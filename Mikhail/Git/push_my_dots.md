@@ -3,6 +3,9 @@
 ``` sh
 cd dots
 ```
+```sh 
+git init 
+```
 
 ``` sh
 git config --global --add safe.directory /home/user/dots
@@ -15,6 +18,11 @@ git config --global user.email "..."
 ``` sh
 git config --global user.name "..."
 ```
+Добавить удаленный репозиторий и дать ему имя/алиас:
+
+```sh 
+git remote add origin <url>
+```
 
 ``` sh
 sudo git add .
@@ -25,9 +33,9 @@ sudo git commit -m "test"
 ```
 
 ``` sh
-sudo git push 
+sudo git push --set-upstream origin master
 ```
-(--set-upstream origin master, это необходимо дабы связать удаленный репозиторий/ветку с локальной веткой master)
+(--set-upstream origin master, это необходимо дабы связать удаленный репозиторий/ветку с алиасом origin с локальной веткой master)
 
 # **Удалить папку/файл** 
 
