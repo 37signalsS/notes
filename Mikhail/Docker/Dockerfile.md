@@ -85,8 +85,8 @@ docker run включает в себя: docker create который созда
 Например, запуск docker run "image" выведет hello word, а docker run "image" Docker выведет hello Docker
 
 ``` dockerfile
-ENTRYPOINT ["echo","hello"]
-CMD ["world]
+ENTRYPOINT ["echo", "hello"]
+CMD ["echo", "world"]
 ```
 
 Также для уменьшения веса образа можно:
