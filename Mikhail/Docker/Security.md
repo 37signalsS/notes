@@ -1,5 +1,7 @@
 https://docs.docker.com/engine/security/
 
+https://github.com/goodwithtech/dockle
+
 Запуск без root-доступа
 ```sh
 docker run --user 1000:1000 my-image
