@@ -1,29 +1,45 @@
-https://docs.docker.com/engine/security/
+# **Безопасность Docker**
 
-https://github.com/goodwithtech/dockle
+---
 
-Запуск без root-доступа
+### **Полезные ссылки**
+
+- [Официальная документация по безопасности Docker](https://docs.docker.com/engine/security/)
+- [dockle - инструмент для проверки безопасности образов](https://github.com/goodwithtech/dockle)
+
+---
+
+### **Рекомендации по безопасности**
+
+- **Запуск без root-доступа**
 ```sh
 docker run --user 1000:1000 my-image
 ```
-Только для чтения
+
+- **Только для чтения**
 ```sh
 docker run --read-only my-image
 ```
-Удалить все cap-привилегии ядра
+
+- **Удалить все cap-привилегии ядра**
 ```sh
 docker run --cap-drop=ALL my-image
 ```
-Использовать seccomp-профиль
+
+- **Использовать seccomp-профиль**
 ```sh
 docker run --security-opt seccomp=default.json my-image
 ```
-Отключить сеть
+
+- **Отключить сеть**
 ```sh
 docker run --network=none my-image
 ```
 
-Также стоит:
-• Настроить AppArmor / SELinux  
-• Запретить монтирование Docker сокета  
-• Ограничить доступ к /proc, /sys
+---
+
+### **Дополнительные меры безопасности**
+
+- Настроить AppArmor / SELinux
+- Запретить монтирование Docker сокета
+- Ограничить доступ к /proc, /sys

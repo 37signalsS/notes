@@ -1,28 +1,88 @@
-Секреты в кубере по умолчанию закодированы в base64, и могут быть легко раскодированны в исходный вид при помощи команды base 64 -d
+# Secret
 
-generic - пароли/токены приложений(произвольные данные)
+**Secret** — это объект Kubernetes, предназначенный для хранения небольших объемов чувствительных данных, таких как пароли, токены или ключи. Использование `Secret` позволяет отделить секретные данные от конфигурации подов, что повышает безопасность и гибкость.
 
-docker-registry - данные авторизации в docker registry
+**Важно:** По умолчанию данные в `Secret` хранятся в `etcd` в кодировке **Base64**, а не в зашифрованном виде. Base64 — это не шифрование, и данные могут быть легко раскодированы. Для настоящей безопасности необходимо настроить шифрование секретов в `etcd` (Encryption at Rest).
 
-tls - tls сертификаты для ingress
+---
 
-Создание секрета - kubectl create secret generic test --from-literal=test1=asdf (будет создан ключ типа generic с названием test а значения ключа test1 and asdf)
+### Типы секретов
 
-``` yaml
+*   `Opaque`: Произвольные данные в виде пар ключ-значение. Тип по умолчанию.
+*   `kubernetes.io/service-account-token`: Используется для хранения токена сервисного аккаунта.
+*   `kubernetes.io/dockerconfigjson`: Для хранения учетных данных для доступа к приватному Docker-репозиторию.
+*   `kubernetes.io/tls`: Для хранения TLS-сертификата и приватного ключа, обычно используется `Ingress`.
+
+---
+
+### Способы создания и использования
+
+#### 1. Создание секрета
+
+**Декларативно (из манифеста):**
+Значения должны быть закодированы в Base64.
+`echo -n 'my-super-secret-password' | base64` -> `bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk`
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-database-secret
+type: Opaque
+data:
+  # ключ: значение (в base64)
+  DB_PASSWORD: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
+```
+
+**Императивно (из команды):**
+`kubectl` автоматически кодирует значения.
+
+```bash
+kubectl create secret generic my-database-secret \
+  --from-literal=DB_PASSWORD='my-super-secret-password'
+```
+
+#### 2. Использование секрета в поде
+
+Секреты можно использовать двумя основными способами:
+
+**а) Как переменные окружения:**
+
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: example-pod
+  name: my-app-pod
 spec:
   containers:
-    - name: example-container
-      image: nginx:latest
+    - name: my-app
+      image: my-app-image
       env:
-#       - name: HARDCODED_ENV
-#         value: "значение_захардкоженное"
-        - name: SECRET_ENV
+        - name: DATABASE_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: my-secret    # имя секрета
-              key: secret_key    # ключ, по которому извлекается значение из секрета
+              name: my-database-secret # Имя секрета
+              key: DB_PASSWORD        # Ключ в секрете
 ```
+
+**б) Как файлы в томе:**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  containers:
+    - name: my-app
+      image: my-app-image
+      volumeMounts:
+        - name: secret-volume
+          mountPath: "/etc/secrets"
+          readOnly: true
+  volumes:
+    - name: secret-volume
+      secret:
+        secretName: my-database-secret
+```
+В этом случае в директории `/etc/secrets` внутри контейнера будет создан файл с именем `DB_PASSWORD`, содержащий раскодированное значение.

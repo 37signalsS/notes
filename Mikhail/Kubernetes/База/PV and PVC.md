@@ -1,146 +1,85 @@
-PV - постоянный том на котором хранятся данные(хранит идентификаторы диска, путь к каталогу в ФС)
+# Хранение данных: PV, PVC и StorageClass
 
-SC - определяет класс хранилища и параметры provisioner'а (тип диска, политики шифрования, зонирование).  StorageClass используется для динамического создания PersistentVolume (PV) на основе запросов PersistentVolumeClaim (PVC).
+Kubernetes предоставляет мощную и гибкую систему для управления хранилищами данных, которая абстрагирует детали конкретной системы хранения от приложений. Ключевыми компонентами этой системы являются `PersistentVolume` (PV), `PersistentVolumeClaim` (PVC) и `StorageClass`.
 
-PVC - запрос на резервирование постоянного тома(хранит размер и SC)
- 
-PV Provisioners - отвечает за динамическое создание PV на основе запросов PVC. 
-
-``` yaml
 ---
-# 1. StorageClass
+
+### 1. PersistentVolume (PV)
+
+**PersistentVolume (PV)** — это "кусок" хранилища в кластере, который был предоставлен администратором. Это ресурс кластера, так же как и узел (node). PV имеет свой жизненный цикл, независимый от любого пода, который его использует.
+
+PV содержит детали реализации хранилища: тип (NFS, iSCSI, облачное хранилище), размер, путь и т.д.
+
+### 2. PersistentVolumeClaim (PVC)
+
+**PersistentVolumeClaim (PVC)** — это запрос на хранилище от пользователя (или пода). Он похож на то, как под запрашивает CPU и память. Под запрашивает определенный размер и режим доступа (например, `ReadWriteOnce`), и Kubernetes находит подходящий PV для удовлетворения этого запроса.
+
+Когда PVC связывается с PV, этот PV становится "занятым" и не может быть использован другим PVC.
+
+### 3. StorageClass
+
+**StorageClass** — это механизм, который позволяет **динамически создавать** PV. Вместо того чтобы администратор вручную создавал PV, он может создать один или несколько `StorageClass`, которые описывают "классы" хранилищ (например, "быстрый-ssd" и "медленный-hdd").
+
+Когда пользователь создает PVC, указывая определенный `StorageClass`, система (с помощью специального **provisioner'а**) автоматически создает соответствующий PV и связывает его с PVC.
+
+---
+
+### Пример: Динамическое выделение хранилища
+
+В этом примере под запрашивает хранилище через PVC, а `StorageClass` с `provisioner`'ом от облачного провайдера автоматически создает необходимый диск.
+
+```yaml
+# 1. StorageClass (обычно уже предоставлен облачным провайдером)
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: my-storage-class
-provisioner: kubernetes.io/no-provisioner
-volumeBindingMode: WaitForFirstConsumer # создание связки PV and PVC только при появлении нагрузки(пока поду не потребуется PVC)
+  name: standard-ssd
+provisioner: kubernetes.io/aws-ebs # Пример для AWS
+parameters:
+  type: gp2
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+
 ---
-# 2. PersistentVolume (PV)
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: my-pv
-  labels:
-    type: local
-spec:
-  capacity:
-    storage: 1Gi
-  volumeMode: Filesystem
-  accessModes:
-    - ReadWriteOnce # или ReadWriteMany, если необходимо
-  storageClassName: my-storage-class
-  persistentVolumeReclaimPolicy: Delete # что будет происходить с PV после удаления PVC
-  local: # позволяет обращаться к Фс хостовой машины, не умеют в переезд
-    path: /mnt
-  nodeAffinity:
-    required:
-      nodeSelectorTerms:
-        - matchExpressions:
-            - key: kubernetes.io/hostname
-              operator: In
-              values:
-                - my-node-name  # имя узла к ФС которого мы хотим подключиться 
----
-# 3. PersistentVolumeClaim (PVC)
+# 2. PersistentVolumeClaim (PVC)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: my-pvc
+  name: my-app-pvc
 spec:
   accessModes:
-    - ReadWriteOnce # исклюзивный доступ к диску, ReadWriteMany - множественный доступ к диску
-  storageClassName: my-storage-class
+    - ReadWriteOnce # Эксклюзивный доступ на чтение/запись
+  storageClassName: standard-ssd # Запрос к конкретному классу хранилища
   resources:
     requests:
-      storage: 1Gi
----
-# 4. ConfigMap с многострочным значением
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: my-config
-data:
-  app.conf: |
-    server {
-        listen 80;
-        server_name example.com;
-        
-        location / {
-            root /usr/share/nginx/html;
-            index index.html;
-        }
-    }
----
-# 5. Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-deployment
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: my-app
-  template:
-    metadata:
-      labels:
-        app: my-app
-    spec:
-      containers:
-        - name: my-container
-          image: nginx:latest
-          ports:
-            - containerPort: 80
-          volumeMounts:
-            # Монтируем ConfigMap как том для конфигурационных файлов
-            - name: config-volume
-              mountPath: /etc/nginx/conf.d
-            # Монтируем PVC как том для хранения данных (например, HTML файлов)
-            - name: data
-              mountPath: /data
-      volumes:
-        - name: config-volume 
-          configMap:
-            name: my-config
-        - name: data-volume
-          persistentVolumeClaim:
-            claimName: my-pvc
----
-# 6. Service для доступа к Deployment
-apiVersion: v1
-kind: Service
-metadata:
-  name: my-service
-spec:
-  selector:
-    app: my-app
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 80
-  type: ClusterIP
----
-# 7. Ingress для внешнего доступа к сервису
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  rules:
-    - host: example.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-service
-                port:
-                  number: 80
+      storage: 10Gi # Запрос на 10 ГиБ
 
+---
+# 3. Pod, использующий PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  containers:
+    - name: my-app
+      image: nginx
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        # Монтируем том, предоставленный PVC, в контейнер
+        - name: my-storage
+          mountPath: /usr/share/nginx/html
+  volumes:
+    - name: my-storage
+      # Указываем, что источником тома является наш PVC
+      persistentVolumeClaim:
+        claimName: my-app-pvc
 ```
 
-Отключение или добавление инстансов - kubectl scale deployment имядеплоймента --replicas=0(0-остановка deployment, 2 - две реплики)
+### Режимы доступа (`accessModes`)
+
+*   `ReadWriteOnce` (RWO): Том может быть смонтирован для чтения и записи одним узлом.
+*   `ReadOnlyMany` (ROX): Том может быть смонтирован только для чтения многими узлами.
+*   `ReadWriteMany` (RWX): Том может быть смонтирован для чтения и записи многими узлами.
+*   `ReadWriteOncePod` (RWOP): Том может быть смонтирован для чтения и записи одним подом.

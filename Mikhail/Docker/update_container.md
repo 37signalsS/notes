@@ -1,14 +1,23 @@
-Меняем версию в compose-файле, смотрим ее на docker hub
+# **Обновление контейнера**
 
-```
-docker compose pull
-```
+---
 
-```
-docker compose up -d
-```
+### **Процесс обновления**
 
-```
-docker compose restart
-```
+1.  **Изменить версию в `docker-compose.yml`**
+    - Найти новую версию на Docker Hub
 
+2.  **Скачать новый образ**
+    ```sh
+    docker compose pull
+    ```
+
+3.  **Пересоздать и запустить контейнер**
+    ```sh
+    docker compose up -d
+    ```
+
+4.  **Перезапустить контейнер (если требуется)**
+    ```sh
+    docker compose restart
+    ```

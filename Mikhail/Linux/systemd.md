@@ -1,139 +1,139 @@
-# **Анализ запуска systemd служб и выяснение узкого места:**
+# systemd
+
+`systemd` — это системный менеджер и менеджер служб для Linux, который стал стандартом для многих дистрибутивов. Он управляет запуском служб во время загрузки системы и позволяет управлять ими в процессе работы.
+
+## Анализ производительности
+
+Для анализа времени загрузки служб и выявления узких мест используется `systemd-analyze`.
 
 ```sh
 systemd-analyze
 ```
+Эта команда покажет, сколько времени заняла загрузка ядра и пользовательского пространства.
 
- # **После создания новой systemd-службы необходимо перезагрузить systemd, чтобы распознать новую службу.**
-
+```sh
+systemd-analyze blame
 ```
+Эта команда выведет список всех запущенных юнитов, отсортированный по времени, которое потребовалось на их запуск.
+
+## Управление службами (Services)
+
+### Основные команды
+
+- **`start`**: Запустить службу.
+  ```sh
+  sudo systemctl start nginx.service
+  ```
+- **`stop`**: Остановить службу.
+  ```sh
+  sudo systemctl stop nginx.service
+  ```
+- **`restart`**: Перезапустить службу.
+  ```sh
+  sudo systemctl restart nginx.service
+  ```
+- **`reload`**: Перезагрузить конфигурацию без остановки службы (если служба это поддерживает).
+  ```sh
+  sudo systemctl reload nginx.service
+  ```
+- **`reload-or-restart`**: Попытаться перезагрузить конфигурацию, а если не получится — полностью перезапустить службу.
+  ```sh
+  sudo systemctl reload-or-restart nginx.service
+  ```
+- **`status`**: Проверить статус службы.
+  ```sh
+  systemctl status nginx.service
+  ```
+- **`enable`**: Включить автозапуск службы при загрузке системы.
+  ```sh
+  sudo systemctl enable nginx.service
+  ```
+- **`disable`**: Отключить автозапуск.
+  ```sh
+  sudo systemctl disable nginx.service
+  ```
+
+### Маскировка служб
+
+Маскировка — это способ полностью запретить запуск службы, даже вручную. Это сильнее, чем `disable`.
+
+```sh
+sudo systemctl mask bluetooth.service
+```
+Для отмены маскировки:
+```sh
+sudo systemctl unmask bluetooth.service
+```
+
+### Управление зависимостями
+
+Посмотреть, от каких юнитов зависит служба:
+```sh
+systemctl list-dependencies <имя-службы>
+```
+
+Посмотреть, какие юниты зависят от этой службы:
+```sh
+systemctl list-dependencies --reverse <имя-службы>
+```
+
+## Юнит-файлы (Unit Files)
+
+### Расположение
+
+`systemd` ищет юнит-файлы в нескольких каталогах. Файлы в `/etc/systemd/system` имеют наивысший приоритет и переопределяют файлы из других каталогов.
+
+- `/usr/lib/systemd/system/`: Юниты, поставляемые с установленными пакетами.
+- `/etc/systemd/system/`: Юниты, созданные системным администратором.
+
+После создания или изменения юнит-файла необходимо выполнить команду:
+```sh
 sudo systemctl daemon-reload
 ```
 
-Не все службы поддерживают мягкую перезагрузку - sudo systemctl reload(отправляет процуссу сигнал SIGHUP). Если вы не уверены, используйте reload-or-restart. Сначала выполняется попытка перезагрузки, а если она не поддерживается, выполняется полный перезапуск.
+### Типы юнитов
 
-```
-systemctl reload-or-restart nginx
-```
+- **`.service`**: Сервисы и скрипты.
+- **`.target`**: Группы юнитов (аналог уровней запуска).
+- **`.mount`**: Точки монтирования файловых систем.
+- **`.timer`**: Задачи по расписанию (аналог `cron`).
+- **`.socket`**: Активация службы при обращении к сокету.
+- и другие (`.automount`, `.swap`, `.slice`, `.device`, `.path`).
 
-# **Маскировка systemd-службы, для предовращения запуска(навсегда)**
+### Структура юнит-файла
 
-```sh
-systemctl mask bluetooth.service
-```
-
-Размаскировать systemd-службу:
-
-```
-systemctl unmask bluetooth.service
-```
-
-# **Зависимости systemd-службы**
-
-```sh
-systemctl list-dependencies service-name
-```
-
-Что зависит от systemd-службы
-
-```sh
-systemctl list-dependencies --reverse service-name
-```
-# **В зависимости от дистрибутива, юнит-файлы находятся в каталогах:**
-
-- `/lib/systemd/system/`
-- `/usr/lib/systemd/user/`
-- `/usr/lib/systemd/system/` - файлы предоставляемые пакетом
-
-Дополнительные юнит-файлы можно добавить в `/etc/systemd/system/`, они имеют приоритет выше.
-
-Существующие типы юнитов `systemd`:
-
-- `target` — группирует сервисы (аналог `runlevel`).
-- `service` — запускает сервисы и пользовательские скрипты.
-- `mount` — монтирует файловые системы.
-- `automount` — автоматическое монтирование.
-- `swap` — подключение файла подкачки.
-- `timer` — выполняет задачи по расписанию (аналог `cron`).
-- `socket` — запуск по подключению к сокету.
-- `slice` — группировка модулей в `cgroups`.
-- `device` — реакция на подключение устройства.
-- `path` — запуск модуля при доступе к файлу.
-
-#### Пример юнит-файла `my_example_service.service`
-
-``` ini
+Пример файла `my_service.service`:
+```ini
 [Unit]
 Description=My Example Service
-Documentation=http://example.com/service-doc
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/my_example_command --option value
-ExecReload=/usr/bin/my_example_command --reload
-ExecStop=/usr/bin/my_example_command --stop
-Restart=always
-RestartSec=10
-User=exampleuser
-Group=examplegroup
-Environment="MY_ENV_VAR=value"
-EnvironmentFile=-/etc/default/my_example_service
-WorkingDirectory=/var/my_example_service
-LimitNOFILE=1024
-LimitNPROC=100
-TimeoutStartSec=30s
-TimeoutStopSec=30s
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=my_example_service
+ExecStart=/usr/bin/my_command --run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+User=myuser
+Group=mygroup
+WorkingDirectory=/opt/my_app
+Environment="VAR=value"
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**1. `[Unit]` — Описание юнита**
+**Секция `[Unit]`**
+- `Description`: Описание юнита.
+- `After`: Указывает, что юнит должен запускаться **после** указанных юнитов (например, `network.target`).
 
-- **`After=network.target`**: Указывает, что сервис должен запускаться **после** того, как будет доступна сеть. Это важно для сервисов, которые используют сеть, например, веб-сервисы.
+**Секция `[Service]`**
+- `Type`: Тип запуска. `simple` — процесс запущен сразу; `forking` — главный процесс порождает дочерний.
+- `ExecStart`: Команда для запуска сервиса.
+- `ExecReload`: Команда для перезагрузки конфигурации. `$MAINPID` — это PID основного процесса.
+- `Restart`: Политика перезапуска (`no`, `on-success`, `on-failure`, `always`).
+- `User`, `Group`: Пользователь и группа, от имени которых будет запущен процесс.
+- `WorkingDirectory`: Рабочая директория для процесса.
+- `Environment`: Переменные окружения.
 
-**2. `[Service]` — Описание работы сервиса**
-
-- **`Type=simple`**: Тип сервиса, который будет считаться запущенным сразу после выполнения команды `ExecStart`. Это самый простой тип сервиса, подходит для большинства приложений.
-    
-- **`ExecStart=/usr/bin/my_example_command --option value`**: Команда, которая будет выполняться при старте сервиса. Здесь это пример команды с параметром.
-    
-- **`ExecReload=/usr/bin/my_example_command --reload`**: Команда, которая будет выполнена при перезагрузке сервиса (например, для применения новых настроек).
-    
-- **`ExecStop=/usr/bin/my_example_command --stop`**: Команда для остановки сервиса.
-    
-- **`Restart=always`**: Указывает, что сервис будет перезапускаться, если он завершится с ошибкой или аварийно.
-    
-- **`RestartSec=10`**: Устанавливает задержку в 10 секунд перед перезапуском сервиса.
-    
-- **`User=exampleuser`**: Сервис будет выполняться от имени пользователя `exampleuser`.
-    
-- **`Group=examplegroup`**: Сервис будет выполняться от имени группы `examplegroup`.
-    
-- **`Environment="MY_ENV_VAR=value"`**: Устанавливает переменные окружения, которые будут доступны сервису.
-    
-- **`EnvironmentFile=-/etc/default/my_example_service`**: Загружает переменные окружения из файла `/etc/default/my_example_service`. Символ `-` перед путем означает, что если файл не существует, ошибки не будет.
-    
-- **`WorkingDirectory=/var/my_example_service`**: Указывает директорию, в которой будет работать сервис. Это полезно, если нужно, чтобы сервис выполнялся из конкретной папки.
-    
-- **`LimitNOFILE=1024`**: Ограничение на количество открытых файлов, которые может использовать сервис.
-    
-- **`LimitNPROC=100`**: Ограничение на количество процессов, которые может создать сервис.
-    
-- **`TimeoutStartSec=30s`**: Время ожидания для успешного старта сервиса. Если сервис не запускается за это время, он будет остановлен.
-    
-- **`TimeoutStopSec=30s`**: Время ожидания для завершения работы сервиса после команды остановки. Если сервис не завершает работу за это время, он будет принудительно завершен.
-    
-- **`StandardOutput=syslog`**: Направляет стандартный вывод в системный журнал (`syslog`).
-    
-- **`StandardError=syslog`**: Направляет стандартный вывод ошибок в системный журнал (`syslog`).
-    
-- **`SyslogIdentifier=my_example_service`**: Устанавливает идентификатор для логов, чтобы можно было легче идентифицировать их в системном журнале.
-
-**3. `[Install]` — Установка и активация юнита**
-
-- **`WantedBy=multi-user.target`**: Указывает, что сервис должен быть активирован при запуске в многопользовательском режиме (обычно при запуске системы). Это означает, что сервис будет автоматически запускаться после загрузки системы в обычном режиме.
+**Секция `[Install]`**
+- `WantedBy`: Указывает, в каком `target` (уровне запуска) юнит должен быть активирован при выполнении `systemctl enable`. `multi-user.target` — стандартный многопользовательский режим.

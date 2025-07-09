@@ -1,42 +1,52 @@
-Условие:  
-Контейнер на базе ubuntu:22.04, в котором хочешь использовать systemd, потому что:
+# **Systemd в Docker**
 
-- там запускается несколько сервисов  
+---
+
+### **Проблема**
+
+**Условие:**
+Контейнер на базе ubuntu:22.04, в котором хочешь использовать systemd, потому что:
+- там запускается несколько сервисов
 - хочешь юниты, логирование через journalctl и `target`-зависимости
 
-Dockerfile:
-
-```
+**Dockerfile:**
+```dockerfile
 FROM ubuntu:22.04
 RUN apt update && apt install -y systemd
 CMD ["/sbin/init"]
 ```
 
-Контейнер запускается. Но:
-
-- systemctl внутри контейнера зависает или падает
+**Результат:**
+- `systemctl` внутри контейнера зависает или падает
 - сервисы не стартуют
-- journalctl выдаёт: Failed to create /run/systemd/notify: Protocol not supported
+- `journalctl` выдаёт: `Failed to create /run/systemd/notify: Protocol not supported`
 
-1. Docker не предназначен для запуска полноценного init-сервиса
+---
 
-- systemd требует PID 1, работу cgroups, tmpfs, правильный init-режим  
-- Docker по умолчанию отключает многие возможности, нужные systemd:  
-  • /sys/fs/cgroup  
-  • tmpfs /run  
-  • CAP_SYS_ADMIN  
-  • --privileged
+### **Почему так происходит?**
 
-1. Для запуска systemd inside Docker:
+1.  **Docker не предназначен для запуска полноценного init-сервиса**
+    - systemd требует PID 1, работу cgroups, tmpfs, правильный init-режим
+    - Docker по умолчанию отключает многие возможности, нужные systemd:
+        - /sys/fs/cgroup
+        - tmpfs /run
+        - CAP_SYS_ADMIN
+        - --privileged
+
+---
+
+### **Решение**
+
+1.  **Для запуска systemd inside Docker:**
+    ```sh
+    docker run -d --privileged \
+      --tmpfs /run --tmpfs /run/lock \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+      myimage:latest
+    ```
+
+2.  **Лучше: не делать так вообще**
+    Вместо systemd — использовать:
+    - supervisord, tini, s6-overlay, runit — как минимальный init
 
 ```
-   docker run -d --privileged \
-     --tmpfs /run --tmpfs /run/lock \
-     -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
-     myimage:latest
-```
-
-
-2. Лучше: не делать так вообще  
-   Вместо systemd — использовать:
-   - supervisord, tini, s6-overlay, runit — как минимальный init  

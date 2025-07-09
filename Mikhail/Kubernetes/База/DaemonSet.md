@@ -1,22 +1,47 @@
-Автоматический запуск на каждой ноде кластера по одному поду
+# DaemonSet
 
-``` sh
+**DaemonSet** — это объект Kubernetes, который гарантирует, что на каждом (или на определённом наборе) узле кластера будет запущен ровно один экземпляр пода. Это идеально подходит для развертывания системных сервисов, которые должны работать на всех или некоторых узлах.
+
+### Примеры использования:
+
+*   **Сборщики логов:** Fluentd, Logstash, Promtail.
+*   **Агенты мониторинга:** Prometheus Node Exporter, Datadog Agent, New Relic.
+*   **Сетевые плагины:** Calico, Flannel, Cilium.
+*   **Системы хранения:** Ceph, GlusterFS.
+
+---
+
+### Taints и Tolerations
+
+Часто `DaemonSet` используется в связке с `tolerations`, чтобы иметь возможность запускаться даже на "загрязненных" (tainted) узлах, например, на мастер-узлах.
+
+Команда для установки "загрязнения" на узел:
+```bash
+# Узел 'my-node' будет принимать только поды, у которых есть соответствующий 'toleration'.
 kubectl taint nodes my-node dedicated=special:NoSchedule
 ```
-Поды не будут назначаться на my-node, если у них нет toleration = dedicated=special([[Pod]]).
+*   `NoSchedule`: Новые поды не будут планироваться на этот узел, если у них нет `toleration`.
+*   `NoExecute`: Новые поды не будут планироваться, а уже запущенные (без `toleration`) будут выселены.
 
-``` yaml
+---
+
+### Пример: DaemonSet для Fluentd
+
+Этот `DaemonSet` разворачивает под с Fluentd на каждом узле для сбора логов. Он использует `tolerations`, чтобы работать даже на мастер-узлах, и `volumeMounts` для доступа к логам хост-машины.
+
+```yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fluentd
-  namespace: kube-system  # Обычно DaemonSet для логирования размещают в kube-system
+  name: fluentd-collector
+  namespace: kube-system # Системные сервисы принято размещать в kube-system
   labels:
     k8s-app: fluentd-logging
 spec:
+  # Стратегия обновления: как будут обновляться поды DaemonSet
   updateStrategy:
     rollingUpdate:
-      maxUnavailable: 1
+      maxUnavailable: 1 # Во время обновления может быть недоступен максимум 1 под
   selector:
     matchLabels:
       name: fluentd
@@ -48,19 +73,23 @@ spec:
           resources:
             limits:
               memory: 200Mi
+            requests:
               cpu: 100m
+              memory: 200Mi
           volumeMounts:
+            # Монтируем директории с логами и контейнерами с хост-машины внутрь пода
             - name: varlog
               mountPath: /var/log
             - name: dockercontainers
               mountPath: /var/lib/docker/containers
               readOnly: true
+      # volumes определяет тома, которые будут использоваться в поде
       volumes:
+        # Определяем тома, которые будут использоваться в поде
         - name: varlog
-          hostPath:
+          hostPath: # hostPath монтирует директорию с хост-машины
             path: /var/log
         - name: dockercontainers
           hostPath:
             path: /var/lib/docker/containers # Замонтировать директори с хоста где запущено приложение в mountPath
-
 ```

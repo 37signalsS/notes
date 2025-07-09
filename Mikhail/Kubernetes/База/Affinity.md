@@ -1,11 +1,19 @@
-Указывает каким образом(с какими labels) и на каких нодах будут запускаться поды
+# Affinity и Anti-Affinity
 
-Типы Affinity:
+**Affinity** в Kubernetes — это механизм, который позволяет влиять на решения планировщика (Scheduler) о том, на каких узлах (nodes) будут размещены поды (pods). Это более гибкая и мощная альтернатива `nodeSelector`.
 
-1. **Node Affinity** — определяет, на каких нодах должны запускаться поды.
-2. **Pod Affinity/Anti-Affinity** — определяет, с какими другими подами должны или не должны запускаться поды.
+## Типы Affinity
 
-``` yaml
+1.  **Node Affinity** — привязка пода к узлам с определёнными метками. Позволяет указать "предпочтительные" или "обязательные" узлы для запуска.
+2.  **Pod Affinity/Anti-Affinity** — размещение подов относительно других подов.
+    *   **Pod Affinity:** Старается разместить поды на одном узле (или в одной зоне доступности), если на нём уже работают поды с определёнными метками.
+    *   **Pod Anti-Affinity:** Старается *не* размещать поды на одном узле, если там уже есть поды с определёнными метками.
+
+---
+
+## Пример использования
+
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,26 +29,33 @@ spec:
         app: affinity-demo
     spec:
       affinity:
-        # Node Affinity
+        # 1. Node Affinity: привязка к узлам
         nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution: # если метка измениться когда поды работают, с подами ничего не произойдет, reuired - жесткое ограничение выполнения affinity
+          # Жесткое правило: под будет запущен ТОЛЬКО на узле с меткой disktype=ssd.
+          # IgnoredDuringExecution означает, что если метка на узле изменится, уже запущенный под не будет перемещён.
+          requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
                   - key: disktype
                     operator: In
                     values:
                       - ssd
-          preferredDuringSchedulingIgnoredDuringExecution: # если метка измениться когда поды работают, с подами ничего не произойдет, preferred - мягкое ограничение выполнения affinity, елси под условия ничего не подходит то будет выбрана любая нода
-            - weight: 1 # вес - приоритет от 1 до 100
+          # Мягкое правило: планировщик будет стараться запустить под на узле с меткой zone=east.
+          # Если таких узлов нет, под будет запущен на любом другом доступном узле.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 1 # Приоритет правила (от 1 до 100).
               preference:
                 matchExpressions:
                   - key: zone
                     operator: In
                     values:
                       - east
-#                   operator: Exists # если key на ноде присутствует, то запускаем на ней
-        # Pod Affinity
-        podAffinity: # запускать поды с определенными метками на одной ноде
+                  # - key: another-label
+                  #   operator: Exists # Оператор Exists означает, что под будет запущен на узле, если у него есть метка 'another-label' (значение не важно).
+
+        # 2. Pod Affinity: привязка к другим подам
+        podAffinity:
+          # Жесткое правило: запускать этот под на том же узле, где уже есть под с меткой app=database.
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchExpressions:
@@ -48,10 +63,13 @@ spec:
                     operator: In
                     values:
                       - database
-
+              # topologyKey определяет "область" применения правила.
+              # kubernetes.io/hostname означает, что поды должны быть на одном и том же узле.
               topologyKey: kubernetes.io/hostname
-        # Pod Anti-Affinity
-        podAntiAffinity: # поды с определенной меткой нельзя запускать на одной ноде
+
+        # 3. Pod Anti-Affinity: избегание других подов
+        podAntiAffinity:
+          # Мягкое правило: стараться не запускать поды этого Deployment'а на одном и том же узле.
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:

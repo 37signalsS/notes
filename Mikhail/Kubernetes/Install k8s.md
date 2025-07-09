@@ -550,7 +550,169 @@ Bare-Metal [Kubernetes](https://www.digitalocean.com/products/kubernetes) — э
 Выполните следующую команду на всех узлах, чтобы убедиться, что они обновлены:
 
 ```
+# Установка Kubernetes на Bare-Metal
+
+В этом руководстве описывается процесс установки кластера Kubernetes на физические серверы ("bare-metal").
+
+---
+
+## Сравнение Bare-Metal и VM
+
+| Характеристика | Bare-Metal Kubernetes | VM-based Kubernetes |
+| :--- | :--- | :--- |
+| **Производительность** | Высокая | Умеренная |
+| **Накладные расходы** | Низкие | Высокие |
+| **Гибкость** | Высокая | Умеренная |
+| **Использование ресурсов** | Эффективное | Неэффективное |
+| **Масштабируемость** | Высокая | Умеренная |
+| **Стоимость** | Низкая | Высокая |
+
+---
+
+## Преимущества Bare-Metal
+
+1.  **Повышенная производительность:** Прямой доступ к оборудованию.
+2.  **Эффективность ресурсов:** Отсутствие слоя гипервизора.
+3.  **Экономия:** Оптимальное использование ресурсов.
+4.  **Гибкость:** Полный контроль над конфигурацией.
+
+---
+
+## Шаг 1: Подготовка узлов
+
+Эти действия необходимо выполнить на всех узлах кластера (мастер и рабочие).
+
+### 1.1. Обновление пакетов
+
+```bash
 sudo apt update && sudo apt upgrade -y
+```
+
+### 1.2. Настройка имен хостов
+
+Присвойте уникальное имя каждому узлу:
+```bash
+sudo hostnamectl set-hostname <имя-узла>
+```
+
+Добавьте IP-адреса и имена всех узлов в `/etc/hosts` на каждом узле:
+```
+192.168.1.100 master-node
+192.168.1.101 worker-node1
+192.168.1.102 worker-node2
+```
+
+### 1.3. Отключение Swap
+
+Для корректной работы Kubernetes необходимо отключить swap:
+```bash
+sudo swapoff -a
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+```
+
+### 1.4. Загрузка модулей ядра
+
+```bash
+sudo modprobe br_netfilter
+sudo tee /etc/modules-load.d/k8s.conf <<EOF
+br_netfilter
+EOF
+sudo tee /etc/sysctl.d/k8s.conf <<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+sudo sysctl --system
+```
+
+---
+
+## Шаг 2: Установка среды выполнения контейнеров
+
+В качестве среды выполнения будет использоваться `containerd`.
+
+```bash
+sudo apt-get install -y containerd
+sudo mkdir -p /etc/containerd
+sudo containerd config default | sudo tee /etc/containerd/config.toml
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+```
+
+---
+
+## Шаг 3: Установка компонентов Kubernetes
+
+Установите `kubelet`, `kubeadm` и `kubectl` на всех узлах.
+
+```bash
+sudo curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+```
+
+---
+
+## Шаг 4: Инициализация кластера (только на мастер-узле)
+
+```bash
+sudo kubeadm init --pod-network-cidr=192.168.0.0/16
+```
+
+После выполнения команды сохраните `kubeadm join` команду, которая будет выведена на экран. Она понадобится для добавления рабочих узлов.
+
+Для начала работы с кластером:
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+---
+
+## Шаг 5: Установка сетевого плагина (только на мастер-узле)
+
+В качестве сетевого плагина будет использоваться Flannel.
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+```
+
+---
+
+## Шаг 6: Добавление рабочих узлов
+
+На каждом рабочем узле выполните команду `kubeadm join`, полученную на 4-м шаге.
+
+```bash
+sudo kubeadm join <MASTER_NODE_IP>:6443 --token <TOKEN> --discovery-token-ca-cert-hash sha256:<HASH>
+```
+
+Проверьте состояние узлов на мастер-ноде:
+```bash
+kubectl get nodes
+```
+
+---
+
+## Шаг 7: Развертывание тестового приложения
+
+Создайте Deployment для Nginx:
+```bash
+kubectl create deployment nginx --image=nginx
+```
+
+Создайте Service типа NodePort для доступа к Nginx извне:
+```bash
+kubectl expose deployment nginx --port=80 --type=NodePort
+```
+
+Узнайте порт, который был выделен для сервиса:
+```bash
+kubectl get svc nginx
+```
+
 ```
 
 ### [2. Настройка имен хостов и файла hosts](https://www.digitalocean.com/community/tutorials/bare-metal-kubernetes?ref=dailydev#2-set-hostnames-and-hosts-file)[](https://www.digitalocean.com/community/tutorials/bare-metal-kubernetes?ref=dailydev#2-set-hostnames-and-hosts-file) ###
