@@ -113,3 +113,128 @@ ssh -R <удалённый_порт>:<локальный_хост>:<локаль
 ssh -R 8080:localhost:3000 user@ssh_server
 ```
 Теперь любой, кто зайдёт на `http://<IP_адрес_ssh_server>:8080`, попадёт на ваш локальный сервис.
+---
+
+### Копирование файлов
+
+- **`scp` (Secure Copy):**
+  - Копирование на сервер:
+    ```sh
+    scp path/to/local/file user@server:/path/to/remote/location
+    ```
+  - Копирование с сервера:
+    ```sh
+    scp user@server:/path/to/remote/file /path/to/local/location
+    ```
+- **`sshfs` (SSH File System):**
+  - Монтирует удаленную файловую систему локально.
+  - Установка: `sudo apt-get install sshfs` (для Debian/Ubuntu).
+  - Монтирование:
+    ```sh
+    mkdir /media/remote_server
+    sshfs user@server:/remote/path /media/remote_server -o reconnect
+    ```
+  - Отмонтирование:
+    ```sh
+    fusermount -u /media/remote_server
+    ```
+
+### Удаленное исполнение кода
+
+- **Простое выполнение:**
+  ```sh
+  ssh user@server "ls -l /var/www"
+  ```
+- **С запросом терминала (для интерактивных команд):**
+  ```sh
+  ssh -t user@server "top"
+  ```
+- **Перенаправление ввода/вывода:**
+  - Удаленный вывод в локальный файл:
+    ```sh
+    ssh user@server "cat /remote/file" > local_file
+    ```
+  - Локальный вывод в удаленный файл:
+    ```sh
+    cat local_file | ssh user@server "cat > /remote/file"
+    ```
+  - Копирование директории с помощью `tar`:
+    ```sh
+    tar -c . | ssh user@server "cd /remote/path && tar -x"
+    ```
+
+### Алиасы и опции по умолчанию (`~/.ssh/config`)
+
+- **Пример конфигурации:**
+  ```ini
+  # Алиас для рабочего сервера
+  Host work
+    HostName spb-mx-i3.extrt.int.company.net
+    User ivanov_i
+    Port 2222
+    Compression yes
+
+  # Алиас для домашнего сервера
+  Host home
+    HostName myhome.dyndns.org
+    User vasya
+    PasswordAuthentication no
+    IdentityFile ~/.ssh/id_rsa_home
+
+  # Опции по умолчанию для всех хостов
+  Host *
+    User root
+    ForwardX11 yes
+  ```
+- Теперь можно подключаться короткими командами: `ssh work`, `scp file.txt home:/tmp/`.
+
+### Проброс X-сервера (X11 Forwarding)
+
+Позволяет запускать графические приложения с удаленного сервера на локальной машине.
+
+- **Подключение с пробросом X11:**
+  ```sh
+  ssh -XYC user@server
+  ```
+  - `-X`: Включает проброс X11.
+  - `-Y`: Включает доверенный проброс X11.
+  - `-C`: Включает сжатие.
+- **Пример:** Запуск `rdesktop` с удаленного сервера:
+  ```sh
+  # На удаленном сервере после подключения по ssh -XYC
+  rdesktop -k en-us 192.168.1.1 -g 1900x1200
+  ```
+
+### SOCKS-прокси
+
+Создает зашифрованный SOCKS-прокси через SSH-соединение, направляя трафик вашего браузера или других приложений через удаленный сервер.
+
+- **Запуск SOCKS-прокси:**
+  ```sh
+  ssh -D 8080 -C user@server
+  ```
+  - `-D 8080`: Создает SOCKS-прокси на локальном порту 8080.
+  - `-C`: Сжимает трафик.
+- После этого нужно настроить браузер или систему на использование SOCKS5-прокси по адресу `localhost:8080`.
+
+### Проброс авторизации (Agent Forwarding)
+
+Позволяет использовать ваш локальный `ssh-agent` для аутентификации на следующем сервере в цепочке, не оставляя приватный ключ на промежуточном хосте.
+
+- **Подключение с пробросом агента:**
+  ```sh
+  ssh -A user@intermediate-server
+  ```
+- **Безопасный проброс через ProxyCommand (Jump Host):**
+  - Этот метод более безопасен, так как промежуточный хост (`jump-server`) не имеет доступа к вашему агенту, а просто перенаправляет трафик.
+  - **Настройка в `~/.ssh/config`:**
+    ```ini
+    Host final-server
+      HostName 10.1.1.2
+      User final_user
+      ProxyCommand ssh -W %h:%p jump_user@jump-server.com
+    ```
+  - **Подключение:**
+    ```sh
+    ssh final-server
+    ```

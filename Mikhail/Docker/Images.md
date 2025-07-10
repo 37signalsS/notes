@@ -38,3 +38,28 @@ docker image prune
 ```sh
 docker image prune -a
 ```
+
+---
+
+### **Реверс-инжиниринг образов**
+
+Если вы потеряли `Dockerfile` запущенного контейнера или хотите понять, как был собран существующий образ, есть несколько утилит, которые могут помочь восстановить его из слоёв.
+
+**Восстановление Dockerfile из образа**
+
+Эти утилиты анализируют слои образа и генерируют `Dockerfile`, который мог бы его создать. Они запускаются как Docker-контейнеры и требуют доступа к Docker-сокету.
+
+- **[dduvnjak/dockerfile-from-image](https://github.com/dduvnjak/dockerfile-from-image)** (написан на Ruby)
+  ```sh
+  sudo docker run -v /var/run/docker.sock:/var/run/docker.sock --rm dduvnjak/dockerfile-from-image <IMAGE_ID>
+  ```
+
+- **[laniksj/dfimage](https://github.com/LanikSJ/dfimage)** (написан на Python)
+  ```sh
+  sudo docker run -v /var/run/docker.sock:/var/run/docker.sock --rm laniksj/dfimage <IMAGE_ID>
+  ```
+
+- **[mrhavens/dedockify](https://github.com/mrhavens/Dedockify)** (написан на Python)
+  ```sh
+  sudo docker run -v /var/run/docker.sock:/var/run/docker.sock --rm mrhavens/dedockify <IMAGE_ID>
+  ```
