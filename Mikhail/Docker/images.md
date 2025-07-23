@@ -1,5 +1,37 @@
 # **Образы Docker (Images)**
 
+### **Основные команды**
+
+- **Скачать образ из репозитория**
+  ```sh
+  docker pull <image_name>:<tag>
+  ```
+
+- **Создать образ из Dockerfile**
+  ```sh
+  # Собрать образ из текущей директории
+  docker build -t webapp-color:0.1 .
+
+  # Собрать образ, указав путь к Dockerfile
+  docker build -f /path/to/Dockerfile -t my-image:latest .
+  ```
+
+- **Сохранить работающий контейнер как новый образ**
+  ```sh
+  docker commit <container_id> my_snapshot
+  ```
+
+- **Удалить образ**
+  ```sh
+  docker rmi <image_name>
+  ```
+
+- **Объединить слои образа при сборке (squash)**
+  *Это экспериментальная функция, которая может уменьшить размер образа, но отключает кэширование слоев.*
+  ```sh
+  docker build --squash -t my-caddy .
+  ```
+
 ---
 
 ### **None-образы**

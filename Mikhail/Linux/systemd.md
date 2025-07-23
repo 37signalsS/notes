@@ -77,6 +77,46 @@ systemctl list-dependencies <имя-службы>
 systemctl list-dependencies --reverse <имя-службы>
 ```
 
+## Особенности зависимостей: Requires= и After=
+
+У вас есть два сервиса: `backend.service` и `database.service`. В юните `backend.service` прописано:
+
+```ini
+[Unit]
+Description=Backend Service
+Requires=database.service
+After=database.service
+```
+
+Однако после перезагрузки системы `backend.service` запускается, даже если `database.service` не смог стартовать (например, из-за ошибки конфигурации).
+
+Такое поведение — не баг, а особенность работы `systemd`.
+
+- `Requires=database.service`: Эта директива означает, что при запуске `backend.service` `systemd` *также попытается* запустить `database.service`. Если `database.service` не запустится, `systemd` не будет автоматически останавливать `backend.service`, который уже был поставлен в очередь на запуск. Эта зависимость работает в одну сторону при активации.
+- `After=database.service`: Эта директива только определяет *порядок* запуска. `backend.service` будет запущен после `database.service`, но `systemd` не будет ждать успешного завершения запуска `database.service`.
+- **`WantedBy=multi-user.target`**: Когда оба сервиса привязаны к `multi-user.target`, `systemd` может пытаться запустить их параллельно (соблюдая правило `After=`), и сбой одного не обязательно остановит другой, если нет более строгой зависимости.
+
+### Правильная настройка "жёсткой" зависимости
+
+Чтобы `backend.service` гарантированно не запускался без работающей базы данных, необходимо настроить его более строго.
+
+```ini
+[Unit]
+Description=Backend Service
+Requires=database.service
+After=database.service
+# Если database.service остановится или упадёт, backend.service тоже будет остановлен.
+BindsTo=database.service
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Ключевые директивы для "жёсткой" связи:**
+
+- `BindsTo=database.service`: Создаёт более сильную связь. Если `database.service` останавливается или падает, `backend.service` также будет немедленно остановлен.
+- `PartOf=database.service`: Полезная директива. Если `database.service` останавливается или перезапускается, то же самое произойдёт и с `backend.service`.
+
 ## Юнит-файлы (Unit Files)
 
 ### Расположение

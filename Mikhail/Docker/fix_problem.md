@@ -2,30 +2,6 @@
 
 ---
 
-### **Мониторинг ресурсов**
-
-- Инфа о использовании ресурсов всех запущенных контейнеров
-```sh
-docker stats
-```
-
-- Инфа о использовании ресурсов запущенного контейнеров
-```sh
-docker stats <container_id>
-```
-
-- Показывает однократный снимок статистики по ресурсам (CPU, память, сеть) всех контейнеров.
-```sh
-docker stats --no-stream
-```
-
-- Cколько пространства на диске занимают образы, контейнеры, сети и тома в Docker
-```sh
-docker system df
-```
-
----
-
 ### **Управление контейнерами**
 
 - Узнать имя-индентификатор контейнера и информацию по нему
@@ -68,32 +44,6 @@ docker run --name webapp -d nginx:1.14-alpine
 docker run --name simple-webapp-blue -d -e APP_COLOR=blue -p 38282:8080 kodekloud/simple-webapp:blue
 ```
 
-- Создать контейнер и связать его с другим контейнером
-```sh
-docker run --name clickcounter-container -d -p 8085:5000 --link redis-container:redis kodekloud/click-counter
-```
-*> **Примечание:** Флаг `--link` является устаревшим. Для связи контейнеров рекомендуется использовать `docker network`.*
-
-- **Создание и использование сетей**
-```sh
-# Создать новую сеть
-docker network create my-network
-
-# Запустить контейнеры в одной сети
-docker run --name redis-container --network my-network -d redis
-docker run --name clickcounter-container --network my-network -d -p 8085:5000 kodekloud/click-counter
-```
-
-- Сохранить базу данных по поределенному адресу
-```sh
-docker run --name mysql-db -v /opt/data:/var/lib/mysql -d mysql
-```
-
-- Запустить контейнер с монтированием локальной директории /data в контейнер по пути /app
-```sh
-docker run -v /data:/app <image_name>
-```
-
 - Запустить контейнер, чтобы он автоматически удалялся после завершения работы
 ```sh
 docker run --rm <image_name>
@@ -112,78 +62,6 @@ docker update --memory 1G --cpus 2 my_container
 - Послучить доступ к командной строке контейнера
 ```sh
 docker exec -it <container_id> /bin/bash
-```
-
----
-
-### **Работа с образами (Images)**
-
-- Удалить images
-```sh
-docker rmi <name>
-```
-
-- Скачать images/образ
-```sh
-docker pull <image_name>
-```
-
-- Создание контейнера на основании Dockerfile с именем webapp-color из текущей директории(перед точкой можно добавить флаг -f и имя докер файла для сборки)
-```sh
-docker build -t webapp-color:0.1 .
-```
-
-- Сохранить работающий контейнер в виде нового образа с именем
-```sh
-docker commit <container_id> my_snapshot
-```
-
-- Объединить все слои в один, но отключит использование кэша при повторной сборке.
-```sh
-docker build --squash -t my-caddy .
-```
-
----
-
-### **Логирование**
-
-- Смотрим логи
-```sh
-docker logs --tail 30 <container_id>
-```
-
-- Смотреть логи в реальном времени
-```sh
-docker logs -f <container_name>
-```
-
----
-
-### **Сеть (Networking)**
-
-- Узнать какие порты открыты на контейнере
-```sh
-docker port <container_name>
-```
-
-- Список всех докер сетей
-```sh
-docker network ls
-```
-
-- Определить все настройки контейнера и в том числе принадлежность к определенной сети
-```sh
-docker inspect alpine-1
-```
-
-- Запустить контеней привязав его к определенной сети
-```sh
-docker run --name alpine-2 --network bridge -d alpine
-```
-
-- Созданить новую сеть испльзуя драйвер bridge, подсеть и шлюз
-```sh
-docker network create --driver bridge --subnet=182.18.0.0/24 --gateway=182.18.0.1 wp-mysql-network
 ```
 
 ---
@@ -219,63 +97,6 @@ gosu postgres pg_resetwal /var/lib/postgresql/data
 ```
 *`gosu` — это утилита, используемая для выполнения команд с правами другого пользователя. В данном случае команда gosu используется для выполнения команды от имени пользователя postgres.*
 *`pg_resetwal` — это инструмент, предназначенный для сброса журналов транзакций (WAL, Write-Ahead Logs) в PostgreSQL.*
-
----
-
-### **Проблема: Пропавший трафик Docker и iptables**
-
-**Симптомы:**
-
-- Вы настроили `iptables` с политикой `DROP` для `INPUT` и `FORWARD`.
-- Запустили Docker-контейнер с пробросом порта (`-p 8080:80`).
-- Локально (`curl http://localhost:8080`) контейнер доступен.
-- Снаружи (`curl http://<host_ip>:8080`) — нет (`Connection refused`).
-
-**Причина:**
-
-Проблема в том, что `iptables` блокирует трафик, предназначенный для контейнера. Docker для проброса портов использует цепочку `FORWARD`, а не `INPUT`.
-
-Когда пакет приходит на хост, `iptables` обрабатывает его так:
-1.  **Цепочка `PREROUTING` (таблица `nat`):** Docker подменяет адрес назначения на внутренний IP-адрес контейнера.
-2.  **Цепочка `FORWARD`:** Пакет перенаправляется к контейнеру.
-
-Если у вас установлена политика `iptables -P FORWARD DROP`, то `iptables` отбросит этот пакет.
-
-**Диагностика:**
-
-Посмотрите счётчики пакетов в `iptables`:
-```sh
-sudo iptables -L -v -n
-```
-Вы увидите, что счётчики отброшенных пакетов (dropped) в цепочке `FORWARD` растут при попытке доступа к контейнеру.
-
-**Решение:**
-
-Нужно явно разрешить `iptables` перенаправлять трафик в Docker.
-
-**Вариант 1 (простой):**
-
-Разрешить весь трафик, идущий через интерфейс `docker0`.
-```sh
-sudo iptables -A FORWARD -o docker0 -j ACCEPT
-```
-
-**Вариант 2 (более строгий):**
-
-Разрешить только установленные и связанные соединения.
-```sh
-# Разрешить трафик из контейнера наружу
-sudo iptables -A FORWARD -i docker0 -o eth0 -j ACCEPT
-
-# Разрешить установленные и связанные соединения к контейнеру
-sudo iptables -A FORWARD -i eth0 -o docker0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-```
-*Примечание: Замените `eth0` на ваш реальный сетевой интерфейс.*
-
-**Вывод:**
-
-- Трафик, который пробрасывается в Docker-контейнер, проходит через цепочку `FORWARD` в `iptables`.
-- Если вы используете `iptables` с политикой `DROP`, не забудьте добавить правила для `FORWARD`, чтобы разрешить доступ к контейнерам.
 
 ---
 
