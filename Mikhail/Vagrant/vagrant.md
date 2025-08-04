@@ -1,225 +1,251 @@
 # Vagrant
 
-## Установка
+Vagrant — это инструмент для создания и управления виртуализированными средами разработки.
 
-1.  Добавьте GPG-ключ HashiCorp:
-    ```sh
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+## Установка (Debian/Ubuntu)
+
+Процесс установки на современных системах Debian/Ubuntu включает добавление GPG-ключа и репозитория HashiCorp.
+
+1.  **Установите необходимые пакеты:**
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y curl gpg
     ```
 
-2.  Добавьте официальный репозиторий HashiCorp:
-    ```sh
-    sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+2.  **Добавьте GPG-ключ HashiCorp:**
+    ```bash
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
     ```
 
-3.  Установите Vagrant:
-    ```sh
-    sudo apt-get update && sudo apt-get install vagrant
+3.  **Добавьте репозиторий HashiCorp:**
+    ```bash
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
     ```
 
-## Основные команды
-
-Создайте директорию для вашего проекта и в ней поддиректории для каждой виртуальной машины.
-
-1.  **Инициализация**
-    В директории проекта выполните инициализацию. Vagrant создаст конфигурационный файл `Vagrantfile`.
-    ```sh
-    vagrant init generic/ubuntu2010
+4.  **Установите Vagrant:**
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y vagrant
     ```
-    Будет создан `Vagrantfile` с базовой конфигурацией:
+
+## Базовый рабочий процесс
+
+1.  **Инициализация проекта**
+    Создайте директорию для проекта и выполните в ней `vagrant init`. Эта команда создаст `Vagrantfile` — основной конфигурационный файл.
+
+    ```bash
+    # Инициализация с использованием box'а Ubuntu 22.04
+    vagrant init ubuntu/jammy64
+    ```
+    Содержимое `Vagrantfile` будет минимальным:
     ```ruby
-    Vagrant.configure("2") do |config|
-      config.vm.box = "generic/ubuntu2010"
-    end
+Vagrant.configure("2") do |config|
+  config.vm.box = "ubuntu/jammy64"
+end
     ```
 
-2.  **Запуск виртуальной машины**
-    ```sh
+2.  **Запуск окружения**
+    Команда `vagrant up` скачивает указанный box (если его нет в кэше), создает и запускает виртуальную машину.
+
+    ```bash
+    # Запуск с указанием провайдера (например, VirtualBox)
     vagrant up --provider=virtualbox
     ```
 
-3.  **Статус**
-    Посмотреть список и статус виртуальных машин:
-    ```sh
-    vagrant status
-    ```
+3.  **Подключение по SSH**
+    Vagrant обеспечивает простой доступ к гостевой машине.
 
-4.  **Подключение по SSH**
-    Узнать параметры для SSH-подключения:
-    ```sh
+    ```bash
+    # Посмотреть параметры для SSH-подключения
     vagrant ssh-config
-    ```
-    Подключиться к машине:
-    ```sh
+
+    # Подключиться к машине
     vagrant ssh
     ```
 
-5.  **Удаление виртуальной машины**
-    ```sh
-    vagrant destroy
+4.  **Проверка статуса**
+    Команда `vagrant status` показывает состояние всех управляемых машин.
+
+    ```bash
+    vagrant status
     ```
 
-6.  **Перезагрузка и Provisioning**
-    Перезагрузить машину (например, после изменения `Vagrantfile`):
-    ```sh
+5.  **Перезагрузка и Provisioning**
+    Для применения изменений в `Vagrantfile` или для повторного запуска скриптов настройки (provisioning) используются следующие команды:
+
+    ```bash
+    # Перезагрузить машину для применения изменений
     vagrant reload
-    ```
-    Запустить provisioning на уже запущенной машине:
-    ```sh
+
+    # Запустить provisioning на работающей машине
     vagrant provision
-    ```
-    Перезагрузить и применить provisioning:
-    ```sh
+
+    # Перезагрузить и применить provisioning
     vagrant reload --provision
     ```
 
-## Конфигурация (`Vagrantfile`)
+6.  **Удаление окружения**
+    Команда `vagrant destroy` останавливает и удаляет виртуальную машину и все связанные с ней ресурсы.
 
-### Имя хоста
-```ruby
-config.vm.hostname = "my-vm"
-```
+    ```bash
+    vagrant destroy
+    ```
 
-### Сеть
-Настройка приватной сети с указанием IP-адреса:
-```ruby
-config.vm.network :private_network, ip: "192.168.56.10"
-```
+## Конфигурация (Vagrantfile)
 
-### Проброс портов
-Сделать сайт на гостевой машине доступным с хоста:
-```ruby
-config.vm.network :forwarded_port, guest: 80, host: 8080
-```
+### Сетевые настройки
 
-### Параметры провайдера
-Настройка характеристик виртуальной машины (память, CPU):
 ```ruby
-config.vm.provider "virtualbox" do |v|
-    v.memory = 2048
-    v.cpus = 2
+Vagrant.configure("2") do |config|
+  # Приватная сеть с фиксированным IP
+  config.vm.network :private_network, ip: "192.168.56.10"
+
+  # Проброс портов: порт 80 гостевой машины будет доступен на порту 8080 хоста
+  config.vm.network :forwarded_port, guest: 80, host: 8080
 end
 ```
 
-### Отключение проверки обновлений
-Отключить проверку обновлений box'а при старте:
+### Настройки виртуальной машины
+
 ```ruby
-config.vm.box_check_update = false
+Vagrant.configure("2") do |config|
+  # Имя хоста
+  config.vm.hostname = "my-vm"
+
+  # Отключить проверку обновлений box'а при старте
+  config.vm.box_check_update = false
+
+  # Настройки провайдера (VirtualBox)
+  config.vm.provider "virtualbox" do |v|
+    v.memory = 2048 # Память в МБ
+    v.cpus = 2     # Количество CPU
+  end
+end
 ```
 
-### Сброс конфигурации
-Если после изменения конфига в статусе ничего не поменялось, можно удалить внутреннее состояние Vagrant для проекта:
-```sh
-rm -rf .vagrant
-```
+## Provisioning (Автоматическая настройка)
 
-## Provisioning (Настройка ПО)
-
-Vagrant может автоматически устанавливать и настраивать ПО на виртуальных машинах.
+Provisioning позволяет автоматически устанавливать ПО и выполнять настройки при создании машины.
 
 **Пример: установка Nginx с помощью shell-скрипта.**
 
-1.  Создайте скрипт `bootstrap.sh`:
-    ```sh
-    #!/bin/sh
-    
-    echo 'deb https://nginx.org/packages/ubuntu/ focal nginx' > /etc/apt/sources.list.d/nginx.list
-    echo 'deb-src https://nginx.org/packages/ubuntu/ focal nginx' >> /etc/apt/sources.list.d/nginx.list
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys ABF5BD827BD9BF62
+1.  **Создайте скрипт `provision.sh`:**
+    ```bash
+    #!/bin/bash
+    set -euo pipefail
+
+    # Добавление репозитория Nginx
     apt-get update -y
-    apt-get install nginx -y
+    apt-get install -y curl gnupg
+    curl -fsSL http://nginx.org/keys/nginx_signing.key | gpg --dearmor > /usr/share/keyrings/nginx-archive-keyring.gpg
+    
+    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" \
+        | tee /etc/apt/sources.list.d/nginx.list
+
+    # Установка Nginx
+    apt-get update -y
+    apt-get install -y nginx
     systemctl enable nginx
     systemctl start nginx
     ```
 
-2.  Добавьте в `Vagrantfile` указание на скрипт:
+2.  **Подключите скрипт в `Vagrantfile`:**
     ```ruby
-    config.vm.provision :shell, path: "bootstrap.sh"
+Vagrant.configure("2") do |config|
+  config.vm.provision :shell, path: "provision.sh"
+end
     ```
+    При следующем `vagrant up` или `vagrant provision` скрипт будет выполнен.
 
-3.  Запустите машину. Nginx будет установлен автоматически.
-    ```sh
-    vagrant up
-    ```
+## Продвинутые сценарии
 
-## Продвинутые конфигурации
+### Управление несколькими машинами
 
-### Конфигурация для нескольких машин
+`Vagrantfile` позволяет описывать и управлять целой группой машин.
 
 ```ruby
-# Скрипт для установки ПО, который будет выполняться на каждой машине
-$script = <<-SCRIPT
-    # Тут пишем, что необходимо установить и т.д.
-    # Например:
-    # apt-get update
-    # apt-get install -y tree
-SCRIPT
+# Общий скрипт для установки ПО
+$provision_script = "apt-get update && apt-get install -y tree"
 
-# Описание узлов
+# Описание узлов в виде массива хэшей
 nodes = [
-    { hostname: 'ubuntu1', ip: '10.245.1.222', memory: 1024, cpu: 1, boxname: "ubuntu/xenial64" },
-    { hostname: 'ubuntu2', ip: '10.245.1.223', memory: 1024, cpu: 1, boxname: "ubuntu/xenial64" }
+    { hostname: 'node1', ip: '192.168.56.11', box: "ubuntu/jammy64" },
+    { hostname: 'node2', ip: '192.168.56.12', box: "ubuntu/jammy64" }
 ]
 
 Vagrant.configure("2") do |config|
-    config.vm.box_check_update = false
-
     nodes.each do |node|
-        config.vm.define node[:hostname] do |nodeconfig|
-            nodeconfig.vm.box = node[:boxname]
-            nodeconfig.vm.hostname = node[:hostname]
-            nodeconfig.vm.network :private_network, ip: node[:ip]
+        config.vm.define node[:hostname] do |node_config|
+            node_config.vm.box = node[:box]
+            node_config.vm.hostname = node[:hostname]
+            node_config.vm.network :private_network, ip: node[:ip]
             
-            nodeconfig.vm.provider :virtualbox do |vb|
-                vb.memory = node[:memory]
-                vb.cpus = node[:cpu]
+            node_config.vm.provider :virtualbox do |vb|
+                vb.memory = 1024
+                vb.cpus = 1
             end
             
-            nodeconfig.vm.provision "shell", inline: $script
+            node_config.vm.provision "shell", inline: $provision_script
         end
     end
 end
 ```
 
-### Использование прокси-сервера
+### Работа через прокси-сервер
 
-Для работы Vagrant через прокси, установите переменные окружения:
-```sh
-export http_proxy="http://user:password@ip_proxy:port/"
-export https_proxy="http://user:password@ip_proxy:port/"
+Если хост-машина находится за прокси, настройте переменные окружения:
+```bash
+export http_proxy="http://user:password@proxy.example.com:port/"
+export https_proxy="http://user:password@proxy.example.com:port/"
 export VAGRANT_HTTP_PROXY="${http_proxy}"
 export VAGRANT_HTTPS_PROXY="${https_proxy}"
-export VAGRANT_NO_PROXY="127.0.0.1"
+export VAGRANT_NO_PROXY="127.0.0.1,localhost"
 ```
 
 ### Интеграция с Tailscale
 
+Этот пример использует плагин `vagrant-env` для безопасной передачи `TAILSCALE_AUTHKEY`.
+
 ```ruby
+# 1. Установите плагин: vagrant plugin install vagrant-env
+# 2. Создайте файл .env и добавьте в него TAILSCALE_AUTHKEY=tskey-...
+
 Vagrant.configure("2") do |config|
-  # Убедитесь, что плагин vagrant-env установлен: vagrant plugin install vagrant-env
+  # Включить плагин для чтения .env файла
   config.env.enable
 
-  config.vm.box = ENV['VM_BOX']
-  config.vm.hostname = ENV['VM_HOSTNAME']    
-  config.vm.provider ENV['VM_ENGINE'] do |v| 
-    v.name = ENV['VM_HOSTNAME']
-    v.memory = ENV['VM_MEMORY']
-    v.cpus = ENV['VM_CPUS']
-  end
+  config.vm.box = "ubuntu/jammy64"
+  config.vm.hostname = "vagrant-tailscale-node"
 
+  # Установка Tailscale
   config.vm.provision "tailscale-install", type: "shell" do |s|
     s.inline = "curl -fsSL https://tailscale.com/install.sh | sh"
   end
 
+  # Подключение к сети Tailscale
   config.vm.provision "tailscale-up", type: "shell" do |s|
-    # Убедитесь, что TAILSCALE_AUTHKEY задан в вашем окружении
-    s.inline = "tailscale up --ssh --operator=vagrant --authkey #{ENV['TAILSCALE_AUTHKEY']}"
+    # Используется ключ из .env файла
+    s.inline = "tailscale up --ssh --operator=vagrant --authkey=#{ENV['TAILSCALE_AUTHKEY']}"
   end
 
   # При удалении машины выходить из сети Tailscale
   config.trigger.before :destroy do |trigger|
-    trigger.run_remote = {inline: "tailscale logout"}
+    trigger.name = "Tailscale Logout"
+    trigger.run_remote = { inline: "tailscale logout" }
     trigger.on_error = :continue
   end
 end
 ```
+
+## Советы и решение проблем
+
+### Сброс состояния проекта
+
+Если `Vagrantfile` был изменен, но `vagrant status` не отражает изменений, или возникли другие проблемы с состоянием, можно удалить внутреннюю директорию Vagrant.
+
+```bash
+# Внимание: это действие удалит все снапшоты и метаданные,
+# но не затронет саму виртуальную машину у провайдера.
+rm -rf .vagrant
+```
+После этого `vagrant up` пересоздаст машину на основе актуального `Vagrantfile`.

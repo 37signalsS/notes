@@ -1,8 +1,10 @@
-# DaemonSet
+# DaemonSet: Управление системными агентами
 
-**DaemonSet** — это объект Kubernetes, который гарантирует, что на каждом (или на определённом наборе) узле кластера будет запущен ровно один экземпляр пода. Это идеально подходит для развертывания системных сервисов, которые должны работать на всех или некоторых узлах.
+**DaemonSet** — это объект Kubernetes, который гарантирует, что на каждом (или на определённом наборе) узле кластера запущен ровно один экземпляр пода. Если в кластер добавляется новый узел, DaemonSet автоматически развернет на нем под. При удалении узла — под будет удален.
 
-### Примеры использования:
+Это идеальный контроллер для развертывания системных сервисов, которые должны присутствовать на всех или некоторых узлах.
+
+### Ключевые сценарии использования:
 
 *   **Сборщики логов:** Fluentd, Logstash, Promtail.
 *   **Агенты мониторинга:** Prometheus Node Exporter, Datadog Agent, New Relic.
@@ -25,11 +27,12 @@ kubectl taint nodes my-node dedicated=special:NoSchedule
 
 ---
 
-### Пример: DaemonSet для Fluentd
+## Пример: Node Exporter для Prometheus
 
-Этот `DaemonSet` разворачивает под с Fluentd на каждом узле для сбора логов. Он использует `tolerations`, чтобы работать даже на мастер-узлах, и `volumeMounts` для доступа к логам хост-машины.
+Этот DaemonSet разворачивает `node-exporter` на каждом узле для сбора метрик хост-машины.
 
 ```yaml
+# node-exporter-daemonset.yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -38,20 +41,30 @@ metadata:
   labels:
     k8s-app: fluentd-logging
 spec:
-  # Стратегия обновления: как будут обновляться поды DaemonSet
-  updateStrategy:
-    rollingUpdate:
-      maxUnavailable: 1 # Во время обновления может быть недоступен максимум 1 под
+  # Селектор для связи DaemonSet с его подами.
   selector:
     matchLabels:
-      name: fluentd
+      app: node-exporter
+
+  # Стратегия обновления. RollingUpdate - стратегия по умолчанию.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Во время обновления может быть недоступен максимум 1 под.
+      maxUnavailable: 1
+
+  # Шаблон пода, который будет создаваться на каждом узле.
   template:
     metadata:
       labels:
         name: fluentd
     spec:
-      hostNetwork: true  # Использует сетевой namespace хоста
-      hostPID: true  # Позволяет видеть процессы namespace хоста
+      # Позволяет поду запускаться на master-узлах, которые обычно имеют taint.
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+
+      # Ограничиваем запуск только на узлах с ОС Linux.
       nodeSelector:
         kubernetes.io/os: linux  # Запускается только на узлах с ОС Linux
         log-node: "true"  # Разворачивается только на узлах с label log-node=true
@@ -72,10 +85,10 @@ spec:
               value: "9200"
           resources:
             limits:
-              memory: 200Mi
+              memory: 256Mi
             requests:
               cpu: 100m
-              memory: 200Mi
+              memory: 128Mi
           volumeMounts:
             # Монтируем директории с логами и контейнерами с хост-машины внутрь пода
             - name: varlog
@@ -91,5 +104,15 @@ spec:
             path: /var/log
         - name: dockercontainers
           hostPath:
-            path: /var/lib/docker/containers # Замонтировать директори с хоста где запущено приложение в mountPath
+             path: /var/lib/docker/containers # Замонтировать директори с хоста где запущено приложение в mountPath           
 ```
+
+---
+
+## Стратегии обновления
+
+DaemonSet поддерживает две стратегии обновления, которые указываются в поле `spec.updateStrategy.type`:
+
+1.  **`RollingUpdate` (по умолчанию):** Поды на узлах обновляются поочередно. Старый под удаляется, а новый создается. Это обеспечивает плавное обновление без простоя сервиса на всех узлах одновременно. Параметр `maxUnavailable` контролирует, сколько подов может быть недоступно в один момент времени.
+
+2.  **`OnDelete`:** Kubernetes не будет автоматически обновлять поды при изменении шаблона DaemonSet. Чтобы применить изменения, вам нужно **вручную удалить** старые поды. После этого DaemonSet создаст новые, уже с обновленной конфигурацией. Эта стратегия полезна для критически важных агентов, обновление которых нужно контролировать полностью вручную.

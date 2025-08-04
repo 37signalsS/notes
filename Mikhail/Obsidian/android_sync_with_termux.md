@@ -1,112 +1,148 @@
-## Установка и настройка Termux
+# Автоматическая синхронизация заметок с Git на Android через Termux
 
-Скачиваем Termux из F-Droid.
+Это руководство поможет настроить автоматическую синхронизацию вашего Git-репозитория (например, с заметками Obsidian) на Android-устройстве с помощью Termux.
 
-Откройте Termux, запустите:
-```sh
-termux-change-repo
-```
+## Шаг 1: Установка Termux и необходимых пакетов
 
-Нажмите `↓` и `пробел`, чтобы отметить все репозитории, затем нажмите `Enter`.
-Далее, отметьте «Зеркала, размещенные Albatross» и нажмите `Enter`.
+1.  **Установите Termux**:
+    Скачайте и установите последнюю версию Termux из [F-Droid](https://f-droid.org/packages/com.termux/). Запуск из Google Play не рекомендуется из-за устаревшей версии.
 
-Установим `git`:
-```sh
-pkg install git -y
-```
+2.  **Обновите репозитории**:
+    Откройте Termux и выполните команду для выбора актуальных зеркал.
+    ```sh
+    termux-change-repo
+    ```
+    Выберите все репозитории (`All repositories`) и затем `Mirrors by Albatross`.
 
-Предоставим доступ к хранилищу:
-```sh
-termux-setup-storage
-```
+3.  **Установите пакеты**:
+    Установим Git для работы с репозиторием, Cronie для запуска по расписанию и Termux Services для управления фоновыми службами.
+    ```sh
+    pkg update && pkg upgrade -y
+    pkg install git cronie termux-services -y
+    ```
 
-Перейдем в общую папку:
-```sh
-cd storage/shared/
-```
+## Шаг 2: Настройка доступа и Git
 
-## Настройка Git
+1.  **Доступ к хранилищу**:
+    Предоставьте Termux доступ к файлам на устройстве.
+    ```sh
+    termux-setup-storage
+    ```
+    Подтвердите разрешение во всплывающем окне Android. Это создаст символическую ссылку `~/storage/shared` на внутреннее хранилище.
 
-Настроим Git для сохранения учетных данных и идентификации пользователя:
-```sh
-git config --global credential.helper store
-git config --global user.email "misha-eliseyev@mail.ru"
-git config --global user.name "37signalsS"
-```
+2.  **Настройка Git**:
+    Укажите ваше имя и email для коммитов.
+    ```sh
+    git config --global user.name "Your Name"
+    git config --global user.email "your.email@example.com"
+    ```
 
-Клонируем репозиторий с заметками:
-```sh
-git clone https://<PERSONAL_ACCESS_TOKEN>@github.com/37signalsS/my-notes.git
-```
+3.  **Кеширование учетных данных (опционально, но удобно)**:
+    Эта команда сохранит ваш Personal Access Token (PAT) в текстовом файле, чтобы не вводить его каждый раз.
+    ```sh
+    git config --global credential.helper store
+    ```
+    > **⚠️ Внимание**: Ваш токен будет храниться в открытом виде в файле `~/.git-credentials`. Это небезопасно, если ваше устройство попадет в чужие руки. Альтернатива — настройка SSH-ключей.
 
-## Настройка автоматической синхронизации
+## Шаг 3: Клонирование репозитория
 
-Установим `cronie` для выполнения задач по расписанию:
-```sh
-pkg install cronie termux-services
-sv-enable crond
-```
+1.  **Перейдите в общую папку**:
+    ```sh
+    cd ~/storage/shared
+    ```
 
-Создадим задачу для `cron`:
-```sh
-crontab -e
-```
+2.  **Клонируйте репозиторий**:
+    Используйте URL с вашим Personal Access Token (PAT).
+    ```sh
+    # Замените <TOKEN> и <USER>/<REPO>.git
+    git clone https://<PERSONAL_ACCESS_TOKEN>@github.com/<USER>/<REPO>.git my-notes
+    ```
+    Например: `git clone https://ghp_..._token@github.com/37signalsS/my-notes.git my-notes`
 
-Добавим строку для ежеминутной синхронизации:
-```sh
-*/1 * * * * ~/sync_repo.sh
-```
+3.  **Добавьте репозиторий в исключения безопасности Git**:
+    Из-за особенностей файловой системы Android, Git может считать директорию небезопасной. Исправим это:
+    ```sh
+    # Путь должен быть абсолютным. /storage/emulated/0/ — это стандартный путь к внутреннему хранилищу.
+    git config --global --add safe.directory /storage/emulated/0/my-notes
+    ```
 
-Создадим и наполним скрипт синхронизации:
-```sh
-nano sync_repo.sh
-```
+## Шаг 4: Создание скрипта синхронизации
 
-Содержимое скрипта `sync_repo.sh`:
-```sh
-#!/bin/bash
+Скрипт будет автоматически выполнять `pull`, `commit` и `push`.
 
-# Переходим в директорию с репозиторием
-if [ -d storage/shared/my-notes ]; then
-    cd storage/shared/my-notes
-else
-    echo "Директория storage/shared/my-notes не существует." >&2
-    exit 1
-fi
+1.  **Создайте файл скрипта** в домашней директории Termux:
+    ```sh
+    nano ~/sync_repo.sh
+    ```
 
-echo "Выполняю git pull..."
-git pull || { echo "Ошибка при выполнении git pull" >&2; exit 1; }
+2.  **Вставьте в него следующий код**:
+    ```sh
+    #!/data/data/com.termux/files/usr/bin/bash
 
-echo "Добавляю изменения в индекс..."
-git add -A
+    # Путь к вашему локальному репозиторию
+    REPO_PATH="$HOME/storage/shared/my-notes"
+    
+    # Сообщение для коммита
+    COMMIT_MSG="Sync: Android auto-sync @ $(date +'%Y-%m-%d %H:%M:%S')"
+    
+    # Проверяем, существует ли директория
+    if [ ! -d "$REPO_PATH" ]; then
+      echo "Ошибка: Директория $REPO_PATH не найдена."
+      exit 1
+    fi
+    
+    # Переходим в директорию репозитория
+    cd "$REPO_PATH" || exit
+    
+    # 1. Получаем изменения с удаленного репозитория
+    git pull
+    
+    # 2. Добавляем все изменения в индекс
+    git add -A
+    
+    # 3. Создаем коммит, только если есть изменения
+    if ! git diff --cached --quiet; then
+      git commit -m "$COMMIT_MSG"
+    else
+      echo "Нет изменений для коммита."
+    fi
+    
+    # 4. Отправляем изменения на сервер
+    git push
+    
+    echo "Синхронизация завершена."
+    ```
 
-# Проверяем, есть ли изменения для коммита
-if git diff --cached --quiet && git diff --quiet; then
-    echo "Нет изменений для коммита."
-else
-    echo "Создаю коммит..."
-    git commit -m "synched with android on $(date)"
-fi
+3.  **Сделайте скрипт исполняемым**:
+    ```sh
+    chmod +x ~/sync_repo.sh
+    ```
 
-echo "Отправляю изменения в удалённый репозиторий..."
-git push || { echo "Ошибка при выполнении git push" >&2; exit 1; }
+## Шаг 5: Настройка автоматического запуска
 
-echo "Синхронизация завершена!"
-```
+1.  **Включите службу cron**:
+    ```sh
+    sv-enable crond
+    ```
 
-Сделаем скрипт исполняемым:
-```sh
-chmod +x sync_repo.sh
-```
+2.  **Добавьте задачу в cron**:
+    ```sh
+    crontab -e
+    ```
 
-Добавим директорию в список безопасных для Git:
-```sh
-git config --global --add safe.directory /storage/emulated/0/my-notes
-```
+3.  **Добавьте строку** для запуска скрипта каждые 15 минут. Нажмите `i` для входа в режим редактирования в `vi`.
+    ```
+    */15 * * * * ~/sync_repo.sh >> ~/cron.log 2>&1
+    ```
+    > **Пояснение**:
+    > `*/15 * * * *` — запускать каждые 15 минут. Ежеминутный запуск (`*/1`) может быстро разряжать батарею.
+    > `~/sync_repo.sh` — команда для выполнения.
+    > `>> ~/cron.log 2>&1` — перенаправляет вывод и ошибки в лог-файл `cron.log` в вашей домашней директории. Это поможет в отладке.
 
-Запустим скрипт для первоначальной синхронизации:
-```sh
-./sync_repo.sh
-```
+4.  **Сохраните и выйдите**: Нажмите `Esc`, затем введите `:wq` и `Enter`.
 
-> **Примечание:** Чтобы Termux работал в фоновом режиме, может потребоваться отключить для него оптимизацию батареи в настройках Android.
+## Шаг 6: Важные замечания
+
+*   **Фоновый режим Termux**: Чтобы Termux и его службы работали стабильно, отключите для него оптимизацию батареи в настройках Android (`Настройки → Приложения → Termux → Батарея → Не ограничено`).
+*   **Проверка работы**: Вы можете запустить скрипт вручную, чтобы убедиться, что все работает: `~/sync_repo.sh`. Также проверяйте лог-файл: `cat ~/cron.log`.
+*   **Редактор `crontab -e`**: По умолчанию используется `vi`. Если вам неудобно, можно установить `nano` (`pkg install nano`) и задать его редактором по умолчанию: `export EDITOR=nano`.

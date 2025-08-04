@@ -4,10 +4,6 @@ https://github.com/Swfuse/devops-interview/?tab=readme-ov-file
 
 https://github.com/trimstray/test-your-sysadmin-skills?tab=readme-ov-file#junior-sysadmin
 
-https://github.com/trimstray/test-your-sysadmin-skills?tab=readme-ov-file#junior-sysadmin
-
-https://habr.com/ru/companies/timeweb/articles/883286/
-
 https://github.com/bregman-arie/devops-exercises
 
 https://github.com/bbachi/DCA-Practice-Questions?tab=readme-ov-file

@@ -2,7 +2,11 @@
 
 Это руководство поможет вам установить Ollama и настроить Open WebUI для взаимодействия с моделями.
 
-## 1. Установка Ollama
+## 1. Предварительные требования
+
+-   У вас должен быть установлен Docker.
+
+## 2. Установка Ollama
 
 Выполните следующую команду, чтобы скачать и запустить официальный скрипт установки Ollama:
 
@@ -16,13 +20,15 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama run llama3.1
 ```
 
-## 2. Настройка и запуск Open WebUI
+## 3. Настройка и запуск Open WebUI
 
 Open WebUI — это удобный веб-интерфейс для работы с Ollama.
 
 ### Конфигурация Ollama для сетевого доступа
 
 Чтобы Open WebUI мог подключиться к Ollama, необходимо разрешить Ollama принимать запросы со всех сетевых интерфейсов.
+
+**Внимание:** Следующие шаги делают ваш экземпляр Ollama доступным по сети. Убедитесь, что вы находитесь в доверенной сети или приняли соответствующие меры безопасности.
 
 1.  Откройте файл службы `ollama.service` для редактирования:
 
@@ -52,10 +58,25 @@ Open WebUI — это удобный веб-интерфейс для работ
 2.  Запустите контейнер Open WebUI:
 
     ```sh
-    docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_BASE_URL=http://127.0.0.1:11434 --name open-webui --restart always ghcr.io/open-webui/open-webui:main
+    docker run -d \
+      --network=host \
+      -v open-webui:/app/backend/data \
+      -e OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+      --name open-webui \
+      --restart always \
+      ghcr.io/open-webui/open-webui:main
     ```
 
     > **Примечание:** Мы используем `--network=host`, чтобы контейнер имел доступ к сервису Ollama, работающему на `localhost`.
+
+    **Объяснение флагов `docker run`:**
+    - `-d`: Запуск контейнера в фоновом режиме.
+    - `--network=host`: Использование сетевого стека хоста, что позволяет контейнеру легко подключаться к сервисам, работающим на `localhost`.
+    - `-v open-webui:/app/backend/data`: Создание и использование Docker-вольюма `open-webui` для сохранения данных Open WebUI.
+    - `-e OLLAMA_BASE_URL=http://127.0.0.1:11434`: Установка переменной окружения, указывающей на адрес API Ollama.
+    - `--name open-webui`: Присвоение имени контейнеру для удобства управления.
+    - `--restart always`: Автоматический перезапуск контейнера при сбоях или после перезагрузки системы.
+    - `ghcr.io/open-webui/open-webui:main`: Образ контейнера Open WebUI.
 
 ### Доступ и устранение неполадок
 
@@ -67,3 +88,5 @@ Open WebUI — это удобный веб-интерфейс для работ
 docker stop open-webui
 docker rm open-webui
 ```
+
+После этого повторите команду `docker run` из предыдущего шага.

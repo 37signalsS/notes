@@ -1,63 +1,86 @@
-# Установка VirtualBox и Extension Pack в Arch Linux
+# Установка VirtualBox в Arch Linux
 
-Это руководство описывает, как установить последнюю версию VirtualBox, VirtualBox Guest Additions и Extension Pack в Arch Linux. Arch Linux — один из самых настраиваемых дистрибутивов Linux. В Arch Linux вы можете легко получить последнюю версию VirtualBox из зеркал Pacman или напрямую из AUR.
+Это руководство описывает полный процесс установки VirtualBox, включая Extension Pack и необходимые модули ядра, в Arch Linux. 
 
 ### Что такое VirtualBox?
 
-VirtualBox — это бесплатный кроссплатформенный продукт для виртуализации. Это один из наиболее часто используемых гипервизоров для домашнего/личного использования. Он позволяет запускать более одной операционной системы поверх существующей. VirtualBox бесплатен для использования и может работать в системах Windows, Linux и Unix.
+**VirtualBox** — это бесплатный кроссплатформенный гипервизор, который позволяет запускать несколько операционных систем (гостевых ОС) поверх вашей основной системы. Он популярен для домашнего использования и разработки благодаря своей простоте и бесплатности, в том числе при использовании с инструментом Vagrant.
 
-Одним из главных преимуществ VirtualBox перед бесплатным VMware Player является то, что инструмент Vagrant для управления виртуальными машинами бесплатен для использования с VirtualBox. Однако с VMware вам придется использовать платную версию Vagrant.
+---
 
-Сначала обновите списки пакетов:
+### Шаг 1: Подготовка системы
 
-```bash
-sudo pacman -Syy
-```
+Перед установкой необходимо убедиться, что система полностью обновлена и содержит заголовки ядра, которые требуются для сборки модулей VirtualBox.
 
-Обновите GPG ключи:
+1.  **Полное обновление системы:**
+    Выполните команду для обновления пакетов и системы. Это также установит последнюю версию ядра.
 
-```bash
-sudo pacman -Sy archlinux-keyring
-sudo pacman-key --populate archlinux
-```
+    ```bash
+    sudo pacman -Syu
+    ```
 
-Выполните обновление системы, установите заголовки ядра и перезагрузите систему:
+2.  **Установка заголовков ядра:**
+    Установите пакет `linux-headers`, соответствующий вашему ядру. Это критически важный шаг для корректной работы модулей `dkms`.
 
-```bash
-sudo pacman -Syu
-sudo pacman -S linux-headers
-sudo reboot
-```
+    ```bash
+    sudo pacman -S --needed linux-headers
+    ```
 
-## Установка VirtualBox в Arch Linux
+3.  **Перезагрузка:**
+    После обновления ядра рекомендуется перезагрузить систему, чтобы убедиться, что все изменения применились.
 
-Установить VirtualBox в Arch Linux просто. Выполните следующую команду в терминале:
+    ```bash
+    sudo reboot
+    ```
 
-```bash
-sudo pacman -S virtualbox virtualbox-guest-iso
-```
+---
 
-Во время установки вам будет предложено выбрать провайдера для `VIRTUALBOX-HOST-MODULES`. Обычно подходит вариант по умолчанию (`virtualbox-host-dkms`).
+### Шаг 2: Установка VirtualBox и модулей ядра
 
-После установки добавьте вашего текущего пользователя в группу `vboxusers`. Это предоставит пользователю права на управление виртуальными машинами.
+Теперь можно установить сам VirtualBox и пакеты, необходимые для его интеграции с ядром Arch Linux.
 
-```bash
-sudo gpasswd -a $USER vboxusers
-```
+1.  **Установка основных пакетов:**
+    Эта команда установит VirtualBox и ISO-образ гостевых дополнений (Guest Additions), который понадобится для установки внутри виртуальных машин.
 
-Следующим шагом является включение автоматической загрузки модулей ядра VirtualBox при запуске системы.
+    ```bash
+    sudo pacman -S virtualbox virtualbox-guest-iso
+    ```
 
-```bash
-sudo systemctl enable vboxweb.service
-```
+2.  **Выбор модуля хоста:**
+    Во время установки вам будет предложено выбрать пакет для `virtualbox-host-modules`. Рекомендуется выбрать `virtualbox-host-dkms`. Это позволит модулям VirtualBox автоматически пересобираться при каждом обновлении ядра, избавляя от необходимости делать это вручную.
 
-## Установка VirtualBox Extension Pack в Arch Linux
+---
 
-На этом этапе мы установили VirtualBox и `virtualbox-guest-iso`. Осталось установить Extension Pack, который обеспечивает поддержку устройств USB 2.0, VirtualBox RDP и загрузку по PXE для карт Intel.
+### Шаг 3: Настройка после установки
 
-Для установки Extension Pack рекомендуется использовать `yay` (или другой AUR хелпер).
+После установки пакетов нужно выполнить несколько действий для корректной работы.
 
-1.  **Установка yay (если не установлен):**
+1.  **Загрузка модулей ядра:**
+    Загрузите модуль ядра VirtualBox. Это необходимо сделать один раз после установки.
+
+    ```bash
+    sudo modprobe vboxdrv
+    ```
+
+2.  **Добавление пользователя в группу `vboxusers`:**
+    Чтобы ваш пользователь мог управлять виртуальными машинами и использовать такие функции, как USB-устройства, его необходимо добавить в группу `vboxusers`.
+
+    ```bash
+    sudo gpasswd -a $USER vboxusers
+    ```
+
+    **Важно:** После выполнения этой команды необходимо **выйти из системы и снова войти**, чтобы изменения вступили в силу.
+
+---
+
+### Шаг 4: Установка VirtualBox Extension Pack
+
+**Extension Pack** расширяет функциональность VirtualBox, добавляя поддержку USB 2.0/3.0, шифрование дисков, загрузку по PXE и VirtualBox RDP (удаленный доступ к рабочему столу).
+
+Самый простой способ установить его — через AUR (Arch User Repository).
+
+1.  **Установка AUR-хелпера (если не установлен):**
+    Если у вас нет `yay` или другого AUR-хелпера, его можно установить следующим образом:
 
     ```bash
     sudo pacman -S --needed git base-devel
@@ -66,38 +89,35 @@ sudo systemctl enable vboxweb.service
     makepkg -si
     ```
 
-2.  **Установка VirtualBox Extension Pack:**
-
-    Выполняйте команду от обычного пользователя, не от root.
+2.  **Установка Extension Pack через `yay`:**
+    Выполняйте команду от обычного пользователя (не от `root`). `yay` автоматически скачает последнюю версию Extension Pack, примет лицензионное соглашение и установит его.
 
     ```bash
-    yay -S virtualbox-ext-oracle --noconfirm
+    yay -S virtualbox-ext-oracle
     ```
 
-В случае, если вы скачали Extension Pack вручную с веб-сайта Oracle VirtualBox, вы можете использовать следующую команду для установки:
+---
 
-```bash
-VBoxManage extpack install <имя_файла>.vbox-extpack
-```
+### Шаг 5 (Опционально): Веб-интерфейс
 
-Если вы планируете использовать [phpVirtualBox](https://wiki.archlinux.org/index.php/PhpVirtualBox), вы можете включить его запуск при загрузке системы.
+Если вы планируете управлять VirtualBox удаленно через веб-интерфейс (например, с помощью `phpVirtualBox`), вам нужно включить и запустить соответствующий сервис.
 
 ```bash
 sudo systemctl enable vboxweb.service
 sudo systemctl start vboxweb.service
 ```
 
-Запустите модули VirtualBox вручную:
+---
+
+### Проверка установки
+
+Чтобы убедиться, что модули ядра VirtualBox успешно загружены, выполните:
 
 ```bash
-sudo /sbin/rcvboxdrv setup
+lsmod | grep vbox
 ```
 
-Затем проверьте:
-
-```bash
-ps ax | grep -i vbox
-```
+Вы должны увидеть в выводе `vboxdrv` и другие связанные модули. После этого можно запускать VirtualBox и создавать виртуальные машины.
 
 ---
-Источник: [Install VirtualBox and Extension Pack in Arch Linux | ComputingForGeeks](https://computingforgeeks.com/install-latest-virtualbox-and-extension-pack-in-arch-linux/)
+*Источник: [Install VirtualBox and Extension Pack in Arch Linux | ComputingForGeeks](https://computingforgeeks.com/install-latest-virtualbox-and-extension-pack-in-arch-linux/)*

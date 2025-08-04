@@ -1,179 +1,228 @@
 # systemd
 
-`systemd` — это системный менеджер и менеджер служб для Linux, который стал стандартом для многих дистрибутивов. Он управляет запуском служб во время загрузки системы и позволяет управлять ими в процессе работы.
+`systemd` — это современный менеджер системы и служб для Linux, стандарт для большинства дистрибутивов. Он инициализирует систему, управляет службами, сокетами, точками монтирования и другими ресурсами.
 
-## Анализ производительности
+## Управление службами
 
-Для анализа времени загрузки служб и выявления узких мест используется `systemd-analyze`.
+Основные команды для управления службами выполняются с помощью утилиты `systemctl`.
 
-```sh
-systemd-analyze
-```
-Эта команда покажет, сколько времени заняла загрузка ядра и пользовательского пространства.
+### Базовые команды
 
-```sh
-systemd-analyze blame
-```
-Эта команда выведет список всех запущенных юнитов, отсортированный по времени, которое потребовалось на их запуск.
-
-## Управление службами (Services)
-
-### Основные команды
-
-- **`start`**: Запустить службу.
+- **Запустить службу:**
   ```sh
   sudo systemctl start nginx.service
   ```
-- **`stop`**: Остановить службу.
+- **Остановить службу:**
   ```sh
   sudo systemctl stop nginx.service
   ```
-- **`restart`**: Перезапустить службу.
+- **Перезапустить службу:**
   ```sh
   sudo systemctl restart nginx.service
   ```
-- **`reload`**: Перезагрузить конфигурацию без остановки службы (если служба это поддерживает).
+- **Перезагрузить конфигурацию (без перезапуска):**
   ```sh
   sudo systemctl reload nginx.service
   ```
-- **`reload-or-restart`**: Попытаться перезагрузить конфигурацию, а если не получится — полностью перезапустить службу.
-  ```sh
-  sudo systemctl reload-or-restart nginx.service
-  ```
-- **`status`**: Проверить статус службы.
+- **Проверить статус службы:**
   ```sh
   systemctl status nginx.service
   ```
-- **`enable`**: Включить автозапуск службы при загрузке системы.
+
+### Автозапуск служб
+
+- **Включить автозапуск при загрузке системы:**
   ```sh
   sudo systemctl enable nginx.service
   ```
-- **`disable`**: Отключить автозапуск.
+- **Отключить автозапуск:**
   ```sh
   sudo systemctl disable nginx.service
   ```
+- **Запретить запуск службы (даже вручную):**
+  Это называется маскировкой.
+  ```sh
+  sudo systemctl mask bluetooth.service
+  ```
+- **Отменить маскировку:**
+  ```sh
+  sudo systemctl unmask bluetooth.service
+  ```
 
-### Маскировка служб
+## Журналирование с journald
 
-Маскировка — это способ полностью запретить запуск службы, даже вручную. Это сильнее, чем `disable`.
+`systemd` интегрирован с `journald`, централизованной системой логирования. Весь вывод (stdout и stderr) от служб автоматически направляется в журнал.
 
-```sh
-sudo systemctl mask bluetooth.service
-```
-Для отмены маскировки:
-```sh
-sudo systemctl unmask bluetooth.service
-```
+- **Просмотреть логи конкретной службы:**
+  ```sh
+  journalctl -u nginx.service
+  ```
+- **Отслеживать логи в реальном времени (как `tail -f`):**
+  ```sh
+  journalctl -f -u nginx.service
+  ```
+- **Показать логи с начала текущей загрузки:**
+  ```sh
+  journalctl -b
+  ```
+- **Фильтровать по времени:**
+  ```sh
+  journalctl --since "1 hour ago"
+  journalctl --since "2025-08-03 12:00:00"
+  ```
 
-### Управление зависимостями
+## Работа с юнит-файлами
 
-Посмотреть, от каких юнитов зависит служба:
-```sh
-systemctl list-dependencies <имя-службы>
-```
+### Расположение юнит-файлов
 
-Посмотреть, какие юниты зависят от этой службы:
-```sh
-systemctl list-dependencies --reverse <имя-службы>
-```
+- `/usr/lib/systemd/system/`: Юниты из установленных пакетов (не рекомендуется изменять).
+- `/etc/systemd/system/`: Юниты, созданные администратором. Имеют наивысший приоритет.
 
-## Особенности зависимостей: Requires= и After=
-
-У вас есть два сервиса: `backend.service` и `database.service`. В юните `backend.service` прописано:
-
-```ini
-[Unit]
-Description=Backend Service
-Requires=database.service
-After=database.service
-```
-
-Однако после перезагрузки системы `backend.service` запускается, даже если `database.service` не смог стартовать (например, из-за ошибки конфигурации).
-
-Такое поведение — не баг, а особенность работы `systemd`.
-
-- `Requires=database.service`: Эта директива означает, что при запуске `backend.service` `systemd` *также попытается* запустить `database.service`. Если `database.service` не запустится, `systemd` не будет автоматически останавливать `backend.service`, который уже был поставлен в очередь на запуск. Эта зависимость работает в одну сторону при активации.
-- `After=database.service`: Эта директива только определяет *порядок* запуска. `backend.service` будет запущен после `database.service`, но `systemd` не будет ждать успешного завершения запуска `database.service`.
-- **`WantedBy=multi-user.target`**: Когда оба сервиса привязаны к `multi-user.target`, `systemd` может пытаться запустить их параллельно (соблюдая правило `After=`), и сбой одного не обязательно остановит другой, если нет более строгой зависимости.
-
-### Правильная настройка "жёсткой" зависимости
-
-Чтобы `backend.service` гарантированно не запускался без работающей базы данных, необходимо настроить его более строго.
-
-```ini
-[Unit]
-Description=Backend Service
-Requires=database.service
-After=database.service
-# Если database.service остановится или упадёт, backend.service тоже будет остановлен.
-BindsTo=database.service
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Ключевые директивы для "жёсткой" связи:**
-
-- `BindsTo=database.service`: Создаёт более сильную связь. Если `database.service` останавливается или падает, `backend.service` также будет немедленно остановлен.
-- `PartOf=database.service`: Полезная директива. Если `database.service` останавливается или перезапускается, то же самое произойдёт и с `backend.service`.
-
-## Юнит-файлы (Unit Files)
-
-### Расположение
-
-`systemd` ищет юнит-файлы в нескольких каталогах. Файлы в `/etc/systemd/system` имеют наивысший приоритет и переопределяют файлы из других каталогов.
-
-- `/usr/lib/systemd/system/`: Юниты, поставляемые с установленными пакетами.
-- `/etc/systemd/system/`: Юниты, созданные системным администратором.
-
-После создания или изменения юнит-файла необходимо выполнить команду:
+После создания или изменения юнит-файла необходимо обновить конфигурацию `systemd`:
 ```sh
 sudo systemctl daemon-reload
 ```
 
-### Типы юнитов
-
-- **`.service`**: Сервисы и скрипты.
-- **`.target`**: Группы юнитов (аналог уровней запуска).
-- **`.mount`**: Точки монтирования файловых систем.
-- **`.timer`**: Задачи по расписанию (аналог `cron`).
-- **`.socket`**: Активация службы при обращении к сокету.
-- и другие (`.automount`, `.swap`, `.slice`, `.device`, `.path`).
-
 ### Структура юнит-файла
 
-Пример файла `my_service.service`:
+Юнит-файл состоит из секций. Пример (`my_app.service`):
+
 ```ini
 [Unit]
-Description=My Example Service
-After=network.target
+Description=My Application
+After=network.target postgresql.service
+Requires=postgresql.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/my_command --run
-ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/usr/bin/my_app --config /etc/my_app.conf
 Restart=on-failure
-User=myuser
-Group=mygroup
+RestartSec=5
+User=app_user
+Group=app_group
 WorkingDirectory=/opt/my_app
-Environment="VAR=value"
+Environment="ENV_VAR=production"
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**Секция `[Unit]`**
-- `Description`: Описание юнита.
-- `After`: Указывает, что юнит должен запускаться **после** указанных юнитов (например, `network.target`).
+- **`[Unit]`**: Метаданные и зависимости.
+  - `Description`: Описание юнита.
+  - `After`, `Before`: Определяют порядок запуска. `my_app` запустится *после* сети и PostgreSQL.
+  - `Requires`: "Жёсткая" зависимость. Если `postgresql.service` не запустится, `my_app.service` также не будет запущен.
+- **`[Service]`**: Конфигурация службы.
+  - `Type`: Тип запуска (`simple`, `forking`, `oneshot`).
+  - `ExecStart`: Команда для запуска.
+  - `Restart`: Политика перезапуска (`no`, `on-failure`, `always`).
+  - `User`, `Group`: Запуск от имени непривилегированного пользователя.
+- **`[Install]`**: Информация для `systemctl enable`.
+  - `WantedBy`: Указывает, что юнит должен быть частью `multi-user.target` (стандартный режим работы).
 
-**Секция `[Service]`**
-- `Type`: Тип запуска. `simple` — процесс запущен сразу; `forking` — главный процесс порождает дочерний.
-- `ExecStart`: Команда для запуска сервиса.
-- `ExecReload`: Команда для перезагрузки конфигурации. `$MAINPID` — это PID основного процесса.
-- `Restart`: Политика перезапуска (`no`, `on-success`, `on-failure`, `always`).
-- `User`, `Group`: Пользователь и группа, от имени которых будет запущен процесс.
-- `WorkingDirectory`: Рабочая директория для процесса.
-- `Environment`: Переменные окружения.
+### Редактирование юнитов через `systemctl edit`
 
-**Секция `[Install]`**
-- `WantedBy`: Указывает, в каком `target` (уровне запуска) юнит должен быть активирован при выполнении `systemctl enable`. `multi-user.target` — стандартный многопользовательский режим.
+Чтобы изменить параметры юнита, не трогая его оригинальный файл (например, из `/usr/lib/systemd/system/`), используйте `systemctl edit`.
+
+```sh
+sudo systemctl edit nginx.service
+```
+
+Эта команда создаст "override"-файл в `/etc/systemd/system/nginx.service.d/override.conf`, где можно указать только те директивы, которые нужно изменить или добавить.
+
+Например, чтобы добавить автоматический перезапуск для `nginx`:
+```ini
+[Service]
+Restart=always
+RestartSec=10
+```
+
+### Зависимости между юнитами
+
+- **`After=` / `Before=`**: Управляют только **порядком** запуска, но не создают реальной зависимости.
+- **`Wants=`**: "Мягкая" зависимость. `systemd` попытается запустить указанный юнит, но если тот не запустится, это не повлияет на основной юнит.
+- **`Requires=`**: "Жёсткая" зависимость. Если юнит, указанный в `Requires=`, не сможет запуститься, то и зависимый от него юнит тоже не запустится.
+- **`BindsTo=`**: Самая сильная связь. Работает как `Requires=`, но дополнительно привязывает жизненные циклы. Если связанный юнит останавливается или падает, `systemd` немедленно остановит и этот юнит.
+- **`PartOf=`**: Похоже на `BindsTo=`, но работает в одну сторону. Если юнит, указанный в `PartOf=`, останавливается или перезапускается, то же самое произойдёт и с этим юнитом.
+
+## Задачи по расписанию: Timers
+
+Таймеры — это современная замена `cron`. Они представляют собой `.timer` юниты, которые активируют `.service` юниты.
+
+**1. Создайте `.service` файл (что делать):**
+`/etc/systemd/system/my_backup.service`
+```ini
+[Unit]
+Description=Run my backup script
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup.sh
+```
+
+**2. Создайте `.timer` файл (когда делать):**
+`/etc/systemd/system/my_backup.timer`
+```ini
+[Unit]
+Description=Run backup script daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+- `OnCalendar=daily`: Запускать раз в день в 00:00. Можно использовать форматы вроде `*-*-* 02:00:00` (каждый день в 2 часа ночи) или `hourly` (раз в час).
+- `Persistent=true`: Если система была выключена во время планового запуска, задача выполнится сразу после следующей загрузки.
+
+**3. Включите и запустите таймер:**
+```sh
+sudo systemctl enable my_backup.timer
+sudo systemctl start my_backup.timer
+```
+
+## Анализ производительности загрузки
+
+`systemd-analyze` помогает выявить узкие места при загрузке системы.
+
+- **Общее время загрузки:**
+  ```sh
+  systemd-analyze
+  ```
+- **Время запуска каждого юнита:**
+  ```sh
+  systemd-analyze blame
+  ```
+- **Критическая цепь зависимостей:**
+  Показывает, какие юниты больше всего замедлили процесс загрузки.
+  ```sh
+  systemd-analyze critical-chain
+  ```
+
+## Управление параметрами ядра (`sysctl`)
+
+`systemd` управляет применением параметров ядра из файлов в `/etc/sysctl.d/`.
+
+1.  **Создайте `.conf` файл:**
+    ```sh
+    sudo nano /etc/sysctl.d/99-custom.conf
+    ```
+2.  **Добавьте параметры:**
+    ```
+    # Увеличить лимит открытых файлов
+    fs.file-max = 2097152
+    ```
+3.  **Примените изменения без перезагрузки:**
+    ```sh
+    sudo sysctl --system
+    ```
+
+## Пользовательские службы
+
+`systemd` может управлять службами для конкретного пользователя. Эти юниты хранятся в `~/.config/systemd/user/`. Управлять ими можно, добавив флаг `--user`.
+
+```sh
+systemctl --user start my_app.service
+systemctl --user enable my_app.service
+```
+Пользовательские службы запускаются при первом входе пользователя в систему и завершаются после окончания его последней сессии.

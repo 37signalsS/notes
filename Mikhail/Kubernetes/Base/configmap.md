@@ -1,71 +1,132 @@
-# ConfigMap
+# ConfigMap: Управление конфигурацией
 
-**ConfigMap** — это объект API Kubernetes, который позволяет хранить конфигурационные данные в виде пар "ключ-значение". Эти данные могут быть использованы подами для конфигурации приложений, например, через переменные окружения, аргументы командной строки или как файлы в томе.
+**ConfigMap** — это объект API Kubernetes для хранения неконфиденциальных конфигурационных данных в виде пар "ключ-значение". Он позволяет отделить конфигурацию от кода приложения, что делает приложения более гибкими и переносимыми.
 
-Основное преимущество — отделение конфигурации от кода приложения, что делает приложения более гибкими и переносимыми.
+**Основное правило:** Используйте ConfigMap для настроек, которые вы хотите менять без пересборки контейнерного образа.
 
----
-
-### Способы использования
-
-1.  **Переменные окружения:** Передача значений из ConfigMap напрямую в переменные окружения контейнера.
-2.  **Файлы в томе (volume):** Монтирование данных из ConfigMap как файлов в файловую систему контейнера. Это самый распространенный способ.
+**Важно:** ConfigMap не предназначен для хранения секретов. Для этого используйте объект `Secret`.
 
 ---
 
-### Пример: Создание и использование ConfigMap
+## Способы создания ConfigMap
 
-#### 1. Манифест ConfigMap
+#### 1. Декларативно (из манифеста)
 
-Этот манифест создаёт ConfigMap с именем `nginx-config`. Он содержит один ключ `default.conf`, значением которого является конфигурационный файл для Nginx.
+Самый надежный и воспроизводимый способ. Конфигурация хранится в системе контроля версий вместе с кодом.
 
 ```yaml
+# nginx-config.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nginx-config
+  name: app-config
 data:
-  # Имя файла, который будет создан в томе
-  default.conf: |
+  # Ключ-значение
+  APP_COLOR: "blue"
+  # Ключ со значением в виде файла
+  nginx.conf: |
     server {
         listen 80;
-        server_name example.com;
-
         location / {
-            root /usr/share/nginx/html;
+            root /app;
             index index.html;
         }
     }
 ```
 
-#### 2. Использование ConfigMap в поде
+#### 2. Императивно (из файлов или литералов)
 
-Здесь ConfigMap `nginx-config` монтируется в качестве тома в директорию `/etc/nginx/conf.d` внутри контейнера. Nginx автоматически подхватит конфигурационный файл `default.conf` из этой директории.
+Удобно для быстрого создания или для данных, генерируемых скриптами.
 
-**Важно:** Перед запуском пода, который использует ConfigMap, необходимо сначала создать сам ConfigMap в кластере (`kubectl apply -f configmap.yaml`).
+```bash
+# Из файла (ключ = имя файла, значение = содержимое)
+kubectl create configmap my-config-from-file --from-file=path/to/config.json
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: nginx-pod-from-configmap
-spec:
-  containers:
-    - name: nginx
-      image: nginx:latest
-      ports:
-        - containerPort: 80
-      volumeMounts:
-        # Монтируем том 'config-volume' в директорию /etc/nginx/conf.d
-        # Ключ 'default.conf' из ConfigMap станет файлом в этой директории.
-        - name: config-volume
-          mountPath: /etc/nginx/conf.d
-  volumes:
-    # Объявляем том с именем 'config-volume'.
-    - name: config-volume
-      # Указываем, что источником данных для этого тома является ConfigMap 'nginx-config'.
-      configMap:
-        name: nginx-config
+# Из литералов (ключ-значение)
+kubectl create configmap my-config-from-literals --from-literal=KEY1=VALUE1 --from-literal=KEY2=VALUE2
 ```
 
-**Предупреждение:** Если вы монтируете ConfigMap в существующую директорию (например, `/etc`), то все файлы в этой директории внутри контейнера будут скрыты файлами из ConfigMap. В примере выше, если бы `mountPath` был `/etc`, то контейнер потерял бы доступ ко всему содержимому `/etc`, кроме файла `CONFIG_FILE`.
+---
+
+## Способы использования ConfigMap в подах
+
+#### 1. Как файлы в томе (Volume)
+
+Это самый распространенный и гибкий способ. ConfigMap монтируется как директория в файловую систему контейнера.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            # Монтируем том 'config-volume' в директорию /etc/nginx/conf.d
+            # Ключ 'nginx.conf' из ConfigMap станет файлом в этой директории.
+            - name: config-volume
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: config-volume
+          configMap:
+            name: app-config # Имя нашего ConfigMap
+```
+
+**Проблема:** Монтирование ConfigMap в существующую директорию (например, `/etc/nginx`) **скроет/затрет** все её оригинальное содержимое.
+
+**Решение:** Используйте `subPath`, чтобы смонтировать только конкретный файл или директорию из ConfigMap, не затрагивая остальное содержимое `mountPath`.
+
+```yaml
+# ...
+volumeMounts:
+  - name: config-volume
+    mountPath: /etc/nginx/nginx.conf # Указываем полный путь к файлу
+    subPath: nginx.conf # Имя ключа в ConfigMap, который нужно смонтировать
+# ...
+```
+
+#### 2. Как переменные окружения
+
+Подходит для передачи простых строковых значений.
+
+```yaml
+# ...
+spec:
+  containers:
+    - name: my-app
+      image: my-app:latest
+      env:
+        # 1. Передать значение одного ключа
+        - name: APP_BACKGROUND_COLOR
+          valueFrom:
+            configMapKeyRef:
+              name: app-config # Имя ConfigMap
+              key: APP_COLOR    # Ключ, значение которого нужно взять
+
+      # 2. Передать все ключи из ConfigMap как переменные окружения
+      envFrom:
+        - configMapRef:
+            name: app-config
+```
+
+---
+
+## Обновление ConfigMap
+
+Поведение при обновлении ConfigMap зависит от способа его использования:
+
+*   **Монтирование как том (`volume`):** Данные в смонтированных файлах **обновляются автоматически** через некоторое время (обычно около минуты). Приложение должно уметь само перечитывать конфигурационные файлы, чтобы подхватить изменения.
+*   **Переменные окружения (`env`, `envFrom`):** Переменные окружения **не обновляются** после запуска пода. Чтобы изменения вступили в силу, **необходимо перезапустить под** (например, выполнив `kubectl rollout restart deployment/my-deployment`).
