@@ -1,8 +1,8 @@
-# DaemonSet: Управление системными агентами
+# DaemonSet: Гарантированный запуск подов на каждом узле
 
-**DaemonSet** — это объект Kubernetes, который гарантирует, что на каждом (или на определённом наборе) узле кластера запущен ровно один экземпляр пода. Если в кластер добавляется новый узел, DaemonSet автоматически развернет на нем под. При удалении узла — под будет удален.
+**DaemonSet** — это контроллер Kubernetes, который обеспечивает запуск ровно одного экземпляра пода на каждом (или на определённом наборе) узле кластера. Если в кластер добавляется новый узел, DaemonSet автоматически развернет на нем под. При удалении узла — под будет корректно удален.
 
-Это идеальный контроллер для развертывания системных сервисов, которые должны присутствовать на всех или некоторых узлах.
+Это идеальный инструмент для развертывания системных сервисов, которые должны работать на всех или некоторых узлах для обеспечения мониторинга, сбора логов или сетевой функциональности.
 
 ### Ключевые сценарии использования:
 
@@ -27,44 +27,43 @@ kubectl taint nodes my-node dedicated=special:NoSchedule
 
 ---
 
-## Пример: Node Exporter для Prometheus
+## Пример: Развертывание Node Exporter для Prometheus
 
-Этот DaemonSet разворачивает `node-exporter` на каждом узле для сбора метрик хост-машины.
 
 ```yaml
 # node-exporter-daemonset.yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fluentd-collector
-  namespace: kube-system # Системные сервисы принято размещать в kube-system
+  name: node-exporter
+  namespace: monitoring # Системные агенты лучше размещать в отдельном неймспейсе
   labels:
-    k8s-app: fluentd-logging
+    app: node-exporter
 spec:
-  # Селектор для связи DaemonSet с его подами.
+  # 1. Селектор для связи DaemonSet с его подами
   selector:
     matchLabels:
       app: node-exporter
 
-  # Стратегия обновления. RollingUpdate - стратегия по умолчанию.
+  # 2. Стратегия обновления (по умолчанию RollingUpdate)
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
-      # Во время обновления может быть недоступен максимум 1 под.
+      # Во время обновления может быть недоступен максимум 1 под
       maxUnavailable: 1
 
-  # Шаблон пода, который будет создаваться на каждом узле.
+  # 3. Шаблон пода, который будет создаваться на каждом узле
   template:
     metadata:
       labels:
-        name: fluentd
+        app: node-exporter
     spec:
-      # Позволяет поду запускаться на master-узлах, которые обычно имеют taint.
+      # 4. Позволяет поду запускаться на master-узлах
       tolerations:
         - effect: NoSchedule
           operator: Exists
 
-      # Ограничиваем запуск только на узлах с ОС Linux.
+      # 5. Ограничиваем запуск только на узлах с ОС Linux
       nodeSelector:
         kubernetes.io/os: linux  # Запускается только на узлах с ОС Linux
         log-node: "true"  # Разворачивается только на узлах с label log-node=true
@@ -85,7 +84,7 @@ spec:
               value: "9200"
           resources:
             limits:
-              memory: 256Mi
+              memory: 128Mi
             requests:
               cpu: 100m
               memory: 128Mi
@@ -109,7 +108,7 @@ spec:
 
 ---
 
-## Стратегии обновления
+## Стратегии обновления DaemonSet
 
 DaemonSet поддерживает две стратегии обновления, которые указываются в поле `spec.updateStrategy.type`:
 

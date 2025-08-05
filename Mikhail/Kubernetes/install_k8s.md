@@ -1,6 +1,6 @@
-# Установка Kubernetes на Bare-Metal
+# Установка отказоустойчивого кластера Kubernetes на Bare-Metal с помощью kubeadm
 
-Это руководство описывает процесс установки и настройки отказоустойчивого кластера Kubernetes на физических серверах ("bare-metal") с использованием `kubeadm`.
+Это руководство представляет собой пошаговую инструкцию по развертыванию отказоустойчивого (High-Availability) кластера Kubernetes на физических серверах ("bare-metal"). Мы будем использовать `kubeadm` для инициализации кластера и `containerd` в качестве среды выполнения контейнеров.
 
 ---
 
@@ -14,7 +14,7 @@
 ### 1.2. Программные требования
 
 *   **ОС:** Ubuntu 22.04 LTS или новее / CentOS 9 Stream на всех узлах.
-*   **Сеть:** Статические IP-адреса для всех узлов и открытые порты (см. документацию Kubernetes).
+*   **Сеть:** Статические IP-адреса для всех узлов и открытые порты (см. [документацию Kubernetes](https://kubernetes.io/docs/reference/ports-and-protocols/)).
 *   **Доступ:** SSH-доступ с правами `sudo` на все узлы.
 
 ---
@@ -36,7 +36,7 @@ sudo apt-get update && sudo apt-get upgrade -y
 sudo hostnamectl set-hostname <имя-узла>
 ```
 
-Добавьте IP-адреса и имена всех узлов в файл `/etc/hosts` на каждом узле для корректного разрешения имен:
+Добавьте IP-адреса и имена всех узлов в файл `/etc/hosts` на каждом узле.
 ```
 # /etc/hosts
 <IP-адрес-мастера-1> master-1
@@ -44,10 +44,11 @@ sudo hostnamectl set-hostname <имя-узла>
 <IP-адрес-балансировщика> kubeapi-vip
 <IP-адрес-воркера-1> worker-1
 ```
+> **NOTE:** Для продуктивных сред рекомендуется использовать внутренний DNS-сервер вместо ручного редактирования `/etc/hosts` для большей надежности и управляемости.
 
 ### 2.3. Отключение Swap
 
-Kubernetes требует, чтобы swap был отключен.
+Kubernetes требует, чтобы swap был отключен для стабильной работы.
 ```bash
 # Отключаем swap немедленно
 sudo swapoff -a
@@ -59,7 +60,7 @@ sudo sed -i '/ swap / s/^/#/' /etc/fstab
 
 Эти параметры необходимы для корректной работы сети в Kubernetes.
 ```bash
-# Включаем модуль br_netfilter
+# Включаем модуль br_netfilter для корректной работы сетевых мостов
 sudo modprobe br_netfilter
 
 # Добавляем его в автозагрузку
@@ -97,7 +98,7 @@ sudo containerd config default | sudo tee /etc/containerd/config.toml
 # Включаем опцию SystemdCgroup, чтобы kubelet и containerd работали с одним cgroup-драйвером
 sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 
-# Перезапускаем и включаем containerd
+# Перезапускаем и включаем containerd для применения изменений
 sudo systemctl restart containerd
 sudo systemctl enable containerd
 ```
@@ -105,18 +106,21 @@ sudo systemctl enable containerd
 ### 3.2. Установка инструментов Kubernetes (kubeadm, kubelet, kubectl)
 
 ```bash
-# Добавляем официальный GPG-ключ Kubernetes
-sudo curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+# 1. Определите актуальную версию Kubernetes, например, на странице релизов:
+# https://github.com/kubernetes/kubernetes/releases
+K8S_VERSION="1.30" # Замените на нужную минорную версию (например, 1.29, 1.30)
 
-# Добавляем репозиторий Kubernetes
-# NOTE: Рекомендуется использовать последнюю стабильную версию, например v1.30
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+# 2. Добавляем официальный GPG-ключ Kubernetes
+sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-# Устанавливаем компоненты
+# 3. Добавляем репозиторий Kubernetes
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+# 4. Устанавливаем компоненты
 sudo apt-get update
 sudo apt-get install -y kubelet kubeadm kubectl
 
-# Фиксируем версии, чтобы избежать случайных обновлений
+# 5. Фиксируем версии, чтобы избежать случайных обновлений при системном apt upgrade
 sudo apt-mark hold kubelet kubeadm kubectl
 ```
 
@@ -124,7 +128,7 @@ sudo apt-mark hold kubelet kubeadm kubectl
 
 ## 4. Настройка отказоустойчивого Control Plane (HA)
 
-Для продуктивных сред рекомендуется использовать кластер с несколькими мастер-узлами (High Availability).
+Для продуктивных сред необходимо использовать кластер с несколькими мастер-узлами.
 
 ### 4.1. Схема работы
 
@@ -137,10 +141,15 @@ sudo apt-mark hold kubelet kubeadm kubectl
 На **первом** мастер-узле выполните:
 ```bash
 # Замените LOAD_BALANCER_IP на VIP вашего балансировщика
-sudo kubeadm init --control-plane-endpoint "LOAD_BALANCER_IP:6443" --upload-certs
+# --pod-network-cidr требуется для многих CNI, например, Calico
+sudo kubeadm init \
+  --control-plane-endpoint "LOAD_BALANCER_IP:6443" \
+  --pod-network-cidr=192.168.0.0/16 \
+  --upload-certs
 ```
 *   `--control-plane-endpoint`: Общая точка входа для всех мастеров.
 *   `--upload-certs`: Загружает сертификаты в кластер, чтобы их могли скачать другие мастера.
+*   `--pod-network-cidr`: Диапазон IP-адресов для подов. Убедитесь, что он не пересекается с другими сетями.
 
 После успешной инициализации `kubeadm` выведет две команды `join`: одну для других мастеров, вторую для рабочих узлов. **Сохраните их.**
 
@@ -167,8 +176,11 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
 Кластер не будет полностью функционален до установки сетевого плагина. Этот шаг выполняется **один раз** с любого мастер-узла.
 
-В качестве примера используем **Calico**:
+В качестве примера используем **Calico**.
+> **Важно:** Версии Calico и Kubernetes должны быть совместимы. Всегда сверяйтесь с [официальной документацией Calico](https://docs.projectcalico.org/getting-started/kubernetes/self-managed-on-premises/on-premises) для получения актуальной команды установки.
+
 ```bash
+# Команда для установки Calico. URL может меняться, проверяйте документацию.
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
 ```
 
@@ -188,21 +200,54 @@ kubectl get nodes
 
 ## 6. Развертывание тестового приложения
 
-Для проверки работоспособности кластера развернем Nginx.
+Для проверки работоспособности кластера развернем Nginx, используя декларативный подход.
 
-1.  **Создайте Deployment:**
-    ```bash
-    kubectl create deployment nginx --image=nginx:1.25.4
+1.  **Создайте файл `nginx-test.yaml`:**
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment
+      labels:
+        app: nginx
+    spec:
+      replicas: 2
+      selector:
+        matchLabels:
+          app: nginx
+      template:
+        metadata:
+          labels:
+            app: nginx
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.25.4
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: nginx-service
+    spec:
+      type: NodePort
+      selector:
+        app: nginx
+      ports:
+        - protocol: TCP
+          port: 80
+          targetPort: 80
     ```
 
-2.  **Создайте Service типа NodePort:**
+2.  **Примените манифест:**
     ```bash
-    kubectl expose deployment nginx --port=80 --type=NodePort
+    kubectl apply -f nginx-test.yaml
     ```
 
 3.  **Узнайте выделенный порт:**
     ```bash
-    kubectl get service nginx
+    kubectl get service nginx-service
     ```
     В выводе вы увидите порт, например `3xxxx`, в строке `80:3xxxx/TCP`.
 
