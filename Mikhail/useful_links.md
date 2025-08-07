@@ -8,7 +8,9 @@ https://github.com/bregman-arie/devops-exercises
 
 https://github.com/bbachi/DCA-Practice-Questions?tab=readme-ov-file
 
-- Тренажеры
+https://yeahub.ru/
+
+- Тренажер
 
 https://devops.games/
 
@@ -35,10 +37,6 @@ https://linuxupskillchallenge.org/#table-of-contents
 https://labex.io/ru
 
 https://interview.devopscommunity.in/
-
-https://linuxsurvival.com/linux-wildcards-part-1/
-
-https://github.com/veltman/clmystery
 
 - Сертификации
 

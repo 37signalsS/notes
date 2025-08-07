@@ -13,7 +13,7 @@
 *   **Linux:**
     Выполните в терминале команду, указав адрес вашего сервера Headscale.
     ```bash
-    # Замените <server_url> на адрес вашего сервера
+    # Замените <server_url> на адрес вашего сервера (https://headscale.magicfun.nnstd.dev)
     sudo tailscale up --login-server <server_url>
     ```
     Скопируйте ключ (`mkey...`), который появится в выводе.
