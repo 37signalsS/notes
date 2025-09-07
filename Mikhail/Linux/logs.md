@@ -71,6 +71,8 @@
     sudo dmesg -C
     ```
 
+В современных системах с `systemd` логи ядра также собираются в `journald` и доступны через команду `journalctl -k` или `journalctl --dmesg`.
+
 ---
 
 ## 2. Современная система: `systemd-journald`
