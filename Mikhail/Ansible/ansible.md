@@ -212,3 +212,37 @@ pip install ansible-lint
 # Проверка плейбука
 ansible-lint my_playbook.yml
 ```
+
+## 7. Примеры плейбуков
+
+### Включение TCP BBR на Ubuntu
+
+Этот плейбук автоматизирует включение алгоритма контроля перегрузки TCP BBR, что может значительно улучшить производительность сети.
+
+```yaml
+- name: Enable TCP BBR on Ubuntu
+  hosts: all
+  become: yes
+  tasks:
+    - name: Ensure tcp_bbr module is loaded
+      modprobe:
+        name: tcp_bbr
+        state: present
+
+    - name: Add BBR to /etc/modules-load.d
+      lineinfile:
+        path: /etc/modules-load.d/modules.conf
+        line: tcp_bbr
+        create: yes
+
+    - name: Set BBR parameters in sysctl
+      blockinfile:
+        path: /etc/sysctl.conf
+        marker: "# {mark} TCP BBR CONFIG"
+        block: |
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+
+    - name: Apply sysctl changes
+      command: sysctl -p
+```
