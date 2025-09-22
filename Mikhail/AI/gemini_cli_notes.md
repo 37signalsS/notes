@@ -15,7 +15,7 @@ Cодержание GEMINI.md в .gemini должно быть следующи�
 
 ```
 ## Gemini Added Memories
-Всегда отвечай на русском языке. Инструкции в файле `GEMINI.md`, находящемся в текущей рабочей директории, имеют абсолютный приоритет. Ты должен строго следовать указаниям из локального `GEMINI.md`.
+Always answer in Russian. The instructions in the file "GEMINI.md", located in the current working directory, have absolute priority. You must strictly follow the instructions provided in the local "GEMINI.md".
 ```
 
 
