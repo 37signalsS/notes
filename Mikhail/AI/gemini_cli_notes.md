@@ -99,3 +99,10 @@ gemini --checkpointing
     *   `/ide enable`: активировать связь с редактором.
     *   `/ide disable`: деактивировать связь.
     *   `/ide status`: проверить текущий статус.
+
+## Переменные окружения
+
+### Fish global env
+```bash
+set -Ux GOOGLE_CLOUD_PROJECT gen-lang-client-0370822555
+```

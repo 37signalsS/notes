@@ -75,4 +75,4 @@ If the linters are not found or errors occur, please let us know.
     *   *Example:* "I have updated the information about TLS. I noticed that there is no document about the Certificate Authority (CA). This is a key part of the public key infrastructure. I suggest creating a `Networking/ca_basics.md'. Should I start?"
 
 ---
-* **Preparing for Interviews:** When asked to "prepare for an interview on X", use `interview_and_work.md `as a basis, and files from the corresponding directory (for example, `Kubernetes/*`) for generating deep technical questions and answers.⏎
+* **Preparing for Interviews:** When asked to "prepare for an interview on X", use `interview_and_work.md `as a basis, and files from the corresponding directory (for example, `Kubernetes/*`) for generating deep technical questions and answers.⏎g
