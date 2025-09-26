@@ -132,6 +132,12 @@ pstree -p
 -   **e**: Показать переменные окружения процесса.
 -   **Пробел**: Выделить/снять выделение с процесса для массовых действий (отменить все выделения - U).
 
+**Кастомизация htop с бэкапом**
+
+```bash
+mkdir -p ~/.config/htop && [ -f ~/.config/htop/htoprc ] && mv ~/.config/htop/htoprc ~/.config/htop/htoprc.bak.$(date +%Y%m%d%H%M%S); curl -fsSL "https://gist.github.com/itcaat/45ea5994d66378fc4bd647cab860a05f/raw" -o ~/.config/htop/htoprc
+```
+
 ### ps: Снимок состояния процессов
 
 ```sh 
