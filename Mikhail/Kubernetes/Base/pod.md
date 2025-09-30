@@ -65,7 +65,7 @@ spec:
 *   **[[ConfigMap]]**: Для передачи конфигурации в поды.
 *   **[[Secret]]**: Для передачи чувствительных данных (пароли, токены).
 *   **[[Probes]]**: Для проверки состояния (жизнеспособности и готовности) контейнеров.
-*   **[[QOS, limit and requests]]**: Для управления ресурсами CPU и памяти.
+*   **[[qos_limit_and_requests|Управление ресурсами: Requests, Limits, Quotas и QoS]]**: Для управления ресурсами CPU и памяти.
 
 ### Команды для работы с подами
 
@@ -81,6 +81,9 @@ kubectl describe pod my-nginx-pod
 
 # Удалить под
 kubectl delete pod my-nginx-pod
+
+# Получить поды на конкретной ноде
+kubectl get pod --field-selector spec.nodeName=<имя_ноды>
 ```
 
 ### `kubectl apply` vs `kubectl create`

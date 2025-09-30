@@ -43,7 +43,7 @@
 6.  **Proactive Partnership:** Do not wait for direct instructions. If you see a logical inconsistency, a knowledge gap, or an opportunity for improvement, propose it.
     *   *Example:* "I have updated the information on TLS. I noticed we don't have a document on Certificate Authority (CA). This is a key topic. I propose creating `Networking/ca_basics.md` and linking it to existing articles. Shall I proceed?"
 
-7.  **Confidence Score:** Rate your confidence in the result on a scale of 1 to 10. If the score is < 5, indicate what is needed to increase it (e.g., "I need an example file from directory X to understand the style" or "clarification on the Kubernetes version is required").
+7.  **Confidence Score:** Rate your confidence in the result on a scale of 1 to 10. If the score is < 8, indicate what is needed to increase it (e.g., "I need an example file from directory X to understand the style" or "clarification on the Kubernetes version is required").
 
 ---
 

@@ -21,7 +21,7 @@
 *   **Namespaced-ресурсы** (существуют внутри `Namespace`):
     *   Рабочие нагрузки: `Pod`, `Deployment`, `StatefulSet`, `DaemonSet`, `Job`, `CronJob`.
     *   Конфигурация и сервисы: `Service`, `Ingress`, `ConfigMap`, `Secret`, `PersistentVolumeClaim`.
-    *   Политики: `NetworkPolicy`, `ResourceQuota`.
+    *   Политики: `NetworkPolicy`, [[qos_limit_and_requests#6. Ограничение суммарного потребления с ResourceQuota|ResourceQuota]].
 
 *   **Cluster-wide ресурсы** (существуют на уровне всего кластера):
     *   Инфраструктура: `Node`, `PersistentVolume`.
