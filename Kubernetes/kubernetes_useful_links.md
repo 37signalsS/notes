@@ -1,0 +1,2 @@
+- **Play with Kubernetes:** Бесплатная онлайн-песочница для изучения Kubernetes.
+  - https://labs.play-with-k8s.com/
