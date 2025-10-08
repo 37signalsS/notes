@@ -92,8 +92,8 @@ docker run ...
 
 ---
 
-### Интеграция с Kubernetes: Container Runtime Interface (CRI)
+### Интеграция с Kubernetes: CRI и OCI
 
-**Container Runtime Interface (CRI)** — это стандартизированный API, который `kubelet` использует для взаимодействия с различными средами выполнения контейнеров.
+Взаимодействие между Kubernetes (`kubelet`) и различными средами выполнения контейнеров происходит через стандартизированные интерфейсы.
 
-Подробное описание стандартов **CRI** и **[OCI (Open Container Initiative)](./docker_components.md#ключевые-стандарты-cri-и-oci)**, а также схема их взаимодействия, находятся в документе о **[компонентах Docker](./docker_components.md)**.
+Подробное описание стандартов **CRI (Container Runtime Interface)** и **OCI (Open Container Initiative)**, а также схема их совместной работы, находятся в основном документе о **[компонентах Docker](./docker_components.md#ключевые-стандарты-cri-и-oci)**.

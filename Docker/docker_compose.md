@@ -108,43 +108,10 @@ API_KEY=some_secret_key
 - `depends_on`: Определяет порядок запуска сервисов. В примере `web` не запустится, пока `database` не станет `healthy`.
 
 - `command` и `entrypoint`: Позволяют переопределить инструкции `CMD` и `ENTRYPOINT` из `Dockerfile` образа.
-
-  Представьте, что у вас есть программа и аргументы для неё:
-     * `ENTRYPOINT` — это сама **программа**, которая всегда запускается (например, `git`, `python`, `ping`).
-     * `CMD` (в Dockerfile) или `command` (в compose.yml) — это **аргументы по умолчанию** для этой программы (например, `commit -m "Initial"`, `-V`, `google.com`).
-
-  **Золотое правило:** `docker-compose.yml` всегда имеет приоритет над `Dockerfile`.
-
-     1. `command:` в `compose.yml` **заменяет** `CMD` из `Dockerfile`.
-     2. `entrypoint:` в `compose.yml` **заменяет** `ENTRYPOINT` из `Dockerfile`.
-
-  Теперь посмотрим на все комбинации в таблице:
-
-  | В `Dockerfile` | В `docker-compose.yml` | Что в итоге запустится |
-  | :--- | :--- | :--- |
-  | `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | (ничего не указано) | `/app/run --default`<br>*(Используются оба значения из Dockerfile)* |
-  | `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `command: --prod` | `/app/run --prod`<br>*(**`command` заменил `CMD`**. ENTRYPOINT остался из Dockerfile)* |
-  | `ENTRYPOINT ["/app/run"]` | `entrypoint: /app/debug` | `/app/debug`<br>*(entrypoint заменил ENTRYPOINT. CMD исчез, так как для нового entrypoint он не был задан)* |
-  | `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `entrypoint: /app/debug`<br>`command: --verbose` | `/app/debug --verbose`<br>*(Заменились и ENTRYPOINT, и CMD)* |
-
-  **Практический пример**
-
-  Допустим, у вас есть `Dockerfile`:
-  ```dockerfile
-  FROM alpine:3.20.0
-  ENTRYPOINT ["ping", "-c", "3"]
-  CMD ["localhost"]
-  ```
-  По умолчанию этот контейнер будет пинговать `localhost`.
-
-  Теперь в `docker-compose.yml` вы хотите пинговать другой хост:
-  ```yaml
-  services:
-    pinger:
-      build: .
-      command: google.com
-  ```
-  Когда вы запустите `docker compose up`, выполнится команда `ping -c 3 google.com`, потому что `command: google.com` из `compose.yml` заменил `CMD ["localhost"]` из `Dockerfile`.
+  
+  Директива `command` в `compose.yml` заменяет `CMD` в `Dockerfile`, а `entrypoint` заменяет `ENTRYPOINT`. Это позволяет изменять команду по умолчанию или основной исполняемый файл для конкретного сервиса без пересборки образа.
+  
+  Подробное описание их взаимодействия и таблица всех возможных комбинаций находятся в документе **[Dockerfile](./docker_dockerfile.md#entrypoint-vs-cmd)**.
 
 - `user`: Запускает процесс внутри контейнера от имени указанного пользователя (`user:group` или `user`). Использование `user: "0:0"` (root) может быть небезопасно.
 

@@ -57,6 +57,24 @@ mysql_secure_installation
 *   Удаление открытой тестовой базы данных.
 *   Перезагрузка таблиц привилегий для применения новых настроек.
 
+## Создание базы данных и пользователя
+
+После установки и базовой настройки сервера БД, можно создать базу данных и пользователя для вашего приложения.
+
+1.  **Подключитесь к серверу баз данных:**
+    ```bash
+    mysql -u root -p
+    ```
+
+2.  **Создайте базу данных, пользователя и выдайте права:**
+    ```sql
+    CREATE DATABASE my_app_db;
+    GRANT ALL PRIVILEGES ON my_app_db.* TO 'my_app_user'@'localhost' IDENTIFIED BY 'p@ssw0rd';
+    FLUSH PRIVILEGES;
+    EXIT;
+    ```
+    > **Важно:** Замените `my_app_db`, `my_app_user` и `p@ssw0rd` на актуальные и безопасные значения.
+
 ## Оптимизация производительности MySQL/MariaDB
 
 ### Анализ с помощью MySQLTuner
@@ -118,9 +136,3 @@ CREATE INDEX index_name ON table_name(column1, column2);
 ```sql
 ALTER TABLE table_name ENGINE = InnoDB;
 ```
-
-### Внешние инструменты анализа
-
-Для глобальной оценки производительности сайта можно использовать:
-- [Google PageSpeed Insights](https://pagespeed.web.dev/)
-- [Pingdom Tools](https://tools.pingdom.com/)

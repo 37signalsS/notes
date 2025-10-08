@@ -23,21 +23,7 @@ mkdir /var/www/example.com
 
 ## Создание базы данных
 
-Подключитесь к серверу баз данных:
-
-```bash
-mysql -u root -p
-```
-
-Создайте базу данных, пользователя и выдайте права:
-
-```sql
-CREATE DATABASE exampledb;
-GRANT ALL PRIVILEGES ON exampledb.* TO 'exampledb-user'@'localhost' IDENTIFIED BY 'p@ssw0rd';
-FLUSH PRIVILEGES;
-EXIT;
-```
-> **Важно:** Замените `exampledb`, `exampledb-user` и `p@ssw0rd` на свои значения.
+Для работы WordPress необходима база данных. Создайте базу данных и пользователя для неё, следуя инструкциям в документе [database_setup.md](./database_setup.md#Создание-базы-данных-и-пользователя).
 
 ## Загрузка и настройка WordPress
 
