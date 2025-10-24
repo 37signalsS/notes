@@ -59,7 +59,7 @@ sudo systemctl isolate multi-user.target
 
 ---
 
-# Перечитать конфигурацию systemd
+# Перечитать конфигурацию systemd(обновить конфигурацию юнитов для всех служб)
 
 ```bash
 sudo systemctl daemon-reload
