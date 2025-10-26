@@ -6,3 +6,6 @@
 
 - **Containers Labs by iximiuz:** Задачи и упражнения по контейнерам.
   - http://labs.iximiuz.com/challenges
+
+- **Docker Extension for VS Code:** Официальное расширение от Microsoft для управления объектами Docker, работы с Dockerfile и docker-compose.yml, а также отладки приложений в контейнерах.
+  - https://marketplace.visualstudio.com/items?itemName=docker.docker

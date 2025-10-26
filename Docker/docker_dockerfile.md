@@ -58,6 +58,8 @@ sudo usermod -aG docker ubuntu
 
 В современных версиях Docker (Docker Desktop, Docker Engine v23.0+) BuildKit **включен по умолчанию**. В более старых версиях его можно было активировать, установив переменную окружения `DOCKER_BUILDKIT=1` перед вызовом команды `docker build`.
 
+Для интерактивной отладки Dockerfile, основанной на BuildKit, существует инструмент **[buildg](./alternative_runtimes_and_tools.md#инструменты-для-сборки-и-отладки)**.
+
 ---
 
 ## Основные инструкции Dockerfile
