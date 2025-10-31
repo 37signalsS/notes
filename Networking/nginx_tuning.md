@@ -164,7 +164,9 @@ open_file_cache_min_uses 2;
 
 # Кэширование ошибок поиска файлов
 open_file_cache_errors on;
+```
 
 ## См. также
 *   [Установка и настройка Nginx + PHP-FPM (LEMP)](./nginx_setup.md)
+*   [Безопасность веб-серверов Nginx и Apache](./web_server_hardening.md)
 ```

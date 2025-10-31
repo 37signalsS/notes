@@ -37,3 +37,9 @@ firewall-cmd --list-all
 
 *   **Ubuntu и Debian:** `/etc/apache2/apache2.conf`
 *   **CentOS:** `/etc/httpd/conf/httpd.conf`
+
+---
+
+## Смотри также
+
+*   [Безопасность веб-серверов Nginx и Apache](../Networking/web_server_hardening.md)
