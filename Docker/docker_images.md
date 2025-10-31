@@ -8,7 +8,7 @@
 
 | Команда | Описание |
 | :--- | :--- |
-| `docker build -t <имя>:<тег> .` | Собирает образ из [`Dockerfile`](./dockerfile.md) в текущей директории. |
+| `docker build -t <имя образа>:<тег> .` | Собирает образ из [`Dockerfile`](./dockerfile.md) в текущей директории. |
 | `docker images` | Показывает все образы, имеющиеся на хосте. |
 | `docker pull <имя>:<тег>` | Скачивает образ из [registry](./docker_registries.md) (например, Docker Hub). |
 | `docker push <имя>:<тег>` | Загружает образ в [registry](./docker_registries.md). |

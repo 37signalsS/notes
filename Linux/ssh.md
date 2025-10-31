@@ -356,7 +356,7 @@ ssh -J user@jump-host.com user@target-server.internal
         *   **Результат, если порт открыт:** `Connection to <server_ip> port 22 [tcp/ssh] succeeded!`
         *   **Результат, если порт закрыт:** `nc: connect to <server_ip> port 22 (tcp) failed: Connection refused`
 
-    *   **Альтернатива с `telnet`:**
+    *   **Альтернатива с `telnet`(TCP-соединение):**
         ```bash
         telnet <server_ip> 22
         ```

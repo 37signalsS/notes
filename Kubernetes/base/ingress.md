@@ -139,4 +139,5 @@ Ingress упрощает терминирование TLS-трафика.
 *   `nginx.ingress.kubernetes.io/rewrite-target: /` — перенаправляет трафик с указанного `path` на корневой путь (`/`) сервиса.
 *   `nginx.ingress.kubernetes.io/ssl-redirect: "true"` — принудительно перенаправляет HTTP-трафик на HTTPS.
 *   `nginx.ingress.kubernetes.io/proxy-body-size: "8m"` — устанавливает максимальный размер тела запроса.
+*   `nginx.ingress.kubernetes.io/proxy-read-timeout: "60s"` — задает таймаут чтения ответа от бэкенда. Полезно для долгих синхронных операций.
 *   `kubernetes.io/ingress.class: "nginx"` — указывает, какой Ingress-контроллер должен обрабатывать этот объект (актуально, если в кластере их несколько).

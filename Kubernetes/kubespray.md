@@ -49,16 +49,16 @@ Kubespray — это проект с открытым исходным кодо�
 
 #### Пример inventory.ini
 
-Для ингресса была создана отдельная группа `[kube_ingress]`, так как ее изначально не было. Kubespray использует имя этой группы для установки соответствующего label на узел.
+Для ингресса была создана отдельная группа `[kube_ingress]`, так как ее изначально не было. Kubespray использует имя этой группы для установки соответствующего label на узел. В примере также показано, как можно указать пользователя для SSH-подключения (`ansible_ssh_user`) и имя для участника etcd-кластера (`etcd_member_name`) прямо в строке хоста.
 
 ```ini
 [all]
-master-1.s000006.slurm.io ansible_host=172.22.193.2 ip=172.22.193.2
-master-2.s000006.slurm.io ansible_host=172.22.193.3 ip=172.22.193.3
-master-3.s000006.slurm.io ansible_host=172.22.193.4 ip=172.22.193.4
-ingress-1.s000006.slurm.io ansible_host=172.22.193.5 ip=172.22.193.5
-node-1.s000006.slurm.io ansible_host=172.22.193.6 ip=172.22.193.6
-node-2.s000006.slurm.io ansible_host=172.22.193.7 ip=172.22.193.7
+master-1.s000006.slurm.io ansible_host=172.22.193.2 ip=172.22.193.2 ansible_ssh_user=root etcd_member_name=etcd1
+master-2.s000006.slurm.io ansible_host=172.22.193.3 ip=172.22.193.3 ansible_ssh_user=root etcd_member_name=etcd2
+master-3.s000006.slurm.io ansible_host=172.22.193.4 ip=172.22.193.4 ansible_ssh_user=root etcd_member_name=etcd3
+ingress-1.s000006.slurm.io ansible_host=172.22.193.5 ip=172.22.193.5 ansible_ssh_user=root
+node-1.s000006.slurm.io ansible_host=172.22.193.6 ip=172.22.193.6 ansible_ssh_user=root
+node-2.s000006.slurm.io ansible_host=172.22.193.7 ip=172.22.193.7 ansible_ssh_user=root
 
 [kube_control_plane]
 master-1.s000006.slurm.io
@@ -176,16 +176,43 @@ flannel_interface_regexp: '172\.21\.0\.\d{1,3}'
 
 ### Запуск развертывания
 
-После того как все настроили, запускаем плейбук из гит директории kubespray. Аргументы запуска - файл инвентори и `cluster.yml`.
+После того как все файлы конфигурации (`inventory.ini` и переменные в `group_vars`) подготовлены, можно запустить главный плейбук `cluster.yml` из корневой директории Kubespray. Этот файл обычно является "точкой входа", которая импортирует основной плейбук `playbooks/cluster.yml`.
 
-После того как все файлы конфигурации (`inventory.ini` и переменные в `group_vars`) подготовлены, можно запустить главный плейбук `cluster.yml` из корневой директории Kubespray.
+Реалистичная команда для запуска выглядит следующим образом:
 
 ```bash
-# -i флаг указывает путь к вашему inventory файлу
-ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
+ansible-playbook cluster.yml \
+  -i inventory/my-cluster/inventory.ini \
+  -u myuser -b \
+  --private-key=~/.ssh/id_rsa
 ```
 
+Разберем команду:
+*   `ansible-playbook cluster.yml`: Запускает выполнение плейбука.
+*   `-i inventory/my-cluster/inventory.ini`: Указывает путь к вашему файлу инвентаря.
+*   `-u myuser` или `--user=myuser`: Задает имя пользователя для SSH-подключения к узлам.
+*   `-b` или `--become`: Указывает Ansible повысить привилегии (например, через `sudo`) для выполнения задач, требующих прав `root`.
+*   `--private-key=~/.ssh/id_rsa`: Указывает путь к вашему приватному SSH-ключу для аутентификации на узлах.
+
 Эта команда запустит процесс установки или обновления кластера в соответствии с вашими декларативными настройками.
+
+## Проверка кластера после установки
+
+Если в вашей конфигурации (например, в `group_vars/k8s-cluster/k8s-cluster.yml`) был установлен параметр `kubeconfig_localhost: true`, то Kubespray скопирует файл `admin.conf` на вашу локальную машину. Этот файл содержит учетные данные для доступа к кластеру с правами администратора.
+
+1.  **Найдите файл kubeconfig:** Он будет находиться в директории `inventory/имя_вашего_кластера/artifacts/admin.conf`.
+
+2.  **Выполните команду для проверки статуса узлов:** Используйте `kubectl`, указав путь к вашему файлу конфигурации.
+    ```bash
+    kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
+    ```
+
+3.  **Проанализируйте результат:** В выводе вы должны увидеть все узлы вашего кластера со статусом `Ready`.
+
+4.  **(Опционально) Установите переменную окружения:** Чтобы не указывать флаг `--kubeconfig` каждый раз, можно экспортировать переменную окружения `KUBECONFIG`.
+    ```bash
+    export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
+    ```
 
 ## Управление кластером: Масштабирование
 
@@ -270,6 +297,8 @@ Kubespray предоставляет отдельные плейбуки для 
 
 После успешной установки кластера с помощью Kubespray в пространстве имен `kube-system` будут развернуты следующие основные системные поды. Их состав может незначительно меняться в зависимости от выбранной конфигурации (например, от CNI-плагина).
 
+Более подробно о стандартных пространствах имен и о том, как Kubespray их использует, можно прочитать в документе [о пространствах имен](./base/namespace.md#namespaces-и-kubespray).
+
 На примере стандартной установки можно увидеть следующие компоненты:
 
 *   **Control Plane компоненты (Static Pods):**
@@ -334,3 +363,30 @@ node_taints:
 ```
 
 Этот пример демонстрирует, как `taint` `NoSchedule` в сочетании с `toleration` гарантирует, что только поды Ingress-контроллера будут размещены на выделенных для них нодах, в то время как другие поды не смогут на них попасть.
+
+## Конфигурация MetalLB (Load Balancer)
+
+**MetalLB** — это реализация балансировщика нагрузки для bare-metal кластеров Kubernetes. В облачных средах (AWS, GCP, Azure) сервисы типа `LoadBalancer` автоматически получают внешний IP-адрес от облачного провайдера. В локальных средах такой функциональности нет. MetalLB решает эту проблему, позволяя назначать внешние IP-адреса из заранее определенного пула.
+
+### `group_vars/k8s-cluster/addons.yml`
+
+Конфигурация MetalLB, как и других дополнений, обычно находится в файле `addons.yml`.
+
+```yaml
+# Включаем MetalLB
+metallb_enabled: true
+metallb_speaker_enabled: true
+
+# Определяем пулы IP-адресов, которые MetalLB будет использовать
+metallb_config:
+  address_pools:
+    primary:
+      ip_range:
+        - "5.75.169.149/32"
+        - "91.99.78.20/32"
+      # auto_assign: false # Можно отключить автоматическое назначение адресов для этого пула
+```
+
+*   `metallb_enabled: true`: Включает установку MetalLB.
+*   `metallb_speaker_enabled: true`: Включает компонент `speaker`, который отвечает за анонсирование IP-адресов по протоколам L2 (ARP) или BGP.
+*   `metallb_config`: Содержит конфигурацию пулов адресов. В данном примере определен один пул `primary` с двумя IP-адресами, которые могут быть назначены сервисам типа `LoadBalancer`.
