@@ -100,6 +100,12 @@
 *   Сгенерированная документация
 *   Отчеты о тестировании или покрытии кода
 
+## Concourse CI: Система непрерывной интеграции
+
+**Concourse CI** – современная масштабируемая система для настройки непрерывной интеграции и для автоматизации конвейеров тестирования с помощью компонуемого декларативного синтаксиса.
+
+Concourse CI может быть установлен на заранее установленный и настроенный сервер Ubuntu/Debian/CentOS. Также возможно настроить базу данных PostgreSQL для использования в качестве серверной части.
+
 ### Почему нельзя просто хранить артефакты на CI-сервере?
 
 Самый простой, но и самый плохой подход — оставлять артефакты на диске CI/CD-агента (например, Jenkins workspace, GitLab runner cache).
@@ -129,11 +135,11 @@
 | :--- | :--- | :--- |
 | **Self-Hosted (управляемые вами)** | **JFrog Artifactory** | Один из лидеров рынка. Поддерживает огромное количество форматов. Мощный, но может быть сложным в настройке. |
 | | **Sonatype Nexus Repository** | Главный конкурент Artifactory. Также очень популярен, особенно в Java-мире. Считается чуть более простым. |
-| | **Harbor** | Open Source проект от [CNCF](../cncf_overview.md). Изначально создавался как реестр Docker-образов, но теперь поддерживает и другие форматы (Helm, OCI). Отлично подходит для Kubernetes. |
+| | **Harbor** | Open Source проект от [CNCF](../Kubernetes/cncf_overview.md). Изначально создавался как реестр Docker-образов, но теперь поддерживает и другие форматы (Helm, OCI). Отлично подходит для Kubernetes. |
 | **Cloud / SaaS (готовые сервисы)** | **GitHub Packages** | Интегрирован с GitHub. Удобен, если ваш код уже там. Поддерживает основные форматы. |
 | | **GitLab Package Registry** | Аналогично, интегрирован с GitLab. Позволяет хранить артефакты рядом с исходным кодом и CI/CD пайплайнами. |
 | | **AWS CodeArtifact / Google Artifact Registry / Azure Artifacts** | Решения от крупных облачных провайдеров. Глубоко интегрированы в свои экосистемы. |
-| **Только для Docker-образов** | **Docker Hub** | Публичный реестр по умолчанию. Подробнее см. в [руководстве по реестрам Docker](../Docker/registries.md). |
+| **Только для Docker-образов** | **Docker Hub** | Публичный реестр по умолчанию. Подробнее см. в [руководстве по реестрам Docker](../Docker/docker_registries.md). |
 | | **Amazon ECR / Google GCR / Azure ACR** | Реестры контейнеров от облачных провайдеров. |
 | **Объектное хранилище** | **Amazon S3 / Google Cloud Storage** | Можно использовать для хранения "сырых" артефактов (например, `.zip` архивов). Не предоставляет функций проксирования и метаданных, как специализированные репозитории, но подходит для простых сценариев. |
 
@@ -189,10 +195,10 @@
 
 ```bash
 # Проверка текущего каталога
-docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest filesystem
+docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:v3.90.13 filesystem
 
 # Проверка репозиториев организации на GitHub
-docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest github --org=trufflesecurity
+docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:v3.90.13 github --org=trufflesecurity
 ```
 
 #### **Gitleaks**

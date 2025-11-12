@@ -1,0 +1,222 @@
+# StatefulSet: Развертывание приложений с состоянием (Stateful)
+
+Этот документ — пошаговое руководство по развертыванию приложений, требующих сохранения состояния (например, баз данных), в Kubernetes. Он также описывает объект `StatefulSet`, его ключевые особенности и отличия от `Deployment`.
+
+## Проблема: Почему Deployment не подходит?
+
+Стандартный объект [Deployment](./deployment_and_rolling_update.md) обращается с подами как со взаимозаменяемыми и не имеющими состояния "копиями". При перезапуске или переносе пода он может получить новый IP-адрес, новое имя и, что самое важное, **потерять связь со своим хранилищем**. Для веб-сервера это нормально, но для базы данных — катастрофа, равносильная потере всех данных.
+
+## Решение: Компоненты для Stateful-приложений
+
+Для правильного развертывания приложений с состоянием используется комбинация из четырех ключевых компонентов:
+
+1.  **`StatefulSet`**: Главный оркестратор. В отличие от `Deployment`, он предоставляет подам стабильные имена и привязывает их к конкретным дискам.
+2.  **`PersistentVolumeClaim` (PVC)**: "Запрос" пода на выделение диска. `StatefulSet` автоматически создает уникальный PVC для каждого своего пода.
+3.  **`PersistentVolume` (PV)**: Физический "кусок" хранилища в кластере (NFS, Ceph, диск облачного провайдера), который удовлетворяет запрос PVC.
+4.  **`Headless Service`**: Специальный тип [сервиса](../Networking/service.md), который обеспечивает каждому поду стабильное и уникальное DNS-имя внутри кластера.
+
+---
+
+## Ключевые отличия StatefulSet от Deployment:
+
+1.  **Стабильные, уникальные сетевые идентификаторы:**
+    *   Каждый [под](./pod.md) в StatefulSet получает предсказуемое имя в формате `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`).
+    *   Эти имена сохраняются при перезапуске и переносе подов.
+
+2.  **Стабильные, постоянные хранилища:**
+    *   Для каждого [пода](./pod.md) создается свой собственный [PersistentVolumeClaim](./pv_and_pvc.md) (PVC) на основе шаблона (`volumeClaimTemplates`).
+    *   Этот PVC привязан к конкретному поду и сохраняется даже после его удаления и пересоздания.
+
+3.  **Упорядоченное развертывание и масштабирование:**
+    *   Поды создаются последовательно, один за другим (сначала `web-0`, потом `web-1` и т.д.). Следующий под не начнет создаваться, пока предыдущий не станет `Ready`.
+    *   Удаление подов происходит в обратном порядке (сначала `web-n`, потом `web-n-1`).
+
+4.  **Поведение при недоступности узла:**
+    *   Если нода становится `NotReady`, Kubernetes **не будет** автоматически переносить под `StatefulSet` на другую ноду. Это сделано для защиты данных и предотвращения сценариев split-brain, особенно для баз данных. Перенос пода `StatefulSet` с `ReadWriteOnce` томом на другую ноду требует ручного вмешательства или использования операторов.
+
+5.  **Требует Headless Service:** Для обеспечения уникальных DNS-имен для каждого пода StatefulSet требует наличия Headless Service (сервис с `clusterIP: None`).
+
+---
+
+### Пример использования: Stateful-приложения (Kafka, базы данных)
+
+`StatefulSet` является единственным правильным выбором для запуска приложений, которые требуют стабильного хранения данных и сетевой идентификации. Классический пример — **Apache Kafka**.
+
+**Проблема:** Если развернуть Kafka с помощью `Deployment`, при любом рестарте пода (из-за сбоя ноды, обновления или масштабирования) он потеряет связь со своим диском (`PersistentVolume`). `Deployment` создает новый под как "чистый лист", без привязки к состоянию предыдущего. Это неминуемо приведет к **потере данных** в брокере Kafka.
+
+**Решение с `StatefulSet`:**
+
+`StatefulSet` решает эту проблему, предоставляя каждому поду:
+1.  **Стабильное имя**: `kafka-0`, `kafka-1`, и т.д.
+2.  **Стабильный PVC**: Для `kafka-0` будет автоматически создан и привязан PVC `data-kafka-0`, для `kafka-1` — `data-kafka-1`.
+
+При рестарте пода `kafka-0` (даже на другой ноде) `StatefulSet` гарантирует, что он будет снова подключен к своему уникальному PVC `data-kafka-0`, сохраняя все данные.
+
+---
+
+## Пошаговый пример: Развертывание Nginx с StatefulSet
+
+Развернем простое stateful-приложение на базе Nginx, где каждый экземпляр будет иметь свой собственный, постоянный `index.html`.
+
+### Шаг 1: Создание Headless Service
+
+Это необходимо для того, чтобы `StatefulSet` мог присвоить подам уникальные DNS-имена.
+
+```yaml
+# service-headless.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-headless
+spec:
+  clusterIP: None # <-- Ключевой параметр, делающий сервис "безголовым"
+  selector:
+    app: my-stateful-app # Должен соответствовать меткам подов
+  ports:
+  - port: 80
+    name: web
+```
+
+### Шаг 2: Создание StatefulSet
+
+Это основной манифест, который связывает все воедино.
+
+```yaml
+# statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: my-app
+spec:
+  # serviceName должен соответствовать имени Headless Service
+  serviceName: "my-app-headless"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-stateful-app # Должен соответствовать меткам в шаблоне
+  template: # Шаблон для создания подов
+    metadata:
+      labels:
+        app: my-stateful-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25.5
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: data-volume # Имя, которое будет связано с PVC
+          mountPath: /usr/share/nginx/html # Путь монтирования внутри контейнера
+        env: # Добавление переменных окружения
+        - name: POD_IP # Название переменной окружения
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP # берет из описания пода IP и прокидывает его в кнтейнер как env
+
+  # Шаблон для автоматического создания PVC для каждого пода
+  volumeClaimTemplates:
+  - metadata:
+      name: data-volume # Имя PVC
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      # storageClassName: "your-storage-class" # Укажите ваш StorageClass
+      resources:
+        requests:
+          storage: 1Gi # Размер диска для каждого пода
+```
+
+### Что здесь происходит?
+
+1.  **`replicas: 2`**: Kubernetes создаст 2 пода: `my-app-0` и `my-app-1`.
+2.  **`volumeClaimTemplates`**: Для каждого пода будет автоматически создан свой `PersistentVolumeClaim`.
+    *   Под `my-app-0` получит PVC с именем `data-volume-my-app-0`.
+    *   Под `my-app-1` получит PVC с именем `data-volume-my-app-1`.
+3.  **Связь:** Kubernetes гарантирует, что под `my-app-0` **всегда** будет подключен к своему PVC `data-volume-my-app-0`, даже если он будет перезапущен на другой ноде.
+
+---
+
+## Проверка и управление
+
+```bash
+# 1. Применить манифесты
+kubectl apply -f service-headless.yaml
+kubectl apply -f statefulset.yaml
+
+# 2. Проверить поды (будут называться my-app-0, my-app-1)
+# Поды создаются строго по одному!
+kubectl get pods -l app=my-stateful-app
+
+# 3. Проверить PVC (будут называться data-volume-my-app-0, ...)
+kubectl get pvc -l app=my-stateful-app
+
+# 4. Запишем уникальные данные в каждый под
+kubectl exec my-app-0 -- /bin/sh -c 'echo "Hello from Pod 0" > /usr/share/nginx/html/index.html'
+kubectl exec my-app-1 -- /bin/sh -c 'echo "Hello from Pod 1" > /usr/share/nginx/html/index.html'
+
+# 5. Удалим один из подов, чтобы увидеть, как StatefulSet его восстановит
+kubectl delete pod my-app-1
+
+# ...подождите немного...
+
+# 6. Проверьте, что под восстановился и его данные на месте!
+kubectl get pods # Убедитесь, что my-app-1 снова запущен
+kubectl exec my-app-1 -- cat /usr/share/nginx/html/index.html
+# Вывод должен быть: Hello from Pod 1
+```
+
+Этот пример наглядно демонстрирует, как `StatefulSet` обеспечивает стабильность и сохранность данных для каждого экземпляра приложения.
+
+---
+
+**Важно:** При удалении `StatefulSet` связанные с ним PVC **не удаляются** автоматически. Это сделано для защиты данных. Их необходимо удалять вручную, если они больше не нужны.
+
+### Headless Service для StatefulSet (пример)
+
+Этот сервис необходим для того, чтобы у каждого пода был свой уникальный DNS-адрес в формате `<pod-name>.<service-name>.<namespace>.svc.cluster.local`.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-headless
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None # Ключевой параметр для Headless Service
+  selector:
+    app: nginx # Должен соответствовать меткам подов
+```
+
+### Проверка работы (DNS)
+
+После применения манифестов можно проверить DNS-записи из любого другого пода в кластере.
+
+1.  **Запускаем временный под для отладки:**
+    ```bash
+    kubectl run -it --rm --image=busybox dns-test -- /bin/sh
+    ```
+
+2.  **Внутри `dns-test` пода выполняем `nslookup`:**
+
+    *   **Запрос к сервису (получаем все IP):**
+        ```sh
+        # nslookup nginx-headless
+        Server:    10.96.0.10
+        Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+
+        Name:      nginx-headless.default.svc.cluster.local
+        Address 1: 10.244.1.5
+        Address 2: 10.244.2.4
+        ```
+
+    *   **Запрос к конкретному поду (получаем один IP):**
+        ```sh
+        # nslookup web-0.nginx-headless
+        Server:    10.96.0.10
+        Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+
+        Name:      web-0.nginx-headless.default.svc.cluster.local
+        Address 1: 10.244.1.5
+        ```

@@ -1,0 +1,159 @@
+# Secret
+
+**Secret** — это объект Kubernetes, предназначенный для хранения небольших объемов чувствительных данных, таких как пароли, токены или ключи. Использование `Secret` позволяет отделить конфигурацию от секретных данных, что повышает безопасность и гибкость.
+
+> **Важно:** По умолчанию данные в `Secret` хранятся в `etcd` в кодировке **Base64**, а не в зашифрованном виде. Base64 — это не шифрование, и данные могут быть легко раскодированы. Для защиты секретов необходимо настраивать шифрование неактивных данных (Encryption at Rest).
+
+## Типы секретов
+
+Не все Kubernetes Secrets одинаковы. Вот краткое описание основных типов:
+
+*   **Opaque Secrets** (`Opaque`): Тип по умолчанию, используется для хранения произвольных пар ключ–значение.
+*   **ServiceAccount Token Secrets** (`kubernetes.io/service-account-token`): Автоматически создаются для аутентификации с API-сервером.
+*   **Docker Config Secrets** (`kubernetes.io/dockerconfigjson`): Применяются для хранения учётных данных Docker Registry, чтобы подтягивать приватные образы.
+*   **Basic Authentication Secrets** (`kubernetes.io/basic-auth`): Содержат логины и пароли в формате base64.
+*   **SSH Authentication Secrets** (`kubernetes.io/ssh-auth`): Хранят приватные SSH-ключи для безопасного доступа.
+*   **TLS Secrets** (`kubernetes.io/tls`): Включают TLS-сертификаты и приватные ключи для HTTPS-соединений.
+*   **Bootstrap Token Secrets** (`bootstrap.kubernetes.io/token`): Используются при подключении новых нод к кластеру.
+
+## Создание Secret
+
+### Декларативно (из манифеста)
+
+**`data` (значения в Base64)**
+
+Значения должны быть предварительно закодированы в Base64.
+
+```bash
+# Кодирование пароля в Base64
+echo -n 'my-super-secret-password' | base64
+# Вывод: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-database-secret
+type: Opaque
+data:
+  # ключ: значение (в base64)
+  DB_PASSWORD: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
+```
+
+**`stringData` (обычный текст)**
+
+Это более удобный способ, так как Kubernetes автоматически кодирует значения.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-database-secret-2
+type: Opaque
+stringData:
+  # Kubernetes сам преобразует это значение в Base64
+  DB_PASSWORD: "my-super-secret-password"
+```
+
+### Императивно (из команды)
+
+`kubectl` автоматически кодирует значения в Base64.
+
+```bash
+kubectl create secret generic my-database-secret \
+  --from-literal=DB_PASSWORD='my-super-secret-password'
+```
+
+## Использование Secret в Pod'ах
+
+### Как переменные окружения
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  containers:
+    - name: my-app
+      image: my-app-image
+      env:
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: my-database-secret # Имя секрета
+              key: DB_PASSWORD        # Ключ в секрете
+```
+
+### Как файлы в томе (volume)
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  containers:
+    - name: my-app
+      image: my-app-image
+      volumeMounts:
+        - name: secret-volume
+          mountPath: "/etc/secrets"
+          readOnly: true
+  volumes:
+    - name: secret-volume
+      secret:
+        secretName: my-database-secret
+```
+
+В этом случае в директории `/etc/secrets` внутри контейнера будет создан файл с именем `DB_PASSWORD`, содержащий раскодированное значение.
+
+---
+
+## Продвинутые и безопасные методы управления секретами
+
+### Шифрование в etcd (Encryption at Rest)
+
+Это базовый уровень защиты, который шифрует данные `Secret` непосредственно в хранилище `etcd`. Если злоумышленник получит доступ к резервной копии `etcd`, он не сможет прочитать секреты без ключа шифрования.
+
+*   **Как работает:** API-сервер Kubernetes шифрует секреты перед сохранением в `etcd` и расшифровывает их при чтении.
+*   **Настройка:** Требует изменения конфигурации API-сервера (`--encryption-provider-config`). Необходимо определить провайдера шифрования (например, `aescbc`, `aesgcm` или `kms` для интеграции с облачными провайдерами).
+*   **Вывод:** Обязательный шаг для любой production-среды.
+
+### Внешние системы управления секретами (External Secret Managers)
+
+Это "золотой стандарт" для управления секретами. Вместо хранения секретов в `etcd`, Kubernetes получает их "на лету" из внешнего, специально предназначенного для этого хранилища.
+
+*   **Примеры:** `HashiCorp Vault`, `AWS Secrets Manager`, `Google Cloud Secret Manager`, `Azure Key Vault`.
+*   **Как работает:**
+    1.  В кластере устанавливается оператор (например, `External Secrets Operator` или `Vault Secrets Operator`).
+    2.  Вы создаете специальный ресурс (например, `ExternalSecret`), который описывает, какой секрет и откуда нужно получить.
+    3.  Оператор аутентифицируется во внешнем хранилище, забирает оттуда секрет и **создает на его основе нативный Kubernetes `Secret`**.
+    4.  Приложение использует этот `Secret` как обычно.
+*   **Преимущества:**
+    *   **Централизованное хранение:** Все секреты в одном месте с аудитом и строгими политиками доступа.
+    *   **Динамические секреты:** Системы вроде Vault могут генерировать секреты "по запросу" с коротким сроком жизни (TTL).
+    *   **Ротация ключей:** Упрощается процесс обновления секретов.
+
+> **Подробнее:** [HashiCorp Vault](../../Security/HashiCorp_Vault/vault_overview.md)
+
+### GitOps: Sealed Secrets
+
+Этот подход решает проблему "Как безопасно хранить секреты в Git-репозитории?"
+
+*   **Как работает:**
+    1.  В кластере устанавливается контроллер `Sealed Secrets`. У него есть пара ключей: публичный и приватный. Приватный ключ хранится только в кластере.
+    2.  Вы используете утилиту `kubeseal` и **публичный ключ** для шифрования вашего `Secret`. На выходе получается новый объект — `SealedSecret`.
+    3.  Этот `SealedSecret` **можно безопасно коммитить в Git**, так как он зашифрован и бесполезен без приватного ключа.
+    4.  Контроллер в кластере обнаруживает `SealedSecret`, расшифровывает его своим приватным ключом и создает нативный `Secret`.
+*   **Преимущества:**
+    *   Идеально для GitOps-подхода.
+    *   Секреты хранятся вместе с кодом приложения, но в безопасном виде.
+
+> **Подробнее:** [Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)
+
+## Общие рекомендации
+
+*   **Используйте RBAC:** Всегда ограничивайте доступ к `Secret` с помощью ролей и ролевых привязок. Только те пользователи и сервисные аккаунты, которым действительно нужен доступ, должны его иметь.
+*   **Принцип наименьших привилегий:** Предоставляйте подам доступ только к тем секретам, которые им необходимы.

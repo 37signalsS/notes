@@ -652,7 +652,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o /ap
 
 # --- Этап 2: Финальный образ ---
 # Используем scratch или alpine для минимального размера
-FROM alpine:latest
+FROM alpine:3.22.2
 
 # Копируем ТОЛЬКО скомпилированный бинарный файл из этапа "builder".
 COPY --from=builder /app/main /main
@@ -863,7 +863,7 @@ RUN if [ -n "$TEMP_BUILD_DEPS" ]; then \
 
 - Применять линтер **`hadolint`** для статического анализа `Dockerfile`. Он проверяет файл на соответствие лучшим практикам, находит ошибки и неидиоматичные конструкции. Пример запуска: `docker run --rm -i hadolint/hadolint < Dockerfile`.
 - Изучить рекомендации по [безопасности](./docker_security.md) и использовать специализированные инструменты:
-  - **`dockle`**: Проверяет образ на соответствие лучшим практикам безопасности (CIS Benchmarks), находит уязвимости и "толстые" слои. Пример: `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:latest my-image:latest`.
+  - **`dockle`**: Проверяет образ на соответствие лучшим практикам безопасности (CIS Benchmarks), находит уязвимости и "толстые" слои. Пример: `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v0.4.15 my-image:latest`.
   - **`docker-bench-security`**: Скрипт, который проверяет конфигурацию самого демона Docker.
 
 ### Интеграция с Kubernetes

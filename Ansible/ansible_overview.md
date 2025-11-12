@@ -2,6 +2,35 @@
 
 Ansible — это система с открытым исходным кодом для автоматизации развертывания программного обеспечения, управления конфигурацией и оркестрации. Он работает без агентов, подключаясь к узлам по SSH, и использует декларативные YAML-файлы (плейбуки) для описания желаемого состояния системы.
 
+## Установка Ansible
+
+Ansible — это мощный инструмент автоматизации, который позволяет управлять множеством серверов одновременно. Установка Ansible проста и занимает всего несколько шагов.
+
+### Debian/Ubuntu
+```bash
+sudo apt update
+sudo apt install -y software-properties-common
+sudo add-apt-repository --yes --update ppa:ansible/ansible
+sudo apt install -y ansible
+```
+*Использование официального PPA гарантирует получение свежей версии Ansible.*
+
+### CentOS/RHEL
+```bash
+sudo yum install -y epel-release
+sudo yum install -y ansible
+```
+
+### С помощью `pip` (универсальный способ)
+Этот способ позволяет установить последнюю версию Ansible в изолированное окружение.
+```bash
+python3 -m venv ansible_env
+source ansible_env/bin/activate
+pip install ansible
+```
+
+---
+
 ### Файл конфигурации (`ansible.cfg`)
 
 Для централизованного управления настройками создайте в корне проекта файл `ansible.cfg`.
