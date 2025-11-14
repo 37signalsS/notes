@@ -11,14 +11,10 @@
             "id": "69bbc69ca7f68b58",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Mikhail/Git/repository.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "repository"
+              "title": "New tab"
             }
           }
         ]
@@ -155,16 +151,49 @@
       "command-palette:Open command palette": false
     }
   },
-  "active": "5799a3a0ed7dfae4",
+  "active": "69bbc69ca7f68b58",
   "lastOpenFiles": [
+    "Mikhail/Git/repository.md",
+    "virtualbox.md",
+    "interview_and_work.md",
+    "devops_useful_links.md",
+    "Zabbix/zabbix_overview.md",
+    "Zabbix",
+    "WebServers/Nginx/nginx_tuning.md",
+    "WebServers/Nginx/nginx_troubleshooting.md",
+    "WebServers/Nginx/nginx_setup.md",
+    "WebServers/Nginx/nginx_load_balancing.md",
+    "WebServers/Nginx/nginx_concepts.md",
+    "WebServers/Concepts/web_server_hardening.md",
+    "WebServers/Concepts/https_with_certbot.md",
+    "WebServers/Apache/apache_setup.md",
+    "WebServers/Nginx",
+    "WebServers/Concepts",
+    "WebServers/Apache",
+    "WebServers",
+    "Vpn/zerotier.md",
+    "Vpn/wireguard.md",
+    "Vpn/tailscale.md",
+    "Vpn",
+    "VictoriaMetrics/victoria_metrics_overview.md",
+    "VictoriaMetrics",
+    "Vagrant/vagrant_overview.md",
+    "Vagrant",
+    "Security/Tools/security_tools.md",
+    "Security/Tools/openvas_installation_and_usage.md",
+    "Security/Resources/useful_links.md",
+    "Security/NetworkSecurity/iptables.md",
+    "Security/HashiCorp_Vault/vault_overview.md",
+    "Security/Concepts/steganography.md",
+    "Security/Concepts/oauth2_overview.md",
+    "Security/ApplicationSecurity/sql_injection.md",
+    "Security/Tools",
+    "Security/Resources",
+    "Kubernetes/Operations/troubleshooting_flowchart.png",
     "Mikhail/Pictures/photo_2025-04-09_10-19-02.jpg",
     "Mikhail/Pictures/photo_3_2025-04-14_08-24-00.jpg",
     "Mikhail/Pictures/2025-04-18_12-06-52.png",
     "Mikhail/Pictures/2025-04-16_20-29-26.png",
-    "Mikhail/Pictures/1024.jpeg",
-    "Mikhail/Linux/Права доступа.md",
-    "Mikhail/Linux/Файловая система.md",
-    "Mikhail/Повторения.md",
-    "Mikhail/Linux/Сети.md"
+    "Mikhail/Pictures/1024.jpeg"
   ]
 }
