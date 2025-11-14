@@ -1,0 +1,170 @@
+{
+  "main": {
+    "id": "635f4a9f9e5c7f35",
+    "type": "split",
+    "children": [
+      {
+        "id": "fd765009dd0001b9",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "69bbc69ca7f68b58",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Mikhail/Git/repository.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "repository"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "fa53d73e2abe3517",
+    "type": "mobile-drawer",
+    "children": [
+      {
+        "id": "5799a3a0ed7dfae4",
+        "type": "leaf",
+        "state": {
+          "type": "file-explorer",
+          "state": {
+            "sortOrder": "alphabetical",
+            "autoReveal": false
+          },
+          "icon": "lucide-folder-closed",
+          "title": "Files"
+        }
+      },
+      {
+        "id": "3d55e23b45d06c44",
+        "type": "leaf",
+        "state": {
+          "type": "search",
+          "state": {
+            "query": "",
+            "matchingCase": false,
+            "explainSearch": false,
+            "collapseAll": false,
+            "extraContext": false,
+            "sortOrder": "alphabetical"
+          },
+          "icon": "lucide-search",
+          "title": "Search"
+        }
+      },
+      {
+        "id": "2855db499a0d9c3c",
+        "type": "leaf",
+        "state": {
+          "type": "tag",
+          "state": {
+            "sortOrder": "frequency",
+            "useHierarchy": true,
+            "showSearch": false,
+            "searchQuery": ""
+          },
+          "icon": "lucide-tags",
+          "title": "Tags"
+        }
+      },
+      {
+        "id": "3e1135ff7f0caf24",
+        "type": "leaf",
+        "state": {
+          "type": "bookmarks",
+          "state": {},
+          "icon": "lucide-bookmark",
+          "title": "Bookmarks"
+        }
+      }
+    ],
+    "currentTab": 0
+  },
+  "right": {
+    "id": "bd566d2e616e2861",
+    "type": "mobile-drawer",
+    "children": [
+      {
+        "id": "58dad237c62e17f3",
+        "type": "leaf",
+        "state": {
+          "type": "backlink",
+          "state": {
+            "file": "Mikhail/Pictures/photo_2025-04-09_10-19-02.jpg",
+            "collapseAll": false,
+            "extraContext": false,
+            "sortOrder": "alphabetical",
+            "showSearch": false,
+            "searchQuery": "",
+            "backlinkCollapsed": false,
+            "unlinkedCollapsed": true
+          },
+          "icon": "links-coming-in",
+          "title": "Backlinks"
+        }
+      },
+      {
+        "id": "fe8343238d8c104d",
+        "type": "leaf",
+        "state": {
+          "type": "outgoing-link",
+          "state": {
+            "file": "Mikhail/Повторения.md",
+            "linksCollapsed": false,
+            "unlinkedCollapsed": true
+          },
+          "icon": "links-going-out",
+          "title": "Outgoing links"
+        }
+      },
+      {
+        "id": "d4ca0f7de1a3ecb9",
+        "type": "leaf",
+        "state": {
+          "type": "outline",
+          "state": {
+            "file": "Mikhail/Повторения.md",
+            "followCursor": false,
+            "showSearch": false,
+            "searchQuery": ""
+          },
+          "icon": "lucide-list",
+          "title": "Outline"
+        }
+      }
+    ],
+    "currentTab": 0
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "bases:Create new base": false,
+      "omnisearch:Omnisearch": false,
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false
+    }
+  },
+  "active": "5799a3a0ed7dfae4",
+  "lastOpenFiles": [
+    "Mikhail/Pictures/photo_2025-04-09_10-19-02.jpg",
+    "Mikhail/Pictures/photo_3_2025-04-14_08-24-00.jpg",
+    "Mikhail/Pictures/2025-04-18_12-06-52.png",
+    "Mikhail/Pictures/2025-04-16_20-29-26.png",
+    "Mikhail/Pictures/1024.jpeg",
+    "Mikhail/Linux/Права доступа.md",
+    "Mikhail/Linux/Файловая система.md",
+    "Mikhail/Повторения.md",
+    "Mikhail/Linux/Сети.md"
+  ]
+}
