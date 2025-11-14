@@ -148,7 +148,7 @@ docker run \
 
 Вместо использования `fluentd` как лог-драйвера, более надежный и гибкий подход — использовать его как **агент-сборщик**, который читает стандартные `json-file` логи, создаваемые Docker по умолчанию.
 
-**Схема:** `Приложение -> STDOUT/STDERR -> Docker (json-file) -> Fluentd (агент) -> Elasticsearch/etc.`
+**Схема:** `Приложение -> STDOUT/STDERR -> Docker (json-file) -> Fluentd (агент) -> [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)/etc.`
 
 **Преимущества:**
 - **Надежность и буферизация:** Docker стабильно пишет логи на локальный диск. Если Fluentd или сеть до ELK-стека недоступны, логи не теряются. Fluentd-агент продолжит чтение с места, на котором остановился, после восстановления связи.

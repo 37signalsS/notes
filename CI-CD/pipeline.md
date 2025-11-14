@@ -189,7 +189,7 @@ Concourse CI может быть установлен на заранее уст
 *   Файловые системы
 *   Docker-образы
 *   Объектные хранилища (GCS, S3)
-*   Postman, syslog, Elasticsearch
+*   Postman, syslog, [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)
 
 **Примеры использования в Docker:**
 

@@ -91,6 +91,8 @@ options ndots:5
 
 Пример `nslookup yandex.ru` с `tcpdump`:
 
+Для более детального анализа сетевого трафика, включая DNS-запросы, можно использовать `tcpdump` или Wireshark. Подробнее см. [Wireshark и анализ сетевого трафика](../../Networking/ServicesAndTools/wireshark_and_packet_capture.md).
+
 ```bash
 [root@centos-test /]# nslookup yandex.ru
 Server:    169.254.25.10

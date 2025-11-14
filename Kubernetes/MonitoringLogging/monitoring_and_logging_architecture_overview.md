@@ -260,7 +260,7 @@ journalctl -u docker
 
 ### Обзор систем централизованного логирования
 
-#### EFK Stack (Elasticsearch, Fluent Bit, Kibana)
+#### EFK Stack ([Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md), Fluent Bit, Kibana)
 Первая из них называется EFK (Elasticsearch, Fluent Bit и Kibana).
 
 ##### Fluent Bit vs Fluentd

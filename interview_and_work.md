@@ -75,7 +75,7 @@
 >     *   Консультировал коллег по любым вопросам, связанным с Linux, Docker и т.д.
 >     *   Участвовал в разработке архитектуры новых частей проекта.
 > *   **Настраивал и администрировал все, что связано с инфраструктурой:**
->     *   Работа с БД (PostgresQL-pgbouncer + keepalived, настройка репликации, настройка резервного копирования. Mongodb, Elasticsearch, Apache Cassandra).
+> *   **Работа с БД (PostgresQL-pgbouncer + keepalived, настройка репликации, настройка резервного копирования. Mongodb, [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md), Apache Cassandra).
 >     *   Администрирование web-серверов для dev/prod среды (Apache Tomcat писал скрипты, с помощью которых разработчики могли управлять состоянием приложений, Nginx, Haproxy).
 >     *   Настраивал и администрировал очереди (ActiveMQ, RabbitMQ, Apache Kafka).
 >

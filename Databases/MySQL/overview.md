@@ -397,3 +397,9 @@ max_binlog_size = 100M
 *   Создание и изменение структуры таблиц.
 *   Поиск по базе данных.
 
+---
+
+### Углубленные темы
+
+- **[Сравнение форков MySQL: Oracle vs Percona vs MariaDB](./mysql_forks_comparison.md)**
+- **[Запуск MySQL в Docker: Лучшие практики и производительность](./mysql_in_docker.md)**

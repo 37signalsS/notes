@@ -70,6 +70,8 @@
     *   **Декапсуляция:** Ваша система получает пакеты, извлекает из них данные, расшифровывает их и передает утилите `curl`.
     *   **Вывод:** `curl` выводит тело ответа (например, HTML-код страницы) в стандартный вывод (ваш терминал).
 
+Подробнее о `curl` и других утилитах, таких как `wget` и `httpie`, читайте в заметке о [HTTP-клиентах в Linux](../ServicesAndTools/linux_http_clients.md).
+
 
 ### Диагностика DNS: `dig`, `nslookup`, `host`
 
@@ -140,6 +142,34 @@ nslookup academy.networkchuck.com ns.cloudflare.com
 
 **Когда использовать:** Когда нужно проверить, какая DNS-запись реально существует на авторитативном сервере, или для отладки DNS.
 
+### Диагностика сетевых задержек с помощью `curl`
+
+`curl` умеет показывать время, затраченное на каждом этапе подключения (DNS, TCP, TLS), что очень полезно для выявления узких мест в производительности.
+
+```bash
+curl -o /dev/null -s -w \
+"DNS: %{time_namelookup}s\nTCP: %{time_connect}s\nTLS: %{time_appconnect}s\nStartTransfer: %{time_starttransfer}s\nTotal: %{time_total}s\n" \
+https://example.com
+```
+
+**Что показывает:**
+*   `DNS` — сколько ушло на резолв домена (`time_namelookup`)
+*   `TCP` — время установки соединения (`time_connect`)
+*   `TLS` — рукопожатие HTTPS (`time_appconnect`)
+*   `StartTransfer` — когда сервер начал отдавать ответ (`time_starttransfer`)
+*   `Total` — общее время запроса (`time_total`)
+
+**Советы по диагностике:**
+
+*   **Сброс DNS-кеша:** Если вы подозреваете, что кеш DNS мешает, можно сбросить его (для `systemd-resolved`):
+    ```bash
+    systemd-resolve --flush-caches
+    ```
+*   **Указание IP напрямую:** Чтобы исключить влияние DNS, можно указать IP-адрес сервера напрямую:
+    ```bash
+    curl --resolve example.com:443:1.2.3.4 https://example.com
+    ```
+
 10. **Трассировка сетевых маршрутов (`traceroute`, `mtr`)**
     **Traceroute** — является удобным инструментом для диагностики сетевых подключений, помогающий определить на каком узле возникают задержки или ограничения для прохождения трафика. При этом, интерпретировать результаты его работы не всегда просто из-за правил фильтрации, систем перенаправления и балансировки трафика.
 
@@ -159,6 +189,7 @@ nslookup academy.networkchuck.com ns.cloudflare.com
 ### Смотри также
 
 *   [Полезные ссылки и инструменты](../UsefulLinks/networking_useful_links.md)
+*   [Wireshark и TCPDump: Анализ Сетевого Трафика](../../Networking/Tools/wireshark_and_tcpdump.md)
 
 ---
 

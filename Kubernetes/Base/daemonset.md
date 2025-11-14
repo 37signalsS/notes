@@ -66,7 +66,7 @@ spec:
       - name: fluentd
         image: fluent/fluentd:v1.19.0-debian-1.0
         env:
-        - name: FLUENT_ELASTICSEARCH_HOST
+        - name: FLUENT_ELASTICSEARCH_HOST # Подробнее о настройке кластера Elasticsearch: [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)
           value: "elasticsearch.logging.svc.cluster.local"
         - name: FLUENT_ELASTICSEARCH_PORT
           value: "9200"

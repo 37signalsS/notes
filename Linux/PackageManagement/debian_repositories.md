@@ -50,4 +50,8 @@
     ```bash
     sudo apt update
     sudo apt install nodejs -y
+
+---
+**Связанные темы:**
+*   [Управление пакетами в Linux: RPM и DEB](./rpm_and_deb_packages.md)
     ```

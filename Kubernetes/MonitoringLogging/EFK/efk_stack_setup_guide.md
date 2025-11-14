@@ -2,7 +2,7 @@
 
 В этом руководстве рассматривается процесс установки и настройки стека для сбора и визуализации логов в кластере Kubernetes с использованием Elasticsearch, Fluent Bit и Kibana.
 
-## 1. Установка Elasticsearch
+## 1. Установка [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)
 
 Elasticsearch будет использоваться для хранения и индексации логов.
 

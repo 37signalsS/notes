@@ -8,7 +8,6 @@
 - Advanced Canvas
 - Better word count
 - Calendar
-- cMenu
 - Dataview
 - Editing toolbar
 - Excalidraw

@@ -117,6 +117,8 @@ sudo wg show
 
 ## Диагностика
 
+Для более детального анализа сетевого трафика, включая WireGuard, можно использовать `tcpdump` или Wireshark. Подробнее см. [Wireshark и анализ сетевого трафика](../../Networking/ServicesAndTools/wireshark_and_packet_capture.md).
+
 ```bash
 # Прослушивание трафика на интерфейсе wg0, порт 22 (SSH)
 sudo tcpdump -i wg0 port 22
