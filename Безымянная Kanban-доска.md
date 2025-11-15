@@ -39,6 +39,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,false,false,false],"show-checkboxes":false,"move-dates":true,"link-date-to-daily-note":true}
+{"kanban-plugin":"board","list-collapse":[false,false,false,false,false,false],"show-checkboxes":false,"move-dates":true,"link-date-to-daily-note":true,"show-relative-date":true}
 ```
 %%
