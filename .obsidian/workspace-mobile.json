@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "01c61131a72d56d1",
+        "id": "dfe63b259c99c7f7",
         "type": "tabs",
         "children": [
           {
-            "id": "963effd7faefe9b0",
+            "id": "17ea52cc9aec92ac",
             "type": "leaf",
             "state": {
               "type": "kanban",
@@ -107,7 +107,7 @@
         "state": {
           "type": "backlink",
           "state": {
-            "file": "Mikhail/Pictures/photo_2025-04-09_10-19-02.jpg",
+            "file": "Git/git_undoing_changes.md",
             "collapseAll": false,
             "extraContext": false,
             "sortOrder": "alphabetical",
@@ -165,8 +165,11 @@
       "obsidian-kanban:Create new board": false
     }
   },
-  "active": "963effd7faefe9b0",
+  "active": "17ea52cc9aec92ac",
   "lastOpenFiles": [
+    "Git/git_undoing_changes.md",
+    "Git/git_synchronization.md",
+    "Git/git_branching.md",
     "Безымянная Kanban-доска.md",
     "WebServers/Nginx/ssl_client_certificate_authentication.md",
     "WebServers/Nginx/secure_apt_repository_guide.md",
@@ -193,9 +196,6 @@
     "Networking/ServicesAndTools/wireshark_and_packet_capture.md",
     "Networking/ServicesAndTools/linux_http_clients.md",
     "Networking/Protocols/dns_protocol.md",
-    "Linux/Shell/bash_command_interpretation.md",
-    "Excalidraw/Drawing 2025-11-14 18.55.44.excalidraw.md",
-    "Excalidraw/Drawing 2025-11-14 12.49.35.excalidraw.md",
     "Excalidraw",
     "Elasticsearch",
     "Zabbix",
