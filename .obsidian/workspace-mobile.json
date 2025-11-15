@@ -4,30 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "7205d5e917e895a0",
+        "id": "01c61131a72d56d1",
         "type": "tabs",
         "children": [
           {
-            "id": "97c2259c9c765da6",
+            "id": "963effd7faefe9b0",
             "type": "leaf",
             "state": {
-              "type": "kanban",
-              "state": {
-                "file": "Безымянная Kanban-доска.md",
-                "kanbanViewState": {
-                  "kanban-plugin": "board",
-                  "list-collapse": [
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                  ]
-                }
-              },
-              "icon": "lucide-trello",
-              "title": "Безымянная Kanban-доска"
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -165,7 +152,7 @@
       "obsidian-kanban:Create new board": false
     }
   },
-  "active": "97c2259c9c765da6",
+  "active": "963effd7faefe9b0",
   "lastOpenFiles": [
     "Безымянная Kanban-доска.md",
     "WebServers/Nginx/ssl_client_certificate_authentication.md",
