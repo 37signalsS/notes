@@ -1,0 +1,135 @@
+# OpenTelemetry (OTel)
+
+**OpenTelemetry** — это открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (логов, метрик и трассировок). Проект является частью [Cloud Native Computing Foundation (CNCF)](https://www.cncf.io/) и находится в статусе *Incubating*.
+
+OTel возник в результате слияния двух популярных проектов: **OpenTracing** (предоставлял API для трассировки) и **OpenCensus** (предоставлял библиотеки для сбора метрик и трассировок). Цель OpenTelemetry — предоставить единый стандарт для инструментирования облачных приложений, чтобы разработчикам не приходилось привязываться к конкретному вендору мониторинга.
+
+---
+*Источник: Основано на материалах из вебинара [DevOps by Rebrain: Знакомство с Observability](../DevOps%20by%20Rebrain%EF%BC%9A%20%D0%97%D0%BD%D0%B0%D0%BA%D0%BE%D0%BC%D1%81%D1%82%D0%B2%D0%BE%20%D1%81%20Observability%20%5BuiHLYNQ6QzU%5D.txt).*
+
+## Ключевые компоненты OpenTelemetry
+
+### 1. Спецификация и API
+
+OpenTelemetry определяет стандартный набор API для всех трёх столпов наблюдаемости. Приложения, инструментированные с помощью OTel API, могут отправлять телеметрию в любую совместимую с OTel систему.
+
+### 2. SDK (Software Development Kits)
+
+Для каждого языка программирования (Java, Go, Python, .NET и др.) предоставляется SDK, который реализует API OpenTelemetry. SDK позволяет настраивать сбор и экспорт данных.
+
+### 3. Инструментация (Instrumentation)
+
+Это библиотеки, которые генерируют телеметрические данные для популярных фреймворков и библиотек. Инструментация бывает двух видов:
+*   **Автоматическая:** Не требует изменения кода приложения. Например, для Java существует специальный **Java-агент** (`javaagent`), который динамически инструментирует байт-код во время выполнения (`on-the-fly`). Он перехватывает вызовы известных библиотек и фреймворков (например, Spring MVC, JDBC, Kafka-клиенты) и автоматически создает спаны и собирает метрики. Это позволяет получить глубокую телеметрию из существующих приложений без переписывания кода.
+*   **Ручная:** Требует от разработчика явного вызова OTel API в коде для создания спанов, метрик или логов.
+
+### 4. Протокол OTLP (OpenTelemetry Protocol)
+
+**OTLP** — это основной протокол для передачи телеметрических данных между компонентами системы. Он является унифицированным и может передавать логи, метрики и трассировки. OTLP может работать поверх разных транспортных протоколов, включая gRPC и HTTP/protobuf.
+
+### 5. OpenTelemetry Collector
+
+**Collector** — это центральный компонент, который действует как гибкий и мощный конвейер для телеметрических данных. Он может получать данные в различных форматах (не только OTLP, но и Jaeger, Prometheus, FluentBit и др.), обрабатывать их и экспортировать в один или несколько бэкендов (например, в [Prometheus](../Prometheus/overview.md), [Loki](../Loki/loki_overview.md), [Tempo](../Tempo/tempo_overview.md) или коммерческие системы).
+
+Архитектура коллектора состоит из:
+*   **Receivers (Приёмники):** Принимают данные. Могут быть "push" (слушают порт, например, OTLP gRPC) или "pull" (собирают данные с эндпоинтов, как Prometheus).
+*   **Processors (Обработчики):** Выполняют обработку данных "на лету". Например, могут добавлять/изменять атрибуты, фильтровать данные, генерировать метрики из спанов (`spanmetrics`), принимать решения о сэмплировании или объединять данные в пакеты (`batch`).
+*   **Exporters (Экспортёры):** Отправляют данные в один или несколько бэкендов.
+*   **Pipelines (Конвейеры):** Определяют путь данных от приёмника через (опциональные) обработчики к экспортёру. Для каждого типа данных (трассировки, метрики, логи) настраивается свой конвейер.
+
+Использование Collector'а позволяет отделить логику сбора и обработки телеметрии от самих приложений, что делает систему более гибкой и управляемой. Например, можно изменить бэкенд для хранения трейсов, просто поменяв экспортёр в конфиге коллектора, не трогая при этом ни одно приложение.
+
+---
+
+## Практический пример: Инструментация запросов к PostgreSQL
+
+Одна из ключевых задач full-stack observability — связать трассировку запроса в приложении с соответствующими операциями в базе данных. Это позволяет точно определить, какой именно SQL-запрос стал причиной замедления и в контексте какой бизнес-операции он был выполнен.
+
+Механизм, позволяющий это сделать, — **SQLCommenter**. Идея состоит в том, чтобы добавлять к каждому SQL-запросу специальный комментарий, содержащий метаданные трассировки (`trace_id`, `span_id`).
+
+```sql
+SELECT * FROM users WHERE id = 123;
+-- Превращается в:
+SELECT * FROM users WHERE id = 123 /*traceparent='00-abc...-def...-01'*/;
+```
+Этот комментарий затем может быть "подхвачен" на стороне базы данных с помощью расширения [pg_tracing](../PostgreSQL/extensions/pg_tracing.md), которое продолжит цепочку трассировки внутри PostgreSQL.
+
+### Пример на Python (Psycopg2)
+
+Библиотека `opentelemetry-instrumentation-psycopg2` позволяет автоматически добавлять комментарии `sqlcommenter` к запросам.
+
+```python
+import psycopg2
+from opentelemetry import trace
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+
+# 1. Настройка OpenTelemetry SDK
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+
+# 2. Инструментация драйвера psycopg2 с включением sqlcommenter
+Psycopg2Instrumentor().instrument(enable_commenter=True)
+
+# 3. Получение трейсера
+tracer = trace.get_tracer(__name__)
+
+# 4. Выполнение запроса внутри спана
+with tracer.start_as_current_span("execute-query"):
+    conn = psycopg2.connect("dbname=test user=postgres")
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users;")
+    cur.fetchone()
+    cur.close()
+    conn.close()
+
+```
+В этом примере `Psycopg2Instrumentor` перехватит вызов `cur.execute` и автоматически добавит к SQL-запросу комментарий с `trace_id` текущего спана "execute-query".
+
+### Пример на Go (database/sql)
+
+В Go для этой цели используется библиотека-обертка `otel-sql`.
+
+```go
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/lib/pq" // Драйвер PostgreSQL
+	"github.com/uptrace/opentelemetry-go-extra/otelsql"
+	"go.opentelemetry.io/otel"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // 1. DSN для подключения к базе
+    dsn := "user=postgres dbname=test sslmode=disable"
+    
+    // 2. Оборачиваем стандартный драйвер с помощью otelsql
+    // Указываем, что нужно использовать формат sqlcommenter
+    db, err := otelsql.Open("postgres", dsn,
+        otelsql.WithSQLCommenter(true),
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    tracer := otel.Tracer("my-app")
+
+    // 3. Создаем спан и выполняем запрос в его контексте
+    ctx, span := tracer.Start(ctx, "select-users")
+    defer span.End()
+
+    rows, err := db.QueryContext(ctx, "SELECT * FROM users")
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+    
+    fmt.Println("Query executed successfully")
+}
+```
+Здесь `otelsql.Open` создает подключение, которое автоматически внедряет `trace_id` из контекста (`ctx`) в SQL-запросы в виде комментария `sqlcommenter`.

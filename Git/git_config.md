@@ -16,3 +16,9 @@ git config --global user.email "ваш@email.com"
 # Запомнить на 1 час
 git config --global credential.helper 'cache --timeout=3600'
 ```
+
+**Настройка редактора по умолчанию:**
+```bash
+# Использовать nano в качестве редактора для сообщений коммитов
+git config --global core.editor "nano"
+```

@@ -204,13 +204,150 @@ API_KEY=some_secret_key
 
 ## Продвинутые темы
 
+### Продвинутый пример: HA-кластер PostgreSQL с Patroni
+
+Docker Compose отлично подходит для моделирования сложных систем, таких как отказоустойчивый кластер PostgreSQL на базе [Patroni](../PostgreSQL/scaling.md#высокая-доступность-high-availability-с-patroni).
+
+В этом примере разворачивается полноценный кластер, состоящий из:
+-   **etcd**: Распределенное хранилище конфигурации, которое Patroni использует для выбора лидера и хранения состояния кластера.
+-   **HAProxy**: Балансировщик нагрузки, который направляет запросы на чтение-запись на текущий ведущий узел (master), а запросы только на чтение — на реплики.
+-   **Три узла Patroni**: Каждый узел запускает экземпляр PostgreSQL и управляется Patroni.
+
+```yaml
+# Пример docker-compose.yml для кластера Patroni
+version: '3.5'
+
+services:
+  etcd:
+    image: 'bitnami/etcd:3.4'
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+    ports:
+      - '2379:2379'
+
+  haproxy:
+    image: 'haproxy:2.1'
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - '5000:5000' # Порт для записи (мастер)
+      - '5001:5001' # Порт для чтения (реплики)
+      - '8008:8008' # Статистика HAProxy
+    depends_on:
+      - patroni1
+      - patroni2
+      - patroni3
+
+  patroni1:
+    image: 'bitnami/patroni:2.0'
+    environment:
+      - PATRONI_NAME=patroni1
+      - PATRONI_SCOPE=my-postgres-cluster
+      - PATroni_RESTAPI_URL=http://patroni1:8008
+      - PATRONI_ETCD_HOSTS=etcd:2379
+      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni1:5432
+      - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
+      - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni1
+    volumes:
+      - patroni_data1:/data/patroni1
+    depends_on:
+      - etcd
+
+  patroni2:
+    image: 'bitnami/patroni:2.0'
+    environment:
+      - PATRONI_NAME=patroni2
+      - PATRONI_SCOPE=my-postgres-cluster
+      - PATRONI_RESTAPI_URL=http://patroni2:8008
+      - PATRONI_ETCD_HOSTS=etcd:2379
+      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni2:5432
+      - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
+      - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni2
+    volumes:
+      - patroni_data2:/data/patroni2
+    depends_on:
+      - etcd
+
+  patroni3:
+    image: 'bitnami/patroni:2.0'
+    environment:
+      - PATRONI_NAME=patroni3
+      - PATRONI_SCOPE=my-postgres-cluster
+      - PATRONI_RESTAPI_URL=http://patroni3:8008
+      - PATRONI_ETCD_HOSTS=etcd:2379
+      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni3:5432
+      - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
+      - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni3
+    volumes:
+      - patroni_data3:/data/patroni3
+    depends_on:
+      - etcd
+
+volumes:
+  patroni_data1:
+  patroni_data2:
+  patroni_data3:
+```
+Этот пример демонстрирует мощь Docker Compose для оркестрации сложных, взаимозависимых сервисов в изолированном окружении.
+
 - **Масштабирование:** Запуск нескольких экземпляров одного сервиса:
 
   ```sh
   docker compose up -d --scale <имя-сервиса>=<количество>
   ```
 
-- **Секция `deploy`:** Используется для определения конфигурации развертывания в **Docker Swarm**, например, для настройки стратегии обновлений (`update_config`) или количества реплик. Большинство этих опций игнорируются обычным `docker compose up`.
+- **Секция `deploy`:**
+
+  Эта секция является ключевой при работе с **Docker Swarm** и используется исключительно командой `docker stack deploy`. Обычная команда `docker compose up` **полностью игнорирует** эту секцию.
+
+  Внутри `deploy` определяются все параметры, связанные с развертыванием, масштабированием и поведением сервиса в кластере.
+
+  **Основные параметры:**
+
+  *   `replicas`: Количество экземпляров (контейнеров) сервиса, которые должны быть запущены.
+  *   `update_config`: Стратегия выполнения обновлений (rolling updates).
+      *   `parallelism`: Сколько контейнеров обновлять одновременно.
+      *   `delay`: Задержка между обновлениями групп контейнеров.
+  *   `restart_policy`: Политика перезапуска в случае сбоя.
+  *   `placement`: Ограничения на размещение контейнеров (например, `constraints: [node.role == worker]`).
+  *   `resources`: Ограничения на потребление CPU и памяти.
+  *   `labels`: **Ключевой механизм для интеграции с другими системами**, такими как реверс-прокси [Traefik](../WebServers/Traefik/traefik_overview.md).
+
+  **Пример использования с Traefik:**
+
+  В этом примере метки (`labels`) сообщают Traefik, как маршрутизировать трафик на сервис `my-web-app`.
+
+  ```yaml
+  version: '3.8'
+  services:
+    my-web-app:
+      image: my-app:${APP_VERSION:-latest}
+      networks:
+        - traefik-public
+      deploy:
+        replicas: 3
+        update_config:
+          parallelism: 1
+          delay: 10s
+        labels:
+          # Включаем Traefik для этого сервиса
+          - "traefik.enable=true"
+          # Задаем правило маршрутизации по домену
+          - "traefik.http.routers.my-app.rule=Host(`app.example.com`)"
+          # Указываем, что роутер работает на HTTPS
+          - "traefik.http.routers.my-app.entrypoints=websecure"
+          # Включаем получение SSL-сертификата через Let's Encrypt
+          - "traefik.http.routers.my-app.tls.certresolver=myresolver"
+          # Указываем порт, на котором работает приложение внутри контейнера
+          - "traefik.http.services.my-app.loadbalancer.server.port=8000"
+
+  networks:
+    traefik-public:
+      external: true
+  ```
+
+  В этом примере также используется [интерполяция переменных](#интерполяция-использование-переменных-в-composeyml) для тега образа (`${APP_VERSION:-latest}`), что является стандартной практикой в CI/CD для развертывания конкретных версий приложения.
 
 - **Интерполяция: использование переменных в `compose.yml`**:
 

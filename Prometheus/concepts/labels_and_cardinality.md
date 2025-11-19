@@ -41,10 +41,10 @@
 **Пример плохого дизайна:**
 Предположим, у нас есть метрика `http_requests_total`.
 *   `http_requests_total{method="GET", status="200"}` — **Низкая кардинальность**. У нас ограниченное число методов и статусов.
-*   `http_requests_total{method="GET", user_id="1"}`
-*   `http_requests_total{method="GET", user_id="2"}`
-*   ...
-*   `http_requests_total{method="GET", user_id="100000"}` — **Высокая кардинальность**. Если у вас 100 000 пользователей, вы создадите 100 000 временных рядов только для GET-запросов.
+*   `http_requests_total{method="GET", path="/api/users/1"}`
+*   `http_requests_total{method="GET", path="/api/users/2"}`
+    ...
+    `http_requests_total{method="GET", path="/api/users/100000"}` — **Высокая кардинальность**. Если у вас 100 000 пользователей и вы включаете их ID в URL, вы создадите 100 000 временных рядов. Вместо этого URL должен быть шаблонизирован: `http_requests_total{method="GET", path="/api/users/:id"}`.
 
 **Что МОЖНО использовать в лейблах:**
 *   Имена сервисов, джоб (`job="node-exporter"`).

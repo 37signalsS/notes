@@ -146,6 +146,115 @@ dpkg -l my-package
 sudo dpkg -r my-package
 ```
 
+
+## Практический пример: Упаковка веб-сервера на Go
+
+Рассмотрим более сложный пример, упаковав простое веб-приложение, написанное на Go.
+
+### 1. Исходный код приложения
+
+Создадим файл `main.go`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprint(w, "Hello from my-package!")
+}
+
+func main() {
+	http.HandleFunc("/", handler)
+	fmt.Println("Starting web server on :8080")
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		fmt.Println("Server failed:", err)
+	}
+}
+```
+
+### 2. Сборка бинарного файла
+
+Скомпилируем приложение. В результате будет создан исполняемый файл `go-server`.
+
+```bash
+go build -o go-server main.go
+```
+
+### 3. Подготовка структуры пакета
+
+Создадим структуру директорий для пакета `go-server` версии `1.0-1`.
+
+```bash
+# Создаем корневую директорию пакета
+mkdir -p go-server-1.0-1/DEBIAN
+mkdir -p go-server-1.0-1/usr/local/bin
+
+# Копируем бинарный файл в пакет
+cp go-server go-server-1.0-1/usr/local/bin/
+
+# Устанавливаем права на исполнение
+chmod +x go-server-1.0-1/usr/local/bin/go-server
+```
+*Примечание: Размещение в `/usr/local/bin` является хорошей практикой для ПО, установленного вручную, чтобы избежать конфликтов с пакетами из официальных репозиториев, которые обычно используют `/usr/bin`.*
+
+### 4. Создание файла `control`
+
+Теперь создадим файл `go-server-1.0-1/DEBIAN/control`. Важный момент — поле `Installed-Size`, которое содержит **приблизительный** размер пакета после установки **в килобайтах**. Его можно вычислить с помощью `du`.
+
+```bash
+# Вычисляем размер директории с файлами пакета в килобайтах
+du -sk go-server-1.0-1/usr | cut -f1
+```
+
+Примерное содержимое файла `control`:
+
+```
+Package: go-server
+Version: 1.0-1
+Section: web
+Priority: optional
+Architecture: amd64
+Depends: libc6
+Maintainer: Your Name <you@example.com>
+Description: A simple Go web server
+ Installed-Size: 2048
+```
+*Замените `Installed-Size` на значение, полученное от `du`, и укажите свои данные в `Maintainer`.*
+
+### 5. Сборка и проверка
+
+Собираем пакет:
+
+```bash
+dpkg-deb --build go-server-1.0-1
+```
+
+Будет создан файл `go-server-1.0-1.deb`. Установим и проверим его:
+
+```bash
+# Установка пакета
+sudo dpkg -i go-server-1.0-1.deb
+
+# Проверяем, что файл установлен
+which go-server
+# /usr/local/bin/go-server
+
+# Запускаем сервер в фоновом режиме
+go-server &
+
+# Проверяем ответ
+curl http://localhost:8080
+# Hello from my-package!
+
+# Удаляем пакет
+sudo dpkg -r go-server
+```
+
 ---
 **Связанные темы:**
 *   [Управление пакетами в Linux: RPM и DEB](./rpm_and_deb_packages.md)

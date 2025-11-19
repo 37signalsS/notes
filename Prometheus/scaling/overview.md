@@ -36,7 +36,7 @@ Prometheus гениален в своей простоте, но его архи
 
 **Популярные решения для долгосрочного хранения (Long-Term Storage):**
 *   **VictoriaMetrics**
-*   **Grafana Mimir**
+*   **[Grafana Mimir](../Mimir/mimir_overview.md)**
 *   **Thanos**
 
 **Преимущества:**

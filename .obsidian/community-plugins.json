@@ -1,4 +1,16 @@
 [
   "omnisearch",
-  "obsidian-kanban"
+  "obsidian-kanban",
+  "obsidian-tasks-plugin",
+  "dataview",
+  "better-word-count",
+  "auto-card-link",
+  "editing-toolbar",
+  "obsidian-excalidraw-plugin",
+  "file-explorer-note-count",
+  "obsidian-icon-folder",
+  "url-into-selection",
+  "pomodoro-timer",
+  "obsidian-reminder-plugin",
+  "share-note"
 ]

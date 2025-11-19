@@ -338,3 +338,91 @@ ansible-playbook my_playbook.yml --step
   register: file_check
   changed_when: false # Не помечать как 'changed'
 ```
+
+---
+
+## Пример: Управление контейнерами Docker через systemd
+
+Для управления множеством контейнеров как сервисов `systemd` целесообразно использовать системы управления конфигурацией, такие как Ansible. Это позволяет автоматизировать создание, настройку и запуск юнитов, а также использовать шаблоны для генерации однотипных конфигураций.
+
+#### Шаблон юнита (Jinja2)
+
+Можно создать универсальный шаблон `container.service.j2` для генерации юнитов. Этот шаблон может динамически подставлять параметры контейнера: имя, образ, порты, тома и переменные окружения.
+
+```j2
+[Unit]
+Description={{ item.name }} container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/usr/bin/docker stop {{ item.name }}
+ExecStartPre=-/usr/bin/docker rm {{ item.name }}
+ExecStart=/usr/bin/docker run --rm --name {{ item.name }} \
+{% if item.ports is defined %}
+    {% for port in item.ports %}
+    -p {{ port }} \
+    {% endfor %}
+{% endif %}
+{% if item.volumes is defined %}
+    {% for volume in item.volumes %}
+    -v {{ volume }} \
+    {% endfor %}
+{% endif %}
+{% if item.env is defined %}
+    {% for var in item.env %}
+    -e "{{ var }}" \
+    {% endfor %}
+{% endif %}
+    {{ item.image }}
+ExecStop=/usr/bin/docker stop {{ item.name }}
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Переменные Ansible
+
+В Ansible переменные для каждого контейнера можно описать в виде списка словарей, что делает конфигурацию наглядной и легко расширяемой.
+
+**Пример (`vars/main.yml`):**
+```yaml
+containers:
+  - name: app-nginx
+    image: nginx:1.25
+    ports:
+      - "8080:80"
+  - name: app-db
+    image: mysql:8.0
+    volumes:
+      - "/opt/mysql/data:/var/lib/mysql"
+    env:
+      - "MYSQL_ROOT_PASSWORD=supersecret"
+```
+
+#### Задачи Ansible
+
+Задача в плейбуке Ansible будет использовать этот шаблон для создания `.service` файлов для каждого контейнера из списка, перезагружать конфигурацию `systemd` и запускать сервисы.
+
+```yaml
+- name: Create systemd unit files for containers
+  ansible.builtin.template:
+    src: container.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ containers }}"
+  notify: Reload systemd
+
+- name: Start and enable container units
+  ansible.builtin.systemd:
+    name: "{{ item.name }}"
+    state: restarted
+    enabled: yes
+  loop: "{{ containers }}"
+```
+*Обработчик `Reload systemd` должен содержать задачу `ansible.builtin.systemd: daemon_reload: yes`.*
+
+Такой подход позволяет централизованно и декларативно управлять жизненным циклом контейнеров, интегрируя их в общую систему управления службами хоста.
