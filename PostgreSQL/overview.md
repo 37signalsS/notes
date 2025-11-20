@@ -10,6 +10,9 @@ PostgreSQL — это мощная, объектно-реляционная си
 - **[Развертывание в Kubernetes с CloudNativePG](./postgresql_on_kubernetes_with_cloudnativepg.md)**
   - Управление жизненным циклом кластера PostgreSQL в Kubernetes с помощью оператора CloudNativePG.
 
+- **[Управление схемами и версионирование баз данных](./schema_migrations_and_versioning.md)**
+  - Стратегии и инструменты для версионирования и миграции схем данных, включая Atlas, SchemaHero и Bytebase.
+
 - **[Анализ производительности: рабочий процесс](./performance_analysis_workflow.md)**
   - Пошаговое руководство по поиску и устранению узких мест производительности.
 

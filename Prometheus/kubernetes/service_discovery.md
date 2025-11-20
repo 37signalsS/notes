@@ -66,9 +66,54 @@ Prometheus поддерживает различные механизмы Servic
 
 ---
 
-## Практические примеры
+## Упрощенное обнаружение через Prometheus Operator (`ServiceMonitor`)
 
-### 1. Сбор метрик с Kubernetes API-серверов
+Хотя `kubernetes_sd_configs` и `relabel_configs` являются мощными нативными инструментами Prometheus, их настройка может быть сложной и громоздкой. В экосистеме `kube-prometheus-stack` эту задачу решает **Prometheus Operator** с помощью Custom Resource Definition (CRD) под названием `ServiceMonitor`.
+
+`ServiceMonitor` — это высокоуровневая абстракция, которая позволяет декларативно описать, какие сервисы нужно мониторить.
+
+**Преимущества использования `ServiceMonitor`:**
+*   **Простота:** Вместо написания сложных правил `relabel`, вы создаете простой YAML-манифест.
+*   **Kubernetes-native:** Управление мониторингом происходит через стандартные `kubectl apply`, что идеально вписывается в GitOps-подход.
+*   **Автоматизация:** Prometheus Operator берет на себя всю работу по генерации и обновлению конфигурации Prometheus.
+
+### Принцип работы
+
+1.  Вы создаете `ServiceMonitor`, в котором указываете, за сервисами с какими **лейблами** (`selector`) и в каких **пространствах имен** (`namespaceSelector`) нужно следить.
+2.  Prometheus Operator обнаруживает этот `ServiceMonitor`.
+3.  Оператор автоматически генерирует соответствующий `scrape_config` для Prometheus, включая все необходимые `relabel_configs` для выбора нужных подов на основе `Endpoints` сервиса.
+4.  Конфигурация Prometheus автоматически обновляется.
+
+### Пример манифеста `ServiceMonitor`
+
+Предположим, у вас есть приложение, чей `Service` имеет лейбл `app: my-app`, и метрики отдаются на порту с именем `web`.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-app-monitor
+  labels:
+    # Лейбл, по которому сам Prometheus Operator находит этот ServiceMonitor
+    release: prometheus 
+spec:
+  selector:
+    matchLabels:
+      app: my-app # 1. Ищем сервисы с этим лейблом
+  namespaceSelector:
+    matchNames:
+      - production # 2. Только в этом namespace
+  endpoints:
+  - port: web # 3. Собираем метрики с порта с именем 'web'
+    interval: 15s
+    path: /metrics
+```
+
+Создав этот ресурс, вы даете команду оператору автоматически добавить все поды сервиса `my-app` в цели для сбора метрик, без необходимости вручную прописывать `relabel_configs`.
+
+## Практические примеры нативной конфигурации
+
+Следующие примеры демонстрируют, как настраивать Service Discovery с использованием `kubernetes_sd_configs` напрямую. Это полезно для понимания низкоуровневых механизмов, которые Prometheus Operator автоматизирует.
 
 **Задача:** Динамически находить и мониторить все экземпляры Kubernetes API-сервера.
 
