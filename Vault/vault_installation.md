@@ -2,6 +2,9 @@
 
 Vault — инструмент от HashiCorp для безопасного хранения и доступа к секретам.
 
+См. также:
+*   [Интеграция Vault с GitLab CI на Kubernetes](./vault_gitlab_integration_kubernetes.md)
+
 ## 1. Загрузка и установка
 
 1.  **Скачайте бинарный файл** с [официального сайта](https://developer.hashicorp.com/vault/downloads).

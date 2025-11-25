@@ -98,8 +98,6 @@ ArgoCD поддерживает сложные стратегии разверт
 
 ## 3. Практический Пример: Установка и Настройка ArgoCD
 
-Вебинар продемонстрировал следующий рабочий процесс и практические шаги по настройке ArgoCD.
-
 ### 3.1. Подготовка Стенда
 
 1.  **Локальный Kubernetes-кластер:** Для тестирования удобно использовать MiniKube (запущенный через Docker Desktop) или Kind.
@@ -113,14 +111,19 @@ ArgoCD поддерживает сложные стратегии разверт
 ### 3.2. Установка ArgoCD
 
 1.  **Создание Namespace для ArgoCD:** Рекомендуется устанавливать ArgoCD в отдельный Namespace для изоляции.
+
     ```bash
     kubectl create namespace argocd
     ```
+
 2.  **Развертывание ArgoCD:** Применение официального YAML-манифеста в кластере.
+
     ```bash
     kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
     ```
+
 3.  **Проверка статуса подов ArgoCD:** Ожидание запуска всех подов в Namespace `argocd`.
+
     ```bash
     kubectl get pods -n argocd
     ```
@@ -128,39 +131,55 @@ ArgoCD поддерживает сложные стратегии разверт
 ### 3.3. Доступ к ArgoCD UI
 
 1.  **Проброс портов:** Для доступа к веб-интерфейсу ArgoCD через локальный адрес.
+
     ```bash
     kubectl port-forward svc/argocd-server -n argocd 8080:443
     ```
+
     (Интерфейс будет доступен по `https://localhost:8080`, нужно будет игнорировать предупреждения о самоподписанном сертификате).
+
 2.  **Получение административного пароля:** Извлечение автоматически сгенерированного пароля из секрета Kubernetes.
+
     ```bash
     kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
     ```
+
 3.  **Вход в UI:** Открытие `https://localhost:8080` в браузере, использование `admin` в качестве логина и полученного пароля. Рекомендуется сменить пароль после первого входа.
 
 ### 3.4. Установка и Настройка ArgoCD CLI (argocd)
 
 1.  **Скачивание ArgoCD CLI:**
+
     ```bash
     curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
     ```
+
     (Для других ОС выберите соответствующую версию.)
+
 2.  **Установка прав на выполнение:**
+
     ```bash
     chmod +x argocd-linux-amd64
     ```
+
 3.  **Перемещение в PATH:**
+
     ```bash
     sudo mv argocd-linux-amd64 /usr/local/bin/argocd
     ```
+
 4.  **Проверка версии:**
+
     ```bash
     argocd version
     ```
+
 5.  **Логин в ArgoCD через CLI:**
+
     ```bash
     argocd login localhost:8080 --username admin
     ```
+
     (Используйте полученный ранее пароль. CLI достаточно дружелюбен и поддерживает табуляцию.)
 
 ### 3.5. Добавление Git-репозитория в ArgoCD
@@ -168,6 +187,7 @@ ArgoCD поддерживает сложные стратегии разверт
 ArgoCD должен знать, из каких репозиториев брать манифесты. Репозитории можно добавлять с использованием различных методов аутентификации.
 
 1.  **Добавление репозитория через CLI (примеры):**
+
     *   **Публичный репозиторий:**
         ```bash
         argocd repo add https://github.com/argoproj/argocd-example-apps.git
@@ -182,10 +202,13 @@ ArgoCD должен знать, из каких репозиториев бра�
         argocd repo add https://gitlab.com/my-group/my-repo.git --username <USERNAME> --password <PASSWORD>
         ```
     *   **Использование токенов:** Токены (например, для GitHub или GitLab) позволяют выдавать более гранулированные права доступа, что повышает безопасность.
+
 2.  **Проверка статуса репозитория:**
+
     ```bash
     argocd repo list
     ```
+
     Убедитесь, что статус `Status: Successful`.
 
 ### 3.6. Создание и Синхронизация Приложения
@@ -193,7 +216,9 @@ ArgoCD должен знать, из каких репозиториев бра�
 ArgoCD Application — это Kubernetes-ресурс, который описывает, откуда брать конфигурацию приложения и куда его развертывать.
 
 1.  **Подготовка манифеста `Application`:** Создайте YAML-файл, например `my-application.yaml`, используя структуру из раздела 2.3.
+
     Пример содержимого `my-application.yaml`:
+
     ```yaml
     apiVersion: argoproj.io/v1alpha1
     kind: Application
@@ -216,18 +241,26 @@ ArgoCD Application — это Kubernetes-ресурс, который описы
         syncOptions:
         - CreateNamespace=true
     ```
+
 2.  **Развертывание приложения (Application) в ArgoCD:**
+
     *   **Через `kubectl`:** Примените манифест `Application`.
+
         ```bash
         kubectl apply -f my-application.yaml
         ```
+
     *   **Через ArgoCD CLI:**
+
         ```bash
         argocd app create guestbook-app --repo https://github.com/argoproj/argocd-example-apps.git --path guestbook --dest-server https://kubernetes.default.svc --dest-namespace default --sync-policy Automated --self-heal --prune --upsert
         ```
+
 3.  **Наблюдение за Развертыванием:**
+
     *   **Через UI:** Отслеживание состояния приложения в веб-интерфейсе ArgoCD.
     *   **Через CLI:**
+
         ```bash
         argocd app get guestbook-app
         argocd app list
@@ -248,10 +281,13 @@ ArgoCD Application — это Kubernetes-ресурс, который описы
 *   **Конфликты ресурсов:** Используйте `argocd app diff <app_name>` для просмотра различий между Git и состоянием кластера.
 *   **"Self-Healing" и "Prune":** Параметр `selfHeal: true` восстанавливает ресурсы, удаленные вручную из кластера. Параметр `prune: true` удаляет ресурсы из кластера, которые больше не присутствуют в Git-репозитории.
 *   **Удаление Application:** Если необходимо удалить приложение и все его ресурсы:
+
     ```bash
     argocd app delete <app_name> --cascade=true
     ```
+
     Или, если `Application` был создан через `kubectl apply -f`, то:
+    
     ```bash
     kubectl delete -f my-application.yaml
     ```

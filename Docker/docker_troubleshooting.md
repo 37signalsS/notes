@@ -28,6 +28,7 @@ sudo nsenter --target $PID --mount --uts --ipc --net --pid
 ### `docker exec` с другим пользователем
 
 Если в образе есть shell, но он недоступен текущему пользователю, попробуйте зайти как `root`:
+
 ```sh
 docker exec -it --user root <container_name> /bin/sh
 ```
@@ -37,11 +38,14 @@ docker exec -it --user root <container_name> /bin/sh
 Запуск временного контейнера с полным набором утилит в пространствах имён целевого контейнера.
 
 *   **Анализ сети:**
+
     ```sh
     # nicolaka/netshoot содержит множество сетевых утилит (ss, tcpdump и т.д.)
     docker run -it --rm --network=container:<target_container_name> nicolaka/netshoot
     ```
+
 *   **Анализ процессов:**
+
     ```sh
     # Позволяет видеть процессы целевого контейнера (ps, top, strace)
     docker run -it --rm --pid=container:<target_container_name> alpine
@@ -50,6 +54,7 @@ docker exec -it --user root <container_name> /bin/sh
 ### Копирование файлов с помощью `docker cp`
 
 Для анализа логов или конфигураций просто скопируйте их на хост:
+
 ```sh
 docker cp <container_name>:/path/to/file /local/path/
 ```
@@ -57,6 +62,7 @@ docker cp <container_name>:/path/to/file /local/path/
 ### Использование `docker debug`
 
 Эта команда (доступна в Docker Desktop версии 4.27.0 и выше) является современным решением для отладки. Она создает копию контейнера, но с возможностью переопределить `entrypoint` или добавить инструменты.
+
 ```sh
 # Создаст копию контейнера my-app и запустит в ней /bin/sh из образа alpine
 docker debug my-app -it --image=alpine --entrypoint=/bin/sh
@@ -91,6 +97,7 @@ CMD ["my-glibc-app"]
 **Проблема:** Ваши привычные alias'ы и функции из `~/.bashrc` не работают внутри контейнера.
 
 **Решение:** Смонтировать `bashrc` с хоста в контейнер при запуске.
+
 ```sh
 docker run -it \
   -v ~/.bashrc:/root/.bashrc \
@@ -149,6 +156,7 @@ docker events --filter container=<your_container_id>
 В старых версиях Docker на CentOS 7 и RHEL 7 по умолчанию использовался драйвер хранения `devicemapper`. Без дополнительной настройки он работал в режиме `loopback` (`loop-lvm`), который **категорически не подходил для production-сред**.
 
 **Симптомы:**
+
 *   Крайне низкая производительность операций ввода-вывода (I/O) внутри контейнеров.
 *   Постепенная деградация производительности файловой системы, вплоть до полной остановки.
 *   Нестабильная работа и риск потери данных.

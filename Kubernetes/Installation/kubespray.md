@@ -2,8 +2,6 @@
 
 Kubespray — это проект с открытым исходным кодом, который объединяет **Ansible** и **kubeadm** для автоматизации процесса установки и управления жизненным циклом кластеров Kubernetes.
 
-## Основная идея
-
 В то время как `kubeadm` является инструментом **для инициализации отдельных узлов кластера**, Kubespray автоматизирует выполнение команд `kubeadm` на всех хостах (мастер- и рабочих узлах) с помощью Ansible-плейбуков. Это позволяет декларативно описывать состояние кластера и применять его к целевым серверам.
 
 ## Ключевые возможности
@@ -30,11 +28,15 @@ Kubespray — это проект с открытым исходным кодо�
 После клонирования директории `kubespray` необходимо установить зависимости.
 
 1.  Найдите файл `requirements.txt`.
+
 2.  Обновите `pip`:
+
     ```bash
     pip install --upgrade pip
     ```
+
 3.  Установите зависимости:
+
     ```bash
     pip install -r requirements.txt
     ```
@@ -42,9 +44,11 @@ Kubespray — это проект с открытым исходным кодо�
 ### Конфигурация Inventory
 
 1.  Скопируйте пример inventory из `inventory/sample` в новую директорию, например, `inventory/my-cluster`.
+
     ```bash
     cp -rfp inventory/sample inventory/my-cluster
     ```
+
 2.  Отредактируйте файл `inventory/my-cluster/inventory.ini`.
 
 #### Пример inventory.ini
@@ -91,6 +95,7 @@ kube_node
 *   **Для конкретной группы:** Для группы `etcd` переменные будут находиться в `group_vars/etcd.yml` или в каталоге `group_vars/etcd/`.
 
 #### `group_vars/all/all.yml`
+
 ```yaml
 # Позволяет kubelet подгружать необходимые модули ядра
 kubelet_load_modules: true
@@ -103,12 +108,14 @@ kube_read_only_port: 10255
 ```
 
 #### `group_vars/all/docker.yml`
+
 ```yaml
 # Устанавливает `overlay2` как драйвер хранилища для Docker
 docker_storage_options: -s overlay2
 ```
 
 #### `group_vars/all/download.yml`
+
 ```yaml
 # Оптимизация загрузки: файлы и образы скачиваются один раз на один узел,
 # а затем копируются на остальные узлы кластера.
@@ -116,6 +123,7 @@ download_run_once: true
 ```
 
 #### `group_vars/etcd.yml`
+
 ```yaml
 # Уменьшает количество записей в журнале операций, хранимых в памяти,
 # для снижения потребления памяти etcd.
@@ -129,6 +137,7 @@ etcd_memory_limit: 0
 ```
 
 #### `group_vars/k8s-cluster/k8s-cluster.yml`
+
 В этом файле настраиваются ключевые параметры самого кластера Kubernetes.
 
 ```yaml
@@ -162,6 +171,7 @@ kubelet_authorization_mode_webhook: true
 ```
 
 #### `group_vars/k8s-cluster/k8s-net-flannel.yml`
+
 Здесь содержатся настройки для сетевого плагина Flannel.
 
 ```yaml
@@ -188,6 +198,7 @@ ansible-playbook cluster.yml \
 ```
 
 Разберем команду:
+
 *   `ansible-playbook cluster.yml`: Запускает выполнение плейбука.
 *   `-i inventory/my-cluster/inventory.ini`: Указывает путь к вашему файлу инвентаря.
 *   `-u myuser` или `--user=myuser`: Задает имя пользователя для SSH-подключения к узлам.
@@ -203,6 +214,7 @@ ansible-playbook cluster.yml \
 1.  **Найдите файл kubeconfig:** Он будет находиться в директории `inventory/имя_вашего_кластера/artifacts/admin.conf`.
 
 2.  **Выполните команду для проверки статуса узлов:** Используйте `kubectl`, указав путь к вашему файлу конфигурации.
+
     ```bash
     kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
     ```
@@ -210,6 +222,7 @@ ansible-playbook cluster.yml \
 3.  **Проанализируйте результат:** В выводе вы должны увидеть все узлы вашего кластера со статусом `Ready`.
 
 4.  **(Опционально) Установите переменную окружения:** Чтобы не указывать флаг `--kubeconfig` каждый раз, можно экспортировать переменную окружения `KUBECONFIG`.
+
     ```bash
     export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
     ```
@@ -222,6 +235,7 @@ Kubespray предоставляет отдельные плейбуки для 
 
 1.  **Обновите inventory:** Добавьте новые узлы в ваш inventory-файл (например, `inventory/my-cluster/inventory.ini`) в группу `[kube_node]`.
 2.  **Запустите плейбук `scale.yml`:** Этот плейбук добавит новые рабочие узлы в существующий кластер.
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini scale.yml
     ```
@@ -232,6 +246,7 @@ Kubespray предоставляет отдельные плейбуки для 
 
 1.  **Обновите inventory:** Добавьте новые master-узлы в inventory-файл в группы `[kube_control_plane]` и `[etcd]`.
 2.  **Запустите плейбук `cluster.yml`:** В отличие от добавления worker-ов, для добавления master-узлов используется основной плейбук `cluster.yml`, который применяет новую конфигурацию ко всему кластеру.
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
     ```
@@ -243,10 +258,13 @@ Kubespray предоставляет отдельные плейбуки для 
 Перед обновлением необходимо выяснить, до какой максимальной версии Kubernetes может быть обновлен кластер с вашей текущей версией Kubespray. Эта информация содержится в файле с контрольными суммами компонентов.
 
 1.  Перейдите в директорию роли `download`:
+
     ```bash
     cd roles/download/defaults
     ```
+
 2.  Откройте файл `main.yml` и найдите переменную `kubelet_checksums`. В ней перечислены все доступные для скачивания версии.
+
     ```bash
     cat main.yml | grep kubelet_checksums
     ```
@@ -256,13 +274,17 @@ Kubespray предоставляет отдельные плейбуки для 
 ### Процесс обновления
 
 1.  **Измените версию:** В конфигурационном файле (например, `group_vars/k8s-cluster/k8s-cluster.yml`) укажите новую целевую версию Kubernetes в переменной `kube_version`.
+
     ```yaml
     kube_version: v1.19.0
     ```
+
 2.  **Запустите плейбук `upgrade-cluster.yml`:** Из корневой директории Kubespray выполните команду:
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini upgrade-cluster.yml
     ```
+
     > **Важное замечание:** В отличие от `cluster.yml`, плейбук `upgrade-cluster.yml` выполняет задачи последовательно на каждом узле, а не параллельно. Это обеспечивает более безопасный и контролируемый процесс обновления.
 
 ### Проверка после обновления
@@ -270,17 +292,23 @@ Kubespray предоставляет отдельные плейбуки для 
 После завершения работы плейбука `upgrade-cluster.yml`, необходимо убедиться, что все компоненты кластера успешно обновились.
 
 1.  **Проверка версии API Server:** Команда `kubectl version` покажет версию сервера, которая должна соответствовать целевой.
+
     ```bash
     kubectl version
     ```
+
 2.  **Проверка версии `kubelet` на узлах:** `kubectl get nodes` покажет версии всех worker-нод.
+
     ```bash
     kubectl get nodes
     ```
+
 3.  **Проверка версий компонентов Control Plane:** Образы и версии ключевых компонентов (`kube-apiserver`, `kube-scheduler` и т.д.) можно проверить через `describe` их подов в пространстве имен `kube-system`.
+
     ```bash
     kubectl describe pod <pod-name> -n kube-system
     ```
+
     В выводе команды нужно смотреть на версию используемого образа (`Image`).
 
 ### Возможные проблемы и важные моменты
@@ -302,20 +330,24 @@ Kubespray предоставляет отдельные плейбуки для 
 На примере стандартной установки можно увидеть следующие компоненты:
 
 *   **Control Plane компоненты (Static Pods):**
+
     *   `kube-apiserver-*`: API-сервер Kubernetes, главная точка входа для управления кластером.
     *   `kube-controller-manager-*`: Менеджер контроллеров, который следит за состоянием кластера (например, за репликами, узлами).
     *   `kube-scheduler-*`: Планировщик, который распределяет поды по узлам кластера.
 
 *   **Сетевые компоненты:**
+
     *   `kube-flannel-*`: Поды сетевого плагина Flannel, который обеспечивает оверлейную сеть для коммуникации между подами.
     *   `kube-proxy-*`: Компонент, который управляет сетевыми правилами на каждом узле, обеспечивая маршрутизацию трафика к сервисам.
 
 *   **DNS и сервисы:**
+
     *   `coredns-*`: Основной DNS-сервер кластера, отвечающий за разрешение имен сервисов.
     *   `dns-autoscaler`: Автоматически масштабирует количество подов CoreDNS в зависимости от нагрузки.
     *   `nodelocaldns-*`: Кэширующий DNS-агент на каждом узле для повышения производительности и надежности DNS-запросов.
 
 *   **Дополнительные компоненты (Addons):**
+
     *   `kubernetes-dashboard-*`: Веб-интерфейс для управления кластером.
     *   `kubernetes-metrics-scraper-*`: Сборщик метрик для Kubernetes Dashboard.
     *   `nginx-proxy-ingress-*`: Ingress-контроллер на базе Nginx для управления внешним доступом к сервисам кластера.

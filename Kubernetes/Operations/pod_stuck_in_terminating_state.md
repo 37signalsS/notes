@@ -5,6 +5,7 @@
 ### Причина: блокировка при завершении работы
 
 Когда Kubernetes удаляет под, `kubelet` на узле выполняет последовательность действий по его корректному завершению:
+
 1.  Отправляет процессу в контейнере сигнал `SIGTERM`.
 2.  Ожидает `terminationGracePeriodSeconds` (по умолчанию 30 секунд).
 3.  Если процесс не завершился, отправляет `SIGKILL`.
@@ -35,6 +36,7 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
 1.  **Подключитесь к узлу**, где был запланирован под.
 
 2.  **Найдите UID пода:**
+
     ```bash
     # Замените <имя-пода> и <неймспейс> на ваши
     POD=<имя-пода>
@@ -44,6 +46,7 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
     ```
 
 3.  **Найдите "зависшие" точки монтирования**, связанные с этим UID:
+
     ```bash
     # Ищем в /proc/mounts
     grep -F "$UID" /proc/mounts
@@ -51,10 +54,12 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
     # Ищем с помощью findmnt
     findmnt | grep "$UID"
     ```
+
     Если вы видите в выводе пути вида `/var/lib/kubelet/pods/<UID>/volumes/...` — это и есть виновник проблемы.
 
 4.  **Определите, какой процесс держит монтирование:**
     Используйте `lsof` для поиска открытых файлов в директории пода.
+
     ```bash
     lsof +D /var/lib/kubelet/pods/$UID 2>/dev/null
     ```
@@ -64,9 +69,11 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
 **Внимание:** следующие шаги являются инвазивными и могут повлиять на работу узла. Действуйте осторожно.
 
 1.  **Остановите контейнер вручную (если он еще работает):**
+
     Найдите ID контейнера и остановите его.
 
     *   **Для containerd:**
+
         ```bash
         crictl ps | grep $POD
         crictl stopp <ID-контейнера>
@@ -74,6 +81,7 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
         ```
 
     *   **Для Docker:**
+
         ```bash
         docker ps --no-trunc | grep $POD
         docker stop <ID-контейнера>
@@ -81,14 +89,18 @@ kubectl get pod <имя-пода> -o jsonpath='{.metadata.finalizers}'
     Если ничего не помогает, в крайнем случае можно перезапустить рантайм: `systemctl restart containerd` или `systemctl restart docker`.
 
 2.  **Принудительно размонтируйте том:**
+
     Если контейнер уже остановлен, но точка монтирования осталась, используйте `umount` с флагом "ленивого" размонтирования (`-l`).
+
     ```bash
     # Пример пути, замените на ваш
     umount -l /var/lib/kubelet/pods/$UID/volumes/kubernetes.io~csi/pvc-xxxx/mount
     ```
 
 3.  **Удалите под:**
+
     После того как блокировка снята, `kubelet` должен сам завершить удаление. Если этого не произошло, попробуйте удалить под еще раз:
+
     ```bash
     kubectl delete pod $POD -n $NS
     ```
@@ -102,6 +114,7 @@ kubectl delete pod $POD -n $NS --grace-period=0 --force
 ```
 
 **Что делает эта команда:**
+
 *   `--grace-period=0`: Немедленно инициирует удаление, не дожидаясь `SIGTERM`.
 *   `--force`: Принудительно удаляет объект из etcd, даже если `kubelet` не подтвердил его фактическое удаление.
 

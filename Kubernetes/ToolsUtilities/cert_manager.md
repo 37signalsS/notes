@@ -51,6 +51,7 @@ helm install \
   --version v1.19.1 \
   --set installCRDs=true
 ```
+
 *   `--namespace cert-manager`: Устанавливает `cert-manager` в отдельный namespace.
 *   `--create-namespace`: Создает namespace, если он не существует.
 *   `--set installCRDs=true`: Эта опция указывает Helm-чарту установить и управлять CRD.

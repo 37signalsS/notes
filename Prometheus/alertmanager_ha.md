@@ -71,4 +71,51 @@ Helm-чарт автоматически сгенерирует конфигур
 ---
 **Связанные темы:**
 *   [[./overview.md]]
+*   [[./alertmanager_overview.md]]
 *   [[../Grafana/high_availability.md]]
+
+---
+
+## Практическое руководство: Настройка HA-кластера вручную
+
+Этот раздел описывает настройку кластера Alertmanager на двух виртуальных машинах.
+
+1.  **Устанавливаем второй Alertmanager:**
+    *   Подключитесь к второму серверу (`server1`).
+    *   Установите Alertmanager, следуя стандартной [инструкции по установке](./alertmanager_setup.md).
+
+2.  **Настраиваем кластер:**
+
+    Настройка производится через флаг `--cluster.peer`, который указывает экземпляру адрес его соседа для обмена информацией по gossip-протоколу.
+
+    2.1. **На `server1`** измените файл с опциями запуска (`/etc/sysconfig/alertmanager`), добавив IP-адрес первого сервера (`monitoring`):
+    ```bash
+    # /etc/sysconfig/alertmanager на server1
+    OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml \
+      --storage.path=/var/lib/alertmanager/ \
+      --cluster.peer <monitoring_IP>:9094"
+    ```
+    > **NB!** Обратите внимание, что используется порт `9094`, который по умолчанию предназначен для gossip-коммуникации.
+
+    2.2. **Перезапустите Alertmanager на `server1`:**
+    ```bash
+    systemctl restart alertmanager.service
+    ```
+
+    2.3. **На сервере `monitoring`** проделайте аналогичную операцию, указав IP-адрес `server1`:
+    ```bash
+    # /etc/sysconfig/alertmanager на monitoring
+    OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml \
+      --storage.path=/var/lib/alertmanager/ \
+      --cluster.peer <server1_IP>:9094"
+    ```
+
+    2.4. **Перезапустите Alertmanager на `monitoring`:**
+    ```bash
+    systemctl restart alertmanager.service
+    ```
+
+3.  **Проверяем работу:**
+    Откройте в браузере веб-интерфейс любого из Alertmanager и перейдите на страницу статуса: `http://<любой_из_IP>:9093/#/status`.
+    
+    На странице в разделе **Peers** вы должны увидеть оба экземпляра Alertmanager как членов кластера.

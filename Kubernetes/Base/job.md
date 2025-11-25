@@ -65,11 +65,13 @@ spec:
 ## Управление Job
 
 1.  **Создать Job:**
+
     ```bash
     kubectl apply -f my-job.yaml
     ```
 
 2.  **Проверить статус:**
+
     ```bash
     # Посмотреть список всех Job
     kubectl get jobs
@@ -79,18 +81,25 @@ spec:
     ```
 
 3.  **Посмотреть логи:**
+
     Сначала найдите имя пода, созданного `Job`:
+
     ```bash
     kubectl get pods --selector=job-name=my-job
     ```
+
     Затем посмотрите его логи:
+
     ```bash
     kubectl logs <имя-пода>
     ```
 
 4.  **Удалить Job:**
+
     При удалении `Job` также удаляются все созданные им поды.
+
     ```bash
     kubectl delete job my-job
     ```
+
     Если вы использовали `ttlSecondsAfterFinished`, Kubernetes сделает это за вас.

@@ -17,16 +17,19 @@
 Не все ресурсы в Kubernetes привязаны к `Namespace`.
 
 *   **Namespaced-ресурсы** (существуют внутри `Namespace`):
+
     *   Рабочие нагрузки: [Pod](./pod.md), [Deployment](./deployment_and_rolling_update.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), CronJob.
     *   Конфигурация и сервисы: [Service](../Networking/service.md), [Ingress](../Networking/ingress.md), [ConfigMap](./configmap.md), [Secret](./secret.md), PersistentVolumeClaim.
     *   Политики: `NetworkPolicy`, [ResourceQuota](../Scheduling/qos_limit_and_requests.md#ограничение-суммарного-потребления-с-resourcequota).
 
 *   **Cluster-wide ресурсы** (существуют на уровне всего кластера):
+
     *   Инфраструктура: `Node`, `PersistentVolume`.
     *   Безопасность и доступ: `ClusterRole`, `ClusterRoleBinding`.
     *   Системные: `Namespace` (сам по себе), `StorageClass`, `APIService`.
 
 Чтобы посмотреть, является ли ресурс namespaced, можно использовать команду:
+
 ```bash
 kubectl api-resources --namespaced=true  # Ресурсы в Namespace
 kubectl api-resources --namespaced=false # Ресурсы на уровне кластера
@@ -93,6 +96,7 @@ kubectl config view --minify | grep namespace
 ## Что не изолирует Namespace?
 
 Важно понимать, что `Namespace` **не обеспечивает** полную изоляцию:
+
 *   **Узлы (Nodes):** Поды из разных `Namespace` могут работать на одном и том же узле.
 *   **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/network.md).
 *   **Физические ресурсы:** `Namespace` ограничивает ресурсы логически через квоты, но не гарантирует физического разделения CPU или памяти.

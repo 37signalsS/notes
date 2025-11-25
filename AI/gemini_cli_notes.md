@@ -9,7 +9,7 @@
 
 Для более сложной настройки и переопределения стандартного поведения можно использовать директорию `.gemini`. Если создать файл `GEMINI.md` внутри этой директории (`.gemini/GEMINI.md`), его инструкции получат более высокий приоритет. 
 
-Cодержание GEMINI.md в .gemini должно быть следующим: 
+Cодержание GEMINI.md в .gemini может быть следующим: 
 
 ```
 ## Gemini Added Memories
@@ -20,7 +20,7 @@ Always answer in Russian. The instructions in the file "GEMINI.md", located in t
 
 -   Создание файла `GEMINI.md` с описанием проекта:
     ```bash
-    /init создаст файл GEMINI.md с описанием проекта
+    /init
     ```
 
 ### Управление сессиями
@@ -29,18 +29,6 @@ Always answer in Russian. The instructions in the file "GEMINI.md", located in t
     ```bash
     /chat save <имя_сессии>
     ```
-
-### Работа с файлами
-
--   **Анализ проекта**: Перед началом работы попросите Gemini проанализировать текущий проект.
--   **Работа с изображениями**: Gemini может анализировать изображения. Укажите путь к файлу относительно директории, в которой запущен CLI.
-
-### Работа со ссылками
-
--   Gemini может обрабатывать информацию по ссылкам. Просто передайте URL в запросе.
-    -   Пример: `Проанализируй статью: https://example.com`
-
----
 
 ## Контрольные точки (Checkpointing)
 
@@ -104,5 +92,5 @@ gemini --checkpointing
   set -eg GOOGLE_CLOUD_PROJECT
 
 # Теперь добавляем новую глобальную переменную
-  set -Ux GOOGLE_CLOUD_PROJECT "intrepid-nova"
+  set -Ux GOOGLE_CLOUD_PROJECT ""
 ```

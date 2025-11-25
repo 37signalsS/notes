@@ -1,2 +1,4 @@
 - **Play with Kubernetes:** Бесплатная онлайн-песочница для изучения Kubernetes.
   - https://labs.play-with-k8s.com/
+- **Kubelab:** Интерактивные лабораторные по Kubernetes.
+  - https://github.com/natrontech/kubelab

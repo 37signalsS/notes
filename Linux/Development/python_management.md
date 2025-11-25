@@ -17,6 +17,7 @@ Python является неотъемлемой частью большинст
 `pyenv` компилирует Python из исходного кода, поэтому необходимо установить зависимости для сборки.
 
 **Для CentOS 7 (`yum`):**
+
 ```bash
 sudo yum update -y
 sudo yum install -y epel-release
@@ -24,6 +25,7 @@ sudo yum install -y git gcc zlib-devel bzip2-devel readline-devel sqlite-devel o
 ```
 
 **Для CentOS 8 / RHEL 8 (`dnf`):**
+
 ```bash
 sudo dnf update -y
 sudo dnf install -y make gcc zlib-devel bzip2 bzip2-devel readline-devel sqlite sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel gdbm-libs libnsl2 git
@@ -38,6 +40,7 @@ git clone https://github.com/pyenv/pyenv.git ~/.pyenv
 ```
 
 Добавьте следующие строки в ваш `~/.bashrc` (или `~/.zshrc`):
+
 ```bash
 echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
 echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
@@ -45,6 +48,7 @@ echo -e 'if command -v pyenv 1>/dev/null 2>&1; then\n  eval "$(pyenv init -)"\nf
 ```
 
 Примените изменения:
+
 ```bash
 source ~/.bashrc
 ```
@@ -65,24 +69,30 @@ pyenv install 3.14.0
 ### 4. Управление версиями
 
 -   **Посмотреть все установленные версии:**
+
     ```bash
     pyenv versions
     ```
 
 -   **Установить глобальную версию Python:**
+
     Эта версия будет использоваться по умолчанию во всей системе для вашего пользователя.
+
     ```bash
     pyenv global 3.14.0
     ```
 
 -   **Установить локальную версию для проекта:**
+
     Эта версия будет активна только внутри конкретного каталога. `pyenv` создает файл `.python-version` для этого.
+
     ```bash
     # Находясь в каталоге проекта
     pyenv local 3.14.0
     ```
 
 -   **Проверить активную версию:**
+
     ```bash
     python --version
     # или
@@ -98,13 +108,16 @@ pyenv install 3.14.0
 ### Установка `pyenv-virtualenv`
 
 Если вы устанавливали `pyenv` вручную, плагин нужно установить отдельно.
+
 ```bash
 git clone https://github.com/pyenv/pyenv-virtualenv.git $(pyenv root)/plugins/pyenv-virtualenv
 ```
 Добавьте в `~/.bashrc`:
+
 ```bash
 echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.bashrc
 ```
+
 И перезапустите оболочку `source ~/.bashrc`.
 
 ### Создание и активация окружения

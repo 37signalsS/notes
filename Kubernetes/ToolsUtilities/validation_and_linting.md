@@ -18,11 +18,13 @@
 **Локальная валидация:**
 
 Проверить один или несколько файлов:
+
 ```bash
 kubeconform my-deployment.yaml another-file.yaml
 ```
 
 Проверить все YAML-файлы в директории рекурсивно:
+
 ```bash
 kubeconform -R .
 ```
@@ -37,6 +39,7 @@ validate-k8s-manifests:
     - echo "Validating Kubernetes manifests..."
     - kubeconform -summary -output tap 'manifests/**/*.yaml'
 ```
+
 *   `-summary`: Показывает краткий отчет о проверенных файлах.
 *   `-output tap`: Форматирует вывод в Test Anything Protocol, который хорошо парсится CI-системами.
 
@@ -62,6 +65,7 @@ helm template my-chart | kubeconform -
 **Установка:**
 
 Установить `kor` можно через `go install`:
+
 ```bash
 go install github.com/yonahd/kor/cmd/kor@latest
 ```
@@ -69,16 +73,19 @@ go install github.com/yonahd/kor/cmd/kor@latest
 **Примеры использования:**
 
 Вывести все неиспользуемые ресурсы в кластере (для текущего контекста kubeconfig):
+
 ```bash
 kor --all
 ```
 
 Вывести неиспользуемые ConfigMaps и Secrets:
+
 ```bash
 kor configmap secret
 ```
 
 Для удаления найденных ресурсов можно использовать флаг `--delete`:
+
 ```bash
 kor --all --delete
 ```

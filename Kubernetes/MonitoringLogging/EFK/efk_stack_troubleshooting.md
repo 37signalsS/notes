@@ -1,27 +1,34 @@
 # Устранение неполадок стека EFK (Elasticsearch, Fluent Bit, Kibana) в Kubernetes
 
-Этот документ содержит рекомендации по диагностике и устранению распространенных проблем, возникающих при работе со стеком EFK (Elasticsearch, Fluent Bit, Kibana) в среде Kubernetes.
-
 ## 1. Общие подходы к устранению неполадок
 
 Прежде чем углубляться в специфические проблемы EFK, убедитесь, что базовые компоненты Kubernetes работают корректно:
 
 *   **Проверка статуса подов:**
+
     ```bash
     kubectl get pods -n logging
     ```
+
     Убедитесь, что все поды (Elasticsearch, Fluent Bit, Kibana) находятся в состоянии `Running` и не имеют ошибок `CrashLoopBackOff` или `ImagePullBackOff`.
+
 *   **Просмотр логов подов:**
+
     ```bash
     kubectl logs <pod-name> -n logging
     kubectl logs <pod-name> -n logging --previous # Для упавших подов
     ```
+
     Ищите ошибки, предупреждения или сообщения, указывающие на проблемы с конфигурацией или подключением.
+
 *   **Описание подов:**
+
     ```bash
     kubectl describe pod <pod-name> -n logging
     ```
+
     Проверьте секцию `Events` на наличие проблем с планированием, монтированием томов или другими событиями, которые могли привести к сбою.
+
 *   **Сетевая связность:** Убедитесь, что поды могут взаимодействовать друг с другом (например, Fluent Bit с Elasticsearch, Kibana с Elasticsearch). Используйте `kubectl exec` для запуска `ping`, `curl` или `nc` из одного пода в другой.
 
 ## 2. Проблемы с Fluent Bit

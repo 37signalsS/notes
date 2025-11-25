@@ -1,8 +1,9 @@
-# MongoDB: Обзор
+# MongoDB
 
 **MongoDB** – это документо-ориентированная NoSQL база данных. В отличие от реляционных баз данных (таких как MySQL или PostgreSQL), которые хранят данные в таблицах и строках, MongoDB хранит данные в гибких, JSON-подобных документах. Эта модель данных позволяет легко и быстро разрабатывать приложения, адаптируясь к изменяющимся требованиям.
 
 Ключевые характеристики:
+
 -   **Высокая производительность:** Обеспечивается за счет встроенного кэширования и оптимизированного доступа к данным.
 -   **Высокая доступность:** Поддерживается через наборы реплик ([replication](../Concepts/replication.md)).
 -   **Горизонтальное масштабирование:** Достигается с помощью [шардинга](../Concepts/sharding.md), что позволяет распределять данные по нескольким серверам.
@@ -14,11 +15,8 @@
 
 ## Установка MongoDB Community Edition на Ubuntu
 
-Эти шаги основаны на официальном руководстве для Ubuntu 22.04 (Jammy Jellyfish).
-
-### 1. Импорт публичного GPG ключа
-
 MongoDB использует свой репозиторий, поэтому сначала необходимо добавить его ключ в систему.
+
 ```bash
 # Устанавливаем зависимости, если их нет
 sudo apt-get install gnupg curl
@@ -28,14 +26,11 @@ curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | \
    sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
 ```
 
-### 2. Создание файла репозитория
-
 Создайте файл `/etc/apt/sources.list.d/mongodb-org-7.0.list`, чтобы `apt` знал, откуда скачивать пакеты.
+
 ```bash
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
 ```
-
-### 3. Установка пакетов
 
 Обновите список пакетов и установите мета-пакет `mongodb-org`, который включает в себя все необходимые компоненты (сервер, клиент, утилиты).
 ```bash
@@ -43,25 +38,12 @@ sudo apt-get update
 sudo apt-get install -y mongodb-org
 ```
 
-### 4. Запуск и управление службой
-
 После установки служба `mongod` не запускается автоматически.
 
 -   **Запустить службу:**
     ```bash
     sudo systemctl start mongod
     ```
-
--   **Добавить в автозагрузку:**
-    ```bash
-    sudo systemctl enable mongod
-    ```
-
--   **Проверить статус:**
-    ```bash
-    sudo systemctl status mongod
-    ```
-    Вы должны увидеть `active (running)`.
 
 -   **Подключиться к базе данных:**
     Используйте `mongosh` (новый shell, который устанавливается вместе с сервером).

@@ -422,13 +422,17 @@ kubectl run agent-example-app \
 ### 6.3. Проверка телеметрии
 
 1.  **Port Forward**: Перенаправьте порт приложения для доступа:
+
     ```bash
     kubectl port-forward pod/$(kubectl get pods -l app=agent-example-app -o jsonpath='{.items[0].metadata.name}') 8080:8080
     ```
+
 2.  **Генерация нагрузки**: Отправьте несколько запросов:
+
     ```bash
     curl localhost:8080/ping
     ```
+
 3.  **Просмотр в Grafana**: Откройте Grafana (http://grafana.test) и перейдите в раздел Explore.
     *   **Логи**: Выберите Data Source `Loki`, используйте запрос `{service_name="agent-example-app"}`. Вы увидите логи приложения.
     *   **Трассировки**: В логах найдите `traceID` и перейдите по нему в Tempo. Вы увидите полную трассировку запроса.
@@ -465,6 +469,3 @@ kubectl run agent-example-app-manual \
 ```
 
 **Примечание**: Для этого способа вам потребуется вручную скопировать `opentelemetry-javaagent.jar` в образ или использовать `initContainer` для его доставки. В данном примере предполагается, что агент уже доступен в образе или будет доставлен другим способом.
-
----
-*Источник: Основано на материалах из вебинара [DevOps by Rebrain: Знакомство с Observability](rebrain_observability_introduction.md)*

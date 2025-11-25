@@ -157,3 +157,4 @@ strace -p <PID>
 *   **[eBPF в Linux](../Core/ebpf.md)**
 *   **[Ядро Linux](../Core/kernel.md)**
 *   **[Мониторинг и Логирование в Kubernetes](../../Kubernetes/MonitoringLogging/monitoring_and_logging_architecture_overview.md)**
+

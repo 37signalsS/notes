@@ -144,6 +144,16 @@ HTTP-клиенты командной строки — это незамени�
     curl -A "MyCustomAgent/1.0" https://example.com
     ```
 
+*   **Сохранение вывода в файл:** Для сохранения ответа сервера в файл используется опция `-o` (`--output`).
+    ```bash
+    curl -o hh.json "https://api.hh.ru/vacancies?text=сетевой%20инженер"
+    ```
+
+*   **Работа с JSON и `jq`**: `curl` отлично работает в связке с утилитой `jq` для форматирования и обработки JSON-ответов.
+    ```bash
+    curl "https://api.hh.ru/vacancies?text=сетевой%20инженер" | jq .
+    ```
+
 ---
 
 ## HTTPie

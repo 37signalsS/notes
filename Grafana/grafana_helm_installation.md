@@ -28,6 +28,7 @@ helm install grafana grafana/grafana -f grafana-values-1.yaml --namespace monito
 ```
 
 Здесь:
+
 *   `grafana` — имя релиза Helm.
 *   `grafana/grafana` — указывает на чарт Grafana из добавленного репозитория.
 *   `-f grafana-values-1.yaml` — путь к файлу с пользовательскими значениями конфигурации.
@@ -116,6 +117,7 @@ grafana:
         disableDeletion: false
         editable: true
 ```
+
 *   **`enabled: true`**: Включает механизм sidecar для дашбордов.
 *   **`label` и `labelValue`**: Используются для поиска ConfigMaps или Secrets, содержащих JSON-определения дашбордов.
 *   **`editable: true/false`**: Определяет, можно ли редактировать эти дашборды через UI Grafana. Часто provisioned дашборды делают `read-only`. Параметр `disableDeletion` (по умолчанию `false`) позволяет предотвратить удаление дашбордов через UI.
@@ -135,6 +137,7 @@ grafana:
     #   accessKey: "${VAULT_KEY_AWS_ACCESS_KEY}"
     #   secretKey: "${VAULT_KEY_AWS_SECRET_KEY}"
 ```
+
 *   **`enabled: true`**: Включает Image Renderer.
 *   **Зависимость от Chrome**: Image Renderer использует под капотом headless-браузер (например, Google Chrome) для рендеринга изображений. Если изображения не прикрепляются к алертам, убедитесь, что под с Image Renderer запущен и корректно настроен.
 *   **Особенности для мессенджеров**: Для некоторых мессенджеров (например, Slack) может потребоваться выгрузка изображений во внешнее хранилище (например, S3), так как API мессенджера требует, чтобы изображение уже где-то хостилось. Для других, как Telegram, в этом нет необходимости, и изображение можно отправить напрямую.

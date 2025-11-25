@@ -1,5 +1,3 @@
-Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к основному документу [SSH (Secure Shell)](../Linux/Security/ssh.md).
-
 ### Работа с SSH-ключами
 
 **Создание нового SSH-ключа:**
@@ -32,4 +30,7 @@ Host project-alias
     User git
     IdentityFile ~/.ssh/id_ed25519_project
 ```
+
 Клонирование с псевдонимом: `git clone git@project-alias:user/repo.git`
+
+Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к основному документу [SSH (Secure Shell)](../Linux/Security/ssh.md).

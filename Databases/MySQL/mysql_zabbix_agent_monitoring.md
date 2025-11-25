@@ -1,13 +1,13 @@
 # Мониторинг MySQL с помощью Zabbix Agent
 
-Этот документ описывает шаги по настройке мониторинга MySQL с использованием Zabbix Agent, а также конфигурацию пользователя MySQL и файлов Zabbix.
-
 ## 1. Конфигурация Zabbix Agent
 
-Zabbix Agent работает на сервере, где расположена база данных MySQL. Для мониторинга MySQL через Zabbix Agent необходимо настроить его конфигурацию.
+Zabbix Agent работает на сервере, где расположена база данных MySQL.
 
 ### 1.1. Основной конфигурационный файл `zabbix_agentd.conf`
+
 В файле `zabbix_agentd.conf` (обычно расположенном в `/etc/zabbix/` или `/etc/zabbix/zabbix_agentd.d/`) убедитесь, что настроены следующие параметры:
+
 *   `Server`: IP-адрес или DNS-имя Zabbix Server и/или Zabbix Proxy, которые могут запрашивать метрики. Например: `Server=192.168.1.100` (для пассивного режима).
 *   `ServerActive`: IP-адрес или DNS-имя Zabbix Server для активных проверок. Например: `ServerActive=192.168.1.100`.
 *   `Hostname`: Уникальное имя хоста, соответствующее имени хоста в Zabbix Frontend. Например: `Hostname=MyMySQLServer`.
@@ -64,6 +64,7 @@ FLUSH PRIVILEGES;
 Чтобы Zabbix Agent мог подключаться к MySQL без интерактивного запроса пароля, создайте файл `my.cnf` в домашней директории пользователя `zabbix` (пользователь, от которого работает Zabbix Agent).
 
 ### 3.1. Определение домашней директории пользователя `zabbix`
+
 ```bash
 grep zabbix /etc/passwd
 ```
@@ -74,6 +75,7 @@ sudo chown zabbix:zabbix /var/lib/zabbix
 ```
 
 ### 3.2. Создание файла `.my.cnf`
+
 Создайте файл `.my.cnf` в домашней директории пользователя `zabbix` (например, `/var/lib/zabbix/.my.cnf`):
 ```ini
 [client]
@@ -83,6 +85,7 @@ password=your_secure_password
 Замените `your_secure_password` на тот, который вы использовали при создании пользователя `zabbix_monitor`.
 
 ### 3.3. Настройка прав доступа к `.my.cnf`
+
 Крайне важно установить правильные права доступа, чтобы только пользователь `zabbix` мог читать этот файл:
 ```bash
 sudo chown zabbix:zabbix /var/lib/zabbix/.my.cnf
