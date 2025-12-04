@@ -306,4 +306,81 @@ spec:
 2.  **Закрытый контур:** Не выставлять Prometheus наружу, держать его в закрытых контурах с подключением через VPN. Это наиболее безопасный вариант, но не всегда возможный.
 3.  **Нативная авторизация Prometheus:** В новых версиях Prometheus появилась **нативная поддержка Basic Auth**, которую можно настроить непосредственно в конфигурации самого Prometheus. Это более современный и безопасный способ. Также появилась возможность авторизации по TLS-сертификатам. Подробности можно можно найти в `release notes` соответствующей версии Prometheus.
 
+---
+
+## Приложение: Пример устаревшей конфигурации (stable/prometheus-operator)
+
+> **Важно:** Этот пример использует устаревший Helm-чарт `stable/prometheus-operator`. Для новых установок рекомендуется использовать `kube-prometheus-stack`. Тем не менее, общие принципы настройки `values.yaml` остаются схожими.
+
+В данном примере настраиваются:
+*   Ingress-ресурсы для Grafana, Alertmanager и Prometheus.
+*   Basic-аутентификация для доступа к Alertmanager и Prometheus через секрет.
+*   Persistent Volume Claims для Alertmanager и Prometheus.
+
+**1. Создание секрета для Basic Auth:**
+```bash
+htpasswd -c auth admin
+kubectl create secret generic admin-basic-auth --from-file=auth --namespace=monitoring
+```
+
+**2. Пример изменений в `values.yaml`:**
+
+```yaml
+alertmanager:
+  ingress:
+    enabled: true
+    annotations:
+      nginx.ingress.kubernetes.io/auth-type: basic
+      nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
+      nginx.ingress.kubernetes.io/auth-realm: "Authentication Required - foo" 
+    hosts:
+      - alertmanager.k8s.example.com
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: cephfs-provisioner
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+      selector: {}
+
+grafana:
+  adminPassword: "topsecret" 
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      kubernetes.io/tls-acme: "true" 
+    hosts:
+      - "grafana-k8s.example.com" 
+    tls:
+      - secretName: grafana-k8s-example-com-tls
+        hosts:
+          - grafana.k8s.example.com
+
+prometheus:
+  ingress:
+    enabled: true
+    annotations:
+      nginx.ingress.kubernetes.io/auth-type: basic
+      nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
+      nginx.ingress.kubernetes.io/auth-realm: "Authentication Required - foo" 
+    hosts:
+      - prometheus.k8s.example.com
+  storageSpec:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: cephfs-provisioner
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+      selector: {}
+```
+
+**3. Установка Prometheus:**
+
+```bash
+helm install stable/prometheus-operator --name prometheus --namespace monitoring -f values.yaml
 ```

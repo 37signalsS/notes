@@ -43,11 +43,11 @@ http {
 -   `$upstream_addr`: Адрес `upstream` сервера.
 -   `$upstream_status`: HTTP-статус ответа от `upstream`.
 -   `$upstream_response_time`: Время получения ответа от `upstream`. Помогает находить медленные бэкенды.
--   `$upstream_cache_status`: Статус кэша (`HIT`, `MISS`, `EXPIRED` и т.д.).
+-   `$upstream_cache_status`: Статус кэша (`HIT`, `MISS`, `EXPIRED` и т.д.). Более подробную информацию о статусах кэша и управлении кэшированием можно найти в [Кэширование в Angie](../Angie/angie_caching.md).
 
 ### 1.3. Логирование в формате JSON
 
-Для упрощения парсинга логов в автоматизированных системах (например, ELK/OpenSearch Stack, Loki, ClickHouse) удобно использовать формат JSON.
+Для упрощения парсинга логов в автоматизированных системах (например, [ELK/OpenSearch Stack](../ELK_Stack/elk_stack_overview.md), [Loki](../Loki/loki_overview.md), ClickHouse) удобно использовать формат JSON.
 
 ```nginx
 http {

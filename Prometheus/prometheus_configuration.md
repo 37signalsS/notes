@@ -78,6 +78,11 @@ remote_read:
 
 ---
 **Связанные темы:**
-*   [[./prometheus_installation.md]]
+*   [[./overview.md]]
+*   [[./manual_installation.md]]
+*   [[./alertmanager.md]]
+*   [[./rules.md]]
 *   [[./kubernetes/service_discovery.md]]
+*   [[./service_discovery_examples.md]]
 *   [[./promtool_and_best_practices.md]]
+*   [[./scaling/remote_read_write.md]]

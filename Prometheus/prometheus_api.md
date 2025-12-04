@@ -201,3 +201,9 @@ curl http://localhost:9090/api/v1/alerts
 ```bash
 curl http://localhost:9090/api/v1/rules
 ```
+---
+**Связанные темы:**
+*   [[./overview.md]]
+*   [[./concepts/promql.md]]
+*   [[./alertmanager.md]]
+*   [[./rules.md]]

@@ -217,3 +217,7 @@ branch_protection:
       rules:
         - prevent_non_pr_changes
 ```
+
+## Интерактивный тренажер
+
+*   **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)**: Интерактивный веб-тренажер для изучения и отработки команд, связанных с ветвлением, слиянием и перебазированием.

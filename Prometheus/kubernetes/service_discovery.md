@@ -241,6 +241,6 @@ spec:
 
 ---
 **Связанные темы:**
-*   [[./setup.md]]
+*   [[./overview.md]]
 *   [[./helm_chart_configuration.md]]
 *   [[../scaling/federation.md]]

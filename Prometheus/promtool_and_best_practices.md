@@ -109,3 +109,14 @@ resources:
 ### 4. Мониторинг в Production
 
 Данный документ является введением в PromTool и базовые аспекты Prometheus. Для настройки мониторинга в production-кластере Kubernetes необходимо глубокое понимание того, какие метрики собирать, какие алерты настраивать и как их эффективно управлять. Эти темы будут рассмотрены в контексте подготовки production-ready кластера Kubernetes.
+
+---
+**Связанные темы:**
+*   [[./overview.md]]
+*   [[./prometheus_configuration.md]]
+*   [[./rules.md]]
+*   [[./concepts/tsdb.md]]
+*   [[./scaling/federation.md]]
+*   [[./kubernetes/helm_chart_configuration.md]]
+*   [[../../VictoriaMetrics/overview.md]]
+*   [[../Mimir/mimir_overview.md]]

@@ -311,22 +311,7 @@ SELinux записывает все свои отказы в системный 
 1.  **Изменить контекст каталога:**
     ```bash
     sudo semanage fcontext -a -t mysqld_db_t "/srv/mysql(/.*)?"
-    sudo restorecon -Rv /srv/mysql
-    ```
-2.  **Перезапустить MySQL:**
-    ```bash
-    sudo systemctl restart mysqld
-    ```
-    Если возникнут проблемы, используйте `audit2allow` для генерации дополнительных правил.
-
-### Пример: Изменение контекста для MySQL
-
-Предположим, вы изменили каталог данных MySQL с `/var/lib/mysql` на `/srv/mysql`.
-
-1.  **Изменить контекст каталога:**
-    ```bash
-    sudo semanage fcontext -a -t mysqld_db_t "/srv/mysql(/.*)?"
-    sudo restorecon -Rv /srv/mysql
+    sudo restorecon -Rv /srv/my_sql    
     ```
 2.  **Перезапустить MySQL:**
     ```bash

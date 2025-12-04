@@ -222,9 +222,106 @@ Grafana предоставляет несколько способов поде�
     *   **JSON-файлу:** Загрузите файл `.json`.
 4.  После загрузки Grafana предложит настроить импорт: можно изменить имя дашборда, назначить его в папку и, что самое важное, выбрать правильный источник данных (Prometheus), к которому будут обращаться панели. Нажмите "Import".
 
-### Провиженинг дашбордов (Configuration as Code)
+## Управление дашбордами как код (Provisioning & Automation)
 
-Помимо ручного создания и импорта через UI, дашборды Grafana могут быть настроены декларативно с использованием провиженинга. Это позволяет управлять дашбордами как кодом, особенно при развертывании Grafana через Helm, обеспечивая автоматизацию и версионирование. Подробнее об этом подходе см. в документе: [Провиженинг Grafana (Configuration as Code)](./grafana_provisioning.md).
+Помимо ручного создания и импорта через UI, дашборды Grafana могут быть настроены декларативно. Это позволяет управлять дашбордами как кодом, хранить их в системе контроля версий (Git) и автоматически развертывать в различных окружениях.
+
+### Способ 1: Файловый провиженинг
+
+Grafana при старте может сканировать локальную директорию на наличие JSON-файлов дашбордов и автоматически загружать их.
+
+1.  **Создайте `provider.yaml`**:
+    В директории провиженинга (например, `/etc/grafana/provisioning/dashboards/`) создайте файл, который укажет Grafana, где искать дашборды.
+
+    ```yaml
+    # /etc/grafana/provisioning/dashboards/main.yaml
+    apiVersion: 1
+    providers:
+    - name: 'default-dashboards'
+      orgId: 1
+      folder: 'Default Dashboards' # Папка в UI, куда будут помещены дашборды
+      type: file
+      disableDeletion: false
+      editable: true # Разрешить редактирование дашбордов в UI
+      options:
+        path: /var/lib/grafana/dashboards/default # Путь внутри контейнера к JSON-файлам
+    ```
+
+2.  **Положите JSON-файлы дашбордов**:
+    Поместите ваши `.json` файлы дашбордов в директорию, указанную в `options.path`.
+
+Этот метод часто используется с Docker, где директория с дашбордами монтируется как том в контейнер.
+
+### Способ 2: Провиженинг через Helm (Kubernetes)
+
+Helm-чарт Grafana предоставляет мощные возможности для провиженинга дашбордов.
+
+Пример конфигурации в `values.yaml`:
+
+```yaml
+# values.yaml
+grafana:
+  # Провайдер, который указывает, где искать дашборды
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'monitoring-provider'
+        orgId: 1
+        folder: 'Monitoring'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/monitoring
+
+  # Сами дашборды
+  dashboards:
+    monitoring:
+      # Импорт дашборда с Grafana.com по ID
+      node-exporter:
+        gnetId: 1860
+        revision: 25
+        datasource: Prometheus
+      
+      # Встраивание дашборда напрямую в values.yaml
+      custom-dashboard:
+        json: |-
+          {
+            "__inputs": [],
+            "__requires": [],
+            "annotations": { ... },
+            "editable": true,
+            "gnetId": null,
+            ...
+          }
+```
+*   `dashboardProviders` настраивает "поставщика" дашбордов.
+*   `dashboards` определяет сами дашборды, которые могут быть загружены с `grafana.com` (`gnetId`) или определены как встроенный `json`.
+
+### Способ 3: Автоматизация через Ansible
+
+Ansible позволяет управлять дашбордами через Grafana API, что полезно для динамической генерации или интеграции в сложные CI/CD пайплайны.
+
+1.  **Шаблонизация дашбордов**:
+    Создается JSON-шаблон дашборда (например, `dashboard.json.j2`) с переменными Jinja2 (`{{ team_name }}`, `{{ service_uid }}`).
+
+2.  **Использование модуля `community.grafana.grafana_dashboard`**:
+    Ansible-плейбук генерирует дашборды из шаблона в цикле и развертывает их в Grafana.
+
+    ```yaml
+    - name: Deploy Grafana Dashboard
+      community.grafana.grafana_dashboard:
+        grafana_url: "https://grafana.example.com"
+        grafana_api_key: "{{ grafana_api_key }}" # API-ключ из Ansible Vault
+        state: present
+        path: "/path/to/generated_dashboard.json" # Путь к сгенерированному JSON
+        folder: "My Dashboards"
+    ```
+
+Этот подход обеспечивает максимальную гибкость, позволяя генерировать десятки однотипных дашбордов для разных команд или сервисов из одного шаблона.
+
+Подробнее о концепции провижининга в целом можно прочитать в заметке [[grafana_provisioning.md]].
 
 ### Практический пример: Мониторинг хоста и Docker
 

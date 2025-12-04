@@ -48,4 +48,4 @@ sudo systemctl restart nginx
 ---
 **Связанные темы:**
 *   [[../../Grafana/grafana_overview.md]]
-*   [[../Nginx/nginx_overview.md]]
+*   [[nginx_overview.md]]

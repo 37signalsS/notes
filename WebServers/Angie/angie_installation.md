@@ -117,7 +117,7 @@
 
 ## 3. Установка Angie Pro
 
-Установка коммерческой версии требует наличия лицензии и ключей доступа к репозиторию.
+Установка коммерческой версии [Angie Pro](../Angie/angie_pro_features.md) требует наличия лицензии и ключей доступа к репозиторию.
 
 1.  **Удаление Open Source версии Angie (если установлена):**
     ```bash
@@ -227,7 +227,7 @@
 
 **Примеры доступных модулей:**
 
-*   **Сжатие:**
+*   **Сжатие:** Более подробную информацию о настройке сжатия можно найти в [Кэширование в Angie](../Angie/angie_caching.md) (раздел "Сравнение алгоритмов сжатия").
     *   `angie-module-brotli`
     *   `angie-module-zstd`
 *   **Безопасность:**
@@ -251,17 +251,20 @@ sudo apt install angie-module-modsecurity angie-module-zstd
 
 ## 6. См. также
 
-*   [Миграция с Nginx на Angie](./migration_from_nginx.md)
-*   [Настройка Angie в роли обратного HTTP-прокси](./angie_reverse_proxy.md)
-*   [Настройка TLS в Angie: безопасность и скорость](./angie_tls_setup.md)
-*   [Балансировка нагрузки HTTP(S) в Angie](./angie_http_load_balancing.md)
-*   [Директивы `location` в Angie](./angie_location_directives.md)
-*   [Балансировка и проксирование L4-трафика (TCP/UDP) в Angie](./l4_balancing_and_proxying.md)
-*   [Мониторинг Angie с помощью Prometheus и Grafana](./monitoring_with_prometheus_and_grafana.md)
-*   [Мониторинг Angie с помощью Console Lite и API](./angie_monitoring_with_console_api.md)
-*   [Клиентское кэширование в Angie](./angie_client_side_caching.md)
-*   [Серверное кэширование в Angie](./angie_server_side_caching.md)
-*   [Динамические группы проксируемых серверов в Angie](./dynamic_upstreams.md)
-*   [Перенаправления и перезапись URI в Angie](./angie_redirects_and_rewrites.md)
-*   [Почему стоит переходить на Angie](./angie_why_migrate.md)
+*   [Обзор Angie](../Angie/angie_overview.md)
+*   [Возможности Angie Pro](../Angie/angie_pro_features.md)
+*   [Миграция с Nginx на Angie](../Angie/migration_from_nginx.md)
+*   [Настройка Angie в роли обратного HTTP-прокси](../Angie/angie_reverse_proxy.md)
+*   [Настройка TLS в Angie: безопасность и скорость](../Angie/angie_tls_setup.md)
+*   [Балансировка нагрузки HTTP(S) в Angie](../Angie/angie_http_load_balancing.md)
+*   [Директивы `location` в Angie](../Angie/angie_location_directives.md)
+*   [Балансировка и проксирование L4-трафика (TCP/UDP) в Angie](../Angie/l4_balancing_and_proxying.md)
+*   [Мониторинг Angie с помощью Prometheus и Grafana](../Angie/monitoring_with_prometheus_and_grafana.md)
+*   [Мониторинг Angie с помощью Console Lite и API](../Angie/angie_monitoring.md)
+*   [Кэширование в Angie](../Angie/angie_caching.md)
+*   [Динамические группы проксируемых серверов в Angie](../Angie/dynamic_upstreams.md)
+*   [Перенаправления и перезапись URI в Angie](../Angie/angie_redirects_and_rewrites.md)
+*   [Почему стоит переходить на Angie](../Angie/angie_why_migrate.md)
+*   [Запуск Nginx в Docker](../Nginx/nginx_in_docker.md)
+*   [Установка и базовая настройка Nginx](../Nginx/nginx_setup.md)
 

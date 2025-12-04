@@ -134,6 +134,6 @@ Nginx использует следующий четкий алгоритм дл
 
 ---
 **Связанные темы:**
-*   [[nginx_concepts.md]]
+*   [[nginx_overview.md|Основные концепции Nginx]]
 *   [[nginx_setup.md]]
 *   [[nginx_rewrite_rules_and_try_files.md|Nginx: Правила Rewrite, Redirect и Директива try_files]]

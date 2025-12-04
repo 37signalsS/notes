@@ -1,5 +1,7 @@
 # Экспортеры Prometheus
 
+> **Практическое руководство**: Инструкции по ручной установке экспортеров находятся в заметке [[./manual_installation.md]].
+
 **Экспортер (Exporter)** — это программа, которая собирает метрики из сторонней системы и преобразует их в формат, понятный Prometheus. Экспортеры действуют как "переводчики" или "адаптеры" между Prometheus и системой, которую необходимо мониторить.
 
 ## Процесс экспозиции (Exposition)
@@ -44,62 +46,6 @@
 *   **Источник данных:** `node_exporter` не обращается напрямую к ядру. Он читает и парсит файлы из виртуальных файловых систем Linux, таких как `/proc` и `/sys`. Например, для получения информации о памяти он читает `/proc/meminfo`.
 *   **Совместимость с ОС:** `node_exporter` предназначен исключительно для операционных систем на базе Linux. Для мониторинга Windows систем используется `wmi_exporter`.
 *   **Веб-интерфейс:** `node_exporter` по умолчанию доступен на порту `9100`. При обращении к `http://<node_exporter_ip>:9100/metrics` отображается страница со всеми экспортируемыми метриками.
-
-#### Детальная установка и настройка `node_exporter`
-
-Практика выполняется на сервере мониторинга, команды выполняются с root-привилегиями.
-
-1.  **Скачиваем и устанавливаем `node_exporter`:**
-    ```bash
-    cd /tmp
-    # Пример для версии 0.18.1. Актуальную версию можно найти на GitHub.
-    wget https://github.com/prometheus/node_exporter/releases/download/v0.18.1/node_exporter-0.18.1.linux-amd64.tar.gz
-    tar xvfz node_exporter-0.18.1.linux-amd64.tar.gz
-    mv node_exporter-0.18.1.linux-amd64/node_exporter /usr/local/bin/
-    ```
-
-2.  **Создаем файл для опций запуска:**
-    `node_exporter` настраивается через флаги командной строки. Чтобы не редактировать systemd-юнит каждый раз, вынесем опции в отдельный файл.
-    ```bash
-    cat <<EOF > /etc/sysconfig/node_exporter
-    OPTIONS=""
-    EOF
-    ```
-
-3.  **Создаем systemd-сервис:**
-    ```bash
-    cat <<EOF > /usr/lib/systemd/system/node_exporter.service 
-    [Unit]
-    Description=Prometheus Node exporter for machine metrics
-    Documentation=https://github.com/prometheus/node_exporter
-
-    [Service]
-    Restart=always
-    User=root
-    EnvironmentFile=/etc/sysconfig/node_exporter
-    ExecStart=/usr/local/bin/node_exporter \$OPTIONS
-    ExecReload=/bin/kill -HUP \$MAINPID
-    TimeoutStopSec=20s
-    SendSIGKILL=no
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    ```
-    > **Примечание:** Директива `EnvironmentFile` позволяет передавать ключи запуска через переменную `$OPTIONS` из файла `/etc/sysconfig/node_exporter`. `node_exporter` требует root-привилегий для доступа к некоторым системным файлам.
-
-4.  **Запускаем сервис:**
-    ```bash
-    systemctl daemon-reload
-    systemctl start node_exporter
-    systemctl enable node_exporter
-    ```
-
-5.  **Проверяем работу:**
-    ```bash
-    curl -I http://localhost:9100
-    # Ответ должен быть HTTP/1.1 200 OK
-    ```
 
 #### Ключи запуска Node Exporter
 
@@ -171,41 +117,6 @@
 > **Замечания из лекции:**
 > *   При проверке URL в браузере стоит помнить, что по пути `/metrics` `blackbox_exporter` отдает метрики о своей работе, а не результаты проверок. Результаты проверок доступны по пути `/probe`.
 > *   Ошибка `network is unreachable` при проверке IPv6-адреса (`[2606:4700:...]`) указывает на то, что на хосте не настроена маршрутизация для IPv6.
-
-#### Детальная установка и настройка `blackbox_exporter`
-
-1.  **Скачиваем и устанавливаем:**
-    ```bash
-    cd /tmp
-    # Пример для версии 0.18.0
-    wget https://github.com/prometheus/blackbox_exporter/releases/download/v0.18.0/blackbox_exporter-0.18.0.linux-amd64.tar.gz 
-    tar xvfz blackbox_exporter-0.18.0.linux-amd64.tar.gz
-    mv blackbox_exporter-0.18.0.linux-amd64/blackbox_exporter /usr/local/bin/
-    ```
-
-2.  **Создаем конфигурацию:**
-    ```bash
-    mkdir /etc/blackbox_exporter
-    # Копируем файл blackbox.yml из архива или создаем свой
-    cp blackbox_exporter-0.18.0.linux-amd64/blackbox.yml /etc/blackbox_exporter/
-    ```
-
-3.  **Создаем файл опций и systemd-сервис** (аналогично `node_exporter`, но с портом `9115` и путем к конфигу):
-    ```bash
-    # /etc/sysconfig/blackbox_exporter
-    OPTIONS="--config.file=/etc/blackbox_exporter/blackbox.yml"
-
-    # /usr/lib/systemd/system/blackbox_exporter.service
-    # ... (аналогично node_exporter, но с Description и путем к бинарнику blackbox_exporter)
-    ```
-
-4.  **Запускаем и проверяем:**
-    ```bash
-    systemctl daemon-reload
-    systemctl start blackbox_exporter
-    systemctl enable blackbox_exporter
-    curl -I http://localhost:9115
-    ```
 
 #### Настройка модулей Blackbox Exporter
 
@@ -401,4 +312,5 @@ scrape_configs:
 **Связанные темы:**
 *   [[./overview.md]]
 *   [[./concepts/labels_and_cardinality.md]]
-*   [[./prometheus_lecture_summary_kube-prometheus-stack.md#7. Observability: Метрики, Логи, Трассировка]]
+*   [[./kubernetes/overview.md#7-observability-метрики-логи-трассировка]]
+*   [[../Concepts/metrics_collection_strategies.md]]

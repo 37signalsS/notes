@@ -2,6 +2,8 @@
 
 В этом документе подробно рассматриваются основные секции конфигурационного файла Fluent Bit (`fluent-bit.conf` или `values.yaml` при использовании Helm-чарта) и их параметры для эффективного сбора логов в Kubernetes.
 
+При возникновении проблем с компонентами стека EFK обратитесь к руководству по [устранению неполадок](./efk_stack_troubleshooting.md).
+
 ## Обзор структуры конфигурации
 
 Конфигурация Fluent Bit разделена на несколько ключевых секций:
@@ -30,7 +32,7 @@ config:
         HTTP_Port     2020
 ```
 
--   `Flush`: Интервал в секундах, с которым Fluent Bit отправляет собранные логи в `OUTPUT`. `Flush 1` означает отправку раз в секунду. На нагруженных системах это значение можно увеличить, чтобы снизить количество запросов, например, к [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md), но это добавит задержку в доставке логов.
+-   `Flush`: Интервал в секундах, с которым Fluent Bit отправляет собранные логи в `OUTPUT`. `Flush 1` означает отправку раз в секунду. На нагруженных системах это значение можно увеличить, чтобы снизить количество запросов, например, к [Elasticsearch](../../../ELK_Stack/Elasticsearch/elasticsearch_sharding_replication_cluster.md), но это добавит задержку в доставке логов.
 -   `Daemon`: `Off` указывает, что Fluent Bit не должен уходить в фоновый режим. Это стандартная практика при запуске в контейнере.
 -   `Log_Level`: Уровень логирования самого Fluent Bit.
 -   `Parsers_File`: Путь к файлу с определениями парсеров.
@@ -173,7 +175,3 @@ helm upgrade --install fluent-bit fluent/fluent-bit \
   --namespace logging \
   -f /home/q/notes/Kubernetes/fluent_values.yaml
 ```
-
-## Дополнительные ресурсы
-
--   **[Устранение неполадок стека EFK](./efk_stack_troubleshooting.md)**: Руководство по диагностике и решению распространенных проблем с Elasticsearch, Fluent Bit и Kibana.

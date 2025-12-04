@@ -110,3 +110,9 @@ server {
     *   Перезапустите Nginx, чтобы он подхватил сгенерированные сертификаты: `docker-compose restart nginx`.
 
 Этот подход обеспечивает полностью автоматизированное управление SSL-сертификатами для вашего Nginx-контейнера.
+
+---
+## Смотри также
+*   [[nginx_overview|Обзор Nginx]]
+*   [[nginx_tls_ssl_configuration|Настройка TLS/SSL]]
+*   [[nginx_in_docker|Запуск Nginx в Docker]]

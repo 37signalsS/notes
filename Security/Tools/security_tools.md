@@ -81,7 +81,3 @@
 *   **Пост-эксплуатация**: Содержит техники для выполнения команд, создания обратных шеллов, передачи файлов и других действий после первоначального проникновения.
 
 
-## Kubernetes Goat [madhuakula/kubernetes-goat](https://github.com/madhuakula/kubernetes-goat)
-
-**Kubernetes Goat** — это не инструмент, а интерактивная обучающая среда ("Vulnerable by Design") для изучения безопасности Kubernetes.
-

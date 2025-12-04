@@ -183,3 +183,10 @@ curl http://<ip_целевого_хоста>:9100/metrics
 Теперь Grafana будет доступна по адресу `http://<ip_сервера>`.
 
 Подробное руководство по этой теме: [[../WebServers/Nginx/nginx_as_reverse_proxy_for_grafana.md]].
+
+---
+**Связанные темы:**
+*   [[./overview.md]]
+*   [[./exporters.md]]
+*   [[./prometheus_configuration.md]]
+*   [[./manual_installation.md]]

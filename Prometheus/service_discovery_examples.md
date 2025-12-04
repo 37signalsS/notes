@@ -195,5 +195,7 @@ relabel_configs:
 
 ---
 **Связанные темы:**
+*   [[./overview.md]]
+*   [[./prometheus_configuration.md]]
 *   [[./kubernetes/service_discovery.md]]
 *   [[./concepts/labels_and_cardinality.md]]

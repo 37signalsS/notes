@@ -61,4 +61,7 @@
 **Связанные темы:**
 *   [[../overview.md]]
 *   [[./metric_types.md]]
+*   [[./promql.md]]
 *   [[./tsdb.md]]
+*   [[../exporters.md]]
+*   [[../service_discovery_examples.md]]

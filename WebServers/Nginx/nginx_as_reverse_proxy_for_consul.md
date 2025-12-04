@@ -170,3 +170,10 @@ resource "yandex_compute_instance" "consul_node" {
 }
 ```
  Этот шаг значительно сокращает поверхность атаки, так как прямой доступ к узлам Consul извне становится невозможен.
+
+---
+## Смотри также
+*   [[nginx_overview|Обзор Nginx]]
+*   [[nginx_load_balancing|Балансировка нагрузки HTTP (L7)]]
+*   [[nginx_tls_ssl_configuration|Настройка TLS/SSL]]
+

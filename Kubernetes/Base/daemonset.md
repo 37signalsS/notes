@@ -24,6 +24,19 @@ kubectl taint nodes my-node dedicated=special:NoSchedule
 *   `NoSchedule`: Новые поды не будут планироваться на этот узел, если у них нет `toleration`.
 *   `NoExecute`: Новые поды не будут планироваться, а уже запущенные (без `toleration`) будут выселены.
 
+### Сценарий: Гарантированный запуск перед другими подами
+
+`Taints` и `Tolerations` также являются ключевым механизмом для обеспечения того, чтобы `DaemonSet` (например, сетевой плагин CNI или агент мониторинга) был полностью запущен и готов на узле *до* того, как на него начнут размещаться обычные поды приложений.
+
+Паттерн выглядит следующим образом:
+1. На узел при добавлении в кластер вешается `taint` с эффектом `NoSchedule`.
+2. В манифест `DaemonSet` добавляется соответствующий `toleration`, что позволяет ему запуститься на этом узле.
+3. После успешного запуска пода `DaemonSet`, внешний контроллер (или логика самого демона) убирает `taint` с узла.
+4. Планировщик начинает размещать на узле обычные поды.
+
+> Подробное описание этого сценария можно найти в документе **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md#практический-сценарий-отложенный-запуск-подов-до-готовности-daemonset)**.
+
+
 ---
 
 ## Пример: Развертывание Fluentd для сбора логов
@@ -67,7 +80,7 @@ spec:
       - name: fluentd
         image: fluent/fluentd:v1.19.0-debian-1.0
         env:
-        - name: FLUENT_ELASTICSEARCH_HOST # Подробнее о настройке кластера Elasticsearch: [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)
+        - name: FLUENT_ELASTICSEARCH_HOST # Подробнее о настройке кластера Elasticsearch: [Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_sharding_replication_cluster.md)
           value: "elasticsearch.logging.svc.cluster.local"
         - name: FLUENT_ELASTICSEARCH_PORT
           value: "9200"

@@ -167,24 +167,6 @@ Vagrant позволяет гибко настраивать виртуальн�
 
 ---
 
-### Шаблон Vagrantfile для VirtualBox
-
-```ruby
-Vagrant.configure("2") do |config|
-  # Имя хоста
-  config.vm.hostname = "my-vm"
-
-  # Отключить проверку обновлений box'а при старте
-  config.vm.box_check_update = false
-
-  # Настройки провайдера (например, VirtualBox)
-  config.vm.provider "virtualbox" do |v|
-    v.memory = 2048 # Память в МБ
-    v.cpus = 2     # Количество CPU
-    v.name = "my-app-vm" # Имя в интерфейсе VirtualBox
-  end
-end
-```
 
 ## Провайдеры и образы (Boxes)
 
@@ -334,59 +316,38 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-### Libvirt с несколькими дисками и автоматическим монтированием
+### Libvirt с выделенным именем диска
 
-1.  **Создание VM:** На базе образа `Ubuntu 24.04`.
-2.  **Конфигурация ресурсов:** 2 CPU и 2048 МБ RAM.
-3.  **Управление дисками:**
-    *   Определяет размер основного диска (`20G`).
-    *   Создает второй, дополнительный диск (`10G`).
-4.  **Автоматизация:** С помощью `shell provisioner` выполняет автоматическое создание раздела, форматирование в `ext4` и монтирование второго диска в директорию `/data`.
 
 ```ruby
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-  # Образ Ubuntu 24.04
-  config.vm.box = "jtarpley/ubuntu2404_base"
-  config.vm.hostname = "suricata-diplom"
+  config.vm.define "diplom" do |node|
+    node.vm.box = "jtarpley/ubuntu2404_base"
+    node.vm.hostname = "suricata-diplom"
+    node.vm.box_check_update = false
 
-  # Настройки провайдера libvirt
-config.vm.provider "libvirt" do |libvirt|
-  libvirt.memory = 6048
-  libvirt.cpus = 4
-  libvirt.storage :file, size: "30G", type: "qcow2", bus: "virtio"
-  libvirt.nic_model_type = "virtio"
-  config.vm.synced_folder ".", "/vagrant", disabled: true
-end
+    node.vm.provider "libvirt" do |libvirt|
+      libvirt.memory = 6144
+      libvirt.cpus = 4
+      libvirt.nic_model_type = "virtio"
+      libvirt.random_hostname = false
 
-  # Приватная сеть для удобного доступа
-  config.vm.network "private_network", ip: "192.168.56.10"
+      libvirt.storage_pool_name = "default"
 
-  # Автоматическое создание и монтирование второго диска
-  config.vm.provision "shell", inline: <<-SHELL
-    set -eux
+      libvirt.storage :file,
+        size: "30G",
+        type: "qcow2",
+        bus: "virtio",
+        name: "suricata_diplom.qcow2",
+        allow_duplicate: true
+    end
 
-    # Проверяем наличие второго диска
-    if lsblk | grep -q vdb; then
-      # Если диск не размечен — создаём раздел и файловую систему
-      if ! blkid /dev/vdb1 >/dev/null 2>&1; then
-        echo "Создаю раздел на /dev/vdb..."
-        echo ",,L" | sfdisk /dev/vdb
-        mkfs.ext4 /dev/vdb1
-        mkdir -p /data
-        echo '/dev/vdb1 /data ext4 defaults 0 0' >> /etc/fstab
-        mount -a
-      else
-        echo "Раздел уже существует, просто монтирую..."
-        mkdir -p /data
-        mount -a
-      fi
-    else
-      echo "Второй диск не найден!"
-    fi
-  SHELL
+    node.vm.synced_folder ".", "/vagrant", disabled: false
+    node.vm.provision "shell", path: "provision.sh"
+  end
 end
 ```
 
@@ -413,6 +374,28 @@ end
   rm -rf .vagrant
   ```
   После этого `vagrant up` пересоздаст машину на основе актуального `Vagrantfile`.
+
+- **Проблема: Рассинхронизация состояния диска (Libvirt)**
+
+  **Симптом:** При запуске `vagrant up` возникает ошибка, связанная с уже существующим диском (например, `suricata_diplom.qcow2`), хотя физически этого файла нет в директории (`/var/lib/libvirt/images/`) и в пуле хранения `libvirt`.
+
+  **Причина:** Такое несоответствие возникает, если Vagrant или `fog-libvirt` сохранили запись о диске в своем внутреннем состоянии (в каталоге `.vagrant` проекта или в кэше `libvirt`), но сам диск был удален вручную или в результате сбоя.
+
+  **Решение:** Необходимо принудительно очистить состояние Vagrant и `libvirt` для данной ВМ.
+
+  1.  **Уничтожить все ВМ, управляемые Vagrant в проекте:**
+      Эта команда удалит виртуальные машины и связанные с ними записи в `libvirt`.
+      ```bash
+      vagrant destroy -f
+      ```
+
+  2.  **Удалить локальное состояние Vagrant:**
+      Эта команда очистит кэш и метаданные проекта, включая ссылки на несуществующие диски.
+      ```bash
+      rm -rf .vagrant
+      ```
+
+  3.  **Повторить запуск:**
 
 - **Остановка и именование ВМ:**
 

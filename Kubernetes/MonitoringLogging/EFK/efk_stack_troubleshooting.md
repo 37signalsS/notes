@@ -59,7 +59,7 @@ Fluent Bit отвечает за сбор, обработку и отправк�
 *   **`Replace_Dots On`:** Если вы видите ошибки маппинга в Elasticsearch, связанные с точками в именах полей (например, `kubernetes.labels.app.kubernetes.io/name`), убедитесь, что `Replace_Dots On` включен в секции `[OUTPUT]`. Это заменяет точки на нижние подчеркивания, предотвращая конфликты.
 *   **Пользовательские парсеры:** Если вы используете пользовательские парсеры, убедитесь, что они корректно определены в секции `[PARSERS]` и правильно применяются (например, через аннотации пода `fluentbit.io/parser`).
 
-## 3. Проблемы с [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md)
+## 3. Проблемы с [Elasticsearch](../../../ELK_Stack/Elasticsearch/elasticsearch_sharding_replication_cluster.md)
 
 Elasticsearch может столкнуться с проблемами производительности, хранения или индексации.
 
