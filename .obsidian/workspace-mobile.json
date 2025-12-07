@@ -11,23 +11,14 @@
             "id": "17ea52cc9aec92ac",
             "type": "leaf",
             "state": {
-              "type": "kanban",
+              "type": "markdown",
               "state": {
-                "file": "Безымянная Kanban-доска.md",
-                "kanbanViewState": {
-                  "kanban-plugin": "board",
-                  "list-collapse": [
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    false
-                  ]
-                }
+                "file": "Git/git_branching.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-trello",
-              "title": "Безымянная Kanban-доска"
+              "icon": "lucide-file",
+              "title": "git_branching"
             }
           }
         ]
@@ -165,7 +156,7 @@
       "obsidian-kanban:Create new board": false
     }
   },
-  "active": "17ea52cc9aec92ac",
+  "active": "5799a3a0ed7dfae4",
   "lastOpenFiles": [
     "Git/git_undoing_changes.md",
     "Git/git_synchronization.md",
