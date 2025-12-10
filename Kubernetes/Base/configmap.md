@@ -193,3 +193,31 @@ spec:
             name: my-config
 ```
 В данном примере Helm вычисляет `sha256sum` от отрендеренного шаблона `configmap.yaml` и вставляет его в аннотацию.
+
+### Пример с `volumeMounts` и `sha256sum`
+
+Этот более общий пример подходит для любого Deployment, где ConfigMap монтируется как том. Здесь хеш также вычисляется с помощью шаблонизатора, но демонстрируется использование с `volumeMounts`.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    metadata:
+      annotations:
+        config-hash: "{{ sha256sum .Values.myConfig }}"
+    spec:
+      containers:
+      - name: app
+        image: myimage:latest
+        volumeMounts:
+        - name: cfg
+          mountPath: /app/config
+      volumes:
+      - name: cfg
+        configMap:
+          name: my-config
+```
+
