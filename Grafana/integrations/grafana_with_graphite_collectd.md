@@ -1,4 +1,4 @@
-# Grafana, Graphite, Carbon, Collectd: Система мониторинга и визуализации
+# Интеграция Grafana с Graphite и Collectd
 
 ## 1. Компоненты системы
 

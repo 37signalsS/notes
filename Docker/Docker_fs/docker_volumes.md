@@ -48,7 +48,7 @@ Docker решает эту проблему, предоставляя механ
 
 ### Пример: `docker-compose.yml` с PostgreSQL
 
-Определение сервисов и томов в файле [`docker-compose.yml`](./docker_compose.md) — стандарт индустрии.
+Определение сервисов и томов в файле [`docker-compose.yml`](../Docker_compose/docker_compose_file_example.md) — стандарт индустрии.
 
 ```yaml
 version: '3.8'

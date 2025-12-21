@@ -151,3 +151,82 @@ sudo mount -a
     ```bash
     sudo udevadm control --reload-rules && sudo udevadm trigger
     ```
+
+#### Systemd .mount и .automount 
+
+Для автоматического монтирования сетевых ресурсов при старте системы, а также монтирования по требованию, можно использовать systemd-юниты `.mount` и `.automount`. Это современный подход, который предлагает больше гибкости и лучшую интеграцию с системой инициализации.
+
+**1. Юнит `.mount` для постоянного монтирования**
+
+Юнит `.mount` определяет параметры монтирования и точку монтирования. Его имя строится по пути к точке монтирования, где `/` заменяется на `-`. Например, для точки монтирования `/mnt/share` файл будет называться `mnt-share.mount`.
+
+Пример содержимого файла `mnt-share.mount` (например, `/etc/systemd/system/mnt-share.mount`):
+
+```ini
+[Unit]
+Description=Mount network share
+After=network-online.target  # Убедиться, что сеть доступна
+
+[Mount]
+What=//192.168.0.10/share
+Where=/mnt/share
+Type=cifs
+Options=credentials=/etc/smb.cred,_netdev,vers=3.0
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Пояснения к секциям:**
+
+*   **`[Unit]`**: Общие метаданные для юнита. `Description` — описание, `After=network-online.target` — указывает, что юнит должен запускаться только после того, как будет доступна сеть (важно для сетевых ресурсов).
+*   **`[Mount]`**: Определяет параметры монтирования.
+    *   `What` — ресурс для монтирования (например, сетевая папка, как в примере `//192.168.0.10/share`).
+    *   `Where` — точка монтирования в локальной файловой системе (`/mnt/share`).
+    *   `Type` — тип файловой системы (`cifs` для SMB/CIFS, `nfs` для NFS, `ext4` для локальных дисков и т.д.).
+    *   `Options` — опции монтирования, аналогичные опциям в `/etc/fstab`. `_netdev` указывает, что это сетевой ресурс.
+*   **`[Install]`**: Определяет, как юнит будет интегрирован в систему при включении (`enable`). `WantedBy=multi-user.target` означает, что юнит будет запускаться при переходе в многопользовательский режим (стандартный режим работы сервера).
+
+После создания файла юнита необходимо:
+
+1.  Создать точку монтирования: `sudo mkdir -p /mnt/share`
+2.  Перезагрузить systemd: `sudo systemctl daemon-reload`
+3.  Включить юнит для автоматического запуска при загрузке: `sudo systemctl enable mnt-share.mount`
+4.  Запустить юнит сейчас: `sudo systemctl start mnt-share.mount`
+5.  Проверить статус: `sudo systemctl status mnt-share.mount`
+
+**2. Юнит `.automount` для монтирования по требованию**
+
+Юнит `.automount` позволяет монтировать ресурс только при первом обращении к нему. Это ускоряет загрузку системы, если сетевые ресурсы не нужны сразу, или если сеть еще не поднята. Он работает в паре с соответствующим `.mount` юнитом.
+
+Пример содержимого файла `mnt-share.automount` (например, `/etc/systemd/system/mnt-share.automount`):
+
+```ini
+[Unit]
+Description=Automount network share
+
+[Automount]
+Where=/mnt/share
+TimeoutIdleSec=600  # Отмонтировать через 10 минут бездействия
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Пояснения к секциям:**
+
+*   **`[Unit]`**: Общие метаданные.
+*   **`[Automount]`**: Определяет параметры авто монтирования.
+    *   `Where` — точка монтирования.
+    *   `TimeoutIdleSec` — время в секундах, после которого ресурс будет автоматически отмонтирован при отсутствии активности.
+*   **`[Install]`**: Как юнит будет интегрирован.
+
+После создания файла `.automount` юнита необходимо:
+
+1.  Создать точку монтирования (если не создана): `sudo mkdir -p /mnt/share`
+2.  Перезагрузить systemd: `sudo systemctl daemon-reload`
+3.  Включить **только `.automount` юнит** для автоматического запуска при загрузке (он "поднимет" `.mount` юнит при необходимости): `sudo systemctl enable mnt-share.automount`
+4.  Запустить `.automount` юнит сейчас: `sudo systemctl start mnt-share.automount`
+5.  Проверить статус: `sudo systemctl status mnt-share.automount`
+
+При первой попытке доступа к `/mnt/share` (например, `ls /mnt/share`) systemd автоматически активирует `mnt-share.mount`.

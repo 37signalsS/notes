@@ -24,6 +24,61 @@ Falco работает, перехватывая системные вызовы
 ### Преимущества:
 Falco помогает строить безопасные и прозрачные среды, автоматизировать контроль соответствия и быстро реагировать на угрозы. Его runtime-мониторинг является критически важным слоем защиты, который дополняет статический анализ и аудит конфигураций.
 
+## 3. Практические сценарии
+
+Правила Falco описывают нежелательное поведение. Ниже приведены несколько примеров из стандартного набора правил.
+
+### Обнаружение запуска оболочки в контейнере
+Это одно из самых известных правил. Оно срабатывает, когда внутри контейнера запускается интерактивная оболочка, что часто является первым шагом злоумышленника после получения доступа.
+```yaml
+- rule: Terminal shell in container
+  desc: A shell was spawned in a container with an attached terminal.
+  condition: >
+    spawned_process and container and shell_procs and proc.tty != 0
+  output: >
+    Terminal shell in container (user=%user.name user_loginuid=%user.loginuid container_id=%container.id container_name=%container.name image=%container.image.repository:%container.image.tag)
+  priority:
+    NOTICE
+```
+
+### Изменение критически важных файлов
+Это правило обнаруживает попытки записи в файлы, содержащие бинарные файлы (`/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`). Такие действия могут свидетельствовать о попытке установки руткита.
+```yaml
+- rule: Write below binary dir
+  desc: an attempt to write to any file below a set of binary directories
+  condition: >
+    (open_write) and
+    (fd.directory in (/bin, /sbin, /usr/bin, /usr/sbin)) and
+    (not package_mgmt_procs)
+  output: >
+    File created/modified in binary directory (user=%user.name command=%proc.cmdline file=%fd.name)
+  priority:
+    ERROR
+```
+
+### Чтение секретов Kubernetes
+Правило для обнаружения попыток чтения `Secrets` в Kubernetes.
+```yaml
+- rule: Read K8s Secret
+  desc: Detect any attempt to read a K8s secret.
+  condition: >
+    k8s_secret_read and not trusted_containers
+  output: >
+    K8s secret read (user=%user.name command=%proc.cmdline secret=%k8s.secret.name)
+  priority:
+    WARNING
+```
+
+### Интеграция с Falcosidekick
+События, обнаруженные Falco, могут быть отправлены в различные системы с помощью `Falcosidekick`:
+- В мессенджеры (Slack, Telegram).
+- В SIEM-системы (Elasticsearch, Splunk).
+- В системы оповещения (Prometheus Alertmanager).
+- Могут запускать serverless-функции (AWS Lambda, Google Cloud Functions) для активного реагирования, например, для изоляции скомпрометированного пода.
+
+
+## 4. Продвинутые детали
+
 ### Сравнение с другими инструментами безопасности
 
 *   **[Kubesec](../Kubernetes/Security/kubesec.md) / [Kyverno](../Kubernetes/Security/kyverno.md):** Эти инструменты фокусируются на проверке манифестов и применении политик *до* или *во время* развертывания (Admission Control). Falco работает *после* развертывания, обеспечивая *runtime-мониторинг*.

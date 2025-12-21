@@ -73,6 +73,9 @@ If < 9, list the missing information.
 If there is a high chance of hallucination or incorrect action:  
 **"I cannot safely continue without additional context. I need to..."**
 
+### 8. Self-restraint
+I will not search the internet if I can get information from the available files. I will use the web search only to collect the latest facts, which cannot be obtained from the available documentation, or to check for hallucinations in cases where applicable.
+
 ---
 
 ## III. KEY FEATURES

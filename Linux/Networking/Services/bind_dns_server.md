@@ -19,8 +19,8 @@ BIND реализует полную спецификацию протокола
 
 Установка пакета `bind9` и утилит для диагностики DNS:
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install bind9 dnsutils
+sudo apt-get update
+sudo apt-get install -y bind9 dnsutils
 sudo systemctl enable --now bind9
 ```
 

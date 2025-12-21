@@ -1,5 +1,7 @@
 # Управление репозиториями в Debian и Ubuntu (`sources.list`)
 
+Эта заметка является частью цикла статей по [управлению пакетами в Linux](../../Linux/PackageManagement/linux_package_management_overview.md).
+
 Файл `/etc/apt/sources.list` и файлы в директории `/etc/apt/sources.list.d/` определяют, откуда система управления пакетами APT (Advanced Package Tool) будет загружать и устанавливать пакеты.
 
 Каждая строка в `sources.list` имеет следующую структуру:
@@ -62,7 +64,7 @@
 1.  **Установка зависимостей и импорт GPG-ключа:**
     ```bash
     sudo apt update
-    sudo apt install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring
+    sudo apt install -y ca-certificates curl gnupg2 lsb-release ubuntu-keyring
     curl -fsSL https://nginx.org/keys/nginx_signing.key | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
     ```
 
@@ -98,7 +100,7 @@
 
 ## Проверка источников пакетов с помощью `apt policy`
 
-Команда `apt policy <package_name>` позволяет узнать, из каких репозиториев доступен пакет, его текущую установленную версию и приоритеты различных источников. APT выбирает пакет из источника с наивысшим приоритетом.
+Команда `apt policy <package_name>` позволяет узнать, из каких репозиториев доступен пакет, его текущую установленную версию и приоритеты различных источников. APT выбирает пакет из источника с наивысшим приоритетом. Для тонкой настройки приоритетов используется [Apt Pinning](./deb_apt_pinning.md).
 
 ```bash
 apt policy nginx
@@ -116,8 +118,3 @@ nginx:
         500 http://archive.ubuntu.com/ubuntu focal-updates/main amd64 Packages
 ```
 Это показывает, что установлена более новая версия из стороннего репозитория `nginx.org`.
-
----
-**Связанные темы:**
-*   [Обзор управления пакетами в Linux](./linux_package_management_overview.md)
-*   [Приоритизация пакетов с помощью APT Pinning](./deb_apt_pinning.md)

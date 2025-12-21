@@ -12,6 +12,7 @@
 *   **ServiceAccount Token Secrets** (`kubernetes.io/service-account-token`): Автоматически создаются для аутентификации с API-сервером.
 *   **Docker Config Secrets** (`kubernetes.io/dockerconfigjson`): Применяются для хранения учётных данных Docker Registry, чтобы подтягивать приватные образы.
 *   **Basic Authentication Secrets** (`kubernetes.io/basic-auth`): Содержат логины и пароли в формате base64.
+    > **Подробнее:** [Настройка BasicAuth в Traefik с Kubernetes](../Security/traefik_kubernetes_basic_auth.md)
 *   **SSH Authentication Secrets** (`kubernetes.io/ssh-auth`): Хранят приватные SSH-ключи для безопасного доступа.
 *   **TLS Secrets** (`kubernetes.io/tls`): Включают TLS-сертификаты и приватные ключи для HTTPS-соединений.
 *   **Bootstrap Token Secrets** (`bootstrap.kubernetes.io/token`): Используются при подключении новых нод к кластеру.

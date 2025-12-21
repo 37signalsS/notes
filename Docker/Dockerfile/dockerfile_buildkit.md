@@ -29,19 +29,33 @@ Kaniko выполняет каждую команду из `Dockerfile` внут
 -   **Идеально для Kubernetes:** Позволяет собирать образы прямо в кластере без предоставления рабочим узлам доступа к Docker-демону, что упрощает управление инфраструктурой.
 
 **Пример использования в CI/CD:**
+
 ```yaml
-# Пример задачи для GitLab CI
-build_image:
+variables:
+  TAG: $CI_COMMIT_SHA
+  DOCKERFILE: $CI_PROJECT_DIR/Dockerfile
+  ARGUMENTS: ""
+
+build-kaniko:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.9.0-debug
-    entrypoint: [""]
+    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    entrypoint: [ "" ]
   script:
-    # Создаем файл аутентификации для реестра
-    - echo "{"auths":{"$CI_REGISTRY":{"username":"$CI_REGISTRY_USER","password":"$CI_REGISTRY_PASSWORD"}}}" > /kaniko/.docker/config.json
-    # Запускаем сборку
-    - /kaniko/executor
+    - echo "Build with tag $TAG"
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"},\"$(echo -n $CI_DEPENDENCY_PROXY_SERVER | awk -F[:] '{print $1}')\":{\"auth\":\"$(printf "%s:%s" ${CI_DEPENDENCY_PROXY_USER} "${CI_DEPENDENCY_PROXY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - echo "Run this build ${CI_REGISTRY_IMAGE}-${CI_ENVIRONMENT_NAME}"
+    - >-
+      /kaniko/executor
       --context $CI_PROJECT_DIR
-      --dockerfile $CI_PROJECT_DIR/Dockerfile
-      --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+      --dockerfile $DOCKERFILE
+      --destination $CI_REGISTRY_IMAGE:$TAG
+      --cache=true
+      $ARGUMENTS
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
+    - when: never
+```
 ```

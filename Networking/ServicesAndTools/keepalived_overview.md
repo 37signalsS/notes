@@ -80,3 +80,7 @@ vrrp_instance VI_1 {
     }
 }
 ```
+
+## Практические руководства
+- [[../../WebServers/Angie/angie_ha_with_keepalived|Настройка отказоустойчивого кластера Angie с Keepalived]]
+
