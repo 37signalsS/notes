@@ -12,6 +12,19 @@
 4.  **Квотирование ресурсов (Resource Quotas):** Можно ограничить потребление CPU, памяти и количество создаваемых объектов (подов, сервисов) для каждого `Namespace`, чтобы гарантировать справедливое распределение ресурсов.
 5.  **Изоляция сетевых политик (Network Policies):** Сетевые политики применяются к подам внутри `Namespace`, позволяя контролировать входящий и исходящий трафик.
 
+Пример Namespace с метками:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+    team: platform
+```
+
+
 ## Ресурсы и Namespaces
 
 Не все ресурсы в Kubernetes привязаны к `Namespace`.

@@ -274,3 +274,17 @@ Kubernetes снова запустит `Rolling Update`, но на этот ра
     *   `maxUnavailable: 0` — более безопасный вариант, гарантирующий отсутствие потери мощности, но требующий больше ресурсов (`maxSurge` должен быть > 0).
     *   `maxSurge: 0` — экономит ресурсы, но может снизить производительность во время обновления.
 *   **Настройте авто-масштабирование:** Для динамического управления количеством реплик в зависимости от нагрузки используйте [Horizontal Pod Autoscaler](./horizontal_pod_autoscaler.md).
+
+### Правильно настраивайте imagePullPolicy
+
+`imagePullPolicy` влияет на предсказуемость обновлений и нагрузку на registry.
+
+**Если не делать:** С `Always` можно случайно перегрузить registry/получить rate limit, с `IfNotPresent` - не обновиться.
+
+```yaml
+spec:
+  containers:
+  - name: app
+    image: myregistry/app:v1.0.0
+    imagePullPolicy: IfNotPresent  # или Always
+```

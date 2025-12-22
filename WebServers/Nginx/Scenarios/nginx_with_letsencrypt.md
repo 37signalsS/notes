@@ -111,8 +111,29 @@ server {
 
 Этот подход обеспечивает полностью автоматизированное управление SSL-сертификатами для вашего Nginx-контейнера.
 
----
-## Смотри также
-*   [[nginx_overview|Обзор Nginx]]
-*   [[nginx_tls_ssl_configuration|Настройка TLS/SSL]]
-*   [[nginx_in_docker|Запуск Nginx в Docker]]
+## Альтернативный метод: Установка Certbot на хост-систему (без Docker)
+
+Если Nginx установлен непосредственно на хост-системе (не в Docker-контейнере), вы можете использовать следующую процедуру для получения SSL-сертификатов с помощью Certbot.
+
+1.  **Установите Certbot:**
+    
+    ```bash
+    sudo apt update
+    sudo apt install certbot python3-certbot-nginx
+    ```
+    
+2.  **Получите сертификат:**
+    Перед запуском команды временно остановите Nginx, если Certbot будет использовать 80-й порт для проверки.
+    
+    ```bash
+    # 1. Временно останавливаем Nginx
+    sudo systemctl stop nginx
+    
+    # 2. Запрашиваем сертификат
+    sudo certbot certonly --standalone \
+      -d consul.your-domain.com \
+      --agree-tos \
+      -m your-email@example.com \
+      --non-interactive
+    ```
+    *Certbot* создаст сертификаты в `/etc/letsencrypt/live/consul.your-domain.com/`. Вам нужно либо указать эти пути в конфигурации Nginx, либо скопировать их в директорию, указанную ранее (`/etc/nginx/ssl/consul/`). Если Certbot использует метод `standalone`, ему потребуется занять 80-й порт, который обычно слушает Nginx.

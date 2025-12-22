@@ -8,22 +8,113 @@ GitLab CI предоставляет мощные механизмы для из
 
 #### 1. `extends` — Наследование конфигураций
 
-Механизм `extends` позволяет заданию унаследовать всю конфигурацию от другого, "скрытого" задания (начинающегося с точки). Это базовый способ переиспользования.
+Механизм `extends` позволяет заданию унаследовать всю конфигурацию от одного или нескольких "скрытых" заданий (начинающихся с точки `.` ). Это базовый способ переиспользования конфигураций.
+
+**Логика слияния `extends`:**
+
+Когда задание использует `extends`, GitLab CI выполняет слияние (merge) конфигураций. Важно понимать, как это происходит:
+
+*   **Скрипты (`script`, `before_script`, `after_script`):** Скрипты из родительского задания **конкатенируются** со скриптами дочернего задания. Если дочернее задание имеет `script` или `before_script`/`after_script`, они будут выполнены **после** соответствующих скриптов из `extends`-задания.
+*   **Другие ключи (например, `variables`, `rules`, `cache`):** Для большинства других ключей происходит **глубокое слияние (deep merge)**. Это означает, что если ключ присутствует как в родительском, так и в дочернем задании, значения из дочернего задания **переопределяют** или **дополняют** значения из родительского.
+    *   Если дочернее задание определяет ключ, отсутствующий в родительском, он добавляется.
+    *   Если ключ является словарем (map), его поля сливаются.
+    *   Если ключ является списком (list), он обычно **заменяется** списком из дочернего задания.
+
+**Пример:**
 
 ```yaml
 .base_job:
   image: ruby:2.7
   script:
     - echo "This is from the base job."
+  variables:
+    BASE_VAR: "base_value"
+    OVERRIDE_ME: "base_override"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 test_job:
   extends: .base_job
   script:
     - echo "This is from the test job. It will run after the base script."
-    # Важно: скрипт из .base_job будет объединён со скриптом test_job.
+  variables:
+    TEST_VAR: "test_value"
+    OVERRIDE_ME: "test_override" # Переопределит BASE_VAR
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"' # Заменит правило из .base_job
 ```
 
-#### 2. YAML Anchors (`&`) и Aliases (`*`)
+В результате `test_job` будет иметь:
+
+*   `image: ruby:2.7`
+*   `script`: объединение скриптов из `.base_job` и `test_job`.
+*   `variables`: `BASE_VAR: "base_value"`, `OVERRIDE_ME: "test_override"`, `TEST_VAR: "test_value"`.
+*   `rules`: только правило из `test_job` (`if: '$CI_PIPELINE_SOURCE == "merge_request_event"'`).
+
+Список ключей `extends` может быть использован для наследования от нескольких скрытых заданий. В этом случае слияние происходит последовательно, справа налево (т.е. последнее задание в списке `extends` будет иметь приоритет).
+
+```yaml
+.base_defaults:
+  image: alpine:latest
+
+.test_rules:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+my_test_job:
+  extends:
+    - .base_defaults
+    - .test_rules
+  script:
+    - echo "Running tests"
+```
+
+В этом примере `my_test_job` сначала наследует от `.base_defaults`, затем сливается с `.test_rules`.
+
+
+#### 2. `!reference`, YAML Anchors (`&`) и Aliases (`*`)
+
+GitLab CI предоставляет несколько механизмов для повторного использования фрагментов конфигурации внутри одного файла `.gitlab-ci.yml`.
+
+##### `!reference` — Ссылки на существующие элементы
+
+`!reference` — это специальный тег GitLab CI, который позволяет ссылаться на другие элементы в файле `.gitlab-ci.yml` и вставлять их содержимое. Это мощный инструмент для сокращения дублирования и создания более читаемых конфигураций, особенно для сложных структур.
+
+**Преимущества `!reference`:**
+
+*   **Четкость:** Явно указывает на ссылку, улучшая читаемость.
+*   **Гибкость:** Можно ссылаться на любые элементы (скрипты, правила, переменные и т.д.).
+*   **Валидация:** Линтер GitLab CI способен валидировать ссылки, чего не скажешь о более низкоуровневых YAML-якорях, которые парсер GitLab не всегда полностью интерпретирует.
+
+**Пример использования `!reference`:**
+
+```yaml
+.script_template:
+  - echo "Running common script part 1"
+  - echo "Running common script part 2"
+
+.default_tags: &default_runner_tags
+  tags:
+    - linux
+    - shell
+
+build_job:
+  stage: build
+  script:
+    - !reference [.script_template] # Вставка содержимого .script_template
+    - echo "Running build specific script"
+  <<: *default_runner_tags # Использование YAML-якоря
+
+test_job:
+  stage: test
+  script:
+    - !reference [.script_template]
+    - echo "Running test specific script"
+  tags:
+    - !reference [.default_tags, tags, 0] # Ссылка на конкретный элемент списка из якоря
+```
+
+##### YAML Anchors (`&`) и Aliases (`*`)
 
 Помимо `!reference`, для переиспользования можно использовать стандартный механизм YAML — якоря (anchors) и псевдонимы (aliases). Это не является специфической функцией GitLab CI, но поддерживается его парсером.
 
@@ -46,6 +137,7 @@ job2:
   after_script:
     - *after_script_definition
 ```
+Важно отметить, что `!reference` обычно более предпочтителен в GitLab CI, так как предоставляет лучшую читаемость и поддержку со стороны GitLab CLI Lint.
 
 #### 3. `include` — Композиция из внешних файлов
 
@@ -76,13 +168,66 @@ job2:
 
 #### 4. CI/CD Catalog (Components)
 
-Новый подход к переиспользованию, позволяющий создавать версионируемые **компоненты** — полноценные, изолированные блоки CI/CD логики, которые можно публиковать в общем каталоге и использовать в проектах.
+**CI/CD Catalog (Каталог CI/CD)** — это наиболее современный и рекомендуемый подход GitLab к переиспользованию логики пайплайнов. Он позволяет создавать версионируемые **компоненты** — полноценные, изолированные блоки CI/CD логики, которые можно публиковать в общем каталоге и использовать в проектах.
+
+**Основные преимущества компонентов над традиционными `include` шаблонами:**
+
+1.  **Явное версионирование:** Каждый компонент имеет свою версию (например, `@1.0`, `@~1.0`, `@stable`). Это обеспечивает стабильность и предсказуемость, так как обновления не ломают зависимые проекты, пока версия не будет явно изменена.
+2.  **Строго типизированные интерфейсы (`spec:inputs`):** Компоненты могут определять входные параметры с указанием типа (строка, число, булево, список), значения по умолчанию и даже регулярных выражений для валидации. Это создает четкий API для компонента, упрощает его использование и предотвращает ошибки.
+3.  **Повышенная изоляция:** Компоненты спроектированы как самостоятельные блоки, что способствует лучшей модульности.
+4.  **Улучшенное обнаружение и управление:** Компоненты публикуются в централизованном каталоге GitLab, что упрощает их поиск, понимание и использование другими командами.
+5.  **Автоматическая документация:** Каталог может автоматически генерировать документацию на основе описаний компонентов.
+
+**Структура компонента:**
+
+Компонент обычно состоит из файла `template.yml` (который содержит основную логику CI/CD) и файла `gitlab-ci.yml` (который определяет метаданные и `spec:inputs`).
+
+**Пример использования компонента:**
 
 ```yaml
+# .gitlab-ci.yml в проекте, использующем компонент
 include:
-  - component: '$CI_SERVER_HOST/my-org/my-component@1.0'
+  - component: '$CI_SERVER_HOST/my-group/my-component/my-build-component@1.0.0'
     inputs:
       stage: build
+      target_branch: main
+      enable_cache: true
+      dockerfile_path: "app/Dockerfile"
+```
+
+**Пример определения компонента (`gitlab-ci.yml` в репозитории компонента):**
+
+```yaml
+# gitlab-ci.yml (в репозитории компонента 'my-build-component')
+spec:
+  inputs:
+    stage:
+      default: build
+      type: string
+      description: "CI stage for the build job."
+    target_branch:
+      type: string
+      default: main
+      description: "The branch to trigger the build on."
+      regex: '^(main|develop|feature/.*)$' # Валидация через regex
+    enable_cache:
+      type: boolean
+      default: true
+      description: "Enable Docker layer caching."
+
+---
+
+# template.yml (основная логика компонента)
+# Использует переменные, переданные через `inputs`
+build-component-job:
+  stage: $[[ inputs.stage ]]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $[[ inputs.target_branch ]]'
+  script:
+    - echo "Building image for stage: $[[ inputs.stage ]]"
+    - if [[ "$[[ inputs.enable_cache ]]" == "true" ]]; then echo "Cache enabled."; fi
+    - docker build -f $[[ inputs.dockerfile_path ]] .
+  # ... остальная логика сборки ...
 ```
 
 ---

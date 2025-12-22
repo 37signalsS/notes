@@ -144,6 +144,29 @@ spec:
 ## Рекомендации и лучшие практики
 
 *   **Высокая доступность (High Availability):** Всегда используйте `podAntiAffinity` для stateless-приложений (например, веб-серверов). Это гарантирует, что реплики будут распределены по разным узлам (`topologyKey: kubernetes.io/hostname`) или даже зонам доступности (`topologyKey: topology.kubernetes.io/zone`), предотвращая единую точку отказа.
+
+    ```yaml
+    spec:
+      affinity:
+        podAntiAffinity:
+          # Мягкое правило: стараться не запускать поды этого Deployment'а на одном и том же узле.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api-server # метка подов, которые не должны располагаться рядом
+                # Разделяем поды в пределах одного узла
+                topologyKey: kubernetes.io/hostname
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api-server
+                # Разделяем поды по разным зонам доступности
+                topologyKey: topology.kubernetes.io/zone
+    ```
+
 *   **Производительность:** Используйте `podAffinity` для компонентов, которые интенсивно обмениваются данными (например, приложение и кэш Redis). Размещение их на одном узле (`topologyKey: kubernetes.io/hostname`) минимизирует сетевую задержку и повышает скорость отклика.
 *   **Работа со специализированным оборудованием:** Используйте `nodeAffinity` для подов, требующих специфических ресурсов, таких как GPU (`nvidia.com/gpu`), быстрые диски (`disk-type: ssd`) или определенные архитектуры CPU.
 *   **Гибкость и надежность:** Отдавайте предпочтение мягким правилам (`preferred...`) перед жесткими (`required...`). Жесткие правила могут сделать систему хрупкой: если ни один узел не удовлетворяет условиям, поды не будут запланированы. Мягкие правила обеспечивают более гибкое и отказоустойчивое размещение.

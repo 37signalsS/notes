@@ -175,6 +175,92 @@ Kubernetes не реализует сетевую модель самостоя�
 
 После применения этой политики (в кластере с Calico или другим поддерживающим CNI) поды в `backend` будут принимать трафик только от подов из `frontend`.
 
+### Расширенные рекомендации и примеры NetworkPolicy
+
+NetworkPolicy — единственный нормальный способ сказать "кто с кем может говорить".
+
+**Если не делать:** По умолчанию будет "всем всё можно", и любой скомпрометированный Pod станет трамплином по кластеру.
+
+Ограничьте pod-to-pod коммуникацию:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy-enhanced
+  namespace: production # Явное указание namespace - хорошая практика
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+  - Ingress
+  - Egress
+
+  ingress:
+  # 1. Разрешить трафик только от frontend в том же namespace
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - port: 8080
+      protocol: TCP
+  # 2. Разрешить сбор метрик от Prometheus (опционально)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring # namespace с Prometheus
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - port: 9090 # Порт метрик вашего приложения
+      protocol: TCP
+
+  egress:
+  # 1. Обязательно: разрешить DNS-запросы
+  - to:
+    - namespaceSelector: {} # Разрешить доступ в любой namespace
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns # или k8s-app: coredns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # 2. Разрешить доступ к базе данных
+  - to:
+    - podSelector:
+        matchLabels:
+          app: database
+    ports:
+    - port: 5432
+      protocol: TCP
+  # 3. Разрешить исходящий трафик в публичный интернет (опционально, для внешних API)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8 # Исключить внутренние сети
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - port: 443
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+```
+
+**Обязательно добавьте DNS:** Без правила для порта 53 политика гарантированно сломает сетевое взаимодействие. 
+
+**Тестируйте в изоляции:** Применяйте политики поэтапно в non-production средах. Используйте `kubectl describe networkpolicy` и инструменты вроде `kubectl run --rm -it testpod --image=nicolaka/netshoot` для проверки связности (`curl`, `dig`, `nc`).
+
+**Логируйте отказанный трафик:** В некоторых CNI (например, Calico) можно настроить логирование дропнутых пакетов для отладки сложных политик.
+
+Важно упомянуть, что для работы `NetworkPolicy` требуется установленный CNI-плагин, поддерживающий эту функциональность (например, Calico, Cilium, Weave Net). Без него манифесты будут бесполезны.
+
 # Сетевое взаимодействие между подами (Pod-to-Pod Communication)
 
 Сетевая модель Kubernetes основана на ключевом принципе: **каждый под получает свой собственный, уникальный IP-адрес в кластере, и все контейнеры внутри пода разделяют это сетевое пространство.** Это означает, что контейнеры в одном поде могут общаться друг с другом через `localhost`.
@@ -243,3 +329,26 @@ Kubernetes не реализует сетевую модель самостоя�
 7.  **Доставка до пода:** Исходный пакет передается на локальный мост (`cbr0`) Узла 2, который доставляет его до Пода 2 по стандартной схеме.
 
 Этот метод проще в настройке, так как не требует конфигурации BGP на сетевом оборудовании, но вносит небольшие накладные расходы на инкапсуляцию.
+
+### Избегайте hostPort и hostNetwork
+
+`hostNetwork` и `hostPort` ограничивают планирование подов и расширяют поверхность атаки. Однако существуют легитимные сценарии их использования, например, для DaemonSet'ов мониторинга, CNI-плагинов или некоторых Ingress-контроллеров.
+
+```yaml
+# ИЗБЕГАЙТЕ, если это не является крайней необходимостью
+spec:
+  hostNetwork: true
+  containers:
+  - name: app
+    ports:
+    - containerPort: 80
+      hostPort: 80  # Привязывает под к конкретному узлу
+```
+
+В качестве альтернативы рекомендуется использовать:
+
+- `NodePort` Services для базового внешнего доступа.
+- `LoadBalancer` Services в облачных средах.
+- Ingress-контроллеры для HTTP-трафика.
+- `kubectl port-forward` для отладки.
+

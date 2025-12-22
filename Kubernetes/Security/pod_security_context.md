@@ -65,6 +65,29 @@
 *   `fsGroup`: Указывает GID, который будет назначен для всех томов, примонтированных к поду. Владение томами изменяется на этот GID.
 *   **Использование:** Гарантирует, что процессы в контейнере имеют правильные разрешения для чтения/записи на смонтированных томах, особенно при работе с `Persistent Volumes`.
 
+## Pod Security Standards (PSS) и Pod Security Admission (PSA)
+
+PSA/PSS — современная замена PSP и база для baseline безопасности. PodSecurityPolicy (PSP) удалены в Kubernetes v1.25.
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    # 1. В аудит-логи API-сервера попадут ВСЕ поды, которые не соответствуют самому высокому стандарту restricted. Это даёт полную картину.
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    # 2. Разработчики сразу увидят предупреждение в kubectl, если их под нарушает даже базовые требования.
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: latest
+    # 3. Фактически не блокирует ничего, кроме совсем уж экзотических случаев. Это позволяет начать сбор данных, не ломая рабочие процессы. По мере готовности можно повысить уровень enforce до baseline, а затем и до restricted.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+Для более сложных политик можно использовать: [Kyverno](../../Kubernetes/Security/kyverno.md) или *OPA Gatekeeper*.
+
 ## Примеры
 
 ### 1. Настройки на уровне пода

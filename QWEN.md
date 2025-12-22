@@ -47,7 +47,7 @@ principle **is a strict rule.**
 
 ---
 
-###4. Using Tools
+### 4. Using Tools
 - `replace`: only after `read_file', with a context of ≥ 3 lines.
 - `write_file`: only for new files or a complete census by direct consent.
 - Do not use secrets explicitly.

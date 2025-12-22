@@ -74,7 +74,40 @@
     ```
     # Пользователь charlie может перезапускать сервис nginx без пароля
     charlie ALL=(ALL) NOPASSWD: /usr/sbin/service nginx restart, /usr/sbin/service nginx status
+
+    # Пользователь может просматривать логи journalctl без пароля
+    username ALL=(ALL) NOPASSWD: /usr/bin/journalctl
+
     ```
+
+### Ограничение доступа для обычных пользователей
+
+#### 1. Ограничение через PolicyKit
+
+PolicyKit (Polkit) позволяет гибко настраивать права на выполнение привилегированных действий. С его помощью можно, например, запретить всем пользователям, кроме администраторов, выключать или перезагружать систему.
+
+Для этого создайте файл конфигурации:
+
+```ini
+# /etc/polkit-1/localauthority/50-local.d/noshutdown.pkla
+[Disable shutdown for users]
+Identity=unix-user:*
+Action=org.freedesktop.login1.power-off;org.freedesktop.login1.reboot
+ResultActive=no
+```
+
+Теперь никто кроме суперпользователя не сможет выключить или перезагрузить систему через графический интерфейс или консольные утилиты, которые используют PolicyKit (например, `systemctl poweroff`).
+
+#### 2. Ограничение через права доступа systemd
+
+Можно ограничить доступ к критически важным `target`-юнитам `systemd`, таким как `shutdown.target` и `reboot.target`, изменив права доступа к файлам.
+
+```bash
+chmod o-rwx /etc/systemd/system/shutdown.target
+chmod o-rwx /etc/systemd/system/reboot.target
+```
+
+Это ограничение предотвращает случайный запуск этих целей обычными пользователями.
 
 ## Системный вызов `setuid()`
 

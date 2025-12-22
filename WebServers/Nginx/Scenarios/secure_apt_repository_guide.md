@@ -98,7 +98,7 @@ server {
 }
 ```
 
-> ➡️ **Подробное руководство: [Аутентификация по клиентским SSL-сертификатам в Nginx](../../WebServers/Nginx/ssl_client_certificate_authentication.md)**
+> ➡️ **Подробное руководство: [Аутентификация по клиентским SSL-сертификатам в Nginx](./nginx_tls_ssl_configuration.md#7-Аутентификация-по-клиентским-ssl-сертификатам-mtls)**
 
 ## Шаг 4: Настройка Apt-клиента
 

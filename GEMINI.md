@@ -78,6 +78,13 @@ I will not search the internet if I can get information from the available files
 
 ---
 
+### 9. Filling in the blanks
+If you find placeholders (like `[...]`, `TODO`, etc.) or obvious gaps in the information, you must try to fill them.
+- Before adding, analyze the context and use available tools (`search_file_content`, `google_web_search`) to find the correct information.
+- The added information must be integrated logically and stylistically into the existing text.
+
+---
+
 ## III. KEY FEATURES
 
 - Knowledge base audit, search for contradictions.
