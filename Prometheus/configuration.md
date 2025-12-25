@@ -1,7 +1,5 @@
 # Конфигурация Prometheus
 
-Этот документ описывает структуру основного конфигурационного файла `prometheus.yml` и наиболее востребованные флаги командной строки для запуска Prometheus.
-
 ## Обзор конфигурационного файла `prometheus.yml`
 
 Основной конфигурационный файл Prometheus имеет формат YAML. Путь к нему задается через флаг `--config.file`. В файле не допускаются символы табуляции, только пробелы.
@@ -50,6 +48,7 @@ remote_read:
 ```
 
 **Ключевые секции, которые нужно запомнить:**
+
 *   `scrape_interval`: Как часто Prometheus опрашивает источники данных.
 *   `scrape_configs`: Список источников данных (таргетов) и правила их обнаружения.
 *   `rule_files`: Пути к файлам с правилами алертинга.
@@ -76,13 +75,3 @@ remote_read:
 | `--log.level` | `info` | Уровень логирования (`debug`, `info`, `warn`, `error`). |
 | `--log.format` | `logfmt` | Формат логов (`logfmt` или `json`). |
 
----
-**Связанные темы:**
-*   [[./overview.md]]
-*   [[./installation/from_binary.md]]
-*   [[./alertmanager.md]]
-*   [[./rules.md]]
-*   [[./kubernetes/service_discovery.md]]
-*   [[./service_discovery_examples.md]]
-*   [[./promtool_and_best_practices.md]]
-*   [[./scaling/remote_read_write.md]]

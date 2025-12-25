@@ -101,7 +101,7 @@ server {
 ### IV. Безопасность (Security)
 -   **[[../Security/nginx_security_guide.md|Руководство по безопасности]]**: Защита от DoS, контроль доступа, заголовки безопасности.
 -   **[[../Security/nginx_tls_ssl_configuration.md|Настройка TLS/SSL]]**: Полное руководство по настройке HTTPS.
--   **[[../Security/nginx_with_letsencrypt.md|Интеграция с Let's Encrypt]]**: Автоматизация получения сертификатов.
+-   **[[../Scenarios/nginx_with_letsencrypt.md|Интеграция с Let's Encrypt]]**: Автоматизация получения сертификатов.
 
 ### V. Эксплуатация и Мониторинг (Operations)
 -   **[[../Operations/nginx_in_docker.md|Запуск Nginx в Docker]]**: Руководство по контейнеризации.
@@ -110,6 +110,7 @@ server {
 
 ### VI. Комплексные сценарии (Scenarios)
 -   **[[../Scenarios/secure_apt_repository_guide.md|Создание защищенного Apt-репозитория с mTLS]]**: Пример комплексной настройки `reprepro`, `OpenSSL` и `Nginx`.
+-   **[[../../../Kubernetes/Networking/ingress.md|Nginx как Ingress-контроллер в Kubernetes]]**: Управление внешним доступом к сервисам в кластере.
 
 ---
 

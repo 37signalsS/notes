@@ -1,7 +1,5 @@
 # Директивы `location` в Angie (Nginx)
 
-В этом документе подробно рассматриваются директивы `location` в Nginx (Angie), их синтаксис, модификаторы, правила приоритета и примеры использования для различных сценариев обработки запросов.
-
 ## 1. Обзор директивы `location`
 
 Директива `location` используется для определения того, как Nginx должен обрабатывать запросы для различных URI. Она позволяет настроить специфические правила для определенных путей или шаблонов URL.
@@ -120,7 +118,7 @@ Nginx обрабатывает директивы `location` в следующе
         proxy_pass http://my_backend_servers;
     }
     ```
-    В этом примере, если Nginx не находит статический файл, он внутренне перенаправляет запрос на именованный `location @backend`, который затем проксирует запрос к бэкенд-серверам.
+    В этом примере, если Nginx не находит статический файл, он внутренне перенаправляет запрос на именованный `location @backend`, который затем проксирует запрос к бэкенд-серверам. Эта техника является основой для [настройки Angie в роли обратного HTTP-прокси](../Angie/angie_reverse_proxy.md) и [балансировки нагрузки HTTP(S)](../Angie/angie_http_load_balancing.md).
 
 ### 4.2. Директива `internal`
 
@@ -238,19 +236,4 @@ server {
         log_not_found off;
     }
 }
-
-## 8. См. также
-
-*   [Обзор Angie](../Angie/angie_overview.md)
-*   [Настройка Angie в роли обратного HTTP-прокси](../Angie/angie_reverse_proxy.md)
-*   [Настройка TLS в Angie: безопасность и скорость](../Angie/angie_tls_setup.md)
-*   [Перенаправления и перезапись URI в Angie](../Angie/angie_redirects_and_rewrites.md)
-*   [Балансировка нагрузки HTTP(S) в Angie](../Angie/angie_http_load_balancing.md)
-*   [Установка Angie из пакетов](../Angie/angie_installation.md)
-*   [Клиентское кэширование в Angie](../Angie/angie_caching.md)
-*   [Мониторинг Angie](../Angie/angie_monitoring.md)
-*   [Почему стоит переходить на Angie](../Angie/angie_why_migrate.md)
-*   [Глубокое погружение в директиву location в Nginx](../Nginx/nginx_location_directive.md)
-*   [Обзор Nginx](../Nginx/nginx_overview.md)
-*   [Nginx: Правила Rewrite, Redirect и Директива try_files](../Nginx/nginx_rewrite_rules_and_try_files.md)
 ```

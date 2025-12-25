@@ -94,3 +94,11 @@ networks:
 docker stack deploy -c docker-compose.app.yml my-app
 ```
 После этого Traefik обнаружит сервис `nginx-app`, увидит его метки, создаст правило для хоста `nginx.your-domain.com`, запросит для него SSL-сертификат и начнет перенаправлять на него трафик.
+
+### Описание меток (Labels)
+
+*   `traefik.enable=true`: Включает Traefik для этого сервиса.
+*   `traefik.http.routers.nginx-router.rule=Host(\`nginx.your-domain.com\`)`: Определяет правило маршрутизации (по доменному имени). Имя роутера `nginx-router` может быть произвольным.
+*   `traefik.http.routers.nginx-router.entrypoints=websecure`: Указывает, что роутер работает на точке входа `websecure` (HTTPS).
+*   `traefik.http.routers.nginx-router.tls.certresolver=myresolver`: Указывает, какой `Certificate Resolver` использовать для получения SSL-сертификатов.
+*   `traefik.http.services.nginx-service.loadbalancer.server.port=80`: Указывает порт, на котором работает приложение внутри контейнера. Имя сервиса `nginx-service` может быть произвольным.

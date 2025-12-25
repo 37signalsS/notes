@@ -1,15 +1,15 @@
-# Vault Agent и шаблоны
+# I. Vault Agent: Определение и ключевые задачи
 
-**Vault Agent** — это режим работы бинарного файла `vault`, который позволяет реализовать несколько полезных паттернов для работы с секретами без необходимости встраивать логику Vault в код самого приложения.
+**Vault Agent** — это режим работы бинарного файла `vault`, который позволяет реализовать несколько полезных паттернов для работы с секретами без необходимости встраивать логику Vault в код самого приложения. Он действует как посредник между приложением и сервером Vault.
 
 Ключевые задачи агента:
-1.  **Автоматическая аутентификация:** Агент самостоятельно аутентифицируется в Vault (например, через [AppRole](./vault_auth_approle.md)), используя настроенный метод.
+1.  **Автоматическая аутентификация:** Агент самостоятельно аутентифицируется в Vault (например, через метод [AppRole](./vault_auth_approle.md)), используя настроенный метод.
 2.  **Управление жизненным циклом токена:** Агент кэширует полученный токен и автоматически обновляет его по истечении срока действия.
 3.  **Рендеринг секретов в файлы:** Агент может запрашивать секреты из Vault и, используя встроенный шаблонизатор, записывать их в конфигурационные файлы приложения в нужном формате.
 
-## Конфигурация Vault Agent
+# II. Конфигурация и основные концепции
 
-Агент управляется через отдельный конфигурационный файл.
+Агент управляется через отдельный конфигурационный файл в формате HCL.
 
 ```hcl
 # /etc/vault.d/agent.hcl
@@ -54,9 +54,53 @@ template {
 *   `destination`: Путь к итоговому файлу, который будет использовать ваше приложение.
 *   `command`: Позволяет уведомить приложение об обновлении конфигурации (например, отправив сигнал `SIGHUP` или выполнив команду перезагрузки).
 
+# III. Практическое применение
+
+## Запуск агента
+
+Агент запускается с указанием файла конфигурации:
+
+```bash
+vault agent -config=/etc/vault.d/agent.hcl
+```
+Для production-окружений рекомендуется запускать агента как `systemd` сервис, аналогично самому [Vault](./vault_installation.md).
+
+## Пример: получение токена Consul
+
+Рассмотрим сценарий, где агент должен получить токен для [Consul](../../Consul/consul_overview.md) и записать его в файл.
+
+**1. Файлы `role_id` и `secret_id`**
+Сначала необходимо получить `RoleID` и `SecretID` для вашей [AppRole](./vault_auth_approle.md) и записать их в файлы, указанные в конфигурации агента.
+
+```bash
+# Получаем RoleID и записываем в файл
+vault read -field=role_id auth/approle/role/ansible > /etc/vault.d/.role_id
+
+# Получаем SecretID и записываем в файл
+vault write -f -field=secret_id auth/approle/role/ansible > /etc/vault.d/.secret_id
+
+# Устанавливаем права, чтобы только Vault мог их читать
+sudo chown vault:vault /etc/vault.d/.role_id /etc/vault.d/.secret_id
+sudo chmod 400 /etc/vault.d/.role_id /etc/vault.d/.secret_id
+```
+
+**2. Запуск и проверка**
+Запускаем агента от имени пользователя `vault` и проверяем результат.
+```bash
+sudo -u vault vault agent -config=/etc/vault.d/agent.hcl
+
+# Проверяем результат
+cat /etc/app/config.json
+```
+```
+token = "a1b2-c3d4-e5f6"
+```
+
+# IV. Шаблоны и отладка
+
 ## Синтаксис шаблонов
 
-Шаблоны используют синтаксис [Consul Template](https://github.com/hashicorp/consul-template).
+Шаблоны используют синтаксис, основанный на [Consul Template](https://github.com/hashicorp/consul-template).
 
 Для получения секрета из K/V-хранилища используется конструкция `with secret`:
 
@@ -76,53 +120,9 @@ consul_token = "{{ .Data.data.token }}"
 В данном примере:
 1.  `with secret "devops/data/consul"`: Агент запрашивает секрет по этому пути.
 2.  `.Data.data.token`: Мы получаем доступ к полю `token` внутри данных секрета.
-3.  В итоге в файле `/etc/app/config.json` (или куда указывает `destination`) будет записано:
-    ```
-    consul_token = "s.aabbccddeeff..."
-    ```
 
-## Запуск агента
+## Отладка: `permission denied`
 
-Агент запускается с указанием файла конфигурации:
-
-```bash
-vault agent -config=/etc/vault.d/agent.hcl
-```
-Для production-окружений рекомендуется запускать агента как `systemd` сервис, аналогично самому Vault.
-
-## Практический пример и отладка
-
-Рассмотрим сценарий, где агент должен получить токен Consul и записать его в файл.
-
-**1. Файлы `role_id` и `secret_id`**
-Сначала необходимо получить `RoleID` и `SecretID` для вашей [AppRole](./vault_auth_approle.md) и записать их в файлы, указанные в конфигурации агента.
-
-```bash
-# Получаем RoleID и записываем в файл
-vault read -field=role_id auth/approle/role/ansible > /etc/vault.d/.role_id
-
-# Получаем SecretID и записываем в файл
-vault write -f -field=secret_id auth/approle/role/ansible > /etc/vault.d/.secret_id
-
-# Устанавливаем права, чтобы только Vault мог их читать
-sudo chown vault:vault /etc/vault.d/.role_id /etc/vault.d/.secret_id
-sudo chmod 400 /etc/vault.d/.role_id /etc/vault.d/.secret_id
-```
-
-**2. Файл шаблона `/etc/app/config.ctmpl`**
-```go-template
-{{ with secret "devops/data/consul" -}}
-token = "{{ .Data.data.token }}"
-{{- end }}
-```
-
-**3. Запуск и отладка**
-Запускаем агента от имени пользователя `vault`:
-```bash
-sudo -u vault vault agent -config=/etc/vault.d/agent.hcl
-```
-
-**Проблема: `permission denied`**
 Если вы видите в логах агента ошибку `permission denied` при попытке доступа к секрету, скорее всего, проблема в политике, привязанной к AppRole.
 
 ```
@@ -137,11 +137,3 @@ sudo -u vault vault agent -config=/etc/vault.d/agent.hcl
 3.  **Проверьте права (`capabilities`):** Убедитесь, что у политики есть право на `read`.
 
 После исправления политики агент при следующей попытке должен успешно отрендерить шаблон.
-
-```bash
-# Проверяем результат
-cat /etc/app/config.json
-```
-```
-token = "a1b2-c3d4-e5f6"
-```
