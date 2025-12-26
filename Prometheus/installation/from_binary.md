@@ -1,387 +1,358 @@
-# Руководство по ручной установке: Prometheus и Экспортеры
+# Установка стека Prometheus из бинарных файлов
 
-Этот документ содержит пошаговую инструкцию по ручной установке из бинарных файлов и настройке в качестве `systemd` сервисов для Prometheus и его ключевых компонентов: `node_exporter` и `blackbox_exporter`.
+## 1. Определения
 
----
+- **Prometheus Server**: Основной компонент, отвечающий за сбор, хранение и обработку метрик в формате временных рядов (TSDB).
+- **Node Exporter**: Экспортер для сбора метрик с аппаратного и программного обеспечения хостовой системы (CPU, RAM, диск, сеть).
+- **Blackbox Exporter**: Экспортер для проверки доступности эндпоинтов по различным протоколам (HTTP, HTTPS, TCP, ICMP, DNS). Работает по принципу "черного ящика".
+- **Alertmanager**: Обрабатывает алерты, отправленные Prometheus. Отвечает за их дедупликацию, группировку, и маршрутизацию в различные системы уведомлений (Email, Slack, PagerDuty).
+- **Pushgateway**: Позволяет кратковременным и batch-заданиям, которые не могут быть постоянно доступны для скрейпинга, отправлять свои метрики в Prometheus.
 
-## 1. Установка Prometheus Server
+## 2. Основные концепции
 
-### Шаг 1.1: Создание пользователя
+### 2.1. Принцип установки
 
-Для запуска Prometheus не требуются root-привилегии, поэтому с точки зрения безопасности лучше запускать его от непривилегированного пользователя.
+1.  **Создание пользователя**: Для изоляции процессов и повышения безопасности для каждого компонента (кроме Node Exporter, которому нужен root-доступ) создается отдельный системный пользователь без прав на вход в систему.
+2.  **Загрузка и размещение бинарных файлов**: Архив с последней стабильной версией загружается с официального репозитория на GitHub, распаковывается, и исполняемый файл помещается в `/usr/local/bin/`.
+3.  **Создание конфигурации**: Создаются необходимые каталоги (`/etc/<component>`, `/var/lib/<component>`) и файлы конфигурации.
+4.  **Настройка `systemd` сервиса**: Для управления процессом (автозапуск, перезапуск) создается unit-файл в `/usr/lib/systemd/system/`. Параметры запуска выносятся в отдельный environment-файл в `/etc/sysconfig/`.
 
-```bash
-useradd prometheus --comment "Prometheus server user" --shell /bin/false
-```
+### 2.2. Управление через `systemd`
 
-### Шаг 1.2: Загрузка и установка
-
-Скачиваем архив с бинарными файлами Prometheus и распаковываем его. В данном примере используется версия 2.24.1. Актуальный список версий можно найти на [странице релизов GitHub](https://github.com/prometheus/prometheus/releases).
-
-```bash
-cd /tmp
-wget https://github.com/prometheus/prometheus/releases/download/v2.24.1/prometheus-2.24.1.linux-amd64.tar.gz
-tar xvfz prometheus-2.24.1.linux-amd64.tar.gz
-cd prometheus-2.24.1.linux-amd64
-mv prometheus promtool /usr/local/bin/
-```
-
-### Шаг 1.3: Настройка конфигурационных каталогов
-
-Создаем каталог для конфигурационных файлов, копируем туда файл конфигурации по умолчанию и выставляем правильные права.
-
-```bash
-mkdir /etc/prometheus
-cp prometheus.yml /etc/prometheus/
-chown -R prometheus:prometheus /etc/prometheus
-```
-
-### Шаг 1.4: Создание каталога для базы данных
-
-Создаем каталог, где Prometheus будет хранить свою базу данных временных рядов (TSDB).
-
-```bash
-mkdir /var/lib/prometheus
-chown prometheus:prometheus /var/lib/prometheus
-```
-
-### Шаг 1.5: Создание файла с опциями запуска
-
-Чтобы избежать необходимости постоянно редактировать systemd-юнит, ключи запуска выносятся в отдельный файл.
-
-```bash
-cat <<EOF > /etc/sysconfig/prometheus
-OPTIONS="--config.file=/etc/prometheus/prometheus.yml \
---storage.tsdb.path=/var/lib/prometheus/"
-EOF
-```
-
-### Шаг 1.6: Создание systemd-сервиса
-
-Создаем unit-файл для управления Prometheus через `systemd`.
-
-```bash
-cat <<EOF > /usr/lib/systemd/system/prometheus.service 
-[Unit]
-Description=Prometheus Server
-Documentation=https://github.com/prometheus/prometheus
-
-[Service]
-Restart=always
-User=prometheus
-Group=prometheus
-EnvironmentFile=/etc/sysconfig/prometheus
-ExecStart=/usr/local/bin/prometheus $OPTIONS
-ExecReload=/bin/kill -HUP $MAINPID
-TimeoutStopSec=20s
-SendSIGKILL=no
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-### Шаг 1.7: Запуск и проверка
-
-```bash
-systemctl daemon-reload
-systemctl start prometheus
-systemctl enable prometheus
-curl -XGET -IL http://localhost:9090/graph # Ответ должен быть HTTP/1.1 200 OK
-```
-
-### Шаг 1.8: Утилита `promtool`
-
-Проверяем конфигурационный файл с помощью утилиты `promtool`, которая была установлена на шаге 1.2.
-
-```bash
-promtool check config /etc/prometheus/prometheus.yml 
-```
+После создания unit-файла для каждого компонента используются стандартные команды `systemctl`:
+- `systemctl daemon-reload`: Перечитать конфигурацию `systemd`.
+- `systemctl start <service>`: Запустить сервис.
+- `systemctl enable <service>`: Включить автозапуск сервиса при старте системы.
+- `systemctl status <service>`: Проверить статус сервиса.
 
 ---
 
-## 2. Установка Node Exporter
+## 3. Практические сценарии: Установка компонентов
 
-Практика выполняется с root-привилегиями.
+### 3.1. Установка Prometheus Server
 
-### Шаг 2.1: Скачиваем и устанавливаем
+**Версия**: 3.8.1
 
-```bash
-cd /tmp
-# Пример для версии 0.18.1. Актуальную версию можно найти на GitHub.
-wget https://github.com/prometheus/node_exporter/releases/download/v0.18.1/node_exporter-0.18.1.linux-amd64.tar.gz
-tar xvfz node_exporter-0.18.1.linux-amd64.tar.gz
-mv node_exporter-0.18.1.linux-amd64/node_exporter /usr/local/bin/
-```
+1.  **Создание пользователя**:
+    ```bash
+    useradd prometheus --comment "Prometheus server user" --shell /bin/false
+    ```
 
-### Шаг 2.2: Создаем файл для опций запуска
+2.  **Загрузка и установка**:
+    ```bash
+    PROMETHEUS_VERSION="3.8.1"
+    cd /tmp
+    wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
+    tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
+    cd prometheus-${PROMETHEUS_VERSION}.linux-amd64
+    mv prometheus promtool /usr/local/bin/
+    ```
 
-```bash
-cat <<EOF > /etc/sysconfig/node_exporter
-OPTIONS=""
-EOF
-```
+3.  **Настройка каталогов и конфигурации**:
+    ```bash
+    mkdir /etc/prometheus
+    cp prometheus.yml /etc/prometheus/
+    chown -R prometheus:prometheus /etc/prometheus
+    mkdir /var/lib/prometheus
+    chown prometheus:prometheus /var/lib/prometheus
+    ```
 
-### Шаг 2.3: Создаем systemd-сервис
+4.  **Создание файла с опциями запуска** (`/etc/sysconfig/prometheus`):
+    ```bash
+    cat <<EOF > /etc/sysconfig/prometheus
+    OPTIONS="--config.file=/etc/prometheus/prometheus.yml \
+    --storage.tsdb.path=/var/lib/prometheus/"
+    EOF
+    ```
 
-> `node_exporter` требует root-привилегий для доступа к некоторым системным файлам.
+5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/prometheus.service`):
+    ```bash
+    cat <<EOF > /usr/lib/systemd/system/prometheus.service
+    [Unit]
+    Description=Prometheus Server
+    Documentation=https://github.com/prometheus/prometheus
+    After=network-online.target
 
-```bash
-cat <<EOF > /usr/lib/systemd/system/node_exporter.service 
-[Unit]
-Description=Prometheus Node exporter for machine metrics
-Documentation=https://github.com/prometheus/node_exporter
+    [Service]
+    Restart=always
+    User=prometheus
+    Group=prometheus
+    EnvironmentFile=/etc/sysconfig/prometheus
+    ExecStart=/usr/local/bin/prometheus $OPTIONS
+    ExecReload=/bin/kill -HUP $MAINPID
+    TimeoutStopSec=20s
+    SendSIGKILL=no
 
-[Service]
-Restart=always
-User=root
-EnvironmentFile=/etc/sysconfig/node_exporter
-ExecStart=/usr/local/bin/node_exporter $OPTIONS
-ExecReload=/bin/kill -HUP $MAINPID
-TimeoutStopSec=20s
-SendSIGKILL=no
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    ```
 
-[Install]
-WantedBy=multi-user.target
-EOF
-```
+6.  **Запуск и проверка**:
+    ```bash
+    systemctl daemon-reload
+    systemctl start prometheus
+    systemctl enable prometheus
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/graph # Ожидаемый ответ: 200
+    ```
 
-### Шаг 2.4: Запускаем и проверяем
+### 3.2. Установка Node Exporter
 
-```bash
-systemctl daemon-reload
-systemctl start node_exporter
-systemctl enable node_exporter
-curl -I http://localhost:9100 # Ответ должен быть HTTP/1.1 200 OK
-```
+**Версия**: 1.10.2
 
+1.  **Загрузка и установка**:
+    ```bash
+    NODE_EXPORTER_VERSION="1.10.2"
+    cd /tmp
+    wget https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
+    tar xvfz node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
+    mv node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64/node_exporter /usr/local/bin/
+    ```
+
+2.  **Создание файла с опциями запуска** (`/etc/sysconfig/node_exporter`):
+    > Для сбора всех метрик `node_exporter` запускается от `root`.
+    ```bash
+    cat <<EOF > /etc/sysconfig/node_exporter
+    OPTIONS=""
+    EOF
+    ```
+
+3.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/node_exporter.service`):
+    ```bash
+    cat <<EOF > /usr/lib/systemd/system/node_exporter.service
+    [Unit]
+    Description=Prometheus Node exporter for machine metrics
+    Documentation=https://github.com/prometheus/node_exporter
+    After=network-online.target
+
+    [Service]
+    Restart=always
+    User=root
+    EnvironmentFile=/etc/sysconfig/node_exporter
+    ExecStart=/usr/local/bin/node_exporter $OPTIONS
+    ExecReload=/bin/kill -HUP $MAINPID
+    TimeoutStopSec=20s
+    SendSIGKILL=no
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    ```
+
+4.  **Запуск и проверка**:
+    ```bash
+    systemctl daemon-reload
+    systemctl start node_exporter
+    systemctl enable node_exporter
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:9100/metrics # Ожидаемый ответ: 200
+    ```
+
+### 3.3. Установка Blackbox Exporter
+
+**Версия**: 0.28.0
+
+1.  **Загрузка и установка**:
+    ```bash
+    BLACKBOX_EXPORTER_VERSION="0.28.0"
+    cd /tmp
+    wget https://github.com/prometheus/blackbox_exporter/releases/download/v${BLACKBOX_EXPORTER_VERSION}/blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz
+    tar xvfz blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz
+    mv blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64/blackbox_exporter /usr/local/bin/
+    ```
+
+2.  **Настройка каталогов и конфигурации**:
+    ```bash
+    mkdir /etc/blackbox_exporter
+    # Скопируйте файл blackbox.yml из архива или создайте свой
+    cp blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64/blackbox.yml /etc/blackbox_exporter/
+    chown -R nobody:nobody /etc/blackbox_exporter
+    ```
+
+3.  **Создание файла с опциями запуска** (`/etc/sysconfig/blackbox_exporter`):
+    ```bash
+    cat <<EOF > /etc/sysconfig/blackbox_exporter
+    OPTIONS="--config.file=/etc/blackbox_exporter/blackbox.yml"
+    EOF
+    ```
+
+4.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/blackbox_exporter.service`):
+    ```bash
+    cat <<EOF > /usr/lib/systemd/system/blackbox_exporter.service
+    [Unit]
+    Description=Prometheus Blackbox Exporter
+    Documentation=https://github.com/prometheus/blackbox_exporter
+    After=network-online.target
+
+    [Service]
+    Restart=always
+    User=nobody
+    Group=nobody
+    EnvironmentFile=/etc/sysconfig/blackbox_exporter
+    ExecStart=/usr/local/bin/blackbox_exporter $OPTIONS
+    ExecReload=/bin/kill -HUP $MAINPID
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    ```
+5.  **Запуск и проверка**:
+    ```bash
+    systemctl daemon-reload
+    systemctl start blackbox_exporter
+    systemctl enable blackbox_exporter
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:9115 # Ожидаемый ответ: 200
+    ```
+
+### 3.4. Установка Alertmanager
+
+**Версия**: 0.30.0
+
+1.  **Создание пользователя**:
+    ```bash
+    useradd --comment "User to run Alertmanager" --shell /bin/false alertmanager
+    ```
+2.  **Загрузка и установка**:
+    ```bash
+    ALERTMANAGER_VERSION="0.30.0"
+    cd /tmp
+    wget https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
+    tar xvfz alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
+    cd alertmanager-${ALERTMANAGER_VERSION}.linux-amd64
+    mv alertmanager amtool /usr/local/bin/
+    ```
+
+3.  **Настройка каталогов и конфигурации**:
+    ```bash
+    mkdir /etc/alertmanager
+    cp alertmanager.yml /etc/alertmanager/alertmanager.yml
+    chown alertmanager:alertmanager -R /etc/alertmanager
+    mkdir /var/lib/alertmanager/
+    chown alertmanager:alertmanager /var/lib/alertmanager/
+    ```
+
+4.  **Создание файла с опциями запуска** (`/etc/sysconfig/alertmanager`):
+    ```bash
+    cat <<EOF > /etc/sysconfig/alertmanager
+    OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml \
+      --storage.path=/var/lib/alertmanager/"
+    EOF
+    ```
+
+5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/alertmanager.service`):
+    ```bash
+    cat <<EOF > /usr/lib/systemd/system/alertmanager.service
+    [Unit]
+    Description=Prometheus Alertmanager
+    Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
+    After=network-online.target
+
+    [Service]
+    User=alertmanager
+    Group=alertmanager
+    Restart=always
+    EnvironmentFile=/etc/sysconfig/alertmanager
+    ExecStart=/usr/local/bin/alertmanager $OPTIONS
+    ExecReload=/bin/kill -HUP $MAINPID
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    ```
+
+6.  **Запуск и проверка**:
+    ```bash
+    systemctl daemon-reload
+    systemctl start alertmanager.service
+    systemctl enable alertmanager.service
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:9093 # Ожидаемый ответ: 200
+    ```
+
+### 3.5. Установка Pushgateway
+
+**Версия**: 1.11.2
+
+1.  **Создание пользователя**:
+    ```bash
+    useradd pushgateway --comment "Pushgateway server user" --shell /bin/false
+    ```
+
+2.  **Загрузка и установка**:
+    ```bash
+    PUSHGATEWAY_VERSION="1.11.2"
+    cd /tmp
+    wget https://github.com/prometheus/pushgateway/releases/download/v${PUSHGATEWAY_VERSION}/pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
+    tar xvfz pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
+    cd pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64
+    mv pushgateway /usr/local/bin/
+    ```
+
+3.  **Создание файла с опциями запуска** (`/etc/sysconfig/pushgateway`):
+    ```bash
+    cat <<EOF > /etc/sysconfig/pushgateway
+    OPTIONS="--web.listen-address=:9091 \
+        --web.telemetry-path=/metrics \
+        --persistence.file=/var/lib/pushgateway/metrics.store \
+        --persistence.interval=5m \
+        --log.level=info"
+    EOF
+    ```
+4. **Создание каталога для хранения метрик**:
+   ```bash
+   mkdir /var/lib/pushgateway
+   chown pushgateway:pushgateway /var/lib/pushgateway
+   ```
+
+5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/pushgateway.service`):
+    ```bash
+    cat <<EOF > /usr/lib/systemd/system/pushgateway.service
+    [Unit]
+    Description=Prometheus Pushgateway
+    Documentation=https://github.com/prometheus/pushgateway
+    After=network-online.target
+
+    [Service]
+    User=pushgateway
+    Group=pushgateway
+    EnvironmentFile=/etc/sysconfig/pushgateway
+    Restart=always
+    ExecStart=/usr/local/bin/pushgateway $OPTIONS
+    ExecReload=/bin/kill -HUP $MAINPID
+    TimeoutStopSec=20s
+    SendSIGKILL=no
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    ```
+
+6.  **Запуск и проверка**:
+    ```bash
+    systemctl daemon-reload
+    systemctl start pushgateway
+    systemctl enable pushgateway
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:9091/-/healthy # Ожидаемый ответ: 200
+    ```
 ---
 
-## 3. Установка Blackbox Exporter
+## 4. Продвинутые детали
 
-### Шаг 3.1: Скачиваем и устанавливаем
+### 4.1. Проверка конфигурации
+
+Перед применением изменений в конфигурации Prometheus всегда проверяйте её синтаксис с помощью утилиты `promtool`, которая устанавливается вместе с сервером. Это помогает избежать ошибок, которые могут привести к остановке сбора метрик.
 
 ```bash
-cd /tmp
-# Пример для версии 0.18.0. Актуальную версию можно найти на GitHub.
-wget https://github.com/prometheus/blackbox_exporter/releases/download/v0.18.0/blackbox_exporter-0.18.0.linux-amd64.tar.gz 
-tar xvfz blackbox_exporter-0.18.0.linux-amd64.tar.gz
-mv blackbox_exporter-0.18.0.linux-amd64/blackbox_exporter /usr/local/bin/
+promtool check config /etc/prometheus/prometheus.yml
 ```
-
-### Шаг 3.2: Создаем конфигурацию
+Для Alertmanager также существует утилита `amtool` для проверки конфигурации и управления состоянием.
 
 ```bash
-mkdir /etc/blackbox_exporter
-# Копируем файл blackbox.yml из архива или создаем свой
-cp blackbox_exporter-0.18.0.linux-amd64/blackbox.yml /etc/blackbox_exporter/
+amtool check-config /etc/alertmanager/alertmanager.yml
 ```
+Подробнее об утилите `promtool` можно прочитать в заметке [`promtool_and_best_practices.md`](./promtool_and_best_practices.md).
 
-### Шаг 3.3: Создаем файл опций и systemd-сервис
+### 4.2. Безопасность
 
-```bash
-# /etc/sysconfig/blackbox_exporter
-cat <<EOF > /etc/sysconfig/blackbox_exporter
-OPTIONS="--config.file=/etc/blackbox_exporter/blackbox.yml"
-EOF
+- **Пользователи**: Запуск от непривилегированных пользователей снижает потенциальный ущерб в случае эксплуатации уязвимостей.
+- **Сетевые доступы**: Настраивайте файрвол для ограничения доступа к веб-интерфейсам и API компонентов только с доверенных IP-адресов.
+- **TLS**: Для защиты трафика между компонентами и при доступе пользователей используйте TLS-шифрование, например, с помощью обратного прокси-сервера (Nginx, Traefik).
 
-# /usr/lib/systemd/system/blackbox_exporter.service
-cat <<EOF > /usr/lib/systemd/system/blackbox_exporter.service
-[Unit]
-Description=Prometheus Blackbox Exporter
-Documentation=https://github.com/prometheus/blackbox_exporter
-
-[Service]
-Restart=always
-# Пользователя создавать не нужно, можно использовать 'nobody'
-User=nobody
-Group=nobody
-EnvironmentFile=/etc/sysconfig/blackbox_exporter
-ExecStart=/usr/local/bin/blackbox_exporter $OPTIONS
-ExecReload=/bin/kill -HUP $MAINPID
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-### Шаг 3.4: Запускаем и проверяем
-```bash
-systemctl daemon-reload
-systemctl start blackbox_exporter
-systemctl enable blackbox_exporter
-curl -I http://localhost:9115 # Ответ должен быть HTTP/1.1 200 OK
-```
-
----
-**Связанные темы:**
-*   [[./overview.md]]
-*   [[./with_apt.md]]
-*   [[./prometheus_configuration.md]]
-*   [[./exporters.md]]
-
----
-
-
-## 4. Установка Alertmanager
-
-
-Это практическое руководство по установке выполняется на сервере мониторинга с root-привилегиями. 
-
-
-### Шаг 4.1: Создание пользователя `alertmanager`
-
-```bash
-
-useradd --comment "User to run Alertmanager" --shell /bin/false alertmanager 
-
-```
-
-
-
-### Шаг 4.2: Скачивание и распаковка архива
-
-Используется версия `0.21.0`. Список актуальных версий можно посмотреть на [странице GitHub](https://github.com/prometheus/alertmanager/releases).
-
-```bash
-
-cd /tmp
-
-wget https://github.com/prometheus/alertmanager/releases/download/v0.21.0/alertmanager-0.21.0.linux-amd64.tar.gz
-
-tar xvfz alertmanager-0.21.0.linux-amd64.tar.gz
-
-cd alertmanager-0.21.0.linux-amd64
-
-mv alertmanager /usr/local/bin/
-
-```
-
-
-
-### Шаг 4.3: Создание каталогов и копирование конфигурации
-
-```bash
-
-mkdir /etc/alertmanager          
-cp alertmanager.yml /etc/alertmanager/alertmanager.yml 
-chown alertmanager:alertmanager -R /etc/alertmanager
-mkdir /var/lib/alertmanager/
-chown alertmanager:alertmanager /var/lib/alertmanager/  
-```
-
-
-
-### Шаг 4.4: Создание файла с опциями запуска
-
-```bash
-
-cat <<EOF > /etc/sysconfig/alertmanager
-OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml \
-  --storage.path=/var/lib/alertmanager/"
-EOF
-```
-
-
-
-### Шаг 4.5: Создание systemd-сервиса
-
-```bash
-
-cat <<EOF > /usr/lib/systemd/system/alertmanager.service 
-[Unit]
-Description=Prometheus Alertmanager
-[Service]
-User=alertmanager
-Group=alertmanager
-Restart=always
-EnvironmentFile=/etc/sysconfig/alertmanager
-ExecStart=/usr/local/bin/alertmanager $OPTIONS
-ExecReload=/bin/kill -HUP $MAINPID
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-
-
-### Шаг 4.6: Запуск Alertmanager
-
-```bash
-
-systemctl daemon-reload
-
-systemctl start alertmanager.service
-
-systemctl enable alertmanager.service
-```
----
-
-
-## 5. Установка Pushgateway
-
-Процесс установки аналогичен установке Prometheus.
-
-### Шаг 5.1: Создание пользователя
-
-```bash
-useradd pushgateway --comment "Pushgateway server user" --shell /bin/false 
-```
-
-### Шаг 5.2: Загрузка и установка
-
-Скачиваем архив с последней версией Pushgateway. В примере используется `v1.4.0`. Актуальные версии можно найти на [странице релизов](https://github.com/prometheus/pushgateway/releases).
-
-```bash
-cd /tmp
-wget https://github.com/prometheus/pushgateway/releases/download/v1.4.0/pushgateway-1.4.0.linux-amd64.tar.gz
-tar xvfz pushgateway-1.4.0.linux-amd64.tar.gz
-cd pushgateway-1.4.0.linux-amd64
-mv pushgateway /usr/local/bin/
-```
-
-### Шаг 5.3: Настройка опций запуска
-
-```bash
-cat <<EOF > /etc/sysconfig/pushgateway
-OPTIONS="--web.listen-address=:9091 \
-    --web.telemetry-path=/metrics \
-    --persistence.file=/tmp/metric.store \
-    --persistence.interval=5m \
-    --log.level=info"
-EOF
-```
-
-### Шаг 5.4: Создание systemd-сервиса
-
-```bash
-cat <<EOF > /usr/lib/systemd/system/pushgateway.service 
-[Unit]
-Description=Prometheus Pushgateway
-Documentation=https://github.com/prometheus/pushgateway
-
-[Service]
-User=pushgateway
-Group=pushgateway
-EnvironmentFile=/etc/sysconfig/pushgateway
-Restart=always
-ExecStart=/usr/local/bin/pushgateway $OPTIONS
-ExecReload=/bin/kill -HUP $MAINPID
-TimeoutStopSec=20s
-SendSIGKILL=no
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-### Шаг 5.5: Запуск и проверка
-
-```bash
-systemctl daemon-reload
-systemctl start pushgateway
-systemctl enable pushgateway
-
-# Проверяем доступность
-curl -XGET -IL http://localhost:9091
 ```

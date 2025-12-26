@@ -1,15 +1,18 @@
 # Руководство по установке стека мониторинга в Docker
 
-Это руководство описывает процесс развертывания полноценного стека мониторинга с помощью Docker и Docker Compose. Стек включает в себя:
-- **Prometheus**: Сбор и хранение метрик.
-- **Grafana**: Визуализация метрик.
-- **Alertmanager**: Управление и отправка оповещений.
-- **cAdvisor**: Сбор метрик с Docker-контейнеров.
-- **Node Exporter**: Сбор метрик с хост-машины.
+Это руководство описывает практический сценарий развертывания полноценного стека мониторинга с использованием [Docker](../../Docker/docker_overview.md) и [Docker Compose](../../Docker/Docker_compose/docker_compose_file_example.md).
+
+## 0. Компоненты стека
+
+Краткий обзор инструментов, используемых в этом руководстве:
+
+- **[Prometheus](../overview.md)**: Основной компонент для сбора и хранения метрик в виде временных рядов. Подробности в [общем обзоре Prometheus](../overview.md).
+- **[Grafana](../../Grafana/grafana_overview.md)**: Платформа для визуализации и анализа метрик. Позволяет создавать интерактивные дашборды. Детальнее в [обзоре Grafana](../../Grafana/grafana_overview.md).
+- **[Alertmanager](../alertmanager.md)**: Обрабатывает оповещения, отправленные клиентами (например, Prometheus). Отвечает за дедупликацию, группировку и маршрутизацию оповещений. См. заметку про [Alertmanager](../alertmanager.md).
+- **[cAdvisor](https://github.com/google/cadvisor)**: Инструмент для сбора, агрегации и экспорта метрик о производительности и ресурсах работающих контейнеров.
+- **[Node Exporter](../exporters.md)**: Экспортер для сбора метрик с хост-машины (ОС и "железо"). Является одним из многих [экспортеров Prometheus](../exporters.md).
 
 ## 1. Структура проекта
-
-Для удобства все конфигурационные файлы будут храниться в отдельных директориях и монтироваться в контейнеры.
 
 ```
 monitoring/
@@ -103,7 +106,7 @@ volumes:
 
 ### `prometheus/prometheus.yml`
 
-Это основной конфигурационный файл Prometheus, где определяются цели для сбора метрик (`scrape_configs`).
+Это основной конфигурационный файл Prometheus, где определяются цели для сбора метрик (`scrape_configs`). Подробнее о настройке см. в [файле конфигурации Prometheus](../configuration.md).
 
 ```yaml
 global:
@@ -131,13 +134,13 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
 ```
-*   **`rule_files`**: Указывает путь к файлу с правилами для Alertmanager.
-*   **`alerting`**: Настраивает подключение к Alertmanager.
-*   **`scrape_configs`**: Определяет, какие эндпоинты (job) опрашивать. Мы используем DNS-имена сервисов из `docker-compose`, Docker обеспечивает их разрешение.
+*   **`rule_files`**: Указывает путь к файлу с [правилами](../rules.md) для Alertmanager.
+*   **`alerting`**: Настраивает подключение к [Alertmanager](../alertmanager.md).
+*   **`scrape_configs`**: Определяет, какие эндпоинты (job) опрашивать. Мы используем DNS-имена сервисов из `docker-compose`, Docker обеспечивает их разрешение. Подробнее о механизме в [Service Discovery](../service_discovery_and_relabeling.md).
 
 ### `prometheus/rules.yml`
 
-Файл с правилами генерации оповещений.
+Файл с [правилами генерации оповещений](../rules.md).
 
 ```yaml
 groups:
@@ -161,7 +164,7 @@ groups:
           summary: "High memory usage on {{ $labels.instance }}"
           description: "Memory usage is over 90% for the last 5 minutes on instance {{ $labels.instance }}."
 ```
-*   **`expr`**: PromQL-выражение. Если оно истинно, алерт переходит в состояние `Pending`.
+*   **`expr`**: [PromQL](../concepts/promql.md)-выражение. Если оно истинно, алерт переходит в состояние `Pending`.
 *   **`for`**: Длительность, в течение которой `expr` должно быть истинным, чтобы алерт стал `Firing`.
 *   **`annotations`**: Содержание оповещения.
 
@@ -169,7 +172,7 @@ groups:
 
 ### `alertmanager/config.yml`
 
-Настраивает, как Alertmanager будет обрабатывать и куда отправлять оповещения.
+Настраивает, как [Alertmanager](../alertmanager.md) будет обрабатывать и куда отправлять оповещения.
 
 ```yaml
 global:
@@ -214,7 +217,7 @@ receivers:
     docker-compose up -d
     ```
 3.  **Prometheus**: Откройте `http://localhost:9090`. Во вкладке **Status -> Targets** проверьте, что все цели (`prometheus`, `node-exporter`, `cadvisor`) имеют статус `UP`.
-4.  **Grafana**: Откройте `http://localhost:3000`. Войдите (`admin`/`admin`), добавьте Prometheus как Data Source (`http://prometheus:9090`) и импортируйте дашборды (например, `1860` для Node Exporter, `13981` для Docker).
+4.  **Grafana**: Откройте `http://localhost:3000`. Войдите (`admin`/`admin`), добавьте Prometheus как [Data Source](../../Grafana/grafana_datasources.md) (`http://prometheus:9090`) и импортируйте [дашборды](../../Grafana/grafana_dashboards.md) (например, `1860` для Node Exporter, `13981` для Docker).
 5.  **Alertmanager**: Откройте `http://localhost:9093`.
 
 Теперь у вас есть работающий стек мониторинга, развернутый в Docker.
@@ -246,11 +249,3 @@ receivers:
 3.  Перезапустите Prometheus на главном сервере (`docker-compose restart prometheus`).
 
 Таким образом, центральный Prometheus будет собирать метрики как с локальных, так и с удаленных экспортеров.
----
-**Связанные темы:**
-*   [[./overview.md]]
-*   [[./prometheus_configuration.md]]
-*   [[./rules.md]]
-*   [[./alertmanager.md]]
-*   [[./exporters.md]]
-

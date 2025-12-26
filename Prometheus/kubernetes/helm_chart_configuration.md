@@ -1,10 +1,13 @@
-# Детальная настройка Helm-чарта `kube-prometheus-stack`
+# Настройка Helm-чарта `kube-prometheus-stack`
 
-Этот документ описывает ключевые параметры файла `values.yaml` для популярного Helm-чарта `kube-prometheus-stack`, который является стандартом де-факто для развертывания мониторинга в Kubernetes.
+Эта заметка является практическим руководством по настройке Helm-чарта `kube-prometheus-stack`. Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
+- [[../../Kubernetes/ToolsUtilities/helm_overview.md|Helm]]
+- [[../../Kubernetes/kubernetes_overview.md|Kubernetes]]
+- [[../overview.md|Prometheus]]
 
 ## Обзор `values.yaml`
 
-Файл `values.yaml` для этого чарта очень большой, но большинство настроек можно оставить по умолчанию. Ниже рассмотрены наиболее важные параметры, которые часто требуют кастомизации.
+В данном разделе рассматриваются ключевые параметры файла `values.yaml`, используемого для конфигурации стека мониторинга.
 
 ## Глобальные параметры и RBAC
 
@@ -18,7 +21,7 @@
 
 ## Конфигурация Alertmanager
 
-Alertmanager — компонент, отвечающий за обработку и отправку оповещений.
+> ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [[../alertmanager.md]].
 
 *   `alertmanager.enabled`: `true`
     *   **Рекомендация:** Оставить включенным для управления алертами.
@@ -42,7 +45,7 @@ Alertmanager — компонент, отвечающий за обработк�
 
 ## Конфигурация Grafana
 
-Grafana — ключевой компонент для визуализации метрик.
+> ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [[../../Grafana/grafana_overview.md]].
 
 *   `grafana.enabled`: `true`
     *   **Рекомендация:** Оставить `true`.
@@ -124,7 +127,7 @@ ConfigMapReload — это вспомогательный компонент, к
 
 ## Конфигурация Node Exporter
 
-Node Exporter собирает метрики с хостовых машин (узлов Kubernetes).
+> ℹ️ Общую информацию об экспортерах метрик можно найти в заметке: [[../exporters.md]].
 
 *   `nodeExporter.enabled`: `true`
     *   **Рекомендация:** Оставить `true` для сбора метрик с нод.
@@ -162,7 +165,7 @@ Node Exporter собирает метрики с хостовых машин (у
 
 ## Конфигурация Prometheus Server
 
-Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](./service_discovery.md).
+Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](../service_discovery_and_relabeling.md).
 
 *   `prometheus.enabled`: `true`
     *   **Рекомендация:** Оставить `true`.
@@ -173,7 +176,7 @@ Node Exporter собирает метрики с хостовых машин (у
     *   `evaluationInterval`: Как часто Prometheus должен вычислять правила алертинга. Это значение также подбирается эмпирически. Например, если настроено правило на проверку количества ETCD-узлов (не менее трех), то при уменьшении их числа до двух, сигнал будет передан в AlertManager через указанный `evaluationInterval`.
 
 *   `prometheus.prometheusSpec.remoteWrite`, `remoteRead`:
-    *   **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../VictoriaMetrics/victoria_metrics_overview.md), Thanos, M3DB).
+    *   **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../../VictoriaMetrics/victoria_metrics_overview.md), Thanos, M3DB).
     *   **Рекомендация:** Использовать в production для долгосрочного хранения метрик, так как хранение больших объемов данных в самом Prometheus неэффективно и может привести к деградации производительности.
 *   `prometheus.ingress.enabled`: `true`
     *   **Описание:** Включает Ingress для доступа к веб-интерфейсу Prometheus.
@@ -231,19 +234,15 @@ Node Exporter собирает метрики с хостовых машин (у
 
 ## Конфигурация Push Gateway
 
-
+> ℹ️ Для детального изучения Push Gateway обратитесь к основной заметке: [[../pushgateway.md]].
 
 Push Gateway используется для сбора метрик от кратковременных или периодически запускаемых задач, которые не могут быть "собраны" (scraped) Prometheus напрямую.
-
-
 
 *   `pushgateway.enabled`: `true`
 
     *   **Описание:** Включает развертывание Push Gateway.
 
     *   **Рекомендация:** Оставить `true` по умолчанию, если нет необходимости его отключать. В данном контексте он не используется, но может быть полезен в других сценариях.
-
-
 
 ## Настройка Persistent Volumes (PV)
 
@@ -300,87 +299,6 @@ spec:
 
 ## Авторизация в веб-интерфейсе
 
-Доступ к веб-интерфейсу Prometheus без аутентификации является проблемой безопасности. Существует несколько подходов к ее решению:
-
 1.  **Через Ingress:** Исторически доступ к интерфейсу Prometheus защищался через Basic Auth на уровне Ingress. Это позволяет настроить окно ввода логина и пароля при доступе к Prometheus через Ingress.
 2.  **Закрытый контур:** Не выставлять Prometheus наружу, держать его в закрытых контурах с подключением через VPN. Это наиболее безопасный вариант, но не всегда возможный.
 3.  **Нативная авторизация Prometheus:** В новых версиях Prometheus появилась **нативная поддержка Basic Auth**, которую можно настроить непосредственно в конфигурации самого Prometheus. Это более современный и безопасный способ. Также появилась возможность авторизации по TLS-сертификатам. Подробности можно можно найти в `release notes` соответствующей версии Prometheus.
-
----
-
-## Приложение: Пример устаревшей конфигурации (stable/prometheus-operator)
-
-> **Важно:** Этот пример использует устаревший Helm-чарт `stable/prometheus-operator`. Для новых установок рекомендуется использовать `kube-prometheus-stack`. Тем не менее, общие принципы настройки `values.yaml` остаются схожими.
-
-В данном примере настраиваются:
-*   Ingress-ресурсы для Grafana, Alertmanager и Prometheus.
-*   Basic-аутентификация для доступа к Alertmanager и Prometheus через секрет.
-*   Persistent Volume Claims для Alertmanager и Prometheus.
-
-**1. Создание секрета для Basic Auth:**
-```bash
-htpasswd -c auth admin
-kubectl create secret generic admin-basic-auth --from-file=auth --namespace=monitoring
-```
-
-**2. Пример изменений в `values.yaml`:**
-
-```yaml
-alertmanager:
-  ingress:
-    enabled: true
-    annotations:
-      nginx.ingress.kubernetes.io/auth-type: basic
-      nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
-      nginx.ingress.kubernetes.io/auth-realm: "Authentication Required - foo" 
-    hosts:
-      - alertmanager.k8s.example.com
-  storage:
-    volumeClaimTemplate:
-      spec:
-        storageClassName: cephfs-provisioner
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
-      selector: {}
-
-grafana:
-  adminPassword: "topsecret" 
-  ingress:
-    enabled: true
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      kubernetes.io/tls-acme: "true" 
-    hosts:
-      - "grafana-k8s.example.com" 
-    tls:
-      - secretName: grafana-k8s-example-com-tls
-        hosts:
-          - grafana.k8s.example.com
-
-prometheus:
-  ingress:
-    enabled: true
-    annotations:
-      nginx.ingress.kubernetes.io/auth-type: basic
-      nginx.ingress.kubernetes.io/auth-secret: admin-basic-auth
-      nginx.ingress.kubernetes.io/auth-realm: "Authentication Required - foo" 
-    hosts:
-      - prometheus.k8s.example.com
-  storageSpec:
-    volumeClaimTemplate:
-      spec:
-        storageClassName: cephfs-provisioner
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 10Gi
-      selector: {}
-```
-
-**3. Установка Prometheus:**
-
-```bash
-helm install stable/prometheus-operator --name prometheus --namespace monitoring -f values.yaml
-```

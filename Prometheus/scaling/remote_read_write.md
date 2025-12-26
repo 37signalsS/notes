@@ -74,9 +74,3 @@ Prometheus может интегрироваться с большим коли�
 -   **Thanos**: `write` (и `read` через Query-компонент)
 -   **VictoriaMetrics**: `write` (и `read`)
 -   Wavefront: `write`
-
----
-**Связанные темы:**
-- [[./overview.md]]
-- [[./thanos_overview.md]]
-- [[../../VictoriaMetrics/overview.md]]

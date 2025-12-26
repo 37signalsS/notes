@@ -2,6 +2,8 @@
 
 **Pushgateway** — это компонент-посредник в экосистеме Prometheus, предназначенный для одного специфического случая: приёма метрик от короткоживущих или периодических задач, которые завершаются быстрее, чем Prometheus успевает их опросить (scrape).
 
+Этот компонент является частью общей **[концепции наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_overview.md)** и иногда используется при **[проектировании мониторинга в распределенных системах](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)**, однако его применение требует понимания ограничений.
+
 ---
 
 ## 1. Определения и базовые концепции
@@ -79,6 +81,10 @@ scrape_configs:
       - targets: ['localhost:9091']
 ```
 После перезагрузки конфигурации Prometheus начнет собирать метрики, которые хранятся в Pushgateway.
+
+### 2.4. Конфигурация в Kubernetes
+
+При развертывании в Kubernetes Pushgateway может быть включен и настроен с помощью Helm-чарта Prometheus, как описано в заметке о **[конфигурации Helm-чарта](./kubernetes/helm_chart_configuration.md)**.
 
 ---
 
