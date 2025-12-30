@@ -27,7 +27,7 @@ sudo apt install prometheus prometheus-node-exporter
 *   `prometheus.service`
 *   `prometheus-node-exporter.service`
 
-Проверим, что они слушают нужные порты:
+Проверим, что они слушают нужные порты: Подробнее об утилите см. [**`ss`**](../../Linux/Diagnostics/Networking/ss.md).
 
 ```bash
 ss -tnlp
@@ -36,7 +36,6 @@ ss -tnlp
 
 *   `*:9090` — веб-интерфейс и API Prometheus.
 *   `*:9100` — эндпоинт с метриками от Node Exporter.
-
 На этом этапе Prometheus уже собирает метрики сам с себя. Это можно проверить, открыв в браузере `http://<ip_сервера>:9090`. Во вкладке **Status -> Targets** будет виден один эндпоинт (`localhost:9100`) со статусом `UP`.
 
 ### Установка Grafana
@@ -58,7 +57,7 @@ sudo systemctl start grafana-server
 sudo systemctl enable grafana-server
 ```
 
-Проверяем порт `3000`:
+Проверяем порт `3000`: Подробнее об утилите см. [**`ss`**](../../Linux/Diagnostics/Networking/ss.md).
 
 ```bash
 ss -tnlp | grep 3000

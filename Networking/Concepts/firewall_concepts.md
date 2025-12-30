@@ -10,7 +10,7 @@
 
 В основе фильтрации трафика в современных операционных системах, таких как Linux, лежит идея перехвата пакетов в ключевых точках их обработки ядром. В Linux этот фреймворк называется **Netfilter**.
 
-[[Модели OSI и TCP/IP|../OSI_TCP_IP_Model/osi_tcp_ip_models.md]] помогут понять, на каком уровне происходит обработка пакетов.
+[Модель OSI](../OSI_TCP_IP_Model/osi_model.md) и [модель TCP/IP](../OSI_TCP_IP_Model/tcp_ip_model.md) помогут понять, на каком уровне происходит обработка пакетов.
 
 ### Цепочки (Chains)
 
@@ -30,5 +30,7 @@ Netfilter предоставляет "хуки" (hooks) в ядре, к кото
 *   **`nat`**: Используется для преобразования сетевых адресов (Network Address Translation). Содержит цепочки `PREROUTING`, `POSTROUTING`, `OUTPUT`.
 *   **`mangle`**: Для продвинутой модификации заголовков пакетов (например, маркировки трафика для QoS).
 *   **`raw`**: Для работы с пакетами до того, как система начнёт отслеживать их состояние (connection tracking).
+
+## Практика
 
 Практическую реализацию этих концепций в Linux с помощью `iptables` и `nftables` смотрите в заметке [[Настройка файрвола в Linux (iptables, nftables)|../../Linux/Networking/OperationsAndTroubleshooting/linux_firewall_management.md]].

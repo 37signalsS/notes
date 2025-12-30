@@ -55,8 +55,3 @@
     ```bash
     sudo dracut -f
     ```
-
--   **Arch Linux:**
-        ```bash
-        sudo mkinitcpio -P
-        ```

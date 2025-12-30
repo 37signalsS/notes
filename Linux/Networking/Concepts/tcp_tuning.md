@@ -64,7 +64,7 @@ net.ipv4.tcp_congestion_control = bbr
 
 *   **`net.ipv4.tcp_tw_recycle`**: **Устарел и опасен!** Этот параметр был удален из ядра Linux (начиная с 4.12) из-за проблем с клиентами за NAT. **Никогда не используйте его.**
 
-**Диагностика:**
+**Диагностика:** Подробнее об утилите см. [**`ss`**](../../Linux/Diagnostics/Networking/ss.md).
 ```bash
 # Подсчитать количество сокетов в состоянии TIME_WAIT
 ss -tan 'state time-wait' | wc -l

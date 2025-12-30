@@ -84,7 +84,7 @@ sudo apt update && sudo apt -y install apache2
     sudo systemctl start httpd      # Запустить (на Debian/Ubuntu служба называется apache2)
     ```
 
-3.  **Проверить, что служба слушает 80-й порт:**
+3.  **Проверить, что служба слушает 80-й порт:** Подробнее об утилите см. [**`ss`**](../../Linux/Diagnostics/Networking/ss.md).
     ```bash
     sudo ss -tlpn | grep httpd
     # LISTEN    0      128          *:80                   *:*      users:(("httpd",pid=...))
