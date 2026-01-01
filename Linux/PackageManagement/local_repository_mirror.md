@@ -1,35 +1,34 @@
-# Собственный mirror APT/YUM в локальной сети
+# Создание локального зеркала репозиториев APT и YUM/DNF
 
-Эта заметка является частью цикла статей по [управлению пакетами в Linux](../../Linux/PackageManagement/linux_package_management_overview.md).
-Если вам нужно создать собственный репозиторий для распространения своих пакетов, ознакомьтесь с [созданием приватного Apt-репозитория с помощью reprepro](./deb_private_apt_repository_reprepro.md).
+## Определения
 
-Когда нужен быстрый доступ к пакетам без выхода в интернет — выручит локальное зеркало. Это экономит трафик, ускоряет обновления и позволяет работать в изолированных (air-gapped) сетях.
+**Локальное зеркало (local mirror)** — это полная или частичная копия удаленного репозитория пакетов (например, официальных репозиториев Ubuntu или CentOS), размещенная в вашей локальной сети.
 
-## APT (Debian/Ubuntu)
+Основное назначение локального зеркала — обеспечить быстрый и надежный доступ к пакетам без необходимости обращения к внешним серверам в интернете. Это решает несколько задач:
+*   **Экономия трафика:** Пакеты скачиваются из интернета один раз, а затем распространяются внутри сети.
+*   **Ускорение обновлений:** Установка и обновление пакетов происходит значительно быстрее.
+*   **Работа в изолированных сетях:** Позволяет управлять пакетами в сетях без доступа к интернету (air-gapped environments).
 
-### 1. Установка
+## Практические сценарии
 
-Для создания зеркала APT нам понадобится утилита `apt-mirror` и любой HTTP-сервер для раздачи файлов по сети, например, Apache или Nginx.
+### Сценарий 1: Создание зеркала для APT (Debian/Ubuntu)
 
+Для создания зеркала APT используется утилита `apt-mirror` и любой HTTP-сервер для раздачи файлов (например, Apache или Nginx).
+
+#### Шаг 1: Установка
 ```bash
 sudo apt update
 sudo apt install apt-mirror apache2
 ```
 
-### 2. Настройка `apt-mirror`
-
-Основной конфигурационный файл `apt-mirror` находится в `/etc/apt/mirror.list`. Он указывает, какие репозитории и архитектуры необходимо скачивать.
-
-Откройте файл для редактирования:
-```bash
-sudo nano /etc/apt/mirror.list
-```
+#### Шаг 2: Настройка `apt-mirror`
+Основной конфигурационный файл — `/etc/apt/mirror.list`. Он определяет, какие репозитории, их компоненты и архитектуры необходимо скачивать.
 
 Пример конфигурации для Ubuntu 20.04 (Focal Fossa):
-
 ```
+# /etc/apt/mirror.list
+
 ############# config ##################
-#
 set base_path    /var/spool/apt-mirror
 #
 # set mirror_path  $base_path/mirror
@@ -38,10 +37,9 @@ set base_path    /var/spool/apt-mirror
 #
 set nthreads     20
 set _tilde       0
-#
 ############# end config ##############
 
-# Пример для Ubuntu 20.04 (focal)
+# Ubuntu 20.04 (focal)
 deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
 deb http://archive.ubuntu.com/ubuntu focal-security main restricted universe multiverse
 deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
@@ -49,49 +47,42 @@ deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe mult
 clean http://archive.ubuntu.com/ubuntu
 ```
 
-### 3. Создание и обновление зеркала
-
-После настройки запустите `apt-mirror`. Первый запуск может занять много времени, так как будут скачиваться все пакеты.
-
+#### Шаг 3: Синхронизация
+Запустите `apt-mirror`. Первый запуск может занять очень много времени, так как будут скачиваться все пакеты из указанных репозиториев.
 ```bash
 sudo apt-mirror
 ```
 Зеркало будет создано в директории, указанной в `base_path` (по умолчанию `/var/spool/apt-mirror`).
 
-### 4. Настройка веб-сервера
-
-Чтобы клиенты могли получить доступ к зеркалу, нужно "отдать" его по HTTP. Создадим символическую ссылку из директории веб-сервера на наше зеркало.
-
+#### Шаг 4: Публикация через веб-сервер
+Чтобы клиенты могли получить доступ к зеркалу, нужно сделать его доступным по HTTP. Самый простой способ — создать символическую ссылку из директории веб-сервера на папку с зеркалом.
 ```bash
 sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu /var/www/html/ubuntu
 ```
 Теперь зеркало будет доступно по адресу `http://<ip-адрес-сервера>/ubuntu`.
 
-### 5. Настройка клиентов
-
-На клиентских машинах измените `/etc/apt/sources.list`, указав адрес вашего локального зеркала.
-
+#### Шаг 5: Настройка клиентов
+На клиентских машинах необходимо отредактировать файл `/etc/apt/sources.list`, указав адрес вашего локального зеркала.
 ```
+# /etc/apt/sources.list
 deb http://mirror.local/ubuntu focal main restricted universe multiverse
 deb http://mirror.local/ubuntu focal-security main restricted universe multiverse
 deb http://mirror.local/ubuntu focal-updates main restricted universe multiverse
 ```
-Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала.
+Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала, затем выполните `sudo apt update`.
 
-## YUM/DNF (RHEL/CentOS/AlmaLinux)
+### Сценарий 2: Создание зеркала для YUM/DNF (RHEL/CentOS/AlmaLinux)
 
-### 1. Установка
+Для систем на базе Red Hat используются утилиты `reposync` и `createrepo_c`.
 
-Для систем на базе RedHat нам понадобятся утилиты `reposync` (из пакета `yum-utils` или `dnf-utils`) и `createrepo_c` (из пакета `createrepo_c`).
-
+#### Шаг 1: Установка
+`reposync` поставляется в пакете `yum-utils` или `dnf-utils`, а `createrepo_c` — в одноименном пакете.
 ```bash
 sudo yum install yum-utils createrepo_c httpd
 ```
 
-### 2. Синхронизация репозитория
-
+#### Шаг 2: Синхронизация репозитория
 Команда `reposync` скачивает все пакеты из указанного репозитория.
-
 ```bash
 # Пример для репозитория 'base'
 # --gpgcheck - проверять подписи пакетов
@@ -100,31 +91,27 @@ sudo yum install yum-utils createrepo_c httpd
 # --download_path - путь для сохранения пакетов
 sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum
 ```
-Повторите команду для всех необходимых репозиториев (`updates`, `extras` и т.д.).
 
-### 3. Создание метаданных репозитория
-
-После скачивания пакетов необходимо создать метаданные репозитория, чтобы `yum` или `dnf` могли с ним работать.
-
+#### Шаг 3: Создание метаданных
+После скачивания пакетов необходимо сгенерировать метаданные, чтобы `yum` или `dnf` могли работать с репозиторием.
 ```bash
 sudo createrepo_c /var/www/html/yum/base
 ```
 Эту команду нужно выполнять каждый раз после обновления пакетов с помощью `reposync`.
 
-### 4. Автоматизация
-
-Процесс синхронизации и создания метаданных можно автоматизировать с помощью `cron`, создав скрипт и добавив его в расписание (например, для запуска раз в сутки).
-
-### 5. Настройка клиентов
-
-На клиентских машинах в файлах `.repo` (в директории `/etc/yum.repos.d/`) измените параметр `baseurl` и отключите проверку GPG-ключей, если они не были импортированы.
+#### Шаг 4: Настройка клиентов
+На клиентских машинах отредактируйте файлы в `/etc/yum.repos.d/`, изменив параметр `baseurl`.
 
 Пример для `CentOS-Base.repo`:
 ```ini
 [base]
 name=CentOS-$releasever - Base - mirror.local
+# Комментируем или удаляем строку mirrorlist
+# mirrorlist=http://mirrorlist.centos.org/...
+# И указываем прямой путь к нашему зеркалу
 baseurl=http://mirror.local/yum/base/
 gpgcheck=0
 enabled=1
 ```
-Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала.
+Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала, затем выполните `sudo dnf clean all`.
+

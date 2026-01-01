@@ -88,53 +88,10 @@ nameserver 127.0.0.53
 ```
 Это означает, что все DNS-запросы от локальных приложений отправляются на `systemd-resolved`, а уже он решает, каким вышестоящим DNS-серверам их перенаправить.
 
-#### Диагностика с `resolvectl`
+#### Диагностика с systemd-resolved
 
-Утилита `resolvectl` — это основной инструмент для взаимодействия с `systemd-resolved`.
-
--   **Проверить общий статус и текущие серверы:**
-    Команда `resolvectl status` (или просто `resolvectl`) показывает подробную информацию о глобальных настройках и настройках для каждого сетевого интерфейса.
-    ```bash
-    $ resolvectl
-    Global
-         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
-      resolv.conf mode: stub
-    Link 2 (ens3)
-        Current Scopes: DNS
-             Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
-    Current DNS Server: 1.1.1.1
-           DNS Servers: 1.1.1.1 8.8.8.8
-            DNS Domain: mycompany.local
-    ```
-    Из вывода видно, что для интерфейса `ens3` используются DNS-серверы `1.1.1.1` и `8.8.8.8`, а также домен поиска `mycompany.local`.
-
--   **Узнать, как система разрешит имя:**
-    Команда `query` показывает, какой IP-адрес вернет именно системный резолвер.
-    ```bash
-    resolvectl query ya.ru
-    ```
-
--   **Очистить кэш:**
-    ```bash
-    sudo resolvectl flush-caches
-    ```
-    Иногда требуется обновить DNS-кеш только для одного сетевого интерфейса. Например, для `eth0`:
-
-    ```bash
-    resolvectl flush-caches eth0
-    ```
-
--   **Проверить статистику кэша:**
-    ```bash
-    resolvectl statistics
-    ```
-
--   **Проверить резолв домена через локальный кеширующий резолвер (systemd-resolved):**
-
-    ```bash
-    dig @127.0.0.53 example.com
-    ```
-    Это позволяет убедиться, что изменения в DNS-кеше применились, и что локальный резолвер корректно обрабатывает запросы, при этом все остальные сервисы остаются онлайн.
+Для детальной диагностики работы `systemd-resolved` и DNS-разрешения в целом, используйте утилиту `resolvectl` и другие инструменты, описанные в заметке [[Диагностика DNS|../../Linux/Diagnostics/Networking/dns_diagnostics.md]].
+Эта утилита является основным инструментом для взаимодействия с `systemd-resolved`.
 
 #### Как `systemd-resolved` получает DNS-серверы?
 

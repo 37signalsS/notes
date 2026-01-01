@@ -1,111 +1,101 @@
 # Управление репозиториями в Debian и Ubuntu (`sources.list`)
 
-Эта заметка является частью цикла статей по [управлению пакетами в Linux](../../Linux/PackageManagement/linux_package_management_overview.md).
+## Определения
 
-Файл `/etc/apt/sources.list` и файлы в директории `/etc/apt/sources.list.d/` определяют, откуда система управления пакетами APT (Advanced Package Tool) будет загружать и устанавливать пакеты.
+*   **APT-репозиторий**: Сервер или локальный каталог, который хранит `.deb` пакеты и метаданные, организованные в стандартизированную структуру. Он позволяет системе управления пакетами APT находить, устанавливать и обновлять ПО.
+*   **`sources.list`**: Основной конфигурационный файл (`/etc/apt/sources.list`) и файлы в директории `/etc/apt/sources.list.d/`, которые указывают APT, где искать пакеты.
 
-Каждая строка в `sources.list` имеет следующую структуру:
+## Базовые концепции
 
+### Структура записи в `sources.list`
+
+Каждая строка в `sources.list` (или в файле в `/etc/apt/sources.list.d/`) определяет один источник пакетов и имеет следующую структуру:
 ```
-<type> <url> <distribution> <component_1> <component_2> ...
+<type> [options] <url> <distribution> <component_1> <component_2> ...
 ```
-
--   **`type`**: Тип архива.
-    -   `deb`: бинарные пакеты (скомпилированные приложения).
-    -   `deb-src`: исходные коды пакетов.
+-   **`type`**: Тип архива (`deb` для бинарных пакетов, `deb-src` для исходных кодов).
+-   **`[options]`**: Необязательные параметры в квадратных скобках, например, `[arch=amd64]` для указания архитектуры или `[signed-by=/path/to/key.gpg]` для связи репозитория с GPG-ключом.
 -   **`url`**: Базовый URL репозитория.
--   **`distribution`**: Имя выпуска (кодовое имя) или класс выпуска (например, `buster` для Debian, `focal` для Ubuntu).
--   **`component`**: Компоненты репозитория, которые различаются между Debian и Ubuntu.
+-   **`distribution`**: Кодовое имя выпуска (например, `focal`, `bullseye`) или класс (`stable`, `testing`).
+-   **`component`**: Компоненты репозитория, разделяющие ПО по лицензии и уровню поддержки.
 
-## Компоненты репозиториев
+### Компоненты репозиториев
 
-### Debian
--   `main`: Основные, полностью свободные пакеты, соответствующие Debian Free Software Guidelines.
--   `contrib`: Пакеты, которые сами по себе свободны, но зависят от несвободных пакетов.
--   `non-free`: Пакеты, которые не соответствуют Debian Free Software Guidelines.
--   `non-free-firmware`: Несвободные прошивки, необходимые для работы некоторого оборудования (появился в Debian 12).
+#### Debian
+-   `main`: Полностью свободное ПО, соответствующее Debian Free Software Guidelines (DFSG).
+-   `contrib`: Свободное ПО, которое зависит от несвободного.
+-   `non-free`: Несвободное ПО.
+-   `non-free-firmware`: Несвободные прошивки, необходимые для работы оборудования (с Debian 12).
 
-### Ubuntu
--   `main`: Основные, полностью свободные пакеты, поддерживаемые Canonical.
+#### Ubuntu
+-   `main`: Свободное ПО, официально поддерживаемое Canonical.
 -   `restricted`: Проприетарные драйверы для устройств.
 -   `universe`: Свободное ПО, поддерживаемое сообществом.
 -   `multiverse`: Проприетарное ПО, не поддерживаемое Canonical.
 
----
+### Роль GPG-ключей
 
-## Добавление сторонних репозиториев
+При добавлении стороннего репозитория крайне важно импортировать его GPG-ключ. APT использует этот ключ для проверки цифровой подписи файла `Release.gpg` в репозитории. Это гарантирует, что пакеты не были подменены и действительно пришли из доверенного источника. **Без валидной подписи APT откажется устанавливать пакеты из репозитория.**
 
-При добавлении сторонних репозиториев крайне важно импортировать GPG-ключ, которым подписаны пакеты. Это позволяет системе проверить подлинность пакетов, убедившись, что они получены именно от заявленного разработчика и не были изменены.
+## Практические сценарии
 
 ### Пример 1: Репозиторий Node.js на Debian
 
 1.  **Установка зависимостей и GPG-ключа:**
     ```bash
-    sudo apt update
-    sudo apt install -y ca-certificates curl gnupg
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl gnupg
     sudo mkdir -p /etc/apt/keyrings
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
     ```
 
-2.  **Добавление репозитория NodeSource:**
+2.  **Добавление репозитория с привязкой к ключу:**
     ```bash
     NODE_MAJOR=24
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
     ```
+    *Опция `[signed-by=...]` явно указывает APT, какой ключ использовать для этого репозитория.*
 
 3.  **Установка Node.js:**
     ```bash
-    sudo apt update
-    sudo apt install nodejs -y
+    sudo apt-get update
+    sudo apt-get install nodejs -y
     ```
 
 ### Пример 2: Репозиторий Nginx на Ubuntu
 
-1.  **Установка зависимостей и импорт GPG-ключа:**
+1.  **Установка зависимостей и GPG-ключа:**
     ```bash
-    sudo apt update
-    sudo apt install -y ca-certificates curl gnupg2 lsb-release ubuntu-keyring
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl gnupg2 lsb-release ubuntu-keyring
     curl -fsSL https://nginx.org/keys/nginx_signing.key | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
     ```
 
-2.  **Добавление репозитория Nginx:**
+2.  **Добавление репозитория:**
     ```bash
     echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu `lsb_release -cs` nginx" | sudo tee /etc/apt/sources.list.d/nginx.list
     ```
-    *Примечание: `lsb_release -cs` автоматически подставит кодовое имя вашего дистрибутива.*
+    *Команда `lsb_release -cs` автоматически подставляет кодовое имя вашего дистрибутива (например, `focal`).*
 
 3.  **Установка Nginx:**
     ```bash
-    sudo apt update
-    sudo apt install nginx -y
+    sudo apt-get update
+    sudo apt-get install nginx -y
     ```
 
-### Пример 3: Репозиторий Oracle MySQL (через `.deb` пакет)
+## Расширенные детали
 
-Некоторые производители предоставляют `.deb` пакет, который автоматически настраивает репозиторий.
+### Управление ключами: новая и старая практика
 
-1.  **Загрузка и установка `.deb` пакета:**
-    ```bash
-    wget https://dev.mysql.com/get/mysql-apt-config_0.8.22-1_all.deb
-    sudo dpkg -i mysql-apt-config_0.8.22-1_all.deb
-    ```
-    *Во время установки будет предложено выбрать нужные компоненты.*
+-   **Современный подход (рекомендуемый):** GPG-ключи хранятся в формате `.gpg` в директориях `/etc/apt/keyrings` или `/usr/share/keyrings`. В файле `sources.list` используется опция `signed-by=`, чтобы явно связать репозиторий с его ключом. Это безопасно, так как один ключ доверяет только одному конкретному репозиторию.
+-   **Устаревший подход:** Ранее использовалась команда `apt-key add`, которая добавляла ключ в глобальное хранилище `/etc/apt/trusted.gpg`. Этот метод не рекомендуется, так как любой ключ в этом хранилище считается доверенным для *любого* репозитория в системе, что создает вектор для атаки.
 
-2.  **Установка MySQL:**
-    ```bash
-    sudo apt update
-    sudo apt install mysql-server -y
-    ```
----
+### Проверка источников пакетов с `apt policy`
 
-## Проверка источников пакетов с помощью `apt policy`
-
-Команда `apt policy <package_name>` позволяет узнать, из каких репозиториев доступен пакет, его текущую установленную версию и приоритеты различных источников. APT выбирает пакет из источника с наивысшим приоритетом. Для тонкой настройки приоритетов используется [Apt Pinning](./deb_apt_pinning.md).
-
+Команда `apt policy <package_name>` позволяет узнать, из каких репозиториев доступен пакет, его текущую установленную версию и приоритеты различных источников.
 ```bash
 apt policy nginx
 ```
-
 Пример вывода:
 ```
 nginx:
@@ -117,4 +107,4 @@ nginx:
      1.18.0-0ubuntu1.4 500
         500 http://archive.ubuntu.com/ubuntu focal-updates/main amd64 Packages
 ```
-Это показывает, что установлена более новая версия из стороннего репозитория `nginx.org`.
+Это показывает, что установлена более новая версия из стороннего репозитория `nginx.org`. Для тонкой настройки приоритетов используется **[Apt Pinning](./deb_apt_pinning.md)**.

@@ -135,7 +135,7 @@ sudo chmod -R 0770 /srv/samba/private/
 ```
 После этого перезапустите Samba: `sudo systemctl restart smb nmb`.
 
-## Расширенные детали
+## Дополнительная информация
 
 ### Пользователи Samba
 

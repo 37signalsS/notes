@@ -1,8 +1,10 @@
 # Role-Based Access Control (RBAC) в Kubernetes
 
-RBAC (Role-Based Access Control) — это механизм авторизации в Kubernetes, который позволяет управлять доступом пользователей и сервисных аккаунтов к ресурсам кластера. 
+## Определения
 
-### Зачем это нужно?
+RBAC (Role-Based Access Control) — это механизм авторизации в Kubernetes, который позволяет управлять доступом пользователей и сервисных аккаунтов к ресурсам кластера.
+
+### Назначение RBAC
 
 RBAC является фундаментом безопасности Kubernetes и необходим для:
 
@@ -10,6 +12,8 @@ RBAC является фундаментом безопасности Kubernetes
 *   Разделения обязанностей между командами и пользователями.
 *   Соответствия требованиям безопасности и комплаенса.
 *   Предотвращения несанкционированного доступа к ресурсам кластера.
+
+### Основные объекты RBAC
 
 Существует пять основных типов объектов RBAC:
 
@@ -19,13 +23,13 @@ RBAC является фундаментом безопасности Kubernetes
 *   ClusterRoleBinding
 *   ServiceAccount
 
-Давайте рассмотрим каждый из них по порядку.
+## Основные понятия
 
-## Role (Роль)
+### Role (Роль)
 
-`Role` представляет собой набор прав, которые есть у некоего пользователя в кластере. Важно понимать, что `Role` не указывает, у кого именно есть эти права; она просто создает некий набор разрешений.
+`Role` представляет собой набор прав, которые есть у некоего пользователя в кластере. Важно понимать, что `Role` не указывает, у кого именно есть эти права; она просто создает некий набор разрешений. `Role` ограничена конкретным пространством имен (namespace).
 
-Пример описания `Role`:
+Пример описания `Role` для управления Ingress-ресурсами:
 
 ```yaml
 - apiGroups: ["extensions", "networking.k8s.io"]
@@ -33,9 +37,9 @@ RBAC является фундаментом безопасности Kubernetes
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
-Эта часть `Role` разрешает выполнять операции `Get`, `List`, `Watch`, `Create`, `Update`, `Patch`, `Delete` с ресурсами `Ingress`.
+Эта `Role` разрешает выполнять операции `Get`, `List`, `Watch`, `Create`, `Update`, `Patch`, `Delete` с ресурсами `Ingress`.
 
-Другой пример:
+Пример `Role` для просмотра подов и их логов:
 
 ```yaml
 - apiGroups: [""] # "" указывает на основную API-группу (core API group)
@@ -49,11 +53,11 @@ RBAC является фундаментом безопасности Kubernetes
 
 `Role` просто создает набор разрешений, который затем может быть применен к пользователю или сущности внутри Kubernetes. Например, `Role`, необходимая `IngressController` для работы в кластере Kubernetes.
 
-## RoleBinding (Привязка роли)
+### RoleBinding (Привязка роли)
 
-`RoleBinding` — это объект, который связывает `Role` с конкретными пользователями или группами пользователей.
+`RoleBinding` — это объект, который связывает `Role` (или `ClusterRole`) с конкретными пользователями (`User`), группами пользователей (`Group`) или сервисными аккаунтами (`ServiceAccount`) в пределах определенного `namespace`.
 
-Пример `RoleBinding`:
+Пример `RoleBinding`, связывающего `Role` с `ServiceAccount`, `User` и `Group`:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -88,7 +92,7 @@ subjects:
 
 Поле `roleRef` указывает, какая `Role` (или `ClusterRole`) применяется к `subjects`.
 
-Пример `RoleBinding` с `ClusterRole`:
+Пример `RoleBinding` с `ClusterRole` `view`:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -105,7 +109,7 @@ subjects:
   namespace: default
 ```
 
-В этом примере `ServiceAccount` с именем `user` в `namespace default` получает права `ClusterRole` с именем `view`.
+В этом примере `ServiceAccount` с именем `user` в `namespace default` получает права `ClusterRole` с именем `view` (эти права будут действовать только в `namespace default`).
 
 После создания `RoleBinding` можно проверить права доступа:
 
@@ -118,9 +122,9 @@ kubectl get service --as=system:serviceaccount:default:user --namespace kube-sys
 # Error from server (Forbidden): services is forbidden: User "system:serviceaccount:default:user" cannot list resource "services" in API group "" in the namespace "kube-system"
 ```
 
-## ServiceAccount (Сервисный аккаунт)
+### ServiceAccount (Сервисный аккаунт)
 
-`ServiceAccount` — это простая абстракция, представляющая собой учетную запись, необходимую для работы внутри кластера Kubernetes.
+`ServiceAccount` — это простая абстракция, представляющая собой учетную запись, необходимую для работы внутри кластера Kubernetes. Они используются для авторизации приложений, работающих внутри кластера Kubernetes и обращающихся к Kubernetes API. В некоторых случаях `ServiceAccount` также могут использоваться для аутентификации внешних пользователей, например, разработчиков, которым выдаются токены для доступа к кластеру.
 
 Пример `ServiceAccount`:
 
@@ -138,7 +142,7 @@ kubectl apply -f serviceaccount.yaml
 # serviceaccount/user created
 ```
 
-При создании `ServiceAccount` контроллер `ServiceAccount` автоматически создает секрет, содержащий токен для авторизации в Kubernetes API. 
+При создании `ServiceAccount` контроллер автоматически создает секрет, содержащий токен для авторизации в Kubernetes API.
 
 ```bash
 kubectl get secret
@@ -149,30 +153,28 @@ kubectl get secret
 
 Этот токен можно использовать для аутентификации в кластере.
 
-Обычно `ServiceAccount` используются для авторизации приложений, работающих внутри кластера Kubernetes и обращающихся к Kubernetes API. В некоторых случаях `ServiceAccount` также могут использоваться для аутентификации внешних пользователей, например, разработчиков, которым выдаются токены для доступа к кластеру.
+### ClusterRole (Кластерная роль)
 
-## ClusterRole (Кластерная роль)
+В отличие от обычной `Role`, которая предоставляет права только в том `namespace`, где она была создана, `ClusterRole` предназначена для сбора прав на объекты во всем кластере (кластер-вайд ресурс). Например, если `ClusterRole` имеет имя `view`, она собирает права на объекты в любом `namespace`.
 
-В отличие от обычной `Role`, которая предоставляет права только в том `namespace`, где она была создана, `ClusterRole` предназначена для сбора прав на объекты во всем кластере (кластер-вайд ресурс). Если `ClusterRole` имеет имя `view`, она собирает права на объекты в любом `namespace`.
-
-## ClusterRoleBinding (Привязка кластерной роли)
+### ClusterRoleBinding (Привязка кластерной роли)
 
 `ClusterRoleBinding` связывает `ClusterRole` с `subjects` (пользователями, группами или `ServiceAccount`) на уровне всего кластера. Это означает, что права, определенные в `ClusterRole`, будут применены ко всем `namespace` в кластере.
 
-**Различия между `RoleBinding` и `ClusterRoleBinding`:**
+### Различия между RoleBinding и ClusterRoleBinding
 
 *   **`RoleBinding`:** Выдает права `Role` (или `ClusterRole`) только в том `namespace`, где был создан `RoleBinding`.
 *   **`ClusterRoleBinding`:** Выдает права `ClusterRole` на весь кластер Kubernetes.
 
----
+## Практические сценарии
 
-## Принцип минимальных привилегий
+### Принцип минимальных привилегий
 
 Kubernetes по умолчанию не является строгим. Можно по ошибке выдать слишком широкие права, например, `cluster-admin`. Это создает риски безопасности, так как компрометация одного компонента может привести к компрометации всего кластера.
 
 Всегда следуйте принципу минимальных привилегий: предоставляйте пользователям и сервисным аккаунтам только те права, которые им абсолютно необходимы.
 
-### Ключевые принципы
+#### Ключевые принципы
 
 **1. Минимальные привилегии (Minimal Privileges):**
 
@@ -207,9 +209,7 @@ rules:
   verbs: ["get", "list", "create", "update", "delete"]
 ```
 
----
-
-## Критически важные практики
+### Критически важные практики
 
 Правильная настройка RBAC является фундаментом безопасности Kubernetes и предотвращает большинство инцидентов, связанных с несанкционированным доступом.
 
@@ -257,9 +257,6 @@ rules:
   verbs: ["get", "list", "watch"]
 ```
 
----
+## Дополнительная информация
 
-## Дополнительные материалы
-
-*   [RBAC Good Practices (Kubernetes Official Documentation)](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)
-```
+*   [RBAC Good Practices (Kubernetes Official Documentation)](https://kubernetes.k8s.io/docs/concepts/security/rbac-good-practices/)
