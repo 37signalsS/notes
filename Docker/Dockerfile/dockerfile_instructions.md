@@ -1,7 +1,3 @@
-# Dockerfile Instructions
-
-This document provides detailed explanations of individual Dockerfile instructions.
-
 ## Основные инструкции Dockerfile
 
 #### FROM

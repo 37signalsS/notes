@@ -1,7 +1,3 @@
-# Dockerfile and Alpine Linux
-
-This document details the specifics of using Alpine Linux as a base image in Dockerfiles, including its advantages, potential issues, and best practices for managing dependencies.
-
 ## Использование Alpine Linux
 
 Alpine Linux — это минималистичный, легковесный дистрибутив Linux, который часто используется в Docker-образах благодаря своему небольшому размеру и упору на безопасность.

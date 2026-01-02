@@ -1,7 +1,3 @@
-# Dockerfile Integration with Kubernetes
-
-This document describes how to integrate Docker Compose files with Kubernetes using the `kompose` tool.
-
 ## Интеграция с Kubernetes
 
 Для конвертации файлов [docker-compose](../Docker_compose/docker_compose.md) в манифесты Kubernetes используйте инструмент **`kompose`**. Он анализирует `docker-compose.yml` и генерирует соответствующие ресурсы Kubernetes (Deployments, Services и т.д.).
@@ -44,13 +40,3 @@ This document describes how to integrate Docker Compose files with Kubernetes us
     ```bash
     kubectl apply -f .
     ```
-
-### Преимущества Kompose:
-
--   **Ускоряет миграцию:** Позволяет быстро перенести существующие Docker Compose проекты в Kubernetes.
--   **Автоматизация:** Устраняет необходимость вручную создавать Kubernetes-манифесты.
--   **Гибкость:** Поддерживает различные типы ресурсов Kubernetes и может быть настроен для генерации специфичных манифестов.
-
-### Ограничения:
-
-Важно помнить, что `kompose` является инструментом для начальной миграции и не может полностью заменить глубокое понимание Kubernetes. Некоторые сложные конфигурации Docker Compose могут потребовать ручной адаптации после конвертации.

@@ -1,7 +1,5 @@
 # Docker BuildKit and Kaniko
 
-This document covers BuildKit, the modern Docker build engine, and Kaniko, a tool for building Docker images without a Docker daemon.
-
 ## BuildKit: Современный движок сборки
 
 **BuildKit** — это современный движок для сборки образов, который предоставляет множество улучшений по сравнению со старым сборщиком:
@@ -57,5 +55,4 @@ build-kaniko:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
     - when: never
-```
 ```

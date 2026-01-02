@@ -10,4 +10,3 @@ docker run -it \
   --env BASH_ENV=/root/.bashrc \
   ubuntu bash
 ```
-

@@ -4,10 +4,6 @@ Ansible Vault — это встроенный в Ansible механизм для
 
 > **Важно:** Vault предназначен для хранения *существующих* секретов. Для генерации новых паролей используйте модуль `ansible.builtin.password`.
 
-См. также:
-*   [Обзор Ansible](ansible_overview.md)
-*   [Рекомендации по безопасности](../Ansible/ansible_security_best_practices.md)
-
 ---
 
 ## 1. Режимы работы: Шифрование файлов vs. строк

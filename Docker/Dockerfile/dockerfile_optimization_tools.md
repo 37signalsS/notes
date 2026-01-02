@@ -1,7 +1,3 @@
-# Dockerfile Optimization and Analysis Tools
-
-This document describes various tools and techniques for analyzing, optimizing, and securing Docker images and Dockerfiles.
-
 ## Анализ и Оптимизация Образов
 
 Эффективное управление размером и структурой Docker-образов имеет решающее значение для производительности и безопасности.

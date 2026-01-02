@@ -1,7 +1,3 @@
-# Docker Build Context and .dockerignore
-
-This document explains the concept of Docker's build context and how to use `.dockerignore` for efficient image building.
-
 ## Контекст сборки (Build Context) и .dockerignore
 
 **Контекст сборки** — это набор файлов, которые Docker CLI отправляет демону Docker для создания образа. Демон может использовать любой из этих файлов в инструкциях `COPY` или `ADD`. Контекст можно указать тремя способами:

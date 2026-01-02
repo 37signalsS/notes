@@ -87,8 +87,3 @@ Ansible по умолчанию использует **Push-модель** уп�
 pip install ansible-lint
 ansible-lint my_playbook.yml
 ```
-
-Для дополнительной информации:
-*   [Пример структуры проекта Ansible](examples/example_project_layout.md)
-*   [Примеры отладки типовых ошибок](examples/example_debugging.md)
-*   [Пример реальной архитектуры CI/CD на Ansible](examples/example_real_world_ci_cd.md)

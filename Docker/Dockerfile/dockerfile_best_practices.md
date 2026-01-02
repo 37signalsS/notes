@@ -1,7 +1,5 @@
 # Dockerfile Best Practices
 
-This document outlines best practices for writing efficient, secure, and maintainable Dockerfiles.
-
 ## Оптимизация Сборки
 
 ### Оптимизация кеширования слоёв
@@ -404,4 +402,3 @@ CMD ["bundle", "exec", "puma"]
 FROM postgres:15
 COPY init.sql /docker-entrypoint-initdb.d/
 ```
-

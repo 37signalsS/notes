@@ -1,10 +1,4 @@
-# Python Base Images for Dockerfiles
-
-This document explains the differences between `full`, `slim`, and `alpine` Python base images and provides guidance on choosing the appropriate one for your Dockerized Python applications.
-
 ## Выбор базового образа Python: `full` vs `slim` vs `alpine`
-
-Выбор правильного базового образа Python для вашего Dockerfile является важным решением, влияющим на размер образа, скорость сборки, совместимость и безопасность.
 
 #### 1. `python:3.11` (Full Debian-based)
 
