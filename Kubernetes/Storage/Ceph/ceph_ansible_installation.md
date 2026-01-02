@@ -127,7 +127,7 @@
 
 #### 2. Конфигурация развертывания
 
-### 3.1. Файл инвентаря (Inventory)
+##### Файл инвентаря (Inventory)
 
 Создайте файл инвентаря (например, `inventory.ini`), который описывает, на каких хостах какие роли Ceph будут развернуты.
 
@@ -140,15 +140,15 @@
     ceph-node2
     ceph-node3
 
-[osds]
-ceph-node1
-ceph-node2
-ceph-node3
+    [osds]
+    ceph-node1
+    ceph-node2
+    ceph-node3
 
-[managers]
-ceph-node1
-ceph-node2
-ceph-node3
+    [managers]
+    ceph-node1
+    ceph-node2
+    ceph-node3
 
     [mdss]
     ceph-node1
@@ -169,7 +169,7 @@ ceph-node3
     ```
     Переменная `monitor_address` указывает сценарию Ansible, на каком IP-адресе монитор будет принимать соединения от клиентов.
 
-## 4. Запуск и проверка
+#### 3. Запуск и проверка
 
 1.  **Подготовка Playbook:**
     Обычно сценарий установки называется `site.yml`. Если его нет, но есть `site.yml.sample`, скопируйте его:

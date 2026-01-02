@@ -1,36 +1,55 @@
 # Установка драйвера CSI для CephFS
 
-Данное руководство описывает процесс установки и настройки драйвера Ceph CSI для работы с файловой системой CephFS в Kubernetes. Для общего понимания архитектуры Ceph и концепции CephFS, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md).
+## Определения
 
-## 1. Подготовка и настройка Helm Chart
+*   **CephFS CSI Driver (Драйвер CSI для CephFS):** Компонент, позволяющий Kubernetes управлять томами хранения, предоставляемыми файловой системой CephFS.
+*   **Helm Chart (Чарты Helm):** Коллекция предварительно настроенных ресурсов Kubernetes, используемых для развертывания приложений.
+*   **Ceph Cluster ID (Идентификатор кластера Ceph):** Уникальный идентификатор для кластера хранения Ceph.
+*   **Ceph Monitors (Мониторы Ceph):** Компоненты в кластере Ceph, отвечающие за поддержание согласованной карты кластера.
+*   **Node Plugin (Плагин узла):** Часть драйвера CSI, которая работает на каждом узле Kubernetes для выполнения операций с томами.
+*   **Pod Security Policies (PSP) (Политики безопасности подов):** Ресурс Kubernetes, контролирующий чувствительные к безопасности аспекты спецификации подов (упоминается в документе, хотя PSP устарели).
+*   **StorageClass (Класс хранения):** Ресурс Kubernetes, который определяет параметры для динамически выделяемого хранилища.
+*   **PersistentVolumeClaim (PVC) (Заявка на постоянный том):** Запрос пользователя на хранилище в Kubernetes.
+
+## Basic Concepts (Основные понятия)
+
+Драйвер Ceph CSI необходим для интеграции файловой системы CephFS с Kubernetes, позволяя подам использовать хранилище Ceph. Развертывание драйвера обычно осуществляется с помощью Helm-чартов, что упрощает управление конфигурацией. Файл `values.yaml` используется для настройки параметров Helm-чарта, таких как `clusterID` и список `monitors`, которые драйвер использует для подключения к кластеру Ceph.
+
+Плагины узлов драйвера могут работать в режиме `hostNetwork: true`, что может привести к конфликтам портов (например, порт `9080` для проверок живучести). Для безопасности рекомендуется создавать отдельного пользователя Ceph для CSI, а его учетные данные хранить в Kubernetes Secret.
+
+StorageClass определяет, как динамически выделяется хранилище, включая провизионер, `clusterID`, имя файловой системы (`fsName`), пул данных (`pool`) и секреты для доступа. PersistentVolumeClaim (PVC) — это запрос пользователя на определенный объем и характеристики хранилища. Для CephFS расширение томов осуществляется путем обновления квоты на каталог, а не путем изменения размера файловой системы внутри пода.
+
+## Практические сценарии
+
+### 1. Подготовка и настройка Helm Chart
 
 Для установки драйвера Ceph CSI используются Helm-чарты. Подробнее о Container Storage Interface (CSI) можно узнать в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md).
 
-Переходим в каталог с манифестами. Репозиторий с чартами Ceph-CSI уже должен быть подключен.
+Перейдите в каталог с манифестами. Репозиторий с чартами Ceph-CSI уже должен быть подключен.
 
-### 1.1. Получение и настройка переменных чарта
+**1.1. Получение и настройка переменных чарта**
 
-Получаем настройки чарта `ceph-csi-cephfs`:
+Получите настройки чарта `ceph-csi-cephfs` и сохраните их в `values.yaml`:
 
 ```bash
 helm show values ceph-csi/ceph-csi-cephfs > values.yaml
 ```
 
-Редактируем файл `values.yaml`. Необходимо указать `clusterID` и список мониторов Ceph.
+Отредактируйте файл `values.yaml`, указав `clusterID` и список мониторов Ceph.
 
-### 1.2. Получение Cluster ID
+**1.2. Получение Cluster ID**
 
-На одном из узлов Ceph-кластера выполняем:
+На одном из узлов Ceph-кластера выполните:
 
 ```bash
 ceph fsid
 ```
 
-Копируем полученный ID и вставляем в `values.yaml`.
+Скопируйте полученный ID и вставьте в `values.yaml`.
 
-### 1.3. Получение списка мониторов
+**1.3. Получение списка мониторов**
 
-На одном из узлов Ceph-кластера получаем список мониторов:
+На одном из узлов Ceph-кластера получите список мониторов:
 
 ```bash
 ceph mon dump
@@ -51,11 +70,11 @@ csiConfig:
 
 **Важно:** Закомментируйте или удалите пустой список `csiConfig` ниже в файле, чтобы избежать переопределения.
 
-### 1.4. Настройка портов Node Plugin
+**1.4. Настройка портов Node Plugin**
 
-Плагины узлов (`nodeplugin`) работают в режиме `hostNetwork: true`, что может привести к конфликтам портов. Если порт `9080` (по-умолчанию для liveness-проб) занят (например, `kube-proxy` в кластере, развернутом через Kubespray), его необходимо изменить.
+Плагины узлов (`nodeplugin`) работают в режиме `hostNetwork: true`, что может привести к конфликтам портов. Если порт `9080` (по умолчанию для liveness-проб) занят (например, `kube-proxy` в кластере, развернутом через Kubespray), его необходимо изменить.
 
-В `values.yaml` изменяем порт:
+В `values.yaml` измените порт:
 
 ```yaml
 # For nodeplugin...
@@ -64,9 +83,9 @@ liveness:
   containerPort: 9091
 ```
 
-### 1.5. Настройка PSP и реплик
+**1.5. Настройка PSP и реплик**
 
-Включаем создание Pod Security Policies (PSP) и устанавливаем количество реплик для provisioner'а.
+Включите создание Pod Security Policies (PSP) и установите количество реплик для provisioner'а.
 
 ```yaml
 # In values.yaml
@@ -80,9 +99,9 @@ replicaCount: 1
 # Also enable PSP for provisioner if needed
 ```
 
-## 2. Установка драйвера
+### 2. Установка драйвера
 
-После сохранения изменений в `values.yaml`, устанавливаем драйвер с помощью Helm:
+После сохранения изменений в `values.yaml`, установите драйвер с помощью Helm:
 
 ```bash
 helm upgrade --install csi-cephfs-driver ceph-csi/ceph-csi-cephfs \
@@ -91,29 +110,29 @@ helm upgrade --install csi-cephfs-driver ceph-csi/ceph-csi-cephfs \
   --create-namespace
 ```
 
-Проверяем статус подов:
+Проверьте статус подов:
 
 ```bash
 kubectl get pods -n ceph-csi-cephfs -w
 ```
 
-## 3. Создание пользователя и StorageClass
+### 3. Создание пользователя и StorageClass
 
-### 3.1. Создание пользователя CephFS
+**3.1. Создание пользователя CephFS**
 
-Для безопасности создадим отдельного пользователя для CSI вместо использования ключа администратора.
+Для безопасности создайте отдельного пользователя для CSI вместо использования ключа администратора.
 
-На узле Ceph выполняем:
+На узле Ceph выполните:
 
 ```bash
-ceph auth get-or-create client.csi-cephfs-user mon 'allow r' mgr 'allow rw' mds 'allow rw, allow rw snapshot, allow r quota' osd 'allow rw pool=cephfs-data, allow rw pool=cephfs-metadata'
+ceph auth get-or-create client.csi-cephfs-user mon 'allow r'mgr 'allow rw' mds 'allow rw, allow rw snapshot, allow r quota' osd 'allow rw pool=cephfs-data, allow rw pool=cephfs-metadata'
 ```
 
-Копируем полученный ключ.
+Скопируйте полученный ключ.
 
-### 3.2. Создание секрета Kubernetes
+**3.2. Создание секрета Kubernetes**
 
-Создаем манифест для секрета, например `secret.yaml`:
+Создайте манифест для секрета, например `secret.yaml`:
 
 ```yaml
 apiVersion: v1
@@ -128,15 +147,15 @@ stringData:
 
 **Примечание:** В старых версиях драйвера поля могли называться `adminID` и `adminKey`.
 
-Применяем манифест:
+Примените манифест:
 
 ```bash
 kubectl apply -f secret.yaml
 ```
 
-### 3.3. Создание StorageClass
+**3.3. Создание StorageClass**
 
-Создаем манифест для StorageClass, например `storageclass.yaml`:
+Создайте манифест для StorageClass, например `storageclass.yaml`:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -158,25 +177,25 @@ mountOptions:
   - noatime
 ```
 
-Заполняем `clusterID` и применяем манифест:
+Заполните `clusterID` и примените манифест:
 
 ```bash
 kubectl apply -f storageclass.yaml
 ```
 
-Проверяем, что StorageClass создан:
+Проверьте, что StorageClass создан:
 
 ```bash
 kubectl get sc
 ```
 
-## 4. Тестирование: создание и расширение PVC
+### 4. Тестирование: создание и расширение PVC
 
-Данный раздел демонстрирует создание и расширение PersistentVolumeClaim (PVC) для CephFS. Более подробно о PersistentVolumes и PersistentVolumeClaims можно узнать в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
+Этот раздел демонстрирует создание и расширение PersistentVolumeClaim (PVC) для CephFS. Более подробно о PersistentVolumes и PersistentVolumeClaims можно узнать в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
 
-### 4.1. Создание PVC
+**4.1. Создание PVC**
 
-Создаем манифест `pvc.yaml`:
+Создайте манифест `pvc.yaml`:
 
 ```yaml
 apiVersion: v1
@@ -192,22 +211,22 @@ spec:
   storageClassName: csi-cephfs-sc
 ```
 
-Применяем:
+Примените:
 
 ```bash
 kubectl apply -f pvc.yaml
 ```
 
-Проверяем статус PVC:
+Проверьте статус PVC:
 
 ```bash
 kubectl get pvc csi-cephfs-pvc
 # Ожидаемый статус: Bound
 ```
 
-### 4.2. Расширение PVC
+**4.2. Расширение PVC**
 
-Редактируем манифест `pvc.yaml`, изменяя размер:
+Отредактируйте манифест `pvc.yaml`, изменив размер:
 
 ```yaml
 # ...
@@ -219,48 +238,48 @@ spec:
 # ...
 ```
 
-Применяем изменения:
+Примените изменения:
 
 ```bash
 kubectl apply -f pvc.yaml
 ```
 
-Проверяем, что размер PVC и связанного с ним PV изменился:
+Проверьте, что размер PVC и связанного с ним PV изменился:
 
 ```bash
 kubectl get pvc,pv
 ```
 Для CephFS изменение размера тома происходит через обновление квоты на каталог, поэтому нет необходимости вручную изменять размер файловой системы внутри пода.
 
-## 5. Проверка на стороне Ceph
+### 5. Проверка на стороне Ceph
 
-### 5.1. Монтирование CephFS на узел (для отладки)
+**5.1. Монтирование CephFS на узел (для отладки)**
 
 Чтобы посмотреть, что создал драйвер, можно смонтировать CephFS непосредственно на один из узлов.
 
-1.  Создаем точку монтирования: `mkdir /mnt/cephfs`
-2.  Создаем файл с секретом: `echo "<your-admin-key>" > /etc/ceph/admin.secret`
-3.  Добавляем запись в `/etc/fstab`:
+1.  Создайте точку монтирования: `mkdir /mnt/cephfs`
+2.  Создайте файл с секретом: `echo "<your-admin-key>" > /etc/ceph/admin.secret`
+3.  Добавьте запись в `/etc/fstab`:
 
     ```
     <mon_ip>:6789:/ /mnt/cephfs ceph name=admin,secretfile=/etc/ceph/admin.secret,netdev 0 0
     ```
 
     **Важно:** Опция `netdev` предотвращает зависание системы при перезагрузке.
-4.  Монтируем: `mount -a`
+4.  Смонтируйте: `mount -a`
 
-### 5.2. Проверка квоты
+**5.2. Проверка квоты**
 
-Переходим в каталог, где CSI создает тома, и проверяем расширенные атрибуты для просмотра квоты.
+Перейдите в каталог, где CSI создает тома, и проверьте расширенные атрибуты для просмотра квоты.
 
-Устанавливаем утилиту:
+Установите утилиту:
 
 ```bash
 # На Debian/Ubuntu
 apt-get install -y attr
 ```
 
-Проверяем квоту:
+Проверьте квоту:
 
 ```bash
 getfattr -n ceph.quota.max_bytes /mnt/cephfs/volumes/csi/csi-vol-<id>/

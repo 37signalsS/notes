@@ -1,69 +1,78 @@
-# Установка Grafana с использованием Helm
+# Установка Grafana в Kubernetes с использованием Helm
 
-Этот документ описывает пошаговую установку и базовую конфигурацию Grafana в кластере Kubernetes с использованием Helm. Мы рассмотрим подключение репозитория Helm, настройку файла `values.yaml` для Ingress, базовой аутентификации, персистентности и учетных данных администратора, а также процесс установки и проверки.
+Этот документ описывает установку и конфигурацию Grafana в кластере Kubernetes с использованием Helm, следуя структурированному подходу.
 
-## Подключение репозитория Helm
+## 1. Определения
 
-Перед установкой Grafana необходимо добавить официальный репозиторий Helm-чартов Grafana:
+**Helm-чарт Grafana** — это пакет преднастроенных ресурсов Kubernetes, который позволяет автоматизировать установку, обновление и управление Grafana в кластере.
+
+## 2. Основные концепции
+
+Для эффективной установки Grafana с помощью Helm важно понимать следующие ключевые концепции:
+
+*   **Персистентность (Persistence):** Обеспечивает сохранение данных Grafana (дашборды, источники данных, настройки) между перезапусками подов. Критически важно для продуктивных сред.
+*   **Внешний доступ (Ingress):** Настройка Ingress-ресурса для предоставления доступа к веб-интерфейсу Grafana извне кластера.
+*   **`root_url`:** Ключевой параметр конфигурации, определяющий публичный URL-адрес Grafana, который используется для генерации корректных ссылок в уведомлениях и интерфейсе.
+*   **Provisioning:** Автоматическая загрузка и настройка ресурсов (дашбордов, источников данных) при старте Grafana.
+*   **Image Renderer:** Отдельный компонент, позволяющий Grafana создавать изображения графиков для включения в уведомления об алертах.
+
+## 3. Практические сценарии
+
+Ниже представлена пошаговая инструкция по установке и настройке Grafana.
+
+### Шаг 1: Подключение репозитория Helm
+
+Перед установкой необходимо добавить официальный репозиторий Helm-чартов Grafana и обновить его:
 
 ```bash
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 ```
 
-## Установка Grafana
+### Шаг 2: Установка и базовая настройка
 
-Перед установкой Grafana рекомендуется ознакомиться с доступными параметрами конфигурации по умолчанию, используя команду `helm show values`:
+Установка Grafana производится с помощью команды `helm install`, которая использует файл `values.yaml` для кастомизации.
 
-```bash
-helm show values grafana/grafana > grafana-default-values.yaml
-```
-
-Это позволит вам увидеть все опции, которые можно переопределить в вашем файле `values.yaml`.
-
-Установка Grafana производится с использованием Helm и файла `values.yaml`, который содержит все необходимые настройки. Пример команды для установки:
+#### Команда для установки
 
 ```bash
-helm install grafana grafana/grafana -f grafana-values-1.yaml --namespace monitoring --create-namespace --wait --atomic
+helm install grafana grafana/grafana -f grafana-values.yaml --namespace monitoring --create-namespace --wait --atomic
 ```
 
-Здесь:
+*   `grafana`: Имя релиза Helm.
+*   `grafana/grafana`: Чарт из добавленного репозитория.
+*   `-f grafana-values.yaml`: Путь к файлу с настройками.
+*   `--namespace monitoring`: Установка в отдельное пространство имен.
+*   `--create-namespace`: Создать пространство имен, если оно не существует.
+*   `--wait`: Ожидать завершения всех ресурсов.
+*   `--atomic`: Откатить релиз в случае неудачной установки.
 
-*   `grafana` — имя релиза Helm.
-*   `grafana/grafana` — указывает на чарт Grafana из добавленного репозитория.
-*   `-f grafana-values-1.yaml` — путь к файлу с пользовательскими значениями конфигурации.
-*   `--namespace monitoring` — установка в пространство имен `monitoring`.
-*   `--create-namespace` — создает пространство имен, если оно не существует.
-*   `--wait` — ожидает завершения всех ресурсов перед тем, как пометить релиз как успешный.
-*   `--atomic` — если установка не удалась, релиз будет автоматически откачен.
+#### Пример базовой конфигурации (`grafana-values.yaml`)
 
-## Настройка файла values (grafana-values-1.yaml)
-
-Пример содержимого файла `grafana-values-1.yaml` для базовой настройки:
+Этот файл содержит основные параметры для первого запуска: Ingress, учетные данные администратора, персистентность и `root_url`.
 
 ```yaml
 ingress:
   enabled: true
   annotations:
     kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/auth-url: "http://kube-auth.default.svc.cluster.local/auth" # Пример, замените на ваш URL
-    nginx.ingress.kubernetes.io/auth-signin: "https://${STUDENT_ID}.slurm.io/oauth2/start?rd=$request_uri" # Пример, замените на ваш URL
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: basic-auth-secret # Имя секрета с учетными данными для базовой аутентификации
+    # Для защиты доступа рекомендуется настроить аутентификацию.
+    # Пример с использованием OAuth2 Proxy (необходимо развернуть отдельно):
+    # nginx.ingress.kubernetes.io/auth-url: "http://oauth2-proxy.default.svc.cluster.local/oauth2/auth"
+    # nginx.ingress.kubernetes.io/auth-signin: "https://sso.your-domain.com/oauth2/start?rd=$request_uri"
   hosts:
-    - host: grafana.${STUDENT_ID}.slurm.io # Замените на ваш домен
+    - host: grafana.your-domain.com # Замените на ваш домен
       paths:
         - path: /
           pathType: Prefix
   tls:
     - hosts:
-        - grafana.${STUDENT_ID}.slurm.io # Замените на ваш домен
+        - grafana.your-domain.com # Замените на ваш домен
       secretName: grafana-tls # Имя секрета TLS
 # Секция `ingress` необходима для обеспечения внешнего доступа к Grafana.
-# Здесь настраиваются правила маршрутизации, хосты и, при необходимости, базовая аутентификация
-# для защиты доступа к веб-интерфейсу Grafana.
-# Аннотации `nginx.ingress.kubernetes.io/auth-*` используются для настройки базовой авторизации
-# через Ingress-контроллер Nginx.
+# Здесь настраиваются правила маршрутизации, хосты и TLS.
+# Аннотации используются для конфигурации Ingress-контроллера (в данном случае, Nginx).
+
 admin:
   user: admin
   password: admin.12.3 # Используйте надежный пароль и храните его в секрете!
@@ -81,70 +90,69 @@ persistence:
 
 grafana.ini:
   server:
-    root_url: "https://grafana.${STUDENT_ID}.slurm.io" # Замените на ваш домен
+    root_url: "https://grafana.your-domain.com" # Замените на ваш домен
+```
 
-## Дополнительные параметры конфигурации
+### Шаг 3: Настройка дополнительных параметров
 
-При установке Grafana через Helm, помимо основных настроек, можно задать ряд дополнительных параметров, которые влияют на ее поведение и функциональность.
-
-### `root_url`
+#### `root_url`
 
 Параметр `root_url` в секции `grafana.ini.server` критически важен для корректной работы Grafana, особенно при генерации ссылок (например, для приглашений пользователей или в уведомлениях об алертах). Если он не задан, Grafana может генерировать некорректные ссылки (например, с `localhost:3000`), что является частой ошибкой при настройке.
 
 ```yaml
-grafana:
-  ini:
-    server:
-      root_url: "https://grafana.your-domain.com" # Укажите полный URL, по которому доступна Grafana
+# values.yaml
+grafana.ini:
+  server:
+    root_url: "https://grafana.your-domain.com" # Укажите полный URL, по которому доступна Grafana
 ```
 
-### Provisioned Dashboards (через `sidecar`)
+#### Provisioned Dashboards (через `sidecar`)
 
-Helm-чарт Grafana позволяет автоматически загружать дашборды при установке, используя механизм `sidecar` или напрямую указывая их в `values.yaml`. Это один из способов получить готовые графики сразу после инсталляции, не создавая их вручную. Это удобно для преднастроенных дашбордов, например, из Prometheus Stack.
+Helm-чарт Grafana позволяет автоматически загружать дашборды при установке, используя механизм `sidecar`. Это удобно для преднастроенных дашбордов, например, из Prometheus Stack.
 
 ```yaml
-grafana:
-  sidecar:
-    dashboards:
-      enabled: true
-      label: grafana_dashboard
-      labelValue: "1"
-      folder: /var/lib/grafana/dashboards
-      provider:
-        name: default
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
+# values.yaml
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: /var/lib/grafana/dashboards
+    provider:
+      name: default
+      folder: ''
+      type: file
+      disableDeletion: false
+      editable: true
 ```
 
 *   **`enabled: true`**: Включает механизм sidecar для дашбордов.
 *   **`label` и `labelValue`**: Используются для поиска ConfigMaps или Secrets, содержащих JSON-определения дашбордов.
 *   **`editable: true/false`**: Определяет, можно ли редактировать эти дашборды через UI Grafana. Часто provisioned дашборды делают `read-only`. Параметр `disableDeletion` (по умолчанию `false`) позволяет предотвратить удаление дашбордов через UI.
 
-### Image Renderer
+#### Image Renderer
 
-Для прикрепления изображений графиков к уведомлениям об алертах (например, в Slack) Grafana использует отдельный компонент Image Renderer. Его также можно включить и настроить через `values.yaml`.
+Для прикрепления изображений графиков к уведомлениям об алертах Grafana использует отдельный компонент Image Renderer.
 
 ```yaml
-grafana:
-  imageRenderer:
-    enabled: true
-    # Дополнительные настройки, например, для S3, если требуется внешнее хранилище для изображений
-    # s3:
-    #   bucket: "grafana-alert-images"
-    #   region: "us-east-1"
-    #   accessKey: "${VAULT_KEY_AWS_ACCESS_KEY}"
-    #   secretKey: "${VAULT_KEY_AWS_SECRET_KEY}"
+# values.yaml
+imageRenderer:
+  enabled: true
+  # Дополнительные настройки, например, для S3, если требуется внешнее хранилище для изображений
+  # s3:
+  #   bucket: "grafana-alert-images"
+  #   region: "us-east-1"
+  #   accessKey: "${VAULT_KEY_AWS_ACCESS_KEY}"
+  #   secretKey: "${VAULT_KEY_AWS_SECRET_KEY}"
 ```
 
 *   **`enabled: true`**: Включает Image Renderer.
-*   **Зависимость от Chrome**: Image Renderer использует под капотом headless-браузер (например, Google Chrome) для рендеринга изображений. Если изображения не прикрепляются к алертам, убедитесь, что под с Image Renderer запущен и корректно настроен.
-*   **Особенности для мессенджеров**: Для некоторых мессенджеров (например, Slack) может потребоваться выгрузка изображений во внешнее хранилище (например, S3), так как API мессенджера требует, чтобы изображение уже где-то хостилось. Для других, как Telegram, в этом нет необходимости, и изображение можно отправить напрямую.
+*   **Зависимость от Chrome**: Image Renderer использует под капотом headless-браузер для рендеринга изображений.
+*   **Особенности для мессенджеров**: Для некоторых мессенджеров (например, Slack) может потребоваться выгрузка изображений во внешнее хранилище (например, S3). Для Telegram в этом нет необходимости.
 
-## Проверка установки
+### Шаг 4: Проверка установки
 
-После выполнения команды `helm install` можно проверить статус развертывания:
+После выполнения команды `helm install` проверьте статус развертывания:
 
 ```bash
 kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana
@@ -153,11 +161,16 @@ kubectl get ingress -n monitoring -l app.kubernetes.io/name=grafana
 
 Убедитесь, что все поды Grafana находятся в состоянии `Running` и Ingress-ресурс создан.
 
-## Доступ к Grafana
+### Шаг 5: Доступ к Grafana
 
-После успешного развертывания Grafana будет доступна по адресу, указанному в `ingress.hosts`. При первом доступе потребуется ввести учетные данные для базовой аутентификации (если настроено), а затем учетные данные администратора Grafana:
+После успешного развертывания Grafana будет доступна по адресу, указанному в `ingress.hosts`. Для входа используйте учетные данные администратора, заданные в `values.yaml`.
 
-*   **Логин:** `admin`
-*   **Пароль:** `admin.12.3` (или тот, который вы указали в `values.yaml`)
+## 4. Дополнительная информация
 
-После входа вы попадете в интерфейс Grafana. На этом этапе Grafana установлена, но еще не имеет источников данных или дашбордов.
+Для ознакомления со всеми доступными параметрами конфигурации Helm-чарта Grafana рекомендуется изучить его `values.yaml` по умолчанию.
+
+```bash
+helm show values grafana/grafana > grafana-default-values.yaml
+```
+
+Эта команда создаст файл `grafana-default-values.yaml` с полным списком опций, комментариями и значениями по умолчанию.

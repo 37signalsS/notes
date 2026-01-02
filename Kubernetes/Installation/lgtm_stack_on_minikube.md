@@ -77,47 +77,46 @@ minikube start --cpus 4 --memory 8192mb --addons ingress --insecure-registry "10
 
 ##### 3.1. Cert-Manager
 
-Установите Cert-Manager и создайте ClusterIssuer для автоматического выпуска самоподписанных сертификатов.
+Для управления TLS-сертификатами в кластере используется **[cert-manager](../ToolsUtilities/cert_manager.md)**. Этот компонент необходим для автоматического выпуска сертификатов для Ingress-ресурсов (Grafana, Loki и т.д.).
 
-```bash
-# Установка Cert-Manager
-helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --create-namespace \
-  --version v1.14.0 \
-  --set installCRDs=true
+В данном руководстве мы будем использовать самоподписанные сертификаты.
 
-# Создание корневого CA
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: minikube-ca
-spec:
-  ca:
-    secretName: minikube-ca-secret
-EOF
+1.  **Установите cert-manager**, следуя официальной инструкции, или воспользуйтесь нашей заметкой: **[Установка cert-manager](../ToolsUtilities/cert_manager.md#Установка)**.
 
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: minikube-ca-secret
-  namespace: cert-manager
-spec:
-  isCA: true
-  duration: 8760h # 1y
-  secretName: minikube-ca-secret
-  privateKey:
-    algorithm: RSA
-    size: 2048
-  commonName: "minikube-ca"
-  issuerRef:
-    name: minikube-ca
+2.  **Создайте ClusterIssuer** для выпуска самоподписанных сертификатов. Это позволит обеспечить безопасное взаимодействие с веб-интерфейсами внутри кластера.
+
+    ```bash
+    # Создание корневого CA
+    kubectl apply -f - <<EOF
+    apiVersion: cert-manager.io/v1
     kind: ClusterIssuer
-    group: cert-manager.io
-EOF
-```
+    metadata:
+      name: minikube-ca
+    spec:
+      ca:
+        secretName: minikube-ca-secret
+    EOF
+
+    kubectl apply -f - <<EOF
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: minikube-ca-secret
+      namespace: cert-manager
+    spec:
+      isCA: true
+      duration: 8760h # 1y
+      secretName: minikube-ca-secret
+      privateKey:
+        algorithm: RSA
+        size: 2048
+      commonName: "minikube-ca"
+      issuerRef:
+        name: minikube-ca
+        kind: ClusterIssuer
+        group: cert-manager.io
+    EOF
+    ```
 
 ##### 3.2. Локальный Docker Registry
 

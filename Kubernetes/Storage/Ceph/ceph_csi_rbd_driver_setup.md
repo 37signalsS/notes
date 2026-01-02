@@ -1,16 +1,36 @@
 # Установка и настройка драйвера Ceph CSI для RBD
 
-В данном руководстве описывается процесс установки и настройки драйвера [Ceph CSI](https://github.com/ceph/ceph-csi) для работы с блочными устройствами **RBD (RADOS Block Device)** в Kubernetes. Для общего понимания архитектуры Ceph и концепции RBD, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md).
+## Определения
 
-Процесс включает в себя подготовку кластера Ceph, установку драйвера через Helm, создание необходимых учетных данных и `StorageClass`, а также проверку создания и динамического расширения томов (`PersistentVolume`).
+*   **Ceph CSI (Container Storage Interface)**: Стандартный интерфейс для интеграции различных систем хранения данных с Kubernetes. Драйвер Ceph CSI позволяет Kubernetes использовать блочные устройства Ceph (RBD) в качестве постоянных томов.
+*   **RBD (RADOS Block Device)**: Блочное устройство, предоставляемое Ceph, которое может быть примонтировано к виртуальным машинам или контейнерам.
+*   **StorageClass**: Объект Kubernetes, который описывает "классы" хранения, предлагаемые кластером. Используется для динамического выделения PersistentVolume.
+*   **PersistentVolume (PV)**: Объект API в Kubernetes, представляющий собой часть хранилища, абстрагированную от базовой реализации хранения.
+*   **PersistentVolumeClaim (PVC)**: Запрос пользователя на хранилище, который может быть удовлетворен PersistentVolume.
 
-## Шаг 1: Подготовка кластера Ceph
+## Основные концепции
+
+Интеграция Ceph RBD с Kubernetes через CSI драйвер включает следующие ключевые шаги и компоненты:
+
+1.  **Подготовка Ceph кластера**: Создание специализированного пула для RBD-образов и активация приложения RBD для этого пула.
+2.  **Развертывание CSI драйвера**: Установка драйвера Ceph CSI в кластере Kubernetes, обычно с использованием Helm, который обеспечивает взаимодействие между Kubernetes и Ceph.
+3.  **Авторизация**: Создание пользователя Ceph с необходимыми правами и хранение его ключа в Kubernetes Secret для аутентификации CSI драйвера в Ceph.
+4.  **Динамическое выделение хранилища**: Использование StorageClass для определения параметров хранения, таких как пул Ceph и функции RBD, позволяя Kubernetes динамически создавать PersistentVolume из Ceph по запросу PersistentVolumeClaim.
+5.  **Расширение томов**: Возможность динамического увеличения размера PersistentVolume, требующая расширения как на стороне Ceph, так и на файловой системе внутри пода.
+
+Более подробную информацию о Container Storage Interface (CSI) можно найти в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md). Для общего понимания архитектуры Ceph и концепции RBD, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md), а о PersistentVolumes и PersistentVolumeClaims — в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
+
+## Практические сценарии: Установка и настройка
+
+Данный раздел описывает пошаговую установку и настройку драйвера Ceph CSI для работы с RBD в Kubernetes.
+
+### Шаг 1: Подготовка кластера Ceph
 
 Предполагается, что у вас уже есть работающий кластер Ceph.
 
-### 1.1. Создание пула для RBD
+#### 1.1. Создание пула для RBD
 
-Сначала необходимо создать в Ceph пул, где будут храниться образы блочных устройств.
+Создайте в Ceph пул, где будут храниться образы блочных устройств:
 
 ```bash
 ceph osd pool create <pool_name> <pg_num>
@@ -18,9 +38,9 @@ ceph osd pool create <pool_name> <pg_num>
 ceph osd pool create kube 32
 ```
 
-### 1.2. Активация приложения RBD для пула
+#### 1.2. Активация приложения RBD для пула
 
-Сообщаем Ceph, что данный пул будет использоваться для хранения RBD-образов.
+Сообщите Ceph, что данный пул будет использоваться для хранения RBD-образов:
 
 ```bash
 ceph osd pool application enable <pool_name> rbd
@@ -28,48 +48,28 @@ ceph osd pool application enable <pool_name> rbd
 ceph osd pool application enable kube rbd
 ```
 
----
+### Шаг 2: Установка драйвера Ceph CSI через Helm
 
-## Шаг 2: Установка драйвера Ceph CSI через Helm
+#### 2.1. Добавление Helm-репозитория
 
-Для установки CSI-драйвера используется Helm. Более подробную информацию о Container Storage Interface (CSI) можно найти в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md).
-
-### 2.1. Добавление Helm-репозитория
-
-Если репозиторий `ceph-csi` еще не добавлен, сделайте это:
+Если репозиторий `ceph-csi` еще не добавлен, выполните:
 
 ```bash
 helm repo add ceph-csi https://ceph.github.io/csi-charts
 helm repo update
 ```
 
-### 2.2. Подготовка файла с настройками (`values.yaml`)
+#### 2.2. Подготовка файла с настройками (`values.yaml`)
 
-Выгрузим стандартные настройки чарта в файл для дальнейшей модификации.
+Выгрузите стандартные настройки чарта в файл для дальнейшей модификации:
 
 ```bash
 helm inspect values ceph-csi/ceph-csi-rbd > ceph-rbd-values.yaml
 ```
 
-Далее, отредактируйте файл `ceph-rbd-values.yaml`. Ключевые параметры для настройки:
+Отредактируйте файл `ceph-rbd-values.yaml`. Укажите `clusterID` и адреса мониторов, полученные с помощью команд `ceph fsid` и `ceph mon dump` на узле Ceph.
 
-*   `csiConfig`: Здесь указывается информация для подключения к вашему кластеру Ceph.
-*   `provisioner.podSecurityPolicy.enabled`: Включение PodSecurityPolicy для provisioner.
-*   `nodeplugin.podSecurityPolicy.enabled`: Включение PodSecurityPolicy для nodeplugin.
-
-**Пример конфигурации `csiConfig`:**
-
-Чтобы найти `clusterID` и адреса мониторов, выполните на узле Ceph следующие команды:
-
-```bash
-# Получение Cluster ID
-ceph fsid
-
-# Получение адресов мониторов
-ceph mon dump
-```
-
-После этого внесите данные в `ceph-rbd-values.yaml`:
+**Пример конфигурации `csiConfig` и PodSecurityPolicy:**
 
 ```yaml
 csiConfig:
@@ -94,9 +94,9 @@ nodeplugin:
     enabled: true
 ```
 
-### 2.3. Установка чарта
+#### 2.3. Установка чарта
 
-Теперь установим Helm-чарт с нашими параметрами.
+Установите Helm-чарт с вашими параметрами:
 
 ```bash
 helm upgrade --install ceph-csi-rbd ceph-csi/ceph-csi-rbd \
@@ -105,25 +105,23 @@ helm upgrade --install ceph-csi-rbd ceph-csi/ceph-csi-rbd \
   -f ceph-rbd-values.yaml
 ```
 
----
+### Шаг 3: Создание пользователя Ceph и секрета Kubernetes
 
-## Шаг 3: Создание пользователя и секрета Kubernetes
+Драйверу Ceph CSI требуется пользователь Ceph для управления RBD-образами.
 
-CSI-драйверу нужен пользователь в Ceph для управления RBD-образами.
+#### 3.1. Создание пользователя в Ceph
 
-### 3.1. Создание пользователя в Ceph
-
-Создадим пользователя `csi-rbd-user` с правами на работу в пуле `kube`.
+Создайте пользователя `csi-rbd-user` с необходимыми правами:
 
 ```bash
 ceph auth get-or-create client.csi-rbd-user mon 'profile rbd' osd 'profile rbd pool=kube'
 ```
 
-Эта команда вернет ключ пользователя. **Сохраните его, он понадобится на следующем шаге.**
+**Важно:** Сохраните ключ пользователя, который будет выведен этой командой, он понадобится на следующем шаге.
 
-### 3.2. Создание секрета Kubernetes
+#### 3.2. Создание секрета Kubernetes
 
-Создайте манифест `secret.yaml` для хранения учетных данных.
+Создайте манифест `secret.yaml` для хранения учетных данных:
 
 ```yaml
 # secret.yaml
@@ -143,13 +141,11 @@ stringData:
 kubectl apply -f secret.yaml
 ```
 
----
+### Шаг 4: Создание StorageClass
 
-## Шаг 4: Создание StorageClass
+`StorageClass` определяет provisioner и параметры для динамического создания `PersistentVolume`.
 
-`StorageClass` определяет, какой provisioner использовать для динамического создания `PersistentVolume`. Подробнее о `PersistentVolumes` и `PersistentVolumeClaims` можно узнать в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
-
-Создайте манифест `storageclass.yaml`:
+Создайте манифест `storageclass.yaml`, используя тот же `clusterID` и имя пула, что и в предыдущих шагах:
 
 ```yaml
 # storageclass.yaml
@@ -180,13 +176,11 @@ mountOptions:
 kubectl apply -f storageclass.yaml
 ```
 
----
+### Шаг 5: Создание и проверка PersistentVolumeClaim (PVC)
 
-## Шаг 5: Создание и проверка PersistentVolumeClaim (PVC)
+#### 5.1. Создание PVC
 
-### 5.1. Создание PVC
-
-Создадим PVC, который запросит 1Gi дискового пространства.
+Создайте PVC для запроса дискового пространства:
 
 ```yaml
 # pvc.yaml
@@ -209,35 +203,32 @@ spec:
 kubectl apply -f pvc.yaml
 ```
 
-### 5.2. Проверка
+#### 5.2. Проверка
 
-Убедитесь, что PVC перешел в статус `Bound`.
+Убедитесь, что PVC перешел в статус `Bound` и что в Ceph был создан соответствующий RBD-образ:
 
 ```bash
 kubectl get pvc rbd-pvc
+# Пример вывода:
 # NAME      STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
 # rbd-pvc   Bound    pvc-d8a7b5a5-c1b1-4e3e-8a1c-3e7c6b2a1b9e   1Gi        RWO            ceph-rbd-sc    30s
-```
 
-Проверьте, что в Ceph был создан соответствующий RBD-образ:
-
-```bash
 rbd ls -p kube
+# Пример вывода:
 # csi-vol-d8a7b5a5-c1b1-4e3e-8a1c-3e7c6b2a1b9e
 
 rbd info kube/csi-vol-d8a7b5a5-c1b1-4e3e-8a1c-3e7c6b2a1b9e
+# Пример вывода:
 # ...
 # size 1 GiB
 # ...
 ```
 
----
+### Шаг 6: Проверка расширения тома (Volume Expansion)
 
-## Шаг 6: Проверка расширения тома (Volume Expansion)
+#### 6.1. Изменение размера PVC
 
-### 6.1. Изменение размера PVC
-
-Отредактируйте манифест `pvc.yaml`, увеличив размер до `2Gi`.
+Отредактируйте манифест `pvc.yaml`, увеличив размер:
 
 ```yaml
 # pvc.yaml
@@ -260,13 +251,11 @@ spec:
 kubectl apply -f pvc.yaml
 ```
 
-### 6.2. Механизм расширения
+#### 6.2. Механизм расширения и проверка
 
-Сразу после применения `kubectl get pv` покажет, что `PersistentVolume` уже имеет новый размер `2Gi`, но `kubectl get pvc` все еще будет показывать старый размер `1Gi`.
+После применения изменений `kubectl get pv` покажет обновленный размер, но `kubectl get pvc` может все еще показывать старый. Расширение файловой системы на томе завершится только при его подключении к поду.
 
-Это происходит потому, что CSI-драйвер сначала расширяет физический образ в Ceph, а затем должен расширить файловую систему на этом образе. **Расширение файловой системы возможно только тогда, когда том подключен к какому-либо поду.**
-
-Чтобы завершить процесс, создайте под, использующий этот PVC.
+Создайте под, использующий этот PVC, чтобы завершить процесс расширения:
 
 ```yaml
 # pod.yaml
@@ -292,10 +281,21 @@ spec:
 kubectl apply -f pod.yaml
 ```
 
-После запуска пода драйвер смонтирует том и выполнит расширение файловой системы. Проверка PVC снова покажет корректный, увеличенный размер `2Gi`.
+После запуска пода драйвер смонтирует том и выполнит расширение файловой системы. Проверка PVC снова покажет корректный, увеличенный размер:
 
 ```bash
 kubectl get pvc rbd-pvc
+# Пример вывода:
 # NAME      STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
 # rbd-pvc   Bound    pvc-d8a7b5a5-c1b1-4e3e-8a1c-3e7c6b2a1b9e   2Gi        RWO            ceph-rbd-sc    5m
 ```
+
+## Дополнительная информация
+
+### Рекомендации по `reclaimPolicy`
+
+В данном руководстве `reclaimPolicy` установлен в `Delete`. Это означает, что при удалении `PersistentVolumeClaim` соответствующий `PersistentVolume` и базовый RBD-образ в Ceph также будут удалены. Для производственных сред рассмотрите возможность использования `Retain` для сохранения данных после удаления PVC.
+
+### Опции монтирования
+
+Опция `discard` в `mountOptions` позволяет Kubernetes информировать Ceph о неиспользуемых блоках, что способствует более эффективному управлению дисковым пространством, особенно при удалении данных.

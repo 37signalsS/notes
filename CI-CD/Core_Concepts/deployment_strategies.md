@@ -60,7 +60,7 @@ CI/CD пайплайн по-прежнему "проталкивает" (push) �
     *   Безопасность: У CI/CD нет критически важных доступов.
     *   Надежность: Исключается рассинхронизация состояния.
     *   Простота отката: Достаточно сделать `git revert` в репозитории конфигурации.
-*   **Источники:** [Стратегии интеграции GitLab CI с Kubernetes](./gitlab_kubernetes_integration_strategies.md), [GitOps и ArgoCD](../GitOps/GitOps_and_ArgoCD_Overview.md)
+*   **Источники:** [Стратегии интеграции GitLab CI с Kubernetes](./gitlab_kubernetes_integration_strategies.md), [GitOps и ArgoCD](../../GitOps/ArgoCD.md)
 
 ### 4. Встроенная интеграция GitLab-Kubernetes (Не рекомендуется)
 
