@@ -1,42 +1,43 @@
-## Интеграция с Kubernetes
+### Определения
 
-Для конвертации файлов [docker-compose](../Docker_compose/docker_compose.md) в манифесты Kubernetes используйте инструмент **`kompose`**. Он анализирует `docker-compose.yml` и генерирует соответствующие ресурсы Kubernetes (Deployments, Services и т.д.).
+**`kompose`** — это инструмент командной строки, предназначенный для упрощения перехода с [Docker Compose](../Docker_compose/docker_compose.md) на Kubernetes. Он автоматически конвертирует файлы `docker-compose.yml` в ресурсы Kubernetes, такие как Deployments и Services.
 
-### Что такое Kompose?
+### Основные концепции
 
-`kompose` — это инструмент командной строки, разработанный для помощи разработчикам, использующим Docker Compose, перейти на Kubernetes. Он позволяет легко преобразовывать приложения, определенные в `docker-compose.yml`, в объекты Kubernetes.
+`kompose` анализирует файл `docker-compose.yml` и на его основе генерирует стандартные манифесты Kubernetes в формате YAML. Эти файлы полностью готовы для применения в кластере, что позволяет быстро развернуть приложение.
 
-### Как это работает?
 
-`kompose` считывает файл `docker-compose.yml` и генерирует на его основе стандартные Kubernetes-манифесты (YAML-файлы). Эти манифесты затем могут быть применены к кластеру Kubernetes.
+### Практические сценарии
 
-**Пример использования:**
+#### **1. Установка**
 
-1.  **Установка Kompose:**
-    (Инструкции по установке зависят от операционной системы и могут быть найдены на официальном сайте `kompose`).
+Инструкции по установке `kompose` зависят от операционной системы и доступны на официальном сайте инструмента.
 
-2.  **Конвертация `docker-compose.yml`:**
-    Предположим, у вас есть файл `docker-compose.yml` в текущей директории:
-    ```yaml
-    version: '3.8'
-    services:
-      web:
-        image: nginx:latest
-        ports:
-          - "80:80"
-      app:
-        image: my-app:latest
-        ports:
-          - "5000:5000"
-    ```
-    Для конвертации выполните:
-    ```bash
-    kompose convert
-    ```
-    Эта команда сгенерирует файлы `web-deployment.yaml`, `web-service.yaml`, `app-deployment.yaml`, `app-service.yaml` и т.д., которые соответствуют вашим сервисам из Docker Compose.
+#### **2. Конвертация `docker-compose.yml`**
 
-3.  **Применение к кластеру Kubernetes:**
-    После генерации манифестов их можно применить к кластеру Kubernetes:
-    ```bash
-    kubectl apply -f .
-    ```
+Предположим, у вас есть следующий файл `docker-compose.yml`:
+```yaml
+version: '3.8'
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+  app:
+    image: my-app:latest
+    ports:
+      - "5000:5000"
+```
+
+Для конвертации выполните команду:
+```bash
+kompose convert
+```
+В результате будут созданы файлы `web-deployment.yaml`, `web-service.yaml`, `app-deployment.yaml` и `app-service.yaml`.
+
+#### **3. Развертывание в Kubernetes**
+
+Сгенерированные манифесты можно применить к кластеру с помощью `kubectl`:
+```bash
+kubectl apply -f .
+```

@@ -152,4 +152,4 @@ kubectl kustomize overlays/production/
 
 ### Дополнительная информация
 
-Kustomize часто используется совместно с Helm. Такой гибридный подход, где Helm генерирует базовые манифесты (`helm template`), а Kustomize накладывает на них специфичные для окружения патчи, подробно рассмотрен в разделе о [структуре проекта с Helm и Kustomize](../ToolsUtilities/helm_overview.md#структура-проекта-с-helm-и-kustomize).
+Kustomize часто используется совместно с Helm. Такой гибридный подход, где Helm генерирует базовые манифесты (`helm template`), а Kustomize накладывает на них специфичные для окружения патчи, подробно рассмотрен в разделе о [структуре проекта с Helm и Kustomize](./Helm/helm_advanced_topics.md#структура-проекта-с-helm-и-kustomize).

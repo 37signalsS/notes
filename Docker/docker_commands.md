@@ -165,14 +165,14 @@ RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
 
 | Команда | Описание |
 | :--- | :--- |
-| `docker network ls` / `create` / `inspect` | Управление сетями. |
 | `docker volume ls` / `create` / `inspect` | Управление томами. |
 
 ### Дополнительная информация
 
-Подробное описание концепций и продвинутое использование сетей и томов находятся в соответствующих разделах:
+Подробное описание концепций и команд для управления объектами находятся в соответствующих разделах:
 
-- **[Сети в Docker](../Docker_network/network_overview.md)**
+- **[Обзор сетей в Docker](../Docker_network/network_overview.md)**
+- **[Команды управления сетями](../Docker_network/management/cli.md)**
 - **[Тома и управление данными](../Docker_fs/storage_overview.md)**
 
 --- 
@@ -192,7 +192,6 @@ RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
 | `docker container prune` | Удаляет все остановленные контейнеры. |
 | `docker image prune` | Удаляет "висячие" образы. С флагом `-a` удаляет все неиспользуемые образы. |
 | `docker volume prune` | Удаляет все неиспользуемые тома. |
-| `docker network prune` | Удаляет все неиспользуемые сети. |
 | `docker system prune -a --volumes` | **(Опасно)** Глобальная очистка: удаляет всё, что не используется, включая тома. |
 
 ### Практические сценарии
