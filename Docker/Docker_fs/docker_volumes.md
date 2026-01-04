@@ -89,7 +89,7 @@ volumes:
   postgres-data:
     driver: local # Docker использует драйвер по умолчанию
 ```
-> Подробное использование `volumes` для stateful-приложения рассмотрено в заметке **[Запуск MySQL в Docker: Лучшие практики и производительность](../Databases/PostgreSQL/postgresql_in_docker.md)**.
+> Подробное использование `volumes` для stateful-приложения рассмотрено в заметке **[Развертывание PostgreSQL в Docker](../Databases/PostgreSQL/Operations/docker_deployment.md)**.
 
 ### Пример: Разработка с Bind Mount
 

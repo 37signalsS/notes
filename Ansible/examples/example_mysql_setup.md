@@ -1,67 +1,84 @@
-# Автоматизация установки и настройки MySQL с помощью Ansible
+# Ansible: Кроссплатформенная установка и настройка MySQL/MariaDB
 
-## Предварительные требования
+## Определения
 
-1.  **Коллекция `community.mysql`:**
-    ```bash
-    ansible-galaxy collection install community.mysql
-    ```
-2.  **Python-библиотека для работы с MySQL:**
-    ```bash
-    pip install PyMySQL
-    ```
+**Автоматизация установки MySQL/MariaDB** — это процесс использования Ansible для развертывания, настройки и обеспечения безопасности сервера баз данных на различных операционных системах (например, Ubuntu и CentOS) без ручного вмешательства.
 
-На целевых хостах (где будет установлен MySQL) потребуется `python3-pymysql`. Плейбук автоматически установит его.
+## Базовые концепции
 
-## Структура плейбука
+### Зависимости
 
-1.  Установит пакеты `mysql-server` и `python3-pymysql`.
-2.  Запустит и включит сервис `mysql`.
-3.  Выполнит задачи безопасности, аналогичные `mysql_secure_installation`:
-    *   Задаст пароль для `root`.
-    *   Удалит анонимных пользователей.
-    *   Удалит тестовую базу данных.
-4.  Изменит метод аутентификации пользователя `root` на `mysql_native_password` для совместимости с большинством приложений.
+Для взаимодействия с MySQL/MariaDB модули Ansible требуют наличия определенных компонентов:
 
-### Полный плейбук
+1.  **Коллекция `community.mysql`**: Набор специализированных модулей Ansible для управления пользователями, базами данных, переменными и т.д. Устанавливается на управляющий узел (`control node`).
+2.  **Python-библиотека `PyMySQL`**: Требуется на управляющем узле для работы коллекции.
+3.  **Драйвер на целевом хосте**: На управляемых машинах должен быть установлен соответствующий Python-драйвер. Для Debian/Ubuntu это `python3-pymysql`, для CentOS/RHEL — `python3-PyMySQL`.
+
+### Идемпотентность и аутентификация
+
+Ключевая сложность при автоматизации — обеспечение **идемпотентности** (возможности многократного безопасного запуска плейбука). Основная проблема возникает при смене пароля `root`:
+
+*   **Debian/Ubuntu**: После установки пользователь `root` аутентифицируется через unix-сокет (`auth_socket`) без пароля. Для первоначальной настройки используется параметр `login_unix_socket`.
+*   **CentOS/RHEL**: После установки у `root` нет пароля, и можно подключиться локально.
+
+После того как плейбук установит пароль и изменит плагин аутентификации на `mysql_native_password`, старый метод входа перестанет работать. Ansible должен уметь подключаться как при первом, так и при последующих запусках.
+
+## Практические сценарии
+
+### Предварительные требования на управляющем узле
+
+```bash
+# 1. Установить коллекцию Ansible
+ansible-galaxy collection install community.mysql
+
+# 2. Установить Python-библиотеку
+pip install PyMySQL
+```
+
+### Кроссплатформенный плейбук
+
+Этот плейбук устанавливает и настраивает MariaDB на CentOS и MySQL на Ubuntu.
 
 ```yaml
 ---
-- name: Install and configure MySQL Server
+- name: Install and Configure MySQL/MariaDB
   hosts: all
   become: yes
   vars:
     # ВАЖНО: Храните пароль в Ansible Vault!
     # ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password'
-    mysql_root_password: "password" # Замените на пароль из Vault
+    mysql_root_password: "YourSecretPassword"
 
   tasks:
-    - name: Install MySQL packages and dependencies
+    # --- Блок задач для Debian/Ubuntu ---
+    - name: Debian | Install MySQL and dependencies
       ansible.builtin.apt:
         name:
           - mysql-server
-          - python3-pymysql # Необходим для модуля community.mysql.mysql_user
+          - python3-pymysql
         state: present
         update_cache: yes
-      tags:
-        - mysql
-        - mysql-install
+      when: ansible_os_family == "Debian"
 
-    - name: Ensure MySQL service is started and enabled
+    # --- Блок задач для RedHat/CentOS ---
+    - name: RedHat | Install MariaDB and dependencies
+      ansible.builtin.yum:
+        name:
+          - mariadb-server
+          - python3-PyMySQL
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    # --- Общие задачи ---
+    - name: Ensure MySQL/MariaDB service is started and enabled
       ansible.builtin.service:
-        name: mysql
+        name: "{{ 'mysql' if ansible_os_family == 'Debian' else 'mariadb' }}"
         state: started
         enabled: yes
-      tags:
-        - mysql
-        - mysql-service
 
-    - name: Set root password and secure installation
+    - name: Set root password and secure the installation
       block:
-        # Эта задача изменяет пароль пользователя root и метод аутентификации.
-        # login_unix_socket используется для первоначального подключения,
-        # так как по умолчанию после установки у root нет пароля.
-        - name: Change root user authentication to mysql_native_password
+        - name: Set root password for the first time (Debian)
           community.mysql.mysql_user:
             login_unix_socket: /var/run/mysqld/mysqld.sock
             name: root
@@ -69,115 +86,66 @@
             password: "{{ mysql_root_password }}"
             plugin: mysql_native_password
             state: present
-          tags:
-            - mysql
-            - mysql-secure
+          when: ansible_os_family == "Debian"
 
-        # Ansible подключается с использованием файла .my.cnf, который он создает
-        # для последующих задач.
+        - name: Set root password for the first time (RedHat)
+          community.mysql.mysql_user:
+            name: root
+            host: localhost
+            password: "{{ mysql_root_password }}"
+            plugin: mysql_native_password
+            state: present
+          when: ansible_os_family == "RedHat"
+
         - name: Remove anonymous MySQL users
           community.mysql.mysql_user:
+            login_user: root
+            login_password: "{{ mysql_root_password }}"
             name: ''
             host_all: yes
             state: absent
-          tags:
-            - mysql
-            - mysql-secure
 
         - name: Remove the MySQL test database
           community.mysql.mysql_db:
+            login_user: root
+            login_password: "{{ mysql_root_password }}"
             name: test
             state: absent
-          tags:
-            - mysql
-            - mysql-secure
-      tags:
-        - mysql-all
 ```
+> **Примечание:** После первого успешного выполнения задачи по установке пароля, последующие задачи (`Remove anonymous...`, `Remove... test database`) используют `login_user` и `login_password` для аутентификации. Это обеспечивает идемпотентность при повторных запусках.
 
-## Разбор ключевых задач
+## Дополнительная информация
 
-### Установка пакетов
+### Процесс отладки и типичные ошибки
 
-```yaml
-- name: Install MySQL packages and dependencies
-  ansible.builtin.apt:
-    name:
-      - mysql-server
-      - python3-pymysql
-    state: present
-    update_cache: yes
-```
-Эта задача устанавливает сам сервер MySQL и библиотеку `python3-pymysql`.
+1.  **Ошибка: `couldn't resolve module/action 'community.mysql.mysql_user'`**
+    *   **Причина**: Коллекция `community.mysql` не установлена на управляющем узле.
+    *   **Решение**: `ansible-galaxy collection install community.mysql`.
 
-*   **`mysql-server`**: Основной пакет сервера баз данных.
-*   **`python3-pymysql`**: Python-драйвер, необходимый модулям из коллекции `community.mysql` для взаимодействия с MySQL на целевом хосте. Без него вы столкнетесь с ошибкой `Failed to import the required Python library (PyMySQL).`
+2.  **Ошибка: `Failed to import the required Python library (PyMySQL)`**
+    *   **Причина**: Отсутствует необходимый Python-драйвер на **целевом хосте**.
+    *   **Решение**: Добавить в плейбук установку пакета `python3-pymysql` (для Debian/Ubuntu) или `python3-PyMySQL` (для CentOS/RHEL), как показано в примере.
 
-### Изменение аутентификации `root`
+3.  **Ошибка: `unable to connect to database...` при повторном запуске**
+    *   **Причина**: Нарушение идемпотентности. Плейбук изменил метод аутентификации `root` при первом запуске, и теперь не может подключиться старым способом.
+    *   **Решение**: Убедиться, что задачи, следующие за сменой пароля, используют новые учетные данные (`login_user`, `login_password`). В сложных сценариях могут потребоваться более продвинутые проверки с `register` и `when`.
 
-```yaml
-- name: Change root user authentication to mysql_native_password
-  community.mysql.mysql_user:
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-    name: root
-    host: localhost
-    password: "{{ mysql_root_password }}"
-    plugin: mysql_native_password
-    state: present
-```
-Это ключевая и самая важная задача. Вручную это делается командой `ALTER USER`. Здесь мы делаем то же самое, но идемпотентно.
+### Использование Ansible Vault для паролей
 
-*   `login_unix_socket`: После свежей установки MySQL в Debian/Ubuntu пользователь `root` использует плагин `auth_socket` и может войти только через unix-сокет без пароля. Этот параметр указывает Ansible использовать именно этот метод для первого подключения, чтобы выполнить первоначальную настройку.
-*   `plugin: mysql_native_password`: Эта директива переключает `root` на стандартную парольную аутентификацию, которая требуется большинству веб-приложений (PHP, Python и т.д.).
-*   **Идемпотентность**: Проблема возникает при повторном запуске плейбука. После первого запуска метод аутентификации меняется, и подключение через сокет без пароля больше невозможно. Плейбук выше решает эту проблему, так как Ansible после успешного выполнения этой задачи "запоминает" пароль и использует его для последующих задач в рамках одного запуска. Для обеспечения идемпотентности между запусками можно было бы использовать `check_implicit_admin: yes`, который проверяет возможность входа без пароля перед выполнением действий, но использование `login_unix_socket` для начальной настройки является более явным подходом.
+Хранить пароли в открытом виде — плохая практика. Используйте **Ansible Vault** для шифрования чувствительных данных.
 
-### Удаление анонимных пользователей и тестовой БД
-
-```yaml
-- name: Remove anonymous MySQL users
-  community.mysql.mysql_user:
-    name: ''
-    host_all: yes
-    state: absent
-
-- name: Remove the MySQL test database
-  community.mysql.mysql_db:
-    name: test
-    state: absent
-```
-Эти две задачи выполняют действия, которые предлагает интерактивный скрипт `mysql_secure_installation`.
-*   **Контекст (Ubuntu vs. CentOS)**: В современных версиях MySQL на Ubuntu анонимные пользователи и тестовая база данных по умолчанию не создаются. Однако в других дистрибутивах, например, в CentOS, они могут присутствовать. Включение этих задач в плейбук делает его более универсальным и безопасным для различных окружений.
-
----
-
-## Процесс отладки и типичные ошибки
-
-### 1. Неизвестный модуль
-
-*   **Проблема**: При первом запуске плейбука Ansible выдает ошибку, что не может найти модуль, например, `community.mysql.mysql_user`.
-    ```
-    ERROR! couldn't resolve module/action 'community.mysql.mysql_user'.
-    ```
-*   **Причина**: Модуль не является встроенным и поставляется в составе коллекции, которую нужно установить отдельно.
-*   **Решение**: Установить коллекцию с помощью `ansible-galaxy`.
+1.  **Зашифруйте пароль:**
     ```bash
-    ansible-galaxy collection install community.mysql
+    ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password'
     ```
-
-### 2. Отсутствие Python-драйвера
-
-*   **Проблема**: Задача падает с ошибкой, сообщающей об отсутствии необходимой Python-библиотеки.
+2.  **Вставьте результат в плейбук или файл переменных:**
+    ```yaml
+    mysql_root_password: !vault |
+      $ANSIBLE_VAULT;1.1;AES256
+      333234...
     ```
-    "msg": "Failed to import the required Python library (PyMySQL) on ...'s Python /usr/bin/python3. Please install it with 'pip install PyMySQL'."
+3.  **Запускайте плейбук с ключом:**
+    ```bash
+    ansible-playbook playbook.yml --ask-vault-pass
     ```
-*   **Причина**: Модулю Ansible для работы с базой данных требуется соответствующий Python-драйвер на **целевом хосте**.
-*   **Решение**: Добавить установку пакета `python3-pymysql` (для Debian/Ubuntu) в плейбук, как это сделано в примере выше.
-
-### 3. Нарушение идемпотентности
-
-*   **Проблема**: Плейбук успешно выполняется в первый раз, но падает при последующих запусках с ошибкой подключения к базе данных.
-    ```
-    "msg": "unable to connect to database, check login_user and login_password are correct"
-    ```
-*   **Причина**: Первая задача меняет метод аутентификации `root`, и при следующем запуске Ansible больше не может подключиться старым способом (через `login_unix_socket`).
-*   **Решение**: Убедиться, что Ansible может аутентифицироваться как при первом, так и при последующих запусках. В данном плейбуке это решается тем, что после смены пароля Ansible автоматически подхватывает новые учетные данные для последующих задач. Для более сложных сценариев можно использовать переменные, условные проверки или специфичные параметры модуля, такие как `check_implicit_admin: yes`.
+Это позволит безопасно хранить и использовать пароли в ваших плейбуках.

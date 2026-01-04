@@ -1,14 +1,25 @@
-# Управление окружениями, развертываниями и откатами в GitLab CI
+# Управление окружениями и развертываниями в GitLab CI
 
-## 1. Окружения (Environments) в GitLab
+В GitLab CI управление жизненным циклом развертывания осуществляется через концепцию "Окружений" (`Environments`). Это позволяет отслеживать, контролировать и визуализировать процесс доставки кода от разработки до конечных пользователей.
 
-Ключевое слово `environment` в `.gitlab-ci.yml` не просто метка. Оно создает в GitLab объект "Окружение", который можно найти в разделе **Deployments > Environments**.
+## Определения
 
-### 1.1. Статические окружения
+-   **Окружение (Environment):** Логическое представление инфраструктуры, куда развертывается приложение (например, `development`, `staging`, `production`). Ключевое слово `environment` в `.gitlab-ci.yml` создает в GitLab соответствующий объект, который отслеживает историю развертываний.
+-   **Развертывание (Deployment):** Процесс доставки и запуска определенной версии приложения в конкретном окружении. Каждое успешное выполнение `job` с ключевым словом `environment` создает запись о развертывании.
+-   **Откат (Rollback):** Возврат окружения к предыдущей стабильной версии приложения. В GitLab это, как правило, означает перезапуск пайплайна от более раннего коммита.
+-   **Статическое окружение (Static Environment):** Долгоживущее, постоянное окружение, такое как `staging` или `production`.
+-   **Динамическое окружение (Dynamic Environment / Review App):** Временное окружение, автоматически создаваемое для тестирования изменений в изолированной среде (например, для каждой `feature-ветки` или `Merge Request`). Оно существует ограниченное время и затем уничтожается.
 
-Это долгоживущие окружения, такие как `staging` или `production`.
+## Основные концепции
 
-**Пример конфигурации:**
+### Создание и типы окружений
+
+Окружения объявляются в файле `.gitlab-ci.yml` с помощью ключевого слова `environment`.
+
+#### Статические окружения
+
+Используются для постоянных стадий, таких как `staging` или `production`.
+
 ```yaml
 deploy_production:
   stage: deploy
@@ -17,121 +28,93 @@ deploy_production:
     - ./deploy.sh
   environment:
     name: production
-    url: https://my-app.com # Прямая ссылка на приложение
+    url: https://my-app.com # Добавляет кнопку "Open" в UI для прямого доступа
 ```
--   `name: production`: Указывает, что задача относится к окружению `production`.
--   `url: https://my-app.com`: Добавляет кнопку "Open" в UI окружений, позволяя в один клик перейти к развернутому приложению.
 
-### 1.1.1. Управление несколькими статическими окружениями с `extends`
+#### Динамические окружения (Review Apps)
 
-Для управления несколькими статическими окружениями (например, `dev`, `prod`) и избежания дублирования кода можно использовать шаблоны (`templates`) и ключевое слово `extends` в GitLab CI.
-
-Сначала определим шаблон джобы (`.deploy-k8s-template`) с общими шагами деплоя:
+Создаются на лету для каждой ветки, используя переменные GitLab CI для уникальности имени.
 
 ```yaml
-# templates/deploy/kubernetes.yaml
-deploy-k8s-template:
+deploy_review:
   stage: deploy
-  image:
-    name: alpine:3.19 # Пример образа с kubectl
-  # ... другие общие скрипты и настройки ...
+  script:
+    - ./deploy-review.sh
+  environment:
+    name: review/$CI_COMMIT_REF_SLUG # Имя уникально для ветки
+    url: https://$CI_COMMIT_REF_SLUG.example.com
+    on_stop: stop_review_app # Указание задачи для очистки
+    auto_stop_in: 1 day      # Автоматическое уничтожение через 1 день
 ```
 
-Затем используем этот шаблон для определения задач для конкретных окружений:
+### Уничтожение динамических окружений
+
+Для освобождения ресурсов временные окружения необходимо удалять. Это делается с помощью задачи, указанной в `on_stop`.
 
 ```yaml
-# .gitlab-ci.yml или другой инклюд-файл
-include:
-  - local: templates/deploy/kubernetes.yaml # Включаем наш шаблон
-
-deploy-dev:
-  environment: dev
-  extends: deploy-k8s-template # Расширяем наш шаблон
-  # Здесь можно добавить специфичные для dev окружения настройки,
-  # например, переопределить переменные или правила.
-
-deploy-prod:
-  environment: prod
-  extends: deploy-k8s-template # Расширяем наш шаблон
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual # Деплой в прод только вручную для основной ветки
-    - when: never
-  # Здесь можно добавить специфичные для prod окружения настройки.
+stop_review_app:
+  stage: cleanup
+  script:
+    - echo "Deleting review app for $CI_COMMIT_REF_SLUG..."
+    - ./cleanup-review-app.sh
+  when: manual # Запускается по кнопке "Stop" или триггеру on_stop
+  environment:
+    name: review/$CI_COMMIT_REF_SLUG
+    action: stop # Явно указывает, что задача останавливает окружение
 ```
 
-**Пояснения:**
-*   **`.deploy-k8s-template`**: Это скрытая джоба (начинается с `.` ), которая выступает в роли шаблона. Она не будет запускаться сама по себе.
-*   **`extends: .deploy-k8s-template`**: Задачи `deploy-dev` и `deploy-prod` наследуют все настройки из шаблона.
-*   **`environment: dev` / `environment: prod`**: Каждая задача ассоциируется со своим окружением в GitLab.
-*   **`rules` в `deploy-prod`**: Демонстрирует, как можно переопределить или добавить правила. В данном случае, деплой в `prod` настроен на ручной запуск.
+-   **Ручное удаление:** Кнопка "Stop" в UI окружений запускает задачу `on_stop`.
+-   **Автоматическое удаление:** Параметр `auto_stop_in` автоматически запускает задачу `on_stop` по истечении указанного времени.
 
-### 1.1.1. Управление несколькими статическими окружениями с `extends`
+### Масштабирование конфигурации с `extends`
 
-Для управления несколькими статическими окружениями (например, `dev`, `prod`) и избежания дублирования кода можно использовать шаблоны (`templates`) и ключевое слово `extends` в GitLab CI.
+Для избежания дублирования кода при настройке нескольких окружений используются YAML-шаблоны и `extends`.
 
-Сначала определим шаблон джобы (`.deploy-k8s-template`) с общими шагами деплоя:
+1.  **Определите шаблон:**
+    ```yaml
+    # templates/deploy.yaml
+    .deploy_template:
+      stage: deploy
+      image: alpine:3.19
+      # ... общие скрипты и настройки ...
+    ```
 
-```yaml
-# templates/deploy/kubernetes.yaml
-deploy-k8s-template:
-  stage: deploy
-  image:
-    name: alpine:3.19 # Пример образа с kubectl
-  # ... другие общие скрипты и настройки ...
-```
+2.  **Используйте шаблон в задачах:**
+    ```yaml
+    # .gitlab-ci.yml
+    include:
+      - local: templates/deploy.yaml
 
-Затем используем этот шаблон для определения задач для конкретных окружений:
+    deploy_staging:
+      extends: .deploy_template
+      environment:
+        name: staging
+        url: https://staging.my-app.com
 
-```yaml
-# .gitlab-ci.yml или другой инклюд-файл
-include:
-  - local: templates/deploy/kubernetes.yaml # Включаем наш шаблон
+    deploy_production:
+      extends: .deploy_template
+      environment:
+        name: production
+        url: https://my-app.com
+      rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+          when: manual # Деплой в production только вручную
+    ```
 
-deploy-dev:
-  environment: dev
-  extends: deploy-k8s-template # Расширяем наш шаблон
-  # Здесь можно добавить специфичные для dev окружения настройки,
-  # например, переопределить переменные или правила.
+### Пользовательский интерфейс и откаты
 
-deploy-prod:
-  environment: prod
-  extends: deploy-k8s-template # Расширяем наш шаблон
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual # Деплой в прод только вручную для основной ветки
-    - when: never
-  # Здесь можно добавить специфичные для prod окружения настройки.
-```
+В разделе **Deployments > Environments** GitLab предоставляет:
+-   Визуальную историю развертываний для каждого окружения.
+-   Кнопку **Re-deploy** для повторного запуска последней задачи.
+-   Встроенный механизм отката.
 
-**Пояснения:**
-*   **`.deploy-k8s-template`**: Это скрытая джоба (начинается с `.` ), которая выступает в роли шаблона. Она не будет запускаться сама по себе.
-*   **`extends: .deploy-k8s-template`**: Задачи `deploy-dev` и `deploy-prod` наследуют все настройки из шаблона.
-*   **`environment: dev` / `environment: prod`**: Каждая задача ассоциируется со своим окружением в GitLab.
-*   **`rules` в `deploy-prod`**: Демонстрирует, как можно переопределить или добавить правила. В данном случае, деплой в `prod` настроен на ручной запуск.
+Нажатие кнопки **Rollback** не запускает специальную логику, а **перезапускает задачу (`job`) от предыдущего успешного развертывания**. Если развертывания идемпотентны и версионированы (например, через теги Docker-образов по хешу коммита), это действие безопасно вернет окружение к предыдущей стабильной версии.
 
-### 1.2. Пользовательский интерфейс окружений
+## Практические сценарии
 
-В разделе **Deployments > Environments** для каждого окружения GitLab предоставляет:
+### 1. Ручная задача отката с Helm
 
--   Визуальную историю развертываний.
--   Кнопку **Re-deploy** для повторного запуска последней успешной задачи развертывания.
--   Механизм отката изменений.
-
----
-
-## 2. Откат изменений (Rollback)
-
-### Способ 1: Встроенный механизм GitLab (рекомендуемый)
-
-В UI окружений GitLab для каждого развертывания (кроме самого первого) есть кнопка **Rollback**.
-
--   **Принцип работы:** Нажатие на эту кнопку **не выполняет специальную логику отката**. Вместо этого GitLab просто **перезапускает задачу (`job`) от предыдущего успешного развертывания**. Если ваши развертывания идемпотентны и версионированы (например, через теги Docker-образов по хешу коммита), этот перезапуск вернет в окружение предыдущую стабильную версию.
--   **Преимущество:** Простота и надежность, не требует написания дополнительного кода.
-
-### Способ 2: Ручная задача `rollback` с Helm
-
-Вы можете создать в `.gitlab-ci.yml` явную задачу для отката, которая дает больше контроля над процессом.
+Для большего контроля можно создать явную задачу `rollback`.
 
 ```yaml
 stages:
@@ -142,144 +125,59 @@ rollback_prod:
   stage: rollback
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual # Запускается только вручную
-      allow_failure: true
+      when: manual # Запускается только вручную из UI пайплайна
   environment:
     name: production
-    action: start
   image:
     name: centosadmin/kubernetes-helm:3.1.2
     entrypoint: [""]
   script:
-    - # Настройка kubectl...
+    - echo "Rolling back production environment..."
     - >
       helm rollback ${CI_PROJECT_PATH_SLUG}
       --namespace ${CI_PROJECT_PATH_SLUG}-${CI_ENVIRONMENT_NAME}
-      --wait
-      --timeout 300s
-```
--   `when: manual`: Задача не будет запускаться автоматически, а будет ждать ручного запуска из UI пайплайна.
--   `script`: Содержит команду `helm rollback`, которая является идемпотентным способом вернуть предыдущую стабильную версию релиза.
-
----
-
-## 3. Динамические окружения (Review Apps)
-
-Это временные окружения, которые создаются автоматически для каждой feature-ветки (или Merge Request), чтобы протестировать изменения в изолированной среде перед слиянием с `main`.
-
-### 3.1. Создание и именование
-
-Для создания динамического окружения используются предопределенные переменные GitLab CI, например `$CI_COMMIT_REF_SLUG` (имя ветки, безопасное для URL).
-
-```yaml
-deploy_review_app:
-  stage: deploy
-  script:
-    - ./deploy-review.sh
-  environment:
-    # Имя окружения уникально для каждой ветки
-    name: review/$CI_COMMIT_REF_SLUG 
-    url: https://$CI_COMMIT_REF_SLUG.example.com 
-    # Указываем задачу для уничтожения этого окружения
-    on_stop: stop_review_app 
+      --wait --timeout 300s
 ```
 
-### 3.2. Уничтожение динамических окружений
+### 2. Настройка Review Apps с Kubernetes
 
-Чтобы временные окружения не потребляли ресурсы бесконечно, их необходимо удалять.
+Это пошаговое руководство демонстрирует настройку динамических окружений с помощью оператора в Kubernetes.
 
--   **Ручное удаление:** В UI окружений для каждого динамического окружения появляется кнопка "Stop". Нажатие на нее запускает задачу, указанную в `on_stop`.
--   **Автоматическое удаление:** Чтобы окружение удалялось само по истечении времени, используется `auto_stop_in`.
+#### Шаг 1: Подготовка кластера и развертывание Оператора
 
-**Пример задачи для остановки:**
-```yaml
-stop_review_app:
-  stage: cleanup
-  script:
-    - echo "Deleting review app..."
-    - ./cleanup-review-app.sh
-  when: manual # Задача запускается только по кнопке "Stop" или по триггеру on_stop
-  environment:
-    name: review/$CI_COMMIT_REF_SLUG
-    action: stop # Указывает, что это задача остановки окружения
-```
+Оператору, управляющему динамическими окружениями, нужен доступ к API Kubernetes.
 
-**Пример с автоматической остановкой через 1 день:**
-```yaml
-deploy_review_app:
-  # ...
-  environment:
-    name: review/$CI_COMMIT_REF_SLUG
-    url: https://$CI_COMMIT_REF_SLUG.example.com
-    on_stop: stop_review_app
-    auto_stop_in: 1 day
-```
-
----
-
-## 4. Практическое руководство: Review Apps с Kubernetes
-
-### 4.1. Часть 1: Подготовка кластера и развертывание Оператора
-
-Прежде чем наше приложение сможет использовать динамические окружения, нам нужно развернуть в кластере сам сервис, который будет ими управлять — Оператор.
-
-#### 4.1.1. Подготовка ServiceAccount и получение токена
-
-Оператору нужен доступ к API Kubernetes. Создадим для него `ServiceAccount` и `ClusterRoleBinding`.
-
-1.  **Создайте Namespace и ServiceAccount:**
+1.  **Создайте `ServiceAccount` и `ClusterRoleBinding`:**
     ```bash
     kubectl create namespace users
     kubectl create serviceaccount deploy-admin -n users
     kubectl create clusterrolebinding deploy-admin-binding --clusterrole=cluster-admin --serviceaccount=users:deploy-admin
     ```
-2.  **Получите и расшифруйте токен:**
+2.  **Получите токен доступа:**
     ```bash
     SECRET_NAME=$(kubectl get sa deploy-admin -n users -o jsonpath='{.secrets[0].name}')
     KUBE_TOKEN=$(kubectl get secret ${SECRET_NAME} -n users -o jsonpath='{.data.token}' | base64 --decode)
     echo $KUBE_TOKEN
     ```
-    Сохраните этот токен.
+3.  **Настройте и запустите пайплайн Оператора:**
+    *   Форкните репозиторий оператора в свой GitLab.
+    *   В `Settings > CI/CD > Variables` проекта добавьте переменные `KUBE_URL` (URL API-сервера Kubernetes) и `KUBE_TOKEN` (полученный токен).
+    *   Запустите пайплайн для ветки `main`, чтобы развернуть оператор.
 
-#### 4.1.2. Настройка и запуск пайплайна Оператора
+#### Шаг 2: Настройка основного приложения
 
-1.  **Форкните репозиторий оператора** в свой GitLab.
-2.  Перейдите в `Settings > CI/CD > Variables` форкнутого проекта.
-3.  **Добавьте переменные:**
-    *   `KUBE_URL`: URL вашего API-сервера Kubernetes.
-    *   `KUBE_TOKEN`: Токен, полученный на предыдущем шаге. Пометьте его как **Masked** и **Protected**.
-4.  Запустите пайплайн для ветки `main`, чтобы развернуть оператор в кластере.
+1.  **Создайте токены доступа:**
+    *   **GitLab API Access Token:** `User Settings > Access Tokens` с правами `api`.
+    *   **Container Registry Deploy Token:** `Project Settings > Repository > Deploy Tokens` с правами `read_registry` и `write_registry`.
+2.  **Настройте переменные CI/CD в проекте приложения:**
+    *   `KUBE_URL` и `KUBE_TOKEN` (из предыдущего шага).
+    *   `GITLAB_API_TOKEN` (созданный токен API).
+    *   `CR_DEPLOY_USER` и `CR_DEPLOY_PASSWORD` (из Deploy Token).
+    *   Рекомендуется хранить секреты в зашифрованном виде, например, с помощью `ansible-vault` и передавать их как переменные типа `File`.
 
-### 4.2. Часть 2: Настройка основного приложения
+#### Шаг 3: Жизненный цикл Review App
 
-1.  **Форкните репозиторий приложения** в свою группу GitLab.
-2.  **Создайте Access Token для GitLab API** (`User Settings > Access Tokens`) с правами `api`. Сохраните его.
-3.  **Создайте Deploy Token для Container Registry** (`Project Settings > Repository > Deploy Tokens`) с правами `read_registry` и `write_registry`. Сохраните имя пользователя и пароль.
-4.  **(Опционально) Зашифруйте секреты** с помощью `ansible-vault` для безопасного хранения в переменных CI/CD.
-    ```bash
-    ansible-vault encrypt_string 'ВАШ_API_ACCESS_TOKEN' --name 'GITLAB_API_TOKEN_CRYPTED'
-    ansible-vault encrypt_string 'ВАШ_DEPLOY_TOKEN_ПАРОЛЬ' --name 'CR_DEPLOY_PASSWORD_CRYPTED'
-    ```
-5.  **Настройте переменные CI/CD в проекте приложения:**
-    *   `KUBE_URL`
-    *   `KUBE_TOKEN`
-    *   `GITLAB_API_TOKEN_CRYPTED`
-    *   `CR_DEPLOY_PASSWORD_CRYPTED`
-    *   `CR_DEPLOY_USER`
-
-### 4.3. Часть 3: Жизненный цикл Review App
-
-1.  Создайте `feature-ветку` в репозитории вашего приложения.
-2.  Внесите изменения в код.
-3.  Создайте **Merge Request (MR)** из вашей feature-ветки в `main`.
-4.  **Автоматический запуск пайплайна:**
-    *   Создание MR автоматически запустит пайплайн с задачей `deploy_review`.
-    *   Эта задача свяжется с оператором в Kubernetes, который создаст новое, изолированное окружение для вашей ветки.
-    *   В виджете Merge Request появится ссылка **"View app"**.
-5.  **Просмотр и тестирование:**
-    *   Перейдите по ссылке "View app", чтобы открыть развернутое приложение и протестировать изменения.
-6.  **Остановка окружения:**
-    *   Когда окружение больше не нужно, перейдите в `Deployments > Environments`.
-    *   Найдите ваше динамическое окружение (например, `review/feature-my-cool-feature`).
-    *   Нажмите кнопку **Stop** (■).
-    *   Это действие запустит задачу `stop_review_app` (`environment:on_stop`), которая удалит все ресурсы, связанные с этим окружением.
+1.  Создайте `feature-ветку` и **Merge Request (MR)** в `main`.
+2.  Пайплайн автоматически запустит задачу `deploy_review`, которая через оператор создаст изолированное окружение.
+3.  В виджете MR появится ссылка **"View app"** для тестирования.
+4.  Для удаления окружения нажмите кнопку **Stop** (■) на странице **Deployments > Environments**. Это запустит задачу, указанную в `on_stop`, которая очистит все ресурсы в Kubernetes.

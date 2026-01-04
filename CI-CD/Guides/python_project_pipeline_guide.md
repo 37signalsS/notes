@@ -1,106 +1,110 @@
-# Проектирование комплексного CI/CD пайплайна: Практический пример
+# Проектирование комплексного CI/CD пайплайна для Python-приложений
 
-**Исходные данные:**
-*   Существует приложение, написанное на Python.
-*   Приложение еще не контейнеризировано.
-*   Бюджет ограничен, поэтому мы будем использовать преимущественно бесплатные инструменты.
+## Определения
 
-**Цель:**
-Построить "идеальный" CI/CD пайплайн, который автоматизирует сборку, тестирование и развертывание приложения, следуя лучшим практикам.
+**Комплексный CI/CD пайплайн** — это автоматизированный процесс, который берет исходный код приложения, проводит его через этапы сборки, тестирования и развертывания в различные окружения (например, `development`, `staging`, `production`), следуя набору предопределенных правил и практик. Цель такого пайплайна — повысить скорость, надежность и безопасность доставки изменений до конечного пользователя.
 
-## 2. Дизайн и планирование
+Ключевые технологии, используемые в данном руководстве:
 
-### 2.1. Основные этапы
-1.  **Контейнеризация:** Упаковать Python-приложение в Docker-контейнер.
-2.  **Оркестрация:** Разворачивать приложение в кластер Kubernetes.
-3.  **Тестирование:** Интегрировать в пайплайн максимальное количество видов тестов.
-4.  **Release-цикл:** Определить и внедрить стратегию ветвления и релизов.
-5.  **Инструменты:** Использовать GitLab CI, максимально задействовав его бесплатный функционал.
+*   **[GitLab CI](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md):** Встроенный в GitLab инструмент для автоматизации, который запускает пайплайны на основе YAML-конфигурации (`.gitlab-ci.yml`) в репозитории.
+*   **[Docker](../../Docker/docker_overview.md):** Платформа для контейнеризации приложений. Позволяет упаковать приложение со всеми его зависимостями в изолированный контейнер, который можно запускать где угодно.
+*   **[Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md):** Инструмент для сборки Docker-образов внутри контейнера или Kubernetes-пода без использования Docker-демона, что повышает безопасность в CI/CD-окружениях.
+*   **[Kubernetes](../../Kubernetes/kubernetes_overview.md):** Платформа для оркестрации контейнеризированных приложений. Управляет развертыванием, масштабированием и работой приложений.
+*   **[Helm](../../Kubernetes/ToolsUtilities/helm.md):** Менеджер пакетов для Kubernetes. Упрощает развертывание и управление приложениями путем упаковки их в "чарты" — наборы предварительно сконфигурированных ресурсов.
+*   **SAST (Static Application Security Testing):** Метод тестирования безопасности, который анализирует исходный код на предмет известных уязвимостей без его фактического запуска.
 
-### 2.2. Стратегия ветвления и релизов (Git Flow)
+## Основные концепции
 
-*   **`feature-` ветки:** Вся разработка (новые функции, исправления) ведется в отдельных ветках. Жизненный цикл этих веток может быть как коротким, так и длинным.
+### 1. Архитектура и стратегии
+
+#### Стратегия ветвления (Git Flow)
+*   **`feature-*` ветки:** Вся разработка (новые функции, исправления) ведется в отдельных ветках.
 *   **`develop` ветка:** Основная ветка для разработки. Feature-ветки сливаются в `develop` через Merge Request'ы (с обязательным код-ревью).
 *   **`master` ветка:** Стабильная ветка, из которой формируются релизы. Ветка `develop` периодически сливается в `master`.
 
-### 2.3. Стратегия окружений
-
-*   **Production:** На это окружение разворачиваются только релизы, созданные из тегов в ветке `master`.
-*   **Staging:** На это окружение разворачивается содержимое ветки `master`. Оно служит для финального, расширенного тестирования перед релизом.
-*   **Development (Dev):** На это окружение разворачивается содержимое ветки `develop`.
+#### Стратегия окружений
+*   **Production:** Окружение для конечных пользователей. Развертываются только релизы, созданные из тегов в ветке `master`.
+*   **Staging:** Предрелизное окружение, точная копия Production. На него разворачивается содержимое ветки `master` для финального, расширенного тестирования.
+*   **Development (Dev):** Окружение для разработчиков. На него разворачивается содержимое ветки `develop`.
 
 > **Примечание:** Динамические окружения (Review Apps) для каждой feature-ветки являются возможным улучшением в будущем, но на данном этапе не реализуются для упрощения.
 
-### 2.4. Стратегия тестирования и "Ворота качества" (Quality Gates)
+#### Стратегия тестирования и "Ворота качества" (Quality Gates)
 
-#### **Критерии для слияния `feature` -> `develop`:**
+**Критерии для слияния `feature` -> `develop`:**
 *   Код-ревью пройдено.
 *   Отсутствуют синтаксические ошибки (линтинг).
 *   Docker-образ успешно собирается.
 *   Проходят все **Unit-тесты**.
 *   Проходят базовые тесты безопасности (**SAST**).
 
-#### **Критерии для слияния `develop` -> `master`:**
+**Критерии для слияния `develop` -> `master`:**
 *   Все предыдущие критерии выполнены.
 *   Успешно проходят все **интеграционные тесты**.
 *   Приложение успешно развернуто в `dev` окружение.
 *   План развертывания (dry-run) в `staging` окружение выполняется без ошибок.
 
-#### **Критерии для создания релиза (Production):**
+**Критерии для создания релиза (Production):**
 *   Приложение успешно развернуто в `staging` окружение.
 *   Все тесты на `staging` окружении проходят.
 *   План развертывания (dry-run) в `production` окружение выполняется без ошибок.
 *   Получено **ручное подтверждение** на развертывание (практика **Continuous Delivery**).
 
-### 2.5. Выбор инструментов
+### 2. Инструментарий и структура проекта
 
-*   **CI/CD:** **GitLab CI** — как основа всего процесса.
-*   **Тестирование:** **Pytest** — для написания и запуска unit- и интеграционных тестов.
-*   **Сборка образов:** **Kaniko** — для безопасной сборки Docker-образов без использования привилегированного режима Docker-in-Docker.
-*   **Безопасность (SAST):** Встроенные шаблоны GitLab CI.
-*   **E2E / Smoke тесты:** **cURL** — для простых health-check'ов, так как приложение не имеет сложного UI.
-*   **Развертывание:** **Helm** — как стандарт де-факто для упаковки и управления приложениями в Kubernetes.
-*   **Уведомления:** **Slack** — для оповещений о статусе выполнения пайплайнов.
+#### Выбор инструментов
+*   **CI/CD:** **GitLab CI**
+*   **Тестирование:** **Pytest**
+*   **Сборка образов:** **Kaniko**
+*   **Безопасность (SAST):** Встроенные шаблоны GitLab CI
+*   **E2E / Smoke тесты:** **cURL**
+*   **Развертывание:** **Helm**
+*   **Уведомления:** **Slack**
 
----
-
-## 3. Часть 1: Анализ проекта и создание скелета пайплайна
-
-На этом шаге мы проанализируем структуру предоставленного нам Python-приложения и создадим базовую структуру (`скелет`) нашего `.gitlab-ci.yml` файла, который будет служить основой для дальнейшей автоматизации.
-
-### 3.1. Обзор кодовой базы
-
+#### Обзор кодовой базы
 Приложение представляет собой простой веб-сервис на базе **Flask**.
+-   **`application/`**: Директория с исходным кодом (`__init__.py`, `helpers.py`).
+-   **`tests/`**: Директория с тестами на базе `pytest` (`unit/`, `integration/`).
+-   **`requirements.txt`**: Основные зависимости.
+-   **`requirements-dev.txt`**: Зависимости для разработки и тестирования.
 
--   **`application/`**: Директория с исходным кодом.
-    -   `__init__.py`: Основной файл Flask-приложения. Определяет два эндпоинта:
-        -   `/`: Отдает точное время, полученное с NTP-сервера.
-        -   `/version`: Отдает версию приложения из переменной окружения.
-    -   `helpers.py`: Вспомогательная логика.
--   **`tests/`**: Директория с тестами на базе `pytest`.
-    -   `unit/`: Модульные тесты для проверки отдельных компонентов.
-    -   `integration/`: Интеграционные тесты для проверки совместной работы компонентов.
--   **`requirements.txt`**: Основные зависимости для работы приложения.
--   **`requirements-dev.txt`**: Дополнительные зависимости для разработки и тестирования.
+#### Принципы контейнеризации
+-   **`Dockerfile`**: Используется **многостадийная сборка (multi-stage build)**.
+    1.  На первой стадии в полном образе Python устанавливаются все зависимости.
+    2.  На второй стадии берется минималистичный "distroless" образ от Google, в который копируются только код приложения и готовые зависимости. Это позволяет получить маленький и безопасный итоговый образ.
+-   **`.dockerignore`**: Исключает из контекста сборки ненужные файлы (`.venv`, `.idea` и т.д.), что ускоряет процесс.
 
-### 3.2. Создание скелета `.gitlab-ci.yml`
+## Практические сценарии
 
-Основываясь на нашем плане, мы создаем первоначальную версию `.gitlab-ci.yml` с определенными стадиями и пустыми задачами (placeholders). Это позволяет нам сразу заложить правильную структуру и логику работы пайплайна.
+### Сценарий 1: Реализация полного CI/CD пайплайна
+
+В этом сценарии мы пошагово реализуем `.gitlab-ci.yml`.
+
+#### Шаг 1: Скелет `.gitlab-ci.yml` (общая структура и правила)
+
+Создаем первоначальную версию с определенными стадиями, правилами и настройками по умолчанию.
 
 ```yaml
-# 1. Глобальные правила запуска всего пайплайна
+# 1. Глобальные правила запуска и переменные
 workflow:
   rules:
-    # Запускать для Merge Request'ов в develop или main
+    # Запускать для Merge Request'ов, прямых пушей, тегов и ручного старта
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
-    # Запускать при прямых пушах в develop или main
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"'
-    # Запускать при создании тега
     - if: '$CI_COMMIT_TAG'
-    # Запускать при ручном старте из UI
     - if: '$CI_PIPELINE_SOURCE == "web"'
+    # Динамическое определение тега для Docker-образа
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
+      variables:
+        DOCKER_IMAGE_TAG: "dev-pr-$CI_MERGE_REQUEST_IID"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      variables:
+        DOCKER_IMAGE_TAG: "main-$CI_PIPELINE_IID"
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+      variables:
+        DOCKER_IMAGE_TAG: $CI_COMMIT_TAG
 
-# 2. Определение последовательности стадий
+# 2. Последовательность стадий
 stages:
   - linting
   - building
@@ -109,29 +113,19 @@ stages:
   - validate_deployment
   - release
 
-# 3. Шаблон для линтинга с использованием YAML-якоря
-.lint_template: &lint_rules
-  stage: linting
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+# 3. Настройки по умолчанию
+default:
+  image: python:3.9
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .venv
+  before_script:
+    - python -m venv .venv
+    - source .venv/bin/activate
+    - pip install -r requirements-dev.txt
 
-pylint:
-  <<: *lint_rules # Наследование правил
-  script:
-    - echo "Running pylint..."
-
-black:
-  <<: *lint_rules # Наследование правил
-  script:
-    - echo "Running black..."
-
-# 4. Стадия сборки
-build-docker:
-  stage: building
-  script:
-    - echo "Building docker image..." # Placeholder
-
-# 5. Шаблоны правил для тестирования
+# 4. Шаблоны правил для задач
 .test_rules_template:
   develop: &develop_rules
     rules:
@@ -142,141 +136,49 @@ build-docker:
       - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
       - if: '$CI_COMMIT_BRANCH == "main"'
 
-# 6. Задачи тестирования
-unit-tests:
-  stage: testing
-  <<: *develop_rules # Запускать для develop и MR в него
-  script:
-    - echo "Running unit tests..." # Placeholder
-
-integration-tests:
-  stage: testing
-  <<: *main_rules # Запускать для main и MR в него
-  script:
-    - echo "Running integration tests..." # Placeholder
-
-security-tests-develop:
-  stage: testing
-  <<: *develop_rules
-  script:
-    - echo "Running security tests for develop..." # Placeholder
-
-security-tests-main:
-  stage: testing
-  <<: *main_rules
-  script:
-    - echo "Running security tests for main..." # Placeholder
-
-# 7. Задачи развертывания
-deploy-dev:
-  stage: deployment
-  script:
-    - echo "Deploying to dev..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-
-deploy-staging:
-  stage: deployment
-  script:
-    - echo "Deploying to staging..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
-deploy-production:
-  stage: deployment
-  script:
-    - echo "Deploying to production..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: manual # Только вручную по кнопке
-
-# 8. Задачи валидации развертывания
-validate-dev-smoke:
-  stage: validate_deployment
-  script:
-    - echo "Running smoke tests on dev..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-
-validate-staging-e2e:
-  stage: validate_deployment
-  script:
-    - echo "Running E2E tests on staging..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
-# 9. Стадия релиза
-create-release:
-  stage: release
-  script:
-    - echo "Creating release tag..." # Placeholder
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual # Только вручную
+# 5. Подключение шаблонов безопасности
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Container-Scanning.yml
 ```
 
-#### Ключевые моменты структуры:
+#### Шаг 2: Реализация стадий `linting`, `building`, `testing`
 
--   **`workflow:rules`**: Глобально контролирует, будет ли пайплайн запускаться в принципе. Это первая линия фильтрации.
--   **`stages`**: Четко определяют порядок выполнения задач.
--   **`rules` (внутри `job`)**: Контролируют запуск конкретной задачи в уже запущенном пайплайне.
--   **YAML Anchors/Aliases (`&` и `*`)**: Якоря, такие как `&lint_rules`, `&develop_rules`, позволяют нам определять набор правил один раз и переиспользовать его в нескольких задачах, что значительно сокращает дублирование кода.
--   **Placeholders (`echo "..."`)**: На данном этапе реальные команды заменены на "заглушки". Это позволяет проверить общую логику и последовательность пайплайна, убедиться, что он успешно проходит, прежде чем наполнять его реальной функциональностью.
+Добавляем конкретные задачи для проверки качества кода, сборки образа и тестирования.
 
----
-
-## 4. Часть 2: Реализация стадий сборки и тестирования
-
-В этой части мы заменим "заглушки" из нашего скелета `.gitlab-ci.yml` на реальные реализации для стадий `linting`, `building` и `testing`.
-
-### 4.1. Оптимизация и кеширование зависимостей
-
-Прежде чем запускать тесты или линтеры, необходимо установить зависимости. Чтобы не делать это на каждой задаче с нуля, мы оптимизируем процесс.
-
--   **`default:image`**: Устанавливаем `python:3.9` как образ по умолчанию для всех задач.
--   **`default:before_script`**: Определяем стандартный блок команд, который будет выполняться перед каждой задачей. Он создает виртуальное окружение `venv` и устанавливает в него зависимости из `requirements-dev.txt`.
--   **`default:cache`**: Включаем кеширование для директории `.venv`, чтобы зависимости сохранялись между запусками пайплайна, значительно ускоряя их выполнение.
-
-### 4.2. Реализация стадии `building` (Сборка Docker-образа)
-
-Задача `build-docker` теперь будет собирать реальный Docker-образ с помощью **Kaniko**.
-
-#### Динамические теги для образов
-Мы используем секцию `workflow:rules` не только для контроля запуска, но и для определения **переменных**, в данном случае — тега Docker-образа (`DOCKER_IMAGE_TAG`). Это позволяет создавать уникальные и предсказуемые теги для разных событий:
--   Для MR в `develop`: `dev-pr-<ID>`
--   Для коммитов в `main`: `main-<ID_пайплайна>`
--   Для Git-тегов (`v*`): `v1.2.3` (чистый тег)
-
-#### `Dockerfile` и `.dockerignore`
--   **`Dockerfile`**: Используется **многостадийная сборка (multi-stage build)**.
-    1.  На первой стадии в полном образе Python устанавливаются все зависимости.
-    2.  На второй стадии берется минималистичный "distroless" образ от Google, в который копируются только код приложения и готовые зависимости из первой стадии. В итоге получается очень маленький и безопасный образ без лишних компонентов (shell, пакетный менеджер и т.д.).
--   **`.dockerignore`**: Добавлен, чтобы исключить из контекста сборки ненужные файлы (`.venv`, `.idea` и т.д.), что ускоряет процесс.
-
-#### Код задачи `build-docker`
 ```yaml
+# ... (продолжение .gitlab-ci.yml)
+
+# Задачи линтинга
+pylint:
+  stage: linting
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - pylint application/
+
+black:
+  stage: linting
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - black --check .
+
+# Задача сборки Docker-образа
 build-docker:
   stage: building
   image:
     name: gcr.io/kaniko-project/executor:v1.9.0-debug
     entrypoint: [""]
   script:
-    # Создаем конфигурационный файл для Kaniko, чтобы он мог аутентифицироваться в GitLab Registry
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    # Запускаем сборку
     - /kaniko/executor
       --context $CI_PROJECT_DIR
       --dockerfile $CI_PROJECT_DIR/Dockerfile
-      # В качестве destination используем переменные GitLab и нашу кастомную DOCKER_IMAGE_TAG
       --destination $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG
-```
 
-### 4.3. Реализация стадии `testing`
-
-#### Юнит- и интеграционные тесты
-Задачи `unit-tests` и `integration-tests` теперь запускают `pytest`, указывая на соответствующие директории с тестами. Они наследуют `before_script` и `cache` для быстрой установки зависимостей.
-
-```yaml
+# Задачи функционального тестирования
 unit-tests:
   stage: testing
   <<: *develop_rules
@@ -288,30 +190,8 @@ integration-tests:
   <<: *main_rules
   script:
     - pytest tests/integration
-```
 
-#### Тесты безопасности
-Мы используем встроенные шаблоны GitLab для автоматического сканирования безопасности.
-
--   **`include`**: В `.gitlab-ci.yml` добавляются три шаблона:
-    -   `Security/SAST.gitlab-ci.yml`: Статический анализ кода на уязвимости.
-    -   `Security/Secret-Detection.gitlab-ci.yml`: Поиск секретов (паролей, ключей), случайно попавших в репозиторий.
-    -   `Security/Container-Scanning.yml`: Сканирование готового Docker-образа на известные уязвимости в его компонентах.
-
--   **Кастомизация**: Мы переопределяем задачи из шаблонов, чтобы настроить правила их запуска с помощью наших якорей `&develop_rules` и `&main_rules`.
-    -   `sast` и `secret-detection` запускаются для веток `develop` и `main`.
-    -   `container-scanning`, как более длительный тест, запускается только для ветки `main`.
-
-```yaml
-# ... (в начале файла)
-include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
-  - template: Security/Container-Scanning.yml
-
-# ... (в секции stages)
-
-# Переопределяем задачи из шаблонов для кастомизации правил
+# Кастомизация задач безопасности из шаблонов
 sast:
   <<: *develop_rules
 
@@ -322,38 +202,18 @@ container_scanning:
   stage: testing
   <<: *main_rules
 ```
-> Примечание: `sast` и `secret_detection` автоматически подхватывают стадию `test`. Для `container_scanning` может потребоваться явно указать стадию.
 
-После этих изменений наш пайплайн не только проверяет качество кода и запускает тесты, но и выполняет комплексную проверку безопасности, автоматически блокируя изменения, которые несут в себе риски.
+#### Шаг 3: Реализация стадии `deployment`
 
----
-
-## 5. Часть 3: Реализация стадий развертывания (Deployment)
-
-Теперь, когда у нас есть протестированный и упакованный в Docker-образ артефакт, мы можем реализовать логику его развертывания в наши Kubernetes-окружения (`dev`, `staging`, `production`).
-
-### 5.1. Подготовка: Helm-чарт и доступ к кластеру
-
--   **Helm-чарт**: Для деплоя используется базовый Helm-чарт, созданный командой `helm create`. Ключевые изменения в нем:
-    -   В `values.yaml` и шаблоне `deployment.yaml` добавлена поддержка `imagePullSecrets` для доступа к приватному GitLab Container Registry.
-    -   Версия приложения передается в контейнер через переменную окружения `VERSION`, которая берется из `{{ .Values.image.tag }}`.
--   **Доступ к Kubernetes**: Для взаимодействия с кластером (в данном примере используется Amazon EKS) в CI/CD переменных проекта (`Settings > CI/CD > Variables`) необходимо настроить учетные данные облачного провайдера (например, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` и др.).
--   **Доступ к Registry**: В кластере Kubernetes необходимо вручную создать секрет типа `docker-registry`, содержащий `Deploy Token` с правом `read_registry`. Этот секрет затем указывается в Helm-чарте в `imagePullSecrets`.
-
-### 5.2. Реализация задач `deployment` в `.gitlab-ci.yml`
-
-Чтобы избежать дублирования кода, создается общий шаблон `.deploy_template`, от которого наследуются все задачи развертывания.
-
-#### Шаблон `.deploy_template`
-Этот шаблон содержит общую логику для всех окружений:
--   **`image`**: Используется кастомный Docker-образ, содержащий все необходимые утилиты: `kubectl`, `helm`, `aws-cli`.
--   **`before_script`**: Устанавливает плагин `helm-diff` и настраивает `kubectl` для доступа к кластеру в AWS.
--   **`script`**: Главная логика, которая в зависимости от наличия переменных `HELM_DIFF` или `HELM_APPLY` выполняет либо `helm diff` (показывает изменения, не применяя их), либо `helm upgrade --install` (применяет изменения).
+Создается общий шаблон `.deploy_template` для унификации развертывания в разные окружения.
 
 ```yaml
+# ... (продолжение .gitlab-ci.yml)
+
+# Шаблон для развертывания
 .deploy_template:
   stage: deployment
-  image: darthvad1r/kube-helm-aws:1.0.0 # Образ с нужными инструментами
+  image: darthvad1r/kube-helm-aws:1.0.0
   before_script:
     - helm plugin install https://github.com/databus23/helm-diff
     - aws eks --region us-east-1 update-kubeconfig --name slurm-eks-cluster
@@ -361,81 +221,86 @@ container_scanning:
   script:
     - |
       if [[ -n "$HELM_DIFF" ]]; then
-        helm diff upgrade --allow-unreleased <имя-релиза> ./helm
+        helm diff upgrade --allow-unreleased $RELEASE_NAME ./helm
       elif [[ -n "$HELM_APPLY" ]]; then
-        helm upgrade --install <имя-релиза> ./helm --set image.tag=$DOCKER_IMAGE_TAG
+        helm upgrade --install $RELEASE_NAME ./helm --set image.tag=$DOCKER_IMAGE_TAG
       else
         echo "Skipping deployment step..."
       fi
-```
 
-#### Задачи развертывания
-Задачи для каждого окружения (`deploy-dev`, `deploy-staging`, `deploy-production`) наследуют этот шаблон и добавляют свою специфику.
+# Задачи развертывания
+deploy-dev:
+  extends: .deploy_template
+  variables:
+    RELEASE_NAME: my-app-dev
+  environment:
+    name: development
+    url: http://dev.example.com
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
+      variables:
+        HELM_DIFF: "true"
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      variables:
+        HELM_APPLY: "true"
 
--   **`environment`**: Для каждой задачи определяется окружение, что позволяет отслеживать деплои в интерфейсе GitLab. Указывается `name` и `url` окружения.
--   **`rules`**: Правила определяют, когда запускать деплой (`HELM_APPLY`) и когда — только проверку изменений (`HELM_DIFF`). Например, для MR в `develop` будет запущен `helm diff`, а для прямого коммита в `develop` — `helm upgrade`.
--   **Авторизация для Production**: Задача `deploy-production` содержит дополнительный `before_script`, который проверяет, входит ли пользователь, запустивший задачу (`$GITLAB_USER_LOGIN`), в список авторизованных (`$AUTHORIZED_USERS`). Это простой, но эффективный способ ограничить права на выкатку в прод.
-
-```yaml
 deploy-staging:
   extends: .deploy_template
   variables:
-    # Динамический URL для доступа к приложению в staging
-    ENDPOINT: http://<...>.us-east-1.elb.amazonaws.com
+    RELEASE_NAME: my-app-staging
+    ENDPOINT: http://staging.example.com
   environment:
     name: staging
     url: $ENDPOINT
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
       variables:
-        HELM_DIFF: "true" # Для MR в main запускаем только diff
+        HELM_DIFF: "true"
     - if: '$CI_COMMIT_BRANCH == "main"'
       variables:
-        HELM_APPLY: "true" # Для коммитов в main - применяем
+        HELM_APPLY: "true"
 
 deploy-production:
   extends: .deploy_template
-  # ...
+  variables:
+    RELEASE_NAME: my-app-prod
+  environment:
+    name: production
+    url: http://prod.example.com
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
-      when: manual # Для тегов - ручной запуск
+      when: manual
       variables:
         HELM_APPLY: "true"
   before_script:
-    # Скрипт проверки авторизации
     - |
       if ! echo "$AUTHORIZED_USERS" | grep -q "$GITLAB_USER_LOGIN"; then
         echo "User $GITLAB_USER_LOGIN is not authorized to deploy to production."
         exit 1
       fi
-    # ... (далее стандартный before_script из шаблона)
+    - !reference [.deploy_template, before_script]
 ```
 
-
-### 5.3. Результат в интерфейсе GitLab
-
-После выполнения пайплайна во вкладке **Deployments > Environments** можно увидеть список всех окружений, историю развертываний для каждого из них, а также перейти по ссылке к работающему приложению. Проверка эндпоинта `/version` подтверждает, что в окружении развернута корректная версия образа, соответствующая тегу, сгенерированному в пайплайне.
-
----
-
-## 6. Часть 4: Валидация, релизы и полный цикл
-
-Это заключительная часть, в которой мы реализуем финальные стадии пайплайна — `validate_deployment` и `release`, а также демонстрируем полный рабочий процесс от feature-ветки до релиза в production.
-
-### 6.1. Реализация стадии `validate_deployment`
-
-После развертывания приложения в окружение, необходимо убедиться, что оно работает корректно.
-
--   **Smoke-тесты (`validate-dev-smoke`)**: Это простая проверка "на дым". Мы используем `curl`, чтобы отправить запрос на `ENDPOINT` нашего приложения и убедиться, что оно отвечает кодом `200 OK`.
--   **E2E-тесты (`validate-staging-e2e`)**: Это более осмысленная проверка. Мы также используем `curl` для запроса к эндпоинту `/version` и с помощью `grep` проверяем, что в ответе содержится правильный тег docker-образа, который был развернут на этой стадии. Это подтверждает, что выкатка прошла успешно и в окружении работает именно то, что мы ожидали.
+#### Шаг 4: Реализация стадий `validate_deployment` и `release`
 
 ```yaml
+# ... (окончание .gitlab-ci.yml)
+
+# Задачи валидации после развертывания
+validate-dev-smoke:
+  stage: validate_deployment
+  image: curlimages/curl:7.75.0
+  script:
+    - curl -s --head http://dev.example.com | grep "200 OK"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
 validate-staging-e2e:
   stage: validate_deployment
   image: curlimages/curl:7.75.0
   script:
     - |
-      CONTENT=$(curl $ENDPOINT/version)
+      CONTENT=$(curl http://staging.example.com/version)
       if ! echo "$CONTENT" | grep -q "$DOCKER_IMAGE_TAG"; then
         echo "Version check failed!"
         exit 1
@@ -444,20 +309,11 @@ validate-staging-e2e:
       fi
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-```
 
-### 6.2. Реализация стадии `release`
-
-Эта стадия отвечает за создание официальных релизов.
-
--   **Задача `create-release`**: Запускается вручную из ветки `main`.
--   **Инструмент**: Используется сторонний инструмент для семантического версионирования (например, `semantic-release` или его аналоги). Он анализирует коммиты с момента последнего тега, автоматически определяет новую версию (patch, minor, major), генерирует `CHANGELOG` и создает новый Git-тег и GitLab Release.
--   **Авторизация**: Для работы этому инструменту требуется **GitLab Access Token** с правами `api`, который хранится в CI/CD-переменных.
-
-```yaml
+# Задача создания релиза
 create-release:
   stage: release
-  image: node:16-alpine # Пример, если используется JS-based релизер
+  image: node:16-alpine
   script:
     - npm install -g semantic-release @semantic-release/gitlab
     - semantic-release
@@ -466,16 +322,7 @@ create-release:
       when: manual
 ```
 
-### 6.3. Интеграция с Slack
-
-Для получения уведомлений о статусе пайплайнов, можно настроить интеграцию со Slack:
-1.  В настройках проекта GitLab перейдите в **Settings > Integrations**.
-2.  Выберите **Slack notifications**.
-3.  Активируйте интеграцию и вставьте **Incoming Webhook URL**, полученный из Slack.
-4.  Выберите, по каким событиям отправлять уведомления (например, `failed pipeline`).
-Для более кастомизированных уведомлений потребуется написать собственный скрипт, который будет отправлять сообщения через API Slack.
-
-### 6.4. Демонстрация полного цикла
+### Сценарий 2: Демонстрация полного рабочего цикла
 
 1.  **Feature-ветка -> `develop`**:
     -   Разработчик создает `feature/my-new-feature` и пушит код.
@@ -498,3 +345,10 @@ create-release:
     -   Инструмент релиза создает новый тег (например, `v1.2.3`) и GitLab Release с описанием изменений.
     -   Создание тега автоматически запускает пайплайн для этого тега, в котором становится доступна ручная задача `deploy-production`.
     -   Авторизованный пользователь нажимает кнопку "Play", и приложение разворачивается в **production-окружение**.
+
+## Дополнительная иинформация
+
+### Подготовка окружения
+
+-   **Доступ к Kubernetes**: Для взаимодействия с кластером в CI/CD переменных проекта (`Settings > CI/CD > Variables`) необходимо настроить учетные данные (например, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` и `AUTHORIZED_USERS`).
+-   **Доступ к Registry**: В кластере Kubernetes необходимо вручную создать секрет типа `docker-registry`, содержащий `Deploy Token` с правом `read_registry`. Этот секрет затем указывается в Helm-чарте в `imagePullSecrets`.

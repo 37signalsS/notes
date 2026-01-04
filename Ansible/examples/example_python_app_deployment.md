@@ -1,67 +1,159 @@
 # Ansible: Пример развертывания Python-приложения
 
-## 1. Подготовка и запуск
+## Определения
 
-1.  **Скопируйте материалы:** Убедитесь, что все необходимые файлы (плейбук, файлы приложения, шаблоны) находятся в рабочей директории на `controlnode`.
-2.  **Запустите плейбук:**
-    ```bash
-    ansible-playbook playbook.yml
-    ```
+**Развертывание Python-приложения с Ansible** — это процесс автоматизации полного цикла доставки приложения на целевой сервер. Он включает в себя:
+*   Копирование исходного кода.
+*   Установку системных и Python-зависимостей в изолированное окружение.
+*   Настройку приложения как системного сервиса (например, `systemd`).
+*   Управление конфигурацией и жизненным циклом сервиса.
 
-## 2. Анализ плейбука
+## Базовые концепции
+
+### Изоляция зависимостей с `pip` и `virtualenv`
+
+Ключевой аспект надежного развертывания — изоляция зависимостей. Модуль `ansible.builtin.pip` позволяет устанавливать пакеты в виртуальное окружение, избегая конфликтов с системными библиотеками.
+
+*   `virtualenv`: Путь, где будет создано или использовано виртуальное окружение.
+*   `virtualenv_command`: Явное указание команды для создания `venv` (например, `/usr/bin/python3 -m venv`). Это критически важно для систем, где может быть несколько версий Python.
+
+### Управление интерпретатором Python
+
+На некоторых ОС (например, CentOS 7) системным интерпретатором по умолчанию может быть Python 2. Чтобы Ansible корректно использовал Python 3 для выполнения своих модулей, необходимо явно указать путь к интерпретатору через переменную `ansible_python_interpreter`.
 
 ```yaml
-- name: "Pip venv"
-  hosts: "centos_python"
-  become: true # Задачи будут выполняться с повышением привилегий
+# playbook.yml
+- hosts: all
   vars:
-    app_name: "hello"
-    mysql_password: "password"
     ansible_python_interpreter: /usr/bin/python3
   tasks:
-    - name: "Copy python files"
-      ansible.builtin.copy:
-        src: files/app
-        dest: /apps/{{ app_name }}
-        owner: vagrant
-        group: vagrant
-        mode: 0644
-
-    - name: Install virtualenv via pip
-      pip:
-        name: virtualenv
-        executable: pip3
-
-    - name: Install requirements into virtualenv
-      pip:
-        requirements: /apps/{{ app_name }}/app/requirements.txt
-        virtualenv: /apps/{{ app_name }}/venv
-        virtualenv_command: /usr/bin/python3 -m venv
-
-    - name: Copy service file
-      ansible.builtin.template:
-        src: service.service.j2
-        dest: /etc/systemd/system/{{ app_name }}.service
-        owner: vagrant
-        group: vagrant
-        mode: 0644
-      notify: Reload systemd # Уведомление для обработчика
-
-    # ... другие задачи, например, настройка БД
+    # ...
 ```
 
-### Ключевые моменты плейбука:
+### Управление сервисом с `systemd`
 
-*   `ansible_python_interpreter: /usr/bin/python3`: Явно указывает Ansible использовать `python3` для выполнения модулей на целевом хосте. Это критически важно для систем, где по умолчанию используется Python 2.
-*   **`ansible.builtin.copy`**: Копирует файлы приложения на удаленный хост.
-*   **`pip: name=virtualenv`**: Устанавливает пакет `virtualenv` глобально с помощью `pip3`.
-*   **`pip: requirements=...`**: Устанавливает зависимости из файла `requirements.txt` в указанное виртуальное окружение.
-    *   `virtualenv: /apps/{{ app_name }}/venv`: Путь, где будет создано или использовано виртуальное окружение.
-    *   `virtualenv_command: /usr/bin/python3 -m venv`: Явно указывает команду для создания `venv`, что помогает избежать проблем с версиями.
-*   **`ansible.builtin.template`**: Создает `systemd` юнит из шаблона `service.service.j2`, позволяя динамически подставлять переменные (например, `app_name`).
-*   **`notify: Reload systemd`**: Отправляет уведомление обработчику `Reload systemd` (который должен содержать задачу `systemd: daemon_reload: yes`), чтобы `systemd` узнал о новом юните.
+Для того чтобы приложение работало в фоновом режиме и автоматически запускалось после перезагрузки, его настраивают как `systemd`-сервис.
+1.  С помощью модуля `ansible.builtin.template` из шаблона (`.j2`) создается юнит-файл сервиса в `/etc/systemd/system/`.
+2.  Обработчик (`handler`), вызванный через `notify`, выполняет `systemctl daemon-reload`, чтобы `systemd` узнал о новом сервисе.
+3.  Модуль `ansible.builtin.service` используется для запуска и включения автозагрузки сервиса.
 
-## 3. Проверка результата
+## Практический сценарий: Развертывание Flask + Gunicorn
 
-*   **PLAY RECAP** покажет статистику выполнения.
-*   Вы можете проверить доступность развернутого сервиса, открыв в браузере его адрес, например: `http://192.168.51.2`.
+Этот плейбук развертывает простое Flask-приложение, которое будет обслуживаться production-ready сервером Gunicorn.
+
+### Структура проекта
+
+```
+/ansible
+├── files/
+│   └── app/
+│       ├── main.py
+│       └── requirements.txt
+├── templates/
+│   └── app.service.j2
+└── playbook.yml
+```
+
+*   `main.py`: Код Flask-приложения.
+*   `requirements.txt`: Зависимости (`flask`, `gunicorn`).
+*   `app.service.j2`: Jinja2-шаблон для systemd-юнита.
+
+### Шаблон `templates/app.service.j2`
+
+```j2
+[Unit]
+Description=Gunicorn instance to serve {{ app_name }}
+After=network.target
+
+[Service]
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory=/apps/{{ app_name }}/app
+ExecStart=/apps/{{ app_name }}/venv/bin/gunicorn --workers 3 --bind unix:{{ app_name }}.sock -m 007 wsgi:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+> Обратите внимание, что `ExecStart` указывает на `gunicorn` внутри виртуального окружения.
+
+### Плейбук `playbook.yml`
+
+```yaml
+---
+- name: Deploy Python Web App with Gunicorn
+  hosts: all
+  become: true
+  vars:
+    app_name: "mywebapp"
+    app_user: "webapp_user"
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: "Create a user for the application"
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        shell: /bin/bash
+        create_home: yes
+
+    - name: "Create application directory"
+      ansible.builtin.file:
+        path: "/apps/{{ app_name }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    - name: "Copy application files"
+      ansible.builtin.copy:
+        src: files/app
+        dest: "/apps/{{ app_name }}/"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: "Install dependencies into a virtualenv"
+      ansible.builtin.pip:
+        requirements: "/apps/{{ app_name }}/app/requirements.txt"
+        virtualenv: "/apps/{{ app_name }}/venv"
+        virtualenv_command: "/usr/bin/python3 -m venv"
+
+    - name: "Create systemd service file from template"
+      ansible.builtin.template:
+        src: templates/app.service.j2
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+      notify: Reload systemd
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+  post_tasks:
+    - name: "Start and enable the application service"
+      ansible.builtin.service:
+        name: "{{ app_name }}"
+        state: started
+        enabled: yes
+```
+
+## Дополнительная информация
+
+### Проверка результата
+
+После успешного выполнения плейбука вы можете проверить статус развернутого сервиса:
+```bash
+# На целевом сервере
+systemctl status mywebapp
+curl --unix-socket /apps/mywebapp/app/mywebapp.sock http
+```
+
+### Хранение секретов
+
+Если вашему приложению требуется доступ к базе данных или другим защищенным ресурсам, пароли и ключи **необходимо** хранить в зашифрованном виде с помощью [Ansible Vault](../ansible_vault.md).
+```yaml
+# vars/main.yml
+db_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  333234...
+```
+Запуск плейбука в этом случае потребует ключа: `ansible-playbook playbook.yml --ask-vault-pass`.

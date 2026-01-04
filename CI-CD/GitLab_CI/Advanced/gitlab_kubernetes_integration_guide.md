@@ -1,280 +1,178 @@
-# Комплексное руководство по интеграции GitLab CI с Kubernetes
+# Интеграция GitLab CI с Kubernetes
 
-## 1. Обзор стратегий интеграции
+## Определения
 
-### 1.1. Подход 1: Встроенная ("нативная") интеграция GitLab (Не рекомендуется)
+**Интеграция GitLab с Kubernetes** — это процесс настройки взаимодействия между CI/CD-пайплайнами GitLab и кластером Kubernetes для автоматического развертывания, тестирования и управления приложениями.
 
-**Ключевые недостатки и риски:**
+Существует три основных подхода к интеграции:
 
-*   **Требование `cluster-admin` доступа:** Для своей работы GitLab требует полных административных прав в кластере, что является серьезной угрозой безопасности и нарушает принцип наименьших привилегий.
-*   **Хрупкость:** Механизм может быть нестабильным и конфликтовать с уже используемыми инструментами (например, попытка установить свой Nginx Ingress Controller, когда у вас уже используется другой).
-*   **Ограниченная гибкость:** Отсутствует возможность ограничить доступ GitLab только одним неймспейсом.
+1.  **"Push"-модель (управляемая CI)**: GitLab CI/CD пайплайн, используя инструменты командной строки (`kubectl`, `helm`), напрямую "проталкивает" (push) изменения в кластер. Это наиболее распространенный и гибкий подход.
+2.  **"Pull"-модель (GitOps)**: Агент, установленный в кластере (например, ArgoCD), отслеживает Git-репозиторий с манифестами и "притягивает" (pull) изменения. GitLab CI отвечает только за сборку образов и обновление конфигурации в Git.
+3.  **Встроенная интеграция (устарела)**: Нативный механизм интеграции GitLab, который **не рекомендуется** к использованию из-за высоких требований к правам доступа и низкой гибкости.
 
-### 1.2. Подход 2: Управление через `kubectl` в пайплайне ("Push" модель)
+## Основные концепции
 
-Это более гибкий, прозрачный и контролируемый подход. Вся логика развертывания описывается явно в `.gitlab-ci.yml` с помощью команд `kubectl` или `helm`. CI/CD система "проталкивает" (push) изменения в кластер.
+### Сравнение стратегий развертывания
 
-**Для реализации этого подхода требуется два компонента:**
-1.  **Образ с инструментами:** Docker-образ, содержащий утилиты `kubectl` и/или `helm`, который будет использоваться в CI-задачах.
-2.  **Авторизация в кластере:** Безопасный способ предоставить CI-задаче права для выполнения команд в Kubernetes.
+| Стратегия | Принцип работы | Безопасность | Гибкость | Рекомендация |
+| :--- | :--- | :--- | :--- | :--- |
+| **Push-модель (`kubectl`)** | Пайплайн GitLab CI получает доступ к API-серверу Kubernetes и выполняет команды. | Требует безопасного хранения и передачи учетных данных в CI. | Высокая, полный контроль над процессом развертывания. | **Рекомендуется** для большинства сценариев. |
+| **Pull-модель (GitOps)** | Агент в кластере синхронизирует состояние с Git-репозиторием. Пайплайн CI не имеет прямого доступа к кластеру. | Высокая, учетные данные не покидают пределы кластера. | Высокая, но требует строгого следования декларативному подходу. | **Рекомендуется** для зрелых процессов и повышения безопасности. |
+| **Встроенная интеграция** | GitLab управляет ресурсами в кластере через свой UI и API. | Низкая, требует прав `cluster-admin`. | Низкая, конфликтует с существующими инструментами. | **Не рекомендуется**. |
 
-### 1.3. Подход 3: GitOps — декларативное управление состоянием ("Pull" модель)
+### Проблемы классической "Push"-модели
 
-GitOps — это эволюция подхода "Управление через `kubectl`", которая решает фундаментальные проблемы "push" модели. **Git-репозиторий становится единственным источником правды.** Агент, установленный в кластере (например, ArgoCD), "притягивает" (pull) изменения из Git и приводит кластер в соответствие с ними.
+Несмотря на популярность, "Push"-модель имеет фундаментальные недостатки, которые привели к появлению GitOps:
 
----
+1.  **Рассинхронизация состояния (State Drift):** Истинное состояние кластера со временем отклоняется от того, что описано в Git.
+    *   **Пример (Ручные изменения):** Инженер для срочного исправления применяет `kubectl patch` напрямую в кластере. Следующий запуск CI/CD пайплайна, не зная об этом изменении, перезатрет его, что может привести к повторному возникновению проблемы.
 
-## 2. Реализация "Push" модели: Авторизация и развертывание
+2.  **Недетерминизм и отсутствие идемпотентности:**
+    *   **Mutable-теги:** Использование изменяемых тегов, таких как `latest`, является анти-паттерном. Невозможно гарантировать, какая именно версия кода работает в кластере.
+    *   **Нестабильность сборки:** Повторная сборка из одного и того же коммита может дать бинарно разный результат из-за динамики зависимостей.
 
-### Шаг 1: Настройка авторизации
+### Принципы "Pull"-модели (GitOps)
 
-#### Способ 1: Авторизация через `KUBE_CONFIG` в CI/CD переменных (Простой, но менее безопасный)
+GitOps решает проблемы "Push"-модели, базируясь на следующих принципах. Для более глубокого изучения см. **[Обзор методологии GitOps](../../../GitOps/GitOps_overview.md)**.
 
-Этот способ состоит в том, чтобы добавить переменную `KUBE_CONFIG` для подключения к удаленному кластеру в переменные GitLab CI.
+1.  **Pull-модель вместо Push:**
+    *   Пайплайн CI/CD **не имеет прямого доступа к кластеру**. Его ответственность — собрать артефакт (образ) и обновить конфигурацию в Git-репозитории манифестов.
+    *   **Агент GitOps (ArgoCD, Flux)** внутри кластера "наблюдает" за репозиторием и "притягивает" изменения.
 
-1.  Получите конфигурацию `kubeconfig` с мастер-ноды кластера в формате base64:
+2.  **Иммутабельные артефакты:**
+    *   Каждый собранный образ версионируется и неизменяем. В качестве тега используется хеш коммита (`CI_COMMIT_SHORT_SHA`) или дайджест образа.
+
+3.  **Разделение репозиториев:**
+    *   **Репозиторий приложения:** Содержит исходный код.
+    *   **Репозиторий конфигурации:** Содержит Kubernetes-манифесты (Helm, Kustomize). Именно за ним следит GitOps-агент.
+
+### Способы авторизации в "Push"-модели
+
+Ключевой задачей является безопасное предоставление CI-задаче прав для выполнения команд в Kubernetes.
+
+1.  **Переменная `KUBE_CONFIG`**
+    *   **Принцип**: Содержимое файла `kubeconfig` сохраняется в виде защищенной CI/CD-переменной в GitLab. Runner использует эту переменную для аутентификации.
+    *   **Плюсы**: Простота настройки.
+    *   **Минусы**: Менее безопасно, так как токен доступа является долгоживущим. Требует сетевой доступности от Runner'а до API-сервера кластера.
+
+2.  **GitLab Runner с Kubernetes Executor**
+    *   **Принцип**: Runner устанавливается непосредственно в кластер Kubernetes. Для каждой CI-задачи создается отдельный Pod. Используя `ServiceAccount` Kubernetes, задача автоматически получает токен доступа с коротким сроком жизни.
+    *   **Плюсы**: **Наиболее безопасный и идиоматичный способ.**
+    *   Подробное сравнение executor-ов можно найти в [соответствующем руководстве](../gitlab_ci_runners_executors.md).
+
+3.  **Техническая учетная запись в IdP**
+    *   **Принцип**: Для CI/CD создается специальная учетная запись в корпоративном провайдере идентификации (LDAP, AD).
+    *   **Применимость**: Крупные организации с централизованным управлением доступом.
+
+4.  **OIDC/JWT-аутентификация**
+    *   **Принцип**: Настраиваются доверительные отношения между Kubernetes и GitLab (как OIDC-провайдером). Кластер может валидировать временный JWT-токен (`CI_JOB_JWT_TOKEN`), который генерируется для каждой CI-задачи.
+    *   **Статус**: Современный и безопасный подход (Workload Identity Federation).
+
+## Практические сценарии
+
+### Сценарий 1: Развертывание в "Push"-модели с Helm и Kubernetes Executor
+
+Это рекомендуемый способ, сочетающий безопасность Kubernetes Executor и гибкость Helm.
+
+1.  **Подготовьте кластер для Runner'а:**
     ```bash
-    cat /path/to/your/.kube/config | base64 -w 0 ; echo
-    ```
-
-2.  В вашем проекте GitLab перейдите в **Settings -> CI/CD** и раскройте раздел **Variables**.
-
-3.  Нажмите **Add variable** и добавьте переменную:
-    *   **Key:** `K8S_CONFIG`
-    *   **Value:** Вставьте содержимое, скопированное с мастер-ноды.
-    *   **Flags:** Пометьте переменную как **"Protected"** и **"Masked"**.
-
-4.  Пример использования в `.gitlab-ci.yml`:
-    ```yaml
-    stages: 
-      - kubectl
-
-    kubectl-check:
-      stage: kubectl
-      image:
-        name: bitnami/kubectl:1.21.13 # Образ с kubectl
-        entrypoint: [""]
-      variables:
-        KUBECONFIG: /tmp/.kubeconfig
-      script:
-        - echo "$K8S_CONFIG" | base64 -d > $KUBECONFIG
-        - kubectl get nodes
-    ```
-    Этот метод требует сетевой доступности между runner'ом и API-сервером Kubernetes.
-
-#### Способ 2: GitLab Runner с Kubernetes Executor (Рекомендуемый)
-
-GitLab Runner устанавливается непосредственно в сам кластер Kubernetes.
-
-1.  **Подготовьте кластер:**
-    ```bash
-    # Создаем неймспейс для раннера
     kubectl create ns gitlab-runner
-
-    # Создаем ServiceAccount для раннера
     kubectl create sa gitlab-runner-sa -n gitlab-runner
-
-    # Даем ServiceAccount нужные права (для примера cluster-admin, в проде используйте гранулярные права)
+    # В реальных проектах используйте гранулярные права вместо cluster-admin
     kubectl create clusterrolebinding gitlab-runner-admin --clusterrole=cluster-admin --serviceaccount=gitlab-runner:gitlab-runner-sa
     ```
 
-2.  **Зарегистрируйте Runner** с executor'ом `kubernetes` и добавьте в его конфигурацию (`config.toml`) разрешение на использование ServiceAccount:
+2.  **Зарегистрируйте Runner** с executor'ом `kubernetes` и разрешите использование ServiceAccount в `config.toml`:
     ```toml
     [[runners]]
-      name = "kubernetes-runner"
       executor = "kubernetes"
       [runners.kubernetes]
         namespace = "gitlab-runner"
-        # service_account_overwrite_allowed разрешает пайплайну использовать указанный SA
         service_account_overwrite_allowed = ".*"
     ```
 
-3.  **Использование в `.gitlab-ci.yml`:**
-    ```yaml
-    stages: 
-      - kubectl
+3.  **Настройте доступ к GitLab Container Registry:**
+    *   Создайте **Deploy Token** (`Settings > Repository > Deploy Tokens`) с правом `read_registry`.
+    *   Создайте секрет в Kubernetes:
+        ```bash
+        kubectl create secret docker-registry gitlab-registry \
+          --docker-server=<ваш_gitlab_registry_url> \
+          --docker-username=<имя_пользователя_deploy_token> \
+          --docker-password=<пароль_deploy_token> \
+          --namespace=<ваш_namespace>
+        ```
 
-    kubectl-check-in-cluster:
-      stage: kubectl
-      tags:
-        - kubernetes # Тег вашего раннера
-      image:
-        name: bitnami/kubectl:1.21.13
+4.  **Настройте `.gitlab-ci.yml`:**
+    ```yaml
+    stages: [deploy]
+
+    deploy_to_prod:
+      stage: deploy
+      image: name: dwolf/helm-kubectl-docker:latest # Образ с kubectl и helm
+      tags: [kubernetes] # Тег вашего runner'а
       variables:
-        # Переопределяем ServiceAccount для Pod'а, в котором будет выполняться задача
-        KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: gitlab-runner-sa
+        KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: gitlab-runner-sa 
       script:
-        # Конфигурация kubectl для использования встроенного ServiceAccount токена
+        # Автоматическая конфигурация kubectl с использованием токена ServiceAccount
         - kubectl config set-cluster local --server=https://kubernetes.default.svc --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         - kubectl config set-context local --cluster=local
         - kubectl config set-credentials user --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
         - kubectl config use-context local --user=user
-        - kubectl get nodes
-    ```
-    Токен для `ServiceAccount` автоматически монтируется в каждый Pod, он всегда актуальный и имеет короткий срок жизни. Это наиболее безопасный и идиоматичный способ.
-
-#### Способ 3: Техническая учетная запись в IdP (Корпоративный вариант)
-
-*   **Принцип:** Если кластер интегрирован с внешним провайдером идентификации (LDAP, Active Directory), можно создать специальную техническую учетную запись для CI/CD. Пайплайн будет использовать логин/пароль этой учетной записи для получения временного токена доступа к кластеру, эмулируя действия обычного пользователя.
-*   **Применимость:** Актуально для крупных организаций с централизованным управлением доступом.
-
-#### Способ 4: OIDC/JWT-аутентификация (Продвинутый)
-
-*   **Принцип:** Использовать встроенную переменную GitLab `CI_JOB_JWT_TOKEN`. Если настроить доверительные отношения между Kubernetes и GitLab как OIDC-провайдером, кластер сможет валидировать JWT-токен из пайплайна. Это позволяет выполнять действия от имени пользователя, запустившего пайплайн, или от имени конкретного проекта/ветки.
-*   **Статус:** Это современный и безопасный подход, соответствующий концепции "Workload Identity Federation".
-
-### Шаг 2: Практический пример развертывания с Helm
-
-#### 2.1. Предварительная подготовка
-
-1.  **Работающий кластер Kubernetes.**
-2.  **Helm-чарт:** Ваше приложение упаковано в Helm-чарт (например, в директории `charts/`).
-3.  **Доступ к GitLab Container Registry:** Кластеру нужен доступ для скачивания образов.
-
-#### 2.2. Настройка доступа Kubernetes к GitLab Container Registry
-
-Чтобы кластер Kubernetes мог скачивать Docker-образы из вашего приватного GitLab Container Registry, ему нужен секрет типа `docker-registry`.
-
-1.  **Создайте Deploy Token в GitLab:**
-    *   Перейдите в `Settings > Repository > Deploy Tokens`.
-    *   Создайте токен с правами (scope) **`read_registry`**.
-    *   Сохраните сгенерированные **имя пользователя** и **пароль**.
-
-2.  **Создайте секрет `docker-registry` в Kubernetes:**
-    ```bash
-    kubectl create secret docker-registry gitlab-registry \
-      --docker-server=<ваш_gitlab_registry_url> \
-      --docker-username=<имя_пользователя_deploy_token> \
-      --docker-password=<пароль_deploy_token> \
-      --namespace=<ваш_namespace>
+        
+        # Развертывание с помощью Helm
+        - helm upgrade --install my-app-release ./charts/my-app \
+          --namespace production \
+          --set image.tag=$CI_COMMIT_SHORT_SHA \
+          --set image.pullSecrets[0].name=gitlab-registry
+      rules:
+        - if: '$CI_COMMIT_BRANCH == "main"'
     ```
 
-3.  **Укажите `imagePullSecrets` в Helm-чарте** (в `values.yaml`):
+### Сценарий 2: Развертывание в "Push"-модели с `kubectl apply` и `KUBE_CONFIG`
+
+Этот способ проще для старта, но менее безопасен.
+
+1.  **Создайте переменную `K8S_CONFIG` в GitLab CI/CD:**
+    *   **Key:** `K8S_CONFIG`
+    *   **Value:** `cat ~/.kube/config | base64 -w 0`
+    *   **Flags:** `Protected`, `Masked`
+
+2.  **Настройте `.gitlab-ci.yml`:**
     ```yaml
-    image:
-      pullSecrets:
-        - name: gitlab-registry 
+    deploy-k8s:
+      stage: deploy
+      image: name: alpine:3.19
+      variables:
+        KUBECONFIG: /tmp/kubeconfig
+        MANIFEST_FOLDER: "k8s"
+      script:
+        # Аутентификация
+        - echo "$K8S_CONFIG" | base64 -d > $KUBECONFIG
+        
+        # Установка инструментов и развертывание
+        - apk update && apk add gettext
+        - wget -q -O /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v1.26.0/bin/linux/amd64/kubectl && chmod +x /usr/local/bin/kubectl
+        - >-
+           for MANIFEST in $MANIFEST_FOLDER/*; do
+            envsubst < $MANIFEST | kubectl apply -n $CI_ENVIRONMENT_NAME -f -;
+          done
+      rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     ```
+    *Примечание: `envsubst` используется для подстановки переменных окружения (например, `$CI_COMMIT_SHA`) в манифесты.*
 
-#### 2.3. Настройка `.gitlab-ci.yml` для развертывания
+### Сценарий 3: Переход на "Pull"-модель (GitOps)
 
-Добавьте новую стадию `deploy` и соответствующую задачу.
+Для реализации этой модели используется связка из CI-пайплайна и GitOps-агента.
 
-```yaml
-stages: 
-  - build
-  - push
-  - deploy
+*   **Ответственность GitLab CI**:
+    1.  Собрать Docker-образ с тегом `$CI_COMMIT_SHA`.
+    2.  Сделать коммит в **репозиторий конфигурации**, обновив тег образа в `values.yaml` или Kustomize-манифесте.
 
-deploy_to_prod:
-  stage: deploy
-  image: 
-    name: dwolf/helm-kubectl-docker:latest # Пример образа с нужными инструментами
-  environment:
-    name: production
-    url: https://app.$CI_PROJECT_NAMESPACE.example.com
-  script:
-    # Пример использует переменные KUBE_URL и KUBE_TOKEN (Способ 1). 
-    # Для продакшена рекомендуется использовать Kubernetes Executor (Способ 2), 
-    # тогда настройка контекста будет выглядеть как в примере 'kubectl-check-in-cluster'.
-    - kubectl config set-cluster k8s --server="$KUBE_URL" --insecure-skip-tls-verify=true
-    - kubectl config set-credentials gitlab --token="$KUBE_TOKEN"
-    - kubectl config set-context default --cluster=k8s --user=gitlab
-    - kubectl config use-context default
-    
-    # Развертывание или обновление с помощью Helm
-    - helm upgrade --install \
-      --namespace production \
-      --set image.tag=$CI_COMMIT_SHORT_SHA \
-      --set ingress.host=app.$CI_PROJECT_NAMESPACE.example.com \
-      my-app-release \
-      ./charts/my-app
+*   **Ответственность GitOps-агента (например, ArgoCD)**:
+    1.  Обнаружить изменение в репозитории конфигурации.
+    2.  Автоматически применить изменения в кластере.
 
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-```
-
-**Пояснения:**
-*   **`image`**: Для выполнения команд `kubectl` и `helm` требуется специальный Docker-образ.
-*   **`environment`**: Эта директива позволяет отслеживать развертывания в GitLab.
-*   **`helm upgrade --install`**: Основная команда. `--install` создает релиз, если его нет.
-*   `--set image.tag=$CI_COMMIT_SHORT_SHA`: Переопределяет `image.tag` в `values.yaml` на хеш коммита. Это гарантирует развертывание конкретной версии образа (иммутабельность).
-
----
-
-### Шаг 3: Простой пример развертывания с kubectl apply
-
-Этот пример демонстрирует базовый способ развертывания Kubernetes-манифестов с помощью `kubectl apply` непосредственно из GitLab CI. Он использует подход "push" для отправки изменений в кластер.
-
-**Манифест деплоя (`templates/deploy/kubernetes.yaml`):**
-```yaml
-variables:
-  DOCKER_IMAGE: $CI_REGISTRY_IMAGE
-  DOCKER_TAG: $CI_COMMIT_SHA
-  DEPLOYMENT_DATE: `date +%Y%m%d-%H-%M-%S`
-  MANIFEST_FOLDER: "k8s"
-  KUBECONFIG: ""
-
-deploy-k8s:
-  stage: deploy
-  image:
-    name: alpine:3.19
-  script:
-    - apk update && apk add gettext
-    - wget https://storage.googleapis.com/kubernetes-release/release/v1.26.0/bin/linux/amd64/kubectl
-    - chmod +x ./kubectl
-    - ./kubectl create secret docker-registry regcred --docker-server=$CI_REGISTRY --docker-username=$CI_DEPLOY_USER --docker-password=$CI_DEPLOY_PASSWORD -n $CI_ENVIRONMENT_NAME || true
-    - >-
-       for MANIFEST in $MANIFEST_FOLDER/*; do
-        envsubst < $MANIFEST | ./kubectl apply -n $CI_ENVIRONMENT_NAME -f -;
-      done
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: on_success
-    - when: never
-```
-
-**Пояснения:**
-*   **`variables`**: Определяют переменные, используемые в задаче, такие как `DOCKER_IMAGE`, `DOCKER_TAG`, путь к манифестам (`MANIFEST_FOLDER`) и `KUBECONFIG`.
-*   **`image`**: Используется легковесный образ `alpine:3.19`, в который устанавливаются `gettext` (для `envsubst`) и `kubectl`.
-*   **Установка `kubectl`**: `kubectl` скачивается и устанавливается динамически.
-*   **`kubectl create secret docker-registry regcred`**: Создает или обновляет секрет `regcred` для аутентификации в Container Registry. Использует переменные GitLab CI (`CI_REGISTRY`, `CI_DEPLOY_USER`, `CI_DEPLOY_PASSWORD`). Опция `|| true` предотвращает падение пайплайна, если секрет уже существует.
-*   **`for MANIFEST in $MANIFEST_FOLDER/*; do ... done`**: Цикл проходит по всем файлам в указанной директории `k8s` (или другой, заданной в `MANIFEST_FOLDER`).
-*   **`envsubst < $MANIFEST | ./kubectl apply -n $CI_ENVIRONMENT_NAME -f -`**: Использует `envsubst` для подстановки переменных (например, `$DOCKER_IMAGE`, `$DOCKER_TAG`) в Kubernetes-манифесты, а затем применяет их к кластеру в соответствующем `namespace`.
-*   **`rules`**: Задача выполняется только при коммитах в ветку по умолчанию (`$CI_DEFAULT_BRANCH`).
-
-**Важно:** Для корректной работы этого примера необходимо, чтобы переменная `KUBECONFIG` была настроена в GitLab CI/CD (как описано в **Способе 1: Авторизация через `KUBE_CONFIG`**). Также убедитесь, что манифесты Kubernetes (`*.yaml`) находятся в папке, указанной в `MANIFEST_FOLDER` (по умолчанию `k8s`), и содержат плейсхолдеры для подстановки переменных (например, `image: $DOCKER_IMAGE:$DOCKER_TAG`).
-
----
-
-## 3. "Pull" модель: Принципы GitOps
-
-### 3.1. Проблемы классической "Push" модели
-
-1.  **Рассинхронизация состояния (State Drift):** Истинное состояние кластера со временем отклоняется от того, что описано в Git.
-    *   **Пример 1 (Ручные изменения):** Инженер для срочного исправления применяет `kubectl patch` напрямую в кластере. Следующий запуск CI/CD пайплайна, не зная об этом изменении, перезатрет его, что может привести к повторному возникновению проблемы.
-    *   **Пример 2 (Ошибка конфигурации):** Пайплайн для обновления GitLab забыл указать подключение к внешней базе данных. GitLab запускается со своей внутренней, эфемерной базой. Пользователи работают два месяца, после чего под перезапускается, и все данные теряются. Git-репозиторий и реальное состояние были рассинхронизированы.
-
-2.  **Недетерминизм и отсутствие идемпотентности:**
-    *   **Mutable-теги:** Использование изменяемых тегов, таких как `latest` или `v1.2`, является анти-паттерном. Невозможно гарантировать, какая именно версия кода работает в кластере, так как разные узлы могут иметь закешированные образы с одним и тем же тегом, но разным содержимым.
-    *   **Нестабильность сборки:** Повторная сборка из одного и того же коммита может дать бинарно разный результат из-за динамики зависимостей или кэша сборки.
-
-### 3.2. Принципы GitOps
-
-1.  **Pull-модель вместо Push:**
-    *   **Пайплайн CI/CD больше не имеет прямого доступа к кластеру.** Его ответственность — собрать артефакт (образ) и обновить конфигурацию в Git-репозитории манифестов.
-    *   **Агент GitOps (ArgoCD, Flux)** внутри кластера "наблюдает" за репозиторием с манифестами.
-    *   При обнаружении расхождения агент "притягивает" (pull) изменения и приводит кластер в соответствие с Git.
-
-2.  **Иммутабельные артефакты:**
-    *   Каждый собранный образ должен быть версионирован и неизменяем. В качестве тега используется хеш коммита (`CI_COMMIT_SHORT_SHA`) или дайджест образа (`sha256:...`).
-
-3.  **Разделение репозиториев:**
-    *   **Репозиторий приложения:** Содержит исходный код. CI/CD пайплайн здесь собирает образ.
-    *   **Репозиторий конфигурации:** Содержит Kubernetes-манифесты (Helm, Kustomize). CI/CD пайплайн обновляет здесь `values.yaml`, указывая новый тег/дайджест образа. Именно за этим репозиторием следит GitOps-агент.
-
-**Преимущества GitOps:**
--   **Безопасность:** У CI нет прямых доступов к кластеру.
--   **Надежность и предсказуемость:** Git является единственным источником истины.
--   **Простота отката:** Для отката достаточно выполнить `git revert` в репозитории конфигурации.
--   **Прозрачность:** Вся история изменений кластера хранится в системе контроля версий.
+Подробные инструкции по настройке specific-инструментов находятся в соответствующих разделах:
+- **[Обзор методологии GitOps](../../../GitOps/GitOps_overview.md)**
+- **[Пример реализации с помощью ArgoCD](../../../GitOps/ArgoCD.md)**
