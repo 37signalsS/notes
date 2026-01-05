@@ -245,14 +245,14 @@ ArgoCD должен знать, из каких репозиториев бра�
     *   **Процесс CI/CD:** CI-пайплайн может быть настроен на автоматическое обновление тега образа в манифесте приложения в Git-репозитории после успешной сборки и тестирования. ArgoCD затем подхватит это изменение.
 3.  **Проверка Обновленной Версии:** Подтвердите, что приложение обновлено и работает с новой версией (через UI, логи подов, доступ к приложению).
 
-### Пример Установки в Специфичном Окружении (на базе slurm.io)
+### Пример Установки в Специфичном Окружении (на базе example.com)
 
 Данный пример демонстрирует установку и настройку ArgoCD в учебном кластере Kubernetes.
 
-**Контекст:** Шаги выполняются на мастер-ноде кластера `sbox.slurm.io`.
+**Контекст:** Шаги выполняются на мастер-ноде кластера `sbox.example.com`.
 
 ```bash
-ssh sbox.slurm.io
+ssh sbox.example.com
 ssh master-1.<uma_nonb3oBaTena> # например, 5000001
 sudo -i
 ```
@@ -272,11 +272,11 @@ kubectl patch ds -n ingress-nginx nginx-ingress-controller --type='json' -p='[{"
 ```yaml
 # ingress.yml
 ...
-- host: argocd.__SLURM_USERNAME__.edu.slurm.io
+- host: argocd.__USERNAME__.edu.example.com
 ...
 ```
 
-Замените `__SLURM_USERNAME__` на ваше имя пользователя.
+Замените `__USERNAME__` на ваше имя пользователя.
 
 #### 3. Развертывание ArgoCD
 
@@ -293,7 +293,7 @@ kubectl apply -f . -n argocd # Применяются все манифесты 
 kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o name | cut -d/ -f2
 ```
 
-После этого можно перейти в UI по адресу `https://argocd.<ваше_имя_пользователя>.edu.slurm.io` и войти с логином `admin` и полученным паролем.
+После этого можно перейти в UI по адресу `https://argocd.<ваше_имя_пользователя>.edu.example.com` и войти с логином `admin` и полученным паролем.
 
 #### 5. Настройка Репозитория и Приложения
 
@@ -303,20 +303,20 @@ kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o name | cut
 
     ```bash
     # Генерация ключа
-    ssh-keygen -t ed25519 -f ~/.ssh/slurm.io_ed25519
+    ssh-keygen -t ed25519 -f ~/.ssh/example.com_ed25519
     
-    # Добавление публичного ключа в GitLab (https://gitlab.slurm.io/profile/keys)
-    cat ~/.ssh/slurm.io_ed25519.pub
+    # Добавление публичного ключа в GitLab (https://gitlab.example.com/profile/keys)
+    cat ~/.ssh/example.com_ed25519.pub
     ```
 
-*   **Добавление репозитория в ArgoCD:** В настройках ArgoCD (`Settings -> Repositories -> Connect repo using SSH`) укажите URL репозитория и вставьте содержимое **приватного** ключа (`cat ~/.ssh/slurm.io_ed25519`).
+*   **Добавление репозитория в ArgoCD:** В настройках ArgoCD (`Settings -> Repositories -> Connect repo using SSH`) укажите URL репозитория и вставьте содержимое **приватного** ключа (`cat ~/.ssh/example.com_ed25519`).
 
 *   **Создание Приложения (Application):**
     В UI ArgoCD нажмите "Create Application" и заполните поля:
     *   **Application Name**: `textserver` (пример)
     *   **Project**: `default`
     *   **Sync Policy**: `Automatic` (для автоматического применения изменений из Git)
-    *   **Repository URL**: `git@gitlab.slurm.io:s000297/argoapp` (пример)
+    *   **Repository URL**: `git@gitlab.example.com:s000297/argoapp` (пример)
     *   **Path**: `.` (путь к манифестам внутри репозитория)
     *   **Revision**: `HEAD` (отслеживать последнюю версию)
     *   **Destination Cluster URL**: `https://kubernetes.default.svc` (текущий кластер)
@@ -326,7 +326,7 @@ kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o name | cut
 
 После создания приложения ArgoCD синхронизирует его состояние с Git.
 
-*   Проверка работы: `curl argoapp.<ваше_имя_пользователя>.edu.slurm.io` должен вернуть `Hello from argo!`.
+*   Проверка работы: `curl argoapp.<ваше_имя_пользователя>.edu.example.com` должен вернуть `Hello from argo!`.
 
 *   **Внесение изменений:** Измените что-либо в манифестах в Git-репозитории (например, текст ответа в `values.yaml` для Helm-чарта) и сделайте `git push`.
 

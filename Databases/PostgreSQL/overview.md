@@ -36,4 +36,5 @@
 
 -   **Оптимизация:** **[Оптимизация производительности PostgreSQL](./Operations/performance_tuning.md)**.
 -   **Масштабирование:** **[Масштабирование PostgreSQL](./Concepts/scaling.md)**.
+-   **Интеграция с внешними данными (FDW):** **[Подключение к разнородным системам с помощью Foreign Data Wrappers](./Integrations/fdw.md)**.
 -   **Интеграция с OLAP:** **[Интеграция с ClickHouse](./Integrations/clickhouse.md)**.

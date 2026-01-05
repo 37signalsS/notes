@@ -216,7 +216,7 @@ container_scanning:
   image: darthvad1r/kube-helm-aws:1.0.0
   before_script:
     - helm plugin install https://github.com/databus23/helm-diff
-    - aws eks --region us-east-1 update-kubeconfig --name slurm-eks-cluster
+    - aws eks --region us-east-1 update-kubeconfig --name example-eks-cluster
     - kubectl version
   script:
     - |

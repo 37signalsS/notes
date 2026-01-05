@@ -127,7 +127,7 @@ groups:
 ```yaml
 # /etc/prometheus/rules.yml
 groups:
-- name: slurm-edu-example-node-exporter-rules
+- name: example-edu-example-node-exporter-rules
   rules:
   # Подсчет количества CPU на каждом узле.
   - record: instance:node_cpus:count

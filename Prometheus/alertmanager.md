@@ -123,8 +123,8 @@ route:
     cat <<EOF > /etc/alertmanager/alertmanager.yml
     global:
       smtp_smarthost: smtp.yandex.ru:465
-      smtp_from: '<user name>@edu-prom.slurm.io'
-      smtp_auth_username: '<user name>@edu-prom.slurm.io'
+      smtp_from: '<user name>@edu-prom.example.com'
+      smtp_auth_username: '<user name>@edu-prom.example.com'
       smtp_auth_password: '<Password>'
 
     route:

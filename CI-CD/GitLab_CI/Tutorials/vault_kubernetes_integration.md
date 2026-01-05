@@ -1,31 +1,42 @@
-# Практическое руководство: Интеграция GitLab CI с HashiCorp Vault в Kubernetes
+# Интеграция GitLab CI с HashiCorp Vault в Kubernetes
 
-## 1. Основные концепции
+## Определения
 
-Интеграция основана на механизме аутентификации **JWT (JSON Web Token)**.
-1.  Для каждой задачи GitLab CI генерирует уникальный, короткоживущий токен (`CI_JOB_JWT_V2_TOKEN`), содержащий атрибуты (claims) о проекте, ветке и т.д.
-2.  [**HashiCorp Vault**](../../Vault/overview.md) настраивается для доверия этим токенам.
-3.  На основе атрибутов токена Vault выдает временный собственный токен с привязанной политикой, которая разрешает доступ только к строго определенным секретам.
+-   **Аутентификация по JWT (JWT Auth Method)**: Метод аутентификации в [HashiCorp Vault](../../Vault/overview.md), который позволяет внешним системам, таким как GitLab, проходить аутентификацию с помощью стандарта JSON Web Token (JWT).
+-   **OpenID Connect (OIDC)**: Открытый стандарт на базе OAuth 2.0, который предоставляет сервисам возможность верифицировать личность пользователя на основе аутентификации, выполненной на доверенном сервере авторизации. GitLab может выступать в роли OIDC-провайдера.
+-   **`CI_JOB_JWT_V2_TOKEN`**: Предопределенная переменная в GitLab CI, которая содержит короткоживущий, OIDC-совместимый JWT-токен. Этот токен уникален для каждой CI/CD-задачи и содержит набор "заявлений" (`claims`), описывающих контекст выполнения (ID проекта, имя ветки, тип ссылки и т.д.).
 
----
+## Основные концепции
 
-## 2. Часть 1: Развертывание Vault в Kubernetes
+Интеграция GitLab CI с Vault для безопасного получения секретов основана на доверительных отношениях, построенных с помощью стандарта OIDC. Процесс выглядит следующим образом:
 
-Мы развернем Vault в [**кластере Kubernetes**](../../Kubernetes/kubernetes_overview.md) с помощью [**Helm**](../../Kubernetes/ToolsUtilities/helm_overview.md) и [**Operator**](../../Kubernetes/Concepts/kubernetes_operators.md).
+1.  **Генерация токена**: Для каждой запущенной CI/CD-задачи GitLab генерирует уникальный JWT-токен и помещает его в переменную `CI_JOB_JWT_V2_TOKEN`.
+2.  **Аутентификация в Vault**: CI-задача отправляет этот токен в Vault, используя метод аутентификации JWT.
+3.  **Валидация токена**: Vault получает токен и выполняет проверку его подлинности. Для этого он обращается по публичному адресу (`JWKS URL`) GitLab, чтобы получить ключ, которым был подписан токен.
+4.  **Проверка привязок (Claims)**: После подтверждения подлинности Vault анализирует "заявления" (`claims`) внутри токена. В Vault заранее настраиваются **роли**, которые связывают определенный набор `claims` с **политиками доступа**.
+5.  **Выдача токена Vault**: Если `claims` из JWT соответствуют условиям, заданным в роли (например, `project_id`, `ref_type: branch`, `ref: main`), Vault генерирует и возвращает CI-задаче новый, короткоживущий **токен Vault**.
+6.  **Получение секрета**: CI-задача использует полученный токен Vault для выполнения запросов к секретам. Политики, привязанные к роли, строго ограничивают, какие именно секреты может читать или изменять данная задача.
 
-### 2.1. Развертывание оператора и Vault
+Этот механизм позволяет избежать хранения долгоживущих токенов или паролей в переменных CI/CD, реализуя принцип динамического и безопасного доступа к секретам.
 
-1.  **Добавьте Helm-репозиторий Banzai Cloud:**
+## Практические сценарии
+
+### Настройка интеграции GitLab CI и Vault в Kubernetes
+
+Это руководство описывает полный цикл настройки: от развертывания Vault в [кластере Kubernetes](../../Kubernetes/kubernetes_overview.md) до получения секрета в пайплайне GitLab CI.
+
+#### Шаг 1: Развертывание Vault в Kubernetes
+
+Мы развернем Vault с помощью [**Helm**](../../Kubernetes/ToolsUtilities/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
+
+1.  **Добавьте Helm-репозиторий и установите оператор:**
     ```bash
     helm repo add banzai-charts https://kubernetes-charts.banzaicloud.com
     helm repo update
-    ```
-2.  **Установите Vault Operator:**
-    Это создаст оператор в отдельном [namespace](../../Kubernetes/Base/namespace.md) `vault`.
-    ```bash
     helm install vault-operator banzai-charts/vault-operator --create-namespace --namespace vault
     ```
-3.  **Создайте манифест для экземпляра Vault:**
+
+2.  **Создайте и примените манифест для экземпляра Vault:**
     Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../Kubernetes/Networking/ingress.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
 
     ```yaml
@@ -34,16 +45,14 @@
     kind: Vault
     metadata:
       name: vault
-    spec:
+spec:
       size: 1
       image: vault:1.10.3 # Рекомендуется использовать актуальную версию
       bankVaultsConfig:
         externalConfig:
           policies:
-            # Для простоты примера создаем политику с полным доступом.
-            # В реальных проектах используйте более строгие политики.
             - name: allow_all
-              rules: path "*" { policy = "write" }
+              rules: path "*" { policy = "write" } # Демо-политика. В production используйте строгие политики.
           auth:
             - type: kubernetes
               roles:
@@ -61,42 +70,44 @@
             - host: vault.your-domain.com # <-- ЗАМЕНИТЬ НА ВАШ ДОМЕН
               paths: [/]
     ```
-4.  **Примените манифест:**
     ```bash
     kubectl apply -f vault-instance.yaml -n vault
     ```
-    Дождитесь, пока под `vault-0` перейдет в состояние `Running`.
 
-### 2.2. Получение доступа к Vault
+3.  **Получите Root Token и войдите в Vault:**
+    Этот токен нужен для первоначальной настройки.
+    ```bash
+    # Получаем токен
+    VAULT_ROOT_TOKEN=$(kubectl get secret vault-unseal-keys -n vault -o jsonpath='{.data.vault-root}' | base64 --decode)
+    echo "Vault Root Token: $VAULT_ROOT_TOKEN"
 
-1.  **Получите Root Token:**
-    Этот токен нужен для первоначальной настройки. Извлекается он из [секрета Kubernetes](../../Kubernetes/Base/secret.md).
-    ```bash
-    kubectl get secret vault-unseal-keys -n vault -o jsonpath='{.data.vault-root}' | base64 --decode
-    ```
-    **Надежно сохраните этот токен!**
-2.  **Войдите в UI и CLI:**
-    *   **UI:** Откройте в браузере `http://vault.your-domain.com` и войдите, используя полученный root-токен.
-    *   **CLI:** Для удобства дальнейшей настройки подключитесь к поду Vault.
-    ```bash
+    # Подключаемся к поду для выполнения команд
     kubectl exec -n vault -it vault-0 -- /bin/sh
+
     # Внутри пода:
     export VAULT_ADDR=http://127.0.0.1:8200
-    vault login <YOUR_VAULT_ROOT_TOKEN> # Используйте ваш root токен
-    vault status # Проверьте статус
+    vault login $VAULT_ROOT_TOKEN
+    vault status
     ```
 
----
+#### Шаг 2: Настройка JWT-аутентификации для GitLab
 
-## 3. Часть 2: Настройка JWT-аутентификации для GitLab
-
-Настроим Vault так, чтобы он доверял токенам, которые генерирует GitLab.
+Настроим Vault так, чтобы он доверял токенам от GitLab.
 
 1.  **Включите метод JWT-аутентификации:**
     ```sh
     vault auth enable jwt
     ```
-2.  **Создайте политики доступа:**
+
+2.  **Настройте конечную точку JWT:**
+    Укажите Vault, как проверять подлинность JWT-токенов от вашего GitLab.
+    ```sh
+    # Для gitlab.com
+    vault write auth/jwt/config jwks_url="https://gitlab.com/-/jwks" bound_issuer="gitlab.com"
+    # Для self-hosted GitLab замените gitlab.com на адрес вашего инстанса
+    ```
+
+3.  **Создайте политики доступа:**
     Политики определяют, к каким путям в Vault будет доступ.
     ```sh
     # Политика для staging (только чтение)
@@ -113,9 +124,10 @@
     }
     EOF
     ```
-3.  **Создайте роли:**
-    Роль связывает JWT-токен от GitLab с политикой в Vault на основе атрибутов (`claims`) токена.
-    *   Найдите **Project ID** вашего GitLab проекта (на главной странице проекта).
+
+4.  **Создайте роли:**
+    Роль связывает JWT-токен от GitLab с политикой в Vault на основе `claims`.
+    *Найдите **Project ID** вашего GitLab проекта (на главной странице проекта).*
 
     ```sh
     # Роль для любых веток, начинающихся со "staging/"
@@ -135,41 +147,27 @@
         user_claim="user_email" \
         ttl="5m"
     ```
-    *`bound_claims`* — ключевое поле, которое гарантирует, что только задачи из определенного проекта и ветки получат доступ.
 
-4.  **Настройте конечную точку JWT:**
-    Укажите Vault, как проверять подлинность JWT-токенов от вашего GitLab.
-    ```sh
-    # Для gitlab.com
-    vault write auth/jwt/config jwks_url="https://gitlab.com/-/jwks" bound_issuer="gitlab.com"
-    # Для self-hosted GitLab замените gitlab.com на адрес вашего инстанса
-    ```
-5.  **Загрузите и проверьте секреты:**
+5.  **Загрузите тестовые секреты:**
     ```sh
     vault kv put secret/my-project/staging db_password="staging_password_123"
     vault kv put secret/my-project/production db_password="!production_secret_@#$"
-
-    # Проверка
-    vault kv get -field=db_password secret/my-project/production
     ```
 
----
-
-## 4. Часть 3: Настройка `.gitlab-ci.yml`
+#### Шаг 3: Настройка `.gitlab-ci.yml` для получения секретов
 
 ```yaml
 stages:
   - get-secrets
 
-# Этот job будет выполняться только для защищенной ветки 'main'
+# Эта задача будет выполняться только для защищенной ветки 'main'
 get-production-secrets:
   stage: get-secrets
   image: vault:latest # Используем официальный образ Vault с CLI
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_COMMIT_BRANCH_PROTECTED == "true"'
   script:
-    - echo "Branch: $CI_COMMIT_BRANCH, Protected: $CI_COMMIT_BRANCH_PROTECTED"
-    - echo "Fetching secrets for production..."
+    - echo "Fetching secrets for production from branch: $CI_COMMIT_BRANCH..."
     
     # Указываем адрес нашего Vault
     - export VAULT_ADDR="http://vault.your-domain.com"
@@ -185,18 +183,17 @@ get-production-secrets:
     
     # Демонстрация того, что секрет получен
     - echo "Successfully fetched production password."
-    - echo "The password is: $PROD_PASSWORD" # В реальных пайплайнах так делать не стоит!
+    # - echo "The password is: $PROD_PASSWORD" # В реальных пайплайнах так делать не стоит!
 
     # Попытка прочитать секрет, к которому нет доступа (завершится ошибкой)
     - echo "Trying to fetch staging password (should fail)..."
     - vault kv get -field=db_password secret/my-project/staging || echo "Permission denied, as expected."
-
 ```
-
-### Пояснения к пайплайну:
--   **`image: vault:latest`**: Используется готовый образ, содержащий CLI для Vault.
--   **`CI_JOB_JWT_V2_TOKEN`**: Специальная переменная GitLab, содержащая OIDC-совместимый JWT-токен, который идентифицирует текущую задачу.
--   **`vault login -method=jwt ...`**: Команда для безопасной аутентификации. Vault проверит токен, найдет подходящую роль (`my-project-production`) и выдаст временный токен Vault с привязанными к ней политиками.
--   **`vault kv get ...`**: Команда для чтения секрета. Она будет успешной только в том случае, если политика разрешает доступ к этому пути.
-
 После запуска этого пайплайна на ветке `main` в логах вы увидите, что пароль для `production` был успешно получен, а попытка получить пароль для `staging` завершилась ошибкой **permission denied**, что подтверждает корректную работу модели безопасности.
+
+## Дополнительная информация
+
+-   **Безопасность `bound_claims`**: Поле `bound_claims` является ключевым для безопасности. Всегда указывайте как минимум `project_id`, чтобы гарантировать, что токен не будет использован из другого проекта. Дополнительные `claims` (`ref`, `ref_type`, `ref_protected`) усиливают гранулярность доступа.
+-   **Аудит с `user_claim`**: Поле `user_claim="user_email"` указывает Vault использовать email пользователя, инициировавшего пайплайн, в качестве идентификатора для логов аудита. Это упрощает отслеживание, кто именно получил доступ к секрету.
+-   **Helm-чарты Vault**: В данном руководстве используется оператор от Banzai Cloud. Существует также официальный Helm-чарт от HashiCorp (`hashicorp/vault`), который является более предпочтительным для новых установок, так как поддерживается непосредственно разработчиками Vault.
+-   **Self-Hosted GitLab**: При использовании собственного экземпляра GitLab не забудьте заменить `https://gitlab.com` на ваш домен в параметре `jwks_url` и `bound_issuer` при настройке JWT-аутентификации.

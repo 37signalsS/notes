@@ -244,7 +244,7 @@ modules:
 
 Простейший экспортер, который инкрементирует счетчик каждые 2 секунды.
 
-1.  **Код (`slurm_exporter.go`):**
+1.  **Код (`example_exporter.go`):**
     ```go
     package main
 
@@ -269,7 +269,7 @@ modules:
 
     var (
             opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
-                    Name: "slurm_example_exporter_processed_ops_total",
+                    Name: "example_exporter_processed_ops_total",
                     Help: "The total number of processed events",
             })
     )
@@ -289,7 +289,7 @@ modules:
     export GO111MODULE=auto
     go get -d -u -v github.com/prometheus/client_golang/prometheus
     go get -d -u -v github.com/Sirupsen/logrus
-    go run slurm_exporter.go
+    go run example_exporter.go
     ```
 
 3.  **Проверка:**

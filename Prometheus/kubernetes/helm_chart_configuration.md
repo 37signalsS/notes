@@ -183,7 +183,7 @@ ConfigMapReload — это вспомогательный компонент, к
     *   `hosts`: Необходимо указать DNS-имя для доступа.
         ```yaml
         hosts:
-          - prometheus.S4999.edu.slurm.io # Пример DNS-имени, используемого в стендах пользователя
+          - prometheus.S4999.edu.example.com # Пример DNS-имени, используемого в стендах пользователя
         ```
     *   `annotations`: Можно использовать для автоматического получения TLS-сертификатов от `cert-manager` (например, `cert-manager.io/cluster-issuer: "letsencrypt-prod"`).
 

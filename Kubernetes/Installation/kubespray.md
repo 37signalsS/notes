@@ -58,30 +58,30 @@
     **Пример `inventory.ini`:**
     ```ini
     [all]
-    master-1.s000006.slurm.io ansible_host=172.22.193.2 ip=172.22.193.2 ansible_ssh_user=root etcd_member_name=etcd1
-    master-2.s000006.slurm.io ansible_host=172.22.193.3 ip=172.22.193.3 ansible_ssh_user=root etcd_member_name=etcd2
-    master-3.s000006.slurm.io ansible_host=172.22.193.4 ip=172.22.193.4 ansible_ssh_user=root etcd_member_name=etcd3
-    ingress-1.s000006.slurm.io ansible_host=172.22.193.5 ip=172.22.193.5 ansible_ssh_user=root
-    node-1.s000006.slurm.io ansible_host=172.22.193.6 ip=172.22.193.6 ansible_ssh_user=root
-    node-2.s000006.slurm.io ansible_host=172.22.193.7 ip=172.22.193.7 ansible_ssh_user=root
+    master-1.s000006.example.com ansible_host=172.22.193.2 ip=172.22.193.2 ansible_ssh_user=root etcd_member_name=etcd1
+    master-2.s000006.example.com ansible_host=172.22.193.3 ip=172.22.193.3 ansible_ssh_user=root etcd_member_name=etcd2
+    master-3.s000006.example.com ansible_host=172.22.193.4 ip=172.22.193.4 ansible_ssh_user=root etcd_member_name=etcd3
+    ingress-1.s000006.example.com ansible_host=172.22.193.5 ip=172.22.193.5 ansible_ssh_user=root
+    node-1.s000006.example.com ansible_host=172.22.193.6 ip=172.22.193.6 ansible_ssh_user=root
+    node-2.s000006.example.com ansible_host=172.22.193.7 ip=172.22.193.7 ansible_ssh_user=root
 
     [kube_control_plane]
-    master-1.s000006.slurm.io
-    master-2.s000006.slurm.io
-    master-3.s000006.slurm.io
+    master-1.s000006.example.com
+    master-2.s000006.example.com
+    master-3.s000006.example.com
 
     [etcd]
-    master-1.s000006.slurm.io
-    master-2.s000006.slurm.io
-    master-3.s000006.slurm.io
+    master-1.s000006.example.com
+    master-2.s000006.example.com
+    master-3.s000006.example.com
 
     [kube_node]
-    node-1.s000006.slurm.io
-    node-2.s000006.slurm.io
-    ingress-1.s000006.slurm.io
+    node-1.s000006.example.com
+    node-2.s000006.example.com
+    ingress-1.s000006.example.com
 
     [kube_ingress]
-    ingress-1.s000006.slurm.io
+    ingress-1.s000006.example.com
 
     [k8s-cluster:children]
     kube_control_plane

@@ -35,7 +35,7 @@ DNS-компоненты в кластере Kubernetes обычно включ�
 Пример вывода `kubectl get all -n kube-system | grep dns`:
 
 ```bash
-[root@master-1.slurm.io /]# kubectl get all -n kube-system | grep dns
+[root@master-1.example.com /]# kubectl get all -n kube-system | grep dns
 pod/coredns-56bc6b976d-drgzm                  1/1     Running   0          95d
 pod/coredns-56bc6b976d-r7ldl                  1/1     Running   0          95d
 pod/dns-autoscaler-56c969bdb8-j4bwk           1/1     Running   1          95d
@@ -76,14 +76,14 @@ replicaset.apps/dns-autoscaler-56c969bdb8  1         1         1       95d
 ```conf
 [root@centos-test /]# cat /etc/resolv.conf
 nameserver 169.254.25.10
-search default.svc.slurm.io svc.slurm.io slurm.io
+search default.svc.example.com svc.example.com example.com
 options ndots:5
 ```
 
 Основные параметры:
 
 *   `nameserver 169.254.25.10`: Указывает на IP-адрес NodeLocalDNS (или CoreDNS, если NodeLocalDNS не используется). Все DNS-запросы из пода сначала идут сюда.
-*   `search default.svc.slurm.io svc.slurm.io slurm.io`: Список доменов поиска. Если запрос не является полным доменным именем, к нему последовательно добавляются эти домены. Это позволяет обращаться к сервисам внутри кластера по их коротким именам.
+*   `search default.svc.example.com svc.example.com example.com`: Список доменов поиска. Если запрос не является полным доменным именем, к нему последовательно добавляются эти домены. Это позволяет обращаться к сервисам внутри кластера по их коротким именам.
 *   `options ndots:5`: Определяет, сколько точек должно быть в имени, чтобы оно считалось полным доменным именем. Если точек меньше `ndots`, имя считается внутренним и к нему применяются домены поиска.
 
 ## Practical Scenarios
@@ -108,9 +108,9 @@ Address:   77.88.55.77
 
 [root@centos-test /]# tcpdump -n -p -i eth0 port 53
 ...
-12:37:41.915647 IP 10.109.1.22.56099 > 169.254.25.10.domain: 8959+ A? yandex.ru.default.svc.slurm.io. (53)
-12:37:41.917544 IP 10.109.1.22.54469 > 169.254.25.10.domain: 62110+ A? yandex.ru.svc.slurm.io. (45)
-12:37:41.918421 IP 10.109.1.22.54469 > 169.254.25.10.domain: 62110+ A? yandex.ru.slurm.io. (45)
+12:37:41.915647 IP 10.109.1.22.56099 > 169.254.25.10.domain: 8959+ A? yandex.ru.default.svc.example.com. (53)
+12:37:41.917544 IP 10.109.1.22.54469 > 169.254.25.10.domain: 62110+ A? yandex.ru.svc.example.com. (45)
+12:37:41.918421 IP 10.109.1.22.54469 > 169.254.25.10.domain: 62110+ A? yandex.ru.example.com. (45)
 12:37:41.919596 IP 10.109.1.22.59504 > 169.254.25.10.domain: 17670+ A? yandex.ru. (27)
 ...
 ```
@@ -168,8 +168,8 @@ data:
 Пример из `/etc/kubernetes/kubelet.env`:
 
 ```bash
-[root@master-1.slurm.io /]# cat /etc/kubernetes/kubelet.env | grep dns
---cluster-dns=169.254.25.10 --cluster-domain=slurm.io
+[root@master-1.example.com /]# cat /etc/kubernetes/kubelet.env | grep dns
+--cluster-dns=169.254.25.10 --cluster-domain=example.com
 ```
 
-Здесь `cluster-dns=169.254.25.10` указывает на NodeLocalDNS, а `cluster-domain=slurm.io` определяет домен кластера.
+Здесь `cluster-dns=169.254.25.10` указывает на NodeLocalDNS, а `cluster-domain=example.com` определяет домен кластера.
