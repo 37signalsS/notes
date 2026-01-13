@@ -73,3 +73,24 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
 *   `--become`: Указывает на необходимость повышения привилегий (`sudo`) для выполнения задач на удаленном хосте.
 *   `--ask-pass` (`-k`): Запрашивает пароль для SSH-подключения.
 *   `--ask-become-pass` (`-K`): Запрашивает пароль для повышения привилегий (`sudo`).
+
+### Интеграция с Vagrant: указание inventory
+
+При использовании Ansible в качестве provisioner'а для Vagrant могут возникать проблемы с обнаружением хостов, если инвентарь определен в отдельном файле.
+
+*   **Проблема**: Vagrant по умолчанию создает временный inventory-файл только для создаваемых им машин и не знает о группах, определенных в вашем статическом файле `inventory.ini`. Это приводит к предупреждениям `[WARNING]: Could not match supplied host pattern...` и ошибкам `skipping: no hosts matched`.
+*   **Решение**: Чтобы Vagrant использовал ваш кастомный inventory-файл, необходимо явно указать путь к нему в `Vagrantfile` внутри блока конфигурации Ansible.
+
+    **Пример в `Vagrantfile`:**
+    ```ruby
+    Vagrant.configure("2") do |config|
+      # ...
+      config.vm.provision "ansible" do |ansible|
+        ansible.playbook = "playbook.yml"
+        # Явно указываем путь к файлу инвентаря
+        ansible.inventory_path = "path/to/your/inventory.ini"
+      end
+      # ...
+    end
+    ```
+    Это заставит Ansible использовать правильный инвентарь, и он сможет находить хосты и группы, определенные в нем.
