@@ -63,38 +63,114 @@ sudo hostnamectl set-hostname <имя-узла>
 ```
 > **NOTE:** Для продуктивных сред рекомендуется использовать внутренний DNS-сервер вместо ручного редактирования `/etc/hosts`.
 
-#### Отключение Swap
+#### Предварительная проверка и настройка системы
 
-Kubernetes требует, чтобы swap был отключен для стабильной работы.
+Эти шаги выполняются на **каждом** сервере будущего кластера.
+
+##### 1. Проверка текущего состояния (на ВСЕХ серверах):
+
+Текущее ядро
 ```bash
-# Отключаем swap немедленно
+uname -r
+```
+
+Доступные ядра
+```bash
+ls /boot/vmlinuz-*
+```
+
+Cgroups версия
+```bash
+stat -fc %T /sys/fs/cgroup
+```
+
+Активный SWAP
+```bash
+swapon --show
+```
+
+Загруженные сетевые модули
+```bash
+lsmod | grep -E "br_netfilter|overlay"
+```
+
+Текущие контейнеры
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+##### 2. Обновление системы (по одному серверу):
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+Проверка доступных ядер после обновления
+```bash
+ls /boot/vmlinuz-*  # Должно быть новое ядро (в моем случае это 6.8.0-90)
+```
+**ВАЖНО: НЕ перезагружаем пока! Сначала выполним все настройки.**
+
+##### 3. Настройка системных параметров:
+
+1. Отключаем SWAP
+```bash
 sudo swapoff -a
-# Убираем swap из fstab, чтобы он не включился после перезагрузки
 sudo sed -i '/ swap / s/^/#/' /etc/fstab
+echo "SWAP отключен: $(swapon --show | wc -l) активных"
 ```
 
-#### Настройка модулей ядра и sysctl
-
-Эти параметры необходимы для корректной работы сети в Kubernetes.
+2. Настраиваем cgroups v2 в GRUB
 ```bash
-# Включаем модуль br_netfilter для корректной работы сетевых мостов
-sudo modprobe br_netfilter
-
-# Добавляем его в автозагрузку
-cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
-br_netfilter
-EOF
-
-# Настраиваем параметры sysctl для сети
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
-net.ipv4.ip_forward                 = 1
-EOF
-
-# Применяем параметры без перезагрузки
-sudo sysctl --system
+sudo sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"/' /etc/default/grub
+sudo update-grub
+echo "GRUB обновлён: $(grep GRUB_CMDLINE_LINUX /etc/default/grub)"
 ```
+
+3. Загружаем сетевые модули
+```bash
+sudo modprobe br_netfilter
+sudo modprobe overlay
+echo -e "br_netfilter\noverlay" | sudo tee /etc/modules-load.d/k8s.conf
+echo "Модули загружены:"
+lsmod | grep -E "br_netfilter|overlay"
+```
+
+4. Настраиваем sysctl параметры
+```bash
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes.conf
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.netfilter.nf_conntrack_max = 262144
+EOF
+
+sudo sysctl --system
+echo "Проверка параметров:"
+sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables
+```
+
+##### 4. Быстрая проверка готовности
+После выполнения всех команд на каждом сервере у вас будет:
+
+1. Система готова к работе с Kubernetes:
+SWAP полностью отключен (swapon --show = 0 активных)
+Cgroups v2 активирован (stat -fc %T /sys/fs/cgroup = cgroup2fs)
+GRUB настроен с параметром systemd.unified_cgroup_hierarchy=1
+Сетевые модули загружены (br_netfilter, overlay)
+Sysctl параметры установлены (ip_forward=1, bridge-nf-call-iptables=1)
+
+2. Все проверки пройдены:
+```bash
+echo "1. SWAP: $(swapon --show | wc -l) активных (должно быть 0)"
+echo "2. Cgroups: $(stat -fc %T /sys/fs/cgroup) (должно быть cgroup2fs)"
+echo "3. Сеть: ip_forward=$(sysctl -n net.ipv4.ip_forward) (должно быть 1)"
+echo "4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(lsmod | grep -c overlay)"
+```
+
+##### 5. Что НЕ сделано (и не должно быть сделано сейчас):
+* Перезагрузка (выполним позже, после всех настроек)
+* Установка Kubernetes компонентов (это следующий этап)
+* Изменение работы существующих контейнеров (они работают как и раньше)
 
 ### 3. Установка компонентов (на всех узлах)
 
