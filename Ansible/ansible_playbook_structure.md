@@ -157,7 +157,7 @@ tasks:
     notify: Restart Nginx # Отправка уведомления
 
 handlers:
-  - name: Restart Nginx
+  - name: Restart Nginx # Только при получении это уведомления выполняеться следующее
     ansible.builtin.service:
       name: nginx
       state: restarted

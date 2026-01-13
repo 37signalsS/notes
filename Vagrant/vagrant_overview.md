@@ -144,9 +144,13 @@ Vagrant позволяет гибко настраивать виртуальн�
 
 | Параметр | Пример | Описание |
 | --- | --- | --- |
-| `libvirt.storage :file, size: '20G'` | — | Дополнительный диск на 20GB |
-| `libvirt.disk_bus` | `'virtio'` | Тип контроллера диска |
-| `libvirt.storage_pool_name` | `"default"` | Пул хранения для дисков VM |
+| `libvirt.storage_pool_name` | `"default"` | Указывает пул хранения libvirt, в котором будут создаваться диски ВМ. Убедитесь, что этот пул существует и активен на вашем хосте. |
+| `libvirt.volume_size` | `"10G"` | Определяет размер основного (корневого) диска виртуальной машины. Этого может быть достаточно для базовой системы и небольших приложений, но для баз данных или приложений с большим количеством данных этого может не хватить. |
+| `libvirt.volume_name` | `"machine#{machine_id}-root.qcow2"` | Задает имя основного диска ВМ. Используйте динамическую генерацию имен (например, с `#{machine_id}`) для предотвращения конфликтов. |
+| `libvirt.storage :file, size: '20G'` | — | Добавляет **дополнительный** диск размером 20GB к виртуальной машине. Этот параметр не управляет размером основного диска гостевой ОС. |
+| `libvirt.disk_bus` | `'virtio'` | Тип контроллера диска (для основных и дополнительных дисков). |
+
+**Примечание:** Для корректной работы с дисками в Libvirt, необходимо убедиться, что указанный `libvirt.storage_pool_name` существует и активен на хост-системе. Имена дисков формируются стандартным образом, учитывающим имя проекта и определение машины в Vagrantfile.
 
 ### Пользователь и SSH-доступ
 
@@ -207,6 +211,13 @@ Vagrant.configure("2") do |config|
 end
 ```
 
+**Примечание:** Для использования `libvirt` в качестве провайдера необходимо установить плагин `vagrant-libvirt`. Если плагин отсутствует, Vagrant не сможет найти провайдера и выдаст ошибку.
+
+```bash
+# Установка плагина vagrant-libvirt
+vagrant plugin install vagrant-libvirt
+```
+
 ### Смена провайдера
 
 Чтобы сменить провайдера для существующего проекта (например, с VirtualBox на libvirt), необходимо **удалить директорию `.vagrant`** в каталоге с `Vagrantfile`. После этого команда `vagrant up` будет использовать нового провайдера, указанного в конфигурации.
@@ -251,34 +262,55 @@ Provisioning позволяет автоматически устанавлив�
 
 ## Продвинутые сценарии
 
-### Управление несколькими машинами
+### Управление несколькими машинами (Libvirt и Ansible)
 
-`Vagrantfile` позволяет описывать и управлять группой машин из одного файла.
+`Vagrantfile` позволяет описывать и управлять группой машин из одного файла, используя циклы для динамической конфигурации. Этот пример демонстрирует создание нескольких машин с Libvirt, настройку сети, дисков и условное применение различных плейбуков Ansible.
 
 ```ruby
-# Описание узлов в виде массива хэшей
-nodes = [
-    { hostname: 'node1', ip: '192.168.56.11', box: "ubuntu/jammy64", version: "20240912.0.0" },
-    { hostname: 'node2', ip: '192.168.56.12', box: "ubuntu/jammy64", version: "20240912.0.0" }
-]
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-    nodes.each do |node|
-        config.vm.define node[:hostname] do |node_config|
-            node_config.vm.box = node[:box]
-            node_config.vm.box_version = node[:version]
-            node_config.vm.hostname = node[:hostname]
-            node_config.vm.network :private_network, ip: node[:ip]
-            
-            node_config.vm.provider :virtualbox do |vb|
-                vb.memory = 1024
-                vb.cpus = 1
-            end
-            
-            # Пример inline-скрипта
-            node_config.vm.provision "shell", inline: "apt-get update && apt-get install -y tree"
-        end
+  config.vm.box = "jtarpley/ubuntu2404_base"
+  config.vm.guest = :ubuntu # Явно указываем гостевую ОС
+
+  # Задаем количество создаваемых машин
+  N = 3
+
+  (1..N).each do |machine_id|
+    config.vm.define "machine#{machine_id}" do |machine|
+      machine.vm.hostname = "machine#{machine_id}"
+      machine.vm.box_check_update = false
+      machine.vm.network "private_network", ip: "192.168.77.#{10+machine_id}"
+
+      # Конфигурация провайдера Libvirt
+      machine.vm.provider "libvirt" do |libvirt|
+        libvirt.memory = 2144
+        libvirt.cpus = 2
+        libvirt.nic_model_type = "virtio"
+        libvirt.random_hostname = false
+
+        libvirt.storage_pool_name = "default"
+        libvirt.volume_size = "10G"
+        libvirt.volume_name = "machine#{machine_id}-root.qcow2"
+      end
+
+      # Условное применение плейбуков Ansible
+      if machine_id == 1
+         # Для первой машины применяем особый плейбук
+         machine.vm.provision :ansible do |ansible|
+           ansible.playbook = "nginx-lab/ansible/playbook_machine1.yml"
+           ansible.limit = "machine1" 
+         end
+      else
+         # Для остальных машин применяем стандартный плейбук
+         machine.vm.provision :ansible do |ansible|
+           ansible.playbook = "nginx-lab/ansible/playbook.yml"
+           ansible.limit = "machine#{machine_id}" 
+         end
+      end
     end
+  end
 end
 ```
 
@@ -396,6 +428,9 @@ end
       ```
 
   3.  **Повторить запуск:**
+
+- **Именование ВМ в Libvirt:**
+  Имя домена виртуальной машины в Libvirt формируется из имени каталога проекта (где лежит `Vagrantfile`) и имени, заданного в `config.vm.define`. Например, для проекта "dev" и машин "machine1", "machine2", "machine3" полные имена доменов и дисков будут `dev_machine1`, `dev_machine2` и `dev_machine3`. Это стандартное поведение Vagrant, и имя домена напрямую влияет на имя диска. Даже после `vagrant destroy -f` и `vagrant up` имена дисков останутся прежними.
 
 - **Остановка и именование ВМ:**
 
