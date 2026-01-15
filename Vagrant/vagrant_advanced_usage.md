@@ -30,6 +30,10 @@ Vagrant.configure("2") do |config|
       machine.vm.provider "libvirt" do |libvirt|
         libvirt.memory = 2048
         libvirt.cpus = 2
+        libvirt.random_hostname = false
+
+        libvirt.storage_pool_name = "default"
+        libvirt.machine_virtual_size = 10
       end
 
       # Условное применение плейбуков Ansible

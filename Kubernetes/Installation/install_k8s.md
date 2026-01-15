@@ -6,6 +6,7 @@
 *   **kubeadm** — официальный инструмент от Kubernetes для быстрой инициализации (bootstrapping) кластеров. Он автоматизирует создание control-plane, управление токенами присоединения и другие базовые задачи, но не управляет подготовкой серверов.
 *   **containerd** — стандартизированная среда выполнения контейнеров. Это легковесный и эффективный runtime, который управляет жизненным циклом контейнеров на узлах кластера. Является заменой Docker Engine (dockershim), поддержка которого удалена из Kubernetes.
 *   **Отказоустойчивый кластер (High-Availability, HA)** — конфигурация кластера, в которой критически важные компоненты (в данном случае, Control Plane) дублируются на нескольких серверах для предотвращения единой точки отказа.
+*   **CRI (Container Runtime Interface)** — это плагин, позволяющий `kubelet` (главному агенту Kubernetes на узле) взаимодействовать с различными средами выполнения контейнеров, такими как `containerd`.
 
 ---
 
@@ -174,17 +175,101 @@ echo "4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(l
 
 ### 3. Установка компонентов (на всех узлах)
 
-#### Установка среды выполнения `containerd`
+#### Установка и настройка среды выполнения `containerd`
+
+**Цель:** Установить `containerd` и настроить его как CRI (Container Runtime Interface) для Kubernetes, обеспечив корректную работу с `systemd` и сохранив совместимость с существующими Docker-контейнерами, если они есть.
+
+**Шаг 3.1: Установка `containerd`**
 ```bash
+# Обновляем список пакетов и устанавливаем containerd
+sudo apt-get update
 sudo apt-get install -y containerd
+
+# Проверяем успешность установки
+echo "Установленная версия containerd:"
+containerd --version
+```
+
+**Шаг 3.2: Конфигурация `containerd` для Kubernetes**
+```bash
+# Создаём директорию для конфигурации, если её нет
 sudo mkdir -p /etc/containerd
+
+# Генерируем конфигурацию по умолчанию.
+# Перед этим создаем бэкап, если файл уже существует.
+if [ -f /etc/containerd/config.toml ]; then
+    sudo cp /etc/containerd/config.toml /etc/containerd/config.toml.backup.$(date +%Y%m%d_%H%M)
+fi
 sudo containerd config default | sudo tee /etc/containerd/config.toml
 
-# Включаем опцию SystemdCgroup, чтобы kubelet и containerd работали с одним cgroup-драйвером
+# Включаем драйвер Systemd Cgroup для корректной интеграции с kubelet.
+# Это критически важный шаг для управления ресурсами подов.
 sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+# Устанавливаем официальный pause-образ от Kubernetes.
+# Он используется для создания сетевого пространства имен для каждого пода.
+sudo sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.k8s.io/pause:3.9"|' /etc/containerd/config.toml
+
+# Проверяем, что ключевые изменения применились
+echo "Проверка настроек containerd:"
+sudo grep -E "SystemdCgroup|sandbox_image" /etc/containerd/config.toml
+```
+
+**Шаг 3.3: Перезапуск сервиса и проверка**
+```bash
+# Перезапускаем containerd для применения новой конфигурации
 sudo systemctl restart containerd
 sudo systemctl enable containerd
+
+# Проверяем, что сервис активен и CRI-сокет доступен
+echo "Статус containerd: $(systemctl is-active containerd)"
+if [ -S /run/containerd/containerd.sock ]; then
+    echo "CRI-сокет /run/containerd/containerd.sock доступен."
+else
+    echo "CRI-сокет /run/containerd/containerd.sock не найден."
+fi
 ```
+
+**Шаг 3.4: Проверка готовности Containerd**
+
+После настройки и перезапуска `containerd` необходимо убедиться в его корректной работе и доступности CRI-сокета для Kubernetes.
+
+```bash
+# Проверка CRI-сокета: убеждаемся, что файл сокета существует и является сокетом
+ls -la /run/containerd/containerd.sock
+test -S /run/containerd/containerd.sock && echo "CRI socket: OK" || echo "CRI socket: MISSING"
+
+# Проверка доступности API containerd через утилиту 'ctr'
+ctr version >/dev/null 2>&1 && echo "Containerd API: OK" || echo "Containerd API: FAILED"
+
+# Проверка применённых настроек, особенно параметра SystemdCgroup
+echo "Applied configuration:"
+containerd config dump | grep -A1 "SystemdCgroup"
+
+# Предварительная проверка pause-образа (опционально):
+# Попытка загрузить pause-образ, если он еще не кэширован.
+# kubelet автоматически загрузит его при необходимости.
+echo "Pause image availability:"
+ctr --namespace k8s.io images pull registry.k8s.io/pause:3.9 2>&1 | grep -q "success" && echo "Pause image: OK" || echo "Pause image: WILL BE PULLED BY KUBELET"
+```
+
+**Ожидаемый результат после выполнения Шага 3 (Установка и настройка `containerd`):**
+*   `containerd` сконфигурирован с параметрами, требуемыми Kubernetes (включая `SystemdCgroup=true` и `sandbox_image=registry.k8s.io/pause:3.9`).
+*   Docker функционирует, используя тот же экземпляр `containerd` (если Docker был установлен ранее).
+*   Существующие Docker-контейнеры восстановлены в рабочее состояние (если они были запущены до остановки Docker).
+*   CRI-сокет доступен по пути `/run/containerd/containerd.sock`.
+*   Система подготовлена к установке компонентов Kubernetes.
+
+**Текущий статус системы:**
+*   Ядро ОС: Обновлено до 6.8.0-90 (будет активно после перезагрузки).
+*   Cgroups: Переключено на v2, параметр прописан в GRUB.
+*   Docker: Работает, использует `containerd` как runtime.
+*   Containerd: Активен, сконфигурирован для CRI (SystemdCgroup=true, `sandbox_image=registry.k8s.io/pause:3.9`).
+*   Kubernetes: Компоненты пока не установлены.
+*   CRI-сокет: `/run/containerd/containerd.sock` доступен.
+*   Контейнеры: Все рабочие контейнеры восстановлены.
+
+**Следующий этап:** Установка `kubeadm`, `kubelet`, `kubectl` версии 1.34. Перезагрузка всех нод будет выполнена после полной установки компонентов Kubernetes.
 
 #### Установка `kubeadm`, `kubelet`, `kubectl`
 ```bash
