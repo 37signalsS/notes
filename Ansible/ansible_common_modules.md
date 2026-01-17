@@ -110,6 +110,31 @@
     dest: /etc/httpd/conf/httpd.conf
 ```
 
+#### `ansible.builtin.blockinfile`
+Модуль для вставки/обновления/удаления блока текста в файлах. Идеально подходит для управления фрагментами конфигурационных файлов, где нужно гарантировать наличие определенного блока текста между специальными маркерами, не перезаписывая весь файл.
+
+**Пример: Добавление `stream` блока в `nginx.conf`**
+```yaml
+- name: Add stream block to nginx.conf
+  ansible.builtin.blockinfile:
+    path: /etc/nginx/nginx.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK FOR STREAM"
+    block: |
+      stream {
+        log_format basic '$remote_addr [$time_local] '
+                         '$protocol $status $bytes_sent $bytes_received '
+                         '$session_time "$upstream_addr"';
+
+        access_log /var/log/nginx/stream-access.log basic;
+        include /etc/nginx/stream.d/*.conf;
+      }
+```
+*   `path: /etc/nginx/nginx.conf`: Указывает, какой файл нужно изменить.
+*   `block: | ...`: Содержит многострочный блок `stream`, который будет вставлен.
+*   Так как не указаны `insertafter` или `insertbefore`, этот блок будет добавлен в конец файла `/etc/nginx/nginx.conf`.
+*   Ansible добавит комментарии-маркеры вокруг этого блока, чтобы в будущем при повторном запуске плейбука он мог обновить этот блок (если его содержимое изменится) или удалить (если `state` будет установлен в `absent`). Если маркер не указан, используются маркеры по умолчанию `BEGIN ANSIBLE MANAGED BLOCK` и `END ANSIBLE MANAGED BLOCK`.
+
+
 #### Более аккуратный вариант развертывания (через `file` + `copy`)
 
 В отличие от `ansible.builtin.synchronize` с опцией `delete: yes`, который полностью заменяет содержимое целевого каталога, существует более безопасный способ развертывания, особенно для критически важных веб-серверов.

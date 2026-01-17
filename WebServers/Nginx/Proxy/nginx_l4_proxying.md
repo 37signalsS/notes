@@ -71,47 +71,63 @@ stream {
 
 ## 3. Практические сценарии
 
-### 3.1. Проксирование [MySQL](../../../Databases/mysql.md) ([TCP](../../../Networking/Protocols/tcp.md))
+### 3.1. Проксирование [MySQL](../../../Databases/mysql.md) ([TCP](../../../Networking/Protocols/tcp.md)) с сохранением IP клиента
 
-Nginx может распределять нагрузку между master и slave-серверами базы данных.
+Это классический сценарий, где Nginx используется для распределения нагрузки между master-сервером базы данных (на запись) и slave-серверами (на чтение).
 
+**Пример конфигурации (`/etc/nginx/stream.d/mysql.conf`):**
 ```nginx
-# /etc/nginx/stream.d/mysql.conf
+# Группа для мастера (запись)
 upstream mysql_master {
     zone mysql_master_zone 64k;
-    server 127.0.0.1:3307; # Пример: Master-сервер
+    server 192.168.77.14:3307 proxy_protocol; 
 }
 
+# Группа для слейвов (чтение)
 upstream mysql_slave {
     zone mysql_slave_zone 64k;
-    server 127.0.0.1:3308; # Пример: Slave-сервер 1
-    # server 127.0.0.1:3309; # Пример: Slave-сервер 2
+    server 192.168.77.12:3308 proxy_protocol;
+    server 192.168.77.13:3309 proxy_protocol; 
 }
 
+# Виртуальный сервер для мастера
 server {
-    listen 6306; # Порт для Master
+    listen 6306;
     proxy_pass mysql_master;
+    
+    # Ограничение подключений для защиты мастера
     limit_conn_zone $binary_remote_addr zone=per_ip_conn:10m;
-    limit_conn per_ip_conn 10; # Ограничение подключений
+    limit_conn per_ip_conn 10;
+    
     access_log /var/log/nginx/mysql-master-access.log basic;
     error_log /var/log/nginx/mysql-master-error.log warn;
-    # allow 192.168.1.0/24;
-    # deny all;
-    status_zone mysql_master_status; # Для мониторинга
-}
+    status_zone mysql_master_status;
+}         
 
+# Виртуальный сервер для слейвов
 server {
-    listen 6307; # Порт для Slave
+    listen 6307;
     proxy_pass mysql_slave;
     status_zone mysql_slave_status;
 }
 ```
 
-**Особенности:**
-*   **`upstream`:** Определяет именованную группу ([`upstream`](nginx_load_balancing.md)) серверов, как и при [балансировке L7-трафика](nginx_load_balancing.md).
-*   **`zone`:** Создает зону разделяемой памяти для хранения статуса upstream-серверов и мониторинга.
-*   **Балансировка:** Поддерживаются все методы, доступные в `http`, кроме `ip_hash`.
-*   **Управление доступом:** Директивы `allow` и `deny` позволяют контролировать доступ по IP-адресам.
+**Разбор конфигурации:**
+
+1.  **Блоки `upstream`**:
+    *   `upstream mysql_master { ... }`: Определяет группу серверов (в данном случае один) для "мастер" базы данных.
+    *   `upstream mysql_slave { ... }`: Аналогично определяет группу "слейв" серверов. Nginx будет распределять нагрузку между ними по умолчанию методом Round Robin (поочередно).
+    *   `zone <name> 64k;`: Выделяет 64 килобайта общей памяти для хранения состояния группы (например, для статистики соединений и динамического управления).
+    *   `server ... proxy_protocol;`: Это самая важная опция для проксирования баз данных. Она включает **[Proxy Protocol](../../../Networking/Concepts/proxy.md)**, который добавляет к TCP-соединению специальный заголовок, содержащий **реальный IP-адрес клиента**. Без этой опции база данных видела бы только IP-адрес самого Nginx, что делает невозможным аудит, мониторинг и применение правил безопасности на основе IP клиента.
+
+2.  **Блоки `server`**:
+    *   `server { listen 6306; ... }`: Создает виртуальный TCP-сервер, слушающий порт `6306`.
+    *   `proxy_pass mysql_master;`: Все поступающие на этот порт соединения направляет в `upstream` с именем `mysql_master`.
+    *   `limit_conn_*`: Директивы для ограничения количества одновременных соединений с одного IP-адреса, что помогает защитить "мастер" от перегрузки.
+    *   `status_zone <name>;`: Связывает сервер с зоной статистики, позволяя отслеживать метрики (активные соединения и т.д.) через API Nginx.
+    *   `server { listen 6307; ... }`: Аналогичный сервер, но для слейвов: слушает порт `6307` и направляет трафик на `upstream` `mysql_slave`.
+
+> Пример автоматизации этой конфигурации с помощью Ansible можно найти в заметке **[[../../../Ansible/ansible_common_modules.md|Ansible: Часто используемые модули]]**.
 
 ### 3.2. [SSL/TLS терминация](../Security/nginx_tls_ssl_configuration.md) на L4
 
