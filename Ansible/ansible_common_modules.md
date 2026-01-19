@@ -300,6 +300,35 @@
 ```
 В этом примере скрипт `/usr/local/bin/configure_service.sh` будет выполнен только в том случае, если файл `/etc/service_configured_flag` не существует.
 
+### 6. Модули для работы с паролями и чувствительными данными
+
+#### `ansible.builtin.password`
+
+*   **Назначение**: Генерация паролей для учетных записей пользователей, баз данных, а также для создания ключей.
+*   **Идемпотентность**: Модуль идемпотентен. Если пароль уже был сгенерирован и сохранен (например, в файле, указанном в `path`), он не будет генерироваться повторно при следующих запусках, если это не будет принудительно указано.
+
+```yaml
+- name: Generate a random password for a database user
+  ansible.builtin.password:
+    length: 20
+    chars: ascii_letters,digits,punctuation
+    # path: /path/to/vaulted_password_file # Укажите путь к файлу, который будет зашифрован Vault
+    # Чтобы сгенерировать хеш пароля (для хранения в БД, например):
+    # algorithm: sha512crypt # Алгоритм хеширования (например, 'sha512crypt', 'bcrypt')
+    # Эти параметры (`path`, `algorithm`) являются взаимоисключающими и необязательными,
+    # их использование зависит от способа хранения и применения пароля.
+  register: db_password_result # Результат генерации пароля будет доступен в этой переменной
+
+- name: Create database user with generated password
+  community.mysql.mysql_user:
+    name: my_app_user
+    password: "{{ db_password_result.password }}"
+    host: localhost
+    priv: '*.*:ALL'
+    state: present
+  no_log: true # Важно скрывать пароли в логах!
+```
+
 ## Дополнительная информация
 
 При использовании модулей Ansible важно обращать внимание на их идемпотентность и специфические параметры. Всегда рекомендуется обращаться к официальной [документации Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules) для получения наиболее актуальной и подробной информации о каждом модуле и его возможностях. Использование `ansible-doc <module_name>` в командной строке также предоставляет быстрый доступ к справке.

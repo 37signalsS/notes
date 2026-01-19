@@ -4,7 +4,6 @@
 
 **Ansible Vault** — это встроенный в Ansible механизм для шифрования секретов, таких как пароли, API-ключи и SSL-сертификаты. Он позволяет безопасно хранить чувствительные данные (переменные) в системе контроля версий (Git) вместе с остальным кодом автоматизации.
 
-
 ### Базовые концепции
 
 #### 1. Режимы работы: Шифрование файлов vs. строк
@@ -199,6 +198,76 @@ Ansible сначала попробует расшифровать файл па
   no_log: true # <-- ВАЖНО
 ```
 Это маскирует *всю* задачу, а не только одно поле, но это необходимая мера безопасности.
+
+#### Практический сценарий: Интеграция с Vagrant
+
+*   **`vars/secrets.yml` **: Файл, содержащий зашифрованные секреты (например, `htpasswd_password`, `admin_ip`). Ansible определяет, что файл зашифрован, по заголовку `$ANSIBLE_VAULT;1.1;AES256`. Этот файл безопасно хранить в Git.
+*   **`.vault_password`**: Простой текстовый файл, содержащий пароль для расшифровки `vars/secrets.yml`. **Этот файл никогда не должен попадать в Git.**
+*   **`.gitignore`**: Стандартный файл Git, который должен содержать строку `.vault_password`, чтобы гарантировать, что "ключ" случайно не попадет в репозиторий.
+
+##### Процесс работы: от `vagrant up` до Nginx
+
+1.  **`Vagrantfile`**: Vagrant читает `Vagrantfile` и находит блок запуска Ansible. Ключевая строка `ansible.vault_password_file = ".vault_password"` дает Vagrant прямую инструкцию, какой файл использовать в качестве пароля для Vault.
+    ```ruby
+    # Vagrantfile
+    machine.vm.provision :ansible do |ansible|
+      ansible.playbook = "playbook.yml"
+      ansible.vault_password_file = ".vault_password" # <--- КЛЮЧЕВОЙ МОМЕНТ
+    end
+    ```
+
+2.  **Инструкция — `playbook.yml`**: Vagrant запускает Ansible, который читает плейбук. Директива `vars_files: - vars/secrets.yml` указывает, что нужно загрузить переменные из зашифрованного файла.
+
+3.  **Расшифровка "на лету"**:
+    *   Ansible видит заголовок `$ANSIBLE_VAULT` в `vars/secrets.yml`.
+    *   Используя путь к паролю (`.vault_password`), полученный от Vagrant, он читает пароль.
+    *   В оперативной памяти расшифровывает содержимое `vars/secrets.yml`. С этого момента переменные (например, `htpasswd_password`) доступны с их реальными значениями.
+
+4.  **Выполнение задач**: Ansible начинает выполнять задачи, подставляя в них расшифрованные "на лету" значения переменных. Вместо простого копирования шаблона, плейбук может содержать более сложную логику, как в примере ниже.
+
+    ```yaml
+    # playbook.yml
+    - name: Generate htpasswd file from vault
+      ansible.builtin.command: >
+        htpasswd -cb /etc/nginx/htpasswd vagrant '{{ htpasswd_password }}'
+      args:
+        creates: /etc/nginx/htpasswd
+      no_log: true # <-- См. нюанс ниже
+
+    - name: Configure Nginx with Self-Signed Certificate
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-enabled/site1.local.conf
+        content: |
+          server {
+              listen 80;
+              # ... (перенаправление на HTTPS)
+          }
+
+          server {
+              listen 443 ssl;
+              # ... (конфигурация SSL)
+
+              location /admin {
+                  allow {{ admin_ip }}; # <-- Сюда подставляется '192.168.77.1'
+                  deny all;
+                  auth_basic "Admin Area";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+              }        
+          }
+      notify: Restart Nginx
+    ```
+
+    **Разбор примера:**
+    *   **Задача 1: `Generate htpasswd file from vault`**
+        *   `'{{ htpasswd_password }}'`: Сюда подставляется реальный пароль из расшифрованного Vault-файла.
+        *   `no_log: true`: Скрывает вывод команды, чтобы пароль не попал в логи.
+
+    *   **Задача 2: `Configure Nginx with Self-Signed Certificate`**
+        *   `allow {{ admin_ip }};`: Внутри конфигурации Nginx переменная `admin_ip` из Vault используется для ограничения доступа к админ-панели.
+
+##### Важные нюансы
+
+*   Vagrant автоматизирует вызов, который вам пришлось бы делать вручную: `ansible-playbook --vault-password-file .vault_password playbook.yml`.
 
 ### Дополнительная информация
 

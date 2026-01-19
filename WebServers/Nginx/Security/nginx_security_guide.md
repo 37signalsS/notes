@@ -28,7 +28,7 @@
     location /login {
         # Применяем зону 'one'.
         # burst=10: Позволяет обработать до 10 запросов, превышающих лимит.
-        # nodelay: Запросы в рамках burst обрабатываются немедленно, а не с задержкой. Полезно для API.
+        # nodelay: Запросы в рамках burst обрабатываются немедленно, а не с задержкой.Полезно для API.
         limit_req zone=one burst=10 nodelay;
 
         proxy_pass http://backend;
@@ -71,8 +71,6 @@ Nginx может защитить часть сайта паролем с пом
 location /admin/ {
     auth_basic "Admin Area";
     auth_basic_user_file /etc/nginx/htpasswd;
-
-    # ... остальная конфигурация
 }
 ```
 
@@ -82,8 +80,8 @@ location /admin/ {
 Файл с паролями создается с помощью утилиты `htpasswd` (обычно из пакета `apache2-utils`):
 
 ```bash
-# Создать файл и добавить первого пользователя
-sudo htpasswd -c /etc/nginx/htpasswd username
+# Создать файл и добавить первого пользователя и создать пароль(без -b утилита спросит его в интерактивном режиме)
+sudo htpasswd -cb /etc/nginx/htpasswd username password
 
 # Добавить следующих пользователей (без -c)
 sudo htpasswd /etc/nginx/htpasswd another_user
