@@ -74,13 +74,20 @@
     - /var/www/site1.local/images
     - /var/www/site1.local/assets
     - /var/www/site1.local/html
+```
 
-  * Это стандартный модуль Ansible для работы с файлами и директориями.
-  * `state: directory`: Указывает, что мы хотим создать директорию, если она не существует.
-  * `loop`: Эта конструкция позволяет выполнить одну и ту же задачу несколько раз с разными параметрами. В данном случае, задача `ansible.builtin.file` выполнится трижды, для каждого пути из списка.
-  * `path: "{{ item }}"`: `item` — это специальная переменная в Ansible, которая в цикле `loop` поочередно принимает каждое значение из списка. Таким образом, Ansible последовательно создает директории `/var/www/site1.local/images`, `/var/www/site1.local/assets` и `/var/www/site1.local/html`.
-  * `mode: '0755'`: Устанавливает права доступа к директориям. `0755` — это стандартные права для веб-контента, которые позволяют владельцу делать всё, а остальным — только просматривать содержимое.
+* Это стандартный модуль Ansible для работы с файлами и директориями.
+* `state: directory`: Указывает, что мы хотим создать директорию, если она не существует.
+* `loop`: Эта конструкция позволяет выполнить одну и ту же задачу несколько раз с разными параметрами. В данном случае, задача `ansible.builtin.file` выполнится трижды, для каждого пути из списка.
+* `path: "{{ item }}"`: `item` — это специальная переменная в Ansible, которая в цикле `loop` поочередно принимает каждое значение из списка. Таким образом, Ansible последовательно создает директории `/var/www/site1.local/images`, `/var/www/site1.local/assets` и `/var/www/site1.local/html`.
+* `mode: '0755'`: Устанавливает права доступа к директориям. `0755` — это стандартные права для веб-контента, которые позволяют владельцу делать всё, а остальным — только просматривать содержимое.
 
+**Ad-hoc команда для создания директории `.ssh`:**
+```bash
+ansible <hostname> -m file -a "path=/home/ansible_user/.ssh state=directory owner=ansible_user group=ansible_user mode=0700" --become
+```
+
+```yaml
 - name: Remove a file
   ansible.builtin.file:
     path: /etc/foo.conf
@@ -99,6 +106,19 @@
 
 *   `dest`: Путь, по которому нужно создать файл на целевой машине (нашей виртуальной машине).
 *   `content`: Вместо того чтобы создавать файл локально и копировать его, мы используем этот параметр, чтобы записать указанную строку прямо в файл `dest`. Это очень удобно для создания небольших тестовых или конфигурационных файлов.
+
+Также с помощью `content` и функции `lookup` можно прочитать локальный файл на управляющей машине и записать его содержимое на удаленный хост. Это полезно, например, для распространения публичных SSH-ключей.
+
+```yaml
+- name: Copy public key to remote host
+  ansible.builtin.copy:
+    dest: /home/ansible_user/.ssh/authorized_keys
+    content: "{{ lookup('file', '/path/to/your/local/id_rsa.pub') }}"
+```
+**Ad-hoc команда для копирования публичного SSH-ключа:**
+```bash
+ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }}" dest=/home/ansible_user/.ssh/authorized_keys owner=ansible_user group=ansible_user mode=0600' --become
+```
 
 #### `ansible.builtin.template`
 Создает файл на целевом хосте на основе [шаблона Jinja2](../ansible_jinja2_templating.md). Это основной способ управления конфигурационными файлами. Модуль обрабатывает переменные и логику в `.j2` файле и создает на сервере статический `.conf` файл.
@@ -194,7 +214,31 @@
     state: restarted
 ```
 
-### 4. Модули для синхронизации файлов
+### 4. Модули для системной конфигурации
+
+#### `ansible.builtin.timezone`
+Управляет системным часовым поясом.
+
+```yaml
+- name: Set timezone to Europe/Moscow
+  ansible.builtin.timezone:
+    name: Europe/Moscow
+```
+
+#### `ansible.builtin.hostname`
+Управляет именем хоста (hostname) системы.
+
+```yaml
+- name: Set hostname to 'webserver01'
+  ansible.builtin.hostname:
+    name: webserver01
+
+- name: Set hostname based on inventory name
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+```
+
+### 5. Модули для синхронизации файлов
 
 #### `ansible.builtin.synchronize`
 Использует `rsync` для эффективной синхронизации файлов и каталогов между хостами. Идеально подходит для больших сайтов и проектов, где важна скорость и идемпотентность.
@@ -300,7 +344,7 @@
 ```
 В этом примере скрипт `/usr/local/bin/configure_service.sh` будет выполнен только в том случае, если файл `/etc/service_configured_flag` не существует.
 
-### 6. Модули для работы с паролями и чувствительными данными
+### 7. Модули для работы с паролями и чувствительными данными
 
 #### `ansible.builtin.password`
 
@@ -328,6 +372,58 @@
     state: present
   no_log: true # Важно скрывать пароли в логах!
 ```
+
+### 8. Модули для управления пользователями и группами
+
+#### `ansible.builtin.user`
+
+*   **Назначение**: Создание, изменение, удаление учетных записей пользователей. Управление группами пользователей.
+*   **Идемпотентность**: Модуль идемпотентен. Он создаст пользователя, только если его нет, и изменит параметры, только если они отличаются от заданных.
+
+**Пример 1: Создание нового пользователя**
+```yaml
+- name: Create a new user 'peter_parker'
+  ansible.builtin.user:
+    name: peter_parker
+    comment: "Peter Parker, Web Developer"
+    shell: /bin/bash
+    home: /home/peter_parker
+    state: present
+```
+**Ad-hoc команда для создания пользователя:**
+```bash
+ansible <hostname> -m user -a "name=ansible_user shell=/bin/bash state=present" --become
+```
+
+**Пример 2: Добавление пользователя в группу sudo**
+Для добавления пользователя в группу `sudo` (или `wheel` в RHEL-подобных системах) используйте параметр `groups` и `append: yes`.
+```yaml
+- name: Add 'peter_parker' to the sudo group
+  ansible.builtin.user:
+    name: peter_parker
+    groups: sudo
+    append: yes
+    state: present
+```
+
+**Пример 3: Установка пароля для пользователя**
+Для установки пароля используется параметр `password`. **Важно**: Пароль должен быть в виде хеша. Ansible не принимает пароли в открытом виде. Вы можете сгенерировать хеш пароля с помощью утилиты `mkpasswd` (в Linux) или Python.
+
+```bash
+# Пример генерации хеша пароля (для Linux, нужен пакет `whois` или `passwd`)
+# python -c 'import crypt; print(crypt.crypt("MySecretPassword", crypt.METHOD_SHA512))'
+```
+
+```yaml
+- name: Set password for 'peter_parker'
+  ansible.builtin.user:
+    name: peter_parker
+    password: "$6$rounds=656000$q1w2e3r4t5y6u7i8$aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789./ABCDEFGHIJKLMNOPQRSTUVW" # Замените на сгенерированный хеш
+    update_password: always # Всегда обновлять пароль, если хеш изменился
+    state: present
+  no_log: true # Скрывать пароль в логах
+```
+> **Лучшая практика**: Всегда используйте [Ansible Vault](../ansible_vault.md) для хранения хешей паролей и других чувствительных данных.
 
 ## Дополнительная информация
 

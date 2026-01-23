@@ -31,6 +31,7 @@
 -   **Миграция без простоя:** **[Миграция PostgreSQL без простоя](./Operations/zero_downtime_migration.md)**.
 -   **Высокая доступность (HA):** **[Концепции высокой доступности](./Concepts/high_availability.md)**.
 -   **Наблюдаемость (Observability):** **[Full-Stack Observability для PostgreSQL](./Operations/observability.md)**.
+-   **Базовые операции с консолью:** **[Работа с PostgreSQL из консоли (psql)](./Operations/console_basics.md)**.
 
 ### Производительность и масштабирование
 

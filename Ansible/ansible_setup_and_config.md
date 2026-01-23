@@ -150,6 +150,10 @@ pip install ansible
 [defaults]
 # Указываем путь к файлу инвентаря.
 inventory = ./hosts.ini
+# Задаем пользователя по умолчанию для всех хостов.
+# Это должен быть пользователь, через которого Ansible подключается к удаленным хостам.
+# Подробнее о его создании и настройке см. в [ansible_security_best_practices.md](ansible_security_best_practices.md).
+remote_user = ansible_user 
 # Задаем путь к приватному ключу по умолчанию.
 private_key_file = /home/vagrant/.ssh/vagrant_test
 # Отключаем проверку ключей хоста (удобно для тестовых сред).
@@ -161,8 +165,9 @@ deprecation_warnings = False
 **Пример `hosts.ini` (инвентарь):**
 ```ini
 [servers]
-server1 ansible_host=192.168.51.4 ansible_user=vagrant
+server1 ansible_host=192.168.51.4
 ```
+> **Примечание:** Если `remote_user` задан в `ansible.cfg`, то `ansible_user` в инвентаре для каждого хоста указывать не обязательно, если он совпадает с глобальным `remote_user`.
 
 **Проверка версии и конфигурации:**
 ```bash
