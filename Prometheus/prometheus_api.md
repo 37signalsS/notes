@@ -1,209 +1,154 @@
 # Prometheus HTTP API
 
-Prometheus предоставляет HTTP API (текущая версия v1) для выполнения запросов и получения данных. API доступен по пути `/api/v1/`.
+[Prometheus](./overview.md) предоставляет полнофункциональный HTTP API, который позволяет выполнять запросы на языке [PromQL](./concepts/promql.md), получать метаданные и проверять состояние самого сервера. Это основной способ интеграции Prometheus с внешними системами, такими как [Grafana](../Grafana/grafana_overview.md), и кастомными приложениями.
 
-## Общие сведения для запросов API
+## 1. Определения и базовые концепции
 
--   **Формат ответа:** JSON.
--   **Коды ответа:**
-    -   `2xx`: Успешный запрос.
-    -   `400`: Неверные или отсутствующие параметры.
-    -   `422`: Запрос не может быть выполнен.
-    -   `503`: Таймаут выполнения запроса.
--   **Метки времени:** Могут быть переданы в формате [RFC3339](https://www.ietf.org/rfc/rfc3339.txt) или как Unix timestamp.
--   **Методы запроса:** `GET` или `POST`. При `GET` параметры добавляются к URL, при `POST` — передаются в теле запроса.
+### 1.1. Формат запросов и ответов
 
-## Запросы мгновенного вектора
+-   **Endpoint:** Все запросы к стабильной версии API выполняются по пути `/api/v1/`.
+-   **Методы:** API поддерживает методы `GET` и `POST`. Параметры могут передаваться как в URL, так и в теле `POST` запроса с `Content-Type: application/x-www-form-urlencoded`.
+-   **Формат ответа:** Все ответы возвращаются в формате `JSON`.
+
+### 1.2. Статусы ответов
+
+-   `2xx`: Успешный запрос.
+-   `400 Bad Request`: Неверные или отсутствующие параметры запроса.
+-   `422 Unprocessable Entity`: Запрос синтаксически корректен, но не может быть выполнен (например, некорректное выражение PromQL).
+-   `503 Service Unavailable`: Запрос не может быть выполнен в данный момент (например, из-за таймаута или перегрузки сервера).
+
+### 1.3. Типы данных в ответе
+
+В зависимости от запроса, поле `data.resultType` в ответе может содержать следующие типы:
+-   `vector`: Вектор мгновенных значений (результат instant query).
+-   `matrix`: Матрица (результат range query).
+-   `scalar`: Простое числовое значение.
+-   `string`: Простое строковое значение.
+
+### 1.4. Формат времени
+
+Временные метки в запросах могут быть указаны в двух форматах:
+-   **Unix timestamp** (например, `1671278400`).
+-   **RFC3339** для URL-кодированных строк (например, `2022-12-17T12:00:00Z`).
+
+---
+
+## 2. Практические сценарии: Основные запросы
+
+### 2.1. Мгновенный запрос (`/query`)
+
+Выполняет PromQL-запрос на **один момент времени**.
 
 -   **Endpoint:** `/api/v1/query`
--   **Method:** `GET` | `POST`
 -   **Параметры:**
-    -   `query`: строка запроса PromQL.
-    -   `time`: временная метка, за которую надо выбрать данные. Если не задан, берется текущее время.
-    -   `timeout`: максимальное время выполнения. Необязательный.
+    -   `query=<string>`: PromQL-запрос.
+    -   `time=<rfc3339 | unix_timestamp>`: (Опционально) Момент времени. По умолчанию — текущее время сервера.
 
-**Пример запроса (GET):**
-*Запрос `up`, время: 19.11.2019 09:10.51. Перед выполнением запроса измените время на текущее. Время указывается в UTC.*
+**Пример:** Получить текущее состояние всех таргетов (`up`).
 ```bash
-curl 'http://localhost:9090/api/v1/query?query=up&time=2019-11-19T09:10:51.781Z'
+curl 'http://localhost:9090/api/v1/query?query=up'
 ```
 
-**Пример ответа:**
+**Пример ответа (`resultType: "vector"`):**
 ```json
-{ 
-   "status":"success",
-   "data":{ 
-	  "resultType":"vector",
-	  "result":[ 
-	     { 
-	        "metric":{ 
-	           "__name__":"up",
-	           "instance":"192.168.0.12:9100",
-	           "job":"openstack"
-	        },
-	        "value":[ 
-	           1574154651.781,
-	           "1"
-	        ]
-	     }
-        // ... другие метрики
-	  ]
-   }
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": [ 1671278400.123, "1" ]
+      }
+    ]
+  }
 }
 ```
 
-**Пример запроса (POST):**
-```bash
-curl -XPOST -H 'Content-Type: application/x-www-form-urlencoded' -d "query=up" -d "time=2019-11-19T09:10:51.781Z" http://localhost:9090/api/v1/query
-```
-> **NB!** `Content-Type` используется: `application/x-www-form-urlencoded`.
+### 2.2. Запрос за период (`/query_range`)
 
-## Запрос вектора за период времени
+Выполняет PromQL-запрос за **диапазон времени**.
 
 -   **Endpoint:** `/api/v1/query_range`
--   **Method:** `GET` | `POST`
 -   **Параметры:**
-    -   `query`: строка запроса PromQL.
-    -   `start`: временная метка начала вектора.
-    -   `end`: временная метка окончания вектора.
-    -   `step`: шаг выборки данных (например, `5s` или число float в секундах).
-    -   `timeout`: максимальное время выполнения. Необязательный.
+    -   `query=<string>`: PromQL-запрос.
+    -   `start=<rfc3339 | unix_timestamp>`: Начало диапазона.
+    -   `end=<rfc3f339 | unix_timestamp>`: Конец диапазона.
+    -   `step=<duration>`: Шаг для вычисления значений (например, `15s`, `1m`).
 
-**Пример:** *Запрос `up` за период с 19.11.2019 10:00.50 по 19.11.2019 10:15.50, с шагом в 30 секунд.*
+**Пример:** Получить среднюю скорость роста потребления CPU (в user-режиме) за последние 30 минут с шагом в 1 минуту.
 ```bash
-curl 'http://localhost:9090/api/v1/query_range?query=up&start=2019-11-19T09:10:51.781Z&end=2019-11-19T09:15:51.781Z&step=30s'
+curl 'http://localhost:9090/api/v1/query_range' \
+  --data-urlencode 'query=rate(node_cpu_seconds_total{mode="user"}[5m])' \
+  --data-urlencode 'start=2025-12-17T09:30:00Z' \
+  --data-urlencode 'end=2025-12-17T10:00:00Z' \
+  --data-urlencode 'step=1m'
 ```
 
-**Пример ответа:**
+**Пример ответа (`resultType: "matrix"`):**
 ```json
-{ 
-   "status":"success",
-   "data":{ 
-      "resultType":"matrix",
-      "result":[ 
-         { 
-            "metric":{ 
-               "__name__":"up",
-               "instance":"192.168.0.12:9100",
-               "job":"openstack"
-            },
-            "values":[ 
-               [1574154651.781, "1"],
-               [1574154681.781, "1"]
-               // ... другие значения
-            ]
-         }
-      ]
-   }
+{
+  "status": "success",
+  "data": {
+    "resultType": "matrix",
+    "result": [
+      {
+        "metric": { "instance": "node-exporter:9100", "job": "node" },
+        "values": [
+          [ 1671279000, "0.012" ],
+          [ 1671279060, "0.015" ],
+          [ 1671279120, "0.013" ]
+        ]
+      }
+    ]
+  }
 }
 ```
 
-## Поиск временных рядов на основании labels
+### 2.3. Поиск временных рядов по меткам (`/series`)
+
+Находит все временные ряды, соответствующие определенному набору селекторов (меток).
 
 -   **Endpoint:** `/api/v1/series`
--   **Method:** `GET` | `POST`
 -   **Параметры:**
-    -   `match[]`: задает список меток для поиска. Необходимо задать хотя бы одно условие.
-    -   `start`: временная метка начала вектора.
-    -   `end`: временная метка окончания вектора.
+    -   `match[]=<series_selector>`: Селектор для поиска (обязательный параметр, можно указывать несколько раз).
+    -   `start=<...>` и `end=<...>`: (Опционально) Ограничивают поиск временным диапазоном.
 
-**Пример:** *Получить данные по всем временным рядам, которые имеют имя `node_disk_write_time_seconds_total` и label `device` со значением `sda`.*
+**Пример:** Найти все метрики, связанные с `node_exporter`.
 ```bash
-curl -XPOST -H 'Content-Type: application/x-www-form-urlencoded' -d 'match[]=node_disk_write_time_seconds_total{device="sda"}' http://localhost:9090/api/v1/series
+curl -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'match[]={job="node_exporter"}' \
+  'http://localhost:9090/api/v1/series'
 ```
+Ответ вернет массив объектов, каждый из которых представляет собой уникальный набор меток для одного временного ряда.
 
-**Пример ответа:**
-```json
-{ 
-   "status":"success",
-   "data":[ 
-      { 
-         "__name__":"node_disk_write_time_seconds_total",
-         "device":"sda",
-         "instance":"192.168.0.12:9100",
-         "job":"node_exporter"
-      }
-      // ... другие ряды
-   ]
-}
-```
+### 2.4. Получение метаданных
 
-## Получение списка меток
+-   **Получить все имена меток:**
+    -   **Endpoint:** `/api/v1/labels`
+    -   **Пример:** `curl http://localhost:9090/api/v1/labels`
 
--   **Endpoint:** `/api/v1/labels`
--   **Method:** `GET` | `POST`
+-   **Получить все значения для конкретной метки:**
+    -   **Endpoint:** `/api/v1/label/<label_name>/values`
+    -   **Пример:** `curl http://localhost:9090/api/v1/label/job/values`
 
-Данный запрос позволяет получить список всех labels.
-```bash
-curl 'http://localhost:9090/api/v1/labels'
-```
-
-## Запрос значений для label
-
--   **Endpoint:** `/api/v1/label/<label_name>/values`
--   **Method:** `GET`
-
-Синтаксис запроса: `/api/v1/label/<label_name>/values`, где `<label_name>` — имя label.
-
-**Пример:**
-```bash
-curl 'http://localhost:9090/api/v1/label/instance/values'
-```
-
-## API для получения конфигурации
-
-### Конфигурация сервера
--   **Endpoint:** `/api/v1/status/config`
--   **Method:** `GET`
--   **Описание:** Возвращает текущую конфигурацию сервера в YAML формате.
-```bash
-curl 'http://localhost:9090/api/v1/status/config'
-```
-
-### Список ключей запуска
--   **Endpoint:** `/api/v1/status/flags`
--   **Method:** `GET`
--   **Описание:** Возвращает список ключей и их значений, с которыми запущен сервер.
-```bash
-curl 'http://localhost:9090/api/v1/status/flags'
-```
-
-### Список targets
--   **Endpoint:** `/api/v1/targets`
--   **Method:** `GET`
--   **Описание:** Возвращает информацию о всех targets.
-```bash
-curl 'http://localhost:9090/api/v1/targets'
-```
-
-## Rules и Alerts API
-
-### Alertmanagers
--   **Endpoint:** `/api/v1/alertmanagers`
--   **Method:** `GET`
--   **Описание:** Возвращает список всех настроенных alertmanagers и их статус.
-```bash
-curl 'http://localhost:9090/api/v1/alertmanagers'
-```
-
-### Alerts
--   **Endpoint:** `/api/v1/alerts`
--   **Method:** `GET`
--   **Описание:** Возвращает список активных алертов.
-```bash
-curl http://localhost:9090/api/v1/alerts
-```
-
-### Rules
--   **Endpoint:** `/api/v1/rules`
--   **Method:** `GET`
--   **Описание:** Возвращает список всех правил: как record rules, так и alert rules.
-```bash
-curl http://localhost:9090/api/v1/rules
-```
 ---
-**Связанные темы:**
-*   [[./overview.md]]
-*   [[./concepts/promql.md]]
-*   [[./alertmanager.md]]
-*   [[./rules.md]]
+
+## 3. Продвинутые детали: Статус и управление
+
+Эти эндпоинты предоставляют информацию о состоянии самого сервера Prometheus.
+
+-   **/api/v1/targets**: Возвращает состояние всех настроенных целей для сбора метрик (scraped targets).
+-   **/api/v1/rules**: Показывает все загруженные [правила](./rules.md) (recording и alerting).
+-   **/api/v1/alerts**: Возвращает список всех активных в данный момент алертов.
+-   **/api/v1/alertmanagers**: Показывает состояние всех подключенных к Prometheus серверов [Alertmanager](./alertmanager.md).
+-   **/api/v1/status/config**: Возвращает конфигурацию Prometheus в формате YAML.
+-   **/api/v1/status/flags**: Возвращает флаги командной строки, с которыми был запущен Prometheus.
+
+### Административные операции
+
+Существуют также эндпоинты для управления жизненным циклом (перезагрузка, выключение) и данными (создание снимков, удаление серий). По умолчанию они отключены и требуют активации через флаг `--web.enable-admin-api`. Использование этих эндпоинтов должно быть строго ограничено.

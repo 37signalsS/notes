@@ -1,61 +1,66 @@
-# Полное руководство: CI/CD с Docker Swarm, GitLab и Traefik
+# CI/CD с Docker Swarm, GitLab и Traefik
 
-## Часть 1: Настройка кластера Docker Swarm
+## Определения
 
-### Шаг 1.1: Инициализация Swarm
+- **[Docker Swarm](../docker_swarm_overview.md):** Нативная система оркестровки контейнеров от Docker, позволяющая объединять несколько хостов в единый виртуальный Docker-хост (кластер). Используется для развертывания и масштабирования сервисов.
+- **[GitLab CI/CD](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md):** Встроенный в GitLab инструмент для автоматизации сборки, тестирования и развертывания приложений (CI/CD). Пайплайны описываются в файле `.gitlab-ci.yml`.
+- **[Traefik](../../WebServers/Traefik/traefik_overview.md):** Современный обратный прокси и балансировщик нагрузки, который автоматически обнаруживает сервисы (Service Discovery) и управляет маршрутизацией трафика к ним, включая автоматическое управление SSL-сертификатами.
 
-Для создания кластера понадобится как минимум один узел-менеджер.
+## Базовые концепции
 
-1.  **Инициализация менеджера:**
-    На главном узле выполните команду, указав IP-адрес, по которому другие узлы смогут к нему подключиться.
+### Архитектура решения
 
+Предлагаемая архитектура представляет собой полный CI/CD-процесс, где **GitLab CI** выступает в роли системы автоматизации, **Docker Swarm** — в качестве платформы для выполнения приложений, а **Traefik** — как точка входа для внешнего трафика (Ingress).
+
+Ключевые принципы:
+
+1.  **Удаленное и безопасное управление Swarm:** GitLab Runner не устанавливается напрямую на узлы кластера. Вместо этого он взаимодействует с Docker Engine удаленно по TCP, используя **mTLS (mutual TLS)**. И клиент (GitLab Runner), и сервер (Docker Daemon) проверяют сертификаты друг друга, что обеспечивает безопасное соединение.
+2.  **Динамическая маршрутизация с Traefik:** Traefik отслеживает Docker API. Когда в Swarm запускается новый сервис с определенными метками (`labels`), Traefik автоматически создает для него маршрут и может выпустить SSL-сертификат от Let's Encrypt. Это устраняет необходимость ручной настройки reverse proxy.
+3.  **Разделение инфраструктуры и приложений:** Общие сервисы (Traefik, базы данных) выносятся в отдельный "инфраструктурный" стек (например, `shared-infra`), управляемый из своего репозитория. Приложения развертываются независимо, используя общую сетевую инфраструктуру.
+4.  **Управление окружениями в GitLab CI:** Используя **[переменные с привязкой к окружению (environment scope)](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**, один и тот же пайплайн может развертывать приложение на разные кластеры (например, `development` и `production`), автоматически подставляя нужные адреса (`DOCKER_HOST`) и учетные данные.
+
+## Практические сценарии
+
+### Сценарий: Настройка полного CI/CD-пайплайна
+
+#### Шаг 1: Настройка кластера Docker Swarm
+
+1.  **Инициализация Swarm:**
+    На узле, который будет менеджером, выполните:
     ```bash
     # Замените <MANAGER-IP> на реальный IP вашего узла
     docker swarm init --advertise-addr <MANAGER-IP>
     ```
+    Сохраните команду `docker swarm join` с токеном для подключения рабочих узлов.
 
-    После выполнения Docker выведет команду для присоединения рабочих узлов, включающую токен.
-
-2.  **Присоединение рабочих узлов (опционально):**
-    На каждом рабочем узле выполните команду, полученную на предыдущем шаге, чтобы расширить кластер.
-
-    ```bash
-    docker swarm join --token <TOKEN> <MANAGER-IP>:<PORT>
-    ```
-
-3.  **Проверка состояния кластера:**
-    На узле-менеджере можно посмотреть список всех узлов.
-
+2.  **Проверка кластера:**
     ```bash
     docker node ls
     ```
 
-### Шаг 1.2: Защита Docker Daemon с помощью mTLS
+#### Шаг 2: Защита Docker Daemon с помощью mTLS
 
-Чтобы GitLab Runner мог удаленно и безопасно управлять Docker Swarm, необходимо настроить Docker daemon на прием команд только от клиентов, предоставивших валидный TLS-сертификат.
+Эта настройка позволяет GitLab Runner'у безопасно управлять Docker Swarm.
 
-1.  **Генерация сертификатов с помощью `openssl`:**
-
-    На узле-менеджере Swarm выполните следующие команды.
-
+1.  **Генерация сертификатов (`openssl`):**
+    На узле-менеджере Swarm:
     ```bash
-    # Создайте директорию для сертификатов
+    # Создание директории для сертификатов
     mkdir -p ~/docker-certs && cd ~/docker-certs
 
-    # 1. Генерируем ключ и сертификат для Центра Сертификации (CA)
+    # 1. Генерация ключа и сертификата для Центра Сертификации (CA)
     openssl genrsa -aes256 -out ca-key.pem 4096
     openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -out ca.pem
-    # (В процессе нужно будет ввести информацию и пароль для CA)
 
-    # 2. Генерируем ключ и сертификат для сервера (Docker Daemon)
-    # ВАЖНО: В поле "Common Name (CN)" укажите IP-адрес или доменное имя вашего менеджера Swarm
+    # 2. Генерация ключа и сертификата для сервера (Docker Daemon)
+    # ВАЖНО: В поле "Common Name (CN)" укажите IP или FQDN вашего менеджера Swarm
     openssl genrsa -out server-key.pem 4096
     openssl req -subj "/CN=$(hostname -f)" -sha256 -new -key server-key.pem -out server.csr
     echo "subjectAltName = DNS:$(hostname -f),IP:$(hostname -I | awk '{print $1}')" > extfile.cnf
     openssl x509 -req -days 3650 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
       -CAcreateserial -out server-cert.pem -extfile extfile.cnf
 
-    # 3. Генерируем ключ и сертификат для клиента (GitLab Runner)
+    # 3. Генерация ключа и сертификата для клиента (GitLab Runner)
     openssl genrsa -out key.pem 4096
     openssl req -subj "/CN=client" -new -key key.pem -out client.csr
     echo "extendedKeyUsage = clientAuth" > extfile-client.cnf
@@ -69,9 +74,7 @@
     ```
 
 2.  **Настройка Docker Daemon:**
-
-    Создайте файл `/etc/docker/daemon.json` (или отредактируйте существующий) со следующим содержимым:
-
+    Создайте или отредактируйте `/etc/docker/daemon.json`:
     ```json
     {
       "tls": true,
@@ -82,54 +85,82 @@
     }
     ```
 
-3.  **Скопируйте сертификаты и перезапустите Docker:**
+    В качестве альтернативы, можно использовать `systemd` для переопределения команды запуска сервиса. Этот способ считается более гибким.
 
+    Пример конфигурации для `/etc/systemd/system/docker.service.d/override.conf`:
+    ```ini
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2376 --tlsverify --tlscacert=/etc/docker/certs/ca.pem --tlscert=/etc/docker/certs/server-cert.pem --tlskey=/etc/docker/certs/server-key.pem
+    ```
+    После создания файла необходимо выполнить `sudo systemctl daemon-reload`.
+
+3.  **Копирование сертификатов и перезапуск Docker:**
     ```bash
     sudo mkdir -p /etc/docker/certs
-    sudo cp ~/docker-certs/{ca,server-cert,server-key}.pem /etc/docker/certs/
+    sudo cp ~/docker-certs/{ca.pem,server-cert.pem,server-key.pem} /etc/docker/certs/
     sudo systemctl restart docker
     ```
 
-## Часть 2: Развертывание инфраструктурных сервисов
+#### Шаг 2.1: Упрощение удаленного доступа с Docker Context
 
-Создадим отдельный репозиторий в GitLab (например, `infra`) для управления общими сервисами, такими как Traefik и базы данных.
+После настройки mTLS, вместо того чтобы каждый раз указывать хост и ключи в командной строке или использовать переменные окружения, можно использовать **Docker Context**. Это позволяет легко переключаться между разными Docker-окружениями (локальным, удаленным dev, удаленным prod).
 
-### Шаг 2.1: `docker-compose.yml` для Traefik и PostgreSQL
+*   **Создание контекста:**
 
-В репозитории `infra` создайте файл `docker-compose.yml`:
+    На вашей локальной машине или в окружении, откуда вы будете управлять кластером, выполните команду. У вас должны быть файлы сертификатов клиента (`ca.pem`, `cert.pem`, `key.pem`), полученные на предыдущем шаге.
 
-```yaml
-version: '3.8'
+    ```sh
+    docker context create prod-swarm \
+      --docker "host=tcp://prod.example.com:2376,ca=/path/to/ca.pem,cert=/path/to/cert.pem,key=/path/to/key.pem"
+    ```
+    Где `prod.example.com` — это доменное имя вашего Swarm менеджера.
 
-services:
-  traefik:
-    image: traefik:v2.11 # Рекомендуется использовать актуальную версию
-    command:
-      - "--log.level=INFO"
-      - "--api.dashboard=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.swarmmode=true"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}" # Переменная GitLab
-      - "--certificatesresolvers.myresolver.acme.storage=/certificates/acme.json"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "traefik-certs:/certificates"
-    networks:
-      - public
-    deploy:
-      placement:
-        constraints:
-          - "node.role==manager"
+*   **Переключение на контекст:**
 
-  postgres:
-    image: postgres:16
+    ```sh
+    docker context use prod-swarm
+    ```
+
+*   После этого все команды `docker` (например, `docker ps`, `docker service ls`) будут выполняться на удаленном Swarm-кластере. Чтобы вернуться к локальному окружению, выполните `docker context use default`.
+
+Этот механизм используется в CI/CD пайплайнах для удобного и безопасного взаимодействия с кластером.
+
+#### Шаг 3: Развертывание инфраструктурных сервисов (Traefik)
+
+В отдельном репозитории GitLab (`infra-stack`) создайте файлы для управления общими сервисами.
+
+1.  **`docker-compose.yml` для Traefik и общей сети:**
+    ```yaml
+    version: '3.8'
+
+    services:
+      traefik:
+        image: traefik:v2.11
+        command:
+          - "--log.level=INFO"
+          - "--api.dashboard=true"
+          - "--providers.docker=true"
+          - "--providers.docker.exposedbydefault=false"
+          - "--providers.docker.swarmmode=true"
+          - "--entrypoints.web.address=:80"
+          - "--entrypoints.websecure.address=:443"
+          - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+          - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}" # Переменная GitLab
+          - "--certificatesresolvers.myresolver.acme.storage=/certificates/acme.json"
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - "/var/run/docker.sock:/var/run/docker.sock:ro"
+          - "traefik-certs:/certificates"
+        networks:
+          - public
+        deploy:
+          placement:
+            constraints:
+              - "node.role==manager"
+
     volumes:
       - "postgres-data:/var/lib/postgresql/data"
     environment:
@@ -143,62 +174,54 @@ services:
         constraints:
           - "node.role==manager"
 
-volumes:
-  postgres-data:
-  traefik-certs:
+    volumes:
+      postgres-data:
+      traefik-certs:
 
-networks:
-  public:
-    driver: overlay
-    name: public
-```
+    networks:
+      public:
+        driver: overlay
+        name: public
+    ```
+    > Этот файл также может содержать другие общие сервисы, например, базы данных (PostgreSQL, MariaDB).
 
-### Шаг 2.2: Настройка GitLab CI для `infra`
+2.  **Настройка `.gitlab-ci.yml` для `infra-stack`:**
+    *   **Переменные в GitLab CI/CD (`Settings -> CI/CD -> Variables`):**
+        *   `DOCKER_HOST`: `tcp://your-swarm-manager.com:2376`
+        *   `POSTGRES_DB`: `shared_db`
+        *   `POSTGRES_USER`: `shared_user`
+        *   `POSTGRES_PASSWORD` (Masked): `your_secure_password`
+        *   `ACME_EMAIL`: `your-email@example.com`
+        *   `CA_PEM` (File): Содержимое `ca.pem`
+        *   `CERT_PEM` (File): Содержимое `cert.pem` (сертификат клиента)
+        *   `KEY_PEM` (File): Содержимое `key.pem` (ключ клиента)
 
-1.  **Добавьте переменные в GitLab CI/CD:**
-
-
-    Перейдите в **Settings -> CI/CD -> Variables**. Создайте переменные:
-    *   `DOCKER_HOST`: `tcp://your-swarm-manager.com:2376`
-    *   `POSTGRES_DB`: `shared_db`
-    *   `POSTGRES_USER`: `shared_user`
-    *   `POSTGRES_PASSWORD` (Masked): `your_secure_password`
-    *   `ACME_EMAIL`: `your-email@example.com`
-    *   `CA_PEM` (File): Содержимое `ca.pem`
-    *   `CERT_PEM` (File): Содержимое `cert.pem`
-    *   `KEY_PEM` (File): Содержимое `key.pem`
-
-2.  **Создайте `.gitlab-ci.yml`:**
-
+    *   **Код `.gitlab-ci.yml`:**
 ```yaml
-stages:
-  - deploy
+    stages:
+      - deploy
 
 deploy_infra:
   stage: deploy
   image: docker:24
   before_script:
     - mkdir -p ~/.docker
-    - cp "$CA_PEM" ~/.docker/ca.pem
-    - cp "$CERT_PEM" ~/.docker/cert.pem
-    - cp "$KEY_PEM" ~/.docker/key.pem
+    # Переменные типа File лучше всего записывать через echo
+    - echo "$CA_PEM" > ~/.docker/ca.pem
+    - echo "$CERT_PEM" > ~/.docker/cert.pem
+    - echo "$KEY_PEM" > ~/.docker/key.pem
     - docker context create swarm --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
     - docker context use swarm
   script:
-    - docker info
-    - docker stack deploy -c docker-compose.yml shared-infra
+    - docker stack deploy -c docker-compose.yml shared-infra --with-registry-auth
   when: manual
 ```
 
-Теперь, запустив этот пайплайн вручную, вы развернете Traefik и PostgreSQL в вашем кластере.
+#### Шаг 4: Автоматическое развертывание приложения
 
-## Часть 3: Автоматическое развертывание приложения
+В репозитории приложения (`my-app`) настроим пайплайн для сборки и развертывания в `dev` и `prod` окружения.
 
-Создадим второй репозиторий для нашего приложения (например, `my-app`), настроив CI/CD для двух окружений: `development` (из ветки `dev`) и `production` (из ветки `main`).
-
-### Шаг 3.1: `Dockerfile` и `docker-compose` файлы
-
-*   **`Dockerfile`** (пример для Node.js, остается без изменений):
+1.  **`Dockerfile` приложения (пример):**
     ```Dockerfile
     FROM node:18-alpine
     WORKDIR /app
@@ -209,55 +232,31 @@ deploy_infra:
     CMD ["node", "server.js"]
     ```
 
-*   **`docker-compose.prod.yml`** для production-окружения:
+2.  **Файлы `docker-compose` для окружений:**
+    *   `docker-compose.prod.yml`:
     ```yaml
     version: '3.8'
-
     services:
       app:
         image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
         networks:
           - public
         deploy:
-          replicas: 3 # Больше реплик для стабильности
+          replicas: 3
           labels:
             - "traefik.enable=true"
-            - "traefik.http.routers.my-app-prod.rule=Host(`app.your-domain.com`)"
+            - "traefik.http.routers.my-app-prod.rule=Host(\`app.your-domain.com`)"
             - "traefik.http.routers.my-app-prod.entrypoints=websecure"
             - "traefik.http.routers.my-app-prod.tls.certresolver=myresolver"
             - "traefik.http.services.my-app-prod.loadbalancer.server.port=3000"
             - "traefik.docker.network=public"
-
     networks:
       public:
         external: true
     ```
+    *   `docker-compose.dev.yml` (аналогично, но с `replicas: 1` и `rule=Host(\`dev.app.your-domain.com`)").
 
-*   **`docker-compose.dev.yml`** для development-окружения:
-    ```yaml
-    version: '3.8'
-
-    services:
-      app:
-        image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
-        networks:
-          - public
-        deploy:
-          replicas: 1 # Достаточно одной реплики для разработки
-          labels:
-            - "traefik.enable=true"
-            - "traefik.http.routers.my-app-dev.rule=Host(`dev.app.your-domain.com`)"
-            - "traefik.http.routers.my-app-dev.entrypoints=websecure"
-            - "traefik.http.routers.my-app-dev.tls.certresolver=myresolver"
-            - "traefik.http.services.my-app-dev.loadbalancer.server.port=3000"
-            - "traefik.docker.network=public"
-
-    networks:
-      public:
-        external: true
-    ```
-
-### Шаг 3.2: Настройка переменных CI/CD для окружений
+3.  **Настройка переменных CI/CD с `Environment scope`:**
 
 В настройках GitLab CI/CD (**Settings -> CI/CD -> Variables**) необходимо определить переменные для каждого окружения, используя **Environment scope**. Это позволяет пайплайну автоматически использовать правильные креды для нужного кластера.
 
@@ -268,47 +267,42 @@ deploy_infra:
 *   `CERT_PEM` (File): Содержимое `cert.pem` для соответствующего кластера.
 *   `KEY_PEM` (File): Содержимое `key.pem` для соответствующего кластера.
 
-### Шаг 3.3: `.gitlab-ci.yml` с использованием шаблонов и окружений
+4.  **Файл `.gitlab-ci.yml` для приложения:**
+    ```yaml
+    stages:
+      - build
+      - deploy
 
-Этот пайплайн использует YAML-якоря (`&`) для переиспользования кода и `rules` для запуска задач только на определенных ветках.
+    build:
+      stage: build
+      image:
+        name: gcr.io/kaniko-project/executor:v1.9.0-debug
+        entrypoint: [""]
+      script:
+        - mkdir -p /kaniko/.docker
+        - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_JOB_USER\",\"password\":\"$CI_JOB_TOKEN\"}}}" > /kaniko/.docker/config.json
+        - /kaniko/executor
+          --context $CI_PROJECT_DIR
+          --dockerfile $CI_PROJECT_DIR/Dockerfile
+          --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+      rules:
+        - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
 
-```yaml
-stages:
-  - build
-  - deploy
-
-build:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.9.0-debug
-    entrypoint: [""]
-  script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_JOB_USER\",\"password\":\"$CI_JOB_TOKEN\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor
-      --context $CI_PROJECT_DIR
-      --dockerfile $CI_PROJECT_DIR/Dockerfile
-      --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
-
-# Шаблон для задачи развертывания
-.deploy_template: &deploy_template
-  stage: deploy
-  image: docker:24
-  before_script:
-    - mkdir -p ~/.docker
-    # Переменные CA_PEM, CERT_PEM, KEY_PEM, DOCKER_HOST будут выбраны GitLab
-    # в зависимости от окружения (environment scope)
-    - echo "$CA_PEM" > ~/.docker/ca.pem
-    - echo "$CERT_PEM" > ~/.docker/cert.pem
-    - echo "$KEY_PEM" > ~/.docker/key.pem
-    - docker context create swarm --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
-    - docker context use swarm
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-  script:
-    - docker info
-    - docker stack deploy -c $COMPOSE_FILE my-app --with-registry-auth
+    # Шаблон для задачи развертывания
+    .deploy_template: &deploy_template
+      stage: deploy
+      image: docker:24
+      before_script:
+        - mkdir -p ~/.docker
+        # Переменные CA_PEM, CERT_PEM, KEY_PEM, DOCKER_HOST выбираются GitLab в зависимости от окружения
+        - echo "$CA_PEM" > ~/.docker/ca.pem
+        - echo "$CERT_PEM" > ~/.docker/cert.pem
+        - echo "$KEY_PEM" > ~/.docker/key.pem
+        - docker context create swarm --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
+        - docker context use swarm
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      script:
+        - docker stack deploy -c $COMPOSE_FILE my-app --with-registry-auth
 
 deploy_prod:
   <<: *deploy_template
@@ -329,13 +323,10 @@ deploy_dev:
     COMPOSE_FILE: docker-compose.dev.yml
   rules:
     - if: '$CI_COMMIT_BRANCH == "dev"'
-```
+    ```
 
-## Заключение
+## Дополнительная информация
 
-Теперь ваш CI/CD процесс полностью настроен для работы с несколькими окружениями:
-
-1.  **Коммит в `dev`**: Запускается сборка и развертывание на `development` окружение.
-2.  **Коммит в `main`**: Запускается сборка и развертывание на `production` окружение.
-
-Этот процесс полностью автоматизирован, безопасен и легко масштабируется для новых приложений и окружений.
+- **Сборка образов без Docker-in-Docker:** В примере используется **Kaniko** для сборки Docker-образов. Это предпочтительный способ в CI/CD, так как он не требует привилегированного доступа к Docker-демону, что повышает безопасность.
+- **`--with-registry-auth`:** Этот флаг в команде `docker stack deploy` критически важен. Он заставляет узел-менеджер Swarm передать учетные данные для доступа к Docker Registry всем узлам кластера, чтобы они могли скачать приватный образ.
+- **Результат:** Коммит в ветку `dev` автоматически развертывает приложение в `development` окружение, а коммит в `main` — в `production`.

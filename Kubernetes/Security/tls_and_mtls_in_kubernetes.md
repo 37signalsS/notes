@@ -1,0 +1,626 @@
+# TLS и mTLS в Kubernetes
+
+## Определения
+
+-   **CA (Certificate Authority / Центр сертификации):** Доверенный "удостоверяющий центр", который выпускает и подписывает цифровые сертификаты. В кластере Kubernetes существует корневой CA (Root CA), который является корнем доверия для всего кластера. Технически, это такой же сертификат x.509, но с правом подписывать другие сертификаты (`CA:TRUE`).
+
+-   **Приватный ключ (Private Key):** Секретный ключ, являющийся неотъемлемой частью криптографической пары. Он используется для создания цифровых подписей и расшифровки данных, зашифрованных соответствующим публичным ключом. Компонент, владеющий приватным ключом, должен хранить его в строжайшем секрете.
+
+-   **Публичный ключ (Public Key):** Открытая часть криптографической пары. Используется для проверки цифровой подписи, созданной приватным ключом, и для шифрования данных, которые сможет расшифровать только владелец приватного ключа. Свободно распространяется внутри сертификата.
+
+-   **Сертификат (x.509 Certificate):** Цифровой "паспорт", который связывает публичный ключ с идентификационными данными (например, с именем пользователя `system:kubelet`). Подлинность сертификата заверяется цифровой подписью CA.
+
+-   **CSR (Certificate Signing Request / Запрос на подпись сертификата):** Формальный запрос, отправляемый в CA для получения подписанного сертификата. Запрос содержит публичный ключ и идентификационные данные запрашивающей стороны.
+
+-   **TLS (Transport Layer Security):** Криптографический протокол, обеспечивающий целостность и шифрование данных при их передаче. В Kubernetes используется для защиты всего трафика между компонентами.
+
+-   **mTLS (Mutual TLS):** Взаимная аутентификация, при которой не только клиент проверяет подлинность сервера, но и сервер проверяет подлинность клиента. Это стандарт де-факто для коммуникации между компонентами Control Plane в Kubernetes, гарантирующий, что в обмене данными участвуют только доверенные участники.
+
+-   **Kubeconfig:** Файл конфигурации для доступа к кластеру Kubernetes. Он содержит всю необходимую информацию: адреса кластеров, сертификаты CA, а также данные клиентов (сертификаты и ключи или токены) и контексты их использования.
+
+## Основные концепции
+
+### Модель взаимодействия компонентов
+
+В Kubernetes взаимодействие компонентов построено по клиент-серверной модели:
+-   **`kube-apiserver` ("мозг"):** Центральный компонент, который принимает все API-запросы, валидирует их, обрабатывает и сохраняет состояние в `etcd`.
+-   **`kubelet` ("руки"):** Агент, работающий на каждом узле (Node). Он получает инструкции от `kube-apiserver` и обеспечивает запуск и мониторинг контейнеров на своем узле.
+
+Все коммуникации между `kubelet` и `kube-apiserver` происходят по защищенному протоколу HTTPS с использованием **mTLS**.
+
+### Процесс mTLS-аутентификации
+
+1.  Устанавливается TCP-соединение между клиентом (например, `kubelet`) и сервером (`kube-apiserver`).
+2.  Происходит "рукопожатие" TLS:
+    -   Клиент и сервер обмениваются своими сертификатами.
+    -   Каждая сторона проверяет, что сертификат другой стороны подписан доверенным CA (в данном случае, корневым CA кластера).
+    -   Каждая сторона доказывает владение соответствующим приватным ключом.
+    -   Проверяются цели использования сертификата через расширение `extendedKeyUsage`. Например, у серверного сертификата должно быть значение `serverAuth`, а у клиентского — `clientAuth`.
+3.  После успешной взаимной проверки устанавливается зашифрованный канал для обмена данными.
+
+Это гарантирует, что `kube-apiserver` принимает команды только от легитимных `kubelet`, а `kubelet` получает инструкции только от легитимного `kube-apiserver`.
+
+## Практические сценарии
+
+### Ручная генерация сертификатов с помощью OpenSSL
+
+Рассмотрим процесс создания CA и выпуска сертификата для компонента `kubelet`.
+
+#### 1. Создание самоподписанного корневого CA
+
+Сначала необходимо создать корневой сертификат, который будет точкой доверия для кластера.
+
+**Конфигурационный файл `ca.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions    = v3_ca
+prompt             = no
+
+[ req_distinguished_name ]
+C = RU
+ST = Moscow
+L = Moscow
+O = Kubernetes
+CN = kubernetes-ca
+
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+```
+- `prompt = no`: Отключает интерактивный ввод данных, все значения берутся из конфигурационного файла.
+- `basicConstraints = critical, CA:true`: Критически важное расширение, указывающее, что этот сертификат является сертификатом CA и может подписывать другие сертификаты.
+- `keyUsage`: Определяет цели, для которых может быть использован ключ (e.g., `digitalSignature` для цифровой подписи, `keyCertSign` для подписи сертификатов).
+
+**Генерация ключа и сертификата CA:**
+```bash
+# 1. Сгенерировать приватный ключ для CA
+openssl genrsa -out ca.key 2048
+
+# 2. Сгенерировать самоподписанный сертификат CA с использованием конфига
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -config ca.cnf
+```
+-   `-x509`: Создает самоподписанный сертификат (вместо CSR).
+-   `-nodes`: (No DES) Не шифровать приватный ключ паролем.
+-   `-days 3650`: Срок действия сертификата (10 лет).
+-   `-sha256`: Использовать алгоритм хеширования SHA-256 для подписи.
+
+#### 2. Создание сертификата для Kubelet
+
+Теперь выпустим сертификат для `kubelet`, который будет подписан нашим CA.
+
+**Конфигурационный файл `kubelet.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+C = RU
+ST = Moscow
+L = Moscow
+O = system:nodes
+CN = system:node:node01.example.com
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = node01.example.com
+IP.1 = 192.168.1.10
+```
+Поля в `req_distinguished_name` формируют *Subject* (субъект) сертификата — его идентификатор:
+- `O = system:nodes`: **Organization** (Организация). В Kubernetes это поле используется для привязки к группе в RBAC. Все `kubelet` принадлежат группе `system:nodes`.
+- `CN = system:node:node01.example.com`: **Common Name** (Общее имя). Используется как имя пользователя для аутентификации. Для `kubelet` принято использовать формат `system:node:<node-name>`.
+- `C`, `ST`, `L`: **Country**, **State**, **Locality**. Географические данные об организации.
+
+Расширения в `v3_req`:
+- `extendedKeyUsage = clientAuth`: Расширение, указывающее, что сертификат предназначен для аутентификации клиента. Для серверных сертификатов используется `serverAuth`.
+- `subjectAltName`: Альтернативные имена субъекта (SANs). Критически важны для TLS, так как клиенты проверяют, что DNS-имя или IP-адрес, к которому они подключаются, совпадает с одним из имен в этом поле.
+
+**Генерация ключа, CSR и подпись сертификата:**
+```bash
+# 1. Сгенерировать приватный ключ для kubelet
+openssl genrsa -out kubelet.key 2048
+
+# 2. Создать запрос на подпись сертификата (CSR)
+openssl req -new -key kubelet.key -out kubelet.csr -config kubelet.cnf
+
+# 3. Подписать CSR с помощью CA, создав сертификат для kubelet
+openssl x509 -req -in kubelet.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kubelet.crt -days 365 -sha256 -extensions v3_req -extfile kubelet.cnf
+```
+
+#### 3. Проверка сертификата
+Можно проверить информацию в созданном сертификате и убедиться, что он подписан нужным CA.
+```bash
+# Просмотр информации о сертификате
+openssl x509 -in kubelet.crt -noout -text
+
+# Проверка цепочки доверия
+openssl verify -CAfile ca.crt kubelet.crt
+# Ожидаемый вывод: kubelet.crt: OK
+```
+
+### Структура Kubeconfig
+
+`kubeconfig` — это YAML-файл, который содержит всю информацию для аутентификации и подключения к API-серверу Kubernetes.
+
+**Пример `kubeconfig` для `kubelet`:**
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubernetes-cluster
+  cluster:
+    certificate-authority-data: <base64-кодированный ca.crt>
+    server: https://kube-apiserver.example.com:6443
+users:
+- name: system:node:node01.example.com
+  user:
+    client-certificate-data: <base64-кодированный kubelet.crt>
+    client-key-data: <base64-кодированный kubelet.key>
+contexts:
+- name: default-context
+  context:
+    cluster: kubernetes-cluster
+    user: system:node:node01.example.com
+current-context: default-context
+```
+-   `clusters`: Список кластеров. Каждый кластер определяет:
+    - `server`: URL-адрес `kube-apiserver`.
+    - `certificate-authority-data`: Base64-кодированный сертификат корневого CA для проверки подлинности сервера.
+-   `users`: Список пользователей. Каждый пользователь определяет учетные данные для аутентификации, например:
+    - `client-certificate-data`: Клиентский сертификат в Base64.
+    - `client-key-data`: Клиентский приватный ключ в Base64.
+-   `contexts`: Список контекстов. Контекст — это именованная комбинация `cluster` и `user`, определяющая, к какому кластеру с какими учетными данными подключаться.
+-   `current-context`: Определяет, какой из контекстов будет использоваться по умолчанию утилитой `kubectl` и другими клиентами.
+
+## Дополнительная информация
+
+-   В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
+-   Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
+-   Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
+-   Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca_management.md)**.
+
+```
+-   **`kubelet` ("руки"):** Агент, работающий на каждом узле (Node). Он получает инструкции от `kube-apiserver` и обеспечивает запуск и мониторинг контейнеров на своем узле.
+
+Все коммуникации между `kubelet` и `kube-apiserver` происходят по защищенному протоколу HTTPS с использованием **mTLS**.
+
+### Процесс mTLS-аутентификации
+
+1.  Устанавливается TCP-соединение между клиентом (например, `kubelet`) и сервером (`kube-apiserver`).
+2.  Происходит "рукопожатие" TLS:
+    -   Клиент и сервер обмениваются сертификатами.
+    -   Каждая сторона проверяет, что сертификат другой стороны подписан доверенным CA (в данном случае, корневым CA кластера).
+    -   Каждая сторона доказывает владение соответствующим приватным ключом.
+3.  После успешной взаимной проверки устанавливается зашифрованный канал для обмена данными.
+
+Это гарантирует, что `kube-apiserver` принимает команды только от легитимных `kubelet`, а `kubelet` получает инструкции только от легитимного `kube-apiserver`.
+
+## Практические сценарии
+
+### Ручная генерация сертификатов с помощью OpenSSL
+
+Рассмотрим процесс создания CA и выпуска сертификата для компонента `kubelet`.
+
+#### 1. Создание самоподписанного корневого CA
+
+Сначала необходимо создать корневой сертификат, который будет точкой доверия для кластера.
+
+**Конфигурационный файл `ca.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions    = v3_ca
+prompt             = no
+
+[ req_distinguished_name ]
+C = RU
+ST = Moscow
+L = Moscow
+O = Kubernetes
+CN = kubernetes-ca
+
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+```
+
+**Генерация ключа и сертификата CA:**
+```bash
+# 1. Сгенерировать приватный ключ для CA
+openssl genrsa -out ca.key 2048
+
+# 2. Сгенерировать самоподписанный сертификат CA с использованием конфига
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -config ca.cnf
+```
+-   `-x509`: Создает самоподписанный сертификат.
+-   `-nodes`: Не шифровать приватный ключ.
+
+#### 2. Создание сертификата для Kubelet
+
+Теперь выпустим сертификат для `kubelet`, который будет подписан нашим CA.
+
+**Конфигурационный файл `kubelet.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+O = system:nodes
+CN = system:node:node01.example.com
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = node01.example.com
+IP.1 = 192.168.1.10
+```
+-   `O = system:nodes`: Имя организации (Organization) указывает, что этот сертификат принадлежит группе `system:nodes`, что используется в RBAC.
+-   `CN = system:node:node01.example.com`: Common Name указывает имя пользователя, в данном случае — конкретного узла.
+-   `extendedKeyUsage = clientAuth`: Расширение, указывающее, что сертификат предназначен для аутентификации клиента. Для серверных сертификатов используется `serverAuth`.
+
+**Генерация ключа, CSR и подпись сертификата:**
+```bash
+# 1. Сгенерировать приватный ключ для kubelet
+openssl genrsa -out kubelet.key 2048
+
+# 2. Создать запрос на подпись сертификата (CSR)
+openssl req -new -key kubelet.key -out kubelet.csr -config kubelet.cnf
+
+# 3. Подписать CSR с помощью CA, создав сертификат для kubelet
+openssl x509 -req -in kubelet.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kubelet.crt -days 365 -sha256 -extensions v3_req -extfile kubelet.cnf
+```
+
+#### 3. Проверка сертификата
+Можно проверить информацию в созданном сертификате и убедиться, что он подписан нужным CA.
+```bash
+# Просмотр информации о сертификате
+openssl x509 -in kubelet.crt -noout -text
+
+# Проверка цепочки доверия
+openssl verify -CAfile ca.crt kubelet.crt
+# Ожидаемый вывод: kubelet.crt: OK
+```
+
+### Структура Kubeconfig
+
+`kubeconfig` — это YAML-файл, который объединяет всю информацию для подключения к кластеру.
+
+**Пример `kubeconfig` для `kubelet`:**
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubernetes-cluster
+  cluster:
+    certificate-authority-data: <base64-кодированный ca.crt>
+    server: https://kube-apiserver.example.com:6443
+users:
+- name: system:node:node01.example.com
+  user:
+    client-certificate-data: <base64-кодированный kubelet.crt>
+    client-key-data: <base64-кодированный kubelet.key>
+contexts:
+- name: default-context
+  context:
+    cluster: kubernetes-cluster
+    user: system:node:node01.example.com
+current-context: default-context
+```
+-   `clusters`: Определяет целевые API-серверы и их корневые CA.
+-   `users`: Определяет учетные данные клиентов (сертификаты и ключи).
+-   `contexts`: Связывает `user` с `cluster`.
+
+## Дополнительная информация
+
+-   В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
+-   Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
+-   Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
+-   Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca_management.md)**.
+```
+-   **`kubelet` ("руки"):** Агент, работающий на каждом узле (Node). Он получает инструкции от `kube-apiserver` и обеспечивает запуск и мониторинг контейнеров на своем узле.
+
+Все коммуникации между `kubelet` и `kube-apiserver` происходят по защищенному протоколу HTTPS с использованием **mTLS**.
+
+### Процесс mTLS-аутентификации
+
+1.  Устанавливается TCP-соединение между клиентом (например, `kubelet`) и сервером (`kube-apiserver`).
+2.  Происходит "рукопожатие" TLS:
+    -   Клиент и сервер обмениваются сертификатами.
+    -   Каждая сторона проверяет, что сертификат другой стороны подписан доверенным CA (в данном случае, корневым CA кластера).
+    -   Каждая сторона доказывает владение соответствующим приватным ключом.
+3.  После успешной взаимной проверки устанавливается зашифрованный канал для обмена данными.
+
+Это гарантирует, что `kube-apiserver` принимает команды только от легитимных `kubelet`, а `kubelet` получает инструкции только от легитимного `kube-apiserver`.
+
+## Практические сценарии
+
+### Ручная генерация сертификатов с помощью OpenSSL
+
+Рассмотрим процесс создания CA и выпуска сертификата для компонента `kubelet`.
+
+#### 1. Создание самоподписанного корневого CA
+
+Сначала необходимо создать корневой сертификат, который будет точкой доверия для кластера.
+
+**Конфигурационный файл `ca.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions    = v3_ca
+prompt             = no
+
+[ req_distinguished_name ]
+C = RU
+ST = Moscow
+L = Moscow
+O = Kubernetes
+CN = kubernetes-ca
+
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+```
+
+**Генерация ключа и сертификата CA:**
+```bash
+# 1. Сгенерировать приватный ключ для CA
+openssl genrsa -out ca.key 2048
+
+# 2. Сгенерировать самоподписанный сертификат CA с использованием конфига
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -config ca.cnf
+```
+-   `-x509`: Создает самоподписанный сертификат.
+-   `-nodes`: Не шифровать приватный ключ.
+
+#### 2. Создание сертификата для Kubelet
+
+Теперь выпустим сертификат для `kubelet`, который будет подписан нашим CA.
+
+**Конфигурационный файл `kubelet.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+O = system:nodes
+CN = system:node:node01.example.com
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = node01.example.com
+IP.1 = 192.168.1.10
+```
+-   `O = system:nodes`: Имя организации (Organization) указывает, что этот сертификат принадлежит группе `system:nodes`, что используется в RBAC.
+-   `CN = system:node:node01.example.com`: Common Name указывает имя пользователя, в данном случае — конкретного узла.
+-   `extendedKeyUsage = clientAuth`: Расширение, указывающее, что сертификат предназначен для аутентификации клиента. Для серверных сертификатов используется `serverAuth`.
+
+**Генерация ключа, CSR и подпись сертификата:**
+```bash
+# 1. Сгенерировать приватный ключ для kubelet
+openssl genrsa -out kubelet.key 2048
+
+# 2. Создать запрос на подпись сертификата (CSR)
+openssl req -new -key kubelet.key -out kubelet.csr -config kubelet.cnf
+
+# 3. Подписать CSR с помощью CA, создав сертификат для kubelet
+openssl x509 -req -in kubelet.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kubelet.crt -days 365 -sha256 -extensions v3_req -extfile kubelet.cnf
+```
+
+#### 3. Проверка сертификата
+Можно проверить информацию в созданном сертификате и убедиться, что он подписан нужным CA.
+```bash
+# Просмотр информации о сертификате
+openssl x509 -in kubelet.crt -noout -text
+
+# Проверка цепочки доверия
+openssl verify -CAfile ca.crt kubelet.crt
+# Ожидаемый вывод: kubelet.crt: OK
+```
+
+### Структура Kubeconfig
+
+`kubeconfig` — это YAML-файл, который объединяет всю информацию для подключения к кластеру.
+
+**Пример `kubeconfig` для `kubelet`:**
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubernetes-cluster
+  cluster:
+    certificate-authority-data: <base64-кодированный ca.crt>
+    server: https://kube-apiserver.example.com:6443
+users:
+- name: system:node:node01.example.com
+  user:
+    client-certificate-data: <base64-кодированный kubelet.crt>
+    client-key-data: <base64-кодированный kubelet.key>
+contexts:
+- name: default-context
+  context:
+    cluster: kubernetes-cluster
+    user: system:node:node01.example.com
+current-context: default-context
+```
+-   `clusters`: Определяет целевые API-серверы и их корневые CA.
+-   `users`: Определяет учетные данные клиентов (сертификаты и ключи).
+-   `contexts`: Связывает `user` с `cluster`.
+
+## Дополнительная информация
+
+-   В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
+-   Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
+-   Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
+-   Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca_management.md)**.
+```
+-   **`kubelet` ("руки"):** Агент, работающий на каждом узле (Node). Он получает инструкции от `kube-apiserver` и обеспечивает запуск и мониторинг контейнеров на своем узле.
+
+Все коммуникации между `kubelet` и `kube-apiserver` происходят по защищенному протоколу HTTPS с использованием **mTLS**.
+
+### Процесс mTLS-аутентификации
+
+1.  Устанавливается TCP-соединение между клиентом (например, `kubelet`) и сервером (`kube-apiserver`).
+2.  Происходит "рукопожатие" TLS:
+    -   Клиент и сервер обмениваются сертификатами.
+    -   Каждая сторона проверяет, что сертификат другой стороны подписан доверенным CA (в данном случае, корневым CA кластера).
+    -   Каждая сторона доказывает владение соответствующим приватным ключом.
+3.  После успешной взаимной проверки устанавливается зашифрованный канал для обмена данными.
+
+Это гарантирует, что `kube-apiserver` принимает команды только от легитимных `kubelet`, а `kubelet` получает инструкции только от легитимного `kube-apiserver`.
+
+## Практические сценарии
+
+### Ручная генерация сертификатов с помощью OpenSSL
+
+Рассмотрим процесс создания CA и выпуска сертификата для компонента `kubelet`.
+
+#### 1. Создание самоподписанного корневого CA
+
+Сначала необходимо создать корневой сертификат, который будет точкой доверия для кластера.
+
+**Конфигурационный файл `ca.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions    = v3_ca
+prompt             = no
+
+[ req_distinguished_name ]
+C = RU
+ST = Moscow
+L = Moscow
+O = Kubernetes
+CN = kubernetes-ca
+
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+```
+
+**Генерация ключа и сертификата CA:**
+```bash
+# 1. Сгенерировать приватный ключ для CA
+openssl genrsa -out ca.key 2048
+
+# 2. Сгенерировать самоподписанный сертификат CA с использованием конфига
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -config ca.cnf
+```
+-   `-x509`: Создает самоподписанный сертификат.
+-   `-nodes`: Не шифровать приватный ключ.
+
+#### 2. Создание сертификата для Kubelet
+
+Теперь выпустим сертификат для `kubelet`, который будет подписан нашим CA.
+
+**Конфигурационный файл `kubelet.cnf`:**
+```ini
+[ req ]
+distinguished_name = req_distinguished_name
+req_extensions     = v3_req
+prompt             = no
+
+[ req_distinguished_name ]
+O = system:nodes
+CN = system:node:node01.example.com
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = node01.example.com
+IP.1 = 192.168.1.10
+```
+-   `O = system:nodes`: Имя организации (Organization) указывает, что этот сертификат принадлежит группе `system:nodes`, что используется в RBAC.
+-   `CN = system:node:node01.example.com`: Common Name указывает имя пользователя, в данном случае — конкретного узла.
+-   `extendedKeyUsage = clientAuth`: Расширение, указывающее, что сертификат предназначен для аутентификации клиента. Для серверных сертификатов используется `serverAuth`.
+
+**Генерация ключа, CSR и подпись сертификата:**
+```bash
+# 1. Сгенерировать приватный ключ для kubelet
+openssl genrsa -out kubelet.key 2048
+
+# 2. Создать запрос на подпись сертификата (CSR)
+openssl req -new -key kubelet.key -out kubelet.csr -config kubelet.cnf
+
+# 3. Подписать CSR с помощью CA, создав сертификат для kubelet
+openssl x509 -req -in kubelet.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kubelet.crt -days 365 -sha256 -extensions v3_req -extfile kubelet.cnf
+```
+
+#### 3. Проверка сертификата
+Можно проверить информацию в созданном сертификате и убедиться, что он подписан нужным CA.
+```bash
+# Просмотр информации о сертификате
+openssl x509 -in kubelet.crt -noout -text
+
+# Проверка цепочки доверия
+openssl verify -CAfile ca.crt kubelet.crt
+# Ожидаемый вывод: kubelet.crt: OK
+```
+
+### Структура Kubeconfig
+
+`kubeconfig` — это YAML-файл, который объединяет всю информацию для подключения к кластеру.
+
+**Пример `kubeconfig` для `kubelet`:**
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubernetes-cluster
+  cluster:
+    certificate-authority-data: <base64-кодированный ca.crt>
+    server: https://kube-apiserver.example.com:6443
+users:
+- name: system:node:node01.example.com
+  user:
+    client-certificate-data: <base64-кодированный kubelet.crt>
+    client-key-data: <base64-кодированный kubelet.key>
+contexts:
+- name: default-context
+  context:
+    cluster: kubernetes-cluster
+    user: system:node:node01.example.com
+current-context: default-context
+```
+-   `clusters`: Определяет целевые API-серверы и их корневые CA.
+-   `users`: Определяет учетные данные клиентов (сертификаты и ключи).
+-   `contexts`: Связывает `user` с `cluster`.
+
+## Дополнительная информация
+
+-   В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
+-   Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
+-   Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
+-   Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca_management.md)**.
+```

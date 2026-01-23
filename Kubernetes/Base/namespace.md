@@ -1,10 +1,12 @@
 # Namespace
 
-**Namespace** (пространство имен) — это механизм для разделения одного физического кластера Kubernetes на несколько **виртуальных кластеров**. Он позволяет изолировать группы ресурсов, создавая для них отдельную рабочую область.
+## Определения
 
-Имена ресурсов должны быть уникальны в пределах одного `Namespace`, но могут повторяться в разных.
+**Namespace** (пространство имен) — это механизм для разделения одного физического кластера Kubernetes на несколько **виртуальных кластеров**. Он позволяет изолировать группы ресурсов, создавая для них отдельную рабочую область. Имена ресурсов должны быть уникальны в пределах одного `Namespace`, но могут повторяться в разных.
 
-## Зачем нужны Namespaces?
+## Основные концепции
+
+### Назначение
 
 1.  **Организация ресурсов:** Группировка объектов по проектам, командам или средам (например, `development`, `staging`, `production`). Это предотвращает хаос в кластере.
 2.  **Предотвращение конфликтов имен:** `Deployment` с именем `my-app` может существовать одновременно в `staging` и `production`, не мешая друг другу.
@@ -12,28 +14,32 @@
 4.  **Квотирование ресурсов (Resource Quotas):** Можно ограничить потребление CPU, памяти и количество создаваемых объектов (подов, сервисов) для каждого `Namespace`, чтобы гарантировать справедливое распределение ресурсов.
 5.  **Изоляция сетевых политик (Network Policies):** Сетевые политики применяются к подам внутри `Namespace`, позволяя контролировать входящий и исходящий трафик.
 
-## Ресурсы и Namespaces
+Пример Namespace с метками:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+    team: platform
+```
+
+
+### Типы ресурсов
 
 Не все ресурсы в Kubernetes привязаны к `Namespace`.
 
 *   **Namespaced-ресурсы** (существуют внутри `Namespace`):
-
-    *   Рабочие нагрузки: [Pod](./pod.md), [Deployment](./deployment_and_rolling_update.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), CronJob.
-    *   Конфигурация и сервисы: [Service](../Networking/service.md), [Ingress](../Networking/ingress.md), [ConfigMap](./configmap.md), [Secret](./secret.md), PersistentVolumeClaim.
-    *   Политики: `NetworkPolicy`, [ResourceQuota](../Scheduling/qos_limit_and_requests.md#ограничение-суммарного-потребления-с-resourcequota).
+    *   Рабочие нагрузки: [Pod](./pod.md), [Deployment](./deployment.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
+    *   Конфигурация и сервисы: [Service](../Networking/service.md), [Ingress](../Networking/ingress.md), [ConfigMap](./configmap.md), [Secret](./secret.md), `PersistentVolumeClaim`.
+    *   Политики: `NetworkPolicy`, `ResourceQuota`.
 
 *   **Cluster-wide ресурсы** (существуют на уровне всего кластера):
-
     *   Инфраструктура: `Node`, `PersistentVolume`.
     *   Безопасность и доступ: `ClusterRole`, `ClusterRoleBinding`.
-    *   Системные: `Namespace` (сам по себе), `StorageClass`, `APIService`.
-
-Чтобы посмотреть, является ли ресурс namespaced, можно использовать команду:
-
-```bash
-kubectl api-resources --namespaced=true  # Ресурсы в Namespace
-kubectl api-resources --namespaced=false # Ресурсы на уровне кластера
-```
+    *   Системные: `Namespace` (сам по себе), `StorageClass`.
 
 ## Стандартные Namespaces
 
@@ -44,9 +50,16 @@ kubectl api-resources --namespaced=false # Ресурсы на уровне кл
 *   `kube-public`: Создаваемое автоматически пространство имён, которое доступно для чтения пользователями (даже неаутентифицированными). Данное пространство имён обычно используется кластером, если ресурсы должны быть общедоступными, например, для публикации информации о кластере.
 *   `kube-node-lease`: Для объектов `Lease`, которые отслеживают доступность узлов (heartbeats).
 
-## Работа с Namespaces
+### Ограничения изоляции
 
-#### Создание
+Важно понимать, что `Namespace` **не обеспечивает** полную физическую изоляцию:
+
+*   **Узлы (Nodes):** Поды из разных `Namespace` могут работать на одном и том же узле.
+*   **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/network.md).
+
+## Практические сценарии
+
+### Создание Namespace
 
 ```bash
 # 1. С помощью команды
@@ -58,16 +71,19 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: my-namespace
+  labels:
+    environment: production
+    team: platform
 EOF
 ```
 
-#### Просмотр и управление
+### Управление и просмотр
 
 ```bash
 # Посмотреть все namespaces
 kubectl get namespaces
 # или
-kubectl get ns # вывод списка неймспейсов
+kubectl get ns 
 
 # Получить поды из конкретного namespace
 kubectl get pods -n my-namespace
@@ -81,7 +97,16 @@ kubectl get pods -A
 kubectl delete namespace my-namespace
 ```
 
-#### Переключение контекста
+### Проверка типа ресурса
+
+Чтобы посмотреть, является ли ресурс namespaced, можно использовать команду:
+
+```bash
+kubectl api-resources --namespaced=true  # Ресурсы в Namespace
+kubectl api-resources --namespaced=false # Ресурсы на уровне кластера
+```
+
+### Переключение контекста
 
 Чтобы не указывать флаг `-n` каждый раз, можно изменить текущий `Namespace` в активном контексте `kubeconfig`.
 
@@ -93,15 +118,9 @@ kubectl config set-context --current --namespace=my-namespace
 kubectl config view --minify | grep namespace
 ```
 
-## Что не изолирует Namespace?
+## Дополнительная информация
 
-Важно понимать, что `Namespace` **не обеспечивает** полную изоляцию:
-
-*   **Узлы (Nodes):** Поды из разных `Namespace` могут работать на одном и том же узле.
-*   **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/network.md).
-*   **Физические ресурсы:** `Namespace` ограничивает ресурсы логически через квоты, но не гарантирует физического разделения CPU или памяти.
-
-## Namespaces и Kubespray
+### Namespaces и Kubespray
 
 Kubespray придерживается стандартов и не создает кастомных пространств имен. Он использует `kube-system` для развертывания всех своих управляемых компонентов.
 
@@ -112,9 +131,9 @@ Kubespray придерживается стандартов и не создае
 *   `kube-public`
 *   `kube-node-lease`
 
-Однако, `kube-system` будет содержать значительно больше подов, чем при "чистой" установке через `kubeadm`. В зависимости от вашей конфигурации, Kubespray добавит туда:
+В зависимости от вашей конфигурации, Kubespray добавит туда:
 
 *   **Сетевой плагин (CNI):** Calico, Flannel, Cilium и т.д.
-*   **DNS-компоненты:** CoreDNS, а также может добавить `dns-autoscaler` и `nodelocaldns`.
+*   **DNS-компоненты:** CoreDNS, `dns-autoscaler`, `nodelocaldns`.
 *   **Ingress-контроллер:** Nginx, HAProxy и др.
 *   **Dashboard:** `kubernetes-dashboard` и `metrics-scraper`.

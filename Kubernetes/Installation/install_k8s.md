@@ -1,118 +1,283 @@
 # Установка отказоустойчивого кластера Kubernetes на Bare-Metal с помощью kubeadm
 
-Это руководство представляет собой пошаговую инструкцию по развертыванию отказоустойчивого (High-Availability) кластера Kubernetes на физических серверах ("bare-metal"). Мы будем использовать `kubeadm` для инициализации кластера и `containerd` в качестве среды выполнения контейнеров.
+## Определения
 
-> **Примечание:** Это руководство описывает установку отказоустойчивого кластера для производственной среды. Для быстрого развертывания простого одно-мастерного кластера для тестирования или разработки см. [Быстрый старт с kubeadm](./kubeadm_quickstart.md).
-
-> **Важно:** Перед началом установки ознакомьтесь с общими принципами и требованиями к построению производственных кластеров в документе [Архитектура кластера Kubernetes](../kubernetes_overview.md).
+*   **Bare-Metal** — физические серверы, в противоположность виртуальным машинам. Установка на "голое железо" дает максимальную производительность, но требует ручного управления инфраструктурой.
+*   **kubeadm** — официальный инструмент от Kubernetes для быстрой инициализации (bootstrapping) кластеров. Он автоматизирует создание control-plane, управление токенами присоединения и другие базовые задачи, но не управляет подготовкой серверов.
+*   **containerd** — стандартизированная среда выполнения контейнеров. Это легковесный и эффективный runtime, который управляет жизненным циклом контейнеров на узлах кластера. Является заменой Docker Engine (dockershim), поддержка которого удалена из Kubernetes.
+*   **Отказоустойчивый кластер (High-Availability, HA)** — конфигурация кластера, в которой критически важные компоненты (в данном случае, Control Plane) дублируются на нескольких серверах для предотвращения единой точки отказа.
+*   **CRI (Container Runtime Interface)** — это плагин, позволяющий `kubelet` (главному агенту Kubernetes на узле) взаимодействовать с различными средами выполнения контейнеров, такими как `containerd`.
 
 ---
 
-### Аппаратные требования
+## Основные концепции
 
-*   **Мастер-узел (Control Plane):** Минимум 2 CPU, 2 ГБ RAM, 20 ГБ диска.
-*   **Рабочий узел (Worker Node):** Минимум 2 CPU, 4 ГБ RAM, 20 ГБ диска.
+Для построения отказоустойчивого кластера Kubernetes используется схема со "стекированным" (stacked) Control Plane, где компоненты `etcd` и API-сервера располагаются на одних и тех же мастер-узлах.
 
-### Программные требования
+Ключевые элементы архитектуры:
 
-*   **ОС:** Ubuntu 22.04 LTS или новее / CentOS 9 Stream на всех узлах.
-*   **Сеть:** Статические IP-адреса для всех узлов и открытые порты (см. [документацию Kubernetes](https://kubernetes.io/docs/reference/ports-and-protocols/)).
+1.  **Балансировщик нагрузки (Load Balancer)**: Внешний компонент (например, HAProxy, Nginx или F5), который располагается перед всеми мастер-узлами. Он принимает трафик на единый виртуальный IP-адрес (VIP) и порт `6443` (порт API-сервера Kubernetes) и распределяет его между работоспособными мастерами. Это обеспечивает единую точку входа (`control-plane-endpoint`) для всего кластера.
+2.  **Мастер-узлы (Control Plane Nodes)**: Минимум три физических или виртуальных машины. Они инициализируются с указанием на VIP балансировщика. Благодаря этому `kubelet` и другие компоненты всегда "общаются" с балансировщиком, а не с конкретным мастером.
+3.  **Рабочие узлы (Worker Nodes)**: Подключаются к кластеру через тот же VIP, что делает их независимыми от IP-адресов конкретных мастеров.
+
+---
+
+## Практический сценарий: Установка кластера
+
+Это пошаговое руководство по развертыванию HA-кластера.
+
+### 1. Требования к среде
+
+#### Аппаратные требования
+*   **Мастер-узел (Control Plane):** Минимум 3 узла, 2 CPU, 2 ГБ RAM, 20 ГБ диска на каждом.
+*   **Рабочий узел (Worker Node):** Минимум 2 узла, 2 CPU, 4 ГБ RAM, 20 ГБ диска на каждом.
+*   **Балансировщик:** 1 узел с установленным HAProxy/Keepalived или аналогичным ПО.
+
+#### Программные требования
+*   **ОС:** Ubuntu 22.04 LTS или новее.
+*   **Сеть:** Статические IP-адреса для всех узлов. Порты должны быть открыты согласно [официальной документации](https://kubernetes.io/docs/reference/ports-and-protocols/).
 *   **Доступ:** SSH-доступ с правами `sudo` на все узлы.
 
----
+### 2. Подготовка всех узлов (Master и Worker)
 
-## Подготовка всех узлов
+Следующие шаги выполняются на **каждом** узле будущего кластера.
 
-Следующие шаги необходимо выполнить на **каждом** узле кластера (мастер- и рабочих).
-
-### Обновление системы
-
+#### Обновление системы
 ```bash
 sudo apt-get update && sudo apt-get upgrade -y
 ```
 
-### Настройка имен хостов и сети
-
-Присвойте уникальное имя каждому узлу:
+#### Настройка имен хостов и `/etc/hosts`
+Присвойте уникальное имя каждому узлу (`master-1`, `master-2`, `worker-1` и т.д.):
 ```bash
 sudo hostnamectl set-hostname <имя-узла>
 ```
-
-Добавьте IP-адреса и имена всех узлов в файл `/etc/hosts` на каждом узле.
+На каждом узле добавьте в `/etc/hosts` IP-адреса всех участников кластера.
 ```
 # /etc/hosts
+<IP-адрес-балансировщика> kubeapi-vip
 <IP-адрес-мастера-1> master-1
 <IP-адрес-мастера-2> master-2
-<IP-адрес-балансировщика> kubeapi-vip
+<IP-адрес-мастера-3> master-3
 <IP-адрес-воркера-1> worker-1
+...
 ```
-> **NOTE:** Для продуктивных сред рекомендуется использовать внутренний DNS-сервер вместо ручного редактирования `/etc/hosts` для большей надежности и управляемости.
+> **NOTE:** Для продуктивных сред рекомендуется использовать внутренний DNS-сервер вместо ручного редактирования `/etc/hosts`.
 
-### Отключение Swap
+#### Предварительная проверка и настройка системы
 
-Kubernetes требует, чтобы swap был отключен для стабильной работы.
+Эти шаги выполняются на **каждом** сервере будущего кластера.
+
+##### 1. Проверка текущего состояния (на ВСЕХ серверах):
+
+Текущее ядро
 ```bash
-# Отключаем swap немедленно
+uname -r
+```
+
+Доступные ядра
+```bash
+ls /boot/vmlinuz-*
+```
+
+Cgroups версия
+```bash
+stat -fc %T /sys/fs/cgroup
+```
+
+Активный SWAP
+```bash
+swapon --show
+```
+
+Загруженные сетевые модули
+```bash
+lsmod | grep -E "br_netfilter|overlay"
+```
+
+Текущие контейнеры
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+##### 2. Обновление системы (по одному серверу):
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+Проверка доступных ядер после обновления
+```bash
+ls /boot/vmlinuz-*  # Должно быть новое ядро (в моем случае это 6.8.0-90)
+```
+**ВАЖНО: НЕ перезагружаем пока! Сначала выполним все настройки.**
+
+##### 3. Настройка системных параметров:
+
+1. Отключаем SWAP
+```bash
 sudo swapoff -a
-# Убираем swap из fstab, чтобы он не включился после перезагрузки
 sudo sed -i '/ swap / s/^/#/' /etc/fstab
+echo "SWAP отключен: $(swapon --show | wc -l) активных"
 ```
 
-### Настройка модулей ядра и sysctl
-
-Эти параметры необходимы для корректной работы сети в Kubernetes.
+2. Настраиваем cgroups v2 в GRUB
 ```bash
-# Включаем модуль br_netfilter для корректной работы сетевых мостов
+sudo sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"/' /etc/default/grub
+sudo update-grub
+echo "GRUB обновлён: $(grep GRUB_CMDLINE_LINUX /etc/default/grub)"
+```
+
+3. Загружаем сетевые модули
+```bash
 sudo modprobe br_netfilter
-
-# Добавляем его в автозагрузку
-cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
-br_netfilter
-EOF
-
-# Настраиваем параметры sysctl для сети
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-ip6tables = 1
-net.bridge.bridge-nf-call-iptables = 1
-net.ipv4.ip_forward                 = 1
-EOF
-
-# Применяем параметры без перезагрузки
-sudo sysctl --system
+sudo modprobe overlay
+echo -e "br_netfilter\noverlay" | sudo tee /etc/modules-load.d/k8s.conf
+echo "Модули загружены:"
+lsmod | grep -E "br_netfilter|overlay"
 ```
 
----
-
-## Установка компонентов
-
-Эти шаги также выполняются на **каждом** узле.
-
-### Установка среды выполнения контейнеров (containerd)
-
+4. Настраиваем sysctl параметры
 ```bash
-# Устанавливаем containerd
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes.conf
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.netfilter.nf_conntrack_max = 262144
+EOF
+
+sudo sysctl --system
+echo "Проверка параметров:"
+sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables
+```
+
+##### 4. Быстрая проверка готовности
+После выполнения всех команд на каждом сервере у вас будет:
+
+1. Система готова к работе с Kubernetes:
+SWAP полностью отключен (swapon --show = 0 активных)
+Cgroups v2 активирован (stat -fc %T /sys/fs/cgroup = cgroup2fs)
+GRUB настроен с параметром systemd.unified_cgroup_hierarchy=1
+Сетевые модули загружены (br_netfilter, overlay)
+Sysctl параметры установлены (ip_forward=1, bridge-nf-call-iptables=1)
+
+2. Все проверки пройдены:
+```bash
+echo "1. SWAP: $(swapon --show | wc -l) активных (должно быть 0)"
+echo "2. Cgroups: $(stat -fc %T /sys/fs/cgroup) (должно быть cgroup2fs)"
+echo "3. Сеть: ip_forward=$(sysctl -n net.ipv4.ip_forward) (должно быть 1)"
+echo "4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(lsmod | grep -c overlay)"
+```
+
+##### 5. Что НЕ сделано (и не должно быть сделано сейчас):
+* Перезагрузка (выполним позже, после всех настроек)
+* Установка Kubernetes компонентов (это следующий этап)
+* Изменение работы существующих контейнеров (они работают как и раньше)
+
+### 3. Установка компонентов (на всех узлах)
+
+#### Установка и настройка среды выполнения `containerd`
+
+**Цель:** Установить `containerd` и настроить его как CRI (Container Runtime Interface) для Kubernetes, обеспечив корректную работу с `systemd` и сохранив совместимость с существующими Docker-контейнерами, если они есть.
+
+**Шаг 3.1: Установка `containerd`**
+```bash
+# Обновляем список пакетов и устанавливаем containerd
+sudo apt-get update
 sudo apt-get install -y containerd
 
-# Создаем конфигурационный файл по умолчанию
-sudo mkdir -p /etc/containerd
-sudo containerd config default | sudo tee /etc/containerd/config.toml
-
-# Включаем опцию SystemdCgroup, чтобы kubelet и containerd работали с одним cgroup-драйвером
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-# Перезапускаем и включаем containerd для применения изменений
-sudo systemctl restart containerd
-sudo systemctl enable containerd
+# Проверяем успешность установки
+echo "Установленная версия containerd:"
+containerd --version
 ```
 
-### Установка инструментов Kubernetes (kubeadm, kubelet, kubectl)
+**Шаг 3.2: Конфигурация `containerd` для Kubernetes**
+```bash
+# Создаём директорию для конфигурации, если её нет
+sudo mkdir -p /etc/containerd
+
+# Генерируем конфигурацию по умолчанию.
+# Перед этим создаем бэкап, если файл уже существует.
+if [ -f /etc/containerd/config.toml ]; then
+    sudo cp /etc/containerd/config.toml /etc/containerd/config.toml.backup.$(date +%Y%m%d_%H%M)
+fi
+sudo containerd config default | sudo tee /etc/containerd/config.toml
+
+# Включаем драйвер Systemd Cgroup для корректной интеграции с kubelet.
+# Это критически важный шаг для управления ресурсами подов.
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+# Устанавливаем официальный pause-образ от Kubernetes.
+# Он используется для создания сетевого пространства имен для каждого пода.
+sudo sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.k8s.io/pause:3.9"|' /etc/containerd/config.toml
+
+# Проверяем, что ключевые изменения применились
+echo "Проверка настроек containerd:"
+sudo grep -E "SystemdCgroup|sandbox_image" /etc/containerd/config.toml
+```
+
+**Шаг 3.3: Перезапуск сервиса и проверка**
+```bash
+# Перезапускаем containerd для применения новой конфигурации
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+
+# Проверяем, что сервис активен и CRI-сокет доступен
+echo "Статус containerd: $(systemctl is-active containerd)"
+if [ -S /run/containerd/containerd.sock ]; then
+    echo "CRI-сокет /run/containerd/containerd.sock доступен."
+else
+    echo "CRI-сокет /run/containerd/containerd.sock не найден."
+fi
+```
+
+**Шаг 3.4: Проверка готовности Containerd**
+
+После настройки и перезапуска `containerd` необходимо убедиться в его корректной работе и доступности CRI-сокета для Kubernetes.
 
 ```bash
-# 1. Определите актуальную версию Kubernetes, например, на странице релизов:
-# https://github.com/kubernetes/kubernetes/releases
-K8S_VERSION="1.34" # Замените на нужную минорную версию (например, 1.29, 1.30)
+# Проверка CRI-сокета: убеждаемся, что файл сокета существует и является сокетом
+ls -la /run/containerd/containerd.sock
+test -S /run/containerd/containerd.sock && echo "CRI socket: OK" || echo "CRI socket: MISSING"
 
-# 2. Добавляем официальный GPG-ключ Kubernetes
+# Проверка доступности API containerd через утилиту 'ctr'
+ctr version >/dev/null 2>&1 && echo "Containerd API: OK" || echo "Containerd API: FAILED"
+
+# Проверка применённых настроек, особенно параметра SystemdCgroup
+echo "Applied configuration:"
+containerd config dump | grep -A1 "SystemdCgroup"
+
+# Предварительная проверка pause-образа (опционально):
+# Попытка загрузить pause-образ, если он еще не кэширован.
+# kubelet автоматически загрузит его при необходимости.
+echo "Pause image availability:"
+ctr --namespace k8s.io images pull registry.k8s.io/pause:3.9 2>&1 | grep -q "success" && echo "Pause image: OK" || echo "Pause image: WILL BE PULLED BY KUBELET"
+```
+
+**Ожидаемый результат после выполнения Шага 3 (Установка и настройка `containerd`):**
+*   `containerd` сконфигурирован с параметрами, требуемыми Kubernetes (включая `SystemdCgroup=true` и `sandbox_image=registry.k8s.io/pause:3.9`).
+*   Docker функционирует, используя тот же экземпляр `containerd` (если Docker был установлен ранее).
+*   Существующие Docker-контейнеры восстановлены в рабочее состояние (если они были запущены до остановки Docker).
+*   CRI-сокет доступен по пути `/run/containerd/containerd.sock`.
+*   Система подготовлена к установке компонентов Kubernetes.
+
+**Текущий статус системы:**
+*   Ядро ОС: Обновлено до 6.8.0-90 (будет активно после перезагрузки).
+*   Cgroups: Переключено на v2, параметр прописан в GRUB.
+*   Docker: Работает, использует `containerd` как runtime.
+*   Containerd: Активен, сконфигурирован для CRI (SystemdCgroup=true, `sandbox_image=registry.k8s.io/pause:3.9`).
+*   Kubernetes: Компоненты пока не установлены.
+*   CRI-сокет: `/run/containerd/containerd.sock` доступен.
+*   Контейнеры: Все рабочие контейнеры восстановлены.
+
+**Следующий этап:** Установка `kubeadm`, `kubelet`, `kubectl` версии 1.34. Перезагрузка всех нод будет выполнена после полной установки компонентов Kubernetes.
+
+#### Установка `kubeadm`, `kubelet`, `kubectl`
+```bash
+# 1. Определяем версию Kubernetes
+# Используем последнюю стабильную версию.
+K8S_VERSION="1.35"
+
+# 2. Добавляем официальный GPG-ключ и репозиторий Kubernetes
 sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
 # 3. Добавляем репозиторий Kubernetes
@@ -126,21 +291,10 @@ sudo apt-get install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 ```
 
----
+### 4. Настройка Control Plane
 
-## Настройка отказоустойчивого Control Plane (HA)
-
-Для продуктивных сред необходимо использовать кластер с несколькими мастер-узлами.
-
-### Схема работы
-
-1.  **Балансировщик нагрузки (Load Balancer):** Настраивается перед мастер-узлами. Он принимает трафик на виртуальный IP-адрес (VIP) и порт `6443` и направляет его на один из работоспособных мастер-узлов. В качестве балансировщика можно использовать **HAProxy**, **Nginx** или **keepalived**.
-2.  **Мастер-узлы:** Инициализируются с указанием на VIP балансировщика.
-3.  **Рабочие узлы:** Подключаются к кластеру через VIP, а не через IP конкретного мастера.
-
-### Инициализация первого мастер-узла
-
-На **первом** мастер-узле выполните:
+#### Инициализация первого мастер-узла
+На **первом** мастере выполните:
 ```bash
 # Замените LOAD_BALANCER_IP на VIP вашего балансировщика
 # --pod-network-cidr требуется для многих CNI, например, Calico
@@ -149,14 +303,13 @@ sudo kubeadm init \
   --pod-network-cidr=192.168.0.0/16 \
   --upload-certs
 ```
-*   `--control-plane-endpoint`: Общая точка входа для всех мастеров.
+*   `--control-plane-endpoint`: Общая точка входа для всех мастеров (VIP).
 *   `--upload-certs`: Загружает сертификаты в кластер, чтобы их могли скачать другие мастера.
 *   `--pod-network-cidr`: Диапазон IP-адресов для подов. Убедитесь, что он не пересекается с другими сетями.
 
 После успешной инициализации `kubeadm` выведет две команды `join`: одну для других мастеров, вторую для рабочих узлов. **Сохраните их.**
 
-### Настройка `kubectl`
-
+#### Настройка `kubectl`
 Чтобы управлять кластером с мастер-узла:
 ```bash
 mkdir -p $HOME/.kube
@@ -164,47 +317,32 @@ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 ```
 
-### Добавление остальных мастер-узлов
+#### Присоединение остальных мастер-узлов
+На **втором и третьем** мастер-узлах выполните команду `kubeadm join` для мастеров, полученную ранее.
 
-На **остальных** мастер-узлах выполните команду `kubeadm join`, которую вы получили на шаге 4.2 (команда для мастеров).
+#### Присоединение рабочих узлов
+На **каждом** рабочем узле выполните команду `kubeadm join` для воркеров.
 
-### Добавление рабочих узлов
+### 5. Установка сетевого плагина (CNI)
 
-На **каждом** рабочем узле выполните команду `kubeadm join` для рабочих узлов.
-
----
-
-## Установка сетевого плагина (CNI)
-
-Кластер не будет полностью функционален до установки сетевого плагина. Этот шаг выполняется **один раз** с любого мастер-узла.
-
-В качестве примера используем **Calico**.
-> **Важно:** Версии Calico и Kubernetes должны быть совместимы. Всегда сверяйтесь с [официальной документацией Calico](https://docs.projectcalico.org/getting-started/kubernetes/self-managed-on-premises/on-premises) для получения актуальной команды установки.
+Этот шаг выполняется **один раз** с любого мастер-узла после инициализации кластера. В качестве примера используем **Calico**.
 
 ```bash
-# Команда для установки Calico. URL может меняться, проверяйте документацию.
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.3/manifests/calico.yaml
+# URL может меняться. Проверяйте совместимость Calico и Kubernetes в официальной документации.
+# https://docs.projectcalico.org/getting-started/kubernetes/self-managed-on-premises/on-premises
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
 ```
 
-После установки плагина проверьте состояние всех подов в `kube-system`:
+Проверьте, что все системные поды и узлы перешли в состояние `Running` и `Ready`:
 ```bash
 kubectl get pods -n kube-system
-```
-Все поды должны перейти в состояние `Running`.
-
-Проверьте состояние узлов:
-```bash
 kubectl get nodes
 ```
-Все узлы должны быть в состоянии `Ready`.
 
----
+### 6. Проверка работоспособности кластера
+Развернем тестовое приложение Nginx.
 
-## Развертывание тестового приложения
-
-Для проверки работоспособности кластера развернем Nginx, используя декларативный подход.
-
-1.  **Создайте файл `nginx-test.yaml`:**
+1.  **Создайте манифест `nginx-test.yaml`:**
     ```yaml
     apiVersion: apps/v1
     kind: Deployment
@@ -224,7 +362,7 @@ kubectl get nodes
         spec:
           containers:
           - name: nginx
-            image: nginx:1.28.0
+            image: nginx:latest
             ports:
             - containerPort: 80
     ---
@@ -242,39 +380,25 @@ kubectl get nodes
           targetPort: 80
     ```
 
-2.  **Примените манифест:**
+2.  **Примените манифест и проверьте сервис:**
     ```bash
     kubectl apply -f nginx-test.yaml
-    ```
-
-3.  **Узнайте выделенный порт:**
-    ```bash
     kubectl get service nginx-service
     ```
-    В выводе вы увидите порт, например `3xxxx`, в строке `80:3xxxx/TCP`.
-
-4.  **Проверьте доступ:**
-    Откройте в браузере `http://<IP-адрес-любого-воркера>:<NodePort>`. Вы должны увидеть страницу приветствия Nginx.
+    Узнайте `NodePort` (порт вида `3xxxx`) и проверьте доступ по адресу `http://<IP-любого-воркера>:<NodePort>`.
 
 ---
 
----
+## Дополнительная информация
 
-## Средства автоматизации: Kubeadm vs Kubespray
+### Kubeadm vs. Kubespray
 
-Хотя `kubeadm` (описанный в этом руководстве) является официальным инструментом для базовой установки кластера, он требует значительного количества ручных операций и написания собственных скриптов для полной автоматизации.
-
-Для более комплексного и автоматизированного подхода существуют специализированные инструменты, такие как **Kubespray**.
+Хотя `kubeadm` является официальным инструментом для инициализации кластера, он требует значительного количества ручных операций. Для полной автоматизации развертывания production-ready кластеров часто используют **Kubespray**.
 
 *   **Kubeadm**:
-    *   **Плюсы**: Официальный инструмент, гибкий, дает глубокое понимание процесса установки.
+    *   **Плюсы**: Официальный, гибкий, дает глубокое понимание процесса установки.
     *   **Минусы**: Требует ручной настройки узлов, сети и компонентов. Автоматизация ложится на плечи инженера.
 
 *   **[Kubespray](./kubespray.md)**:
-    *   **Плюсы**: Полностью автоматизирует развертывание, включая настройку ОС, сети и дополнительных компонентов. Управляется декларативно через Ansible.
-    *   **Минусы**: Менее гибкий, чем `kubeadm`. Из-за большого количества Ansible-ролей может быть медленным. Сложнее в отладке из-за высокого уровня абстракции.
-
----
-
-Теперь, когда ваш кластер установлен и работает, вы можете изучить его [архитектуру кластера](../CoreConcepts/cluster_architecture.md).
-
+    *   **Плюсы**: Полностью автоматизирует развертывание с помощью Ansible. Поддерживает большое количество конфигураций.
+    *   **Минусы**: Более высокий уровень абстракции усложняет отладку. Может быть медленным из-за большого количества Ansible-ролей.

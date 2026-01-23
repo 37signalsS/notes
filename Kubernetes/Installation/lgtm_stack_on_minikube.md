@@ -1,32 +1,58 @@
 # Развертывание стека LGTM и OpenTelemetry на Minikube
 
-Это пошаговое руководство описывает процесс развертывания полного стека Observability (Loki, Grafana, Tempo, Mimir) и OpenTelemetry на локальном кластере Kubernetes, запущенном с помощью Minikube. Руководство основано на практической части вебинара "DevOps by Rebrain: Знакомство с Observability".
+## Определения
 
-## 1. Предварительные требования
+- **Стек LGTM (Loki, Grafana, Tempo, Mimir)**: Современный, полностью интегрированный стек наблюдаемости с открытым исходным кодом от Grafana Labs. Он включает в себя:
+    - **[Loki](../Loki/loki_overview.md)**: Система для сбора и агрегации логов, оптимизированная для экономичного хранения.
+    - **[Grafana](../Grafana/grafana_overview.md)**: Платформа для визуализации и анализа данных, позволяющая объединять метрики, логи и трейсы в едином интерфейсе.
+    - **[Tempo](../Tempo/tempo_overview.md)**: Высокомасштабируемое хранилище для распределенных трассировок.
+    - **[Mimir](../Mimir/mimir_overview.md)**: Горизонтально масштабируемое хранилище временных рядов для метрик Prometheus.
+    Более подробно концепция описана в [обзоре наблюдаемости](../Concepts/Observability_and_Monitoring/observability_overview.md).
 
-Убедитесь, что у вас установлены следующие инструменты:
+- **[OpenTelemetry (OTel)](../OpenTelemetry/opentelemetry_overview.md)**: Открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (логов, метрик и трассировок). Он позволяет унифицировать инструментирование приложений независимо от используемого бэкенда для анализа.
+
+- **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера Kubernetes. Идеально подходит для разработки, обучения и тестирования.
+
+## Основные концепции
+
+### Архитектура решения
+
+Данное руководство описывает создание полноценной среды наблюдаемости в локальном кластере Minikube. Архитектура включает следующие ключевые компоненты:
+
+1.  **Приложение**: Тестовое Java-приложение, инструментированное с помощью OpenTelemetry для генерации логов, метрик и трассировок.
+2.  **OpenTelemetry Collector**: Центральный компонент, который получает телеметрию от приложения по протоколу OTLP. Он обрабатывает данные и экспортирует их в соответствующие бэкенды:
+    - Логи → **Loki**
+    - Трассировки → **Tempo**
+    - Метрики → **Mimir** (через Prometheus)
+3.  **Стек LGTM**: Набор инструментов для хранения и визуализации телеметрии. **Grafana** выступает в роли единого интерфейса для анализа всех собранных данных.
+4.  **Вспомогательные компоненты**:
+    - **Cert-Manager**: Управляет TLS-сертификатами для защищенного доступа к веб-интерфейсам через Ingress.
+    - **Local Docker Registry**: Позволяет хранить и распространять кастомные Docker-образы внутри кластера без необходимости публиковать их в Docker Hub.
+
+## Практические сценарии
+
+### Сценарий: Развертывание стека LGTM и OpenTelemetry на Minikube
+
+Этот практический сценарий демонстрирует пошаговый процесс настройки полного стека наблюдаемости для тестового приложения.
+
+#### 1. Предварительные требования
 
 *   **Docker**: Для запуска Minikube.
 *   **Git**: Для клонирования репозиториев.
 *   **Minikube**: Локальный кластер Kubernetes.
 *   **kubectl**: Утилита командной строки для управления кластерами Kubernetes.
 *   **Helm**: Менеджер пакетов для Kubernetes.
-*   **OpenLens (опционально)**: Для удобного просмотра состояния кластера.
 
-## 2. Подготовка окружения
+#### 2. Подготовка окружения
 
-### 2.1. Клонирование репозиториев
-
-Клонируйте репозиторий с примерами OpenTelemetry и репозиторий с практикой LGTM:
+##### 2.1. Клонирование репозиториев
 
 ```bash
 git clone https://github.com/open-telemetry/opentelemetry-java-examples.git
 git clone https://github.com/memori-dev/observability-practice.git
 ```
 
-### 2.2. Добавление Helm репозиториев
-
-Добавьте необходимые Helm репозитории:
+##### 2.2. Добавление Helm репозиториев
 
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -37,80 +63,67 @@ helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm
 helm repo update
 ```
 
-### 2.3. Запуск Minikube
-
-Запустите Minikube с необходимыми опциями:
+##### 2.3. Запуск Minikube
 
 ```bash
 minikube start --cpus 4 --memory 8192mb --addons ingress --insecure-registry "10.0.0.0/24" --driver=docker
 ```
-
 *   `--cpus 4 --memory 8192mb`: Рекомендуемые ресурсы для стабильной работы стека.
 *   `--addons ingress`: Включает Ingress-контроллер.
 *   `--insecure-registry "10.0.0.0/24"`: Позволяет использовать локальный Docker Registry без HTTPS.
 *   `--driver=docker`: Использует Docker в качестве драйвера.
 
-### 2.4. Настройка OpenLens (опционально)
+#### 3. Развертывание вспомогательных компонентов
 
-Для удобства работы с Minikube и просмотра логов/подов, установите расширение `OpenLens not pod menu`:
+##### 3.1. Cert-Manager
 
-1.  В OpenLens перейдите в `File -> Extensions`.
-2.  Добавьте URL `https://github.com/AliBK/openlens-not-pod-menu`.
-3.  Нажмите `Install`.
+Для управления TLS-сертификатами в кластере используется **[cert-manager](../ToolsUtilities/cert_manager.md)**. Этот компонент необходим для автоматического выпуска сертификатов для Ingress-ресурсов (Grafana, Loki и т.д.).
 
-## 3. Развертывание вспомогательных компонентов
+В данном руководстве мы будем использовать самоподписанные сертификаты.
 
-### 3.1. Cert-Manager
+1.  **Установите cert-manager**, следуя официальной инструкции, или воспользуйтесь нашей заметкой: **[Установка cert-manager](../ToolsUtilities/cert_manager.md#Установка)**.
 
-Установите Cert-Manager для управления TLS-сертификатами:
+2.  **Создайте ClusterIssuer** для выпуска самоподписанных сертификатов. Это позволит обеспечить безопасное взаимодействие с веб-интерфейсами внутри кластера.
 
-```bash
-helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --create-namespace \
-  --version v1.14.0 \
-  --set installCRDs=true
-```
-
-Примените конфигурацию ClusterIssuer для автоматического выпуска сертификатов:
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: minikube-ca
-spec:
-  ca:
-    secretName: minikube-ca-secret
-EOF
-
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: minikube-ca-secret
-  namespace: cert-manager
-spec:
-  isCA: true
-  duration: 8760h # 1y
-  secretName: minikube-ca-secret
-  privateKey:
-    algorithm: RSA
-    size: 2048
-  commonName: "minikube-ca"
-  issuerRef:
-    name: minikube-ca
+    ```bash
+    # Создание корневого CA
+    kubectl apply -f - <<EOF
+    apiVersion: cert-manager.io/v1
     kind: ClusterIssuer
-    group: cert-manager.io
-EOF
-```
+    metadata:
+      name: minikube-ca
+    spec:
+      ca:
+        secretName: minikube-ca-secret
+    EOF
 
-### 3.2. Локальный Docker Registry
+    kubectl apply -f - <<EOF
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: minikube-ca-secret
+      namespace: cert-manager
+    spec:
+      isCA: true
+      duration: 8760h # 1y
+      secretName: minikube-ca-secret
+      privateKey:
+        algorithm: RSA
+        size: 2048
+      commonName: "minikube-ca"
+      issuerRef:
+        name: minikube-ca
+        kind: ClusterIssuer
+        group: cert-manager.io
+    EOF
+    ```
 
-Разверните локальный Docker Registry в Minikube:
+##### 3.2. Локальный Docker Registry
+
+Разверните локальный Docker Registry, доступный внутри кластера.
 
 ```bash
+# Установка Docker Registry
 helm upgrade --install docker-registry twuni/docker-registry \
   --namespace docker-registry \
   --create-namespace \
@@ -122,29 +135,16 @@ helm upgrade --install docker-registry twuni/docker-registry \
   --set ingress.tls.secretName=registry-tls \
   --set ingress.tls.issuerName=minikube-ca \
   --set ingress.tls.issuerKind=ClusterIssuer
-```
 
-Добавьте запись в `/etc/hosts` для разрешения имени `registry.test`:
-
-```bash
+# Добавление записи в /etc/hosts
 echo "$(minikube ip) registry.test" | sudo tee -a /etc/hosts
-```
 
-Настройте Docker Daemon для работы с insecure registry (может потребоваться перезапуск Docker и Minikube):
-
-```bash
-minikube ssh "sudo tee /etc/docker/daemon.json <<EOF
-{
-  \"insecure-registries\": [\"registry.test:30000\"]
-}
-EOF"
+# Настройка Docker Daemon для работы с insecure registry
+minikube ssh "sudo tee /etc/docker/daemon.json <<< '{\"insecure-registries\": [\"registry.test:30000\"]}'"
 minikube ssh "sudo systemctl restart docker"
 minikube stop && minikube start
-```
 
-Создайте секрет для доступа к Registry из кластера и пропатчите `default` ServiceAccount:
-
-```bash
+# Создание секрета для доступа к registry
 kubectl create secret docker-registry regcred \
   --docker-server=registry.test:30000 \
   --docker-username=admin \
@@ -154,22 +154,18 @@ kubectl create secret docker-registry regcred \
 kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}'
 ```
 
-## 4. Развертывание стека LGTM (Grafana, Loki, Tempo, Mimir)
+#### 4. Развертывание стека LGTM
 
-Мы будем использовать `kube-prometheus-stack` для развертывания Grafana, Prometheus и Alertmanager, а Loki и Tempo развернем отдельно.
+##### 4.1. Grafana, Prometheus, Alertmanager
 
-### 4.1. Grafana, Prometheus, Alertmanager (через kube-prometheus-stack)
-
-Создайте необходимые Namespace:
+Компоненты разворачиваются с помощью чарта `kube-prometheus-stack`, который включает преднастроенные Data Sources для Loki, Tempo и Mimir.
 
 ```bash
+# Создание Namespace
 kubectl create namespace monitoring
 kubectl create namespace grafana
-```
 
-Разверните `kube-prometheus-stack` с кастомными значениями, которые включают Ingress для Grafana и преднастроенные Data Sources для Loki, Tempo, Mimir:
-
-```bash
+# Установка kube-prometheus-stack
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   -f - <<EOF
@@ -197,7 +193,7 @@ grafana:
           - datasourceUid: tempo
             matcherRegex: "traceID=(\\w+)"
             name: TraceID
-            url: "$${__value.raw}"
+            url: '$${__value.raw}'
     - name: Tempo
       type: tempo
       access: proxy
@@ -212,7 +208,6 @@ grafana:
         tracesToLogs:
           datasourceUid: loki
           filterByTraceID: true
-          filterBySpanID: false
           spanStartTimeShift: 1h
           spanEndTimeShift: 1h
           lokiSearch: true
@@ -230,25 +225,21 @@ grafana:
       version: 1
       editable: true
 EOF
-```
 
-Добавьте запись в `/etc/hosts` для разрешения имени `grafana.test`:
-
-```bash
+# Добавление записи в /etc/hosts
 echo "$(minikube ip) grafana.test" | sudo tee -a /etc/hosts
 ```
-
-Получите пароль администратора Grafana:
-
+Пароль администратора Grafana (`prom-operator`) можно также получить командой:
 ```bash
 kubectl get secret --namespace monitoring prometheus-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
 ```
 
-### 4.2. Loki
+##### 4.2. Loki, Tempo и Mimir
 
-Разверните Loki:
+Разверните остальные компоненты стека.
 
 ```bash
+# Установка Loki
 helm upgrade --install loki grafana/loki \
   --namespace loki \
   --create-namespace \
@@ -260,31 +251,20 @@ helm upgrade --install loki grafana/loki \
   --set ingress.tls.secretName=loki-tls \
   --set ingress.tls.issuerName=minikube-ca \
   --set ingress.tls.issuerKind=ClusterIssuer
-```
-
-### 4.3. Tempo
-
-Разверните Tempo:
-
-```bash
+# Установка Tempo
 helm upgrade --install tempo grafana/tempo \
   --namespace tempo \
   --create-namespace \
   --set service.type=ClusterIP \
-  --set service.port=3200 \
-  --set ingress.enabled=true \
-  --set ingress.host=tempo.test \
-  --set ingress.tls.enabled=true \
-  --set ingress.tls.secretName=tempo-tls \
-  --set ingress.tls.issuerName=minikube-ca \
-  --set ingress.tls.issuerKind=ClusterIssuer
+  --set service.port=3200
+
+# Установка Mimir (в данном примере не устанавливается, т.к. используется Prometheus из стека)
+# Для полноценного использования Mimir его нужно развернуть отдельно.
 ```
 
-## 5. Развертывание OpenTelemetry Collector и Operator
+#### 5. Развертывание OpenTelemetry
 
-### 5.1. OpenTelemetry Operator
-
-Установите OpenTelemetry Operator:
+##### 5.1. OpenTelemetry Operator
 
 ```bash
 helm upgrade --install opentelemetry-operator open-telemetry/opentelemetry-operator \
@@ -292,11 +272,12 @@ helm upgrade --install opentelemetry-operator open-telemetry/opentelemetry-opera
   --create-namespace
 ```
 
-### 5.2. OpenTelemetry Collector (управляемый оператором)
+##### 5.2. OpenTelemetry Collector
 
-Создайте манифест `otel-collector.yaml` для OpenTelemetry Collector:
+Создайте файл `otel-collector.yaml` и примените его.
 
 ```yaml
+# otel-collector.yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: OpenTelemetryCollector
 metadata:
@@ -312,7 +293,7 @@ spec:
           grpc:
           http:
     processors:
-      batch:
+      batch: 
       attributes:
         actions:
           - key: service.name
@@ -334,10 +315,14 @@ spec:
     exporters:
       otlp:
         endpoint: "tempo.tempo:4317"
+        tls:
+          insecure: true
       loki:
         endpoint: "http://loki.loki:3100/loki/api/v1/push"
       prometheus:
         endpoint: "http://prometheus-kube-prometheus-prometheus.monitoring:9090/api/v1/write"
+        tls:
+          insecure: true
     service:
       pipelines:
         traces:
@@ -353,18 +338,16 @@ spec:
           processors: [batch, attributes]
           exporters: [loki]
 ```
-
-Примените манифест:
-
 ```bash
 kubectl apply -f otel-collector.yaml
 ```
 
-### 5.3. OpenTelemetry Instrumentation (для автоматической инструментации)
+##### 5.3. OpenTelemetry Auto-Instrumentation
 
-Создайте манифест `otel-instrumentation.yaml` для настройки автоматической инструментации:
+Создайте файл `otel-instrumentation.yaml` для автоматической инъекции агента.
 
 ```yaml
+# otel-instrumentation.yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: Instrumentation
 metadata:
@@ -394,11 +377,9 @@ spec:
 kubectl apply -f otel-instrumentation.yaml
 ```
 
-## 6. Запуск тестового приложения с OpenTelemetry
+#### 6. Запуск и проверка тестового приложения
 
-### 6.1. Сборка Docker образа приложения
-
-Перейдите в директорию `opentelemetry-java-examples/agent/agent-example-app` и соберите Docker образ:
+##### 6.1. Сборка и отправка Docker-образа
 
 ```bash
 cd opentelemetry-java-examples/agent/agent-example-app
@@ -407,65 +388,54 @@ docker build -t registry.test:30000/agent-example-app:latest .
 docker push registry.test:30000/agent-example-app:latest
 ```
 
-### 6.2. Запуск приложения с автоматической инструментацией
+##### 6.2. Запуск приложения с автоматической инструментацией
 
-Запустите приложение в Minikube, используя аннотацию `instrumentation.opentelemetry.io/inject: "true"` для автоматической инструментации:
+Аннотация `instrumentation.opentelemetry.io/inject: "true"` указывает оператору внедрить OTel-агент.
 
 ```bash
 kubectl run agent-example-app \
   --image=registry.test:30000/agent-example-app:latest \
   --port=8080 \
   --labels="app=agent-example-app" \
-  --annotations="instrumentation.opentelemetry.io/inject=true"
+  --annotations='instrumentation.opentelemetry.io/inject: "true"' \
+  --namespace=default
 ```
 
-### 6.3. Проверка телеметрии
+##### 6.3. Проверка телеметрии
 
-1.  **Port Forward**: Перенаправьте порт приложения для доступа:
-
+1.  **Проброс порта**:
     ```bash
     kubectl port-forward pod/$(kubectl get pods -l app=agent-example-app -o jsonpath='{.items[0].metadata.name}') 8080:8080
     ```
-
-2.  **Генерация нагрузки**: Отправьте несколько запросов:
-
+2.  **Генерация нагрузки**:
     ```bash
     curl localhost:8080/ping
     ```
-
 3.  **Просмотр в Grafana**: Откройте Grafana (http://grafana.test) и перейдите в раздел Explore.
     *   **Логи**: Выберите Data Source `Loki`, используйте запрос `{service_name="agent-example-app"}`. Вы увидите логи приложения.
     *   **Трассировки**: В логах найдите `traceID` и перейдите по нему в Tempo. Вы увидите полную трассировку запроса.
     *   **Метрики**: Выберите Data Source `Prometheus`, используйте запрос `traces_spanmetrics_latency_bucket{service_name="agent-example-app"}`. Вы увидите метрики, сгенерированные из спанов.
 
-## 7. Запуск приложения с Java Agent (альтернативный способ)
+### Альтернативный сценарий: запуск с Java Agent вручную
 
 Этот способ демонстрирует запуск приложения с Java Agent напрямую, без использования OpenTelemetry Operator.
 
-### 7.1. Сборка Docker образа приложения (без встроенного агента)
-
-Убедитесь, что в `opentelemetry-java-examples/agent/agent-example-app/Dockerfile` нет строк, связанных с копированием `opentelemetry-javaagent.jar` и параметром `-javaagent`. Затем соберите и запушьте образ:
-
-```bash
-cd opentelemetry-java-examples/agent/agent-example-app
-# Убедитесь, что Dockerfile не содержит настроек для Java Agent
-docker build -t registry.test:30000/agent-example-app-no-agent:latest .
+1.  **Сборка образа (без встроенного агента)**:
+    Убедитесь, что Dockerfile не содержит инструкций по копированию и активации `opentelemetry-javaagent.jar`.
+    ```bash
+    cd opentelemetry-java-examples/agent/agent-example-app
+    docker build -t registry.test:30000/agent-example-app-no-agent:latest .
 docker push registry.test:30000/agent-example-app-no-agent:latest
-```
-
-### 7.2. Запуск приложения с явным указанием Java Agent
-
-Запустите приложение, явно указав Java Agent и параметры OpenTelemetry через переменные окружения:
-
-```bash
-kubectl run agent-example-app-manual \
-  --image=registry.test:30000/agent-example-app-no-agent:latest \
-  --port=8080 \
-  --labels="app=agent-example-app-manual" \
-  --env="JAVA_TOOL_OPTIONS=-javaagent:/opt/opentelemetry-javaagent.jar" \
-  --env="OTEL_EXPORTER_OTLP_ENDPOINT=http://default.opentelemetry:4317" \
-  --env="OTEL_LOGS_EXPORTER=otlp" \
-  --env="OTEL_SERVICE_NAME=agent-example-app-manual"
-```
-
-**Примечание**: Для этого способа вам потребуется вручную скопировать `opentelemetry-javaagent.jar` в образ или использовать `initContainer` для его доставки. В данном примере предполагается, что агент уже доступен в образе или будет доставлен другим способом.
+    ```
+2.  **Запуск пода с явным указанием агента**:
+    Этот метод требует, чтобы JAR-файл агента был доступен в контейнере (например, через `initContainer` или путем встраивания в образ).
+    ```bash
+    kubectl run agent-example-app-manual \
+      --image=registry.test:30000/agent-example-app-no-agent:latest \
+      --port=8080 \
+      --labels="app=agent-example-app-manual" \
+      --env="JAVA_TOOL_OPTIONS=-javaagent:/path/to/opentelemetry-javaagent.jar" \
+      --env="OTEL_EXPORTER_OTLP_ENDPOINT=http://default.opentelemetry:4317" \
+      --env="OTEL_LOGS_EXPORTER=otlp" \
+      --env="OTEL_SERVICE_NAME=agent-example-app-manual"
+    ```

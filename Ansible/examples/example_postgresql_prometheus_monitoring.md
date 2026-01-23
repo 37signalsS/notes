@@ -1,126 +1,121 @@
-# 7.8 Пример: Настройка мониторинга PostgreSQL с помощью Ansible и Prometheus
+# Мониторинг PostgreSQL с помощью Prometheus и Ansible
 
-## Задача
+## Определения
 
-Перед нами стоит задача — установить базу данных PostgreSQL на виртуальную машину, а также настроить экспорт метрик для того, чтобы мы могли следить за её основными жизненными показателями.
+**Мониторинг PostgreSQL с помощью Prometheus и Ansible** — это процесс автоматизированного развертывания и настройки полного стека мониторинга для базы данных PostgreSQL. Ansible используется для управления конфигурацией, `postgres_exporter` — для сбора метрик, а Prometheus — для их агрегации и хранения.
 
-Наши подзадачи:
-1.  **Установить PostgreSQL**: Используя готовую Ansible-роль, установить СУБД.
-2.  **Настроить базу данных**:
-    *   Создать базу `migrations`.
-    *   Накатить базовые миграции.
-    *   Создать пользователя `testuser` с паролем.
-    *   Настроить `pg_hba.conf` и `postgresql.conf` для доступа извне.
-3.  **Настроить Healthcheck**: После установки убедиться, что PostgreSQL доступен и отвечает на запросы.
-4.  **Установить Prometheus PostgreSQL Exporter**: На ту же машину, где стоит PostgreSQL, установить экспортер метрик.
-5.  **Настроить Healthcheck для экспортера**: Убедиться, что экспортер запущен и отдает метрики.
-6.  **Установить Prometheus**: На отдельную ноду установить Prometheus.
-7.  **Настроить Prometheus**: Сконфигурировать его для сбора метрик (скрейпинга) с `postgres_exporter`.
-8.  **Защитить секреты**: Скрыть все чувствительные данные (пароли, ключи) с помощью `ansible-vault`.
+## Основные концепции
 
-## 1. Установка и настройка PostgreSQL
+-   **Компоненты стека мониторинга**:
+    -   **[PostgreSQL](../../Databases/PostgreSQL/overview.md)**: Объект мониторинга, реляционная СУБД.
+    -   **[Prometheus PostgreSQL Exporter](https://github.com/prometheus-community/postgres_exporter)**: Специализированный сервис (экспортер), который запускается рядом с базой данных. Он выполняет запросы к PostgreSQL для сбора статистики (например, количество активных соединений, скорость транзакций) и предоставляет их по HTTP в формате, понятном для Prometheus.
+    -   **[Prometheus](../../Prometheus/overview.md)**: Система мониторинга, которая периодически опрашивает (scrape) HTTP-ендпоинт экспортера, собирает метрики и сохраняет их в свою базу данных временных рядов.
 
-Для установки рекомендуется использовать готовую роль, например, от `community.postgresql`.
+-   **Автоматизация с [Ansible](../../Ansible/ansible_introduction.md)**:
+    -   **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспорtera, и `cloudalchemy.prometheus` для Prometheus.
+    -   **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/ansible_vault.md).
 
-**Ключевые моменты конфигурации:**
+## Практические сценарии
 
-*   **`postgresql.conf`**: Убедитесь, что параметр `listen_addresses` установлен в `*`, чтобы разрешить подключения с любых IP-адресов.
-*   **`pg_hba.conf`**: Добавьте правила, разрешающие подключения для вашего пользователя. Например:
-    ```
-    # TYPE  DATABASE        USER            ADDRESS                 METHOD
-    host    all             all             0.0.0.0/0               md5
-    host    all             all             ::/0                    md5
-    ```
+### Сценарий: Настройка полного стека мониторинга
 
-**Миграции:**
-Можно использовать модуль `community.postgresql.postgresql_script` для выполнения SQL-скрипта.
+#### Шаг 1: Структура инвентаря и переменных
 
-**Пример SQL миграции:**
-```sql
--- migration.sql
-CREATE DATABASE migrations;
-\c migrations;
+**Файл инвентаря `hosts.ini`:**
+```ini
+[postgres_servers]
+pg01 ansible_host=192.168.55.10
 
-CREATE TABLE public.transactions (
-    id integer,
-    "timestamp" integer,
-    name text,
-    size integer
-);
--- ... и так далее
+[monitoring_servers]
+mon01 ansible_host=192.168.55.20
 ```
 
-**Healthcheck для PostgreSQL:**
-Используйте `delegate_to: localhost` и модуль `community.postgresql.postgresql_info` или просто `wait_for`, чтобы проверить доступность порта `5432` и выполнение простого запроса (например, `SELECT 1`).
+**Переменные и секреты:**
+Переменные для ролей удобно хранить в `group_vars`.
 
-## 2. Установка PostgreSQL Exporter
-
-Рекомендуется использовать готовую роль, например `prometheus-community.postgres_exporter`.
-
-**Ключевые моменты конфигурации:**
-
-*   Экспортер настраивается через переменные окружения. Ключевая переменная — `DATA_SOURCE_NAME`.
-*   Эту переменную нужно установить для сервиса экспортера. В плейбуке это можно сделать через блок `environment`.
-
-**Пример настройки в плейбуке:**
+`group_vars/postgres_servers.yml`:
 ```yaml
-- hosts: postgres_server
-  environment:
-    DATA_SOURCE_NAME: 'postgresql://testuser:your_password@localhost:5432/migrations?sslmode=disable'
+# Переменные для роли community.postgresql
+postgresql_databases:
+  - name: myapp_db
+postgresql_users:
+  - name: myapp_user
+    pass: "{{ db_password }}" # Пароль будет взят из Vault
+```
+
+`group_vars/all.yml` (шифруется с помощью Vault):
+```yaml
+# ansible-vault encrypt group_vars/all.yml
+db_password: "MySuperSecretPassword"
+```
+
+#### Шаг 2: Плейбук для PostgreSQL и Exporter
+
+Этот play устанавливает СУБД, создает пользователя для мониторинга и настраивает экспортер.
+
+```yaml
+- name: Setup PostgreSQL and Exporter
+  hosts: postgres_servers
+  become: true
+  
+  vars:
+    # Строка подключения для экспортера
+    postgres_exporter_dsn: "postgresql://{{ postgresql_users[0].name }}:{{ db_password }}@localhost:5432/{{ postgresql_databases[0].name }}?sslmode=disable"
+
   roles:
+    # 1. Устанавливаем PostgreSQL
+    - role: community.postgresql
+      vars:
+        # Настраиваем PostgreSQL для прослушивания всех интерфейсов
+        postgresql_conf:
+          - name: listen_addresses
+            value: '*'
+        # Разрешаем подключение по паролю для всех
+        postgresql_hba_entries:
+          - { type: host, database: all, user: all, address: '0.0.0.0/0', method: md5 }
+
+    # 2. Устанавливаем и настраиваем экспортер
     - role: prometheus-community.postgres_exporter
-      # ... переменные для роли
+      vars:
+        # Передаем строку подключения через переменную окружения
+        postgres_exporter_environment_vars:
+          DATA_SOURCE_NAME: "{{ postgres_exporter_dsn }}"
+
+  post_tasks:
+    - name: Healthcheck for postgres_exporter
+      ansible.builtin.uri:
+        url: "http://localhost:9187/metrics"
+        return_content: yes
+      register: metrics_page
+      until: "'pg_up 1' in metrics_page.content"
+      retries: 5
+      delay: 10
 ```
 
-**Healthcheck для экспортера:**
-Используйте модуль `uri` для запроса к эндпоинту `http://your_postgres_host:9187/metrics`. Проверьте, что ответ содержит метрику `pg_up 1`.
+#### Шаг 3: Плейбук для Prometheus
 
-## 3. Установка и настройка Prometheus
+Этот play разворачивает Prometheus на сервере мониторинга и настраивает его на сбор метрик с `postgres_exporter`.
 
-Prometheus следует устанавливать на отдельную ноду мониторинга. Рекомендуется использовать роль `cloudalchemy.prometheus`.
-
-**Ключевые моменты конфигурации:**
-
-*   Основная конфигурация Prometheus — это `scrape_configs`, где вы указываете, какие эндпоинты (targets) нужно опрашивать.
-*   Вам нужно добавить новую `job`, которая будет опрашивать ваш `postgres_exporter`.
-
-**Пример конфигурации `scrape_configs`:**
 ```yaml
-prometheus_scrape_configs:
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['your_postgres_host:9187']
+- name: Setup Prometheus
+  hosts: monitoring_servers
+  become: true
+
+  roles:
+    - role: cloudalchemy.prometheus
+      vars:
+        # Добавляем новую задачу для сбора метрик с PostgreSQL
+        prometheus_scrape_configs:
+          - job_name: 'postgres'
+            static_configs:
+              - targets:
+                  # Явно указываем хосты из группы postgres_servers
+                  - "{{ hostvars[item]['ansible_host'] }}:9187"
+                with_items: "{{ groups['postgres_servers'] }}"
 ```
-Эту структуру нужно передать в переменную для роли `cloudalchemy.prometheus`.
 
-**Healthcheck для Prometheus:**
-Просто откройте веб-интерфейс Prometheus по адресу `http://your_prometheus_host:9090` и проверьте в разделе `Status -> Targets`, что ваш `postgres_exporter` имеет статус `UP`.
+## Дополнительная информация
 
-## 4. Использование Ansible Vault
+### Проверка статуса в Prometheus
 
-Все чувствительные данные (пароли от БД, секретные ключи) должны быть зашифрованы.
-
-1.  **Создайте зашифрованный файл переменных:**
-    ```bash
-    ansible-vault create vars/secrets.yml
-    ```
-2.  **Поместите в него все секреты:**
-    ```yaml
-    # vars/secrets.yml
-    postgres_password: "your_super_secret_password"
-    ```
-3.  **Подключите этот файл в плейбуке:**
-    ```yaml
-    - hosts: all
-      vars_files:
-        - vars/secrets.yml
-      # ...
-    ```
-4.  **Запускайте плейбук с ключом:**
-    ```bash
-    ansible-playbook your_playbook.yml --ask-vault-pass
-    ```
-
-## Заключение
-
-Целью данной практической работы является отработка навыка работы с готовыми Ansible-ролями, а также демонстрация того, насколько можно ускорить свою работу, используя уже существующие решения. Это типичная задача в DevOps-практике, объединяющая развертывание сервиса и настройку его мониторинга.
+После выполнения плейбуков откройте веб-интерфейс Prometheus по адресу `http://<monitoring_server_ip>:9090`. Перейдите в раздел **Status → Targets**. Вы должны увидеть эндпоинт вашего `postgres_exporter` (например, `192.168.55.10:9187`) со статусом **UP**. Это означает, что Prometheus успешно собирает метрики.

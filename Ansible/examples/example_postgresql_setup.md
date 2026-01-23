@@ -1,13 +1,26 @@
-# Установка и настройка PostgreSQL с помощью Ansible
+# Ansible: Примеры установки и настройки PostgreSQL
 
-В этом руководстве рассматривается использование Ansible для автоматизации установки и настройки кластера PostgreSQL в конфигурации master-replica, а также для выполнения миграций базы данных.
+## Определения
 
-## Пример: Master-Replica с использованием роли `geerlingguy.postgresql`
+**Автоматизация PostgreSQL с помощью Ansible** — это процесс использования плейбуков для управления полным жизненным циклом экземпляров PostgreSQL, включая установку, настройку репликации, выполнение миграций схемы базы данных и обеспечение отказоустойчивости.
 
-Этот плейбук демонстрирует, как развернуть PostgreSQL master и slave (replica), используя популярную роль из Ansible Galaxy.
+## Базовые концепции
 
-### Файл инвентаря `hosts.ini`
+В экосистеме Ansible для управления PostgreSQL используются два основных подхода, которые можно комбинировать:
 
+1.  **Использование готовых ролей из Ansible Galaxy**: Для сложных, стандартизированных задач, таких как настройка потоковой репликации, рекомендуется использовать проверенные сообществом роли (например, `geerlingguy.postgresql`). Это экономит время и обеспечивает доступ к большому набору функций "из коробки".
+
+2.  **Использование встроенных модулей `community.postgresql`**: Для гранулярного контроля и выполнения кастомных SQL-запросов (например, при миграции схемы) используются специализированные модули, такие как `postgresql_db`, `postgresql_user`, `postgresql_query`. В сочетании с конструкциями `block`/`rescue` они позволяют создавать надежные и атомарные операции.
+
+## Практические сценарии
+
+### Сценарий 1: Настройка Master-Replica с использованием роли
+
+Этот пример демонстрирует, как развернуть PostgreSQL master и slave (replica), используя популярную роль `geerlingguy.postgresql`.
+
+*   **Теоретическая база:** Подробное описание концепций потоковой репликации доступно в документе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
+
+#### Файл инвентаря `hosts.ini`
 ```ini
 [postgres_master]
 server_postgres_master ansible_host=192.168.51.2
@@ -20,8 +33,7 @@ postgres_master
 postgres_slave
 ```
 
-### Плейбук `postgres-playbook.yml`
-
+#### Плейбук `postgres-playbook.yml`
 ```yaml
 ---
 - name: Setup PostgreSQL Master
@@ -33,7 +45,7 @@ postgres_slave
       - 'replica1_slot'
     postgresql_users:
       - name: repluser
-        pass: 'your_strong_password'
+        pass: 'your_strong_password' # Используйте Vault!
         replication: true
   roles:
     - geerlingguy.postgresql
@@ -46,28 +58,18 @@ postgres_slave
     postgresql_master_host: '192.168.51.2' # IP мастера
     postgresql_replication_user:
       name: repluser
-      pass: 'your_strong_password'
+      pass: 'your_strong_password' # Используйте Vault!
   roles:
     - geerlingguy.postgresql
 ```
 
-**Примечание:** Этот плейбук предполагает, что роль `geerlingguy.postgresql` уже установлена через `ansible-galaxy`.
+### Сценарий 2: Атомарная миграция схемы с откатом
 
----
+Этот пример показывает, как выполнить SQL-скрипт для создания и наполнения таблицы, обеспечив автоматический откат в случае сбоя.
 
-## Упражнение: Миграция базы данных с откатом
+*   **Теоретическая база:** Подходы к изменению структуры БД описаны в документе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
 
-Это практическое задание демонстрирует, как написать плейбук, который устанавливает PostgreSQL, создает базу данных и применяет SQL-миграции. Важным условием является наличие блока `rescue` для отката изменений в случае ошибки.
-
-### Задача
-
-1.  Использовать роль `geerlingguy.postgresql` для установки PostgreSQL 13.
-2.  Создать новую базу данных с именем `namesdb`.
-3.  Выполнить SQL-скрипт для создания таблицы и вставки данных.
-4.  Если на любом этапе после создания таблицы происходит сбой, плейбук должен удалить созданную таблицу (`rescue` блок), чтобы восстановить исходное состояние.
-
-### Плейбук для миграции
-
+#### Плейбук для миграции
 ```yaml
 ---
 - name: Install PostgreSQL and Run Migrations
@@ -77,16 +79,14 @@ postgres_slave
     db_name: "namesdb"
     db_user: "your_user" # Замените на вашего пользователя
 
-  roles:
-    - geerlingguy.postgresql
-
-  tasks:
+  pre_tasks:
     - name: "Ensure database '{{ db_name }}' exists"
       community.postgresql.postgresql_db:
         name: "{{ db_name }}"
         state: present
       become_user: postgres
 
+  tasks:
     - name: "Run migrations with rollback on failure"
       block:
         - name: "Create employees table"
@@ -108,7 +108,6 @@ postgres_slave
             query: |
               INSERT INTO public.employees (name, license_plate) VALUES ('John B.', 'DB124GR');
               INSERT INTO public.employees (name, license_plate) VALUES ('Jill O.', 'VG645PH');
-              INSERT INTO public.employees (name, license_plate) VALUES ('Phil K.', '6632266');
               -- Пример ошибочного запроса для теста rescue
               -- INSERT INTO non_existent_table VALUES (1);
           become_user: postgres
@@ -120,5 +119,23 @@ postgres_slave
             query: "DROP TABLE IF EXISTS employees;"
           become_user: postgres
 ```
+Конструкция `block`/`rescue` гарантирует, что если любая задача внутри `block` завершится неудачно, Ansible выполнит задачи из секции `rescue` для отката изменений.
 
-Этот плейбук использует `block` и `rescue` для обеспечения атомарности операции миграции. Если любая задача внутри `block` завершается неудачно, Ansible выполняет задачи из секции `rescue` для отката.
+## Дополнительная информация
+
+### Предварительные требования
+
+Для работы приведенных примеров необходимо установить зависимости на **управляющем узле** (где запускается `ansible-playbook`):
+
+1.  **Роль `geerlingguy.postgresql`**:
+    ```bash
+    ansible-galaxy install geerlingguy.postgresql
+    ```
+2.  **Коллекция `community.postgresql`**:
+    ```bash
+    ansible-galaxy collection install community.postgresql
+    ```
+3.  **Python-библиотека `psycopg2`**:
+    ```bash
+    pip install psycopg2-binary
+    ```
