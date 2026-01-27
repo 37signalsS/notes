@@ -309,9 +309,9 @@ server {
     root /var/www/wordpress;
     index index.php index.html index.htm;
 
-    # Защита конфиденциальных файлов
-    location ~ /\.ht {
-        deny all;
+    # Защита конфиденциальных файлов начинающиейся с точки (запрет всех файлов с точки кроме .well-known - location ~ /\.(?!well-known).* например /.well-known/acme-challenge/...)
+    location ~ /\. {
+        deny all; # запрещает доступ все клиентам
     }
     location ~ /(wp-config\.php|wp-trackback\.php|xmlrpc\.php) {
         deny all;
@@ -332,6 +332,6 @@ server {
     # Специальный location для статики wp-content
     location ~* \.(js|css|png|jpg|jpeg|gif|ico)$ {
         expires max;
-        log_not_found off;
+        log_not_found off; # Не писать ошибки “файл не найден”
     }
 }

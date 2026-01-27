@@ -146,21 +146,30 @@ server {
 
     # 1. Strict-Transport-Security (HSTS)
     # Заставляет браузер всегда использовать HTTPS. Включать только после полной отладки HTTPS.
+    
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
 
     # 2. X-Frame-Options
-    # Защищает от Clickjacking, запрещая встраивание страницы в iframe на других сайтах.
-    add_header X-Frame-Options "SAMEORIGIN";
+    # Защищает от Clickjacking, запрещая встраивание страницы в iframe на других сайтах, без always nginx добавит заголовок ТОЛЬКО если ответ успешный.
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
 
     # 3. X-Content-Type-Options
-    # Предотвращает MIME-сниффинг, заставляя браузер доверять Content-Type от сервера.
-    add_header X-Content-Type-Options "nosniff";
+    # Запрещает браузеру "угадывать" (MIME-сниффинг) тип контента.
 
-    # 4. X-XSS-Protection
-    # Включает встроенный в старые браузеры фильтр XSS-атак.
-    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff" always;
 
-    # 5. Content-Security-Policy (CSP)
+    # 4. Referrer-Policy
+    # Контролирует, какая информация о реферере (источнике перехода) будет отправлена при навигации.
+
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # 5. X-XSS-Protection
+    # Отключает устаревший и небезопасный встроенный в браузеры XSS-фильтр.
+
+    add_header X-XSS-Protection "0" always;
+
+    # 6. Content-Security-Policy (CSP)
     # Наиболее мощный заголовок, который определяет, с каких доменов можно загружать ресурсы.
     # Требует тщательной настройки.
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://trusted.cdn.com;";
