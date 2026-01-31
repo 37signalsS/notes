@@ -8,3 +8,6 @@
 
 - **LabEx:** Большая коллекция интерактивных лабораторных работ по различным технологиям.
   - https://labex.io/ru
+
+- **KillerCoda:** Интерактивные сценарии для изучения Linux.
+  - https://killercoda.com/pawelpiwosz/course/linuxFundamentals

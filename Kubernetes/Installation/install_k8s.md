@@ -272,24 +272,45 @@ ctr --namespace k8s.io images pull registry.k8s.io/pause:3.9 2>&1 | grep -q "suc
 **Следующий этап:** Установка `kubeadm`, `kubelet`, `kubectl` версии 1.34. Перезагрузка всех нод будет выполнена после полной установки компонентов Kubernetes.
 
 #### Установка `kubeadm`, `kubelet`, `kubectl`
+
+**Добавление репозитория Kubernetes (v1.34)**
+
 ```bash
-# 1. Определяем версию Kubernetes
-# Используем последнюю стабильную версию.
-K8S_VERSION="1.35"
-
-# 2. Добавляем официальный GPG-ключ и репозиторий Kubernetes
-sudo curl -fsSL "https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/Release.key" | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-# 3. Добавляем репозиторий Kubernetes
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-# 4. Устанавливаем компоненты
+# Обновляем список пакетов и устанавливаем зависимости
 sudo apt-get update
-sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
 
-# 5. Фиксируем версии, чтобы избежать случайных обновлений при системном apt upgrade
-sudo apt-mark hold kubelet kubeadm kubectl
+# Добавляем GPG-ключ для Kubernetes v1.34
+# Новый URL для ключей pkgs.k8s.io
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# Добавляем репозиторий Kubernetes v1.34
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
 ```
+
+**Установка и настройка компонентов**
+
+```bash
+# Устанавливаем компоненты версии 1.34
+sudo apt-get install -y kubelet=1.34.* kubeadm=1.34.* kubectl=1.34.*
+
+# Фиксируем версии, чтобы избежать случайных обновлений
+sudo apt-mark hold kubelet kubeadm kubectl
+
+# Включаем службу kubelet в автозагрузку.
+# Kubelet будет запущен автоматически после инициализации кластера с помощью kubeadm.
+sudo systemctl enable kubelet
+```
+
+**Что сделано:**
+*   `kubeadm 1.34`: установлен и готов к инициализации кластера (`kubeadm init`).
+*   `kubelet 1.34`: установлен, включён в автозагрузку, но не запущен (ожидает инструкций от `kubeadm`).
+*   `kubectl 1.34`: установлен, готов для выполнения команд управления кластером.
+*   Версии пакетов зафиксированы (`apt-mark hold`), чтобы предотвратить неконтролируемые обновления.
+
+> **Важно:** На данном этапе НЕ ВЫПОЛНЯЙТЕ `kubeadm init`. Сначала необходимо убедиться, что все узлы находятся в одинаковом состоянии. После этого рекомендуется перезагрузить серверы для применения всех настроек, включая обновление ядра.
 
 ### 4. Настройка Control Plane
 

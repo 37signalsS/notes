@@ -135,13 +135,67 @@ spec:
 ### 3. Вставка лимитов и запросов для ресурсов
 `toYaml` и `nindent` также используются для вставки сложных структур, таких как `resources`.
 
-```yaml
 spec:
   containers:
   - name: {{ .Chart.Name }}
     resources:
       {{- toYaml .Values.resources | nindent 6 }}
+
+### Переиспользуемые блоки: `_helpers.tpl` и именованные шаблоны
+
+Для соблюдения принципа DRY (Don't Repeat Yourself) и избежания дублирования кода в шаблонах Helm используется специальный файл `templates/_helpers.tpl`. В нем определяются **именованные шаблоны (named templates)** — переиспользуемые фрагменты YAML или логики.
+
+#### Определения
+*   **`define`**: Ключевое слово для определения именованного шаблона. Имя шаблона должно быть уникальным в пределах чарта (рекомендуется использовать префикс, например, `имя-чарта.имя-шаблона`).
+*   **`include`**: Функция для вставки именованного шаблона в другом месте.
+
+#### Практический сценарий: Общие метки
+
+Часто одни и те же метки (`labels`) необходимо применять к нескольким ресурсам (`Deployment`, `Service`, `Ingress`). Вместо того чтобы копировать их, можно вынести их в `_helpers.tpl`.
+
+**1. Определяем шаблон в `templates/_helpers.tpl`:**
+
+```go
+{{/*
+Шаблон для стандартных меток.
+Принимает контекст `.` и использует метаданные чарта.
+*/}}
+{{- define "my-chart.labels" -}}
+labels:
+  app.kubernetes.io/name: {{ .Chart.Name }}
+  helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+  app.kubernetes.io/instance: {{ .Release.Name }}
+  app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
 ```
+
+**2. Используем шаблон в `templates/deployment.yaml`:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  # Вставляем блок 'labels:' с отступом в 4 пробела
+  {{- include "my-chart.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      # Для `matchLabels` нам нужны только `name` и `instance`
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      # Здесь мы вставляем полный блок меток
+      {{- include "my-chart.labels" . | nindent 6 }}
+    spec:
+      ...
+```
+
+*   `{{- include "my-chart.labels" . }}`: Вызывает именованный шаблон `my-chart.labels` и передает ему текущий контекст (`.`).
+*   `| nindent 4`: Результат работы `include` (сгенерированный YAML-блок) сдвигается на 4 пробела вправо для соблюдения правильной иерархии.
+
+Такой подход делает чарты более чистыми, управляемыми и легкими для обновления.
 
 ## Дополнительная информация
 

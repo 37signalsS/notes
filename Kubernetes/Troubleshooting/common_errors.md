@@ -140,6 +140,30 @@ Events:
     *   **Причина:** `livenessProbe` завершается с ошибкой, и `kubelet` принудительно перезапускает контейнер.
     *   **Решение:** Проверьте корректность и таймауты `livenessProbe`. Возможно, приложению нужно больше времени для старта.
 
+5.  **Недостаточно прав доступа (RBAC)**
+    *   **Причина:** Приложение внутри контейнера при старте пытается обратиться к API Kubernetes, но у его `ServiceAccount` нет на это прав. В логах можно увидеть ошибки `Forbidden` или `permission denied`.
+    *   **Пример из практики:** Контейнер-сборщик логов (log shipper) пытается получить логи с других подов в кластере. Для этого ему необходимо право `get` для ресурса `pods/log`. Если этого права нет, приложение-агент может аварийно завершиться.
+    *   **Диагностика:**
+        1.  Изучите логи контейнера (`kubectl logs <pod> --previous`). Если вы видите сообщения об ошибках доступа к API, это ваш случай.
+        2.  Определите `ServiceAccount`, который использует под: `kubectl get pod <pod-name> -o yaml | grep serviceAccountName`. Если не указан, используется `default`.
+        3.  Проверьте, есть ли у этого `ServiceAccount` нужные права с помощью `kubectl auth can-i`:
+            ```bash
+            # Замените на ваши namespace и serviceaccount
+            kubectl auth can-i get pods/log \
+              --namespace my-app-ns \
+              --as=system:serviceaccount:my-app-ns:my-app-sa
+            # Ответ "no" подтвердит проблему.
+            ```
+    *   **Решение:**
+        1.  Найдите `Role` или `ClusterRole`, привязанную к вашему `ServiceAccount` через `RoleBinding` или `ClusterRoleBinding`.
+        2.  Добавьте в `rules` этой роли необходимые права. Для примера с логами:
+            ```yaml
+            - apiGroups: [""]
+              resources: ["pods/log"]
+              verbs: ["get", "list", "watch"]
+            ```
+        3.  Примените изменения и перезапустите под.
+
 #### Частный случай: `Init:CrashLoopBackOff`
 
 Если в `CrashLoopBackOff` уходит `initContainer`, диагностика аналогична, но для просмотра логов нужно указать имя init-контейнера: `kubectl logs <pod-name> -c <init-container-name>`.
