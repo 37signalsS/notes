@@ -121,23 +121,4 @@ Docker использует клиент-серверную архитектур
 
 #### Ключевые стандарты: CRI и OCI
 
-*   **Open Container Initiative (OCI) spec:** OCI также предлагает эталонную реализацию runtime — `runc`, которая использует конфигурационный файл (`config.json`):
-    ```json
-    {
-      "ociVersion": "1.0.0",
-      "process": {
-        "args": ["nginx", "-g", "daemon off;"]
-      },
-      "linux": {
-        "namespaces": [
-          {"type": "pid"},
-          {"type": "network"},
-          {"type": "mount"}
-        ]
-      }
-    }
-    ```
-
-*   **Container Runtime Interface (CRI):** До появления CRI, `kubelet` был тесно интегрирован с Docker. CRI абстрагирует эту зависимость.
-
-Подробнее о различных средах выполнения можно прочитать в документе об **[альтернативных средах выполнения и инструментах](./alternative_runtimes_and_tools.md)**.
+Подробное описание стандартов Open Container Initiative (OCI) и Container Runtime Interface (CRI), которые лежат в основе контейнеризации, приведено в документе об **[альтернативных средах выполнения и инструментах](./alternative_runtimes_and_tools.md#стандарты-cri-и-oci)**.

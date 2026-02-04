@@ -81,6 +81,7 @@ gtid_ignore_duplicates = ON
 # Для MySQL:
 # replicate_same_server_id = OFF (по умолчанию)
 ```
+
 *После изменения перезапустите сервис MySQL/MariaDB на всех узлах.*
 
 #### Шаг 2: Создание пользователя для репликации
@@ -98,6 +99,7 @@ FLUSH PRIVILEGES;
 На каждом узле нужно настроить два канала репликации: от двух других "мастеров".
 
 **На Узле 1 (server-id=1):**
+
 ```sql
 -- Канал от Узла 2
 CHANGE MASTER TO 
@@ -117,6 +119,7 @@ FOR CHANNEL 'node3';
 ```
 
 **На Узле 2 (server-id=2):**
+
 ```sql
 -- Настроить каналы от Узла 1 ('node1') и Узла 3 ('node3')
 ... FOR CHANNEL 'node1';
@@ -124,6 +127,7 @@ FOR CHANNEL 'node3';
 ```
 
 **На Узле 3 (server-id=3):**
+
 ```sql
 -- Настроить каналы от Узла 1 ('node1') и Узла 2 ('node2')
 ... FOR CHANNEL 'node1';
@@ -133,20 +137,24 @@ FOR CHANNEL 'node3';
 #### Шаг 4: Запуск и проверка
 
 На каждом узле запустите все настроенные каналы:
+
 ```sql
 START SLAVE FOR CHANNEL 'nodeX';
 START SLAVE FOR CHANNEL 'nodeY';
 ```
 
 Проверка статуса для конкретного канала:
+
 ```sql
 SHOW SLAVE 'nodeX' STATUS\G
 ```
+
 Убедитесь, что `Slave_IO_Running: Yes` и `Slave_SQL_Running: Yes` для всех каналов на всех узлах.
 
 ### Настройка плавающего IP с помощью `keepalived`
 
 #### Шаг 1: Установка `keepalived`
+
 ```bash
 sudo apt install keepalived
 ```
@@ -197,6 +205,7 @@ vrrp_instance VI_1 {
 sudo systemctl enable keepalived
 sudo systemctl start keepalived
 ```
+
 После запуска проверьте, что VIP-адрес (`192.168.1.100`) появился на узле с состоянием `MASTER` с помощью команды `ip addr`.
 
 ## Дополнительная информация

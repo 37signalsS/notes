@@ -8,9 +8,9 @@
 
 В экосистеме Ansible для управления PostgreSQL используются два основных подхода, которые можно комбинировать:
 
-1.  **Использование готовых ролей из Ansible Galaxy**: Для сложных, стандартизированных задач, таких как настройка потоковой репликации, рекомендуется использовать проверенные сообществом роли (например, `geerlingguy.postgresql`). Это экономит время и обеспечивает доступ к большому набору функций "из коробки".
+1. **Использование готовых ролей из Ansible Galaxy**: Для сложных, стандартизированных задач, таких как настройка потоковой репликации, рекомендуется использовать проверенные сообществом роли (например, `geerlingguy.postgresql`). Это экономит время и обеспечивает доступ к большому набору функций "из коробки".
 
-2.  **Использование встроенных модулей `community.postgresql`**: Для гранулярного контроля и выполнения кастомных SQL-запросов (например, при миграции схемы) используются специализированные модули, такие как `postgresql_db`, `postgresql_user`, `postgresql_query`. В сочетании с конструкциями `block`/`rescue` они позволяют создавать надежные и атомарные операции.
+2. **Использование встроенных модулей `community.postgresql`**: Для гранулярного контроля и выполнения кастомных SQL-запросов (например, при миграции схемы) используются специализированные модули, такие как `postgresql_db`, `postgresql_user`, `postgresql_query`. В сочетании с конструкциями `block`/`rescue` они позволяют создавать надежные и атомарные операции.
 
 ## Практические сценарии
 
@@ -18,9 +18,33 @@
 
 Этот пример демонстрирует, как развернуть PostgreSQL master и slave (replica), используя популярную роль `geerlingguy.postgresql`.
 
-*   **Теоретическая база:** Подробное описание концепций потоковой репликации доступно в документе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
+* **Теоретическая база:** Подробное описание концепций потоковой репликации доступно в документе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
+
+### Предварительные требования
+
+Для работы приведенных примеров необходимо установить зависимости на **управляющем узле** (где запускается `ansible-playbook`):
+
+1. **Роль `geerlingguy.postgresql`**:
+
+    ```bash
+    ansible-galaxy install geerlingguy.postgresql
+    ```
+
+2. **Коллекция `community.postgresql`**:
+
+    ```bash
+    ansible-galaxy collection install community.postgresql
+    ```
+
+3. **Python-библиотека `psycopg2`**:
+
+    ```bash
+    pip install psycopg2-binary
+    ```
+
 
 #### Файл инвентаря `hosts.ini`
+
 ```ini
 [postgres_master]
 server_postgres_master ansible_host=192.168.51.2
@@ -34,6 +58,7 @@ postgres_slave
 ```
 
 #### Плейбук `postgres-playbook.yml`
+
 ```yaml
 ---
 - name: Setup PostgreSQL Master
@@ -67,9 +92,10 @@ postgres_slave
 
 Этот пример показывает, как выполнить SQL-скрипт для создания и наполнения таблицы, обеспечив автоматический откат в случае сбоя.
 
-*   **Теоретическая база:** Подходы к изменению структуры БД описаны в документе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
+* **Теоретическая база:** Подходы к изменению структуры БД описаны в документе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
 
 #### Плейбук для миграции
+
 ```yaml
 ---
 - name: Install PostgreSQL and Run Migrations
@@ -119,23 +145,5 @@ postgres_slave
             query: "DROP TABLE IF EXISTS employees;"
           become_user: postgres
 ```
+
 Конструкция `block`/`rescue` гарантирует, что если любая задача внутри `block` завершится неудачно, Ansible выполнит задачи из секции `rescue` для отката изменений.
-
-## Дополнительная информация
-
-### Предварительные требования
-
-Для работы приведенных примеров необходимо установить зависимости на **управляющем узле** (где запускается `ansible-playbook`):
-
-1.  **Роль `geerlingguy.postgresql`**:
-    ```bash
-    ansible-galaxy install geerlingguy.postgresql
-    ```
-2.  **Коллекция `community.postgresql`**:
-    ```bash
-    ansible-galaxy collection install community.postgresql
-    ```
-3.  **Python-библиотека `psycopg2`**:
-    ```bash
-    pip install psycopg2-binary
-    ```

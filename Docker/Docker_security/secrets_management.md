@@ -125,6 +125,8 @@ secrets:
 
 Секреты хранятся в зашифрованной Raft-базе данных Swarm и монтируются в контейнер как файлы в `/run/secrets/`.
 
+> Подробное руководство по использованию секретов и конфигураций в Swarm доступно в документе **[Docker Swarm: Секреты и Конфигурации](../Docker_swarm/swarm_secrets_configs.md)**.
+
 1.  **Создание секрета:**
     ```bash
     echo "mypassword123" | docker secret create db_password -

@@ -6,14 +6,14 @@
 
 ## Основные концепции
 
--   **Компоненты стека мониторинга**:
-    -   **[PostgreSQL](../../Databases/PostgreSQL/overview.md)**: Объект мониторинга, реляционная СУБД.
-    -   **[Prometheus PostgreSQL Exporter](https://github.com/prometheus-community/postgres_exporter)**: Специализированный сервис (экспортер), который запускается рядом с базой данных. Он выполняет запросы к PostgreSQL для сбора статистики (например, количество активных соединений, скорость транзакций) и предоставляет их по HTTP в формате, понятном для Prometheus.
-    -   **[Prometheus](../../Prometheus/overview.md)**: Система мониторинга, которая периодически опрашивает (scrape) HTTP-ендпоинт экспортера, собирает метрики и сохраняет их в свою базу данных временных рядов.
+- **Компоненты стека мониторинга**:
+  - **[PostgreSQL](../../Databases/PostgreSQL/overview.md)**: Объект мониторинга, реляционная СУБД.
+  - **[Prometheus PostgreSQL Exporter](https://github.com/prometheus-community/postgres_exporter)**: Специализированный сервис (экспортер), который запускается рядом с базой данных. Он выполняет запросы к PostgreSQL для сбора статистики (например, количество активных соединений, скорость транзакций) и предоставляет их по HTTP в формате, понятном для Prometheus.
+  - **[Prometheus](../../Prometheus/overview.md)**: Система мониторинга, которая периодически опрашивает (scrape) HTTP-ендпоинт экспортера, собирает метрики и сохраняет их в свою базу данных временных рядов.
 
--   **Автоматизация с [Ansible](../../Ansible/ansible_introduction.md)**:
-    -   **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспорtera, и `cloudalchemy.prometheus` для Prometheus.
-    -   **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/ansible_vault.md).
+- **Автоматизация с [Ansible](../../Ansible/ansible_introduction.md)**:
+  - **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспорtera, и `cloudalchemy.prometheus` для Prometheus.
+  - **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/ansible_vault.md).
 
 ## Практические сценарии
 
@@ -22,6 +22,7 @@
 #### Шаг 1: Структура инвентаря и переменных
 
 **Файл инвентаря `hosts.ini`:**
+
 ```ini
 [postgres_servers]
 pg01 ansible_host=192.168.55.10
@@ -34,6 +35,7 @@ mon01 ansible_host=192.168.55.20
 Переменные для ролей удобно хранить в `group_vars`.
 
 `group_vars/postgres_servers.yml`:
+
 ```yaml
 # Переменные для роли community.postgresql
 postgresql_databases:
@@ -44,6 +46,7 @@ postgresql_users:
 ```
 
 `group_vars/all.yml` (шифруется с помощью Vault):
+
 ```yaml
 # ansible-vault encrypt group_vars/all.yml
 db_password: "MySuperSecretPassword"

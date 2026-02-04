@@ -2,57 +2,64 @@
 
 ## Определения
 
-**Molecule** — это фреймворк для автоматизированного тестирования ролей и плейбуков Ansible. Он позволяет создавать временные, изолированные окружения (с помощью Docker, Vagrant, облачных провайдеров), применять к ним ваш код и проверять, что он работает корректно. Это ключевой инструмент для внедрения практик CI/CD в разработку Ansible-автоматизации.
+**Molecule** — это фреймворк для автоматизированного тестирования [ролей](ansible_roles.md) и плейбуков Ansible. Он позволяет создавать временные, изолированные окружения (с помощью Docker, Vagrant, облачных провайдеров), применять к ним ваш код и проверять, что он работает корректно. Это ключевой инструмент для внедрения практик CI/CD в разработку Ansible-автоматизации.
 
 ## Основные концепции
 
 ### Зачем нужен Molecule?
 
 Тестирование сложной роли вручную требует: поднятия тестовых серверов, запуска плейбука, ручной проверки и повторения для разных ОС. Molecule автоматизирует этот процесс, позволяя:
-*   **Инициализировать роль** со всей необходимой тестовой обвязкой.
-*   **Интегрироваться в CI/CD пайплайны** (GitLab CI, Jenkins) для автоматического прогона тестов при каждом коммите.
-*   **Создавать и уничтожать тестовые окружения** на лету, используя различные "драйверы" (Docker, Vagrant, OpenStack и др.).
-*   **Проводить линтинг** кода (`ansible-lint`) как один из шагов тестирования.
+
+* **Инициализировать роль** со всей необходимой тестовой обвязкой.
+* **Интегрироваться в CI/CD пайплайны** (GitLab CI, Jenkins) для автоматического прогона тестов при каждом коммите.
+* **Создавать и уничтожать тестовые окружения** на лету, используя различные "драйверы".
+* **Проводить линтинг** кода (например, с помощью `ansible-lint`), как один из шагов тестирования.
+
+### Жизненный цикл тестирования
+
+`molecule test` запускает полный, последовательный цикл тестирования, который включает следующие основные шаги:
+
+1. `dependency`: Установка зависимостей роли из `meta/main.yml`.
+2. `lint`: Проверка кода статическим анализатором.
+3. `create`: Создание тестового инстанса (например, Docker-контейнера).
+4. `prepare`: Выполнение подготовительного плейбука `prepare.yml` (если он есть).
+5. `converge`: Запуск основного плейбука `converge.yml`, который применяет тестируемую роль.
+6. `idempotence`: Повторный запуск `converge.yml` для проверки идемпотентности (не должно быть `changed` задач).
+7. `verify`: Запуск плейбука `verify.yml` с тестами для проверки состояния системы.
+8. `destroy`: Уничтожение тестового инстанса.
+
+Для отладки каждый шаг можно запускать отдельно (например, `molecule converge`, `molecule login`, `molecule verify`).
 
 ### Установка
+
 Molecule является Python-пакетом и устанавливается через `pip`. Рекомендуется устанавливать его вместе с драйвером (например, Docker) и линтером.
 
 ```bash
 # Установка Molecule с поддержкой Docker и ansible-lint
 pip install "molecule[docker,lint]"
-
-# Иногда могут потребоваться системные зависимости
-# sudo apt-get install python3-pip libssl-dev
 ```
-> **Примечание о версиях:** Molecule тесно связан с версией Ansible. При ошибках совместимости может потребоваться установка конкретной версии Molecule.
-> `pip install molecule==X.Y.Z`
+
+> **Примечание о версиях:** Molecule тесно связан с версией Ansible. При ошибках совместимости может потребоваться установка конкретной версии: `pip install molecule==X.Y.Z`.
 
 ## Практические сценарии
 
-### Инициализация роли и структура тестов
-Для создания новой роли вместе с тестовой структурой Molecule используется команда `init role`.
+### Полный цикл тестирования роли
+
+#### Шаг 1: Инициализация роли
+
+Команда `molecule init role` создает новую роль со стандартной структурой и тестовым сценарием `default`.
 
 ```bash
-molecule init role my_new_role
+molecule init role nginx
+cd nginx
 ```
-Эта команда создаст стандартную структуру `ansible-galaxy` и добавит в нее директорию `molecule/` со сценарием тестирования `default`.
 
-```
-my_new_role/
-└── molecule/
-    └── default/
-        ├── create.yml      # Плейбук для создания тестового инстанса
-        ├── destroy.yml     # Плейбук для уничтожения инстанса
-        ├── converge.yml    # Основной плейбук, применяющий вашу роль
-        ├── molecule.yml    # Главный файл конфигурации сценария
-        └── verify.yml      # Плейбук для проверки состояния системы после converge
-```
-Можно создавать несколько сценариев тестирования (например, для разных ОС) с помощью `molecule init scenario <scenario_name>`.
+Это создаст директорию `nginx/` и поддиректорию `molecule/default/` со всеми необходимыми файлами.
 
-### Файл конфигурации `molecule.yml`
-Это сердце тестового сценария, описывающее, как Molecule должен проводить тестирование.
+#### Шаг 2: Настройка сценария (`molecule/default/molecule.yml`)
 
-**Пример `molecule.yml`:**
+Это главный файл конфигурации теста. Укажем Docker-образ, который будем использовать.
+
 ```yaml
 ---
 dependency:
@@ -69,68 +76,96 @@ verifier:
   name: ansible
 ```
 
-**Ключевые секции:**
-*   `dependency`: Управление зависимостями роли (например, через `ansible-galaxy`).
-*   `driver`: Инструмент для создания тестовых окружений (`docker`, `vagrant`, `delegated`).
-*   `platforms`: Описание тестовых инстансов (инвентарь для теста).
-*   `provisioner`: Инструмент для применения конфигурации (обычно `ansible`).
-*   `verifier`: Инструмент для проверки (`ansible` с `verify.yml`).
+#### Шаг 3: Написание логики роли (`tasks/main.yml`)
 
-### Плейбуки сценария
-*   **`create.yml` и `destroy.yml`:** Подготавливают и уничтожают окружение. Генерируются автоматически для `docker`/`vagrant` драйверов.
-*   **`converge.yml`:** Основной плейбук для применения тестируемой роли к инстансу.
-    ```yaml
-    ---
-    - name: Converge
-      hosts: all
-      tasks:
-        - name: "Include my_new_role"
-          include_role:
-            name: "my_new_role"
-    ```
-*   **`verify.yml`:** Содержит тесты для проверки корректной работы роли.
-    ```yaml
-    ---
-    - name: Verify
-      hosts: all
-      gather_facts: false
-      tasks:
-        - name: Check that Nginx is installed
-          ansible.builtin.package:
-            name: nginx
-            state: present
-          check_mode: true
-          register: nginx_pkg
-        
-        - name: Assert that nginx package is present
-          ansible.builtin.assert:
-            that:
-              - not nginx_pkg.changed
-            fail_msg: "Nginx package was not installed"
-            success_msg: "Nginx package is present"
-    ```
+Добавим простые задачи по установке и запуску Nginx.
 
-### Жизненный цикл и команды
-Molecule предоставляет набор команд для управления всем циклом тестирования.
+```yaml
+---
+# tasks file for nginx
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: latest
+    update_cache: true
 
-*   **`molecule test`:** Запускает полный цикл тестирования:
-    1.  `dependency`: Установка зависимостей.
-    2.  `lint`: Проверка кода линтером.
-    3.  `cleanup`: Очистка.
-    4.  `destroy`: Уничтожение старых инстансов.
-    5.  `syntax`: Проверка синтаксиса.
-    6.  `create`: Создание инстансов.
-    7.  `prepare`: Подготовка инстансов (если есть `prepare.yml`).
-    8.  `converge`: Запуск основного плейбука.
-    9.  `idempotence`: Проверка идемпотентности.
-    10. `verify`: Запуск тестов из `verify.yml`.
-    11. `destroy`: Уничтожение инстансов.
+- name: Start and enable nginx service
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+```
 
-*   **Отдельные команды (для отладки):**
-    *   `molecule create`: Создать окружение.
-    *   `molecule converge`: Применить роль.
-    *   `molecule login`: Подключиться к тестовому инстансу по SSH.
-    *   `molecule verify`: Запустить тесты.
-    *   `molecule destroy`: Уничтожить окружение.
+#### Шаг 4: Написание тестов (`molecule/default/verify.yml`)
 
-> **Практический совет:** Если роль требует предварительной настройки серверов, используйте плейбук `prepare.yml` в сценарии. Molecule выполнит его после создания инстанса и до `converge`.
+Это плейбук, который проверяет, что роль отработала корректно.
+
+```yaml
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Check that Nginx package is installed
+      ansible.builtin.package:
+        name: nginx
+        state: present
+      check_mode: true
+      register: nginx_pkg
+
+    - name: Assert that nginx package is present
+      ansible.builtin.assert:
+        that:
+          - not nginx_pkg.changed
+        fail_msg: "Nginx package was not installed"
+
+    - name: Check if nginx service is running
+      ansible.builtin.service_facts:
+      register: service_facts
+
+    - name: Assert that nginx service is running
+      ansible.builtin.assert:
+        that:
+          - service_facts.ansible_facts.services['nginx.service'].state == 'running'
+        fail_msg: "Nginx service is not running"
+```
+
+#### Шаг 5: Запуск тестов
+
+Команда `molecule test` запустит полный жизненный цикл.
+
+```bash
+molecule test
+```
+
+Если все шаги пройдены успешно, вы увидите зеленый вывод, подтверждающий, что ваша роль работает как ожидалось и является идемпотентной.
+
+**Команды для отладки:**
+
+* `molecule create`
+* `molecule converge`
+* `molecule login` (для подключения к контейнеру и ручной проверки)
+* `molecule verify`
+* `molecule destroy`
+
+## Дополнительная информация
+
+### Подготовительный плейбук (`prepare.yml`)
+
+Если роль требует предварительной настройки тестового инстанса (например, установки `curl` для проверки веб-сервера), эти задачи можно поместить в файл `molecule/default/prepare.yml`. Molecule выполнит его после создания инстанса (`create`) и до применения роли (`converge`).
+
+### Несколько сценариев
+
+Molecule позволяет создавать несколько сценариев для тестирования роли на разных ОС.
+
+```bash
+# Создать новый сценарий для CentOS
+molecule init scenario centos -r nginx
+```
+
+Это создаст новую директорию `molecule/centos/`, где в `molecule.yml` можно указать другой `image` (например, `geerlingguy/docker-centos8-ansible:latest`) и, при необходимости, адаптировать тесты.
+
+```bash
+# Запустить тесты только для сценария centos
+molecule test -s centos
+```

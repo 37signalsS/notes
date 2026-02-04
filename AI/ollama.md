@@ -12,37 +12,39 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama run llama3.1
 ```
 
-### Конфигурация Ollama для сетевого доступа
+## Конфигурация Ollama для сетевого доступа
 
 Чтобы Open WebUI мог подключиться к Ollama, необходимо разрешить Ollama принимать запросы со всех сетевых интерфейсов.
 
-1.  Откройте файл службы `ollama.service` для редактирования:
+1. Откройте файл службы `ollama.service` для редактирования:
 
     ```bash
     sudo systemctl edit ollama.service
     ```
 
-2.  В открывшемся редакторе добавьте следующие строки:
+2. В открывшемся редакторе добавьте следующие строки:
 
     ```ini
     [Service]
     Environment="OLLAMA_HOST=0.0.0.0"
     ```
 
-3.  Перезагрузите конфигурацию `systemd` и перезапустите сервис Ollama:
+3. Перезагрузите конфигурацию `systemd` и перезапустите сервис Ollama:
+
     ```bash
     sudo systemctl daemon-reload
     sudo systemctl restart ollama
     ```
+
 ### Запуск Open WebUI с помощью Docker
 
-1.  Убедитесь, что Docker запущен и включен:
+1. Убедитесь, что Docker запущен и включен:
 
     ```bash
     sudo systemctl enable --now docker
     ```
 
-2.  Запустите контейнер Open WebUI:
+2. Запустите контейнер Open WebUI:
 
     ```bash
     docker run -d \

@@ -14,7 +14,7 @@
 
 Ключевые принципы:
 
-1.  **Удаленное и безопасное управление Swarm:** GitLab Runner не устанавливается напрямую на узлы кластера. Вместо этого он взаимодействует с Docker Engine удаленно по TCP, используя **mTLS (mutual TLS)**. И клиент (GitLab Runner), и сервер (Docker Daemon) проверяют сертификаты друг друга, что обеспечивает безопасное соединение.
+1.  **Удаленное и безопасное управление Swarm:** GitLab Runner не устанавливается напрямую на узлы кластера. Вместо этого он взаимодействует с Docker Engine удаленно по TCP, используя **[mTLS (mutual TLS)](../../WebServers/Nginx/Security/nginx_tls_ssl_configuration.md)**. И клиент (GitLab Runner), и сервер (Docker Daemon) проверяют сертификаты друг друга, что обеспечивает безопасное соединение.
 2.  **Динамическая маршрутизация с Traefik:** Traefik отслеживает Docker API. Когда в Swarm запускается новый сервис с определенными метками (`labels`), Traefik автоматически создает для него маршрут и может выпустить SSL-сертификат от Let's Encrypt. Это устраняет необходимость ручной настройки reverse proxy.
 3.  **Разделение инфраструктуры и приложений:** Общие сервисы (Traefik, базы данных) выносятся в отдельный "инфраструктурный" стек (например, `shared-infra`), управляемый из своего репозитория. Приложения развертываются независимо, используя общую сетевую инфраструктуру.
 4.  **Управление окружениями в GitLab CI:** Используя **[переменные с привязкой к окружению (environment scope)](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**, один и тот же пайплайн может развертывать приложение на разные кластеры (например, `development` и `production`), автоматически подставляя нужные адреса (`DOCKER_HOST`) и учетные данные.
@@ -160,19 +160,6 @@
           placement:
             constraints:
               - "node.role==manager"
-
-    volumes:
-      - "postgres-data:/var/lib/postgresql/data"
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD} # Переменная GitLab
-    networks:
-      - public
-    deploy:
-      placement:
-        constraints:
-          - "node.role==manager"
 
     volumes:
       postgres-data:
@@ -327,6 +314,6 @@ deploy_dev:
 
 ## Дополнительная информация
 
-- **Сборка образов без Docker-in-Docker:** В примере используется **Kaniko** для сборки Docker-образов. Это предпочтительный способ в CI/CD, так как он не требует привилегированного доступа к Docker-демону, что повышает безопасность.
+- **Сборка образов без Docker-in-Docker:** В примере используется **[Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md)** для сборки Docker-образов. Это предпочтительный способ в CI/CD, так как он не требует привилегированного доступа к Docker-демону, что повышает безопасность.
 - **`--with-registry-auth`:** Этот флаг в команде `docker stack deploy` критически важен. Он заставляет узел-менеджер Swarm передать учетные данные для доступа к Docker Registry всем узлам кластера, чтобы они могли скачать приватный образ.
 - **Результат:** Коммит в ветку `dev` автоматически развертывает приложение в `development` окружение, а коммит в `main` — в `production`.
