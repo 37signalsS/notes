@@ -35,6 +35,6 @@
 
 ### Пример развертывания
 
-Практический пример развертывания отказоустойчивого кластера PostgreSQL с использованием Patroni, etcd и HAProxy наглядно демонстрируется в руководстве по Docker Compose. Этот пример служит отличной отправной точкой для моделирования сложных систем.
+Практический пример развертывания отказоустойчивого кластера PostgreSQL с использованием Patroni, etcd и HAProxy наглядно демонстрируется в руководстве по Docker Compose. 
 
 > **См. подробное руководство:** **[Пример: HA-кластер PostgreSQL с Patroni в Docker Compose](../../../Docker/Docker_compose/docker_compose_advanced_topics.md#пример-ha-кластер-postgresql-с-patroni)**.

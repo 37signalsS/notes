@@ -145,3 +145,5 @@ spec:
     kubectl delete job my-job
     kubectl delete cronjob backup-cronjob
     ```
+
+## Дополнительная информация

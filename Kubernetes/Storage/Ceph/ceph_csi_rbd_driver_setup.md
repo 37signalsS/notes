@@ -20,7 +20,7 @@
 
 Более подробную информацию о Container Storage Interface (CSI) можно найти в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md). Для общего понимания архитектуры Ceph и концепции RBD, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md), а о PersistentVolumes и PersistentVolumeClaims — в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
 
-## Практические сценарии: Установка и настройка
+## Практические сценарии
 
 Данный раздел описывает пошаговую установку и настройку драйвера Ceph CSI для работы с RBD в Kubernetes.
 

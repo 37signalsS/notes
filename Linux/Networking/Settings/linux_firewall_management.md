@@ -99,7 +99,7 @@ EOF
     sudo systemctl enable --now nftables
     ```
 
-## Расширенные детали
+## Дополнительная информация
 
 ### 1. Сохранение правил `iptables`
 

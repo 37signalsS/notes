@@ -110,25 +110,7 @@ output.logstash:
 - **`type: container`**: Специализированный входной плагин Filebeat, который автоматически парсит JSON-логи Docker.
 - **`add_docker_metadata`**: Процессор, который обогащает события полной информацией о контейнере от Docker API.
 
-**Пример конфигурации `logstash.conf` для приема от Filebeat:**
-```conf
-input {
-  beats {
-    port => 5044
-  }
-}
-
-filter {
-  # Дополнительная обработка логов при необходимости
-}
-
-output {
-  elasticsearch {
-    hosts => ["http://elasticsearch.example.com:9200"]
-    index => "docker-logs-%{+YYYY.MM.dd}"
-  }
-}
-```
+Для детального примера конфигурации Logstash для приема логов от Filebeat см. **[Logstash: Обзор и ключевые концепции](../../ELK_Stack/Logstash/logstash_overview.md#пример-конфигурации-для-приема-от-filebeat)**.
 
 ## Дополнительная информация
 

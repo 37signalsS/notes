@@ -22,26 +22,33 @@
 
 Примеры использования `systemd-run`:
 
-1.  **Запуск команды в отдельном cgroup с лимитом CPU:**
+### 1. Запуск команды в отдельном cgroup с лимитом CPU
 
-    ```bash
-    systemd-run --scope -p CPUQuota=20% bash -c "make build"
-    ```
+```bash
+systemd-run --scope -p CPUQuota=20% bash -c "make build"
+```
 
-2.  **Запуск периодической задачи**
+### 2. Запуск периодической задачи
 
-    ```bash
-    systemd-run --on-calendar="hourly" /usr/local/bin/cleanup.sh
-    ```
+```bash
+systemd-run --on-calendar="hourly" /usr/local/bin/cleanup.sh
+```
 
-3.  **Проверка сервиса в sandbox-режиме (изоляция временной директории и системы):**
+### 3. Проверка сервиса в sandbox-режиме (изоляция временной директории и системы)
 
-    ```bash
-    systemd-run --property=PrivateTmp=yes --property=ProtectSystem=strict bash
-    ```
+```bash
+systemd-run --property=PrivateTmp=yes --property=ProtectSystem=strict bash
+```
 
-4.  **Изоляция для небезопасной команды (без новых привилегий и доступа к устройствам):**
+### 4. Изоляция для небезопасной команды (без новых привилегий и доступа к устройствам)
 
-    ```bash
-    systemd-run -p NoNewPrivileges=yes -p PrivateDevices=yes ./script.sh
-    ```
+```bash
+systemd-run -p NoNewPrivileges=yes -p PrivateDevices=yes ./script.sh
+```
+
+## Дополнительная информация
+
+*   **[Обзор Systemd: Управление системой и службами](./overview.md)**: Общая информация о `systemd` и его архитектуре.
+*   **[Контрольные группы (cgroups) в Linux](../cgroups.md)**: Для понимания механизмов управления ресурсами, используемых `systemd`.
+*   **[Journald: Централизованный сбор логов](../Logging/journald.md)**: Для подробной информации о системе логирования `systemd`.
+*   **[Задачи по расписанию (Timers)](./timers.md)**: Для изучения альтернативного механизма планирования задач в `systemd`.

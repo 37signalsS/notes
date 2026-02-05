@@ -11,7 +11,11 @@
 
 - **[OpenTelemetry (OTel)](../OpenTelemetry/opentelemetry_overview.md)**: Открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (логов, метрик и трассировок). Он позволяет унифицировать инструментирование приложений независимо от используемого бэкенда для анализа.
 
-- **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера Kubernetes. Идеально подходит для разработки, обучения и тестирования.
+- **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера [Kubernetes](../../Kubernetes/kubernetes_overview.md). Идеально подходит для разработки, обучения и тестирования.
+
+- **[Docker Registry](../../Docker/docker_registries.md)**: Сервис для хранения и распространения Docker-образов.
+
+- **[Cert-Manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**: Нативный для Kubernetes инструмент для управления TLS-сертификатами.
 
 ## Основные концепции
 
@@ -19,15 +23,15 @@
 
 Данное руководство описывает создание полноценной среды наблюдаемости в локальном кластере Minikube. Архитектура включает следующие ключевые компоненты:
 
-1.  **Приложение**: Тестовое Java-приложение, инструментированное с помощью OpenTelemetry для генерации логов, метрик и трассировок.
-2.  **OpenTelemetry Collector**: Центральный компонент, который получает телеметрию от приложения по протоколу OTLP. Он обрабатывает данные и экспортирует их в соответствующие бэкенды:
+1.  **Приложение**: Тестовое Java-приложение, инструментированное с помощью [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md) для генерации логов, метрик и трассировок.
+2.  **OpenTelemetry Collector**: Центральный компонент [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md), который получает телеметрию от приложения по протоколу OTLP. Он обрабатывает данные и экспортирует их в соответствующие бэкенды:
     - Логи → **Loki**
     - Трассировки → **Tempo**
     - Метрики → **Mimir** (через Prometheus)
 3.  **Стек LGTM**: Набор инструментов для хранения и визуализации телеметрии. **Grafana** выступает в роли единого интерфейса для анализа всех собранных данных.
 4.  **Вспомогательные компоненты**:
-    - **Cert-Manager**: Управляет TLS-сертификатами для защищенного доступа к веб-интерфейсам через Ingress.
-    - **Local Docker Registry**: Позволяет хранить и распространять кастомные Docker-образы внутри кластера без необходимости публиковать их в Docker Hub.
+    - **[Cert-Manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**: Управляет TLS-сертификатами для защищенного доступа к веб-интерфейсам через [Ingress](../../Kubernetes/Networking/ingress.md).
+    - **[Local Docker Registry](../../Docker/docker_registries.md)**: Позволяет хранить и распространять кастомные Docker-образы внутри кластера без необходимости публиковать их в Docker Hub.
 
 ## Практические сценарии
 
@@ -37,11 +41,11 @@
 
 #### 1. Предварительные требования
 
-*   **Docker**: Для запуска Minikube.
-*   **Git**: Для клонирования репозиториев.
-*   **Minikube**: Локальный кластер Kubernetes.
-*   **kubectl**: Утилита командной строки для управления кластерами Kubernetes.
-*   **Helm**: Менеджер пакетов для Kubernetes.
+*   **[Docker](../../Docker/docker_overview.md)**: Для запуска Minikube.
+*   **[Git](../../Git/git_basics.md)**: Для клонирования репозиториев.
+*   **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Локальный кластер [Kubernetes](../../Kubernetes/kubernetes_overview.md).
+*   **[kubectl](../../Kubernetes/kubernetes_overview.md)**: Утилита командной строки для управления кластерами Kubernetes.
+*   **[Helm](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)**: Менеджер пакетов для Kubernetes.
 
 #### 2. Подготовка окружения
 
@@ -158,7 +162,7 @@ kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred
 
 ##### 4.1. Grafana, Prometheus, Alertmanager
 
-Компоненты разворачиваются с помощью чарта `kube-prometheus-stack`, который включает преднастроенные Data Sources для Loki, Tempo и Mimir.
+Компоненты разворачиваются с помощью чарта [kube-prometheus-stack](../../Prometheus/kubernetes/overview.md), который включает преднастроенные Data Sources для Loki, Tempo и Mimir.
 
 ```bash
 # Создание Namespace

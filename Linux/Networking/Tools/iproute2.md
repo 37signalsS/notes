@@ -147,7 +147,7 @@ sudo ip address del 192.168.1.10/24dev eth0
     sudo ip neighbour flush dev eth0
     ```
 
-## Расширенные детали
+## Дополнительная информация
 
 ### 1. Сетевые пространства имен (`ip netns`)
 

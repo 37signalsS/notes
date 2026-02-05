@@ -6,7 +6,7 @@
 - Если **`namespaces`** отвечают за **изоляцию видимости** (что процесс может видеть),
 - то **`cgroups`** отвечают за **ограничение потребления** (что процесс может использовать).
 
-Ключевая файловая система для управления cgroups — `cgroupfs`, обычно монтируемая в `/sys/fs/cgroup`.
+Ключевая файловая система для управления cgroups — [cgroupfs](../../FileSystems/other_virtual_fs.md#cgroupfs), обычно монтируемая в `/sys/fs/cgroup`.
 
 ### Основные возможности
 
@@ -152,4 +152,3 @@ echo $(pgrep stress) | sudo tee /sys/fs/cgroup/test_group/cgroup.procs
 Вы можете отслеживать потребление ресурсов, читая псевдофайлы внутри директории `cgroup`:
 -   **CPU:** `cat /sys/fs/cgroup/test_group/cpu.stat`
 -   **Память:** `cat /sys/fs/cgroup/test_group/memory.current`
-

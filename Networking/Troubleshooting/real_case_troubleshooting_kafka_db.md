@@ -68,7 +68,7 @@
 
 ### Шаг 5: Исследование третьего сервера (Consumer)
 
-**Действие:** Найти логи консьюмера `Store` в [Elasticsearch](../Elasticsearch/elasticsearch_sharding_replication_cluster.md).
+**Действие:** Найти логи консьюмера `Store` в [Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_overview.md).
 **Результат:**
 -   В логах найдены ошибки: **"не могу подключиться к базе данных"**.
 -   В сообщении об ошибке указан хост базы данных.

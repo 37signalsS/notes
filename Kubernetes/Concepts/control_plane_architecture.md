@@ -61,3 +61,26 @@ Control Plane работает как единая система, где ком
     *   **Deployment/ReplicaSet Controller**: Поддерживает заданное количество реплик пода.
     *   **Endpoints Controller**: Обновляет объект `Endpoints`, связывая сервисы с IP-адресами подов.
 *   **Восстановление после сбоев**: `etcd` поддерживает создание **снимков (snapshots)**, которые позволяют восстанавливать состояние кластера.
+
+### Ссылки для углубленного изучения
+
+*   **kube-apiserver**:
+    *   [Высокая доступность kube-apiserver и его реализация](Kubernetes/Installation/ha_cluster_deployment_with_kubespray.md)
+    *   [Мониторинг kube-apiserver](Kubernetes/MonitoringLogging/KubeAPIServer/kube_apiserver_monitoring.md)
+    *   [TLS и mTLS в Kubernetes (включая коммуникацию с kube-apiserver)](Kubernetes/Security/tls_and_mtls_in_kubernetes.md)
+*   **etcd**:
+    *   [Управление секретами в Kubernetes (хранение в etcd)](Kubernetes/Base/secret.md)
+    *   [Обновление кластеров Kubernetes (важность снимков etcd)](Kubernetes/Operations/upgrading_clusters.md)
+    *   [Высокая доступность etcd в процессе установки кластера](Kubernetes/Installation/ha_cluster_deployment_with_kubespray.md)
+*   **kube-scheduler**:
+    *   [Quality of Service (QoS), Requests и Limits (использование планировщиком)](Kubernetes/Scheduling/qos_limit_and_requests.md)
+*   **kubelet**:
+    *   [Пробы (Liveness, Readiness, Startup Probes) и их использование kubelet'ом](Kubernetes/Base/probes.md)
+    *   [TLS и mTLS в Kubernetes (включая коммуникацию с kubelet)](Kubernetes/Security/tls_and_mtls_in_kubernetes.md)
+    *   [Часто встречающиеся ошибки и их устранение (проблемы с kubelet)](Kubernetes/Troubleshooting/common_errors.md)
+    *   [Установка Kubernetes (kubelet)](Kubernetes/Installation/install_k8s.md)
+    *   [Быстрый старт kubeadm (установка kubelet)](Kubernetes/Installation/kubeadm_quickstart.md)
+    *   [Глубокое погружение в DNS (настройки kubelet для DNS)](Kubernetes/Networking/dns_deep_dive.md)
+    *   [Альтернативные среды выполнения контейнеров (взаимодействие с CRI)](Docker/alternative_runtimes_and_tools.md)
+*   **kube-proxy**:
+    *   [Сетевая модель в Kubernetes (подробно о kube-proxy и его режимах)](Kubernetes/Networking/network.md)

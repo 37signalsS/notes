@@ -67,7 +67,7 @@
 *   **Варианты реализации**:
     *   **Нативный Kubernetes**: Может быть реализован с использованием нескольких `Deployment` и `Service`, но требует ручной настройки и сложного управления.
     *   **Service Mesh**: Решения, такие как [Istio](../Networking/Service_Mesh/Istio/istio_overview.md) и [Linkerd](../Networking/Service_Mesh/Linkerd/linkerd_overview.md), позволяют гибко управлять маршрутизацией трафика на уровне L7.
-    *   **Специализированные инструменты**: [Flagger](../../ToolsUtilities/deployment_tools.md), [ArgoCD](/GitOps/ArgoCD.md) (с плагинами/интеграциями), [Spinnaker](../../ToolsUtilities/deployment_tools.md) предоставляют готовые механизмы для автоматизации Canary-развертываний.
+    *   **Специализированные инструменты**: [Flagger](../../ToolsUtilities/deployment_tools.md), [ArgoCD](../../GitOps/ArgoCD.md) (с плагинами/интеграциями), [Spinnaker](../../ToolsUtilities/deployment_tools.md) предоставляют готовые механизмы для автоматизации Canary-развертываний.
 
 ### A/B Testing Deployment
 

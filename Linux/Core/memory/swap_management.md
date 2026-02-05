@@ -1,5 +1,6 @@
 # Управление Swap (файлом подкачки)
 
+
 ## Определения
 
 *   **Swap (подкачка)** — это пространство на диске, которое операционная система использует, когда ей не хватает оперативной памяти (RAM), для выгрузки неактивных страниц памяти.
@@ -71,7 +72,7 @@ sudo mkswap /swapfile
 # 4. Активировать
 sudo swapon /swapfile
 
-# 5. Сделать постоянным (добавить в /etc/fstab)
+# 5. Сделать постоянным (добавить в [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab))
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
@@ -81,7 +82,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 # 1. Деактивировать swap
 sudo swapoff /swapfile
 
-# 2. Удалить запись из /etc/fstab (если она была добавлена)
+# 2. Удалить запись из [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab) (если она была добавлена)
 
 # 3. Удалить сам файл
 sudo rm /swapfile
@@ -125,7 +126,7 @@ sudo swapoff /swapfile
 sudo swapon /swapfile -p 10
 
 # 3. Закрепить в /etc/fstab
-# /swapfile none swap sw,pri=10 0 0
+# `/swapfile none swap sw,pri=10 0 0` (см. [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab))
 # /dev/sdb2   none swap sw,pri=5  0 0
 ```
 
@@ -141,13 +142,8 @@ sudo swapon /swapfile -p 10
 
 ### Рефакторинг: замена LVM-раздела на swap-файл
 
-Если swap выделен как логический том (LV) в LVM, его можно преобразовать в swap-файл, а место отдать корневому разделу.
-**Последовательность действий:**
+Если swap выделен как логический том (LV) в [LVM (Logical Volume Manager)](../../Linux/FileSystems/lvm.md), его можно преобразовать в swap-файл, а место отдать корневому разделу.
 
-1.  **Проверить LV:** `sudo lvs`
-2.  **Отключить swap:** `sudo swapoff -a` и удалить запись из `/etc/fstab`.
-3.  **Удалить LV:** `sudo lvremove /dev/vg-name/swap_lv`
-4.  **Расширить корневой LV:** `sudo lvextend -l +100%FREE /dev/vg-name/root_lv`
-5.  **Изменить размер файловой системы:** `sudo resize2fs /dev/mapper/vg-name-root_lv` (для ext4)
-6.  **Создать swap-файл**, как описано выше.
+**Последовательность действий включает:** отключение текущего swap, удаление LVM-тома swap, расширение корневого LVM-тома и его файловой системы, а затем создание нового swap-файла. Подробные инструкции по управлению LVM-томами можно найти в разделе [Изменение размеров логических томов](../../Linux/FileSystems/lvm.md#изменение-размеров) и [Удаление логических томов](../../Linux/FileSystems/lvm.md#полный-жизненный-цикл-lvm). Создание swap-файла описано в этом документе выше.
+
 > **Важно:** После таких изменений рекомендуется перезагрузка для проверки корректности конфигурации.

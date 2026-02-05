@@ -88,3 +88,9 @@ sudo systemctl enable systemd-nspawn@my-container.service
 # Проверить статус
 systemctl status systemd-nspawn@my-container.service
 ```
+
+## Дополнительная информация
+
+*   **[Обзор виртуализации в Linux](../Virtualization/virtualization_overview.md)**: Для более широкого понимания различных технологий виртуализации и контейнеризации в Linux.
+*   **[Пространства имен (Namespaces) в Linux](../namespaces.md)**: Для углубленного изучения технологии изоляции, используемой `systemd-nspawn`.
+*   **[Контрольные группы (cgroups) в Linux](../cgroups.md)**: Для понимания механизмов управления ресурсами, применяемых `systemd-nspawn`.

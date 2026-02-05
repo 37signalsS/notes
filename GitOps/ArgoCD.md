@@ -350,9 +350,8 @@ kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o name | cut
     kubectl delete -f my-application.yaml
     ```
 
-### Мониторинг и метрики DORA с помощью ArgoCD
-
-ArgoCD предоставляет встроенный экспортер метрик для Prometheus, которые можно использовать для отслеживания ключевых показателей **DORA**:
+### Интеграция ArgoCD с метриками DORA
+Подробное описание метрик DORA содержится в документе: [Метрики DORA (DevOps Research and Assessment)](../../CI-CD/Core_Concepts/dora_metrics.md). ArgoCD предоставляет встроенный экспортер метрик для Prometheus, которые можно использовать для отслеживания ключевых показателей DORA:
 
 *   **Deployment Frequency (Частота развертывания)**: отслеживается через количество успешных синхронизаций.
 *   **Change Fail Rate (Процент ошибок при изменениях)**: процент синхронизаций со статусом `Failed`.

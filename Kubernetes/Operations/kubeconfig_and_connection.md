@@ -27,6 +27,37 @@
 
 Файл также содержит поле `current-context`, которое указывает `kubectl`, какой контекст использовать по умолчанию, если он не указан явно в команде.
 
+### Пример `kubeconfig` для `kubelet`:
+
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubernetes-cluster
+  cluster:
+    certificate-authority-data: <base64-кодированный ca.crt>
+    server: https://kube-apiserver.example.com:6443
+users:
+- name: system:node:node01.example.com
+  user:
+    client-certificate-data: <base64-кодированный kubelet.crt>
+    client-key-data: <base64-кодированный kubelet.key>
+contexts:
+- name: default-context
+  context:
+    cluster: kubernetes-cluster
+    user: system:node:node01.example.com
+current-context: default-context
+```
+-   `clusters`: Список кластеров. Каждый кластер определяет:
+    - `server`: URL-адрес `kube-apiserver`.
+    - `certificate-authority-data`: Base64-кодированный сертификат корневого CA для проверки подлинности сервера.
+-   `users`: Список пользователей. Каждый пользователь определяет учетные данные для аутентификации, например:
+    - `client-certificate-data`: Клиентский сертификат в Base64.
+    - `client-key-data`: Клиентский приватный ключ в Base64.
+-   `contexts`: Список контекстов. Контекст — это именованная комбинация `cluster` и `user`, определяющая, к какому кластеру с какими учетными данными подключаться.
+-   `current-context`: Определяет, какой из контекстов будет использоваться по умолчанию утилитой `kubectl` и другими клиентами.
+
 ## Практические сценарии
 
 ### Получение файла Kubeconfig

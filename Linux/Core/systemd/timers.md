@@ -1,4 +1,4 @@
-# Задачи по расписанию: systemd Timers
+# systemd Timers
 
 ## Определения
 
@@ -79,7 +79,7 @@ WantedBy=timers.target
     journalctl -u my_backup.service
     ```
 
-## Additional information
+## Дополнительная информация
 
 ### Типичные проблемы и решения
 

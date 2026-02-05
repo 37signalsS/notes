@@ -3,14 +3,16 @@
 ## Определения
 
 *   **Bare-Metal** — физические серверы, в противоположность виртуальным машинам. Установка на "голое железо" дает максимальную производительность, но требует ручного управления инфраструктурой.
-*   **kubeadm** — официальный инструмент от Kubernetes для быстрой инициализации (bootstrapping) кластеров. Он автоматизирует создание control-plane, управление токенами присоединения и другие базовые задачи, но не управляет подготовкой серверов.
-*   **containerd** — стандартизированная среда выполнения контейнеров. Это легковесный и эффективный runtime, который управляет жизненным циклом контейнеров на узлах кластера. Является заменой Docker Engine (dockershim), поддержка которого удалена из Kubernetes.
+*   **kubeadm** — см. [kubeadm](../../Kubernetes/Installation/kubeadm_quickstart.md)
+*   **containerd** — см. [containerd](../../Docker/docker_overview.md#containerd)
 *   **Отказоустойчивый кластер (High-Availability, HA)** — конфигурация кластера, в которой критически важные компоненты (в данном случае, Control Plane) дублируются на нескольких серверах для предотвращения единой точки отказа.
-*   **CRI (Container Runtime Interface)** — это плагин, позволяющий `kubelet` (главному агенту Kubernetes на узле) взаимодействовать с различными средами выполнения контейнеров, такими как `containerd`.
+*   **CRI (Container Runtime Interface)** — см. [Container Runtime Interface (CRI)](../../Docker/alternative_runtimes_and_tools.md#стандарты-cri-и-oci)
 
 ---
 
 ## Основные концепции
+
+В данном разделе описаны фундаментальные принципы и архитектурные решения, лежащие в основе развертывания отказоустойчивого кластера Kubernetes.
 
 Для построения отказоустойчивого кластера Kubernetes используется схема со "стекированным" (stacked) Control Plane, где компоненты `etcd` и API-сервера располагаются на одних и тех же мастер-узлах.
 
@@ -22,7 +24,9 @@
 
 ---
 
-## Практический сценарий: Установка кластера
+## Практические сценарии
+
+### Установка кластера
 
 Это пошаговое руководство по развертыванию HA-кластера.
 
@@ -109,7 +113,7 @@ sudo apt upgrade -y
 ```bash
 ls /boot/vmlinuz-*  # Должно быть новое ядро (в моем случае это 6.8.0-90)
 ```
-**ВАЖНО: НЕ перезагружаем пока! Сначала выполним все настройки.**
+> **ВАЖНО:** НЕ перезагружаем пока! Сначала выполним все настройки.
 
 ##### 3. Настройка системных параметров:
 
@@ -162,10 +166,10 @@ Sysctl параметры установлены (ip_forward=1, bridge-nf-call-i
 
 2. Все проверки пройдены:
 ```bash
-echo "1. SWAP: $(swapon --show | wc -l) активных (должно быть 0)"
-echo "2. Cgroups: $(stat -fc %T /sys/fs/cgroup) (должно быть cgroup2fs)"
-echo "3. Сеть: ip_forward=$(sysctl -n net.ipv4.ip_forward) (должно быть 1)"
-echo "4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(lsmod | grep -c overlay)"
+1. SWAP: $(swapon --show | wc -l) активных (должно быть 0)
+2. Cgroups: $(stat -fc %T /sys/fs/cgroup) (должно быть cgroup2fs)
+3. Сеть: ip_forward=$(sysctl -n net.ipv4.ip_forward) (должно быть 1)
+4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(lsmod | grep -c overlay)
 ```
 
 ##### 5. Что НЕ сделано (и не должно быть сделано сейчас):
@@ -186,7 +190,6 @@ sudo apt-get update
 sudo apt-get install -y containerd
 
 # Проверяем успешность установки
-echo "Установленная версия containerd:"
 containerd --version
 ```
 
@@ -222,20 +225,7 @@ sudo systemctl restart containerd
 sudo systemctl enable containerd
 
 # Проверяем, что сервис активен и CRI-сокет доступен
-echo "Статус containerd: $(systemctl is-active containerd)"
-if [ -S /run/containerd/containerd.sock ]; then
-    echo "CRI-сокет /run/containerd/containerd.sock доступен."
-else
-    echo "CRI-сокет /run/containerd/containerd.sock не найден."
-fi
-```
-
-**Шаг 3.4: Проверка готовности Containerd**
-
-После настройки и перезапуска `containerd` необходимо убедиться в его корректной работе и доступности CRI-сокета для Kubernetes.
-
-```bash
-# Проверка CRI-сокета: убеждаемся, что файл сокета существует и является сокетом
+sudo systemctl status containerd | grep "Active"
 ls -la /run/containerd/containerd.sock
 test -S /run/containerd/containerd.sock && echo "CRI socket: OK" || echo "CRI socket: MISSING"
 
@@ -243,31 +233,14 @@ test -S /run/containerd/containerd.sock && echo "CRI socket: OK" || echo "CRI so
 ctr version >/dev/null 2>&1 && echo "Containerd API: OK" || echo "Containerd API: FAILED"
 
 # Проверка применённых настроек, особенно параметра SystemdCgroup
-echo "Applied configuration:"
 containerd config dump | grep -A1 "SystemdCgroup"
 
 # Предварительная проверка pause-образа (опционально):
-# Попытка загрузить pause-образ, если он еще не кэширован.
-# kubelet автоматически загрузит его при необходимости.
-echo "Pause image availability:"
+# Kubelet автоматически загрузит его при необходимости.
 ctr --namespace k8s.io images pull registry.k8s.io/pause:3.9 2>&1 | grep -q "success" && echo "Pause image: OK" || echo "Pause image: WILL BE PULLED BY KUBELET"
 ```
 
-**Ожидаемый результат после выполнения Шага 3 (Установка и настройка `containerd`):**
-*   `containerd` сконфигурирован с параметрами, требуемыми Kubernetes (включая `SystemdCgroup=true` и `sandbox_image=registry.k8s.io/pause:3.9`).
-*   Docker функционирует, используя тот же экземпляр `containerd` (если Docker был установлен ранее).
-*   Существующие Docker-контейнеры восстановлены в рабочее состояние (если они были запущены до остановки Docker).
-*   CRI-сокет доступен по пути `/run/containerd/containerd.sock`.
-*   Система подготовлена к установке компонентов Kubernetes.
-
-**Текущий статус системы:**
-*   Ядро ОС: Обновлено до 6.8.0-90 (будет активно после перезагрузки).
-*   Cgroups: Переключено на v2, параметр прописан в GRUB.
-*   Docker: Работает, использует `containerd` как runtime.
-*   Containerd: Активен, сконфигурирован для CRI (SystemdCgroup=true, `sandbox_image=registry.k8s.io/pause:3.9`).
-*   Kubernetes: Компоненты пока не установлены.
-*   CRI-сокет: `/run/containerd/containerd.sock` доступен.
-*   Контейнеры: Все рабочие контейнеры восстановлены.
+По завершении этого шага `containerd` будет корректно сконфигурирован для Kubernetes, CRI-сокет будет доступен, и система будет готова к установке компонентов Kubernetes. Все необходимые системные настройки будут применены.
 
 **Следующий этап:** Установка `kubeadm`, `kubelet`, `kubectl` версии 1.34. Перезагрузка всех нод будет выполнена после полной установки компонентов Kubernetes.
 
@@ -304,11 +277,7 @@ sudo apt-mark hold kubelet kubeadm kubectl
 sudo systemctl enable kubelet
 ```
 
-**Что сделано:**
-*   `kubeadm 1.34`: установлен и готов к инициализации кластера (`kubeadm init`).
-*   `kubelet 1.34`: установлен, включён в автозагрузку, но не запущен (ожидает инструкций от `kubeadm`).
-*   `kubectl 1.34`: установлен, готов для выполнения команд управления кластером.
-*   Версии пакетов зафиксированы (`apt-mark hold`), чтобы предотвратить неконтролируемые обновления.
+Все компоненты Kubernetes (`kubeadm`, `kubelet`, `kubectl`) версии 1.34 установлены, их версии зафиксированы, а `kubelet` включен в автозагрузку, ожидая инициализации кластера.
 
 > **Важно:** На данном этапе НЕ ВЫПОЛНЯЙТЕ `kubeadm init`. Сначала необходимо убедиться, что все узлы находятся в одинаковом состоянии. После этого рекомендуется перезагрузить серверы для применения всех настроек, включая обновление ядра.
 
@@ -423,3 +392,7 @@ kubectl get nodes
 *   **[Kubespray](./kubespray.md)**:
     *   **Плюсы**: Полностью автоматизирует развертывание с помощью Ansible. Поддерживает большое количество конфигураций.
     *   **Минусы**: Более высокий уровень абстракции усложняет отладку. Может быть медленным из-за большого количества Ansible-ролей.
+
+### Альтернативные методы развертывания Kubernetes
+
+*   [Быстрый старт с kubeadm (Single-Node)](./kubeadm_quickstart.md): Для ознакомления с базовой установкой Kubernetes на один узел без обеспечения высокой доступности.

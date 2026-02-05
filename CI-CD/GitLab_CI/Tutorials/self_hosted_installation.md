@@ -48,8 +48,6 @@ sudo chown -R $(whoami) /srv/gitlab/
 
 ### Шаг 3: Запуск Docker-контейнера GitLab
 
-Эта команда скачает и запустит контейнер GitLab с указанными параметрами.
-
 ```bash
 sudo docker run --detach \
   --hostname gitlab.example.com \
