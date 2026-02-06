@@ -37,7 +37,7 @@ cursor.execute(f"SELECT * FROM users WHERE username = '{username}'")
 cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
 ```
 
-## 4. Продвинутые детали
+## 4. Дополнительная информация
 
 ### Другие методы защиты
 

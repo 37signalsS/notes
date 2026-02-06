@@ -23,10 +23,11 @@
 ```bash
 docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
 ```
--   **`docker plugin install ...`**: Команда для установки плагинов в Docker.
--   **`grafana/loki-docker-driver:latest`**: Имя плагина. Для production-систем рекомендуется использовать фиксированную версию вместо `latest`.
--   **`--alias loki`**: Задает короткое и удобное имя (`loki`) для драйвера, которое будет использоваться в конфигурациях.
--   **`--grant-all-permissions`**: Предоставляет плагину необходимые права для работы (например, доступ к сети и логам).
+
+- **`docker plugin install ...`**: Команда для установки плагинов в Docker.
+- **`grafana/loki-docker-driver:latest`**: Имя плагина. Для production-систем рекомендуется использовать фиксированную версию вместо `latest`.
+- **`--alias loki`**: Задает короткое и удобное имя (`loki`) для драйвера, которое будет использоваться в конфигурациях.
+- **`--grant-all-permissions`**: Предоставляет плагину необходимые права для работы (например, доступ к сети и логам).
 
 Проверить установку можно командой `docker plugin ls`.
 
@@ -35,6 +36,7 @@ docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all
 Настроить отправку логов в Loki можно как для всего стека через `docker-compose.yml`, так и для отдельного контейнера.
 
 #### Вариант А: Настройка в `docker-compose.yml` (рекомендуемый)
+
 Для удобства и предотвращения дублирования конфигурацию можно определить один раз с помощью YAML-якоря (`&default-logging`).
 
 ```yaml
@@ -62,14 +64,15 @@ services:
 ```
 
 **Объяснение опций (`options`):**
+
 - **`loki-url`**: Полный URL-адрес эндпоинта Loki для приема логов. Замените `<IP_АДРЕС_LOKI>` на IP вашего сервера, где запущен Loki.
 - **`loki-batch-size`**: Размер пачки логов (в байтах), которая будет отправляться за один раз.
 - **`loki-retries`**: Количество попыток повторной отправки в случае ошибки.
 - **`loki-max-backoff`**: Максимальное время ожидания между попытками.
 - **`loki-timeout`**: Таймаут для отправки логов.
 
-
 #### Вариант Б: Настройка через `docker run`
+
 ```bash
 docker run \
   --log-driver=loki \
@@ -82,14 +85,14 @@ docker run \
 После перезапуска сервисов (`docker-compose up -d --force-recreate`) драйвер начнет отправлять логи в Loki.
 
 Для их просмотра:
-1.  Откройте Grafana и перейдите в раздел **Explore**.
-2.  В качестве источника данных выберите **Loki**.
-3.  Используйте **Log browser** для фильтрации по автоматически добавляемым меткам (например, `container_name`, `job`).
-4.  Или напишите запрос на языке LogQL, например: `{job="<имя_проекта_docker_compose>"}`.
+
+1. Откройте Grafana и перейдите в раздел **Explore**.
+2. В качестве источника данных выберите **Loki**.
+3. Используйте **Log browser** для фильтрации по автоматически добавляемым меткам (например, `container_name`, `job`).
+4. Или напишите запрос на языке LogQL, например: `{job="<имя_проекта_docker_compose>"}`.
 
 ## Дополнительная информация
 
-### Связанные SSoT-документы:
--   **Общая структура логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
--   **Обзор Loki:** [Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)
--   **Пример развертывания Loki:** [Настройка Loki Stack через Docker Compose](../../Loki/docker_compose_setup.md)
+- **Общая структура логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
+- **Обзор Loki:** [Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)
+- **Пример развертывания Loki:** [Настройка Loki Stack через Docker Compose](../../Loki/docker_compose_setup.md)

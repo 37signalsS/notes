@@ -10,20 +10,20 @@
 
 ### Ключевые возможности
 
-*   **Автоматизация:** Полностью автоматизированное развертывание, масштабирование и обновление кластеров.
-*   **Гибкость:** Поддерживает большое количество операционных систем (Ubuntu, CentOS, и др.).
-*   **Настраиваемость:** Позволяет легко настраивать компоненты кластера, включая:
-    *   [Сетевые плагины (CNI)](../../Kubernetes/Networking/network.md#cni-container-network-interface), такие как Calico, Cilium, Flannel.
-    *   [DNS-провайдеры](../../Kubernetes/Networking/dns_deep_dive.md) (например, CoreDNS).
-    *   Различные среды выполнения контейнеров.
-*   [**Отказоустойчивость (HA)**](../../Kubernetes/Installation/install_k8s.md#определения): Встроенная поддержка для создания высокодоступных [Control Plane](../../Kubernetes/Concepts/control_plane_architecture.md).
+* **Автоматизация:** Полностью автоматизированное развертывание, масштабирование и обновление кластеров.
+* **Гибкость:** Поддерживает большое количество операционных систем (Ubuntu, CentOS, и др.).
+* **Настраиваемость:** Позволяет легко настраивать компоненты кластера, включая:
+  * [Сетевые плагины (CNI)](../../Kubernetes/Networking/network.md#cni-container-network-interface), такие как Calico, Cilium, Flannel.
+  * [DNS-провайдеры](../../Kubernetes/Networking/dns_deep_dive.md) (например, CoreDNS).
+  * Различные среды выполнения контейнеров.
+* [**Отказоустойчивость (HA)**](../../Kubernetes/Installation/install_k8s.md#определения): Встроенная поддержка для создания высокодоступных [Control Plane](../../Kubernetes/Concepts/control_plane_architecture.md).
 
 ### Недостатки и рекомендации
 
-*   **Медленная скорость изменений:** Так как Kubespray основан на Ansible (Python) и использует большое количество ролей, любые изменения в конфигурации кластера могут занимать много времени.
-*   **Установка дополнений:** Установку дополнительных компонентов (например, DNS или систем мониторинга) рекомендуется выполнять отдельно, а не в рамках Kubespray. Это связано с медленной скоростью работы и потенциальными ошибками, которые усложняют процесс обновления и отката.
-*   **Обновления и масштабирование:** Kubespray предоставляет отдельные Ansible-плейбуки для добавления новых узлов и для обновления кластера. Однако следует помнить, что эти процессы также могут быть медленными.
-*   **Основной файл конфигурации:** Центральным файлом для описания кластера является `cluster.yml`.
+* **Медленная скорость изменений:** Так как Kubespray основан на Ansible (Python) и использует большое количество ролей, любые изменения в конфигурации кластера могут занимать много времени.
+* **Установка дополнений:** Установку дополнительных компонентов (например, DNS или систем мониторинга) рекомендуется выполнять отдельно, а не в рамках Kubespray. Это связано с медленной скоростью работы и потенциальными ошибками, которые усложняют процесс обновления и отката.
+* **Обновления и масштабирование:** Kubespray предоставляет отдельные Ansible-плейбуки для добавления новых узлов и для обновления кластера. Однако следует помнить, что эти процессы также могут быть медленными.
+* **Основной файл конфигурации:** Центральным файлом для описания кластера является `cluster.yml`.
 
 ## 3. Практические сценарии
 
@@ -31,7 +31,7 @@
 
 #### Шаг 1: Установка зависимостей
 
-После клонирования директории `kubespray` необходимо установить зависимости из `requirements.txt`.
+После клонирования `kubespray` необходимо установить зависимости из `requirements.txt`.
 
 Сначала обновите `pip`:
 
@@ -47,13 +47,16 @@ pip install -r requirements.txt
 
 #### Шаг 2: Конфигурация Inventory
 
-1.  Скопируйте пример inventory из `inventory/sample` в новую директорию, например, `inventory/my-cluster`.
+1. Скопируйте пример inventory из `inventory/sample` в новую директорию, например, `inventory/my-cluster`.
+
     ```bash
     cp -rfp inventory/sample inventory/my-cluster
     ```
-2.  Отредактируйте файл `inventory/my-cluster/inventory.ini`. В нем определяются хосты и их роли в кластере.
+
+2. Отредактируйте файл `inventory/my-cluster/inventory.ini`. В нем определяются хосты и их роли в кластере.
 
     **Пример `inventory.ini`:**
+
     ```ini
     [all]
     master-1.s000006.example.com ansible_host=172.22.193.2 ip=172.22.193.2 ansible_ssh_user=root etcd_member_name=etcd1
@@ -90,10 +93,11 @@ pip install -r requirements.txt
 
 В Ansible переменные для групп хостов определяются в каталоге `group_vars`.
 
-*   **Для всех хостов:** Переменные, применяемые ко всем хостам из inventory, можно указать в файле `group_vars/all/all.yml`. Если переменных много, их можно разложить на несколько файлов в директории `group_vars/all/`.
-*   **Для конкретной группы:** Для группы `etcd` переменные будут находиться в `group_vars/etcd.yml` или в каталоге `group_vars/etcd/`.
+* **Для всех хостов:** Переменные, применяемые ко всем хостам из inventory, можно указать в файле `group_vars/all/all.yml`. Если переменных много, их можно разложить на несколько файлов в директории `group_vars/all/`.
+* **Для конкретной группы:** Для группы `etcd` переменные будут находиться в `group_vars/etcd.yml` или в каталоге `group_vars/etcd/`.
 
 **Пример `group_vars/all/all.yml`:**
+
 ```yaml
 # Позволяет kubelet подгружать необходимые модули ядра
 kubelet_load_modules: true
@@ -104,12 +108,14 @@ kube_read_only_port: 10255
 ```
 
 **Пример `group_vars/all/docker.yml`:**
+
 ```yaml
 # Устанавливает `overlay2` как драйвер хранилища для Docker
 docker_storage_options: -s overlay2
 ```
 
 **Пример `group_vars/all/download.yml`:**
+
 ```yaml
 # Оптимизация загрузки: файлы и образы скачиваются один раз на один узел,
 # а затем копируются на остальные узлы кластера.
@@ -117,6 +123,7 @@ download_run_once: true
 ```
 
 **Пример `group_vars/etcd.yml`:**
+
 ```yaml
 # Уменьшает количество записей в журнале операций, хранимых в памяти,
 # для снижения потребления памяти etcd.
@@ -128,6 +135,7 @@ etcd_memory_limit: 0
 ```
 
 **Пример `group_vars/k8s-cluster/k8s-cluster.yml`:**
+
 ```yaml
 # Версия Kubernetes для установки
 kube_version: v1.34.5
@@ -159,6 +167,7 @@ kubelet_authorization_mode_webhook: true
 ```
 
 **Пример `group_vars/k8s-cluster/k8s-net-flannel.yml`:**
+
 ```yaml
 # Указываем бэкенд для Flannel. host-gw - самый быстрый и простой режим,
 # так как он создает статические маршруты между узлами в одной L2-сети.
@@ -178,37 +187,46 @@ ansible-playbook cluster.yml \
   -u myuser -b \
   --private-key=~/.ssh/id_rsa
 ```
+
 (Параметры: `-i` — путь к инвентарю, `-u` — пользователь SSH, `-b` — повышение привилегий, `--private-key` — путь к SSH-ключу.)
 
 ### 3.2. Проверка и доступ к кластеру
 
 Если в конфигурации был установлен параметр `kubeconfig_localhost: true`, Kubespray скопирует файл `admin.conf` на вашу локальную машину.
 
-1.  **Найдите файл kubeconfig:** Он будет находиться в `inventory/имя_вашего_кластера/artifacts/admin.conf`.
-2.  **Выполните команду для проверки статуса узлов:**
+1. **Найдите файл kubeconfig:** Он будет находиться в `inventory/имя_вашего_кластера/artifacts/admin.conf`.
+2. **Выполните команду для проверки статуса узлов:**
+
     ```bash
     kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
     ```
-3.  **(Опционально) Установите переменную окружения `KUBECONFIG`:**
+
+3. **(Опционально) Установите переменную окружения `KUBECONFIG`:**
+
     ```bash
     export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
     # Теперь можно выполнять команды kubectl без флага --kubeconfig
     kubectl get nodes
     ```
+
     В выводе вы должны увидеть все узлы кластера со статусом `Ready`.
 
 ### 3.3. Управление кластером: Масштабирование
 
 #### Добавление Worker Node
-1.  **Обновите inventory:** Добавьте новые узлы в `inventory.ini` в группу `[kube_node]`.
-2.  **Запустите плейбук `scale.yml`:**
+
+1. **Обновите inventory:** Добавьте новые узлы в `inventory.ini` в группу `[kube_node]`.
+2. **Запустите плейбук `scale.yml`:**
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini scale.yml
     ```
 
 #### Добавление Master Node (Control Plane)
-1.  **Обновите inventory:** Добавьте новые master-узлы в `inventory.ini` в группы `[kube_control_plane]` и `[etcd]`.
-2.  **Запустите плейбук `cluster.yml`:** Для добавления master-узлов используется основной плейбук.
+
+1. **Обновите inventory:** Добавьте новые master-узлы в `inventory.ini` в группы `[kube_control_plane]` и `[etcd]`.
+2. **Запустите плейбук `cluster.yml`:** Для добавления master-узлов используется основной плейбук.
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
     ```
@@ -216,53 +234,69 @@ ansible-playbook cluster.yml \
 ### 3.4. Управление кластером: Обновление
 
 #### Проверка доступной версии для обновления
+
 Перед обновлением выясните, до какой версии Kubernetes можно обновиться с вашей версией Kubespray.
-1.  Перейдите в директорию `roles/download/defaults`.
-2.  Откройте файл `main.yml` и найдите переменную `kubelet_checksums`.
+
+1. Перейдите в директорию `roles/download/defaults`.
+2. Откройте файл `main.yml` и найдите переменную `kubelet_checksums`.
 
 #### Процесс обновления
-1.  **Измените версию** в `group_vars/k8s-cluster/k8s-cluster.yml`:
+
+1. **Измените версию** в `group_vars/k8s-cluster/k8s-cluster.yml`:
+
     ```yaml
     kube_version: v1.35.0
     ```
-2.  **Запустите плейбук `upgrade-cluster.yml`:**
+
+2. **Запустите плейбук `upgrade-cluster.yml`:**
+
     ```bash
     ansible-playbook -i inventory/my-cluster/inventory.ini upgrade-cluster.yml
     ```
+
     > **Важно:** Плейбук `upgrade-cluster.yml` выполняет задачи последовательно на каждом узле, а не параллельно, для большей безопасности.
 
 #### Проверка после обновления
-1.  **Проверьте версию API Server и `kubelet`:**
+
+1. **Проверьте версию API Server и `kubelet`:**
+
     ```bash
     kubectl version
     kubectl get nodes
     ```
-2.  **Проверьте версии компонентов Control Plane**, посмотрев на версию образа (`Image`) в описании их подов:
+
+2. **Проверьте версии компонентов Control Plane**, посмотрев на версию образа (`Image`) в описании их подов:
+
     ```bash
     kubectl describe pod <pod-name> -n kube-system
     ```
 
 #### Возможные проблемы и важные моменты при обновлении
-*   **Правило одной минорной версии:** Обновлять кластер можно только последовательно, на одну минорную версию за раз (например, с `1.34` на `1.35`).
-*   **Устаревшие API и манифесты:** В новых версиях Kubernetes могут быть удалены API. Проверяйте манифесты на использование устаревших `apiVersion`.
-*   **Изменение опций компонентов:** Параметры запуска компонентов могут измениться. Kubespray обычно это обрабатывает, но кастомные конфигурации могут потребовать ручной корректировки.
-*   **Проверка `release notes`:** Критически важно изучить официальные `release notes` для новой версии Kubernetes.
+
+* **Правило одной минорной версии:** Обновлять кластер можно только последовательно, на одну минорную версию за раз (например, с `1.34` на `1.35`).
+* **Устаревшие API и манифесты:** В новых версиях Kubernetes могут быть удалены API. Проверяйте манифесты на использование устаревших `apiVersion`.
+* **Изменение опций компонентов:** Параметры запуска компонентов могут измениться. Kubespray обычно это обрабатывает, но кастомные конфигурации могут потребовать ручной корректировки.
+* **Проверка `release notes`:** Критически важно изучить официальные `release notes` для новой версии Kubernetes.
 
 ## 4. Дополнительная информация
 
 ### 4.1. Системные поды после установки
+
 После установки в пространстве имен `kube-system` будут развернуты системные поды. Их состав зависит от конфигурации.
-*   **Control Plane (Static Pods):** `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*`.
-*   **Сетевые компоненты:** `kube-flannel-*` (или Calico, Cilium), `kube-proxy-*`.
-*   **DNS и сервисы:** `coredns-*`, `dns-autoscaler`, `nodelocaldns-*`.
-*   **Дополнения (Addons):** `kubernetes-dashboard-*`, `nginx-proxy-ingress-*` и др.
+
+* **Control Plane (Static Pods):** `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*`.
+* **Сетевые компоненты:** `kube-flannel-*` (или Calico, Cilium), `kube-proxy-*`.
+* **DNS и сервисы:** `coredns-*`, `dns-autoscaler`, `nodelocaldns-*`.
+* **Дополнения (Addons):** `kubernetes-dashboard-*`, `nginx-proxy-ingress-*` и др.
 
 Подробнее о пространствах имен и о том, как Kubespray их использует, можно прочитать в документе [о пространствах имен](../Base/namespace.md#namespaces-и-kubespray).
 
 ### 4.2. Пример: Выделенные ноды для Ingress
+
 Этот подход использует `taints` и `tolerations` для изоляции Ingress-подов на выделенных узлах. Подробное объяснение механизма: **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)**.
 
 **`group_vars/k8s-cluster/addons.yml`**
+
 ```yaml
 # Параметры для дополнительного ПО
 ingress_nginx_enabled: true
@@ -281,6 +315,7 @@ ingress_nginx_tolerations: # Позволяет подам запускатьс�
 ```
 
 **`group_vars/all/kube-ingress.yml`** (не существует по-умолчанию, создается пользователем)
+
 ```yaml
 # На ноды из группы 'kube_ingress' будет установлена соответствующая метка
 node_labels:
@@ -292,9 +327,11 @@ node_taints:
 ```
 
 ### 4.3. Пример: Конфигурация MetalLB
+
 **MetalLB** — это реализация балансировщика нагрузки для bare-metal кластеров, которая позволяет использовать сервисы типа `LoadBalancer`.
 
 **`group_vars/k8s-cluster/addons.yml`**
+
 ```yaml
 # Включаем MetalLB
 metallb_enabled: true
@@ -310,6 +347,6 @@ metallb_config:
       # auto_assign: false # Можно отключить автоматическое назначение адресов для этого пула
 ```
 
-*   `metallb_enabled: true`: Включает установку MetalLB.
-*   `metallb_speaker_enabled: true`: Включает компонент `speaker`, который отвечает за анонсирование IP-адресов по протоколам L2 (ARP) или BGP.
-*   `metallb_config`: Содержит конфигурацию пулов адресов. В данном примере определен один пул `primary` с двумя IP-адресами, которые могут быть назначены сервисам типа `LoadBalancer`.
+* `metallb_enabled: true`: Включает установку MetalLB.
+* `metallb_speaker_enabled: true`: Включает компонент `speaker`, который отвечает за анонсирование IP-адресов по протоколам L2 (ARP) или BGP.
+* `metallb_config`: Содержит конфигурацию пулов адресов. В данном примере определен один пул `primary` с двумя IP-адресами, которые могут быть назначены сервисам типа `LoadBalancer`.

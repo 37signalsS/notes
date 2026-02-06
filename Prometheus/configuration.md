@@ -1,79 +1,114 @@
 # Конфигурация Prometheus
 
-## 1. Базовые концепции и структура `prometheus.yml`
+## Определения
 
-Основной конфигурационный файл Prometheus имеет формат YAML. Путь к нему задается через флаг `--config.file`, а его корректность можно проверить с помощью утилиты [[./promtool_and_best_practices.md|promtool]]. В файле не допускаются символы табуляции, только пробелы.
+**Конфигурация Prometheus** — это набор инструкций, определяющих, как Prometheus собирает, хранит и обрабатывает метрики, а также как управляет оповещениями. Она состоит из двух основных частей:
+1.  **Конфигурационный файл `prometheus.yml`**: Основной файл в формате YAML, описывающий цели для сбора метрик, правила алертинга, и интеграции с внешними системами.
+2.  **Ключи (флаги) запуска**: Параметры командной строки, которые управляют поведением самого процесса Prometheus, например, путем к хранилищу данных и его настройками.
 
-### Структура файла
+## Базовые концепции
+
+### Структура файла `prometheus.yml`
+
+Основной конфигурационный файл имеет иерархическую структуру. В файле не допускаются символы табуляции, только пробелы.
 
 ```yaml
 # Глобальные настройки.
 global:
-  # Как часто собирать метрики с таргетов по умолчанию. Основа pull-модели, подробнее в [[./overview.md|обзоре Prometheus]].
-  [ scrape_interval: <duration> | default = 1m ]
-
-  # Таймаут для одного скрейп-запроса по умолчанию.
-  [ scrape_timeout: <duration> | default = 10s ]
-
-  # Как часто вычислять [[./rules.md|правила (rules)]].
-  [ evaluation_interval: <duration> | default = 1m ]
-
-  # Внешние метки, которые добавляются ко всем временным рядам.
+  scrape_interval: 1m
+  evaluation_interval: 1m
   external_labels:
-    [ <labelname>: <labelvalue> ... ]
+    monitor: 'my-prometheus'
 
-# Список файлов с [[./rules.md|правилами записи (recording) и алертинга (alerting)]].
-# Поддерживает glob-паттерны.
+# Пути к файлам с правилами записи и алертинга. Поддерживаются glob-паттерны.
 rule_files:
-  [ - <filepath_glob> ... ]
+  - 'rules/*.rules.yml'
 
 # Конфигурация для обнаружения и сбора метрик (scrape).
-# Здесь настраивается [[./service_discovery_and_relabeling.md|Service Discovery и Relabeling]].
 scrape_configs:
-  [ - <scrape_config> ... ]
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
 
-# Настройки для взаимодействия с [[./alertmanager.md|Alertmanager]].
+# Настройки для взаимодействия с Alertmanager.
 alerting:
-  alert_relabel_configs:
-    [ - <relabel_config> ... ]
   alertmanagers:
-    [ - <alertmanager_config> ... ]
+  - static_configs:
+      - targets: ['localhost:9093']
 
 # Настройки для отправки данных во внешние хранилища (LTS).
-# Подробнее см. в [[./scaling/remote_read_write.md|Prometheus Remote Read/Write]].
 remote_write:
-  [ - <remote_write> ... ]
+  - url: "http://remote-storage.example.com/write"
 
 # Настройки для чтения данных из внешних хранилищ.
-# Подробнее см. в [[./scaling/remote_read_write.md|Prometheus Remote Read/Write]].
 remote_read:
-  [ - <remote_read> ... ]
+  - url: "http://remote-storage.example.com/read"
 ```
 
-**Ключевые секции, которые нужно запомнить:**
+### Ключевые секции `prometheus.yml`
 
-*   `scrape_interval`: Как часто Prometheus опрашивает источники данных.
-*   `scrape_configs`: Список источников данных (таргетов) и правила их обнаружения.
-*   `rule_files`: Пути к файлам с правилами алертинга.
+*   `global`: Глобальные параметры, которые применяются ко всем остальным настройкам, если не переопределены локально.
+    *   `scrape_interval`: Как часто собирать метрики с таргетов по умолчанию.
+    *   `evaluation_interval`: Как часто вычислять [[./rules.md|правила]].
+    *   `external_labels`: Метки, которые добавляются ко всем временным рядам.
+*   `rule_files`: Список файлов с [[./rules.md|правилами записи (recording) и алертинга (alerting)]].
+*   `scrape_configs`: Список "заданий" (jobs) по сбору метрик. Это сердце конфигурации, где настраивается [[./service_discovery_and_relabeling.md|Service Discovery и Relabeling]].
+*   `alerting`: Настройки для взаимодействия с [[./alertmanager.md|Alertmanager]].
+*   `remote_write` / `remote_read`: Конфигурация для интеграции с долгосрочными хранилищами (LTS). Подробнее см. в [[./scaling/remote_read_write.md|Prometheus Remote Read/Write]].
 
-## Ключи (флаги) запуска Prometheus
+### Ключи запуска (флаги)
 
-Ниже приведен список наиболее часто используемых флагов командной строки. Полный список можно получить с помощью команды `prometheus --help`. Их значения также можно посмотреть через [[./prometheus_api.md|HTTP API]].
+Наиболее часто используемые флаги командной строки. Полный список можно получить с помощью `prometheus --help`.
 
 | Флаг | Значение по умолчанию | Описание |
 | :--- | :--- | :--- |
-| `--config.file` | `prometheus.yml` | Путь к конфигурационному файлу. Рекомендуется проверять с помощью `promtool check config` (см. [[./promtool_and_best_practices.md|утилита promtool]]). |
-| `--web.listen-address` | `0.0.0.0:9090` | Адрес и порт, по которому доступны UI, [[./prometheus_api.md|API]] и метрики самого Prometheus. |
-| `--web.read-timeout` | `5m` | Максимальное время ожидания для запросов и неактивных соединений. |
-| `--storage.tsdb.path` | `data/` | Путь к каталогу для хранения [[./concepts/tsdb.md|базы данных временных рядов (TSDB)]]. |
+| `--config.file` | `prometheus.yml` | Путь к конфигурационному файлу. |
+| `--web.listen-address` | `0.0.0.0:9090` | Адрес и порт для UI, [[./prometheus_api.md|API]] и метрик самого Prometheus. |
+| `--storage.tsdb.path` | `data/` | Путь к каталогу для хранения [[./concepts/tsdb.md|TSDB]]. |
 | `--storage.tsdb.retention.time` | `15d` | Как долго хранить данные метрик (по умолчанию 15 дней). |
-| `--storage.tsdb.retention.size`| `0B` | **[Экспериментальный]** Максимальный размер хранилища метрик (например, `50GB`). При превышении старые данные удаляются. |
-| `--rules.alert.for-outage-tolerance` | `1h` | Максимальное время, в течение которого Prometheus может быть недоступен, чтобы состояние `for` для алерта было восстановлено. |
+| `--storage.tsdb.retention.size`| `0B` | **[Экспер.]** Максимальный размер хранилища (например, `50GB`). |
+| `--rules.alert.for-outage-tolerance` | `1h` | Допустимое время простоя Prometheus для восстановления состояния `for`. |
 | `--rules.alert.for-grace-period`| `10m` | Минимальный период для восстановления состояния алерта. |
-| `--rules.alert.resend-delay` | `1m` | Минимальная задержка перед повторной отправкой уведомлений в [[./alertmanager.md|Alertmanager]]. |
-| `--alertmanager.notification-queue-capacity` | `10000` | Размер очереди уведомлений, ожидающих отправки в [[./alertmanager.md|Alertmanager]]. |
+| `--rules.alert.resend-delay` | `1m` | Задержка перед повторной отправкой уведомлений в [[./alertmanager.md|Alertmanager]]. |
+| `--alertmanager.notification-queue-capacity` | `10000` | Размер очереди уведомлений для [[./alertmanager.md|Alertmanager]]. |
 | `--alertmanager.timeout` | `10s` | Таймаут для запросов к [[./alertmanager.md|Alertmanager]]. |
 | `--query.timeout` | `2m` | Максимальное время выполнения [[./concepts/promql.md|PromQL]]-запроса. |
-| `--query.max-concurrency` | `20` | Максимальное количество одновременно выполняющихся запросов. |
+| `--query.max-concurrency` | `20` | Максимальное количество одновременных запросов. |
 | `--log.level` | `info` | Уровень логирования (`debug`, `info`, `warn`, `error`). |
-| `--log.format` | `logfmt` | Формат логов (`logfmt` или `json`). |
+
+## Практические сценарии
+
+### Пример базовой конфигурации
+
+Этот `prometheus.yml` настраивает Prometheus на сбор метрик с самого себя и с `node_exporter`, запущенного на том же хосте.
+
+```yaml
+global:
+  scrape_interval: 15s # Собирать метрики каждые 15 секунд
+
+rule_files:
+  # - "first.rules"
+  # - "second.rules"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["localhost:9100"]
+```
+В данном примере:
+- Глобальный `scrape_interval` установлен в `15s`.
+- Определены два задания (`jobs`): `prometheus` и `node_exporter`.
+- Для каждого задания статически (`static_configs`) определена одна цель (`target`) для сбора метрик.
+
+## Дополнительная информация
+
+*   **Проверка конфигурации**: Перед применением изменений всегда проверяйте корректность конфигурационного файла и файлов с правилами с помощью утилиты `promtool`. Это помогает избежать ошибок, которые могут остановить сбор метрик.
+    ```bash
+    promtool check config /path/to/prometheus.yml
+    promtool check rules /path/to/rules.yml
+    ```
+    Подробнее см. в заметке [[./promtool_and_best_practices.md|promtool и лучшие практики]].

@@ -1,25 +1,25 @@
 # Настройка стека Loki в Kubernetes
 
-## 1. Определения и базовые концепции
+## 1. Определения
 
 Для ознакомления с определениями, архитектурой, языком запросов LogQL и другими базовыми концепциями обратитесь к основному источнику знаний: **[Обзор Grafana Loki](./loki_overview.md)**.
 
-## 2. Практический сценарий: Установка в Kubernetes
+## 2. Практические сценарии
 
-### 2.1. Установка Loki
+### Подготовка: Добавление Helm-репозитория
 
-Loki будет использоваться для хранения и индексации логов.
-
-#### 2.1.1. Добавление Helm-репозитория Grafana
-
-Добавьте официальный Helm-репозиторий Grafana:
+Добавьте официальный Helm-репозиторий Grafana, который содержит чарты для всех компонентов стека:
 
 ```bash
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 ```
 
-#### 2.1.2. Настройка Values для Loki
+### Установка Loki
+
+Loki будет использоваться для хранения и индексации логов.
+
+#### Настройка Values для Loki
 
 Сохраним стандартные `values` для дальнейшей кастомизации:
 
@@ -45,7 +45,7 @@ persistence:
 
 > **Примечание:** В некоторых учебных средах с ограниченными ресурсами (например, диски по 5GB на ноду), может потребоваться уменьшить `size` до `5Gi`, чтобы избежать проблем с нехваткой места.
 
-#### 2.1.3. Установка Loki
+#### Установка Loki
 
 Установим Loki с помощью Helm в `logging` namespace:
 
@@ -61,11 +61,11 @@ helm upgrade --install loki grafana/loki \
 kubectl get pods -n logging -l app.kubernetes.io/name=loki
 ```
 
-### 2.2. Установка Promtail
+### Установка Promtail
 
 Promtail — это агент для сбора логов, который будет работать как DaemonSet на каждой ноде кластера и отправлять логи в Loki.
 
-#### 2.2.1. Настройка Values для Promtail
+#### Настройка Values для Promtail
 
 Сохраним `values` для чарта `grafana/promtail`:
 
@@ -86,7 +86,7 @@ tolerations:
   - operator: "Exists"
 ```
 
-#### 2.2.2. Установка Promtail
+#### Установка Promtail
 
 Установим Promtail, применив измененные `values`:
 
@@ -102,11 +102,11 @@ helm upgrade --install promtail grafana/promtail \
 kubectl get pods -n logging -l app.kubernetes.io/name=promtail -o wide
 ```
 
-### 2.3. Установка Grafana
+### Установка Grafana
 
 Grafana будет использоваться для визуализации и анализа логов из Loki.
 
-#### 2.3.1. Настройка Values для Grafana
+#### Настройка Values для Grafana
 
 Сохраним `values` для чарта `grafana/grafana`:
 
@@ -147,7 +147,7 @@ datasources:
         editable: true
 ```
 
-#### 2.3.2. Установка Grafana
+#### Установка Grafana
 
 Установим Grafana с настроенным Ingress и источником данных Loki:
 
@@ -157,15 +157,15 @@ helm upgrade --install grafana grafana/grafana \
   -f grafana_values.yaml
 ```
 
-#### 2.3.3. Доступ к Grafana
+#### Доступ к Grafana
 
 После успешного запуска пода Grafana вы сможете получить доступ к веб-интерфейсу по адресу, указанному в `Ingress` (например, `http://grafana.example.com`). Войдите с логином `admin` и установленным вами паролем.
 
-### 2.4. Работа с логами в Grafana
+### Работа с логами в Grafana
 
 После установки стека можно приступать к анализу логов в Grafana.
 
-#### 2.4.1. Подключение Loki как источника данных (вручную)
+#### Подключение Loki как источника данных (вручную)
 
 Если вы не настроили `datasource` через `values.yaml` при установке Grafana, его можно добавить вручную:
 
@@ -175,7 +175,7 @@ helm upgrade --install grafana grafana/grafana \
     *   **Важно:** Если Grafana и Loki находятся в разных `namespaces` (например, Grafana в `monitoring`, а Loki в `logging`), используйте полное имя сервиса: `http://loki.logging.svc.cluster.local:3100`.
 4.  Нажмите `Save & Test`. Grafana должна показать сообщение об успешном подключении.
 
-#### 2.4.2. Анализ логов с помощью LogQL
+#### Анализ логов с помощью LogQL
 
 После подключения источника данных вы можете анализировать логи с помощью языка запросов LogQL в разделе `Explore`.
 

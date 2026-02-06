@@ -6,24 +6,20 @@
 
 ### Назначение RBAC
 
-RBAC является фундаментом безопасности Kubernetes и необходим для:
-
-*   Реализации принципа наименьших привилегий.
-*   Разделения обязанностей между командами и пользователями.
-*   Соответствия требованиям безопасности и комплаенса.
-*   Предотвращения несанкционированного доступа к ресурсам кластера.
+* Реализации принципа наименьших привилегий.
+* Разделения обязанностей между командами и пользователями.
+* Соответствия требованиям безопасности и комплаенса.
+* Предотвращения несанкционированного доступа к ресурсам кластера.
 
 ## Основные концепции
 
 ### Основные объекты RBAC
 
-Существует пять основных типов объектов RBAC:
-
-*   Role
-*   RoleBinding
-*   ClusterRole
-*   ClusterRoleBinding
-*   ServiceAccount
+* Role
+* RoleBinding
+* ClusterRole
+* ClusterRoleBinding
+* ServiceAccount
 
 ### Role (Роль)
 
@@ -82,9 +78,9 @@ subjects:
 
 Поле `subjects` определяет, кому выдаются права. `Subjects` бывают трех типов:
 
-*   **ServiceAccount:** Сервисная учетная запись внутри Kubernetes.
-*   **User:** Пользователь.
-*   **Group:** Группа пользователей.
+* **ServiceAccount:** Сервисная учетная запись внутри Kubernetes.
+* **User:** Пользователь.
+* **Group:** Группа пользователей.
 
 Для `ServiceAccount` также необходимо указать `namespace`.
 
@@ -163,8 +159,8 @@ kubectl get secret
 
 ### Различия между RoleBinding и ClusterRoleBinding
 
-*   **`RoleBinding`:** Выдает права `Role` (или `ClusterRole`) только в том `namespace`, где был создан `RoleBinding`.
-*   **`ClusterRoleBinding`:** Выдает права `ClusterRole` на весь кластер Kubernetes.
+* **`RoleBinding`:** Выдает права `Role` (или `ClusterRole`) только в том `namespace`, где был создан `RoleBinding`.
+* **`ClusterRoleBinding`:** Выдает права `ClusterRole` на весь кластер Kubernetes.
 
 ## Практические сценарии
 
@@ -177,8 +173,6 @@ Kubernetes по умолчанию не является строгим. Мож�
 #### Ключевые принципы
 
 **1. Минимальные привилегии (Minimal Privileges):**
-
-Предоставляйте только минимально необходимые права для выполнения конкретной задачи.
 
 ```yaml
 # Минимальные необходимые права для чтения подов в кластере
@@ -210,8 +204,6 @@ rules:
 ```
 
 ### Критически важные практики
-
-Правильная настройка RBAC является фундаментом безопасности Kubernetes и предотвращает большинство инцидентов, связанных с несанкционированным доступом.
 
 **1. Ограничение сервисных аккаунтов (ServiceAccount Restriction):**
 
@@ -259,4 +251,4 @@ rules:
 
 ## Дополнительная информация
 
-*   [RBAC Good Practices (Kubernetes Official Documentation)](https://kubernetes.k8s.io/docs/concepts/security/rbac-good-practices/)
+* [RBAC Good Practices (Kubernetes Official Documentation)](https://kubernetes.k8s.io/docs/concepts/security/rbac-good-practices/)

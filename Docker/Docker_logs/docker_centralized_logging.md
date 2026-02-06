@@ -27,6 +27,7 @@
 Интегрируется с `systemd-journald`, позволяя использовать стандартную утилиту `journalctl` для просмотра логов всех контейнеров. Это предпочтительный выбор для систем на базе `systemd`.
 
 **Конфигурация (`/etc/docker/daemon.json`):**
+
 ```json
 {
   "log-driver": "journald",
@@ -37,13 +38,16 @@
 ```
 
 > #### Важно: Тюнинг `journald`
+>
 > По умолчанию `journald` ограничивает количество принимаемых сообщений, что может привести к их потере при высокой нагрузке.
 > **Симптом**: В логах `journald` появляется сообщение `systemd-journald[...]: Suppressed ... messages from ...`.
 > **Решение**: Увеличьте лимиты в `/etc/systemd/journald.conf`:
+>
 > ```ini
 > [Journal]
 > RateLimitBurst=50000
 > ```
+>
 > После этого перезапустите службу: `sudo systemctl restart systemd-journald`.
 
 ### 3.2. Драйвер `syslog`
@@ -51,6 +55,7 @@
 Отправляет логи на Syslog-сервер (локальный или удаленный) по стандартному протоколу Syslog.
 
 **Использование:**
+
 ```bash
 docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_image
 ```
@@ -60,6 +65,7 @@ docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_ima
 Отправляет логи на GELF-совместимый сервер, такой как Graylog или Logstash. Протокол GELF (Graylog Extended Log Format) позволяет передавать структурированные данные.
 
 **Использование:**
+
 ```bash
 docker run --log-driver=gelf --log-opt gelf-address=udp://1.2.3.4:12201 my_image
 ```
@@ -69,6 +75,7 @@ docker run --log-driver=gelf --log-opt gelf-address=udp://1.2.3.4:12201 my_image
 Отправляет логи на сервер-агрегатор Fluentd.
 
 **Конфигурация для отдельного контейнера:**
+
 ```bash
 docker run \
   --log-driver=fluentd \
@@ -78,6 +85,7 @@ docker run \
 ```
 
 **Пример конфигурации Fluentd (`fluent.conf`):**
+
 ```conf
 # Источник: Принимает логи от Docker logging driver
 <source>
