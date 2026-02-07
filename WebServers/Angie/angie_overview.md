@@ -76,7 +76,7 @@ nginx version: nginx/1.27.3
 -   **"Поколения" конфигурации:** При перезагрузке конфигурации (`reload`) Angie инкрементирует номер "поколения" рабочих процессов. Это позволяет легко отслеживать, какие процессы работают со старой, а какие — с новой конфигурацией.
 
 ```bash
-$ ps aux | grep angie
+$ [`ps aux | grep angie`](../../../Linux/Diagnostics/Processes/ps.md)
 # root      ... /usr/sbin/angie: master process ...
 # www-data  ... /usr/sbin/angie: worker process (generation: 2)
 ```

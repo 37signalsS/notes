@@ -52,7 +52,7 @@
         ```
     *   Убедитесь, что процессы Angie запущены:
         ```bash
-        ps aux | grep angie
+        [`ps aux | grep angie`](../../../Linux/Diagnostics/Processes/ps.md)
         ```
     *   После внесения изменений в конфигурацию, ее можно перезагрузить:
         ```bash
@@ -108,7 +108,7 @@
         ```
     *   Для отслеживания успешности перезагрузки конфигурации можно смотреть на "поколение" worker-процессов. После каждой успешной перезагрузки (`sudo service angie reload`) номер поколения увеличивается.
         ```bash
-        ps aux | grep angie
+        [`ps aux | grep angie`](../../../Linux/Diagnostics/Processes/ps.md)
         # root      ... /usr/sbin/angie: master process ...
         # www-data  ... /usr/sbin/angie: worker process (generation: 2)
         ```

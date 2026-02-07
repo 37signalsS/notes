@@ -1,15 +1,16 @@
-# Настройка Helm-чарта `kube-prometheus-stack`
+# Конфигурация Helm-чарта kube-prometheus-stack
 
-Эта заметка является практическим руководством по настройке Helm-чарта `kube-prometheus-stack`. Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
-- [[../../Kubernetes/ToolsUtilities/helm_overview.md|Helm]]
-- [[../../Kubernetes/kubernetes_overview.md|Kubernetes]]
-- [[../overview.md|Prometheus]]
+## Определения
 
-## Обзор `values.yaml`
+**`kube-prometheus-stack`** — это Helm-чарт, предназначенный для развертывания и управления полным стеком мониторинга в среде Kubernetes. Он включает в себя [[../overview.md|Prometheus]], [[../alertmanager.md|Alertmanager]], [[../../Grafana/grafana_overview.md|Grafana]], а также ключевые экспортеры и конфигурационные ресурсы.
+
+**`values.yaml`** — основной конфигурационный файл Helm-чарта, который позволяет кастомизировать развертываемые компоненты и их параметры.
+
+## Базовые концепции
 
 В данном разделе рассматриваются ключевые параметры файла `values.yaml`, используемого для конфигурации стека мониторинга.
 
-## Глобальные параметры и RBAC
+### Глобальные параметры и RBAC
 
 *   `rbac.create`: `true`
     *   **Описание:** Создает все необходимые роли и привязки (Roles, RoleBindings) для работы компонентов стека в кластере.
@@ -19,7 +20,7 @@
     *   **Описание:** Создает ServiceAccount для каждого компонента.
     *   **Рекомендация:** Оставить `true`.
 
-## Конфигурация Alertmanager
+### Конфигурация Alertmanager
 
 > ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [[../alertmanager.md]].
 
@@ -43,7 +44,7 @@
     *   **Описание:** Запросы (`requests`) и лимиты (`limits`) по CPU и Memory.
     *   **Рекомендация:** Подбираются эмпирически. Можно начать с минимальных значений (`requests: cpu: 100m, memory: 32Mi`) и наблюдать за потреблением.
 
-## Конфигурация Grafana
+### Конфигурация Grafana
 
 > ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [[../../Grafana/grafana_overview.md]].
 
@@ -56,15 +57,6 @@
         ```yaml
         grafana:
           adminPassword: "MySecurePassword"
-        ```
-
-*   `grafana.ingress.enabled`: `true`
-    *   **Описание:** Включает Ingress для доступа к веб-интерфейсу Grafana.
-        ```yaml
-        ingress:
-          enabled: true
-          hosts:
-            - grafana.example.com
         ```
 
 *   `grafana.grafana.ini`:
@@ -111,13 +103,13 @@
           size: 10Gi
         ```
 
-## Конфигурация `kube-state-metrics`
+### Конфигурация `kube-state-metrics`
 
 *   `kube-state-metrics.enabled`: `true`
     *   **Описание:** Включает развертывание `kube-state-metrics`, который генерирует метрики о состоянии объектов Kubernetes (Deployments, Pods, Nodes и т.д.).
     *   **Рекомендация:** Оставить `true`. Это один из ключевых источников метрик о состоянии кластера.
 
-## Конфигурация ConfigMapReload
+### Конфигурация ConfigMapReload
 
 ConfigMapReload — это вспомогательный компонент, который автоматически перезагружает конфигурацию Prometheus и Alertmanager при изменении соответствующих ConfigMap.
 
@@ -125,45 +117,21 @@ ConfigMapReload — это вспомогательный компонент, к
     *   **Описание:** Включает развертывание `configmap-reload` контейнера.
     *   **Рекомендация:** Оставить `true` для автоматической перезагрузки конфигураций без ручного вмешательства.
 
-## Конфигурация Node Exporter
+### Конфигурация Node Exporter
 
 > ℹ️ Общую информацию об экспортерах метрик можно найти в заметке: [[../exporters.md]].
 
 *   `nodeExporter.enabled`: `true`
     *   **Рекомендация:** Оставить `true` для сбора метрик с нод.
 
-*   `prometheus.prometheusSpec.scrapeClasses`:
-    *   **Описание:** Позволяет определить специфичные для `node-exporter` правила, в частности `relabeling`. Это полезно для обогащения метрик.
-    *   **Пример:** Добавление читаемого имени узла в метрики `node-exporter`.
-        ```yaml
-        prometheus:
-          prometheusSpec:
-            scrapeClasses:
-              - name: node-exporter
-                # Добавляем правило relabeling для node-exporter
-                relabelingConfigs:
-                  - sourceLabels: [__meta_kubernetes_pod_node_name]
-                    targetLabel: node
-                    action: replace
-        ```
-
 *   `nodeExporter.hostNetwork`: `true`
     *   **Описание:** Позволяет подам Node Exporter использовать сетевой namespace хоста (`hostNetwork: true`) и PID namespace хоста (`hostPID: true`).
     *   **Рекомендация:** Оставить `true` для корректного сбора сетевых метрик и метрик процессов с хоста.
 
-*   `nodeExporter.tolerations`:
-    *   **Описание:** Позволяет подам Node Exporter размещаться на master-нодах, которые по умолчанию имеют `taint` (например, `NoSchedule`), запрещающий запуск на них обычных подов.
-    *   **Рекомендация:** Добавить `toleration`, чтобы собирать метрики со всех узлов кластера, включая мастеры. Чтобы узнать точный `taint`, можно выполнить `kubectl describe node <master-node-name>`.
-        ```yaml
-        tolerations:
-          - operator: "Exists"
-            effect: "NoSchedule"
-        ```
-
 *   `nodeExporter.resources`:
     *   **Рекомендация:** Как и для других компонентов, задать минимальные значения и наблюдать.
 
-## Конфигурация Prometheus Server
+### Конфигурация Prometheus Server
 
 Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](../service_discovery_and_relabeling.md).
 
@@ -178,19 +146,12 @@ ConfigMapReload — это вспомогательный компонент, к
 *   `prometheus.prometheusSpec.remoteWrite`, `remoteRead`:
     *   **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../../VictoriaMetrics/victoria_metrics_overview.md), Thanos, M3DB).
     *   **Рекомендация:** Использовать в production для долгосрочного хранения метрик, так как хранение больших объемов данных в самом Prometheus неэффективно и может привести к деградации производительности.
-*   `prometheus.ingress.enabled`: `true`
-    *   **Описание:** Включает Ingress для доступа к веб-интерфейсу Prometheus.
-    *   `hosts`: Необходимо указать DNS-имя для доступа.
-        ```yaml
-        hosts:
-          - prometheus.S4999.edu.example.com # Пример DNS-имени, используемого в стендах пользователя
-        ```
-    *   `annotations`: Можно использовать для автоматического получения TLS-сертификатов от `cert-manager` (например, `cert-manager.io/cluster-issuer: "letsencrypt-prod"`).
 
 *   `prometheus.prometheusSpec.storage`:
     *   **Описание:** Определяет конфигурацию хранилища для `StatefulSet`'а Prometheus. Использование `volumeClaimTemplate` является стандартным подходом.
     *   **Рекомендация (Production):** Обязательно настроить для сохранения данных при перезапусках.
-    *   **Пример:**
+    *   `storageClassName`: Необходимо указать имя существующего в кластере `StorageClass`.
+    *   `storage`: Размер диска подбирается в зависимости от количества метрик и срока хранения (`retention`).
         ```yaml
         prometheus:
           prometheusSpec:
@@ -203,8 +164,6 @@ ConfigMapReload — это вспомогательный компонент, к
                     requests:
                       storage: 50Gi
         ```
-    *   `storageClassName`: Необходимо указать имя существующего в кластере `StorageClass`.
-    *   `storage`: Размер диска подбирается в зависимости от количества метрик и срока хранения (`retention`).
 
 *   `prometheus.replicaCount`: `1`
     *   **Рекомендация (Production):** Установить значение больше `1` для высокой доступности.
@@ -217,63 +176,19 @@ ConfigMapReload — это вспомогательный компонент, к
     *   **Описание:** (Альфа-версия) Позволяет ограничивать хранилище по размеру (например, `50GB`), а не только по времени.
     *   **Рекомендация:** Использовать с осторожностью, так как это экспериментальная функция.
 
-*   `prometheus.prometheusSpec.additionalScrapeConfigs`:
-    *   **Описание:** Позволяет добавлять кастомные `scrape_configs` напрямую в конфигурацию Prometheus. Это основной способ настроить мониторинг целей, которые находятся **вне Kubernetes** и не могут быть обнаружены через `ServiceMonitor`.
-    *   **Рекомендация:** Использовать для мониторинга виртуальных машин, физических серверов или других ресурсов, у которых есть статический IP-адрес и запущенный exporter.
-    *   **Пример:** Мониторинг внешнего хоста с `node-exporter`.
-        ```yaml
-        prometheus:
-          prometheusSpec:
-            additionalScrapeConfigs:
-              - job_name: 'external-nodes'
-                static_configs:
-                  - targets: ['192.168.1.100:9100', '192.168.1.101:9100']
-                    labels:
-                      env: 'production'
-        ```
-
-## Конфигурация Push Gateway
+### Конфигурация Push Gateway
 
 > ℹ️ Для детального изучения Push Gateway обратитесь к основной заметке: [[../pushgateway.md]].
 
 Push Gateway используется для сбора метрик от кратковременных или периодически запускаемых задач, которые не могут быть "собраны" (scraped) Prometheus напрямую.
 
 *   `pushgateway.enabled`: `true`
-
     *   **Описание:** Включает развертывание Push Gateway.
-
     *   **Рекомендация:** Оставить `true` по умолчанию, если нет необходимости его отключать. В данном контексте он не используется, но может быть полезен в других сценариях.
 
-## Настройка Persistent Volumes (PV)
+## Практические сценарии
 
-Если ваш `StorageClass` не поддерживает динамическое создание томов (dynamic provisioning), вам потребуется создать PersistentVolume вручную. Это актуально, например, при использовании `local-storage`.
-
-**Пример манифеста PV:**
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: pv-prometheus-1
-spec:
-  capacity:
-    storage: 5Gi
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-storage
-  local:
-    path: /mnt/local-pv-1 # Путь на хостовой машине, который должен существовать
-  nodeAffinity:
-    required:
-      nodeSelectorTerms:
-        - matchExpressions:
-            - key: kubernetes.io/hostname
-              operator: In
-              values:
-                - node-1 # Имя ноды, на которой будет использоваться PV
-```
-**Важно:** Перед применением манифеста необходимо убедиться, что директория, указанная в `local.path`, существует на соответствующей ноде. Для каждой ноды, где будет использоваться PV, необходимо создать отдельный PV-манифест, указывающий на уникальный путь и имя ноды. **Не забудьте создать эти директории на целевых узлах кластера перед применением PV-манифестов.**
-
-## Процесс установки
+### Процесс установки
 
 1.  **Скачать чарт локально:**
     ```bash
@@ -297,8 +212,109 @@ spec:
     ```
     **Примечание:** Если при установке возникают ошибки, например, из-за пустых списков в `values.yaml` (как в строке 493 в примере), убедитесь, что все списки корректно заполнены или закомментированы. После успешной установки проверьте статус подов (`kubectl get pods -n monitoring`), PV/PVC (`kubectl get pv,pvc -n monitoring`) и Ingress (`kubectl get ingress -n monitoring`).
 
-## Авторизация в веб-интерфейсе
+### Настройка доступа к веб-интерфейсам
+
+*   **Grafana:**
+    ```yaml
+    grafana:
+      ingress:
+        enabled: true
+        hosts:
+          - grafana.example.com
+    ```
+
+*   **Prometheus:**
+    ```yaml
+    prometheus:
+      ingress:
+        enabled: true
+        hosts:
+          - prometheus.S4999.edu.example.com # Пример DNS-имени, используемого в стендах пользователя
+        annotations: # Можно использовать для автоматического получения TLS-сертификатов
+          cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    ```
+
+### Настройка мониторинга внешних ресурсов (static_configs)
+
+Позволяет добавлять кастомные `scrape_configs` напрямую в конфигурацию Prometheus. Это основной способ настроить мониторинг целей, которые находятся **вне Kubernetes** (виртуальные машины, физические серверы).
+
+*   **Пример:** Мониторинг внешнего хоста с `node-exporter`.
+    ```yaml
+    prometheus:
+      prometheusSpec:
+        additionalScrapeConfigs:
+          - job_name: 'external-nodes'
+            static_configs:
+              - targets: ['192.168.1.100:9100', '192.168.1.101:9100']
+                labels:
+                  env: 'production'
+    ```
+
+### Обогащение метрик `node-exporter`
+Позволяет определить специфичные для `node-exporter` правила `relabeling` для обогащения метрик.
+
+*   **Пример:** Добавление читаемого имени узла в метрики.
+    ```yaml
+    prometheus:
+      prometheusSpec:
+        scrapeClasses:
+          - name: node-exporter
+            relabelingConfigs:
+              - sourceLabels: [__meta_kubernetes_pod_node_name]
+                targetLabel: node
+                action: replace
+    ```
+
+### Сбор метрик с master-нод
+
+Позволяет подам Node Exporter размещаться на master-нодах, которые по умолчанию имеют `taint` (например, `NoSchedule`).
+
+*   **Рекомендация:** Добавить `toleration`, чтобы собирать метрики со всех узлов кластера.
+    ```yaml
+    nodeExporter:
+      tolerations:
+        - operator: "Exists"
+          effect: "NoSchedule"
+    ```
+
+### Настройка Persistent Volumes (PV) вручную
+
+Если ваш `StorageClass` не поддерживает динамическое создание томов (dynamic provisioning), вам потребуется создать PersistentVolume вручную. Это актуально, например, при использовании `local-storage`.
+
+*   **Пример манифеста PV:**
+    ```yaml
+    apiVersion: v1
+    kind: PersistentVolume
+    metadata:
+      name: pv-prometheus-1
+    spec:
+      capacity:
+        storage: 5Gi
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: local-storage
+      local:
+        path: /mnt/local-pv-1 # Путь на хостовой машине, который должен существовать
+      nodeAffinity:
+        required:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: In
+                  values:
+                    - node-1 # Имя ноды, на которой будет использоваться PV
+    ```
+    **Важно:** Перед применением манифеста необходимо убедиться, что директория, указанная в `local.path`, существует на соответствующей ноде. **Не забудьте создать эти директории на целевых узлах кластера перед применением PV-манифестов.**
+
+### Авторизация в веб-интерфейсе
 
 1.  **Через Ingress:** Исторически доступ к интерфейсу Prometheus защищался через Basic Auth на уровне Ingress. Это позволяет настроить окно ввода логина и пароля при доступе к Prometheus через Ingress.
 2.  **Закрытый контур:** Не выставлять Prometheus наружу, держать его в закрытых контурах с подключением через VPN. Это наиболее безопасный вариант, но не всегда возможный.
 3.  **Нативная авторизация Prometheus:** В новых версиях Prometheus появилась **нативная поддержка Basic Auth**, которую можно настроить непосредственно в конфигурации самого Prometheus. Это более современный и безопасный способ. Также появилась возможность авторизации по TLS-сертификатам. Подробности можно можно найти в `release notes` соответствующей версии Prometheus.
+
+## Дополнительная информация
+
+Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
+- [[../../Kubernetes/ToolsUtilities/helm_overview.md|Helm]]
+- [[../../Kubernetes/kubernetes_overview.md|Kubernetes]]
+- [[../overview.md|Prometheus]]

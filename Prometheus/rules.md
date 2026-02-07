@@ -1,166 +1,124 @@
 # Правила в Prometheus: Recording и Alerting
 
-В [Prometheus](./overview.md) "правила" (rules) — это набор выражений на [языке PromQL](./concepts/promql.md), которые периодически вычисляются на сервере. Существует два типа правил: **правила записи** (`recording rules`) и **правила оповещений** (`alerting rules`).
-
-Оба типа правил настраиваются в одних и тех же файлах конфигурации и используют схожий синтаксис, но служат разным целям.
+В [Prometheus](./overview.md) "правила" (rules) — это набор выражений на языке [PromQL](./concepts/promql.md), которые периодически вычисляются на сервере. Они используются для создания новых временных рядов и для генерации оповещений.
 
 ---
 
-## 1. Правила записи (Recording Rules)
+### 1. Определения
 
-**Правила записи** позволяют предварительно вычислять часто используемые или ресурсоемкие PromQL-запросы и сохранять их результаты в виде нового набора временных рядов.
+Существует два типа правил, которые настраиваются в конфигурационных файлах Prometheus:
 
-### Назначение
+*   **Правила записи (Recording Rules)**
+    Позволяют предварительно вычислять часто используемые или ресурсоемкие PromQL-запросы и сохранять их результаты в виде нового набора временных рядов. Это "виртуальные" метрики, которые можно использовать в других запросах, дашбордах или правилах.
 
-1.  **Оптимизация производительности**: "Тяжелые" запросы в дашбордах [Grafana](../Grafana/grafana_dashboards.md) могут создавать значительную нагрузку на [Prometheus](./overview.md). Правила записи позволяют вычислить результат один раз и затем использовать уже готовую, легкую метрику, что существенно снижает нагрузку.
-2.  **Упрощение сложных запросов**: [PromQL](./concepts/promql.md) не всегда поддерживает вложенность функций. Правила записи позволяют обойти это, сохранив результат внутреннего запроса в новую метрику и работая уже с ней.
-3.  **Создание абстракций**: Позволяют создать "виртуальный" слой метрик со стабильными именами, который не зависит от названий метрик в исходных экспортерах.
-
-### Недостатки
-
-Каждое правило записи создает новый временной ряд, что увеличивает потребление дискового пространства. Их следует использовать только при реальной необходимости.
-
-### Синтаксис и именование
-
-*   `record`: Имя новой метрики, которую создаст правило.
-*   `expr`: PromQL-выражение для вычисления.
-*   `labels`: (Опционально) Метки, которые будут добавлены к новой метрике.
-
-Рекомендуемый формат именования: `level:metric:operations`.
-*   `level`: Уровень агрегации (например, `job`, `instance`).
-*   `metric`: Имя исходной метрики без суффиксов.
-*   `operations`: Список примененных функций (`rate5m`, `sum`).
-
-**Пример:**
-```yaml
-- record: job:request_failures_per_requests:ratio_rate5m
-  expr: |
-      sum without (instance, path)(rate(request_failures_total[5m]))
-    /
-      sum without (instance, path)(rate(requests_total[5m]))
-```
+*   **Правила оповещений (Alerting Rules)**
+    Позволяют определять условия, при которых Prometheus генерирует оповещения (алерты). Если выражение в правиле становится истинным, Prometheus отправляет алерт в [Alertmanager](./alertmanager.md) для дальнейшей обработки.
 
 ---
 
-## 2. Правила оповещений (Alerting Rules)
+### 2. Основные концепции
 
-**Правила оповещений** позволяют определять условия, при которых Prometheus генерирует оповещения (алерты) и отправляет их в [Alertmanager](./alertmanager.md).
+#### Назначение и синтаксис правил
 
-### Синтаксис
+Оба типа правил определяются в YAML-файлах и объединяются в группы (`groups`). Правила внутри одной группы выполняются последовательно с заданным интервалом.
 
-*   `alert`: Имя алерта.
-*   `expr`: PromQL-выражение. Если оно истинно, алерт переходит в состояние `Pending`, а затем `Firing`.
-*   `for`: Период времени, в течение которого выражение `expr` должно быть истинным, прежде чем алерт станет `Firing`. Это помогает отсеивать кратковременные сбои.
-*   `labels`: Дополнительные метки для алерта. Используются для маршрутизации в [Alertmanager](./alertmanager.md).
-*   `annotations`: Дополнительная информация (описание, ссылки на дашборды), которая отправляется в уведомлении. Поддерживают шаблоны.
+**Правила записи (Recording Rules)**
 
-**Пример:**
-```yaml
-- alert: HighCpuLoad
-  expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "High CPU load (instance {{ $labels.instance }})"
-    description: "CPU load is > 80% on {{ $labels.instance }}."
-```
+*   **Назначение:**
+    1.  **Оптимизация производительности**: Снижают нагрузку на Prometheus, избавляя от необходимости выполнять "тяжелые" запросы на лету, например, в дашбордах [Grafana](../Grafana/grafana_dashboards.md).
+    2.  **Упрощение сложных запросов**: Помогают обойти ограничения [PromQL](./concepts/promql.md), сохраняя промежуточные результаты вычислений.
+    3.  **Создание абстракций**: Формируют слой "виртуальных" метрик со стабильными именами, не зависящими от исходных экспортеров.
+*   **Недостатки:** Каждое правило создает новый временной ряд, что увеличивает потребление дискового пространства.
+*   **Синтаксис:**
+    *   `record`: Имя новой метрики.
+    *   `expr`: PromQL-выражение для вычисления.
+    *   `labels`: (Опционально) Метки, которые будут добавлены к новой метрике.
 
----
+**Правила оповещений (Alerting Rules)**
 
-## 3. Общая настройка и управление
+*   **Назначение:** Определяют условия для генерации алертов.
+*   **Синтаксис:**
+    *   `alert`: Имя алерта.
+    *   `expr`: PromQL-выражение. Если оно истинно, алерт переходит в состояние `Pending`, а затем `Firing`.
+    *   `for`: Период, в течение которого `expr` должно быть истинным, чтобы алерт стал `Firing`. Помогает отсеивать кратковременные сбои.
+    *   `labels`: Дополнительные метки для маршрутизации в [Alertmanager](./alertmanager.md) (например, `severity`).
+    *   `annotations`: Дополнительная информация для уведомлений (описание, summary, ссылки), поддерживает шаблоны.
 
-### Структура файла правил
+#### Управление правилами
 
-Оба типа правил определяются в YAML-файлах и объединяются в группы. Правила внутри одной группы выполняются последовательно с заданным интервалом.
-
-```yaml
-groups:
-  - name: example_group
-    interval: 30s
-    rules:
-    # Правило записи
-    - record: job:up:avg
-      expr: avg without(instance)(up{job="node_exporter"})
-    # Правило оповещения
-    - alert: ManyInstancesDown
-      expr: job:up:avg{job="node_exporter"} < 0.5
-      for: 1m
-      labels:
-        severity: critical
-```
-
-### Подключение и проверка
-
-1.  **Добавление файла в `prometheus.yml`**:
-    Укажите путь к файлу(ам) с правилами в основном [конфигурационном файле Prometheus](./configuration.md).
+1.  **Конфигурация Prometheus**: Пути к файлам с правилами указываются в `prometheus.yml`.
     ```yaml
     rule_files:
       - "rules.yml"
       - "rules/*.yml"
     ```
 
-2.  **Проверка синтаксиса**:
-    Используйте утилиту [promtool](./promtool_and_best_practices.md) для валидации файлов с правилами.
+2.  **Проверка синтаксиса**: Для валидации используется утилита [promtool](./promtool_and_best_practices.md).
     ```bash
     promtool check rules /path/to/your/rules.yml
     ```
 
-3.  **Применение настроек**:
-    Перезагрузите конфигурацию [Prometheus](./overview.md) без перезапуска сервиса.
+3.  **Применение**: Конфигурация перезагружается без перезапуска сервиса.
     ```bash
+    # Для systemd
     systemctl reload prometheus.service
-    # или, если Prometheus в Docker
+    
+    # Для Docker
     docker-compose exec prometheus kill -HUP 1 
     ```
 
-4.  **Проверка в UI**:
-    *   В веб-интерфейсе [Prometheus](./overview.md) (`http://<server_ip>:9090`) перейдите в раздел **Status -> Rules**. Вы должны увидеть загруженные правила.
-    *   Активные алерты будут отображаться в разделе **Alerts**.
+4.  **Проверка в UI**: Загруженные правила и активные алерты отображаются в разделах **Status -> Rules** и **Alerts** веб-интерфейса Prometheus.
 
 ---
 
-## 4. Практические примеры
+### 3. Практические сценарии
 
-### Пример Recording Rules
-
-```yaml
-# /etc/prometheus/rules.yml
-groups:
-- name: example-edu-example-node-exporter-rules
-  rules:
-  # Подсчет количества CPU на каждом узле.
-  - record: instance:node_cpus:count
-    expr: count(node_cpu_seconds_total{mode="idle"}) without (cpu,mode)
-
-  # Общая утилизация CPU в процентах.
-  - record: instance:node_cpu_utilization:ratio
-    expr: sum(rate(node_cpu_seconds_total{mode!="idle"}[5m])) without (mode) / instance:node_cpus:count
-```
-
-### Пример Alerting Rules
+Рассмотрим пример файла правил `/etc/prometheus/rules/node_rules.yml`, который объединяет оба типа правил для мониторинга состояния узлов с `node_exporter`.
 
 ```yaml
-# /etc/prometheus/rules_alert.yml
 groups:
-- name: NodeExporterGroup
-  rules:
-  - alert: ExporterDown
-    expr: up == 0
-    for: 1m
-    labels:
-      severity: error
-    annotations:
-      summary: "Exporter down (instance {{ $labels.instance }})"
-      description: "Prometheus exporter down\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+  - name: node-exporter-rules
+    interval: 30s
+    rules:
+      # --- Recording Rules ---
 
-  - alert: HighCpuLoad
-    expr: instance:node_cpu_utilization:ratio * 100 > 85
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "High CPU load (instance {{ $labels.instance }})"
-      description: "CPU load is > 85%\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      # 1. Подсчет количества CPU на каждом узле для дальнейших расчетов.
+      - record: instance:node_cpus:count
+        expr: count(node_cpu_seconds_total{mode="idle"}) without (cpu, mode)
+
+      # 2. Расчет утилизации CPU в процентах.
+      # Мы используем ранее созданную метрику `instance:node_cpus:count`.
+      - record: instance:node_cpu_utilization:ratio
+        expr: sum(rate(node_cpu_seconds_total{mode!="idle"}[5m])) without (mode) / instance:node_cpus:count
+
+      # --- Alerting Rules ---
+
+      # 3. Оповещение о недоступности экспортера.
+      # Использует стандартную метрику `up`.
+      - alert: ExporterDown
+        expr: up{job="node_exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Exporter down (instance {{ $labels.instance }})"
+          description: "Prometheus exporter '{{ $labels.job }}' на узле {{ $labels.instance }} недоступен."
+
+      # 4. Оповещение о высокой нагрузке на CPU.
+      # Использует метрику, созданную правилом записи.
+      - alert: HighCpuLoad
+        expr: instance:node_cpu_utilization:ratio * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU load on {{ $labels.instance }}"
+          description: "Нагрузка на CPU узла {{ $labels.instance }} превышает 85%.\n  ТЕКУЩЕЕ ЗНАЧЕНИЕ: {{ $value | printf `%.2f` }}%"
 ```
 
+---
+
+### 4. Дополнительная информация
+
+*   **Именование Recording Rules**: Настоятельно рекомендуется придерживаться формата `level:metric:operations` (например, `instance:node_cpu_utilization:ratio`). Это значительно упрощает навигацию и отладку, так как имя метрики сразу говорит о уровне ее агрегации (`instance`), исходной метрике (`node_cpu`) и примененных операциях (`ratio`).
+*   **Шаблоны в аннотациях**: Используйте переменные, такие как `{{ $labels.<name> }}` и `{{ $value }}`, для создания информативных и динамических сообщений в алертах.

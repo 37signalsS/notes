@@ -310,7 +310,7 @@ kubectl auth can-i list secrets -n kube-system --as=system:serviceaccount:defaul
 1. Подключитесь к узлу, где был запущен под.
 2. Найдите UID пода: `kubectl get pod <pod-name> -o jsonpath='{.metadata.uid}'`
 3. Найдите "зависшие" точки монтирования: `findmnt | grep <UID>`
-4. Найдите процесс, который держит монтирование: `lsof +D /var/lib/kubelet/pods/<UID>`
+4. Найдите процесс, который держит монтирование: [`lsof`](../../Linux/Diagnostics/Processes/lsof.md) +D /var/lib/kubelet/pods/<UID>
 
 #### Решение
 

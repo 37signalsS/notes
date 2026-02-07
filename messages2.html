@@ -1,0 +1,2320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DevOps Вопросы и Ответы - Часть 2</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6; 
+            color: #333; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .qa-list { padding: 30px; }
+        .qa-item { 
+            margin-bottom: 30px; 
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .qa-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .question-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
+        .question { 
+            font-size: 1.3em; 
+            font-weight: 600; 
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+        .answer { 
+            color: #4a5568;
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+        .answer strong { color: #2d3748; }
+        pre {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        code {
+            background: #edf2f7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>DevOps Вопросы и Ответы</h1>
+            <p>Сборник вопросов для собеседований - Часть 2</p>
+            <p style="margin-top: 10px; font-size: 1em;">Вопросов: 125</p>
+        </div>
+        <div class="qa-list">
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #4</div>
+                <div class="question">Может ли быть оверкоммит при виртуализации и при контейнеризации?</div>
+                <div class="answer">Это выделение больше ресурсов, чем физически доступно.
+-  При виртуализации – возможен в KVM, VMware, Hyper-V через memory ballooning, swap или динамическое выделение CPU. Это может привести к Out-Of-Memory (OOM) при нехватке физической памяти.
+-  При контейнеризации – возможен, если cgroups и limits настроены неправильно. Например, если память не ограничена, контейнеры могут использовать больше RAM, чем доступно системе.
+Решение – настройка overcommit_memory=2, swapiness и OOM-killer для защиты системы.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #8</div>
+                <div class="question">Какими средствами бэкапили виртуалки или куберовские сущности?</div>
+                <div class="answer">Для виртуалок — Veeam, Bacula, Proxmox Backup Server, VMware tools.
+Для Kubernetes — Velero, Kasten K10, Restic, etcd backup. Также можно использовать kubectl get -o yaml для экспорта манифестов и pv snapshot-менеджеры.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #9</div>
+                <div class="question">Как примонтировать диск?</div>
+                <div class="answer">Чтобы использовать новый диск в Linux, его нужно разметить, создать файловую систему и примонтировать.  
+
+Разметить диск (`fdisk`)  
+
+Запустить fdisk для диска sdb  
+sudo fdisk /dev/sdb
+
+Создать файловую систему (`mkfs`)  
+
+Форматировать раздел в ext4
+sudo mkfs.ext4 /dev/sdb1
+
+Если нужен xfs
+sudo mkfs.xfs /dev/sdb1
+
+Автоматическое монтирование при загрузке (`/etc/fstab`)  
+
+Найти UUID диска
+blkid /dev/sdb1
+
+Вывод  
+/dev/sdb1: UUID=&quot;12345678-abcd-1234-efgh-56789abcdef0&quot; TYPE=&quot;ext4&quot;
+
+Добавить в /etc/fstab  
+echo &apos;UUID=12345678-abcd-1234-efgh-56789abcdef0 /mnt/data ext4 defaults 0 2&apos; | sudo tee -a /etc/fstab
+
+Применить изменения
+sudo mount -a
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #10</div>
+                <div class="question">Что такое LDAP?</div>
+                <div class="answer">LDAP (Lightweight Directory Access Protocol) — протокол доступа к распределённой иерархической базе данных:
+-  Используется для аутентификации (OpenLDAP, Active Directory).
+-  Хранит данные о пользователях, группах, компьютерах.
+-  Протокол TCP/389.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #11</div>
+                <div class="question">Что за протокол http, зачем он нужен?</div>
+                <div class="answer">HTTP (HyperText Transfer Protocol) — это протокол передачи данных в интернете. Он используется для обмена данными между клиентом (браузером) и сервером.  
+
+Пример работы HTTP  
+
+Браузер отправляет запрос → &quot;GET /index.html HTTP/1.1&quot;.  
+Сервер отвечает → HTML-страницей (200 OK).  
+Браузер отображает страницу.  
+
+Основные принципы HTTP  
+
+Клиент-серверная модель → браузер запрашивает, сервер отвечает.  
+Без состояния (stateless) → каждый запрос независим (нет сессий).  
+Текстовый протокол → данные передаются в читаемом формате.  
+
+Структура HTTP-запроса  
+
+Пример запроса от браузера к серверу
+GET /index.html HTTP/1.1  
+Host: example.com  
+User-Agent: Mozilla/5.0
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #12</div>
+                <div class="question">Если не успеваешь к дедлайну и появилась дополнительная работа — как поступить?</div>
+                <div class="answer">Варианты:
+-  Прозрачно заэскалировать: предупредить менеджера, обосновать риски и объем допработы.
+-  Предложить минимальный MVP в срок, доработки — позже.
+-  Попросить поддержку команды или делегирование части задач.
+-  Перепланировать приоритеты и зафиксировать новые сроки.
+-  Использовать timeboxing и вести трекинг прогресса.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #14</div>
+                <div class="question">Какие есть три вида монтирования в Docker?</div>
+                <div class="answer">1.  Volumes — управляются самим Docker, хранятся в /var/lib/docker/volumes, удобны для долговременного хранения.
+2.  Bind mounts — указываются вручную, монтируют директорию с хоста, позволяют использовать локальные файлы.
+3.  tmpfs — размещаются в оперативной памяти, временные, очищаются после остановки контейнера.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #16</div>
+                <div class="question">Что такое CRD (Custom Resource Definition)?</div>
+                <div class="answer">CRD — это механизм расширения API Kubernetes, позволяющий создавать свои типы ресурсов. Они управляются как стандартные ресурсы, но определяются и обрабатываются отдельно.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #17</div>
+                <div class="question">Что сделать если зависает ssh?</div>
+                <div class="answer">Если SSH завис, не стоит сразу закрывать терминал. Есть несколько причин и решений.  
+
+Проверить, можно ли выйти без разрыва сессии  
+Если SSH завис, но сессия не разорвана, попробуйте выйти без закрытия терминала:  
+~.
+
+Переключение в режим управления SSH
+~Ctrl+Z
+
+Проверить соединение с сервером  
+
+Если SSH завис, причина может быть в разрыве соединения. Проверьте:  
+
+Работает ли пинг до сервера:  
+ping server_ip
+ Открыт ли SSH-порт (22):  
+nc -zv server_ip 22
+
+Перезапустить SSH-клиент  
+
+Если только один SSH-клиент завис, попробуйте:  
+pkill -9 ssh
+
+или  
+killall -9 ssh
+
+Затем переподключитесь
+ssh user@server_ip
+
+Проверить SSH-сервер  
+
+Если сервер доступен, но SSH зависает, войдите через консоль или другой метод (например, VNC, IPMI).  
+
+Если SSH не отвечает, перезапустите его:  
+sudo systemctl restart ssh
+
+или  
+service ssh restart
+
+Отключить TCP KeepAlive или изменить таймауты  
+
+Иногда SSH зависает из-за разрыва соединения на роутере или файрволе.  
+
+Добавьте в ~/.ssh/config на клиенте
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 5
+
+Или в /etc/ssh/sshd_config на сервере  
+ClientAliveInterval 60
+ClientAliveCountMax 5
+
+Затем перезапустите SSH  
+sudo systemctl restart ssh
+
+Убить зависшую SSH-сессию на сервере  
+
+Если осталось зависшее подключение, найдите его и завершите:  
+who  # Показывает активные пользователи
+ps aux | grep ssh  # Показывает процессы SSH
+pkill -9 -u username  # Завершает все сессии пользователя
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #18</div>
+                <div class="question">Где хранятся метрики?</div>
+                <div class="answer">Метрики могут храниться в памяти демона (например, node_exporter) или записываться в базу Prometheus. Обычно они доступны по HTTP endpoint, откуда считываются системой мониторинга.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #20</div>
+                <div class="question">Что означает команда ping ::1?</div>
+                <div class="answer">Эта команда выполняет ping на локальный IPv6-адрес, аналог IPv4 . ::1 — это loopback-адрес в IPv6, используемый для проверки работы стека IPv6 на устройстве.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #21</div>
+                <div class="question">Как задать права на всё?</div>
+                <div class="answer">В Linux права доступа к файлам и папкам регулируются с помощью команд chmod и chown.  
+
+Назначение всех прав (777)
+Если вам нужно дать полный доступ ко всем файлам и папкам, используйте
+chmod -R 777 /путь/к/папке
+-R (recursive) — применяет права ко всем вложенным файлам и каталогам.  
+777 означает:  
+7 (чтение, запись, выполнение) для владельца  
+7 (чтение, запись, выполнение) для группы  
+7 (чтение, запись, выполнение) для всех остальных  
+
+Передача владения (если нет прав)
+Если текущий пользователь не владеет файлами, назначьте нового владельца  
+chown -R username:group /путь/к/папке
+username — новый владелец  
+group — новая группа  
+
+Лучший вариант — более безопасные права
+Вместо 777 лучше дать только нужные права:  
+Для исполняемых файлов: chmod 755  
+Для конфигураций и данных: chmod 644  
+Для приватных ключей и чувствительных файлов: chmod 600
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #22</div>
+                <div class="question">Почему плохо запускать контейнер от рута в Kubernetes?</div>
+                <div class="answer">-  Повышенный риск эксплойта и компрометации хоста;
+-  Нарушение принципов наименьших привилегий;
+-  Некоторые security policies запрещают root-контейнеры;
+-  Контейнер может получить доступ к host namespace и ресурсам.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #27</div>
+                <div class="question">Какие таблицы прописывал в iptables?</div>
+                <div class="answer">В iptables есть 5 таблиц, но чаще всего работают с тремя:  
+
+`filter` 
+основная таблица для контроля трафика (используется по умолчанию)  
+`nat` 
+для трансляции адресов (SNAT, DNAT, редиректы)  
+`mangle` 
+для изменения пакетов (маркировка, TTL, QoS)  
+`raw` 
+для исключения пакетов из обработки conntrack  
+`security` 
+используется в SELinux для меток безопасности  
+
+Таблица `filter` (фильтрация пакетов)  
+
+Используется для разрешения или блокировки трафика.  
+iptables -P INPUT DROP  
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT  
+
+Таблица `nat` (трансляция адресов)  
+
+Используется для NAT, порт-форвардинга, маскарадинга.  
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE  
+
+Пример: Проброс порта (DNAT) – входящие пакеты на 80 порт перенаправляем на 8080  
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080  
+
+Таблица `mangle` (изменение пакетов)  
+
+Используется для маркировки пакетов, изменения TTL, QoS.  
+iptables -t mangle -A POSTROUTING -j TTL --ttl-set 64  
+
+Пример: Маркировка пакетов для использования в tc (QoS)  
+iptables -t mangle -A PREROUTING -p tcp --dport 22 -j MARK --set-mark 1
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #28</div>
+                <div class="question">В чём разница в директориях  и ?</div>
+                <div class="answer">-   — стандартная директория Linux для хранения изменяемых данных: логи, спулы, кэш, временные данные;
+-   — не является стандартной и может быть частью прикладных настроек, например, конфигураций по умолчанию в /etc/default/.
+Важно не путать её с системными каталогами.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #30</div>
+                <div class="question">Как обновлять чарты в Helm?</div>
+                <div class="answer">-  Обновить значения в values.yaml.
+-  Выполнить:
+-  helm upgrade &lt;release-name&gt; &lt;chart-path&gt; -f values.yaml
+Или в CI/CD — helm upgrade с актуальными переменными среды.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #33</div>
+                <div class="question">Как найти запущенный процесс?</div>
+                <div class="answer">В операционных системах на базе Unix и Linux для поиска запущенных процессов используются различные команды. 
+
+Команда `ps`
+Команда ps отображает список текущих процессов. Часто используемые опции:
+ps aux: Показывает все процессы в системе.
+ps -ef: Альтернативный формат вывода всех процессов.
+ps aux | grep &lt;имя_процесса&gt;
+
+Команда `top`
+Команда top показывает список процессов в реальном времени, обновляя его каждые несколько секунд. Это удобно для мониторинга системы и поиска процессов с высокой загрузкой CPU или памяти.
+top
+
+Команда `htop`
+Команда htop — это улучшенная версия top, предоставляющая более удобный интерфейс для мониторинга процессов. Она должна быть установлена отдельно.
+sudo apt-get install htop
+htop
+
+Команда `pgrep`
+Команда pgrep используется для поиска процессов по имени. Она возвращает идентификаторы (PID) процессов, соответствующих критериям поиска.
+
+Пример использования:
+pgrep &lt;имя_процесса&gt;
+
+Команда `pidof`
+Команда pidof возвращает идентификаторы (PID) процессов с указанным именем.
+pidof &lt;имя_процесса&gt;
+
+Команда `ps` с фильтрацией
+Для более точного поиска можно использовать команду ps с фильтрацией через grep.
+ps aux | grep &lt;имя_процесса&gt; | grep -v grep
+
+Команда `lsof`
+Команда lsof отображает список открытых файлов и может использоваться для поиска процессов, открывающих определенные файлы.
+sudo lsof -i :&lt;номер_порта&gt;
+
+Пример поиска конкретного процесса
+
+Допустим, вам нужно найти процесс с именем nginx. Вот несколько способов сделать это
+Использование ps
+ps aux | grep nginx | grep -v grep
+
+Использование pgrep
+pgrep nginx
+
+Использование pidof
+pidof nginx
+
+Использование `top` или `htop`
+
+Запустите top или htop и найдите процесс nginx в интерактивном режиме.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #38</div>
+                <div class="question">Какие этапы и виды тестирования есть в процессе сборки приложения?</div>
+                <div class="answer">-  Unit-тесты — проверка логики каждого компонента.
+-  Интеграционные — проверка взаимодействия между модулями.
+-  E2E/UI — через браузеры или симуляцию пользовательских действий.
+-  Security — статический анализ, сканирование уязвимостей.
+-  Performance — нагрузочные/стресс тесты.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #39</div>
+                <div class="question">Как мы можем с помощью cloudfront сохранить бюджет на использование сервисов?</div>
+                <div class="answer">Amazon CloudFront — это CDN (Content Delivery Network), которая помогает оптимизировать затраты на трафик и нагрузку на серверы. Использование CloudFront позволяет экономить бюджет на AWS-сервисах следующими способами:  
+
+Кеширование контента (уменьшение нагрузки на бэкенд)  
+CloudFront кэширует статический и динамический контент, что снижает количество запросов к вашим основным серверам (например, EC2, S3, API Gateway, Lambda).  
+Меньше запросов к S3 (меньше операций GET, а они платные).  
+Меньше запросов к API Gateway и Lambda (так как CloudFront может кешировать ответы API).  
+Экономия на EC2 и RDS, так как нагрузка перераспределяется.  
+
+Использование бесплатного трафика между CloudFront и S3
+Когда CloudFront забирает файлы из S3 в том же регионе, за исходящий трафик из S3 не взимается плата. Исходящий трафик из S3 в интернет стоит ≈ $0.09 за ГБ. Исходящий трафик из CloudFront в интернет дешевле (например, первые 1 ТБ в месяц — бесплатно).  
+
+Снижение стоимости глобального трафика  
+Если у вас клиенты в разных странах, CloudFront дешевле, чем стандартный AWS-трафик. Исходящий трафик из CloudFront в интернет в среднем на 30-50% дешевле, чем прямой выход из EC2 или S3. AWS часто снижает цены на CloudFront трафик в рамках программ оптимизации.  
+
+Фильтрация ненужного трафика (ботов, DDoS, парсеров)  
+CloudFront позволяет использовать AWS WAF (Web Application Firewall) для блокировки вредоносных запросов.   Меньше запросов к бэкенду (EC2, API Gateway, Lambda). Защита от DDoS (AWS Shield Standard бесплатен для CloudFront).  
+
+Кеширование динамического контента  
+CloudFront поддерживает TTL (Time-to-Live) для кэширования даже динамических API-ответов. Вместо запроса к API Gateway/Lambda, CloudFront может вернуть кэшированный ответ. Можно настроить &quot;Stale While Revalidate&quot; — клиент получает устаревший контент, пока идет обновление.  
+
+Гибкое управление ценой через региональные edge-локации  
+CloudFront позволяет управлять ценами, ограничивая определенные регионы. Можно исключить дорогие регионы (например, Южную Америку, где трафик дороже). Можно использовать AWS Origin Shield для дополнительного кеширования между регионами.  
+
+Использование CloudFront Functions вместо AWS Lambda  
+CloudFront поддерживает CloudFront Functions, которые выполняются прямо на edge-узлах и дешевле, чем Lambda@Edge. CloudFront Functions работают быстрее и стоят $0.10 за миллион запросов. Lambda@Edge стоит $0.60 за миллион запросов + плата за выполнение.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #42</div>
+                <div class="question">Почему мы используем Deployment над ReplicaSet, а не напрямую?</div>
+                <div class="answer">Deployment предоставляет более высокий уровень абстракции и автоматизирует обновления, масштабирование, откаты и ведение истории. ReplicaSet только поддерживает нужное количество подов, но не управляет версионированием и обновлениями. С использованием Deployment всё это делается проще и безопаснее.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #44</div>
+                <div class="question">Что такое селектор?</div>
+                <div class="answer">Селектор (label selector) используется для выбора ресурсов по меткам. Например, Deployment использует селектор, чтобы знать, какие Pods ему управлять.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #45</div>
+                <div class="question">Какой командой можно показать все работающие процессы на Linux?</div>
+                <div class="answer">Для отображения всех работающих процессов в Linux можно использовать несколько команд. Самые популярные из них: ps, top, htop и pgrep. Каждая из них имеет свои особенности.
+
+Команда `ps`
+
+ps выводит снимок (snapshot) текущих процессов в момент выполнения команды.
+`ps aux`
+Показывает все процессы, запущенные в системе, включая пользователей и системные демоны.
+ps aux
+
+`ps -ef`
+Альтернативный стиль вывода всех процессов с более детальной информацией.
+ps -ef
+ 
+Команда `top`
+
+top — интерактивная утилита для отображения всех запущенных процессов в реальном времени. Вывод обновляется автоматически.
+
+Запуск
+top
+
+Команда `htop`
+
+htop — более современная и удобная версия top. Требуется предварительная установка:
+sudo apt install htop  # Для Ubuntu/Debian
+sudo yum install htop  # Для CentOS/RHEL
+
+Запуск
+htop
+
+Команда `pgrep`
+
+pgrep используется для поиска процессов по имени, но с дополнительными опциями можно вывести все процессы.
+
+Пример
+pgrep -a &quot;&quot;
+
+Команда `systemctl` (для сервисов)
+
+Если вы хотите посмотреть системные службы
+systemctl list-units --type=service
+
+Какую команду выбрать?
+
+Для быстрого снимка 
+ps aux.  
+Для мониторинга в реальном времени 
+top или htop.  
+Для поиска конкретного процесса 
+pgrep &lt;имя процесса&gt;.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #46</div>
+                <div class="question">Когда методы REST используются?</div>
+                <div class="answer">REST-методы применяются при работе с веб-API. Выбор метода зависит от задачи:
+-  GET — при запросе информации;
+-  POST — при создании данных (регистрация, форма);
+-  PUT — при обновлении ресурса полностью;
+-  PATCH — для изменения конкретных полей;
+-  DELETE — при удалении данных.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #48</div>
+                <div class="question">Как откатить Helm-релиз?</div>
+                <div class="answer">С помощью команды:
+helm rollback &lt;release-name&gt; &lt;revision-number&gt;
+Можно также узнать список доступных ревизий через:
+helm history &lt;release-name&gt;
+Это позволяет быстро вернуться к рабочей версии, если обновление прошло неудачно.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #49</div>
+                <div class="question">Что такое cherry pick?</div>
+                <div class="answer">Это команда в системе контроля версий Git, которая позволяет выбрать отдельные коммиты из одной ветки и применить их к другой ветке. Это полезно, когда вы хотите перенести конкретные изменения (коммиты) в текущую ветку, не выполняя слияние всей ветки.
+
+Когда используется
+
+Применение отдельных изменений
+Когда нужно перенести конкретные исправления или функции из одной ветки в другую, не сливая все изменения из исходной ветки.
+Быстрое исправление ошибок
+Когда найденное исправление в одной ветке нужно срочно применить в другой, например, из ветки разработки в ветку релиза.
+Избежание сложного слияния
+Когда слияние всей ветки может привести к конфликтам или нежелательным изменениям, cherry-pick позволяет аккуратно перенести только нужные коммиты.
+
+Примеры использования
+
+Простого `cherry-pick`
+Перенос одного коммита из другой ветки.   
+# Переключитесь на ветку, куда вы хотите применить изменения
+git checkout target-branch
+
+# Выполните cherry-pick коммита
+git cherry-pick &lt;commit-hash&gt;
+
+Применения нескольких коммитов
+Перенос нескольких коммитов из другой ветки.   
+# Переключитесь на ветку, куда вы хотите применить изменения
+git checkout target-branch
+
+# Выполните cherry-pick нескольких коммитов
+git cherry-pick &lt;commit-hash-1&gt; &lt;commit-hash-2&gt; &lt;commit-hash-3&gt;
+
+Применения диапазона коммитов
+Перенос диапазона коммитов из другой ветки.   
+# Переключитесь на ветку, куда вы хотите применить изменения
+git checkout target-branch
+
+# Выполните cherry-pick диапазона коммитов
+git cherry-pick &lt;start-commit-hash&gt;..&lt;end-commit-hash&gt;
+
+Разрешение конфликтов
+
+Разрешите конфликты в файлах.
+
+Добавьте изменения в индекс   
+git add &lt;filename&gt;   
+
+Завершите процесс cherry-pick   
+git cherry-pick --continue   
+
+Прерывание
+
+Если вы хотите прервать процесс cherry-pick, можно использовать команду
+git cherry-pick --abort
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #52</div>
+                <div class="question">Какие параметры файловой системы могут влиять на выбор файловой системы?</div>
+                <div class="answer">Файловая система выбирается по ряду параметров:
+-  Тип нагрузки – большие файлы (XFS, ZFS) или много мелких файлов (EXT4, Btrfs).
+-  Журналирование – влияет на отказоустойчивость (XFS, EXT4).
+-  Снапшоты – нужны ли сохранения состояний файлов (Btrfs, ZFS).
+-  Шифрование – встроенная защита данных (ZFS, LUKS).
+-  Резервирование пространства – например, XFS и ZFS резервируют место.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #53</div>
+                <div class="question">Как определить ресурс, который необходим одной node?</div>
+                <div class="answer">Чтобы определить нагрузку на Node и правильно выделить ресурсы, нужно:  
+Проверить текущее потребление ресурсов (CPU, RAM, диски)*
+Оценить нагрузку от подов (requests и limits)  
+Использовать мониторинг (Prometheus, Grafana, kubectl top)  
+
+Проверить нагрузку на Node (`kubectl top node`)  
+
+Команда  
+sh  
+kubectl top nodes  
+
+Вывод  
+NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%  
+node-1      500m         25%    2Gi             50%  
+node-2      1000m        50%    4Gi             80%  
+
+Проверить потребление ресурсов подами (`kubectl top pods`)  
+
+Команда  
+sh  
+kubectl top pods --all-namespaces  
+
+Вывод  
+NAMESPACE   POD            CPU(cores)   MEMORY(bytes)  
+default     web-app-1      250m         256Mi  
+default     web-app-2      300m         512Mi  
+monitoring  prometheus-1   600m         1Gi  
+
+Анализ `requests` и `limits` подов  
+
+Команда  
+sh  
+kubectl describe node node-1  
+
+Вывод (пример секции Allocatable)  
+Allocatable:  
+  cpu:                4  
+  memory:             8Gi  
+  pods:               110  
+
+Проверить requests и limits у подов
+sh  
+kubectl describe pod my-pod  
+
+Вывод  
+Requests:  
+  cpu:     500m  
+  memory:  1Gi  
+Limits:  
+  cpu:     1  
+  memory:  2Gi  
+
+Использование Prometheus и Grafana для анализа нагрузки  
+
+Prometheus-запросы для анализа Node
+Средняя загрузка CPU за 5 минут
+promql  
+avg(rate(node_cpu_seconds_total[5m])) * 100  
+
+Среднее использование памяти
+promql  
+avg(node_memory_Active_bytes) / avg(node_memory_MemTotal_bytes) * 100
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #54</div>
+                <div class="question">Отличия монтирования дисков к виртуалке и к контейнеру?</div>
+                <div class="answer">-  Виртуальная машина (VM):
+-  Подключается как полноценный виртуальный диск.
+-  Обычно требует перезапуска и настройки в гипервизоре.
+-  Может использовать собственную файловую систему.
+-  Контейнер (Docker):
+-  Монтирование происходит на уровне хоста (bind mount или volume).
+-  Не требует перезапуска контейнера.
+-  Более гибкое и динамичное подключение к каталогам.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #56</div>
+                <div class="question">Kubernetes Control Plane и Worker Node — кто за что отвечает?</div>
+                <div class="answer">-  Control Plane — управляет кластером, принимает решения, следит за состоянием.
+-  Worker Node — выполняет рабочие задачи, т.е. подами и контейнерами.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #58</div>
+                <div class="question">Как использовать темплейты Helm?</div>
+                <div class="answer">Темплейты находятся в директории templates/ и содержат шаблонизированные YAML-файлы, в которых можно:
+-  Использовать переменные из values.yaml
+-  Применять условные конструкции, циклы, функции Go-шаблонов
+Ты можешь:
+-  Генерировать манифесты: helm template
+-  Переопределять значения при установке: helm install --set key=value</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #59</div>
+                <div class="question">Как linux выбирает, какой из процессов завершить?</div>
+                <div class="answer">Она использует механизм, известный как OOM Killer (убийца процессов при нехватке памяти), для завершения процессов с целью освобождения памяти. Выбор процесса для завершения базируется на ряде критериев, чтобы минимизировать влияние на работу системы.
+
+Как работает OOM Killer?
+
+Очки OOM (OOM Score)
+Каждому процессу присваиваются очки OOM, которые рассчитываются на основе нескольких факторов, таких как: Объем памяти, используемой процессом. Приоритет процесса. Важность процесса для системы (например, системные демоны имеют более низкие очки).
+
+Формула расчета OOM Score
+Основной фактор при расчете очков - это объем потребляемой процессом памяти. Чем больше памяти потребляет процесс, тем выше его OOM Score. Операционная система также учитывает приоритет процесса (nice value) и некоторые другие параметры.
+
+Принудительное завершение
+Процесс с наибольшим OOM Score считается наименее критичным для системы и завершается первым.
+
+Пример расчета OOM Score
+
+Вот пример того, как может быть рассчитан OOM Score (упрощенный)
+Процесс A использует 1 ГБ памяти.
+Процесс B использует 2 ГБ памяти.
+Процесс C использует 500 МБ памяти, но это критический системный процесс.
+OOM Score для этих процессов может выглядеть так
+Процесс A: 300
+Процесс B: 600
+Процесс C: 100 (низкий, так как процесс критический)
+
+Настройка OOM Killer
+
+Администраторы могут влиять на работу OOM Killer, настраивая параметры OOM Score для конкретных процессов с помощью файлов в каталоге /proc. Например, для изменения приоритета процесса:
+echo -1000 &gt; /proc/&lt;PID&gt;/oom_score_adj
+
+Логирование и мониторинг
+
+При срабатывании OOM Killer соответствующие сообщения записываются в системный журнал (обычно /var/log/syslog или /var/log/messages), что позволяет администраторам анализировать причины и предпринимать меры по предотвращению в будущем.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #62</div>
+                <div class="question">Что такое брокеры сообщений?</div>
+                <div class="answer">Брокер сообщений — это система, которая:
+-  принимает, сохраняет и передаёт сообщения между компонентами системы;
+-  развязывает отправителя и получателя, повышает отказоустойчивость;
+-  поддерживает очереди, топики, доставку и масштабирование.
+Примеры: Kafka, RabbitMQ, NATS, ActiveMQ.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #64</div>
+                <div class="question">Зачем нужен OOM</div>
+                <div class="answer">OOM (Out Of Memory) — это механизм, срабатывающий, когда системе не хватает памяти для работы, что приводит к завершению процессов с высокой нагрузкой. Он защищает систему от полного исчерпания памяти, освобождая ресурсы, чтобы другие процессы могли продолжать работать. OOM-killer используется для выбора и завершения наименее критичных процессов, предотвращая полное зависание системы.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #66</div>
+                <div class="question">Какие типы заголовков есть?</div>
+                <div class="answer">Заголовки в HTTP делятся на:
+-  General — общие (Date, Connection);
+-  Request — только для клиента (Accept, User-Agent, Authorization);
+-  Response — только для ответа (Server, Set-Cookie);
+-  Entity — описывают тело (Content-Type, Content-Length).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #70</div>
+                <div class="question">Чем методы REST отличаются?</div>
+                <div class="answer">Методы REST различаются по назначению и идемпотентности:
+-  GET — для чтения данных, безопасен и идемпотентен;
+-  POST — для создания ресурса, не идемпотентен;
+-  PUT — для полного обновления ресурса, идемпотентен;
+-  PATCH — для частичного обновления;
+-  DELETE — для удаления, идемпотентен;
+-  OPTIONS, HEAD — вспомогательные методы для получения метаинформации.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #72</div>
+                <div class="question">Какой командой загрузить модуль ядра?</div>
+                <div class="answer">Для загрузки модуля ядра используется команда, которая активирует нужный драйвер или подсистему. Это нужно, например, для поддержки сетевых или файловых функций.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #74</div>
+                <div class="question">Где Elasticsearch хранит логи?</div>
+                <div class="answer">Elasticsearch хранит данные в индексах (индекс — это аналог таблицы в реляционной БД), на диске в формате, совместимом с Lucene. По умолчанию данные находятся в директории /var/lib/elasticsearch.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #76</div>
+                <div class="question">Из чего состоит ELK стек?</div>
+                <div class="answer">ELK включает в себя три компонента: Elasticsearch (хранение и поиск данных), Logstash (сбор и преобразование логов) и Kibana (визуализация данных). Вместе они обеспечивают централизованный сбор, хранение и анализ логов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #77</div>
+                <div class="question">Как диагностировать проблемы с локальным сервером который не отвечает на ping?</div>
+                <div class="answer">Если сервер не пингуется, это не значит, что он не работает – проблема может быть в сети, настройках брандмауэра или самом сервере.  
+
+Пошаговая диагностика  
+
+Проверить, действительно ли сервер включен  
+Подойти к серверу и проверить:  
+Горят ли индикаторы сети (LAN) на сервере?  
+Реагирует ли на клавиатуру/монитор?  
+Не завис ли сервер? (Может помочь Hard Reboot).  
+
+Проверить, есть ли связь на L2-уровне (MAC-адреса)  
+Проверяем, видит ли наш компьютер MAC-адрес сервера через `arp`.  
+Запрос ARP  
+arp -a | grep 192.168.1.100
+
+Если MAC-адрес есть → пакеты доходят до сервера, но он не отвечает.  
+Если MAC-адреса нет → возможны проблемы с сетью (кабель, порт, VLAN, DHCP, статика).  
+Дополнительно проверить соединение  
+ethtool eth0  # Проверить состояние сетевого адаптера
+ip link show eth0  # Интерфейс должен быть UP
+
+Проверить, отвечает ли сервер на другие запросы (SSH, HTTP, RDP)  
+Если ping отключен (ICMP заблокирован брандмауэром), но сервер работает, попробуем другие протоколы.  
+Пробуем зайти по SSH (если это Linux)  
+ssh user@192.168.1.100
+
+Пробуем зайти по RDP (если это Windows)  
+rdesktop 192.168.1.100
+
+Пробуем зайти через HTTP (если там веб-сервер)  
+curl -I http://192.168.1.100
+
+Проверить сетевой интерфейс на сервере  
+Подключаемся к серверу (если возможно) и проверяем, есть ли у него сеть.  
+Проверяем IP-адрес сервера  
+ip a
+
+или
+ifconfig -a
+
+Пробуем пропинговать шлюз с сервера  
+ping 192.168.1.1
+
+Проверить брандмауэр и iptables на сервере  
+Если сервер не отвечает на ICMP, его может блокировать брандмауэр.  
+Linux (firewalld, iptables, ufw)  
+iptables -L -n | grep DROP  # Проверяем правила iptables
+ufw status  # Проверяем UFW (если используется)
+firewall-cmd --list-all  # Проверяем firewalld
+Если ICMP запрещен → разрешаем его  
+iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+ufw allow proto icmp
+firewall-cmd --add-icmp-block=echo-reply --permanent
+firewall-cmd --reload
+
+Windows (Проверить ICMP в брандмауэре Windows)  
+netsh advfirewall firewall show rule name=&quot;File and Printer Sharing (Echo Request - ICMPv4-In)&quot;
+
+Если правило отключено → включаем  
+netsh advfirewall firewall add rule name=&quot;ICMP Allow&quot; protocol=icmpv4:8,any dir=in action=allow
+
+Проверить маршрутизацию и сеть
+Если сервер и клиент находятся в разных VLAN или подсетях, проверяем маршрут.  
+На клиенте  
+traceroute 192.168.1.100  # Linux
+tracert 192.168.1.100  # Windows
+
+Проверить маршруты на сервере 
+ip route show
+
+Если маршрут отсутствует → добавляем вручную  
+ip route add 192.168.1.0/24 via 192.168.1.1
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #78</div>
+                <div class="question">Записал видос &quot;Как за 3 минуты настроить Автоотклики на вакансии HeadHunter&quot;  больше не придется заниматься этой унылой рутиной</div>
+                <div class="answer">Видео:</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #79</div>
+                <div class="question">Что такое init-контейнер?</div>
+                <div class="answer">Init-контейнер запускается перед основным контейнером в поде.
+1.  Используется для выполнения подготовительных задач, таких как загрузка данных или настройка окружения.
+2.  Гарантирует, что основное приложение начнёт работу в подготовленном состоянии.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #80</div>
+                <div class="question">Что такое Web Sockets (веб сокет)?</div>
+                <div class="answer">WebSockets (веб-сокеты) — это коммуникационный протокол, предоставляющий возможность устанавливать постоянное, двустороннее соединение между клиентом (обычно веб-браузером) и сервером через один TCP-соединение. Это позволяет обмениваться данными в реальном времени с минимальной задержкой и без необходимости повторного открытия соединения для каждого обмена сообщениями, как это происходит в традиционных HTTP-соединениях.
+
+Основные характеристики WebSockets:
+
+Двусторонняя коммуникация: WebSockets поддерживают полноценную двустороннюю (или full-duplex) коммуникацию, что позволяет как клиенту, так и серверу отправлять данные в любое время без необходимости инициирования запроса.
+Постоянное соединение: После установления WebSocket-соединение остается открытым, что значительно уменьшает задержки, связанные с установлением новых соединений, характерных для HTTP-запросов.
+Меньший накладной расход: WebSockets используют меньше заголовков по сравнению с HTTP-запросами, что делает передачу данных более эффективной и менее затратной по времени и ресурсам.
+Протокол: WebSocket протокол стандартизирован в RFC 6455 и поддерживается большинством современных веб-браузеров. Соединение начинается с обычного HTTP-запроса, который затем &quot;обновляется&quot; до WebSocket-соединения через HTTP-заголовок Upgrade.
+
+Как работает WebSocket:
+
+Установление соединения: Клиент отправляет HTTP-запрос с заголовком Upgrade: websocket на сервер, указывая на желание перейти к протоколу WebSocket. Сервер отвечает подтверждением, если поддерживает WebSockets, и соединение устанавливается.
+Передача данных: После установления соединения клиент и сервер могут обмениваться данными в обе стороны по мере необходимости. Сообщения передаются как фреймы (frames), которые могут содержать текстовые или бинарные данные.
+Закрытие соединения: Соединение может быть закрыто любой стороной в любой момент времени с отправкой соответствующего фрейма закрытия.
+
+Применения WebSocket:
+
+Реальное время: Приложения, требующие обновлений в реальном времени, такие как чаты, системы обмена сообщениями, онлайн-игры, торги на биржах.
+Потоковая передача данных: Веб-сокеты идеально подходят для приложений, передающих данные в реальном времени, таких как спортивные трансляции или финансовые данные.
+Уведомления и оповещения: Приложения, отправляющие мгновенные уведомления пользователям, например, социальные сети или системы мониторинга.
+Коллаборативные инструменты: Инструменты для совместной работы, такие как совместное редактирование документов или доски с заметками.
+
+Преимущества WebSocket:
+Эффективность: Меньший накладной расход и постоянное соединение делают WebSockets более эффективными для приложений, требующих частого обмена данными.
+Скорость: WebSockets обеспечивают более низкую задержку, что делает их идеальными для приложений, работающих в реальном времени.
+Простота использования: WebSockets имеют простой API, который легко интегрируется с современными веб-приложениями.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #81</div>
+                <div class="question">Что такое в Docker тип сети host?</div>
+                <div class="answer">Сетевой режим host позволяет контейнеру использовать сетевой стек хостовой машины напрямую. Это означает, что контейнер не изолирован по сети и может работать с теми же IP/портами, что и хост.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #85</div>
+                <div class="question">Разница между SQS и MSK в AWS?</div>
+                <div class="answer">-  SQS (Simple Queue Service) — очередь сообщений, проста в использовании, полностью управляется AWS. Поддерживает:
+-  FIFO и стандартные очереди.
+-  Не гарантирует точно один раз доставку в стандартном режиме.
+-  MSK (Managed Streaming for Apache Kafka) — стриминговая платформа, аналог Kafka:
+-  Позволяет обрабатывать большие потоки данных.
+-  Сложнее, но более гибко.
+SQS — простота, MSK — мощность и контроль.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #87</div>
+                <div class="question">В чем разница Deployment и DaemonSet?</div>
+                <div class="answer">`Deployment` в Kubernetes управляет развертыванием приложений, гарантируя наличие определенного количества реплик контейнеров в кластере, их обновление и масштабирование. `DaemonSet`, напротив, гарантирует, что на каждом узле кластера будет запущена ровно одна копия пода, что полезно для запуска системных служб, таких как агенты мониторинга. `Deployment` используется для управления приложениями, требующими масштабирования, а `DaemonSet` — для процессов, которые должны работать на каждом узле.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #89</div>
+                <div class="question">Какие бывают сервисы, как они на низком уровне работают?</div>
+                <div class="answer">Типы в Kubernetes:
+-  ClusterIP — доступен только внутри кластера.
+-  NodePort — доступ снаружи через IP:порт узла.
+-  LoadBalancer — работает через облачного провайдера.
+-  Headless Service — без IP, для StatefulSet и DNS.
+На низком уровне: kube-proxy проксирует трафик через iptables или IPVS.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #93</div>
+                <div class="question">Чем отличается CMD от ENTRYPOINT в DockerFile?</div>
+                <div class="answer">CMD задает команду по умолчанию, которая может быть переопределена при запуске контейнера. ENTRYPOINT определяет неизменяемую команду, которая всегда будет выполняться. CMD обычно используется для указания параметров для ENTRYPOINT.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #97</div>
+                <div class="question">Task удаляет файл, при первом запуске он удален, что должно быть при втором?</div>
+                <div class="answer">При втором запуске Ansible должен сообщить, что изменений нет, так как файл уже удален. Это подтверждает идемпотентность – задача не выполняется снова, если состояние соответствует ожидаемому.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #99</div>
+                <div class="question">Что такое маска подсетей и зачем она нужна?</div>
+                <div class="answer">Маска подсети определяет, какая часть IP-адреса — это сеть, а какая — узел (host).
+Например, маска  говорит: первые 3 октета — сеть, последний — устройства в ней.
+Используется для разделения сети на подсети, маршрутизации и управления доступом.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #101</div>
+                <div class="question">Что такое сквош (squash)?</div>
+                <div class="answer">Squash — это процесс объединения нескольких коммитов в один перед слиянием ветки. Применяется для:
+-  очистки истории;
+-  упрощения отката;
+-  группировки связанных изменений;
+-  подготовки &quot;чистого&quot; pull request&apos;а.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #102</div>
+                <div class="question">Что такое маска подсетей, Зачем она нужна?</div>
+                <div class="answer">Маска подсети (subnet mask) — это число, которое определяет, какая часть IP-адреса относится к сети, а какая — к хостам внутри этой сети.  
+Пример:  
+IP-адрес:   
+Маска подсети:   
+
+В двоичном виде
+IP:    11000000.10101000.00000001.00001010  (192.168.1.10)
+Маска: 11111111.11111111.11111111.00000000  (255.255.255.0)
+
+ Зачем нужна маска подсети?  
+
+Разделять сеть на логические сегменты (разделение на подсети). Определять, находятся ли два устройства в одной сети или им нужен маршрутизатор. Экономить IP-адреса, разбивая сеть на нужное количество хостов.  
+
+Как это работает?  
+
+Если два устройства в одной подсети, они могут общаться напрямую. Если в разных — нужен маршрутизатор.  
+
+CIDR-нотация  
+
+Вместо маски  можно записать .  
+Пример:  (означает, что первые 24 бита — это сеть).
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #103</div>
+                <div class="question">Какие существуют типы Docker Runner?</div>
+                <div class="answer">В GitLab существуют следующие типы Runner:
+-  Shared Runner — общий для всех проектов;
+-  Specific Runner — закреплён за конкретным проектом;
+-  Group Runner — доступен для всех проектов в группе; Также Runner может быть Shell, Docker, Docker+Machine, Kubernetes и другие — по способу исполнения задач.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #105</div>
+                <div class="question">Как работает NAT?</div>
+                <div class="answer">NAT (Network Address Translation):
+-  Преобразует внутренние IP-адреса в один внешний IP.
+-  Позволяет многим устройствам пользоваться Интернетом через один адрес.
+-  Типы:
+-  SNAT — исходящий трафик (от локального к Интернету).
+-  DNAT / Port forwarding — входящий трафик (от Интернета к устройству).
+-  Обеспечивает безопасность и экономию IP-адресов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #106</div>
+                <div class="question">По какой причине inode могут закончиться?</div>
+                <div class="answer">Это структуры данных, которые хранят информацию о файлах и каталогах. Каждый файл или каталог на диске ассоциируется с одним inode, который содержит метаданные файла, такие как его размер, разрешения, временные метки, ссылки на блоки данных и т.д. Количество inode на файловой системе обычно определяется в момент её создания и не может быть изменено без переформатирования или значительных изменений в файловой системе.
+
+Причины исчерпания
+
+Большое количество мелких файлов
+Одной из наиболее частых причин исчерпания inode является наличие очень большого количества маленьких файлов на файловой системе. Поскольку каждый файл использует как минимум один inode, системы с большим количеством мелких файлов могут исчерпать доступные inode, даже если дисковое пространство по-прежнему доступно.
+
+Недостаточное количество выделенных inode
+При создании файловой системы, если количество выделенных inode было рассчитано неправильно (слишком мало для предполагаемого использования), это может привести к раннему их исчерпанию. Это особенно актуально для серверов или систем, где ожидается большое количество файлов.
+
+Особенности файловой системы
+Некоторые файловые системы, такие как Ext3 или Ext4, имеют фиксированное соотношение inode к объёму файловой системы, которое задаётся при их создании. Если создать файловую систему с недостаточным количеством inode для конкретного случая использования, то в дальнейшем это может стать проблемой.
+
+Решения проблемы исчерпания
+
+Проверка использования
+С помощью команды df -i можно проверить, сколько inode используется и сколько ещё доступно в вашей файловой системе.
+
+Очистка файловой системы
+Удаление ненужных или временных файлов может освободить inode.
+
+Изменение файловой системы
+Если возможно, можно увеличить количество inode путём изменения файловой системы или пересоздания файловой системы с более высоким количеством inode. Для файловых систем, таких как XFS или некоторые конфигурации Btrfs, можно динамически добавлять inode.
+
+Использование других файловых систем
+Переход на другую файловую систему, которая не имеет строгих ограничений на количество inode (например, Btrfs или ZFS), может быть решением для систем с большим количеством маленьких файлов.
+
+Архивирование
+Программы и процессы, которые создают большое количество мелких файлов, могут модифицироваться для хранения данных в формате архивов вместо отдельных файлов, что снижает потребление inode.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #109</div>
+                <div class="question">Отличия IPv4 и IPv6?</div>
+                <div class="answer">-  Длина адреса:
+IPv4 — 32 бита (например, ),
+IPv6 — 128 бит (например, 2001:0db8::1).
+-  Количество адресов:
+IPv6 предоставляет намного больше адресов (2¹²⁸ против 2³²).
+-  Формат:
+IPv4 использует десятичную точечную нотацию, IPv6 — шестнадцатеричную с двоеточиями.
+-  NAT:
+В IPv6 NAT не обязателен, в IPv4 он широко используется.
+-  Упрощённые заголовки:
+В IPv6 заголовок легче обрабатывается маршрутизаторами.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #111</div>
+                <div class="question">Как подключить, отформатировать жёсткий диск?</div>
+                <div class="answer">1.  Подключение:
+-  Устройство появляется как /dev/sdX
+-  Проверить с помощью lsblk или fdisk -l
+2.  Форматирование:
+-  Создание раздела: fdisk /dev/sdX
+-  Форматирование: mkfs.ext4 /dev/sdX1
+-  Монтирование: mount /dev/sdX1 /mnt/mydisk
+-  Добавление в /etc/fstab для автоподключения
+Обязательно убедиться, что нужный диск выбран, чтобы избежать потери данных.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #112</div>
+                <div class="question">Какая может быть проблема если вы подключаетесь к серверу через ssh а вам приходят тикеты, что другие пользователи не могут подключиться по ssh по одной и той же учётной записи</div>
+                <div class="answer">Если вы можете подключиться к серверу по SSH, но другие пользователи, использующие ту же учетную запись, не могут, возможны следующие причины:  
+
+Проблема с ограничением количества подключений  
+В файле конфигурации SSH (/etc/ssh/sshd_config) могут быть ограничения на число одновременных подключений.  
+Открываем конфигурацию SSH  
+sudo nano /etc/ssh/sshd_config
+
+Проверяем параметры  
+MaxSessions 1
+MaxStartups 10:30:60
+
+Решение  
+Увеличьте MaxSessions, например:  
+MaxSessions 10
+
+Перезапустите SSH:  
+sudo systemctl restart sshd
+
+Файл .ssh/authorized_keys имеет неверные права  
+Если у вас ключевая авторизация, возможно, права на файлы .ssh/authorized_keys нарушены.  
+На сервере выполните:  
+ls -l ~/.ssh/authorized_keys
+
+Если права не 600, исправьте  
+chmod 600 ~/.ssh/authorized_keys
+
+Ограничение по IP (DenyUsers, AllowUsers, TCP Wrappers)  
+Конфигурация SSH может блокировать подключения для определенных IP или пользователей.  
+Откройте /etc/ssh/sshd_config и проверьте параметры  
+DenyUsers user1
+AllowUsers admin
+
+Проверьте /etc/hosts.deny и /etc/hosts.allow  
+cat /etc/hosts.deny
+cat /etc/hosts.allow
+
+Закончились доступные PTY (псевдотерминалы)  
+Если исчерпан лимит доступных PTY, новые сессии не смогут открываться.  
+Запустите  
+ls /dev/pts
+
+Если там слишком много открытых сессий, попробуйте очистить:  
+pkill -u user
+
+или увеличьте лимит в /etc/security/limits.conf  
+* hard nproc 1024
+* soft nproc 1024
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #113</div>
+                <div class="question">Как посмотреть историю изменения деплоймента?</div>
+                <div class="answer">Для этого используют:
+-  kubectl rollout history deployment &lt;имя&gt; — показывает историю версий (ревизий).
+-  Можно увидеть, какие изменения конфигурации были внесены и когда.
+Это полезно для отслеживания конфигурационных изменений и откатов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #115</div>
+                <div class="question">Как первоначально оценить размер ноды, не зная как работает приложение?</div>
+                <div class="answer">1.  Стартовая гипотеза:
+-  CPU: 0.5–1 core
+-  RAM: 512Mi–1Gi
+-  Подняться с requests по минимуму и оставить limits пустыми.
+2.  Понаблюдать:
+-  Метрики пода (kubectl top pod, Grafana).
+-  Поведение при запуске, пике и в простое.
+3.  Использовать Goldilocks или VPA:
+-  Эти инструменты подскажут оптимальные requests/limits на основе истории.
+4.  Снять perf-профиль:
+-  Если есть возможность — замерить поведение через нагрузочное тестирование.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #117</div>
+                <div class="question">Почему при проверке командой, ранее заполненный, но после очищенный раздел, все равно выглядит, как заполненный?</div>
+                <div class="answer">Операционные системы не всегда сразу удаляют данные с диска, а только помечают их как доступные для перезаписи. Причины:
+-  Журналирование (EXT4, XFS) – данные могут оставаться в журнале.
+-  TRIM для SSD не выполнен – стирание на SSD происходит не сразу.
+-  Блоки файловой системы не очищены – команда rm удаляет ссылки, но не сами данные.
+-  Кеширование и lazy-write – система может отложить освобождение пространства.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #119</div>
+                <div class="question">В чём разница synchronized и Lock?</div>
+                <div class="answer">-  synchronized — встроенный механизм блокировки:
+-  Прост в использовании.
+-  Автоматически освобождает монитор.
+-  Lock (ReentrantLock):
+-  Предоставляет гибкость: можно попытаться захватить (tryLock), установить таймаут, прерывание.
+-  Требует явного освобождения — unlock().</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #121</div>
+                <div class="question">Сколько дефолтно историй есть?</div>
+                <div class="answer">По умолчанию Kubernetes хранит 10 ревизий (revisionHistoryLimit = 10) для ресурсов типа Deployment. Это значит, ты можешь откатиться на одну из 10 предыдущих версий.
+Это значение можно изменить в манифесте деплоймента.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #123</div>
+                <div class="question">Как автоматически деплоить Helm Chart?</div>
+                <div class="answer">Для автоматического деплоя Helm-чартов можно использовать:
+-  CI/CD инструменты (GitLab CI, GitHub Actions, Jenkins) с шагами helm install или helm upgrade;
+-  GitOps-подход через ArgoCD или Flux, где Helm-чарты подтягиваются и применяются при изменении Git-репозитория;
+-  Использование Helm-плагинов для управления релизами и версионированием.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #124</div>
+                <div class="question">Что слышали про rancher kubernetes?</div>
+                <div class="answer">Это платформа для управления Kubernetes-кластерами. Она позволяет развертывать, настраивать, мониторить и управлять несколькими кластерами Kubernetes из единой панели управления. Rancher упрощает работу с Kubernetes, предоставляя удобный UI, API и инструменты автоматизации.
+
+Зачем нужен Rancher?  
+
+Управление несколькими кластерами
+Rancher позволяет управлять кластерами Kubernetes, развернутыми в различных облаках (AWS, GCP, Azure) и на локальной инфраструктуре.  
+Упрощенная установка и настройка
+С помощью Rancher можно быстро развернуть Kubernetes-кластеры с минимальными усилиями.  
+Безопасность и контроль доступа
+Поддерживает аутентификацию через LDAP, Active Directory, GitHub и другие методы.  
+Мониторинг и логирование
+Встроенная поддержка Prometheus, Grafana и Fluentd для мониторинга и логов.  
+Развертывание приложений
+Поддерживает Helm-чарты и стандартные манифесты Kubernetes.  
+
+Как работает Rancher?  
+
+Rancher Server 
+центральный компонент, управляющий кластерами и предоставляющий UI/API.  
+Kubernetes-кластеры 
+могут быть развернуты с помощью Rancher (RKE, RKE2) или добавлены вручную (например, EKS, AKS, GKE).  
+Rancher Agents 
+агенты, установленные в кластерах для обеспечения связи с сервером Rancher.  
+
+Пример развертывания Rancher  
+
+Для развертывания Rancher можно использовать Docker
+docker run -d --name=rancher --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  rancher/rancher:latest
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #125</div>
+                <div class="question">Как по access-логам Nginx понять, из какого location отдан контент?</div>
+                <div class="answer">По умолчанию в access.log не указывается location напрямую, но:
+-  Обычно можно различить по пути URL — если location /static/, location /cache/, location /backend/ — это отражается в строке запроса.
+-  Чтобы точно видеть, откуда был ответ, можно:
+-  Добавить пользовательский формат логов, где записывать $uri или специальные переменные ($request_uri, $upstream_addr и пр.).
+-  Логировать переменные, которые задаются внутри каждого location (например, set $source static → логируешь $source).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #127</div>
+                <div class="question">Что такое pod?</div>
+                <div class="answer">Pod — это основная единица развертывания в Kubernetes, которая представляет собой один или несколько контейнеров, работающих вместе и разделяющих общие ресурсы, такие как сеть и хранилище. Каждый pod получает уникальный IP-адрес в кластере и может включать контейнеры, которые взаимодействуют друг с другом. Pod является недолговечным и может быть перезапущен или пересоздан при сбое, поэтому Kubernetes автоматически управляет их состоянием. Pod помогает упрощать управление контейнерами в кластере.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #129</div>
+                <div class="question">Как ограничить ресурсы приложения в кубах?</div>
+                <div class="answer">Ограничения задаются в манифесте контейнера с помощью resources.limits и resources.requests.
+requests — минимальные ресурсы, которые контейнеру гарантированы.
+limits — максимум, который контейнер может использовать.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #131</div>
+                <div class="question">Когда выполняются факты в Ansible?</div>
+                <div class="answer">Факты (facts) — это информация о целевой машине (ОС, IP, пакеты и т.д.). Они собираются в начале каждого play, если включено gather_facts: true (по умолчанию включено). Также можно собирать их вручную через модуль setup.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #135</div>
+                <div class="question">Как экспортёры отдают метрики?</div>
+                <div class="answer">Экспортёры собирают метрики из сервисов или ОС и предоставляют их по HTTP в формате, который Prometheus может опрашивать. Они работают по модели pull, где Prometheus забирает данные сам.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #137</div>
+                <div class="question">Что известно про workflow GitLab?</div>
+                <div class="answer">GitLab CI/CD workflow — это последовательность стадий (stages) и заданий (jobs), определённых в .gitlab-ci.yml. Стадии выполняются последовательно: build → test → deploy. Jobs могут выполняться параллельно внутри одной стадии. Также можно использовать правила (rules), переменные (env), артефакты и условия запуска.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #139</div>
+                <div class="question">Чем проводить процедуру траблшутинга?</div>
+                <div class="answer">Процедура траблшутинга проводится с помощью логов (journalctl, kubectl logs), мониторинга (Prometheus, Grafana), сетевых утилит (netstat, tcpdump, nmap), профилировщиков (htop, top, iotop) и инструментов трассировки (strace, lsof). Также полезны APM-системы и средства централизованного логирования (ELK, Loki).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #143</div>
+                <div class="question">Какие уровни модели TCP/IP?</div>
+                <div class="answer">1.  Прикладной (Application) — HTTP, FTP, DNS, SMTP и др.
+2.  Транспортный (Transport) — TCP, UDP.
+3.  Сетевой (Internet) — IP, ICMP, ARP.
+4.  Канальный (Link/Network Access) — Ethernet, Wi-Fi, драйверы устройств.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #145</div>
+                <div class="question">С каким флагом использовать pg_dump, чтобы сжать бэкап?</div>
+                <div class="answer">Чтобы получить сжатый архив, используй формат custom:
+-  Флаг -Fc — это формат custom, который:
+-  создаёт сжатый файл
+-  можно частично восстанавливать
+-  совместим с pg_restore
+Или можешь перенаправить в gzip, но -Fc предпочтительнее, если нужен сжатый дамп с гибкой структурой.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #147</div>
+                <div class="question">Что будет происходить после внесения изменений в image?</div>
+                <div class="answer">-  Сборка создаст новый слой поверх существующего;
+-  Старый image сохраняется, пока не удалён;
+-  Изменения можно сравнить, протестировать или запушить в репозиторий;
+-  При развертывании — будет использоваться обновлённая версия образа.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #149</div>
+                <div class="question">Какие есть сущности в Kubernetes, минимальные и далее по возрастанию?</div>
+                <div class="answer">-  Pod — минимальная сущность, может содержать один или несколько контейнеров.
+-  ReplicaSet — управляет количеством pod&apos;ов.
+-  Deployment — управляет ReplicaSet&apos;ами, обновлениями и откатами.
+-  Service — обеспечивает доступ к pod&apos;ам.
+-  Namespace — логическое разделение ресурсов.
+-  Node — физическая или виртуальная машина.
+-  Cluster — объединение всех вышеуказанных компонентов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #151</div>
+                <div class="question">Какой номер порта используется для ping-коммуникации?</div>
+                <div class="answer">Ping не использует порты, так как работает на уровне ICMP, а не TCP или UDP.
+ICMP — это протокол сетевого уровня, используемый для диагностики (например, ping, traceroute).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #153</div>
+                <div class="question">Во сколько зонах можно включить репликацию в RDS Aurora?</div>
+                <div class="answer">Aurora поддерживает до 5 read-replicas в разных зонах/регионах с высокой доступностью и кросс-региональным фейловером.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #155</div>
+                <div class="question">Как Kafka записывает сообщения и как их отдаёт?</div>
+                <div class="answer">-  Producer отправляет сообщение в топик, который разбит на партиции.
+-  Kafka записывает в лог-файл на диск.
+-  Consumer читает сообщения, обращаясь к нужной партиции.
+-  Каждый consumer хранит offset, Kafka ничего не удаляет, пока не истечёт retention.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #156</div>
+                <div class="question">Из чего состоит control plane?</div>
+                <div class="answer">В Kubernetes Control Plane — это набор компонентов, которые управляют всей кластерной системой. Он отвечает за контроль над состоянием кластера, управлением узлами (nodes) и развертыванием приложений. 
+
+kube-apiserver
+Что делает: Это центральный компонент, предоставляющий API для управления кластером.
+Почему нужен: Все взаимодействия, включая добавление/удаление узлов, создание подов и настройку сетей, проходят через API-сервер.
+Как работает:
+Принимает запросы от пользователей, kubectl, и других компонентов.
+Проверяет подлинность запросов и валидирует данные.
+Передает команды другим компонентам через REST API.
+
+etcd
+Что делает: Это распределённое key-value хранилище, которое сохраняет все данные о состоянии кластера.
+Почему нужен: Все данные о конфигурации, статусе и метаданных кластера сохраняются в etcd. Если etcd выходит из строя, кластер теряет свою управляемость.
+Как работает:
+Хранит информацию о подах, конфигурации сетей и статусе всех компонентов.
+Поддерживает консенсус между узлами, обеспечивая надёжность данных.
+
+kube-scheduler
+Что делает: Назначает поды на доступные узлы.
+Почему нужен: Без планировщика поды не смогут быть развернуты на узлах.
+Как работает:
+Считывает незапланированные поды из API-сервера.
+Анализирует доступные узлы на основе их ресурсов (CPU, память и т.д.).
+Назначает узел для каждого пода на основе алгоритмов (например, минимальная загрузка).
+
+kube-controller-manager
+Что делает: Управляет контроллерами, которые следят за состоянием ресурсов в кластере.
+Почему нужен: Контроллеры — это &quot;надсмотрщики&quot;, которые автоматически исправляют отклонения от желаемого состояния.
+Как работает:
+Включает несколько встроенных контроллеров:
+Node Controller: Следит за доступностью узлов.
+Replication Controller: Поддерживает нужное количество реплик подов.
+Endpoint Controller: Обновляет Endpoints-объекты.
+Service Account Controller: Создает учетные записи для сервисов.
+
+cloud-controller-manager 
+Что делает: Управляет интеграцией с облачными провайдерами (например, AWS, GCP).
+Почему нужен: Позволяет использовать облачные функции, такие как балансировка нагрузки, управление дисками и маршрутизацией.
+Как работает:
+Отвечает за создание LoadBalancer.
+Управляет постоянными томами (Persistent Volumes), связанными с облачными хранилищами.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #157</div>
+                <div class="question">Пример асимметричного шифрования?</div>
+                <div class="answer">-  RSA — самый популярный алгоритм.
+-  Пример: клиент шифрует данные публичным ключом сервера, а сервер расшифровывает их своим приватным.
+Также используется в TLS-сертификатах, PGP, SSH.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #161</div>
+                <div class="question">На каком шаге заканчивается Continuous Integration?</div>
+                <div class="answer">CI заканчивается после:
+-  успешной сборки,
+-  прохождения тестов,
+-  публикации артефактов.
+Далее идёт этап доставки (delivery) или развёртывания (deployment) — это уже CD.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #163</div>
+                <div class="question">Куда идёт деплой из релизных веток?</div>
+                <div class="answer">Из release-веток обычно:
+-  деплой идёт в staging/QA окружение для тестирования;
+-  после подтверждения — в master, что может инициировать production-деплой.
+Это даёт возможность проверить стабильность перед боевым запуском.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #165</div>
+                <div class="question">Как работает GitLab Runner?</div>
+                <div class="answer">Это агент, выполняющий CI/CD задачи.
+1.  Он регистрируется в GitLab и запускает задачи (jobs) из .gitlab-ci.yml.
+2.  Работает в разных режимах (shell, Docker, Kubernetes) для выполнения сборок, тестов и деплоя.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #167</div>
+                <div class="question">Как происходит работа с диском?</div>
+                <div class="answer">Работа с диском идёт через:
+1.  Файловую систему — разбивка данных на блоки, управление метаданными.
+2.  ОС и драйверы — планируют чтение/запись, оптимизируют доступ.
+3.  Кэширование — часто используется буферизация в RAM.
+4.  Контроллер диска — управляет физическим доступом на уровне блоков.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #169</div>
+                <div class="question">Сколько существует проб в Kubernetes?</div>
+                <div class="answer">Существует три типа проб:
+1.  livenessProbe
+2.  readinessProbe
+3.  startupProbe
+Каждая решает свою задачу и настраивается отдельно в манифесте pod&apos;а.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #171</div>
+                <div class="question">Как построить выделение ресурсов, балансировку, нагрузку и масштабирование?</div>
+                <div class="answer">Выделение ресурсов:
+-  Использование kubernetes requests/limits, cgroups, namespaces.
+-  Автоматическое масштабирование под CPU/Memory.
+Балансировка нагрузки:
+-  Внутри кластера — через kube-proxy, kube-dns, Istio, Envoy.
+-  Наружу — Ingress Controller, L7 балансировщики (Nginx, Traefik), L4 (HAProxy, AWS ALB).
+Масштабирование:
+-  Horizontal Pod Autoscaler по метрикам.
+-  Vertical Pod Autoscaler для подбора ресурсов.
+-  Cluster Autoscaler — масштабирует сам кластер.
+Оркестрация + наблюдение:
+-  Prometheus + Grafana для метрик.
+-  Alertmanager для алертов.
+-  Tracing (Jaeger, OpenTelemetry).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #172</div>
+                <div class="question">С каким максимальным кол-ом адресов ОП может провзаимодействовать процессор?</div>
+                <div class="answer">Максимальное количество адресов оперативной памяти (ОП), с которыми может взаимодействовать процессор, зависит от ширины адресной шины процессора. Адресная шина определяет, сколько уникальных адресов памяти процессор может адресовать. 
+
+Формула вычисления
+
+Количество адресуемых ячеек памяти определяется по формуле:  
+\text{Максимальное количество адресов} = 2^{\text{ширина адресной шины (в битах)}}
+
+Примеры
+
+Процессор с 32-битной адресной шиной  
+Максимально возможное количество адресов:  
+2^{32} = 4,294,967,296 \, (\approx 4 \, \text{Гбайт})
+
+Процессор с 64-битной адресной шиной  
+Теоретический максимум
+2^{64} = 18,446,744,073,709,551,616 \, (\approx 16 \, \text{эксабайт})
+Однако современные процессоры обычно поддерживают меньше, например
+Архитектура x86-64 (например, Intel и AMD): ограничена 48–57 битами для адресов памяти, что позволяет адресовать от 256 Тбайт до 128 Пбайт.
+
+Почему реальная адресуемая память меньше?
+
+Ограничения архитектуры 
+Производители процессоров могут использовать меньшее количество адресных линий, чтобы снизить сложность и стоимость. Например, современные 64-битные процессоры адресуют только часть 64-битного пространства (например, 48 бит).
+   
+Ограничения ОЗУ 
+Даже если процессор поддерживает большое количество адресов, максимальная память ограничивается количеством слотов памяти и их емкостью на материнской плате.
+
+Системные резервы 
+Некоторые адреса зарезервированы для системных нужд (например, для ввода/вывода или BIOS).
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #173</div>
+                <div class="question">Как найти запущенный процесс?</div>
+                <div class="answer">1.  Используйте команду ps (например, ps aux для подробной информации).
+2.  Команда top показывает активные процессы в реальном времени.
+3.  Для фильтрации можно использовать pgrep &lt;имя процесса&gt;.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #175</div>
+                <div class="question">Как решить проблему, если Jenkins не видит merge request и ветки из GitLab?</div>
+                <div class="answer">-  Убедиться, что используется GitLab Plugin.
+-  Включить webhook из GitLab.
+-  Установить refspec:
+-  +refs/merge-requests/*:refs/remotes/origin/mr/*
+-  Убедиться, что Jenkins имеет доступ к правильным permissions в GitLab.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #176</div>
+                <div class="question">Сколько часов живёт один вал Prometeus CICD?</div>
+                <div class="answer">Вал (или &quot;валидность данных&quot;) в Prometheus определяется настройками временного диапазона хранения данных. Обычно данные в Prometheus живут столько, сколько задано в параметре --storage.tsdb.retention.time, который устанавливает период хранения временных рядов.
+
+По умолчанию
+Если не указать параметр --storage.tsdb.retention.time, данные хранятся 15 дней. Это соответствует 360 часам.
+
+Как изменить время жизни данных
+Вы можете настроить период хранения данных, передав значение параметра при запуске Prometheus:
+
+CLI-параметр:
+prometheus --storage.tsdb.retention.time=30d
+
+Конфигурационный файл
+Если Prometheus запускается как часть системы CI/CD через Docker Compose, Kubernetes или другой инструмент, параметр указывается в соответствующем разделе.
+services:
+  prometheus:
+    image: prom/prometheus
+    command:
+      - &apos;--storage.tsdb.retention.time=7d&apos; # 7 дней (168 часов)
+
+Почему это важно?
+
+Оптимизация дискового пространства 
+Большие периоды хранения требуют больше дискового пространства. Если валидация данных больше не нужна, лучше очищать старые временные ряды.
+Баланс производительности 
+Длительное хранение может замедлить обработку запросов, особенно если используемые метрики застарелые или редко запрашиваются.
+Потребности CI/CD 
+Для CI/CD-пайплайнов обычно достаточно короткого периода (например, 7–15 дней), чтобы сохранять данные релевантными и свежими.
+
+Пример настройки в CI/CD контексте
+Если вы хотите, чтобы метрики для CI/CD жили 12 часов (подходящий срок для проверки тестов и сборок), настройте
+prometheus:
+  image: prom/prometheus
+  command:
+    - &apos;--storage.tsdb.retention.time=12h&apos;
+
+Как проверить текущий срок хранения?
+
+В интерфейсе Prometheus
+Перейдите на страницу /status → /status/flags, где можно увидеть значение параметра --storage.tsdb.retention.time.
+Через командную строку
+Проверьте журнал запуска Prometheus или конфигурационный файл.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #177</div>
+                <div class="question">Где можно использовать Kubernetes?</div>
+                <div class="answer">Kubernetes используют для:
+-  управления контейнерами и их жизненным циклом;
+-  масштабирования микросервисов;
+-  автоматизации деплоя;
+-  отказоустойчивости и самовосстановления сервисов.
+Можно использовать в облаке, on-premise, edge и гибридных решениях.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #181</div>
+                <div class="question">Какой дистрибутив выбрать для высоконагруженных приложений — RHEL или Debian?</div>
+                <div class="answer">-  RHEL/CentOS/AlmaLinux/Rocky:
+-  Более предсказуемое поведение (stable ABI);
+-  Широкая поддержка корпоративных решений (Oracle, SAP);
+-  SELinux.
+-  Debian/Ubuntu:
+-  Больше свободных пакетов;
+-  Быстрее обновления;
+-  Лучше для разработки.
+Вывод: для продакшна в крупном энтерпрайзе — чаще RHEL. Для DevOps и CI — Debian.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #182</div>
+                <div class="question">Что такое брокеры сообщений?</div>
+                <div class="answer">Это программные системы, которые позволяют обмениваться данными между разными компонентами приложения или между различными приложениями. Они действуют как посредники, принимая сообщения от отправителей (producers) и доставляя их получателям (consumers).
+
+Основные функции брокеров сообщений
+
+Прием и маршрутизация сообщений
+Сообщения отправляются от одного компонента и доставляются нужному получателю. Брокер определяет, куда отправить сообщение, используя темы (topics), очереди (queues) или маршруты (routing keys).
+
+Асинхронное взаимодействие
+Отправитель может передать сообщение, не дожидаясь его обработки, что повышает производительность системы.
+
+Очереди сообщений
+Если получатель временно недоступен, сообщение сохраняется в очереди до тех пор, пока оно не будет доставлено.
+
+Гарантированная доставка
+Некоторые брокеры предоставляют механизмы подтверждения получения сообщений (acknowledgment), чтобы избежать их потери.
+
+Распределение нагрузки
+Сообщения могут быть обработаны несколькими получателями, что позволяет распределить нагрузку между ними.
+
+Фильтрация и маршрутизация
+Сообщения доставляются только тем потребителям, которые их ожидают, используя фильтры или ключи маршрутизации.
+
+Примеры использования брокеров сообщений
+
+Микросервисы
+Компоненты приложения обмениваются данными через брокер, что позволяет им оставаться изолированными и независимыми.
+
+Логирование и мониторинг
+Сбор логов и метрик от множества источников с их дальнейшей обработкой.
+
+Управление задачами
+Постановка задач в очередь для выполнения одним или несколькими воркерами.
+
+Интеграция систем
+Связывание разнородных систем, которые обмениваются данными.
+
+Примеры брокеров сообщений
+
+RabbitMQ
+Протокол: AMQP (Advanced Message Queuing Protocol). Поддерживает очереди, маршрутизацию, подтверждения доставки. Хорошо подходит для сложных сценариев с разными типами маршрутизации.
+
+Apache Kafka
+Протокол: Проприетарный. Отличается высокой производительностью и надежностью. Используется для потоковой обработки данных, аналитики в реальном времени.
+
+Redis (Pub/Sub)
+Протокол: Redis. Простая и быстрая модель pub/sub. Хорошо подходит для временных сообщений без сохранения состояния.
+
+ActiveMQ
+Протокол: AMQP, STOMP, MQTT. Гибкий и совместимый с различными сценариями.
+
+NATS
+Легковесный и быстрый брокер для приложений, требующих низкой задержки.
+
+Как работают брокеры сообщений
+
+Producers (отправители) отправляют сообщение в брокер.
+Брокер размещает сообщение в соответствующей очереди или теме.
+Consumers (получатели) получают сообщение: Либо сразу, если они активны. Либо позже, если оно сохраняется в очереди.
+
+Пример использования RabbitMQ
+
+Отправитель публикует сообщение в очередь:
+import pika
+connection = pika.BlockingConnection(pika.ConnectionParameters(&apos;localhost&apos;))
+channel = connection.channel()
+channel.queue_declare(queue=&apos;hello&apos;)
+channel.basic_publish(exchange=&apos;&apos;, routing_key=&apos;hello&apos;, body=&apos;Hello World!&apos;)
+connection.close()
+
+Получатель забирает сообщение из очереди:
+import pika
+connection = pika.BlockingConnection(pika.ConnectionParameters(&apos;localhost&apos;))
+channel = connection.channel()
+channel.queue_declare(queue=&apos;hello&apos;)
+
+def callback(ch, method, properties, body):
+    print(f&quot;Received {body}&quot;)
+
+channel.basic_consume(queue=&apos;hello&apos;, on_message_callback=callback, auto_ack=True)
+channel.start_consuming()
+
+Плюсы использования
+
+Разделение ответственности
+Компоненты системы сосредотачиваются на своих задачах, а не на доставке данных.
+Масштабируемость
+Легко добавлять новых потребителей или отправителей.
+Устойчивость к сбоям
+Брокеры обеспечивают сохранность сообщений, даже если один из компонентов временно недоступен.
+Гибкость
+Возможность использовать различные стратегии маршрутизации и обработки данных.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #185</div>
+                <div class="question">Что такое DevOps?</div>
+                <div class="answer">DevOps — это практика, направленная на интеграцию разработки и операционных процессов для ускорения выпуска программного обеспечения. Она включает автоматизацию процессов, улучшение взаимодействия команд и повышение качества продукта. Цель DevOps — ускорить доставку программного обеспечения без потери качества.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #187</div>
+                <div class="question">Почему при доступном месте файлы не создаются?</div>
+                <div class="answer">Это может происходить по нескольким причинам, даже если свободное место есть:
+1.  Закончились inode&apos;ы — файловая система использует их для хранения метаданных файлов. Если они исчерпаны, новые файлы нельзя создать.
+2.  Ограничения прав — пользователь или процесс может не иметь разрешения на запись.
+3.  Переполнение квоты — если включены пользовательские квоты на дисковое пространство.
+4.  Ошибка монтирования — путь указывает на размонтированное хранилище, и запись идёт не туда.
+5.  Файловая система в режиме только для чтения — возможно после сбоев или ошибок диска.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #188</div>
+                <div class="question">В чём преимущество Kubernetes как платформы?</div>
+                <div class="answer">Это платформа для оркестрации контейнеров, которая упрощает развертывание, управление и масштабирование приложений. Она имеет ряд ключевых преимуществ, которые делают её популярной в DevOps и облачных решениях.
+
+Основные плюсы
+
+Автоматизация управления приложениями
+Kubernetes автоматически запускает, останавливает и перезапускает контейнеры при сбоях. Поддерживает заданное число экземпляров (реплик) приложений, перезапуская или создавая их при необходимости.
+
+Масштабирование (горизонтальное и вертикальное)
+Ручное: Легко увеличить или уменьшить количество контейнеров (поды) для приложения. Автоматическое: Используя Horizontal Pod Autoscaler (HPA), Kubernetes добавляет ресурсы при увеличении нагрузки.
+
+Высокая доступность (HA)
+Kubernetes поддерживает отказоустойчивость: Если один узел (node) выходит из строя, поды перемещаются на другие узлы. Внутренний балансировщик нагрузки распределяет трафик между подами.
+
+Платформонезависимость
+Kubernetes работает в любых средах: Локальных (например, Minikube). В публичных облаках (AWS, Google Cloud, Azure). В гибридных и on-premise инфраструктурах.
+
+Управление конфигурацией и секретами
+Kubernetes упрощает работу с настройками: ConfigMaps: Для управления конфигурационными данными.
+Secrets: Для безопасного хранения конфиденциальной информации, например, ключей API или паролей.
+
+Эффективное использование ресурсов
+Kubernetes помогает оптимизировать потребление CPU и памяти: Устанавливая минимальные и максимальные лимиты ресурсов для каждого приложения. Перераспределяя ресурсы между приложениями.
+
+Расширяемость
+Kubernetes поддерживает плагины и кастомизацию: Сетевые плагины (Calico, Flannel) для настройки сети. Системы мониторинга (Prometheus, Grafana). Операторы для автоматизации сложных задач.
+
+Сообщество и экосистема
+Kubernetes поддерживается большинством крупных облачных провайдеров. Обширная экосистема инструментов: Helm для управления шаблонами, ArgoCD для GitOps, Istio для сетевых взаимодействий.
+
+Когда особенно полезен?
+
+Разработка микросервисных архитектур. Частые релизы и автоматизация CI/CD. Работа с масштабируемыми приложениями. Использование гибридных или мультиоблачных решений.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #191</div>
+                <div class="question">Что такое сокет?</div>
+                <div class="answer">Сокет — это конечная точка двустороннего сетевого соединения.
+Используется для обмена данными между приложениями по сети.
+Может быть:
+-  TCP-сокет (надёжный, соединение);
+-  UDP-сокет (без соединения, быстрее).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #193</div>
+                <div class="question">Сколько часов живёт один вал Prometheus CI/CD?</div>
+                <div class="answer">Файлы WAL (write-ahead log) в Prometheus обычно хранятся 2 часа по умолчанию, после чего происходит компрессия данных в блоки. Этот параметр можно настроить через флаг запуска --storage.tsdb.min-block-duration.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #195</div>
+                <div class="question">В каком месте пайплайна нужно подключать новую инфраструктуру, нужно ли её как-то готовить?</div>
+                <div class="answer">1.  Место в пайплайне:
+-  Подключение инфраструктуры происходит в начальных шагах, перед тестированием и деплоем.
+2.  Подготовка:
+-  Настройте сервер, проверьте доступность и корректность конфигурации.
+-  Убедитесь, что инфраструктура поддерживает требования приложения (например, порты, доступ к базам данных).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #197</div>
+                <div class="question">Как удалить файл который называется --rm?</div>
+                <div class="answer">Такой файл воспринимается как опция командой удаления, поэтому нужно указать системе, что это именно имя файла. Это можно сделать, отключив распознавание флагов или указав путь к файлу явно.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #198</div>
+                <div class="question">Динамическая маршрутизация и разные протоколы динамической маршрутизации, ebgp ibgp, константы bgp. На чём сейчас принято строить bgp-пиринги?</div>
+                <div class="answer">Динамическая маршрутизация  
+Динамическая маршрутизация – это механизм автоматического выбора маршрута на основе изменяющихся сетевых условий. В отличие от статической маршрутизации, она автоматически адаптируется к изменениям в сети.  
+Протоколы динамической маршрутизации делятся на:  
+Протоколы внутреннего шлюза (IGP – Interior Gateway Protocol)  
+RIP (Routing Information Protocol) – устаревший, работает на алгоритме дистанционно-векторного маршрутизации.  
+OSPF (Open Shortest Path First) – основан на SPF (Dijkstra) и работает по принципу линк-стейт.  
+IS-IS (Intermediate System to Intermediate System) – аналог OSPF, но чаще используется в провайдерских сетях.  
+Протоколы внешнего шлюза (EGP – Exterior Gateway Protocol)  
+BGP (Border Gateway Protocol) – основной протокол маршрутизации в интернете.  
+
+BGP: Основной протокол глобальной маршрутизации  
+eBGP vs iBGP  
+BGP бывает двух типов:  
+eBGP (External BGP) – маршрутизация между автономными системами (AS). Используется для обмена маршрутами между разными организациями или провайдерами.  
+iBGP (Internal BGP) – работает внутри одной AS, передавая BGP-маршруты между роутерами этой сети.  
+
+Константы BGP (Attributes)  
+
+BGP использует атрибуты маршрута для выбора наилучшего пути. Основные атрибуты:  
+
+Local Preference 
+приоритетный маршрут внутри AS (чем выше, тем лучше).  
+AS Path 
+список AS, через которые проходит маршрут (короче – лучше).  
+MED (Multi-Exit Discriminator) 
+предпочтение одного из выходов из AS (меньше – лучше).  
+Origin 
+источник маршрута (IGP &lt; EGP &lt; Incomplete).  
+Community 
+метки маршрутов для упрощения политики маршрутизации.  
+Weight (Cisco-only) 
+локальный параметр (чем больше, тем лучше).  
+
+На чём сейчас строят BGP-пиринги?  
+
+BGP можно развернуть на разных платформах, включая аппаратные и программные решения:  
+
+Оборудование (Аппаратные маршрутизаторы)  
+Cisco (IOS, IOS-XE, IOS-XR, NX-OS) – классика для крупных сетей.  
+Juniper (Junos OS) – мощное решение для дата-центров и операторов.  
+Arista (EOS) – высокопроизводительные маршрутизаторы для ЦОДов.  
+Huawei (VRP) – популярно в крупных корпоративных сетях.  
+
+Программные решения (SOFT-router)  
+FRRouting (FRR) – open-source, поддерживает BGP, OSPF, IS-IS.  
+BIRD – лёгкий BGP-демон для Linux, используется в IX (Internet Exchange).  
+GoBGP – BGP-демон, написанный на Go.  
+VyOS – Linux-маршрутизатор с поддержкой BGP.  
+MikroTik (RouterOS) – бюджетное, но мощное решение.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #201</div>
+                <div class="question">Если запустить любой плейбук через консоль, какая там появится первая надпись?</div>
+                <div class="answer">Обычно первой появляется надпись:
+PLAY [название play] — это начало выполнения плейбука и определение группы хостов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #203</div>
+                <div class="question">Чем отличается headless-сервис от любого другого?</div>
+                <div class="answer">Headless-сервис (ClusterIP: None) не использует прокси и балансировку, а напрямую возвращает IP-адреса всех подов. Используется для:
+-  stateful-приложений (например, БД кластеров);
+-  сервисов, которым нужно напрямую знать об остальных нодах.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #205</div>
+                <div class="question">Что из себя представляет пайплайн, какие стадии?</div>
+                <div class="answer">CI/CD пайплайн — это последовательность стадий (stages), включающих набор job-ов:
+-  build — сборка приложения.
+-  test — юнит и интеграционные тесты.
+-  lint — проверка стиля и ошибок.
+-  deploy — выкладка в dev/stage/prod.
+-  cleanup — удаление временных артефактов, откаты.
+Каждый job может быть зависим от предыдущих.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #206</div>
+                <div class="question">Как определить ресурс, который необходим одной node?</div>
+                <div class="answer">Чтобы определить нагрузку на Node и правильно выделить ресурсы, нужно:  
+Проверить текущее потребление ресурсов (CPU, RAM, диски)*
+Оценить нагрузку от подов (requests и limits)  
+Использовать мониторинг (Prometheus, Grafana, kubectl top)  
+
+Проверить нагрузку на Node (`kubectl top node`)  
+
+Команда  
+sh  
+kubectl top nodes  
+
+Вывод  
+NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%  
+node-1      500m         25%    2Gi             50%  
+node-2      1000m        50%    4Gi             80%  
+
+Проверить потребление ресурсов подами (`kubectl top pods`)  
+
+Команда  
+sh  
+kubectl top pods --all-namespaces  
+
+Вывод  
+NAMESPACE   POD            CPU(cores)   MEMORY(bytes)  
+default     web-app-1      250m         256Mi  
+default     web-app-2      300m         512Mi  
+monitoring  prometheus-1   600m         1Gi  
+
+Анализ `requests` и `limits` подов  
+
+Команда  
+sh  
+kubectl describe node node-1  
+
+Вывод (пример секции Allocatable)  
+Allocatable:  
+  cpu:                4  
+  memory:             8Gi  
+  pods:               110  
+
+Проверить requests и limits у подов
+sh  
+kubectl describe pod my-pod  
+
+Вывод  
+Requests:  
+  cpu:     500m  
+  memory:  1Gi  
+Limits:  
+  cpu:     1  
+  memory:  2Gi  
+
+Использование Prometheus и Grafana для анализа нагрузки  
+
+Prometheus-запросы для анализа Node
+Средняя загрузка CPU за 5 минут
+promql  
+avg(rate(node_cpu_seconds_total[5m])) * 100  
+
+Среднее использование памяти
+promql  
+avg(node_memory_Active_bytes) / avg(node_memory_MemTotal_bytes) * 100
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #207</div>
+                <div class="question">Можно ли откатить деплоймент?</div>
+                <div class="answer">Да. Kubernetes поддерживает откат на предыдущую ревизию:
+-  С помощью команды kubectl rollout undo deployment &lt;имя&gt;.
+-  Можно указать конкретную ревизию, если нужно вернуться дальше.
+Это позволяет безопасно вернуться к предыдущей стабильной версии.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #210</div>
+                <div class="question">Как задать права на всё?</div>
+                <div class="answer">В Linux права доступа к файлам и папкам регулируются с помощью команд chmod и chown.  
+
+Назначение всех прав (777)
+Если вам нужно дать полный доступ ко всем файлам и папкам, используйте
+chmod -R 777 /путь/к/папке
+-R (recursive) — применяет права ко всем вложенным файлам и каталогам.  
+777 означает:  
+7 (чтение, запись, выполнение) для владельца  
+7 (чтение, запись, выполнение) для группы  
+7 (чтение, запись, выполнение) для всех остальных  
+
+Передача владения (если нет прав)
+Если текущий пользователь не владеет файлами, назначьте нового владельца  
+chown -R username:group /путь/к/папке
+username — новый владелец  
+group — новая группа  
+
+Лучший вариант — более безопасные права
+Вместо 777 лучше дать только нужные права:  
+Для исполняемых файлов: chmod 755  
+Для конфигураций и данных: chmod 644  
+Для приватных ключей и чувствительных файлов: chmod 600
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #211</div>
+                <div class="question">В каких случаях удобно использовать Kubernetes, а в каких Docker Compose?</div>
+                <div class="answer">-  Docker Compose — подходит для простых локальных окружений, отладки, микросервисов в одной машине.
+-  Kubernetes — для продакшн-окружений, масштабируемости, отказоустойчивости, автодеплоя.
+Kubernetes нужен там, где требуется оркестрация, распределённость и гибкость.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #212</div>
+                <div class="question">Какие таблицы прописывал в iptables?</div>
+                <div class="answer">В iptables есть 5 таблиц, но чаще всего работают с тремя:  
+
+`filter` 
+основная таблица для контроля трафика (используется по умолчанию)  
+`nat` 
+для трансляции адресов (SNAT, DNAT, редиректы)  
+`mangle` 
+для изменения пакетов (маркировка, TTL, QoS)  
+`raw` 
+для исключения пакетов из обработки conntrack  
+`security` 
+используется в SELinux для меток безопасности  
+
+Таблица `filter` (фильтрация пакетов)  
+
+Используется для разрешения или блокировки трафика.  
+iptables -P INPUT DROP  
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT  
+
+Таблица `nat` (трансляция адресов)  
+
+Используется для NAT, порт-форвардинга, маскарадинга.  
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE  
+
+Пример: Проброс порта (DNAT) – входящие пакеты на 80 порт перенаправляем на 8080  
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080  
+
+Таблица `mangle` (изменение пакетов)  
+
+Используется для маркировки пакетов, изменения TTL, QoS.  
+iptables -t mangle -A POSTROUTING -j TTL --ttl-set 64  
+
+Пример: Маркировка пакетов для использования в tc (QoS)  
+iptables -t mangle -A PREROUTING -p tcp --dport 22 -j MARK --set-mark 1
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #213</div>
+                <div class="question">Что такое лимиты и реквесты в Kubernetes?</div>
+                <div class="answer">requests — это минимальные ресурсы, которые гарантированно выделяются поду. limits — это максимальные ресурсы, которые pod может потреблять. Kubernetes использует requests для планирования, а limits — для ограничения. Например: request: 200Mi, limit: 1Gi.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #215</div>
+                <div class="question">SIGKILL можно не обработать, а проигнорировать?</div>
+                <div class="answer">Нет.
+SIGKILL (kill -9) — это немаскируемый сигнал.
+ОС немедленно завершает процесс без возможности перехвата.
+Единственный способ обработать завершение — использовать другие сигналы, например SIGTERM (kill -15), который можно перехватить и обработать.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #218</div>
+                <div class="question">Где находится swap какое устройство использует?</div>
+                <div class="answer">Это область на диске, которую операционная система использует как виртуальную память, если основной оперативной памяти (RAM) не хватает. Swap может быть представлен в виде:
+
+Где находится swap?
+
+Swap-раздел  
+Swap может быть выделен как отдельный раздел диска. Он создается во время установки системы или вручную и не имеет файловой системы (тип раздела — swap).
+Swap-файл  
+Swap может быть представлен как обычный файл в файловой системе (например, /swapfile).
+
+Как узнать, где находится swap?
+
+Используйте команды для проверки текущей конфигурации:
+
+Проверка swap через swapon
+swapon --show
+
+Пример вывода
+NAME       TYPE      SIZE   USED PRIO
+/dev/sda2  partition 4G     1G   -2
+/swapfile  file      2G     0B   -3
+- NAME: Устройство или файл, используемый для swap.  
+- TYPE: Указывает, является ли swap разделом или файлом.  
+- SIZE: Размер swap.  
+- USED: Сколько swap в данный момент используется.  
+- PRIO: Приоритет использования (меньшее значение — меньший приоритет).
+
+Проверка через free
+free -h
+
+Проверка через `fstab`
+
+Если swap является разделом, он обычно прописан в /etc/fstab
+cat /etc/fstab | grep swap
+
+Пример
+/dev/sda2    none    swap    sw    0   0
+
+Какое устройство использует swap?
+
+Если swap — это раздел, то он отображается как устройство, например, /dev/sda2. Если swap — это файл, его путь будет, например, /swapfile.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #223</div>
+                <div class="question">Как в bash прописывают условие &quot;или&quot;?</div>
+                <div class="answer">Условие &quot;или&quot; используется, чтобы выполнить вторую команду только если первая завершилась с ошибкой. Это помогает задать альтернативное действие при сбое.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #231</div>
+                <div class="question">Как определить ресурс, который необходим одной node?</div>
+                <div class="answer">-  Собрать usage-метрики:
+Через kubectl top node, Prometheus или Cloud Monitoring.
+-  Сравнить с pod requests:
+Если нода забита, а pod’ы с маленькими requests — нужно увеличивать.
+-  Просмотреть узкие места:
+CPU, RAM, IO, дисковое пространство — что конкретно лимитирует.
+-  Использовать нагрузочные тесты:
+Прогнать типичную нагрузку и посмотреть, как ведут себя узлы.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #234</div>
+                <div class="question">Что такое Web Sockets (веб сокет)?</div>
+                <div class="answer">WebSockets (веб-сокеты) — это коммуникационный протокол, предоставляющий возможность устанавливать постоянное, двустороннее соединение между клиентом (обычно веб-браузером) и сервером через один TCP-соединение. Это позволяет обмениваться данными в реальном времени с минимальной задержкой и без необходимости повторного открытия соединения для каждого обмена сообщениями, как это происходит в традиционных HTTP-соединениях.
+
+Основные характеристики WebSockets:
+
+Двусторонняя коммуникация: WebSockets поддерживают полноценную двустороннюю (или full-duplex) коммуникацию, что позволяет как клиенту, так и серверу отправлять данные в любое время без необходимости инициирования запроса.
+Постоянное соединение: После установления WebSocket-соединение остается открытым, что значительно уменьшает задержки, связанные с установлением новых соединений, характерных для HTTP-запросов.
+Меньший накладной расход: WebSockets используют меньше заголовков по сравнению с HTTP-запросами, что делает передачу данных более эффективной и менее затратной по времени и ресурсам.
+Протокол: WebSocket протокол стандартизирован в RFC 6455 и поддерживается большинством современных веб-браузеров. Соединение начинается с обычного HTTP-запроса, который затем &quot;обновляется&quot; до WebSocket-соединения через HTTP-заголовок Upgrade.
+
+Как работает WebSocket:
+
+Установление соединения: Клиент отправляет HTTP-запрос с заголовком Upgrade: websocket на сервер, указывая на желание перейти к протоколу WebSocket. Сервер отвечает подтверждением, если поддерживает WebSockets, и соединение устанавливается.
+Передача данных: После установления соединения клиент и сервер могут обмениваться данными в обе стороны по мере необходимости. Сообщения передаются как фреймы (frames), которые могут содержать текстовые или бинарные данные.
+Закрытие соединения: Соединение может быть закрыто любой стороной в любой момент времени с отправкой соответствующего фрейма закрытия.
+
+Применения WebSocket:
+
+Реальное время: Приложения, требующие обновлений в реальном времени, такие как чаты, системы обмена сообщениями, онлайн-игры, торги на биржах.
+Потоковая передача данных: Веб-сокеты идеально подходят для приложений, передающих данные в реальном времени, таких как спортивные трансляции или финансовые данные.
+Уведомления и оповещения: Приложения, отправляющие мгновенные уведомления пользователям, например, социальные сети или системы мониторинга.
+Коллаборативные инструменты: Инструменты для совместной работы, такие как совместное редактирование документов или доски с заметками.
+
+Преимущества WebSocket:
+Эффективность: Меньший накладной расход и постоянное соединение делают WebSockets более эффективными для приложений, требующих частого обмена данными.
+Скорость: WebSockets обеспечивают более низкую задержку, что делает их идеальными для приложений, работающих в реальном времени.
+Простота использования: WebSockets имеют простой API, который легко интегрируется с современными веб-приложениями.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #237</div>
+                <div class="question">Что должно находиться внутри пода?</div>
+                <div class="answer">Внутри пода размещаются один или несколько контейнеров, выполняющих взаимосвязанные задачи. Также могут быть volume для хранения данных и sidecar-контейнеры для дополнительных функций, таких как логирование.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #238</div>
+                <div class="question">Что такое SLA, SLO, SLI?</div>
+                <div class="answer">Эти три термина относятся к управлению надежностью и качеством IT-сервисов. Они помогают определить, измерить и гарантировать уровень обслуживания пользователей.
+
+SLI (Service Level Indicator) – Показатель уровня сервиса  
+
+SLI – это метрика, которая показывает, насколько хорошо работает сервис.  
+- Доступность (например, uptime 99.9%)  
+- Время ответа API (например, менее 200 мс)  
+- Ошибки запросов (например, не более 1% 5xx ошибок)  
+
+SLO (Service Level Objective) – Целевой уровень сервиса  
+
+SLO – это цель, которую компания ставит для SLI.  
+Доступность 99.9% сервиса в месяц.  
+Среднее время ответа API ≤ 200 мс.  
+
+SLA (Service Level Agreement) – Соглашение об уровне сервиса  
+  
+SLA – это официальное соглашение между клиентом и провайдером сервиса, которое описывает обязательства и штрафы за их невыполнение.  
+- Если доступность меньше 99.9%, клиент получает возврат денег.  
+- Если среднее время ответа API больше 500 мс, клиент получает скидку.  
+
+Как они связаны?  
+
+SLI (метрика) → измеряет, насколько хорош сервис.  
+SLO (цель) → устанавливает, каким должен быть сервис.  
+SLA (договор) → фиксирует обязательства и штрафы.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #239</div>
+                <div class="question">Как запустишь приложение в Kubernetes?</div>
+                <div class="answer">Чтобы запустить приложение в Kubernetes:
+1.  Подготовь манифест YAML с описанием (обычно это Deployment или StatefulSet).
+2.  Убедись, что есть нужный Service, чтобы обеспечить доступ к приложению.
+3.  Применяешь манифест командой:
+4.  kubectl apply -f &lt;файл&gt;.yaml
+Приложение развернётся в виде подов, которые будут управляться контроллером.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #241</div>
+                <div class="question">Что произойдёт с контейнером, если будет превышен лимит по памяти?</div>
+                <div class="answer">Контейнер будет немедленно остановлен, и статус пода отразит ошибку OOMKilled. Это защита от выхода за пределы выделенных ресурсов. Такой лимит жёсткий, и превышение приводит к завершению процесса.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #242</div>
+                <div class="question">В чём преимущество Kubernetes как платформы?</div>
+                <div class="answer">Это платформа для оркестрации контейнеров, которая упрощает развертывание, управление и масштабирование приложений. Она имеет ряд ключевых преимуществ, которые делают её популярной в DevOps и облачных решениях.
+
+Основные плюсы
+
+➕Автоматизация управления приложениями
+Kubernetes автоматически запускает, останавливает и перезапускает контейнеры при сбоях. Поддерживает заданное число экземпляров (реплик) приложений, перезапуская или создавая их при необходимости.
+
+➕Масштабирование (горизонтальное и вертикальное)
+Ручное: Легко увеличить или уменьшить количество контейнеров (поды) для приложения. Автоматическое: Используя Horizontal Pod Autoscaler (HPA), Kubernetes добавляет ресурсы при увеличении нагрузки.
+
+➕Высокая доступность (HA)
+Kubernetes поддерживает отказоустойчивость: Если один узел (node) выходит из строя, поды перемещаются на другие узлы. Внутренний балансировщик нагрузки распределяет трафик между подами.
+
+➕Платформонезависимость
+Kubernetes работает в любых средах: Локальных (например, Minikube). В публичных облаках (AWS, Google Cloud, Azure). В гибридных и on-premise инфраструктурах.
+
+➕Управление конфигурацией и секретами
+Kubernetes упрощает работу с настройками: ConfigMaps: Для управления конфигурационными данными.
+Secrets: Для безопасного хранения конфиденциальной информации, например, ключей API или паролей.
+
+➕Эффективное использование ресурсов
+Kubernetes помогает оптимизировать потребление CPU и памяти: Устанавливая минимальные и максимальные лимиты ресурсов для каждого приложения. Перераспределяя ресурсы между приложениями.
+
+➕Расширяемость
+Kubernetes поддерживает плагины и кастомизацию: Сетевые плагины (Calico, Flannel) для настройки сети. Системы мониторинга (Prometheus, Grafana). Операторы для автоматизации сложных задач.
+
+➕Сообщество и экосистема
+Kubernetes поддерживается большинством крупных облачных провайдеров. Обширная экосистема инструментов: Helm для управления шаблонами, ArgoCD для GitOps, Istio для сетевых взаимодействий.
+
+Когда особенно полезен?
+
+Разработка микросервисных архитектур. Частые релизы и автоматизация CI/CD. Работа с масштабируемыми приложениями. Использование гибридных или мультиоблачных решений.
+
+Ставь  и забирай</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #247</div>
+                <div class="question">Чем бы вы заменили Logstash на Windows?</div>
+                <div class="answer">На Windows Logstash часто заменяют на Filebeat, поскольку он легче, проще настраивается и эффективно выполняет задачи по пересылке логов, особенно если преобразование логов минимально.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #249</div>
+                <div class="question">Как задать права на всё?</div>
+                <div class="answer">Если ты хочешь дать максимальные права всем (rwx):
+-  Числовая форма: chmod 777 файл
+-  7 = 4 (r) + 2 (w) + 1 (x)
+-  Символьная форма: chmod a+rwx файл
+-  a = all
+Осторожно: такие права дают полный доступ всем, включая анонимных пользователей.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #251</div>
+                <div class="question">Как организовать метод хранения ролей, чтобы они были доступны плейбуку, когда он вызывается?</div>
+                <div class="answer">Роли должны находиться в директории roles, либо можно задать путь к ним через параметр roles_path в файле ansible.cfg.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #253</div>
+                <div class="question">Как дебажить поды?</div>
+                <div class="answer">Для отладки подов в Kubernetes сначала можно посмотреть их логи командой kubectl logs &lt;pod-name&gt;. Если в поде несколько контейнеров, нужно указать имя контейнера через -c. Чтобы попасть внутрь контейнера, используют kubectl exec -it &lt;pod-name&gt; -- /bin/sh или /bin/bash. Также важно использовать kubectl describe pod &lt;pod-name&gt;, чтобы получить подробную информацию об ивентах, причине ошибок и статусе. Если под перезапускается, пригодится команда kubectl logs --previous, которая показывает логи предыдущего запуска контейнера.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #255</div>
+                <div class="question">По какой причине inode могут закончиться</div>
+                <div class="answer">Inodes заканчиваются, когда файловая система достигает максимального количества файлов, которые можно создать, даже если еще есть свободное место на диске. Это может произойти при наличии большого количества мелких файлов, которые занимают inodes, особенно в файловых системах с ограниченным количеством inodes. Когда inodes исчерпаны, создание новых файлов становится невозможным, несмотря на наличие доступного дискового пространства.</div>
+            </div>
+
+            

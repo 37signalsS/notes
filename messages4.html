@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DevOps Тестовые Задания - Часть 4</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6; 
+            color: #333; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .qa-list { padding: 30px; }
+        .qa-item { 
+            margin-bottom: 30px; 
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .qa-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .question-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-bottom: 12px;
+        }
+        .question { 
+            font-size: 1.3em; 
+            font-weight: 600; 
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+        .answers-list {
+            list-style: none;
+            padding: 0;
+        }
+        .answer-item {
+            padding: 10px 15px;
+            margin-bottom: 8px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            color: #4a5568;
+        }
+        .answer-item:hover {
+            background: #edf2f7;
+            border-color: #cbd5e0;
+        }
+        .answer-text { 
+            color: #4a5568;
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+        pre {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        code {
+            background: #edf2f7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        .type-badge {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            margin-left: 10px;
+        }
+        .type-badge.qa {
+            background: #ed8936;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>DevOps Тестовые Задания</h1>
+            <p>Вопросы с вариантами ответов и Q&A</p>
+            <p style="margin-top: 10px; font-size: 1em;">Всего вопросов: 29 (Тесты: 533, Q&A: 43)</p>
+        </div>
+        <div class="qa-list">
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #536<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что значит ванильный Kubernetes?</div>
+                <div class="answer-text">Это чистая, стандартная установка Kubernetes без обёрток или специфичных дополнений от облачных провайдеров (таких как GKE, EKS, AKS). Ванильный кластер предоставляет полный контроль, но требует ручной настройки всех компонентов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #537<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Чем отличаются Deployment и ReplicaSet?</div>
+                <div class="answer-text">1. ReplicaSet: управляет количеством подов, обеспечивая их заданное количество. Сам по себе ReplicaSet не поддерживает обновления или откаты.
+2. Deployment: предоставляет более высокоуровневую абстракцию над ReplicaSet. Он отвечает за управление обновлениями, откатами и масштабированием. При необходимости Deployment создаёт и контролирует ReplicaSet.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #541<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Пример асимметричного шифрования?</div>
+                <div class="answer-text">-  RSA — самый популярный алгоритм.
+-  Пример: клиент шифрует данные публичным ключом сервера, а сервер расшифровывает их своим приватным.
+Также используется в TLS-сертификатах, PGP, SSH.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #543<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как посмотреть размер папки на диске?</div>
+                <div class="answer-text">Команда du -sh &lt;путь к папке&gt; показывает размер папки в человеко-читаемом формате.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #544<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что такое декларативный подход?</div>
+                <div class="answer-text">Декларативный подход — это способ описания желаемого конечного состояния, а не шагов, как до него добраться. Например, мы говорим, что &quot;пакет nginx должен быть установлен&quot;, а не &quot;скачай и установи nginx&quot;.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #546<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Какие преимущества HTTP/2 перед HTTP/1?</div>
+                <div class="answer-text">-  Мультиплексирование — несколько запросов по одному соединению.
+-  Сжатие заголовков (HPACK).
+-  Сервер push — сервер может отправить данные заранее.
+-  Меньше оверхеда, нет блокировок запросов.
+Итог: быстрее, надёжнее, меньше сетевой нагрузки.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #547<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что такое сокет?</div>
+                <div class="answer-text">Сокет — это конечная точка двустороннего сетевого соединения.
+Используется для обмена данными между приложениями по сети.
+Может быть:
+-  TCP-сокет (надёжный, соединение);
+-  UDP-сокет (без соединения, быстрее).</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #550<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Кто-нибудь использует ReplicaSet? Как считаете, нормальная ли это тема использовать ReplicaSet?</div>
+                <div class="answer-text">В большинстве случаев ReplicaSet используется опосредованно через Deployment. Прямое использование ReplicaSet возможно, если нужно точечно управлять pod&apos;ами без стратегии обновлений, но это редко требуется. Лучше использовать Deployment как стандарт.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #551<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как работает DHCP?</div>
+                <div class="answer-text">DHCP (Dynamic Host Configuration Protocol):
+1.  Клиент отправляет DHCPDISCOVER.
+2.  Сервер отвечает DHCPOFFER.
+3.  Клиент выбирает и отправляет DHCPREQUEST.
+4.  Сервер подтверждает DHCPACK.
+В результате клиент получает: IP, маску, шлюз, DNS и др. Это автоматизация настройки сети.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #552<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что известно про workflow GitLab?</div>
+                <div class="answer-text">GitLab CI/CD workflow — это последовательность стадий (stages) и заданий (jobs), определённых в .gitlab-ci.yml. Стадии выполняются последовательно: build → test → deploy. Jobs могут выполняться параллельно внутри одной стадии. Также можно использовать правила (rules), переменные (env), артефакты и условия запуска.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #553<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как работает NAT?</div>
+                <div class="answer-text">NAT (Network Address Translation):
+-  Преобразует внутренние IP-адреса в один внешний IP.
+-  Позволяет многим устройствам пользоваться Интернетом через один адрес.
+-  Типы:
+-  SNAT — исходящий трафик (от локального к Интернету).
+-  DNAT / Port forwarding — входящий трафик (от Интернета к устройству).
+-  Обеспечивает безопасность и экономию IP-адресов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #554<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как называются контейнеры, которые проверяют команды?</div>
+                <div class="answer-text">Такие контейнеры называются probe-контейнеры или точнее — используются liveness, readiness и startup probes, встроенные в спецификацию pod&apos;а. Они не отдельные контейнеры, но выполняют проверку состояния основного.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #555<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что такое service monitor в Kubernetes?</div>
+                <div class="answer-text">ServiceMonitor — это объект в Kubernetes, используемый в связке с Prometheus для мониторинга сервисов. Он определяет, какие эндпоинты и метрики должны собираться Prometheus. Это часть системы мониторинга, которая позволяет автоматизировать сбор данных о состоянии сервисов.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #556<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Какой подход использует Ansible — декларативный или императивный?</div>
+                <div class="answer-text">Ansible преимущественно использует декларативный подход, описывая желаемое состояние. Однако, в некоторых случаях допускается императивный стиль — например, когда используются shell-команды или блоки с условной логикой.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #557<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Какие уровни модели TCP/IP?</div>
+                <div class="answer-text">1.  Прикладной (Application) — HTTP, FTP, DNS, SMTP и др.
+2.  Транспортный (Transport) — TCP, UDP.
+3.  Сетевой (Internet) — IP, ICMP, ARP.
+4.  Канальный (Link/Network Access) — Ethernet, Wi-Fi, драйверы устройств.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #558<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как работает HTTPS?</div>
+                <div class="answer-text">1.  HTTPS использует протокол HTTP с добавлением шифрования через SSL/TLS.
+2.  Клиент и сервер обмениваются ключами для установки защищённого соединения.
+3.  Все передаваемые данные шифруются, что обеспечивает конфиденциальность, целостность и аутентификацию.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #562<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что известно о стеке TCP/IP?</div>
+                <div class="answer-text">Стек TCP/IP — это модель сетевых протоколов, лежащая в основе Интернета.
+Он определяет, как данные упаковываются, передаются, маршрутизируются и принимаются.
+Основан на четырёх уровнях, проще и практичнее по сравнению с 7-уровневой моделью OSI.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #563<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что такое SLA, SLO, SLI?</div>
+                <div class="answer-text">-  SLA (Service Level Agreement) — договорной уровень доступности между клиентом и поставщиком (например, 99.9% аптайма).
+-  SLO (Service Level Objective) — технические цели внутри компании (например, latency &lt; 100ms в 95% случаев).
+-  SLI (Service Level Indicator) — метрика (например, количество ошибок, время ответа), которая измеряет качество сервиса.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #566<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что вообще означает eviction или evict?</div>
+                <div class="answer-text">Evict означает &quot;выселить&quot; или &quot;удалить&quot;. В Kubernetes это означает, что pod удаляется с текущей ноды — либо временно (будет пересоздан), либо навсегда (если не управляется контроллером). Это часть механизма автоматического самовосстановления и балансировки нагрузки.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #567<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Как объявить хост, если у нас inventory с расширением YAML?</div>
+                <div class="answer-text">В YAML-инвентори хосты описываются под ключом hosts, а группы — под children. Пример:
+All.
+Это более структурированный способ, чем обычный INI-формат.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #568<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Когда выполняются факты в Ansible?</div>
+                <div class="answer-text">Факты (facts) — это информация о целевой машине (ОС, IP, пакеты и т.д.). Они собираются в начале каждого play, если включено gather_facts: true (по умолчанию включено). Также можно собирать их вручную через модуль setup.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #569<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Файловые системы: какие подводные камни?</div>
+                <div class="answer-text">Работа с файловыми системами включает использование EXT4, XFS, ZFS, Btrfs, NTFS и других.
+Подводные камни:
+-  EXT4 – отсутствие встроенного сжатия и шифрования, но высокая стабильность.
+-  XFS – плохо подходит для маленьких файлов, но хорошо масштабируется.
+-  ZFS/Btrfs – требуют больше памяти из-за механизма снапшотов и самовосстановления.
+-  NTFS на Linux – поддерживается через ntfs-3g, но есть ограничения.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #571<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Есть две приватных сети. Как сделать так, чтобы хосты внутри них общались?</div>
+                <div class="answer-text">Варианты решения:
+1.  VPN-туннель между сетями:
+-  OpenVPN, WireGuard, IPsec — надёжный способ объединения.
+-  Прозрачный доступ между подсетями.
+2.  Маршрутизация:
+-  Настроить роутер или Linux-хост с IP forwarding.
+-  Добавить маршруты на каждом конце к нужным подсетям.
+3.  GRE-туннель или VXLAN — для &quot;протягивания&quot; L2 поверх L3.
+Важно: следить за firewall/iptables и разрешением маршрутов на хостах.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #572<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Что такое keep-alive и зачем он нужен?</div>
+                <div class="answer-text">Keep-alive — это механизм удержания соединения между клиентом и сервером открытым после выполнения запроса. Он позволяет повторно использовать соединение для нескольких запросов, снижая задержки и нагрузку на сеть.</div>
+            </div>
+
+            <div class="qa-item">
+                <div class="question-number">Вопрос #574<span class="type-badge qa">Q&A</span></div>
+                <div class="question">Сколько часов живёт один вал Prometheus CI/CD?</div>
+                <div class="answer-text">Файлы WAL (write-ahead log) в Prometheus обычно хранятся 2 часа по умолчанию, после чего происходит компрессия данных в блоки. Этот параметр можно настроить через флаг запуска --storage.tsdb.min-block-duration.</div>
+            </div>
+
+            

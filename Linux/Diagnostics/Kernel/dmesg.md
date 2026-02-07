@@ -17,7 +17,7 @@
 
 ### Интеграция с `systemd-journald`
 
-В современных системах с `systemd` логи ядра также собираются в `journald` и доступны через команду `journalctl -k` или `journalctl --dmesg`. `journalctl` предоставляет более мощные средства для фильтрации, но `dmesg` остается быстрым инструментом для оперативной диагностики, особенно в окружениях, где `journald` недоступен (например, в `initramfs`).
+В современных системах с `systemd` логи ядра также собираются в [`systemd-journald`](../../SystemAdministration/Logging/journald.md) и доступны через команду [`journalctl -k`](../Logging/journalctl.md#логи-ядра-аналог-dmesg) или `journalctl --dmesg`. [`journalctl`](../Logging/journalctl.md) предоставляет более мощные средства для фильтрации, но `dmesg` остается быстрым инструментом для оперативной диагностики, особенно в окружениях, где `journald` недоступен (например, в `initramfs`).
 
 ## Практические сценарии
 

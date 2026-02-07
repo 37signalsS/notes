@@ -80,7 +80,7 @@ sudo unshare --mount --uts --ipc --net --pid --fork --user --map-root-user bash
 
 # Внутри этой оболочки:
 hostname new-host # меняем имя хоста, снаружи оно не изменится
-ps -ef # видим только процесс bash и ps
+[`ps -ef`](../../Diagnostics/Processes/ps.md) # видим только процесс bash и ps
 ```
 
 ### Вход в существующее пространство имён с `nsenter`

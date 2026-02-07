@@ -1,46 +1,52 @@
 # Установка стека Prometheus из бинарных файлов
 
-## 1. Определения
+### Определения
 
-- **Prometheus Server**: Основной компонент, отвечающий за сбор, хранение и обработку метрик в формате временных рядов (TSDB).
-- **Node Exporter**: Экспортер для сбора метрик с аппаратного и программного обеспечения хостовой системы (CPU, RAM, диск, сеть).
-- **Blackbox Exporter**: Экспортер для проверки доступности эндпоинтов по различным протоколам (HTTP, HTTPS, TCP, ICMP, DNS). Работает по принципу "черного ящика".
-- **Alertmanager**: Обрабатывает алерты, отправленные Prometheus. Отвечает за их дедупликацию, группировку, и маршрутизацию в различные системы уведомлений (Email, Slack, PagerDuty).
-- **Pushgateway**: Позволяет кратковременным и batch-заданиям, которые не могут быть постоянно доступны для скрейпинга, отправлять свои метрики в Prometheus.
-
-## 2. Основные концепции
-
-### 2.1. Принцип установки
-
-1.  **Создание пользователя**: Для изоляции процессов и повышения безопасности для каждого компонента (кроме Node Exporter, которому нужен root-доступ) создается отдельный системный пользователь без прав на вход в систему.
-2.  **Загрузка и размещение бинарных файлов**: Архив с последней стабильной версией загружается с официального репозитория на GitHub, распаковывается, и исполняемый файл помещается в `/usr/local/bin/`.
-3.  **Создание конфигурации**: Создаются необходимые каталоги (`/etc/<component>`, `/var/lib/<component>`) и файлы конфигурации.
-4.  **Настройка `systemd` сервиса**: Для управления процессом (автозапуск, перезапуск) создается unit-файл в `/usr/lib/systemd/system/`. Параметры запуска выносятся в отдельный environment-файл в `/etc/sysconfig/`.
-
-### 2.2. Управление через `systemd`
-
-После создания unit-файла для каждого компонента используются стандартные команды `systemctl`:
-- `systemctl daemon-reload`: Перечитать конфигурацию `systemd`.
-- `systemctl start <service>`: Запустить сервис.
-- `systemctl enable <service>`: Включить автозапуск сервиса при старте системы.
-- `systemctl status <service>`: Проверить статус сервиса.
+*   **Prometheus Server**: Основной компонент стека, отвечающий за сбор, хранение и обработку метрик в формате временных рядов (TSDB).
+*   **Node Exporter**: Экспортер для сбора метрик с аппаратного и программного обеспечения хостовой системы (CPU, RAM, диск, сеть).
+*   **Blackbox Exporter**: Экспортер для проверки доступности эндпоинтов по различным протоколам (HTTP, HTTPS, TCP, ICMP, DNS). Работает по принципу "черного ящика".
+*   **Alertmanager**: Обрабатывает алерты, отправленные Prometheus. Отвечает за их дедупликацию, группировку и маршрутизацию в различные системы уведомлений (Email, Slack, PagerDuty).
+*   **Pushgateway**: Позволяет кратковременным и batch-заданиям, которые не могут быть постоянно доступны для скрейпинга, отправлять свои метрики в Prometheus.
 
 ---
 
-## 3. Практические сценарии: Установка компонентов
+### Основные концепции
 
-### 3.1. Установка Prometheus Server
+#### Принцип установки
 
-**Версия**: 3.8.1
+1.  **Создание пользователя**: Для изоляции процессов и повышения безопасности для каждого компонента создается отдельный системный пользователь без прав на вход в систему. Исключением является `Node Exporter`, которому для сбора некоторых метрик может потребоваться `root`-доступ.
+2.  **Загрузка и размещение бинарных файлов**: Архив с последней стабильной версией компонента загружается с официального репозитория на GitHub, распаковывается, а исполняемый файл помещается в директорию `/usr/local/bin/`.
+3.  **Создание конфигурации**: Создаются необходимые каталоги (например, `/etc/<component>`, `/var/lib/<component>`) и файлы конфигурации для компонента.
+4.  **Настройка `systemd` сервиса**: Для управления процессом (автозапуск, перезапуск) создается unit-файл в `/etc/systemd/system/`. Параметры запуска выносятся в отдельный environment-файл в `/etc/sysconfig/` (для CentOS/RHEL) или интегрируются напрямую в unit-файл.
+
+#### Управление через `systemd`
+
+После создания unit-файла для каждого компонента используются стандартные команды `systemctl`:
+
+*   `systemctl daemon-reload`: Перечитать конфигурацию `systemd`.
+*   `systemctl start <service>`: Запустить сервис.
+*   `systemctl enable <service>`: Включить автозапуск сервиса при старте системы.
+*   `systemctl status <service>`: Проверить статус сервиса.
+*   `systemctl stop <service>`: Остановить сервис.
+*   `systemctl restart <service>`: Перезапустить сервис.
+*   `systemctl reload <service>`: Перезагрузить конфигурацию сервиса без его полной остановки (поддерживается не всеми сервисами).
+
+---
+
+### Практические сценарии
+
+> **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
+
+#### 3.1. Установка Prometheus Server
 
 1.  **Создание пользователя**:
     ```bash
-    useradd prometheus --comment "Prometheus server user" --shell /bin/false
+    useradd --no-create-home --shell /bin/false prometheus --comment "Prometheus server user"
     ```
 
-2.  **Загрузка и установка**:
+2.  **Загрузка и установка (пример для версии 2.45.0)**:
     ```bash
-    PROMETHEUS_VERSION="3.8.1"
+    PROMETHEUS_VERSION="2.45.0" # Проверьте последнюю стабильную версию
     cd /tmp
     wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
     tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
@@ -65,9 +71,9 @@
     EOF
     ```
 
-5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/prometheus.service`):
+5.  **Создание systemd-сервиса** (`/etc/systemd/system/prometheus.service`):
     ```bash
-    cat <<EOF > /usr/lib/systemd/system/prometheus.service
+    cat <<EOF > /etc/systemd/system/prometheus.service
     [Unit]
     Description=Prometheus Server
     Documentation=https://github.com/prometheus/prometheus
@@ -78,8 +84,8 @@
     User=prometheus
     Group=prometheus
     EnvironmentFile=/etc/sysconfig/prometheus
-    ExecStart=/usr/local/bin/prometheus $OPTIONS
-    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/local/bin/prometheus \$OPTIONS
+    ExecReload=/bin/kill -HUP \$MAINPID
     TimeoutStopSec=20s
     SendSIGKILL=no
 
@@ -96,13 +102,11 @@
     curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/graph # Ожидаемый ответ: 200
     ```
 
-### 3.2. Установка Node Exporter
+#### 3.2. Установка Node Exporter
 
-**Версия**: 1.10.2
-
-1.  **Загрузка и установка**:
+1.  **Загрузка и установка (пример для версии 1.6.0)**:
     ```bash
-    NODE_EXPORTER_VERSION="1.10.2"
+    NODE_EXPORTER_VERSION="1.6.0" # Проверьте последнюю стабильную версию
     cd /tmp
     wget https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
     tar xvfz node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
@@ -110,16 +114,16 @@
     ```
 
 2.  **Создание файла с опциями запуска** (`/etc/sysconfig/node_exporter`):
-    > Для сбора всех метрик `node_exporter` запускается от `root`.
+    > Для сбора всех метрик `node_exporter` рекомендуется запускать от `root`.
     ```bash
     cat <<EOF > /etc/sysconfig/node_exporter
-    OPTIONS=""
+    OPTIONS="--web.listen-address=:9100"
     EOF
     ```
 
-3.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/node_exporter.service`):
+3.  **Создание systemd-сервиса** (`/etc/systemd/system/node_exporter.service`):
     ```bash
-    cat <<EOF > /usr/lib/systemd/system/node_exporter.service
+    cat <<EOF > /etc/systemd/system/node_exporter.service
     [Unit]
     Description=Prometheus Node exporter for machine metrics
     Documentation=https://github.com/prometheus/node_exporter
@@ -129,8 +133,8 @@
     Restart=always
     User=root
     EnvironmentFile=/etc/sysconfig/node_exporter
-    ExecStart=/usr/local/bin/node_exporter $OPTIONS
-    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/local/bin/node_exporter \$OPTIONS
+    ExecReload=/bin/kill -HUP \$MAINPID
     TimeoutStopSec=20s
     SendSIGKILL=no
 
@@ -147,13 +151,11 @@
     curl -s -o /dev/null -w "%{http_code}" http://localhost:9100/metrics # Ожидаемый ответ: 200
     ```
 
-### 3.3. Установка Blackbox Exporter
+#### 3.3. Установка Blackbox Exporter
 
-**Версия**: 0.28.0
-
-1.  **Загрузка и установка**:
+1.  **Загрузка и установка (пример для версии 0.24.0)**:
     ```bash
-    BLACKBOX_EXPORTER_VERSION="0.28.0"
+    BLACKBOX_EXPORTER_VERSION="0.24.0" # Проверьте последнюю стабильную версию
     cd /tmp
     wget https://github.com/prometheus/blackbox_exporter/releases/download/v${BLACKBOX_EXPORTER_VERSION}/blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz
     tar xvfz blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz
@@ -175,9 +177,9 @@
     EOF
     ```
 
-4.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/blackbox_exporter.service`):
+4.  **Создание systemd-сервиса** (`/etc/systemd/system/blackbox_exporter.service`):
     ```bash
-    cat <<EOF > /usr/lib/systemd/system/blackbox_exporter.service
+    cat <<EOF > /etc/systemd/system/blackbox_exporter.service
     [Unit]
     Description=Prometheus Blackbox Exporter
     Documentation=https://github.com/prometheus/blackbox_exporter
@@ -188,8 +190,8 @@
     User=nobody
     Group=nobody
     EnvironmentFile=/etc/sysconfig/blackbox_exporter
-    ExecStart=/usr/local/bin/blackbox_exporter $OPTIONS
-    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/local/bin/blackbox_exporter \$OPTIONS
+    ExecReload=/bin/kill -HUP \$MAINPID
 
     [Install]
     WantedBy=multi-user.target
@@ -203,17 +205,15 @@
     curl -s -o /dev/null -w "%{http_code}" http://localhost:9115 # Ожидаемый ответ: 200
     ```
 
-### 3.4. Установка Alertmanager
-
-**Версия**: 0.30.0
+#### 3.4. Установка Alertmanager
 
 1.  **Создание пользователя**:
     ```bash
-    useradd --comment "User to run Alertmanager" --shell /bin/false alertmanager
+    useradd --no-create-home --shell /bin/false alertmanager --comment "User to run Alertmanager"
     ```
-2.  **Загрузка и установка**:
+2.  **Загрузка и установка (пример для версии 0.26.0)**:
     ```bash
-    ALERTMANAGER_VERSION="0.30.0"
+    ALERTMANAGER_VERSION="0.26.0" # Проверьте последнюю стабильную версию
     cd /tmp
     wget https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
     tar xvfz alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz
@@ -238,9 +238,9 @@
     EOF
     ```
 
-5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/alertmanager.service`):
+5.  **Создание systemd-сервиса** (`/etc/systemd/system/alertmanager.service`):
     ```bash
-    cat <<EOF > /usr/lib/systemd/system/alertmanager.service
+    cat <<EOF > /etc/systemd/system/alertmanager.service
     [Unit]
     Description=Prometheus Alertmanager
     Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
@@ -251,8 +251,8 @@
     Group=alertmanager
     Restart=always
     EnvironmentFile=/etc/sysconfig/alertmanager
-    ExecStart=/usr/local/bin/alertmanager $OPTIONS
-    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/local/bin/alertmanager \$OPTIONS
+    ExecReload=/bin/kill -HUP \$MAINPID
     [Install]
     WantedBy=multi-user.target
     EOF
@@ -266,18 +266,16 @@
     curl -s -o /dev/null -w "%{http_code}" http://localhost:9093 # Ожидаемый ответ: 200
     ```
 
-### 3.5. Установка Pushgateway
-
-**Версия**: 1.11.2
+#### 3.5. Установка Pushgateway
 
 1.  **Создание пользователя**:
     ```bash
-    useradd pushgateway --comment "Pushgateway server user" --shell /bin/false
+    useradd --no-create-home --shell /bin/false pushgateway --comment "Pushgateway server user"
     ```
 
-2.  **Загрузка и установка**:
+2.  **Загрузка и установка (пример для версии 1.7.0)**:
     ```bash
-    PUSHGATEWAY_VERSION="1.11.2"
+    PUSHGATEWAY_VERSION="1.7.0" # Проверьте последнюю стабильную версию
     cd /tmp
     wget https://github.com/prometheus/pushgateway/releases/download/v${PUSHGATEWAY_VERSION}/pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
     tar xvfz pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64.tar.gz
@@ -295,15 +293,15 @@
         --log.level=info"
     EOF
     ```
-4. **Создание каталога для хранения метрик**:
-   ```bash
-   mkdir /var/lib/pushgateway
-   chown pushgateway:pushgateway /var/lib/pushgateway
-   ```
-
-5.  **Создание systemd-сервиса** (`/usr/lib/systemd/system/pushgateway.service`):
+4.  **Создание каталога для хранения метрик**:
     ```bash
-    cat <<EOF > /usr/lib/systemd/system/pushgateway.service
+    mkdir -p /var/lib/pushgateway
+    chown pushgateway:pushgateway /var/lib/pushgateway
+    ```
+
+5.  **Создание systemd-сервиса** (`/etc/systemd/system/pushgateway.service`):
+    ```bash
+    cat <<EOF > /etc/systemd/system/pushgateway.service
     [Unit]
     Description=Prometheus Pushgateway
     Documentation=https://github.com/prometheus/pushgateway
@@ -314,8 +312,8 @@
     Group=pushgateway
     EnvironmentFile=/etc/sysconfig/pushgateway
     Restart=always
-    ExecStart=/usr/local/bin/pushgateway $OPTIONS
-    ExecReload=/bin/kill -HUP $MAINPID
+    ExecStart=/usr/local/bin/pushgateway \$OPTIONS
+    ExecReload=/bin/kill -HUP \$MAINPID
     TimeoutStopSec=20s
     SendSIGKILL=no
 
@@ -331,28 +329,30 @@
     systemctl enable pushgateway
     curl -s -o /dev/null -w "%{http_code}" http://localhost:9091/-/healthy # Ожидаемый ответ: 200
     ```
+
 ---
 
-## 4. Продвинутые детали
+### Дополнительная информация
 
-### 4.1. Проверка конфигурации
+#### Проверка конфигурации компонентов
 
-Перед применением изменений в конфигурации Prometheus всегда проверяйте её синтаксис с помощью утилиты `promtool`, которая устанавливается вместе с сервером. Это помогает избежать ошибок, которые могут привести к остановке сбора метрик.
+Перед применением изменений в конфигурации Prometheus и Alertmanager всегда проверяйте синтаксис с помощью утилит `promtool` и `amtool`. Это помогает избежать ошибок, которые могут привести к остановке сбора метрик или обработки оповещений.
 
-```bash
-promtool check config /etc/prometheus/prometheus.yml
-```
-Для Alertmanager также существует утилита `amtool` для проверки конфигурации и управления состоянием.
+*   **Prometheus**:
+    ```bash
+    promtool check config /etc/prometheus/prometheus.yml
+    ```
+    Подробнее об утилите `promtool` можно прочитать в заметке [`promtool_and_best_practices.md`](../promtool_and_best_practices.md).
 
-```bash
-amtool check-config /etc/alertmanager/alertmanager.yml
-```
-Подробнее об утилите `promtool` можно прочитать в заметке [`promtool_and_best_practices.md`](./promtool_and_best_practices.md).
+*   **Alertmanager**:
+    ```bash
+    amtool check-config /etc/alertmanager/alertmanager.yml
+    ```
 
-### 4.2. Безопасность
+#### Рекомендации по безопасности
 
-- **Пользователи**: Запуск от непривилегированных пользователей снижает потенциальный ущерб в случае эксплуатации уязвимостей.
-- **Сетевые доступы**: Настраивайте файрвол для ограничения доступа к веб-интерфейсам и API компонентов только с доверенных IP-адресов.
-- **TLS**: Для защиты трафика между компонентами и при доступе пользователей используйте TLS-шифрование, например, с помощью обратного прокси-сервера (Nginx, Traefik).
+При развертывании компонентов Prometheus следуйте основным принципам безопасности:
 
-```
+*   **Пользователи**: Запускайте каждый компонент от непривилегированного пользователя. Это снижает потенциальный ущерб в случае эксплуатации уязвимостей.
+*   **Сетевые доступы**: Настраивайте файрвол для ограничения доступа к веб-интерфейсам и API компонентов только с доверенных IP-адресов.
+*   **TLS**: Для защиты трафика между компонентами и при доступе пользователей используйте TLS-шифрование, например, с помощью обратного прокси-сервера (Nginx, Traefik).

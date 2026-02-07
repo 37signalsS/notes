@@ -1,16 +1,12 @@
 # Prometheus Operator
 
-**Prometheus Operator** был создан для упрощения управления стеком [[../overview.md|Prometheus]], [[../alertmanager.md|Alertmanager]] и [[../../Grafana/grafana_overview.md|Grafana]] как единым целым. Он является ядром популярного Helm-чарта `kube-prometheus-stack`. Устанавливая его, вы получаете не просто Prometheus, а целую экосистему: Grafana с набором дашбордов, стандартные [[../exporters.md|экспортеры]], Alertmanager и, что самое главное, мощный механизм для декларативного управления конфигурацией.
+## Определения
 
-## 1. Определения
+**Prometheus Operator** — это специализированный контроллер Kubernetes, созданный для упрощения управления полным стеком мониторинга, включающим [[../overview.md|Prometheus]], [[../alertmanager.md|Alertmanager]] и [[../../Grafana/grafana_overview.md|Grafana]]. Он является ядром популярного Helm-чарта `kube-prometheus-stack` и использует [[../../Kubernetes/Concepts/kubernetes_operators.md#2.1.-Custom-Resource-Definitions-(CRD)|пользовательские ресурсы (Custom Resources)]] для автоматизации задач развертывания и конфигурации. Детальное описание концепции, её назначения и принципов работы доступно в основной заметке: [[../../Kubernetes/Concepts/kubernetes_operators.md|Kubernetes Операторы]].
 
-В основе Prometheus Operator лежит концепция **Оператора Kubernetes**. Вкратце, оператор — это специализированный контроллер, который использует [[../../Kubernetes/Concepts/kubernetes_operators.md#2.1.-Custom-Resource-Definitions-(CRD)|пользовательские ресурсы (Custom Resources)]] для управления приложениями и их компонентами. Он автоматизирует задачи, которые обычно требуют вмешательства человека.
+Оператор отслеживает изменения в своих кастомных ресурсах и преобразует их в реальные объекты Kubernetes, такие как [[../../Kubernetes/Base/statefulset.md|StatefulSet'ы]], [[../../Kubernetes/Base/configmap.md|ConfigMap'ы]] и [[../../Kubernetes/Base/secret.md|Secret'ы]].
 
-Prometheus Operator следит за появлением и изменением "своих" кастомных ресурсов и автоматически преобразует их в реальные объекты кластера: [[../../Kubernetes/Base/statefulset.md|StatefulSet'ы]] для Prometheus, [[../../Kubernetes/Base/configmap.md|ConfigMap'ы]] с конфигурацией, [[../../Kubernetes/Base/secret.md|Secret'ы]] и т.д.
-
-> Подробное описание концепции, её назначения и принципов работы находится в основной заметке: **[[../../Kubernetes/Concepts/kubernetes_operators.md|Kubernetes Операторы]]**.
-
-## 2. Основные концепции: архитектура и Custom Resources
+## Основные концепции
 
 Prometheus Operator расширяет API Kubernetes набором специализированных CRD для декларативного управления всеми компонентами стека мониторинга.
 
@@ -57,9 +53,10 @@ Prometheus Operator расширяет API Kubernetes набором специ�
     4.  `prometheus-config-reloader` обнаруживает этот `ConfigMap`, монтирует его в под Prometheus и отдает команду на перезагрузку правил.
 
 ### AlertmanagerConfig
+
 Данный CRD предоставляет способ декларативно настраивать маршрутизацию и получателей для [[../alertmanager.md|Alertmanager]], являясь альтернативой управлению конфигурацией через один центральный `Secret`.
 
-## 3. Практические сценарии и применение
+## Практические сценарии
 
 ### Управление Grafana
 
@@ -82,7 +79,7 @@ Prometheus Operator расширяет API Kubernetes набором специ�
     *   **Избирательный подход:** Сосредоточьтесь на сборе только тех метрик, которые действительно необходимы для мониторинга и алертинга.
     *   **Оптимизация:** При установке `kube-state-metrics` можно исключить сбор ненужных метрик, чтобы снизить нагрузку на Prometheus и API-сервер.
 
-## 4. Продвинутые детали: высокая доступность и безопасность
+## Дополнительная информация
 
 ### Prometheus
 

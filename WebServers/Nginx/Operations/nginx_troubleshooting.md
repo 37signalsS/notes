@@ -48,7 +48,7 @@
 
 2.  **Посмотрите, есть ли процесс в системе:**
     ```bash
-    ps aux | grep nginx
+    [`ps aux | grep nginx`](../../../Linux/Diagnostics/Processes/ps.md)
     ```
     Должны быть видны `master` и несколько `worker` процессов.
 
@@ -100,8 +100,8 @@ tail -f /var/log/nginx/error.log
 ### 3.6. Проверка системных ресурсов
 
 *   **Закончилось место на диске:** `df -h`
-*   **Закончилась оперативная память:** `free -m` или `htop`
-*   **Высокая нагрузка на CPU:** `htop`
+*   **Закончилась оперативная память:** `free -m` или [`htop`](../../../Linux/Diagnostics/Processes/htop.md)
+*   **Высокая нагрузка на CPU:** [`htop`](../../../Linux/Diagnostics/Processes/htop.md)
 
 ---
 ## 4. Продвинутые детали: Автоматизированный анализ логов
