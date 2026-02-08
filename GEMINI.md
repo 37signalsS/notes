@@ -73,7 +73,7 @@ Transform the current catalog into a structured, interconnected and practically 
 Definitions → Basic Concepts → Practical Scenarios → Additional information
 ```
 
-Links must be embedded; link lists are prohibited at the end.
+Links must be embedded; link lists are prohibited at the end. All links must adhere to the standard Markdown format `[text](url)`.
 
 ---
 

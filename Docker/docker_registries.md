@@ -54,67 +54,7 @@ docker pull my-registry.example.com/my-project/my-app:1.0.0
 
 ## Практические сценарии
 
-### Пример: Harbor — корпоративный реестр образов
-
-**Harbor** — это популярный open-source проект [CNCF](../../Kubernetes/cncf_overview.md), который предоставляет функциональность частного реестра с расширенными возможностями для корпоративного использования.
-
-#### Ключевые возможности Harbor
-
-* **Управление доступом (RBAC)**: Проекты, пользователи и роли для гранулярного контроля доступа.
-* **Сканирование уязвимостей**: Интеграция со сканерами (например, Trivy, Clair) для автоматического анализа образов на известные уязвимости.
-* **Подпись образов**: Обеспечение целостности и происхождения образов с помощью Notary или Cosign.
-* **Репликация**: Автоматическая синхронизация образов между несколькими инстансами Harbor (например, для геораспределенных команд).
-* **Веб-интерфейс**: Удобный UI для управления проектами, пользователями и образами.
-* **Аудит**: Детальное логирование всех действий пользователей.
-
-#### Установка Harbor
-
-Harbor обычно устанавливается с помощью Docker Compose.
-
-1. **Скачать инсталлятор**: Загрузите офлайн-инсталлятор с [официального сайта](https://github.com/goharbor/harbor/releases).
-2. **Настроить `harbor.yml`**:
-
-    ```yaml
-    hostname: harbor.yourdomain.com
-    http:
-      port: 80
-    https:
-      port: 443
-      certificate: /path/to/tls.crt
-      private_key: /path/to/tls.key
-    harbor_admin_password: <YourAdminPassword>
-    # ... другие настройки
-    ```
-
-3. **Запустить установку**:
-
-    ```bash
-    sudo ./install.sh
-    ```
-
-#### Работа с Harbor
-
-1. **Аутентификация**:
-
-    ```bash
-    docker login harbor.yourdomain.com
-    # Username: admin
-    # Password: <YourAdminPassword>
-    ```
-
-2. **Тегирование и отправка образа**:
-
-    ```bash
-    # В Harbor образы организованы по проектам (например, 'library')
-    docker tag my-app:latest harbor.yourdomain.com/library/my-app:v1
-    docker push harbor.yourdomain.com/library/my-app:v1
-    ```
-
-3. **Получение образа**:
-
-    ```bash
-    docker pull harbor.yourdomain.com/library/my-app:v1
-    ```
+### Пример: [Harbor - корпоративный реестр образов](Docker_registries/harbor.md)
 
 ## Дополнительная информация
 
