@@ -373,48 +373,7 @@ openssl x509 -req -in test.csr \
 
 ## Приложение A: Пример — mTLS в Nginx
 
-Перед настройкой Nginx подготовим единый файл с сертификатом сервера и цепочкой `intermediate-ca/ca-chain.crt`. Это лучшая практика, избавляющая клиента от необходимости самому искать промежуточный сертификат.
-
-```bash
-cat my-service.crt intermediate-ca/ca-chain.crt > my-service.fullchain.crt
-```
-
-Теперь настроим Nginx так, чтобы он требовал от клиентов валидный сертификат, подписанный нашим **Intermediate CA**.
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name my-service.local;
-
-    # Сертификат сервера, включающий цепочку до корневого CA
-    ssl_certificate         /path/to/my-service.fullchain.crt;
-    ssl_certificate_key     /path/to/my-service.key;
-
-    # --- Клиентская аутентификация (mTLS) ---
-
-    # 1. Корневой сертификат для проверки клиентов.
-    # Nginx будет доверять всем клиентам, чьи сертификаты подписаны
-    # любым промежуточным CA из этой цепочки.
-    ssl_client_certificate  /path/to/intermediate-ca/ca-chain.crt;
-
-    # 2. Файл со списком отозванных сертификатов (генерируется Intermediate CA)
-    ssl_crl                 /path/to/intermediate-ca/crl/crl.pem;
-
-    # 3. Включить проверку клиента
-    ssl_verify_client       on;
-    # Глубина проверки: 1 (клиент) + 1 (Intermediate CA) = 2.
-    # Цепочка: a_client.crt -> intermediate.crt -> root.crt (уже доверен).
-    ssl_verify_depth        2;
-
-    location / {
-        if ($ssl_verify_result != "SUCCESS") {
-            return 403;
-        }
-        # proxy_set_header X-Client-DN $ssl_client_s_dn;
-        proxy_pass http://backend;
-    }
-}
-```
+Подробное описание и практический пример настройки mTLS в Nginx можно найти в разделе [Аутентификация по клиентским SSL-сертификатам (mTLS)](../../WebServers/Nginx/Security/nginx_tls_ssl_configuration.md#аутентификация-по-клиентским-ssl-сертификатам-mtls)
 
 ---
 

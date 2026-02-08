@@ -335,55 +335,7 @@ openssl x509 -req -in test.csr \
 
 ## Приложение A: Практический пример — mTLS в Nginx
 
-Настроим Nginx так, чтобы он требовал от клиентов валидный сертификат, подписанный нашим CA.
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name my-service.local;
-
-    ssl_certificate         /path/to/my-service.crt;
-    ssl_certificate_key     /path/to/my-service.key;
-
-    # --- Клиентская аутентификация ---
-
-    # 1. Корневой сертификат для проверки клиентов
-    ssl_client_certificate  /path/to/ca/ca.crt;
-
-    # 2. Файл со списком отозванных сертификатов
-    ssl_crl                 /path/to/ca/crl.pem;
-
-    # 3. Включить проверку клиента
-    # on: Строгая проверка. Клиент обязан предоставить валидный сертификат.
-    #     Если сертификат не предоставлен или не прошел проверку, соединение разрывается.
-    # optional: Запрашивать сертификат, но не требовать.
-    #           Результат проверки доступен в переменной $ssl_verify_result.
-    #           Позволяет реализовать логику, когда доступ для клиентов
-    #           с сертификатом и без него отличается.
-    # optional_no_ca: Запрашивать сертификат, но не проверять его по CA.
-    #                 Используется в редких случаях, когда проверка выполняется
-    #                 на уровне приложения.
-    ssl_verify_client       on;
-
-    location / {
-        # Переменная $ssl_client_s_dn содержит DN (Distinguished Name) клиента
-        # Например: /C=RU/ST=Moscow/O=My Private Org/OU=IT Department/CN=user1
-        # Можно использовать для авторизации.
-        if ($ssl_verify_result != "SUCCESS") {
-            return 403;
-        }
-
-        # Можно извлечь CN клиента и использовать для логгирования или
-        # передачи в backend.
-        # map $ssl_client_s_dn $ssl_client_cn {
-        #    ~,CN=(?<cn>[^,]+) $cn;
-        # }
-        # proxy_set_header X-Client-CN $ssl_client_cn;
-
-        proxy_pass http://backend;
-    }
-}
-```
+Подробное описание и практический пример настройки mTLS в Nginx можно найти в разделе [Аутентификация по клиентским SSL-сертификатам (mTLS)](../../WebServers/Nginx/Security/nginx_tls_ssl_configuration.md#аутентификация-по-клиентским-ssl-сертификатам-mtls)
 
 ---
 
