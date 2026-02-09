@@ -46,7 +46,7 @@ Vault делегирует хранение зашифрованных данн�
 **Методы аутентификации** проверяют личность клиентов (людей, приложений) и выдают им **токен**. Токен — это основной объект для взаимодействия с Vault, к которому привязаны политики доступа.
 
 Основные типы методов аутентификации:
-*   **Для людей:** `userpass`, [[LDAP (Lightweight Directory Access Protocol)|../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol]], `oidc`/`jwt`, `github`.
+*   **Для людей:** `userpass`, [LDAP (Lightweight Directory Access Protocol)](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol), `oidc`/`jwt`, `github`.
 *   **Для машин и приложений:** **[`AppRole`](../guides/vault_auth_approle.md)** (предпочтительный), `Kubernetes`, `AWS`/`GCP`/`Azure`.
 
 ### Политики доступа (Policies)
