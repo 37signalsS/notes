@@ -111,6 +111,45 @@
     qemu-img create -f qcow2 -b base_image.qcow2 -F qcow2 vm_delta.qcow2
     ```
 
+#### Изменение размера диска
+
+Процесс состоит из двух этапов: увеличение объема файла-образа на хосте и расширение разделов/файловой системы внутри гостевой ОС.
+
+1. **На стороне хоста (увеличение файла-образа):**
+   * **QEMU/KVM:** `qemu-img resize <файл_образа.qcow2> +<размер>G` (например, `+10G`).
+
+2. **Внутри гостевой ОС (Linux):**
+   * **Пересканирование диска** (если ВМ не перезагружалась): `echo 1 > /sys/class/block/sdX/device/rescan`.
+   * **Изменение таблицы разделов:** Использование `fdisk`, `parted` или `growpart` (пакет `cloud-utils`) для расширения раздела.
+   * **Расширение файловой системы:**
+     * `ext4`: `resize2fs /dev/sdXn`.
+     * `XFS`: `xfs_growfs /mount/point`.
+     * **LVM**: `pvresize /dev/sdXn` -> `lvextend -l +100%FREE /dev/mapper/vg-lv` -> `resize2fs` (или `xfs_growfs`).
+
+#### Восстановление доступа к ВМ (при наличии доступа к диску)
+
+Если доступ к ВМ по SSH или паролю утерян, его можно восстановить, смонтировав образ диска на хосте или в другой ВМ.
+
+1. **Монтирование образа:**
+   * **QEMU/KVM (через nbd):**
+     ```bash
+     sudo modprobe nbd max_part=8
+     sudo qemu-nbd --connect=/dev/nbd0 <путь_к_образу.qcow2>
+     sudo mount /dev/nbd0p1 /mnt
+     ```
+
+2. **Сброс пароля/ключа:**
+   * **SSH-ключ:** Добавить публичный ключ в `/mnt/root/.ssh/authorized_keys`.
+   * **Пароль root:**
+     * `chroot /mnt passwd root` (требуется `mount --bind` для `/dev`, `/proc`, `/sys`).
+     * Или ручная правка `/mnt/etc/shadow` (замена хеша пароля).
+
+3. **Размонтирование:**
+   ```bash
+   sudo umount /mnt
+   sudo qemu-nbd --disconnect /dev/nbd0
+   ```
+
 ## Дополнительная Информация
 
 ### Распространение ВМ: Формат OVF/OVA
