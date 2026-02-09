@@ -14,7 +14,7 @@
 * **RPC (Remote Procedure Call)**: Механизм коммуникации NFS. Служба `rpcbind` информирует клиентов о портах служб NFS. Для NFSv4+ этот механизм менее критичен, так как протокол стремится использовать один порт (2049).
 * **`root_squash`**: Важная функция безопасности, при которой запросы от `root` клиента выполняются сервером от имени пользователя `nobody:nogroup`. Это предотвращает получение `root`-прав клиента на файловой системе сервера.
 * **Версии NFS**: Рекомендуется использовать **NFSv4** как более производительную и безопасную версию с улучшенной работой через файрволы. NFSv4 функционирует поверх TCP.
-* **Маппинг UID/GID**: NFS использует числовые UID и GID для разделения привилегий. Для корректной работы в многохостовых средах требуется централизованная система идентификации (например, NIS, [[LDAP (Lightweight Directory Access Protocol)|../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol]]) для обеспечения согласованного маппинга UID/GID на клиентах и сервере. Подробнее см. [[Управление пользователями в Linux|../../SystemAdministration/users_management.md]].
+* **Маппинг UID/GID**: NFS использует числовые UID и GID для разделения привилегий. Для корректной работы в многохостовых средах требуется централизованная система идентификации (например, NIS, [LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)) для обеспечения согласованного маппинга UID/GID на клиентах и сервере. Подробнее см. [Управление пользователями в Linux](../../SystemAdministration/users_management.md).
 
 ## Практические сценарии
 
@@ -64,7 +64,7 @@ sudo chown nobody:nogroup /srv/nfs/shared
 
 #### Настройка файрвола
 
-Для обеспечения работы NFS необходимо разрешить доступ к соответствующим портам через файрвол. Подробности см. [[Настройка файрвола в Linux: iptables и nftables|../Settings/linux_firewall_management.md]].
+Для обеспечения работы NFS необходимо разрешить доступ к соответствующим портам через файрвол. Подробности см. [Настройка файрвола в Linux: iptables и nftables](../Settings/linux_firewall_management.md).
 
 ```bash
 # Пример для ufw

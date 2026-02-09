@@ -109,7 +109,7 @@ deploy:
   tags: [kubernetes] # Указываем, что нужен Runner в Kubernetes
   script:
     - |
-      if [[ "$CI_COMMIT_REF_NAME" == "main" ]]; then
+      if [ "$CI_COMMIT_REF_NAME" == "main" ]( "$CI_COMMIT_REF_NAME" == "main" ); then
         export ENVIRONMENT=staging
       else
         export ENVIRONMENT=dev

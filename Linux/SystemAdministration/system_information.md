@@ -68,7 +68,7 @@
         127.0.1.1   new_hostname.example.com new_hostname
         ```
 
-        Подробнее об этом файле см. в [[Настройка и диагностика DNS-клиента в Linux|../../Networking/Concepts/dns_client.md]].
+        Подробнее об этом файле см. в [Настройка и диагностика DNS-клиента в Linux](../../Networking/Concepts/dns_client.md).
     3. **Применение изменений без перезагрузки:**
 
         ```bash

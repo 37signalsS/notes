@@ -10,7 +10,7 @@
 
 1.  **Управление несколькими кластерами**: Позволяет централизованно управлять Kubernetes-кластерами в различных облаках (AWS, GCP, Azure) и на локальной инфраструктуре.
 2.  **Упрощенная установка и настройка**: Предоставляет инструменты для быстрого развертывания Kubernetes-кластеров (например, с использованием RKE, RKE2) с минимальными усилиями.
-3.  **Безопасность и контроль доступа**: Поддерживает различные методы аутентификации, включая [[LDAP (Lightweight Directory Access Protocol)|../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol]], Active Directory, GitHub и другие.
+3.  **Безопасность и контроль доступа**: Поддерживает различные методы аутентификации, включая [LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol), Active Directory, GitHub и другие.
 4.  **Мониторинг и логирование**: Встроенная поддержка для таких инструментов, как Prometheus, Grafana и Fluentd.
 5.  **Развертывание приложений**: Упрощает развертывание приложений с поддержкой Helm-чартов и стандартных манифестов Kubernetes.
 

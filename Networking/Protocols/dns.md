@@ -145,7 +145,7 @@ DNS использует бинарный формат сообщений. Вс�
 ### Конфигурация DNS-клиента
 
 Настройка DNS-клиента в ОС (например, Linux) включает управление порядком и способом разрешения доменных имен. Основные способы: DHCP, ручная настройка (публичные DNS-серверы), локальные службы-резолверы.
-Подробности настройки для Linux (включая `/etc/nsswitch.conf`, `/etc/hosts`, `/etc/resolv.conf`, `resolvectl`) см. в: [[Настройка и диагностика DNS-клиента в Linux|../Linux/Networking/Concepts/dns_client.md]].
+Подробности настройки для Linux (включая `/etc/nsswitch.conf`, `/etc/hosts`, `/etc/resolv.conf`, `resolvectl`) см. в: [Настройка и диагностика DNS-клиента в Linux](../Linux/Networking/Concepts/dns_client.md).
 
 ### Надежность и безопасность DNS
 

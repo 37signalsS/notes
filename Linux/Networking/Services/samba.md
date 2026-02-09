@@ -20,7 +20,7 @@
 
 * Отключать SMBv1, использовать версии SMBv3+ с поддержкой шифрования.
 * Тщательно настраивать права доступа.
-* Ограничивать доступ с помощью файрвола. См. [[Настройка файрвола в Linux: iptables и nftables|../Settings/linux_firewall_management.md]].
+* Ограничивать доступ с помощью файрвола. См. [Настройка файрвола в Linux: iptables и nftables](../Settings/linux_firewall_management.md).
 
 ## Практические сценарии
 
@@ -61,7 +61,7 @@ sudo chmod -R 0775 /srv/samba/public/
 sudo chcon -t samba_share_t /srv/samba/public/
 ```
 
-Подробнее об управлении SELinux см. [[SELinux (Security-Enhanced Linux): Управление и Практика|../../Security/Mechanisms/SELinux.md]].
+Подробнее об управлении SELinux см. [SELinux (Security-Enhanced Linux): Управление и Практика](../../Security/Mechanisms/SELinux.md).
 
 **Firewall:**
 

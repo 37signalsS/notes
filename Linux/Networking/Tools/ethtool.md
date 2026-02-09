@@ -145,4 +145,4 @@ bus-info: 0000:00:03.0
     AutoNegotiation=yes
     ```
 
-Подробнее о настройке см. в [[Постоянная настройка сети в Linux|../Settings/persistent_network_configuration.md]].
+Подробнее о настройке см. в [Постоянная настройка сети в Linux](../Settings/persistent_network_configuration.md).

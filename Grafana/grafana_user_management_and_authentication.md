@@ -28,7 +28,7 @@
 
 ### Внешняя аутентификация
 
-Grafana интегрируется с внешними провайдерами аутентификации (OAuth: GitHub, GitLab, Google; [[LDAP (Lightweight Directory Access Protocol)|../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol]]), делегируя им процесс входа.
+Grafana интегрируется с внешними провайдерами аутентификации (OAuth: GitHub, GitLab, Google; [LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)), делегируя им процесс входа.
 
 ## Практические сценарии
 
