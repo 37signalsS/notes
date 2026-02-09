@@ -281,16 +281,16 @@ receivers:
 
 ### 4. Дополнительная информация
 
-*   **Docker**: Обзор и основные концепции [[../../Docker/docker_overview.md]].
-*   **Docker Compose**: Подробное описание и примеры использования [[../../Docker/Docker_compose/docker_compose_file_example.md]].
-*   **Prometheus**: Общий обзор архитектуры и принципов работы [[../overview.md]].
-*   **Grafana**: Обзор платформы и ее возможностей [[../../Grafana/grafana_overview.md]].
-*   **Alertmanager**: Детальное описание и настройка [[../alertmanager.md]].
-*   **Node Exporter**: Подробности об экспортере для ОС [[../exporters.md]].
+*   **Docker**: Обзор и основные концепции [docker_overview](../../Docker/docker_overview.md).
+*   **Docker Compose**: Подробное описание и примеры использования [docker_compose_file_example](../../Docker/Docker_compose/docker_compose_file_example.md).
+*   **Prometheus**: Общий обзор архитектуры и принципов работы [overview](../overview.md).
+*   **Grafana**: Обзор платформы и ее возможностей [grafana_overview](../../Grafana/grafana_overview.md).
+*   **Alertmanager**: Детальное описание и настройка [alertmanager](../alertmanager.md).
+*   **Node Exporter**: Подробности об экспортере для ОС [exporters](../exporters.md).
 *   **cAdvisor**: Документация (внешняя ссылка) [Google cAdvisor](https://github.com/google/cadvisor).
-*   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [[../configuration.md]].
-*   **PromQL**: Язык запросов Prometheus [[../concepts/promql.md]].
-*   **Правила Prometheus**: Правила записи и оповещений [[../rules.md]].
-*   **Источники данных Grafana**: Настройка источников данных [[../../Grafana/grafana_datasources.md]].
-*   **Дашборды Grafana**: Создание и импорт дашбордов [[../../Grafana/grafana_dashboards.md]].
-*   **Service Discovery в Prometheus**: Автоматическое обнаружение целей [[../service_discovery_and_relabeling.md]].
+*   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).
+*   **PromQL**: Язык запросов Prometheus [promql](../concepts/promql.md).
+*   **Правила Prometheus**: Правила записи и оповещений [rules](../rules.md).
+*   **Источники данных Grafana**: Настройка источников данных [grafana_datasources](../../Grafana/grafana_datasources.md).
+*   **Дашборды Grafana**: Создание и импорт дашбордов [grafana_dashboards](../../Grafana/grafana_dashboards.md).
+*   **Service Discovery в Prometheus**: Автоматическое обнаружение целей [service_discovery_and_relabeling](../service_discovery_and_relabeling.md).

@@ -170,17 +170,17 @@
     ```bash
     sudo systemctl restart nginx
     ```
-    Теперь Grafana будет доступна по адресу `http://<ip_сервера>`. Подробное руководство по этой теме: [[../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md]].
+    Теперь Grafana будет доступна по адресу `http://<ip_сервера>`. Подробное руководство по этой теме: [nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md).
 
 ---
 
 ### 4. Дополнительная информация
 
-*   **Prometheus**: Общая информация об архитектуре и компонентах [[../overview.md]].
-*   **Grafana**: Полный обзор возможностей и функций платформы [[../../Grafana/grafana_overview.md]].
-*   **Node Exporter**: Детальное описание и настройка [[../exporters.md]].
-*   **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [[../../Linux/PackageManagement/linux_package_management_overview.md]].
-*   **Управление службами Systemd**: Подробное руководство по `systemctl` [[../../Linux/Core/systemd/service_management.md]].
-*   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [[../configuration.md]].
-*   **Дашборды в Grafana**: Создание, импорт и управление дашбордами [[../../Grafana/grafana_dashboards.md]].
-*   **Утилита `ss`**: Подробнее о проверке сетевых соединений [[../../Linux/Diagnostics/Networking/ss.md]].
+*   **Prometheus**: Общая информация об архитектуре и компонентах [overview](../overview.md).
+*   **Grafana**: Полный обзор возможностей и функций платформы [grafana_overview](../../Grafana/grafana_overview.md).
+*   **Node Exporter**: Детальное описание и настройка [exporters](../exporters.md).
+*   **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
+*   **Управление службами Systemd**: Подробное руководство по `systemctl` [service_management](../../Linux/Core/systemd/service_management.md).
+*   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).
+*   **Дашборды в Grafana**: Создание, импорт и управление дашбордами [grafana_dashboards](../../Grafana/grafana_dashboards.md).
+*   **Утилита `ss`**: Подробнее о проверке сетевых соединений [ss](../../Linux/Diagnostics/Networking/ss.md).

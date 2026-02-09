@@ -60,7 +60,7 @@ end
 
 ## Дополнительная информация
 
-- **Сеть:** [[vagrant_networking.md]]
-- **Автоматическая настройка:** [[vagrant_provisioning.md]]
-- **Провайдеры и образы:** [[vagrant_providers.md]]
-- **Хранилище и общие папки:** [[vagrant_storage_and_folders.md]]
+- **Сеть:** [vagrant_networking](./vagrant_networking.md)
+- **Автоматическая настройка:** [vagrant_provisioning](./vagrant_provisioning.md)
+- **Провайдеры и образы:** [vagrant_providers](./vagrant_providers.md)
+- **Хранилище и общие папки:** [vagrant_storage_and_folders](./vagrant_storage_and_folders.md)

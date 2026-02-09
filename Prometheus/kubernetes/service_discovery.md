@@ -1,6 +1,6 @@
 # Service Discovery в Kubernetes
 
-> Эта заметка описывает специфику обнаружения сервисов в Kubernetes. Для понимания основных концепций Service Discovery и `relabel_configs`, пожалуйста, сначала ознакомьтесь с основной заметкой: **[[../service_discovery_and_relabeling.md]]**.
+> Эта заметка описывает специфику обнаружения сервисов в Kubernetes. Для понимания основных концепций Service Discovery и `relabel_configs`, пожалуйста, сначала ознакомьтесь с основной заметкой: **[service_discovery_and_relabeling](../service_discovery_and_relabeling.md)**.
 
 ## Определения
 
@@ -17,10 +17,10 @@ Prometheus предоставляет два принципиально разн
 #### Роли в Kubernetes Service Discovery
 
 *   `endpoints`: Обнаруживает все объекты `Endpoints`, связанные с [сервисами](../../Kubernetes/Networking/service.md). Наиболее частая роль для мониторинга.
-*   `service`: Обнаруживает все объекты [[../../Kubernetes/Networking/service.md|Service]].
-*   `pod`: Обнаруживает все объекты [[../../Kubernetes/Base/pod.md|Pod]].
+*   `service`: Обнаруживает все объекты [Service](../../Kubernetes/Networking/service.md).
+*   `pod`: Обнаруживает все объекты [Pod](../../Kubernetes/Base/pod.md).
 *   `node`: Обнаруживает все объекты `Node` кластера.
-*   `ingress`: Обнаруживает все объекты [[../../Kubernetes/Networking/ingress.md|Ingress]].
+*   `ingress`: Обнаруживает все объекты [Ingress](../../Kubernetes/Networking/ingress.md).
 
 В зависимости от выбранной роли, Prometheus получает набор целей (targets) и обогащает их метаданными.
 
@@ -29,7 +29,7 @@ Prometheus предоставляет два принципиально разн
 Когда Prometheus обнаруживает цель через Kubernetes, он добавляет к ней множество метаданных, называемых "discovery labels". Эти метки начинаются с префикса `__meta_kubernetes_` и содержат информацию из API Kubernetes.
 
 Примеры:
-*   `__meta_kubernetes_namespace`: [[../../Kubernetes/Base/namespace.md|Пространство имен]] объекта.
+*   `__meta_kubernetes_namespace`: [Пространство имен](../../Kubernetes/Base/namespace.md) объекта.
 *   `__meta_kubernetes_service_name`: Имя сервиса.
 *   `__meta_kubernetes_pod_name`: Имя пода.
 *   `__meta_kubernetes_node_name`: Имя ноды.
@@ -40,13 +40,13 @@ Prometheus предоставляет два принципиально разн
 
 ### Фильтрация и модификация целей с помощью `relabel_configs`
 
-`relabel_configs` — это мощный механизм для изменения меток целей *перед* сбором метрик. Он позволяет фильтровать цели (действия `keep`/`drop`), переименовывать и форматировать метки (`replace`). Его главная задача в Kubernetes — это работа с метаданными (`__meta_kubernetes_*`). Все основные параметры и подробные примеры (`labelmap`, `labeldrop`) находятся в главной заметке **[[../service_discovery_and_relabeling.md#4-продвинутые-детали-действия-relabel_configs|Service Discovery и Relabeling]]**, которая описывает его фундаментальные принципы работы.
+`relabel_configs` — это мощный механизм для изменения меток целей *перед* сбором метрик. Он позволяет фильтровать цели (действия `keep`/`drop`), переименовывать и форматировать метки (`replace`). Его главная задача в Kubernetes — это работа с метаданными (`__meta_kubernetes_*`). Все основные параметры и подробные примеры (`labelmap`, `labeldrop`) находятся в главной заметке **[Service Discovery и Relabeling](../service_discovery_and_relabeling.md#4-продвинутые-детали-действия-relabel_configs)**, которая описывает его фундаментальные принципы работы.
 
 ## Практические сценарии
 
 ### Конфигурация сбора метрик (`scrape_configs`)
 
-Основная логика обнаружения целей описывается в секции `scrape_configs` файла `prometheus.yml` (см. [[../configuration.md|конфигурацию Prometheus]]). Эта секция содержит список "заданий" (jobs), каждое из которых определяет, как находить и собирать метрики с определенной группы целей.
+Основная логика обнаружения целей описывается в секции `scrape_configs` файла `prometheus.yml` (см. [конфигурацию Prometheus](../configuration.md)). Эта секция содержит список "заданий" (jobs), каждое из которых определяет, как находить и собирать метрики с определенной группы целей.
 
 Каждое задание идентифицируется уникальным `job_name`.
 
@@ -64,19 +64,19 @@ Prometheus предоставляет два принципиально разн
 
 ### Упрощенное обнаружение через Prometheus Operator (`ServiceMonitor`)
 
-Хотя `kubernetes_sd_configs` и `relabel_configs` являются мощными нативными инструментами Prometheus, их настройка может быть сложной и громоздкой. В экосистеме `kube-prometheus-stack` (см. [[../kubernetes/overview.md|обзор]]) эту задачу решает **[[./operator.md|Prometheus Operator]]** с помощью Custom Resource Definition (CRD) (см. [[../../Kubernetes/Concepts/kubernetes_operators.md|Kubernetes Operators]]) под названием `ServiceMonitor`.
+Хотя `kubernetes_sd_configs` и `relabel_configs` являются мощными нативными инструментами Prometheus, их настройка может быть сложной и громоздкой. В экосистеме `kube-prometheus-stack` (см. [обзор](../kubernetes/overview.md)) эту задачу решает **[Prometheus Operator](./operator.md)** с помощью Custom Resource Definition (CRD) (см. [Kubernetes Operators](../../Kubernetes/Concepts/kubernetes_operators.md)) под названием `ServiceMonitor`.
 
 `ServiceMonitor` — это высокоуровневая абстракция, которая позволяет декларативно описать, какие сервисы нужно мониторить.
 
 **Преимущества использования `ServiceMonitor`:**
 *   **Простота:** Вместо написания сложных правил `relabel`, вы создаете простой YAML-манифест.
-*   **Kubernetes-native:** Управление мониторингом происходит через стандартные `kubectl apply`, что идеально вписывается в [[../../GitOps/GitOps_overview.md|GitOps-подход]].
-*   **Автоматизация:** [[./operator.md|Prometheus Operator]] берет на себя всю работу по генерации и обновлению конфигурации Prometheus.
+*   **Kubernetes-native:** Управление мониторингом происходит через стандартные `kubectl apply`, что идеально вписывается в [GitOps-подход](../../GitOps/GitOps_overview.md).
+*   **Автоматизация:** [Prometheus Operator](./operator.md) берет на себя всю работу по генерации и обновлению конфигурации Prometheus.
 
 #### Принцип работы
 
-1.  Вы создаете `ServiceMonitor`, в котором указываете, за сервисами с какими **лейблами** (`selector`) и в каких **[[../../Kubernetes/Base/namespace.md|пространствах имен]]** (`namespaceSelector`) нужно следить.
-2.  [[./operator.md|Prometheus Operator]] обнаруживает этот `ServiceMonitor`.
+1.  Вы создаете `ServiceMonitor`, в котором указываете, за сервисами с какими **лейблами** (`selector`) и в каких **[пространствах имен](../../Kubernetes/Base/namespace.md)** (`namespaceSelector`) нужно следить.
+2.  [Prometheus Operator](./operator.md) обнаруживает этот `ServiceMonitor`.
 3.  Оператор автоматически генерирует соответствующий `scrape_config` для Prometheus, включая все необходимые `relabel_configs` для выбора нужных подов на основе `Endpoints` сервиса.
 4.  Конфигурация Prometheus автоматически обновляется.
 
@@ -196,9 +196,9 @@ spec:
 *   `prometheus.io/path: "/my-metrics"`: Позволяет указать нестандартный путь к метрикам.
 *   `prometheus.io/port: "9091"`: Позволяет указать порт, с которого нужно собирать метрики.
 
-#### 4. Мониторинг доступности сервисов с [[../exporters.md#blackbox-exporter|Blackbox Exporter]]
+#### 4. Мониторинг доступности сервисов с [Blackbox Exporter](../exporters.md#blackbox-exporter)
 
-**Задача:** Проверять доступность сервисов "снаружи" с помощью [[../exporters.md#blackbox-exporter|Blackbox Exporter]].
+**Задача:** Проверять доступность сервисов "снаружи" с помощью [Blackbox Exporter](../exporters.md#blackbox-exporter).
 
 ```yaml
 - job_name: 'kubernetes-services-blackbox'
@@ -223,4 +223,3 @@ spec:
 2.  `prometheus.io/probe: "true"`: Мониторинг включается для сервисов с этой аннотацией.
 3.  `target_label: __param_target`: Адрес целевого сервиса (например, `my-app.default.svc:80`) передается Blackbox Exporter'у через параметр `target` в URL.
 4.  `replacement: blackbox-exporter...`: Сам Prometheus обращается не к сервису напрямую, а к Blackbox Exporter'у, который уже выполняет проверку.
-

@@ -1,6 +1,6 @@
 # Service Discovery и Relabeling в Prometheus
 
-> Эта заметка описывает общие принципы Service Discovery и Relabeling. Для специфики работы в Kubernetes, см. **[[./kubernetes/service_discovery.md]]**.
+> Эта заметка описывает общие принципы Service Discovery и Relabeling. Для специфики работы в Kubernetes, см. **[service_discovery](./kubernetes/service_discovery.md)**.
 
 ## Определения
 

@@ -150,20 +150,3 @@ Kubernetes является флагманским проектом **Cloud Nati
 
 * **[CNCF Landscape](https://landscape.cncf.io/):** Интерактивная карта, которая позволяет найти программное обеспечение по нужной категории в экосистеме Cloud Native.
 * **[CNCF Radar](https://radar.cncf.io/):** Предоставляет информацию о том, какие технологии из CNCF Landscape и насколько зрело используются в индустрии, основываясь на данных от конечных пользователей.
-
-### Обучение и практика
-
-*   **[Kubernetes Basics (Official Tutorials)](https://kubernetes.io/docs/tutorials/)**: Официальные интерактивные материалы от проекта Kubernetes, пошагово вводят в базовые концепции и терминологию. Подходит для старта и выравнивания базы перед практикой.
-
-*   **[Play with Kubernetes](https://training.play-with-kubernetes.com/kubernetes-workshop/)**: Браузерная среда для экспериментов с Kubernetes без локальной установки. Позволяет получить временный доступ к кластеру и выполнять команды в терминале. Удобно для быстрых проверок и самостоятельной практики.
-
-*   **[Killercoda Kubernetes Scenarios](https://killercoda.com/playgrounds/scenario/kubernetes)**: Платформа с практическими сценариями и встроенным терминалом. Задания построены вокруг типовых задач: поды, деплойменты, сервисы, сеть, диагностика и устранение проблем. Подходит для закрепления навыков на прикладных кейсах.
-
-*   **[KodeKloud Kubernetes Labs](https://kodekloud.com/studio/labs/kubernetes?ref=kodekloud.com)**: Обучающая платформа с лабораторными работами и тренажёрами. Даёт структурированную практику по Kubernetes с постепенным усложнением тем. Подходит для системного обучения и подготовки к рабочим задачам.
-
-*   **[Play with Kubernetes](https://labs.play-with-k8s.com/):** Бесплатная онлайн-песочница, предоставляющая временный доступ к кластеру Kubernetes прямо в браузере.
-
-*   **[Kubelab](https://github.com/natrontech/kubelab):** Набор интерактивных лабораторных работ для изучения основ Kubernetes.
-
-*   **[CK-X](https://github.com/sailor-sh/CK-X):** Проект с практическими заданиями для подготовки к экзаменам Certified Kubernetes Administrator (CKA), Developer (CKAD) и Specialist (CKS).
-*   **[K8sQuest: Интерактивная игра для изучения и отладки Kubernetes](../ToolsUtilities/k8squest_overview.md):** Локальная, практическая игра для обучения поиску и устранению неисправностей в Kubernetes.

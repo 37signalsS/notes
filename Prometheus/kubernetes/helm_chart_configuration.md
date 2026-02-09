@@ -2,7 +2,7 @@
 
 ## Определения
 
-**`kube-prometheus-stack`** — это Helm-чарт, предназначенный для развертывания и управления полным стеком мониторинга в среде Kubernetes. Он включает в себя [[../overview.md|Prometheus]], [[../alertmanager.md|Alertmanager]], [[../../Grafana/grafana_overview.md|Grafana]], а также ключевые экспортеры и конфигурационные ресурсы.
+**`kube-prometheus-stack`** — это Helm-чарт, предназначенный для развертывания и управления полным стеком мониторинга в среде Kubernetes. Он включает в себя [Prometheus](../overview.md), [Alertmanager](../alertmanager.md), [Grafana](../../Grafana/grafana_overview.md), а также ключевые экспортеры и конфигурационные ресурсы.
 
 **`values.yaml`** — основной конфигурационный файл Helm-чарта, который позволяет кастомизировать развертываемые компоненты и их параметры.
 
@@ -22,7 +22,7 @@
 
 ### Конфигурация Alertmanager
 
-> ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [[../alertmanager.md]].
+> ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [alertmanager](../alertmanager.md).
 
 *   `alertmanager.enabled`: `true`
     *   **Рекомендация:** Оставить включенным для управления алертами.
@@ -46,7 +46,7 @@
 
 ### Конфигурация Grafana
 
-> ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [[../../Grafana/grafana_overview.md]].
+> ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [grafana_overview](../../Grafana/grafana_overview.md).
 
 *   `grafana.enabled`: `true`
     *   **Рекомендация:** Оставить `true`.
@@ -119,7 +119,7 @@ ConfigMapReload — это вспомогательный компонент, к
 
 ### Конфигурация Node Exporter
 
-> ℹ️ Общую информацию об экспортерах метрик можно найти в заметке: [[../exporters.md]].
+> ℹ️ Общую информацию об экспортерах метрик можно найти в заметке: [exporters](../exporters.md).
 
 *   `nodeExporter.enabled`: `true`
     *   **Рекомендация:** Оставить `true` для сбора метрик с нод.
@@ -178,7 +178,7 @@ ConfigMapReload — это вспомогательный компонент, к
 
 ### Конфигурация Push Gateway
 
-> ℹ️ Для детального изучения Push Gateway обратитесь к основной заметке: [[../pushgateway.md]].
+> ℹ️ Для детального изучения Push Gateway обратитесь к основной заметке: [pushgateway](../pushgateway.md).
 
 Push Gateway используется для сбора метрик от кратковременных или периодически запускаемых задач, которые не могут быть "собраны" (scraped) Prometheus напрямую.
 
@@ -315,6 +315,6 @@ Push Gateway используется для сбора метрик от кра
 ## Дополнительная информация
 
 Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
-- [[../../Kubernetes/ToolsUtilities/helm_overview.md|Helm]]
-- [[../../Kubernetes/kubernetes_overview.md|Kubernetes]]
-- [[../overview.md|Prometheus]]
+- [Helm](../../Kubernetes/ToolsUtilities/helm_overview.md)
+- [Kubernetes](../../Kubernetes/kubernetes_overview.md)
+- [Prometheus](../overview.md)
