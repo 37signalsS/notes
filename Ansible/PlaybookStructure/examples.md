@@ -1,0 +1,60 @@
+# Ansible: Практические примеры структуры плейбуков
+
+## 1. Параметризация роли (defaults и group_vars)
+
+Пример демонстрирует, как сделать размер swap-файла настраиваемым.
+
+1. **Задача с переменной** (`roles/swap/tasks/main.yml`):
+
+    ```yaml
+    - name: Create swap file
+      ansible.builtin.shell: "fallocate -l {{ swap_size }} /swapfile"
+      args:
+        creates: /swapfile
+    ```
+
+2. **Значение по умолчанию** (`roles/swap/defaults/main.yml`):
+
+    ```yaml
+    swap_size: 1g
+    ```
+
+3. **Переопределение для группы** (`group_vars/backup.yml`):
+
+    ```yaml
+    swap_size: 2g # Для бэкап-серверов
+    ```
+
+**Результат**: Приоритет `group_vars` выше, чем у `defaults`, поэтому для хостов из группы `backup` будет использовано значение `2g`.
+
+## 2. Управление контейнерами Docker через systemd
+
+**Шаблон `container.service.j2`:**
+
+```j2
+[Unit]
+Description={{ item.name }} container
+Requires=docker.service
+After=docker.service
+[Service]
+Restart=always
+ExecStartPre=-/usr/bin/docker stop {{ item.name }}
+ExecStartPre=-/usr/bin/docker rm {{ item.name }}
+ExecStart=/usr/bin/docker run --rm --name {{ item.name }} 
+{% if item.ports is defined %}{% for port in item.ports %} -p {{ port }} \ {% endfor %}{% endif %}
+    {{ item.image }}
+ExecStop=/usr/bin/docker stop {{ item.name }}
+[Install]
+WantedBy=multi-user.target
+```
+
+**Задача Ansible:**
+
+```yaml
+- name: Create systemd unit files for containers
+  ansible.builtin.template:
+    src: container.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+  loop: "{{ containers }}"
+  notify: Reload systemd
+```

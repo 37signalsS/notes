@@ -1,0 +1,63 @@
+## Практические сценарии
+
+### 1. Модули для управления пакетами
+
+#### `ansible.builtin.yum_repository`
+
+Управляет YUM-репозиториями в системах на базе Red Hat (CentOS, Fedora).
+
+```yaml
+- name: Add EPEL Repository
+  ansible.builtin.yum_repository:
+    name: epel
+    description: EPEL YUM repo
+    baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
+```
+
+#### `ansible.builtin.yum`
+
+Управляет пакетами (установка, обновление, удаление) с помощью менеджера пакетов YUM.
+
+```yaml
+- name: Install the latest version of Apache
+  ansible.builtin.yum:
+    name: httpd
+    state: latest
+```
+
+#### `ansible.builtin.apt`
+
+```yaml
+- name: Install the latest version of Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: latest
+    update_cache: yes
+    cache_valid_time: 3600 # Кэш не будет обновляться, если он свежее 1 часа
+```
+
+* При `state: present` (или `latest`), модуль `apt` обеспечивает идемпотентность: пакет будет установлен, только если его нет или если он устарел.
+* Опция `update_cache: yes` выполняет аналог `apt update` перед установкой.
+* Для контроля частоты обновления кэша можно использовать `cache_valid_time` в блоке play. Например, `cache_valid_time: 3600` означает, что кэш не будет обновляться, если он свежее 1 часа.
+
+#### `ansible.builtin.package`
+
+Универсальный модуль, который пытается использовать системный менеджер пакетов по умолчанию (`apt`, `yum`, `dnf`, и т.д.).
+
+```yaml
+- name: Install the latest version of Nginx using the generic package module
+  ansible.builtin.package:
+    name: nginx
+    state: latest
+```
+
+**Сравнение `package` с нативными модулями (`apt`, `yum`)**
+
+| Характеристика | `ansible.builtin.package` (универсальный) | `ansible.builtin.apt` / `ansible.builtin.yum` (нативные) |
+| :--- | :--- | :--- |
+| **Простота** | Высокая. Один модуль для разных ОС. | Средняя. Требуется условная логика для кросс-платформенных плейбуков. |
+| **Функциональность** | **Ограниченная.** Не поддерживает специфичные параметры, такие как `update_cache: yes` для `apt` или работу с репозиториями. | **Полная.** Предоставляют доступ ко всем возможностям пакетного менеджера. |
+| **Надежность** | Ниже в сложных сценариях. | **Высокая.** Поведение более предсказуемо. |
+| **Рекомендация** | Подходит для простых задач и быстрых плейбуков. | **Предпочтительный выбор** для production-окружений, ролей и сложных сценариев, где требуется полный контроль (управление репозиториями, кэшем, версиями). |
+
+> Для сложных сценариев, требующих тонкой настройки, по-прежнему **рекомендуется использовать нативные модули**, такие как `apt` и `yum`.
