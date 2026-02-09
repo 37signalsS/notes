@@ -11,7 +11,7 @@
 
 1. **Задержка выполнения запросов (Request Latency)**: Время, которое требуется API-серверу для обработки входящих запросов.
     - **Метрика**: `apiserver_request_duration_seconds_bucket`.
-    - **Описание**: [[../../../Concepts/Observability_and_Monitoring/observability_overview.md#histogram|Гистограмма]] времени выполнения запросов. При расчете перцентилей следует исключать долгоживущие запросы (`watch`, `connect`), чтобы избежать искажения результатов.
+    - **Описание**: [Гистограмма](../../../Concepts/Observability_and_Monitoring/observability_overview.md#histogram) времени выполнения запросов. При расчете перцентилей следует исключать долгоживущие запросы (`watch`, `connect`), чтобы избежать искажения результатов.
 
 2. **Частота ошибок (Error Rate)**: Доля запросов, завершившихся с ошибкой.
     - **Метрика**: `apiserver_requests_total`.
