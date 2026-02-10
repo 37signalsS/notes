@@ -23,17 +23,16 @@
 2. При запуске плейбука вы указываете, какой пароль использовать для какого ID:
 
     ```bash
-    ansible-playbook my_playbook.yml 
-      --vault-id prod@~/.prod_vault_pass 
+    ansible-playbook my_playbook.yml \
+      --vault-id prod@~/.prod_vault_pass \
       --vault-id dev@~/.dev_vault_pass
     ```
 
-    Ansible автоматически применит правильный пароль к каждому зашифрованному файлу. Если `--vault-id` не указан, используется хранилище по умолчанию.
+    Ansible автоматически применит правильный пароль к каждому зашифрованному файлу, определяя его по `vault-id` в заголовке. Если `--vault-id` не указан, используется хранилище по умолчанию.
 
 ## Нюансы поведения `--vault-id`
 
 По умолчанию Ansible довольно "снисходителен" к указанным `--vault-id`. Если вы предоставите несколько Vault ID и паролей (например, `id` и `non-id`):
-
 ```bash
 ansible-playbook encrypted_playbook.yml --vault-id id@my_password.txt --vault-id non-id@another_password.txt
 ```

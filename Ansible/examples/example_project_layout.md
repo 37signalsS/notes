@@ -18,22 +18,30 @@
 
 ### Сценарий 1: Стандартная структура проекта
 
+На уровне репозитория практично выделить отдельные корни для локальных ролей, внешних ролей (через collections) и для специфичных для окружений наложений.
+
 ```
-/
-├── ansible.cfg
-├── inventory/
-│   ├── production.ini
-│   └── staging.ini
-├── group_vars/
-│   ├── all.yml           # Переменные для всех хостов
-│   └── webservers.yml    # Переменные для группы webservers
-├── host_vars/
-│   └── db-server-01.yml  # Переменные для конкретного хоста
-├── roles/
-│   ├── common            # Общая базовая роль
-│   └── nginx             # Роль для установки и настройки Nginx
-├── site.yml              # Основной плейбук, применяющий конфигурацию ко всем хостам
-└── webservers.yml        # Плейбук для настройки только веб-серверов
+infra/
+  ansible.cfg
+  inventories/
+    prod/
+      hosts.ini
+      group_vars/
+      host_vars/
+    stage/
+      hosts.ini
+      group_vars/
+      host_vars/
+  playbooks/
+    site.yml
+    web.yml
+    db.yml
+  roles/                # локальные роли проекта
+    base/
+    web/
+    db/
+  vendor_roles/         # импортированные роли (git submodule/galaxy)
+  collections/          # установленные коллекции (ansible-galaxy)
 ```
 
 **Описание компонентов:**
@@ -41,6 +49,14 @@
 - **`site.yml`**: "Мастер-плейбук", который обычно включает другие плейбуки или роли для полной настройки инфраструктуры.
 - **`group_vars/`**: Ansible автоматически загружает переменные из файла `webservers.yml` для всех хостов в группе `webservers`. Файл `all.yml` применяется ко всем хостам в инвентаре.
 - **Преимущества**: Простота, предсказуемость, соответствует официальной документации Ansible. Идеально подходит для большинства проектов.
+
+Настройка путей поиска ролей в `ansible.cfg` позволяет миксовать местные и внешние источники без изменения playbooks:
+
+```ini
+[defaults]
+roles_path = roles:vendor_roles:collections/ansible_collections
+collections_paths = collections
+```
 
 ### Сценарий 2: Продвинутая структура со скриптом-оберткой
 

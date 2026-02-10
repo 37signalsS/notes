@@ -127,6 +127,9 @@ private_key_file = /path/to/your/private_key
 host_key_checking = false
 # Подавляет предупреждения о будущих изменениях.
 deprecation_warnings = False
+# Настройка путей поиска ролей и коллекций
+roles_path = roles:vendor_roles:collections/ansible_collections
+collections_paths = collections
 ```
 
 **Пример `hosts.ini` (инвентарь):**

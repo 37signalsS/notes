@@ -13,6 +13,16 @@
   when: ansible_os_family == "Debian"
 ```
 
+### Структурирование плейбуков (import_role vs include_role)
+Для тонкого контроля задач внутри роли применяются `include_role`/`import_role`:
+```yaml
+- name: OS-specific tweaks
+  import_role:
+    name: base
+    tasks_from: os-debian.yml
+  when: ansible_os_family == 'Debian'
+```
+
 ### Выполнение задач на других хостах (delegate_to)
 
 Позволяет выполнить задачу на другой машине (чаще всего `localhost`), а не на целевом хосте.

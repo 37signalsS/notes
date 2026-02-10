@@ -35,70 +35,73 @@
 
 Подробное описание этих механизмов см. в статье: **[Создание переиспользуемых и композитных пайплайнов](../Advanced/gitlab_ci_reusable_pipelines.md)**.
 
-## Практические сценарии
+## Практический сценарий: Комплексный базовый пайплайн
 
-### Сценарий 1: Базовый пайплайн "Hello World"
-
-Этот пример демонстрирует базовую структуру с двумя этапами. Задачи `test:lint` и `test:unit` на этапе `test` будут запущены параллельно после успешного завершения `build_job`.
+Этот пример демонстрирует многие основные концепции GitLab CI в одном файле.
 
 ```yaml
-# Определение последовательности этапов
+# 1. Определение последовательности этапов
 stages:
   - build
   - test
-
-# Глобальные переменные, доступные во всех задачах
-variables:
-  APP_VERSION: "1.0.0"
-
-build_job:
-  stage: build
-  script:
-    - echo "Building the app version $APP_VERSION..."
-    - sleep 10 # Имитация сборки
-    - echo "Build successful."
-
-test:lint:
-  stage: test
-  script:
-    - echo "Running linter..."
-    - sleep 5
-    - echo "No linting errors found."
-
-test:unit:
-  stage: test
-  script:
-    - echo "Running unit tests..."
-    - sleep 15
-    - echo "All tests passed."
-```
-
-### Сценарий 2: Использование `before_script` для подготовки
-
-`before_script` идеально подходит для подготовительных команд, которые должны выполняться перед каждой задачей.
-
-```yaml
-# Задаем образ по умолчанию для всех задач
-default:
-  image: alpine:3.19
-
-stages:
   - deploy
 
+# 2. Глобальные переменные
+variables:
+  APP_ENV: production
+
+# 3. Настройки по умолчанию для всех задач
+default:
+  image: python:3.12
+  before_script:
+    - pip install -r requirements.txt
+
+# 4. Задача сборки
+build:
+  stage: build
+  script:
+    - python -m build
+  artifacts:
+    # Сохраняем собранные файлы на 1 неделю
+    paths:
+      - dist/
+    expire_in: 1 week
+
+# 5. Задача тестирования
+test:
+  stage: test
+  # `needs` создает зависимость от задачи `build`, позволяя `test` начаться 
+  # сразу после `build`, не дожидаясь завершения всей стадии `build` (если бы там были другие задачи).
+  needs: ["build"]
+  script:
+    - pytest -q
+  # `dependencies` указывает, что для этой задачи нужно скачать артефакты из `build`.
+  dependencies: ["build"]
+
+# 6. Задача развертывания
 deploy:
   stage: deploy
-  before_script:
-    # Эти команды выполнятся перед основным скриптом
-    - echo "Logging in to the registry..."
-    - apk add --no-cache curl
-    - echo "Login successful."
+  # Описываем окружение, куда происходит развертывание
+  environment:
+    name: prod
+    url: https://app.example.com
+  # Запускать задачу только вручную через интерфейс GitLab
+  when: manual
   script:
-    - echo "Deploying the application..."
-    - curl http://example.com/deploy-hook
-  after_script:
-    # Эта команда выполнится в любом случае
-    - echo "Logging out from the registry."
+    - ./scripts/deploy.sh
+  # Правило: задача доступна только для ветки 'main'
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 ```
+
+### Разбор примера:
+
+1.  **`stages`**: Определяет три последовательных этапа: `build`, `test`, `deploy`.
+2.  **`variables`**: Устанавливает глобальную переменную `APP_ENV`, доступную во всех задачах.
+3.  **`default`**: Указывает, что все задачи по умолчанию будут использовать образ `python:3.12` и выполнять `pip install` перед основным скриптом.
+4.  **`build` (job)**: Находится на этапе `build`, выполняет сборку и сохраняет директорию `dist/` как **артефакт**.
+5.  **`test` (job)**: Зависит от `build` (`needs` и `dependencies`), выполняется на этапе `test` и запускает тесты.
+6.  **`deploy` (job)**: Выполняется на этапе `deploy`, привязана к окружению `prod` и может быть запущена только вручную для ветки `main`.
 
 ## Дополнительная информация
 
