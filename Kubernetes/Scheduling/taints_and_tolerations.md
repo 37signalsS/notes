@@ -6,6 +6,8 @@
 
     ```bash
     kubectl taint nodes <node-name> <key>=<value>:<effect>
+    # Пример:
+    kubectl taint nodes worker-1 dedicated=ml:NoSchedule
     ```
 
 * **Tolerations (терпимость):** Свойство, задаваемое в спецификации пода (`pod.spec`), которое позволяет ему "терпеть" `taint` на узле и быть размещенным на нем.

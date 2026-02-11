@@ -43,3 +43,4 @@ docker service create --name my-service --network my-overlay-network --replicas 
 
 * Общее понимание технологий туннелирования и оверлейных сетей можно найти в **[обзоре туннелирования](../../Networking/Tunnels/tunneling_overview.md)**.
 * Детальное описание протокола VXLAN, лежащего в основе оверлейных сетей Docker Swarm, представлено в файле **[VXLAN](../../Networking/Tunnels/vxlan.md)**.
+* Для углубленной диагностики overlay-сетей, включая анализ трафика и MTU, см. раздел "Диагностика" в файле **[Драйвер сети: overlay](../../Docker/Docker_network/drivers/overlay.md#диагностика)**.

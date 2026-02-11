@@ -22,11 +22,31 @@
 
 ### Быстрый старт в dev-режиме
 
-Для разработки и тестирования Vault можно запустить в режиме `dev`, который использует хранилище в памяти и не требует "распечатывания".
+Для разработки и тестирования Vault можно запустить в режиме `dev`, который использует хранилище в памяти, не требует "распечатывания" и автоматически настраивает адрес и корневой токен.
 
 ```bash
-# Запуск dev-сервера
+# Старт в dev-режиме для локального ознакомления
 vault server -dev
+
+# В выводе команды будут указаны адрес и корневой токен.
+# Откройте новый терминал и экспортируйте их в переменные окружения:
+export VAULT_ADDR='http://127.0.0.1:8200'
+export VAULT_TOKEN='...' # Скопируйте токен из вывода
+
+# Подключение KV v2 и запись секрета
+vault secrets enable -path=app kv-v2
+vault kv put app/config username=alice password=s3cr3t
+vault kv get app/config
+
+# Создание политики и ограниченного токена
+cat > app.hcl <<'EOF'
+path "app/*" { capabilities = ["read", "list"] }
+EOF
+vault policy write app app.hcl
+vault token create -policy=app -ttl=1h
+
+# Пример response wrapping
+vault kv get -wrap-ttl=60s app/config
 ```
 
 ### Централизованное хранилище для CI/CD

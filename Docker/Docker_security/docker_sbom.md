@@ -83,3 +83,27 @@ curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin
 ## Дополнительная информация
 
 Создание и анализ SBOM являются частью более широкой темы **[безопасности цепочки поставок ПО (Supply Chain Security)](./supply_chain_security.md)**, которая также включает подписание артефактов и сканирование уязвимостей.
+
+### 3. Генерация SBOM с помощью Docker BuildKit
+
+Начиная с `docker buildx` версии 0.10, можно генерировать SBOM-аттестации непосредственно во время сборки образа. BuildKit создаст SBOM для итогового образа и прикрепит его к манифесту в реестре.
+
+**Пример команды:**
+```bash
+# Включить BuildKit (может быть включен по умолчанию)
+export DOCKER_BUILDKIT=1
+
+# Собрать образ и сгенерировать SBOM
+docker buildx build \
+  --sbom=true \
+  --tag my-registry/my-app:1.0.0 \
+  .
+```
+
+Эта команда создаст аттестацию в формате SPDX JSON.
+
+Для просмотра сгенерированной аттестации можно использовать команду `docker buildx imagetools inspect`:
+```bash
+docker buildx imagetools inspect my-registry/my-app:1.0.0 --format '{{ json .SBOM }}'
+```
+Этот подход упрощает CI/CD-пайплайны, так как не требует установки и запуска сторонних инструментов для генерации SBOM.
