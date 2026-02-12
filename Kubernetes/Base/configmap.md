@@ -6,7 +6,7 @@
 
 Ключевое правило: Используйте ConfigMap для настроек, которые могут меняться, а [Secret](./secret.md) — для конфиденциальных данных (пароли, токены, ключи API).
 
-## Основные концепции
+# Основные концепции
 
 ## Способы создания ConfigMap
 
@@ -35,9 +35,12 @@ data:
             index index.html;
         }
     }
+binaryData:
+  # Бинарные данные, кодированные в Base64
+  logo.png: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 ```
 
-#### Императивно: с помощью `kubectl`
+### Императивно: с помощью `kubectl`
 
 Удобно для быстрого создания или для данных, генерируемых скриптами.
 
@@ -54,57 +57,14 @@ kubectl create configmap my-config-from-literals --from-literal=KEY1=VALUE1 --fr
 
 ## Способы использования ConfigMap в [подах](./pod.md)
 
-### Как файлы в томе (Volume)
+| Способ | Типичные случаи | Обновления | Особенности |
+| :--- | :--- | :--- | :--- |
+| **`env`/`envFrom`** | Флаги, небольшие параметры | **Не обновляются** автоматически | Простота, но требует рестарта Pod для новых значений |
+| **`volume`** | Файлы конфигурации, ключи | **Обновляются** атомарно | Гибкое монтирование, позволяет обновлять конфиг на лету |
+| **`subPath`** | Монтирование одного файла в существующую директорию | **Не обновляется** автоматически | Удобно, но блокирует автоматические обновления |
+| **`projected`** | Сборка конфигурации из нескольких источников | **Обновляются**, как у `volume` | Единая точка монтирования для разных ресурсов |
 
-Это самый распространенный и мощный способ. ConfigMap монтируется как директория в файловую систему контейнера, где каждый ключ становится файлом.
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: nginx-deployment
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: nginx
-  template:
-    metadata:
-      labels:
-        app: nginx
-    spec:
-      containers:
-        - name: nginx
-          image: nginx:1.28.0
-          ports:
-            - containerPort: 80
-          volumeMounts:
-            # Монтируем том 'config-volume' в директорию /etc/nginx/conf.d
-            # Ключ 'nginx.conf' из ConfigMap станет файлом в этой директории.
-            - name: config-volume
-              mountPath: /etc/nginx/conf.d
-      volumes:
-        - name: config-volume
-          configMap:
-            name: app-config # Имя нашего ConfigMap
-```
-
-**Важный нюанс: `subPath`**
-
-Если смонтировать ConfigMap в существующую системную директорию (например, `/etc/nginx`), он **полностью скроет** ее оригинальное содержимое. Чтобы этого избежать и смонтировать только один файл, используйте `subPath`.
-
-```yaml
-# ...
-volumeMounts:
-  - name: config-volume
-    mountPath: /etc/nginx/nginx.conf # Указываем полный путь к файлу
-    subPath: nginx.conf # Имя ключа в ConfigMap, который нужно смонтировать
-# ...
-```
-
-**Внимание:** Использование `subPath` имеет побочный эффект — **смонтированный файл перестает обновляться автоматически** при изменении ConfigMap.
-
-#### Как переменные окружения
+### Как переменные окружения (`env`, `envFrom`)
 
 Подходит для передачи простых строковых значений в приложение.
 
@@ -121,12 +81,82 @@ spec:
             configMapKeyRef:
               name: app-config # Имя ConfigMap
               key: APP_COLOR    # Ключ, значение которого нужно взять
-
+              optional: false   # Под упадет, если ConfigMap или ключ не найдены
       # 2. Передать все ключи из ConfigMap как переменные окружения
       envFrom:
         - configMapRef:
             name: app-config
+            optional: true # Под запустится, даже если ConfigMap не найден
 ```
+
+### Как файлы в томе (`volume`)
+
+Это самый распространенный и мощный способ. ConfigMap монтируется как директория в файловую систему контейнера, где каждый ключ становится файлом.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.28.0
+      volumeMounts:
+        - name: config-volume
+          mountPath: /etc/nginx/conf.d
+  volumes:
+    - name: config-volume
+      configMap:
+        name: app-config # Имя нашего ConfigMap
+        defaultMode: 0660 # Права доступа к файлам по умолчанию
+        items:
+          - key: nginx.conf
+            path: special_nginx.conf # Монтируем ключ nginx.conf в файл special_nginx.conf
+```
+Использование `items` позволяет гибко настраивать путь монтирования для каждого ключа.
+
+### Том с `subPath`
+
+Используйте `subPath`, чтобы смонтировать только один файл из ConfigMap, не скрывая остальное содержимое целевой директории.
+
+```yaml
+# ...
+volumeMounts:
+  - name: config-volume
+    mountPath: /etc/nginx/nginx.conf # Указываем полный путь к файлу
+    subPath: nginx.conf # Имя ключа в ConfigMap
+# ...
+```
+**Внимание:** Использование `subPath` имеет побочный эффект — **смонтированный файл перестает обновляться автоматически** при изменении ConfigMap.
+
+### Projected том
+
+Объединяет несколько источников в одну директорию.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-projected
+spec:
+  containers:
+  - name: app
+    image: nginx
+    volumeMounts:
+    - name: all-in-one
+      mountPath: /etc/app
+      readOnly: true
+  volumes:
+  - name: all-in-one
+    projected:
+      sources:
+      - configMap:
+          name: app-config
+      - secret:
+          name: db-creds
+```
+При конфликте имен файлов приоритет имеет последний источник в списке `sources`.
 
 ## Обновление ConfigMap и его влияние на поды
 
@@ -169,7 +199,7 @@ data:
   MAX_CONNECTIONS: "100"
 ```
 
-## Практические сценарии
+# Практические сценарии
 
 ## Автоматический перезапуск подов при изменении ConfigMap
 
@@ -190,8 +220,6 @@ data:
 Этот подход полностью автоматизирует процесс обновления конфигурации и является лучшей практикой при работе с [GitOps](../../GitOps/GitOps_overview.md) и CI/CD.
 
 ### Пример реализации (с Helm)
-
-В шаблонизаторах, таких как Helm, это реализуется очень просто.
 
 ```yaml
 apiVersion: apps/v1
@@ -247,7 +275,9 @@ spec:
 
 ## Рекомендации и лучшие практики
 
-* **Предпочитайте монтирование через том:** Это позволяет обновлять конфигурацию на лету, без перезапуска приложения, если оно поддерживает перечитывание конфигов.
-* **Именуйте и версионируйте ConfigMap:** Чтобы избежать хаоса, давайте осмысленные имена (например, `nginx-config-v2`). При развертывании новой версии приложения можно создать новый ConfigMap и обновить ссылку на него в манифесте `Deployment`.
-* **Не используйте `latest`:** Явно указывайте версию ConfigMap в манифестах, чтобы развертывания были предсказуемыми.
-* **Проверяйте перед применением:** Используйте `kubectl diff -f my-manifest.yaml` для просмотра изменений перед их применением в кластере.
+*   **Предпочитайте монтирование через том:** Это позволяет обновлять конфигурацию на лету (если приложение это поддерживает).
+*   **Именуйте и версионируйте ConfigMap:** Давайте осмысленные имена (например, `nginx-config-v2`) для предсказуемости развертываний.
+*   **Проверяйте перед применением:** Используйте `kubectl diff -f my-manifest.yaml` для просмотра изменений.
+*   **Ограничение размера:** Размер одного ConfigMap не должен превышать 1 MiB.
+*   **Права доступа:** Управляйте правами на смонтированные файлы через `defaultMode` в `volume` и `securityContext.fsGroup` в поде.
+*   **Бинарные данные:** Для нетекстовых данных используйте поле `binaryData`.

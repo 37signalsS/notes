@@ -2,180 +2,118 @@
 
 ## Определения
 
-**RBAC (Role-Based Access Control)** — это механизм авторизации в Kubernetes, который позволяет управлять доступом пользователей и сервисных аккаунтов к ресурсам кластера.
+**RBAC (Role-Based Access Control)** — это механизм авторизации в Kubernetes, который позволяет гранулярно управлять доступом пользователей, групп и сервисных аккаунтов к ресурсам кластера.
+
+В Kubernetes модель RBAC опирается на описание разрешённых действий в виде объектов `Role` и `ClusterRole`. Эти объекты определяют, какие операции (`verbs`) над какими ресурсами (`resources`) допустимы. Применяются эти права к субъектам (`User`, `Group`, `ServiceAccount`) через объекты-связки `RoleBinding` и `ClusterRoleBinding`.
+
+- **Роли (`Role`, `ClusterRole`)** отвечают на вопрос «что разрешено?».
+- **Привязки (`RoleBinding`, `ClusterRoleBinding`)** отвечают на вопросы «кому разрешено?» и «где разрешено?».
 
 ### Назначение RBAC
 
-* Реализации принципа наименьших привилегий.
-* Разделения обязанностей между командами и пользователями.
-* Соответствия требованиям безопасности и комплаенса.
-* Предотвращения несанкционированного доступа к ресурсам кластера.
+*   **Реализация принципа наименьших привилегий (Principle of Least Privilege)**: субъекты получают только те права, которые им необходимы для выполнения задач.
+*   **Разделение обязанностей**: команды и приложения изолированы друг от друга.
+*   **Соответствие требованиям безопасности** и комплаенса.
+*   **Предотвращение несанкционированного доступа** к ресурсам кластера и эскалации привилегий.
 
 ## Основные концепции
 
 ### Основные объекты RBAC
 
-* Role
-* RoleBinding
-* ClusterRole
-* ClusterRoleBinding
-* ServiceAccount
+*   `Role`
+*   `ClusterRole`
+*   `RoleBinding`
+*   `ClusterRoleBinding`
+*   `User`, `Group`, `ServiceAccount` (субъекты)
 
-### Role (Роль)
+Права в RBAC являются **аддитивными**: итоговые возможности субъекта — это объединение всех разрешений из всех привязок, которые на него действуют. Явного механизма запрета (`deny`) в стандартном RBAC нет.
 
-`Role` представляет собой набор прав, которые есть у некоего пользователя в кластере. Важно понимать, что `Role` не указывает, у кого именно есть эти права; она просто создает некий набор разрешений. `Role` ограничена конкретным пространством имен (namespace).
+### Role и ClusterRole
 
-Пример описания `Role` для управления Ingress-ресурсами:
+`Role` и `ClusterRole` содержат правила (`rules`), которые представляют собой набор разрешений.
 
-```yaml
-- apiGroups: ["extensions", "networking.k8s.io"]
-  resources: ["ingresses"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-```
+*   **Role**: представляет собой набор прав в пределах конкретного **пространства имен (`namespace`)**. Не может предоставлять доступ к кластерным ресурсам (например, `nodes`).
+*   **ClusterRole**: является **кластерным объектом** (не принадлежит `namespace`) и может использоваться для предоставления прав на:
+    *   Кластерные ресурсы (`nodes`, `persistentvolumes`).
+    *   Ресурсы во всех `namespace` (например, `pods` в масштабе всего кластера).
+    *   Нересурсные URL (например, `/healthz`).
 
-Эта `Role` разрешает выполнять операции `Get`, `List`, `Watch`, `Create`, `Update`, `Patch`, `Delete` с ресурсами `Ingress`.
+#### Структура правил (`rules`)
+Каждая роль содержит список правил, где указываются:
+*   `apiGroups`: список API-групп (`""` для core API).
+*   `resources`: типы ресурсов (`pods`, `configmaps`, `nodes` и т.д.). Можно использовать `*`.
+*   `verbs`: действия (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`). Также существуют специфичные, например `deletecollection`, `escalate`, `bind`, `approve`. Можно использовать `*`.
+*   `resourceNames`: ограничение правил на конкретные имена ресурсов.
+*   `nonResourceURLs`: доступ к не-ресурсным HTTP путям API-сервера.
 
-Пример `Role` для просмотра подов и их логов:
+> **Примечание:** Ограничение `resourceNames` не применимо к операциям `list` и `watch`, так как они возвращают списки объектов.
 
-```yaml
-- apiGroups: [""] # "" указывает на основную API-группу (core API group)
-  resources: ["pods", "pods/log"]
-  verbs: ["get", "list"]
-```
+#### Сравнение Role и ClusterRole
 
-Эта `Role` разрешает выполнять операции `Get` и `List` с ресурсами `Pods` и `Pods/Log`.
+| Критерий | Role | ClusterRole |
+| :--- | :--- | :--- |
+| **Область действия** | Один `namespace` | Весь кластер |
+| **Ресурсы** | Только `namespaced` ресурсы | Кластерные и `namespaced` ресурсы |
+| **Привязка** | `RoleBinding` в том же `namespace` | `ClusterRoleBinding` (на весь кластер) или `RoleBinding` (на конкретный `namespace`) |
+| **Агрегация** | Нет | Есть (`aggregationRule`) |
 
-Если `apiGroups` пуста, это подразумевает `API Groups V1` (стандартная группа).
+### RoleBinding и ClusterRoleBinding
 
-`Role` просто создает набор разрешений, который затем может быть применен к пользователю или сущности внутри Kubernetes. Например, `Role`, необходимая `IngressController` для работы в кластере Kubernetes.
+`RoleBinding` и `ClusterRoleBinding` используются для привязки ролей к субъектам.
 
-### RoleBinding (Привязка роли)
+*   **RoleBinding**: назначает права в пределах **одного `namespace`**. Может ссылаться как на `Role` (в том же `namespace`), так и на `ClusterRole` (в этом случае права из `ClusterRole` будут действовать только в `namespace`, где создан `RoleBinding`).
+*   **ClusterRoleBinding**: назначает права на **весь кластер**. Ссылается только на `ClusterRole`.
 
-`RoleBinding` — это объект, который связывает `Role` (или `ClusterRole`) с конкретными пользователями (`User`), группами пользователей (`Group`) или сервисными аккаунтами (`ServiceAccount`) в пределах определенного `namespace`.
+#### Субъекты (`subjects`)
+В качестве субъектов могут выступать:
+- `User`: `kind: User, name: "jane"`
+- `Group`: `kind: Group, name: "developers"`
+- `ServiceAccount`: `kind: ServiceAccount, name: "ci-bot", namespace: "dev"`
 
-Пример `RoleBinding`, связывающего `Role` с `ServiceAccount`, `User` и `Group`:
+> **Важно:** `User` и `Group` не являются объектами Kubernetes. Они приходят из внешних систем аутентификации (сертификаты, токены). `ServiceAccount` — это объект Kubernetes.
 
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: nginx-ingress
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: nginx-ingress
-subjects:
-- kind: ServiceAccount
-  name: nginx-ingress
-  namespace: ingress-nginx
-- kind: User
-  name: jane # "name" чувствительно к регистру
-  apiGroup: rbac.authorization.k8s.io
-- kind: Group
-  name: developer # например, организация в пользовательском сертификате
-  apiGroup: rbac.authorization.k8s.io
-```
+#### Сравнение RoleBinding и ClusterRoleBinding
 
-Поле `subjects` определяет, кому выдаются права. `Subjects` бывают трех типов:
+| Характеристика | RoleBinding | ClusterRoleBinding |
+| :--- | :--- | :--- |
+| **Область действия** | Один `namespace` | Весь кластер |
+| **`roleRef`** | `Role` (локальная) или `ClusterRole` | Только `ClusterRole` |
+| **`namespace` у ресурса** | Обязателен | Отсутствует (кластерный ресурс) |
+| **`ServiceAccount` subject** | Если `namespace` не указан, используется `namespace` самого `RoleBinding`. | `namespace` в `subject` обязателен. |
+| **Типовые сценарии**| Делегирование ролей в пределах команды/проекта | Глобальные роли для администраторов, контроллеров, системных компонентов. |
 
-* **ServiceAccount:** Сервисная учетная запись внутри Kubernetes.
-* **User:** Пользователь.
-* **Group:** Группа пользователей.
+### Агрегируемые ClusterRole
 
-Для `ServiceAccount` также необходимо указать `namespace`.
+Агрегация позволяет объединять правила из нескольких `ClusterRole` в одну. Контроллер автоматически обновляет агрегированную роль, добавляя в нее правила из ролей, отмеченных специальной меткой (`label`). Это удобно для расширения стандартных ролей (`admin`, `edit`, `view`).
 
-**Важное замечание:** В самом Kubernetes нет таких объектов, как `user` или `group`. Для того чтобы Kubernetes мог аутентифицировать определенного пользователя или группу, требуются внешние механизмы аутентификации (например, Single Sign-On). В данном случае рассматриваются только `ServiceAccount`.
-
-Поле `roleRef` указывает, какая `Role` (или `ClusterRole`) применяется к `subjects`.
-
-Пример `RoleBinding` с `ClusterRole` `view`:
+**Пример агрегирующей роли:**
+Она находит все `ClusterRole` с меткой `rbac.myorg.io/aggregate-to-team-developer: "true"` и объединяет их правила.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRole
 metadata:
-  name: user
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: view
-subjects:
-- kind: ServiceAccount
-  name: user
-  namespace: default
+  name: team-developer
+aggregationRule:
+  clusterRoleSelectors:
+  - matchLabels:
+      rbac.myorg.io/aggregate-to-team-developer: "true"
+rules: [] # Правила будут добавлены автоматически
 ```
 
-В этом примере `ServiceAccount` с именем `user` в `namespace default` получает права `ClusterRole` с именем `view` (эти права будут действовать только в `namespace default`).
+## Практические сценарии и лучшие практики
 
-После создания `RoleBinding` можно проверить права доступа:
-
-```bash
-# Попытка получить сервисы в namespace default (успешно)
-kubectl get service --as=system:serviceaccount:default:user
-
-# Попытка получить сервисы в namespace kube-system (неуспешно)
-kubectl get service --as=system:serviceaccount:default:user --namespace kube-system
-# Error from server (Forbidden): services is forbidden: User "system:serviceaccount:default:user" cannot list resource "services" in API group "" in the namespace "kube-system"
-```
-
-### ServiceAccount (Сервисный аккаунт)
-
-`ServiceAccount` — это простая абстракция, представляющая собой учетную запись, необходимую для работы внутри кластера Kubernetes. Они используются для авторизации приложений, работающих внутри кластера Kubernetes и обращающихся к Kubernetes API. В некоторых случаях `ServiceAccount` также могут использоваться для аутентификации внешних пользователей, например, разработчиков, которым выдаются токены для доступа к кластеру.
-
-Пример `ServiceAccount`:
+### 1. Принцип минимальных привилегий
+Всегда предоставляйте только те права, которые абсолютно необходимы.
 
 ```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: user
-```
+# ПЛОХО: избыточные права
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
 
-Создание `ServiceAccount`:
-
-```bash
-kubectl apply -f serviceaccount.yaml
-# serviceaccount/user created
-```
-
-При создании `ServiceAccount` контроллер автоматически создает секрет, содержащий токен для авторизации в Kubernetes API.
-
-```bash
-kubectl get secret
-# NAME                  TYPE                                  DATA   AGE
-# default-token-hhcsn   kubernetes.io/service-account-token   3      4h2m
-# user-token-4mps8      kubernetes.io/service-account-token   3      12s
-```
-
-Этот токен можно использовать для аутентификации в кластере.
-
-### ClusterRole (Кластерная роль)
-
-В отличие от обычной `Role`, которая предоставляет права только в том `namespace`, где она была создана, `ClusterRole` предназначена для сбора прав на объекты во всем кластере (кластер-вайд ресурс). Например, если `ClusterRole` имеет имя `view`, она собирает права на объекты в любом `namespace`.
-
-### ClusterRoleBinding (Привязка кластерной роли)
-
-`ClusterRoleBinding` связывает `ClusterRole` с `subjects` (пользователями, группами или `ServiceAccount`) на уровне всего кластера. Это означает, что права, определенные в `ClusterRole`, будут применены ко всем `namespace` в кластере.
-
-### Различия между RoleBinding и ClusterRoleBinding
-
-* **`RoleBinding`:** Выдает права `Role` (или `ClusterRole`) только в том `namespace`, где был создан `RoleBinding`.
-* **`ClusterRoleBinding`:** Выдает права `ClusterRole` на весь кластер Kubernetes.
-
-## Практические сценарии
-
-### Принцип минимальных привилегий
-
-Kubernetes по умолчанию не является строгим. Можно по ошибке выдать слишком широкие права, например, `cluster-admin`. Это создает риски безопасности, так как компрометация одного компонента может привести к компрометации всего кластера.
-
-Всегда следуйте принципу минимальных привилегий: предоставляйте пользователям и сервисным аккаунтам только те права, которые им абсолютно необходимы.
-
-#### Ключевые принципы
-
-**1. Минимальные привилегии (Minimal Privileges):**
-
-```yaml
-# Минимальные необходимые права для чтения подов в кластере
+# ХОРОШО: минимально необходимые права для чтения подов
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -186,9 +124,8 @@ rules:
   verbs: ["get", "list", "watch"]
 ```
 
-**2. Разделение по Namespace (Namespace Isolation):**
-
-Используйте `Role` и `RoleBinding` для ограничения доступа к ресурсам в рамках определенного `namespace`. Это обеспечивает изоляцию и предотвращает горизонтальное распространение угроз.
+### 2. Изоляция по Namespace
+Используйте `Role` и `RoleBinding` для ограничения доступа к ресурсам в рамках `namespace`.
 
 ```yaml
 # Доступ только к Deployments в конкретном namespace 'development'
@@ -200,55 +137,96 @@ metadata:
 rules:
 - apiGroups: ["apps"]
   resources: ["deployments"]
-  verbs: ["get", "list", "create", "update", "delete"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dev-lead-binding
+  namespace: development
+subjects:
+- kind: User
+  name: dev-lead
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: deployment-manager
+  apiGroup: rbac.authorization.k8s.io
 ```
 
-### Критически важные практики
-
-**1. Ограничение сервисных аккаунтов (ServiceAccount Restriction):**
-
-По умолчанию Kubernetes автоматически монтирует токен `ServiceAccount` в каждый под. Если приложение не нуждается в доступе к Kubernetes API, отключите эту функцию для повышения безопасности.
+### 3. Использование ClusterRole в конкретном Namespace
+Чтобы переиспользовать роль в нескольких `namespace`, создайте `ClusterRole` и привязывайте ее через `RoleBinding`.
 
 ```yaml
-# Автоматическое монтирование токена только когда это действительно необходимо
+# ClusterRole для просмотра секретов
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: secret-viewer
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+---
+# Даем группе 'devs' права на просмотр секретов только в namespace 'staging'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: view-secrets-in-staging
+  namespace: staging
+subjects:
+- kind: Group
+  name: devs
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: secret-viewer
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### 4. Ограничение ServiceAccount
+Если приложению не нужен доступ к Kubernetes API, отключите автоматическое монтирование токена `ServiceAccount`.
+
+```yaml
+# ServiceAccount без автоматического монтирования токена
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: my-app
+  name: no-api-access-sa
 automountServiceAccountToken: false
+
+# Под, использующий этот ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+spec:
+  serviceAccountName: no-api-access-sa
+  ...
 ```
 
-**2. Регулярный аудит RBAC (Regular RBAC Audit):**
-
-Периодически проверяйте текущие права доступа, чтобы убедиться, что они соответствуют принципу минимальных привилегий и не содержат избыточных разрешений. Это особенно важно после изменений или развертывания новых компонентов.
+### 5. Регулярный аудит RBAC
+Периодически проверяйте текущие права доступа с помощью `kubectl auth can-i`.
 
 ```bash
-# Проверка прав текущего пользователя: может ли он выполнять операцию 'list secrets' во всех namespace
-kubectl auth can-i list secrets --all-namespaces
+# Проверка, может ли текущий пользователь создавать Deployments в namespace 'default'
+kubectl auth can-i create deployments --namespace default
 
-# Аудит всех ClusterRole и Role в кластере (вывод в YAML для анализа)
-kubectl get clusterroles,roles --all-namespaces -o yaml
+# Проверка от имени другого пользователя
+kubectl auth can-i list secrets --namespace dev --as jane
+
+# Проверка от имени ServiceAccount
+kubectl auth can-i list nodes --as=system:serviceaccount:observability:prometheus
 ```
 
-**3. Избегание Wildcard-прав (Avoid Wildcard Permissions):**
+### Дополнительные рекомендации
 
-Использование `*` для `resources` или `verbs` в `Role` или `ClusterRole` предоставляет чрезмерные привилегии и является серьезной угрозой безопасности. Всегда указывайте конкретные ресурсы и действия.
-
-```yaml
-# ОПАСНО: Предоставляет полный доступ ко всем ресурсам
-rules:
-- apiGroups: [""]
-  resources: ["*"]
-  verbs: ["*"]
-
-```yaml
-# БЕЗОПАСНО: Предоставляет только необходимые права на конкретные ресурсы
-rules:
-- apiGroups: [""]
-  resources: ["pods", "services"]
-  verbs: ["get", "list", "watch"]
-```
+*   **Предпочитайте `Role`**: Используйте `ClusterRole` только при необходимости кластерного доступа или для повторного использования в нескольких `namespace`.
+*   **Связывайте группы, а не пользователей**: Для кластеров с внешней аутентификацией предпочтительнее назначать права группам. Это упрощает управление при смене состава команды.
+*   **Ограничивайте доступ к RBAC-ресурсам**: Чтобы предотвратить эскалацию привилегий, отдельно ограничивайте права на `create`, `update`, `patch` для ресурсов `roles`, `rolebindings`, `clusterroles` и `clusterrolebindings`.
+*   **Не давайте права `escalate` и `bind` без необходимости**: `escalate` позволяет получить права другой роли, а `bind` — создавать `RoleBinding`/`ClusterRoleBinding`.
 
 ## Дополнительная информация
 
-* [RBAC Good Practices (Kubernetes Official Documentation)](https://kubernetes.k8s.io/docs/concepts/security/rbac-good-practices/)
+*   [Using RBAC Authorization (Kubernetes Official Documentation)](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+*   [RBAC Good Practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)

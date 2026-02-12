@@ -70,9 +70,15 @@ CI/CD-пайплайн по-прежнему "проталкивает" (push) �
 * **Rolling Update:** Стандартная стратегия Kubernetes, при которой поды обновляются поочередно, обеспечивая непрерывную доступность.
 * **Recreate:** Полная остановка старой версии приложения перед запуском новой. Приводит к простою.
 * **Blue/Green Deployment:** Развертывание новой версии ("Green") параллельно со старой ("Blue"). После успешной проверки трафик мгновенно переключается на новую версию.
-* **Canary Deployment (Канареечное развертывание):** Новая версия выкатывается на небольшую часть пользователей. Если метрики в норме, охват постепенно увеличивается.
+  * **Подробнее:** [**Blue-Green Deployment: Детальное руководство](../Deployment_Strategies/blue_green_deployment.md)**.
 
-**Подробнее** о реализации этих подходов в Kubernetes см. в документе [**Расширенные стратегии развертывания**](../../Kubernetes/Operations/Advanced_Deployment_Strategies.md).
+* **Canary Deployment (Канареечное развертывание):** Новая версия выкатывается на небольшую часть пользователей. Если метрики в норме, охват постепенно увеличивается.
+  * **Подробнее:** [**Canary Deployment: Пошаговое внедрение](../Deployment_Strategies/canary_deployment.md)**, [**Мониторинг и оценка трафика при Canary](../Deployment_Strategies/canary_monitoring_and_gating.md)**.
+
+**Общая информация:**
+* **[Проверки здоровья и стратегии отката](../Deployment_Strategies/deployment_health_checks_and_rollback.md)**
+* **[Сравнение стратегий: Blue-Green vs. Canary](../Deployment_Strategies/comparison.md)**
+* **Реализация в Kubernetes:** [**Расширенные стратегии развертывания**](../../Kubernetes/Operations/Advanced_Deployment_Strategies.md).
 
 ## Дополнительная информация
 

@@ -82,7 +82,7 @@ curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin
 
 ## Дополнительная информация
 
-Создание и анализ SBOM являются частью более широкой темы **[безопасности цепочки поставок ПО (Supply Chain Security)](./supply_chain_security.md)**, которая также включает подписание артефактов и сканирование уязвимостей.
+Создание и анализ SBOM являются частью более широкой темы **[безопасности цепочки поставок ПО (Supply Chain Security)](../../Security/Supply_Chain_Security/overview.md)**, которая также включает подписание артефактов и сканирование уязвимостей.
 
 ### 3. Генерация SBOM с помощью Docker BuildKit
 

@@ -55,48 +55,57 @@ metadata:
   name: my-app-hpa
   namespace: default
 spec:
-  # 1. Ссылка на масштабируемый ресурс
+  # 1. Ссылка на масштабируемый ресурс (Deployment или StatefulSet)
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
+    name: my-app # Измените на имя вашего Deployment
 
   # 2. Границы масштабирования
-  minReplicas: 2
-  maxReplicas: 10
+  minReplicas: 3
+  maxReplicas: 20
 
   # 3. Метрики для принятия решений
   metrics:
+    # Метрика по утилизации CPU (ресурсная метрика)
     - type: Resource
       resource:
         name: cpu
         target:
-          type: Utilization # Тип цели — среднее использование
-          averageUtilization: 50
-    - type: Resource
-      resource:
-        name: memory
+          type: Utilization # Тип цели — средняя утилизация
+          averageUtilization: 60 # Целевое значение 60% утилизации CPU
+    # Внешняя метрика (например, из очереди сообщений)
+    - type: External
+      external:
+        metric:
+          name: queue_messages_ready # Название внешней метрики
         target:
           type: AverageValue
-          averageValue: 200Mi
+          averageValue: "200" # Целевое среднее значение 200 сообщений в очереди
 
-  # 4. Поведение при масштабировании
+  # 4. Поведение при масштабировании (опционально, для тонкой настройки)
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 0
+      stabilizationWindowSeconds: 0 # Отсутствие задержки для быстрого масштабирования вверх
       policies:
       - type: Percent
-        value: 100
-        periodSeconds: 15
+        value: 100 # Увеличение на 100% от текущего числа подов
+        periodSeconds: 15 # Каждые 15 секунд
     scaleDown:
-      stabilizationWindowSeconds: 300
+      stabilizationWindowSeconds: 300 # 5-минутная задержка для масштабирования вниз
       policies:
       - type: Pods
-        value: 2
-        periodSeconds: 60
+        value: 2 # Уменьшение на 2 пода
+        periodSeconds: 60 # Каждую минуту
 ```
 
 1. **`scaleTargetRef`**: Указывает, каким `Deployment` или `StatefulSet` будет управлять HPA.
 2. **`minReplicas` / `maxReplicas`**: Задает границы масштабирования.
 3. **`metrics`**: Список метрик. HPA рассчитает необходимое количество реплик для *каждой* метрики и выберет **наибольшее** значение.
 4. **`behavior`**: Позволяет тонко настроить скорость масштабирования, чтобы избежать "дребезжания" (быстрого увеличения и уменьшения реплик).
+
+#### Практические рекомендации:
+
+-   **`readinessProbe`**: Настройка `readinessProbe` критически важна для исключения «холодных» (еще не готовых) подов из балансировки, предотвращая направление трафика на неинициализированные экземпляры.
+-   **`minReadySeconds`**: Использование параметра `minReadySeconds` в спецификации Deployment/StatefulSet помогает уменьшить "флаппинг" (быстрое переключение состояний подов) и гарантирует, что новый под считается "готовым" только после прохождения `readinessProbe` и стабильной работы в течение этого времени.
+-   **Корректные `requests`**: Указание адекватных запросов на ресурсы (CPU/RAM `requests`) позволяет планировщику заранее резервировать необходимые ресурсы на узлах, что способствует более стабильному и предсказуемому масштабированию.

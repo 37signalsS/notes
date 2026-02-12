@@ -1,3 +1,13 @@
+> **Примечание:** Этот документ описывает теоретические основы и концепции. Практические руководства с примерами кода, командами и метриками находятся в разделе **[Deployment Strategies](../../CI-CD/Deployment_Strategies/)**.
+> 
+> *   [**Blue-Green Deployment: Детальное руководство**](../../CI-CD/Deployment_Strategies/blue_green_deployment.md)
+> *   [**Canary Deployment: Пошаговое внедрение**](../../CI-CD/Deployment_Strategies/canary_deployment.md)
+> *   [**Мониторинг и оценка трафика при Canary**](../../CI-CD/Deployment_Strategies/canary_monitoring_and_gating.md)
+> *   [**Проверки здоровья и стратегии отката**](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)
+> *   [**Сравнение стратегий: Blue-Green vs. Canary**](../../CI-CD/Deployment_Strategies/comparison.md)
+
+---
+
 # Расширенные стратегии развертывания в Kubernetes
 
 ## Определения
