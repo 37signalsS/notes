@@ -226,7 +226,154 @@ kubectl auth can-i list nodes --as=system:serviceaccount:observability:prometheu
 *   **Ограничивайте доступ к RBAC-ресурсам**: Чтобы предотвратить эскалацию привилегий, отдельно ограничивайте права на `create`, `update`, `patch` для ресурсов `roles`, `rolebindings`, `clusterroles` и `clusterrolebindings`.
 *   **Не давайте права `escalate` и `bind` без необходимости**: `escalate` позволяет получить права другой роли, а `bind` — создавать `RoleBinding`/`ClusterRoleBinding`.
 
+## Недостатки RBAC
+
+Несмотря на свою мощь, RBAC имеет ряд ограничений:
+
+### 1. Отсутствие deny-правил
+
+RBAC работает только на основе разрешений (allowlist). Нельзя явно запретить действие — только не предоставить на него права.
+
+```yaml
+# Невозможно написать:
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["delete"]
+  effect: Deny  # ❌ Такого нет в RBAC!
+```
+
+**Решение:** Использование OPA/Kyverno для запрещающих политик.
+
+### 2. Нет условий (conditions)
+
+Нельзя ограничить доступ на основе:
+- Времени суток
+- IP-адреса источника
+- Значений полей ресурса (labels, annotations)
+- Состояния ресурса
+
+```yaml
+# Невозможно ограничить по label:
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["delete"]
+  when: resource.labels.environment == "production"  # ❌ Не поддерживается
+```
+
+**Решение:** OPA/Kyverno для политик на основе атрибутов (ABAC).
+
+### 3. Статичность правил
+
+RBAC-политики статичны и не могут динамически адаптироваться к контексту. Нельзя создать правило "разрешить доступ только к подам своей команды".
+
+### 4. Сложность управления в больших кластерах
+
+- Разрастание количества ролей и привязок
+- Сложность аудита эффективных прав
+- Риск "role explosion" — множество похожих ролей с минимальными отличиями
+
+### 5. Нет контроля над содержимым ресурсов
+
+RBAC контролирует CRUD-операции, но не валидирует содержимое:
+- Нельзя запретить Pod с привилегированным контейнером
+- Нельзя требовать определенные labels
+- Нельзя ограничить ресурсы (CPU/memory)
+
+**Решение:** Admission Controllers (OPA Gatekeeper, Kyverno).
+
+### 6. Проблемы с эскалацией привилегий
+
+- `escalate` verb позволяет создавать роли с правами, которых нет у создателя
+- `bind` verb позволяет привязывать существующие роли
+- Сложность отслеживания транзитивных прав
+
+## OPA (Open Policy Agent) — расширение возможностей RBAC
+
+**OPA** — это движок политик общего назначения, который позволяет реализовать сложные сценарии авторизации, недоступные в RBAC.
+
+### Возможности OPA в Kubernetes
+
+1. **Политики на основе контекста:**
+   - Проверка IP-адреса клиента
+   - Время суток
+   - Атрибуты ресурса (labels, annotations)
+
+2. **Запрещающие политики:**
+   - Явный запрет определенных действий
+   - Блокировка по условиям
+
+3. **Валидация содержимого:**
+   - Проверка spec ресурсов
+   - Валидация безопасности (no privileged containers)
+   - Требование наличия определенных полей
+
+4. **Многоуровневая авторизация:**
+   - Интеграция с внешними системами
+   - Сложная логика принятия решений
+
+### OPA Gatekeeper
+
+OPA Gatekeeper — это специфическая реализация OPA для Kubernetes, работающая как Validating Webhook.
+
+**Архитектура:**
+```
+API Request → API Server → OPA Gatekeeper → Decision (allow/deny)
+                                          ↓
+                                    Rego Policies
+```
+
+**Пример политики (Rego):**
+```rego
+package kubernetes.admission
+
+# Запретить privileged контейнеры
+deny[msg] {
+    input.request.kind.kind == "Pod"
+    input.request.object.spec.containers[_].securityContext.privileged
+    msg := "Privileged containers are not allowed"
+}
+
+# Требовать label 'owner' на всех ресурсах
+deny[msg] {
+    input.request.object.metadata.labels.owner == ""
+    msg := "All resources must have an 'owner' label"
+}
+```
+
+### Сравнение RBAC и OPA
+
+| Возможность | RBAC | OPA |
+|-------------|------|-----|
+| **Разрешения CRUD** | ✅ Да | ✅ Да |
+| **Запрещающие правила** | ❌ Нет | ✅ Да |
+| **Условия (time, IP)** | ❌ Нет | ✅ Да |
+| **Проверка содержимого** | ❌ Нет | ✅ Да |
+| **Сложность** | Низкая | Высокая |
+| **Производительность** | Высокая (встроено) | Ниже (webhook) |
+| **Язык политик** | YAML | Rego |
+
+### Рекомендации по использованию
+
+1. **RBAC для базовой авторизации:**
+   - Разграничение доступа по namespace
+   - Роли разработчиков/операторов
+   - Доступ ServiceAccount
+
+2. **OPA для сложных политик:**
+   - Безопасность workload (no privileged, no root)
+   - Compliance-требования
+   - Контекстные ограничения
+   - Запрещающие правила
+
+3. **Комбинированный подход:**
+   - RBAC дает общий доступ
+   - OPA валидирует и ограничивает на уровне Admission Controller
+
 ## Дополнительная информация
 
 *   [Using RBAC Authorization (Kubernetes Official Documentation)](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
 *   [RBAC Good Practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)
+*   [OPA Documentation](https://www.openpolicyagent.org/docs/latest/)
+*   [OPA Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/)

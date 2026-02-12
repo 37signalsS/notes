@@ -69,3 +69,103 @@ DHCP поддерживает три основных способа выдел�
     5.  **802.1X (Network Access Control):** Более комплексное решение, требующее аутентификации устройств перед предоставлением им сетевого доступа, что также помогает предотвратить подключение несанкционированных DHCP-серверов.
 
 *   **Порты:** DHCP-сервер использует порт **67/UDP**, а клиент — порт **68/UDP**.
+
+---
+
+## DHCPv6 (Dynamic Host Configuration Protocol for IPv6)
+
+DHCPv6 — это протокол для автоматической конфигурации IPv6-адресов и сетевых параметров в сетях IPv6.
+
+### Отличия от DHCPv4
+
+| Критерий | DHCPv4 | DHCPv6 |
+|----------|--------|--------|
+| **Транспорт** | UDP (сервер 67, клиент 68) | UDP (сервер 547, клиент 546) |
+| **Широковещание** | Использует broadcast (255.255.255.255) | Использует multicast (ff02::1:2 для всех агентов) |
+| **DORA процесс** | Четырехэтапный (Discover → Offer → Request → Ack) | Двухэтапный (Solicit → Advertise → Request → Reply) или четырехэтапный при использовании Relay |
+| **Адресация** | Выдает IPv4-адреса с маской | Выдает IPv6-адреса с префиксами |
+| **Резервирование** | Привязка по MAC-адресу (DUID в DHCPv6) | Использует DUID (DHCP Unique Identifier) + IAID |
+| **Совместимость с SLAAC** | Нет | Может работать вместе со SLAAC (Stateless Address Autoconfiguration) |
+
+### Режимы работы DHCPv6
+
+1. **Stateful DHCPv6:**
+   - DHCPv6-сервер полностью управляет выделением IPv6-адресов
+   - Клиент получает адрес, префикс, DNS и другие параметры от сервера
+   - Аналогичен DHCPv4
+
+2. **Stateless DHCPv6:**
+   - IPv6-адреса назначаются через SLAAC (Router Advertisement)
+   - DHCPv6 предоставляет только дополнительные параметры (DNS, NTP, domain name)
+   - Клиент отправляет `Information-Request`, сервер отвечает `Reply` с опциями
+
+### Типы сообщений DHCPv6
+
+- **Solicit (1):** Клиент ищет DHCPv6-серверы
+- **Advertise (2):** Серверы предлагают свои услуги
+- **Request (3):** Клиент запрашивает параметры у конкретного сервера
+- **Confirm (4):** Клиент проверяет валидность своего адреса
+- **Renew (5):** Обновление аренды адреса
+- **Rebind (6):** Попытка обновления у других серверов
+- **Reply (7):** Ответ сервера на запрос клиента
+- **Release (8):** Освобождение адреса
+- **Decline (9):** Отказ от адреса (конфликт)
+- **Reconfigure (10):** Сервер требует обновления конфигурации
+- **Information-Request (11):** Запрос только опций (для stateless режима)
+
+### DUID (DHCP Unique Identifier)
+
+Уникальный идентификатор клиента DHCPv6, который сохраняется при смене сетевого интерфейса:
+
+- **DUID-LLT:** На основе MAC + времени создания
+- **DUID-EN:** Enterprise Number + идентификатор производителя
+- **DUID-LL:** Только на основе MAC-адреса
+- **DUID-UUID:** На основе UUID системы
+
+### Идентификаторы Identity Association (IA)
+
+- **IAID (Identity Association Identifier):** Идентификатор, назначаемый клиентом для каждого интерфейса
+- **IA_NA (Non-temporary Address):** Ассоциация для обычных IPv6-адресов
+- **IA_TA (Temporary Address):** Ассоциация для временных адресов (privacy extensions)
+- **IA_PD (Prefix Delegation):** Делегирование префикса для маршрутизаторов
+
+### Практические сценарии DHCPv6
+
+**Настройка Stateful DHCPv6 (Linux с ISC DHCP):**
+
+```bash
+# /etc/dhcp/dhcpd6.conf
+default-lease-time 600;
+max-lease-time 7200;
+
+subnet6 2001:db8::/64 {
+    # Диапазон для выдачи
+    range6 2001:db8::100 2001:db8::200;
+    
+    # DNS серверы
+    option dhcp6.name-servers 2001:4860:4860::8888, 2001:4860:4860::8844;
+    
+    # Домен
+    option dhcp6.domain-search "example.com";
+    
+    # Резервирование по DUID
+    host client1 {
+        host-identifier option dhcp6.client-id 00:01:00:01:12:34:56:78:aa:bb:cc:dd:ee:ff;
+        fixed-address6 2001:db8::50;
+    }
+}
+```
+
+**Настройка Stateless DHCPv6:**
+
+```bash
+# Только опции, без выдачи адресов
+subnet6 2001:db8::/64 {
+    # Адреса через SLAAC
+    range6 2001:db8::100 2001:db8::200 temporary;
+    
+    # DNS и другие опции через DHCPv6
+    option dhcp6.name-servers 2001:4860:4860::8888;
+    option dhcp6.domain-search "example.com";
+}
+```

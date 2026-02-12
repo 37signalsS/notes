@@ -227,3 +227,224 @@ docker inspect <container> \
 Для обеспечения целостности и аутентичности образов используется механизм цифровых подписей. Это позволяет гарантировать, что образ не был изменен с момента его создания доверенным издателем.
 
 Подробнее о механизмах подписи, таких как **Docker Content Trust** и **Cosign**, можно прочитать в руководстве по [безопасности Docker](./Docker_security/docker_security_overview.md).
+
+## Docker-образы в разных бранчах
+
+### Вопрос: Один артефакт или разные?
+
+**Сценарий:** Dockerfile добавлен в бранч `dev`, образ собран и в `dev`, и в `stage`.
+
+**Ответ:** Это будут **разные артефакты**, даже если Dockerfile одинаковый.
+
+### Почему разные артефакты?
+
+```
+Бранч dev:
+┌─────────────────────────────────────────────────────────────┐
+│  dev: Dockerfile ──► docker build ──► myapp:dev-{hash}     │
+│                                                              │
+│  Контекст сборки:                                           │
+│  - Git commit: abc123 (dev)                                 │
+│  - Base image: ubuntu:20.04 (latest на момент сборки)      │
+│  - Build args: ENV=development                              │
+│  - Слои: [base]─[deps]─[code@abc123]─[config-dev]          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ Разные!
+                              ▼
+Бранч stage:
+┌─────────────────────────────────────────────────────────────┐
+│  stage: Dockerfile ──► docker build ──► myapp:stage-{hash} │
+│                                                              │
+│  Контекст сборки:                                           │
+│  - Git commit: def456 (stage)                               │
+│  - Base image: ubuntu:20.04 (возможно другой digest!)      │
+│  - Build args: ENV=staging                                  │
+│  - Слои: [base]─[deps]─[code@def456]─[config-stage]        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Факторы, создающие различия
+
+| Фактор | Влияние | Результат |
+|--------|---------|-----------|
+| **Git-история** | Разные коммиты = разный код | Разные слои COPY |
+| **Base image** | `ubuntu:latest` меняется | Может быть разный base layer |
+| **Build args** | `ENV=dev` vs `ENV=prod` | Разные инструкции RUN |
+| **Build context** | Разные файлы в бранче | Разные слои COPY |
+| **Multi-stage** | TARGETPLATFORM и др. | Разные финальные образы |
+| **Тегирование** | dev-v1.0 vs stage-v1.0 | Разные манифесты в registry |
+
+### Immutable артефакты: Лучшая практика
+
+```dockerfile
+# Dockerfile с явным версионированием
+FROM ubuntu:20.04@sha256:abc123...  # Пиним digest!
+
+ARG APP_VERSION
+ARG BUILD_ENV
+
+# Установка зависимостей (кэшируется)
+RUN apt-get update && apt-get install -y \
+    python3=3.8.10-0ubuntu1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копирование кода
+COPY . /app
+
+# Сборка с версией
+RUN echo "Building ${APP_VERSION} for ${BUILD_ENV}"
+
+LABEL git.commit=$GIT_COMMIT \
+      build.env=$BUILD_ENV \
+      build.date=$BUILD_DATE
+```
+
+```bash
+# Сборка с полным контролем
+DOCKER_BUILDKIT=1 docker build \
+  --build-arg APP_VERSION=1.2.3 \
+  --build-arg BUILD_ENV=dev \
+  --build-arg GIT_COMMIT=$(git rev-parse HEAD) \
+  --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+  -t myapp:1.2.3-dev-$(git rev-parse --short HEAD) \
+  -t myapp:1.2.3-dev-latest \
+  .
+```
+
+### Промоция образов между окружениями
+
+```
+РЕКОМЕНДУЕМЫЙ ПОДХОД (Promotion):
+
+Dev бранч:
+  docker build -t myapp:dev-abc123 .
+  docker tag myapp:dev-abc123 registry/app:dev-abc123
+  
+Тестирование в dev...
+  ✓ Пройдены unit tests
+  ✓ Пройдены integration tests
+  
+Stage бранч (merging dev → stage):
+  # НЕ пересобираем! Промоутим проверенный образ
+  docker pull registry/app:dev-abc123
+  docker tag registry/app:dev-abc123 registry/app:stage-abc123
+  docker push registry/app:stage-abc123
+  
+  # ИЛИ используем immutable digest
+  docker buildx imagetools inspect \
+    registry/app:dev-abc123 --format '{{ json .Manifest }}'
+  
+Production (merging stage → main):
+  docker pull registry/app:stage-abc123
+  docker tag registry/app:stage-abc123 registry/app:prod-abc123
+  docker tag registry/app:stage-abc123 registry/app:1.2.3
+  docker push registry/app:1.2.3
+```
+
+### Проверка идентичности образов
+
+```bash
+# Сравнение digests (SHA256)
+docker inspect --format='{{index .RepoDigests 0}}' myapp:dev
+docker inspect --format='{{index .RepoDigests 0}}' myapp:stage
+
+# Если разные — разные артефакты!
+
+# Просмотр всех слоев
+docker history myapp:dev
+docker history myapp:stage
+
+# Сравнение с помощью dive
+dive myapp:dev
+dive myapp:stage
+
+# Извлечение SBOM и сравнение
+syft myapp:dev -o json > dev.sbom.json
+syft myapp:stage -o json > stage.sbom.json
+diff dev.sbom.json stage.sbom.json
+```
+
+### Когда образы одинаковые?
+
+Образы **могут быть одинаковыми**, если:
+
+1. **Одинаковый git-commit** в обоих бранчах (fast-forward merge)
+2. **Пиннинг всех зависимостей** (FROM ubuntu:20.04@sha256:...)
+3. **Одинаковые build args** и context
+4. **Multi-stage с одинаковым финальным stage**
+
+```dockerfile
+# Multi-stage: финальный образ может быть идентичен
+FROM golang:1.19 AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o myapp
+
+FROM scratch AS production
+COPY --from=builder /app/myapp /myapp
+ENTRYPOINT ["/myapp"]
+
+# Сборка разными способами дает одинаковый результат:
+# docker build --target=production .
+# Но только если builder stage не влияет на финальный бинарь!
+```
+
+### CI/CD стратегии
+
+**Стратегия 1: Сборка в каждом бранче (простая)**
+```yaml
+# .gitlab-ci.yml
+build:
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+  # Результат: разные образы в каждом бранче
+```
+
+**Стратегия 2: Сборка один раз, промоция между окружениями**
+```yaml
+# Сборка только в dev
+build:
+  only:
+    - dev
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+# Промоция в stage
+promote_to_stage:
+  only:
+    - stage
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:stage
+    - docker push $CI_REGISTRY_IMAGE:stage
+
+# Промоция в prod
+promote_to_prod:
+  only:
+    - main
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:latest
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+```
+
+**Стратегия 3: Immutable артефакты с подписью**
+```yaml
+# Cosign подпись
+sign:
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - cosign sign --key $COSIGN_KEY $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    
+verify:
+  script:
+    - cosign verify --key $COSIGN_PUB $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+```
+
+## Дополнительная информация
