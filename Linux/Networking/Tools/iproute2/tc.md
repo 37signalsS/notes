@@ -91,6 +91,32 @@ sudo tc -s filter show dev eth0 parent ffff:
 sudo tc qdisc del dev eth0 ingress
 ```
 
+## Приоритизация трафика с HTB и fq_codel
+
+Хостовая дисциплина очередей позволяет защитить интерактивный трафик от фоновой репликации:
+
+```bash
+# Создание HTB (Hierarchical Token Bucket) с классами приоритета
+tc qdisc replace dev eth0 root handle 1: htb default 20
+
+# Корневой класс с ограничением скорости
+tc class add dev eth0 parent 1: classid 1:1 htb rate 1gbit ceil 1gbit
+
+# Класс приоритета 0 для интерактивного трафика (200 Мбит)
+tc class add dev eth0 parent 1:1 classid 1:10 htb rate 200mbit prio 0
+
+# Класс приоритета 1 для фонового трафика (800 Мбит)
+tc class add dev eth0 parent 1:1 classid 1:20 htb rate 800mbit prio 1
+
+# Добавление fq_codel к каждому классу для борьбы с bufferbloat
+tc qdisc add dev eth0 parent 1:10 fq_codel
+tc qdisc add dev eth0 parent 1:20 fq_codel
+```
+
+**Использование:**
+* Маркируйте пакеты DSCP на стороне приложения/прокси
+* Направляйте маркированный трафик в приоритетный класс (1:10)
+
 ## Эмуляция сетевых проблем (netem)
 
 `tc` также является мощным инструментом для эмуляции плохих сетевых условий, таких как задержки, потери и повреждения пакетов.
