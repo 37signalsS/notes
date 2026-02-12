@@ -142,3 +142,16 @@ env -i PATH=/usr/bin:/bin bash -c 'env'
 - **`PS1`:** Строка приглашения командной строки (promt).
 - **`TERM`:** Тип терминала.
 - **`EDITOR` / `VISUAL`:** Редактор по умолчанию.
+
+## Где задавать переменные
+
+Окружение подхватывается различными типами оболочек (login, interactive, non-login), а также процессами systemd. Важно выбрать правильное место для настройки.
+
+| Файл/механизм | Когда применяется | Примеры переменных |
+|---------------|-------------------|-------------------|
+| /etc/environment | Ко всем пользователям (PAM) | LANG, HTTP_PROXY |
+| /etc/profile.d/*.sh | Login shell для всех | PATH, JAVA_HOME |
+| ~/.profile, ~/.bash_profile | Login shell пользователя | PATH, EDITOR |
+| ~/.bashrc | Интерактивные bash-сессии | алиасы, PS1 |
+| ~/.zshrc | Интерактивные zsh | PATH, функции |
+| systemd --user | Пользовательские сервисы | systemctl --user import-environment VAR |
