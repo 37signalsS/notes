@@ -91,31 +91,11 @@ lsmod | grep vbox
 
 
 
-Docker (26 файлов):
-- Concepts/linux_isolation.md
-- Dockerfile/Docker_best_practices/build_optimization.md
-- Docker_fs/: docker_commit.md, docker_images.md, docker_overlayfs.md, docker_volumes.md, volume_encryption.md
-- Docker_fs/images/: branch_artifacts.md, diagnostics_transfer.md, docker_images_basics.md, image_vs_container.md, layer_management.md, promotion_cicd.md
-- Docker_network/: docker_network.md, drivers/(ipvlan.md, macvlan.md, none.md, overlay.md), management/cli.md
-- docker_overview.md
-- Docker_registries/: image_versioning_and_tagging.md, docker_registries.md, public_registry_security.md
-- Docker_security/: docker_sbom.md, host_daemon_hardening.md, image_signature_and_verification.md, supply_chain_security.md, vulnerability_scanning.md
-- Docker_swarm/swarm_networking.md
-- Docker_troubleshooting/network_connectivity_issues.md
-ELK_Stack (6 файлов):
-- Elasticsearch/: elasticsearch_mapping_and_indexing.md, elasticsearch_overview.md
-- Kibana/: kibana_overview.md, kibana_search_and_visualization.md
-- Logstash/: logstash_overview.md, logstash_pipelines.md
-etcd (4 файла):
-- architecture_and_concepts.md, clustering_and_recovery.md, mvcc_versioning_and_compaction.md, raft_consensus.md
-Git/GitHub/GitOps (12 файлов):
-- Git/git_troubleshooting.md
-- Github_CI/: Core_Concept.md, Environment_Limitations.md, Events_Jobs_Steps.md, Marketplace_Actions.md, Matrix_Builds.md, Workflow_Syntax.md
-- GitOps/: ArgoCD/(auto_sync.md, synchronization.md), Comparisons/argo_vs_flux_manifests.md, Concepts/(audit_logs.md, containerization_and_image_storage.md), Flux/overview.md, Notifications/webhooks_for_notifications.md, Security/secrets_encryption.md
-Grafana (3 файла):
-- grafana_alerting.md, grafana_dashboards.md, grafana_templating.md
-Jaeger (5 файлов):
-- distributed_tracing_concepts.md, jaeger_architecture.md, jaeger_deployment_options.md, jaeger_kubernetes_integration.md, jaeger_performance_analysis.md
+
+
+
+
+
 Kafka (4 файла):
 - delivery_guarantees.md, message_queues_principles.md, partitioning_and_balancing.md, rabbitmq_vs_kafka.md
 Kubernetes (53 файла):

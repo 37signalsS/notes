@@ -1,130 +1,86 @@
-# Контейнеризация и хранение образов в GitOps
+# GitOps: Образы контейнеров и их жизненный цикл
 
-## Роль контейнерных образов в GitOps
-В GitOps цикл доставки разделяется на два артефакта: исходный код приложения и образ контейнера. Репозиторий инфраструктуры фиксирует желаемое состояние кластера, но не хранит сами образы — вместо этого в манифестах Kubernetes указываются ссылки на образы из реестра. Ключевое требование — детерминируемость: манифест должен ссылаться на неизменяемый артефакт.
+В GitOps образ контейнера является ключевым артефактом, который связывает процессы непрерывной интеграции (CI) и непрерывной доставки (CD). Правильное управление образами — основа предсказуемости и безопасности всей системы.
 
-Варианты ссылок:
-*   Теги: удобны для людей, но могут быть мутируемыми.
-*   Дайджесты (sha256): криптографически однозначные ссылки на конкретный слойный слепок образа.
+## Определения
 
-Таблица:
-| Способ | Плюсы | Минусы | Где уместно |
-| --- | --- | --- | --- |
-| image:repo/app:1.4.2 | Читаемо, просто | Риск перезаписи тега | Dev, автообновление |
-| image:repo/app@sha256:... | Идемпотентно, точно | Менее читаемо | Staging/Prod, аудит |
+- **Образ контейнера (Container Image)**: Неизменяемый (immutable) бинарный пакет, который включает в себя приложение и все его зависимости. В GitOps-конвейере это главный "доставляемый" артефакт.
+- **Реестр образов (Image Registry)**: Сервис для хранения, версионирования и распространения образов контейнеров. Примеры: Docker Hub, Harbor, ECR, GCR.
+- **Неизменяемый тег (Immutable Tag)**: Тег образа, который уникально и постоянно идентифицирует один и тот же слой образа. Это может быть хеш коммита (e.g., `githash-a4b5c6d`) или версия по SemVer (`1.2.3`).
 
-## Практики контейнеризации для GitOps
-*   Репродуцируемые сборки: фиксируйте версии базовых образов и инструментов.
-*   Мультистейдж: минимизируйте итоговый слой, исключайте dev-зависимости.
-*   Метаданные: добавляйте OCI-лейблы (version, vcs-url, revision).
-*   Безопасность: не используйте root, ограничивайте capabilities, обновляйте базу пакетов.
-*   Подписи и SBOM: подписывайте образы и публикуйте SBOM для трассируемости цепочки поставки.
+## Основные концепции
 
-Пример Dockerfile с мультистейдж-сборкой и непривилегированным исполнением:
-```bash
-FROM golang:1.22-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o /bin/app ./cmd/app
+### Разделение CI и CD
 
-FROM gcr.io/distroless/static:nonroot
-LABEL org.opencontainers.image.source="https://example.com/repo" 
-      org.opencontainers.image.version="${VERSION}"
-USER nonroot:nonroot
-COPY --from=build /bin/app /app
-ENTRYPOINT ["/app"]
-```
-## Хранение образов и политики реестров
-Реестр — единственный источник бинарных артефактов. Для GitOps критичны:
-*   Иммутабельность тегов и запрет перезаписи.
-*   Политики ретенции и garbage collection.
-*   Частные репозитории и протокол OCI с поддержкой подписей.
-*   Репликация между регионами и кэширование (pull-through).
-*   Хранение Helm-чартов как OCI-артефактов для консистентности.
+GitOps четко разделяет зону ответственности:
+- **CI (Continuous Integration)**: Процесс сборки кода в артефакт. В данном контексте, CI-пайплайн отвечает за сборку, тестирование и публикацию образа в реестр с неизменяемым тегом.
+- **CD (Continuous Delivery)**: Процесс доставки артефакта в окружение. GitOps-инструмент (ArgoCD, Flux) отвечает за то, чтобы версия образа, указанная в Git-репозитории, работала в кластере.
 
-Примеры: Docker Hub, Harbor, ECR, GCR/Artifact Registry, ACR — выбираются по требованиям к контролю доступа, репликации и доказуемости происхождения.
+Git-репозиторий с манифестами Kubernetes служит "мостом" между этими двумя процессами.
 
-## Связь образов с манифестами Kubernetes
-Рекомендуется закреплять образ по дайджесту, особенно для продуктивных окружений:
+### Важность Неизменяемых Тегов
+
+Использование изменяемых (mutable) тегов, таких как `latest` или `staging`, является анти-паттерном в GitOps по нескольким причинам:
+- **Непредсказуемость**: Невозможно быть уверенным, какая именно версия кода скрывается за тегом `latest`.
+- **Потеря источника истины**: Git перестает быть единственным источником правды, так как фактическое состояние может измениться без коммита (просто из-за перезаливки тега).
+- **Невозможность отката**: Нельзя надежно откатиться на предыдущую рабочую версию, если тег был перезаписан.
+
+**Правило**: Всегда используйте неизменяемые теги.
+
+## Практические сценарии
+
+### Сценарий 1: Полный CI/CD пайплайн для GitOps
+
+1.  **Коммит**: Разработчик пушит код в репозиторий приложения.
+2.  **CI-пайплайн (GitHub Actions, Jenkins)**:
+    - Запускается сборка.
+    - Образ контейнера собирается и тегируется хешем коммита (например, `my-app:a4b5c6d`).
+    - Образ пушится в приватный реестр (ECR, Harbor).
+3.  **Обновление манифеста (Автоматическое)**:
+    - Инструмент типа **Argo CD Image Updater** или **Flux Image Automation** замечает новый образ.
+    - Он автоматически создает коммит в *другой, конфигурационный* репозиторий, обновляя тег образа в `Deployment.yaml`.
+4.  **CD-пайплайн (ArgoCD/Flux)**:
+    - GitOps-инструмент обнаруживает новый коммит в конфигурационном репозитории.
+    - Он синхронизирует состояние кластера, запуская деплой новой версии приложения.
+
+### Сценарий 2: Автоматическое обновление образов
+
+И в ArgoCD, и во Flux есть инструменты для автоматизации шага 3 из сценария выше.
+
+**Argo CD Image Updater**:
+Настраивается через аннотации в манифесте `Application`.
+
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: app
-spec:
-  template:
-    spec:
-      containers:
-      - name: app
-        image: registry.example.com/team/app@sha256:ab12cd...
-        imagePullPolicy: IfNotPresent
-```
-Kustomize позволяет централизованно изменять образ:
-```yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-images:
-  - name: registry.example.com/team/app
-    newName: registry.example.com/team/app
-    newTag: 1.4.2
-```
-## Автоматизация обновления образов
-Argo CD использует синхронизацию по Git. Обновление образов реализуется через генерацию коммитов в репозиторий манифестов. Два распространённых подхода:
-*   Argo CD Image Updater: мониторит реестр и создаёт коммиты/PR с обновлёнными тегами или дайджестами.
-```yaml
+# Аннотации для Application
 metadata:
   annotations:
-    argocd-image-updater.argoproj.io/image-list: app=registry.example.com/team/app
-    argocd-image-updater.argoproj.io/app.update-strategy: semver
-    argocd-image-updater.argoproj.io/app.allow-tags: regexp:^1\.\d+\.\d+$
+    # Указываем, какой образ отслеживать
+    argocd-image-updater.argoproj.io/image-list: my-app=my-registry/my-app
+    # Стратегия обновления: следовать SemVer
+    argocd-image-updater.argoproj.io/my-app.update-strategy: semver
+    # Разрешаем только стабильные версии
+    argocd-image-updater.argoproj.io/my-app.allow-tags: regexp:^v[0-9]+\.[0-9]+\.[0-9]+$
 ```
-*   Flux Image Automation: контроллеры CRD для наблюдения за тегами и обновления манифестов.
+
+**Flux Image Automation**:
+Настраивается через набор CRD (`ImageRepository`, `ImagePolicy`, `ImageUpdateAutomation`).
+
 ```yaml
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageRepository
-metadata:
-  name: app-repo
-spec:
-  image: registry.example.com/team/app
----
+# Политика выбора образа: последняя версия по SemVer
 apiVersion: image.toolkit.fluxcd.io/v1beta2
 kind: ImagePolicy
 metadata:
-  name: app-policy
+  name: my-app-policy
 spec:
   imageRepositoryRef:
-    name: app-repo
+    name: my-app-repo # Ссылка на ImageRepository
   policy:
     semver:
-      range: 1.x
----
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageUpdateAutomation
-metadata:
-  name: app-auto
-spec:
-  sourceRef:
-    kind: GitRepository
-    name: manifests
-  update:
-    strategy: Setters
+      range: ">=1.0.0" # Диапазон версий
 ```
-## Безопасность и проверка в кластере
-Для валидации подписей образов применяются политики при приёме манифестов. Пример проверки подписи образа:
-```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: verify-image-signature
-spec:
-  rules:
-    - name: require-signed
-      match:
-        resources:
-          kinds: ["Pod"]
-      verifyImages:
-        - image: "registry.example.com/team/app:*"
-          key: "cosign.pub"
-```
+
+## Дополнительная информация
+
+- **[Управление артефактами в CI/CD](../../CI-CD/artifact_management.md)**: Общие принципы работы с артефактами.
+- **[Реестры Docker](../../Docker/docker_registries.md)**: Подробнее о видах и настройке реестров.
+- **[Безопасность публичных реестров](../../Docker/Docker_registries/public_registry_security.md)**: Рекомендации по безопасной работе с Docker Hub и другими публичными реестрами.

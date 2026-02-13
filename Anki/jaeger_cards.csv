@@ -1,0 +1,105 @@
+Что такое Jaeger?;Jaeger — это распределенная система трассировки (distributed tracing system) с открытым исходным кодом, предназначенная для мониторинга и устранения неполадок в сложных микросервисных архитектурах. Разработан Uber Technologies, выпущен в опенсорс в 2017 году, стал инкубируемым проектом CNCF.;jaeger::basics
+Что такое Трассировка (Trace) в контексте Jaeger?;Трассировка представляет собой полный жизненный цикл одного запроса или транзакции, проходящего через различные сервисы. Трассировка состоит из одного или нескольких спанов.;jaeger::basics
+Что такое Спан (Span) в Jaeger?;Спан — это фундаментальная единица работы, представляющая одну операцию (HTTP-вызов или запрос к БД). Каждый спан имеет имя, время начала, длительность и теги. Спаны формируют иерархическую структуру (родитель-потомок).;jaeger::basics
+Что такое Контекст трассировки (Trace Context)?;Это информация (trace_id, span_id), которая передается между сервисами (обычно через HTTP-заголовки) для связывания спанов в одну трассировку.;jaeger::basics
+Какие основные компоненты архитектуры Jaeger?;1) Jaeger Client (библиотеки для инструментирования); 2) Jaeger Agent (сетевой демон, sidecar); 3) Jaeger Collector (серверный компонент для валидации и обработки); 4) Storage (Elasticsearch, Cassandra, Kafka, Badger); 5) Jaeger Query (API для извлечения трассировок); 6) Jaeger UI (веб-интерфейс на React).;jaeger::architecture
+Какова функция Jaeger Client?;Библиотеки для инструментирования приложений на различных языках (Go, Java, Python, Node.js, C++). Создают спаны, устанавливают контекст трассировки, передают его между сервисами и отправляют спаны на Agent или Collector. Использует OpenTracing API, переходит на OpenTelemetry.;jaeger::architecture
+Какова функция Jaeger Agent?;Сетевой демон, запускаемый как sidecar-контейнер или локальный процесс. Принимает спаны от клиента, буферизует, выполняет локальную обработку (сэмплирование) и пересылает на Collector. Снижает нагрузку на клиентские библиотеки.;jaeger::architecture
+Какова функция Jaeger Collector?;Серверный компонент, который получает трассировки от агентов, выполняет валидацию, обработку, индексацию и сохраняет в хранилище. Может быть развернут в нескольких экземплярах для высокой доступности.;jaeger::architecture
+Какие хранилища поддерживает Jaeger?;Jaeger поддерживает: Elasticsearch, Cassandra, Kafka (промежуточный буфер), Badger (для небольших инсталляций). Использует NoSQL-решения, оптимизированные для больших объемов данных.;jaeger::architecture
+Какова функция Jaeger UI?;Веб-интерфейс для поиска, просмотра и анализа трассировок. Написан на React. Позволяет визуализировать трассировки в виде диаграмм Ганта, показывать временные рамки, зависимости между спанами, атрибуты и логи.;jaeger::architecture
+Как Jaeger интегрируется с OpenTelemetry?;Jaeger полностью совместим с OpenTelemetry. OpenTelemetry Collector может использоваться для сбора данных и их отправки в бэкенд Jaeger. Это позволяет использовать единый стандарт для инструментирования приложений.;jaeger::integrations
+Чем Jaeger отличается от Grafana Tempo в плане хранения?;Tempo оптимизировано для хранения трассировок в объектных хранилищах (S3, MinIO) — более экономично. Jaeger использует индексирующие хранилища (Elasticsearch, Cassandra) — обеспечивает более гибкий поиск.;jaeger::comparison
+Чем Jaeger отличается от Grafana Tempo в плане поиска?;Tempo находит трассировки в основном по trace_id. Jaeger позволяет выполнять поиск по тегам и атрибутам спанов, что упрощает отладку.;jaeger::comparison
+Какой практический сценарий использования Jaeger?;Анализ производительности в микросервисной архитектуре. Например: пользователи жалуются на медленную обработку заказов. Разработчик открывает Jaeger UI, находит медленную трассировку, видит на диаграмме Ганта, что Order Service занимает 90% времени, находит долгий запрос к БД — проблема локализована.;jaeger::practices
+Каково назначение Jaeger в контексте наблюдаемости?;Jaeger — распределённая система трассировки, предназначенная для наблюдаемости межсервисных взаимодействий. Архитектура разделяет сбор, транспорт, хранение и визуализацию трасс для независимого масштабирования каждого слоя.;jaeger::basics
+Опишите поток данных в Jaeger;Application → Agent/OTel Collector → Jaeger Collector → [Kafka → Ingester] → Storage → Query/UI;jaeger::architecture
+Какие варианты развёртывания Jaeger существуют?;1) All-in-one — единый бинарник для локальной разработки и демо; 2) Продакшен — раздельные сервисы с балансировкой и Kafka при высоком трафике; 3) Kubernetes — Agent как DaemonSet/sidecar или OTel Collector как Deployment/DaemonSet.;jaeger::architecture
+Что такое Head-based сэмплирование?;Сэмплирование на стороне SDK/агента: фиксированная вероятность, per-operation, rate limiting. Уменьшает трафик с источника.;jaeger::sampling
+Что такое Tail-based сэмплирование?;Решение о сэмплинге принимается после наблюдения всей трассы (обычно в OpenTelemetry Collector). Позволяет сохранять редкие или ошибочные трассы, но требует больше ресурсов.;jaeger::sampling
+Что такое Remote sampling?;Централизованная доставка политики сэмплинга клиентам.;jaeger::sampling
+Какие хранилища поддерживает Jaeger и их особенности?;Elasticsearch — быстрый поиск и гибкая индексация, высокие RPS на чтение; Cassandra — горизонтально масштабируемая запись, предсказуемая пропускная способность; Badger — локальное встраиваемое хранилище для небольших окружений.;jaeger::storage
+Какие механизмы обеспечивают надёжность и производительность в Jaeger?;Батчинг и очереди в агенте/Collector уменьшают накладные расходы; Kafka буферизует пики и отделяет SLA приёмки от записи; горизонтальное масштабирование Collector/Query; ограничение размеров спана, сжатие и контроль кардинальности тегов.;jaeger::architecture
+Для чего используется Kafka в архитектуре Jaeger?;Декаплинг приёмки и записи в хранилище, сглаживание пиков. Позволяет выдерживать всплески. Ingester читает из Kafka и пишет в сторедж.;jaeger::architecture
+Какие практики работы с хранилищем используются в Jaeger?;Управление TTL, шаблоны индексов, шардирование и выделенные кластеры под горячие/холодные данные.;jaeger::storage
+Что такое Jaeger Query?;API для чтения трасс и агрегатов. Статлесс, читающий слой над хранилищем.;jaeger::architecture
+Что делает Jaeger Ingester?;Считывает сообщения из Kafka и записывает в хранилище с управляемой скоростью.;jaeger::architecture
+Какой минимальный конфиг OpenTelemetry Collector для отправки данных в Jaeger?;receivers: otlp (http/gRPC); processors: batch; exporters: jaeger (endpoint: jaeger-collector:14250, tls.insecure: true); pipeline: traces: receivers→processors→exporters.;jaeger::integrations
+Какие подходы к развёртыванию Jaeger в Kubernetes?;1) All-in-One — единый Pod с агентом, коллектором, UI и in-memory хранилищем для демо и отладки; 2) Production — отдельные Deployment-ы для Collector и Query, агент как DaemonSet/сайдкар, внешнее хранилище (Elasticsearch, Cassandra); 3) Через оператор — Jaeger Operator управляет жизненным циклом, предоставляет CRD и автоматизирует сайдкар-инъекцию.;jaeger::kubernetes
+Что делает Jaeger Operator?;Упрощает установку: создаётся ресурс Jaeger, а оператор разворачивает нужные объекты (Deployment, Service и др.).;jaeger::kubernetes
+Какая аннотация включает автоматическую инъекцию агента Jaeger в Pod?;sidecar.jaegertracing.io/inject: "true";jaeger::kubernetes
+Какие порты использует Jaeger Agent?;6831/6832 UDP (приём трейсингов от SDK), 5778 (конфигурация).;jaeger::kubernetes
+Какие порты использует Jaeger Collector?;14250 gRPC, 14268 HTTP, 9411 (приём трейсингов в форматах gRPC/Thrift/Zipkin).;jaeger::kubernetes
+Какой порт использует Jaeger Query (UI)?;16686 — веб-интерфейс.;jaeger::kubernetes
+Какие Service-объекты создаются в Kubernetes для Jaeger?;jaeger-collector для приёма трафика от приложений/агентов; jaeger-query для доступа к UI; jaeger-agent как DaemonSet/сайдкар для отправки данных на localhost:6831.;jaeger::kubernetes
+Как приложение отправляет трейсы при использовании сайдкар-агента?;Приложение отправляет трейсы на localhost:6831 (JAEGER_AGENT_HOST=localhost, JAEGER_AGENT_PORT=6831).;jaeger::kubernetes
+Как настроить приложение для отправки OTLP-трейсов через OpenTelemetry Collector?;Переменные: OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318, OTEL_TRACES_EXPORTER=otlp, OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf.;jaeger::kubernetes
+Какие практические аспекты эксплуатации Jaeger в Kubernetes?;Горизонтальное масштабирование Collector; выделение ресурсов и лимитов CPU/Memory; развёртывание UI за Ingress с аутентификацией; сетевые политики для ограничения исходящего трафика; изоляция хранилища через StorageClass.;jaeger::kubernetes
+Какая минимальная продакшен-конфигурация Jaeger с Elasticsearch?;strategy: production; storage.type: elasticsearch с es.server-urls; collector.replicas: 3; query.replicas: 2.;jaeger::kubernetes
+Какие переменные окружения нужны для настройки отправки трейсов в Jaeger?;JAEGER_AGENT_HOST, JAEGER_AGENT_PORT, JAEGER_SERVICE_NAME.;jaeger::kubernetes
+Чем отличается All-in-One от Production развёртывания Jaeger?;All-in-One — единый Pod (агент+коллектор+UI+in-memory) для демо; Production — раздельные Deployment-ы с внешним хранилищем и высокой доступностью.;jaeger::kubernetes
+Что такое Трасса (trace)?;Целостное представление запроса от начала до конца. Идентифицируется trace_id. Полная история обработки одного запроса, объединяющая все связанные операции в разных сервисах.;tracing::concepts
+Что такое Спан (span)?;Атомарная единица работы в трейсе: обработка HTTP-запроса, вызов БД, публикация сообщения. Имеет span_id, временные метки начала/конца и метаданные (атрибуты, статус).;tracing::concepts
+Что такое Контекст спана (span context)?;Минимальный набор идентификаторов и флагов для корреляции: traceId, spanId, флаг sampled, а также tracestate.;tracing::concepts
+Что такое Багаж (baggage) в контексте трассировки?;Произвольные ключ-значения, путешествующие с контекстом через все сервисы. Предназначен для маршрутизации и аналитики, не для больших данных.;tracing::concepts
+Что такое Атрибуты (tags/attributes) спана?;Ключ-значение, описывающие спан: http.method, db.system, net.peer.ip и т.д.;tracing::concepts
+Что такое События (events/logs/annotations) в спанах?;Точечные метки во времени внутри спана: ретраи, кеш-промахи, сериализация.;tracing::concepts
+Какие бывают Виды спана (span kind)?;client, server, producer, consumer, internal — помогает интерпретировать диаграммы времени и агрегировать задержки по ролям.;tracing::concepts
+Какие типы связей между спанами существуют?;ChildOf (родитель-потомок), FollowsFrom (ослабленная причинность, асинхронные очереди), link (fan-in/fan-out).;tracing::concepts
+Что такое W3C Trace Context?;Стандарт пропагации контекста с заголовками traceparent и tracestate.;tracing::concepts
+Что такое B3 (Zipkin стиль) пропагация?;Стиль пропагации с заголовками x-b3-traceid, x-b3-spanid, x-b3-sampled и др.;tracing::concepts
+Какой формат заголовка traceparent?;traceparent: {version}-{traceId}-{spanId}-{traceflags}. Пример: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01;tracing::concepts
+Что такое Head-based сэмплирование?;Решение на старте корневого спана (до обработки): всегда/никогда/по вероятности/по правилам. Просто и дешево, но не учитывает исход.;tracing::concepts
+Что такое Tail-based сэмплирование?;Решение после завершения трассы с учётом ошибок и латентности. Точнее, но требует буферизации.;tracing::concepts
+Что такое Consistent sampling?;Согласованность решения между сервисами по одному traceId. Если корневой спан выбран, дочерние тоже должны быть записаны.;tracing::concepts
+Какие стратегии сэмплирования бывают?;probabilistic (по вероятности), per-operation (повышенная доля для редких/критичных), rate limiting (не более N трасс/сек).;tracing::concepts
+Как обрабатываются очереди в трассировке?;Producer создает спан при публикации, consumer — при обработке. Связь оформляется через links или сохранение context в метаданных сообщения.;tracing::concepts
+Как Service Mesh работает с трассировкой?;Прокси автоматически прокидывают заголовки и создают спаны client/server без изменения кода.;tracing::concepts
+Что такое fan-out и fan-out в контексте трассировки?;Fan-out — несколько дочерних спанов выполняются параллельно; для объединения результатов применяются links.;tracing::concepts
+Какие атрибуты спана являются стандартными?;http.method, http.url, http.status_code, db.system, db.statement, net.peer.ip, messaging.system и др.;tracing::concepts
+Когда применять All-in-one развёртывание Jaeger?;Локальная разработка, демо, временные окружения в CI, быстрая проверка интеграции OpenTelemetry SDK/Collector. Допускается потеря данных и ограниченная ретенция.;jaeger::deployment
+Когда применять Production развёртывание Jaeger?;Стейджинг и продакшен, где важны горизонтальное масштабирование, отказоустойчивость, долговременное хранение в Elasticsearch/Cassandra, контроль ретенции, безопасность.;jaeger::deployment
+Какие компоненты входят в All-in-one развёртывание?;Все в одном процессе: agent, collector, query, UI, память/Badger.;jaeger::deployment
+Какие компоненты входят в Production развёртывание?;Отдельные сервисы: agent/collector/query/ingester, внешнее хранилище (Elasticsearch или Cassandra).;jaeger::deployment
+Какое хранилище используется в All-in-one?;Память или встроенный Badger, без HA.;jaeger::deployment
+Какое хранилище используется в Production?;Elasticsearch или Cassandra, HA и масштабирование.;jaeger::deployment
+Какая устойчивость к сбоям в All-in-one?;Низкая.;jaeger::deployment
+Какая устойчивость к сбоям в Production?;Высокая при корректной архитектуре.;jaeger::deployment
+Какая производительность у All-in-one?;Подходит для малой нагрузки.;jaeger::deployment
+Какая производительность у Production?;Подходит для высоких RPS трасс.;jaeger::deployment
+Какая безопасность в All-in-one?;Базовая, часто без TLS.;jaeger::deployment
+Какая безопасность в Production?;TLS, аутентификация, контроль доступа.;jaeger::deployment
+Какие порты открывает All-in-one Docker контейнер?;16686 (UI), 14268 (HTTP ingest), 14250 (gRPC ingest), 6831/udp (Thrift compact), 9411 (Zipkin).;jaeger::deployment
+Какие настройки sampling рекомендуются для All-in-one?;Агрессивные (низкая доля) во избежание переполнения памяти.;jaeger::deployment
+Что означает SPAN_STORAGE_TYPE=memory?;Хранение в памяти — потеря данных при рестарте контейнера.;jaeger::deployment
+Какие порты открывает Jaeger Collector в Docker?;14250 gRPC, 14268 HTTP, 9411 Zipkin.;jaeger::deployment
+Какие порты открывает Jaeger UI в Docker?;16686.;jaeger::deployment
+Какие порты открывает Jaeger Agent в Docker?;6831/6832 UDP, 5778 (конфигурация).;jaeger::deployment
+Какие практические соображения при выборе развёртывания?;Продуктовая готовность, стоимость, миграция (от All-in-one к Production), безопасность.;jaeger::deployment
+Какая стратегия миграции с All-in-one на Production?;Вынести хранилище, разделить collector/query, добавить стриминг и тонкую настройку sampling.;jaeger::deployment
+Что добавляют для высоких объёмов трасс в Production?;Стриминг через Kafka и ingester для разгрузки collectors и буферизации.;jaeger::deployment
+Для чего нужен esIndexCleaner в Jaeger?;Управление сроком хранения (количество дней) и издержками хранилища.;jaeger::deployment
+Какие преимущества даёт Jaeger Operator?;Упрощает жизненный цикл, обеспечивает корректную схему компонентов, автоматизирует развёртывание.;jaeger::deployment
+Какие реплики collector и query в production?;Collector: 3 реплики, Query: 2 реплики.;jaeger::deployment
+Какие преимущества даёт использование Cassandra в Jaeger?;Горизонтально масштабируемая запись, предсказуемая пропускная способность.;jaeger::deployment
+Какие ключевые элементы интерфейса Jaeger используются для анализа?;Поиск (по сервису, операции, тегам, длительности), Таймлайн (waterfall) для визуализации последовательности и параллелизма, Детали спана (теги, логи, метаданные), Dependencies (карта сервисных зависимостей).;jaeger::analysis
+Что показывает Таймлайн (waterfall) в Jaeger?;Визуализирует последовательность и параллелизм: родительские/дочерние связи (ChildOf, FollowsFrom), перекрытия спанов (параллельные вызовы), вклад каждого спана в общую задержку.;jaeger::analysis
+Как читать трейс в Jaeger?;1) Найти корневой спан и оценить общую длительность; 2) Определить критический путь — последовательность спанов с суммарной задержкой запроса; 3) Идентифицировать «широкие» спаны и проверить перекрытия; 4) Сверить внешние вызовы по латентности.;jaeger::analysis
+Что такое критический путь в трейсе?;Последовательность спанов, суммарная длительность которых равна задержке запроса. Именно он определяет перформанс.;jaeger::analysis
+Что такое паттерн N+1 в трассировке?;Множество однотипных коротких спанов к одной зависимости, суммарно дающих большую задержку.;jaeger::analysis
+Что такое Chatty I/O?;Паттерн: серия мелких последовательных RPC.;jaeger::analysis
+Что такое каскадные ретраи?;Повторяющиеся одинаковые спаны с увеличивающейся задержкой и тегом retry_count.;jaeger::analysis
+Что такое Сериализация/десериализация в контексте анализа?;Значимый вклад CPU-спанов без внешних I/O.;jaeger::analysis
+Какие проблемы можно выявить через трассировку?;Проблемы сети/DNS: длительный connect/resolve, высокая разбежка latency.;jaeger::analysis
+Как фильтровать трейсы в Jaeger?;По тегам и длительности: например, http.method=GET, error=true, minDuration=500ms.;jaeger::analysis
+Как автоматизировать выгрузку трейсов из Jaeger?;HTTP API: curl 'http://jaeger-query:16686/api/traces?service=checkout&operation=PlaceOrder&lookback=1h&limit=20&minDuration=500ms&tags=%7B%22error%22%3Atrue%7D';jaeger::analysis
+Как связать метрики с трейсами?;При наличии экземпларов на графике задержки щелчок по точке открывает конкретный трейс с соответствующим trace_id.;jaeger::analysis
+Как связать логи с трейсами?;Включать в логи trace_id и span_id. Фильтр по trace_id для мгновенного перехода к трейсу.;jaeger::analysis
+Какие рекомендуемые атрибуты для диагностируемости?;http.method, http.route, http.status_code; db.system, db.operation, db.statement (обезличенно); net.peer.name/port, retry_count, cache.hit, queue.name; feature_flag, user.anonymous_id (хэшированный).;jaeger::analysis
+Какие события в спанах полезны для диагностики?;event="timeout", event="fall-back" с атрибутами причины.;jaeger::analysis
+Как работает tail-based sampling в OTel Collector?;Политики на основе атрибутов и длительности отфильтровывают шум. decision_wait: 5s, num_traces: 50000.;jaeger::analysis
+Какие типы политик tail_sampling бывают?;status_code (ошибки), latency (медленные трейсы), string_attribute (важные маршруты).;jaeger::analysis
+Пример конфига tail_sampling для ошибок?;type: status_code, status_code: {status_codes: [ERROR]};jaeger::analysis
+Пример конфига tail_sampling для медленных трейсов?;type: latency, latency: {threshold_ms: 800};jaeger::analysis
+Пример конфига tail_sampling для важных маршрутов?;type: string_attribute, string_attribute: {key: http.route, values: ["/checkout", "/payment"]};jaeger::analysis
+Зачем нужен tail-based sampling?;Концентрирует хранилище на ценных для анализа трейсах (медленные/ошибочные) и облегчает поиск регрессий.;jaeger::analysis

@@ -1,93 +1,101 @@
-# Промоция образов между окружениями
+# Docker: Продвижение образов в CI/CD (Image Promotion)
 
-## Рекомендуемый подход (Promotion)
+## Определения
 
-```
-Dev бранч:
-  docker build -t myapp:dev-abc123 .
-  docker tag myapp:dev-abc123 registry/app:dev-abc123
-  
-Тестирование в dev...
-  ✓ Пройдены unit tests
-  ✓ Пройдены integration tests
-  
-Stage бранч (merging dev → stage):
-  # НЕ пересобираем! Промоутим проверенный образ
-  docker pull registry/app:dev-abc123
-  docker tag registry/app:dev-abc123 registry/app:stage-abc123
-  docker push registry/app:stage-abc123
-  
-  # ИЛИ используем immutable digest
-  docker buildx imagetools inspect \
-    registry/app:dev-abc123 --format '{{ json .Manifest }}'
-   
-Production (merging stage → main):
-  docker pull registry/app:stage-abc123
-  docker tag registry/app:stage-abc123 registry/app:prod-abc123
-  docker tag registry/app:stage-abc123 registry/app:1.2.3
-  docker push registry/app:1.2.3
-```
+- **Продвижение образа (Image Promotion)**: Процесс, при котором один и тот же, единожды собранный и неизменяемый Docker-образ квалифицируется для использования в последующих, более критичных окружениях (например, из `Testing` в `Staging`, а затем в `Production`).
 
-## Проверка идентичности образов
+- **Ключевой принцип: "Собирай один раз, развертывай везде" (Build Once, Deploy Anywhere)**. Этот принцип гласит, что артефакт (Docker-образ) должен быть собран **только один раз** в начале CI/CD конвейера. Дальнейшее его продвижение по окружениям должно осуществляться исключительно путем **смены тегов (re-tagging)**, а не пересборки.
 
+## Основные концепции
+
+### Почему нельзя пересобирать для каждого окружения?
+
+Пересборка образа для каждого окружения (dev, stage, prod) — это **критический анти-паттерн**. Артефакт, который вы разворачиваете в production, должен быть **байт в байт идентичен** тому, который вы тестировали в staging. Пересборка нарушает эту гарантию, так как в процесс могут вмешаться неконтролируемые факторы:
+- Обновление базового образа (`FROM ubuntu:latest`).
+- Установка пакетов разных версий (`apt-get install my-package`).
+- Различия в версиях сборочных инструментов на CI-агентах.
+
+Продвижение одного и того же неизменяемого артефакта гарантирует, что вы развертываете именно то, что тестировали.
+
+### Роль тегов в продвижении
+
+Теги в Docker — это изменяемые указатели. В процессе продвижения они используются как маркеры зрелоosti и готовности образа.
+- **Исходный тег**: Часто содержит хеш коммита (`1.2.3-a9c8e7f`), однозначно идентифицируя сборку.
+- **Промежуточные теги**: Могут обозначать окружение, в котором образ был протестирован (`my-app:staging`).
+- **Финальные теги**: "Чистая" версия (`1.2.3`) и, возможно, `latest`, которые присваиваются образу, готовому к production.
+
+## Практические сценарии
+
+### Сквозной сценарий продвижения образа
+
+Рассмотрим полный жизненный цикл от сборки до развертывания в production.
+
+**Шаг 1: Сборка и развертывание в Dev**
+- **Триггер**: Пуш в ветку `main`.
+- **Действие**: CI-система собирает образ и тегирует его хешем коммита.
 ```bash
-# Сравнение digests (SHA256)
-docker inspect --format='{{index .RepoDigests 0}}' myapp:dev
-docker inspect --format='{{index .RepoDigests 0}}' myapp:stage
+# 1. Собираем образ
+export GIT_COMMIT=$(git rev-parse --short HEAD)
+docker build -t my-registry/my-app:$GIT_COMMIT .
 
-# Если разные — разные артефакты!
+# 2. Пушим в реестр с уникальным тегом
+docker push my-registry/my-app:$GIT_COMMIT
 
-# Просмотр всех слоев
-docker history myapp:dev
-docker history myapp:stage
-
-# Сравнение с помощью dive
-dive myapp:dev
-dive myapp:stage
-
-# Извлечение SBOM и сравнение
-syft myapp:dev -o json > dev.sbom.json
-syft myapp:stage -o json > stage.sbom.json
-diff dev.sbom.json stage.sbom.json
+# 3. Развертываем в Dev-окружение для прогона автоматических тестов
+deploy_to_dev.sh my-registry/my-app:$GIT_COMMIT
 ```
 
-## CI/CD стратегии
+**Шаг 2: Продвижение в Staging**
+- **Триггер**: Успешное завершение всех тестов в Dev.
+- **Действие**: CI-система **не пересобирает образ**, а лишь добавляет ему новый тег `staging`.
+```bash
+# 1. Скачиваем уже существующий образ (если на другом агенте)
+docker pull my-registry/my-app:$GIT_COMMIT
 
-**Стратегия 1: Сборка в каждом бранче (простая)**
-```yaml
-build:
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+# 2. Присваиваем ему новый тег
+docker tag my-registry/my-app:$GIT_COMMIT my-registry/my-app:staging
+
+# 3. Пушим новый тег в реестр
+docker push my-registry/my-app:staging
+
+# 4. Развертываем в Staging для ручного QA и нагрузочного тестирования
+deploy_to_staging.sh my-registry/my-app:staging
 ```
 
-**Стратегия 2: Сборка один раз, промоция между окружениями**
-```yaml
-build:
-  only:
-    - dev
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+**Шаг 3: Продвижение в Production**
+- **Триггер**: Ручное подтверждение от QA-инженера или менеджера релиза.
+- **Действие**: Образ, успешно проверенный в Staging, получает финальные, "чистые" теги.
+```bash
+# 1. Скачиваем образ с тегом staging
+docker pull my-registry/my-app:staging
 
-promote_to_stage:
-  only:
-    - stage
-  script:
-    - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA $CI_REGISTRY_IMAGE:stage
-    - docker push $CI_REGISTRY_IMAGE:stage
+# 2. Присваиваем ему релизный тег и, опционально, latest
+docker tag my-registry/my-app:staging my-registry/my-app:1.2.3
+docker tag my-registry/my-app:staging my-registry/my-app:latest
+
+# 3. Пушим финальные теги в реестр
+docker push my-registry/my-app:1.2.3
+docker push my-registry/my-app:latest
+
+# 4. Развертываем в Production
+deploy_to_production.sh my-registry/my-app:1.2.3
 ```
+Этот процесс гарантирует, что один и тот же неизменяемый артефакт прошел все стадии контроля качества.
 
 ## Дополнительная информация
 
-### Реверс-инжиниринг образов
+- **Альтернативная стратегия**: Вместо использования тегов, некоторые компании используют **отдельные репозитории или реестры** для каждого окружения (`dev-registry/my-app`, `stage-registry/my-app`). Продвижение в этом случае — это процесс копирования образа между реестрами.
 
-**Внимание:** Это метод "последней надежды", если `Dockerfile` утерян.
+- **Проверка идентичности образов**: Если вам нужно убедиться, что два тега указывают на один и тот же образ, сравните их **дайджесты (Digests)**.
+  ```bash
+  docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:1.2.3
+  docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:staging
+  # Если дайджесты совпадают, это один и тот же образ.
+  ```
 
-- **[dduvnjak/dockerfile-from-image](https://github.com/dduvnjak/dockerfile-from-image)**
-- **[laniksj/dfimage](https://github.com/LanikSJ/dfimage)**
+- **Реверс-инжиниринг Dockerfile**: В крайнем случае, если `Dockerfile` утерян, существуют утилиты, которые пытаются восстановить его из существующего образа, например, `laniksj/dfimage` или `dduvnjak/dockerfile-from-image`.
 
-### Подписание образов и безопасность
-
-Для обеспечения целостности и аутентичности образов используется механизм цифровых подписей. Подробнее см. документацию по безопасности Docker.
+- **Связанные темы**:
+  - **[Идентичность и неизменяемость артефактов](./branch_artifacts.md)**: Объясняет, почему образы, собранные в разных ветках, не являются одним и тем же артефактом.
+  - **[Стратегии версионирования и тегирования](../../Docker/Docker_registries/image_versioning_and_tagging.md)**: SSoT по выбору правильных тегов для разных сценариев.
+  - **[Подписание образов](../../Docker/Docker_security/image_signature_and_verification.md)**: Для обеспечения целостности и аутентичности образов в процессе их продвижения.

@@ -1,0 +1,342 @@
+#separator:;
+#tags:nginx
+#deck: Nginx
+
+Что такое Nginx и как он произносится?;Nginx (произносится "engine-x") — высокопроизводительный веб-сервер, обратный прокси-сервер, кэширующий прокси и балансировщик нагрузки с открытым исходным кодом.;nginx::overview
+Перечислите основные роли Nginx;1) Веб-сервер для статического контента 2) Обратный прокси-сервер (Reverse Proxy) 3) Балансировщик нагрузки 4) Кэширующий HTTP-сервер 5) TLS/SSL-терминатор;nginx::overview
+Что такое "проблема C10k"?;Задача обслуживания 10 000 одновременных соединений;nginx::architecture
+В чём заключается классическая модель Apache (mpm_prefork)?;Выделение отдельного рабочего процесса на каждое активное подключение. Минус: высокое потребление памяти при большом числе соединений.;nginx::architecture
+Какова архитектура Nginx?;Асинхронная, событийно-ориентированная модель (event-driven);nginx::architecture
+Опишите структуру процессов Nginx;Один мастер-процесс (выполняет привилегированные операции: чтение конфигурации, открытие портов) и несколько воркер-процессов (обрабатывают запросы, количество = числу ядер CPU);nginx::architecture
+Сколько соединений обрабатывает один worker в Nginx?;Один рабочий процесс обрабатывает тысячи соединений одновременно благодаря неблокирующему вводу-выводу;nginx::architecture
+Что такое виртуальные хосты в Nginx?;server блоки, позволяющие одному серверу Nginx обслуживать множество сайтов на одном IP-адресе;nginx::vhost
+Как Nginx определяет какой server block использовать?;По заголовку Host: ищет server блок с директивой server_name, совпадающей с заголовком;nginx::vhost
+Что такое Angie и как она связана с Nginx?;Форк Nginx, созданный ключевой командой разработчиков после закрытия московского офиса Nginx в 2022 году. Предлагает совместимость с Nginx и включает в Open Source многие функции Nginx Plus;nginx::overview
+Что такое директива location в Nginx?;Ключевой элемент конфигурации Nginx, позволяющий гибко управлять обработкой запросов в зависимости от URI (Uniform Resource Identifier);nginx::location
+Перечислите приоритеты модификаторов location от высшего к низшему;= (точное совпадение) > ^~ (приоритетный префикс) > ~ / ~* (регулярные выражения по порядку в файле) > без модификатора (самый длинный префикс);nginx::location
+Как работает префиксный location без модификатора?;Совпадает, если URI запроса начинается с указанного префикса. Nginx выбирает самый длинный совпавший префикс. Порядок объявления не имеет значения.;nginx::location
+Как работает точное совпадение (=)?;URI запроса должен быть в точности равен указанному. Имеет наивысший приоритет - поиск прекращается сразу после нахождения.;nginx::location
+Как работает регулярное выражение в location (~ и ~*)?;~ - с учетом регистра, ~* - без учета регистра. Проверяются в порядке появления в конфиге. Первый совпавший используется.;nginx::location
+Как работает модификатор ^~?;Работает как префиксный location, но если он оказался самым длинным совпавшим префиксом, Nginx не проверяет регулярные выражения.;nginx::location
+Какие лучшие практики при работе с location?;1) Предпочитайте префиксные location 2) Избегайте вложенных location 3) Используйте ^~ для статики 4) Централизуйте управление заголовками;nginx::location
+Как отладить какой location обрабатывает запрос?;Использовать директиву return внутри location для временного возврата текста, подтверждающего попадание в этот location;nginx::location
+Что такое именованный location (@name)?;location, который нельзя вызвать напрямую клиентом. Используется для внутренних перенаправлений через try_files или error_page.;nginx::location
+Что делает директива internal в location?;Делает location доступным только для внутренних запросов Nginx. Клиентские запросы будут отклонены (404 Not Found).;nginx::location
+Для чего используется директива error_page?;Определяет что увидит пользователь при возникновении ошибки. Позволяет показать кастомную страницу ошибки.;nginx::location
+В чем разница между root и alias?;root добавляет полный URI к корневому пути. alias заменяет часть URI, соответствующую location, на указанный путь.;nginx::location
+Как работает try_files?;Проверяет существование файлов/директорий по порядку и выполняет внутреннее перенаправление, если ни один не найден.;nginx::location
+Приведите пример конфигурации PHP в Nginx;location ~ \.php$ { fastcgi_pass unix:/var/run/php/php7.4-fpm.sock; fastcgi_index index.php; include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }	nginx::location
+Опишите алгоритм выбора location Nginx;1) Поиск точного совпадения (=) 2) Поиск префиксных и запоминание самого длинного 3) Если ^~ - используется сразу 4) Проверка регулярных выражений по порядку 5) Если ничего не совпало - используется самый длинный префикс;nginx::location
+Почему порядок регулярных выражений в location критически важен?;Регулярные выражения проверяются в порядке появления в конфиге. Первый совпавший используется, остальные игнорируются. Неправильный порядок может заблокировать более специфичные правила.;nginx::location
+Как защитить файлы начинающиеся с точки в Nginx?;location ~ /\. { deny all; } - запрещает доступ ко всем скрытым файлам и директориям;nginx::location
+Как настроить try_files для WordPress?;try_files $uri $uri/ /index.php?$args; - сначала ищет файл, потом директорию, потом перенаправляет на index.php с параметрами запроса;nginx::location
+Для чего используется expires max в location?;Устанавливает максимальное время кэширования статических файлов в браузере;nginx::location
+Для чего нужен log_not_found off?;Отключает логирование ошибок "файл не найден" для этого location;nginx::location
+Как сделать редирект с HTTP на HTTPS?;server { listen 80; server_name example.com; return 301 https://$host$request_uri; } - перенаправляет на HTTPS с сохранением URI;nginx::location
+Что означает $args в try_files?;Это переменная Nginx, содержащая параметры запроса (все после ? в URL);nginx::location
+Для чего нужен fastcgi_index?;Задает имя файла по умолчанию, который будет использоваться, если URI заканчивается слэшом (например, index.php);nginx::location
+Что делает try_files с =code?;try_files $uri $uri/ =404; - если ни один файл не найден, возвращает указанный код ошибки вместо стандартного;nginx::location
+На каком уровне можно определить root?;На уровне http, server или location. Если не указан в location, наследуется от родительского блока.;nginx::location
+Какой параметр нужен для проброса пути к PHP-скрипту?;fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; - передает полный путь к исполняемому скрипту в PHP-FPM;nginx::location
+Для чего нужен deny all?;Запрещает доступ к ресурсу для всех клиентов (возвращает 403 Forbidden);nginx::location
+Что делает try_files $uri @backend?;Проверяет файл, если не найден - делает внутреннее перенаправление на именованный location @backend;nginx::location
+В чем разница между Rewrite и Redirect?;Rewrite - внутреннее изменение URI, браузер не знает. Redirect - внешнее перенаправление с кодом 3xx, браузер делает новый запрос.;nginx::rewrite
+Синтаксис директивы rewrite;rewrite regex replacement [flag]; - regex: регулярное выражение, replacement: URI замены, flag: определяет поведение (last, redirect, permanent);nginx::rewrite
+Какие флаги есть у rewrite?;last - прекращает обработку и ищет новый location; redirect - временный редирект (302); permanent - постоянный редирект (301);nginx::rewrite
+Директива return - для чего используется?;Более простой и быстрый способ завершить обработку и отправить ответ, включая редиректы. Предпочтительнее rewrite для простых перенаправлений.;nginx::rewrite
+Синтаксис try_files;try_files file ... uri; или try_files file ... =code; - проверяет существование файлов/директорий по порядку;nginx::rewrite
+Что такое "If is Evil" в Nginx?;Использование if в Nginx крайне не рекомендуется - может приводить к непредсказуемому поведению и проблемам с производительностью.;nginx::rewrite
+Пример замены if на try_files;if (!-f $request_filename) { rewrite ... } заменяется на try_files $uri /index.php?$args;;nginx::rewrite
+Пример постоянного редиректа с HTTP на HTTPS;server { listen 80; server_name domain.com; return 301 https://$host$request_uri; };nginx::rewrite
+Пример редиректа со старого URL на новый;location = /old-url { return 301 /new-url; } - точное совпадение;nginx::rewrite
+Что такое директива map?;Безопасная альтернатива if для создания условной логики. Позволяет создавать переменные на основе значений других переменных. Объявляется в блоке http.;nginx::rewrite
+Где объявляется директива map?;В блоке http;nginx::rewrite
+Пример A/B тестирования с map;map $cookie_version $ab_test_page { default /index-old.html; new /index-new.html; } location / { try_files $ab_test_page =404; } - на основе cookie показывает разные версии страницы;nginx::rewrite
+Как работает флаг last в rewrite?;Nginx прекращает обработку текущего набора правил и начинает новый поиск location для измененного URI;nginx::rewrite
+Как работает флаг redirect в rewrite?;Временный редирект (302) - браузер получает код 302 и делает новый запрос на новый URL;nginx::rewrite
+Как работает флаг permanent в rewrite?;Постоянный редирект (301) - браузеры агрессивно кэшируют этот редирект;nginx::rewrite
+try_files $uri $uri/ /index.php?$args - разбор;$uri - ищет файл, $uri/ - ищет директорию, /index.php?$args - если ничего не найдено, передает на index.php с параметрами;nginx::rewrite
+Что такое $args в Nginx?;Переменная, содержащая все параметры запроса после ? в URL;nginx::rewrite
+Как логировать только редиректы?;Использовать map для определения переменной $is_redirect = 1 при статусе ~^3, затем access_log ... if=$is_redirect;nginx::rewrite
+Почему return предпочтительнее rewrite для редиректов?;return не задействует движок регулярных выражений, работает быстрее и проще;nginx::rewrite
+Что такое модуль stream в Nginx?;Расширение Nginx для балансировки и проксирования трафика на уровне L4 (TCP/UDP), позволяет работать с не-HTTP протоколами (MySQL, DNS, SSH);nginx::l4
+В чем отличие L4 от L7 проксирования?;L4 работает на уровне TCP/UDP (транспортный уровень), L7 работает на уровне HTTP (приложения). L4 требует меньше ресурсов, так как не нужно разбирать протокол приложения.;nginx::l4
+Какие протоколы поддерживает модуль stream?;Любые TCP/UDP протоколы: MySQL, PostgreSQL, DNS, NTP, SSH и др.;nginx::l4
+Где объявляется блок stream?;В nginx.conf на уровне http (рядом с блоком http);nginx::l4
+Какие переменные доступны для логирования в stream?;$remote_addr, $time_local, $protocol, $status, $bytes_sent, $bytes_received, $session_time, $upstream_addr;nginx::l4
+Какое ограничение есть в stream вместо limit_req?;limit_conn - ограничение одновременных подключений (limit_req не работает, так как нет понятия запроса);nginx::l4
+Пример конфигурации upstream с zone;upstream name { zone upstream_zone 64k; server 192.168.1.1:3306; } - zone выделяет память для хранения состояния группы;nginx::l4
+Что делает директива proxy_protocol в upstream?;Включает Proxy Protocol, который добавляет заголовок с реальным IP клиента. Позволяет бэкенду видеть реальный IP, а не IP Nginx;nginx::l4
+Пример ограничения подключений с одного IP в stream;limit_conn_zone $binary_remote_addr zone=per_ip:10m; ... limit_conn per_ip 10; - ограничивает до 10 подключений с одного IP;nginx::l4
+Пример SSL-терминации на L4;server { listen 9443 ssl; ssl_certificate cert.pem; ssl_certificate_key key.pem; proxy_pass backend; } - Nginx расшифровывает трафик и проксирует на бэкенд;nginx::l4
+Что такое SSL Pre-read?;Функция позволяет заглянуть в начало TCP-соединения и определить SNI без полной терминации сессии для маршрутизации трафика;nginx::l4
+Пример мультиплексирования HTTPS и SSH на одном порту;map $ssl_preread_server_name $backend { default ssh; example.com http; } server { listen 443; ssl_preread on; proxy_pass $backend; } - на основе SNI определяет бэкенд;nginx::l4
+Что такое Proxy Protocol?;Протокол для передачи реального IP клиента через прокси-сервер к бэкенду via специальный заголовок;nginx::l4
+Пример настройки Proxy Protocol на бэкенде;set_real_ip_from 127.0.0.0/8; real_ip_header proxy_protocol; - указывает доверенные прокси и откуда брать реальный IP;nginx::l4
+Как проксировать UDP DNS через Nginx?;server { listen 53 udp; proxy_responses 1; proxy_pass dns_servers; } - proxy_responses критически важно для UDP без состояния;nginx::l4
+Для чего нужен proxy_responses?;Указывает сколько ответов ожидать от бэкенда. Для UDP критически важен чтобы не держать сессию открытой бесконечно;nginx::l4
+Что такое status_zone в stream?;Связывает server с зоной статистики для отслеживания метрик через API Nginx;nginx::l4
+Можно ли передать расшифрованный TLS трафик в http модуль?;Да, после TLS-терминации в stream можно проксировать на локальный порт, который слушает http-сервер;nginx::l4
+Какой метод балансировки используется по умолчанию в upstream?;Round Robin - поочередное распределение между серверами;nginx::l4
+Что такое балансировка нагрузки?;Способ распределения запросов к приложению между несколькими бэкенд-серверами для масштабируемости и отказоустойчивости;nginx::lb
+Что такое upstream в Nginx?;Именованная группа бэкенд-серверов, между которыми распределяется нагрузка;nginx::lb
+Что такое stateless-архитектура?;Архитектура, где бэкенд-серверы не хранят состояние. Любой запрос может быть обработан любым сервером без потери данных;nginx::lb
+Компоненты stateless-архитектуры;1) Балансировщик (Nginx) 2) Бэкенд-серверы 3) База данных 4) Кэш/сессии (Redis) 5) Файловое хранилище (S3);nginx::lb
+Что делает Nginx в роли балансировщика?;Принимает трафик, терминирует TLS, выполняет health checks, проксирует запросы к работающим бэкендам;nginx::lb
+Перечислите алгоритмы балансировки Nginx;1) Round Robin (по умолчанию) 2) Least Connections 3) IP Hash 4) Hash 5) Random;nginx::lb
+Weighted Round Robin;Запросы распределяются пропорционально весу сервера (weight);nginx::lb
+Least Connections;Запрос отправляется на сервер с наименьшим количеством активных соединений;nginx::lb
+Недостаток Least Connections;Может направить трафик на неработающий сервер, который быстро отдает пустые 200 OK, так как у него меньше соединений;nginx::lb
+IP Hash;Запросы от одного IP всегда направляются на один и тот же сервер;nginx::lb
+Недостатки IP Hash;1) Неравномерное распределение при NAT 2) Использует только первые 3 октета IPv4;nginx::lb
+Hash метод;Распределяет запросы на основе хеша указанной переменной. Параметр consistent минимизирует перераспределение при изменении группы;nginx::lb
+Random метод;Случайное распределение. random two least_conn - выбирает 2 случайных и отправляет тому, у кого меньше соединений;nginx::lb
+Параметр weight в upstream;Вес сервера - чем выше, тем больше запросов получает. По умолчанию 1;nginx::lb
+Параметр max_fails;Максимальное количество неудачных попыток, после которого сервер считается недоступным. По умолчанию 1;nginx::lb
+Параметр fail_timeout;Время в секундах, на которое сервер исключается из балансировки после max_fails. Также время учета неудач. По умолчанию 10s;nginx::lb
+Параметр backup;Сервер используется только когда все основные серверы недоступны;nginx::lb
+Параметр down;Сервер полностью исключен из балансировки. Для вывода на обслуживание;nginx::lb
+Параметр slow_start;Плавное наращивание нагрузки на восстановленный сервер. Вес увеличивается от 0 до номинального. Только в Nginx Plus/Angie;nginx::lb
+Что такое пассивная проверка health checks?;Встроенная проверка: если Nginx не может установить соединение (Connection refused/timed out), считает попытку неудачной;nginx::lb
+Ограничение пассивной проверки;Реагирует только на недоступность на сетевом уровне. Не спасает если сервер возвращает ошибки 5xx;nginx::lb
+Активная проверка health checks;Периодическая отправка специальных запросов (GET /status) и анализ ответа. Доступна в Nginx Plus/Angie или через сторонний модуль;nginx::lb
+Пример конфигурации active health checks;check interval=3000 rise=2 fall=3 timeout=1000 type=http; check_http_send "GET /status HTTP/1.0\r\n\r\n"; check_http_expect_alive http_2xx;nginx::lb
+Что такое sticky sessions?;Механизм прилипания сессий - запросы от одного клиента всегда направляются на один и тот же бэкенд;nginx::lb
+sticky cookie режим;Nginx устанавливает куку с информацией о выбранном бэкенде. syntax: sticky cookie name expires=1h path=/;nginx::lb
+sticky route режим;Привязка на основе значения переменной. syntax: sticky route $arg_route; server ... route=blue;nginx::lb
+sticky strict;Если привязанный сервер недоступен, Nginx вернет ошибку 502. Без strict - перенаправит на другой доступный сервер;nginx::lb
+sticky secret;Добавляет соль к значению идентификатора сервера перед хешированием для защиты от угадывания хеша;nginx::lb
+Почему важно снижать proxy_connect_timeout для backup?;Чтобы backup-сервер вводился в работу быстрее, так как по умолачнию proxy_connect_timeout = 60s;nginx::lb
+Что хранится в Redis в stateless-архитектуре?;Кэш страниц, результаты тяжелых запросов, пользовательские сессии;nginx::lb
+Для чего нужна директива zone в upstream?;Зона разделяемой памяти для хранения состояния группы и динамической конфигурации. Необходима для least_conn, least_time, health_check, sticky;nginx::lb
+Пример минимальной конфигурации upstream;upstream backend { zone backend_zone 64k; server 127.0.0.1:8080; server 127.0.0.1:8081; } - zone обязательна для продвинутых функций;nginx::lb
+Как проксировать на upstream?;location / { proxy_pass http://apache_backend; } - указывает Nginx установить соединение с одним из серверов группы;nginx::lb
+Какие заголовки передавать бэкенду?;proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; - для передачи информации о клиенте;nginx::lb
+Что такое keep-alive соединения?;Постоянный пул открытых соединений к бэкендам вместо открытия нового для каждого запроса;nginx::lb
+Пример настройки keep-alive;upstream { keepalive 32; } + в location: proxy_http_version 1.1; proxy_set_header Connection ""; - снижает задержки и нагрузку на CPU;nginx::lb
+proxy_connect_timeout;Таймаут на установку соединения с бэкендом. Если превышен - попытка считается неудачной. Рекомендуется 1s для быстрого переключения на backup;nginx::lb
+proxy_read_timeout;Таймаут на чтение ответа от бэкенда. Если бэкенд замолчал на это время - соединение рвется;nginx::lb
+proxy_send_timeout;Таймаут на передачу запроса бэкенду;nginx::lb
+Что делает proxy_buffering?;Буферизация ответов от бэкенда - сначала читает весь ответ в буфер, потом отправляет клиенту. Освобождает бэкенд быстрее;nginx::lb
+Когда отключить буферизацию?;Для long-polling или Server-Sent Events, где важна минимальная задержка;nginx::lb
+proxy_buffers;Количество и размер буферов для ответа от бэкенда. syntax: proxy_buffers 8 16k;nginx::lb
+proxy_buffer_size;Размер буфера для первой части ответа (обычно заголовки);nginx::lb
+Зачем proxy_http_version 1.1?;Для работы keep-alive соединений требуется HTTP/1.1;nginx::lb
+Зачем proxy_set_header Connection ""?;Очищает заголовок Connection для корректной работы keep-alive;nginx::lb
+Что такое proxy_pass?;Директива указывающая Nginx установить новое HTTP-соединение с бэкендом и перенаправить ему запрос;nginx::lb
+Минимальный набор proxy_set_header;Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto - передают информацию о клиенте и протоколе;nginx::lb
+Преимущества keep-alive;Снижает задержки и нагрузку на CPU, так как не тратится время на TCP/TLS handshake для каждого запроса;nginx::lb
+Какие upstream директивы требуют zone?;least_conn, least_time, health_check, sticky - все продвинутые функции требуют zone в upstream;nginx::lb
+Что такое DoS/DDoS атаки?;Атаки типа "отказ в обслуживании", направленные на нарушение доступности сервисов;nginx::security
+Ограничения защиты от DoS на уровне Nginx;Защита на уровне одного сервера имеет серьезные ограничения. Для масштабных атак нужны внешние сервисы;nginx::security
+Что такое limit_req?;Модуль Nginx для ограничения частоты запросов от клиента. Защита от флуда и брутфорса;nginx::security
+Пример настройки limit_req;limit_req_zone $binary_remote_addr zone=one:10m rate=5r/s; в location: limit_req zone=one burst=10 nodelay; - 5 запросов в секунду, burst до 10;nginx::security
+$binary_remote_addr;Ключ для отслеживания в limit_req - IP-адрес клиента в бинарном виде, занимает меньше памяти;nginx::security
+burst в limit_req;Позволяет обработать до N запросов, превышающих лимит;nginx::security
+nodelay в limit_req;Запросы в рамках burst обрабатываются немедленно, а не с задержкой. Полезно для API;nginx::security
+Ограничения limit_req;Неэффективен против DDoS, может заблокировать легитимных пользователей из-под одного NAT;nginx::security
+Контроль доступа по IP;allow 192.168.1.10; allow 10.0.0.0/8; deny all; - правила обрабатываются по порядку, первое совпадение определяет действие;nginx::security
+Базовая аутентификация auth_basic;Nginx может защитить часть сайта паролем через HTTP-аутентификацию;nginx::security
+Пример auth_basic;location /admin/ { auth_basic "Admin Area"; auth_basic_user_file /etc/nginx/htpasswd; } - текст в окне + путь к файлу паролей;nginx::security
+Как создать файл htpasswd?;htpasswd -cb /etc/nginx/htpasswd username password - создать файл; htpasswd /etc/nginx/htpasswd user2 - добавить пользователя;nginx::security
+Почему auth_basic опасен без TLS?;Логин и пароль передаются в Base64 - легко декодировать. Обязательно использовать с HTTPS;nginx::security
+Защита конфиденциальных файлов;location ~ /\.(git|svn|ht|env) { deny all; return 404; } - блокирует доступ к системным файлам;nginx::security
+Запрет выполнения скриптов в uploads;location /uploads { location ~ \.php$ { return 403; } } - запрещает исполнение PHP в директории загрузок;nginx::security
+Отключение ненужных HTTP-методов;if ($request_method !~ ^(GET|POST|HEAD)$) { return 405; } - отклоняет все кроме GET, POST, HEAD;nginx::security
+Зачем нужен параметр always в add_header?;Гарантирует добавление заголовка ко всем ответам, включая ошибки (404, 500), а не только успешные (2xx, 3xx);nginx::security
+Strict-Transport-Security (HSTS);add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"; - заставляет браузер всегда использовать HTTPS;nginx::security
+X-Frame-Options;add_header X-Frame-Options "SAMEORIGIN"; - защищает от Clickjacking, запрещая встраивание в iframe;nginx::security
+X-Content-Type-Options;add_header X-Content-Type-Options "nosniff"; - запрещает браузеру угадывать MIME-тип контента;nginx::security
+Referrer-Policy;add_header Referrer-Policy "strict-origin-when-cross-origin"; - контролирует информацию о реферере при навигации;nginx::security
+X-XSS-Protection;add_header X-XSS-Protection "0"; - отключает устаревший XSS-фильтр браузера (не рекомендуется использовать);nginx::security
+CSP default-src;default-src 'self'; - разрешает загрузку ресурсов только с текущего домена;nginx::security
+CSP script-src;script-src 'self' https://trusted.cdn.com; - разрешает скрипты со своего домена и CDN;nginx::security
+CSP object-src;object-src 'none'; - запрещает загрузку плагинов (хорошая практика);nginx::security
+upgrade-insecure-requests;CSP директива - автоматически преобразует HTTP-запросы в HTTPS;nginx::security
+Как тестировать CSP без блокировки?;Использовать Content-Security-Policy-Report-Only вместо Content-Security-Policy;nginx::security
+server_tokens;server_tokens off; - скрывает версию Nginx в заголовке Server. Добавляется в блок http;nginx::security
+Как полностью убрать заголовок Server?;Использовать модуль ngx_http_headers_more_filter_module или пересобрать Nginx;nginx::security
+proxy_hide_header;proxy_hide_header Server; - скрывает заголовок Server от бэкенда при проксировании;nginx::security
+Права доступа к файлам Nginx;root:root для /etc/nginx, chmod 750 для директорий, 640 для конфигов;nginx::security
+Права на файлы сайта;myuser:www-data для /var/www/mysite, chmod 755 для директорий;nginx::security
+Уровень логирования error_log;error_log /var/log/nginx/error.log warn; - рекомендуется warn чтобы не пропустить важные события;nginx::security
+В чем преимущество Nginx перед Apache по конфигурации?;Централизованная конфигурация читается в память при старте, не обращается к файловой системе при каждом запросе - максимальная производительность;nginx::lb
+Есть ли в Nginx аналог .htaccess?;Нет, Nginx не поддерживает .htaccess. Вся конфигурация централизованная;nginx::lb
+Почему важна проверка nginx -t перед reload?;Ошибка в конфиге любого сайта не применится целиком, предотвращает остановку всего сервера;nginx::lb
+Почему .htaccess снижает производительность Apache?;При каждом запросе проверяется наличие .htaccess во всех родительских директориях - множественные обращения к файловой системе;nginx::lb
+Преимущество .htaccess для хостинга;Владелец сайта может менять конфигурацию (mod_rewrite) без доступа к главному конфу - идеально для shared-hosting;nginx::lb
+Изоляция ошибок в .htaccess;Ошибка в .htaccess одного сайта вызовет 500 только для этого сайта, остальные продолжат работать;nginx::lb
+Сравнение Nginx и HAProxy;HAProxy лучше для узкоспециализированных задач балансировки и гибких алгоритмов, Nginx универсальнее (веб-сервер + прокси);nginx::lb
+Когда выбрать Nginx для балансировки?;Если вы единственный администратор и нужен универсальный инструмент (веб-сервер + реверс-прокси + балансировщик);nginx::lb
+Когда выбрать Apache + Nginx?;Для shared-hosting, где нужна гибкость .htaccess от Apache, а Nginx как фронтенд для статики и проксирования;nginx::lb
+Что предлагает Nginx Plus для балансировки?;Балансировка по скорости ответа, динамическая реконфигурация бэкендов, расширенный мониторинг;nginx::lb
+Директории для конфигов Nginx;/etc/nginx/conf.d/ - глобальные настройки (upstream), /etc/nginx/sites-enabled/ - сайты;nginx::lb
+Почему важно очищать Connection header?;Для корректной работы keep-alive нужно убрать заголовок Connection при использовании HTTP/1.1;nginx::lb
+Что такое long-polling?;Техника, при которой клиент запрашивает данные и сервер отвечает не сразу, а когда данные появляются. Требует отключения буферизации;nginx::lb
+176: Опишите процесс TLS Handshake;1) TCP handshake 2) Сервер отправляет сертификат 3) Клиент проверяет валидность 4) Обмен сессионным ключом через асимметричное шифрование 5) Дальнейший обмен через симметричное шифрование;nginx::tls
+177: Что такое цепочка сертификатов?;Root CA (корневой, в ОС) -> Intermediate CA (промежуточный) -> Server Certificate (серверный). При настройке Nginx нужен fullchain.pem;nginx::tls
+178: Что такое Perfect Forward Secrecy (PFS)?;Обеспечивается эфемерными алгоритмами (ECDHE, DHE). Каждая сессия имеет уникальный ключ - при компрометации приватного ключа расшифровать прошлый трафик невозможно;nginx::tls
+179: Что такое OCSP Stapling?;Механизм при котором сервер сам получает ответ от CA о статусе своего сертификата и прикрепляет его к TLS handshake. Ускоряет соединение и повышает приватность;nginx::tls
+180: Зачем нужен HSTS?;HTTP заголовок, заставляющий браузер всегда использовать HTTPS. Предотвращает атаки понижения версии протокола;nginx::tls
+181: Что такое mTLS?;Mutual TLS - взаимная аутентификация, когда не только клиент проверяет сертификат сервера, но и сервер проверяет сертификат клиента;nginx::tls
+182: Для чего нужны директивы keepalive_timeout и keepalive_requests?;keepalive_timeout - таймаут keep-alive соединения, keepalive_requests - максимальное число запросов через одно соединение. Сокращают задержки от TCP/TLS handshake;nginx::tls
+183: Зачем нужен ssl_session_cache?;Кэширует параметры TLS сессий на стороне сервера. Позволяет выполнять быстрое сокращенное handshake при повторных подключениях;nginx::tls
+184: Пример настройки ssl_session_cache;ssl_session_cache shared:SSL:10m; - создает общую зону в памяти на 10 МБ (хватает на ~40000 сессий);nginx::tls
+185: Зачем нужен ssl_session_timeout?;Устанавливает время жизни сессии в кэше. Пример: ssl_session_timeout 1d; - сессия хранится 1 день;nginx::tls
+186: Что делает ssl_session_tickets?;Механизм возобновления сессий, при котором зашифрованная информация хранится на стороне клиента. Основной для TLS 1.3;nginx::tls
+187: Почему рекомендуется ssl_session_tickets off?;Билеты сессий имели проблемы с безопасностью и могут ослабить PFS. Отключение и использование ssl_session_cache безопаснее;nginx::tls
+188: Какие протоколы разрешить в ssl_protocols?;ssl_protocols TLSv1.2 TLSv1.3; - только современные безопасные версии. Защищает от SSLv2, SSLv3, TLS 1.0, TLS 1.1 (уязвимы к POODLE, BEAST);nginx::tls
+189: Что делает ssl_prefer_server_ciphers?;Определяет кто выбирает шифр - сервер или клиент. off (современный подход) - учитывает предпочтения клиента для лучшей производительности;nginx::tls
+190: Что делает ssl_buffer_size?;Размер буфера для отправки данных. По умолчанию 16k - оптимально. Уменьшение до 8k может улучшить TTFB, но увеличит нагрузку на CPU;nginx::tls
+191: Для чего нужен ssl_dhparam?;Путь к файлу с параметрами Диффи-Хеллмана (DHE). Повышает безопасность по сравнению со стандартными. Не требуется для ECDHE или TLS 1.3;nginx::tls
+192: Как сгенерировать dhparam файл?;openssl dhparam -out /etc/nginx/dhparam.pem 2048; - генерирует файл с параметрами DH длиной 2048 бит;nginx::tls
+193: Что делает ssl_early_data?;Включает 0-RTT для TLS 1.3, ускоряя повторные соединения;nginx::tls
+194: Как настроить OCSP Stapling?;ssl_stapling on; ssl_stapling_verify on; resolver 8.8.8.8 8.8.4.4 valid=300s; resolver_timeout 5s; - сервер сам загружает статус сертификата от CA;nginx::tls
+195: Минимальная конфигурация HTTPS в Nginx;server { listen 443 ssl http2; server_name domain.com; ssl_certificate /path/to/cert.pem; ssl_certificate_key /path/to/key.pem; } - базовая настройка виртуального хоста;nginx::tls
+196: Зачем ssl_certificate и ssl_certificate_key?;ssl_certificate - путь к публичному сертификату (fullchain), ssl_certificate_key - путь к приватному ключу;nginx::tls
+197: Как сделать редирект с HTTP на HTTPS?;server { listen 80; server_name domain.com; return 301 https://$host$request_uri; } - 301 кэшируется, для отладки использовать 302;nginx::tls
+198: Как включить HTTP/2 в Nginx?;Добавить параметр http2 к директиве listen: listen 443 ssl http2; - требует HTTPS;nginx::tls
+199: Как включить HTTP/3 (QUIC) в Nginx?;listen 443 quic reuseport; http3 on; add_header Alt-Svc 'h3=":443"; ma=86400'; - требует UDP порт;nginx::tls
+200: Для чего нужна DNS запись HTTPS?;Информирует клиентов о поддержке HTTP/2 и HTTP/3. Пример: your_domain.com. IN HTTPS 1 . alpn="h2,h3";nginx::tls
+201: Как использовать EC и RSA сертификаты вместе?;Указать оба сертификата: ssl_certificate /path/to/ec_cert.pem; ssl_certificate_key /path/to/ec_key.pem; ssl_certificate /path/to/rsa_cert.pem; ssl_certificate_key /path/to/rsa_key.pem; - Nginx выберет подходящий;nginx::tls
+202: Что делает ssl_client_certificate?;Указывает путь к файлу с доверенными CA для проверки клиентских сертификатов в mTLS;nginx::tls
+203: Что делает ssl_crl?;Путь к списку отозванных сертификатов (CRL). Nginx отклоняет клиентов с отозванными сертификатами;nginx::tls
+204: Перечислите режимы ssl_verify_client;off (по умолчанию, не запрашивать), on (обязателен), optional (запрашивается, но не обязателен), optional_no_ca (запрашивается, но не проверяется);nginx::tls
+205: Что делает ssl_verify_depth?;Устанавливает глубину проверки цепочки сертификата клиента. Для промежуточного CA нужно минимум 2;nginx::tls
+206: Минимальная конфигурация mTLS;ssl_client_certificate /path/to/ca.crt; ssl_crl /path/to/crl.pem; ssl_verify_client on; - базовая настройка взаимной аутентификации;nginx::tls
+207: Как протестировать mTLS curl?;curl https://domain.com --cert /path/to/client.crt --key /path/to/client.key --cacert /path/to/ca.crt; - подключение с клиентским сертификатом;nginx::tls
+208: Какие переменные содержат информацию о клиентском сертификате?;$ssl_client_verify (SUCCESS/FAILED/NONE), $ssl_client_s_dn (полный DN), $ssl_client_s_dn_cn (CN), $ssl_client_serial (серийный номер);nginx::tls
+209: Как передать данные клиентского сертификата бэкенду?;proxy_set_header X-Client-Verify $ssl_client_verify; proxy_set_header X-Client-DN $ssl_client_s_dn; proxy_set_header X-Client-CN $ssl_client_s_dn_cn; - через заголовки;nginx::tls
+210: Почему валидация в location нужна при ssl_verify_client optional?;При optional проверка не обязательна, поэтому нужно вручную проверять $ssl_client_verify и возвращать 403 если не SUCCESS;nginx::tls
+211: Как проверить синтаксис конфигурации Nginx?;nginx -t - проверяет конфигурацию на ошибки;nginx::tls
+212: Как проверить открытые порты 443?;ss -tlpn | grep 443 - для TCP, ss -ulpn | grep 443 - для UDP (HTTP/3 QUIC);nginx::tls
+213: Как проверить TLS-соединение через openssl?;openssl s_client -connect domain.com:443 -servername domain.com - показывает детали handshake и сертификата;nginx::tls
+214: Зачем нужен параметр -servername в openssl s_client?;Это SNI (Server Name Indication) - критически важно для множества HTTPS сайтов на одном IP для выбора правильного сертификата;nginx::tls
+215: Как проверить версию TLS в браузере?;DevTools -> Network -> смотреть протокол (HTTP/1.1, H2, H3). Вкладка Security - детали сертификата;nginx::tls
+216: Для чего нужен SSL Labs?;Сервис ssllabs.com/ssltest/ для оценки конфигурации TLS - проверяет рейтинг, сертификат, протоколы, уязвимости;nginx::tls
+217: На что обратить внимание в SSL Labs отчете?;Overall Rating (A или A+), Certificate (цепочка), Protocol Support (отключены ли старые протоколы), Handshake Simulation, Vulnerabilities (все No);nginx::tls
+218: Какие клиенты поддерживают TLS 1.2?;Android 4.4+, Windows 7+, Chrome 49+, Firefox, Safari 9+, Java 8+, OpenSSL 1.0.1+;nginx::tls
+219: Какие клиенты НЕ поддерживают TLS 1.2?;Android 2.x-4.3, Windows XP IE6, Windows Vista IE7-9, Java 6-7, OpenSSL 0.9.8, Safari 6-8;nginx::tls
+220: С каких версий есть TLS 1.3?;Android 8.1+, современные браузеры;nginx::tls
+221: Какой порт используется для HTTP/3 QUIC?;UDP порт 443 - требует отдельной настройки в Nginx;nginx::tls
+222: Зачем нужен reuseport в listen для QUIC?;Позволяет каждому worker-процессу Nginx иметь свой собственный сокет для UDP, повышая производительность;nginx::tls
+223: Что такое SNI?;Server Name Indication - расширение TLS, позволяющее серверу выбирать сертификат на основе имени хоста при множестве сайтов на одном IP;nginx::tls
+224: Что делает ssl_trusted_certificate?;Указывает путь к доверенным CA для дополнительной верификации (помимо системных). Используется с ssl_stapling_verify;nginx::tls
+225: Зачем нужен ssl_password_file?;Позволяет указать файл с паролями для расшифровки приватных ключей. Полезно если ключи зашифрованы;nginx::tls
+226: Как посмотреть версию OpenSSL в Nginx?;nginx -V | grep OpenSSL - показывает версию OpenSSL с которой собран Nginx;nginx::tls
+227: Что такое OCSP?;Online Certificate Status Protocol - протокол для проверки статуса сертификата (отозван или нет) в реальном времени;nginx::tls
+228: Какой порт по умолчанию для HTTPS?;TCP 443;nginx::tls
+229: Какой порт по умолчанию для HTTP?;TCP 80;nginx::tls
+230: Что такое wildcard сертификат?;Сертификат, выданный для *.domain.com - покрывает все поддомены;nginx::tls
+231: Что такое SAN в сертификате?;Subject Alternative Name - поле сертификата для указания дополнительных доменов/IP;nginx::tls
+232: Какой тип сертификата лучше - EC или RSA?;EC (ECDSA) - меньше размер, быстрее. RSA - лучшая совместимость со старыми клиентами;nginx::tls
+233: Какой размер ключа RSA рекомендуется?;Минимум 2048 бит, рекомендуется 4096 бит для высокой безопасности;nginx::tls
+234: Какой размер ключа EC рекомендуется?;Минимум 256 бит (prime256v1);nginx::tls
+235: Что делает ssl_reject_handshake?;При значении on - Nginx отклоняет соединения без SNI для этого server блока;nginx::tls
+236: Что такое False Start?;Техника ускорения TLS handshake - клиент начинает отправлять данные до завершения handshake;nginx::tls
+237: Какой хэш использует TLS 1.3?;SHA-256 или SHA-384;nginx::tls
+238: Что такое 0-RTT?;Режим в TLS 1.3 позволяющий отправлять данные в первом сообщении. Ускоряет, но менее безопасен (не имеет PFS);nginx::tls
+239: Минусы 0-RTT?;Уязвимость к replay-атакам - данные могут быть переотправлены злоумышленником;nginx::tls
+240: Какой протокол выбрать для максимальной безопасности?;TLS 1.3 только - отключить 1.2. Но нужно учитывать совместимость с клиентами;nginx::tls
+241: Что такое сжатие данных в Nginx?;Процесс уменьшения объема передаваемых данных для ускорения загрузки и экономии трафика;nginx::compression
+242: Перечислите алгоритмы сжатия в Nginx;Gzip - старый универсальный, Brotli - от Google с высокой степенью сжатия, ZSTD - от Facebook с высокой скоростью;nginx::compression
+243: Что такое динамическое сжатие?;Сжатие контента в момент запроса. Плюс: не нужно предварительно готовить файлы. Минус: потребляет CPU на каждый запрос, блокирует воркера;nginx::compression
+244: Что такое статическое сжатие?;Файлы сжимаются заранее (.gz, .br, .zst) и отдаются как есть. Плюс: минимальная нагрузка на CPU, максимальное сжатие. Минус: требует подготовки при деплое;nginx::compression
+245: Что такое Content Negotiation?;Переговоры о сжатии - браузер отправляет Accept-Encoding (gzip, deflate, br, zstd), сервер выбирает лучший алгоритм и отправляет Content-Encoding;nginx::compression
+246: Какой заголовок отправляет браузер для указания поддерживаемых алгоритмов?;Accept-Encoding - например "gzip, deflate, br, zstd";nginx::compression
+247: Какой заголовок отправляет сервер для указания использованного алгоритма?;Content-Encoding - например "Content-Encoding: br";nginx::compression
+248: Как включить динамическое Gzip?;gzip on; - включает сжатие;nginx::compression
+249: Что делает gzip_comp_level?;Уровень сжатия Gzip (1-9). 3-4 - хороший компромисс для динамики;nginx::compression
+250: Что делает gzip_types?;Указывает какие MIME-типы сжимать. По умолчанию только text/html, остальное нужно добавить явно;nginx::compression
+251: Что делает gzip_vary on?;Добавляет заголовок Vary: Accept-Encoding - важно для корректного кэширования прокси-серверами;nginx::compression
+252: Что делает gzip_min_length?;Минимальная длина ответа в байтах для сжатия. Предотвращает сжатие маленьких файлов где накладные расходы превышают выгоду;nginx::compression
+253: Что делает gzip_proxied?;Включает сжатие для проксированных запросов. any - сжимать все;nginx::compression
+254: Как включить статическое Gzip?;gzip_static on; - отдает предварительно сжатые .gz файлы;nginx::compression
+255: Пример конфигурации Gzip;gzip on; gzip_comp_level 3; gzip_types text/plain text/css application/json application/javascript; gzip_min_length 1000; gzip_vary on; - базовая настройка;nginx::compression
+256: Как сгенерировать .gz файл с максимальным сжатием?;gzip -k -9 file.css (быстро) или zopfli -k -9 file.css (лучше сжатие);nginx::compression
+257: Что такое Brotli?;Современный алгоритм от Google с высокой степенью сжатия. Требует модуль ngx_brotli;nginx::compression
+258: Как включить Brotli в Nginx?;brotli on; - требует загрузки модуля ngx_http_brotli_filter_module.so;nginx::compression
+259: Что делает brotli_comp_level?;Уровень сжатия Brotli (1-11). 5-6 для динамики, 11 для статики;nginx::compression
+260: Что делает brotli_static on?;Включает отдачу предварительно сжатых .br файлов;nginx::compression
+261: Как сгенерировать .br файл?;brotli -k -q 11 file.css - максимальное сжатие;nginx::compression
+262: Что такое ZSTD?;Алгоритм от Facebook с очень высокой скоростью сжатия и декомпрессии. Идеален для динамического контента;nginx::compression
+263: Как включить ZSTD?;zstd on; - требует модуля ngx_http_zstd_filter_module;nginx::compression
+264: Что делает zstd_comp_level?;Уровень сжатия ZSTD (1-22). 3-5 для динамики - хороший баланс скорости и сжатия;nginx::compression
+265: Что делает zstd_static on?;Включает отдачу предварительно сжатых .zst файлов;nginx::compression
+266: Какой алгоритм лучше для статики?;Brotli - обеспечивает наилучшее сжатие при минимальной нагрузке (сжатие один раз);nginx::compression
+267: Какой алгоритм лучше для динамики?;ZSTD - исключительно высокая скорость, что критично для HTTP/2/HTTP/3;nginx::compression
+268: Какой запасной алгоритм использовать?;Gzip - универсальная поддержка, если Brotli или ZSTD недоступны;nginx::compression
+269: Как влияет уровень сжатия на производительность?;Чем выше уровень - тем меньше размер, но выше нагрузка на CPU и больше время сжатия. Для динамики это снижает RPS;nginx::compression
+270: Почему высокое сжатие критично для HTTP/2?;При HTTP/2 все запросы в одном соединении, динамическое сжатие блокирует воркера - может значительно снизить RPS;nginx::compression
+271: Как проверить сжатие в браузере?;DevTools -> Network -> столбец Content-Encoding (gzip, br, zstd). Сравнить Size и Content;nginx::compression
+272: Как проверить сжатие через curl?;curl -H "Accept-Encoding: gzip, deflate, br, zstd" -I https://domain.com/path - проверить заголовок Content-Encoding;nginx::compression
+273: Какие инструменты для нагрузочного тестирования сжатия?;Apache Benchmark (ab), wrk - позволяют оценить влияние сжатия на RPS и время ответа;nginx::compression
+274: Пример тестирования сжатия ab;ab -n 1000 -c 100 -H "Accept-Encoding: gzip" https://domain.com/style.css - 1000 запросов, 100 одновременных;nginx::compression
+275: Почему gzip_types важно настраивать?;По умолчанию сжимается только text/html. Для CSS, JS, JSON нужно добавить явно;nginx::compression
+276: Почему не стоит использовать gzip_static глобально?;Будет искать сжатые версии для всех файлов, включая изображения - неэффективно. Использовать внутри location для CSS/JS;nginx::compression
+277: Почему gzip_disable "msie6"?;Отключает сжатие для старых браузеров IE, которые могут некорректно обрабатывать сжатый контент;nginx::compression
+278: Что делает gzip_buffers?;Буферы для сжатия. По умолчанию 4 8k. Пример: gzip_buffers 16 8k;nginx::compression
+279: Что делает gzip_http_version?;Минимальная версия HTTP для сжатия. gzip_http_version 1.1 - сжимать только для HTTP/1.1 и выше;nginx::compression
+280: Что такое адаптивная доставка изображений?;Техника при которой сервер отдает разные версии одного изображения в зависимости от возможностей браузера. Например WebP/AVIF для современных браузеров, JPEG/PNG для остальных;nginx::adaptive
+281: Какой заголовок отправляет браузер для указания поддерживаемых форматов изображений?;Accept - например "Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";nginx::adaptive
+282: Как определить поддержку WebP через map?;map $http_accept $webp_suffix { default ""; "~*webp" ".webp"; } - если в Accept есть webp, переменная получает значение .webp;nginx::adaptive
+283: Как определить поддержку AVIF через map?;map $http_accept $avif_suffix { default ""; "~*avif" ".avif"; } - если в Accept есть avif, переменная получает значение .avif;nginx::adaptive
+284: Пример try_files для адаптивных изображений;try_files $uri$avif_suffix $uri$webp_suffix $uri =404; - сначала ищет AVIF, потом WebP, потом оригинал;nginx::adaptive
+285: Как работает адаптивная доставка с photo.jpg?;Запрос /images/photo.jpg. Если браузер поддерживает AVIF и WebP: сначала ищет photo.jpg.avif, потом photo.jpg.webp, потом photo.jpg;nginx::adaptive
+286: Почему важен заголовок Vary при адаптивной доставке?;Сообщает прокси что ответ зависит от Accept. Без него кэш может отдать неправильный формат другому браузеру;nginx::adaptive
+287: Проблема без Vary: Accept;1) Старый браузер запрашивает image.jpg, прокси кэширует 2) Современный браузер запрашивает тот же URL, прокси отдает закэшированный jpg вместо webp;nginx::adaptive
+288: Как добавить Vary: Accept?;add_header Vary "Accept"; - в location для изображений;nginx::adaptive
+289: Пример полной конфигурации адаптивных изображений;map для webp и avif + location с try_files + add_header Vary "Accept";nginx::adaptive
+290: Почему важно создавать версии изображений заранее?;Nginx просто отдает готовые файлы, не конвертирует на лету. Нужны photo.jpg.webp и photo.jpg.avif рядом с оригиналом;nginx::adaptive
+291: Что лучше - $uri или $1 в try_files для изображений?;$uri чаще проще и универсальнее. $1 использует захваченную часть из регулярного выражения;nginx::adaptive
+292: Какой формат изображений лучше сжимается?;AVIF - лучшая степень сжатия, потом WebP, потом JPEG/PNG;nginx::adaptive
+293: Порядок поиска в try_files для изображений;Сначала самый современный формат (AVIF), потом предыдущий (WebP), потом оригинал;nginx::adaptive
+294: Что такое кэширование в Nginx?;Процесс временного хранения копий данных для быстрого доступа. Сокращает время ответа, уменьшает нагрузку на бэкенд и сетевой трафик;nginx::cache
+295: Перечислите виды кэширования в Nginx;Клиентское (браузерное) - браузер сохраняет локальные копии; Серверное (proxy cache) - Nginx сохраняет ответы от бэкендов;nginx::cache
+296: Что такое ETag?;Уникальный идентификатор версии ресурса (обычно хэш содержимого). Для валидации кэша;nginx::cache
+297: Что такое Last-Modified?;Заголовок с датой последнего изменения файла. Используется для валидации кэша;nginx::cache
+298: Что такое Expires?;Заголовок с точной датой устаревания ресурса;nginx::cache
+299: Что такое Cache-Control?;Современный HTTP-заголовок для гибкого управления кэшированием через директивы (max-age, public, private, no-cache, no-store, immutable);nginx::cache
+300: Что делает директива max-age в Cache-Control?;Время жизни кэша в секундах;nginx::cache
+301: Что делает директива public в Cache-Control?;Ресурс может кэшироваться любыми кэшами (браузер, CDN);nginx::cache
+302: Что делает директива private в Cache-Control?;Ресурс предназначен только для одного пользователя (браузер);nginx::cache
+303: Что делает директива no-cache в Cache-Control?;Требует валидации с сервером перед каждым использованием;nginx::cache
+304: Что делает директива no-store в Cache-Control?;Полностью запрещает кэширование;nginx::cache
+305: Что делает директива immutable в Cache-Control?;Указывает что ресурс не изменится. Используется с cache busting;nginx::cache
+306: Как работает ETag валидация?;Сервер отправляет ETag. Клиент отправляет If-None-Match. При совпадении сервер возвращает 304 Not Modified;nginx::cache
+307: Как работает Last-Modified валидация?;Сервер отправляет Last-Modified. Клиент отправляет If-Modified-Since. При совпадении сервер возвращает 304 Not Modified;nginx::cache
+308: Что такое 304 Not Modified?;Ответ сервера при валидации кэша - ресурс не изменился, используй локальную копию. Экономит трафик;nginx::cache
+309: Пример конфигурации клиентского кэширования статики;location ~* \.(css|js|jpe?g|gif|png)$ { expires 1y; add_header Cache-Control "public, immutable"; access_log off; } - вечное кэширование;nginx::cache
+310: Что такое Cache Busting?;Техника изменения URL ресурса при обновлении для сброса кэша. Версия в query string или хэш в имени файла;nginx::cache
+311: Примеры Cache Busting;style.css?v=1.2 (query string) или style.a1b2c3d4.css (хэш в имени - предпочтительнее);nginx::cache
+312: Для чего нужен proxy_cache_path?;Определяет зону кэширования в контексте http - путь, размер, структуру директорий;nginx::cache
+313: Пример proxy_cache_path;proxy_cache_path /var/cache/nginx/proxy_cache levels=1:2 keys_zone=my_cache:10m inactive=60m max_size=1g; - путь, уровни, память, неактивность, макс размер;nginx::cache
+314: Что делает параметр levels в proxy_cache_path?;Создает многоуровневую структуру директорий для предотвращения проблем с производительностью ФС;nginx::cache
+315: Что делает параметр keys_zone в proxy_cache_path?;Определяет зону разделяемой памяти для хранения ключей кэша и метаданных. Пример: keys_zone=my_cache:10m;nginx::cache
+316: Что делает параметр inactive в proxy_cache_path?;Время хранения невостребованных элементов. inactive=60m - удалить через 60 минут без запросов;nginx::cache
+317: Что делает параметр max_size в proxy_cache_path?;Максимальный размер кэша на диске. При превышении cache manager удаляет старые элементы;nginx::cache
+318: Для чего нужен proxy_cache_key?;Определяет уникальный ключ для кэширования. Пример: proxy_cache_key "$scheme$request_method$host$request_uri";nginx::cache
+319: Почему нельзя добавлять user-id в proxy_cache_key?;Для каждого пользователя создастся своя копия кэша - раздувание и неэффективность;nginx::cache
+320: Как включить proxy cache в location?;proxy_cache my_cache; - указать имя зоны из proxy_cache_path;nginx::cache
+321: Для чего нужен proxy_cache_valid?;Устанавливает время жизни кэша для разных кодов ответа. proxy_cache_valid 200 10m; - 200 код на 10 минут;nginx::cache
+322: Пример proxy_cache_valid;proxy_cache_valid 200 302 10m; proxy_cache_valid 404 1m; proxy_cache_valid any 5m; - разное время для разных кодов;nginx::cache
+323: Что делает proxy_cache_min_uses?;Кэшировать объект только после указанного числа запросов. proxy_cache_min_uses 3; - после 3 запросов;nginx::cache
+324: Что делает proxy_cache_bypass?;Определяет условия когда Nginx НЕ берет из кэша а идет на бэкенд. proxy_cache_bypass $cookie_nocache $arg_nocache;nginx::cache
+325: Что делает proxy_no_cache?;Определяет условия когда ответ НЕ будет сохранен в кэш. proxy_no_cache $cookie_session; - не кэшировать если есть кука сессии;nginx::cache
+326: Что делает proxy_cache_lock?;Предотвращает "стадо бизонов" - при одновременных запросах к некэшированному ресурсу только 1 уходит на бэкенд, остальные ждут;nginx::cache
+327: Что такое "стадо бизонов" (thundering herd)?;Ситуация когда тысячи одновременных запросов к одному ресурсу все идут на бэкенд вместо одного;nginx::cache
+328: Как работает proxy_cache_lock?;Первый запрос уходит на бэкенд, ставится lock. Остальные ждут. Первый получает ответ, кладет в кэш, снимает lock, остальные берут из кэша;nginx::cache
+329: Что делает proxy_cache_use_stale?;Разрешает отдавать устаревший кэш если бэкенд недоступен или возвращает ошибки. Повышает отказоустойчивость;nginx::cache
+330: Пример proxy_cache_use_stale;proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504; - отдавать старый кэш при ошибках;nginx::cache
+331: Что делает proxy_cache_background_update?;Разрешает обновление кэша в фоновом режиме. Клиент получает старую версию, Nginx асинхронно обновляет;nginx::cache
+332: Что делает proxy_ignore_headers?;Позволяет игнорировать заголовки от бэкенда запрещающие кэширование (Cache-Control, Expires, Set-Cookie);nginx::cache
+333: Что показывает $upstream_cache_status?;Статус взаимодействия с кэшем: MISS (не найден), HIT (из кэша), EXPIRED (истек), STALE (устаревший отдан), UPDATING (обновляется), BYPASS (обойден), REVALIDATED (валидирован 304);nginx::cache
+334: Как добавить отладочный заголовок X-Cache-Status?;add_header X-Cache-Status $upstream_cache_status; - показывает статус кэша в ответе;nginx::cache
+335: Как очистить кэш в Nginx?;Использовать модуль ngx_cache_purge. location ~ /purge(/.*) { proxy_cache_purge cache_name "$scheme$host$1"; } - GET /purge/uri для очистки;nginx::cache
+336: Ограничение доступа к purge;allow 127.0.0.1; allow 192.168.77.0/24; deny all; - разрешить только доверенным IP;nginx::cache
+337: Пример очистки кэша curl;curl -X GET "http://example.com/purge/api/v1/data" - очищает кэш для этого URI;nginx::cache
+338: Рекомендации по кэшированию статики;Вечное кэширование (expires 1y, Cache-Control public immutable) + cache busting;nginx::cache
+339: Рекомендации по кэшированию динамики;Валидационное кэширование или Cache-Control: no-cache для получения актуальных данных;nginx::cache
+340: Что делает expires в Nginx?;Устанавливает заголовки Expires и Cache-Control для клиентского кэширования. expires 1y = 1 год;nginx::cache
+341: По умолчанию включен ли ETag для статики?;Да, ETag включен по умолчанию для статических файлов;nginx::cache
+342: Что лучше - ETag или Last-Modified?;ETag точнее (хэш содержимого), Last-Modified проще. ETag приоритетнее если оба присутствуют;nginx::cache

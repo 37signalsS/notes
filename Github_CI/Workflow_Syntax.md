@@ -1,85 +1,94 @@
-# Workflow-файлы: синтаксис и размещение
+# GitHub Actions: Синтаксис Workflow
 
-## Где хранятся workflow-файлы
+Файлы workflow в GitHub Actions используют синтаксис YAML и имеют специальную структуру с набором ключей верхнего уровня, контекстов и выражений.
 
-Файлы GitHub Actions размещаются в репозитории по пути .github/workflows. Допустимы расширения .yml или .yaml. Имена произвольные, лучше без пробелов и с кратким описанием назначения (например, ci.yml, release.yaml). В одном репозитории может быть несколько файлов workflow; они независимы и могут запускаться параллельно.
+## Определения
 
-Workflow должен находиться в ветке, из которой выполняется событие. Для переиспользуемых workflow допускается хранение в любом репозитории; подключение выполняется через uses с указанием owner/repo и пути .github/workflows/.yml на определённой версии или теге.
+- **Workflow-файл**: YAML-файл (с расширением `.yml` или `.yaml`), расположенный в директории `.github/workflows/` репозитория. Он определяет автоматизированный процесс (`workflow`).
+- **Синтаксис выражений (`${{...}}`)**: Специальный синтаксис, который позволяет использовать контекстную информацию, выполнять условную логику и работать с переменными внутри workflow-файла.
 
-## Структура и ключи верхнего уровня
+## Основные концепции
 
-YAML чувствителен к отступам и использует пробелы (табуляции недопустимы). Порядок ключей не критичен, но распространённая структура выглядит так:
+### Структура и размещение
 
-| Ключ | Назначение |
-| :--- | :--- |
-| name | Человекочитаемое имя workflow. |
-| on | События-триггеры (push, pull_request, schedule, workflow_dispatch и др.). |
-| env | Глобальные переменные окружения. |
-| permissions | Права GITHUB_TOKEN по умолчанию для workflow. |
-| defaults | Значения по умолчанию для run (shell, working-directory). |
-| concurrency | Группировка и отмена конкурирующих запусков. |
-| jobs | Набор заданий, выполняемых на раннерах. |
+- **Расположение**: Все workflow-файлы должны находиться в директории `.github/workflows/`.
+- **Формат**: Используется YAML. Отступы имеют значение (используйте пробелы, а не табы).
 
-## Минимальный пример
+### Ключи верхнего уровня
+
+Это основные блоки, из которых строится workflow:
+
+- `name`: (Опционально) Имя рабочего процесса, которое отображается в UI GitHub.
+- `on`: (Обязательно) Определяет [события (events)](./Events_Jobs_Steps.md), которые запускают workflow.
+- `jobs`: (Обязательно) Содержит одну или несколько [задач (jobs)](./Events_Jobs_Steps.md), которые нужно выполнить.
+- `env`: (Опционально) Позволяет определить переменные окружения, доступные для всех задач в workflow.
+- `permissions`: (Опционально) Управляет правами доступа, которые предоставляются `GITHUB_TOKEN`. Рекомендуется задавать минимально необходимые права.
+- `concurrency`: (Опционально) Предотвращает одновременный запуск нескольких экземпляров workflow, позволяя отменять устаревшие запуски.
+
+### Контексты
+
+Контексты — это наборы переменных, которые доступны в большинстве частей workflow. К ним обращаются через синтаксис выражений.
+
+- `github`: Информация о запуске workflow (имя репозитория, хеш коммита, имя ветки, данные о событии и т.д.).
+- `secrets`: Доступ к секретам, настроенным в репозитории или организации.
+- `env`: Доступ к переменным окружения (глобальным, на уровне задачи или шага).
+- `steps`: Доступ к `outputs` (выходным данным) предыдущих шагов в рамках одной задачи.
+- `matrix`: Содержит значения текущей комбинации в [матричной сборке](./Matrix_Builds.md).
+
+## Практический сценарий: Демонстрация синтаксиса
+
+Этот пример показывает использование большинства ключевых элементов синтаксиса.
 
 ```yaml
-name: CI
+# Ключ 'name': Имя workflow
+name: Syntax Demo
+
+# Ключ 'on': запуск на push в main или по кнопке
 on:
   push:
     branches: [ main ]
-    paths:
-      - "src/**"
-      - "!docs/**"
-  pull_request:
   workflow_dispatch:
 
+# Ключ 'permissions': Ограничиваем права токена
 permissions:
   contents: read
 
+# Ключ 'concurrency': отменяем предыдущие запуски для этой ветки
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-demo-${{ github.ref }}
   cancel-in-progress: true
 
+# Ключ 'env': глобальная переменная
 env:
-  NODE_ENV: test
+  PROJECT_NAME: "My Awesome App"
 
+# Ключ 'jobs': секция с задачами
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [18, 20]
     steps:
       - uses: actions/checkout@v4
-      - name: Установка Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - name: Установка зависимостей
-        run: npm ci
-      - name: Сборка
-        run: npm run build
+      
+      - name: Use global env
+        # Используем выражение и контекст env
+        run: echo "Building ${{ env.PROJECT_NAME }}..."
 
-  tests:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm test
-        env:
-          CI: "true"
+      - name: Use github context
+        # Используем условное выполнение и контекст github
+        if: github.event_name == 'push'
+        run: echo "This step runs only on push events."
+        
+      - name: Set output
+        id: my-step
+        run: echo "output_value=hello" >> $GITHUB_OUTPUT
+
+      - name: Use step context
+        # Используем контекст steps для доступа к output
+        run: echo "The output was ${{ steps.my-step.outputs.output_value }}"
 ```
 
-## Ключевые элементы синтаксиса
+## Дополнительная информация
 
-*   `on` поддерживает список событий или объект с фильтрами: branches, tags, paths, types. Для ручного запуска используется workflow_dispatch с inputs. Для расписания — schedule с cron.
-*   `jobs` — словарь заданий. Каждое задание имеет runs-on (ubuntu-latest, windows-latest, macos-latest или self-hosted) и steps.
-*   `steps` бывают двух типов:
-*   `uses` — подключение готового действия: owner/repo@версия, Docker-образ или локальный путь ./path.
-*   `run` — выполнение команд в шелле; можно задать shell или использовать defaults.run.
-*   Стратегии выполнения: `strategy.matrix` позволяет варьировать параметры (версии ОС, интерпретаторов, флагов сборки), а также include/exclude для точной настройки.
-*   Условные выражения задаются в `if`: на уровнях job/step, например: `if: github.ref == 'refs/heads/main'`. Внутри значений часто применяются выражения ${{ ... }} и контексты (github, env, secrets, matrix).
-*   Переменные окружения можно объявлять глобально (env на уровне workflow), для job или step; переопределение происходит по месту.
-*   `permissions` ограничивает доступ GITHUB_TOKEN; рекомендуется явно задавать только необходимые права (например, contents: read, id-token: write).
-*   `concurrency` предотвращает одновременные конфликты: group задаёт ключ группировки, cancel-in-progress отменяет более старые запуски при новых коммитах.
-*   Переиспользуемые workflow подключаются через `uses: owner/repo/.github/workflows/file.yml@ref` в job, а целевой файл должен иметь триггер `workflow_call`.
+- **[Ключевые концепции GitHub Actions](./Core_Concept.md)**: Общее описание платформы.
+- **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**: Детальное описание ключей `on`, `jobs` и `steps`.
+- **Официальная документация**: [Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)

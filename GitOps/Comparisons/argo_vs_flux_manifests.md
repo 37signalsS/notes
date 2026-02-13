@@ -1,97 +1,103 @@
-# Сравнение структуры манифестов ArgoCD и Flux
+# ArgoCD vs. Flux: Сравнение Подходов и Манифестов
 
-## Концептуальные различия
-*   Argo CD объединяет описание того, что и куда разворачивать, в одном ресурсе Application. Источник, путь/чарт и целевой кластер/namespace задаются прямо в манифесте Application, синхронизация управляется полями syncPolicy и опциями.
-*   Flux разделяет ответственность: источники (Git/Helm/OCI/S3) описываются отдельными ресурсами Source API (GitRepository, HelmRepository, OCIRepository, Bucket), а применение — ресурсом Kustomization или HelmRelease. Таким образом, граф зависимости между «источником» и «применением» выражается явно через ссылки.
+ArgoCD и Flux — два ведущих GitOps-инструмента в экосистеме CNCF, но они реализуют свои задачи с разной философией. Это сравнение фокусируется на ключевых архитектурных различиях и том, как они отражаются в структуре манифестов.
 
-## Базовые ресурсы и поля
-| Аспект | Argo CD | Flux |
-| --- | --- | --- |
-| Главный CR | Application | Kustomization, HelmRelease |
-| Группа CRD | argoproj.io | fluxcd.io |
-| Источник артефактов | spec.source (repoURL, path, chart, targetRevision) | Отдельный Source: GitRepository/HelmRepository/OCIRepository |
-| Целевой кластер | spec.destination.server/namespace | По умолчанию локальный кластер; удалённый через spec.kubeConfig в Kustomization |
-| Управление порядком | Sync waves (аннотации), hooks | dependsOn в Kustomization, healthChecks |
-| Массовая генерация | ApplicationSet | Kustomize-композиции, генерация на стороне Git, HelmRelease c values |
+## Определения
 
-## Минимальные примеры
-Argo CD: единый Application, описывающий источник и назначение.
+- **ArgoCD**: Централизованный GitOps-инструмент с упором на "все-в-одном", мощный Web UI и мультикластерное управление из коробки. Его основной ресурс — `Application`, который описывает, *что*, *откуда* и *куда* разворачивать.
+- **Flux**: Набор ("toolkit") декомпозированных, независимых контроллеров, которые работают вместе. Философия Flux ближе к "Unix-way" — каждый инструмент делает одну вещь хорошо. Ответственность разделена между разными CRD (например, `GitRepository` + `Kustomization`).
+
+## Основные концепции: Ключевые различия
+
+### 1. Модель конфигурации
+
+- **ArgoCD**: Использует единый, монолитный CRD `Application`. В нем смешаны все аспекты: ссылка на Git-репозиторий (`source`), целевой кластер (`destination`) и политика синхронизации (`syncPolicy`). Это делает конфигурацию простой для старта, но менее гибкой.
+- **Flux**: Разделяет обязанности. `Source`-контроллер отвечает за получение артефактов из источников (`GitRepository`, `HelmRepository`). `Kustomize`- и `Helm`-контроллеры отвечают за применение (`Kustomization`, `HelmRelease`). Это более многословно, но позволяет переиспользовать один источник для нескольких развертываний.
+
+### 2. Пользовательский интерфейс (UI)
+
+- **ArgoCD**: Поставляется с мощным и интуитивно понятным Web UI, который является одной из его главных особенностей. UI позволяет визуализировать состояние приложений, просматривать `diff`, откатываться и управлять синхронизацией.
+- **Flux**: Не имеет официального встроенного UI. Основной способ взаимодействия — CLI (`flux`) и просмотр CRD в кластере (`kubectl`). Существуют сторонние UI, например Weave GitOps.
+
+### 3. Архитектура
+
+- **ArgoCD**: Более централизованная модель. Один инстанс ArgoCD может управлять множеством кластеров.
+- **Flux**: Децентрализованный набор контроллеров. Обычно один набор контроллеров Flux управляет одним кластером.
+
+## Практические сценарии: Примеры Манифестов
+
+Рассмотрим, как развернуть одно и то же Kustomize-приложение с помощью обоих инструментов.
+
+### ArgoCD: Единый манифест `Application`
+
+ArgoCD описывает все в одном ресурсе.
+
 ```yaml
+# apps/argocd/my-app.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: billing-app
+  name: my-app
+  namespace: argocd
 spec:
-  project: default
+  # ЧТО: источник в Git
   source:
-    repoURL: https://github.com/org/platform-configs.git
-    path: apps/billing/overlays/prod
+    repoURL: https://github.com/my-org/my-app-config.git
+    path: overlays/production
     targetRevision: main
-    kustomize:
-      commonLabels:
-        app: billing
+  # КУДА: целевой кластер и namespace
   destination:
     server: https://kubernetes.default.svc
-    namespace: billing
+    namespace: my-app
+  # КАК: политика синхронизации
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /spec/replicas
 ```
-Flux: явное разделение источника и применения.
+
+### Flux: Разделение на `Source` и `Kustomization`
+
+Flux требует как минимум два ресурса: один для описания источника, другой — для описания процесса применения.
+
 ```yaml
+# 1. Описываем источник (ЧТО)
+# sources/git-repo.yaml
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
-  name: platform-configs
+  name: my-app-config-repo
   namespace: flux-system
 spec:
-  url: https://github.com/org/platform-configs.git
+  interval: 1m
+  url: https://github.com/my-org/my-app-config.git
   ref:
     branch: main
-  interval: 1m
 ---
+# 2. Описываем применение (КУДА и КАК)
+# apps/flux/my-app.yaml
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: billing-app
+  name: my-app
   namespace: flux-system
 spec:
   interval: 5m
-  path: ./apps/billing/overlays/prod
+  path: ./overlays/production # Путь внутри источника
   prune: true
+  # Ссылка на источник
   sourceRef:
     kind: GitRepository
-    name: platform-configs
-  targetNamespace: billing
-  dependsOn:
-    - name: platform-base
-  patches:
-    - patch: |
-        - op: replace
-          path: /spec/replicas
-          value: 3
-      target:
-        kind: Deployment
-        name: billing-api
+    name: my-app-config-repo
+  # Целевой namespace
+  targetNamespace: my-app
 ```
-Для Helm-чартов Flux использует HelmRepository + HelmRelease и может одновременно управлять зависимостями и значениями; в Argo CD Helm описывается через spec.source.chart и values/parameters внутри Application.
 
-## Организация репозиториев
-*   Argo CD:
-*   Часто применяется паттерн app-of-apps: корневой Application указывает на директорию, где лежат дочерние Applications.
-*   Распространённое разделение: один репозиторий с декларациями приложений, другой — с инфраструктурой/кластерами. Назначение кластера задаётся в каждом Application через destination.
-*   Flux:
-*   Рекомендуется структура clusters//*, где объявлены Kustomization и источники, привязанные к конкретному кластеру.
-*   Каталоги infrastructure/* и apps/* переиспользуются несколькими кластерами; привязка осуществляется за счёт Kustomization в директории соответствующего кластера.
+## Дополнительная информация
 
-## Детали валидации и дрейфа
-*   Argo CD использует сравнение с live-объектами и может игнорировать различия через ignoreDifferences; дополнительные опции поведения задаются в syncOptions.
-*   Flux применяет server-side apply, осуществляет периодическую сверку по interval, поддерживает точечные модификации через patches и postBuild, а контроль зависимостей и готовности — через dependsOn и healthChecks.
+- **[Обзор ArgoCD](../ArgoCD/argocd_overview.md)**: Подробное введение в архитектуру и возможности ArgoCD.
+- **[Обзор Flux](../Flux/overview.md)**: Введение в философию и компоненты GitOps Toolkit от Flux.
+- **Официальная документация ArgoCD**: [argoproj.github.io/cd/](https://argoproj.github.io/cd/)
+- **Официальная документация Flux**: [fluxcd.io](https://fluxcd.io/)

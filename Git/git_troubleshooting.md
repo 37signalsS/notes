@@ -227,6 +227,13 @@ git config --global core.autocrlf false
 
 ## Дополнительная информация
 
+### Внутренние ресурсы
+* **[Основы Git](./git_basics.md)**: для понимания базовых команд и концепций.
+* **[Ветвление в Git](./git_branching.md)**: для углубленного изучения слияний и `rebase`.
+* **[Манипуляция историей](./git_history_manipulation.md)**: для исправления коммитов и решения более сложных проблем.
+* **[Настройка Git](./git_configuration.md)**: для управления конфигурационными параметрами, такими как `core.autocrlf`.
+
+### Внешние ресурсы
 * Официальная документация Git по `git bundle`: [Git SCM - git-bundle](https://git-scm.com/docs/git-bundle)
 * Подробнее об окончаниях строк в Git: [Git SCM - Git Configuration - core.autocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
 * Общие советы по отладке Git: [Git SCM - Git Internals - Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)

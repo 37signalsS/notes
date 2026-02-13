@@ -1,139 +1,125 @@
 # Интеграция Jaeger с Kubernetes
 
-Интеграция Jaeger в кластер Kubernetes подразумевает развёртывание компонентов трассировки и корректное подключение приложений к сборщику трейсингов. Варианты зависят от требований к отказоустойчивости и объёму данных: от all-in-one для разработческой среды до распределённой продакшен-архитектуры с устойчивым хранилищем.
+Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через Custom Resources (CRD). Это предпочтительный метод для production-окружений.
 
-## Подходы к развёртыванию
+---
 
-*   **All-in-One**: единый Pod с агентом, коллектором, UI и in-memory хранилищем. Подойдёт для демо и отладки.
-*   **Production**: отдельные Deployment-ы для Collector и Query, агент в виде DaemonSet или сайдкара; внешнее хранилище (Elasticsearch, Cassandra).
-*   **Через оператор**: Jaeger Operator управляет жизненным циклом, предоставляет CRD и автоматизирует сайдкар-инъекцию агента.
+## Определения
 
-## Jaeger Operator и CRD
+*   **Jaeger Operator:** Контроллер Kubernetes, который отслеживает ресурсы `Jaeger` (CRD) и управляет соответствующими объектами (Deployments, Services, DaemonSets и т.д.).
+*   **Custom Resource (CR):** Объект `kind: Jaeger`, который описывает желаемое состояние инсталляции Jaeger (например, стратегия `allInOne` или `production`).
 
-Оператор упрощает установку: создаётся ресурс Jaeger, а оператор разворачивает нужные объекты. Пример dev-конфигурации:
+---
 
+## Основные концепции
+
+### Паттерны развертывания агента
+
+Существует два основных подхода к развертыванию Jaeger Agent для сбора трассировок с приложений:
+
+1.  **Sidecar:** Агент развертывается как дополнительный контейнер в каждом поде приложения.
+    *   **Плюсы:** Простота конфигурации для приложения (всегда отправляет спаны на `localhost`). Изоляция ресурсов.
+    *   **Минусы:** Более высокое потребление ресурсов (память, CPU) в масштабе кластера.
+    *   **Реализация:** Автоматически управляется Jaeger Operator через аннотацию.
+
+2.  **DaemonSet:** Один экземпляр агента развертывается на каждом узле кластера.
+    *   **Плюсы:** Эффективное использование ресурсов (один агент на узел).
+    *   **Минусы:** Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов. Требует `hostPort`.
+    *   **Реализация:** Задается в CR `Jaeger` в секции `spec.agent.strategy`.
+
+### Подключение приложений
+
+Приложение должно быть сконфигурировано для отправки трассировок агенту или коллектору.
+*   При использовании **Sidecar**-агента, SDK настраивается на отправку данных на `localhost:6831`.
+*   При использовании **DaemonSet**-агента, SDK должен использовать `hostIP` пода в качестве адреса.
+*   Как альтернатива, приложения могут отправлять данные напрямую в **Collector** через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local`).
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Развертывание через Jaeger Operator
+
+#### 1. Установка Operator
+Jaeger Operator можно установить с помощью Helm или из OperatorHub.
+
+#### 2. Создание Jaeger Instance
+Создайте YAML-файл, описывающий нужную конфигурацию.
+
+**Для разработки (all-in-one):**
 ```yaml
 apiVersion: jaegertracing.io/v1
 kind: Jaeger
 metadata:
   name: jaeger-dev
 spec:
-  strategy: allInOne
+  strategy: allInOne # Все компоненты в одном поде
   storage:
     type: memory
   ingress:
-    enabled: true
+    enabled: true # Автоматически создать Ingress для доступа к UI
 ```
 
-Минимальная продакшен-конфигурация с Elasticsearch:
-
+**Для production:**
 ```yaml
 apiVersion: jaegertracing.io/v1
 kind: Jaeger
 metadata:
   name: jaeger-prod
 spec:
-  strategy: production
+  strategy: production # Раздельные, масштабируемые компоненты
   storage:
     type: elasticsearch
     options:
       es:
-        server-urls: http://elasticsearch:9200
+        server-urls: http://elasticsearch-client:9200
   collector:
     replicas: 3
-  query:
-    replicas: 2
+  agent:
+    strategy: DaemonSet # Использовать DaemonSet для агентов
 ```
 
-Для автоматической инъекции агента в Pod добавляется аннотация. Оператор подставит сайдкар и направит трафик на Collector:
+#### 3. Автоматическое внедрение агента (Sidecar Injection)
 
-```yaml
-metadata:
-  annotations:
-    sidecar.jaegertracing.io/inject: "true"
-```
-
-## Сети и порты
-
-| Компонент | Порты | Назначение |
-| --- | --- | --- |
-| Agent | 6831/6832 UDP, 5778 | Приём трейсингов от SDK, конфигурация |
-| Collector | 14250 gRPC, 14268 HTTP, 9411 | Приём трейсингов (gRPC/Thrift/Zipkin) |
-| Query (UI) | 16686 | Веб-интерфейс |
-
-В Kubernetes обычно создаются Service-объекты:
-
-*   `jaeger-collector` для приёма трафика от приложений/агентов.
-*   `jaeger-query` для доступа к UI (через Ingress/LoadBalancer).
-*   `jaeger-agent` как DaemonSet или сайдкар, чтобы приложения могли отправлять данные на `localhost:6831` без дополнительных DNS-зависимостей.
-
-## Интеграция приложений
-
-### Вариант 1: агент как сайдкар
-Аннотация подставит агент, а приложение отправляет трейсы на `localhost`:
+Чтобы Operator автоматически добавил sidecar-контейнер с агентом в под вашего приложения, добавьте аннотацию в `metadata` вашего Deployment:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: payments
+  name: my-app
 spec:
-  replicas: 2
-  selector: { matchLabels: { app: payments } }
   template:
     metadata:
-      labels: { app: payments }
       annotations:
-        sidecar.jaegertracing.io/inject: "true"
+        "sidecar.jaegertracing.io/inject": "true"
     spec:
       containers:
-      - name: app
-        image: registry.example.com/payments:1.2.3
+      - name: my-app
+        image: my-app-image:1.0
         env:
+        # SDK будет отправлять спаны на localhost, где их перехватит sidecar-агент
         - name: JAEGER_AGENT_HOST
           value: "localhost"
-        - name: JAEGER_AGENT_PORT
-          value: "6831"
-        - name: JAEGER_SERVICE_NAME
-          value: "payments"
 ```
 
-### Вариант 2: через OpenTelemetry Collector
-Приложение направляет OTLP-трейсы на Collector.
+### Сценарий 2: Интеграция с OpenTelemetry Collector
 
-Конфигурация `otel-collector`:
-```yaml
-receivers:
-  otlp:
-    protocols:
-      http:
-exporters:
-  jaeger:
-    endpoint: jaeger-collector:14250
-    tls:
-      insecure: true
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [jaeger]
-```
+Вместо Jaeger Agent можно использовать OpenTelemetry Collector. Приложение отправляет данные в OTel Collector, который, в свою очередь, экспортирует их в Jaeger Collector.
 
-Конфигурация приложения:
+**Конфигурация приложения:**
 ```yaml
 env:
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: "http://otel-collector:4318"
+  value: "http://otel-collector-service:4318" # Адрес сервиса OTel Collector
 - name: OTEL_TRACES_EXPORTER
   value: "otlp"
-- name: OTEL_EXPORTER_OTLP_PROTOCOL
-  value: "http/protobuf"
 ```
+Это позволяет использовать единый коллектор для всех сигналов телеметрии (трассировок, метрик, логов).
 
-## Практические аспекты эксплуатации
+---
 
-*   Масштабирование Collector горизонтально с учётом пропускной способности и очередей.
-*   Выделение ресурсов и лимитов CPU/Memory для Collector/Query, чтобы избежать троттлинга.
-*   Развёртывание UI за Ingress с аутентификацией уровня платформы.
-*   Сетевые политики ограничивают исходящий трафик приложений только до агента/коллектора.
-*   Бэкенд-хранилище разворачивается в отдельном пуле узлов и изолируется по StorageClass для стабильно низких задержек.
+## Дополнительная информация
+
+*   **Сравнение моделей развертывания:** Подробнее см. в [**Вариантах развертывания Jaeger**](./jaeger_deployment_options.md).
+*   **Архитектура:** Обзор компонентов Jaeger доступен в [**Архитектуре Jaeger**](./jaeger_architecture.md).

@@ -1,34 +1,50 @@
-# Автоматическое восстановление и кластеризация etcd
+# Кластеризация и восстановление etcd
 
-Кластер etcd строится поверх консенсуса Raft: в каждый момент времени есть лидер, принимающий запись, и фолловеры, реплицирующие лог. Автоматическое восстановление достигается за счет повторного выбора лидера при сбоях, журналирования (WAL) и механизма снапшотов, позволяющих узлам догонять кластер после перезапуска.
+### Определения
 
-## Топология и кворум
+**Кластер etcd** — это группа из нескольких экземпляров (узлов) etcd, работающих совместно для обеспечения отказоустойчивости и высокой доступности хранилища. Управление кластером основано на [алгоритме консенсуса Raft](raft_consensus.md).
 
--   Рекомендуется нечетное число участников.
--   Кворум = floor(N/2) + 1; число допустимых одновременных отказов = N − кворум.
+| Термин | Описание |
+|---|---|
+| **Узел (Node/Member)** | Один экземпляр процесса etcd, являющийся членом кластера. |
+| **Кворум (Quorum)** | Минимальное количество узлов (`floor(N/2) + 1`), которое должно быть работоспособно для функционирования кластера. |
+| **Peer-трафик** | Внутренний сетевой трафик между узлами кластера для репликации данных и выборов лидера. |
+| **Снапшот (Snapshot)** | Снимок состояния хранилища ключ-значение на определённый момент времени. Используется для ускорения восстановления узлов и очистки лога Raft. |
+| **WAL (Write-Ahead Log)** | Журнал предзаписи, в который etcd записывает все операции перед их применением. Гарантирует, что при сбое не произойдёт потеря данных. |
+
+---
+
+### Основные концепции
+
+#### Топология и кворум
+Кластер etcd наиболее устойчив при нечётном количестве участников. Это связано с математикой кворума:
 
 | N узлов | Кворум | Допустимо отказов |
 |---|---|---|
 | 1 | 1 | 0 |
 | 3 | 2 | 1 |
 | 5 | 3 | 2 |
+| 7 | 4 | 3 |
 
-Сетевые задержки и разрывы могут имитировать отказ; критично обеспечивать стабильную сеть для peer-трафика.
+Кластер из 3 узлов выдерживает отказ 1 узла. Кластер из 4 узлов также выдерживает отказ только 1 узла (кворум = 3), поэтому 4 узла не дают преимуществ в отказоустойчивости по сравнению с 3, но увеличивают накладные расходы.
 
-## Базовая конфигурация кластера
+#### Процесс запуска кластера
+1.  **Начальная загрузка (Bootstrap)**: Все участники запускаются с флагом `--initial-cluster-state=new` и списком всех peer-адресов в `--initial-cluster`.
+2.  **Присоединение к существующему кластеру**: Новый узел добавляется с помощью `etcdctl member add`, после чего запускается с флагом `--initial-cluster-state=existing`.
 
-Ключевые параметры запуска:
+#### Восстановление узла
+При перезапуске или после сбоя узел etcd автоматически восстанавливает своё состояние:
+1.  Читает метаданные из `data-dir`.
+2.  Проигрывает записи из WAL (журнала).
+3.  Применяет последний снапшот.
+4.  Подключается к кластеру, запрашивает у лидера недостающие записи и догоняет актуальное состояние.
 
--   `--name`: уникальное имя участника.
--   `--data-dir`: постоянное хранилище данных.
--   `--listen-client-urls` / `--advertise-client-urls`: для клиентов.
--   `--listen-peer-urls` / `--initial-advertise-peer-urls`: для межузловой репликации.
--   `--initial-cluster`: список участников с peer-URL.
--   `--initial-cluster-state`: `new` для нового кластера, `existing` при присоединении/перезапуске.
--   TLS: `--cert-file`/`--key-file`/`--trusted-ca-file` для клиентского, `--peer-cert-file`/`--peer-key-file`/`--peer-trusted-ca-file` для межузлового шифрования.
+---
 
-Пример systemd-юнита с TLS и статической кластеризацией:
+### Практические сценарии
 
+#### Конфигурация узла (systemd)
+Пример юнита для запуска etcd в составе кластера со статической конфигурацией и TLS.
 ```ini
 [Unit]
 Description=etcd
@@ -37,22 +53,19 @@ After=network.target
 [Service]
 Type=notify
 User=etcd
-ExecStart=/usr/local/bin/etcd 
-  --name=node1 
-  --data-dir=/var/lib/etcd 
-  --listen-client-urls=https://0.0.0.0:2379 
-  --advertise-client-urls=https://node1:2379 
-  --listen-peer-urls=https://0.0.0.0:2380 
-  --initial-advertise-peer-urls=https://node1:2380 
-  --initial-cluster=node1=https://node1:2380,node2=https://node2:2380,node3=https://node3:2380 
-  --initial-cluster-state=new 
-  --cert-file=/etc/etcd/tls/server.crt 
-  --key-file=/etc/etcd/tls/server.key 
-  --trusted-ca-file=/etc/etcd/tls/ca.crt 
-  --peer-cert-file=/etc/etcd/tls/peer.crt 
-  --peer-key-file=/etc/etcd/tls/peer.key 
-  --peer-trusted-ca-file=/etc/etcd/tls/ca.crt 
-  --auto-compaction-retention=1h
+ExecStart=/usr/local/bin/etcd \
+  --name=node1 \
+  --data-dir=/var/lib/etcd \
+  --listen-client-urls=https://0.0.0.0:2379 \
+  --advertise-client-urls=https://node1:2379 \
+  --listen-peer-urls=https://0.0.0.0:2380 \
+  --initial-advertise-peer-urls=https://node1:2380 \
+  --initial-cluster=node1=https://node1:2380,node2=https://node2:2380,node3=https://node3:2380 \
+  --initial-cluster-state=new \
+  --peer-cert-file=/etc/etcd/tls/peer.crt \
+  --peer-key-file=/etc/etcd/tls/peer.key \
+  --peer-trusted-ca-file=/etc/etcd/tls/ca.crt \
+  # ... other TLS flags
 Restart=always
 RestartSec=5
 
@@ -60,63 +73,48 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-## Автоматическое восстановление узлов
-
-При перезапуске участник реплейт WAL, применяет локальный снапшот и догоняет лидера через потоковые снапшоты и лог. Для сохранения работоспособности:
-
--   Хранить data-dir на надежном диске и не очищать без необходимости.
--   Обеспечить совпадение name и advertise-URL с параметрами, известными кластеру.
--   Следить за временем выборов: `--election-timeout` и `--heartbeat-interval` должны соответствовать сетевым условиям.
-
-Служебные операции:
-
+#### Резервное копирование и восстановление
+**Создание снапшота:**
 ```bash
-etcdctl --endpoints=https://node1:2379,https://node2:2379,https://node3:2379 endpoint health --cluster
-etcdctl snapshot save /backups/etcd-$(date +%F).db
-etcdctl snapshot restore /backups/etcd.db --data-dir=/var/lib/etcd-restore
+etcdctl snapshot save /backups/etcd-snapshot.db
 ```
 
-## Замена вышедшего из строя участника
-
-1) Удалить недоступный член:
-
-```sql
-etcdctl member list
-etcdctl member remove <memberID>
+**Восстановление из снапшота (Disaster Recovery):**
+Процедура полного восстановления кластера из снапшота. Требует остановки всех узлов.
+```bash
+etcdctl snapshot restore /backups/etcd-snapshot.db \
+  --name=node1 \
+  --initial-cluster=node1=https://node1:2380,... \
+  --initial-advertise-peer-urls=https://node1:2380 \
+  --data-dir=/var/lib/etcd-new
 ```
+После этого старые каталоги данных удаляются, а etcd запускается с новым `data-dir`.
 
-2) Добавить новый с его peer-URL:
-
-```sql
-etcdctl member add node3 --peer-urls=https://node3:2380
-```
-
-Команда вернет строку для `--initial-cluster`; запустить новый узел с пустым data-dir и `--initial-cluster-state=existing`, используя выданные значения.
-
-## Профилактика деградации
-
--   Автокомпакция для снижения объема исторических ревизий:
-    ```ini
-    --auto-compaction-retention=12h
+#### Замена вышедшего из строя узла
+1.  **Удалить** старый узел из кластера:
+    ```bash
+    etcdctl member remove <MEMBER_ID>
     ```
--   Регулярная дефрагментация для reclaim диска:
-    ```css
+2.  **Добавить** новый узел с его peer-адресом:
+    ```bash
+    etcdctl member add node-new --peer-urls=https://node-new:2380
+    ```
+3.  **Запустить** новый узел с флагом `--initial-cluster-state=existing`.
+
+---
+
+### Дополнительная информация
+
+#### Обслуживание кластера
+Для поддержания работоспособности кластера необходимо выполнять регулярные операции:
+*   **Дефрагментация**: Возвращает дисковое пространство операционной системе.
+    ```bash
     etcdctl defrag --cluster
     ```
--   Контроль квоты хранилища:
-    ```ini
-    --quota-backend-bytes=8G
-    ```
--   Реакция на тревоги:
-    ```perl
-    etcdctl alarm list
-    etcdctl alarm disarm
-    ```
-
-## Наблюдение за здоровьем
-
--   Проверка линз сервисов:
-    ```lua
+*   **Контроль квоты**: Установка лимита на размер хранилища (`--quota-backend-bytes`) предотвращает его бесконтрольный рост.
+*   **Мониторинг**: Проверка состояния узлов и задержек.
+    ```bash
+    etcdctl endpoint health --cluster
     etcdctl endpoint status --cluster --write-out=table
     ```
--   Метрики и логи лидера и фолловеров позволяют оценивать задержки репликации, количество выборов и объем WAL; рост этих показателей указывает на сетевые или дисковые проблемы.
+Подробнее об общей архитектуре и взаимодействии компонентов можно прочитать в файле [architecture_and_concepts.md](architecture_and_concepts.md).
