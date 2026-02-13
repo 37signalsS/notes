@@ -16,26 +16,6 @@ vm.nr_hugepages = 1024
 cat /proc/meminfo | grep Huge
 ```
 
-## PMD (Poll Mode Drivers)
-
-Вместо прерываний DPDK использует polling:
-
-```c
-// Пример polling loop в DPDK
-while (1) {
-    // Прием пакетов (не блокируется!)
-    nb_rx = rte_eth_rx_burst(port_id, queue_id, rx_pkts, BURST_SIZE);
-    
-    if (nb_rx > 0) {
-        // Обработка пакетов
-        process_packets(rx_pkts, nb_rx);
-    }
-    
-    // Отправка пакетов
-    rte_eth_tx_burst(port_id, queue_id, tx_pkts, nb_tx);
-}
-```
-
 **Преимущества polling:**
 - Нет overhead от прерываний
 - Предсказуемая задержка (latency)

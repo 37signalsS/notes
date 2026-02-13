@@ -96,8 +96,7 @@ lsmod | grep vbox
 
 
 
-Kafka (4 файла):
-- delivery_guarantees.md, message_queues_principles.md, partitioning_and_balancing.md, rabbitmq_vs_kafka.md
+
 Kubernetes (53 файла):
 - Autoscaling/: hpa_detailed.md, pod_disruption_budget.md, pod_distribution.md, scaling_patterns.md, vpa_detailed.md
 - Base/: configmap.md, deployment.md, high_availability.md, secret.md, statefulset.md
@@ -129,8 +128,6 @@ Networking (19 файлов):
 - Concepts/: dpdk_and_sriov.md, dpdk/(dpdk_overview.md, dpdk_technical.md, scenarios.md, sriov.md, sriov_setup.md), firewall_concepts.md, firewall_rules_best_practices.md, network_segmentation_and_microsegmentation.md, sdn/(netflow.md, openflow.md, scenarios.md, sdn_controllers.md, sdn_overview.md), sdn_openflow_netflow.md, vpn_vs_service_mesh.md, zero_trust_overview.md
 - OSI_TCP_IP_Model/network_layer.md
 - Protocols/: dhcp.md, http_protocols_optimization.md, tls.md
-OpenTelemetry (4 файла):
-- architecture_signals.md, instrumentation_sdk.md, opentelemetry_overview.md, otlp_protocol.md
 Podman (5 файлов):
 - alternatives_crio_containerd.md, Concepts/linux_isolation.md, podman_daemonless_architecture.md, podman_rootless.md, podman_vs_docker.md
 Prometheus (6 файлов):
@@ -141,7 +138,6 @@ SaltStack (5 файлов):
 Security (16 файлов):
 - ApplicationSecurity/: ddos_protection_and_waf.md, ddos_waf/(architecture_best_practices.md, ddos_protection_methods.md, ddos_waf_overview.md, scenarios.md, waf.md), xss_and_csp.md
 - audit_and_compliance_overview.md
-- Secure_Coding/: sdlc_and_secure_sdlc.md, sdlc/(maturity_models.md, practical_scenarios.md, sdlc_overview.md, secure_sdlc.md)
 - Supply_Chain_Security/: artifact_signing.md, build_integrity.md, dependency_and_sbom_analysis.md, overview.md
 Service_Mesh (5 файлов):
 - istio_architecture.md, istio_vs_linkerd.md, proxy_sidecar.md, service_mesh_concepts.md, traffic_management.md
