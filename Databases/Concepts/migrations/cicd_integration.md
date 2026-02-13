@@ -52,3 +52,8 @@ grep -ri "ALTER TABLE.*DROP" db/migrations/ && {
 # 3. Проверяем, что новые колонки nullable или имеют DEFAULT
 echo "Migration compatibility check passed!"
 ```
+
+---
+### Дополнительная информация
+
+-   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**

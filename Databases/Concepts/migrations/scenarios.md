@@ -71,3 +71,8 @@ pg_restore -h $DB_HOST -U $DB_USER -d $DB_NAME backup.sql
 git revert HEAD
 kubectl rollout resume deployment/myapp
 ```
+
+---
+### Дополнительная информация
+
+-   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**

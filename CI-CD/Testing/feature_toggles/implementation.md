@@ -1,10 +1,18 @@
-# Реализация Feature Toggles
+# Реализация Feature Toggles в коде
 
-## Простая реализация на Python
+### Определения
+
+- **Реализация Feature Toggles** — это практическое встраивание логики проверки флагов в исходный код приложения. Как правило, это сводится к вызову метода `is_enabled()` из специализированного клиента или SDK.
+
+### Практические сценарии
+
+#### Сценарий 1: Простая реализация на Python
+Этот пример показывает базовый менеджер флагов, который читает конфигурацию из YAML и поддерживает стратегии по ID пользователя и проценту трафика.
 
 ```python
 import yaml
 from typing import Dict, Any, Optional
+import hashlib
 
 class FeatureFlagManager:
     def __init__(self, config_path: str):
@@ -14,87 +22,55 @@ class FeatureFlagManager:
     
     def is_enabled(self, flag_name: str, 
                    context: Optional[Dict[str, Any]] = None) -> bool:
-        """Проверить, включен ли toggle"""
-        flag = self.flags.get(flag_name, {})
+        """Проверяет, включен ли флаг для данного контекста."""
+        flag_config = self.flags.get(flag_name, {})
         
-        if not flag.get('enabled', False):
+        if not flag_config.get('enabled', False):
             return False
         
-        strategy = flag.get('strategy', 'default')
+        strategy = flag_config.get('strategy', 'default')
         
         if strategy == 'userId':
             user_id = context.get('user_id') if context else None
-            return user_id in flag.get('userIds', [])
+            return user_id in flag_config.get('userIds', [])
         
         elif strategy == 'percentage':
-            import hashlib
             user_id = context.get('user_id', 'anonymous')
-            hash_val = int(hashlib.md5(
-                f"{flag_name}:{user_id}".encode()
-            ).hexdigest(), 16)
-            return hash_val % 100 < flag.get('percentage', 0)
+            hash_val = int(hashlib.md5(f"{flag_name}:{user_id}".encode()).hexdigest(), 16)
+            return hash_val % 100 < flag_config.get('percentage', 0)
         
         return True
-    
-    def get_variant(self, flag_name: str, 
-                    context: Optional[Dict[str, Any]] = None,
-                    default: str = 'control') -> str:
-        """Получить вариант для A/B тестирования"""
-        flag = self.flags.get(flag_name, {})
-        
-        if not flag.get('enabled', False):
-            return default
-        
-        variants = flag.get('variants', [default])
-        
-        # Консистентное распределение по user_id
-        user_id = context.get('user_id', 'anonymous')
-        import hashlib
-        hash_val = int(hashlib.md5(
-            f"{flag_name}:{user_id}".encode()
-        ).hexdigest(), 16)
-        
-        return variants[hash_val % len(variants)]
 
-# Использование
-ff_manager = FeatureFlagManager('features.yaml')
-
-# Простая проверка
-if ff_manager.is_enabled('dark-mode'):
-    enable_dark_mode()
-
-# С контекстом
-if ff_manager.is_enabled('beta-feature', 
-                          context={'user_id': user.id}):
-    show_beta_ui()
-
-# A/B тест
-variant = ff_manager.get_variant('new-pricing-page',
-                                 context={'user_id': user.id})
-render_pricing_page(variant)
+# --- Использование ---
+# if ff_manager.is_enabled('dark-mode', context={'user_id': user.id}):
+#    enable_dark_mode()
 ```
 
-## Интеграция с Unleash (Open-source)
+#### Сценарий 2: Интеграция с готовым решением (Unleash)
+Использование готового SDK значительно упрощает работу, так как вся сложная логика (кэширование, стратегии, A/B-тесты) реализована внутри клиента.
 
 ```python
 from UnleashClient import UnleashClient
 
+# Инициализация клиента
 client = UnleashClient(
     url="https://unleash.mycompany.com/api",
     app_name="my-app",
     custom_headers={'Authorization': 'API_TOKEN'}
 )
-
 client.initialize_client()
 
-# Проверка toggle
-if client.is_enabled("new-payment-flow", 
-                     context={'userId': user.id}):
+# Проверка флага с передачей контекста
+context = {'userId': user.id, 'sessionId': session.id}
+if client.is_enabled("new-payment-flow", context=context):
     process_new_payment()
 else:
     process_legacy_payment()
-
-# A/B тест
-variant = client.get_variant("checkout-redesign",
-                             context={'userId': user.id})
 ```
+
+### Дополнительная информация
+
+#### Связанные документы
+- **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
+- **[Архитектура систем Feature Toggles](./architecture.md)** — выбор между своей реализацией и готовым сервисом.
+- **[Лучшие практики](./best_practices.md)** — как писать код с флагами, чтобы его было легко поддерживать.

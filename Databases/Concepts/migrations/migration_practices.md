@@ -53,3 +53,8 @@ COMMIT;
 -- В PostgreSQL некоторые операции не могут быть в транзакции:
 -- CREATE INDEX CONCURRENTLY, VACUUM, ALTER SYSTEM
 ```
+
+---
+### Дополнительная информация
+
+-   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**

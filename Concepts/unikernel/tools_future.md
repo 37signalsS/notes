@@ -1,92 +1,72 @@
-# Инструменты и будущее Unikernels
+# Unikernels: Инструменты и Будущее
 
-## Инструменты и фреймворки
+## Определения
 
-### UniK (Unikernel Compiler)
+Этот документ описывает популярные инструменты для сборки **unikernels** и рассматривает смежные технологии, такие как MicroVMs и WebAssembly, которые определяют будущее легковесных вычислений.
 
-```bash
-# Установка
-go get -u github.com/solo-io/unik
+Для ознакомления с базовыми концепциями unikernels, пожалуйста, прочтите [общий обзор](./unikernel_overview.md).
 
-# Создание unikernel из Go приложения
-unik build --name my-go-app --path ./myapp --language go --provider virtualbox
+## Практические сценарии (Инструменты)
 
-# Запуск
-unik run --instanceName my-go-app-instance --imageName my-go-app
-```
+### 1. UniK (Unikernel Compiler)
+*   **Описание:** Инструмент для компиляции исходного кода приложений в unikernels. Автоматизирует процесс сборки под различные гипервизоры и облачные платформы. Проект сейчас менее активен.
+*   **Пример использования:**
+    ```bash
+    # Собрать Go-приложение как unikernel для VirtualBox
+    unik build --name my-go-app --path ./src/myapp --language go --provider virtualbox
 
-### OPS (NanoVMs)
+    # Запустить созданный образ
+    unik run --instanceName my-app-instance --imageName my-go-app
+    ```
 
-```bash
-# Установка
-curl https://ops.city/get.sh -sSfL | sh
+### 2. OPS
+*   **Описание:** Современный и активно развивающийся инструмент для создания и запуска unikernels (nanos). Позволяет легко запускать приложения на Go, Node.js, Python и других языках.
+*   **Пример использования (Node.js):**
+    ```bash
+    # Установить OPS
+    curl https://ops.city/get.sh -sSfL | sh
 
-# Создание образа
-ops load node_v14.2.0 -a myapp.js
+    # Загрузить готовый пакет Node.js
+    ops pkg load node_v16.13.2
 
-# Запуск
-ops run myapp
+    # Создать и запустить unikernel с вашим приложением
+    ops run -p 8080 my-node-app.js
+    ```
+*   **Пример использования (Go):**
+    ```bash
+    # Создать и запустить Go-приложение
+    ops run my-go-app
+    ```
 
-# Деплой в облако
-ops image create myapp -t gcp -c config.json
-ops instance create myapp -t gcp -z us-west1-b
-```
+## Основные концепции (Будущее и Альтернативы)
 
-**Поддерживаемые языки:**
-- C, C++, Go, Node.js, Python, Ruby, Java, Rust, и др.
+### 1. AWS Firecracker (MicroVMs)
+*   **Описание:** Технология виртуализации от AWS, которая использует **MicroVMs** для запуска изолированных сред. Лежит в основе AWS Lambda и Fargate. Firecracker не является "классическим" unikernel-фреймворком, но решает те же задачи: быстрый старт, высокая плотность и надежная изоляция.
+*   **Ключевые характеристики:**
+    *   **Время старта:** < 150 мс.
+    *   **Потребление памяти:** < 5 МБ на одну MicroVM.
+    *   **Безопасность:** Изоляция на уровне гипервизора (KVM).
+    *   **Технология:** Минималистичная модель виртуальных устройств поверх KVM.
 
-## Будущее Unikernels
+### 2. WebAssembly (Wasm) + WASI
+*   **Описание:** WebAssembly становится универсальным бинарным форматом для облачных вычислений. В связке с **WASI (WebAssembly System Interface)** он позволяет запускать Wasm-модули вне браузера, в изолированной "песочнице".
+*   **Wasm как "альтернатива" Unikernel:**
+    *   **Преимущества:** Платформенная независимость, строгая изоляция (sandbox), почти нативная производительность, поддержка множества языков.
+    *   **Отличия:** Wasm — это не ОС, а формат байт-кода и среда выполнения. Он работает поверх хостовой ОС, в то время как unikernel заменяет ее.
 
-### AWS Firecracker
+### Сравнительная таблица
 
-AWS Firecracker — это virtualization technology, использующая MicroVMs:
+| Технология | Изоляция | Размер | Старт | Гибкость | Зрелость |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **VM (Вирт. машина)**| Сильная (гипервизор) | ГБ | ~Минута | Высокая | Высокая |
+| **Контейнер** | Слабая (ядро хоста) | Сотни МБ | ~Секунды | Очень высокая | Высокая |
+| **Unikernel** | Сильная (гипервизор) | МБ | **мс** | Низкая | Низкая |
+| **Wasm + WASI** | Сильная (sandbox) | **КБ-МБ**| **мкс-мс**| Средняя | Развивающаяся |
 
-```
-Firecracker = KVM + Minimal device model + Fast boot
-
-- Boot time: 125ms
-- Memory overhead: < 5MB
-- Density: 1000s MicroVMs per host
-- Используется в AWS Lambda и Fargate
-```
-
-### WebAssembly (Wasm) + Unikernels
-
-```
-WebAssembly как "легкий unikernel":
-
-┌─────────────────────────────────────────────────────────────┐
-│                    WASM RUNTIME                             │
-│              (Wasmtime, Wasmer, WasmEdge)                   │
-├─────────────────────────────────────────────────────────────┤
-│                    WASM MODULE                              │
-│              (Sandboxed, portable)                          │
-├─────────────────────────────────────────────────────────────┤
-│                    HOST OS / Container                      │
-└─────────────────────────────────────────────────────────────┘
-
-Преимущества:
-- Near-native performance
-- Sandbox без hypervisor
-- Поддержка множества языков
-- Cloud-native
-```
-
-## Сравнение с альтернативами
-
-| Технология | Размер | Безопасность | Производительность | Гибкость |
-|------------|--------|--------------|-------------------|----------|
-| **VM** | Большой | Средняя | Средняя | Высокая |
-| **Container** | Средний | Средняя | Высокая | Высокая |
-| **Unikernel** | Маленький | Высокая | Очень высокая | Низкая |
-| **Wasm** | Маленький | Высокая | Высокая | Средняя |
-
-## Дополнительная информация
-
-- [MirageOS](https://mirage.io/)
-- [IncludeOS](https://www.includeos.org/)
-- [OSv](http://osv.io/)
-- [Rumprun](https://github.com/rumpkernel/rumprun)
-- [UniK](https://github.com/solo-io/unik)
-- [OPS/NanoVMs](https://ops.city/)
-- [AWS Firecracker](https://firecracker-microvm.github.io/)
+## Дополнительная информация (Ссылки)
+*   [OPS / NanoVMs](https://ops.city/)
+*   [AWS Firecracker](https://firecracker-microvm.github.io/)
+*   [WebAssembly](https://webassembly.org/)
+*   [WASI (WebAssembly System Interface)](https://wasi.dev/)
+*   [MirageOS](https://mirage.io/)
+*   [IncludeOS](https://www.includeos.org/)

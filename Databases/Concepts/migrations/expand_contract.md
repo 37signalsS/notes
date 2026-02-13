@@ -77,3 +77,8 @@ DROP TRIGGER sync_name_trigger ON users;
 DROP FUNCTION sync_name();
 ALTER TABLE users DROP COLUMN name;
 ```
+
+---
+### Дополнительная информация
+
+-   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**

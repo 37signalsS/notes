@@ -1,87 +1,60 @@
-# Best Practices для Feature Toggles
+# Лучшие практики для Feature Toggles
 
-## 1. Naming Convention
+### Определения
 
-```
-❌ Плохо:
-- flag1
-- new_feature
-- fix_bug_123
+- **Лучшие практики (Best Practices)** — это набор проверенных подходов и правил, которые помогают эффективно управлять feature toggles, минимизировать технический долг и избегать распространенных ошибок.
 
-✅ Хорошо:
-- checkout-redesign-v2
-- payment-stripe-integration
-- user-profile-enhancements-2024
-```
+### Основные практики
 
-## 2. Default Values
+#### 1. Единое соглашение об именовании (Naming Convention)
+- **Цель:** Сделать флаги понятными и легко находимыми.
+- **Правило:** Имя должно отражать суть фичи, а не ее техническую реализацию.
+  ```
+  ❌ Плохо: flag1, new_feature, fix_bug_123
+  Хорошо: checkout-redesign-v2, payment-stripe-integration
+  ```
 
-```python
-# ❌ Плохо: неявный default
-if feature_flags.is_enabled('critical-fix'):
-    apply_fix()
+#### 2. Безопасное значение по умолчанию (Default Values)
+- **Цель:** Обеспечить предсказуемое поведение системы, если система управления флагами недоступна.
+- **Правило:** В коде всегда указывайте безопасное значение по умолчанию (обычно `False`).
+  ```python
+  # Хорошо: явный default
+  if feature_flags.is_enabled('critical-fix', default=False):
+      apply_new_logic()
+  ```
 
-# ✅ Хорошо: явный default
-if feature_flags.is_enabled('critical-fix', default=True):
-    apply_fix()
-```
+#### 3. Процесс удаления устаревших флагов
+- **Цель:** Избежать накопления "мертвых" флагов и технического долга.
+- **Процесс:**
+    1.  Включить флаг для всех пользователей (100%).
+    2.  Подождать 1-2 недели, наблюдая за стабильностью.
+    3.  Создать задачу на удаление `if/else` и самого флага.
+    4.  Удалить флаг из кода и из системы управления.
 
-## 3. Удаление устаревших toggles
+#### 4. Мониторинг использования флагов
+- **Цель:** Понимать, как и когда проверяются флаги, и отслеживать их влияние.
+- **Реализация:** Встроить отправку метрик и логов в SDK клиента.
+  ```python
+  # Отправка метрики при каждой проверке флага
+  statsd.increment('feature_flag.check', 
+                  tags=[f'flag:{flag_name}', f'result:{result}'])
+  ```
 
-```python
-# План удаления:
-# 1. Feature toggle включен для всех (100%)
-# 2. Ждем 1-2 недели (мониторинг)
-# 3. Удаляем if/else, оставляем только новый код
-# 4. Удаляем toggle из системы
+#### 5. Тестирование обоих состояний
+- **Цель:** Гарантировать, что приложение корректно работает как с включенным, так и с выключенным флагом.
+- **Реализация:** Юнит-тесты и E2E-тесты должны иметь возможность принудительно устанавливать состояние флага.
+  ```python
+  def test_with_new_flow_enabled():
+      with override_feature_flag('new-checkout-flow', True):
+          # ...
+  
+  def test_with_new_flow_disabled():
+      with override_feature_flag('new-checkout-flow', False):
+          # ...
+  ```
 
-# ❌ Плохо: мертвый код
-if feature_flags.is_enabled('old-feature'):
-    # Этот код никогда не выполняется
-    pass
-else:
-    do_something()
+### Дополнительная информация
 
-# ✅ Хорошо: очищенный код
-do_something()
-```
-
-## 4. Мониторинг
-
-```python
-import logging
-from datadog import statsd
-
-class MonitoredFeatureFlags:
-    def is_enabled(self, flag_name: str, context=None):
-        result = self._check_flag(flag_name, context)
-        
-        # Метрики
-        statsd.increment('feature_flag.check', 
-                        tags=[f'flag:{flag_name}', 
-                              f'result:{result}'])
-        
-        # Логирование для audit
-        logging.info(f"Feature flag check: {flag_name}={result}",
-                    extra={'flag_name': flag_name,
-                           'result': result,
-                           'user_id': context.get('user_id')})
-        
-        return result
-```
-
-## 5. Тестирование
-
-```python
-# Тесты должны покрывать оба состояния toggle
-
-def test_checkout_with_new_flow():
-    with override_feature_flag('new-checkout-flow', True):
-        response = process_checkout()
-        assert response.new_ui == True
-
-def test_checkout_with_legacy_flow():
-    with override_feature_flag('new-checkout-flow', False):
-        response = process_checkout()
-        assert response.new_ui == False
-```
+#### Связанные документы
+- **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
+- **[Анти-паттерны](./antipatterns.md)** — распространенные ошибки, которых помогают избежать эти практики.

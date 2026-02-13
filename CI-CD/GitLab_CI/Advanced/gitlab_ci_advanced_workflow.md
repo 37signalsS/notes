@@ -259,4 +259,9 @@ deploy_production:
   when: manual
   only:
     - main
+
+### Связанные документы
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — для понимания базовых концепций (Pipeline, Stage, Job).
+- **[Исполнители (Runners) и их типы (Executors)](./gitlab_ci_runners_executors.md)** — для настройки сред выполнения задач.
+- **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов.
 ```

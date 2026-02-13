@@ -1,6 +1,13 @@
-# Практические сценарии Feature Toggles
+# Сценарии использования Feature Toggles
 
-## Сценарий 1: Canary Deployment
+### Определения
+
+- **Сценарии использования** — это типовые задачи и проблемы, которые эффективно решаются с помощью техники Feature Toggles.
+
+### Практические сценарии
+
+#### Сценарий 1: Canary Deployment
+Постепенный и контролируемый запуск новой функциональности на определенный процент пользователей.
 
 ```python
 # Постепенный rollout новой версии
@@ -19,41 +26,40 @@ else:
 # Если ошибок < 0.1%, увеличиваем rollout_percentage
 ```
 
-## Сценарий 2: Kill Switch
+#### Сценарий 2: Аварийный выключатель (Kill Switch)
+Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
 
 ```python
-# Быстрое отключение проблемной функции
 @app.route('/api/recommendations')
 def get_recommendations():
-    if not feature_flags.is_enabled('recommendations-api'):
-        # Fallback: возвращаем популярные товары
-        return get_popular_items()
+    if not feature_flags.is_enabled('recommendations-api', default=True):
+        return get_popular_items() # Fallback-логика
     
-    try:
-        return ml_service.get_recommendations()
-    except MLServiceError:
-        # Автоматическое отключение
-        feature_flags.emergency_disable('recommendations-api')
-        return get_popular_items()
+    # ... основная логика ...
 ```
 
-## Сценарий 3: Beta Testing
+#### Сценарий 3: Бета-тестирование
+Предоставление доступа к новым функциям ограниченному кругу пользователей (например, внутренним сотрудникам или участникам бета-программы).
 
 ```python
-# Доступ к бете для выбранных пользователей
 @app.route('/beta/new-dashboard')
 @login_required
 def beta_dashboard():
-    if not feature_flags.is_enabled('beta-dashboard',
-                                    context={'user_id': current_user.id}):
+    # Контекст передает ID пользователя для проверки
+    context = {'user_id': current_user.id}
+    if not feature_flags.is_enabled('beta-dashboard', context=context):
         abort(403, "Beta access required")
     
     return render_template('beta/dashboard.html')
 ```
 
-## Дополнительная информация
+### Дополнительная информация
 
+#### Внешние ресурсы
 - [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html)
 - [LaunchDarkly Documentation](https://docs.launchdarkly.com/)
 - [Unleash Documentation](https://docs.getunleash.io/)
-- [Feature Flags on AWS](https://aws.amazon.com/blogs/mt/feature-flags-aws-appconfig/)
+
+#### Связанные документы
+- **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
+- **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.
