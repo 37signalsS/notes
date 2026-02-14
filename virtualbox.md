@@ -90,13 +90,6 @@ lsmod | grep vbox
 
 
 
-
-
-
-
-
-
-
 Kubernetes (53 файла):
 - Autoscaling/: hpa_detailed.md, pod_disruption_budget.md, pod_distribution.md, scaling_patterns.md, vpa_detailed.md
 - Base/: configmap.md, deployment.md, high_availability.md, secret.md, statefulset.md
@@ -117,14 +110,6 @@ Kubernetes (53 файла):
 - Storage/pv_and_pvc.md
 - ToolsUtilities/Helm/: helm_chart_structure.md, helm_overview.md, helm_release_versioning.md, helm_templating.md, helm_v2_vs_v3.md
 Linux (18 файлов):
-- Core/: firmware_bios_uefi.md, kernel/boot_process.md
-- Diagnostics/Networking/: dns_diagnostics.md, ss.md
-- FileSystems/mounting/: additional_info.md, commands.md, fstab.md, index.md, mounting.md, scenarios/(autofs_mount.md, basic_partition.md, directory_mount.md, systemd_mount.md, udev_mount.md)
-- Networking/: network_diagnostics_tools.md, Concepts/(network_latency_optimization.md, rss_rps_rfs.md, tcp_tuning.md), Tools/(ethtool.md, iproute2/tc.md)
+Concepts/( rss_rps_rfs.md, tcp_tuning.md), Tools/(ethtool.md)
 - Security/Mechanisms/SELinux.md
-- Shell/: quoting.md, shell_intro.md, shell_variables.md
-Networking (19 файлов):
-- CDN/: cdn_caching_and_invalidation.md, cdn_overview.md
-- Concepts/: dpdk_and_sriov.md, dpdk/(dpdk_overview.md, dpdk_technical.md, scenarios.md, sriov.md, sriov_setup.md), firewall_concepts.md, firewall_rules_best_practices.md, network_segmentation_and_microsegmentation.md, sdn/(netflow.md, openflow.md, scenarios.md, sdn_controllers.md, sdn_overview.md), sdn_openflow_netflow.md, vpn_vs_service_mesh.md, zero_trust_overview.md
-- OSI_TCP_IP_Model/network_layer.md
-- Protocols/: dhcp.md, http_protocols_optimization.md, tls.md
+- Shell/: quoting.md,  shell_variables.md
