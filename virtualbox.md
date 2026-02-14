@@ -87,8 +87,6 @@ lsmod | grep vbox
 
 
 
-- Base/: configmap.md, deployment.md, high_availability.md, secret.md, statefulset.md
-- Base/Pod/: pod_labels_annotations_node_selection.md, pod_lifecycle_and_state.md
 - Base/secrets/: creating_secrets.md, etcd_storage.md, external_managers.md, secrets_basics.md, security.md, using_secrets.md
 - Concepts/: control_plane_architecture.md, etcd_overview.md, kubernetes_crd.md, kubernetes_operators.md
 - Installation/Kubespray/additional_info_and_examples.md
