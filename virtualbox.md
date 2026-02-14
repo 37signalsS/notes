@@ -92,6 +92,5 @@ lsmod | grep vbox
 
 
 
-- Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md
 - Scheduling/: qos_limit_and_requests.md, taints_and_tolerations.md
 - Storage/pv_and_pvc.md
