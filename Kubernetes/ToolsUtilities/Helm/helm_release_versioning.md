@@ -17,11 +17,12 @@ Helm сохраняет историю релиза в Kubernetes-объекта
 Каждый `helm upgrade` создает новую ревизию. Историю и детали изменений можно анализировать командами:
 
 ```bash
+# Просмотр истории
 helm history my-release -n prod
-helm status my-release -n prod
+
+# Детали конкретной ревизии
 helm get values my-release -n prod --revision 7
 helm get manifest my-release -n prod --revision 7
-```
 
 Откат переключает релиз на ранее зафиксированную ревизию, сохраняя при этом новую запись истории:
 
@@ -29,28 +30,10 @@ helm get manifest my-release -n prod --revision 7
 helm rollback my-release 7 -n prod --wait --timeout 5m
 ```
 
-Релевантные практики:
-*   Ограничивать глубину истории (`--history-max`) для экономии ресурсов.
-*   Сохранять историю при удалении релиза (`--keep-history`), чтобы вернуть его при необходимости.
-
-```bash
-helm upgrade --install my-release repo/app --atomic --history-max 20 -n prod
-helm uninstall my-release -n prod --keep-history
-```
-
-## Управление версиями чартов и зависимостей
-
-Установка определенной версии чарта из репозитория:
-
-```bash
-helm repo add stable https://example.repo
-helm install my-release stable/app --version 1.8.3 -n prod
-```
-
-Закрепление зависимостей выполняется через `Chart.yaml` с семантическими диапазонами версий и создание `Chart.lock` файла:
+### Зависимости
 
 ```yaml
-# Chart.yaml (фрагмент)
+# Chart.yaml
 dependencies:
   - name: redis
     version: ^17.1.0
@@ -58,36 +41,62 @@ dependencies:
 ```
 
 ```bash
+# Обновление и фиксация
 helm dependency update
-# генерирует Chart.lock с точными версиями зависимостей
+# Создаёт Chart.lock с точными версиями
 ```
 
-`Chart.lock` фиксирует конкретные артефакты, обеспечивая детерминированность сборки чарта в CI/CD.
+## Практические сценарии
 
-## Стратегии обновления и фиксации
-
-*   **Пиннинг версий:** Явно указывать версии чарта и зависимостей; использовать диапазоны с осторожностью.
-*   **Атомарность:** Включать флаги `--wait` и `--atomic`, чтобы не оставить кластер в промежуточном состоянии.
-*   **Контроль изменений значений:** Хранить `values` в VCS, сравнивать ревизии перед обновлением.
+### Установка конкретной версии
 
 ```bash
-helm upgrade --install my-release stable/app \
-  -f values/prod.yaml \
-  --version 1.9.0 \
-  --wait --timeout 10m --atomic -n prod
+# Из репозитория
+helm install myapp bitnami/nginx --version 13.2.0 -n prod
+
+# Локальный чарт
+helm install myapp ./mychart --atomic --history-max 20 -n prod
 ```
 
-Продвижение через окружения (dev → stage → prod) обычно выполняется переиспользованием того же чарта и версии образов, меняя только конфигурацию:
+### Управление историей
 
 ```bash
-# dev
+# Ограничение глубины истории
+helm upgrade myapp bitnami/nginx --history-max 10 -n prod
+
+# Сохранение при удалении
+helm uninstall myapp -n prod --keep-history
+
+# Восстановление
+helm rollback myapp 0 -n prod
+```
+
+### Продвижение через окружения
+
+```bash
+# Dev
 helm upgrade --install app app-chart -f values/dev.yaml --version 2.3.1 -n dev
 
-# stage
+# Stage
 helm upgrade --install app app-chart -f values/stage.yaml --version 2.3.1 -n stage
 
-# prod (после проверки)
-helm upgrade --install app app-chart -f values/prod.yaml --version 2.3.1 -n prod
+# Prod (фиксация версий)
+helm upgrade --install app app-chart \
+  -f values/prod.yaml \
+  --version 2.3.1 \
+  --wait --timeout 10m \
+  --atomic -n prod
 ```
 
-Такой подход фиксирует артефакты, а различия между окружениями выражаются в `values`, что упрощает аудит и воспроизводимость.
+### Best practices
+
+- **Пиннинг**: Явно указывать версии чартов
+- **Атомарность**: Использовать `--atomic` и `--wait`
+- **Контроль**: Хранить `values` в VCS
+- **История**: Ограничивать `--history-max` для экономии ресурсов
+
+## Дополнительная информация
+
+- [Обзор Helm](./helm_overview.md) — общие концепции
+- [Структура Helm-чарта](./helm_chart_structure.md) — метаданные в Chart.yaml
+- [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) — различия в хранении

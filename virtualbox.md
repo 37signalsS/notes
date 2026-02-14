@@ -103,8 +103,5 @@ Kubernetes (53 файла):
 - Networking/Service/: service_overview.md, service_type_clusterip.md, service_type_loadbalancer.md, service_type_nodeport.md, service_types_summary.md
 - Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md
 - Scheduling/: qos_limit_and_requests.md, taints_and_tolerations.md
-- Security/: network_policies.md, pod_iam_irsa_kube2iam_kiam.md, sealed_secrets_overview.md
-- Security/rbac/: aggregation_scenarios.md, bindings.md, limitations_opa.md, rbac_overview.md, roles.md
-- Security/rbac_overview.md
 - Storage/pv_and_pvc.md
 - ToolsUtilities/Helm/: helm_chart_structure.md, helm_overview.md, helm_release_versioning.md, helm_templating.md, helm_v2_vs_v3.md
