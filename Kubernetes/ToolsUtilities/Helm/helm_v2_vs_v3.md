@@ -1,14 +1,19 @@
 # Сравнение Helm v2 и v3
 
-Helm 3 ввёл ключевые архитектурные изменения: отказ от Tiller, переход на клиент-only модель и улучшение безопасности.
+Helm 3 ввёл ключевые архитектурные изменения: отказ от серверного компонента Tiller, переход на клиент-only модель и улучшение безопасности через нативный RBAC.
+
+---
 
 ## Определения
 
 | Термин | Описание |
 |--------|----------|
-| **Tiller** | Серверный компонент Helm 2 в кластере |
-| **Chart API** | Версия формата чарта (v1/v2) |
-| **CRD** | Custom Resource Definitions |
+| **Tiller** | Серверный компонент Helm 2, работавший в кластере Kubernetes |
+| **apiVersion** | Версия формата чарта: v1 (Helm 2) или v2 (Helm 3) |
+| **Chart API v2** | Расширенный формат чарта с поддержкой типов `application`/`library` и встроенными зависимостями |
+| **Three-way merge** | Стратегия слияния изменений: желаемое состояние + последняя ревизия + текущее состояние в кластере |
+
+---
 
 ## Основные концепции
 
@@ -16,97 +21,175 @@ Helm 3 ввёл ключевые архитектурные изменения: 
 
 | Аспект | Helm v2 | Helm v3 |
 |--------|---------|---------|
-| Управляющий компонент | Tiller в кластере | Только клиент |
-| Безопасность | Права для Tiller | RBAC пользователя |
-| Хранение релизов | ConfigMaps в `kube-system` | Secrets в namespace релиза |
-| Область имён | Часто кластерная | Уникальность в пределах namespace |
-| Chart API | `apiVersion: v1` | `apiVersion: v2` |
+| **Управляющий компонент** | Tiller в кластере с повышенными привилегиями | Только клиент; прямое взаимодействие с Kubernetes API |
+| **Безопасность** | RBAC для Tiller; сложная модель разрешений | RBAC пользователя через kubeconfig; нативная интеграция |
+| **Хранение релизов** | ConfigMaps в namespace `kube-system` | Secrets в namespace целевого релиза |
+| **Уникальность имён** | Глобальная уникальность имён релизов | Уникальность в пределах namespace |
+| **Chart API** | `apiVersion: v1` | `apiVersion: v2` |
 
 ### Безопасность
 
-**Helm 2:**
-- Tiller работал с повышенными привилегиями
-- Сложная модель RBAC
-- Центральная точка отказа
+**Helm 2 (Tiller):**
+- Tiller работал с широкими привилегиями в кластере
+- Необходимость настройки сложной модели RBAC для Tiller
+- Центральная точка отказа и потенциальная угроза безопасности
+- Все операции выполнялись от имени сервисного аккаунта Tiller
 
-**Helm 3:**
-- Клиент использует kubeconfig пользователя
-- Нативный RBAC Kubernetes
-- Нет серверного компонента
+**Helm 3 (Client-only):**
+- Клиент использует учётные данные пользователя из kubeconfig
+- Нативная интеграция с RBAC Kubernetes
+- Никакого серверного компонента в кластере
+- Операции выполняются с правами текущего пользователя
 
-### Формат чартов
+### Формат чартов (Chart API)
 
-| Функция | Helm v2 | Helm v3 |
-|---------|---------|---------|
-| Типы чартов | Нет | `application`, `library` |
-| Зависимости | `requirements.yaml` | `dependencies` в `Chart.yaml` |
-| Lock-файл | Нет | `Chart.lock` |
-| CRD | Как шаблоны | Каталог `crds/` |
-| Локальные файлы | `~/.helm` | XDG-спецификация |
+| Функция | Helm v2 (v1) | Helm v3 (v2) |
+|---------|--------------|--------------|
+| **Типы чартов** | Только application | `application` и `library` |
+| **Зависимости** | В отдельном файле `requirements.yaml` | Встроены в `Chart.yaml`, секция `dependencies` |
+| **Lock-файл** | Не поддерживался | `Chart.lock` для фиксации версий |
+| **CRD** | Обрабатывались как обычные шаблоны | Специальная директория `crds/` (применяется до шаблонов) |
+| **Локальное хранилище** | `~/.helm` | XDG Base Directory Specification (`~/.cache/helm`, `~/.config/helm`) |
+
+### Стратегия слияния
+
+**Helm 2** использовал двустороннее слияние (two-way merge):
+- Сравнение желаемого состояния (чарт) и предыдущей ревизии
+
+**Helm 3** использует трёхстороннее слияние (three-way merge):
+- Желаемое состояние (новый чарт)
+- Последняя ревизия Helm
+- Текущее "живое" состояние в кластере
+
+**Преимущества three-way merge:**
+- Корректная обработка изменений, внесённых вне Helm
+- Уменьшение количества конфликтов при обновлениях
+- Более предсказуемое поведение при редактировании ресурсов вручную
 
 ### Синтаксис команд
 
 **Helm v2:**
 ```bash
+# Установка с указанием имени через флаг
 helm install stable/mysql --name mydb --namespace prod
+
+# Установка без имени (автогенерация)
+helm install stable/mysql --namespace prod
 ```
 
 **Helm v3:**
 ```bash
+# Установка с именем как позиционный аргумент
 helm install mydb bitnami/mysql --namespace prod
+
+# Автогенерация имени
 helm install --generate-name bitnami/mysql --namespace prod
+
+# Сокращённая запись upgrade или install
+helm upgrade --install mydb bitnami/mysql --namespace prod
 ```
+
+---
 
 ## Практические сценарии
 
 ### Миграция чарта с v1 на v2
 
-**Было (v2):**
+**Было (Helm 2, requirements.yaml):**
 ```yaml
 # requirements.yaml
 dependencies:
 - name: redis
   version: "~10.5"
-  repository: "https://charts.example.com"
+  repository: "https://charts.bitnami.com/bitnami"
+- name: postgresql
+  version: "8.x.x"
+  repository: "https://charts.bitnami.com/bitnami"
 ```
 
-**Стало (v3):**
+```bash
+# Helm 2: обновление зависимостей
+helm dependency update
+# Нет lock-файла
+```
+
+**Стало (Helm 3, Chart.yaml):**
 ```yaml
 # Chart.yaml
 apiVersion: v2
 name: myapp
+description: My application chart
 type: application
-version: 0.1.0
+version: 1.0.0
+appVersion: "2.0.0"
 dependencies:
 - name: redis
   version: "~17.0"
-  repository: "https://charts.example.com"
+  repository: "https://charts.bitnami.com/bitnami"
+  condition: redis.enabled
+- name: postgresql
+  version: "12.x.x"
+  repository: "https://charts.bitnami.com/bitnami"
 ```
 
 ```bash
+# Helm 3: обновление зависимостей и создание Chart.lock
 helm dependency update
-# Создаёт Chart.lock
+# Создаёт/обновляет Chart.lock с точными версиями
 ```
 
-### CRD в Helm 3
+### Работа с CRD в Helm 3
 
 ```
 mychart/
-├── crds/              # Применяется до шаблонов
+├── crds/                      # CRD применяются ДО шаблонов
 │   └── myresource.yaml
 ├── templates/
+│   ├── deployment.yaml
+│   └── service.yaml
+├── Chart.yaml
 └── values.yaml
 ```
 
-### Трёхстороннее слияние (Helm 3)
+**Важно:** CRD в директории `crds/` не управляются как часть релиза (helm uninstall не удалит их). Для управляемых CRD используйте обычные шаблоны с условиями.
 
-Helm 3 использует стратегию three-way merge:
-- Желаемое состояние (чарт)
-- Последняя ревизия
-- "Живое" состояние в кластере
+### Library Charts
+
+```yaml
+# Chart.yaml для library chart
+apiVersion: v2
+name: mylib
+description: Library chart with common templates
+type: library  # <-- отличие от application
+version: 1.0.0
+```
+
+Library charts содержат переиспользуемые шаблоны, но не создают собственных ресурсов. Используются как зависимости для application charts.
+
+### Проверка версии Helm
+
+```bash
+helm version
+# Helm 2: показывает версию клиента и сервера (Tiller)
+# Helm 3: показывает только версию клиента
+```
+
+### Конвертация чартов
+
+```bash
+# Helm 2: экспорт релиза для миграции (plugin helm-2to3)
+helm 2to3 convert my-release
+
+# Helm 3: автоматически работает с чартами apiVersion: v1
+# Для использования новых функций обновите до apiVersion: v2
+```
+
+---
 
 ## Дополнительная информация
 
-- [Обзор Helm](./helm_overview.md) — общие концепции
-- [Структура Helm-чарта](./helm_chart_structure.md) — формат Chart.yaml
-- [Управление версиями релизов](./helm_release_versioning.md) — хранение ревизий
+- [Обзор Helm](./helm_overview.md) — общие концепции, жизненный цикл релиза
+- [Структура Helm-чарта](./helm_chart_structure.md) — формат Chart.yaml, зависимости, Chart.lock
+- [Управление версиями релизов](./helm_release_versioning.md) — хранение ревизий в Secrets (Helm 3) vs ConfigMaps (Helm 2)
+
+**Примечание:** Helm 2 достиг end-of-life в ноябре 2020 года. Для новых проектов используйте Helm 3.

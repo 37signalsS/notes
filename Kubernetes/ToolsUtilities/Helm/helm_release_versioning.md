@@ -1,102 +1,173 @@
 # Управление версиями релизов
 
-Управление версиями в Helm включает несколько взаимосвязанных уровней: версии самих чартов, версии приложения внутри чарта и ревизии релиза в кластере. Понимание этих сущностей позволяет воспроизводимо обновлять, откатывать и продвигать релизы через окружения.
+Helm управляет версиями на трёх уровнях: версия чарта, версия приложения и ревизия релиза в кластере. Это обеспечивает воспроизводимость, аудит и возможность отката.
 
-## Типы версий в Helm
+---
 
-| Сущность | Где хранится | Формат | Назначение |
-| :--- | :--- | :--- | :--- |
-| Версия чарта | `Chart.yaml: version` | SemVer (например, 1.4.2) | Идентификация пакета Helm; влияет на выбор при установке/обновлении из репозитория. |
-| Версия приложения | `Chart.yaml: appVersion` | Свободный (часто SemVer) | Маркер версии разворачиваемого софта; отображается в шаблонах, но не управляет поведением Helm. |
-| Ревизия релиза | Secret/ConfigMap Helm в namespace релиза | Целое (1, 2, 3, …) | Снимок состояния релиза при каждой операции `upgrade`/`rollback`; используется для истории и откатов. |
+## Определения
 
-Helm сохраняет историю релиза в Kubernetes-объектах с именованием вида `sh.helm.release.v1.<release-name>.v<revision>`. Это делает состояние аудируемым и воспроизводимым.
+| Сущность | Где определяется | Формат | Назначение |
+|----------|------------------|--------|------------|
+| **Версия чарта** | `Chart.yaml: version` | SemVer (1.4.2) | Идентификация пакета; выбор версии при установке из репозитория. См. [Структура Helm-чарта](./helm_chart_structure.md) |
+| **Версия приложения** | `Chart.yaml: appVersion` | Свободный (обычно SemVer) | Маркер версии разворачиваемого ПО; информационное поле |
+| **Ревизия релиза** | Secret/ConfigMap в namespace релиза | Целое число (1, 2, 3…) | Снимок состояния при каждой операции `upgrade`/`rollback`; используется для истории и откатов |
 
-## История релиза и откаты
+**Хранилище истории:**
+- Helm 3: Secrets с именем `sh.helm.release.v1.<release-name>.v<revision>` в namespace релиза
+- Helm 2: ConfigMaps в namespace `kube-system`
 
-Каждый `helm upgrade` создает новую ревизию. Историю и детали изменений можно анализировать командами:
+См. [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) для деталей различий хранения.
+
+---
+
+## Основные концепции
+
+### Семантическое версионирование (SemVer)
+
+Версии чартов следуют формату `MAJOR.MINOR.PATCH`:
+- **MAJOR** — несовместимые изменения
+- **MINOR** — новая функциональность, обратно совместимая
+- **PATCH** — исправления ошибок
+
+**Диапазоны версий в зависимостях:**
+```yaml
+dependencies:
+  - name: redis
+    version: "^17.1.0"    # >=17.1.0 и <18.0.0
+  - name: postgresql
+    version: "~12.1.0"    # >=12.1.0 и <12.2.0
+  - name: mysql
+    version: ">=8.0.0"    # 8.0.0 и выше
+```
+
+### История релизов
+
+Каждая операция `helm upgrade` или `helm rollback` создаёт новую ревизию. История хранит:
+- Манифесты, отправленные в кластер
+- Значения параметров (values)
+- Информацию о дате и статусе
+
+**Преимущества:**
+- Аудит изменений
+- Восстановление предыдущих состояний
+- Анализ диффов между версиями
+
+### Зависимости и lock-файл
+
+При использовании зависимостей Helm фиксирует точные версии в `Chart.lock`:
+
+```yaml
+# Chart.yaml
+dependencies:
+  - name: redis
+    version: "^17.1.0"
+    repository: https://charts.bitnami.com/bitnami
+```
 
 ```bash
-# Просмотр истории
+# Обновление зависимостей и создание Chart.lock
+helm dependency update
+
+# Сборка зависимостей по Chart.lock
+helm dependency build
+```
+
+См. [Структура Helm-чарта](./helm_chart_structure.md) для подробностей о файловой структуре.
+
+---
+
+## Практические сценарии
+
+### Просмотр и анализ истории
+
+```bash
+# История релиза
 helm history my-release -n prod
 
 # Детали конкретной ревизии
 helm get values my-release -n prod --revision 7
 helm get manifest my-release -n prod --revision 7
 
-Откат переключает релиз на ранее зафиксированную ревизию, сохраняя при этом новую запись истории:
+# Показать все значения текущей ревизии
+helm get values my-release -n prod --all
+
+# Показать заметки релиза
+helm get notes my-release -n prod
+```
+
+### Откат релиза
 
 ```bash
+# Откат к конкретной ревизии
+helm rollback my-release 7 -n prod
+
+# Откат с ожиданием и таймаутом
 helm rollback my-release 7 -n prod --wait --timeout 5m
+
+# Восстановление после удаления с сохранением истории
+helm uninstall my-release -n prod --keep-history
+helm rollback my-release 0 -n prod  # 0 — последняя ревизия
 ```
 
-### Зависимости
-
-```yaml
-# Chart.yaml
-dependencies:
-  - name: redis
-    version: ^17.1.0
-    repository: https://charts.bitnami.com/bitnami
-```
+### Управление глубиной истории
 
 ```bash
-# Обновление и фиксация
-helm dependency update
-# Создаёт Chart.lock с точными версиями
-```
-
-## Практические сценарии
-
-### Установка конкретной версии
-
-```bash
-# Из репозитория
-helm install myapp bitnami/nginx --version 13.2.0 -n prod
-
-# Локальный чарт
-helm install myapp ./mychart --atomic --history-max 20 -n prod
-```
-
-### Управление историей
-
-```bash
-# Ограничение глубины истории
+# Ограничение количества хранимых ревизий при обновлении
 helm upgrade myapp bitnami/nginx --history-max 10 -n prod
 
-# Сохранение при удалении
+# Удаление с сохранением истории
 helm uninstall myapp -n prod --keep-history
-
-# Восстановление
-helm rollback myapp 0 -n prod
 ```
 
 ### Продвижение через окружения
 
 ```bash
-# Dev
-helm upgrade --install app app-chart -f values/dev.yaml --version 2.3.1 -n dev
+# Установка конкретной версии в Dev
+helm upgrade --install app app-chart \
+  -f values/dev.yaml \
+  --version 2.3.1 \
+  -n dev
 
-# Stage
-helm upgrade --install app app-chart -f values/stage.yaml --version 2.3.1 -n stage
+# Продвижение той же версии в Staging
+helm upgrade --install app app-chart \
+  -f values/staging.yaml \
+  --version 2.3.1 \
+  -n stage
 
-# Prod (фиксация версий)
+# Продвижение в Production с дополнительными проверками
 helm upgrade --install app app-chart \
   -f values/prod.yaml \
   --version 2.3.1 \
-  --wait --timeout 10m \
-  --atomic -n prod
+  --wait \
+  --timeout 10m \
+  --atomic \
+  -n prod
+```
+
+### Проверка изменений перед обновлением
+
+```bash
+# Просмотр диффа перед обновлением
+helm diff upgrade myapp bitnami/nginx -n prod
+
+# Сравнение двух ревизий
+helm get manifest myapp -n prod --revision 5 > rev5.yaml
+helm get manifest myapp -n prod --revision 6 > rev6.yaml
+diff rev5.yaml rev6.yaml
 ```
 
 ### Best practices
 
-- **Пиннинг**: Явно указывать версии чартов
-- **Атомарность**: Использовать `--atomic` и `--wait`
-- **Контроль**: Хранить `values` в VCS
-- **История**: Ограничивать `--history-max` для экономии ресурсов
+- **Пиннинг версий**: Явно указывайте версии чартов в production (`--version X.Y.Z`)
+- **Атомарность**: Используйте `--atomic` для автоматического отката при сбое
+- **Контроль истории**: Ограничивайте `--history-max` для экономии ресурсов (рекомендуется 10-20)
+- **Хранение values**: Держите `values` файлы под версионным контролем
+- **Тестирование**: Проверяйте обновления в staging перед production
+
+---
 
 ## Дополнительная информация
 
-- [Обзор Helm](./helm_overview.md) — общие концепции
-- [Структура Helm-чарта](./helm_chart_structure.md) — метаданные в Chart.yaml
-- [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) — различия в хранении
+- [Обзор Helm](./helm_overview.md) — общие концепции, жизненный цикл релиза
+- [Структура Helm-чарта](./helm_chart_structure.md) — Chart.yaml, зависимости, Chart.lock
+- [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) — различия в хранении истории релизов

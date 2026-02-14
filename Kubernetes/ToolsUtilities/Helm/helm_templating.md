@@ -1,202 +1,249 @@
-# Шаблонизация манифестов в Helm
+# Шаблонизация в Helm
+
+Helm использует Go template engine с библиотекой Sprig для генерации манифестов Kubernetes на основе параметров и логики.
+
+---
 
 ## Определения
 
-**Шаблонизация в Helm** — это процесс генерации манифестов Kubernetes с использованием **Go template engine**. Helm обрабатывает файлы в директории `templates/`, подставляя в них динамические значения, что позволяет создавать гибкие и переиспользуемые [чарты](./helm_chart_structure.md). Рендеринг выполняется с использованием функций из библиотеки [Sprig](http://masterminds.github.io/sprig/), что позволяет описывать конфигурацию декларативно, но с элементами логики.
+| Термин | Описание |
+|--------|----------|
+| **Go templates** | Движок шаблонизации, используемый Helm для рендеринга YAML |
+| **Встроенные объекты** | Предопределённые переменные: `.Values`, `.Release`, `.Chart`, `.Capabilities`, `.Files`, `.Template` |
+| **Именованные шаблоны** | Переиспользуемые блоки, определяемые через `{{ define }}` и вызываемые через `{{ include }}` |
+| **Функции Sprig** | Расширенная библиотека функций для работы со строками, коллекциями, математикой, датами |
+| **Хелперы** | Вспомогательные шаблоны в файле `_helpers.tpl` |
 
-Внутри шаблонов доступны встроенные объекты для доступа к данным:
-
-*   `.Values`: Наиболее часто используемый объект. Предоставляет доступ к значениям из файла `values.yaml` и параметрам, переданным через флаги `--set` или `-f`.
-*   `.Release`: Содержит метаданные о самом релизе, такие как `.Release.Name` (имя релиза), `.Release.Namespace` (пространство имен) и `.Release.Service` (служебное имя Helm).
-*   `.Chart`: Содержит метаданные из файла `Chart.yaml`, например `.Chart.Name` (имя чарта) и `.Chart.Version`.
-*   `.Files`: Предоставляет доступ к файлам внутри чарта (не шаблонам). Позволяет, например, вставлять содержимое конфигурационных файлов.
-*   `.Capabilities`: Содержит информацию о возможностях целевого кластера Kubernetes (например, `.Capabilities.KubeVersion.Version` или доступные версии API `.Capabilities.APIVersions.Has "batch/v1/CronJob"`).
+---
 
 ## Основные концепции
 
-### Синтаксис и значения
+### Встроенные объекты
 
-Базовый синтаксис для вставки значения — `{{ .Values.ключ }}`.
+| Объект | Назначение | Примеры доступа |
+|--------|------------|-----------------|
+| `.Values` | Значения из `values.yaml` и флагов `--set` | `.Values.replicaCount`, `.Values.image.repository` |
+| `.Release` | Метаданные релиза | `.Release.Name`, `.Release.Namespace`, `.Release.Revision` |
+| `.Chart` | Метаданные чарта из `Chart.yaml` | `.Chart.Name`, `.Chart.Version`, `.Chart.AppVersion` |
+| `.Capabilities` | Возможности кластера | `.Capabilities.KubeVersion.Version`, `.Capabilities.APIVersions.Has "batch/v1"` |
+| `.Files` | Доступ к файлам чарта | `.Files.Get "config.json"`, `.Files.Glob "configs/*.json"` |
+| `.Template` | Информация о текущем шаблоне | `.Template.Name`, `.Template.BasePath` |
 
-**Пример `templates/configmap.yaml`:**
+### Базовый синтаксис
 
+**Вставка значения:**
 ```yaml
-apiVersion: v1
-kind: ConfigMap
 metadata:
-  name: {{ include "myapp.fullname" . }}
-data:
-  app.env: {{ .Values.env | default "prod" | quote }}
-  {{- range $k, $v := .Values.config }}
-  {{ $k }}: {{ $v | quote }}
-  {{- end }}
+  name: {{ .Values.appName }}
 ```
 
-**Соответствующий `values.yaml`:**
+**Конвейер функций:**
+```yaml
+name: {{ .Values.name | default "myapp" | lower | trunc 63 | trimSuffix "-" }}
+```
+
+**Управление пробелами:**
+- `{{-` — удаляет пробелы и переносы строк до тега
+- `-}}` — удаляет пробелы и переносы строк после тега
 
 ```yaml
-env: staging
-config:
-  LOG_LEVEL: info
-  TIMEOUT: "30s"
+env:
+{{- range $k, $v := .Values.env }}
+  - name: {{ $k }}
+    value: {{ $v | quote }}
+{{- end }}
 ```
 
-### Управляющие конструкции и функции
+### Управляющие конструкции
 
-Go-шаблоны поддерживают условные блоки, циклы и функции для работы с данными.
-
-#### Условные блоки `if/else`
-
-Позволяют включать или исключать блоки YAML в зависимости от наличия или значения переменных.
-
+**Условные блоки `if/else`:**
 ```yaml
 {{- if .Values.metrics.enabled }}
 ports:
   - name: metrics
     containerPort: 9090
+{{- else }}
+# Метрики отключены
 {{- end }}
 ```
 
-#### Блок `with`
-
-`with` позволяет "погрузиться" в дочерний объект, изменяя текущий контекст (`.`) для сокращения кода.
-
+**Блок `with` (изменение контекста):**
 ```yaml
 {{- with .Values.resources }}
 resources:
   limits:
-    cpu: {{ .cpu }}
-    memory: {{ .memory }}
+    cpu: {{ .limits.cpu }}
+    memory: {{ .limits.memory }}
 {{- end }}
 ```
 
-#### Итерация по спискам и словарям `range`
-
-Используется для генерации повторяющихся блоков.
-
+**Итерация `range`:**
 ```yaml
 env:
-{{- range $name, $val := .Values.envVars }}
+{{- range $name, $value := .Values.envVars }}
   - name: {{ $name }}
-    value: {{ $val | quote }}
+    value: {{ $value | quote }}
+{{- end }}
+
+# Итерация по списку
+{{- range .Values.volumes }}
+- name: {{ .name }}
+  mountPath: {{ .mountPath }}
 {{- end }}
 ```
 
-#### Ключевые функции
+### Ключевые функции
 
-*   `quote`: Заключает значение в двойные кавычки.
-*   `toYaml`: Сериализует объект (map, list) в YAML-блок. Незаменима для вставки целых блоков конфигурации (например, `nodeSelector` или `tolerations`).
-*   `nindent`: Добавляет отступы к каждой строке сгенерированного блока. Критически важна для соблюдения иерархии в YAML.
-*   `default`: Задает значение по умолчанию, если переменная не определена.
-*   `required`: Прерывает выполнение с ошибкой, если обязательный параметр отсутствует.
-*   `tpl`: Обрабатывает строку как шаблон внутри другого шаблона. Полезно для динамических аннотаций или конфигураций.
+| Функция | Назначение | Пример |
+|---------|------------|--------|
+| `quote` | Заключение в двойные кавычки | `{{ .Values.name \| quote }}` |
+| `default` | Значение по умолчанию | `{{ .Values.tag \| default "latest" }}` |
+| `required` | Обязательный параметр | `{{ required "Image required" .Values.image }}` |
+| `toYaml` | Сериализация в YAML | `{{ toYaml .Values.nodeSelector }}` |
+| `nindent` | Отступ для YAML-блока | `{{ toYaml .Values.tolerations \| nindent 8 }}` |
+| `tpl` | Рендер строки как шаблона | `{{ tpl .Values.config . }}` |
+| `include` | Вставка именованного шаблона | `{{ include "chart.fullname" . }}` |
 
-#### Управление пробелами
-
-Дефисы `{{-` и `-}}` используются для удаления пробельных символов (включая переносы строк) до или после тега, делая итоговые манифесты чище.
+---
 
 ## Практические сценарии
 
-### Переиспользуемые блоки: `_helpers.tpl` и именованные шаблоны
+### Создание именованных шаблонов (_helpers.tpl)
 
-Для соблюдения принципа DRY (Don't Repeat Yourself) используется файл `templates/_helpers.tpl`, где определяются **именованные шаблоны (named templates)**.
-
-*   **`define`**: Ключевое слово для определения именованного шаблона.
-*   **`include`**: Функция для вставки именованного шаблона.
-
-**1. Определение шаблонов в `templates/_helpers.tpl`:**
-
+**Определение в `templates/_helpers.tpl`:**
 ```go
 {{/*
-Шаблон для генерации имени приложения.
+Создаёт полное имя ресурса с учётом переопределения и ограничения длины.
+*/}}
+{{- define "myapp.fullname" -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- printf "%s-%s" $name .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Создаёт имя приложения.
 */}}
 {{- define "myapp.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
-Шаблон для генерации полного имени ресурса.
+Генерирует метки Kubernetes.
 */}}
-{{- define "myapp.fullname" -}}
-{{- printf "%s-%s" (include "myapp.name" .) .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- define "myapp.labels" -}}
+app.kubernetes.io/name: {{ include "myapp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 ```
 
-**2. Использование шаблонов в `templates/deployment.yaml`:**
-
+**Использование в шаблонах:**
 ```yaml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: {{ include "myapp.fullname" . }}
   labels:
-    app.kubernetes.io/name: {{ include "myapp.name" . }}
+    {{- include "myapp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
 ```
 
-### Вставка сложных блоков
-
-Комбинация `if`, `toYaml` и `nindent` позволяет гибко управлять блоками.
+### Вставка сложных блоков с toYaml и nindent
 
 ```yaml
+apiVersion: apps/v1
+kind: Deployment
 spec:
-  {{- if .Values.affinity }}
-  affinity:
-    {{- toYaml .Values.affinity | nindent 4 }}
-  {{- end }}
-  {{- if .Values.tolerations }}
-  tolerations:
-    {{- toYaml .Values.tolerations | nindent 4 }}
-  {{- end }}
+  template:
+    spec:
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
 ```
 
-### Комбинирование функций
+### Комбинирование функций для надёжности
 
-Пример ниже демонстрирует совместную работу нескольких функций для повышения надежности чарта.
-
-```go
-{{- $image := required "Values.image.repository обязателен" .Values.image.repository -}}
-image: "{{ $image }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-envFrom:
-{{ toYaml .Values.envFrom | nindent 2 }}
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        {{- $image := required "Values.image.repository обязателен" .Values.image.repository }}
+        image: "{{ $image }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+        envFrom:
+          {{- toYaml .Values.envFrom | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
 ```
-В этом примере:
-1. `required` прервет установку, если `Values.image.repository` не определен.
-2. `default` использует `Chart.AppVersion` как тег образа, если `Values.image.tag` не указан.
-3. `toYaml` и `nindent` безопасно вставляют и форматируют целый YAML-блок из `Values.envFrom`.
 
+### Работа с ConfigMap и файлами
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "myapp.fullname" . }}-config
+data:
+  # Вставка значения из values
+  app.conf: |
+    {{ .Values.configContent | nindent 4 }}
+  
+  # Чтение внешнего файла
+  config.json: |
+    {{ .Files.Get "files/config.json" | nindent 4 }}
+```
+
+### Проверка API версий кластера
+
+```yaml
+{{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
+apiVersion: networking.k8s.io/v1
+{{- else if .Capabilities.APIVersions.Has "networking.k8s.io/v1beta1/Ingress" }}
+apiVersion: networking.k8s.io/v1beta1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+```
+
+### Глобальные values и scoped values
+
+```yaml
+# Глобальные значения (доступны из зависимостей)
+{{- .Values.global.storageClass -}}
+
+# Scoped значения в зависимостях
+{{- .Values.postgresql.enabled -}}
+```
+
+---
 
 ## Дополнительная информация
 
-### Локальная отладка шаблонов
+- [Обзор Helm](./helm_overview.md) — общие концепции, жизненный цикл релиза
+- [Структура Helm-чарта](./helm_chart_structure.md) — расположение шаблонов, _helpers.tpl, values.yaml
+- [Управление версиями релизов](./helm_release_versioning.md) — ревизии релизов, откаты
 
-Команда `helm template` — основной инструмент для отладки, рендерящий чарт локально без отправки в кластер.
-
-```bash
-# Рендер чарта в текущей директории
-helm template my-release-name .
-
-# Рендер с файлом значений
-helm template my-release-name . -f my-values.yaml
-```
-
-Для проверки с выводом контекста и заметок используются флаги `--dry-run` и `--debug`.
-
-```bash
-helm install demo ./mychart --dry-run --debug -f values.yaml
-```
-
-### Сводка встроенных объектов
-
-| Объект | Назначение |
-| :--- | :--- |
-| `.Values` | Пользовательские параметры чарта |
-| `.Chart` | Метаданные из `Chart.yaml` |
-| `.Release` | Имя релиза, namespace, сервисные поля |
-| `.Capabilities` | Доступные API и версии Kubernetes |
-| `.Files` | Чтение встроенных в чарт файлов |
-
-### Создание стартового чарта
-
-Команда `helm create` генерирует шаблонный чарт со стандартной структурой, `_helpers.tpl` и примерами, что является отличной отправной точкой.
-
-```bash
-helm create my-new-chart
-```
+**Полезные ресурсы:**
+- Документация Go templates: https://golang.org/pkg/text/template/
+- Библиотека Sprig: http://masterminds.github.io/sprig/
+- Локальная отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`
