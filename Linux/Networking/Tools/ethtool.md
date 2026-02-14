@@ -140,7 +140,7 @@ ethtool -l enp0s3
 sudo ethtool -L enp0s3 combined 8
 ```
 
-> Подробное описание технологий **RSS, RPS и RFS** и их программной настройки находится в документе [**RSS, RPS, RFS: Многопоточная обработка сетевого трафика**](../Concepts/rss_rps_rfs.md).
+> Подробное описание технологий RSS, RPS, RFS и их программной настройки — в [**RSS, RPS, RFS**](../Concepts/rss_rps_rfs.md).
 
 ### 8. MTU и Jumbo Frames
 
