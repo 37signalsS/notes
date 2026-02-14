@@ -2,7 +2,7 @@
 
 ## Определения
 
-*   **Модуль `stream` Nginx**: Расширение функциональности Nginx, предоставляющее мощные возможности для балансировки нагрузки и проксирования трафика на **уровне L4 (TCP/UDP)**. Это позволяет работать с различными протоколами, которые не основаны на HTTP, такими как базы данных ([MySQL](../../../Databases/mysql.md), [PostgreSQL](../../../Databases/PostgreSQL/overview.md)), [DNS](../../../Networking/Protocols/dns.md), NTP, [SSH](../../../Linux/Security/ssh/ssh_overview.md) и др.
+*   **Модуль `stream` Nginx**: Расширение функциональности Nginx, предоставляющее мощные возможности для балансировки нагрузки и проксирования трафика на **уровне L4 (TCP/UDP)**. Это позволяет работать с различными протоколами, которые не основаны на HTTP, такими как базы данных ([MySQL](../../../Databases/MySQL/configuration.md), [PostgreSQL](../../../Databases/PostgreSQL/overview.md)), [DNS](../../../Networking/Protocols/dns.md), NTP, [SSH](../../../Linux/Security/ssh/ssh_overview.md) и др.
 
 *   **L4 против L7 проксирования**:
     *   Традиционно Nginx используется для работы с HTTP-трафиком (L7), где конфигурация находится в контексте `http` и позволяет работать с запросами на уровне приложения.
@@ -67,7 +67,7 @@ stream {
 
 ## Практические сценарии
 
-### Проксирование [MySQL](../../../Databases/mysql.md) ([TCP](../../../Networking/Protocols/TCP/overview.md)) с сохранением IP клиента
+### Проксирование [MySQL](../../../Databases/MySQL/configuration.md) ([TCP](../../../Networking/Protocols/TCP/overview.md)) с сохранением IP клиента
 
 Это классический сценарий, где Nginx используется для распределения нагрузки между master-сервером базы данных (на запись) и slave-серверами (на чтение).
 
@@ -123,9 +123,9 @@ server {
     *   `status_zone <name>;`: Связывает сервер с зоной статистики, позволяя отслеживать метрики (активные соединения и т.д.) через API Nginx.
     *   `server { listen 6307; ... }`: Аналогичный сервер, но для слейвов: слушает порт `6307` и направляет трафик на `upstream` `mysql_slave`.
 
-> Пример автоматизации этой конфигурации с помощью Ansible можно найти в заметке **[Ansible: Часто используемые модули](../../../Ansible/ansible_common_modules.md)**.
+> Пример автоматизации этой конфигурации с помощью Ansible можно найти в заметке **[Ansible: Часто используемые модули](../../../Ansible/Modules/ansible_modules_overview.md)**.
 
-### [SSL/TLS терминация](../Security/nginx_tls_ssl_configuration.md) на L4
+### [SSL/TLS терминация](../Security/TLS_SSL/nginx_tls_ssl_overview.md) на L4
 
 Nginx может выступать в роли SSL-терминатора, принимая зашифрованные соединения, расшифровывая их и затем проксируя трафик дальше в открытом виде.
 

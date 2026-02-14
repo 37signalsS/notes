@@ -87,11 +87,11 @@ server {
 
 #### I. Основы и Конфигурация (Core)
 -   **[Установка и базовая настройка](./nginx_setup.md)**: Установка, управление службой, структура конфигурации.
--   **[Глубокое погружение в директиву location](./nginx_location_directive.md)**: Приоритеты и правила обработки запросов.
+-   **[Глубокое погружение в директиву location](./Location/basics.md)**: Приоритеты и правила обработки запросов.
 -   **[Правила Rewrite, Redirect и try_files](./nginx_rewrite_rules_and_try_files.md)**: Изменение URI и перенаправление клиентов.
 
 #### II. Проксирование и Балансировка (Proxy)
--   **[Балансировка нагрузки HTTP (L7)](../Proxy/nginx_load_balancing.md)**: Распределение запросов между серверами.
+-   **[Балансировка нагрузки HTTP (L7)](../Proxy/Load_Balancing/overview_concepts.md)**: Распределение запросов между серверами.
 -   **[Балансировка и проксирование TCP/UDP (L4)](../Proxy/nginx_l4_proxying.md)**: Настройка модуля `stream`.
 -   **Примеры:**
     -   **[Nginx как реверс-прокси для Consul](../Proxy/nginx_as_reverse_proxy_for_consul.md)**
@@ -103,16 +103,16 @@ server {
 -   **[Сжатие (Gzip, Brotli, ZSTD)](../Performance/nginx_compression.md)**: Уменьшение объема передаваемых данных.
 -   **[Адаптивная доставка изображений](../Performance/nginx_adaptive_content.md)**: Отдача WebP/AVIF для поддерживающих браузеров.
 -   **Кэширование:**
-    -   **[Кэширование ответов бэкенда (Proxy Cache)](../Performance/nginx_proxy_caching.md)**: Снижение нагрузки на бэкенды.
+    -   **[Кэширование ответов бэкенда (Proxy Cache)](../Performance/Caching/proxy_caching.md)**: Снижение нагрузки на бэкенды.
     -   **[Кэширование статики на клиенте](../Performance/nginx_static_file_caching.md)**: Управление кэшем в браузере.
 
 #### IV. Безопасность (Security)
 -   **[Руководство по безопасности](../Security/nginx_security_guide.md)**: Защита от DoS, контроль доступа, заголовки безопасности.
--   **[Настройка TLS/SSL](../Security/nginx_tls_ssl_configuration.md)**: Полное руководство по настройке HTTPS.
+-   **[Настройка TLS/SSL](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**: Полное руководство по настройке HTTPS.
 -   **[Интеграция с Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md)**: Автоматизация получения сертификатов.
 
 #### V. Эксплуатация и Мониторинг (Operations)
--   **[Запуск Nginx в Docker](../Operations/nginx_in_docker.md)**: Руководство по контейнеризации.
+-   **[Запуск Nginx в Docker](../../Docker/Docker_compose/docker_compose_file_example.md)**: Руководство по контейнеризации.
 -   **[Поиск и устранение неисправностей](../Operations/nginx_troubleshooting.md)**: Пошаговая диагностика.
 -   **[Мониторинг с помощью vts-модуля](../Operations/nginx_vts_monitoring_setup.md)**: Настройка связки с Prometheus и Grafana.
 

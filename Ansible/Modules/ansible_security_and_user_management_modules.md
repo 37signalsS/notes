@@ -84,4 +84,4 @@ ansible <hostname> -m user -a "name=ansible_user shell=/bin/bash state=present" 
   no_log: true # Скрывать пароль в логах
 ```
 
-> **Лучшая практика**: Всегда используйте [Ansible Vault](../ansible_vault.md) для хранения хешей паролей и других чувствительных данных.
+> **Лучшая практика**: Всегда используйте [Ansible Vault](../Vault/basics.md) для хранения хешей паролей и других чувствительных данных.

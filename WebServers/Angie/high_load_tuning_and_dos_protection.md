@@ -74,7 +74,7 @@ server {
 -   **`proxy_cache_background_update on;` и `proxy_cache_use_stale updating;`**: Позволяют отдавать клиенту устаревший ответ из кэша немедленно, пока в фоне идет его обновление. Это критически важно для производительности.
 -   **`proxy_cache_use_stale error timeout ...`**: Разрешает отдавать устаревший контент, если бэкенд недоступен.
 
-Детали реализации описаны в руководствах по [кэшированию в Nginx](../../Nginx/Performance/nginx_proxy_caching.md) и [кэшированию в Angie](./angie_caching.md).
+Детали реализации описаны в руководствах по [кэшированию в Nginx](../../Nginx/Performance/Caching/proxy_caching.md) и [кэшированию в Angie](../../Nginx/Performance/Caching/proxy_caching.md).
 
 ### Сценарий 4: Оптимизация на стороне клиента
 -   **Версии HTTP:** Включайте **HTTP/2 и HTTP/3**, чтобы ускорить загрузку за счет мультиплексирования. См. [настройку версий в Nginx](../../Nginx/Performance/nginx_http_versions.md).
@@ -89,4 +89,4 @@ server {
 ### Тюнинг ядра и TLS
 -   **Тюнинг ядра Linux:** Дополнительные параметры производительности можно настроить на уровне ядра. См. [заметку о sysctl](../../../Linux/Core/kernel/sysctl.md).
 -   **Оптимизация TLS:** Шифрование — ресурсоемкая операция. Важно использовать современные протоколы (`TLSv1.2`, `TLSv1.3`) и кэширование сессий.
-> Подробности смотрите в руководствах по [настройке TLS в Angie](./angie_tls_setup.md) и [основной заметке по TLS в Nginx](../../Nginx/Security/nginx_tls_ssl_configuration.md).
+> Подробности смотрите в руководствах по [настройке TLS в Angie](./angie_tls_setup.md) и [основной заметке по TLS в Nginx](../../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md).

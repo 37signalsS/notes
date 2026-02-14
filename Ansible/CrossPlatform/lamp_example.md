@@ -47,8 +47,8 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
 
 ### Установка Nginx
 
-- **Ubuntu (Debian):** Использует [модуль `ansible.builtin.apt`](../ansible_common_modules.md#ansiblebuiltinapt).
-- **CentOS (Red Hat):** Использует [модуль `ansible.builtin.yum`](../ansible_common_modules.md#ansiblebuiltyum) и предварительно устанавливает репозиторий EPEL.
+- **Ubuntu (Debian):** Использует [модуль `ansible.builtin.apt`](../Modules/ansible_modules_overview.md#ansiblebuiltinapt).
+- **CentOS (Red Hat):** Использует [модуль `ansible.builtin.yum`](../Modules/ansible_modules_overview.md#ansiblebuiltyum) и предварительно устанавливает репозиторий EPEL.
 
 **`roles/nginx/tasks/ubuntu.yml`**
 
@@ -74,7 +74,7 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
     state: present
 ```
 
-> **Важно:** Хотя существует универсальный [модуль `ansible.builtin.package`](../ansible_common_modules.md#ansiblebuiltinpackage), для специфических задач (например, установка EPEL) рекомендуется использовать модули `apt` и `yum` для большей предсказуемости.
+> **Важно:** Хотя существует универсальный [модуль `ansible.builtin.package`](../Modules/ansible_modules_overview.md#ansiblebuiltinpackage), для специфических задач (например, установка EPEL) рекомендуется использовать модули `apt` и `yum` для большей предсказуемости.
 
 ### Управление файлами и шаблонами Nginx
 
@@ -83,7 +83,7 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
 - **Ubuntu:** `/var/www/html`
 - **CentOS:** `/usr/share/nginx/html`
 
-**Копирование файлов с [модулем `ansible.builtin.copy`](../ansible_common_modules.md#ansiblebuiltincopy):**
+**Копирование файлов с [модулем `ansible.builtin.copy`](../Modules/ansible_modules_overview.md#ansiblebuiltincopy):**
 
 ```yaml
 # Пример для CentOS
@@ -96,7 +96,7 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
     mode: '0755'
 ```
 
-**Создание конфигураций с [модулем `ansible.builtin.template`](../ansible_common_modules.md#ansiblebuiltintemplate):**
+**Создание конфигураций с [модулем `ansible.builtin.template`](../Modules/ansible_modules_overview.md#ansiblebuiltintemplate):**
 Модуль `template` использует [шаблоны Jinja2](../ansible_jinja2_templating.md) (`.j2`) для создания динамических файлов.
 
 ```yaml

@@ -13,7 +13,7 @@
 
 - **Автоматизация с [Ansible](../../Ansible/ansible_introduction.md)**:
   - **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспорtera, и `cloudalchemy.prometheus` для Prometheus.
-  - **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/ansible_vault.md).
+  - **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/Vault/basics.md).
 
 ## Практические сценарии
 

@@ -22,14 +22,14 @@
 
 ### Требования к использованию HTTP/2 и HTTP/3
 
-*   **HTTP/2:** Работает поверх TCP и де-факто требует [TLS (шифрования)](../Security/nginx_tls_ssl_configuration.md) для большинства браузеров.
+*   **HTTP/2:** Работает поверх TCP и де-факто требует [TLS (шифрования)](../Security/TLS_SSL/nginx_tls_ssl_overview.md) для большинства браузеров.
 *   **HTTP/3:** Требует Nginx версии 1.25.0+ (или Angie) с соответствующим модулем QUIC и открытый UDP-порт 443 на файрволе.
 
 ## Практические сценарии
 
 ### Настройка HTTP/2 в Nginx
 
-Включить HTTP/2 очень просто: достаточно добавить параметр `http2` к директиве `listen` в блоке `server`. Для этого требуется настроенный [TLS/SSL](../Security/nginx_tls_ssl_configuration.md).
+Включить HTTP/2 очень просто: достаточно добавить параметр `http2` к директиве `listen` в блоке `server`. Для этого требуется настроенный [TLS/SSL](../Security/TLS_SSL/nginx_tls_ssl_overview.md).
 
 ```nginx
 server {

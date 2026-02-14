@@ -222,6 +222,6 @@ sudo systemctl start mcstransd
 
 ### Связанные темы
 
-*   **[Docker и SELinux](../../../Docker/Docker_security/security_overview.md)** — безопасность контейнеров
-*   **[AppArmor](../AppArmor.md)** — альтернативный MAC-механизм
-*   **[Аудит](../../Diagnostics/Logging/audit.md)** — аудит системных событий
+*   **[Docker и SELinux](../../../Docker/Docker_security/overview.md)** — безопасность контейнеров
+*   **[AppArmor](./AppArmor.md)** — альтернативный MAC-механизм
+*   **[Аудит](../../SystemAdministration/Logging/auditd.md)** — аудит системных событий

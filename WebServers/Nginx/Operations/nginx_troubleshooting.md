@@ -65,7 +65,7 @@
     *   `listen`: Правильно ли указаны порты? `listen 80;`, `listen 443 ssl;`.
     *   `server_name`: Указано ли ваше доменное имя? `server_name your-domain.com www.your-domain.com;`.
     *   `root`: Правильно ли указан путь к файлам сайта?
-    *   `location`: Корректны ли блоки `location`? См. [Директива location](../Core/nginx_location_directive.md).
+    *   `location`: Корректны ли блоки `location`? См. [Директива location](../Core/Location/basics.md).
 
 ### Анализ логов Nginx
 
@@ -92,7 +92,7 @@ tail -f /var/log/nginx/error.log
     *   **Решение:** Проверьте путь в `root` и убедитесь, что файлы сайта лежат именно там.
 
 *   **`"connect() failed (111: Connection refused) while connecting to upstream"` (ошибка 502 Bad Gateway):**
-    *   **Проблема:** Nginx работает в режиме прокси (`proxy_pass`), но не может подключиться к бэкенд-приложению (например, Node.js, Python, PHP-FPM). Бэкенд либо не запущен, либо слушает не тот порт/IP. Подробнее о `proxy_pass` см. в заметке о [балансировке нагрузки](../Proxy/nginx_load_balancing.md).
+    *   **Проблема:** Nginx работает в режиме прокси (`proxy_pass`), но не может подключиться к бэкенд-приложению (например, Node.js, Python, PHP-FPM). Бэкенд либо не запущен, либо слушает не тот порт/IP. Подробнее о `proxy_pass` см. в заметке о [балансировке нагрузки](../Proxy/Load_Balancing/overview_concepts.md).
     *   **Решение:**
         1.  Проверьте, что ваш бэкенд запущен: `systemctl status my-app`.
         2.  Проверьте, что он слушает тот же порт, что указан в `proxy_pass` (например, `127.0.0.1:8000`). Сделайте это с сервера Nginx: `curl http://127.0.0.1:8000`.
@@ -106,7 +106,7 @@ tail -f /var/log/nginx/error.log
 ---
 ## Дополнительная информация
 
-Для автоматического анализа логов в скриптах часто используются утилиты `tail`, `awk` и `sed`. Базовые принципы их работы описаны в заметке [Основы shell](../../../Linux/Shell/shell_basics.md).
+Для автоматического анализа логов в скриптах часто используются утилиты `tail`, `awk` и `sed`. Базовые принципы их работы описаны в заметке [Основы shell](../../../Linux/Shell/shell_intro.md).
 
 ### Отслеживание новых записей в логе
 

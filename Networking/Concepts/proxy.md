@@ -39,9 +39,9 @@
 
 *   **Nginx/Angie:**
     *   [Настройка обратного прокси](../../WebServers/Angie/angie_reverse_proxy.md)
-    *   [Балансировка нагрузки HTTP (L7)](../../WebServers/Nginx/Proxy/nginx_load_balancing.md)
+    *   [Балансировка нагрузки HTTP (L7)](../../WebServers/Nginx/Proxy/Load_Balancing/overview_concepts.md)
     *   [Балансировка TCP/UDP (L4)](../../WebServers/Nginx/Proxy/nginx_l4_proxying.md)
-    *   [Кэширование (Proxy Cache)](../../WebServers/Nginx/Performance/nginx_caching_guide.md)
+    *   [Кэширование (Proxy Cache)](../../WebServers/Nginx/Performance/Caching/proxy_caching.md)
 *   **HAProxy:**
     *   [Обзор и настройка HAProxy](../../WebServers/Haproxy/haproxy_overview.md)
 *   **Traefik:**

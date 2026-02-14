@@ -64,7 +64,7 @@ sudo dnf install httpd
 ```bash
 sudo apt update && sudo apt -y install apache2
 ```
-Установка и базовая настройка могут быть автоматизированы с помощью [Ansible](../../Ansible/ansible_playbook_structure.md).
+Установка и базовая настройка могут быть автоматизированы с помощью [Ansible](../../Ansible/PlaybookStructure/basics.md).
 
 ### Управление службой
 

@@ -25,7 +25,7 @@
 
 Использование `docker-compose.yml` значительно упрощает управление связкой Nginx и Certbot.
 
-> Для детального понимания синтаксиса и директив Docker Compose обратитесь к руководству: **[Обзор Docker Compose](../../Docker/Docker_compose/docker_compose_overview.md)**.
+> Для детального понимания синтаксиса и директив Docker Compose обратитесь к руководству: **[Обзор Docker Compose](../../Docker/Docker_compose/docker_compose_file_example.md)**.
 
 ```yaml
 # docker-compose.yml
@@ -136,7 +136,7 @@ server {
 *   `ssl_certificate ...` и `ssl_certificate_key ...`: Пути к файлам сертификата и приватного ключа.
 *   `include ...` и `ssl_dhparam ...`: Подключение рекомендованных параметров безопасности от Certbot.
 
-> Для глубокой настройки всех параметров TLS/SSL, выбора шифров и оптимизации производительности обратитесь к основному руководству: **[Оптимальная настройка TLS/SSL в Nginx](../Security/nginx_tls_ssl_configuration.md)**.
+> Для глубокой настройки всех параметров TLS/SSL, выбора шифров и оптимизации производительности обратитесь к основному руководству: **[Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**.
 
 ---
 

@@ -26,7 +26,7 @@
 
 #### Определение Upstream
 
-Сначала определим группу `upstream`, в которую включим все серверы Consul. Этот подход также является основой для [балансировки нагрузки](../Proxy/nginx_load_balancing.md).
+Сначала определим группу `upstream`, в которую включим все серверы Consul. Этот подход также является основой для [балансировки нагрузки](../Proxy/Load_Balancing/overview_concepts.md).
 
 ```nginx
 # /etc/nginx/conf.d/upstream-consul.conf
@@ -53,7 +53,7 @@ server {
 
     # Подключение общих параметров TLS/SSL
     # Рекомендуется вынести общие настройки в отдельный файл.
-    # > Подробное руководство: [Оптимальная настройка TLS/SSL в Nginx](../Security/nginx_tls_ssl_configuration.md)
+    # > Подробное руководство: [Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)
     include /etc/nginx/snippets/ssl-params.conf;
 
     # Заголовок HSTS для безопасности
@@ -77,7 +77,7 @@ server {
 
 #### Общие параметры TLS/SSL (пример `ssl-params.conf`)
 
-Пример файла с общими настройками безопасности. Детальные рекомендации смотрите в [соответствующем руководстве](../Security/nginx_tls_ssl_configuration.md).
+Пример файла с общими настройками безопасности. Детальные рекомендации смотрите в [соответствующем руководстве](../Security/TLS_SSL/nginx_tls_ssl_overview.md).
 
 ```nginx
 # /etc/nginx/snippets/ssl-params.conf

@@ -123,7 +123,7 @@ mongodb_bind_ip: 0.0.0.0
 
 - Включить аутентификацию в MongoDB.
 - Передавать `login_user` и `login_password` в модуль `mongodb_replicaset`.
-- Хранить все пароли и ключи в зашифрованном виде с помощью **[Ansible Vault](../ansible_vault.md)**.
+- Хранить все пароли и ключи в зашифрованном виде с помощью **[Ansible Vault](../Vault/basics.md)**.
 
 ### Идемпотентность
 

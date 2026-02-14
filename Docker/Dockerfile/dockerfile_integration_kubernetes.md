@@ -2,7 +2,7 @@
 
 ## Определения
 
-**`kompose`** — это инструмент командной строки, предназначенный для упрощения перехода с [Docker Compose](../Docker_compose/docker_compose_overview.md) на Kubernetes. Он читает файл `docker-compose.yml` и автоматически конвертирует его в ресурсы Kubernetes (Deployments, Services и т.д.).
+`**`kompose`** — это инструмент командной строки, предназначенный для упрощения перехода с [Docker Compose](../Docker_compose/docker_compose_file_example.md) на Kubernetes**. Он читает файл `docker-compose.yml` и автоматически конвертирует его в ресурсы Kubernetes (Deployments, Services и т.д.).
 
 ### Основные концепции
 

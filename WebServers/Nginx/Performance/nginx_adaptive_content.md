@@ -52,7 +52,7 @@ http {
 #### 3.2. Настройка `location` для отдачи изображений
 
 В блоке `server` используйте директиву `try_files` для проверки наличия версий файла в определенном порядке. Подробнее о `location` и `try_files` можно прочитать в соответствующих заметках:
--   [Глубокое погружение в директиву location](../Core/nginx_location_directive.md)
+-   [Глубокое погружение в директиву location](../Core/Location/basics.md)
 -   [Правила Rewrite, Redirect и try_files](../Core/nginx_rewrite_rules_and_try_files.md)
 
 ```nginx

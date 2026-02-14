@@ -210,7 +210,7 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 
 1.  **Скрипт обнаружения:** На хосте создается скрипт, который формирует JSON для LLD. Пример `my_discovery_script.sh`: ```bash #!/bin/bash echo '{ "data": [ { "{#ITEMNAME}": "CPU_Usage", "{#ITEMDESCRIPTION}": "Загрузка процессора" }, { "{#ITEMNAME}": "Memory_Free", "{#ITEMDESCRIPTION}": "Свободная память" } ] }' ```
 
-2.  **UserParameter для агента:** В конфигурации [Zabbix-агента](../../Zabbix/zabbix_overview.md) (`/etc/zabbix/zabbix_agentd.conf.d/`) создается `UserParameter` для вызова [скрипта](../../Databases/mysql.md): ``` UserParameter=otus.discovery,/usr/local/bin/my_discovery_script.sh ```
+2.  **UserParameter для агента:** В конфигурации [Zabbix-агента](../../Zabbix/zabbix_overview.md) (`/etc/zabbix/zabbix_agentd.conf.d/`) создается `UserParameter` для вызова [скрипта](../../Databases/MySQL/configuration.md): ``` UserParameter=otus.discovery,/usr/local/bin/my_discovery_script.sh ```
 3.  **LLD-правило в Zabbix:** В шаблоне создается правило обнаружения с ключом `otus.discovery`, которое будет выполнять этот `UserParameter` для получения JSON.
 
 4.  **Прототипы элементов:** Создаются прототипы элементов данных с типом **`Zabbix trapper`** и ключами, использующими макросы из JSON. - **Прототип:** `Custom metric {#ITEMDESCRIPTION}` с ключом `custom.metric[{#ITEMNAME}]`.

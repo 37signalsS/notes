@@ -135,8 +135,8 @@ rotateCertificates: true
 * **kubelet**:
   * [Пробы (Liveness, Readiness, Startup Probes) и их использование kubelet'ом](../Base/probes.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kubelet)](../Security/tls_and_mtls_in_kubernetes.md)
-  * [Часто встречающиеся ошибки и их устранение (проблемы с kubelet)](../Troubleshooting/common_errors.md)
-  * [Установка Kubernetes (kubelet)](../Installation/install_k8s.md)
+  * [Часто встречающиеся ошибки и их устранение (проблемы с kubelet)](../Troubleshooting/Common_Errors/overview.md)
+  * [Установка Kubernetes (kubelet)](../Installation/kubeadm_quickstart.md)
   * [Быстрый старт kubeadm (установка kubelet)](../Installation/kubeadm_quickstart.md)
   * [Глубокое погружение в DNS (настройки kubelet для DNS)](../Networking/dns_deep_dive.md)
   * [Альтернативные среды выполнения контейнеров (взаимодействие с CRI)](../../Docker/alternative_runtimes_and_tools.md)
