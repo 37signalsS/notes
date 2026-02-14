@@ -189,7 +189,7 @@ kubectl get sc
 
 ### 4. Тестирование: создание и расширение PVC
 
-Этот раздел демонстрирует создание и расширение PersistentVolumeClaim (PVC) для CephFS. Более подробно о PersistentVolumes и PersistentVolumeClaims можно узнать в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
+Этот раздел демонстрирует создание и расширение PersistentVolumeClaim (PVC) для CephFS. Более подробно о PersistentVolumes и PersistentVolumeClaims можно узнать в [PersistentVolumes и PersistentVolumeClaims](../pv_and_pvc.md).
 
 **4.1. Создание PVC**
 

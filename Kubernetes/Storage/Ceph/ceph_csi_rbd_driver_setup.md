@@ -18,7 +18,7 @@
 4. **Динамическое выделение хранилища**: Использование StorageClass для определения параметров хранения, таких как пул Ceph и функции RBD, позволяя Kubernetes динамически создавать PersistentVolume из Ceph по запросу PersistentVolumeClaim.
 5. **Расширение томов**: Возможность динамического увеличения размера PersistentVolume, требующая расширения как на стороне Ceph, так и на файловой системе внутри пода.
 
-Более подробную информацию о Container Storage Interface (CSI) можно найти в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md). Для общего понимания архитектуры Ceph и концепции RBD, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md), а о PersistentVolumes и PersistentVolumeClaims — в [PersistentVolumes и PersistentVolumeClaims](../../Base/pv_and_pvc.md).
+Более подробную информацию о Container Storage Interface (CSI) можно найти в [Обзор Container Storage Interface (CSI)](../CSI/csi_overview.md). Для общего понимания архитектуры Ceph и концепции RBD, пожалуйста, ознакомьтесь с [Обзором Ceph](ceph_overview.md), а о PersistentVolumes и PersistentVolumeClaims — в [PersistentVolumes и PersistentVolumeClaims](../pv_and_pvc.md).
 
 ## Практические сценарии
 

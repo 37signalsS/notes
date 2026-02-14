@@ -81,16 +81,3 @@ lsmod | grep vbox
 ```
 
 Вы должны увидеть в выводе `vboxdrv` и другие связанные модули. После этого можно запускать VirtualBox и создавать виртуальные машины.
-
-
-
-
-
-
-
-
-
-
-
-- Scheduling/: qos_limit_and_requests.md, taints_and_tolerations.md
-- Storage/pv_and_pvc.md
