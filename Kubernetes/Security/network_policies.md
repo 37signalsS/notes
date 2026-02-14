@@ -1,40 +1,59 @@
-# NetworkPolicy: управление трафиком между Pod’ами
+# NetworkPolicy: управление трафиком между Pod'ами
 
-NetworkPolicy — объект Kubernetes для декларативного управления сетевым доступом на уровне L3/L4 между Pod’ами и внешними адресами. Политики действуют в пределах пространства имён, опираются на метки и сетевые атрибуты и применяются только если сетевой плагин (CNI) поддерживает их. По умолчанию, если ни одна политика не селектит Pod, весь трафик к нему и от него разрешён.
+## Определения
 
-## Ключевые элементы
+**NetworkPolicy** — объект Kubernetes API для декларативного управления сетевым доступом на уровне L3/L4 между Pod'ами и внешними адресами.
 
-*   `podSelector` — определяет целевые Pod’ы, к которым применяется политика.
-*   `policyTypes` — направления контроля: Ingress, Egress.
-*   `ingress`/`egress` — списки правил, описывающих, кто и на какие порты может подключаться (ingress) и куда Pod может ходить (egress).
-*   `from`/`to` — источники/получатели:
-    *   `podSelector` — Pod’ы по меткам в том же namespace.
-    *   `namespaceSelector` — все Pod’ы в совпавших пространствах имён.
-    *   сочетание `namespaceSelector`+`podSelector` — подсет целевых Pod’ов в указанных ns.
-    *   `ipBlock` — CIDR-диапазоны с опциональными исключениями.
-*   `ports` — номер или имя порта, протокол TCP/UDP/SCTP.
+**Селектор Pod'ов (`podSelector`)** — механизм выбора целевых Pod'ов по меткам для применения политик.
 
-## Семантика применения
+**Ingress** — правила входящего трафика к Pod'ам.
 
-*   Изоляция по направлению возникает, когда существует хотя бы одна политика, селектящая Pod и задающая правила для этого направления. Тогда разрешено только явно описанное.
-*   Политики аддитивны: набор разрешённых потоков равен объединению всех правил из всех политик, селектящих Pod.
-*   Пустые списки правил при указанном направление в `policyTypes` дают «deny all» по этому направлению.
-*   Матчинг происходит по IP Pod’ов; Service не отменяет действие политик.
-*   Политики работают на сетевом уровне (L3/L4) и не фильтруют по FQDN; доменные имена учитываются лишь через разрешённые IP-адреса.
+**Egress** — правила исходящего трафика от Pod'ов.
 
-## Типы источников/получателей
+**CNI (Container Network Interface)** — плагин сетевой подсистемы Kubernetes, обеспечивающий реализацию NetworkPolicy.
 
-| Тип peer | Что матчит | Частый случай |
-| :--- | :--- | :--- |
-| podSelector | Pod’ы в текущем ns | Разрешить слой frontend → api |
-| namespaceSelector | Все Pod’ы в ns по меткам | Межкомандные интеграции |
-| ipBlock | Внешние/внутренние сети | Доступ к интернету/БД по CIDR |
+## Основные концепции
 
-## Примеры YAML
+### Принцип работы
 
-### 1. Полная изоляция (default deny)
+NetworkPolicy действует по принципу **явного разрешения**:
+- По умолчанию (если нет политик, селектящих Pod) — весь трафик разрешён
+- При наличии политики с указанным направлением — только явно разрешённый трафик
+- Политики **аддитивны**: объединение всех правил из всех селектящих политик
+- Пустые списки правил = полный запрет (deny all) по данному направлению
 
-Эта политика выбирает все поды с меткой `app: backend` и применяет к ним правила `Ingress` и `Egress`. Поскольку списки правил пустые, это фактически запрещает весь входящий и исходящий трафик для этих подов.
+### Ключевые элементы спецификации
+
+| Поле | Описание | Пример |
+|------|----------|--------|
+| `podSelector` | Выбор Pod'ов по меткам | `matchLabels: {app: backend}` |
+| `policyTypes` | Направления контроля | `Ingress`, `Egress` |
+| `ingress` | Правила входящего трафика | `from`, `ports` |
+| `egress` | Правила исходящего трафика | `to`, `ports` |
+
+### Типы источников/получателей (`from`/`to`)
+
+| Тип | Описание | Use Case |
+|-----|----------|----------|
+| `podSelector` | Pod'ы по меткам в том же namespace | Frontend → Backend |
+| `namespaceSelector` | Все Pod'ы в совпавших namespace | Межкомандные интеграции |
+| `podSelector` + `namespaceSelector` | Pod'ы в конкретных namespace | Изоляция окружений |
+| `ipBlock` | CIDR-диапазоны | Доступ к внешним БД, интернету |
+
+### Порты и протоколы
+
+- `port`: номер порта или имя порта из spec контейнера
+- `protocol`: TCP (по умолчанию), UDP, SCTP
+
+### Требования к CNI
+
+NetworkPolicy работает только при условии поддержки со стороны CNI-плагина:
+- Calico, Cilium, Weave Net
+- ❌ Flannel (не поддерживает)
+
+## Практические сценарии
+
+### Сценарий 1: Default Deny (полная изоляция)
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -51,9 +70,9 @@ spec:
   - Egress
 ```
 
-### 2. Разрешение конкретного трафика
+Политика изолирует все Pod'ы с меткой `app: backend`: запрещает весь входящий и исходящий трафик.
 
-Эта политика разрешает входящий трафик к подам `app: backend` от подов `app: frontend` на порт `5432`, а также разрешает исходящий трафик от `app: backend` в интернет (`0.0.0.0/0`) на порт `443` (HTTPS).
+### Сценарий 2: Разрешение конкретного трафика
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -85,4 +104,117 @@ spec:
       protocol: TCP
 ```
 
-> Такая комбинация иллюстрирует паттерн: одна политика создаёт изоляцию, другая добавляет строго необходимые разрешения.
+Разрешает:
+- Входящий трафик от `app: frontend` на порт 5432
+- Исходящий HTTPS-трафик (порт 443) в интернет
+
+### Сценарий 3: Межпространственное взаимодействие
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-allow-monitoring
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          purpose: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+      namespaceSelector:
+        matchLabels:
+          purpose: monitoring
+    ports:
+    - port: 8080
+```
+
+Разрешает доступ к API от Pod'ов Prometheus из namespace с меткой `purpose: monitoring`.
+
+### Сценарий 4: Доступ к внешним сервисам
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-access
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.0.2.0/24
+    ports:
+    - port: 5432
+      protocol: TCP
+```
+
+Разрешает backend'у доступ к PostgreSQL в подсети 10.0.2.0/24.
+
+### Сценарий 5: Исключения из ipBlock
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: limited-internet-access
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8      # Запретить доступ к внутренней сети
+        - 192.168.0.0/16  # Запретить доступ к внутренней сети
+    ports:
+    - port: 443
+```
+
+Разрешает доступ в интернет по HTTPS, но блокирует внутренние сети.
+
+## Дополнительная информация
+
+### Ограничения NetworkPolicy
+
+- **L3/L4 только**: нет фильтрации по FQDN/доменам
+- **IP-based**: доменные имена учитываются только через разрешённые IP
+- **Не отменяет Service**: политики работают на сетевом уровне
+- **Матчинг по IP**: при изменении IP Pod'а политика может нарушиться
+
+### Альтернативы для L7
+
+Для фильтрации по доменам (FQDN) используйте:
+- **Cilium** — встроенная поддержка DNS/FQDN
+- **Calico** — NetworkSets с доменами
+- **Service Mesh** (Istio, Linkerd) — L7-авторизация
+
+### Паттерны безопасности
+
+- **Zero Trust**: default deny + явные разрешения
+- **Segmentation**: изоляция namespace по командам/окружениям
+- **Least Privilege**: минимально необходимые порты и протоколы
+
+### Связанные темы
+
+- Безопасность секретов: [Sealed Secrets](../sealed_secrets_overview.md)
+- RBAC для доступа к API: [RBAC Overview](../rbac/rbac_overview.md)
+- [Kubernetes NetworkPolicy Documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
