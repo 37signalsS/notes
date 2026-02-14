@@ -1,22 +1,33 @@
-# Хранение секретов в etcd
+# Хранение Secret в etcd
 
-## Как хранятся секреты в etcd
+## Определения
 
-**etcd** — это распределенное key-value хранилище, используемое Kubernetes для хранения всех объектов кластера.
+**etcd** — распределённое key-value хранилище Kubernetes для всех объектов кластера.
 
 **Структура хранения:**
 ```
 /registry/secrets/<namespace>/<secret-name>
 ```
 
-**Формат хранения:**
-- Secrets хранятся в etcd в виде serialized объектов
-- Данные в поле `data` закодированы в **Base64** (не шифрование!)
-- Без Encryption at Rest, любой, кто имеет доступ к etcd, может прочитать секреты
+**Формат:** Secret хранятся в etcd в сериализованном виде. Поле `data` закодировано в Base64 (не шифрование!).
 
-## Как просмотреть ресурсы в etcd
+> Без Encryption at Rest любой, имеющий доступ к etcd, может прочитать секреты. Подробнее о безопасности см. [Безопасность Secret](security.md).
 
-### Использование etcdctl
+## Практические сценарии
+
+### Просмотр ресурсов в etcd
+
+#### Через kubectl (рекомендуется)
+
+```bash
+kubectl get secret my-secret -o yaml
+
+echo "bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk" | base64 -d
+kubectl get secrets
+kubectl get secrets --all-namespaces
+```
+
+#### Через etcdctl
 
 ```bash
 # Установка etcdctl
@@ -57,6 +68,8 @@ kubectl get secrets --all-namespaces
 
 ### Шифрование at-rest (Encryption at Rest)
 
+**Это обязательный уровень защиты Secret в production.**
+
 ```yaml
 # /etc/kubernetes/encryption-config.yaml
 apiVersion: apiserver.config.k8s.io/v1
@@ -89,9 +102,24 @@ resources:
           secret: <new-base64-encoded-key>
         - name: key1
           secret: <old-base64-encoded-key>
+```
 
-# Перезапускаем API server
-# Все новые секреты шифруются key2
-# Перешифровываем старые:
+После перезапуска API-сервера перешифруйте старые секреты:
+
+```bash
 kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 ```
+
+## Дополнительная информация
+
+### Ограничения
+
+- Размер одного Secret: **до 1 MiB**
+- Для больших данных используйте внешние хранилища
+
+### Связанные темы
+
+- [Основы Secret](secrets_basics.md)
+- [Создание Secret](creating_secrets.md)
+- [Безопасность Secret](security.md)
+- [Внешние менеджеры](external_managers.md) — для исключения Secret из etcd

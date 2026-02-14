@@ -87,7 +87,7 @@ lsmod | grep vbox
 
 
 
-- Base/secrets/: creating_secrets.md, etcd_storage.md, external_managers.md, secrets_basics.md, security.md, using_secrets.md
+
 - Concepts/: control_plane_architecture.md, etcd_overview.md, kubernetes_crd.md, kubernetes_operators.md
 - Installation/Kubespray/additional_info_and_examples.md
 - Networking/Addons/metallb.md

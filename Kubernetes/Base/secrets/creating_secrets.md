@@ -1,10 +1,16 @@
-# Создание и использование Secret в Pod'ах
+# Создание Secret в Kubernetes
 
-## Способы создания
+## Определения
 
-### Декларативно (из манифеста) с `stringData` (рекомендуемый)
+**Secret** — объект Kubernetes для хранения конфиденциальных данных. Значения кодируются в Base64 (не шифрование!).
 
-Это наиболее удобный способ, так как Kubernetes автоматически кодирует значения в Base64.
+> Подробнее о безопасности см. [Безопасность Secret](security.md) и [Хранение в etcd](etcd_storage.md).
+
+## Практические сценарии
+
+### Декларативно с `stringData` (рекомендуемый)
+
+Kubernetes автоматически кодирует значения в Base64:
 
 ```yaml
 apiVersion: v1
@@ -18,9 +24,9 @@ stringData:
   password: "my-super-secret-password"
 ```
 
-### Декларативно (из манифеста) с `data`
+### Декларативно с `data`
 
-Значения должны быть предварительно закодированы в Base64.
+Значения необходимо предварительно закодировать в Base64 вручную:
 
 ```bash
 # Кодирование пароля в Base64
@@ -39,12 +45,30 @@ data:
   password: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
 ```
 
-### Императивно (из команды)
+### Императивно через kubectl
 
-`kubectl` автоматически кодирует значения в Base64.
+`kubectl` автоматически кодирует значения в Base64:
 
 ```bash
 kubectl create secret generic db-cred \
   --from-literal=username=app \
   --from-literal=password='S3cUr3!'
 ```
+
+## Дополнительная информация
+
+### Типы Secret
+
+По умолчанию используется тип `Opaque`. Другие типы см. в [Основах Secret](secrets_basics.md).
+
+### Использование созданных Secret
+
+- [Монтирование как том](using_secrets.md#как-файлы-в-томе-volume)
+- [Переменные окружения](using_secrets.md#как-переменные-окружения-env-envfrom)
+
+### Связанные темы
+
+- [Основы Secret](secrets_basics.md)
+- [Использование Secret](using_secrets.md)
+- [Хранение в etcd](etcd_storage.md)
+- [Безопасность](security.md)
