@@ -95,7 +95,6 @@ lsmod | grep vbox
 - MonitoringLogging/EFK/: fluentbit_deep_dive.md, fluentbit/(buffering_routing.md, fluentbit_configuration.md, fluent_comparison.md, parsing.md, selection_criteria.md)
 - Networking/Addons/metallb.md
 - Networking/Network/cni_kube_proxy_roles.md
-- Networking/Service/: service_overview.md, service_type_clusterip.md, service_type_loadbalancer.md, service_type_nodeport.md, service_types_summary.md
 - Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md
 - Scheduling/: qos_limit_and_requests.md, taints_and_tolerations.md
 - Storage/pv_and_pvc.md
