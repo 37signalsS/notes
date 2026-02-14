@@ -24,7 +24,7 @@
 * **Задача**: Предоставить единую, стабильную точку доступа (IP-адрес и DNS-имя) для группы Подов.
 * **При сбое**: `Service` отслеживает состояние своих эндпоинтов (Подов). Если Под становится недоступным, `Service` немедленно исключает его из списка и перестает направлять на него трафик. Как только новый Под запускается и становится готов, `Service` автоматически добавляет его в балансировщик.
 
-> Подробнее см. [Service](../Networking/service.md).
+> Подробнее см. [Service](../Networking/Service/service_overview.md).
 
 #### Probes (Пробы жизнеспособности и готовности)
 
@@ -200,7 +200,7 @@ spec:
 
 - [Deployment](./deployment.md) — управление stateless-приложениями
 - [StatefulSet](./statefulset.md) — управление stateful-приложениями
-- [Service](../Networking/service.md) — сетевой доступ к подам
+- [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
 - [Пробы (Probes)](./probes.md) — проверки жизнеспособности
 - [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
 - [Обслуживание узлов](../Operations/node_maintenance.md) — cordon и drain

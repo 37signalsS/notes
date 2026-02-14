@@ -4,7 +4,7 @@
 
 **Deployment** — это объект Kubernetes, который декларативно управляет жизненным циклом подов. Его основная задача — поддерживать заданное количество работающих экземпляров приложения (`replicas`) и обеспечивать их предсказуемое, контролируемое обновление.
 
-Схема управления: Deployment → [ReplicaSet](#replicaset-двигатель-для-deployment) → [Pod](./pod.md).
+Схема управления: Deployment → [ReplicaSet](#replicaset-двигатель-для-deployment) → [Pod](./Pod/pod_overview.md).
 
 Когда вы создаете или обновляете `Deployment`, он создает новый `ReplicaSet`. Этот `ReplicaSet`, в свою очередь, запускает поды в соответствии с указанным шаблоном (`template`). Старый `ReplicaSet` сохраняется для возможности отката.
 
@@ -194,7 +194,7 @@ kubectl rollout undo deployment/my-webapp --to-revision=2
 kubectl rollout restart deployment/my-webapp
 ```
 
-Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](./secret.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
+Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](../secrets/secrets_basics.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
 
 ### Быстрое обновление образа
 
@@ -253,7 +253,7 @@ Kubernetes снова запустит `Rolling Update` для возврата 
 - **Настройте `maxSurge` и `maxUnavailable`:**
   - `maxUnavailable: 0` — более безопасный вариант, гарантирующий отсутствие потери мощности, но требующий больше ресурсов (`maxSurge` должен быть > 0).
   - `maxSurge: 0` — экономит ресурсы, но может снизить производительность во время обновления.
-- **Настройте авто-масштабирование:** Для динамического управления количеством реплик используйте [Horizontal Pod Autoscaler](../Autoscaling/autoscaling_overview.md).
+- **Настройте авто-масштабирование:** Для динамического управления количеством реплик используйте [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md).
 - **Используйте `imagePullPolicy: IfNotPresent`:** Политика `Always` может привести к избыточной нагрузке на registry и проблемам с rate-лимитами, в то время как `IfNotPresent` является более предсказуемой для версионированных образов.
 - **Продвинутые стратегии:** Для минимизации рисков при выкатке критичных изменений используйте [расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md), такие как Blue/Green и Canary.
 
@@ -264,9 +264,9 @@ Kubernetes снова запустит `Rolling Update` для возврата 
 ## Связанные темы
 
 - [ConfigMap](./configmap.md) — внешняя конфигурация
-- [Secret](./secret.md) — конфиденциальные данные
+- [Secret](../secrets/secrets_basics.md) — конфиденциальные данные
 - [StatefulSet](./statefulset.md) — управление stateful-приложениями
 - [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
-- [Pod](./pod.md) — базовый объект развертывания
-- [Horizontal Pod Autoscaler](../Autoscaling/autoscaling_overview.md) — автоматическое масштабирование
+- [Pod](./Pod/pod_overview.md) — базовый объект развертывания
+- [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md) — автоматическое масштабирование
 - [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary

@@ -16,11 +16,11 @@ Prometheus предоставляет два принципиально разн
 
 #### Роли в Kubernetes Service Discovery
 
-*   `endpoints`: Обнаруживает все объекты `Endpoints`, связанные с [сервисами](../../Kubernetes/Networking/service.md). Наиболее частая роль для мониторинга.
-*   `service`: Обнаруживает все объекты [Service](../../Kubernetes/Networking/service.md).
-*   `pod`: Обнаруживает все объекты [Pod](../../Kubernetes/Base/pod.md).
+*   `endpoints`: Обнаруживает все объекты `Endpoints`, связанные с [сервисами](../../Kubernetes/Networking/Service/service_overview.md). Наиболее частая роль для мониторинга.
+*   `service`: Обнаруживает все объекты [Service](../../Kubernetes/Networking/Service/service_overview.md).
+*   `pod`: Обнаруживает все объекты [Pod](../../Kubernetes/Base/Pod/pod_overview.md).
 *   `node`: Обнаруживает все объекты `Node` кластера.
-*   `ingress`: Обнаруживает все объекты [Ingress](../../Kubernetes/Networking/ingress.md).
+*   `ingress`: Обнаруживает все объекты [Ingress](../../Kubernetes/Networking/Ingress/overview.md).
 
 В зависимости от выбранной роли, Prometheus получает набор целей (targets) и обогащает их метаданными.
 

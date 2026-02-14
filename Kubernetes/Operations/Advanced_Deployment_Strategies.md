@@ -80,14 +80,14 @@
 * **Сценарий использования**: Идеально подходит для приложений, где критически важна стабильность и минимизация влияния возможных ошибок на пользователей. Часто используется для внедрения новых функций, которые могут иметь непредсказуемое поведение в продакшене.
 * **Варианты реализации**:
   * **Нативный Kubernetes**: Может быть реализован с использованием нескольких `Deployment` и `Service`, но требует ручной настройки и сложного управления.
-  * **Service Mesh**: Решения, такие как [Istio](../../Service_Mesh/istio_architecture.md) и [Linkerd](../../Service_Mesh/linkerd_overview.md), позволяют гибко управлять маршрутизацией трафика на уровне L7.
-  * **Специализированные инструменты**: [Flagger](../../ToolsUtilities/deployment_tools.md), [ArgoCD](../../GitOps/ArgoCD.md) (с плагинами/интеграциями), [Spinnaker](../../ToolsUtilities/deployment_tools.md) предоставляют готовые механизмы для автоматизации Canary-развертываний.
+  * **Service Mesh**: Решения, такие как [Istio](../../Service_Mesh/istio_architecture.md) и [Linkerd](../../Service_Mesh/service_mesh_concepts.md), позволяют гибко управлять маршрутизацией трафика на уровне L7.
+  * **Специализированные инструменты**: Flagger, ArgoCD (с плагинами/интеграциями), Spinnaker предоставляют готовые механизмы для автоматизации Canary-развертываний.
 
 ### A/B Testing Deployment
 
 * **Реализация в Kubernetes**:
   * **Ingress Controller**: Некоторые Ingress-контроллеры (например, NGINX Ingress, Traefik, Ambassador) позволяют настраивать правила маршрутизации на основе хоста, пути, заголовков или cookie.
-  * **Service Mesh**: [Istio](../../Service_Mesh/istio_architecture.md) и [Linkerd](../../Service_Mesh/linkerd_overview.md) являются наиболее мощными инструментами для A/B тестирования, предоставляя детальный контроль над маршрутизацией трафика внутри кластера без изменения кода приложения.
+  * **Service Mesh**: [Istio](../../Service_Mesh/istio_architecture.md) и [Linkerd](../../Service_Mesh/service_mesh_concepts.md) являются наиболее мощными инструментами для A/B тестирования, предоставляя детальный контроль над маршрутизацией трафика внутри кластера без изменения кода приложения.
 
 ## Дополнительная информация
 
@@ -105,4 +105,4 @@
 * [Стратегии развертывания в CI/CD](../../CI-CD/Core_Concepts/deployment_strategies.md) — обзор всех стратегий
 * [Управление трафиком в Service Mesh](../../Service_Mesh/traffic_management.md) — техническая реализация канареечных развертываний
 * [ArgoCD для GitOps](../../GitOps/ArgoCD/argocd_overview.md) — автоматизация развертываний
-* [Инструменты деплоймента](../../ToolsUtilities/deployment_tools.md) — Flagger, Spinnaker и другие
+* Инструменты деплоймента — Flagger, Spinnaker и другие

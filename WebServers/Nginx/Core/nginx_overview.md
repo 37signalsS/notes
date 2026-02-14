@@ -118,7 +118,7 @@ server {
 
 #### VI. Комплексные сценарии (Scenarios)
 -   **[Создание защищенного Apt-репозитория с mTLS](../Scenarios/secure_apt_repository_guide.md)**: Пример комплексной настройки `reprepro`, `OpenSSL` и `Nginx`.
--   **[Nginx как Ingress-контроллер в Kubernetes](../../../Kubernetes/Networking/ingress.md)**: Управление внешним доступом к сервисам в кластере.
+-   **[Nginx как Ingress-контроллер в Kubernetes](../../../Kubernetes/Networking/Ingress/overview.md)**: Управление внешним доступом к сервисам в кластере.
 
 ### Связанные технологии
 -   **[Angie](../../Angie/angie_overview.md)**: Форк Nginx от ключевых бывших разработчиков.

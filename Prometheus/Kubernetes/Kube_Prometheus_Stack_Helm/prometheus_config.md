@@ -11,7 +11,7 @@
     *   `evaluationInterval`: Как часто Prometheus должен вычислять правила алертинга. Это значение также подбирается эмпирически. Например, если настроено правило на проверку количества ETCD-узлов (не менее трех), то при уменьшении их числа до двух, сигнал будет передан в AlertManager через указанный `evaluationInterval`.
 
 *   `prometheus.prometheusSpec.remoteWrite`, `remoteRead`:
-    *   **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../../VictoriaMetrics/victoria_metrics_overview.md), Thanos, M3DB).
+    * **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../../VictoriaMetrics/overview.md), Thanos, M3DB).
     *   **Рекомендация:** Использовать в production для долгосрочного хранения метрик, так как хранение больших объемов данных в самом Prometheus неэффективно и может привести к деградации производительности.
 
 *   `prometheus.prometheusSpec.storage`:

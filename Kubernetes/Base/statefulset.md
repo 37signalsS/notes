@@ -32,11 +32,11 @@
 1. **`StatefulSet`**: Главный оркестратор. Предоставляет подам стабильные имена и привязывает их к конкретным дискам.
 2. **`PersistentVolumeClaim` (PVC)**: "Запрос" пода на выделение диска. `StatefulSet` автоматически создает уникальный PVC для каждого своего пода.
 3. **`PersistentVolume` (PV)**: Физический "кусок" хранилища в кластере (NFS, Ceph, диск облачного провайдера), который удовлетворяет запрос PVC.
-4. **`Headless Service`**: Специальный тип [сервиса](../Networking/service.md) с `clusterIP: None`, который обеспечивает каждому поду стабильное и уникальное DNS-имя внутри кластера.
+4. **`Headless Service`**: Специальный тип [сервиса](../Networking/Service/service_overview.md) с `clusterIP: None`, который обеспечивает каждому поду стабильное и уникальное DNS-имя внутри кластера.
 
 ### Стабильные, уникальные сетевые идентификаторы
 
-* Каждый [под](./pod.md) в StatefulSet получает предсказуемое имя в формате `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`).
+* Каждый [под](./Pod/pod_overview.md) в StatefulSet получает предсказуемое имя в формате `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`).
 * Эти имена сохраняются при перезапуске и переносе подов, что критически важно для кластерных приложений.
 * Требует наличия **Headless Service** (сервис с `clusterIP: None`) для обеспечения уникальных DNS-имен для каждого пода.
 * Формат DNS-записи: `pod-ordinal.service.namespace.svc.cluster.local` (например, `web-0.my-svc.default.svc.cluster.local`)
@@ -222,8 +222,8 @@ nslookup my-app-0.my-app-headless
 ## Связанные темы
 
 - [Deployment](./deployment.md) — управление stateless-приложениями
-- [Pod](./pod.md) — базовый объект развертывания
+- [Pod](./Pod/pod_overview.md) — базовый объект развертывания
 - [PersistentVolumeClaim](./pv_and_pvc.md) — запросы на хранилище
-- [Service](../Networking/service.md) — сетевой доступ к подам
+- [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
 - [Высокая доступность](./high_availability.md) — PodDisruptionBudget, отказоустойчивость
 - [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов

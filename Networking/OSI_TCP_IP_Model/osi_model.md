@@ -17,7 +17,7 @@
 | **6. Представления (Presentation)** | **Данные (Data)** | См. [Уровень представления (L6)](./presentation_layer.md) | [SSL/TLS](../Protocols/tls.md), ASCII, JPEG, MPEG | Хосты, Шлюзы |
 | **5. Сеансовый (Session)** | **Данные (Data)** | См. [Сеансовый уровень (L5)](./session_layer.md) | NetBIOS, RPC, Sockets API | Хосты, Шлюзы |
 | **4. Транспортный (Transport)** | **Сегменты/Дейтаграммы**| См. [Транспортный уровень (L4)](./transport_layer.md) | TCP, UDP, SCTP | Хосты, L4-брандмауэры |
-| **3. Сетевой (Network)** | **Пакеты (Packets)** | См. [Сетевой уровень (L3)](./network_layer.md) | IPv4, IPv6, ICMP, [DHCP](../Protocols/dhcp.md) | Маршрутизатор, L3-коммутатор |
+| **3. Сетевой (Network)** | **Пакеты (Packets)** | См. [Сетевой уровень (L3)](./Network_layer/Concepts/network_layer_overview.md) | IPv4, IPv6, ICMP, [DHCP](../Protocols/dhcp.md) | Маршрутизатор, L3-коммутатор |
 | **2. Канальный (Data Link)** | **Кадры (Frames)** | См. [Канальный уровень (L2)](./data_link_layer.md) | Ethernet, Wi-Fi, [ARP](../Protocols/arp.md), [VLAN](../Protocols/vlan.md) | Коммутатор, Мост, Сетевая карта (NIC) |
 | **1. Физический (Physical)** | **Биты (Bits)** | См. [Физический уровень (L1)](./physical_layer.md) | Ethernet (кабель), USB, Bluetooth, Оптоволокно | Концентратор, Повторитель, Кабели |
 

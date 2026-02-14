@@ -24,5 +24,5 @@
     - Метрики → **Mimir** (через Prometheus)
 3. **Стек LGTM**: Набор инструментов для хранения и визуализации телеметрии. **Grafana** выступает в роли единого интерфейса для анализа всех собранных данных.
 4. **Вспомогательные компоненты**:
-    - **[Cert-Manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**: Управляет TLS-сертификатами для защищенного доступа к веб-интерфейсам через [Ingress](../../Kubernetes/Networking/ingress.md).
+    - **[Cert-Manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**: Управляет TLS-сертификатами для защищенного доступа к веб-интерфейсам через [Ingress](../../Kubernetes/Networking/Ingress/overview.md).
     - **[Local Docker Registry](../../Docker/docker_registries.md)**: Позволяет хранить и распространять кастомные Docker-образы внутри кластера без необходимости публиковать их в Docker Hub.

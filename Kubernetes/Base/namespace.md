@@ -31,8 +31,8 @@ metadata:
 Не все ресурсы в Kubernetes привязаны к `Namespace`.
 
 * **Namespaced-ресурсы** (существуют внутри `Namespace`):
-  * Рабочие нагрузки: [Pod](./pod.md), [Deployment](./deployment.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
-  * Конфигурация и сервисы: [Service](../Networking/service.md), [Ingress](../Networking/ingress.md), [ConfigMap](./configmap.md), [Secret](./secret.md), `PersistentVolumeClaim`.
+  * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./deployment.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
+  * Конфигурация и сервисы: [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
   * Политики: `NetworkPolicy`, `ResourceQuota`.
 
 * **Cluster-wide ресурсы** (существуют на уровне всего кластера):
@@ -54,7 +54,7 @@ metadata:
 Важно понимать, что `Namespace` **не обеспечивает** полную физическую изоляцию:
 
 * **Узлы (Nodes):** Поды из разных `Namespace` могут работать на одном и том же узле.
-* **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/network.md).
+* **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/Network/network_policy.md).
 
 ## Практические сценарии
 

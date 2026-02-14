@@ -44,7 +44,7 @@
 **Дополнительные материалы по стратегиям:**
 - **[Проверки здоровья и стратегии отката](../Deployment_Strategies/deployment_health_checks_and_rollback.md)**
 - **[Сравнение стратегий: Blue-Green vs. Canary](../Deployment_Strategies/comparison.md)**
-- **Реализация в Kubernetes:** [**Расширенные стратегии развертывания**](../Kubernetes/Operations/Advanced_Deployment_Strategies.md).
+- **Реализация в Kubernetes:** [**Расширенные стратегии развертывания**](../../Kubernetes/Operations/Advanced_Deployment_Strategies.md).
 
 ### Дополнительная информация
 

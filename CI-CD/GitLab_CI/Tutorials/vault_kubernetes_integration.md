@@ -30,7 +30,7 @@
     ```
 
 2. **Создайте и примените манифест для экземпляра Vault:**
-    Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../Kubernetes/Networking/ingress.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
+    Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../Kubernetes/Networking/Ingress/overview.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
 
     ```yaml
     # vault-instance.yaml

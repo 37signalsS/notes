@@ -148,6 +148,6 @@ git update-index --no-assume-unchanged <файл>
 
 ## Дополнительная информация
 
-* Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к документу [SSH (Secure Shell)](../Linux/Security/ssh.md).
-* Общие настройки SSH-клиента: [Конфигурация SSH-клиента](./Linux/Security/ssh/ssh_client_config.md)
-* Подробности об SSH-агенте: [Аутентификация по SSH: ssh-agent и управление ключами](./Linux/Security/ssh/ssh_authentication.md)
+* Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к документу [SSH (Secure Shell)](../Linux/Security/ssh/ssh_overview.md).
+* Общие настройки SSH-клиента: [Конфигурация SSH-клиента](../Linux/Security/ssh/ssh_client_config.md)
+* Подробности об SSH-агенте: [Аутентификация по SSH: ssh-agent и управление ключами](../Linux/Security/ssh/ssh_session_management.md)
