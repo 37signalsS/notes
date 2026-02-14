@@ -59,7 +59,7 @@ kubectl create secret generic db-cred \
 
 ### Типы Secret
 
-По умолчанию используется тип `Opaque`. Другие типы см. в [Основах Secret](secrets_basics.md).
+По умолчанию используется тип `Opaque`. Другие типы см. в [Основах Secret](secrets_basics.md#типы-secret).
 
 ### Использование созданных Secret
 

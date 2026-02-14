@@ -48,24 +48,6 @@ etcdctl --endpoints=https://127.0.0.1:2379 \
   get /registry/secrets --prefix --keys-only
 ```
 
-### Просмотр через API Server (рекомендуется)
-
-```bash
-# Просмотр секрета через kubectl (автоматически декодирует base64)
-kubectl get secret my-secret -o yaml
-
-# Декодирование значения вручную
-echo "bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk" | base64 -d
-
-# Просмотр всех секретов в namespace
-kubectl get secrets
-
-# Просмотр секретов во всех namespaces
-kubectl get secrets --all-namespaces
-```
-
-## Безопасность etcd
-
 ### Шифрование at-rest (Encryption at Rest)
 
 **Это обязательный уровень защиты Secret в production.**
@@ -114,8 +96,7 @@ kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 
 ### Ограничения
 
-- Размер одного Secret: **до 1 MiB**
-- Для больших данных используйте внешние хранилища
+Подробнее об ограничениях размера Secret см. в [Основах Secret](secrets_basics.md#ограничения).
 
 ### Связанные темы
 
