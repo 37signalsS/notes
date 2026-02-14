@@ -86,7 +86,7 @@ lsmod | grep vbox
 
 
 
-- Autoscaling/: hpa_detailed.md, pod_disruption_budget.md, pod_distribution.md, scaling_patterns.md, vpa_detailed.md
+
 - Base/: configmap.md, deployment.md, high_availability.md, secret.md, statefulset.md
 - Base/Pod/: pod_labels_annotations_node_selection.md, pod_lifecycle_and_state.md
 - Base/secrets/: creating_secrets.md, etcd_storage.md, external_managers.md, secrets_basics.md, security.md, using_secrets.md
