@@ -1,25 +1,62 @@
 # Парсинг логов в Fluent Bit
 
-Парсинг — это преобразование сырой строки лога в структурированную запись с полями и корректным временем события.
+## Определения
 
-## Типы плагинов и место парсинга
+**Парсинг** — преобразование сырой строки лога в структурированную запись с полями.
 
-- **Входные плагины:** `tail`, `systemd`, `tcp`, `forward`
-- **Парсеры:** Секции `[PARSER]` и `[MULTILINE_PARSER]`
+**Парсер (Parser)** — конфигурационная секция `[PARSER]`, определяющая правила разбора формата.
 
-## Распространённые форматы и парсеры
+**Multiline Parser** — парсер для объединения многострочных записей (например, стектрейсов).
 
-| Формат | Fluent Bit (Parser) | Примечание |
-| :--- | :--- | :--- |
-| **JSON** | `json` | Быстрый и надёжный |
-| **Docker (JSON file)** | `docker` | Ключ `log` содержит строку приложения |
-| **CRI (K8s containerd)** | `cri` | Раскладывает `ts/stream/log` |
-| **Регулярные выражения** | `regex` | Гибкость для произвольных форматов |
-| **LTSV** | `ltsv` | Лог с `key:value` парами |
-| **CSV** | `csv` | Требует определения колонок |
-| **Syslog** | `syslog` | Может идти как input и как parse |
+**Time Key** — поле, содержащее timestamp события.
 
-## Пример: парсинг CRI и многострочных стектрейсов Java
+**Time Format** — формат даты/времени для парсинга timestamp.
+
+## Основные концепции
+
+### Типы парсеров
+
+| Формат | Тип Parser | Применение |
+|--------|-----------|------------|
+| JSON | `json` | Структурированные логи |
+| Docker | `docker` | Логи контейнеров Docker |
+| CRI | `cri` или `regex` | Логи containerd/CRI-O |
+| Regex | `regex` | Произвольные форматы |
+| LTSV | `ltsv` | Labelled Tab-separated Values |
+| CSV | `csv` | Табличные данные |
+| Syslog | `syslog` | Системные логи RFC3164/RFC5424 |
+
+### Где применяется парсинг
+
+1. **На входе** (`[INPUT]`): параметр `Parser`
+2. **В фильтре** (`[FILTER]`): плагин `parser`
+3. **Автоматически**: через аннотации Kubernetes (`K8S-Logging.Parser`)
+
+### Структура парсера
+
+```ini
+[PARSER]
+    Name        <имя>
+    Format      <тип>
+    Time_Key    <поле_времени>
+    Time_Format <формат_времени>
+```
+
+### Multiline парсинг
+
+Используется для объединения связанных строк:
+
+```ini
+[MULTILINE_PARSER]
+    Name          <имя>
+    Type          regex
+    Flush_Timeout <мс>
+    Rule          "<состояние>" "<регекс>" "<след_состояние>"
+```
+
+## Практические сценарии
+
+### Сценарий 1: Парсинг Docker-логов
 
 ```yaml
 config:
@@ -29,38 +66,111 @@ config:
         Format      json
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L
-    
+  
+  inputs: |
+    [INPUT]
+        Name   tail
+        Path   /var/log/containers/*.log
+        Tag    kube.*
+        Parser docker
+```
+
+### Сценарий 2: Парсинг CRI-формата (containerd)
+
+```yaml
+config:
+  customParsers: |
     [PARSER]
         Name        cri
         Format      regex
         Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+  
+  inputs: |
+    [INPUT]
+        Name   tail
+        Path   /var/log/containers/*.log
+        Tag    kube.*
+        Parser cri
+```
 
+### Сценарий 3: Многострочные Java-стектрейсы
+
+```yaml
+config:
+  customParsers: |
     [MULTILINE_PARSER]
         Name          java_stack
         Type          regex
         Flush_Timeout 5000
         Rule          "start_state"   "/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d+Z/."  "cont"
         Rule          "cont"          "/^\s+at\s+|^\s*Caused by:/."                   "cont"
-
+  
   inputs: |
     [INPUT]
-        Name                tail
-        Path                /var/log/containers/*.log
-        Tag                 kube.*
-        Parser              cri
-        Multiline           On
-        Multiline.Parser    java_stack
+        Name             tail
+        Path             /var/log/containers/*.log
+        Tag              kube.*
+        Multiline        On
+        Multiline.Parser java_stack
 ```
 
-Здесь `Parser cri` разбирает стандартный формат логов CRI, а `Multiline.Parser java_stack` "склеивает" строки, относящиеся к одному Java-исключению.
+**Логика работы:**
+- `start_state` — начало новой записи (timestamp)
+- `cont` — продолжение предыдущей записи (строки `at` или `Caused by`)
+- `Flush_Timeout` — принудительная отправка через 5 секунд
 
-## Практические ориентиры
+### Сценарий 4: Парсинг через фильтр
 
-- Предпочтителен изначально структурированный лог (JSON, LTSV)
-- Указывайте `time_key` и `time_format`
-- Включайте объединение многострочных записей для стектрейсов
-- Сохраняйте часть «сырого» сообщения в отдельном поле для отладки
-- Нормализуйте ключи и уровни логирования
-- Избегайте чрезмерно сложных регулярных выражений на горячих путях
+```yaml
+config:
+  inputs: |
+    [INPUT]
+        Name tcp
+        Port 5170
+        Tag  app.*
+  
+  filters: |
+    [FILTER]
+        Name   parser
+        Match  app.*
+        Parser json
+        Key_Name log
+        Reserve_Data On
+```
+
+### Сценарий 5: Пользовательский формат логов
+
+```yaml
+config:
+  customParsers: |
+    [PARSER]
+        Name        myapp
+        Format      regex
+        Regex       ^\[(?<level>\w+)\] (?<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%d %H:%M:%S
+  
+  inputs: |
+    [INPUT]
+        Name   tail
+        Path   /var/log/myapp/*.log
+        Tag    app.myapp
+        Parser myapp
+```
+
+## Дополнительная информация
+
+- Конфигурация Fluent Bit: [fluentbit_configuration.md](./fluentbit_configuration.md)
+- Буферизация и маршрутизация: [buffering_routing.md](./buffering_routing.md)
+- Сравнение с Fluentd: [fluent_comparison.md](./fluent_comparison.md)
+- Критерии выбора: [selection_criteria.md](./selection_criteria.md)
+
+**Рекомендации:**
+- Предпочитайте изначально структурированные логи (JSON)
+- Всегда указывайте `Time_Key` и `Time_Format`
+- Включайте `Multiline` для приложений со стектрейсами
+- Сохраняйте сырые сообщения при отладке
+- Нормализуйте уровни логирования
+- Избегайте сложных регулярных выражений на высоких нагрузках

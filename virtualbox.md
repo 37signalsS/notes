@@ -92,7 +92,6 @@ lsmod | grep vbox
 - Base/secrets/: creating_secrets.md, etcd_storage.md, external_managers.md, secrets_basics.md, security.md, using_secrets.md
 - Concepts/: control_plane_architecture.md, etcd_overview.md, kubernetes_crd.md, kubernetes_operators.md
 - Installation/Kubespray/additional_info_and_examples.md
-- MonitoringLogging/EFK/: fluentbit_deep_dive.md, fluentbit/(buffering_routing.md, fluentbit_configuration.md, fluent_comparison.md, parsing.md, selection_criteria.md)
 - Networking/Addons/metallb.md
 - Networking/Network/cni_kube_proxy_roles.md
 - Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md
