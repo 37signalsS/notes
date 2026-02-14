@@ -1,21 +1,3 @@
-AI/gemini_cli.md
-AI/ollama.md
-Anki/angie_cards.csv
-Anki/ansible_cards.csv
-Anki/concepts_cards.csv
-Anki/consul_cards.csv
-Anki/database_cards.csv
-Anki/git_cards.csv
-Anki/jaeger_cards.csv
-Anki/kafka_cards.csv
-Anki/loki_cards.csv
-Anki/nginx_cards.csv
-Anki/podman_cards.csv
-Anki/security_cards.csv
-Anki/service_mesh_cards.csv
-Anki/testing_cards.csv
-Anki/vault_cards.csv
-Anki/webservers_cards.csv
 Ansible/ansible_advanced_role_structure.md
 Ansible/ansible_bad_practices.md
 Ansible/ansible_buildah_image_building.md
@@ -660,6 +642,7 @@ Linux/Diagnostics/Troubleshooting/linux_performance_diagnostics_case.md
 Linux/Diagnostics/Troubleshooting/reboot_troubleshooting.md
 Linux/Diagnostics/Troubleshooting/tracing_and_debugging.md
 Linux/Diagnostics/Troubleshooting/troubleshooting_too_many_open_files.md
+Linux/Diagnostics/sos_report.md
 Linux/FileSystems/data_recovery.md
 Linux/FileSystems/device_types.md
 Linux/FileSystems/disk_quotas.md
@@ -1122,4 +1105,3 @@ Zabbix/zabbix_database_monitoring.md
 Zabbix/zabbix_overview.md
 Zabbix/zabbix_postgresql_monitoring.md
 Zabbix/zabbix_troubleshooting_and_performance_tuning.md
-Отзыв и Запрос ПС к Хэдхантер.docx
