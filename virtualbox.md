@@ -88,8 +88,8 @@ lsmod | grep vbox
 
 
 
-- Concepts/: control_plane_architecture.md, etcd_overview.md, kubernetes_crd.md, kubernetes_operators.md
-- Installation/Kubespray/additional_info_and_examples.md
+
+
 - Networking/Addons/metallb.md
 - Networking/Network/cni_kube_proxy_roles.md
 - Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md

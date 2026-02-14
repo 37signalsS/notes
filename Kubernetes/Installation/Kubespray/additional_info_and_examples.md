@@ -1,19 +1,34 @@
 # Kubespray: Дополнительная информация и примеры
 
-## 4. Дополнительная информация
+## 1. Определения
 
-### 4.1. Системные поды после установки
+**Системные поды** — поды, развертываемые в пространстве имен `kube-system` для работы кластера Kubernetes.
 
-После установки в пространстве имен `kube-system` будут развернуты системные поды. Их состав зависит от конфигурации.
+**Addons** — дополнительные компоненты, устанавливаемые в кластер (Ingress, MetalLB, Dashboard).
+
+## 2. Основные концепции
+
+### Системные компоненты
 
 * **Control Plane (Static Pods):** `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*`.
-* **Сетевые компоненты:** `kube-flannel-*` (или Calico, Cilium), `kube-proxy-*`.
+* **Сетевые компоненты:** CNI-плагин (Flannel, Calico, Cilium), `kube-proxy-*`.
 * **DNS и сервисы:** `coredns-*`, `dns-autoscaler`, `nodelocaldns-*`.
-* **Дополнения (Addons):** `kubernetes-dashboard-*`, `nginx-proxy-ingress-*` и др.
+* **Дополнения (Addons):** `kubernetes-dashboard-*`, Ingress-контроллер и др.
 
-Подробнее о пространствах имен и о том, как Kubespray их использует, можно прочитать в документе [о пространствах имен](../Base/namespace.md#namespaces-и-kubespray).
+Подробнее о пространствах имен в [документации](../../Base/namespace.md).
 
-### 4.2. Пример: Выделенные ноды для Ingress
+## 3. Практические сценарии
+
+### 3.1. Системные поды после установки
+
+После установки в пространстве имен `kube-system` будут развернуты системные поды. Их состав зависит от конфигурации:
+
+* **Control Plane (Static Pods):** `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*`.
+* **Сетевые компоненты:** CNI-плагин (`kube-flannel-*`, Calico, Cilium), `kube-proxy-*`.
+* **DNS и сервисы:** `coredns-*`, `dns-autoscaler`, `nodelocaldns-*`.
+* **Дополнения (Addons):** `kubernetes-dashboard-*`, Ingress-контроллер и др.
+
+### 3.2. Пример: Выделенные ноды для Ingress
 
 Этот подход использует `taints` и `tolerations` для изоляции Ingress-подов на выделенных узлах. Подробное объяснение механизма: **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)**.
 
@@ -48,9 +63,11 @@ node_taints:
   - "node-role.kubernetes.io/ingress:NoSchedule"
 ```
 
-### 4.3. Пример: Конфигурация MetalLB
+### 3.3. Пример: Конфигурация MetalLB
 
 **MetalLB** — реализация балансировщика нагрузки для bare-metal кластеров. Подробнее о компонентах, режимах работы и конфигурации см. в [MetalLB — детальная документация](../../Networking/Addons/metallb.md).
+
+**Пример конфигурации в Kubespray:**
 
 **`group_vars/k8s-cluster/addons.yml`**
 
@@ -59,7 +76,7 @@ node_taints:
 metallb_enabled: true
 metallb_speaker_enabled: true
 
-# Определяем пулы IP-адресов, которые MetalLB будет использовать
+# Определяем пулы IP-адресов
 metallb_config:
   address_pools:
     primary:
@@ -72,3 +89,9 @@ metallb_config:
 * `metallb_enabled: true`: Включает установку MetalLB.
 * `metallb_speaker_enabled: true`: Включает компонент `speaker`, который отвечает за анонсирование IP-адресов по протоколам L2 (ARP) или BGP.
 * `metallb_config`: Содержит конфигурацию пулов адресов. В данном примере определен один пул `primary` с двумя IP-адресами, которые могут быть назначены сервисам типа `LoadBalancer`.
+
+## 4. Дополнительная информация
+
+* [Обзор Kubespray](./overview.md) — определения и основные концепции.
+* [Установка и конфигурация](./installation_and_config.md) — развертывание кластера.
+* [Управление кластером](./cluster_management.md) — масштабирование и обновление.
