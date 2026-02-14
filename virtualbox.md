@@ -90,7 +90,7 @@ lsmod | grep vbox
 
 
 
-- Networking/Addons/metallb.md
+
 - Networking/Network/cni_kube_proxy_roles.md
 - Operations/: Advanced_Deployment_Strategies.md, node_maintenance.md
 - Scheduling/: qos_limit_and_requests.md, taints_and_tolerations.md
