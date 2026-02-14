@@ -50,4 +50,4 @@ salt '<target-minion>' state.apply users
 необходимых серверах.
 
 Подробнее о механизме применения состояний и зависимостях читайте в документе
-**[[Highstate и порядок выполнения|Highstate_and_Execution_Order.md]]**.
+**[Highstate и порядок выполнения](Highstate_and_Execution_Order.md)**.

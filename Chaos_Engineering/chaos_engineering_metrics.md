@@ -55,5 +55,5 @@ p99_control = histogram_quantile(0.99, sum by (le) (rate(http_request_duration_s
 
 ### Связанные концепции
 
-*   [[chaos_engineering_overview.md|Обзор Chaos Engineering]]
-*   [[chaos_monkey_concept.md|Концепция Chaos Monkey]]
+*   [Обзор Chaos Engineering](chaos_engineering_overview.md)
+*   [Концепция Chaos Monkey](chaos_monkey_concept.md)

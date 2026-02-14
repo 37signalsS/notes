@@ -69,4 +69,4 @@ spec:
 | Azure Chaos Studio | Azure | Облачный сервис | Да | Сервис |
 
 ### Связанные концепции
-*   [[chaos_engineering_overview.md|Обзор Chaos Engineering]]
+*   [Обзор Chaos Engineering](chaos_engineering_overview.md)
