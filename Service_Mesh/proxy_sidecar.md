@@ -1,130 +1,71 @@
-# Proxy Sidecar: Envoy, Linkerd Proxy
+# Proxy Sidecar: Реализации и Сценарии
 
-Прокси в модели sidecar — это прозрачный сетевой посредник, запускаемый рядом с приложением в одном Pod, через который проходит исходящий и входящий трафик. Перехват осуществляется на уровне сетевой плоскости узла (например, с помощью iptables), а логика маршрутизации, балансировки, шифрования и наблюдаемости реализуется в самом прокси. В современных service mesh основными реализациями служат Envoy (обычно в составе Istio) и Linkerd Proxy (linkerd2-proxy).
+## Определения
 
-## Архитектура и протоколы
+**Proxy Sidecar** — это прозрачный сетевой прокси, который развертывается вместе с каждым экземпляром приложения (в одном Pod в Kubernetes) и обрабатывает весь его входящий и исходящий трафик. Этот паттерн является основой плоскости данных (Data Plane) в большинстве [Service Mesh](./service_mesh_concepts.md).
 
-### Envoy
+Перехват трафика обычно настраивается на уровне сетевого пространства имен (например, с помощью `iptables`), что делает работу прокси прозрачной для приложения.
 
--   Высокопроизводительный L4/L7-прокси на C++ с модульной “filter chain”.
--   Поддержка HTTP/1.1, HTTP/2, HTTP/3, gRPC, TCP/UDP, TLS/mTLS.
--   Динамическая конфигурация через семейство xDS (кластеры, маршруты, листенеры).
--   Расширяемость: HTTP-фильтры, Lua/WASM-плагины, продвинутые политики ретраев и circuit breaking.
+## Основные концепции: Envoy vs Linkerd-proxy
 
-### Linkerd Proxy
+В современных service mesh доминируют две реализации sidecar-прокси: **Envoy** (используется в Istio) и **linkerd2-proxy** (используется в Linkerd).
 
--   Компактный прокси на Rust с акцентом на безопасность и малый overhead.
--   Поддержка HTTP/1.x, HTTP/2, gRPC; TCP-проброс; автоматический mTLS.
--   Простая модель: большинство настроек выносится в контроллер; прокси получает конфигурацию автоматически.
--   Без плагинов и сложных пользовательских фильтров, безопасные дефолты.
-
-Сравнение по ключевым критериям:
-
-| Критерий | Envoy | Linkerd Proxy |
+| Критерий | Envoy | Linkerd-proxy |
 | :--- | :--- | :--- |
-| **Конфигурация** | xDS, богатая модель | Контроллер + CRD, минимум ручных настроек |
-| **Протоколы** | HTTP/1–3, gRPC, TCP/UDP | HTTP/1–2, gRPC, TCP |
-| **Расширяемость** | Фильтры, WASM | Ограниченная, без плагинов |
-| **Нагрузка** | Выше, гибкость | Ниже, минимализм |
-| **mTLS** | Политики Istio, SPIFFE-идентичности | Встроенный по умолчанию |
+| **Архитектура** | Высокопроизводительный L4/L7-прокси на C++ с модульной архитектурой "filter chain". | Компактный и сверхбыстрый L4/L7-прокси на Rust, с фокусом на безопасность и низкие накладные расходы. |
+| **Конфигурация** | Динамическая, через семейство протоколов xDS. Обладает богатой и гибкой моделью. | Управляется централизованно через control plane. Модель конфигурации минималистична. |
+| **Протоколы** | HTTP/1.1, HTTP/2, HTTP/3, gRPC, TCP, UDP. | HTTP/1.x, HTTP/2, gRPC, TCP. |
+| **Расширяемость**| Высокая: кастомные фильтры, Lua, WebAssembly (WASM). | Ограниченная, философия "безопасных настроек по умолчанию". |
+| **mTLS** | Управляется плоскостью управления (например, Istio), поддерживает SPIFFE-идентичности. | Встроен и включен по умолчанию для всего TCP-трафика. |
 
-## Политики, безопасность и маршрутизация
+Более детальное сравнение платформ доступно в документе [Сравнение Istio и Linkerd](./istio_vs_linkerd.md).
 
-Оба прокси реализуют mTLS для сквозного шифрования и идентификации сервисов. В Envoy идентичности и политики часто управляются через контрольную плоскость (например, Istio), применяются AuthorizationPolicy, DestinationRule, VirtualService. Linkerd использует собственные идентичности, а для поведенческих характеристик маршрутов применяет ServiceProfile, транслируемый в прокси через контроллер.
+## Практические сценарии
 
-Поведение при сбоях включает ретраи с джиттером, таймауты, circuit breaking и outlier detection. В Envoy эти механизмы богаче и тоньше настраиваются; в Linkerd — проще, но покрывают типовые сценарии деградации.
+### Внедрение (Injection) Sidecar в Kubernetes
 
-## Наблюдаемость и отладка
+Внедрение прокси обычно автоматизировано плоскостью управления.
 
-### Envoy:
-
--   Метрики и трассировка через встроенные статистики и экспортеры.
--   Доступ к административному интерфейсу и диагностике.
--   Детальные access-logs и поддержка заголовков трассировки.
-
-### Linkerd:
-
--   Метрики из коробки (latency, success rate, RPS), диаграммы golden signals.
--   Диагностические инструменты tap и top для наблюдения за трафиком.
--   Минимум конфигурации, акцент на безопасные стандартные метрики.
-
-Примеры диагностики:
-
+**Istio:**
+Требуется добавить метку `istio-injection=enabled` к `namespace`:
 ```bash
-# Envoy admin (внутри sidecar-контейнера)
+kubectl label namespace my-app istio-injection=enabled
+```
+
+**Linkerd:**
+Требуется добавить аннотацию `linkerd.io/inject: enabled` к объекту (например, Deployment):
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  annotations:
+    linkerd.io/inject: enabled
+...
+```
+
+### Диагностика трафика
+
+**Envoy:**
+Доступ к административному интерфейсу для получения статистики и конфигурации (выполняется внутри sidecar-контейнера).
+```bash
+# Статистика по всем метрикам
 curl http://127.0.0.1:15000/stats
+
+# Список сконфигурированных кластеров
 curl http://127.0.0.1:15000/clusters
 ```
 
+**Linkerd:**
+Используется встроенный CLI для получения "золотых сигналов" и наблюдения за трафиком в реальном времени.
 ```bash
-# Linkerd наблюдение
-linkerd stat deploy -n app
-linkerd tap deploy/backend -n app
+# Статистика по всем Deployment в namespace
+linkerd stat deploy -n my-app
+
+# "Прослушивание" трафика к конкретному сервису
+linkerd tap deploy/my-backend -n my-app
 ```
 
-## Примеры конфигурации
+## Дополнительная информация
 
-Автовпрыск sidecar в Kubernetes:
-
-```bash
-# Istio (метка на namespace)
-kubectl label namespace app istio-injection=enabled
-```
-
-```yaml
-# Linkerd (аннотация на Pod/Deployment)
-metadata:
-  annotations:
-    linkerd.io/inject: enabled
-```
-
-Минимальный статический Envoy bootstrap (для понимания структуры):
-
-```yaml
-static_resources:
-  listeners:
-  - name: inbound-http
-    address: { socket_address: { address: 0.0.0.0, port_value: 15006 } }
-    filter_chains:
-    - filters:
-      - name: envoy.filters.network.http_connection_manager
-        typed_config:
-          stat_prefix: inbound_http
-          route_config:
-            name: local_route
-            virtual_hosts:
-            - name: app
-              domains: ["*"]
-              routes:
-              - match: { prefix: "/" }
-                route: { cluster: local_service }
-          http_filters:
-          - name: envoy.filters.http.router
-  clusters:
-  - name: local_service
-    connect_timeout: 1s
-    type: STATIC
-    load_assignment:
-      cluster_name: local_service
-      endpoints:
-      - lb_endpoints:
-        - endpoint: { address: { socket_address: { address: 127.0.0.1, port_value: 8080 } } }
-```
-
-ServiceProfile для Linkerd с маршрутными таймаутами:
-
-```yaml
-apiVersion: linkerd.io/v1alpha2
-kind: ServiceProfile
-metadata:
-  name: backend.default.svc.cluster.local
-  namespace: default
-spec:
-  routes:
-  - name: GET /api/v1/items
-    condition:
-      method: GET
-      pathRegex: /api/v1/items
-    isRetryable: true
-    timeout: 2s
-```
+Примеры конфигурационных ресурсов, таких как `ServiceProfile` для Linkerd, которые определяют поведение прокси (таймауты, ретраи), находятся в документе, посвященном [Управлению трафиком](./traffic_management.md). Архитектура Istio и его CRD, управляющие Envoy, описаны в [Istio: компоненты и архитектура](./istio_architecture.md).

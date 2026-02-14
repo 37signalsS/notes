@@ -1,43 +1,8 @@
 # Архитектура защиты и Best Practices
 
-## Layered Defense (Защита в глубину)
+**Этот документ был объединен с основным файлом о DDoS.**
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DDoS Protection                          │
-│         (CloudFlare/AWS Shield/Imperva)                     │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                        WAF                                  │
-│              (Application Layer Protection)                 │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                    Load Balancer                            │
-│              (Rate Limiting, Health Checks)                 │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────────┐
-│                    Application                              │
-│          (Input Validation, Authentication)                 │
-└─────────────────────────────────────────────────────────────┘
-```
+Вся информация по этой теме теперь находится в следующих файлах:
 
-## Best Practices
-
-1. **Defense in depth:** Многоуровневая защита
-2. **Monitoring и alerting:** Отслеживание аномалий
-3. **Incident response plan:** План реагирования на инциденты
-4. **Regular testing:** Тестирование защиты (stress testing)
-5. **Capacity planning:** Запас мощности для поглощения атак
-6. **Geographic filtering:** Блокировка трафика из подозрительных регионов
-
-## Метрики для мониторинга
-
-- Requests per second (RPS)
-- Bandwidth utilization
-- Connection count per IP
-- Error rate (4xx, 5xx)
-- Response time (latency)
-- Geographic distribution of traffic
+-   [DDoS (Distributed Denial of Service)](./ddos.md)
+-   [Web Application Firewall (WAF)](./waf.md)

@@ -1,15 +1,18 @@
-# Инструменты для генерации отчётов (JUnit, Allure)
+# Инструменты для генерации отчётов о тестировании
 
-## Обзор
+## Определения
 
-Тестовые отчёты позволяют конвейеру автоматически интерпретировать результаты прогона, визуализировать падения и делать регресс-анализ. На практике используются два класса артефактов: машинно-читаемые отчёты в формате JUnit XML и человеко-ориентированные интерактивные отчёты Allure.
+- **Тестовый отчёт (Test Report)**: Это документ, который содержит результаты выполнения тестов. Отчёты бывают двух видов:
+    1.  **Машиночитаемые (JUnit XML)**: Предназначены для автоматической обработки CI/CD-системами. Позволяют определить статус сборки (успех/неудача) и отобразить базовую статистику.
+    2.  **Человекочитаемые (Allure Report)**: Интерактивные HTML-отчёты, предназначенные для аналитики, отладки и визуализации. Содержат детальную информацию, включая шаги выполнения, вложения (скриншоты, логи) и историю прогонов.
 
-## JUnit XML: стандарт де-факто для CI
+## Основные концепции
 
-JUnit — это не только фреймворк для Java-тестов, но и формат XML-отчёта, который поддерживают большинство рантаймов и CI-систем. Многие не-Java инструменты умеют экспортировать в JUnit: pytest, Cypress, PHPUnit, Go test и др. В отчёте фиксируются тестовые сьюты, кейсы, статусы, длительности, сообщения об ошибках и логи.
+### JUnit XML: стандарт для CI
 
-### Минимальный фрагмент JUnit XML
+Формат **JUnit XML** стал стандартом де-факто для интеграции результатов тестов с CI-системами, такими как Jenkins, GitLab CI, GitHub Actions. Большинство тестовых фреймворков поддерживают экспорт в этот формат.
 
+**Пример фрагмента JUnit XML:**
 ```xml
 <testsuite name="api" tests="3" failures="1" time="1.234">
   <testcase classname="api.users" name="test_get_user" time="0.120"/>
@@ -22,122 +25,49 @@ JUnit — это не только фреймворк для Java-тестов, 
 </testsuite>
 ```
 
-Этот формат напрямую понимают Jenkins (шаг junit), GitLab (artifacts:reports:junit), GitHub Actions (анализ артефактов сторонними действиями).
+### Allure Report: продвинутая аналитика
 
-### Генерация примерами
+**Allure** создаёт подробные интерактивные отчёты, которые упрощают анализ упавших тестов и отслеживание качества продукта во времени.
 
-```bash
-# Pytest
-pytest --junitxml=report.xml
+**Ключевые особенности:**
+- **Детализация**: Шаги выполнения, временные метки, прикреплённые логи и скриншоты.
+- **История и тренды**: Графики стабильности тестов и динамики времени выполнения.
+- **Классификация**: Возможность категоризировать дефекты (например, продуктовые баги, flaky-тесты).
 
-# Maven Surefire/FailSafe (JUnit/TestNG)
-mvn -DskipTests=false test
-# отчёты: target/surefire-reports/*.xml
-```
+## Практические сценарии
 
-## Allure: интерактивные отчёты и аналитика
+### Генерация отчётов
 
-Allure формирует детальные отчёты с шагами, прикреплениями, категориями дефектов, флейки-детектором и историей. Поток типовой: тестовый раннер сохраняет результаты в allure-results (JSON + вложения), затем генератор строит HTML-отчёт.
+| Инструмент | Команда для генерации |
+|---|---|
+| **Pytest** | `pytest --junitxml=report.xml --alluredir=allure-results` |
+| **Maven** | `mvn test` (генерирует XML в `target/surefire-reports`) |
+| **Allure** | `allure generate allure-results -o allure-report --clean` |
 
-### Особенности
+### Интеграция в GitLab CI
 
-- Структура по сьютам, фичам, история запуска и тренды
-- Вложения: скриншоты, запросы/ответы, логи
-- Лейблы и ссылки на задачи для трассируемости
-
-### Генерация (Python)
-
-```bash
-pip install allure-pytest
-pytest --alluredir=allure-results
-allure generate allure-results -o allure-report --clean
-```
-
-### Java-проекты (JUnit 5)
-
-```xml
-<!-- pom.xml -->
-<dependencies>
-  <dependency>
-    <groupId>io.qameta.allure</groupId>
-    <artifactId>allure-junit5</artifactId>
-  </dependency>
-</dependencies>
-```
-
-```bash
-mvn test
-# результаты появятся в target/allure-results
-allure generate target/allure-results -o target/allure-report --clean
-```
-
-## Сравнение
-
-| Критерий | JUnit XML | Allure |
-|----------|-----------|--------|
-| Назначение | Машинный формат для CI | Интерактивная аналитика |
-| Содержимое | Статусы, тайминги, логи | Шаги, вложения, истории, категории |
-| Поддержка в CI | Нативная публикация | Плагин/генерация + артефакт |
-| Вес/скорость | Минимальные | Выше из‑за HTML и вложений |
-
-## Интеграция в пайплайны
-
-### Jenkins (Declarative Pipeline)
-
-```groovy
-pipeline {
-  stages {
-    stage('Test') {
-      steps {
-        sh 'pytest --junitxml=report.xml --alluredir=allure-results'
-      }
-      post {
-        always {
-          junit 'report.xml'
-          allure includeProperties: false, results: [[path: 'allure-results']]
-        }
-      }
-    }
-  }
-}
-```
-
-### GitLab CI
+Этот пример показывает, как в рамках одного задания генерируются оба типа отчётов, которые затем используются GitLab.
 
 ```yaml
 test:
-  image: python:3.12
   script:
     - pip install pytest allure-pytest
     - pytest --junitxml=report.xml --alluredir=allure-results
     - allure generate allure-results -o allure-report --clean
   artifacts:
+    when: always
     reports:
-      junit: report.xml
+      junit: report.xml  # Для интеграции с UI GitLab
     paths:
-      - allure-report
+      - allure-report/   # Для просмотра полного отчёта
     expire_in: 7 days
 ```
 
-### GitHub Actions (фрагмент)
+## Дополнительная информация
 
-```yaml
-- run: pytest --junitxml=report.xml --alluredir=allure-results
-- uses: actions/upload-artifact@v4
-  with:
-    name: junit
-    path: report.xml
-- run: allure generate allure-results -o allure-report --clean
-- uses: actions/upload-artifact@v4
-  with:
-    name: allure
-    path: allure-report
-```
+### Рекомендации
 
-## Практики
-
-- Единый шаблон имён тестов и сьютов для устойчивых трендов
-- Прикрепляйте ключевые артефакты: запросы/ответы API, скриншоты, логи
-- Разделяйте отчёты по компонентам и веткам, добавляйте build tags/labels
-- Храните директорию history из предыдущего отчёта Allure, чтобы сохранить тренды между прогонами
-- Учитывайте параллелизм: сводите результаты из шардов перед генерацией Allure
+- **Единый нейминг**: Используйте консистентные имена для сьютов и тестов для корректного отображения истории в Allure.
+- **Вложения**: Прикрепляйте к упавшим тестам артефакты, полезные для отладки: логи, скриншоты, дампы ответов API.
+- **Параллелизм**: При параллельном запуске тестов сперва соберите результаты со всех потоков, и только потом генерируйте единый Allure-отчёт.
+- **Контекст**: Генерация и использование отчётов — это один из шагов пайплайна, описанного в документе **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)**.

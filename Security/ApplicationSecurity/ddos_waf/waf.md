@@ -1,58 +1,74 @@
 # Web Application Firewall (WAF)
 
-## Функции WAF
+## Определения
 
-1. **Защита от OWASP Top 10:**
-   - SQL Injection
-   - XSS (Cross-Site Scripting)
-   - CSRF (Cross-Site Request Forgery)
-   - LFI/RFI (Local/Remote File Inclusion)
-   - Command Injection
+**WAF (Web Application Firewall)** — это межсетевой экран прикладного уровня (L7), который фильтрует, мониторит и блокирует HTTP/HTTPS-трафик на основе набора правил, защищая веб-приложения от уязвимостей.
 
-2. **Фильтрация трафика:**
-   - Проверка HTTP-заголовков
-   - Валидация параметров запроса
-   - Блокировка вредоносных payloads
+## Основные концепции
 
-3. **Virtual Patching:**
-   - Быстрая защита от известных уязвимостей
-   - Без изменения кода приложения
+### Функции WAF
 
-## Типы WAF
+1.  **Защита от OWASP Top 10:**
+    *   SQL Injection
+    *   XSS (Cross-Site Scripting)
+    *   CSRF (Cross-Site Request Forgery)
+    *   LFI/RFI (Local/Remote File Inclusion)
+    *   Command Injection
+2.  **Фильтрация трафика:**
+    *   Проверка HTTP-заголовков.
+    *   Валидация параметров запроса.
+    *   Блокировка вредоносных payloads.
+3.  **Virtual Patching:**
+    *   Быстрая защита от известных уязвимостей без изменения кода приложения.
+4.  **Защита от DDoS атак уровня L7**.
 
-**1. Network-based WAF (Hardware):**
-- Физические устройства в ЦОД
-- Высокая производительность
-- Высокая стоимость
+### Типы WAF
 
-**2. Host-based WAF (Software):**
-- Установка на сервере
-- ModSecurity для Apache/Nginx
-- Бесплатные и коммерческие решения
+*   **Network-based WAF (Hardware):** Физические устройства в ЦОД. Высокая производительность, высокая стоимость.
+*   **Host-based WAF (Software):** Устанавливается как модуль на веб-сервер (например, ModSecurity для Apache/Nginx).
+*   **Cloud WAF:** SaaS-решения, предлагаемые провайдерами (CloudFlare WAF, AWS WAF, Azure WAF).
 
-**3. Cloud WAF:**
-- SaaS-решения
-- CloudFlare WAF
-- AWS WAF
-- Azure Application Gateway WAF
+## Практические сценарии
 
-## Примеры WAF правил
+### Kubernetes Ingress с ModSecurity
 
-### ModSecurity (CRS - Core Rule Set)
+```yaml
+# Включение WAF на уровне Ingress-контроллера
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: protected-app
+  annotations:
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+spec:
+  rules:
+  - host: app.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          service:
+            name: app-service
+            port:
+              number: 80
+```
+
+### Правила ModSecurity (CRS)
 
 ```apache
-# Защита от SQL Injection
-SecRule REQUEST_COOKIES|REQUEST_COOKIES_NAMES|REQUEST_FILENAME|ARGS_NAMES|ARGS|XML:/* \
-    "@rx (?i:(?:select\s*\*\s*from|(?:delete|drop|truncate)\s+table|union(?:\s+all)?\s*select|insert\s+into\s+.+?values))" \
+# Пример правила для защиты от SQL Injection
+SecRule REQUEST_COOKIES|ARGS|XML:/* \
+    "@rx (?i:(?:select\s*\*\s*from|(?:delete|drop|truncate)\s+table|union(?:\s+all)?\s*select))" \
     "id:942100,phase:2,deny,status:403,msg:'SQL Injection Attack Detected'"
 
-# Защита от XSS
-SecRule REQUEST_COOKIES|REQUEST_COOKIES_NAMES|REQUEST_FILENAME|ARGS_NAMES|ARGS|XML:/* \
+# Пример правила для защиты от XSS
+SecRule REQUEST_COOKIES|ARGS|XML:/* \
     "@rx (?i:<script|javascript:|on\w+\s*=)" \
     "id:941100,phase:2,deny,status:403,msg:'XSS Attack Detected'"
 ```
 
-### AWS WAF Rules
+### Правила AWS WAF
 
 ```json
 {
@@ -81,3 +97,10 @@ SecRule REQUEST_COOKIES|REQUEST_COOKIES_NAMES|REQUEST_FILENAME|ARGS_NAMES|ARGS|X
   }
 }
 ```
+
+## Дополнительная информация
+
+-   [ModSecurity Core Rule Set (CRS)](https://coreruleset.org/)
+-   [OWASP WAF](https://owasp.org/www-community/Web_Application_Firewall)
+-   [AWS WAF Documentation](https://aws.amazon.com/waf/)
+-   Связанный файл: [DDoS (Distributed Denial of Service)](./ddos.md)
