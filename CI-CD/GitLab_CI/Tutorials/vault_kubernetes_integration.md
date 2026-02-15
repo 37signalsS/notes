@@ -19,7 +19,7 @@
 
 ##### Шаг 1: Развертывание Vault в Kubernetes
 
-Мы развернем Vault с помощью [**Helm**](../../Kubernetes/ToolsUtilities/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
+Мы развернем Vault с помощью [**Helm**](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
 
 1. **Добавьте Helm-репозиторий и установите оператор:**
 

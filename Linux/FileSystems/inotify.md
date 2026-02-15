@@ -63,4 +63,4 @@ inotifywait -m -r /var/www
     sudo sysctl -p
     ```
 
-    Подробнее о настройке параметров ядра см. в [Настройка параметров ядра (sysctl)](../../Core/kernel/sysctl.md).
+    Подробнее о настройке параметров ядра см. в [Настройка параметров ядра (sysctl)](../../Linux/Core/kernel/sysctl.md).

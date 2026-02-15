@@ -81,5 +81,5 @@ docker run -d --name my-guaranteed-nginx nginx@sha256:f6a02b669bf8e59b20d361e148
 - **Связанные темы**:
   - **[Образ vs. Контейнер](./image_vs_container.md)**: Подробное объяснение разницы между шаблоном и его запущенным экземпляром.
   - **[Стратегии версионирования и тегирования](../../Docker/Docker_registries/image_versioning_and_tagging.md)**: Лучшие практики по управлению тегами.
-  - **[Оптимизация сборки Docker-образов](../Dockerfile/Docker_best_practices/build_optimization.md)**: Как правильно работать со слоями для создания эффективных образов.
+  - **[Оптимизация сборки Docker-образов](../../Dockerfile/Docker_best_practices/build_optimization.md)**: Как правильно работать со слоями для создания эффективных образов.
   - **[Драйвер хранения OverlayFS](./docker_overlayfs.md)**: Техническая основа слоеной файловой системы.

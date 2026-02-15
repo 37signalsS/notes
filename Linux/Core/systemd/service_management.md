@@ -165,7 +165,7 @@ systemctl --failed
 
 - **Просмотр логов (`journalctl`):**
     `systemd` включает подсистему логирования `journald`. Для просмотра логов используется утилита `journalctl`.
-    Подробное описание `journalctl` находится в основной заметке: **[systemd-journald: Современная система логирования](./../SystemAdministration/Logging/journald.md)**.
+    Подробное описание `journalctl` находится в основной заметке: **[systemd-journald: Современная система логирования](../../SystemAdministration/Logging/journald.md)**.
 
 - **`logrotate` и службы `systemd`:**
     Многие приложения пишут текстовые логи, которые ротируются с помощью `logrotate`. `systemd` используется для отправки сигнала `reload` службе после ротации, чтобы она корректно переоткрыла лог-файл.

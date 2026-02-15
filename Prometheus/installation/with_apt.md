@@ -178,7 +178,7 @@
 
 *   **Prometheus**: Общая информация об архитектуре и компонентах [overview](../overview.md).
 *   **Grafana**: Полный обзор возможностей и функций платформы [grafana_overview](../../Grafana/grafana_overview.md).
-*   **Node Exporter**: Детальное описание и настройка [exporters](../exporters.md).
+*   **Node Exporter**: Детальное описание и настройка [exporters](../Exporters/overview.md).
 *   **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
 *   **Управление службами Systemd**: Подробное руководство по `systemctl` [service_management](../../Linux/Core/systemd/service_management.md).
 *   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).

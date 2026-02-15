@@ -2,7 +2,7 @@
 
 ## Определения
 
-**`kube-prometheus-stack`** — это популярный [Helm-чарт](../../Kubernetes/ToolsUtilities/helm_overview.md), который разворачивает полноценную систему мониторинга на базе Prometheus в кластере [Kubernetes](../../Kubernetes/kubernetes_overview.md). Он значительно упрощает установку, настройку и управление компонентами, необходимыми для сбора, визуализации и оповещения о метриках.
+**`kube-prometheus-stack`** — это популярный [Helm-чарт](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md), который разворачивает полноценную систему мониторинга на базе Prometheus в кластере [Kubernetes](../../Kubernetes/kubernetes_overview.md). Он значительно упрощает установку, настройку и управление компонентами, необходимыми для сбора, визуализации и оповещения о метриках.
 
 ## Основные концепции
 

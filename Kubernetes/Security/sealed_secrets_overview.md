@@ -125,7 +125,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-Подробнее о RBAC: [RBAC Overview](../rbac/rbac_overview.md), [Role и ClusterRole](../rbac/roles.md), [Привязки](../rbac/bindings.md)
+Подробнее о RBAC: [RBAC Overview](./rbac/rbac_overview.md), [Role и ClusterRole](./rbac/roles.md), [Привязки](./rbac/bindings.md)
 
 ### Сценарий 4: GitOps-интеграция
 
@@ -186,7 +186,7 @@ kubectl apply -f new.sealed.yaml
 
 | Угроза | Уровень | Митигация |
 |--------|---------|-----------|
-| Компрометация приватного ключа | Критический | Защита [RBAC](../rbac/rbac_overview.md), etcd encryption |
+| Компрометация приватного ключа | Критический | Защита [RBAC](./rbac/rbac_overview.md), etcd encryption |
 | Перенос между кластерами | Низкий | Кластеры изолированы по дизайну |
 | Утечка в Git | Низкий | Данные зашифрованы |
 | Физический доступ к etcd | Средний | Encryption at rest |
@@ -206,6 +206,6 @@ kubectl apply -f new.sealed.yaml
 ### Связанные темы
 
 - Сетевая изоляция: [NetworkPolicy](../network_policies.md)
-- Управление доступом: [RBAC Overview](../rbac/rbac_overview.md)
+- Управление доступом: [RBAC Overview](./rbac/rbac_overview.md)
 - Ограничения RBAC: [Недостатки RBAC и OPA](../rbac/limitations_opa.md)
 - [Sealed Secrets GitHub](https://github.com/bitnami-labs/sealed-secrets)

@@ -37,6 +37,6 @@
 ## Дополнительная информация
 
 Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
-- [Helm](../../Kubernetes/ToolsUtilities/helm_overview.md)
+- [Helm](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
 - [Kubernetes](../../Kubernetes/kubernetes_overview.md)
 - [Prometheus](../overview.md)

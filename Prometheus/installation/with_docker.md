@@ -286,7 +286,7 @@ receivers:
 *   **Prometheus**: Общий обзор архитектуры и принципов работы [overview](../overview.md).
 *   **Grafana**: Обзор платформы и ее возможностей [grafana_overview](../../Grafana/grafana_overview.md).
 *   **Alertmanager**: Детальное описание и настройка [alertmanager](../alertmanager.md).
-*   **Node Exporter**: Подробности об экспортере для ОС [exporters](../exporters.md).
+*   **Node Exporter**: Подробности об экспортере для ОС [exporters](../Exporters/overview.md).
 *   **cAdvisor**: Документация (внешняя ссылка) [Google cAdvisor](https://github.com/google/cadvisor).
 *   **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).
 *   **PromQL**: Язык запросов Prometheus [promql](../concepts/promql.md).

@@ -34,7 +34,7 @@
 *   Сертификат для клиента (`client.crt` и `client.key`), подписанный вашим CA.
 *   Список отозванных сертификатов (`crl.pem`).
 
-> **Подробное руководство: [Управление собственным CA с помощью OpenSSL](../../Security/Tools/openssl_ca_management.md)**
+> **Подробное руководство: [Управление собственным CA с помощью OpenSSL](../../Security/Tools/openssl_ca/single_tier/overview.md)**
 
 ### 3.2. Создание приватного Apt-репозитория
 
