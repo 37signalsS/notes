@@ -145,5 +145,5 @@ Offsite-хранилища обеспечивают географическую
 
 - **RPO (Recovery Point Objective)** и **RTO (Recovery Time Objective)** — ключевые метрики, определяющие требования к процессу восстановления (допустимое время простоя и объем потерь данных). Подробно описаны в основной заметке: **[Концепции SRE: SLA, SLO, SLI и метрики надежности](../../../Concepts/SRE/sre_concepts_main.md)**.
 - Специфичные для конкретных СУБД инструменты и сценарии описаны в отдельных статьях:
-  - **[Резервное копирование в PostgreSQL](./../PostgreSQL/Concepts/backup_and_recovery.md)**
-  - **[Резервное копирование в MariaDB](./../MariaDB/backup_and_recovery.md)**
+  - **[Резервное копирование в PostgreSQL](../PostgreSQL/Concepts/backup_and_recovery.md)**
+  - **[Резервное копирование в MariaDB](../MariaDB/backup_and_recovery.md)**

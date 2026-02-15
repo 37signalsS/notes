@@ -39,7 +39,7 @@ upstream backend {
 
 ### Мониторинг Upstream
 
-Состояние `upstream` серверов можно отслеживать через API-интерфейсы (в Nginx Plus / Angie) или с помощью сторонних инструментов мониторинга, анализируя логирование и метрики, которые отдает, например, [nginx-prometheus-exporter](../../Prometheus/exporters.md#nginx-prometheus-exporter).
+Состояние `upstream` серверов можно отслеживать через API-интерфейсы (в Nginx Plus / Angie) или с помощью сторонних инструментов мониторинга, анализируя логирование и метрики, которые отдает, например, [nginx-prometheus-exporter](../../Prometheus/Exporters/other_exporters.md).
 
 ### Проверка
 

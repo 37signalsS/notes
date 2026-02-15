@@ -25,7 +25,7 @@
 | `user`    | Идентичности и права                                                                                          | UID/GID, capabilities               |
 | `cgroup`  | Привязка к иерархии cgroups                                                                                   | Видимость cgroup-дерева             |
 
-> Ключевой нюанс **user namespace** позволяет реализовать модель “root внутри, не-root снаружи”: процесс получает административные права (`capabilities`) внутри своего user-namespace, не имея их в хостовой системе. Это основа `rootless` режима в [Podman](../podman_rootless.md).
+> Ключевой нюанс **user namespace** позволяет реализовать модель “root внутри, не-root снаружи”: процесс получает административные права (`capabilities`) внутри своего user-namespace, не имея их в хостовой системе. Это основа `rootless` режима в [Podman](../../Podman/podman_rootless.md).
 
 ### 2. Контрольные группы (Cgroups)
 

@@ -174,9 +174,9 @@ RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
 
 Подробное описание концепций и команд для управления объектами находятся в соответствующих разделах:
 
-- **[Обзор сетей в Docker](../Docker_network/network_overview.md)**
+- **[Обзор сетей в Docker](../Docker_network/docker_network.md)**
 - **[Команды управления сетями](../Docker_network/management/cli.md)**
-- **[Тома и управление данными](../Docker_fs/storage_overview.md)**
+- **[Тома и управление данными](../Docker_fs/docker_volumes.md)**
 
 ---
 

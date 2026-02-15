@@ -61,4 +61,4 @@ Build Cache     0         0         0B        0B
 Хотя `docker stats` и `docker system df` полезны для быстрой диагностики, для полноценного производственного мониторинга рекомендуется использовать более мощные решения. Они позволяют собирать, агрегировать и анализировать метрики в долгосрочной перспективе, а также настраивать оповещения.
 
 - **Интеграция с Prometheus**: Docker может предоставлять метрики в формате Prometheus для их сбора и анализа. Подробнее см. в разделе **[Интеграция Docker с Prometheus](./docker_prometheus_integration.md)**.
-- **Специализированные агенты**: Инструменты, такие как **cAdvisor**, **[Vector](../..//Vector/vector_overview.md)** или **[Filebeat](../../ELK_Stack/Filebeat/filebeat_overview.md)**, собирают метрики напрямую из `cgroups` или логов и отправляют их в системы мониторинга (Prometheus, ClickHouse, Elasticsearch).
+- **Специализированные агенты**: Инструменты, такие как **cAdvisor**, **[Vector](../../Vector/vector_overview.md)** или **[Filebeat](../../ELK_Stack/Filebeat/filebeat_overview.md)**, собирают метрики напрямую из `cgroups` или логов и отправляют их в системы мониторинга (Prometheus, ClickHouse, Elasticsearch).

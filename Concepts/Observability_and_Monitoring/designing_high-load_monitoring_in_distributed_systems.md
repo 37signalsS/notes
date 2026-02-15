@@ -27,7 +27,7 @@
 **[Prometheus](../../Prometheus/overview.md)** является промышленным стандартом для сбора метрик в Cloud Native средах.
 
 * **Модель сбора**: Преимущественно используется **pull-модель**, при которой Prometheus сам опрашивает цели (экспортеры). Это делает источники данных независимыми от доступности системы мониторинга. Для кратковременных задач (batch jobs) используется **push-модель** через **[Pushgateway](../../Prometheus/pushgateway.md)**.
-* **[Архитектура](../../Prometheus/overview.md#архитектура)**: Состоит из сервера Prometheus (сбор, хранение, обработка), **[экспортеров](../../Prometheus/exporters.md)** (преобразование метрик), механизмов **[Service Discovery](../../Prometheus/service_discovery_and_relabeling.md)** и **[Alertmanager](../../Prometheus/alertmanager.md)** (оповещения).
+* **[Архитектура](../../Prometheus/overview.md#архитектура)**: Состоит из сервера Prometheus (сбор, хранение, обработка), **[экспортеров](../../Prometheus/Exporters/overview.md)** (преобразование метрик), механизмов **[Service Discovery](../../Prometheus/service_discovery_and_relabeling.md)** и **[Alertmanager](../../Prometheus/alertmanager.md)** (оповещения).
 * **Федерация**: **[Федерация Prometheus](../../Prometheus/scaling/federation.md)** позволяет создавать иерархическую структуру, где один сервер агрегирует данные с других, что полезно для объединения метрик из разных контуров.
 
 ### Долгосрочное хранение метрик: Remote Storage

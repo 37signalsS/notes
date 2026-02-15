@@ -104,7 +104,7 @@
 
 Настройки ядра Linux критически важны для высоконагруженных серверов. Для глубокого понимания и детального тюнинга `sysctl` и параметров TCP обратитесь к следующим заметкам:
 *   **Главная заметка о `sysctl`**: [../../../Linux/Core/kernel/sysctl.md](../../../Linux/Core/kernel/sysctl.md)
-*   **Детальный тюнинг TCP**: [../../../Linux/Networking/Concepts/tcp_tuning.md](../../../../../Linux/Networking/Concepts/tcp_tuning.md)
+*   **Детальный тюнинг TCP**: [../../../Linux/Networking/Concepts/tcp_tuning.md](../../../Linux/Networking/Concepts/tcp_tuning.md)
 
 ### Оптимизация TCP/IP сокетов
 

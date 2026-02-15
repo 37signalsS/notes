@@ -72,5 +72,4 @@ rules:
 ## Дополнительная информация
 
 - **[Общие принципы аудита и комплаенса](../../Security/audit_and_compliance_overview.md)**: Базовый документ по теме ведения журналов аудита.
-- **[Политики аудита в Kubernetes](../../Kubernetes/Security/audit_policies.md)**: Подробное описание настройки Kubernetes Audit Policy.
 - **Официальная документация Argo CD**: [Audit Trails](https://argo-cd.readthedocs.io/en/stable/operator-manual/audit/)

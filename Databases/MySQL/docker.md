@@ -86,6 +86,6 @@ docker run -d --name mysql-db-high-perf \
 
 ### Дополнительная информация
 
-- [Управление данными в Docker: Volumes](./../../Docker/Docker_volumes.md)
-- [Обзор сетей в Docker](./../../Docker/Docker_network/docker_network.md)
-- [Сетевой драйвер `host`](./../../Docker/Docker_network/drivers/host.md)
+- [Управление данными в Docker: Volumes](../../Docker/Docker_fs/docker_volumes.md)
+- [Обзор сетей в Docker](../../Docker/Docker_network/docker_network.md)
+- [Сетевой драйвер `host`](../../Docker/Docker_network/drivers/host.md)
