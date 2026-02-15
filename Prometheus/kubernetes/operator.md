@@ -39,7 +39,7 @@ Prometheus Operator расширяет API Kubernetes набором специ�
 
 ### Probe
 
-Данный Custom Resource (`kind: Probe`) используется для мониторинга "черным ящиком" (blackbox monitoring) с помощью **[Blackbox Exporter](../exporters.md#blackbox_exporter)**.
+Данный Custom Resource (`kind: Probe`) используется для мониторинга "черным ящиком" (blackbox monitoring) с помощью **[Blackbox Exporter](../overview.md#blackbox_exporter)**.
 В `Probe` вы описываете цель (например, `google.com`) и модуль проверки (например, `http_2xx`). Prometheus Operator на основе этого генерирует конфигурацию, чтобы Prometheus опрашивал не саму цель, а Blackbox Exporter, передавая ему цель как параметр.
 
 ### PrometheusRule

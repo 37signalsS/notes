@@ -3,7 +3,7 @@
 ## 1. Определения
 
 * **Talos** — это современная, безопасная и минималистичная ОС для запуска [Kubernetes](../../Kubernetes/kubernetes_overview.md). Она управляется исключительно через API, что исключает необходимость в SSH и обеспечивает предсказуемость конфигурации.
-* **`talosctl`** — утилита командной строки для взаимодействия с Talos. Позволяет быстро разворачивать локальные кластеры, используя [Docker](../../Docker/docker_overview.md) для запуска узлов, что представляет собой простую и эффективную альтернативу таким инструментам, как [kind](../../Kubernetes/Installation/kind_quickstart.md) или [minikube](https://minikube.sigs.k8s.io/docs/).
+* **`talosctl`** — утилита командной строки для взаимодействия с Talos. Позволяет быстро разворачивать локальные кластеры, используя [Docker](../../Docker/docker_overview.md) для запуска узлов, что представляет собой простую и эффективную альтернативу таким инструментам, как [kind](../Installation/kind_quickstart.md) или [minikube](https://minikube.sigs.k8s.io/docs/).
 * **[kubeconfig](../../Kubernetes/Operations/kubeconfig_and_connection.md)**: YAML-файл, который используется утилитой `kubectl` и другими клиентами для подключения к кластеру Kubernetes.
 * **[kubectl](../../Kubernetes/kubernetes_overview.md)**: Основной инструмент командной строки для взаимодействия с API-сервером Kubernetes и управления объектами кластера.
 

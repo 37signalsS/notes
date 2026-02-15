@@ -151,7 +151,7 @@
     sudo mount /dev/my_vg/my_test_lv /mnt/test
     ```
 
-    *(Не забудьте про [`/etc/fstab`](../mounting.md#структура-и-синтаксис-файла-etcfstab) для постоянного монтирования)*.
+    *(Не забудьте про [`/etc/fstab`](../mounting/fstab.md#структура-и-синтаксис-файла-etcfstab) для постоянного монтирования)*.
 
 4. **Расширение "на лету":**
     * Добавьте еще один диск/раздел (`/dev/sdd1`) в VG: `pvcreate /dev/sdd1`, `vgextend my_vg /dev/sdd1`.

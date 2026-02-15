@@ -43,7 +43,7 @@ listener "tcp" {
 storage "consul" {
   // Адрес для подключения к кластеру Consul.
   // Это может быть адрес балансировщика, как в примере с
-  // [Nginx reverse proxy](../../WebServers/Nginx/nginx_as_reverse_proxy_for_consul.md),
+  // [Nginx reverse proxy](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md),
   // или адрес одного из агентов Consul.
   address = "consul.your-domain.com:8500" // или "127.0.0.1:8500"
 
@@ -86,5 +86,5 @@ sudo systemctl restart vault
 ### Связанные документы
 *   [Vault Overview](../overview.md): Общее описание технологии Vault.
 *   [Consul Overview](../../Consul/consul_overview.md): Обзор Consul, его функций и архитектуры.
-*   [Nginx в качестве обратного прокси для Consul](../../WebServers/Nginx/nginx_as_reverse_proxy_for_consul.md): Пример настройки Nginx для безопасного доступа к UI Consul.
+* [Nginx в качестве обратного прокси для Consul](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md): Пример настройки Nginx для безопасного доступа к UI Consul.
 *   [Концепты безопасности Vault](../concepts.md): Обзор ключевых механизмов безопасности Vault, включая шифрование.

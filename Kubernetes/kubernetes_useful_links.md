@@ -5,4 +5,4 @@
 * **[Play with Kubernetes](https://labs.play-with-k8s.com/):** Бесплатная онлайн-песочница, предоставляющая временный доступ к кластеру Kubernetes прямо в браузере.
 * **[Kubelab](https://github.com/natrontech/kubelab):** Набор интерактивных лабораторных работ для изучения основ Kubernetes.
 * **[CK-X](https://github.com/sailor-sh/CK-X):** Проект с практическими заданиями для подготовки к экзаменам Certified Kubernetes Administrator (CKA), Developer (CKAD) и Specialist (CKS).
-* **[K8sQuest: Интерактивная игра для изучения и отладки Kubernetes](../ToolsUtilities/k8squest_overview.md):** Локальная, практическая игра для обучения поиску и устранению неисправностей в Kubernetes.
+* **K8sQuest:** Локальная, практическая игра для обучения поиску и устранению неисправностей в Kubernetes.

@@ -11,7 +11,7 @@
 1. Откройте веб-интерфейс Kibana.
 2. В боковом меню выберите **Stack Management** → **Index Patterns**.
 3. Нажмите **Create index pattern**.
-4. В поле "Index pattern name" введите шаблон, соответствующий префиксу логов из [конфигурации Fluent Bit](./fluentbit_deep_dive.md) (например, `kube-*` для логов контейнеров или `node-*` для логов хостов).
+4. В поле "Index pattern name" введите шаблон, соответствующий префиксу логов из [конфигурации Fluent Bit](./fluentbit/fluentbit_configuration.md) (например, `kube-*` для логов контейнеров или `node-*` для логов хостов).
 5. На следующем шаге в выпадающем списке **Time field** выберите `@timestamp`. Это поле Kibana будет использовать для фильтрации по времени.
 6. Нажмите **Create index pattern**.
 

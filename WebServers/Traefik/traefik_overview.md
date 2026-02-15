@@ -26,7 +26,7 @@ Traefik широко используется в различных средах
     *   **Основная заметка:** **[Docker Swarm - Ingress Traffic Management with Traefik](../../Docker/Docker_swarm/swarm_ingress_traefik.md)**
     *   **Обзор Docker Swarm:** **[Docker Swarm Mode Overview](../../Docker/Docker_swarm/docker_swarm_overview.md)**
 *   **Kubernetes:** Traefik является одним из популярных **[Ingress-контроллеров](../../Kubernetes/Networking/Ingress/overview.md)**, управляя внешним доступом к сервисам в кластере.
-    *   **Пример настройки:** **[Настройка BasicAuth в Traefik с Kubernetes](../../Kubernetes/Security/traefik_kubernetes_basic_auth.md)**
+    *   **Пример настройки:** **[Настройка BasicAuth в Traefik с Kubernetes](../../../Kubernetes/Security/traefik_kubernetes_basic_auth.md)**
 
 ## Дополнительная информация
 

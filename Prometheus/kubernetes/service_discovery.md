@@ -196,9 +196,9 @@ spec:
 *   `prometheus.io/path: "/my-metrics"`: Позволяет указать нестандартный путь к метрикам.
 *   `prometheus.io/port: "9091"`: Позволяет указать порт, с которого нужно собирать метрики.
 
-#### 4. Мониторинг доступности сервисов с [Blackbox Exporter](../exporters.md#blackbox-exporter)
+#### 4. Мониторинг доступности сервисов с [Blackbox Exporter](../overview.md#blackbox-exporter)
 
-**Задача:** Проверять доступность сервисов "снаружи" с помощью [Blackbox Exporter](../exporters.md#blackbox-exporter).
+**Задача:** Проверять доступность сервисов "снаружи" с помощью [Blackbox Exporter](../overview.md#blackbox-exporter).
 
 ```yaml
 - job_name: 'kubernetes-services-blackbox'
