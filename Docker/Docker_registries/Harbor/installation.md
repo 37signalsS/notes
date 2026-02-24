@@ -3,7 +3,9 @@
 Harbor устанавливается с помощью Docker Compose.
 
 ## Шаг 1.1 Ставим docker
+
 Установим docker и docker-compose:
+
 ```bash
 apt update && 
 apt install containerd docker.io docker-compose -y
@@ -12,7 +14,9 @@ sudo usermod -aG docker $USER
 ```
 
 ## Шаг 1.2 Скачиваем Harbor и готовим конфиги
+
 Клонируем репозиторий Harbor, используя актуальную версию:
+
 ```bash
 LATEST=$(curl -s https://api.github.com/repos/goharbor/harbor/releases/latest 
   | grep browser_download_url 
@@ -26,23 +30,32 @@ tar xvzf "$FILE" &&
 rm "$FILE" && 
 cd harbor
 ```
+
 Создаём файл `.env` для хранения паролей:
+
 ```bash
 sudo nano .env
 ```
+
 Прописываем в переменных пароль Админа и БД:
+
 ```
 HARBOR_ADMIN_PASSWORD=super_admin_pazzword
 DB_PASSWORD=super_db_mazafaka
 ```
+
 Изменяем права:
+
 ```bash
 sudo chmod 600 .env
 ```
+
 Далее работаем с файлом `harbor.yml`. Создаём резервную копию:
+
 ```bash
 sudo cp harbor.yml.copy harbor.yml
 ```
+
 Чтобы хосты доверяли этому репозиторию, нужно создать сертификаты в Центре Сертификации (CA).
 Создайте сертификаты в вашем ЦА с именами:
 `harbor.example.local.key`
@@ -51,10 +64,13 @@ sudo cp harbor.yml.copy harbor.yml
 Или перейдите на Шаг 3 (в отдельном разделе ниже), затем вернитесь сюда.
 
 Открываем на редактирование:
+
 ```bash
 sudo nano harbor.yml
 ```
+
 Удаляем содержимое файла и вставляем следующие параметры:
+
 ```yaml
 hostname: harbor.example.local
 http:
@@ -113,13 +129,17 @@ cache:
   enabled: false
   expire_hours: 24
 ```
+
 *Примечание: Данная конфигурация Trivy предназначена для работы в закрытом контуре (без доступа к интернету). Это означает, что базы сканера уязвимостей Trivy не будут обновляться напрямую, а только вручную (см. [Оффлайн обновление Trivy](./offline_trivy_update.md)). Настройки конфигурации `skip_update: true` и `offline_scan: true` сделаны исходя из этого требования.*
 
 ## Шаг 2. Запуск установки
+
 Запустите установку с компонентом Trivy:
+
 ```bash
 sudo ./install.sh --with-trivy
 ```
 
 ## Шаг 2.1 Вход в UI
+
 После установки вы сможете войти в веб-интерфейс Harbor по адресу, указанному в `hostname` (например, `https://harbor.example.local`). Логин и пароль администратора были заданы в `.env` файле.

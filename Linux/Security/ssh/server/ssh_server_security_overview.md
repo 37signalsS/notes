@@ -7,7 +7,8 @@
 ## Основные концепции
 
 Конфигурация безопасности SSH включает в себя:
-*   [Методы аутентификации](./ssh_authentication.md)
-*   [Контроль доступа пользователей](./ssh_access_control.md)
-*   [Мониторинг и устранение неполадок](./ssh_monitoring_and_troubleshooting.md)
-*   [Укрепление безопасности и лучшие практики](./ssh_hardening_best_practices.md)
+
+* [Методы аутентификации](./ssh_authentication.md)
+* [Контроль доступа пользователей](./ssh_access_control.md)
+* [Мониторинг и устранение неполадок](./ssh_monitoring_and_troubleshooting.md)
+* [Укрепление безопасности и лучшие практики](./ssh_hardening_best_practices.md)

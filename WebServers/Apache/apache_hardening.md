@@ -8,10 +8,10 @@
 
 ### Расположение конфигурационных файлов
 
--   **Основной конфиг (Debian/Ubuntu):** `/etc/apache2/apache2.conf`
--   **Основной конфиг (RHEL/CentOS):** `/etc/httpd/conf/httpd.conf`
--   **Виртуальные хосты (Debian/Ubuntu):** `/etc/apache2/sites-available/`
--   **Виртуальные хосты (RHEL/CentOS):** `/etc/httpd/conf.d/`
+- **Основной конфиг (Debian/Ubuntu):** `/etc/apache2/apache2.conf`
+- **Основной конфиг (RHEL/CentOS):** `/etc/httpd/conf/httpd.conf`
+- **Виртуальные хосты (Debian/Ubuntu):** `/etc/apache2/sites-available/`
+- **Виртуальные хосты (RHEL/CentOS):** `/etc/httpd/conf.d/`
 
 ## Практические сценарии укрепления
 
@@ -96,6 +96,7 @@ ErrorDocument 500 /custom500.html
 Для интеграции с SIEM-системами через [syslog](../../Linux/SystemAdministration/Logging/rsyslog.md) можно использовать следующие настройки.
 
 **Формат и уровень логирования (в `httpd.conf` или `apache2.conf`):**
+
 ```apache
 LogFormat "%h \"%{X-Forwarded-For}i\" %A %p %u %f %t %m %V %U \"%q\" %H %>s %b \"%{Referer}i\" \"%{User-Agent}i\""  tosiem
 ErrorLogFormat "[%t] [%l] [pid %P] [client\ %a] %M% , \"%{Referer}i\""
@@ -104,6 +105,7 @@ ErrorLog syslog:local4
 ```
 
 **Отправка логов доступа в syslog (внутри блока `<VirtualHost>`):**
+
 ```apache
 CustomLog "|/usr/bin/logger -p local4.info -t apache"  tosiem # Для Ubuntu/Debian
 CustomLog "|/usr/bin/logger -p local4.info -t httpd"  tosiem # Для CentOS/RHEL
@@ -116,6 +118,7 @@ CustomLog "|/usr/bin/logger -p local4.info -t httpd"  tosiem # Для CentOS/RHE
 **Решение:** Минимизировать объем отдаваемой информации с помощью директив `ServerTokens` и `ServerSignature`.
 
 В основном конфигурационном файле (`httpd.conf` или `apache2.conf`) добавьте:
+
 ```apache
 # Устанавливает минимальный уровень детализации в заголовке Server (например, "Server: Apache")
 ServerTokens Prod
@@ -136,9 +139,10 @@ ServerSignature Off
     Header set Content-Security-Policy "default-src 'self'; script-src 'self'; object-src 'none'"
 </Directory>
 ```
-*   `default-src 'self'`: Разрешает загрузку ресурсов только с текущего домена.
-*   `script-src 'self'`: Разрешает выполнение скриптов только с текущего домена.
-*   `object-src 'none'`: Запрещает загрузку плагинов (например, Flash), что является хорошей практикой безопасности.
+
+- `default-src 'self'`: Разрешает загрузку ресурсов только с текущего домена.
+- `script-src 'self'`: Разрешает выполнение скриптов только с текущего домена.
+- `object-src 'none'`: Запрещает загрузку плагинов (например, Flash), что является хорошей практикой безопасности.
 
 **Важно:** Слишком строгая политика может заблокировать работу легитимных сторонних виджетов или аналитики. Внедряйте CSP постепенно, тестируя конфигурацию.
 
@@ -158,6 +162,7 @@ SSLCipherSuite HIGH:!aNULL:!MD5
 ```
 
 Для перенаправления с HTTP на HTTPS добавьте в конфигурацию виртуального хоста для 80-го порта:
+
 ```apache
 <VirtualHost *:80>
     ServerName example.com
@@ -178,6 +183,7 @@ SSLCipherSuite HIGH:!aNULL:!MD5
     </LimitExcept>
 </Directory>
 ```
+
 Это правило запретит все методы, кроме перечисленных, для указанной директории, снижая поверхность атаки.
 
 ## Дополнительная информация

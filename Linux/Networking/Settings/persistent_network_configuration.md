@@ -38,7 +38,7 @@ iface eth0 inet static
     dns-nameservers 8.8.8.8 1.1.1.1
 ```
 
-- **Применение изменений:** `sudo systemctl restart networking`
+* **Применение изменений:** `sudo systemctl restart networking`
 
 ### 2. CentOS/RHEL и другие (NetworkManager и `nmcli`)
 
@@ -78,7 +78,7 @@ iface eth0 inet static
     DNS1="8.8.8.8"
     ```
 
-- **Применение изменений:** `sudo systemctl restart NetworkManager`
+* **Применение изменений:** `sudo systemctl restart NetworkManager`
 
 ### 3. Ubuntu 17.10+ (Netplan)
 

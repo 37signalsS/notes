@@ -3,11 +3,14 @@
 Для обеспечения доверия хостов к репозиторию Harbor необходимо создать Центр Сертификации (CA) и выпустить подписанные сертификаты.
 
 Создаём директорию для хранения сертификатов:
+
 ```bash
 sudo mkdir -p ~/harbor/certs
 cd ~/harbor/certs
 ```
+
 Создаём сертификаты корневого ЦА:
+
 ```bash
 # Root CA key
 openssl genrsa -out root-ca.key 4096
@@ -17,12 +20,16 @@ openssl req -x509 -new -nodes -sha256 -days 3650
   -key root-ca.key -out root-ca.crt 
   -subj "/C=RU/ST=Moscow/L=Moscow/O=HomeLab/OU=ITZM/CN=My-Root-CA"
 ```
+
 Измените значения переменных на ваше имя и IP Harbor сервера:
+
 ```bash
 export HARBOR_HOST=harbor.example.local
 export MyIP=2.2.2.2
 ```
+
 Выполните команды для создания серверных сертификатов Harbor:
+
 ```bash
 # server key
 openssl genrsa -out ${HARBOR_HOST}.key 4096
@@ -60,24 +67,32 @@ openssl x509 -req -in ${HARBOR_HOST}.csr -CA root-ca.crt -CAkey root-ca.key -CAc
   -out ${HARBOR_HOST}.crt -days 825 -sha256 
   -extensions req_ext -extfile ${HARBOR_HOST}.csr.cnf
 ```
+
 В результате будут созданы:
-*   `root-ca.crt` - корневой сертификат, который необходимо распространить на все клиентские хосты.
-*   `${HARBOR_HOST}.crt` и `${HARBOR_HOST}.key` - серверные сертификаты для Harbor.
+
+* `root-ca.crt` - корневой сертификат, который необходимо распространить на все клиентские хосты.
+* `${HARBOR_HOST}.crt` и `${HARBOR_HOST}.key` - серверные сертификаты для Harbor.
 
 ## Распространение корневого CA сертификата
+
 Скопируйте `root-ca.crt` на все хосты, которые будут взаимодействовать с Harbor.
 
 Для **Ubuntu**:
+
 ```bash
 sudo cp root-ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 ```
+
 Для **CentOS**:
+
 ```bash
 sudo cp root-ca.crt /etc/pki/ca-trust/source/anchors/
 sudo update-ca-trust extract
 ```
+
 После установки сертификатов перезапустите Docker на хостах:
+
 ```bash
 systemctl restart docker.service
 ```

@@ -252,3 +252,4 @@ git config --global user.email "ваш@email.com"
   * [Конфигурация Git](./git_configuration.md)
   * [Работа с ветками](./git_branching.md)
   * [Рабочие процессы в Git](./git_workflows.md)
+  * [Инструменты (TUI и CLI)](./git_tools.md)

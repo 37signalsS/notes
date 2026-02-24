@@ -10,11 +10,11 @@
 
 Формально Rosenpass — это демон, который, имея закрытый ключ и список пиров, выполняет обмен ключами с каждым пиром. Полученные ключи передаются WireGuard с использованием его функции PSK (Pre-Shared Key).
 
-*   WireGuard остается таким же безопасным, как и был.
-*   Rosenpass добавляет защиту от квантовых компьютеров.
-*   Rosenpass обновляет симметричный ключ каждые две минуты.
+* WireGuard остается таким же безопасным, как и был.
+* Rosenpass добавляет защиту от квантовых компьютеров.
+* Rosenpass обновляет симметричный ключ каждые две минуты.
 
 ## Ссылки
 
-*   **GitHub:** [https://github.com/rosenpass/rosenpass](https://github.com/rosenpass/rosenpass)
-*   **Официальный сайт:** [https://rosenpass.eu/](https://rosenpass.eu/)
+* **GitHub:** [https://github.com/rosenpass/rosenpass](https://github.com/rosenpass/rosenpass)
+* **Официальный сайт:** [https://rosenpass.eu/](https://rosenpass.eu/)

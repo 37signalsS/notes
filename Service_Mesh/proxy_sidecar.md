@@ -28,12 +28,14 @@
 
 **Istio:**
 Требуется добавить метку `istio-injection=enabled` к `namespace`:
+
 ```bash
 kubectl label namespace my-app istio-injection=enabled
 ```
 
 **Linkerd:**
 Требуется добавить аннотацию `linkerd.io/inject: enabled` к объекту (например, Deployment):
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -48,6 +50,7 @@ metadata:
 
 **Envoy:**
 Доступ к административному интерфейсу для получения статистики и конфигурации (выполняется внутри sidecar-контейнера).
+
 ```bash
 # Статистика по всем метрикам
 curl http://127.0.0.1:15000/stats
@@ -58,6 +61,7 @@ curl http://127.0.0.1:15000/clusters
 
 **Linkerd:**
 Используется встроенный CLI для получения "золотых сигналов" и наблюдения за трафиком в реальном времени.
+
 ```bash
 # Статистика по всем Deployment в namespace
 linkerd stat deploy -n my-app

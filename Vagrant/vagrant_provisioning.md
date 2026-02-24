@@ -9,6 +9,7 @@
 ### Когда выполняется Provisioning?
 
 Скрипты автоматической настройки запускаются в следующих случаях:
+
 - При первом запуске `vagrant up`.
 - Принудительно для уже запущенной машины командой `vagrant provision`.
 - Принудительно при перезагрузке командой `vagrant reload --provision`.
@@ -16,6 +17,7 @@
 ### Провижинеры (Provisioners)
 
 Vagrant поддерживает множество "провижинеров" — инструментов для управления конфигурацией. Выбор зависит от сложности задачи. Наиболее популярные:
+
 - **Shell**: для простых скриптов.
 - **Ansible**: для сложного управления конфигурацией.
 - **Puppet**: альтернатива Ansible.
@@ -29,6 +31,7 @@ Vagrant поддерживает множество "провижинеров" �
 
 **Вариант А: Встроенный (inline) скрипт**
 Идеально для одной-двух команд.
+
 ```ruby
 config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx"
 ```
@@ -36,7 +39,8 @@ config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx
 **Вариант Б: Внешний скрипт (рекомендуется)**
 Для более сложных сценариев лучше использовать отдельный файл.
 
-1.  **Создайте скрипт `provision.sh`:**
+1. **Создайте скрипт `provision.sh`:**
+
     ```bash
     #!/bin/bash
     set -euo pipefail # Останавливать скрипт при ошибках
@@ -45,7 +49,8 @@ config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx
     systemctl enable --now nginx
     ```
 
-2.  **Подключите его в `Vagrantfile`:**
+2. **Подключите его в `Vagrantfile`:**
+
     ```ruby
     config.vm.provision :shell, path: "provision.sh"
     ```
@@ -55,6 +60,7 @@ config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx
 Vagrant имеет встроенную поддержку Ansible, что позволяет использовать всю мощь плейбуков.
 
 **`Vagrantfile`:**
+
 ```ruby
 config.vm.provision "ansible" do |ansible|
   ansible.playbook = "playbook.yml"
@@ -63,9 +69,10 @@ end
 ```
 
 **Как это работает?**
-1.  **Автогенерация Inventory:** Vagrant создает временный inventory-файл с параметрами SSH-доступа к создаваемой машине.
-2.  **Ограничение выполнения (`--limit`):** Vagrant автоматически запускает `ansible-playbook` с флагом `--limit <имя_машины>`, гарантируя, что плейбук применится только к нужной ВМ. Вам **не нужно** делать это вручную.
-3.  **Использование своего inventory:** Если вы указываете `ansible.inventory_path`, Vagrant **перестает управлять процессом**: inventory не генерируется, и `--limit` не добавляется.
+
+1. **Автогенерация Inventory:** Vagrant создает временный inventory-файл с параметрами SSH-доступа к создаваемой машине.
+2. **Ограничение выполнения (`--limit`):** Vagrant автоматически запускает `ansible-playbook` с флагом `--limit <имя_машины>`, гарантируя, что плейбук применится только к нужной ВМ. Вам **не нужно** делать это вручную.
+3. **Использование своего inventory:** Если вы указываете `ansible.inventory_path`, Vagrant **перестает управлять процессом**: inventory не генерируется, и `--limit` не добавляется.
 
 ### Сценарий 3: Обзор других провижинеров
 

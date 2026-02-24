@@ -43,6 +43,7 @@ test_job:
 ```
 
 В результате `test_job` будет иметь:
+
 - `image: ruby:2.7`
 - `script`: объединение скриптов из `.base_job` и `test_job`.
 - `variables`: `BASE_VAR: "base_value"`, `OVERRIDE_ME: "test_override"`, `TEST_VAR: "test_value"`.

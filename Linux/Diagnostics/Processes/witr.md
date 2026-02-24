@@ -21,6 +21,7 @@
 # Инструкции по установке с GitHub
 # (необходимо добавить актуальные шаги после проверки)
 ```
+
 Ссылка на проект: [https://github.com/pranshuparmar/witr](https://github.com/pranshuparmar/witr)
 
 ### Примеры использования

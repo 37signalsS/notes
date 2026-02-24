@@ -86,6 +86,7 @@ crlDistributionPoints  = URI:http://pki.my-corp.com/intermediate.crl
 [ alt_names ]
 DNS.1 = my-service.local
 ```
+
 *`pathlen:0`* запрещает этому CA подписывать другие CA.
 
 **2.6. Создание ключа и CSR для Intermediate CA**
@@ -124,4 +125,5 @@ cd ..
 ```bash
 cat intermediate-ca/intermediate.crt root-ca/ca.crt > intermediate-ca/ca-chain.crt
 ```
+
 - **`ca-chain.crt`**: Этот файл будет использоваться в директиве `ssl_client_certificate` в Nginx для проверки клиентских сертификатов, а также может быть объединен с сертификатом сервера для отправки клиентам.

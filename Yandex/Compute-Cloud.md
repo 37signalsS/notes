@@ -72,6 +72,7 @@ yc compute instance create \
 ```
 
 Полезные варианты:
+
 - Добавить предсозданный security group: security-group-ids= внутри параметра network-interface.
 - Для экономии: --preemptible для прерываемой ВМ.
 - Для автоматизации: --metadata-from-file user-data=cloud-init.yaml.
@@ -123,11 +124,13 @@ yc compute instance delete --name demo-vm
 Программа должна вывести строку в формате: "Yandex Cloud VM created: [ID]", где [ID] - это переданный идентификатор виртуальной машины.
 
 **Sample Input:**
+
 ```
 vm-test-123
 ```
 
 **Sample Output:**
+
 ```
 Yandex Cloud VM created: vm-test-123
 ```

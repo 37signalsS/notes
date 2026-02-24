@@ -7,33 +7,39 @@
 ### Полезные команды для проверки
 
 **Просмотреть содержимое сертификата:**
+
 ```bash
 openssl x509 -in my-service.crt -noout -text
 ```
 
 **Просмотреть содержимое CSR:**
+
 ```bash
 openssl req -in my-service.csr -noout -text
 ```
 
 **Проверить соответствие ключа и сертификата:**
 (Хеши модулей должны совпадать)
+
 ```bash
 openssl rsa -noout -modulus -in my-service.key | openssl md5
 openssl x509 -noout -modulus -in my-service.crt | openssl md5
 ```
 
 **Просмотреть содержимое CRL:**
+
 ```bash
 openssl crl -in ca/crl.pem -noout -text
 ```
 
 **Проверить дату окончания срока действия сертификата:**
+
 ```bash
 openssl x509 -in my-service.crt -noout -enddate
 ```
 
 **Подключиться к TLS-серверу и показать его сертификат:**
+
 ```bash
 # Замените my-service.local:443 на нужный адрес и порт
 openssl s_client -connect my-service.local:443 -showcerts < /dev/null

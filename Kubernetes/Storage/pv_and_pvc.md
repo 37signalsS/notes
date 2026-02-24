@@ -12,7 +12,7 @@
 
 ### Проблема прямого управления томами
 
-Изначально в Kubernetes тома определялись непосредственно в манифесте пода (`awsElasticBlockStore`, `gcePersistentDisk`). 
+Изначально в Kubernetes тома определялись непосредственно в манифесте пода (`awsElasticBlockStore`, `gcePersistentDisk`).
 
 Недостатки:
 

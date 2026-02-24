@@ -10,11 +10,13 @@
 ## Основные концепции
 
 ### Зачем нужны уведомления?
+
 - **Оперативное информирование**: Сообщать о успешных и неудачных развертываниях в командный чат.
 - **Проактивное реагирование**: Немедленно узнавать о проблемах со здоровьем (`Degraded`) приложений после синхронизации.
 - **Аудит и трассируемость**: Создавать "ленту" всех деплойментов в отдельном канале.
 
 ### Ключевые события для уведомлений
+
 - Успешное завершение синхронизации (`Sync Succeeded`).
 - Ошибка синхронизации (`Sync Failed`).
 - Изменение статуса здоровья приложения (например, с `Progressing` на `Healthy` или `Degraded`).
@@ -26,7 +28,8 @@
 
 Argo CD использует `argocd-notifications-controller`. Настройка производится в `ConfigMap` и `Secret`.
 
-1.  **Создайте Secret с URL вебхука Slack:**
+1. **Создайте Secret с URL вебхука Slack:**
+
     ```yaml
     apiVersion: v1
     kind: Secret
@@ -36,7 +39,8 @@ Argo CD использует `argocd-notifications-controller`. Настройк
       slack-url: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
     ```
 
-2.  **Настройте сервис и шаблон в ConfigMap:**
+2. **Настройте сервис и шаблон в ConfigMap:**
+
     ```yaml
     apiVersion: v1
     kind: ConfigMap
@@ -55,8 +59,9 @@ Argo CD использует `argocd-notifications-controller`. Настройк
           send: [app-sync-status]
     ```
 
-3.  **Подпишите приложение на уведомления:**
+3. **Подпишите приложение на уведомления:**
     Добавьте аннотацию в манифест `Application`.
+
     ```yaml
     metadata:
       annotations:
@@ -67,7 +72,8 @@ Argo CD использует `argocd-notifications-controller`. Настройк
 
 Flux использует `notification-controller` и CRD `Provider` и `Alert`.
 
-1.  **Создайте Secret с URL вебхука Slack:**
+1. **Создайте Secret с URL вебхука Slack:**
+
     ```yaml
     apiVersion: v1
     kind: Secret
@@ -77,7 +83,8 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
       address: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
     ```
 
-2.  **Настройте `Provider`, который указывает, куда отправлять:**
+2. **Настройте `Provider`, который указывает, куда отправлять:**
+
     ```yaml
     apiVersion: notification.toolkit.fluxcd.io/v1beta3
     kind: Provider
@@ -90,7 +97,8 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
         name: slack-webhook-secret
     ```
 
-3.  **Настройте `Alert`, который определяет, о чем уведомлять:**
+3. **Настройте `Alert`, который определяет, о чем уведомлять:**
+
     ```yaml
     apiVersion: notification.toolkit.fluxcd.io/v1beta3
     kind: Alert
@@ -109,6 +117,7 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
     ```
 
 ## Дополнительная информация
+
 - **[Обзор ArgoCD](../ArgoCD/argocd_overview.md)**
 - **[Обзор Flux](../Flux/overview.md)**
 - **Официальная документация Argo CD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)

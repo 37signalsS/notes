@@ -66,6 +66,7 @@ deploy_app:
 ```
 
 Запуск оркестрации:
+
 ```bash
 salt-run state.orchestrate orch.deploy_app
 ```
@@ -73,6 +74,7 @@ salt-run state.orchestrate orch.deploy_app
 **2. Автоматический перезапуск сервиса при изменении конфига (Beacon + Reactor)**
 
 **Minion (Beacon):** Отслеживает изменения в файле `.env`.
+
 ```yaml
 # /etc/salt/minion.d/beacons.conf
 beacons:
@@ -82,6 +84,7 @@ beacons:
 ```
 
 **Master (Reactor):** При получении события вызывает SLS для перезапуска.
+
 ```yaml
 # /srv/salt/reactor/restart_app.sls
 {% set minion_id = data['id'] %}
@@ -97,6 +100,7 @@ restart_service:
 **3. Интеграция с CI/CD через `salt-api`**
 
 Команда для запуска оркестрации из Jenkins, GitLab CI или другого инструмента.
+
 ```bash
 curl -sSk https://salt-master:8000/run \
   -H "X-Auth-Token: $SALT_API_TOKEN" \

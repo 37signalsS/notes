@@ -87,6 +87,7 @@ git config --global core.autocrlf false
 #### Когда и почему возникают конфликты
 
 Конфликт при слиянии возникает, когда Git не может автоматически объединить изменения из двух веток. Типичные случаи:
+
 * одни и те же строки в файле изменены в обеих ветках;
 * файл изменен в одной ветке и удален в другой;
 * переименование совпало с изменениями содержимого;
@@ -105,11 +106,13 @@ git config --global core.autocrlf false
 вариант из объединяемой ветки
 >>>>>>> feature
 ```
+
 Редактору предстоит вручную выбрать нужные части, удалить маркеры и сохранить итоговую версию.
 
 #### Рабочий процесс разрешения
 
 1. **Инициировать слияние и увидеть конфликт**:
+
    ```bash
    git merge feature
    # или
@@ -117,6 +120,7 @@ git config --global core.autocrlf false
    ```
 
 2. **Просмотреть проблемные файлы**:
+
    ```bash
    git status
    git diff --name-only --diff-filter=U
@@ -124,6 +128,7 @@ git config --global core.autocrlf false
    ```
 
 3. **Отредактировать файлы**, устранив маркеры, либо выбрать одну из сторон:
+
    ```bash
    # Выбрать версию из текущей (нашей) ветки
    git checkout --ours path/to/file
@@ -136,6 +141,7 @@ git config --global core.autocrlf false
    ```
 
 4. **Отметить файлы как решенные** и завершить операцию:
+
    ```bash
    git add path/to/file
    git commit          # для merge
@@ -144,6 +150,7 @@ git config --global core.autocrlf false
    ```
 
 5. **При необходимости откатить процесс**:
+
    ```bash
    git merge --abort
    git rebase --abort
@@ -153,21 +160,25 @@ git config --global core.autocrlf false
 #### Полезные инструменты и опции
 
 * **Визуальное слияние**:
+
   ```bash
   git mergetool
   git config --global merge.tool meld
   ```
 
 * **Повторное использование решений (Rerere)**: Git может запоминать, как вы разрешали конфликты, и применять те же решения автоматически в будущем.
+
   ```bash
   git config --global rerere.enabled true
   ```
 
 * **Настройка стратегии для спорных кусков**: При слиянии можно указать Git, чью версию предпочесть в случае конфликта.
+
   ```bash
   git merge -X ours feature
   git merge -X theirs feature
   ```
+
   *Опции `-X ours/theirs` применяются только к конфликтующим фрагментам и не эквивалентны полной подмене файлов. Использовать осторожно.*
 
 #### Типы конфликтов и подходы
@@ -228,12 +239,14 @@ git config --global core.autocrlf false
 ## Дополнительная информация
 
 ### Внутренние ресурсы
+
 * **[Основы Git](./git_basics.md)**: для понимания базовых команд и концепций.
 * **[Ветвление в Git](./git_branching.md)**: для углубленного изучения слияний и `rebase`.
 * **[Манипуляция историей](./git_history_manipulation.md)**: для исправления коммитов и решения более сложных проблем.
 * **[Настройка Git](./git_configuration.md)**: для управления конфигурационными параметрами, такими как `core.autocrlf`.
 
 ### Внешние ресурсы
+
 * Официальная документация Git по `git bundle`: [Git SCM - git-bundle](https://git-scm.com/docs/git-bundle)
 * Подробнее об окончаниях строк в Git: [Git SCM - Git Configuration - core.autocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
 * Общие советы по отладке Git: [Git SCM - Git Internals - Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)

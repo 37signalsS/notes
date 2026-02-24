@@ -22,6 +22,7 @@
 - **HMAC-SHA1** — для генерации кода
 
 Формула: `TOTP = Truncate(HMAC-SHA1(K, T))`, где:
+
 - `K` — секретный ключ
 - `T` — временная метка (timestamp // 30)
 
@@ -125,5 +126,6 @@ is_valid = totp.verify(user_input_code)
 ---
 
 **См. также:**
+
 - [Атаки методом перебора](./brute_force_attacks.md) — MFA как защита от брутфорса
 - [Аутентификация vs Авторизация](./authentication_vs_authorization.md) — различие понятий

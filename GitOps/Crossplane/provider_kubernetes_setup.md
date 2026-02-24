@@ -6,12 +6,12 @@
 
 #### Предварительные требования
 
-*   **Кластер Kubernetes:** Локальный (Minikube, Kind) или облачный.
-*   **Установленный Crossplane:** Следуйте шагам по установке Crossplane из раздела "Установка Crossplane и его CLI" выше.
+* **Кластер Kubernetes:** Локальный (Minikube, Kind) или облачный.
+* **Установленный Crossplane:** Следуйте шагам по установке Crossplane из раздела "Установка Crossplane и его CLI" выше.
 
 #### Установка и конфигурация `provider-kubernetes`
 
-1.  **Установка `provider-kubernetes`:**
+1. **Установка `provider-kubernetes`:**
     Создайте файл `kubernetes-provider.yaml`:
 
     ```yaml
@@ -35,7 +35,7 @@
     kubectl get provider
     ```
 
-2.  **Настройка `ProviderConfig` для управления текущим кластером:**
+2. **Настройка `ProviderConfig` для управления текущим кластером:**
     `provider-kubernetes` необходимо предоставить разрешения для управления ресурсами. Создайте привязку роли кластера для ServiceAccount провайдера:
 
     ```bash
@@ -64,7 +64,7 @@
 
 Теперь вы можете использовать `provider-kubernetes` для создания нативных ресурсов Kubernetes. Например, создадим `Namespace` и `Deployment` с Nginx.
 
-1.  **Создание `Namespace`:**
+1. **Создание `Namespace`:**
     Создайте файл `nginx-namespace.yaml`:
 
     ```yaml
@@ -97,7 +97,7 @@
     kubectl get ns crossplane-nginx-example
     ```
 
-2.  **Создание `Deployment` с Nginx:**
+2. **Создание `Deployment` с Nginx:**
     Создайте файл `nginx-deployment.yaml`:
 
     ```yaml

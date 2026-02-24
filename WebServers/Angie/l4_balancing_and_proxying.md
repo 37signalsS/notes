@@ -27,6 +27,7 @@
 | **Лог ошибок `stream`** | `/var/log/nginx/stream-error.log` | `/var/log/angie/stream-error.log` |
 
 **Пример структуры в `angie.conf`:**
+
 ```nginx
 # /etc/angie/angie.conf
 stream {

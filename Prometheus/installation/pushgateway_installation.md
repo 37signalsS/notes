@@ -2,12 +2,14 @@
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
 
-1.  **Создание пользователя**:
+1. **Создание пользователя**:
+
     ```bash
     useradd --no-create-home --shell /bin/false pushgateway --comment "Pushgateway server user"
     ```
 
-2.  **Загрузка и установка (пример для версии 1.7.0)**:
+2. **Загрузка и установка (пример для версии 1.7.0)**:
+
     ```bash
     PUSHGATEWAY_VERSION="1.7.0" # Проверьте последнюю стабильную версию
     cd /tmp
@@ -17,7 +19,8 @@
     mv pushgateway /usr/local/bin/
     ```
 
-3.  **Создание файла с опциями запуска** (`/etc/sysconfig/pushgateway`):
+3. **Создание файла с опциями запуска** (`/etc/sysconfig/pushgateway`):
+
     ```bash
     cat <<EOF > /etc/sysconfig/pushgateway
     OPTIONS="--web.listen-address=:9091 
@@ -27,13 +30,16 @@
         --log.level=info"
     EOF
     ```
-4.  **Создание каталога для хранения метрик**:
+
+4. **Создание каталога для хранения метрик**:
+
     ```bash
     mkdir -p /var/lib/pushgateway
     chown pushgateway:pushgateway /var/lib/pushgateway
     ```
 
-5.  **Создание systemd-сервиса** (`/etc/systemd/system/pushgateway.service`):
+5. **Создание systemd-сервиса** (`/etc/systemd/system/pushgateway.service`):
+
     ```bash
     cat <<EOF > /etc/systemd/system/pushgateway.service
     [Unit]
@@ -56,7 +62,8 @@
     EOF
     ```
 
-6.  **Запуск и проверка**:
+6. **Запуск и проверка**:
+
     ```bash
     systemctl daemon-reload
     systemctl start pushgateway

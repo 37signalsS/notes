@@ -36,7 +36,8 @@ helm repo update
 minikube start --cpus 4 --memory 8192mb --addons ingress --insecure-registry "10.0.0.0/24" --driver=docker
 ```
 
-* `--cpus 4 --memory 8192mb`: Рекомендуемые ресурсы для стабильной работы стека.
+- `--cpus 4 --memory 8192mb`: Рекомендуемые ресурсы для стабильной работы стека.
+
 - `--addons ingress`: Включает Ingress-контроллер.
 - `--insecure-registry "10.0.0.0/24"`: Позволяет использовать локальный Docker Registry без HTTPS.
 - `--driver=docker`: Использует Docker в качестве драйвера.

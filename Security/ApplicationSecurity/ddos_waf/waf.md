@@ -8,25 +8,25 @@
 
 ### Функции WAF
 
-1.  **Защита от OWASP Top 10:**
-    *   SQL Injection
-    *   XSS (Cross-Site Scripting)
-    *   CSRF (Cross-Site Request Forgery)
-    *   LFI/RFI (Local/Remote File Inclusion)
-    *   Command Injection
-2.  **Фильтрация трафика:**
-    *   Проверка HTTP-заголовков.
-    *   Валидация параметров запроса.
-    *   Блокировка вредоносных payloads.
-3.  **Virtual Patching:**
-    *   Быстрая защита от известных уязвимостей без изменения кода приложения.
-4.  **Защита от DDoS атак уровня L7**.
+1. **Защита от OWASP Top 10:**
+    * SQL Injection
+    * XSS (Cross-Site Scripting)
+    * CSRF (Cross-Site Request Forgery)
+    * LFI/RFI (Local/Remote File Inclusion)
+    * Command Injection
+2. **Фильтрация трафика:**
+    * Проверка HTTP-заголовков.
+    * Валидация параметров запроса.
+    * Блокировка вредоносных payloads.
+3. **Virtual Patching:**
+    * Быстрая защита от известных уязвимостей без изменения кода приложения.
+4. **Защита от DDoS атак уровня L7**.
 
 ### Типы WAF
 
-*   **Network-based WAF (Hardware):** Физические устройства в ЦОД. Высокая производительность, высокая стоимость.
-*   **Host-based WAF (Software):** Устанавливается как модуль на веб-сервер (например, ModSecurity для Apache/Nginx).
-*   **Cloud WAF:** SaaS-решения, предлагаемые провайдерами (CloudFlare WAF, AWS WAF, Azure WAF).
+* **Network-based WAF (Hardware):** Физические устройства в ЦОД. Высокая производительность, высокая стоимость.
+* **Host-based WAF (Software):** Устанавливается как модуль на веб-сервер (например, ModSecurity для Apache/Nginx).
+* **Cloud WAF:** SaaS-решения, предлагаемые провайдерами (CloudFlare WAF, AWS WAF, Azure WAF).
 
 ## Практические сценарии
 
@@ -100,7 +100,7 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* \
 
 ## Дополнительная информация
 
--   [ModSecurity Core Rule Set (CRS)](https://coreruleset.org/)
--   [OWASP WAF](https://owasp.org/www-community/Web_Application_Firewall)
--   [AWS WAF Documentation](https://aws.amazon.com/waf/)
--   Связанный файл: [DDoS (Distributed Denial of Service)](./ddos.md)
+* [ModSecurity Core Rule Set (CRS)](https://coreruleset.org/)
+* [OWASP WAF](https://owasp.org/www-community/Web_Application_Firewall)
+* [AWS WAF Documentation](https://aws.amazon.com/waf/)
+* Связанный файл: [DDoS (Distributed Denial of Service)](./ddos.md)

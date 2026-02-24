@@ -22,6 +22,7 @@
 Запрещает совместное размещение подов с определенными метками в пределах указанного домена.
 
 **Уровни строгости:**
+
 - `requiredDuringSchedulingIgnoredDuringExecution` — жесткое требование
 - `preferredDuringSchedulingIgnoredDuringExecution` — предпочтительное
 
@@ -45,8 +46,10 @@ affinity:
           - my-frontend
       topologyKey: "kubernetes.io/hostname"
 ```
--   `requiredDuringSchedulingIgnoredDuringExecution`: Жесткое правило. Если планировщик не может его выполнить, под не будет запущен.
--   `topologyKey: "kubernetes.io/hostname"`: Указывает, что правило применяется в пределах одного узла.
+
+- `requiredDuringSchedulingIgnoredDuringExecution`: Жесткое правило. Если планировщик не может его выполнить, под не будет запущен.
+- `topologyKey: "kubernetes.io/hostname"`: Указывает, что правило применяется в пределах одного узла.
+
 ### Topology Spread Constraints
 
 ```yaml
@@ -58,14 +61,15 @@ topologySpreadConstraints:
     matchLabels:
       app: my-app
 ```
--   `maxSkew`: Максимально допустимая разница в количестве подов.
--   `topologyKey`: Домен, в котором нужно соблюдать баланс (например, `zone` или `hostname`).
--   `whenUnsatisfiable`: Что делать, если правило невозможно выполнить (`DoNotSchedule` — не размещать, `ScheduleAnyway` — разместить, но нарушить правило).
 
+- `maxSkew`: Максимально допустимая разница в количестве подов.
+- `topologyKey`: Домен, в котором нужно соблюдать баланс (например, `zone` или `hostname`).
+- `whenUnsatisfiable`: Что делать, если правило невозможно выполнить (`DoNotSchedule` — не размещать, `ScheduleAnyway` — разместить, но нарушить правило).
 
 ### Комбинированное использование
 
 Для максимальной отказоустойчивости используйте оба механизма:
+
 - Anti-Affinity для критичных компонентов (базы данных)
 - Topology Spread для равномерной нагрузки между зонами
 

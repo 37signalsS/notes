@@ -10,27 +10,27 @@
 
 #### 1. Атаки на канальный уровень (L3/L4)
 
-*   **Volumetric attacks (Объемные):**
-    *   **UDP Flood:** Массовая отправка UDP-пакетов на случайные порты.
-    *   **ICMP Flood (Ping of Death):** Перегрузка через ICMP echo-request.
-    *   **DNS Amplification:** Использование открытых DNS-серверов для усиления трафика.
-    *   **NTP Amplification:** Аналогично DNS, используя NTP сервера.
-*   **Protocol attacks:**
-    *   **SYN Flood:** Исчерпание таблицы соединений полуоткрытыми TCP-соединениями.
-    *   **ACK Flood:** Массовая отправка ACK-пакетов.
-    *   **Fragmentation attacks:** Атаки с использованием фрагментированных пакетов.
+* **Volumetric attacks (Объемные):**
+  * **UDP Flood:** Массовая отправка UDP-пакетов на случайные порты.
+  * **ICMP Flood (Ping of Death):** Перегрузка через ICMP echo-request.
+  * **DNS Amplification:** Использование открытых DNS-серверов для усиления трафика.
+  * **NTP Amplification:** Аналогично DNS, используя NTP сервера.
+* **Protocol attacks:**
+  * **SYN Flood:** Исчерпание таблицы соединений полуоткрытыми TCP-соединениями.
+  * **ACK Flood:** Массовая отправка ACK-пакетов.
+  * **Fragmentation attacks:** Атаки с использованием фрагментированных пакетов.
 
 #### 2. Атаки на прикладной уровень (L7)
 
-*   **Application layer attacks:**
-    *   **HTTP Flood:** Массовые GET/POST запросы к веб-приложению.
-    *   **Slowloris:** Медленная отправка HTTP-заголовков для исчерпания соединений.
-    *   **Slow POST:** Медленная отправка тела запроса.
-    *   **RUDY (R-U-Dead-Yet):** Аналогично Slow POST.
-*   **Resource exhaustion:**
-    *   **Complex search queries:** Тяжелые запросы к базе данных.
-    *   **Login attacks:** Массовые попытки аутентификации.
-    *   **API abuse:** Злоупотребление API endpoints.
+* **Application layer attacks:**
+  * **HTTP Flood:** Массовые GET/POST запросы к веб-приложению.
+  * **Slowloris:** Медленная отправка HTTP-заголовков для исчерпания соединений.
+  * **Slow POST:** Медленная отправка тела запроса.
+  * **RUDY (R-U-Dead-Yet):** Аналогично Slow POST.
+* **Resource exhaustion:**
+  * **Complex search queries:** Тяжелые запросы к базе данных.
+  * **Login attacks:** Массовые попытки аутентификации.
+  * **API abuse:** Злоупотребление API endpoints.
 
 ### Архитектура защиты (Layered Defense)
 
@@ -58,19 +58,19 @@
 
 ### Best Practices
 
-1.  **Defense in depth:** Многоуровневая защита.
-2.  **Monitoring и alerting:** Отслеживание аномалий (RPS, bandwidth, error rate, latency).
-3.  **Incident response plan:** План реагирования на инциденты.
-4.  **Regular testing:** Тестирование защиты (stress testing).
-5.  **Capacity planning:** Запас мощности для поглощения атак.
-6.  **Geographic filtering:** Блокировка трафика из подозрительных регионов.
+1. **Defense in depth:** Многоуровневая защита.
+2. **Monitoring и alerting:** Отслеживание аномалий (RPS, bandwidth, error rate, latency).
+3. **Incident response plan:** План реагирования на инциденты.
+4. **Regular testing:** Тестирование защиты (stress testing).
+5. **Capacity planning:** Запас мощности для поглощения атак.
+6. **Geographic filtering:** Блокировка трафика из подозрительных регионов.
 
 ### Методы защиты
 
-*   **Инфраструктурная защита:** Rate Limiting, Connection Limiting, SYN Cookies.
-*   **Сетевая защита:** Blackholing (RTBH), Traffic Scrubbing, Anycast.
-*   **Облачная защита:** CDN-based (CloudFlare, Akamai), Dedicated services (AWS Shield, Google Cloud Armor).
-*   **Application-level защита:** Challenge-Response (CAPTCHA, JS challenges), Behavioral analysis.
+* **Инфраструктурная защита:** Rate Limiting, Connection Limiting, SYN Cookies.
+* **Сетевая защита:** Blackholing (RTBH), Traffic Scrubbing, Anycast.
+* **Облачная защита:** CDN-based (CloudFlare, Akamai), Dedicated services (AWS Shield, Google Cloud Armor).
+* **Application-level защита:** Challenge-Response (CAPTCHA, JS challenges), Behavioral analysis.
 
 ## Практические сценарии
 
@@ -128,7 +128,7 @@ deny all;
 
 ## Дополнительная информация
 
--   [OWASP DDoS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)
--   [CloudFlare DDoS Protection](https://www.cloudflare.com/ddos/)
--   [AWS Best Practices for DDoS Resiliency](https://docs.aws.amazon.com/whitepapers/latest/aws-best-practices-ddos-resiliency/welcome.html)
--   Связанный файл: [Web Application Firewall (WAF)](./waf.md)
+* [OWASP DDoS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)
+* [CloudFlare DDoS Protection](https://www.cloudflare.com/ddos/)
+* [AWS Best Practices for DDoS Resiliency](https://docs.aws.amazon.com/whitepapers/latest/aws-best-practices-ddos-resiliency/welcome.html)
+* Связанный файл: [Web Application Firewall (WAF)](./waf.md)

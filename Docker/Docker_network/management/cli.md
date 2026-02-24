@@ -8,6 +8,7 @@
 
 - **Использование:** `docker network ls [OPTIONS]`
 - **Пример:**
+
   ```bash
   docker network ls
   # NETWORK ID     NAME              DRIVER    SCOPE
@@ -26,6 +27,7 @@
   - `--subnet`: Подсеть в формате CIDR (например, `172.20.0.0/16`).
   - `--gateway`: IP-адрес основного шлюза для подсети.
 - **Пример:**
+
   ```bash
   # Создание стандартной bridge-сети
   docker network create my-bridge-net
@@ -40,6 +42,7 @@
 
 - **Использование:** `docker network inspect [OPTIONS] <имя_сети>...`
 - **Пример:**
+
   ```bash
   docker network inspect my-bridge-net
   # Вывод покажет драйвер, подсеть, шлюз и список подключенных контейнеров.
@@ -51,6 +54,7 @@
 
 - **Использование:** `docker network connect [OPTIONS] <сеть> <контейнер>`
 - **Пример:**
+
   ```bash
   docker network connect my-bridge-net my-running-container
   ```
@@ -61,6 +65,7 @@
 
 - **Использование:** `docker network disconnect [OPTIONS] <сеть> <контейнер>`
 - **Пример:**
+
   ```bash
   docker network disconnect my-bridge-net my-running-container
   ```
@@ -71,6 +76,7 @@
 
 - **Использование:** `docker network rm <имя_сети>...`
 - **Пример:**
+
   ```bash
   docker network rm my-bridge-net
   ```
@@ -81,6 +87,7 @@
 
 - **Использование:** `docker network prune [OPTIONS]`
 - **Пример:**
+
   ```bash
   docker network prune
   # Docker запросит подтверждение перед удалением.
@@ -90,30 +97,36 @@
 
 Рассмотрим полный жизненный цикл управления сетью.
 
-1.  **Создадим свою `bridge`-сеть для изоляции приложения:**
+1. **Создадим свою `bridge`-сеть для изоляции приложения:**
+
     ```bash
     docker network create my-app-net
     ```
 
-2.  **Запустим `nginx` в новой сети:**
+2. **Запустим `nginx` в новой сети:**
+
     ```bash
     docker run -d --name server --network my-app-net nginx
     ```
 
-3.  **Убедимся, что контейнер `server` подключен к `my-app-net`:**
+3. **Убедимся, что контейнер `server` подключен к `my-app-net`:**
+
     ```bash
     docker network inspect my-app-net
     # В выводе JSON в секции "Containers" будет информация о контейнере "server".
     ```
 
-4.  **Запустим второй контейнер и подключим его "на лету":**
+4. **Запустим второй контейнер и подключим его "на лету":**
+
     ```bash
     docker run -d --name client alpine sleep 3600
     docker network connect my-app-net client
     ```
+
     Теперь `client` может обращаться к `server` по имени (`ping server`).
 
-5.  **Отключим `client` и очистим ресурсы:**
+5. **Отключим `client` и очистим ресурсы:**
+
     ```bash
     docker network disconnect my-app-net client
     docker stop server client && docker rm server client

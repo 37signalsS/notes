@@ -32,17 +32,20 @@ Helm использует Go template engine с библиотекой Sprig д�
 ### Базовый синтаксис
 
 **Вставка значения:**
+
 ```yaml
 metadata:
   name: {{ .Values.appName }}
 ```
 
 **Конвейер функций:**
+
 ```yaml
 name: {{ .Values.name | default "myapp" | lower | trunc 63 | trimSuffix "-" }}
 ```
 
 **Управление пробелами:**
+
 - `{{-` — удаляет пробелы и переносы строк до тега
 - `-}}` — удаляет пробелы и переносы строк после тега
 
@@ -57,6 +60,7 @@ env:
 ### Управляющие конструкции
 
 **Условные блоки `if/else`:**
+
 ```yaml
 {{- if .Values.metrics.enabled }}
 ports:
@@ -68,6 +72,7 @@ ports:
 ```
 
 **Блок `with` (изменение контекста):**
+
 ```yaml
 {{- with .Values.resources }}
 resources:
@@ -78,6 +83,7 @@ resources:
 ```
 
 **Итерация `range`:**
+
 ```yaml
 env:
 {{- range $name, $value := .Values.envVars }}
@@ -111,6 +117,7 @@ env:
 ### Создание именованных шаблонов (_helpers.tpl)
 
 **Определение в `templates/_helpers.tpl`:**
+
 ```go
 {{/*
 Создаёт полное имя ресурса с учётом переопределения и ограничения длины.
@@ -143,6 +150,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 ```
 
 **Использование в шаблонах:**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -244,6 +252,7 @@ kind: Ingress
 - [Управление версиями релизов](./helm_release_versioning.md) — ревизии релизов, откаты
 
 **Полезные ресурсы:**
-- Документация Go templates: https://golang.org/pkg/text/template/
-- Библиотека Sprig: http://masterminds.github.io/sprig/
+
+- Документация Go templates: <https://golang.org/pkg/text/template/>
+- Библиотека Sprig: <http://masterminds.github.io/sprig/>
 - Локальная отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`

@@ -53,11 +53,11 @@
 * **Создание:** Поды создаются последовательно, один за другим (сначала `web-0`, потом `web-1`). Следующий под не начнет создаваться, пока предыдущий не станет `Ready`.
 * **Удаление:** Поды удаляются в обратном порядке (сначала `web-n`, потом `web-n-1`).
 * **Параметр `podManagementPolicy`:**
-  - `OrderedReady` (по умолчанию): обеспечивает строгий порядок и ожидание готовности.
-  - `Parallel`: создаёт/удаляет Pod'ы параллельно, если порядок не критичен.
+  * `OrderedReady` (по умолчанию): обеспечивает строгий порядок и ожидание готовности.
+  * `Parallel`: создаёт/удаляет Pod'ы параллельно, если порядок не критичен.
 * **`updateStrategy`:**
-  - `RollingUpdate` с `partition` позволяет обновлять только Pod'ы с индексом ≥ `partition`, сохраняя нижние индексы нетронутыми.
-  - `OnDelete` применяет новую спецификацию только к Pod'ам, которые вы удалите вручную.
+  * `RollingUpdate` с `partition` позволяет обновлять только Pod'ы с индексом ≥ `partition`, сохраняя нижние индексы нетронутыми.
+  * `OnDelete` применяет новую спецификацию только к Pod'ам, которые вы удалите вручную.
 
 ### Особое поведение при сбоях
 
@@ -204,11 +204,11 @@ nslookup my-app-0.my-app-headless
 
 ## Лучшие практики
 
-*   **Используйте PodDisruptionBudget** для защиты от плановых выселений при обслуживании нод. См. [Высокая доступность](./high_availability.md).
-*   **Настройте readinessProbe** для корректного определения готовности пода к приему трафика.
-*   **Используйте `volumeBindingMode: WaitForFirstConsumer`** в StorageClass для корректного размещения томов.
-*   **Регулярно делайте бэкапы** PVC, даже несмотря на их постоянство.
-*   **Применяйте podAntiAffinity** для распределения подов по разным зонам доступности.
+* **Используйте PodDisruptionBudget** для защиты от плановых выселений при обслуживании нод. См. [Высокая доступность](./high_availability.md).
+* **Настройте readinessProbe** для корректного определения готовности пода к приему трафика.
+* **Используйте `volumeBindingMode: WaitForFirstConsumer`** в StorageClass для корректного размещения томов.
+* **Регулярно делайте бэкапы** PVC, даже несмотря на их постоянство.
+* **Применяйте podAntiAffinity** для распределения подов по разным зонам доступности.
 
 ## Сравнение поведения Pod'ов
 
@@ -221,9 +221,9 @@ nslookup my-app-0.my-app-headless
 
 ## Связанные темы
 
-- [Deployment](./deployment.md) — управление stateless-приложениями
-- [Pod](./Pod/pod_overview.md) — базовый объект развертывания
-- [PersistentVolumeClaim](../Storage/pv_and_pvc.md) — запросы на хранилище
-- [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
-- [Высокая доступность](./high_availability.md) — PodDisruptionBudget, отказоустойчивость
-- [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
+* [Deployment](./deployment.md) — управление stateless-приложениями
+* [Pod](./Pod/pod_overview.md) — базовый объект развертывания
+* [PersistentVolumeClaim](../Storage/pv_and_pvc.md) — запросы на хранилище
+* [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
+* [Высокая доступность](./high_availability.md) — PodDisruptionBudget, отказоустойчивость
+* [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов

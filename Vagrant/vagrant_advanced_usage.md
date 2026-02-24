@@ -55,7 +55,9 @@ Vagrant.configure("2") do |config|
   end
 end
 ```
+
 Команды `vagrant up`, `vagrant ssh` и другие теперь можно применять к конкретной машине, указывая ее имя:
+
 ```bash
 vagrant up machine2
 vagrant ssh machine1

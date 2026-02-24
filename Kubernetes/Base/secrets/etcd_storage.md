@@ -5,6 +5,7 @@
 **etcd** — распределённое key-value хранилище Kubernetes для всех объектов кластера.
 
 **Структура хранения:**
+
 ```
 /registry/secrets/<namespace>/<secret-name>
 ```

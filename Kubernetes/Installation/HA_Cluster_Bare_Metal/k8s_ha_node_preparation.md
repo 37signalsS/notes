@@ -69,7 +69,7 @@ lsmod | grep -E "br_netfilter|overlay"
 Текущие контейнеры
 
 ```bash
-docker ps --format "table {{.Names}}	{{.Status}}"
+docker ps --format "table {{.Names}} {{.Status}}"
 ```
 
 ##### 2. Обновление системы (по одному серверу)

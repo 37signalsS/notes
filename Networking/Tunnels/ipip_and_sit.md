@@ -38,6 +38,7 @@ sudo ip tunnel add ipip1 mode ipip remote 192.0.2.1 local 192.0.2.2
 sudo ip link set ipip1 up
 sudo ip address add 10.0.0.2/30 dev ipip1
 ```
+
 - `ipip1`: Произвольное имя интерфейса.
 - `mode ipip`: Указывает тип туннеля.
 - `remote` / `local`: IP-адреса удаленной и локальной точек туннеля.
@@ -55,6 +56,7 @@ sudo ip tunnel add sit1 mode sit remote 192.0.2.1 local 192.0.2.2
 sudo ip link set sit1 up
 sudo ip address add fc00::2/64 dev sit1
 ```
+
 - `sit1`: Произвольное имя интерфейса.
 - `mode sit`: Указывает тип туннеля.
 - `fc00::/64`: Пример [Unique Local Address (ULA)](../Concepts/private_and_special_use_ip_addresses.md) для IPv6.

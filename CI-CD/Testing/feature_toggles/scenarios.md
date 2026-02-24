@@ -7,6 +7,7 @@
 ### Практические сценарии
 
 #### Сценарий 1: Canary Deployment
+
 Постепенный и контролируемый запуск новой функциональности на определенный процент пользователей.
 
 ```python
@@ -27,6 +28,7 @@ else:
 ```
 
 #### Сценарий 2: Аварийный выключатель (Kill Switch)
+
 Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
 
 ```python
@@ -39,6 +41,7 @@ def get_recommendations():
 ```
 
 #### Сценарий 3: Бета-тестирование
+
 Предоставление доступа к новым функциям ограниченному кругу пользователей (например, внутренним сотрудникам или участникам бета-программы).
 
 ```python
@@ -56,10 +59,12 @@ def beta_dashboard():
 ### Дополнительная информация
 
 #### Внешние ресурсы
+
 - [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html)
 - [LaunchDarkly Documentation](https://docs.launchdarkly.com/)
 - [Unleash Documentation](https://docs.getunleash.io/)
 
 #### Связанные документы
+
 - **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
 - **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.

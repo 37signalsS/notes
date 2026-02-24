@@ -81,6 +81,7 @@ sudo sysctl -w net.ipv4.ip_forward=1
 - **[eBPF](./ebpf.md):** Безопасное выполнение кода в пространстве ядра.
 - **[io_uring](./io_uring.md):** Высокопроизводительный асинхронный ввод-вывод.
 - **[Pressure Stall Information (psi.md)](./psi.md):** Мониторинг давления на ресурсы CPU, памяти, I/O.
+- **[Зависания ядра (lockups.md)](./lockups.md):** Soft Lockup, Hard Lockup и Watchdog.
 - **[Паника ядра (kernel_panic.md)](./kernel_panic.md):** Анализ и отладка критических сбоев.
 - **["Живые" патчи (live_patching.md)](./live_patching.md):** Обновление ядра без перезагрузки.
 - **[Механизмы синхронизации (kernel_synchronization.md)](./kernel_synchronization.md):** Блокировки для защиты данных.

@@ -2,11 +2,14 @@
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
 
-1.  **Создание пользователя**:
+1. **Создание пользователя**:
+
     ```bash
     useradd --no-create-home --shell /bin/false alertmanager --comment "User to run Alertmanager"
     ```
-2.  **Загрузка и установка (пример для версии 0.26.0)**:
+
+2. **Загрузка и установка (пример для версии 0.26.0)**:
+
     ```bash
     ALERTMANAGER_VERSION="0.26.0" # Проверьте последнюю стабильную версию
     cd /tmp
@@ -16,7 +19,8 @@
     mv alertmanager amtool /usr/local/bin/
     ```
 
-3.  **Настройка каталогов и конфигурации**:
+3. **Настройка каталогов и конфигурации**:
+
     ```bash
     mkdir /etc/alertmanager
     cp alertmanager.yml /etc/alertmanager/alertmanager.yml
@@ -25,7 +29,8 @@
     chown alertmanager:alertmanager /var/lib/alertmanager/
     ```
 
-4.  **Создание файла с опциями запуска** (`/etc/sysconfig/alertmanager`):
+4. **Создание файла с опциями запуска** (`/etc/sysconfig/alertmanager`):
+
     ```bash
     cat <<EOF > /etc/sysconfig/alertmanager
     OPTIONS="--config.file=/etc/alertmanager/alertmanager.yml 
@@ -33,7 +38,8 @@
     EOF
     ```
 
-5.  **Создание systemd-сервиса** (`/etc/systemd/system/alertmanager.service`):
+5. **Создание systemd-сервиса** (`/etc/systemd/system/alertmanager.service`):
+
     ```bash
     cat <<EOF > /etc/systemd/system/alertmanager.service
     [Unit]
@@ -53,7 +59,8 @@
     EOF
     ```
 
-6.  **Запуск и проверка**:
+6. **Запуск и проверка**:
+
     ```bash
     systemctl daemon-reload
     systemctl start alertmanager.service

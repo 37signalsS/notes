@@ -36,21 +36,21 @@ podman login registry.example.com
 
 ### 2. Сценарии выбора
 
--   **Podman** — идеальный выбор для:
-    -   Linux-серверов с фокусом на безопасность и интеграцию с `systemd`.
-    -   Многопользовательских сред, где изоляция пользователей критична (`rootless`).
-    -   Разработки и тестирования Kubernetes-приложений (`podman play kube`).
+- **Podman** — идеальный выбор для:
+  - Linux-серверов с фокусом на безопасность и интеграцию с `systemd`.
+  - Многопользовательских сред, где изоляция пользователей критична (`rootless`).
+  - Разработки и тестирования Kubernetes-приложений (`podman play kube`).
 
--   **Docker** — остается сильным выбором для:
-    -   Устоявшихся CI/CD пайплайнов, сильно завязанных на `docker-compose`.
-    -   Кросс-платформенной разработки (Windows/macOS), где `Docker Desktop` предоставляет более зрелый UX.
-    -   Экосистем с большим количеством плагинов и инструментов, ориентированных на Docker API.
+- **Docker** — остается сильным выбором для:
+  - Устоявшихся CI/CD пайплайнов, сильно завязанных на `docker-compose`.
+  - Кросс-платформенной разработки (Windows/macOS), где `Docker Desktop` предоставляет более зрелый UX.
+  - Экосистем с большим количеством плагинов и инструментов, ориентированных на Docker API.
 
 ## Дополнительная информация
 
--   **Архитектура Docker:** [Обзор Docker](../Docker/docker_overview.md)
--   **Архитектура Podman:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
--   **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
--   **Механизмы изоляции:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)
--   **Альтернативные среды выполнения:** [Сравнение CRI-O, Containerd и других сред](./alternatives_crio_containerd.md)
--   **Запуск `systemd` в контейнере:** [Docker и systemd](../Docker/docker_systemd.md)
+- **Архитектура Docker:** [Обзор Docker](../Docker/docker_overview.md)
+- **Архитектура Podman:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
+- **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
+- **Механизмы изоляции:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)
+- **Альтернативные среды выполнения:** [Сравнение CRI-O, Containerd и других сред](./alternatives_crio_containerd.md)
+- **Запуск `systemd` в контейнере:** [Docker и systemd](../Docker/docker_systemd.md)

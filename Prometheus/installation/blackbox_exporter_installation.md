@@ -2,7 +2,8 @@
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
 
-1.  **Загрузка и установка (пример для версии 0.24.0)**:
+1. **Загрузка и установка (пример для версии 0.24.0)**:
+
     ```bash
     BLACKBOX_EXPORTER_VERSION="0.24.0" # Проверьте последнюю стабильную версию
     cd /tmp
@@ -11,7 +12,8 @@
     mv blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64/blackbox_exporter /usr/local/bin/
     ```
 
-2.  **Настройка каталогов и конфигурации**:
+2. **Настройка каталогов и конфигурации**:
+
     ```bash
     mkdir /etc/blackbox_exporter
     # Скопируйте файл blackbox.yml из архива или создайте свой
@@ -19,14 +21,16 @@
     chown -R nobody:nobody /etc/blackbox_exporter
     ```
 
-3.  **Создание файла с опциями запуска** (`/etc/sysconfig/blackbox_exporter`):
+3. **Создание файла с опциями запуска** (`/etc/sysconfig/blackbox_exporter`):
+
     ```bash
     cat <<EOF > /etc/sysconfig/blackbox_exporter
     OPTIONS="--config.file=/etc/blackbox_exporter/blackbox.yml"
     EOF
     ```
 
-4.  **Создание systemd-сервиса** (`/etc/systemd/system/blackbox_exporter.service`):
+4. **Создание systemd-сервиса** (`/etc/systemd/system/blackbox_exporter.service`):
+
     ```bash
     cat <<EOF > /etc/systemd/system/blackbox_exporter.service
     [Unit]
@@ -46,7 +50,9 @@
     WantedBy=multi-user.target
     EOF
     ```
-5.  **Запуск и проверка**:
+
+5. **Запуск и проверка**:
+
     ```bash
     systemctl daemon-reload
     systemctl start blackbox_exporter

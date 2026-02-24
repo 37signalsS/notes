@@ -8,9 +8,9 @@
 
 `smem` предоставляет более точные показатели использования памяти, чем традиционные утилиты (`top`, `ps`), благодаря корректному учёту разделяемой памяти. К таким показателям относятся:
 
--   **USS (Unique Set Size)**
--   **PSS (Proportional Set Size)**
--   **RSS (Resident Set Size)**
+- **USS (Unique Set Size)**
+- **PSS (Proportional Set Size)**
+- **RSS (Resident Set Size)**
 
 Подробное описание этих метрик, их значений и сценариев использования см. в [Метрики потребления памяти процесса](../Core/memory/process_memory_metrics.md).
 

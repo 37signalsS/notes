@@ -147,6 +147,7 @@ ClusterRole поддерживают [динамическую агрегаци�
 ### Встроенные роли
 
 Kubernetes предоставляет встроенные ClusterRole:
+
 - `cluster-admin` — полный доступ
 - `admin` — админ в рамках namespace
 - `edit` — чтение и запись

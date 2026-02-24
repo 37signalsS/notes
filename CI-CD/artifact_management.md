@@ -38,6 +38,7 @@
 #### Версионирование артефактов
 
 Распространенные схемы:
+
 - **Семантическое версионирование (SemVer):** `MAJOR.MINOR.PATCH`. Пример: `1.4.0`, пре-релиз: `1.5.0-rc.2`, метаданные сборки: `1.4.0+build.57`.
 - **Календарное версионирование (CalVer):** `YYYY.MM[.DD]`. Пример: `2025.10.10` для частых выпусков.
 - **Комбинированные схемы:** SemVer + суффикс короткого SHA коммита (`1.4.0+gabc1234`) для точной трассировки.
@@ -131,6 +132,7 @@ use_package:
 #### Сценарий 3: Интеграция с Nexus и Artifactory
 
 **Maven и Nexus:**
+
 ```xml
 <!-- settings.xml -->
 <settings>
@@ -153,6 +155,7 @@ use_package:
 ```
 
 **JFrog CLI и Artifactory:**
+
 ```bash
 jf c add art --url=https://art.local --user=$USER --password=$PASS --interactive=false
 mvn -B deploy -DaltDeploymentRepository=artifactory::default::https://art.local/artifactory/my-maven-local
@@ -162,6 +165,7 @@ jf rt build-publish my-build $CI_PIPELINE_ID
 #### Сценарий 4: Работа с тегами и метаданными в CI
 
 **Обогащение Docker-образа метаданными:**
+
 ```Dockerfile
 # Dockerfile
 LABEL org.opencontainers.image.title="shop-api" \
@@ -172,6 +176,7 @@ LABEL org.opencontainers.image.title="shop-api" \
 ```
 
 **Мульти-тегирование и пуш:**
+
 ```bash
 IMAGE=registry.example.com/shop/api
 VERSION=2.3.0
@@ -183,6 +188,7 @@ docker push $IMAGE --all-tags
 #### Сценарий 5: Настройка политик хранения
 
 **Jenkins Pipeline:**
+
 ```groovy
 // Jenkinsfile
 pipeline {
@@ -194,6 +200,7 @@ pipeline {
 ```
 
 **Правила жизненного цикла для S3:**
+
 ```json
 {
   "Rules": [{
@@ -220,6 +227,7 @@ pipeline {
 | **Автоматизация** | REST API | Богатый REST API, JFrog CLI, webhooks |
 
 **Критерии выбора:**
+
 - Поддерживаемые форматы пакетов и глубина метаданных.
 - Требования к HA, геораспределению и репликации.
 - Наличие процессов promotion/staging.

@@ -37,6 +37,31 @@ apt-cache policy nginx
 
 ## Практические сценарии
 
+### Варианты настройки Pin
+
+1. **По версии пакета:**
+    * `Pin: version 1.28.2*`
+    * `Pin: version 1.24.0-2ubuntu7.6`
+2. **По происхождению (origin):**
+    * `Pin: release o=nginx`          # от nginx.org
+    * `Pin: release o=Debian`         # от Debian
+    * `Pin: release o=LP-PPA-ondrej-nginx`  # от PPA Ondřej
+3. **По дистрибутиву (archive):**
+    * `Pin: release a=stable`
+    * `Pin: release a=mainline`
+    * `Pin: release a=noble-backports`
+4. **По кодовому имени (codename):**
+    * `Pin: release n=noble`
+    * `Pin: release n=jammy`
+5. **По компоненту:**
+    * `Pin: release c=main`
+    * `Pin: release c=nginx`
+    * `Pin: release c=universe`
+6. **По архитектуре:**
+    * `Pin: release b=amd64`
+7. **Комбинирование (AND):**
+    * `Pin: release o=nginx,a=stable,n=noble` # Все условия должны совпадать
+
 ### Настройка приоритетов
 
 Приоритеты конфигурируются в файлах директории `/etc/apt/preferences.d/`. Эти файлы дополняют [источники репозиториев (`sources.list`)](../../Linux/PackageManagement/deb_repositories_sources_list.md). Рекомендуется использовать отдельный файл для каждого правила.

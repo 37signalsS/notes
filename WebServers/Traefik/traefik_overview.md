@@ -10,23 +10,23 @@
 
 Архитектура Traefik построена на следующих компонентах:
 
-*   **Providers (Провайдеры):** Системы, из которых Traefik получает информацию о сервисах. Это могут быть оркестраторы (Docker Swarm, Kubernetes), сервисы обнаружения (Consul) или даже файлы конфигурации.
-*   **Entrypoints (Точки входа):** Сетевые порты, которые принимают входящий трафик (например, порты 80 для HTTP и 443 для HTTPS).
-*   **Routers (Маршрутизаторы):** Анализируют входящие запросы (на основе хоста, пути, заголовков) и определяют, какому сервису их направить.
-*   **Services (Сервисы):** Определяют, как добраться до конечных приложений, включая их адреса и порты, а также настройки балансировки нагрузки.
-*   **Middleware (Промежуточное ПО):** Компоненты, которые могут изменять запрос перед его отправкой сервису. Примеры: аутентификация, установка заголовков, редиректы (например, с HTTP на HTTPS).
+* **Providers (Провайдеры):** Системы, из которых Traefik получает информацию о сервисах. Это могут быть оркестраторы (Docker Swarm, Kubernetes), сервисы обнаружения (Consul) или даже файлы конфигурации.
+* **Entrypoints (Точки входа):** Сетевые порты, которые принимают входящий трафик (например, порты 80 для HTTP и 443 для HTTPS).
+* **Routers (Маршрутизаторы):** Анализируют входящие запросы (на основе хоста, пути, заголовков) и определяют, какому сервису их направить.
+* **Services (Сервисы):** Определяют, как добраться до конечных приложений, включая их адреса и порты, а также настройки балансировки нагрузки.
+* **Middleware (Промежуточное ПО):** Компоненты, которые могут изменять запрос перед его отправкой сервису. Примеры: аутентификация, установка заголовков, редиректы (например, с HTTP на HTTPS).
 
 ## Практические сценарии
 
 Traefik широко используется в различных средах. Ниже приведены ссылки на подробные руководства по его настройке:
 
-*   **Docker Compose:** Пошаговая инструкция по настройке Traefik для отдельных проектов.
-    *   **[Traefik с Docker Compose: Практическое руководство](./traefik_with_docker_compose.md)**
-*   **Docker Swarm:** Использование Traefik для управления ingress-трафиком в кластере.
-    *   **Основная заметка:** **[Docker Swarm - Ingress Traffic Management with Traefik](../../Docker/Docker_swarm/swarm_ingress_traefik.md)**
-    *   **Обзор Docker Swarm:** **[Docker Swarm Mode Overview](../../Docker/Docker_swarm/docker_swarm_overview.md)**
-*   **Kubernetes:** Traefik является одним из популярных **[Ingress-контроллеров](../../Kubernetes/Networking/Ingress/overview.md)**, управляя внешним доступом к сервисам в кластере.
-    *   **Пример настройки:** **[Настройка BasicAuth в Traefik с Kubernetes](../../../Kubernetes/Security/traefik_kubernetes_basic_auth.md)**
+* **Docker Compose:** Пошаговая инструкция по настройке Traefik для отдельных проектов.
+  * **[Traefik с Docker Compose: Практическое руководство](./traefik_with_docker_compose.md)**
+* **Docker Swarm:** Использование Traefik для управления ingress-трафиком в кластере.
+  * **Основная заметка:** **[Docker Swarm - Ingress Traffic Management with Traefik](../../Docker/Docker_swarm/swarm_ingress_traefik.md)**
+  * **Обзор Docker Swarm:** **[Docker Swarm Mode Overview](../../Docker/Docker_swarm/docker_swarm_overview.md)**
+* **Kubernetes:** Traefik является одним из популярных **[Ingress-контроллеров](../../Kubernetes/Networking/Ingress/overview.md)**, управляя внешним доступом к сервисам в кластере.
+  * **Пример настройки:** **[Настройка BasicAuth в Traefik с Kubernetes](../../../Kubernetes/Security/traefik_kubernetes_basic_auth.md)**
 
 ## Дополнительная информация
 

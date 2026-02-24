@@ -38,40 +38,46 @@
 
 Давайте проследим весь путь на командах.
 
-1.  **Создаем "чертеж" (Образ):**
+1. **Создаем "чертеж" (Образ):**
     Собираем `Dockerfile` в новый образ с тегом `my-app:1.0`.
+
     ```bash
     docker build -t my-app:1.0 .
     ```
 
-2.  **Проверяем наличие "чертежа":**
+2. **Проверяем наличие "чертежа":**
     Убедимся, что наш образ появился в локальном списке образов.
+
     ```bash
     docker images | grep my-app
     # REPOSITORY   TAG      IMAGE ID       CREATED          SIZE
     # my-app       1.0      a1b2c3d4e5f6   10 seconds ago   150MB
     ```
 
-3.  **Строим "здание" (Контейнер):**
+3. **Строим "здание" (Контейнер):**
     Запускаем контейнер из нашего образа. Теперь у нас есть работающий экземпляр.
+
     ```bash
     docker run -d --name my-running-app my-app:1.0
     ```
 
-4.  **Проверяем список "зданий":**
+4. **Проверяем список "зданий":**
     Команда `ps` показывает только запущенные контейнеры.
+
     ```bash
     docker ps | grep my-running-app
     # CONTAINER ID   IMAGE        COMMAND                  CREATED         STATUS         PORTS     NAMES
     # 01a2b3c4d5e6   my-app:1.0   "npm start"              5 seconds ago   Up 4 seconds             my-running-app
     ```
 
-5.  **"Сносим здание", но "чертеж" остается:**
+5. **"Сносим здание", но "чертеж" остается:**
     Удалим контейнер.
+
     ```bash
     docker stop my-running-app
     docker rm my-running-app
     ```
+
     Процесс исчез (`docker ps` будет пуст), но образ остался нетронутым (`docker images` все еще покажет `my-app:1.0`).
 
 ## Дополнительная информация

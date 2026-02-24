@@ -59,7 +59,7 @@ def run_migration(migration_file):
 
 ## Дополнительная информация
 
--   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**
+- См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**
 - [Flyway Documentation](https://documentation.red-gate.com/flyway)
 - [Liquibase Documentation](https://docs.liquibase.com/)
 - [Alembic Documentation](https://alembic.sqlalchemy.org/)

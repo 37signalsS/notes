@@ -13,10 +13,12 @@
 - **Просмотреть содержимое CRL:**
   `openssl crl -in intermediate-ca/crl/crl.pem -noout -text`
 - **Проверить соответствие ключа и сертификата:** (хеши модулей должны совпадать)
+
   ```bash
   openssl rsa -noout -modulus -in my-service.key | openssl md5
   openssl x509 -noout -modulus -in my-service.crt | openssl md5
   ```
+
 - **Подключиться к TLS-серверу и показать его сертификат:**
   `openssl s_client -connect my-service.local:443 -showcerts < /dev/null`
 - **Проверить цепочку доверия для файла fullchain:**

@@ -68,6 +68,7 @@ spec:
 ### Сравнение с другими типами
 
 ClusterIP является базовым типом, который используется как фундамент для:
+
 - [NodePort](./service_type_nodeport.md) — добавляет публикацию через порт узла
 - [LoadBalancer](./service_type_loadbalancer.md) — добавляет облачный балансировщик
 

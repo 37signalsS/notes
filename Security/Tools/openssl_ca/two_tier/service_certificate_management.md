@@ -18,6 +18,7 @@ openssl genrsa -out my-service.key 4096
 openssl req -new -key my-service.key -out my-service.csr 
   -subj "/C=RU/ST=Moscow/O=My Private Corp/OU=WebApp/CN=my-service.local"
 ```
+
 Далее файл `my-service.csr` передается администратору Intermediate CA.
 
 **Подпись CSR с помощью Intermediate CA**
@@ -43,6 +44,7 @@ openssl ca -config openssl.cnf -in ../my-service.csr -out ../my-service.crt
 
 cd ..
 ```
+
 - `-extensions v3_server_cert`: Эта опция указывает OpenSSL применить расширения из секции `[v3_server_cert]` конфигурационного файла. Поскольку в этой секции есть строка `subjectAltName = @alt_names`, OpenSSL автоматически добавит в сертификат все имена из секции `[alt_names]`.
 
 Теперь у вас есть `my-service.crt`, `my-service.key` и `intermediate-ca/ca-chain.crt` для настройки вашего веб-сервера.
@@ -55,6 +57,7 @@ cd ..
 # Проверяем, что сертификат сервиса доверен цепочке
 openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
 ```
+
 Ожидаемый вывод: `my-service.crt: OK`.
 
 #### Добавление корневого сертификата в системное хранилище
@@ -62,11 +65,14 @@ openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
 Чтобы вся система доверяла вашему CA, нужно добавить в нее **только корневой сертификат `root-ca/ca.crt`**.
 
 **Для Debian/Ubuntu:**
+
 ```bash
 sudo cp root-ca/ca.crt /usr/local/share/ca-certificates/my-private-corp-root.crt
 sudo update-ca-certificates
 ```
+
 **Для RHEL/CentOS/Fedora:**
+
 ```bash
 sudo cp root-ca/ca.crt /etc/pki/ca-trust/source/anchors/
 sudo update-ca-trust
@@ -87,6 +93,7 @@ openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
 
 cd ..
 ```
+
 > **Как клиенты узнают об отзыве?**
 > В конфигурации `intermediate-ca/openssl.cnf` мы добавили строку `crlDistributionPoints = URI:http://pki.my-corp.com/intermediate.crl`. Это расширение записывается в каждый выданный сертификат. Когда клиент проверяет сертификат, он видит этот URL, скачивает по нему CRL и проверяет, не отозван ли проверяемый сертификат.
 > **Ваша задача** — разместить сгенерированный файл `crl/crl.pem` по этому публично доступному URL (например, на обычном веб-сервере) и регулярно его обновлять.
@@ -110,5 +117,6 @@ openssl x509 -req -in test.csr
     -CA root-ca/ca.crt -CAkey root-ca/ca.key -CAcreateserial 
     -out test.crt -days 90
 ```
+
 - `-CAcreateserial`: Создает файл `root-ca.srl` (если его нет) для отслеживания серийных номеров.
 - **Недостаток**: этот метод не позволяет вести полноценный учёт и отзывать сертификаты через CRL и подвергает риску ключ корневого CA.

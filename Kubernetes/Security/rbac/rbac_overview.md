@@ -5,6 +5,7 @@
 **RBAC (Role-Based Access Control)** — механизм авторизации Kubernetes для гранулярного управления доступом субъектов (пользователей, групп, [ServiceAccount](roles.md#serviceaccount)) к ресурсам кластера через декларативные правила.
 
 Ключевые сущности:
+
 - **Субъект** — кто запрашивает доступ: `User`, `Group`, [ServiceAccount](roles.md#serviceaccount)
 - **Роль** — набор разрешений: [Role](roles.md#role), [ClusterRole](roles.md#clusterrole)
 - **Привязка** — связь субъекта с ролью: [RoleBinding](bindings.md), [ClusterRoleBinding](bindings.md)
@@ -14,6 +15,7 @@
 ### Модель разрешений
 
 RBAC опирается на три вопроса:
+
 - **Что разрешено?** — определяется в [Role](roles.md) и [ClusterRole](roles.md#clusterrole)
 - **Кому разрешено?** — определяется в поле `subjects` [привязок](bindings.md)
 - **Где разрешено?** — определяется уровнем привязки ([RoleBinding](bindings.md#rolebinding) или [ClusterRoleBinding](bindings.md#clusterrolebinding))
@@ -102,6 +104,7 @@ roleRef:
 ### Ограничения RBAC
 
 RBAC имеет принципиальные [ограничения](limitations_opa.md):
+
 - Нет запрещающих правил (deny)
 - Нет условий (time, IP)
 - Статичность правил

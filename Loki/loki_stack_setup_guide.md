@@ -29,9 +29,9 @@ helm show values grafana/loki > loki_values.yaml
 
 Основные параметры для изменения в файле `loki_values.yaml`:
 
-*   **`persistence`**: Настройка постоянного хранилища для Loki. В production-средах рекомендуется использовать облачные хранилища (S3, GCS) или распределенные файловые системы. Для тестовых сред можно использовать `filesystem`.
-*   **`replicas`**: Количество реплик Loki. Для высокой доступности рекомендуется 3 и более.
-*   **`resources`**: Настройка ресурсов CPU и памяти для подов Loki.
+* **`persistence`**: Настройка постоянного хранилища для Loki. В production-средах рекомендуется использовать облачные хранилища (S3, GCS) или распределенные файловые системы. Для тестовых сред можно использовать `filesystem`.
+* **`replicas`**: Количество реплик Loki. Для высокой доступности рекомендуется 3 и более.
+* **`resources`**: Настройка ресурсов CPU и памяти для подов Loki.
 
 Пример изменения `persistence` (для тестовой среды):
 
@@ -75,8 +75,8 @@ helm show values grafana/promtail > promtail_values.yaml
 
 Ключевые моменты конфигурации в файле `promtail_values.yaml`:
 
-*   **`loki.serviceName`**: Убедитесь, что Promtail настроен на отправку логов в сервис Loki. По умолчанию это `loki`.
-*   **`tolerations`**: Чтобы Promtail собирал логи со всех нод, включая `master` и `ingress` ноды со специальными `taints`, необходимо добавить `tolerations`.
+* **`loki.serviceName`**: Убедитесь, что Promtail настроен на отправку логов в сервис Loki. По умолчанию это `loki`.
+* **`tolerations`**: Чтобы Promtail собирал логи со всех нод, включая `master` и `ingress` ноды со специальными `taints`, необходимо добавить `tolerations`.
 
 Добавьте в `promtail_values.yaml` следующие `tolerations`. Это позволит Promtail запускаться на всех нодах, включая `master` и `ingress`, игнорируя любые `taints` (независимо от их `key` и `effect`), что необходимо для полного сбора логов со всего кластера.
 
@@ -116,10 +116,10 @@ helm show values grafana/grafana > grafana_values.yaml
 
 Основные настройки в файле `grafana_values.yaml`:
 
-*   **`ingress.enabled`**: Включите Ingress для доступа к веб-интерфейсу Grafana извне кластера.
-*   **`ingress.hosts`**: Укажите доменное имя для доступа к Grafana.
-*   **`adminPassword`**: Установите надежный пароль для пользователя `admin`.
-*   **`datasources`**: Настройте Loki как источник данных по умолчанию.
+* **`ingress.enabled`**: Включите Ingress для доступа к веб-интерфейсу Grafana извне кластера.
+* **`ingress.hosts`**: Укажите доменное имя для доступа к Grafana.
+* **`adminPassword`**: Установите надежный пароль для пользователя `admin`.
+* **`datasources`**: Настройте Loki как источник данных по умолчанию.
 
 Пример изменения `ingress` и `datasources`:
 
@@ -169,11 +169,11 @@ helm upgrade --install grafana grafana/grafana \
 
 Если вы не настроили `datasource` через `values.yaml` при установке Grafana, его можно добавить вручную:
 
-1.  Перейдите в `Configuration` -> `Data Sources`.
-2.  Нажмите `Add data source` и выберите `Loki`.
-3.  В поле `URL` укажите адрес сервиса Loki. Обычно это `http://loki:3100`.
-    *   **Важно:** Если Grafana и Loki находятся в разных `namespaces` (например, Grafana в `monitoring`, а Loki в `logging`), используйте полное имя сервиса: `http://loki.logging.svc.cluster.local:3100`.
-4.  Нажмите `Save & Test`. Grafana должна показать сообщение об успешном подключении.
+1. Перейдите в `Configuration` -> `Data Sources`.
+2. Нажмите `Add data source` и выберите `Loki`.
+3. В поле `URL` укажите адрес сервиса Loki. Обычно это `http://loki:3100`.
+    * **Важно:** Если Grafana и Loki находятся в разных `namespaces` (например, Grafana в `monitoring`, а Loki в `logging`), используйте полное имя сервиса: `http://loki.logging.svc.cluster.local:3100`.
+4. Нажмите `Save & Test`. Grafana должна показать сообщение об успешном подключении.
 
 #### Анализ логов с помощью LogQL
 
@@ -183,6 +183,6 @@ helm upgrade --install grafana grafana/grafana \
 
 Примеры запросов, специфичные для Kubernetes:
 
-*   **Логи из конкретного namespace:** `{namespace="ingress-nginx"}`
-*   **Логи конкретного пода:** `{pod="my-app-pod-12345"}`
-*   **Поиск ошибок в логах Java-приложения:** `{app="my-java-app"} |= "Exception"`
+* **Логи из конкретного namespace:** `{namespace="ingress-nginx"}`
+* **Логи конкретного пода:** `{pod="my-app-pod-12345"}`
+* **Поиск ошибок в логах Java-приложения:** `{app="my-java-app"} |= "Exception"`

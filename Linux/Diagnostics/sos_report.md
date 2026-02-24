@@ -24,6 +24,7 @@
 После распаковки `sos report` создаётся директория с подкаталогами:
 
 **Символические ссылки (удобный доступ к ключевой информации):**
+
 - `cmdline` — команда загрузки ядра
 - `date` — дата/время выполнения sos report
 - `dmidecode` — информация об оборудовании
@@ -38,6 +39,7 @@
 - `uptime` — время работы и средняя нагрузка
 
 **Каталоги:**
+
 - `boot` — информация о Grub
 - `etc` — конфигурация системы
 - `proc` — структуры данных ядра
@@ -67,11 +69,13 @@
 ### Установка sos
 
 **Oracle Linux 6 и 7:**
+
 ```bash
 sudo yum install sos
 ```
 
 **Oracle Linux 8 и 9:**
+
 ```bash
 sudo dnf install sos
 ```
@@ -81,21 +85,25 @@ sudo dnf install sos
 Рекомендуемые команды для получения полных данных:
 
 **Oracle Linux 6 и 7:**
+
 ```bash
 sudo sosreport --batch --all-logs -k sar.all_sar=on
 ```
 
 **Oracle Linux 8:**
+
 ```bash
 sudo sos report --batch --all-logs -k sar.all-sar=on
 ```
 
 **Oracle Linux 9:**
+
 ```bash
 sudo sos report --batch --all-logs -e sar -k sar.all-sar=on
 ```
 
 **Параметры:**
+
 - `--batch` — запуск без интерактивного ввода (имя хоста и timestamp автоматически)
 - `--all-logs` — сбор полных версий файлов из `/var/log` (без этого некоторые файлы усекаются)
 - `-k sar.all-sar=on` — сбор всех данных `sar` за весь период (не только за 14 дней)
@@ -121,11 +129,13 @@ oled sosdiff <dir1> <dir2>
 ```
 
 **Полезные опции:**
+
 - `-d, --detail` — подробный вывод с полными значениями конфигурации
 - `-o, --override` — принудительное сравнение при несовпадении версий ОС или архитектуры
 - `-c, --color` — цветной вывод (использовать с `less -r`)
 
 **Примеры сравнения:**
+
 ```bash
 # Сравнение до и после перезагрузки
 oled sosdiff sosreport-test-2025-04-21-hzasqne sosreport-test-2025-04-21-qvbwphy
@@ -142,16 +152,19 @@ oled sosdiff --override sosreport-baremetal sosreport-vm
 Иногда требуется скрыть чувствительные данные перед отправкой отчёта.
 
 **Oracle Linux 8 и 9 — обфускация при сборе:**
+
 ```bash
 sudo sos report --clean --batch --keywords SecretApp --all-logs -e sar -k sar.all-sar=on
 ```
 
 **Oracle Linux 8 и 9 — обфускация после сбора:**
+
 ```bash
 sudo sos clean --batch --keywords SecretApp sosreport-name.tar.xz
 ```
 
 **Oracle Linux 7 — последующая обфускация через soscleaner:**
+
 ```bash
 sudo yum install soscleaner
 sudo soscleaner sosreport-name.tar.xz
@@ -215,6 +228,7 @@ grep multipathd var/log/messages | grep "Jul 12" | grep mpathr
 ### Выходные файлы
 
 По умолчанию `sos report` сохраняет архив в `/var/tmp`:
+
 - `sosreport-hostname-YYYY-MM-DD-xxxxxx.tar.xz` — основной архив
 - `sosreport-hostname-YYYY-MM-DD-xxxxxx.tar.xz.sha256` — контрольная сумма
 

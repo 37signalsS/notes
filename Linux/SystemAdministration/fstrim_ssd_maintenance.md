@@ -19,6 +19,7 @@
 ```bash
 sudo fstrim -v /
 ```
+
 Команда выведет объем освобожденных данных.
 
 ### Автоматическое выполнение с `systemd-timer`
@@ -30,6 +31,7 @@ sudo fstrim -v /
 sudo systemctl enable fstrim.timer
 sudo systemctl start fstrim.timer
 ```
+
 Это обеспечит поддержание производительности SSD без ручного вмешательства.
 
 ## Дополнительная информация

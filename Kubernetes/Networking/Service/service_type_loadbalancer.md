@@ -5,6 +5,7 @@
 **LoadBalancer** — тип Service, который создает внешний балансировщик нагрузки у облачного провайдера (AWS, GCP, Azure). Балансировщик получает публичный IP-адрес и направляет трафик на `Service`.
 
 LoadBalancer является расширением [NodePort](./service_type_nodeport.md) и [ClusterIP](./service_type_clusterip.md):
+
 ```
 External Traffic → Cloud LB → NodePort → ClusterIP → Pod
 ```

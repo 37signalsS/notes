@@ -40,6 +40,7 @@ kubernetes/
 Файлы в `base` содержат общие, неспецифичные для окружения манифесты.
 
 **`base/deployment.yaml`:**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -67,6 +68,7 @@ spec:
 
 **`base/kustomization.yaml`:**
 Определяет ресурсы, входящие в базу.
+
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -81,6 +83,7 @@ resources:
 Директории `overlays` содержат специфичные для окружений изменения. Каждое наложение ссылается на `base` и применяет патчи.
 
 **Staging (`overlays/staging/kustomization.yaml`):**
+
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -99,6 +102,7 @@ images:                       # Переопределение тегов обр
 ```
 
 **Production (`overlays/production/kustomization.yaml`):**
+
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -115,7 +119,9 @@ images:
   - name: myregistry/myapp
     newTag: v1.2.0
 ```
+
 **Пример патча для Production (`overlays/production/resource-limits.yaml`):**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment

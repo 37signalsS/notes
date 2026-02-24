@@ -1,18 +1,20 @@
 ### Регистрация нового устройства
 
-*   **Linux:**
+* **Linux:**
     Выполните в терминале команду, указав адрес вашего сервера Headscale.
+
     ```bash
     # Замените https://headscale.example.com на адрес вашего сервера(https://headscale.magicfun.nnstd.dev)
     sudo tailscale up --login-server https://headscale.example.com
     ```
+
     Скопируйте ключ (`mkey...`), который появится в выводе.
 
-*   **Windows / macOS / Android:**
-    1.  В настройках приложения найдите опцию для использования альтернативного сервера (`Use alternative coordination server`).
-    2.  Введите адрес вашего сервера Headscale: `https://headscale.example.com`.
-    3.  Нажмите `Log in` или `Подключиться`. В браузере откроется страница с ключом аутентификации.
-    4.  Скопируйте этот ключ (`mkey...`).
+* **Windows / macOS / Android:**
+    1. В настройках приложения найдите опцию для использования альтернативного сервера (`Use alternative coordination server`).
+    2. Введите адрес вашего сервера Headscale: `https://headscale.example.com`.
+    3. Нажмите `Log in` или `Подключиться`. В браузере откроется страница с ключом аутентификации.
+    4. Скопируйте этот ключ (`mkey...`).
 
 **Регистрация ключа на сервере**
 
@@ -33,17 +35,20 @@ headscale nodes register --user <user> --key <key>
 
 ## Управление сервером Headscale
 
-*   **Создание нового пользователя:**
+* **Создание нового пользователя:**
+
     ```bash
     headscale users create <username>
     ```
 
-*   **Просмотр списка всех узлов:**
+* **Просмотр списка всех узлов:**
+
     ```bash
     headscale nodes list
     ```
 
-*   **Удаление неактивного узла:**
+* **Удаление неактивного узла:**
+
     ```bash
     headscale nodes delete --identifier <ID>
     ```

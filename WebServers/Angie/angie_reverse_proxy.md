@@ -28,6 +28,7 @@ server {
     }
 }
 ```
+
 - `proxy_pass`: Ключевая директива, указывающая адрес бэкенд-сервера. В данном случае все запросы, приходящие на `location /`, будут перенаправлены на `http://localhost:9000`.
 
 Для отладки работы прокси удобно использовать бэкенд, который в ответ возвращает все заголовки и параметры полученного им запроса, например, `ws-debugger` в [Docker](../../Docker/docker_overview.md).
@@ -61,7 +62,7 @@ location / {
 
 - **`proxy_pass http://backend;` (без `/`)**: URI запроса передается "как есть". Запрос `/some/page` будет проксирован на `http://backend/some/page`.
 - **`proxy_pass http://backend/;` (с `/`)**: Часть URI, совпадающая с `location`, отбрасывается.
-    - `location /path/ { proxy_pass http://backend/; }`: Запрос `/path/some/page` будет проксирован на `http://backend/some/page`.
+  - `location /path/ { proxy_pass http://backend/; }`: Запрос `/path/some/page` будет проксирован на `http://backend/some/page`.
 
 Подробное описание логики работы директивы `location` находится в отдельной заметке: [Директивы `location` в Angie](./angie_location_directives.md).
 
@@ -89,10 +90,12 @@ http {
     }
 }
 ```
+
 **Ключевые директивы:**
-1.  `upstream { keepalive ...; }`: Включает кэш для keep-alive соединений в рамках `upstream` блока.
-2.  `proxy_http_version 1.1;`: Переключает проксирование на протокол HTTP/1.1, который поддерживает keep-alive.
-3.  `proxy_set_header Connection "";`: Сбрасывает заголовок `Connection`, чтобы Angie не передавал на бэкенд `Connection: close` от клиента.
+
+1. `upstream { keepalive ...; }`: Включает кэш для keep-alive соединений в рамках `upstream` блока.
+2. `proxy_http_version 1.1;`: Переключает проксирование на протокол HTTP/1.1, который поддерживает keep-alive.
+3. `proxy_set_header Connection "";`: Сбрасывает заголовок `Connection`, чтобы Angie не передавал на бэкенд `Connection: close` от клиента.
 
 ### 5.2. Буферизация (`proxy_buffering`)
 
@@ -168,6 +171,7 @@ http {
     }
 }
 ```
+
 - `proxy_cache_path`: Создает зону кэша на диске.
 - `proxy_cache`: Активирует кэширование, используя указанную зону.
 - `proxy_cache_valid`: Определяет время жизни кэша для разных кодов ответа.

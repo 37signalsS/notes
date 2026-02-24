@@ -52,7 +52,9 @@ LoadBalancer (NodePort + облачный балансировщик)
 ### Решение для распространенных задач
 
 #### Задача: Доступ к базе данных из приложения
+
 **Решение:** [ClusterIP](./service_type_clusterip.md)
+
 ```yaml
 spec:
   type: ClusterIP
@@ -61,14 +63,18 @@ spec:
 ```
 
 #### Задача: Демо/отладка приложения
+
 **Решение:** [NodePort](./service_type_nodeport.md) или `kubectl port-forward`
+
 ```bash
 # Быстрый доступ для разработки
 kubectl port-forward svc/my-app 8080:80
 ```
 
 #### Задача: Публикация API в production (облако)
+
 **Решение:** [LoadBalancer](./service_type_loadbalancer.md) для TCP или [Ingress](../Ingress/overview.md) для HTTP
+
 ```yaml
 spec:
   type: LoadBalancer
@@ -76,7 +82,9 @@ spec:
 ```
 
 #### Задача: Публикация в on-premise кластере
+
 **Решение:** [NodePort](./service_type_nodeport.md) + внешний балансировщик или MetalLB
+
 ```yaml
 spec:
   type: NodePort

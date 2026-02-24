@@ -41,6 +41,7 @@ Secret можно использовать как переменные окру�
 ### Безопасность
 
 Подробнее см. [Безопасность Secret](security.md):
+
 - Шифрование в etcd (Encryption at Rest)
 - Неизменяемые Secrets (`immutable: true`)
 - RBAC

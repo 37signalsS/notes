@@ -35,21 +35,39 @@ sudo apt install apt-mirror apache2
 # /etc/apt/mirror.list
 
 ############# config ##################
+# Указывает базовый путь для хранения всех файлов зеркала (пакеты, кэш и т.д.).
+# По умолчанию: /var/spool/apt-mirror
 set base_path    /var/spool/apt-mirror
 #
-# set mirror_path  $base_path/mirror
-# set skel_path    $base_path/skel
-# set var_path     $base_path/var
+# set mirror_path  $base_path/mirror # Путь к директории с непосредственно зеркалом
+# set skel_path    $base_path/skel   # Путь для хранения временных файлов
+# set var_path     $base_path/var     # Путь для хранения логов и других переменных данных
 #
+# Определяет количество потоков для одновременной загрузки пакетов.
+# Увеличение значения ускоряет загрузку, но увеличивает нагрузку на сеть и сервер.
 set nthreads     20
+# Настройка обработки символа '~' в версиях пакетов.
+# Установка в '0' позволяет избежать проблем с пакетами, содержащими этот символ.
 set _tilde       0
 ############# end config ##############
 
-# Ubuntu 20.04 (focal)
+# Определения репозиториев для зеркалирования.
+# Формат: deb [опции] URI дистрибутив [компоненты]
+#
+# deb: Указывает на репозиторий бинарных пакетов.
+# http://archive.ubuntu.com/ubuntu: Базовый URL удаленного репозитория.
+# focal: Кодовое имя дистрибутива (например, Ubuntu 20.04 LTS).
+# main restricted universe multiverse: Компоненты репозитория, определяющие категории программного обеспечения:
+#   - main: Основные пакеты, поддерживаемые Canonical.
+#   - restricted: Проприетарные драйверы.
+#   - universe: Пакеты, поддерживаемые сообществом.
+#   - multiverse: Пакеты, ограниченные патентами или авторским правом.
 deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
 deb http://archive.ubuntu.com/ubuntu focal-security main restricted universe multiverse
 deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
 
+# Инструкция для apt-mirror по удалению устаревших пакетов с локального зеркала,
+# которые больше не присутствуют в исходном репозитории.
 clean http://archive.ubuntu.com/ubuntu
 ```
 

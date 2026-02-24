@@ -99,4 +99,4 @@ dig dnsserver.local.lan
 ;; flags: qr aa rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 1, ADDITIONAL: 1
 ```
 
-- `aa` (Authoritative Answer): флаг, подтверждающий, что ответ является авторитативным.
+* `aa` (Authoritative Answer): флаг, подтверждающий, что ответ является авторитативным.

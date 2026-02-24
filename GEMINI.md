@@ -97,11 +97,13 @@ Definitions → Basic Concepts → Practical Scenarios → Additional Informatio
 ## 7. Currency Assessment
 
 When outdated info found:
+
 1. `websearch` / `codesearch`
 2. Justification
 3. Update plan
 
 **Indicators:**
+
 - Info older than 12 months
 - Mentioned version EOL/deprecated
 - Known vulnerabilities in tools
@@ -120,18 +122,21 @@ When outdated info found:
 ## 9. Merge/Split Rules
 
 ### Split
+>
 - >300 lines with multiple subtopics
 - Different technologies/cases in one file
 - Independent concepts
 - Each file keeps link to parent
 
 ### Merge
+
 - <30 lines with overlap
 - Same-directory files with similar naming
 - Cross-references >3 times
 - Semantic duplicates
 
 **Merge procedure:**
+
 1. Identify all files for merge
 2. Choose best location (primary domain)
 3. Combine using structure `Definitions → Basic Concepts → Practical Scenarios → Additional Information`
@@ -150,6 +155,7 @@ When outdated info found:
 | Anchor | `[Section](#section-name)` | Within file |
 
 **Forbidden:**
+
 - Link lists at file end
 - Broken links
 - Circular references without purpose
@@ -159,19 +165,22 @@ When outdated info found:
 
 ## 11. Currency and Freshness
 
-### Verification triggers:
+### Verification triggers
+
 - Explicit user request
 - Info older than 12 months
 - Version EOL
 - Tool vulnerabilities
 
-### Freshness indicators:
+### Freshness indicators
+
 - Version-specific (K8s 1.23) → check if still valid
 - Tool-specific (old flag) → check version
 - Concept (TCP basics) → generally evergreen
 - Best practices → check for updates
 
-### Handling:
+### Handling
+
 - Version numbers → check if current
 - EOL dates → add warning banner
 - Tutorial steps → verify tool availability

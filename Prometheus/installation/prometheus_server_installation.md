@@ -2,12 +2,14 @@
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
 
-1.  **Создание пользователя**:
+1. **Создание пользователя**:
+
     ```bash
     useradd --no-create-home --shell /bin/false prometheus --comment "Prometheus server user"
     ```
 
-2.  **Загрузка и установка (пример для версии 2.45.0)**:
+2. **Загрузка и установка (пример для версии 2.45.0)**:
+
     ```bash
     PROMETHEUS_VERSION="2.45.0" # Проверьте последнюю стабильную версию
     cd /tmp
@@ -17,7 +19,8 @@
     mv prometheus promtool /usr/local/bin/
     ```
 
-3.  **Настройка каталогов и конфигурации**:
+3. **Настройка каталогов и конфигурации**:
+
     ```bash
     mkdir /etc/prometheus
     cp prometheus.yml /etc/prometheus/
@@ -26,7 +29,8 @@
     chown prometheus:prometheus /var/lib/prometheus
     ```
 
-4.  **Создание файла с опциями запуска** (`/etc/sysconfig/prometheus`):
+4. **Создание файла с опциями запуска** (`/etc/sysconfig/prometheus`):
+
     ```bash
     cat <<EOF > /etc/sysconfig/prometheus
     OPTIONS="--config.file=/etc/prometheus/prometheus.yml 
@@ -34,7 +38,8 @@
     EOF
     ```
 
-5.  **Создание systemd-сервиса** (`/etc/systemd/system/prometheus.service`):
+5. **Создание systemd-сервиса** (`/etc/systemd/system/prometheus.service`):
+
     ```bash
     cat <<EOF > /etc/systemd/system/prometheus.service
     [Unit]
@@ -57,7 +62,8 @@
     EOF
     ```
 
-6.  **Запуск и проверка**:
+6. **Запуск и проверка**:
+
     ```bash
     systemctl daemon-reload
     systemctl start prometheus

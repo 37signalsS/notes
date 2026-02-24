@@ -54,6 +54,7 @@ echo "Migration compatibility check passed!"
 ```
 
 ---
+
 ### Дополнительная информация
 
--   См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**
+- См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**

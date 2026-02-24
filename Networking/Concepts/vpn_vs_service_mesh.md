@@ -28,12 +28,14 @@
 #### 1. Гибридный подход
 
 Наиболее распространенный паттерн:
+
 - **VPN** используется для создания безопасного транспортного канала между облаком и on-premise дата-центром (защита north-south).
 - **Service Mesh** применяется для контроля и защиты трафика между микросервисами внутри облачного кластера Kubernetes (защита east-west).
 
 #### 2. Примеры конфигураций
 
 - **VPN (Туннель WireGuard):** Создает простое site-to-site соединение.
+
     ```ini
     # Хост A
     [Interface]
@@ -45,7 +47,9 @@
     AllowedIPs = 10.10.0.2/32
     Endpoint = 203.0.113.2:51820
     ```
+
 - **Service Mesh (Политика доступа в Istio):** Требует mTLS и разрешает `POST`-запросы к сервису `orders` только от сервиса `payments` на основе его криптографической идентичности.
+
     ```yaml
     apiVersion: security.istio.io/v1beta1
     kind: AuthorizationPolicy
@@ -76,5 +80,5 @@
 
 - Детальное описание технологий туннелирования: **[Обзор туннелирования](../Tunnels/tunneling_overview.md)**.
 - Углубленная информация по конкретным реализациям:
-    - **[VPN на примере WireGuard](../../Vpn/wireguard.md)**.
-    - **[Service Mesh на примере Istio](../../Service_Mesh/Istio/istio_overview.md)** (путь может потребовать уточнения).
+  - **[VPN на примере WireGuard](../../Vpn/wireguard.md)**.
+  - **[Service Mesh на примере Istio](../../Service_Mesh/Istio/istio_overview.md)** (путь может потребовать уточнения).

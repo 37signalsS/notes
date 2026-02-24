@@ -42,7 +42,6 @@
     pip install psycopg2-binary
     ```
 
-
 #### Файл инвентаря `hosts.ini`
 
 ```ini

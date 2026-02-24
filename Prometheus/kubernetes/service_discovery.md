@@ -16,11 +16,11 @@ Prometheus предоставляет два принципиально разн
 
 #### Роли в Kubernetes Service Discovery
 
-*   `endpoints`: Обнаруживает все объекты `Endpoints`, связанные с [сервисами](../../Kubernetes/Networking/Service/service_overview.md). Наиболее частая роль для мониторинга.
-*   `service`: Обнаруживает все объекты [Service](../../Kubernetes/Networking/Service/service_overview.md).
-*   `pod`: Обнаруживает все объекты [Pod](../../Kubernetes/Base/Pod/pod_overview.md).
-*   `node`: Обнаруживает все объекты `Node` кластера.
-*   `ingress`: Обнаруживает все объекты [Ingress](../../Kubernetes/Networking/Ingress/overview.md).
+* `endpoints`: Обнаруживает все объекты `Endpoints`, связанные с [сервисами](../../Kubernetes/Networking/Service/service_overview.md). Наиболее частая роль для мониторинга.
+* `service`: Обнаруживает все объекты [Service](../../Kubernetes/Networking/Service/service_overview.md).
+* `pod`: Обнаруживает все объекты [Pod](../../Kubernetes/Base/Pod/pod_overview.md).
+* `node`: Обнаруживает все объекты `Node` кластера.
+* `ingress`: Обнаруживает все объекты [Ingress](../../Kubernetes/Networking/Ingress/overview.md).
 
 В зависимости от выбранной роли, Prometheus получает набор целей (targets) и обогащает их метаданными.
 
@@ -29,12 +29,13 @@ Prometheus предоставляет два принципиально разн
 Когда Prometheus обнаруживает цель через Kubernetes, он добавляет к ней множество метаданных, называемых "discovery labels". Эти метки начинаются с префикса `__meta_kubernetes_` и содержат информацию из API Kubernetes.
 
 Примеры:
-*   `__meta_kubernetes_namespace`: [Пространство имен](../../Kubernetes/Base/namespace.md) объекта.
-*   `__meta_kubernetes_service_name`: Имя сервиса.
-*   `__meta_kubernetes_pod_name`: Имя пода.
-*   `__meta_kubernetes_node_name`: Имя ноды.
-*   `__meta_kubernetes_service_annotation_<annotation_name>`: Значение аннотации сервиса.
-*   `__address__`: Реальный адрес и порт цели.
+
+* `__meta_kubernetes_namespace`: [Пространство имен](../../Kubernetes/Base/namespace.md) объекта.
+* `__meta_kubernetes_service_name`: Имя сервиса.
+* `__meta_kubernetes_pod_name`: Имя пода.
+* `__meta_kubernetes_node_name`: Имя ноды.
+* `__meta_kubernetes_service_annotation_<annotation_name>`: Значение аннотации сервиса.
+* `__address__`: Реальный адрес и порт цели.
 
 Эти метаданные являются основой для динамической фильтрации и настройки целей с помощью `relabel_configs`.
 
@@ -69,16 +70,17 @@ Prometheus предоставляет два принципиально разн
 `ServiceMonitor` — это высокоуровневая абстракция, которая позволяет декларативно описать, какие сервисы нужно мониторить.
 
 **Преимущества использования `ServiceMonitor`:**
-*   **Простота:** Вместо написания сложных правил `relabel`, вы создаете простой YAML-манифест.
-*   **Kubernetes-native:** Управление мониторингом происходит через стандартные `kubectl apply`, что идеально вписывается в [GitOps-подход](../../GitOps/GitOps_overview.md).
-*   **Автоматизация:** [Prometheus Operator](./operator.md) берет на себя всю работу по генерации и обновлению конфигурации Prometheus.
+
+* **Простота:** Вместо написания сложных правил `relabel`, вы создаете простой YAML-манифест.
+* **Kubernetes-native:** Управление мониторингом происходит через стандартные `kubectl apply`, что идеально вписывается в [GitOps-подход](../../GitOps/GitOps_overview.md).
+* **Автоматизация:** [Prometheus Operator](./operator.md) берет на себя всю работу по генерации и обновлению конфигурации Prometheus.
 
 #### Принцип работы
 
-1.  Вы создаете `ServiceMonitor`, в котором указываете, за сервисами с какими **лейблами** (`selector`) и в каких **[пространствах имен](../../Kubernetes/Base/namespace.md)** (`namespaceSelector`) нужно следить.
-2.  [Prometheus Operator](./operator.md) обнаруживает этот `ServiceMonitor`.
-3.  Оператор автоматически генерирует соответствующий `scrape_config` для Prometheus, включая все необходимые `relabel_configs` для выбора нужных подов на основе `Endpoints` сервиса.
-4.  Конфигурация Prometheus автоматически обновляется.
+1. Вы создаете `ServiceMonitor`, в котором указываете, за сервисами с какими **лейблами** (`selector`) и в каких **[пространствах имен](../../Kubernetes/Base/namespace.md)** (`namespaceSelector`) нужно следить.
+2. [Prometheus Operator](./operator.md) обнаруживает этот `ServiceMonitor`.
+3. Оператор автоматически генерирует соответствующий `scrape_config` для Prometheus, включая все необходимые `relabel_configs` для выбора нужных подов на основе `Endpoints` сервиса.
+4. Конфигурация Prometheus автоматически обновляется.
 
 #### Пример манифеста `ServiceMonitor`
 
@@ -128,11 +130,13 @@ spec:
       action: keep
       regex: default;kubernetes;https
 ```
+
 **Объяснение:**
-1.  `role: endpoints`: Prometheus ищет объекты `Endpoints`.
-2.  `action: keep`: Сохраняются только те цели, которые соответствуют `regex`.
-3.  `regex: default;kubernetes;https`: Правило отбирает цели, у которых `namespace` равен `default`, имя сервиса — `kubernetes`, а имя порта — `https`. Это точно соответствует сервису API-сервера.
-4.  `scheme`, `tls_config`, `bearer_token_file`: Настраивается безопасное HTTPS-соединение с авторизацией для доступа к API.
+
+1. `role: endpoints`: Prometheus ищет объекты `Endpoints`.
+2. `action: keep`: Сохраняются только те цели, которые соответствуют `regex`.
+3. `regex: default;kubernetes;https`: Правило отбирает цели, у которых `namespace` равен `default`, имя сервиса — `kubernetes`, а имя порта — `https`. Это точно соответствует сервису API-сервера.
+4. `scheme`, `tls_config`, `bearer_token_file`: Настраивается безопасное HTTPS-соединение с авторизацией для доступа к API.
 
 #### 2. Сбор метрик с Kubelet (через прокси)
 
@@ -156,10 +160,12 @@ spec:
       target_label: __metrics_path__
       replacement: /api/v1/nodes/${1}/proxy/metrics
 ```
+
 **Объяснение:**
-1.  `role: node`: Prometheus обнаруживает все ноды в кластере.
-2.  `target_label: __address__`: Первое правило `relabel` подменяет адрес цели (`__address__`, который изначально указывает на kubelet) на адрес самого API-сервера (`kubernetes.default.svc:443`).
-3.  `target_label: __metrics_path__`: Второе правило `relabel` динамически формирует путь для запроса. Оно берет имя ноды из мета-метки `__meta_kubernetes_node_name` и подставляет его в URL для проксирования: `/api/v1/nodes/<имя-ноды>/proxy/metrics`.
+
+1. `role: node`: Prometheus обнаруживает все ноды в кластере.
+2. `target_label: __address__`: Первое правило `relabel` подменяет адрес цели (`__address__`, который изначально указывает на kubelet) на адрес самого API-сервера (`kubernetes.default.svc:443`).
+3. `target_label: __metrics_path__`: Второе правило `relabel` динамически формирует путь для запроса. Оно берет имя ноды из мета-метки `__meta_kubernetes_node_name` и подставляет его в URL для проксирования: `/api/v1/nodes/<имя-ноды>/proxy/metrics`.
 
 В результате Prometheus обращается к API-серверу, который, в свою очередь, проксирует запрос к `kubelet` на нужной ноде.
 
@@ -189,12 +195,14 @@ spec:
       regex: ([^:]+)(?::\d+)?;(\d+)
       replacement: $1:$2
 ```
+
 **Объяснение:**
 Эта конфигурация позволяет управлять сбором метрик с помощью аннотаций на объекте `Service`:
-*   `prometheus.io/scrape: "true"`: Включает сбор метрик для этого сервиса (`action: keep`).
-*   `prometheus.io/scheme: "https"`: Позволяет переопределить схему на `https`.
-*   `prometheus.io/path: "/my-metrics"`: Позволяет указать нестандартный путь к метрикам.
-*   `prometheus.io/port: "9091"`: Позволяет указать порт, с которого нужно собирать метрики.
+
+* `prometheus.io/scrape: "true"`: Включает сбор метрик для этого сервиса (`action: keep`).
+* `prometheus.io/scheme: "https"`: Позволяет переопределить схему на `https`.
+* `prometheus.io/path: "/my-metrics"`: Позволяет указать нестандартный путь к метрикам.
+* `prometheus.io/port: "9091"`: Позволяет указать порт, с которого нужно собирать метрики.
 
 #### 4. Мониторинг доступности сервисов с [Blackbox Exporter](../overview.md#blackbox-exporter)
 
@@ -218,8 +226,10 @@ spec:
     - source_labels: [__param_target]
       target_label: instance
 ```
+
 **Объяснение:**
-1.  `role: service`: Prometheus обнаруживает объекты `Service`.
-2.  `prometheus.io/probe: "true"`: Мониторинг включается для сервисов с этой аннотацией.
-3.  `target_label: __param_target`: Адрес целевого сервиса (например, `my-app.default.svc:80`) передается Blackbox Exporter'у через параметр `target` в URL.
-4.  `replacement: blackbox-exporter...`: Сам Prometheus обращается не к сервису напрямую, а к Blackbox Exporter'у, который уже выполняет проверку.
+
+1. `role: service`: Prometheus обнаруживает объекты `Service`.
+2. `prometheus.io/probe: "true"`: Мониторинг включается для сервисов с этой аннотацией.
+3. `target_label: __param_target`: Адрес целевого сервиса (например, `my-app.default.svc:80`) передается Blackbox Exporter'у через параметр `target` в URL.
+4. `replacement: blackbox-exporter...`: Сам Prometheus обращается не к сервису напрямую, а к Blackbox Exporter'у, который уже выполняет проверку.

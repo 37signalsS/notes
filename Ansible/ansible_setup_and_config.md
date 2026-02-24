@@ -28,19 +28,93 @@ Ansible ищет файл `ansible.cfg` в нескольких местах в 
 
 Файл инвентаризации определяет хосты и группы хостов, которыми вы управляете.
 
-**Способы определения параметров подключения**
+#### Форматы инвентаря: INI и YAML
 
-Параметры подключения (адрес, пользователь, ключ) задаются как переменные, привязанные к хосту.
+Ansible поддерживает два основных формата для файлов инвентаризации: INI (классический) и YAML.
+
+**INI-формат**
+
+Прост для чтения и плоских структур.
 
 ```ini
 # inventory.ini
-[servers]
-server1 ansible_host=192.168.50.11 ansible_user=vagrant ansible_ssh_private_key_file=~/.vagrant.d/insecure_private_key
+[webservers]
+web1.example.com
+web2.example.com ansible_port=2222
+
+[dbservers]
+db1.example.com
+
+[servers:children]
+webservers
+dbservers
 ```
+
+**YAML-формат**
+
+Предпочтителен для сложных структур, так как позволяет определять вложенные группы и переменные более наглядно.
+
+```yaml
+# inventory.yml
+all:
+  children:
+    webservers:
+      hosts:
+        web1.example.com:
+        web2.example.com:
+          ansible_port: 2222
+    dbservers:
+      hosts:
+        db1.example.com:
+    servers:
+      children:
+        webservers:
+        dbservers:
+```
+
+#### Переменные инвентаря: `host_vars` и `group_vars`
+
+Хотя переменные можно указывать прямо в файле инвентаря (inline-переменные), лучшей практикой является их вынесение в отдельные файлы. Ansible автоматически загружает переменные из файлов, расположенных в директориях `host_vars` и `group_vars`, которые должны находиться рядом с вашим файлом инвентаря или плейбуком.
+
+**Структура каталогов:**
+
+```
+.
+├── inventory.ini
+├── playbook.yml
+├── group_vars/
+│   ├── all.yml          # Переменные для всех хостов
+│   └── webservers.yml   # Переменные для группы [webservers]
+└── host_vars/
+    └── web1.example.com.yml # Переменные только для хоста web1.example.com
+```
+
+**Пример `group_vars/webservers.yml`:**
+
+```yaml
+---
+ntp_server: ntp.example.com
+http_port: 8080
+```
+
+Эти переменные будут автоматически применены ко всем хостам в группе `webservers`.
+
+**Переменные подключения**
+
+Параметры подключения (адрес, пользователь, ключ) также задаются как переменные, привязанные к хосту.
 
 - `ansible_host`: IP-адрес или DNS-имя целевой машины.
 - `ansible_user`: Имя пользователя для SSH-подключения.
 - `ansible_ssh_private_key_file`: Путь к приватному SSH-ключу.
+
+Пример в `host_vars/web1.example.com.yml`:
+
+```yaml
+---
+ansible_host: 192.168.50.11
+ansible_user: vagrant
+ansible_ssh_private_key_file: ~/.vagrant.d/insecure_private_key
+```
 
 > **Внимание:** Хранение паролей в открытом виде (`ansible_ssh_pass`) **крайне небезопасно**. Для реальных проектов **всегда** используйте [Ansible Vault](./Vault/basics.md).
 
@@ -70,6 +144,7 @@ pip install ansible
 #### Настройка `ansible.cfg` и `inventory`
 
 **Пример `ansible.cfg`:**
+
 ```ini
 [defaults]
 inventory = ./inventory
@@ -81,22 +156,28 @@ roles_path = ./roles
 ```
 
 **Пример `inventory`:**
+
 ```ini
 [servers]
 server1 ansible_host=192.168.51.4
 ```
 
 #### Проверка подключения
+
 Модуль `ping` — это основной способ проверить, что Ansible может подключиться к хосту и выполнить на нем Python-код.
+
 ```bash
 ansible server1 -m ping
 ```
+
 Если подключение успешно, хост вернет `pong`.
 
 ### 2. Подготовка тестовой среды с Vagrant
+
 [Vagrant](../../Vagrant/vagrant_basic_workflow.md) — идеальный инструмент для быстрого развертывания локальной тестовой среды.
 
 **Пример `Vagrantfile`:**
+
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.define "controlnode" do |controlnode|

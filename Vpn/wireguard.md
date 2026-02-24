@@ -114,7 +114,6 @@ sudo wg show
 - Асимметричное шифрование (ECDH/Curve25519) дорого по ресурсам, поэтому используется **только для начального обмена ключами**.
 - После установления соединения всё шифруется **быстро и эффективно** с использованием **симметричного ключа**, полученного из асимметрического обмена.
 
-
 ## Диагностика
 
 Для более детального анализа сетевого трафика, включая WireGuard, можно использовать `tcpdump` или Wireshark. Подробнее см. [Wireshark и анализ сетевого трафика](../../Networking/ServicesAndTools/Wireshark/definitions.md).
@@ -184,7 +183,7 @@ sudo chmod 755 /usr/local/bin/wg-rebind.sh
 
 Нам понадобится два файла: `service` для запуска скрипта и `timer` для его периодического вызова.
 
-1.  **Создайте файл сервиса `/etc/systemd/system/wg-rebind.service`:**
+1. **Создайте файл сервиса `/etc/systemd/system/wg-rebind.service`:**
 
     ```ini
     [Unit]
@@ -197,7 +196,7 @@ sudo chmod 755 /usr/local/bin/wg-rebind.sh
     ExecStart=/usr/local/bin/wg-rebind.sh
     ```
 
-2.  **Создайте файл таймера `/etc/systemd/system/wg-rebind.timer`:**
+2. **Создайте файл таймера `/etc/systemd/system/wg-rebind.timer`:**
 
     Этот таймер будет запускать сервис каждые 3 минуты.
 
@@ -226,22 +225,25 @@ sudo systemctl daemon-reload
 # Включить и немедленно запустить таймер
 sudo systemctl enable --now wg-rebind.timer
 ```
+
 ---
 
 ## Проверка работы
 
 Вы можете убедиться, что таймер активен и успешно выполняется.
 
-*   **Проверить статус таймера:**
+- **Проверить статус таймера:**
 
     ```bash
     systemctl list-timers | grep wg-rebind
     ```
+
     Вывод должен показать, что таймер `wg-rebind.timer` активен и запланирован.
 
-*   **Посмотреть логи выполнения сервиса:**
+- **Посмотреть логи выполнения сервиса:**
 
     ```bash
     journalctl -u wg-rebind.service -f
     ```
+
     Вы должны увидеть логи, подтверждающие успешное выполнение скрипта (`Successfully rebound`).

@@ -132,6 +132,7 @@
 
 1. **Монтирование образа:**
    * **QEMU/KVM (через nbd):**
+
      ```bash
      sudo modprobe nbd max_part=8
      sudo qemu-nbd --connect=/dev/nbd0 <путь_к_образу.qcow2>
@@ -145,6 +146,7 @@
      * Или ручная правка `/mnt/etc/shadow` (замена хеша пароля).
 
 3. **Размонтирование:**
+
    ```bash
    sudo umount /mnt
    sudo qemu-nbd --disconnect /dev/nbd0

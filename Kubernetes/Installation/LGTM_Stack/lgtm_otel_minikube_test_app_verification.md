@@ -57,12 +57,12 @@ docker push registry.test:30000/agent-example-app-no-agent:latest
 2.  **Запуск пода с явным указанием агента**:
     Этот метод требует, чтобы JAR-файл агента был доступен в контейнере (например, через `initContainer` или путем встраивания в образ).
     ```bash
-    kubectl run agent-example-app-manual 
-      --image=registry.test:30000/agent-example-app-no-agent:latest 
-      --port=8080 
-      --labels="app=agent-example-app-manual" 
-      --env="JAVA_TOOL_OPTIONS=-javaagent:/path/to/opentelemetry-javaagent.jar" 
-      --env="OTEL_EXPORTER_OTLP_ENDPOINT=<http://default.opentelemetry:4317>" 
-      --env="OTEL_LOGS_EXPORTER=otlp" 
+    kubectl run agent-example-app-manual
+      --image=registry.test:30000/agent-example-app-no-agent:latest
+      --port=8080
+      --labels="app=agent-example-app-manual"
+      --env="JAVA_TOOL_OPTIONS=-javaagent:/path/to/opentelemetry-javaagent.jar"
+      --env="OTEL_EXPORTER_OTLP_ENDPOINT=<http://default.opentelemetry:4317>"
+      --env="OTEL_LOGS_EXPORTER=otlp"
       --env="OTEL_SERVICE_NAME=agent-example-app-manual"
     ```

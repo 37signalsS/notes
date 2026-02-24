@@ -139,6 +139,7 @@ automountServiceAccountToken: false
 ### Встроенные привязки
 
 Kubernetes создаёт встроенные ClusterRoleBinding:
+
 - `cluster-admin` → группа `system:masters`
 
 ### Множественные привязки

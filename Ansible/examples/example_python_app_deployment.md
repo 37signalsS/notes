@@ -123,4 +123,3 @@ WantedBy=multi-user.target
 systemctl status mywebapp
 curl --unix-socket /apps/mywebapp/app/mywebapp.sock http
 ```
-

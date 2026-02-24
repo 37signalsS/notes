@@ -32,23 +32,28 @@ Grafana предоставляет встроенные переменные д�
 
 Этот подход позволяет сужать выбор на каждом следующем уровне.
 
-1.  **Переменная `cluster`** (тип `Query`):
+1. **Переменная `cluster`** (тип `Query`):
+
     ```promql
     label_values(up{job="node-exporter"}, cluster)
     ```
+
     *Включается опция **Include All** с кастомным значением `.*` для возможности выбора всех кластеров.*
 
-2.  **Переменная `namespace`** (тип `Query`), зависимая от `$cluster`:
+2. **Переменная `namespace`** (тип `Query`), зависимая от `$cluster`:
+
     ```promql
     label_values(kube_pod_info{cluster=~"$cluster"}, namespace)
     ```
 
-3.  **Переменная `pod`** (тип `Query`), зависимая от `$cluster` и `$namespace`:
+3. **Переменная `pod`** (тип `Query`), зависимая от `$cluster` и `$namespace`:
+
     ```promql
     label_values(kube_pod_info{cluster=~"$cluster", namespace=~"$namespace"}, pod)
     ```
 
 > **Настройка обновления (Refresh)**:
+>
 > - **On Dashboard Load**: Для стабильных списков (например, имена окружений).
 > - **On Time Range Change**: Если значения зависят от выбранного окна времени.
 
@@ -57,6 +62,7 @@ Grafana предоставляет встроенные переменные д�
 Переменные подставляются в запросы с помощью синтаксиса `$имя_переменной`.
 
 **Пример запроса PromQL:**
+
 ```promql
 rate(container_cpu_usage_seconds_total{
   cluster=~"$cluster",
@@ -64,9 +70,11 @@ rate(container_cpu_usage_seconds_total{
   pod=~"$pod"
 }[$__rate_interval])
 ```
+
 *Оператор `=~` используется для поддержки множественных значений (multi-value) и опции "All".*
 
 **Пример запроса LogQL (Loki):**
+
 ```logql
 sum by (app) (rate({cluster=~"$cluster", namespace=~"$namespace"} |= "ERROR" [5m]))
 ```
