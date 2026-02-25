@@ -22,6 +22,19 @@ def ensure_venv():
         print("Создаю виртуальное окружение...")
         subprocess.run([sys.executable, "-m", "venv", VENV_PATH], check=True)
 
+    # Проверяем, есть ли pip
+    try:
+        subprocess.run(
+            [VENV_PYTHON, "-m", "pip", "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("pip не найден в виртуальном окружении. Пытаюсь установить...")
+        subprocess.run([VENV_PYTHON, "-m", "ensurepip", "--upgrade"], check=True)
+
+
     # Проверяем, установлен ли vosk
     try:
         subprocess.run(
@@ -36,7 +49,7 @@ def ensure_venv():
 
     print("Ставлю зависимости...")
     subprocess.run([VENV_PYTHON, "-m", "pip", "install", "--upgrade", "pip"], check=True)
-    subprocess.run([VENV_PYTHON, "-m", "pip", "install", "vosk"], check=True)
+    subprocess.run([VENV_PYTHON, "-m", "pip", "install", "--upgrade", "vosk"], check=True)
 
 
 # Если запускаемся НЕ из окружения — создаём его и перезапускаем скрипт заново
@@ -86,7 +99,7 @@ def transcribe_audio(wav_file_path):
     result_text = []
 
     while True:
-        data = wf.readframes(4000)
+        data = wf.readframes(32000)
         if not data:
             break
 
@@ -95,7 +108,8 @@ def transcribe_audio(wav_file_path):
             result_text.append(part.get("text", ""))
 
         progress = wf.tell() / total_frames * 100
-        print(f"\r  - Прогресс транскрибации: {progress:.2f}%", end="", flush=True)
+        if progress % 10 < 0.5:
+            print(f"\r  - Прогресс транскрибации: {progress:.0f}%", end="", flush=True)
 
     final = json.loads(rec.FinalResult())
     result_text.append(final.get("text", ""))
@@ -142,7 +156,7 @@ def main():
             if not os.path.exists(wav_file):
                 print("  - Конвертация в WAV...")
                 subprocess.run(
-                    ["ffmpeg", "-nostdin", "-i", video_file, "-ar", "16000", "-ac", "1", "-af", "dynaudnorm", wav_file],
+                    ["ffmpeg", "-threads", "0", "-nostdin", "-i", video_file, "-ar", "16000", "-ac", "1", "-af", "dynaudnorm", wav_file],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=True,
