@@ -22,6 +22,7 @@
     curl -X POST -H "Content-Type: application/json" -d '{"key":"value"}' http://httpbin.org/post
     ```
 
+
 * **Отправка файлов и форм:**
   * `-F, --form`: отправить данные в формате `multipart/form-data`.
 
