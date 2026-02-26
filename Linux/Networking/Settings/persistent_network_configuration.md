@@ -42,7 +42,13 @@ iface eth0 inet static
 
 ### 2. CentOS/RHEL и другие (NetworkManager и `nmcli`)
 
-`nmcli` является предпочтительным инструментом для управления NetworkManager.
+`nmcli` является предпочтительным инструментом для управления NetworkManager. Также доступен псевдографический интерфейс `nmtui` для удобной настройки без запоминания команд.
+
+* **Псевдографический интерфейс (nmtui):**
+    ```bash
+    nmtui
+    ```
+    Позволяет интерактивно редактировать соединения, включая настройку статических IP-адресов, шлюзов и DNS-серверов.
 
 * **Посмотреть устройства и соединения:**
 
@@ -57,11 +63,11 @@ iface eth0 inet static
     # Устанавливаем статический IP, маску и шлюз для соединения 'enp0s3'
     sudo nmcli connection modify 'enp0s3' ipv4.method manual ipv4.addresses 10.10.10.10/24 gw4 10.10.10.1
 
-    # Добавляем DNS-серверы
+    # Добавляем DNS-серверы (через пробел)
     sudo nmcli connection modify 'enp0s3' ipv4.dns "8.8.8.8 1.1.1.1"
 
-    # Применяем изменения
-    sudo nmcli connection up 'enp0s3'
+    # Применяем изменения (деактивируем и активируем соединение)
+    sudo nmcli connection down 'enp0s3' && sudo nmcli connection up 'enp0s3'
     ```
 
 * **Традиционный способ (файлы `ifcfg-*`):**

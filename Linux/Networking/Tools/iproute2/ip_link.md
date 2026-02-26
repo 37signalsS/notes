@@ -44,3 +44,27 @@
     sudo ip link set eth0 address 00:11:22:33:44:55
     sudo ip link set eth0 up
     ```
+
+* **Promiscuous mode (неразборчивый режим):**
+
+    В обычном режиме сетевая карта принимает только кадры, адресованные её MAC-адресу. В promiscuous mode карта принимает весь проходящий трафик, что необходимо для анализаторов трафика (tcpdump, wireshark) и некоторых сценариев виртуализации.
+
+    ```bash
+    # Включить promiscuous mode
+    sudo ip link set eth0 promisc on
+
+    # Выключить promiscuous mode
+    sudo ip link set eth0 promisc off
+
+    # Проверить статус
+    ip link show eth0 | grep PROMISC
+    ```
+
+* **Virtio сетевой драйвер:**
+
+    `virtio-net` — высокопроизводительный паравиртуальный драйвер, используемый в виртуальных машинах (KVM, VirtualBox, QEMU). В отличие от эмулируемых адаптеров (e1000, Intel Pro 1000), virtio работает напрямую с гипервизором, минуя эмуляцию оборудования, что значительно повышает производительность.
+
+    Определить драйвер можно по имени интерфейса (`virtio0`) или через `ethtool`:
+    ```bash
+    ethtool -i eth0 | grep driver
+    ```
