@@ -54,17 +54,10 @@ ssh-keygen -t ed25519 -C "ваш@email.com" -f ~/.ssh/id_ed25519_project
 
 #### Добавление ключа в `ssh-agent`
 
-```bash
-# Запуск ssh-agent (если он еще не запущен)
-eval "$(ssh-agent -s)"
+Для управления ключами и их кэширования используется `ssh-agent`.
 
-# Добавление приватного ключа в ssh-agent
-ssh-add ~/.ssh/id_ed25519_project
+> Подробная информация о запуске агента, добавлении и удалении ключей находится в руководстве по [Конфигурации SSH-клиента](../Linux/Security/ssh/ssh_client_config.md#управление-ключами-с-помощью-ssh-agent).
 
-# Установка правильных прав доступа для директории и файла ключа
-chmod 600 ~/.ssh/id_ed25519_project
-chmod 700 ~/.ssh
-```
 
 #### Управление несколькими SSH-ключами (`~/.ssh/config`)
 
@@ -150,4 +143,4 @@ git update-index --no-assume-unchanged <файл>
 
 * Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к документу [SSH (Secure Shell)](../Linux/Security/ssh/ssh_overview.md).
 * Общие настройки SSH-клиента: [Конфигурация SSH-клиента](../Linux/Security/ssh/ssh_client_config.md)
-* Подробности об SSH-агенте: [Аутентификация по SSH: ssh-agent и управление ключами](../Linux/Security/ssh/ssh_session_management.md)
+* Подробности об SSH-агенте: [Аутентификация по SSH: ssh-agent и управление ключами](../Linux/Security/ssh/ssh_client_config.md#управление-ключами-с-помощью-ssh-agent)
