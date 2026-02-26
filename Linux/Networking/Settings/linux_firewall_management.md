@@ -182,6 +182,195 @@ sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -j DROP
 # Просмотр правил с номерами строк и счетчиками
 sudo iptables -nvL --line-numbers
 
+# Вставить правило на первую позицию в цепочку INPUT
+sudo iptables -I INPUT 1 -s 1.2.3.4 -j DROP
+
+# Удаление правила по номеру строки
+sudo iptables -D INPUT 1
+
+# Сброс всех правил и счетчиков (ОПАСНО!)
+sudo iptables -F
+sudo iptables -X
+```
+
+---
+
+## Firewalld: Динамический файрвол
+
+**Firewalld** — это динамический менеджер файрвола, используемый по умолчанию в RHEL-based дистрибутивах (CentOS, RHEL, Fedora). Он является надстройкой над `nftables` (или `iptables` в старых версиях), предоставляя удобный интерфейс для управления правилами.
+
+### Базовая концепция
+
+Firewalld работает на основе **зон** (zones) и **сервисов** (services), что упрощает настройку. В отличие от статических правил `iptables`, firewalld позволяет изменять правила "на лету" без полной перезагрузки правил.
+
+* **Сервисы** — это шаблоны, которые объединяют порты и протоколы. Например, сервис SSH включает порт 22/TCP.
+* **Зоны** — это наборы правил, применяемые к сетевым интерфейсам или IP-адресам.
+
+### Основные команды firewall-cmd
+
+```bash
+# Просмотр всей информации о текущей конфигурации
+firewall-cmd --list-all
+
+# Список разрешенных сервисов
+firewall-cmd --list-services
+
+# Список открытых портов
+firewall-cmd --list-ports
+
+# Добавить порт (временный, действует до перезагрузки)
+firewall-cmd --add-port=2233/tcp
+
+# Добавить сервис
+firewall-cmd --add-service=ssh
+
+# Удалить порт или сервис
+firewall-cmd --remove-port=2233/tcp
+firewall-cmd --remove-service=ssh
+
+# Сохранить изменения permanent (требует перезагрузки firewalld)
+firewall-cmd --permanent --add-port=2233/tcp
+firewall-cmd --reload
+
+# Переключить runtime в permanent (применить текущие настройки навсегда)
+firewall-cmd --runtime-to-permanent
+
+# Режим паники: блокирует весь входящий и исходящий трафик
+firewall-cmd --panic-on
+# Выключить режим паники
+firewall-cmd --panic-off
+```
+
+**Важно:** Изменения без ключа `--permanent` применяются немедленно, но теряются при перезагрузке сервиса или системы.
+
+### Работа с зонами
+
+Firewalld по умолчанию использует зону `public`. Основные предопределенные зоны:
+
+* **drop**: Блокирует все входящие соединения, исходящие разрешены.
+* **block**: Блокирует все входящие соединения, но отправляет ICMP-ответ (в отличие от `drop`).
+* **public**: Для использования в общественных сетях. По умолчанию блокирует входящие, разрешает исходящие.
+* **trusted**: Разрешает весь трафик.
+
+```bash
+# Посмотреть все зоны
+firewall-cmd --list-all-zones
+
+# Назначить интерфейс на зону
+firewall-cmd --zone=trusted --change-interface=eth1
+
+# Добавить IP-адрес (source) в зону
+firewall-cmd --zone=trusted --add-source=192.168.1.100
+```
+
+### Блокировка ICMP (пинга)
+
+Для защиты от сканирования можно заблокировать ICMP-пакеты (ping):
+
+```bash
+# Заблокировать все ICMP-запросы
+firewall-cmd --add-icmp-block=echo-request
+
+# Инвертировать ICMP-блокировку (заблокировать все, кроме указанных)
+firewall-cmd --add-icmp-block-inversion
+
+# Удалить блокировку
+firewall-cmd --remove-icmp-block=echo-request
+
+# Проверить статус
+firewall-cmd --list-icmp-blocks
+```
+
+### Rich Rules (Расширенные правила)
+
+Rich Rules позволяют создавать детальные правила с указанием IP-адресов, портов, логирования и ограничения частоты.
+
+```bash
+# Разрешить SSH только с определенного IP
+firewall-cmd --permanent --zone=public --add-rich-rule='rule family="ipv4" source address="192.168.1.100" service name="ssh" accept'
+
+# Заблокировать IP-адрес с логированием
+firewall-cmd --permanent --add-rich-rule='rule source address="10.0.0.50" log prefix="BLOCKED: " level="info" drop'
+
+# Ограничить частоту подключений (защита от брутфорса)
+firewall-cmd --permanent --add-rich-rule='rule service name="ssh" limit value="5/m" accept'
+
+# Удалить rich rule
+firewall-cmd --permanent --remove-rich-rule='rule ...'
+```
+
+### Политики (Policies)
+
+Политики — это новый механизм firewalld для управления **транзитным трафиком (FORWARD)**. Они описывают правила для трафика, проходящего с одного интерфейса (зоны) на другой.
+
+```bash
+# Создать политику
+firewall-cmd --permanent --new-policy myPolicy
+
+# Задать входящую (ingress) и исходящую (egress) зоны
+firewall-cmd --permanent --policy myPolicy --add-ingress-zone=dmz
+firewall-cmd --permanent --policy myPolicy --add-egress-zone=internal
+
+# Добавить разрешающее правило через rich rule
+firewall-cmd --permanent --policy myPolicy --add-rich-rule='rule family="ipv4" source address="10.0.2.101" service name="ssh" accept'
+
+# Применить изменения
+firewall-cmd --reload
+```
+
+### NAT и Port Forwarding
+
+Firewalld упрощает настройку NAT (Masquerading) и проброса портов (DNAT):
+
+```bash
+# Включить Masquerading (SNAT) — нужно для NAT-роутера
+firewall-cmd --permanent --zone=external --add-masquerade
+
+# Проброс порта (DNAT) — перенаправление трафика с одного порта на другой хост
+# Пример: проброс порта 5555 на внутренний хост 192.168.1.10:22
+firewall-cmd --permanent --zone=external --add-forward-port=port=5555:proto=tcp:toport=22:toaddr=192.168.1.10
+```
+
+* **RHEL/CentOS:**
+
+    ```bash
+    sudo yum install -y iptables-services
+    sudo systemctl enable --now iptables
+    # Для сохранения правил:
+    sudo service iptables save
+    ```
+
+### 2. Взаимодействие `iptables` и Docker
+
+Docker активно управляет `iptables` для обеспечения сетевой изоляции и проброса портов, добавляя собственные правила в цепочки `DOCKER` и `FORWARD`. Это создает несколько распространенных проблем:
+
+1. **Конфликт с политикой `FORWARD DROP`**: Если вы вручную устанавливаете политику по умолчанию для цепочки `FORWARD` в `DROP`, Docker не сможет доставить трафик в контейнеры.
+    * **Решение:** Вместо изменения глобальной политики, добавляйте свои правила в специальную цепочку `DOCKER-USER`. Docker обрабатывает правила из этой цепочки *перед* своими автоматическими правилами, что позволяет безопасно переопределять доступ к контейнерам.
+
+2. **Конфликт `iptables-legacy` и `iptables-nft`**: В современных дистрибутивах `iptables` является слоем совместимости над `nftables`. Если Docker пытается использовать `legacy`-синтаксис, а другая служба (например, `firewalld`) управляет `nftables` напрямую, правила Docker могут "затираться" или не работать.
+    * **Решение:** Явно переключить Docker и систему на использование `iptables-legacy`.
+
+Подробный разбор этих проблем и примеры их решения находятся в отдельной заметке: **[Решение проблем: Docker и `iptables`](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)**.
+
+Ниже приведен пример добавления правил в `DOCKER-USER`:
+
+```bash
+# Пример: разрешить доступ к порту 8080 контейнера только с IP 1.2.3.4
+sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -s 1.2.3.4 -j ACCEPT
+sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -j DROP
+```
+
+### 3. `DROP` vs `REJECT`
+
+* `DROP`: Пакеты молча отбрасываются. Предпочтительный способ для внешней сети, так как не раскрывает информацию о хосте и замедляет сканирование портов.
+* `REJECT`: Отправителю отправляется ICMP-сообщение (`connection refused`). Может быть полезно для отладки во внутренних, доверенных сетях.
+
+### 4. Полезные команды `iptables`
+
+```bash
+# Просмотр правил с номерами строк и счетчиками
+sudo iptables -nvL --line-numbers
+
 # Вставить правило на первую позицию в цепочке INPUT
 sudo iptables -I INPUT 1 -s 1.2.3.4 -j DROP
 
