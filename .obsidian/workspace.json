@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "5485a0eb83a0787c",
+        "id": "6efba69abf354020",
         "type": "tabs",
         "children": [
           {
-            "id": "796221cb21513abb",
+            "id": "7db6a5a9c6437aaf",
             "type": "leaf",
             "state": {
-              "type": "graph",
+              "type": "empty",
               "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "icon": "lucide-file",
+              "title": "New tab"
             }
           }
         ]
@@ -179,8 +179,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "796221cb21513abb",
+  "active": "7db6a5a9c6437aaf",
   "lastOpenFiles": [
+    "Kubernetes/Troubleshooting/Common_Errors/pod_pending.md",
+    "Kubernetes/Troubleshooting/Common_Errors/overview.md",
     "Linux/SystemAdministration/grub.md",
     "Kubernetes/Base/configmap.md",
     "Kafka/kafka_overview.md",
