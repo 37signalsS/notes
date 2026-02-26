@@ -110,6 +110,6 @@
 
 - **Прошивка и ранняя загрузка**: [Linux/Core/firmware_bios_uefi.md](../firmware_bios_uefi.md)
 - **Система инициализации `systemd`**: `Linux/systemd/overview.md`
-- **Загрузчик GRUB**: `Linux/SystemAdministration/grub.md`
+- **Загрузчик GRUB**: [GRUB](../SystemAdministration/grub.md)
 - **Монтирование файловых систем**: [Linux/FileSystems/mounting/index.md](../../FileSystems/mounting/index.md)
 - **Альтернативные архитектуры**: [Обзор Unikernels](../../Concepts/unikernel/unikernel_overview.md)
