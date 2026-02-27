@@ -205,6 +205,9 @@ Firewalld работает на основе **зон** (zones) и **серви�
 
 * **Сервисы** — это шаблоны, которые объединяют порты и протоколы. Например, сервис SSH включает порт 22/TCP.
 * **Зоны** — это наборы правил, применяемые к сетевым интерфейсам или IP-адресам.
+* **Важные сервисы:** `samba` (SMB/CIFS), `nfs`, `ssh`, `http`, `https`, `mysql`, `ntp` (NTP сервер, порт 123/UDP).
+
+Пример добавления Samba:
 
 ### Основные команды firewall-cmd
 
@@ -227,6 +230,14 @@ firewall-cmd --add-service=ssh
 # Удалить порт или сервис
 firewall-cmd --remove-port=2233/tcp
 firewall-cmd --remove-service=ssh
+
+# Пример: добавить сервис Samba (SMB/CIFS)
+firewall-cmd --permanent --add-service=samba
+firewall-cmd --reload
+
+# Пример: добавить сервис NTP (для NTP сервера, порт 123/UDP)
+firewall-cmd --permanent --add-service=ntp
+firewall-cmd --reload
 
 # Сохранить изменения permanent (требует перезагрузки firewalld)
 firewall-cmd --permanent --add-port=2233/tcp
