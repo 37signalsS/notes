@@ -66,3 +66,6 @@
 
 - **RAID (Redundant Array of Independent Disks):** Объединение дисков в массив для повышения производительности и/или отказоустойчивости.
   - **Подробности:** [Управление программным RAID с помощью mdadm](./raid_management.md)
+
+- **VDO (Virtual Data Optimizer):** Дедупликация, сжатие и thin provisioning на уровне блочного устройства.
+  - **Подробности:** [VDO (Virtual Data Optimizer)](./vdo.md)
