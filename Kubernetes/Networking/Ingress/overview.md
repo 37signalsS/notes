@@ -111,3 +111,48 @@ spec:
 ### Схема работы: путь трафика в Kubernetes
 
 Подробное описание пути трафика в Kubernetes, от внешнего запроса до пода, включая роль Ingress Controller, Service и kube-proxy, было перенесено в документ [Сетевая модель в Kubernetes](./network.md#путь-трафика-от-ingress-до-pod) для централизации информации.
+
+## Практические сценарии
+
+### Установка Nginx Ingress Controller через Helm
+
+Nginx Ingress Controller является одним из наиболее популярных ingress-контроллеров. Установка производится через официальный Helm-чарт.
+
+**1. Добавление репозитория:**
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+```
+
+**2. Установка через Helm (пример с кастомными параметрами):**
+
+```bash
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.priorityClassName=high-priority \
+  --set controller.metrics.enabled=true \
+  --set controller.admissionWebhooks.enabled=false \
+  --set controller.ingressClass=system-ingress \
+  --version 4.10.0
+```
+
+**Основные параметры:**
+
+- `controller.priorityClassName`: PriorityClass для контроллера (требуется предварительное создание)
+- `controller.metrics.enabled`: Включение метрик для Prometheus
+- `controller.admissionWebhooks.enabled`: Включение валидации Ingress-ресурсов
+- `controller.ingressClass`: Имя IngressClass (по умолчанию nginx)
+- `controller.service.type`: Тип Service (по умолчанию LoadBalancer)
+
+**3. Проверка установки:**
+
+```bash
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx
+```
+
+### K3s и LoadBalancer
+
+В K3s встроен механизм Service типа LoadBalancer. При создании Service с типом LoadBalancer K3s автоматически назначает IP-адреса всех узлов кластера в качестве external IP. При наличии одного узла можно использовать IP этого узла для доступа к сервису.

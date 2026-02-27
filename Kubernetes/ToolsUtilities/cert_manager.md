@@ -25,7 +25,7 @@ Cert-manager добавляет в Kubernetes API следующие Custom Reso
 
 ## Практические сценарии
 
-## Установка
+### Установка
 
 Рекомендуемый способ установки — через Helm.
 
@@ -57,6 +57,92 @@ helm install \
 * `--namespace cert-manager`: Устанавливает `cert-manager` в отдельный namespace.
 * `--create-namespace`: Создает namespace, если он не существует.
 * `--set installCRDs=true`: Эта опция указывает Helm-чарту установить и управлять CRD.
+
+### Приватный Certificate Authority (CA)
+
+В ситуациях, когда использование Let's Encrypt невозможно (например, закрытая инфраструктура, локальный домен без внешнего доступа), необходимо развернуть собственный приватный Certificate Authority.
+
+#### Создание самоподписанного CA
+
+Создаем Issuer, который генерирует самоподписанный сертификат для нашего CA:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-ca-issuer
+  namespace: cert-manager
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: home-ca-cert
+  namespace: cert-manager
+spec:
+  isCA: true
+  duration: 87600h
+  secretName: home-ca-secret
+  commonName: Home CA
+  issuerRef:
+    name: selfsigned-ca-issuer
+    kind: Issuer
+```
+
+#### ClusterIssuer для подписи сертификатов
+
+Создаем ClusterIssuer, который использует наш CA для подписи сертификатов во всех namespace:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: home-ca-cluster-issuer
+spec:
+  ca:
+    secretName: home-ca-secret
+```
+
+#### Доверие приватному CA на различных ОС
+
+После создания CA необходимо добавить его в доверенные корневые центры сертификации на всех машинах, которые будут использовать подписанные им сертификаты.
+
+**Получение сертификата CA:**
+
+```bash
+kubectl get secret home-ca-secret -n cert-manager -o jsonpath='{.data.tls\.crt}' | base64 -d > ca.crt
+```
+
+**Rocky Linux / CentOS / RHEL:**
+
+```bash
+mkdir -p /etc/pki/ca-trust/source/anchors/
+cp ca.crt /etc/pki/ca-trust/source/anchors/
+update-ca-trust extract
+```
+
+**Ubuntu / Debian:**
+
+```bash
+sudo mkdir -p /usr/local/share/ca-certificates
+sudo cp ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
+
+**Windows:**
+
+1. Дважды щелкнуть по файлу .crt
+2. Нажать "Установить сертификат"
+3. Выбрать "Текущий пользователь"
+4. Выбрать "Поместить все сертификаты в следующее хранилище"
+5. Указать "Доверенные корневые центры сертификации"
+
+**macOS:**
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt
+```
 
 ## Конфигурация: Создание ClusterIssuer
 

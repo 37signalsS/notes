@@ -64,5 +64,5 @@ spec:
 По умолчанию ArgoCD не работает с зашифрованными секретами напрямую. Для безопасного хранения секретов в Git (Secrets-in-Git) требуются сторонние инструменты:
 
 * **[Sealed Secrets](../../../Kubernetes/Security/sealed_secrets_overview.md)**: Шифрует секреты в Git, которые может расшифровать только контроллер в кластере.
-* **[HashiCorp Vault](../../../Vault/overview.md)**: Интеграция через плагины, например, `argo-vault-plugin`.
+* **[HashiCorp Vault (AVP)](./argocd_vault_integration.md)**: Интеграция через плагины, например, `argo-vault-plugin`.
 * **[SOPS (Secrets OPerationS)](../../../Security/Tools/sops_overview.md)**: Позволяет шифровать значения в YAML/JSON файлах.

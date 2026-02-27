@@ -58,6 +58,8 @@
 
 ## 3. Практические сценарии с CloudNativePG
 
+> **Примечание:** Существуют и другие операторы PostgreSQL для Kubernetes. Подробнее см. [Zalando Postgres Operator](./zalando_postgres_operator.md).
+
 CloudNativePG управляет кластером PostgreSQL, автоматически создавая и настраивая все необходимые ресурсы Kubernetes: [StatefulSet](../../../Kubernetes/Base/statefulset.md), `Services`, `Pods`, `PVC`, `Secrets` и др.
 
 ### 3.1. Ключевые возможности
