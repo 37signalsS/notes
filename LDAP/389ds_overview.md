@@ -613,5 +613,5 @@ docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
 
 * [LDAP](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol) — основы протокола LDAP
 * [OpenLDAP в Kubernetes](openldap_kubernetes.md) — развёртывание и эксплуатация OpenLDAP в Kubernetes
-* [Kubernetes](../Kubernetes/overview.md) — оркестрация контейнеров
+* [Kubernetes](../Kubernetes/kubernetes_overview.md) — оркестрация контейнеров
 * [Helm](../Kubernetes/Installation/Kubespray/overview.md) — менеджер пакетов для Kubernetes

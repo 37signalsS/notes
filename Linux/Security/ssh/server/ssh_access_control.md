@@ -11,7 +11,7 @@
 
 **Важно:** Директивы `Allow` имеют приоритет над `Deny`. Рекомендуется использовать только `AllowUsers` или `AllowGroups`, чтобы избежать путаницы.
 
-### Ограничение доступа по IP-адресу с помощью [TCP Wrappers](../../Networking/ServicesAndTools/tcp_wrappers.md)
+### Ограничение доступа по IP-адресу с помощью [TCP Wrappers](../../../Networking/ServicesAndTools/tcp_wrappers.md)
 
 ### Смена стандартного порта
 

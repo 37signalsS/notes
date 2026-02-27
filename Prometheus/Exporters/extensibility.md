@@ -57,7 +57,7 @@
     * Префиксы `process_`, `scrape_` зарезервированы.
     * Название должно быть понятным и содержать единицы измерения (например, `nginx_http_request_duration_seconds`).
 2. **Выбор labels:**
-    * Не используйте в лейблах слова: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` и т.д. — это задача [Service Discovery](./service_discovery_and_relabeling.md).
+    * Не используйте в лейблах слова: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` и т.д. — это задача [Service Discovery](../service_discovery_and_relabeling.md).
     * `le` — только для гистограмм, `quantile` — только для `Summary`.
     * Метрика должна иметь смысл при агрегации (суммировании/усреднении). Не стоит разделять `read/write` с помощью лейбла, лучше сделать две разные метрики.
 3. **Рекомендации по коду:**

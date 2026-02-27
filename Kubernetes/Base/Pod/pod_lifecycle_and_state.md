@@ -87,4 +87,4 @@
 * [Пошаговый сценарий создания Pod](../kubernetes_overview.md#жизненный-цикл-создания-pod-пошаговый-сценарий) — полный процесс от kubectl до запуска
 * [Метки и аннотации](pod_labels_annotations_node_selection.md) — идентификация и селекция подов
 * [Пробы (Probes)](pod_advanced_topics.md) — подробнее о startup, readiness, liveness
-* [Troubleshooting: Pod Pending](../Troubleshooting/Common_Errors/pod_pending.md) — диагностика проблем с размещением
+* [Troubleshooting: Pod Pending](../../Troubleshooting/Common_Errors/pod_pending.md) — диагностика проблем с размещением

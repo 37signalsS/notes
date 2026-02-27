@@ -119,6 +119,6 @@ echo f > /proc/irq/$IRQ_NUM/smp_affinity
 
 ### Связанные темы
 
-* **[`ethtool`](../../Tools/ethtool.md)** — настройка аппаратных параметров NIC, включая RSS
-* **[Оптимизация TCP](../tcp_tuning.md)** — комплексный тюнинг TCP-стека
+* **[`ethtool`](../Tools/ethtool.md)** — настройка аппаратных параметров NIC, включая RSS
+* **[Оптимизация TCP](tcp_tuning.md)** — комплексный тюнинг TCP-стека
 * **[Прерывания](../../Core/kernel/interrupts.md)** — управление прерываниями в ядре

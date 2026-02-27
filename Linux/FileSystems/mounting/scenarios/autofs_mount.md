@@ -133,4 +133,4 @@ sudo ipa-client-install --enable-dns-updates
 
 * `autofs` является альтернативой `systemd automount`. Подробнее о `systemd` можно прочитать в сценарии [монтирования через Systemd](./systemd_mount.md).
 * Общий обзор всех способов монтирования представлен в [главном файле раздела](../index.md).
-* Подробнее о NFS см. [NFS (Network File System)](../../Networking/Services/nfs.md).
+* Подробнее о NFS см. [NFS (Network File System)](../../../Networking/Services/nfs.md).

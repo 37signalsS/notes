@@ -54,7 +54,7 @@
 
 Взаимодействие между подами на разных узлах обеспечивается **CNI-плагином** (Container Network Interface). Подробнее о CNI и его роли см. [cni_kube_proxy_roles.md](./cni_kube_proxy_roles.md).
 
-#### 3.1. Прямая маршрутизация (с [BGP (Border Gateway Protocol)](../../Networking/Protocols/bgp.md))
+#### 3.1. Прямая маршрутизация (с [BGP (Border Gateway Protocol)](../../../Networking/Protocols/bgp.md))
 
 Этот подход используется CNI-плагинами, такими как **Calico** или **Cilium** в режиме BGP. Он не использует инкапсуляцию, что обеспечивает высокую производительность.
 

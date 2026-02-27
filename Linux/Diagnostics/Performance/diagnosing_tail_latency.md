@@ -64,7 +64,7 @@ ss -ti dst :<порт_сервиса>
 
 #### Скрытая нагрузка от GRO/LRO (Offloading)
 
-Часто причиной такой "скрытой" нагрузки на одно ядро является технология **Network Offloading**, в частности **GRO (Generic Receive Offload)** или **LRO (Large Receive Offload)**. Подробнее об этом можно прочитать в заметке [**Network Offloading: GRO/LRO**](../Networking/Concepts/offloading.md).
+Часто причиной такой "скрытой" нагрузки на одно ядро является технология **Network Offloading**, в частности **GRO (Generic Receive Offload)** или **LRO (Large Receive Offload)**. Подробнее об этом можно прочитать в заметке [**Network Offloading: GRO/LRO**](../../Networking/Concepts/offloading.md).
 
 GRO/LRO агрегируют несколько входящих пакетов в один крупный буфер ещё до их передачи в сетевой стек. Это снижает количество обработок на уровне TCP/IP и уменьшает overhead на каждый пакет. Однако агрегированные пакеты обрабатываются тем CPU, который обслуживает очередь RX. Если прерывания (IRQ) и RPS не распределены, вся тяжёлая работа концентрируется на одном ядре.
 

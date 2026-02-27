@@ -36,13 +36,13 @@
 * Сертификат для клиента (`client.crt` и `client.key`), подписанный вашим CA.
 * Список отозванных сертификатов (`crl.pem`).
 
-> **Подробное руководство: [Управление собственным CA с помощью OpenSSL](../../Security/Tools/openssl_ca/single_tier/overview.md)**
+> **Подробное руководство: [Управление собственным CA с помощью OpenSSL](../../../Security/Tools/openssl_ca/single_tier/overview.md)**
 
 ### 3.2. Создание приватного Apt-репозитория
 
 Далее, создадим сам репозиторий с помощью `reprepro` и подпишем его GPG-ключом.
 
-> **Подробное руководство: [Создание приватного Apt-репозитория с reprepro](../../Linux/PackageManagement/private_apt_repository_with_reprepro.md)**
+> **Подробное руководство: [Создание приватного Apt-репозитория с reprepro](../../../Linux/PackageManagement/deb_private_apt_repository_reprepro.md)**
 
 На этом же этапе вы можете создать и добавить в репозиторий свои собственные пакеты.
 
@@ -168,4 +168,4 @@ sudo apt-get update
 
 Например, вы можете захотеть, чтобы пакеты из вашего репозитория всегда предпочитались, даже если их версия ниже.
 
-> **Подробное руководство: [Управление приоритетами пакетов в Apt (Pinning)](../../Linux/PackageManagement/apt_pinning_and_priorities.md)**
+> **Подробное руководство: [Управление приоритетами пакетов в Apt (Pinning)](../../../Linux/PackageManagement/deb_apt_pinning.md)**

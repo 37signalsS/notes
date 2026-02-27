@@ -217,4 +217,4 @@ AutoNegotiation=yes
 
 * **[RSS, RPS, RFS](../Concepts/rss_rps_rfs.md)** — концепции многопоточной обработки
 * **[Оптимизация TCP](../Concepts/tcp_tuning.md)** — настройка TCP-стека
-* **[`ip link`](../../Tools/iproute2/ip_link.md)** — управление MTU и состоянием интерфейса
+* **[`ip link`](iproute2/ip_link.md)** — управление MTU и состоянием интерфейса

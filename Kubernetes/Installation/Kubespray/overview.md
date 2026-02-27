@@ -2,7 +2,7 @@
 
 ## 1. Определения
 
-**Kubespray** — это проект с открытым исходным кодом, который объединяет [Ansible](../../Ansible/ansible_introduction.md) и [kubeadm](../kubeadm_quickstart.md) для автоматизации процесса установки и управления жизненным циклом кластеров Kubernetes.
+**Kubespray** — это проект с открытым исходным кодом, который объединяет [Ansible](../../../Ansible/ansible_introduction.md) и [kubeadm](../kubeadm_quickstart.md) для автоматизации процесса установки и управления жизненным циклом кластеров Kubernetes.
 
 В то время как [kubeadm](../kubeadm_quickstart.md) является инструментом для инициализации отдельных узлов кластера, Kubespray автоматизирует выполнение команд `kubeadm` на всех хостах (мастер- и рабочих узлах) с помощью Ansible-плейбуков. Это позволяет декларативно описывать состояние кластера и применять его к целевым серверам.
 
@@ -14,7 +14,7 @@
 * **Гибкость:** Поддерживает большое количество операционных систем (Ubuntu, CentOS, и др.).
 * **Настраиваемость:** Позволяет легко настраивать компоненты кластера, включая:
   * [Сетевые плагины (CNI)](../../Networking/Network/cni_kube_proxy_roles.md), такие как Calico, Cilium, Flannel.
-  * [DNS-провайдеры](../../Kubernetes/Networking/dns_deep_dive.md) (например, CoreDNS).
+  * [DNS-провайдеры](../../Networking/dns_deep_dive.md) (например, CoreDNS).
   * Различные среды выполнения контейнеров.
 * [**Отказоустойчивость (HA)**](../ha_cluster_deployment_with_kubespray.md): Встроенная поддержка для создания высокодоступных [Control Plane](../../Concepts/control_plane_architecture.md).
 

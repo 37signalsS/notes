@@ -1,6 +1,6 @@
 # Конфигурация Prometheus Server в kube-prometheus-stack
 
-Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](../service_discovery_and_relabeling.md).
+Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](../../service_discovery_and_relabeling.md).
 
 * `prometheus.enabled`: `true`
   * **Рекомендация:** Оставить `true`.

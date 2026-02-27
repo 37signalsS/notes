@@ -54,7 +54,7 @@ docker pull my-registry.example.com/my-project/my-app:1.0.0
 
 ## Практические сценарии
 
-### Пример: [Harbor - корпоративный реестр образов](Docker_registries/harbor.md)
+### Пример: [Harbor - корпоративный реестр образов](Docker_registries/Harbor/overview.md)
 
 ## Дополнительная информация
 

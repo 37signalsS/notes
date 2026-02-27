@@ -219,6 +219,6 @@ spec:
 
 ### Связанные темы
 
-- Безопасность секретов: [Sealed Secrets](../sealed_secrets_overview.md)
+- Безопасность секретов: [Sealed Secrets](sealed_secrets_overview.md)
 - RBAC для доступа к API: [RBAC Overview](./rbac/rbac_overview.md)
 - [Kubernetes NetworkPolicy Documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/)

@@ -3,7 +3,7 @@
 ## Определения
 
 * **`systemd-journald`** — это системная служба, которая централизованно собирает и управляет логами от всех компонентов операционной системы, включая ядро, службы и приложения.
-* **`journalctl`** — это утилита командной строки для просмотра, фильтрации и анализа логов, собранных `systemd-journald`. **Подробное описание утилиты `journalctl` и её использования находится в [Linux/Diagnostics/Logging/journalctl.md](../Diagnostics/Logging/journalctl.md).**
+* **`journalctl`** — это утилита командной строки для просмотра, фильтрации и анализа логов, собранных `systemd-journald`. **Подробное описание утилиты `journalctl` и её использования находится в [Linux/Diagnostics/Logging/journalctl.md](../../Diagnostics/Logging/journalctl.md).**
 
 ## Основные концепции
 

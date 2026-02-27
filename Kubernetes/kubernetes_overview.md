@@ -63,7 +63,7 @@
   * Перенаправляет трафик с виртуального IP-адреса сервиса на правильные IP-адреса подов.
 * **Примечание:** `kube-proxy` занимается реализацией абстракции `Service` (L4), в то время как сквозную связность между подами (L2/L3) обеспечивает CNI-плагин.
 
-Подробное описание его взаимодействия с CNI и режимов работы находится в документе [Сетевая модель в Kubernetes](../Networking/network.md#разделение-ролей-cni-flannel-calico-и-kube-proxy).
+Подробное описание его взаимодействия с CNI и режимов работы находится в документе [Сетевая модель в Kubernetes](../Networking/Network/network_overview.md#разделение-ролей-cni-flannel-calico-и-kube-proxy).
 
 #### `cAdvisor`
 
@@ -96,7 +96,7 @@
     * Настройка сетевых интерфейсов для каждого пода.
     * Обеспечение маршрутизации трафика между подами на одном узле и между узлами.
     * Реализация сетевых политик (в продвинутых CNI-плагинах).
-  * **Примеры реализаций CNI:** Flannel, Calico, Cilium, Weave Net. Подробнее см. в [Сетевая модель в Kubernetes](../Networking/Network/network_overview.md).
+  * **Примеры реализаций CNI:** Flannel, Calico, Cilium, Weave Net. Подробнее см. в [Сетевая модель в Kubernetes](Networking/Network/network_overview.md).
 
 ### CSI (Container Storage Interface)
 
@@ -106,7 +106,7 @@
     * Динамическое выделение и девыделение томов хранения.
     * Монтирование и отмонтирование томов к подам.
     * Создание снапшотов и клонирование томов.
-  * **Примеры реализаций CSI:** OpenEBS, Rook, Portworx, Ceph CSI. Подробнее см. в [Container Storage Interface (CSI)](../Storage/CSI/csi_overview.md).
+  * **Примеры реализаций CSI:** OpenEBS, Rook, Portworx, Ceph CSI. Подробнее см. в [Container Storage Interface (CSI)](Storage/CSI/csi_overview.md).
 
 ### Kubernetes и экосистема CNCF (Cloud Native Computing Foundation)
 

@@ -144,11 +144,11 @@ sudo tc qdisc del dev eth0 root netem
 
 * **Для initcwnd:** настройка через [`ip route`](../../Tools/iproute2/ip_route.md).
 * **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md) (см. [Оптимизация TCP](../../Concepts/tcp_tuning.md)).
-* **Для многопоточности:** [RSS, RPS, RFS](../Concepts/rss_rps_rfs.md).
+* **Для многопоточности:** [RSS, RPS, RFS](../../Concepts/rss_rps_rfs.md).
 
 ### Связанные темы
 
 * **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — настройка TCP-стека, алгоритмы congestion control
 * **[`ip route`](../../Tools/iproute2/ip_route.md)** — управление маршрутами и initcwnd
-* **[QoS](../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
+* **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 * **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем

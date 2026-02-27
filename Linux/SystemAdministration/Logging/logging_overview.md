@@ -17,7 +17,7 @@
 
 - `/var/log/syslog` (Debian/Ubuntu) или `/var/log/messages` (CentOS/RHEL): Главный системный лог, куда попадает большинство событий от ядра и служб.
 - `/var/log/auth.log` (Debian/Ubuntu) или `/var/log/secure` (CentOS/RHEL): События аутентификации (входы по SSH, `sudo`, неудачные попытки). **Ключевой файл для анализа безопасности.** Для более детального аудита событий безопасности см. [auditd: Аудит событий безопасности](./auditd.md).
-- `/var/log/dmesg`: Сообщения ядра при загрузке. Подробнее см. [dmesg: Просмотр сообщений ядра](../../../Diagnostics/Kernel/dmesg.md).
+- `/var/log/dmesg`: Сообщения ядра при загрузке. Подробнее см. [dmesg: Просмотр сообщений ядра](../../Diagnostics/Kernel/dmesg.md).
 - `/var/log/boot.log`: Лог процесса загрузки.
 - `/var/log/apt/` (Debian/Ubuntu) или `/var/log/yum.log` (CentOS/RHEL): Логи менеджера пакетов.
 - **Логи приложений:** Многие приложения (например, `nginx`, `apache2`, `postgresql`) создают свои собственные поддиректории в `/var/log/`.

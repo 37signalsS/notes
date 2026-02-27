@@ -241,4 +241,4 @@ sudo chown -R myuser:www-data /var/www/mysite
 sudo chmod -R 755 /var/www/mysite
 ```
 
-Подробное описание принципов работы с правами доступа в Linux, командами `chown` и `chmod` доступно в заметке: [Права доступа к файлам в Linux](../../../Linux/Security/Concepts/Linux_File_Permissions.md).
+Подробное описание принципов работы с правами доступа в Linux, командами `chown` и `chmod` доступно в заметке: [Права доступа к файлам в Linux](../../../Linux/Security/Concepts/File_Permissions/overview_definitions.md).

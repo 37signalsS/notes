@@ -117,7 +117,7 @@ ip route | grep default
 
 ### 5. Превращение Linux в роутер с NAT
 
-Для организации доступа во внутреннюю сеть через NAT (как описано в [NAT (Network Address Translation)](../Networking/Concepts/nat.md)):
+Для организации доступа во внутреннюю сеть через NAT (как описано в [NAT (Network Address Translation)](../../Networking/Concepts/nat.md)):
 
 1. Включите IP Forwarding (см. раздел 2)
 2. Настройте NAT в файрволе (firewalld, iptables или nftables)
@@ -128,4 +128,4 @@ ip route | grep default
 
 ### Policy-Based Routing (PBR)
 
-Для более сложных сценариев, когда маршрут нужно выбирать не только по адресу назначения, но и по адресу источника или другим критериям, используется **[Policy-Based Routing](../linux_policy_based_routing.md)**.
+Для более сложных сценариев, когда маршрут нужно выбирать не только по адресу назначения, но и по адресу источника или другим критериям, используется **[Policy-Based Routing](../Networking/linux_policy_based_routing.md)**.

@@ -4,7 +4,7 @@
 
 В некоторых случаях, особенно при использовании stateful-приложений, необходимо, чтобы запросы от одного клиента всегда попадали на один и тот же бэкенд-сервер. Для этой цели, помимо метода `ip_hash`, можно использовать более гибкие механизмы "прилипания".
 
-> **Примечание:** В Nginx Open Source описанная ниже функциональность (`sticky`) доступна через сторонний модуль [ngx_http_upstream_sticky_module](https://bitbucket.org/nginx-goodies/nginx-sticky-module-ng/src/master/). В форке Nginx [Angie](../../Angie/angie_overview.md) и в коммерческой версии Nginx Plus этот функционал является встроенным.
+> **Примечание:** В Nginx Open Source описанная ниже функциональность (`sticky`) доступна через сторонний модуль [ngx_http_upstream_sticky_module](https://bitbucket.org/nginx-goodies/nginx-sticky-module-ng/src/master/). В форке Nginx [Angie](../../../Angie/angie_overview.md) и в коммерческой версии Nginx Plus этот функционал является встроенным.
 
 #### Режим `cookie`
 

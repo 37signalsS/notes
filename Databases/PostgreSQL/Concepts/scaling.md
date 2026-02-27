@@ -66,7 +66,7 @@
 
 * **[Citus](../../citus.md):** Превращает PostgreSQL в распределенную БД с архитектурой на основе **координатора**.
 * **[Greenplum](../../greenplum.md):** Форк PostgreSQL с архитектурой **"shared-nothing"**, где каждый узел независим.
-* Другие решения, такие как YugabyteDB и **[TimescaleDB](../timescaledb.md)** (для временных рядов).
+* Другие решения, такие как YugabyteDB и **[TimescaleDB](../../timescaledb.md)** (для временных рядов).
 
 ## Дополнительные сведения
 

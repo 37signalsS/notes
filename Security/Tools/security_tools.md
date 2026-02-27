@@ -41,7 +41,7 @@
 
 - **[Vault](../../Vault/overview.md)**: Централизованное хранилище для управления секретами.
 - **[SOPS](./sops_overview.md)**: Редактор для шифрования файлов (YAML, JSON) и их безопасного хранения в Git.
-- **[Sealed Secrets](./sealed_secrets_overview.md)**: Инструмент для безопасного хранения секретов Kubernetes в Git.
+- **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Инструмент для безопасного хранения секретов Kubernetes в Git.
 - **[Управление CA с помощью OpenSSL](./openssl_ca/single_tier/overview.md)**: Руководство по созданию и управлению собственным центром сертификации.
 - **[Sigstore](./sigstore.md)**: Решение для безопасной подписи и проверки программных артефактов (образов, бинарников).
 - **[Aces](./aces.md)**: Утилита и библиотека для кодирования данных в произвольный набор символов.

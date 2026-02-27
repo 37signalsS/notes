@@ -1,6 +1,6 @@
 # Конфигурация Alertmanager в kube-prometheus-stack
 
-> ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [alertmanager](../alertmanager.md).
+> ℹ️ Для детального изучения Alertmanager обратитесь к основной заметке: [alertmanager](../../alertmanager.md).
 
 * `alertmanager.enabled`: `true`
   * **Рекомендация:** Оставить включенным для управления алертами.

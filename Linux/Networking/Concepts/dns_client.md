@@ -86,7 +86,7 @@ nameserver 8.8.8.8
 
 ### 4. Современный подход: `systemd-resolved`
 
-В большинстве современных дистрибутивов (Ubuntu 17.10+, CentOS/RHEL 7+) за разрешение имен отвечает служба [systemd-resolved](../../Linux/Core/systemd.md). Она выступает в роли локального кэширующего DNS-резолвера.
+В большинстве современных дистрибутивов (Ubuntu 17.10+, CentOS/RHEL 7+) за разрешение имен отвечает служба [systemd-resolved](../../Core/systemd/overview.md). Она выступает в роли локального кэширующего DNS-резолвера.
 
 При этом `/etc/resolv.conf` часто является символической ссылкой на файл-заглушку (`/run/systemd/resolve/stub-resolv.conf`), который содержит только один `nameserver`:
 
@@ -98,7 +98,7 @@ nameserver 127.0.0.53
 
 #### Диагностика с systemd-resolved
 
-Для детальной диагностики работы `systemd-resolved` и DNS-разрешения в целом, используйте утилиту `resolvectl` и другие инструменты, описанные в заметке [Диагностика DNS](../../Linux/Diagnostics/Networking/dns_diagnostics.md).
+Для детальной диагностики работы `systemd-resolved` и DNS-разрешения в целом, используйте утилиту `resolvectl` и другие инструменты, описанные в заметке [Диагностика DNS](../../Diagnostics/Networking/dns_diagnostics.md).
 Эта утилита является основным инструментом для взаимодействия с `systemd-resolved`.
 
 #### Как `systemd-resolved` получает DNS-серверы?

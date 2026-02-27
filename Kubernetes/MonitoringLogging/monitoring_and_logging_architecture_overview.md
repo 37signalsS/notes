@@ -2,7 +2,7 @@
 
 ## Определения
 
-> **Основная статья: [Observability (Наблюдаемость)](../../../Concepts/Observability_and_Monitoring/observability_overview.md)**
+> **Основная статья: [Observability (Наблюдаемость)](../../Concepts/Observability_and_Monitoring/observability_overview.md)**
 
 **Мониторинг** — это процесс сбора, обработки и анализа данных (метрик) для получения представления о производительности и состоянии системы. В контексте Kubernetes это относится ко всему, от бизнес-показателей до утилизации CPU на отдельных нодах.
 

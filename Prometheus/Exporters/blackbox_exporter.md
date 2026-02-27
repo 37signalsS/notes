@@ -38,7 +38,7 @@ scrape_configs:
         replacement: 127.0.0.1:9115
 ```
 
-Подробнее о relabeling см. в [service_discovery_and_relabeling](./service_discovery_and_relabeling.md).
+Подробнее о relabeling см. в [service_discovery_and_relabeling](../service_discovery_and_relabeling.md).
 
 ### Настройка модулей `blackbox_exporter`
 

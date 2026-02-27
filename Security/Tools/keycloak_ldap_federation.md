@@ -118,5 +118,5 @@ Keycloak может выступать как:
 
 ### Ссылки
 
-- [OpenLDAP в Kubernetes](../LDAP/openldap_kubernetes.md)
+- [OpenLDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)
 - [LDAP в Linux](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)

@@ -20,7 +20,7 @@ Prometheus Operator расширяет API Kubernetes набором специ�
 
 ### ServiceMonitor
 
-Это один из самых важных CRD. `ServiceMonitor` позволяет декларативно описать, как Prometheus должен обнаруживать и собирать метрики с группы подов, объединенных одним [сервисом (Service)](../../Kubernetes/Networking/Service/service_overview.md). Более подробно механика обнаружения сервисов, включая сравнение с нативным подходом, описана в заметке о [Service Discovery в Kubernetes](../service_discovery.md).
+Это один из самых важных CRD. `ServiceMonitor` позволяет декларативно описать, как Prometheus должен обнаруживать и собирать метрики с группы подов, объединенных одним [сервисом (Service)](../../Kubernetes/Networking/Service/service_overview.md). Более подробно механика обнаружения сервисов, включая сравнение с нативным подходом, описана в заметке о [Service Discovery в Kubernetes](service_discovery.md).
 
 * **Как это работает:**
     1. Вы создаете `ServiceMonitor`, в котором с помощью `selector`'а указываете, за сервисами с какими лейблами нужно следить.

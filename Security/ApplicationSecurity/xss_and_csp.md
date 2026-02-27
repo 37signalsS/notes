@@ -73,8 +73,8 @@ Content-Security-Policy:
 
 Подробные инструкции по настройке CSP и других заголовков безопасности можно найти в следующих руководствах:
 
-* **Nginx:** [Руководство по безопасности Nginx](../WebServers/Nginx/Security/nginx_security_guide.md)
-* **Apache:** [Руководство по усилению безопасности Apache](../WebServers/Apache/apache_hardening.md)
+* **Nginx:** [Руководство по безопасности Nginx](../../WebServers/Nginx/Security/nginx_security_guide.md)
+* **Apache:** [Руководство по усилению безопасности Apache](../../WebServers/Apache/apache_hardening.md)
 
 ### Проверка CSP
 
@@ -89,4 +89,4 @@ Content-Security-Policy:
 * **OWASP:** [Cross Site Scripting (XSS) Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html)
 * **Связанные файлы:**
   * [Web Application Firewall (WAF)](./ddos_waf/waf.md) — WAF может блокировать многие известные XSS-атаки.
-  * [SAST vs DAST](../CI-CD/DevSecOps/sast_vs_dast.md) — методы автоматического поиска уязвимостей, включая XSS.
+  * [SAST vs DAST](../../CI-CD/DevSecOps/sast_vs_dast.md) — методы автоматического поиска уязвимостей, включая XSS.

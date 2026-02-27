@@ -196,7 +196,7 @@ kubectl rollout undo deployment/my-webapp --to-revision=2
 kubectl rollout restart deployment/my-webapp
 ```
 
-Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](../secrets/secrets_basics.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
+Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](secrets/secrets_basics.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
 
 ### Быстрое обновление образа
 
@@ -274,7 +274,7 @@ Kubernetes снова запустит `Rolling Update` для возврата 
 ## Связанные темы
 
 - [ConfigMap](./configmap.md) — внешняя конфигурация
-- [Secret](../secrets/secrets_basics.md) — конфиденциальные данные
+- [Secret](secrets/secrets_basics.md) — конфиденциальные данные
 - [StatefulSet](./statefulset.md) — управление stateful-приложениями
 - [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
 - [Pod](./Pod/pod_overview.md) — базовый объект развертывания

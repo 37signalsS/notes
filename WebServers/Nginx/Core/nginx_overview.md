@@ -102,8 +102,8 @@ server {
 - **[Балансировка нагрузки HTTP (L7)](../Proxy/Load_Balancing/overview_concepts.md)**: Распределение запросов между серверами.
 - **[Балансировка и проксирование TCP/UDP (L4)](../Proxy/nginx_l4_proxying.md)**: Настройка модуля `stream`.
 - **Примеры:**
-  - **[Nginx как реверс-прокси для Consul](../Proxy/nginx_as_reverse_proxy_for_consul.md)**
-  - **[Nginx как реверс-прокси для Grafana](../Proxy/nginx_as_reverse_proxy_for_grafana.md)**
+  - **[Nginx как реверс-прокси для Consul](../Scenarios/nginx_as_reverse_proxy_for_consul.md)**
+  - **[Nginx как реверс-прокси для Grafana](../Scenarios/nginx_as_reverse_proxy_for_grafana.md)**
 
 #### III. Производительность и Кэширование (Performance)
 
@@ -123,7 +123,7 @@ server {
 
 #### V. Эксплуатация и Мониторинг (Operations)
 
-- **[Запуск Nginx в Docker](../../Docker/Docker_compose/docker_compose_file_example.md)**: Руководство по контейнеризации.
+- **[Запуск Nginx в Docker](../../../Docker/Docker_compose/docker_compose_file_example.md)**: Руководство по контейнеризации.
 - **[Поиск и устранение неисправностей](../Operations/nginx_troubleshooting.md)**: Пошаговая диагностика.
 - **[Мониторинг с помощью vts-модуля](../Operations/nginx_vts_monitoring_setup.md)**: Настройка связки с Prometheus и Grafana.
 

@@ -208,7 +208,7 @@ kubectl apply -f new.sealed.yaml
 
 ### Связанные темы
 
-- Сетевая изоляция: [NetworkPolicy](../network_policies.md)
+- Сетевая изоляция: [NetworkPolicy](network_policies.md)
 - Управление доступом: [RBAC Overview](./rbac/rbac_overview.md)
-- Ограничения RBAC: [Недостатки RBAC и OPA](../rbac/limitations_opa.md)
+- Ограничения RBAC: [Недостатки RBAC и OPA](rbac/limitations_opa.md)
 - [Sealed Secrets GitHub](https://github.com/bitnami-labs/sealed-secrets)

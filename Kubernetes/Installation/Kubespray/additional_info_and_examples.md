@@ -30,7 +30,7 @@
 
 ### 3.2. Пример: Выделенные ноды для Ingress
 
-Этот подход использует `taints` и `tolerations` для изоляции Ingress-подов на выделенных узлах. Подробное объяснение механизма: **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)**.
+Этот подход использует `taints` и `tolerations` для изоляции Ingress-подов на выделенных узлах. Подробное объяснение механизма: **[Taints and Tolerations](../../Scheduling/taints_and_tolerations.md)**.
 
 **`group_vars/k8s-cluster/addons.yml`**
 

@@ -79,7 +79,7 @@ grep MemAvailable /proc/meminfo
 
 #### Память ядра
 
-- `Slab`: Память, используемая ядром для кэширования собственных структур данных (inodes, dentries и т.д.). Делится на `SReclaimable` (можно освободить) и `SUnreclaim` (освободить нельзя). Подробнее см. в [Slab Allocator](../Core/memory/slab_allocator.md).
+- `Slab`: Память, используемая ядром для кэширования собственных структур данных (inodes, dentries и т.д.). Делится на `SReclaimable` (можно освободить) и `SUnreclaim` (освободить нельзя). Подробнее см. в [Slab Allocator](../../Core/memory/slab_allocator.md).
 - `KernelStack`: Память, выделенная для стеков потоков ядра.
 - `PageTables`: Память, занимаемая таблицами страниц для трансляции виртуальных адресов в физические.
 - `VmallocTotal` / `VmallocUsed`: Область виртуальной памяти ядра для больших непрерывных участков.

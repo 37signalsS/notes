@@ -2,7 +2,7 @@
 
 ## Определения
 
-**IPv6 (Internet Protocol version 6)** — это версия протокола IP с длиной адреса 128 бит (16 байт). Создана для решения проблемы нехватки IPv4-адресов. Подробнее о теоретических основах см. [IP-протокол](../../Networking/Protocols/ip.md) и [Dual Stack IPv4/IPv6](../../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
+**IPv6 (Internet Protocol version 6)** — это версия протокола IP с длиной адреса 128 бит (16 байт). Создана для решения проблемы нехватки IPv4-адресов. Подробнее о теоретических основах см. [IP-протокол](../../../Networking/Protocols/ip.md) и [Dual Stack IPv4/IPv6](../../../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
 
 **Unique Local Address (ULA)** — частные адреса IPv6, аналогичные приватным адресам IPv4 (RFC 4193). Диапазон: `fc00::/7` (обычно используется `fc00::/8`).
 
@@ -13,7 +13,7 @@
 ### Отличия от IPv4 в контексте Linux
 
 1. **Адресное пространство:** 128 бит вместо 32, что обеспечивает практически неограниченное количество адресов.
-2. **Автоконфигурация:** Поддержка SLAAC (Stateless Address Autoconfiguration) и DHCPv6 (подробнее см. [DHCP для IPv6](../../Networking/Protocols/dhcp.md)).
+2. **Автоконфигурация:** Поддержка SLAAC (Stateless Address Autoconfiguration) и DHCPv6 (подробнее см. [DHCP для IPv6](../../../Networking/Protocols/dhcp.md)).
 3. **ICMPv6:** В IPv6 протокол ICMPv6 выполняет функции ARP (через NDP — Neighbor Discovery Protocol).
 4. **Безопасность:** IPv6 требует отдельных правил файрвола (не наследуются от IPv4).
 
@@ -172,7 +172,7 @@ listen [::]:443 ssl http2;
 
 ### Туннелирование IPv6
 
-Для передачи IPv6 через сети, поддерживающие только IPv4, используются туннели. Подробнее см. [Туннели IPIP и SIT](../../Networking/Tunnels/ipip_and_sit.md).
+Для передачи IPv6 через сети, поддерживающие только IPv4, используются туннели. Подробнее см. [Туннели IPIP и SIT](../../../Networking/Tunnels/ipip_and_sit.md).
 
 ### Часто используемые утилиты
 

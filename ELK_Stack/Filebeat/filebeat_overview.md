@@ -30,4 +30,4 @@ Filebeat работает путем установки на серверы, з�
 
 ## Дополнительная информация
 
-Для получения более подробной информации о развертывании Filebeat в связке с другими компонентами Elastic Stack, см. [Практический ELK Stack с Docker](../../Tutorials/practical_setup_with_docker.md).
+Для получения более подробной информации о развертывании Filebeat в связке с другими компонентами Elastic Stack, см. [Практический ELK Stack с Docker](../Tutorials/practical_setup_with_docker.md).

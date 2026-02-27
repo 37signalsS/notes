@@ -85,7 +85,7 @@ runners:
 
 - **Изолируйте рабочие нагрузки:** Используйте `tags` для разделения Runner'ов для разных сред (`dev`, `prod`).
 - **Предпочитайте Specific Runner'ы:** Для production-задач всегда используйте `Specific Runner`'ы и отключайте `Shared Runner`'ы.
-- **Безопасность Docker:** Избегайте `privileged` режима и монтирования Docker-сокета. Для сборки образов используйте **[Kaniko](../Dockerfile/dockerfile_kaniko.md)**.
+- **Безопасность Docker:** Избегайте `privileged` режима и монтирования Docker-сокета. Для сборки образов используйте **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 - **Наблюдаемость:** Включите `metrics_server` в `config.toml` для сбора метрик в формате Prometheus.
 
 #### Связанные документы

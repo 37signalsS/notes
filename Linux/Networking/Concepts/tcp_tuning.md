@@ -30,7 +30,7 @@
 
 ### Дисциплины очередей (Queueing Disciplines)
 
-> Детальная настройка дисциплин выполняется через [`tc`](../../Tools/iproute2/tc.md).
+> Детальная настройка дисциплин выполняется через [`tc`](../Tools/iproute2/tc.md).
 
 * **fq_codel** — снижает латентность при смешанных нагрузках, борется с bufferbloat. Устанавливается по умолчанию через `net.core.default_qdisc`.
 * **fq (Fair Queuing)** — полезен для точного pacing с BBR при крупных передачах.
@@ -125,7 +125,7 @@ ss -ti | grep bbr
 
 ### Настройка initcwnd
 
-> Подробнее о настройке через `ip route` см. в [`ip route`](../../Tools/iproute2/ip_route.md).
+> Подробнее о настройке через `ip route` см. в [`ip route`](../Tools/iproute2/ip_route.md).
 
 По умолчанию: 10 MSS (~14 КБ). Увеличение до 20-40 безопасно для большинства веб-серверов.
 
@@ -176,7 +176,7 @@ ss -s
 
 ### Связанные темы
 
-* **[`tc`: Управление трафиком](../../Tools/iproute2/tc.md)** — детальная настройка дисциплин очередей (HTB, fq_codel)
+* **[`tc`: Управление трафиком](../Tools/iproute2/tc.md)** — детальная настройка дисциплин очередей (HTB, fq_codel)
 * **[`sysctl`](../../Core/kernel/sysctl.md)** — управление параметрами ядра
 * **[RSS, RPS, RFS](./rss_rps_rfs.md)** — многопоточная обработка сетевого трафика
-* **[`ip route`](../../Tools/iproute2/ip_route.md)** — настройка initcwnd для маршрутов
+* **[`ip route`](../Tools/iproute2/ip_route.md)** — настройка initcwnd для маршрутов

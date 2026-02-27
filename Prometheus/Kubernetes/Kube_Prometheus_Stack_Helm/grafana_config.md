@@ -1,6 +1,6 @@
 # Конфигурация Grafana в kube-prometheus-stack
 
-> ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [grafana_overview](../../Grafana/grafana_overview.md).
+> ℹ️ Для детального изучения Grafana обратитесь к основной заметке: [grafana_overview](../../../Grafana/grafana_overview.md).
 
 * `grafana.enabled`: `true`
   * **Рекомендация:** Оставить `true`.

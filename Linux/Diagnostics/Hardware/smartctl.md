@@ -58,4 +58,4 @@ sudo smartctl -l selftest /dev/sda
 
 - **Интерпретация**: Статус `PASSED` не является гарантией, что диск не выйдет из строя. Важно следить за динамикой критических атрибутов. Резкий рост `Reallocated_Sectors_Ct` — серьезный повод для замены диска.
 - **Контекст**: `smartctl` является важным инструментом при обслуживании программных RAID.
-  - См. [Управление RAID в Linux](../FileSystems/raid_management.md)
+  - См. [Управление RAID в Linux](../../FileSystems/raid_management.md)

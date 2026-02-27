@@ -5,8 +5,8 @@
 * **HA-кластер (High Availability Cluster):** Кластер, спроектированный для обеспечения непрерывной работы и отсутствия единой точки отказа (Single Point of Failure, SPoF). В контексте Kubernetes это означает запуск нескольких экземпляров компонентов Control Plane (особенно `kube-apiserver`) на разных узлах.
 * **Kubespray:** Инструмент на базе Ansible, который автоматизирует развертывание и управление жизненным циклом production-ready кластеров Kubernetes. Подробнее см. в [Kubespray](./Kubespray/overview.md).
 * **VIP (Virtual IP):** Единый виртуальный IP-адрес, который служит точкой входа для доступа к API-серверам кластера. Подробнее см. в [Виртуальный IP-адрес (VIP)](../../../WebServers/Angie/angie_ha_with_keepalived.md#виртуальный-ip-адрес-vip).
-* **Keepalived:** Сервис, который обеспечивает отказоустойчивость VIP, перемещая его между мастер-узлами в случае сбоя активного узла. Подробнее см. в [Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md).
-* **HAProxy:** Высокопроизводительный балансировщик нагрузки, который принимает трафик, поступающий на VIP, и распределяет его между всеми доступными экземплярами `kube-apiserver` на мастер-узлах. Подробнее см. в [HAProxy](../../../WebServers/Haproxy/haproxy_overview.md).
+* **Keepalived:** Сервис, который обеспечивает отказоустойчивость VIP, перемещая его между мастер-узлами в случае сбоя активного узла. Подробнее см. в [Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md).
+* **HAProxy:** Высокопроизводительный балансировщик нагрузки, который принимает трафик, поступающий на VIP, и распределяет его между всеми доступными экземплярами `kube-apiserver` на мастер-узлах. Подробнее см. в [HAProxy](../../WebServers/Haproxy/haproxy_overview.md).
 
 ## Основные концепции
 
@@ -188,7 +188,7 @@ Kubespray может автоматически настроить Keepalived и
     ```
 
 2. **Развертывание мониторинга**:
-    Разверните стек мониторинга ([Prometheus](../../../Prometheus/overview.md), [Grafana](../../../Grafana/grafana_overview.md)).
+    Разверните стек мониторинга ([Prometheus](Kubespray/overview.md), [Grafana](../../Grafana/grafana_overview.md)).
 
     ```bash
     # Пример развертывания через Terragrunt

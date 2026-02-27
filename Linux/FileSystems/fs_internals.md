@@ -53,6 +53,6 @@
 
 ## Дополнительная информация
 
-- Подробнее об [Inode и Dentry](../../FileSystems/links_inodes_dentries.md) как фундаментальных структурах файловой системы.
-- Управление памятью для ядерных объектов, таких как inode и dentry, осуществляется с помощью [Slab Allocator](../../Core/memory/slab_allocator.md).
-- Обзор различных файловых систем и их функций представлен в [Разделы и файловые системы в Linux](../../FileSystems/partitions_and_filesystems.md).
+- Подробнее об [Inode и Dentry](links_inodes_dentries.md) как фундаментальных структурах файловой системы.
+- Управление памятью для ядерных объектов, таких как inode и dentry, осуществляется с помощью [Slab Allocator](../Core/memory/slab_allocator.md).
+- Обзор различных файловых систем и их функций представлен в [Разделы и файловые системы в Linux](partitions_and_filesystems.md).

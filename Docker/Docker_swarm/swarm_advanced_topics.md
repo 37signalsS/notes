@@ -2,7 +2,7 @@
 
 ## Определения
 
-* Этот документ рассматривает продвинутые аспекты [Docker Swarm Mode](../docker_swarm_overview.md).
+* Этот документ рассматривает продвинутые аспекты [Docker Swarm Mode](docker_swarm_overview.md).
 
 ## Базовые концепции
 

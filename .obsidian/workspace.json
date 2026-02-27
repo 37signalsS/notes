@@ -11,10 +11,10 @@
             "id": "7db6a5a9c6437aaf",
             "type": "leaf",
             "state": {
-              "type": "empty",
+              "type": "graph",
               "state": {},
-              "icon": "lucide-file",
-              "title": "New tab"
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
             }
           }
         ]
@@ -181,6 +181,7 @@
   },
   "active": "7db6a5a9c6437aaf",
   "lastOpenFiles": [
+    "Prometheus/overview.md",
     "Kubernetes/Troubleshooting/Common_Errors/pod_pending.md",
     "Kubernetes/Troubleshooting/Common_Errors/overview.md",
     "Linux/SystemAdministration/grub.md",

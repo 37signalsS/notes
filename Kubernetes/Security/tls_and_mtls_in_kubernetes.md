@@ -154,7 +154,7 @@ openssl verify -CAfile ca.crt kubelet.crt
 # Ожидаемый вывод: kubelet.crt: OK
 ```
 
-Подробное описание структуры `kubeconfig` см. в [Kubeconfig: Подключение к кластеру Kubernetes](../../Operations/kubeconfig_and_connection.md).
+Подробное описание структуры `kubeconfig` см. в [Kubeconfig: Подключение к кластеру Kubernetes](../Operations/kubeconfig_and_connection.md).
 
 ## Дополнительная информация
 

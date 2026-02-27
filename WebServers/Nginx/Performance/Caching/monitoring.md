@@ -2,7 +2,7 @@
 
 ## Мониторинг кэша
 
-Состояние кэша можно мониторить через **Angie Console** или с помощью **[Prometheus](../../../../../Prometheus/overview.md)** и **[Grafana](../../../../../Grafana/grafana_overview.md)**. Ключевые метрики: hit ratio, размер кэша на диске, количество `HIT`/`MISS`.
+Состояние кэша можно мониторить через **Angie Console** или с помощью **[Prometheus](../../../../Prometheus/overview.md)** и **[Grafana](../../../../Grafana/grafana_overview.md)**. Ключевые метрики: hit ratio, размер кэша на диске, количество `HIT`/`MISS`.
 
 ## Производительность дискового кэша
 

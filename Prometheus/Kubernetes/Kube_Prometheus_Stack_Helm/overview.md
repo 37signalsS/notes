@@ -2,7 +2,7 @@
 
 ## Определения
 
-**`kube-prometheus-stack`** — это Helm-чарт, предназначенный для развертывания и управления полным стеком мониторинга в среде Kubernetes. Он включает в себя [Prometheus](../overview.md), [Alertmanager](../alertmanager.md), [Grafana](../../Grafana/grafana_overview.md), а также ключевые экспортеры и конфигурационные ресурсы.
+**`kube-prometheus-stack`** — это Helm-чарт, предназначенный для развертывания и управления полным стеком мониторинга в среде Kubernetes. Он включает в себя [Prometheus](overview.md), [Alertmanager](../../alertmanager.md), [Grafana](../../../Grafana/grafana_overview.md), а также ключевые экспортеры и конфигурационные ресурсы.
 
 **`values.yaml`** — основной конфигурационный файл Helm-чарта, который позволяет кастомизировать развертываемые компоненты и их параметры.
 
@@ -43,6 +43,6 @@
 
 Для общего обзора технологий рекомендуется ознакомиться с основными заметками:
 
-- [Helm](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
-- [Kubernetes](../../Kubernetes/kubernetes_overview.md)
-- [Prometheus](../overview.md)
+- [Helm](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
+- [Kubernetes](../../../Kubernetes/kubernetes_overview.md)
+- [Prometheus](overview.md)

@@ -77,7 +77,7 @@ spec:
             sleep 2
     # КРИТИЧЕСКИ ВАЖНО: Настроенные Readiness Probe!
     # Они заставят K8s немедленно исключить pod из Service
-    readinessProbe: # Подробности см. в документе [Пробы (Probes)](./probes.md)
+    readinessProbe: # Подробности см. в документе [Пробы (Probes)](../probes.md)
       httpGet:
         path: /health/ready
         port: 8080

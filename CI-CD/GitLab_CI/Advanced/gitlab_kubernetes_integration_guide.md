@@ -31,7 +31,7 @@
 2. **GitLab Runner с Kubernetes Executor**
     * **Принцип**: Runner устанавливается непосредственно в кластер Kubernetes. Для каждой CI-задачи создается отдельный Pod. Используя `ServiceAccount` Kubernetes, задача автоматически получает токен доступа с коротким сроком жизни.
     * **Плюсы**: **Наиболее безопасный и идиоматичный способ.**
-    * См. **[Обзор Runner'ов и Executor'ов](../gitlab_ci_runners_executors.md)** для подробного сравнения.
+    * См. **[Обзор Runner'ов и Executor'ов](gitlab_ci_runners_executors.md)** для подробного сравнения.
 
 3. **OIDC/JWT-аутентификация**
     * **Принцип**: Настраиваются доверительные отношения между Kubernetes и GitLab (как OIDC-провайдером). Кластер может валидировать временный JWT-токен (`CI_JOB_JWT_TOKEN`), который генерируется для каждой CI-задачи.
@@ -55,7 +55,7 @@
     kubectl create clusterrolebinding gitlab-runner-admin --clusterrole=cluster-admin --serviceaccount=gitlab-runner:gitlab-runner-sa
     ```
 
-2. **Зарегистрируйте Runner** с executor'ом `kubernetes` и разрешите использование ServiceAccount в `config.toml`. Подробнее в **[руководстве по Runner'ам](../gitlab_ci_runners_executors.md)**.
+2. **Зарегистрируйте Runner** с executor'ом `kubernetes` и разрешите использование ServiceAccount в `config.toml`. Подробнее в **[руководстве по Runner'ам](gitlab_ci_runners_executors.md)**.
 
 3. **Настройте доступ к GitLab Container Registry:**
     * Создайте **Deploy Token** (`Settings > Repository > Deploy Tokens`) с правом `read_registry`.

@@ -46,5 +46,5 @@ systemd-run -p NoNewPrivileges=yes -p PrivateDevices=yes ./script.sh
 
 * **[Обзор Systemd: Управление системой и службами](./overview.md)**: Общая информация о `systemd` и его архитектуре.
 * **[Контрольные группы (cgroups) в Linux](../cgroups.md)**: Для понимания механизмов управления ресурсами, используемых `systemd`.
-* **[Journald: Централизованный сбор логов](../Logging/journald.md)**: Для подробной информации о системе логирования `systemd`.
+* **[Journald: Централизованный сбор логов](../../SystemAdministration/Logging/journald.md)**: Для подробной информации о системе логирования `systemd`.
 * **[Задачи по расписанию (Timers)](./timers.md)**: Для изучения альтернативного механизма планирования задач в `systemd`.

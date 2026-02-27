@@ -174,7 +174,7 @@ ansible server1 -m ping
 
 ### 2. Подготовка тестовой среды с Vagrant
 
-[Vagrant](../../Vagrant/vagrant_basic_workflow.md) — идеальный инструмент для быстрого развертывания локальной тестовой среды.
+[Vagrant](../Vagrant/vagrant_basic_workflow.md) — идеальный инструмент для быстрого развертывания локальной тестовой среды.
 
 **Пример `Vagrantfile`:**
 

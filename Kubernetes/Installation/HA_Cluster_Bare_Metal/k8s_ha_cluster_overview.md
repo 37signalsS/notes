@@ -3,7 +3,7 @@
 ## Определения
 
 * **Bare-Metal** — физические серверы, в противоположность виртуальным машинам. Установка на "голое железо" дает максимальную производительность, но требует ручного управления инфраструктурой.
-* **kubeadm** — см. [kubeadm](../../Kubernetes/Installation/kubeadm_quickstart.md)
+* **kubeadm** — см. [kubeadm](../kubeadm_quickstart.md)
 * **containerd** — см. [containerd](../../Docker/docker_overview.md#containerd)
 * **Отказоустойчивый кластер (High-Availability, HA)** — конфигурация кластера, в которой критически важные компоненты (в данном случае, Control Plane) дублируются на нескольких серверах для предотвращения единой точки отказа.
 * **CRI (Container Runtime Interface)** — см. [Container Runtime Interface (CRI)](../../Docker/alternative_runtimes_and_tools.md#стандарты-cri-и-oci)

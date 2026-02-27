@@ -4,11 +4,11 @@
 
 #### 1. Предварительные требования
 
-- **[Docker](../../Docker/docker_overview.md)**: Для запуска Minikube.
-- **[Git](../../Git/git_basics.md)**: Для клонирования репозиториев.
+- **[Docker](../../../Docker/docker_overview.md)**: Для запуска Minikube.
+- **[Git](../../../Git/git_basics.md)**: Для клонирования репозиториев.
 - **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Локальный кластер [Kubernetes](../../../Kubernetes/kubernetes_overview.md).
-- **[kubectl](../../Kubernetes/kubernetes_overview.md)**: Утилита командной строки для управления кластерами Kubernetes.
-- **[Helm](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)**: Менеджер пакетов для Kubernetes.
+- **[kubectl](../../kubernetes_overview.md)**: Утилита командной строки для управления кластерами Kubernetes.
+- **[Helm](../../ToolsUtilities/Helm/helm_overview.md)**: Менеджер пакетов для Kubernetes.
 
 #### 2. Подготовка окружения
 

@@ -106,5 +106,5 @@ stress --cpu 1 --vm 1 --vm-bytes 512M --timeout 10s # Команда будет 
 ## Дополнительная информация
 
 - **[Обзор Docker](../docker_overview.md)**: Основные сведения о Docker.
-- **[Архитектура Podman](../Podman/podman_daemonless_architecture.md)**: Ключевые отличия от Docker.
+- **[Архитектура Podman](../../Podman/podman_daemonless_architecture.md)**: Ключевые отличия от Docker.
 - **[Сетевая модель Docker](../Docker_network/docker_network.md)**: Подробнее об устройстве сети.

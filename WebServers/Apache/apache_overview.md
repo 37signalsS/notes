@@ -135,7 +135,7 @@ sudo firewall-cmd --reload
     Можно найти запущенный процесс и посмотреть, с какими параметрами он был запущен.
 
     ```bash
-    [`ps aux | grep httpd`](../../../Linux/Diagnostics/Processes/ps.md)
+    ps aux | grep httpd
     ```
 
     Однако в выводе не всегда явно указан путь к конфигурационному файлу.

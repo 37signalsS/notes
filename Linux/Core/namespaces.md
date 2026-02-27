@@ -80,7 +80,7 @@ sudo unshare --mount --uts --ipc --net --pid --fork --user --map-root-user bash
 
 # Внутри этой оболочки:
 hostname new-host # меняем имя хоста, снаружи оно не изменится
-[`ps -ef`](../../Diagnostics/Processes/ps.md) # видим только процесс bash и ps
+[`ps -ef`](../Diagnostics/Processes/ps.md) # видим только процесс bash и ps
 ```
 
 ### Вход в существующее пространство имён с `nsenter`
@@ -150,5 +150,5 @@ lsns
 
 * **[cgroups](./cgroups.md)**: Документация по Control Groups, механизму, который наряду с пространствами имен лежит в основе контейнеризации.
 * **[`ip netns`](../../Linux/Networking/Tools/iproute2/overview.md)**: Управление сетевыми пространствами имен с помощью утилиты `ip`.
-* **[`systemd-nspawn`](../systemd/nspawn.md)**: Легковесная контейнеризация с использованием `systemd` и пространств имен.
+* **[`systemd-nspawn`](systemd/nspawn.md)**: Легковесная контейнеризация с использованием `systemd` и пространств имен.
 * **[`seccomp`](../../Linux/Security/Mechanisms/Seccomp.md)**: Механизм фильтрации системных вызовов, используемый для дополнительной изоляции контейнеров.
