@@ -19,17 +19,40 @@
 
 Gateway API вводит ролевую модель, где разные роли взаимодействуют с разными ресурсами:
 
-1. **`GatewayClass`** (Администратор кластера)
+1. **`GatewayClass`** (Администратор кластера / Infrastructure Provider)
     - **Что это?** Шаблон для создания шлюзов. Определяет тип шлюза и контроллер, который будет его реализовывать. Аналогичен `IngressClass`.
-    - **Кто создает?** Администратор кластера.
+    - **Кто создает?** Администратор кластера (Infrastructure Provider).
+    - **Задача:** Подготовить контроллеры и назначить им GatewayClass.
 
-2. **`Gateway`** (Оператор инфраструктуры / Администратор пространства имен)
+2. **`Gateway`** (Оператор инфраструктуры / Cluster Operator)
     - **Что это?** Реализация шлюза в конкретном `namespace`. Запрашивает IP-адрес и порты у `GatewayClass` и определяет, какие маршруты (`*Route`) могут к нему подключаться.
     - **Кто создает?** Оператор, ответственный за инфраструктуру пространства имен.
+    - **Задача:** Определить, какие listener (входные точки) контроллера будут использоваться, какие namespace/kind могут подключаться.
 
-3. **`HTTPRoute`, `TCPRoute`, `GRPCRoute` и др.** (Разработчик)
+3. **`HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`, `UDPRoute`** (Разработчик / Developer)
     - **Что это?** Правила маршрутизации, которые привязываются к `Gateway`. Определяют, как направлять трафик к сервисам на основе хостов, путей, заголовков и т.д.
     - **Кто создает?** Разработчики приложений.
+    - **Задача:** Описать правила маршрутизации для своего приложения.
+
+### Сравнение с Ingress
+
+| Характеристика | Ingress | Gateway API |
+|---------------|---------|-------------|
+| **Разделение ролей** | Слабое, все в одном манифесте | Четкое: GatewayClass → Gateway → Route |
+| **Аннотации** | Множество специфичных для каждого контроллера | Унифицированные CRD |
+| **Namespace маршрутов** | Только в namespace приложения | В любом namespace |
+| **Secret для TLS** | Только в том же namespace | В любом namespace |
+| **Поддержка протоколов** | mainly HTTP/HTTPS | HTTP, HTTPS, gRPC, TCP, UDP |
+| **Direct Pod targeting** | Через Service | Напрямую (по endpoints) |
+| **Ролевая модель** | Отсутствует | Встроенная (allowedRoutes) |
+
+### Статус компонентов (по состоянию на 2025)
+
+- **V1 (Stable):** GatewayClass, Gateway, HTTPRoute, GRPCRoute
+- **Beta:** TLSRoute, TCPRoute, UDPRoute
+- **Alpha:** некоторые расширенные функции
+
+**Рекомендация:** Использовать только стабильные V1 ресурсы в production.
 
 ## Практические сценарии
 
@@ -112,6 +135,91 @@ spec:
 ### Envoy Gateway
 
 **Envoy Gateway** — официальная реализация Gateway API от проекта Envoy Proxy. В отличие от Traefik Proxy, Envoy Gateway работает по модели контроллера.
+
+#### Traefik как реализация Gateway API
+
+**Traefik** — один из популярных прокси-контроллеров, поддерживающий Gateway API. В отличие от Envoy Gateway, Traefik может работать как Ingress Controller или как Gateway API Controller.
+
+##### Установка Traefik с поддержкой Gateway API
+
+```bash
+# При установке через ArgoCD или Helm необходимо включить провайдер Gateway API:
+# values.yaml
+providers:
+  kubernetesGateway:
+    enabled: true  # Включить поддержку Gateway API
+  ingressClass:
+    enabled: false  # Отключить классический Ingress (опционально)
+gateway:
+  enabled: false  # Не создавать Gateway по умолчанию, создавать вручную
+```
+
+##### Конфигурация GatewayClass (Traefik)
+
+По умолчанию Traefik создает GatewayClass с именем `traefik`. При наличии нескольких контроллеров необходимо создавать отдельные GatewayClass для каждого.
+
+##### Конфигурация Gateway (Traefik)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: traefik-gateway
+  namespace: sample
+spec:
+  gatewayClassName: traefik
+  listeners:
+  - name: web
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same  # Разрешить маршруты только из того же namespace
+  - name: websecure
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: sample-tls
+        namespace: sample  # Secret может быть в другом namespace!
+```
+
+**Особенности:**
+- `hostname` в HTTP listener не обязателен, маршрутизация по hostname определяется в HTTPRoute
+- `hostname` в HTTPS listener обязателен
+- TLS mode `Terminate` — SSL-трафик терминируется на контроллере, далее передается по HTTP
+- TLS mode `Passthrough` (или `Translate`) — SSL-трафик не расшифровывается, используется TLSRoute далее
+- **Важно:** Secret с сертификатом может находиться в **другом namespace**, в отличие от Ingress, где Secret должен быть в том же namespace
+
+##### Конфигурация HTTPRoute (Traefik)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: sample-http
+  namespace: sample
+spec:
+  parentRefs:
+  - name: traefik-gateway
+    sectionName: web  # Какой listener использовать
+  hostnames:
+  - sample.example.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: qmi
+      port: 80
+```
+
+**Особенности:**
+- HTTPRoute может находиться в **любом namespace**, не обязательно в namespace приложения
+- HTTPRoute может ссылаться на Service в **любом namespace**
+- Traefik по умолчанию отправляет трафик напрямую на pod endpoints, минуя Service (более эффективно)
 
 #### Архитектура
 

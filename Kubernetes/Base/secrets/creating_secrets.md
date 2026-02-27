@@ -55,6 +55,57 @@ kubectl create secret generic db-cred \
   --from-literal=password='S3cUr3!'
 ```
 
+### Приоритет `stringData` над `data`
+
+При указании одинакового ключа в обоих полях, `stringData` имеет приоритет:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: combined-secret
+type: Opaque
+data:
+  username: YWRtaW4=     # "admin" в base64
+stringData:
+  username: administrator  # Приоритетнее, результат: "administrator"
+```
+
+### Типы Secret
+
+#### TLS Secret
+
+Для TLS сертификатов используется тип `kubernetes.io/tls`:
+
+```bash
+# Генерация приватного ключа и самоподписанного сертификата
+openssl genrsa -out tls.key 2048
+openssl req -new -x509 -key tls.key -out tls.crt -days=365
+
+# Создание Secret
+kubectl create secret tls my-tls-secret \
+  --cert=tls.crt \
+  --key=tls.key
+```
+
+#### Docker Registry Secret
+
+Для доступа к приватным Docker registry:
+
+```bash
+# Из существующего docker config
+kubectl create secret generic regcred \
+  --from-file=.dockerconfigjson=<path/to/config.json> \
+  --type=kubernetes.io/dockerconfigjson
+
+# Явно указать параметры
+kubectl create secret docker-registry myregistry-secret \
+  --docker-server=https://index.docker.io/v1/ \
+  --docker-username=user \
+  --docker-password=password \
+  --docker-email=email@example.com
+```
+
 ## Дополнительная информация
 
 ### Типы Secret
