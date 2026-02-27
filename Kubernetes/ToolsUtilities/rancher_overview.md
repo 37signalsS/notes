@@ -22,6 +22,14 @@
 
 ## Практические сценарии
 
+### Развертывание приложений
+
+Rancher упрощает развертывание приложений с поддержкой Helm-чартов и стандартных манифестов Kubernetes.
+
+### Rancher Pipelines
+
+Rancher включает встроенный механизм CI/CD — **Rancher Pipelines**, основанный на Jenkins. Подробнее см. [Rancher Pipelines](./rancher_pipelines.md).
+
 ### Пример развертывания Rancher Server с использованием Docker
 
 Для быстрого развертывания Rancher Server можно использовать Docker-контейнер:
