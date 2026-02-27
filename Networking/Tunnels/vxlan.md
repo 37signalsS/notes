@@ -67,7 +67,7 @@ sudo ip link set vxlan0 up
 sudo ip address add 10.8.0.2/24 dev vxlan0
 ```
 
-* `group 239.0.0.10`: Указывает multicast-адрес, к которому присоединяется VXLAN-интерфейс. [Адреса `239.0.0.0/8` зарезервированы для частного использования](../Concepts/private_and_special_use_ip_addresses.md).
+* `group 239.0.0.10`: Указывает multicast-адрес, к которому присоединяется VXLAN-интерфейс. [Адреса `239.0.0.0/8` зарезервированы для частного использования](../Concepts/network_classification.md).
 
 ## Дополнительная информация
 

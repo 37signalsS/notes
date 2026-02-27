@@ -78,7 +78,7 @@ Prometheus разделяет процессы удаленной записи (
 
 ##### 1.1 Установка Prometheus
 
-Установите Prometheus на серверы `server1` и `server2`. Инструкции по установке можно найти в документе [from_binary](../installation/from_binary.md).
+Установите Prometheus на серверы `server1` и `server2`. Инструкции по установке можно найти в документе [Установка Prometheus](../installation/overview.md).
 
 ##### 1.2 Настройка `prometheus.yml`
 
