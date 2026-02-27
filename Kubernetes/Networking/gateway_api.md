@@ -108,3 +108,162 @@ spec:
 4. Запросы с путем, начинающимся на `/api`, маршрутизируются к `backend-service`.
 5. Весь остальной трафик для этого хоста направляется к `frontend-service`.
 6. Политики `allowedRoutes` и `parentRefs` обеспечивают безопасное взаимодействие между пространствами имен, предотвращая конфликты между командами.
+
+### Envoy Gateway
+
+**Envoy Gateway** — официальная реализация Gateway API от проекта Envoy Proxy. В отличие от Traefik Proxy, Envoy Gateway работает по модели контроллера.
+
+#### Архитектура
+
+1. **Envoy Gateway Controller** — под в кластере, который:
+   - Отслеживает манифесты Gateway API
+   - Создает и управляет отдельными подами Envoy Proxy
+   - На каждый `Gateway` создается отдельный экземпляр Envoy Proxy
+
+2. **Envoy Proxy** — отдельные поды, обслуживающие конкретный Gateway:
+   - По умолчанию создается Service типа LoadBalancer
+   - Автоматически получает Endpoints из Service приложения
+   - Может работать напрямую с подами или через Service
+
+#### Установка
+
+```bash
+helm install eg envoy-gateway/envoy-gateway --version 1.3.1 -n envoy-gateway --create-namespace
+```
+
+#### Конфигурация EnvoyProxy
+
+`EnvoyProxy` — CRD для динамической конфигурации Envoy Proxy. Позволяет настраивать логирование, телеметрию, провайдеров.
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: my-proxy-config
+  namespace: gateway-infra
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      kind: Service
+  logging:
+    level:
+      default: warning
+      proxy-logs:
+        upstream: info
+```
+
+**Привязка к GatewayClass** — применяется ко всем Gateway:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ig
+spec:
+  controllerName: gateway.envoyproxy.io/gateway-class-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: my-proxy-config
+    namespace: gateway-infra
+```
+
+**Привязка к конкретному Gateway** — применяется только к одному Gateway:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: ig
+  # ...
+```
+
+#### Интеграция с cert-manager
+
+Для выпуска сертификатов через Gateway API необходимо:
+
+1. Установить cert-manager с поддержкой Gateway API:
+
+```bash
+helm install cert-manager jetstack/cert-manager \
+  --set "extraArgs={--enable-gateway-api=true}" \
+  -n cert-manager --create-namespace
+```
+
+**Важно:** CRD Gateway API должны быть установлены ДО cert-manager, иначе возникнет ошибка.
+
+2. Создать Issuer/ClusterIssuer:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-ca
+  namespace: sample
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sample-tls
+  namespace: sample
+spec:
+  secretName: sample-tls
+  issuerRef:
+    name: selfsigned-ca
+    kind: Issuer
+  dnsNames:
+  - sample.example.local
+```
+
+3. Ссылка на Secret в Gateway:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example-gateway
+spec:
+  gatewayClassName: ig
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: sample-tls
+        namespace: sample
+```
+
+#### Особенности работы с HTTPS
+
+При использовании `hostname` в Gateway и cert-manager возможны проблемы с генерацией сертификата. В некоторых случаях требуется:
+- Удалить поле `hostname` из манифеста Gateway
+- Создать Certificate вручную перед созданием Gateway
+- Дождаться создания Secret и только затем применять Gateway
+
+#### MetalLB интеграция
+
+Для работы LoadBalancer сервисов необходим MetalLB в кластере:
+
+```yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.218.180-192.168.218.185
+```
+
+## Дополнительная информация
+
+* **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
+* **Официальная документация Envoy Gateway:** [envoyproxy.io](https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds)
+* **Обзор Ingress и его ограничений:** [Ingress: Будущее - Gateway API](./Ingress/future_gateway_api.md)
