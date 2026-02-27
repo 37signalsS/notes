@@ -383,6 +383,7 @@ spec:
 
 ## Связанные темы
 
-* [LDAP](../Linux/ldap_basics.md) — основы протокола LDAP
+* [LDAP](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol) — основы протокола LDAP
+* [OpenLDAP в Kubernetes](openldap_kubernetes.md) — развёртывание и эксплуатация OpenLDAP в Kubernetes
 * [Kubernetes](../Kubernetes/overview.md) — оркестрация контейнеров
 * [Helm](../Kubernetes/Installation/Kubespray/overview.md) — менеджер пакетов для Kubernetes

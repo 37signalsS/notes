@@ -12,6 +12,44 @@
 - **vCluster** — виртуальный кластер, работающий внутри namespace'а host-кластера
 - **Control Plane** — компоненты vCluster (API Server, etcd, CoreDNS), работающие как поды внутри namespace'а
 - **Sync Back Controller** — компонент, синхронизирующий ресурсы между vCluster и host-кластером
+- **etcd** — встроенная база данных для хранения состояния vCluster
+- **CoreDNS** — DNS-сервер внутри vCluster
+
+### Матрица совместимости
+
+| Host Cluster | vCluster K8s |
+|--------------|--------------|
+| 1.30+ | 1.30, 1.31, 1.32, 1.33 |
+
+**Обозначения:**
+- Официально протестировано (100%)
+- OK — предполагается работа, официально не протестировано
+
+### Варианты развёртывания Control Plane
+
+- **Kubernetes (vanilla)** — полный K8s API
+- **K3s** — облегчённый дистрибутив
+- **K0s** — минималистичный дистрибутив
+
+### Варианты Backing Store
+
+- **etcd** — встроенный etcd (рекомендуется для production)
+- **Database** — внешняя БД (Enterprise)
+
+## Варианты использования
+
+### Разработка Kubernetes-контроллеров
+
+vCluster особенно полезен при разработке Custom Resource Definition (CRD):
+- Каждая команда может иметь свой vCluster с собственной версией CRD
+- Полная изоляция CRD между командами
+- Быстрое создание/удаление кластеров без затрат на отдельные VM
+
+### Изоляция окружений
+
+- Dev/Stage/Prod в рамках одного host-кластера
+- Изоляция лучше, чем namespace (собственный API Server, RBAC, CRD)
+- Быстрое развёртывание (секунды вместо часов)
 
 ### Отличия от Namespace
 
@@ -188,8 +226,40 @@ spec:
         backend:
           service:
             name: my-app
-            port:
-              number: 80
+              port:
+                number: 80
+```
+
+### Ingress для доступа к API vCluster
+
+Для доступа к Kubernetes API vCluster используется Ingress controller host-кластера:
+
+```yaml
+# values.yaml
+controlPlane:
+  ingress:
+    enabled: true
+    host: "vcluster1.example.com"
+  proxy:
+    extraSANs:
+      - "vcluster1.example.com"
+      - "192.168.1.100"
+```
+
+**Требования к Ingress Controller:**
+- Для сквозного SSL требуется настройка пропуска HTTPS-трафика
+
+### Получение kubeconfig
+
+После развёртывания vCluster kubeconfig создаётся в Secret:
+
+```bash
+# Получить kubeconfig
+kubectl get secret -n <vcluster-namespace> <vcluster-name> -o jsonpath='{.data.config}' | base64 -d > kubeconfig.yaml
+
+# Использовать
+export KUBECONFIG=kubeconfig.yaml
+kubectl get nodes
 ```
 
 ### Удаление vCluster
