@@ -86,9 +86,127 @@ ldapsearch -x -H ldap://localhost:3389 -D "cn=Directory Manager" -W -b "dc=examp
 
 ## Настройка репликации (Multi-Master)
 
-Для обеспечения высокой доступности настраивается репликация между несколькими экземплярами 389DS.
+Для обеспечения высокой доступности настраивается репликация между несколькими экземплярами 389DS. Рассматривается кластер из двух узлов (master-master).
 
-Подробнее о репликации — в видео "LDAP сервер 389ds [02]".
+### Предварительные требования
+
+* Две машины с Docker/Podman
+* Сетевая связность между машинами
+* DNS-имена серверов (ldap01, ldap02)
+* Директория для данных: `mkdir -p /data/ldap`
+
+### Запуск контейнеров на обеих нодах
+
+```bash
+docker run -d \
+  --name 389ds \
+  -p 3389:3389 \
+  -p 3636:3636 \
+  -v /data/ldap:/data \
+  --memory=2g \
+  -e SUFFIX=dc=test,dc=local \
+  -e DM_PASSWORD=password \
+  -e DS_REINDEX=true \
+  389ds/ds-container:latest
+```
+
+### Проверка статуса серверов
+
+```bash
+# На каждом сервере проверить список backends
+docker exec 389ds dsconf backend suffix list
+```
+
+### Создание backend (выполнить на обеих нодах)
+
+```bash
+docker exec 389ds dsconf backend create \
+  --suffix "dc=test,dc=local" \
+  --be-name user-root \
+  --create-suffix
+```
+
+### Включение репликации
+
+#### На первом сервере (ldap01)
+
+```bash
+docker exec 389ds dsconf replica enable \
+  --suffix "dc=test,dc=local" \
+  --role supplier \
+  --replica-id 1 \
+  "cn=replication manager,cn=config" \
+  --password password
+```
+
+#### На втором сервере (ldap02)
+
+```bash
+docker exec 389ds dsconf replica enable \
+  --suffix "dc=test,dc=local" \
+  --role supplier \
+  --replica-id 2 \
+  "cn=replication manager,cn=config" \
+  --password password
+```
+
+### Создание replication agreement
+
+#### На ldap01 (к ldap02)
+
+```bash
+docker exec 389ds dsconf repl-agmt create \
+  --suffix "dc=test,dc=local" \
+  --host-name ldap02 \
+  --port 3389 \
+  --bind-method simple \
+  --bind-dn "cn=replication manager,cn=config" \
+  --password password \
+  me-to-ldap02
+```
+
+#### На ldap02 (к ldap01)
+
+```bash
+docker exec 389ds dsconf repl-agmt create \
+  --suffix "dc=test,dc=local" \
+  --host-name ldap01 \
+  --port 3389 \
+  --bind-method simple \
+  --bind-dn "cn=replication manager,cn=config" \
+  --password password \
+  me-to-ldap01
+```
+
+### Инициализация репликации
+
+```bash
+# На любом сервере
+docker exec 389ds dsconf repl-agmt init \
+  --suffix "dc=test,dc=local" \
+  me-to-ldap02
+```
+
+### Проверка статуса репликации
+
+```bash
+docker exec 389ds dsconf replication status \
+  --suffix "dc=test,dc=local" \
+  me-to-ldap02
+```
+
+Ключевые параметры:
+* `Replication Enable` — репликация включена
+* `Last Update` — время последней синхронизации
+* `Replica Status` — статус синхронизации
+
+> **Примечание:** Конфигурация серверов (cn=config) не реплицируется — каждый сервер имеет собственную конфигурацию.
+
+> **Рекомендуемая последовательность:**
+> 1. Запустить 389DS в Docker на отдельных машинах
+> 2. Настроить кластер и репликацию
+> 3. Перенести работающую конфигурацию в Kubernetes
+> 4. Создать Helm chart для повторяемости
 
 ## Развертывание в Kubernetes
 
@@ -366,6 +484,116 @@ spec:
 ```
 
 # Дополнительная информация
+
+## Плагины 389DS
+
+389DS поддерживает множество плагинов для расширения функциональности. Основные плагины:
+
+### RetroChangeLog
+
+Плагин сохраняет все изменения в отдельной ветке `cn=changelog`. Полезен для:
+* Отладки репликации
+* Аудита изменений
+* Восстановления данных
+
+### MemberOf
+
+Автоматически добавляет атрибут `memberOf` к пользовательским записям, показывая группы, в которых состоит пользователь. Решает проблему "обратного" поиска — вместо поиска групп по пользователю, информация о группах хранится в самой записи пользователя.
+
+### Включение плагинов
+
+Плагины конфигурируются в ветке `cn=config,cn=plugins`. Изменения требуют перезапуска контейнера.
+
+#### Пример LDIF для включения плагинов
+
+```ldif
+dn: cn=Retro Changelog,cn=plugins,cn=config
+changetype: modify
+replace: nsslapd-pluginEnabled
+nsslapd-pluginEnabled: on
+
+dn: cn=MemberOf Plugin,cn=plugins,cn=config
+changetype: modify
+replace: nsslapd-pluginEnabled
+nsslapd-pluginEnabled: on
+```
+
+#### Настройка MemberOf для uniqueMember
+
+```ldif
+dn: cn=MemberOf Plugin,cn=plugins,cn=config
+changetype: modify
+replace: memberOfGroupAttr
+memberOfGroupAttr: uniqueMember
+```
+
+#### Применение изменений
+
+```bash
+# На каждом сервере (конфигурация не реплицируется)
+docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -W -f plugin-config.ldif
+
+# Перезапуск контейнера
+docker restart 389ds
+```
+
+#### Проверка конфигурации плагинов
+
+```bash
+docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -W \
+  -b "cn=MemberOf Plugin,cn=plugins,cn=config"
+```
+
+## ACI (Access Control Instructions)
+
+ACI в 389DS определяют права доступа на уровне отдельных записей. В отличие от OpenLDAP (ACL), ACI привязываются к конкретным записям в дереве LDAP.
+
+### Отличие от OpenLDAP
+
+| OpenLDAP | 389DS |
+| :--- | :--- |
+| ACL (Access Control List) | ACI (Access Control Instructions) |
+| Конфигурация в `cn=config` | ACI в атрибутах записей |
+| Глобальные правила | Правила на уровне записей |
+
+### Примеры ACI
+
+#### Разрешить доступ всем (чтение)
+
+```ldif
+dn: dc=test,dc=local
+changetype: modify
+add: aci
+aci: (target="ldap:///dc=test,dc=local")(targetattr="*")(version 3.0; acl "Allow read access"; allow (read,search,compare);)
+```
+
+#### Разрешить доступ группе администраторов
+
+```ldif
+dn: dc=test,dc=local
+changetype: modify
+add: aci
+aci: (target="ldap:///dc=test,dc=local")(targetattr="*")(version 3.0; acl "Admin group access"; allow (all)(groupdn="ldap:///cn=admins,ou=groups,dc=test,dc=local");)
+```
+
+### Применение ACI
+
+```bash
+docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -W -f aci-config.ldif
+```
+
+### Проверка ACI
+
+```bash
+docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -W \
+  -b "dc=test,dc=local" -A aci
+```
+
+> **Примечание:** ACI реплицируются между серверами вместе с данными.
 
 ## Требования к ресурсам
 
