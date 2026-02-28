@@ -88,9 +88,3 @@ deploy_prod:
     - ./scripts/deploy.sh prod $APP_VERSION
   environment: "production"
 ```
-
-### Дополнительная информация
-
-- **[Ключевые элементы CI/CD](./pipeline_elements.md):** Глоссарий терминов, используемых в этом документе.
-- **[Паттерны и лучшие практики CI/CD](../ci_cd_patterns.md):** Высокоуровневые подходы к построению эффективных пайплайнов.
-- **[Стратегии развертывания](./deployment_strategies.md):** Обзор различных методов выкатки релиза (Blue/Green, Canary и др.).

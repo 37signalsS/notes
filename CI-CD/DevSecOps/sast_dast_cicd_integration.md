@@ -114,8 +114,4 @@ pipeline {
 - Каждое исключение должно содержать идентификатор уязвимости, причину, автора и срок, до которого оно действует.
 - Запрещайте бессрочные исключения и настройте автоматические уведомления об их пересмотре.
 
-### Связанные документы
-
-- **[SAST (Static Application Security Testing)](./sast_overview.md)** — детальный обзор статического анализа.
-- **[DAST (Dynamic Application Security Testing)](./dast_overview.md)** — детальный обзор динамического анализа.
-- **[Сравнение SAST и DAST](./sast_vs_dast.md)** — для понимания, какой инструмент что находит.
+Интеграция SAST и DAST — ключевая часть [DevSecOps-практик](../DevSecOps/devsecops_overview.md) и [тестирования безопасности в CI/CD](../DevSecOps/devsecops_overview.md).

@@ -41,15 +41,7 @@
 - **Rolling Update:** Стандартная стратегия Kubernetes, обновляет поды поочередно.
 - **Recreate:** Полная остановка старой версии перед запуском новой. Приводит к простою.
 - **Blue/Green Deployment:** Развертывание новой версии ("Green") параллельно со старой ("Blue"). После проверки трафик мгновенно переключается.
-  - **Подробнее:** [**Blue-Green Deployment: Детальное руководство**](../Deployment_Strategies/blue_green_deployment.md).
 - **Canary Deployment (Канареечное развертывание):** Новая версия выкатывается на небольшую часть пользователей. При успехе охват постепенно увеличивается.
-  - **Подробнее:** [**Canary Deployment: Пошаговое внедрение**](../Deployment_Strategies/canary_deployment.md) и [**Мониторинг при Canary**](../Deployment_Strategies/canary_monitoring_and_gating.md).
-
-**Дополнительные материалы по стратегиям:**
-
-- **[Проверки здоровья и стратегии отката](../Deployment_Strategies/deployment_health_checks_and_rollback.md)**
-- **[Сравнение стратегий: Blue-Green vs. Canary](../Deployment_Strategies/comparison.md)**
-- **Реализация в Kubernetes:** [**Расширенные стратегии развертывания**](../../Kubernetes/Operations/Advanced_Deployment_Strategies.md).
 
 ### Дополнительная информация
 
