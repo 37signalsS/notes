@@ -129,15 +129,66 @@ production-chart/
 
 ### Многоокружная стратегия через values-файлы
 
+Для управления конфигурациями в разных окружениях (dev, staging, production) используется несколько `values` файлов.
+
+**Подход:**
+
+1.  **`values.yaml` (файл по умолчанию):**
+    *   Содержит "безопасные" и минимальные значения. Многие функции по умолчанию отключены (`ingress.enabled: false`, `autoscaling.enabled: false`).
+    *   Служит основной документацией для чарта. В нем полезно оставлять закомментированные блоки, демонстрирующие структуру сложных параметров (например, `resources` или `affinity`), чтобы пользователи знали, что они могут сконфигурировать.
+    
+    ```yaml
+    # values.yaml
+    replicaCount: 1
+
+    ingress:
+      enabled: false
+
+    # Ресурсы по умолчанию не заданы, но показана структура для пользователя
+    # resources:
+    #   limits:
+    #     cpu: 100m
+    #     memory: 128Mi
+    #   requests:
+    #     cpu: 100m
+    #     memory: 128Mi
+    ```
+
+2.  **`values-<окружение>.yaml` (файл переопределения):**
+    *   Содержит только те значения, которые отличаются от `values.yaml` и специфичны для конкретного окружения.
+    
+    ```yaml
+    # values-production.yaml
+    replicaCount: 3
+
+    ingress:
+      enabled: true
+      hosts:
+        - host: myapp.prod.com
+      tls:
+       - secretName: myapp-prod-tls
+         hosts:
+           - myapp.prod.com
+
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+    ```
+
+**Применение:**
+
+При установке или обновлении чарта флаг `-f` (или `--values`) можно указывать несколько раз. Файлы применяются последовательно, и каждое последующее значение перезаписывает предыдущее.
+
 ```bash
-# Разработка
+# Сначала загружается values.yaml, затем его значения перезаписываются из values-dev.yaml
 helm install app ./chart -f values.yaml -f values-dev.yaml -n dev
 
-# Staging
-helm install app ./chart -f values.yaml -f values-staging.yaml -n staging
-
-# Production
-helm install app ./chart -f values.yaml -f values-production.yaml -n prod --atomic
+# Для production
+helm upgrade app ./chart -f values.yaml -f values-production.yaml -n prod --atomic
 ```
 
 ### Валидация структуры

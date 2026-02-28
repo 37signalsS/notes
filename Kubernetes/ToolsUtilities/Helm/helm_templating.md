@@ -173,6 +173,86 @@ spec:
   replicas: {{ .Values.replicaCount }}
 ```
 
+#### Организация меток для компонентов
+
+При усложнении чарта, особенно при добавлении нескольких компонентов (например, основной `app` и вспомогательный `mail-relay`), `_helpers.tpl` становится ключевым для поддержания порядка. Вместо дублирования меток, можно определить для каждого компонента свои именованные шаблоны.
+
+**Пример в `templates/_helpers.tpl`:**
+
+```go
+{{/*
+Определение стандартных меток для mail-relay
+*/}}
+{{- define "myapp.mail-relay.labels" -}}
+app.kubernetes.io/name: {{ include "myapp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: mail-relay
+{{- end -}}
+
+{{/*
+Определение меток селектора для mail-relay.
+Эти метки используются в `spec.selector` и должны быть неизменными.
+*/}}
+{{- define "myapp.mail-relay.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "myapp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: mail-relay
+{{- end -}}
+```
+
+**Использование в `templates/mail-relay-deployment.yaml`:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "myapp.fullname" . }}-mail-relay
+  labels:
+    {{- include "myapp.mail-relay.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "myapp.mail-relay.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "myapp.mail-relay.selectorLabels" . | nindent 8 }}
+    spec:
+      ...
+```
+Такой подход позволяет централизованно управлять метками, упрощает их использование в `Service`, `Deployment` и `NetworkPolicy`, а также снижает риск ошибок из-за опечаток.
+
+#### Шаблонизация NetworkPolicy
+
+Использование именованных шаблонов для меток особенно полезно при определении сетевых политик, так как позволяет избежать ошибок и рассинхронизации селекторов.
+
+**Пример в `templates/mail-relay-netpol.yaml`:**
+
+Политика ниже разрешает входящий трафик к `mail-relay` только от подов основного приложения.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "myapp.fullname" . }}-mail-relay
+spec:
+  # 1. Применяем политику к подам mail-relay
+  podSelector:
+    matchLabels:
+      {{- include "myapp.mail-relay.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # 2. Разрешаем трафик от подов основного приложения
+    - from:
+      - podSelector:
+          matchLabels:
+            {{- include "myapp.labels" . | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 25
+```
+Здесь `include` гарантирует, что селекторы в `NetworkPolicy` точно соответствуют меткам в `Deployment` и `Service` без копирования и вставки.
+
 ### Вставка сложных блоков с toYaml и nindent
 
 ```yaml
@@ -280,6 +360,47 @@ spec:
 1. `eq .Values.service.type "NodePort"`: тип сервиса равен `NodePort`.
 2. `.Values.service.nodePort`: значение `nodePort` не пустое.
 
+### Условное создание ресурсов
+
+Часто бывает необходимо создавать целые ресурсы только при определённых условиях. Например, `HorizontalPodAutoscaler` имеет смысл только для `Deployment`, но не для `StatefulSet`, и он должен включаться отдельным флагом.
+
+**values.yaml:**
+```yaml
+kind: Deployment # Может быть Deployment или StatefulSet
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+```
+
+**templates/hpa.yaml:**
+```yaml
+{{- if and .Values.autoscaling.enabled (eq .Values.kind "Deployment") }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "myapp.fullname" . }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "myapp.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+{{- end }}
+```
+- `and .Values.autoscaling.enabled (eq .Values.kind "Deployment")`: эта строка проверяет выполнение **двух условий**:
+    1.  `autoscaling.enabled` имеет значение `true`.
+    2.  Тип развертывания (`kind`) — это `Deployment`.
+- Если хотя бы одно из условий ложно, файл `hpa.yaml` сгенерирует пустой вывод, и ресурс не будет создан.
+
 ### Условное добавление аннотаций
 
 Блоки `if` позволяют добавлять метаданные, например, аннотации, только при выполнении определённого условия. Это полезно для интеграции с инструментами, которые могут быть не во всех кластерах.
@@ -306,6 +427,95 @@ spec:
 ...
 ```
 Аннотация будет добавлена в манифест только если `.Values.reloader.enabled` установлено в `true`.
+
+### Автоматический перезапуск рабочих нагрузок (Deployments, StatefulSets) при изменении ConfigMap
+
+Внешние инструменты, такие как `stakater/reloader`, удобны, но можно добиться аналогичного поведения, используя только встроенные функции Helm. Метод заключается в добавлении в аннотации пода специальной "вычисляемой" аннотации, которая меняется при изменении `ConfigMap` или `Secret`. Любое изменение в `spec.template` рабочей нагрузки (включая его аннотации) приводит к рестарту его подов.
+
+Этот паттерн одинаково важен и для **Deployments**, и для **StatefulSets**. Распространенная ошибка — применить аннотацию к `Deployment`, но забыть добавить ее в `StatefulSet`, в результате чего его конфигурация не обновляется после `helm upgrade`.
+
+**Принцип работы:**
+
+1.  В манифест `Deployment` или `StatefulSet` добавляется аннотация в секцию `spec.template.metadata.annotations`.
+2.  Значение этой аннотации — это SHA256-хеш от **содержимого** шаблона `configmap.yaml`.
+3.  При `helm upgrade`, если в `values.yaml` были изменены данные, которые используются в `ConfigMap`, то отрендеренное содержимое `configmap.yaml` изменится.
+4.  Следовательно, изменится и его SHA256-хеш.
+5.  Helm обновит `Deployment`/`StatefulSet`, так как изменилась одна из его аннотаций.
+6.  Kubernetes увидит изменение в `spec.template` и запустит rolling update для подов.
+
+**Пример (для StatefulSet):**
+
+**templates/configmap.yaml:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "myapp.fullname" . }}-config
+data:
+  my-value: {{ .Values.myValue | quote }}
+  another-value: {{ .Values.anotherValue | quote }}
+```
+
+**templates/statefulset.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "myapp.fullname" . }}
+spec:
+  # ...
+  template:
+    metadata:
+      annotations:
+        # При любом изменении в configmap.yaml изменится и эта аннотация,
+        # что вызовет рестарт подов.
+        checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        # ...
+```
+
+**Разбор аннотации:**
+- `print .Template.BasePath "/configmap.yaml"`: Конструирует путь к файлу `configmap.yaml` внутри директории `templates`. `.Template.BasePath` — это путь к текущей директории шаблонов.
+- `include ... .`: Вставляет **отрендеренное** содержимое указанного файла как строку.
+- `| sha256sum`: Вычисляет SHA256-хеш от этой строки.
+
+Этот подход избавляет от необходимости устанавливать в кластер дополнительный контроллер.
+
+### Экранирование символов шаблонизатора
+
+Иногда конфигурационные файлы, которые вы помещаете в `ConfigMap`, сами используют синтаксис `{{ .Value }}` для своей шаблонизации (например, конфиг Postfix, Prometheus Alerting Rules и др.). Это создает конфликт, так как шаблонизатор Helm пытается обработать эти вставки, что приводит к ошибке.
+
+Для решения этой проблемы Helm позволяет "экранировать" такие блоки, чтобы он их игнорировал.
+
+**Пример:**
+
+Предположим, у вас есть `ConfigMap` с конфигурацией, которая использует двойные фигурные скобки.
+
+**Неправильно (вызовет ошибку):**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+data:
+  config.file: |
+    # Этот блок будет обработан Helm, что приведет к ошибке
+    value = {{ .POSTFIX_VALUE }}
+```
+
+**Правильно (с экранированием):**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+data:
+  config.file: |
+    # Helm проигнорирует этот блок
+    value = `{{` .POSTFIX_VALUE `}}`
+```
+Здесь `{{` и `}}` заключены в обратные одинарные кавычки (backticks), что заставляет Helm рассматривать их как обычный текст, а не как начало или конец шаблона. В итоговом манифесте останутся просто `{{ .POSTFIX_VALUE }}`.
 
 ### Использование `NOTES.txt` для инструкций
 
