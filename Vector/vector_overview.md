@@ -44,6 +44,82 @@ Vector использует язык **VRL (Vector Remap Language)** для сл
   '''
 ```
 
+### 2.3. Практический сценарий: Роутер логов из Kafka в OpenSearch
+
+Один из мощных сценариев использования Vector — в роли **агрегатора-трансформера** в конвейере логирования, например, в связке `Fluent Bit -> Kafka -> Vector -> OpenSearch`.
+
+#### Проблема
+
+1.  **Масштабируемость**: При высоких нагрузках прямой поток логов от агентов (Fluent Bit) к хранилищу (OpenSearch) может привести к потере данных, если хранилище не справляется с потоком записи. Kafka используется как буфер для решения этой проблемы.
+2.  **Ограничения агентов**: Некоторые легковесные агенты, как Fluent Bit, исторически не умели читать данные из Kafka. Они могут только отправлять данные в Kafka.
+3.  **Совместимость данных**: Поля в JSON-логах, особенно метаданные Kubernetes, часто содержат точки (`.`), например, `annotations.kubernetes.io/name`. Elasticsearch/OpenSearch не могут индексировать такие поля, что приводит к потере части лога.
+
+#### Решение с помощью Vector
+
+Vector выступает в роли "моста", который забирает данные из Kafka, преобразует их и отправляет в OpenSearch.
+
+**Конфигурация (в формате `yaml` для Helm-чарта):**
+
+```yaml
+customConfig:
+  # 1. Источники данных: читаем из топиков Kafka
+  sources:
+    kube_logs:
+      type: kafka
+      bootstrap_servers: "kafka-broker.kafka.svc:9092"
+      topics: ["kube"]
+      group_id: "vector-loggers"
+    host_logs:
+      type: kafka
+      bootstrap_servers: "kafka-broker.kafka.svc:9092"
+      topics: ["host"]
+      group_id: "vector-loggers"
+
+  # 2. Трансформации: магия VRL для исправления данных
+  transforms:
+    process_kube_logs:
+      type: remap
+      inputs: ["kube_logs"]
+      source: |
+        # Шаг 1: Распарсить сообщение из Kafka и сделать его корнем (.)
+        # Сообщение от Fluent Bit приходит как JSON внутри поля "message"
+        . = parse_json!(.message)
+
+        # Шаг 2: Удалить ненужные поля
+        remove(.p)
+        remove(@timestamp)
+
+        # Шаг 3: Рекурсивно заменить точки на подчеркивания в ключах
+        # Это критически важно для совместимости с Elasticsearch/OpenSearch!
+        if exists(.kubernetes.labels) {
+          .kubernetes.labels = map_keys(.kubernetes.labels, recursive: true) -> |key| { replace(key, ".", "_") }
+        }
+        if exists(.kubernetes.annotations) {
+          .kubernetes.annotations = map_keys(.kubernetes.annotations, recursive: true) -> |key| { replace(key, ".", "_") }
+        }
+
+  # 3. Приемники: отправляем обработанные логи в OpenSearch
+  sinks:
+    opensearch_sink:
+      type: elasticsearch # Используется общий драйвер
+      inputs: ["process_kube_logs"]
+      endpoint: "https://opensearch-master.logging.svc:9200"
+      index: "cube-{{`{{ EventTime }}`|strftime(format:`%Y.%m.%d`)}}"
+      # Отключаем проверку TLS для самоподписанных сертификатов в dev-среде
+      tls:
+        verify: false
+      auth:
+        strategy: basic
+        user: "admin"
+        password: "admin_password"
+```
+
+**Ключевые моменты трансформации:**
+
+*   `. = parse_json!(.message)`: Сообщение из Kafka содержит обертку с метаданными. Полезная нагрузка (сам лог от Fluent Bit) находится в поле `message`. Эта команда распаковывает JSON из `message` и делает его новым корневым объектом.
+*   `map_keys(..., recursive: true)`: Эта функция рекурсивно обходит все вложенные ключи в полях `kubernetes.labels` и `kubernetes.annotations`.
+*   `replace(key, ".", "_")`: Заменяет каждую точку в имени ключа на подчеркивание, решая проблему совместимости.
+
 ---
 
 # Дополнительная информация

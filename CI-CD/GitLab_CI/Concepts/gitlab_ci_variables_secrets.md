@@ -120,6 +120,39 @@ use_secrets:
 - Пароль для расшифровки надежно хранится в переменных GitLab CI.
 - Расшифровка происходит только во время выполнения пайплайна в изолированной среде Runner'а.
 
+#### Сценарий 4: Использование переменной типа `File` для CA-сертификата
+
+При работе с внутренними сервисами (например, Docker-реестром Harbor), использующими TLS с сертификатами от собственного центра сертификации (CA), необходимо, чтобы клиенты в CI/CD-пайплайне доверяли этому CA.
+
+**Настройка:**
+
+1.  В `Settings > CI/CD > Variables` добавьте переменную `CUSTOM_CA_CERT` типа `File`.
+2.  В значение переменной вставьте содержимое публичного ключа вашего CA (`ca.crt`).
+
+**Задача в `.gitlab-ci.yml` (пример для Docker):**
+
+```yaml
+build_with_custom_ca:
+  stage: build
+  image: docker:20.10
+  services:
+    - docker:20.10-dind
+  before_script:
+    # Docker daemon (dind) и клиент Docker должны доверять вашему CA
+    # $CUSTOM_CA_CERT содержит путь к временному файлу с сертификатом
+    - mkdir -p /etc/docker/certs.d/harbor.your-domain.com
+    - cp "$CUSTOM_CA_CERT" /etc/docker/certs.d/harbor.your-domain.com/ca.crt
+    - docker login -u $HARBOR_USER -p $HARBOR_PASSWORD harbor.your-domain.com
+  script:
+    - docker build -t harbor.your-domain.com/my-project/my-image:latest .
+    - docker push harbor.your-domain.com/my-project/my-image:latest
+```
+
+**Результат:**
+
+- Переменная `CUSTOM_CA_CERT` типа `File` предоставляет безопасный и удобный способ передачи многострочного сертификата в пайплайн.
+- Клиентские утилиты (`docker`, `curl`, `kaniko` и др.) могут быть настроены на использование этого сертификата для установления доверенных TLS-соединений.
+
 ### Дополнительная информация
 
 - **Интеграция с HashiCorp Vault**: Для максимального уровня безопасности и централизации рекомендуется интегрировать GitLab CI с внешним хранилищем секретов, таким как HashiCorp Vault. Это позволяет динамически получать секреты с коротким сроком жизни, не храня их в GitLab. Подробное руководство доступно в документе [Интеграция GitLab CI с HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md).

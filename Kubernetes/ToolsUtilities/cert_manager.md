@@ -58,15 +58,18 @@ helm install \
 * `--create-namespace`: Создает namespace, если он не существует.
 * `--set installCRDs=true`: Эта опция указывает Helm-чарту установить и управлять CRD.
 
-### Приватный Certificate Authority (CA)
+### Приватный Certificate Authority (CA) для локальной разработки
 
-В ситуациях, когда использование Let's Encrypt невозможно (например, закрытая инфраструктура, локальный домен без внешнего доступа), необходимо развернуть собственный приватный Certificate Authority.
+В ситуациях, когда использование публичных CA вроде Let's Encrypt невозможно (например, в закрытой инфраструктуре или для доменов `.local` без внешнего доступа), необходимо развернуть собственный приватный Certificate Authority. Cert-manager значительно упрощает этот процесс.
 
-#### Создание самоподписанного CA
+#### Шаг 1: Создание самоподписанного CA
 
-Создаем Issuer, который генерирует самоподписанный сертификат для нашего CA:
+Сначала создается временный `Issuer`, который нужен только для одной цели — выпустить корневой сертификат для нашего будущего CA.
+
+Затем создается ресурс `Certificate`, который использует этот временный `Issuer` для генерации самого себя. Это и будет наш корневой сертификат CA.
 
 ```yaml
+# issuer-ca-selfsigned.yaml
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -78,91 +81,88 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: home-ca-cert
+  name: home-ca-certificate
   namespace: cert-manager
 spec:
   isCA: true
-  duration: 87600h
-  secretName: home-ca-secret
-  commonName: Home CA
+  duration: 87600h # 10 лет
+  secretName: home-ca-secret # Секрет, в котором будет храниться ключ и сертификат CA
+  commonName: "My Home Certificate Authority" # Имя вашего CA
   issuerRef:
     name: selfsigned-ca-issuer
     kind: Issuer
 ```
 
-#### ClusterIssuer для подписи сертификатов
+После применения этого манифеста `cert-manager` создаст секрет `home-ca-secret`, содержащий `tls.crt` (сертификат) и `tls.key` (приватный ключ) нашего CA.
 
-Создаем ClusterIssuer, который использует наш CA для подписи сертификатов во всех namespace:
+#### Шаг 2: Создание ClusterIssuer для подписи сертификатов
+
+Теперь, когда у нас есть секрет с CA, мы можем создать `ClusterIssuer`. Этот "издатель" будет использовать наш CA для подписи сертификатов для приложений уже во всех неймспейсах кластера.
 
 ```yaml
+# clusterissuer-ca.yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: home-ca-cluster-issuer
 spec:
   ca:
-    secretName: home-ca-secret
+    secretName: home-ca-secret # Ссылка на секрет с нашим CA из Шага 1
 ```
 
-#### Доверие приватному CA на различных ОС
+> **`Issuer` vs `ClusterIssuer`**: `Issuer` работает в рамках одного namespace. `ClusterIssuer` является общекластерным ресурсом и может использоваться для выпуска сертификатов в любом namespace, что делает его более удобным для общих CA.
 
-После создания CA необходимо добавить его в доверенные корневые центры сертификации на всех машинах, которые будут использовать подписанные им сертификаты.
+#### Шаг 3: Добавление CA в доверенные на клиентских машинах
 
-**Получение сертификата CA:**
+Чтобы браузеры и утилиты командной строки (curl, git и т.д.) доверяли сертификатам, подписанным нашим новым CA, его корневой сертификат нужно добавить в хранилище доверенных сертификатов на всех машинах, с которых будет осуществляться доступ.
 
-```bash
-kubectl get secret home-ca-secret -n cert-manager -o jsonpath='{.data.tls\.crt}' | base64 -d > ca.crt
-```
+1.  **Экспорт сертификата CA из кластера:**
 
-**Rocky Linux / CentOS / RHEL:**
+    ```bash
+    kubectl get secret home-ca-secret -n cert-manager -o jsonpath='{.data.tls\.crt}' | base64 -d > ca.crt
+    ```
 
-```bash
-mkdir -p /etc/pki/ca-trust/source/anchors/
-cp ca.crt /etc/pki/ca-trust/source/anchors/
-update-ca-trust extract
-```
+2.  **Добавление сертификата в ОС:**
 
-**Ubuntu / Debian:**
+    *   **Debian / Ubuntu / и другие производные:**
+        ```bash
+        sudo cp ca.crt /usr/local/share/ca-certificates/home-ca.crt
+        sudo update-ca-certificates
+        ```
 
-```bash
-sudo mkdir -p /usr/local/share/ca-certificates
-sudo cp ca.crt /usr/local/share/ca-certificates/
-sudo update-ca-certificates
-```
+    *   **Red Hat / CentOS / Rocky Linux:**
+        ```bash
+        sudo cp ca.crt /etc/pki/ca-trust/source/anchors/home-ca.crt
+        sudo update-ca-trust extract
+        ```
 
-**Windows:**
+    *   **Windows:**
+        1.  Дважды щелкните по файлу `ca.crt`.
+        2.  Нажмите "Установить сертификат...".
+        3.  Выберите "Текущий пользователь" и нажмите "Далее".
+        4.  Выберите опцию "Поместить все сертификаты в следующее хранилище".
+        5.  Нажмите "Обзор..." и выберите "Доверенные корневые центры сертификации".
+        6.  Нажмите "ОК", "Далее" и "Готово". Согласитесь на импорт.
 
-1. Дважды щелкнуть по файлу .crt
-2. Нажать "Установить сертификат"
-3. Выбрать "Текущий пользователь"
-4. Выбрать "Поместить все сертификаты в следующее хранилище"
-5. Указать "Доверенные корневые центры сертификации"
+    *   **macOS:**
+        Откройте приложение "Связка ключей" (Keychain Access), перейдите в раздел "Система" (System) и просто перетащите файл `ca.crt` в окно приложения. Дважды щелкните по импортированному сертификату и в разделе "Доверие" (Trust) установите "При использовании этого сертификата" (When using this certificate) в "Всегда доверять" (Always Trust).
 
-**macOS:**
+### Конфигурация для публичных CA (Let's Encrypt)
 
-```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt
-```
-
-## Конфигурация: Создание ClusterIssuer
-
-После установки необходимо настроить `Issuer` или `ClusterIssuer`, который будет отвечать за выдачу сертификатов. Ниже приведен пример `ClusterIssuer` для Let's Encrypt с использованием HTTP-01 проверки.
+Для получения публично доверенных сертификатов настраивается `ClusterIssuer` для Let's Encrypt.
 
 ```yaml
+# clusterissuer-letsencrypt.yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: letsencrypt-prod
 spec:
   acme:
-    # Email address used for ACME registration
     email: your-email@example.com
-    # ACME server URL
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
-      # Secret resource that will be used to store the ACME account's private key.
       name: letsencrypt-prod-private-key
-    # Enable the HTTP-01 challenge provider
     solvers:
     - http01:
         ingress:

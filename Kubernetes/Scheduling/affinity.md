@@ -176,6 +176,53 @@ spec:
           image: nginx:1.28.0
 ```
 
+### Сценарий 4: Обеспечение высокой доступности для stateless-сервиса (HA)
+
+**Задача:** Развернуть stateless-приложение (например, лог-роутер на базе FluentD) с несколькими репликами и гарантировать, что планировщик разместит их на разных узлах для предотвращения единой точки отказа.
+
+**Решение:** Использовать `podAntiAffinity` с `topologyKey: kubernetes.io/hostname`. Это правило указывает планировщику избегать размещения пода на узле, где уже работает другой под с такой же меткой.
+
+```yaml
+# Пример для Deployment'а FluentD
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluentd-router
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fluentd-router
+  template:
+    metadata:
+      labels:
+        app: fluentd-router
+    spec:
+      affinity:
+        podAntiAffinity:
+          # Используем жесткое правило для production
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - fluentd-router
+            # Область применения правила - один узел (hostname)
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+        # ... остальная конфигурация ...
+```
+
+**Как это работает:**
+1. Когда планировщик собирается разместить первую реплику, он выбирает подходящий узел.
+2. При размещении второй реплики правило `podAntiAffinity` активируется. Планировщик видит, что на первом узле уже есть под с меткой `app: fluentd-router`, и исключает этот узел из списка кандидатов.
+3. Таким образом, все три реплики будут гарантированно размещены на разных узлах (если в кластере достаточно узлов). Если попытаться увеличить количество реплик до числа, превышающего количество доступных узлов, новые поды останутся в состоянии `Pending`.
+
+---
+
 ### Рекомендации
 
 * **Гибкость и надежность:** Отдавайте предпочтение мягким правилам (`preferred...`). Жесткие правила (`required...`) могут сделать систему хрупкой: если ни один узел не удовлетворяет условиям, поды не будут запланированы.

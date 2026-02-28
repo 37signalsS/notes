@@ -131,6 +131,75 @@ spec:
         claimName: my-app-pvc
 ```
 
+### Пример: статическое выделение для NFS
+
+Этот сценарий подходит, когда нужно подключить существующий NFS-ресурс к кластеру.
+
+1.  **Создание `PersistentVolume` (PV) (задача администратора):**
+    Администратор описывает доступный NFS-том как ресурс кластера.
+
+    ```yaml
+    # pv-nfs.yaml
+    apiVersion: v1
+    kind: PersistentVolume
+    metadata:
+      name: nfs-logs-pv
+    spec:
+      capacity:
+        storage: 10Gi
+      accessModes:
+        - ReadWriteMany # NFS поддерживает одновременную запись с нескольких узлов
+      # Политика сохранения данных после удаления PVC
+      persistentVolumeReclaimPolicy: Retain
+      # Указываем тип тома - NFS
+      nfs:
+        path: /var/k8s-logs # Путь на NFS-сервере
+        server: 192.168.1.100 # IP-адрес NFS-сервера
+    ```
+
+2.  **Создание `PersistentVolumeClaim` (PVC) (задача разработчика):**
+    Разработчик запрашивает хранилище, не зная деталей реализации.
+
+    ```yaml
+    # pvc-nfs.yaml
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: fluentd-logs-pvc
+      namespace: logging
+    spec:
+      accessModes:
+        - ReadWriteMany # Запрашиваемый режим доступа должен поддерживаться PV
+      resources:
+        requests:
+          storage: 10Gi # Запрашиваемый объем
+      # storageClassName: "" # Пустое имя класса, чтобы Kubernetes искал среди PV без класса
+    ```
+    Kubernetes найдет `nfs-logs-pv`, так как он удовлетворяет требованиям по `accessModes` и `storage`, и свяжет его с `fluentd-logs-pvc`.
+
+3.  **Использование в поде:**
+    Под `fluentd` монтирует хранилище через PVC.
+
+    ```yaml
+    # fluentd-pod.yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: fluentd
+      namespace: logging
+    spec:
+      containers:
+        - name: fluentd
+          image: fluent/fluentd
+          volumeMounts:
+            - name: log-storage
+              mountPath: /fluentd/log
+      volumes:
+        - name: log-storage
+          persistentVolumeClaim:
+            claimName: fluentd-logs-pvc
+    ```
+
 ### StatefulSet с PersistentVolume
 
 Для Stateful-приложений (БД) используется **[StatefulSet](../Base/statefulset.md)**. Автоматически создаёт уникальный PVC для каждого пода с именем `<claimName>-<podName>`.

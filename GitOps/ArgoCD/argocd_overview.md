@@ -66,3 +66,7 @@ spec:
 * **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Шифрует секреты в Git, которые может расшифровать только контроллер в кластере.
 * **[HashiCorp Vault (AVP)](./argocd_vault_integration.md)**: Интеграция через плагины, например, `argo-vault-plugin`.
 * **[SOPS (Secrets OPerationS)](../../Security/Tools/sops_overview.md)**: Позволяет шифровать значения в YAML/JSON файлах.
+
+## Практические сценарии
+
+* **[Интеграция с Helm](./helm_integration.md)**: Описание и сравнение подходов к развертыванию приложений с помощью Helm-чартов.

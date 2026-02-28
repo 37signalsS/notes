@@ -50,6 +50,35 @@ build-image:
 - **`--dockerfile`**: Путь к `Dockerfile`.
 - **`--destination`**: Имя и тег итогового образа.
 
+#### Сценарий: Сборка с приватным реестром (Harbor) и кастомным CA
+
+При работе с on-premise реестрами, использующими сертификаты, подписанные внутренним центром сертификации (CA), необходимо предоставить Kaniko этот CA для проверки доверия.
+
+В этом примере предполагается, что в переменных GitLab CI определены:
+- `HARBOR_REGISTRY`, `HARBOR_USER`, `HARBOR_PASSWORD` — для доступа к Harbor.
+- `CUSTOM_CA_CERT` — переменная типа `File` с содержимым публичного ключа CA.
+
+```yaml
+build-custom:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    entrypoint: [""]
+  script:
+    # 1. Аутентификация в приватном реестре
+    - echo "{\"auths\":{\"$HARBOR_REGISTRY\":{\"username\":\"$HARBOR_USER\",\"password\":\"$HARBOR_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    
+    # 2. Сборка с передачей CA и аргументов
+    - /kaniko/executor
+      --context $CI_PROJECT_DIR
+      --dockerfile $CI_PROJECT_DIR/Dockerfile
+      --destination "$HARBOR_REGISTRY/my-project/my-image:latest"
+      --build-arg "APP_VERSION=${CI_COMMIT_TAG}" # Пример передачи build-arg
+      --registry-certificate $CUSTOM_CA_CERT # Путь к файлу с CA, предоставленный GitLab Runner
+```
+- **`--registry-certificate`**: Указывает путь к файлу с CA-сертификатом, которому Kaniko должен доверять.
+- **`--build-arg`**: Передает переменные времени сборки в `Dockerfile`.
+
 ### Дополнительная информация
 
 #### Кэширование с Kaniko для ускорения сборок

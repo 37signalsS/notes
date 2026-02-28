@@ -64,6 +64,7 @@
 /home/q/notes/Ansible/Vault/examples.md
 /home/q/notes/Ansible/Vault/multi_vault.md
 /home/q/notes/Ansible/Vault/passwords.md
+/home/q/notes/ArgoCD [03], Harbor [BS4J79H4VL4].txt
 /home/q/notes/Chaos_Engineering/chaos_engineering_metrics.md
 /home/q/notes/Chaos_Engineering/chaos_engineering_overview.md
 /home/q/notes/Chaos_Engineering/chaos_engineering_tools.md
@@ -335,6 +336,7 @@
 /home/q/notes/etcd/mvcc_versioning_and_compaction.md
 /home/q/notes/etcd/raft_consensus.md
 /home/q/notes/FileD/file.d_overview.md
+/home/q/notes/.gemini-all-files.txt
 /home/q/notes/GEMINI.md
 /home/q/notes/Git/git_basics.md
 /home/q/notes/Git/git_branching.md
@@ -415,6 +417,7 @@
 /home/q/notes/Interview_and_Work/Подготовка_к_поиску_работы.md
 /home/q/notes/Interview_and_Work/Полезные_ссылки.md
 /home/q/notes/Interview_and_Work/Теоретические_основы.md
+/home/q/notes/Istio [01] [2025] [_aafO4tSpgo].txt
 /home/q/notes/Jaeger/distributed_tracing_concepts.md
 /home/q/notes/Jaeger/jaeger_architecture.md
 /home/q/notes/Jaeger/jaeger_deployment_options.md
@@ -428,6 +431,7 @@
 /home/q/notes/Kafka/message_queues_principles.md
 /home/q/notes/Kafka/partitioning_and_balancing.md
 /home/q/notes/Kafka/rabbitmq_vs_kafka.md
+/home/q/notes/kubeadm [06] Удаление нод. Сертификаты. [2XQaB6n-mxk].txt
 /home/q/notes/Kubernetes/Autoscaling/cluster_autoscaler_detailed.md
 /home/q/notes/Kubernetes/Autoscaling/hpa_detailed.md
 /home/q/notes/Kubernetes/Autoscaling/in_place_pod_resize.md
@@ -517,6 +521,7 @@
 /home/q/notes/Kubernetes/Networking/Service/service_type_loadbalancer.md
 /home/q/notes/Kubernetes/Networking/Service/service_type_nodeport.md
 /home/q/notes/Kubernetes/Networking/Service/service_types_summary.md
+/home/q/notes/Kubernetes Network Polices [1ACDqnfGdIQ].txt
 /home/q/notes/Kubernetes/OpenShift/openshift_overview.md
 /home/q/notes/Kubernetes/Operations/Advanced_Deployment_Strategies.md
 /home/q/notes/Kubernetes/Operations/kubeconfig_and_connection.md
@@ -582,6 +587,7 @@
 /home/q/notes/Kubernetes/Troubleshooting/Common_Errors/pod_terminating_issues.md
 /home/q/notes/Kubernetes/Troubleshooting/troubleshooting_flowchart.png
 /home/q/notes/Kubernetes/Troubleshooting/troubleshooting_overview.md
+/home/q/notes/Kubernetes, volumes [01], emptyDir [2020] [dscyyCuWRHA].txt
 /home/q/notes/LDAP/389ds_overview.md
 /home/q/notes/LDAP/openldap_kubernetes.md
 /home/q/notes/Linux/Core/cgroups.md
@@ -933,18 +939,9 @@
 /home/q/notes/Networking/Tunnels/vxlan.md
 /home/q/notes/Nomad/nomad_overview.md
 /home/q/notes/Obsidian/android_sync_with_termux.md
-/home/q/notes/.obsidian/appearance.json
-/home/q/notes/.obsidian/app.json
-/home/q/notes/.obsidian/community-plugins.json
-/home/q/notes/.obsidian/core-plugins.json
 /home/q/notes/Obsidian/github.md
-/home/q/notes/.obsidian/graph.json
 /home/q/notes/Obsidian/plugins.md
-/home/q/notes/.obsidian/plugins/obsidian-kanban/main.js
-/home/q/notes/.obsidian/plugins/obsidian-kanban/manifest.json
-/home/q/notes/.obsidian/plugins/obsidian-kanban/styles.css
-/home/q/notes/.obsidian/workspace.json
-/home/q/notes/.obsidian/workspace-mobile.json
+/home/q/notes/OpenLDAP [09] [2oebGMJki2Q].txt
 /home/q/notes/OpenTelemetry/architecture_signals.md
 /home/q/notes/OpenTelemetry/instrumentation_sdk.md
 /home/q/notes/OpenTelemetry/opentelemetry_overview.md
@@ -1056,6 +1053,7 @@
 /home/q/notes/Security/Tools/traitor.md
 /home/q/notes/Security/Tools/wazuh.md
 /home/q/notes/Security/Tools/what.md
+/home/q/notes/Semaphore (ansible UI) в kubernetes [9TOUdULKn2s].txt
 /home/q/notes/Service_Mesh/istio_architecture.md
 /home/q/notes/Service_Mesh/istio_vs_linkerd.md
 /home/q/notes/Service_Mesh/proxy_sidecar.md
@@ -1171,3 +1169,5 @@
 /home/q/notes/Zabbix/zabbix_postgresql_monitoring.md
 /home/q/notes/Zabbix/zabbix_troubleshooting_and_performance_tuning.md
 /home/q/notes/Отзыв и Запрос ПС к Хэдхантер.docx
+/home/q/notes/Слегка продвинутый Helm (gitflic) - 06 [BLVWgwkLhlI].txt
+/home/q/notes/Среда разработки на базе k3s и набор полезных приложений [03] [0TV0XKRaIEo].txt
