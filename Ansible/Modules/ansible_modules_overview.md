@@ -7,3 +7,19 @@
 ## Основные концепции
 
 Идемпотентность — ключевое свойство большинства модулей Ansible. Более подробно об идемпотентности см. в [Ansible: Основные концепции](../ansible_core_concepts.md#идемпотентность). Модули абстрагируют сложность работы с различными операционными системами и инструментами, предоставляя унифицированный интерфейс.
+
+## Практические сценарии
+
+Модули Ansible можно разделить на категории по их назначению. Подробные примеры использования модулей каждой категории приведены в соответствующих файлах:
+
+- [Управление пакетами](ansible_package_management_modules.md): `apt`, `yum`, `package`
+- [Управление файлами](ansible_file_management_modules.md): `file`, `copy`, `template`, `blockinfile`
+- [Синхронизация файлов](ansible_file_synchronization_modules.md): `synchronize`
+- [Управление службами и системной конфигурацией](ansible_service_and_system_config_modules.md): `systemd`, `hostname`, `timezone`
+- [Выполнение команд](ansible_command_execution_modules.md): `command`, `shell`
+- [Управление пользователями и безопасностью](ansible_security_and_user_management_modules.md): `user`, `password`
+
+## Дополнительная информация
+
+- [Официальная документация Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules): Полный справочник по всем модулям.
+- Команда `ansible-doc <module_name>` предоставляет справку по конкретному модулю.

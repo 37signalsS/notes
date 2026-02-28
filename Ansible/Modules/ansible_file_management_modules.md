@@ -1,3 +1,18 @@
+# Ansible: Модули для управления файлами
+
+## Определения
+
+**Модули управления файлами** — это инструменты Ansible для создания, копирования, модификации и удаления файлов и директорий на управляемых хостах. Они включают как простые операции с файлами, так и генерацию конфигураций на основе шаблонов.
+
+## Основные концепции
+
+- **`file`**: Управление атрибутами файлов, директорий и символических ссылок (права, владелец, состояние).
+- **`copy`**: Копирование файлов с контрольного узла на управляемые хосты, включая создание файлов "на лету" через параметр `content`.
+- **`template`**: Генерация файлов на основе [шаблонов Jinja2](../ansible_jinja2_templating.md) с подстановкой переменных.
+- **`blockinfile`**: Вставка, обновление или удаление блоков текста в существующих файлах с использованием маркеров.
+
+## Практические сценарии
+
 ### 2. Модули для управления файлами
 
 #### `ansible.builtin.file`
@@ -132,3 +147,11 @@ ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }
 **Шаг 2: Копируем файлы**
 
 После того, как каталог гарантированно существует, можно безопасно копировать файлы с помощью `ansible.builtin.copy` или `ansible.builtin.template`.
+
+## Дополнительная информация
+
+- [Шаблонизация с Jinja2](../ansible_jinja2_templating.md): Подробнее о создании динамических конфигураций.
+- [Официальная документация по модулю file](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/file_module.html)
+- [Официальная документация по модулю copy](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html)
+- [Официальная документация по модулю template](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/template_module.html)
+- [Официальная документация по модулю blockinfile](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/blockinfile_module.html)

@@ -1,3 +1,18 @@
+# Ansible: Модули для управления службами и системной конфигурацией
+
+## Определения
+
+**Модули управления службами и системной конфигурацией** — это инструменты Ansible для управления системными сервисами (демонами), настройки времени, имени хоста и других системных параметров.
+
+## Основные концепции
+
+- **`systemd`**: Современный модуль для управления сервисами в системах с `systemd`. Поддерживает перезагрузку демонов (`daemon_reload`).
+- **`service`**: Универсальный модуль для управления сервисами в различных системах инициализации (SysVinit, systemd).
+- **`hostname`**: Управление именем хоста системы.
+- **`timezone`**: Управление системным часовым поясом.
+
+## Практические сценарии
+
 ### 3. Модули для управления службами (сервисами)
 
 #### `ansible.builtin.systemd`
@@ -40,3 +55,9 @@
   ansible.builtin.hostname:
     name: "{{ inventory_hostname }}"
 ```
+
+## Дополнительная информация
+
+- [Официальная документация по модулю systemd](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html)
+- [Официальная документация по модулю hostname](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/hostname_module.html)
+- [Официальная документация по модулю timezone](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/timezone_module.html)
