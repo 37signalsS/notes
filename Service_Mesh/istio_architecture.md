@@ -14,7 +14,7 @@
 
 - **Конфигурация и распространение**: Преобразует высокоуровневые правила из CRD Istio в конфигурацию для прокси-серверов (Envoy) и распространяет ее по протоколу xDS.
 - **Сервис-дискавери**: Отслеживает эндпоинты сервисов в кластере.
-- **Центр сертификации (CA)**: Выпускает и ротирует сертификаты для обеспечения mTLS между компонентами.
+- **Центр сертификации (CA)**: Выпускает и ротирует сертификаты для обеспечения mTLS между компонентами. Идентификация рабочей нагрузки (workload identity) основана на **ServiceAccount** Kubernetes. `istiod` выпускает сертификат для каждого ServiceAccount, который используется для установления `principal` (идентификатора) в mTLS-соединениях.
 
 ## Архитектурные модели: Sidecar vs. Ambient
 
@@ -53,7 +53,7 @@ Istio предлагает две взаимоисключающие модел�
 #### Компоненты Ambient-режима
 - **`istio-cni-node`**: DaemonSet, который настраивает сетевое окружение на каждой ноде для прозрачного перехвата трафика и его направления в Ztunnel.
 - **`ztunnel`**: DaemonSet, легковесный прокси на Rust, обеспечивающий L4-функциональность (mTLS, L4-политики). Использует протокол **HBONE** (HTTP-Based Overlay Network Environment) для туннелирования трафика между нодами.
-- **`waypoint-proxy`**: Deployment на базе Envoy, разворачиваемый по необходимости в каждом неймспейсе для предоставления L7-политик сервисам.
+- **`waypoint-proxy`**: Deployment на базе Envoy, разворачиваемый по необходимости в каждом неймспейсе для предоставления L7-политик сервисам. Чтобы активировать Waypoint для сервисов в неймспейсе, создается ресурс `Gateway` с `gatewayClassName: istio-waypoint`.
 
 **Преимущества:**
 - **Эффективность ресурсов**: Значительно снижает потребление CPU и памяти, так как прокси разделяются между множеством подов.
@@ -64,50 +64,74 @@ Istio предлагает две взаимоисключающие модел�
 
 ## Модель конфигурации (CRD)
 
-Istio расширяет Kubernetes через набор Custom Resource Definitions (CRD) для декларативного управления сетевым поведением. Ключевые ресурсы используются в обеих моделях, но применяются на разных уровнях:
+Istio расширяет Kubernetes через набор Custom Resource Definitions (CRD) для декларативного управления сетевым поведением.
 
-- `VirtualService`: Определяет правила маршрутизации трафика (требует **Waypoint Proxy** в Ambient-режиме).
-- `DestinationRule`: Задает политики для целевых сервисов (балансировка, подмножества версий).
-- `Gateway`: Конфигурирует Ingress/Egress шлюзы, часто используется в связке с Kubernetes Gateway API.
-- `ServiceEntry`: Позволяет добавить в сетку внешние сервисы.
-- `AuthorizationPolicy`: Определяет политики доступа (L4-политики применяются **Ztunnel**, L7 — **Waypoint Proxy**).
+**Важное замечание о конфигурационных API:**
+Istio исторически использовал собственный набор CRD для управления трафиком (`VirtualService`, `DestinationRule`). С развитием Kubernetes **Gateway API**, Istio интегрировал его как основной, предпочтительный способ конфигурации. Таким образом, существует два способа настройки:
+1.  **Kubernetes Gateway API (предпочтительный)**: Использует ресурсы `Gateway` и `HTTPRoute`. Это современный, стандартный для Kubernetes подход.
+2.  **Istio API (legacy)**: Использует `VirtualService` и `DestinationRule`. Этот способ остается для обратной совместимости.
+
+Ключевые ресурсы:
+- **`Gateway` и `HTTPRoute`**: Стандартные ресурсы Gateway API для управления входящим и внутренним трафиком. `HTTPRoute` может ссылаться как на `Gateway` (для north-south трафика), так и на `Service` (для east-west трафика, требует Waypoint Proxy).
+- **`AuthorizationPolicy`**: Определяет политики доступа на основе `principal` (ServiceAccount) и других атрибутов. L4-политики применяются **Ztunnel**, а L7-политики (например, на основе JWT) — **Waypoint Proxy** (в Ambient) или Envoy sidecar.
+- **`ServiceEntry`**: Позволяет добавить в сетку внешние сервисы.
+- `VirtualService` / `DestinationRule` (Legacy): Альтернативный способ определения правил маршрутизации и политик для сервисов.
 
 ## Практические сценарии
 
-### Маршрутизация на основе заголовка
+### L4-Авторизация: Ограничение доступа по ServiceAccount
 
-В этом примере трафик для пользователей с заголовком `x-user: canary` направляется на версию `v2` сервиса `reviews`. Весь остальной трафик — на `v1`.
-- В **Sidecar-модели** это правило будет применено Envoy-прокси каждого пода `reviews`.
-- В **Ambient-модели** это правило потребует развертывания **Waypoint Proxy** для сервиса `reviews` и будет применено на нем.
+`AuthorizationPolicy` позволяет создавать мощные правила доступа. В этом примере мы разрешаем доступ к сервису `productpage` только от двух конкретных источников (principals): `bookinfo-gateway` и `curl-sa`. Любые другие вызовы будут заблокированы на уровне L4 компонентом **Ztunnel**.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata:
-  name: reviews
+  name: productpage-access-policy
+  namespace: default
 spec:
-  hosts: [ "reviews.default.svc.cluster.local" ]
-  http:
-  - match:
-    - headers:
-        x-user:
-          exact: canary
-    route:
-    - destination: { host: reviews, subset: v2 }
-  - route:
-    - destination: { host: reviews, subset: v1 }
----
-apiVersion: networking.istio.io/v1beta1
-kind: DestinationRule
+  selector:
+    matchLabels:
+      app: productpage
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/default/sa/bookinfo-gateway"
+        - "cluster.local/ns/default/sa/curl-sa"
+```
+
+### L7-Маршрутизация внутреннего трафика (Ambient Mode)
+
+Стандартные Ingress-ресурсы (включая Gateway API), предназначенные для внешнего трафика, не могут управлять потоками данных *между* сервисами внутри кластера (east-west traffic). Например, они не могут определить, какую версию сервиса `reviews` должен вызывать сервис `productpage`.
+
+Для этого в Ambient-режиме используется связка **Waypoint Proxy** и `HTTPRoute`, ссылающегося на сервис.
+
+1.  **Создается Waypoint Proxy** для неймспейса с помощью ресурса `Gateway`.
+2.  **Создается `HTTPRoute`**, который в `parentRefs` указывает не на `Gateway`, а на `Service`. Это перехватывает трафик, адресованный сервису `reviews`, и применяет к нему правила маршрутизации.
+
+В данном примере 80% запросов к сервису `reviews` направляются на `reviews-v1`, а 20% — на `reviews-v2`.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: reviews
+  name: reviews-internal-route
+  namespace: default
 spec:
-  host: reviews.default.svc.cluster.local
-  subsets:
-  - name: v1
-    labels: { version: v1 }
-  - name: v2
-    labels: { version: v2 }
+  parentRefs:
+  - name: reviews # Имя сервиса, трафиком которого управляем
+    kind: Service
+    port: 9080
+  rules:
+  - backendRefs:
+    - name: reviews-v1
+      port: 9080
+      weight: 80
+    - name: reviews-v2
+      port: 9080
+      weight: 20
 ```
 
 ## Дополнительная информация
