@@ -96,3 +96,8 @@ Feature: Shopping Cart
 
 - [Test-Driven Development by Kent Beck](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530)
 - [Cucumber Documentation](https://cucumber.io/docs/guides/overview/)
+
+#### Внешние связи
+
+- **[CI-CD: Обзор пайплайна](../../CI-CD/ci_cd_overview.md)** — TDD/BDD является частью процесса непрерывной интеграции.
+- **[Стратегии развертывания](../../CI-CD/Core_Concepts/deployment_strategies.md)** — после успешного тестирования код развертывается с использованием различных стратегий.

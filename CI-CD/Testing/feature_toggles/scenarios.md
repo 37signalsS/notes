@@ -27,6 +27,8 @@ else:
 # Если ошибок < 0.1%, увеличиваем rollout_percentage
 ```
 
+**Подробнее о стратегии:** [Canary Deployment в CI/CD](../../CI-CD/Deployment_Strategies/canary_deployment.md)
+
 #### Сценарий 2: Аварийный выключатель (Kill Switch)
 
 Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
@@ -68,3 +70,4 @@ def beta_dashboard():
 
 - **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
 - **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.
+- **[Canary Deployment в CI-CD](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний.

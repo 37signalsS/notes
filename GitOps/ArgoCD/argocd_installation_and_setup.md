@@ -181,7 +181,186 @@ ArgoCD должен знать, из каких репозиториев бра�
     * **Процесс CI/CD:** CI-пайплайн может быть настроен на автоматическое обновление тега образа в манифесте приложения в Git-репозитории после успешной сборки и тестирования. ArgoCD затем подхватит это изменение.
 3. **Проверка Обновленной Версии:** Подтвердите, что приложение обновлено и работает с новой версией (через UI, логи подов, доступ к приложению).
 
-### Пример Установки в Специфичном Окружении
+### Продвинутая установка и настройка
+
+Этот раздел описывает более контролируемый подход к установке ArgoCD, который подходит для production-like окружений. Он включает в себя использование Ingress-контроллера для доступа к UI, управление SSL-сертификатами и декларативную настройку пользователей и проектов.
+
+#### 1. Предварительные требования
+
+*   **Ingress Controller:** Необходим для доступа к UI ArgoCD по доменному имени.
+*   **Cert-manager:** Рекомендуется для автоматического выпуска и управления SSL-сертификатами для Ingress.
+
+#### 2. Стратегия установки
+
+Вместо применения единого `install.yaml` от разработчиков, рекомендуется разделить его на несколько частей для большего контроля:
+
+1.  **CRD-манифесты (`CustomResourceDefinition`):** Ресурсы `Application` и `AppProject`. Их следует применять в первую очередь.
+2.  **Манифесты компонентов ArgoCD:** Остальные ресурсы (Deployments, Services, ConfigMaps и т.д.).
+
+Это позволяет вносить изменения в конфигурацию компонентов ArgoCD перед их установкой.
+
+#### 3. Настройка доступа через Ingress
+
+При использовании Ingress-контроллера для терминирования SSL-трафика, необходимо отключить встроенный HTTPS на сервере ArgoCD, чтобы избежать конфликтов сертификатов.
+
+*   **Модификация `argocd-server`:** В манифесте `Deployment` для `argocd-server` добавьте флаг `--insecure` в команду запуска контейнера.
+
+    ```yaml
+    ...
+    command:
+      - argocd-server
+      - --insecure # Отключает встроенный HTTPS, так как SSL терминируется на Ingress
+    ...
+    ```
+
+*   **Создание Ingress-ресурса:** Настройте Ingress для маршрутизации трафика на сервис `argocd-server`.
+
+    ```yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: argocd-server-ingress
+      namespace: argocd
+      annotations:
+        cert-manager.io/cluster-issuer: "letsencrypt-prod" # Пример
+        nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+        nginx.ingress.kubernetes.io/backend-protocol: "HTTP" # Указываем, что бэкенд ожидает HTTP
+    spec:
+      ingressClassName: nginx
+      rules:
+      - host: argocd.your-domain.com
+        http:
+          paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  name: http # Обращаемся к HTTP порту
+      tls:
+      - hosts:
+        - argocd.your-domain.com
+        secretName: argocd-tls # Секрет, созданный cert-manager
+    ```
+
+#### 4. Управление пользователями и RBAC
+
+Управление пользователями и правами в ArgoCD (кроме смены пароля) осуществляется декларативно через `ConfigMap`.
+
+##### Создание локального пользователя
+
+1.  **Отредактируйте `argocd-cm` (`ConfigMap`):**
+    Добавьте нового пользователя и укажите его возможности.
+
+    ```yaml
+    # argocd-cm.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: argocd-cm
+      namespace: argocd
+      labels:
+        app.kubernetes.io/name: argocd-cm
+        app.kubernetes.io/part-of: argocd
+    data:
+      # Добавление локального пользователя 'myuser'
+      accounts.myuser: apiKey,login
+    ```
+
+    *   `apiKey`: Разрешает создавать токены для доступа к API.
+    *   `login`: Разрешает вход через UI/CLI.
+
+2.  **Отредактируйте `argocd-rbac-cm` (`ConfigMap`):**
+    Назначьте пользователю роль.
+
+    ```yaml
+    # argocd-rbac-cm.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: argocd-rbac-cm
+      namespace: argocd
+    data:
+      # Назначение роли 'admin' пользователю 'myuser'
+      policy.csv: |
+        g, myuser, role:admin
+    ```
+
+    *   `g` означает "group" (в контексте RBAC ArgoCD, это относится к пользователям).
+    *   `myuser`: Имя пользователя.
+    *   `role:admin`: Встроенная роль администратора. Также есть `role:readonly`.
+
+3.  **Примените изменения:**
+
+    ```bash
+    kubectl apply -f argocd-cm.yaml -n argocd
+    kubectl apply -f argocd-rbac-cm.yaml -n argocd
+    ```
+
+##### Установка пароля
+
+Пароли хранятся в виде хешей в секрете `argocd-secret`. Установка и смена пароля производятся через CLI.
+
+1.  **Войдите как администратор:**
+
+    ```bash
+    # Получаем пароль admin
+    INITIAL_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+    
+    # Логинимся
+    argocd login argocd.your-domain.com --username admin --password $INITIAL_PASSWORD --grpc-web
+    ```
+    *   Флаг `--grpc-web` необходим при работе через Ingress, который не настроен на `h2c` (HTTP/2 cleartext).
+
+2.  **Смените пароль для `admin`:**
+
+    ```bash
+    argocd account update-password --account admin --current-password $INITIAL_PASSWORD --new-password <your-new-strong-password>
+    ```
+
+3.  **Установите пароль для нового пользователя `myuser`:**
+
+    ```bash
+    argocd account update-password --account myuser --new-password <user-password>
+    ```
+
+#### 5. Настройка проектов
+
+**Проекты (`AppProject`)** — это ключевой механизм для изоляции и безопасности в ArgoCD. Они позволяют сгруппировать приложения и определить политики для них:
+
+*   **Ограничение источников:** Из каких Git-репозиториев можно развертывать приложения.
+*   **Ограничение назначений:** В какие кластеры и неймспейсы можно выполнять развертывание.
+*   **Ограничение ресурсов:** Какие типы ресурсов Kubernetes (e.g., `Deployments`, `Services`) разрешено или запрещено создавать.
+*   **Управление доступом (RBAC):** Какие пользователи/группы имеют доступ к проекту.
+
+Проект `default` по умолчанию разрешает развертывание из любого репозитория в любой неймспейс, что небезопасно. Рекомендуется создавать отдельные проекты для разных команд или окружений и ограничивать права доступа к проекту `default`.
+
+*Пример манифеста `AppProject`:*
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: production-apps
+  namespace: argocd
+spec:
+  description: "Проект для производственных приложений"
+  # Разрешить развертывание только из одного репозитория
+  sourceRepos:
+  - 'https://github.com/my-org/production-repo.git'
+  # Разрешить развертывание только в один кластер и неймспейс 'prod'
+  destinations:
+  - namespace: 'prod'
+    server: 'https://kubernetes.default.svc'
+  # Запретить развертывание ClusterRoleBindings
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  clusterResourceBlacklist:
+  - group: 'rbac.authorization.k8s.io'
+    kind: 'ClusterRoleBinding'
+```
+
 
 **Контекст:** Шаги выполняются на мастер-ноде кластера `sbox.example.com`.
 

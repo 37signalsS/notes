@@ -68,3 +68,4 @@ spec:
 - **[Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md)**
 - **[Сравнение: Blue-Green vs. Canary](./comparison.md)**
 - **[Проверки здоровья и откат](./deployment_health_checks_and_rollback.md)**
+- **[Feature Toggles: Сценарии использования](../../CI-CD/Testing/feature_toggles/scenarios.md)** — реализация канареечного развертывания на уровне кода с помощью флагов.

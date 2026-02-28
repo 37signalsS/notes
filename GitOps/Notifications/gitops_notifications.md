@@ -24,49 +24,15 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Уведомления в Slack из Argo CD
+### Сценарий 1: Уведомления из Argo CD
 
-Argo CD использует `argocd-notifications-controller`. Настройка производится в `ConfigMap` и `Secret`.
+Argo CD использует отдельный компонент `argocd-notifications-controller`. Процесс настройки включает три основных шага:
 
-1. **Создайте Secret с URL вебхука Slack:**
+1.  **Настройка `ConfigMap` и `Secret`:** В `ConfigMap` (`argocd-notifications-cm`) определяются триггеры, шаблоны сообщений и сервисы (Slack, Telegram и т.д.). В `Secret` (`argocd-notifications-secret`) хранятся токены и URL вебхуков.
+2.  **Подписка:** Приложения или проекты подписываются на уведомления с помощью аннотаций в своих манифестах.
+3.  **Результат:** При срабатывании триггера (например, `on-sync-succeeded`) контроллер отправляет отформатированное сообщение в указанный сервис.
 
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: argocd-notifications-secret
-    stringData:
-      slack-url: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
-    ```
-
-2. **Настройте сервис и шаблон в ConfigMap:**
-
-    ```yaml
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: argocd-notifications-cm
-    data:
-      service.slack: |
-        url: $slack-url
-      template.app-sync-status: |
-        message: |
-          Application {{.app.metadata.name}} sync status is {{.app.status.sync.status}}.
-          Health status is {{.app.satus.health.status}}.
-          Revision: {{.app.status.sync.revision}}
-      trigger.on-sync-status: |
-        - when: app.status.operationState.phase in ['Succeeded', 'Failed']
-          send: [app-sync-status]
-    ```
-
-3. **Подпишите приложение на уведомления:**
-    Добавьте аннотацию в манифест `Application`.
-
-    ```yaml
-    metadata:
-      annotations:
-        notifications.argoproj.io/subscribe.on-sync-status.slack: my-channel
-    ```
+Подробное руководство по настройке, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)**.
 
 ### Сценарий 2: Уведомления в Slack из Flux
 
