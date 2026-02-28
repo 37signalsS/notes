@@ -22,191 +22,185 @@
 
 ## 3. Практические сценарии
 
-### 3.1. Установка и конфигурация кластера
+### 3.1. Предварительные требования к узлам
 
-#### Шаг 1: Установка зависимостей
+Перед запуском Kubespray убедитесь, что каждый узел кластера (control plane и worker) соответствует следующим требованиям:
 
-После клонирования `kubespray` необходимо установить зависимости из `requirements.txt`.
+*   **ОС:** Поддерживаемый дистрибутив Linux (например, Ubuntu, CentOS).
+*   **SSH-доступ:** Настроен доступ по SSH-ключам с машины, где будет запускаться Ansible. Рекомендуется использовать пользователя `root` или пользователя с беспарольным `sudo`.
+*   **Отключен SELinux:**
+    ```bash
+    sudo setenforce 0
+    # Отключить навсегда в /etc/selinux/config
+    ```
+*   **Отключен Swap:**
+    ```bash
+    sudo swapoff -a
+    # Закомментировать строку о swap в /etc/fstab
+    ```
+*   **Отключен Firewall:** (например, `firewalld` или `ufw`)
+    ```bash
+    sudo systemctl stop firewalld
+    sudo systemctl disable firewalld
+    ```
+*   **DNS:** Все узлы должны иметь возможность разрешать FQDN друг друга. Рекомендуется настроить для этого локальный DNS-сервер.
+*   **Python:** На всех узлах должен быть установлен Python (обычно Kubespray справляется с этим автоматически).
 
-Сначала обновите `pip`:
+### 3.2. Установка и конфигурация
 
-```bash
-pip install --upgrade pip
-```
+#### Шаг 1: Клонирование Kubespray и установка зависимостей
 
-Затем установите зависимости:
+1.  **Клонировать репозиторий:**
+    ```bash
+    git clone https://github.com/kubernetes-sigs/kubespray.git
+    cd kubespray
+    ```
 
-```bash
-pip install -r requirements.txt
-```
+2.  **Установить зависимости Ansible:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 #### Шаг 2: Конфигурация Inventory
 
-1. Скопируйте пример inventory из `inventory/sample` в новую директорию, например, `inventory/my-cluster`.
-
+1.  Скопируйте пример inventory из `inventory/sample` в новую директорию, например, `inventory/my-cluster`.
     ```bash
     cp -rfp inventory/sample inventory/my-cluster
     ```
-
-2. Отредактируйте файл `inventory/my-cluster/inventory.ini`. В нем определяются хосты и их роли в кластере.
+2.  Отредактируйте файл `inventory/my-cluster/inventory.ini`, чтобы он отражал состав вашего кластера. Для небольших кластеров `etcd` можно размещать на узлах control plane.
 
     **Пример `inventory.ini`:**
-
     ```ini
     [all]
-    master-1.s000006.example.com ansible_host=172.22.193.2 ip=172.22.193.2 ansible_ssh_user=root etcd_member_name=etcd1
-    master-2.s000006.example.com ansible_host=172.22.193.3 ip=172.22.193.3 ansible_ssh_user=root etcd_member_name=etcd2
-    master-3.s000006.example.com ansible_host=172.22.193.4 ip=172.22.193.4 ansible_ssh_user=root etcd_member_name=etcd3
-    ingress-1.s000006.example.com ansible_host=172.22.193.5 ip=172.22.193.5 ansible_ssh_user=root
-    node-1.s000006.example.com ansible_host=172.22.193.6 ip=172.22.193.6 ansible_ssh_user=root
-    node-2.s000006.example.com ansible_host=172.22.193.7 ip=172.22.193.7 ansible_ssh_user=root
+    control-1 ansible_host=192.168.1.11
+    control-2 ansible_host=192.168.1.12
+    control-3 ansible_host=192.168.1.13
+    worker-1 ansible_host=192.168.1.21
+    worker-2 ansible_host=192.168.1.22
 
     [kube_control_plane]
-    master-1.s000006.example.com
-    master-2.s000006.example.com
-    master-3.s000006.example.com
+    control-1
+    control-2
+    control-3
 
     [etcd]
-    master-1.s000006.example.com
-    master-2.s000006.example.com
-    master-3.s000006.example.com
+    control-1
+    control-2
+    control-3
 
     [kube_node]
-    node-1.s000006.example.com
-    node-2.s000006.example.com
-    ingress-1.s000006.example.com
+    worker-1
+    worker-2
 
-    [kube_ingress]
-    ingress-1.s000006.example.com
-
-    [k8s-cluster:children]
+    [k8s_cluster:children]
     kube_control_plane
     kube_node
     ```
 
-#### Шаг 3: Конфигурация переменных (group_vars)
+#### Шаг 3: Конфигурация переменных (`group_vars`)
 
-В Ansible переменные для групп хостов определяются в каталоге `group_vars`.
+Это наиболее важный шаг, где определяется конфигурация кластера.
 
-* **Для всех хостов:** Переменные, применяемые ко всем хостам из inventory, можно указать в файле `group_vars/all/all.yml`. Если переменных много, их можно разложить на несколько файлов в директории `group_vars/all/`.
-* **Для конкретной группы:** Для группы `etcd` переменные будут находиться в `group_vars/etcd.yml` или в каталоге `group_vars/etcd/`.
+1.  **`inventory/my-cluster/group_vars/all/all.yml`**:
+    Здесь указывается, что `etcd` должен устанавливаться и управляться через `kubeadm`. Это критически важно для последующего [управления сертификатами](../../Operations/certificate_management.md).
 
-**Пример `group_vars/all/all.yml`:**
+    ```yaml
+    # Управлять etcd через kubeadm
+    etcd_kubeadm_enabled: true
+    # На каждой ноде будет запущен локальный прокси на API-сервер
+    loadbalancer_apiserver_localhost: true
+    ```
 
-```yaml
-# Позволяет kubelet подгружать необходимые модули ядра
-kubelet_load_modules: true
-# Отключает использование kubeadm (используется классический способ установки)
-kubeadm_enabled: false
-# Включает read-only порт (10255) для сбора метрик без авторизации
-kube_read_only_port: 10255
-```
+2.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`**:
+    Основные параметры кластера.
 
-**Пример `group_vars/all/docker.yml`:**
+    ```yaml
+    # Версия Kubernetes
+    kube_version: v1.20.2 # Выберите актуальную версию, поддерживаемую Kubespray
 
-```yaml
-# Устанавливает `overlay2` как драйвер хранилища для Docker
-docker_storage_options: -s overlay2
-```
+    # Среда выполнения контейнеров. Docker устарел, используем containerd
+    container_manager: containerd
 
-**Пример `group_vars/all/download.yml`:**
+    # Сетевой CNI-плагин. Рекомендуется Calico.
+    kube_network_plugin: calico
 
-```yaml
-# Оптимизация загрузки: файлы и образы скачиваются один раз на один узел,
-# а затем копируются на остальные узлы кластера.
-download_run_once: true
-```
+    # Сеть для сервисов
+    kube_service_addresses: 10.232.0.0/16
+    # Сеть для подов
+    kube_pods_subnet: 10.233.0.0/16
 
-**Пример `group_vars/etcd.yml`:**
+    # Режим работы kube-proxy. IPVS производительнее iptables
+    kube_proxy_mode: ipvs
 
-```yaml
-# Уменьшает количество записей в журнале операций, хранимых в памяти,
-# для снижения потребления памяти etcd.
-etcd_snapshot_count: "5000"
-# Устанавливает приоритет I/O для etcd
-etcd_ionice: '-c2 -n0'
-# Лимит памяти для etcd (0 - без ограничений)
-etcd_memory_limit: 0
-```
+    # Включить локальный кеширующий DNS на каждом узле для ускорения DNS-запросов
+    enable_nodelocaldns: true
 
-**Пример `group_vars/k8s-cluster/k8s-cluster.yml`:**
+    # Принудительная регенерация сертификатов при необходимости
+    # (полезно при обновлениях)
+    auto_renew_certificates: true
+    ```
 
-```yaml
-# Версия Kubernetes для установки
-kube_version: v1.34.5
+3.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-net-calico.yml`**:
+    Настройки для сетевого плагина Calico.
 
-# Отключаем все методы аутентификации, оставляя только по токену
-kube_oidc_auth: false
-kube_basic_auth: false
-
-# Сетевой CNI-плагин
-kube_network_plugin: flannel
-# Сеть для сервисов типа ClusterIP
-kube_service_addresses: 10.100.0.0/16
-# Сеть для подов
-kube_pods_subnet: 10.0.0.0/16
-
-# Отключаем небезопасный порт API-сервера
-kube_apiserver_insecure_port: 0
-# Режим работы kube-proxy
-kube_proxy_mode: iptables
-cluster_name: s000000.1local
-
-# Копирование kubeconfig на локальную машину для управления кластером
-kubeconfig_localhost: true
-kubectl_localhost: true
-
-# Включаем аутентификацию и авторизацию kubelet через вебхуки по токену
-kubelet_authentication_token_webhook: true
-kubelet_authorization_mode_webhook: true
-```
-
-**Пример `group_vars/k8s-cluster/k8s-net-flannel.yml`:**
-
-```yaml
-# Указываем бэкенд для Flannel. host-gw - самый быстрый и простой режим,
-# так как он создает статические маршруты между узлами в одной L2-сети.
-flannel_backend_type: "host-gw"
-# Указываем Flannel, на каком сетевом интерфейсе работать.
-# Он выберет тот интерфейс, IP-адрес которого совпадет с регулярным выражением.
-flannel_interface_regexp: '172\.21\.0\.\d{1,3}'
-```
+    ```yaml
+    # Режим инкапсуляции трафика между узлами.
+    # IPIP - производительный режим для сетей, где узлы находятся в одном L2-домене.
+    # Для VXLAN укажите 'VXLAN'.
+    calico_ipip_mode: CrossSubnet
+    ```
 
 #### Шаг 4: Запуск развертывания
 
-После подготовки всех файлов конфигурации (`inventory.ini` и переменных в `group_vars`) запустите главный плейбук `cluster.yml` из корневой директории Kubespray:
+Выполните плейбук `cluster.yml` из корневой директории Kubespray, указав путь к вашему inventory.
 
 ```bash
-ansible-playbook cluster.yml 
-  -i inventory/my-cluster/inventory.ini 
-  -u myuser -b 
-  --private-key=~/.ssh/id_rsa
+# Если вы используете пользователя root для SSH
+ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
+
+# Если вы используете non-root пользователя с sudo
+ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cluster.yml
 ```
 
-(Параметры: `-i` — путь к инвентарю, `-u` — пользователь SSH, `-b` — повышение привилегий, `--private-key` — путь к SSH-ключу.)
+Процесс установки может занять 15-30 минут.
 
-### 3.2. Проверка и доступ к кластеру
+### 3.3. Действия после установки
 
-Если в конфигурации был установлен параметр `kubeconfig_localhost: true`, Kubespray скопирует файл `admin.conf` на вашу локальную машину.
+#### Проверка кластера
 
-Подробнее о работе с kubeconfig читайте в [руководстве по подключению](../../Operations/kubeconfig_and_connection.md).
+1.  Подключитесь к любому узлу control plane.
+2.  Выполните команду `kubectl get nodes -o wide`, чтобы убедиться, что все узлы в статусе `Ready`.
 
-1. **Найдите файл kubeconfig:** Он будет находиться в `inventory/имя_вашего_кластера/artifacts/admin.conf`.
-2. **Выполните команду для проверки статуса узлов:**
-
-    ```bash
-    kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
     ```
-
-3. **(Опционально) Установите переменную окружения `KUBECONFIG`:**
-
-    ```bash
-    export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
-    # Теперь можно выполнять команды kubectl без флага --kubeconfig
-    kubectl get nodes
+    NAME        STATUS   ROLES                  AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE         KERNEL-VERSION    CONTAINER-RUNTIME
+    control-1   Ready    control-plane,master   1h    v1.20.2   192.168.1.11    <none>        CentOS Linux 7   3.10.0-1160...    containerd://1.4.3
+    ...
     ```
+    Обратите внимание на `CONTAINER-RUNTIME`, который должен быть `containerd`.
 
-    В выводе вы должны увидеть все узлы кластера со статусом `Ready`.
+#### Работа с `containerd` через `crictl`
+
+Поскольку в кластере не используется Docker, для взаимодействия с контейнерами на уровне узла используется утилита `crictl`.
+
+*   **Посмотреть запущенные контейнеры** (аналог `docker ps`):
+    ```bash
+    sudo crictl ps
+    ```
+*   **Посмотреть запущенные поды на текущем узле:**
+    ```bash
+    sudo crictl pods
+    ```
+*   **Посмотреть логи контейнера:**
+    ```bash
+    sudo crictl logs <CONTAINER_ID>
+    ```
+Подробнее об альтернативных средах выполнения см. в [этой заметке](../../../Podman/alternatives_crio_containerd.md).
+
+#### Управление и мониторинг
+
+*   **Обновление сертификатов:** Сертификаты кластера живут 1 год. Их необходимо периодически обновлять. Подробнее см. [Управление сертификатами Kubernetes](../../Operations/certificate_management.md).
+*   **Графический интерфейс:** Для удобного управления кластером можно использовать IDE, такие как [Lens](../../ToolsUtilities/lens.md).
+*   **Доступ к кластеру:** Файл `kubeconfig` для доступа к кластеру (`admin.conf`) будет создан в директории `inventory/my-cluster/artifacts/`.
 
 ## 4. Дополнительная информация
 

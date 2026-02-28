@@ -61,31 +61,89 @@ spec:
 
 ## Практические сценарии
 
-### Создание кастомных PriorityClasses
+### 1. Создание иерархии приоритетов для различных сред
 
-Рекомендуется создавать набор кастомных PriorityClasses для различных типов приложений, чтобы управлять их относительной важностью.
+В большинстве кластеров сосуществуют разные типы рабочих нагрузок: критически важные системные компоненты, production-приложения, staging-среды и тестовые задачи. `PriorityClass` позволяет выстроить иерархию, гарантирующую, что наиболее важные сервисы будут работать даже при дефиците ресурсов.
+
+#### Шаг 1: Определение набора `PriorityClass`
+
+Создадим три уровня приоритета:
+
+*   **`high-priority`**: Для критически важных, но не системных компонентов, от которых зависит работа всего кластера. Примеры:
+    *   Ingress-контроллер
+    *   Приватный Docker Registry
+    *   Динамический provisioner для хранилищ (например, `nfs-subdir-external-provisioner`)
+*   **`medium-priority`**: Для основных production-приложений.
+*   **`low-priority`**: Для staging, dev-сред или фоновых задач.
+
+Поды без указания `priorityClassName` получат приоритет `0`, что делает их первыми кандидатами на вытеснение.
+
+#### Шаг 2: Манифесты `PriorityClass`
 
 ```yaml
-# low-priority.yaml
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
-  name: low-priority
-value: 100
-globalDefault: false
-description: "Низкий приоритет для тестовых или пакетных задач."
----
-# high-priority.yaml
+# priority-classes.yaml
+
+# Высокий приоритет для аддонов кластера
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: high-priority
 value: 1000000
 globalDefault: false
-description: "Высокий приоритет для критически важных production-сервисов."
+description: "Приоритет для критически важных компонентов кластера (ingress, registry, etc)."
+
+---
+# Средний приоритет для production-приложений
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium-priority
+value: 500000
+globalDefault: false
+description: "Приоритет для production-приложений."
+
+---
+# Низкий приоритет для тестовых сред
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 100000
+globalDefault: false
+description: "Приоритет для staging, dev и других некритичных приложений."
 ```
 
-### Сценарий: Вытеснение для обеспечения работы Production
+#### Шаг 3: Применение к подам
+
+Теперь при создании `Deployment` или `StatefulSet` для каждого типа нагрузки указывается соответствующий класс:
+
+**Deployment Ingress-контроллера (высокий приоритет):**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-ingress-controller
+spec:
+  template:
+    spec:
+      priorityClassName: high-priority # <---
+      ...
+```
+
+**Deployment production-приложения (средний приоритет):**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-production-app
+spec:
+  template:
+    spec:
+      priorityClassName: medium-priority # <---
+      ...
+```
+
+### 2. Сценарий: Вытеснение для обеспечения работы Production
 
 Это классический пример использования `PriorityClass` для разделения сред `staging` и `production` в одном кластере.
 
@@ -93,9 +151,9 @@ description: "Высокий приоритет для критически ва
 
 **Шаги:**
 
-1.  **Создаем два `PriorityClass`**: `prod-priority` с высоким значением и `staging-priority` с низким.
-2.  **Разворачиваем staging-приложение** с низким приоритетом, которое занимает большую часть ресурсов узла.
-3.  **Разворачиваем production-приложение** с высоким приоритетом и большими запросами по ресурсам (`requests`).
+1.  **Создаем два `PriorityClass`**: `medium-priority` с высоким значением и `low-priority` с низким.
+2.  **Разворачиваем staging-приложение** с `priorityClassName: low-priority`, которое занимает большую часть ресурсов узла.
+3.  **Разворачиваем production-приложение** с `priorityClassName: medium-priority` и большими запросами по ресурсам (`requests`).
 
 **Результат:**
 
