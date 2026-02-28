@@ -23,17 +23,39 @@
     * **Реализация:** Автоматически управляется Jaeger Operator через аннотацию.
 
 2. **DaemonSet:** Один экземпляр агента развертывается на каждом узле кластера.
-    * **Плюсы:** Эффективное использование ресурсов (один агент на узел).
-    * **Минусы:** Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов. Требует `hostPort`.
-    * **Реализация:** Задается в CR `Jaeger` в секции `spec.agent.strategy`.
+    * **Плюсы:** 
+        *   **Эффективное использование ресурсов** (один агент на узел).
+        *   **Упрощение сетевого пути:** Позволяет приложению отправлять UDP-пакеты напрямую агенту на IP-адрес хоста, минуя оверхед и сложности сети Kubernetes (Service, NAT).
+    * **Минусы:** 
+        *   Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов.
+        *   Требует использования `hostPort` и `hostNetwork: true`.
+    * **Реализация:** Задается в CR `Jaeger` в секции `spec.agent.strategy` или настраивается вручную в Helm-чарте. Для корректной работы DNS-резолвинга внутри кластера для такого пода требуется `dnsPolicy: ClusterFirstWithHostNet`.
 
 ### Подключение приложений
 
 Приложение должно быть сконфигурировано для отправки трассировок агенту или коллектору.
 
-* При использовании **Sidecar**-агента, SDK настраивается на отправку данных на `localhost:6831`.
-* При использовании **DaemonSet**-агента, SDK должен использовать `hostIP` пода в качестве адреса.
-* Как альтернатива, приложения могут отправлять данные напрямую в **Collector** через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local`).
+*   **При использовании Sidecar:** SDK настраивается на отправку данных на `localhost:6831`.
+
+*   **При использовании DaemonSet:** SDK должен использовать `hostIP` пода в качестве адреса. Этого можно достичь, передав `hostIP` в приложение как переменную окружения через **Downward API**.
+
+    ```yaml
+    # В манифесте Deployment приложения
+    spec:
+      template:
+        spec:
+          containers:
+          - name: my-app
+            env:
+            - name: OTEL_EXPORTER_JAEGER_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP # Инъекция IP адреса хоста
+            - name: OTEL_EXPORTER_JAEGER_AGENT_PORT
+              value: "6831"
+    ```
+
+*   **Напрямую в Collector:** Как альтернатива, приложения могут отправлять данные напрямую в Collector через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local`).
 
 ---
 
@@ -108,7 +130,55 @@ spec:
           value: "localhost"
 ```
 
-### Сценарий 2: Интеграция с OpenTelemetry Collector
+### Сценарий 2: Интеграция с Ingress-NGINX для сквозной трассировки
+
+NGINX Ingress Controller может автоматически создавать корневой спан для каждого входящего запроса, что позволяет получить полную трассировку от точки входа в кластер.
+
+#### Конфигурация
+
+Трассировка включается через параметры конфигурации контроллера (в `ConfigMap` или `values.yaml` для Helm-чарта):
+
+- **`enable-opentracing: "true"`**: Глобально включает модуль трассировки.
+- **`jaeger-collector-host`: "jaeger-agent.observability.svc.cluster.local"**: Адрес сервиса, указывающего на агенты Jaeger.
+- **`jaeger-propagation-format: "w3c"`**: Устанавливает формат заголовков для передачи контекста трассировки. `w3c` является современным стандартом и использует заголовок `traceparent`.
+
+Также трассировку можно включить для конкретного Ingress-ресурса с помощью аннотации:
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/enable-opentracing: "true"
+```
+
+> **Важно:** Модуль трассировки в NGINX Ingress Controller чувствителен к доступности агента. Если `jaeger-collector-host` указан, но агент недоступен, **контроллер может перестать работать или не сможет обновить конфигурацию**. Для production-сред рекомендуется использовать отдельный Ingress-контроллер для трассируемых приложений, чтобы изолировать возможные сбои.
+
+### Сценарий 3: Конфигурация Java TrustStore для подключения к OpenSearch
+
+Если ваш OpenSearch использует TLS с сертификатами, подписанными собственным CA, Java-приложениям (таким как `jaeger-spark-dependencies`) для подключения потребуется `TrustStore`.
+
+Процесс создания и использования TrustStore в Kubernetes:
+
+1.  **Получить CA сертификат OpenSearch.**
+2.  **Создать TrustStore:** Используется утилита `keytool` из JDK. Это можно сделать внутри временного контейнера.
+    ```bash
+    # Запускаем контейнер с JDK, пробрасывая в него CA сертификат
+    kubectl run -it --rm jdk-helper --image=openjdk:11 -- /bin/bash
+
+    # Внутри контейнера:
+    keytool -import -alias opensearch-ca -file /path/to/ca.pem -keystore truststore.jks -storepass password -noprompt
+    ```
+3.  **Сохранить TrustStore в `ConfigMap`:**
+    Так как `TrustStore` является бинарным файлом, его необходимо закодировать в Base64.
+    ```bash
+    # Копируем TrustStore из контейнера
+    kubectl cp jdk-helper:truststore.jks ./truststore.jks
+
+    # Кодируем и создаем ConfigMap
+    kubectl create configmap jaeger-truststore --from-file=truststore.jks.b64=$(base64 -w 0 truststore.jks)
+    ```
+4.  **Смонтировать `ConfigMap` в под:**
+    Далее этот `ConfigMap` монтируется в под с приложением (например, `CronJob` для `jaeger-spark-dependencies`), где init-контейнер декодирует его из Base64 обратно в бинарный файл.
+
+### Сценарий 4: Интеграция с OpenTelemetry Collector
 
 Вместо Jaeger Agent можно использовать OpenTelemetry Collector. Приложение отправляет данные в OTel Collector, который, в свою очередь, экспортирует их в Jaeger Collector.
 
