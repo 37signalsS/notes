@@ -4,17 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "9301676953f6f1a6",
+        "id": "da98f06f74d4e55c",
         "type": "tabs",
         "children": [
           {
-            "id": "dd91c1bc759ebdac",
+            "id": "9beb848806b1932c",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
+              "type": "markdown",
+              "state": {
+                "file": "Concepts/monolith_vs_microservices.md",
+                "mode": "source",
+                "source": false
+              },
               "icon": "lucide-file",
-              "title": "Новая вкладка"
+              "title": "monolith_vs_microservices"
             }
           }
         ]
@@ -179,8 +183,11 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "dd91c1bc759ebdac",
+  "active": "9beb848806b1932c",
   "lastOpenFiles": [
+    "Kubernetes/Networking/Service/service_practical_scenarios.md",
+    "Без названия.canvas",
+    "Kubernetes/Base/replicaset.md",
     "Prometheus/overview.md",
     "Настройка timezone в контейнере (перезалито) [g-fFv8JbeSg].txt",
     "Среда разработки на базе k3s и набор полезных приложений [09] [bhZP1qG7-lA].txt",

@@ -10,13 +10,11 @@
 
 ### ReplicaSet: Двигатель для Deployment
 
-**ReplicaSet** — это объект Kubernetes, основная задача которого — гарантировать, что указанное количество идентичных подов (реплик) всегда будет запущено. `ReplicaSet` постоянно отслеживает количество подов, соответствующих его селектору (`selector`):
+**[ReplicaSet](./replicaset.md)** — это объект Kubernetes, основная задача которого — гарантировать, что указанное количество идентичных подов (реплик) всегда будет запущено.
 
-- Если подов меньше, чем `replicas`, он создает новые из шаблона (`template`).
-- Если подов больше, он удаляет лишние.
-- Если под, управляемый `ReplicaSet`, выходит из строя, контроллер автоматически создает замену.
+`Deployment` использует `ReplicaSet` для управления жизненным циклом подов. При каждом обновлении `Deployment` создает новый `ReplicaSet` и постепенно переводит на него поды, сохраняя старый `ReplicaSet` для возможности отката.
 
-Поскольку `Deployment` управляет этими `ReplicaSet`-ами, вы получаете все преимущества `ReplicaSet` (самовосстановление) плюс возможность декларативных обновлений и отката.
+Такая схема позволяет `Deployment` выполнять декларативные обновления и откаты, получая при этом все преимущества `ReplicaSet` (например, самовосстановление подов). Подробнее см. в документе [ReplicaSet](./replicaset.md).
 
 ## Основные концепции
 
@@ -81,72 +79,142 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-webapp
+  name: nginx-deployment
   labels:
-    app: my-webapp
+    app: nginx
 spec:
-  # 1. Желаемое количество работающих подов
   replicas: 3
-
-  # 2. Сколько старых ReplicaSet'ов хранить для истории и отката.
-  # Предотвращает «захламление» кластера старыми версиями.
-  revisionHistoryLimit: 5
-
-  # 3. Таймаут для развертывания. Если за это время (в секундах)
-  # новый ReplicaSet не станет доступным, его статус будет Progressing=False
-  # с причиной ProgressDeadlineExceeded.
-  progressDeadlineSeconds: 600
-
-  # 4. Селектор для связи с подами, которыми управляет Deployment
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
-      app: my-webapp
-
-  # 5. Стратегия обновления
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      # На сколько подов можно превысить `replicas` во время обновления.
-      # Может быть числом (1) или процентом ("25%").
-      maxSurge: 1
-
-      # Сколько подов может быть недоступно во время обновления.
-      # Может быть числом (1) или процентом ("25%").
-      maxUnavailable: 1
-
-  # 6. Шаблон для создания подов
+      app: nginx
   template:
     metadata:
       labels:
-        app: my-webapp # Метки должны совпадать с селектором
+        app: nginx
     spec:
       containers:
-      - name: web-server
-        image: nginx:1.28.0 # Используйте конкретную версию, а не :latest
+      - name: nginx
+        image: nginx:1.14.2 # Используйте конкретную версию, а не :latest
         ports:
         - containerPort: 80
-        # Важно! Добавьте [readinessProbe](./probes.md) для реальных приложений
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 5
-          periodSeconds: 10
 ```
 
-> **Примечание:** Подробнее о настройке проб см. в документе [Высокая доступность](./high_availability.md).
+## Управление жизненным циклом
 
-## Управление через `kubectl`
-
-### Просмотр статуса и мониторинг
+### Шаг 1: Создание и проверка
 
 ```bash
-# Показывает, как проходит процесс обновления в реальном времени
-kubectl rollout status deployment/my-webapp
+# Создаем Deployment
+kubectl apply -f nginx-deployment.yaml
+# deployment.apps/nginx-deployment created
 
-# При проблемах — для просмотра событий и причин
-kubectl describe deployment/my-webapp
+# Проверяем иерархию созданных объектов
+kubectl get all -l app=nginx
+# NAME                                    READY   STATUS    RESTARTS   AGE
+# pod/nginx-deployment-5d59d67564-7wqgt   1/1     Running   0          15s
+# pod/nginx-deployment-5d59d67564-8b9pw   1/1     Running   0          15s
+# pod/nginx-deployment-5d59d67564-m2xvb   1/1     Running   0          15s
+#
+# NAME                               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+# deployment.apps/nginx-deployment   3         3         3            3           15s
+#
+# NAME                                          DESIRED   CURRENT   READY   AGE
+# replicaset.apps/nginx-deployment-5d59d67564   3         3         3       15s
 ```
+Мы видим, что `Deployment` создал один `ReplicaSet`, который, в свою очередь, запустил три `Pod`.
+
+### Шаг 2: Успешное обновление (Rolling Update)
+
+Обновим версию Nginx с `1.14.2` до `1.16.1`. Это можно сделать, изменив файл манифеста и применив его снова, или с помощью императивной команды `kubectl set image`.
+
+```bash
+# Обновляем образ в контейнере 'nginx' деплоймента 'nginx-deployment'
+kubectl set image deployment/nginx-deployment nginx=nginx:1.16.1 --record
+# deployment.apps/nginx-deployment image updated
+
+# Наблюдаем за процессом в реальном времени
+kubectl rollout status deployment/nginx-deployment
+# Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
+# deployment "nginx-deployment" successfully rolled out
+```
+
+Что произошло "под капотом":
+1. `Deployment` создал **новый** `ReplicaSet` с обновленным шаблоном (`nginx:1.16.1`).
+2. Он начал постепенно увеличивать количество реплик нового `ReplicaSet` и уменьшать количество реплик старого.
+3. В результате поды заменялись один за другим без простоя приложения.
+
+```bash
+# Проверим, что старый ReplicaSet остался для истории
+kubectl get replicaset
+# NAME                                     DESIRED   CURRENT   READY   AGE
+# nginx-deployment-5d59d67564              0         0         0       5m
+# nginx-deployment-new-version-86f596b6c   3         3         3       3m
+```
+
+### Шаг 3: Неудачное обновление и откат
+
+Теперь попробуем обновиться на несуществующую версию `nginx:1.99.9`.
+
+```bash
+kubectl set image deployment/nginx-deployment nginx=nginx:1.99.9
+# deployment.apps/nginx-deployment image updated
+```
+
+Смотрим, что происходит:
+```bash
+kubectl get pods -l app=nginx
+# NAME                                     READY   STATUS             RESTARTS   AGE
+# nginx-deployment-new-version-86f596b6c-abcde   1/1     Running            0          8m
+# nginx-deployment-new-version-86f596b6c-fghij   1/1     Running            0          8m
+# nginx-deployment-failed-update-12345678-klmno   0/1     ImagePullBackOff   0          1m
+```
+Kubernetes пытается создать новый под, но не может скачать образ, что приводит к статусу `ImagePullBackOff`. Старые поды при этом продолжают работать, обслуживая трафик.
+
+**Диагностика:**
+Используем `describe pod` для выяснения причины.
+
+```bash
+kubectl describe pod nginx-deployment-failed-update-12345678-klmno
+
+# ... в секции Events ...
+# Events:
+#   Type     Reason     Age                From               Message
+#   ----     ------     ----               ----               -------
+#   Normal   Scheduled  <unknown>          default-scheduler  Successfully assigned default/nginx-pod to node-1
+#   Normal   Pulling    24s (x4 over 90s)  kubelet, node-1    Pulling image "nginx:1.99.9"
+#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Failed to pull image "nginx:1.99.9": rpc error: code = Unknown desc = Error response from daemon: manifest for nginx:1.99.9 not found
+#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Error: ErrImagePull
+#   Normal   BackOff    10s (x6 over 88s)  kubelet, node-1    Back-off pulling image "nginx:1.99.9"
+#   Warning  Failed     10s (x6 over 88s)  kubelet, node-1    Error: ImagePullBackOff
+```
+События ясно показывают, что образ не найден.
+
+**Откат:**
+Отменим неудачное развертывание.
+
+```bash
+kubectl rollout undo deployment/nginx-deployment
+# deployment.apps/nginx-deployment rolled back
+```
+`Deployment` удалит проблемный `ReplicaSet` и вернет предыдущий `ReplicaSet` в рабочее состояние.
+
+### Шаг 4: Просмотр истории и откат к конкретной ревизии
+
+```bash
+# Посмотрим историю изменений
+# Флаг --record записывает команду в аннотацию 'change-cause'
+kubectl rollout history deployment/nginx-deployment
+# REVISION  CHANGE-CAUSE
+# 1         kubectl apply --filename=nginx-deployment.yaml
+# 2         kubectl set image deployment/nginx-deployment nginx=nginx:1.16.1 --record
+# 3         kubectl set image deployment/nginx-deployment nginx=nginx:1.99.9
+
+# Мы можем откатиться не только к предыдущей, но и к любой ревизии
+kubectl rollout undo deployment/nginx-deployment --to-revision=1
+```
+
+## Дополнительные команды `kubectl`
 
 ### Пауза и возобновление развертывания
 
@@ -157,37 +225,7 @@ kubectl rollout pause deployment/my-webapp
 # После внесения всех изменений, возобновить
 kubectl rollout resume deployment/my-webapp
 ```
-
-Это полезно, чтобы применить несколько изменений в спецификации Deployment одним батчем, а не запускать обновление после каждого изменения.
-
-### Просмотр истории ревизий
-
-```bash
-kubectl rollout history deployment/my-webapp
-```
-
-Для фиксации причины изменения для последующего аудита, можно использовать аннотацию `kubernetes.io/change-cause`:
-
-```bash
-# Добавление аннотации с причиной изменения
-kubectl annotate deployment/my-webapp kubernetes.io/change-cause="Обновление до версии 1.29.0"
-
-# Теперь история будет более информативной
-kubectl rollout history deployment/my-webapp
-# REVISION  CHANGE-CAUSE
-# 1         <none>
-# 2         Обновление до версии 1.29.0
-```
-
-### Откат изменений
-
-```bash
-# Откат к предыдущей успешной версии
-kubectl rollout undo deployment/my-webapp
-
-# Откат к конкретной ревизии
-kubectl rollout undo deployment/my-webapp --to-revision=2
-```
+Это полезно, чтобы применить несколько изменений в спецификации `Deployment` одним батчем, а не запускать обновление после каждого `kubectl edit` или `kubectl patch`.
 
 ### Принудительный перезапуск (рестарт)
 
@@ -195,66 +233,17 @@ kubectl rollout undo deployment/my-webapp --to-revision=2
 # Элегантный способ перезапустить все поды в деплойменте
 kubectl rollout restart deployment/my-webapp
 ```
-
 Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](secrets/secrets_basics.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
-
-### Быстрое обновление образа
-
-```bash
-# Императивный способ обновить образ контейнера
-kubectl set image deployment/my-webapp web-server=nginx:1.29.0
-```
-
-## Сценарий: Обновление и откат
-
-**Задача:** Обновить приложение с образа `app:v1` на `app:v2`, а затем выполнить откат.
-
-**Шаг 1: Обновление образа**
-
-Императивная команда `kubectl set image` — это самый быстрый способ обновить образ в `Deployment`.
-
-```bash
-# kubectl set image deployment/<имя-деплоймента> <имя-контейнера>=<новый-образ>
-kubectl set image deployment/my-webapp web-server=app:v2
-```
-
-Сразу после выполнения этой команды Kubernetes запускает процесс `Rolling Update`.
-
-Наблюдение за процессом:
-
-```bash
-# Посмотреть статус выкатки
-kubectl rollout status deployment/my-webapp
-
-# Посмотреть на создаваемые и удаляемые поды
-kubectl get pods -l app=my-webapp -w
-```
-
-**Шаг 2: Проверка истории и откат**
-
-```bash
-# Посмотреть историю
-kubectl rollout history deployment/my-webapp
-# REVISION  CHANGE-CAUSE
-# 1         <none>
-# 2         <none>
-
-# Откатиться к предыдущей версии
-kubectl rollout undo deployment/my-webapp
-# deployment.apps/my-webapp rolled back
-```
-
-Kubernetes снова запустит `Rolling Update` для возврата к предыдущей версии.
 
 ## Дополнительная информация
 
 ### Owner References
 
-Каждый ресурс содержит поле `ownerReferences` в metadata, которое показывает связь "родитель-потомок":
+Каждый ресурс содержит поле `ownerReferences` в `metadata`, которое показывает связь "родитель-потомок":
 - Pod → принадлежит ReplicaSet
 - ReplicaSet → принадлежит Deployment
 
-Это используется каскадного удаления: при удалении Deployment автоматически удаляются связанные ReplicaSet и Pods.
+Это используется для каскадного удаления: при удалении `Deployment` автоматически удаляются связанные `ReplicaSet` и `Pod`.
 
 ## Лучшие практики
 
@@ -273,10 +262,11 @@ Kubernetes снова запустит `Rolling Update` для возврата 
 
 ## Связанные темы
 
-- [ConfigMap](./configmap.md) — внешняя конфигурация
-- [Secret](secrets/secrets_basics.md) — конфиденциальные данные
-- [StatefulSet](./statefulset.md) — управление stateful-приложениями
-- [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
-- [Pod](./Pod/pod_overview.md) — базовый объект развертывания
-- [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md) — автоматическое масштабирование
-- [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary
+-   [ConfigMap](./configmap.md) — внешняя конфигурация
+-   [Secret](secrets/secrets_basics.md) — конфиденциальные данные
+-   [StatefulSet](./statefulset.md) — управление stateful-приложениями
+-   [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
+-   [Pod](./Pod/pod_overview.md) — базовый объект развертывания
+-   [ReplicaSet](./replicaset.md) — управление репликами
+-   [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md) — автоматическое масштабирование
+-   [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary
