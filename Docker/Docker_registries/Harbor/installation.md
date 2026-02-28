@@ -168,3 +168,103 @@ sudo ./install.sh --with-trivy
     *   **Важно:** Некоторые Helm-чарты могут требовать указания паролей в открытом виде в `values.yaml`. Это является их недостатком. Если возможно, следует использовать чарты, поддерживающие чтение паролей из Kubernetes Secrets.
 *   **`persistence`**: Настройка Persistent Volumes для хранения данных реестра, логов и других компонентов. Необходимо указать `storageClass` и требуемый объем.
 *   **`image`**: Возможность переопределить реестр и тег для каждого из образов компонентов Harbor, что полезно для работы в закрытых контурах или при использовании прокси-реестров.
+
+### Пример: Установка в k3s с помощью ArgoCD
+
+Этот пример демонстрирует установку Harbor в кластер k3s с использованием GitOps-подхода через ArgoCD.
+
+**Предварительные условия:**
+*   Установлен и настроен [ArgoCD](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md#argocd).
+*   Установлен [cert-manager](../../../Security/certificates.md#cert-manager) для автоматического выпуска TLS-сертификатов.
+*   Присутствуют внешние экземпляры PostgreSQL и Redis.
+
+#### 1. Подготовка базы данных
+
+Перед установкой необходимо создать базу данных для Harbor в вашем кластере PostgreSQL.
+
+```sql
+CREATE DATABASE harbor;
+```
+
+#### 2. Манифест Application для ArgoCD
+
+Создайте манифест `Application` для развертывания Harbor. Этот манифест описывает, откуда брать Helm-чарт, в какой namespace его устанавливать и с какими параметрами.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: harbor
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://charts.bitnami.com/bitnami'
+    chart: harbor
+    targetRevision: 19.3.5 # Укажите актуальную версию чарта
+    helm:
+      values: |
+        # Админ пароль по умолчанию, смените его после установки
+        harborAdminPassword: "password"
+
+        # Внешний URL, по которому будет доступен Harbor
+        expose:
+          type: ingress
+          tls:
+            enabled: true
+            secretName: harbor-tls
+          ingress:
+            hostname: registry.krukov.local
+            # Аннотации для cert-manager
+            annotations:
+              cert-manager.io/cluster-issuer: "letsencrypt-staging"
+              cert-manager.io/renew-before: "360h"
+              # ... другие аннотации
+
+        # Настройка хранилища (PV/PVC)
+        persistence:
+          enabled: true
+          # Используется StorageClass по умолчанию (в примере это local-path-provisioner)
+          registry:
+            size: 30Gi
+          jobservice:
+            size: 1Gi
+          database:
+            size: 1Gi
+          redis:
+            size: 1Gi
+          trivy:
+            size: 5Gi
+
+        # Отключение встроенной базы данных PostgreSQL
+        postgresql:
+          enabled: false
+
+        # Подключение к внешней базе данных PostgreSQL
+        externalDatabase:
+          host: "postgresql.database.svc.cluster.local"
+          port: 5432
+          user: "postgres"
+          password: "password"
+          database: "harbor"
+
+        # Отключение встроенного Redis
+        redis:
+          enabled: false
+
+        # Подключение к внешнему Redis
+        externalRedis:
+          host: "redis-master.database.svc.cluster.local"
+          port: 6379
+          password: "password"
+          database: 0
+```
+
+**Ключевые моменты конфигурации:**
+
+*   **`expose.ingress`**: Настраивает Ingress-ресурс. Аннотации `cert-manager.io/*` указывают `cert-manager` выпустить сертификат для домена `registry.krukov.local` и сохранить его в секрете `harbor-tls`.
+*   **`persistence`**: Включает постоянное хранилище. Размер тома для реестра (`registry`) увеличен до 30Gi. Так как `storageClass` не указан, будет использован `StorageClass` по умолчанию в кластере.
+*   **`postgresql.enabled: false`**: Отключает развертывание PostgreSQL в составе чарта.
+*   **`externalDatabase`**: Содержит данные для подключения к вашему существующему экземпляру PostgreSQL.
+*   **`redis.enabled: false`**: Отключает развертывание Redis в составе чарта.
+*   **`externalRedis`**: Содержит данные для подключения к вашему существующему экземпляру Redis.
