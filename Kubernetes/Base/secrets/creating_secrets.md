@@ -10,7 +10,7 @@
 
 ### Декларативно с `stringData` (рекомендуемый)
 
-Kubernetes автоматически кодирует значения в Base64:
+Это наиболее удобный и безопасный для GitOps способ. Kubernetes автоматически кодирует значения в Base64, а вы работаете с обычным текстом.
 
 ```yaml
 apiVersion: v1
@@ -19,10 +19,12 @@ metadata:
   name: db-cred
 type: Opaque
 stringData:
-  # Kubernetes сам преобразует это значение в Base64
+  # Kubernetes сам преобразует это значение в Base64 и поместит в поле 'data'
   username: "app"
   password: "my-super-secret-password"
 ```
+
+> **Примечание:** Поле `stringData` является "write-only". При чтении секрета через `kubectl get secret -o yaml` вы всегда будете видеть только поле `data` с Base64-кодированными значениями. `stringData` существует для удобства написания манифестов.
 
 ### Декларативно с `data`
 
