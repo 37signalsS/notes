@@ -75,3 +75,5 @@
 
 * **[Основы GitLab CI/CD](./GitLab_CI/Concepts/gitlab_ci_basics.md)**
 * **[Модели и Стратегии Развертывания](./Core_Concepts/deployment_strategies.md)**
+* **[Управление артефактами](./artifact_management.md)**
+* **[CI/CD: Паттерны](./ci_cd_patterns.md)**
