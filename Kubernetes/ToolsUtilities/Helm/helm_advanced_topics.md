@@ -65,6 +65,85 @@ k8s-project/
 
 Этот подход сочетает гибкость шаблонов Helm и декларативность патчей Kustomize, позволяя избежать сложной логики в чартах.
 
+### 3. Создание адаптивных ("умных") шаблонов
+
+Шаблоны Helm позволяют не просто вставлять значения, но и создавать логику, которая адаптирует манифесты под окружение, в частности, под версию Kubernetes. Это ключевой аспект создания по-настоящему переиспользуемых и надежных чартов.
+
+#### Пример: Адаптивный Ingress-шаблон
+
+Шаблон `ingress.yaml`, генерируемый командой `helm create`, является отличным примером "умного" шаблона. Он решает несколько проблем совместимости "из коробки".
+
+**Адаптация `apiVersion`:**
+
+API для Ingress менялся несколько раз (`extensions/v1beta1` → `networking.k8s.io/v1beta1` → `networking.k8s.io/v1`). Шаблон использует встроенный объект `.Capabilities` для выбора корректной версии API, поддерживаемой кластером.
+
+```yaml
+{{- $kubeVersion := .Capabilities.KubeVersion.Version -}}
+{{- if semverCompare ">=1.19-0" $kubeVersion -}}
+apiVersion: networking.k8s.io/v1
+{{- else if semverCompare ">=1.14-0" $kubeVersion -}}
+apiVersion: networking.k8s.io/v1beta1
+{{- else -}}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+...
+```
+- `.Capabilities.KubeVersion.Version` получает семантическую версию Kubernetes.
+- `semverCompare` сравнивает версии, позволяя выстроить логическую цепочку.
+
+**Динамическое управление `ingressClassName`:**
+
+До Kubernetes 1.18 класс ингресса указывался через аннотацию. Начиная с 1.18, появилось специальное поле `spec.ingressClassName`. Шаблон элегантно обрабатывает оба случая.
+
+```yaml
+...
+metadata:
+  annotations:
+    {{- if and .Values.ingress.className (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.Version)) }}
+    {{- if not (hasKey .Values.ingress.annotations "kubernetes.io/ingress.class") }}
+    {{- $_ := set .Values.ingress.annotations "kubernetes.io/ingress.class" .Values.ingress.className}}
+    {{- end }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if and .Values.ingress.className (semverCompare ">=1.18-0" .Capabilities.KubeVersion.Version) }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+...
+```
+- **Логика для старых версий (K8s < 1.18):**
+    1. Проверяется, что `ingress.className` задан и версия кластера < 1.18.
+    2. `hasKey` проверяет, не задал ли пользователь аннотацию `kubernetes.io/ingress.class` вручную.
+    3. Если нет, `set` динамически **добавляет** эту аннотацию в словарь `.Values.ingress.annotations` перед его рендерингом через `toYaml`.
+- **Логика для новых версий (K8s >= 1.18):**
+    1. Проверяется, что `ingress.className` задан и версия кластера >= 1.18.
+    2. Если да, рендерится поле `ingressClassName` в спецификации.
+
+**Манипуляция строками с `printf`:**
+
+Иногда имя ресурса, на который нужно сослаться, отличается от имени релиза. Например, сервис может называться `my-release-svc`. Функция `printf` позволяет конструировать такие строки на лету.
+
+```yaml
+...
+{{- $fullName := include "mychart.fullname" . -}}
+{{- $svcPort := .Values.service.port -}}
+{{- $svcName := printf "%s-svc" $fullName -}}
+
+...
+backend:
+  service:
+    name: {{ $svcName }}
+    port:
+      number: {{ $svcPort }}
+...
+```
+Здесь переменной `$svcName` присваивается результат форматирования строки — к полному имени релиза добавляется суффикс `-svc`.
+
+Эти техники позволяют создавать универсальные чарты, которые работают в разных окружениях без необходимости ручной правки.
+
 ## Дополнительная информация
 
 ### Инструменты для оркестрации

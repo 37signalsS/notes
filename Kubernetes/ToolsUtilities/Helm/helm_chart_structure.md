@@ -12,8 +12,9 @@
 | **Chart.yaml** | Метаданные чарта: имя, версия, зависимости. Подробнее о версионировании см. [Управление версиями релизов](./helm_release_versioning.md) |
 | **values.yaml** | Значения по умолчанию для шаблонов |
 | **templates/** | Директория с Go-шаблонами манифестов Kubernetes. См. [Шаблонизация в Helm](./helm_templating.md) |
-| **_helpers.tpl** | Вспомогательные шаблоны и функции |
+| **_helpers.tpl** | Вспомогательный файл для переиспользуемых именованных шаблонов, определяемых через `{{ define }}`. |
 | **Chart.lock** | Файл с зафиксированными версиями зависимостей |
+| **.helmignore**| Файл, аналогичный `.gitignore`, который указывает, какие файлы и директории следует исключить при упаковке чарта в архив. |
 
 ---
 
@@ -23,8 +24,10 @@
 
 ```
 mychart/
+├── .helmignore         # Файлы для исключения из пакета
 ├── Chart.yaml          # Метаданные чарта (обязательно)
 ├── values.yaml         # Значения по умолчанию (обязательно)
+├── charts/             # Директория для зависимых чартов
 └── templates/          # Шаблоны манифестов (обязательно)
     ├── _helpers.tpl    # Вспомогательные функции
     └── *.yaml          # Манифесты Kubernetes
@@ -32,16 +35,26 @@ mychart/
 
 ### Файл Chart.yaml
 
-Содержит метаданные чарта. Подробнее о различиях форматов v1 и v2 см. [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md).
+Содержит ключевые метаданные, описывающие чарт.
 
 ```yaml
-apiVersion: v2           # v2 для Helm 3, v1 для Helm 2
+apiVersion: v2           # v2 для Helm 3. Обязательное поле.
 name: my-application
 description: A Helm chart for Kubernetes
-type: application        # application или library
-version: 1.2.3          # Версия чарта (SemVer)
-appVersion: "2.0.0"     # Версия приложения
-dependencies:           # Зависимости (только apiVersion: v2)
+
+# Тип чарта: 'application' (по умолчанию) или 'library' (не устанавливается, только для переиспользования шаблонов).
+type: application
+
+# Версия самого чарта. Должна соответствовать SemVer 2.0.0.
+version: 1.2.3
+
+# Версия приложения, развертываемого этим чартом. Не обязана быть SemVer.
+appVersion: "2.0.0" 
+
+# Ограничение на совместимые версии Kubernetes (SemVer).
+kubeVersion: ">= 1.19.0-0"
+
+dependencies:
   - name: postgresql
     version: "12.x.x"
     repository: https://charts.bitnami.com/bitnami

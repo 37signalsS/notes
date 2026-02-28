@@ -44,17 +44,26 @@ metadata:
 name: {{ .Values.name | default "myapp" | lower | trunc 63 | trimSuffix "-" }}
 ```
 
-**Управление пробелами:**
+**Управление пробелами (Whitespace Control):**
 
-- `{{-` — удаляет пробелы и переносы строк до тега
-- `-}}` — удаляет пробелы и переносы строк после тега
+Дефис `(-)` используется для удаления пробелов и символов новой строки, примыкающих к тегам шаблона. Это позволяет избежать пустых строк в итоговом YAML.
+- `{{-` — удаляет пробелы и переносы строк **до** тега (слева).
+- `-}}` — удаляет пробелы и переносы строк **после** тега (справа).
 
 ```yaml
+# ШАБЛОН:
 env:
 {{- range $k, $v := .Values.env }}
   - name: {{ $k }}
     value: {{ $v | quote }}
 {{- end }}
+
+# РЕЗУЛЬТАТ (без пустых строк):
+env:
+  - name: KEY1
+    value: "VALUE1"
+  - name: KEY2
+    value: "VALUE2"
 ```
 
 ### Управляющие конструкции
@@ -109,6 +118,8 @@ env:
 | `nindent` | Отступ для YAML-блока | `{{ toYaml .Values.tolerations \| nindent 8 }}` |
 | `tpl` | Рендер строки как шаблона | `{{ tpl .Values.config . }}` |
 | `include` | Вставка именованного шаблона | `{{ include "chart.fullname" . }}` |
+| `trunc` | Обрезка строки до указанной длины | `{{ .Release.Name | trunc 10 }}` |
+| `trimSuffix`| Удаление суффикса из строки | `{{ "my-release-1" | trimSuffix "-1" }}` |
 
 ---
 
@@ -242,6 +253,73 @@ kind: Ingress
 # Scoped значения в зависимостях
 {{- .Values.postgresql.enabled -}}
 ```
+
+### Условная логика в `service.yaml`
+
+Шаблоны позволяют создавать гибкие манифесты. Например, можно динамически добавлять поле `nodePort` в сервис, только если тип сервиса `NodePort` и порт задан в `values.yaml`.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "myapp.fullname" . }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+    {{- end }}
+  selector:
+    {{- include "myapp.labels" . | nindent 4 }}
+```
+Здесь функция `and` проверяет два условия:
+1. `eq .Values.service.type "NodePort"`: тип сервиса равен `NodePort`.
+2. `.Values.service.nodePort`: значение `nodePort` не пустое.
+
+### Условное добавление аннотаций
+
+Блоки `if` позволяют добавлять метаданные, например, аннотации, только при выполнении определённого условия. Это полезно для интеграции с инструментами, которые могут быть не во всех кластерах.
+
+Пример для `stakater/reloader`, который перезагружает Deployment при изменении ConfigMap:
+
+**values.yaml:**
+```yaml
+reloader:
+  enabled: true
+```
+
+**deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "myapp.fullname" . }}
+  {{- if .Values.reloader.enabled }}
+  annotations:
+    reloader.stakater.com/auto: "true"
+  {{- end }}
+spec:
+...
+```
+Аннотация будет добавлена в манифест только если `.Values.reloader.enabled` установлено в `true`.
+
+### Использование `NOTES.txt` для инструкций
+
+Файл `templates/NOTES.txt` — это специальный шаблон, содержимое которого выводится в консоль после успешного выполнения `helm install` или `helm upgrade`. Его главная задача — предоставить пользователю краткую инструкцию о том, как получить доступ к установленному приложению.
+
+Этот файл может содержать такую же логику, как и обычные шаблоны. Стандартный `NOTES.txt`, генерируемый `helm create`, содержит полезные проверки:
+
+- Если в чарте включен **Ingress**, он выводит команду для получения URL.
+- Если Ingress отключен, он проверяет тип **Service**:
+    - Для `LoadBalancer` показывает, как получить внешний IP.
+    - Для `NodePort` показывает команду для формирования URL с NodePort.
+    - Для `ClusterIP` предлагает использовать `kubectl port-forward`.
+
+Это значительно улучшает пользовательский опыт, предоставляя готовые команды для первого доступа к приложению.
 
 ---
 
