@@ -69,3 +69,59 @@ Ingress упрощает терминирование TLS-трафика. Для
 * `nginx.ingress.kubernetes.io/proxy-body-size: "8m"` — устанавливает максимальный размер тела запроса.
 * `nginx.ingress.kubernetes.io/proxy-read-timeout: "60s"` — задает таймаут чтения ответа от бэкенда. Полезно для долгих синхронных операций.
 * `kubernetes.io/ingress.class: "nginx"` — указывает, какой Ingress-контроллер должен обрабатывать этот объект (актуально, если в кластере их несколько).
+
+### Проксирование TCP/UDP трафика (L4)
+
+Хотя Ingress в основном предназначен для L7 (HTTP/S) трафика, NGINX Ingress Controller можно настроить для проксирования TCP и UDP трафика на уровне L4. Это полезно для публикации не-HTTP сервисов, таких как базы данных или брокеры сообщений.
+
+**Процесс настройки:**
+
+1.  **Включить проксирование в Deployment контроллера:**
+    При запуске Ingress-контроллера необходимо передать ему аргументы командной строки, указывающие на `ConfigMap`'ы, которые будут содержать конфигурацию TCP и UDP сервисов.
+
+    ```yaml
+    # В манифесте Deployment контроллера
+    spec:
+      template:
+        spec:
+          containers:
+            - name: controller
+              args:
+                - /nginx-ingress-controller
+                # ... другие аргументы
+                - --tcp-services-configmap=$(POD_NAMESPACE)/tcp-services
+                - --udp-services-configmap=$(POD_NAMESPACE)/udp-services
+    ```
+
+2.  **Создать `ConfigMap` для TCP/UDP сервисов:**
+    Создайте `ConfigMap` с именами `tcp-services` и/или `udp-services` в том же `namespace`, где работает контроллер. В секции `data` ключом является внешний порт, а значением — ссылка на внутренний сервис в формате `<namespace>/<service-name>:<service-port>`.
+
+    ```yaml
+    # tcp-services-configmap.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: tcp-services
+      namespace: ingress-nginx
+    data:
+      # Проксировать трафик с внешнего порта 5432 на сервис 'my-postgres' в порту 5432
+      "5432": "default/my-postgres:5432"
+    ```
+
+3.  **Опубликовать порты на `Service` контроллера:**
+    Необходимо открыть соответствующие порты на главном `Service`, который выставляет Ingress-контроллер наружу (`NodePort` или `LoadBalancer`).
+
+    ```yaml
+    # В манифесте Service контроллера
+    spec:
+      ports:
+        # ... http и https порты
+        - name: postgres-tcp
+          port: 5432
+          targetPort: 5432
+          protocol: TCP
+          # Если тип NodePort, можно указать nodePort
+          # nodePort: 30432
+    ```
+
+После применения этих изменений трафик, поступающий на опубликованный порт (например, `30432`), будет перенаправлен на указанный внутренний сервис.
