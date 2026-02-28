@@ -19,7 +19,7 @@
 -   **Версионирование**: Grafana автоматически сохраняет историю изменений дашборда, позволяя сравнивать версии и откатываться к предыдущим.
 -   **Переносимость**: JSON-модель можно легко экспортировать и импортировать между разными экземплярами Grafana.
 -   **Автоматизация**: Дашбордами можно управлять как кодом, хранить их в Git и автоматически развертывать (см. [Provisioning](./grafana_provisioning.md)).
--   **Взаимодействие с `ConfigMap` в Rancher**: В контексте `kube-prometheus-stack`, развернутого через Rancher, дашборды часто поставляются и управляются через Kubernetes `ConfigMap`. Это позволяет декларативно определять дашборды в YAML-файлах и включать их в Git-репозитории. При таком подходе **Persistent Volume для самой Grafana часто не требуется**, поскольку данные о дашбордах "поставляются" из `ConfigMap`, а не хранятся в файловой системе пода Grafana. Это также упрощает масштабирование и восстановление Grafana.
+-   **Взаимодействие с `ConfigMap` в Rancher**: В контексте `kube-prometheus-stack`, развернутого через Rancher, дашборды часто поставляются и управляются через Kubernetes `ConfigMap`. Пользователи могут создавать собственные `ConfigMap`, содержащие JSON-определение их дашбордов. Это позволяет декларативно определять дашборды в YAML-файлах и включать их в Git-репозитории. При таком подходе **Persistent Volume для самой Grafana часто не требуется**, поскольку данные о дашбордах "поставляются" из `ConfigMap`, а не хранятся в файловой системе пода Grafana. Это также упрощает масштабирование и восстановление Grafana.
 
 ### Уровни дашбордов
 
@@ -165,6 +165,119 @@
 2. Задайте имя и интервал переключения (например, `1m`).
 3. Добавьте в плейлист существующие дашборды.
 4. Сохраните и запустите плейлист в режиме **TV** или **Kiosk** для полноэкранного отображения без лишних элементов интерфейса.
+
+### Сценарий 6: Провижионинг пользовательских дашбордов через ConfigMap
+
+В Rancher, когда используется общий экземпляр Grafana, пользователи не могут напрямую создавать и сохранять дашборды через UI. Вместо этого они должны предоставлять свои дашборды в виде Kubernetes `ConfigMap`.
+
+1.  **Создайте дашборд в своей Grafana и экспортируйте JSON**: Используйте локальный или тестовый экземпляр Grafana для создания нужного дашборда. Экспортируйте его в формате JSON.
+2.  **Создайте `ConfigMap` с JSON дашборда**: Оберните экспортированный JSON дашборда в Kubernetes `ConfigMap`. **Ключевым моментом является добавление метки `grafana-dashboard: "1"`**, которая будет использоваться Grafana Sidecar для обнаружения.
+    ```yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: my-app-dashboard
+      namespace: test-app # Разверните в namespace вашего приложения
+      labels:
+        grafana-dashboard: "1" # Обязательная метка для обнаружения Grafana Sidecar
+    data:
+      my-app-dashboard.json: |-
+        {
+          "annotations": {
+            "list": [
+              {
+                "builtIn": 1,
+                "datasource": "-- Grafana --",
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+              }
+            ]
+          },
+          "editable": true,
+          "gnetId": null,
+          "graphTooltip": 1,
+          "id": null,
+          "links": [],
+          "panels": [
+            {
+              "datasource": "Prometheus",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {},
+                  "mappings": [],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "gridPos": {
+                "h": 9,
+                "w": 12,
+                "x": 0,
+                "y": 0
+              },
+              "id": 2,
+              "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                },
+                "textMode": "auto"
+              },
+              "pluginVsersion": "8.3.3",
+              "targets": [
+                {
+                  "datasource": "Prometheus",
+                  "expr": "api_http_requests_total{job=\"test-app\",namespace=\"test-app\"}",
+                  "interval": "",
+                  "legendFormat": "{{pod}}",
+                  "refId": "A"
+                }
+              ],
+              "title": "Application Requests Total",
+              "type": "stat"
+            }
+          ],
+          "schemaVersion": 30,
+          "style": "dark",
+          "tags": [],
+          "templating": {
+            "list": []
+          },
+          "time": {
+            "from": "now-5m",
+            "to": "now"
+          },
+          "timepicker": {},
+          "timezone": "",
+          "title": "Test Application Dashboard",
+          "type": "dashboard",
+          "uid": "test-app-dashboard",
+          "version": 1
+        }
+    ```
+3.  **Разверните `ConfigMap`**: Примените этот `ConfigMap` в `namespace` вашего приложения (например, `test-app`).
+4.  **Проверьте в Grafana**: Дашборд появится в разделе "Manage" в общей Grafana Rancher. Grafana Sidecar автоматически импортирует его.
+    *   **Важно**: Для того чтобы Grafana Sidecar мог обнаруживать дашборды в других `namespaces`, необходимо убедиться, что соответствующая настройка включена в `values.yaml` Helm-чарта `kube-prometheus-stack` при его развертывании (это, как правило, задача администратора кластера).
 
 ## Дополнительная информация
 
