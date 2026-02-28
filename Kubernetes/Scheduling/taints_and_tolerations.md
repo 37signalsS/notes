@@ -85,6 +85,8 @@ tolerations:
 
 ### Сценарий: Разрешение запуска на Control Plane и управление Taints
 
+В кластерах, развернутых с помощью RKE (Rancher Kubernetes Engine), узлы с ролями Control Plane и etcd по умолчанию получают `taints` для предотвращения размещения на них рабочих нагрузок. Например, `control-plane` узлы могут иметь `taint` `node-role.kubernetes.io/control-plane:NoSchedule`, а `etcd` узлы — `taint` `node-role.kubernetes.io/etcd:NoSchedule` или аналогичный.
+
 Этот сценарий демонстрирует, как разрешить `DaemonSet` запускаться на `control-plane` узлах и как динамически управлять размещением с помощью `taints`.
 
 **Шаг 1: Диагностика проблемы**
