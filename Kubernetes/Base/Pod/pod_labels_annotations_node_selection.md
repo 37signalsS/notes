@@ -40,21 +40,58 @@
 
 ## Практические сценарии
 
-### Использование nodeSelector
+### Использование `nodeSelector`
 
-Размещение подов на узлах с определёнными характеристиками:
+`nodeSelector` — это простейший способ ограничить запуск пода только теми узлами, которые имеют определенные метки.
+
+**Рекомендация:** Всегда создавайте собственные осмысленные метки для узлов. Не рекомендуется привязываться к стандартной метке `kubernetes.io/hostname`, так как имена узлов могут меняться, что сделает ваши манифесты хрупкими.
+
+**Сценарий:** Ограничить запуск `DaemonSet` только двумя из трех узлов в кластере.
+
+**Шаг 1: Добавление меток к узлам**
+
+Присвоим нужным узлам пользовательскую метку `special=ds-only`.
 
 ```bash
-# Добавление метки к узлу
-kubectl label nodes worker-1 disktype=nvme zone=eu-1a
+kubectl label nodes control-plane-1 special=ds-only
+kubectl label nodes worker-2 special=ds-only
 ```
 
+**Шаг 2: Просмотр меток**
+
+Убедимся, что метки применились.
+
+```bash
+kubectl get nodes --show-labels
+```
+
+**Шаг 3: Добавление `nodeSelector` в манифест**
+
+В спецификацию пода (`spec` или `spec.template.spec` для контроллеров) добавляется раздел `nodeSelector`.
+
 ```yaml
-# Пример пода с nodeSelector
+# daemonset-with-nodeselector.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+# ...
 spec:
-  nodeSelector:
-    disktype: nvme
-    gpu: "true"
+  template:
+    spec:
+      nodeSelector:
+        special: ds-only # Под будет запущен только на узлах с меткой special=ds-only
+      containers:
+      # ...
+```
+
+После применения манифеста `DaemonSet` запустит поды только на узлах `control-plane-1` и `worker-2`.
+
+**Шаг 4: Удаление метки**
+
+Удаление метки приведет к тому, что узел перестанет удовлетворять условию `nodeSelector`. `DaemonSet` автоматически удалит под с этого узла.
+
+```bash
+# Для удаления метки используется тот же ключ с дефисом в конце
+kubectl label nodes worker-2 special-
 ```
 
 ### Применение меток

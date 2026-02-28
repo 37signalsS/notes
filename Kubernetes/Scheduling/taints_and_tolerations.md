@@ -83,6 +83,76 @@ tolerations:
 * **Выделение узлов для определенных групп пользователей**: Разделение ресурсов между командами в многопользовательских кластерах.
 * **Вытеснение подов при неисправности узла**: Kubernetes автоматически добавляет `taint` (например, `node.kubernetes.io/unreachable`) на недоступные узлы. Поды, не имеющие соответствующего `toleration` с `tolerationSeconds`, будут вытеснены, что позволяет планировщику перенести их на здоровые узлы.
 
+### Сценарий: Разрешение запуска на Control Plane и управление Taints
+
+Этот сценарий демонстрирует, как разрешить `DaemonSet` запускаться на `control-plane` узлах и как динамически управлять размещением с помощью `taints`.
+
+**Шаг 1: Диагностика проблемы**
+
+Вы развернули `DaemonSet` и заметили, что количество подов меньше, чем количество узлов в кластере.
+
+```bash
+# В кластере 3 узла, но запущено только 2 пода
+$ kubectl get pods -o wide
+NAME          READY   STATUS    RESTARTS   AGE   IP           NODE
+test-ds-abc   1/1     Running   0          60s   10.42.1.5    worker-1
+test-ds-def   1/1     Running   0          60s   10.42.2.8    worker-2
+```
+
+**Шаг 2: Проверка Taints на узлах**
+
+С помощью `kubectl describe node` или специального вывода можно увидеть `taints`, примененные к узлам.
+
+```bash
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+```
+
+Вывод покажет, что на `control-plane` узле есть `taint`, который запрещает запуск обычных подов:
+`node-role.kubernetes.io/control-plane:NoSchedule`
+
+**Шаг 3: Добавление `toleration` в манифест**
+
+Чтобы разрешить поду запускаться на `control-plane` узле, добавьте в его спецификацию (`spec.template.spec` для `DaemonSet`) соответствующий `toleration`.
+
+```yaml
+# daemonset-with-toleration.yaml
+spec:
+  template:
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists" # "Exists" подходит для любого значения, т.к. value здесь не важно
+        effect: "NoSchedule"
+      containers:
+      # ...
+```
+
+После применения этого манифеста `DaemonSet` запустит под и на `control-plane` узле.
+
+**Шаг 4: Динамическое управление с помощью `taint`**
+
+Вы можете "заразить" любой узел, чтобы временно или постоянно запретить на нем запуск подов.
+
+```bash
+# Добавляем taint с эффектом NoExecute к worker-2.
+# Это приведет к вытеснению всех подов без соответствующего toleration.
+kubectl taint nodes worker-2 test-taint:NoExecute
+```
+
+После выполнения этой команды под `DaemonSet` будет удален с узла `worker-2`.
+
+**Шаг 5: Удаление `taint`**
+
+Чтобы убрать `taint` и позволить `DaemonSet` снова запустить под, выполните команду с дефисом в конце.
+
+```bash
+kubectl taint nodes worker-2 test-taint:NoExecute-
+```
+
+`DaemonSet` обнаружит, что узел снова доступен для планирования, и автоматически создаст на нем недостающий под.
+
+> **Осторожно с `NoExecute`**: Этот эффект вытесняет *все* поды без `toleration` с узла, что может затронуть другие приложения. Для более безопасного запрета планирования новых подов используйте `NoSchedule`.
+
 ### Отложенный запуск подов до готовности DaemonSet
 
 Этот сценарий гарантирует, что системные компоненты (например, CNI-плагин или агент мониторинга), развернутые через [DaemonSet](../Base/daemonset.md), запустятся на узле раньше, чем поды приложений.
