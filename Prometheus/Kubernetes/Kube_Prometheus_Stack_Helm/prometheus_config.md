@@ -1,45 +1,120 @@
-# Конфигурация Prometheus Server в kube-prometheus-stack
 
-Это основной компонент системы мониторинга. Общие рекомендации и лучшие практики по работе с Prometheus описаны в документе [PromTool и лучшие практики Prometheus](../../promtool_and_best_practices.md). Концептуальное описание конфигурации сервера, включая Service Discovery и `relabel_configs`, можно найти в [Обзоре конфигурации сервера Prometheus](../../service_discovery_and_relabeling.md).
+---
 
-* `prometheus.enabled`: `true`
-  * **Рекомендация:** Оставить `true`.
+## Мониторинг ETCD с помощью kube-prometheus-stack
 
-* `prometheus.prometheusSpec.scrapeInterval`, `scrapeTimeout`, `evaluationInterval`:
-  * `scrapeInterval`: Частота сбора метрик с таргетов. Подбирается эмпирически. Если метрик собирается большой объем, то есть смысл собирать их реже (например, `30s` или `1m`). Если метрик немного, то можно собирать их чаще.
-  * `scrapeTimeout`: Время, по истечении которого Prometheus будет считать, что сбор метрик с таргета не удался.
-  * `evaluationInterval`: Как часто Prometheus должен вычислять правила алертинга. Это значение также подбирается эмпирически. Например, если настроено правило на проверку количества ETCD-узлов (не менее трех), то при уменьшении их числа до двух, сигнал будет передан в AlertManager через указанный `evaluationInterval`.
+Для полноценного мониторинга кластера Kubernetes крайне важно собирать метрики с ETCD. В случаях, когда Kubernetes развернут вручную (без использования инструментов Rancher для инсталляции кластера), `kube-prometheus-stack` может не собирать эти метрики автоматически. Ручная настройка включает создание Kubernetes-объектов для обнаружения ETCD и его метрик.
 
-* `prometheus.prometheusSpec.remoteWrite`, `remoteRead`:
-  * **Описание:** Настройки для интеграции с внешними долгосрочными хранилищами (например, [VictoriaMetrics](../../VictoriaMetrics/overview.md), Thanos, M3DB).
-  * **Рекомендация:** Использовать в production для долгосрочного хранения метрик, так как хранение больших объемов данных в самом Prometheus неэффективно и может привести к деградации производительности.
+### 1. Подготовка сертификатов ETCD
 
-* `prometheus.prometheusSpec.storage`:
-  * **Описание:** Определяет конфигурацию хранилища для `StatefulSet`'а Prometheus. Использование `volumeClaimTemplate` является стандартным подходом.
-  * **Рекомендация (Production):** Обязательно настроить для сохранения данных при перезапусках.
-  * `storageClassName`: Необходимо указать имя существующего в кластере `StorageClass`.
-  * `storage`: Размер диска подбирается в зависимости от количества метрик и срока хранения (`retention`).
+ETCD использует TLS для безопасной коммуникации. Prometheus должен использовать клиентские сертификаты для аутентификации при сборе метрик. Эти сертификаты (CA, client certificate, client key) обычно находятся на Control Plane узлах Kubernetes и должны быть помещены в Kubernetes Secret.
 
-        ```yaml
-        prometheus:
-          prometheusSpec:
-            storage:
-              volumeClaimTemplate:
-                spec:
-                  storageClassName: "your-storage-class"
-                  accessModes: ["ReadWriteOnce"]
-                  resources:
-                    requests:
-                      storage: 50Gi
-        ```
+**Пример создания Secret (предполагается, что файлы сертификатов уже извлечены):**
 
-* `prometheus.replicaCount`: `1`
-  * **Рекомендация (Production):** Установить значение больше `1` для высокой доступности.
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-etcd-client-certs
+  namespace: kube-system # Или другой namespace, где Prometheus Operator имеет доступ
+type: Opaque
+data:
+  etcd-client-ca.crt: <base64_encoded_ca_cert>
+  etcd-client.crt: <base64_encoded_client_cert>
+  etcd-client.key: <base64_encoded_client_key>
+```
+**Примечание**: Ключи полей `etcd-client-ca.crt`, `etcd-client.crt`, `etcd-client.key` должны совпадать с именами, которые будут использоваться в `ServiceMonitor`. Убедитесь, что Prometheus Operator имеет права на чтение этого `Secret`.
 
-* `prometheus.prometheusSpec.retention`: `15d`
-  * **Описание:** Срок хранения метрик в локальном хранилище Prometheus. Метрики старше этого срока будут удалены.
-  * **Рекомендация:** Настраивается эмпирически в зависимости от доступного дискового пространства, требований к хранению и влияния на нагрузку сервера. Если объем метрик слишком велик, и кластер не справляется, следует уменьшить срок хранения. Для долгосрочного хранения используется `remoteWrite`.
+### 2. Создание Service и Endpoint для ETCD
 
-* `prometheus.prometheusSpec.retentionSize`: `""`
-  * **Описание:** (Альфа-версия) Позволяет ограничивать хранилище по размеру (например, `50GB`), а не только по времени.
-  * **Рекомендация:** Использовать с осторожностью, так как это экспериментальная функция.
+Prometheus Operator использует Service Discovery через Kubernetes Services. Поскольку ETCD может быть запущен как статический Pod (kubelet-managed) с `hostNetwork=true`, для него необходимо создать `Service` типа `ClusterIP` без селектора (headless Service) и вручную добавить `Endpoint`, указывающий на IP-адреса ETCD-узлов.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd
+  namespace: kube-system
+  labels:
+    k8s-app: etcd-metrics # Метка для ServiceMonitor
+spec:
+  ports:
+  - name: metrics
+    port: 2379
+    protocol: TCP
+    targetPort: 2379
+  clusterIP: None # Headless Service
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: etcd
+  namespace: kube-system
+  labels:
+    k8s-app: etcd-metrics # Метка для ServiceMonitor
+subsets:
+  - addresses:
+      - ip: <IP_адрес_первого_ETCD_узла>
+      - ip: <IP_адрес_второго_ETCD_узла>
+      - ip: <IP_адрес_третьего_ETCD_узла>
+    ports:
+      - name: metrics
+        port: 2379
+        protocol: TCP
+```
+**Примечание**: Замените `<IP_адрес_..._ETCD_узла>` на реальные IP-адреса ваших ETCD-серверов. Метка `k8s-app: etcd-metrics` в `Service` и `Endpoints` используется `ServiceMonitor` для обнаружения.
+
+### 3. Создание ServiceMonitor для ETCD
+
+`ServiceMonitor` инструктирует Prometheus, как собирать метрики с созданного Service.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd-k8s-monitor
+  namespace: kube-system # Namespace, где развернут Service
+  labels:
+    release: prometheus-stack # Важно: эта метка должна соответствовать 'release' метке вашего Prometheus,
+                            # управляемого kube-prometheus-stack. Обычно это 'prometheus-stack' или 'rancher-monitoring'.
+spec:
+  jobLabel: k8s-app
+  endpoints:
+  - port: metrics
+    interval: 30s # Интервал сбора метрик
+    scheme: https # ETCD использует HTTPS
+    tlsConfig:
+      ca:
+        secret:
+          name: kube-etcd-client-certs
+          key: etcd-client-ca.crt
+      cert:
+        secret:
+          name: kube-etcd-client-certs
+          key: etcd-client.crt
+      key:
+        secret:
+          name: kube-etcd-client-certs
+          key: etcd-client.key
+      # InsecureSkipVerify: true # Использовать с осторожностью, только для отладки
+    metricRelabelings: # Опционально: отфильтровать ненужные метрики
+    - sourceLabels: [__name__]
+      regex: 'etcd_debugging_mvcc_db_total_size_in_bytes|etcd_server_has_leader|...'
+      action: keep
+  selector:
+    matchLabels:
+      k8s-app: etcd-metrics # Соответствует метке Service и Endpoints
+  namespaceSelector:
+    matchNames:
+    - kube-system # Namespace, где находится Service
+```
+**Важные параметры `ServiceMonitor`**:
+*   `namespace`: Должен быть тем же `namespace`, что и `Service`/`Endpoints`.
+*   `labels.release`: Критически важен, так как Prometheus Operator использует эту метку для связывания `ServiceMonitor` с конкретным экземпляром Prometheus. Замените `prometheus-stack` на `rancher-monitoring`, если вы используете Rancher.
+*   `scheme: https`: Указывает, что метрики собираются по HTTPS.
+*   `tlsConfig`: Конфигурация TLS, указывающая на `Secret` с клиентскими сертификатами ETCD.
+*   `selector.matchLabels`: Должен соответствовать меткам `Service` и `Endpoints`.
+*   `namespaceSelector.matchNames`: Указывает, в каких `namespaces` искать Service.
+
+После применения этих манифестов Prometheus должен начать собирать метрики с ETCD, которые затем станут доступны для визуализации в Grafana.
