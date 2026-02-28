@@ -132,3 +132,4 @@ elif '--host' in sys.argv:
 
 - **Основы инвентаря**: Базовые концепции статического инвентаря описаны в документе [Установка и настройка Ansible](../ansible_setup_and_config.md).
 - **Плагин `aws_ec2`**: Подробную документацию по всем параметрам плагина `amazon.aws.aws_ec2` можно найти на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html).
+- **Теги в облаках**: [Кроссплатформенные концепции](../CrossPlatform/concepts.md) — использование тегов для группировки

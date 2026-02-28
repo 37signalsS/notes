@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "034dc0836a6e27e4",
+        "id": "9301676953f6f1a6",
         "type": "tabs",
         "children": [
           {
-            "id": "851cae3ec17e32cb",
+            "id": "dd91c1bc759ebdac",
             "type": "leaf",
             "state": {
               "type": "empty",
               "state": {},
               "icon": "lucide-file",
-              "title": "New tab"
+              "title": "Новая вкладка"
             }
           }
         ]
@@ -40,7 +40,7 @@
                 "autoReveal": false
               },
               "icon": "lucide-folder-closed",
-              "title": "Files"
+              "title": "Файловый менеджер"
             }
           },
           {
@@ -170,17 +170,18 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "switcher:Open quick switcher": false,
-      "graph:Open graph view": false,
-      "canvas:Create new canvas": false,
-      "daily-notes:Open today's daily note": false,
-      "templates:Insert template": false,
-      "command-palette:Open command palette": false,
-      "bases:Create new base": false
+      "switcher:Меню быстрого перехода": false,
+      "graph:Граф": false,
+      "canvas:Создать новый холст": false,
+      "daily-notes:Сегодняшняя заметка": false,
+      "templates:Вставить шаблон": false,
+      "command-palette:Открыть палитру команд": false,
+      "bases:Создать новую базу": false
     }
   },
-  "active": "851cae3ec17e32cb",
+  "active": "dd91c1bc759ebdac",
   "lastOpenFiles": [
+    "Prometheus/overview.md",
     "Настройка timezone в контейнере (перезалито) [g-fFv8JbeSg].txt",
     "Среда разработки на базе k3s и набор полезных приложений [09] [bhZP1qG7-lA].txt",
     "Fixiki [01] [53NEFsFb0iM].txt",
@@ -197,14 +198,12 @@
     "Kubernetes monitoring [01]. Введение [93wK1oTv2CU].txt",
     "ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md",
     "Kubernetes/UI/kubernetes_dashboard.md",
-    "Kubernetes/UI",
     "ELK_Stack/OpenSearch/opensearch_overview.md",
     "Ansible/ansible_semaphore.md",
     "Service_Mesh/istio_observability_and_tools.md",
     "GitOps/ArgoCD/helm_integration.md",
     "sorted_index.md",
     "Yandex/VPC.md",
-    "Prometheus/overview.md",
     "Kubernetes/Troubleshooting/Common_Errors/pod_pending.md",
     "Kubernetes/Troubleshooting/Common_Errors/overview.md",
     "Linux/SystemAdministration/grub.md",

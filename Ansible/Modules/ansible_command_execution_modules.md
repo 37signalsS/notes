@@ -104,4 +104,5 @@
 
 - [Официальная документация по модулю command](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html)
 - [Официальная документация по модулю shell](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/shell_module.html)
-- **Рекомендация**: Всегда отдавайте предпочтение специализированным модулям Ansible, если они доступны для вашей задачи.
+- **Рекомендация**: Всегда отдавайте предпочтение специализированным модулям Ansible, если они доступны для вашей задачи
+- [Антипаттерны](../../ansible_bad_practices.md): Избыточное использование shell/command

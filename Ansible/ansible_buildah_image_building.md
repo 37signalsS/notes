@@ -122,3 +122,9 @@ buildah commit "$ctrl" my-lighttpd-image
 
 **Возможные проблемы:**
 На CentOS 7 Ansible из стандартных репозиториев может быть установлен под Python 2, с которым `ansible-bender` не работает. В этом случае установите Ansible через `pip3`.
+
+## Дополнительная информация
+
+- [Тестирование с Molecule](ansible_testing_with_molecule.md): Альный подтернативход к тестированию
+- [Оптимизация производительности](ansible_performance_tuning.md): Ускорение сборок
+- [Пользовательские модули](ansible_custom_modules.md): Расширение функциональности Ansible

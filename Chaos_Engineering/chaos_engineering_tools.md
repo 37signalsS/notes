@@ -9,7 +9,8 @@
 ### Обзор популярных инструментов
 
 * **Chaos Mesh:** Kubernetes-native инструмент, использующий CRD для декларативного описания хаос-экспериментов. Позволяет управлять сбоями подов, сети, системы ввода-вывода и др.
-* **LitmusChaos:** CNCF-проект с большим каталогом готовых экспериментов (ChaosHub) и веб-интерфейсом для управления.
+* **LitmusChaos:** CNCF-проект с большим каталогом готовых экспериментов (ChaosHub) и веб-интерфейсом для управления. Активно развивается (версия 3.26+, 2026), CNCF Incubating.
+* **Chaosblade:** CNCF Sandbox проект от Alibaba, простой и мощный инструмент для инъекции хаоса. Поддерживает Linux, Docker и Kubernetes.
 * **Gremlin:** Коммерческая SaaS-платформа, поддерживающая различные среды (не только Kubernetes) и предоставляющая продвинутые функции безопасности.
 * **AWS Fault Injection Simulator (FIS) и Azure Chaos Studio:** Нативные облачные сервисы для проведения экспериментов над ресурсами AWS и Azure соответственно.
 
@@ -60,12 +61,20 @@ spec:
 
 ## 4. Дополнительная информация
 
+### Требования к наблюдаемости
+
+Хаос-эксперименты требуют качественной наблюдаемости для валидации гипотез. Убедитесь, что:
+* Метрики (Prometheus, Grafana) покрывают все критические SLI.
+* Трассировки (Jaeger, Tempo) позволяют отслеживать цепочки вызовов между сервисами.
+* Логи централизованы и доступны для анализа в реальном времени.
+
 ### Сравнительная таблица инструментов
 
 | Инструмент | Среда | Модель | UI | Лицензия |
 |---|---|---|---|---|
-| Chaos Mesh | Kubernetes | CRD | Да | Open Source |
-| LitmusChaos | Kubernetes | CRD + ChaosHub | Да | Open Source |
+| Chaos Mesh | Kubernetes | CRD | Да | CNCF Incubating |
+| LitmusChaos | Kubernetes | CRD + ChaosHub | Да | CNCF Incubating |
+| Chaosblade | Linux/Docker/K8s | CLI/Agent | Нет | CNCF Sandbox |
 | Gremlin | Хосты/K8s/VM | Агент + SaaS | Да | Коммерческий |
 | AWS FIS | AWS | Облачный сервис | Да | Сервис |
 | Azure Chaos Studio | Azure | Облачный сервис | Да | Сервис |
@@ -73,3 +82,4 @@ spec:
 ### Связанные концепции
 
 * [Обзор Chaos Engineering](chaos_engineering_overview.md)
+* [Observability (Наблюдаемость)](../Concepts/Observability_and_Monitoring/observability_overview.md)

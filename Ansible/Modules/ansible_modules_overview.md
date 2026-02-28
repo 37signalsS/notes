@@ -21,5 +21,6 @@
 
 ## Дополнительная информация
 
-- [Официальная документация Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules): Полный справочник по всем модулям.
-- Команда `ansible-doc <module_name>` предоставляет справку по конкретному модулю.
+- [Официальная документация Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules): Полный справочник по всем модулям
+- [Создание пользовательских модулей](../ansible_custom_modules.md): Как расширить функциональность
+- Команда `ansible-doc <module_name>` предоставляет справку по конкретному модулю

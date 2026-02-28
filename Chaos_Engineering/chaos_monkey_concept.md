@@ -25,7 +25,7 @@
 
 ### Пример: PodDisruptionBudget и удаление пода в Kubernetes
 
-Чтобы безопасно применять Chaos Monkey в Kubernetes, используется `PodDisruptionBudget` (PDB), который гарантирует минимальное количество доступных реплик.
+Чтобы безопасно применять Chaos Monkey в Kubernetes, используется `PodDisruptionBudget` (PDB), который гарантирует минимальное количество доступных реплик. Подробнее о PDB в [Высокая доступность в Kubernetes](../Kubernetes/Base/high_availability.md) и [PodDisruptionBudget](../Kubernetes/Autoscaling/pod_disruption_budget.md).
 
 **1. Ограничение недоступности:**
 Этот PDB запрещает одновременную потерю более одного пода для приложения `frontend`.

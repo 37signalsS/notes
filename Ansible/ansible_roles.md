@@ -298,3 +298,7 @@ server_list = my_company_galaxy
 [galaxy_server.my_company_galaxy]
 url = https://galaxy.mycompany.com/
 ```
+
+### Продвинутые паттерны ролей
+
+Для сложных сценариев переиспользования кода между ролями изучите [паттерн "Utility Role"](ansible_advanced_role_structure.md).

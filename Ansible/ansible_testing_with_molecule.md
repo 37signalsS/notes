@@ -169,3 +169,9 @@ molecule init scenario centos -r nginx
 # Запустить тесты только для сценария centos
 molecule test -s centos
 ```
+
+## Дополнительная информация
+
+- [Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint): Статический анализ плейбуков
+- [Структура проекта](examples/example_project_layout.md): Организация файлов и директорий
+- [Роли](ansible_roles.md): Тестирование ролей — ключевой компонент CI/CD

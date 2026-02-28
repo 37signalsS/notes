@@ -80,3 +80,4 @@
 - [Официальная документация по модулю apt](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html)
 - [Официальная документация по модулю yum](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/yum_module.html)
 - [Официальная документация по модулю package](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/package_module.html)
+- [Кроссплатформенные плейбуки](../CrossPlatform/concepts.md): Управление пакетами на разных ОС

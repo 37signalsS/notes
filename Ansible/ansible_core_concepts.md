@@ -95,3 +95,7 @@
 pip install ansible-lint
 ansible-lint my_playbook.yml
 ```
+
+### Тестирование ролей
+
+Для автоматизированного тестирования ролей используйте [Molecule](ansible_testing_with_molecule.md), который позволяет создавать изолированные тестовые окружения.
