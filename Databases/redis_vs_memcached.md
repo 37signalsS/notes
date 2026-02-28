@@ -50,5 +50,5 @@ Redis подходит для **сложных сценариев**, выход�
 
 Этот документ дает общее представление. Для углубленного изучения каждой системы обратитесь к их основным описаниям:
 
-- **[Подробный обзор Redis](<./Redis/redis_overview.md>)**
-- **[Подробный обзор Memcached](<./Memcached/memcached_overview.md>)**
+- **[Подробный обзор Redis](./Redis/redis_overview.md)**
+- **[Подробный обзор Memcached](./Memcached/memcached_overview.md)**

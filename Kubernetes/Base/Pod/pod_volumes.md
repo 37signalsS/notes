@@ -82,6 +82,10 @@ spec:
   * **Что это:** Позволяют "пробросить" данные из [ConfigMap](../configmap.md) или [Secret](../secrets/secrets_basics.md) в под в виде файлов.
   * **Использование:** Основной способ передачи конфигурационных файлов, TLS-сертификатов и других данных в приложение.
 
+* **`projected`**:
+  * **Что это:** Позволяет объединить несколько источников (`secret`, `configMap`, `downwardAPI`) в один том, который монтируется как единая директория.
+  * **Использование:** Удобно для сбора различных типов конфигурационных данных и метаданных в одном месте, доступном для приложения.
+
 * **`persistentVolumeClaim`**:
   * **Что это:** Способ смонтировать постоянное (persistent) хранилище, жизненный цикл которого не зависит от пода.
   * **Использование:** Это стандартный и правильный способ для хранения данных приложений, которые должны сохраняться (базы данных, пользовательские файлы и т.д.). Подробнее см. в [PV, PVC и StorageClass](../../Storage/pv_and_pvc.md).
@@ -112,6 +116,49 @@ spec:
     volumeMounts:
     - name: shared-data
       mountPath: /shared
+```
+
+#### Практический пример: Projected Volume
+
+Этот пример показывает, как объединить данные из `Secret`, `ConfigMap` и `DownwardAPI` в одну директорию `/projected-volume`.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-volume-pod
+spec:
+  volumes:
+  - name: all-in-one
+    projected:
+      sources:
+      - secret:
+          name: user-password-secret # Предполагается, что этот Secret существует
+          items:
+            - key: username
+              path: app-credentials/user.txt
+      - configMap:
+          name: app-config # Предполагается, что этот ConfigMap существует
+          items:
+            - key: config.yaml
+              path: app-config/settings.yaml
+      - downwardAPI:
+          items:
+            - path: "pod-labels"
+              fieldRef:
+                fieldPath: metadata.labels
+            - path: "container-cpu-limit"
+              resourceFieldRef:
+                containerName: test-container
+                resource: limits.cpu
+  containers:
+  - name: test-container
+    image: busybox
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: all-in-one
+      mountPath: "/projected-volume"
+      readOnly: true
 ```
 
 ### Downward API

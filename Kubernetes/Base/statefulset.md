@@ -64,7 +64,8 @@
 * Каждый [под](./Pod/pod_overview.md) в StatefulSet получает предсказуемое имя в формате `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`).
 * Эти имена сохраняются при перезапуске и переносе подов, что критически важно для кластерных приложений.
 * Требует наличия **Headless Service** (сервис с `clusterIP: None`) для обеспечения уникальных DNS-имен для каждого пода.
-* Формат DNS-записи: `pod-ordinal.service.namespace.svc.cluster.local` (например, `web-0.my-svc.default.svc.cluster.local`)
+* Формат DNS-записи: `pod-ordinal.service.namespace.svc.cluster.local` (например, `web-0.my-svc.default.svc.cluster.local`).
+* **Автоматическая метка пода:** Kubernetes автоматически добавляет к каждому поду `StatefulSet` метку `statefulset.kubernetes.io/pod-name` со значением, равным имени пода (например, `my-app-0`). Эта метка позволяет создавать сервисы, нацеленные на один конкретный под.
 
 ### Стабильные, постоянные хранилища
 
@@ -224,6 +225,56 @@ nslookup my-app-headless
 # Запрос к конкретному поду вернет его собственный IP
 nslookup my-app-0.my-app-headless
 ```
+
+### Шаг 4: Публикация конкретного пода StatefulSet
+
+**Проблема:** Стабильное DNS-имя пода (например, `my-app-0.my-app-headless...`) доступно только внутри кластера. Вы не можете использовать это FQDN напрямую в `Ingress`, так как поле `service.name` ожидает имя сервиса, а не произвольное доменное имя.
+
+**Решение:** Создать стандартный сервис типа `ClusterIP`, который будет нацелен только на один конкретный под `StatefulSet`. Это достигается с помощью метки `statefulset.kubernetes.io/pod-name`, которую Kubernetes автоматически добавляет к каждому поду.
+
+**Пример:** Опубликуем под `my-app-0` через Ingress.
+
+1.  **Создаем сервис, нацеленный на `my-app-0`:**
+
+    ```yaml
+    # service-for-pod-0.yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: my-app-0-service # Имя нового сервиса
+    spec:
+      selector:
+        # Указываем метку, уникальную для пода my-app-0
+        statefulset.kubernetes.io/pod-name: my-app-0
+      ports:
+        - protocol: TCP
+          port: 80
+          targetPort: 80
+    ```
+
+2.  **Создаем `Ingress`, указывающий на этот сервис:**
+
+    ```yaml
+    # ingress-for-pod-0.yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: my-app-0-ingress
+    spec:
+      rules:
+      - host: "app-0.example.com"
+        http:
+          paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-app-0-service # Ссылаемся на наш новый сервис
+                port:
+                  number: 80
+    ```
+
+После применения этих манифестов, трафик, приходящий на `app-0.example.com`, будет направлен через `Ingress` на `my-app-0-service` и далее только на под `my-app-0`.
 
 # Дополнительная информация
 

@@ -68,8 +68,54 @@ Redis использует однопоточную модель для выпо
 - **Реализация блокировок (Distributed Locks):** Создание распределенных блокировок.
 - **Pub/Sub:** Использование в качестве брокера сообщений.
 
+#### Основные команды Redis
+
+```bash
+# Строки
+SET user:1 "Alex"
+GET user:1
+
+# Списки
+LPUSH tasks "task1"
+RPOP tasks
+
+# Множества
+SADD tags "redis" "database"
+SMEMBERS tags
+
+# Хэши
+HSET user:1 name "Alex" age "30"
+HGET user:1 name
+
+# Счетчики
+INCR page_views
+INCRBY page_views 10
+
+# Pub/Sub
+PUBLISH channel "message"
+SUBSCRIBE channel
+```
+
+#### Установка и запуск
+
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install redis-server
+
+# Запуск сервиса
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+
+# Подключение к Redis
+redis-cli
+```
+
 ---
 
 ### Дополнительная информация
 
-Для выбора между Redis и другими In-Memory системами, такими как Memcached, см. [детальное сравнение](<../redis_vs_memcached.md>).
+Для выбора между Redis и другими In-Memory системами, такими как Memcached, см. [детальное сравнение](../redis_vs_memcached.md).
+
+- **Репликация:** Настройка master-slave репликации в Redis аналогична другим СУБД. Подробнее о принципах репликации см. [Репликация](../Concepts/replication.md).
+- **Резервное копирование:** Для понимания стратегий резервного копирования in-memory баз данных см. [Резервное копирование](../Concepts/backups.md).
