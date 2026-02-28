@@ -1,8 +1,26 @@
 # Регистрация GitLab Runner
 
-### Ключевые концепции
+### Определения
 
-* **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)**
+- **[GitLab Runner](https://docs.gitlab.com/runner/)**: Отдельное приложение, которое выполняет задания (jobs) из пайплайнов GitLab CI/CD. Runner опрашивает сервер GitLab, забирает задачи и выполняет их в указанной среде.
+- **[Executor](https://docs.gitlab.com/runner/executors/)**: Модуль внутри Runner'а, определяющий, как и где будут выполняться скрипты (в Docker-контейнере, на хосте через shell или в Kubernetes Pod).
+- **Регистрационный токен**: Уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
+
+### Основные концепции
+
+#### Типы Runner'ов по области видимости
+
+| Тип | Область видимости | Контроль | Использование |
+| :--- | :--- | :--- | :--- |
+| **Shared** | Вся инстанция GitLab | Администраторы | Общие задачи |
+| **Group** | Все проекты в группе | Владельцы группы | Командные задачи |
+| **Specific** | Конкретный проект | Владельцы проекта | Специфичные задачи |
+
+Подробнее о типах Runner'ов см. в статье: **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)**.
+
+#### Docker Executor
+
+Docker Executor — один из наиболее популярных типов исполнителей. Он запускает каждую задачу в изолированном Docker-контейнере, что обеспечивает воспроизводимость и безопасность.
 
 ### Предварительные требования
 
@@ -94,5 +112,6 @@ docker run -d --name gitlab-runner --restart always \
 
 ### Связанные документы
 
-* **[Официальная документация GitLab Runner](https://docs.gitlab.com/runner/)**
-* **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)**
+- **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)** — подробное сравнение типов executor'ов.
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — настройка Kubernetes Executor.
+- **[Официальная документация GitLab Runner](https://docs.gitlab.com/runner/)**

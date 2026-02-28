@@ -263,7 +263,10 @@ deploy_production:
     - main
 
 ### Связанные документы
+
 - **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — для понимания базовых концепций (Pipeline, Stage, Job).
 - **[Исполнители (Runners) и их типы (Executors)](./gitlab_ci_runners_executors.md)** — для настройки сред выполнения задач.
 - **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов.
+- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с environments и Review Apps.
+- **[Кэширование в GitLab CI](./gitlab_ci_caching.md)** — оптимизация скорости пайплайнов.
 ```

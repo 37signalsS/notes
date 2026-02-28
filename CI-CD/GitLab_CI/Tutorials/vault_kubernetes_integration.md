@@ -197,3 +197,9 @@ get-production-secrets:
 - **Аудит с `user_claim`**: Поле `user_claim="user_email"` указывает Vault использовать email пользователя, инициировавшего пайплайн, в качестве идентификатора для логов аудита. Это упрощает отслеживание, кто именно получил доступ к секрету.
 - **Helm-чарты Vault**: В данном руководстве используется оператор от Banzai Cloud. Существует также официальный Helm-чарт от HashiCorp (`hashicorp/vault`), который является более предпочтительным для новых установок, так как поддерживается непосредственно разработчиками Vault.
 - **Self-Hosted GitLab**: При использовании собственного экземпляра GitLab не забудьте заменить `https://gitlab.com` на ваш домен в параметре `jwks_url` и `bound_issuer` при настройке JWT-аутентификации.
+
+### Связанные документы
+
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными и секретами.
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — развертывание в Kubernetes.
+- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.

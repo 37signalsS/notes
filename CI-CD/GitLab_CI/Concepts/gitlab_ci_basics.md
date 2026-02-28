@@ -111,6 +111,8 @@ deploy:
 
 ### Связанные документы
 
-* **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов (Pipeline, Stage, Job, Artifact).
-* **[Продвинутые рабочие процессы в GitLab CI](../Advanced/gitlab_ci_advanced_workflow.md)** — для более сложных сценариев.
-* **[Исполнители (Runners) и их типы (Executors)](../Advanced/gitlab_ci_runners_executors.md)** — для настройки сред выполнения задач.
+- **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов (Pipeline, Stage, Job, Artifact).
+- **[Продвинутые рабочие процессы в GitLab CI](../Advanced/gitlab_ci_advanced_workflow.md)** — для более сложных сценариев.
+- **[Исполнители (Runners) и их типы (Executors)](../Advanced/gitlab_ci_runners_executors.md)** — для настройки сред выполнения задач.
+- **[Переиспользуемые пайплайны](../Reusable_Pipelines/overview.md)** — `extends`, `include`, `!reference` для избежания дублирования.
+- **[GitLab Flow](../Tutorials/gitlab_flow.md)** — стратегия ветвления для эффективной разработки.

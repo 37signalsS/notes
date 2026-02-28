@@ -91,3 +91,9 @@ git push --set-upstream origin feature/my-new-feature
 
 * **[Официальная документация GitLab Flow](https://about.gitlab.com/topics/version-control/what-is-gitlab-flow/)**: Для более глубокого изучения, включая использование веток окружений.
 * **[Обзор рабочих процессов в Git](../../../Git/git_workflows.md)**: Сравнение GitLab Flow с другими популярными моделями, такими как Git Flow и GitHub Flow.
+
+### Связанные документы
+
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции пайплайнов.
+- **[Продвинутые рабочие процессы](../Advanced/gitlab_ci_advanced_workflow.md)** — правила `rules` для MR-пайплайнов.
+- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.

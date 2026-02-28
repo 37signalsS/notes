@@ -157,3 +157,8 @@ build_with_custom_ca:
 
 - **Интеграция с HashiCorp Vault**: Для максимального уровня безопасности и централизации рекомендуется интегрировать GitLab CI с внешним хранилищем секретов, таким как HashiCorp Vault. Это позволяет динамически получать секреты с коротким сроком жизни, не храня их в GitLab. Подробное руководство доступно в документе [Интеграция GitLab CI с HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md).
 - **Полный список предопределенных переменных** доступен в [официальной документации GitLab](https://docs.gitlab.com/ee/ci/variables/predefined_variables.html).
+
+### Связанные документы
+
+- **[Интеграция GitLab CI с HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md)** — безопасное управление секретами.
+- **[Интеграция с Ansible](./ansible_integration.md)** — использование переменных для SSH-ключей.
