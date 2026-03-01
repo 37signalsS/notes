@@ -40,7 +40,7 @@ Docker Compose позволяет использовать переменные 
 
 #### 3. Секция `deploy` и интеграция с Docker Swarm
 
-Секция `deploy` является ключевой при работе с **[Docker Swarm](../../Docker/Docker_swarm/docker_swarm_overview.md)** и используется исключительно командой `docker stack deploy`.
+Секция `deploy` является ключевой при работе с **[Docker Swarm](../Docker_swarm/docker_swarm_overview.md)** и используется исключительно командой `docker stack deploy`.
 
 > **Важно:** Обычная команда `docker compose up` **полностью игнорирует** эту секцию.
 
@@ -52,9 +52,9 @@ Docker Compose позволяет использовать переменные 
   * `restart_policy`: Политика перезапуска в случае сбоя.
   * `placement`: Ограничения на размещение контейнеров (например, `constraints: [node.role == worker]`).
   * `resources`: Ограничения на потребление CPU и памяти.
-  * `labels`: Ключевой механизм для интеграции с другими системами, например, с реверс-прокси **[Traefik](../../WebServers/Traefik/traefik_overview.md)**.
+  * `labels`: Ключевой механизм для интеграции с другими системами, например, с реверс-прокси **[Traefik](../../../WebServers/Traefik/traefik_overview.md)**.
 
-> Подробнее о развертывании стеков в Swarm читайте в руководстве [Развертывание приложений в Docker Swarm с помощью docker stack deploy](../../Docker/Docker_swarm/swarm_stack_deployment.md).
+> Подробнее о развертывании стеков в Swarm читайте в руководстве [Развертывание приложений в Docker Swarm с помощью docker stack deploy](../Docker_swarm/swarm_stack_deployment.md).
 
 #### 4. Масштабирование сервисов (для `docker compose`)
 
@@ -80,8 +80,6 @@ Docker Compose отлично подходит для моделирования
   * **Три узла Patroni**: Экземпляры PostgreSQL, управляемые Patroni.
 
 ```yaml
-version: '3.5'
-
 services:
   etcd:
     image: 'bitnami/etcd:3.4'
@@ -105,7 +103,7 @@ services:
       - patroni3
 
   patroni1:
-    image: 'bitnami/patroni:2.0'
+    image: 'bitnami/patroni:3.0'
     environment:
       - PATRONI_NAME=patroni1
       - PATRONI_SCOPE=my-postgres-cluster
@@ -120,7 +118,7 @@ services:
       - etcd
 
   patroni2:
-    image: 'bitnami/patroni:2.0'
+    image: 'bitnami/patroni:3.0'
     environment:
       - PATRONI_NAME=patroni2
       - PATRONI_SCOPE=my-postgres-cluster
