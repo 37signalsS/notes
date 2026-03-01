@@ -88,8 +88,14 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-extldflags "-static"' -o /app/main .
 
 # --- Этап 2: Финальный образ ---
-FROM alpine:3.22.2
+FROM alpine:3.23
 COPY --from=builder /app/main /main
 RUN chmod +x /main
 ENTRYPOINT ["/main"]
 ```
+
+## Дополнительная информация
+
+- **[Оптимизация сборки](./build_optimization.md):** Общие принципы многоэтапных сборок.
+- **[Безопасность в Dockerfile](./security.md):** Подробнее об образах `scratch` и `distroless`.
+- **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md):** Как отлаживать контейнеры без shell.

@@ -112,3 +112,8 @@ ENV RAILS_ENV=production RACK_ENV=production
 EXPOSE 3000
 CMD ["bundle", "exec", "puma"]
 ```
+
+## Дополнительная информация
+
+- **[Оптимизация сборки](./build_optimization.md):** Общие принципы многоэтапных сборок и кеширования.
+- **[Безопасность в Dockerfile](./security.md):** Создание непривилегированных пользователей.
