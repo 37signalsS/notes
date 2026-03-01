@@ -1,10 +1,12 @@
-### Определения
+# Управление релизами и семантическое версионирование
+
+## Определения
 
 - **Семантическое Версионирование (SemVer)**: Cтандарт версионирования ПО в формате `MAJOR.MINOR.PATCH`, где изменения отражают характер правок: `MAJOR` для обратно несовместимых изменений, `MINOR` для новой функциональности и `PATCH` для исправлений ошибок.
 - **Conventional Commits**: Соглашение о форматировании сообщений коммитов, которое придает им машиночитаемый смысл. Формат `type(scope): description` позволяет автоматически определять тип изменений (например, `feat:` для новой функции, `fix:` для исправления, `BREAKING CHANGE:` для ломающих изменений).
 - **Управление релизами в CI/CD**: Процесс автоматизации создания, тегирования и развертывания новых версий ПО на основе событий в системе контроля версий. В GitLab это реализуется с помощью `release-cli` и специальных ключевых слов в `.gitlab-ci.yml`.
 
-### Основные концепции
+## Основные концепции
 
 #### Философия автоматизированного релиза
 
@@ -17,9 +19,11 @@
 3. **Создание релиза**: В GitLab создается формальный релиз, к которому прикрепляются описание изменений (release notes) и другие артефакты.
 4. **Публикация и развертывание**: Собранные артефакты (например, Docker-образы) тегируются новой версией и развертываются в нужные окружения.
 
-Ключевым инструментом в этом процессе является **`release-cli`** от GitLab, а для передачи данных между этапами используется механизм артефактов **`artifacts:reports:dotenv`**.
+Ключевым инструментом в этом процессе является **`release-cli`** от GitLab (актуальная версия **0.24.0** на 2026 год), а для передачи данных между этапами используется механизм артефактов **`artifacts:reports:dotenv`**.
 
-### Практические сценарии
+**Важно:** Начиная с GitLab 17, release-cli находится в режиме maintenance. Для новых проектов рассмотрите использование [GitLab Releases API](https://docs.gitlab.com/ee/api/releases/) напрямую или декларативный блок `release:` в `.gitlab-ci.yml`.
+
+## Практические сценарии
 
 #### Сценарий: Полный цикл автоматизации релиза
 
@@ -201,7 +205,69 @@ deploy_prod:
 - Задача запускается только для тегов и требует ручного подтверждения.
 - Для развертывания используется переменная `$CI_COMMIT_TAG`, что гарантирует доставку именно релизной версии.
 
-### Дополнительная информация
+## Дополнительная информация
 
 - **Спецификация Conventional Commits**: [www.conventionalcommits.org](https://www.conventionalcommits.org/ru/v1.0.0/)
 - **Документация `release-cli`**: [docs.gitlab.com/ee/api/releases/#create-a-release](https://docs.gitlab.com/ee/api/releases/#create-a-release)
+- **GitLab Releases API**: [docs.gitlab.com/ee/api/releases/](https://docs.gitlab.com/ee/api/releases/)
+
+## Best Practices (2025-2026)
+
+1. **Используйте декларативный блок `release:`**
+   - Начиная с GitLab 16+, предпочтительнее использовать встроенный блок `release:` вместо release-cli
+   - Упрощает конфигурацию и уменьшает зависимости
+
+2. **Автоматическая генерация changelog**
+   - Используйте `git log` с фильтрацией по тегам
+   - Включайте только коммиты с `feat:`, `fix:`, `BREAKING CHANGE:`
+
+3. **Ручное подтверждение для production**
+   - Всегда используйте `when: manual` для создания релизов в production
+   - Дайте возможность проверить changelog перед публикацией
+
+4. **Связывание артефактов**
+   - Добавляйте ссылки на Docker-образы в `assets.links`
+   - Прикрепляйте бинарные файлы через `assets:links` или `artifacts`
+
+5. **Защита тегов**
+   - Используйте защищённые теги для production-релизов
+   - Требуйте approval от maintainer перед созданием тега
+
+6. **Интеграция с Package Registry**
+   - Публикуйте пакеты в GitLab Package Registry
+   - Связывайте релизы с соответствующими пакетами
+
+## Альтернатива release-cli (GitLab 17+)
+
+```yaml
+# Современный подход с использованием декларативного release
+create_release:
+  stage: release
+  image: alpine:3.19
+  needs:
+    - job: analyze_commit
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      curl --request POST \
+        --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data "{
+          \"name\": \"Release $NEW_TAG\",
+          \"tag_name\": \"$NEW_TAG\",
+          \"description\": \"$(cat RELEASE_NOTE.md | jq -Rs .)\",
+          \"ref\": \"$CI_COMMIT_SHA\",
+          \"assets\": {
+            \"links\": [{
+              \"name\": \"Docker Image\",
+              \"url\": \"${CI_REGISTRY_IMAGE}:${NEW_TAG}\"
+            }]
+          }
+        }" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
+```

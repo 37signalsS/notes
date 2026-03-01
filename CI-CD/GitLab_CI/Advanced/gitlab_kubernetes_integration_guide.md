@@ -27,15 +27,71 @@
 1. **Переменная `KUBE_CONFIG`**
     * **Принцип**: Содержимое файла `kubeconfig` сохраняется в виде защищенной CI/CD-переменной в GitLab. Runner использует эту переменную для аутентификации.
     * **Минусы**: Менее безопасно, так как токен доступа является долгоживущим. Требует сетевой доступности от Runner'а до API-сервера кластера.
+    * **Статус**: Не рекомендуется для production-окружений.
 
 2. **GitLab Runner с Kubernetes Executor**
     * **Принцип**: Runner устанавливается непосредственно в кластер Kubernetes. Для каждой CI-задачи создается отдельный Pod. Используя `ServiceAccount` Kubernetes, задача автоматически получает токен доступа с коротким сроком жизни.
     * **Плюсы**: **Наиболее безопасный и идиоматичный способ.**
     * См. **[Обзор Runner'ов и Executor'ов](gitlab_ci_runners_executors.md)** для подробного сравнения.
 
-3. **OIDC/JWT-аутентификация**
-    * **Принцип**: Настраиваются доверительные отношения между Kubernetes и GitLab (как OIDC-провайдером). Кластер может валидировать временный JWT-токен (`CI_JOB_JWT_TOKEN`), который генерируется для каждой CI-задачи.
+3. **OIDC/JWT-аутентификация (рекомендуется)**
+    * **Принцип**: Настраиваются доверительные отношения между Kubernetes и GitLab (как OIDC-провайдером). Кластер может валидировать временный JWT-токен (`CI_JOB_JWT_TOKEN` или `CI_JOB_JWT_V2`), который генерируется для каждой CI-задачи.
     * **Статус**: Современный и безопасный подход, также известный как **[Workload Identity Federation](https://docs.gitlab.com/ee/ci/secrets/authenticate_with_oidc.html)**.
+    * **Преимущества**:
+      - Временные токены (срок жизни — длительность задачи)
+      - Нет необходимости хранить секреты в GitLab
+      - Гранулярный контроль доступа через ServiceAccount
+      - Аудит всех действий в Kubernetes
+    
+    * **Настройка в Kubernetes:**
+      ```bash
+      # 1. Создаём OIDC Provider в кластере
+      kubectl create -f - <<EOF
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: gitlab-deploy-sa
+        namespace: production
+        annotations:
+          # Для GCP
+          iam.gke.io/gcp-service-account: gitlab-deploy@PROJECT_ID.iam.gserviceaccount.com
+          # Для AWS (через IRSA)
+          eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/gitlab-deploy-role
+      EOF
+      
+      # 2. Создаём Role с минимальными правами
+      kubectl create -f - <<EOF
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: gitlab-deploy-role
+        namespace: production
+      rules:
+      - apiGroups: ["apps"]
+        resources: ["deployments"]
+        verbs: ["get", "list", "update", "patch"]
+      - apiGroups: [""]
+        resources: ["services", "configmaps"]
+        verbs: ["get", "list", "update", "patch"]
+      EOF
+      
+      # 3. Привязываем ServiceAccount к Role
+      kubectl create -f - <<EOF
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: gitlab-deploy-binding
+        namespace: production
+      subjects:
+      - kind: ServiceAccount
+        name: gitlab-deploy-sa
+        namespace: production
+      roleRef:
+        kind: Role
+        name: gitlab-deploy-role
+        apiGroup: rbac.authorization.k8s.io
+      EOF
+      ```
 
 ## Практические сценарии
 
@@ -117,6 +173,9 @@
 * **Гранулярные права (RBAC):** Никогда не используйте `cluster-admin` для CI/CD в production. Создавайте `Role` и `RoleBinding` с минимально необходимыми правами для каждого приложения (`helm install` требует прав на создание, обновление и чтение многих типов ресурсов).
 * **Иммутабельные теги:** Всегда используйте неизменяемые теги для Docker-образов, такие как `CI_COMMIT_SHORT_SHA` или `CI_COMMIT_TAG`. Использование `latest` является анти-паттерном.
 * **Изоляция Runner'ов:** Запускайте Runner'ы в выделенном, изолированном `namespace` с настроенными `NetworkPolicy` и `ResourceQuota`.
+* **OIDC-аутентификация (2025-2026):** Используйте Workload Identity Federation вместо долгоживущих токенов и секретов.
+* **GitLab Components (17+):** Для переиспользуемых шаблонов развертывания используйте компоненты с типизированными `inputs`.
+* **Аудит и логирование:** Включите аудит всех действий ServiceAccount в Kubernetes для отслеживания изменений.
 
 ### Устранение неполадок
 

@@ -1,70 +1,282 @@
-### Определения
+# Дочерние и мультипроектные пайплайны GitLab CI/CD
 
-**[Дочерние пайплайны (Child Pipelines)](https://docs.gitlab.com/ee/ci/pipelines/downstream_pipelines.html#child-pipelines)** позволяют запускать один или несколько дополнительных пайплайнов в рамках того же проекта из родительского пайплайна. Их конфигурация может быть определена в отдельном файле (или сгенерирована динамически) и включается с помощью директивы `trigger:include`.
+## Определения
 
-**[Мультипроектные пайплайны (Multi-project Pipelines)](https://docs.gitlab.com/ee/ci/pipelines/downstream_pipelines.html#multi-project-pipelines)** дают возможность одному проекту (родительскому/upstream) инициировать запуск пайплайна в другом, независимом проекте (дочернем/downstream). Это реализуется через директиву `trigger:project`.
+**Downstream pipeline** — любой пайплайн GitLab CI/CD, запущенный другим пайплайном. Выполняется независимо и параллельно с upstream-пайплайном.
 
-**Динамическая генерация пайплайнов** — это мощный паттерн, при котором конфигурация дочернего пайплайна (`.gitlab-ci.yml`) создается "на лету" с помощью скриптов во время выполнения родительского пайплайна. Это обеспечивает высокую гибкость и адаптивность.
+**Два типа downstream pipelines:**
 
-### Основные концепции
+| Тип | Описание | Ограничения |
+| :--- | :--- | :--- |
+| **Parent-child pipeline** | Downstream в том же проекте | Макс. 2 уровня вложенности |
+| **Multi-project pipeline** | Downstream в другом проекте | Без ограничений вложенности |
 
-#### Механизмы запуска
+**Динамическая генерация пайплайнов** — паттерн, при котором конфигурация `.gitlab-ci.yml` создаётся во время выполнения родительского пайплайна. Обеспечивает высокую гибкость.
 
-* **Мультипроектные пайплайны (`trigger:project`)**:
-    Используется для связи проектов. Родительский пайплайн инициирует дочерний в другом репозитории.
+## Основные концепции
 
-    ```yaml
-    # Родительский проект
-    trigger_downstream:
-      stage: deploy
-      trigger:
-        project: 'group/downstream-project' # Путь к дочернему проекту
-        branch: main # Ветка, в которой запускается пайплайн
-    ```
+### Parent-child pipelines
 
-* **Дочерние пайплайны (`trigger:include`)**:
-    Используется для декомпозиции или динамической конфигурации в рамках одного проекта.
+**Характеристики:**
+- Выполняются в том же проекте, ref и commit SHA
+- Не отображаются в общем списке пайплайнов (только на странице родителя)
+- Автоматически отменяются при настройке `interruptible`
+- **Максимальная глубина: 2 уровня** child pipelines
 
-    ```yaml
-    # Родительский проект .gitlab-ci.yml
+**Пример:**
+```yaml
+# Родительский .gitlab-ci.yml
+child-pipeline:
+  stage: test
+  trigger:
     include:
-      - project: 'group/project'
-        file: '/path/to/child-pipeline.yml'
-        # Запуск дочернего пайплайна, определенного в другом файле этого же проекта
-    
-    # или
-    
-    run-dynamically-generated-pipeline:
-      stage: test
-      trigger:
-        include:
-          - artifact: generated-config.yml # Ссылка на сгенерированный артефакт
-            job: generate-config-job # Задание, которое сгенерировало артефакт
-    ```
+      - local: path/to/child-pipeline.yml
+```
 
-#### Ожидание завершения (`strategy: depend`)
+### Multi-project pipelines
 
-По умолчанию задача, запускающая дочерний пайплайн, завершается успешно сразу после его инициирования. Чтобы родительский пайплайн дождался фактического завершения дочернего пайплайна и отразил его статус (успех/неудача), используется `strategy: depend`. Это критически важно для построения последовательных цепочек пайплайнов.
+**Характеристики:**
+- Запускаются из пайплайна другого проекта
+- Upstream может выбрать ref downstream и передать переменные
+- Отображаются в списке пайплайнов downstream-проекта
+- **Нет ограничений на вложенность**
+
+**Требования безопасности:**
+- Пользователь должен иметь права на запуск пайплайнов в downstream-проекте
+- При использовании публичного проекта для запуска private проверьте конфиденциальность
+
+**Пример:**
+```yaml
+trigger_downstream:
+  stage: deploy
+  trigger:
+    project: 'group/downstream-project'
+    branch: main
+```
+
+### Стратегии выполнения: `strategy`
+
+#### `strategy: mirror`
+
+Отображает статус downstream pipeline в trigger job:
 
 ```yaml
 trigger_job:
-  stage: trigger
   trigger:
-    project: 'group/downstream-project' # или include
-    strategy: depend # Родительский пайплайн будет ожидать завершения дочернего
+    include:
+      - local: path/to/child-pipeline.yml
+    strategy: mirror
 ```
 
-#### Наследование переменных
+**Применение:**
+- Parent-child и multi-project pipelines
+- Авто-отмена родительского пайплайна при провале child (если настроен `workflow: auto_cancel`)
 
-* **Дочерние пайплайны (Child Pipelines)**:
-  * Наследуют **все предопределенные переменные GitLab CI** (например, `CI_COMMIT_SHA`, `CI_COMMIT_REF_NAME`).
-  * Наследуют **все пользовательские переменные**, определенные на уровне проекта, группы или в родительском `.gitlab-ci.yml`.
-  * Наследуют переменные, определенные в запускающей задаче родительского пайплайна (внутри `variables:` блока этой задачи).
+#### `strategy: depend`
 
-* **Мультипроектные пайплайны (Multi-project Pipelines)**:
-  * **НЕ наследуют пользовательские переменные** из родительского пайплайна или из настроек проекта/группы родительского проекта.
-  * Наследуют **только предопределенные переменные GitLab CI**, относящиеся к собственному проекту (например, `CI_PROJECT_PATH` дочернего проекта).
-  * Для передачи пользовательских переменных их необходимо **явно указать** в блоке `variables:` триггерной задачи родительского пайплайна.
+Отображает отчёты child pipeline в Merge Request виджетах:
+
+```yaml
+test-backend:
+  trigger:
+    include: backend-tests.yml
+    strategy: depend
+
+test-frontend:
+  trigger:
+    include: frontend-tests.yml
+    strategy: depend
+```
+
+**Критично для:**
+- Unit test отчётов (JUnit)
+- Code quality отчётов
+- Terraform отчётов
+- Security отчётов (SAST, secret detection, container scanning, DAST)
+
+**Без `strategy: depend`** родительский пайплайн завершается до окончания child pipelines, и их отчёты не появляются в Merge Request.
+
+### Динамические child pipelines
+
+Генерация конфигурации "на лету":
+
+```yaml
+generate-config:
+  stage: build
+  script:
+    - python generate_ci_config.py > generated-config.yml
+  artifacts:
+    paths:
+      - generated-config.yml
+
+child-pipeline:
+  stage: test
+  trigger:
+    include:
+      - artifact: generated-config.yml
+        job: generate-config
+```
+
+**Ограничения:**
+- Артефакт должен быть в пределах лимитов инстанса
+- Нельзя использовать CI/CD переменные в `include` секции динамического child pipeline
+
+## Наследование переменных
+
+### Сравнение наследования
+
+| Тип переменных | Child Pipelines | Multi-project Pipelines |
+| :--- | :--- | :--- |
+| **Predefined (CI_*)** | Наследуют все | Наследуют только относящиеся к downstream проекту |
+| **Project/Group variables** | Наследуют все | **НЕ наследуют** |
+| **Variables из задачи** | Наследуют | **Только явно указанные** в `trigger:variables` |
+| **Masked variables** | Наследуют | **НЕ наследуют** (риск unmask!) |
+
+### 1. Variables keyword (наследование)
+
+```yaml
+variables:
+  VERSION: "1.0.0"
+
+staging:
+  variables:
+    ENVIRONMENT: staging
+  stage: deploy
+  trigger:
+    include:
+      - local: path/to/child-pipeline.yml
+```
+
+- `ENVIRONMENT` доступен во всех jobs downstream pipeline
+- `VERSION` наследуется как default variable
+
+### 2. Блокировка наследования
+
+```yaml
+trigger-job:
+  inherit:
+    variables: false  # Блокировать наследование default variables
+  variables:
+    JOB_VAR: value
+  trigger:
+    include:
+      - local: path/to/child-pipeline.yml
+```
+
+- `DEFAULT_VAR` не передаётся в triggered pipeline
+- `JOB_VAR` доступен
+
+### 3. Predefined variables (интерполяция)
+
+```yaml
+trigger-job:
+  variables:
+    PARENT_BRANCH: $CI_COMMIT_REF_NAME  # Сохраняет как job variable
+  trigger:
+    include:
+      - local: path/to/child-pipeline.yml
+```
+
+⚠️ **Важно:** Не используйте для masked variables в multi-project pipelines (masking не передаётся).
+
+### 4. Inputs keyword (рекомендуется для GitLab 17+)
+
+**Преимущества перед `variables`:**
+- Type checking
+- Validation через `options`
+- Descriptions
+- Default values
+- Безопасность (защита от инъекций)
+
+**В target configuration:**
+```yaml
+# child-pipeline.yml
+spec:
+  inputs:
+    environment:
+      description: "Окружение для деплоя"
+      options: [staging, production]
+      default: staging
+    version:
+      type: string
+      description: "Версия приложения"
+      default: "1.0.0"
+    enable_tests:
+      type: boolean
+      description: "Запускать ли тесты"
+      default: true
+```
+
+**При запуске:**
+```yaml
+staging:
+  trigger:
+    include:
+      - local: path/to/child-pipeline.yml
+    inputs:
+      environment: staging
+      version: "1.0.0"
+      enable_tests: true
+
+production:
+  trigger:
+    include:
+      - local: path/to/child-pipeline.yml
+    inputs:
+      environment: production
+      version: "1.0.0"
+      enable_tests: false
+```
+
+**Использование в triggered pipeline:**
+```yaml
+# В child-pipeline.yml
+deploy_job:
+  script:
+    - echo "Deploying version $[[ inputs.version ]] to $[[ inputs.environment ]]"
+    - |
+      if [[ "$[[ inputs.enable_tests ]]" == "true" ]]; then
+        echo "Running tests..."
+        npm test
+      fi
+```
+
+**Миграция с variables на inputs:**
+
+| Variables | Inputs |
+| :--- | :--- |
+| `$VARIABLE_NAME` | `$[[ inputs.VARIABLE_NAME ]]` |
+| Нет валидации типов | Строгая типизация (string, boolean, number) |
+| Нет проверки значений | `options` для допустимых значений |
+| Может быть переопределена | Защищено от несанкционированного изменения |
+
+### 5. Dotenv variable inheritance (Premium/Ultimate)
+
+```yaml
+# Upstream
+build_vars:
+  stage: build
+  script:
+    - echo "BUILD_VERSION=hello" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+deploy:
+  stage: deploy
+  trigger: my/downstream_project
+
+# Downstream
+test:
+  stage: test
+  script:
+    - echo $BUILD_VERSION
+  needs:
+    - project: my/upstream_project
+      job: build_vars
+      ref: master
+      artifacts: true
+```
 
 ### Практические сценарии
 
@@ -181,6 +393,32 @@ run-generated-pipeline:
 * **Сложная логика выбора заданий:** Идеально для монорепозиториев, где нужно запускать только релевантные тесты или сборки.
 * **Гибкое масштабирование:** Генерация множества однотипных заданий (для разных окружений, версий) без дублирования кода.
 * **Конфигурация на основе данных:** Когда структура пайплайна зависит от внешних данных или файлов конфигурации проекта.
+
+#### Best Practices (2025-2026)
+
+1. **Используйте `inputs` вместо `variables` (GitLab 17+)**
+   - Типизированные параметры с валидацией
+   - Защита от инъекций и несанкционированного изменения
+
+2. **`strategy: depend` для отчётов**
+   - Обязательно для unit-тестов, code quality, security отчётов
+   - Гарантирует отображение в Merge Request
+
+3. **`strategy: mirror` для синхронизации статусов**
+   - Отображает реальный статус downstream в trigger job
+   - Авто-отмена при провале child pipeline
+
+4. **Версионирование шаблонов**
+   - Используйте `ref: 'v1.2.3'` для include из других проектов
+   - Избегайте поломки при обновлении шаблонов
+
+5. **Минимальные права для multi-project pipelines**
+   - Проверяйте права пользователя на запуск в downstream-проекте
+   - Используйте Deploy Tokens с ограниченными правами
+
+6. **Ограничение вложенности**
+   - Parent-child: максимум 2 уровня
+   - Multi-project: без ограничений, но следите за сложностью
 
 ### Связанные документы
 
