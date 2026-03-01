@@ -25,7 +25,7 @@
 
 ```dockerfile
 # --- Этап 1: Сборка гемов (builder) ---
-FROM ruby:3.4.6-slim-bookworm AS builder
+FROM ruby:3.4.2-slim-bookworm AS builder
 
 # Устанавливаем build-essential для компиляции "нативных" гемов
 RUN apt-get update -qq && \
@@ -44,7 +44,7 @@ RUN bundle config set --local without 'development test' && \
     bundle install --jobs $(nproc) --retry 3
 
 # --- Этап 2: Финальный образ ---
-FROM ruby:3.4.6-slim-bookworm
+FROM ruby:3.4.2-slim-bookworm
 
 # Устанавливаем ТОЛЬКО runtime-зависимости
 RUN apt-get update -qq && \

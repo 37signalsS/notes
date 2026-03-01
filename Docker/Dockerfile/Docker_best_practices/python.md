@@ -46,7 +46,6 @@
 ```dockerfile
 # Используем slim-образ как рекомендованную основу
 FROM python:3.13-slim
-LABEL maintainer="your-name@example.com"
 
 # Устанавливаем переменные окружения
 # PYTHONDONTWRITEBYTECODE: не создает .pyc файлы
@@ -145,3 +144,9 @@ CMD ["start"]
 
 - `docker run my-app` (запустит веб-сервер)
 - `docker run -e MODE=migrate my-app` (выполнит миграции)
+
+## Дополнительная информация
+
+- **[Многоэтапные сборки](./build_optimization.md):** Детальное описание техники multi-stage сборок.
+- **[Безопасность в Dockerfile](./security.md):** Создание непривилегированных пользователей и минимизация поверхности атаки.
+- **[Контекст сборки](../dockerfile_build_context.md):** Правила управления контекстом сборки.

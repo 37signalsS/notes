@@ -1,40 +1,57 @@
-# Инструкции Dockerfile: Переменные
+# Инструкции Dockerfile: Переменные Окружения и Аргументы
 
-### Переменные
+## Определения
 
-#### `ARG` и `ENV`
+**`ARG` (Argument)** — переменная времени сборки, доступная только в процессе `docker build`. Не сохраняется в конечном образе.
 
-- **`ARG` (переменная времени сборки):**
-  - Доступна **только** в процессе сборки образа (`docker build`).
-  - Не сохраняется в конечном образе и недоступна для запущенного контейнера.
-  - Используется для параметризации сборки: передачи версий, токенов или для включения отладочных инструментов.
-  - Пример:
+**`ENV` (Environment)** — переменная окружения, доступная как при сборке, так и во время выполнения контейнера. Сохраняется в образе.
 
-    ```dockerfile
-    ARG APP_VERSION=1.0
-    RUN echo "Собирается версия: $APP_VERSION"
-    ```
+## Основные концепции
 
-    Переопределить значение можно командой: `docker build --build-arg APP_VERSION=2.1 .`
+### `ARG`
 
-- **`ENV` (переменная среды выполнения):**
-  - Устанавливает переменные окружения, которые доступны как во время сборки, так и внутри запущенного контейнера.
-  - Сохраняется в образе.
-  - Используется для конфигурации приложения: URL базы данных, порты, ключи API.
-  - **Важно:** Не используйте `ENV` для секретов в production. Для этого применяйте механизм [Docker Secrets](../../Docker_swarm/swarm_secrets_configs.md) или внешние хранилища секретов.
+- Доступна **только** в процессе сборки образа (`docker build`)
+- Не сохраняется в конечном образе
+- Используется для параметризации сборки: версии пакетов, токены для доступа к приватным репозиториям
 
-> Подробнее о безопасном управлении secrets см. **[Управление секретами](../../Docker_security/secrets_management.md)**
-  - Пример:
+**Синтаксис:**
 
-    ```dockerfile
-    ENV DB_HOST=localhost
-    CMD ["echo", "Подключение к $DB_HOST"]
-    ```
+```dockerfile
+ARG APP_VERSION=1.0
+RUN echo "Собирается версия: $APP_VERSION"
+```
 
-    Переопределить значение можно командой: `docker run -e DB_HOST=db.example.com my-image`
+**Переопределение при сборке:**
 
-**Совместное использование:**
-Часто `ARG` используют для установки значения `ENV` по умолчанию.
+```bash
+docker build --build-arg APP_VERSION=2.1 .
+```
+
+> **Безопасность:** Не используйте `ARG` для секретов в production. Значения `ARG` видны в истории образа через `docker history`.
+
+### `ENV`
+
+- Устанавливает переменные окружения, доступные как при сборке, так и в запущенном контейторе
+- Сохраняется в образе и доступно через `docker inspect`
+- Используется для конфигурации приложения: URL БД, порты, пути
+
+**Синтаксис:**
+
+```dockerfile
+ENV DB_HOST=localhost
+ENV DB_PORT=5432
+CMD ["echo", "Подключение к $DB_HOST:$DB_PORT"]
+```
+
+**Переопределение при запуске:**
+
+```bash
+docker run -e DB_HOST=db.example.com my-image
+```
+
+### Совместное использование `ARG` и `ENV`
+
+Часто `ARG` используют для установки значения `ENV` по умолчанию:
 
 ```dockerfile
 ARG APP_PORT=8080
@@ -42,8 +59,50 @@ ENV PORT=${APP_PORT}
 EXPOSE ${PORT}
 ```
 
-#### `ENV PYTHONUNBUFFERED=1`
+### `ENV PYTHONUNBUFFERED=1`
 
-Эта инструкция особенно важна для Python-приложений. По умолчанию Python буферизирует потоки `stdout` и `stderr`. Это означает, что данные, выводимые вашим приложением (например, через `print()`), не сразу появляются в логах Docker. Они накапливаются в буфере и выводятся только при его заполнении или при завершении процесса.
+Для Python-приложений. По умолчанию Python буферизирует потоки `stdout` и `stderr`. Установка `ENV PYTHONUNBUFFERED=1` отключает буферизацию, и вывод сразу направляется в логи контейнера.
 
-Установка `ENV PYTHONUNBUFFERED=1` отключает эту буферизацию, и все выводы сразу направляются в логи контейнера. Это критически важно для отладки, так как позволяет видеть логи в реальном времени.
+## Практические сценарии
+
+### Сценарий 1: Параметризация версии приложения
+
+```dockerfile
+ARG NODE_VERSION=20-alpine
+FROM node:${NODE_VERSION}
+ARG APP_VERSION=1.0.0
+ENV APP_VERSION=${APP_VERSION}
+LABEL version="${APP_VERSION}"
+```
+
+### Сценарий 2: Безопасная передача секретов на этапе сборки
+
+> Для секретов используйте `--mount=type=secret` (BuildKit), а не `ARG`
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM alpine
+RUN --mount=type=secret,id=npm_token \
+    NPM_TOKEN=$(cat /run/secrets/npm_token) && \
+    echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+```
+
+### Сценарий 3: Конфигурация приложения через ENV
+
+```dockerfile
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+CMD ["python", "app.py"]
+```
+
+## Дополнительная информация
+
+- Не используйте `ENV` для секретов в production — применяйте **[Docker Secrets](../../Docker_security/secrets_management.md)** или внешние хранилища (Vault)
+- Подробнее о безопасном управлении secrets см. **[Управление секретами](../../Docker_security/secrets_management.md)**
+- Переменные окружения можно переопределить при запуске: `docker run -e VAR=value`
+- Полезные переменные для Python: `PYTHONUNBUFFERED`, `PYTHONDONTWRITEBYTECODE`, `PYTHONPATH`

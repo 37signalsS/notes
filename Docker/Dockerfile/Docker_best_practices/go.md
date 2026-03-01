@@ -25,7 +25,7 @@
 
 ```dockerfile
 # --- Этап 1: Сборка бинарного файла (builder) ---
-FROM golang:1.25.1-alpine AS builder
+FROM golang:1.26-alpine AS builder
 # Устанавливаем git для скачивания приватных модулей, если нужно
 RUN apk update && apk add --no-cache git
 # Создаем непривилегированного пользователя
@@ -60,7 +60,7 @@ ENTRYPOINT ["/main"]
 
 ```dockerfile
 # --- Этап 1: Сборка ---
-FROM golang:1.25.1-bookworm as builder
+FROM golang:1.26-bookworm as builder
 WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o my-app .
@@ -78,7 +78,7 @@ CMD ["/my-app"]
 
 ```dockerfile
 # --- Этап 1: Сборка ---
-FROM golang:1.25.1 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download

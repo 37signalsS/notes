@@ -1,24 +1,38 @@
 # Инструкции Dockerfile: Практические Сценарии
 
-## Практические сценарии
+## Определения
 
-### Переопределение `ENTRYPOINT` и `CMD`
+**Приоритет команд при запуске контейнера** — порядок, в котором `docker run` и `docker-compose.yml` переопределяют инструкции из `Dockerfile`.
+
+## Основные концепции
+
+### Приоритет переопределения
+
+| Источник | ENTRYPOINT | CMD |
+| :--- | :--- | :--- |
+| Dockerfile | `ENTRYPOINT ["/app/run"]` | `CMD ["--default"]` |
+| docker-compose.yml / docker run | `entrypoint: /app/debug` | `command: --prod` |
+| **Результат** | Переопределяется | Переопределяется |
 
 **Золотое правило:** `docker-compose.yml` (или `docker run`) всегда имеет приоритет над `Dockerfile`.
 
-1. `command:` в `compose.yml` (или аргументы в `docker run`) **заменяет** `CMD` из `Dockerfile`.
-2. `entrypoint:` в `compose.yml` (или `--entrypoint` в `docker run`) **заменяет** `ENTRYPOINT` из `Dockerfile`.
+1. `command:` в `compose.yml` (или аргументы в `docker run`) **заменяет** `CMD` из `Dockerfile`
+2. `entrypoint:` в `compose.yml` (или `--entrypoint` в `docker run`) **заменяет** `ENTRYPOINT` из `Dockerfile`
 
-| В `Dockerfile` | В `docker-compose.yml` / `docker run` | Что в итоге запустится |
+## Практические сценарии
+
+### Сценарий 1: Базовая работа ENTRYPOINT и CMD
+
+| В Dockerfile | В docker-compose / docker run | Итоговая команда |
 | :--- | :--- | :--- |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | (ничего не указано) | `/app/run --default`<br>*(Используются оба значения из Dockerfile)* |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `command: --prod` | `/app/run --prod`<br>*(**`command` заменил `CMD`**. ENTRYPOINT остался)* |
-| `ENTRYPOINT ["/app/run"]` | `entrypoint: /app/debug` | `/app/debug`<br>*(entrypoint заменил ENTRYPOINT. CMD исчез)* |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `entrypoint: /app/debug`<br>`command: --verbose` | `/app/g/debug --verbose`<br>*(Заменились и ENTRYPOINT, и CMD)* |
+| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | (ничего) | `/app/run --default` |
+| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `command: --prod` | `/app/run --prod` |
+| `ENTRYPOINT ["/app/run"]` | `entrypoint: /app/debug` | `/app/debug` |
+| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `entrypoint: /app/debug`<br>`command: --verbose` | `/app/debug --verbose` |
 
-**Практический пример**
+### Сценарий 2: Переопределение CMD для ping
 
-Допустим, у вас есть `Dockerfile`:
+**Dockerfile:**
 
 ```dockerfile
 FROM alpine:3.20.0
@@ -26,9 +40,9 @@ ENTRYPOINT ["ping", "-c", "3"]
 CMD ["localhost"]
 ```
 
-По умолчанию этот контейнер будет пинговать `localhost`.
+По умолчанию: `ping -c 3 localhost`
 
-Теперь в `docker-compose.yml` вы хотите пинговать другой хост:
+**docker-compose.yml:**
 
 ```yaml
 services:
@@ -37,4 +51,19 @@ services:
     command: google.com
 ```
 
-Когда вы запустите `docker compose up`, выполнится команда `ping -c 3 google.com`, потому что `command: google.com` из `compose.yml` заменил `CMD ["localhost"]` из `Dockerfile`.
+**Результат:** `ping -c 3 google.com`
+
+### Сценарий 3: Отладка с переопределением ENTRYPOINT
+
+```yaml
+services:
+  app:
+    build: .
+    entrypoint: /bin/sh
+    command: -c "echo debug && tail -f /dev/null"
+```
+
+## Дополнительная информация
+
+- Подробнее о формах записи (shell vs exec) см. **[Выполнение при запуске](./runtime_execution.md)**
+- Подробнее о docker-compose см. **[Docker Compose](../Docker_compose/docker_compose_file_example.md)**
