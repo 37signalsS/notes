@@ -37,10 +37,12 @@ deploy_review:
   script:
     - ./deploy-review.sh
   environment:
-    name: review/$CI_COMMIT_REF_SLUG # Имя уникально для ветки
+    name: review/$CI_COMMIT_REF_SLUG # Имя уникально для ветки ($CI_COMMIT_REF_SLUG - безопасное для URL имя ветки)
     url: https://$CI_COMMIT_REF_SLUG.example.com
     on_stop: stop_review_app # Указание задачи для очистки
     auto_stop_in: 1 day      # Автоматическое уничтожение через 1 день
+  rules:
+    - if: $CI_MERGE_REQUEST_ID # Создавать окружение только для Merge Requests
 ```
 
 #### Уничтожение динамических окружений
@@ -112,68 +114,36 @@ stages:
 
 rollback_prod:
   stage: rollback
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual # Запускается только вручную из UI пайплайна
-  environment:
-    name: production
-  image:
-    name: centosadmin/kubernetes-helm:3.1.2
-    entrypoint: [""]
+  # Рекомендуемый образ, содержащий kubectl и helm. Версию следует закрепить.
+  image: alpine/k8s:1.29.0
   script:
     - echo "Rolling back production environment..."
+    # $CI_PROJECT_PATH_SLUG - безопасное для URL имя проекта (group/project-name)
+    # $CI_ENVIRONMENT_NAME - имя окружения, 'production' в данном случае
     - >
       helm rollback ${CI_PROJECT_PATH_SLUG}
       --namespace ${CI_PROJECT_PATH_SLUG}-${CI_ENVIRONMENT_NAME}
       --wait --timeout 300s
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual # Запускается только вручную из UI пайплайна
 ```
 
-#### Сценарий 2: Настройка Review Apps с Kubernetes
+#### Сценарий 2: Концепция Review Apps с Kubernetes
 
-Это пошаговое руководство демонстрирует настройку динамических окружений с помощью оператора в Kubernetes.
+Настройка динамических окружений (Review Apps) в Kubernetes является мощной практикой, позволяющей тестировать изменения в изолированной среде для каждого Merge Request.
 
-##### Шаг 1: Подготовка кластера и развертывание Оператора
+**Высокоуровневый процесс выглядит так:**
+1. Для каждого MR создается уникальный `namespace` в Kubernetes.
+2. В этот `namespace` развертывается приложение с использованием Helm или Kustomize. Имя релиза и `hostname` в Ingress также делаются уникальными на основе имени ветки или ID мержа.
+3. После слияния или закрытия MR соответствующий `namespace` и все его ресурсы автоматически удаляются.
 
-Оператору, управляющему динамическими окружениями, нужен доступ к API Kubernetes.
+Этот процесс обычно автоматизируется с помощью **оператора Kubernetes** или набора скриптов, которые вызываются из задач `deploy_review` и `stop_review_app`.
 
-1. **Создайте `ServiceAccount` и `ClusterRoleBinding`:**
-
-    ```bash
-    kubectl create namespace users
-    kubectl create serviceaccount deploy-admin -n users
-    kubectl create clusterrolebinding deploy-admin-binding --clusterrole=cluster-admin --serviceaccount=users:deploy-admin
-    ```
-
-2. **Получите токен доступа:**
-
-    ```bash
-    SECRET_NAME=$(kubectl get sa deploy-admin -n users -o jsonpath='{.secrets[0].name}')
-    KUBE_TOKEN=$(kubectl get secret ${SECRET_NAME} -n users -o jsonpath='{.data.token}' | base64 --decode)
-    echo $KUBE_TOKEN
-    ```
-
-3. **Настройте и запустите пайплайн Оператора:**
-    - Форкните репозиторий оператора в свой GitLab.
-    - В `Settings > CI/CD > Variables` проекта добавьте переменные `KUBE_URL` (URL API-сервера Kubernetes) и `KUBE_TOKEN` (полученный токен).
-    - Запустите пайплайн для ветки `main`, чтобы развернуть оператор.
-
-##### Шаг 2: Настройка основного приложения
-
-1. **Создайте токены доступа:**
-    - **GitLab API Access Token:** `User Settings > Access Tokens` с правами `api`.
-    - **Container Registry Deploy Token:** `Project Settings > Repository > Deploy Tokens` с правами `read_registry` и `write_registry`.
-2. **Настройте переменные CI/CD в проекте приложения:**
-    - `KUBE_URL` и `KUBE_TOKEN` (из предыдущего шага).
-    - `GITLAB_API_TOKEN` (созданный токен API).
-    - `CR_DEPLOY_USER` и `CR_DEPLOY_PASSWORD` (из Deploy Token).
-    - Рекомендуется хранить секреты в зашифрованном виде, например, с помощью `ansible-vault` и передавать их как переменные типа `File`.
-
-##### Шаг 3: Жизненный цикл Review App
-
-1. Создайте `feature-ветку` и **Merge Request (MR)** в `main`.
-2. Пайплайн автоматически запустит задачу `deploy_review`, которая через оператор создаст изолированное окружение.
-3. В виджете MR появится ссылка **"View app"** для тестирования.
-4. Для удаления окружения нажмите кнопку **Stop** (■) на странице **Deployments > Environments**. Это запустит задачу, указанную в `on_stop`, которая очистит все ресурсы в Kubernetes.
+> Подробное пошаговое руководство по настройке Review Apps с Kubernetes доступно в документе:
+> **[Настройка динамических окружений (Review Apps) с Kubernetes](../Tutorials/kubernetes_review_apps.md)**
 
 ### Дополнительная информация
 
@@ -190,6 +160,8 @@ rollback_prod:
 ### Связанные документы
 
 - **[Основы GitLab CI/CD](./gitlab_ci_basics.md)** — базовые концепции (Pipeline, Stage, Job).
+- **[Переменные и управление секретами](./gitlab_ci_variables_secrets.md)** — работа с переменными окружения.
 - **[Продвинутые рабочие процессы](../Advanced/gitlab_ci_advanced_workflow.md)** — правила `rules` и оптимизация пайплайнов.
 - **[Переиспользуемые пайплайны](../Reusable_Pipelines/overview.md)** — использование `extends` и `include` для избежания дублирования.
-- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — развертывание в Kubernetes.
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — общее руководство по развертыванию в Kubernetes.
+- **[Настройка Review Apps с Kubernetes](../Tutorials/kubernetes_review_apps.md)** — пошаговое руководство.
