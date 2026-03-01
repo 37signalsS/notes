@@ -5,9 +5,10 @@
 ## Определения
 
 * **Маппинг (Mapping)**: Схема данных для индекса, определяющая поля, их типы (`text`, `keyword`, `date` и т.д.) и способ индексации. Аналог `CREATE TABLE` в SQL.
-* **Шаблон индекса (Index Template)**: Набор преднастроенных параметров (`settings`) и маппингов (`mappings`), который автоматически применяется к новым индексам по шаблону имени (`logs-*`).
+* **Поток данных (Data Stream)**: Абстракция для управления данными временных рядов (логи, метрики), которая автоматически работает с ILM для ротации и управления служебными индексами.
+* **Шаблон индекса (Index Template)**: Набор преднастроенных параметров (`settings`) и маппингов (`mappings`), который автоматически применяется к новым индексам или потокам данных по шаблону имени (`logs-*`).
+* **Компонентный шаблон (Component Template)**: Переиспользуемый блок конфигурации (маппинги, настройки, алиасы), который можно включать в несколько шаблонов индексов.
 * **ILM (Index Lifecycle Management)**: Политика управления жизненным циклом индекса, которая автоматизирует операции ротации (`rollover`), перемещения данных между стадиями хранения (hot/warm/cold) и удаления.
-* **Алиас (Alias)**: Стабильное имя (указатель), которое может ссылаться на один или несколько индексов. Ключевой инструмент для бесшовного переключения между индексами.
 
 ## Основные концепции
 
@@ -30,33 +31,31 @@
 
 ## Практические сценарии
 
-### Создание индекса с явным маппингом
+### Современный подход: Data Streams, ILM и шаблоны
 
-Пример создания индекса для логов с определением типов полей, включая вложенные.
+Для данных временных рядов, таких как логи или метрики, современный подход заключается в использовании потоков данных (Data Streams), которые бесшовно интегрируются с ILM и шаблонами.
+
+**Шаг 1: Создание политики ILM**
+
+Политика будет управлять жизненным циклом индексов в потоке данных: ротация при достижении 50 ГБ или через 7 дней, и удаление через 30 дней.
 
 ```bash
-curl -X PUT 'http://localhost:9200/logs-2025.10.10' -H 'Content-Type: application/json' -d '{
-  "settings": {
-    "number_of_shards": 3,
-    "number_of_replicas": 1
-  },
-  "mappings": {
-    "dynamic": "strict",
-    "properties": {
-      "@timestamp": { "type": "date" },
-      "message":    { "type": "text", "analyzer": "standard" },
-      "level":      { "type": "keyword" },
-      "user": {
-        "type": "text",
-        "fields": {
-          "keyword": { "type": "keyword", "ignore_above": 256 }
+curl -X PUT "localhost:9200/_ilm/policy/logs-policy" -H 'Content-Type: application/json' -d'
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "actions": {
+          "rollover": {
+            "max_size": "50gb",
+            "max_age": "7d"
+          }
         }
       },
-      "geo": {
-        "properties": {
-          "ip":   { "type": "ip" },
-          "lat":  { "type": "float" },
-          "lon":  { "type": "float" }
+      "delete": {
+        "min_age": "30d",
+        "actions": {
+          "delete": {}
         }
       }
     }
@@ -64,67 +63,69 @@ curl -X PUT 'http://localhost:9200/logs-2025.10.10' -H 'Content-Type: applicatio
 }'
 ```
 
-### Шаблоны индексов (Index Templates)
+**Шаг 2: Создание компонентного шаблона для маппингов**
 
-Composable templates позволяют применять стандартные настройки, маппинги и алиасы ко всем новым индексам, соответствующим шаблону `logs-*`.
+Это позволяет переиспользовать схему данных в разных потоках.
 
 ```bash
-curl -X PUT 'http://localhost:9200/_index_template/logs-template' 
--H 'Content-Type: application/json' -d '{
-  "index_patterns": ["logs-*"],
+curl -X PUT "localhost:9200/_component_template/logs-mappings" -H 'Content-Type: application/json' -d'
+{
   "template": {
-    "settings": { "number_of_shards": 3, "number_of_replicas": 1 },
     "mappings": {
       "dynamic": "strict",
-      "dynamic_templates": [{
-        "strings_as_keyword": {
-          "match_mapping_type": "string",
-          "mapping": { "type": "keyword", "ignore_above": 256 }
-        }
-      }],
-      "properties": { "@timestamp": { "type": "date" } }
-    },
-    "aliases": { "logs-read": {}, "logs-write": {} }
-  },
-  "priority": 100
-}'
-```
-
-### Управление жизненным циклом (ILM) с ротацией (Rollover)
-
-Политика ILM автоматизирует ротацию и удаление индексов.
-
-1. **Создание политики**:
-
-    ```bash
-    curl -X PUT 'http://localhost:9200/_ilm/policy/logs-policy' -H 'Content-Type: application/json' -d '{
-      "policy": {
-        "phases": {
-          "hot": { "actions": { "rollover": { "max_size": "50gb", "max_age": "7d" } } },
-          "delete": { "min_age": "30d", "actions": { "delete": {} } }
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "message": { "type": "text" },
+        "level": { "type": "keyword" },
+        "user": {
+          "properties": {
+            "id": { "type": "keyword" }
+          }
         }
       }
     }
-    ```
+  }
+}'
+```
 
-2. **Создание первого индекса для записи**:
+**Шаг 3: Создание главного шаблона индекса для потока данных**
 
-    ```bash
-    curl -X PUT 'http://localhost:9200/logs-000001' -H 'Content-Type: application/json' -d '{
-      "aliases": { "logs-write": { "is_write_index": true }, "logs-read": {} }
-    }'
-    ```
+Этот шаблон связывает всё вместе: он указывает, что все индексы, соответствующие `logs-*`, должны быть частью потока данных, использовать наш компонентный шаблон для маппинга и управляться политикой ILM.
 
-    *Теперь все данные пишутся в алиас `logs-write`. ILM автоматически создаст новый индекс `logs-000002` и переключит на него алиас при достижении условий `rollover`.*
+```bash
+curl -X PUT "localhost:9200/_index_template/logs-template" -H 'Content-Type: application/json' -d'
+{
+  "index_patterns": ["logs-*"],
+  "data_stream": {},
+  "composed_of": ["logs-mappings"],
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "logs-policy"
+    }
+  },
+  "priority": 200
+}'
+```
+
+**Шаг 4: Индексация данных**
+
+Теперь просто отправляйте документы напрямую в поток данных `logs-my-service`. Elasticsearch автоматически создаст первый служебный индекс (например, `.ds-logs-my-service-2024.01.01-000001`) и будет управлять его ротацией в соответствии с политикой ILM.
+
+```bash
+curl -X POST "localhost:9200/logs-my-service/_bulk" -H 'Content-Type: application/json' -d'
+{ "create": {} }
+{ "@timestamp": "2024-01-01T12:00:00Z", "level": "info", "message": "User logged in", "user": { "id": "user123" } }
+'
+```
 
 ### Изменение существующего маппинга
 
-Изменять тип существующего поля **нельзя**. Процедура миграции схемы:
+Изменять тип существующего поля в индексах, которые уже содержат данные, **нельзя**. Для потоков данных процедура миграции схемы выглядит так:
 
-1. Создать новый шаблон с корректным маппингом.
-2. Создать новый индекс на основе этого шаблона.
-3. Запустить **reindex API** для копирования и преобразования данных из старого индекса в новый.
-4. Атомарно переключить алиас чтения/записи со старого индекса на новый.
+1. Создать новый компонентный шаблон с обновленным маппингом (v2).
+2. Обновить главный шаблон индекса, чтобы он использовал новый компонентный шаблон v2.
+3. Выполнить операцию `rollover` для потока данных. Это создаст новый служебный индекс с v2-маппингом. Новые данные будут писаться в него.
+4. Старые данные остаются в индексах с v1-маппингом. При необходимости их можно переиндексировать в новый поток данных с помощью **reindex API**.
 
 ## Дополнительная информация
 
