@@ -1,5 +1,11 @@
 # Настройка Grafana с помощью Docker Compose
 
+> **Навигация:**
+> - [Обзор Grafana](../grafana_overview.md) — основная информация о платформе
+> - [Провиженинг](../grafana_provisioning.md) — управление конфигурацией как код
+> - [Источники данных](../grafana_datasources.md) — подключение систем мониторинга
+> - [Установка через Helm](./grafana_helm_installation.md) — для Kubernetes
+
 ## Определения
 
 - **Grafana**: Открытая платформа для аналитики и интерактивной визуализации данных из различных источников ([Prometheus](../overview.md), [Loki](../../Loki/loki_overview.md), InfluxDB и др.).
@@ -54,31 +60,74 @@ monitoring/
 
 services:
   prometheus:
-    image: prom/prometheus
-    container_name: ${PROJECT_NAME}-prometheus
+    image: prom/prometheus:v3.0.0
+    container_name: ${PROJECT_NAME:-monitoring}-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
     volumes:
       - ./prometheus:/etc/prometheus
       - prom_data:/prometheus
     ports:
       - "9090:9090"
-    restart: always
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring
 
   grafana:
-    image: grafana/grafana
-    container_name: ${PROJECT_NAME}-grafana
+    image: grafana/grafana:11.4.0
+    container_name: ${PROJECT_NAME:-monitoring}-grafana
+    user: "472:472"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_LOG_LEVEL=info
+      - GF_LOG_MODE=console file
+      - GF_LOG_FILE_LEVEL=info
     ports:
       - "3000:3000"
-    restart: always
+    restart: unless-stopped
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - monitoring
+    # Ограничение ресурсов (опционально)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.5'
+    #       memory: 512M
 
 volumes:
   prom_data:
+  grafana_data:
+
+networks:
+  monitoring:
+    driver: bridge
 ```
+
+> **Примечания:**
+> - `${PROJECT_NAME:-monitoring}` — использует значение переменной или `monitoring` по умолчанию
+> - `${GRAFANA_ADMIN_PASSWORD:-admin}` — пароль из переменной окружения или `admin` по умолчанию
+> - **Health checks** обеспечивают проверку работоспособности сервисов
+> - **Сеть `monitoring`** изолирует трафик мониторинга
 
 ### Шаг 2: Провиженинг источника данных
 
@@ -120,8 +169,57 @@ datasources:
 
 ## Дополнительная информация
 
+### Security Checklist
+
+- [ ] **Смените пароль администратора** при первом входе
+- [ ] **Используйте переменные окружения** для чувствительных данных (`.env` файл)
+- [ ] **Запускайте от непривилегированного пользователя** (`user: "472:472"`)
+- [ ] **Ограничьте доступ к портам** через firewall или binding на localhost
+- [ ] **Включите HTTPS** для production (reverse proxy с SSL)
+- [ ] **Настройте аутентификацию** через OAuth/LDAP (см. [управление пользователями](../grafana_user_management_and_authentication.md))
+
+### Troubleshooting
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| **Контейнер не запускается** | Ошибка прав доступа к volumes | `chmod -R 472:472 ./grafana` |
+| **Нет связи с Prometheus** | Сервисы в разных сетях | Проверьте `networks` в docker-compose.yml |
+| **Datasource не работает** | Неправильный URL | Используйте `http://prometheus:9090` (имя сервиса) |
+| **Grafana теряет данные** | Нет persistent volume | Проверьте `grafana_data` volume |
+| **Высокое потребление памяти** | Много дашбордов/запросов | Увеличьте лимиты памяти или оптимизируйте запросы |
+
+**Полезные команды:**
+
+```bash
+# Просмотр логов
+docker compose logs -f grafana
+docker compose logs -f prometheus
+
+# Проверка статуса
+docker compose ps
+
+# Перезапуск сервиса
+docker compose restart grafana
+
+# Полная пересборка
+docker compose down && docker compose up -d
+
+# Проверка health
+curl http://localhost:3000/api/health
+curl http://localhost:9090/-/healthy
+```
+
+### Production Recommendations
+
 - **Безопасность**: Всегда меняйте пароль администратора по умолчанию при первом входе.
-- **Production**: Для производственной среды рекомендуется использовать фиксированные версии образов (например, `grafana/grafana:10.4.2` вместо `grafana/grafana` или `grafana/grafana:latest`).
-- **Расширение стека**:
-  - Для сбора логов вы можете добавить в стек [Loki](../../Loki/docker_compose_setup.md).
-  - Для обеспечения отказоустойчивости изучите настройку [высокой доступности (HA)](../high_availability.md).
+- **Version pinning**: Для производственной среды используйте фиксированные версии образов (например, `grafana/grafana:11.4.0` вместо `grafana/grafana` или `grafana/grafana:latest`).
+- **Backup**: Настройте регулярный бэкап директории `/var/lib/grafana` (дашборды, БД) и файлов провиженинга.
+- **Monitoring**: Разверните мониторинг для самой Grafana (метрики, логи).
+- **High Availability**: Для HA-конфигурации используйте внешнюю БД (PostgreSQL/MySQL) и балансировщик. См. [Высокая доступность](../high_availability.md).
+
+### Расширение стека
+
+- **Сбор логов**: Добавьте [Loki](../../Loki/docker_compose_setup.md) для агрегации логов.
+- **Трассировки**: Добавьте [Tempo](../../Tempo/tempo_overview.md) для распределенных трассировок.
+- **Отказоустойчивость**: Изучите настройку [высокой доступности (HA)](../high_availability.md).
+- **Алертинг**: Настройте [оповещения](../grafana_alerting.md) для уведомления об инцидентах.
