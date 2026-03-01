@@ -51,7 +51,7 @@ BuildKit предоставляет автоматические перемен�
 ```dockerfile
 # syntax=docker/dockerfile:1.4
 # Этап 1: Сборщик. Используем платформу ХОСТА ($BUILDPLATFORM) для скорости.
-FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 # TARGETOS и TARGETARCH автоматически установлены BuildKit
 ARG TARGETOS TARGETARCH
 WORKDIR /app
@@ -60,7 +60,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/myapp .
 
 # Этап 2: Финальный образ. Обязательно используем ЦЕЛЕВУЮ платформу.
-FROM --platform=$TARGETPLATFORM alpine:3.18
+FROM --platform=$TARGETPLATFORM alpine:3.23
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/myapp /usr/local/bin/myapp
 USER nobody

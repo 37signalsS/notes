@@ -33,7 +33,7 @@ build-image:
   stage: build
   image:
     # Рекомендуется использовать debug-образ, так как он содержит shell
-    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    name: gcr.io/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   script:
     # 1. Создание файла конфигурации для аутентификации в реестре
@@ -62,7 +62,7 @@ build-image:
 build-custom:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    name: gcr.io/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   script:
     # 1. Аутентификация в приватном реестре
@@ -94,7 +94,7 @@ build-custom:
 build-image-with-cache:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    name: gcr.io/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json

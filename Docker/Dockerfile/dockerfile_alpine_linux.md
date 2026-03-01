@@ -94,3 +94,4 @@ docker build --build-arg TEMP_BUILD_DEPS="git curl" .
 ### Дополнительная информация
 
 - Подробное сравнение `glibc` и `musl` доступно в документе **[Glibc vs Musl](../../Linux/Core/glibc_vs_musl.md)**.
+- Принципы оптимизации размера образов описаны в разделе **[Сборка и оптимизация образов](../Docker_fs/images/docker_images_basics.md)**.
