@@ -178,5 +178,4 @@ git fsck --lost-found
 ## Дополнительная информация
 
 * Сравнение `merge` и `rebase`: [Ветвление в Git: Команды и Механизмы - Сравнение merge и rebase](./git_branching.md#Сравнение-merge-и-rebase)
-* Подробнее о `git reset`: [Git Basic Commands - git reset](../Git/git_basics.md#git-reset)
 * [TUI инструменты для визуализации истории](./git_tools.md)
