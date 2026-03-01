@@ -6,21 +6,23 @@
 
 **`values.yaml`** — основной конфигурационный файл Helm-чарта, который позволяет кастомизировать развертываемые компоненты и их параметры.
 
+> **Инструкции по установке:** Полные руководства по онлайн и оффлайн (air-gapped) установке см. в [Практических сценариях](./practical_scenarios.md).
+
 ## Базовые концепции
 
 В данном разделе рассматриваются ключевые параметры файла `values.yaml`, используемого для конфигурации стека мониторинга.
 
 ## Процесс установки
 
+**Рекомендация:** Всегда работайте с локальной копией чарта. Это позволяет версионировать конфигурацию (`values.yaml`) вместе с кодом вашего приложения и интегрировать развертывание в CI/CD.
+
 1. **Скачать чарт локально:**
 
     ```bash
     helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
     helm repo update
-    helm pull prometheus-community/prometheus --untar
+    helm pull prometheus-community/kube-prometheus-stack --untar
     ```
-
-    **Рекомендация:** Всегда работайте с локальной копией чарта. Это позволяет версионировать конфигурацию (`values.yaml`) вместе с кодом вашего приложения и интегрировать развертывание в CI/CD. Установка через CI/CD помогает избежать несоответствий версий и конфигураций, которые могут привести к болезненным проблемам при обновлении.
 
 2. **Создать PV (при необходимости):**
 
@@ -31,13 +33,13 @@
 3. **Установить чарт:**
 
     ```bash
-    helm install prometheus ./prometheus 
-      --namespace monitoring 
-      --create-namespace 
+    helm install prometheus ./kube-prometheus-stack \
+      --namespace monitoring \
+      --create-namespace \
       -f values.yaml
     ```
 
-    **Примечание:** Если при установке возникают ошибки, например, из-за пустых списков в `values.yaml` (как в строке 493 в примере), убедитесь, что все списки корректно заполнены или закомментированы. После успешной установки проверьте статус подов (`kubectl get pods -n monitoring`), PV/PVC (`kubectl get pv,pvc -n monitoring`) и Ingress (`kubectl get ingress -n monitoring`).
+**Примечание:** После установки проверьте статус подов (`kubectl get pods -n monitoring`), PV/PVC и Ingress.
 
 ## Дополнительная информация
 
@@ -46,3 +48,4 @@
 - [Helm](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
 - [Kubernetes](../../../Kubernetes/kubernetes_overview.md)
 - [Prometheus](overview.md)
+- [Практические сценарии установки](./practical_scenarios.md)

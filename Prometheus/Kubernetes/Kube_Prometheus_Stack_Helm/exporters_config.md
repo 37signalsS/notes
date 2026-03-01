@@ -1,5 +1,7 @@
 # Конфигурация экспортеров в kube-prometheus-stack
 
+> **Установка:** Инструкции по онлайн и оффлайн установке см. в [Практических сценариях](./practical_scenarios.md).
+
 ### Конфигурация `kube-state-metrics`
 
 * `kube-state-metrics.enabled`: `true`

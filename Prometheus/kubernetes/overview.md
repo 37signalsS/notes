@@ -4,6 +4,12 @@
 
 **`kube-prometheus-stack`** — это популярный [Helm-чарт](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md), который разворачивает полноценную систему мониторинга на базе Prometheus в кластере [Kubernetes](../../Kubernetes/kubernetes_overview.md). Он значительно упрощает установку, настройку и управление компонентами, необходимыми для сбора, визуализации и оповещения о метриках.
 
+**Онлайн установка** — стандартный метод с прямым доступом к публичным репозиториям.
+
+**Оффлайн установка (Air-gapped)** — развертывание в изолированных средах без доступа к интернету.
+
+> **Основная документация:** Детальные инструкции по установке см. в [kube-prometheus-stack: Практические сценарии](../Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+
 ## Основные концепции
 
 ### Экосистема Prometheus
@@ -66,7 +72,7 @@
     * **Prometheus:**
         * `retention`: Срок хранения метрик в локальном хранилище Prometheus (например, `31d`).
         * `requests` и `limits`: Запросы и лимиты ресурсов (CPU, Memory).
-        * `persistentVolume`: Конфигурация постоянного хранилища. Использует `volumeClaimTemplate` с указанием `storageClassName` (например, `DigitalOcean Block Storage`), `accessModes` (например, `ReadWriteOnce`) и `size`.
+        * `persistentVolume`: Конфигурация постоянного хранилища. Использует `volumeClaimTemplate` с указанием `storageClassName`, `accessModes` и `size`.
     * **Grafana:**
         * `root_url`: Важный параметр для генерации корректных ссылок в Grafana (например, для приглашений пользователей).
         * `adminPassword`: Пароль для пользователя `admin`. Рекомендуется использовать `Secret` для хранения.
@@ -76,22 +82,7 @@
     * **Node Exporter:**
         * `relabeling`: Настройка правил для обогащения метрик, например, для добавления читаемого имени узла (`node`) в метрики `node-exporter` (используя `__meta_kubernetes_pod_node_name`).
 
-### Доступ к веб-интерфейсам
-
-После установки для доступа к веб-интерфейсам Grafana или Prometheus можно использовать `kubectl port-forward`, если Ingress не настроен. Это эквивалентно SSH-туннелю и позволяет получить доступ к сервисам, работающим внутри кластера, через локальный порт на вашей машине.
-
-* **Для Grafana (порт 3000):**
-
-    ```bash
-    kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
-    ```
-
-    Затем откройте `http://localhost:3000` в браузере. (Имя сервиса может отличаться, например, `prometheus-grafana`).
-* **Для Prometheus (порт 9090):**
-
-    ```bash
-    kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090
-    ```
+> **Детали установки:** Полные инструкции по онлайн/оффлайн установке и настройке доступа см. в [Практических сценариях](../Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
 
 ### Мониторинг внешних ресурсов
 
