@@ -24,6 +24,8 @@
 docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
 ```
 
+> **Рекомендация:** Для production-систем используйте фиксированную версию вместо `latest` (например, `grafana/loki-docker-driver:3.2.0`), чтобы избежать непредсказуемых изменений при обновлении.
+
 - **`docker plugin install ...`**: Команда для установки плагинов в Docker.
 - **`grafana/loki-docker-driver:latest`**: Имя плагина. Для production-систем рекомендуется использовать фиксированную версию вместо `latest`.
 - **`--alias loki`**: Задает короткое и удобное имя (`loki`) для драйвера, которое будет использоваться в конфигурациях.

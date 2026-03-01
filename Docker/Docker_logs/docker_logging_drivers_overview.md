@@ -31,8 +31,10 @@
 ### Руководства по реализации
 
 * **Агентный сбор**: **[Агентный сбор логов Docker](./docker_agent_based_logging.md)**
-* **Прямая отправка**: **[Архитектура логирования Docker: Лог-драйверы](./docker_centralized_logging.md)**
-* **Локальные логи**: Для управления логами, которые хранятся локально (драйвер `json-file`), см. **[Управление ротацией логов Docker](./docker_log_rotation.md)**
+* **Прямая отправка**: **[Централизованное логирование: Лог-драйверы](./docker_centralized_logging.md)**
+* **Локальные логи и ротация**: **[Управление ротацией логов Docker](./docker_log_rotation.md)**
+* **Специфичный драйвер Loki**: **[Настройка лог-драйвера Grafana Loki](./loki_logging_driver_setup.md)**
+* **Multi-Process паттерн**: **[Паттерн Multi-Process в Docker](./docker_multi_process_logging.md)**
 
 ## Дополнительная информация
 
