@@ -2,6 +2,8 @@
 
 ## Шаг 3: Развертывание инфраструктурных сервисов (Traefik)
 
+> **Важно:** В примере используется Traefik v3.x. При миграции с v2.x учитыйте [отличия в конфигурации](https://doc.traefik.io/traefik/v3.0/migration/v2-to-v3/).
+
 В отдельном репозитории GitLab (`infra-stack`) создайте файлы для управления общими сервисами.
 
 1. **`docker-compose.yml` для Traefik и общей сети:**
@@ -11,21 +13,25 @@
 
     services:
       traefik:
-        image: traefik:v2.11
+        image: traefik:v3.6
         command:
           - "--log.level=INFO"
           - "--api.dashboard=true"
           - "--providers.docker=true"
           - "--providers.docker.exposedbydefault=false"
-          - "--providers.docker.swarmmode=true"
+          - "--providers.swarm=true"
+          - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
           - "--entrypoints.web.address=:80"
           - "--entrypoints.websecure.address=:443"
+          - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+          - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
           - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
           - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}" # Переменная GitLab
           - "--certificatesresolvers.myresolver.acme.storage=/certificates/acme.json"
         ports:
           - "80:80"
           - "443:443"
+          - "8080:8080"
         volumes:
           - "/var/run/docker.sock:/var/run/docker.sock:ro"
           - "traefik-certs:/certificates"

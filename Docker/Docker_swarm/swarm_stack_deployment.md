@@ -23,7 +23,7 @@ version: '3.8'
 
 services:
   web:
-    image: nginx:1.25.5
+    image: nginx:1.26.3
     ports:
       - "80:80"
     deploy:

@@ -1,5 +1,7 @@
 # Управление Ingress-трафиком в Docker Swarm с помощью Traefik
 
+> **Миграция с v2 → v3:** Данный конфиг обновлен для Traefik v3.6.8. Ключевые изменения: `--providers.docker.swarmMode=true` заменен на `--providers.swarm=true`.
+
 При работе с несколькими веб-сервисами в кластере **[Docker Swarm](docker_swarm_overview.md)** возникает проблема маршрутизации. Стандартный механизм **[Routing Mesh](swarm_core_concepts.md)** направляет трафик на опубликованные порты, но не умеет различать запросы по доменным именам (например, `app1.example.com` и `app2.example.com`).
 
 Для решения этой задачи используются динамические обратные прокси, и **[Traefik](../../WebServers/Traefik/traefik_overview.md)** является одним из самых популярных решений в этой области. Он автоматически обнаруживает сервисы и настраивает для них правила маршрутизации.
@@ -36,15 +38,16 @@ version: '3.8'
 
 services:
   traefik:
-    image: traefik:v2.11
+    image: traefik:v3.6.8
     ports:
-      # Открываем стандартные HTTP и HTTPS порты
+      # Открываем стандартные HTTP и HTTPS порты, а также Dashboard
       - "80:80"
       - "443:443"
+      - "8080:8080"
     command:
-      # --- Конфигурация Traefik ---
+      # --- Конфигурация Traefik v3 ---
       # Включаем Docker Swarm Provider
-      - "--providers.docker.swarmMode=true"
+      - "--providers.swarm=true"
       # Указываем, что Traefik не должен автоматически работать со всеми сервисами, а только с теми, у которых есть label "traefik.enable=true"
       - "--providers.docker.exposedByDefault=false"
       # Определяем точки входа (entrypoints)
@@ -96,7 +99,7 @@ version: '3.8'
 
 services:
   nginx-app:
-    image: nginx:1.25.5
+    image: nginx:1.26.3
     networks:
       - traefik-public
     deploy:

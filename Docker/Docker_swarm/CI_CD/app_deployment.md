@@ -44,7 +44,7 @@
 
 3. **Настройка переменных CI/CD с `Environment scope`:**
 
-В настройках GitLab CI/CD (**Settings -> CI/CD -> Variables**) необходимо определить переменные для каждого окружения, используя **Environment scope**. Это позволяет пайплайну автоматически использовать правильные креды для нужного кластера.
+    В настройках GitLab CI/CD (**Settings -> CI/CD -> Variables**) необходимо определить переменные для каждого окружения, используя **Environment scope**. Это позволяет пайплайну автоматически использовать правильные креды для нужного кластера. Подробнее о типах переменных в **[Переменные и секреты GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**.
 
 Создайте следующие переменные **дважды**: один раз со скоупом `production`, второй раз — `development`.
 
@@ -63,7 +63,7 @@
     build:
       stage: build
       image:
-        name: gcr.io/kaniko-project/executor:v1.9.0-debug
+        name: gcr.io/kaniko-project/executor:v1.24.0-debug
         entrypoint: [""]
       script:
         - mkdir -p /kaniko/.docker

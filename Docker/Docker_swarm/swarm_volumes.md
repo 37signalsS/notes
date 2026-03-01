@@ -43,7 +43,7 @@
     
     services:
       database:
-        image: postgres:16
+        image: postgres:17.9
         volumes:
           - my-shared-volume:/var/lib/postgresql/data
     

@@ -56,7 +56,7 @@
 * **Создание сервиса:**
 
     ```sh
-    docker service create --name my-web --publish 80:80 --replicas 3 nginx:1.25.5
+    docker service create --name my-web --publish 80:80 --replicas 3 nginx:1.26.3
     ```
 
 * **Список всех сервисов:**
@@ -83,7 +83,7 @@
     Например, для смены версии образа. Swarm выполнит обновление "на лету".
 
     ```sh
-    docker service update --image nginx:1.26.0 my-web
+    docker service update --image nginx:1.26.4 my-web
     ```
 
 * **Откат обновления:**

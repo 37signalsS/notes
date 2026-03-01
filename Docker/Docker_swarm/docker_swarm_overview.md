@@ -11,7 +11,7 @@
 ## Практические сценарии
 
 * **[Развертывание приложений с помощью Docker Compose (Docker Stack) в Docker Swarm](swarm_stack_deployment.md)**: Использование `docker-compose.yml` для деплоя многоконтейнерных приложений.
-* **[CI/CD с Docker Swarm, GitLab и Traefik](docker_swarm_gitlab_ci_traefik_guide.md)**: Полноценный гайд по настройке CI/CD-пайплайна.
+* **[CI/CD с Docker Swarm, GitLab и Traefik](CI_CD/overview.md)**: Полноценный гайд по настройке CI/CD-пайплайна.
 * **[Управление Ingress-трафиком с помощью Traefik](swarm_ingress_traefik.md)**: Руководство по использованию Traefik в качестве Ingress-контроллера.
 
 ## Дополнительная информация
