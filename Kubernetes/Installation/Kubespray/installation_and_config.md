@@ -109,14 +109,50 @@
     etcd_kubeadm_enabled: true
     # На каждой ноде будет запущен локальный прокси на API-сервер
     loadbalancer_apiserver_localhost: true
+    # Позволяет kubelet подгружать необходимые модули ядра
+    kubelet_load_modules: true
+    # Отключает использование kubeadm (используется классический способ установки)
+    kubeadm_enabled: false
+    # Включает read-only порт (10255) для сбора метрик без авторизации
+    kube_read_only_port: 10255
     ```
 
-2.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`**:
+2.  **`inventory/my-cluster/group_vars/all/docker.yml`** (опционально):
+    Настройки для Docker (если используется вместо containerd).
+
+    ```yaml
+    # Устанавливает `overlay2` как драйвер хранилища для Docker
+    docker_storage_options: -s overlay2
+    ```
+
+3.  **`inventory/my-cluster/group_vars/all/download.yml`**:
+    Оптимизация загрузки артефактов.
+
+    ```yaml
+    # Оптимизация загрузки: файлы и образы скачиваются один раз на один узел,
+    # а затем копируются на остальные узлы кластера.
+    download_run_once: true
+    ```
+
+4.  **`inventory/my-cluster/group_vars/etcd.yml`**:
+    Настройки для компонента etcd.
+
+    ```yaml
+    # Уменьшает количество записей в журнале операций, хранимых в памяти,
+    # для снижения потребления памяти etcd.
+    etcd_snapshot_count: "5000"
+    # Устанавливает приоритет I/O для etcd
+    etcd_ionice: '-c2 -n0'
+    # Лимит памяти для etcd (0 - без ограничений)
+    etcd_memory_limit: 0
+    ```
+
+5.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`**:
     Основные параметры кластера.
 
     ```yaml
-    # Версия Kubernetes
-    kube_version: v1.20.2 # Выберите актуальную версию, поддерживаемую Kubespray
+    # Версия Kubernetes (укажите актуальную стабильную версию)
+    kube_version: v1.31.0
 
     # Среда выполнения контейнеров. Docker устарел, используем containerd
     container_manager: containerd
@@ -124,13 +160,31 @@
     # Сетевой CNI-плагин. Рекомендуется Calico.
     kube_network_plugin: calico
 
-    # Сеть для сервисов
+    # Сеть для сервисов типа ClusterIP
     kube_service_addresses: 10.232.0.0/16
     # Сеть для подов
     kube_pods_subnet: 10.233.0.0/16
 
     # Режим работы kube-proxy. IPVS производительнее iptables
     kube_proxy_mode: ipvs
+
+    # Имя кластера
+    cluster_name: k8s-cluster
+
+    # Отключаем небезопасный порт API-сервера
+    kube_apiserver_insecure_port: 0
+
+    # Отключаем OIDC и basic auth, оставляем только токен
+    kube_oidc_auth: false
+    kube_basic_auth: false
+
+    # Копирование kubeconfig на локальную машину для управления кластером
+    kubeconfig_localhost: true
+    kubectl_localhost: true
+
+    # Включаем аутентификацию и авторизацию kubelet через вебхуки по токену
+    kubelet_authentication_token_webhook: true
+    kubelet_authorization_mode_webhook: true
 
     # Включить локальный кеширующий DNS на каждом узле для ускорения DNS-запросов
     enable_nodelocaldns: true
@@ -140,14 +194,25 @@
     auto_renew_certificates: true
     ```
 
-3.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-net-calico.yml`**:
-    Настройки для сетевого плагина Calico.
+6.  **`inventory/my-cluster/group_vars/k8s_cluster/k8s-net-calico.yml`** (или `k8s-net-flannel.yml`):
+    Настройки для сетевого плагина.
 
+    **Для Calico:**
     ```yaml
     # Режим инкапсуляции трафика между узлами.
     # IPIP - производительный режим для сетей, где узлы находятся в одном L2-домене.
     # Для VXLAN укажите 'VXLAN'.
     calico_ipip_mode: CrossSubnet
+    ```
+
+    **Для Flannel:**
+    ```yaml
+    # Указываем бэкенд для Flannel. host-gw - самый быстрый и простой режим,
+    # так как он создает статические маршруты между узлами в одной L2-сети.
+    flannel_backend_type: "host-gw"
+    # Указываем Flannel, на каком сетевом интерфейсе работать.
+    # Он выберет тот интерфейс, IP-адрес которого совпадет с регулярным выражением.
+    flannel_interface_regexp: '192\.168\.1\.\d{1,3}'
     ```
 
 #### Шаг 4: Запуск развертывания
@@ -201,6 +266,33 @@ ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cl
 *   **Обновление сертификатов:** Сертификаты кластера живут 1 год. Их необходимо периодически обновлять. Подробнее см. [Управление сертификатами Kubernetes](../../Operations/certificate_management.md).
 *   **Графический интерфейс:** Для удобного управления кластером можно использовать IDE, такие как [Lens](../../ToolsUtilities/lens.md).
 *   **Доступ к кластеру:** Файл `kubeconfig` для доступа к кластеру (`admin.conf`) будет создан в директории `inventory/my-cluster/artifacts/`.
+
+#### Работа с kubeconfig
+
+Если в конфигурации установлен параметр `kubeconfig_localhost: true`, Kubespray скопирует файл `admin.conf` на локальную машину.
+
+1.  **Найти файл kubeconfig:**
+    Файл находится в `inventory/my-cluster/artifacts/admin.conf`.
+
+2.  **Проверить статус узлов:**
+    ```bash
+    kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
+    ```
+
+3.  **Установить переменную окружения `KUBECONFIG`:**
+    ```bash
+    export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
+    # Теперь можно выполнять команды kubectl без флага --kubeconfig
+    kubectl get nodes
+    ```
+
+4.  **Скопировать kubeconfig в домашнюю директорию (опционально):**
+    ```bash
+    mkdir -p ~/.kube
+    cp inventory/my-cluster/artifacts/admin.conf ~/.kube/config
+    ```
+
+Подробнее о работе с kubeconfig см. в [руководстве по подключению](../../Operations/kubeconfig_and_connection.md).
 
 ## 4. Дополнительная информация
 
