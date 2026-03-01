@@ -2,13 +2,13 @@
 
 ## Определения
 
-**Продвинутые возможности Docker Compose** — это набор техник, которые позволяют гибко управлять сложными многоконтейнерными приложениями, адаптировать конфигурации для разных окружений (например, разработка и production) и интегрировать Compose с системами оркестрации, такими как Docker Swarm.
+**Продвинутые возможности Docker Compose** — это набор техник, которые позволяют гибко управлять сложными многоконтейнерными приложениями, адаптировать конфигурации для разных окружений и переиспользовать код.
 
-### Базовые концепции
+## Базовые концепции
 
 #### 1. Интерполяция переменных
 
-Docker Compose позволяет использовать переменные окружения из вашего терминала или из файла `.env` для подстановки значений в `compose.yml`. Это делает конфигурацию гибкой и позволяет избежать жесткого кодирования портов, тегов образов или паролей.
+Docker Compose позволяет использовать переменные окружения из вашего терминала или из файла `.env` для подстановки значений в `compose.yml`.
 
 * **Приоритет и источники переменных:**
     1. **Переменные из оболочки (shell):** Наивысший приоритет.
@@ -17,67 +17,86 @@ Docker Compose позволяет использовать переменные 
 * **Синтаксис:**
   * `${VARIABLE}`: Простая подстановка.
   * `${VARIABLE:-default}`: Подставить `default`, если `VARIABLE` не задана.
-  * `${VARIABLE:?error message}`: Показать ошибку и прервать выполнение, если `VARIABLE` не задана.
+  * `${VARIABLE:?error message}`: Показать ошибку, если `VARIABLE` не задана.
 
-> **Важно:** Использование `.env` файлов удобно для разработки, но является **небезопасным для хранения секретов в production**. Переменные окружения могут легко утечь в логи или быть прочитаны через `docker inspect`. Для безопасного управления секретами используйте встроенные механизмы, описанные в заметке [Управление секретами в Docker](../Docker_security/secrets_management.md).
+> **Важно:** Использование `.env` файлов удобно для разработки, но **небезопасно для хранения секретов в production**. Для безопасного управления секретами используйте директиву `secrets` ([Управление секретами в Docker](../Docker_security/secrets_management.md)).
 
 #### 2. Разделение конфигурации для разных окружений
 
-Для сложных проектов часто требуется иметь базовую конфигурацию для production и изменять ее для локальной разработки (например, добавлять порты и монтировать исходный код).
+* **Лучшая практика: `compose.override.yml`**
+    По умолчанию `docker compose` автоматически ищет и объединяет два файла:
+    1. `compose.yml` (базовая конфигурация)
+    2. `compose.override.yml` (переопределения для локальной разработки)
 
-* **Лучшая практика: `docker-compose.override.yml`**
-    По умолчанию `docker compose` автоматически ищет и использует два файла, если они существуют в одной директории:
-    1. `docker-compose.yml` (базовая конфигурация)
-    2. `docker-compose.override.yml` (переопределения для конкретного окружения)
+    Это позволяет хранить на production-сервере только `compose.yml` для безопасной, изолированной конфигурации, а локально добавлять монтирование исходного кода, порты и т.д.
 
-    Значения из `override.yml` **переопределяют или дополняют** значения из основного файла. Это позволяет на production-сервере хранить только `docker-compose.yml` для безопасной, изолированной конфигурации.
-
-* **Альтернативный способ:** Явно указать несколько файлов с помощью флага `-f`. Файлы объединяются в указанном порядке, и последний указанный файл имеет наивысший приоритет.
-
+* **Альтернативный способ:** Явно указать несколько файлов с помощью флага `-f`. Последний файл имеет наивысший приоритет.
     ```sh
-    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+    docker compose -f compose.yml -f compose.prod.yml up -d
     ```
 
-#### 3. Секция `deploy` и интеграция с Docker Swarm
+#### 3. Использование `extends` для переиспользования конфигураций
 
-Секция `deploy` является ключевой при работе с **[Docker Swarm](../../Docker_swarm/docker_swarm_overview.md)** и используется исключительно командой `docker stack deploy`.
+Директива `extends` позволяет совместно использовать общие конфигурации между различными сервисами или даже разными проектами.
 
-> **Важно:** Обычная команда `docker compose up` **полностью игнорирует** эту секцию.
+```yaml
+# common-services.yml
+services:
+  base_service:
+    env_file: .env
+    restart: unless-stopped
+    networks:
+      - some_network
 
-Внутри `deploy` определяются параметры, связанные с развертыванием, масштабированием и поведением сервиса в кластере Swarm.
+# compose.yml
+services:
+  web:
+    extends:
+      file: common-services.yml
+      service: base_service
+    build: .
+    ports:
+      - "8000:8000"
+```
+
+> **Предостережение:** `extends` может усложнить понимание и отладку конфигурации, так как часть определения сервиса "спрятана" в другом файле. В современных проектах часто предпочитают использовать **YAML anchors & aliases (`&` и `*`)** для переиспользования кода в пределах одного файла, так как это делает конфигурацию более явной и читаемой.
+
+#### 4. Секция `deploy` и интеграция с Docker Swarm
+
+Секция `deploy` является ключевой при работе с **[Docker Swarm](../../Docker_swarm/docker_swarm_overview.md)**.
+
+> **Важно:** Изначально `deploy` использовалась только командой `docker stack deploy` и полностью игнорировалась `docker compose up`. Однако **современные версии `docker compose` частично поддерживают** некоторые параметры из этой секции (например, `deploy.replicas` и `deploy.resources`) даже без режима Swarm.
 
 * **Основные параметры:**
-  * `replicas`: Количество экземпляров (контейнеров) сервиса.
+  * `replicas`: Количество экземпляров сервиса.
   * `update_config`: Стратегия выполнения обновлений (rolling updates).
   * `restart_policy`: Политика перезапуска в случае сбоя.
-  * `placement`: Ограничения на размещение контейнеров (например, `constraints: [node.role == worker]`).
+  * `placement`: Ограничения на размещение контейнеров (`constraints: [node.role == worker]`).
   * `resources`: Ограничения на потребление CPU и памяти.
-  * `labels`: Ключевой механизм для интеграции с другими системами, например, с реверс-прокси **[Traefik](../../../WebServers/Traefik/traefik_overview.md)**.
+  * `labels`: Интеграция с другими системами, например, с реверс-прокси **[Traefik](../../../WebServers/Traefik/traefik_overview.md)**.
 
-> Подробнее о развертывании стеков в Swarm читайте в руководстве [Развертывание приложений в Docker Swarm с помощью docker stack deploy](../../Docker_swarm/swarm_stack_deployment.md).
+> Подробнее о развертывании стеков: [Развертывание приложений в Docker Swarm](../../Docker_swarm/swarm_stack_deployment.md).
 
-#### 4. Масштабирование сервисов (для `docker compose`)
+#### 5. Масштабирование сервисов (для `docker compose`)
 
-Для простого горизонтального масштабирования сервисов, управляемых через `docker compose` на **одной машине**, используется флаг `--scale`.
+Для горизонтального масштабирования сервисов на **одной машине** можно использовать флаг `--scale` или директиву `deploy.replicas`.
 
 ```sh
-# Запустить 3 экземпляра сервиса 'worker' и 1 экземпляр всех остальных
+# Запустить 3 экземпляра сервиса 'worker'
 docker compose up -d --scale worker=3
 ```
 
-Эта команда создаст независимые контейнеры для указанного сервиса, в отличие от `replicas` в Swarm, которые управляются централизованно.
+## Практические сценарии
 
-### Практические сценарии
+### Пример: HA-кластер PostgreSQL с Patroni
 
-#### Пример: HA-кластер PostgreSQL с Patroni
-
-Docker Compose отлично подходит для моделирования сложных систем. Данный пример демонстрирует развертывание отказоустойчивого кластера PostgreSQL.
+Docker Compose отлично подходит для моделирования сложных систем, таких как отказоустойчивый кластер PostgreSQL.
 
 * **Концепция:** В основе лежит **[Patroni](../../Databases/PostgreSQL/Concepts/high_availability.md)**, система для автоматизации высокой доступности PostgreSQL.
 * **Компоненты стека:**
-  * **etcd**: Распределенное хранилище конфигурации для выбора лидера и хранения состояния кластера.
-  * **HAProxy**: Балансировщик нагрузки для направления запросов на ведущий узел и реплики.
-  * **Три узла Patroni**: Экземпляры PostgreSQL, управляемые Patroni.
+  * **etcd**: Распределенное хранилище для выбора лидера и хранения состояния кластера.
+  * **HAProxy**: Балансировщик нагрузки для направления запросов.
+  * **Три узла Patroni/PostgreSQL**.
 
 ```yaml
 services:
@@ -102,53 +121,53 @@ services:
       - patroni2
       - patroni3
 
-  patroni1:
+  patroni1: &patroni-base
     image: 'bitnami/patroni:3.0'
-    environment:
-      - PATRONI_NAME=patroni1
+    environment: &patroni-env
       - PATRONI_SCOPE=my-postgres-cluster
-      - PATRONI_RESTAPI_URL=http://patroni1:8008
       - PATRONI_ETCD_HOSTS=etcd:2379
-      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni1:5432
       - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
-      - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni1
-    volumes:
-      - patroni_data1:/data/patroni1
     depends_on:
       - etcd
 
   patroni2:
-    image: 'bitnami/patroni:3.0'
+    <<: *patroni-base # Используем YAML якорь для переиспользования
     environment:
+      <<: *patroni-env
       - PATRONI_NAME=patroni2
-      - PATRONI_SCOPE=my-postgres-cluster
       - PATRONI_RESTAPI_URL=http://patroni2:8008
-      - PATRONI_ETCD_HOSTS=etcd:2379
       - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni2:5432
-      - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
       - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni2
     volumes:
       - patroni_data2:/data/patroni2
-    depends_on:
-      - etcd
 
   patroni3:
-    image: 'bitnami/patroni:2.0'
+    <<: *patroni-base
+    image: 'bitnami/patroni:3.0' # ИСПРАВЛЕНО
     environment:
+      <<: *patroni-env
       - PATRONI_NAME=patroni3
-      - PATRONI_SCOPE=my-postgres-cluster
       - PATRONI_RESTAPI_URL=http://patroni3:8008
-      - PATRONI_ETCD_HOSTS=etcd:2379
       - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni3:5432
-      - PATRONI_POSTGRESQL_LISTEN=0.0.0.0:5432
       - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni3
     volumes:
       - patroni_data3:/data/patroni3
-    depends_on:
-      - etcd
+
+# Определяем patroni1 отдельно, чтобы задать уникальные значения
+services:
+  patroni1:
+    environment:
+      <<: *patroni-env
+      - PATRONI_NAME=patroni1
+      - PATRONI_RESTAPI_URL=http://patroni1:8008
+      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=patroni1:5432
+      - PATRONI_POSTGRESQL_DATA_DIR=/data/patroni1
+    volumes:
+      - patroni_data1:/data/patroni1
 
 volumes:
   patroni_data1:
   patroni_data2:
   patroni_data3:
 ```
+В данном примере для `patroni2` и `patroni3` используется YAML-якорь `*patroni-base`, чтобы не дублировать общие поля `image` и `depends_on`.
