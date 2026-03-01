@@ -40,7 +40,7 @@ Docker Compose позволяет использовать переменные 
 
 #### 3. Секция `deploy` и интеграция с Docker Swarm
 
-Секция `deploy` является ключевой при работе с **[Docker Swarm](../Docker_swarm/docker_swarm_overview.md)** и используется исключительно командой `docker stack deploy`.
+Секция `deploy` является ключевой при работе с **[Docker Swarm](../../Docker_swarm/docker_swarm_overview.md)** и используется исключительно командой `docker stack deploy`.
 
 > **Важно:** Обычная команда `docker compose up` **полностью игнорирует** эту секцию.
 
@@ -54,7 +54,7 @@ Docker Compose позволяет использовать переменные 
   * `resources`: Ограничения на потребление CPU и памяти.
   * `labels`: Ключевой механизм для интеграции с другими системами, например, с реверс-прокси **[Traefik](../../../WebServers/Traefik/traefik_overview.md)**.
 
-> Подробнее о развертывании стеков в Swarm читайте в руководстве [Развертывание приложений в Docker Swarm с помощью docker stack deploy](../Docker_swarm/swarm_stack_deployment.md).
+> Подробнее о развертывании стеков в Swarm читайте в руководстве [Развертывание приложений в Docker Swarm с помощью docker stack deploy](../../Docker_swarm/swarm_stack_deployment.md).
 
 #### 4. Масштабирование сервисов (для `docker compose`)
 
