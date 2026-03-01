@@ -1,5 +1,19 @@
 # Интеграция Grafana с Graphite и Collectd
 
+> **LEGACY STACK (2026)**
+>
+> Graphite и Collectd — устаревшие компоненты. Для новых проектов рекомендуется:
+> - **Метрики:** [Prometheus](../../Prometheus/overview.md) + [Grafana Alloy](../grafana_alloy_overview.md)
+> - **Логи:** [Loki](../../Loki/loki_overview.md) + Alloy
+> - **Трассировки:** [Tempo](../../Tempo/tempo_overview.md)
+>
+> Данная документация сохранена для поддержки legacy-систем.
+
+> **Навигация:**
+> - [Обзор Grafana](../grafana_overview.md)
+> - [Источники данных](../grafana_datasources.md)
+> - [Docker Compose установка](../Installation/docker_compose_setup.md)
+
 ## Определения
 
 * **Grafana:** Платформа для аналитики, интерактивной визуализации данных, создания дашбордов, графиков и алертов.

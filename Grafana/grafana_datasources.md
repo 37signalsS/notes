@@ -1,85 +1,145 @@
-# Источники данных Grafana
+# Grafana: Источники данных
+
+> **Навигация:**
+> - [Обзор Grafana](./grafana_overview.md)
+> - [Провиженинг](./grafana_provisioning.md)
+> - [Установка через Docker](./Installation/docker_compose_setup.md)
+> - [Установка через Helm](./Installation/grafana_helm_installation.md)
 
 ## Определения
 
-Ключевая особенность Grafana — использование **нативного языка запросов источника данных** (например, PromQL для Prometheus, SQL для PostgreSQL). Grafana не имеет собственного языка запросов, она лишь предоставляет интерфейс для их выполнения и визуализации результатов.
+**Источник данных (Datasource)** — подключение к системе хранения данных (Prometheus, MySQL, Loki и др.). Grafana **не хранит данные**, а выполняет запросы к источникам и визуализирует результаты.
 
-Каждый источник данных (datasource) в Grafana имеет следующие атрибуты:
+**Текущая версия (февраль 2026):** Grafana 12.x поддерживает 50+ источников данных
 
-- **Имя**: Уникальное название для идентификации.
-- **Default**: Флаг, указывающий, является ли источник данных используемым по умолчанию.
-- **Type (Тип коннектора)**: Определяет систему, к которой подключается Grafana (Prometheus, MySQL, Loki, Tempo и т.д.).
-- **Параметры подключения**: Специфические настройки для подключения (URL, аутентификация, заголовки).
+### Атрибуты источника
+
+| Атрибут | Описание |
+| :--- | :--- |
+| **Name** | Уникальное имя в интерфейсе Grafana |
+| **Default** | Флаг источника по умолчанию |
+| **Type** | Тип коннектора (Prometheus, MySQL, Loki...) |
+| **URL** | Адрес системы (http://prometheus:9090) |
+| **Auth** | Параметры аутентификации |
 
 ## Основные концепции
 
-### Встроенные (специальные) источники данных
+### Языки запросов
 
-Grafana предоставляет несколько псевдо-источников данных для тестирования и расширенной работы:
+Grafana **не имеет собственного языка запросов** — используется нативный язык каждого источника:
 
-- **`TestData`**: Генерирует случайные данные для тестирования визуализаций и создания макетов дашбордов без реального бэкенда.
-- **`Mixed` (Смешанный)**: Позволяет объединять данные из нескольких разных источников на одной панели. Мощный инструмент для корреляции данных из разрозненных систем и использования результатов запросов с других дашбордов.
+| Источник | Язык запросов |
+| :--- | :--- |
+| **Prometheus** | PromQL |
+| **Loki** | LogQL |
+| **Tempo** | TraceQL |
+| **MySQL/PostgreSQL** | SQL |
+| **Elasticsearch** | Lucene Query DSL |
+
+### Встроенные источники данных
+
+| Источник | Назначение |
+| :--- | :--- |
+| **TestData** | Генерация случайных данных для тестирования визуализаций |
+| **Mixed** | Объединение данных из нескольких источников на одной панели |
+| **Dashboard** | Использование результатов запросов с других дашбордов |
 
 ## Практические сценарии
 
-### Сценарий 1: Ручная настройка Prometheus
+### Сценарий 1: Настройка Prometheus
 
-1. **Подключение к Grafana**: Откройте Grafana в браузере (например, `http://<monitoring-ip>:3000`). Войдите (по умолчанию `admin/admin`).
-2. **Добавление источника данных**: Перейдите в **Connections -> Data Sources -> Add new data source**. Выберите **Prometheus**.
-3. **Настройка параметров**:
-    - **Name**: "Prometheus".
-    - **URL**: Адрес вашего Prometheus-сервера (например, `http://prometheus:9090` для Docker Compose или `http://prometheus-server.monitoring.svc.cluster.local` для Kubernetes).
-    - **Access**: `Server (proxy)` (рекомендовано).
-    - **Scrape interval**: Рекомендуется `15s`.
-    - **Query timeout**: Рекомендуется `60s`.
-    - **HTTP Method**: `POST` (для Prometheus 2.1.0+).
-4. **Сохранение и проверка**: Нажмите **Save & Test**. Успешное подключение подтвердится зеленым уведомлением.
-5. **Проверка в Explorer**: Перейдите в **Explore**, выберите "Prometheus" и выполните тестовый запрос PromQL (например, `kube_deployment_status_replicas_available`).
+**Docker Compose:**
 
-### Сценарий 2: Интеграция Loki и Tempo для корреляции логов и трейсов
+```yaml
+# grafana/provisioning/datasources/datasources.yaml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true
+    editable: true
+```
 
-Этот сценарий настраивает Grafana для бесшовного переключения между логами и трассировками, используя специальную функцию `Derived Fields`.
+**Kubernetes (Helm):**
 
-1. **Добавление источника данных Loki**:
-    - Перейдите в **Connections -> Data Sources -> Add new data source**. Выберите **Loki**.
-    - Укажите **URL** вашего Loki (например, `http://loki:3100`).
-    - Нажмите **Save & test**.
-2. **Добавление источника данных Tempo**:
-    - Перейдите в **Connections -> Data Sources -> Add new data source**. Выберите **Tempo**.
-    - Укажите **URL** вашего Tempo (например, `http://tempo:3200`).
-    - В секции **Trace to logs** выберите ранее настроенный источник данных Loki.
-    - Нажмите **Save & test**.
-3. **Настройка связи из логов в трейсы (Derived Fields)**:
-    - Вернитесь в настройки источника данных **Loki**.
-    - Найдите раздел **Derived Fields**. Нажмите **Add**.
-    - **Name**: `TraceID`.
-    - **Regex**: Регулярное выражение для извлечения ID трассировки из лога (например, `traceID=([a-zA-Z0-9]+)`).
-    - **URL**: `${__value.raw}` (автоматически подставит извлеченное значение).
-    - Включите **Internal Link**.
-    - **Data source**: Выберите источник данных **Tempo**.
-    - Нажмите **Save & test**.
+```yaml
+# values.yaml
+grafana:
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://prometheus-server.monitoring.svc.cluster.local
+          access: proxy
+          isDefault: true
+```
 
-После этих шагов в разделе **Explore** кликабельные `TraceID` в логах Loki будут мгновенно открывать соответствующие трассировки в Tempo, обеспечивая быструю корреляцию.
+**Ручная настройка (UI):**
 
-### Сценарий 3: Ручная настройка Loki
+1. **Connections → Data Sources → Add new data source → Prometheus**
+2. **URL:** `http://prometheus:9090` (Docker) или `http://prometheus-server.monitoring.svc.cluster.local` (K8s)
+3. **Access:** `Server (proxy)`
+4. **Save & Test**
 
-Этот сценарий описывает процесс добавления Loki в качестве источника данных вручную через веб-интерфейс Grafana.
+> **Примечание:** См. также [Провиженинг](./grafana_provisioning.md) для автоматизации.
 
-1.  **Подключение к Grafana**: Откройте веб-интерфейс Grafana.
-2.  **Добавление источника данных**: Перейдите в **Connections -> Data Sources** (или иконка шестеренки -> Data Sources) и нажмите **Add new data source**.
-3.  **Выбор Loki**: Найдите и выберите **Loki** из списка доступных источников.
-4.  **Настройка подключения**:
-    *   **Name**: Оставьте `Loki` или задайте собственное имя.
-    *   **URL**: Укажите HTTP-адрес вашего сервиса Loki.
-        *   **Пример для Kubernetes:** `http://loki-distributed-gateway.loki.svc.cluster.local`
-        *   **Пример для Docker:** `http://loki:3100`
-    *   Остальные настройки можно оставить по умолчанию.
-5.  **Сохранение и проверка**: Нажмите кнопку **Save & test**. Grafana попытается подключиться к Loki и, в случае успеха, отобразит сообщение "Data source is working". Если в Loki уже есть данные, также может появиться информация о найденных метках (labels).
+### Сценарий 2: Интеграция Loki и Tempo (Derived Fields)
+
+**Настройка связи логов с трассировками:**
+
+1. **Добавьте Loki:**
+   - **Connections → Data Sources → Loki**
+   - **URL:** `http://loki:3100`
+   - **Save & test**
+
+2. **Добавьте Tempo:**
+   - **Connections → Data Sources → Tempo**
+   - **URL:** `http://tempo:3200`
+   - **Trace to logs:** Выберите источник Loki
+   - **Save & test**
+
+3. **Настройте Derived Fields в Loki:**
+   - Откройте настройки источника **Loki**
+   - **Derived Fields → Add:**
+     - **Name:** `TraceID`
+     - **Regex:** `traceID=([a-zA-Z0-9]+)`
+     - **URL:** `${__value.raw}`
+     - **Internal Link:** ✓
+     - **Data source:** Tempo
+   - **Save & test**
+
+**Результат:** Кликабельные `TraceID` в логах Loki открывают трассировки в Tempo.
+
+### Сценарий 3: Настройка Loki
+
+**URL для различных окружений:**
+
+| Окружение | URL |
+| :--- | :--- |
+| **Docker Compose** | `http://loki:3100` |
+| **Kubernetes** | `http://loki-distributed-gateway.loki.svc.cluster.local` |
+| **Standalone** | `http://localhost:3100` |
 
 ## Дополнительная информация
 
-### Управление источниками данных как код (Provisioning)
+### Популярные источники данных
 
-Источники данных Grafana можно настраивать декларативно с помощью **провиженинга**. Этот подход позволяет управлять конфигурацией как кодом (Infrastructure as Code) и является лучшей практикой для автоматизации и версионирования. Конфигурация описывается в YAML-файлах, которые Grafana автоматически загружает при старте.
+| Источник | Тип | Назначение |
+| :--- | :--- | :--- |
+| **Prometheus** | Метрики | Мониторинг инфраструктуры и приложений |
+| **Loki** | Логи | Агрегация и анализ логов |
+| **Tempo** | Трассировки | Распределённые трассировки |
+| **Mimir** | Метрики | Долгосрочное хранение метрик Prometheus |
+| **MySQL/PostgreSQL** | SQL | Бизнес-метрики из БД |
+| **Elasticsearch** | Логи/Поиск | Поиск и анализ логов |
+| **CloudWatch** | Метрики AWS | Мониторинг AWS-ресурсов |
+| **Azure Monitor** | Метрики Azure | Мониторинг Azure-ресурсов |
 
-Подробное руководство по провиженингу источников данных, дашбордов и других ресурсов Grafana находится в документе: **[Grafana Provisioning](./grafana_provisioning.md)**.
+### Ссылки
+
+- [Документация по источникам](https://grafana.com/docs/grafana/latest/datasources/)
+- [Провиженинг источников](./grafana_provisioning.md)

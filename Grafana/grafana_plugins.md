@@ -1,18 +1,32 @@
-# Grafana Plugins
+# Grafana: Плагины
+
+> **Навигация:**
+> - [Обзор Grafana](./grafana_overview.md)
+> - [Провиженинг](./grafana_provisioning.md)
+> - [Установка через Docker](./Installation/docker_compose_setup.md)
+> - [Установка через Helm](./Installation/grafana_helm_installation.md)
 
 ## Определения
 
-**Плагины (Plugins)** — программные пакеты, расширяющие стандартную функциональность Grafana. Они позволяют интегрировать новые источники данных, добавлять кастомные типы визуализаций и встраивать комплексные приложения в интерфейс Grafana.
+**Плагины (Plugins)** — пакеты, расширяющие функциональность Grafana: новые источники данных, типы визуализаций, комплексные приложения.
 
-Плагин может включать только фронтенд-компонент (например, для визуализации) или бэкенд-компонент для расширения возможностей сервера.
+**Текущая версия (февраль 2026):** Grafana 12.x поддерживает плагины v10.x+
 
 ## Базовые концепции
 
 ### Типы плагинов
 
-* **Data Source:** Обеспечивает поддержку новых источников данных (например, Zabbix, ClickHouse, GitHub).
-* **Panel:** Добавляет новые типы визуализаций для дашбордов (например, `Pie Chart`, `Worldmap`).
-* **App:** Комплексное решение, которое может включать собственные страницы, источники данных и панели (например, Zabbix App, Kubernetes App).
+| Тип | Назначение | Примеры |
+| :--- | :--- | :--- |
+| **Data Source** | Новые источники данных | Zabbix, ClickHouse, GitHub, Azure Monitor |
+| **Panel** | Новые типы визуализаций | Pie Chart, Worldmap, Histogram |
+| **App** | Комплексные решения | Zabbix App, Kubernetes App, IoT App |
+
+### Категории плагинов
+
+- **Официальные (Grafana Labs)** — поддерживаются командой Grafana
+- **Сертифицированные** — проверенные партнёрами
+- **Community** — от сообщества (требуют ручной проверки)
 
 ## Практические сценарии
 
@@ -20,52 +34,57 @@
 
 #### Автоматическая установка (Provisioning)
 
-1. **Через переменные окружения (Docker):**
-    Переменная `GF_INSTALL_PLUGINS` позволяет указать список плагинов для автоматической установки при старте контейнера.
+**Docker (переменные окружения):**
 
-    *Пример для `docker-compose.yml`:*
+```yaml
+# docker-compose.yml
+services:
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,volkov-echarts-panel
+```
 
-    ```yaml
-    services:
-      grafana:
-        image: grafana/grafana:10.4.2
-        ports:
-          - "3000:3000"
-        environment:
-          # Список плагинов через запятую
-          - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
-    ```
+**Kubernetes (Helm):**
 
-2. **Через Helm (Kubernetes):**
-    В `values.yaml` Helm-чарта Grafana можно определить список плагинов, которые будут установлены init-контейнером перед запуском основного приложения.
-
-    *Пример в `values.yaml`:*
-
-    ```yaml
-    plugins:
-      - grafana-piechart-panel
-      - grafana-worldmap-panel
-    ```
+```yaml
+# values.yaml
+grafana:
+  plugins:
+    - grafana-piechart-panel
+    - volkov-echarts-panel
+```
 
 #### Ручная установка
 
-1. **Поиск:** Найдите плагин на [официальном маркетплейсе](https://grafana.com/grafana/plugins/) и скопируйте его ID.
-2. **Установка:** Выполните команду внутри контейнера/пода Grafana.
+1. **Поиск:** Найдите плагин на [маркетплейсе](https://grafana.com/grafana/plugins/).
+2. **Установка:**
 
-    ```bash
-    grafana-cli plugins install <plugin-id>
-    ```
+   ```bash
+   grafana-cli plugins install <plugin-id>
+   ```
 
-3. **Перезапуск:** Перезапустите сервер Grafana для активации плагина.
-    *Пример для Kubernetes:*
+3. **Перезапуск:**
 
-    ```bash
-    kubectl rollout restart deployment/grafana -n <namespace>
-    ```
+   ```bash
+   # Docker
+   docker restart grafana
 
-4. **Проверка:** Убедитесь, что плагин появился в разделе **Administration -> Plugins**.
+   # Kubernetes
+   kubectl rollout restart deployment/grafana -n monitoring
+   ```
+
+4. **Проверка:** **Administration → Plugins**.
 
 ## Дополнительная информация
 
-* **Устаревший метод:** Файловый провиженинг через `provisioning/plugins.yaml` более не рекомендуется к использованию.
-* **Маркетплейс:** [Grafana Plugins Marketplace](https://grafana.com/grafana/plugins/) — официальный каталог для поиска и выбора плагинов.
+### Важные замечания
+
+- **Файловый провиженинг** через `provisioning/plugins.yaml` — устаревший метод, не рекомендуется.
+- **Безопасность:** Проверяйте плагины community перед установкой в production.
+- **Совместимость:** Убедитесь, что плагин совместим с вашей версией Grafana.
+
+### Ссылки
+
+- [Grafana Plugins Marketplace](https://grafana.com/grafana/plugins/)
+- [Документация по плагинам](https://grafana.com/docs/grafana/latest/plugins/)
