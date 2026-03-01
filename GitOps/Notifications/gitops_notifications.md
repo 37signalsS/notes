@@ -1,6 +1,10 @@
 # GitOps: Уведомления о статусе развертываний
 
-> **SSoT для ArgoCD Notifications:** [ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)
+> **Актуальные версии (февраль 2026):** ArgoCD Notifications v3.3, Flux notification-controller v1.8.1.
+
+> **SSoT файлы:**
+> - **ArgoCD Notifications:** [ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)
+> - **Flux Notifications:** [Flux Overview](../Flux/overview.md#архитектура-gitops-toolkit)
 
 Уведомления — это неотъемлемая часть GitOps-конвейера, позволяющая командам получать оперативную информацию о состоянии своих приложений без необходимости постоянно проверять UI или консоль.
 
@@ -9,7 +13,7 @@
 - **Уведомление (Notification)**: Автоматическое сообщение о событии в GitOps-конвейере (e.g., sync success/fail), отправляемое в стороннюю систему (Slack, Microsoft Teams, Email).
 - **Webhook**: Основной механизм доставки уведомлений. GitOps-инструмент отправляет HTTP POST-запрос с деталями события на заранее указанный URL (например, входящий вебхук Slack).
 
-## Основные концепции
+## Базовые концепции
 
 ### Зачем нужны уведомления?
 
@@ -23,6 +27,14 @@
 - Ошибка синхронизации (`Sync Failed`).
 - Изменение статуса здоровья приложения (например, с `Progressing` на `Healthy` или `Degraded`).
 - Автоматическое обновление образа с помощью Image Updater.
+
+### Новые функции notification-controller v1.8 (февраль 2026)
+
+- **PR Comments**: Прямое комментирование Pull Request в GitHub/GitLab
+- **Новые провайдеры**: `githubpullrequestcomment`, `gitlabmergerequestcomment`, `giteapullrequestcomment`
+- **Расширенная аутентификация NATS**: JWT, NKey, Username/Password
+- **CDEvents support**: Поддержка CDEvents в Receiver API
+- **mTLS**: mTLS для алертов и GitHub App transport
 
 ## Практические сценарии
 
@@ -86,7 +98,7 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
 
 ## Дополнительная информация
 
-- **[Обзор ArgoCD](../ArgoCD/argocd_overview.md)**
-- **[Обзор Flux](../Flux/overview.md)**
-- **Официальная документация Argo CD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
-- **Официальная документация Flux**: [Notifications](https://fluxcd.io/flux/components/notification/)
+- **[ArgoCD Notifications SSoT](../ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
+- **[Flux Overview](../Flux/overview.md)**: Архитектура Flux и notification-controller.
+- **Официальная документация ArgoCD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
+- **Официальная документация Flux**: [Notification Controller](https://fluxcd.io/flux/components/notification/)

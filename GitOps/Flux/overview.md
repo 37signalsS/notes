@@ -1,27 +1,30 @@
 # Flux: Обзор и Ключевые Концепции
 
-**Flux** — это модульный и расширяемый набор инструментов для построения GitOps-конвейеров в Kubernetes. Проект является частью CNCF и фокусируется на "Unix-way" подходе, где каждый компонент решает свою задачу, а вместе они образуют гибкую систему.
+> **Актуальные версии (февраль 2026):** Flux v2.8.1, notification-controller v1.8.1, image-automation-controller v1.1.0.
+
+**Flux** — это модульный и расширяемый набор инструментов для построения GitOps-конвейеров в Kubernetes. Проект является частью CNCF (Graduated с ноября 2022) и фокусируется на "Unix-way" подходе, где каждый компонент решает свою задачу, а вместе они образуют гибкую систему.
 
 ## Определения
 
 - **Flux**: Набор контроллеров, которые автоматизируют синхронизацию состояния кластера с конфигурациями из Git-репозиториев и других источников.
 - **GitOps Toolkit**: Набор специализированных контроллеров, из которых состоит Flux. Каждый контроллер отвечает за свой тип ресурсов (источники, Kustomize-манифесты, Helm-релизы и т.д.).
 
-## Основные концепции
+## Базовые концепции
 
 ### Архитектура GitOps Toolkit
 
 Flux состоит из нескольких независимых контроллеров, которые взаимодействуют через CRD.
 
 | Контроллер | Основные CRD | Назначение |
-| --- | --- | --- |
-| `source-controller` | `GitRepository`, `HelmRepository` | Отвечает за получение манифестов из источников. |
+| :--- | :--- | :--- |
+| `source-controller` | `GitRepository`, `HelmRepository`, `Bucket` | Отвечает за получение манифестов из источников. |
 | `kustomize-controller`| `Kustomization` | Применяет YAML-манифесты, используя Kustomize. |
 | `helm-controller` | `HelmRelease` | Управляет жизненным циклом Helm-релизов. |
-| `notification-controller`| `Provider`, `Alert` | Отправляет уведомления о событиях в Slack, Teams и др. |
+| `notification-controller`| `Provider`, `Alert`, `Receiver` | Отправляет уведомления о событиях в Slack, Teams и др. |
+| `image-reflector-controller`| `ImageRepository`, `ImagePolicy` | Сканирует реестры образов и отражает метаданные. |
 | `image-automation-controller`| `ImageUpdateAutomation` | Автоматизирует обновление тегов образов в Git. |
 
-### Ключевые Ресурсы (CRD)
+### Ключевые ресурсы (CRD)
 
 Философия Flux — разделение ответственности. Процесс развертывания описывается несколькими CRD:
 
@@ -36,6 +39,20 @@ Flux позволяет управлять Helm-релизами полност�
 
 - **`HelmRepository`**: Определяет репозиторий чартов.
 - **`HelmRelease`**: Описывает конкретный релиз: какой чарт и с какими `values` установить. `helm-controller` берет на себя установку, обновление и откат.
+
+### Ключевые изменения в v2.8 (февраль 2026)
+
+| Функция | Описание |
+| :--- | :--- |
+| **Helm v4 support** | Server-side apply и kstatus-based health checking для HelmRelease |
+| **Readiness evaluation** | Оценка готовности Helm-объектов через CEL-выражения |
+| **Inventory tracking** | Отслеживание инвентаря в `.status.inventory` для HelmRelease |
+| **PR Comments** | Прямое комментирование Pull Request из Flux notifications |
+| **Cosign v3 support** | Верификация OCI-артефактов и образов контейнеров |
+| **mTLS support** | mTLS для алертов и GitHub App transport |
+| **OpenTelemetry tracing** | Трассировка для Kustomization и HelmRelease |
+
+> **Важно:** API v1beta2 и v2beta2 удалены в v2.8.0. Требуется миграция через `flux migrate` перед обновлением.
 
 ## Практические сценарии
 
@@ -127,5 +144,8 @@ spec:
 ## Дополнительная информация
 
 - **[Сравнение с ArgoCD](../Comparisons/argo_vs_flux_manifests.md)**: Детальный разбор различий в философии и структуре манифестов.
+- **[GitOps Notifications](../Notifications/gitops_notifications.md)**: Настройка уведомлений в Slack, Teams для Flux.
+- **[GitOps Security](../Security/secrets_encryption.md)**: Управление секретами с SOPS и Sealed Secrets.
 - **Официальная документация**: [fluxcd.io](https://fluxcd.io/)
-- **Flux CLI**: Мощный инструмент для отладки, ручной синхронизации (`flux reconcile`) и проверки состояния (`flux get kustomizations`).
+- **GitHub Repository**: [fluxcd/flux2](https://github.com/fluxcd/flux2)
+- **Changelog**: [flux2 releases](https://github.com/fluxcd/flux2/releases)
