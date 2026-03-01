@@ -10,6 +10,8 @@
 
 Постепенный и контролируемый запуск новой функциональности на определенный процент пользователей.
 
+- **Тип флага:** [Экспериментальный (Experiment Toggle)](./types.md#2-экспериментальные-флаги-experiment-toggles) или [Релизный (Release Toggle)](./types.md#1-релизные-флаги-release-toggles).
+
 ```python
 # Постепенный rollout новой версии
 rollout_percentage = feature_flags.get_value(
@@ -27,11 +29,11 @@ else:
 # Если ошибок < 0.1%, увеличиваем rollout_percentage
 ```
 
-**Подробнее о стратегии:** [Canary Deployment в CI/CD](../../CI-CD/Deployment_Strategies/canary_deployment.md)
-
 #### Сценарий 2: Аварийный выключатель (Kill Switch)
 
 Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
+
+- **Тип флага:** [Операционный (Ops Toggle)](./types.md#3-операционные-флаги-ops-toggles).
 
 ```python
 @app.route('/api/recommendations')
@@ -46,6 +48,8 @@ def get_recommendations():
 
 Предоставление доступа к новым функциям ограниченному кругу пользователей (например, внутренним сотрудникам или участникам бета-программы).
 
+- **Тип флага:** [Доступный (Permission Toggle)](./types.md#4-флаги-доступов-permission-toggles) или [Релизный (Release Toggle)](./types.md#1-релизные-флаги-release-toggles).
+
 ```python
 @app.route('/beta/new-dashboard')
 @login_required
@@ -56,6 +60,30 @@ def beta_dashboard():
         abort(403, "Beta access required")
     
     return render_template('beta/dashboard.html')
+```
+
+#### Сценарий 4: A/B тестирование
+
+Сравнение двух или более версий одной и той же функциональности для определения, какая из них лучше достигает бизнес-целей (например, конверсии, кликабельности).
+
+- **Тип флага:** [Экспериментальный (Experiment Toggle)](./types.md#2-экспериментальные-флаги-experiment-toggles)
+
+```python
+# Флаг может вернуть вариант 'A', 'B', или 'C'
+button_variant = feature_flags.get_variant(
+    'new-checkout-button-test',
+    context={'user_id': user.id}
+)
+
+if button_variant == 'A':
+    render_button('blue')
+elif button_variant == 'B':
+    render_button('green')
+else: # Контрольная группа
+    render_button('gray')
+
+# Собираем метрики по каждой группе для анализа
+statsd.increment(f'checkout.button.shown.{button_variant}')
 ```
 
 ### Дополнительная информация
@@ -70,4 +98,4 @@ def beta_dashboard():
 
 - **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
 - **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.
-- **[Canary Deployment в CI-CD](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний.
+- **[Canary Deployment](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний, которые реализуются через этот сценарий.
