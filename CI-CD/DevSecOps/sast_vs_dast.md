@@ -89,4 +89,4 @@ dast:
 - Для SAST используйте инкрементальные сканы и baseline, чтобы не замедлять CI.
 - Для DAST исключайте разрушающие маршруты и настраивайте профили аутентификации.
 
-Комбинация SAST и DAST является основой [практики DevSecOps](../DevSecOps/devsecops_overview.md) и [интеграции безопасности в CI/CD](../DevSecOps/sast_dast_cicd_integration.md).
+Комбинация SAST и DAST является основой [практики DevSecOps](./devsecops_overview.md) и [интеграции безопасности в CI/CD](./sast_dast_cicd_integration.md).

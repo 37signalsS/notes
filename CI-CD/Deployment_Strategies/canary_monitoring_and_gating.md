@@ -33,54 +33,84 @@
 
 ### Примеры сравнения и алертинга (Prometheus)
 
-* **Сопоставление долей ошибок:**
+* **Сопоставление долей ошибок (Error Rate):**
 
     ```promql
-    # Вычисляем долю ошибок для canary
-    canary_err = sum(rate(http_requests_total{version="canary",code=~"5.."}[5m])) 
-                 / sum(rate(http_requests_total{version="canary"}[5m]))
+    # Вычисляем долю 5xx ошибок для canary и stable версий.
+    # Используем `or vector(0)` чтобы избежать деления на ноль, если трафика нет.
+    (
+      sum(rate(http_requests_total{version="canary", code=~"5.."}[5m]))
+      /
+      sum(rate(http_requests_total{version="canary"}[5m]))
+    ) or vector(0)
     
-    # Вычисляем долю ошибок для stable
-    stable_err = sum(rate(http_requests_total{version="stable",code=~"5.."}[5m])) 
-                 / sum(rate(http_requests_total{version="stable"}[5m]))
-
-    # Условие для алерта: ошибка на canary на 20% выше, чем на stable, И при этом абсолютное значение выше 1%
-    (canary_err - stable_err) > 0.2 * stable_err and canary_err > 0.01
+    # Условие для алерта:
+    # Доля ошибок на canary более чем в 2 раза выше, чем на stable
+    # И при этом абсолютное значение доли ошибок canary выше 1%
+    (
+      (
+        sum(rate(http_requests_total{version="canary", code=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{version="canary"}[5m]))
+      )
+      > 2 *
+      (
+        sum(rate(http_requests_total{version="stable", code=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{version="stable"}[5m]))
+      )
+    ) and (
+      (
+        sum(rate(http_requests_total{version="canary", code=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{version="canary"}[5m]))
+      ) > 0.01
+    )
     ```
 
-* **Сравнение задержки p95:**
+* **Сравнение задержки p95 (95-й перцентиль):**
 
     ```promql
-    canary_p95 = histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="canary"}[5m])))
-    stable_p95 = histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="stable"}[5m])))
+    # Вычисляем p95 latency для canary и stable.
+    # sum by(le, version) аггрегирует гистограммы для каждой версии.
+    histogram_quantile(0.95, sum by (le, version) (rate(http_request_duration_seconds_bucket[5m])))
 
-    # Условие для алерта: p95 на canary в 1.25 раза выше, чем на stable
-    (canary_p95 / stable_p95) > 1.25
+    # Условие для алерта:
+    # Задержка на canary в 1.3 раза выше, чем на stable.
+    # `on()` позволяет сравнить два вектора без общих лейблов.
+    histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="canary"}[5m])))
+    > 1.3 * on()
+    histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="stable"}[5m])))
     ```
 
-* **Пример алерта на деградацию:**
+* **Пример комплексного алерта на деградацию:**
 
     ```yaml
     alert: CanaryDegradation
     expr: |
+      # Часть 1: Проверка деградации по доле ошибок.
+      # Сработает, если доля ошибок на canary вдвое выше, чем на stable, И при этом она больше 2%.
       (
-        (sum(rate(http_requests_total{version="canary",code=~"5.."}[5m])) / sum(rate(http_requests_total{version="canary"}[5m]))) > 
-        2 * 
-        (sum(rate(http_requests_total{version="stable",code=~"5.."}[5m])) / sum(rate(http_requests_total{version="stable"}[5m])))
+        (sum(rate(http_requests_total{version="canary",code=~"5.."}[5m])) / sum(rate(http_requests_total{version="canary"}[5m])))
+        > 
+        2 * (sum(rate(http_requests_total{version="stable",code=~"5.."}[5m])) / sum(rate(http_requests_total{version="stable"}[5m])))
         and
         (sum(rate(http_requests_total{version="canary",code=~"5.."}[5m])) / sum(rate(http_requests_total{version="canary"}[5m]))) > 0.02
       )
       or
+      # Часть 2: Проверка деградации по задержке.
+      # Сработает, если 95-й перцентиль задержки на canary в 1.3 раза выше, чем на stable.
       (
-        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="canary"}[5m]))) >
-        1.3 *
-        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="stable"}[5m])))
+        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="canary"}[5m])))
+        >
+        1.3 * histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{version="stable"}[5m])))
       )
     for: 10m
     labels:
       severity: warning
     annotations:
-      summary: "Канарейка деградирует по качеству"
+      summary: "Канарейка {{ $labels.service }} деградирует по качеству"
+      description: "Версия 'canary' сервиса {{ $labels.service }} показывает рост ошибок или задержек. Ошибки: {{ $value.ERR_RATE }}%, Задержка p95: {{ $value.LATENCY }}s"
     ```
 
 ### Автоматизация оценки и "ворота" раскатки (Gating)

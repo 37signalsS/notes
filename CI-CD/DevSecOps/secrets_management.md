@@ -76,3 +76,7 @@ docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:v3.90.13 g
 * Состоять из символов набора Base64 (RFC4648).
 
 Подробнее см. в [официальной документации GitLab](https://docs.gitlab.com/ee/ci/variables/#mask-a-custom-variable).
+
+## Дополнительная информация
+
+- Для обзора всех практик безопасности в CI/CD, см. основную заметку: **[DevSecOps и тестирование безопасности в CI/CD](./devsecops_overview.md)**.
