@@ -1,83 +1,362 @@
 # GitLab CI: Механизм `include`
 
-### Основные концепции
+## Определения
 
-#### `include` — Композиция из внешних файлов
+**`include`** — механизм GitLab CI для подключения внешних YAML-файлов к конфигурации пайплайна. Позволяет создавать модульные, переиспользуемые конфигурации, размещая общие шаблоны в отдельных файлах.
 
-`include` — один из самых мощных механизмов, позволяющий собрать пайплайн из нескольких YAML-файлов, делая конфигурацию модульной и легко управляемой.
+**Важно:** Файлы `include` обрабатываются **первыми**, затем сливаются с основной конфигурацией `.gitlab-ci.yml`. Локальная конфигурация имеет приоритет и перезаписывает включённую.
 
-Поддерживаемые источники:
+## Основные концепции
 
-- **`include:local`**: Файл из того же репозитория.
-- **`include:project`**: Файл из другого проекта в том же инстансе GitLab. Рекомендуется использовать тег (`ref: v1.0.0`) для версионирования шаблонов.
-- **`include:remote`**: Файл по URL.
-- **`include:template`**: Встроенные шаблоны GitLab (например, для `Node.js`, `Docker`, `SAST`).
+### Типы `include`
 
-### Практические сценарии
+| Тип | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| **`include:local`** | Файл в том же репозитории и ветке | Разделение конфигурации внутри проекта |
+| **`include:project`** | Файл из другого проекта на том же экземпляре GitLab | Централизованные шаблоны для группы проектов |
+| **`include:remote`** | Файл по публичному URL | Сторонние шаблоны, публичные библиотеки |
+| **`include:template`** | Встроенные шаблоны GitLab (Auto DevOps, SAST, DAST) | Быстрая настройка стандартных пайплайнов |
+| **`include:component`** | CI/CD компонент из каталога | Версионируемые компоненты с `spec:inputs` |
 
-#### Сценарий 4: Как избежать дублирования конфигурации?
+### Синтаксис
 
-**Вопрос:** У вас есть 5 проектов на одном языке программирования. Как организовать пайплайны, чтобы избежать дублирования конфигурации?
+#### Краткая форма (только для `local`)
 
-**Ответ:**
+```yaml
+include:
+  - '.gitlab-ci/build.yml'
+  - '.gitlab-ci/test.yml'
+```
 
-1. **Создание общих шаблонов:** Вынесите повторяющиеся задачи (build, test, lint) в отдельный YAML-файл в централизованном репозитории.
-2. **Использование `include`:** Подключайте эти общие шаблоны в `.gitlab-ci.yml` каждого проекта.
-3. **Применение `extends`:** Наследуйте и кастомизируйте базовые задачи из шаблона в своих проектах, добавляя специфичные для проекта детали.
+#### Полная форма
+
+```yaml
+include:
+  - local: '.gitlab-ci/build.yml'
+  
+  - project: 'group/ci-templates'
+    ref: v1.0.0
+    file: '/docker/build.yml'
+  
+  - remote: 'https://example.com/.gitlab-ci.yml'
+  
+  - template: 'Security/SAST.gitlab-ci.yml'
+  
+  - component: '$CI_SERVER_FQDN/group/component@1.0.0'
+```
+
+## Детали по типам
+
+### `include:local`
+
+Подключает файл из того же репозитория и ветки.
+
+```yaml
+include:
+  - local: '.gitlab-ci/build.yml'
+```
+
+**Ограничения:**
+- Путь должен начинаться с `/` или быть относительным
+- Нельзя использовать пути через Git submodules
+- Расширение: `.yml` или `.yaml`
 
 **Пример структуры:**
-
-**1. Центральный файл шаблонов (`common-templates.yml`):**
+```
+project/
+├── .gitlab-ci.yml
+└── .gitlab-ci/
+    ├── build.yml
+    ├── test.yml
+    └── deploy.yml
+```
 
 ```yaml
-# common-templates.yml
-.build_template:
+# .gitlab-ci.yml
+include:
+  - local: '.gitlab-ci/build.yml'
+  - local: '.gitlab-ci/test.yml'
+  - local: '.gitlab-ci/deploy.yml'
+
+stages:
+  - build
+  - test
+  - deploy
+```
+
+### `include:project`
+
+Подключает файл из другого проекта на том же экземпляре GitLab.
+
+```yaml
+include:
+  - project: 'group/ci-templates'
+    ref: main
+    file: '/docker/build.yml'
+```
+
+**Параметры:**
+| Параметр | Обязательный | Описание |
+| :--- | :--- | :--- |
+| `project` | Да | Путь проекта (например, `group/ci-templates`) |
+| `file` | Да | Путь файла в проекте (начинается с `/`) |
+| `ref` | Нет | Ветка, тег или SHA (по умолчанию — `HEAD`) |
+
+**Рекомендации по версионированию:**
+
+| Тип `ref` | Рекомендация | Пример |
+| :--- | :--- | :--- |
+| **Тег (SemVer)** | ✅ Рекомендуется | `ref: v1.2.0` |
+| **Commit SHA** | ✅ Максимальная стабильность | `ref: e3262fdd0914fa823210cdb79a8c421e2cef79d8` |
+| **Ветка** | ⚠️ Не рекомендуется (нестабильно) | `ref: main` |
+| **Частичный SemVer** | ✅ Для автообновлений | `ref: '1.2'` (только для опубликованных компонентов) |
+
+**Пример:**
+```yaml
+include:
+  - project: 'group/ci-templates'
+    ref: v1.2.0  # Тег вместо main
+    file: '/docker/build.yml'
+```
+
+### `include:remote`
+
+Подключает файл по публичному URL.
+
+```yaml
+include:
+  - remote: 'https://example.com/.gitlab-ci.yml'
+```
+
+**Параметры (GitLab 17.9+):**
+| Параметр | Описание |
+| :--- | :--- |
+| `integrity` | SHA256-хеш для проверки целостности файла |
+| `cache` | Время кэширования удалённого файла (GitLab 18.9+, эксперимент) |
+
+**Пример с проверкой целостности:**
+```yaml
+include:
+  - remote: 'https://example.com/.gitlab-ci.yml'
+    integrity: 'sha256-L3/GAoKaw0Arw6hDCKeKQlV1QPEgHYxGBHsH4zG1IY8='
+```
+
+### `include:template`
+
+Использует встроенные шаблоны GitLab.
+
+```yaml
+include:
+  - template: 'Security/SAST.gitlab-ci.yml'
+  - template: 'Jobs/Node.js.gitlab-ci.yml'
+```
+
+**Доступные шаблоны:**
+- `Security/SAST.gitlab-ci.yml` — статический анализ безопасности
+- `Security/DAST.gitlab-ci.yml` — динамический анализ безопасности
+- `Jobs/Node.js.gitlab-ci.yml` — шаблон для Node.js проектов
+- `Jobs/Python.gitlab-ci.yml` — шаблон для Python проектов
+- `Jobs/Go.gitlab-ci.yml` — шаблон для Go проектов
+
+### `include:component`
+
+CI/CD компонент из каталога (GitLab 16.0+).
+
+```yaml
+include:
+  - component: '$CI_SERVER_FQDN/group/component@1.0.0'
+    inputs:
+      stage: build
+      target_branch: main
+```
+
+**Синтаксис пути:**
+```
+$CI_SERVER_FQDN/<project-path>/<component-name>@<version>
+```
+
+**Форматы версий:**
+| Формат | Пример | Рекомендация |
+| :--- | :--- | :--- |
+| **SemVer (полный)** | `@1.2.0` | ✅ Для релизов |
+| **SemVer (частичный)** | `@1.2` или `@1` | ✅ Для автообновлений |
+| **Commit SHA** | `@e3262fd...` | ✅ Для максимальной стабильности |
+| **~latest** | `@~latest` | ⚠️ Только если доверяете автору |
+
+**Важно:** Для компонентов в CI/CD Catalog обязательно семантическое версионирование (GitLab 16.10+).
+
+## Дополнительные параметры `include`
+
+### `include:inputs`
+
+Передача входных параметров в подключаемый файл (для компонентов и шаблонов с `spec:inputs`).
+
+```yaml
+include:
+  - local: '.gitlab-ci/build.yml'
+    inputs:
+      environment: production
+      enable_cache: true
+```
+
+### `include:rules`
+
+Условное включение файлов.
+
+```yaml
+include:
+  - local: '.gitlab-ci/deploy.yml'
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+```
+
+Файл будет включён только если условие истинно.
+
+### `include:integrity`
+
+Проверка целостности удалённого файла через SHA256 (GitLab 17.9+).
+
+```yaml
+include:
+  - remote: 'https://example.com/.gitlab-ci.yml'
+    integrity: 'sha256-<hash>'
+```
+
+## Ограничения
+
+| Ограничение | Значение |
+| :--- | :--- |
+| Максимум включений на пайплайн | **150** (включая вложенные) |
+| Время ожидания разрешения файлов | **30 секунд** |
+| Расширения файлов | `.yml`, `.yaml` |
+| Глобальные ключи в `include` | `stages:`, `default:` влияют на весь пайплайн |
+
+## Практические сценарии
+
+### Сценарий 1: Модульная конфигурация проекта
+
+**Структура:**
+```
+project/
+├── .gitlab-ci.yml
+└── .gitlab-ci/
+    ├── build.yml
+    ├── test.yml
+    └── deploy.yml
+```
+
+```yaml
+# .gitlab-ci.yml
+include:
+  - local: '.gitlab-ci/build.yml'
+  - local: '.gitlab-ci/test.yml'
+  - local: '.gitlab-ci/deploy.yml'
+
+stages:
+  - build
+  - test
+  - deploy
+```
+
+### Сценарий 2: Централизованные шаблоны для группы проектов
+
+**Репозиторий шаблонов (`group/ci-templates`):**
+```
+ci-templates/
+├── docker-build.yml
+├── nodejs-test.yml
+└── kubernetes-deploy.yml
+```
+
+```yaml
+# docker-build.yml
+.docker_build:
   stage: build
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
   script:
-    - npm install
-    - npm run build
-  artifacts:
-    paths:
-      - dist/
-
-.test_template:
-  stage: test
-  script:
-    - npm run test
-  coverage: '/Coverage: \d+\.\d+%/'
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
 ```
 
-**2. Файл `.gitlab-ci.yml` в каждом проекте:**
-
+**Проект (`.gitlab-ci.yml`):**
 ```yaml
-# В каждом проекте .gitlab-ci.yml
 include:
-  - project: 'templates/ci-templates'
-    ref: main # Рекомендуется использовать тег для версионирования
-    file: 'common-templates.yml'
+  - project: 'group/ci-templates'
+    ref: v1.2.0
+    file: '/docker-build.yml'
 
-build_job:
-  extends: .build_template
+stages:
+  - build
 
-test_job:
-  extends: .test_template
+build:
+  extends: .docker_build
+  variables:
+    DOCKER_BUILDKIT: "1"
 ```
 
-### Дополнительная информация
-
-#### Версионирование шаблонов
-
-При использовании `include:project` настоятельно рекомендуется использовать теги (refs) вместо веток для обеспечения стабильности:
+### Сценарий 3: Условное включение для разных окружений
 
 ```yaml
 include:
-  - project: 'my-group/ci-templates'
-    ref: v1.0.0  # Используйте тег, а не main
-    file: 'docker-build.yml'
+  - local: '.gitlab-ci/build.yml'
+  
+  - local: '.gitlab-ci/deploy-dev.yml'
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "develop"'
+  
+  - local: '.gitlab-ci/deploy-prod.yml'
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
 ```
 
-#### Связанные документы
+### Сценарий 4: Использование компонента с inputs
 
-- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов к переиспользованию.
-- **[Механизм `extends`](./extends_keyword.md)** — наследование конфигураций задач.
-- **[CI/CD Catalog](./ci_cd_catalog_components.md)** — современный подход с версионированием.
+```yaml
+include:
+  - component: '$CI_SERVER_FQDN/group/security/secret-detection@1.0.0'
+    inputs:
+      stage: security
+      scan_path: './config/secrets'
+```
+
+## Дополнительная информация
+
+### Приоритеты слияния
+
+| Конфигурация | Приоритет |
+| :--- | :--- |
+| Задание в `.gitlab-ci.yml` | **Наивысший** |
+| `default:` в `.gitlab-ci.yml` | Средний |
+| Файлы `include:` | **Низший** |
+
+### Валидация
+
+```bash
+# Проверка конфигурации
+gitlab-ci lint --project=my-group/my-project
+
+# Отладка include
+gitlab-ci lint --include-debug
+```
+
+### Распространённые ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `file does not exist` | Неправильный путь к файлу | Проверьте путь и расширение |
+| `exceeded max includes` | Более 150 включений | Упростите структуру |
+| `timeout waiting for include` | Файл недоступен более 30 сек | Проверьте доступность remote/project |
+
+### Связанные документы
+
+- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение подходов
+- **[Механизм `extends`](./extends_keyword.md)** — наследование конфигураций
+- **[CI/CD Catalog](./ci_cd_catalog_components.md)** — создание компонентов
+- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными
+
+### Внешние ресурсы
+
+- [Официальная документация: `include`](https://docs.gitlab.com/ci/yaml/#include)
+- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)

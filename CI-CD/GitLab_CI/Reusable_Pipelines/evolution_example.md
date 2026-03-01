@@ -1,16 +1,23 @@
 # GitLab CI: Эволюция переиспользуемого пайплайна (практический пример)
 
-### Практические сценарии
+## Практические сценарии
 
-#### Сценарий 5: Эволюция переиспользуемого пайплайна: практический пример
+### Сценарий: Эволюция от дублирования к компонентам
 
-**Этап 1: Проблема — Дублирование кода (Boilerplate)**
+Данный пример демонстрирует полный путь эволюции конфигурации GitLab CI — от простого дублирования кода до публикации версионируемых компонентов в каталоге.
 
-**Ситуация:** Команда пишет много микросервисов, и для каждого нужно собирать Docker-образ. Разработчики копируют один и тот же большой кусок YAML-кода в `.gitlab-ci.yml` каждого нового проекта.
+---
 
-**Пример boilerplate-кода:**
+## Этап 1: Проблема — Дублирование кода (Boilerplate)
+
+### Ситуация
+
+Команда разрабатывает несколько микросервисов. Для каждого сервиса требуется сборка Docker-образа. Разработчики копируют одинаковую конфигурацию в `.gitlab-ci.yml` каждого проекта.
+
+### Пример boilerplate-кода
 
 ```yaml
+# .gitlab-ci.yml в каждом из 10+ проектов
 build-docker-image:
   stage: build
   image: docker:20.10
@@ -18,32 +25,45 @@ build-docker-image:
     - docker:20.10-dind
   variables:
     IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    DOCKER_TLS_CERTDIR: "/certs"
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $IMAGE_TAG .
     - docker push $IMAGE_TAG
 ```
 
-**Проблемы:**
+### Проблемы
 
-1. **Сложность поддержки:** Если нужно обновить версию Docker или изменить логику сборки (например, добавить сканирование), придется вручную править файлы во всех репозиториях.
-2. **Человеческий фактор:** При копировании легко допустить ошибку.
-3. **Загромождение:** `.gitlab-ci.yml` становится большим и трудночитаемым.
+| Проблема | Описание |
+| :--- | :--- |
+| **Сложность поддержки** | При изменении версии Docker или логики сборки требуется править 10+ файлов |
+| **Человеческий фактор** | При копировании легко допустить ошибку (опечатка, устаревшая версия) |
+| **Загромождение** | `.gitlab-ci.yml` становится большим, трудным для чтения |
+| **Отсутствие стандартизации** | Каждый проект может иметь свою версию конфигурации |
 
-**Этап 2: Решение — Централизация с помощью `include`**
+---
 
-**Решение:** Вынести общий код в отдельный файл в центральном репозитории CI-шаблонов и подключать его с помощью `include`.
+## Этап 2: Решение — Централизация с помощью `include`
 
-**Создаем репозиторий `ci-templates` с файлом `docker-build.yml`:**
+### Решение
+
+Вынести общий код в отдельный файл в центральном репозитории CI-шаблонов и подключать его через `include:project`.
+
+### Создание репозитория шаблонов
+
+**Репозиторий:** `group/ci-templates`
+
+**Файл:** `docker-build.yml`
 
 ```yaml
 # ci-templates/docker-build.yml
 build-docker-image:
   stage: docker-build
-  image: docker:20.10
+  image: docker:24.0
   services:
-    - docker:20.10-dind
+    - docker:24.0-dind
   variables:
+    DOCKER_TLS_CERTDIR: "/certs"
     IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
@@ -51,78 +71,120 @@ build-docker-image:
     - docker push $IMAGE_TAG
 ```
 
-**В `.gitlab-ci.yml` проекта теперь используется `include`:**
+### Использование в проекте
 
 ```yaml
+# .gitlab-ci.yml проекта
 stages:
-  - docker-build # Необходимо объявить стадию из шаблона
+  - docker-build
 
 include:
-  - project: 'my-group/ci-templates'
-    ref: main
+  - project: 'group/ci-templates'
+    ref: v1.0.0  # Версионирование через тег
     file: '/docker-build.yml'
 ```
 
-**Результат:** Код централизован. Изменения вносятся в одном месте.
+### Результат
 
-**Этап 3: Проблема — Отсутствие гибкости**
+| Преимущество | Описание |
+| :--- | :--- |
+| **Централизация** | Изменения вносятся в одном месте |
+| **Стандартизация** | Все проекты используют одинаковую конфигурацию |
+| **Упрощение** | `.gitlab-ci.yml` проекта содержит только `include` |
 
-**Ситуация:** Шаблон `include` предоставляет готовую задачу, но не позволяет разработчикам кастомизировать ее под свои нужды (например, добавить `before_script` или передать специфичные для сборки `variables`), не отказываясь от шаблона целиком.
+### Новые проблемы
 
-**Этап 4: Решение — Гибкость с помощью `extends`**
+| Проблема | Описание |
+| :--- | :--- |
+| **Отсутствие гибкости** | Невозможно кастомизировать шаблон под конкретный проект |
+| **Жёсткая конфигурация** | Все проекты вынуждены использовать одинаковые `image`, `variables` |
 
-**Решение:** Превратить задачу в шаблоне в "скрытую" (начинающуюся с точки) и наследовать ее в пайплайне проекта с помощью `extends`.
+---
 
-**Обновляем `ci-templates/docker-build.yml`:**
+## Этап 3: Гибкость с помощью `extends`
+
+### Решение
+
+Превратить задачу в шаблоне в "скрытую" (начинающуюся с точки) и наследовать её в проекте через `extends`, добавляя специфичные настройки.
+
+### Обновлённый шаблон
+
+**Репозиторий:** `group/ci-templates`
+
+**Файл:** `docker-build.yml`
 
 ```yaml
 # ci-templates/docker-build.yml
-# Имя задачи теперь начинается с точки, она не будет запускаться сама по себе
 .docker-build-template:
   stage: build
-  image: docker:20.10
+  image: docker:24.0
   services:
-    - docker:20.10-dind
+    - docker:24.0-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build 
-        --build-arg CI_JOB_TOKEN=${CI_JOB_TOKEN} 
-        -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA 
+    - docker build
+        --build-arg CI_JOB_TOKEN=${CI_JOB_TOKEN}
+        -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
         .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
 ```
 
-**В `.gitlab-ci.yml` проекта теперь используется `extends`:**
+### Использование в проекте с кастомизацией
 
 ```yaml
+# .gitlab-ci.yml проекта
 include:
-  - project: 'my-group/ci-templates'
-    ref: main
+  - project: 'group/ci-templates'
+    ref: v1.0.0
     file: '/docker-build.yml'
 
 stages:
   - build
 
 build-my-app:
-  stage: build
   extends: .docker-build-template
   variables:
-    # Теперь можно добавлять свои переменные
-    EXTRA_BUILD_ARG: "my-value"
+    DOCKER_BUILDKIT: "1"  # Добавляем специфичную переменную
+    IMAGE_NAME: "my-app"
   before_script:
-    # И добавлять свои шаги
-    - echo "Custom step before building"
+    - echo "Custom step before building"  # Добавляем свой шаг
+    - npm install  # Специфичная подготовка
 ```
 
-**Результат:** Сохранены и централизация, и гибкость для кастомизации.
+### Результат
 
-**Этап 5: Абстрагирование деталей реализации (Безопасность)**
+| Преимущество | Описание |
+| :--- | :--- |
+| **Централизация** | Общая логика в одном месте |
+| **Гибкость** | Каждый проект может добавлять свои переменные, `before_script`, `after_script` |
+| **DRY** | Нет дублирования основной логики |
 
-**Ситуация:** Платформенная команда решает, что `docker:dind` небезопасен (требует привилегированного режима) и нужно перейти на более безопасный сборщик, например, **Kaniko**.
+### Новые проблемы
 
-**Решение:** Так как все проекты используют централизованный шаблон, достаточно изменить только его.
+| Проблема | Описание |
+| :--- | :--- |
+| **Безопасность** | `docker:dind` требует привилегированного режима (`privileged`) |
+| **Сложность обновления** | При изменении шаблона все проекты получают изменения немедленно |
 
-**Обновляем `ci-templates/docker-build.yml`, заменяя Docker на Kaniko:**
+---
+
+## Этап 4: Абстрагирование деталей реализации (Безопасность)
+
+### Ситуация
+
+Платформенная команда решает, что `docker:dind` небезопасен (требует `privileged`) и нужно перейти на более безопасный сборщик — **Kaniko**.
+
+### Решение
+
+Так как все проекты используют централизованный шаблон, достаточно изменить только его.
+
+### Обновление шаблона на Kaniko
+
+**Репозиторий:** `group/ci-templates`
+
+**Файл:** `docker-build.yml`
 
 ```yaml
 # ci-templates/docker-build.yml
@@ -131,11 +193,199 @@ build-my-app:
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
+  variables:
+    DOCKERFILE: Dockerfile
+    CONTEXT: $CI_PROJECT_DIR
   script:
     - /kaniko/executor
-      --context $CI_PROJECT_DIR
-      --dockerfile $CI_PROJECT_DIR/Dockerfile
+      --context $[[ CONTEXT ]]
+      --dockerfile $[[ DOCKERFILE ]]
       --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+      --cache=true
+      --cache-repo=$CI_REGISTRY_IMAGE/cache
 ```
 
-**Результат:** Для конечных пользователей (разработчиков) ничего не поменялось. Их `.gitlab-ci.yml` файлы остались прежними, но сборка теперь происходит с помощью другого, более безопасного инструмента.
+### Результат для проектов
+
+**Проекты не требуют изменений!** Их `.gitlab-ci.yml` остаются прежними:
+
+```yaml
+# .gitlab-ci.yml проекта (без изменений)
+include:
+  - project: 'group/ci-templates'
+    ref: v1.0.0
+    file: '/docker-build.yml'
+
+build-my-app:
+  extends: .docker-build-template
+  variables:
+    DOCKERFILE: "app/Dockerfile"  # Можно переопределить
+```
+
+### Преимущества
+
+| Преимущество | Описание |
+| :--- | :--- |
+| **Прозрачное обновление** | Проекты не требуют изменений |
+| **Безопасность** | Kaniko не требует привилегированного режима |
+| **Кэширование** | Встроенное кэширование слоёв через Kaniko |
+
+### Новые проблемы
+
+| Проблема | Описание |
+| :--- | :--- |
+| **Отсутствие типизации** | Нет явного интерфейса для входных параметров |
+| **Слабая валидация** | Невозможно валидировать переменные до выполнения |
+| **Документирование** | Требуется ручная документация параметров |
+
+---
+
+## Этап 5: Зрелость — CI/CD Catalog Components
+
+### Решение
+
+Переход на CI/CD Components с явным интерфейсом (`spec:inputs`), версионированием через Semver и публикацией в каталоге.
+
+### Создание компонента
+
+**Репозиторий:** `group/ci-components/docker-build`
+
+**Структура:**
+```
+docker-build/
+├── .gitlab-ci.yml          # spec:inputs + метаданные
+└── templates/
+    └── build.yml           # Основная логика
+```
+
+**Файл:** `.gitlab-ci.yml` (метаданные компонента)
+
+```yaml
+# .gitlab-ci.yml компонента
+spec:
+  inputs:
+    stage:
+      default: build
+      type: string
+      description: "CI stage name"
+    
+    dockerfile:
+      default: Dockerfile
+      type: string
+      description: "Path to Dockerfile"
+    
+    context:
+      default: $CI_PROJECT_DIR
+      type: string
+      description: "Build context path"
+    
+    enable_cache:
+      default: true
+      type: boolean
+      description: "Enable Kaniko caching"
+    
+    cache_repo:
+      default: $CI_REGISTRY_IMAGE/cache
+      type: string
+      description: "Cache repository"
+
+---
+# Основная логика компонента (templates/build.yml)
+docker-build-job:
+  stage: $[[ inputs.stage ]]
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - /kaniko/executor
+      --context $[[ inputs.context ]]
+      --dockerfile $[[ inputs.dockerfile ]]
+      --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+      --cache=$[[ inputs.enable_cache ]]
+      --cache-repo=$[[ inputs.cache_repo ]]
+```
+
+### Публикация в каталог
+
+**Создание релиза:**
+```bash
+# Создание тега с SemVer
+git tag -a v1.0.0 -m "Initial release of docker-build component"
+git push origin v1.0.0
+
+# Или через GitLab UI: Releases → New release
+```
+
+**CI для автоматического релиза:**
+```yaml
+# .gitlab-ci.yml компонента (добавление release job)
+release:
+  stage: deploy
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "Release $CI_COMMIT_TAG"
+    description: "docker-build component $CI_COMMIT_TAG"
+```
+
+### Использование компонента в проекте
+
+```yaml
+# .gitlab-ci.yml проекта
+include:
+  - component: '$CI_SERVER_FQDN/group/ci-components/docker-build@1.0.0'
+    inputs:
+      stage: build
+      dockerfile: app/Dockerfile
+      context: $CI_PROJECT_DIR
+      enable_cache: true
+      cache_repo: $CI_REGISTRY_IMAGE/cache
+```
+
+### Преимущества Components
+
+| Преимущество | Описание |
+| :--- | :--- |
+| **Типизация** | Явные типы параметров (string, boolean, number) |
+| **Валидация** | Автоматическая валидация inputs через CI Lint |
+| **Документация** | Автоматическая генерация из `description` |
+| **Версионирование** | Semver с поддержкой частичных версий (`@1.0`, `@1`) |
+| **Каталог** | Видимость в UI GitLab, поиск компонентов |
+| **Изоляция** | Полная самодостаточность компонента |
+
+---
+
+## Сводная таблица эволюции
+
+| Этап | Подход | Преимущества | Недостатки |
+| :--- | :--- | :--- | :--- |
+| **1** | Дублирование | Простота начала | Нет поддержки, стандартизации |
+| **2** | `include:project` | Централизация | Нет гибкости |
+| **3** | `include` + `extends` | Централизация + гибкость | Нет типизации, безопасности |
+| **4** | Абстракция (Kaniko) | Безопасность, прозрачность | Нет явного интерфейса |
+| **5** | CI/CD Components | Типизация, валидация, каталог | Высокая сложность настройки |
+
+## Рекомендации по выбору этапа
+
+| Размер команды | Количество проектов | Рекомендуемый этап |
+| :--- | :--- | :--- |
+| 1–3 разработчика | 1–3 проекта | Этап 2–3 (`include` + `extends`) |
+| 5–10 разработчиков | 5–10 проектов | Этап 3–4 (абстракция) |
+| 10+ разработчиков | 10+ проектов | Этап 5 (Components) |
+| Публичные компоненты | Любое | Этап 5 (Components с каталогом) |
+
+## Дополнительная информация
+
+### Связанные документы
+
+- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов
+- **[Механизм `extends`](./extends_keyword.md)** — наследование конфигураций
+- **[Механизм `include`](./include_keyword.md)** — все типы include
+- **[CI/CD Catalog](./ci_cd_catalog_components.md)** — создание компонентов
+
+### Внешние ресурсы
+
+- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
+- [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
