@@ -78,7 +78,47 @@ spec:
 ```
 После применения этого манифеста логи, генерируемые приложением `my-app-container`, будут использовать московское время.
 
+#### Пример с Kubernetes DownwardAPI (автоматически с хоста)
+
+Для автоматического наследования часового пояса с ноды (где работает под) можно использовать `downwardAPI`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: timezone-auto
+spec:
+  containers:
+  - name: app
+    image: alpine:latest
+    command: ["sleep", "3600"]
+    env:
+    - name: TZ
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+```
+
+> **Примечание:** Этот метод требует, чтобы имя ноды соответствовало часовому поясу (например, `node-msk-01`), что не всегда удобно. Альтернатива — использовать `hostPath` монтирование `/etc/localtime`.
+
 ## 4. Дополнительная информация
+
+### Ограничения переменной TZ
+
+Не все приложения корректно обрабатывают переменную `TZ`. Исключения:
+
+- **Java** (JVM): Читает `TZ`, но требует правильной настройки `JAVA_OPTS`
+- **PostgreSQL**: Использует `PGTZ` или настройки в `postgresql.conf`
+- **Nginx**: Требует директиву `env TZ;` в конфиге и установку `tzdata`
+
+Для JVM в Kubernetes:
+```yaml
+env:
+- name: TZ
+  value: "Europe/Moscow"
+- name: JAVA_TOOL_OPTIONS
+  value: "-Duser.timezone=Europe/Moscow"
+```
 
 ### Установка `tzdata`
 
@@ -99,3 +139,9 @@ ENV TZ="Europe/Moscow"
 
 Этот подход гарантирует,
 что любой, кто использует ваш образ, по умолчанию получит правильный часовой пояс, но при этом сможет переопределить его при запуске контейнера.
+
+---
+
+### Связанные темы
+
+- [Синхронизация времени в Linux](../../Linux/Core/systemd/time_synchronization.md) — настройка NTP

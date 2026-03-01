@@ -102,3 +102,5 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
     - **[host](./drivers/host.md)**
     - **[overlay](./drivers/overlay.md)**
     - **[macvlan](./drivers/macvlan.md)**
+
+- **[Изоляция в Linux: Namespaces и Cgroups](../Concepts/linux_isolation.md)** — сетевой namespace как часть общей изоляции
