@@ -105,7 +105,7 @@ services:
       - monitoring-net
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.53.0 # Используйте актуальную версию
+    image: ghcr.io/cadvisor/cadvisor:v0.56.0 # Используйте актуальную версию
     container_name: cadvisor
     volumes:
       - /:/rootfs:ro
