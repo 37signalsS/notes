@@ -249,3 +249,7 @@ CloudNativePG найдет последний доступный бэкап от
 ### 4.1. Мониторинг
 
 CloudNativePG "из коробки" интегрируется с Prometheus. Если в манифесте указать `monitoring: { enablePodMonitor: true }`, оператор создаст ресурс `PodMonitor`, который будет автоматически обнаружен Prometheus Operator'ом для сбора сотен метрик о состоянии PostgreSQL.
+
+### Связанные концепции
+
+* **Full-Stack Observability:** Подробнее о мониторинге PostgreSQL см. **[Full-Stack Observability для PostgreSQL](./observability.md)**.
