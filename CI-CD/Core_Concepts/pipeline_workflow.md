@@ -2,18 +2,18 @@
 
 ### Определения
 
-- **Поток пайплайна (Pipeline Workflow)** — это последовательность **[этапов (Stages)](./pipeline_elements.md)** и **[задач (Jobs)](./pipeline_elements.md)**, которые выполняются для доставки кода от коммита до развертывания. Этот документ описывает типичный, обобщенный поток.
+- **Поток пайплайна (Pipeline Workflow)** — это последовательность **[этапов (Stages)](./pipeline_elements.md#этап-stage)** и **[задач (Jobs)](./pipeline_elements.md#задача-job-step)**, которые выполняются для доставки кода от коммита до развертывания. Этот документ описывает типичный, обобщенный поток.
 
 ### Основные концепции: Типичный поток (Workflow)
 
-Процесс инициируется **[триггером](./pipeline_elements.md)** (например, `git push`) и выполняется **[исполнителями (Runners)](./pipeline_elements.md)**.
+Процесс инициируется **[триггером](./pipeline_elements.md#триггер-trigger)** (например, `git push`) и выполняется **[исполнителями (Runners)](./pipeline_elements.md#исполнитель-runner-agent)**.
 
 1. **Инициация:** Разработчик создает `pull/merge request` в основную ветку (`main`).
-2. **Сборка и статический анализ:** Запускается **[пайплайн](./pipeline_elements.md)**, который собирает проект, запускает линтеры и SAST-сканеры.
+2. **Сборка и статический анализ:** Запускается **[пайплайн](./pipeline_elements.md#пайплайн-pipeline)**, который собирает проект, запускает линтеры и SAST-сканеры.
 3. **Автоматическое тестирование:** Выполняются unit-тесты, интеграционные и др.
 4. **Сканирование безопасности:** Происходит сканирование зависимостей на уязвимости (SCA).
-5. **Пакетирование:** Создается релизный **[артефакт](./pipeline_elements.md)** (например, Docker-образ) и публикуется в **[репозиторий артефактов](../artifact_management.md)**.
-6. **Развертывание на Staging:** Артефакт развертывается в предпроизводственную **[среду (Environment)](./pipeline_elements.md)**, где выполняются smoke-тесты.
+5. **Пакетирование:** Создается релизный **[артефакт](./pipeline_elements.md#артефакт-artifact)** (например, Docker-образ) и публикуется в **[репозиторий артефактов](../artifact_management.md)**.
+6. **Развертывание на Staging:** Артефакт развертывается в предпроизводственную **[среду (Environment)](./pipeline_elements.md#среда-environment)**, где выполняются smoke-тесты.
 7. **Развертывание на Production:**
     - **Continuous Delivery:** Требуется ручное подтверждение для развертывания.
     - **Continuous Deployment:** Развертывание происходит автоматически при успехе всех предыдущих шагов.
@@ -23,7 +23,7 @@
 Этот декларативный пайплайн иллюстрирует описанный выше поток.
 
 ```yaml
-# Определение последовательности этапов (Stages)
+# Определение последовательности [Этапов (Stages)](./pipeline_elements.md#этап-stage)
 stages:
   - build
   - test
@@ -33,13 +33,13 @@ stages:
 variables:
   APP_VERSION: "${CI_COMMIT_SHORT_SHA}"
 
-# Задача (Job) на этапе 'build'
+# [Задача (Job)](./pipeline_elements.md#задача-job-step) на этапе 'build'
 build:
   stage: build
   script:
     - make deps
     - make build
-  # Создание артефактов для передачи на следующие этапы
+  # Создание [артефактов](./pipeline_elements.md#артефакт-artifact) для передачи на следующие этапы
   artifacts:
     paths:
       - dist/
@@ -53,7 +53,7 @@ test:
     - make lint
     - make unit
     - make integration
-  # Использование кэширования для ускорения
+  # Использование [кэширования](./pipeline_elements.md#кэш-cache) для ускорения
   cache:
     paths:
       - .cache/pip
@@ -69,7 +69,7 @@ package:
     reports:
       dotenv: release.env
 
-# Задача развертывания в среду 'staging'
+# Задача развертывания в [среду](./pipeline_elements.md#среда-environment) 'staging'
 deploy_stage:
   stage: deploy
   needs: ["package"]
@@ -77,11 +77,11 @@ deploy_stage:
     - ./scripts/deploy.sh stage $APP_VERSION
   environment: "stage"
 
-# Задача развертывания в среду 'production'
+# Задача развертывания в [среду](./pipeline_elements.md#среда-environment) 'production'
 deploy_prod:
   stage: deploy
   needs: ["deploy_stage"]
-  when: manual # Триггер: ручной запуск
+  when: manual # [Триггер](./pipeline_elements.md#триггер-trigger): ручной запуск
   only:
     - main
   script:
