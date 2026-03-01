@@ -1,8 +1,21 @@
 # ArgoCD: Декларативный CI/CD для Kubernetes
 
+> **Актуальная версия:** v3.3 (февраль 2026). Установка: `kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml`
+
 ## Определения
 
 **ArgoCD** — это декларативный [GitOps-инструмент](../GitOps_overview.md) непрерывной доставки (CD) для Kubernetes. Он автоматизирует развертывание приложений и синхронизирует состояние кластера с Git-репозиторием, который выступает как единственный источник истины (Single Source of Truth).
+
+## Дополнительная информация
+
+### Ключевые изменения в v3.x
+
+- **PreDelete Hooks** (v3.3): Запуск Jobs перед удалением приложения для безопасного завершения работы
+- **OIDC Refresh**: Обновление сессий без таймаутов
+- **Granular RBAC**: Whitelist имён ресурсов для детального контроля доступа
+- **Hydrator**: Улучшенная работа с Helm-чартами и Kustomize
+- **Progressive Sync**: Постепенное развёртывание на несколько кластеров с валидацией
+- **Server-Side Apply**: Улучшенная обработка конфликтов при синхронизации
 
 ## Базовые концепции
 
@@ -83,10 +96,41 @@ spec:
 
 По умолчанию ArgoCD не работает с зашифрованными секретами напрямую. Для безопасного хранения секретов в Git (Secrets-in-Git) требуются сторонние инструменты:
 
-* **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Шифрует секреты в Git, которые может расшифровать только контроллер в кластере.
-* **[HashiCorp Vault (AVP)](./argocd_vault_integration.md)**: Интеграция через плагины, например, `argo-vault-plugin`.
-* **[SOPS (Secrets OPerationS)](../../Security/Tools/sops_overview.md)**: Позволяет шифровать значения в YAML/JSON файлах.
+- **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Шифрует секреты в Git, которые может расшифровать только контроллер в кластере.
+- **[HashiCorp Vault (AVP)](./argocd_vault_integration.md)**: Интеграция через плагины, например, `argo-vault-plugin`.
+- **[SOPS (Secrets OPerationS)](../../Security/Tools/sops_overview.md)**: Позволяет шифровать значения в YAML/JSON файлах.
+
+### ArgoCD Image Updater
+
+**ArgoCD Image Updater** (текущая версия: v0.18.0, декабрь 2025) — дополнительный компонент для автоматического обновления образов контейнеров.
+
+**Принцип работы:**
+1. Мониторит Docker Registry на наличие новых тегов образов
+2. Обновляет манифесты в Git-репозитории при обнаружении новых версий
+3. ArgoCD автоматически синхронизирует изменения
+
+**Пример аннотаций для Application:**
+```yaml
+metadata:
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: my-app=my-registry/my-app
+    argocd-image-updater.argoproj.io/my-app.update-strategy: semver
+    argocd-image-updater.argoproj.io/my-app.allow-tags: regexp:^v[0-9]+\.[0-9]+\.[0-9]+$
+```
+
+**Стратегии обновления:**
+- `semver`: Обновление по семантической версии
+- `latest`: Последний тег (не рекомендуется для production)
+- `digest`: Обновление по хешу образа
+- `name`: Сортировка по имени тега
+
+Подробнее: [GitOps: Образы контейнеров и их жизненный цикл](../Concepts/containerization_and_image_storage.md)
 
 ## Практические сценарии
 
-* **[Интеграция с Helm](./helm_integration.md)**: Описание и сравнение подходов к развертыванию приложений с помощью Helm-чартов.
+- **[Интеграция с Helm](./helm_integration.md)**: Описание и сравнение подходов к развёртыванию приложений с помощью Helm-чартов
+- **[Установка и настройка](./argocd_installation_and_setup.md)**: Практическое руководство по установке ArgoCD v3.x
+- **[Синхронизация](./synchronization.md)**: Политики синхронизации, Sync Waves, Hooks
+- **[Уведомления](./argocd_notifications.md)**: Настройка уведомлений в Telegram, Slack, Email
+- **[Vault интеграция](./argocd_vault_integration.md)**: Управление секретами через HashiCorp Vault
+- **[Troubleshooting](./argocd_troubleshooting_and_monitoring.md)**: Диагностика проблем и мониторинг

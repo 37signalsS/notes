@@ -1,44 +1,63 @@
-# ArgoCD: Синхронизация и ее Политики
+# ArgoCD: Синхронизация и её политики
 
-Синхронизация в ArgoCD — это ключевой процесс, который приводит состояние вашего Kubernetes-кластера в соответствие с конфигурацией, описанной в Git-репозитории.
+> **SSoT:** Этот файл — основной источник истины для политик синхронизации ArgoCD.
 
 ## Определения
 
-- **Синхронизация (Synchronization)**: Процесс анализа и применения изменений из Git в кластер. Цель — устранить расхождения между желаемым и реальным состоянием.
-- **Desired State (Желаемое состояние)**: Конфигурация, описанная в манифестах (YAML, Helm, Kustomize) в Git-репозитории. Это "источник истины".
-- **Live State (Реальное состояние)**: Фактическое состояние объектов, работающих в Kubernetes-кластере.
-- **OutOfSync**: Статус, который присваивается приложению, если его `Live State` не соответствует `Desired State`.
+| Термин | Определение |
+| :--- | :--- |
+| **Синхронизация (Synchronization)** | Процесс приведения состояния Kubernetes-кластера в соответствие с конфигурацией из Git-репозитория |
+| **Desired State** | Желаемое состояние, описанное в манифестах (YAML, Helm, Kustomize) в Git |
+| **Live State** | Фактическое состояние объектов в Kubernetes-кластере |
+| **OutOfSync** | Статус приложения при расхождении `Live State` и `Desired State` |
+| **Sync Status** | Соответствие состояния кластера Git: `Synced` или `OutOfSync` |
+| **Health Status** | Состояние здоровья ресурсов: `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing` |
 
-## Основные концепции
+## Базовые концепции
 
-### Цикл Сверки (Reconciliation Loop)
+### Цикл сверки (Reconciliation Loop)
 
-ArgoCD Application Controller с заданной периодичностью (по умолчанию 3 минуты) или по триггеру (webhook, ручной refresh):
+ArgoCD Application Controller с заданной периодичностью (по умолчанию 3 минуты) или по триггеру (webhook, manual refresh):
 
-1. Клонирует Git-репозиторий.
-2. Рендерит манифесты (например, обрабатывает Helm-шаблон).
-3. Сравнивает результат с `Live State` в кластере.
-4. Если обнаружено расхождение, приложение получает статус `OutOfSync`.
+1. Клонирует Git-репозиторий
+2. Рендерит манифесты (Helm-шаблон, Kustomize, plain YAML)
+3. Сравнивает результат с `Live State` в кластере
+4. При расхождении присваивает статус `OutOfSync`
 
-### Статусы Приложения
+### Политики синхронизации
 
-ArgoCD отслеживает два независимых статуса:
+Определяются в секции `syncPolicy` манифеста `Application`:
 
-- **Sync Status**: Показывает, соответствует ли `Live State` состоянию `Desired State`. Значения: `Synced`, `OutOfSync`.
-- **Health Status**: Показывает состояние здоровья задеплоенных ресурсов. Значения: `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing`.
+```yaml
+spec:
+  syncPolicy:
+    automated:
+      prune: true      # Удалять ресурсы, отсутствующие в Git
+      selfHeal: true   # Исправлять дрейф конфигурации
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+```
 
 ## Практические сценарии
 
-Политика синхронизации определяется в секции `syncPolicy` манифеста `Application`.
-
 ### Сценарий 1: Ручная синхронизация (Manual Sync)
 
-Это поведение по умолчанию. ArgoCD обнаружит расхождение и покажет статус `OutOfSync`, но не будет предпринимать никаких действий. Оператор должен вручную нажать кнопку "Sync" в интерфейсе.
+**Поведение по умолчанию.** ArgoCD обнаруживает расхождение и показывает статус `OutOfSync`, но не применяет изменения автоматически.
 
-**Когда использовать**: Для критичных production-окружений, где каждое изменение должно проходить дополнительную проверку человеком.
+**Когда использовать:**
+- Production-окружения с требованием ручного подтверждения
+- Критичные изменения, требующие проверки
+- Окружения с compliance-требованиями
 
 ```yaml
-# syncPolicy не указан, используется Manual по умолчанию
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app
+  namespace: argocd
 spec:
   project: default
   source:
@@ -48,18 +67,39 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: my-app
+  # syncPolicy не указан — Manual по умолчанию
+```
+
+**Команды CLI:**
+```bash
+# Просмотр различий
+argocd app diff my-app
+
+# Запуск синхронизации
+argocd app sync my-app
+
+# Синхронизация с конкретной ревизией
+argocd app sync my-app --revision abc123
+
+# Ожидание завершения
+argocd app wait my-app --sync --health
 ```
 
 ### Сценарий 2: Автоматическая синхронизация (Auto-Sync)
 
-В этом режиме ArgoCD автоматически применяет изменения из Git, как только они обнаруживаются.
+ArgoCD автоматически применяет изменения из Git при их обнаружении.
 
-**Когда использовать**: Для dev/staging окружений или для приложений, где скорость доставки важнее ручного контроля.
+**Когда использовать:**
+- Dev/Staging-окружения
+- Приложения с высокой частотой развёртываний
+- Команды с зрелыми CI/CD-процессами
 
-Ключевые параметры `automated`:
+**Ключевые параметры:**
 
-- `prune: true`: Автоматически удалять ресурсы, которые были удалены из Git.
-- `selfHeal: true`: Автоматически исправлять "дрейф" — ручные изменения, сделанные в кластере в обход Git.
+| Параметр | Описание |
+| :--- | :--- |
+| `prune: true` | Автоматически удалять ресурсы, удалённые из Git |
+| `selfHeal: true` | Автоматически исправлять ручные изменения в кластере |
 
 ```yaml
 spec:
@@ -68,55 +108,232 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true # Автоматически создавать namespace
-      - ServerSideApply=true # Использовать Server-Side Apply для лучшей обработки конфликтов
+    - CreateNamespace=true
+    - ServerSideApply=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+    - RespectIgnoreDifferences=true
 ```
 
-### Сценарий 3: Управление порядком и хуками (Sync Waves & Hooks)
+**Опции `syncOptions`:**
 
-Иногда ресурсы нужно создавать в определенном порядке (например, CRD, затем сам ресурс).
+| Опция | Описание |
+| :--- | :--- |
+| `CreateNamespace=true` | Автоматически создавать целевой namespace |
+| `ServerSideApply=true` | Использовать Server-Side Apply для обработки конфликтов |
+| `PrunePropagationPolicy=foreground` | Ждать удаления ресурсов перед продолжением |
+| `PruneLast=true` | Удалять ресурсы после применения остальных изменений |
+| `RespectIgnoreDifferences=true` | Игнорировать указанные различия при синхронизации |
 
-- **Sync Waves**: Аннотация `argocd.argoproj.io/sync-wave: "N"` позволяет группировать ресурсы. ArgoCD сначала применит ресурсы с меньшим `N`.
-- **Hooks**: Аннотации `PreSync`, `Sync`, `PostSync` позволяют запускать Jobs или другие ресурсы до, во время или после синхронизации для выполнения миграций, тестов и т.д.
+### Сценарий 3: Управление порядком — Sync Waves и Hooks
+
+**Sync Waves** — аннотация для группировки ресурсов и применения в определённом порядке.
 
 ```yaml
-# Этот Job запустится перед синхронизацией
+# 1. CRD (wave -2)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mycrds.example.com
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+
+# 2. Namespace (wave -1)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+
+# 3. Deployment и Service (wave 0)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+# 4. Ingress (wave 1)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-ingress
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+```
+
+**Hooks** — ресурсы для выполнения действий до/во время/после синхронизации.
+
+| Hook | Описание |
+| :--- | :--- |
+| `PreSync` | Выполняется перед синхронизацией (миграции БД, тесты) |
+| `Sync` | Выполняется во время синхронизации |
+| `PostSync` | Выполняется после синхронизации (уведомления, smoke-тесты) |
+| `Skip` | Пропускается при синхронизации |
+
+**Пример PreSync Hook для миграции БД:**
+```yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pre-sync-job
+  name: db-migration
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - name: migration
+        image: my-app:migration
+        command: ["rails", "db:migrate"]
+      restartPolicy: Never
+  backoffLimit: 1
 ```
 
-### Сценарий 4: Ограничение авто-синхронизации (Sync Windows)
+**Политики удаления Hooks (`hook-delete-policy`):**
 
-Для предотвращения нежелательных изменений в определенное время (например, в часы пиковой нагрузки или во время code freeze) используются окна синхронизации. Они настраиваются на уровне `AppProject`.
+| Политика | Описание |
+| :--- | :--- |
+| `HookSucceeded` | Удалить после успешного выполнения |
+| `HookFailed` | Удалить после неудачи |
+| `BeforeHookCreation` | Удалить старый hook перед созданием нового |
 
-**Когда использовать**: В production-окружениях, чтобы запретить автоматические деплои по ночам или в праздники.
+### Сценарий 4: Окна синхронизации (Sync Windows)
+
+**Sync Windows** ограничивают автоматическую синхронизацию по расписанию. Настраиваются на уровне `AppProject`.
+
+**Когда использовать:**
+- Запрет деплоев в нерабочее время
+- Code freeze в праздничные периоды
+- Ограничение деплоев в часы пик
 
 ```yaml
-# Пример AppProject с окнами синхронизации
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: production-apps
+  namespace: argocd
 spec:
-  # ...
+  description: "Production приложения"
+  sourceRepos:
+  - 'https://github.com/my-org/production-repo.git'
+  destinations:
+  - namespace: 'prod'
+    server: 'https://kubernetes.default.svc'
+  
   syncWindows:
-  # Разрешаем авто-синк только в рабочие часы
+  # Разрешение: будни 9:00-18:00 MSK
   - kind: allow
-    schedule: '0 9-18 * * 1-5' # 9:00-18:00 по будням
+    schedule: '0 9-18 * * 1-5'
     duration: 1h
     timeZone: "Europe/Moscow"
-  # Запрещаем авто-синк в конце года
+    applications:
+    - '*-prod'
+    manualSync: true  # Ручная синхронизация разрешена всегда
+  
+  # Запрет: с 25 декабря на неделю
   - kind: deny
-    schedule: '0 0 25 12 *' # с 25 декабря
-    duration: 168h # на неделю
+    schedule: '0 0 25 12 *'
+    duration: 168h  # 7 дней
+    timeZone: "Europe/Moscow"
+    applications:
+    - '*-prod'
+```
+
+**Параметры Sync Window:**
+
+| Параметр | Описание |
+| :--- | :--- |
+| `kind` | `allow` (разрешение) или `deny` (запрет) |
+| `schedule` | Cron-выражение |
+| `duration` | Длительность окна (например, `1h`, `168h`) |
+| `timeZone` | Часовой пояс (например, `Europe/Moscow`) |
+| `applications` | Список приложений или wildcard |
+| `manualSync` | Разрешить ручную синхронизацию вне окна |
+
+**Проверка активных окон:**
+```bash
+argocd proj get production-apps
+```
+
+### Сценарий 5: Прогрессивная синхронизация (Progressive Sync, v3.x)
+
+**Progressive Sync** — постепенное развёртывание на несколько кластеров с валидацией на каждом этапе.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: progressive-app
+  namespace: argocd
+spec:
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          environment: production
+  template:
+    metadata:
+      name: 'app-{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/my-org/app.git
+        targetRevision: HEAD
+        path: manifests
+      destination:
+        server: '{{server}}'
+        namespace: production
+      syncPolicy:
+        progressiveSync:
+          maxUpdate: 1  # Максимум 1 кластер за раз
+          steps:
+          - maxUpdate: 1
+            matchExpressions:
+            - key: environment
+              operator: In
+              values: [staging]
+          - maxUpdate: 2
+            matchExpressions:
+            - key: environment
+              operator: In
+              values: [production]
 ```
 
 ## Дополнительная информация
 
-- **[Обзор ArgoCD](./argocd_overview.md)**: Введение в ArgoCD и его архитектуру.
-- **Официальная документация**: [Sync Policies and Options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
+### Игнорирование различий (Ignore Differences)
+
+Для ресурсов, где допустим дрейф (например, `replicas` для HPA):
+
+```yaml
+spec:
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
+  - group: autoscaling
+    kind: HorizontalPodAutoscaler
+    jqPathExpressions:
+    - .spec.minReplicas
+    - .spec.maxReplicas
+```
+
+### Принудительная синхронизация
+
+```bash
+# Принудительное применение (игнорируя различия)
+argocd app sync my-app --force
+
+# Пропуск проверки здоровья
+argocd app sync my-app --skip-schema-validation
+```
+
+### Ссылки
+
+- **[Обзор ArgoCD](./argocd_overview.md)**
+- **[Установка и настройка](./argocd_installation_and_setup.md)**
+- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)**

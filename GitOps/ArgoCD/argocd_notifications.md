@@ -6,7 +6,7 @@
 
 Это позволяет командам получать оперативную информацию о состоянии развертываний, не отслеживая постоянно веб-интерфейс ArgoCD.
 
-## Основные концепции
+## Базовые концепции
 
 Вся конфигурация `argocd-notifications` хранится в двух основных ресурсах Kubernetes в неймспейсе `argocd`:
 
@@ -26,6 +26,8 @@
 ### Важное замечание о версиях
 
 При установке `argocd-notifications` с помощью официальных манифестов важно убедиться, что версия манифеста соответствует версии документации. В прошлом были случаи, когда `Getting Started` гайд ссылался на устаревшую версию манифестов, что приводило к несовместимости конфигурации. Установка через [официальный Helm-чарт](https://github.com/argoproj/argo-helm/tree/main/charts/argocd-notifications) является более надежным способом, так как версионирование в Helm строже.
+
+**Для ArgoCD v3.x:** Notifications встроен в основной дистрибутив, отдельная установка не требуется.
 
 ## Практические сценарии
 
@@ -124,3 +126,30 @@ spec:
 3.  Забирает токен из `Secret`.
 4.  Формирует сообщение и отправляет его через API Telegram.
 5.  Добавляет в аннотации приложения информацию о том, что уведомление было отправлено, чтобы избежать дублирования.
+
+## Дополнительная информация
+
+### Встроенные триггеры (v3.x)
+
+| Триггер | Условие | Шаблон |
+| :--- | :--- | :--- |
+| `on-sync-succeeded` | `app.status.operationState.phase in ['Succeeded']` | `app-sync-succeeded` |
+| `on-sync-failed` | `app.status.operationState.phase in ['Failed', 'Error']` | `app-sync-failed` |
+| `on-health-degraded` | `app.status.health.status == 'Degraded'` | `app-health-degraded` |
+| `on-sync-running` | `app.status.operationState.phase in ['Running']` | `app-sync-running` |
+| `on-sync-status-unknown` | `app.status.sync.status == 'Unknown'` | `app-sync-status-unknown` |
+
+### Поддерживаемые сервисы уведомлений
+
+- **Telegram:** Боты через token
+- **Slack:** Webhook URL или OAuth
+- **Email:** SMTP-сервер
+- **Microsoft Teams:** Webhook URL
+- **GitHub:** Status API
+- **GitLab:** Commit Status API
+- **Webhook:** Произвольный HTTP POST
+
+### Ссылки
+
+- **[GitOps: Уведомления](../Notifications/gitops_notifications.md)** — обзор уведомлений в GitOps
+- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)**

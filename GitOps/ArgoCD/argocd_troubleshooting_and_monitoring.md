@@ -1,86 +1,207 @@
+# ArgoCD: Устранение неполадок и мониторинг
+
+## Определения
+
+**Troubleshooting ArgoCD** — процесс диагностики и устранения проблем с синхронизацией, развёртыванием и мониторингом приложений в ArgoCD.
+
+## Базовые концепции
+
+### Типы проблем в ArgoCD
+
+| Категория | Примеры |
+| :--- | :--- |
+| **Синхронизация** | Ошибки применения манифестов, конфликты ресурсов |
+| **Доступ к репозиторию** | Неверные учётные данные, SSH-ключи |
+| **Health статус** | Приложения в статусе `Degraded`, `Missing` |
+| **Производительность** | Медленная синхронизация, таймауты API |
+| **Безопасность** | Ошибки аутентификации, RBAC |
+
+## Практические сценарии
+
+### Сценарий 1: Диагностика ошибок синхронизации
+
+**Проверка логов компонентов:**
+```bash
+# Application Controller
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+
+# Repo Server
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server
+
+# Server
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
+```
+
+**Просмотр различий между Git и кластером:**
+```bash
+argocd app diff <app-name>
+```
+
+**Проверка статуса приложения:**
+```bash
+argocd app get <app-name>
+argocd app list
+```
+
+### Сценарий 2: Проблемы с доступом к репозиторию
+
+**Проверка подключенных репозиториев:**
+```bash
+argocd repo list
+```
+
+**Тестирование подключения:**
+```bash
+argocd repo get <repo-url>
+```
+
+**Частые причины:**
+- Истёк SSH-ключ или токен доступа
+- Изменился URL репозитория
+- Блокировка сетевым экраном
+- Неправильный формат ключа (должен быть без passphrase)
+
+**Решение:**
+```bash
+# Обновление репозитория
+argocd repo rm <repo-url>
+argocd repo add <repo-url> --ssh-private-key-path ~/.ssh/id_rsa
+```
+
+### Сценарий 3: Проблемы с образами контейнеров
+
+**ImagePullBackOff / ErrImagePull:**
+```bash
+# Проверка событий в namespace
+kubectl get events -n <namespace> --sort-by='.lastTimestamp'
+
+# Проверка secret для registry
+kubectl get secret <registry-secret> -n <namespace> -o yaml
+```
+
+**Для локальных кластеров (Minikube/Kind):**
+```bash
+# Загрузка образа в кластер
+minikube image load <image>:<tag>
+kind load docker-image <image>:<tag>
+```
+
+### Сценарий 4: Self-Healing и Prune
+
+**Параметры политики синхронизации:**
+
+| Параметр | Описание |
+| :--- | :--- |
+| `selfHeal: true` | Автоматически восстанавливает ресурсы, удалённые вручную из кластера |
+| `prune: true` | Удаляет ресурсы из кластера, которые отсутствуют в Git |
+
+**Проверка политики:**
+```bash
+argocd app get <app-name> -o yaml | grep -A 10 syncPolicy
+```
+
+**Удаление приложения и всех его ресурсов:**
+```bash
+# Через CLI
+argocd app delete <app-name> --cascade=true
+
+# Через kubectl
+kubectl delete -f my-application.yaml
+```
+
+### Сценарий 5: Мониторинг и метрики
+
+ArgoCD предоставляет встроенный экспортер метрик для Prometheus.
+
+**Эндпоинты метрик:**
+- `/metrics` — основные метрики
+- `/metrics/applications` — метрики приложений
+
+**Ключевые метрики:**
+
+| Метрика | Описание |
+| :--- | :--- |
+| `argocd_app_info` | Информация о приложениях |
+| `argocd_app_sync_status` | Статус синхронизации |
+| `argocd_app_health_status` | Статус здоровья |
+| `argocd_repo_server_queue_size` | Размер очереди Repo Server |
+| `argocd_cluster_api_requests` | Запросы к Kubernetes API |
+
+**Интеграция с Prometheus:**
+```yaml
+# ServiceMonitor для Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-metrics
+  namespace: argocd
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-metrics
+  endpoints:
+  - port: metrics
+```
+
+### Сценарий 6: Метрики DORA через ArgoCD
+
+ArgoCD позволяет отслеживать ключевые метрики DORA через Prometheus. Подробное описание: **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)**.
+
+| Метрика DORA | Источник в ArgoCD |
+| :--- | :--- |
+| **Deployment Frequency** | Количество успешных синхронизаций (`argocd_app_sync_status{phase="Succeeded"}`) |
+| **Change Fail Rate** | Процент синхронизаций со статусом `Failed` |
+| **MTTR** | Время между неудачной и последующей успешной синхронизацией |
+| **Lead Time** | Время от коммита до успешной синхронизации (требует интеграции с Git) |
+
+**Пример запроса Prometheus для Deployment Frequency:**
+```promql
+# Количество успешных развёртываний за 24 часа
+increase(argocd_app_sync_status{phase="Succeeded"}[24h])
+```
+
+**Пример для Change Fail Rate:**
+```promql
+# Процент неудачных синхронизаций
+sum(increase(argocd_app_sync_status{phase="Failed"}[24h])) 
+/ 
+sum(increase(argocd_app_sync_status[24h])) * 100
+```
+
+### Сценарий 7: Ограничения мониторинга с ArgoCD
+
+- **Неполное покрытие:** Не все части пайплайна отслеживаются
+- **Изолированная аналитика:** Данные из разных источников слабо связаны
+- **Сложность корреляции:** Трудности с связью метрик, логов и трассировок
+
+**Решение:** Дополнение ArgoCD инструментами наблюдаемости:
+- **Keptn:** Quality Gates, пре/пост-деплой проверки
+- **Backstage:** Developer Portal для единой точки входа
+- **Grafana:** Визуализация метрик из нескольких источников
+
 ## Дополнительная информация
 
-### Устранение неполадок (Troubleshooting)
+### Полезные команды CLI
 
-* **Ошибки синхронизации:** Проверяйте логи подов ArgoCD (`kubectl logs -n argocd <pod_name>`).
-* **Доступ к репозиторию:** Убедитесь, что ArgoCD имеет корректные учетные данные или SSH-ключи для доступа к Git-репозиторию.
-* **Проблемы с образами:** Если поды не запускаются, проверьте, доступен ли Docker-образ в кластере (например, `minikube image load`).
-* **Конфликты ресурсов:** Используйте `argocd app diff <app_name>` для просмотра различий между Git и состоянием кластера.
-* **"Self-Healing" и "Prune":** Параметр `selfHeal: true` восстанавливает ресурсы, удаленные вручную из кластера. Параметр `prune: true` удаляет ресурсы из кластера, которые больше не присутствуют в Git-репозитории.
-* **Удаление Application:** Если необходимо удалить приложение и все его ресурсы:
+```bash
+# История синхронизаций
+argocd app history <app-name>
 
-    ```bash
-    argocd app delete <app_name> --cascade=true
-    ```
+# Журналы подов приложения
+argocd app logs <app-name>
 
-    Или, если `Application` был создан через `kubectl apply -f`:
+# Перезапуск синхронизации
+argocd app sync <app-name> --retry
 
-    ```bash
-    kubectl delete -f my-application.yaml
-    ```
+# Откат к предыдущей ревизии
+argocd app rollback <app-name> [revision]
 
-### Интеграция ArgoCD с метриками DORA
+# Ожидание завершения синхронизации
+argocd app wait <app-name> --sync --health
+```
 
-Подробное описание метрик DORA содержится в документе: [Метрики DORA (DevOps Research and Assessment)](../../CI-CD/Core_Concepts/dora_metrics.md). ArgoCD предоставляет встроенный экспортер метрик для Prometheus, которые можно использовать для отслеживания ключевых показателей DORA:
+### Ссылки
 
-* **Deployment Frequency (Частота развертывания)**: отслеживается через количество успешных синхронизаций.
-* **Change Fail Rate (Процент ошибок при изменениях)**: процент синхронизаций со статусом `Failed`.
-* **Mean Time to Recovery (MTTR - Среднее время восстановления)**: время между неудачной синхронизацией и последующей успешной.
-* **Lead Time for Changes (Время выполнения изменений)**: время от коммита до успешной синхронизации в кластере.
-
-ArgoCD предоставляет метрики трех видов: собственные, RepoServer и Application Controller.
-
-#### Метрики Application Controller
-
-Отвечает за приложения:
-
-* **Application Sync Status:** Статус синхронизации приложений. Используется для построения ChangeFailRate.
-* **Resource Health:** Состояние ресурсов (модулей, служб, подов). Обнаруживает сбои или чрезмерное использование ресурсов, что может указывать на FailRate.
-* **Application Deployment History:** История развертываний и откатов. Помогает отслеживать Deployment Frequency и Change Fail Rate.
-* **Performance Deployment History:** Показатели производительности (потребление ресурсов, время отклика) во время развертывания.
-* **Error and Event Log:** Журналы ошибок и событий. Важен для диагностики и сокращения MTTR.
-
-#### Метрики RepoServer
-
-Отвечает за взаимодействие с Git и Docker Registry:
-
-* **Git Repository Sync:** Состояние синхронизации репозитория (ошибки, время выборки). Влияет на Lead Time.
-* **Resource Caching:** Отслеживает кэшированные ресурсы в репозитории. Оптимизирует Lead Time.
-* **Authentication and Access:** Журналы доступа и безопасности.
-* **Resource Integrity:** Целостность ресурсов. Обнаруживает повреждения данных, что влияет на Change Fail Rate.
-* **Resource Usage:** Потребление процессора и памяти RepoServer. Влияет на Deployment Frequency, Lead Time и Change Fail Rate.
-
-#### Метрики ArgoCD (собственные)
-
-* **API Request Metrics:** Запросы к API ArgoCD (количество, время ответа, частота ошибок).
-* **User Authentication and Authorization:** События контроля доступа.
-* **Resource Usage:** Потребление ресурсов сервером ArgoCD.
-* **Application Activity:** Сбор информации об операциях (создание, чтение, обновление, удаление) развертывания приложений.
-* **Dashboard Metrics:** Базовые метрики для диагностики, доступные в веб-интерфейсе ArgoCD.
-
-### Ограничения мониторинга с ArgoCD
-
-* **Неполное покрытие:** Не всегда удается отследить все части пайплайна.
-* **Сложность системы:** Множество разработчиков и команд затрудняют полное понимание происходящего.
-* **Отсутствие стандартов сбора данных:** Приходится интегрировать различные подходы (метрики, логи).
-* **Изолированная аналитика:** Данные из разных источников могут быть плохо связаны между собой.
-
-### Дополнение ArgoCD инструментом Keptn
-
-Keptn — инструмент, который дополняет возможности ArgoCD для более комплексного мониторинга и контроля непрерывной доставки.
-
-**Основные возможности Keptn:**
-
-* **Предварительная оценка состояния (Quality Gates):** Перед развертыванием любой нагрузки в кластере.
-* **Определение готовности приложения:** Когда приложение готово к работе.
-* **Декларативная проверка работоспособности:** Используя декларативный подход, что соответствует ArgoCD.
-* **Стандартизация Pre/Post-deployment задач:** Для различных типов развертываний.
-* **Наблюдаемость за всем циклом развертывания:** Более полное покрытие.
-
-**Принцип работы Keptn:**
-Не требует сложной настройки. Достаточно добавить аннотации к Deployments: `keptn.sh/app`, `keptn.sh/workload`, `keptn.sh/version` или стандартные аннотации Kubernetes `app.kubernetes.io/part-of`, `app.kubernetes.io/version`.
-
-**CDI (Custom Resource Definitions) Keptn:**
-
-* **Конфигурируемые вручную:** `App`, `TaskDefinition`, `EvaluationDefinition`, `EvaluationProviders`, `Metric`.
-* **Создаваемые автоматически:** `Workloads`, `WorkloadsInstances`, `Task`, `Version`.
+- **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)** — SSoT для метрик
+- **[Синхронизация](./synchronization.md)** — политики и опции
+- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/)**
