@@ -1,11 +1,15 @@
 # Установка Blackbox Exporter
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
+>
+> **Последняя стабильная версия:** `0.28.0` (декабрь 2025)
+>
+> **Новые возможности v0.28.0:** HTTP/3 (QUIC) prober, gRPC metadata, byte matching в TCP, автоматическая перезагрузка конфига
 
-1. **Загрузка и установка (пример для версии 0.24.0)**:
+1. **Загрузка и установка**:
 
     ```bash
-    BLACKBOX_EXPORTER_VERSION="0.24.0" # Проверьте последнюю стабильную версию
+    BLACKBOX_EXPORTER_VERSION="0.28.0"
     cd /tmp
     wget https://github.com/prometheus/blackbox_exporter/releases/download/v${BLACKBOX_EXPORTER_VERSION}/blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz
     tar xvfz blackbox_exporter-${BLACKBOX_EXPORTER_VERSION}.linux-amd64.tar.gz

@@ -56,3 +56,42 @@ Prometheus собирает данные по HTTP протоколу, в фор
 
 * **Алертинг на недоступность таргета:** Самое важное — знать, что экспортер не работает. В Prometheus есть встроенная метрика `up`, которая автоматически становится `0` для недоступного таргета. Настройка алерта `up == 0` является обязательной практикой. Подробнее см. в [Alertmanager](../alertmanager.md) и [Правила оповещений](../rules.md).
 * **Использование параллельных систем:** Для расследования инцидентов, произошедших во время недоступности экспортера, используются другие системы: логирование (ELK, Loki) или другие утилиты мониторинга (например, [atop](../../Linux/Diagnostics/Performance/atop.md)).
+
+## Практические сценарии
+
+### Whitebox vs Blackbox Мониторинг
+
+* **Whitebox (белый ящик)**: Мониторинг внутренних метрик системы. Это основной подход для Prometheus. Приложение инструментируется и само отдает метрики.
+* **Blackbox (черный ящик)**: Мониторинг внешнего поведения сервиса (доступен ли HTTP-эндпоинт, валиден ли SSL-сертификат). Реализуется с помощью **[Blackbox Exporter](./blackbox_exporter.md)**.
+
+### Выбор экспортера для задачи
+
+| Задача | Экспортер | Ссылка |
+| :--- | :--- | :--- |
+| Мониторинг Linux-хоста (CPU, память, диск, сеть) | [node_exporter](./node_exporter.md) | [Установка](../installation/node_exporter_installation.md) |
+| Мониторинг контейнеров Docker | [cAdvisor](./cadvisor.md) | — |
+| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox_exporter.md) | [Установка](../installation/blackbox_exporter_installation.md) |
+| Мониторинг MySQL | mysqld_exporter | [MySQL](../../Databases/MySQL/overview.md) |
+| Мониторинг PostgreSQL | postgres_exporter | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
+| Мониторинг Nginx | nginx-prometheus-exporter | — |
+| Мониторинг RabbitMQ | rabbitmq_exporter | — |
+| Мониторинг Kafka | kafka_exporter | [Kafka](../../Kafka/kafka_for_monitoring.md) |
+| Кастомные метрики | [Textfile Collector](./extensibility.md#textfile-collector) / [Свой экспортер](./extensibility.md#написание-собственных-экспортеров) | — |
+
+## Дополнительная информация
+
+### Официальные и поддерживаемые сообществом экспортеры
+
+Полный список экспортеров доступен в [official exporters](https://prometheus.io/docs/instrumenting/exporters/) и [community exporters](https://prometheus.io/docs/instrumenting/exporters/#community-exporters).
+
+### Расширяемость
+
+* **[Textfile Collector](./extensibility.md#textfile-collector)** — механизм для сбора произвольных метрик через внешние скрипты
+* **[Написание своих экспортеров](./extensibility.md#написание-собственных-экспортеров)** — руководство по созданию кастомных экспортеров на Go
+
+### Связанные темы
+
+* [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — автоматическое обнаружение экспортеров
+* [Конфигурация Prometheus](../configuration.md) — настройка сбора метрик
+* [Типы метрик](../concepts/metric_types.md) — counter, gauge, histogram, summary
+* [Лейблы и кардинальность](../concepts/labels_and_cardinality.md) — правильное использование лейблов

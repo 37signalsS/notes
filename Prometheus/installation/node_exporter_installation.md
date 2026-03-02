@@ -1,11 +1,13 @@
 # Установка Node Exporter
 
 > **Важно**: Указанные версии компонентов могут быть устаревшими. Всегда проверяйте официальные репозитории GitHub для загрузки **последних стабильных версий**.
+>
+> **Последняя стабильная версия:** `1.10.2` (октябрь 2025)
 
-1. **Загрузка и установка (пример для версии 1.6.0)**:
+1. **Загрузка и установка**:
 
     ```bash
-    NODE_EXPORTER_VERSION="1.6.0" # Проверьте последнюю стабильную версию
+    NODE_EXPORTER_VERSION="1.10.2"
     cd /tmp
     wget https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
     tar xvfz node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz

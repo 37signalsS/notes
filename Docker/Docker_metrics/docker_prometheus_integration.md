@@ -43,7 +43,7 @@
     # Пример запуска cAdvisor в docker-compose.yml
     services:
       cadvisor:
-        image: ghcr.io/cadvisor/cadvisor:v0.56.0
+        image: ghcr.io/google/cadvisor:v0.56.2
         container_name: cadvisor
         ports:
           - "8080:8080"
@@ -54,6 +54,8 @@
           - /var/lib/docker/:/var/lib/docker:ro
         restart: unless-stopped
     ```
+
+    > **Важно**: Начиная с v0.56.0, cAdvisor мигрировал с `gcr.io/cadvisor/cadvisor` на `ghcr.io/google/cadvisor`.
 
     Метрики всех контейнеров на хосте будут доступны по адресу `http://<host-ip>:8080/metrics`.
 
