@@ -2,9 +2,11 @@
 
 ## Определения
 
-**Istio** — это открытая и наиболее функционально богатая реализация [Service Mesh](./service_mesh_concepts.md). Платформа предоставляет унифицированные механизмы для безопасного соединения, управления и наблюдения за микросервисами в облачных средах, таких как Kubernetes.
+**Istio** — открытая и наиболее функционально богатая реализация [Service Mesh](./service_mesh_concepts.md). Платформа предоставляет унифицированные механизмы для безопасного соединения, управления и наблюдения за микросервисами в облачных средах, таких как Kubernetes.
 
 Архитектура Istio разделена на **плоскость данных (Data Plane)** и **плоскость управления (Control Plane)**.
+
+---
 
 ## Основные концепции
 
@@ -15,6 +17,8 @@
 - **Конфигурация и распространение**: Преобразует высокоуровневые правила из CRD Istio в конфигурацию для прокси-серверов (Envoy) и распространяет ее по протоколу xDS.
 - **Сервис-дискавери**: Отслеживает эндпоинты сервисов в кластере.
 - **Центр сертификации (CA)**: Выпускает и ротирует сертификаты для обеспечения mTLS между компонентами. Идентификация рабочей нагрузки (workload identity) основана на **ServiceAccount** Kubernetes. `istiod` выпускает сертификат для каждого ServiceAccount, который используется для установления `principal` (идентификатора) в mTLS-соединениях.
+
+---
 
 ## Архитектурные модели: Sidecar vs. Ambient
 
@@ -61,6 +65,9 @@ Istio предлагает две взаимоисключающие модел�
 
 **Недостатки:**
 - **Меньшая изоляция L7-политик**: Так как Waypoint Proxy является общим для неймспейса, уровень изоляции ниже, чем в sidecar-модели.
+- **Ограниченная поддержка мультикластера**: Мультикластерный Ambient в beta (не для production до Istio 1.30+).
+
+---
 
 ## Модель конфигурации (CRD)
 
@@ -68,20 +75,27 @@ Istio расширяет Kubernetes через набор Custom Resource Defini
 
 **Важное замечание о конфигурационных API:**
 Istio исторически использовал собственный набор CRD для управления трафиком (`VirtualService`, `DestinationRule`). С развитием Kubernetes **Gateway API**, Istio интегрировал его как основной, предпочтительный способ конфигурации. Таким образом, существует два способа настройки:
-1.  **Kubernetes Gateway API (предпочтительный)**: Использует ресурсы `Gateway` и `HTTPRoute`. Это современный, стандартный для Kubernetes подход.
+
+1.  **Kubernetes Gateway API (предпочтительный, GA с 2024)**: Использует ресурсы `Gateway` и `HTTPRoute`. Это современный, стандартный для Kubernetes подход.
 2.  **Istio API (legacy)**: Использует `VirtualService` и `DestinationRule`. Этот способ остается для обратной совместимости.
 
 Ключевые ресурсы:
 - **`Gateway` и `HTTPRoute`**: Стандартные ресурсы Gateway API для управления входящим и внутренним трафиком. `HTTPRoute` может ссылаться как на `Gateway` (для north-south трафика), так и на `Service` (для east-west трафика, требует Waypoint Proxy).
 - **`AuthorizationPolicy`**: Определяет политики доступа на основе `principal` (ServiceAccount) и других атрибутов. L4-политики применяются **Ztunnel**, а L7-политики (например, на основе JWT) — **Waypoint Proxy** (в Ambient) или Envoy sidecar.
 - **`ServiceEntry`**: Позволяет добавить в сетку внешние сервисы.
-- `VirtualService` / `DestinationRule` (Legacy): Альтернативный способ определения правил маршрутизации и политик для сервисов.
+- **`VirtualService` / `DestinationRule` (Legacy)**: Альтернативный способ определения правил маршрутизации и политик для сервисов.
+- **`PeerAuthentication`**: Глобальная или поуровневая конфигурация mTLS (режимы: `PERMISSIVE`, `STRICT`, `DISABLE`).
+- **`RequestAuthentication`**: Политики аутентификации на основе JWT.
+- **`Telemetry`**: Управление сбором и экспортом телеметрии (access logs, metrics, traces).
+- **`WasmPlugin`**: Расширение функциональности прокси через WebAssembly-модули.
+
+---
 
 ## Практические сценарии
 
 ### L4-Авторизация: Ограничение доступа по ServiceAccount
 
-`AuthorizationPolicy` позволяет создавать мощные правила доступа. В этом примере мы разрешаем доступ к сервису `productpage` только от двух конкретных источников (principals): `bookinfo-gateway` и `curl-sa`. Любые другие вызовы будут заблокированы на уровне L4 компонентом **Ztunnel**.
+`AuthorizationPolicy` позволяет создавать мощные правила доступа. В этом примере мы разрешаем доступ к сервису `productpage` только от двух конкретных источников (principals): `bookinfo-gateway` и `curl-sa`. Любые другие вызовы будут заблокированы на уровне L4 компонентом **Ztunnel** (в Ambient) или Envoy sidecar.
 
 ```yaml
 apiVersion: security.istio.io/v1
@@ -134,8 +148,46 @@ spec:
       weight: 20
 ```
 
+### Включение Ambient Mesh для неймспейса
+
+```bash
+# 1. Установить istio-cni и ztunnel (требуется до установки приложений)
+istioctl install --set profile=ambient -y
+
+# 2. Включить Ambient для неймспейса (вместо sidecar-инъекции)
+kubectl label namespace default istio.io/dataplane-mode=ambient
+
+# 3. Создать Waypoint Proxy для L7-политик
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: default
+spec:
+  gatewayClassName: istio-waypoint
+EOF
+```
+
+---
+
 ## Дополнительная информация
 
-- Более сложные примеры, включая взвешенную маршрутизацию, ретраи и зеркалирование, рассмотрены в документе [Управление трафиком в Service Mesh](./traffic_management.md).
-- Сравнение архитектуры и возможностей Istio с его основной альтернативой, Linkerd, доступно в [Сравнение Istio и Linkerd](./istio_vs_linkerd.md).
-- Подробности о прокси Envoy, используемом в Istio, можно найти в [Proxy Sidecar: Реализации и Сценарии](./proxy_sidecar.md).
+### Сравнение моделей
+
+| Критерий | Sidecar | Ambient |
+| :--- | :--- | :--- |
+| **Изоляция** | Максимальная (на под) | Неймспейс (L7), нода (L4) |
+| **Ресурсы** | 100–300 МБ RAM, 50–500 mCPU на под | ~30–50% от sidecar (разделение) |
+| **L7-политики** | Все доступны | Только через Waypoint Proxy |
+| **Миграция** | Требует перезапуска подов | Без перезапуска (on/off mesh) |
+| **Мультикластер** | Production-ready | Beta (не для production) |
+| **Рекомендация** | Сложные L7-сценарии, изоляция | Простота, эффективность, массовые развертывания |
+
+### Связанные документы
+
+- **Базовые концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
+- **Трафик:** [Traffic Management](./traffic_management.md)
+- **Сравнение:** [Istio vs Linkerd](./istio_vs_linkerd.md)
+- **Proxy:** [Proxy Sidecar](./proxy_sidecar.md)
+- **Observability:** [Kiali и Dex](./istio_observability_and_tools.md)
