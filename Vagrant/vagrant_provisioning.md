@@ -2,89 +2,267 @@
 
 ## Определения
 
-**Provisioning (провижининг, или автоматическая настройка)** — это механизм, который позволяет автоматически устанавливать программное обеспечение, изменять конфигурации и выполнять другие подготовительные задачи при создании виртуальной машины. Это ключевая особенность Vagrant для создания воспроизводимых и готовых к работе окружений.
+**Provisioning (провижининг)** — механизм автоматической установки ПО, настройки конфигураций и выполнения задач при создании ВМ. Ключевая особенность Vagrant для воспроизводимых окружений.
 
 ## Базовые концепции
 
-### Когда выполняется Provisioning?
+### Когда выполняется provisioning
 
-Скрипты автоматической настройки запускаются в следующих случаях:
+| Событие | Команда | Provisioning |
+| --- | --- | --- |
+| Первый запуск | `vagrant up` | ✅ Выполняется |
+| Повторный запуск | `vagrant up` | ❌ Не выполняется |
+| Принудительно | `vagrant provision` | ✅ Выполняется |
+| Перезагрузка | `vagrant reload --provision` | ✅ Выполняется |
+| Перезагрузка | `vagrant reload` | ❌ Не выполняется |
 
-- При первом запуске `vagrant up`.
-- Принудительно для уже запущенной машины командой `vagrant provision`.
-- Принудительно при перезагрузке командой `vagrant reload --provision`.
+> **Важно:** Provisioning выполняется только один раз при первом `vagrant up`. Для повторного применения используйте `vagrant provision` или `vagrant reload --provision`.
 
-### Провижинеры (Provisioners)
+### Типы провижинеров
 
-Vagrant поддерживает множество "провижинеров" — инструментов для управления конфигурацией. Выбор зависит от сложности задачи. Наиболее популярные:
-
-- **Shell**: для простых скриптов.
-- **Ansible**: для сложного управления конфигурацией.
-- **Puppet**: альтернатива Ansible.
-- **Docker**: для запуска контейнеров внутри ВМ.
+| Провижинер | Описание | Сложность |
+| --- | --- | --- |
+| **Shell** | Выполнение bash-скриптов | Низкая |
+| **Ansible** | Управление конфигурацией | Средняя |
+| **Puppet** | Декларативная конфигурация | Высокая |
+| **Chef** | Управление конфигурацией | Высокая |
+| **Docker** | Запуск контейнеров | Средняя |
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка с помощью Shell-скриптов
+### Сценарий 1: Shell-скрипты
 
-Это самый простой способ, подходящий для быстрых задач.
-
-**Вариант А: Встроенный (inline) скрипт**
-Идеально для одной-двух команд.
+**Встроенный скрипт (inline):**
 
 ```ruby
-config.vm.provision "shell", inline: "apt-get update && apt-get install -y nginx"
+config.vm.provision "shell", inline: <<-SHELL
+  apt-get update
+  apt-get install -y nginx
+  systemctl enable --now nginx
+SHELL
 ```
 
-**Вариант Б: Внешний скрипт (рекомендуется)**
-Для более сложных сценариев лучше использовать отдельный файл.
+**Внешний скрипт (рекомендуется):**
 
-1. **Создайте скрипт `provision.sh`:**
+```ruby
+# Vagrantfile
+config.vm.provision :shell, path: "scripts/provision.sh"
+```
 
-    ```bash
-    #!/bin/bash
-    set -euo pipefail # Останавливать скрипт при ошибках
-    apt-get update -y
-    apt-get install -y nginx
-    systemctl enable --now nginx
-    ```
+```bash
+#!/bin/bash
+# scripts/provision.sh
+set -euo pipefail
 
-2. **Подключите его в `Vagrantfile`:**
+apt-get update -y
+apt-get install -y nginx
+systemctl enable --now nginx
 
-    ```ruby
-    config.vm.provision :shell, path: "provision.sh"
-    ```
+# Идемпотентность: добавлять строку только если её нет
+grep -q "custom_config" /etc/nginx/nginx.conf || \
+  echo "custom_config" >> /etc/nginx/nginx.conf
+```
 
-### Сценарий 2: Управление конфигурацией через Ansible
+**Несколько скриптов:**
 
-Vagrant имеет встроенную поддержку Ansible, что позволяет использовать всю мощь плейбуков.
+```ruby
+config.vm.provision :shell, path: "scripts/base.sh"
+config.vm.provision :shell, path: "scripts/nginx.sh"
+config.vm.provision :shell, path: "scripts/app.sh"
+```
 
-**`Vagrantfile`:**
+### Сценарий 2: Ansible
+
+**Базовая конфигурация:**
 
 ```ruby
 config.vm.provision "ansible" do |ansible|
-  ansible.playbook = "playbook.yml"
-  ansible.inventory_path = "inventory.ini"
+  ansible.playbook = "playbooks/site.yml"
+  ansible.compatibility_mode = "2.0"
 end
 ```
 
-**Как это работает?**
+**С кастомным inventory:**
 
-1. **Автогенерация Inventory:** Vagrant создает временный inventory-файл с параметрами SSH-доступа к создаваемой машине.
-2. **Ограничение выполнения (`--limit`):** Vagrant автоматически запускает `ansible-playbook` с флагом `--limit <имя_машины>`, гарантируя, что плейбук применится только к нужной ВМ. Вам **не нужно** делать это вручную.
-3. **Использование своего inventory:** Если вы указываете `ansible.inventory_path`, Vagrant **перестает управлять процессом**: inventory не генерируется, и `--limit` не добавляется.
+```ruby
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "playbooks/site.yml"
+  ansible.inventory_path = "inventory.ini"
+  ansible.limit = "all"
+end
+```
 
-### Сценарий 3: Обзор других провижинеров
+> **Важно:** При указании `inventory_path` Vagrant не генерирует автоматический inventory и не добавляет `--limit`. Вы полностью управляете процессом.
 
-| Провижинер | Пример в `Vagrantfile` | Описание |
-| --- | --- | --- |
-| `puppet` | `config.vm.provision "puppet", manifest: "default.pp"` | Применяет манифесты Puppet. |
-| `docker` | `config.vm.provision "docker", run: "nginx"` | Устанавливает Docker и запускает указанные контейнеры внутри ВМ. |
+**С дополнительными параметрами:**
+
+```ruby
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "playbooks/site.yml"
+  ansible.verbose = "-vv"
+  ansible.extra_vars = { 
+    nginx_port: 80,
+    app_env: "development"
+  }
+  ansible.raw_arguments = ["--forks=10"]
+end
+```
+
+**Интеграция с Ansible Vault:**
+
+```ruby
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "playbooks/site.yml"
+  ansible.vault_password_file = ".vault_password"
+end
+```
+
+Файл `.vault_password` должен быть в `.gitignore`.
+
+**Подробности:** [Ansible Vault Examples](../Ansible/Vault/examples.md)
+
+### Сценарий 3: Docker внутри ВМ
+
+**Запуск контейнеров:**
+
+```ruby
+config.vm.provision "docker" do |d|
+  d.run "nginx", image: "nginx:alpine", ports: ["80:80"]
+  d.run "redis", image: "redis:7"
+end
+```
+
+**С переменными окружения:**
+
+```ruby
+config.vm.provision "docker" do |d|
+  d.run "app",
+    image: "myapp:latest",
+    ports: ["8080:8080"],
+    env: {
+      "DATABASE_URL" => "postgres://db:5432",
+      "SECRET_KEY" => ENV['SECRET_KEY']
+    }
+end
+```
+
+**Установка Docker Compose:**
+
+```ruby
+config.vm.provision :shell, inline: <<-SHELL
+  curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+  chmod +x /usr/local/bin/docker-compose
+SHELL
+
+config.vm.provision "docker-compose" do |d|
+  d.compose_files = ["docker-compose.yml"]
+end
+```
+
+### Сценарий 4: Puppet
+
+**Базовая конфигурация:**
+
+```ruby
+config.vm.provision "puppet" do |puppet|
+  puppet.manifests_path = "manifests"
+  puppet.manifest_file = "site.pp"
+end
+```
+
+**С модулями:**
+
+```ruby
+config.vm.provision "puppet" do |puppet|
+  puppet.manifests_path = "manifests"
+  puppet.manifest_file = "site.pp"
+  puppet.module_path = "modules"
+  puppet.hiera_config_path = "hiera.yaml"
+end
+```
+
+### Сценарий 5: Множественные провижинеры
+
+Комбинирование различных типов:
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  
+  # 1. Базовая настройка через Shell
+  config.vm.provision "shell", path: "scripts/base.sh"
+  
+  # 2. Установка Docker
+  config.vm.provision "docker" do |d|
+    d.run "nginx", image: "nginx:alpine"
+  end
+  
+  # 3. Настройка через Ansible
+  config.vm.provision "ansible" do |ansible|
+    ansible.playbook = "playbooks/configure.yml"
+  end
+end
+```
 
 ## Дополнительная информация
 
-### Как выбрать провижинер?
+### Выбор провижинера
 
-- **Shell**: Используйте для простых, неидемпотентных задач или для установки базовых зависимостей (например, установки Ansible на "голую" машину).
-- **Ansible/Puppet**: Выбирайте для сложного и декларативного управления конфигурацией, когда важна идемпотентность и поддержка состояний. Интеграция с Ansible является одной из самых мощных возможностей Vagrant.
-- **Docker**: Полезен, если вам нужно протестировать взаимодействие вашего приложения с Docker-контейнерами, запущенными внутри полноценной ВМ.
+| Критерий | Shell | Ansible | Puppet/Docker |
+| --- | --- | --- | --- |
+| **Простота** | ✅ | ⚠️ | ❌ |
+| **Идемпотентность** | ❌ | ✅ | ✅ |
+| **Сложные сценарии** | ❌ | ✅ | ✅ |
+| **Порог входа** | Низкий | Средний | Высокий |
+
+**Рекомендации:**
+
+- **Shell:** Быстрые задачи, установка зависимостей, bootstrap
+- **Ansible:** Управление конфигурацией, идемпотентность, сложная логика
+- **Docker:** Тестирование контейнеров, микросервисы
+
+### Лучшие практики
+
+1. **Идемпотентность:** Скрипты должны выполняться многократно без побочных эффектов:
+   ```bash
+   # Плохо
+   echo "line" >> /etc/config
+   
+   # Хорошо
+   grep -q "line" /etc/config || echo "line" >> /etc/config
+   ```
+
+2. **Модульность:** Разделяйте скрипты по функциям:
+   - `base.sh` — базовая настройка ОС
+   - `nginx.sh` — установка веб-сервера
+   - `app.sh` — развёртывание приложения
+
+3. **Версионирование:** Фиксируйте версии ПО:
+   ```ruby
+   d.run "nginx", image: "nginx:1.25-alpine"  # Конкретная версия
+   ```
+
+4. **Секреты:** Не храните секреты в Vagrantfile:
+   ```ruby
+   # Используйте ENV
+   env: { "API_KEY" => ENV['API_KEY'] }
+   ```
+
+### Отладка provisioning
+
+```bash
+# Запуск с подробными логами
+VAGRANT_LOG=info vagrant up
+
+# Принудительный provisioning
+vagrant provision --debug
+
+# Провижининг конкретной машины
+vagrant provision web-server
+```
+
+### См. также
+
+- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — сложные сценарии
+- [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md) — запуск Ansible
+- [Ansible Vault Examples](../Ansible/Vault/examples.md) — работа с секретами
