@@ -1,71 +1,115 @@
-# Yandex Cloud DevOps - Virtual Private Cloud
+# Yandex Virtual Private Cloud (VPC)
 
-## Управление сетью: Yandex Virtual Private Cloud
+## Определения
 
-Yandex Virtual Private Cloud — изолированная программно-определяемая сеть, в которой размещаются ресурсы: виртуальные машины, базы данных, балансировщики, Kubernetes-кластеры. Для DevOps VPC — опорный слой, определяющий адресное пространство, маршрутизацию, границы безопасности и схему подключения к интернету и он-прем инфраструктуре.
+**Virtual Private Cloud (VPC)** — изолированная программно-определяемая сеть в Yandex Cloud для размещения ресурсов: виртуальных машин, баз данных, Kubernetes-кластеров, балансировщиков.
 
-## Базовые сущности
+**Сеть (Network)** — логическое объединение подсетей в рамках каталога, определяющее границы сегментации и точки пирового соединения.
 
-- **Сеть (Network)**. Логическое объединение подсетей внутри каталога. Определяет границы сегментации и точку для пирового соединения.
-- **Подсеть (Subnet)**. Привязана к зоне доступности и содержит CIDR-пул частных адресов. Ресурсы получают IP из соответствующей подсети.
-- **Таблица маршрутов (Route table)**. Набор статических маршрутов; привязывается к подсетям и управляет выходом трафика за их пределы.
-- **Internet Gateway**. Шлюз для трафика в интернет для ресурсов с публичными адресами через маршрут 0.0.0.0/0.
-- **NAT Gateway**. Управляемый egress для частных подсетей без публичных IP; обеспечивает исходящий доступ в интернет с трансляцией адресов.
-- **Security Groups**. Состояние-ориентированные правила L3/L4, применяемые к сетевым интерфейсам; контролируют входящий и исходящий трафик.
-- **Cloud VPN/Peering**. Соединяют разные сети: через IPsec-туннели с он-прем, либо напрямую между сетями в YC.
+**Подсеть (Subnet)** — сегмент сети в одной зоне доступности с собственным CIDR-пулом частных адресов.
 
-Таблица компонентов:
+**Security Group** — набор правил контроля сетевого трафика на уровне L3/L4 для сетевых интерфейсов.
+
+---
+
+## Основные концепции
+
+### Компоненты VPC
 
 | Компонент | Назначение | Ключевые параметры |
-|-----------|------------|-------------------|
-| Network | Изоляция и сегментация | Границы для peering, набор подсетей |
-| Subnet | Адресация в зоне | CIDR, зона доступности |
-| Route table | Выход из подсети | Маршруты, привязка к подсетям |
-| Internet GW | Публичный egress/ingress | Маршрут 0.0.0.0/0 для публичных ВМ |
-| NAT GW | Приватный egress | Публичный IP, маршрут 0.0.0.0/0 |
-| Security Group | Политики трафика | Direction, протокол, порты, цели |
+| :--- | :--- | :--- |
+| **Network** | Изоляция и сегментация ресурсов | Границы для peering, набор подсетей |
+| **Subnet** | Адресация в зоне доступности | CIDR, зона, сеть |
+| **Route Table** | Маршрутизация трафика | Статические маршруты, привязка к подсетям |
+| **Internet Gateway** | Публичный ingress/egress | Маршрут `0.0.0.0/0` для публичных ВМ |
+| **NAT Gateway** | Приватный egress для подсетей | Публичный IP, маршрут `0.0.0.0/0` |
+| **Security Group** | Политики трафика | Direction, протокол, порты, CIDR |
 
-## Типовые топологии
+> **Важно:** Egress NAT устарел и не поддерживается для новых ресурсов (декабрь 2025). Используйте NAT Gateway.
+
+### Типы подсетей
 
 **Публичная подсеть:**
-
-- Веб-балансировщик, ВМ с публичными IP.
-- Таблица маршрутов c 0.0.0.0/0 → Internet Gateway.
-- Security Groups ограничивают вход: 80/443 от любого, 22 только с административных адресов.
+- ВМ с публичными IP
+- Таблица маршрутов: `0.0.0.0/0 → Internet Gateway`
+- Security Groups: вход 80/443 отовсюду, 22 только с доверенных IP
 
 **Приватная подсеть:**
+- ВМ без публичных IP
+- Таблица маршрутов: `0.0.0.0/0 → NAT Gateway`
+- Вход только из публичной подсети, LB или VPN
 
-- Бэкенды, базы данных, кластеры без публичных IP.
-- Таблица маршрутов c 0.0.0.0/0 → NAT Gateway для обновлений и репозиториев.
-- Вход только из публичной подсети/через LB/VPN.
+### Security Groups
 
-**Hub-and-Spoke:**
+Правила работают на уровне сетевых интерфейсов ВМ.
 
-- Центральный "hub" с NAT/Internet GW, VPN и общими сервисами.
-- "Spokes" — окружения dev/stage/prod с собственными подсетями и таблицами маршрутов.
-- Нет пересечения CIDR между звеньями; сквозные политики через Security Groups и пировые соединения.
+**Типы правил:**
+- **Ingress** — входящий трафик
+- **Egress** — исходящий трафик
 
-## Практика адресации и безопасности
+**Параметры правила:**
+- Протокол (TCP, UDP, ICMP, любой)
+- Порт или диапазон портов
+- CIDR-блок источника/назначения
+- Описание
 
-- Планируйте CIDR на весь портфель: резерв под рост, отсутствие пересечений для VPN/peering.
-- Используйте разные сети или папки для окружений, упрощая разграничение доступов.
-- Привязывайте таблицы маршрутов на подсетях; для egress из приватных — дефолтный маршрут через NAT Gateway.
-- Минимизируйте публичные IP. Для исходящего трафика используйте NAT с выделенным статическим адресом.
-- Применяйте Security Groups как код: описывайте правила для ролей (web, db, bastion), а не для отдельных ВМ.
+**Лимиты (2025):**
+- До 10 security groups на каталог
+- До 60 правил на одну группу
 
-## Минимальные примеры с yc CLI
+### Маршрутизация
 
-Создание сети и подсетей в разных зонах:
+**Статические маршруты:**
+- Явно заданные пути для трафика
+- Пример: `10.0.0.0/8 → next-hop 192.168.1.1`
+
+**Таблицы маршрутов:**
+- Привязываются к подсетям
+- Одна подсеть — одна таблица маршрутов
+- Маршрут по умолчанию: `0.0.0.0/0`
+
+### NAT Gateway
+
+**Назначение:** обеспечение исходящего доступа в интернет для приватных ВМ без публичных IP.
+
+**Преимущества перед Egress NAT:**
+- Управляемый сервис
+- Автоматическое масштабирование
+- Интеграция с Security Groups
+- Статические публичные IP (через отдельные адреса)
+
+**Лимиты:**
+- До 20 NAT Gateway на каталог
+- Пропускная способность зависит от конфигурации
+
+### Cloud VPN и Peering
+
+**Cloud VPN:**
+- IPsec-туннели для подключения on-prem инфраструктуры
+- Динамическая маршрутизация (BGP)
+
+**VPC Peering:**
+- Прямое соединение между сетями Yandex Cloud
+- Без транзитной маршрутизации
+
+---
+
+## Практические сценарии
+
+### Создание сети и подсетей
 
 ```bash
+# Создание сети
 yc vpc network create --name net-main
 
+# Подсеть в зоне ru-central1-a
 yc vpc subnet create \
   --name subnet-a \
   --zone ru-central1-a \
   --range 10.10.1.0/24 \
   --network-name net-main
 
+# Подсеть в зоне ru-central1-b
 yc vpc subnet create \
   --name subnet-b \
   --zone ru-central1-b \
@@ -73,31 +117,169 @@ yc vpc subnet create \
   --network-name net-main
 ```
 
-Security Group для веб-слоя:
+### Security Group для веб-слоя
 
 ```bash
+# Создание группы
 yc vpc security-group create --name sg-web --network-name net-main
 
+# Разрешить HTTP (80)
 yc vpc security-group add-rule \
   --security-group-name sg-web \
-  --direction ingress --protocol tcp --port 80 --v4-cidr 0.0.0.0/0
+  --direction ingress \
+  --protocol tcp \
+  --port 80 \
+  --v4-cidr 0.0.0.0/0 \
+  --description "HTTP from anywhere"
 
+# Разрешить HTTPS (443)
 yc vpc security-group add-rule \
   --security-group-name sg-web \
-  --direction ingress --protocol tcp --port 443 --v4-cidr 0.0.0.0/0
+  --direction ingress \
+  --protocol tcp \
+  --port 443 \
+  --v4-cidr 0.0.0.0/0 \
+  --description "HTTPS from anywhere"
 
+# Разрешить SSH только с доверенного IP
 yc vpc security-group add-rule \
   --security-group-name sg-web \
-  --direction egress --protocol any --v4-cidr 0.0.0.0/0
+  --direction ingress \
+  --protocol tcp \
+  --port 22 \
+  --v4-cidr 203.0.113.0/24 \
+  --description "SSH from admin network"
+
+# Исходящий трафик (по умолчанию разрешён)
+yc vpc security-group add-rule \
+  --security-group-name sg-web \
+  --direction egress \
+  --protocol any \
+  --v4-cidr 0.0.0.0/0 \
+  --description "Allow all outbound"
 ```
 
-Для приватных подсетей создайте NAT Gateway, выделите статический публичный адрес и пропишите маршрут 0.0.0.0/0 на NAT Gateway в таблице маршрутов, связанную с нужными подсетями. Для гибридных сценариев используйте Cloud VPN и динамическую маршрутизацию к вашим on-prem сетям.
+### Security Group для БД
+
+```bash
+# PostgreSQL только из внутренней сети
+yc vpc security-group create --name sg-db --network-name net-main
+
+yc vpc security-group add-rule \
+  --security-group-name sg-db \
+  --direction ingress \
+  --protocol tcp \
+  --port 5432 \
+  --v4-cidr 10.10.0.0/16 \
+  --description "PostgreSQL from internal network"
+
+yc vpc security-group add-rule \
+  --security-group-name sg-db \
+  --direction egress \
+  --protocol any \
+  --v4-cidr 0.0.0.0/0
+```
+
+### NAT Gateway для приватных подсетей
+
+```bash
+# Создание NAT Gateway
+yc vpc gateway create --name nat-gw
+
+# Таблица маршрутов с NAT
+yc vpc route-table create --name rt-nat --network-name net-main
+
+yc vpc route-table static-route create \
+  --route-table-name rt-nat \
+  --destination 0.0.0.0/0 \
+  --gateway-id $(yc vpc gateway get --name nat-gw --format json | jq -r '.id')
+
+# Привязка таблицы маршрутов к подсети
+yc vpc subnet update --name subnet-b \
+  --route-table-name rt-nat
+```
+
+### Типовая топология: двухуровневая архитектура
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    VPC: net-main                    │
+│                                                     │
+│  ┌─────────────────┐      ┌─────────────────────┐  │
+│  │ Public Subnet   │      │  Private Subnet     │  │
+│  │ 10.10.1.0/24    │      │  10.10.2.0/24       │  │
+│  │                 │      │                     │  │
+│  │ ┌─────────────┐ │      │ ┌─────────────────┐ │  │
+│  │ │  Web VM     │ │      │ │   App VM        │ │  │
+│  │ │  + Nat IP   │ │      │ │   (no Nat IP)   │ │  │
+│  │ └─────────────┘ │      │ └─────────────────┘ │  │
+│  │       │         │      │         │           │  │
+│  │       ▼         │      │         ▼           │  │
+│  │ ┌─────────────┐ │      │ ┌─────────────────┐ │  │
+│  │ │  LB (App)   │ │      │ │   DB Cluster    │ │  │
+│  │ └─────────────┘ │      │ └─────────────────┘ │  │
+│  └─────────────────┘      └─────────────────────┘  │
+│         │                          │                │
+│         ▼                          ▼                │
+│  ┌─────────────┐          ┌─────────────────┐      │
+│  │ Internet GW │          │   NAT Gateway   │      │
+│  └─────────────┘          └─────────────────┘      │
+└─────────────────────────────────────────────────────┘
+```
+
+**Маршрутизация:**
+- Public Subnet: `0.0.0.0/0 → Internet Gateway`
+- Private Subnet: `0.0.0.0/0 → NAT Gateway`
+
+**Security Groups:**
+- `sg-web`: 80/443 ingress, 22 с админ-IP
+- `sg-app`: 8080 ingress только от `sg-web`
+- `sg-db`: 5432 ingress только от `sg-app`
+
+### Проверка и диагностика
+
+```bash
+# Список сетей
+yc vpc network list
+
+# Список подсетей
+yc vpc subnet list
+
+# Информация о security group
+yc vpc security-group get --name sg-web
+
+# Проверка маршрутов
+yc vpc route-table get --name rt-nat
+
+# Удаление неиспользуемых ресурсов
+yc vpc security-group delete --name sg-old
+yc vpc subnet delete --name subnet-unused
+```
 
 ---
 
-## Network в Compute Cloud
+## Дополнительная информация
 
-- Подсети в разных зонах доступности
-- Security groups для контроля доступа
-- Публичные IP для публичных сервисов
-- NAT для исходящих соединений
+### Связанные документы
+
+- **[Compute Cloud](./Compute-Cloud.md)** — размещение ВМ в подсетях
+- **[Resource Manager](./Resource-Manager.md)** — каталоги и метки для сетей
+- **[Monitoring](./Monitoring.md)** — мониторинг сетевого трафика
+
+### Интеграции
+
+- **[Kubernetes](../Kubernetes/)** — сетевая модель CNI использует VPC
+- **[Load Balancer](../Networking/)** — интеграция с подсетями VPC
+- **[Terraform](../Concepts/iac_overview.md)** — декларативное управление сетью
+
+### Безопасность
+
+- **Security Groups** — основной механизм сегментации
+- **Private Subnets** — изоляция критичных ресурсов
+- **VPN/Peering** — безопасное подключение on-prem
+
+### Актуальная информация (2025–2026)
+
+- **Egress NAT** — устарел (декабрь 2025), использовать NAT Gateway
+- **Лимиты:** 10 security groups, 20 NAT Gateway на каталог
+- **Новые регионы:** добавлены зоны доступности в 2025
