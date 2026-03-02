@@ -4,6 +4,8 @@
 
 **PromQL (Prometheus Query Language)** — это мощный **функциональный язык запросов**, разработанный для работы с многомерными данными временных рядов в [Prometheus](../overview.md). В отличие от SQL, он оптимизирован для вычислений и агрегаций над временными рядами. PromQL позволяет выбирать и агрегировать данные в реальном времени, результаты чего могут быть отображены в [Grafana](../../Grafana/grafana_overview.md), таблицах или использованы внешними системами через [HTTP API](../prometheus_api.md).
 
+> **См. также:** [Типы метрик](./metric_types.md) — counter, gauge, histogram, summary.
+
 ### Типы данных
 
 PromQL оперирует четырьмя основными типами данных:
@@ -69,6 +71,7 @@ PromQL оперирует четырьмя основными типами да�
 * `stddev()`, `stdvar()`: стандартное отклонение и дисперсия.
 * `topk(k, ...)` / `bottomk(k, ...)`: `k` наибольших/наименьших значений.
 * `count_values("label", ...)`: количество элементов с одинаковым значением лейбла.
+* `quantile(φ, ...)`: φ-квантиль (0 ≤ φ ≤ 1).
 
 *Пример:* `sum by (path) (http_requests_total)` — сумма запросов для каждого `path`.
 
@@ -103,8 +106,14 @@ PromQL имеет большой набор функций, которые мо�
 
 * `avg_over_time(v range-vector)`: Скользящее среднее.
 * `max_over_time()`, `min_over_time()`, `sum_over_time()`, и др.
+* `count_over_time()`: Количество точек в диапазоне.
+* `first_over_time()`, `last_over_time()`: Первое/последнее значение.
+* `stddev_over_time()`, `stdvar_over_time()`: Стандартное отклонение/дисперсия.
+* `quantile_over_time(φ, v range-vector)`: φ-квантиль в диапазоне.
 
 ### Шаблоны выражений
+
+#### Мониторинг инфраструктуры
 
 * **Утилизация CPU по instance (в %):**
 
@@ -112,7 +121,27 @@ PromQL имеет большой набор функций, которые мо�
     avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
     ```
 
-* **Доля ошибок 5xx:**
+* **Использование памяти (в %):**
+
+    ```promql
+    (1 - node_memory_mem_available_bytes / node_memory_mem_total_bytes) * 100
+    ```
+
+* **Использование диска (в %):**
+
+    ```promql
+    (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100
+    ```
+
+* **Входящий сетевой трафик (байт/сек):**
+
+    ```promql
+    rate(node_network_receive_bytes_total[5m])
+    ```
+
+#### Мониторинг приложений
+
+* **Доля ошибок HTTP 5xx:**
 
     ```promql
     sum(rate(http_requests_total{code=~"5.."}[5m]))
@@ -120,11 +149,67 @@ PromQL имеет большой набор функций, которые мо�
     sum(rate(http_requests_total[5m]))
     ```
 
+* **95-й перцентиль времени ответа:**
+
+    ```promql
+    histogram_quantile(0.95, 
+      sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+    )
+    ```
+
+* **RPS (запросов в секунду):**
+
+    ```promql
+    sum(rate(http_requests_total[5m]))
+    ```
+
+#### Мониторинг Kubernetes
+
+* **Количество подов в состоянии Running:**
+
+    ```promql
+    sum(kube_pod_status_phase{phase="Running"})
+    ```
+
+* **Использование CPU контейнером (в ядрах):**
+
+    ```promql
+    rate(container_cpu_usage_seconds_total[5m])
+    ```
+
+* **Использование памяти контейнером:**
+
+    ```promql
+    container_memory_usage_bytes
+    ```
+
+#### Алертинг
+
 * **Проверка отсутствия метрики (для алертинга):**
 
     ```promql
     absent(up{job="my-critical-service"})
     ```
+
+* **Сервис недоступен:**
+
+    ```promql
+    up{job="api-server"} == 0
+    ```
+
+* **Прогноз нехватки диска через 4 часа:**
+
+    ```promql
+    predict_linear(node_filesystem_free_bytes[1h], 3600 * 4) < 0
+    ```
+
+* **Высокая загрузка CPU (>80% в течение 10 минут):**
+
+    ```promql
+    avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 < 20
+    ```
+
+> **См. также:** [Rules и алертинг](../rules.md) — создание правил для Alertmanager.
 
 ## Дополнительная информация
 
@@ -138,10 +223,30 @@ PromQL позволяет производить операции между в�
   * `on(<label_list>)`: Указывает, по каким лейблам сопоставлять векторы.
   * `ignoring(<label_list>)`: Указывает, какие лейблы игнорировать при сопоставлении.
 
+**Пример many-to-one с group_left:**
+
+```promql
+# Добавляем лейбл job из метрики up к метрике node_cpu_seconds_total
+node_cpu_seconds_total * group_left(job) up
+```
+
 ### Функции для работы с метками (Labels)
 
 * `label_replace(v, dst_label, replacement, src_label, regex)`: Создает новую метку `dst_label` на основе `regex`, примененного к `src_label`.
 * `label_join(v, dst_label, separator, src_label_1, ...)`: Объединяет значения нескольких меток в одну.
+
+**Пример label_replace (шаблонизация URL):**
+
+```promql
+# Преобразуем /api/users/123 в /api/users/:id
+label_replace(
+  http_requests_total,
+  "templated_path",
+  "/api/users/:id",
+  "path",
+  "/api/users/[^/]+"
+)
+```
 
 ### Прочие функции
 
@@ -150,3 +255,28 @@ PromQL позволяет производить операции между в�
 * `round()`, `ceil()`, `floor()`: Функции округления.
 * `time()`: Возвращает текущее время в формате Unix time.
 * `holt_winters()`: Реализует двойное экспоненциальное сглаживание для прогнозирования и очистки данных от шума.
+* `clamp(v, min, max)`: Ограничивает значение в диапазоне.
+* `clamp_max(v, max)` / `clamp_min(v, min)`: Ограничивает значение максимумом/минимумом.
+
+### Subqueries (подзапросы)
+
+Subqueries позволяют применять функции диапазона к функциям instant vector:
+
+```promql
+# Среднее значение rate за последний час с шагом 5 минут
+avg_over_time(rate(http_requests_total[5m])[1h:5m])
+
+# Максимум 95-го перцентиля за день
+max_over_time(
+  histogram_quantile(0.95, sum(rate(http_duration_bucket[5m])) by (le))[1d:1h]
+)
+```
+
+### Связанные темы
+
+* [Типы метрик](./metric_types.md) — counter, gauge, histogram, summary
+* [Лейблы и кардинальность](./labels_and_cardinality.md) — правильное использование лейблов
+* [TSDB](./tsdb.md) — хранение временных рядов
+* [Rules](../rules.md) — создание правил алертинга
+* [Prometheus API](../prometheus_api.md) — выполнение запросов через API
+* [Grafana](../../Grafana/grafana_overview.md) — визуализация результатов запросов

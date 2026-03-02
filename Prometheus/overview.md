@@ -37,6 +37,8 @@ Prometheus использует собственную локальную баз
 * **Компакция (Compaction)**: В фоновом режиме старые блоки объединяются в более крупные для оптимизации хранения и ускорения запросов.
 * **Срок хранения (Retention)**: Управляется флагами `--storage.tsdb.retention.time` и `--storage.tsdb.retention.size`. По истечении срока старые блоки удаляются.
 
+> **Концепты:** [Типы метрик](./concepts/metric_types.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql.md), [TSDB](./concepts/tsdb.md).
+
 ## Практические сценарии
 
 ### Whitebox vs Blackbox Мониторинг

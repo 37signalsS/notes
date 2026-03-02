@@ -1,28 +1,50 @@
 # Установка Alertmanager с помощью Helm-чарта
 
-Помимо [ручной установки](./alertmanager_installation.md) или развертывания в составе комплексного стека [kube-prometheus-stack](../Kubernetes/Kube_Prometheus_Stack_Helm/overview.md), **Alertmanager** можно установить как отдельный компонент с помощью официального или комьюнити Helm-чарта. Этот подход обеспечивает хороший баланс между простотой и гибкостью.
+## Определения
 
-## 1. Контекст
+**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация.
 
-Установка через Helm-чарт является предпочтительным методом для Kubernetes, так как позволяет:
--   Декларативно управлять конфигурацией через `values.yaml`.
--   Легко интегрироваться с системами GitOps (ArgoCD, Flux).
--   Автоматизировать управление сложными объектами Kubernetes (StatefulSet, Service, Ingress и т.д.).
+**Helm** — менеджер пакетов для Kubernetes, упрощающий развертывание приложений через чарты.
 
-## 2. Установка
+> **См. также:** [Alertmanager](../alertmanager.md), [Helm](../../Kubernetes/kubernetes_helm.md).
 
-### 2.1. Конфигурация (`values.yaml`)
+## Основные концепции
 
-Создайте файл `values.yaml` для настройки Alertmanager. Минимальная конфигурация включает определение `ingress` для доступа к веб-интерфейсу и базовую конфигурацию самого Alertmanager.
+### Актуальная версия чарта
 
-**Пример `my-values.yaml`:**
+| Параметр | Значение |
+|---|---|
+| **Репозиторий** | `prometheus-community/alertmanager` |
+| **Последняя версия** | Проверьте на [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/alertmanager) |
+| **Версия Alertmanager** | 0.31.0 (февраль 2026) |
+
+> **Важно:** Версии чарта и приложения могут отличаться. Проверяйте [официальный репозиторий](https://github.com/prometheus-community/helm-charts).
+
+### Преимущества установки через Helm
+
+* **Декларативность:** Конфигурация в `values.yaml`
+* **GitOps:** Интеграция с ArgoCD, Flux
+* **Версионирование:** Откат к предыдущим версиям
+* **Шаблоны:** Автоматизация сложных манифестов
+
+## Практические сценарии
+
+### Базовая установка
+
+**1. Добавление репозитория:**
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+```
+
+**2. Создание `values.yaml`:**
+
 ```yaml
-# my-values.yaml
-
-# Переопределяем имя, чтобы оно было короче и чище
+# values.yaml
 nameOverride: alertmanager
 
-# Настройка Ingress для доступа к UI
+# Ingress для доступа к UI
 ingress:
   enabled: true
   ingressClassName: nginx
@@ -31,14 +53,8 @@ ingress:
       paths:
         - path: /
           pathType: ImplementationSpecific
-  # tls:
-  #   - secretName: alertmanager-tls
-  #     hosts:
-  #       - alertmanager.my-domain.com
 
-# Базовая конфигурация Alertmanager
-# Для начала достаточно простой заглушки, чтобы сервис запустился.
-# В дальнейшем здесь настраиваются маршруты (routes) и получатели (receivers).
+# Конфигурация Alertmanager
 config:
   global:
     resolve_timeout: 5m
@@ -51,7 +67,7 @@ config:
   receivers:
     - name: 'null'
 
-# Запросы и лимиты ресурсов
+# Ресурсы
 resources:
   requests:
     cpu: 100m
@@ -60,17 +76,32 @@ resources:
     cpu: 200m
     memory: 256Mi
 
-# Настройка персистентности (опционально, но рекомендуется для production)
+# Персистентность
 persistence:
   enabled: true
   size: 2Gi
 ```
 
-### 2.2. Развертывание через GitOps (ArgoCD)
+**3. Установка:**
 
-Наиболее удобный способ развертывания — использование ArgoCD. Создайте `Application` манифест, который будет ссылаться на Helm-чарт и ваш файл с конфигурацией.
+```bash
+helm install alertmanager prometheus-community/alertmanager \
+  --namespace monitoring \
+  --create-namespace \
+  -f values.yaml
+```
 
-**Пример `argocd-app-alertmanager.yaml`:**
+**4. Проверка:**
+
+```bash
+helm status alertmanager -n monitoring
+kubectl get pods -n monitoring -l app.kubernetes.io/name=alertmanager
+```
+
+### Установка через GitOps (ArgoCD)
+
+**Application манифест:**
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -82,17 +113,15 @@ metadata:
 spec:
   project: default
   source:
-    # Укажите репозиторий с чартом
     repoURL: 'https://prometheus-community.github.io/helm-charts'
     chart: alertmanager
-    targetRevision: 'x.y.z' # Укажите версию чарта
+    targetRevision: 'x.y.z'  # Укажите версию чарта
     helm:
-      # Ссылка на ваш файл values
       valuesFiles:
         - 'values.yaml'
   destination:
     server: 'https://kubernetes.default.svc'
-    namespace: monitoring # Неймспейс для установки
+    namespace: monitoring
   syncPolicy:
     automated:
       prune: true
@@ -100,4 +129,128 @@ spec:
     syncOptions:
       - CreateNamespace=true
 ```
-После применения этого манифеста ArgoCD установит Alertmanager в ваш кластер с указанной конфигурацией. Веб-интерфейс будет доступен по адресу, определенному в `ingress`.
+
+**Применение:**
+
+```bash
+kubectl apply -f argocd-app-alertmanager.yaml
+```
+
+### Продвинутая конфигурация
+
+**Настройка Slack-уведомлений:**
+
+```yaml
+config:
+  global:
+    slack_api_url: 'https://hooks.slack.com/services/XXX/YYY/ZZZ'
+  route:
+    group_by: ['alertname', 'severity']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    receiver: 'slack-notifications'
+    routes:
+      - match:
+          severity: critical
+        receiver: 'slack-critical'
+  receivers:
+    - name: 'slack-notifications'
+      slack_configs:
+        - channel: '#monitoring'
+          send_resolved: true
+    - name: 'slack-critical'
+      slack_configs:
+        - channel: '#alerts-critical'
+          send_resolved: true
+```
+
+**Настройка Email-уведомлений:**
+
+```yaml
+config:
+  global:
+    smtp_smarthost: 'smtp.example.com:587'
+    smtp_from: 'alertmanager@example.com'
+    smtp_auth_username: 'alertmanager@example.com'
+    smtp_auth_password: 'password'
+  route:
+    receiver: 'email-receiver'
+  receivers:
+    - name: 'email-receiver'
+      email_configs:
+        - to: 'team@example.com'
+          send_resolved: true
+```
+
+> **См. также:** [Alertmanager — конфигурация](../alertmanager.md).
+
+### Интеграция с Prometheus
+
+**Добавьте в `values.yaml` Prometheus:**
+
+```yaml
+# Для kube-prometheus-stack
+alertmanager:
+  enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: 'slack-notifications'
+    receivers:
+      - name: 'slack-notifications'
+        slack_configs:
+          - channel: '#monitoring'
+```
+
+**Или вручную в `prometheus.yml`:**
+
+```yaml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager.monitoring.svc.cluster.local:9093'
+```
+
+## Дополнительная информация
+
+### Проверка состояния
+
+```bash
+# Статус релиза
+helm status alertmanager -n monitoring
+
+# Логи
+kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager
+
+# Проверка конфигурации
+kubectl exec -n monitoring deploy/alertmanager -- amtool check-config /etc/alertmanager/alertmanager.yml
+```
+
+### Обновление
+
+```bash
+# Обновление чарта
+helm repo update
+helm upgrade alertmanager prometheus-community/alertmanager \
+  --namespace monitoring \
+  -f values.yaml
+
+# Откат
+helm rollback alertmanager -n monitoring
+```
+
+### Удаление
+
+```bash
+helm uninstall alertmanager -n monitoring
+```
+
+### Связанные темы
+
+* [Alertmanager](../alertmanager.md) — полное руководство
+* [Alertmanager installation](./alertmanager_installation.md) — ручная установка
+* [Kube-Prometheus-Stack](../Kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — полный стек
+* [Rules](../rules.md) — создание правил алертинга

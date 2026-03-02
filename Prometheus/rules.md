@@ -2,6 +2,8 @@
 
 В [Prometheus](./overview.md) "правила" (rules) — это набор выражений на языке [PromQL](./concepts/promql.md), которые периодически вычисляются на сервере. Они используются для создания новых временных рядов и для генерации оповещений.
 
+> **См. также:** [Типы метрик](./concepts/metric_types.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql.md).
+
 ---
 
 ### 1. Определения
@@ -125,3 +127,64 @@ groups:
 
 * **Именование Recording Rules**: Настоятельно рекомендуется придерживаться формата `level:metric:operations` (например, `instance:node_cpu_utilization:ratio`). Это значительно упрощает навигацию и отладку, так как имя метрики сразу говорит о уровне ее агрегации (`instance`), исходной метрике (`node_cpu`) и примененных операциях (`ratio`).
 * **Шаблоны в аннотациях**: Используйте переменные, такие как `{{ $labels.<name> }}` и `{{ $value }}`, для создания информативных и динамических сообщений в алертах.
+
+### Примеры алертов для разных типов метрик
+
+**Алерт на основе Counter (доля ошибок):**
+
+```yaml
+- alert: HighErrorRate
+  expr: |
+    sum(rate(http_requests_total{status=~"5.."}[5m])) 
+    / 
+    sum(rate(http_requests_total[5m])) > 0.05
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Высокая доля ошибок HTTP 5xx"
+    description: "Доля ошибок составляет {{ $value | humanizePercentage }}"
+```
+
+**Алерт на основе Gauge (память):**
+
+```yaml
+- alert: LowMemory
+  expr: |
+    (node_memory_mem_available_bytes / node_memory_mem_total_bytes) * 100 < 10
+  for: 10m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Мало свободной памяти на {{ $labels.instance }}"
+    description: "Свободно только {{ $value | humanize }}%"
+```
+
+**Алерт на основе Histogram (латентность):**
+
+```yaml
+- alert: HighLatency
+  expr: |
+    histogram_quantile(0.95, 
+      sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+    ) > 1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Высокая латентность запросов"
+    description: "95-й перцентиль: {{ $value | humanizeDuration }}"
+```
+
+**Алерт на основе кардинальности:**
+
+```yaml
+- alert: HighCardinality
+  expr: count({__name__=~".+"}) > 100000
+  for: 15m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Высокая кардинальность в Prometheus"
+    description: "Общее количество временных рядов: {{ $value | humanize }}"
+```

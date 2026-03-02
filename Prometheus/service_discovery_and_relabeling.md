@@ -2,6 +2,8 @@
 
 > Эта заметка описывает общие принципы. Для специфики работы в Kubernetes см. **[Обнаружение сервисов в Kubernetes](./kubernetes/service_discovery.md)**.
 
+> **См. также:** [Лейблы и кардинальность](./concepts/labels_and_cardinality.md) — правильное использование лейблов.
+
 ## Определения
 
 **Service Discovery (Обнаружение сервисов)** — это механизм, который [Prometheus](./overview.md) использует для автоматического нахождения целей (targets) для сбора метрик. Вместо ручного перечисления хостов в [конфигурации](./configuration.md), Prometheus запрашивает у внешних систем (API облаков, Kubernetes, [Consul](../Consul/consul_overview.md)) актуальный список эндпоинтов.

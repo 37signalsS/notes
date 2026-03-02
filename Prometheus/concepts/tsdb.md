@@ -12,6 +12,8 @@
 * **Сжатие (Compaction):** Процесс, в ходе которого несколько блоков объединяются в один более крупный блок для оптимизации хранения и ускорения запросов.
 * **Индекс (Index):** Файл внутри каждого блока, содержащий структуры для быстрого поиска временных рядов по их лейблам.
 
+> **См. также:** [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние кардинальности на производительность TSDB.
+
 ## Основные понятия
 
 ### Логика и архитектура хранения
@@ -37,6 +39,21 @@
 4. Каждые 2 часа (по умолчанию) Head Block "закрывается" и записывается на диск как новый постоянный **Блок**. На его месте в памяти создается новый пустой Head Block.
 5. В фоновом режиме запускается процесс **Compaction**, который объединяет старые, более мелкие блоки в более крупные, уменьшая количество файлов и оптимизируя индекс.
 
+### Визуализация архитектуры
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Prometheus                            │
+├─────────────────────────────────────────────────────────────┤
+│  Scrape → WAL (disk) → Head Block (RAM) → Block (disk)     │
+│                              │              │                │
+│                              │              └─> Compaction   │
+│                              │                 (merge)       │
+│                              └─> Recovery    └─> Retention  │
+│                                  after crash     (delete)   │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ## Практические сценарии
 
 ### Модульная архитектура хранения и внешние бэкенды
@@ -50,6 +67,80 @@
   * **[Thanos](../scaling/thanos_overview.md):** Решение для обеспечения глобального обзора, высокой доступности и долгосрочного хранения метрик Prometheus, тесно ориентированное на работу в Kubernetes.
   * **[Mimir](../../Mimir/mimir_overview.md):** Еще одно горизонтально масштабируемое решение от Grafana Labs.
   * **Другие:** Существуют адаптеры для таких систем, как [ClickHouse](../../Databases/clickhouse.md), Elasticsearch, Graphite, InfluxDB, Kafka, что позволяет использовать их для хранения данных Prometheus в зависимости от конкретных требований.
+
+### Мониторинг TSDB
+
+**Ключевые метрики для отслеживания состояния TSDB:**
+
+```promql
+# Размер TSDB на диске (байты)
+prometheus_tsdb_storage_blocks_bytes
+
+# Количество блоков на диске
+prometheus_tsdb_storage_blocks
+
+# Время последней компакции
+prometheus_tsdb_compactions_total
+
+# Количество активных рядов в Head Block
+prometheus_tsdb_head_series
+
+# Количество сэмплов в памяти
+prometheus_tsdb_head_samples_appended_total
+
+# Размер WAL (байты)
+prometheus_tsdb_wal_size_bytes
+```
+
+**Алерты на проблемы с TSDB:**
+
+```yaml
+# Алерт на высокую кардинальность
+- alert: HighTSDBCardinality
+  expr: prometheus_tsdb_head_series > 100000
+  for: 15m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Высокая кардинальность TSDB"
+    description: "Количество рядов: {{ $value | humanize }}"
+
+# Алерт на быстрый рост рядов (churn rate)
+- alert: HighChurnRate
+  expr: |
+    rate(prometheus_tsdb_head_series_created_total[5m]) > 1000
+  for: 10m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Высокий churn rate"
+    description: "Создаётся {{ $value | humanize }} рядов/сек"
+
+# Алерт на заполнение диска
+- alert: TSDBDiskAlmostFull
+  expr: |
+    (prometheus_tsdb_storage_blocks_bytes / prometheus_tsdb_storage_blocks_bytes_limit) > 0.85
+  for: 30m
+  labels:
+    severity: warning
+  annotations:
+    summary: "TSDB диск заполнен на {{ $value | humanizePercentage }}"
+```
+
+> **См. также:** [Rules и алертинг](../rules.md), [promtool](../promtool_and_best_practices.md).
+
+### Анализ TSDB с помощью promtool
+
+```bash
+# Анализ дампа TSDB (покажет топ метрик по кардинальности)
+promtool tsdb analyze /path/to/tsdb/data
+
+# Анализ конкретного блока
+promtool tsdb analyze --block-id <block-id> /path/to/tsdb/data
+
+# Дамп метаданных
+promtool tsdb dump /path/to/tsdb/data
+```
 
 ## Дополнительная информация
 
@@ -88,3 +179,47 @@
   * `rate(prometheus_tsdb_head_series_removed_total[5m])`: Скорость удаления старых рядов.
 
     Если скорости создания и удаления рядов высокие и постоянно "прыгают", это явный признак высокого churn rate.
+
+### Настройка retention period
+
+**Параметры командной строки:**
+
+```bash
+prometheus \
+  --storage.tsdb.path=/prometheus \
+  --storage.tsdb.retention.time=15d \
+  --storage.tsdb.retention.size=10GB
+```
+
+| Параметр | Описание | По умолчанию |
+|---|---|---|
+| `--storage.tsdb.path` | Путь к данным TSDB | `./data` |
+| `--storage.tsdb.retention.time` | Время хранения данных | `15d` |
+| `--storage.tsdb.retention.size` | Максимальный размер TSDB | `0` (без ограничений) |
+| `--storage.tsdb.min-block-duration` | Минимальная длительность блока | `2h` |
+| `--storage.tsdb.max-block-duration` | Максимальная длительность блока | `2h` |
+| `--storage.tsdb.wal-segment-size` | Размер сегмента WAL | `128MB` |
+
+> **См. также:** [Configuration](../configuration.md) — полная справка по параметрам.
+
+### Оптимизация производительности TSDB
+
+**Рекомендации:**
+
+1. **Следите за кардинальностью:** Используйте [best practices](./labels_and_cardinality.md) для избежания высокой кардинальности.
+2. **Настройте retention:** Выберите разумный период хранения в зависимости от доступного диска.
+3. **Выделите достаточно RAM:** Минимум 2GB для малых инсталляций, 8GB+ для крупных.
+4. **Используйте SSD:** TSDB чувствительна к скорости диска, особенно при compaction.
+5. **Мониторьте churn rate:** Высокий churn rate опаснее статической кардинальности.
+6. **Рассмотрите внешнее хранилище:** Для долгосрочного хранения используйте [VictoriaMetrics](../../VictoriaMetrics/overview.md), [Thanos](../scaling/thanos_overview.md) или [Mimir](../../Mimir/mimir_overview.md).
+
+### Связанные темы
+
+* [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние на TSDB
+* [Типы метрик](./metric_types.md) — хранение разных типов метрик
+* [PromQL](./promql.md) — запросы к TSDB
+* [Configuration](../configuration.md) — настройки хранения
+* [promtool](../promtool_and_best_practices.md) — анализ TSDB
+* [Remote Read/Write](../scaling/remote_read_write.md) — внешние хранилища
+* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — альтернативная TSDB
+* [Thanos](../scaling/thanos_overview.md) — долгосрочное хранение
