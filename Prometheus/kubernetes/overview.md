@@ -1,110 +1,223 @@
-# Мониторинг Kubernetes с помощью Kube-Prometheus-Stack
+# Мониторинг Kubernetes: Обзор
 
 ## Определения
 
-**`kube-prometheus-stack`** — это популярный [Helm-чарт](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md), который разворачивает полноценную систему мониторинга на базе Prometheus в кластере [Kubernetes](../../Kubernetes/kubernetes_overview.md). Он значительно упрощает установку, настройку и управление компонентами, необходимыми для сбора, визуализации и оповещения о метриках.
+**kube-prometheus-stack** — Helm-чарт для развертывания полноценной системы мониторинга на базе Prometheus в Kubernetes. Упрощает установку, настройку и управление всеми компонентами стека.
 
-**Онлайн установка** — стандартный метод с прямым доступом к публичным репозиториям.
+**Prometheus Operator** — контроллер Kubernetes для автоматизации управления Prometheus, Alertmanager и связанными компонентами через Custom Resource Definitions (CRD).
 
-**Оффлайн установка (Air-gapped)** — развертывание в изолированных средах без доступа к интернету.
-
-> **Основная документация:** Детальные инструкции по установке см. в [kube-prometheus-stack: Практические сценарии](../Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+> **См. также:** [Prometheus Operator](./operator.md), [Service Discovery](./service_discovery.md).
 
 ## Основные концепции
 
+### Актуальные версии (март 2026)
+
+| Компонент | Версия | Дата |
+|---|---|---|
+| **kube-prometheus-stack** | 82.4.3 | Февраль 2026 |
+| **Prometheus Operator** | 0.89.0 | Февраль 2026 |
+| **Prometheus** | 3.10.0 | Февраль 2026 |
+| **Alertmanager** | 0.31.0 | Февраль 2026 |
+| **Grafana** | 11.x | Январь 2026 |
+
+> **Важно:** Проверяйте [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack) и [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) для получения последних версий.
+
 ### Экосистема Prometheus
 
-* **[Prometheus Server](../overview.md):** Центральный компонент для сбора, хранения и обработки метрик. Разворачивается как `StatefulSet`. Осуществляет сбор метрик по модели pull-based, активно опрашивая (scrapes) целевые эндпоинты экспортеров по HTTP. Имеет встроенный механизм `service discovery` для автоматического обнаружения целей в динамических средах.
-* **[Alertmanager](../alertmanager.md):** Отдельная сущность, отвечающая за дедупликацию, группировку и маршрутизацию оповещений, сгенерированных Prometheus. Он получает алерты от Prometheus и отправляет их в различные каналы связи.
-* **[Push Gateway](../pushgateway.md):** Компонент, предназначенный для сбора метрик от кратковременных или периодически запускаемых задач (например, `cron` job), которые не могут быть опрошены Prometheus напрямую. Эти задачи "проталкивают" (push) свои метрики в Push Gateway, откуда Prometheus их уже забирает по своей стандартной pull-модели.
-* **[Экспортеры](../Exporters/overview.md):** Программы, которые собирают метрики из различных систем (ОС, базы данных, приложения) и преобразуют их в текстовый формат, понятный Prometheus, предоставляя по HTTP-эндпоинту (обычно `/metrics`). Примеры: `node-exporter` для метрик хоста, `kube-state-metrics` для метрик объектов Kubernetes.
-* **[Grafana](../../Grafana/grafana_overview.md):** Инструмент для мощной визуализации метрик, создания интерактивных дашбордов и настройки алертов. Работает с Prometheus как с основным источником данных.
+* **[Prometheus Server](../overview.md):** Центральный компонент для сбора, хранения и обработки метрик. Разворачивается как `StatefulSet`.
+* **[Alertmanager](../alertmanager.md):** Дедупликация, группировка и маршрутизация оповещений.
+* **[Push Gateway](../pushgateway.md):** Сбор метрик от кратковременных задач (batch jobs).
+* **[Экспортеры](../Exporters/overview.md):** Сбор метрик из различных систем (ОС, БД, приложения).
+* **[Grafana](../../Grafana/grafana_overview.md):** Визуализация метрик, дашборды, алерты.
 
-### Архитектура `kube-prometheus-stack`: Оператор и CRD
+### Архитектура kube-prometheus-stack
 
-`kube-prometheus-stack` основан на паттерне "Оператор" и устанавливает целую экосистему компонентов:
+**Компоненты:**
 
-* **[Prometheus Operator](./operator.md):** Является "мозгом" системы. Это контроллер, который расширяет API Kubernetes с помощью **Custom Resource Definitions (CRD)** и управляет конфигурацией всего стека. Вместо ручного редактирования сложных файлов `prometheus.yml`, вы описываете желаемое состояние с помощью простых CRD-манифестов. Оператор следит за этими CRD и автоматически преобразует их в реальные объекты кластера (StatefulSet, ConfigMap, Secret и т.д.). Подробное описание его архитектуры и принципов работы находится в основной заметке: **[Prometheus Operator](./operator.md)**.
-* **[Prometheus Server](../overview.md):** Настраивается и управляется Оператором.
-* **[Grafana](../../Grafana/grafana_overview.md):** Для визуализации метрик, поставляется с набором готовых дашбордов.
-* **[Alertmanager](../alertmanager.md):** Для управления и маршрутизации оповещений, также управляется Оператором.
-* **[Node Exporter](../Exporters/overview.md#node-exporter):** Собирает метрики с узлов Kubernetes (`DaemonSet`).
-* **[Kube-State-Metrics](../Exporters/overview.md#kube-state-metrics):** Генерирует метрики о состоянии объектов Kubernetes.
+* **Prometheus Operator** — контроллер для управления стеком
+* **Prometheus Server** — сбор и хранение метрик
+* **Alertmanager** — обработка оповещений
+* **Grafana** — визуализация
+* **Node Exporter** — метрики хостов (DaemonSet)
+* **Kube-State-Metrics** — метрики объектов Kubernetes
 
-#### Ключевые CRD, управляемые Оператором
+### Custom Resource Definitions (CRD)
 
-* **`ServiceMonitor`**:
-  * Описывает, как Prometheus должен обнаруживать и собирать метрики с группы подов, объединенных одним `Service`.
-  * Использует `selector` для поиска нужных сервисов по их лейблам.
-  * **Важный нюанс**: Prometheus Operator **не** направляет Prometheus на ClusterIP сервиса. Вместо этого он обращается к Kubernetes API, находит `Endpoints` объекта `Service` (которые содержат реальные IP-адреса подов, стоящих за сервисом) и генерирует соответствующую конфигурацию `scrape_config` для Prometheus. Это позволяет собирать метрики со всех подов, а не только с одного случайного.
-  * **Лейбл `release`**: Для корректной работы `ServiceMonitor` в Helm-установке `kube-prometheus-stack` необходимо, чтобы `ServiceMonitor` имел лейбл `release`, совпадающий с названием вашей Helm-инсталляции (например, `release: otus`). Без него Prometheus Operator не сможет найти и обработать `ServiceMonitor`.
+**Ключевые CRD:**
 
-* **`PodMonitor`**:
-  * Аналогичен `ServiceMonitor`, но позволяет мониторить поды напрямую по их лейблам, без необходимости создавать для них сервис.
+* **ServiceMonitor** — описание целей для скрейпинга через Service
+* **PodMonitor** — мониторинг подов напрямую по лейблам
+* **PrometheusRule** — правила алертинга и записи
+* **Probe** — blackbox-мониторинг через Blackbox Exporter
+* **AlertmanagerConfig** — конфигурация маршрутизации Alertmanager
 
-* **`PrometheusRule`**:
-  * Позволяет декларативно описывать правила алертинга и записи (`recording rules`). Оператор автоматически загружает их в Prometheus.
+> **См. также:** [Prometheus Operator](./operator.md) — детальное описание CRD.
 
-* **`Probe`**:
-  * Используется для мониторинга внешних систем (например, веб-сайтов) с помощью `blackbox-exporter`.
+### Service Discovery в Kubernetes
 
-### Observability: Метрики, Логи, Трассировка
+Prometheus использует Kubernetes API для автоматического обнаружения целей:
 
-Важно четко различать роли различных инструментов в [Observability (наблюдаемости)](../../Concepts/Observability_and_Monitoring/observability_overview.md):
+* **endpoints** — обнаружение Endpoint объектов
+* **service** — обнаружение Service объектов
+* **pod** — обнаружение Pod объектов
+* **node** — обнаружение Node объектов
+* **ingress** — обнаружение Ingress объектов
 
-* **Метрики (Prometheus):** Отвечают на вопрос "**Что происходит?**". Помогают понять общее состояние системы.
-* **Логи ([ELK Stack](../../ELK_Stack/elk_stack_overview.md), [Grafana Loki](../../Loki/loki_overview.md)):** Отвечают на вопрос "**Почему это произошло?**". Содержат детальную информацию о событиях.
-* **Трассировка ([Jaeger](../../Jaeger/jaeger_overview.md), [OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md)):** Отвечает на вопрос "**Как это произошло?**". Позволяет проследить путь запроса.
+> **См. также:** [Service Discovery](./service_discovery.md) — детальное руководство.
 
 ## Практические сценарии
 
-### Процесс развертывания
+### Быстрый старт
 
-1. **Подготовка:**
-    * Создается отдельный `namespace` для мониторинга (например, `monitoring`).
-    * Добавляется Helm-репозиторий `prometheus-community`.
+```bash
+# Создание namespace
+kubectl create namespace monitoring
 
-2. **Установка через Helm:**
-    * Используется команда `helm install`.
-    * Ключевым элементом является кастомизация через файл `values.yaml`.
+# Добавление репозитория
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
 
-3. **Настройка `values.yaml`:**
-    * **Prometheus:**
-        * `retention`: Срок хранения метрик в локальном хранилище Prometheus (например, `31d`).
-        * `requests` и `limits`: Запросы и лимиты ресурсов (CPU, Memory).
-        * `persistentVolume`: Конфигурация постоянного хранилища. Использует `volumeClaimTemplate` с указанием `storageClassName`, `accessModes` и `size`.
-    * **Grafana:**
-        * `root_url`: Важный параметр для генерации корректных ссылок в Grafana (например, для приглашений пользователей).
-        * `adminPassword`: Пароль для пользователя `admin`. Рекомендуется использовать `Secret` для хранения.
-        * `sidecar.dashboards.enabled: true`: Позволяет Grafana автоматически подгружать дашборды из `ConfigMap`, помеченных специальными лейблами. Это реализует подход "Dashboards as Code".
-        * `additionalGrafanaPlugins`: Позволяет устанавливать дополнительные плагины (например, `grafana-worldmap-panel`).
-        * `persistence`: Настройка постоянного хранилища для Grafana, чтобы сохранять дашборды, созданные через UI, и другие настройки.
-    * **Node Exporter:**
-        * `relabeling`: Настройка правил для обогащения метрик, например, для добавления читаемого имени узла (`node`) в метрики `node-exporter` (используя `__meta_kubernetes_pod_node_name`).
+# Установка kube-prometheus-stack
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace
+```
 
-> **Детали установки:** Полные инструкции по онлайн/оффлайн установке и настройке доступа см. в [Практических сценариях](../Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+> **См. также:** [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md).
+
+### Проверка установки
+
+```bash
+# Проверка подов
+kubectl get pods -n monitoring
+
+# Проверка ServiceMonitor
+kubectl get servicemonitor -n monitoring
+
+# Доступ к Prometheus
+kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
+
+# Доступ к Grafana
+kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80
+```
 
 ### Мониторинг внешних ресурсов
 
-1. **Blackbox-мониторинг:**
-    * Используется `blackbox-exporter` для выполнения внешних проверок доступности (HTTP, TCP, ICMP) произвольных ресурсов.
-    * Настраивается либо через CRD `Probe` (при использовании `kube-prometheus-stack`), либо путем включения `ServiceMonitor` для `blackbox-exporter` и указания целей через его параметры.
-    * Пример: проверка доступности внешнего URL (`google.com`) или внутреннего IP-адреса не-Kubernetes узла (`192.168.1.77`).
-    * **Совет из лекции**: Используйте `Probe` CRD для удобной декларативной настройки blackbox-проверок.
+**Blackbox-мониторинг через CRD Probe:**
 
-2. **Whitebox-мониторинг (для систем с Prometheus-метриками):**
-    * Если внешний сервис (например, ВМ, физический сервер) уже отдает метрики в формате Prometheus (например, на нем запущен `node-exporter`), его можно добавить в конфигурацию Prometheus, запущенного в Kubernetes.
-    * Это делается через секцию `prometheus.prometheusSpec.additionalScrapeConfigs` в `values.yaml` Helm-чарта. Сюда можно вписать статические конфигурации (`static_configs`) для целей вне Kubernetes:
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: google-probe
+  namespace: monitoring
+spec:
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  module: http_2xx
+  targets:
+    staticConfig:
+      static:
+        - https://google.com
+```
 
-        ```yaml
-        prometheus:
-          prometheusSpec:
-            additionalScrapeConfigs:
-              - job_name: 'external-non-k8s-host'
-                static_configs:
-                  - targets: ['192.168.1.100:9100'] # IP и порт node-exporter на внешней ВМ
-                    labels:
-                      env: 'production'
-        ```
+**Whitebox-мониторинг внешних хостов:**
 
-    * **Условие**: Необходима сетевая связность между Prometheus в Kubernetes и внешними целями.
+```yaml
+# В values.yaml
+prometheus:
+  prometheusSpec:
+    additionalScrapeConfigs:
+      - job_name: 'external-host'
+        static_configs:
+          - targets: ['192.168.1.100:9100']
+            labels:
+              env: 'production'
+```
+
+> **См. также:** [Blackbox Exporter](../Exporters/blackbox_exporter.md).
+
+## Дополнительная информация
+
+### Observability: Метрики, Логи, Трассировка
+
+| Тип | Инструменты | Вопрос |
+|---|---|---|
+| **Метрики** | Prometheus, Grafana | **Что происходит?** |
+| **Логи** | ELK Stack, Grafana Loki | **Почему это произошло?** |
+| **Трассировка** | Jaeger, OpenTelemetry | **Как это произошло?** |
+
+> **См. также:** [Observability overview](../../Concepts/Observability_and_Monitoring/observability_overview.md).
+
+### Рекомендации по безопасности
+
+**1. Аутентификация Prometheus:**
+
+* Используйте встроенную аутентификацию (доступна в новых версиях)
+* Или Basic-аутентификацию на Ingress + Network Policies
+
+**2. Ограничение доступа:**
+
+```yaml
+# NetworkPolicy для Prometheus
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-network-policy
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - port: 9090
+          protocol: TCP
+```
+
+**3. TLS для внешних соединений:**
+
+* Используйте Ingress с TLS для доступа к UI
+* Настройте mTLS для внутренних соединений (опционально)
+
+### Высокая доступность
+
+**Prometheus:**
+
+* Минимум 2 реплики (StatefulSet)
+* Одинаковая конфигурация на всех репликах
+* Внешнее хранилище для долгосрочных данных
+
+**Alertmanager:**
+
+* Минимум 3 реплики для кворума
+* Кластеризация для дедупликации алертов
+
+> **См. также:** [Scaling](../scaling/overview.md), [Thanos](../scaling/thanos_overview.md).
+
+### Полезные метрики Kubernetes
+
+* `kube_deployment_status_replicas_unavailable` — недоступные реплики
+* `kube_node_status_capacity_memory_bytes` — ёмкость памяти ноды
+* `kube_pod_container_status_restart_total` — перезапуски контейнеров
+* `kube_pod_container_status_ready` — готовность контейнера
+* `kubelet_running_pods` — количество запущенных подов на ноде
+
+### Связанные темы
+
+* [Prometheus Operator](./operator.md) — управление стеком
+* [Service Discovery](./service_discovery.md) — обнаружение целей
+* [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md) — установка
+* [Installation](../installation/overview.md) — установка на хост
+* [Configuration](../configuration.md) — настройка Prometheus
+* [Rules](../rules.md) — правила алертинга
+* [Scaling](../scaling/overview.md) — масштабирование

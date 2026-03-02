@@ -2,99 +2,390 @@
 
 ## Определения
 
-**Prometheus Operator** — это специализированный контроллер Kubernetes, созданный для упрощения управления полным стеком мониторинга, включающим [Prometheus](../overview.md), [Alertmanager](../alertmanager.md) и [Grafana](../../Grafana/grafana_overview.md). Он является ядром популярного Helm-чарта `kube-prometheus-stack` и использует [пользовательские ресурсы (Custom Resources)](../../Kubernetes/Concepts/kubernetes_operators.md#2.1.-Custom-Resource-Definitions-(CRD)) для автоматизации задач развертывания и конфигурации. Детальное описание концепции, её назначения и принципов работы доступно в основной заметке: [Kubernetes Операторы](../../Kubernetes/Concepts/kubernetes_operators.md).
+**Prometheus Operator** — контроллер Kubernetes для автоматизации управления стеком мониторинга (Prometheus, Alertmanager, Grafana). Использует Custom Resource Definitions (CRD) для декларативного управления конфигурацией.
 
-Оператор отслеживает изменения в своих кастомных ресурсах и преобразует их в реальные объекты Kubernetes, такие как [StatefulSet'ы](../../Kubernetes/Base/statefulset.md), [ConfigMap'ы](../../Kubernetes/Base/configmap.md) и [Secret'ы](../../Kubernetes/Base/secrets/secrets_basics.md).
+> **См. также:** [Kubernetes Operators](../../Kubernetes/Concepts/kubernetes_operators.md), [kube-prometheus-stack](./overview.md).
 
 ## Основные концепции
 
-Prometheus Operator расширяет API Kubernetes набором специализированных CRD для декларативного управления всеми компонентами стека мониторинга.
+### Актуальная версия (март 2026)
+
+| Параметр | Значение |
+|---|---|
+| **Последняя версия** | `0.89.0` |
+| **Дата выпуска** | 5 февраля 2026 |
+| **Репозиторий** | [prometheus-operator/prometheus-operator](https://github.com/prometheus-operator/prometheus-operator) |
+| **Минимальный Kubernetes** | 1.16.0 |
+
+> **Важно:** Проверяйте [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) для получения последних версий.
+
+### Архитектура
+
+Prometheus Operator работает как контроллер Kubernetes:
+
+1. Отслеживает изменения в CRD (ServiceMonitor, PrometheusRule, etc.)
+2. Генерирует конфигурацию Prometheus/Alertmanager
+3. Создает/обновляет Kubernetes-объекты (StatefulSet, ConfigMap, Secret)
+4. Автоматически перезагружает конфигурацию при изменениях
+
+## Custom Resource Definitions (CRD)
 
 ### Prometheus
 
-Данный Custom Resource (`kind: Prometheus`) отвечает за развертывание и конфигурацию самого Prometheus-сервера. Оператор, видя этот ресурс, создает соответствующий `StatefulSet`, `Service`, `ConfigMap`'ы и другие необходимые объекты.
+**`kind: Prometheus`** — описание экземпляра Prometheus Server:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: main
+  namespace: monitoring
+spec:
+  replicas: 2
+  version: v3.10.0
+  serviceAccountName: prometheus
+  serviceMonitorSelector:
+    matchLabels:
+      release: monitoring
+  resources:
+    requests:
+      memory: 400Mi
+      cpu: 200m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+  retention: 15d
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: standard
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+```
+
+> **См. также:** [Prometheus Server](../installation/prometheus_server_installation.md).
 
 ### Alertmanager
 
-Аналогичный Custom Resource (`kind: Alertmanager`) используется для управления экземплярами [Alertmanager](../alertmanager.md).
+**`kind: Alertmanager`** — описание экземпляра Alertmanager:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: main
+  namespace: monitoring
+spec:
+  replicas: 3
+  version: v0.31.0
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: standard
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+> **См. также:** [Alertmanager](../alertmanager.md).
 
 ### ServiceMonitor
 
-Это один из самых важных CRD. `ServiceMonitor` позволяет декларативно описать, как Prometheus должен обнаруживать и собирать метрики с группы подов, объединенных одним [сервисом (Service)](../../Kubernetes/Networking/Service/service_overview.md). Более подробно механика обнаружения сервисов, включая сравнение с нативным подходом, описана в заметке о [Service Discovery в Kubernetes](service_discovery.md).
+**`kind: ServiceMonitor`** — описание целей для скрейпинга через Service:
 
-* **Как это работает:**
-    1. Вы создаете `ServiceMonitor`, в котором с помощью `selector`'а указываете, за сервисами с какими лейблами нужно следить.
-    2. Prometheus Operator обнаруживает этот `ServiceMonitor`.
-    3. Он **не** направляет Prometheus на ClusterIP сервиса. Вместо этого он обращается к API Kubernetes, находит `Endpoints` объекта `Service` и получает реальные IP-адреса всех подов, стоящих за этим сервисом.
-    4. Оператор генерирует соответствующую конфигурацию (`scrape_config`) и обновляет `Secret`, в котором хранится полный конфигурационный файл Prometheus (`prometheus.yml`).
-    5. Внутри пода Prometheus работает специальный контейнер `prometheus-config-reloader`. Он замечает, что `Secret` с конфигурацией изменился.
-    6. `config-reloader` обновляет файл на диске внутри пода и отправляет Prometheus-серверу HTTP-запрос на перезагрузку конфигурации.
-    7. Prometheus перечитывает конфиг и начинает опрашивать новые цели.
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-app
+  namespace: production
+  labels:
+    release: monitoring  # Важно для Helm-установки
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  namespaceSelector:
+    matchNames:
+      - production
+  endpoints:
+    - port: web
+      interval: 15s
+      path: /metrics
+```
 
-Этот механизм позволяет автоматически мониторить сервисы, просто добавив им нужный лейбл и создав `ServiceMonitor`.
+**Как работает:**
+
+1. Prometheus Operator находит ServiceMonitor по селектору
+2. Запрашивает Kubernetes API для получения Endpoints сервиса
+3. Генерирует scrape_config для Prometheus
+4. Обновляет конфигурацию через Secret
+5. `prometheus-config-reloader` перезагружает Prometheus
+
+> **См. также:** [Service Discovery](./service_discovery.md).
 
 ### PodMonitor
 
-Аналогичен `ServiceMonitor`, но был добавлен позже. Позволяет мониторить поды напрямую по их лейблам, без необходимости объединять их `Service`'ом. Это полезно для подов, которые не предоставляют сетевой сервис, но экспортируют метрики. Хорошим примером использования является автоматический сбор метрик с баз данных, как описано в заметке о [развертывании PostgreSQL в Kubernetes](../../Databases/PostgreSQL/Operations/kubernetes_deployment.md#включение-мониторинга-для-prometheus-operator).
+**`kind: PodMonitor`** — мониторинг подов напрямую (без Service):
 
-### Probe
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: my-app
+  namespace: production
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  namespaceSelector:
+    matchNames:
+      - production
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+```
 
-Данный Custom Resource (`kind: Probe`) используется для мониторинга "черным ящиком" (blackbox monitoring) с помощью **[Blackbox Exporter](../overview.md#blackbox_exporter)**.
-В `Probe` вы описываете цель (например, `google.com`) и модуль проверки (например, `http_2xx`). Prometheus Operator на основе этого генерирует конфигурацию, чтобы Prometheus опрашивал не саму цель, а Blackbox Exporter, передавая ему цель как параметр.
+> **Преимущество:** Не требует создания Service для мониторинга.
 
 ### PrometheusRule
 
-Этот CRD позволяет декларативно управлять [правилами записи (recording rules) и оповещений (alerting rules)](../rules.md).
+**`kind: PrometheusRule`** — правила алертинга и записи:
 
-* **Принцип работы:**
-    1. Вы описываете правила в манифесте `kind: PrometheusRule`.
-    2. Prometheus Operator отслеживает этот ресурс.
-    3. Он генерирует из него `ConfigMap`, содержащий файлы с правилами.
-    4. `prometheus-config-reloader` обнаруживает этот `ConfigMap`, монтирует его в под Prometheus и отдает команду на перезагрузку правил.
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: my-app-rules
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: my-app-alerts
+      rules:
+        - alert: HighErrorRate
+          expr: rate(http_requests_total{status="500"}[5m]) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High error rate detected"
+            description: "Error rate is {{ $value }} errors/sec"
+```
+
+> **См. также:** [Rules](../rules.md).
+
+### Probe
+
+**`kind: Probe`** — blackbox-мониторинг через Blackbox Exporter:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: google-probe
+  namespace: monitoring
+spec:
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  module: http_2xx
+  targets:
+    staticConfig:
+      static:
+        - https://google.com
+        - https://example.com
+```
+
+> **См. также:** [Blackbox Exporter](../Exporters/blackbox_exporter.md).
 
 ### AlertmanagerConfig
 
-Данный CRD предоставляет способ декларативно настраивать маршрутизацию и получателей для [Alertmanager](../alertmanager.md), являясь альтернативой управлению конфигурацией через один центральный `Secret`.
+**`kind: AlertmanagerConfig`** — маршрутизация и получатели:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slack-config
+  namespace: monitoring
+spec:
+  route:
+    groupBy: ['alertname', 'job']
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+    receiver: 'slack'
+    routes:
+      - matchers:
+          - name: severity
+            value: critical
+        receiver: 'slack-critical'
+  receivers:
+    - name: 'slack'
+      slackConfigs:
+        - channel: '#monitoring'
+          apiURL:
+            name: slack-webhook
+            key: url
+    - name: 'slack-critical'
+      slackConfigs:
+        - channel: '#alerts-critical'
+          apiURL:
+            name: slack-webhook-critical
+            key: url
+```
+
+> **См. также:** [Alertmanager configuration](../alertmanager.md).
 
 ## Практические сценарии
 
 ### Управление Grafana
 
-Для [Grafana](../../Grafana/grafana_overview.md) нет специального CRD, но используется похожий механизм на основе [ConfigMap'ов](../../Kubernetes/Base/configmap.md) с определенными лейблами/аннотациями, что является примером [провижининга](../../Grafana/grafana_provisioning.md).
+Grafana не имеет CRD, но использует ConfigMap с лейблами:
 
-* **Принцип работы:**
-    1. Вы создаете `ConfigMap`, содержащий JSON-модель дашборда или конфигурацию источника данных.
-    2. В поде с Grafana работают служебные [контейнеры-сайдкары](../../Kubernetes/Base/pod.md#паттерн-сайдкар-sidecar).
-    3. Эти сайдкары отслеживают появление `ConfigMap`'ов с нужными аннотациями.
-    4. При их обнаружении они монтируют содержимое в Grafana и дают ей команду перечитать конфигурацию.
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-my-app
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: "My App"
+data:
+  my-app-dashboard.json: |
+    {
+      "title": "My App Dashboard",
+      "panels": [...]
+    }
+```
 
-### Полезные метрики и рекомендации
+**Принцип работы:**
 
-* **Примеры полезных метрик:**
-  * `kube_deployment_status_replicas_unavailable`: Отслеживает количество недоступных реплик для деплойментов. Значение больше нуля может указывать на проблемы.
-  * `kube_node_status_capacity_memory_bytes`: Показывает общую емкость памяти для каждой ноды.
-  * `kube_pod_container_status_restart_total`: Суммарное количество перезапусков контейнера. Постоянный рост указывает на нестабильность приложения.
-  * `kube_pod_container_status_ready`: Показывает готовность контейнера (1 - готов, 0 - нет). Позволяет быстро выявлять неработоспособные поды.
-* **Рекомендации:**
-  * **Избирательный подход:** Сосредоточьтесь на сборе только тех метрик, которые действительно необходимы для мониторинга и алертинга.
-  * **Оптимизация:** При установке `kube-state-metrics` можно исключить сбор ненужных метрик, чтобы снизить нагрузку на Prometheus и API-сервер.
+1. ConfigMap с лейблом `grafana_dashboard: "1"` создается в namespace
+2. Grafana sidecar обнаруживает ConfigMap
+3. Монтирует JSON в Grafana
+4. Grafana загружает дашборд
+
+> **См. также:** [Grafana provisioning](../../Grafana/grafana_provisioning.md).
+
+### Ручная установка Operator
+
+```bash
+# Установка CRD
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_probes.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
+
+# Установка Operator
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/bundle.yaml
+```
+
+> **Предпочтительный способ:** Используйте [Helm-чарт](./Kube_Prometheus_Stack_Helm/overview.md).
 
 ## Дополнительная информация
 
-### Prometheus
+### Высокая доступность
 
-* **Высокая доступность:** Prometheus, как правило, устанавливается в кластер как [StatefulSet](../../Kubernetes/Base/statefulset.md). У `StatefulSet`'ов есть определенная особенность: если выходит из строя нода, на которой запущен `StatefulSet`, он не перезапускается на других нодах даже по истечении `eviction-timeout`. Поэтому, чтобы гарантировать минимальную доступность Prometheus, его необходимо устанавливать минимум в две копии.
-* **Аутентификация:** Prometheus не имел встроенной аутентификации в ранних версиях, но в последних версиях она появилась, и ее нужно использовать. В более ранних версиях использовалось сочетание Basic-аутентификации на [Ingress](../../Kubernetes/Networking/Ingress/overview.md) плюс Network Policy, чтобы ограничить доступ к Prometheus внутри кластера. Это делается с одной простой целью: если злоумышленник получит доступ к одному из ваших подов, он сможет напрямую обратиться к Prometheus-серверу. В нем содержится огромное количество информации, которая существенно упростит жизнь злоумышленнику и подскажет, что и как можно атаковать. В частности, из Prometheus можно получить версию Kubernetes, что позволит поискать уже известные уязвимости для данной версии.
-* **Retention Size:** У Prometheus в Kubernetes-кластере есть настройка, которая позволяет ограничить количество хранимых данных. Мы можем ограничивать Prometheus не только по тому, как долго он хранит данные, но и по размеру. Это очень важно по двум причинам:
-    1. Prometheus может устанавливаться с [emptyDir](../../Kubernetes/Base/pod.md#основные-типы-томов), то есть по сути он будет писать на физическую ноду. Если не ограничить размер, то в какой-то момент из-за ошибки разработчиков мы можем увидеть резкий скачок по размеру данных, и у Prometheus просто закончится свободное место.
-    2. Даже когда никто нигде не ошибся, данных просто может стать больше, и в какой-то момент [Persistent Volume](../../Kubernetes/Storage/pv_and_pvc.md), который используется в Prometheus, закончится, и мы останемся без системы мониторинга. Данная настройка позволяет избежать подобных ситуаций.
+**Prometheus:**
 
-### Alertmanager
+* Минимум 2 реплики для HA
+* StatefulSet не перезапускается при падении ноды
+* Используйте external storage для долгосрочных данных
 
-* **Высокая доступность:** Alertmanager также запускается как `StatefulSet`. Идея ровно такая же, как и для Prometheus. Единственное отличие: его нужно запускать минимум в 3 копии, потому что Alertmanager умеет собираться самостоятельно в кластер, обмениваться данными для дедупликации уведомлений, и ему требуется большинство (кворум), поэтому 3 копии. Детальнее см. [Alertmanager HA](../alertmanager.md#4.-продвинутые-детали-высокая-доступность-high-availability).
-* **Аутентификация:** Для Alertmanager все то же самое, что и с Prometheus: не надо никого пускать туда, куда ему не надо ходить.
+**Alertmanager:**
 
-### Grafana
+* Минимум 3 реплики для кворума
+* Кластеризация через `--cluster.listen-address`
+* Дедупликация алертов между репликами
 
-* **Управление дашбордами:** Когда мы устанавливаем Grafana из Prometheus Operator, там есть некий набор предустановленных дашбордов. Они удобны и покрывают на старте 99% потребностей. При этом механизм загрузки этих дашбордов в Grafana заключается в том, что они подтягиваются с сайта Grafana по ID. В любой момент эти дашборды могут поменяться. И при перезапуске Pod с Grafana мы увидим совершенно другие дашборды в нашем веб-интерфейсе, что не очень хорошо.
-* **Хранение дашбордов:** Дашборды, которые рисуются под наши приложения и нужды, мы применяем в качестве `ConfigMap`'ов. Если что-то происходит или меняется, они могут быть потеряны. Поэтому единственным правильным решением является хранение всех [дашбордов в Git](../../Grafana/grafana_dashboards.md) (например, GitLab) и применение их отдельно в виде `ConfigMap`. См. также [рабочие процессы в Git](../../Git/git_workflows.md).
+> **См. также:** [Alertmanager HA](../alertmanager.md#кластеризация).
+
+### Безопасность
+
+**1. Аутентификация:**
+
+* Prometheus: встроенная (новые версии) или Ingress с Basic Auth
+* Alertmanager: Ingress с аутентификацией
+* Grafana: встроенная
+
+**2. Network Policies:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-access
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - port: 9090
+          protocol: TCP
+```
+
+**3. TLS:**
+
+* Используйте Ingress с TLS для внешних соединений
+* mTLS для внутренних соединений (опционально)
+
+### Полезные метрики Operator
+
+* `prometheus_operator_reconcile_duration_seconds` — длительность reconciliation
+* `prometheus_operator_reconcile_errors_total` — ошибки reconciliation
+* `prometheus_operator_spec_replicas` — количество реплик из spec
+* `prometheus_operator_node_address_lookup_errors_total` — ошибки DNS
+
+### Устранение неполадок
+
+**ServiceMonitor не работает:**
+
+```bash
+# Проверка ServiceMonitor
+kubectl get servicemonitor -n monitoring
+
+# Проверка лейблов
+kubectl get servicemonitor my-app -n production -o yaml | grep release
+
+# Проверка Endpoints
+kubectl get endpoints -n production -l app=my-app
+
+# Логи Operator
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator
+```
+
+**Prometheus не скрейпит цели:**
+
+* Проверьте лейбл `release` в ServiceMonitor
+* Убедитесь, что Endpoint существует
+* Проверьте логи Prometheus: `kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus`
+
+### Связанные темы
+
+* [Overview](./overview.md) — обзор мониторинга в Kubernetes
+* [Service Discovery](./service_discovery.md) — обнаружение целей
+* [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md) — установка через Helm
+* [Configuration](../configuration.md) — настройка Prometheus
+* [Rules](../rules.md) — правила алертинга
