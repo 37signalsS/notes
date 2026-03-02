@@ -43,9 +43,10 @@
 
 ## Практические сценарии
 
+- **[Yandex Cloud — навигатор](../../Yandex/index.md)**: Полная документация по сервисам YC
 - **[Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)**: Установка и конфигурация Crossplane для работы с Yandex Cloud
 - **[Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)**: Локальный пример управления ресурсами внутри кластера
-- **[Интеграция с GitOps](./gitops_integration.md)**: Полное руководство по интеграции с ArgoCD и Flux
+- **[Интеграция с GitOps](./gitops_integration.md)**: Полное руководство по интеграцией с ArgoCD и Flux
 - **[Сравнение с Terraform](./terraform_comparison.md)**: Детальное сравнение подходов и инструментов
 
 ## Дополнительная информация
