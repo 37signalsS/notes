@@ -26,6 +26,8 @@
 | **Срок жизни** | Недели, месяцы, бессрочно | Минуты, часы; автоматическое продление и отзыв |
 | **Проверка доступа** | По принадлежности к "доверенной" сети | По идентичности и контексту каждого запроса |
 | **Компрометация** | Долговременный неконтролируемый доступ | Ущерб ограничен коротким TTL и узкими привилегиями |
+| **Ротация** | Ручная, редкая | Автоматическая, частая (через lease renewal) |
+| **Аудит** | Отсутствует или фрагментарный | Полный журнал всех операций с хэшированием чувствительных данных |
 
 ## Практические сценарии
 
@@ -33,11 +35,13 @@
 
 В Kubernetes рабочая нагрузка (pod) может подтвердить свою личность, используя токен своего `ServiceAccount`, который проверяется Vault.
 
+**Подробное руководство:** **[Интеграция Vault с Kubernetes через Secrets Store CSI Driver](./guides/vault_kubernetes_integration.md)**
+
 1. **Настройка аутентификации `kubernetes` в Vault:** Vault настраивается так, чтобы доверять OIDC-провайдеру Kubernetes API.
 2. **Создание роли в Vault:** Роль связывает `ServiceAccount` из определенного `namespace` с политиками Vault.
 
     ```hcl
-    # Роль 'web' разрешает аутентификацию для ServiceAccount 'web-sa' 
+    # Роль 'web' разрешает аутентификацию для ServiceAccount 'web-sa'
     # в namespace 'prod' и привязывает политику 'web-readonly'
     vault write auth/kubernetes/role/web \
       bound_service_account_names=web-sa \
@@ -48,6 +52,64 @@
 
 3. **Доставка секрета:** Vault Agent, запущенный как sidecar-контейнер, аутентифицируется в Vault, получает динамические учетные данные для базы данных и записывает их во временный том (`tmpfs`), доступный основному приложению.
 
+### Динамические секреты для баз данных
+
+Вместо хранения статических паролей для БД, Vault генерирует временные учётные данные с ограниченным TTL.
+
+```bash
+# Настройка подключения к PostgreSQL
+vault write database/config/postgresql \
+    plugin_name=postgresql-database-plugin \
+    allowed_roles="readonly-role" \
+    connection_url="postgresql://{{username}}:{{password}}@db.example.com:5432/appdb?sslmode=disable" \
+    username="vault_admin" \
+    password="admin_password"
+
+# Создание роли с TTL 1 час
+vault write database/roles/readonly-role \
+    db_name=postgresql \
+    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"{{name}}\";" \
+    default_ttl="1h" \
+    max_ttl="24h"
+
+# Получение временных учётных данных
+vault read database/creds/readonly-role
+```
+
+**Преимущества:**
+* Пароль автоматически меняется при каждом запросе
+* Учётная запись автоматически удаляется после истечения TTL
+* Аудит: кто, когда и к какой БД получил доступ
+
+### Шифрование данных через Transit Engine
+
+Приложение шифрует данные через Vault, не храня ключи шифрования локально.
+
+**Подробное руководство:** **[Политика доступа для Transit Engine](./guides/transit_key_policy.md)**
+
+```bash
+# Включение Transit engine
+vault secrets enable transit
+
+# Создание ключа шифрования
+vault write -f transit/keys/payments
+
+# Шифрование данных
+vault write transit/encrypt/payments \
+    plaintext=$(echo -n "sensitive_data" | base64)
+
+# Расшифровка (только для авторизованных приложений)
+vault write transit/decrypt/payments \
+    ciphertext="vault:v1:..." \
+    --format json | jq -r .data.plaintext | base64 -d
+```
+
+**Принцип Zero Trust:** Приложение не имеет доступа к ключам, только к операциям шифрования/дешифрования через API Vault.
+
 ## Дополнительная информация
 
 * **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md):** Альтернативный подход для безопасного хранения секретов в Git, который реализует часть принципов Zero Trust. Секрет шифруется для конкретного кластера и может быть расшифрован только в нем.
+* **[Антипаттерны управления секретами](./security/common_antipatterns.md):** Типичные ошибки и способы их предотвращения.
+* **[Vault Agent и шаблоны](./guides/vault_agent_and_templates.md):** Автоматизация доставки секретов с динамическим обновлением конфигурации.
+* **[18-point secrets management checklist](https://www.hashicorp.com/en/blog/the-18-point-secrets-management-checklist):** Полный чеклист лучших практик от HashiCorp.

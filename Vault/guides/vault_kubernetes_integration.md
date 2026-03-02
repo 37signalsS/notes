@@ -268,7 +268,12 @@ data:
 После применения всех манифестов `initContainer` получит секреты, создаст `index.html`, и `nginx` запустится с уже готовой конфигурацией, не имея прямого доступа к Vault.
 
 ## 4. Ссылки по теме
-- [Обзор HashiCorp Vault](../overview.md)
-- [Основные концепции Vault](../concepts.md)
-- [Обзор Container Storage Interface (CSI)](../../Kubernetes/Storage/CSI/csi_overview.md)
+
+* **[Обзор HashiCorp Vault](../overview.md):** Общее описание технологии и ключевых компонентов.
+* **[Основные концепции Vault](../concepts.md):** Архитектура, Seal/Unseal, бэкенды, аутентификация.
+* **[Обзор Container Storage Interface (CSI)](../../Kubernetes/Storage/CSI/csi_overview.md):** Принцип работы CSI в Kubernetes.
+* **[Vault Agent и Шаблоны](./vault_agent_and_templates.md):** Альтернативный подход с использованием sidecar-контейнера.
+* **[Подход Zero Trust](../zero_trust.md):** Как интеграция с Kubernetes реализует принципы нулевого доверия.
+* **[Официальная документация: Vault + Kubernetes](https://developer.hashicorp.com/vault/docs/platform/k8s):** Полное руководство от HashiCorp.
+* **[Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/):** Документация проекта.
 

@@ -39,10 +39,10 @@ auto_auth {
 template {
   # Исходный файл-шаблон
   source      = "/etc/app/config.ctmpl"
-  
+
   # Конечный файл, который будет сгенерирован
   destination = "/etc/app/config.json"
-  
+
   # Опционально: команда, которая будет выполнена после успешного рендеринга
   # command = "systemctl reload my-app"
 }
@@ -242,3 +242,11 @@ template {
 3. **Проверьте права (`capabilities`):** Убедитесь, что у политики есть право на `read`.
 
 После исправления политики агент при следующей попытке должен успешно отрендерить шаблон.
+
+## Дополнительная информация
+
+* **[Официальная документация Vault Agent](https://developer.hashicorp.com/vault/docs/agent-and-proxy/agent):** Полное руководство по конфигурации и возможностям.
+* **[Аутентификация через AppRole](./vault_auth_approle.md):** Настройка метода аутентификации для агента.
+* **[Интеграция с Kubernetes](./vault_kubernetes_integration.md):** Использование Vault Agent в Kubernetes-средах.
+* **[Подход Zero Trust](../zero_trust.md):** Как Vault Agent реализует принципы нулевого доверия.
+* **[Consul Template](https://github.com/hashicorp/consul-template):** Документация по синтаксису шаблонов.

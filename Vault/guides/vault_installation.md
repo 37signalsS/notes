@@ -39,7 +39,7 @@ listener "tcp" {
 
 // Конфигурация хранилища (storage).
 // В данном примере используется файловое хранилище Raft.
-// Для production рекомендуется использовать Consul, см. [vault_with_consul_backend.md](./vault_with_consul_backend.md).
+// Для production с внешним бэкендом см. [vault_with_consul_backend.md](./vault_with_consul_backend.md).
 storage "raft" {
   path    = "/var/lib/vault/data"
   node_id = "vault_node_1"
@@ -161,4 +161,7 @@ sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
 
 ### Связанные документы
 
-* **Общее описание технологии, ее назначения и ключевых компонентов доступно в основной заметке: [HashiCorp Vault Overview](../overview.md).**
+* **[HashiCorp Vault Overview](../overview.md):** Общее описание технологии, ее назначения и ключевых компонентов.
+* **[Основные концепции Vault](../concepts.md):** Подробное описание архитектуры, Seal/Unseal, бэкендов.
+* **[Использование Consul в качестве бэкенда](./vault_with_consul_backend.md):** Настройка HA-кластера с внешним хранилищем.
+* **[Официальная документация по установке](https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-install):** Руководство от HashiCorp.

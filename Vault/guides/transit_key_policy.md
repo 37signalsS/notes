@@ -21,13 +21,17 @@
 
 Политики строятся вокруг путей API движка `transit`:
 
-* `/transit/keys/<name>`: Управление ключом (создание, чтение метаданных).
-* `/transit/encrypt/<name>`: Шифрование данных.
-* `/transit/decrypt/<name>`: Расшифровка данных.
-* `/transit/rewrap/<name>`: Перешифрование данных новой версией ключа.
-* `/transit/sign/<name>`: Создание цифровой подписи.
-* `/transit/verify/<name>`: Проверка подписи.
-* `/transit/keys/<name>/rotate`: Ротация ключа.
+| Путь | Операция | Capabilities |
+| :--- | :--- | :--- |
+| `/transit/keys/<name>` | Управление ключом | `create`, `read`, `update`, `list` |
+| `/transit/encrypt/<name>` | Шифрование данных | `update` |
+| `/transit/decrypt/<name>` | Расшифровка данных | `update` |
+| `/transit/rewrap/<name>` | Перешифрование новой версией ключа | `update` |
+| `/transit/sign/<name>` | Создание цифровой подписи | `update` |
+| `/transit/verify/<name>` | Проверка подписи | `update` |
+| `/transit/keys/<name>/rotate` | Ротация ключа | `update` |
+
+**Подробное руководство:** **[Подход Zero Trust к управлению секретами](../zero_trust.md)** — как Transit engine реализует принципы нулевого доверия.
 
 ## Практические сценарии
 
@@ -84,3 +88,6 @@ path "transit/decrypt/payments" {
 ## Дополнительная информация
 
 * **Безопасная доставка секрета:** Для безопасной передачи зашифрованного значения можно использовать механизм **[Response Wrapping](../concepts.md#response-wrapping)**. Vault помещает ответ в одноразовый токен, который можно безопасно передать получателю.
+* **[Официальная документация: Transit Engine](https://developer.hashicorp.com/vault/docs/secrets/transit):** Полное руководство по возможностям Transit engine.
+* **[Аутентификация через AppRole](./vault_auth_approle.md):** Настройка доступа для приложений.
+* **[Подход Zero Trust](../zero_trust.md):** Как шифрование через Transit реализует принципы нулевого доверия.
