@@ -61,17 +61,19 @@ resource "yandex_vpc_subnet" "default" {
 
 resource "yandex_compute_instance" "app" {
   name        = "web-app-server"
-  platform_id = "standard-v2"
+  platform_id = "standard-v3"  // Актуальная платформа (2026)
   zone        = "ru-central1-a"
 
   resources {
     cores  = 2
-    memory = 2
+    memory = 4
   }
 
   boot_disk {
     initialize_params {
-      image_id = "fd8vj3j1l015********" // Ubuntu 22.04 LTS
+      image_id    = "fd8vj3j1l015********" // Ubuntu 22.04 LTS
+      type        = "network-ssd"
+      size        = 20
     }
   }
 
@@ -81,6 +83,8 @@ resource "yandex_compute_instance" "app" {
   }
 }
 ```
+
+**Подробнее:** [Yandex Compute Cloud](../Yandex/Compute-Cloud.md), [Yandex VPC](../Yandex/VPC.md)
 
 ### Пример 2: Настройка сервера (Ansible)
 

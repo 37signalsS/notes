@@ -259,9 +259,12 @@ kubectl -n crossplane-system logs -l app=crossplane-provider-yandex-cloud
 
 ## Дополнительная информация
 
+- **[Yandex Cloud — навигатор](../../../Yandex/index.md)**: Полная документация по сервисам YC
 - **[Crossplane Overview](./overview.md)**: Введение в Crossplane и его возможности
-- **[GitOps Integration](./gitops_integration.md)**: Интеграция с ArgoCD для автоматической синхронизации
 - **[Provider Kubernetes](./provider_kubernetes_setup.md)**: Управление ресурсами внутри Kubernetes
+- **[Compute Cloud](../../../Yandex/Compute-Cloud.md)**: Виртуальные машины и платформы
+- **[VPC](../../../Yandex/VPC.md)**: Сети и security groups
+- **[Managed Databases](../../../Yandex/Managed-Databases.md)**: Управляемые СУБД
 - **Официальная документация провайдера**: [github.com/yandexcloud/crossplane-provider-yc](https://github.com/yandexcloud/crossplane-provider-yc)
 - **Yandex Cloud Marketplace**: [Crossplane with Yandex Cloud support](https://yandex.cloud/en/marketplace/products/yc/crossplane)
 - **Yandex Cloud API**: [cloud.yandex.ru/docs](https://cloud.yandex.ru/docs)
