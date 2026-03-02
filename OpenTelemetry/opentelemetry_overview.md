@@ -1,16 +1,19 @@
 # OpenTelemetry (OTel): Обзор
 
+> **Актуальность:** Декабрь 2025 — Январь 2026. Collector v1.49+, стабильная модель релизов.
+
 ## Определения
 
 **OpenTelemetry (OTel)** — это открытый, независимый от поставщика стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных. Проект является частью [Cloud Native Computing Foundation (CNCF)](https://www.cncf.io/).
 
-Цель OTel — унифицировать инструментирование облачных приложений для обеспечения наблюдаемости (observability). Он возник в результате слияния проектов **OpenTracing** и **OpenCensus**.
+Цель OTel — унифицировать инструментирование облачных приложений для обеспечения наблюдаемости (observability). Он возник в результате слияния проектов **OpenTracing** и **OpenCensus** в 2019 году.
 
 Телеметрия в OpenTelemetry основана на трёх "столпах" (сигналах):
 
 1. **Трассировки (Traces):** Детализированная информация о жизненном цикле запроса в распределённой системе.
 2. **Метрики (Metrics):** Агрегированные числовые данные о производительности и состоянии системы.
 3. **Логи (Logs):** Записи о конкретных событиях.
+4. **Профили (Profiles):** *В разработке (2025-2026)* — непрерывный сбор данных о потреблении ресурсов (CPU, memory).
 
 ## Основные концепции
 
@@ -21,12 +24,15 @@
 - **[Протокол OTLP](./otlp_protocol.md):** Унифицированный протокол для передачи телеметрических данных. Он определяет единый формат для всех сигналов, что упрощает их передачу и приём.
 - **Collector:** Центральный компонент, который действует как конвейер для телеметрических данных.
     - **Архитектура:** Collector имеет четкую архитектуру, состоящую из:
-        - **Receivers (Приемники):** Принимают данные в различных форматах (OTLP, Jaeger, Prometheus и др.).
+        - **Receivers (Приемники):** Принимают данные в различных форматах (OTLP, Jaeger, Prometheus, Zipkin и др.).
         - **Processors (Обработчики):** Обрабатывают данные на лету (фильтрация, обогащение, сэмплирование, группировка).
-        - **Exporters (Экспортеры):** Отправляют обработанные данные в один или несколько бэкендов (OTLP, Jaeger, Loki и др.).
-    - **Дистрибутивы:** Существует два основных дистрибутива:
-        - **`otel/opentelemetry-collector`:** Базовый, с поддержкой OTLP и Jaeger.
-        - **`otel/opentelemetry-collector-contrib`:** Расширенный, с огромным количеством дополнительных компонентов для интеграции с различными системами.
+        - **Exporters (Экспортеры):** Отправляют обработанные данные в один или несколько бэкендов (OTLP, Jaeger, Loki, Prometheus и др.).
+    - **Дистрибутивы (модель стабильности с 2025):**
+        - **Core (`otel/opentelemetry-collector`):** Минимальный дистрибутив с проверенными стабильными компонентами. Рекомендуется для production.
+        - **Contrib (`otel/opentelemetry-collector-contrib`):** Расширенный дистрибутив с экспериментальными и специализированными компонентами.
+    - **Модель стабильности (2025):** Компоненты маркируются уровнями стабильности (`stable`, `beta`, `alpha`, `development`). Stable-дистрибутивы включают только стабильные компоненты по умолчанию.
+
+> **Важно:** Jaeger v1 достиг EOL 31 декабря 2025 года. Jaeger v2 построен на базе OpenTelemetry Collector. Для новой инструментации рекомендуется использовать OTel SDK вместо Jaeger-клиентов.
 
 ## Практические сценарии
 
@@ -115,9 +121,18 @@ SELECT * FROM users WHERE id = 1 /*traceparent='00-abc...-def...-01'*/;
 
 Гибкость OTel позволяет использовать его с широким спектром бэкендов. Популярные стеки:
 
-- **Стек Grafana Labs:** [Loki](../Loki/loki_overview.md) (логи), [Tempo](../Tempo/tempo_overview.md) (трассировки), [Mimir](../Mimir/mimir_overview.md) (метрики) и [Grafana](../Grafana/grafana_overview.md) для визуализации.
-- **Стек ELK/OpenSearch:** [Elasticsearch](../ELK_Stack/Elasticsearch/elasticsearch_overview.md) как единое хранилище для всех трёх сигналов.
-- **Другие:** [Jaeger](../Jaeger/jaeger_overview.md) для трассировок, а также коммерческие платформы (Datadog, New Relic).
+- **Стек Grafana Labs:** [Loki](../Loki/loki_overview.md) (логи), [Tempo](../Tempo/tempo_overview.md) (трассировки), [Mimir](../Mimir/mimir_overview.md) (метрики) и [Grafana](../Grafana/grafana_overview.md) для визуализации. Для сбора данных используется [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — агент на базе OTel Collector с языком конфигурации River.
+- **Стек ELK/OpenSearch:** [Elasticsearch](../ELK_Stack/Elasticsearch/elasticsearch_overview.md) / [OpenSearch](../ELK_Stack/OpenSearch/opensearch_overview.md) как единое хранилище для всех трёх сигналов. Data Prepper используется как конвейер для OTLP.
+- **Jaeger:** [Jaeger v2](../Jaeger/jaeger_overview.md) для трассировок (построен на OTel Collector, Jaeger v1 EOL с 31.12.2025).
+- **Другие:** Коммерческие платформы (Datadog, New Relic, Dynatrace) поддерживают OTLP нативно.
+
+### Альтернативы OTel Collector
+
+| Агент | Основан на | Язык конфигурации | Фокус |
+|-------|------------|-------------------|-------|
+| **OTel Collector** | — | YAML | Универсальный, любой OTel-бэкенд |
+| **Grafana Alloy** | OTel Collector | River (HCL) | Экосистема Grafana (Loki, Mimir, Tempo) |
+| **Fluent Bit** | — | Lua/ YAML | Логи, легковесный |
 
 ### Ресурсы для изучения
 
@@ -125,3 +140,5 @@ SELECT * FROM users WHERE id = 1 /*traceparent='00-abc...-def...-01'*/;
 - **[Инструментация и SDK](./instrumentation_sdk.md)**
 - **[Протокол OTLP](./otlp_protocol.md)**
 - Официальный демонстрационный проект **[opentelemetry-demo](https://opentelemetry.io/docs/demo/)** — эталонный пример инструментированного микросервисного приложения.
+- **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — альтернативный дистрибутив Collector для стека Grafana.
+- **[Jaeger v2](../Jaeger/jaeger_overview.md)** — система трассировки на базе OTel Collector.
