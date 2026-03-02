@@ -1,6 +1,8 @@
 # Интеграция Jaeger с Kubernetes
 
-Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через Custom Resources (CRD). Это предпочтительный метод для production-окружений.
+> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг EOL 31 декабря 2025 года.
+
+Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через Custom Resources (CRD). В v2 Operator использует OpenTelemetry Operator под капотом.
 
 ---
 
@@ -13,29 +15,29 @@
 
 ## Основные концепции
 
-### Паттерны развертывания агента
+### Паттерны развертывания Collector
 
-Существует два основных подхода к развертыванию Jaeger Agent для сбора трассировок с приложений:
+В Jaeger v2 компонент Agent объединен с Collector в единый **OpenTelemetry Collector**. Существует два основных подхода к развертыванию:
 
-1. **Sidecar:** Агент развертывается как дополнительный контейнер в каждом поде приложения.
-    * **Плюсы:** Простота конфигурации для приложения (всегда отправляет спаны на `localhost`). Изоляция ресурсов.
+1. **Sidecar:** OTel Collector развертывается как дополнительный контейнер в каждом поде приложения.
+    * **Плюсы:** Простота конфигурации для приложения (отправка на `localhost`). Изоляция ресурсов.
     * **Минусы:** Более высокое потребление ресурсов (память, CPU) в масштабе кластера.
     * **Реализация:** Автоматически управляется Jaeger Operator через аннотацию.
 
-2. **DaemonSet:** Один экземпляр агента развертывается на каждом узле кластера.
+2. **DaemonSet:** Один экземпляр Collector развертывается на каждом узле кластера.
     * **Плюсы:** 
-        *   **Эффективное использование ресурсов** (один агент на узел).
-        *   **Упрощение сетевого пути:** Позволяет приложению отправлять UDP-пакеты напрямую агенту на IP-адрес хоста, минуя оверхед и сложности сети Kubernetes (Service, NAT).
+        * **Эффективное использование ресурсов** (один Collector на узел).
+        * **Упрощение сетевого пути:** Позволяет приложению отправлять данные напрямую на IP-адрес хоста.
     * **Минусы:** 
-        *   Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов.
-        *   Требует использования `hostPort` и `hostNetwork: true`.
-    * **Реализация:** Задается в CR `Jaeger` в секции `spec.agent.strategy` или настраивается вручную в Helm-чарте. Для корректной работы DNS-резолвинга внутри кластера для такого пода требуется `dnsPolicy: ClusterFirstWithHostNet`.
+        * Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов.
+        * Требует использования `hostPort` и `hostNetwork: true`.
+    * **Реализация:** Задается в CR `Jaeger` в секции `spec.collector`. Для корректной работы DNS-резолвинга внутри кластера для такого пода требуется `dnsPolicy: ClusterFirstWithHostNet`.
 
 ### Подключение приложений
 
-Приложение должно быть сконфигурировано для отправки трассировок агенту или коллектору.
+Приложение должно быть сконфигурировано для отправки трассировок в OTel Collector.
 
-*   **При использовании Sidecar:** SDK настраивается на отправку данных на `localhost:6831`.
+*   **При использовании Sidecar:** SDK настраивается на отправку данных на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
 
 *   **При использовании DaemonSet:** SDK должен использовать `hostIP` пода в качестве адреса. Этого можно достичь, передав `hostIP` в приложение как переменную окружения через **Downward API**.
 
@@ -47,15 +49,14 @@
           containers:
           - name: my-app
             env:
-            - name: OTEL_EXPORTER_JAEGER_AGENT_HOST
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 fieldRef:
-                  fieldPath: status.hostIP # Инъекция IP адреса хоста
-            - name: OTEL_EXPORTER_JAEGER_AGENT_PORT
-              value: "6831"
+                  fieldPath: status.hostIP
+              value: ":4317"
     ```
 
-*   **Напрямую в Collector:** Как альтернатива, приложения могут отправлять данные напрямую в Collector через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local`).
+*   **Напрямую в Collector Service:** Приложения могут отправлять данные напрямую в Collector через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local:4317`).
 
 ---
 
@@ -95,20 +96,21 @@ metadata:
   name: jaeger-prod
 spec:
   strategy: production # Раздельные, масштабируемые компоненты
+  collector:
+    replicas: 3
+    options:
+      otlp:
+        enabled: true # Включить прием OTLP данных
   storage:
     type: elasticsearch
     options:
       es:
         server-urls: http://elasticsearch-client:9200
-  collector:
-    replicas: 3
-  agent:
-    strategy: DaemonSet # Использовать DaemonSet для агентов
 ```
 
-#### 3. Автоматическое внедрение агента (Sidecar Injection)
+#### 3. Автоматическое внедрение Collector (Sidecar Injection)
 
-Чтобы Operator автоматически добавил sidecar-контейнер с агентом в под вашего приложения, добавьте аннотацию в `metadata` вашего Deployment:
+Чтобы Operator автоматически добавил sidecar-контейнер с OTel Collector в под вашего приложения, добавьте аннотацию в `metadata` вашего Deployment:
 
 ```yaml
 apiVersion: apps/v1
@@ -125,9 +127,9 @@ spec:
       - name: my-app
         image: my-app-image:1.0
         env:
-        # SDK будет отправлять спаны на localhost, где их перехватит sidecar-агент
-        - name: JAEGER_AGENT_HOST
-          value: "localhost"
+        # SDK будет отправлять спаны на localhost, где их перехватит sidecar-collector
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://localhost:4317"
 ```
 
 ### Сценарий 2: Интеграция с Ingress-NGINX для сквозной трассировки
@@ -139,7 +141,7 @@ NGINX Ingress Controller может автоматически создават�
 Трассировка включается через параметры конфигурации контроллера (в `ConfigMap` или `values.yaml` для Helm-чарта):
 
 - **`enable-opentracing: "true"`**: Глобально включает модуль трассировки.
-- **`jaeger-collector-host`: "jaeger-agent.observability.svc.cluster.local"**: Адрес сервиса, указывающего на агенты Jaeger.
+- **`jaeger-collector-host`**: Адрес OTel Collector. В v2 используется формат `opentelemetry-collector.<namespace>.svc.cluster.local`.
 - **`jaeger-propagation-format: "w3c"`**: Устанавливает формат заголовков для передачи контекста трассировки. `w3c` является современным стандартом и использует заголовок `traceparent`.
 
 Также трассировку можно включить для конкретного Ingress-ресурса с помощью аннотации:
