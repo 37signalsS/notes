@@ -170,8 +170,10 @@ molecule init scenario centos -r nginx
 molecule test -s centos
 ```
 
-## Дополнительная информация
+### Связанные документы
 
-- [Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint): Статический анализ плейбуков
-- [Структура проекта](examples/example_project_layout.md): Организация файлов и директорий
-- [Роли](ansible_roles.md): Тестирование ролей — ключевой компонент CI/CD
+- **[Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint)** — статический анализ плейбуков
+- **[Структура проекта](examples/example_project_layout.md)** — организация файлов и директорий
+- **[Роли](ansible_roles.md)** — тестирование ролей — ключевой компонент CI/CD
+- **[Интеграция тестов в CI/CD](../Testing/testing_cicd_integration.md)** — общие практики тестирования
+- **[Quality Gates](../Testing/testing_cicd_integration.md#quality-gates-лучшие-практики-20252026)** — Molecule как часть ворот качества
