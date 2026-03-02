@@ -51,3 +51,12 @@ Zabbix предлагает богатые возможности для нас�
 ### 4.1. Выявление "шумных" триггеров
 
 * Используйте отчет **`Reports -> Triggers top 100`**, чтобы выявить самые "шумные" триггеры, которые постоянно переключаются между состояниями OK и PROBLEM. Это кандидаты на пересмотр и тюнинг.
+
+### 4.2. Связанные документы
+
+| Тема | Документ |
+|------|----------|
+| Общие концепции Zabbix | **[Обзор Zabbix](./zabbix_overview.md)** |
+| Диагностика и тюнинг | **[Поиск и устранение неисправностей](./zabbix_troubleshooting_and_performance_tuning.md)** |
+| Мониторинг СУБД | **[Мониторинг Баз Данных](./zabbix_database_monitoring.md)** |
+| Стратегии сбора метрик | **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_overview.md)** |

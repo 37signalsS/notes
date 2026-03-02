@@ -1,5 +1,7 @@
 # Zabbix: Обзор системы мониторинга
 
+> **SSoT-статус:** Этот файл является основным источником истины для общих концепций Zabbix, архитектуры и способов сбора данных.
+>
 > **Версия документа:** Актуально для Zabbix 7.0 LTS (поддержка до июня 2029) и 7.4
 
 ---
@@ -87,9 +89,16 @@ Zabbix поддерживает обе модели сбора данных (г�
 
 Если какой-то объект (например, файловая система) исчезает из JSON при следующей проверке, Zabbix автоматически удаляет связанные с ним метрики и триггеры.
 
+**Примеры использования LLD:**
+- Мониторинг файловых систем
+- Мониторинг сетевых интерфейсов
+- [Мониторинг баз данных](./zabbix_database_monitoring.md) (автоматическое обнаружение БД на сервере)
+
 ---
 
 ## 3. Практические сценарии
+
+> **Примечание:** В примерах ниже используется Zabbix 7.0 LTS. Для актуальных версий проверьте официальные репозитории на [zabbix.com](https://www.zabbix.com/download).
 
 ### Установка Zabbix Server (на Ubuntu)
 
@@ -103,8 +112,9 @@ sudo apt install -y apache2 mariadb-server mariadb-client php php-cgi php-mbstri
 **2. Добавление репозитория Zabbix**
 
 ```bash
-wget https://repo.zabbix.com/zabbix/6.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.0-4+ubuntu22.04_all.deb
-sudo dpkg -i zabbix-release_6.0-4+ubuntu22.04_all.deb
+# Для Zabbix 7.0 LTS
+wget https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-4+ubuntu22.04_all.deb
+sudo dpkg -i zabbix-release_7.0-4+ubuntu22.04_all.deb
 sudo apt update
 ```
 
@@ -189,6 +199,10 @@ sudo systemctl enable zabbix-agent
 sudo ufw allow from 192.168.1.100 to any port 10050 proto tcp
 ```
 
+> **См. также:**
+> - **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** — практический пример настройки UserParameter для MySQL
+> - **[Мониторинг PostgreSQL с помощью Zabbix Agent 2](./zabbix_postgresql_monitoring.md)** — современный подход к мониторингу PostgreSQL
+
 После этого не забудьте добавить хост в веб-интерфейсе Zabbix.
 
 ### Отправка данных с помощью zabbix_sender
@@ -252,4 +266,36 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 
 4. **Прототипы элементов:** Создаются прототипы элементов данных с типом **`Zabbix trapper`** и ключами, использующими макросы из JSON. - **Прототип:** `Custom metric {#ITEMDESCRIPTION}` с ключом `custom.metric[{#ITEMNAME}]`.
 
-5. **Отправка данных:** Для отправки значений обнаруженных метрик на Zabbix-сервер используется утилита `zabbix_sender` в отдельном скрипте, запускаемом по расписанию (cron). ```bash #!/bin/bash ZABBIX_SERVER="<zabbix_server_ip>" HOSTNAME="My Host" # Имя хоста, как оно определено в Zabbix # Получение значения загрузки процессора CPU_VALUE=$(awk '{print $1*100}' @/proc/loadavg | cut -d'.' -f1) # Пример # Отправка значения CPU_Usage zabbix_sender -z "$ZABBIX_SERVER" -s "$HOSTNAME" -k 'custom.metric[CPU_Usage]' -o "$CPU_VALUE" # Получение значения свободной памяти MEM_VALUE=$(free -m | awk 'NR==2{print $4}') # Пример # Отправка значения Memory_Free zabbix_sender -z "$ZABBIX_SERVER" -s "$HOSTNAME" -k 'custom.metric[Memory_Free]' -o "$MEM_VALUE"```
+5. **Отправка данных:** Для отправки значений обнаруженных метрик на Zabbix-сервер используется утилита `zabbix_sender` в отдельном скрипте, запускаемом по расписанию (cron).
+
+---
+
+## 4. Дополнительная информация
+
+### Полезные ссылки
+
+| Тема | Документ |
+|------|----------|
+| Архитектура и компоненты | Этот документ (SSoT) |
+| Мониторинг СУБД | **[Мониторинг Баз Данных с помощью Zabbix](./zabbix_database_monitoring.md)** |
+| Мониторинг MySQL | **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** |
+| Мониторинг PostgreSQL | **[Мониторинг PostgreSQL в Zabbix](./zabbix_postgresql_monitoring.md)** |
+| Лучшие практики | **[Лучшие практики настройки Zabbix](./zabbix_best_practices.md)** |
+| Диагностика и тюнинг | **[Поиск и устранение неисправностей и тюнинг производительности Zabbix](./zabbix_troubleshooting_and_performance_tuning.md)** |
+| Стратегии сбора метрик | **[Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/observability_overview.md#стратегии-сбора-метрик)** |
+| Интеграция с Grafana | **[Grafana](../Grafana/grafana_overview.md)** |
+
+### Официальные ресурсы
+
+- **[Официальный сайт Zabbix](https://www.zabbix.com/)**
+- **[Документация Zabbix 7.0](https://www.zabbix.com/documentation/7.0)**
+- **[Репозитории загрузок](https://www.zabbix.com/download_sources)**
+- **[Release Notes](https://www.zabbix.com/release_notes)**
+
+### Версии и поддержка
+
+| Версия | Тип | Дата выхода | Поддержка до |
+|--------|-----|-------------|--------------|
+| Zabbix 7.0 | LTS | Июнь 2024 | Июнь 2029 |
+| Zabbix 7.4 | Stable | Октябрь 2025 | Октябрь 2026 |
+| Zabbix 8.0 | LTS (план) | 2026 | — |

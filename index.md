@@ -1162,7 +1162,6 @@
 /home/q/notes/Yandex/Resource-Manager.md
 /home/q/notes/Yandex/Storage.md
 /home/q/notes/Yandex/VPC.md
-/home/q/notes/Zabbix/zabbix_agentless_monitoring_and_discovery.md
 /home/q/notes/Zabbix/zabbix_best_practices.md
 /home/q/notes/Zabbix/zabbix_database_monitoring.md
 /home/q/notes/Zabbix/zabbix_overview.md
