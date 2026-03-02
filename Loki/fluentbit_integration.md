@@ -3,13 +3,19 @@
 ## 1. Определения
 
 Для ознакомления с базовыми концепциями Loki, обратитесь к основному источнику знаний: **[Обзор Grafana Loki](./loki_overview.md)**.
-Для изучения основ конфигурации Fluent Bit: **[Конфигурация Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)**.
+Для изучения основ конфигурации Fluent Bit: **[Конфигурация Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)**.
 
 ## 2. Базовые концепции
 
 ### Выбор версии Fluent Bit
 
-Существует несколько вариантов Fluent Bit. Для интеграции с Loki **рекомендуется использовать официальный Fluent Bit**, а не устаревшую версию `grafana/fluent-bit`, которая помечена как `Deprecated`. Большинство примеров в интернете используют устаревшую версию, что может привести к путанице. Официальный Fluent Bit имеет встроенный output-плагин `grafana-loki`, который отлично работает.
+| Версия | Статус | Рекомендация |
+| :--- | :--- | :--- |
+| **Fluent Bit v3.x** | ✅ Активно развивается | Рекомендуется для новых развертываний |
+| **Fluent Bit v2.x** | ✅ Поддерживается | Стабильная версия для production |
+| **grafana/fluent-bit** | ⚠️ Deprecated | Не использовать, переходить на официальный Fluent Bit |
+
+> **Важно:** Официальный Fluent Bit имеет встроенный output-плагин `grafana-loki`, который отлично работает. Избегайте устаревшего образа `grafana/fluent-bit`.
 
 ### Ключевая особенность Loki: Уникальность лейблов
 
@@ -20,7 +26,7 @@
 **Решение** — обеспечить уникальность набора лейблов для каждого потока логов. Это достигается добавлением динамических меток, которые идентифицируют источник лога.
 
 **Неправильный подход (приведет к ошибкам):**
-```yaml
+```ini
 [OUTPUT]
     Name  loki
     Match *
@@ -30,7 +36,7 @@
 ```
 
 **Правильный подход (добавление динамических меток):**
-```yaml
+```ini
 [OUTPUT]
     Name  loki
     Match kube.*
@@ -38,11 +44,28 @@
     Port  80
     Labels job=fluent-bit-k8s, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name'], container=$kubernetes['container_name'], host=$kubernetes['host']
 ```
+
 В этом примере метки `namespace`, `pod`, `container` и `host` извлекаются из полей, добавленных фильтром `kubernetes`, и гарантируют уникальность потока логов.
+
+### Сравнение: Fluent Bit vs. Grafana Alloy для Loki
+
+| Критерий | Fluent Bit | Grafana Alloy |
+| :--- | :--- | :--- |
+| **Статус** | ✅ Активно развивается | ✅ Активно развивается |
+| **Специализация** | Логи и метрики | Логи + метрики + трассировки + профили |
+| **Конфигурация** | INI/TOML/YAML | River (HCL-подобный) |
+| **Интеграция с Loki** | Output-плагин `grafana-loki` | Нативный компонент `loki.write` |
+| **Kubernetes** | Фильтр `kubernetes` | `discovery.kubernetes` + `loki.source.kubernetes` |
+| **Производительность** | Высокая, низкое потребление | Высокая, немного больше ресурсов |
+| **Рекомендация** | Для существующих развертываний | Для новых развертываний |
+
+> **Подробнее:** [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — универсальный агент Grafana Labs.
 
 ## 3. Практический сценарий: Настройка Fluent Bit для Loki
 
 Этот сценарий описывает конфигурацию Fluent Bit для сбора логов из Kubernetes и системных файлов с последующей отправкой в Loki.
+
+> **Примечание:** Конфигурация актуальна для Fluent Bit v2.x/v3.x. Для Grafana Alloy см. [loki_stack_setup_guide.md](./loki_stack_setup_guide.md#альтернатива-grafana-alloy).
 
 ### Файл конфигурации `fluent-bit.conf`
 
@@ -136,10 +159,46 @@
 Эта ошибка возникает, когда Fluent Bit пытается отправить в Loki батч (пакет) логов, размер которого превышает лимит, установленный на стороне Loki (или на прокси перед ним, например, Nginx Ingress).
 
 **Решения:**
-1.  **Увеличить лимит в Loki**: В конфигурации Loki увеличьте параметр `max_body_size` (например, `server.http_listen_max_body_size`).
-2.  **Увеличить лимит в Ingress Controller**: Если используется Ingress, необходимо увеличить максимальный размер тела запроса в его конфигурации. Для Nginx Ingress это аннотация `nginx.ingress.kubernetes.io/proxy-body-size`.
-    ```yaml
-    # В аннотациях Ingress для Loki
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m" # Установить подходящий размер
-    ```
-3.  **Уменьшить размер батча в Fluent Bit**: В секции `[SERVICE]` можно уменьшить значение `Flush` (например, до `1`), чтобы отправлять данные чаще и меньшими порциями. Также в `[INPUT]` можно уменьшить `Mem_Buf_Limit`, чтобы ограничить буферизацию.
+
+| Решение | Описание | Пример |
+| :--- | :--- | :--- |
+| **Увеличить лимит в Loki** | Параметр `max_body_size` в конфигурации Loki | `server.http_listen_max_body_size: 10MB` |
+| **Увеличить лимит в Ingress** | Аннотация для Nginx Ingress | `nginx.ingress.kubernetes.io/proxy-body-size: "10m"` |
+| **Уменьшить батч в Fluent Bit** | Параметры `Flush` и `Mem_Buf_Limit` | `Flush 1`, `Mem_Buf_Limit 5MB` |
+
+**Пример настройки Ingress для Loki:**
+```yaml
+# Ingress для Loki Gateway
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki-gateway
+  namespace: logging
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  rules:
+    - host: loki.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: loki-gateway
+                port:
+                  number: 80
+```
+
+## 4. Дополнительные ресурсы
+
+| Ресурс | Описание |
+| :--- | :--- |
+| **[loki_overview.md](./loki_overview.md)** | Базовые концепции Loki, LogQL, архитектура |
+| **[docker_compose_setup.md](./docker_compose_setup.md)** | Настройка Loki в Docker Compose |
+| **[loki_stack_setup_guide.md](./loki_stack_setup_guide.md)** | Развертывание в Kubernetes с Helm |
+| **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** | Рекомендуемый агент для новых развертываний |
+| **[Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** | Базовая конфигурация Fluent Bit |
+| **[Fluent Bit Output: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki)** | Официальная документация Fluent Bit |

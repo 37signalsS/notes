@@ -1,19 +1,41 @@
 # Настройка репликации 389DS
 
-## Репликация Multi-Master
+## Определения
 
-Для обеспечения высокой доступности настраивается репликация между несколькими экземплярами 389DS. Рассматривается кластер из двух узлов (master-master).
+**Multi-Master репликация** — архитектура, при которой несколько серверов 389DS содержат синхронизированные копии базы данных. Каждый сервер может принимать записи на изменение.
 
-### Предварительные требования
+**Replica ID** — уникальный идентификатор реплики в топологии (1–65535).
 
-* Две машины с Docker/Podman
-* Сетевая связность между машинами
-* DNS-имена серверов (ldap01, ldap02)
-* Директория для данных: `mkdir -p /data/ldap`
+**Replication Agreement** — настройка, определяющая параметры синхронизации между двумя серверами.
 
-### Запуск контейнеров на обеих нодах
+## Базовые концепции
+
+### Типы репликации
+
+| Тип | Описание | Сценарий |
+| :--- | :--- | :--- |
+| **Single-Master** | Один master (запись), остальные — consumers (чтение) | Простая HA |
+| **Multi-Master** | Несколько master (запись/чтение на всех) | Active-Active HA |
+| **Cascading** | Consumer сам становится master для других | Географическое распределение |
+
+### Требования к репликации
+
+* Сетевая связность между серверами (порт 3389/3636)
+* DNS-имена или статические IP (ldap01, ldap02)
+* Одинаковая версия 389DS на всех серверах
+* Синхронизированное время (NTP/Chrony)
+
+## Практические сценарии
+
+### Подготовка серверов
+
+На обоих серверах выполнить:
 
 ```bash
+# Создать директорию для данных
+mkdir -p /data/ldap
+
+# Запустить контейнер
 docker run -d \
   --name 389ds \
   -p 3389:3389 \
@@ -23,17 +45,15 @@ docker run -d \
   -e SUFFIX=dc=test,dc=local \
   -e DM_PASSWORD=password \
   -e DS_REINDEX=true \
-  389ds/ds-container:latest
+  quay.io/389ds/ds-container:latest
+
+# Проверить статус
+docker logs -f 389ds
 ```
 
-### Проверка статуса серверов
+### Создание backend
 
-```bash
-# На каждом сервере проверить список backends
-docker exec 389ds dsconf backend suffix list
-```
-
-### Создание backend (выполнить на обеих нодах)
+На **каждом** сервере:
 
 ```bash
 docker exec 389ds dsconf backend create \
@@ -42,9 +62,14 @@ docker exec 389ds dsconf backend create \
   --create-suffix
 ```
 
+Проверка:
+```bash
+docker exec 389ds dsconf backend suffix list
+```
+
 ### Включение репликации
 
-#### На первом сервере (ldap01)
+#### Сервер 1 (ldap01, Replica ID: 1)
 
 ```bash
 docker exec 389ds dsconf replica enable \
@@ -55,7 +80,7 @@ docker exec 389ds dsconf replica enable \
   --password password
 ```
 
-#### На втором сервере (ldap02)
+#### Сервер 2 (ldap02, Replica ID: 2)
 
 ```bash
 docker exec 389ds dsconf replica enable \
@@ -68,7 +93,7 @@ docker exec 389ds dsconf replica enable \
 
 ### Создание replication agreement
 
-#### На ldap01 (к ldap02)
+#### На ldap01 (агрейт на ldap02)
 
 ```bash
 docker exec 389ds dsconf repl-agmt create \
@@ -81,7 +106,7 @@ docker exec 389ds dsconf repl-agmt create \
   me-to-ldap02
 ```
 
-#### На ldap02 (к ldap01)
+#### На ldap02 (агрейт на ldap01)
 
 ```bash
 docker exec 389ds dsconf repl-agmt create \
@@ -96,8 +121,9 @@ docker exec 389ds dsconf repl-agmt create \
 
 ### Инициализация репликации
 
+На любом сервере:
+
 ```bash
-# На любом сервере
 docker exec 389ds dsconf repl-agmt init \
   --suffix "dc=test,dc=local" \
   me-to-ldap02
@@ -111,15 +137,51 @@ docker exec 389ds dsconf replication status \
   me-to-ldap02
 ```
 
-Ключевые параметры:
-* `Replication Enable` — репликация включена
+**Ключевые параметры:**
+* `Replication Enabled` — репликация включена
 * `Last Update` — время последней синхронизации
-* `Replica Status` — статус синхронизации
+* `Replica Status` — статус (online/offline, ошибки)
 
-> **Примечание:** Конфигурация серверов (cn=config) не реплицируется — каждый сервер имеет собственную конфигурацию.
+## Дополнительная информация
 
-> **Рекомендуемая последовательность:**
-> 1. Запустить 389DS в Docker на отдельных машинах
-> 2. Настроить кластер и репликацию
-> 3. Перенести работающую конфигурацию в Kubernetes
-> 4. Создать Helm chart для повторяемости
+### Troubleshooting
+
+| Проблема | Решение |
+| :--- | :--- |
+| `Error: Can't contact LDAP server` | Проверить сеть, firewall, статус контейнера |
+| `Replica not in sync` | Выполнить `dsconf repl-agmt init` |
+| `Conflict DN` | Проверить логи репликации, использовать `dsconf repl-conflict` |
+
+### Логи репликации
+
+```bash
+# Включить логирование репликации
+docker exec 389ds dsconf config set \
+  --add-nsslapd-errorlog-level "replication"
+
+# Просмотр логов
+docker exec 389ds tail -f /var/log/dirsrv/slapd-*/errors
+```
+
+### Best Practices
+
+1. **Минимум 2 сервера** для HA
+2. **Replica ID** должны быть уникальны в топологии
+3. **Конфигурация (`cn=config`) не реплицируется** — настраивать на каждом сервере отдельно
+4. **Мониторинг:** отслеживать `Last Update` и ошибки репликации
+5. **Тестирование:** проверять репликацию изменений перед production
+
+### Рекомендуемая последовательность развёртывания
+
+1. Запустить 389DS в Docker на отдельных машинах
+2. Настроить кластер и репликацию
+3. Протестировать failover
+4. Перенести конфигурацию в Kubernetes (опционально)
+5. Создать Helm chart для повторяемости
+
+### Связанные темы
+
+* [Docker развёртывание](./docker.md)
+* [Kubernetes развёртывание](./kubernetes.md)
+* [Плагины](./plugins.md)
+* [Безопасность](./overview.md#Безопасность)

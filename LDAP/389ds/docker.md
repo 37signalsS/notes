@@ -1,10 +1,16 @@
-# Docker развертывание 389DS
+# Docker развёртывание 389DS
 
-## Запуск в Docker-контейне распространяется в виде официального Docker-обраре
+## Определения
 
-389DSза. Установка сводится к запуску контейнера с необходимыми параметрами.
+**Официальный образ:** `quay.io/389ds/ds-container` (поддерживается проектом 389DS).
 
-### Базовая команда запуска
+> **Примечание:** Образ `389ds/ds-container:latest` на Docker Hub может быть устаревшим. Рекомендуется использовать `quay.io/389ds/ds-container:<version>`.
+
+## Базовые концепции
+
+### Запуск контейнера
+
+Базовая команда запуска:
 
 ```bash
 docker run -d \
@@ -15,40 +21,51 @@ docker run -d \
   --memory=2g \
   -e SUFFIX=dc=example,dc=com \
   -e DM_PASSWORD=mysecretpassword \
-  -e DS_SCHEMA_INETPERSON=false \
-  389ds/ds-container:latest
+  quay.io/389ds/ds-container:latest
 ```
 
 ### Переменные окружения
 
-| Переменная | Описание | Обязательно |
-| :--- | :--- | :--- |
-| `SUFFIX` | Корневой DN дерева LDAP (например, `dc=example,dc=com`) | Да |
-| `DM_PASSWORD` | Пароль администратора (Directory Manager) | Да |
-| `DS_SCHEMA_INETPERSON` | Включить схему inetPerson (по умолчанию `true`) | Нет |
-| `DS_INDEX` | Включить индексацию при старте (`true`/`false`) | Нет |
+| Переменная | Описание | Обязательно | Значение по умолчанию |
+| :--- | :--- | :--- | :--- |
+| `SUFFIX` | Корневой DN дерева LDAP | Да | — |
+| `DM_PASSWORD` | Пароль Directory Manager | Да | — |
+| `DS_SCHEMA_INETPERSON` | Включить схему inetPerson | Нет | `true` |
+| `DS_INDEX` | Включить индексацию при старте | Нет | `true` |
+| `DS_REINDEX` | Пересоздать индексы при старте | Нет | `false` |
+| `DS_CONTAINER_PORT` | Порт LDAP внутри контейнера | Нет | `3389` |
+| `DS_SECURE_PORT` | Порт LDAPS внутри контейнера | Нет | `3636` |
 
 ### Порты
 
-* **3389** — LDAP (стандартный порт)
-* **3636** — LDAPS (LDAP over SSL/TLS)
+| Порт | Протокол | Описание |
+| :--- | :--- | :--- |
+| **3389** | LDAP | Стандартный порт (нешифрованный или StartTLS) |
+| **3636** | LDAPS | LDAP over SSL/TLS |
 
-> **Примечание:** Использование портов > 1024 позволяет запускать контейнер от непривилегированного пользователя.
+> **Примечание:** Порты > 1024 позволяют запускать контейнер от непривилегированного пользователя.
+
+## Практические сценарии
 
 ### Структура данных
 
-* **Database** — хранение данных в `/data/db`
-* **Backups** — резервные копии в `/data/backups`
-* **Config** — конфигурация в `/data/config`
-* **Schemas** — схемы (обычно не требуют изменений, добавляются редко)
+| Путь | Описание |
+| :--- | :--- |
+| `/data/db` | База данных (LMDB) |
+| `/data/backups` | Резервные копии |
+| `/data/config` | Конфигурация (`cn=config`) |
+| `/data/schema` | Схемы (редко требуют изменений) |
+| `/data/tls` | TLS-сертификаты (опционально) |
 
 ### Утилиты управления
 
-После запуска контейнера внутри доступны стандартные LDAP-утилиты:
+Внутри контейнера доступны стандартные LDAP-утилиты:
+
 * `ldapsearch` — поиск по дереву
 * `ldapmodify` — модификация записей
 * `ldapadd` — добавление записей
-* `dsconf` — утилита управления 389DS
+* `dsconf` — управление конфигурацией 389DS
+* `dsctl` — управление экземпляром (старт/стоп/бэкап)
 
 ### Проверка работоспособности
 
@@ -60,12 +77,47 @@ docker exec -it 389ds /bin/bash
 dsconf -D "cn=Directory Manager" ldap://localhost:3389 config get
 
 # Поиск базовой записи
-ldapsearch -x -H ldap://localhost:3389 -D "cn=Directory Manager" -W -b "dc=example,dc=com"
+ldapsearch -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -W \
+  -b "dc=example,dc=com" "(objectClass=*)"
 ```
 
-## Создание одноузлового кластера
+### Развёртывание одноузлового кластера
 
 1. Создать директорию для данных: `mkdir -p /data/ldap`
-2. Запустить контейнер с параметрами
+2. Запустить контейнер с параметрами (см. выше)
 3. Проверить логи: `docker logs -f 389ds`
-4. Дождаться сообщения `389DS container started`
+4. Дождаться сообщения: `389DS container started`
+
+## Дополнительная информация
+
+### TLS/SSL конфигурация
+
+Для использования LDAPS требуется смонтировать сертификаты:
+
+```bash
+docker run -d \
+  --name 389ds \
+  -v /data/ldap:/data \
+  -v /path/to/certs:/data/tls:ro \
+  -e SUFFIX=dc=example,dc=com \
+  -e DM_PASSWORD=password \
+  quay.io/389ds/ds-container:latest
+```
+
+Требования к сертификатам:
+* Серверный сертификат: `/data/tls/server.crt`
+* Ключ: `/data/tls/server.key`
+* CA-сертификат: `/data/tls/ca.crt`
+
+### Ресурсы
+
+* **CPU:** 2 ядра минимум, 4+ для production
+* **RAM:** 2 ГБ минимум, 4–8 ГБ для production
+* **Диск:** 10 ГБ+, SSD рекомендуется
+
+### Связанные темы
+
+* [Настройка репликации](./replication.md)
+* [Развёртывание в Kubernetes](./kubernetes.md)
+* [Безопасность](./overview.md#Безопасность)

@@ -1,19 +1,33 @@
-# 389 Directory Server (389DS)
+# 389 Directory Server (389DS) — Индекс
 
 > **Данный файл декомпозирован.** Актуальная информация разделена на тематические заметки.
 
-## Тематические заметки
+## Основная документация
 
-* [Определения и требования](./389ds/overview.md) — основные определения, требования к ресурсам, безопасность
-* [Docker развертывание](./389ds/docker.md) — запуск в Docker, переменные окружения, структура данных
-* [Настройка репликации](./389ds/replication.md) — Multi-Master репликация между двумя узлами
-* [Развертывание в Kubernetes](./389ds/kubernetes.md) — StatefulSet, Services, Jobs, TLS
-* [Плагины 389DS](./389ds/plugins.md) — RetroChangeLog, MemberOf
-* [Управление доступом (ACI)](./389ds/aci.md) — Access Control Instructions
+| Файл | Описание |
+| :--- | :--- |
+| [overview.md](./389ds/overview.md) | Определения, архитектура, терминология, требования |
+| [docker.md](./389ds/docker.md) | Развёртывание в Docker, переменные окружения |
+| [replication.md](./389ds/replication.md) | Multi-Master репликация, troubleshooting |
+| [kubernetes.md](./389ds/kubernetes.md) | StatefulSet, Services, Job для инициализации |
+| [plugins.md](./389ds/plugins.md) | RetroChangelog, MemberOf, DNA, ACI |
+| [aci.md](./389ds/aci.md) | Access Control Instructions, примеры, best practices |
+
+## Быстрый старт
+
+1. **Тестирование:** [Docker развёртывание](./389ds/docker.md)
+2. **Production HA:** [Настройка репликации](./389ds/replication.md)
+3. **Kubernetes:** [StatefulSet развёртывание](./389ds/kubernetes.md)
 
 ## Связанные темы
 
-* [LDAP](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol) — основы протокола LDAP
-* [OpenLDAP в Kubernetes](openldap_kubernetes.md) — развёртывание и эксплуатация OpenLDAP в Kubernetes
-* [Kubernetes](../Kubernetes/kubernetes_overview.md) — оркестрация контейнеров
-* [Helm](../Kubernetes/Installation/Kubespray/overview.md) — менеджер пакетов для Kubernetes
+* [LDAP основы](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+* [OpenLDAP в Kubernetes](./openldap_kubernetes.md) — сравнение с 389DS
+* [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/ldap_sssd.md)
+* [Kubernetes основы](../../Kubernetes/kubernetes_overview.md)
+
+## Внешние ресурсы
+
+* [Официальная документация](https://www.port389.org/docs/389ds/)
+* [GitHub репозиторий](https://github.com/389ds/389-ds-base)
+* [Контейнеры quay.io](https://quay.io/repository/389ds/ds-container)

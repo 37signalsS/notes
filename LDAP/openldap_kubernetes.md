@@ -283,7 +283,10 @@ Entry UUID: no user modification allowed
 
 ### Ссылки
 
-- [389DS — альтернатива OpenLDAP](../LDAP/389ds_overview.md)
-- [LDAP в Linux](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
-- [Настройка SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/users_management.md#Настройка-SSSD-для-LDAP)
-- [Keycloak LDAP Federation](../Security/Tools/keycloak_ldap_federation.md)
+* [389DS — альтернатива OpenLDAP](./389ds/overview.md) — сравнение, преимущества
+* [389DS Docker](./389ds/docker.md) — развёртывание в Docker
+* [389DS репликация](./389ds/replication.md) — Multi-Master настройка
+* [389DS Kubernetes](./389ds/kubernetes.md) — StatefulSet развёртывание
+* [LDAP в Linux](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+* [Настройка SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/ldap_sssd.md)
+* [Keycloak LDAP Federation](../Security/Tools/keycloak_ldap_federation.md)

@@ -1,30 +1,47 @@
-# Развертывание 389DS в Kubernetes
+# Развёртывание 389DS в Kubernetes
 
-После освоения запуска в контейнерах, 389DS переносится в Kubernetes с использованием:
-* **StatefulSet** — для сохранения состояния
-* **PersistentVolumeClaim** — для персистентных данных
-* **ConfigMap/Secret** — для конфигурации
-* **Helm chart** — для автоматизации развертывания
+## Определения
+
+**StatefulSet** — контроллер Kubernetes для stateful-приложений с уникальными идентификаторами подов и персистентным хранилищем.
+
+**Headless Service** — сервис без ClusterIP для прямого DNS-discovery подов StatefulSet.
+
+## Базовые концепции
+
+### Архитектура развёртывания
+
+389DS в Kubernetes использует:
+* **StatefulSet** — для сохранения состояния и стабильных идентификаторов
+* **PersistentVolumeClaim** — для персистентных данных (режим RWO)
+* **ConfigMap/Secret** — для конфигурации и чувствительных данных
+* **Headless Service** — для discovery подов репликации
 
 > **Рекомендуемая последовательность:**
 > 1. Запустить 389DS в Docker на отдельных машинах
 > 2. Настроить кластер и репликацию
-> 3. Перенести работающую конфигурацию в Kubernetes
-> 4. Создать Helm chart для повторяемости
+> 3. Протестировать failover
+> 4. Перенести работающую конфигурацию в Kubernetes
+> 5. Создать Helm chart для повторяемости
 
-## Требования к кластеру Kubernetes
+### Требования к кластеру
 
-* Минимум 2 worker nodes (для отказоустойчивости)
-* Ingress/LoadBalancer для доступа к сервису (MetalLB)
-* Cert-manager для TLS-сертификатов
+| Требование | Описание |
+| :--- | :--- |
+| **Nodes** | Минимум 2 worker nodes для HA |
+| **Storage** | StorageClass с поддержкой RWO |
+| **Network** | Ingress/LoadBalancer (MetalLB) для внешнего доступа |
+| **Certificates** | cert-manager для TLS-сертификатов |
 
-## StatefulSet конфигурация
+## Практические сценарии
+
+### StatefulSet конфигурация
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: 389ds
+  namespace: ldap
 spec:
   serviceName: 389ds-headless
   replicas: 2
@@ -36,6 +53,7 @@ spec:
       labels:
         app: 389ds
     spec:
+      # Anti-affinity для распределения по узлам
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -43,9 +61,10 @@ spec:
                 matchLabels:
                   app: 389ds
               topologyKey: kubernetes.io/hostname
+      # Ограничение количества реплик
       initContainers:
         - name: check-replicas
-          image: busybox
+          image: busybox:1.36
           command: ["/bin/sh", "-c"]
           env:
             - name: POD_NAME
@@ -61,7 +80,7 @@ spec:
               fi
       containers:
         - name: 389ds
-          image: 389ds/ds-container:latest
+          image: quay.io/389ds/ds-container:latest
           env:
             - name: POD_NAME
               valueFrom:
@@ -85,31 +104,28 @@ spec:
             - name: tls
               mountPath: /data/tls
               readOnly: true
-            - name: tls-ca
-              mountPath: /data/tls/ca
-              readOnly: true
+          # Probes для проверки работоспособности
           livenessProbe:
             exec:
-              command: ["/bin/sh", "-c", "nslookup localhost"]
-            initialDelaySeconds: 30
+              command: ["/bin/sh", "-c", "ldapsearch -x -H ldap://localhost:3389 -b '' -s base '(objectClass=*)'"]
+            initialDelaySeconds: 60
             periodSeconds: 10
+            timeoutSeconds: 5
           readinessProbe:
             exec:
-              command: ["/bin/sh", "-c", "nslookup localhost"]
+              command: ["/bin/sh", "-c", "ldapsearch -x -H ldap://localhost:3389 -b '' -s base '(objectClass=*)'"]
             initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
           resources:
             requests:
               memory: "2Gi"
               cpu: "1"
             limits:
-              memory: "2Gi"
+              memory: "4Gi"
               cpu: "2"
       volumes:
         - name: tls
-          secret:
-            secretName: 389ds-tls
-        - name: tls-ca
           secret:
             secretName: 389ds-tls
   volumeClaimTemplates:
@@ -123,7 +139,7 @@ spec:
             storage: 10Gi
 ```
 
-## Сервисы
+### Сервисы
 
 ```yaml
 # Headless service для discovery подов
@@ -131,6 +147,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: 389ds-headless
+  namespace: ldap
 spec:
   clusterIP: None
   selector:
@@ -138,13 +155,16 @@ spec:
   ports:
     - port: 3389
       name: ldap
+    - port: 3636
+      name: ldaps
 
 ---
-# LoadBalancer для доступа к LDAP
+# LoadBalancer для внешнего доступа
 apiVersion: v1
 kind: Service
 metadata:
   name: 389ds
+  namespace: ldap
   annotations:
     metallb.universe.tf/loadBalancerIPs: 192.168.1.100
 spec:
@@ -160,22 +180,24 @@ spec:
       name: ldaps
 ```
 
-## Инициализация и репликация через Job
+### Инициализация через Job
 
-Для автоматической инициализации 389DS (создание backend, настройка репликации) используется Job. Job выполняет shell-скрипт внутри контейнера 389DS.
+Для автоматической инициализации (backend, репликация, плагины) используется Job.
 
-### RBAC для Job
+#### RBAC для Job
 
 ```yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: 389ds-init
+  namespace: ldap
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: 389ds-init
+  namespace: ldap
 rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
@@ -188,22 +210,25 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: 389ds-init
+  namespace: ldap
 subjects:
   - kind: ServiceAccount
     name: 389ds-init
+    namespace: ldap
 roleRef:
   kind: Role
   name: 389ds-init
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### Пример Job
+#### Пример Job
 
 ```yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: 389ds-init
+  namespace: ldap
 spec:
   template:
     spec:
@@ -211,7 +236,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: init
-          image: 389ds/ds-container:latest
+          image: quay.io/389ds/ds-container:latest
           command: ["/bin/bash", "/init/init.sh"]
           env:
             - name: SUFFIX
@@ -233,35 +258,30 @@ spec:
           volumeMounts:
             - name: init-script
               mountPath: /init
-            - name: config
-              mountPath: /config
       volumes:
         - name: init-script
           configMap:
             name: 389ds-init-script
-        - name: config
-          configMap:
-            name: 389ds-config
 ```
 
-### Основные задачи init-скрипта
+#### Задачи init-скрипта
 
-1. **Проверка количества реплик** — не более 2 для простоты
-2. **Настройка логирования** — JSON формат для логов
-3. **Инициализация backend** — `dsconf backend create`
-4. **Включение репликации** — `dsconf replica enable`
-5. **Создание replication agreement** — между подами
-6. **Заполнение LDAP-дерева** — базовые OU (people, groups, service)
-7. **Включение плагинов** — RetroChangelog, MemberOf
-8. **Перезапуск подов** — через `kubectl patch statefulset`
+1. **Проверка количества реплик** — максимум 2 для простоты
+2. **Инициализация backend** — `dsconf backend create`
+3. **Включение репликации** — `dsconf replica enable`
+4. **Создание replication agreement** — между подами
+5. **Заполнение DIT** — базовые OU (people, groups, services)
+6. **Включение плагинов** — RetroChangelog, MemberOf
+7. **Перезапуск подов** — через `kubectl patch statefulset`
 
-## Настройка TLS (cert-manager)
+### Настройка TLS (cert-manager)
 
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: 389ds-tls
+  namespace: ldap
 spec:
   secretName: 389ds-tls
   dnsNames:
@@ -272,3 +292,42 @@ spec:
     name: letsencrypt-prod
     kind: ClusterIssuer
 ```
+
+## Дополнительная информация
+
+### Troubleshooting
+
+| Проблема | Решение |
+| :--- | :--- |
+| Pod не запускается | Проверить логи: `kubectl logs 389ds-0 -n ldap` |
+| PVC не создаётся | Проверить StorageClass: `kubectl get sc` |
+| Репликация не работает | Проверить сеть между подами, DNS |
+
+### Мониторинг
+
+```bash
+# Статус подов
+kubectl get pods -l app=389ds -n ldap
+
+# Проверка репликации
+kubectl exec 389ds-0 -n ldap -- \
+  dsconf replication status --suffix "dc=example,dc=com" me-to-389ds-1
+
+# Логи
+kubectl logs -f 389ds-0 -n ldap
+```
+
+### Best Practices
+
+1. **Anti-affinity** — распределять поды по разным узлам
+2. **Resource limits** — ограничивать CPU/RAM для предсказуемости
+3. **Backup** — использовать `dsctl backup` перед обновлениями
+4. **Update strategy** — обновлять по одному поду (RollingUpdate)
+5. **Monitoring** — отслеживать статус репликации и свободное место
+
+### Связанные темы
+
+* [Docker развёртывание](./docker.md)
+* [Настройка репликации](./replication.md)
+* [Плагины](./plugins.md)
+* [OpenLDAP в Kubernetes](../openldap_kubernetes.md)

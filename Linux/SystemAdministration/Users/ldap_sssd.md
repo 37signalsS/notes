@@ -111,5 +111,7 @@ getent group
 - Пароль binddn хранится в открытом виде в конфигурации
 
 См. также:
-- [PAM (Pluggable Authentication Modules)](../Security/pam_overview.md)
-- [Определения](./users_definitions.md)
+* [PAM (Pluggable Authentication Modules)](../../Security/pam_overview.md)
+* [Определения](./users_definitions.md)
+* [389DS — LDAP сервер](../../../LDAP/389ds/overview.md) — развёртывание LDAP-сервера
+* [OpenLDAP в Kubernetes](../../../LDAP/openldap_kubernetes.md) — альтернативная реализация LDAP
