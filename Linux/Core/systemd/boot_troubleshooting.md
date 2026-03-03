@@ -17,64 +17,62 @@
 
 Первый шаг — убедиться, что сервис включен для автозапуска, и проверить его статус и логи.
 
-* **Проверить, включен ли сервис:**
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl is-enabled myservice.service` | Проверить, включен ли автозапуск |
+| `systemctl enable myservice.service` | Включить автозапуск |
+| `systemctl status myservice.service` | Проверить текущий статус |
+| `journalctl -u myservice.service -b` | Логи сервиса с начала текущей загрузки |
+| `journalctl -u myservice.service -b -1` | Логи с предыдущей загрузки |
+| `journalctl -u myservice.service -p err` | Только ошибки |
+| `systemctl show myservice.service` | Полная информация о сервисе |
 
-    ```bash
-    systemctl is-enabled myservice.service
-    ```
-
-* **Включить автозапуск, если выключен:**
-
-    ```bash
-    sudo systemctl enable myservice.service
-    ```
-
-* **Проверить статус сервиса:**
-
-    ```bash
-    systemctl status myservice.service
-    ```
-
-* **Просмотреть логи сервиса с начала текущей загрузки:**
-
-    ```bash
-    journalctl -u myservice.service -b
-    ```
-
-    Ключ `-b` (boot) критически важен, так как он отфильтровывает логи, относящиеся только к текущей сессии загрузки, игнорируя предыдущие ручные запуски. Более подробно о работе с логами `systemd` см. в [Journald: Централизованный сбор логов](../../SystemAdministration/Logging/journald.md).
+Ключ `-b` (boot) критически важен, так как он отфильтровывает логи, относящиеся только к текущей сессии загрузки, игнорируя предыдущие ручные запуски. Более подробно о работе с логами `systemd` см. в [Journald: Централизованный сбор логов](../../SystemAdministration/Logging/journald.md).
 
 ### 2. Анализ зависимостей
 
 Частая причина — неверно указанные зависимости. Сервис пытается стартовать до того, как поднимется сеть, примонтируются диски или запустятся другие необходимые службы. Подробное описание зависимостей `systemd` можно найти в [Юниты, таргеты и зависимости systemd](./units_and_dependencies.md).
 
-* **Просмотр зависимостей:**
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl show myservice \| grep -E 'After=\|Wants=\|Requires='` | Показать зависимости |
+| `systemctl list-dependencies myservice.service` | Дерево зависимостей |
+| `systemctl list-dependencies --reverse myservice.service` | Обратные зависимости |
+| `systemd-analyze critical-chain myservice.service` | Критическая цепь запуска |
 
-    ```bash
-    systemctl show myservice.service | grep -E 'After=|Wants=|Requires='
-    ```
+**Зависимость от сети:**
+Если сервису нужна сеть, простой директивы `After=network.target` часто недостаточно, так как она лишь указывает на запуск *после* юнита `network.target`, но не гарантирует, что сеть действительно доступна. Правильнее использовать `network-online.target`:
 
-    Для просмотра дерева зависимостей можно использовать `systemctl list-dependencies myservice.service`. Подробнее об этом и других командах `systemctl` см. в [Управление службами Systemd (systemctl)](./service_management.md).
+```ini
+[Unit]
+Description=My Awesome Service
+After=network-online.target
+Wants=network-online.target
+```
 
-* **Зависимость от сети:**
-    Если сервису нужна сеть, простой директивы `After=network.target` часто недостаточно, так как она лишь указывает на запуск *после* юнита `network.target`, но не гарантирует, что сеть действительно доступна. Правильнее использовать `network-online.target`:
+**Зависимость от монтирования:**
+Если сервис зависит от определенной точки монтирования, используйте `RequiresMountsFor=`:
 
-    ```ini
-    [Unit]
-    Description=My Awesome Service
-    After=network-online.target
-    Wants=network-online.target
-    ```
+```ini
+[Unit]
+Description=My Service That Needs a Specific Mount
+RequiresMountsFor=/mnt/data
+```
 
-* **Зависимость от монтирования:**
-    Если сервис зависит от определенной точки монтирования, используйте `RequiresMountsFor=`:
+Это гарантирует, что `systemd` запустит сервис только после того, как указанный путь станет активной точкой монтирования.
 
-    ```ini
-    [Unit]
-    Description=My Service That Needs a Specific Mount
-    RequiresMountsFor=/mnt/data
-    ```
+### 3. Быстрая диагностика: чеклист
 
-    Это гарантирует, что `systemd` запустит сервис только после того, как указанный путь станет активной точкой монтирования.
+| Проблема | Команда для проверки | Решение |
+| :--- | :--- | :--- |
+| Сервис не включен | `systemctl is-enabled` | `systemctl enable` |
+| Сервис в статусе `failed` | `systemctl status`, `journalctl -p err` | Исправить ошибку, `systemctl reset-failed` |
+| Зависимость не запущена | `systemctl list-dependencies` | Добавить `After=`, `Requires=` |
+| Сеть не готова | Сервис стартует раньше сети | Использовать `network-online.target` |
+| Диск не примонтирован | `mount \| grep /mnt/data` | Использовать `RequiresMountsFor=` |
+| Не найден исполняемый файл | `journalctl -u service` | Использовать абсолютный путь в `ExecStart` |
+| Таймаут запуска | `TimeoutStartSec` в логах | Увеличить `TimeoutStartSec=` |
+| Неправильные права | `Permission denied` в логах | Проверить `User=`, права на файлы |
 
 ### 3. Проверка путей и окружения
 

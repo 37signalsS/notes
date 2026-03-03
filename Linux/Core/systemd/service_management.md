@@ -34,9 +34,15 @@
 
 **Состояния активности:**
 
-- **`active (running)`**: Служба запущена и работает как демон (постоянный процесс).
-- **`active (exited)`**: Служба выполнила одноразовую задачу (например, скрипт инициализации) и завершилась. Это нормальное поведение для сервисов, которые не являются демонами.
-- **`inactive`**: Служба остановлена.
+| Состояние | Описание |
+| :--- | :--- |
+| `active (running)` | Служба запущена и работает как демон (постоянный процесс) |
+| `active (exited)` | Служба выполнила одноразовую задачу и завершилась (нормально для `oneshot`) |
+| `active (waiting)` | Служба запущена, но ожидает события (например, socket activation) |
+| `inactive (dead)` | Служба остановлена |
+| `failed` | Служба завершилась с ошибкой (требует внимания) |
+| `activating` | Служба в процессе запуска |
+| `deactivating` | Служба в процессе остановки |
 
 **Информация в выводе `status`:**
 
@@ -55,27 +61,23 @@
 
 ### Управление автозапуском
 
-- **Включить автозапуск службы при загрузке системы:**
-    (создает символическую ссылку в `.wants/` каталоге нужного таргета)
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl enable <service>` | Включить автозапуск (создает symlink в `.wants/`) |
+| `systemctl disable <service>` | Отключить автозапуск (удаляет symlink) |
+| `systemctl is-enabled <service>` | Проверить статус автозапуска |
+| `systemctl enable --now <service>` | Включить и сразу запустить |
+| `systemctl disable --now <service>` | Отключить и сразу остановить |
+| `systemctl mask <service>` | Полностью запретить запуск (symlink на `/dev/null`) |
+| `systemctl unmask <service>` | Отменить маскировку |
+| `systemctl reenable <service>` | Перевключить (disable + enable) |
 
-    ```bash
-    sudo systemctl enable nginx.service
-    ```
-
-- **Отключить автозапуск (удаляет симлинк):**
-
-    ```bash
-    sudo systemctl disable nginx.service
-    ```
-
-- **Проверить, включен ли автозапуск:**
-
-    ```bash
-    systemctl is-enabled nginx.service
-    # Возможные статусы: enabled, disabled, static, masked
-    ```
-
-    *Статус `static` означает, что юнит не имеет секции `[Install]` и обычно запускается как зависимость другого юнита.*
+**Статусы автозапуска:**
+- `enabled` — автозапуск включен
+- `disabled` — автозапуск отключен
+- `static` — нет секции `[Install]`, запускается как зависимость
+- `masked` — заблокирован через `mask`
+- `indirect` — зависит от другого включенного юнита
 
 ### Обновление конфигурации systemd
 
@@ -101,22 +103,17 @@ sudo systemctl unmask NetworkManager.service
 
 ### Анализ состояния и зависимостей
 
-```bash
-# Показать все активные юниты
-systemctl list-units
-
-# Показать все установленные юнит-файлы и их статус автозагрузки
-systemctl list-unit-files --type=service
-
-# Показать юниты, от которых зависит служба (прямые зависимости)
-systemctl list-dependencies nginx.service
-
-# Показать юниты, которые зависят от этой службы (обратные зависимости)
-systemctl list-dependencies --reverse nginx.service
-
-# Показать все юниты, которые не смогли запуститься
-systemctl --failed
-```
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl list-units` | Показать все активные юниты |
+| `systemctl list-units --all` | Показать все юниты (включая неактивные) |
+| `systemctl list-unit-files --type=service` | Все установленные юнит-файлы со статусом |
+| `systemctl list-dependencies <service>` | Прямые зависимости службы |
+| `systemctl list-dependencies --reverse <service>` | Обратные зависимости (кто зависит от этой службы) |
+| `systemctl --failed` | Все юниты, которые не смогли запуститься |
+| `systemctl list-jobs` | Текущие активные задачи (загрузки/остановки) |
+| `systemctl show <service>` | Полная информация о юните в формате key=value |
+| `systemctl status <service> --all` | Статус с полными строками (без усечения) |
 
 ### Редактирование и переопределение юнитов
 
@@ -163,19 +160,16 @@ systemctl --failed
 
 ### Безопасный перезапуск в Production
 
-- **"Мягкий" перезапуск:** Перезапускает сервис, только если он уже запущен.
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl try-restart <service>` | Перезапустить, только если служба запущена |
+| `systemctl reload-or-restart <service>` | Перезагрузить конфигурацию или перезапустить |
+| `systemctl reload-or-try-restart <service>` | Reload или try-restart (безопасно) |
+| `systemctl daemon-reexec` | Перезапустить сам systemd (глубокая перезагрузка) |
+| `systemctl daemon-reload` | Перечитать конфигурацию юнитов с диска |
+| `systemctl reset-failed` | Сбросить статус failed у всех юнитов |
 
-    ```bash
-    sudo systemctl try-restart my-service.service
-    ```
-
-- **Перечитать конфигурацию самого systemd:** Более "глубокая" операция, чем `daemon-reload`.
-
-    ```bash
-    sudo systemctl daemon-reexec
-    ```
-
-Для сервисов, использующих **socket activation**, перезапуск происходит без потерь запросов, так как сокет продолжает их слушать, пока сервис перезагружается.
+**Socket activation:** Для сервисов, использующих socket activation, перезапуск происходит без потерь запросов, так как сокет продолжает их слушать, пока сервис перезагружается.
 
 ## Дополнительная информация
 
@@ -184,6 +178,15 @@ systemctl --failed
 - **Просмотр логов (`journalctl`):**
     `systemd` включает подсистему логирования `journald`. Для просмотра логов используется утилита `journalctl`.
     Подробное описание `journalctl` находится в основной заметке: **[systemd-journald: Современная система логирования](../../SystemAdministration/Logging/journald.md)**.
+
+| Команда | Описание |
+| :--- | :--- |
+| `journalctl -u <service>` | Логи конкретной службы |
+| `journalctl -u <service> -f` | Логи в реальном времени |
+| `journalctl -u <service> --since "1 hour ago"` | Логи за период |
+| `journalctl -u <service> -b` | Логи с последней загрузки |
+| `journalctl -u <service> -p err` | Только ошибки (priority) |
+| `journalctl -t <identifier>` | Логи по SYSLOG_IDENTIFIER |
 
 - **`logrotate` и службы `systemd`:**
     Многие приложения пишут текстовые логи, которые ротируются с помощью `logrotate`. `systemd` используется для отправки сигнала `reload` службе после ротации, чтобы она корректно переоткрыла лог-файл.

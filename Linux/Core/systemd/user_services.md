@@ -22,25 +22,20 @@
 
 ### Управление пользовательскими службами
 
-```bash
-# Запустить пользовательскую службу
-systemctl --user start my_app.service
+| Команда | Описание |
+| :--- | :--- |
+| `systemctl --user start <service>` | Запустить службу |
+| `systemctl --user stop <service>` | Остановить службу |
+| `systemctl --user restart <service>` | Перезапустить службу |
+| `systemctl --user status <service>` | Проверить статус |
+| `systemctl --user enable <service>` | Включить автозапуск при входе |
+| `systemctl --user disable <service>` | Отключить автозапуск |
+| `systemctl --user daemon-reload` | Перечитать конфигурацию |
+| `systemctl --user list-units` | Показать все пользовательские юниты |
+| `systemctl --user failed` | Показать упавшие службы |
+| `journalctl --user -u <service>` | Логи пользовательской службы |
 
-# Остановить службу
-systemctl --user stop my_app.service
-
-# Проверить статус
-systemctl --user status my_app.service
-
-# Включить автозапуск службы при входе пользователя в систему
-systemctl --user enable my_app.service
-
-# Отключить автозапуск
-systemctl --user disable my_app.service
-
-# Показать все пользовательские юниты
-systemctl --user list-units
-```
+**Важно:** Команды выполняются от имени пользователя, без `sudo`.
 
 ## Практические сценарии
 
