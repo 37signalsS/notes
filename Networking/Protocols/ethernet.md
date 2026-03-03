@@ -123,3 +123,14 @@
 * **2.5G/5G Ethernet (NBASE-T):** Промежуточные версии на 2.5 и 5 Gbps, используемые на витой паре.
 * **10 Gigabit Ethernet (10 GbE):** 10 Gbps.
 * **25/40/50/100/200/400 Gigabit Ethernet:** Современные высокоскоростные стандарты.
+
+### Связанные документы
+- **[MAC-адрес](../Concepts/mac_address.md)** — адресация на канальном уровне
+- **[VLAN](./vlan.md)** — тегирование кадров 802.1Q
+- **[STP](./stp.md)** — предотвращение петель в Ethernet-сетях
+- **[Link Aggregation](../Concepts/link_aggregation.md)** — агрегация каналов (LACP)
+
+### Стандарты
+- **IEEE 802.3** — базовый стандарт Ethernet
+- **IEEE 802.3ab** — Gigabit Ethernet (1000BASE-T)
+- **IEEE 802.3ae** — 10 Gigabit Ethernet
