@@ -2,145 +2,202 @@
 
 ## Определения
 
-* **TuneD:** Демон в Linux, предназначенный для оптимизации производительности системы. Он использует набор готовых профилей с настроенными параметрами ядра, сети, дисков и других подсистем.
-* **Профиль производительности (Performance Profile):** Набор предопределенных настроек для определенного сценария использования (например, "высокая производительность", "энергосбережение", "виртуальная машина").
+**TuneD** — демон в Linux для автоматической оптимизации производительности системы. Использует профили с предустановленными параметрами ядра, сети, дисков и других подсистем.
+
+**Профиль производительности** — набор предопределённых настроек для конкретного сценария использования (сервер, десктоп, виртуальная машина, низкая задержка).
 
 ## Основные концепции
 
-TuneD упрощает процесс настройки производительности, предоставляя:
-1.  **Готовые профили:** Для различных сценариев (desktop, server, virtual-guest, latency-performance, network-throughput и др.).
-2.  **Кастомные профили:** Возможность создавать собственные профили на основе существующих.
-3.  **Динамическая оптимизация:** Автоматическая корректировка настроек в зависимости от текущей нагрузки (опционально, по умолчанию выключено).
-4.  **Централизованное управление:** Все параметры (sysctl, параметры планировщика, настройки дисков и т.д.) хранятся в одном месте.
+### Возможности TuneD
+
+| Возможность | Описание |
+| :--- | :--- |
+| **Готовые профили** | Для различных сценариев: desktop, server, virtual-guest, latency-performance, network-throughput |
+| **Кастомные профили** | Создание собственных профилей на основе существующих |
+| **Динамическая оптимизация** | Автоматическая корректировка настроек в зависимости от нагрузки (опционально) |
+| **Централизованное управление** | Все параметры (sysctl, планировщик, диски) в одном месте |
+| **Верификация** | Проверка применения настроек (`tuned-adm verify`) |
 
 ### Структура профиля
 
-Профили TuneD расположены в:
-* Системные: `/usr/lib/tuned/<имя_профиля>/`
-* Кастомные: `/etc/tuned/<имя_профиля>/`
+**Расположение профилей:**
 
-Основной файл конфигурации: `tuned.conf`
+- **Системные:** `/usr/lib/tuned/<имя_профиля>/`
+- **Кастомные:** `/etc/tuned/<имя_профиля>/` (приоритет)
 
-Структура файла:
-* `[main]`: Основные настройки (включая `include` для наследования от другого профиля).
-* Плагины: Определяют, какие подсистемы настраиваются (cpu, disk, network, sysctl, services и др.).
+**Основной файл:** `tuned.conf`
+
+**Структура:**
+
+```ini
+[main]
+summary=Описание профиля
+include=базовый-профиль  # Наследование
+
+[sysctl]
+vm.swappiness = 10
+net.core.somaxconn = 4096
+
+[cpu]
+governor = performance
+
+[disk]
+elevator = deadline
+
+[network]
+timeout = 100
+```
+
+**Плагины:** `cpu`, `disk`, `network`, `sysctl`, `services`, `vm`, `bootloader`, `script`
 
 ## Практические сценарии
 
 ### 1. Установка и запуск
 
 ```bash
-# Установка (если отсутствует)
+# RHEL/CentOS/Fedora/AlmaLinux
 sudo dnf install tuned
+
+# Debian/Ubuntu (если доступен)
+sudo apt install tuned
 
 # Запуск и включение автозапуска
 sudo systemctl enable --now tuned
+
+# Проверка статуса
+systemctl status tuned
 ```
 
 ### 2. Управление профилями
 
-* **Просмотр доступных профилей:**
+```bash
+# Просмотр доступных профилей
+tuned-adm list
 
-    ```bash
-    tuned-adm list
-    ```
+# Просмотр текущего профиля
+tuned-adm active
 
-* **Просмотр текущего профиля:**
+# Рекомендация профиля от TuneD
+tuned-adm recommend
 
-    ```bash
-    tuned-adm active
-    ```
+# Установка профиля
+tuned-adm profile latency-performance
+```
 
-* **Установка профиля:**
+**Распространённые профили:**
 
-    ```bash
-    # Пример: профиль для низкой задержки сети
-    tuned-adm profile latency-performance
-    
-    # Пример: профиль для виртуальной машины
-    tuned-adm profile virtual-guest
-    ```
-
-* **Рекомендация профиля от TuneD:**
-
-    ```bash
-    tuned-adm recommend
-    ```
+| Профиль | Назначение |
+| :--- | :--- |
+| `balanced` | Базовый профиль (по умолчанию) |
+| `throughput-performance` | Пропускная способность дисков |
+| `latency-performance` | Низкая задержка (CPU governor performance) |
+| `network-throughput` | Оптимизация сети |
+| `virtual-guest` | Для гостевых ВМ |
+| `virtual-host` | Для хостов виртуализации |
+| `oracle` | Для СУБД Oracle |
+| `desktop` | Для рабочих станций |
+| `powersave` | Энергосбережение |
 
 ### 3. Проверка применения настроек
 
-* **Верификация (проверка параметров):**
+```bash
+# Верификация (проверка параметров)
+tuned-adm verify
 
-    ```bash
-    tuned-adm verify
-    ```
+# Проверка активных параметров ядра
+sysctl -a | grep -E 'vm.|net.'
 
-    *Примечание:* Если TuneD не может применить какие-либо настройки (например, они были переопределены вручную в `sysctl.conf`), верификация выдаст предупреждение.
+# Проверка CPU governor
+cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+```
+
+> **Примечание:** Если TuneD не может применить настройки (например, переопределены вручную в `/etc/sysctl.conf`), `tuned-adm verify` выдаст предупреждение.
 
 ### 4. Управление TuneD
 
-* **Временно выключить профиль (переключиться на "no-op"):**
+```bash
+# Временно выключить профиль
+tuned-adm off
 
-    ```bash
-    tuned-adm off
-    ```
+# Включить обратно
+tuned-adm profile <имя_профиля>
 
-* **Включить обратно:**
+# Полностью отключить демон
+sudo systemctl stop tuned
+sudo systemctl disable tuned
+```
 
-    ```bash
-    tuned-adm profile <имя_профиля>
-    ```
+### 5. Динамическая оптимизация
 
-* **Полностью отключить демон:**
+По умолчанию выключена. Позволяет автоматически менять настройки в зависимости от нагрузки.
 
-    ```bash
-    sudo systemctl stop tuned
-    sudo systemctl disable tuned
-    ```
+**Включение:**
 
-### 5. Динамическая оптимизация (Dynamic Tuning)
+```ini
+# /etc/tuned/tuned.conf
+[main]
+dynamic_tuning = 1
+```
 
-По умолчанию выключена. Позволяет TuneD автоматически менять настройки в зависимости от нагрузки (например, увеличивать производительность диска только при высокой нагрузке на запись).
+**Перезапуск:**
 
-* **Включение:** В файле `/etc/tuned/tuned.conf`:
+```bash
+sudo systemctl restart tuned
+```
 
-    ```ini
-    [main]
-    dynamic_tuning = 1
-    ```
-
-* **Перезапуск для применения:**
-
-    ```bash
-    sudo systemctl restart tuned
-    ```
-
-*Примечание:* Динамическая оптимизация поддерживается не всеми плагинами и чаще используется на рабочих станциях, чем на серверах.
+> **Примечание:** Поддерживается не всеми плагинами. Чаще используется на рабочих станциях, чем на серверах.
 
 ### 6. Создание кастомного профиля
 
-1.  Создать директорию: `/etc/tuned/my-profile/`
-2.  Создать файл `tuned.conf`:
+```bash
+# 1. Создать директорию
+sudo mkdir -p /etc/tuned/my-profile
 
-    ```ini
-    [main]
-    summary=My Custom Performance Profile
-    include=latency-performance
-    
-    [sysctl]
-    # Дополнительные параметры ядра
-    vm.swappiness = 10
-    net.core.somaxconn = 4096
-    ```
+# 2. Создать tuned.conf
+sudo tee /etc/tuned/my-profile/tuned.conf << 'EOF'
+[main]
+summary=My Custom Performance Profile
+include=latency-performance
 
-3.  Активировать:
+[sysctl]
+vm.swappiness = 10
+net.core.somaxconn = 4096
+net.ipv4.tcp_max_syn_backlog = 8192
 
-    ```bash
-    tuned-adm profile my-profile
-    ```
+[cpu]
+governor = performance
+
+[disk]
+elevator = deadline
+EOF
+
+# 3. Активировать профиль
+sudo tuned-adm profile my-profile
+
+# 4. Проверить
+tuned-adm active
+```
+
+### 7. Troubleshooting
+
+| Проблема | Решение |
+| :--- | :--- |
+| Профиль не применяется | Проверить `systemctl status tuned`, `journalctl -u tuned` |
+| `tuned-adm verify` выдаёт ошибки | Параметры переопределены вручную в `/etc/sysctl.conf` |
+| Демон не запускается | Проверить конфликты с другими сервисами оптимизации |
+| Настройки сбрасываются после перезагрузки | Убедиться, что профиль включён через `tuned-adm` |
 
 ## Дополнительная информация
 
-* **[Настройка параметров ядра (sysctl)](./kernel/sysctl.md)**: TuneD часто управляет параметрами ядра через sysctl.
-* **[Управление Swap](./memory/swap_management.md)**: Параметр `vm.swappiness`, который часто настраивается через TuneD.
-* **[Оптимизация памяти](./memory/performance_tuning.md)**: Связанные темы по оптимизации памяти.
+### Связанные темы
+
+- **[Sysctl](./kernel/sysctl.md)** — управление параметрами ядра
+- **[Memory Tuning](./memory/performance_tuning.md)** — оптимизация памяти
+- **[CPU Pinning](./cpu_pinning.md)** — привязка к ядрам CPU
+- **[Systemd](./systemd/overview.md)** — управление сервисами
+
+### Дополнительные ресурсы
+
+- **Официальная документация:** [access.redhat.com/tuned](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/monitoring_and_managing_system_status_and_performance/tuned)
+- **GitHub репозиторий:** [github.com/redhat-performance/tuned](https://github.com/redhat-performance/tuned)
+- **Man page:** [tuned-adm(8)](https://man7.org/linux/man-pages/man8/tuned-adm.8.html)
