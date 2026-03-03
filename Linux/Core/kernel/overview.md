@@ -1,3 +1,5 @@
+# Ядро Linux: Обзор
+
 ## Определения
 
 **Ядро (Kernel)** — это самый низкий уровень программного обеспечения и центральный, наиболее важный компонент операционной системы. Оно выступает в роли моста между программным обеспечением и аппаратной частью компьютера.
@@ -17,6 +19,7 @@
 
 - **Пространство ядра (Kernelspace):** Здесь работает ядро, имея неограниченный доступ ко всему оборудованию. Ошибка в этом режиме приводит к панике ядра (`Kernel Panic`).
 - **Пространство пользователя (Userspace):** Здесь выполняются все остальные программы. Они имеют ограниченные права и для доступа к ресурсам должны обращаться к ядру.
+
 Подробнее см. в [Userspace и Kernelspace](../processes/overview.md#userspace-и-kernelspace).
 
 ### Модульная архитектура
@@ -78,20 +81,37 @@ sudo sysctl -w net.ipv4.ip_forward=1
 
 ## Дополнительная информация
 
-Следующие заметки подробно описывают различные аспекты и подсистемы ядра Linux:
+### Индекс заметок по темам
 
-- **[Процесс загрузки (boot_process.md)](./boot_process.md):** От включения питания до запуска первого процесса.
-- **[Модули ядра (kernel_modules.md)](./kernel_modules.md):** Управление драйверами и другими компонентами.
-- **[Интерфейсы ядра (kernel_interfaces.md)](./kernel_interfaces.md):** `syscalls`, `/proc`, `/sys`, `netlink`.
-- **[Настройка параметров (sysctl.md)](./sysctl.md):** Управление поведением ядра "на лету".
-- **[Планировщики ввода-вывода (io_schedulers.md)](./io_schedulers.md):** Управление очередями запросов к дискам.
-- **[Вытесняющая многозадачность (preemption.md)](./preemption.md):** Механизмы для повышения отзывчивости.
-- **[Изоляция CPU (cpu_isolation.md)](./cpu_isolation.md):** Выделение ядер для конкретных задач.
-- **[Прерывания (interrupts.md)](./interrupts.md):** Обработка аппаратных и программных прерываний.
-- **[eBPF](./ebpf.md):** Безопасное выполнение кода в пространстве ядра.
-- **[io_uring](./io_uring.md):** Высокопроизводительный асинхронный ввод-вывод.
-- **[Pressure Stall Information (psi.md)](./psi.md):** Мониторинг давления на ресурсы CPU, памяти, I/O.
-- **[Зависания ядра (lockups.md)](./lockups.md):** Soft Lockup, Hard Lockup и Watchdog.
-- **[Паника ядра (kernel_panic.md)](./kernel_panic.md):** Анализ и отладка критических сбоев.
-- **["Живые" патчи (live_patching.md)](./live_patching.md):** Обновление ядра без перезагрузки.
-- **[Механизмы синхронизации (kernel_synchronization.md)](./kernel_synchronization.md):** Блокировки для защиты данных.
+#### Загрузка и инициализация
+
+- **[Процесс загрузки (boot_process.md)](./boot_process.md)** — этапы загрузки ядра: от передачи управления загрузчиком до запуска systemd
+- **[BIOS и UEFI (firmware_bios_uefi.md)](../firmware_bios_uefi.md)** — прошивка, ранняя загрузка, работа загрузчика *(вне директории kernel/)*
+- **["Живые" патчи (live_patching.md)](./live_patching.md)** — обновление ядра без перезагрузки (kpatch, ksplice)
+- **[kexec](./live_patching.md#Быстрая-перезагрузка-kexec)** — быстрая перезагрузка с минуем BIOS/UEFI
+
+#### Управление ресурсами и планирование
+
+- **[Вытесняющая многозадачность (preemption.md)](./preemption.md)** — модели вытеснения ядра (No Forced, Voluntary, Preemptible)
+- **[Изоляция CPU (cpu_isolation.md)](./cpu_isolation.md)** — изоляция ядер на уровне ядра (`isolcpus`, `nohz_full`)
+- **[CPU Pinning (../cpu_pinning.md)](../cpu_pinning.md)** — привязка процессов к ядрам из userspace *(в директории Core/)*
+- **[Планировщики ввода-вывода (io_schedulers.md)](./io_schedulers.md)** — управление очередями запросов к дискам (none, mq-deadline, bfq, kyber)
+- **[Pressure Stall Information (psi.md)](./psi.md)** — мониторинг давления на ресурсы CPU, памяти, I/O
+
+#### Синхронизация и отладка
+
+- **[Механизмы синхронизации (kernel_synchronization.md)](./kernel_synchronization.md)** — блокировки, RCU, lock-free программирование
+- **[Зависания ядра (lockups.md)](./lockups.md)** — Soft Lockup, Hard Lockup, Watchdog
+- **[Паника ядра (kernel_panic.md)](./kernel_panic.md)** — анализ и отладка критических сбоев, kdump
+
+#### Интерфейсы и расширяемость
+
+- **[Интерфейсы ядра (kernel_interfaces.md)](./kernel_interfaces.md)** — syscalls, `/proc`, `/sys`
+- **[Модули ядра (kernel_modules.md)](./kernel_modules.md)** — управление драйверами и компонентами
+- **[Настройка параметров (sysctl.md)](./sysctl.md)** — управление поведением ядра "на лету"
+
+#### Современные технологии
+
+- **[eBPF](./ebpf.md)** — безопасное выполнение кода в пространстве ядра для наблюдаемости, сети и безопасности
+- **[io_uring](./io_uring.md)** — высокопроизводительный асинхронный ввод-вывод
+- **[Прерывания (interrupts.md)](./interrupts.md)** — обработка аппаратных и программных прерываний (Hard IRQ, SoftIRQ, Tasklets)
