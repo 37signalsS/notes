@@ -1,5 +1,10 @@
 # Траблшутинг №2: Периодические 500-е ошибки из-за DNS
 
+> - Диагностика DNS: [`dns_diagnostics.md`](../../Linux/Diagnostics/Networking/dns_diagnostics.md)
+> - Протокол DNS: [`dns.md`](../../Networking/Protocols/dns.md)
+> - Общая методология траблшутинга: [`general_troubleshooting_methodology.md`](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)
+> - Диагностика в Docker: [`dns_resolution_issues.md`](../../Docker/Docker_network/troubleshooting/dns_resolution_issues.md)
+
 ## Определения
 
 * **DNS-мисконфигурация**: Некорректная настройка системы доменных имен (DNS), приводящая к разрешению доменных имен в неверные IP-адреса. В данном контексте — ошибочное разрешение имени базы данных в адрес тестового окружения вместо продуктивного.
@@ -41,6 +46,18 @@
 7. **Поиск истинной причины (решающий шаг)**:
     * Проведена проверка разрешения DNS-имени хоста базы данных с проблемного и с рабочего серверов приложений (`nslookup <db_hostname>` изнутри контейнера).
     * **Результат**: На проблемном сервере DNS-имя базы данных разрешалось в IP-адрес **тестовой**, а не **боевой** БД.
+    
+    > **Диагностика DNS (подробнее):** Для комплексной проверки DNS используйте [`dig`](../../Linux/Diagnostics/Networking/dns_diagnostics.md) или [`resolvectl`](../../Linux/Diagnostics/Networking/dns_diagnostics.md):
+    > ```bash
+    > # Проверка разрешения имени через dig
+    > dig @<dns_server> <db_hostname>
+    > 
+    > # Проверка через systemd-resolved
+    > resolvectl query <db_hostname>
+    > 
+    > # Сравнение результатов с разных хостов
+    > for host in app1 app2 app3; do ssh $host "nslookup <db_hostname>"; done
+    > ```
 
 ### Причина проблемы
 
@@ -54,3 +71,5 @@
   * Включение проверки DNS-разрешения (например, через `nslookup` или `dig`) в автоматизированные тесты и пайплайны CI/CD для критически важных сервисов.
   * Внедрение Service Discovery (например, Consul, etcd, Kubernetes Service DNS) для динамического и корректного разрешения имен сервисов.
   * Тщательная проверка окружения и параметров запуска для каждого сервиса, особенно при развертывании в контейнерной среде.
+  * **Мониторинг DNS**: Настройка алертов на аномалии в разрешении DNS (например, через Prometheus + Blackbox Exporter).
+  * **Документирование**: Ведение актуальной документации по DNS-зонам и критическим зависимостям между сервисами.
