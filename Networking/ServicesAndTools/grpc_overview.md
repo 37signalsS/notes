@@ -76,6 +76,9 @@ gRPC изначально построен поверх протокола **HTT
 * **Мобильные клиенты и бэкенд:** Эффективный бинарный протокол экономит трафик и заряд батареи, что критично для мобильных устройств.
 * **Real-time приложения:** Двунаправленный стриминг отлично подходит для приложений, требующих обмена данными в реальном времени (чаты, IoT, игровые сервисы).
 * **API для разных языков:** Когда у вас есть полиглотная система (сервисы на Go, Java, Python), gRPC упрощает их интеграцию благодаря автоматической генерации кода.
+* **Observability:** gRPC используется в [OpenTelemetry Protocol (OTLP)](../../OpenTelemetry/otlp_protocol.md) для передачи телеметрии (трассировки, метрики, логи) в Collector.
+* **Docker и Kubernetes:** [Docker](../../Docker/docker_overview.md) использует gRPC для взаимодействия `dockerd` с `containerd`. [Kubernetes](../../Kubernetes/Architecture/components.md) использует gRPC через CRI для управления контейнерами.
+* **Service Mesh:** [Consul](../../Consul/consul_health_checks.md) использует gRPC для health checks сервисов.
 
 **Когда REST может быть лучше:**
 
@@ -112,3 +115,11 @@ gRPC изначально построен поверх протокола **HTT
 | **Генерация кода** | Встроена в инструментарий | Зависит от сторонних инструментов (e.g., Swagger Codegen) |
 | **Поддержка браузерами**| Требуется gRPC-Web + прокси (Envoy) | Нативная, полная поддержка |
 | **Безопасность** | mTLS, интерцепторы для авторизации | HTTPS, OAuth2, JWT, API Keys |
+
+## Связанные документы
+
+* **[OTLP Protocol](../../OpenTelemetry/otlp_protocol.md)** — gRPC для телеметрии.
+* **[Docker Architecture](../../Docker/docker_overview.md)** — gRPC в Docker (containerd).
+* **[Consul Health Checks](../../Consul/consul_health_checks.md)** — gRPC для проверок.
+* **[HTTP/2 и оптимизация](../Protocols/http_protocols_optimization.md)** — детали HTTP/2.
+* **[Envoy Proxy](../../WebServers/Envoy/envoy_overview.md)** — прокси для gRPC-Web.

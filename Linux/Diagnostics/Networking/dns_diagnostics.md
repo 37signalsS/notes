@@ -14,62 +14,19 @@
 
 Процесс разрешения имен управляется файлом `/etc/nsswitch.conf`. Строка `hosts: files dns` означает, что система сначала проверит локальный файл `/etc/hosts` и только потом обратится к DNS-серверам, указанным в `/etc/resolv.conf`. Это важно помнить, так как запись в `/etc/hosts` может переопределять DNS.
 
-### `systemd-resolved`
+> **Конфигурация DNS-клиента:** Подробная информация о файлах `/etc/nsswitch.conf`, `/etc/hosts`, `/etc/resolv.conf` и `systemd-resolved` находится в заметке [Настройка и диагностика DNS-клиента в Linux](../../Networking/Concepts/dns_client.md).
 
-На многих современных дистрибутивах `systemd-resolved` выступает в роли локального кэширующего DNS-резолвера. Все DNS-запросы от приложений сначала поступают к нему. Утилита `resolvectl` — это основной инструмент для взаимодействия с ним.
+### Диагностика с systemd-resolved
 
-* **Проверить статус и текущие серверы:**
-    Команда `resolvectl status` (или просто `resolvectl`) показывает подробную информацию о глобальных настройках и настройках для каждого сетевого интерфейса.
+Для детальной диагностики работы `systemd-resolved` используйте утилиту `resolvectl`:
 
-    ```bash
-    $ resolvectl
-    Global
-         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
-      resolv.conf mode: stub
-    Link 2 (ens3)
-        Current Scopes: DNS
-             Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
-    Current DNS Server: 1.1.1.1
-           DNS Servers: 1.1.1.1 8.8.8.8
-            DNS Domain: mycompany.local
-    ```
+- **Проверить статус:** `resolvectl status`
+- **Выполнить запрос:** `resolvectl query example.com`
+- **Очистить кэш:** `sudo resolvectl flush-caches`
+- **Статистика:** `resolvectl statistics`
+- **Проверить локальный резолвер:** `dig @127.0.0.53 example.com`
 
-    Из вывода видно, что для интерфейса `ens3` используются DNS-серверы `1.1.1.1` и `8.8.8.8`, а также домен поиска `mycompany.local`.
-
-* **Выполнить запрос через системный резолвер (узнать, как система разрешит имя):**
-    Команда `query` показывает, какой IP-адрес вернет именно системный резолвер.
-
-    ```bash
-    resolvectl query example.com
-    ```
-
-* **Очистить кэш:**
-
-    ```bash
-    sudo resolvectl flush-caches
-    ```
-
-    Иногда требуется обновить DNS-кеш только для одного сетевого интерфейса. Например, для `eth0`:
-
-    ```bash
-    resolvectl flush-caches eth0
-    ```
-
-* **Проверить статистику кэша:**
-
-    ```bash
-    resolvectl statistics
-    ```
-
-    Растущий счётчик `Transactions in progress` или большое количество `Cache Misses` может указывать на проблемы с вышестоящими DNS-серверами или сетевой связностью.
-
-* **Проверить резолв домена через локальный кеширующий резолвер (systemd-resolved):**
-
-    ```bash
-    dig @127.0.0.53 example.com
-    ```
-
-    Это позволяет убедиться, что изменения в DNS-кеше применились, и что локальный резолвер корректно обрабатывает запросы, при этом все остальные сервисы остаются онлайн.
+Подробная информация о настройке `systemd-resolved` — в [Настройка DNS-клиента в Linux](../../Networking/Concepts/dns_client.md).
 
 ## Практические сценарии
 
@@ -174,4 +131,3 @@ DNS в контейнеризированных средах имеет особ
 ## Дополнительная информация
 
 * **Анализ времени DNS-запроса:** Для детального измерения сетевых задержек, включая этап разрешения DNS, можно использовать `curl`. Этот метод подробно описан в заметке [Диагностика сетевых задержек с curl](./curl_network_diagnostics.md).
-* **Конфигурация клиента:** Подробности о файлах `/etc/nsswitch.conf`, `/etc/hosts` и `/etc/resolv.conf` смотрите в заметке [Настройка и диагностика DNS-клиента в Linux](../../Networking/Concepts/dns_client.md).

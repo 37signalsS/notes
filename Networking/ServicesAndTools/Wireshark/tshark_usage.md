@@ -21,4 +21,16 @@ sudo tshark -i enp0s3 -f "tcp port 80"
 
 # Экспорт определенных полей в CSV
 tshark -r capture.pcapng -T fields -e ip.src -e ip.dst -e frame.len -E header=y -E separator=, > packets.csv
+
+# Экспорт в JSON (для дальнейшей обработки)
+tshark -r capture.pcapng -T json > packets.json
+
+# Статистика по диалогам (conversations)
+tshark -r capture.pcapng -q -z conv,ip
+
+# Статистика по протоколам
+tshark -r capture.pcapng -q -z io,phs
+
+# Дешифрование TLS с использованием keylog файла
+tshark -r capture.pcapng -o tls.keylog_file:/path/to/keys.log
 ```
