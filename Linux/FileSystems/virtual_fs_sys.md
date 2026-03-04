@@ -77,3 +77,12 @@ cat /sys/module/zfs/parameters/zfs_arc_max
 ```
 
 Это позволяет получить актуальные значения параметров модуля, что не всегда возможно с помощью `modinfo`.
+
+## Дополнительная информация
+
+- **Связанные темы:**
+  - [Виртуальные ФС](./virtual_filesystems.md) — обзор псевдо-ФС
+  - [Procfs](./virtual_fs_proc.md) — информация о процессах
+  - [Udev](../Core/udev.md) — управление устройствами
+  - [Lspci](../Diagnostics/Hardware/lspci.md) — информация о PCI устройствах
+  - [Lsusb](../Diagnostics/Hardware/lsusb.md) — информация о USB устройствах

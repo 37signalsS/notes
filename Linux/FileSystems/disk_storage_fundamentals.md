@@ -50,3 +50,8 @@
 - Организация файловых систем поверх блочных устройств и работа с ними подробно описаны в [Разделы и файловые системы в Linux](partitions_and_filesystems.md).
 - Для мониторинга состояния HDD/SSD используйте утилиту [smartctl](../Diagnostics/Hardware/smartctl.md).
 - Инвентаризация дисков и контроллеров: [lsscsi, lsblk](../Diagnostics/Hardware/hardware_listing.md).
+- **Связанные темы:**
+  - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT
+  - [RAID](./raid_management.md) — отказоустойчивые массивы
+  - [LVM](./LVM/overview_concepts.md) — логические тома
+  - [Выравнивание разделов](#Проблема-выравнивания-разделов-Partition-Alignment) — производительность

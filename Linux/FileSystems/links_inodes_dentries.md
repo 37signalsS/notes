@@ -168,3 +168,19 @@
 ### Защита от небезопасных ссылок
 
 Для получения информации о механизмах защиты от атак с использованием символических и жестких ссылок см. [Защита от небезопасных ссылок (symlinks и hardlinks)](../../Security/fstec_linux.md#Защита-от-небезопасных-ссылок-symlinks-и-hardlinks).
+
+### Связанные темы
+
+- **Фундаментальные структуры:**
+  - [Типы файлов](./file_types.md) — типы файлов в Linux
+  - [Файловые дескрипторы](./file_descriptors.md) — FD для процессов
+  - [Dentry cache](../Core/memory/slab_allocator.md) — кэш dentry в Slab
+
+- **Диагностика:**
+  - [Исчерпание inode](../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md) — `df -i`
+  - [Восстановление данных](./data_recovery.md) — после удаления файлов
+  - [Проверка ФС](./fsck.md) — `fsck`, `xfs_repair`
+
+- **Оптимизация:**
+  - [Выбор ФС](./partitions_and_filesystems.md) — сравнение файловых систем
+  - [Монтирование](./mounting/index.md) — опции монтирования

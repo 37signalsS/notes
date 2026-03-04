@@ -69,3 +69,14 @@
 
 - **VDO (Virtual Data Optimizer):** Дедупликация, сжатие и thin provisioning на уровне блочного устройства.
   - **Подробности:** [VDO (Virtual Data Optimizer)](./vdo.md)
+
+- **Stratis:** Многоуровневое управление хранилищем с автоматическим кэшированием.
+  - **Подробности:** [Stratis](./stratis.md)
+
+- **Шифрование:** LUKS для шифрования блочных устройств.
+  - **Подробности:** [LUKS](../Security/luks.md)
+
+- **Восстановление:**
+  - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT
+  - [Логическое восстановление данных](./data_recovery.md) — TestDisk, PhotoRec
+  - [Проверка целостности ФС](./fsck.md) — `fsck`, `xfs_repair`

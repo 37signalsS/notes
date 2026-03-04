@@ -30,3 +30,12 @@ crw-rw-rw- 1 root tty  4, 0 фев 25 10:00 /dev/tty     # Символьное 
 lrwxrwxrwx 1 root root  25 фев 25 10:00 /var/log -> /path/to/logs # Символическая ссылка
 srwxrwxrwx 1 mysql mysql 0 фев 25 10:00 /tmp/mysql.sock # Сокет
 ```
+
+## Дополнительная информация
+
+- **Связанные темы:**
+  - [Типы устройств](./device_types.md) — блочные и символьные устройства
+  - [Ссылки, Inode и Dentry](./links_inodes_dentries.md) — жёсткие и символические ссылки
+  - [Виртуальная ФС /dev](./virtual_fs_dev.md) — файлы устройств
+  - [Сокеты IPC](../IPC/sockets.md) — межпроцессное взаимодействие
+  - [Именованные каналы](../IPC/pipes.md) — FIFO для IPC

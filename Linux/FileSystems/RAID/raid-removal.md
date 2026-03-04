@@ -1,13 +1,101 @@
-### Полное удаление RAID-массива
+# Удаление RAID-массива
 
-1. **Отмонтировать файловую систему**: `sudo umount /dev/md0` и удалить запись из `/etc/fstab`.
-2. **Остановить массив**: `sudo mdadm --stop /dev/md0`.
-3. **Затереть суперблоки**: **Важнейший шаг**, удаляющий метаданные RAID с дисков.
+## Определения
 
-    ```bash
-    sudo mdadm --zero-superblock /dev/sdb1
-    sudo mdadm --zero-superblock /dev/sdc1
-    # ... и так далее для всех дисков
-    ```
+**Удаление RAID** — процесс демонтажа массива с сохранением или удалением данных. Включает остановку массива, очистку метаданных и обновление конфигурации.
 
-4. **Удалить конфигурацию**: Удалите строку из `/etc/mdadm/mdadm.conf` и обновите `initramfs`.
+> ⚠️ **ВНИМАНИЕ:** Удаление метаданных (`--zero-superblock`) не удаляет данные на дисках, но делает массив недоступным. Для полного удаления данных используйте `wipefs --all` или `shred`.
+
+## Практические сценарии
+
+### Полное удаление массива
+
+#### Шаг 1: Размонтирование
+
+```bash
+# Размонтирование ФС
+sudo umount /dev/md0
+
+# Удаление из /etc/fstab
+sudo nano /etc/fstab  # удалить строку с UUID или /dev/md0
+```
+
+#### Шаг 2: Остановка массива
+
+```bash
+sudo mdadm --stop /dev/md0
+```
+
+#### Шаг 3: Очистка метаданных RAID
+
+```bash
+# Для разделов
+sudo mdadm --zero-superblock /dev/sdb1
+sudo mdadm --zero-superblock /dev/sdc1
+
+# Для целых дисков
+sudo mdadm --zero-superblock /dev/sdb
+sudo mdadm --zero-superblock /dev/sdc
+```
+
+> **Проверка:** Убедитесь, что метаданные удалены:
+> ```bash
+> sudo mdadm --examine /dev/sdb1
+> # Должно быть: "No md superblock detected"
+> ```
+
+#### Шаг 4: Удаление конфигурации
+
+```bash
+# Удаление записи из mdadm.conf
+sudo nano /etc/mdadm/mdadm.conf
+
+# Обновление initramfs
+sudo update-initramfs -u
+```
+
+#### Шаг 5: Очистка дисков (опционально)
+
+```bash
+# Полная очистка всех подписей (ФС, LVM, RAID)
+sudo wipefs --all /dev/sdb1
+sudo wipefs --all /dev/sdc1
+
+# Или уничтожение данных (необратимо!)
+sudo shred -v -n 1 /dev/sdb1
+```
+
+---
+
+### Временная остановка массива
+
+```bash
+# Остановка без удаления метаданных
+sudo mdadm --stop /dev/md0
+
+# Повторная сборка
+sudo mdadm --assemble /dev/md0
+```
+
+---
+
+### Удаление одного диска из массива
+
+```bash
+# 1. Пометка диска как сбойного
+sudo mdadm /dev/md0 --fail /dev/sdb1
+
+# 2. Удаление диска
+sudo mdadm /dev/md0 --remove /dev/sdb1
+
+# 3. Очистка метаданных только на удалённом диске
+sudo mdadm --zero-superblock /dev/sdb1
+```
+
+> **Важно:** Массив останется рабочим в degraded-режиме. Для восстановления добавьте новый диск.
+
+## Дополнительная информация
+
+* [Управление RAID 1](./raid1-management.md#удаление-raid-1)
+* [Очистка метаданных](./raid1-management.md#очистка-старых-метаданных)
+* [wipefs](../partitions_and_filesystems.md)

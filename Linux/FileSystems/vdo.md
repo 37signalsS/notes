@@ -131,3 +131,6 @@ sudo vdo disableDeduplication --name=vdo_name
 * [LVM и Thin Provisioning](./LVM/thin_provisioning.md) — альтернативное тонкое выделение на уровне LVM
 * [Файловые системы](./partitions_and_filesystems.md) — создание ФС поверх VDO
 * [Монтирование](./mounting/fstab.md) — настройка автоматического монтирования
+* [Stratis](./stratis.md) — многоуровневое управление хранилищем
+* [Оптимизация производительности](./performance_tuning.md) — другие методы оптимизации
+* [Мониторинг диска](../Diagnostics/Hardware/iostat.md) — мониторинг ввода-вывода
