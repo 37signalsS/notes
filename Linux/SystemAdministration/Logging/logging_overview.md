@@ -2,12 +2,19 @@
 
 ## Определения
 
-**Системные журналы (логи)** — это файлы, в которые записываются системные сообщения и события, происходящие в операционной системе. Анализ логов является ключевым навыком для диагностики проблем, отслеживания производительности и расследования инцидентов безопасности.
+**Системные журналы (логи)** — файлы, в которые записываются системные сообщения и события. Анализ логов — ключевой навык для диагностики проблем, отслеживания производительности и расследования инцидентов безопасности.
 
-- **`systemd-journald`**: Централизованная служба, которая собирает все логи в структурированном бинарном формате. Подробнее см. [journald: Централизованный сбор логов](./journald.md).
-- **`rsyslog`**: Традиционный демон, который обрабатывает текстовые логи, фильтрует их и пересылает в различные места назначения (файлы, удаленные серверы). Подробнее см. [rsyslog: Фильтрация и пересылка логов](./rsyslog.md).
+**Архитектура логирования в современных Linux:**
 
-Часто эти системы работают вместе: `journald` собирает все сообщения, а `rsyslog` забирает их из журнала для дальнейшей обработки и долгосрочного хранения.
+| Компонент | Назначение | SSoT |
+| :--- | :--- | :--- |
+| `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald.md](./journald.md) |
+| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/Logging/journalctl.md) |
+| `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
+| `auditd` | Аудит событий безопасности на уровне ядра | [auditd.md](./auditd.md) |
+| `logrotate` | Ротация и архивация текстовых логов | См. ниже |
+
+Часто эти системы работают вместе: `journald` собирает сообщения, `rsyslog` забирает их для фильтрации и пересылки, `logrotate` управляет размером файлов.
 
 ## Базовые концепции
 
@@ -109,4 +116,35 @@ sudo logrotate -d /etc/logrotate.conf
 sync
 ```
 
-Применение не только к логам, но и к любым файловым операциям.
+Применяется не только к логам, но и к любым файловым операциям.
+
+### Методология диагностики проблем логирования
+
+| Проблема | Порядок диагностики |
+| :--- | :--- |
+| Сервис не запускается | 1. `journalctl -u <сервис> -b`<br>2. `systemctl status <сервис>`<br>3. Проверить логи приложения в `/var/log/<app>/` |
+| Ошибки аутентификации | 1. `journalctl -p err -b`<br>2. `/var/log/auth.log` или `/var/log/secure`<br>3. `ausearch -m USER_LOGIN` (если настроен `auditd`) |
+| Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [`dmesg -T`](../../Diagnostics/Kernel/dmesg.md)<br>3. `dmesg --level=err,warn` |
+| Дисковое пространство | 1. `journalctl --disk-usage`<br>2. `du -sh /var/log/*`<br>3. Проверить конфигурацию `logrotate` |
+| Проблемы загрузки | 1. `journalctl --list-boots`<br>2. `journalctl -b -1` (предыдущая загрузка)<br>3. [`reboot_troubleshooting.md`](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) |
+| Инцидент безопасности | 1. `ausearch -m SYSCALL`<br>2. `/var/log/audit/audit.log`<br>3. `journalctl _UID=0` (действия root) |
+
+## Ссылки по теме
+
+### Основные компоненты
+
+* **systemd-journald:** [journald.md](./journald.md) — демон, конфигурация, хранение.
+* **journalctl:** [journalctl.md](../../Diagnostics/Logging/journalctl.md) — утилита просмотра логов.
+* **rsyslog:** [rsyslog.md](./rsyslog.md) — фильтрация и пересылка.
+* **auditd:** [auditd.md](./auditd.md) — аудит безопасности.
+
+### Диагностика
+
+* **dmesg:** [dmesg.md](../../Diagnostics/Kernel/dmesg.md) — логи ядра.
+* **Анализ сбоев:** [error_and_crash_analysis.md](./error_and_crash_analysis.md) — coredump, kdump.
+* **Troubleshooting:** [general_troubleshooting_methodology.md](../../Diagnostics/Troubleshooting/general_troubleshooting_methodology.md).
+
+### Observability
+
+* **Централизованное логирование:** [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
+* **Высоконагруженный мониторинг:** [designing_high-load_monitoring_in_distributed_systems.md](../../../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md).
