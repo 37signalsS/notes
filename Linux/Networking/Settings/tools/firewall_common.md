@@ -1,71 +1,84 @@
 # Общие вопросы файрволов Linux
 
-> [Назад к оглавлению](../linux_firewall_management.md)
-
 ## Определения
 
-Общие вопросы настройки и управления файрволами в Linux.
+Файл содержит общие вопросы настройки файрволов, не специфичные для конкретного инструмента (iptables/nftables/firewalld).
 
-## Сохранение правил `iptables`
+См. также:
+- **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
+- **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
+- **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
 
-Правила `iptables` не сохраняются после перезагрузки по умолчанию.
+---
 
-* **Debian/Ubuntu:**
+## Basic Concepts
 
-    ```bash
-    sudo apt-get update
-    sudo apt-get install -y iptables-persistent
-    # Для сохранения измененных правил:
-    sudo netfilter-persistent save
-    ```
+### Сохранение правил между перезагрузками
 
-* **RHEL/CentOS:**
+Правила файрволов не сохраняются после перезагрузки по умолчанию — требуется явное сохранение.
 
-    ```bash
-    sudo yum install -y iptables-services
-    sudo systemctl enable --now iptables
-    # Для сохранения правил:
-    sudo service iptables save
-    ```
+| Дистрибутив | Инструмент | Команда сохранения |
+| :--- | :--- | :--- |
+| **Debian/Ubuntu** | `iptables-persistent` | `sudo netfilter-persistent save` |
+| **RHEL/CentOS 7+** | `iptables-services` | `sudo service iptables save` |
+| **Современные (nftables)** | `nft` | `sudo nft list ruleset > /etc/nftables.conf` |
 
-## Взаимодействие `iptables` и Docker
-
-Docker активно управляет `iptables` для обеспечения сетевой изоляции и проброса портов, добавляя собственные правила в цепочки `DOCKER` и `FORWARD`. Это создает несколько распространенных проблем:
-
-1. **Конфликт с политикой `FORWARD DROP`**: Если вы вручную устанавливаете политику по умолчанию для цепочки `FORWARD` в `DROP`, Docker не сможет доставить трафик в контейнеры.
-    * **Решение:** Вместо изменения глобальной политики, добавляйте свои правила в специальную цепочку `DOCKER-USER`. Docker обрабатывает правила из этой цепочки *перед* своими автоматическими правилами, что позволяет безопасно переопределять доступ к контейнерам.
-
-2. **Конфликт `iptables-legacy` и `iptables-nft`**: В современных дистрибутивах `iptables` является слоем совместимости над `nftables`. Если Docker пытается использовать `legacy`-синтаксис, а другая служба (например, `firewalld`) управляет `nftables` напрямую, правила Docker могут "затираться" или не работать.
-    * **Решение:** Явно переключить Docker и систему на использование `iptables-legacy`.
-
-Подробный разбор этих проблем и примеры их решения находятся в отдельной заметке: **[Решение проблем: Docker и `iptables`](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)**.
-
-Ниже приведен пример добавления правил в `DOCKER-USER`:
-
+**Debian/Ubuntu:**
 ```bash
-# Пример: разрешить доступ к порту 8080 контейнера только с IP 1.2.3.4
-sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -s 1.2.3.4 -j ACCEPT
-sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -j DROP
+sudo apt-get update && sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save
 ```
 
-## `DROP` vs `REJECT`
-
-* `DROP`: Пакеты молча отбрасываются. Предпочтительный способ для внешней сети, так как не раскрывает информацию о хосте и замедляет сканирование портов.
-* `REJECT`: Отправителю отправляется ICMP-сообщение (`connection refused`). Может быть полезно для отладки во внутренних, доверенных сетях.
-
-## Полезные команды `iptables`
-
+**RHEL/CentOS:**
 ```bash
-# Просмотр правил с номерами строк и счетчиками
-sudo iptables -nvL --line-numbers
-
-# Вставить правило на первую позицию в цепочку INPUT
-sudo iptables -I INPUT 1 -s 1.2.3.4 -j DROP
-
-# Удаление правила по номеру строки
-sudo iptables -D INPUT 1
-
-# Сброс всех правил и счетчиков (ОПАСНО!)
-sudo iptables -F
-sudo iptables -X
+sudo yum install -y iptables-services
+sudo systemctl enable --now iptables
+sudo service iptables save
 ```
+
+---
+
+## Practical Scenarios
+
+### Взаимодействие Docker и файрвола
+
+Docker активно управляет `iptables` для сетевой изоляции контейнеров, добавляя правила в цепочки `DOCKER` и `FORWARD`.
+
+**Типичные проблемы:**
+
+1. **Конфликт с политикой `FORWARD DROP`**
+   - **Проблема:** При политике `FORWARD DROP` трафик к контейнерам блокируется.
+   - **Решение:** Добавлять правила в цепочку `DOCKER-USER` (обрабатывается до правил Docker).
+   - **Подробности:** [Интеграция Docker с iptables](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
+
+   ```bash
+   # Разрешить доступ к порту 8080 контейнера только с IP 1.2.3.4
+   sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -s 1.2.3.4 -j ACCEPT
+   sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -j DROP
+   ```
+
+2. **Конфликт `iptables-legacy` и `iptables-nft`**
+   - **Проблема:** В системах с `nftables` (через `firewalld`) правила Docker могут "затираться".
+   - **Решение:** Переключить Docker на `iptables-legacy`.
+   - **Подробности:** [Интеграция Docker с iptables](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
+
+---
+
+## Additional Information
+
+### Сравнение `DROP` и `REJECT`
+
+| Параметр | `DROP` | `REJECT` |
+| :--- | :--- | :--- |
+| **Поведение** | Пакеты молча отбрасываются | Отправляется ICMP-сообщение об ошибке |
+| **Использование** | Внешние сети, интернет | Внутренние доверенные сети |
+| **Безопасность** | Скрывает наличие хоста, замедляет сканирование | Раскрывает информацию о хосте |
+| **Отладка** | Затруднена | Упрощена (видно "connection refused") |
+
+**Рекомендация:** Используйте `DROP` для внешних интерфейсов и `REJECT` для внутренних сетей.
+
+### Ссылки по теме
+
+- **[iptables основы](./iptables_basics.md)** — полезные команды iptables
+- **[nftables](./nftables.md)** — сохранение правил nftables
+- **[firewalld](./firewalld.md)** — управление зонами и сервисами

@@ -11,7 +11,27 @@
 
 **Важно:** Директивы `Allow` имеют приоритет над `Deny`. Рекомендуется использовать только `AllowUsers` или `AllowGroups`, чтобы избежать путаницы.
 
-### Ограничение доступа по IP-адресу с помощью [TCP Wrappers](../../../Networking/ServicesAndTools/tcp_wrappers.md)
+### Ограничение доступа по IP-адресу
+
+#### С помощью [TCP Wrappers](../../../Networking/ServicesAndTools/tcp_wrappers.md)
+
+> **Устаревший метод**: TCP Wrappers не поддерживается в современных дистрибутивах по умолчанию. Рекомендуется использовать методы ниже.
+
+Настройка выполняется через файлы `/etc/hosts.allow` и `/etc/hosts.deny`. Изменения применяются немедленно, без перезапуска службы.
+
+#### С помощью sshd_config (рекомендуется)
+
+Используйте директивы в `/etc/ssh/sshd_config`:
+
+- `AllowUsers user1@192.168.1.100 user2@192.168.1.101`: Разрешает вход только указанным пользователям с конкретных IP
+- `AllowGroups sshusers`: Разрешает вход только пользователям из группы `sshusers`
+- `DenyUsers`, `DenyGroups`: Явный запрет (используются реже)
+
+После изменения `sshd_config` требуется перезапуск: `systemctl restart sshd`.
+
+#### С помощью файрвола
+
+Альтернативный метод — фильтрация на сетевом уровне через `[iptables](../../../Networking/Settings/tools/iptables_basics.md)`, `[nftables](../../../Networking/Settings/tools/nftables.md)` или `firewalld`.
 
 ### Смена стандартного порта
 

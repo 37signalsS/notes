@@ -61,7 +61,7 @@
   * [Udev](./scenarios/udev_mount.md) — монтирование по событиям
 * **Теория udev:** [**Udev: подсистема динамического управления устройствами**](../../Core/udev.md)
 * **Смежные разделы:**
-  * [NFS](../../Networking/Services/nfs.md)
-  * [Samba](../../Networking/Services/samba.md)
+  * [NFS](../../Networking/Services/nfs/index.md)
+  * [Samba](../../Networking/Services/samba/index.md)
   * [LVM snapshots](../LVM/snapshots.md)
 * **Диагностика:** [**Диагностика файловых систем**](../../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md)

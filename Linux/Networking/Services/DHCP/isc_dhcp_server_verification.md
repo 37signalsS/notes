@@ -1,5 +1,7 @@
 # ISC DHCP-сервер: Проверка и мониторинг
 
+> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Мониторинг через JSON/CTRL-agent.
+
 ## 1. Проверка и запуск службы
 
 1.  **Проверка синтаксиса конфигурации:**
@@ -62,6 +64,60 @@
     ```bash
     nmcli device show eth0 | grep IP4
     ```
+
+## Troubleshooting
+
+### Клиент не получает IP
+
+1. **Проверка доступности сервера:**
+```bash
+# С сервера: проверка порта UDP/67
+nc -uvz <dhcp-server> 67
+```
+
+2. **Проверка логов на клиенте:**
+```bash
+# Журнал NetworkManager
+sudo journalctl -u NetworkManager -f
+
+# Прямой запуск dhclient для отладки
+sudo dhclient -v eth0
+```
+
+3. **Проверка широковещательного домена:**
+- Убедитесь, что клиент и сервер в одной подсети
+- Для разных подсетей проверьте настройку [DHCP Relay](./isc_dhcp_server_relay.md)
+
+### Конфликты IP-адресов
+
+```bash
+# Проверка существующих аренд
+cat /var/lib/dhcp/dhcpd.leases | grep -A 5 "lease"
+
+# Поиск дубликатов MAC-адресов
+grep "hardware ethernet" /var/lib/dhcp/dhcpd.leases
+```
+
+### Ошибки в конфигурации
+
+```bash
+# Детальная проверка синтаксиса
+sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf -lf /var/lib/dhcp/dhcpd.leases
+
+# Проверка с выводом всех ошибок
+sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf 2>&1 | less
+```
+
 ---
-*   **Назад:** [Настройка DHCP Relay](./isc_dhcp_server_relay.md)
-*   **В начало:** [Обзор ISC DHCP](./isc_dhcp_server_overview.md)
+
+## Навигация по документации DHCP
+
+| Тема | Файл |
+| :--- | :--- |
+| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
+| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
+| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
+| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
+| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
+| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
+| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

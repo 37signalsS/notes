@@ -756,8 +756,8 @@
 /home/q/notes/Linux/Networking/Services/BIND/reverse_zone_configuration.md
 /home/q/notes/Linux/Networking/Services/BIND/slave_server_configuration.md
 /home/q/notes/Linux/Networking/Services/dhcp_server.md
-/home/q/notes/Linux/Networking/Services/nfs.md
-/home/q/notes/Linux/Networking/Services/samba.md
+/home/q/notes/Linux/Networking/Services/nfs/index.md
+/home/q/notes/Linux/Networking/Services/samba/index.md
 /home/q/notes/Linux/Networking/Settings/ipv6_configuration.md
 /home/q/notes/Linux/Networking/Settings/linux_firewall_management.md
 /home/q/notes/Linux/Networking/Settings/persistent_network_configuration.md
@@ -774,7 +774,6 @@
 /home/q/notes/Linux/Networking/Tools/iproute2/ip_tunnel.md
 /home/q/notes/Linux/Networking/Tools/iproute2/overview.md
 /home/q/notes/Linux/Networking/Tools/iproute2/tc.md
-/home/q/notes/Linux/Networking/Tools/iproute2/tc_netem.md
 /home/q/notes/Linux/Networking/Tools/tc_netem.md
 /home/q/notes/Linux/PackageManagement/deb_apt_pinning.md
 /home/q/notes/Linux/PackageManagement/deb_private_apt_repository_reprepro.md

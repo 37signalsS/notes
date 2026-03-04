@@ -25,8 +25,21 @@
 
 ### Алгоритмы управления перегрузкой
 
-* **CUBIC** — алгоритм по умолчанию, универсальный, но может создавать очереди при высокой нагрузке.
-* **BBR** — минимизирует очереди, удерживая скорость близкой к пропускной способности канала. Эффективен на каналах с потерями (мобильные сети).
+* **CUBIC** — алгоритм по умолчанию в большинстве дистрибутивов. Универсальный, но может создавать очереди при высокой нагрузке.
+* **BBR (Bottleneck Bandwidth and Round-trip time)** — минимизирует очереди, удерживая скорость близкой к пропускной способности канала. Эффективен на каналах с потерями (мобильные сети).
+* **BBRv2** — улучшенная версия BBR с лучшей справедливостью (fairness) по отношению к CUBIC и лучшими характеристиками в сетях с потерями. Доступен в ядре 5.18+ (не во всех дистрибутивах).
+* **BBRv3** — latest версия от Google, **НЕ включена в mainline Linux kernel** (2026). Доступна через патчи.
+* **Reno** — классический алгоритм, основанный на потерях. Устарел для современных сетей.
+
+### Доступные алгоритмы в системе
+
+```bash
+# Просмотр доступных алгоритмов
+cat /proc/sys/net/ipv4/tcp_available_congestion_control
+
+# Текущий алгоритм
+sysctl net.ipv4.tcp_congestion_control
+```
 
 ### Дисциплины очередей (Queueing Disciplines)
 
@@ -109,18 +122,52 @@ sudo sysctl -w net.ipv4.tcp_wmem='4096 65536 16777216'
 
 Требования: ядро Linux 4.9+
 
-    ```ini
-    # /etc/sysctl.conf
-    # Включить Fair Queuing (обязательно для BBR)
-    net.core.default_qdisc = fq
-    # Установить BBR как алгоритм контроля перегрузки
-    net.ipv4.tcp_congestion_control = bbr
-    ```
+```ini
+# /etc/sysctl.conf
+# Включить Fair Queuing (обязательно для BBR)
+net.core.default_qdisc = fq
+# Установить BBR как алгоритм контроля перегрузки
+net.ipv4.tcp_congestion_control = bbr
+```
 
 ```bash
 sudo sysctl -p
 # Проверка
 ss -ti | grep bbr
+```
+
+### Включение BBRv2
+
+Требования: ядро Linux 5.18+
+
+```ini
+# /etc/sysctl.conf
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr2
+```
+
+**Преимущества BBRv2 по сравнению с BBRv1:**
+- Лучшая справедливость (fairness) при совместной работе с CUBIC
+- Улучшенная производительность в сетях с потерями пакетов
+- Более стабильная работа с WiFi и мобильными сетями
+- Поддержка ECN (Explicit Congestion Notification)
+
+```bash
+# Проверка поддержки BBRv2
+modprobe tcp_bbr2
+cat /proc/sys/net/ipv4/tcp_available_congestion_control | grep bbr2
+```
+
+> **Примечание:** BBRv2 может быть недоступен в старых дистрибутивах. Требуется ядро 5.18+.
+
+### Включение BBRv3 (experimental)
+
+> **Внимание:** BBRv3 **НЕ** включен в mainline Linux kernel (2026). Требует патчей или сборки ядра.
+
+```ini
+# /etc/sysctl.conf
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr3
 ```
 
 ### Настройка initcwnd

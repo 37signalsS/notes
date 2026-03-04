@@ -4,10 +4,36 @@
 
 Позволяет подключать удалённые блочные устройства по IP-сети так, будто это локальный диск.
 
+## Определения
+
+* **Target** — сервер, предоставляющий блочные устройства (LUN).
+* **Initiator** — клиент, подключающийся к таргету и получающий доступ к этим устройствам.
+* **LUN (Logical Unit Number)** — логический том, предоставляемый Target.
+* **IQN (iSCSI Qualified Name)** — уникальное имя таргета/инициатора в формате `iqn.YYYY-MM.com.example:storage`.
+* **CHAP (Challenge-Handshake Authentication Protocol)** — протокол аутентификации для безопасного подключения.
+
 ## Архитектурная модель iSCSI
 
-- **Target** — сервер, предоставляющий блочные устройства (LUN).
-- **Initiator** — клиент, подключающийся к таргету и получающий доступ к этим устройствам.
+```
+┌─────────────────┐      IP-сеть      ┌─────────────────┐
+│   Initiator     │◄─────────────────►│     Target      │
+│   (Клиент)      │    TCP/IP:3260    │   (Сервер)      │
+│  open-iscsi     │                   │  tgt / LIO      │
+└─────────────────┘                   └─────────────────┘
+        │                                     │
+        ▼                                     ▼
+  /dev/sdb                              /dev/sdb (физический)
+  (виртуальный диск)                    (или файл-образ)
+```
+
+### Реализации
+
+| Компонент | Реализация | Статус | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Target** | `tgt` | Стабильно | Простая настройка, рекомендуется для большинства случаев |
+| **Target** | `LIO` (targetcli) | Стабильно | Встроен в ядро, сложнее в настройке |
+| **Initiator** | `open-iscsi` | Стандарт | Используется во всех дистрибутивах |
+| **Initiator** | Встроенный в ядро | Альтернатива | Для специфичных сценариев |
 
 ## Установка и настройка iSCSI Target
 
@@ -27,10 +53,39 @@ sudo apt install tgt
 </target>
 ```
 
+**Важно:** iSCSI использует TCP-порт **3260**. Убедитесь, что он открыт в firewall:
+
+```bash
+sudo ufw allow 3260/tcp
+# или для iptables
+sudo iptables -A INPUT -p tcp --dport 3260 -j ACCEPT
+```
+
 После изменения конфигурации перезапустите службу:
 
 ```bash
 sudo systemctl restart tgt
+sudo systemctl enable tgt  # для автозагрузки при старте
+```
+
+**Проверка статуса Target:**
+
+```bash
+# Показать все таргеты
+sudo tgtadm --lld iscsi --mode target --op show
+
+# Проверить статус службы
+systemctl status tgt
+```
+
+### Альтернатива: LIO (targetcli)
+
+`LIO` — встроенная в ядро Linux реализация iSCSI Target. Настройка через `targetcli`:
+
+```bash
+sudo apt install targetcli-fb
+sudo targetcli
+```
 ```
 
 ## Установка и основные команды для iSCSI Initiator
@@ -39,6 +94,8 @@ sudo systemctl restart tgt
 
 ```bash
 sudo apt install open-iscsi
+sudo systemctl enable open-iscsi
+sudo systemctl start open-iscsi
 ```
 
 ### Основные команды
@@ -67,65 +124,120 @@ sudo apt install open-iscsi
   sudo iscsiadm -m node -T <IQN> -p <IP> --logout
   ```
 
+- **Удаление записи о таргете (после logout):**
+
+  ```bash
+  sudo iscsiadm -m node -T <IQN> -p <IP> -o delete
+  ```
+
+- **Автоматический вход при загрузке:**
+
+  ```bash
+  # После успешного login установите автоматический вход
+  sudo iscsiadm -m node -T <IQN> -p <IP> -o update -n node.startup -v automatic
+  ```
+
 ## Использование iSCSI-устройства (разметка, форматирование, монтирование, постоянство)
 
 После успешного подключения (`--login`) iSCSI-таска он становится доступным как блочное устройство.
 
-1. **Определение нового устройства:**
-    Используйте `lsblk` или `fdisk -l` для обнаружения нового диска. Оно может появиться как `/dev/sdX` (например, `/dev/sdb`).
+### 1. Определение нового устройства
 
-    ```bash
-    lsblk
-    ```
+Используйте `lsblk` или `fdisk -l` для обнаружения нового диска. Оно может появиться как `/dev/sdX` (например, `/dev/sdb`).
 
-2. **Создание раздела (опционально, если не нужен весь диск):**
+```bash
+lsblk
+# или
+sudo fdisk -l
+```
 
-    ```bash
-    sudo fdisk /dev/sdb
-    # N (новый раздел), P (основной), 1 (номер раздела), Enter (начальный сектор), Enter (конечный сектор), W (записать изменения)
-    ```
+**Проверка сессий iSCSI:**
 
-3. **Форматирование раздела:**
+```bash
+# Показать активные сессии с деталями
+sudo iscsiadm -m session -P 3
+```
 
-    ```bash
-    sudo mkfs.ext4 /dev/sdb1 # или /dev/sdb, если без разделов
-    ```
+### 2. Создание раздела (опционально, если не нужен весь диск)
 
-4. **Создание точки монтирования и монтирование:**
+```bash
+sudo fdisk /dev/sdb
+# N (новый раздел), P (основной), 1 (номер раздела), Enter (начальный сектор), Enter (конечный сектор), W (записать изменения)
+```
 
-    ```bash
-    sudo mkdir /mnt/iscsi_data
-    sudo mount /dev/sdb1 /mnt/iscsi_iscsi_data
-    ```
+### 3. Форматирование раздела
 
-5. **Проверка монтирования:**
+```bash
+sudo mkfs.ext4 /dev/sdb1 # или /dev/sdb, если без разделов
+```
 
-    ```bash
-    df -h /mnt/iscsi_data
-    ```
+### 4. Создание точки монтирования и монтирование
 
-6. **Настройка постоянного монтирования (fstab):**
-    Получите UUID устройства для надежного монтирования:
+```bash
+sudo mkdir /mnt/iscsi_data
+sudo mount /dev/sdb1 /mnt/iscsi_data
+```
 
-    ```bash
-    sudo blkid /dev/sdb1
-    ```
+### 5. Проверка монтирования
 
-    Добавьте строку в `/etc/fstab`. Важно использовать опцию `_netdev`, чтобы система монтировала раздел только после поднятия сети.
+```bash
+df -h /mnt/iscsi_data
+```
 
-    ```ini
-    UUID=<ваш_UUID> /mnt/iscsi_data ext4 _netdev,defaults 0 0
-    ```
+### 6. Настройка постоянного монтирования (fstab)
 
-    Проверьте конфигурацию `/etc/fstab`:
+Получите UUID устройства для надежного монтирования:
 
-    ```bash
-    sudo mount -a
-    ```
+```bash
+sudo blkid /dev/sdb1
+```
+
+Добавьте строку в `/etc/fstab`. **Важно использовать опцию `_netdev`**, чтобы система монтировала раздел только после поднятия сети.
+
+```ini
+UUID=<ваш_UUID> /mnt/iscsi_data ext4 _netdev,defaults 0 0
+```
+
+Проверьте конфигурацию `/etc/fstab`:
+
+```bash
+sudo mount -a
+```
+
+**Опции монтирования для iSCSI:**
+
+| Опция | Описание |
+| :--- | :--- |
+| `_netdev` | Устройство требует сети (обязательно для iSCSI) |
+| `nofail` | Не прерывать загрузку, если устройство недоступно |
+| `defaults` | Стандартные опции (rw, suid, dev, exec, auto, nouser, async) |
+| `noatime` | Не обновлять время доступа (для производительности) |
+
+**Пример полной строки fstab:**
+
+```ini
+UUID=abc123 /mnt/iscsi_data ext4 _netdev,nofail,noatime 0 2
+```
+
+### Диагностика проблем Initiator
+
+```bash
+# Проверить статус службы open-iscsi
+systemctl status open-iscsi
+
+# Просмотреть логи
+journalctl -u open-iscsi -f
+
+# Принудительное переподключение
+sudo iscsiadm -m node --logoutall=ALL
+sudo iscsiadm -m node --loginall=ALL
+```
 
 ### CHAP (Challenge-Handshake Authentication Protocol)
 
 CHAP — протокол аутентификации, используемый для безопасного подключения iSCSI-инициаторов к таргетам. Обеспечивает взаимную аутентификацию (target-initiator и initiator-target) с использованием общего секрета.
+
+**Важно:** CHAP защищает от несанкционированного доступа, но не шифрует трафик. Для шифрования используйте IPsec или выделенную сеть. Для изоляции iSCSI-трафика в отдельной сети рассмотрите **[Policy-Based Routing](./linux_policy_based_routing.md)**.
 
 #### Настройка на iSCSI Target (tgt)
 
@@ -179,6 +291,33 @@ sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.
 sudo iscsiadm -m node -T <IQN> -p <IP_таргета> --login
 ```
 
+**Рекомендации по безопасности CHAP:**
+
+| Требование | Описание |
+| :--- | :--- |
+| **Длина пароля** | Минимум 12 символов |
+| **Сложность** | Буквы, цифры, специальные символы |
+| **Уникальность** | Разные пароли для разных таргетов |
+| **Хранение** | Файл `/etc/iscsi/iscsid.conf` должен быть доступен только root (`chmod 600`) |
+
 ## Заключение
 
 iSCSI превращает IP-сеть в гибкое хранилище уровня SAN — бесплатная альтернатива Fibre Channel для виртуализации, кластеров и бэкапов. Основные реализации: `open-iscsi` (инициатор) и `tgt` или `LIO` (таргет).
+
+## Типичные проблемы и решения
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| **Connection refused:3260** | Target не запущен или firewall блокирует | `systemctl status tgt`, проверить порт 3260 |
+| **Authentication failed** | Неверный CHAP пароль | Проверить `iscsid.conf` на обоих концах |
+| **No portals found** | Неправильный IP таргета | Проверить `iscsiadm -m discovery` |
+| **Device not appearing** | Драйверы или проблема с ядром | `dmesg \| grep -i iscsi`, `lsblk` |
+| **Mount fails after reboot** | Нет опции `_netdev` в fstab | Добавить `_netdev,nofail` в fstab |
+| **Session timeout** | Проблемы с сетью | Проверить стабильность сети, MTU |
+
+## Связанные заметки
+
+* **[LVM](../Storage/lvm.md)** — управление логическими томами
+* **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем
+* **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
+* **[Firewall](../Settings/linux_firewall_management.md)** — настройка firewall

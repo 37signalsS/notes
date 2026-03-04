@@ -149,6 +149,6 @@ sudo tc qdisc del dev eth0 root netem
 ### Связанные темы
 
 * **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — настройка TCP-стека, алгоритмы congestion control
-* **[`ip route`](../../Tools/iproute2/ip_route.md)** — управление маршрутами и initcwnd
+* **[`ip route`](./ip_route.md)** — управление маршрутами и initcwnd
 * **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 * **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем

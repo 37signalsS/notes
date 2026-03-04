@@ -1,6 +1,10 @@
 # ISC DHCP-сервер: Настройка отказоустойчивости (Failover)
 
+> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. В Kea используется HA (High Availability) через hook modules.
+
 Для обеспечения высокой доступности (High Availability) службы DHCP настраивают два сервера в режиме failover. Они синхронизируют между собой информацию о выданных адресах и могут подменять друг друга в случае сбоя.
+
+> **См. также:** [Протокол DHCP: безопасность](../../../Networking/Protocols/dhcp.md#безопасность-dhcp-защита-от-несанкционированных-dhcp-серверов-rogue-dhcp-server) — защита от rogue DHCP.
 
 ## Принцип работы
 1.  **Два сервера:** Один настраивается как `primary`, другой как `secondary`.
@@ -83,6 +87,54 @@ subnet 10.0.10.0 netmask 255.255.255.0 {
 ## Шаг 4: Настройка файрвола
 На обоих DHCP-серверах необходимо разрешить входящие подключения на порт **TCP/647** для обмена failover-сообщениями.
 
+## Состояния failover-пары
+
+| Состояние | Описание |
+| :--- | :--- |
+| **normal** | Оба сервера работают, синхронизация активна |
+| **balanced** | Нормальная работа с распределением нагрузки |
+| **communications-interrupted** | Потеря связи между серверами |
+| **partner-down** | Партнер считается неработающим |
+| **potentially-down** | Сервер под вопросом, требуется подтверждение |
+| **reboot** | Сервер перезапускается после сбоя |
+| **shutdown** | Сервер остановлен администратором |
+| **paused** | Временная приостановка обработки запросов |
+
+## Troubleshooting failover
+
+**Проблема:** Серверы не синхронизируются
+```bash
+# Проверка логов на наличие ошибок
+sudo journalctl -u isc-dhcp-server -f | grep failover
+
+# Проверка подключения к порту партнера
+telnet 10.0.4.5 647
+
+# Проверка состояния failover в логах
+grep "failover peer" /var/log/syslog
+```
+
+**Проблема:** Конфликты IP-адресов
+```bash
+# Проверка файла аренды на обоих серверах
+cat /var/lib/dhcp/dhcpd.leases
+
+# Принудительная синхронизация (на secondary)
+sudo systemctl stop isc-dhcp-server
+sudo rm /var/lib/dhcp/dhcpd.leases~
+sudo systemctl start isc-dhcp-server
+```
+
 ---
-*   **Далее:** [Настройка DHCP Relay](./isc_dhcp_server_relay.md)
-*   **Назад:** [Резервирование IP и маршруты](./isc_dhcp_server_reservations.md)
+
+## Навигация по документации DHCP
+
+| Тема | Файл |
+| :--- | :--- |
+| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
+| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
+| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
+| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
+| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
+| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
+| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

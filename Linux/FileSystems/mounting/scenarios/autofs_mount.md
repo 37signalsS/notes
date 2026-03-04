@@ -176,6 +176,6 @@ sudo ipa-client-install --enable-dns-updates
   * [ArchWiki: AutoFS](https://wiki.archlinux.org/title/Autofs) (обновлено: декабрь 2025)
   * [Ubuntu: Autofs](https://help.ubuntu.com/community/Autofs)
 * **Смежные разделы:**
-  * [NFS (Network File System)](../../../Networking/Services/nfs.md)
+  * [NFS (Network File System)](../../../Networking/Services/nfs/index.md)
   * [Файл /etc/fstab](../fstab.md)
 * **Обзор:** [Главный файл раздела](../index.md)

@@ -9,6 +9,7 @@
 * **Автосогласование (Auto-Negotiation)** — автоматический выбор наилучшего режима работы (скорость и дуплекс) между соединенными устройствами.
 * **MTU (Maximum Transmission Unit)** — максимальный размер кадра.
 * **RSS (Receive Side Scaling)** — аппаратная технология распределения пакетов по ядрам CPU (подробнее в [RSS, RPS, RFS](../Concepts/rss_rps_rfs.md)).
+* **Checksum Offloading** — вычисление контрольных сумм пакетов переносится с CPU на NIC (подробнее в [Offloading](../Concepts/offloading.md)).
 
 ## Основные концепции
 
@@ -39,9 +40,13 @@
 
 ### Оффлоуды (Offloads)
 
+> Подробное описание в [Offloading](../Concepts/offloading.md).
+
 * **GRO (Generic Receive Offload)** — укрупнение пакетов на уровне ядра.
 * **LRO (Large Receive Offload)** — укрупнение пакетов аппаратно.
 * **TSO (TCP Segmentation Offload)** — сегментация TCP аппаратно.
+* **Checksum Offloading** — вычисление контрольных сумм аппаратно.
+* **VLAN Offloading** — обработка VLAN-тегов аппаратно.
 
 Отключение GRO/LRO снижает задержки для критичных по latency приложений.
 
@@ -58,6 +63,12 @@ sudo ethtool -S enp0s3
 
 # Информация о драйвере и прошивке
 sudo ethtool -i enp0s3
+
+# Проверка статуса оффлоудов
+sudo ethtool -k enp0s3
+
+# Краткий вывод только активных оффлоудов
+sudo ethtool -k enp0s3 | grep "on"
 ```
 
 ### Изменение базовых параметров
@@ -123,21 +134,47 @@ sudo ethtool -C eth0 rx-usecs 20 tx-usecs 20
 * `tx-usecs` — максимальное время ожидания перед генерацией прерывания при передаче.
 * Меньшие значения = меньше задержка, но больше прерываний.
 
-### Балансировка прерываний
-
-Для равномерного распределения нагрузки от сетевых прерываний между ядрами CPU проверьте статус `irqbalance`:
+### Диагностика проблем с IRQ
 
 ```bash
-irqbalancectl status
+# Проверить распределение прерываний по CPU
+cat /proc/interrupts | grep eth0
+
+# Проверить загрузку softirq по ядрам
+cat /proc/softirqs | grep NET_RX
+
+# Проверить статус irqbalance
+systemctl status irqbalance
+
+# Если irqbalance не активен — прерывания могут обрабатываться на одном CPU
+# Это приводит к неравномерной нагрузке и потерям пакетов
 ```
 
-При необходимости убедитесь, что служба `irqbalance` активна и настроена корректно.
+**Решение:**
+- Включить `irqbalance` для автоматического распределения
+- Или вручную настроить affinity через `/proc/irq/<IRQ>/smp_affinity`
 
-# Отключение GRO и LRO для снижения задержек
+### Управление оффлоудами
+
+> Подробное описание сценариев в [Offloading](../Concepts/offloading.md).
 
 ```bash
-ethtool -K eth0 gro off lro off
+# Отключить GRO/LRO для снижения задержек (latency-критичные приложения)
+sudo ethtool -K eth0 gro off lro off
+
+# Отключить TSO для предсказуемой отправки пакетов
+sudo ethtool -K eth0 tso off
+
+# Включить обратно для максимальной пропускной способности
+sudo ethtool -K eth0 gro on lro on tso on
+
+# Проверить изменения
+ethtool -k eth0 | grep -E "gro|lro|tso"
 ```
+
+**Сценарии:**
+- **Низкая латентность** (VoIP, HFT, онлайн-игры): отключить GRO/LRO/TSO
+- **Высокая пропускная способность** (файловые серверы, CDN): включить все оффлоуды
 
 ### Идентификация порта и самотесты
 
@@ -215,6 +252,9 @@ AutoNegotiation=yes
 
 ### Связанные темы
 
+* **[Offloading](../Concepts/offloading.md)** — детальное описание технологий GRO/LRO/TSO
 * **[RSS, RPS, RFS](../Concepts/rss_rps_rfs.md)** — концепции многопоточной обработки
 * **[Оптимизация TCP](../Concepts/tcp_tuning.md)** — настройка TCP-стека
+* **[Оптимизация сетевых каналов](../Concepts/network_latency_optimization.md)** — комплексная оптимизация
 * **[`ip link`](iproute2/ip_link.md)** — управление MTU и состоянием интерфейса
+* **[`tc`](iproute2/tc.md)** — управление трафиком (QoS)

@@ -22,7 +22,7 @@ PXE является стандартом де-факто для автомат�
 3. **DHCP-сервер** отвечает, предоставляя IP-адрес и опции `next-server` (IP TFTP-сервера) и `filename` (имя загрузчика, например `pxelinux.0` или `ipxe.efi`).
 4. Клиент скачивает **NBP** с TFTP-сервера в оперативную память и исполняет его.
 5. NBP (например, `PXELINUX`) скачивает свою конфигурацию, ядро Linux (`vmlinuz`) и `initrd`.
-6. Запускается ядро, которое монтирует корневую файловую систему по сети (через [NFS](../Services/nfs.md)/[iSCSI](../iSCSI.md)) или начинает автоматическую установку ОС, скачивая файлы с HTTP-сервера.
+6. Запускается ядро, которое монтирует корневую файловую систему по сети (через [NFS](../Services/nfs/index.md)/[iSCSI](../iSCSI.md)) или начинает автоматическую установку ОС, скачивая файлы с HTTP-сервера.
 
 Подробнее о [процессе загрузки Linux](../../Core/kernel/boot_process.md).
 
@@ -37,7 +37,7 @@ PXE является стандартом де-факто для автомат�
 
 ### 2. Развертывание PXE-сервера
 
-* **[DHCP-сервер: Развертывание и настройка](../Services/dhcp_server.md)**
+* **[DHCP-сервер: Развертывание и настройка](../Services/DHCP/isc_dhcp_server_overview.md)**
 
 * **TFTP-сервер (например, `tftpd-hpa`):**
   * В корневой директории TFTP (часто `/srv/tftp/`) размещаются:
@@ -61,6 +61,16 @@ PXE является стандартом де-факто для автомат�
 
 Это позволяет, например, отказаться от медленного и примитивного TFTP в пользу HTTP.
 
+**Пример скрипта iPXE:**
+```ipxe
+#!ipxe
+dhcp
+set boot-url http://192.168.1.100/install
+kernel ${boot-url}/vmlinuz initrd=initrd.img ip=dhcp
+initrd ${boot-url}/initrd.img
+boot
+```
+
 ### PXE в средах UEFI
 
 * **Разные загрузчики:** Для Legacy BIOS и UEFI требуются разные загрузчики. `pxelinux.0` предназначен для BIOS, в то время как для UEFI обычно используются `.efi` файлы (например, `shim.efi`, `grubx64.efi` или `ipxe.efi`).
@@ -78,3 +88,41 @@ PXE является стандартом де-факто для автомат�
 * Использовать iPXE с загрузкой по HTTPS.
 * Изолировать PXE-сегмент сети (VLAN).
 * Использовать функции безопасности коммутаторов, такие как [DHCP Snooping](../../../Networking/Protocols/dhcp.md#dhcp-snooping).
+
+### Современные решения для Provisioning
+
+**Bare Metal Provisioning** — автоматизированная установка ОС на физические серверы.
+
+| Решение | Описание | Использование PXE |
+|---------|----------|-------------------|
+| **MAAS (Metal as a Service)** | Canonical, управление физическими серверами как облаком | PXE + DHCP + TFTP |
+| **Foreman** | Интеграция с Puppet, Katello | PXE + DHCP |
+| **Tinkerbell** | CNCF проект, workflow-based provisioning | PXE/HTTP |
+| **iPXE + HTTP** | Современная альтернатива TFTP | iPXE chainload + HTTP |
+| **Virtual Media (IPMI/iDRAC)** | Монтирование ISO удалённо | Альтернатива PXE |
+
+### PXE в Kubernetes-средах
+
+Для автоматизации развёртывания Kubernetes-кластеров на bare metal:
+
+* **Tinkerbell** — CNCF-проект для provisioning
+* **Metal³** — Bare Metal Host для Kubernetes
+* **Matchbox** — Matchbox от CoreOS (сейчас Flatcar)
+
+### Альтернативы PXE
+
+| Метод | Преимущества | Недостатки |
+|-------|-------------|------------|
+| **IPMI Virtual Media** | Не требует PXE-инфраструктуры | Медленнее, требует лицензий |
+| **USB-накопители** | Просто для разовых установок | Не масштабируется |
+| **iSCSI Boot** | Загрузка по iSCSI напрямую | Требует поддержки NIC |
+| **HTTP Boot (UEFI)** | Быстрее TFTP, проще настройка | Требуется UEFI 2.0+ |
+
+### Связанные темы
+
+- **[DHCP-сервер](../Services/DHCP/isc_dhcp_server_overview.md)** — настройка DHCP для PXE
+- **[TFTP](../ServicesAndTools/)** — базовый файловый сервер для PXE (документация в разработке)
+- **[iSCSI](../iSCSI.md)** — загрузка rootfs по iSCSI
+- **[NFS](../Services/nfs/index.md)** — сетевая файловая система для PXE
+- **[Процесс загрузки Linux](../../Core/kernel/boot_process.md)** — этапы загрузки системы
+- **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — влияние латентности сети на загрузку

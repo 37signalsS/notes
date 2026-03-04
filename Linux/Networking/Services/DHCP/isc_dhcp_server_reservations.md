@@ -1,5 +1,9 @@
 # ISC DHCP-сервер: Резервирование IP и передача маршрутов
 
+> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Конфигурация резервирования в JSON.
+
+> **См. также:** [Статическое назначение DHCP](../../../Networking/Protocols/dhcp.md#способы-назначения-ip-адресов) — теория в SSoT.
+
 ## Резервирование IP-адреса (Static Allocation)
 Чтобы устройство (например, сервер или принтер) всегда получало один и тот же IP-адрес, используется резервирование по MAC-адресу.
 
@@ -28,6 +32,17 @@ subnet 10.0.30.0 netmask 255.255.255.0 {
     option rfc3442-classless-static-routes 16, 172, 16, 10, 0, 30, 254;
 }
 ```
+
 ---
-*   **Далее:** [Настройка отказоустойчивости (Failover)](./isc_dhcp_server_failover.md)
-*   **Назад:** [Базовая настройка](./isc_dhcp_server_basic_config.md)
+
+## Навигация по документации DHCP
+
+| Тема | Файл |
+| :--- | :--- |
+| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
+| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
+| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
+| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
+| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
+| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
+| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

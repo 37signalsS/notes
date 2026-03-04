@@ -2,20 +2,29 @@
 
 ## Определения
 
-* **Постоянная настройка сети** — это конфигурация сетевых параметров (IP-адресов, шлюзов, DNS-серверов), которая сохраняется после перезагрузки. В отличие от временных настроек, применяемых утилитой [iproute2](../Tools/iproute2/overview.md), она достигается редактированием системных файлов.
+* **Постоянная настройка сети** — конфигурация сетевых параметров (IP-адресов, шлюзов, DNS-серверов), сохраняющаяся после перезагрузки. В отличие от временных настроек через [iproute2](../Tools/iproute2/overview.md), достигается редактированием системных файлов.
 
 ## Базовые концепции
 
-Настройки, сделанные с помощью команды `ip`, являются временными. Для постоянной конфигурации сети в Linux необходимо использовать один из следующих подходов, зависящих от дистрибутива и его версии.
+Настройки через команду `ip` временны. Для постоянной конфигурации используются следующие подходы (зависят от дистрибутива):
 
-Основные системы управления сетью:
+| Система | Дистрибутивы | Тип конфигурации | Управление |
+| :--- | :--- | :--- | :--- |
+| **`/etc/network/interfaces`** | Debian/Ubuntu (старые) | Императивная | `ifupdown` |
+| **NetworkManager** | RHEL/CentOS/Fedora, Ubuntu Desktop | Императивная | `nmcli`, `nmtui` |
+| **Netplan** | Ubuntu 17.10+ | Декларативная (YAML) | `netplan` |
+| **`systemd-networkd`** | Минималистичные/серверные сборки | Декларативная | `networkctl` |
 
-* **`/etc/network/interfaces`**: Классический метод в Debian/Ubuntu.
-* **NetworkManager**: Стандарт де-факто в десктопных и многих серверных дистрибутивах (CentOS/RHEL, Fedora, Ubuntu Desktop). Управляется через `nmcli`.
-* **Netplan**: Декларативная система на основе YAML в современных версиях Ubuntu Server, которая генерирует конфигурацию для NetworkManager или `systemd-networkd`.
-* **`systemd-networkd`**: Современный системный менеджер сети, часто используется в минималистичных и серверных сборках.
+**Выбор системы:**
+- **Серверы без GUI**: `systemd-networkd` или `netplan` (Ubuntu), `NetworkManager` (RHEL)
+- **Десктопы**: `NetworkManager` (универсально)
+- **Контейнеры/minimal**: `systemd-networkd`
 
-Концепции работы DNS-клиента подробно описаны в заметке [Настройка и диагностика DNS-клиента в Linux](../Concepts/dns_client.md).
+**См. также:**
+- [Сетевые интерфейсы](../Concepts/linux_network_interfaces.md) — типы интерфейсов
+- [Настройка DNS-клиента](../Concepts/dns_client.md) — DNS-резолвинг
+- [Агрегация каналов](../../../Networking/Concepts/link_aggregation.md) — bonding
+- [VLAN](../../../Networking/Concepts/vlan_and_L2_switching.md) — VLAN-конфигурация
 
 ## Практические сценарии
 
@@ -123,30 +132,194 @@ sudo netplan generate
 sudo netplan apply
 ```
 
+### 4. systemd-networkd
+
+`systemd-networkd` — встроенный менеджер сети в systemd. Работает без дополнительных зависимостей, идеален для серверов и минималистичных систем.
+
+**Конфигурационные файлы:** `/etc/systemd/network/*.network`
+
+**Пример статической конфигурации:**
+
+```ini
+# /etc/systemd/network/10-eth0.network
+[Match]
+Name=eth0
+
+[Network]
+Address=10.10.10.10/24
+Gateway=10.10.10.1
+DNS=8.8.8.8
+DNS=1.1.1.1
+
+# DHCP (альтернатива)
+# [Network]
+# DHCP=yes
+```
+
+**Пример с несколькими адресами и маршрутами:**
+
+```ini
+# /etc/systemd/network/10-eth0.network
+[Match]
+Name=eth0
+
+[Network]
+# Основной адрес
+Address=10.10.10.10/24
+# Дополнительный адрес (VIP)
+Address=10.10.10.20/24
+Gateway=10.10.10.1
+DNS=8.8.8.8
+DNS=1.1.1.1
+
+# Статический маршрут
+[Route]
+Destination=192.168.100.0/24
+Gateway=10.10.10.254
+
+# Маршрут по умолчанию с метрикой
+[Route]
+Gateway=10.10.10.1
+Metric=100
+```
+
+**Пример DHCP-клиента:**
+
+```ini
+# /etc/systemd/network/10-eth0.network
+[Match]
+Name=eth0
+
+[Network]
+DHCP=yes
+
+[DHCP]
+# Использовать DNS от DHCP
+UseDNS=yes
+# Использовать NTP от DHCP
+UseNTP=yes
+```
+
+**Управление и диагностика:**
+
+```bash
+# Включить службу
+sudo systemctl enable --now systemd-networkd
+
+# Перезапустить службу
+sudo systemctl restart systemd-networkd
+
+# Показать состояние интерфейсов
+networkctl status
+
+# Показать список интерфейсов
+networkctl list
+
+# Перечитать конфигурацию
+sudo networkctl reload
+
+# Журнал событий
+journalctl -u systemd-networkd -f
+```
+
+**Интеграция с systemd-resolved (DNS):**
+
+`systemd-networkd` автоматически передает DNS-серверы в `systemd-resolved`. Проверка:
+
+```bash
+# Показать текущие DNS-серверы
+resolvectl status
+
+# Показать кэш DNS
+resolvectl statistics
+```
+
+**Преимущества systemd-networkd:**
+- Минимальные зависимости (часть systemd)
+- Декларативная конфигурация
+- Встроенная поддержка DHCP, DNS-over-TLS (через systemd-resolved)
+- Хорошая интеграция с другими компонентами systemd
+
+**Недостатки:**
+- Меньше возможностей для сложных сценариев (по сравнению с NetworkManager)
+- Нет GUI-инструментов
+
+---
+
 ## Дополнительная информация
 
 ### IPv6
 
-Настройка IPv6 в Linux выполняется аналогично IPv4, но с использованием соответствующих параметров. Подробнее см. [Настройка IPv6 в Linux](./ipv6_configuration.md).
+Настройка IPv6 выполняется аналогично IPv4 с использованием соответствующих параметров. Подробно см. [Настройка IPv6 в Linux](./ipv6_configuration.md).
 
-### 1. Фиксация имен сетевых интерфейсов
+### Фиксация имен сетевых интерфейсов
 
-Чтобы имя интерфейса (например, `eth0`) не менялось после перезагрузки, можно использовать `systemd.link`.
+Для предотвращения смены имен интерфейсов (например, `eth0` → `eth1`) после перезагрузки используется `systemd.link`.
 
-1. **Узнайте MAC-адрес интерфейса:** `ip link show eth0`
-2. **Создайте файл `/etc/systemd/network/10-persistent-net.link`:**
+**Процедура:**
 
-    ```ini
-    [Match]
-    MACAddress=52:54:00:ab:cd:ef
+1. **Узнать MAC-адрес интерфейса:**
+   ```bash
+   ip link show eth0
+   ```
 
-    [Link]
-    Name=net0
-    ```
+2. **Создать файл `/etc/systemd/network/10-persistent-net.link`:**
+   ```ini
+   [Match]
+   MACAddress=52:54:00:ab:cd:ef
 
-    * `[Match]`: Условие, по которому `systemd` найдет устройство. `MACAddress` — самый надежный способ.
-    * `[Link]`: Действие. `Name=net0` задает новое, постоянное имя `net0`.
+   [Link]
+   Name=net0
+   ```
+   - `[Match]`: Условие поиска устройства (MAC-адрес — надежнейший способ).
+   - `[Link]`: Действие — `Name=net0` задает постоянное имя.
 
-3. **Перезагрузите систему** или выполните `sudo udevadm trigger` (подробнее об этой команде см. в разделе [Управление правилами `udev`](../Core/udev.md#Управление-правилами-udev)), чтобы применить изменения.
+3. **Применить изменения:**
+   ```bash
+   # Перезагрузить систему
+   sudo reboot
+   # Или без перезагрузки (требует осторожности)
+   sudo udevadm trigger
+   ```
 
-Теперь ваш сетевой интерфейс всегда будет называться `net0`.
+**См. также:** [Управление правилами udev](../Core/udev.md#Управление-правилами-udev).
+
+### Сравнение методов настройки
+
+| Метод | Сложность | Гибкость | GUI | Рекомендация |
+| :--- | :--- | :--- | :--- | :--- |
+| `/etc/network/interfaces` | Низкая | Средняя | Нет | Устарел, только legacy-системы |
+| `NetworkManager` (nmcli) | Средняя | Высокая | Есть (`nmtui`) | Десктопы, RHEL/CentOS серверы |
+| `Netplan` | Низкая | Средняя | Нет | Ubuntu Server 17.10+ |
+| `systemd-networkd` | Средняя | Высокая | Нет | Минималистичные системы, контейнеры |
+
+### Диагностика проблем
+
+**Общие команды:**
+```bash
+# Проверка состояния сети
+systemctl status NetworkManager
+systemctl status systemd-networkd
+systemctl status netplan
+
+# Журналы
+journalctl -u NetworkManager -f
+journalctl -u systemd-networkd -f
+
+# Проверка конфигурации
+networkctl status
+nmcli device status
+```
+
+**Типичные проблемы:**
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| Конфликт DNS | Несколько служб управляют `/etc/resolv.conf` | Проверить `systemd-resolved`, NetworkManager |
+| Интерфейс не поднимается | Ошибка в конфигурации | `networkctl status`, `journalctl -u systemd-networkd` |
+| Нет маршрута по умолчанию | Не указан gateway | Проверить файл конфигурации |
+| DNS не работает | Неправильные nameservers | Проверить `resolvectl status` |
+
+**См. также:**
+- [Диагностика DNS](../Concepts/dns_client.md#Диагностика-проблем)
+- [Сетевая диагностика](../network_diagnostics_tools.md)

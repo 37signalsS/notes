@@ -1,6 +1,10 @@
 # ISC DHCP-сервер: Базовая настройка
 
+> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Конфигурация требует конвертации в JSON.
+
 В данном руководстве описаны шаги по установке и базовой настройке ISC DHCP-сервера.
+
+> **См. также:** [Протокол DHCP: теория и концепции](../../../Networking/Protocols/dhcp.md) — базовые понятия, процесс DORA, время аренды.
 
 ## 1. Установка
 
@@ -9,7 +13,7 @@
     sudo apt update
     sudo apt install isc-dhcp-server
     ```
--   **RHEL/CentOS:**
+-   **RHEL/Rocky Linux/AlmaLinux:**
     ```bash
     sudo dnf install dhcp-server
     ```
@@ -79,6 +83,30 @@ subnet 10.0.20.0 netmask 255.255.255.0 {
 }
 ```
 
+## Распространённые опции DHCP
+
+| Опция | Описание | Пример |
+| :--- | :--- | :--- |
+| `option domain-name` | Доменное имя | `"example.com"` |
+| `option domain-name-servers` | DNS-серверы | `8.8.8.8, 1.1.1.1` |
+| `option routers` | Шлюз по умолчанию | `10.0.10.1` |
+| `option subnet-mask` | Маска подсети | `255.255.255.0` |
+| `option broadcast-address` | Broadcast-адрес | `10.0.10.255` |
+| `option ntp-servers` | NTP-серверы | `pool.ntp.org` |
+| `option netbios-name-servers` | WINS-серверы | `10.0.10.5` |
+| `option tftp-server-name` | TFTP-сервер (PXE) | `"tftp.example.com"` |
+| `option bootfile-name` | Файл загрузки (PXE) | `"undionly.kpxe"` |
+
 ---
-*   **Далее:** [Резервирование IP-адресов и передача маршрутов](./isc_dhcp_server_reservations.md)
-*   **Назад:** [Обзор ISC DHCP](./isc_dhcp_server_overview.md)
+
+## Навигация по документации DHCP
+
+| Тема | Файл |
+| :--- | :--- |
+| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
+| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
+| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
+| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
+| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
+| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
+| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
