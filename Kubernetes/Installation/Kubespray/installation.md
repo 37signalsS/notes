@@ -327,8 +327,11 @@ ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cl
 
 ## 9. Дополнительная информация
 
-* [Обзор Kubespray](./overview.md) — определения и основные концепции.
-* [Управление кластером](./cluster_management.md) — масштабирование и обновление.
-* [Примеры конфигураций](./examples.md) — Ingress, MetalLB, системные поды.
-* [HA-кластер](./ha_cluster_deployment_with_kubespray.md) — развертывание высокодоступного кластера.
-* [Управление сертификатами](../../Operations/certificate_management.md) — обновление сертификатов кластера.
+* **[Обзор Kubespray](./overview.md)** — определения и основные концепции.
+* **[Управление кластером](./cluster_management.md)** — масштабирование и обновление.
+* **[Примеры конфигураций](./examples.md)** — Ingress, MetalLB, системные поды.
+* **[HA-кластер через Kubespray](../ha_cluster_deployment_with_kubespray.md)** — развертывание высокодоступного кластера.
+* **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — альтернативный ручной метод.
+* **[Управление сертификатами](../../Operations/certificate_management.md)** — обновление сертификатов кластера.
+* **[kind](../kind_quickstart.md)** — локальные кластеры для разработки.
+* **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.

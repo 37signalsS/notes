@@ -1,43 +1,72 @@
 # Управление сертификатами кластера Kubernetes
 
+> **SSoT:** Этот файл является основным источником истины для управления сертификатами Kubernetes.
+
 ## 1. Определения
 
-**Сертификаты Kubernetes** — это набор TLS-сертификатов, используемых компонентами [Control Plane](../../Concepts/control_plane_architecture.md) для взаимной аутентификации и шифрования трафика. Они являются основой безопасности кластера.
+| Термин | Описание |
+| :--- | :--- |
+| **CA (Certificate Authority)** | Корневой центр сертификации, подписывающий все сертификаты кластера. |
+| **TLS-сертификаты** | Сертификаты для шифрования и аутентификации компонентов Control Plane. |
+| **mTLS** | Mutual TLS — взаимная аутентификация клиента и сервера через сертификаты. |
 
-Ключевые сертификаты:
-*   **CA (Certificate Authority):** Корневой сертификат, которым подписываются все остальные сертификаты в кластере. Существуют отдельные CA для `etcd` и для остальных компонентов.
-*   **API Server Certificate:** Используется API-сервером для аутентификации перед клиентами (например, `kubectl`).
-*   **Kubelet Client Certificates:** Используются kubelet'ами для аутентификации на API-сервере.
+### Ключевые сертификаты
+
+| Сертификат | Назначение | Подписан |
+| :--- | :--- | :--- |
+| **ca.crt** (Root CA) | Подпись всех сертификатов K8s | Self-signed |
+| **etcd/ca.crt** (etcd CA) | Подпись сертификатов etcd | Self-signed |
+| **front-proxy-ca.crt** | Подпись сертификатов front-proxy | Self-signed |
+| **apiserver.crt** | API Server для клиентов | ca |
+| **apiserver-kubelet-client.crt** | API Server → kubelet | ca |
+| **apiserver-etcd-client.crt** | API Server → etcd | etcd-ca |
+| **etcd/server.crt** | etcd Server для клиентов | etcd-ca |
+| **kubelet.crt** | Kubelet для API Server | ca |
 
 ## 2. Основные концепции
 
-### Срок действия сертификатов
+### 2.1. Срок действия сертификатов
 
-По умолчанию, все сертификаты, генерируемые `kubeadm`, имеют **срок действия 1 год**. Это одна из частых причин отказа кластера: если сертификаты вовремя не обновить, компоненты Control Plane не смогут взаимодействовать друг с другом, и кластер перестанет функционировать ("превратится в тыкву").
+| Тип сертификата | Срок действия | Обновляется через kubeadm |
+| :--- | :--- | :--- |
+| **Корневые CA** (`ca.crt`, `etcd/ca.crt`, `front-proxy-ca.crt`) | 10 лет | ❌ Нет |
+| **Сертификаты компонентов** (`apiserver`, `kubelet-client`, `etcd-server`) | 1 год | ✅ Да |
+| **Admin kubeconfig** (`admin.conf`) | 1 год | ✅ Да |
 
-### Управление через `kubeadm`
+> **Важно:** Истечение сертификатов — частая причина отказа кластера. Компоненты Control Plane не смогут взаимодействовать, кластер перестанет функционировать.
 
-Утилита `kubeadm` предоставляет встроенные команды для управления жизненным циклом сертификатов, что значительно упрощает их обновление.
+### 2.2. Требования для управления через kubeadm
 
-**Важное требование:** Чтобы `kubeadm` мог управлять сертификатами `etcd`, кластер должен быть развернут с опцией, которая указывает `kubeadm` управлять развертыванием `etcd`. При использовании [Kubespray](../Installation/Kubespray/installation.md) это достигается параметром `etcd_kubeadm_enabled: true`.
+Для управления сертификатами `etcd` через `kubeadm`:
+
+*   **Ручная установка:** `kubeadm init` по умолчанию управляет etcd.
+*   **Kubespray:** Требуется `etcd_kubeadm_enabled: true` в inventory.
+*   **Другие инструменты:** Проверить документацию инструмента.
+
+### 2.3. Источники информации
+
+| Источник | Описание |
+| :--- | :--- |
+| **Официальная документация** | [kubeadm-certs](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) |
+| **kubeadm-специфичное** | [Управление сертификатами в kubeadm](../Installation/kudeadm/kubeadm_certificates.md) |
+| **Kubespray** | [Kubespray installation](../Installation/Kubespray/installation.md) |
 
 ## 3. Практические сценарии
 
 Все команды выполняются на одном из узлов Control Plane.
 
-### 3.1. Проверка срока действия сертификатов
-
-Чтобы проверить, когда истекает срок действия сертификатов кластера, используйте команду:
+### 3.1. Проверка срока действия
 
 ```bash
+# Проверка всех сертификатов
 sudo kubeadm certs check-expiration
 ```
 
-Вывод покажет оставшееся время жизни для каждого сертификата и предупредит, если они скоро истекут.
+**Пример вывода:**
 
 ```
 CERTIFICATE                EXPIRES                  RESIDUAL TIME   CERTIFICATE AUTHORITY   EXTERNALLY MANAGED
-admin.conf                 Feb 27, 2027 10:00 UTC   364d                                    no
+admin.conf                 Feb 27, 2027 10:00 UTC   364d            -                       no
 apiserver                  Feb 27, 2027 10:00 UTC   364d            ca                      no
 apiserver-etcd-client      Feb 27, 2027 10:00 UTC   364d            etcd-ca                 no
 apiserver-kubelet-client   Feb 27, 2027 10:00 UTC   364d            ca                      no
@@ -45,26 +74,128 @@ apiserver-kubelet-client   Feb 27, 2027 10:00 UTC   364d            ca          
 etcd-server                Feb 27, 2027 10:00 UTC   364d            etcd-ca                 no
 ```
 
+> **Примечание:** Корневые CA не отображаются, так как не управляются `kubeadm`.
+
 ### 3.2. Обновление сертификатов
 
-Если срок действия сертификатов подходит к концу, их можно обновить одной командой. Это **не приводит к простою** кластера.
-
-Для обновления всех сертификатов выполните:
+**Обновление всех сертификатов:**
 
 ```bash
 sudo kubeadm certs renew all
 ```
 
-Эта команда обновит все сертификаты, подписанные как корневым CA кластера, так и CA `etcd`. После выполнения команды рекомендуется перезапустить компоненты Control Plane (api-server, controller-manager, scheduler, etcd), чтобы они подхватили новые сертификаты. Если они запущены как статические поды, `kubelet` должен перезапустить их автоматически после обновления.
-
-Также можно обновлять сертификаты по отдельности, например:
+**Обновление отдельного сертификата:**
 
 ```bash
-# Обновить только сертификат API-сервера
+# API Server
 sudo kubeadm certs renew apiserver
+
+# Kubelet client
+sudo kubeadm certs renew apiserver-kubelet-client
+
+# etcd server
+sudo kubeadm certs renew etcd-server
+
+# etcd client (API Server → etcd)
+sudo kubeadm certs renew apiserver-etcd-client
 ```
+
+### 3.3. Применение новых сертификатов
+
+После обновления требуется перезапуск компонентов Control Plane.
+
+**Способ 1: Автоматический через kubelet (рекомендуется)**
+
+Компоненты запущены как статические поды. Kubelet автоматически перезапустит их:
+
+```bash
+# Проверка статуса
+kubectl get pods -n kube-system
+
+# При необходимости — restart kubelet
+sudo systemctl restart kubelet
+```
+
+**Способ 2: Ручной через манифесты**
+
+```bash
+# Создать временную директорию
+mkdir /tmp/k8s-manifests-backup/
+
+# Переместить манифесты
+sudo mv /etc/kubernetes/manifests/*.yaml /tmp/k8s-manifests-backup/
+
+# Подождать 15-20 секунд
+sleep 20
+
+# Вернуть манифесты
+sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
+```
+
+### 3.4. Troubleshooting
+
+| Проблема | Диагностика | Решение |
+| :--- | :--- | :--- |
+| **Сертификаты истекли** | `kubeadm certs check-expiration` | `kubeadm certs renew all` + restart |
+| **etcd не подключается** | `kubectl get pods -n kube-system` | Проверить `apiserver-etcd-client` |
+| **kubelet не авторизуется** | `journalctl -u kubelet` | Проверить `apiserver-kubelet-client` |
+| **Cluster не отвечает** | `curl -k https://localhost:6443/healthz` | Проверить `apiserver` сертификат |
+| **x509: certificate expired** | `openssl x509 -in <cert> -text -noout` | Обновить + перезапустить компоненты |
 
 ## 4. Дополнительная информация
 
-*   [Официальная документация по управлению сертификатами](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/)
-*   [Установка кластера с помощью Kubespray](../Installation/Kubespray/installation.md)
+### 4.1. Best Practices
+
+| Практика | Описание |
+| :--- | :--- |
+| **Мониторинг expiration** | Проверка за 30 дней до истечения |
+| **Backup перед обновлением** | `cp -r /etc/kubernetes/pki /backup/pki-$(date +%F)` |
+| **Тестирование в staging** | Сначала обновить на тестовом кластере |
+| **Автоматизация** | CronJob для проверки + alerting |
+| **Документирование** | Фиксация даты обновления и остаточного времени |
+
+### 4.2. Автоматизация проверки
+
+**CronJob для ежедневной проверки:**
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cert-expiration-check
+  namespace: kube-system
+  labels:
+    app: cert-check
+spec:
+  schedule: "0 9 * * *"  # Ежедневно в 9:00
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: check
+            image: bitnami/kubectl:1.33
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "=== Certificate Expiration Check ==="
+              echo "Date: $(date)"
+              # Проверка выполняется на узле через hostPath
+          restartPolicy: OnFailure
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+```
+
+> **Примечание:** Полная автоматизация требует доступа к хост-файлам `/etc/kubernetes/pki` через hostPath volume.
+
+### 4.3. Связанные темы
+
+*   [kubeadm: Управление сертификатами](../Installation/kudeadm/kubeadm_certificates.md)
+*   [Безопасность Kubernetes](../Security/security_overview.md)
+*   [TLS/mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md)
+*   [etcd обслуживание](../Concepts/etcd_overview.md)

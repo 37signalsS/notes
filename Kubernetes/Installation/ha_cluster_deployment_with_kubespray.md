@@ -1,203 +1,321 @@
-# Развертывание HA-кластера Kubernetes с помощью Kubespray
+# Kubespray: Развертывание HA-кластера
 
-## Определения
+## 1. Определения
 
-* **HA-кластер (High Availability Cluster):** Кластер, спроектированный для обеспечения непрерывной работы и отсутствия единой точки отказа (Single Point of Failure, SPoF). В контексте Kubernetes это означает запуск нескольких экземпляров компонентов Control Plane (особенно `kube-apiserver`) на разных узлах.
-* **Kubespray:** Инструмент на базе Ansible, который автоматизирует развертывание и управление жизненным циклом production-ready кластеров Kubernetes. Подробнее см. в [Kubespray: Обзор](./Kubespray/overview.md).
-* **VIP (Virtual IP):** Единый виртуальный IP-адрес, который служит точкой входа для доступа к API-серверам кластера. Подробнее см. в [Виртуальный IP-адрес (VIP)](../../../WebServers/Angie/angie_ha_with_keepalived.md#виртуальный-ip-адрес-vip).
-* **Keepalived:** Сервис, который обеспечивает отказоустойчивость VIP, перемещая его между мастер-узлами в случае сбоя активного узла. Подробнее см. в [Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md).
-* **HAProxy:** Высокопроизводительный балансировщик нагрузки, который принимает трафик, поступающий на VIP, и распределяет его между всеми доступными экземплярами `kube-apiserver` на мастер-узлах. Подробнее см. в [HAProxy](../../WebServers/Haproxy/haproxy_overview.md).
+**HA-кластер (High Availability)** — кластер Kubernetes с несколькими узлами Control Plane для устранения единой точки отказа (SPoF).
 
-## Основные концепции
+**VIP (Virtual IP)** — виртуальный IP-адрес, который служит единой точкой входа к API-серверам через механизм VRRP.
 
-Цель создания HA-кластера — устранить `kube-apiserver` как единую точку отказа. Для этого разворачивается несколько (обычно три) мастер-узлов, на каждом из которых работает свой экземпляр `kube-apiserver`.
+**Kubespray** — инструмент автоматизации развертывания Kubernetes на базе Ansible, поддерживающий встроенную настройку HA через Keepalived + HAProxy.
 
-Архитектура отказоустойчивости выглядит следующим образом:
+> **SSoT:** Подробное описание архитектуры Keepalived + HAProxy см. в [Настройка HA с kubeadm](./kudeadm/kubeadm_ha_with_keepalived_haproxy.md).
 
-1. **Keepalived** запускается на всех мастер-узлах и по протоколу VRRP определяет, какой из них будет "главным" (MASTER) в данный момент. Этот узел получает **VIP**.
-2. Если текущий "главный" узел перестает отвечать, Keepalived запускает процесс выборов, и другой узел становится "главным", забирая VIP себе. Это обеспечивает постоянную доступность VIP в сети.
-3. **HAProxy** также работает на всех мастер-узлах. Он настроен так, чтобы принимать трафик на VIP (порт 6443) и перенаправлять его на реальные IP-адреса работающих `kube-apiserver` (например, `192.168.1.10:6443`, `192.168.1.11:6443` и т.д.). Это обеспечивает балансировку нагрузки и гарантирует, что запросы не отправляются на неработающий API-сервер.
+## 2. Основные концепции
 
-Таким образом, все компоненты кластера и внешние пользователи обращаются к одному стабильному адресу (VIP), а связка Keepalived + HAProxy прозрачно управляет отказами и распределением нагрузки. Kubespray способен автоматически настраивать эту связку.
+### Архитектура HA через Kubespray
 
-## Практические сценарии
+Kubespray автоматизирует настройку HA следующим образом:
 
-### Настройка HA-кластера с нуля
+```
+                    ┌─────────────────┐
+                    │      VIP        │
+                    │  192.168.1.100  │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+     ┌────────▼───────┐ ┌───▼────────┐ ┌───▼────────┐
+     │   Master-1     │ │  Master-2  │ │  Master-3  │
+     │  Keepalived    │ │ Keepalived │ │ Keepalived │
+     │    MASTER      │ │  BACKUP    │ │  BACKUP    │
+     │   HAProxy:6443 │ │HAProxy:6443│ │HAProxy:6443│
+     │ apiserver:6444 │ │apiserver:6444│ │apiserver:6444│
+     └────────────────┘ └────────────┘ └────────────┘
+```
 
-#### 1. Предварительные требования
+**Компоненты:**
 
-* **Инфраструктура**: Подготовленные виртуальные или физические машины. В данном примере используется 5 машин:
-  * 3 для master-узлов (control plane).
-  * 2 для worker-узлов.
-* **Сеть**: Все машины должны находиться в одной подсети.
-* **Управляющая машина**: Машина, с которой будет запускаться Ansible, с доступом по SSH ко всем узлам кластера.
+| Компонент | Назначение | Порт |
+| :--- | :--- | :--- |
+| **Keepalived** | Управление VIP через VRRP | 112 (VRRP) |
+| **HAProxy** | Балансировка трафика к API-серверам | 6443 (VIP), 6444 (local) |
+| **kube-apiserver** | API Kubernetes | 6444 (локально) |
 
-#### 2. Этап 1: Развертывание базового кластера с Kubespray
+### Отличия от ручного kubeadm
 
-1. **Клонируйте репозиторий Kubespray**:
+| Аспект | Kubespray | Ручной kubeadm |
+| :--- | :--- | :--- |
+| **Автоматизация** | Полная (Ansible) | Ручная настройка |
+| **Keepalived/HAProxy** | Устанавливается автоматически | Ручная установка |
+| **Сертификаты** | Авто-генерация с VIP | Ручное добавление SAN |
+| **Время развертывания** | 15-30 минут | 1-2 часа |
 
-    ```bash
-    git clone https://github.com/kubernetes-sigs/kubespray.git
-    cd kubespray
-    ```
+## 3. Практические сценарии
 
-2. **Создайте копию инвентаря**:
+### 3.1. Инфраструктурные требования
 
-    ```bash
-    cp -rfp inventory/sample inventory/my-cluster
-    ```
+**Минимальная конфигурация HA-кластера:**
 
-3. **Настройте инвентарь `inventory/my-cluster/hosts.ini`**:
-    Заполните файл IP-адресами ваших машин.
+| Роль | Количество | CPU | RAM | Диск |
+| :--- | :--- | :--- | :--- | :--- |
+| **Control Plane** | 3 (odd для кворума) | 2+ | 4GB+ | 40GB+ |
+| **Worker** | 2+ | 2+ | 4GB+ | 40GB+ |
+| **etcd** | 3 (на master) | 2+ | 8GB+ | SSD 40GB+ |
 
-    ```ini
-    [all]
-    master-1 ansible_host=192.168.1.10 ip=192.168.1.10
-    master-2 ansible_host=192.168.1.11 ip=192.168.1.11
-    master-3 ansible_host=192.168.1.12 ip=192.168.1.12
-    worker-1 ansible_host=192.168.1.20 ip=192.168.1.20
-    worker-2 ansible_host=192.168.1.21 ip=192.168.1.21
+> **Важно:** Количество master-узлов должно быть нечетным (3, 5) для обеспечения кворума etcd.
 
-    [kube_control_plane]
-    master-1
-    master-2
-    master-3
+### 3.2. Конфигурация Inventory
 
-    [etcd]
-    master-1
-    master-2
-    master-3
+**Файл `inventory/my-cluster/inventory.ini`:**
 
-    [kube_node]
-    worker-1
-    worker-2
+```ini
+[all]
+master-1 ansible_host=192.168.1.10 ip=192.168.1.10
+master-2 ansible_host=192.168.1.11 ip=192.168.1.11
+master-3 ansible_host=192.168.1.12 ip=192.168.1.12
+worker-1 ansible_host=192.168.1.20 ip=192.168.1.20
+worker-2 ansible_host=192.168.1.21 ip=192.168.1.21
 
-    [k8s_cluster:children]
-    kube_control_plane
-    kube_node
-    ```
+[kube_control_plane]
+master-1
+master-2
+master-3
 
-    * `ansible_host`: IP для подключения Ansible.
-    * `ip`: Внутренний IP узла.
+[etcd]
+master-1
+master-2
+master-3
 
-4. **Установите зависимости Python**:
+[kube_node]
+worker-1
+worker-2
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+[k8s_cluster:children]
+kube_control_plane
+kube_node
 
-5. **Запустите плейбук Kubespray**:
-    Эта команда запустит процесс установки Kubernetes на все узлы.
+[calico_rr]
 
-    ```bash
-    ansible-playbook -i inventory/my-cluster/hosts.ini --become --become-user=root cluster.yml
-    ```
+[vault]
+vault-1
 
-#### 3. Этап 2: Настройка HA с Keepalived, HAProxy и VIP
+[all:vars]
+ansible_user=root
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+```
 
-Kubespray может автоматически настроить Keepalived и HAProxy для создания виртуального IP (VIP), который будет обеспечивать единую точку доступа к API-серверам на всех master-узлах.
+### 3.3. Настройка переменных для HA
 
-1. **Настройте переменные для VIP в `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`**:
+**Файл `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`:**
 
-    ```yaml
-    # IP-адрес, который будет использоваться как виртуальный
-    loadbalancer_apiserver_localhost: false
-    kube_apiserver_ip: 192.168.1.100 # Ваш VIP
-    ```
+```yaml
+# Включение локального балансировщика (HAProxy на каждом master)
+loadbalancer_apiserver_localhost: true
 
-2. **Перезапустите плейбук `cluster.yml`** или запустите отдельно плейбук для HAProxy, если базовый кластер уже установлен.
+# VIP для доступа к API
+apiserver_loadbalancer_domain: "lb.k8s.local"
+loadbalancer_apiserver:
+  address: "192.168.1.100"  # VIP адрес
+  port: 6443
 
-#### 4. Этап 3: Конфигурация компонентов для работы через VIP
+# Версия Kubernetes
+kube_version: v1.31.0
 
-1. **Перегенерация сертификатов для VIP**
-    Чтобы Kubernetes API-сервер корректно работал с VIP, необходимо, чтобы этот IP-адрес был включен в его TLS-сертификаты. Это нужно сделать на **каждом master-узле**.
+# Container runtime (containerd рекомендуется)
+container_manager: containerd
 
-    a. **Добавьте VIP в `kubeadm-config.yaml`**:
-       Откройте файл `/etc/kubernetes/kubeadm-config.yaml` и в секцию `apiServer.certSANs` добавьте ваш VIP.
+# Сетевой плагин
+kube_network_plugin: calico
 
-       ```yaml
-       apiServer:
-         certSANs:
-         - "192.168.1.100" # Ваш VIP
-         - ...
-       ```
+# Режим kube-proxy (ipvs производительнее для HA)
+kube_proxy_mode: ipvs
+```
 
-    b. **Перегенерируйте сертификаты**:
+**Файл `inventory/my-cluster/group_vars/all/all.yml`:**
 
-       ```bash
-       kubeadm init phase certs all --config /etc/kubernetes/kubeadm-config.yaml
-       ```
+```yaml
+# Включение Keepalived
+enable_keepalived: true
 
-    c. **Перезапустите `kube-apiserver`**:
-       Поды `kube-apiserver` являются статическими. Удалите их, чтобы `kubelet` автоматически их пересоздал с новыми сертификатами.
+# Конфигурация Keepalived
+keepalived_virtual_router_id: 51
+keepalived_priority: 100  # Будет переопределено для master/backup
+keepalived_auth_pass: "k8s-ha-secret"
 
-       ```bash
-       # Пример удаления пода на master-1
-       kubectl delete pod kube-apiserver-master-1 -n kube-system
-       ```
+# Разрешить небезопасный порт API (опционально)
+kube_apiserver_insecure_port: 0
+```
 
-2. **Проверка доступа через VIP и обновление `kubeconfig`**
-    * Получите `kubeconfig` с любого master-узла.
-    * В файле `kubeconfig` замените IP-адрес `server` на ваш **VIP** и порт HAProxy (по умолчанию `6443`).
+### 3.4. Развертывание HA-кластера
 
-    ```yaml
-    server: https://192.168.1.100:6443
-    ```
+**Запуск playbook:**
 
-    * Проверьте доступ: `kubectl get nodes`.
+```bash
+cd kubespray
 
-3. **Настройка `kubelet`**
-    На **каждом узле** (master и worker) настройте `kubelet` для связи с API-сервером через VIP.
-    * Отредактируйте файл `/etc/kubernetes/kubelet.conf`, заменив IP-адрес `server` на VIP.
+# Полное развертывание
+ansible-playbook -i inventory/my-cluster/inventory.ini \
+  --become --become-user=root \
+  cluster.yml
+```
 
-        ```yaml
-        server: https://192.168.1.100:6443
-        ```
+**Пошаговое выполнение (для отладки):**
 
-    * Перезапустите `kubelet`:
+```bash
+# 1. Подготовка узлов (установка зависимостей)
+ansible-playbook -i inventory/my-cluster/inventory.ini \
+  --become bootstrap-os.yml
 
-        ```bash
-        systemctl restart kubelet
-        ```
+# 2. Развертывание кластера
+ansible-playbook -i inventory/my-cluster/inventory.ini \
+  --become cluster.yml
 
-4. **Настройка `kube-proxy`**
-    * Обновите `ConfigMap` для `kube-proxy`, чтобы он также использовал VIP.
+# 3. Проверка
+ansible-playbook -i inventory/my-cluster/inventory.ini \
+  --become recover-node.yml
+```
 
-        ```bash
-        kubectl edit configmap kube-proxy -n kube-system
-        ```
+### 3.5. Проверка HA-конфигурации
 
-    * Найдите поле `server` и замените IP-адрес на VIP.
-    * Перезапустите поды `kube-proxy`:
+**Проверка VIP:**
 
-        ```bash
-        kubectl delete pod -l k8s-app=kube-proxy -n kube-system
-        ```
+```bash
+# На master-узле с MASTER статусом
+ip a show dev eth0 | grep 192.168.1.100
 
-#### 5. Этап 4: Развертывание дополнительных компонентов (опционально)
+# Проверка статуса Keepalived
+systemctl status keepalived
 
-После настройки кластера можно развернуть дополнительные сервисы, например, с помощью Helm и Terragrunt.
+# Журнал VRRP
+journalctl -u keepalived -f
+```
 
-1. **Установка Metric Server**:
-    Metric Server необходим для работы HPA и команды `kubectl top`.
+**Проверка HAProxy:**
 
-    ```bash
-    # Пример развертывания через Terragrunt
-    cd infrastructure/prod/metrics-server/
-    terragrunt apply
-    ```
+```bash
+# Статус HAProxy
+systemctl status haproxy
 
-2. **Развертывание мониторинга**:
-    Разверните стек мониторинга ([Prometheus](Kubespray/overview.md), [Grafana](../../Grafana/grafana_overview.md)).
+# Проверка бэкендов (должны быть UP)
+echo "show stat" | socat stdio /var/run/haproxy/admin.sock | \
+  grep -E "kubernetes-api-masters.*UP"
 
-    ```bash
-    # Пример развертывания через Terragrunt
-    cd infrastructure/prod/monitoring/
-    terragrunt apply
-    ```
+# Лог HAProxy
+tail -f /var/log/haproxy.log
+```
 
-    После развертывания можно получить доступ к Grafana через `port-forward`:
+**Проверка Kubernetes API:**
 
-    ```bash
-    kubectl port-forward svc/grafana 3000:80 -n monitoring
-    ```
+```bash
+# Подключение через VIP
+kubectl --server=https://192.168.1.100:6443 get nodes
+
+# Проверка всех master-узлов
+kubectl get nodes -l node-role.kubernetes.io/control-plane
+
+# Проверка etcd кластера
+kubectl get pods -n kube-system -l component=etcd
+```
+
+### 3.6. Тестирование отказоустойчивости
+
+**Тест 1: Отключение MASTER узла**
+
+```bash
+# На текущем MASTER узле
+systemctl stop keepalived
+
+# На другом узле проверить появление VIP
+ip a show dev eth0 | grep 192.168.1.100
+
+# API должен оставаться доступным
+kubectl get nodes
+```
+
+**Тест 2: Отключение kube-apiserver**
+
+```bash
+# На одном из master
+systemctl stop kube-apiserver
+
+# HAProxy должен исключить узел из ротации
+echo "show stat" | socat stdio /var/run/haproxy/admin.sock | \
+  grep kubernetes-api-masters
+```
+
+**Тест 3: Отключение etcd**
+
+```bash
+# На одном из master
+systemctl stop etcd
+
+# Кластер должен оставаться работоспособным (2 из 3)
+kubectl get pods --all-namespaces
+```
+
+## 4. Дополнительная информация
+
+### Конфигурационные файлы Kubespray
+
+| Файл | Назначение |
+| :--- | :--- |
+| `inventory/my-cluster/inventory.ini` | Хосты и роли |
+| `group_vars/all/all.yml` | Общие переменные |
+| `group_vars/k8s_cluster/k8s-cluster.yml` | Параметры K8s |
+| `group_vars/etcd/etcd.yml` | Настройки etcd |
+
+### Переменные для HA
+
+| Переменная | Значение по умолчанию | Описание |
+| :--- | :--- | :--- |
+| `loadbalancer_apiserver_localhost` | `false` | Включить локальный HAProxy |
+| `enable_keepalived` | `true` | Включить Keepalived |
+| `keepalived_virtual_router_id` | `51` | VRRP router ID |
+| `kube_apiserver_insecure_port` | `0` | Небезопасный порт API |
+
+### Troubleshooting
+
+**Проблема: VIP не назначается**
+
+```bash
+# Проверка VRRP трафика
+tcpdump -n -i eth0 vrrp
+
+# Проверка логов Keepalived
+journalctl -u keepalived -n 50
+```
+
+**Проблема: HAProxy не видит бэкенды**
+
+```bash
+# Проверка доступности API-серверов
+curl -k https://192.168.1.10:6444/healthz
+
+# Перезапуск HAProxy
+systemctl restart haproxy
+```
+
+**Проблема: etcd кворум потерян**
+
+```bash
+# Статус etcd на каждом узле
+etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/ssl/etcd/ssl/ca.pem \
+  --cert=/etc/ssl/etcd/ssl/peer-$(hostname).pem \
+  --key=/etc/ssl/etcd/ssl/peer-$(hostname)-key.pem \
+  endpoint health
+```
+
+### Связанные документы
+
+- **[Kubespray: Обзор](./Kubespray/overview.md)** — общая информация
+- **[Kubespray: Установка](./Kubespray/installation.md)** — базовая установка
+- **[HA с kubeadm](./kudeadm/kubeadm_ha_with_keepalived_haproxy.md)** — ручная настройка HA
+- **[Keepalived обзор](../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
+- **[HAProxy обзор](../WebServers/Haproxy/haproxy_overview.md)** — детали HAProxy
+
+### Внешние ресурсы
+
+- **Kubespray Documentation:** [kubespray.io](https://kubespray.io/)
+- **GitHub:** [kubernetes-sigs/kubespray](https://github.com/kubernetes-sigs/kubespray)
+- **VRRP RFC:** [RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798)

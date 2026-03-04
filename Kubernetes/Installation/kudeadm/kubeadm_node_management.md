@@ -1,149 +1,235 @@
 # Управление узлами кластера
 
-## Добавление узлов
+## 1. Определения
 
-Процесс добавления узлов различается для Worker и Control-Plane, особенно если первоначальный токен для присоединения истек (по умолчанию он действует 24 часа).
+| Термин | Описание |
+| :--- | :--- |
+| **Bootstrap Token** | Временный токен для присоединения узлов к кластеру (действует 24 часа по умолчанию). |
+| **Certificate Key** | Ключ для безопасной передачи сертификатов control-plane при присоединении новых master-узлов. |
+| **Drain** | Операция безопасного удаления узлов: eviction подов, mark unschedulable. |
+| **Cordon** | Mark узла как unschedulable (без eviction подов). |
+| **Uncordon** | Снятие ограничения cordons, узел снова доступен для планирования. |
 
-### Добавление Worker-узла
+## 2. Основные концепции
 
-Это наиболее простой сценарий.
+### 2.1. Токены kubeadm
 
-1.  **На master-узле создайте новую команду для присоединения:**
-    Эта команда сгенерирует новый токен и выведет полную команду `kubeadm join`, которую нужно будет выполнить на worker-узле.
-    ```bash
-    sudo kubeadm token create --print-join-command
-    ```
-2.  **На новом worker-узле выполните полученную команду:**
-    Скопируйте и выполните команду из предыдущего шага.
-    ```bash
-    # Пример команды
-    sudo kubeadm join <ip-мастера>:<порт-мастера> --token <токен> --discovery-token-ca-cert-hash sha256:<хэш>
-    ```
+| Тип токена | Срок действия | Назначение |
+| :--- | :--- | :--- |
+| **Bootstrap Token** | 24 часа | Присоединение worker и control-plane узлов. |
+| **Certificate Key** | 2 часа | Передача сертификатов CA новым control-plane узлам. |
 
-### Добавление Control-Plane-узла (при истекшем токене)
+### 2.2. Типы узлов
 
-Присоединение нового master-узла требует дополнительных шагов для безопасной передачи сертификатов, необходимых для компонентов control-plane и `etcd`.
+| Тип узла | Описание | Особенности удаления |
+| :--- | :--- | :--- |
+| **Worker Node** | Запускает пользовательские поды | Простое удаление через `kubeadm reset`. |
+| **Control-Plane Node** | Запускает компоненты Control Plane + etcd | Требуется удаление из etcd кластера. |
 
-> **Важно:** В кластере должно быть нечетное количество control-plane узлов (1, 3, 5 и т.д.) для обеспечения кворума `etcd`.
+> **Важно:** В кластере должно быть **нечётное количество control-plane узлов** (1, 3, 5) для обеспечения кворума etcd.
 
-**На существующем master-узле выполните следующие шаги:**
+## 3. Практические сценарии
 
-**Шаг 1: Создание нового токена**
+### 3.1. Добавление узлов
+
+#### Добавление Worker-узла
+
+**Шаг 1: Генерация команды join (на master)**
+
+```bash
+# Создать новый токен и вывести полную команду
+sudo kubeadm token create --print-join-command
+```
+
+**Шаг 2: Выполнение команды join (на worker)**
+
+```bash
+# Пример команды
+sudo kubeadm join <vip-or-master-ip>:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+**Проверка:**
+
+```bash
+kubectl get nodes
+# Статус должен быть Ready через 1-2 минуты
+```
+
+#### Добавление Control-Plane-узла
+
+**Сценарий: Токен действителен**
+
+Используйте команду `kubeadm join` с флагом `--control-plane` из вывода `kubeadm init`.
+
+**Сценарий: Токен истёк**
+
+**Шаг 1: Создание нового bootstrap-токена (на существующем master)**
+
 ```bash
 sudo kubeadm token create
-# Вывод: <токен> (например, abcdef.0123456789abcdef)
+# Вывод: <token> (например, abcdef.0123456789abcdef)
 ```
-Сохраните этот токен.
 
-**Шаг 2: Получение хеша сертификата CA**
-Этот хеш нужен, чтобы новый узел мог доверять Certificate Authority кластера.
+**Шаг 2: Получение хеша CA-сертификата**
+
 ```bash
-openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | \
-   openssl dgst -sha256 -hex | sed 's/^.* //'
-# Вывод: <хэш> (64-символьная строка)
+openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | \
+  openssl rsa -pubin -outform der 2>/dev/null | \
+  openssl dgst -sha256 -hex | sed 's/^.* //'
+# Вывод: <hash> (64-символьная строка)
 ```
-Сохраните этот хеш.
 
 **Шаг 3: Загрузка сертификатов в кластер**
-Эта команда упаковывает сертификаты (CA, etcd, front-proxy и др.) в `Secret` в `kube-system` и генерирует ключ для их шифрования. Этот ключ потребуется новому узлу для их расшифровки.
+
 ```bash
 sudo kubeadm init phase upload-certs --upload-certs
-# Вывод: <ключ-шифрования-сертификатов> (64-символьная строка)
+# Вывод: <certificate-key> (64-символьная строка, действителен 2 часа)
 ```
-Сохраните этот ключ. Он действителен 2 часа.
 
-**Шаг 4: Формирование и выполнение команды `join` на новом master-узле**
-
-Соберите все полученные данные в одну команду и выполните ее на **новом control-plane узле**.
+**Шаг 4: Формирование команды join (на новом control-plane)**
 
 ```bash
-sudo kubeadm join <ip-мастера>:<порт> \
-  --token <токен_из_шага_1> \
-  --discovery-token-ca-cert-hash sha256:<хэш_из_шага_2> \
+sudo kubeadm join <vip-or-master-ip>:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash> \
   --control-plane \
-  --certificate-key <ключ_из_шага_3>
+  --certificate-key <certificate-key>
 ```
 
-После выполнения узел присоединится к кластеру как еще одна master-нода.
+> **Важно:** Команда с `--certificate-key` действительна только 2 часа.
 
-## Действия после добавления узлов
+### 3.2. Удаление узлов
 
-### Перераспределение подов CoreDNS
+#### Удаление Worker-узла (штатное)
 
-После добавления первых control-plane узлов поды `CoreDNS` могут остаться на одном, самом первом узле. Это создает единую точку отказа для DNS в кластере. Чтобы заставить Kubernetes перераспределить их по разным узлам в соответствии с правилами anti-affinity, выполните перезапуск `Deployment`-а `CoreDNS`.
+**Шаг 1: Drain узла (на master)**
 
 ```bash
-kubectl rollout restart deployment coredns -n kube-system
+# Evict поды и mark unschedulable
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
 ```
-Kubernetes плавно остановит старые поды и создаст новые, которые планировщик разместит на разных доступных узлах.
 
-## Удаление узлов
+**Шаг 2: Удаление из кластера**
 
-### Удаление Worker-узла
+```bash
+kubectl delete node <node-name>
+```
 
-1.  **Сделать узел недоступным для планирования и удалить с него поды:**
-    ```bash
-    kubectl drain <имя-worker-узла> --ignore-daemonsets
-    ```
-2.  **Удалить узел из кластера:**
-    ```bash
-    kubectl delete node <имя-worker-узла>
-    ```
-3.  **Сбросить состояние на самом worker-узле:**
-    Подключитесь к узлу и выполните:
-    ```bash
-    sudo kubeadm reset
-    ```
-
-### Удаление Control-Plane узла
-
-Процесс усложняется из-за того, что на control-plane узлах работает кластер `etcd`.
-
-*   **Сценарий 1: Узел доступен (штатное удаление)**
-    1.  Выполните `drain` и `delete node`, как для worker-узла.
-    2.  На удаляемом узле выполните `sudo kubeadm reset`. Эта команда корректно обработает вывод участника (`member`) из кластера `etcd`.
-
-*   **Сценарий 2: Узел потерян (аварийное удаление)**
-    Если узел недоступен, `kubeadm reset` выполнить нельзя. Участник `etcd` останется в кластере в нерабочем состоянии, что может нарушить кворум. Его необходимо удалить вручную.
-
-    1.  **Найти один из рабочих `etcd` подов:**
-        ```bash
-        kubectl get pods -n kube-system | grep etcd
-        ```
-        Выберите один из подов, например, `etcd-master-1`.
-
-    2.  **Получить список участников (`members`) кластера `etcd`:**
-        Выполните `exec` в рабочий `etcd` под, чтобы использовать `etcdctl`.
-        ```bash
-        kubectl exec -n kube-system etcd-master-1 -- etcdctl \
-          --endpoints=https://127.0.0.1:2379 \
-          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-          --cert=/etc/kubernetes/pki/etcd/server.crt \
-          --key=/etc/kubernetes/pki/etcd/server.key \
-          member list
-        ```
-        В выводе найдите ID потерянного узла.
-
-    3.  **Удалить участника из кластера `etcd`:**
-        Используйте ID из предыдущей команды.
-        ```bash
-        kubectl exec -n kube-system etcd-master-1 -- etcdctl \
-          --endpoints=https://127.0.0.1:2379 \
-          --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-          --cert=/etc/kubernetes/pki/etcd/server.crt \
-          --key=/etc/kubernetes/pki/etcd/server.key \
-          member remove <ID_ПОТЕРЯННОГО_УЗЛА>
-        ```
-
-    4.  **Удалить объект Node из Kubernetes:**
-        ```bash
-        kubectl delete node <имя_потерянного_узла>
-        ```
-
-## Сброс состояния узла
-
-Для отсоединения узла от кластера и полной очистки всех изменений, сделанных `kubeadm`, используется команда `reset`. Это полезно, если нужно инициализировать узел заново.
+**Шаг 3: Сброс состояния (на удаляемом узле)**
 
 ```bash
 sudo kubeadm reset
 ```
+
+#### Удаление Control-Plane-узла (штатное)
+
+**Шаг 1: Drain узла**
+
+```bash
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+```
+
+**Шаг 2: Удаление из кластера**
+
+```bash
+kubectl delete node <node-name>
+```
+
+**Шаг 3: Сброс состояния (на удаляемом узле)**
+
+```bash
+# Эта команда корректно удаляет узел из etcd
+sudo kubeadm reset
+```
+
+#### Удаление Control-Plane-узла (аварийное)
+
+> **Сценарий:** Узел потерян, `kubeadm reset` выполнить невозможно.
+
+**Шаг 1: Удаление объекта Node**
+
+```bash
+kubectl delete node <lost-node-name>
+```
+
+**Шаг 2: Удаление участника из etcd**
+
+```bash
+# Найти рабочий etcd под
+kubectl get pods -n kube-system | grep etcd
+
+# Получить список участников
+kubectl exec -n kube-system etcd-<master-name> -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  member list
+
+# Удалить потерянный узел (используйте ID из предыдущей команды)
+kubectl exec -n kube-system etcd-<master-name> -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  member remove <member-id>
+```
+
+### 3.3. Обслуживание узлов
+
+#### Вывод узла в обслуживание
+
+```bash
+# Запретить планирование новых подов
+kubectl cordon <node-name>
+
+# Безопасно удалить существующие поды
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+```
+
+#### Возврат узла в строй
+
+```bash
+# Разрешить планирование
+kubectl uncordon <node-name>
+```
+
+#### Перезапуск подов после обновления
+
+```bash
+# Перезапуск CoreDNS (после добавления control-plane)
+kubectl rollout restart deployment coredns -n kube-system
+
+# Перезапуск kube-proxy (после обновления узлов)
+kubectl rollout restart daemonset kube-proxy -n kube-system
+```
+
+### 3.4. Troubleshooting
+
+| Проблема | Диагностика | Решение |
+| :--- | :--- | :--- |
+| **Node NotReady** | `kubectl describe node <name>` | Проверить kubelet, сеть, CNI |
+| **Pod Pending** | `kubectl describe pod <name>` | Проверить ресурсы, taints, affinity |
+| **Token expired** | `kubeadm token list` | `kubeadm token create --print-join-command` |
+| **etcd кворум потерян** | `etcdctl endpoint health` | Восстановить из backup, добавить узел |
+| **Node не удаляется** | `kubectl get events --sort-by='.lastTimestamp'` | Force delete: `kubectl delete node <name> --force --grace-period=0` |
+
+## 4. Дополнительная информация
+
+### 4.1. Связанные темы
+
+*   [Быстрый старт с kubeadm](./kubeadm_quickstart.md)
+*   [Управление сертификатами](../../Operations/certificate_management.md)
+*   [etcd обслуживание](../../Concepts/etcd_overview.md)
+*   [Troubleshooting кластера](../../Troubleshooting/cluster_troubleshooting.md)
+
+### 4.2. Best Practices
+
+| Практика | Описание |
+| :--- | :--- |
+| **Регулярный backup etcd** | `etcdctl snapshot save` перед изменениями |
+| **Мониторинг токенов** | Проверка срока действия перед добавлением узлов |
+| **Плановое обслуживание** | Использование `cordon/drain` перед обновлением |
+| **Нечётное число control-plane** | Избегание потери кворума etcd |

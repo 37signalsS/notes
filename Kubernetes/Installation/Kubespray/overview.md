@@ -40,19 +40,23 @@
 
 | Сценарий | Файл |
 | :--- | :--- |
-| Развертывание кластера | [Установка кластера](./installation.md) |
-| Масштабирование и обновление | [Управление кластером](./cluster_management.md) |
-| Высокая доступность (HA) | [HA-кластер](./ha_cluster_deployment_with_kubespray.md) |
-| Примеры конфигураций | [Примеры](./examples.md) |
+| Развертывание кластера | **[Установка кластера](./installation.md)** |
+| Масштабирование и обновление | **[Управление кластером](./cluster_management.md)** |
+| **HA-кластер (Keepalived + HAProxy)** | **[HA через Kubespray](../ha_cluster_deployment_with_kubespray.md)** |
+| Примеры конфигураций | **[Примеры](./examples.md)** |
+| Альтернатива: ручная установка | **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** |
 
 ## 4. Дополнительная информация
 
 ### Связанные документы
 
-* [Ansible: Введение](../../../Ansible/ansible_introduction.md) — основы Ansible.
-* [kubeadm: Быстрый старт](../kubeadm_quickstart.md) — базовая утилита для инициализации кластера.
-* [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md) — компоненты управления кластером.
-* [etcd: Обзор](../../Concepts/etcd_overview.md) — распределённое хранилище данных кластера.
+* **[Ansible: Введение](../../../Ansible/ansible_introduction.md)** — основы Ansible.
+* **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — базовая утилита для инициализации кластера.
+* **[HA с kubeadm](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)** — ручная настройка HA (SSoT).
+* **[Control Plane: Архитектура](../../Concepts/control_plane_architecture.md)** — компоненты управления кластером.
+* **[etcd: Обзор](../../Concepts/etcd_overview.md)** — распределённое хранилище данных кластера.
+* **[kind](../kind_quickstart.md)** — локальные кластеры для разработки.
+* **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.
 
 ### Внешние ресурсы
 
