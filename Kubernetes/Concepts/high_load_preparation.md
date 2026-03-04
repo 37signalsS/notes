@@ -81,4 +81,11 @@
 
 * **Причины и диагностика `OOMKilled`**: Подробное описание причин возникновения и способов устранения ошибки `OOMKilled` можно найти в руководстве по [устранению распространенных ошибок](../Troubleshooting/Common_Errors/oomkilled_pods.md).
 * **CPU Throttling**: Причины возникновения троттлинга CPU и его связь с `limits.cpu` описаны в документе о [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md).
-* **Автомасштабирование**: Для глубокого понимания механизмов автомасштабирования см. обзор [HPA и VPA](../Autoscaling/overview_concepts.md).
+* **Автомасштабирование**: Для глубокого понимания механизмов автомасштабирования см.:
+  * [Обзор концепций автомасштабирования](../Autoscaling/overview_concepts.md)
+  * [Horizontal Pod Autoscaler (HPA)](../Autoscaling/hpa_detailed.md)
+  * [Vertical Pod Autoscaler (VPA)](../Autoscaling/vpa_detailed.md)
+  * [KEDA — масштабирование по событиям](../Autoscaling/keda_detailed.md)
+  * [Cluster Autoscaler и Karpenter](../Autoscaling/cluster_autoscaler_detailed.md)
+  * [Шаблоны масштабирования](../Autoscaling/scaling_patterns.md)
+* **Высокая доступность**: Стратегии обеспечения отказоустойчивости при высоких нагрузках см. в документе [Высокая доступность в Kubernetes](../Base/high_availability.md).
