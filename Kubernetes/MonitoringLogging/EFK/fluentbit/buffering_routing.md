@@ -66,7 +66,7 @@ Fluent Bit поддерживает две основные модели буф�
     Name          tail
     Tag           kube.*
     Path          /var/log/containers/*.log
-    Parser        docker
+    Parser        cri
     storage.type  filesystem
     Mem_Buf_Limit 10MB
 

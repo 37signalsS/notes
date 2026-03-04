@@ -13,33 +13,33 @@
 
 Данный сценарий реализует отказоустойчивую архитектуру сбора и хранения логов, где Fluentd выступает в роли промежуточного звена (роутера) между сборщиками FluentBit и конечным файловым хранилищем на NFS.
 
-```
-+---------------------------------------------------------------------------------+
-| Kubernetes Cluster                                                              |
-|                                                                                 |
-|  +----------+       +----------+       +----------------------+       +-------+ |
-|  | Node 1   |       | Node 2   |       |       Node 3         |       | NFS   | |
-|  | [FluentBit]---> | [FluentBit]--->  |      [FluentBit]----->|------>| Server| |
-|  +----------+       +----------+       +----------------------+       +-------+ |
-|      |                  |                               |                       |
-|      |                  |     (via Service ClusterIP)   |                       |
-|      |                  +-------------------------------+                       |
-|      |                                    |                                     |
-|      |      +-----------------------------+-----------------------------+       |
-|      |      |                                                           |       |
-|  +---v------+---+                    +----------------v----+                 |       |
-|  | Fluentd Pod 1|                    |   Fluentd Pod 2   |                 |       |
-|  | (on Node 1)  |                    |   (on Node 2)     |                 |       |
-|  +--------------+                    +-------------------+                 |       |
-|      |       (Writes to NFS via PVC)       |                               |       |
-|      +-------------------------------------+-------------------------------+       |
-|                                            |                                       |
-+--------------------------------------------+------------------------------------------+
-                                             |
-                                     +-------v-------+
-                                     |  NFS Share    |
-                                     | [/logs/app.log] |
-                                     +---------------+
+```mermaid
+graph TD
+    subgraph Kubernetes Cluster
+        subgraph Nodes
+            N1[Node 1: FluentBit]
+            N2[Node 2: FluentBit]
+            NN[Node N: FluentBit]
+        end
+
+        subgraph Fluentd Aggregator (StatefulSet)
+            F1[Fluentd Pod 1]
+            F2[Fluentd Pod 2]
+        end
+
+        N1 -- forward --> F1
+        N2 -- forward --> F2
+        NN -- forward --> F1
+        F1 -- Writes logs --> NFS
+        F2 -- Writes logs --> NFS
+    end
+
+    subgraph External Storage
+        NFS[NFS Share:/logs]
+    end
+
+    style F1 fill:#f9f,stroke:#333,stroke-width:2px
+    style F2 fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
 ## Практическая реализация
@@ -124,6 +124,10 @@
           path /fluentd/log/example-app.log
           append true
           <buffer>
+            # ВНИМАНИЕ: memory-буфер с immediate flush подходит для отладки,
+            # но в production он может привести к потере данных при перезапуске пода.
+            # Для надежности используйте file-буфер.
+            # См. https://docs.fluentd.org/configuration/buffer-section
             @type memory
             flush_mode immediate
           </buffer>
@@ -150,7 +154,7 @@
     *   `@type file`: Указывает, что вывод будет в файл.
     *   `path /fluentd/log/...`: Путь внутри контейнера, куда будет смонтирован NFS-том.
     *   `append true`: Критически важный параметр. Позволяет нескольким репликам Fluentd дописывать логи в один и тот же файл без конфликтов.
-    *   `flush_mode immediate`: Немедленно сбрасывать буфер на диск. Полезно для отладки, в production можно использовать другие режимы.
+    *   `buffer`: Конфигурация буферизации. Использование `file`-буфера — одна из ключевых причин применения Fluentd в качестве агрегатора. См. [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md#буферизация-и-надежность).
 
 2.  **Создайте `Deployment` для Fluentd**:
 
@@ -184,7 +188,7 @@
                 topologyKey: "kubernetes.io/hostname"
           containers:
           - name: fluentd
-            image: fluent/fluentd:v1.14-debian
+            image: fluent/fluentd:v1.17-debian
             resources:
               requests:
                 cpu: 100m
