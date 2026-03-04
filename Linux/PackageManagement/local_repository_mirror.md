@@ -2,21 +2,54 @@
 
 ## Определения
 
-**Локальное зеркало (local mirror)** — полная или частичная копия удаленного репозитория пакетов (например, Ubuntu, CentOS), размещенная в локальной сети.
+**Локальное зеркало (Local Mirror)** — полная или частичная копия удалённого репозитория пакетов (например, Ubuntu, Debian, CentOS), размещённая в локальной сети или на изолированном сервере.
+
+**Репозиторий-источник (Upstream Repository)** — официальный или доверенный удалённый репозиторий, с которого синхронизируется локальное зеркало.
+
+**Синхронизация** — процесс обновления локального зеркала до актуального состояния репозитория-источника.
 
 ## Основные понятия
 
-Основное назначение локального зеркала:
+### Назначение локального зеркала
 
-* **Экономия трафика:** Пакеты скачиваются из интернета однократно, затем распространяются в сети.
-* **Ускорение обновлений:** Установка и обновление пакетов происходят быстрее.
-* **Работа в изолированных сетях:** Позволяет управлять пакетами в сетях без доступа к интернету (air-gapped environments).
+| Преимущество | Описание |
+| :--- | :--- |
+| **Экономия трафика** | Пакеты скачиваются из интернета однократно, затем распространяются локально |
+| **Ускорение обновлений** | Установка и обновление пакетов происходят быстрее (LAN vs WAN) |
+| **Работа в изолированных сетях** | Управление пакетами в сетях без доступа к интернету (air-gapped environments) |
+| **Контроль версий** | Возможность заморозить версии пакетов для стабильности |
+| **Кэширование** | Сохранение старых версий для отката при необходимости |
+
+### Архитектура зеркалирования
+
+```
+┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
+│   Интернет      │─────▶│  Сервер-зеркало  │─────▶│  Клиентские     │
+│   Репозитории   │      │  (apt-mirror/    │      │  машины         │
+│   (upstream)    │      │   reposync)      │      │                 │
+└─────────────────┘      └──────────────────┘      └─────────────────┘
+                                │
+                                ▼
+                         ┌──────────────────┐
+                         │  Хранилище       │
+                         │  /var/spool/     │
+                         │  apt-mirror/     │
+                         └──────────────────┘
+```
+
+### Инструменты зеркалирования
+
+| Система | Инструмент | Назначение |
+| :--- | :--- | :--- |
+| **APT** | `apt-mirror` | Автоматическое зеркалирование APT-репозиториев |
+| **APT** | `debmirror` | Гибкое зеркалирование с фильтрацией |
+| **APT** | `reprepro` | Создание приватных репозиториев (не зеркалирование) |
+| **YUM/DNF** | `reposync` | Синхронизация RPM-репозиториев |
+| **YUM/DNF** | `createrepo_c` | Создание метаданных для локальных репозиториев |
 
 ## Практические сценарии
 
 ### Сценарий 1: Создание зеркала для APT (Debian/Ubuntu)
-
-Для создания зеркала APT используются утилита `apt-mirror` и HTTP-сервер (например, Apache или Nginx).
 
 #### Шаг 1: Установка
 
@@ -29,131 +62,403 @@ sudo apt install apt-mirror apache2
 
 Конфигурационный файл `/etc/apt/mirror.list` определяет скачиваемые репозитории, компоненты и архитектуры.
 
-Пример конфигурации для Ubuntu 20.04 (Focal Fossa):
+**Пример конфигурации для Ubuntu 22.04 (Jammy Jellyfish):**
 
-```
-# /etc/apt/mirror.list
-
+```bash
+sudo tee /etc/apt/mirror.list << 'EOF'
 ############# config ##################
-# Указывает базовый путь для хранения всех файлов зеркала (пакеты, кэш и т.д.).
-# По умолчанию: /var/spool/apt-mirror
+# Базовый путь для хранения всех файлов зеркала
 set base_path    /var/spool/apt-mirror
-#
-# set mirror_path  $base_path/mirror # Путь к директории с непосредственно зеркалом
-# set skel_path    $base_path/skel   # Путь для хранения временных файлов
-# set var_path     $base_path/var     # Путь для хранения логов и других переменных данных
-#
-# Определяет количество потоков для одновременной загрузки пакетов.
-# Увеличение значения ускоряет загрузку, но увеличивает нагрузку на сеть и сервер.
+
+# Путь к зеркалу (пакеты)
+# set mirror_path  $base_path/mirror
+
+# Путь для временных файлов
+# set skel_path    $base_path/skel
+
+# Путь для логов и переменных данных
+# set var_path     $base_path/var
+
+# Количество потоков для одновременной загрузки
 set nthreads     20
-# Настройка обработки символа '~' в версиях пакетов.
-# Установка в '0' позволяет избежать проблем с пакетами, содержащими этот символ.
+
+# Обработка символа '~' в версиях пакетов
 set _tilde       0
+
 ############# end config ##############
 
-# Определения репозиториев для зеркалирования.
-# Формат: deb [опции] URI дистрибутив [компоненты]
-#
-# deb: Указывает на репозиторий бинарных пакетов.
-# http://archive.ubuntu.com/ubuntu: Базовый URL удаленного репозитория.
-# focal: Кодовое имя дистрибутива (например, Ubuntu 20.04 LTS).
-# main restricted universe multiverse: Компоненты репозитория, определяющие категории программного обеспечения:
-#   - main: Основные пакеты, поддерживаемые Canonical.
-#   - restricted: Проприетарные драйверы.
-#   - universe: Пакеты, поддерживаемые сообществом.
-#   - multiverse: Пакеты, ограниченные патентами или авторским правом.
-deb http://archive.ubuntu.com/ubuntu focal main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu focal-security main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu focal-updates main restricted universe multiverse
+# Репозитории для зеркалирования
+# Формат: deb <URL> <дистрибутив> <компоненты>
 
-# Инструкция для apt-mirror по удалению устаревших пакетов с локального зеркала,
-# которые больше не присутствуют в исходном репозитории.
+# Основные репозитории
+deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+
+# Репозиторий безопасности
+deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+
+# Исходные коды (опционально, требует deb-src)
+# deb-src http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+
+# Очистка устаревших пакетов
 clean http://archive.ubuntu.com/ubuntu
+clean http://security.ubuntu.com/ubuntu
+EOF
+```
+
+**Для Debian 12 (Bookworm):**
+
+```bash
+sudo tee /etc/apt/mirror.list << 'EOF'
+set base_path    /var/spool/apt-mirror
+set nthreads     20
+
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+
+clean http://deb.debian.org/debian
+clean http://security.debian.org/debian-security
+EOF
 ```
 
 #### Шаг 3: Синхронизация
 
-Запустите `apt-mirror`. Первый запуск может быть длительным.
-
 ```bash
+# Первый запуск (может занять длительное время)
 sudo apt-mirror
+
+# Проверка результата
+ls -la /var/spool/apt-mirror/mirror/
+
+# Размер зеркала
+du -sh /var/spool/apt-mirror/
 ```
 
-Зеркало будет создано в директории `base_path` (по умолчанию `/var/spool/apt-mirror`).
+**Время синхронизации:**
+- **Первая синхронизация:** 1-4 часа (зависит от скорости интернета и размера репо)
+- **Последующие обновления:** 10-30 минут
 
 #### Шаг 4: Публикация через веб-сервер
 
-Для доступа клиентов сделайте зеркало доступным по HTTP. Создайте символическую ссылку из директории веб-сервера.
+**Nginx:**
 
 ```bash
+# Создать символическую ссылку
 sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu /var/www/html/ubuntu
+sudo ln -s /var/spool/apt-mirror/mirror/security.ubuntu.com/ubuntu /var/www/html/ubuntu-security
+
+# Конфигурация Nginx
+sudo tee /etc/nginx/sites-available/repo << 'EOF'
+server {
+    listen 80;
+    server_name mirror.local;
+    root /var/www/html;
+
+    location / {
+        autoindex on;
+        autoindex_format html;
+        autoindex_localtime on;
+    }
+
+    # Кэширование для клиентов
+    location ~* \.(deb|gz|xml)$ {
+        expires 1h;
+        add_header Cache-Control "public, must-revalidate";
+    }
+}
+EOF
+
+sudo ln -s /etc/nginx/sites-available/repo /etc/nginx/sites-enabled/repo
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Зеркало будет доступно по адресу `http://<ip-адрес-сервера>/ubuntu`.
+**Apache:**
+
+```bash
+# Включить модуль автоиндекса
+sudo a2enmod autoindex
+
+# Создать символическую ссылку
+sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu /var/www/html/ubuntu
+
+# Перезапустить Apache
+sudo systemctl reload apache2
+```
 
 #### Шаг 5: Настройка клиентов
 
-На клиентских машинах отредактируйте `/etc/apt/sources.list`, указав адрес локального зеркала.
+На клиентских машинах отредактировать `/etc/apt/sources.list`:
 
-```
+```bash
 # /etc/apt/sources.list
-deb http://mirror.local/ubuntu focal main restricted universe multiverse
-deb http://mirror.local/ubuntu focal-security main restricted universe multiverse
-deb http://mirror.local/ubuntu focal-updates main restricted universe multiverse
+deb http://mirror.local/ubuntu jammy main restricted universe multiverse
+deb http://mirror.local/ubuntu jammy-updates main restricted universe multiverse
+deb http://mirror.local/ubuntu jammy-security main restricted universe multiverse
+deb http://mirror.local/ubuntu jammy-backports main restricted universe multiverse
 ```
 
-Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала, затем выполните `sudo apt update`.
+Или создать отдельный файл:
+
+```bash
+echo "deb http://mirror.local/ubuntu jammy main restricted universe multiverse" | \
+    sudo tee /etc/apt/sources.list.d/local-mirror.list
+
+sudo apt update
+```
+
+#### Шаг 6: Автоматизация обновлений
+
+**Cron (ежедневное обновление):**
+
+```bash
+# /etc/cron.daily/apt-mirror
+#!/bin/bash
+/usr/bin/apt-mirror > /var/log/apt-mirror.log 2>&1
+```
+
+```bash
+sudo chmod +x /etc/cron.daily/apt-mirror
+```
+
+**Systemd timer:**
+
+```bash
+# /etc/systemd/system/apt-mirror.service
+[Unit]
+Description=APT Mirror Sync
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/apt-mirror
+
+# /etc/systemd/system/apt-mirror.timer
+[Unit]
+Description=Run apt-mirror daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl enable --now apt-mirror.timer
+```
 
 ### Сценарий 2: Создание зеркала для YUM/DNF (RHEL/CentOS/AlmaLinux)
 
-Используются утилиты `reposync` и `createrepo_c`.
-
 #### Шаг 1: Установка
-
-`reposync` поставляется в пакете `yum-utils` или `dnf-utils`, `createrepo_c` — в одноименном пакете.
 
 ```bash
 sudo yum install yum-utils createrepo_c httpd
+# или для новых версий
+sudo dnf install yum-utils createrepo_c httpd
 ```
 
 #### Шаг 2: Синхронизация репозитория
 
-Команда `reposync` скачивает все пакеты из указанного репозитория.
-
 ```bash
-# Пример для репозитория 'base'
-# --gpgcheck - проверка подписей пакетов
-# -l - поддержка плагинов yum
-# --repoid=base - идентификатор репозитория
-# --download_path - путь сохранения пакетов
+# Создать директорию для зеркала
+sudo mkdir -p /var/www/html/yum
+
+# Синхронизировать репозиторий base
+# --gpgcheck: проверка подписей пакетов
+# -l: поддержка плагинов yum
+# --repoid: идентификатор репозитория
+# --download-path: путь сохранения
 sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum
+
+# Для нескольких репозиториев
+sudo reposync --gpgcheck -l -p /var/www/html/yum
+
+# Синхронизация с фильтрацией по архитектуре
+sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum --arch=x86_64
 ```
 
 #### Шаг 3: Создание метаданных
 
-После скачивания пакетов необходимо сгенерировать метаданные для работы `yum`/`dnf` с репозиторием.
-
 ```bash
+# Создать метаданные для каждого репозитория
 sudo createrepo_c /var/www/html/yum/base
+
+# Обновить метаданные после синхронизации
+sudo createrepo_c --update /var/www/html/yum/base
+
+# Полная пересоздание метаданных
+sudo createrepo_c --cleanup --update /var/www/html/yum/base
 ```
 
-Эту команду следует выполнять после каждого обновления пакетов с `reposync`.
+#### Шаг 4: Публикация через HTTP
 
-#### Шаг 4: Настройка клиентов
+```bash
+# Настроить SELinux (если включён)
+sudo setsebool -P httpd_can_network_connect 1
+sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/html/yum(/.*)?"
+sudo restorecon -Rv /var/www/html/yum
 
-На клиентских машинах отредактируйте файлы в `/etc/yum.repos.d/`, изменив параметр `baseurl`.
+# Включить и запустить httpd
+sudo systemctl enable --now httpd
 
-Пример для `CentOS-Base.repo`:
+# Открыть порт в firewall
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --reload
+```
+
+#### Шаг 5: Настройка клиентов
+
+Создать файл `/etc/yum.repos.d/local-mirror.repo` на клиентских машинах:
 
 ```ini
-[base]
-name=CentOS-$releasever - Base - mirror.local
-# Комментируем или удаляем строку mirrorlist
-# mirrorlist=http://mirrorlist.centos.org/...
-# И указываем прямой путь к нашему зеркалу
+[local-base]
+name=Local Base Mirror
 baseurl=http://mirror.local/yum/base/
 gpgcheck=0
 enabled=1
+priority=50
+
+[local-updates]
+name=Local Updates Mirror
+baseurl=http://mirror.local/yum/updates/
+gpgcheck=0
+enabled=1
+priority=50
 ```
 
-Замените `mirror.local` на IP-адрес или DNS-имя вашего сервера-зеркала, затем выполните `sudo dnf clean all`.
+```bash
+# Очистить кэш и обновить метаданные
+sudo dnf clean all
+sudo dnf makecache
+```
+
+#### Шаг 6: Автоматизация обновлений
+
+**Cron скрипт:**
+
+```bash
+# /etc/cron.daily/yum-mirror
+#!/bin/bash
+REPO_DIR="/var/www/html/yum"
+
+# Синхронизация репозиториев
+reposync --gpgcheck -l --repoid=base --download-path=$REPO_DIR
+reposync --gpgcheck -l --repoid=updates --download-path=$REPO_DIR
+
+# Обновление метаданных
+createrepo_c --update $REPO_DIR/base
+createrepo_c --update $REPO_DIR/updates
+```
+
+```bash
+sudo chmod +x /etc/cron.daily/yum-mirror
+```
+
+### Сценарий 3: Зеркалирование для изолированной сети (Air-Gapped)
+
+#### Шаг 1: Подготовка съёмного носителя
+
+```bash
+# На машине с интернетом
+sudo apt-mirror
+
+# Копирование на внешний диск
+EXTERNAL_DISK="/mnt/external-drive"
+sudo rsync -av /var/spool/apt-mirror/ $EXTERNAL_DISK/apt-mirror/
+```
+
+#### Шаг 2: Развёртывание в изолированной сети
+
+```bash
+# На машине в изолированной сети
+EXTERNAL_DISK="/mnt/external-drive"
+sudo mkdir -p /var/www/html/offline-repo
+sudo rsync -av $EXTERNAL_DISK/apt-mirror/ /var/www/html/offline-repo/
+
+# Настройка веб-сервера (как выше)
+```
+
+#### Шаг 3: Использование без веб-сервера (локальный путь)
+
+```bash
+# /etc/apt/sources.list.d/offline.list
+deb file:///var/www/html/offline-repo/ubuntu jammy main restricted universe multiverse
+
+sudo apt update
+```
+
+## Дополнительная информация
+
+### Расчёт необходимого дискового пространства
+
+| Дистрибутив | Полный размер | Частичное (main only) |
+| :--- | :--- | :--- |
+| **Ubuntu 22.04** | ~200 GB | ~50 GB |
+| **Debian 12** | ~400 GB | ~80 GB |
+| **CentOS 8** | ~150 GB | ~40 GB |
+| **RHEL 9** | ~180 GB | ~45 GB |
+
+**Рекомендации:**
+- Используйте отдельный раздел/диск для зеркала
+- Настройте мониторинг свободного места
+- Планируйте рост (добавление новых версий)
+
+### Оптимизация зеркалирования
+
+**Фильтрация пакетов (apt-mirror):**
+
+```bash
+# Зеркалирование только определённых архитектур
+set archs amd64
+
+# Исключение пакетов по шаблону
+FILTER = ^(.*/)?(kernel|linux-image).*$
+
+# Зеркалирование только конкретных пакетов
+# (требует использования debmirror вместо apt-mirror)
+```
+
+**Инкрементальная синхронизация:**
+
+```bash
+# apt-mirror по умолчанию загружает только изменения
+# Для принудительной проверки:
+apt-mirror --force-check
+
+# Очистка старых версий пакетов
+apt-mirror --clean
+```
+
+### Мониторинг и логирование
+
+```bash
+# Просмотр лога синхронизации
+tail -f /var/spool/apt-mirror/var/log
+
+# Проверка последней синхронизации
+ls -la /var/spool/apt-mirror/var/last-run
+
+# Уведомление об ошибках (скрипт)
+#!/bin/bash
+if ! /usr/bin/apt-mirror > /var/log/apt-mirror.log 2>&1; then
+    mail -s "APT Mirror Sync Failed" admin@example.com < /var/log/apt-mirror.log
+fi
+```
+
+### Проблемы и решения
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Недостаточно места** | Большой размер репо | Очистить старые пакеты, увеличить диск |
+| **404 ошибки** | Изменения в структуре репо | Обновить URLs в mirror.list |
+| **GPG ошибки на клиентах** | Нет ключей | Импортировать ключи репозитория |
+| **Медленная синхронизация** | Ограничения пропускной способности | Увеличить `nthreads`, использовать rsync |
+
+### Связанные темы
+
+* **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — файл `sources.list`
+* **[Управление репозиториями DNF](./dnf_repository_management.md)** — настройка репозиториев для RPM
+* **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
+* **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
