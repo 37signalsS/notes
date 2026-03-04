@@ -22,7 +22,7 @@ Lens использует стандартные файлы `kubeconfig` для 
 2.  Скопируйте его содержимое.
 3.  В Lens нажмите `File > Add Cluster` и вставьте содержимое `kubeconfig`.
 
-При использовании [Kubespray](../Kubespray/installation_and_config.md), файл `admin.conf` можно найти в директории `inventory/имя_кластера/artifacts/`.
+При использовании [Kubespray](../Installation/Kubespray/installation.md), файл `admin.conf` можно найти в директории `inventory/имя_кластера/artifacts/`.
 
 ## 3. Практические сценарии
 

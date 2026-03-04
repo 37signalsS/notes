@@ -19,7 +19,7 @@
 
 Утилита `kubeadm` предоставляет встроенные команды для управления жизненным циклом сертификатов, что значительно упрощает их обновление.
 
-**Важное требование:** Чтобы `kubeadm` мог управлять сертификатами `etcd`, кластер должен быть развернут с опцией, которая указывает `kubeadm` управлять развертыванием `etcd`. При использовании [Kubespray](../Installation/Kubespray/installation_and_config.md) это достигается параметром `etcd_kubeadm_enabled: true`.
+**Важное требование:** Чтобы `kubeadm` мог управлять сертификатами `etcd`, кластер должен быть развернут с опцией, которая указывает `kubeadm` управлять развертыванием `etcd`. При использовании [Kubespray](../Installation/Kubespray/installation.md) это достигается параметром `etcd_kubeadm_enabled: true`.
 
 ## 3. Практические сценарии
 
@@ -67,4 +67,4 @@ sudo kubeadm certs renew apiserver
 ## 4. Дополнительная информация
 
 *   [Официальная документация по управлению сертификатами](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/)
-*   [Установка кластера с помощью Kubespray](../Installation/Kubespray/installation_and_config.md)
+*   [Установка кластера с помощью Kubespray](../Installation/Kubespray/installation.md)

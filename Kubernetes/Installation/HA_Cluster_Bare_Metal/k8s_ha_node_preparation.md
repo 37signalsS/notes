@@ -1,124 +1,144 @@
-### 2. Подготовка всех узлов (Master и Worker)
+# Подготовка узлов HA кластера Kubernetes
 
-Следующие шаги выполняются на **каждом** узле будущего кластера.
+## Определения
 
-#### Обновление системы
+**Node Preparation** — процесс предварительной настройки всех узлов кластера (Control Plane и Worker) перед установкой компонентов Kubernetes.
 
-```bash
-sudo apt-get update && sudo apt-get upgrade -y
-```
+**cgroups v2** — версия контрольных групп Linux, обязательная для Kubernetes 1.24+. Управляет ресурсами контейнеров.
 
-#### Настройка имен хостов и `/etc/hosts`
+**SWAP** — область подкачки на диске. Kubernetes требует отключения SWAP для предсказуемого управления памятью.
 
-Присвойте уникальное имя каждому узлу (`master-1`, `master-2`, `worker-1` и т.д.):
+**CNI (Container Network Interface)** — стандартный интерфейс для подключения контейнеров к сети.
 
-```bash
-sudo hostnamectl set-hostname <имя-узла>
-```
+---
 
-На каждом узле добавьте в `/etc/hosts` IP-адреса всех участников кластера.
+## Основные концепции
 
-```
-# /etc/hosts
-<IP-адрес-балансировщика> kubeapi-vip
-<IP-адрес-мастера-1> master-1
-<IP-адрес-мастера-2> master-2
-<IP-адрес-мастера-3> master-3
-<IP-адрес-воркера-1> worker-1
-...
-```
+### Почему требуется подготовка?
 
-> **NOTE:** Для продуктивных сред рекомендуется использовать внутренний DNS-сервер вместо ручного редактирования `/etc/hosts`.
+Kubernetes предъявляет специфические требования к ОС:
+- **Отключенный SWAP** — `kubelet` не работает с SWAP
+- **cgroups v2** — требуется для управления ресурсами подов
+- **Сетевые модули** — `br_netfilter`, `overlay` для работы CNI
+- **Sysctl параметры** — включение IP forwarding, iptables для сетевой политики
 
-#### Предварительная проверка и настройка системы
+### Область применения
 
-Эти шаги выполняются на **каждом** сервере будущего кластера.
+Эти шаги выполняются **на каждом узле** кластера:
+- Control Plane узлы (мастеры)
+- Worker узлы
 
-##### 1. Проверка текущего состояния (на ВСЕХ серверах)
+---
 
-Текущее ядро
+## Практические сценарии
+
+### Шаг 1: Обновление системы
 
 ```bash
-uname -r
-```
+# Обновление пакетов
+sudo apt update
+sudo apt upgrade -y
 
-Доступные ядра
-
-```bash
+# Проверка доступных ядер после обновления
 ls /boot/vmlinuz-*
 ```
 
-Cgroups версия
+> **Важно**: НЕ перезагружаем систему до завершения всех настроек.
+
+### Шаг 2: Настройка имени хоста и `/etc/hosts`
+
+#### Установка hostname
 
 ```bash
+# Присвоить уникальное имя каждому узлу
+sudo hostnamectl set-hostname <имя-узла>
+# Примеры: master-1, master-2, worker-1
+```
+
+#### Настройка `/etc/hosts`
+
+На **каждом** узле добавить IP-адреса всех участников:
+
+```bash
+# /etc/hosts
+<IP-балансировщика>    kubeapi-vip
+<IP-master-1>          master-1
+<IP-master-2>          master-2
+<IP-master-3>          master-3
+<IP-worker-1>          worker-1
+<IP-worker-2>          worker-2
+```
+
+> **NOTE**: Для production использовать внутренний DNS-сервер вместо ручного `/etc/hosts`.
+
+### Шаг 3: Проверка текущего состояния
+
+```bash
+# Текущее ядро
+uname -r
+
+# Доступные ядра
+ls /boot/vmlinuz-*
+
+# Версия cgroups
 stat -fc %T /sys/fs/cgroup
-```
+# Ожидается: cgroup2fs
 
-Активный SWAP
-
-```bash
+# Активный SWAP
 swapon --show
-```
+# Ожидается: пусто (0 активных)
 
-Загруженные сетевые модули
-
-```bash
+# Загруженные сетевые модули
 lsmod | grep -E "br_netfilter|overlay"
-```
 
-Текущие контейнеры
-
-```bash
+# Текущие контейнеры (если есть)
 docker ps --format "table {{.Names}} {{.Status}}"
 ```
 
-##### 2. Обновление системы (по одному серверу)
+### Шаг 4: Отключение SWAP
 
 ```bash
-sudo apt update
-sudo apt upgrade -y
-```
-
-Проверка доступных ядер после обновления
-
-```bash
-ls /boot/vmlinuz-*  # Должно быть новое ядро (в моем случае это 6.8.0-90)
-```
-
-> **ВАЖНО:** НЕ перезагружаем пока! Сначала выполним все настройки.
-
-##### 3. Настройка системных параметров
-
-1. Отключаем SWAP
-
-```bash
+# Немедленно отключить SWAP
 sudo swapoff -a
-sudo sed -i '/ swap / s/^/#/' /etc/fstab
-echo "SWAP отключен: $(swapon --show | wc -l) активных"
+
+# Закомментировать SWAP в /etc/fstab (перманентное отключение)
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+# Проверка: должно быть 0 активных
+swapon --show | wc -l
 ```
 
-1. Настраиваем cgroups v2 в GRUB
+### Шаг 5: Настройка cgroups v2 в GRUB
 
 ```bash
+# Добавить параметр ядра для включения cgroups v2
 sudo sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"/' /etc/default/grub
+
+# Обновить конфигурацию GRUB
 sudo update-grub
-echo "GRUB обновлён: $(grep GRUB_CMDLINE_LINUX /etc/default/grub)"
+
+# Проверка
+grep GRUB_CMDLINE_LINUX /etc/default/grub
 ```
 
-1. Загружаем сетевые модули
+### Шаг 6: Загрузка сетевых модулей
 
 ```bash
+# Загрузить модули немедленно
 sudo modprobe br_netfilter
 sudo modprobe overlay
-echo -e "br_netfilter
-overlay" | sudo tee /etc/modules-load.d/k8s.conf
-echo "Модули загружены:"
+
+# Добавить в автозагрузку
+echo -e "br_netfilter\noverlay" | sudo tee /etc/modules-load.d/k8s.conf
+
+# Проверка
 lsmod | grep -E "br_netfilter|overlay"
 ```
 
-1. Настраиваем sysctl параметры
+### Шаг 7: Настройка sysctl параметров
 
 ```bash
+# Создать конфигурационный файл
 cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes.conf
 net.ipv4.ip_forward = 1
 net.bridge.bridge-nf-call-iptables = 1
@@ -126,33 +146,79 @@ net.bridge.bridge-nf-call-ip6tables = 1
 net.netfilter.nf_conntrack_max = 262144
 EOF
 
+# Применить настройки
 sudo sysctl --system
-echo "Проверка параметров:"
+
+# Проверка
 sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables
 ```
 
-##### 4. Быстрая проверка готовности
+**Описание параметров**:
+- `net.ipv4.ip_forward = 1` — включение маршрутизации между подами
+- `bridge-nf-call-iptables = 1` — передача трафика bridge через iptables (требуется для NetworkPolicy)
+- `nf_conntrack_max` — максимальное количество отслеживаемых соединений
 
-После выполнения всех команд на каждом сервере у вас будет:
-
-1. Система готова к работе с Kubernetes:
-SWAP полностью отключен (swapon --show = 0 активных)
-Cgroups v2 активирован (stat -fc %T /sys/fs/cgroup = cgroup2fs)
-GRUB настроен с параметром systemd.unified_cgroup_hierarchy=1
-Сетевые модули загружены (br_netfilter, overlay)
-Sysctl параметры установлены (ip_forward=1, bridge-nf-call-iptables=1)
-
-2. Все проверки пройдены:
+### Шаг 8: Итоговая проверка готовности
 
 ```bash
-1. SWAP: $(swapon --show | wc -l) активных (должно быть 0)
-2. Cgroups: $(stat -fc %T /sys/fs/cgroup) (должно быть cgroup2fs)
-3. Сеть: ip_forward=$(sysctl -n net.ipv4.ip_forward) (должно быть 1)
-4. Модули: br_netfilter=$(lsmod | grep -c br_netfilter), overlay=$(lsmod | grep -c overlay)
+echo "=== Проверка готовности узла ==="
+
+# 1. SWAP
+swap_count=$(swapon --show | wc -l)
+echo "1. SWAP: $swap_count активных (должно быть 0)"
+
+# 2. Cgroups
+cgroup_type=$(stat -fc %T /sys/fs/cgroup)
+echo "2. Cgroups: $cgroup_type (должно быть cgroup2fs)"
+
+# 3. Сеть
+ip_forward=$(sysctl -n net.ipv4.ip_forward)
+echo "3. IP Forward: $ip_forward (должно быть 1)"
+
+# 4. Модули
+br_count=$(lsmod | grep -c br_netfilter)
+overlay_count=$(lsmod | grep -c overlay)
+echo "4. Модули: br_netfilter=$br_count, overlay=$overlay_count (должно быть 1+)"
+
+# Итог
+if [ "$swap_count" -eq 0 ] && [ "$cgroup_type" = "cgroup2fs" ] && [ "$ip_forward" -eq 1 ] && [ "$br_count" -ge 1 ] && [ "$overlay_count" -ge 1 ]; then
+    echo "✅ Узел готов к установке Kubernetes"
+else
+    echo "❌ Узел НЕ готов. Проверьте настройки выше."
+fi
 ```
 
-##### 5. Что НЕ сделано (и не должно быть сделано сейчас)
+---
 
-* Перезагрузка (выполним позже, после всех настроек)
-* Установка Kubernetes компонентов (это следующий этап)
-* Изменение работы существующих контейнеров (они работают как и раньше)
+## Дополнительная информация
+
+### Что НЕ делается на этом этапе
+
+- **Перезагрузка** — выполняется позже, после установки всех компонентов
+- **Установка Kubernetes** — следующий этап
+- **Изменение существующих контейнеров** — Docker/containerd продолжают работать
+
+### Следующие шаги
+
+После подготовки всех узлов:
+1. Установка `containerd` → [Component Installation](./k8s_ha_component_installation.md)
+2. Установка `kubeadm`, `kubelet`, `kubectl`
+3. Перезагрузка всех узлов
+4. Инициализация кластера
+
+### Связанные документы
+
+- **Требования**: [Environment Requirements](./k8s_ha_environment_requirements.md)
+- **Установка компонентов**: [Component Installation](./k8s_ha_component_installation.md)
+- **containerd**: [Альтернативные среды выполнения](../../Docker/alternative_runtimes_and_tools.md)
+- **cgroups**: [Kubelet Configuration](../../Concepts/control_plane_architecture.md#конфигурация-kubelet)
+- **Сеть**: [CNI Overview](../../Networking/Network/cni_overview.md)
+
+### Надежность
+
+| Раздел | SSoT | Confidence |
+| :--- | :--- | :--- |
+| Отключение SWAP | Этот файл | 10 |
+| cgroups v2 настройка | Этот файл | 10 |
+| Сетевые модули | Этот файл + официалка | 10 |
+| Sysctl параметры | Этот файл | 10 |

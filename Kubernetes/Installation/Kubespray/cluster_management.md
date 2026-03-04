@@ -1,92 +1,168 @@
-# Kubespray: Управление кластером (Масштабирование и Обновление)
+# Kubespray: Управление кластером
 
 ## 1. Определения
 
-**Управление кластером** — операции по масштабированию (добавление узлов) и обновлению кластера Kubernetes с помощью Kubespray.
+**Управление кластером** — операции по масштабированию (добавление/удаление узлов) и обновлению компонентов кластера Kubernetes с помощью Kubespray.
 
 ## 2. Основные концепции
 
 ### Плейбуки управления
 
-* `scale.yml` — добавление новых узлов в существующий кластер.
-* `cluster.yml` — основной плейбук, также используется для добавления master-узлов.
-* `upgrade-cluster.yml` — обновление кластера до новой версии Kubernetes.
+| Плейбук | Назначение |
+| :--- | :--- |
+| `scale.yml` | Добавление новых worker-узлов |
+| `cluster.yml` | Добавление master-узлов (Control Plane) |
+| `upgrade-cluster.yml` | Обновление Kubernetes до новой версии |
+| `remove-node.yml` | Удаление узлов из кластера |
 
-### Версионирование
+### Версионирование и совместимость
 
-* **Правило одной минорной версии:** Обновлять кластер можно только последовательно, на одну минорную версию за раз.
-* **Kubespray и версии Kubernetes:** Версия Kubespray определяет, до какой версии Kubernetes можно обновиться.
+| Правило | Описание |
+| :--- | :--- |
+| **Одна минорная версия** | Обновлять можно только на одну минорную версию за раз (например, 1.29 → 1.30) |
+| **Версия Kubespray** | Определяет максимальную версию Kubernetes для обновления |
+| **Проверка совместимости** | См. `roles/download/defaults/main.yml` (переменная `kubelet_checksums`) |
+
+> **Важно:** Перед обновлением изучите [Release Notes](https://github.com/kubernetes/kubernetes/releases) целевой версии Kubernetes.
 
 ## 3. Практические сценарии
 
-### 3.1. Управление кластером: Масштабирование
+### 3.1. Масштабирование кластера
 
 #### Добавление Worker Node
 
-1. **Обновите inventory:** Добавьте новые узлы в `inventory.ini` в группу `[kube_node]`.
-2. **Запустите плейбук `scale.yml`:**
+1. **Обновите inventory** (`inventory/my-cluster/inventory.ini`):
+   ```ini
+   [kube_node]
+   worker-1
+   worker-2
+   worker-3  # Новый узел
+   ```
 
-    ```bash
-    ansible-playbook -i inventory/my-cluster/inventory.ini scale.yml
-    ```
+2. **Запустите плейбук `scale.yml`:**
+   ```bash
+   ansible-playbook -i inventory/my-cluster/inventory.ini scale.yml
+   ```
+
+3. **Проверьте результат:**
+   ```bash
+   kubectl get nodes
+   ```
 
 #### Добавление Master Node (Control Plane)
 
-1. **Обновите inventory:** Добавьте новые master-узлы в `inventory.ini` в группы `[kube_control_plane]` и `[etcd]`.
-2. **Запустите плейбук `cluster.yml`:** Для добавления master-узлов используется основной плейбук.
+1. **Обновите inventory:**
+   ```ini
+   [kube_control_plane]
+   control-1
+   control-2
+   control-3
+   control-4  # Новый master
 
-    ```bash
-    ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
-    ```
+   [etcd]
+   control-1
+   control-2
+   control-3
+   control-4  # Новый master (etcd должен быть на всех master)
+   ```
 
-### 3.2. Управление кластером: Обновление
+2. **Запустите плейбук `cluster.yml`:**
+   ```bash
+   ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
+   ```
 
-#### Проверка доступной версии для обновления
+3. **Проверьте результат:**
+   ```bash
+   kubectl get nodes -l node-role.kubernetes.io/control-plane
+   ```
 
-Перед обновлением выясните, до какой версии Kubernetes можно обновиться с вашей версией Kubespray.
+#### Удаление узла
 
-1. Перейдите в директорию `roles/download/defaults`.
-2. Откройте файл `main.yml` и найдите переменную `kubelet_checksums`.
+1. **Обновите inventory** — удалите узел из всех групп.
+
+2. **Запустите плейбук `remove-node.yml`:**
+   ```bash
+   ansible-playbook -i inventory/my-cluster/inventory.ini remove-node.yml -e node=<имя_узла>
+   ```
+
+3. **Проверьте результат:**
+   ```bash
+   kubectl get nodes
+   ```
+
+### 3.2. Обновление кластера
+
+#### Подготовка к обновлению
+
+1. **Проверьте поддерживаемую версию:**
+   ```bash
+   cat roles/download/defaults/main.yml | grep kubelet_checksums -A 20
+   ```
+
+2. **Изучите Release Notes** целевой версии Kubernetes.
+
+3. **Сделайте бэкап etcd:**
+   ```bash
+   etcdctl snapshot save snapshot.db
+   ```
+
+4. **Проверьте манифесты** на использование устаревших API (см. [Deprecation Guide](https://kubernetes.io/docs/reference/using-api/deprecation-guide/)).
 
 #### Процесс обновления
 
 1. **Измените версию** в `group_vars/k8s-cluster/k8s-cluster.yml`:
-
-    ```yaml
-    kube_version: v1.35.0
-    ```
+   ```yaml
+   kube_version: v1.30.0  # Целевая версия
+   ```
 
 2. **Запустите плейбук `upgrade-cluster.yml`:**
+   ```bash
+   ansible-playbook -i inventory/my-cluster/inventory.ini upgrade-cluster.yml
+   ```
 
-    ```bash
-    ansible-playbook -i inventory/my-cluster/inventory.ini upgrade-cluster.yml
-    ```
+   > **Важно:** Плейбук выполняет задачи **последовательно** на каждом узле (не параллельно) для минимизации рисков.
 
-    > **Важно:** Плейбук `upgrade-cluster.yml` выполняет задачи последовательно на каждом узле, а не параллельно, для большей безопасности.
+3. **Время выполнения:** 20–40 минут в зависимости от количества узлов.
 
 #### Проверка после обновления
 
-1. **Проверьте версию API Server и `kubelet`:**
+1. **Версия API Server и kubelet:**
+   ```bash
+   kubectl version
+   kubectl get nodes
+   ```
 
-    ```bash
-    kubectl version
-    kubectl get nodes
-    ```
+2. **Версии компонентов Control Plane:**
+   ```bash
+   kubectl describe pod kube-apiserver-control-1 -n kube-system | grep Image
+   kubectl describe pod kube-controller-manager-control-1 -n kube-system | grep Image
+   kubectl describe pod kube-scheduler-control-1 -n kube-system | grep Image
+   ```
 
-2. **Проверьте версии компонентов Control Plane**, посмотрев на версию образа (`Image`) в описании их подов:
+3. **Версия etcd:**
+   ```bash
+   etcdctl version
+   ```
 
-    ```bash
-    kubectl describe pod <pod-name> -n kube-system
-    ```
+4. **Проверка подов:**
+   ```bash
+   kubectl get pods -A --field-selector=status.phase!=Running
+   ```
 
-#### Возможные проблемы и важные моменты при обновлении
+### 3.3. Возможные проблемы при обновлении
 
-* **Устаревшие API и манифесты:** В новых версиях Kubernetes могут быть удалены API. Проверяйте манифесты на использование устаревших `apiVersion`.
-* **Изменение опций компонентов:** Параметры запуска компонентов могут измениться. Kubespray обычно это обрабатывает, но кастомные конфигурации могут потребовать ручной корректировки.
-* **Проверка `release notes`:** Критически важно изучить официальные `release notes` для новой версии Kubernetes.
+| Проблема | Решение |
+| :--- | :--- |
+| **Устаревшие API** | Обновите манифесты до актуальных `apiVersion` |
+| **Изменение опций компонентов** | Проверьте кастомные конфигурации в `group_vars/` |
+| **Недостаточно ресурсов** | Освободите ресурсы на узлах перед обновлением |
+| **Сбой во время обновления** | Восстановите из бэкапа etcd, откатите версию |
 
 ## 4. Дополнительная информация
 
 * [Обзор Kubespray](./overview.md) — определения и основные концепции.
-* [Установка и конфигурация](./installation_and_config.md) — развертывание кластера.
-* [Дополнительные примеры](./additional_info_and_examples.md) — примеры конфигурации.
+* [Установка кластера](./installation.md) — развертывание кластера.
+* [Примеры конфигураций](./examples.md) — Ingress, MetalLB, системные поды.
+* [Управление сертификатами](../../Operations/certificate_management.md) — обновление сертификатов.
+* [etcd: Обзор](../../Concepts/etcd_overview.md) — хранилище данных кластера.
+

@@ -479,9 +479,9 @@
 /home/q/notes/Kubernetes/Installation/ha_cluster_deployment_with_kubespray.md
 /home/q/notes/Kubernetes/Installation/kind_quickstart.md
 /home/q/notes/Kubernetes/Installation/kubeadm_quickstart.md
-/home/q/notes/Kubernetes/Installation/Kubespray/additional_info_and_examples.md
 /home/q/notes/Kubernetes/Installation/Kubespray/cluster_management.md
-/home/q/notes/Kubernetes/Installation/Kubespray/installation_and_config.md
+/home/q/notes/Kubernetes/Installation/Kubespray/examples.md
+/home/q/notes/Kubernetes/Installation/Kubespray/installation.md
 /home/q/notes/Kubernetes/Installation/Kubespray/overview.md
 /home/q/notes/Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_auxiliary_components.md
 /home/q/notes/Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_lgtm_stack_deployment.md
