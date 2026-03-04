@@ -65,5 +65,4 @@ Secret можно использовать как переменные окру�
 - [Внешние менеджеры](external_managers.md)
 - [ConfigMap](../configmap.md) — для неконфиденциальных данных
 - [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)
-- [External Secrets Operator](../../Security/external_secrets_overview.md) — интеграция с внешними хранилищами
-- [RBAC](../../Security/rbac_basics.md) — управление доступом
+- [RBAC](../../Security/rbac/rbac_overview.md) — управление доступом
