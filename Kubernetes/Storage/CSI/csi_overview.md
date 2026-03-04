@@ -86,4 +86,4 @@ CSI-драйвер для конкретной СХД обычно состои�
   - **Централизованное управление:** Секреты хранятся в одном надежном месте.
   - **Автоматическая ротация:** Драйвер может автоматически обновлять смонтированные секреты.
   - **Повышенная безопасность:** Секреты не хранятся в `etcd` в base64.
-- **См. также:** [Secrets Store CSI Driver в Kubernetes](../../Base/secret.md#secrets-store-csi-driver).
+- **См. также:** [External Secret Managers: Secrets Store CSI Driver](../Base/secrets/external_managers.md)

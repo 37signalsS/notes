@@ -17,6 +17,8 @@
 
 **Примеры провайдеров:** HashiCorp Vault, AWS Secrets Manager, Google Cloud Secret Manager, Azure Key Vault
 
+> Подробнее об интеграции Vault через CSI Driver см. [Интеграция Vault с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)
+
 ### Sealed Secrets
 
 Решает проблему хранения Secret в Git.
@@ -26,6 +28,8 @@
 3. SealedSecret безопасно коммитить в Git
 4. Контроллер расшифровывает и создаёт нативный Secret
 
+> Подробнее см. [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)
+
 ### Secrets Store CSI Driver
 
 Монтирует внешние секреты как тома, не сохраняя в etcd:
@@ -34,6 +38,8 @@
 2. Создайте ресурс `SecretProviderClass`
 3. В поде монтируется том типа `secrets-store.csi.k8s.io`
 4. CSI Driver извлекает данные и монтирует как файлы
+
+> Подробнее см. [CSI Overview](../Storage/CSI/csi_overview.md)
 
 ## Дополнительная информация
 
@@ -51,6 +57,7 @@
 | Sealed Secrets | Да | Контроллер | Низкая |
 | ESO | Нет | Оператор + внешнее хранилище | Средняя |
 | CSI Driver | Нет | Драйвер + провайдер | Средняя |
+| [SOPS](../../Security/Tools/sops_overview.md) | Да | Ключи (PGP/age/Cloud KMS) | Низкая |
 
 ### Связанные темы
 

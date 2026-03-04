@@ -63,3 +63,4 @@ Secret можно использовать как переменные окру�
 - [Хранение в etcd](etcd_storage.md)
 - [Безопасность Secret](security.md)
 - [Внешние менеджеры](external_managers.md)
+- [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)

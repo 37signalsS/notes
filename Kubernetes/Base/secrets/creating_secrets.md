@@ -52,9 +52,19 @@ data:
 `kubectl` автоматически кодирует значения в Base64:
 
 ```bash
+# Из литералов
 kubectl create secret generic db-cred \
   --from-literal=username=app \
   --from-literal=password='S3cUr3!'
+
+# Из файлов (приватный ключ, сертификат)
+kubectl create secret tls my-tls-secret \
+  --cert=path/to/tls.crt \
+  --key=path/to/tls.key
+
+# Из директории с файлами
+kubectl create secret generic my-secret \
+  --from-file=path/to/directory/
 ```
 
 ### Приоритет `stringData` над `data`

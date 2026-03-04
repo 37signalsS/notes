@@ -103,6 +103,31 @@ spec:
               path: settings/app.conf
 ```
 
+### Secret Data Mount (serviceAccount)
+
+Автоматическое монтирование токена и ca.crt из ServiceAccount:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  serviceAccountName: my-sa
+  containers:
+  - name: my-app
+    image: my-app-image
+    volumeMounts:
+    - name: kube-api-access
+      mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      readOnly: true
+```
+
+При создании ServiceAccount автоматически создаётся:
+- `kubernetes.io/serviceaccount/namespace` — namespace
+- `kubernetes.io/serviceaccount/token` — JWT-токен
+- `kubernetes.io/serviceaccount/ca.crt` — CA сертификат для проверки API
+
 ## Дополнительная информация
 
 ### Сравнение методов

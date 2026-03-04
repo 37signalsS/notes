@@ -205,6 +205,7 @@ kubectl apply -f new.sealed.yaml
 - **External Secrets Operator** — интеграция с внешними KMS
 - **SOPS** — шифрование с ключами AWS/GCP/Azure
 - **Vault** — полноценное secrets management
+- Другие подходы см. [Внешние менеджеры](../Base/secrets/external_managers.md)
 
 ### Связанные темы
 
