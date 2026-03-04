@@ -2,165 +2,138 @@
 
 ## Определения
 
-**Буферизация** — механизм временного хранения логов перед отправкой в назначение, обеспечивающий надежность доставки при сбоях сети или хранилища.
+**Буферизация (Buffering)** — механизм временного хранения записей логов перед их отправкой в место назначения. Это ключевой элемент для обеспечения надежности доставки при сбоях сети или недоступности конечного хранилища.
 
-**Storage Layer** — подсистема Fluent Bit для дисковой буферизации логов.
+**Слой хранения (Storage Layer)** — подсистема Fluent Bit, отвечающая за дисковую буферизацию логов.
 
-**Тег (Tag)** — идентификатор потока логов, используемый для маршрутизации.
+**Тег (Tag)** — строковый идентификатор, присваиваемый каждой записи. Используется для маршрутизации логов.
 
-**Маршрутизация** — процесс определения, в какой output отправлять лог на основе его тега.
+**Маршрутизация (Routing)** — процесс определения, в какой `[OUTPUT]` плагин направить запись лога на основе ее тега.
 
 ## Основные концепции
 
 ### Модели буферизации
 
-Fluent Bit поддерживает два типа буферизации:
+Fluent Bit поддерживает две основные модели буферизации:
 
-1. **Memory Buffer** — буферизация в оперативной памяти (по умолчанию)
-2. **Filesystem Buffer** — буферизация на диске с резервированием в памяти
+1.  **Memory (в памяти)** — буферизация в оперативной памяти. Используется по умолчанию. Быстро, но данные теряются при перезапуске процесса.
+2.  **Filesystem (на диске)** — буферизация на диске с резервированием в памяти. Обеспечивает персистентность данных между перезапусками.
 
 ### Параметры буферизации
 
-**Глобальные настройки** (`[SERVICE]`):
+Настройки буферизации задаются как глобально в секции `[SERVICE]`, так и для каждого входа в секции `[INPUT]`.
+
+**Глобальные настройки (`[SERVICE]`) для Filesystem-буфера:**
 
 | Параметр | Описание |
-|----------|----------|
-| `storage.path` | Путь к директории для файлового буфера |
-| `storage.sync` | Режим синхронизации (`normal`/`full`) |
-| `storage.backlog.mem_limit` | Лимит памяти для backlog |
+|---|---|
+| `storage.path` | Путь к директории для хранения файлов буфера. |
+| `storage.sync` | Режим синхронизации с диском (`normal` или `full`). |
+| `storage.checksum` | Включить/выключить проверку контрольных сумм для чанков (`On`/`Off`). |
+| `storage.backlog.mem_limit` | Ограничение памяти для чанков, которые не удалось отправить. |
 
-**Настройки входа** (`[INPUT]`):
+**Настройки входа (`[INPUT]`):**
 
 | Параметр | Описание |
-|----------|----------|
-| `storage.type` | Тип буфера (`memory`/`filesystem`) |
-| `Mem_Buf_Limit` | Лимит памяти для входного буфера |
+|---|---|
+| `storage.type` | Тип буфера для данного входа (`memory` или `filesystem`). |
+| `Mem_Buf_Limit` | Лимит памяти для входного буфера (до того, как начнется сброс на диск или backpressure). |
 
 ### Механизм маршрутизации
 
-Каждый `[OUTPUT]` использует:
+Каждый плагин `[OUTPUT]` использует один из следующих параметров для подписки на логи:
 
-- `Match` — точное совпадение тега (glob-шаблоны: `*`, `**`)
-- `Match_Regex` — регулярное выражение для тега
+- `Match`: Простое совпадение по тегу. Поддерживает wildcards (`*` для одного уровня, `**` для любого количества уровней).
+- `Match_Regex`: Совпадение по тегу с использованием регулярного выражения.
 
-Приоритет: первый подходящий output получает лог (если не используется `copy`)
+По умолчанию лог отправляется в **первый** `[OUTPUT]`, который соответствует тегу.
 
 ## Практические сценарии
 
 ### Сценарий 1: Надежная доставка с дисковым буфером
 
-Применение: защита от потери логов при недоступности Elasticsearch.
+**Задача:** Защититься от потери логов при временной недоступности Elasticsearch.
 
 ```yaml
-config:
-  service: |
-    [SERVICE]
-        Flush        1
-        storage.path /var/lib/fluent-bit/storage
-        storage.sync normal
-        storage.backlog.mem_limit 128M
-  
-  inputs: |
-    [INPUT]
-        Name         tail
-        Tag          kube.*
-        Path         /var/log/containers/*.log
-        Parser       docker
-        storage.type filesystem
-        Mem_Buf_Limit 10MB
-  
-  outputs: |
-    [OUTPUT]
-        Name        es
-        Match       kube.*
-        Host        elasticsearch-master.logging.svc.cluster.local
-        Port        9200
-        Retry_Limit False
+# fluent-bit.conf
+[SERVICE]
+    Flush        1
+    Log_Level    info
+    storage.path /var/lib/fluent-bit/storage/
+    storage.sync normal
+
+[INPUT]
+    Name          tail
+    Tag           kube.*
+    Path          /var/log/containers/*.log
+    Parser        docker
+    storage.type  filesystem
+    Mem_Buf_Limit 10MB
+
+[OUTPUT]
+    Name        es
+    Match       kube.*
+    Host        elasticsearch-master.logging.svc.cluster.local
+    Port        9200
+    Retry_Limit False
 ```
 
 **Ключевые моменты:**
+- `storage.type filesystem`: Включает дисковую буферизацию, сохраняя логи на диск при сбоях отправки или перезапуске Fluent Bit.
+- `Retry_Limit False`: Устанавливает бесконечное количество попыток отправки.
+    - **Внимание:** Это может создать избыточное давление на конечную систему и сам Fluent Bit, если проблема с доставкой длится долго. В некоторых случаях лучше установить конкретное, но большое значение (например, `300`).
+- `storage.path`: Указывает место для хранения чанков на диске.
 
-- `storage.type filesystem` — сохраняет логи на диск при перезапуске
-- `Retry_Limit False` — бесконечные попытки отправки
-- `storage.backlog.mem_limit` — защита от OOM
+### Сценарий 2: Маршрутизация по namespace в разные индексы
 
-### Сценарий 2: Маршрутизация по namespace
+**Задача:** Отправлять логи из `prod` и `dev` неймспейсов в разные индексы Elasticsearch.
 
 ```yaml
-config:
-  outputs: |
-    [OUTPUT]
-        Name  es
-        Match kube.*
-        Host  elasticsearch.logging.svc
-        Port  9200
-    
-    [OUTPUT]
-        Name  s3
-        Match kube.*
-        bucket logs-archive
-        region us-east-1
+# Используется фильтр kubernetes для обогащения логов
+[FILTER]
+    Name                kubernetes
+    Match               kube.*
+    Kube_URL            https://kubernetes.default.svc:443
+    Merge_Log           On
+    Keep_Log            Off
+
+# Разделение на два output'а с разными Logstash_Prefix
+[OUTPUT]
+    Name            es
+    Match_Regex     ^kube.*_prod_.*$
+    Host            es.logging.svc
+    Logstash_Format On
+    Logstash_Prefix prod-app
+
+[OUTPUT]
+    Name            es
+    Match_Regex     ^kube.*_dev_.*$
+    Host            es.logging.svc
+    Logstash_Format On
+    Logstash_Prefix dev-app
 ```
 
-### Сценарий 3: Разделение production и development логов
+### Сценарий 3: Использование Kafka как центрального буфера
+
+**Задача:** Использовать Kafka как надежный промежуточный буфер для защиты от пиковых нагрузок и недоступности конечного хранилища (например, ClickHouse).
 
 ```yaml
-config:
-  filters: |
-    [FILTER]
-        Name   modify
-        Match  kube.*
-        Add    environment ${K8S_NAMESPACE}
-  
-  outputs: |
-    [OUTPUT]
-        Name  es
-        Match kube.*
-        Host  es-prod.logging.svc
-        Port  9200
-        Match_Regex ^kube\.(prod|api).*
-    
-    [OUTPUT]
-        Name  es
-        Match kube.*
-        Host  es-dev.logging.svc
-        Port  9200
-        Match_Regex ^kube\.(dev|test).*
-```
-
-### Сценарий 4: Отправка логов в Kafka для буферизации
-
-Применение: использование Kafka как надежного буфера для защиты от потери логов при пиковых нагрузках или недоступности конечного хранилища.
-
-```yaml
-config:
-  outputs: |
-    # Отправка логов Kubernetes в топик 'kube'
-    [OUTPUT]
-        Name        kafka
-        Match       kube.*
-        Brokers     kafka-broker.kafka.svc:9092
-        Topics      kube
-
-    # Отправка хостовых логов в топик 'host'
-    [OUTPUT]
-        Name        kafka
-        Match       host.*
-        Brokers     kafka-broker.kafka.svc:9092
-        Topics      host
+[OUTPUT]
+    Name        kafka
+    Match       kube.*
+    Brokers     kafka-broker.kafka.svc:9092
+    Topics      kube-logs
 ```
 
 **Ключевые моменты:**
-
-*   **Маршрутизация по тегам**: Логи с тегом `kube.*` направляются в топик `kube`, а логи с `host.*` — в топик `host`.
-*   **Надежность**: Kafka обеспечивает надежное хранение логов, пока они не будут обработаны консьюмером (например, Vector или Logstash).
-*   **Важное ограничение**: Fluent Bit может выступать только как **продюсер** для Kafka (писать данные). Он **не умеет** читать данные из Kafka. Поэтому в архитектуре `Fluent Bit -> Kafka -> Storage` требуется промежуточный обработчик, который будет забирать логи из Kafka.
+*   **Надежность:** Kafka обеспечивает надежное хранение логов, пока они не будут обработаны консьюмером (например, Logstash, Vector или другой Fluentd).
+*   **Разделение ответственности:** Fluent Bit выполняет только сбор логов, а сложную логику обработки и отправки в конечные хранилища берет на себя другой инструмент. Это соответствует гибридной архитектуре, описанной в `fluent_comparison.md`.
+*   **Ограничение:** Fluent Bit может выступать только как **продюсер** для Kafka (писать данные). Он **не умеет** читать данные из Kafka.
 
 ## Дополнительная информация
 
-- Сравнение с Fluentd см. в [fluent_comparison.md](./fluent_comparison.md)
-- Детали парсинга: [parsing.md](./parsing.md)
-- Полная конфигурация: [fluentbit_configuration.md](./fluentbit_configuration.md)
-- Критерии выбора инструментов: [selection_criteria.md](./selection_criteria.md)
+- Сравнение с Fluentd и выбор архитектуры: [fluent_comparison.md](./fluent_comparison.md)
+- Детали конфигурации Fluent Bit: [fluentbit_configuration.md](./fluentbit_configuration.md)
+- Парсинг логов: [parsing.md](./parsing.md)
 
-**Примечание**: Сравнение механизмов буферизации Fluent Bit и Fluentd приведено в [fluent_comparison.md](./fluent_comparison.md).
+**Примечание**: Сравнение механизмов буферизации Fluent Bit и Fluentd также приведено в [fluent_comparison.md](./fluent_comparison.md).
