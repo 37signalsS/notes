@@ -124,8 +124,60 @@ grub2-install --target=x86_64-efi --efi-directory=/boot/efi
 
 ## Дополнительная информация
 
+### Диагностика проблем GRUB
+
+| Проблема | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| `error: no such partition` | Неправильный раздел /boot | Проверить `ls` в GRUB rescue |
+| `error: file not found` | Удалено ядро или grub.cfg | Переустановить GRUB |
+| `error: invalid signature` | Проблема с Secure Boot | Отключить Secure Boot или обновить shim |
+| `GRUB rescue>` | Поврежден загрузчик | Использовать GRUB rescue commands |
+| Двойная загрузка не видна | os-prober не включен | Включить `GRUB_DISABLE_OS_PROBER=false` |
+
+**GRUB rescue commands:**
+```
+ls                    # Показать разделы
+ls (hd0,1)/           # Просмотреть содержимое раздела
+set root=(hd0,1)      # Установить корневой раздел
+linux /vmlinuz ...    # Загрузить ядро вручную
+initrd /initrd.img    # Загрузить initrd
+boot                  # Загрузиться
+```
+
 ### Связанные темы
 
-- **Процесс загрузки ядра**: [Linux/Core/kernel/boot_process.md](../Core/kernel/boot_process.md)
-- **BIOS и UEFI**: [Linux/Core/firmware_bios_uefi.md](../Core/firmware_bios_uefi.md)
-- **LVM**: [Linux/FileSystems/LVM/overview_concepts.md](../FileSystems/LVM/overview_concepts.md)
+**Процесс загрузки:**
+- **[Процесс загрузки ядра](../../Core/kernel/boot_process.md)** — этапы от GRUB до systemd
+- **[BIOS и UEFI](../../Core/firmware_bios_uefi.md)** — прошивка, ранняя загрузка
+- **[Восстановление пароля](./linux_password_recovery.md)** — использование GRUB для сброса пароля
+
+**Файловые системы и LVM:**
+- **[LVM](../../FileSystems/LVM/overview_concepts.md)** — логические тома
+- **[LVM и загрузка](../../FileSystems/LVM/advanced_topics.md)** — загрузка с LVM
+
+**Systemd:**
+- **[Параметры ядра](../../Core/kernel/kernel_interfaces.md)** — /proc/cmdline
+- **[Systemd загрузка](../../Core/systemd/boot_troubleshooting.md)** — диагностика загрузки systemd
+
+### Безопасность GRUB
+
+**Пароль на GRUB:**
+Защита от несанкционированного изменения параметров загрузки:
+
+```bash
+# Создать хэш пароля
+grub-mkpasswd-pbkdf2
+
+# Добавить в /etc/grub.d/40_custom
+set superusers="admin"
+password_pbkdf2 admin grub.pbkdf2.sha512...
+
+# Обновить конфигурацию
+sudo update-grub  # Debian/Ubuntu
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # RHEL/CentOS
+```
+
+**Secure Boot:**
+- GRUB должен быть подписан для работы с Secure Boot
+- Используйте `shim.efi` для загрузки в системах с Secure Boot
+- Отключение Secure Boot может потребоваться для кастомных ядер

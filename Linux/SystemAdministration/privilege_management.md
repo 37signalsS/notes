@@ -208,6 +208,28 @@ ResultActive=no
 
 ## Дополнительная информация
 
+### Связанные темы
+
+**Управление пользователями и группами:**
+- **[Управление пользователями](./users_management.md)** — useradd, usermod, userdel
+- **[Управление группами](./Users/group_commands.md)** — groupadd, groupmod, groupdel
+- **[Файлы конфигурации](./Users/users_config_files.md)** — /etc/passwd, /etc/shadow, /etc/sudoers
+
+**Права доступа:**
+- **[Права доступа к файлам](../Security/Concepts/File_Permissions/overview_definitions.md)** — DAC, rwx, владелец/группа/остальные
+- **[Специальные права](../Security/Concepts/File_Permissions/special_permissions.md)** — SUID, SGID, Sticky Bit
+- **[Маска umask](../Security/Concepts/File_Permissions/umask.md)** — права по умолчанию
+- **[ACL](../Security/Concepts/File_Permissions/acl_immutable_timestamps.md)** — расширенные права доступа
+
+**Аутентификация:**
+- **[PAM](../Security/pam_overview.md)** — Pluggable Authentication Modules
+- **[SSH аутентификация](../Security/ssh/ssh_overview.md)** — ключи, пароли, 2FA
+
+**Безопасность:**
+- **[Аудит событий](./Logging/auditd.md)** — auditd для отслеживания действий
+- **[SELinux](../Security/selinux.md)** — мандатный контроль доступа
+- **[AppArmor](../Security/apparmor.md)** — мандатный контроль доступа
+
 ### Системный вызов `setuid()` и безопасность
 
 `setuid()` — системный вызов, позволяющий процессу изменять свой эффективный идентификатор пользователя (EUID). Этот механизм, совместно с `setuid`-битом на исполняемых файлах, является основой временного повышения привилегий в Unix-системах. Подробнее о `SUID/SGID` битах: [Права доступа к файлам в Linux](../Security/Concepts/Linux_File_Permissions.md#suid-set-user-id).
@@ -220,3 +242,20 @@ ResultActive=no
 
 1. **`setuid` на скриптах игнорируется:** Ядро Linux игнорирует `setuid`-бит на скриптах (`.sh`, `.py`) для предотвращения эскалации привилегий. Бит работает только на скомпилированных бинарных файлах.
 2. **Риск утечки данных через Core Dumps:** Чтобы предотвратить утечку чувствительных данных из `setuid/setgid` программ через core dumps, установите `sudo sysctl -w fs.suid_dumpable=0`. Для постоянного изменения добавьте `fs.suid_dumpable = 0` в `/etc/sysctl.conf`.
+
+### Аудит действий с sudo
+
+Для отслеживания всех действий через sudo используйте auditd:
+
+```bash
+# Добавить правило для отслеживания sudo
+sudo auditctl -w /usr/bin/sudo -p x -k sudo_execution
+
+# Поиск событий
+sudo ausearch -k sudo_execution
+
+# Отчет
+sudo aureport -su
+```
+
+Подробнее: **[auditd](./Logging/auditd.md)**

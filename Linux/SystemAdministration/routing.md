@@ -5,6 +5,7 @@
 * **Маршрутизация (Routing):** Процесс определения пути для IP-пакетов от отправителя к получателю.
 * **Таблица маршрутизации (Routing Table):** Набор правил в ядре, который используется для принятия решений о том, куда отправить пакет.
 * **IP Forwarding (Пересылка IP):** Функция ядра Linux, позволяющая пересылать пакеты между сетевыми интерфейсами. Когда она включена, Linux-система может работать как маршрутизатор.
+* **Шлюз по умолчанию (Default Gateway):** Маршрут, используемый для отправки пакетов в сети, для которых нет явного маршрута (0.0.0.0/0).
 
 ## Основные концепции
 
@@ -126,6 +127,65 @@ ip route | grep default
 
 ## Дополнительная информация
 
+### Постоянная настройка маршрутов
+
+Временные маршруты (через `ip route`) сбрасываются после перезагрузки. Для постоянной настройки:
+
+**Debian/Ubuntu (`/etc/network/interfaces` или netplan):**
+
+```yaml
+# Netplan (/etc/netplan/01-netcfg.yaml)
+network:
+  version: 2
+  ethernets:
+    eth0:
+      routes:
+        - to: 10.10.0.0/16
+          via: 192.168.1.254
+        - to: default
+          via: 192.168.1.1
+```
+
+**RHEL/CentOS (`/etc/sysconfig/network-scripts/route-<interface>`):**
+
+```bash
+# /etc/sysconfig/network-scripts/route-eth0
+10.10.0.0/16 via 192.168.1.254
+default via 192.168.1.1
+```
+
+**Systemd-networkd (`/etc/systemd/network/10-eth0.network`):**
+
+```ini
+[Route]
+Gateway=192.168.1.1
+Destination=10.10.0.0/16
+Gateway=192.168.1.254
+```
+
 ### Policy-Based Routing (PBR)
 
 Для более сложных сценариев, когда маршрут нужно выбирать не только по адресу назначения, но и по адресу источника или другим критериям, используется **[Policy-Based Routing](../Networking/linux_policy_based_routing.md)**.
+
+**Пример использования PBR:**
+- Маршрутизация трафика от разных пользователей через разные шлюзы
+- Балансировка нагрузки между несколькими провайдерами
+- Изоляция трафика между сервисами
+
+### Диагностика проблем маршрутизации
+
+| Проблема | Команда диагностики | Возможное решение |
+| :--- | :--- | :--- |
+| Нет связи с внешней сетью | `ip route get 8.8.8.8` | Проверить маршрут по умолчанию |
+| Неправильный шлюз | `ip route show` | Удалить/добавить маршрут |
+| Пакеты не пересылаются | `sysctl net.ipv4.ip_forward` | Включить IP forwarding |
+| Дублирование маршрутов | `ip route show \| grep <сеть>` | Удалить конфликтующие маршруты |
+| Медленная маршрутизация | `traceroute -n <цель>` | Проверить задержки на шлюзах |
+
+### Связанные темы
+
+- **NAT и масquerading:** [NAT в Linux](../Networking/Concepts/nat.md)
+- **Policy-Based Routing:** [PBR](../Networking/linux_policy_based_routing.md)
+- **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
+- **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)
+- **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](../Networking/Settings/tools/nftables.md), [firewalld](../Networking/Settings/tools/firewalld.md)

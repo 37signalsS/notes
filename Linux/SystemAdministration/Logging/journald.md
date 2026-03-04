@@ -123,6 +123,10 @@ SystemMaxFileSize=200M
 
 # Режим хранения: auto, persistent, volatile, none
 Storage=auto
+
+# Ограничение скорости записи (защита от интенсивного логирования)
+RateLimitIntervalSec=5s
+RateLimitBurst=10000
 ```
 
 **Применение настроек:**
@@ -131,8 +135,11 @@ Storage=auto
 sudo systemctl restart systemd-journald
 ```
 
+**RateLimiting:** параметры `RateLimitIntervalSec` и `RateLimitBurst` защищают систему от интенсивного логирования одним сервисом. Превышающие лимит сообщения отбрасываются.
+
 ### Очистка журнала (vacuum)
 
+**Ручная очистка через `journalctl`:**
 ```bash
 # Оставить только последние 500 МБ
 sudo journalctl --vacuum-size=500M
@@ -143,6 +150,17 @@ sudo journalctl --vacuum-time=2d
 # Оставить только 5 последних файлов журнала
 sudo journalctl --vacuum-files=5
 ```
+
+**Автоматическая очистка через `systemd-tmpfiles`:**
+
+Создать файл `/etc/tmpfiles.d/systemd-journald.conf`:
+```conf
+# Тип  Путь                     Режим Владелец Группа Возраст
+R    /var/log/journal          -      -       -       -
+e    /var/log/journal          -      -       -       14d
+```
+
+Параметр `Age` (14d) указывает, что файлы старше 14 дней будут удаляться при запуске `systemd-tmpfiles --clean`.
 
 ### Интеграция с syslog (совместимость)
 
@@ -189,6 +207,8 @@ SyncIntervalSec=5m  # Принудительная синхронизация к
 | Журнал занимает слишком много места | Не настроены лимиты | Настроить `SystemMaxUse` в `journald.conf` |
 | Сервис не пишет в journal | Сервис настроен на запись в файл | Проверить конфигурацию сервиса или настроить `StandardOutput=journal` в unit-файле |
 | `systemd-journald` потребляет много CPU | Интенсивное логирование от приложения | Найти источник: `journalctl -f`, настроить уровень логирования приложения |
+| Сообщения отбрасываются | Превышен RateLimit | Настроить `RateLimitIntervalSec` и `RateLimitBurst` |
+| Файлы журнала повреждены | Внезапное выключение, сбой ФС | Удалить поврежденный файл в `/var/log/journal/`, служба создаст новый |
 
 ### Интеграция с другими системами
 

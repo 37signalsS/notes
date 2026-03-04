@@ -12,74 +12,91 @@
 | `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/Logging/journalctl.md) |
 | `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
 | `auditd` | Аудит событий безопасности на уровне ядра | [auditd.md](./auditd.md) |
-| `logrotate` | Ротация и архивация текстовых логов | См. ниже |
+| `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов-logrotate) |
 
-Часто эти системы работают вместе: `journald` собирает сообщения, `rsyslog` забирает их для фильтрации и пересылки, `logrotate` управляет размером файлов.
+Компоненты работают совместно: `journald` собирает сообщения, `rsyslog` забирает их для фильтрации и пересылки, `logrotate` управляет размером файлов.
 
 ## Базовые концепции
 
 ### Стандартные файлы и директории логов
 
-Несмотря на то, что `journald` хранит логи в бинарном формате, многие службы по-прежнему пишут текстовые логи в директорию `/var/log/`. Это поведение часто настраивается через `rsyslog`.
+Большинство служб пишут логи в `/var/log/` (поведение настраивается через `rsyslog`):
 
-- `/var/log/syslog` (Debian/Ubuntu) или `/var/log/messages` (CentOS/RHEL): Главный системный лог, куда попадает большинство событий от ядра и служб.
-- `/var/log/auth.log` (Debian/Ubuntu) или `/var/log/secure` (CentOS/RHEL): События аутентификации (входы по SSH, `sudo`, неудачные попытки). **Ключевой файл для анализа безопасности.** Для более детального аудита событий безопасности см. [auditd: Аудит событий безопасности](./auditd.md).
-- `/var/log/dmesg`: Сообщения ядра при загрузке. Подробнее см. [dmesg: Просмотр сообщений ядра](../../Diagnostics/Kernel/dmesg.md).
-- `/var/log/boot.log`: Лог процесса загрузки.
-- `/var/log/apt/` (Debian/Ubuntu) или `/var/log/yum.log` (CentOS/RHEL): Логи менеджера пакетов.
-- **Логи приложений:** Многие приложения (например, `nginx`, `apache2`, `postgresql`) создают свои собственные поддиректории в `/var/log/`.
+| Файл/Директория | Описание |
+| :--- | :--- |
+| `/var/log/syslog` (Debian/Ubuntu) или `/var/log/messages` (RHEL/CentOS) | Главный системный лог |
+| `/var/log/auth.log` (Debian/Ubuntu) или `/var/log/secure` (RHEL/CentOS) | События аутентификации (SSH, sudo). Для детального аудита см. [auditd](./auditd.md) |
+| `/var/log/dmesg` | Сообщения ядра при загрузке. Подробнее: [dmesg](../../Diagnostics/Kernel/dmesg.md) |
+| `/var/log/boot.log` | Лог процесса загрузки |
+| `/var/log/apt/` или `/var/log/yum.log` | Логи менеджера пакетов |
+| `/var/log/nginx/`, `/var/log/apache2/`, `/var/log/postgresql/` | Логи приложений |
 
 ### Централизованное логирование
 
-Хранение логов локально на каждом хосте имеет ряд существенных недостатков:
+**Проблемы локального хранения:**
+- Потребление дискового пространства и I/O
+- Угроза безопасности (логи проще удалить/подделать)
+- Сложность анализа в больших инфраструктурах
+- Отсутствие агрегации и корреляции между хостами
 
-- Потребление дискового пространства и I/O.
-- Угроза безопасности: Локальные логи проще удалить или подделать злоумышленником.
-- Сложность анализа: В больших инфраструктурах анализ логов на каждом хосте вручную неэффективен.
-- Отсутствие агрегации: Сложно коррелировать события между разными хостами.
+**Решения:**
+- Традиционные: `rsyslog` (подробнее в [rsyslog.md](./rsyslog.md))
+- Современные: Fluentd, Vector, Kafka, Loki, Elasticsearch
 
-Для решения этих проблем применяется **централизованное логирование**, когда логи со всех хостов собираются на выделенных серверах. Традиционно это достигается с помощью `rsyslog`, но в современных распределенных системах используются специализированные агенты (Fluentd, Vector) и брокеры сообщений (Kafka). Подробнее о подходах к централизованному логированию в контексте наблюдаемости см. [Мониторинг и Observability (Наблюдаемость / O11y)](../../../Concepts/Observability_and_Monitoring/observability_overview.md), а о проектировании высоконагруженной доставки логов — [Проектирование высоконагруженного мониторинга в распределенных системах](../../../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md).
+Подробнее о централизованном логировании в контексте наблюдаемости: [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
 
 ### Ротация логов (`logrotate`)
 
-Чтобы текстовые лог-файлы не занимали все место на диске, утилита `logrotate` периодически их архивирует, сжимает и удаляет.
+Утилита `logrotate` архивирует, сжимает и удаляет старые логи.
 
-- **Основной конфиг:** `/etc/logrotate.conf`
-- **Конфиги для отдельных служб:** `/etc/logrotate.d/`
+- **Конфигурация:** `/etc/logrotate.conf`, `/etc/logrotate.d/`
+- **Пример:** См. [Пример конфигурации logrotate](#пример-конфигурации-logrotate)
 
 ## Практические сценарии
 
 ### Отправка тестовых сообщений: `logger`
 
-Утилита `logger` позволяет отправлять сообщения в syslog вручную. Это полезно для тестирования конфигурации rsyslog, проверки централизованного сбора логов или отладки скриптов.
-
 ```bash
-# Отправить сообщение с уровнем info в facility user (по умолчанию)
+# Базовое сообщение
 logger "Тестовое сообщение"
 
-# Отправить сообщение с указанием facility и priority
+# С указанием facility и priority
 logger -t myscript -p local0.info "Скрипт выполнен успешно"
 
-# Отправить сообщение на удаленный syslog-сервер (если настроено)
+# На удаленный сервер
 logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 ```
 
-- `-t tag`: Добавить тег к сообщению (обычно имя скрипта или процесса)
-- `-p facility.priority`: Указать facility (источник) и priority (уровень важности)
-- `-n server`: Отправить на удаленный хост
+**Параметры:**
+- `-t tag` — тег сообщения (имя скрипта/процесса)
+- `-p facility.priority` — категория и уровень (например, `local0.info`)
+- `-n server` — отправка на удаленный хост
 
-### Анализ логов с помощью командной строки
+### Анализ логов: базовые утилиты
 
-- **`tail`**: Просмотр конца файла в реальном времени (`tail -f /var/log/syslog`).
-- **`less`**: Мощный просмотрщик с поиском (`/`, `?`) и фильтрацией (`&`).
-- **`grep`**: Поиск текста по шаблону (`grep "error" /var/log/syslog`).
-- **`zcat` / `zgrep`**: Утилиты для работы со сжатыми логами (`.gz`), созданными `logrotate`.
+| Утилита | Назначение |
+| :--- | :--- |
+| `tail -f` | Просмотр в реальном времени |
+| `less` | Поиск (`/`, `?`), фильтрация (`&`) |
+| `grep` | Поиск по шаблону |
+| `zcat` / `zgrep` | Работа со сжатыми логами (`.gz`) |
+
+### Методология диагностики проблем логирования
+
+| Проблема | Порядок диагностики |
+| :--- | :--- |
+| Сервис не запускается | 1. `journalctl -u <сервис> -b`<br>2. `systemctl status <сервис>`<br>3. `/var/log/<app>/` |
+| Ошибки аутентификации | 1. `journalctl -p err -b`<br>2. `/var/log/auth.log` или `/var/log/secure`<br>3. `ausearch -m USER_LOGIN` |
+| Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [dmesg -T](../../Diagnostics/Kernel/dmesg.md)<br>3. `dmesg --level=err,warn` |
+| Дисковое пространство | 1. `journalctl --disk-usage`<br>2. `du -sh /var/log/*`<br>3. Проверка `logrotate` |
+| Проблемы загрузки | 1. `journalctl --list-boots`<br>2. `journalctl -b -1`<br>3. [reboot_troubleshooting](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) |
+| Инцидент безопасности | 1. `ausearch -m SYSCALL`<br>2. `/var/log/audit/audit.log`<br>3. `journalctl _UID=0` |
+
+## Дополнительная информация
 
 ### Пример конфигурации `logrotate`
 
-Конфигурация в `/etc/logrotate.d/nginx` для ротации логов веб-сервера:
-
-```
+```conf
 /var/log/nginx/*.log {
     daily
     missingok
@@ -95,56 +112,30 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 }
 ```
 
-- `daily`: Ротировать ежедневно.
-- `rotate 14`: Хранить 14 старых логов.
-- `compress`: Сжимать старые логи.
-- `postrotate...endscript`: Команды, которые выполняются после ротации (здесь — сигнал Nginx переоткрыть лог-файлы).
+**Директивы:**
+- `daily` — ротация ежедневно
+- `rotate 14` — хранить 14 архивов
+- `compress` — сжимать архивы
+- `postrotate...endscript` — команды после ротации
 
-**Проверка конфигурации:**
-
+**Проверка:**
 ```bash
-# Выполнить "сухой запуск" для отладки
-sudo logrotate -d /etc/logrotate.conf
+sudo logrotate -d /etc/logrotate.conf  # "Сухой запуск"
 ```
 
-### Принудительная синхронизация буферов: `sync`
-
-Команда `sync` принудительно записывает все данные из буферов памяти на диск. Это полезно перед выключением системы или для гарантии записи критических логов:
+### Принудительная синхронизация: `sync`
 
 ```bash
-# Синхронизировать все отложенные записи на диск
-sync
+sync  # Запись буферов на диск
 ```
 
-Применяется не только к логам, но и к любым файловым операциям.
+Полезна перед выключением системы или для гарантии записи критических данных.
 
-### Методология диагностики проблем логирования
+---
 
-| Проблема | Порядок диагностики |
-| :--- | :--- |
-| Сервис не запускается | 1. `journalctl -u <сервис> -b`<br>2. `systemctl status <сервис>`<br>3. Проверить логи приложения в `/var/log/<app>/` |
-| Ошибки аутентификации | 1. `journalctl -p err -b`<br>2. `/var/log/auth.log` или `/var/log/secure`<br>3. `ausearch -m USER_LOGIN` (если настроен `auditd`) |
-| Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [`dmesg -T`](../../Diagnostics/Kernel/dmesg.md)<br>3. `dmesg --level=err,warn` |
-| Дисковое пространство | 1. `journalctl --disk-usage`<br>2. `du -sh /var/log/*`<br>3. Проверить конфигурацию `logrotate` |
-| Проблемы загрузки | 1. `journalctl --list-boots`<br>2. `journalctl -b -1` (предыдущая загрузка)<br>3. [`reboot_troubleshooting.md`](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) |
-| Инцидент безопасности | 1. `ausearch -m SYSCALL`<br>2. `/var/log/audit/audit.log`<br>3. `journalctl _UID=0` (действия root) |
-
-## Ссылки по теме
-
-### Основные компоненты
-
-* **systemd-journald:** [journald.md](./journald.md) — демон, конфигурация, хранение.
-* **journalctl:** [journalctl.md](../../Diagnostics/Logging/journalctl.md) — утилита просмотра логов.
-* **rsyslog:** [rsyslog.md](./rsyslog.md) — фильтрация и пересылка.
-* **auditd:** [auditd.md](./auditd.md) — аудит безопасности.
-
-### Диагностика
-
-* **dmesg:** [dmesg.md](../../Diagnostics/Kernel/dmesg.md) — логи ядра.
-* **Анализ сбоев:** [error_and_crash_analysis.md](./error_and_crash_analysis.md) — coredump, kdump.
-* **Troubleshooting:** [general_troubleshooting_methodology.md](../../Diagnostics/Troubleshooting/general_troubleshooting_methodology.md).
-
-### Observability
-
-* **Централизованное логирование:** [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
-* **Высоконагруженный мониторинг:** [designing_high-load_monitoring_in_distributed_systems.md](../../../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md).
+**SSoT-файлы по компонентам:**
+- journald: [journald.md](./journald.md)
+- journalctl: [journalctl.md](../../Diagnostics/Logging/journalctl.md)
+- rsyslog: [rsyslog.md](./rsyslog.md)
+- auditd: [auditd.md](./auditd.md)
+- Анализ сбоев: [Core/processes/troubleshooting.md](../../Core/processes/troubleshooting.md), [Core/kernel/kernel_panic.md](../../Core/kernel/kernel_panic.md)
