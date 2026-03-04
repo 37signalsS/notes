@@ -15,3 +15,9 @@ sudo mdadm --detail /dev/md0
 ```
 
 Здесь виден статус массива (`State : active`, `clean`, `degraded`), его участников и процесс восстановления.
+
+## Связанные разделы
+
+* [Управление RAID 1](./raid1-management.md)
+* [Управление RAID 5](./raid5-management.md)
+* [Уровни RAID](./raid-levels.md)

@@ -1,5 +1,7 @@
 ### Полный практический цикл управления RAID 5
 
+> **Важно**: RAID 5 устарел. Для новых систем рекомендуется [RAID 6](./raid-levels.md) или RAID 10.
+
 Рассмотрим на примере создания, расширения и управления массивом `/dev/md0` из дисков `/dev/vdb`, `/dev/vdc`, `/dev/vdd`.
 
 #### 1. Создание массива
@@ -49,3 +51,8 @@ sudo mdadm --create --verbose /dev/md0 --level=5 --raid-devices=3 /dev/vdb /dev/
     sudo mdadm --detail --scan | sudo tee /etc/mdadm/mdadm.conf
     sudo update-initramfs -u
     ```
+
+## Связанные разделы
+
+* [Мониторинг RAID](./monitoring.md)
+* [Уровни RAID](./raid-levels.md)
