@@ -169,3 +169,10 @@
     ```bash
     lsusb -vvv # Подробная информация обо всех USB-устройствах
     ```
+
+## Дополнительная информация
+
+- Полная диагностика CPU: [Диагностика CPU](../Diagnostics/Hardware/cpu_info.md)
+- Инвентаризация оборудования: [Hardware listing](../Diagnostics/Hardware/hardware_listing.md)
+- Мониторинг дисков: [smartctl](../Diagnostics/Hardware/smartctl.md)
+- Виртуальные файловые системы: [/proc](../FileSystems/virtual_fs_proc.md), [/sys](../FileSystems/virtual_fs_sys.md)
