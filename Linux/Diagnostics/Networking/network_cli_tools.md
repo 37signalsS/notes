@@ -75,5 +75,5 @@ sudo apt install nload bmon iftop jnettop iptraf-ng
 ## Дополнительная информация
 
 * **[Socket Statistics (ss)](./ss.md)** — основной CLI инструмент для детального анализа сокетов.
-* **[Инструменты диагностики сети](../../Networking/network_diagnostics_tools.md)** — комплексный обзор методологии и инструментов.
+* **[Инструменты диагностики сети](../network_diagnostics_tools.md)** — комплексный обзор методологии и инструментов.
 * **[Репозиторий snitch](https://github.com/karol-broda/snitch)**

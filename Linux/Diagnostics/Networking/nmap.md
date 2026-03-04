@@ -124,3 +124,10 @@ sudo nmap --script vuln 192.168.1.100
 # Пример SSH-брутфорса с использованием файлов со словарями
 sudo nmap --script ssh-brute --script-args userdb=/path/to/users.txt,passdb=/path/to/pass.txt 192.168.1.100
 ```
+
+## Связанные заметки
+
+- **[ping](./ping.md)** — базовая проверка доступности
+- **[ping_alternatives](../../../Networking/Troubleshooting/ping_alternatives.md)** — альтернативы ping (TCP-пинг)
+- **[traceroute и mtr](./traceroute_mtr.md)** — трассировка маршрута
+- **[tcpdump](./tcpdump.md)** — анализ трафика

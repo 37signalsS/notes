@@ -96,6 +96,60 @@ sudo tcpdump -i eth0 -Xvvv -nn 'port 80 and host example.com'
 sudo tcpdump -i eth0 -c 3 'host example.com and port 80'
 ```
 
+### Фильтрация по направлению (src/dst)
+
+```bash
+# Только исходящий трафик к порту 443
+sudo tcpdump -i eth0 'dst port 443'
+
+# Только входящий трафик с порта 80
+sudo tcpdump -i eth0 'src port 80'
+
+# Трафик между двумя хостами
+sudo tcpdump -i eth0 'host 192.168.1.10 and host 8.8.8.8'
+```
+
+### Расширенные фильтры BPF
+
+```bash
+# Фильтрация по размеру пакета (больше 100 байт)
+sudo tcpdump -i eth0 'greater 100'
+
+# Фильтрация по TCP-флагам (только SYN)
+sudo tcpdump -i eth0 'tcp[tcpflags] = tcp-syn'
+
+# Фильтрация по диапазону портов
+sudo tcpdump -i eth0 'tcp portrange 8000-9000'
+
+# Комплексный фильтр: HTTP/HTTPS трафик без локальной сети
+sudo tcpdump -i eth0 'not net 192.168.0.0/16 and (port 80 or port 443)'
+```
+
+### Мониторинг в реальном времени с ограничением вывода
+
+```bash
+# Показать только заголовки пакетов (без payload)
+sudo tcpdump -i eth0 -q -n
+
+# Вывод с временными метками
+sudo tcpdump -i eth0 -tttt -n
+
+# Остановить захват после первого события (например, после 5 пакетов)
+sudo tcpdump -i eth0 -c 5 -w capture.pcap
+```
+
+### Анализ проблем с производительностью
+
+```bash
+# Захват с метками времени для анализа задержек
+sudo tcpdump -i eth0 -tttt 'port 80'
+
+# Показать только проблемные пакеты (RST, FIN, отброшенные)
+sudo tcpdump -i eth0 'tcp[tcpflags] & (tcp-rst|tcp-fin) != 0'
+
+# Анализ DNS-запросов с детальной информацией
+sudo tcpdump -i eth0 -vvv port 53
+
 ### Расшифровка флагов TCP
 
 - **`[S]`** (SYN): Начало соединения.
@@ -106,3 +160,11 @@ sudo tcpdump -i eth0 -c 3 'host example.com and port 80'
 - **`[U]`** (URG): Срочные данные.
 - **`[W]`** (ECE): ECN-Echo, уведомление о перегрузке.
 - **`[E]`** (CWR): Congestion Window Reduced, ответ на ECE.
+
+## Связанные заметки
+
+- **[Диагностика DNS](./dns_diagnostics.md)** — анализ DNS-трафика
+- **[ss (Socket Statistics)](./ss.md)** — анализ сокетов
+- **[traceroute и mtr](./traceroute_mtr.md)** — трассировка маршрута
+- **[ping](./ping.md)** — базовая проверка доступности
+- **[Wireshark и анализ сетевого трафика](../../../Networking/ServicesAndTools/Wireshark/definitions.md)** — графический анализатор
