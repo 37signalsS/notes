@@ -394,6 +394,7 @@ ethtool -k eth0 | grep pacing
 - **[Flow Control](./flow_control.md)** — управление потоком получателя
 - **[Оптимизация TCP](../../../Linux/Networking/Concepts/tcp_tuning.md)** — практическая настройка
 - **[HTTP/3](../http.md)** — QUIC как альтернатива TCP
+- **[Wireshark: Диагностика производительности](../../../Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md)** — анализ проблем производительности
 
 ### Формулы
 

@@ -132,15 +132,32 @@ Fail2Ban может использоваться для защиты NGINX от 
     port = http,https
     filter = nginx-limit-req
     logpath = /var/log/nginx/error.log
-    maxretry = 5
-    findtime = 600
-    bantime = 3600
-    action = iptables-ipset-protoall[name=nginx-limit-req, port="http,https", protocol=tcp]
+    maxretry = 4                 # Количество превышений лимита для блокировки
+    findtime = 600               # Временное окно (10 минут) для подсчёта нарушений
+    bantime = 7200               # Время блокировки (2 часа)
+    action = iptables-multiport[name=nginx-limit-req, port="http,https", protocol=tcp]
     ```
 
     * `filter = nginx-limit-req`: Этот фильтр (находится в `/etc/fail2ban/filter.d/nginx-limit-req.conf`) ищет в логах NGINX записи о превышении лимита запросов (например, "limiting requests, excess").
     * `logpath`: Путь к файлу `error.log` NGINX.
     * `findtime` и `bantime`: Настройте эти параметры в соответствии с вашими потребностями. Для `nginx-limit-req` рекомендуется более осторожный `bantime` из-за возможности ложных срабатываний.
+    * `port`: Ограничивает блокировку только указанными портами (неполная блокировка).
+    * `action`: Используется `iptables-multiport` для блокировки на уровне firewall.
+
+**Важно:** Блокировка происходит на уровне firewall (iptables), а не на уровне NGINX. Это означает, что запросы от заблокированных IP отбрасываются до того, как достигнут веб-сервера, что снижает нагрузку на NGINX.
+
+**Производительность:** При большом количестве заблокированных IP-адресов рекомендуется использовать `ipset` вместо прямого добавления правил в `iptables`. `ipset` создаёт хэшированные таблицы IP-адресов, которые обрабатываются на порядок быстрее.
+
+```ini
+# Рекомендуемое действие для большого количества блокировок
+action = iptables-ipset-protoall[name=nginx-limit-req, port="http,https", protocol=tcp]
+```
+
+Для использования `ipset` установите пакет:
+```bash
+sudo apt install ipset    # Debian/Ubuntu
+sudo dnf install ipset    # CentOS/RHEL
+```
 
 #### Изменение типа блокировки (DROP вместо REJECT)
 

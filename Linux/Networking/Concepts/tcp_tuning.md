@@ -227,3 +227,4 @@ ss -s
 * **[`sysctl`](../../Core/kernel/sysctl.md)** — управление параметрами ядра
 * **[RSS, RPS, RFS](./rss_rps_rfs.md)** — многопоточная обработка сетевого трафика
 * **[`ip route`](../Tools/iproute2/ip_route.md)** — настройка initcwnd для маршрутов
+* **[Wireshark: Диагностика производительности](../../../Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md)** — анализ проблем производительности

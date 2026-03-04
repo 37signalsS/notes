@@ -132,3 +132,8 @@ deny all;
 * [CloudFlare DDoS Protection](https://www.cloudflare.com/ddos/)
 * [AWS Best Practices for DDoS Resiliency](https://docs.aws.amazon.com/whitepapers/latest/aws-best-practices-ddos-resiliency/welcome.html)
 * Связанный файл: [Web Application Firewall (WAF)](./waf.md)
+
+### См. также
+
+* **[Защита от DoS-атак в Angie/Nginx](../../../WebServers/Angie/high_load_tuning_and_dos_protection.md)** — практическое руководство по настройке rate limiting, GeoIP-блокировки и других методов на уровне веб-сервера
+* **[Fail2Ban](../../../Linux/Security/Tools/Fail2Ban.md)** — автоматическая блокировка нарушителей на основе логов

@@ -51,7 +51,7 @@ Rancher использует специализированный `Logging Opera
 3.  Нажмите **Install**. Всегда выбирайте опцию "Customize Helm Options for install".
 4.  **Конфигурация `systemd` логов**: Укажите правильный путь к журналам `systemd` (например, `/run/log/journal` или `/var/log/journal`).
 5.  **Настройка `Tolerations` для Control Plane узлов**:
-    *   По умолчанию, узлы Control Plane имеют `taint` (`node-role.kubernetes.io/master:NoSchedule`).
+    *   По умолчанию, узлы Control Plane имеют `taint` (`node-role.kubernetes.io/master:NoSchedule` или `node-role.kubernetes.io/control-plane:NoSchedule`).
     *   Система логирования по умолчанию не будет развернута на таких узлах.
     *   **Решение**: В `values.yaml` Helm-чарта необходимо добавить соответствующую `toleration`:
 
@@ -61,7 +61,12 @@ Rancher использует специализированный `Logging Opera
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
         operator: Exists
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
     ```
+
+    **Важно:** Проверьте актуальные taints на ваших control plane узлах через `kubectl describe node <node-name>`.
 
 6.  Выберите **Destination** (цель отправки логов):
     *   **Elasticsearch**
@@ -104,7 +109,40 @@ Rancher предоставляет возможность тонкой наст�
 2.  **Создание `ClusterOutput`**:
     *   Выберите тип "Elasticsearch" (даже если используется OpenSearch).
     *   Настройте Endpoint, Index Name, Authentication.
-    *   **Ручное редактирование YAML**: Измените `type: elasticsearch` на `type: opensearch`, добавьте `suppress_type_name_true: true` и настройте буферизацию.
+    *   **Ручное редактирование YAML**: Измените `type: elasticsearch` на `type: opensearch`, добавьте `suppress_type_name: true` и настройку буферизации.
+
+    **Пример конфигурации ClusterOutput для OpenSearch:**
+
+    ```yaml
+    apiVersion: logging.banzaicloud.io/v1beta1
+    kind: ClusterOutput
+    metadata:
+      name: opensearch-output
+    spec:
+      opensearch:
+        host: https://opensearch-cluster-master.es.svc.cluster.local:9200
+        index_name: control-plane-%Y%m%d
+        user:
+          username:
+            valueFrom:
+              secretKeyRef:
+                name: opensearch-auth
+                key: username
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: opensearch-auth
+                key: password
+        ssl_verify: false
+        suppress_type_name: true
+        buffer:
+          timekey: 1m
+          timekey_wait: 30s
+          timekey_use_utc: true
+          chunk_limit_size: 8MB
+    ```
+
+    **Важно:** Веб-интерфейс Rancher не поддерживает OpenSearch напрямую — после создания через UI необходимо редактировать YAML вручную. Параметр `suppress_type_name: true` обязателен для современных версий OpenSearch/Elasticsearch. Индекс с `%Y%m%d` создаётся ежедневно.
 
 #### 5. Создание Flow для сбора логов Control Plane
 
@@ -113,18 +151,84 @@ Rancher предоставляет возможность тонкой наст�
     *   В секции **Outputs** выберите созданный `ClusterOutput`.
     *   В секции **Filters** добавьте `Tag Normalizer` и `Kube Events Timestamp`.
 
+2.  **Настройка фильтров**:
+
+    *   **Tag Normalizer** — формирует тег для динамического именования индексов на основе namespace, pod и container:
+
+        ```yaml
+        filters:
+        - tag_normalizer:
+            tag: ${namespace_name}.${pod_name}.${container_name}
+        ```
+
+    *   **Kube Events Timestamp** — генерирует поле `mtime` с временной меткой события (критично для временной сортировки в OpenSearch/Elasticsearch):
+
+        ```yaml
+        filters:
+        - kube_events_timestamp:
+            time_field: mtime
+        ```
+
+    **Пример Flow для сбора логов из kube-system:**
+
+    ```yaml
+    apiVersion: logging.banzaicloud.io/v1beta1
+    kind: Flow
+    metadata:
+      name: control-plane-flow
+      namespace: kube-system
+    spec:
+      filters:
+      - tag_normalizer:
+          tag: ${namespace_name}.${pod_name}.${container_name}
+      - kube_events_timestamp:
+          time_field: mtime
+      globalOutputRefs:
+      - opensearch-output
+    ```
+
 ### Важный нюанс логирования Fluentd
 
-По умолчанию логи самого `Fluentd` не выводятся в `stdout/stderr` контейнера, а сохраняются внутри него (например, `/var/log/fluentd/out`). Для отладки может потребоваться `kubectl exec` в контейнер `fluentd`.
+По умолчанию логи самого `Fluentd` не выводятся в `stdout/stderr` контейнера, а сохраняются внутри него (например, `/var/log/fluentd/out`). Для отладки может потребоваться `kubectl exec` в контейнер `fluentd`:
+
+```bash
+kubectl exec -n cattle-logging-system <fluentd-pod> -- cat /var/log/fluentd/out
+```
+
+**Просмотр конфигурации Fluentd:** Текущая конфигурация хранится в `Secret` (например, `fluentd-app`), который автоматически обновляется при изменении `Flow` и `Output`.
+
+**Troubleshooting:**
+
+1.  **Проверка логов Fluent Bit** (сборщики на узлах):
+    ```bash
+    kubectl logs -n cattle-logging-system -l app.kubernetes.io/name=fluentbit
+    ```
+    Ошибки подключения к Fluentd могут указывать на проблемы с буферизацией или сетевые проблемы.
+
+2.  **Проверка логов Fluentd** (маршрутизатор):
+    ```bash
+    kubectl exec -n cattle-logging-system <fluentd-pod> -- cat /var/log/fluentd/out
+    ```
+    Ищите ошибки `flush_unavailable` или ошибки подключения к output.
+
+3.  **Буферизация:** Если логи не появляются в OpenSearch сразу, проверьте настройки буфера в `ClusterOutput`. По умолчанию Fluentd может отправлять логи пакетами раз в минуту.
 
 ## Ограничения RBAC
 
 *   **`ClusterFlow` и `ClusterOutput`**: Могут быть созданы только администраторами Rancher.
 *   **`Flow` и `Output` (привязанные к `namespace`)**:
     *   `Project Owner` может создавать и изменять `Flow` и `Output`.
-    *   `Project Member` **не может** создавать `Flow` и `Output`.
+    *   `Project Member` **не может** создавать `Flow` и `Output` (только просмотр).
 
-**Критическое замечание**: Это ограничение делает функциональность логирования Rancher для пользовательских приложений малопригодной для самостоятельного использования разработчиками с ролью `Project Member`.
+**Критическое замечание:** Это ограничение делает функциональность логирования Rancher для пользовательских приложений малопригодной для самостоятельного использования разработчиками с ролью `Project Member`. Пользователь с ролью `Project Member` не может самостоятельно настроить сбор логов своего приложения — требуется вмешательство администратора или `Project Owner`.
+
+**Сравнение ролей:**
+
+| Роль | ClusterFlow/Output | Flow/Output |
+| :--- | :--- | :--- |
+| **Admin** | ✅ Создание/чтение/удаление | ✅ Создание/чтение/удаление |
+| **Project Owner** | ❌ Нет доступа | ✅ Создание/чтение/удаление |
+| **Project Member** | ❌ Нет доступа | ⚠️ Только чтение |
 
 ## Дополнительная информация
 

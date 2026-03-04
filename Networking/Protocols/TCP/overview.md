@@ -90,6 +90,7 @@ TCP работает на **транспортном уровне** модели
 - **[TLS](../tls.md)** — шифрование поверх TCP (HTTPS = HTTP + TLS + TCP)
 - **[Оптимизация TCP в Linux](../../../Linux/Networking/Concepts/tcp_tuning.md)** — sysctl-параметры, BBR, initcwnd
 - **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ TCP-трафика
+- **[Wireshark: Диагностика производительности](../../../Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md)** — анализ узких мест через Wireshark
 - **[SYN-флуд](../../Concepts/dos_ddos_overview.md#syn-флуд)** — DDoS-атака на TCP-handshake
 
 ### RFC и стандарты
