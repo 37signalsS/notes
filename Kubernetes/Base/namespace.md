@@ -33,12 +33,50 @@ metadata:
 * **Namespaced-ресурсы** (существуют внутри `Namespace`):
   * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./deployment.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
   * Конфигурация и сервисы: [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
-  * Политики: `NetworkPolicy`, `ResourceQuota`.
+  * Политики: `NetworkPolicy`, `ResourceQuota`, `LimitRange`.
 
 * **Cluster-wide ресурсы** (существуют на уровне всего кластера):
   * Инфраструктура: `Node`, `PersistentVolume`.
   * Безопасность и доступ: `ClusterRole`, `ClusterRoleBinding`.
   * Системные: `Namespace` (сам по себе), `StorageClass`.
+
+### ResourceQuota и LimitRange
+
+**ResourceQuota** — объект для ограничения суммарного потребления ресурсов всеми подами в Namespace:
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    pods: "50"
+```
+
+**LimitRange** — устанавливает ограничения по умолчанию для отдельных контейнеров в Namespace:
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: container-limits
+  namespace: production
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+```
 
 ## Стандартные Namespaces
 

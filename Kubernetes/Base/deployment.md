@@ -95,9 +95,28 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:1.14.2 # Используйте конкретную версию, а не :latest
+        image: nginx:1.28.0 # Используйте конкретную версию, а не :latest
         ports:
         - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 20
 ```
 
 ## Управление жизненным циклом
@@ -126,11 +145,11 @@ kubectl get all -l app=nginx
 
 ### Шаг 2: Успешное обновление (Rolling Update)
 
-Обновим версию Nginx с `1.14.2` до `1.16.1`. Это можно сделать, изменив файл манифеста и применив его снова, или с помощью императивной команды `kubectl set image`.
+Обновим версию Nginx с `1.28.0` до `1.29.0`. Это можно сделать, изменив файл манифеста и применив его снова, или с помощью императивной команды `kubectl set image`.
 
 ```bash
 # Обновляем образ в контейнере 'nginx' деплоймента 'nginx-deployment'
-kubectl set image deployment/nginx-deployment nginx=nginx:1.16.1 --record
+kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
 # deployment.apps/nginx-deployment image updated
 
 # Наблюдаем за процессом в реальном времени
@@ -140,7 +159,7 @@ kubectl rollout status deployment/nginx-deployment
 ```
 
 Что произошло "под капотом":
-1. `Deployment` создал **новый** `ReplicaSet` с обновленным шаблоном (`nginx:1.16.1`).
+1. `Deployment` создал **новый** `ReplicaSet` с обновленным шаблоном (`nginx:1.29.0`).
 2. Он начал постепенно увеличивать количество реплик нового `ReplicaSet` и уменьшать количество реплик старого.
 3. В результате поды заменялись один за другим без простоя приложения.
 
@@ -154,10 +173,10 @@ kubectl get replicaset
 
 ### Шаг 3: Неудачное обновление и откат
 
-Теперь попробуем обновиться на несуществующую версию `nginx:1.99.9`.
+Теперь попробуем обновиться на несуществующую версию `nginx:1.999.9`.
 
 ```bash
-kubectl set image deployment/nginx-deployment nginx=nginx:1.99.9
+kubectl set image deployment/nginx-deployment nginx=nginx:1.999.9
 # deployment.apps/nginx-deployment image updated
 ```
 
@@ -182,10 +201,10 @@ kubectl describe pod nginx-deployment-failed-update-12345678-klmno
 #   Type     Reason     Age                From               Message
 #   ----     ------     ----               ----               -------
 #   Normal   Scheduled  <unknown>          default-scheduler  Successfully assigned default/nginx-pod to node-1
-#   Normal   Pulling    24s (x4 over 90s)  kubelet, node-1    Pulling image "nginx:1.99.9"
-#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Failed to pull image "nginx:1.99.9": rpc error: code = Unknown desc = Error response from daemon: manifest for nginx:1.99.9 not found
+#   Normal   Pulling    24s (x4 over 90s)  kubelet, node-1    Pulling image "nginx:1.999.9"
+#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Failed to pull image "nginx:1.999.9": rpc error: code = Unknown desc = Error response from daemon: manifest for nginx:1.999.9 not found
 #   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Error: ErrImagePull
-#   Normal   BackOff    10s (x6 over 88s)  kubelet, node-1    Back-off pulling image "nginx:1.99.9"
+#   Normal   BackOff    10s (x6 over 88s)  kubelet, node-1    Back-off pulling image "nginx:1.999.9"
 #   Warning  Failed     10s (x6 over 88s)  kubelet, node-1    Error: ImagePullBackOff
 ```
 События ясно показывают, что образ не найден.
@@ -207,8 +226,8 @@ kubectl rollout undo deployment/nginx-deployment
 kubectl rollout history deployment/nginx-deployment
 # REVISION  CHANGE-CAUSE
 # 1         kubectl apply --filename=nginx-deployment.yaml
-# 2         kubectl set image deployment/nginx-deployment nginx=nginx:1.16.1 --record
-# 3         kubectl set image deployment/nginx-deployment nginx=nginx:1.99.9
+# 2         kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
+# 3         kubectl set image deployment/nginx-deployment nginx=nginx:1.999.9
 
 # Мы можем откатиться не только к предыдущей, но и к любой ревизии
 kubectl rollout undo deployment/nginx-deployment --to-revision=1
