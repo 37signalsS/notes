@@ -10,36 +10,34 @@
 
 **OPA Gatekeeper** — реализация OPA для Kubernetes в виде Validating Admission Webhook.
 
+**Kyverno** — альтернатива OPA с политиками в формате YAML (не требует изучения Rego).
+
 ## Основные концепции
 
 ### Ограничения RBAC
 
 RBAC имеет принципиальные ограничения:
 
-| Ограничение | Описание | Риск |
-|-------------|----------|------|
-| Нет deny-правил | Только разрешения, нельзя явно запретить | Сложно исключить определённые действия |
-| Нет условий | Нет проверок времени, IP, labels | Невозможен контекстный доступ |
-| Статичность | Правила не адаптируются динамически | Требуется ручное обновление |
-| Нет валидации содержимого | Только CRUD-операции | Нельзя проверить spec ресурса |
-| Role explosion | Разрастание количества ролей | Сложность управления |
+| Ограничение | Описание | Риск | Митигация |
+|-------------|----------|------|-----------|
+| Нет deny-правил | Только разрешения, нельзя явно запретить | Сложно исключить определённые действия | OPA/Kyverno |
+| Нет условий | Нет проверок времени, IP, labels | Невозможен контекстный доступ | OPA/Kyverno |
+| Статичность | Правила не адаптируются динамически | Требуется ручное обновление | Агрегация ролей |
+| Нет валидации содержимого | Только CRUD-операции | Нельзя проверить spec ресурса | Admission Controllers |
+| Role explosion | Разрастание количества ролей | Сложность управления | Агрегация, именование |
+| Нет аудита действий | RBAC не логирует запросы | Сложно отслеживать нарушения | Kubernetes Audit Log |
 
-### ABAC через OPA
-
-OPA позволяет реализовать ABAC с проверками:
-
-- Атрибуты субъекта (роль, группа, время суток)
-- Атрибуты ресурса (labels, annotations, namespace)
-- Атрибуты окружения (IP-адрес, время запроса)
-- Атрибуты действия (HTTP метод, API endpoint)
-
-### Решение: Admission Controllers
+### Admission Controllers
 
 Для компенсации ограничений RBAC используются:
 
-- **OPA Gatekeeper** — политики на Rego
-- **Kyverno** — политики в YAML
-- **Pod Security Standards** — встроенные политики безопасности
+| Контроллер | Тип | Назначение |
+|------------|-----|------------|
+| **OPA Gatekeeper** | Validating Webhook | Политики на Rego |
+| **Kyverno** | Validating/Mutating Webhook | Политики в YAML |
+| **Pod Security Admission** | Built-in | Встроенные политики безопасности |
+| **Resource Quota** | Built-in | Ограничение ресурсов namespace |
+| **Limit Ranges** | Built-in | Ограничение ресурсов pod/container |
 
 ## Практические сценарии
 
@@ -68,6 +66,37 @@ deny[msg] {
     input.request.namespace == "kube-system"
     msg := "Deleting pods in kube-system is not allowed"
 }
+```
+
+Решение через Kyverno:
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: deny-delete-kube-system-pods
+spec:
+  validationFailureAction: Enforce
+  rules:
+  - name: deny-delete
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    preconditions:
+      all:
+      - key: "{{request.operation}}"
+        operator: Equals
+        value: DELETE
+    validate:
+      message: "Deleting pods in kube-system is not allowed"
+      deny:
+        conditions:
+          all:
+          - key: "{{request.object.metadata.namespace}}"
+            operator: Equals
+            value: kube-system
 ```
 
 ### Сценарий 2: Условия на основе времени
@@ -148,19 +177,34 @@ deny[msg] {
 }
 ```
 
+### Сценарий 6: Требование labels для всех ресурсов
+
+```rego
+package kubernetes.admission
+
+# Требовать label 'app' для всех Deployments
+deny[msg] {
+    input.request.kind.kind == "Deployment"
+    input.request.operation == "CREATE"
+    not input.request.object.metadata.labels.app
+    msg := "All Deployments must have 'app' label"
+}
+```
+
 ## Дополнительная информация
 
 ### Сравнение RBAC и OPA
 
-| Возможность | RBAC | OPA |
-|-------------|------|-----|
-| Разрешения CRUD | ✅ | ✅ |
-| Запрещающие правила | ❌ | ✅ |
-| Условия (time, IP) | ❌ | ✅ |
-| Проверка содержимого | ❌ | ✅ |
-| Сложность | Низкая | Высокая |
-| Производительность | Высокая | Средняя |
-| Встроенность | Нативно | Требует установки |
+| Возможность | RBAC | OPA | Kyverno |
+|-------------|------|-----|---------|
+| Разрешения CRUD | ✅ | ✅ | ✅ |
+| Запрещающие правила | ❌ | ✅ | ✅ |
+| Условия (time, IP) | ❌ | ✅ | ✅ |
+| Проверка содержимого | ❌ | ✅ | ✅ |
+| Мутация ресурсов | ❌ | ❌ | ✅ |
+| Сложность | Низкая | Высокая (Rego) | Средняя (YAML) |
+| Производительность | Высокая | Средняя | Средняя |
+| Встроенность | Нативно | Требует установки | Требует установки |
 
 ### Когда использовать RBAC
 
@@ -169,20 +213,34 @@ deny[msg] {
 - Стандартные CRUD-операции
 - Простота и производительность важны
 
-### Когда использовать OPA
+### Когда использовать OPA/Kyverno
 
 - Запрещающие политики
 - Контекстные условия доступа
 - Валидация spec ресурсов
 - Соответствие комплаенсу
 - Сложные бизнес-правила
+- Мутация ресурсов (только Kyverno)
+
+### Выбор между OPA и Kyverno
+
+| Критерий | OPA Gatekeeper | Kyverno |
+|----------|----------------|---------|
+| Язык политик | Rego (требует обучения) | YAML (знакомый формат) |
+| Мутация ресурсов | Нет | Да |
+| Сообщество | Большое (CNCF) | Растущее (CNCF) |
+| Интеграции | Широкие | Широкие |
+| Сложность | Высокая | Средняя |
+
+> **Рекомендация:** Для простых сценариев выбирайте Kyverno (YAML проще Rego). Для сложных — OPA (более зрелая экосистема).
 
 ### Связанные темы
 
-- Основы RBAC: [RBAC Overview](../rbac/rbac_overview.md)
-- Определение ролей: [Role и ClusterRole](../rbac/roles.md)
-- Привязки: [RoleBinding и ClusterRoleBinding](../rbac/bindings.md)
-- Практические сценарии: [Агрегируемые ClusterRole](../rbac/aggregation_scenarios.md)
+- Основы RBAC: [RBAC Overview](./rbac_overview.md)
+- Определение ролей: [Role и ClusterRole](./roles.md)
+- Привязки: [RoleBinding и ClusterRoleBinding](./bindings.md)
+- Практические сценарии: [Агрегируемые ClusterRole](./aggregation_scenarios.md)
 - [OPA Documentation](https://www.openpolicyagent.org/docs/latest/)
 - [OPA Gatekeeper](https://open-policy-agent.github.io/gatekeeper/website/docs/)
+- [Kyverno Documentation](https://kyverno.io/docs/)
 - [Kubernetes RBAC Good Practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)

@@ -1,74 +1,363 @@
 # Поды в состоянии `CrashLoopBackOff`
 
-### Определение
+## Определения
 
-Состояние `CrashLoopBackOff` означает, что контейнер в поде запускается, но немедленно завершается с ошибкой. `kubelet` пытается его перезапустить, но сбой повторяется в цикле, с каждым разом увеличивая интервал перед перезапуском.
+**`CrashLoopBackOff`** — статус пода, означающий, что контейнер запускается, но немедленно завершается с ошибкой. `kubelet` пытается перезапустить контейнер, но сбой повторяется циклически с нарастающей задержкой между попытками (exponential backoff).
 
-### Основные концепции
+> - Общие инструменты диагностики: [`troubleshooting_overview.md`](../troubleshooting_overview.md)
+> - OOMKilled: [`oomkilled_pods.md](./oomkilled_pods.md)
+> - QoS и ресурсы: [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
+> - RBAC: [`rbac_overview.md`](../../Security/rbac/rbac_overview.md)
+> - ConfigMap/Secret: [`pod_volumes.md`](../../Base/Pod/pod_volumes.md)
 
-* **Код выхода (Exit Code):** Процесс в контейнере при завершении возвращает код. `0` означает успешное завершение, любой другой код — ошибку.
-* **Логи контейнера:** Стандартные потоки вывода (`stdout`) и ошибок (`stderr`) приложения, которые являются основным источником информации для диагностики.
-* **Probes (Liveness, Readiness):** Проверки жизнеспособности и готовности. Неудачная `livenessProbe` приведет к перезапуску контейнера, что также может вызвать `CrashLoopBackOff`.
+**Backoff задержки:** 10s → 20s → 40s → 80s → 160s → 300s (максимум)
 
-### Практические сценарии
+## Основные концепции
 
-#### Диагностика
+### Механизм перезапуска
 
-1. **Просмотр логов предыдущего падения:** Это самая важная команда.
+```
+Контейнер запускается
+    ↓
+Приложение падает (Exit Code ≠ 0)
+    ↓
+kubelet ждет (exponential backoff)
+    ↓
+Попытка перезапуска
+    ↓
+Цикл повторяется → CrashLoopBackOff
+```
 
-    ```bash
-    kubectl logs <pod-name> --previous
-    ```
+### Коды выхода (Exit Codes)
 
-2. **Анализ статуса пода:** `kubectl describe pod <pod-name>` покажет `Last State` с причиной `Error` и кодом выхода (`Exit Code`), либо причину `OOMKilled`.
-3. **Просмотр текущих логов:** `kubectl logs <pod-name>`. Может быть пустым, если контейнер падает слишком быстро.
+| Код | Значение | Вероятная причина |
+|-----|----------|-------------------|
+| **0** | Успех | Нормальное завершение (не для долгоживущих процессов) |
+| **1** | Общая ошибка | Ошибка приложения, конфигурации |
+| **126** | Command not executable | Проблема с правами на файл |
+| **127** | Command not found | Неверный путь к команде |
+| **137** | OOMKilled (128+9) | Превышен лимит памяти |
+| **143** | SIGTERM (128+15) | Graceful shutdown |
+| **1** - **255** | Различные ошибки | См. документацию приложения |
 
-#### Распространенные случаи и их решения
+> **См. также:** [`docker_exit_codes.md`](../../../Docker/Docker_troubleshooting/docker_exit_codes.md)
 
-1. **Ошибка в приложении**
-    * **Причина:** Неперехваченное исключение, баг, который проявляется при старте.
-    * **Решение:** Анализируйте логи (`--previous`), исправляйте код приложения.
+### Причины CrashLoopBackOff по категориям
 
-2. **Неверная конфигурация**
-    * **Причина:** Отсутствуют переменные окружения, не смонтирован `ConfigMap`/`Secret`, неверные аргументы командной строки (`command`/`args`).
-    * **Решение:** Проверьте конфигурацию пода и убедитесь, что все зависимости (конфиги, секреты) доступны.
+| Категория | Примеры | % случаев |
+|-----------|---------|-----------|
+| **Приложение** | Неперехваченное исключение, баг кода | ~35% |
+| **Конфигурация** | Отсутствует ConfigMap/Secret, неверные env vars | ~30% |
+| **Зависимости** | Недоступна БД, кэш, внешний сервис | ~20% |
+| **Ресурсы** | OOMKilled, нехватка CPU | ~10% |
+| **Probes** | Неудачная livenessProbe | ~5% |
 
-3. **Проблемы с зависимостями**
-    * **Причина:** Приложение не может подключиться к базе данных или другому сервису при старте.
-    * **Решение:** Убедитесь, что внешние сервисы доступны из пода (проверьте DNS, сетевые политики).
+## Практические сценарии
 
-4. **Неудачная liveness-проба**
-    * **Причина:** `livenessProbe` завершается с ошибкой, и `kubelet` принудительно перезапускает контейнер.
-    * **Решение:** Проверьте корректность и таймауты `livenessProbe`. Возможно, приложению нужно больше времени для старта.
+### Диагностика: пошаговый чек-лист
 
-5. **Недостаточно прав доступа (RBAC)**
-    * **Причина:** Приложение внутри контейнера при старте пытается обратиться к API Kubernetes, но у его `ServiceAccount` нет на это прав. В логах можно увидеть ошибки `Forbidden` или `permission denied`.
-    * **Пример из практики:** Контейнер-сборщик логов (log shipper) пытается получить логи с других подов в кластере. Для этого ему необходимо право `get` для ресурса `pods/log`. Если этого права нет, приложение-агент может аварийно завершиться.
-    * **Диагностика:**
-        1. Изучите логи контейнера (`kubectl logs <pod> --previous`). Если вы видите сообщения об ошибках доступа к API, это ваш случай.
-        2. Определите `ServiceAccount`, который использует под: `kubectl get pod <pod-name> -o yaml | grep serviceAccountName`. Если не указан, используется `default`.
-        3. Проверьте, есть ли у этого `ServiceAccount` нужные права с помощью `kubectl auth can-i`:
+#### Шаг 1: Проверка статуса пода
 
-            ```bash
-            # Замените на ваши namespace и serviceaccount
-            kubectl auth can-i get pods/log 
-              --namespace my-app-ns 
-              --as=system:serviceaccount:my-app-ns:my-app-sa
-            # Ответ "no" подтвердит проблему.
-            ```
+```bash
+kubectl describe pod <pod-name>
+```
 
-    * **Решение:**
-        1. Найдите `Role` или `ClusterRole`, привязанную к вашему `ServiceAccount` через `RoleBinding` или `ClusterRoleBinding`.
-        2. Добавьте в `rules` этой роли необходимые права. Для примера с логами:
+**Ищите в выводе:**
+```
+State:          Waiting
+  Reason:       CrashLoopBackOff
+Last State:     Terminated
+  Reason:       Error (или OOMKilled)
+  Exit Code:    <код>
+Restart Count:  <число>
+```
 
-            ```yaml
-            - apiGroups: [""]
-              resources: ["pods/log"]
-              verbs: ["get", "list", "watch"]
-            ```
+#### Шаг 2: Просмотр логов
 
-        3. Примените изменения и перезапустите под.
+```bash
+# Логи предыдущего запуска (критично!)
+kubectl logs <pod-name> --previous
 
-#### Частный случай: `Init:CrashLoopBackOff`
+# Логи текущего запуска (если контейнер еще жив)
+kubectl logs <pod-name>
 
-Если в `CrashLoopBackOff` уходит `initContainer`, диагностика аналогична, но для просмотра логов нужно указать имя init-контейнера: `kubectl logs <pod-name> -c <init-container-name>`.
+# Для pod с несколькими контейнерами
+kubectl logs <pod-name> -c <container-name> --previous
+
+# Стриминг в реальном времени
+kubectl logs <pod-name> -f --previous
+```
+
+#### Шаг 3: Проверка конфигурации
+
+```bash
+# Проверка ConfigMap
+kubectl get configmap <configmap-name> -o yaml
+
+# Проверка Secret
+kubectl get secret <secret-name> -o yaml
+
+# Проверка переменных окружения в поде
+kubectl exec <pod-name> -- env 2>/dev/null || kubectl run debug --image=busybox --rm -it --restart=Never -- env
+```
+
+#### Шаг 4: Проверка зависимостей
+
+```bash
+# Проверка доступности сервисов
+kubectl get svc
+kubectl get endpoints <service-name>
+
+# Проверка DNS
+kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup <service-name>.<namespace>.svc.cluster.local
+
+# Проверка Network Policies
+kubectl get networkpolicy -n <namespace>
+```
+
+#### Шаг 5: Проверка RBAC (если приложение обращается к API K8s)
+
+```bash
+# Определение ServiceAccount пода
+kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}'
+
+# Проверка прав
+kubectl auth can-i get pods --as=system:serviceaccount:<namespace>:<sa-name>
+kubectl auth can-i list secrets --as=system:serviceaccount:<namespace>:<sa-name>
+```
+
+### Распространенные случаи и решения
+
+#### 1. Ошибка в приложении (баг, исключение)
+
+**Симптомы:**
+- В логах stack trace, exception
+- Exit Code: 1 или другой ненулевой
+
+**Решение:**
+- Исправить код приложения
+- Добавить обработку исключений
+- Проверить зависимости (библиотеки, модули)
+
+#### 2. Неверная конфигурация
+
+**Симптомы:**
+- Ошибка в логах: "config not found", "missing environment variable"
+- Exit Code: 1
+
+**Примеры:**
+```yaml
+# ❌ Ошибка: ConfigMap не существует
+envFrom:
+- configMapRef:
+    name: missing-config
+
+# ❌ Ошибка: Secret не найден
+env:
+- name: DB_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: missing-secret
+      key: password
+```
+
+**Решение:**
+```bash
+# Создать недостающий ConfigMap
+kubectl create configmap app-config --from-literal=key=value
+
+# Или исправить ссылку в манифесте
+```
+
+#### 3. Проблемы с зависимостями (БД, кэш, API)
+
+**Симптомы:**
+- В логах: "connection refused", "timeout", "cannot connect"
+- Приложение падает при старте при проверке подключения
+
+**Решение:**
+```yaml
+# Добавить проверку доступности зависимости перед стартом
+initContainers:
+- name: wait-for-db
+  image: busybox
+  command: ['sh', '-c', 'until nc -z db-service 5432; do sleep 2; done']
+
+# Или использовать startupProbe для отсрочки проверки liveness
+startupProbe:
+  tcpSocket:
+    port: 5432
+  failureThreshold: 30
+  periodSeconds: 10
+```
+
+#### 4. Недостаточно прав RBAC
+
+**Симптомы:**
+- В логах: "Forbidden", "permission denied", "unauthorized"
+- Приложение обращается к Kubernetes API
+
+**Пример из практики:** Log shipper пытается читать логи других подов.
+
+**Диагностика:**
+```bash
+# Проверка прав ServiceAccount
+kubectl auth can-i get pods/log --as=system:serviceaccount:my-ns:my-sa
+```
+
+**Решение:**
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-log-reader
+  namespace: my-ns
+rules:
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-sa-pod-log-reader
+  namespace: my-ns
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: my-ns
+roleRef:
+  kind: Role
+  name: pod-log-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+> **См. также:** [`rbac_overview.md`](../../Security/rbac/rbac_overview.md)
+
+#### 5. Неудачная livenessProbe
+
+**Симптомы:**
+- В `kubectl describe`: `Killing container ... Liveness probe failed`
+- Контейнер перезапускается без ошибок приложения
+
+**Решение:**
+```yaml
+# Увеличить время на старт
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 60  # Было 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Или использовать startupProbe для медленных приложений
+startupProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  failureThreshold: 30
+  periodSeconds: 10
+```
+
+#### 6. OOMKilled
+
+**Симптомы:**
+- Exit Code: 137
+- Reason: OOMKilled
+
+**Решение:** См. [`oomkilled_pods.md`](./oomkilled_pods.md)
+
+### Частные случаи
+
+#### `Init:CrashLoopBackOff`
+
+Если в CrashLoopBackOff уходит `initContainer`:
+
+```bash
+# Логи init-контейнера
+kubectl logs <pod-name> -c <init-container-name> --previous
+
+# Описание пода
+kubectl describe pod <pod-name>
+```
+
+**Частые причины:**
+- Скрипт инициализации падает с ошибкой
+- Недоступна зависимость (БД, миграции)
+- Неверный syntax в shell-скрипте
+
+> **Пример:** В оригинальном видео отсутствовало слово `then` после условия `if`, что приводило к `CrashLoopBackOff` у initContainer.
+
+#### `Completed` → `CrashLoopBackOff`
+
+Если контейнер завершается с кодом 0, но Deployment ожидает долгоживущий процесс:
+
+**Причина:** Контейнер предназначен для одноразовых задач (Jobs), а не для Deployments.
+
+**Решение:** Изменить приложение на долгоживущий процесс или использовать `Job`/`CronJob`.
+
+### Временная "заморозка" пода для отладки
+
+При постоянных рестартах можно "заморозить" под командой `sleep`:
+
+```bash
+kubectl patch deployment <deployment-name> \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"<container-name>","command":["sleep","3600"]}]}}}}'
+```
+
+**После отладки:**
+```bash
+kubectl rollout undo deployment/<deployment-name>
+```
+
+> **См. также:** [`troubleshooting_overview.md`](../troubleshooting_overview.md)
+
+## Дополнительная информация
+
+### Автоматизация диагностики
+
+```bash
+#!/bin/bash
+# Скрипт быстрой диагностики CrashLoopBackOff
+
+POD=$1
+
+echo "=== Статус пода ==="
+kubectl get pod $POD -o wide
+
+echo -e "\n=== Описание ==="
+kubectl describe pod $POD | grep -A 10 "State:\|Last State:"
+
+echo -e "\n=== Логи (предыдущие) ==="
+kubectl logs $POD --previous --tail=50
+
+echo -e "\n=== События ==="
+kubectl get events --field-selector involvedObject.name=$POD --sort-by='.lastTimestamp'
+```
+
+### Связь с другими ошибками
+
+| Ошибка | Связь с CrashLoopBackOff |
+|--------|--------------------------|
+| `OOMKilled` | Частая причина CrashLoopBackOff |
+| `ImagePullBackOff` | Предшествует CrashLoopBackOff (образ не скачан) |
+| `CreateContainerConfigError` | Предшествует CrashLoopBackOff (конфигурация) |
+| `Error` (Exit Code 1) | Непосредственная причина |
+
+### Best Practices
+
+| Практика | Описание |
+|----------|----------|
+| **Всегда смотрите `--previous` логи** | Основной источник информации |
+| **Проверяйте Exit Code** | Указывает на тип ошибки |
+| **Используйте startupProbe** | Для приложений с долгим стартом |
+| **Настраивайте livenessProbe корректно** | Избегайте ложных срабатываний |
+| **Логируйте в stdout/stderr** | Kubernetes собирает только эти потоки |
+
+### Ссылки
+
+- [Kubernetes Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+- [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-pod/)

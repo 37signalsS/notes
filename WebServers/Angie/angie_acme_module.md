@@ -259,4 +259,4 @@ ns1.acme.example.com.       IN A  <IP-адрес вашего Angie-сервер
 
 * **Certbot и acme.sh:** Классические утилиты командной строки. `certbot` имеет плагины для Nginx (см. **[Использование Let's Encrypt с Nginx в Docker](../Nginx/Scenarios/nginx_with_letsencrypt.md)**), а `acme.sh` известен широкой поддержкой DNS API.
 * **Traefik:** Современный обратный прокси со встроенной автоматической поддержкой Let's Encrypt. См. **[обзор Traefik](../Traefik/traefik_overview.md)**.
-* **Cert-manager:** Стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager для Kubernetes](../../Kubernetes/ToolsUtilities/cert_manager.md)**.
+* **Cert-manager:** Стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**.

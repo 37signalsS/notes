@@ -1,41 +1,58 @@
 # NFS Subdir External Provisioner
 
-## 1. Определения
+## Определения
 
-**NFS Subdir External Provisioner** — это динамический provisioner для Kubernetes, который использует существующий и доступный NFS-сервер для создания `PersistentVolume` (PV).
+**NFS Subdir External Provisioner** — динамический provisioner для Kubernetes, использующий существующий NFS-сервер для создания `PersistentVolume`.
 
-В отличие от более сложных хранилищ (например, Ceph или GlusterFS), этот provisioner не управляет самим хранилищем. Вместо этого, при поступлении запроса на `PersistentVolumeClaim` (PVC), он просто создает новую поддиректорию вида `<namespace>-<pvc-name>-<pv-name>` на общем NFS-ресурсе и предоставляет ее в качестве `PersistentVolume`.
+При поступлении запроса на PVC provisioner создаёт новую поддиректорию вида `<namespace>-<pvc-name>-<pv-name>` на общем NFS-ресурсе и предоставляет её как `PersistentVolume`.
 
-Это делает его простым и эффективным решением для `dev`-сред, лабораторных работ или небольших on-premise инсталляций, где уже есть NFS-сервер.
+> **Назначение:** Простое и эффективное решение для dev-сред, лабораторных работ или небольших on-premise инсталляций с существующим NFS-сервером.
 
-## 2. Основные концепции
+---
+
+## Базовые концепции
 
 ### Принцип работы
 
-1.  **Запрос (PVC):** Пользователь создает `PersistentVolumeClaim`, указывая `StorageClass`, который обслуживается этим provisioner'ом.
-2.  **Действие Provisioner'а:** Контроллер provisioner'а, который запущен в кластере как `Deployment`, замечает новый PVC.
-3.  **Создание директории:** Он подключается к NFS-серверу и создает в корневом каталоге новую, уникально именованную поддиректорию.
-4.  **Создание PV:** Provisioner создает объект `PersistentVolume` с типом `NFS`, указывая в качестве пути только что созданную поддиректорию.
-5.  **Привязка:** Kubernetes связывает (`binds`) этот новый PV с пользовательским PVC.
+1. **Запрос (PVC):** Пользователь создаёт PVC с указанием `StorageClass`.
+2. **Действие Provisioner'а:** Контроллер (Deployment) обнаруживает новый PVC.
+3. **Создание директории:** Provisioner подключается к NFS-серверу и создаёт уникальную поддиректорию.
+4. **Создание PV:** Provisioner создаёт `PersistentVolume` с типом `NFS`, указывающий на новую директорию.
+5. **Привязка:** Kubernetes связывает PV с PVC (статус `Bound`).
 
-### Политика очистки (`ReclaimPolicy`)
+### Политика очистки (ReclaimPolicy)
 
-Когда PVC удаляется, `ReclaimPolicy`, указанная в `StorageClass` или `PV`, определяет, что произойдет с данными на NFS-сервере:
-*   `Delete` (по умолчанию): Provisioner удалит поддиректорию со всем ее содержимым.
-*   `Retain`: Provisioner переименует директорию в `archived-<namespace>-<pvc-name>-<pv-name>`, сохранив данные.
+| Политика | Описание | Когда использовать |
+|----------|----------|-------------------|
+| **`Delete`** (по умолчанию) | Provisioner удаляет поддиректорию со всем содержимым | Dev/Test, временные данные |
+| **`Retain`** | Provisioner переименовывает директорию в `archived-<namespace>-<pvc-name>-<pv-name>` | Production, важные данные |
 
-## 3. Практические сценарии
+> **Важно:** При `Retain` данные сохраняются, но PV требует ручной очистки перед повторным использованием.
 
-### 3.1. Предварительные требования
+### Ограничения
 
-*   **NFS-сервер:** Должен быть доступен со всех рабочих узлов Kubernetes.
-*   **NFS-клиент:** На всех рабочих узлах должны быть установлены утилиты для монтирования NFS (например, пакет `nfs-common` для Debian/Ubuntu или `nfs-utils` для CentOS).
+| Ограничение | Описание | Рекомендация |
+|-------------|----------|--------------|
+| **Производительность** | Ограничена скоростью сети и возможностями NFS-сервера | Не использовать для high-IOPS workload |
+| **Блокировки** | Нет механизмов блокировок на уровне файлов | Осторожно с параллельной записью |
+| **Зависимость от NFS** | Требуется доступный NFS-сервер | Настроить мониторинг NFS |
 
-### 3.2. Установка и настройка
+---
 
-#### Шаг 1: RBAC (Role-Based Access Control)
+## Практические сценарии
 
-Provisioner'у нужны права на создание, удаление и управление `PersistentVolume`.
+### Предварительные требования
+
+1. **NFS-сервер:** Доступен со всех рабочих узлов Kubernetes.
+2. **NFS-клиент:** На всех узлах установлены утилиты для монтирования NFS:
+   - Debian/Ubuntu: `nfs-common`
+   - CentOS/RHEL: `nfs-utils`
+
+### Установка и настройка
+
+#### Шаг 1: RBAC
+
+Provisioner'у нужны права на управление PV:
 
 ```yaml
 # nfs-provisioner-rbac.yaml
@@ -43,7 +60,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: nfs-client-provisioner
-  namespace: default # Можно разместить в любом namespace
+  namespace: default
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -56,7 +73,12 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "update"]
-  # ... и другие необходимые права
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -72,9 +94,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-#### Шаг 2: Deployment Provisioner'а
-
-Создаем `Deployment`, который запустит контроллер provisioner'а.
+#### Шаг 2: Deployment
 
 ```yaml
 # nfs-provisioner-deployment.yaml
@@ -87,31 +107,30 @@ spec:
   template:
     spec:
       serviceAccountName: nfs-client-provisioner
-      priorityClassName: high-priority # Важный компонент, задаем высокий приоритет
+      priorityClassName: high-priority
       containers:
         - name: nfs-client-provisioner
-          image: k8s.gcr.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+          image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
           volumeMounts:
             - name: nfs-client-root
               mountPath: /persistentvolumes
           env:
             - name: PROVISIONER_NAME
-              value: my-nfs-storage # Имя, которое будет использоваться в StorageClass
+              value: cluster.local/nfs-client-provisioner
             - name: NFS_SERVER
-              value: 192.168.1.10 # IP-адрес вашего NFS-сервера
+              value: 192.168.1.10
             - name: NFS_PATH
-              value: /var/nfs/kubedata # Путь к экспортируемой директории на NFS-сервере
+              value: /var/nfs/kubedata
       volumes:
         - name: nfs-client-root
           nfs:
             server: 192.168.1.10
             path: /var/nfs/kubedata
 ```
-> **Важно:** `Deployment` монтирует к себе весь NFS-ресурс (`/persistentvolumes`), чтобы иметь возможность создавать и удалять в нем поддиректории.
 
-#### Шаг 3: Создание `StorageClass`
+> **Важно:** `Deployment` монтирует весь NFS-ресурс для создания поддиректорий.
 
-Создаем `StorageClass`, который будет использовать наш provisioner.
+#### Шаг 3: StorageClass
 
 ```yaml
 # nfs-storageclass.yaml
@@ -119,14 +138,14 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: managed-nfs-storage
-provisioner: my-nfs-storage # То же имя, что и в PROVISIONER_NAME
+provisioner: cluster.local/nfs-client-provisioner
 parameters:
-  archiveOnDelete: "false" # При удалении PVC данные будут удаляться
+  archiveOnDelete: "false"  # false = удалять, true = архивировать
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
 ```
 
-### 3.3. Использование
-
-Теперь любой пользователь в кластере может запросить хранилище, создав `PersistentVolumeClaim`.
+### Использование
 
 ```yaml
 apiVersion: v1
@@ -134,20 +153,51 @@ kind: PersistentVolumeClaim
 metadata:
   name: my-test-pvc
 spec:
-  storageClassName: managed-nfs-storage # Ссылаемся на наш StorageClass
+  storageClassName: managed-nfs-storage
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
 ```
 
-После создания этого PVC:
-1.  NFS Provisioner создаст директорию на NFS-сервере (например, `/var/nfs/kubedata/default-my-test-pvc-pvc-xxxx`).
-2.  Provisioner создаст `PersistentVolume`, указывающий на эту директорию.
-3.  `my-test-pvc` будет успешно привязан к этому `PV` и перейдет в статус `Bound`.
+**Результат:**
 
-## 4. Дополнительная информация
+1. NFS Provisioner создаёт директорию на NFS-сервере (например, `/var/nfs/kubedata/default-my-test-pvc-pvc-xxxx`).
+2. Создаётся `PersistentVolume`, указывающий на эту директорию.
+3. PVC переходит в статус `Bound`.
 
-*   **`accessModes`**: Несмотря на то, что NFS поддерживает `ReadWriteMany` (одновременный доступ на чтение и запись из нескольких подов), при использовании этого provisioner'а рекомендуется быть осторожным, так как он не обеспечивает никаких механизмов блокировок на уровне файлов.
-*   [Официальный репозиторий](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner)
+### Пример: Pod с RWX-доступом
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-server
+spec:
+  containers:
+    - name: nginx
+      image: nginx:latest
+      volumeMounts:
+        - name: shared-data
+          mountPath: /usr/share/nginx/html
+  volumes:
+    - name: shared-data
+      persistentVolumeClaim:
+        claimName: my-test-pvc
+```
+
+---
+
+## Дополнительная информация
+
+### Связанные темы
+
+- **[PersistentVolume и PVC](./pv_and_pvc.md)** — базовые концепции
+- **[Local Path Provisioner](./local-path-provisioner.md)** — альтернатива для RWO
+- **[Ceph CephFS](./Ceph/ceph_csi_cephfs_driver_setup.md)** — альтернатива для RWX с лучшей производительностью
+
+### Ресурсы
+
+- [Официальный репозиторий](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner)
+- [NFS-клиенты для Kubernetes](https://kubernetes.io/docs/concepts/storage/volumes/#nfs)

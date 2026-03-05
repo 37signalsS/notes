@@ -30,7 +30,7 @@
 | **Nodes** | Минимум 2 worker nodes для HA |
 | **Storage** | StorageClass с поддержкой RWO |
 | **Network** | Ingress/LoadBalancer (MetalLB) для внешнего доступа |
-| **Certificates** | cert-manager для TLS-сертификатов |
+| **Certificates** | cert-manager для TLS-сертификатов (см. [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/02_private_ca.md)) |
 
 ## Практические сценарии
 
@@ -275,6 +275,8 @@ spec:
 7. **Перезапуск подов** — через `kubectl patch statefulset`
 
 ### Настройка TLS (cert-manager)
+
+**Подробно:** См. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/05_ingress.md) или [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/02_private_ca.md).
 
 ```yaml
 apiVersion: cert-manager.io/v1

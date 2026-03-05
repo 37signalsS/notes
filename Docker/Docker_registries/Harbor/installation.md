@@ -175,7 +175,7 @@ sudo ./install.sh --with-trivy
 
 **Предварительные условия:**
 *   Установлен и настроен [ArgoCD](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md#argocd).
-*   Установлен [cert-manager](../../../Security/certificates.md#cert-manager) для автоматического выпуска TLS-сертификатов.
+*   Установлен [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager.md) для автоматического выпуска TLS-сертификатов.
 *   Присутствуют внешние экземпляры PostgreSQL и Redis.
 
 #### 1. Подготовка базы данных

@@ -89,3 +89,10 @@ spec:
 ## Дополнительная информация
 
 Хотя `stringData` упрощает создание секрета, важно помнить, что **для Traefik `basicAuth` всегда требуется хэшированный пароль**, а не пароль в открытом виде. Несоблюдение этого требования — частая причина ошибок при настройке.
+
+### Связанные темы
+
+- **[Authentication](./authentication.md)** — аутентификация в Kubernetes
+- **[Secret](./application_secrets_management.md)** — работа с секретами
+- **[Ingress Overview](../Networking/Ingress/overview.md)** — ingress-контроллеры
+- **[Traefik](../Networking/gateway_api/traefik.md)** — документация по Traefik

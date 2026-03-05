@@ -140,6 +140,47 @@ perf stat -e minor-faults,major-faults -a sleep 10
 **Решение и лучшая практика:**
 **Для баз данных (Oracle, PostgreSQL, MongoDB и др.), систем виртуализации и любых приложений, требующих стабильно низкой задержки, настоятельно рекомендуется отключать THP** и вместо этого использовать предварительно выделенные **Standard HugePages**. Это обеспечивает предсказуемую производительность без случайных пауз.
 
+#### Диагностика Compaction Stalls
+
+Когда ядру требуется выделить крупный непрерывный блок памяти (для THP или order>0 аллокаций), при фрагментированной памяти запускается **memory compaction** — перемещение страниц для формирования contiguous-области. В этот момент потоки могут блокироваться, что проявляется как кратковременные latency spikes без очевидного CPU или I/O bottleneck.
+
+**Проверка активности compaction:**
+
+```bash
+# Счётчики compaction в vmstat
+cat /proc/vmstat | grep compact
+
+# Ключевые метрики:
+# compact_stall — количество раз, когда процессы ждали завершения compaction
+# compact_fail — неудачные попытки compaction
+# compact_success — успешные compaction
+```
+
+Рост `compact_stall` означает, что процессы реально ждали завершения compaction.
+
+**Проверка уровня фрагментации:**
+
+```bash
+# Просмотр свободных блоков разного порядка (order)
+cat /proc/buddyinfo
+```
+
+Если мало свободных блоков высокого order — крупные аллокации требуют сборки памяти.
+
+**Проверка активности THP:**
+
+```bash
+# Статус THP
+cat /sys/kernel/mm/transparent_hugepage/enabled
+
+# Использование анонимных huge pages
+cat /proc/meminfo | grep AnonHugePages
+```
+
+Подробнее о метриках памяти, включая `AnonHugePages`, см. в [`/proc/meminfo`](../../Diagnostics/Memory/proc_meminfo.md).
+
+При активном THP и фрагментированной памяти попытки выделить huge pages создают периодические паузы. В high-load среде это проявляется как кратковременные latency spikes без явных CPU или I/O bottleneck.
+
 #### Сравнение и ключевые различия
 
 | Характеристика | Transparent Huge Pages (THP) | Standard HugePages (HugeTLB) |

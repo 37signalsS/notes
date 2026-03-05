@@ -6,7 +6,7 @@
 
 Kubesec (<https://github.com/controlplaneio/kubesec>) проверяет YAML-манифесты Kubernetes на рискованные настройки безопасности и возвращает score (оценку) + список сработавших правил.
 
-Инструмент помогает быстро находить небезопасные параметры (например, запуск контейнеров с `privileged: true`, использование `hostPath`, `capabilities`, `runAsRoot` и отсутствие `securityContext`) ещё до развертывания — локально или в CI/CD.
+**Важно:** Kubesec работает **до деплоя** (статический анализ). Для проверок во время деплоя используйте [Kyverno](./kyverno.md), для аудита инфраструктуры — [kube-bench](./kube-bench.md).
 
 ## Основные концепции
 
@@ -74,3 +74,38 @@ Kubesec (<https://github.com/controlplaneio/kubesec>) проверяет YAML-м
     ```bash
     curl -sS --request POST --data-binary @pod.yaml https://v2.kubesec.io/scan
     ```
+
+## Дополнительная информация
+
+### Сравнение инструментов безопасности
+
+| Инструмент | Когда работает | Назначение | SSoT |
+|------------|----------------|------------|------|
+| **[kubesec](./kubesec.md)** | До деплоя (статический анализ) | Проверка манифестов на уязвимости | Этот файл |
+| **[Kyverno](./kyverno.md)** | Во время деплоя (Admission) | Применение политик к ресурсам | kyverno.md |
+| **[kube-bench](./kube-bench.md)** | Периодический аудит | Проверка конфигурации кластера на CIS Benchmark | kube-bench.md |
+| **[Falco](../../Security/Tools/falco.md)** | Runtime (после деплоя) | Мониторинг поведения приложений | falco.md |
+
+### Интеграция в CI/CD
+
+**GitLab CI пример**:
+
+```yaml
+security-scan:
+  stage: test
+  image: kubesec/kubesec:latest
+  script:
+    - kubesec scan k8s/ | jq '.score' | grep -q '^^2$' || exit 1
+```
+
+**Пороговые значения**:
+- **score < 0** — критические уязвимости, блокировка деплоя
+- **score 0–5** — предупреждения, рекомендуется исправление
+- **score > 5** — приемлемый уровень
+
+### Связанные темы
+
+- **[Kyverno](./kyverno.md)** — политики безопасности во время деплоя
+- **[Pod Security Context](./pod_security_context.md)** — securityContext для подов
+- **[kube-bench](./kube-bench.md)** — аудит инфраструктуры
+- **[Kubesec GitHub](https://github.com/controlplaneio/kubesec)** — официальный репозиторий

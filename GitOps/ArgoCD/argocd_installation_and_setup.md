@@ -76,7 +76,7 @@ argocd login argocd.example.com --username admin --grpc-web
 
 ### Сценарий 3: Настройка доступа через Ingress с SSL
 
-**Требования:** Ingress Controller (nginx), cert-manager
+**Требования:** Ingress Controller (nginx), cert-manager (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/05_ingress.md))
 
 ```yaml
 # argocd-server-ingress.yaml

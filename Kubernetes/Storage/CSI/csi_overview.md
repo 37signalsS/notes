@@ -1,6 +1,6 @@
 # Container Storage Interface (CSI)
 
-### Определения
+## Определения
 
 **Container Storage Interface (CSI)** — это открытый стандарт, который определяет универсальный API для взаимодействия систем оркестрации контейнеров (таких как Kubernetes) с системами хранения данных (СХД).
 
@@ -8,14 +8,19 @@
 
 **Ключевые задачи, решаемые CSI:**
 
-- Динамическое выделение и девыделение томов хранения.
+- Динамическое выделение и удаление томов хранения.
 - Монтирование и отмонтирование томов к подам.
-- Создание снапшотов и клонирование томов.
-- Расширение томов.
+- Создание снапшотов (Volume Snapshots) и клонирование томов.
+- Расширение томов (Volume Expansion) — онлайн и офлайн.
+- Управление жизненным циклом томов с учётом топологии (Topology Aware).
 
-### Основные концепции
+> **Продвинутые возможности:** [CSI Advanced Features](./csi_advanced.md)
 
-#### Проблемы до-CSI (In-Tree плагины)
+---
+
+## Основные концепции
+
+### Проблемы до-CSI (In-Tree плагины)
 
 До появления CSI вся логика для работы с различными СХД (например, AWS EBS, GCE PD, Ceph) была встроена непосредственно в код Kubernetes. Это создавало ряд проблем:
 
@@ -25,7 +30,7 @@
 
 CSI решил эти проблемы, полностью отделив логику работы с хранилищами от Kubernetes, перейдя к модели **Out-of-Tree** плагинов.
 
-#### Архитектура CSI-драйвера
+### Архитектура CSI-драйвера
 
 CSI-драйвер для конкретной СХД обычно состоит из двух основных компонентов, которые развертываются в кластере как отдельные поды:
 
@@ -45,7 +50,7 @@ CSI-драйвер для конкретной СХД обычно состои�
         - Форматирование файловой системы (при необходимости).
     - **Взаимодействие:** `kubelet` на каждом узле взаимодействует с Node Plugin через локальный сокет для выполнения этих операций.
 
-#### Преимущества использования CSI
+### Преимущества использования CSI
 
 Переход на CSI-драйверы предоставляет значительно более широкие возможности по сравнению со старыми встроенными плагинами:
 
@@ -57,9 +62,11 @@ CSI-драйвер для конкретной СХД обычно состои�
 - **Поддержка топологии (Topology Aware):** Позволяет планировщику Kubernetes принимать решения о размещении подов с учетом физического расположения данных (например, разместить под в той же зоне доступности, где находится его диск, для минимизации задержек).
 - **Поддержка различных режимов доступа:** Включая блочные устройства (`Block Storage`) и файловые системы (`File Storage`), а также режимы `RWO`, `ROX`, `RWX`.
 
-### Практические сценарии
+---
 
-#### Пример: Ceph CSI
+## Практические сценарии
+
+### Ceph CSI
 
 В качестве примера можно рассмотреть распределенную систему хранения данных [Ceph](https://ceph.io/en/). Драйвер **Ceph CSI** предоставляет доступ к двум типам хранилищ, закрывая разные потребности:
 
@@ -77,7 +84,9 @@ CSI-драйвер для конкретной СХД обычно состои�
     - **Применение:** Общие данные для веб-серверов, CMS, аналитические задачи. Отличная альтернатива NFS.
     - **См. также:** [Установка и настройка драйвера CSI для CephFS](../Ceph/ceph_csi_cephfs_driver_setup.md).
 
-#### Пример: Secrets Store CSI Driver
+> **Пример использования с Volume Snapshots:** [CSI Advanced Features](./csi_advanced.md#пример-ceph-rbd-с-volume-snapshots)
+
+### Secrets Store CSI Driver
 
 Этот драйвер используется не для хранения данных, а для безопасного управления секретами.
 
@@ -86,4 +95,25 @@ CSI-драйвер для конкретной СХД обычно состои�
   - **Централизованное управление:** Секреты хранятся в одном надежном месте.
   - **Автоматическая ротация:** Драйвер может автоматически обновлять смонтированные секреты.
   - **Повышенная безопасность:** Секреты не хранятся в `etcd` в base64.
-- **См. также:** [External Secret Managers: Secrets Store CSI Driver](../Base/secrets/external_managers.md)
+
+> **Подробно:** [CSI Drivers Comparison](./csi_drivers_comparison.md#secrets-store-csi-driver), [External Secret Managers](../Base/secrets/external_managers.md), [Интеграция Vault с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)
+
+---
+
+## Дополнительная информация
+
+### Связанные темы
+
+- **Продвинутые возможности:** [CSI Advanced Features](./csi_advanced.md) — Snapshots, Cloning, Topology, Expansion, Migration
+- **Сравнение драйверов:** [CSI Drivers Comparison](./csi_drivers_comparison.md) — таблица возможностей, диагностика, best practices
+- **PV и PVC:** [Хранение данных: PV, PVC и StorageClass](../pv_and_pvc.md)
+- **Ceph CSI:** [Ceph Overview](../Ceph/ceph_overview.md)
+- **Secrets Management:** [External Secret Managers](../Base/secrets/external_managers.md)
+- **StatefulSet:** [StatefulSet](../Base/statefulset.md)
+
+### Официальные источники
+
+- [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
+- [Kubernetes CSI Documentation](https://kubernetes.io/docs/concepts/storage/volumes/#csi)
+- [CSI Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
+- [CSI Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)

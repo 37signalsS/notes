@@ -1,23 +1,268 @@
-# Использование Cert-manager с Ingress
+# Интеграция Cert-manager с Ingress
 
-Самый распространенный способ использования `cert-manager` — это автоматическое получение сертификатов для Ingress-ресурсов с помощью аннотаций.
+## Определения
 
-Просто добавьте аннотацию в ваш Ingress-манифест, и `cert-manager` сделает все остальное.
+**Ingress-аннотации cert-manager** — механизм автоматического создания и обновления сертификатов для Ingress-ресурсов через добавление специальных аннотаций.
+
+**Преимущества:**
+- Минимальная конфигурация
+- Автоматическое продление
+- Интеграция с любым Ingress Controller (nginx, Traefik, HAProxy)
+
+---
+
+## Основные концепции
+
+### Поток работы
+
+```
+Ingress с аннотацией
+       ↓
+cert-manager обнаруживает аннотацию
+       ↓
+Создаётся Certificate ресурс
+       ↓
+Выполняется ACME-проверка (HTTP-01/DNS-01)
+       ↓
+Secret создаётся/обновляется
+       ↓
+Ingress использует Secret
+```
+
+### Аннотации cert-manager
+
+| Аннотация | Описание | Пример |
+| :--- | :--- | :--- |
+| `cert-manager.io/issuer` | Issuer в том же namespace | `my-issuer` |
+| `cert-manager.io/cluster-issuer` | ClusterIssuer (общекластерный) | `letsencrypt-prod` |
+| `cert-manager.io/issue-temporary-certificate` | Временный сертификат до ACME | `true` |
+| `cert-manager.io/acme-challenge-type` | Принудительный solver | `http01`, `dns01` |
+| `cert-manager.io/common-name` | Переопределение CN | `example.com` |
+| `cert-manager.io/duration` | Срок действия | `2160h` |
+| `cert-manager.io/renew-before` | Время до продления | `360h` |
+| `cert-manager.io/private-key-size` | Размер ключа | `4096` |
+| `cert-manager.io/private-key-algorithm` | Алгоритм | `RSA`, `ECDSA` |
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Базовый Ingress с HTTP-01
+
+**Цель:** Автоматически получить сертификат для домена.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: my-ingress
+  name: my-app-ingress
+  namespace: default
   annotations:
-    # Указываем, какой ClusterIssuer использовать
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
   tls:
   - hosts:
+    - myapp.example.com
+    secretName: myapp-tls
+  rules:
+  - host: myapp.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-app
+            port:
+              number: 80
+```
+
+**Процесс:**
+1. cert-manager создаёт `Certificate` с именем `myapp-tls`
+2. Выполняется HTTP-01 проверка через Ingress
+3. Secret `myapp-tls` создаётся с сертификатом
+4. Ingress использует Secret для TLS
+
+---
+
+### Сценарий 2: Несколько доменов в одном Ingress
+
+**Цель:** Один сертификат для нескольких доменов (SAN).
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: multi-domain-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/common-name: "example.com"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - example.com
+    - www.example.com
+    - shop.example.com
+    secretName: example-com-multi-tls
+  rules:
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: main-service
+            port:
+              number: 80
+  - host: www.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: main-service
+            port:
+              number: 80
+  - host: shop.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: shop-service
+            port:
+              number: 80
+```
+
+---
+
+### Сценарий 3: Временный сертификат до ACME-проверки
+
+**Цель:** Избежать ошибок TLS во время ACME-проверки.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: temp-cert-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/issue-temporary-certificate: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - myapp.example.com
+    secretName: myapp-tls
+  rules:
+  - host: myapp.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-app
+            port:
+              number: 80
+```
+
+**Поведение:**
+- cert-manager создаёт self-signed сертификат немедленно
+- После прохождения ACME-проверки заменяется на настоящий
+
+---
+
+### Сценарий 4: DNS-01 для wildcard-доменов
+
+**Цель:** Wildcard-сертификат `*.example.com`.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wildcard-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "dns01"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - example.com
+    - "*.example.com"
+    secretName: example-wildcard-tls
+  rules:
+  - host: app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app-service
+            port:
+              number: 80
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 80
+```
+
+> **Важно:** Требуется настроенный DNS-01 solver в ClusterIssuer.
+
+---
+
+### Сценарий 5: Прямое создание Certificate (без аннотаций)
+
+**Цель:** Больший контроль над параметрами сертификата.
+
+```yaml
+# 1. Certificate ресурс
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: my-domain-cert
+  namespace: default
+spec:
+  secretName: my-domain-tls
+  duration: 2160h  # 90 дней
+  renewBefore: 360h  # 15 дней
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
     - my-domain.com
-    secretName: my-domain-tls # cert-manager создаст и заполнит этот секрет
+    - www.my-domain.com
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    encoding: PKCS8
+---
+# 2. Ingress без аннотаций cert-manager
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-domain-ingress
+  namespace: default
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - my-domain.com
+    - www.my-domain.com
+    secretName: my-domain-tls  # Ссылка на Secret из Certificate
   rules:
   - host: my-domain.com
     http:
@@ -31,40 +276,57 @@ spec:
               number: 80
 ```
 
-> **Примечание об устаревшей аннотации:** Ранее использовалась аннотация `kubernetes.io/tls-acme: "true"`. Она считается устаревшей и ее следует избегать. Вместо нее всегда используйте `cert-manager.io/cluster-issuer` или `cert-manager.io/issuer`.
+**Преимущества:**
+- Полный контроль над `duration`, `renewBefore`, `privateKey`
+- Можно использовать для не-Ingress сценариев (mTLS, Secret для приложений)
 
 ---
 
-## Прямое создание ресурса Certificate
+## Дополнительная информация
 
-Второй способ — создать ресурс `Certificate` напрямую. Этот подход обеспечивает больший контроль и полезен, когда сертификат не привязан к Ingress (например, для mTLS между сервисами).
+### Диагностика
 
-В этом ресурсе вы описываете желаемый сертификат, указываете доменные имена и ссылаетесь на `Issuer` или `ClusterIssuer`.
+```bash
+# Статус Certificate
+kubectl get certificate -n default
 
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: my-domain-com
-  namespace: default
-spec:
-  # Имя секрета, в который будет сохранен сертификат
-  secretName: my-domain-tls
-  # Длительность и период обновления
-  duration: 2160h # 90d
-  renewBefore: 360h # 15d
-  # Доменные имена
-  dnsNames:
-  - my-domain.com
-  - www.my-domain.com
-  # Ссылка на Issuer или ClusterIssuer
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
+# Детали Certificate
+kubectl describe certificate myapp-tls -n default
+
+# Связанные Order и Challenge
+kubectl get order -n default
+kubectl get challenge -n default
+
+# Логи cert-manager
+kubectl logs -n cert-manager -l app=cert-manager --tail=100
 ```
 
-Cert-manager отследит этот ресурс и автоматически создаст/обновит секрет `my-domain-tls` с валидным сертификатом.
+### Частые ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `Waiting for HTTP-01 challenge` | Ingress недоступен извне | Проверить LoadBalancer, firewall |
+| `Secret not found` | Certificate ещё не создан | Подождать 1-2 минуты, проверить логи |
+| `Issuer not found` | Неправильный namespace/имя | Проверить `issuerRef` или аннотацию |
+| `Rate limit exceeded` | Лимит Let's Encrypt | Использовать staging, подождать |
+
+### Устаревшие аннотации
+
+| Устаревшая | Современная замена |
+| :--- | :--- |
+| `kubernetes.io/tls-acme: "true"` | `cert-manager.io/cluster-issuer` |
+| `certmanager.k8s.io/issuer` | `cert-manager.io/issuer` |
+
+> **Важно:** Используйте только аннотации с префиксом `cert-manager.io`.
+
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| Ingress аннотации | **10** | Официальная документация cert-manager.io |
+| Временные сертификаты | **9** | Подтверждено в релизах 1.10+ |
+| Wildcard через DNS-01 | **10** | Стандартный паттерн ACME |
 
 ---
 
-*Основа: [](../cert_manager.md)*
+*SSoT для интеграции с Ingress. Последняя проверка актуальности: март 2026.*

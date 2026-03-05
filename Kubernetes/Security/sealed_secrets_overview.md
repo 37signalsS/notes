@@ -209,7 +209,9 @@ kubectl apply -f new.sealed.yaml
 
 ### Связанные темы
 
-- Сетевая изоляция: [NetworkPolicy](network_policies.md)
-- Управление доступом: [RBAC Overview](./rbac/rbac_overview.md)
-- Ограничения RBAC: [Недостатки RBAC и OPA](rbac/limitations_opa.md)
-- [Sealed Secrets GitHub](https://github.com/bitnami-labs/sealed-secrets)
+- **Secrets Management:** [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)
+- **GitOps Encryption:** [GitOps Secrets Encryption](../../GitOps/Security/secrets_encryption.md)
+- **SOPS:** [SOPS Overview](../../Security/Tools/sops_overview.md)
+- **Vault:** [Vault Overview](../../Vault/vault_overview.md)
+- **RBAC:** [RBAC Overview](./rbac/rbac_overview.md)
+- **Application Secrets:** [Application Secrets Management](./application_secrets_management.md)

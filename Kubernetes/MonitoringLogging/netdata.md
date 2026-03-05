@@ -109,6 +109,8 @@ spec:
               name: http
 ```
 
+**Подробно о настройке cert-manager:** См. [CA кластера для внутренних сертификатов](../ToolsUtilities/cert_manager/03_cluster_ca.md).
+
 ### 3.2. Удаление Netdata
 
 Удаление релиза выполняется одной командой. Helm автоматически удалит все связанные ресурсы (`Deployment`, `DaemonSet`, `Service`, `PVC` и т.д.).

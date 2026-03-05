@@ -2,6 +2,12 @@
 
 ---
 
+## Определения
+
+**Checksum-аннотации** — аннотации с SHA256-хешем содержимого ConfigMap, вызывающие rolling update при изменении конфигурации.
+
+---
+
 ## Принцип работы
 
 1. В манифест Deployment/StatefulSet добавляется аннотация в `spec.template.metadata.annotations`
