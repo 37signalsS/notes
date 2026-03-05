@@ -2,59 +2,74 @@
 
 ## Определения
 
-**`Pending`** — статус пода, означающий, что API-сервер принял спецификацию пода, но планировщик (`kube-scheduler`) не может разместить его на одном из узлов. Под ожидает решения планировщика.
+**Pending** — состояние пода в Kubernetes, означающее, что планировщик не может разместить под на каком-либо узле кластера. Под находится в очереди на планирование.
 
-## Основные концепции
+**Планировщик (Scheduler)** — компонент Kubernetes, который определяет, на каком узле будет запущен под, на основе доступных ресурсов, политик и ограничений.
 
-### Workflow планировщика
+## Причины состояния Pending
+
+Под переходит в состояние `Pending` когда:
+
+1. **Недостаточно ресурсов** — CPU, память, ephemeral storage
+2. **Не выполнены ограничения планирования** — nodeSelector, affinity/anti-affinity
+3. **Taints и tolerations** — узлы имеют taints, которые под не tolerates
+4. **PVC не удовлетворен** — нет доступного PV или StorageClass
+5. **ResourceQuota превышен** — лимиты namespace исчерпаны
+6. **PriorityClass** — под с высоким приоритетом не может вытеснить другие поды
+
+## Архитектура планирования
 
 ```
-Pod создан (Pending)
-    ↓
-kube-scheduler обнаруживает под
-    ↓
-Фильтрация узлов (Predicate)
-    ↓
-Оценка узлов (Priority)
-    ↓
-Выбор лучшего узла
-    ↓
-Binding → Pod запускается
+┌─────────────────┐
+│   Pod Created   │
+│   (Pending)     │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Scheduler     │
+│   Watch Queue   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Filter Nodes   │
+│  (Predicates)   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Score Nodes    │
+│  (Priorities)   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Bind Pod to   │
+│   Best Node     │
+└─────────────────┘
 ```
 
-### Причины Pending по категориям
+## Диагностика
 
-| Категория | Причины | % случаев |
-|-----------|---------|-----------|
-| **Ресурсы** | Insufficient cpu/memory | ~40% |
-| **Taints** | Узлы имеют taints без tolerations | ~25% |
-| **Affinity** | Не выполнены правила affinity | ~20% |
-| **PVC** | PVC в Pending (нет PV/StorageClass) | ~10% |
-| **Другие** | NodeSelector, PodSecurityPolicy, Quota | ~5% |
+Основной инструмент диагностики — команда `kubectl describe pod`, которая показывает:
 
-### Механизмы ограничения планирования
+- Текущее состояние пода
+- Причины ожидания (в разделе Events)
+- Требования к ресурсам
+- Ограничения планирования
 
-| Механизм | Описание | Ссылка |
-|----------|----------|--------|
-| **`requests`/`limits`** | Планировщик ищет узлы с достаточными ресурсами | [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md) |
-| **`nodeSelector`** | Простой выбор узлов по меткам | [`affinity.md`](../../Scheduling/affinity.md) |
-| **`nodeAffinity`** | Продвинутое правило выбора узлов | [`affinity.md`](../../Scheduling/affinity.md) |
-| **`podAffinity`/`podAntiAffinity`** | Размещение относительно других подов | [`affinity.md`](../../Scheduling/affinity.md) |
-| **`taints`/`tolerations`** | "Отталкивание" подов от узлов | [`taints_and_tolerations.md`](../../Scheduling/taints_and_tolerations.md) |
-| **`topologySpreadConstraints`** | Равномерное распределение по топологии | [`pod_distribution.md`](../../Autoscaling/pod_distribution.md) |
-| **`PriorityClass`** | Приоритет планирования | [`priorityclass.md`](../../Concepts/priorityclass.md) |
+## Связанные концепции
 
-### Связанные концепты
-
-- Taints и tolerations: [`taints_and_tolerations.md`](../../Scheduling/taints_and_tolerations.md)
-- Affinity: [`affinity.md`](../../Scheduling/affinity.md)
-- QoS и ресурсы: [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
-- PV/PVC: [`pv_and_pvc.md`](../../Storage/pv_and_pvc.md)
-- PriorityClass: [`priorityclass.md`](../../Concepts/priorityclass.md)
+- **[Resource Requests/Limits](../../Scheduling/qos_limit_and_requests.md)** — запросы ресурсов
+- **[Node Affinity](../../Scheduling/affinity.md)** — привязка к узлам
+- **[Taints and Tolerations](../../Scheduling/taints_and_tolerations.md)** — изоляция узлов
+- **[PVC/PV](../../Storage/pv_and_pvc.md)** — постоянное хранилище
+- **[ResourceQuota](../../Scheduling/resource_quota.md)** — квоты namespace
 
 ---
 
 ## Ссылки
 
-- [Практические сценарии](./practical_scenarios.md) — диагностика и решения
-- [Дополнительная информация](./advanced_topics.md) — мониторинг и best practices
+- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист
+- **[Распространенные случаи](./common_cases_and_solutions.md)** — решения проблем
