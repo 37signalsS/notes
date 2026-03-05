@@ -4,11 +4,13 @@
 
 Kubernetes предоставляет несколько типов **Service** для различных сценариев доступа к приложениям. Выбор типа определяет **границы доступности** (внутри кластера vs. извне) и **способ маршрутизации** трафика.
 
+> Для быстрого сравнения характеристик в виде таблицы см. **[Сравнительная таблица типов Service](./service_types_comparison.md)**.
+
 ## Основные концепции
 
 ### Иерархия типов
 
-Все типы сервисов (кроме ExternalName) построены на базе **ClusterIP**:
+Все типы сервисов (кроме `ExternalName` и `Headless`) построены на базе **ClusterIP**:
 
 ```
 ClusterIP (базовый)
@@ -22,11 +24,11 @@ LoadBalancer (NodePort + облачный балансировщик)
 
 | Критерий | Рекомендация |
 |----------|--------------|
-| **Внутреннее взаимодействие** | ClusterIP |
-| **Разработка/отладка** | NodePort или kubectl port-forward |
-| **Production в облаке** | LoadBalancer или Ingress |
-| **On-premise production** | NodePort + внешний LB или MetalLB |
-| **HTTP/HTTPS приложения** | Ingress (L7) вместо LoadBalancer (L4) |
+| **Внутреннее взаимодействие** | [ClusterIP](./service_type_clusterip.md) |
+| **Разработка/отладка** | [NodePort](./service_type_nodeport.md) или `kubectl port-forward` |
+| **Production в облаке** | [LoadBalancer](./service_type_loadbalancer.md) или [Ingress](../Ingress/overview.md) |
+| **On-premise production** | [NodePort](./service_type_nodeport.md) + внешний LB или MetalLB |
+| **HTTP/HTTPS приложения** | [Ingress](../Ingress/overview.md) (L7) вместо [LoadBalancer](./service_type_loadbalancer.md) (L4) |
 
 ## Практические сценарии
 
@@ -37,8 +39,8 @@ LoadBalancer (NodePort + облачный балансировщик)
 | **[ClusterIP](./service_type_clusterip.md)** | Только внутри кластера | Внутренние коммуникации (backend-to-db) | Нет прямого внешнего доступа |
 | **[NodePort](./service_type_nodeport.md)** | Внутри и снаружи (через `IP_узла:NodePort`) | Разработка, отладка, простой внешний доступ, on-prem | Диапазон портов 30000-32767, зависимость от IP узла |
 | **[LoadBalancer](./service_type_loadbalancer.md)** | Из интернета (через внешний IP от облака) | Публикация приложений в облаке (production) | Зависит от облачного провайдера; в bare-metal требует MetalLB |
-| **ExternalName** | Только DNS (CNAME) | Доступ к внешним сервисам по внутреннему имени | Не проксирует трафик, работает только на уровне DNS |
-| **Headless** | Прямой доступ к Pod-ам | Stateful-приложения (StatefulSet), service discovery | Нет балансировки на уровне Service |
+| **[ExternalName](./service_type_externalname.md)** | Только DNS (CNAME) | Доступ к внешним сервисам по внутреннему имени | Не проксирует трафик, работает только на уровне DNS |
+| **[Headless](./service_type_headless.md)** | Прямой доступ к Pod-ам | Stateful-приложения (StatefulSet), service discovery | Нет балансировки на уровне Service |
 
 ### Сравнение по уровням OSI
 
@@ -49,80 +51,18 @@ LoadBalancer (NodePort + облачный балансировщик)
 | LoadBalancer | L4 | TCP, UDP | Публичный IP + порт |
 | Ingress | L7 | HTTP, HTTPS | Хост, путь, заголовки |
 
-### Решение для распространенных задач
-
-#### Задача: Доступ к базе данных из приложения
-
-**Решение:** [ClusterIP](./service_type_clusterip.md)
-
-```yaml
-spec:
-  type: ClusterIP
-  ports:
-    - port: 5432  # PostgreSQL
-```
-
-#### Задача: Демо/отладка приложения
-
-**Решение:** [NodePort](./service_type_nodeport.md) или `kubectl port-forward`
-
-```bash
-# Быстрый доступ для разработки
-kubectl port-forward svc/my-app 8080:80
-```
-
-#### Задача: Публикация API в production (облако)
-
-**Решение:** [LoadBalancer](./service_type_loadbalancer.md) для TCP или [Ingress](../Ingress/overview.md) для HTTP
-
-```yaml
-spec:
-  type: LoadBalancer
-  externalTrafficPolicy: Local  # Для сохранения IP клиента
-```
-
-#### Задача: Публикация в on-premise кластере
-
-**Решение:** [NodePort](./service_type_nodeport.md) + внешний балансировщик или MetalLB
-
-```yaml
-spec:
-  type: NodePort
-  # + внешний HAProxy/Nginx балансирует на NodeIP:NodePort
-```
-
 ## Дополнительная информация
 
 ### ExternalIPs
-
-Помимо стандартных типов, можно использовать поле `externalIPs` для назначения внешних IP-адресов сервису:
-
-```yaml
-spec:
-  type: ClusterIP
-  externalIPs:
-    - 203.0.113.1
-```
-
-**Ограничение:** Требует ручной настройки маршрутизации на узлах.
+Поле `externalIPs` позволяет назначить сервису заранее известный внешний IP-адрес. Это не тип, а свойство, применимое к другим типам.
+**Подробнее: [ExternalIPs](./service_externalips.md)**
 
 ### Headless Service
-
-Для Stateful-приложений создается сервис без ClusterIP (`clusterIP: None`):
-
-```yaml
-spec:
-  clusterIP: None  # Headless
-  selector:
-    app: my-stateful-app
-```
-
-DNS возвращает IP-адреса всех Pod напрямую, позволяя клиенту самому выбирать под.
+Сервис без `ClusterIP` (`clusterIP: None`), который используется для прямого обнаружения подов.
+**Подробнее: [Headless Service](./service_type_headless.md)**
 
 ### Дополнительные ресурсы
-
 - [Обзор Service](./service_overview.md) — базовые концепции и архитектура
-- [ClusterIP](./service_type_clusterip.md) — внутренние коммуникации
-- [NodePort](./service_type_nodeport.md) — публикация через порт узла
-- [LoadBalancer](./service_type_loadbalancer.md) — облачный балансировщик
+- [Сравнительная таблица](./service_types_comparison.md) — быстрое сравнение всех типов
+- [Практический сценарий](./service_practical_scenarios.md) — пошаговый пример публикации
 - [Ingress](../Ingress/overview.md) — L7 маршрутизация для HTTP/HTTPS
