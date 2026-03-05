@@ -25,7 +25,7 @@
 | **Direct Pod targeting** | Через Service | Напрямую (по endpoints) |
 | **Ролевая модель** | Отсутствует | Встроенная (allowedRoutes) |
 
-## Статус компонентов (по состоянию на 2025)
+## Статус компонентов (по состоянию на 2026)
 
 - **V1 (Stable):** GatewayClass, Gateway, HTTPRoute, GRPCRoute
 - **Beta:** TLSRoute, TCPRoute, UDPRoute
@@ -44,8 +44,18 @@
 
 ## Дополнительная информация
 
+**См. также:**
+- [Ресурсы (CRD)](./resources.md) — GatewayClass, Gateway, Route
+- [Базовые сценарии](./practical_basic.md) — практические примеры
+- [Расширенные функции маршрутизации](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
+- [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
+
+**Реализации:**
+- [Envoy Gateway](./envoy_gateway.md)
+- [Traefik](./traefik.md)
+
 * **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
-* **Обзор Ingress и его ограничений:** [Ingress: Будущее - Gateway API](./Ingress/future_gateway_api.md)
+* **Обзор Ingress и его ограничений:** [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api)
 
 ---
 

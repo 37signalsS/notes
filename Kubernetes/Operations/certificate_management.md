@@ -144,6 +144,8 @@ sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
 
 ## 4. Дополнительная информация
 
+> **Примечание:** При обновлении кластера Kubernetes необходимо проверить и обновить сертификаты. Подробнее в разделе [Обновление кластера](upgrading_clusters.md).
+
 ### 4.1. Best Practices
 
 | Практика | Описание |
@@ -196,6 +198,6 @@ spec:
 ### 4.3. Связанные темы
 
 *   [kubeadm: Управление сертификатами](../Installation/kudeadm/kubeadm_certificates.md)
-*   [Безопасность Kubernetes](../Security/security_overview.md)
-*   [TLS/mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md)
-*   [etcd обслуживание](../Concepts/etcd_overview.md)
+*   [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
+*   [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
+*   [PKI Overview](../../Security/Concepts/pki_overview.md)

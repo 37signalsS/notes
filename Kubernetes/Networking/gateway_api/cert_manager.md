@@ -101,4 +101,9 @@ spec:
 
 ---
 
+**См. также:**
+- [Traefik](./traefik.md) — пример настройки Gateway с TLS
+- [Envoy Gateway](./envoy_gateway.md) — пример настройки Gateway
+- [Базовые сценарии](./practical_basic.md) — основы создания Gateway
+
 **Parent:** [Gateway API](../gateway_api.md)

@@ -89,4 +89,10 @@ spec:
 
 ---
 
+**См. также:**
+- [Определения](./definitions.md) — концепции Gateway API
+- [Базовые сценарии](./practical_basic.md) — примеры создания ресурсов
+- [Traefik](./traefik.md) — альтернативная реализация
+- [cert-manager](./cert_manager.md) — интеграция с TLS
+
 **Parent:** [Gateway API](../gateway_api.md)

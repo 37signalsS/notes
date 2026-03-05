@@ -4,6 +4,8 @@
 >
 > * [Высокая доступность в Kubernetes](../Base/high_availability.md) — обзор методов обеспечения отказоустойчивости
 > * [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — политики для защиты доступности при выселении подов
+> * [Обновление кластера](upgrading_clusters.md) — обновление часто требует обслуживания узлов
+> * [Управление сертификатами](certificate_management.md) — сертификаты узлов при обслуживании
 
 ## Определения
 

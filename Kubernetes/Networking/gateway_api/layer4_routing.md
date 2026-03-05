@@ -66,4 +66,8 @@
 
 ---
 
+**См. также:**
+- [Расширенные функции](./routing_features.md) — L7 маршрутизация
+- [Базовые сценарии](./practical_basic.md) — основы HTTPRoute
+
 **Parent:** [Gateway API](../gateway_api.md)
