@@ -22,6 +22,8 @@
 | **Pod Anti-Affinity** | Запрет или предпочтение размещения | Жёсткие требования к изоляции | `required` или `preferred` |
 | **Topology Spread** | Балансировка нагрузки | Равномерное распределение | `DoNotSchedule` или `ScheduleAnyway` |
 
+> **Примечание:** Подробное описание всех полей, операторов и примеров использования см. в [Scheduling/affinity.md](../Scheduling/affinity.md#основные-концепции).
+
 ### Pod Anti-Affinity
 
 Запрещает или предпочитает совместное размещение подов с определёнными метками в пределах указанного домена.
@@ -41,6 +43,8 @@
 | **Pod Affinity** | Размещение подов рядом с другими подами | Коликейшн связанных компонентов |
 | **Node Affinity** | Размещение подов на определённых узлах | Требования к инфраструктуре |
 
+> **Примечание:** Детальное сравнение механизмов притяжения и отталкивания см. в [Scheduling/affinity.md](../Scheduling/affinity.md#сравнение-механизмов-планирования) и [Scheduling/taints_and_tolerations.md](../Scheduling/taints_and_tolerations.md#taints-tolerations-vs-affinity-anti-affinity).
+
 ### Topology Spread Constraints
 
 Стремится к равномерному распределению подов между доменами топологии.
@@ -54,6 +58,8 @@
 | `whenUnsatisfiable` | Действие при невозможности соблюдения | `DoNotSchedule`, `ScheduleAnyway` |
 | `labelSelector` | Метки подов для распределения | `matchLabels: app: my-app` |
 | `minDomains` | Минимальное количество доменов для распределения | `2`, `3` |
+
+> **Примечание:** Полное описание всех параметров TopologySpreadConstraints, включая `nodeAffinityPolicy` и `nodeTaintsPolicy`, см. в [Scheduling/affinity.md](../Scheduling/affinity.md#ключевые-поля-и-операторы).
 
 #### Уровни строгости (`whenUnsatisfiable`)
 
@@ -328,5 +334,8 @@ kubectl describe pod pending-pod | grep -A 5 "Events:"
 
 ### Ресурсы
 
+* **[Affinity и Anti-Affinity](../Scheduling/affinity.md)** — SSoT по механизмам размещения подов.
+* **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)** — механизм отталкивания на уровне узлов.
+* **[Pod Disruption Budget](pod_disruption_budget.md)** — защита от массового вытеснения подов.
 * [Официальная документация Kubernetes: Pod Affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity)
 * [Официальная документация Kubernetes: Topology Spread](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)

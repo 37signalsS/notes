@@ -158,7 +158,7 @@ sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
 
 ### 4.2. Автоматизация проверки
 
-**CronJob для ежедневной проверки:**
+**CronJob для ежедневной проверки (с доступом к хост-сертификатам):**
 
 ```yaml
 apiVersion: batch/v1
@@ -176,14 +176,33 @@ spec:
         spec:
           containers:
           - name: check
-            image: bitnami/kubectl:1.33
+            image: bitnami/kubectl:1.32
             command:
             - /bin/sh
             - -c
             - |
               echo "=== Certificate Expiration Check ==="
               echo "Date: $(date)"
-              # Проверка выполняется на узле через hostPath
+              echo ""
+              # Проверка сертификатов через kubeadm (требует доступа к хосту)
+              if [ -f /host/etc/kubernetes/pki/ca.crt ]; then
+                echo "CA Certificate:"
+                openssl x509 -in /host/etc/kubernetes/pki/ca.crt -noout -dates
+                echo ""
+                echo "API Server Certificate:"
+                openssl x509 -in /host/etc/kubernetes/pki/apiserver.crt -noout -dates
+              else
+                echo "WARNING: Certificates not found on host path"
+              fi
+            volumeMounts:
+            - name: kubernetes-pki
+              mountPath: /host/etc/kubernetes/pki
+              readOnly: true
+          volumes:
+          - name: kubernetes-pki
+            hostPath:
+              path: /etc/kubernetes/pki
+              type: Directory
           restartPolicy: OnFailure
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
@@ -193,7 +212,7 @@ spec:
             effect: NoSchedule
 ```
 
-> **Примечание:** Полная автоматизация требует доступа к хост-файлам `/etc/kubernetes/pki` через hostPath volume.
+> **Важно:** CronJob требует доступа к hostPath `/etc/kubernetes/pki` для чтения сертификатов. Альтернативно — использовать `kubeadm certs check-expiration` через DaemonSet с доступом к `/etc/kubernetes`.
 
 ### 4.3. Связанные темы
 

@@ -91,6 +91,6 @@ spec:
 * **Namespaces**: [Базовое руководство](../Base/namespace.md)
 * **RBAC**: [Обзор RBAC](../Security/rbac/rbac_overview.md), [Роли](../Security/rbac/roles.md), [Привязки](../Security/rbac/bindings.md)
 * **ResourceQuota и LimitRange**: [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md#ограничение-суммарного-потребления-с-resourcequota)
-* **NetworkPolicy**: [Сетевая модель](../Networking/Network/network_overview.md#сетевая-изоляция-и-networkpolicy), [Калико](../Security/network_policies/calico.md)
+* **NetworkPolicy**: [Сетевая Изоляция (SSoT)](../Networking/Network/network_policy.md), [Calico HostEndpoint](../Security/network_policies/calico.md)
 * **Pod Security**: [Pod Security Context](../Security/pod_security_context.md)
 * **Хранение**: [PV и PVC](../Storage/pv_and_pvc.md), [CSI](../Storage/CSI/csi_overview.md)

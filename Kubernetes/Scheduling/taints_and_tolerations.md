@@ -18,6 +18,21 @@
 * **`PreferNoSchedule`:** "Мягкая" версия `NoSchedule`. Kubernetes старается не размещать на узле новые поды без `toleration`, но сделает это при отсутствии альтернатив.
 * **`NoExecute`:** Самый строгий эффект. Новые поды без `toleration` не размещаются, а существующие поды без `toleration` **вытесняются (evicted)**.
 
+#### Стандартные Taints узлов
+
+Kubernetes автоматически применяет следующие `taints` к узлам в зависимости от их роли:
+
+| Taint | Описание | Узлы |
+|-------|----------|------|
+| `node-role.kubernetes.io/control-plane:NoSchedule` | Запрет размещения на управляющих узлах | Control Plane (Kubernetes 1.20+) |
+| `node-role.kubernetes.io/master:NoSchedule` | Устаревший taint для control-plane | Control Plane (до 1.24) |
+| `node.kubernetes.io/not-ready:NoExecute` | Узел не готов (kubelet не отвечает) | Все узлы |
+| `node.kubernetes.io/unreachable:NoExecute` | Узел недоступен в сети | Все узлы |
+| `node.kubernetes.io/memory-pressure:NoSchedule` | Нехватка памяти на узле | Все узлы |
+| `node.kubernetes.io/disk-pressure:NoSchedule` | Нехватка дискового пространства | Все узлы |
+| `node.kubernetes.io/network-unavailable:NoSchedule` | Сеть узла недоступна | Все узлы |
+| `node.kubernetes.io/pid-pressure:NoSchedule` | Исчерпание PID на узле | Все узлы |
+
 > **Связанные механизмы:** Вытеснение подов также управляется через [QoS классы](./qos_limit_and_requests.md), которые определяют приоритет пода при нехватке ресурсов на узле.
 
 ## Основные концепции
@@ -67,6 +82,20 @@ tolerations:
 ```
 
 Если `tolerationSeconds` не указано, под с соответствующим `toleration` останется на узле. Если `toleration` нет, под будет вытеснен немедленно.
+
+#### Стандартные `tolerationSeconds` в Kubernetes
+
+Kubernetes автоматически добавляет следующие `tolerations` ко всем подам:
+
+| Taint | Effect | `tolerationSeconds` |
+|-------|--------|---------------------|
+| `node.kubernetes.io/not-ready` | `NoExecute` | 300 |
+| `node.kubernetes.io/unreachable` | `NoExecute` | 300 |
+| `node.kubernetes.io/disk-pressure` | `NoSchedule` | — |
+| `node.kubernetes.io/memory-pressure` | `NoSchedule` | — |
+| `node.kubernetes.io/pid-pressure` | `NoSchedule` | — |
+
+Это означает, что при потере связи с узлом поды будут вытеснены только через 5 минут, что позволяет избежать ложных срабатываний при временных проблемах с сетью.
 
 ### Taints/Tolerations vs. Affinity/Anti-Affinity
 

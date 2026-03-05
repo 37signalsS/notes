@@ -14,6 +14,8 @@
 
 ## Основные концепции
 
+> **Примечание:** Здесь приведены ключевые моменты. Подробное руководство с пошаговыми сценариями см. в [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md).
+
 ### Принцип работы
 
 NetworkPolicy действует по принципу **явного разрешения**:
@@ -41,11 +43,6 @@ NetworkPolicy действует по принципу **явного разре
 | `podSelector` + `namespaceSelector` | Pod'ы в конкретных namespace | Изоляция окружений |
 | `ipBlock` | CIDR-диапазоны | Доступ к внешним БД, интернету |
 
-### Порты и протоколы
-
-- `port`: номер порта или имя порта из spec контейнера
-- `protocol`: TCP (по умолчанию), UDP, SCTP
-
 ### Требования к CNI
 
 NetworkPolicy работает только при условии поддержки со стороны CNI-плагина:
@@ -53,7 +50,11 @@ NetworkPolicy работает только при условии поддерж
 - Calico, Cilium, Weave Net
 - ❌ Flannel (не поддерживает)
 
+Подробно о ролях CNI: [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md).
+
 ## Практические сценарии
+
+> **Примечание:** Ниже приведены краткие примеры. Подробные пошаговые сценарии с объяснениями см. в [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md#практический-сценарий-от-изоляции-до-разрешения-dns).
 
 ### Сценарий 1: Default Deny (полная изоляция)
 
@@ -71,8 +72,6 @@ spec:
   - Ingress
   - Egress
 ```
-
-Политика изолирует все Pod'ы с меткой `app: backend`: запрещает весь входящий и исходящий трафик.
 
 ### Сценарий 2: Разрешение конкретного трафика
 
@@ -106,43 +105,7 @@ spec:
       protocol: TCP
 ```
 
-Разрешает:
-
-- Входящий трафик от `app: frontend` на порт 5432
-- Исходящий HTTPS-трафик (порт 443) в интернет
-
-### Сценарий 3: Межпространственное взаимодействие
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: api-allow-monitoring
-  namespace: production
-spec:
-  podSelector:
-    matchLabels:
-      app: api
-  policyTypes:
-  - Ingress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          purpose: monitoring
-    - podSelector:
-        matchLabels:
-          app: prometheus
-      namespaceSelector:
-        matchLabels:
-          purpose: monitoring
-    ports:
-    - port: 8080
-```
-
-Разрешает доступ к API от Pod'ов Prometheus из namespace с меткой `purpose: monitoring`.
-
-### Сценарий 4: Доступ к внешним сервисам
+### Сценарий 3: Доступ к внешним сервисам
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -165,38 +128,11 @@ spec:
       protocol: TCP
 ```
 
-Разрешает backend'у доступ к PostgreSQL в подсети 10.0.2.0/24.
-
-### Сценарий 5: Исключения из ipBlock
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: limited-internet-access
-  namespace: production
-spec:
-  podSelector:
-    matchLabels:
-      app: frontend
-  policyTypes:
-  - Egress
-  egress:
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-        except:
-        - 10.0.0.0/8      # Запретить доступ к внутренней сети
-        - 192.168.0.0/16  # Запретить доступ к внутренней сети
-    ports:
-    - port: 443
-```
-
-Разрешает доступ в интернет по HTTPS, но блокирует внутренние сети.
-
 ## Защита узлов с помощью Calico HostEndpoint
 
-Подробная документация по использованию Calico HostEndpoint и GlobalNetworkPolicy для создания периметрального файрвола: [Calico HostEndpoint](network_policies/calico.md)
+Calico расширяет стандартные NetworkPolicy через ресурсы `HostEndpoint` и `GlobalNetworkPolicy`, позволяя создавать периметральный файрвол на уровне узлов.
+
+**Подробная документация:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/calico.md)
 
 ## Дополнительная информация
 
@@ -223,7 +159,10 @@ spec:
 
 ### Связанные темы
 
-- Безопасность секретов: [Sealed Secrets](sealed_secrets_overview.md)
-- RBAC для доступа к API: [RBAC Overview](./rbac/rbac_overview.md)
-- Calico HostEndpoint: [Calico HostEndpoint](network_policies/calico.md)
-- [Kubernetes NetworkPolicy Documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+- **SSoT по NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md)
+- **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/calico.md)
+- **CNI и kube-proxy:** [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md)
+- **Сетевая модель:** [Обзор сети Kubernetes](../Networking/Network/network_overview.md)
+- **Sealed Secrets:** [Sealed Secrets](sealed_secrets_overview.md)
+- **RBAC:** [RBAC Overview](./rbac/rbac_overview.md)
+- **Kubernetes Documentation:** [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
