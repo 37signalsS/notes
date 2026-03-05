@@ -1,8 +1,6 @@
-# Паттерны масштабирования
+# Паттерн Workers + Queue в Kubernetes
 
 ## Определения
-
-**Шардирование (Sharding)** — разделение рабочей нагрузки на изолированные группы (шарды) с независимым масштабированием и управлением.
 
 **Workers + Queue** — архитектурный паттерн для асинхронной обработки задач через очередь сообщений, где Workers масштабируются по длине очереди.
 
@@ -12,33 +10,11 @@
 
 **Идемпотентность** — свойство обработки задачи, при котором повторное выполнение не приводит к ошибкам или дублированию результата.
 
+**Dead Letter Queue (DLQ)** — очередь для неудачных задач, требующих ручного разбора.
+
 ## Основные концепции
 
-### Шардирование
-
-Разделение трафика по ключу позволяет:
-* **Изолировать сбои** — проблема в одном шарде не влияет на другие
-* **Обеспечить локальность данных** — данные клиента хранятся в одном шарде
-* **Обойти ограничения** — масштабирование beyond limits отдельных компонентов
-
-#### Ключи шардирования
-
-| Ключ | Описание | Пример |
-|------|----------|--------|
-| **Регион пользователя** | Географическое разделение | `us-west`, `eu-central`, `ap-south` |
-| **ID клиента** | Хеш или диапазон ID | `customer_id % 10` |
-| **Тип подписки** | Тарифный план | `free`, `premium`, `enterprise` |
-| **Хеш данных** | Равномерное распределение | `hash(order_id) % 8` |
-
-#### Типы шардирования
-
-| Тип | Описание | Когда использовать |
-|-----|----------|-------------------|
-| **Горизонтальное** | Разделение по ключу (регион, клиент) | Мультирегиональные приложения |
-| **Вертикальное** | Разделение по функциональности | Микросервисная архитектура |
-| **Гибридное** | Комбинация подходов | Сложные распределённые системы |
-
-### Workers + Queue
+### Архитектура Workers + Queue
 
 Архитектура для фоновой обработки:
 * **Очередь сглаживает пиковые нагрузки** — буфер между Producer и Consumer
@@ -66,120 +42,7 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Шардирование по региону
-
-```yaml
-# Deployment для шарда A (US)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: webapp-shard-us
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: webapp
-      shard: us
-  template:
-    metadata:
-      labels:
-        app: webapp
-        shard: us
-    spec:
-      containers:
-        - name: app
-          image: myapp:latest
-          env:
-            - name: SHARD_ID
-              value: "us"
-            - name: ALLOWED_REGIONS
-              value: "us-west,us-east"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: service-us
-spec:
-  selector:
-    app: webapp
-    shard: us
-  ports:
-    - port: 80
-      targetPort: 8080
----
-# Deployment для шарда B (EU)
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: webapp-shard-eu
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: webapp
-      shard: eu
-  template:
-    metadata:
-      labels:
-        app: webapp
-        shard: eu
-    spec:
-      containers:
-        - name: app
-          image: myapp:latest
-          env:
-            - name: SHARD_ID
-              value: "eu"
-            - name: ALLOWED_REGIONS
-              value: "eu-west,eu-central"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: service-eu
-spec:
-  selector:
-    app: webapp
-    shard: eu
-  ports:
-    - port: 80
-      targetPort: 8080
-```
-
-**Маршрутизация на уровне Ingress:**
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: shard-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  rules:
-    - host: us.api.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: service-us
-                port:
-                  number: 80
-    - host: eu.api.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: service-eu
-                port:
-                  number: 80
-```
-
-### Сценарий 2: Workers + Queue с HPA (внешние метрики)
+### Сценарий 1: Workers + Queue с HPA (внешние метрики)
 
 ```yaml
 # Deployment Workers
@@ -245,7 +108,7 @@ spec:
           periodSeconds: 60
 ```
 
-### Сценарий 3: Workers + Queue с KEDA (рекомендуется)
+### Сценарий 2: Workers + Queue с KEDA (рекомендуется)
 
 ```yaml
 # ScaledObject KEDA для RabbitMQ
@@ -275,50 +138,7 @@ spec:
 * 60+ источников событий (Kafka, SQS, Prometheus)
 * Встроенная аутентификация через `TriggerAuthentication`
 
-### Сценарий 4: Шардирование с независимым масштабированием
-
-```yaml
-# HPA для каждого шарда
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: shard-us-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: webapp-shard-us
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: shard-eu-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: webapp-shard-eu
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-```
-
-### Сценарий 5: Priority Queue с несколькими очередями
+### Сценарий 3: Priority Queue с несколькими очередями
 
 ```yaml
 # Workers для критических задач
@@ -378,28 +198,17 @@ spec:
               memory: "512Mi"
 ```
 
-### Выбор паттерна
-
-| Сценарий | Рекомендуемый паттерн | Обоснование |
-|----------|----------------------|-------------|
-| Видео-обработка, отчёты | Workers + Queue | Асинхронная обработка, сглаживание пиков |
-| Мультирегиональное приложение | Шардирование | Локальность данных, compliance (GDPR) |
-| Пиковые нагрузки с непредсказуемым трафиком | Workers + Queue | Очередь как буфер |
-| Требования к изоляции клиентов | Шардирование | Изоляция сбоев, безопасность |
-| Обработка платежей | Шардирование + Workers | Изоляция + асинхронность |
-| Real-time аналитика | Шардирование по времени | Разделение по временным окнам |
-
 ## Дополнительная информация
 
 ### Интеграция с Kubernetes
 
 | Компонент | Интеграция |
 |-----------|------------|
-| **[HPA](hpa_detailed.md)** | Масштабирование workers по внешним метрикам (длина очереди) |
-| **[KEDA](keda_detailed.md)** | Рекомендуемое решение для событийного масштабирования |
-| **[Pod Distribution](pod_distribution.md)** | Распределение шардов по узлам/зонам для отказоустойчивости |
-| **[Pod Disruption Budget](pod_disruption_budget.md)** | Защита workers при масштабировании узлов |
-| **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** | Добавление узлов при масштабировании workers |
+| **[HPA](./hpa_detailed.md)** | Масштабирование workers по внешним метрикам (длина очереди) |
+| **[KEDA](./keda_detailed.md)** | Рекомендуемое решение для событийного масштабирования |
+| **[Pod Distribution](./pod_distribution.md)** | Распределение workers по узлам для отказоустойчивости |
+| **[Pod Disruption Budget](./pod_disruption_budget.md)** | Защита workers при масштабировании узлов |
+| **[Cluster Autoscaler](./cluster_autoscaler_detailed.md)** | Добавление узлов при масштабировании workers |
 
 ### Технологии очередей
 
@@ -412,24 +221,7 @@ spec:
 | **Google Pub/Sub** | Потоковая передача событий в GCP | ✅ Google Pub/Sub scaler |
 | **Redis Streams** | Лёгковесная очередь на базе Redis | ✅ Redis Streams scaler |
 
-### Дополнительные соображения
-
-#### Маршрутизация шардов
-
-| Уровень | Реализация |
-|---------|------------|
-| **Ingress** | На основе host/path (см. Сценарий 1) |
-| **API Gateway** | На основе заголовков, JWT claims |
-| **Клиентская** | Клиент определяет шард по ключу |
-| **Service Mesh** | Istio VirtualService для маршрутизации |
-
-#### Ребалансировка
-
-* **Планирование миграции** — постепенное перемещение данных между шардами
-* **Consistent Hashing** — минимизация перемещений при изменении количества шардов
-* **Dual-write** — запись в старый и новый шард во время миграции
-
-#### Мониторинг
+### Мониторинг
 
 | Метрика | Описание | Алерт |
 |---------|----------|-------|
@@ -439,8 +231,15 @@ spec:
 | `consumer_lag` (Kafka) | Отставание потребителя | >10000 сообщений |
 | `dead_letter_queue_size` | Размер DLQ | >100 задач |
 
+### Сценарии использования
+
+| Сценарий | Обоснование |
+|----------|-------------|
+| Видео-обработка, отчёты | Асинхронная обработка, сглаживание пиков |
+| Пиковые нагрузки с непредсказуемым трафиком | Очередь как буфер |
+| Обработка платежей | Асинхронность + гарантии доставки |
+
 ### Ресурсы
 
 * [KEDA Scalers Documentation](https://keda.sh/docs/latest/scalers/)
 * [Kubernetes HPA with Custom Metrics](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
-* [Sharding Patterns (Microservices.io)](https://microservices.io/patterns/data/sharding.html)

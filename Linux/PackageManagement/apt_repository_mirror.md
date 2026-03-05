@@ -1,8 +1,8 @@
-# Создание локального зеркала репозиториев APT и YUM/DNF
+# Зеркалирование APT-репозиториев
 
 ## Определения
 
-**Локальное зеркало (Local Mirror)** — полная или частичная копия удалённого репозитория пакетов (например, Ubuntu, Debian, CentOS), размещённая в локальной сети или на изолированном сервере.
+**Локальное зеркало (Local Mirror)** — полная или частичная копия удалённого репозитория пакетов (например, Ubuntu, Debian), размещённая в локальной сети или на изолированном сервере.
 
 **Репозиторий-источник (Upstream Repository)** — официальный или доверенный удалённый репозиторий, с которого синхронизируется локальное зеркало.
 
@@ -25,8 +25,8 @@
 ```
 ┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
 │   Интернет      │─────▶│  Сервер-зеркало  │─────▶│  Клиентские     │
-│   Репозитории   │      │  (apt-mirror/    │      │  машины         │
-│   (upstream)    │      │   reposync)      │      │                 │
+│   Репозитории   │      │  (apt-mirror)    │      │  машины         │
+│   (upstream)    │      │                  │      │                 │
 └─────────────────┘      └──────────────────┘      └─────────────────┘
                                 │
                                 ▼
@@ -37,15 +37,13 @@
                          └──────────────────┘
 ```
 
-### Инструменты зеркалирования
+### Инструменты зеркалирования APT
 
-| Система | Инструмент | Назначение |
-| :--- | :--- | :--- |
-| **APT** | `apt-mirror` | Автоматическое зеркалирование APT-репозиториев |
-| **APT** | `debmirror` | Гибкое зеркалирование с фильтрацией |
-| **APT** | `reprepro` | Создание приватных репозиториев (не зеркалирование) |
-| **YUM/DNF** | `reposync` | Синхронизация RPM-репозиториев |
-| **YUM/DNF** | `createrepo_c` | Создание метаданных для локальных репозиториев |
+| Инструмент | Назначение |
+| :--- | :--- |
+| `apt-mirror` | Автоматическое зеркалирование APT-репозиториев |
+| `debmirror` | Гибкое зеркалирование с фильтрацией |
+| `reprepro` | Создание приватных репозиториев (не зеркалирование) |
 
 ## Практические сценарии
 
@@ -249,114 +247,7 @@ WantedBy=timers.target
 sudo systemctl enable --now apt-mirror.timer
 ```
 
-### Сценарий 2: Создание зеркала для YUM/DNF (RHEL/CentOS/AlmaLinux)
-
-#### Шаг 1: Установка
-
-```bash
-sudo yum install yum-utils createrepo_c httpd
-# или для новых версий
-sudo dnf install yum-utils createrepo_c httpd
-```
-
-#### Шаг 2: Синхронизация репозитория
-
-```bash
-# Создать директорию для зеркала
-sudo mkdir -p /var/www/html/yum
-
-# Синхронизировать репозиторий base
-# --gpgcheck: проверка подписей пакетов
-# -l: поддержка плагинов yum
-# --repoid: идентификатор репозитория
-# --download-path: путь сохранения
-sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum
-
-# Для нескольких репозиториев
-sudo reposync --gpgcheck -l -p /var/www/html/yum
-
-# Синхронизация с фильтрацией по архитектуре
-sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum --arch=x86_64
-```
-
-#### Шаг 3: Создание метаданных
-
-```bash
-# Создать метаданные для каждого репозитория
-sudo createrepo_c /var/www/html/yum/base
-
-# Обновить метаданные после синхронизации
-sudo createrepo_c --update /var/www/html/yum/base
-
-# Полная пересоздание метаданных
-sudo createrepo_c --cleanup --update /var/www/html/yum/base
-```
-
-#### Шаг 4: Публикация через HTTP
-
-```bash
-# Настроить SELinux (если включён)
-sudo setsebool -P httpd_can_network_connect 1
-sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/html/yum(/.*)?"
-sudo restorecon -Rv /var/www/html/yum
-
-# Включить и запустить httpd
-sudo systemctl enable --now httpd
-
-# Открыть порт в firewall
-sudo firewall-cmd --permanent --add-service=http
-sudo firewall-cmd --reload
-```
-
-#### Шаг 5: Настройка клиентов
-
-Создать файл `/etc/yum.repos.d/local-mirror.repo` на клиентских машинах:
-
-```ini
-[local-base]
-name=Local Base Mirror
-baseurl=http://mirror.local/yum/base/
-gpgcheck=0
-enabled=1
-priority=50
-
-[local-updates]
-name=Local Updates Mirror
-baseurl=http://mirror.local/yum/updates/
-gpgcheck=0
-enabled=1
-priority=50
-```
-
-```bash
-# Очистить кэш и обновить метаданные
-sudo dnf clean all
-sudo dnf makecache
-```
-
-#### Шаг 6: Автоматизация обновлений
-
-**Cron скрипт:**
-
-```bash
-# /etc/cron.daily/yum-mirror
-#!/bin/bash
-REPO_DIR="/var/www/html/yum"
-
-# Синхронизация репозиториев
-reposync --gpgcheck -l --repoid=base --download-path=$REPO_DIR
-reposync --gpgcheck -l --repoid=updates --download-path=$REPO_DIR
-
-# Обновление метаданных
-createrepo_c --update $REPO_DIR/base
-createrepo_c --update $REPO_DIR/updates
-```
-
-```bash
-sudo chmod +x /etc/cron.daily/yum-mirror
-```
-
-### Сценарий 3: Зеркалирование для изолированной сети (Air-Gapped)
+### Сценарий 2: Зеркалирование для изолированной сети (Air-Gapped)
 
 #### Шаг 1: Подготовка съёмного носителя
 
@@ -397,8 +288,6 @@ sudo apt update
 | :--- | :--- | :--- |
 | **Ubuntu 22.04** | ~200 GB | ~50 GB |
 | **Debian 12** | ~400 GB | ~80 GB |
-| **CentOS 8** | ~150 GB | ~40 GB |
-| **RHEL 9** | ~180 GB | ~45 GB |
 
 **Рекомендации:**
 - Используйте отдельный раздел/диск для зеркала
@@ -458,7 +347,6 @@ fi
 
 ### Связанные темы
 
-* **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — файл `sources.list`
-* **[Управление репозиториями DNF](./dnf_repository_management.md)** — настройка репозиториев для RPM
-* **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
-* **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
+- **[Управление репозиториями DNF](../../Linux/PackageManagement/dnf_repository_management.md)** — настройка репозиториев для RPM
+- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
+- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
