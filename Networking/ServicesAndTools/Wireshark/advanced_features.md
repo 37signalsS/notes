@@ -120,18 +120,20 @@ Wireshark может дешифровать TLS-трафик, что крити�
 #### Практический пример: Расшифровка трафика Chromium
 
 1. **Подготовка**:
-   - Установите Chromium: `sudo apt install chromium` (Linux).
-   - Откройте Wireshark, выберите активный интерфейс.
+   * Установите Chromium: `sudo apt install chromium` (Linux).
+   * Откройте Wireshark, выберите активный интерфейс.
 2. **Запуск с записью ключей**:
+
    ```bash
    export SSLKEYLOGFILE=~/keylog.txt
    chromium --ssl-key-log-file=~/keylog.txt
    ```
+
 3. **Настройка Wireshark**:
-   - `Edit -> Preferences -> Protocols -> TLS`
-   - Укажите путь к `~/keylog.txt` в поле `(Pre)-Master-Secret log filename`.
+   * `Edit -> Preferences -> Protocols -> TLS`
+   * Укажите путь к `~/keylog.txt` в поле `(Pre)-Master-Secret log filename`.
 4. **Анализ**:
-   - После посещения HTTPS-сайтов в Wireshark появятся записи `Decrypted TLS`, `HTTP2`.
-   - Используйте `Follow -> TCP Stream` для просмотра содержимого.
+   * После посещения HTTPS-сайтов в Wireshark появятся записи `Decrypted TLS`, `HTTP2`.
+   * Используйте `Follow -> TCP Stream` для просмотра содержимого.
 
 > **Примечание**: Метод работает только с отладочными/специальными сборками браузеров. Продакшен-версии Chrome/Firefox могут требовать дополнительных настроек или не поддерживать запись ключей.

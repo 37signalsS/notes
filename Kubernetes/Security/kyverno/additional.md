@@ -13,6 +13,7 @@
 По умолчанию Kyverno не имеет прав на создание некоторых ресурсов (например, `Secret`). Для расширения прав используются **Aggregated Cluster Roles**.
 
 **Механизм работы**:
+
 1. Создается `ClusterRole` с лейблом `kyverno.io/aggregate-to-<controller>-controller: "true"`
 2. Kubernetes автоматически агрегирует права из этого `ClusterRole` в соответствующий контроллер
 3. Контроллер получает дополнительные права без изменения основных ролей
@@ -152,6 +153,7 @@ spec:
 ### Пример: Замена PSP на Kyverno
 
 **PSP (удалено в 1.25)**:
+
 ```yaml
 apiVersion: policy/v1beta1
 kind: PodSecurityPolicy
@@ -177,6 +179,7 @@ spec:
 ```
 
 **Kyverno (эквивалент)**:
+
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy

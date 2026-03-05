@@ -24,6 +24,7 @@ Kubernetes предоставляет готовые роли:
 | `cluster-admin` | Полный доступ | Админы кластера |
 
 **Привязка встроенной роли:**
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

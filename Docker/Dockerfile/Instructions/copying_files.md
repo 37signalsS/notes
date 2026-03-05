@@ -23,12 +23,14 @@
 ### Практические примеры
 
 **COPY — простое копирование:**
+
 ```dockerfile
 COPY ./app.py /app/
 COPY package*.json /app/
 ```
 
 **ADD — загрузка по URL (не рекомендуется, используйте RUN + curl):**
+
 ```dockerfile
 # Не рекомендуется
 ADD http://example.com/file.tar.gz /tmp/
@@ -38,6 +40,7 @@ RUN curl -SL http://example.com/file.tar.gz | tar -xz -C /tmp/
 ```
 
 **ADD — распаковка архива:**
+
 ```dockerfile
 # Не рекомендуется
 ADD archive.tar.gz /app/

@@ -47,17 +47,20 @@ journalctl -k | grep -i "oom\|killed process"
 ### Анализ Application Crash
 
 1. **Проверить наличие coredump:**
+
    ```bash
    coredumpctl list
    coredumpctl info <PID>
    ```
 
 2. **Изучить логи сервиса:**
+
    ```bash
    journalctl -u <сервис> -b
    ```
 
 3. **Анализ дампа в gdb:**
+
    ```bash
    coredumpctl debug <PID>
    # В gdb: bt (backtrace)
@@ -68,17 +71,20 @@ journalctl -k | grep -i "oom\|killed process"
 ### Анализ Kernel Panic
 
 1. **Проверить логи ядра:**
+
    ```bash
    journalctl -k -b -1  # Предыдущая загрузка
    dmesg -T | less
    ```
 
 2. **Найти сообщения о panic:**
+
    ```bash
    journalctl -k | grep -i "panic\|bug\|oops"
    ```
 
 3. **Анализ kdump (если настроен):**
+
    ```bash
    ls -la /var/crash/
    ```

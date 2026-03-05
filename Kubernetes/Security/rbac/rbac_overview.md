@@ -49,6 +49,7 @@ Kubernetes предоставляет встроенные роли с преф�
 | `system:discovery` | Чтение endpoints обнаружения API |
 
 > **Важно:** Для агрегации прав во встроенные роли используйте лейблы:
+>
 > - `rbac.authorization.k8s.io/aggregate-to-admin`
 > - `rbac.authorization.k8s.io/aggregate-to-edit`
 > - `rbac.authorization.k8s.io/aggregate-to-view`

@@ -136,6 +136,7 @@ rollback_prod:
 Настройка динамических окружений (Review Apps) в Kubernetes является мощной практикой, позволяющей тестировать изменения в изолированной среде для каждого Merge Request.
 
 **Высокоуровневый процесс выглядит так:**
+
 1. Для каждого MR создается уникальный `namespace` в Kubernetes.
 2. В этот `namespace` развертывается приложение с использованием Helm или Kustomize. Имя релиза и `hostname` в Ingress также делаются уникальными на основе имени ветки или ID мержа.
 3. После слияния или закрытия MR соответствующий `namespace` и все его ресурсы автоматически удаляются.
@@ -158,6 +159,7 @@ rollback_prod:
 Нажатие кнопки **Rollback** не запускает специальную логику, а **перезапускает задачу (`job`) от предыдущего успешного развертывания**. Если развертывания идемпотентны и версионированы (например, через теги Docker-образов по хешу коммита), это действие безопасно вернет окружение к предыдущей стабильной версии.
 
 > **Критичные изменения GitLab 18.x:**
+>
 > - **18.4**: `environment:kubernetes:namespace` deprecated → используйте `environment:kubernetes:dashboard:namespace`
 > - **18.4**: `environment:kubernetes:flux_resource_path` deprecated → используйте `environment:kubernetes:dashboard:flux_resource_path`
 > - **18.4**: Новая структура `environment:kubernetes:dashboard` для интеграции с Kubernetes

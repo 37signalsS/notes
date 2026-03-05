@@ -38,6 +38,7 @@ http_requests_total{path="/api/v2", method="get"}
 ```
 
 **Пример:**
+
 * Метрика `http_requests_total` с лейблами:
   * `method`: 5 значений (GET, POST, PUT, DELETE, PATCH)
   * `status`: 10 значений (200, 201, 400, 404, 500, ...)
@@ -214,6 +215,7 @@ prometheus_tsdb_head_series
 | Крупный (4+ CPU, 8GB+ RAM) | 200 000 – 500 000 | 1 000 000+ |
 
 **Важно:** Эти значения приблизительные. Фактические лимиты зависят от:
+
 * Сложности запросов PromQL
 * Частоты скрейпинга
 * Настроек retention period

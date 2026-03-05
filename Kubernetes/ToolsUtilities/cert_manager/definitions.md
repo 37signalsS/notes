@@ -236,6 +236,7 @@ spec:
 ```
 
 **Особенности:**
+
 - Поле `hostname` в Gateway может конфликтовать с автогенерацией Certificate
 - Рекомендуется создавать Certificate вручную перед Gateway
 - Поддерживаются несколько HTTPS-слушателей на одном шлюзе
@@ -255,6 +256,7 @@ spec:
 | Gateway API CRD | 1.21+ | Устанавливаются отдельно |
 
 **Проверка версий:**
+
 ```bash
 kubectl get deployments -n cert-manager -o wide
 helm list -n cert-manager

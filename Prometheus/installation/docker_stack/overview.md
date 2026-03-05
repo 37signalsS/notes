@@ -6,11 +6,11 @@
 
 Весь процесс декомпозирован на следующие шаги:
 
-1.  [Конфигурация Docker Compose](./docker-compose_config.md)
-2.  [Конфигурация Prometheus](./prometheus_config.md)
-3.  [Конфигурация Alertmanager](./alertmanager_config.md)
-4.  [Запуск и проверка](./deployment_and_verification.md)
-5.  [Мониторинг удаленных хостов](./remote_hosts_monitoring.md)
+1. [Конфигурация Docker Compose](./docker-compose_config.md)
+2. [Конфигурация Prometheus](./prometheus_config.md)
+3. [Конфигурация Alertmanager](./alertmanager_config.md)
+4. [Запуск и проверка](./deployment_and_verification.md)
+5. [Мониторинг удаленных хостов](./remote_hosts_monitoring.md)
 
 ## Определения
 

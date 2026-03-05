@@ -59,6 +59,7 @@ my_test_job:
 ```
 
 В результате `my_test_job` получит:
+
 - `image: alpine:latest` (из `.base_defaults`)
 - `tags: [docker]` (из `.base_defaults`)
 - `rules` из `.test_rules`
@@ -104,6 +105,7 @@ rubocop_job:
 ```
 
 **Результат:**
+
 - `rspec_job`: наследует `image`, `before_script`, `stage`, добавляет `variables`
 - `rubocop_job`: наследует всё, но переопределяет `script` и отключает `artifacts`
 
@@ -203,6 +205,7 @@ unit_tests:
 ```
 
 **Результат слияния:**
+
 1. Применяются `.global_defaults` (retry, timeout)
 2. Добавляются `.nodejs_base` (image, before_script)
 3. Добавляются `.test_rules` (rules)
@@ -220,6 +223,7 @@ unit_tests:
 | **Валидация** | Полная через CI Lint | Полная через CI Lint |
 
 **Пример выбора:**
+
 - Используйте `extends` для создания шаблонов jobs
 - Используйте `!reference` для вставки общих скриптов или правил
 

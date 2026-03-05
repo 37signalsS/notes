@@ -79,7 +79,7 @@
 
 ## Дополнительная информация
 
-- [Основы структуры плейбуков](basics.md): Введение в структуру плейбуков
-- [Ansible: Роли](ansible_roles.md): Управление переменными в ролях (defaults vs vars)
-- [Антипаттерны](../ansible_bad_practices.md): Конфликты переменных между ролями
-- [Официальная документация по переменным](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html): Полная информация о переменных
+* [Основы структуры плейбуков](basics.md): Введение в структуру плейбуков
+* [Ansible: Роли](ansible_roles.md): Управление переменными в ролях (defaults vs vars)
+* [Антипаттерны](../ansible_bad_practices.md): Конфликты переменных между ролями
+* [Официальная документация по переменным](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html): Полная информация о переменных

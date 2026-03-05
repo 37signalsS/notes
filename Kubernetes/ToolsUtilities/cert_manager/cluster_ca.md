@@ -52,6 +52,7 @@ kubectl create secret tls kubernetes-ca-secret \
 ```
 
 **Важно:**
+
 - Операция требует прав администратора кластера
 - Ключ CA (`ca.key`) должен храниться в секрете
 - Рекомендуется ограничить доступ к Secret через RBAC
@@ -70,6 +71,7 @@ spec:
 ```
 
 **Issuer vs ClusterIssuer:**
+
 - `Issuer` — доступен только в том же namespace (cert-manager)
 - `ClusterIssuer` — доступен из всех namespace (рекомендуется для общих сервисов)
 

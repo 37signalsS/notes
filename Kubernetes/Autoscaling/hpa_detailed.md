@@ -21,6 +21,7 @@ HPA работает по принципу термостата с период�
 ```
 
 **Пример расчета:**
+
 - Текущие реплики: 3
 - Целевая метрика (CPU): 50%
 - Текущая нагрузка: 90%
@@ -36,10 +37,10 @@ HPA работает по принципу термостата с период�
 
 ### Компоненты архитектуры
 
-* **HPA Controller** — контроллер в `kube-controller-manager`, управляющий объектами HPA.
-* **Metrics Server** — предоставляет ресурсные метрики через Metrics API.
-* **Custom Metrics API** — адаптер (обычно Prometheus Adapter) для кастомных метрик.
-* **External Metrics API** — для внешних метрик (часто через KEDA).
+- **HPA Controller** — контроллер в `kube-controller-manager`, управляющий объектами HPA.
+- **Metrics Server** — предоставляет ресурсные метрики через Metrics API.
+- **Custom Metrics API** — адаптер (обычно Prometheus Adapter) для кастомных метрик.
+- **External Metrics API** — для внешних метрик (часто через KEDA).
 
 ### Конфигурация поведения (Behavior)
 
@@ -286,35 +287,35 @@ kubectl top nodes
 
 ### Лучшие практики
 
-* **Readiness Probe** — критически важна для исключения «холодных» подов из балансировки.
-* **minReadySeconds** — уменьшает «флаппинг» подов, гарантирует стабильность перед включением в балансировку.
-* **Корректные requests** — адекватные запросы позволяют планировщику резервировать ресурсы.
-* **Behavior для scale-down** — настройте `stabilizationWindowSeconds: 300` для предотвращения частого уменьшения.
-* **Выбор метрики** — для I/O-bound приложений используйте кастомные метрики (RPS), а не CPU.
-* **PDB** — всегда создавайте [PodDisruptionBudget](pod_disruption_budget.md) для критических приложений.
-* **Тестирование** — проверяйте масштабирование в staging перед production.
+- **Readiness Probe** — критически важна для исключения «холодных» подов из балансировки.
+- **minReadySeconds** — уменьшает «флаппинг» подов, гарантирует стабильность перед включением в балансировку.
+- **Корректные requests** — адекватные запросы позволяют планировщику резервировать ресурсы.
+- **Behavior для scale-down** — настройте `stabilizationWindowSeconds: 300` для предотвращения частого уменьшения.
+- **Выбор метрики** — для I/O-bound приложений используйте кастомные метрики (RPS), а не CPU.
+- **PDB** — всегда создавайте [PodDisruptionBudget](pod_disruption_budget.md) для критических приложений.
+- **Тестирование** — проверяйте масштабирование в staging перед production.
 
 ## Дополнительная информация
 
 ### Ограничения
 
-* **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте [KEDA](keda_detailed.md).
-* **Интервал метрик** — метрики собираются с интервалом 15 секунд (настройка Metrics Server).
-* **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
-* **Только Deployment/StatefulSet/ReplicaSet** — не работает с DaemonSet, Job, CronJob.
-* **Требует Metrics Server** — без Metrics Server работают только кастомные/внешние метрики.
+- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте [KEDA](keda_detailed.md).
+- **Интервал метрик** — метрики собираются с интервалом 15 секунд (настройка Metrics Server).
+- **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
+- **Только Deployment/StatefulSet/ReplicaSet** — не работает с DaemonSet, Job, CronJob.
+- **Требует Metrics Server** — без Metrics Server работают только кастомные/внешние метрики.
 
 ### Интеграции
 
-* **[Pod Disruption Budget](pod_disruption_budget.md)** — HPA учитывает PDB при масштабировании вниз.
-* **[Pod Distribution](pod_distribution.md)** — созданные HPA поды распределяются согласно правилам распределения.
-* **[Scaling Patterns](scaling_patterns.md)** — для масштабирования workers по длине очереди используйте внешние метрики.
-* **[VPA](vpa_detailed.md)** — используйте VPA в режиме `Off` для получения рекомендаций, HPA — для горизонтального масштабирования.
-* **[KEDA](keda_detailed.md)** — KEDA создаёт HPA для событийного масштабирования (очереди, расписания).
-* **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик для HPA.
+- **[Pod Disruption Budget](pod_disruption_budget.md)** — HPA учитывает PDB при масштабировании вниз.
+- **[Pod Distribution](pod_distribution.md)** — созданные HPA поды распределяются согласно правилам распределения.
+- **[Scaling Patterns](scaling_patterns.md)** — для масштабирования workers по длине очереди используйте внешние метрики.
+- **[VPA](vpa_detailed.md)** — используйте VPA в режиме `Off` для получения рекомендаций, HPA — для горизонтального масштабирования.
+- **[KEDA](keda_detailed.md)** — KEDA создаёт HPA для событийного масштабирования (очереди, расписания).
+- **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик для HPA.
 
 ### Ресурсы
 
-* [Официальная документация Kubernetes: HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
-* [Kubernetes Autoscaling SIG](https://github.com/kubernetes/autoscaler)
-* [Prometheus Adapter](https://github.com/kubernetes-sigs/prometheus-adapter)
+- [Официальная документация Kubernetes: HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [Kubernetes Autoscaling SIG](https://github.com/kubernetes/autoscaler)
+- [Prometheus Adapter](https://github.com/kubernetes-sigs/prometheus-adapter)

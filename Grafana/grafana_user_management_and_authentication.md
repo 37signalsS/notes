@@ -1,6 +1,7 @@
 # Grafana: Управление пользователями и аутентификация
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Провиженинг](./grafana_provisioning.md)
 > - [Установка через Helm](./Installation/grafana_helm_installation.md)

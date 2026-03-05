@@ -39,6 +39,7 @@ sudo mdadm --zero-superblock /dev/sdc
 ```
 
 > **Проверка:** Убедитесь, что метаданные удалены:
+>
 > ```bash
 > sudo mdadm --examine /dev/sdb1
 > # Должно быть: "No md superblock detected"

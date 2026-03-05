@@ -1,6 +1,7 @@
 # Grafana Alloy
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md)
 

@@ -79,4 +79,4 @@ docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:v3.90.13 g
 
 ## Дополнительная информация
 
-- Для обзора всех практик безопасности в CI/CD, см. основную заметку: **[DevSecOps и тестирование безопасности в CI/CD](./devsecops_overview.md)**.
+* Для обзора всех практик безопасности в CI/CD, см. основную заметку: **[DevSecOps и тестирование безопасности в CI/CD](./devsecops_overview.md)**.

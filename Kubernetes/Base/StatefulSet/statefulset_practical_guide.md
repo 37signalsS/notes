@@ -142,7 +142,7 @@ nslookup my-app-0.my-app-headless
 
 **Пример:** Опубликуем под `my-app-0` через Ingress.
 
-1.  **Создаем сервис, нацеленный на `my-app-0`:**
+1. **Создаем сервис, нацеленный на `my-app-0`:**
 
     ```yaml
     # service-for-pod-0.yaml
@@ -160,7 +160,7 @@ nslookup my-app-0.my-app-headless
           targetPort: 80
     ```
 
-2.  **Создаем `Ingress`, указывающий на этот сервис:**
+2. **Создаем `Ingress`, указывающий на этот сервис:**
 
     ```yaml
     # ingress-for-pod-0.yaml

@@ -185,16 +185,16 @@ kubectl get nodes
 
 ### 4.1. Связанные темы
 
-*   [Управление узлами кластера](./kubeadm_node_management.md)
-*   [HA кластер с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)
-*   [CNI плагины — сравнение](../../Networking/Network/cni_overview.md)
-*   [Container runtime](../../Concepts/container_runtime.md)
-*   [kind](../kind_quickstart.md) — альтернатива для локальной разработки
-*   [Talos](../local_cluster_with_talosctl.md) — безопасная ОС для K8s
+* [Управление узлами кластера](./kubeadm_node_management.md)
+* [HA кластер с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)
+* [CNI плагины — сравнение](../../Networking/Network/cni_overview.md)
+* [Container runtime](../../Concepts/container_runtime.md)
+* [kind](../kind_quickstart.md) — альтернатива для локальной разработки
+* [Talos](../local_cluster_with_talosctl.md) — безопасная ОС для K8s
 
 ### 4.2. Следующие шаги
 
-1.  **Проверка кластера:** `kubectl get nodes`, `kubectl get pods -A`
-2.  **Установка метрик:** [metrics-server](../../MonitoringLogging/metrics-server.md)
-3.  **Настройка storage:** [CSI драйверы](../../Storage/CSI/csi_overview.md)
-4.  **Мониторинг:** [Prometheus + Grafana](../../MonitoringLogging/prometheus_overview.md)
+1. **Проверка кластера:** `kubectl get nodes`, `kubectl get pods -A`
+2. **Установка метрик:** [metrics-server](../../MonitoringLogging/metrics-server.md)
+3. **Настройка storage:** [CSI драйверы](../../Storage/CSI/csi_overview.md)
+4. **Мониторинг:** [Prometheus + Grafana](../../MonitoringLogging/prometheus_overview.md)

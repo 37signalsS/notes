@@ -2,12 +2,12 @@
 
 ## Определения
 
-*   **FluentBit**: Легковесный агент сбора логов, установленный на каждом узле кластера. См. [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md).
-*   **Fluentd**: Более мощный агрегатор логов, используемый в данном сценарии как центральный роутер.
-*   **NFS (Network File System)**: Сетевая файловая система, используемая как внешнее хранилище для логов.
-*   **PersistentVolume (PV)**: Ресурс Kubernetes, представляющий физическое хранилище (в данном случае, NFS-ресурс).
-*   **PersistentVolumeClaim (PVC)**: Запрос пода на выделение хранилища. Подробнее см. [Хранение данных: PV, PVC и StorageClass](../../Storage/pv_and_pvc.md).
-*   **Pod Anti-Affinity**: Правило планирования, запрещающее размещение подов на одном и том же узле. Подробнее см. [Управление размещением подов: Affinity и Anti-Affinity](../../Scheduling/affinity.md).
+* **FluentBit**: Легковесный агент сбора логов, установленный на каждом узле кластера. См. [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md).
+* **Fluentd**: Более мощный агрегатор логов, используемый в данном сценарии как центральный роутер.
+* **NFS (Network File System)**: Сетевая файловая система, используемая как внешнее хранилище для логов.
+* **PersistentVolume (PV)**: Ресурс Kubernetes, представляющий физическое хранилище (в данном случае, NFS-ресурс).
+* **PersistentVolumeClaim (PVC)**: Запрос пода на выделение хранилища. Подробнее см. [Хранение данных: PV, PVC и StorageClass](../../Storage/pv_and_pvc.md).
+* **Pod Anti-Affinity**: Правило планирования, запрещающее размещение подов на одном и том же узле. Подробнее см. [Управление размещением подов: Affinity и Anti-Affinity](../../Scheduling/affinity.md).
 
 ## Архитектура решения
 
@@ -48,9 +48,9 @@ graph TD
 
 Прежде чем разворачивать Fluentd, необходимо предоставить ему постоянное хранилище.
 
-1.  **Настройте NFS-сервер**: Убедитесь, что у вас есть работающий NFS-сервер и экспортированная директория (например, `/var/k8s-logs`). Убедитесь, что на всех узлах Kubernetes установлен пакет `nfs-common` (или `nfs-utils`).
+1. **Настройте NFS-сервер**: Убедитесь, что у вас есть работающий NFS-сервер и экспортированная директория (например, `/var/k8s-logs`). Убедитесь, что на всех узлах Kubernetes установлен пакет `nfs-common` (или `nfs-utils`).
 
-2.  **Создайте PersistentVolume (PV)**:
+2. **Создайте PersistentVolume (PV)**:
     Это задача администратора кластера. Создается объект `PersistentVolume`, который описывает NFS-ресурс.
 
     ```yaml
@@ -70,7 +70,7 @@ graph TD
         server: 192.168.1.100 # IP-адрес вашего NFS-сервера
     ```
 
-3.  **Создайте PersistentVolumeClaim (PVC)**:
+3. **Создайте PersistentVolumeClaim (PVC)**:
     Это запрос от приложения (Fluentd) на выделение хранилища.
 
     ```yaml
@@ -90,7 +90,8 @@ graph TD
       storageClassName: ""
     ```
 
-4.  **Примените манифесты и проверьте**:
+4. **Примените манифесты и проверьте**:
+
     ```bash
     kubectl create ns logging
     kubectl apply -f 01-nfs-pv.yaml
@@ -100,7 +101,7 @@ graph TD
 
 ### Шаг 2: Настройка и развертывание Fluentd
 
-1.  **Создайте `ConfigMap` для `fluent.conf`**:
+1. **Создайте `ConfigMap` для `fluent.conf`**:
 
     ```yaml
     # 03-fluentd-config.yaml
@@ -150,13 +151,14 @@ graph TD
           </format>
         </match>
     ```
-    *   `@type forward`: Принимает логи по протоколу forward.
-    *   `@type file`: Указывает, что вывод будет в файл.
-    *   `path /fluentd/log/...`: Путь внутри контейнера, куда будет смонтирован NFS-том.
-    *   `append true`: Критически важный параметр. Позволяет нескольким репликам Fluentd дописывать логи в один и тот же файл без конфликтов.
-    *   `buffer`: Конфигурация буферизации. Использование `file`-буфера — одна из ключевых причин применения Fluentd в качестве агрегатора. См. [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md#буферизация-и-надежность).
 
-2.  **Создайте `Deployment` для Fluentd**:
+    * `@type forward`: Принимает логи по протоколу forward.
+    * `@type file`: Указывает, что вывод будет в файл.
+    * `path /fluentd/log/...`: Путь внутри контейнера, куда будет смонтирован NFS-том.
+    * `append true`: Критически важный параметр. Позволяет нескольким репликам Fluentd дописывать логи в один и тот же файл без конфликтов.
+    * `buffer`: Конфигурация буферизации. Использование `file`-буфера — одна из ключевых причин применения Fluentd в качестве агрегатора. См. [Сравнение Fluentd и Fluent Bit](./fluentbit/fluent_comparison.md#буферизация-и-надежность).
+
+2. **Создайте `Deployment` для Fluentd**:
 
     ```yaml
     # 04-fluentd-deployment.yaml
@@ -211,7 +213,7 @@ graph TD
               claimName: fluentd-logs-pvc
     ```
 
-3.  **Создайте `Service` для Fluentd**:
+3. **Создайте `Service` для Fluentd**:
 
     ```yaml
     # 05-fluentd-service.yaml
@@ -230,7 +232,8 @@ graph TD
         targetPort: 24224
     ```
 
-4.  **Примените манифесты**:
+4. **Примените манифесты**:
+
     ```bash
     kubectl apply -f 03-fluentd-config.yaml
     kubectl apply -f 04-fluentd-deployment.yaml
@@ -241,11 +244,12 @@ graph TD
 
 Теперь нужно изменить конфигурацию FluentBit, чтобы он отправлял логи не в Elasticsearch, а на наш новый сервис Fluentd.
 
-1.  **Найдите `ConfigMap` вашего FluentBit**. Обычно он называется `fluent-bit-config` в неймспейсе, где развернут FluentBit.
-2.  **Отредактируйте секцию `[OUTPUT]`**:
+1. **Найдите `ConfigMap` вашего FluentBit**. Обычно он называется `fluent-bit-config` в неймспейсе, где развернут FluentBit.
+2. **Отредактируйте секцию `[OUTPUT]`**:
     Замените существующий `[OUTPUT]` (например, для Elasticsearch) на новый.
 
     **Было (пример):**
+
     ```ini
     [OUTPUT]
         Name            es
@@ -255,6 +259,7 @@ graph TD
     ```
 
     **Стало:**
+
     ```ini
     [OUTPUT]
         Name      forward
@@ -263,10 +268,11 @@ graph TD
         Port      24224
         Retry_Limit False
     ```
-3.  **Примените изменения** и перезапустите поды FluentBit, чтобы они подхватили новую конфигурацию (`kubectl rollout restart daemonset/fluent-bit -n <namespace>`).
+
+3. **Примените изменения** и перезапустите поды FluentBit, чтобы они подхватили новую конфигурацию (`kubectl rollout restart daemonset/fluent-bit -n <namespace>`).
 
 ### Шаг 4: Проверка
 
-1.  Запустите приложение, которое генерирует логи.
-2.  Проверьте содержимое файлов на вашем NFS-сервере в директории, которую вы экспортировали (например, `/var/k8s-logs`). Должны появиться файлы `example-app.log` и `syslog.log` с логами в формате JSON.
-3.  Убедитесь, что поды Fluentd распределены по разным узлам (`kubectl get pods -n logging -o wide`).
+1. Запустите приложение, которое генерирует логи.
+2. Проверьте содержимое файлов на вашем NFS-сервере в директории, которую вы экспортировали (например, `/var/k8s-logs`). Должны появиться файлы `example-app.log` и `syslog.log` с логами в формате JSON.
+3. Убедитесь, что поды Fluentd распределены по разным узлам (`kubectl get pods -n logging -o wide`).

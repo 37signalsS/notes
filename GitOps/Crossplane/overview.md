@@ -37,21 +37,21 @@
 
 ### Статус проекта
 
-- **CNCF Status:** Graduated (ноябрь 2025)
-- **Сообщество:** 100+ релизов с момента присоединения к CNCF
-- **Бэкеры:** Upbound, Microsoft, Google, AWS, и другие
+* **CNCF Status:** Graduated (ноябрь 2025)
+* **Сообщество:** 100+ релизов с момента присоединения к CNCF
+* **Бэкеры:** Upbound, Microsoft, Google, AWS, и другие
 
 ## Практические сценарии
 
-- **[Yandex Cloud — навигатор](../../Yandex/index.md)**: Полная документация по сервисам YC
-- **[Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)**: Установка и конфигурация Crossplane для работы с Yandex Cloud
-- **[Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)**: Локальный пример управления ресурсами внутри кластера
-- **[Интеграция с GitOps](./gitops_integration.md)**: Полное руководство по интеграцией с ArgoCD и Flux
-- **[Сравнение с Terraform](./terraform_comparison.md)**: Детальное сравнение подходов и инструментов
+* **[Yandex Cloud — навигатор](../../Yandex/index.md)**: Полная документация по сервисам YC
+* **[Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)**: Установка и конфигурация Crossplane для работы с Yandex Cloud
+* **[Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)**: Локальный пример управления ресурсами внутри кластера
+* **[Интеграция с GitOps](./gitops_integration.md)**: Полное руководство по интеграцией с ArgoCD и Flux
+* **[Сравнение с Terraform](./terraform_comparison.md)**: Детальное сравнение подходов и инструментов
 
 ## Дополнительная информация
 
-- **[GitOps Overview](../GitOps_overview.md)**: Общие принципы GitOps и место Crossplane в экосистеме
-- **[ArgoCD Overview](../ArgoCD/argocd_overview.md)**: Инструмент для GitOps-доставки приложений и инфраструктуры
-- **Официальная документация Crossplane**: [docs.crossplane.io](https://docs.crossplane.io/)
-- **CNCF Announcement**: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)
+* **[GitOps Overview](../GitOps_overview.md)**: Общие принципы GitOps и место Crossplane в экосистеме
+* **[ArgoCD Overview](../ArgoCD/argocd_overview.md)**: Инструмент для GitOps-доставки приложений и инфраструктуры
+* **Официальная документация Crossplane**: [docs.crossplane.io](https://docs.crossplane.io/)
+* **CNCF Announcement**: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)

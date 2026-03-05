@@ -81,6 +81,7 @@ spec:
 ---
 
 **См. также:**
+
 - [Определения](./definitions.md) — концепции и ролевая модель
 - [Ресурсы](./resources.md) — описание CRD
 - [Расширенные функции](./routing_features.md) — Redirect, Rewrite, Traffic Splitting

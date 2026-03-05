@@ -130,8 +130,8 @@ use_secrets:
 
 **Настройка:**
 
-1.  В `Settings > CI/CD > Variables` добавьте переменную `CUSTOM_CA_CERT` типа `File`.
-2.  В значение переменной вставьте содержимое публичного ключа вашего CA (`ca.crt`).
+1. В `Settings > CI/CD > Variables` добавьте переменную `CUSTOM_CA_CERT` типа `File`.
+2. В значение переменной вставьте содержимое публичного ключа вашего CA (`ca.crt`).
 
 **Задача в `.gitlab-ci.yml` (пример для Docker):**
 
@@ -164,12 +164,14 @@ build_with_custom_ca:
 - **Приоритет переменных** (высший → низший): Pipeline execution policy → Scan execution policy → Pipeline variables → Project variables → Group variables → Instance variables → Dotenv reports → Job variables → Default variables → Deployment variables → Predefined variables.
 
 > **Критичные изменения GitLab 18.x:**
+>
 > - **17.4**: Введены `Hidden variables` (GA в 17.6)
 > - **18.3**: Переменные по умолчанию маскируются (`Masked` вместо `Visible`)
 > - **18.5**: Массовое отключение pipeline variables для проектов, которые их не используют
 > - **18.6**: `expand variable reference` отключён по умолчанию
 
 > **Ограничения:**
+>
 > - Project: максимум 8000 переменных
 > - Group: максимум 30000 переменных
 > - Value: до 10 000 символов (ограничено OS runner)

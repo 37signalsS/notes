@@ -1,6 +1,7 @@
 # Установка Grafana в Kubernetes с использованием Helm
 
 > **Навигация:**
+>
 > - [Обзор Grafana](../grafana_overview.md) — основная информация о платформе
 > - [Провиженинг](../grafana_provisioning.md) — управление конфигурацией как код
 > - [Источники данных](../grafana_datasources.md) — подключение систем мониторинга
@@ -18,6 +19,7 @@
 > Официальный репозиторий `grafana https://grafana.github.io/helm-charts` **более не обновляется**.
 >
 > **Новый репозиторий:**
+>
 > ```bash
 > helm repo add grafana-community https://grafana-community.github.io/helm-charts
 > helm repo update
@@ -61,6 +63,7 @@ helm repo update
 Создайте файл `grafana-values.yaml` с основными параметрами. Этот файл определяет ключевые аспекты развертывания.
 
 > **Актуальные версии (февраль 2026):**
+>
 > - **Grafana:** 11.x.x (последняя стабильная)
 > - **Helm-чарт grafana:** 10.5.x+ (из нового репозитория `grafana-community`)
 > - **Минимальная версия Kubernetes:** 1.25+
@@ -141,6 +144,7 @@ networkPolicy:
 ```
 
 > **Best Practices:**
+>
 > - Используйте **секреты** для чувствительных данных (пароли, API-ключи) через `admin.existingSecret` или внешние системы (Vault)
 > - Включайте **NetworkPolicy** для ограничения сетевого доступа
 > - Настраивайте **resource limits** для предотвращения исчерпания ресурсов кластера

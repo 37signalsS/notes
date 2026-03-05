@@ -13,6 +13,7 @@
 | **[Compute Cloud](./Compute-Cloud.md)** | Виртуальные машины, прерываемые инстансы, диски, снапшоты |
 
 **Ключевые темы:**
+
 - Платформы виртуализации (standard-v3, standard-v4a, highfreq, gpu)
 - Типы дисков (network-ssd, network-hdd, network-ssd-nonreplicated)
 - Прерываемые ВМ для CI/CD и HPC
@@ -27,6 +28,7 @@
 | **[VPC](./VPC.md)** | Виртуальные частные сети, подсети, маршрутизация, security groups |
 
 **Ключевые темы:**
+
 - Публичные и приватные подсети
 - NAT Gateway и Internet Gateway
 - Security Groups для сегментации
@@ -41,6 +43,7 @@
 | **[Managed Databases](./Managed-Databases.md)** | Управляемые СУБД: PostgreSQL, MySQL, ClickHouse, Redis, MongoDB |
 
 **Ключевые темы:**
+
 - Выбор движка (OLTP vs OLAP)
 - Автоматические бэкапы и PITR
 - Репликация и высокая доступность
@@ -55,6 +58,7 @@
 | **[Storage](./Storage.md)** | Object Storage, Block Storage, File Storage |
 
 **Ключевые темы:**
+
 - S3-совместимый API для объектов
 - Версионирование и lifecycle-политики
 - Снимки дисков для бэкапов
@@ -69,6 +73,7 @@
 | **[Monitoring](./Monitoring.md)** | Сбор метрик, дашборды, алертинг, интеграция с логами |
 
 **Ключевые темы:**
+
 - Модель данных (метрики, метки, точки)
 - Пользовательские метрики через API
 - Log-based metrics
@@ -83,6 +88,7 @@
 | **[Resource Manager](./Resource-Manager.md)** | Иерархия ресурсов, каталоги, сервисные аккаунты, IAM |
 
 **Ключевые темы:**
+
 - Организация каталогов (dev/stage/prod)
 - Сервисные аккаунты для CI/CD
 - Принцип минимальных прав

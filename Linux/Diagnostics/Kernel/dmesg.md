@@ -281,14 +281,18 @@ log_buf_len=16M
 ```
 
 1. Отредактировать `/etc/default/grub`:
+
    ```bash
    GRUB_CMDLINE_LINUX="log_buf_len=16M"
    ```
+
 2. Обновить конфигурацию GRUB:
+
    ```bash
    sudo update-grub  # Debian/Ubuntu
    sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # RHEL/CentOS
    ```
+
 3. Перезагрузиться
 
 **Проверка текущего размера:**

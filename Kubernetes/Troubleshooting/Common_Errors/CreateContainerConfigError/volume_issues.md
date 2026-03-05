@@ -3,6 +3,7 @@
 ## 1. Проблемы с Projected Volume
 
 **Сообщение:**
+
 ```
 Error: projected volume error: configmap "cm1" not found
 ```
@@ -10,6 +11,7 @@ Error: projected volume error: configmap "cm1" not found
 **Причина:** Projected volume объединяет несколько источников, один из которых отсутствует.
 
 **Решение:**
+
 ```yaml
 # Проверка всех источников в projected volume
 volumes:
@@ -30,6 +32,7 @@ volumes:
 ## 2. Проблемы с томами emptyDir
 
 **Сообщение:**
+
 ```
 Error: failed to create emptyDir volume "cache": quota exceeded
 ```
@@ -37,6 +40,7 @@ Error: failed to create emptyDir volume "cache": quota exceeded
 **Причина:** Превышен лимит на `emptyDir` или ResourceQuota.
 
 **Решение:**
+
 ```yaml
 # Указание sizeLimit для emptyDir
 volumes:

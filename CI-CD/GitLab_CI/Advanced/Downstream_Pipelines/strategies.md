@@ -11,11 +11,13 @@
 **Назначение:** Отображает статус downstream pipeline в trigger job.
 
 **Поведение:**
+
 - Parent job отображает реальный статус child pipeline
 - При провале child pipeline — parent job также показывает failed
 - Авто-отмена родительского пайплайна при провале child (если настроен `workflow: auto_cancel`)
 
 **Применение:**
+
 - Parent-child и multi-project pipelines
 - Критичные зависимости, где статус downstream важен
 
@@ -32,11 +34,13 @@ trigger_job:
 **Назначение:** Отображает отчёты child pipeline в Merge Request виджетах.
 
 **Поведение:**
+
 - Parent job ждёт завершения child pipeline перед завершением
 - Отчёты (JUnit, code quality, security) появляются в Merge Request
 - Родительский пайплайн не завершается пока child выполняется
 
 **Критично для:**
+
 - Unit test отчётов (JUnit)
 - Code quality отчётов
 - Terraform отчётов

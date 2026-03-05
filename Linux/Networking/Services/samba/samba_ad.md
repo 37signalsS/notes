@@ -54,6 +54,7 @@ sudo systemctl enable --now smb nmb winbind
 ### Шаг 4: Настройка NSS и PAM
 
 **`/etc/nsswitch.conf`:**
+
 ```yaml
 passwd:         compat winbind
 group:          compat winbind
@@ -61,6 +62,7 @@ shadow:         compat
 ```
 
 **PAM (автоматическое создание домашних директорий):**
+
 ```bash
 sudo pam-auth-update
 ```

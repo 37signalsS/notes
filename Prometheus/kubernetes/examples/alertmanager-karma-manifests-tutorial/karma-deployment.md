@@ -1,6 +1,7 @@
 # Karma Deployment
 
 **`karma-deployment.yaml`**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment

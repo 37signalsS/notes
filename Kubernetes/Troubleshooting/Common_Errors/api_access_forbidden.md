@@ -6,6 +6,6 @@
 > - [`authentication_methods.md`](./ApiAccessForbidden/authentication_methods.md) — Методы аутентификации, 401 ошибки
 > - [`rbac_objects.md`](./ApiAccessForbidden/rbac_objects.md) — RBAC объекты, встроенные ClusterRole
 > - [`diagnostics.md`](./ApiAccessForbidden/diagnostics.md) — Диагностика: пошаговый чек-лист + скрипт
-> - [`403_forbidden_common.md`](./ApiAccessForbidden/403_forbidden_common.md) — 403 ошибки: pods, secrets, deployments
-> - [`403_forbidden_advanced.md`](./ApiAccessForbidden/403_forbidden_advanced.md) — 403 ошибки: logs, nodes, namespaces
+> - [`common.md`](./ApiAccessForbidden/common.md) — 403 ошибки: pods, secrets, deployments
+> - [`advanced.md`](./ApiAccessForbidden/advanced.md) — 403 ошибки: logs, nodes, namespaces
 > - [`best_practices.md`](./ApiAccessForbidden/best_practices.md) — Best Practices, аудит, мониторинг

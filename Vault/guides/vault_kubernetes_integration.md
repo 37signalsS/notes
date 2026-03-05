@@ -28,6 +28,7 @@
 Рекомендуется использовать официальный Helm-чарт. В данном примере Vault настраивается для работы в HA-режиме с PostgreSQL в качестве бэкенда (вместо Consul), так как драйвер S3 не поддерживает HA-режим.
 
 Пример `values.yaml` для установки Vault:
+
 ```yaml
 injector:
   enabled: false # Отключаем sidecar injector, так как используем CSI
@@ -74,6 +75,7 @@ csi:
 **2. Установка Secrets Store CSI Driver**
 
 Также устанавливается через Helm.
+
 ```bash
 helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
 helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
@@ -84,13 +86,16 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 После установки поды Vault будут запущены, но "запечатаны" (`Sealed`).
 > **Важно:** Процедуру `unseal` необходимо выполнять для каждого пода Vault после его перезапуска. В production это автоматизируется.
 
-1.  **Инициализация (выполняется один раз):**
+1. **Инициализация (выполняется один раз):**
+
     ```bash
     kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > cluster-keys.json
     ```
+
     Сохраните `cluster-keys.json` в надежном месте. В нем содержатся ключ для распечатывания (`unseal_keys_b64`) и корневой токен (`root_token`).
 
-2.  **Распечатывание:**
+2. **Распечатывание:**
+
     ```bash
     # Получаем ключ из файла
     UNSEAL_KEY=$(jq -r ".unseal_keys_b64[0]" cluster-keys.json)
@@ -102,7 +107,8 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 
 ### Шаг 3: Настройка Vault для аутентификации Kubernetes
 
-1.  **Логин в Vault:**
+1. **Логин в Vault:**
+
     ```bash
     ROOT_TOKEN=$(jq -r ".root_token" cluster-keys.json)
     kubectl exec -n vault -it vault-0 -- /bin/sh
@@ -110,7 +116,8 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
     vault login $ROOT_TOKEN
     ```
 
-2.  **Включение движка секретов и аутентификации Kubernetes:**
+2. **Включение движка секретов и аутентификации Kubernetes:**
+
     ```sh
     # Включаем KV-v2 движок
     vault secrets enable -path=secret kv-v2
@@ -119,8 +126,9 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
     vault auth enable kubernetes
     ```
 
-3.  **Конфигурация аутентификации:**
+3. **Конфигурация аутентификации:**
     Указываем Vault, как найти и проверить API-сервер Kubernetes.
+
     ```sh
     vault write auth/kubernetes/config 
        token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" 
@@ -128,7 +136,8 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
        kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
     ```
 
-4.  **Создание секрета, политики и роли:**
+4. **Создание секрета, политики и роли:**
+
     ```sh
     # 1. Помещаем секрет в Vault
     vault kv put secret/webapp/config username="db-user" password="Password123!"
@@ -153,6 +162,7 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 **1. `SecretProviderClass`**
 
 Это CRD, который говорит CSI-драйверу, как и откуда получать секреты.
+
 ```yaml
 # csi-provider.yaml
 apiVersion: secrets-store.csi.x-k8s.io/v1
@@ -175,11 +185,11 @@ spec:
 
 **2. `Deployment`**
 
--   Создаем `ServiceAccount` `webapp-sa`.
--   В `Deployment` указываем `serviceAccountName: webapp-sa`.
--   Монтируем CSI-том, ссылающийся на `SecretProviderClass`.
--   `initContainer` читает секреты из тома и генерирует `index.html`.
--   Основной контейнер использует сгенерированный файл.
+- Создаем `ServiceAccount` `webapp-sa`.
+- В `Deployment` указываем `serviceAccountName: webapp-sa`.
+- Монтируем CSI-том, ссылающийся на `SecretProviderClass`.
+- `initContainer` читает секреты из тома и генерирует `index.html`.
+- Основной контейнер использует сгенерированный файл.
 
 ```yaml
 # deployment.yaml
@@ -269,11 +279,10 @@ data:
 
 ## 4. Ссылки по теме
 
-* **[Обзор HashiCorp Vault](../overview.md):** Общее описание технологии и ключевых компонентов.
-* **[Основные концепции Vault](../concepts.md):** Архитектура, Seal/Unseal, бэкенды, аутентификация.
-* **[Обзор Container Storage Interface (CSI)](../../Kubernetes/Storage/CSI/csi_overview.md):** Принцип работы CSI в Kubernetes.
-* **[Vault Agent и Шаблоны](./vault_agent_and_templates.md):** Альтернативный подход с использованием sidecar-контейнера.
-* **[Подход Zero Trust](../zero_trust.md):** Как интеграция с Kubernetes реализует принципы нулевого доверия.
-* **[Официальная документация: Vault + Kubernetes](https://developer.hashicorp.com/vault/docs/platform/k8s):** Полное руководство от HashiCorp.
-* **[Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/):** Документация проекта.
-
+- **[Обзор HashiCorp Vault](../overview.md):** Общее описание технологии и ключевых компонентов.
+- **[Основные концепции Vault](../concepts.md):** Архитектура, Seal/Unseal, бэкенды, аутентификация.
+- **[Обзор Container Storage Interface (CSI)](../../Kubernetes/Storage/CSI/csi_overview.md):** Принцип работы CSI в Kubernetes.
+- **[Vault Agent и Шаблоны](./vault_agent_and_templates.md):** Альтернативный подход с использованием sidecar-контейнера.
+- **[Подход Zero Trust](../zero_trust.md):** Как интеграция с Kubernetes реализует принципы нулевого доверия.
+- **[Официальная документация: Vault + Kubernetes](https://developer.hashicorp.com/vault/docs/platform/k8s):** Полное руководство от HashiCorp.
+- **[Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/):** Документация проекта.

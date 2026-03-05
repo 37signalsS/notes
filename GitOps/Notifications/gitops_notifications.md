@@ -39,6 +39,7 @@
 **Основное руководство:** Подробное руководство по настройке ArgoCD Notifications, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)**.
 
 Краткое описание:
+
 - Argo CD использует компонент `argocd-notifications-controller`
 - Конфигурация хранится в `ConfigMap` и `Secret`
 - Приложения подписываются на уведомления через аннотации

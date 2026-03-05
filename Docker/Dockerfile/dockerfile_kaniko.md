@@ -55,6 +55,7 @@ build-image:
 При работе с on-premise реестрами, использующими сертификаты, подписанные внутренним центром сертификации (CA), необходимо предоставить Kaniko этот CA для проверки доверия.
 
 В этом примере предполагается, что в переменных GitLab CI определены:
+
 - `HARBOR_REGISTRY`, `HARBOR_USER`, `HARBOR_PASSWORD` — для доступа к Harbor.
 - `CUSTOM_CA_CERT` — переменная типа `File` с содержимым публичного ключа CA.
 
@@ -76,6 +77,7 @@ build-custom:
       --build-arg "APP_VERSION=${CI_COMMIT_TAG}" # Пример передачи build-arg
       --registry-certificate $CUSTOM_CA_CERT # Путь к файлу с CA, предоставленный GitLab Runner
 ```
+
 - **`--registry-certificate`**: Указывает путь к файлу с CA-сертификатом, которому Kaniko должен доверять.
 - **`--build-arg`**: Передает переменные времени сборки в `Dockerfile`.
 

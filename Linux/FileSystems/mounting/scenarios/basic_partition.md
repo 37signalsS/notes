@@ -68,16 +68,19 @@ sudo parted /dev/sdX mkpart primary ext4 0% 100%
 ### 3. Форматирование раздела
 
 **Для ext4:**
+
 ```bash
 sudo mkfs.ext4 /dev/sdX1
 ```
 
 **Для XFS:**
+
 ```bash
 sudo mkfs.xfs /dev/sdX1
 ```
 
 **Для Btrfs:**
+
 ```bash
 sudo mkfs.btrfs /dev/sdX1
 ```

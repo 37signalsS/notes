@@ -25,10 +25,10 @@
     * **Реализация:** Автоматически управляется Jaeger Operator через аннотацию.
 
 2. **DaemonSet:** Один экземпляр Collector развертывается на каждом узле кластера.
-    * **Плюсы:** 
+    * **Плюсы:**
         * **Эффективное использование ресурсов** (один Collector на узел).
         * **Упрощение сетевого пути:** Позволяет приложению отправлять данные напрямую на IP-адрес хоста.
-    * **Минусы:** 
+    * **Минусы:**
         * Приложению необходимо знать IP-адрес хоста (`hostIP`) для отправки спанов.
         * Требует использования `hostPort` и `hostNetwork: true`.
     * **Реализация:** Задается в CR `Jaeger` в секции `spec.collector`. Для корректной работы DNS-резолвинга внутри кластера для такого пода требуется `dnsPolicy: ClusterFirstWithHostNet`.
@@ -37,9 +37,9 @@
 
 Приложение должно быть сконфигурировано для отправки трассировок в OTel Collector.
 
-*   **При использовании Sidecar:** SDK настраивается на отправку данных на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
+* **При использовании Sidecar:** SDK настраивается на отправку данных на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
 
-*   **При использовании DaemonSet:** SDK должен использовать `hostIP` пода в качестве адреса. Этого можно достичь, передав `hostIP` в приложение как переменную окружения через **Downward API**.
+* **При использовании DaemonSet:** SDK должен использовать `hostIP` пода в качестве адреса. Этого можно достичь, передав `hostIP` в приложение как переменную окружения через **Downward API**.
 
     ```yaml
     # В манифесте Deployment приложения
@@ -56,7 +56,7 @@
               value: ":4317"
     ```
 
-*   **Напрямую в Collector Service:** Приложения могут отправлять данные напрямую в Collector через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local:4317`).
+* **Напрямую в Collector Service:** Приложения могут отправлять данные напрямую в Collector через соответствующий Kubernetes Service (например, `jaeger-collector.observability.svc.cluster.local:4317`).
 
 ---
 
@@ -140,11 +140,12 @@ NGINX Ingress Controller может автоматически создават�
 
 Трассировка включается через параметры конфигурации контроллера (в `ConfigMap` или `values.yaml` для Helm-чарта):
 
-- **`enable-opentracing: "true"`**: Глобально включает модуль трассировки.
-- **`jaeger-collector-host`**: Адрес OTel Collector. В v2 используется формат `opentelemetry-collector.<namespace>.svc.cluster.local`.
-- **`jaeger-propagation-format: "w3c"`**: Устанавливает формат заголовков для передачи контекста трассировки. `w3c` является современным стандартом и использует заголовок `traceparent`.
+* **`enable-opentracing: "true"`**: Глобально включает модуль трассировки.
+* **`jaeger-collector-host`**: Адрес OTel Collector. В v2 используется формат `opentelemetry-collector.<namespace>.svc.cluster.local`.
+* **`jaeger-propagation-format: "w3c"`**: Устанавливает формат заголовков для передачи контекста трассировки. `w3c` является современным стандартом и использует заголовок `traceparent`.
 
 Также трассировку можно включить для конкретного Ingress-ресурса с помощью аннотации:
+
 ```yaml
 metadata:
   annotations:
@@ -159,8 +160,9 @@ metadata:
 
 Процесс создания и использования TrustStore в Kubernetes:
 
-1.  **Получить CA сертификат OpenSearch.**
-2.  **Создать TrustStore:** Используется утилита `keytool` из JDK. Это можно сделать внутри временного контейнера.
+1. **Получить CA сертификат OpenSearch.**
+2. **Создать TrustStore:** Используется утилита `keytool` из JDK. Это можно сделать внутри временного контейнера.
+
     ```bash
     # Запускаем контейнер с JDK, пробрасывая в него CA сертификат
     kubectl run -it --rm jdk-helper --image=openjdk:11 -- /bin/bash
@@ -168,8 +170,10 @@ metadata:
     # Внутри контейнера:
     keytool -import -alias opensearch-ca -file /path/to/ca.pem -keystore truststore.jks -storepass password -noprompt
     ```
-3.  **Сохранить TrustStore в `ConfigMap`:**
+
+3. **Сохранить TrustStore в `ConfigMap`:**
     Так как `TrustStore` является бинарным файлом, его необходимо закодировать в Base64.
+
     ```bash
     # Копируем TrustStore из контейнера
     kubectl cp jdk-helper:truststore.jks ./truststore.jks
@@ -177,7 +181,8 @@ metadata:
     # Кодируем и создаем ConfigMap
     kubectl create configmap jaeger-truststore --from-file=truststore.jks.b64=$(base64 -w 0 truststore.jks)
     ```
-4.  **Смонтировать `ConfigMap` в под:**
+
+4. **Смонтировать `ConfigMap` в под:**
     Далее этот `ConfigMap` монтируется в под с приложением (например, `CronJob` для `jaeger-spark-dependencies`), где init-контейнер декодирует его из Base64 обратно в бинарный файл.
 
 ### Сценарий 4: Интеграция с OpenTelemetry Collector

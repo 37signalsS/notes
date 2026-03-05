@@ -92,7 +92,7 @@ spec:
 
 ### Связанные темы
 
-- **[Authentication](./authentication.md)** — аутентификация в Kubernetes
-- **[Secret](./application_secrets_management.md)** — работа с секретами
-- **[Ingress Overview](../Networking/Ingress/overview.md)** — ingress-контроллеры
-- **[Traefik](../Networking/gateway_api/traefik.md)** — документация по Traefik
+* **[Authentication](./authentication.md)** — аутентификация в Kubernetes
+* **[Secret](./application_secrets_management.md)** — работа с секретами
+* **[Ingress Overview](../Networking/Ingress/overview.md)** — ingress-контроллеры
+* **[Traefik](../Networking/gateway_api/traefik.md)** — документация по Traefik

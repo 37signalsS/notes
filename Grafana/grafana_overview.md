@@ -1,6 +1,7 @@
 # Grafana: Обзор
 
 > **Навигация:**
+>
 > - [Установка через Docker Compose](./Installation/docker_compose_setup.md)
 > - [Установка через Helm](./Installation/grafana_helm_installation.md)
 > - [Источники данных](./grafana_datasources.md)
@@ -21,9 +22,9 @@
 
 **Grafana Stack** (ранее LGTM: Loki, Grafana, Tempo, Mimir) — набор инструментов для реализации концепции [наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_overview.md). Grafana — центральный компонент, предоставляющий единый интерфейс для анализа:
 
-* **Метрики** (Mimir/Prometheus)
-* **Логи** (Loki)
-* **Трассировки** (Tempo)
+- **Метрики** (Mimir/Prometheus)
+- **Логи** (Loki)
+- **Трассировки** (Tempo)
 
 ## Базовые концепции
 

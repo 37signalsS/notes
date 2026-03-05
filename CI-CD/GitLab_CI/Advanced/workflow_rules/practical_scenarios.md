@@ -41,6 +41,7 @@ build:
 ```
 
 **Создание 6 задач:**
+
 - 3 × unit-тесты (Node 18, 20, 22)
 - 2 × integration/e2e (Node 20)
 

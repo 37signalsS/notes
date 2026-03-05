@@ -149,18 +149,23 @@ du --inodes -S / | sort -rh | head -20
    - **Описание:** Ext2/3/4 резервируют 5% места для root. При заполнении >95% даже root не может писать.
    - **Диагностика:** `df -h` показывает ~95-100% использования
    - **Аварийное решение:** Временно обнулить резерв:
+
      ```bash
      sudo tune2fs -m 0 /dev/sdXN
      ```
+
    - **После очистки:** Вернуть резерв:
+
      ```bash
      sudo tune2fs -m 5 /dev/sdXN
      ```
+
    - **Подробнее:** [Устранение нехватки места на диске](../../FileSystems/disk_space_troubleshooting.md)
 
 3. **Удаленные, но открытые файлы:**
    - **Описание:** Процесс удалил файл, но держит его открытым — место не освобождается
    - **Диагностика:**
+
      ```bash
      # Найти удалённые, но открытые файлы
      lsof +L1 2>/dev/null
@@ -168,7 +173,9 @@ du --inodes -S / | sort -rh | head -20
      # Или через /proc
      find /proc/*/fd -type l -lname '/path/to/deleted/file' 2>/dev/null
      ```
+
    - **Решение:** Перезапустить процесс или закрыть дескриптор:
+
      ```bash
      # Найти PID процесса
      lsof | grep deleted
@@ -179,11 +186,13 @@ du --inodes -S / | sort -rh | head -20
      # Или перезапустить службу
      systemctl restart <service>
      ```
+
    - **Подробнее:** [lsof — диагностика открытых файлов](../Processes/lsof.md)
 
 ## Дополнительная информация
 
 **См. также:**
+
 - [Real case troubleshooting: Kafka и исчерпание inodes](../../../Networking/Troubleshooting/real_case_troubleshooting_kafka_db.md)
 - [Планировщики I/O](../../Core/kernel/io_schedulers.md)
 - [Дисковые квоты](../../FileSystems/disk_quotas.md)

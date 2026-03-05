@@ -220,10 +220,10 @@ kubectl rollout restart daemonset kube-proxy -n kube-system
 
 ### 4.1. Связанные темы
 
-*   [Быстрый старт с kubeadm](./kubeadm_quickstart.md)
-*   [Управление сертификатами](../../Operations/certificate_management.md)
-*   [etcd обслуживание](../../Concepts/etcd_overview.md)
-*   [Troubleshooting кластера](../../Troubleshooting/cluster_troubleshooting.md)
+* [Быстрый старт с kubeadm](./kubeadm_quickstart.md)
+* [Управление сертификатами](../../Operations/certificate_management.md)
+* [etcd обслуживание](../../Concepts/etcd_overview.md)
+* [Troubleshooting кластера](../../Troubleshooting/cluster_troubleshooting.md)
 
 ### 4.2. Best Practices
 

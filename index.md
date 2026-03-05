@@ -93,7 +93,7 @@ CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/cache_best_practices.md
 CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/cache_concepts.md
 CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/cache_scenarios.md
 CI-CD/GitLab_CI/Advanced/gitlab_ci_caching.md
-CI-CD/GitLab_CI/Advanced/gitlab_ci_downstream_pipelines.md
+CI-CD/GitLab_CI/Advanced/Downstream_Pipelines/definitions.md
 CI-CD/GitLab_CI/Advanced/gitlab_ci_runners_executors.md
 CI-CD/GitLab_CI/Advanced/gitlab_ci_workflow_builder.md
 CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md
@@ -681,10 +681,10 @@ Kubernetes/ToolsUtilities/Helm/templating/templates/_helpers.md
 Kubernetes/ToolsUtilities/kor.md
 Kubernetes/ToolsUtilities/kubeconform.md
 Kubernetes/ToolsUtilities/kubeswitches.md
-Kubernetes/ToolsUtilities/kustomize_overview.md
+Kubernetes/ToolsUtilities/kustomize/kustomize_overview.md
 Kubernetes/ToolsUtilities/lens.md
-Kubernetes/ToolsUtilities/reloader.md
-Kubernetes/ToolsUtilities/vcluster.md
+Kubernetes/ToolsUtilities/reloader/reloader_overview.md
+Kubernetes/ToolsUtilities/vcluster/vcluster_overview.md
 Kubernetes/Troubleshooting/Common_Errors/api_access_forbidden.md
 Kubernetes/Troubleshooting/Common_Errors/create_container_config_error.md
 Kubernetes/Troubleshooting/Common_Errors/node_unavailability.md
@@ -1069,8 +1069,8 @@ Networking/Protocols/icmp.md
 Networking/Protocols/ip.md
 Networking/Protocols/proxy_protocol.md
 Networking/Protocols/stp.md
-Networking/Protocols/TCP/congestion_control.md
-Networking/Protocols/TCP/connection_management.md
+Networking/Protocols/TCP/congestion/tcp_congestion_control_overview.md
+Networking/Protocols/TCP/connection/tcp_connection_management_overview.md
 Networking/Protocols/TCP/flow_control.md
 Networking/Protocols/TCP/header_format.md
 Networking/Protocols/TCP/overview.md
@@ -1085,7 +1085,7 @@ Networking/ServicesAndTools/Wireshark/advanced_features.md
 Networking/ServicesAndTools/Wireshark/core_concepts.md
 Networking/ServicesAndTools/Wireshark/definitions.md
 Networking/ServicesAndTools/Wireshark/practical_scenarios.md
-Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md
+Networking/ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md
 Networking/ServicesAndTools/Wireshark/tshark_usage.md
 Networking/Troubleshooting/ping_alternatives.md
 Networking/Troubleshooting/real_case_troubleshooting_dns_misconfig.md
@@ -1115,7 +1115,7 @@ Prometheus/concepts/metric_types.md
 Prometheus/concepts/promql.md
 Prometheus/concepts/tsdb.md
 Prometheus/configuration.md
-Prometheus/Exporters/blackbox_exporter.md
+Prometheus/Exporters/blackbox/blackbox_exporter_overview.md
 Prometheus/Exporters/cadvisor.md
 Prometheus/Exporters/extensibility.md
 Prometheus/Exporters/node_exporter.md
@@ -1350,4 +1350,3 @@ Zabbix/zabbix_overview.md
 Zabbix/zabbix_postgresql_monitoring.md
 Zabbix/zabbix_troubleshooting_and_performance_tuning.md
 Отзыв и Запрос ПС к Хэдхантер.docx
-

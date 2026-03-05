@@ -3,6 +3,7 @@
 ## PVC не найден или не привязан
 
 **Сообщение:**
+
 ```
 Error: persistentvolumeclaim "data-pvc" not found
 unable to provision volume: persistentvolumeclaim "data-pvc" not found
@@ -11,6 +12,7 @@ unable to provision volume: persistentvolumeclaim "data-pvc" not found
 **Причина:** PVC не существует или находится в статусе `Pending`.
 
 **Диагностика:**
+
 ```bash
 kubectl describe pvc data-pvc
 ```
@@ -25,6 +27,7 @@ kubectl describe pvc data-pvc
 | **AccessMode несовместим** | Изменить accessMode |
 
 **Решение:**
+
 ```yaml
 # Создание PVC с StorageClass
 apiVersion: v1
@@ -42,6 +45,7 @@ spec:
 ```
 
 **Создание PV (если нет dynamic provisioning):**
+
 ```yaml
 apiVersion: v1
 kind: PersistentVolume

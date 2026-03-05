@@ -46,6 +46,7 @@ binaryData:
 ```
 
 **Применение:**
+
 ```bash
 kubectl apply -f app-config.yaml
 ```

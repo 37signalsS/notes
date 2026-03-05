@@ -65,6 +65,7 @@ Git-репозиторий с манифестами Kubernetes служит "м
 - **Flux Image Automation** — встроенный контроллер (`image-automation-controller` v1.1.0). Настройка через CRD: `ImageRepository`, `ImagePolicy`, `ImageUpdateAutomation`.
 
 Оба инструмента поддерживают:
+
 - Сканирование реестров на наличие новых тегов
 - Фильтрацию по SemVer, regex, датам
 - Автоматическое создание PR/коммитов в Git-репозиторий

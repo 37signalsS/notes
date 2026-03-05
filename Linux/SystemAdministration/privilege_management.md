@@ -49,7 +49,7 @@
 
 ### Конфигурация `sudo`: файл `/etc/sudoers`
 
-Этот файл определяет права пользователей и групп на использование `sudo`. 
+Этот файл определяет права пользователей и групп на использование `sudo`.
 
 #### Редактирование и структура: `visudo` и `/etc/sudoers.d`
 
@@ -59,11 +59,12 @@
 При запуске `visudo` создает временный файл (`/etc/sudoers.tmp`). При сохранении с ошибкой программа предложит варианты: `e` (вернуться к редактированию), `x` (выйти без сохранения), `q` (сохранить с предупреждением). Настройте переменную `EDITOR` (например, `export EDITOR=nano` в `~/.bashrc`) для выбора предпочитаемого редактора.
 
 **Директория `/etc/sudoers.d`**
-: Современный и рекомендуемый подход — не изменять основной файл `/etc/sudoers` напрямую. Вместо этого следует создавать отдельные файлы для каждого пользователя или сервиса в директории `/etc/sudoers.d/`. 
-- **Преимущества:**
-    - **Модульность:** Каждая конфигурация изолирована в своем файле.
-    - **Простота управления:** Легко добавлять, удалять и отключать правила.
-    - **Безопасность:** Снижается риск повредить основной файл конфигурации.
+: Современный и рекомендуемый подход — не изменять основной файл `/etc/sudoers` напрямую. Вместо этого следует создавать отдельные файлы для каждого пользователя или сервиса в директории `/etc/sudoers.d/`.
+
+* **Преимущества:**
+  * **Модульность:** Каждая конфигурация изолирована в своем файле.
+  * **Простота управления:** Легко добавлять, удалять и отключать правила.
+  * **Безопасность:** Снижается риск повредить основной файл конфигурации.
 
 Файл в `/etc/sudoers.d` должен иметь имя без точек и тильд и иметь такие же права, как у `/etc/sudoers`.
 
@@ -185,7 +186,7 @@ sudo visudo -f /etc/sudoers.d/developer
 
 10. **Принцип разрешений, а не запретов**
     Не стройте правила на основе "разрешить все, потом запретить опасные команды". Всегда разрешайте только строго необходимые команды. Используйте алиасы для упрощения управления:
-    - `User_Alias`, `Host_Alias`, `Runas_Alias`, `Cmnd_Alias`
+    * `User_Alias`, `Host_Alias`, `Runas_Alias`, `Cmnd_Alias`
 
 ### Получение интерактивной оболочки через `sudo`
 
@@ -211,24 +212,28 @@ ResultActive=no
 ### Связанные темы
 
 **Управление пользователями и группами:**
-- **[Управление пользователями](./users_management.md)** — useradd, usermod, userdel
-- **[Управление группами](./Users/group_commands.md)** — groupadd, groupmod, groupdel
-- **[Файлы конфигурации](./Users/users_config_files.md)** — /etc/passwd, /etc/shadow, /etc/sudoers
+
+* **[Управление пользователями](./users_management.md)** — useradd, usermod, userdel
+* **[Управление группами](./Users/group_commands.md)** — groupadd, groupmod, groupdel
+* **[Файлы конфигурации](./Users/users_config_files.md)** — /etc/passwd, /etc/shadow, /etc/sudoers
 
 **Права доступа:**
-- **[Права доступа к файлам](../Security/Concepts/File_Permissions/overview_definitions.md)** — DAC, rwx, владелец/группа/остальные
-- **[Специальные права](../Security/Concepts/File_Permissions/special_permissions.md)** — SUID, SGID, Sticky Bit
-- **[Маска umask](../Security/Concepts/File_Permissions/umask.md)** — права по умолчанию
-- **[ACL](../Security/Concepts/File_Permissions/acl_immutable_timestamps.md)** — расширенные права доступа
+
+* **[Права доступа к файлам](../Security/Concepts/File_Permissions/overview_definitions.md)** — DAC, rwx, владелец/группа/остальные
+* **[Специальные права](../Security/Concepts/File_Permissions/special_permissions.md)** — SUID, SGID, Sticky Bit
+* **[Маска umask](../Security/Concepts/File_Permissions/umask.md)** — права по умолчанию
+* **[ACL](../Security/Concepts/File_Permissions/acl_immutable_timestamps.md)** — расширенные права доступа
 
 **Аутентификация:**
-- **[PAM](../Security/pam_overview.md)** — Pluggable Authentication Modules
-- **[SSH аутентификация](../Security/ssh/ssh_overview.md)** — ключи, пароли, 2FA
+
+* **[PAM](../Security/pam_overview.md)** — Pluggable Authentication Modules
+* **[SSH аутентификация](../Security/ssh/ssh_overview.md)** — ключи, пароли, 2FA
 
 **Безопасность:**
-- **[Аудит событий](./Logging/auditd.md)** — auditd для отслеживания действий
-- **[SELinux](../Security/selinux.md)** — мандатный контроль доступа
-- **[AppArmor](../Security/apparmor.md)** — мандатный контроль доступа
+
+* **[Аудит событий](./Logging/auditd.md)** — auditd для отслеживания действий
+* **[SELinux](../Security/selinux.md)** — мандатный контроль доступа
+* **[AppArmor](../Security/apparmor.md)** — мандатный контроль доступа
 
 ### Системный вызов `setuid()` и безопасность
 

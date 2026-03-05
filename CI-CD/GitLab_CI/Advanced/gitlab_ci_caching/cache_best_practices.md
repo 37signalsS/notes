@@ -63,6 +63,7 @@ cache:
 **Способ 1:** Измените `cache:key` в `.gitlab-ci.yml`
 
 **Способ 2:** Через UI GitLab:
+
 1. Build → Pipelines
 2. Clear runner caches
 

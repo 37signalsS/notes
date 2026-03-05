@@ -100,11 +100,13 @@ ARP-таблица — это временное хранилище сопост
 ## Дополнительная информация
 
 ### Связанные документы
+
 - **[Ethernet](./ethernet.md)** — канальный уровень, формат кадров
 - **[IP](./ip.md)** — сетевой уровень, адресация
 - **[VLAN](./vlan.md)** — изоляция broadcast-доменов
 - **[Gratuitous ARP](../../Linux/Networking/Concepts/arp.md)** — диагностика и использование
 
 ### RFC
+
 - **RFC 826** — спецификация ARP
 - **RFC 5227** — IPv4 Address Conflict Detection (Gratuitous ARP)

@@ -108,6 +108,7 @@ yay -S virtualbox-ext-oracle
 ```
 
 **Проверка установки:**
+
 ```bash
 VBoxManage list extpacks
 ```
@@ -119,12 +120,14 @@ VBoxManage list extpacks
 #### Host-only сеть
 
 **Файл `/etc/vbox/networks.conf`:**
+
 ```
 * 10.0.0.0/8 192.168.0.0/16
 * 2001:db8:1234::/48
 ```
 
 **Создание адаптера:**
+
 ```bash
 VBoxManage hostonlyif create
 VBoxManage hostonlyif ipconfig vboxnet0 --ip 192.168.56.1 --netmask 255.255.255.0
@@ -135,17 +138,20 @@ VBoxManage hostonlyif ipconfig vboxnet0 --ip 192.168.56.1 --netmask 255.255.255.
 ### Работа с Wayland
 
 **Проблемы:**
+
 - Захват клавиатуры может не работать
 - Интеграция мыши может быть нарушена
 
 **Решения:**
 
 1. **Whitelist для GNOME:**
+
 ```bash
 gsettings set org.gnome.mutter.wayland xwayland-grab-access-rules "['VirtualBox Machine']"
 ```
 
-2. **Принудительный X11:**
+1. **Принудительный X11:**
+
 ```bash
 QT_QPA_PLATFORM=xcb VirtualBox
 ```
@@ -157,6 +163,7 @@ QT_QPA_PLATFORM=xcb VirtualBox
 **Проблема:** Модули KVM и VirtualBox не могут работать одновременно.
 
 **Решение для Android Studio (эмулятор):**
+
 ```bash
 # Выгрузить модули VirtualBox
 sudo modprobe -r vboxnetflt vboxnetadp vboxdrv

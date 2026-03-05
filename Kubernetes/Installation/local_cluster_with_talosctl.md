@@ -39,6 +39,7 @@
 ### 3.1. Подготовка
 
 **Требования:**
+
 - Docker 18.03+
 - Linux/macOS/Windows (WSL2)
 
@@ -64,6 +65,7 @@ talosctl cluster create --name talos-default --wait
 ```
 
 **Параметры:**
+
 - `--name` — имя кластера (по умолчанию `talos-default`)
 - `--wait` — ждать готовности кластера
 - `--workers N` — количество worker-узлов
@@ -225,6 +227,7 @@ talosctl cluster destroy
 ### Расширения Talos
 
 Talos поддерживает system extensions для дополнительной функциональности:
+
 - **QEMU Guest Agent** — для виртуализации
 - **NVIDIA GPU** — поддержка GPU
 - **WireGuard** — VPN

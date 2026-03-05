@@ -73,6 +73,7 @@
 | `systemctl reenable <service>` | Перевключить (disable + enable) |
 
 **Статусы автозапуска:**
+
 - `enabled` — автозапуск включен
 - `disabled` — автозапуск отключен
 - `static` — нет секции `[Install]`, запускается как зависимость

@@ -42,6 +42,7 @@
 ### Сценарий 1: Настройка Vault
 
 **1. Создание KV store:**
+
 ```bash
 # Включение KV v2
 vault secrets enable -path=secret kv-v2
@@ -51,6 +52,7 @@ vault kv put secret/test user="myuser" password="mypassword"
 ```
 
 **2. Политика доступа:**
+
 ```hcl
 # test-policy.hcl
 path "secret/data/test" {
@@ -59,6 +61,7 @@ path "secret/data/test" {
 ```
 
 **3. Kubernetes аутентификация:**
+
 ```bash
 # Включение метода аутентификации
 vault auth enable kubernetes
@@ -79,6 +82,7 @@ vault write auth/kubernetes/role/argocd \
 ### Сценарий 2: Конфигурация ArgoCD с плагином
 
 **Установка через Helm:**
+
 ```yaml
 # values.yaml для argo-cd Helm chart
 repoServer:
@@ -133,6 +137,7 @@ plugins:
 ### Сценарий 3: Использование в манифестах
 
 **Plain YAML (с аннотациями):**
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -147,6 +152,7 @@ stringData:
 ```
 
 **Helm Charts (values.yaml):**
+
 ```yaml
 secret:
   username: <username>
@@ -154,6 +160,7 @@ secret:
 ```
 
 **Синтаксис тегов:**
+
 - `<path#key>` — полный путь (например, `secret/data/test#username`)
 - `<key>` — только ключ (путь берётся из аннотации)
 
@@ -222,7 +229,7 @@ generate:
 | :--- | :--- | :--- |
 | `AVP_TYPE` | Тип бэкенда (vault, aws, gcp) | vault |
 | `AVP_AUTH_TYPE` | Метод аутентификации | kubernetes |
-| `VAULT_ADDR` | Адрес Vault | http://localhost:8200 |
+| `VAULT_ADDR` | Адрес Vault | <http://localhost:8200> |
 | `AVP_K8S_ROLE` | Kubernetes роль для Vault | - |
 | `VAULT_NAMESPACE` | Vault namespace (Enterprise) | - |
 | `AVP_PATH_VERSION` | Версия KV secret | latest |
@@ -237,11 +244,13 @@ generate:
 ### Troubleshooting
 
 **Проверка логов:**
+
 ```bash
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c avp
 ```
 
 **Частые проблемы:**
+
 - `permission denied` — проверка политики Vault
 - `connection refused` — проверка сетевого доступа к Vault
 - `secret not found` — проверка пути и версии секрета

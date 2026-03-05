@@ -42,7 +42,7 @@ NFS использует числовые UID и GID для разделения
 
 ## Связанные документы
 
-- [Настройка NFS](./nfs_setup.md) — практические сценарии
-- [Безопасность NFS](./nfs_security.md) — Kerberos, файрвол
-- [Производительность](./nfs_performance.md) — оптимизация
-- [Устранение неполадок](./nfs_troubleshooting.md)
+* [Настройка NFS](./nfs_setup.md) — практические сценарии
+* [Безопасность NFS](./nfs_security.md) — Kerberos, файрвол
+* [Производительность](./nfs_performance.md) — оптимизация
+* [Устранение неполадок](./nfs_troubleshooting.md)

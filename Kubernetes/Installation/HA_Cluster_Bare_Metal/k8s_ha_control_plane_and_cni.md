@@ -34,6 +34,7 @@
 ### Почему CNI устанавливается отдельно?
 
 Kubernetes не включает сетевой плагин по умолчанию. Администратор выбирает CNI в зависимости от требований:
+
 - **Calico** — баланс функциональности и производительности
 - **Flannel** — простой, минималистичный
 - **Cilium** — eBPF-based, продвинутая безопасность
@@ -57,11 +58,13 @@ sudo kubeadm init \
 ```
 
 **Параметры**:
+
 - `--control-plane-endpoint` — адрес балансировщика (Keepalived + HAProxy)
 - `--pod-network-cidr` — диапазон для подов (должен совпадать с выбранным CNI)
 - `--upload-certs` — загружает сертификаты в Secret для других мастеров
 
 **Результат**:
+
 - `kubeadm` выведет **две команды `join`**:
   1. Для других мастер-узлов (с `--control-plane` и `--certificate-key`)
   2. Для worker-узлов (без дополнительных флагов)
@@ -98,6 +101,7 @@ sudo kubeadm join LOAD_BALANCER_VIP:6443 \
 ```
 
 **После выполнения**:
+
 - Мастер присоединяется к кластеру
 - Запускаются компоненты Control Plane как статические поды
 - `etcd` формирует кластер (3 узла)
@@ -125,6 +129,7 @@ kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/
 > **Важно**: Проверяйте совместимость версии Calico с вашей версией Kubernetes в [официальной документации Calico](https://docs.tigera.io/calico/latest/about/supported-releases).
 
 **Альтернативные CNI**:
+
 - **Cilium**: `kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/master/install/kubernetes/quick-install.yaml`
 - **Flannel**: `kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml`
 
@@ -148,6 +153,7 @@ kubectl get pods -n kube-system -l k8s-app=calico-node
 ```
 
 **Ожидаемый результат**:
+
 - Все системные поды в статусе `Running`
 - Все узлы в статусе `Ready`
 - 3 пода `etcd`, 3 пода `kube-apiserver`, и т.д.

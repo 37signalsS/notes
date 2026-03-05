@@ -1,6 +1,7 @@
 # Grafana: Шаблонизация (Templating)
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Дашборды](./grafana_dashboards.md)
 > - [Источники данных](./grafana_datasources.md)

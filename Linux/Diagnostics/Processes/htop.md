@@ -13,6 +13,7 @@
 ### Графические индикаторы
 
 В верхней части отображаются метрики системы:
+
 - **CPU**: загрузка по каждому ядру с разбивкой по типам (user, system, nice, idle, iowait, irq)
 - **Memory**: использование физической памяти (used, buffers, cached, available)
 - **Swap**: использование пространства подкачки
@@ -131,6 +132,7 @@ htop -b -n 1 --sort-key=PERCENT_MEM | head -n 10
 - **Colors**: цветовые схемы
 
 **Пример быстрой настройки с бэкапом:**
+
 ```bash
 mkdir -p ~/.config/htop && \
 [ -f ~/.config/htop/htoprc ] && \
@@ -146,7 +148,6 @@ mv ~/.config/htop/htoprc ~/.config/htop/htoprc.bak.$(date +%Y%m%d%H%M%S)
 | [`atop`](../Performance/atop.md) | **Исторические логи**, Dirty Cache, детальный I/O | Сложный интерфейс, требует изучения | **Глубокий анализ инцидентов**, постфактум диагностика |
 | [`ps`](./ps.md) | Скриптовая автоматизация, снимки | Не интерактивный | Скрипты, разовые проверки |
 | [`systemd-cgtop`](../../Core/systemd/cgtop.md) | Агрегация по cgroups/systemd-сервисам | Только для systemd | Мониторинг systemd-юнитов |
-
 
 ### Ограничения
 

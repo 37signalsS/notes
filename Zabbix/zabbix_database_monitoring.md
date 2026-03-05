@@ -59,14 +59,14 @@ Zabbix предлагает несколько способов монитори
 #### Zabbix Agent 2
 
 * **Принцип:** Новая версия Zabbix Agent, написанная на Go. Обладает более модульной структурой с плагинами.
-* **Преимущества:** 
-  - Эффективный мониторинг СУБД через специализированные плагины
-  - Кроссплатформенность
-  - Упрощённая разработка плагинов (на Go, а не на C)
-  - Встроенные плагины для PostgreSQL, MySQL, Oracle, Redis
+* **Преимущества:**
+  * Эффективный мониторинг СУБД через специализированные плагины
+  * Кроссплатформенность
+  * Упрощённая разработка плагинов (на Go, а не на C)
+  * Встроенные плагины для PostgreSQL, MySQL, Oracle, Redis
 * **Примеры использования:**
-  - **[Мониторинг PostgreSQL с помощью Zabbix Agent 2](./zabbix_postgresql_monitoring.md)**
-  - **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** (также поддерживает Agent 2)
+  * **[Мониторинг PostgreSQL с помощью Zabbix Agent 2](./zabbix_postgresql_monitoring.md)**
+  * **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** (также поддерживает Agent 2)
 
 #### Zabbix Agent DBMON
 

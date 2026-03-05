@@ -103,6 +103,7 @@ sudo named-checkzone local.lan /etc/bind/zones/db.local.lan
 ```
 
 **Ожидаемый вывод:**
+
 ```
 zone local.lan/IN: loaded serial 2
 OK
@@ -134,6 +135,7 @@ dnsserver.local.lan.  604800  IN  A  192.168.52.149
 ```
 
 **Ключевые флаги:**
+
 - `aa` (Authoritative Answer) — ответ от авторитативного сервера
 - `status: NOERROR` — успешное разрешение
 

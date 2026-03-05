@@ -11,6 +11,7 @@
 **Репозиторий:** `group/ci-components/docker-build`
 
 **Структура:**
+
 ```
 docker-build/
 ├── .gitlab-ci.yml          # spec:inputs + метаданные
@@ -68,6 +69,7 @@ docker-build-job:
 ### Публикация в каталог
 
 **Создание релиза:**
+
 ```bash
 # Создание тега с SemVer
 git tag -a v1.0.0 -m "Initial release of docker-build component"
@@ -77,6 +79,7 @@ git push origin v1.0.0
 ```
 
 **CI для автоматического релиза:**
+
 ```yaml
 # .gitlab-ci.yml компонента (добавление release job)
 release:

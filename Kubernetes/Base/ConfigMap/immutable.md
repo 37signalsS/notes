@@ -40,6 +40,7 @@ kubectl patch configmap app-config -p '{"data":{"LOG_LEVEL":"debug"}}'
 ```
 
 Результат:
+
 ```
 Error from server (BadRequest): error when patching "configmap/app-config": cannot modify fields other than 'metadata' for immutable configmap
 ```
@@ -52,6 +53,7 @@ Error from server (BadRequest): error when patching "configmap/app-config": cann
 2. Создать новую с обновлёнными данными
 
 Или изменить манифест и применить с флагом `--force`:
+
 ```bash
 kubectl apply -f configmap.yaml --force
 ```

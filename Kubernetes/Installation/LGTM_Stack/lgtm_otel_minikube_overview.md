@@ -1,6 +1,7 @@
 # Развертывание стека LGTM и OpenTelemetry на Minikube
 
 > **Навигация по руководству:**
+>
 > - **[Предварительные требования и подготовка окружения](./lgtm_otel_minikube_prerequisites_environment.md)**
 > - **[Развертывание вспомогательных компонентов](./lgtm_otel_minikube_auxiliary_components.md)**
 > - **[Развертывание стека LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)**

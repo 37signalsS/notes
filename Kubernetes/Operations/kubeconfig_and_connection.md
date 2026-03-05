@@ -1,6 +1,7 @@
 # Kubeconfig: Подключение к кластеру Kubernetes
 
 > **Связанные разделы:**
+>
 > * [Управление сертификатами](certificate_management.md) — сертификаты для аутентификации в kubeconfig
 > * [Обновление кластера](upgrading_clusters.md) — генерация нового kubeconfig при обновлении
 

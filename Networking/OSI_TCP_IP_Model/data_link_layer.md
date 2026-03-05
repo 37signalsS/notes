@@ -73,8 +73,8 @@
 
 ### Связанные документы
 
-* **[Физический уровень](./physical_layer.md)** — L1, основа для канального
-* **[Сетевой уровень](./Network_layer/Concepts/network_layer_overview.md)** — L3, использует канальный
-* **[MAC-адреса](../Concepts/mac_address.md)** — адресация L2
-* **[Ethernet](../Protocols/ethernet.md)** — основной протокол L2
-* **[ARP](../Protocols/arp.md)** — связь IP и MAC-адресов
+- **[Физический уровень](./physical_layer.md)** — L1, основа для канального
+- **[Сетевой уровень](./Network_layer/Concepts/network_layer_overview.md)** — L3, использует канальный
+- **[MAC-адреса](../Concepts/mac_address.md)** — адресация L2
+- **[Ethernet](../Protocols/ethernet.md)** — основной протокол L2
+- **[ARP](../Protocols/arp.md)** — связь IP и MAC-адресов

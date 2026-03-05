@@ -28,6 +28,7 @@
 ### 1. Настройка Slave-сервера
 
 **Установка BIND:**
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y bind9 dnsutils
@@ -76,6 +77,7 @@ zone "test.example.com" {
 ```
 
 **Параметры:**
+
 - `allow-transfer` — разрешает трансфер зоны только указанным IP
 - `also-notify` — отправляет NOTIFY-сообщения Slave при изменении зоны
 
@@ -95,6 +97,7 @@ grep "transfer" /var/log/syslog
 ```
 
 **Ожидаемый результат:**
+
 ```
 test.example.com.  604800  IN  SOA  ns1.test.example.com. admin.test.example.com. (
     2  ; Serial (должен совпадать с Master)
@@ -118,6 +121,7 @@ ls -la /var/lib/bind/
 ```
 
 **Возможные причины:**
+
 - `allow-transfer` не настроен на Master
 - Брандмауэр блокирует TCP/53 (AXFR использует TCP)
 - Неправильный путь к файлу зоны

@@ -3,6 +3,7 @@
 Конфигурация для Karma очень проста. Нужно лишь указать адрес Alertmanager.
 
 **`karma-config.yaml`**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap

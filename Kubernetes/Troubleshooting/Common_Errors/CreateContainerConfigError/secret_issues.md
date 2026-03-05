@@ -3,6 +3,7 @@
 ## 1. Отсутствует Secret
 
 **Сообщение:**
+
 ```
 Error: secret "db-credentials" not found
 ```
@@ -10,6 +11,7 @@ Error: secret "db-credentials" not found
 **Причина:** Pod ссылается на Secret, который не существует.
 
 **Решение:**
+
 ```bash
 # Создание Secret
 kubectl create secret generic db-credentials \
@@ -25,6 +27,7 @@ kubectl create secret generic tls-secret \
 ```
 
 **Пример манифеста:**
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -38,6 +41,7 @@ data:
 ```
 
 **Использование в Pod:**
+
 ```yaml
 # Как переменные окружения
 env:
@@ -59,6 +63,7 @@ volumes:
 ## 2. Ключ Secret не существует
 
 **Сообщение:**
+
 ```
 secret "db-credentials" not found: key "password" not found
 ```
@@ -66,12 +71,14 @@ secret "db-credentials" not found: key "password" not found
 **Причина:** Secret существует, но указанный ключ отсутствует.
 
 **Диагностика:**
+
 ```bash
 # Проверка ключей Secret
 kubectl get secret db-credentials -o jsonpath='{.data}'
 ```
 
 **Решение:**
+
 ```bash
 # Добавление ключа в Secret
 kubectl patch secret db-credentials \

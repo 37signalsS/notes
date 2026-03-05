@@ -5,6 +5,7 @@
 Файл содержит общие вопросы настройки файрволов, не специфичные для конкретного инструмента (iptables/nftables/firewalld).
 
 См. также:
+
 - **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
 - **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
 - **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
@@ -24,12 +25,14 @@
 | **Современные (nftables)** | `nft` | `sudo nft list ruleset > /etc/nftables.conf` |
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt-get update && sudo apt-get install -y iptables-persistent
 sudo netfilter-persistent save
 ```
 
 **RHEL/CentOS:**
+
 ```bash
 sudo yum install -y iptables-services
 sudo systemctl enable --now iptables

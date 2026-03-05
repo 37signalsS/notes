@@ -38,6 +38,7 @@ secretGenerator:
 ```
 
 **Применение:**
+
 ```bash
 kubectl apply -k .
 ```

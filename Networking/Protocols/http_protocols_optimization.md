@@ -64,12 +64,14 @@
 ## 4. Дополнительная информация
 
 ### Связанные документы
-- **[HTTP](./http.md)** — базовый протокол, версии
-- **[TLS](./tls.md)** — шифрование и handshake
-- **[QUIC](./http.md#http3-2022)** — транспорт для HTTP/3
-- **[Nginx оптимизация](../../WebServers/Nginx/Performance/nginx_http_versions.md)** — конфигурация HTTP/2 и HTTP/3
+
+* **[HTTP](./http.md)** — базовый протокол, версии
+* **[TLS](./tls.md)** — шифрование и handshake
+* **[QUIC](./http.md#http3-2022)** — транспорт для HTTP/3
+* **[Nginx оптимизация](../../WebServers/Nginx/Performance/nginx_http_versions.md)** — конфигурация HTTP/2 и HTTP/3
 
 ### RFC
-- **RFC 7540** — HTTP/2
-- **RFC 9000** — QUIC
-- **RFC 9114** — HTTP/3
+
+* **RFC 7540** — HTTP/2
+* **RFC 9000** — QUIC
+* **RFC 9114** — HTTP/3

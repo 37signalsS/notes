@@ -21,6 +21,7 @@
 ## Пример для StatefulSet
 
 **templates/configmap.yaml:**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -32,6 +33,7 @@ data:
 ```
 
 **templates/statefulset.yaml:**
+
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
@@ -49,6 +51,7 @@ spec:
 ```
 
 **Разбор аннотации:**
+
 - `print .Template.BasePath "/configmap.yaml"` — конструирует путь к файлу
 - `include ... .` — вставляет отрендеренное содержимое файла
 - `| sha256sum` — вычисляет SHA256-хеш
@@ -67,4 +70,4 @@ spec:
 
 - [Функции](../functions.md) — sha256sum, include, toYaml
 - [Условная логика](./conditionals.md) — условное создание ресурсов
-- [ helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница

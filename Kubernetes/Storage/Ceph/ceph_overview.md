@@ -26,6 +26,7 @@ Ceph хранит данные как объекты, но предоставл�
 | **RGW** (RADOS Gateway) | Объектное | REST API (S3/Swift) | Архивы, бэкапы, статический контент |
 
 Подробные руководства:
+
 - [Работа с RBD](ceph_rbd_usage.md)
 - [Настройка CephFS](cephfs_setup_and_usage.md)
 

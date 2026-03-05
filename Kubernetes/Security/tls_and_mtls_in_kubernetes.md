@@ -156,14 +156,14 @@ openssl verify -CAfile ca.crt kubelet.crt
 
 ## Дополнительная информация
 
-- В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
-- Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
-- Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
-- Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca/single_tier/overview.md)**.
+* В реальном кластере Kubernetes существуют и другие CA. Например, `etcd` и `front-proxy` часто имеют свои собственные центры сертификации для изоляции доменов доверия.
+* Ручное управление сертификатами — сложный и трудоемкий процесс. В современных кластерах для автоматизации выпуска и ротации сертификатов используется **[cert-manager](../ToolsUtilities/cert_manager.md)**.
+* Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
+* Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca/single_tier/overview.md)**.
 
 ### Связанные темы
 
-- **[PKI Overview](../../Security/Concepts/pki_overview.md)** — инфраструктура открытых ключей
-- **[cert-manager](../ToolsUtilities/cert_manager.md)** — автоматизация сертификатов в Kubernetes
-- **[Authentication](./authentication.md)** — аутентификация в Kubernetes
-- **[Sealed Secrets](./sealed_secrets_overview.md)** — хранение сертификатов и ключей
+* **[PKI Overview](../../Security/Concepts/pki_overview.md)** — инфраструктура открытых ключей
+* **[cert-manager](../ToolsUtilities/cert_manager.md)** — автоматизация сертификатов в Kubernetes
+* **[Authentication](./authentication.md)** — аутентификация в Kubernetes
+* **[Sealed Secrets](./sealed_secrets_overview.md)** — хранение сертификатов и ключей

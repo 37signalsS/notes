@@ -46,6 +46,7 @@ smbclient -L //localhost -U%
 Samba использует собственную базу паролей (`/var/lib/samba/private/smbpasswd`).
 
 **Управление через `smbpasswd`:**
+
 ```bash
 smbpasswd -a [user]  # Добавление пользователя
 smbpasswd -x [user]  # Удаление
@@ -54,6 +55,7 @@ smbpasswd -d [user]  # Деактивация
 ```
 
 **Управление через `pdbedit`:**
+
 ```bash
 pdbedit -a -u smbuser  # Добавление
 pdbedit -L             # Список пользователей

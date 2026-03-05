@@ -28,13 +28,13 @@
 sudo chage -l username
 
 # Пример вывода:
-# Last password change					: Jan 01, 2026
-# Password expires					: Apr 01, 2026
-# Password inactive					: (never)
-# Account expires						: (never)
-# Minimum number of days between password change	: 0
-# Maximum number of days between password change	: 90
-# Number of days of warning before password expires	: 7
+# Last password change     : Jan 01, 2026
+# Password expires     : Apr 01, 2026
+# Password inactive     : (never)
+# Account expires      : (never)
+# Minimum number of days between password change : 0
+# Maximum number of days between password change : 90
+# Number of days of warning before password expires : 7
 ```
 
 ### Установка политик

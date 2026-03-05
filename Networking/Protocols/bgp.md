@@ -47,11 +47,13 @@ BGP использует атрибуты для выбора наилучшег
   - `NotFound` — ROA отсутствует (принимать с осторожностью)
 
 **Актуальность (2025):**
+
 - Более **50%** IPv4 и IPv6 маршрутов покрыты RPKI ROA
 - Крупные провайдеры (Cloudflare, Google, Akamai) отклоняют `Invalid` маршруты
 - Рекомендуется включать RPKI validation на всех BGP-роутерах
 
 **Пример настройки RPKI в FRRouting:**
+
 ```bash
 router bgp 65001
   bgp rpki server tcp rpki.example.com 323
@@ -65,12 +67,14 @@ router bgp 65001
 ### Платформы для BGP
 
 #### Аппаратные решения
+
 - **Cisco (IOS-XE, IOS-XR, NX-OS)** — enterprise и carrier-grade
 - **Juniper (Junos OS)** — дата-центры и ISP
 - **Arista (EOS)** — high-performance DC
 - **Huawei (VRP)** — Азия и enterprise
 
 #### Программные решения (Soft-router)
+
 - **FRRouting (FRR)** — полноценный routing suite (BGP, OSPF, IS-IS)
 - **BIRD** — легковесный, популярен на IXP
 - **GoBGP** — Go-implementation с API
@@ -82,6 +86,7 @@ router bgp 65001
 **Задача:** Обеспечить отказоустойчивость при подключении к двум провайдерам.
 
 **Конфигурация:**
+
 ```
                     AS 64500 (Your Network)
                    /                       \
@@ -91,6 +96,7 @@ router bgp 65001
 ```
 
 **Рекомендации:**
+
 1. Получите собственный ASN и префикс у LIR/RIR
 2. Настройте BGP с обоими провайдерами
 3. Используйте Local Preference для выбора основного провайдера
@@ -102,6 +108,7 @@ router bgp 65001
 **Использование:** BGP для underlay сети в Clos/fat-tree топологиях.
 
 **Преимущества:**
+
 - ECMP (Equal-Cost Multi-Path) для балансировки
 - Быстрая конвергенция с BFD
 - Масштабируемость для больших DC
@@ -111,14 +118,17 @@ router bgp 65001
 ## Дополнительная информация
 
 ### Порты и протоколы
+
 - **Порт:** 179/TCP
 - **Протокол:** TCP (гарантирует надежную доставку обновлений)
 
 ### Связанные документы
+
 - [Сетевой уровень](../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md) — основы маршрутизации
 - [RPKI Deployment](https://rpki.readthedocs.io/) — документация по развёртыванию
 
 ### RFC
+
 - **RFC 4271** — спецификация BGP-4
 - **RFC 6811** — BGP Prefix Origin Validation (ROV)
 - **RFC 8416** — RPKI-Router Protocol

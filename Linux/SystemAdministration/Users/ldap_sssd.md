@@ -230,10 +230,12 @@ sss_cache -u username  # Показать пользователя
 
 1. **Всегда используйте LDAPS (порт 636)** — никогда не передавайте учётные данные в открытом виде
 2. **Ограничьте доступ к sssd.conf** — файл содержит пароли:
+
    ```bash
    chmod 600 /etc/sssd/sssd.conf
    chown root:root /etc/sssd/sssd.conf
    ```
+
 3. **Используйте SASL/GSSAPI** для аутентификации вместо простых паролей
 4. **Настройте firewall** — разрешите только порт 636 (LDAPS)
 5. **Регулярно обновляйте CA-сертификаты**
@@ -241,17 +243,22 @@ sss_cache -u username  # Показать пользователя
 ### Производительность
 
 1. **Настройте кэширование** — уменьшите нагрузку на LDAP:
+
    ```ini
    entry_cache_timeout = 60
    entry_cache_user_timeout = 30
    entry_cache_group_timeout = 30
    ```
+
 2. **Используйте поддомены** — для крупных инфраструктур:
+
    ```ini
    [sssd]
    domains = example.com, sub.example.com
    ```
+
 3. **Фильтруйте пользователей** — не кэшируйте системные учётные записи:
+
    ```ini
    [nss]
    filter_users = root,daemon,bin

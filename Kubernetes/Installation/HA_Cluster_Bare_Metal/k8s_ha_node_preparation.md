@@ -17,6 +17,7 @@
 ### Почему требуется подготовка?
 
 Kubernetes предъявляет специфические требования к ОС:
+
 - **Отключенный SWAP** — `kubelet` не работает с SWAP
 - **cgroups v2** — требуется для управления ресурсами подов
 - **Сетевые модули** — `br_netfilter`, `overlay` для работы CNI
@@ -25,6 +26,7 @@ Kubernetes предъявляет специфические требовани�
 ### Область применения
 
 Эти шаги выполняются **на каждом узле** кластера:
+
 - Control Plane узлы (мастеры)
 - Worker узлы
 
@@ -154,6 +156,7 @@ sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-
 ```
 
 **Описание параметров**:
+
 - `net.ipv4.ip_forward = 1` — включение маршрутизации между подами
 - `bridge-nf-call-iptables = 1` — передача трафика bridge через iptables (требуется для NetworkPolicy)
 - `nf_conntrack_max` — максимальное количество отслеживаемых соединений
@@ -201,6 +204,7 @@ fi
 ### Следующие шаги
 
 После подготовки всех узлов:
+
 1. Установка `containerd` → [Component Installation](./k8s_ha_component_installation.md)
 2. Установка `kubeadm`, `kubelet`, `kubectl`
 3. Перезагрузка всех узлов

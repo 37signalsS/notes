@@ -8,12 +8,15 @@
 
 ## 1. Установка
 
--   **Debian/Ubuntu:**
+- **Debian/Ubuntu:**
+
     ```bash
     sudo apt update
     sudo apt install isc-dhcp-server
     ```
--   **RHEL/Rocky Linux/AlmaLinux:**
+
+- **RHEL/Rocky Linux/AlmaLinux:**
+
     ```bash
     sudo dnf install dhcp-server
     ```
@@ -22,11 +25,14 @@
 
 Укажите, на каких сетевых интерфейсах DHCP-сервер должен принимать запросы.
 
--   **Debian/Ubuntu (`/etc/default/isc-dhcp-server`):**
+- **Debian/Ubuntu (`/etc/default/isc-dhcp-server`):**
+
     ```ini
     INTERFACESv4="eth0"
     ```
--   **RHEL/CentOS (`/etc/sysconfig/dhcpd`):**
+
+- **RHEL/CentOS (`/etc/sysconfig/dhcpd`):**
+
     ```ini
     DHCPDARGS="eth0"
     ```

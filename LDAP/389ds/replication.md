@@ -63,6 +63,7 @@ docker exec 389ds dsconf backend create \
 ```
 
 Проверка:
+
 ```bash
 docker exec 389ds dsconf backend suffix list
 ```
@@ -138,6 +139,7 @@ docker exec 389ds dsconf replication status \
 ```
 
 **Ключевые параметры:**
+
 * `Replication Enabled` — репликация включена
 * `Last Update` — время последней синхронизации
 * `Replica Status` — статус (online/offline, ошибки)

@@ -75,6 +75,7 @@ cache:
 ```
 
 **Настройка в UI GitLab:**
+
 1. Settings → CI/CD
 2. General pipelines
 3. Снимите галочку **Use separate caches for protected branches**

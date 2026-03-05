@@ -107,7 +107,7 @@ Security Context является базовым инструментом для
 
 ### Связанные темы
 
-- **[Kyverno](./kyverno.md)** — применение securityContext через политики
-- **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — профили системных вызовов
-- **[Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — Linux capabilities
-- **[RBAC](./rbac/rbac_overview.md)** — управление доступом
+* **[Kyverno](./kyverno.md)** — применение securityContext через политики
+* **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — профили системных вызовов
+* **[Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — Linux capabilities
+* **[RBAC](./rbac/rbac_overview.md)** — управление доступом

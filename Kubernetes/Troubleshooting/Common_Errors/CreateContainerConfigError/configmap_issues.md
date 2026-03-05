@@ -3,6 +3,7 @@
 ## 1. Отсутствует ConfigMap
 
 **Сообщение:**
+
 ```
 Error: configmap "app-config" not found
 ```
@@ -10,6 +11,7 @@ Error: configmap "app-config" not found
 **Причина:** Pod ссылается на ConfigMap, который не существует в данном namespace.
 
 **Решение:**
+
 ```bash
 # Создание недостающего ConfigMap
 kubectl create configmap app-config \
@@ -24,6 +26,7 @@ kubectl create configmap app-config \
 ```
 
 **Пример манифеста:**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -41,6 +44,7 @@ data:
 ```
 
 **Использование в Pod:**
+
 ```yaml
 # Как переменные окружения
 envFrom:
@@ -67,6 +71,7 @@ volumes:
 ## 2. Ключ ConfigMap не существует
 
 **Сообщение:**
+
 ```
 configmaps "app-config" not found: key "DATABASE_PASSWORD" not found
 ```
@@ -74,12 +79,14 @@ configmaps "app-config" not found: key "DATABASE_PASSWORD" not found
 **Причина:** ConfigMap существует, но указанный ключ отсутствует.
 
 **Диагностика:**
+
 ```bash
 # Проверка ключей ConfigMap
 kubectl get configmap app-config -o jsonpath='{.data}'
 ```
 
 **Решение:**
+
 ```bash
 # Добавление ключа в ConfigMap
 kubectl patch configmap app-config \

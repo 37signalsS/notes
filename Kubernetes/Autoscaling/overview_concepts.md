@@ -24,31 +24,37 @@
 ### Краткое описание компонентов
 
 #### Horizontal Pod Autoscaler (HPA)
+
 Автоматически увеличивает или уменьшает количество реплик подов на основе метрик (CPU, memory, custom, external). Работает с Deployment, ReplicaSet, StatefulSet.
 
 **Подробнее:** [HPA Detailed](hpa_detailed.md)
 
 #### Vertical Pod Autoscaler (VPA)
+
 Автоматически настраивает `requests` и `limits` CPU/memory для контейнеров. Работает в режимах рекомендаций (`Off`) или автоматического применения (`Initial`, `Recreate`, `Auto`).
 
 **Подробнее:** [VPA Detailed](vpa_detailed.md)
 
 #### Cluster Autoscaler (CA)
+
 Автоматически добавляет или удаляет узлы кластера при нехватке ресурсов или избытке. Работает с Node Groups в облачных средах.
 
 **Подробнее:** [Cluster Autoscaler Detailed](cluster_autoscaler_detailed.md)
 
 #### Karpenter
+
 Высокопроизводительная альтернатива CA. Создаёт узлы оптимального размера «точно в срок» под требования ожидающих подов. Быстрее и эффективнее CA.
 
 **Подробнее:** [Karpenter Detailed](karpenter_detailed.md)
 
 #### KEDA (Kubernetes Event-driven Autoscaling)
+
 Расширяет возможности HPA, позволяя масштабировать поды на основе событий из 60+ источников (очереди, метрики, расписание). Поддерживает масштабирование до нуля.
 
 **Подробнее:** [KEDA Detailed](keda_detailed.md)
 
 #### In-Place Pod Resize
+
 Функция Kubernetes 1.35+, позволяющая изменять ресурсы запущенных подов без пересоздания. Интегрируется с VPA для автоматического применения рекомендаций.
 
 **Подробнее:** [In-Place Pod Resize Detailed](in_place_pod_resize.md)

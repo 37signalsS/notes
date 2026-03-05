@@ -19,6 +19,7 @@
 `containerd` заменяет Docker в качестве среды выполнения для Kubernetes (начиная с версии 1.24, когда был удалён `dockershim`).
 
 **Преимущества containerd**:
+
 - Легковесный — только необходимый функционал для CRI
 - Проект CNCF — независим от Docker
 - Стабильный API — меньше breaking changes
@@ -82,6 +83,7 @@ sudo grep -E "SystemdCgroup|sandbox_image" /etc/containerd/config.toml
 ```
 
 **Почему SystemdCgroup = true**:
+
 - Kubernetes использует systemd для управления ресурсами
 - Без этой настройки `kubelet` не сможет корректно управлять подами
 - Требуется для cgroups v2

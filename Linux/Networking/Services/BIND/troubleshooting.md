@@ -45,12 +45,14 @@ sudo named-checkzone example.com /etc/bind/zones/db.example.com
 ```
 
 **Ожидаемый вывод:**
+
 ```
 zone example.com/IN: loaded serial 5
 OK
 ```
 
 **Возможные ошибки:**
+
 ```
 zone example.com/IN: loading master file: permission denied
 → Проверить права: chown bind:bind /etc/bind/zones/*
@@ -85,12 +87,14 @@ ss -ulnp | grep :53
 ```
 
 **Ожидаемый результат:**
+
 ```
 UDP:  *.53   users:(("named",pid=1234,fd=100))
 TCP:  *.53   users:(("named",pid=1234,fd=101))
 ```
 
 **Если порты не открыты:**
+
 - Проверить `listen-on` в `named.conf.options`
 - Проверить брандмауэр: `ufw status` или `firewall-cmd --list-all`
 
@@ -126,6 +130,7 @@ example.com.    604800    IN    A    192.168.1.10
 ```
 
 **Флаги:**
+
 - `qr` (Query Response) — это ответ
 - `aa` (Authoritative Answer) — авторитетный ответ
 - `rd` (Recursion Desired) — запрошена рекурсия
@@ -146,6 +151,7 @@ dig @slave example.com SOA
 ```
 
 **Проблемы:**
+
 - `transfer failed` — проверить `allow-transfer` на Master
 - `connection refused` — брандмауэр блокирует TCP/53
 - `serial mismatch` — Slave не обновился, проверить логи

@@ -66,6 +66,7 @@ sudo mdadm --create --verbose /dev/md0 --level=1 --raid-devices=2 /dev/sdb /dev/
 ```
 
 > **Метаданные и загрузка:** По умолчанию используется версия метаданных 1.2, которая не всегда поддерживается GRUB для `/boot`. Для загрузочного раздела укажите `--metadata=1.0`:
+>
 > ```bash
 > sudo mdadm --create /dev/md0 --level=1 --metadata=1.0 --raid-devices=2 /dev/sdb1 /dev/sdc1
 > ```

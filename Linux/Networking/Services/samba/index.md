@@ -26,11 +26,13 @@
 ### Быстрый старт
 
 **Установка (Debian/Ubuntu):**
+
 ```bash
 sudo apt-get install -y samba
 ```
 
 **Минимальная конфигурация (`/etc/samba/smb.conf`):**
+
 ```ini
 [global]
    workgroup = WORKGROUP
@@ -44,6 +46,7 @@ sudo apt-get install -y samba
 ```
 
 **Запуск:**
+
 ```bash
 sudo systemctl enable --now smb nmb
 ```

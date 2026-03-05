@@ -7,15 +7,16 @@
 ## Схема работы
 
 Алгоритм развертывания следующий:
-1.  Разработчик отправляет код в GitLab-репозиторий.
-2.  GitLab обнаруживает файл `.gitlab-ci.yml` и запускает пайплайн.
-3.  **Этап `build`**:
-    *   Запускается задача сборки Docker-образа с помощью [Kaniko](https://docs.gitlab.com/ee/ci/docker/using_kaniko.html), что позволяет избежать использования Docker-in-Docker.
-    *   Собранный образ помещается в [GitLab Container Registry](../../../Docker/docker_registries.md).
-4.  **Этап `deploy`**:
-    *   Задача запускается **вручную** для контроля над развертыванием в production-окружении.
-    *   GitLab Runner подключается к удаленному серверу по SSH.
-    *   С помощью `docker compose` скачивается новый образ из GitLab Registry и перезапускается контейнер с приложением.
+
+1. Разработчик отправляет код в GitLab-репозиторий.
+2. GitLab обнаруживает файл `.gitlab-ci.yml` и запускает пайплайн.
+3. **Этап `build`**:
+    * Запускается задача сборки Docker-образа с помощью [Kaniko](https://docs.gitlab.com/ee/ci/docker/using_kaniko.html), что позволяет избежать использования Docker-in-Docker.
+    * Собранный образ помещается в [GitLab Container Registry](../../../Docker/docker_registries.md).
+4. **Этап `deploy`**:
+    * Задача запускается **вручную** для контроля над развертыванием в production-окружении.
+    * GitLab Runner подключается к удаленному серверу по SSH.
+    * С помощью `docker compose` скачивается новый образ из GitLab Registry и перезапускается контейнер с приложением.
 
 ---
 
@@ -44,7 +45,8 @@ docker run -d --name gitlab-runner --restart always
   -v /var/run/docker.sock:/var/run/docker.sock 
   gitlab/gitlab-runner:alpine
 ```
-*   `-v /var/run/docker.sock:/var/run/docker.sock`: Пробрасываем сокет Docker внутрь контейнера, чтобы Runner мог управлять Docker-демоном на хост-машине.
+
+* `-v /var/run/docker.sock:/var/run/docker.sock`: Пробрасываем сокет Docker внутрь контейнера, чтобы Runner мог управлять Docker-демоном на хост-машине.
 
 ### Шаг 3: Регистрация Runner в проекте
 
@@ -64,13 +66,15 @@ docker run --rm -it -v /srv/gitlab-runner/config:/etc/gitlab-runner gitlab/gitla
   --docker-privileged 
   --docker-volumes "/certs/client"
 ```
+
 После выполнения в UI GitLab появится новый "Project runner".
 
 ### Шаг 4: Аутентификация Docker на сервере
 
 Чтобы сервер мог скачивать образы из приватного GitLab Container Registry, необходимо выполнить вход.
-1.  Создайте Personal Access Token: `User Profile > Access Tokens`. Дайте ему права `read_registry` и `write_registry`.
-2.  На сервере выполните команду:
+
+1. Создайте Personal Access Token: `User Profile > Access Tokens`. Дайте ему права `read_registry` и `write_registry`.
+2. На сервере выполните команду:
 
 ```bash
 # registry.gitlab.com - для облачной версии GitLab
@@ -96,18 +100,19 @@ cat ~/.ssh/id_rsa
 
 Перейдите в `Settings > CI/CD > Variables` и добавьте переменные:
 
-*   **`SSH_PRIVATE_KEY`**:
-    *   **Type**: `File`
-    *   **Value**: Вставьте содержимое приватного ключа (`id_rsa`), скопированное на предыдущем шаге.
-*   **`SERVER_USER`**:
-    *   **Type**: `Variable`
-    *   **Value**: Имя пользователя для SSH-подключения (например, `root` или другой).
-*   **`SERVER_HOST`**:
-    *   **Type**: `Variable`
-    *   **Value**: IP-адрес вашего сервера.
-*   **`ENV_FILE`**:
-    *   **Type**: `File`
-    *   **Value**: Содержимое файла с переменными окружения для `docker-compose`. Например:
+* **`SSH_PRIVATE_KEY`**:
+  * **Type**: `File`
+  * **Value**: Вставьте содержимое приватного ключа (`id_rsa`), скопированное на предыдущем шаге.
+* **`SERVER_USER`**:
+  * **Type**: `Variable`
+  * **Value**: Имя пользователя для SSH-подключения (например, `root` или другой).
+* **`SERVER_HOST`**:
+  * **Type**: `Variable`
+  * **Value**: IP-адрес вашего сервера.
+* **`ENV_FILE`**:
+  * **Type**: `File`
+  * **Value**: Содержимое файла с переменными окружения для `docker-compose`. Например:
+
         ```
         TEST_SERVICE_PORT=8080
         OPEN_API_TITLE=My Spring App
@@ -201,9 +206,10 @@ deploy:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
     - eval $(ssh-agent -s)
-    - echo "${SSH_PRIVATE_KEY}" | tr -d '' | ssh-add -
+    - echo "${SSH_PRIVATE_KEY}" | tr -d '
+' | ssh-add -
     - '[[ -f /.dockerenv || -d /run/secrets/kubernetes.io/serviceaccount ]] && echo -e "Host *
-	StrictHostKeyChecking no
+ StrictHostKeyChecking no
 
 " > ~/.ssh/config'
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
@@ -221,12 +227,12 @@ deploy:
 
 ## 3. Анализ `.gitlab-ci.yml`
 
-*   **`stages`**: Определены два этапа: `build` и `deploy`.
-*   **`build-only-MR`**: Собирает Docker-образ для Merge Request'ов, но не публикует его (`--no-push`). Это позволяет проверить, что проект успешно собирается, не загрязняя Registry.
-*   **`build`**: Собирает образ при коммите в `main` и публикует его в GitLab Container Registry с тегом `latest`.
-*   **`deploy`**:
-    *   Выполняется вручную (`when: manual`) для контроля релиза.
-    *   Использует стандартный образ `docker:20.10-git`.
-    *   В `before_script` настраивается SSH-соединение с удаленным сервером с использованием переменных `SSH_PRIVATE_KEY`, `SERVER_USER`, `SERVER_HOST`.
-    *   `DOCKER_HOST` перенаправляет команды локального Docker CLI на Docker-демон удаленного сервера.
-    *   В `script` происходит обновление и перезапуск сервисов через `docker compose`.
+* **`stages`**: Определены два этапа: `build` и `deploy`.
+* **`build-only-MR`**: Собирает Docker-образ для Merge Request'ов, но не публикует его (`--no-push`). Это позволяет проверить, что проект успешно собирается, не загрязняя Registry.
+* **`build`**: Собирает образ при коммите в `main` и публикует его в GitLab Container Registry с тегом `latest`.
+* **`deploy`**:
+  * Выполняется вручную (`when: manual`) для контроля релиза.
+  * Использует стандартный образ `docker:20.10-git`.
+  * В `before_script` настраивается SSH-соединение с удаленным сервером с использованием переменных `SSH_PRIVATE_KEY`, `SERVER_USER`, `SERVER_HOST`.
+  * `DOCKER_HOST` перенаправляет команды локального Docker CLI на Docker-демон удаленного сервера.
+  * В `script` происходит обновление и перезапуск сервисов через `docker compose`.

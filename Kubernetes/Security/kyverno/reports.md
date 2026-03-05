@@ -5,6 +5,7 @@
 **Policy Report** — стандартизированный формат отчетов о применении политик, разработанный **Policy Report Working Group** (WG Policy K8s).
 
 **Типы отчетов**:
+
 - **PolicyReport** — namespace-scoped ресурс, создается для политик типа `Policy`
 - **ClusterPolicyReport** — cluster-scoped ресурс, создается для политик типа `ClusterPolicy`
 

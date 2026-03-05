@@ -25,6 +25,7 @@
 | **Производительность** | ~5–10 мс задержка, 100–300 МБ RAM на под. | ~1–3 мс задержка, 40–60% меньше CPU/RAM. |
 
 **Альтернативы:**
+
 - **Ztunnel (Istio Ambient):** Легковесный прокси на Rust для L4-функциональности (mTLS, L4-политики). Работает на уровне ноды (DaemonSet).
 - **Cilium Proxy (eBPF):** Прозрачный прокси на основе eBPF, альтернатива классическим sidecar.
 
@@ -47,6 +48,7 @@ kubectl label namespace my-app istio-injection=enabled
 ```
 
 **Проверка:**
+
 ```bash
 # Проверка статуса инъекции
 kubectl get namespace my-app --show-labels
@@ -75,6 +77,7 @@ spec:
 ```
 
 **Проверка:**
+
 ```bash
 # Проверка инъекции
 linkerd check -n my-app
@@ -107,6 +110,7 @@ istioctl proxy-config status deploy/my-app -n my-app
 ```
 
 **Полезные команды `istioctl`:**
+
 ```bash
 # Анализ конфигурации на ошибки
 istioctl analyze -n my-app
@@ -137,6 +141,7 @@ linkerd viz graph deploy -n my-app
 ```
 
 **Полезные команды `linkerd`:**
+
 ```bash
 # Детальная статистика с разбивкой по операциям
 linkerd stat routes deploy/my-app -n my-app
@@ -214,11 +219,11 @@ istioctl x describe pod my-app-pod -n default
 
 ### Best Practices
 
-1.  **Ресурсы:** Всегда устанавливайте `requests` и `limits` для sidecar-контейнеров.
-2.  **Логирование:** Используйте выборочное логирование (access log) для отладки, отключайте в production.
-3.  **Мониторинг:** Настройте алерты на аномалии в метриках sidecar (ошибки, задержки).
-4.  **Безопасность:** Ограничьте доступ к админ-интерфейсу Envoy (`15000`).
-5.  **Ambient:** Рассмотрите Ambient для массовых развертываний с низким оверхедом.
+1. **Ресурсы:** Всегда устанавливайте `requests` и `limits` для sidecar-контейнеров.
+2. **Логирование:** Используйте выборочное логирование (access log) для отладки, отключайте в production.
+3. **Мониторинг:** Настройте алерты на аномалии в метриках sidecar (ошибки, задержки).
+4. **Безопасность:** Ограничьте доступ к админ-интерфейсу Envoy (`15000`).
+5. **Ambient:** Рассмотрите Ambient для массовых развертываний с низким оверхедом.
 
 ### Актуальность
 
@@ -228,6 +233,7 @@ istioctl x describe pod my-app-pod -n default
 - **eBPF:** Растущая конкуренция (Cilium), но sidecar остается доминирующим паттерном.
 
 **Источники:**
+
 - [Envoy Proxy Documentation](https://www.envoyproxy.io/docs)
 - [Linkerd Proxy Architecture](https://linkerd.io/docs/reference/architecture/)
 - [Istio Ambient Documentation](https://istio.io/latest/docs/ambient/)

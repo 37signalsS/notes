@@ -7,6 +7,7 @@
 **SIT (Simple Internet Transition)** — протокол, инкапсулирующий пакеты IPv6 в пакеты IPv4 для транзита IPv6-трафика через IPv4-сети.
 
 **Общие характеристики:**
+
 | Параметр | IPIP | SIT |
 |----------|------|-----|
 | **Протокол** | IP (номер `4`) | IP (номер `41`) |
@@ -21,11 +22,13 @@
 ### Принцип работы
 
 **IPIP:**
+
 ```
 [IPv4-пакет] → [Внешний IPv4-заголовок] → Передача → Декапсуляция
 ```
 
 **SIT (6in4):**
+
 ```
 [IPv6-пакет] → [Внешний IPv4-заголовок] → Передача → Декапсуляция
 ```
@@ -74,6 +77,7 @@ ip route add 10.0.2.0/24 dev ipip1
 ```
 
 **Параметры:**
+
 - `mode ipip` — тип туннеля
 - `remote` / `local` — внешние IP-адреса точек
 - `10.0.0.0/30` — адресация туннеля
@@ -96,6 +100,7 @@ ip address add fc00::2/64 dev sit1
 ```
 
 **Адресация:**
+
 - `fc00::/64` — [Unique Local Address (ULA)](../Protocols/ip.md) для IPv6
 - `2001:db8::/32` — документационный префикс IPv6
 
@@ -123,11 +128,13 @@ tcpdump proto 41 -n   # SIT
 ### Недостатки
 
 **Общие:**
+
 - **Нет шифрования:** Трафик передаётся открыто — требуется IPsec для безопасности
 - **Point-to-Point:** Только две конечные точки на туннель
 - **Один протокол:** IPIP — только IPv4, SIT — только IPv6
 
 **SIT специфичные:**
+
 - **6to4 устарел:** Автоматические 6to4-туннели не рекомендуются из-за проблем с надёжностью
 - **NAT traversal:** Проблемы при прохождении через NAT
 
@@ -150,6 +157,7 @@ tcpdump proto 41 -n   # SIT
 | 1500 | 1480 |
 
 **Настройка:**
+
 ```bash
 ip link set <tun_if> mtu 1480
 ```
@@ -158,4 +166,4 @@ ip link set <tun_if> mtu 1480
 
 - [RFC 2003 — IP Encapsulation within IP](https://datatracker.ietf.org/doc/html/rfc2003)
 - [RFC 4213 — Basic Transition Mechanisms for IPv6](https://datatracker.ietf.org/doc/html/rfc4213)
-- [Linux IP Tunneling HOWTO](https://tldp.org/HOWTO/IP- Tunneling-HOWTO/)
+- [Linux IP Tunneling HOWTO](<https://tldp.org/HOWTO/IP-> Tunneling-HOWTO/)

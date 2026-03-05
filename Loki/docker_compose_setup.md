@@ -210,6 +210,7 @@ scrape_configs:
 ### 3. Запуск и проверка
 
 1. Создайте структуру директорий:
+
    ```bash
    mkdir -p monitoring/grafana/provisioning/datasources
    mkdir -p monitoring/promtail
@@ -221,12 +222,14 @@ scrape_configs:
    - `monitoring/promtail/config.yml`
 
 3. Запустите стек:
+
    ```bash
    cd monitoring
    docker-compose up -d
    ```
 
 4. Проверьте статус контейнеров:
+
    ```bash
    docker-compose ps
    # или
@@ -234,6 +237,7 @@ scrape_configs:
    ```
 
 5. Проверьте логи Loki:
+
    ```bash
    docker-compose logs loki
    ```

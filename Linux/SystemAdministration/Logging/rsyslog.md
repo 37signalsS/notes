@@ -20,6 +20,7 @@
 ### Конфигурация и фильтрация
 
 **Файлы конфигурации:**
+
 - Главный: `/etc/rsyslog.conf`
 - Дополнительные: `/etc/rsyslog.d/*.conf`
 
@@ -32,6 +33,7 @@
 | **Action (действие)** | Куда отправить | `/var/log/file`, `@server:514`, `@@server:514` |
 
 **Специальные facility:**
+
 - `local0` – `local7` — для кастомных приложений
 - `auth`, `authpriv` — аутентификация (SSH, sudo)
 - `kern` — сообщения ядра
@@ -51,6 +53,7 @@ mail.none;*.*           -/var/log/syslog
 ```
 
 **Модификаторы действия:**
+
 - `-` перед путём — асинхронная запись (буферизация)
 - `@` — отправка по UDP
 - `@@` — отправка по TCP
@@ -75,6 +78,7 @@ mail.none;*.*           -/var/log/syslog
 #### Сервер (получатель логов)
 
 1. **Включить прием логов** (`/etc/rsyslog.d/50-remote.conf`):
+
    ```conf
    # Прием по TCP (надежно, с подтверждением)
    module(load="imtcp")
@@ -86,6 +90,7 @@ mail.none;*.*           -/var/log/syslog
    ```
 
 2. **Создать шаблон для разделения по хостам:**
+
    ```conf
    # Шаблон: /var/log/remote/HOSTNAME/PROGRAM.log
    template(name="RemoteHostLog" type="string"
@@ -96,6 +101,7 @@ mail.none;*.*           -/var/log/syslog
    ```
 
 3. **Перезапустить и открыть порт:**
+
    ```bash
    sudo systemctl restart rsyslog
    sudo firewall-cmd --add-port=514/tcp --permanent && sudo firewall-cmd --reload
@@ -104,6 +110,7 @@ mail.none;*.*           -/var/log/syslog
 #### Клиент (отправитель логов)
 
 `/etc/rsyslog.d/99-forward.conf`:
+
 ```conf
 # Отправка по TCP (надежно)
 *.* @@remote-log-server:514
@@ -116,6 +123,7 @@ mail.none;*.*           -/var/log/syslog
 ```
 
 Перезапуск:
+
 ```bash
 sudo systemctl restart rsyslog
 ```
@@ -125,6 +133,7 @@ sudo systemctl restart rsyslog
 **Модуль `imjournal`:** позволяет `rsyslog` забирать сообщения из `journald`.
 
 1. **Загрузить модуль** (`/etc/rsyslog.conf`):
+
    ```conf
    module(load="imjournal")
    # Опционально: игнорировать уже прочитанные сообщения
@@ -132,6 +141,7 @@ sudo systemctl restart rsyslog
    ```
 
 2. **Перезапустить:**
+
    ```bash
    sudo systemctl restart rsyslog
    ```

@@ -196,6 +196,6 @@ callback_whitelist = timer, profile_tasks, profile_roles
 
 ## Дополнительная информация
 
-- [Тестирование ролей с Molecule](ansible_testing_with_molecule.md): Автоматизированное тестирование
-- [Ansible-bender](ansible_buildah_image_building.md): Сборка контейнеров через Ansible
-- [Pull-режим](ansible_pull.md): Альтернативный способ управления
+* [Тестирование ролей с Molecule](ansible_testing_with_molecule.md): Автоматизированное тестирование
+* [Ansible-bender](ansible_buildah_image_building.md): Сборка контейнеров через Ansible
+* [Pull-режим](ansible_pull.md): Альтернативный способ управления

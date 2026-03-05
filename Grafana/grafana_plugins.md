@@ -1,6 +1,7 @@
 # Grafana: Плагины
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Провиженинг](./grafana_provisioning.md)
 > - [Установка через Docker](./Installation/docker_compose_setup.md)

@@ -3,6 +3,7 @@
 ## Сценарий 1: Использование компонента из каталога
 
 **Проект (`.gitlab-ci.yml`):**
+
 ```yaml
 include:
   - component: '$CI_SERVER_FQDN/group/security/secret-detection@1.0.0'
@@ -12,6 +13,7 @@ include:
 ```
 
 **Преимущества:**
+
 - Автоматическая валидация inputs
 - Версионирование через Semver
 - Видимость в UI GitLab Catalog
@@ -67,6 +69,7 @@ build-docker-job:
 ```
 
 **Использование в проекте:**
+
 ```yaml
 include:
   - component: '$CI_SERVER_FQDN/group/ci-components/build-docker@1.0.0'
@@ -137,6 +140,7 @@ build_job:
 | **Major** | `1.0.0` → `2.0.0` | Breaking changes |
 
 **Создание релиза:**
+
 ```bash
 # Создание тега
 git tag -a v1.0.0 -m "Release version 1.0.0"
@@ -146,6 +150,7 @@ git push origin v1.0.0
 ```
 
 **Использование в проекте:**
+
 ```yaml
 include:
   # Конкретная версия (рекомендуется для стабильности)

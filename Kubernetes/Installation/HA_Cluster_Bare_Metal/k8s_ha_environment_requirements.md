@@ -59,6 +59,7 @@
 | **AlmaLinux/Rocky** | Поддерживается | 8, 9 |
 
 **Требования к ОС**:
+
 - Ядро Linux 4.15+ (рекомендуется 5.4+)
 - systemd (cgroups v2 для Kubernetes 1.24+)
 - Контейнерная среда: `containerd` 1.6+ или `CRI-O`

@@ -3,6 +3,7 @@
 ## Проблемы с правами доступа (RBAC)
 
 **Сообщение:**
+
 ```
 user "system:serviceaccount:default:default" cannot get resource "configmaps" in API group "" in the namespace "default"
 ```
@@ -10,6 +11,7 @@ user "system:serviceaccount:default:default" cannot get resource "configmaps" in
 **Причина:** У ServiceAccount пода нет прав на чтение ConfigMap/Secret.
 
 **Диагностика:**
+
 ```bash
 kubectl auth can-i get configmaps \
   --as=system:serviceaccount:default:default \
@@ -17,6 +19,7 @@ kubectl auth can-i get configmaps \
 ```
 
 **Решение:**
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

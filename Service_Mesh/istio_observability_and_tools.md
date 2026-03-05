@@ -50,9 +50,9 @@ Kiali предоставляет наглядную карту (`traffic graph`)
 
 ### Шаг 1: Подготовка (Сертификаты и Gateway)
 
-Предполагается, что в кластере уже установлен `cert-manager` (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/05_ingress.md) или [Gateway API](../../Kubernetes/ToolsUtilities/cert_manager/06_gateway_api.md)).
+Предполагается, что в кластере уже установлен `cert-manager` (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md) или [Gateway API](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api.md)).
 
-1.  **Создание TLS-сертификата:** Для защиты всех веб-интерфейсов (Kiali, Grafana, Prometheus, Dex) создается единый сертификат, который будет обслуживать несколько доменных имен.
+1. **Создание TLS-сертификата:** Для защиты всех веб-интерфейсов (Kiali, Grafana, Prometheus, Dex) создается единый сертификат, который будет обслуживать несколько доменных имен.
 
     ```yaml
     # Фрагмент Certificate для ClusterIssuer
@@ -73,7 +73,7 @@ Kiali предоставляет наглядную карту (`traffic graph`)
         kind: ClusterIssuer
     ```
 
-2.  **Создание выделенного Gateway:** Для инструментов мониторинга создается отдельный `Gateway`, который будет слушать только HTTPS-трафик (порт 443) и использовать созданный сертификат.
+2. **Создание выделенного Gateway:** Для инструментов мониторинга создается отдельный `Gateway`, который будет слушать только HTTPS-трафик (порт 443) и использовать созданный сертификат.
 
     ```yaml
     apiVersion: gateway.networking.k8s.io/v1
@@ -98,7 +98,7 @@ Kiali предоставляет наглядную карту (`traffic graph`)
 
 ### Шаг 2: Установка зависимостей (Prometheus и Grafana)
 
-1.  **Prometheus:** Устанавливается через Helm. Важно убедиться, что его конфигурация скрайпинга (`scrape_configs`) охватывает все необходимые компоненты Istio (istiod, envoy, ztunnel, waypoint). Доступ к веб-интерфейсу Prometheus организуется через `HTTPRoute`.
+1. **Prometheus:** Устанавливается через Helm. Важно убедиться, что его конфигурация скрайпинга (`scrape_configs`) охватывает все необходимые компоненты Istio (istiod, envoy, ztunnel, waypoint). Доступ к веб-интерфейсу Prometheus организуется через `HTTPRoute`.
 
     ```yaml
     # Пример HTTPRoute для Prometheus
@@ -118,16 +118,16 @@ Kiali предоставляет наглядную карту (`traffic graph`)
           port: 80
     ```
 
-2.  **Grafana:** Устанавливается через Helm. Современные чарты Grafana поддерживают создание `HTTPRoute` "из коробки". Также в `values.yaml` можно сразу определить `dataSource` для подключения к Prometheus.
+2. **Grafana:** Устанавливается через Helm. Современные чарты Grafana поддерживают создание `HTTPRoute` "из коробки". Также в `values.yaml` можно сразу определить `dataSource` для подключения к Prometheus.
 
 ### Шаг 3: Установка и настройка Dex
 
 Dex разворачивается как отдельное приложение в кластере.
 
-1.  **Конфигурация Dex (`ConfigMap`):**
-    *   **Storage:** В качестве бэкенда для хранения данных используется сам Kubernetes (CRD).
-    *   **Static Users:** Для тестового сценария пользователи определяются статически прямо в конфигурации. **Внимание:** Пароль хранится в виде bcrypt-хэша.
-    *   **Static Clients:** Определяется клиент `kiali` с его `redirectURIs` и секретом.
+1. **Конфигурация Dex (`ConfigMap`):**
+    * **Storage:** В качестве бэкенда для хранения данных используется сам Kubernetes (CRD).
+    * **Static Users:** Для тестового сценария пользователи определяются статически прямо в конфигурации. **Внимание:** Пароль хранится в виде bcrypt-хэша.
+    * **Static Clients:** Определяется клиент `kiali` с его `redirectURIs` и секретом.
 
     ```yaml
     # Фрагмент ConfigMap для Dex
@@ -158,11 +158,11 @@ Dex разворачивается как отдельное приложени�
           secret: "$CLIENT_SECRET_FROM_K8S_SECRET"
     ```
 
-2.  **Публикация Dex:** Доступ к Dex организуется через `HTTPRoute`, привязанный к ранее созданному `kiali-support-gateway`.
+2. **Публикация Dex:** Доступ к Dex организуется через `HTTPRoute`, привязанный к ранее созданному `kiali-support-gateway`.
 
 ### Шаг 4: Установка и настройка Kiali
 
-1.  **Создание секрета для OIDC клиента:** Kiali ожидает секрет с паролем клиента, который был определен в конфигурации Dex.
+1. **Создание секрета для OIDC клиента:** Kiali ожидает секрет с паролем клиента, который был определен в конфигурации Dex.
 
     ```bash
     kubectl create secret generic kiali-oidc-secret \
@@ -170,11 +170,11 @@ Dex разворачивается как отдельное приложени�
       -n istio-system
     ```
 
-2.  **Конфигурация Kiali (`values.yaml` для Helm):**
-    *   **Аутентификация:** Устанавливается стратегия `openid`.
-    *   **Конфигурация OpenID:** Указываются `client_id`, `issuer_uri` (адрес Dex). Важно установить `insecure_skip_verify_tls: true` при использовании самоподписанных сертификатов для Dex.
-    *   **Внешние сервисы:** Прописываются внутренние URL для доступа Kiali к Prometheus и Grafana.
-    *   **Доступ к кластеру:** Поскольку кластер Kubernetes не был изначально настроен на работу с OIDC, необходимо отключить RBAC на основе токенов Dex с помощью флага `disable_rbac: true`.
+2. **Конфигурация Kiali (`values.yaml` для Helm):**
+    * **Аутентификация:** Устанавливается стратегия `openid`.
+    * **Конфигурация OpenID:** Указываются `client_id`, `issuer_uri` (адрес Dex). Важно установить `insecure_skip_verify_tls: true` при использовании самоподписанных сертификатов для Dex.
+    * **Внешние сервисы:** Прописываются внутренние URL для доступа Kiali к Prometheus и Grafana.
+    * **Доступ к кластеру:** Поскольку кластер Kubernetes не был изначально настроен на работу с OIDC, необходимо отключить RBAC на основе токенов Dex с помощью флага `disable_rbac: true`.
 
     ```yaml
     # Фрагмент values.yaml для Kiali
@@ -206,7 +206,7 @@ Dex разворачивается как отдельное приложени�
         enabled: true
     ```
 
-3.  **Публикация Kiali:** Как и другие компоненты, Kiali публикуется наружу с помощью `HTTPRoute`.
+3. **Публикация Kiali:** Как и другие компоненты, Kiali публикуется наружу с помощью `HTTPRoute`.
 
     ```yaml
     apiVersion: gateway.networking.k8s.io/v1
@@ -232,21 +232,22 @@ Dex разворачивается как отдельное приложени�
 
 ### Kiali v2.x: Новые возможности
 
-- **Ambient Mesh Visualization:** Полная поддержка Ztunnel и Waypoint Proxy, разделение L4/L7 трафика.
-- **Gateway API Support:** Визуализация `HTTPRoute`, `Gateway`, `BackendRef`.
-- **External Kiali:** Централизованное управление observability для мультикластерных развертываний.
-- **Улучшенная производительность:** Оптимизация запросов к Prometheus, кэширование.
-- **Расширенная валидация:** Автоматическое обнаружение ошибок в конфигурациях Istio.
+* **Ambient Mesh Visualization:** Полная поддержка Ztunnel и Waypoint Proxy, разделение L4/L7 трафика.
+* **Gateway API Support:** Визуализация `HTTPRoute`, `Gateway`, `BackendRef`.
+* **External Kiali:** Централизованное управление observability для мультикластерных развертываний.
+* **Улучшенная производительность:** Оптимизация запросов к Prometheus, кэширование.
+* **Расширенная валидация:** Автоматическое обнаружение ошибок в конфигурациях Istio.
 
 ### Сложность настройки
 
-Интеграция всех компонентов (Cert-Manager [05_ingress.md](../../Kubernetes/ToolsUtilities/cert_manager/05_ingress.md), Gateway API [06_gateway_api.md](../../Kubernetes/ToolsUtilities/cert_manager/06_gateway_api.md), Prometheus, Grafana, Dex, Kiali) является нетривиальной задачей и требует хорошего понимания каждого из них.
+Интеграция всех компонентов (Cert-Manager [ingress.md](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md), Gateway API [gateway_api.md](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api.md), Prometheus, Grafana, Dex, Kiali) является нетривиальной задачей и требует хорошего понимания каждого из них.
 
 **Рекомендации:**
-1.  Используйте Helm-чарты для автоматизации установки.
-2.  Тестируйте на non-production окружении перед production.
-3.  Документируйте все кастомные конфигурации.
-4.  Мониторьте сам Kiali и его зависимости (Prometheus, Dex).
+
+1. Используйте Helm-чарты для автоматизации установки.
+2. Тестируйте на non-production окружении перед production.
+3. Документируйте все кастомные конфигурации.
+4. Мониторьте сам Kiali и его зависимости (Prometheus, Dex).
 
 ### Альтернативы Dex
 
@@ -258,14 +259,14 @@ Dex разворачивается как отдельное приложени�
 
 ### Источники и документация
 
-- **[Официальная документация Kiali](https://kiali.io/docs/)** — полное руководство по установке и настройке.
-- **[External Kiali](https://kiali.io/docs/configuration/multi-cluster/external/)** — централизованное observability для мультикластера.
-- **[Istio Observability with Kiali](https://oneuptime.com/blog/post/2026-02-09-istio-kiali-observability/view)** — практическое руководство.
+* **[Официальная документация Kiali](https://kiali.io/docs/)** — полное руководство по установке и настройке.
+* **[External Kiali](https://kiali.io/docs/configuration/multi-cluster/external/)** — централизованное observability для мультикластера.
+* **[Istio Observability with Kiali](https://oneuptime.com/blog/post/2026-02-09-istio-kiali-observability/view)** — практическое руководство.
 
 ### Связанные документы
 
-- **Базовые концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
-- **Архитектура:** [Istio Architecture](./istio_architecture.md)
-- **Трафик:** [Traffic Management](./traffic_management.md)
-- **Grafana:** [Grafana Dashboards](../Grafana/grafana_dashboards.md), [Grafana Helm Installation](../Grafana/Installation/grafana_helm_installation.md)
-- **Prometheus:** [Prometheus Service Discovery](../Prometheus/service_discovery_and_relabeling.md)
+* **Базовые концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
+* **Архитектура:** [Istio Architecture](./istio_architecture.md)
+* **Трафик:** [Traffic Management](./traffic_management.md)
+* **Grafana:** [Grafana Dashboards](../Grafana/grafana_dashboards.md), [Grafana Helm Installation](../Grafana/Installation/grafana_helm_installation.md)
+* **Prometheus:** [Prometheus Service Discovery](../Prometheus/service_discovery_and_relabeling.md)

@@ -29,10 +29,10 @@
 └─────────────────┘    └──────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-1.  **Подготовка узлов**: Установка container runtime (containerd/Docker), `kubeadm`, `kubelet`, `kubectl` на всех узлах.
-2.  **Инициализация master**: `kubeadm init` развёртывает Control Plane как статические поды (`etcd`, `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`).
-3.  **Установка CNI**: Без сетевого плагина поды не перейдут в статус `Ready`. Популярные варианты: [Calico](../../Networking/Network/cni_overview.md#calico), [Flannel](../../Networking/Network/cni_overview.md#flannel), [Cilium](../../Networking/Network/cni_overview.md#cilium).
-4.  **Присоединение workers**: `kubeadm join` с токеном подключает узлы к кластеру.
+1. **Подготовка узлов**: Установка container runtime (containerd/Docker), `kubeadm`, `kubelet`, `kubectl` на всех узлах.
+2. **Инициализация master**: `kubeadm init` развёртывает Control Plane как статические поды (`etcd`, `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`).
+3. **Установка CNI**: Без сетевого плагина поды не перейдут в статус `Ready`. Популярные варианты: [Calico](../../Networking/Network/cni_overview.md#calico), [Flannel](../../Networking/Network/cni_overview.md#flannel), [Cilium](../../Networking/Network/cni_overview.md#cilium).
+4. **Присоединение workers**: `kubeadm join` с токеном подключает узлы к кластеру.
 
 ### 2.3. Версии Kubernetes
 
@@ -59,20 +59,20 @@
 
 ### 4.1. Связанные темы
 
-*   [Архитектура Control Plane](../../Concepts/control_plane_architecture.md)
-*   [Высокая доступность Kubernetes](../../Base/high_availability.md)
-*   **HA с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)** — подробное руководство по HA
-*   [Kubespray — автоматизация через Ansible](../Kubespray/overview.md)
-*   [HA кластер на bare metal](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-*   **[kind](../kind_quickstart.md)** — локальные кластеры в Docker
-*   **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s
+* [Архитектура Control Plane](../../Concepts/control_plane_architecture.md)
+* [Высокая доступность Kubernetes](../../Base/high_availability.md)
+* **HA с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)** — подробное руководство по HA
+* [Kubespray — автоматизация через Ansible](../Kubespray/overview.md)
+* [HA кластер на bare metal](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
+* **[kind](../kind_quickstart.md)** — локальные кластеры в Docker
+* **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s
 
 ### 4.2. Ограничения kubeadm
 
-*   Не управляет инфраструктурой (ВМ, сеть, балансировщики).
-*   Не предоставляет механизм обновления версий K8s "в один клик" (требуется `kubeadm upgrade`).
-*   Требует ручной настройки HA для production.
-*   Сертификаты действительны 1 год (требуется ротация).
+* Не управляет инфраструктурой (ВМ, сеть, балансировщики).
+* Не предоставляет механизм обновления версий K8s "в один клик" (требуется `kubeadm upgrade`).
+* Требует ручной настройки HA для production.
+* Сертификаты действительны 1 год (требуется ротация).
 
 ### 4.3. Альтернативы
 

@@ -177,21 +177,25 @@
 ### Связанные темы
 
 **Диагностика Hardware:**
+
 - **[Диагностика CPU](../../Diagnostics/Hardware/cpu_info.md)** — подробная информация о процессоре
 - **[Hardware listing](../../Diagnostics/Hardware/hardware_listing.md)** — полная инвентаризация оборудования
 - **[smartctl](../../Diagnostics/Hardware/smartctl.md)** — мониторинг состояния дисков
 
 **Диагностика процессов и памяти:**
+
 - **[ps](../../Diagnostics/Processes/ps.md)** — информация о процессах
 - **[top/htop](../../Diagnostics/Processes/htop.md)** — мониторинг процессов в реальном времени
 - **[vmstat](../../Diagnostics/Memory/vmstat.md)** — статистика памяти и CPU
 - **[proc_meminfo](../../Diagnostics/Memory/proc_meminfo.md)** — информация о памяти
 
 **Файловые системы:**
+
 - **[/proc](../../FileSystems/virtual_fs_proc.md)** — виртуальная ФС процессов
 - **[/sys](../../FileSystems/virtual_fs_sys.md)** — виртуальная ФС ядра
 
 **Диагностика сети:**
+
 - **[ip](../../Networking/Tools/iproute2/ip_address.md)** — информация о сетевых интерфейсах
 - **[ss](../../Diagnostics/Networking/ss.md)** — сетевые сокеты
 - **[netstat](../../Diagnostics/Networking/netstat.md)** — устаревшая, но полезная

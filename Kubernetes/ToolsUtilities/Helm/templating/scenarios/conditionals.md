@@ -32,6 +32,7 @@ spec:
 ```
 
 Функция `and` проверяет два условия:
+
 1. `eq .Values.service.type "NodePort"` — тип сервиса равен `NodePort`
 2. `.Values.service.nodePort` — значение `nodePort` не пустое
 
@@ -42,6 +43,7 @@ spec:
 Создание `HorizontalPodAutoscaler` только для Deployment:
 
 **values.yaml:**
+
 ```yaml
 kind: Deployment
 autoscaling:
@@ -51,6 +53,7 @@ autoscaling:
 ```
 
 **templates/hpa.yaml:**
+
 ```yaml
 {{- if and .Values.autoscaling.enabled (eq .Values.kind "Deployment") }}
 apiVersion: autoscaling/v2
@@ -75,6 +78,7 @@ spec:
 ```
 
 Логика:
+
 - `autoscaling.enabled == true` — HPA включён
 - `kind == Deployment"` — тип ресурса Deployment
 - При нарушении условий — пустой вывод, ресурс не создаётся
@@ -86,12 +90,14 @@ spec:
 Добавление аннотаций только при включённом флаге:
 
 **values.yaml:**
+
 ```yaml
 reloader:
   enabled: true
 ```
 
 **deployment.yaml:**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -111,4 +117,4 @@ spec:
 
 - [Синтаксис шаблонов](../syntax.md) — базовый синтаксис и управляющие конструкции
 - [Функции](../functions.md) — ключевые функции
-- [ helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница

@@ -24,6 +24,7 @@
 ### Типы ключей
 
 **1. Статический ключ:**
+
 ```yaml
 cache:
   key: "global-npm-cache"
@@ -32,6 +33,7 @@ cache:
 ```
 
 **2. Динамический ключ (переменные):**
+
 ```yaml
 cache:
   key: "$CI_COMMIT_REF_SLUG"  # Разный кэш для каждой ветки
@@ -40,6 +42,7 @@ cache:
 ```
 
 **3. Ключ по файлам зависимостей (рекомендуется):**
+
 ```yaml
 cache:
   key:
@@ -52,6 +55,7 @@ cache:
 ```
 
 **4. Ключ по коммитам файлов:**
+
 ```yaml
 cache:
   key:
@@ -124,12 +128,14 @@ test:
 ```
 
 **Порядок поиска:**
+
 1. `cache-$CI_COMMIT_REF_SLUG`
 2. `cache-$CI_DEFAULT_BRANCH`
 3. `cache-main`
 4. Без кэша → создание нового
 
 **Глобальный fallback:**
+
 ```yaml
 variables:
   CACHE_FALLBACK_KEY: fallback-key

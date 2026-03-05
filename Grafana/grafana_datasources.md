@@ -1,6 +1,7 @@
 # Grafana: Источники данных
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Провиженинг](./grafana_provisioning.md)
 > - [Установка через Docker](./Installation/docker_compose_setup.md)
@@ -19,7 +20,7 @@
 | **Name** | Уникальное имя в интерфейсе Grafana |
 | **Default** | Флаг источника по умолчанию |
 | **Type** | Тип коннектора (Prometheus, MySQL, Loki...) |
-| **URL** | Адрес системы (http://prometheus:9090) |
+| **URL** | Адрес системы (<http://prometheus:9090>) |
 | **Auth** | Параметры аутентификации |
 
 ## Основные концепции

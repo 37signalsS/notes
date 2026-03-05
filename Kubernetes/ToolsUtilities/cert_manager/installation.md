@@ -64,6 +64,7 @@ kubectl get crds | grep cert-manager.io
 ```
 
 **Ожидаемый вывод:**
+
 ```
 NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
 cert-manager              1/1     1            1           2m
@@ -207,6 +208,7 @@ kubectl logs -n cert-manager -l app=cainjector
 | <1.12 | <1.22 | **Устарели** | Да |
 
 **Источники:**
+
 - [Официальная документация](https://cert-manager.io/docs/installation/)
 - [GitHub Releases](https://github.com/cert-manager/cert-manager/releases)
 - [Helm Chart](https://artifacthub.io/packages/helm/cert-manager/cert-manager)

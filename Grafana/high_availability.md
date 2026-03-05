@@ -1,6 +1,7 @@
 # Grafana: Высокая доступность (HA)
 
 > **Навигация:**
+>
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Установка через Docker](./Installation/docker_compose_setup.md)
 > - [Установка через Helm](./Installation/grafana_helm_installation.md)

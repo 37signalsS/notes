@@ -141,17 +141,19 @@ ssh -L 59001:localhost:5901 -N -f -l your_username your_server_ip
 ### Связанные темы
 
 **SSH (Secure Shell):**
-- **[Обзор SSH](../Security/ssh/ssh_overview.md)** — основы протокола, аутентификация, шифрование
-- **[SSH утилиты](../Security/ssh/ssh_cli_tools.md)** — scp, sftp, ssh-copy-id
-- **[SSH туннели](../Security/ssh/ssh_usage_and_tunnels.md)** — проброс портов, VPN-туннели
-- **[SSH клиент](../Security/ssh/ssh_client_config.md)** — конфигурация ~/.ssh/config
-- **[SSH сессии](../Security/ssh/ssh_session_management.md)** — управление подключениями
-- **[Диагностика SSH](../Security/ssh/ssh_troubleshooting.md)** — решение проблем
+
+* **[Обзор SSH](../Security/ssh/ssh_overview.md)** — основы протокола, аутентификация, шифрование
+* **[SSH утилиты](../Security/ssh/ssh_cli_tools.md)** — scp, sftp, ssh-copy-id
+* **[SSH туннели](../Security/ssh/ssh_usage_and_tunnels.md)** — проброс портов, VPN-туннели
+* **[SSH клиент](../Security/ssh/ssh_client_config.md)** — конфигурация ~/.ssh/config
+* **[SSH сессии](../Security/ssh/ssh_session_management.md)** — управление подключениями
+* **[Диагностика SSH](../Security/ssh/ssh_troubleshooting.md)** — решение проблем
 
 **Другие протоколы:**
-- **[RDP](../../Networking/Protocols/rdp.md)** — Remote Desktop Protocol (Windows)
-- **[VNC](../../Networking/Protocols/vnc.md)** — Virtual Network Computing
-- **[Telnet](../../Networking/Protocols/telnet.md)** — устаревший незащищенный протокол
+
+* **[RDP](../../Networking/Protocols/rdp.md)** — Remote Desktop Protocol (Windows)
+* **[VNC](../../Networking/Protocols/vnc.md)** — Virtual Network Computing
+* **[Telnet](../../Networking/Protocols/telnet.md)** — устаревший незащищенный протокол
 
 ### Безопасность удаленного доступа
 
@@ -163,6 +165,7 @@ ssh -L 59001:localhost:5901 -N -f -l your_username your_server_ip
 | **RDP** | BlueKeep, brute-force | NLA, VPN, 2FA |
 
 **Рекомендации:**
+
 1. Всегда используйте SSH вместо Telnet/rlogin
 2. VNC только через SSH-туннель
 3. OOB-интерфейсы в изолированной сети управления

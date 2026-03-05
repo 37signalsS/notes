@@ -28,5 +28,5 @@
 
 ### Связанные технологии
 
-- **[VLAN 802.1Q](./vlan_and_L2_switching.md#стандарт-ieee-8021q-формат-тегированного-кадра):** Поле PCP в VLAN-теге используется для приоритизации трафика на L2.
-- **[DiffServ](../Protocols/ip.md#dscp-differentiated-services-code-point):** Маркировка трафика на L3 для QoS.
+* **[VLAN 802.1Q](./vlan_and_L2_switching.md#стандарт-ieee-8021q-формат-тегированного-кадра):** Поле PCP в VLAN-теге используется для приоритизации трафика на L2.
+* **[DiffServ](../Protocols/ip.md#dscp-differentiated-services-code-point):** Маркировка трафика на L3 для QoS.

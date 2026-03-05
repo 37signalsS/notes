@@ -52,6 +52,7 @@ spec:
 ```
 
 **Сравнение с другими инструментами**:
+
 - **[kubesec](../kubesec.md)** — статический анализ YAML до деплоя
 - **Kyverno** — валидация и мутация во время деплоя
 - **[Falco](../../../Security/Tools/falco.md)** — runtime-мониторинг после деплоя
@@ -131,6 +132,7 @@ git-repo/
 ```
 
 **CI/CD пайплайн**:
+
 ```yaml
 # .github/workflows/validate-policies.yaml
 name: Validate Kyverno Policies

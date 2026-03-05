@@ -77,16 +77,19 @@ end
 **Процесс:**
 
 1. **Уничтожьте существующую ВМ:**
+
     ```bash
     vagrant destroy -f
     ```
 
 2. **Удалите метаданные провайдера:**
+
     ```bash
     rm -rf .vagrant
     ```
 
 3. **Запустите с новым провайдером:**
+
     ```bash
     vagrant up --provider=libvirt
     ```
@@ -147,13 +150,13 @@ config.vm.box = "ubuntu/jammy64"
 
 ### Рекомендации по выбору box
 
-- **Разработка на Linux:** `bento/ubuntu-24.04` или `bento/debian-12` с провайдером Libvirt
-- **Кроссплатформенная разработка:** `ubuntu/jammy64` с VirtualBox
-- **Тестирование enterprise:** `almalinux/9` или `rockylinux/9`
-- **Минимальный размер:** `generic/alpine318` или `generic/ubuntu2204`
+* **Разработка на Linux:** `bento/ubuntu-24.04` или `bento/debian-12` с провайдером Libvirt
+* **Кроссплатформенная разработка:** `ubuntu/jammy64` с VirtualBox
+* **Тестирование enterprise:** `almalinux/9` или `rockylinux/9`
+* **Минимальный размер:** `generic/alpine318` или `generic/ubuntu2204`
 
 ### См. также
 
-- [Vagrant Installation](./vagrant_installation.md) — установка Vagrant и плагинов
-- [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
-- [Vagrant Networking](./vagrant_networking.md) — настройка сети
+* [Vagrant Installation](./vagrant_installation.md) — установка Vagrant и плагинов
+* [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
+* [Vagrant Networking](./vagrant_networking.md) — настройка сети

@@ -37,9 +37,9 @@
 
 Для управления сертификатами `etcd` через `kubeadm`:
 
-*   **Ручная установка:** `kubeadm init` по умолчанию управляет etcd.
-*   **Kubespray:** Требуется `etcd_kubeadm_enabled: true` в inventory.
-*   **Другие инструменты:** Проверить документацию инструмента.
+* **Ручная установка:** `kubeadm init` по умолчанию управляет etcd.
+* **Kubespray:** Требуется `etcd_kubeadm_enabled: true` в inventory.
+* **Другие инструменты:** Проверить документацию инструмента.
 
 ### 2.3. Источники информации
 
@@ -214,7 +214,7 @@ spec:
 
 ### 4.3. Связанные темы
 
-*   [kubeadm: Управление сертификатами](../Installation/kudeadm/kubeadm_certificates.md)
-*   [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
-*   [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
-*   [PKI Overview](../../Security/Concepts/pki_overview.md)
+* [kubeadm: Управление сертификатами](../Installation/kudeadm/kubeadm_certificates.md)
+* [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
+* [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
+* [PKI Overview](../../Security/Concepts/pki_overview.md)

@@ -28,6 +28,7 @@ sudo chown user:group file
 - [ACL и атрибуты](../../Security/Concepts/File_Permissions/acl_immutable_timestamps.md) — расширенные права
 
 См. также:
+
 - [Определения пользователей](./users_definitions.md)
 - [Управление группами](./group_commands.md)
 - [Управление привилегиями](../privilege_management.md)

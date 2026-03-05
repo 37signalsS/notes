@@ -14,8 +14,9 @@
 ### 2.1. Проблема
 
 В кластере с несколькими master-узлами каждый запускает `kube-apiserver` на порту `6443`. При использовании IP одного узла:
-*   При отказе узла доступ к API теряется.
-*   Требуется ручное переключение клиентов (`kubectl`, `kubelet`, `kubeadm join`).
+
+* При отказе узла доступ к API теряется.
+* Требуется ручное переключение клиентов (`kubectl`, `kubelet`, `kubeadm join`).
 
 ### 2.2. Решение: VIP + L4-балансировщик
 
@@ -274,11 +275,11 @@ kubectl get pods -n kube-system
 
 ### 4.1. Связанные темы
 
-*   [Быстрый старт с kubeadm](./kubeadm_quickstart.md)
-*   [HA кластер на bare metal](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-*   [Keepalived обзор](../../Networking/ServicesAndTools/keepalived_overview.md)
-*   [HAProxy обзор](../../WebServers/Haproxy/haproxy_overview.md)
-*   [Высокая доступность Kubernetes](../../Base/high_availability.md)
+* [Быстрый старт с kubeadm](./kubeadm_quickstart.md)
+* [HA кластер на bare metal](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
+* [Keepalived обзор](../../Networking/ServicesAndTools/keepalived_overview.md)
+* [HAProxy обзор](../../WebServers/Haproxy/haproxy_overview.md)
+* [Высокая доступность Kubernetes](../../Base/high_availability.md)
 
 ### 4.2. Альтернативы
 

@@ -8,17 +8,17 @@
 
 ### Зачем нужен Rancher?
 
-1.  **Управление несколькими кластерами**: Централизованное управление Kubernetes-кластерами в различных облаках (AWS, GCP, Azure) и на локальной инфраструктуре.
-2.  **Упрощенная установка и настройка**: Предоставляет инструменты для быстрого развертывания Kubernetes-кластеров (RKE, RKE2).
-3.  **Безопасность и контроль доступа**: Поддерживает различные методы аутентификации, включая [LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol), Active Directory, GitHub.
-4.  **Мониторинг и логирование**: Встроенная поддержка для Prometheus, Grafana и Fluentd.
-5.  **Развертывание приложений**: Упрощает развертывание приложений с поддержкой Helm-чартов.
+1. **Управление несколькими кластерами**: Централизованное управление Kubernetes-кластерами в различных облаках (AWS, GCP, Azure) и на локальной инфраструктуре.
+2. **Упрощенная установка и настройка**: Предоставляет инструменты для быстрого развертывания Kubernetes-кластеров (RKE, RKE2).
+3. **Безопасность и контроль доступа**: Поддерживает различные методы аутентификации, включая [LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol), Active Directory, GitHub.
+4. **Мониторинг и логирование**: Встроенная поддержка для Prometheus, Grafana и Fluentd.
+5. **Развертывание приложений**: Упрощает развертывание приложений с поддержкой Helm-чартов.
 
 ### Как работает Rancher?
 
-*   **Rancher Server**: Центральный компонент, который управляет кластерами, предоставляет веб-интерфейс (UI) и API.
-*   **Kubernetes-кластеры**: Могут быть развернуты с помощью Rancher (RKE, RKE2) или импортированы (EKS, AKS, GKE).
-*   **Rancher Agents**: Агенты, устанавливаемые в каждом управляемом Kubernetes-кластере.
+* **Rancher Server**: Центральный компонент, который управляет кластерами, предоставляет веб-интерфейс (UI) и API.
+* **Kubernetes-кластеры**: Могут быть развернуты с помощью Rancher (RKE, RKE2) или импортированы (EKS, AKS, GKE).
+* **Rancher Agents**: Агенты, устанавливаемые в каждом управляемом Kubernetes-кластере.
 
 ## Тематические заметки
 
@@ -50,4 +50,4 @@
 
 ## Дополнительная информация
 
-*   Официальная документация Rancher: [Rancher Documentation](https://rancher.com/docs/rancher/v2.x/en/)
+* Официальная документация Rancher: [Rancher Documentation](https://rancher.com/docs/rancher/v2.x/en/)

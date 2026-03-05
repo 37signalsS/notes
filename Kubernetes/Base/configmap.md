@@ -28,11 +28,13 @@
 ### Быстрый старт
 
 1. **Создание ConfigMap:**
+
    ```bash
    kubectl create configmap app-config --from-literal=LOG_LEVEL=info
    ```
 
 2. **Использование в поде (переменные окружения):**
+
    ```yaml
    envFrom:
      - configMapRef:
@@ -40,6 +42,7 @@
    ```
 
 3. **Использование в поде (том):**
+
    ```yaml
    volumes:
      - name: config
@@ -51,6 +54,7 @@
    ```
 
 4. **Обновление с перезапуском:**
+
    ```bash
    kubectl rollout restart deployment/my-app
    ```

@@ -5,6 +5,7 @@
 **Service Mesh (Сетка сервисов)** — выделенный инфраструктурный слой для управления сетевыми взаимодействиями между микросервисами на уровне L4–L7. Основная задача — вынести логику сети (маршрутизацию, безопасность, наблюдаемость) из кода приложения в платформу.
 
 **Ключевые характеристики:**
+
 - **Прозрачность:** Приложение не требует изменений кода для интеграции.
 - **Децентрализация:** Управление трафиком распределено между прокси.
 - **Идентичность:** Каждый сервис имеет криптографическую идентичность (SPIFFE/SVID, ServiceAccount).
@@ -31,7 +32,9 @@ Service Mesh состоит из двух независимых плоскос�
 ### Ключевые возможности
 
 #### 1. Управление трафиком
+
 Динамическая маршрутизация на основе L7-атрибутов (хост, путь, заголовки):
+
 - **Маршрутизация:** Canary, blue-green, A/B-тестирование.
 - **Отказоустойчивость:** Таймауты, ретраи, circuit breaking, outlier detection.
 - **Зеркалирование:** Тестирование под нагрузкой без влияния на пользователей.
@@ -39,20 +42,25 @@ Service Mesh состоит из двух независимых плоскос�
 Полное описание примитивов и примеров — в [Управлении трафиком в Service Mesh](./traffic_management.md).
 
 #### 2. Безопасность (Zero Trust)
+
 - **mTLS по умолчанию:** Автоматическое сквозное шифрование между сервисами.
 - **Идентичность:** SPIFFE/SVID или ServiceAccount Kubernetes как основа для `principal`.
 - **Политики доступа:** L7-авторизация на основе идентичности, а не IP (подробнее в [Zero Trust](../Networking/Concepts/zero_trust_overview.md)).
 - **Сравнение с VPN:** [VPN vs Service Mesh](../Networking/Concepts/vpn_vs_service_mesh.md).
 
 #### 3. Наблюдаемость (Observability)
+
 Автоматический сбор телеметрии без изменений в коде:
+
 - **Золотые сигналы:** Задержка, трафик, ошибки, насыщенность (saturation).
 - **Трассировка:** Распределенная трассировка запросов (Jaeger, Tempo).
 - **Топология:** Визуализация карты зависимостей (Kiali, Linkerd Viz).
 - **Инструменты:** [Kiali и Dex](./istio_observability_and_tools.md), Grafana, Prometheus.
 
 #### 4. Сегментация сети
+
 Микросегментация на уровне сервисов (L7) вместо макросегментации на уровне подсетей (L3):
+
 - **Политики:** `AuthorizationPolicy` в Istio, `ServiceProfile` в Linkerd.
 - **Гранулярность:** Контроль доступа по методам HTTP, путям, заголовкам.
 - **См. также:** [Network Segmentation](../Networking/Concepts/network_segmentation_and_microsegmentation.md).
@@ -76,6 +84,7 @@ Service Mesh состоит из двух независимых плоскос�
 | **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29) | **Да** | **Да** |
 
 **Рекомендации по выбору:**
+
 - **Istio:** Сложные L7-сценарии, мультикластер, кастомные политики, Gateway API.
 - **Linkerd:** Простота, низкий оверхед, безопасность "из коробки", быстрый старт.
 - **Consul:** Гетерогенные среды (VM + Kubernetes), встроенный service discovery, KV-store.
@@ -94,6 +103,7 @@ Service Mesh состоит из двух независимых плоскос�
 | **ArgoCD** | GitOps для конфигураций Istio (VirtualService, DestinationRule). |
 
 **См. также:**
+
 - [Chaos Engineering](../Chaos_Engineering/chaos_engineering_overview.md) — fault injection через Service Mesh.
 - [Grafana Dashboards](../Grafana/grafana_dashboards.md) — импорт дашбордов через sidecar.
 
@@ -119,6 +129,7 @@ Service Mesh состоит из двух независимых плоскос�
 - **eBPF:** Растущая конкуренция (Cilium Service Mesh), но классические mesh (Istio, Linkerd) доминируют.
 
 **Источники:**
+
 - [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)
 - [Istio Ambient Multicluster Beta](https://istio.io/latest/blog/2026/ambient-multinetwork-multicluster-beta/)
 - [Service Mesh Comparison](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)

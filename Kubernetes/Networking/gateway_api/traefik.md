@@ -50,6 +50,7 @@ spec:
 ```
 
 **Особенности:**
+
 - `hostname` в HTTP listener не обязателен, маршрутизация по hostname определяется в HTTPRoute
 - `hostname` в HTTPS listener обязателен
 - TLS mode `Terminate` — SSL-трафик терминируется на контроллере, далее передается по HTTP
@@ -81,6 +82,7 @@ spec:
 ```
 
 **Особенности:**
+
 - HTTPRoute может находиться в **любом namespace**, не обязательно в namespace приложения
 - HTTPRoute может ссылаться на Service в **любом namespace**
 - Traefik по умолчанию отправляет трафик напрямую на pod endpoints, минуя Service (более эффективно)
@@ -88,6 +90,7 @@ spec:
 ---
 
 **См. также:**
+
 - [Определения](./definitions.md) — концепции Gateway API
 - [Базовые сценарии](./practical_basic.md) — примеры
 - [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация

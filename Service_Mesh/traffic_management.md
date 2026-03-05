@@ -72,6 +72,7 @@ spec:
 ```
 
 **Для Sidecar-модели:** Замените `parentRefs` на ссылку на `Service`:
+
 ```yaml
   parentRefs:
   - name: api
@@ -264,12 +265,12 @@ spec:
 
 ### Best Practices
 
-1.  **Используйте Gateway API для новых развертываний.** VirtualService/DestinationRule — только для миграции.
-2.  **Ambient Mesh для массовых развертываний.** Снижает оверхед на 30–50%.
-3.  **Таймауты и ретраи — обязательно.** Защищают от каскадных сбоев.
-4.  **Circuit breaking для критичных сервисов.** Предотвращает перегрузку.
-5.  **Зеркалирование для тестирования.** Безопасное тестирование под нагрузкой.
-6.  **Версионирование через labels.** `version: v1`, `version: v2` для четкой сегментации.
+1. **Используйте Gateway API для новых развертываний.** VirtualService/DestinationRule — только для миграции.
+2. **Ambient Mesh для массовых развертываний.** Снижает оверхед на 30–50%.
+3. **Таймауты и ретраи — обязательно.** Защищают от каскадных сбоев.
+4. **Circuit breaking для критичных сервисов.** Предотвращает перегрузку.
+5. **Зеркалирование для тестирования.** Безопасное тестирование под нагрузкой.
+6. **Версионирование через labels.** `version: v1`, `version: v2` для четкой сегментации.
 
 ### Актуальность
 
@@ -278,6 +279,7 @@ spec:
 - **Linkerd 2.x:** SMI TrafficSplit остается основным способом маршрутизации.
 
 **Источники:**
+
 - [Istio Gateway API Documentation](https://istio.io/latest/docs/tasks/traffic-management/gateway-api/)
 - [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/)
 - [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)

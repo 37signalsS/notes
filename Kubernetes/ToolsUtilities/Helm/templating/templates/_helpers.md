@@ -143,4 +143,4 @@ spec:
 
 - [Функции](./functions.md) — ключевые функции для работы с шаблонами
 - [Сценарии: NetworkPolicy](./scenarios/networkpolicy.md) — подробнее о сетевых политиках
-- [ helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница

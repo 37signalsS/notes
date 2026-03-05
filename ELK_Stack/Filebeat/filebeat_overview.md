@@ -64,11 +64,14 @@ output.elasticsearch:
 
 Модули значительно упрощают сбор стандартных логов.
 
-1.  **Включить модуль:**
+1. **Включить модуль:**
+
     ```bash
     filebeat modules enable nginx
     ```
-2.  **Настроить модуль** в `modules.d/nginx.yml`:
+
+2. **Настроить модуль** в `modules.d/nginx.yml`:
+
     ```yaml
     - module: nginx
       # Разделы для access и error логов
@@ -79,6 +82,7 @@ output.elasticsearch:
         enabled: true
         var.paths: ["/var/log/nginx/error.log*"]
     ```
+
     *Filebeat автоматически применит правильный парсинг и направит данные на соответствующие дашборды в Kibana.*
 
 ### Пример: Использование процессоров
@@ -114,5 +118,5 @@ filebeat.inputs:
 
 ## Дополнительная информация
 
-*   **Настройка Filebeat и ELK**: Для ознакомления с полным циклом настройки стека см. [Практическое руководство по настройке ELK](../Tutorials/practical_setup_with_docker.md).
-*   **Официальный список модулей**: [Filebeat Modules](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html)
+* **Настройка Filebeat и ELK**: Для ознакомления с полным циклом настройки стека см. [Практическое руководство по настройке ELK](../Tutorials/practical_setup_with_docker.md).
+* **Официальный список модулей**: [Filebeat Modules](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html)

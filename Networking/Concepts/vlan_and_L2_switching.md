@@ -15,6 +15,7 @@
 Коммутатор работает с **таблицей MAC-адресов** (MAC address table, CAM table):
 
 **Процесс коммутации:**
+
 ```
 1. Кадр поступает на порт → коммутатор запоминает:
    Source MAC → Port X (запись в таблицу)
@@ -26,6 +27,7 @@
 ```
 
 **Пример таблицы MAC-адресов:**
+
 ```
 MAC Address       VLAN    Port
 --------------    ----    ----
@@ -46,6 +48,7 @@ MAC Address       VLAN    Port
 | **Гибкость** | Группировка по отделам/проектам, а не физическому расположению |
 
 **Пример сегментации:**
+
 ```
                     [Core Switch]
                          |
@@ -63,6 +66,7 @@ MAC Address       VLAN    Port
 **Задача:** Сервер подключён к trunk-порту, нужны интерфейсы для VLAN 10 и 20.
 
 **Вариант A: Временная настройка (iproute2)**
+
 ```bash
 # Создать VLAN-интерфейсы
 ip link add link eth0 name eth0.10 type vlan id 10
@@ -82,6 +86,7 @@ ip -d link show eth0.20
 ```
 
 **Вариант B: NetworkManager (nmtui/nmcli)**
+
 ```bash
 # Создать VLAN через nmcli
 nmcli connection add type vlan ifname enp0s3.10 \
@@ -97,6 +102,7 @@ nmcli connection up vlan10-users
 ```
 
 **Вариант C: Netplan (Ubuntu 18.04+)**
+
 ```yaml
 # /etc/netplan/01-netcfg.yaml
 network:
@@ -128,6 +134,7 @@ sudo netplan apply
 **Задача:** Виртуальные машины на одном гипервизоре должны быть в разных VLAN.
 
 **Решение с Linux Bridge:**
+
 ```bash
 # Создать мосты для каждого VLAN
 ip link add name br-vlan10 type bridge
@@ -152,6 +159,7 @@ ip link set br-vlan20 up
 ```
 
 **Решение с Open vSwitch:**
+
 ```bash
 # Создать OVS мост
 ovs-vsctl add-br ovs-br0
@@ -176,6 +184,7 @@ ip addr add 192.168.20.1/24 dev vlan20
 **Задача:** Обеспечить связь между VLAN 10 и 20 через маршрутизатор.
 
 **Топология:**
+
 ```
 [Users VLAN 10] ----+
                     |
@@ -185,6 +194,7 @@ ip addr add 192.168.20.1/24 dev vlan20
 ```
 
 **Конфигурация роутера (Cisco):**
+
 ```cisco
 interface GigabitEthernet0/0.10
  encapsulation dot1Q 10
@@ -196,6 +206,7 @@ interface GigabitEthernet0/0.20
 ```
 
 **Конфигурация Linux (iproute2):**
+
 ```bash
 # Включить IP forwarding
 sysctl -w net.ipv4.ip_forward=1
@@ -265,11 +276,13 @@ ethtool -S eth0 | grep -i error
 **Правильная маркировка критична для поддержки VLAN:**
 
 **Стандарты:**
+
 - **Двусторонняя маркировка:** Оба конца кабеля маркируются
 - **Формат:** `Откуда → Куда` (например, `SW1-P24 → SRV3-eth0`)
 - **VLAN информация:** На коммутаторе указать VLAN ID на порту
 
 **Пример маркировки:**
+
 ```
 Порт коммутатора:
   Gi0/1  [VLAN 10]  →  SRV1-eth0  (Users)
@@ -284,11 +297,13 @@ ethtool -S eth0 | grep -i error
 ### Связанные документы
 
 **Протоколы:**
+
 - **[VLAN 802.1Q](../Protocols/vlan.md)** — детальное описание протокола
 - **[STP](../Protocols/stp.md)** — предотвращение петель
 - **[Ethernet](../Protocols/ethernet.md)** — формат кадров
 
 **Концепции:**
+
 - **[MAC-адреса](./mac_address.md)** — адресация L2
 - **[Сетевая сегментация](./network_segmentation_and_microsegmentation.md)** — стратегии
 - **[NAT](./nat.md)** — трансляция адресов

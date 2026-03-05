@@ -45,6 +45,7 @@
 | **13/14** | 0 | Timestamp Request/Reply | Синхронизация времени, измерение RTT |
 
 **Пример ping:**
+
 ```bash
 $ ping -c 4 8.8.8.8
 PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
@@ -70,6 +71,7 @@ PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
 | **12** | 0-2 | Parameter Problem | Ошибка в заголовке пакета |
 
 **Пример traceroute:**
+
 ```bash
 $ traceroute -n 8.8.8.8
  1  192.168.1.1  2.345 ms  2.123 ms  2.456 ms
@@ -77,6 +79,7 @@ $ traceroute -n 8.8.8.8
  3  203.0.113.1  8.901 ms  8.765 ms  9.012 ms
  ...
 ```
+
 `traceroute` отправляет пакеты с увеличивающимся TTL (1, 2, 3...) и получает ICMP Time Exceeded от каждого маршрутизатора на пути.
 
 #### Управление маршрутизацией
@@ -91,10 +94,12 @@ $ traceroute -n 8.8.8.8
 #### Блокировка ICMP файрволом
 
 **Симптомы:**
+
 - `ping` не работает, но TCP-соединения устанавливаются
 - `traceroute` показывает `* * *` на некоторых хопах
 
 **Проверка:**
+
 ```bash
 # Проверка доступности ICMP
 tcpdump -i eth0 icmp
@@ -106,6 +111,7 @@ tcpdump -i eth0 'icmp[0] = 8 or icmp[0] = 0'
 **Проблема:** Маршрутизатор отправляет ICMP "Fragmentation Needed", если пакет больше MTU следующего звена, а флаг DF (Don't Fragment) установлен.
 
 **Решение:**
+
 ```bash
 # Проверка MTU пути
 tracepath example.com
@@ -119,11 +125,13 @@ ip link set dev eth0 mtu 1400
 #### ICMP в security-политиках
 
 **Рекомендации:**
+
 - **Разрешить:** Echo Request/Reply (для мониторинга), Destination Unreachable, Time Exceeded
 - **Ограничить:** Rate limiting для предотвращения ICMP flood
 - **Блокировать:** Redirect (может использоваться для атак), Timestamp (утечка информации)
 
 **Пример правила iptables:**
+
 ```bash
 # Разрешить ping с rate limiting
 iptables -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
@@ -151,17 +159,20 @@ iptables -A INPUT -p icmp --icmp-type redirect -j DROP
 ### ICMP в IPv6
 
 В IPv6 ICMP стал **обязательным** и переименован в **ICMPv6** (RFC 4443). Дополнительные функции:
+
 - **NDP (Neighbor Discovery Protocol)** — замена ARP
 - **SLAAC (Stateless Address Autoconfiguration)** — автоконфигурация адресов
 - **MLD (Multicast Listener Discovery)** — управление multicast-группами
 
 ### Связанные документы
+
 - [IP](./ip.md) — сетевой уровень
 - [TCP](./TCP/overview.md) — транспортный уровень
 - [traceroute](../../Linux/Networking/Tools/traceroute.md) — утилита диагностики
 - [ping](../../Linux/Networking/Tools/ping.md) — утилита проверки доступности
 
 ### RFC
+
 - **RFC 792** — спецификация ICMP для IPv4
 - **RFC 4443** — ICMPv6 для IPv6
 - **RFC 4884** — Extended ICMP

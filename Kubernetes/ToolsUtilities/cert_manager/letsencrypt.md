@@ -106,7 +106,7 @@ kubectl create secret generic cloudflare-api-key \
   -n cert-manager
 ```
 
-2. Создать ClusterIssuer:
+1. Создать ClusterIssuer:
 
 ```yaml
 apiVersion: cert-manager.io/v1

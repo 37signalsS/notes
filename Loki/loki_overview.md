@@ -106,11 +106,12 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 | **Прямая интеграция** | ✅ Поддерживается | Напрямую из приложения с помощью библиотек для разных языков программирования. |
 
 **Практические руководства:**
-- **[Настройка в Docker Compose](./docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
-- **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail/Alloy, Grafana) в Kubernetes с помощью Helm.
-- **[Интеграция Fluent Bit](./fluentbit_integration.md)**: Практическое руководство по интеграции Fluent Bit с Loki.
-- **[Лог-драйвер Loki для Docker](../Docker/Docker_logs/loki_logging_driver_setup.md)**: Настройка прямой отправки логов из Docker в Loki без агента.
-- **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)**: Полный обзор и руководство по миграции на Alloy.
+
+* **[Настройка в Docker Compose](./docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
+* **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail/Alloy, Grafana) в Kubernetes с помощью Helm.
+* **[Интеграция Fluent Bit](./fluentbit_integration.md)**: Практическое руководство по интеграции Fluent Bit с Loki.
+* **[Лог-драйвер Loki для Docker](../Docker/Docker_logs/loki_logging_driver_setup.md)**: Настройка прямой отправки логов из Docker в Loki без агента.
+* **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)**: Полный обзор и руководство по миграции на Alloy.
 
 ### Конфигурация
 
@@ -242,9 +243,9 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 
 ### Дополнительные ресурсы
 
-- **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для сбора телеметрии в Loki
-- **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_overview.md)** — место Loki в стеке наблюдаемости
-- **[High Availability Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** — архитектура высоконагруженного мониторинга с Loki
-- **[Docker Logging Drivers](../Docker/Docker_logs/docker_logging_drivers_overview.md)** — обзор подходов к логированию в Docker
-- **[Loki Docker Driver](../Docker/Docker_logs/loki_logging_driver_setup.md)** — прямая отправка логов из Docker в Loki
-- **[FluentBit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** — базовая конфигурация FluentBit для интеграции с Loki
+* **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для сбора телеметрии в Loki
+* **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_overview.md)** — место Loki в стеке наблюдаемости
+* **[High Availability Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** — архитектура высоконагруженного мониторинга с Loki
+* **[Docker Logging Drivers](../Docker/Docker_logs/docker_logging_drivers_overview.md)** — обзор подходов к логированию в Docker
+* **[Loki Docker Driver](../Docker/Docker_logs/loki_logging_driver_setup.md)** — прямая отправка логов из Docker в Loki
+* **[FluentBit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** — базовая конфигурация FluentBit для интеграции с Loki

@@ -38,12 +38,13 @@
     * **Принцип**: Настраиваются доверительные отношения между Kubernetes и GitLab (как OIDC-провайдером). Кластер может валидировать временный JWT-токен (`CI_JOB_JWT_TOKEN` или `CI_JOB_JWT_V2`), который генерируется для каждой CI-задачи.
     * **Статус**: Современный и безопасный подход, также известный как **[Workload Identity Federation](https://docs.gitlab.com/ee/ci/secrets/authenticate_with_oidc.html)**.
     * **Преимущества**:
-      - Временные токены (срок жизни — длительность задачи)
-      - Нет необходимости хранить секреты в GitLab
-      - Гранулярный контроль доступа через ServiceAccount
-      - Аудит всех действий в Kubernetes
-    
+      * Временные токены (срок жизни — длительность задачи)
+      * Нет необходимости хранить секреты в GitLab
+      * Гранулярный контроль доступа через ServiceAccount
+      * Аудит всех действий в Kubernetes
+
     * **Настройка в Kubernetes:**
+
       ```bash
       # 1. Создаём ServiceAccount с аннотациями для Workload Identity
       kubectl create -f - <<EOF
@@ -185,6 +186,6 @@
 
 ### Связанные документы
 
-- **[Исполнители (Runners)](./gitlab_ci_runners_executors.md)** — Kubernetes Executor и типы runner'ов.
-- **[Обзор GitOps](../../../GitOps/GitOps_overview.md)** — методология GitOps.
-- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.
+* **[Исполнители (Runners)](./gitlab_ci_runners_executors.md)** — Kubernetes Executor и типы runner'ов.
+* **[Обзор GitOps](../../../GitOps/GitOps_overview.md)** — методология GitOps.
+* **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.

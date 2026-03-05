@@ -3,6 +3,7 @@
 Создадим `ConfigMap`, содержащий **шаблон** конфигурации `alertmanager.yml`. Вместо реальных секретов в нем используются переменные-заглушки (например, `##SMTP_USER##`), которые `init-container` заменит на значения из `Secret`.
 
 **`alertmanager-config-template.yaml`**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap

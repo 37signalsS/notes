@@ -62,6 +62,7 @@ PXE является стандартом де-факто для автомат�
 Это позволяет, например, отказаться от медленного и примитивного TFTP в пользу HTTP.
 
 **Пример скрипта iPXE:**
+
 ```ipxe
 #!ipxe
 dhcp
@@ -120,9 +121,9 @@ boot
 
 ### Связанные темы
 
-- **[DHCP-сервер](../Services/DHCP/isc_dhcp_server_overview.md)** — настройка DHCP для PXE
-- **[TFTP](../ServicesAndTools/)** — базовый файловый сервер для PXE (документация в разработке)
-- **[iSCSI](../iSCSI.md)** — загрузка rootfs по iSCSI
-- **[NFS](../Services/nfs/index.md)** — сетевая файловая система для PXE
-- **[Процесс загрузки Linux](../../Core/kernel/boot_process.md)** — этапы загрузки системы
-- **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — влияние латентности сети на загрузку
+* **[DHCP-сервер](../Services/DHCP/isc_dhcp_server_overview.md)** — настройка DHCP для PXE
+* **[TFTP](../ServicesAndTools/)** — базовый файловый сервер для PXE (документация в разработке)
+* **[iSCSI](../iSCSI.md)** — загрузка rootfs по iSCSI
+* **[NFS](../Services/nfs/index.md)** — сетевая файловая система для PXE
+* **[Процесс загрузки Linux](../../Core/kernel/boot_process.md)** — этапы загрузки системы
+* **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — влияние латентности сети на загрузку

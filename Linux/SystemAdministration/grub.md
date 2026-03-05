@@ -47,6 +47,7 @@
 ### Параметры ядра в GRUB
 
 Строка `linux` в `grub.cfg` содержит:
+
 - Путь к ядру (`vmlinuz-...`)
 - Параметр `root=` (устройство корневой ФС)
 - Дополнительные флаги: `rhgb` (анимация загрузки), `quiet` (скрыть вывод), `nomodeset` и др.
@@ -88,7 +89,7 @@ sudo update-grub
 lsinitrd /boot/initramfs-$(uname -r).img | less
 ```
 
-2. Создание конфигурации добавления модулей:
+1. Создание конфигурации добавления модулей:
 
 ```bash
 # Создать файл в /etc/dracut.conf.d/
@@ -96,7 +97,7 @@ lsinitrd /boot/initramfs-$(uname -r).img | less
 add_drivers+=" mpt3sas vmw_balloon vmw_vmci vmd "
 ```
 
-3. Пересоздание initramfs:
+1. Пересоздание initramfs:
 
 ```bash
 # RHEL/CentOS
@@ -135,6 +136,7 @@ grub2-install --target=x86_64-efi --efi-directory=/boot/efi
 | Двойная загрузка не видна | os-prober не включен | Включить `GRUB_DISABLE_OS_PROBER=false` |
 
 **GRUB rescue commands:**
+
 ```
 ls                    # Показать разделы
 ls (hd0,1)/           # Просмотреть содержимое раздела
@@ -147,15 +149,18 @@ boot                  # Загрузиться
 ### Связанные темы
 
 **Процесс загрузки:**
+
 - **[Процесс загрузки ядра](../../Core/kernel/boot_process.md)** — этапы от GRUB до systemd
 - **[BIOS и UEFI](../../Core/firmware_bios_uefi.md)** — прошивка, ранняя загрузка
 - **[Восстановление пароля](./linux_password_recovery.md)** — использование GRUB для сброса пароля
 
 **Файловые системы и LVM:**
+
 - **[LVM](../../FileSystems/LVM/overview_concepts.md)** — логические тома
 - **[LVM и загрузка](../../FileSystems/LVM/advanced_topics.md)** — загрузка с LVM
 
 **Systemd:**
+
 - **[Параметры ядра](../../Core/kernel/kernel_interfaces.md)** — /proc/cmdline
 - **[Systemd загрузка](../../Core/systemd/boot_troubleshooting.md)** — диагностика загрузки systemd
 
@@ -178,6 +183,7 @@ sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # RHEL/CentOS
 ```
 
 **Secure Boot:**
+
 - GRUB должен быть подписан для работы с Secure Boot
 - Используйте `shim.efi` для загрузки в системах с Secure Boot
 - Отключение Secure Boot может потребоваться для кастомных ядер

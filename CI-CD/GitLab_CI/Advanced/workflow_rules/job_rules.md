@@ -3,6 +3,7 @@
 ## Определения
 
 `rules` — рекомендуемый способ контроля запуска **отдельных задач**. Поддерживает:
+
 - `if` — условные выражения
 - `changes` — изменения в файлах
 - `exists` — существование файлов
@@ -15,7 +16,7 @@
 
 ### Условный запуск задач с `rules`
 
-#### Запуск только для Merge Request:
+#### Запуск только для Merge Request
 
 ```yaml
 test_job:
@@ -26,7 +27,7 @@ test_job:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 ```
 
-#### Запуск для MR в определённую ветку:
+#### Запуск для MR в определённую ветку
 
 ```yaml
 test_mr_to_main:
@@ -36,7 +37,7 @@ test_mr_to_main:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
 ```
 
-#### Запуск при изменении файлов (монорепозитории):
+#### Запуск при изменении файлов (монорепозитории)
 
 ```yaml
 # Запуск только при изменении frontend-кода
@@ -59,7 +60,7 @@ test_backend:
         - "requirements.txt"
 ```
 
-#### Комбинированное правило для деплоя:
+#### Комбинированное правило для деплоя
 
 ```yaml
 deploy_job:
@@ -77,7 +78,7 @@ deploy_job:
     - when: never
 ```
 
-#### Задачи по расписанию (pipeline schedules):
+#### Задачи по расписанию (pipeline schedules)
 
 ```yaml
 nightly_tests:

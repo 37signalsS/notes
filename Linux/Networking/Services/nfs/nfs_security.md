@@ -66,16 +66,19 @@ STATDOPTS="--port 893 --outgoing-port 894"
 ## Монтирование с Kerberos
 
 **Временное монтирование:**
+
 ```bash
 sudo mount -t nfs4 -o sec=krb5p 10.0.0.5:/srv/nfs/shared /mnt/nfs/shared
 ```
 
 **Через `/etc/fstab`:**
+
 ```ini
 10.0.0.5:/srv/nfs/shared  /mnt/nfs/shared  nfs4  hard,sec=krb5p,_netdev  0  0
 ```
 
 **Проверка билета Kerberos:**
+
 ```bash
 # Проверка билета
 klist

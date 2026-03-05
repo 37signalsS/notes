@@ -120,6 +120,6 @@
 
 ## Дополнительная информация
 
-- [Роли](../ansible_roles.md): Правильная структура и организация
-- [Продвинутые паттерны ролей](ansible_advanced_role_structure.md): Паттерн "Utility Role"
-- [Переменные](../PlaybookStructure/variables.md): Приоритеты и область видимости
+* [Роли](../ansible_roles.md): Правильная структура и организация
+* [Продвинутые паттерны ролей](ansible_advanced_role_structure.md): Паттерн "Utility Role"
+* [Переменные](../PlaybookStructure/variables.md): Приоритеты и область видимости

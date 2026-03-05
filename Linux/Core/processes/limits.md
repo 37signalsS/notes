@@ -130,6 +130,7 @@ OOMScoreAdjust=-1000   # Защита от OOM Killer
 ```
 
 После изменения файла:
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart my-app
@@ -210,6 +211,7 @@ done | sort -nr | head -20
 ```
 
 Пример вывода:
+
 ```
 700  0      131351  fail2ban-server
 693  0      1254    node
@@ -232,6 +234,7 @@ journalctl -k -g "Out of memory" -n 50
 ```
 
 Пример записи в логе:
+
 ```
 [114247.906865] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),
 cpuset=/,mems_allowed=0,global_oom,task_memcg=/system.slice/fail2ban.service,

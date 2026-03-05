@@ -67,6 +67,7 @@ trigger-job:
 ### 4. Inputs keyword (рекомендуется для GitLab 17+)
 
 **Преимущества перед `variables`:**
+
 - Type checking
 - Validation через `options`
 - Descriptions
@@ -74,6 +75,7 @@ trigger-job:
 - Безопасность (защита от инъекций)
 
 **В target configuration:**
+
 ```yaml
 # child-pipeline.yml
 spec:
@@ -93,6 +95,7 @@ spec:
 ```
 
 **При запуске:**
+
 ```yaml
 staging:
   trigger:
@@ -114,6 +117,7 @@ production:
 ```
 
 **Использование в triggered pipeline:**
+
 ```yaml
 # В child-pipeline.yml
 deploy_job:

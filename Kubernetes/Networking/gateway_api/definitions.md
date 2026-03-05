@@ -45,17 +45,19 @@
 ## Дополнительная информация
 
 **См. также:**
+
 - [Ресурсы (CRD)](./resources.md) — GatewayClass, Gateway, Route
 - [Базовые сценарии](./practical_basic.md) — практические примеры
 - [Расширенные функции маршрутизации](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
 - [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
 
 **Реализации:**
+
 - [Envoy Gateway](./envoy_gateway.md)
 - [Traefik](./traefik.md)
 
-* **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
-* **Обзор Ingress и его ограничений:** [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api)
+- **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
+- **Обзор Ingress и его ограничений:** [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api)
 
 ---
 

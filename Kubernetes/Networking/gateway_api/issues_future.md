@@ -11,6 +11,7 @@
 ---
 
 **См. также:**
+
 - [Определения](./definitions.md) — основные понятия
 - [Сравнение с Ingress](./definitions.md#сравнение-с-ingress) — преимущества Gateway API
 - [Envoy Gateway](./envoy_gateway.md) — реализация с дополнительными возможностями

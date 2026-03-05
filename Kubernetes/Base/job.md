@@ -195,6 +195,7 @@ spec:
 ### Поведение подов после завершения Job
 
 После завершения Job (успешно или с ошибкой), поды **не удаляются автоматически**. Они остаются в кластере как записи в etcd. Это позволяет:
+
 * Просматривать логи завершённых подов
 * Использовать `kubectl describe` для отладки
 
@@ -203,10 +204,13 @@ spec:
 ### Отладка через Events
 
 Для диагностики проблем с Job полезно использовать:
+
 ```bash
 kubectl events --namespace <namespace>
 ```
+
 События покажут историю создания, планирования и завершения подов.
 
-*   [Kubernetes v1.35: Job .spec.managedBy for Jobs Goes GA](https://kubernetes.io/blog/2025/12/18/kubernetes-v1-35-job-managedby-for-jobs-goes-ga/)
+* [Kubernetes v1.35: Job .spec.managedBy for Jobs Goes GA](https://kubernetes.io/blog/2025/12/18/kubernetes-v1-35-job-managedby-for-jobs-goes-ga/)
+
     ```

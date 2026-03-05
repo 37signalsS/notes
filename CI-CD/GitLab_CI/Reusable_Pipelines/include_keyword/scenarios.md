@@ -3,6 +3,7 @@
 ## Сценарий 1: Модульная конфигурация проекта
 
 **Структура:**
+
 ```
 project/
 ├── .gitlab-ci.yml
@@ -28,6 +29,7 @@ stages:
 ## Сценарий 2: Централизованные шаблоны для группы проектов
 
 **Репозиторий шаблонов (`group/ci-templates`):**
+
 ```
 ci-templates/
 ├── docker-build.yml
@@ -48,6 +50,7 @@ ci-templates/
 ```
 
 **Проект (`.gitlab-ci.yml`):**
+
 ```yaml
 include:
   - project: 'group/ci-templates'

@@ -9,6 +9,7 @@ kubectl describe pod <pod-name>
 ```
 
 **Ищите в разделе `Events`:**
+
 ```
 Type     Reason     Age                From               Message
 ----     ------     ----               ----               -------

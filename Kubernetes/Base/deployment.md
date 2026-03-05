@@ -141,6 +141,7 @@ kubectl get all -l app=nginx
 # NAME                                          DESIRED   CURRENT   READY   AGE
 # replicaset.apps/nginx-deployment-5d59d67564   3         3         3       15s
 ```
+
 Мы видим, что `Deployment` создал один `ReplicaSet`, который, в свою очередь, запустил три `Pod`.
 
 ### Шаг 2: Успешное обновление (Rolling Update)
@@ -159,6 +160,7 @@ kubectl rollout status deployment/nginx-deployment
 ```
 
 Что произошло "под капотом":
+
 1. `Deployment` создал **новый** `ReplicaSet` с обновленным шаблоном (`nginx:1.29.0`).
 2. Он начал постепенно увеличивать количество реплик нового `ReplicaSet` и уменьшать количество реплик старого.
 3. В результате поды заменялись один за другим без простоя приложения.
@@ -181,6 +183,7 @@ kubectl set image deployment/nginx-deployment nginx=nginx:1.999.9
 ```
 
 Смотрим, что происходит:
+
 ```bash
 kubectl get pods -l app=nginx
 # NAME                                     READY   STATUS             RESTARTS   AGE
@@ -188,6 +191,7 @@ kubectl get pods -l app=nginx
 # nginx-deployment-new-version-86f596b6c-fghij   1/1     Running            0          8m
 # nginx-deployment-failed-update-12345678-klmno   0/1     ImagePullBackOff   0          1m
 ```
+
 Kubernetes пытается создать новый под, но не может скачать образ, что приводит к статусу `ImagePullBackOff`. Старые поды при этом продолжают работать, обслуживая трафик.
 
 **Диагностика:**
@@ -207,6 +211,7 @@ kubectl describe pod nginx-deployment-failed-update-12345678-klmno
 #   Normal   BackOff    10s (x6 over 88s)  kubelet, node-1    Back-off pulling image "nginx:1.999.9"
 #   Warning  Failed     10s (x6 over 88s)  kubelet, node-1    Error: ImagePullBackOff
 ```
+
 События ясно показывают, что образ не найден.
 
 **Откат:**
@@ -216,6 +221,7 @@ kubectl describe pod nginx-deployment-failed-update-12345678-klmno
 kubectl rollout undo deployment/nginx-deployment
 # deployment.apps/nginx-deployment rolled back
 ```
+
 `Deployment` удалит проблемный `ReplicaSet` и вернет предыдущий `ReplicaSet` в рабочее состояние.
 
 ### Шаг 4: Просмотр истории и откат к конкретной ревизии
@@ -244,6 +250,7 @@ kubectl rollout pause deployment/my-webapp
 # После внесения всех изменений, возобновить
 kubectl rollout resume deployment/my-webapp
 ```
+
 Это полезно, чтобы применить несколько изменений в спецификации `Deployment` одним батчем, а не запускать обновление после каждого `kubectl edit` или `kubectl patch`.
 
 ### Принудительный перезапуск (рестарт)
@@ -252,6 +259,7 @@ kubectl rollout resume deployment/my-webapp
 # Элегантный способ перезапустить все поды в деплойменте
 kubectl rollout restart deployment/my-webapp
 ```
+
 Эта команда инициирует стандартный `Rolling Update`, не изменяя сам манифест. Это идеальный способ заставить поды подхватить изменения из [ConfigMap](./configmap.md) или [Secret](secrets/secrets_basics.md). Команда также работает для [DaemonSet](./daemonset.md) и [StatefulSet](./statefulset.md).
 
 ## Дополнительная информация
@@ -259,6 +267,7 @@ kubectl rollout restart deployment/my-webapp
 ### Owner References
 
 Каждый ресурс содержит поле `ownerReferences` в `metadata`, которое показывает связь "родитель-потомок":
+
 - Pod → принадлежит ReplicaSet
 - ReplicaSet → принадлежит Deployment
 
@@ -281,11 +290,11 @@ kubectl rollout restart deployment/my-webapp
 
 ## Связанные темы
 
--   [ConfigMap](./configmap.md) — внешняя конфигурация
--   [Secret](secrets/secrets_basics.md) — конфиденциальные данные
--   [StatefulSet](./statefulset.md) — управление stateful-приложениями
--   [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
--   [Pod](./Pod/pod_overview.md) — базовый объект развертывания
--   [ReplicaSet](./replicaset.md) — управление репликами
--   [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md) — автоматическое масштабирование
--   [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary
+- [ConfigMap](./configmap.md) — внешняя конфигурация
+- [Secret](secrets/secrets_basics.md) — конфиденциальные данные
+- [StatefulSet](./statefulset.md) — управление stateful-приложениями
+- [Высокая доступность](./high_availability.md) — обеспечение отказоустойчивости
+- [Pod](./Pod/pod_overview.md) — базовый объект развертывания
+- [ReplicaSet](./replicaset.md) — управление репликами
+- [Horizontal Pod Autoscaler](../Autoscaling/overview_concepts.md) — автоматическое масштабирование
+- [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary

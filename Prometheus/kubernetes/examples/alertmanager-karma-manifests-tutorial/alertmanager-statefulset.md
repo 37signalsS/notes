@@ -1,14 +1,16 @@
 # Alertmanager StatefulSet
 
 Манифест `StatefulSet` для Alertmanager.
+
 - **`initContainers`**: Секция, где происходит магия. Контейнер `config-init` читает шаблон из `alertmanager-config-template`, подставляет в него секреты из `alertmanager-secret` и записывает готовый `alertmanager.yml` в `emptyDir` volume.
 - **Основной контейнер `alertmanager`**: Запускается уже с готовым конфигурационным файлом.
 - **Volumes**:
-    - `config-template`: монтирует шаблон.
-    - `config`: `emptyDir` для обмена готовым конфигом между `init-container` и основным контейнером.
-    - `templates`: монтирует шаблоны сообщений.
+  - `config-template`: монтирует шаблон.
+  - `config`: `emptyDir` для обмена готовым конфигом между `init-container` и основным контейнером.
+  - `templates`: монтирует шаблоны сообщений.
 
 **`alertmanager-statefulset.yaml`**
+
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet

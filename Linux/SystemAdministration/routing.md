@@ -168,9 +168,10 @@ Gateway=192.168.1.254
 Для более сложных сценариев, когда маршрут нужно выбирать не только по адресу назначения, но и по адресу источника или другим критериям, используется **[Policy-Based Routing](../Networking/linux_policy_based_routing.md)**.
 
 **Пример использования PBR:**
-- Маршрутизация трафика от разных пользователей через разные шлюзы
-- Балансировка нагрузки между несколькими провайдерами
-- Изоляция трафика между сервисами
+
+* Маршрутизация трафика от разных пользователей через разные шлюзы
+* Балансировка нагрузки между несколькими провайдерами
+* Изоляция трафика между сервисами
 
 ### Диагностика проблем маршрутизации
 
@@ -184,8 +185,8 @@ Gateway=192.168.1.254
 
 ### Связанные темы
 
-- **NAT и масquerading:** [NAT в Linux](../Networking/Concepts/nat.md)
-- **Policy-Based Routing:** [PBR](../Networking/linux_policy_based_routing.md)
-- **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
-- **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)
-- **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](../Networking/Settings/tools/nftables.md), [firewalld](../Networking/Settings/tools/firewalld.md)
+* **NAT и масquerading:** [NAT в Linux](../Networking/Concepts/nat.md)
+* **Policy-Based Routing:** [PBR](../Networking/linux_policy_based_routing.md)
+* **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
+* **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)
+* **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](../Networking/Settings/tools/nftables.md), [firewalld](../Networking/Settings/tools/firewalld.md)

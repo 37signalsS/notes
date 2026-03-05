@@ -171,6 +171,7 @@ kubectl get object nginx-deployment -o yaml
 ```
 
 Обратите внимание на поле `status`:
+
 - `Ready: True` — ресурс успешно создан
 - `Ready: False` — проверьте `status.conditions` для деталей
 

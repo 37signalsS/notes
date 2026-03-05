@@ -99,13 +99,14 @@ security-scan:
 ```
 
 **Пороговые значения**:
-- **score < 0** — критические уязвимости, блокировка деплоя
-- **score 0–5** — предупреждения, рекомендуется исправление
-- **score > 5** — приемлемый уровень
+
+* **score < 0** — критические уязвимости, блокировка деплоя
+* **score 0–5** — предупреждения, рекомендуется исправление
+* **score > 5** — приемлемый уровень
 
 ### Связанные темы
 
-- **[Kyverno](./kyverno.md)** — политики безопасности во время деплоя
-- **[Pod Security Context](./pod_security_context.md)** — securityContext для подов
-- **[kube-bench](./kube-bench.md)** — аудит инфраструктуры
-- **[Kubesec GitHub](https://github.com/controlplaneio/kubesec)** — официальный репозиторий
+* **[Kyverno](./kyverno.md)** — политики безопасности во время деплоя
+* **[Pod Security Context](./pod_security_context.md)** — securityContext для подов
+* **[kube-bench](./kube-bench.md)** — аудит инфраструктуры
+* **[Kubesec GitHub](https://github.com/controlplaneio/kubesec)** — официальный репозиторий

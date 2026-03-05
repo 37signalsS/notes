@@ -24,8 +24,8 @@
 
 Для управления сертификатами `etcd` через `kubeadm`, кластер должен быть развёрнут с опцией управления etcd через kubeadm:
 
-*   **При ручной установке:** `kubeadm init` по умолчанию управляет etcd.
-*   **При использовании Kubespray:** `etcd_kubeadm_enabled: true` в inventory.
+* **При ручной установке:** `kubeadm init` по умолчанию управляет etcd.
+* **При использовании Kubespray:** `etcd_kubeadm_enabled: true` в inventory.
 
 ## 3. Практические сценарии
 
@@ -137,9 +137,9 @@ spec:
 
 ### 4.1. Связанные темы
 
-*   [Управление сертификатами кластера](../../Operations/certificate_management.md)
-*   [Kubespray установка](../Kubespray/installation.md)
-*   [etcd обслуживание](../../Concepts/etcd_overview.md)
+* [Управление сертификатами кластера](../../Operations/certificate_management.md)
+* [Kubespray установка](../Kubespray/installation.md)
+* [etcd обслуживание](../../Concepts/etcd_overview.md)
 
 ### 4.2. Troubleshooting
 

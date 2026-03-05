@@ -47,6 +47,7 @@ sudo ethtool -k eth0 | grep "on"
 ```
 
 **Пример вывода:**
+
 ```
 Features for eth0:
 rx-checksumming: on
@@ -123,6 +124,7 @@ ethtool -k eth0 | grep "off \[fixed\]"
 ```
 
 **Возможные причины:**
+
 - Offloading отключен на одном конце соединения
 - Драйвер NIC не поддерживает нужные функции
 - Аппаратные ограничения сетевой карты
@@ -130,6 +132,7 @@ ethtool -k eth0 | grep "off \[fixed\]"
 ### Постоянное применение настроек
 
 **Debian/Ubuntu** (`/etc/network/interfaces`):
+
 ```
 auto eth0
 iface eth0 inet dhcp
@@ -137,11 +140,13 @@ iface eth0 inet dhcp
 ```
 
 **RHEL/CentOS** (`/etc/sysconfig/network-scripts/ifcfg-eth0`):
+
 ```
 ETHTOOL_OPTS="-K eth0 gro off lro off"
 ```
 
 **systemd-networkd** (`/etc/systemd/network/10-eth.network`):
+
 ```ini
 [Match]
 Name=eth0

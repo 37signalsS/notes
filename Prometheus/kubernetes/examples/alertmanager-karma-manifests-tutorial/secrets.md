@@ -3,6 +3,7 @@
 Перед развертыванием необходимо создать `Secret` в Kubernetes, который будет содержать все чувствительные данные.
 
 **`alertmanager-secret.yaml`**
+
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -19,6 +20,7 @@ stringData:
   telegram.token: "bot-token-from-botfather"
   telegram.chat_id: "your-chat-id" # ID чата или канала
 ```
+
 > **Важно:** Замените плейсхолдеры на реальные значения.
 
 ---

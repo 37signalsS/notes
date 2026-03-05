@@ -95,16 +95,19 @@ metallb_config:
 ### 3.3. Проверка системных подов
 
 **Просмотр всех подов в kube-system:**
+
 ```bash
 kubectl get pods -n kube-system -o wide
 ```
 
 **Проверка версии компонента Control Plane:**
+
 ```bash
 kubectl describe pod kube-apiserver-control-1 -n kube-system | grep Image
 ```
 
 **Проверка CNI-плагина:**
+
 ```bash
 kubectl get pods -n kube-system -l k8s-app=calico-node
 # или для Flannel

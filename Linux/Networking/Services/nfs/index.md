@@ -26,6 +26,7 @@
 ### Быстрый старт
 
 **Сервер (Debian/Ubuntu):**
+
 ```bash
 sudo apt-get install -y nfs-kernel-server
 sudo mkdir -p /srv/nfs/shared
@@ -35,6 +36,7 @@ sudo systemctl restart nfs-kernel-server
 ```
 
 **Клиент:**
+
 ```bash
 sudo apt-get install -y nfs-common
 sudo mount -t nfs4 10.0.0.5:/srv/nfs/shared /mnt/nfs/shared

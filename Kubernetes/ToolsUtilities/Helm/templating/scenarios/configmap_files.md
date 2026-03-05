@@ -33,6 +33,7 @@ data:
 - `.Files.AsConfig` — доступ как к ConfigMap
 
 **Пример структуры чарта:**
+
 ```
 chart/
 ├── files/
@@ -42,6 +43,7 @@ chart/
 ```
 
 **templates/configmap.yaml:**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -62,6 +64,7 @@ data:
 Конфигурационные файлы могут содержать синтаксис `{{ .Value }}` (Postfix, Prometheus и др.), что конфликтует с Helm.
 
 **Неправильно (ошибка):**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -73,6 +76,7 @@ data:
 ```
 
 **Правильно (экранирование):**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -91,4 +95,4 @@ data:
 
 - [Функции](../functions.md) — toYaml, nindent и другие
 - [Именованные шаблоны](../templates/_helpers.md) — переиспользуемые блоки
-- [ helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница

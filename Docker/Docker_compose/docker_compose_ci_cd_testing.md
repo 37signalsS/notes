@@ -81,6 +81,6 @@ docker compose -f compose.yml -f compose.test.yml up \
 
 ### Связанные документы
 
-- **[Testcontainers Overview](../../Testing/testcontainers_overview.md)** — альтернативный подход к изоляции зависимостей
-- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие практики
-- **[Docker Overview](../docker_overview.md)** — основы Docker
+* **[Testcontainers Overview](../../Testing/testcontainers_overview.md)** — альтернативный подход к изоляции зависимостей
+* **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие практики
+* **[Docker Overview](../docker_overview.md)** — основы Docker

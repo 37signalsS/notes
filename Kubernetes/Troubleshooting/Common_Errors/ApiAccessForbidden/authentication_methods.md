@@ -12,17 +12,20 @@
 ### 401 Unauthorized — проблемы с токеном
 
 **Сообщение:**
+
 ```
 Unauthorized: Invalid token
 The token provided has expired
 ```
 
 **Причины:**
+
 - Истек срок действия токена ServiceAccount
 - Token был отозван
 - Неверный kubeconfig
 
 **Решение:**
+
 ```bash
 # Пересоздание token для ServiceAccount
 kubectl delete secret <sa-token-secret>

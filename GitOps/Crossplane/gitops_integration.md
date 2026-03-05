@@ -44,6 +44,7 @@ Crossplane идеально вписывается в методологию Git
 ### Сценарий 1: ArgoCD + Crossplane для управления инфраструктурой
 
 1. **Создание манифеста Crossplane в Git:**
+
    ```yaml
    apiVersion: yandexcloud.crossplane.io/v1alpha1
    kind: ObjectStorageBucket
@@ -59,6 +60,7 @@ Crossplane идеально вписывается в методологию Git
    ```
 
 2. **ArgoCD Application для синхронизации:**
+
    ```yaml
    apiVersion: argoproj.io/v1alpha1
    kind: Application
@@ -83,6 +85,7 @@ Crossplane идеально вписывается в методологию Git
    ```
 
 3. **Мониторинг статуса:**
+
    ```bash
    # Статус синхронизации ArgoCD
    argocd app get crossplane-infra

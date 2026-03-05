@@ -35,6 +35,7 @@
 ```
 
 **Поля тега:**
+
 | Поле | Размер | Описание |
 |------|--------|----------|
 | **TPID (Tag Protocol Identifier)** | 2 байта | `0x8100` — указывает на тегированный кадр |
@@ -58,6 +59,7 @@
 ### Настройка VLAN в Linux
 
 **Создание VLAN-интерфейсов:**
+
 ```bash
 # Создать VLAN 10 на eth0
 ip link add link eth0 name eth0.10 type vlan id 10
@@ -78,6 +80,7 @@ ip -d link show
 ```
 
 **Настройка через NetworkManager (nmtui/nmcli):**
+
 ```bash
 nmcli connection add type vlan ifname enp0s3.20 dev enp0s3 id 20
 nmcli connection modify enp0s3.20 ipv4.addresses 192.168.20.1/24
@@ -86,6 +89,7 @@ nmcli connection up enp0s3.20
 ```
 
 **Постоянная конфигурация (Netplan, Ubuntu):**
+
 ```yaml
 network:
   version: 2
@@ -106,6 +110,7 @@ network:
 ### Диагностика VLAN
 
 **Проверка конфигурации:**
+
 ```bash
 # Показать VLAN-интерфейсы
 ip -d link show | grep vlan
@@ -119,6 +124,7 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 ```
 
 **Типичные проблемы:**
+
 | Проблема | Симптомы | Решение |
 |----------|----------|---------|
 | **Native VLAN mismatch** | Потеря пакетов на trunk | Убедиться, что native VLAN совпадает на обоих концах |
@@ -130,11 +136,13 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 ### Безопасность VLAN
 
 **Атаки:**
+
 - **VLAN Hopping:** Злоумышленник отправляет тегированные кадры с access-порта
 - **Double Tagging:** Два тега 802.1Q для обхода изоляции
 - **Switch Spoofing:** Эмуляция коммутатора для получения trunk-доступа
 
 **Защита:**
+
 - Отключить DTP (Dynamic Trunking Protocol) на пользовательских портах
 - Настроить access-порты явно
 - Использовать private VLAN для дополнительной изоляции
@@ -150,10 +158,12 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 ### Связанные документы
 
 **Протоколы:**
+
 - **[Ethernet](./ethernet.md)** — базовый протокол канального уровня
 - **[ARP](./arp.md)** — broadcast-трафик в VLAN
 
 **Концепции и настройка:**
+
 - **[L2 Switching](../Concepts/vlan_and_L2_switching.md)** — принцип работы коммутаторов
 - **[Сетевая сегментация](../Concepts/network_segmentation_and_microsegmentation.md)** — стратегии сегментации
 

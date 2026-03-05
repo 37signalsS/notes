@@ -92,6 +92,6 @@ sudo ip link set veth-guest up # Этот интерфейс обычно пер
 
 ### Оптимизация сетевых интерфейсов
 
-- **[Оптимизация TCP](./tcp_tuning.md)** — настройка буферов, алгоритмов перегрузки
-- **[Offloading](./offloading.md)** — разгрузка CPU через NIC (GRO/LRO/TSO)
-- **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка по ядрам CPU
+* **[Оптимизация TCP](./tcp_tuning.md)** — настройка буферов, алгоритмов перегрузки
+* **[Offloading](./offloading.md)** — разгрузка CPU через NIC (GRO/LRO/TSO)
+* **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка по ядрам CPU

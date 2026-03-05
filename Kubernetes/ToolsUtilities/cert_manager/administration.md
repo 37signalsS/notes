@@ -22,6 +22,7 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 ```
 
 **Поведение после включения:**
+
 - cert-manager добавляет `ownerReference` к Secret, указывая на Certificate
 - При удалении Certificate сборщик мусора Kubernetes автоматически удаляет Secret
 
@@ -125,6 +126,7 @@ kubectl get endpoints cert-manager-webhook -n cert-manager
 ```
 
 **Решение:**
+
 ```bash
 # Пересоздать webhook
 kubectl rollout restart deployment cert-manager-webhook -n cert-manager
@@ -216,6 +218,7 @@ kubectl apply -f ca-secret-backup.yaml
 ### Миграция между кластерами
 
 1. Экспортировать все Certificate и Issuer ресурсы:
+
    ```bash
    kubectl get certificates,issuers,clusterissuers --all-namespaces -o yaml > cert-manager-resources.yaml
    ```
@@ -227,6 +230,7 @@ kubectl apply -f ca-secret-backup.yaml
 4. Восстановить CA-секреты
 
 5. Применить ресурсы:
+
    ```bash
    kubectl apply -f cert-manager-resources.yaml
    ```

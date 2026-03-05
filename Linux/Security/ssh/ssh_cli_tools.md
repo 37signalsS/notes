@@ -47,6 +47,7 @@ rsync -avz --progress /local/dir/ user@server:/remote/dir/
 ```
 
 **Важность слеша:**
+
 - `rsync source/ dest` — копирует **содержимое** директории source в dest
 - `rsync source dest` — копирует **саму директорию** source в dest
 
@@ -68,6 +69,7 @@ sftp user@server
 ```
 
 **Графические клиенты:**
+
 - Linux: Nautilus (файловый менеджер) — подключение через `sftp://user@server`
 - Windows: WinSCP, FileZilla
 

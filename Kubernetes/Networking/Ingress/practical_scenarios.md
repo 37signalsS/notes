@@ -28,6 +28,7 @@ helm install ingress-nginx ingress-nginx/ingress-nginx
 ```
 
 **Основные параметры:**
+
 - `controller.priorityClassName`: PriorityClass для контроллера (требуется предварительное создание).
 - `controller.metrics.enabled`: Включение метрик для Prometheus.
 - `controller.admissionWebhooks.enabled`: Отключение валидации Ingress-ресурсов. Полезно, если в кластере планируется несколько Ingress-контроллеров.
@@ -92,26 +93,33 @@ spec:
 В скачанном файле рекомендуется внести несколько изменений для повышения надежности и управляемости.
 
 #### а) Настройка Service типа `NodePort`
+
 Найдите ресурс `Service` для контроллера и измените его `spec`:
-*   **`type: NodePort`**: Выставляет сервис на портах всех узлов.
-*   **`externalTrafficPolicy: Local`** (опционально, но рекомендуется): Заставляет `NodePort` открываться только на тех узлах, где запущены поды Ingress-контроллера. Это сохраняет исходный IP-адрес клиента и избегает лишнего сетевого хопа. *Требует совместного использования с `nodeSelector` или Affinity-правилами.*
-*   **`spec.ports`**: Можно явно задать `nodePort` для HTTP и HTTPS, например `31080` и `31443`.
+
+- **`type: NodePort`**: Выставляет сервис на портах всех узлов.
+- **`externalTrafficPolicy: Local`** (опционально, но рекомендуется): Заставляет `NodePort` открываться только на тех узлах, где запущены поды Ingress-контроллера. Это сохраняет исходный IP-адрес клиента и избегает лишнего сетевого хопа. *Требует совместного использования с `nodeSelector` или Affinity-правилами.*
+- **`spec.ports`**: Можно явно задать `nodePort` для HTTP и HTTPS, например `31080` и `31443`.
 
 #### б) Определение кастомного `IngressClass`
+
 Чтобы избежать конфликтов, если в кластере может быть несколько Ingress-контроллеров, рекомендуется определить собственный класс.
 
 Найдите `Deployment` контроллера и в аргументах запуска (`args`) добавьте:
+
 ```yaml
 - /nginx-ingress-controller
 - --ingress-class=system-ingress # Наше кастомное имя
 - --configmap=$(POD_NAMESPACE)/ingress-nginx-controller
 ```
+
 Теперь только `Ingress`-ресурсы с аннотацией `kubernetes.io/ingress.class: system-ingress` или полем `spec.ingressClassName: system-ingress` будут обрабатываться этим контроллером.
 
 #### в) Настройка высокой доступности (HA) через Anti-Affinity
+
 Чтобы два пода Ingress-контроллера не оказались на одном узле (что сведет на нет отказоустойчивость), используется `podAntiAffinity`.
 
 В `Deployment` контроллера добавьте в `spec.template.spec`:
+
 ```yaml
       affinity:
         podAntiAffinity:
@@ -124,11 +132,14 @@ spec:
                       - ingress-nginx
               topologyKey: "kubernetes.io/hostname"
 ```
-*   `requiredDuringScheduling...`: Жесткое правило, запрещающее планировщику размещать поды с одинаковым лейблом (`app.kubernetes.io/name: ingress-nginx`) на одном узле (`topologyKey: "kubernetes.io/hostname"`).
+
+- `requiredDuringScheduling...`: Жесткое правило, запрещающее планировщику размещать поды с одинаковым лейблом (`app.kubernetes.io/name: ingress-nginx`) на одном узле (`topologyKey: "kubernetes.io/hostname"`).
 
 #### г) Включение JSON-логов
+
 Для упрощения сбора и анализа логов, настройте их вывод в формате JSON.
 Найдите ресурс `ConfigMap` (`ingress-nginx-controller`) и добавьте в `data`:
+
 ```yaml
 data:
   log-format-upstream: '{"time": "$time_iso8601", "proxy_protocol_addr": "$proxy_protocol_addr", ...}' # Добавьте нужный формат
@@ -136,9 +147,11 @@ data:
 ```
 
 **3. Применение манифеста:**
+
 ```bash
 kubectl apply -f ./deploy-custom.yaml
 ```
+
 Этот подход обеспечивает полный контроль и создает надежную, отказоустойчивую конфигурацию Ingress-контроллера.
 
 ## Практические сценарии
@@ -204,12 +217,12 @@ Ingress упрощает терминирование TLS-трафика. Для
 
 **Примеры для NGINX Ingress Controller:**
 
-* `nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"` — указывает, что приложение, на которое направляется трафик, ожидает HTTPS-соединение, а не HTTP (по умолчанию). Это позволяет Ingress-контроллеру понять, как именно обрабатывать и отправлять трафик к бэкенду.
-* `nginx.ingress.kubernetes.io/rewrite-target: /` — перенаправляет трафик с указанного `path` на корневой путь (`/`) сервиса.
-* `nginx.ingress.kubernetes.io/ssl-redirect: "true"` — принудительно перенаправляет HTTP-трафик на HTTPS.
-* `nginx.ingress.kubernetes.io/proxy-body-size: "8m"` — устанавливает максимальный размер тела запроса.
-* `nginx.ingress.kubernetes.io/proxy-read-timeout: "60s"` — задает таймаут чтения ответа от бэкенда. Полезно для долгих синхронных операций.
-* `kubernetes.io/ingress.class: "nginx"` — указывает, какой Ingress-контроллер должен обрабатывать этот объект (актуально, если в кластере их несколько).
+- `nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"` — указывает, что приложение, на которое направляется трафик, ожидает HTTPS-соединение, а не HTTP (по умолчанию). Это позволяет Ingress-контроллеру понять, как именно обрабатывать и отправлять трафик к бэкенду.
+- `nginx.ingress.kubernetes.io/rewrite-target: /` — перенаправляет трафик с указанного `path` на корневой путь (`/`) сервиса.
+- `nginx.ingress.kubernetes.io/ssl-redirect: "true"` — принудительно перенаправляет HTTP-трафик на HTTPS.
+- `nginx.ingress.kubernetes.io/proxy-body-size: "8m"` — устанавливает максимальный размер тела запроса.
+- `nginx.ingress.kubernetes.io/proxy-read-timeout: "60s"` — задает таймаут чтения ответа от бэкенда. Полезно для долгих синхронных операций.
+- `kubernetes.io/ingress.class: "nginx"` — указывает, какой Ingress-контроллер должен обрабатывать этот объект (актуально, если в кластере их несколько).
 
 ### Интеграция с распределенной трассировкой (Distributed Tracing)
 
@@ -224,6 +237,7 @@ NGINX Ingress Controller может интегрироваться с систе
 - **`jaeger-propagation-format: "w3c"`**: Устанавливает формат заголовков для передачи контекста трассировки. `w3c` является современным стандартом и использует заголовок `traceparent`.
 
 В качестве альтернативы глобальному включению, трассировку можно активировать для конкретного Ingress-ресурса с помощью аннотации:
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -238,11 +252,12 @@ spec:
 > **Важно:** Модуль трассировки в NGINX Ingress Controller чувствителен к доступности бекенда трассировки. Если `jaeger-collector-host` указан, но сервис недоступен, **контроллер может перестать работать или не сможет применить новую конфигурацию**. Для production-сред рекомендуется использовать отдельный Ingress-контроллер для трассируемых приложений, чтобы изолировать возможные сбои от основного потока трафика.
 
 ### Проксирование TCP/UDP трафика (L4)
+
 Хотя Ingress в основном предназначен для L7 (HTTP/S) трафика, NGINX Ingress Controller можно настроить для проксирования TCP и UDP трафика на уровне L4. Это полезно для публикации не-HTTP сервисов, таких как базы данных или брокеры сообщений.
 
 **Процесс настройки:**
 
-1.  **Включить проксирование в Deployment контроллера:**
+1. **Включить проксирование в Deployment контроллера:**
     При запуске Ingress-контроллера необходимо передать ему аргументы командной строки, указывающие на `ConfigMap`'ы, которые будут содержать конфигурацию TCP и UDP сервисов.
 
     ```yaml
@@ -259,7 +274,7 @@ spec:
                 - --udp-services-configmap=$(POD_NAMESPACE)/udp-services
     ```
 
-2.  **Создать `ConfigMap` для TCP/UDP сервисов:**
+2. **Создать `ConfigMap` для TCP/UDP сервисов:**
     Создайте `ConfigMap` с именами `tcp-services` и/или `udp-services` в том же `namespace`, где работает контроллер. В секции `data` ключом является внешний порт, а значением — ссылка на внутренний сервис в формате `<namespace>/<service-name>:<service-port>`.
 
     ```yaml
@@ -274,7 +289,7 @@ spec:
       "5432": "default/my-postgres:5432"
     ```
 
-3.  **Опубликовать порты на `Service` контроллера:**
+3. **Опубликовать порты на `Service` контроллера:**
     Необходимо открыть соответствующие порты на главном `Service`, который выставляет Ingress-контроллер наружу (`NodePort` или `LoadBalancer`).
 
     ```yaml

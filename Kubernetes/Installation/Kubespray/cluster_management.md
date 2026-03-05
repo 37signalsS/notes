@@ -32,6 +32,7 @@
 #### Добавление Worker Node
 
 1. **Обновите inventory** (`inventory/my-cluster/inventory.ini`):
+
    ```ini
    [kube_node]
    worker-1
@@ -40,11 +41,13 @@
    ```
 
 2. **Запустите плейбук `scale.yml`:**
+
    ```bash
    ansible-playbook -i inventory/my-cluster/inventory.ini scale.yml
    ```
 
 3. **Проверьте результат:**
+
    ```bash
    kubectl get nodes
    ```
@@ -52,6 +55,7 @@
 #### Добавление Master Node (Control Plane)
 
 1. **Обновите inventory:**
+
    ```ini
    [kube_control_plane]
    control-1
@@ -67,11 +71,13 @@
    ```
 
 2. **Запустите плейбук `cluster.yml`:**
+
    ```bash
    ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
    ```
 
 3. **Проверьте результат:**
+
    ```bash
    kubectl get nodes -l node-role.kubernetes.io/control-plane
    ```
@@ -81,11 +87,13 @@
 1. **Обновите inventory** — удалите узел из всех групп.
 
 2. **Запустите плейбук `remove-node.yml`:**
+
    ```bash
    ansible-playbook -i inventory/my-cluster/inventory.ini remove-node.yml -e node=<имя_узла>
    ```
 
 3. **Проверьте результат:**
+
    ```bash
    kubectl get nodes
    ```
@@ -95,6 +103,7 @@
 #### Подготовка к обновлению
 
 1. **Проверьте поддерживаемую версию:**
+
    ```bash
    cat roles/download/defaults/main.yml | grep kubelet_checksums -A 20
    ```
@@ -102,6 +111,7 @@
 2. **Изучите Release Notes** целевой версии Kubernetes.
 
 3. **Сделайте бэкап etcd:**
+
    ```bash
    etcdctl snapshot save snapshot.db
    ```
@@ -111,11 +121,13 @@
 #### Процесс обновления
 
 1. **Измените версию** в `group_vars/k8s-cluster/k8s-cluster.yml`:
+
    ```yaml
    kube_version: v1.30.0  # Целевая версия
    ```
 
 2. **Запустите плейбук `upgrade-cluster.yml`:**
+
    ```bash
    ansible-playbook -i inventory/my-cluster/inventory.ini upgrade-cluster.yml
    ```
@@ -127,12 +139,14 @@
 #### Проверка после обновления
 
 1. **Версия API Server и kubelet:**
+
    ```bash
    kubectl version
    kubectl get nodes
    ```
 
 2. **Версии компонентов Control Plane:**
+
    ```bash
    kubectl describe pod kube-apiserver-control-1 -n kube-system | grep Image
    kubectl describe pod kube-controller-manager-control-1 -n kube-system | grep Image
@@ -140,11 +154,13 @@
    ```
 
 3. **Версия etcd:**
+
    ```bash
    etcdctl version
    ```
 
 4. **Проверка подов:**
+
    ```bash
    kubectl get pods -A --field-selector=status.phase!=Running
    ```
@@ -165,4 +181,3 @@
 * [Примеры конфигураций](./examples.md) — Ingress, MetalLB, системные поды.
 * [Управление сертификатами](../../Operations/certificate_management.md) — обновление сертификатов.
 * [etcd: Обзор](../../Concepts/etcd_overview.md) — хранилище данных кластера.
-

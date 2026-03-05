@@ -5,6 +5,7 @@
 **Proxy Protocol** — протокол, передающий информацию о первоначальном соединении (IP-адреса клиента и сервера, порты) в начале TCP-соединения через L4-прокси.
 
 **Проблема:** При использовании L4-балансировщиков (HAProxy, Nginx stream, AWS ELB) бэкенд-сервер видит только IP-адрес прокси, а не реального клиента. Это ломает:
+
 - Логирование реальных IP
 - Rate limiting по IP
 - Геолокацию
@@ -25,20 +26,24 @@ PROXY TCP4 192.168.0.1 192.168.0.11 56324 443\r\n
 ```
 
 **Формат:**
+
 ```
 PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
 ```
 
 **Типы протоколов:**
+
 - `TCP4` — TCP over IPv4
 - `TCP6` — TCP over IPv6
 - `UNKNOWN` — нет информации (используется для совместимости)
 
 **Преимущества:**
+
 - Простая отладка (видно в tcpdump)
 - Легкая реализация
 
 **Недостатки:**
+
 - Больше размер (до 108 байт)
 - Нет расширения для дополнительных данных
 
@@ -53,6 +58,7 @@ PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
 ```
 
 **Преимущества:**
+
 - Компактный (минимум 16 байт)
 - Поддержка **TLV** (Type-Length-Value) для дополнительных данных:
   - SSL/TLS информация (cipher, version, client certificate)
@@ -61,6 +67,7 @@ PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
   - Custom metadata
 
 **Формат заголовка v2:**
+
 | Поле | Размер | Описание |
 |------|--------|----------|
 | **Signature** | 12 байт | `\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A` |
@@ -84,6 +91,7 @@ PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
 ### Настройка HAProxy → Nginx
 
 **HAProxy (отправитель):**
+
 ```haproxy
 frontend https
     bind *:443
@@ -92,6 +100,7 @@ frontend https
 ```
 
 **Nginx (получатель):**
+
 ```nginx
 stream {
     server {
@@ -129,6 +138,7 @@ host    all    all    0.0.0.0/0    md5
 ```
 
 **Пример с HAProxy:**
+
 ```haproxy
 frontend postgres
     bind *:5432
@@ -141,6 +151,7 @@ PostgreSQL будет видеть реальный IP клиента в `pg_sta
 ### Диагностика и troubleshooting
 
 **Проверка заголовка v1:**
+
 ```bash
 # Подключиться и увидеть заголовок
 telnet backend.example.com 80
@@ -151,6 +162,7 @@ tcpdump -i eth0 -A port 80 | head -20
 ```
 
 **Проверка заголовка v2:**
+
 ```bash
 # Бинарный заголовок не виден в текстовом виде
 tcpdump -i eth0 -X port 80 | head -30
@@ -168,15 +180,18 @@ tcpdump -i eth0 -X port 80 | head -30
 ### Безопасность
 
 **Риски:**
+
 - **IP spoofing:** Злоумышленник может отправить поддельный Proxy Protocol заголовок
 - **DoS:** Отправка некорректных заголовков для нарушения работы бэкенда
 
 **Защита:**
+
 1. **Доверенная сеть:** Proxy Protocol должен использоваться только между доверенными узлами
 2. **Firewall rules:** Разрешить соединения только от балансировщиков
 3. **Валидация:** Бэкенд должен отбрасывать заголовки от недоверенных источников
 
 **Пример (Nginx):**
+
 ```nginx
 # Принимать Proxy Protocol только от доверенных IP
 set_real_ip_from 10.0.0.0/8;
@@ -198,10 +213,12 @@ set_real_ip_from 192.168.0.0/16;
 | | Redis (plugin) |
 
 ### Связанные документы
+
 - [HTTP](./http.md) — прикладной уровень
 - [TCP](./TCP/overview.md) — транспортный уровень
 - [Load Balancing](../Concepts/proxy.md) — балансировка нагрузки
 
 ### Спецификации
+
 - **HAProxy Proxy Protocol:** [Официальная спецификация](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt)
 - **RFC:** Не является RFC, де-факто стандарт

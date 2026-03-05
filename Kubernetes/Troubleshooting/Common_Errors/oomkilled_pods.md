@@ -55,6 +55,7 @@ kubectl describe pod <pod-name>
 ```
 
 Ищите в выводе:
+
 ```
 Last State:     Terminated
   Reason:       OOMKilled
@@ -96,11 +97,13 @@ kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
 #### 1. Превышение `limits.memory`
 
 **Симптомы:**
+
 - `Exit Code: 137`
 - `Reason: OOMKilled`
 - Потребление памяти близко к `limits`
 
 **Решение:**
+
 ```yaml
 resources:
   requests:
@@ -114,11 +117,13 @@ resources:
 #### 2. Утечка памяти в приложении
 
 **Симптомы:**
+
 - Постепенный рост потребления памяти со временем
 - Регулярные `OOMKilled` через определенные интервалы
 - `OOMKilled` даже при высоких `limits`
 
 **Диагностика:**
+
 ```bash
 # Непрерывный мониторинг потребления
 watch -n 5 'kubectl top pod <pod-name>'
@@ -128,6 +133,7 @@ kubectl logs <pod-name> --previous | grep -i 'memory\|leak\|heap'
 ```
 
 **Решение:**
+
 - Профилирование приложения (pprof для Go, JFR для Java, tracemalloc для Python)
 - Оптимизация кода, исправление утечек
 - Настройка GC (для JVM: `-XX:MaxRAMPercentage`)
@@ -137,6 +143,7 @@ kubectl logs <pod-name> --previous | grep -i 'memory\|leak\|heap'
 **Проблема:** JVM до JDK 8u191 не учитывала лимиты контейнера.
 
 **Решение:**
+
 ```yaml
 env:
 - name: JAVA_TOOL_OPTIONS
@@ -155,6 +162,7 @@ resources:
 **Причина:** Приложению требуется больше памяти для инициализации, чем для работы.
 
 **Решение:**
+
 ```yaml
 # Временное увеличение лимита через HPA с кастомными метриками
 # Или использование Startup Probe для отсрочки проверки liveness

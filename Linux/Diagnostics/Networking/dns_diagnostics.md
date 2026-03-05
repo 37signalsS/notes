@@ -23,6 +23,7 @@ hosts: files dns
 ```
 
 **Порядок:**
+
 1. **`files`** — проверка `/etc/hosts` (локальные переопределения)
 2. **`dns`** — запрос к DNS-серверам из `/etc/resolv.conf`
 
@@ -44,6 +45,7 @@ hosts: files dns
 В современных дистрибутивах (Ubuntu 17.10+, RHEL 7+) за разрешение имён отвечает `systemd-resolved` — локальный кэширующий резолвер.
 
 **Особенности:**
+
 - `/etc/resolv.conf` → symlink на `/run/systemd/resolve/stub-resolv.conf`
 - `nameserver 127.0.0.53` — локальный stub-резолвер
 - Получает DNS-серверы от DHCP, NetworkManager или статической конфигурации
@@ -100,13 +102,16 @@ hosts: files dns
 
 `nslookup` — простой инструмент для проверки DNS. В отличие от `dig`, имеет более лаконичный вывод и по умолчанию показывает, какой DNS-сервер ответил на запрос.
 
-*   **Простой запрос A-записи:**
+- **Простой запрос A-записи:**
+
     ```bash
     nslookup google.com
     ```
+
     Команда покажет IP-адреса (A и AAAA) для `google.com`, а также адрес DNS-сервера, который предоставил ответ.
 
-*   **Запрос конкретного типа записи:**
+- **Запрос конкретного типа записи:**
+
     ```bash
     # Запросить MX-записи (почтовые серверы)
     nslookup -type=mx google.com
@@ -114,20 +119,22 @@ hosts: files dns
     # Запросить SOA-запись (авторитетная информация о зоне)
     nslookup -type=soa google.com
     ```
+
     Ответ на SOA-запрос покажет первичный сервер имен для зоны (ns1.google.com) и контактный email администратора.
 
-*   **Трассировка цепочки делегирования:**
+- **Трассировка цепочки делегирования:**
     Можно вручную проследить путь разрешения имени, начиная с корневых серверов.
-    1.  Находим один из корневых серверов (например, `a.root-servers.net`).
-    2.  Спрашиваем у него про NS-серверы для зоны `.com`: `nslookup -type=ns com a.root-servers.net`.
-    3.  У полученного сервера (например, `a.gtld-servers.net`) спрашиваем про NS-серверы для `google.com`: `nslookup -type=ns google.com a.gtld-servers.net`.
-    4.  У полученного сервера (например, `ns1.google.com`) спрашиваем А-запись для `google.com`: `nslookup google.com ns1.google.com`.
+    1. Находим один из корневых серверов (например, `a.root-servers.net`).
+    2. Спрашиваем у него про NS-серверы для зоны `.com`: `nslookup -type=ns com a.root-servers.net`.
+    3. У полученного сервера (например, `a.gtld-servers.net`) спрашиваем про NS-серверы для `google.com`: `nslookup -type=ns google.com a.gtld-servers.net`.
+    4. У полученного сервера (например, `ns1.google.com`) спрашиваем А-запись для `google.com`: `nslookup google.com ns1.google.com`.
 
 ### Сценарий 3: Детальный анализ DNS-записи с помощью `dig`
 
 **`dig` (Domain Information Groper)** — мощная утилита для выполнения DNS-запросов и получения детальной информации о доменах. Входит в состав пакета `dnsutils` (Debian) или `bind-utils` (RHEL). В отличие от `nslookup` или `host`, `dig` показывает полную информацию: заголовки запроса, секции ответа, время отклика и статистику.
 
 **Установка:**
+
 ```bash
 # Debian/Ubuntu
 sudo apt-get install -y dnsutils
@@ -142,11 +149,13 @@ apk add bind-utils
 #### Основные примеры использования
 
 **Простой запрос A-записи:**
+
 ```bash
 dig cortel.cloud
 ```
 
 **Пример вывода:**
+
 ```
 ; <<>> DiG 9.20.20 <<>> cortel.cloud
 ;; global options: +cmd
@@ -169,12 +178,14 @@ cortel.cloud.    4746  IN  A  95.181.181.7
 ```
 
 **Запрос к определённому DNS-серверу:**
+
 ```bash
 dig @8.8.8.8 cortel.cloud    # использовать DNS Google
 dig @1.1.1.1 example.com     # использовать DNS Cloudflare
 ```
 
 **Краткий вывод (только IP):**
+
 ```bash
 dig cortel.cloud +short
 # 95.181.181.7
@@ -194,6 +205,7 @@ dig cortel.cloud +short
 | `+multi` | Многострочный вывод (для DNSKEY) |
 
 **Примеры использования опций:**
+
 ```bash
 # Только ответ с TTL
 dig +noall +answer +ttlid example.com
@@ -225,9 +237,9 @@ dig _http._tcp.example.com SRV  # SRV-запись
 
 DNS в контейнеризированных средах имеет особенности:
 
-* **Kubernetes:** DNS обычно предоставляется [CoreDNS или NodeLocalDNS](../../../Kubernetes/Networking/dns_deep_dive.md).
-* **Docker:** Использует встроенный DNS на `127.0.0.11`. Проблемы решаются через проверку конфигурации демона и сети контейнера. Подробнее см. [Устранение проблем с DNS в Docker](../../../Docker/Docker_troubleshooting/network_connectivity_issues.md#сценарий-4-проблемы-с-dns-в-контейнерах).
+- **Kubernetes:** DNS обычно предоставляется [CoreDNS или NodeLocalDNS](../../../Kubernetes/Networking/dns_deep_dive.md).
+- **Docker:** Использует встроенный DNS на `127.0.0.11`. Проблемы решаются через проверку конфигурации демона и сети контейнера. Подробнее см. [Устранение проблем с DNS в Docker](../../../Docker/Docker_troubleshooting/network_connectivity_issues.md#сценарий-4-проблемы-с-dns-в-контейнерах).
 
 ## Дополнительная информация
 
-* **Анализ времени DNS-запроса:** Для детального измерения сетевых задержек, включая этап разрешения DNS, можно использовать `curl`. Этот метод подробно описан в заметке [Диагностика сетевых задержек с curl](./curl_network_diagnostics.md).
+- **Анализ времени DNS-запроса:** Для детального измерения сетевых задержек, включая этап разрешения DNS, можно использовать `curl`. Этот метод подробно описан в заметке [Диагностика сетевых задержек с curl](./curl_network_diagnostics.md).

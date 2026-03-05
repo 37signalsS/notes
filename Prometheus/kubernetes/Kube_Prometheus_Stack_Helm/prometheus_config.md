@@ -25,6 +25,7 @@ data:
   etcd-client.crt: <base64_encoded_client_cert>
   etcd-client.key: <base64_encoded_client_key>
 ```
+
 **Примечание**: Ключи полей `etcd-client-ca.crt`, `etcd-client.crt`, `etcd-client.key` должны совпадать с именами, которые будут использоваться в `ServiceMonitor`. Убедитесь, что Prometheus Operator имеет права на чтение этого `Secret`.
 
 ### 2. Создание Service и Endpoint для ETCD
@@ -65,6 +66,7 @@ subsets:
         port: 2379
         protocol: TCP
 ```
+
 **Примечание**: Замените `<IP_адрес_..._ETCD_узла>` на реальные IP-адреса ваших ETCD-серверов. Метка `k8s-app: etcd-metrics` в `Service` и `Endpoints` используется `ServiceMonitor` для обнаружения.
 
 ### 3. Создание ServiceMonitor для ETCD
@@ -111,13 +113,15 @@ spec:
     matchNames:
     - kube-system # Namespace, где находится Service
 ```
+
 **Важные параметры `ServiceMonitor`**:
-*   `namespace`: Должен быть тем же `namespace`, что и `Service`/`Endpoints`.
-*   `labels.release`: Критически важен, так как Prometheus Operator использует эту метку для связывания `ServiceMonitor` с конкретным экземпляром Prometheus. Замените `prometheus-stack` на `rancher-monitoring`, если вы используете Rancher.
-*   `scheme: https`: Указывает, что метрики собираются по HTTPS.
-*   `tlsConfig`: Конфигурация TLS, указывающая на `Secret` с клиентскими сертификатами ETCD.
-*   `selector.matchLabels`: Должен соответствовать меткам `Service` и `Endpoints`.
-*   `namespaceSelector.matchNames`: Указывает, в каких `namespaces` искать Service.
+
+* `namespace`: Должен быть тем же `namespace`, что и `Service`/`Endpoints`.
+* `labels.release`: Критически важен, так как Prometheus Operator использует эту метку для связывания `ServiceMonitor` с конкретным экземпляром Prometheus. Замените `prometheus-stack` на `rancher-monitoring`, если вы используете Rancher.
+* `scheme: https`: Указывает, что метрики собираются по HTTPS.
+* `tlsConfig`: Конфигурация TLS, указывающая на `Secret` с клиентскими сертификатами ETCD.
+* `selector.matchLabels`: Должен соответствовать меткам `Service` и `Endpoints`.
+* `namespaceSelector.matchNames`: Указывает, в каких `namespaces` искать Service.
 
 После применения этих манифестов Prometheus должен начать собирать метрики с ETCD, которые затем станут доступны для визуализации в Grafana.
 
@@ -127,9 +131,9 @@ spec:
 
 **Основные принципы:**
 
-1.  **Обнаружение Service:** `ServiceMonitor` указывает Prometheus Operator, какой Kubernetes Service он должен мониторить, используя метки (label selector).
-2.  **Эндпоинты:** Определяет, по какому порту и пути в `Service` доступны метрики (например, `/metrics`).
-3.  **Ассоциация с Prometheus:** Экземпляр Prometheus, управляемый Prometheus Operator, будет автоматически настроен на сбор метрик с таргетов, соответствующих `ServiceMonitor`. Для Rancher-мониторинга критически важна метка `release: rancher-monitoring`.
+1. **Обнаружение Service:** `ServiceMonitor` указывает Prometheus Operator, какой Kubernetes Service он должен мониторить, используя метки (label selector).
+2. **Эндпоинты:** Определяет, по какому порту и пути в `Service` доступны метрики (например, `/metrics`).
+3. **Ассоциация с Prometheus:** Экземпляр Prometheus, управляемый Prometheus Operator, будет автоматически настроен на сбор метрик с таргетов, соответствующих `ServiceMonitor`. Для Rancher-мониторинга критически важна метка `release: rancher-monitoring`.
 
 **Пример ServiceMonitor для пользовательского приложения:**
 
@@ -155,10 +159,10 @@ spec:
 
 **Пояснения:**
 
-*   **`metadata.namespace`**: `ServiceMonitor` обычно развертывается в том же `namespace`, что и `Service` приложения, которое он мониторит.
-*   **`labels.release: rancher-monitoring`**: Эта метка критически важна. Она позволяет экземпляру Prometheus, развернутому Rancher (имеющему аналогичную `release`-метку), обнаружить и использовать этот `ServiceMonitor`. Если эта метка не совпадает, Prometheus не будет собирать метрики.
-*   **`spec.selector.matchLabels`**: Указывает `ServiceMonitor`, какие `Service` он должен выбрать. Эти метки должны точно совпадать с метками `Service` вашего приложения.
-*   **`spec.endpoints`**: Определяет, к какому порту (по имени, как определено в `Service`) и по какому пути обращаться за метриками.
-*   **`interval: 15s`**: Указывает интервал сбора метрик. Более частый сбор (например, 15 секунд) может быть полезен для бизнес-метрик, но увеличивает нагрузку на Prometheus.
+* **`metadata.namespace`**: `ServiceMonitor` обычно развертывается в том же `namespace`, что и `Service` приложения, которое он мониторит.
+* **`labels.release: rancher-monitoring`**: Эта метка критически важна. Она позволяет экземпляру Prometheus, развернутому Rancher (имеющему аналогичную `release`-метку), обнаружить и использовать этот `ServiceMonitor`. Если эта метка не совпадает, Prometheus не будет собирать метрики.
+* **`spec.selector.matchLabels`**: Указывает `ServiceMonitor`, какие `Service` он должен выбрать. Эти метки должны точно совпадать с метками `Service` вашего приложения.
+* **`spec.endpoints`**: Определяет, к какому порту (по имени, как определено в `Service`) и по какому пути обращаться за метриками.
+* **`interval: 15s`**: Указывает интервал сбора метрик. Более частый сбор (например, 15 секунд) может быть полезен для бизнес-метрик, но увеличивает нагрузку на Prometheus.
 
 После применения этого `ServiceMonitor` Prometheus Operator автоматически обновит конфигурацию Prometheus, и тот начнет собирать метрики с вашего приложения. Проверить статус сбора можно в UI Prometheus в разделе "Targets".

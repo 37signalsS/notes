@@ -106,6 +106,7 @@ docker run -d \
 ```
 
 Требования к сертификатам:
+
 * Серверный сертификат: `/data/tls/server.crt`
 * Ключ: `/data/tls/server.key`
 * CA-сертификат: `/data/tls/ca.crt`

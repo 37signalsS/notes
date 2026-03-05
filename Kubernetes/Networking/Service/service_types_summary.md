@@ -54,14 +54,17 @@ LoadBalancer (NodePort + облачный балансировщик)
 ## Дополнительная информация
 
 ### ExternalIPs
+
 Поле `externalIPs` позволяет назначить сервису заранее известный внешний IP-адрес. Это не тип, а свойство, применимое к другим типам.
 **Подробнее: [ExternalIPs](./service_externalips.md)**
 
 ### Headless Service
+
 Сервис без `ClusterIP` (`clusterIP: None`), который используется для прямого обнаружения подов.
 **Подробнее: [Headless Service](./service_type_headless.md)**
 
 ### Дополнительные ресурсы
+
 - [Обзор Service](./service_overview.md) — базовые концепции и архитектура
 - [Сравнительная таблица](./service_types_comparison.md) — быстрое сравнение всех типов
 - [Практический сценарий](./service_practical_scenarios.md) — пошаговый пример публикации

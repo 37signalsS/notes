@@ -3,6 +3,7 @@
 Создадим отдельный `ConfigMap` для Go-шаблонов, которые форматируют сообщения для Telegram и почты.
 
 **`alertmanager-templates.yaml`**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap

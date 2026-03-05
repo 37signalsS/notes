@@ -5,6 +5,7 @@
 **VXLAN (Virtual Extensible LAN)** — протокол туннелирования для создания оверлейных сетей в крупных виртуализированных средах и облачных дата-центрах.
 
 **Ключевые характеристики:**
+
 - **Уровень:** L2 (инкапсуляция Ethernet в UDP)
 - **Транспорт:** UDP порт `4789` (IANA), `8472` (Linux по умолчанию до стандартизации)
 - **Идентификатор:** VNI (24 бита) — до 16 миллионов сетей
@@ -28,6 +29,7 @@
 ```
 
 **Поля:**
+
 - **I-бит (бит 3):** Указывает на наличие VNI (должен быть 1)
 - **VNI (24 бита):** Идентификатор виртуальной сети
 - **Reserved:** Зарезервированные биты (должны быть 0)
@@ -35,11 +37,13 @@
 ### Принцип работы
 
 **Инкапсуляция:**
+
 ```
 [Ethernet-кадр] → [VXLAN (8 байт)] → [UDP] → [Внешний IP] → Передача
 ```
 
 **Overhead:** ~50 байт
+
 - VXLAN: 8 байт
 - UDP: 8 байт
 - Внешний IP: 20 байт
@@ -58,14 +62,17 @@
 ### Компоненты VXLAN
 
 **VTEP (VXLAN Tunnel End Point):**
+
 - Выполняет инкапсуляцию/декапсуляцию
 - Может быть программным (Linux, vSwitch) или аппаратным (NIC, switch)
 
 **VNI (VXLAN Network Identifier):**
+
 - Аналог VLAN ID, но 24 бита
 - Локально значимый идентификатор сегмента
 
 **VXLAN Segment:**
+
 - Логический L2-домен внутри VXLAN
 - Аналог broadcast-домена VLAN
 
@@ -88,6 +95,7 @@ ip address add 10.8.0.2/24 dev vxlan0
 ```
 
 **Параметры:**
+
 - `id 100` — VNI виртуальной сети
 - `dev eth0` — физический интерфейс для VXLAN-трафика
 - `dstport 4789` — стандартный порт VXLAN
@@ -104,11 +112,13 @@ ip address add 10.8.0.1/24 dev vxlan0
 ```
 
 **Требования:**
+
 - Поддержка multicast в сети
 - Настроенный IGMP для управления группами
 - [Адреса 239.0.0.0/8](../Concepts/network_classification.md) — локально-административные
 
 **Ограничения:**
+
 - Multicast обычно не работает через публичный Интернет
 - Требует настройки multicast-маршрутизации
 
@@ -127,17 +137,20 @@ bridge fdb append to 00:11:22:33:44:66 dev vxlan0 dst 192.0.2.3
 ```
 
 **Применение:**
+
 - Интеграция с SDN-контроллерами
 - Динамическое обучение MAC-адресов
 
 ### 4. VXLAN в Kubernetes (CNI)
 
 **Примеры CNI с VXLAN:**
+
 - **Flannel:** VXLAN backend по умолчанию
 - **Calico:** VXLAN для cross-subnet
 - **Cilium:** VXLAN для cluster pooling
 
 **Типичная конфигурация Flannel:**
+
 ```json
 {
   "Network": "10.244.0.0/16",
@@ -190,10 +203,12 @@ tcpdump -i vxlan0 -n
 ### VXLAN Offload
 
 **Аппаратная поддержка:**
+
 - Современные NIC поддерживают VXLAN checksum/TLS offload
 - Проверка: `ethtool -k eth0 | grep vxlan`
 
 **Включение offload:**
+
 ```bash
 ethtool -K eth0 vxlan-hw-offload on
 ```
@@ -201,11 +216,13 @@ ethtool -K eth0 vxlan-hw-offload on
 ### MTU considerations
 
 **Расчёт MTU для VXLAN:**
+
 ```
 Базовый MTU (1500) - VXLAN overhead (50) = 1450
 ```
 
 **Настройка:**
+
 ```bash
 # Для физического интерфейса (jumbo frames)
 ip link set eth0 mtu 9000

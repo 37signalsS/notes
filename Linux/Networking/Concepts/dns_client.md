@@ -63,12 +63,14 @@ hosts:          files dns
 > **Безопасность:** Вредоносное ПО может добавлять записи в `/etc/hosts` для перенаправления трафика с легитимных сайтов на фишинговые IP-адреса.
 
 **Пример атаки:**
+
 ```
 # Злоумышленник добавляет:
 185.199.108.153 github.com
 ```
 
 **Проверка целостности:**
+
 ```bash
 # Сверить с известными записями
 cat /etc/hosts
@@ -120,6 +122,7 @@ nameserver 8.8.8.8
 #### Конфигурационный файл
 
 **`/etc/systemd/resolved.conf`:**
+
 ```ini
 [Resolve]
 # DNS-серверы (через пробел)
@@ -142,6 +145,7 @@ Cache=yes
 ```
 
 **Применение изменений:**
+
 ```bash
 sudo systemctl restart systemd-resolved
 ```
@@ -193,8 +197,8 @@ dns=systemd-resolved
 
 ### Связанные темы
 
-- **[Диагностика DNS](../../Diagnostics/Networking/dns_diagnostics.md)** — утилиты и сценарии диагностики
-- **[Протокол DNS](../../../Networking/Protocols/DNS/dns.md)** — теория и архитектура DNS
-- **[DNS-кэширование](../../../Networking/Protocols/DNS/dns_concepts.md)** — TTL, кэширование на разных уровнях
-- **[Постоянная настройка сети](../Settings/persistent_network_configuration.md)** — конфигурация сети в дистрибутивах
-- **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — снижение задержек DNS-резолвинга
+* **[Диагностика DNS](../../Diagnostics/Networking/dns_diagnostics.md)** — утилиты и сценарии диагностики
+* **[Протокол DNS](../../../Networking/Protocols/DNS/dns.md)** — теория и архитектура DNS
+* **[DNS-кэширование](../../../Networking/Protocols/DNS/dns_concepts.md)** — TTL, кэширование на разных уровнях
+* **[Постоянная настройка сети](../Settings/persistent_network_configuration.md)** — конфигурация сети в дистрибутивах
+* **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — снижение задержек DNS-резолвинга

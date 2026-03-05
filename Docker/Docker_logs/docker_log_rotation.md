@@ -83,5 +83,5 @@ docker run -it --log-opt max-size=10m --log-opt max-file=3 nginx
 
 ### Связанные документы
 
-- **Обзор системы логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
-- **Агентный сбор логов:** [Агентный сбор логов Docker](./docker_agent_based_logging.md)
+* **Обзор системы логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
+* **Агентный сбор логов:** [Агентный сбор логов Docker](./docker_agent_based_logging.md)

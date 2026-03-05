@@ -76,7 +76,7 @@ argocd login argocd.example.com --username admin --grpc-web
 
 ### Сценарий 3: Настройка доступа через Ingress с SSL
 
-**Требования:** Ingress Controller (nginx), cert-manager (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/05_ingress.md))
+**Требования:** Ingress Controller (nginx), cert-manager (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md))
 
 ```yaml
 # argocd-server-ingress.yaml
@@ -138,6 +138,7 @@ argocd repo list
 ### Сценарий 5: Создание приложения
 
 **Через CLI:**
+
 ```bash
 argocd app create guestbook \
   --repo https://github.com/argoproj/argocd-example-apps.git \
@@ -150,6 +151,7 @@ argocd app create guestbook \
 ```
 
 **Через манифест:**
+
 ```yaml
 # my-application.yaml
 apiVersion: argoproj.io/v1alpha1
@@ -177,6 +179,7 @@ spec:
 ### Сценарий 6: Настройка локального пользователя и RBAC
 
 **1. Создание пользователя (argocd-cm ConfigMap):**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -189,6 +192,7 @@ data:
 ```
 
 **2. Назначение роли (argocd-rbac-cm ConfigMap):**
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -203,6 +207,7 @@ data:
 ```
 
 **3. Установка пароля:**
+
 ```bash
 # Для admin
 argocd account update-password --account admin

@@ -33,6 +33,6 @@
 
 ## Обратная связь
 
-- [ helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница
 - [Именованные шаблоны](./templates/_helpers.md) — переиспользуемые блоки
 - [Функции](./functions.md) — ключевые функции

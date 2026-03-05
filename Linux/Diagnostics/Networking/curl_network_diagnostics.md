@@ -76,6 +76,6 @@ curl --resolve site1.local:80:192.168.77.11 http://site1.local
 
 ## Связанные заметки
 
-- **[Диагностика DNS](./dns_diagnostics.md)** — диагностика DNS-проблем
-- **[ss (Socket Statistics)](./ss.md)** — анализ сокетов
-- **[tcpdump](./tcpdump.md)** — анализ сетевого трафика
+* **[Диагностика DNS](./dns_diagnostics.md)** — диагностика DNS-проблем
+* **[ss (Socket Statistics)](./ss.md)** — анализ сокетов
+* **[tcpdump](./tcpdump.md)** — анализ сетевого трафика

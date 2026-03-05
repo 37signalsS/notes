@@ -78,6 +78,7 @@
 ### Пример запроса A-записи
 
 **Запрос (query):**
+
 ```
 Transaction ID: 0x1234
 Flags: 0x0100 (RD=1, стандартный запрос)
@@ -93,6 +94,7 @@ Question:
 ```
 
 **Ответ (response):**
+
 ```
 Transaction ID: 0x1234 (тот же)
 Flags: 0x8180 (QR=1, RA=1, RD=1, RCODE=0)

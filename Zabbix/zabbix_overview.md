@@ -55,7 +55,7 @@ Zabbix поддерживает обе модели сбора данных (г�
 1. **Zabbix Agent:** Основной способ. Доступен в двух версиях:
     * **Zabbix Agent (classic):** Классический агент на C.
     * **Zabbix Agent 2:** Агент на Go с модульной архитектурой и плагинами для СУБД (PostgreSQL, MySQL, Oracle).
-    
+
     Режимы работы:
     * **Активные проверки:** Агент периодически запрашивает у сервера список элементов данных и самостоятельно отправляет результаты. Предпочтительный, лучше масштабируемый режим.
     * **Пассивные проверки:** Сервер сам запрашивает у агента значение конкретной метрики.
@@ -88,9 +88,10 @@ Zabbix поддерживает обе модели сбора данных (г�
 Если какой-то объект (например, файловая система) исчезает из JSON при следующей проверке, Zabbix автоматически удаляет связанные с ним метрики и триггеры.
 
 **Примеры использования LLD:**
-- Мониторинг файловых систем
-- Мониторинг сетевых интерфейсов
-- [Мониторинг баз данных](./zabbix_database_monitoring.md) (автоматическое обнаружение БД на сервере)
+
+* Мониторинг файловых систем
+* Мониторинг сетевых интерфейсов
+* [Мониторинг баз данных](./zabbix_database_monitoring.md) (автоматическое обнаружение БД на сервере)
 
 ---
 
@@ -198,8 +199,9 @@ sudo ufw allow from 192.168.1.100 to any port 10050 proto tcp
 ```
 
 > **См. также:**
-> - **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** — практический пример настройки UserParameter для MySQL
-> - **[Мониторинг PostgreSQL с помощью Zabbix Agent 2](./zabbix_postgresql_monitoring.md)** — современный подход к мониторингу PostgreSQL
+>
+> * **[Мониторинг MySQL с помощью Zabbix Agent](../Databases/MySQL/monitoring.md)** — практический пример настройки UserParameter для MySQL
+> * **[Мониторинг PostgreSQL с помощью Zabbix Agent 2](./zabbix_postgresql_monitoring.md)** — современный подход к мониторингу PostgreSQL
 
 После этого не забудьте добавить хост в веб-интерфейсе Zabbix.
 
@@ -285,10 +287,10 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 
 ### Официальные ресурсы
 
-- **[Официальный сайт Zabbix](https://www.zabbix.com/)**
-- **[Документация Zabbix 7.0](https://www.zabbix.com/documentation/7.0)**
-- **[Репозитории загрузок](https://www.zabbix.com/download_sources)**
-- **[Release Notes](https://www.zabbix.com/release_notes)**
+* **[Официальный сайт Zabbix](https://www.zabbix.com/)**
+* **[Документация Zabbix 7.0](https://www.zabbix.com/documentation/7.0)**
+* **[Репозитории загрузок](https://www.zabbix.com/download_sources)**
+* **[Release Notes](https://www.zabbix.com/release_notes)**
 
 ### Версии и поддержка
 
