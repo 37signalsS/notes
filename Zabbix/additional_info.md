@@ -73,10 +73,10 @@ UserParameter=otus.discovery,/usr/local/bin/my_discovery_script.sh
 
 ## Официальные ресурсы
 
-* **[Официальный сайт Zabbix](https://www.zabbix.com/)**
-* **[Документация Zabbix 7.0](https://www.zabbix.com/documentation/7.0)**
-* **[Репозитории загрузок](https://www.zabbix.com/download_sources)**
-* **[Release Notes](https://www.zabbix.com/release_notes)**
+- **[Официальный сайт Zabbix](https://www.zabbix.com/)**
+- **[Документация Zabbix 7.0](https://www.zabbix.com/documentation/7.0)**
+- **[Репозитории загрузок](https://www.zabbix.com/download_sources)**
+- **[Release Notes](https://www.zabbix.com/release_notes)**
 
 ---
 

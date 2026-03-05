@@ -71,8 +71,8 @@
 
 ## Ресурсы
 
-* [Sharding Patterns (Microservices.io)](https://microservices.io/patterns/data/sharding.html)
-* [Kubernetes HPA Documentation](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [Sharding Patterns (Microservices.io)](https://microservices.io/patterns/data/sharding.html)
+- [Kubernetes HPA Documentation](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
 
 ---
 

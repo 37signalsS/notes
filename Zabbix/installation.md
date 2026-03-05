@@ -133,8 +133,8 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 1. При создании хоста в Zabbix добавляется интерфейс типа **SNMP**.
 2. Указывается IP-адрес или DNS-имя устройства.
 3. Задаются параметры SNMP:
-   - **SNMP version:** Чаще всего `2`.
-   - **SNMP community:** Строка-пароль (например, `public`), которая должна совпадать с настроенной на устройстве.
+   * **SNMP version:** Чаще всего `2`.
+   * **SNMP community:** Строка-пароль (например, `public`), которая должна совпадать с настроенной на устройстве.
 
 ---
 
@@ -146,6 +146,6 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 
 ## Ссылки
 
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
-- **[Мониторинг БД](./zabbix_database_monitoring.md)** — мониторинг СУБД
-- **[Best Practices](./zabbix_best_practices.md)** — лучшие практики
+* **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
+* **[Мониторинг БД](./zabbix_database_monitoring.md)** — мониторинг СУБД
+* **[Best Practices](./zabbix_best_practices.md)** — лучшие практики

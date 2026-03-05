@@ -93,6 +93,6 @@ Zabbix поддерживает обе модели сбора данных (г�
 
 ## Ссылки
 
-- **[Установка Zabbix Server](./installation.md)** — практическое руководство
-- **[Мониторинг БД](./zabbix_database_monitoring.md)** — мониторинг СУБД
-- **[Best Practices](./zabbix_best_practices.md)** — лучшие практики
+* **[Установка Zabbix Server](./installation.md)** — практическое руководство
+* **[Мониторинг БД](./zabbix_database_monitoring.md)** — мониторинг СУБД
+* **[Best Practices](./zabbix_best_practices.md)** — лучшие практики

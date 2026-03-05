@@ -69,5 +69,5 @@
 
 ## Ссылки
 
-- **[Практические сценарии](./practical_scenarios.md)** — реализация шардирования
-- **[Мониторинг и best practices](./monitoring_and_best_practices.md)** — наблюдение за шардами
+* **[Практические сценарии](./practical_scenarios.md)** — реализация шардирования
+* **[Мониторинг и best practices](./monitoring_and_best_practices.md)** — наблюдение за шардами
