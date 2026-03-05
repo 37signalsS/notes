@@ -40,8 +40,8 @@ Binding → Pod запускается
 
 ### Механизмы ограничения планирования
 
-| Механизм | Описание | SSoT |
-|----------|----------|------|
+| Механизм | Описание |
+|----------|----------|
 | **`requests`/`limits`** | Планировщик ищет узлы с достаточными ресурсами | [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md) |
 | **`nodeSelector`** | Простой выбор узлов по меткам | [`affinity.md`](../../Scheduling/affinity.md) |
 | **`nodeAffinity`** | Продвинутое правило выбора узлов | [`affinity.md`](../../Scheduling/affinity.md) |

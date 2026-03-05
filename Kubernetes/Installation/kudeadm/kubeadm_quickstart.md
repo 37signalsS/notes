@@ -36,7 +36,7 @@
 
 ### 2.3. Версии Kubernetes
 
-| Компонент | Актуальная версия (март 2026) | Поддерживаемые версии |
+| Компонент | Версия | Поддерживаемые версии |
 | :--- | :--- | :--- |
 | **Kubernetes** | 1.33 | 1.31, 1.32, 1.33 |
 | **kubeadm** | 1.33 | Соответствует версии K8s |
@@ -52,7 +52,7 @@
 | **Одно-мастерный кластер** | [kubeadm_cluster_creation.md](./kubeadm_cluster_creation.md) | Базовая установка для dev/test сред. |
 | **HA кластер (Keepalived + HAProxy)** | [kubeadm_ha_with_keepalived_haproxy.md](./kubeadm_ha_with_keepalived_haproxy.md) | Production-кластер с балансировкой API Server. |
 | **Управление узлами** | [kubeadm_node_management.md](./kubeadm_node_management.md) | Добавление/удаление worker и control-plane узлов. |
-| **Управление сертификатами** | [../../Operations/certificate_management.md](../../Operations/certificate_management.md) | Проверка и ротация сертификатов (SSoT). |
+| **Управление сертификатами** | [../../Operations/certificate_management.md](../../Operations/certificate_management.md) | Проверка и ротация сертификатов. |
 | **Управление RKE кластером** | [kubeadm_rke_management.md](./kubeadm_rke_management.md) | Работа с кластерами, развёрнутыми через Rancher. |
 
 ## 4. Дополнительная информация
@@ -61,7 +61,7 @@
 
 *   [Архитектура Control Plane](../../Concepts/control_plane_architecture.md)
 *   [Высокая доступность Kubernetes](../../Base/high_availability.md)
-*   **[SSoT] HA с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)** — подробное руководство по HA
+*   **HA с Keepalived + HAProxy](./kubeadm_ha_with_keepalived_haproxy.md)** — подробное руководство по HA
 *   [Kubespray — автоматизация через Ansible](../Kubespray/overview.md)
 *   [HA кластер на bare metal](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
 *   **[kind](../kind_quickstart.md)** — локальные кластеры в Docker

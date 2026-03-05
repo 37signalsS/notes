@@ -5,7 +5,6 @@
 **Node Exporter** — экспортер для сбора метрик с хост-машины на базе Linux. Предоставляет детальную ресурсную мониторинговую информацию: загрузку CPU, использование памяти, дисковое I/O, сетевую активность и другие системные метрики.
 
 * **Порт по умолчанию:** `9100`
-* **Последняя стабильная версия:** `1.10.2` (октябрь 2025)
 * **Репозиторий:** [prometheus/node_exporter](https://github.com/prometheus/node_exporter)
 * **Установка:** [installation/node_exporter_installation.md](../installation/node_exporter_installation.md)
 

@@ -45,19 +45,17 @@ Crossplane идеально вписывается в методологию Git
 
 1. **Создание манифеста Crossplane в Git:**
    ```yaml
-   apiVersion: database.aws.crossplane.io/v1beta1
-   kind: RDSInstance
+   apiVersion: yandexcloud.crossplane.io/v1alpha1
+   kind: ObjectStorageBucket
    metadata:
-     name: my-postgres-db
+     name: my-artifacts
    spec:
      forProvider:
-       region: us-east-1
-       engine: postgres
-       engineVersion: "15"
-       masterUsername: admin
-       allocatedStorage: 100
+       name: my-artifacts-bucket
+       location:
+         region: ru-central1
      providerConfigRef:
-       name: aws-provider
+       name: yandexcloud-provider
    ```
 
 2. **ArgoCD Application для синхронизации:**
@@ -92,46 +90,6 @@ Crossplane идеально вписывается в методологию Git
    # Статус ресурса Crossplane
    kubectl get rdsinstance my-postgres-db -o yaml
    ```
-
-### Сценарий 2: Композитные ресурсы (Composite Resources)
-
-Crossplane позволяет создавать абстракции высокого уровня через Composition API:
-
-```yaml
-# XRD (CompositeResourceDefinition)
-apiVersion: apiextensions.crossplane.io/v1
-kind: CompositeResourceDefinition
-metadata:
-  name: xpostgresqls.database.example.org
-spec:
-  group: database.example.org
-  names:
-    kind: XPostgreSQL
-    plural: xpostgresqls
-  claimNames:
-    kind: PostgreSQL
-    plural: postgresqls
-  versions:
-    - name: v1alpha1
-      served: true
-      referenceable: true
-      schema:
-        openAPIV3Schema:
-          type: Object
-          properties:
-            spec:
-              type: Object
-              properties:
-                storageGB:
-                  type: integer
-                version:
-                  type: string
-```
-
-Преимущества:
-- Платформенные команды создают абстракции для разработчиков
-- Разработчики запрашивают ресурсы через простые Claim-объекты
-- Инфраструктурные детали скрыты в Composition
 
 ### Сценарий 3: Мультикластерная синхронизация с ArgoCD
 

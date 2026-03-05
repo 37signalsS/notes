@@ -77,7 +77,7 @@ PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
 | **Сохранение IP клиента** | Бэкенд видит реальный IP для логирования и ACL |
 | **Цепочки прокси** | Информация передаётся через несколько уровней |
 | **Kubernetes Ingress** | Ingress-контроллеры передают IP клиента подам |
-| **AWS ELB/ALB** | Elastic Load Balancer поддерживает Proxy Protocol |
+| **Yandex Cloud Load Balancer** | Поддерживает Proxy Protocol для сохранения IP клиента |
 
 ## Практические сценарии
 
@@ -193,7 +193,7 @@ set_real_ip_from 192.168.0.0/16;
 | HAProxy (v1, v2) | Nginx (v1, v2) |
 | Nginx (v2) | HAProxy (v1, v2) |
 | Envoy (v2) | Apache (mod_remoteip, v1) |
-| AWS ELB/ALB | PostgreSQL (native/plugin) |
+| Yandex Cloud Load Balancer (v2) | PostgreSQL (native/plugin) |
 | Kubernetes Ingress | MySQL (plugin) |
 | | Redis (plugin) |
 

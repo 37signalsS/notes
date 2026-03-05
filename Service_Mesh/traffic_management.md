@@ -4,7 +4,7 @@
 
 **Управление трафиком (Traffic Management)** — набор техник для контроля потоков запросов (трафика) между сервисами на уровне L7. В контексте [Service Mesh](./service_mesh_concepts.md) эти техники реализуются в прокси-сайдкарах и управляются декларативно через API плоскости управления, что позволяет изменять сетевое поведение без вмешательства в код приложений.
 
-**Ключевое изменение (2025–2026):** Gateway API стал предпочтительным способом конфигурации в Istio (вместо VirtualService/DestinationRule). VirtualService и DestinationRule остаются для обратной совместимости (legacy).
+**Ключевое изменение:** Gateway API стал предпочтительным способом конфигурации в Istio (вместо VirtualService/DestinationRule). VirtualService и DestinationRule остаются для обратной совместимости (legacy).
 
 ---
 
@@ -262,7 +262,7 @@ spec:
 | **`TCPRoute`**, **`TLSRoute`**, **`GRPCRoute`** | Маршрутизация для других протоколов. | Базы данных, gRPC-сервисы. |
 | **`ReferenceGrant`** | Разрешение ссылок между неймспейсами. | Безопасный cross-namespace routing. |
 
-### Best Practices (2025–2026)
+### Best Practices
 
 1.  **Используйте Gateway API для новых развертываний.** VirtualService/DestinationRule — только для миграции.
 2.  **Ambient Mesh для массовых развертываний.** Снижает оверхед на 30–50%.
@@ -271,7 +271,7 @@ spec:
 5.  **Зеркалирование для тестирования.** Безопасное тестирование под нагрузкой.
 6.  **Версионирование через labels.** `version: v1`, `version: v2` для четкой сегментации.
 
-### Актуальность (2025–2026)
+### Актуальность
 
 - **Istio 1.29:** Gateway API GA, Ambient Mesh production-ready.
 - **Kubernetes 1.31–1.35:** Полная поддержка Gateway API.

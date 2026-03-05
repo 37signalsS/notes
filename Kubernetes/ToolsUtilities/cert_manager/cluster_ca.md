@@ -264,5 +264,3 @@ openssl verify -CAfile cluster-ca.crt <(kubectl get secret internal-services-sec
 | Ошибка доверия в приложении | CA не добавлен в trust store | Импортировать `ca.crt` из Secret в приложение |
 
 ---
-
-*SSoT для CA кластера. Последняя проверка актуальности: март 2026.*

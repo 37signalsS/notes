@@ -14,8 +14,8 @@
 
 ### Классификация ошибок по уровням
 
-| Уровень | Ошибки | SSoT |
-|---------|--------|------|
+| Уровень | Ошибки |
+|---------|--------|
 | **Планирование** | `Pending` | [pod_pending.md](./pod_pending.md) |
 | **Конфигурация** | `ImagePullBackOff`, `CreateContainerConfigError` | [pod_image_pull_errors.md](./pod_image_pull_errors.md), [create_container_config_error.md](./create_container_config_error.md) |
 | **Запуск приложения** | `CrashLoopBackOff`, `OOMKilled` | [pod_crash_loop_back_off.md](./pod_crash_loop_back_off.md), [oomkilled_pods.md](./oomkilled_pods.md) |

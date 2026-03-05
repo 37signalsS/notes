@@ -1,6 +1,6 @@
 # Интеграция Jaeger с Kubernetes
 
-> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг EOL 31 декабря 2025 года.
+> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг EOL.
 
 Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через Custom Resources (CRD). В v2 Operator использует OpenTelemetry Operator под капотом.
 

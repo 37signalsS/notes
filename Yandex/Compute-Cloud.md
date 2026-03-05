@@ -207,7 +207,7 @@ yc compute snapshot list
 - **[IAM](../Security/)** — управление доступом через сервисные аккаунты
 - **[KMS](../Security/)** — шифрование дисков
 
-### Актуальные версии (февраль 2026)
+### Актуальные версии
 
 - **Платформы:** standard-v3, standard-v4a (AMD Zen 4), highfreq-v3, highfreq-v4a
 - **ОС:** Ubuntu 22.04/24.04 LTS, AlmaLinux 8/9, Debian 11/12, CentOS 7/8/9, Windows Server 2019/2022

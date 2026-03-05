@@ -130,7 +130,7 @@ deny all;
 
 * [OWASP DDoS Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)
 * [CloudFlare DDoS Protection](https://www.cloudflare.com/ddos/)
-* [AWS Best Practices for DDoS Resiliency](https://docs.aws.amazon.com/whitepapers/latest/aws-best-practices-ddos-resiliency/welcome.html)
+* [Yandex Cloud DDoS Protection](https://yandex.cloud/ru/docs/ddos-protection/)
 * Связанный файл: [Web Application Firewall (WAF)](./waf.md)
 
 ### См. также

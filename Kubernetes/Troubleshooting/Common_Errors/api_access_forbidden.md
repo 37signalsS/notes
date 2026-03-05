@@ -47,8 +47,8 @@
 
 ### RBAC объекты
 
-| Объект | Описание | SSoT |
-|--------|----------|------|
+| Объект | Описание |
+|--------|----------|
 | **ServiceAccount** | Учетная запись для pod | [`roles.md`](../../Security/rbac/roles.md) |
 | **Role** | Права в namespace | [`roles.md`](../../Security/rbac/roles.md) |
 | **ClusterRole** | Права на кластер | [`roles.md`](../../Security/rbac/roles.md) |

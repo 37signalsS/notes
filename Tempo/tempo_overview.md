@@ -191,7 +191,22 @@ storage:
       path: /tmp/tempo/blocks
 ```
 
-#### Конфигурация для S3 (production)
+#### Конфигурация для локального хранилища (production)
+
+```yaml
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+    pool:
+      max_workers: 100
+      queue_depth: 10000
+```
+
+#### Конфигурация для S3-совместимого хранилища (Yandex Object Storage / MinIO)
 
 ```yaml
 storage:
@@ -199,10 +214,11 @@ storage:
     backend: s3
     s3:
       bucket: tempo-traces
-      endpoint: s3.us-east-1.amazonaws.com
-      region: us-east-1
+      endpoint: storage.yandexcloud.net
+      region: ru-central1
       access_key: ${S3_ACCESS_KEY}
       secret_key: ${S3_SECRET_KEY}
+      insecure: false
     wal:
       path: /var/tempo/wal
     pool:
@@ -291,5 +307,5 @@ service:
 * **[Официальная документация](https://grafana.com/docs/tempo/latest/)** — полное руководство по установке и конфигурации
 * **[GitHub-репозиторий](https://github.com/grafana/tempo)** — исходный код, release notes, issues
 * **[TraceQL Documentation](https://grafana.com/docs/tempo/latest/traceql/)** — полный справочник по языку запросов
-* **[Tempo 2.10 Release Notes](https://grafana.com/docs/tempo/latest/release-notes/v2-10/)** — последние изменения (январь 2026)
+* **[Tempo 2.10 Release Notes](https://grafana.com/docs/tempo/latest/release-notes/v2-10/)** — последние изменения
 * **[Grafana Cloud](https://grafana.com/products/cloud/tempo/)** — управляемая версия Tempo от Grafana Labs

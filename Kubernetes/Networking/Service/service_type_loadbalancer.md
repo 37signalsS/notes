@@ -37,7 +37,7 @@ spec:
   externalTrafficPolicy: Local
 ```
 
-Подробное описание работы `externalTrafficPolicy` см. в [документации NodePort](./service_type_nodeport.md#externaltrafficpolicy-local-ssot).
+Подробное описание работы `externalTrafficPolicy` см. в [документации NodePort](./service_type_nodeport.md#externaltrafficpolicy-local).
 
 ### Статический IP-адрес
 

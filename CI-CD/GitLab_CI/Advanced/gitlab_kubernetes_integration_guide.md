@@ -45,7 +45,7 @@
     
     * **Настройка в Kubernetes:**
       ```bash
-      # 1. Создаём OIDC Provider в кластере
+      # 1. Создаём ServiceAccount с аннотациями для Workload Identity
       kubectl create -f - <<EOF
       apiVersion: v1
       kind: ServiceAccount
@@ -53,10 +53,10 @@
         name: gitlab-deploy-sa
         namespace: production
         annotations:
-          # Для GCP
-          iam.gke.io/gcp-service-account: gitlab-deploy@PROJECT_ID.iam.gserviceaccount.com
-          # Для AWS (через IRSA)
-          eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/gitlab-deploy-role
+          # Для Yandex Cloud (через IAM)
+          iam.yandexcloud.net/service-account-id: sa-xxxxxxxxxxxxxxxxx
+          # Для локального аринта (если используется Vault CSI)
+          secrets-store.csi.k8s.io/used: "true"
       EOF
       
       # 2. Создаём Role с минимальными правами

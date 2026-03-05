@@ -104,5 +104,5 @@
 
 - **Связанные темы**:
   - **[Основы Docker-образов](./docker_images_basics.md)**: Для понимания, что такое слои.
-  - **[Оптимизация сборки Docker-образов](../../Dockerfile/Docker_best_practices/build_optimization.md)**: Основной SSoT по созданию эффективных слоев.
+  - **[Оптимизация сборки Docker-образов](../../Dockerfile/Docker_best_practices/build_optimization.md)**: основной справочник по созданию эффективных слоев.
   - **[Инструменты оптимизации Dockerfile](../../Dockerfile/dockerfile_optimization_tools.md)**: Другие инструменты для анализа и улучшения Dockerfile.

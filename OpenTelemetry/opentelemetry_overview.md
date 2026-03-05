@@ -1,7 +1,5 @@
 # OpenTelemetry (OTel): Обзор
 
-> **Актуальность:** Декабрь 2025 — Январь 2026. Collector v1.49+, стабильная модель релизов.
-
 ## Определения
 
 **OpenTelemetry (OTel)** — это открытый, независимый от поставщика стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных. Проект является частью [Cloud Native Computing Foundation (CNCF)](https://www.cncf.io/).
@@ -13,7 +11,7 @@
 1. **Трассировки (Traces):** Детализированная информация о жизненном цикле запроса в распределённой системе.
 2. **Метрики (Metrics):** Агрегированные числовые данные о производительности и состоянии системы.
 3. **Логи (Logs):** Записи о конкретных событиях.
-4. **Профили (Profiles):** *В разработке (2025-2026)* — непрерывный сбор данных о потреблении ресурсов (CPU, memory).
+4. **Профили (Profiles):** *В разработке* — непрерывный сбор данных о потреблении ресурсов (CPU, memory).
 
 ## Основные концепции
 
@@ -27,12 +25,10 @@
         - **Receivers (Приемники):** Принимают данные в различных форматах (OTLP, Jaeger, Prometheus, Zipkin и др.).
         - **Processors (Обработчики):** Обрабатывают данные на лету (фильтрация, обогащение, сэмплирование, группировка).
         - **Exporters (Экспортеры):** Отправляют обработанные данные в один или несколько бэкендов (OTLP, Jaeger, Loki, Prometheus и др.).
-    - **Дистрибутивы (модель стабильности с 2025):**
+    - **Дистрибутивы:**
         - **Core (`otel/opentelemetry-collector`):** Минимальный дистрибутив с проверенными стабильными компонентами. Рекомендуется для production.
         - **Contrib (`otel/opentelemetry-collector-contrib`):** Расширенный дистрибутив с экспериментальными и специализированными компонентами.
-    - **Модель стабильности (2025):** Компоненты маркируются уровнями стабильности (`stable`, `beta`, `alpha`, `development`). Stable-дистрибутивы включают только стабильные компоненты по умолчанию.
-
-> **Важно:** Jaeger v1 достиг EOL 31 декабря 2025 года. Jaeger v2 построен на базе OpenTelemetry Collector. Для новой инструментации рекомендуется использовать OTel SDK вместо Jaeger-клиентов.
+    - **Модель стабильности:** Компоненты маркируются уровнями стабильности (`stable`, `beta`, `alpha`, `development`). Stable-дистрибутивы включают только стабильные компоненты по умолчанию.
 
 ## Практические сценарии
 
@@ -123,7 +119,7 @@ SELECT * FROM users WHERE id = 1 /*traceparent='00-abc...-def...-01'*/;
 
 - **Стек Grafana Labs:** [Loki](../Loki/loki_overview.md) (логи), [Tempo](../Tempo/tempo_overview.md) (трассировки), [Mimir](../Mimir/mimir_overview.md) (метрики) и [Grafana](../Grafana/grafana_overview.md) для визуализации. Для сбора данных используется [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — агент на базе OTel Collector с языком конфигурации River.
 - **Стек ELK/OpenSearch:** [Elasticsearch](../ELK_Stack/Elasticsearch/elasticsearch_overview.md) / [OpenSearch](../ELK_Stack/OpenSearch/opensearch_overview.md) как единое хранилище для всех трёх сигналов. Data Prepper используется как конвейер для OTLP.
-- **Jaeger:** [Jaeger v2](../Jaeger/jaeger_overview.md) для трассировок (построен на OTel Collector, Jaeger v1 EOL с 31.12.2025).
+- **Jaeger:** [Jaeger v2](../Jaeger/jaeger_overview.md) для трассировок (построен на OTel Collector).
 - **Другие:** Коммерческие платформы (Datadog, New Relic, Dynatrace) поддерживают OTLP нативно.
 
 ### Альтернативы OTel Collector

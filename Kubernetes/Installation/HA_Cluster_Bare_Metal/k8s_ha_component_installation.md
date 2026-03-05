@@ -131,7 +131,7 @@ echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 sudo apt-get update
 ```
 
-> **Важно**: Версия Kubernetes 1.34 указана в исходном файле. На март 2026 проверьте актуальную стабильную версию в [официальной документации](https://kubernetes.io/releases/).
+> **Важно**: Версия Kubernetes 1.34 указана в исходном файле. Проверьте актуальную стабильную версию в [официальной документации](https://kubernetes.io/releases/).
 
 #### Установка компонентов
 
@@ -186,7 +186,7 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 
 | Компонент | Версия в файле | Статус | Примечание |
 | :--- | :--- | :--- | :--- |
-| **Kubernetes** | 1.34.* | ⚠️ Проверить | На март 2026 — уточнить актуальность |
+| **Kubernetes** | 1.34.* | ⚠️ Проверить | Уточнить актуальность |
 | **containerd** | из репозитория ОС | ✅ | 1.6+ совместим с K8s 1.24-1.34 |
 | **pause image** | 3.9 | ⚠️ Проверить | Актуальная версия может быть новее |
 | **Calico** | v3.31.0 | ⚠️ Проверить | В файле k8s_ha_control_plane_and_cni.md |
@@ -201,8 +201,8 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 
 ### Надежность
 
-| Раздел | SSoT | Confidence |
-| :--- | :--- | :--- |
+| Раздел | Confidence |
+| :--- | :--- |
 | Установка containerd | Этот файл | 10 |
 | Конфигурация SystemdCgroup | Этот файл | 10 |
 | Версии Kubernetes | Требует проверки | 7 |

@@ -294,9 +294,4 @@ sudo nvme health-info /dev/nvme0n1
 - **`mdadm`**: Управление RAID — см. [RAID management](../../../FileSystems/raid_management.md)
 - **`nvme-cli`**: Утилиты для NVMe дисков
 
-### Ссылки на SSoT
-
-- Инвентаризация оборудования: [hardware_listing](./hardware_listing.md)
-- Основы хранения данных: [disk_storage_fundamentals](../../../FileSystems/disk_storage_fundamentals.md)
-- Файловые системы: [FileSystems](../../../FileSystems/)
-- Мониторинг производительности: [Performance](../Performance/)
+## Дополнительная информация

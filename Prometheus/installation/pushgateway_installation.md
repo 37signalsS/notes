@@ -16,7 +16,6 @@
 | Параметр | Значение |
 |---|---|
 | **Последняя стабильная версия** | `1.11.2` |
-| **Дата выпуска** | 30 октября 2025 |
 | **Репозиторий** | [prometheus/pushgateway](https://github.com/prometheus/pushgateway) |
 
 > **Важно:** Проверяйте [официальный репозиторий](https://github.com/prometheus/pushgateway/releases) для получения последних версий.

@@ -328,5 +328,3 @@ kubectl logs -n cert-manager -l app=cert-manager --tail=100
 | Wildcard через DNS-01 | **10** | Стандартный паттерн ACME |
 
 ---
-
-*SSoT для интеграции с Ingress. Последняя проверка актуальности: март 2026.*

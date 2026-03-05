@@ -19,7 +19,7 @@
 | **Сложность** | **Высокая**: Требует глубокого понимания CRD и сетевых концепций. | **Низкая**: Простая установка и эксплуатация, минимум конфигурации. |
 | **Производительность** | Sidecar: ~5–10 мс задержка, 100–300 МБ RAM на под. <br> Ambient: ~30–50% меньше оверхед. | ~1–3 мс задержка, 40–60% меньше CPU/RAM чем Istio sidecar. |
 | **Мультикластер** | Production-ready (sidecar), Beta (Ambient, до Istio 1.30+). | Production-ready (нативная поддержка). |
-| **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29, февр. 2026). | **Да**. |
+| **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29). | **Да**. |
 
 ---
 
@@ -68,7 +68,7 @@ Istio и Linkerd используют разные подходы для реш�
 
 ## Дополнительная информация
 
-### Выбор между Istio и Linkerd: Рекомендации (2025–2026)
+### Выбор между Istio и Linkerd: Рекомендации
 
 #### Выбирайте Istio, если:
 
@@ -90,7 +90,7 @@ Istio и Linkerd используют разные подходы для реш�
 5.  **Стабильность:** Linkerd известен своей надежностью и предсказуемостью.
 6.  **Мультикластер:** Нативная поддержка мультикластерных развертываний.
 
-### Актуальность и тенденции (2025–2026)
+### Актуальность и тенденции
 
 | Тенденция | Описание |
 | :--- | :--- |
@@ -101,9 +101,9 @@ Istio и Linkerd используют разные подходы для реш�
 
 ### Источники и документация
 
-- **[Istio vs Linkerd 2025-2026 Comparison](https://tasrieit.com/blog/istio-vs-linkerd-service-mesh-comparison-2026)** — независимое сравнение (февр. 2026).
-- **[Service Mesh Comparison 2025](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)** — Istio, Linkerd, Consul Connect.
-- **[Linkerd vs Istio 2025](https://slickfinch.com/istio-vs-linkerd-service-mesh-solutions-comparison-for-microservices/)** — производительность и эффективность.
+- **[Istio vs Linkerd Comparison](https://tasrieit.com/blog/istio-vs-linkerd-service-mesh-comparison-2026)** — независимое сравнение.
+- **[Service Mesh Comparison](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)** — Istio, Linkerd, Consul Connect.
+- **[Linkerd vs Istio](https://slickfinch.com/istio-vs-linkerd-service-mesh-solutions-comparison-for-microservices/)** — производительность и эффективность.
 - **[Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)** — Ambient Mesh production-ready.
 - **[Linkerd Documentation](https://linkerd.io/docs/)** — официальная документация.
 

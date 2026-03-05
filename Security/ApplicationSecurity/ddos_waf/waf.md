@@ -25,8 +25,8 @@
 ### Типы WAF
 
 * **Network-based WAF (Hardware):** Физические устройства в ЦОД. Высокая производительность, высокая стоимость.
-* **Host-based WAF (Software):** Устанавливается как модуль на веб-сервер (например, ModSecurity для Apache/Nginx).
-* **Cloud WAF:** SaaS-решения, предлагаемые провайдерами (CloudFlare WAF, AWS WAF, Azure WAF).
+* **Host-based WAF (Software):** Устанавливается как модуль на веб-сервер (например, ModSecurity для Apache/Nginx/Angie).
+* **Cloud WAF:** SaaS-решения, предлагаемые провайдерами (CloudFlare WAF, Yandex Cloud WAF).
 
 ## Практические сценарии
 
@@ -68,7 +68,7 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* \
     "id:941100,phase:2,deny,status:403,msg:'XSS Attack Detected'"
 ```
 
-### Правила AWS WAF
+### Пример правил для Yandex Cloud WAF
 
 ```json
 {
@@ -93,7 +93,7 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* \
   "VisibilityConfig": {
     "SampledRequestsEnabled": true,
     "CloudWatchMetricsEnabled": true,
-    "MetricName": "SQLInjectionProtection"
+    "MetricName": "SQLInjectionRule"
   }
 }
 ```
@@ -102,5 +102,5 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* \
 
 * [ModSecurity Core Rule Set (CRS)](https://coreruleset.org/)
 * [OWASP WAF](https://owasp.org/www-community/Web_Application_Firewall)
-* [AWS WAF Documentation](https://aws.amazon.com/waf/)
+* [Yandex Cloud WAF Documentation](https://yandex.cloud/ru/docs/waf/)
 * Связанный файл: [DDoS (Distributed Denial of Service)](./ddos.md)

@@ -12,12 +12,13 @@
 
 ### Облачные провайдеры
 
+> **Примечание:** Для локального аринта используйте on-premise решения (Ceph, NFS, Longhorn).
+
 | Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **AWS EBS CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **GCP PD CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **Azure Disk CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **Azure Files CSI** | File | ✅ | ✅ | ✅ | ✅ | RWX |
+| **Yandex Disk CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
+| **vSphere CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
+| **OpenStack Cinder CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
 
 ### On-premise решения
 
@@ -48,8 +49,8 @@ kubectl get pods -n kube-system -l app=csi-driver
 # Просмотр событий CSI
 kubectl get events -n kube-system --field-selector reason=Provisioning
 
-# Детальная информация о драйвере
-kubectl describe csidriver ebs.csi.aws.com
+# Детальная информация о драйвере (пример для Ceph RBD)
+kubectl describe csidriver rbd.csi.ceph.com
 ```
 
 ### Диагностика проблем с томами
@@ -117,11 +118,11 @@ kubectl logs -n kube-system -l app=csi-driver --all-containers=true
 
 ### Secrets Store CSI Driver
 
-**Назначение:** Монтирование секретов из внешних хранилищ (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) напрямую в файловую систему пода.
+**Назначение:** Монтирование секретов из внешних хранилищ (HashiCorp Vault, Yandex Lockbox) напрямую в файловую систему пода.
 
 **Архитектура:**
 - **CSI Driver:** Устанавливается как DaemonSet на каждом узле
-- **CSI Provider:** Плагин для конкретного хранилища (Vault Provider, Azure Provider, GCP Provider)
+- **CSI Provider:** Плагин для конкретного хранилища (Vault Provider, Yandex Lockbox Provider)
 - **SecretProviderClass:** CRD, описывающий какие секреты и откуда монтировать
 
 **Преимущества:**

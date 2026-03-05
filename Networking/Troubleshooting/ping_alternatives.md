@@ -126,8 +126,8 @@ psping -n 4 example.com:80
 
 ### Сравнительная таблица утилит
 
-| Утилита | Протокол | Лучше всего подходит для | SSoT |
-|---------|----------|------------------------|------|
+| Утилита | Протокол | Лучше всего подходит для |
+|---------|----------|------------------------|
 | `nc` | TCP/UDP | Быстрой проверки одного порта | [`network_cli_tools.md`](../../Linux/Diagnostics/Networking/network_cli_tools.md) |
 | `nmap` | TCP/UDP | Комплексного сканирования портов и служб | [`nmap.md`](../../Linux/Diagnostics/Networking/nmap.md) |
 | `curl` | HTTP/HTTPS | Проверки работоспособности веб-сервисов | [`curl.md`](../../Linux/Networking/Tools/http_clients/curl.md) |

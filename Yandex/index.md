@@ -170,7 +170,7 @@ resource "yandex_compute_instance" "app" {
 
 ---
 
-## Актуальные версии (март 2026)
+## Актуальные версии
 
 | Сервис | Версии / Состояние |
 | :--- | :--- |
@@ -179,7 +179,7 @@ resource "yandex_compute_instance" "app" {
 | **MySQL** | 8.0, 8.4 |
 | **Redis** | 6.2, 7.0, 7.2 |
 | **ClickHouse** | 23.8+, 24.8+ |
-| **VPC** | NAT Gateway (Egress NAT устарел в декабре 2025) |
+| **VPC** | NAT Gateway (Egress NAT устарел) |
 | **Monitoring** | Интеграция с Managed Service for Prometheus, вкладка Alerts |
 
 ---

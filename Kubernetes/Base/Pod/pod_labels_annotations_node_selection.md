@@ -88,7 +88,7 @@ kubectl label nodes worker-2 special-
 
 ## Дополнительная информация
 
-* [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md) — SSoT по меткам и аннотациям
+* [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md) — основное руководство по меткам и аннотациям
 * [Node Affinity/Anti-Affinity](../../Scheduling/affinity.md) — более гибкие механизмы привязки
 * [Taints/Tolerations](../../Scheduling/taints_and_tolerations.md) — управление (taints) на узлах
 * [Жизненный цикл пода](pod_lifecycle_and_state.md) — состояния и фазы пода

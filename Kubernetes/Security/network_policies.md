@@ -96,7 +96,7 @@ spec:
 
 ### Связанные темы
 
-- **SSoT по NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md) (полное руководство)
+- **NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md) (полное руководство)
 - **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/calico.md)
 - **CNI и kube-proxy:** [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md)
 - **Сетевая модель:** [Обзор сети Kubernetes](../Networking/Network/network_overview.md)

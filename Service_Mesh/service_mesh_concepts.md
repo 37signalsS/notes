@@ -11,7 +11,7 @@
 
 **Паттерн Sidecar:** Ключевой элемент архитектуры — **прокси sidecar**, легковесный сетевой прокси, который запускается рядом с каждым экземпляром сервиса и перехватывает весь входящий и исходящий трафик. Детальное описание паттерна и реализаций — в [Proxy Sidecar](./proxy_sidecar.md).
 
-**Альтернатива Ambient:** Начиная с Istio 1.29 (2026), доступна **Ambient Mesh** — архитектура без sidecar, где прокси разделяются на уровне ноды (Ztunnel) и неймспейса (Waypoint Proxy). Подробнее в [Istio: компоненты и архитектура](./istio_architecture.md).
+**Альтернатива Ambient:** Начиная с Istio 1.29, доступна **Ambient Mesh** — архитектура без sidecar, где прокси разделяются на уровне ноды (Ztunnel) и неймспейса (Waypoint Proxy). Подробнее в [Istio: компоненты и архитектура](./istio_architecture.md).
 
 ---
 
@@ -73,7 +73,7 @@ Service Mesh состоит из двух независимых плоскос�
 | **Наблюдаемость** | Kiali, Prometheus, Jaeger (требует настройки) | Linkerd Viz (встроено) | Consul UI, интеграция с Prometheus |
 | **Сложность** | Высокая (много CRD, настроек) | Низкая (быстрая установка, минимум настроек) | Средняя (требует агентов Consul) |
 | **Производительность** | Оверхед sidecar: ~5–10 мс задержка, 100–300 МБ RAM на под | Оверхед: ~1–3 мс, 40–60% меньше CPU/RAM чем Istio | Сопоставим с Istio (Envoy) |
-| **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29, февр. 2026) | **Да** | **Да** |
+| **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29) | **Да** | **Да** |
 
 **Рекомендации по выбору:**
 - **Istio:** Сложные L7-сценарии, мультикластер, кастомные политики, Gateway API.
@@ -111,9 +111,9 @@ Service Mesh состоит из двух независимых плоскос�
 | **Совместимость** | Проблемы с не-HTTP/gRPC, legacy-протоколами, UDP. | Тестирование, fallback на TCP-прокси, Consul Connect. |
 | **Отладка** | Трафик прозрачен, но требует инструментов (Kiali, tap). | Kiali, `istioctl analyze`, `linkerd tap`, трассировка. |
 
-### Актуальность (2025–2026)
+### Актуальность
 
-- **Istio 1.29 (февр. 2026):** Ambient Mesh production-ready, мультикластер в beta, Gateway API GA.
+- **Istio 1.29:** Ambient Mesh production-ready, мультикластер в beta, Gateway API GA.
 - **Linkerd 2.x:** Стабильная работа, фокус на производительности и безопасности.
 - **Gateway API:** Предпочтительный способ конфигурации в Istio (вместо VirtualService/DestinationRule).
 - **eBPF:** Растущая конкуренция (Cilium Service Mesh), но классические mesh (Istio, Linkerd) доминируют.
@@ -121,7 +121,7 @@ Service Mesh состоит из двух независимых плоскос�
 **Источники:**
 - [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)
 - [Istio Ambient Multicluster Beta](https://istio.io/latest/blog/2026/ambient-multinetwork-multicluster-beta/)
-- [Service Mesh Comparison 2025](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)
+- [Service Mesh Comparison](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)
 
 ### Связанные документы
 

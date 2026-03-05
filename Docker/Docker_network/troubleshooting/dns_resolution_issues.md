@@ -72,7 +72,7 @@ docker run --dns=1.1.1.1 my_image
 ### Дополнительная информация
 
 - **Связанные темы**:
-  - **[Обзор сетевых моделей Docker](../docker_network.md)**: SSoT по Docker Networking
+  - **[Обзор сетевых моделей Docker](../docker_network.md)**: основной справочник по Docker Networking
   - **[DNS и Service Discovery](../concepts/dns_and_service_discovery.md)**: Подробнее о встроенном DNS и сервис-дискавери
   - **[Интеграция с iptables](./iptables_integration.md)**: Проблемы с NAT и файрволом
 

@@ -77,6 +77,6 @@ Git-репозиторий с манифестами Kubernetes служит "м
 - **[Управление артефактами в CI/CD](../../CI-CD/artifact_management.md)**: Общие принципы работы с артефактами.
 - **[Реестры Docker](../../Docker/docker_registries.md)**: Подробнее о видах и настройке реестров.
 - **[Безопасность публичных реестров](../../Docker/Docker_registries/public_registry_security.md)**: Рекомендации по безопасной работе с Docker Hub и другими публичными реестрами.
-- **[Версионирование и тегирование образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)**: SSoT по стратегиям тегирования.
+- **[Версионирование и тегирование образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)**: Основное руководство по стратегиям тегирования.
 - **[ArgoCD Image Updater](../ArgoCD/argocd_overview.md#argocd-image-updater)**: Подробная настройка для ArgoCD.
 - **[Flux Image Automation](../Flux/overview.md)**: Подробная настройка для Flux.

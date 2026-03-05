@@ -6,8 +6,8 @@
 
 **Архитектура логирования в современных Linux:**
 
-| Компонент | Назначение | SSoT |
-| :--- | :--- | :--- |
+| Компонент | Назначение |
+| :--- | :--- |
 | `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald.md](./journald.md) |
 | `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/Logging/journalctl.md) |
 | `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
@@ -133,7 +133,7 @@ sync  # Запись буферов на диск
 
 ---
 
-**SSoT-файлы по компонентам:**
+**Файлы по компонентам:**
 - journald: [journald.md](./journald.md)
 - journalctl: [journalctl.md](../../Diagnostics/Logging/journalctl.md)
 - rsyslog: [rsyslog.md](./rsyslog.md)

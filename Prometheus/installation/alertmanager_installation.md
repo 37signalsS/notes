@@ -17,7 +17,6 @@
 | Параметр | Значение |
 |---|---|
 | **Последняя стабильная версия** | `0.31.0` |
-| **Дата выпуска** | 2 февраля 2026 |
 | **Репозиторий** | [prometheus/alertmanager](https://github.com/prometheus/alertmanager) |
 
 > **Важно:** Проверяйте [официальный репозиторий](https://github.com/prometheus/alertmanager/releases) для получения последних версий.

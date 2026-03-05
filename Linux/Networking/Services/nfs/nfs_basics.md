@@ -19,7 +19,7 @@
 | **NFSv3** | Stateless, UDP/TCP, нет встроенной безопасности | Устарела, не рекомендуется |
 | **NFSv4** | Stateful, только TCP, встроенный security, один порт (2049) | Рекомендуется |
 | **NFSv4.1** | Поддержка параллельного NFS (pNFS) для кластеров | Для HPC/кластеров |
-| **NFSv4.2** | Server-side copy, sparse files, application I/O hints | Актуальная (2025-2026) |
+| **NFSv4.2** | Server-side copy, sparse files, application I/O hints | Актуальная |
 
 ## Маппинг UID/GID
 

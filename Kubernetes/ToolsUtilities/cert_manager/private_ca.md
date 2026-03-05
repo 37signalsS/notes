@@ -306,5 +306,3 @@ openssl verify -CAfile <(kubectl get secret my-root-ca-secret -n default -o json
 | Ошибка цепочки доверия | Secret с CA удалён | Не удалять CA-сертификат до перевыпуска всех зависимых |
 
 ---
-
-*SSoT для приватного CA. Последняя проверка актуальности: март 2026.*

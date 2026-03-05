@@ -17,7 +17,7 @@
 - **[OpenTelemetry (OTel)](../../../OpenTelemetry/opentelemetry_overview.md)**: Открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (CNCF).
 - **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера [Kubernetes](../../kubernetes_overview.md). Идеально подходит для разработки, обучения и тестирования.
 - **[Docker Registry](../../../Docker/docker_registries.md)**: Сервис для хранения и распространения Docker-образов.
-- **[Cert-Manager](../../ToolsUtilities/cert_manager.md)**: Нативный для Kubernetes инструмент для управления TLS-сертификатами. Полная документация: [Cert-Manager SSoT](../../ToolsUtilities/cert_manager.md).
+- **[Cert-Manager](../../ToolsUtilities/cert_manager.md)**: Нативный для Kubernetes инструмент для управления TLS-сертификатами. Полная документация: [Cert-Manager](../../ToolsUtilities/cert_manager.md).
 
 > **Важно:** Для production-развертываний рекомендуется использовать **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — унифицированный агент от Grafana Labs (замена Promtail и Grafana Agent, EOL 2025-2026).
 
@@ -71,13 +71,13 @@
 
 ### Таблица компонентов и версий
 
-| Компонент | Версия Helm | Версия приложения | SSoT |
+| Компонент | Версия Helm | Версия приложения |
 | :--- | :--- | :--- | :--- |
 | **kube-prometheus-stack** | `>=60.x` | Prometheus 2.x, Grafana 11.x | [Prometheus K8s](../../Prometheus/kubernetes/overview.md) |
 | **Loki** | `>=6.x` | Loki 3.x | [Loki overview](../../../Loki/loki_overview.md) |
 | **Tempo** | `>=1.x` | Tempo 2.x | [Tempo overview](../../../Tempo/tempo_overview.md) |
 | **OpenTelemetry Operator** | `>=0.x` | Operator 0.x | [OTel overview](../../../OpenTelemetry/opentelemetry_overview.md) |
-| **Cert-Manager** | `>=0.16.x` | 1.x | [Cert-Manager SSoT](../../ToolsUtilities/cert_manager.md) |
+| **Cert-Manager** | `>=0.16.x` | 1.x | [Cert-Manager](../../ToolsUtilities/cert_manager.md) |
 | **Docker Registry** | `>=2.x` | Registry 2.x | [Docker Registries](../../../Docker/docker_registries.md) |
 
 ### Требования к ресурсам (Minikube)

@@ -10,7 +10,7 @@
 
 **ISC DHCP** — классическая и наиболее распространенная реализация DHCP-сервера для Linux, разработанная Internet Systems Consortium. Пакет может называться `isc-dhcp-server` (Debian/Ubuntu) или `dhcp-server` (RHEL/CentOS).
 
-> **См. также:** [Протокол DHCP: теория, DORA, безопасность](../../../Networking/Protocols/dhcp.md) — SSoT по концепциям протокола.
+> **См. также:** [Протокол DHCP: теория, DORA, безопасность](../../../Networking/Protocols/dhcp.md) — по концепциям протокола.
 
 ## Базовые концепции
 
@@ -44,7 +44,7 @@
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
 
 ## Дополнительная информация
 

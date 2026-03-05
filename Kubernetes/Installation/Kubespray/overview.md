@@ -52,7 +52,7 @@
 
 * **[Ansible: Введение](../../../Ansible/ansible_introduction.md)** — основы Ansible.
 * **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — базовая утилита для инициализации кластера.
-* **[HA с kubeadm](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)** — ручная настройка HA (SSoT).
+* **[HA с kubeadm](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)** — ручная настройка HA.
 * **[Control Plane: Архитектура](../../Concepts/control_plane_architecture.md)** — компоненты управления кластером.
 * **[etcd: Обзор](../../Concepts/etcd_overview.md)** — распределённое хранилище данных кластера.
 * **[kind](../kind_quickstart.md)** — локальные кластеры для разработки.

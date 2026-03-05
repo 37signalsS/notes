@@ -228,9 +228,4 @@ cat /proc/cmdline | grep isolcpus
 - **`sar`**: Исторические данные использования CPU — см. [sar](../Performance/sar.md)
 - **`numactl`**: Управление NUMA affinity — см. [NUMA](../../../Core/memory/)
 
-### Ссылки на SSoT
-
-- Общая информация о системе: [Информация о системе](../../../SystemAdministration/system_information.md)
-- Виртуализация CPU: [Виртуализация](../../../Virtualization/virtualization_overview.md)
-- CPU pinning: [CPU Isolation](../../../Core/cpu_pinning.md)
-- Файловая система /proc: [/proc](../../../FileSystems/virtual_fs_proc.md)
+## Дополнительная информация

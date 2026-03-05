@@ -281,8 +281,8 @@ kubectl logs -n kube-system -l k8s-app=calico-node
 
 ### Надежность
 
-| Раздел | SSoT | Confidence |
-| :--- | :--- | :--- |
+| Раздел | Confidence |
+| :--- | :--- |
 | Базовая проверка | Этот файл | 10 |
 | Проверка HA | Этот файл + [kubeadm_ha_with_keepalived_haproxy.md](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md) | 10 |
 | Проверка etcd | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |

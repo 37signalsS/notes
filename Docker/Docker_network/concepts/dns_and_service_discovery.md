@@ -90,6 +90,6 @@ docker run --dns 8.8.8.8 --dns-search corp.local --network my-app-net alpine nsl
 
 - **Ограничение DNS в default bridge:** В сети `bridge`, созданной **по умолчанию**, разрешение имен контейнеров не работает. Для корректного взаимодействия сервисов по именам всегда создавайте собственные `bridge`-сети для приложений.
 - **Связанные темы:**
-  - [Обзор сетевых моделей Docker](../docker_network.md) — SSoT по Docker Networking
+  - [Обзор сетевых моделей Docker](../docker_network.md) — основной справочник по Docker Networking
   - [Docker network CLI](./management/cli.md) — управление сетями
   - [Драйвер bridge](../drivers/bridge.md) — детальное описание bridge-сети

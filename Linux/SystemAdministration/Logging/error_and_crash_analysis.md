@@ -6,8 +6,8 @@
 
 **Типы сбоев:**
 
-| Тип | Описание | SSoT |
-| :--- | :--- | :--- |
+| Тип | Описание |
+| :--- | :--- |
 | **Kernel Panic** | Критический сбой ядра, система не может продолжать работу | [kernel_panic.md](../../Core/kernel/kernel_panic.md) |
 | **Coredump** | Дамп памяти процесса при аварийном завершении | [troubleshooting.md#Анализ-сбоев-Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump) |
 | **OOM Killer** | Механизм завершения процессов при нехватке памяти | [troubleshooting.md](../../Core/processes/troubleshooting.md) |
@@ -18,13 +18,13 @@
 
 Происходят при выполнении недопустимых операций (обращение к неверному адресу памяти, деление на ноль). Система завершает процесс, потенциально создавая `coredump`.
 
-**SSoT:** [Анализ сбоев: Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump)
+**Анализ сбоев:** [Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump)
 
 ### Сбои пространства ядра (Kernel Crashes)
 
 Затрагивают ядро ОС, часто приводят к `Kernel Panic` и перезагрузке. Для анализа требуется механизм сохранения памяти в момент краха (`kdump`).
 
-**SSoT:** [Kernel Panic: анализ и отладка](../../Core/kernel/kernel_panic.md)
+**Kernel Panic:** [анализ и отладка](../../Core/kernel/kernel_panic.md)
 
 ## Практические сценарии
 
@@ -89,8 +89,8 @@ journalctl -k | grep -i "oom\|killed process"
 
 ### Инструменты анализа
 
-| Инструмент | Назначение | SSoT |
-| :--- | :--- | :--- |
+| Инструмент | Назначение |
+| :--- | :--- |
 | `coredumpctl` | Управление дампами памяти процессов | [troubleshooting.md](../../Core/processes/troubleshooting.md) |
 | `kdump` | Механизм сбора дампов памяти ядра | [kernel_panic.md](../../Core/kernel/kernel_panic.md) |
 | `abrt` | Автоматическое создание отчетов об ошибках (RHEL/Fedora) | — |

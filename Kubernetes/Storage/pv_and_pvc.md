@@ -14,20 +14,20 @@
 
 ### Проблема прямого управления томами
 
-Изначально в Kubernetes тома определялись непосредственно в манифесте пода (`awsElasticBlockStore`, `gcePersistentDisk`).
+Изначально в Kubernetes тома определялись непосредственно в манифесте пода (`awsElasticBlockStore`, `gcePersistentDisk`, `azureDisk`).
 
 **Недостатки:**
 
 1. **Ручное создание томов** — администратор создаёт диски в СХД вручную.
 2. **Жёсткая связь с инфраструктурой** — параметры доступа прописаны в манифесте приложения.
-3. **Сложность миграции** — при смене облака требуется изменять манифесты всех приложений.
+3. **Сложность миграции** — при смене хранилища требуется изменять манифесты всех приложений.
 
 ### Решение: трёхуровневая абстракция
 
 | Роль | Задача |
 |------|--------|
 | **Разработчик** | Описывает требования: "нужно 10 ГБ быстрого хранилища с эксклюзивным доступом" |
-| **Администратор** | Настраивает способы удовлетворения: "быстрое хранилище = SSD в облаке" |
+| **Администратор** | Настраивает способы удовлетворения: "быстрое хранилище = Ceph RBD на SSD" |
 
 ### Режимы выделения хранилища
 
@@ -131,19 +131,23 @@ allowVolumeExpansion: true          # Разрешить расширение
 
 ## Практические сценарии
 
-### Пример: Динамическое выделение в облаке (AWS EBS)
+### Пример: Динамическое выделение для Ceph RBD (локальный аринт)
 
 ```yaml
 # 1. StorageClass
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: standard-ssd
-provisioner: ebs.csi.aws.com
+  name: ceph-ssd
+provisioner: rbd.csi.ceph.com
 parameters:
-  type: gp2
+  pool: replicapool
+  clusterID: rook-ceph
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
 reclaimPolicy: Retain
 volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
 
 ---
 # 2. PersistentVolumeClaim
@@ -154,7 +158,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: standard-ssd
+  storageClassName: ceph-ssd
   resources:
     requests:
       storage: 10Gi

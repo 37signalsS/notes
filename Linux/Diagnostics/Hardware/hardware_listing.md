@@ -275,10 +275,4 @@ lsmod | grep -i e1000  # Пример для Intel NIC
 - **`mdadm`**: Управление RAID — см. [RAID management](../../../FileSystems/raid_management.md)
 - **`lvm2`**: Управление логическими томами — см. [LVM](../../../FileSystems/lvm.md)
 
-### Ссылки на SSoT
-
-- Информация о CPU: [Диагностика CPU](./cpu_info.md)
-- Диагностика дисков: [smartctl](./smartctl.md)
-- Общая информация о системе: [Информация о системе](../../../SystemAdministration/system_information.md)
-- Файловая система /sys: [/sys](../../../FileSystems/virtual_fs_sys.md)
-- Сетевые интерфейсы: [Сетевая диагностика](../Networking/)
+## Дополнительная информация

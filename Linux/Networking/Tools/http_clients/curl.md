@@ -4,10 +4,6 @@
 
 **cURL** (Client for URLs) — утилита командной строки для передачи данных по множеству протоколов (HTTP, HTTPS, FTP, SCP, SFTP, SMB, LDAP и др.). Стандарт де-факто для работы с API в скриптах и автоматизации.
 
-> **SSoT:** Это файл по специфичным возможностям curl. Общее сравнение HTTP-клиентов — в **[overview.md](./overview.md)**. Диагностика задержек — в **[curl_network_diagnostics.md](../../../Diagnostics/Networking/curl_network_diagnostics.md)**.
-
----
-
 ## Базовые концепции
 
 ### 1. Структура команды

@@ -192,14 +192,11 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: zonal-ssd
-provisioner: ebs.csi.aws.com
+provisioner: rbd.csi.ceph.com
 volumeBindingMode: WaitForFirstConsumer  # Критично для топологии
-allowedTopologies:
-  - matchLabelExpressions:
-      - key: topology.ebs.csi.aws.com/zone
-        values:
-          - eu-central-1a
-          - eu-central-1b
+parameters:
+  pool: replicapool
+  clusterID: rook-ceph
 ```
 
 ### Режимы volumeBindingMode
@@ -258,37 +255,39 @@ kubectl get storageclass standard-ssd -o yaml | grep allowVolumeExpansion
 
 ### Контекст
 
-До Kubernetes 1.24 многие плагины хранения (AWS EBS, GCE PD, Azure Disk, vSphere) были встроены в код Kubernetes. Начиная с версии 1.24, большинство in-tree плагинов удалены, и их использование автоматически перенаправляется на соответствующие CSI-драйверы.
+До Kubernetes 1.24 многие плагины хранения (AWS EBS, GCE PD, Azure Disk, vSphere, Cinder) были встроены в код Kubernetes. Начиная с версии 1.24, большинство in-tree плагинов удалены, и их использование автоматически перенаправляется на соответствующие CSI-драйверы.
 
 ### Механизм работы
 
 - **`CSIMigration` feature gate:** Включает автоматическую трансляцию in-tree `StorageClass` в CSI-эквиваленты
 - **Автоматическая совместимость:** Существующие манифесты с in-tree плагинами продолжают работать без изменений
 
-### Пример миграции AWS EBS
+### Пример миграции для локального аринта (Ceph RBD)
 
 ```yaml
-# До миграции (in-tree)
+# До миграции (in-tree, устарело)
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: standard
-provisioner: kubernetes.io/aws-ebs  # In-tree плагин
+  name: ceph-storage
+provisioner: kubernetes.io/cinder  # In-tree плагин (OpenStack)
 
-# После миграции (автоматически транслируется в)
-provisioner: ebs.csi.aws.com  # CSI драйвер
+# После миграции (CSI драйвер)
+provisioner: rbd.csi.ceph.com  # CSI драйвер
+parameters:
+  pool: replicapool
+  clusterID: rook-ceph
 ```
 
 ### Статус миграции (Kubernetes 1.25+)
 
-| In-tree плагин | CSI замена | Статус |
-| :--- | :--- | :--- |
-| `kubernetes.io/aws-ebs` | `ebs.csi.aws.com` | ✅ |
-| `kubernetes.io/gce-pd` | `pd.csi.storage.gke.io` | ✅ |
-| `kubernetes.io/azure-disk` | `disk.csi.azure.com` | ✅ |
-| `kubernetes.io/cinder` | `cinder.csi.openstack.org` | ✅ |
-| `kubernetes.io/vsphere-volume` | `csi.vsphere.vmware.com` | ✅ |
-| `kubernetes.io/portworx-volume` | `pxd.portworx.com` | ✅ |
+| In-tree плагин | CSI замена | Статус | Сценарий |
+| :--- | :--- | :--- | :--- |
+| `kubernetes.io/cinder` | `cinder.csi.openstack.org` | ✅ | OpenStack |
+| `kubernetes.io/vsphere-volume` | `csi.vsphere.vmware.com` | ✅ | VMware vSphere |
+| `kubernetes.io/portworx-volume` | `pxd.portworx.com` | ✅ | Portworx |
+| `kubernetes.io/cephfs` | `cephfs.csi.ceph.com` | ✅ | Ceph FS |
+| `kubernetes.io/rbd` | `rbd.csi.ceph.com` | ✅ | Ceph RBD |
 
 > **Важно:** Для Kubernetes 1.24+ рекомендуется явно использовать CSI-драйверы в манифестах.
 

@@ -69,9 +69,6 @@ kubectl = "1.29.3"
 helm = "3.14.4"
 k9s = "0.32.4"
 
-aws-cli = "2.15.42"
-gcloud = "476.0.0"
-
 jq = "1.7.1"
 yq = "4.44.1"
 
@@ -107,10 +104,10 @@ run = "ansible-playbook --syntax-check playbook.yml"
 # --- Задачи для Kubernetes ---
 
 [tasks.k8s-connect]
-description = "Настраивает kubectl для подключения к EKS кластеру"
+description = "Настраивает kubectl для подключения к Yandex Cloud Managed Kubernetes кластеру"
 # Пример команды, которую больше не нужно запоминать.
 # private = true предотвратит случайное логирование чувствительной информации
-run = "aws eks update-kubeconfig --name my-cluster --region us-east-1"
+run = "yc managed-kubernetes cluster get-credentials --name my-cluster --context k8s-context"
 private = true
 
 # --- Комплексная задача для CI/CD ---

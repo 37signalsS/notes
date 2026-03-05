@@ -4,7 +4,7 @@
 
 **Grafana Loki** — это горизонтально масштабируемая, высокодоступная, мульти-тенантовая система агрегации логов, вдохновленная Prometheus. Она использует аналогичный подход к индексации, фокусируясь на метаданных (метках), а не на полном тексте логов. Это позволяет значительно снизить затраты на хранение по сравнению с традиционными системами, такими как Elasticsearch. Являясь частью [стека Grafana LGTM](../Concepts/Observability_and_Monitoring/observability_overview.md#современные-стеки-наблюдаемости:-grafana-lgtm), Loki позиционируется как экономичное и эффективное решение для сбора и анализа логов.
 
-### Важные изменения 2025-2026
+### Важные изменения
 
 | Агент | Статус | Дата EOL | Рекомендация |
 | :--- | :--- | :--- | :--- |
@@ -178,8 +178,8 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
         shared_store: s3
       s3:
         bucketnames: my-loki-bucket
-        endpoint: s3.us-east-1.amazonaws.com # или endpoint вашего S3-совместимого хранилища
-        region: us-east-1
+        endpoint: storage.yandexcloud.net # или endpoint вашего S3-совместимого хранилища (MinIO, Ceph)
+        region: ru-central1
         access_key_id: ${S3_ACCESS_KEY_ID} # Используйте переменные окружения или Vault
         secret_access_key: ${S3_SECRET_ACCESS_KEY} # Используйте переменные окружения или Vault
     # ... (остальные настройки) ...

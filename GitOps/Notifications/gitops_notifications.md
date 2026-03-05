@@ -2,10 +2,6 @@
 
 > **Актуальные версии (февраль 2026):** ArgoCD Notifications v3.3, Flux notification-controller v1.8.1.
 
-> **SSoT файлы:**
-> - **ArgoCD Notifications:** [ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)
-> - **Flux Notifications:** [Flux Overview](../Flux/overview.md#архитектура-gitops-toolkit)
-
 Уведомления — это неотъемлемая часть GitOps-конвейера, позволяющая командам получать оперативную информацию о состоянии своих приложений без необходимости постоянно проверять UI или консоль.
 
 ## Определения
@@ -40,7 +36,7 @@
 
 ### Сценарий 1: Уведомления из Argo CD
 
-**SSoT:** Подробное руководство по настройке ArgoCD Notifications, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)**.
+**Основное руководство:** Подробное руководство по настройке ArgoCD Notifications, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)**.
 
 Краткое описание:
 - Argo CD использует компонент `argocd-notifications-controller`
@@ -98,7 +94,7 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
 
 ## Дополнительная информация
 
-- **[ArgoCD Notifications SSoT](../ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
+- **[ArgoCD Notifications](../ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
 - **[Flux Overview](../Flux/overview.md)**: Архитектура Flux и notification-controller.
 - **Официальная документация ArgoCD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
 - **Официальная документация Flux**: [Notification Controller](https://fluxcd.io/flux/components/notification/)

@@ -1,6 +1,6 @@
 # Управление сертификатами в kubeadm
 
-> **Примечание:** Это файл содержит только kubeadm-специфичную информацию. Полное руководство по управлению сертификатами Kubernetes см. в [Управление сертификатами кластера](../../Operations/certificate_management.md) (SSoT).
+> **Примечание:** Это файл содержит только kubeadm-специфичную информацию. Полное руководство по управлению сертификатами Kubernetes см. в [Управление сертификатами кластера](../../Operations/certificate_management.md).
 
 ## 1. Определения
 
@@ -137,7 +137,7 @@ spec:
 
 ### 4.1. Связанные темы
 
-*   [Управление сертификатами кластера (SSoT)](../../Operations/certificate_management.md)
+*   [Управление сертификатами кластера](../../Operations/certificate_management.md)
 *   [Kubespray установка](../Kubespray/installation.md)
 *   [etcd обслуживание](../../Concepts/etcd_overview.md)
 

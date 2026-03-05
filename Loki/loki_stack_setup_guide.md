@@ -15,8 +15,6 @@ helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 ```
 
-> **Примечание:** На март 2026 актуальные версии чартов: `loki-5.x.x`, `promtail-6.x.x`, `grafana-8.x.x`. Проверяйте актуальные версии через `helm search repo grafana`.
-
 ### ⚠️ Важное замечание о Promtail
 
 **Promtail находится в статусе deprecated (весна 2026).** Для новых развертываний рекомендуется использовать **Grafana Alloy**.
@@ -40,7 +38,7 @@ Loki будет использоваться для хранения и инде
 helm show values grafana/loki > loki_values.yaml
 ```
 
-**Актуальные параметры для Loki 3.x (март 2026):**
+**Актуальные параметры для Loki 3.x:**
 
 | Параметр | Описание | Рекомендуемое значение |
 | :--- | :--- | :--- |
@@ -154,7 +152,7 @@ Promtail — это агент для сбора логов, который бу
 helm show values grafana/promtail > promtail_values.yaml
 ```
 
-**Актуальные параметры для Promtail 6.x (март 2026):**
+**Актуальные параметры для Promtail 6.x:**
 
 | Параметр | Описание | Рекомендуемое значение |
 | :--- | :--- | :--- |
@@ -226,7 +224,7 @@ Grafana будет использоваться для визуализации 
 helm show values grafana/grafana > grafana_values.yaml
 ```
 
-**Актуальные параметры для Grafana 10.x/11.x (март 2026):**
+**Актуальные параметры для Grafana 10.x/11.x:**
 
 | Параметр | Описание | Рекомендуемое значение |
 | :--- | :--- | :--- |

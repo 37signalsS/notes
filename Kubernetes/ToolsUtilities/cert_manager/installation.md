@@ -197,7 +197,7 @@ kubectl logs -n cert-manager -l app=cainjector
 
 ---
 
-## Актуальные версии (март 2026)
+## Актуальные версии
 
 | Версия | Мин. K8s | Статус | EOL |
 | :--- | :--- | :--- | :--- |
@@ -212,5 +212,3 @@ kubectl logs -n cert-manager -l app=cainjector
 - [Helm Chart](https://artifacthub.io/packages/helm/cert-manager/cert-manager)
 
 ---
-
-*SSoT для установки cert-manager. Последняя проверка актуальности: март 2026.*

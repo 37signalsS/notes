@@ -230,7 +230,7 @@ Dex разворачивается как отдельное приложени�
 
 ## Дополнительная информация
 
-### Kiali v2.x: Новые возможности (2025–2026)
+### Kiali v2.x: Новые возможности
 
 - **Ambient Mesh Visualization:** Полная поддержка Ztunnel и Waypoint Proxy, разделение L4/L7 трафика.
 - **Gateway API Support:** Визуализация `HTTPRoute`, `Gateway`, `BackendRef`.
@@ -259,9 +259,8 @@ Dex разворачивается как отдельное приложени�
 ### Источники и документация
 
 - **[Официальная документация Kiali](https://kiali.io/docs/)** — полное руководство по установке и настройке.
-- **[Kiali Sprint Demo v2.18](https://www.youtube.com/watch?v=p-tP7GOosRE)** — видео с новыми функциями (2025).
 - **[External Kiali](https://kiali.io/docs/configuration/multi-cluster/external/)** — централизованное observability для мультикластера.
-- **[Istio Observability with Kiali](https://oneuptime.com/blog/post/2026-02-09-istio-kiali-observability/view)** — практическое руководство (2026).
+- **[Istio Observability with Kiali](https://oneuptime.com/blog/post/2026-02-09-istio-kiali-observability/view)** — практическое руководство.
 
 ### Связанные документы
 

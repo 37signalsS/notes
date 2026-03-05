@@ -1,5 +1,7 @@
 # Karpenter
 
+> **Важно:** Karpenter предназначен для облачных провайдеров (AWS, Azure, GCP). Для локального аринта (on-premise, bare-metal) используйте **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** с node groups или **Volcano** для batch-нагрузок.
+
 ## Определения
 
 **Karpenter** — оператор Kubernetes для автоматического масштабирования кластера, который динамически создаёт узлы оптимального размера под требования ожидающих подов.

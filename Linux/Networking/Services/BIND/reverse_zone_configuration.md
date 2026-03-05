@@ -6,8 +6,6 @@
 
 **PTR-запись** — ресурсная запись, указывающая на каноническое имя хоста для данного IP-адреса.
 
-> **SSoT:** Теория обратных зон и PTR-записей — в [`dns_zones.md`](../../../../Networking/Protocols/DNS/dns_zones.md), [`dns_records.md`](../../../../Networking/Protocols/DNS/dns_records.md).
-
 ## Базовые концепции
 
 ### Формат обратных зон

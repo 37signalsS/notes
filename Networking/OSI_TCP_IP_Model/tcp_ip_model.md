@@ -20,8 +20,8 @@
 
 ### Уровни модели TCP/IP
 
-| Уровень | Соответствие OSI | Функции | Протоколы | SSoT-файл |
-| :--- | :--- | :--- | :--- | :--- |
+| Уровень | Соответствие OSI | Функции | Протоколы |
+| :--- | :--- | :--- | :--- |
 | **4. Прикладной (Application)** | L7, L6, L5 | Взаимодействие с приложениями, представление данных, сеансы | [HTTP](../Protocols/http.md), [DNS](../Protocols/DNS/dns.md), SMTP, FTP, [TLS](../Protocols/tls.md) | [application_layer.md](./application_layer.md) |
 | **3. Транспортный (Transport)** | L4 | Доставка между процессами, надёжность, поток | [TCP](../Protocols/TCP/overview.md), [UDP](../Protocols/udp.md), SCTP | [transport_layer.md](./transport_layer.md) |
 | **2. Сетевой (Internet)** | L3 | Глобальная адресация, маршрутизация, фрагментация | [IP](../Protocols/ip.md), [ICMP](../Protocols/icmp.md), [ARP](../Protocols/arp.md), OSPF, [BGP](../Protocols/bgp.md) | [Network_layer/Concepts/network_layer_overview.md](./Network_layer/Concepts/network_layer_overview.md) |

@@ -109,4 +109,4 @@ subnet 10.0.20.0 netmask 255.255.255.0 {
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP (SSoT)](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

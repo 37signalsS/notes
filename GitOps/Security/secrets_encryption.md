@@ -2,11 +2,6 @@
 
 > **Актуальные версии (февраль 2026):** SOPS v3.9, Sealed Secrets v0.28, Vault v1.18.
 
-> **SSoT файлы:**
-> - **SOPS:** [SOPS (Secrets OPerationS)](../../Security/Tools/sops_overview.md)
-> - **Sealed Secrets:** [Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)
-> - **Vault:** [HashiCorp Vault](../../Vault/overview.md)
-
 Хранение секретов — одна из главных проблем в GitOps. Поскольку Git является источником истины, хранить в нем пароли и ключи в открытом виде недопустимо. Эта заметка описывает ключевые подходы для безопасного управления секретами.
 
 ## Определения
@@ -27,8 +22,8 @@
 
 ### Сравнение инструментов
 
-| Инструмент | Шифрование | Ключи | GitOps | Сложность | SSoT |
-| :--- | :--- | :--- | :--- | :--- | :--- |
+| Инструмент | Шифрование | Ключи | GitOps | Сложность |
+| :--- | :--- | :--- | :--- | :--- |
 | **Sealed Secrets** | Асимметричное (RSA) | Один приватный ключ в кластере | Полная | Низкая | [Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md) |
 | **SOPS** | Симметричное (AES) + KMS/PGP/age | KMS, PGP, age | Полная (Flux нативно) | Средняя | [SOPS](../../Security/Tools/sops_overview.md) |
 | **Vault** | Динамические секреты | Transit Engine | Через агент/интеграцию | Высокая | [Vault](../../Vault/overview.md) |
@@ -93,9 +88,9 @@
 
 ## Дополнительная информация
 
-- **[Sealed Secrets SSoT](../../Kubernetes/Security/sealed_secrets_overview.md)**: Полное руководство по Sealed Secrets.
-- **[SOPS SSoT](../../Security/Tools/sops_overview.md)**: Полное руководство по SOPS.
-- **[Vault SSoT](../../Vault/overview.md)**: Полное руководство по HashiCorp Vault.
+- **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Полное руководство по Sealed Secrets.
+- **[SOPS](../../Security/Tools/sops_overview.md)**: Полное руководство по SOPS.
+- **[Vault](../../Vault/overview.md)**: Полное руководство по HashiCorp Vault.
 - **[ArgoCD Vault Integration](../ArgoCD/argocd_vault_integration.md)**: Интеграция ArgoCD с Vault.
 - **Ротация ключей**: Регулярно меняйте ключи шифрования (для SOPS, Sealed Secrets) и токены доступа (для Vault). Автоматизируйте этот процесс, где возможно.
 - **Политики безопасности**: Используйте Kubernetes-политики (например, Kyverno) чтобы запретить создание `Secret`'ов напрямую в обход GitOps-пайплайна.

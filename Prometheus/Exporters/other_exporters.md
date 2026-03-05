@@ -51,12 +51,13 @@
 
 ## Облачные платформы
 
+> ⚠️ **Примечание:** Для локального аринта используйте openstack_exporter или прямые экспортеры систем хранения.
+
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
-| **cloudwatch_exporter** | Мониторинг AWS CloudWatch | [GitHub](https://github.com/prometheus/cloudwatch_exporter) | 9106 |
-| **stackdriver_exporter** | Мониторинг GCP Stackdriver | [GitHub](https://github.com/prometheus-community/stackdriver_exporter) | 9255 |
-| **azure_exporter** | Мониторинг Azure Monitor | [GitHub](https://github.com/Azure/prometheus-collector) | — |
+| **yandex_exporter** | Мониторинг Yandex Cloud | [GitHub](https://github.com/yandex-cloud/prometheus-exporter) | 9100 |
 | **openstack_exporter** | Мониторинг OpenStack | [GitHub](https://github.com/openstack/exporter) | 9119 |
+| **vmware_exporter** | Мониторинг vSphere | [GitHub](https://github.com/pryorda/vmware_exporter) | 9271 |
 
 ## Системы хранения
 

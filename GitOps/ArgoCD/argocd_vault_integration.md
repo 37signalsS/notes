@@ -1,6 +1,5 @@
 # ArgoCD + HashiCorp Vault: Интеграция через ArgoCD Vault Plugin
 
-> **SSoT:** Этот файл — основной источник истины для интеграции Vault с ArgoCD.
 > **Версия плагина:** v1.18.1 (июнь 2024). Совместимость с ArgoCD v3 требует тестирования.
 
 ## Определения
@@ -192,45 +191,6 @@ spec:
     automated:
       prune: true
       selfHeal: true
-```
-
-### Сценарий 5: Альтернативные методы аутентификации
-
-**AppRole:**
-```bash
-# Создание AppRole
-vault write auth/approle/role/argocd \
-    token_policies="test-policy" \
-    token_ttl=1h
-
-# Получение role_id и secret_id
-vault read auth/approle/role/argocd/role-id
-vault write -f auth/approle/role/argocd/secret-id
-```
-
-```yaml
-env:
-- name: AVP_AUTH_TYPE
-  value: approle
-- name: AVP_ROLE_ID
-  valueFrom:
-    secretKeyRef:
-      name: vault-approle
-      key: role-id
-- name: AVP_SECRET_ID
-  valueFrom:
-    secretKeyRef:
-      name: vault-approle
-      key: secret-id
-```
-
-**AWS IAM:**
-```yaml
-env:
-- name: AVP_AUTH_TYPE
-  value: iam
-- name: AWS_REGION
-  value: us-east-1
 ```
 
 ## Дополнительная информация

@@ -318,5 +318,3 @@ kubectl logs -n cert-manager -l app=cert-manager | grep -i acme
 4. **Избегайте лимитов** — кэшируйте заказы при разработке
 
 ---
-
-*SSoT для Let's Encrypt. Последняя проверка актуальности: март 2026.*

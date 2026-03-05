@@ -14,8 +14,8 @@
 
 | Агент | Статус | Конец поддержки |
 | :--- | :--- | :--- |
-| **Grafana Agent (static mode)** | ⚠️ Deprecated | Осень 2025 |
-| **Promtail** | ⚠️ Deprecated | Весна 2026 |
+| **Grafana Agent (static mode)** | ⚠️ Deprecated | — |
+| **Promtail** | ⚠️ Deprecated | — |
 | **Grafana Alloy** | ✅ Активно развивается | — |
 
 ## Основные концепции

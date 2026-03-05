@@ -202,6 +202,6 @@ argocd app wait <app-name> --sync --health
 
 ### Ссылки
 
-- **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)** — SSoT для метрик
+- **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)** — основное руководство по метрикам
 - **[Синхронизация](./synchronization.md)** — политики и опции
 - **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/)**

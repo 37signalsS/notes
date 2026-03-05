@@ -380,5 +380,3 @@ kubectl logs -n cert-manager -l app=cert-manager | grep -i gateway
 | Wildcard сертификаты | **10** | Стандартный ACME DNS-01 |
 
 ---
-
-*SSoT для интеграции с Gateway API. Последняя проверка актуальности: март 2026.*

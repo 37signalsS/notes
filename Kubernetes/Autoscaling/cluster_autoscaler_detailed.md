@@ -171,5 +171,5 @@ kubectl get events -n kube-system --field-selector reason=ScaleDown
 ### Ресурсы
 
 * [Официальная документация Kubernetes](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler)
-* [AWS EKS Cluster Autoscaler](https://docs.aws.amazon.com/eks/latest/userguide/autoscaling.html)
-* [GCP GKE Autoscaling](https://cloud.google.com/kubernetes-engine/docs/concepts/cluster-autoscaler)
+* [Yandex Cloud Managed Kubernetes Autoscaling](https://yandex.cloud/ru/docs/managed-kubernetes/concepts/autoscaling)
+* [VMware Tanzu Kubernetes Grid Autoscaling](https://docs.vmware.com/en/VMware-Tanzu-Kubernetes-Grid/index.html)

@@ -334,7 +334,7 @@ kubectl describe pod pending-pod | grep -A 5 "Events:"
 
 ### Ресурсы
 
-* **[Affinity и Anti-Affinity](../Scheduling/affinity.md)** — SSoT по механизмам размещения подов.
+* **[Affinity и Anti-Affinity](../Scheduling/affinity.md)** — основное руководство по механизмам размещения подов.
 * **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)** — механизм отталкивания на уровне узлов.
 * **[Pod Disruption Budget](pod_disruption_budget.md)** — защита от массового вытеснения подов.
 * [Официальная документация Kubernetes: Pod Affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity)

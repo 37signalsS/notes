@@ -10,15 +10,15 @@
 
 ## Основные концепции
 
-### Актуальные версии (март 2026)
+### Актуальные версии
 
-| Компонент | Версия | Дата |
-|---|---|---|
-| **kube-prometheus-stack** | 82.4.3 | Февраль 2026 |
-| **Prometheus Operator** | 0.89.0 | Февраль 2026 |
-| **Prometheus** | 3.10.0 | Февраль 2026 |
-| **Alertmanager** | 0.31.0 | Февраль 2026 |
-| **Grafana** | 11.x | Январь 2026 |
+| Компонент | Версия |
+|---|---|
+| **kube-prometheus-stack** | 82.4.3 |
+| **Prometheus Operator** | 0.89.0 |
+| **Prometheus** | 3.10.0 |
+| **Alertmanager** | 0.31.0 |
+| **Grafana** | 11.x |
 
 > **Важно:** Проверяйте [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack) и [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) для получения последних версий.
 

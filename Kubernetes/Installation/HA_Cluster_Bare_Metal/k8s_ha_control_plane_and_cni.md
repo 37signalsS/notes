@@ -204,8 +204,8 @@ kubectl delete pod -n kube-system -l k8s-app=calico-node
 
 ### Надежность
 
-| Раздел | SSoT | Confidence |
-| :--- | :--- | :--- |
+| Раздел | Confidence |
+| :--- | :--- |
 | kubeadm init | Этот файл + официалка | 10 |
 | kubeadm join | Этот файл + официалка | 10 |
 | Calico установка | Требует проверки версии | 7 |

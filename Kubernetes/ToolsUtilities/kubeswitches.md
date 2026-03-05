@@ -231,26 +231,26 @@ mkdir -p ~/.kube/contexts/gke-prod
 cp ~/.kube/config ~/.kube/contexts/gke-prod/config
 ```
 
-**EKS (Amazon Elastic Kubernetes Service):**
+**Yandex Cloud Managed Kubernetes:**
 
 ```bash
 # Обновление kubeconfig
-aws eks update-kubeconfig --name cluster-name --region region
+yc managed-kubernetes cluster get-credentials --name cluster-name --folder-id folder-id
 
 # Сохранение как отдельный контекст
-mkdir -p ~/.kube/contexts/eks-prod
-cp ~/.kube/config ~/.kube/contexts/eks-prod/config
+mkdir -p ~/.kube/contexts/yandex-prod
+cp ~/.kube/config ~/.kube/contexts/yandex-prod/config
 ```
 
-**AKS (Azure Kubernetes Service):**
+**Локальный кластер (kubeadm/k3s/minikube):**
 
 ```bash
-# Получение credentials
-az aks get-credentials --resource-group rg --name cluster-name
+# kubeconfig обычно находится в ~/.kube/config
+# Для переключения между кластерами используйте контексты
 
 # Сохранение как отдельный контекст
-mkdir -p ~/.kube/contexts/aks-prod
-cp ~/.kube/config ~/.kube/contexts/aks-prod/config
+mkdir -p ~/.kube/contexts/local-prod
+cp ~/.kube/config ~/.kube/contexts/local-prod/config
 ```
 
 ## 4. Дополнительная информация

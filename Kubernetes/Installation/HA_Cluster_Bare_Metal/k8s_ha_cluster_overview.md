@@ -100,8 +100,8 @@
 
 ### Надежность
 
-| Компонент | SSoT | Confidence |
-| :--- | :--- | :--- |
+| Компонент | Confidence |
+| :--- | :--- |
 | Архитектура HA | Этот файл | 10 |
 | Балансировка | [kubeadm_ha_with_keepalived_haproxy.md](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md) | 10 |
 | etcd кворум | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |

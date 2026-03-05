@@ -8,7 +8,7 @@
 
 **Kubespray** — инструмент автоматизации развертывания Kubernetes на базе Ansible, поддерживающий встроенную настройку HA через Keepalived + HAProxy.
 
-> **SSoT:** Подробное описание архитектуры Keepalived + HAProxy см. в [Настройка HA с kubeadm](./kudeadm/kubeadm_ha_with_keepalived_haproxy.md).
+> **Основное руководство:** Подробное описание архитектуры Keepalived + HAProxy см. в [Настройка HA с kubeadm](./kudeadm/kubeadm_ha_with_keepalived_haproxy.md).
 
 ## 2. Основные концепции
 

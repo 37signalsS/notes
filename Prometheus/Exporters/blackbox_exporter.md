@@ -5,7 +5,6 @@
 **Blackbox Exporter** — экспортер для мониторинга систем снаружи (blackbox-мониторинг), с точки зрения пользователя. Проверяет доступность и работоспособность эндпоинтов по сети с использованием протоколов: HTTP(S), TCP, ICMP, DNS, gRPC.
 
 * **Порт по умолчанию:** `9115`
-* **Последняя стабильная версия:** `0.28.0` (декабрь 2025)
 * **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter)
 * **Установка:** [installation/blackbox_exporter_installation.md](../installation/blackbox_exporter_installation.md)
 

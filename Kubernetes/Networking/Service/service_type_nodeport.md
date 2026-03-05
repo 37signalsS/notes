@@ -22,7 +22,7 @@ NodePort расширяет [ClusterIP](./service_type_clusterip.md), добав
 - **По умолчанию:** 30000-32767
 - **Настройка:** Можно изменить в конфигурации API-сервера флагами `--service-node-port-range`
 
-### externalTrafficPolicy: Local (SSoT)
+### externalTrafficPolicy: Local
 
 По умолчанию (`externalTrafficPolicy: Cluster`), трафик, пришедший на `NodePort` одного узла, может быть перенаправлен на под, работающий на *другом* узле.
 

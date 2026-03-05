@@ -4,8 +4,6 @@
 
 **`ping`** (Packet Internet Groper) — базовая утилита для проверки сетевого подключения между хостами. Работает на сетевом уровне модели OSI, используя ICMP (Internet Control Message Protocol) пакеты типа **Echo Request** и **Echo Reply**.
 
-> **SSoT:** Это основная заметка по использованию `ping`. Альтернативы и дополнения описаны в [ping_alternatives](../../../Networking/Troubleshooting/ping_alternatives.md).
-
 ## Основные концепции
 
 ### Принцип работы

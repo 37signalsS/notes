@@ -10,8 +10,8 @@
 
 ### Ключевые протоколы сетевого уровня
 
-| Протокол | Назначение | SSoT |
-|----------|------------|------|
+| Протокол | Назначение |
+|----------|------------|
 | **[IP (Internet Protocol)](../../../Protocols/ip.md)** | Передача данных и глобальная адресация | `Networking/Protocols/ip.md` |
 | **[ICMP (Internet Control Message Protocol)](../../../Protocols/icmp.md)** | Служебные и диагностические сообщения | `Networking/Protocols/icmp.md` |
 | **[ARP (Address Resolution Protocol)](../../../Protocols/arp.md)** | Сопоставление IP-адресов (L3) и MAC-адресов (L2) | `Networking/Protocols/arp.md` |

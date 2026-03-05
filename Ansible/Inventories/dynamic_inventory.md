@@ -16,7 +16,7 @@
 
 ### Способы реализации
 
-1. **Inventory plugins**: Предпочтительный, нативный способ. Ansible предоставляет плагины для большинства облаков и сервисов (например, `amazon.aws.aws_ec2`, `google.cloud.gcp_compute`, `community.digitalocean.digitalocean`).
+1. **Inventory plugins**: Предпочтительный, нативный способ. Ansible предоставляет плагины для большинства облаков и сервисов (например, `yandex.cloud.yandex_cloud`, `community.vmware.vmware_vm_inventory`, `kubernetes.core.k8s`).
 2. **Исполняемые скрипты**: Любой исполняемый файл (`.py`, `.sh`, etc.), который при запуске с флагом `--list` возвращает JSON в специальном формате. Этот способ считается устаревающим, но все еще поддерживается.
 3. **Комбинированный подход**: Директория `inventories/` может содержать несколько источников (статические и динамические файлы), которые Ansible объединяет в один инвентарь.
 
@@ -33,7 +33,7 @@
 
 ```ini
 [inventory]
-enable_plugins = aws_ec2, yaml, ini, script
+enable_plugins = yandex.cloud.yandex_cloud, vmware.vmware.vmware_vm_inventory, yaml, ini, script
 cache = True
 cache_plugin = jsonfile
 cache_timeout = 600
@@ -52,84 +52,13 @@ cache_connection = .cache/inventory
 | **Группировка** | Ручные группы | Автоматически, по тегам/фильтрам |
 | **Производительность**| Быстро локально | Требует кэширования для API |
 
-### Пример: Динамический инвентарь с `amazon.aws.aws_ec2`
+### Примеры конфигурации
 
-Это YAML-файл, который описывает, как получать и структурировать хосты из AWS.
-
-**`inventories/aws_ec2.yml`:**
-
-```yaml
-plugin: amazon.aws.aws_ec2
-
-# Специфичные параметры для AWS
-regions:
-  - eu-central-1
-filters:
-  tag:Env: prod
-  instance-state-name: running
-hostnames:
-  - tag:Name
-  - private-ip-address
-
-# Общие параметры для постобработки
-compose:
-  ansible_host: private_ip_address
-  env: tags.Env
-keyed_groups:
-  - key: tags.Env
-    prefix: env
-  - key: placement.availability_zone
-    prefix: az
-groups:
-  web: "'nginx' in (tags.get('Role', '') | lower)"
-  bastion: "tags.get('Role') == 'bastion'"
-
-# Кэширование
-cache: true
-cache_plugin: jsonfile
-cache_connection: .cache/aws
-cache_timeout: 600
-
-strict: false
-```
-
-- `regions` и `filters` ограничивают область поиска.
-- `hostnames` задаёт приоритет источников для имени хоста в инвентаре.
-- `compose`, `keyed_groups` и `groups` создают удобные переменные и группы на основе тегов.
-
-Для просмотра итогового инвентаря используется команда:
-
-```bash
-ansible-inventory -i inventories/aws_ec2.yml --graph
-```
-
-### Пример: Собственный скрипт динамического инвентаря
-
-Любой скрипт, который выводит JSON в определенном формате, может служить источником инвентаря.
-
-**`inventory.py`:**
-
-```python
-#!/usr/bin/env python3
-import json, sys
-
-if '--list' in sys.argv:
-    print(json.dumps({
-        "app": {
-            "hosts": ["app1", "app2"]
-        },
-        "_meta": {
-            "hostvars": {
-                "app1": {"ansible_host": "1.2.3.4"}
-            }
-        }
-    }))
-elif '--host' in sys.argv:
-    print(json.dumps({}))
-```
+Документация по плагинам доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html).
 
 ## Дополнительная информация
 
 - **Основы инвентаря**: Базовые концепции статического инвентаря описаны в документе [Установка и настройка Ansible](../ansible_setup_and_config.md).
-- **Плагин `aws_ec2`**: Подробную документацию по всем параметрам плагина `amazon.aws.aws_ec2` можно найти на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html).
+- **Плагин `yandex_cloud`**: Подробную документацию по плагину `yandex.cloud.yandex_cloud` можно найти на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html).
+- **Плагин `vmware_vm_inventory`**: Документация доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html).
 - **Теги в облаках**: [Кроссплатформенные концепции](../CrossPlatform/concepts.md) — использование тегов для группировки

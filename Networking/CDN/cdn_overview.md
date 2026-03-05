@@ -88,7 +88,7 @@ via: 1.1 google
 
 - **Cloudflare**: Глобальная сеть с edge computing (Workers), бесплатные тарифы.
 - **Akamai**: Крупнейшая enterprise-CDN, специализация на безопасности.
-- **Amazon CloudFront**: Интеграция с AWS, гибкое ценообразование.
+- **Yandex Cloud CDN**: Интеграция с Yandex Cloud, низкая задержка в РФ.
 - **Fastly**: Edge cloud platform, акцент на программируемость и реальное время.
 - **Gcore, StackPath, BunnyCDN**: Альтернативы для специфических регионов и задач.
 

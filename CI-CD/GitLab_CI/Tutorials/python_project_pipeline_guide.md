@@ -174,10 +174,12 @@ container_scanning:
 # Шаблон для развертывания
 .deploy_template:
   stage: deployment
-  image: darthvad1r/kube-helm-aws:1.0.0
+  image: bitnami/kubectl:latest
   before_script:
     - helm plugin install https://github.com/databus23/helm-diff
-    - aws eks --region us-east-1 update-kubeconfig --name example-eks-cluster
+    # Для Yandex Cloud Managed Kubernetes
+    - yc managed-kubernetes cluster get-credentials --name example-k8s-cluster --context k8s-context
+    # Или для локального кластера (kubeconfig уже настроен)
     - kubectl version
   script:
     - |

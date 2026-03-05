@@ -55,13 +55,15 @@ jobs:
       contents: read
       id-token: write # Разрешение на получение OIDC-токена
     steps:
-      - name: 'Authenticate to Google Cloud'
-        uses: 'google-github-actions/auth@v2'
+      - name: 'Authenticate to Yandex Cloud'
+        uses: 'yandex-cloud/actions/auth@v0'
         with:
-          workload_identity_provider: '...'
-          service_account: '...'
+          service-account-id: 'sa-xxxxxxxxxxxxxxxxx'
       # ... шаги для деплоя
 ```
+
+> **Примечание:** Для локального аринта используйте self-hosted runner'ы с прямой аутентификацией через `yc` CLI или kubeconfig.
+
 
 ## Дополнительная информация
 
