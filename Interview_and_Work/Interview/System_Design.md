@@ -100,4 +100,4 @@
 * **Масштабирование:**
   * **Горизонтальное:** Stateless-сервисы легко масштабируются добавлением новых экземпляров.
   * **Базы данных:** Шардирование по `user_id` или `tweet_id`.
-  * **[CDN](../../Networking/Protocols/dns.md):** Использование CDN для разгрузки `Media Service`.
+  * **[CDN](../../Networking/Protocols/DNS/dns.md):** Использование CDN для разгрузки `Media Service`.

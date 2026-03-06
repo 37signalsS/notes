@@ -68,7 +68,7 @@ fi
 
 - **[Управление репозиториями DNF](../dnf_repository_management.md)** — настройка репозиториев для RPM
 - **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
-- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
+- **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
 
 ---
 

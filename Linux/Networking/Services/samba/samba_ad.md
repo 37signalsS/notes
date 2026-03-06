@@ -131,5 +131,5 @@ klist
 
 - [Базовые концепции](./samba_basics.md)
 - [Настройка Samba](./samba_setup.md)
-- [Kerberos: централизованная аутентификация](../../../Security/Concepts/kerberos.md)
+- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
 - [Управление пользователями](../../../SystemAdministration/users_management.md)

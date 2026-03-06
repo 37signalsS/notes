@@ -32,7 +32,7 @@
 - `dmidecode` может показывать информацию о виртуальном BIOS
 - Флаги виртуализации (`vmx`, `svm`) могут отсутствовать без nested virtualization
 
-Подробнее см. [Виртуализация в Linux](../../../Virtualization/virtualization_overview.md).
+Подробнее см. [Виртуализация в Linux](../../Virtualization/virtualization_overview.md).
 
 ## Практические сценарии
 
@@ -191,7 +191,7 @@ ls /sys/devices/system/cpu/
 - `conservative`: Более плавное масштабирование, чем ondemand
 - `schedutil`: Современный governor на основе планировщика (рекомендуется)
 
-Подробнее о CPU governor см. [CPU Frequency Scaling](../../../Core/cpu_pinning.md).
+Подробнее о CPU governor см. [CPU Frequency Scaling](../../Core/cpu_pinning.md).
 
 ### Диагностика проблем с CPU
 

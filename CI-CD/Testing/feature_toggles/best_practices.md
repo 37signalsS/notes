@@ -76,4 +76,4 @@
 - **[Анти-паттерны](./antipatterns.md)** — распространенные ошибки, которых помогают избежать эти практики.
 - **[Типы Feature Toggles](./types.md)** — понимание типов помогает применять правильные практики (например, удаление релизных флагов).
 - **[Архитектура систем Feature Toggles](./architecture.md)** — выбор архитектуры определяет, как реализуются многие практики.
-- **[Обзор Observability](../../Concepts/Observability_and_Monitoring/observability_overview.md)** — для глубокого понимания принципов мониторинга.
+- **[Обзор Observability](../../../Concepts/Observability_and_Monitoring/observability_overview.md)** — для глубокого понимания принципов мониторинга.

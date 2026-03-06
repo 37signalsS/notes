@@ -122,8 +122,8 @@ include:
 
 ### Связанные документы
 
-- **[Этап 4: Абстрагирование (Kaniko)](./evolution/stage4_kaniko.md)** — предыдущий этап
-- **[CI/CD Catalog](./ci_cd_catalog_components.md)** — создание компонентов
+- **[Этап 4: Абстрагирование (Kaniko)](stage4_kaniko.md)** — предыдущий этап
+- **[CI/CD Catalog](../ci_cd_catalog_components.md)** — создание компонентов
 - **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов
 
 ### Внешние ресурсы

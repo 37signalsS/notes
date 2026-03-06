@@ -185,5 +185,5 @@ spec:
 ### Связанные темы
 
 - **[High Availability](./high_availability.md)** — HA конфигурация
-- **[Prometheus CRD](./crd/prometheus.md)** — описание Prometheus
+- **[Prometheus CRD](../crd/prometheus.md)** — описание Prometheus
 - **[Alertmanager](../alertmanager.md)** — базовая настройка

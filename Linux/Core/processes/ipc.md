@@ -96,7 +96,7 @@ semop(sem_id, &op, 1);
   - Работают в пределах одной системы.
   - Используют файловую систему для адресации (например, `/var/run/docker.sock`).
   - Более эффективны, чем сетевые сокеты (не задействуют сетевой стек).
-  - Подробное описание см. в заметке [**Интерфейс сокетов (Socket API)**](../../Networking/Concepts/socket_api.md).
+  - Подробное описание см. в заметке [**Интерфейс сокетов (Socket API)**](../../../Networking/Concepts/socket_api.md).
 
 - **Network Sockets:**
   - Используются для связи между процессами по сети (TCP/IP).
@@ -153,7 +153,7 @@ file /var/run/docker.sock
 # Вывод: /var/run/docker.sock: socket
 ```
 
-Этот механизм подробно описан в разделе о [Unix-сокетах](../../Networking/Concepts/socket_api.md#unix-сокеты-af_unix).
+Этот механизм подробно описан в разделе о [Unix-сокетах](../../../Networking/Concepts/socket_api.md#unix-сокеты-af_unix).
 
 ### Пример: Pipe в shell
 

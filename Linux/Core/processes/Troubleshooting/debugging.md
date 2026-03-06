@@ -28,7 +28,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./your-program
 strace -e trace=mmap,munmap -p <PID>
 ```
 
-Подробнее об утилите см. [**Трассировка и отладка**](../../Diagnostics/Troubleshooting/tracing_and_debugging.md).
+Подробнее об утилите см. [**Трассировка и отладка**](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md).
 
 #### 3. /proc/<PID>/status
 
@@ -144,5 +144,5 @@ ps -eo pid,ppid,stat,cmd | grep ' Z '
 
 ### Связанные темы
 
-- **[strace](../../Diagnostics/Troubleshooting/tracing_and_debugging.md)** — трассировка системных вызовов
-- **[Observability Overview](../../Concepts/Observability_and_Monitoring/observability_overview.md)** — наблюдаемость системы
+- **[strace](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md)** — трассировка системных вызовов
+- **[Observability Overview](../../../../Concepts/Observability_and_Monitoring/observability_overview.md)** — наблюдаемость системы

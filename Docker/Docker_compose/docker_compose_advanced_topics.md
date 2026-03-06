@@ -74,7 +74,7 @@ services:
   * `restart_policy`: Политика перезапуска в случае сбоя.
   * `placement`: Ограничения на размещение контейнеров (`constraints: [node.role == worker]`).
   * `resources`: Ограничения на потребление CPU и памяти.
-  * `labels`: Интеграция с другими системами, например, с реверс-прокси **[Traefik](../../../WebServers/Traefik/traefik_overview.md)**.
+  * `labels`: Интеграция с другими системами, например, с реверс-прокси **[Traefik](../../WebServers/Traefik/traefik_overview.md)**.
 
 > Подробнее о развертывании стеков: [Развертывание приложений в Docker Swarm](../../Docker_swarm/swarm_stack_deployment.md).
 

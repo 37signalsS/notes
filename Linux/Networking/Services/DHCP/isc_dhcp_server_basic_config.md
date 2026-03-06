@@ -4,7 +4,7 @@
 
 В данном руководстве описаны шаги по установке и базовой настройке ISC DHCP-сервера.
 
-> **См. также:** [Протокол DHCP: теория и концепции](../../../Networking/Protocols/dhcp.md) — базовые понятия, процесс DORA, время аренды.
+> **См. также:** [Протокол DHCP: теория и концепции](../../../../Networking/Protocols/dhcp.md) — базовые понятия, процесс DORA, время аренды.
 
 ## 1. Установка
 
@@ -115,4 +115,4 @@ subnet 10.0.20.0 netmask 255.255.255.0 {
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

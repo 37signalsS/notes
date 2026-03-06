@@ -46,7 +46,7 @@ node_cpu_seconds_total
 
 #### Выбор labels
 
-* **Не использовать** в лейблах: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` — это задача [Service Discovery](../service_discovery_and_relabeling.md)
+* **Не использовать** в лейблах: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` — это задача [Service Discovery](../../service_discovery_and_relabeling.md)
 * **Избегать высокой кардинальности:** не использовать `request_id`, `user_id`, `email`
 * **Метрика должна иметь смысл при агрегации:** не разделять `read/write` с помощью лейбла, лучше сделать две разные метрики
 
@@ -88,10 +88,10 @@ user_actions_total{user_email="..."}         # Высокая кардиналь
 
 ## Связанные темы
 
-* [Node Exporter](./node_exporter.md) — основной экспортер для Linux
-* [Service Discovery и Relabeling](../service_discovery_and_relabeling.md)
-* [Лейблы и кардинальность](../../Concepts/labels_and_cardinality.md)
-* [Типы метрик](../../Concepts/metric_types.md)
+* [Node Exporter](../node_exporter.md) — основной экспортер для Linux
+* [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)
+* [Лейблы и кардинальность](../../concepts/labels_and_cardinality.md)
+* [Типы метрик](../../concepts/metric_types.md)
 
 ## Официальные ресурсы
 

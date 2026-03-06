@@ -155,4 +155,4 @@ spec:
 * [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
 * [PriorityClass](../Concepts/priorityclass.md) — приоритеты и вытеснение
 * [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md) — защита от плановых выселений
-* [Обслуживание узлов](../Operations/node_maintenance.md) — cordon и drain
+* [Обслуживание узлов](../Maintenance/node_maintenance.md) — cordon и drain

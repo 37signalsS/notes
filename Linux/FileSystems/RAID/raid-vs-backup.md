@@ -98,10 +98,10 @@ RAID мгновенно синхронизирует удаление на вс�
 | **mysqldump / xtrabackup** | MySQL/MariaDB | Бэкап СУБД |
 | **Veeam / Proxmox Backup** | Виртуальные машины | Гипервизоры |
 
-Подробнее: [Резервное копирование БД](../../Databases/Concepts/backups.md)
+Подробнее: [Резервное копирование БД](../../../Databases/Concepts/backups.md)
 
 ## Дополнительная информация
 
 * [Уровни RAID](./raid-levels.md)
 * [Мониторинг RAID](./monitoring.md)
-* [Резервное копирование БД](../../Databases/Concepts/backups.md)
+* [Резервное копирование БД](../../../Databases/Concepts/backups.md)

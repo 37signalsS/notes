@@ -63,6 +63,6 @@
 
 - **[Определения директив](./directives_definitions.md)** — ключевые директивы
 - **[workflow:rules и pipeline inputs](./pipeline_inputs.md)** — управление пайплайнами
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции
 - **[Кэширование в GitLab CI](../gitlab_ci_caching.md)** — оптимизация скорости пайплайнов
 - **[Исполнители (Runners)](../gitlab_ci_runners_executors.md)** — настройка сред выполнения

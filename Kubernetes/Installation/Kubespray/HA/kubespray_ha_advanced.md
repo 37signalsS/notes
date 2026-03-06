@@ -93,8 +93,8 @@ etcdctl --endpoints=https://127.0.0.1:2379 \
 - **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** — инфраструктурные требования, inventory, развертывание
 - **[Kubespray: Обзор](../Kubespray/overview.md)** — общая информация
 - **[HA с kubeadm](../../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)** — ручная настройка HA
-- **[Keepalived обзор](../../../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
-- **[HAProxy обзор](../../../WebServers/Haproxy/haproxy_overview.md)** — детали HAProxy
+- **[Keepalived обзор](../../../../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
+- **[HAProxy обзор](../../../../WebServers/Haproxy/haproxy_overview.md)** — детали HAProxy
 
 ## Внешние ресурсы
 

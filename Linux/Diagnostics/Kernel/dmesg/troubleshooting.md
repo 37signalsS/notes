@@ -51,7 +51,7 @@
 
 **Что делать:**
 
-1. Проверить SMART диска: [`smartctl -a /dev/sda`](../Hardware/smartctl.md)
+1. Проверить SMART диска: [`smartctl -a /dev/sda`](../../Hardware/smartctl.md)
 2. Заменить SATA-кабель или проверить подключение
 3. Проверить логи на предмет bad sectors: `dmesg | grep -i "reallocated\|pending\|uncorrectable"`
 
@@ -105,7 +105,7 @@
 
 **Что делать:**
 
-1. Проверить температуру: [`sensors`](../Hardware/hardware_listing.md#мониторинг-температуры)
+1. Проверить температуру: [`sensors`](../../Hardware/hardware_listing.md#мониторинг-температуры)
 2. Очистить систему охлаждения, заменить термопасту
 3. Проверить работу вентиляторов
 
@@ -165,7 +165,7 @@ grep log_buf_len /proc/cmdline
 | `debug` | Включить отладочные сообщения ядра |
 | `earlyprintk` | Включить ранний вывод через консоль (для отладки загрузки) |
 
-> **См. также:** [Настройка параметров ядра (sysctl)](../../Core/kernel/sysctl.md), [Процесс загрузки ядра](../../Core/kernel/boot_process.md)
+> **См. также:** [Настройка параметров ядра (sysctl)](../../../Core/kernel/sysctl.md), [Процесс загрузки ядра](../../../Core/kernel/boot_process.md)
 
 ---
 
@@ -173,6 +173,6 @@ grep log_buf_len /proc/cmdline
 
 ### Связанные темы
 
-- **[smartctl](../Hardware/smartctl.md)** — диагностика дисков
-- **[sysctl](../../Core/kernel/sysctl.md)** — настройка параметров ядра
-- **[boot_process](../../Core/kernel/boot_process.md)** — процесс загрузки ядра
+- **[smartctl](../../Hardware/smartctl.md)** — диагностика дисков
+- **[sysctl](../../../Core/kernel/sysctl.md)** — настройка параметров ядра
+- **[boot_process](../../../Core/kernel/boot_process.md)** — процесс загрузки ядра

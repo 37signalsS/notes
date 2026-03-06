@@ -13,6 +13,6 @@
 ## Связанные документы
 
 - **[Blackbox Exporter](../../Exporters/blackbox_exporter.md)** — полное руководство
-- **[Prometheus Server](./prometheus_server_installation.md)** — интеграция
+- **[Prometheus Server](../prometheus_server_installation.md)** — интеграция
 - **[Configuration](../configuration.md)** — настройка Prometheus
-- **[Docker Stack](./docker_stack/remote_hosts_monitoring.md)** — мониторинг удалённых хостов
+- **[Docker Stack](../docker_stack/remote_hosts_monitoring.md)** — мониторинг удалённых хостов

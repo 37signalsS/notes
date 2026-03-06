@@ -2,7 +2,7 @@
 
 ## Определения
 
-**containerd** — CRI-совместимая среда выполнения контейнеров для Kubernetes. Демон, управляющий жизненным циклом контейнеров. Подробнее: [Альтернативные среды выполнения](../../Docker/alternative_runtimes_and_tools.md).
+**containerd** — CRI-совместимая среда выполнения контейнеров для Kubernetes. Демон, управляющий жизненным циклом контейнеров. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
 
 **CRI (Container Runtime Interface)** — API Kubernetes для взаимодействия `kubelet` со средой выполнения контейнеров.
 
@@ -197,7 +197,7 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 
 - **Подготовка узлов**: [Node Preparation](./k8s_ha_node_preparation.md)
 - **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
-- **containerd**: [Альтернативные среды выполнения](../../Docker/alternative_runtimes_and_tools.md)
+- **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
 - **kubeadm**: [Quickstart](../kudeadm/kubeadm_quickstart.md)
 - **CNI**: [CNI Overview](../../Networking/Network/cni_overview.md)
 

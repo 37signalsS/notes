@@ -60,6 +60,6 @@ include:
 
 ### Связанные документы
 
-- **[Этап 1: Дублирование кода](./evolution/stage1_boilerplate.md)** — проблема до централизации
-- **[Этап 3: Гибкость с extends](./evolution/stage3_extends.md)** — решение проблемы гибкости
-- **[Механизм `include`](./include_keyword.md)** — все типы include
+- **[Этап 1: Дублирование кода](stage1_boilerplate.md)** — проблема до централизации
+- **[Этап 3: Гибкость с extends](stage3_extends.md)** — решение проблемы гибкости
+- **[Механизм `include`](../include_keyword.md)** — все типы include

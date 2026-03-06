@@ -76,7 +76,7 @@ spec:
 
 - **Никогда не храните манифесты Secret с открытыми данными в Git**
 - Используйте внешние хранилища (Vault, Sealed Secrets, External Secrets Operator)
-- Применяйте [SOPS (Security)](../../Security/Tools/sops_overview.md) или git-crypt для шифрования в репозитории
+- Применяйте [SOPS (Security)](../../../Security/Tools/sops_overview.md) или git-crypt для шифрования в репозитории
 
 ## Дополнительная информация
 
@@ -96,5 +96,5 @@ spec:
 - [Хранение в etcd](etcd_storage.md)
 - [Внешние менеджеры](external_managers.md)
 - [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)
-- [SOPS (Security)](../../Security/Tools/sops_overview.md)
+- [SOPS (Security)](../../../Security/Tools/sops_overview.md)
 - [ConfigMap](../configmap.md)

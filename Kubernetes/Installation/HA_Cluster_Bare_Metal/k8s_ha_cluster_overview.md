@@ -6,11 +6,11 @@
 
 **kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kudeadm/kubeadm_quickstart.md).
 
-**containerd** — высокоуровневая CRI-совместимая среда выполнения контейнеров. Проект CNCF, стандарт для Kubernetes. Подробнее: [Альтернативные среды выполнения](../../Docker/alternative_runtimes_and_tools.md).
+**containerd** — высокоуровневая CRI-совместимая среда выполнения контейнеров. Проект CNCF, стандарт для Kubernetes. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
 
 **Высокая доступность (High-Availability, HA)** — свойство системы непрерывно выполнять функции при отказах компонентов. Достигается дублированием Control Plane и использованием балансировщика. Базовые концепции: [HA Overview](../../../Concepts/High_Availability/ha_overview.md).
 
-**CRI (Container Runtime Interface)** — API Kubernetes для взаимодействия `kubelet` со средами выполнения (`containerd`, `CRI-O`). Спецификация: [CRI и OCI](../../Docker/alternative_runtimes_and_tools.md#стандарты-cri-и-oci).
+**CRI (Container Runtime Interface)** — API Kubernetes для взаимодействия `kubelet` со средами выполнения (`containerd`, `CRI-O`). Спецификация: [CRI и OCI](../../../Docker/alternative_runtimes_and_tools.md#стандарты-cri-и-oci).
 
 **Control Plane Endpoint** — стабильная точка входа (VIP:PORT или DNS) для доступа к API-серверу через балансировщик нагрузки.
 
@@ -79,7 +79,7 @@
 3. Обновление/ремонт
 4. Возврат в кластер: `kubectl uncordon <node>`
 
-Подробнее: [Обслуживание узлов](../../Operations/node_maintenance.md).
+Подробнее: [Обслуживание узлов](../../Maintenance/node_maintenance.md).
 
 ---
 

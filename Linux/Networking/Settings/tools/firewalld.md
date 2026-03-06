@@ -12,7 +12,7 @@
 
 См. также:
 
-- **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
+- **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
 - **[iptables основы](./iptables_basics.md)** — низкоуровневое управление
 - **[nftables](./nftables.md)** — современная подсистема
 
@@ -180,4 +180,4 @@ Firewalld автоматически сохраняет правила при и
 ### Ссылки по теме
 
 - **[Общие вопросы файрволов](./firewall_common.md)** — сохранение правил, Docker
-- **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
+- **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования

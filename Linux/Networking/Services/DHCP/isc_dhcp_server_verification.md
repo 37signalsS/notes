@@ -138,4 +138,4 @@ sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf 2>&1 | less
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

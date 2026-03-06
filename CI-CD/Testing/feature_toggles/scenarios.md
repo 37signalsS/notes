@@ -98,4 +98,4 @@ statsd.increment(f'checkout.button.shown.{button_variant}')
 
 - **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
 - **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.
-- **[Canary Deployment](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний, которые реализуются через этот сценарий.
+- **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний, которые реализуются через этот сценарий.

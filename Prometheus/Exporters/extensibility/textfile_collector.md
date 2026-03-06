@@ -213,6 +213,6 @@ app_memory_usage_bytes 524288000
 
 ## Связанные темы
 
-* [Node Exporter](./node_exporter.md) — основной экспортер для Linux
+* [Node Exporter](../node_exporter.md) — основной экспортер для Linux
 * [Расширяемость экспортеров](./concepts.md) — базовые концепции
 * [Создание собственных экспортеров](./custom_exporters.md) — написание экспортеров на Go и Python

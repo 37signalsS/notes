@@ -248,4 +248,4 @@ curl -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
 
 - **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie
 - **[Диагностика задержек curl](../../../Diagnostics/Networking/curl_network_diagnostics.md)**
-- **[Инструменты диагностики сети](../network_diagnostics_tools.md)**
+- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**

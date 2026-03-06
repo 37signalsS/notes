@@ -13,7 +13,7 @@
 * **Конвертеры конфигураций:** автоматическая миграция с Promtail/Grafana Agent
 * **Язык River:** декларативный язык конфигурации (похож на Terraform)
 
-**Подробнее:** [Grafana Alloy Overview](../Grafana/grafana_alloy_overview.md)
+**Подробнее:** [Grafana Alloy Overview](../../Grafana/grafana_alloy_overview.md)
 
 ## Подготовка
 
@@ -124,6 +124,6 @@ Grafana предоставляет конвертер конфигураций P
 
 ## Связанные темы
 
-* **[Обзор Grafana Loki](./loki_overview.md)** — архитектура, LogQL
-* **[Установка Promtail](./loki_stack_setup/promtail_installation.md)** — устаревший агент
-* **[Grafana Alloy Overview](../Grafana/grafana_alloy_overview.md)** — подробная информация об Alloy
+* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL
+* **[Установка Promtail](promtail_installation.md)** — устаревший агент
+* **[Grafana Alloy Overview](../../Grafana/grafana_alloy_overview.md)** — подробная информация об Alloy

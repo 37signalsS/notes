@@ -123,7 +123,7 @@ kubectl describe statefulset -n logging -l app.kubernetes.io/name=loki
 
 ## Связанные темы
 
-* **[Обзор Grafana Loki](./loki_overview.md)** — архитектура, LogQL, базовые концепции
-* **[Установка Promtail](./loki_stack_setup/promtail_installation.md)** — агент для сбора логов
-* **[Установка Grafana](./loki_stack_setup/grafana_installation.md)** — визуализация логов
-* **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — альтернатива Promtail
+* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL, базовые концепции
+* **[Установка Promtail](promtail_installation.md)** — агент для сбора логов
+* **[Установка Grafana](grafana_installation.md)** — визуализация логов
+* **[Grafana Alloy](../../Grafana/grafana_alloy_overview.md)** — альтернатива Promtail

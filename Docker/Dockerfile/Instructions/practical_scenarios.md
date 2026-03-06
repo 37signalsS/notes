@@ -66,4 +66,4 @@ services:
 ## Дополнительная информация
 
 - Подробнее о формах записи (shell vs exec) см. **[Выполнение при запуске](./runtime_execution.md)**
-- Подробнее о docker-compose см. **[Docker Compose](../Docker_compose/docker_compose_file_example.md)**
+- Подробнее о docker-compose см. **[Docker Compose](../../Docker_compose/docker_compose_file_example.md)**

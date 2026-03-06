@@ -54,6 +54,6 @@
 
 - **[Практические сценарии](./monitoring_practical_scenarios.md)** — отправка метрик, алертинг, дашборды
 - **[Дополнительные темы](./monitoring_advanced_topics.md)** — интеграция с Grafana, best practices
-- **[Compute Cloud](./Compute-Cloud.md)** — метрики ВМ
-- **[Managed Databases](./Managed-Databases.md)** — метрики БД
+- **[Compute Cloud](../Compute-Cloud.md)** — метрики ВМ
+- **[Managed Databases](../Managed-Databases.md)** — метрики БД
 - **[Prometheus](../Prometheus/overview.md)** — альтернативная система мониторинга

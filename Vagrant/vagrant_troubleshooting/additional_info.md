@@ -59,8 +59,8 @@ vagrant --debug
 
 ## Связанные темы
 
-- **[Vagrant Basic Workflow](./vagrant_basic_workflow.md)** — управление жизненным циклом
-- **[Vagrant Storage and Folders](./vagrant_storage_and_folders.md)** — работа с хранилищем
+- **[Vagrant Basic Workflow](../vagrant_basic_workflow.md)** — управление жизненным циклом
+- **[Vagrant Storage and Folders](../vagrant_storage_and_folders.md)** — работа с хранилищем
 - **[VirtualBox](../virtualbox.md)** — настройка провайдера VirtualBox
 
 ---

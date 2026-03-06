@@ -54,7 +54,7 @@ sudo systemctl enable --now smb nmb
 ## Связанные темы
 
 - [NFS: файловая система для UNIX](../nfs/)
-- [Kerberos: централизованная аутентификация](../../../Security/Concepts/kerberos.md)
+- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
 - [SELinux: контексты безопасности](../../../Security/Mechanisms/SELinux.md)
 - [Настройка файрвола](../Settings/linux_firewall_management.md)
 - [Монтирование CIFS в fstab](../../../FileSystems/mounting/fstab.md)

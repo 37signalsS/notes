@@ -53,7 +53,7 @@ spec:
 
 - **[kubesec](../kubesec.md)** — статический анализ YAML до деплоя
 - **Kyverno** — валидация и мутация во время деплоя
-- **[Falco](../../../Security/Tools/falco.md)** — runtime-мониторинг после деплоя
+- **[Falco](../../../../Security/Tools/falco.md)** — runtime-мониторинг после деплоя
 
 ---
 

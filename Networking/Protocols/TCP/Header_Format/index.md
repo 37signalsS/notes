@@ -54,7 +54,7 @@
 - **1024–49151:** Registered ports (пользовательские приложения)
 - **49152–65535:** Dynamic/ephemeral ports (клиентские соединения)
 
-См. также: [Сетевые порты](../../Concepts/network_ports.md)
+См. также: [Сетевые порты](../../../Concepts/network_ports.md)
 
 #### 2. Порядковый номер (Sequence Number, 32 бита)
 
@@ -162,4 +162,4 @@ ACK Number = 1024 (ожидается байт №1024)
 
 - **[Надежность TCP](./reliability_mechanisms.md)** — как поля заголовка обеспечивают надежность
 - **[Handshake](./connection_management.md)** — использование SYN, ACK, Sequence Number
-- **[Оптимизация TCP](../../../Linux/Networking/Concepts/tcp_tuning.md)** — влияние параметров на заголовк
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — влияние параметров на заголовк

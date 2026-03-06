@@ -150,8 +150,8 @@ boot                  # Загрузиться
 
 **Процесс загрузки:**
 
-- **[Процесс загрузки ядра](../../Core/kernel/boot_process.md)** — этапы от GRUB до systemd
-- **[BIOS и UEFI](../../Core/firmware_bios_uefi.md)** — прошивка, ранняя загрузка
+- **[Процесс загрузки ядра](../Core/kernel/boot_process.md)** — этапы от GRUB до systemd
+- **[BIOS и UEFI](../Core/firmware_bios_uefi.md)** — прошивка, ранняя загрузка
 - **[Восстановление пароля](./linux_password_recovery.md)** — использование GRUB для сброса пароля
 
 **Файловые системы и LVM:**
@@ -161,8 +161,8 @@ boot                  # Загрузиться
 
 **Systemd:**
 
-- **[Параметры ядра](../../Core/kernel/kernel_interfaces.md)** — /proc/cmdline
-- **[Systemd загрузка](../../Core/systemd/boot_troubleshooting.md)** — диагностика загрузки systemd
+- **[Параметры ядра](../Core/kernel/kernel_interfaces.md)** — /proc/cmdline
+- **[Systemd загрузка](../Core/systemd/boot_troubleshooting.md)** — диагностика загрузки systemd
 
 ### Безопасность GRUB
 

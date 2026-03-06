@@ -4,7 +4,7 @@
 >
 > Общее описание архитектуры Zabbix доступно в основной заметке: **[Обзор Zabbix](./zabbix_overview.md)**.
 >
-> Полная наблюдаемость для PostgreSQL (метрики + логи + трассировки): **[Full-Stack Observability для PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)**.
+> Полная наблюдаемость для PostgreSQL (метрики + логи + трассировки): **[Full-Stack Observability для PostgreSQL](../Databases/PostgreSQL/Operations/observability.md)**.
 
 ## Определения
 
@@ -112,7 +112,7 @@ Zabbix Agent 2 собирает обширный набор метрик, исп
 | Тема | Документ |
 |------|----------|
 | Архитектура PostgreSQL | **[PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md)** |
-| Observability для PostgreSQL | **[Full-Stack Observability](../../Databases/PostgreSQL/Operations/observability.md)** |
+| Observability для PostgreSQL | **[Full-Stack Observability](../Databases/PostgreSQL/Operations/observability.md)** |
 | Оптимизация производительности PostgreSQL | **[Performance Tuning](../../Databases/PostgreSQL/Operations/performance_tuning.md)** |
 | Общие подходы к мониторингу СУБД | **[Мониторинг Баз Данных](./zabbix_database_monitoring.md)** |
 | Лучшие практики Zabbix | **[Best Practices](./zabbix_best_practices.md)** |

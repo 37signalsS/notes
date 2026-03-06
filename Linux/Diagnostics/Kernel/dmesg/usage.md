@@ -112,12 +112,12 @@ dmesg -T | grep -A 20 "Out of memory"
 **Что делать при OOM:**
 
 1. **Идентифицировать процесс:** По имени и PID в сообщении
-2. **Проверить лимиты памяти:** [`ulimit -a`](../../Core/processes/limits.md), cgroups, Docker/Kubernetes limits
-3. **Анализ потребления:** Использовать [`htop`](../Processes/htop.md), [`ps`](../Processes/ps.md), [`smem`](../Memory/smem.md)
-4. **Настроить swap:** Временно увеличить swap-пространство или добавить [`zswap`](../../Core/memory/swap_management.md)
+2. **Проверить лимиты памяти:** [`ulimit -a`](../../../Core/processes/limits.md), cgroups, Docker/Kubernetes limits
+3. **Анализ потребления:** Использовать [`htop`](../../Processes/htop.md), [`ps`](../../Processes/ps.md), [`smem`](../../Memory/smem.md)
+4. **Настроить swap:** Временно увеличить swap-пространство или добавить [`zswap`](../../../Core/memory/swap_management.md)
 5. **Оптимизировать приложение:** Уменьшить потребление памяти (heap size, кэши)
 
-> **См. также:** [OOM Killer в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md), [Управление памятью процессов](../../Core/processes/limits.md)
+> **См. также:** [OOM Killer в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md), [Управление памятью процессов](../../../Core/processes/limits.md)
 
 ---
 
@@ -125,6 +125,6 @@ dmesg -T | grep -A 20 "Out of memory"
 
 ### Связанные темы
 
-- **[journalctl](../Logging/journalctl.md)** — просмотр системных логов
-- **[htop](../Processes/htop.md)** — мониторинг процессов
+- **[journalctl](../../Logging/journalctl.md)** — просмотр системных логов
+- **[htop](../../Processes/htop.md)** — мониторинг процессов
 - **[OOM Killer в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md)** — диагностика в Kubernetes

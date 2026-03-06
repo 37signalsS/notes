@@ -164,13 +164,13 @@ borg prune --keep-daily=7 --keep-weekly=4 /backup/borg-repo
 
 **Файловые системы и LVM:**
 
-- **[LVM Snapshots](../../FileSystems/LVM/snapshots.md)** — снапшоты для консистентных бэкапов
+- **[LVM Snapshots](../FileSystems/LVM/snapshots.md)** — снапшоты для консистентных бэкапов
 - **[rsync](../Security/ssh/ssh_cli_tools.md)** — синхронизация файлов
 
 **Планирование:**
 
 - **[cron](./cron.md)** — планирование бэкапов
-- **[Systemd Timers](../../Core/systemd/timers.md)** — современная альтернатива cron
+- **[Systemd Timers](../Core/systemd/timers.md)** — современная альтернатива cron
 
 **Мониторинг:**
 

@@ -137,5 +137,5 @@ http -A bearer -a <token> https://api.example.com/api/resource
 ### 4. Связанные заметки
 
 - **[Диагностика сетевых задержек с curl](../../../Diagnostics/Networking/curl_network_diagnostics.md)**
-- **[Инструменты диагностики сети](../network_diagnostics_tools.md)**
-- **[Жизненный цикл веб-запроса](../../../Networking/Concepts/web_request_lifecycle.md)**
+- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**
+- **[Жизненный цикл веб-запроса](../../../../Networking/Concepts/web_request_lifecycle.md)**

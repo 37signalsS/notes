@@ -108,5 +108,5 @@ Effective Window = min(cwnd, rwnd)
 
 - **[Congestion Control](./congestion_control.md)** — управление перегрузкой сети
 - **[Header Format](../header_format.md#7-размер-окна-window-size-16-бит)** — поле Window Size
-- **[Оптимизация TCP](../../../Linux/Networking/Concepts/tcp_tuning.md)** — настройка буферов
-- **[Wireshark: Диагностика производительности](../../../Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md)** — диагностика Zero Window
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — настройка буферов
+- **[Wireshark: Диагностика производительности](../../../ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md)** — диагностика Zero Window

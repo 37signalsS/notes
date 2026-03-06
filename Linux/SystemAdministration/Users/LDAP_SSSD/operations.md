@@ -136,5 +136,5 @@ sssctl user-check username
 
 ### Связанные темы
 
-- **[PAM](../../Security/pam_overview.md)** — модули аутентификации
-- **[Kerberos](../../Security/Concepts/kerberos.md)** — аутентификация в AD
+- **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
+- **[Kerberos](../../../../Security/Concepts/kerberos.md)** — аутентификация в AD

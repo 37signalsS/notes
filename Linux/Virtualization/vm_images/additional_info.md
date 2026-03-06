@@ -27,7 +27,7 @@ qemu-img convert -f vmdk -O qcow2 disk.vmdk disk.qcow2
 | Инструмент | Назначение |
 | :--- | :--- |
 | **Packer** | Создание идентичных образов для разных платформ из одного конфига |
-| **Vagrant** | Управление ВМ для разработки, см. [Vagrant workflow](../../Vagrant/vagrant_basic_workflow.md) |
+| **Vagrant** | Управление ВМ для разработки, см. [Vagrant workflow](../../../Vagrant/vagrant_basic_workflow.md) |
 | **virt-builder** | Быстрая сборка образов для KVM (из репозиториев) |
 | **cloud-init** | Первоначальная настройка ВМ (пользователи, SSH, сеть) |
 

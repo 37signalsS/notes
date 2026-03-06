@@ -184,5 +184,5 @@ sss_ssh_authorizedkeys username
 
 ### Связанные темы
 
-- **[PAM](../../Security/pam_overview.md)** — модули аутентификации
+- **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
 - **[389DS](../../../LDAP/389ds/overview.md)** — развёртывание LDAP-сервера

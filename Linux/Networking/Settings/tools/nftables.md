@@ -13,7 +13,7 @@
 
 См. также:
 
-- **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
+- **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
 - **[iptables основы](./iptables_basics.md)** — классическая утилита
 - **[Firewalld](./firewalld.md)** — высокоуровневое управление на основе nftables
 
@@ -230,4 +230,4 @@ EOF
 ### Ссылки по теме
 
 - **[Сохранение правил](./firewall_common.md#сохранение-правил-между-перезагрузками)** — общие вопросы
-- **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
+- **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования

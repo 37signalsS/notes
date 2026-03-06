@@ -12,8 +12,8 @@
 
 ## Связанные документы
 
-- **[Сетевые интерфейсы](../Concepts/linux_network_interfaces.md)** — типы интерфейсов
-- **[Настройка DNS-клиента](../Concepts/dns_client.md)** — DNS-резолвинг
-- **[Агрегация каналов](../../../Networking/Concepts/link_aggregation.md)** — bonding
+- **[Сетевые интерфейсы](../../Concepts/linux_network_interfaces.md)** — типы интерфейсов
+- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — DNS-резолвинг
+- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — bonding
 - **[VLAN](../../../Networking/Concepts/vlan_and_L2_switching.md)** — VLAN-конфигурация
 - **[iproute2](../Tools/iproute2/overview.md)** — временная настройка сети

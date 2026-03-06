@@ -70,10 +70,10 @@
 
 ## Связанные концепции
 
-- **[Liveness/Readiness Probes](../../Base/probes.md)** — проверки здоровья
+- **[Liveness/Readiness Probes](../../../Base/probes.md)** — проверки здоровья
 - **[Resource Limits](../../Scheduling/qos_limit_and_requests.md)** — лимиты ресурсов
 - **[RBAC](../../Security/rbac/rbac_overview.md)** — права доступа
-- **[Jobs](../../Base/job.md)** — для одноразовых задач
+- **[Jobs](../../../Base/job.md)** — для одноразовых задач
 
 ---
 

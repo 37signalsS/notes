@@ -146,4 +146,4 @@ API-ключи создаются в разделе **Configuration -> API Keys*
 
 - [Документация по аутентификации](https://grafana.com/docs/grafana/latest/administration/authentication/)
 - [API Grafana](https://grafana.com/docs/grafana/latest/developers/http_api/)
-- [LDAP-конфигурация](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+- [LDAP-конфигурация](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)

@@ -53,8 +53,8 @@
   * [LVM](./LVM/overview_concepts.md) — логическое управление томами, thin provisioning
 
 * **Мониторинг производительности:**
-  * [`iostat`](../Diagnostics/Hardware/iostat.md) — статистика ввода-вывода
-  * [`iotop`](../Diagnostics/Processes/iotop.md) — мониторинг дисковой активности процессов
+  * [`iostat`](../Diagnostics/Filesystem/iostat.md) — статистика ввода-вывода
+  * [`iotop`](../Diagnostics/Filesystem/iotop.md) — мониторинг дисковой активности процессов
   * [`blktrace`](../Diagnostics/Hardware/blktrace.md) — трассировка блочных устройств
 
 * **Настройка ядра:** Параметры ввода-вывода в [`/sys/block/<device>/queue/`](./virtual_fs_sys.md)

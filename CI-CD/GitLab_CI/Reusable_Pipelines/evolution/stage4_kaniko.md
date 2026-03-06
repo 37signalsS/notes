@@ -72,6 +72,6 @@ build-my-app:
 
 ### Связанные документы
 
-- **[Этап 3: Гибкость с extends](./evolution/stage3_extends.md)** — предыдущий этап
-- **[Этап 5: CI/CD Components](./evolution/stage5_components.md)** — решение проблем типизации
+- **[Этап 3: Гибкость с extends](stage3_extends.md)** — предыдущий этап
+- **[Этап 5: CI/CD Components](stage5_components.md)** — решение проблем типизации
 - **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов

@@ -215,7 +215,7 @@ kubectl patch deployment <deployment-name> \
 kubectl rollout undo deployment/<deployment-name>
 ```
 
-> **См. также:** [`troubleshooting_overview.md`](../troubleshooting_overview.md)
+> **См. также:** [`troubleshooting_overview.md`](../../troubleshooting_overview.md)
 
 ---
 

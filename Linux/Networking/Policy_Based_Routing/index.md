@@ -88,8 +88,8 @@
 
 ### Связанные заметки
 
-* **[ip route](../../Tools/iproute2/ip_route.md)** — базовая маршрутизация
+* **[ip route](../Tools/iproute2/ip_route.md)** — базовая маршрутизация
 * **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
 * **[iptables](../Settings/linux_firewall_management.md)** — маркировка пакетов
-* **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
-* **[TCP-tuning](./Concepts/tcp_tuning.md)** — оптимизация TCP
+* **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети
+* **[TCP-tuning](../Concepts/tcp_tuning.md)** — оптимизация TCP

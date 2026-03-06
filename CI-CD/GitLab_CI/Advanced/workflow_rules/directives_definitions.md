@@ -59,7 +59,7 @@ GitLab CI/CD поддерживает различные события для �
 
 ## Связанные документы
 
-- **[workflow:rules и pipeline inputs](./workflow_rules/pipeline_inputs.md)** — управление запуском пайплайнов
-- **[Правила запуска задач](./workflow_rules/job_rules.md)** — условия для отдельных задач
-- **[DAG с needs](./workflow_rules/dag_with_needs.md)** — управление зависимостями
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции Pipeline, Stage, Job
+- **[workflow:rules и pipeline inputs](pipeline_inputs.md)** — управление запуском пайплайнов
+- **[Правила запуска задач](job_rules.md)** — условия для отдельных задач
+- **[DAG с needs](dag_with_needs.md)** — управление зависимостями
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции Pipeline, Stage, Job

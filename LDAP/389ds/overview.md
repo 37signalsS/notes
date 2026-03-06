@@ -85,7 +85,7 @@
 * [Kubernetes развёртывание](./kubernetes.md)
 * [Плагины](./plugins.md)
 * [Управление доступом (ACI)](./aci.md)
-* [LDAP основы](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+* [LDAP основы](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
 * [OpenLDAP в Kubernetes](../openldap_kubernetes.md)
 * [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/ldap_sssd.md)
 * [Kubernetes основы](../../Kubernetes/kubernetes_overview.md)

@@ -16,7 +16,7 @@
 | `krb5i` | Аутентификация + целостность |
 | `krb5p` | Аутентификация + целостность + шифрование (наивысшая безопасность, ниже производительность) |
 
-Подробности настройки Kerberos см. [Kerberos](../../../Security/Concepts/kerberos.md).
+Подробности настройки Kerberos см. [Kerberos](../../../../Security/Concepts/kerberos.md).
 
 ## Секьюрити-флаги в `/etc/exports`
 
@@ -91,5 +91,5 @@ kinit user@REALM
 
 - [Базовые концепции](./nfs_basics.md)
 - [Настройка NFS](./nfs_setup.md)
-- [Kerberos: централизованная аутентификация](../../../Security/Concepts/kerberos.md)
+- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
 - [Настройка файрвола](../Settings/linux_firewall_management.md)

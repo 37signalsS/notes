@@ -12,7 +12,7 @@
 
 ### Сценарий 2: Оптимизация производительности сервера
 
-Многие из этих настроек пересекаются с общими рекомендациями в [руководстве по настройке производительности Nginx](../Nginx/Performance/nginx_performance_tuning.md).
+Многие из этих настроек пересекаются с общими рекомендациями в [руководстве по настройке производительности Nginx](../../Nginx/Performance/nginx_performance_tuning.md).
 
 #### Основные настройки Angie/Nginx
 
@@ -39,14 +39,14 @@
 - **`proxy_cache_background_update on;` и `proxy_cache_use_stale updating;`**: Позволяют отдавать клиенту устаревший ответ из кэша немедленно, пока в фоне идет его обновление. Это критически важно для производительности.
 - **`proxy_cache_use_stale error timeout ...`**: Разрешает отдавать устаревший контент, если бэкенд недоступен.
 
-Детали реализации описаны в руководствах по [кэшированию в Nginx](../Nginx/Performance/Caching/proxy_caching.md) и [кэшированию в Angie](../Nginx/Performance/Caching/proxy_caching.md).
+Детали реализации описаны в руководствах по [кэшированию в Nginx](../../Nginx/Performance/Caching/proxy_caching.md) и [кэшированию в Angie](../../Nginx/Performance/Caching/proxy_caching.md).
 
 ---
 
 ### Сценарий 4: Оптимизация на стороне клиента
 
-- **Версии HTTP:** Включайте **HTTP/2 и HTTP/3**, чтобы ускорить загрузку за счет мультиплексирования. См. [настройку версий в Nginx](../Nginx/Performance/nginx_http_versions.md).
-- **Сжатие:** Используйте **Zstd** для динамического сжатия и **Brotli** для статики. См. [заметку о сжатии в Nginx](../Nginx/Performance/nginx_compression.md).
+- **Версии HTTP:** Включайте **HTTP/2 и HTTP/3**, чтобы ускорить загрузку за счет мультиплексирования. См. [настройку версий в Nginx](../../Nginx/Performance/nginx_http_versions.md).
+- **Сжатие:** Используйте **Zstd** для динамического сжатия и **Brotli** для статики. См. [заметку о сжатии в Nginx](../../Nginx/Performance/nginx_compression.md).
 
 ---
 
@@ -54,9 +54,9 @@
 
 ### Связанные темы
 
-- **[Nginx Performance Tuning](../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности
-- **[Proxy Caching](../Nginx/Performance/Caching/proxy_caching.md)** — кэширование в Nginx/Angie
-- **[HTTP/2 и HTTP/3](../Nginx/Performance/nginx_http_versions.md)** — версии HTTP
-- **[Сжатие в Nginx](../Nginx/Performance/nginx_compression.md)** — Zstd и Brotli
-- **[Настройка TLS в Angie](./angie_tls_setup.md)** — оптимизация TLS
-- **[TLS в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)** — основная заметка по TLS
+- **[Nginx Performance Tuning](../../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности
+- **[Proxy Caching](../../Nginx/Performance/Caching/proxy_caching.md)** — кэширование в Nginx/Angie
+- **[HTTP/2 и HTTP/3](../../Nginx/Performance/nginx_http_versions.md)** — версии HTTP
+- **[Сжатие в Nginx](../../Nginx/Performance/nginx_compression.md)** — Zstd и Brotli
+- **[Настройка TLS в Angie](../angie_tls_setup.md)** — оптимизация TLS
+- **[TLS в Nginx](../../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)** — основная заметка по TLS

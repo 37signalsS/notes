@@ -285,6 +285,6 @@ done
 ### Связанные темы
 
 - [Управление пользователями](./user_commands.md) — `useradd`, `usermod`
-- [Диагностика процессов](../Diagnostics/Processes/w.md) — `ps`, `top`
+- [Диагностика процессов](../../Diagnostics/Processes/w.md) — `ps`, `top`
 - [PAM](../../Security/pam_overview.md) — аутентификация
-- [Аудит безопасности](../../Security/audit_and_compliance_overview.md) — логирование
+- [Аудит безопасности](../../../Security/audit_and_compliance_overview.md) — логирование

@@ -69,10 +69,10 @@ ss -tno
 
 - **[Надежность TCP](./reliability_mechanisms.md)** — как поля заголовка обеспечивают надежность
 - **[Handshake](./connection_management.md)** — использование SYN, ACK, Sequence Number
-- **[Оптимизация TCP](../../../Linux/Networking/Concepts/tcp_tuning.md)** — влияние параметров на заголовок
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — влияние параметров на заголовок
 
 ### Инструменты анализа
 
-- **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — перехват и анализ пакетов
-- **[ss](../../../Linux/Diagnostics/Networking/ss.md)** — информация о сокетах
+- **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — перехват и анализ пакетов
+- **[ss](../../../../Linux/Diagnostics/Networking/ss.md)** — информация о сокетах
 - **Wireshark** — графический анализатор трафика

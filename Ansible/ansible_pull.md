@@ -104,4 +104,4 @@
 
 * [Push-модель](ansible_core_concepts.md#модели-развертывания-push-и-pull): Сравнение подходов
 * [Оптимизация производительности](ansible_performance_tuning.md): Настройка параллелизма
-* [Cron](.../Linux/SystemAdministration/cron.md): Примеры настройки расписания
+* [Cron](../Linux/SystemAdministration/cron.md): Примеры настройки расписания

@@ -2,7 +2,7 @@
 
 > **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Конфигурация резервирования в JSON.
 
-> **См. также:** [Статическое назначение DHCP](../../../Networking/Protocols/dhcp.md#способы-назначения-ip-адресов) — теория.
+> **См. также:** [Статическое назначение DHCP](../../../../Networking/Protocols/dhcp.md#способы-назначения-ip-адресов) — теория.
 
 ## Резервирование IP-адреса (Static Allocation)
 
@@ -47,4 +47,4 @@ subnet 10.0.30.0 netmask 255.255.255.0 {
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |

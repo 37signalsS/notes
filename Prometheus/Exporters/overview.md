@@ -70,7 +70,7 @@ Prometheus собирает данные по HTTP протоколу, в фор
 | :--- | :--- | :--- |
 | Мониторинг Linux-хоста (CPU, память, диск, сеть) | [node_exporter](./node_exporter.md) | [Установка](../installation/node_exporter_installation.md) |
 | Мониторинг контейнеров Docker | [cAdvisor](./cadvisor.md) | — |
-| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox_exporter.md) | [Установка](../installation/blackbox_exporter_installation.md) |
+| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox_exporter.md) | [Установка](../installation/Blackbox_Exporter/blackbox_exporter_installation.md) |
 | Мониторинг MySQL | mysqld_exporter | [MySQL](../../Databases/MySQL/overview.md) |
 | Мониторинг PostgreSQL | postgres_exporter | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
 | Мониторинг Nginx | nginx-prometheus-exporter | — |

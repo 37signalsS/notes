@@ -102,4 +102,4 @@ deploy_job:
 
 - **[Определения директив](./directives_definitions.md)** — ключевые директивы GitLab CI/CD
 - **[Правила запуска задач](./job_rules.md)** — условия для отдельных задач
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции Pipeline, Stage, Job
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции Pipeline, Stage, Job

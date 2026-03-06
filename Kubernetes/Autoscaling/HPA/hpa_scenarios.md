@@ -115,7 +115,7 @@ spec:
           averageValue: "200"  # 200 сообщений на под
 ```
 
-> **Примечание:** Для внешних метрик требуется Prometheus Adapter или [KEDA](./keda_detailed.md).
+> **Примечание:** Для внешних метрик требуется Prometheus Adapter или [KEDA](../keda_detailed.md).
 
 ## 5. Сценарий 4: HPA с продвинутым поведением
 
@@ -199,5 +199,5 @@ spec:
 
 - **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
 - **[Дополнительные темы](./hpa_advanced.md)** — диагностика, проблемы, best practices
-- **[KEDA](./keda_detailed.md)** — событийное масштабирование
+- **[KEDA](../keda_detailed.md)** — событийное масштабирование
 - **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик

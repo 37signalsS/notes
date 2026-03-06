@@ -24,7 +24,7 @@
 - **SYN-SENT:** Клиент отправил SYN для установки соединения
 - **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен [SYN-flood](../../../Security/DoS/syn_flood.md))
 - **ESTABLISHED:** Соединение установлено, данные передаются
-- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Linux/Networking/Concepts/tcp_tuning.md))
+- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Networking/Concepts/tcp_tuning.md))
 - **CLOSED:** Соединение закрыто
 
 ### Основные флаги

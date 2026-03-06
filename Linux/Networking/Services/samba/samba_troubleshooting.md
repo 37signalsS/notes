@@ -103,4 +103,4 @@ sudo systemctl restart systemd-timesyncd
 - [Базовые концепции](./samba_basics.md)
 - [Настройка Samba](./samba_setup.md)
 - [AD-интеграция](./samba_ad.md) — домен, winbind, idmap
-- [Kerberos](../../../Security/Concepts/kerberos.md)
+- [Kerberos](../../../../Security/Concepts/kerberos.md)

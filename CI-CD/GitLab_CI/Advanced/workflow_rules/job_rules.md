@@ -113,4 +113,4 @@ nightly_tests:
 - **[Определения директив](./directives_definitions.md)** — ключевые директивы
 - **[workflow:rules и pipeline inputs](./pipeline_inputs.md)** — управление пайплайнами
 - **[DAG с needs](./dag_with_needs.md)** — управление зависимостями
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции

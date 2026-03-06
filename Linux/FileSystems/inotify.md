@@ -68,6 +68,6 @@ inotifywait -m -r /var/www
 ## Дополнительная информация
 
 - **Связанные темы:**
-  - [Мониторинг событий в реальном времени](../Diagnostics/Processes/auditd.md) — `auditd` для аудита
+  - [Мониторинг событий в реальном времени](../SystemAdministration/Logging/auditd.md) — `auditd` для аудита
   - [File watchers в приложениях](../Development/file_watchers.md) — использование в программах
   - [Лимиты ресурсов](../Core/processes/limits.md) — системные лимиты

@@ -128,7 +128,7 @@ sysctl -a | grep -E "net.ipv4.tcp|net.core"
 
 Для измерения эффективности оптимизаций и поиска узких мест используйте:
 
-- **[Диагностика DNS](../Diagnostics/Networking/dns_diagnostics.md)** — проверка разрешения имён
+- **[Диагностика DNS](../../Diagnostics/Networking/dns_diagnostics.md)** — проверка разрешения имён
 - **[Сетевые инструменты CLI](../network_diagnostics_tools.md)** — `ss`, `ping`, `mtr`, `tcpdump`
 - **[curl для диагностики задержек](../Tools/http_clients/curl.md)** — измерение времени по этапам
 

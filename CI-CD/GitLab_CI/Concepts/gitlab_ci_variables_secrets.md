@@ -179,6 +179,6 @@ build_with_custom_ca:
 ### Связанные документы
 
 - **[Интеграция GitLab CI с HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md)** — безопасное управление секретами.
-- **[Интеграция с Ansible](./ansible_integration.md)** — использование переменных для SSH-ключей.
+- **[Интеграция с Ansible](../Tutorials/ansible_integration.md)** — использование переменных для SSH-ключей.
 - **[Управление секретами в CI/CD](../../DevSecOps/secrets_management.md)** — общие практики DevSecOps.
 - **[Безопасное управление секретами в Docker](../../../Docker/Docker_security/secrets_management.md)** — для Docker-контекста.

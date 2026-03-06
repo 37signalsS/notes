@@ -116,6 +116,6 @@ sum by (level) (rate({app="my-app"} | logfmt | level=~"info\|warn\|error" [5m]))
 
 ## Связанные темы
 
-* **[Обзор Grafana Loki](./loki_overview.md)** — язык запросов LogQL, базовые концепции
-* **[Установка Loki](./loki_stack_setup/loki_installation.md)** — установка Loki
-* **[Установка Grafana](./loki_stack_setup/grafana_installation.md)** — визуализация логов
+* **[Обзор Grafana Loki](../loki_overview.md)** — язык запросов LogQL, базовые концепции
+* **[Установка Loki](loki_installation.md)** — установка Loki
+* **[Установка Grafana](grafana_installation.md)** — визуализация логов

@@ -226,4 +226,4 @@ wget --metalink=file.metalink https://example.com/file.iso
 ### 5. Связанные заметки
 
 - **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie
-- **[Инструменты диагностики сети](../network_diagnostics_tools.md)**
+- **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**

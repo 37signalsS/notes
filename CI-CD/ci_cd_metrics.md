@@ -27,4 +27,4 @@
 - **[Метрики DORA](./Core_Concepts/dora_metrics.md)** — подробный разбор ключевых метрик.
 - **[Паттерны CI/CD](./ci_cd_patterns.md)** — как улучшать эти метрики.
 - **[Анти-паттерны](./ci_cd_antipatterns.md)** — чего избегать.
-- **[Observability](../../Concepts/Observability_and_Monitoring/observability_overview.md)** — метрики CI/CD являются частью общей наблюдаемости системы.
+- **[Observability](../Concepts/Observability_and_Monitoring/observability_overview.md)** — метрики CI/CD являются частью общей наблюдаемости системы.

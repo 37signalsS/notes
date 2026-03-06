@@ -128,7 +128,7 @@ kubeconform -kubernetes-version master manifests/
 
 - **[Kustomize](./kustomize_overview.md)** — валидация результатов kustomize
 - **[Helm](./Helm/helm_overview.md)** — валидация Helm-чартов
-- **[GitOps](../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
+- **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
 
 ### Репозиторий и документация
 

@@ -23,7 +23,7 @@ node_cpu_seconds_total
 
 ### Выбор labels
 
-* **Не использовать** в лейблах: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` — это задача [Service Discovery](../service_discovery_and_relabeling.md)
+* **Не использовать** в лейблах: `region`, `zone`, `cluster`, `az`, `datacenter`, `customer` — это задача [Service Discovery](../../service_discovery_and_relabeling.md)
 * **Избегать высокой кардинальности:** не использовать `request_id`, `user_id`, `email`
 * **Метрика должна иметь смысл при агрегации:** не разделять `read/write` с помощью лейбла, лучше сделать две разные метрики
 
@@ -166,4 +166,4 @@ python example_exporter.py
 
 * [Расширяемость экспортеров](./concepts.md) — базовые концепции
 * [Textfile Collector](./textfile_collector.md) — сбор метрик через внешние скрипты
-* [Node Exporter](./node_exporter.md) — основной экспортер для Linux
+* [Node Exporter](../node_exporter.md) — основной экспортер для Linux

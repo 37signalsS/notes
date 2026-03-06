@@ -291,6 +291,6 @@ Entry UUID: no user modification allowed
 - [389DS Docker](./389ds/docker.md) — развёртывание в Docker
 - [389DS репликация](./389ds/replication.md) — Multi-Master настройка
 - [389DS Kubernetes](./389ds/kubernetes.md) — StatefulSet развёртывание
-- [LDAP в Linux](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+- [LDAP в Linux](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
 - [Настройка SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/ldap_sssd.md)
 - [Keycloak LDAP Federation](../Security/Tools/keycloak_ldap_federation.md)

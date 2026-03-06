@@ -90,4 +90,4 @@ deploy_prod:
 
 - **[Определения директив](./directives_definitions.md)** — ключевые директивы
 - **[DAG с needs](./dag_with_needs.md)** — управление зависимостями
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции

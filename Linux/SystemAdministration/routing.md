@@ -123,7 +123,7 @@ ip route | grep default
 1. Включите IP Forwarding (см. раздел 2)
 2. Настройте NAT в файрволе (firewalld, iptables или nftables)
 
-Подробнее см. **[NAT в Linux](../Networking/Concepts/nat.md#настройка-nat-в-firewalld-linux-router)**.
+Подробнее см. **[NAT в Linux](../../Networking/Concepts/nat.md#настройка-nat-в-firewalld-linux-router)**.
 
 ## Дополнительная информация
 
@@ -185,7 +185,7 @@ Gateway=192.168.1.254
 
 ### Связанные темы
 
-* **NAT и масquerading:** [NAT в Linux](../Networking/Concepts/nat.md)
+* **NAT и масquerading:** [NAT в Linux](../../Networking/Concepts/nat.md)
 * **Policy-Based Routing:** [PBR](../Networking/linux_policy_based_routing.md)
 * **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
 * **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)

@@ -111,7 +111,7 @@ helm upgrade --install grafana grafana/grafana \
 
 ## Связанные темы
 
-* **[Обзор Grafana Loki](./loki_overview.md)** — архитектура, LogQL
-* **[Установка Loki](./loki_stack_setup/loki_installation.md)** — установка Loki
-* **[Примеры LogQL](./loki_stack_setup/logql_examples.md)** — запросы для анализа логов
-* **[Grafana Provisioning](../Grafana/grafana_provisioning.md)** — автоматическая настройка дашбордов
+* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL
+* **[Установка Loki](loki_installation.md)** — установка Loki
+* **[Примеры LogQL](logql_examples.md)** — запросы для анализа логов
+* **[Grafana Provisioning](../../Grafana/grafana_provisioning.md)** — автоматическая настройка дашбордов

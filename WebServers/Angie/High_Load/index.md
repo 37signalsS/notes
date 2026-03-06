@@ -25,7 +25,7 @@
 ### Основы защиты от DoS/DDoS-атак
 
 Защита от атак — комплексная задача. Защита на уровне одного веб-сервера имеет ограничения и эффективна в основном против простых атак.
-> Подробный разбор типов атак (L3/L4, L7) и методов противодействия вынесен в основную заметку: **[Обзор атак типа «Отказ в обслуживании» (DoS/DDoS)](../../Networking/Concepts/dos_ddos_overview.md)**
+> Подробный разбор типов атак (L3/L4, L7) и методов противодействия вынесен в основную заметку: **[Обзор атак типа «Отказ в обслуживании» (DoS/DDoS)](../../../Networking/Concepts/dos_ddos_overview.md)**
 
 ---
 
@@ -42,19 +42,19 @@
 
 ### Angie vs. Nginx: Краткий обзор
 
-- **История:** [Angie](./angie_overview.md) — форк [Nginx](../Nginx/Core/nginx_overview.md), созданный ключевой командой разработчиков оригинального проекта.
+- **История:** [Angie](../angie_overview.md) — форк [Nginx](../../Nginx/Core/nginx_overview.md), созданный ключевой командой разработчиков оригинального проекта.
 - **Преимущества Angie:** Более быстрое развитие, больше функций в Open Source (мониторинг, `slow_start`, `drain`), готовые пакеты с модулями. Сохраняется полная совместимость с Nginx.
 
 ### Тюнинг ядра и TLS
 
-- **Тюнинг ядра Linux:** Дополнительные параметры производительности можно настроить на уровне ядра. См. [заметку о sysctl](../../Linux/Core/kernel/sysctl.md).
+- **Тюнинг ядра Linux:** Дополнительные параметры производительности можно настроить на уровне ядра. См. [заметку о sysctl](../../../Linux/Core/kernel/sysctl.md).
 - **Оптимизация TLS:** Шифрование — ресурсоемкая операция. Важно использовать современные протоколы (`TLSv1.2`, `TLSv1.3`) и кэширование сессий.
 
-> Подробности смотрите в руководствах по [настройке TLS в Angie](./angie_tls_setup.md) и [основной заметке по TLS в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md).
+> Подробности смотрите в руководствах по [настройке TLS в Angie](../angie_tls_setup.md) и [основной заметке по TLS в Nginx](../../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md).
 
 ### Связанные темы
 
-- **[Nginx Performance Tuning](../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности Nginx
-- **[Proxy Caching](../Nginx/Performance/Caching/proxy_caching.md)** — кэширование в Nginx/Angie
-- **[HTTP/2 и HTTP/3](../Nginx/Performance/nginx_http_versions.md)** — версии HTTP
-- **[Сжатие в Nginx](../Nginx/Performance/nginx_compression.md)** — Zstd и Brotli
+- **[Nginx Performance Tuning](../../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности Nginx
+- **[Proxy Caching](../../Nginx/Performance/Caching/proxy_caching.md)** — кэширование в Nginx/Angie
+- **[HTTP/2 и HTTP/3](../../Nginx/Performance/nginx_http_versions.md)** — версии HTTP
+- **[Сжатие в Nginx](../../Nginx/Performance/nginx_compression.md)** — Zstd и Brotli

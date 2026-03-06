@@ -164,5 +164,5 @@ http {
 ### Внешние ресурсы
 
 - **[Официальная документация Jinja2](https://jinja.palletsprojects.com/en/latest/templates/)**: Полный справочник по всем тегам, фильтрам и функциям
-- [Модули управления файлами](../Modules/ansible_file_management_modules.md): Использование template и copy модулей
-- [Управление потоком](../PlaybookStructure/flow_control.md): Фильтры и условная логика
+- [Модули управления файлами](Modules/ansible_file_management_modules.md): Использование template и copy модулей
+- [Управление потоком](PlaybookStructure/flow_control.md): Фильтры и условная логика

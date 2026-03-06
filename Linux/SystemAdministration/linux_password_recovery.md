@@ -116,8 +116,8 @@
 **Загрузчики и загрузка:**
 
 - **[GRUB](./grub.md)** — загрузчик, параметры загрузки
-- **[Процесс загрузки ядра](../../Core/kernel/boot_process.md)** — этапы загрузки
-- **[BIOS и UEFI](../../Core/firmware_bios_uefi.md)** — прошивка, Secure Boot
+- **[Процесс загрузки ядра](../Core/kernel/boot_process.md)** — этапы загрузки
+- **[BIOS и UEFI](../Core/firmware_bios_uefi.md)** — прошивка, Secure Boot
 
 **Управление пользователями:**
 

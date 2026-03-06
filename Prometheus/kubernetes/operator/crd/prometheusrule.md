@@ -163,5 +163,5 @@ spec:
 
 * **[Prometheus CRD](./prometheus.md)** — описание Prometheus
 * **[Alertmanager CRD](./alertmanager.md)** — описание Alertmanager
-* **[Rules](../../rules.md)** — базовая настройка правил
+* **[Rules](../../../rules.md)** — базовая настройка правил
 * **[AlertmanagerConfig](./alertmanagerconfig.md)** — маршрутизация алертов

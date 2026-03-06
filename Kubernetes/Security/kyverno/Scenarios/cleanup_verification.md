@@ -81,7 +81,7 @@ spec:
                         -----END PUBLIC KEY-----
 ```
 
-**Связанные темы**: [Sigstore](../../../Security/Tools/sigstore.md), [Supply Chain Security](../../../Security/Supply_Chain_Security/artifact_signing.md)
+**Связанные темы**: [Sigstore](../../../../Security/Tools/sigstore.md), [Supply Chain Security](../../../../Security/Supply_Chain_Security/artifact_signing.md)
 
 ---
 

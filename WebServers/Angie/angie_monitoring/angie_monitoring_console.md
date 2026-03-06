@@ -4,7 +4,7 @@
 
 ### Шаг 1: Установка Console Lite
 
-Установите пакет `angie-console-lite` через пакетный менеджер после [базовой установки Angie](./angie_installation.md).
+Установите пакет `angie-console-lite` через пакетный менеджер после [базовой установки Angie](../angie_installation.md).
 
 ```bash
 sudo apt-get install angie-console-light

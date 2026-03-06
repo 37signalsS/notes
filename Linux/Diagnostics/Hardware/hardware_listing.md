@@ -37,7 +37,7 @@
 - `dmidecode` может показывать информацию о виртуальном BIOS
 - `lsblk` показывает виртуальные диски (vda, sda от гипервизора)
 
-Подробнее см. [Виртуализация](../../../Virtualization/virtualization_overview.md).
+Подробнее см. [Виртуализация](../../Virtualization/virtualization_overview.md).
 
 ## Практические сценарии
 
@@ -278,8 +278,8 @@ lsmod | grep -i e1000  # Пример для Intel NIC
 
 - **`smartctl`**: Мониторинг здоровья дисков — см. [smartctl](./smartctl.md)
 - **`dmidecode`**: Низкоуровневая информация о CPU, памяти, BIOS — см. [Диагностика CPU](./cpu_info.md)
-- **`fdisk`, `parted`**: Управление разделами — см. [Разделы и файловые системы](../../../FileSystems/partitions_and_filesystems.md)
-- **`mdadm`**: Управление RAID — см. [RAID management](../../../FileSystems/raid_management.md)
+- **`fdisk`, `parted`**: Управление разделами — см. [Разделы и файловые системы](../../FileSystems/partitions_and_filesystems.md)
+- **`mdadm`**: Управление RAID — см. [RAID management](../../FileSystems/raid_management.md)
 - **`lvm2`**: Управление логическими томами — см. [LVM](../../../FileSystems/lvm.md)
 
 ## Дополнительная информация

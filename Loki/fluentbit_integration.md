@@ -204,7 +204,7 @@ spec:
 | Ресурс | Описание |
 | :--- | :--- |
 | **[loki_overview.md](./loki_overview.md)** | Базовые концепции Loki, LogQL, архитектура |
-| **[docker_compose_setup.md](./docker_compose_setup.md)** | Настройка Loki в Docker Compose |
+| **[docker_compose_setup.md](../Grafana/Installation/docker_compose_setup.md)** | Настройка Loki в Docker Compose |
 | **[loki_stack_setup_guide.md](./loki_stack_setup_guide.md)** | Развертывание в Kubernetes с Helm |
 | **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** | Рекомендуемый агент для новых развертываний |
 | **[Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** | Базовая конфигурация Fluent Bit |

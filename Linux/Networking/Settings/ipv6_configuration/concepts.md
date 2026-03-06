@@ -10,7 +10,7 @@
 
 **Privacy Extensions (RFC 4941)** — механизм генерации временных случайных адресов для исходящих соединений, обеспечивающий конфиденциальность.
 
-**Подробнее:** [IP-протокол](../../../Networking/Protocols/ip.md), [Dual Stack IPv4/IPv6](../../../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
+**Подробнее:** [IP-протокол](../../../../Networking/Protocols/ip.md), [Dual Stack IPv4/IPv6](../../../../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
 
 ## Отличия от IPv4 в контексте Linux
 

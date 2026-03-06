@@ -78,4 +78,4 @@ docker stack rm my-app-stack
 
 ## Дополнительная информация
 
-* Более подробную информацию о параметрах, доступных в секции `deploy`, можно найти в документе **[Продвинутые возможности Docker Compose](../Docker_compose/docker_compose_advanced_topics.md#секция-deploy-и-интеграция-с-docker-swarm)**.
+* Более подробную информацию о параметрах, доступных в секции `deploy`, можно найти в документе **[Продвинутые возможности Docker Compose](../Docker/Docker_compose/docker_compose_advanced_topics.md#секция-deploy-и-интеграция-с-docker-swarm)**.

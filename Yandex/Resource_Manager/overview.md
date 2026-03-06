@@ -72,8 +72,8 @@
 
 ### Связанные документы
 
-- **[Compute Cloud](./Compute-Cloud.md)** — управление ВМ в каталогах
-- **[VPC](./VPC.md)** — сети и security groups
+- **[Compute Cloud](../Compute-Cloud.md)** — управление ВМ в каталогах
+- **[VPC](../VPC.md)** — сети и security groups
 - **[Storage](./Storage.md)** — хранилища и бакеты
 - **[IAM Roles](./iam_roles.md)** — роли и права доступа
 

@@ -23,7 +23,7 @@ feature-B:      ●────●────●────●────●�
 
 #### Решение: Trunk-Based Development с Feature Toggles
 
-С флагами все разработчики могут постоянно интегрировать свою работу в основную ветку (`main`), что является ключевым принципом **[Trunk-Based Development](../../CI-CD/ci_cd_patterns.md#1-trunk-based-development-tbd)**. Незавершенная функциональность просто скрыта за выключенным флагом, что позволяет отделить развертывание кода от его выпуска.
+С флагами все разработчики могут постоянно интегрировать свою работу в основную ветку (`main`), что является ключевым принципом **[Trunk-Based Development](../../ci_cd_patterns.md#1-trunk-based-development-tbd)**. Незавершенная функциональность просто скрыта за выключенным флагом, что позволяет отделить развертывание кода от его выпуска.
 
 ```
 С Feature Toggles (Trunk-based development):
@@ -62,6 +62,6 @@ main:     ●────●────●────●────●──�
 
 #### Внешние связи
 
-- **[Стратегии развертывания в CI/CD](../../CI-CD/Core_Concepts/deployment_strategies.md)** — Feature Toggles являются альтернативой или дополнением к Canary и Blue-Green стратегиям.
-- **[Canary Deployment](../../CI-CD/Deployment_Strategies/canary_deployment.md)** — детальное описание канареечного развертывания, которое часто реализуется с помощью флагов.
-- **[Сравнение стратегий: Blue-Green vs. Canary](../../CI-CD/Deployment_Strategies/comparison.md)** — когда выбрать ту или иную стратегию.
+- **[Стратегии развертывания в CI/CD](../../Core_Concepts/deployment_strategies.md)** — Feature Toggles являются альтернативой или дополнением к Canary и Blue-Green стратегиям.
+- **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)** — детальное описание канареечного развертывания, которое часто реализуется с помощью флагов.
+- **[Сравнение стратегий: Blue-Green vs. Canary](../../Deployment_Strategies/comparison.md)** — когда выбрать ту или иную стратегию.

@@ -55,7 +55,7 @@
 * **Принцип:** `SELECT ...` -> `SELECT ... /*application='backend',traceparent='...'*/;`
 * **Польза:** Позволяет фильтровать `slow query log` в контексте конкретного сервиса и связывать SQL-запросы с трассировками.
 * **Реализация:** Существуют библиотеки для популярных ORM (SQLAlchemy, GORM и др.), которые делают это автоматически.
-  * См. [Примеры для OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md#практический-пример-инструментация-запросов-к-postgresql).
+  * См. [Примеры для OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md#практический-пример-инструментация-запросов-к-postgresql).
 
 ### `pg_tracing` (экспериментальный)
 

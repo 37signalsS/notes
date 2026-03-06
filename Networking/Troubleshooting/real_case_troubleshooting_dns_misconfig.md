@@ -1,7 +1,7 @@
 # Траблшутинг №2: Периодические 500-е ошибки из-за DNS
 
 > - Диагностика DNS: [`dns_diagnostics.md`](../../Linux/Diagnostics/Networking/dns_diagnostics.md)
-> - Протокол DNS: [`dns.md`](../../Networking/Protocols/dns.md)
+> - Протокол DNS: [`dns.md`](../Protocols/DNS/dns.md)
 > - Общая методология траблшутинга: [`general_troubleshooting_methodology.md`](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)
 > - Диагностика в Docker: [`dns_resolution_issues.md`](../../Docker/Docker_network/troubleshooting/dns_resolution_issues.md)
 

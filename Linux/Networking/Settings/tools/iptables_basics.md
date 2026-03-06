@@ -14,8 +14,8 @@
 
 См. также:
 
-- **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter, Stateful/Stateless
-- **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
+- **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter, Stateful/Stateless
+- **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
 - **[nftables](./nftables.md)** — современная замена iptables
 - **[firewalld](./firewalld.md)** — высокоуровневое управление на основе iptables/nftables
 

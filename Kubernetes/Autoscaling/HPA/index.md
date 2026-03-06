@@ -15,7 +15,7 @@
 - **[KEDA](../keda_detailed.md)** — событийное масштабирование
 - **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
 - **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик
-- **[Pod Disruption Budget](../../PodDisruptionBudget/pod_disruption_budget.md)** — защита от недоступности
+- **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита от недоступности
 - **[Scaling Patterns](../scaling_patterns.md)** — паттерны масштабирования
 
 ## Ресурсы

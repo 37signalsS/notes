@@ -81,4 +81,4 @@ ethtool -k eth0 | grep pacing
 - **[Алгоритмы congestion control](./tcp_congestion_algorithms.md)** — CUBIC, BBR
 - **[Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md)** — правило 14 КБ
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — практическая настройка
-- **[Wireshark: Диагностика производительности](../../../../Networking/ServicesAndTools/Wireshark/tcp_performance_diagnostics.md)** — анализ проблем
+- **[Wireshark: Диагностика производительности](../../../ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md)** — анализ проблем

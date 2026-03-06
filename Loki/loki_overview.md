@@ -89,7 +89,7 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 
 #### Практические руководства
 
-* **[Настройка в Docker Compose](./docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
+* **[Настройка в Docker Compose](../Grafana/Installation/docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
 * **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail, Grafana) в Kubernetes с помощью Helm.
 
 #### Агенты для сбора логов
@@ -107,7 +107,7 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 
 **Практические руководства:**
 
-* **[Настройка в Docker Compose](./docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
+* **[Настройка в Docker Compose](../Grafana/Installation/docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
 * **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail/Alloy, Grafana) в Kubernetes с помощью Helm.
 * **[Интеграция Fluent Bit](./fluentbit_integration.md)**: Практическое руководство по интеграции Fluent Bit с Loki.
 * **[Лог-драйвер Loki для Docker](../Docker/Docker_logs/loki_logging_driver_setup.md)**: Настройка прямой отправки логов из Docker в Loki без агента.

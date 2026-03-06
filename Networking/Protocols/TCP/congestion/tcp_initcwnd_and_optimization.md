@@ -101,7 +101,7 @@ RTT 0: Клиент отправляет данные сразу с ClientHello
 Итого: 1 RTT (но есть риск replay-атак)
 ```
 
-См. также: [TLS Handshake](../tls.md#процесс-рукопожатия-tls-handshake)
+См. также: [TLS Handshake](../../tls.md#процесс-рукопожатия-tls-handshake)
 
 ---
 
@@ -127,4 +127,4 @@ RTT 0: Клиент отправляет данные сразу с ClientHello
 - **[Обзор и базовые алгоритмы](./tcp_congestion_control_overview.md)** — Slow Start, AIMD
 - **[Алгоритмы congestion control](./tcp_congestion_algorithms.md)** — CUBIC, BBR
 - **[Диагностика](./tcp_congestion_diagnostics.md)** — практические сценарии
-- **[TLS Handshake](../tls.md)** — процесс рукопожатия
+- **[TLS Handshake](../../tls.md)** — процесс рукопожатия

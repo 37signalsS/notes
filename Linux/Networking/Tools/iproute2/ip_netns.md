@@ -149,7 +149,7 @@ sudo ip netns exec my_namespace ip route add default via 10.0.0.1
 * **[Namespaces](../../../../Linux/Core/namespaces.md)** — полное руководство по Linux namespaces
 * **[Docker network](../../../../Docker/Docker_network/docker_network.md)** — сетевая модель Docker
 * **[Kubernetes network](../../../../Kubernetes/Networking/Network/network_overview.md)** — сеть в Kubernetes
-* **[veth](../Concepts/linux_network_interfaces.md)** — виртуальные интерфейсы
+* **[veth](../../Concepts/linux_network_interfaces.md)** — виртуальные интерфейсы
 
 ### Ограничения
 

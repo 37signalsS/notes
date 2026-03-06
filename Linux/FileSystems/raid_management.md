@@ -77,7 +77,7 @@ sudo mdadm /dev/md0 --add /dev/sdd1
 
 * [Диагностика дисков (SMART)](../Diagnostics/Hardware/smartctl.md)
 * [LVM поверх RAID](../LVM/overview_concepts.md)
-* [Настройка fstab](../mounting/fstab.md)
+* [Настройка fstab](mounting/fstab.md)
 * [Загрузка и initramfs](../Core/kernel/boot_process.md)
 * [Резервное копирование БД](../../Databases/Concepts/backups.md)
 * [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT

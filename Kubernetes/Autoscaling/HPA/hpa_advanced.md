@@ -45,14 +45,14 @@ kubectl top nodes
 - **Корректные requests** — адекватные запросы позволяют планировщику резервировать ресурсы.
 - **Behavior для scale-down** — настройте `stabilizationWindowSeconds: 300` для предотвращения частого уменьшения.
 - **Выбор метрики** — для I/O-bound приложений используйте кастомные метрики (RPS), а не CPU.
-- **PDB** — всегда создавайте [PodDisruptionBudget](../PodDisruptionBudget/pod_disruption_budget.md) для критических приложений.
+- **PDB** — всегда создавайте [PodDisruptionBudget](../pod_disruption_budget.md) для критических приложений.
 - **Тестирование** — проверяйте масштабирование в staging перед production.
 
 ## 3. Ограничения
 
-- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте [KEDA](./keda_detailed.md).
+- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте [KEDA](../keda_detailed.md).
 - **Интервал метрик** — метрики собираются с интервалом 15 секунд (настройка Metrics Server).
-- **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](./vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
+- **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](../vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
 - **Только Deployment/StatefulSet/ReplicaSet** — не работает с DaemonSet, Job, CronJob.
 - **Требует Metrics Server** — без Metrics Server работают только кастомные/внешние метрики.
 
@@ -60,11 +60,11 @@ kubectl top nodes
 
 | Интеграция | Описание |
 | :--- | :--- |
-| **[Pod Disruption Budget](../PodDisruptionBudget/pod_disruption_budget.md)** | HPA учитывает PDB при масштабировании вниз |
-| **[Pod Distribution](../Scheduling/pod_distribution.md)** | Созданные HPA поды распределяются согласно правилам распределения |
-| **[Scaling Patterns](./scaling_patterns.md)** | Для масштабирования workers по длине очереди используйте внешние метрики |
-| **[VPA](./vpa_detailed.md)** | Используйте VPA в режиме `Off` для получения рекомендаций, HPA — для горизонтального масштабирования |
-| **[KEDA](./keda_detailed.md)** | KEDA создаёт HPA для событийного масштабирования (очереди, расписания) |
+| **[Pod Disruption Budget](../pod_disruption_budget.md)** | HPA учитывает PDB при масштабировании вниз |
+| **[Pod Distribution](../pod_distribution.md)** | Созданные HPA поды распределяются согласно правилам распределения |
+| **[Scaling Patterns](../scaling_patterns.md)** | Для масштабирования workers по длине очереди используйте внешние метрики |
+| **[VPA](../vpa_detailed.md)** | Используйте VPA в режиме `Off` для получения рекомендаций, HPA — для горизонтального масштабирования |
+| **[KEDA](../keda_detailed.md)** | KEDA создаёт HPA для событийного масштабирования (очереди, расписания) |
 | **[Metrics Server](../MonitoringLogging/metrics-server.md)** | Источник ресурсных метрик для HPA |
 
 ## 5. Ресурсы
@@ -77,6 +77,6 @@ kubectl top nodes
 
 - **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
 - **[Практические сценарии](./hpa_scenarios.md)** — предварительные требования, сценарии использования
-- **[KEDA](./keda_detailed.md)** — событийное масштабирование
-- **[VPA](./vpa_detailed.md)** — вертикальное масштабирование
-- **[Pod Disruption Budget](../PodDisruptionBudget/pod_disruption_budget.md)** — защита от недоступности
+- **[KEDA](../keda_detailed.md)** — событийное масштабирование
+- **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
+- **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита от недоступности

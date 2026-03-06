@@ -29,7 +29,7 @@ TCP нумерует **байты**, а не сегменты.
 * Обнаружение дубликатов
 * Точное подтверждение полученных данных
 
-**Подробнее:** [Sequence Numbers](./reliability_mechanisms/sequence_numbers.md)
+**Подробнее:** [Sequence Numbers](sequence_numbers.md)
 
 ### 2. Подтверждения (Acknowledgments)
 
@@ -51,7 +51,7 @@ ACK подтверждает **все байты до указанного но�
 
 **Опция TCP:** [SACK в заголовке](./header_format.md#выборочное-подтверждение-selective-acknowledgment-sack)
 
-**Подробнее:** [Acknowledgments](./reliability_mechanisms/acknowledgments.md)
+**Подробнее:** [Acknowledgments](acknowledgments.md)
 
 ### 3. Повторная передача (Retransmission)
 
@@ -85,7 +85,7 @@ RTO = SRTT + max(4, 4 × RTTVAR)
 * Быстрее (не нужно ждать тайм-аут)
 * Выше пропускная способность
 
-**Подробнее:** [Retransmission](./reliability_mechanisms/retransmission.md)
+**Подробнее:** [Retransmission](retransmission.md)
 
 ### 4. Скользящее окно (Sliding Window)
 
@@ -108,7 +108,7 @@ LastByteSent - LastByteAcked ≤ cwnd (congestion window)
 LastByteSent - LastByteAcked ≤ rwnd (receiver window)
 ```
 
-**Подробнее:** [Sliding Window](./reliability_mechanisms/sliding_window.md)
+**Подробнее:** [Sliding Window](sliding_window.md)
 
 ### 5. Контрольная сумма (Checksum)
 
@@ -120,7 +120,7 @@ LastByteSent - LastByteAcked ≤ rwnd (receiver window)
 * Включает **pseudo-header** (IP-адреса, протокол, длина)
 * Если ошибка — сегмент отбрасывается без ACK
 
-**Подробнее:** [Checksum](./reliability_mechanisms/checksum.md)
+**Подробнее:** [Checksum](checksum.md)
 
 ## Взаимодействие с Congestion Control
 
@@ -154,7 +154,7 @@ ss -tmo
 * **[Header Format](./header_format.md)** — поля Sequence Number, ACK
 * **[Connection Management](./connection_management.md)** — handshake, состояния
 * **[Congestion Control](./congestion_control.md)** — управление перегрузкой
-* **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
+* **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
 
 ## RFC и стандарты
 

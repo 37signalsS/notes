@@ -25,7 +25,7 @@
 * **Примеры:**
   * `22`: SSH
   * `25`: SMTP
-  * `53`: [DNS](../Protocols/dns.md)
+  * `53`: [DNS](../Protocols/DNS/dns.md)
   * `80`: [HTTP](../Protocols/http.md)
   * `443`: [HTTPS](../Protocols/tls.md)
 

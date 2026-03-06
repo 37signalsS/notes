@@ -23,7 +23,7 @@
 
 ## Маппинг UID/GID
 
-NFS использует числовые UID и GID для разделения привилегий. Для корректной работы в многохостовых средах требуется централизованная система идентификации (например, NIS, [LDAP](../../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)) для обеспечения согласованного маппинга UID/GID на клиентах и сервере.
+NFS использует числовые UID и GID для разделения привилегий. Для корректной работы в многохостовых средах требуется централизованная система идентификации (например, NIS, [LDAP](../../../SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)) для обеспечения согласованного маппинга UID/GID на клиентах и сервере.
 
 Подробнее см. [Управление пользователями в Linux](../../../SystemAdministration/users_management.md).
 

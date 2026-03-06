@@ -213,7 +213,7 @@ kubectl get priorityclass
 - Настроить Preemption
 - Уменьшить приоритет пода
 
-> **См. также:** [`priorityclass.md`](../../Concepts/priorityclass.md)
+> **См. также:** [`priorityclass.md`](../../../Concepts/priorityclass.md)
 
 ---
 

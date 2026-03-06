@@ -78,5 +78,5 @@ lscpu | grep Virtualization
 
 ## Связанные документы
 
-- **[Виртуализация overview](./virtualization_overview.md)**
+- **[Виртуализация overview](../virtualization_overview.md)**
 - **[Образы ВМ](./virtual_machine_images.md)**

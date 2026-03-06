@@ -275,5 +275,5 @@ http {
 
 ### Связанные темы
 
-- **[DoS/DDoS Overview](../../Networking/Concepts/dos_ddos_overview.md)** — типы атак и методы противодействия
-- **[Nginx Performance Tuning](../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности
+- **[DoS/DDoS Overview](../../../Networking/Concepts/dos_ddos_overview.md)** — типы атак и методы противодействия
+- **[Nginx Performance Tuning](../../Nginx/Performance/nginx_performance_tuning.md)** — руководство по настройке производительности

@@ -114,7 +114,7 @@ sysctl -w net.ipv4.conf.ens5.rp_filter=2
 
 ### Связанные темы
 
-- **[ip route](../../Tools/iproute2/ip_route.md)** — базовая маршрутизация
+- **[ip route](../Tools/iproute2/ip_route.md)** — базовая маршрутизация
 - **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
 - **[iptables](../Settings/linux_firewall_management.md)** — маркировка пакетов
 - **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети

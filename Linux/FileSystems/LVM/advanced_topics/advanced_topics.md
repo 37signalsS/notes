@@ -35,9 +35,9 @@ lvscan
 | Тема | Файл |
 | :--- | :--- |
 | Базовые концепции LVM | [overview_concepts.md](./overview_concepts.md) |
-| Операции управления | [management_operations.md](./management_operations.md) |
-| Снимки | [snapshots.md](./snapshots.md) |
-| Тонкое провизионирование | [thin_provisioning.md](./thin_provisioning.md) |
+| Операции управления | [management_operations.md](../management_operations.md) |
+| Снимки | [snapshots.md](../snapshots.md) |
+| Тонкое провизионирование | [thin_provisioning.md](../thin_provisioning.md) |
 | Шифрование дисков | ../../Security/encryption.md (dm-crypt/LUKS) |
 | Загрузка Linux | ../../Boot/grub.md |
 

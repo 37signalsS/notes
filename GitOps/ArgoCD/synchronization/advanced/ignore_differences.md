@@ -57,5 +57,5 @@ argocd app sync my-app --skip-schema-validation
 ### Ссылки
 
 - **[Основные концепции синхронизации](../concepts.md)**
-- **[Ручная синхронизация](./scenarios/manual_sync.md)**
+- **[Ручная синхронизация](../scenarios/manual_sync.md)**
 - **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)**

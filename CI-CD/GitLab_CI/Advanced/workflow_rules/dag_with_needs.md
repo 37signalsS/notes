@@ -155,4 +155,4 @@ deploy_prod:
 - **[Определения директив](./directives_definitions.md)** — ключевые директивы
 - **[workflow:rules и pipeline inputs](./pipeline_inputs.md)** — управление пайплайнами
 - **[Правила запуска задач](./job_rules.md)** — условия для задач
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции
+- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции

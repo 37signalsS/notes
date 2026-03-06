@@ -6,8 +6,8 @@
 
 См. также:
 
-- **[Концепции сетевых файрволов](../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
-- **[Лучшие практики правил](../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
+- **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
+- **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
 - **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
 
 ---
@@ -52,7 +52,7 @@ Docker активно управляет `iptables` для сетевой изо
 1. **Конфликт с политикой `FORWARD DROP`**
    - **Проблема:** При политике `FORWARD DROP` трафик к контейнерам блокируется.
    - **Решение:** Добавлять правила в цепочку `DOCKER-USER` (обрабатывается до правил Docker).
-   - **Подробности:** [Интеграция Docker с iptables](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
+   - **Подробности:** [Интеграция Docker с iptables](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
 
    ```bash
    # Разрешить доступ к порту 8080 контейнера только с IP 1.2.3.4
@@ -63,7 +63,7 @@ Docker активно управляет `iptables` для сетевой изо
 2. **Конфликт `iptables-legacy` и `iptables-nft`**
    - **Проблема:** В системах с `nftables` (через `firewalld`) правила Docker могут "затираться".
    - **Решение:** Переключить Docker на `iptables-legacy`.
-   - **Подробности:** [Интеграция Docker с iptables](../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
+   - **Подробности:** [Интеграция Docker с iptables](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)
 
 ---
 

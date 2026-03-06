@@ -97,4 +97,4 @@ spec:
 * **[Alertmanager CRD](./alertmanager.md)** — описание Alertmanager
 * **[ServiceMonitor](./servicemonitor.md)** — цели для скрейпинга
 * **[High Availability](../high_availability.md)** — HA конфигурация
-* **[Prometheus Server](../../installation/prometheus_server_installation.md)** — базовая установка
+* **[Prometheus Server](../../../installation/prometheus_server_installation.md)** — базовая установка

@@ -34,4 +34,4 @@
 - **[Установка и настройка](./blackbox_exporter_installation.md)** — установка, конфигурация, интеграция с Prometheus
 - **[Дополнительные темы](./blackbox_exporter_advanced.md)** — безопасность, Docker, troubleshooting
 - **[Blackbox Exporter](../Exporters/blackbox_exporter.md)** — полное руководство
-- **[Prometheus Server](./prometheus_server_installation.md)** — интеграция
+- **[Prometheus Server](../prometheus_server_installation.md)** — интеграция

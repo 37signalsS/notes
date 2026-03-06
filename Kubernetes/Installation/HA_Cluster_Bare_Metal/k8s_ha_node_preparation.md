@@ -214,7 +214,7 @@ fi
 
 - **Требования**: [Environment Requirements](./k8s_ha_environment_requirements.md)
 - **Установка компонентов**: [Component Installation](./k8s_ha_component_installation.md)
-- **containerd**: [Альтернативные среды выполнения](../../Docker/alternative_runtimes_and_tools.md)
+- **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
 - **cgroups**: [Kubelet Configuration](../../Concepts/control_plane_architecture.md#конфигурация-kubelet)
 - **Сеть**: [CNI Overview](../../Networking/Network/cni_overview.md)
 

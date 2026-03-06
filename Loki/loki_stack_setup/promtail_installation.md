@@ -93,6 +93,6 @@ kubectl describe daemonset -n logging -l app.kubernetes.io/name=promtail
 
 ## Связанные темы
 
-* **[Обзор Grafana Loki](./loki_overview.md)** — архитектура, LogQL
-* **[Установка Loki](./loki_stack_setup/loki_installation.md)** — установка Loki
-* **[Установка Grafana Alloy](./loki_stack_setup/alloy_installation.md)** — современная альтернатива Promtail
+* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL
+* **[Установка Loki](loki_installation.md)** — установка Loki
+* **[Установка Grafana Alloy](alloy_installation.md)** — современная альтернатива Promtail

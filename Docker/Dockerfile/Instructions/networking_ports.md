@@ -62,5 +62,5 @@ services:
 
 - Для постоянного проброса используйте флаг `-p` в `docker run` или секцию `ports` в `docker-compose.yml`
 - `EXPOSE` не заменяет настройку сетевых драйверов Docker — это метаданные
-- Подробнее о сетях см. **[Docker Network](../Docker_network/docker_network.md)**
+- Подробнее о сетях см. **[Docker Network](../../Docker_network/docker_network.md)**
 - Подробнее о Docker Compose см. **[Docker Compose file example](../../Docker_compose/docker_compose_file_example.md)**

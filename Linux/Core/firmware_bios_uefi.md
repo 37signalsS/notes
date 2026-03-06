@@ -157,7 +157,7 @@ reboot
 ### Связанные темы
 
 - **[Boot Process](./kernel/boot_process.md)** — загрузка ядра после передачи управления от загрузчика
-- **[GRUB](../PackageManagement/grub.md)** — настройка загрузчика GRUB
+- **[GRUB](../SystemAdministration/grub.md)** — настройка загрузчика GRUB
 - **[Разметка диска](../FileSystems/partitions_and_filesystems.md)** — MBR и GPT
 - **[PXE Boot](../Networking/Concepts/pxe_boot.md)** — сетевая загрузка
 

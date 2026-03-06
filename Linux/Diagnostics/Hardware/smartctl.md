@@ -210,7 +210,7 @@ sudo smartctl -d 3ware,0 -a /dev/twe0    # 3ware RAID
 sudo smartctl -a /dev/sda  # Проверка физических дисков
 ```
 
-Подробнее см. [Управление RAID в Linux](../../../FileSystems/raid_management.md).
+Подробнее см. [Управление RAID в Linux](../../FileSystems/raid_management.md).
 
 ### Диагностика проблем с производительностью
 
@@ -294,7 +294,7 @@ sudo nvme health-info /dev/nvme0n1
 - **`iostat`, `iotop`**: Мониторинг производительности дисков — см. [iostat](../Filesystem/iostat.md), [iotop](../Filesystem/iotop.md)
 - **`fio`**: Тестирование производительности — см. [fio](../Filesystem/fio.md)
 - **`lsblk`, `lsscsi`**: Инвентаризация дисков — см. [Инвентаризация оборудования](./hardware_listing.md)
-- **`mdadm`**: Управление RAID — см. [RAID management](../../../FileSystems/raid_management.md)
+- **`mdadm`**: Управление RAID — см. [RAID management](../../FileSystems/raid_management.md)
 - **`nvme-cli`**: Утилиты для NVMe дисков
 
 ## Дополнительная информация

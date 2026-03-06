@@ -146,5 +146,5 @@ net.ipv4.tcp_sack=1
 
 * **[Retransmission](./retransmission.md)** — механизмы повторной передачи
 * **[Acknowledgments](./acknowledgments.md)** — DupACK и SACK
-* **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
+* **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
 * **[Congestion Control](./congestion_control.md)** — реакция на потери

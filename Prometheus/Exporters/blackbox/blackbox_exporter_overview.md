@@ -6,7 +6,7 @@
 
 * **Порт по умолчанию:** `9115`
 * **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter)
-* **Установка:** [installation/blackbox_exporter_installation.md](../../installation/blackbox_exporter_installation.md)
+* **Установка:** [installation/blackbox_exporter_installation.md](../../installation/Blackbox_Exporter/blackbox_exporter_installation.md)
 
 ## Основные концепции
 
@@ -55,9 +55,9 @@ blackbox_exporter возвращает метрики: probe_success, probe_dura
 * **[Установка и настройка](./blackbox_exporter_installation_and_setup.md)** — запуск и конфигурация Prometheus
 * **[Конфигурация модулей](./blackbox_exporter_modules_configuration.md)** — HTTP, TCP, ICMP, DNS, gRPC модули
 * **[Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)** — метрики и правила оповещений
-* **[Service Discovery и Relabeling](../service_discovery_and_relabeling.md)**
+* **[Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)**
 * **[Alertmanager](../alertmanager.md)**
-* **[Правила оповещений](../rules.md)**
+* **[Правила оповещений](../../rules.md)**
 
 ### Официальные ресурсы
 

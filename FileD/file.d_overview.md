@@ -38,4 +38,4 @@
 * Требуется богатая экосистема интеграций
 * Международная поддержка и сообщество
 
-> Подробнее о Vector см. в **[Vector Overview](../Vector/vector_overview.md#сравнение-с-аналогами)**.
+> Подробнее о Vector см. в **[Vector Overview](../Vector/Concepts/vector_overview.md#сравнение-с-аналогами)**.

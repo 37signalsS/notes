@@ -51,7 +51,7 @@ kubectl logs -f 389ds-0 -n ldap
 * [Docker развёртывание](./docker.md)
 * [Настройка репликации](./replication.md)
 * [Плагины](./plugins.md)
-* [OpenLDAP в Kubernetes](../openldap_kubernetes.md)
+* [OpenLDAP в Kubernetes](../../openldap_kubernetes.md)
 
 ---
 

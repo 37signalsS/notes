@@ -58,12 +58,12 @@
 
 **Протоколы:**
 
-- **[VLAN 802.1Q](../Protocols/vlan.md)** — детальное описание протокола
-- **[STP](../Protocols/stp.md)** — предотвращение петель
-- **[Ethernet](../Protocols/ethernet.md)** — формат кадров
+- **[VLAN 802.1Q](../../Protocols/vlan.md)** — детальное описание протокола
+- **[STP](../../Protocols/stp.md)** — предотвращение петель
+- **[Ethernet](../../Protocols/ethernet.md)** — формат кадров
 
 **Концепции:**
 
 - **[MAC-адреса](../mac_address.md)** — адресация L2
-- **[Сетевая сегментация](./network_segmentation_and_microsegmentation.md)** — стратегии
+- **[Сетевая сегментация](../network_segmentation_and_microsegmentation.md)** — стратегии
 - **[NAT](../nat.md)** — трансляция адресов

@@ -69,7 +69,7 @@
 | Sealed Secrets | Да | Контроллер | Низкая |
 | ESO | Нет | Оператор + внешнее хранилище | Средняя |
 | CSI Driver | Нет | Драйвер + провайдер | Средняя |
-| [SOPS](../../Security/Tools/sops_overview.md) | Да | Ключи (PGP/age/Cloud KMS) | Низкая |
+| [SOPS](../../../Security/Tools/sops_overview.md) | Да | Ключи (PGP/age/Cloud KMS) | Низкая |
 
 ### Связанные темы
 
