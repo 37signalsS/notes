@@ -13,32 +13,32 @@
 
 ### Базовые понятия
 
-- [[Users/users_definitions.md|Определения пользователей и групп]] — UID, GID, диапазоны, привилегии
-- [[Users/users_config_files.md|Файлы конфигурации]] — `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`
-- [[Users/user_private_groups.md|Приватные группы (UPG)]] — схема именования групп
+- [Определения пользователей и групп](Users/users_definitions.md) — UID, GID, диапазоны, привилегии
+- [Файлы конфигурации](Users/users_config_files.md) — `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`
+- [Приватные группы (UPG)](Users/user_private_groups.md) — схема именования групп
 
 ### Управление
 
-- [[Users/user_commands.md|Управление пользователями]] — `useradd`, `usermod`, `userdel`
-- [[Users/group_commands.md|Управление группами]] — `groupadd`, `groupmod`, `groupdel`, `gpasswd`
-- [[Users/password_hashing.md|Хэширование паролей]] — алгоритмы, соль, безопасность
-- [[Users/password_policy_chage.md|Политики паролей]] — `chage`, сроки действия
+- [Управление пользователями](Users/user_commands.md) — `useradd`, `usermod`, `userdel`
+- [Управление группами](Users/group_commands.md) — `groupadd`, `groupmod`, `groupdel`, `gpasswd`
+- [Хэширование паролей](Users/password_hashing.md) — алгоритмы, соль, безопасность
+- [Политики паролей](Users/password_policy_chage.md) — `chage`, сроки действия
 
 ### Мониторинг и аудит
 
-- [[Users/user_monitoring.md|Мониторинг пользователей]] — `id`, `who`, `w`, `last`, процессы, файлы
-- [[Users/user_migration.md|Миграция пользователей]] — перенос между системами
+- [Мониторинг пользователей](Users/user_monitoring.md) — `id`, `who`, `w`, `last`, процессы, файлы
+- [Миграция пользователей](Users/user_migration.md) — перенос между системами
 
 ### Централизованное управление
 
-- [[Users/ldap_sssd.md|LDAP и SSSD]] — централизованная аутентификация, кэширование
+- [LDAP и SSSD](Users/ldap_sssd.md) — централизованная аутентификация, кэширование
 
 ### Смежные темы
 
-- [[../privilege_management.md|Управление привилегиями]] — `su`, `sudo`, Polkit
-- [[../../Security/pam_overview.md|PAM]] — модули аутентификации
-- [[../../Security/Concepts/File_Permissions/overview_definitions.md|Права доступа]] — DAC, SUID, SGID, ACL
-- [[./file_permissions.md|Права доступа (кратко)]] — `chmod`, `chown`
+- [Управление привилегиями](../privilege_management.md) — `su`, `sudo`, Polkit
+- [PAM](../../Security/pam_overview.md) — модули аутентификации
+- [Права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) — DAC, SUID, SGID, ACL
+- [Права доступа (кратко)](./file_permissions.md) — `chmod`, `chown`
 
 ## Лучшие практики
 
