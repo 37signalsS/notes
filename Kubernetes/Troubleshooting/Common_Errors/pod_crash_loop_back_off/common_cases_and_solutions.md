@@ -129,29 +129,47 @@ roleRef:
 **Симптомы:**
 
 - В `kubectl describe`: `Killing container ... Liveness probe failed`
-- Контейнер перезапускается без ошибок приложения
+- В логах приложения могут отсутствовать ошибки, так как оно работает корректно, но проба настроена неверно.
 
-**Решение:**
+**Диагностика и решение:**
 
-```yaml
-# Увеличить время на старт
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  initialDelaySeconds: 60  # Было 10
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 3
+Частая причина — несоответствие порта, пути или схемы (HTTP/HTTPS) в `livenessProbe` и реального эндпоинта приложения.
 
-# Или использовать startupProbe для медленных приложений
-startupProbe:
-  httpGet:
-    path: /health
-    port: 8080
-  failureThreshold: 30
-  periodSeconds: 10
-```
+1. **Стабилизируйте под**, временно отключив пробу через `kubectl edit deployment <name>` или используя паттерн "заморозки" (см. ниже).
+2. **Подключитесь к поду** с помощью `kubectl debug`.
+3. **Найдите реальный порт и путь** внутри контейнера:
+
+    ```bash
+    # Внутри debug-контейнера
+    # Узнаем, какой порт слушает приложение
+    netstat -tuln
+
+    # Проверяем, отвечает ли эндпоинт
+    wget -q -O - http://localhost:3333/health
+    ```
+
+4. **Исправьте `livenessProbe`** в манифесте, указав корректный порт и путь, и увеличьте `initialDelaySeconds`, если приложение стартует медленно.
+
+    ```yaml
+    livenessProbe:
+      httpGet:
+        path: /health # Убедитесь, что этот путь верен
+        port: 3333      # Укажите порт, который слушает приложение
+      initialDelaySeconds: 60
+      periodSeconds: 10
+    ```
+
+5. **Для медленно стартующих приложений** используйте `startupProbe`, чтобы отложить проверку liveness:
+
+    ```yaml
+    # Используйте startupProbe для отсрочки проверки liveness
+    startupProbe:
+      httpGet:
+        path: /health
+        port: 3333
+      failureThreshold: 30 # Дает приложению 300с (30*10) на старт
+      periodSeconds: 10
+    ```
 
 ---
 
@@ -202,12 +220,16 @@ kubectl describe pod <pod-name>
 
 ## Временная "заморозка" пода для отладки
 
-При постоянных рестартах можно "заморозить" под командой `sleep`:
+При постоянных рестартах (`CrashLoopBackOff`) невозможно использовать `kubectl exec` или `kubectl debug`, так как для подключения требуется запущенный контейнер. Чтобы это обойти, можно "заморозить" под, временно переопределив его команду на `sleep`. Это стабилизирует контейнер в состоянии `Running`, позволяя провести диагностику.
+
+**Команда для "заморозки":**
 
 ```bash
 kubectl patch deployment <deployment-name> \
   -p '{"spec":{"template":{"spec":{"containers":[{"name":"<container-name>","command":["sleep","3600"]}]}}}}'
 ```
+
+После этого можно безопасно подключаться к поду для исследования файловой системы, переменных окружения и сетевых настроек.
 
 **После отладки:**
 
