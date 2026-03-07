@@ -11,3 +11,9 @@
 
 - **KillerCoda:** Интерактивные сценарии для изучения Linux.
   - <https://killercoda.com/pawelpiwosz/course/linuxFundamentals>
+
+- **Keep-Alive.ru:** Командные траблшутинги.
+  - <https://keep-alive.ru>
+
+- **SREGA.me:** Индивидуальные тренировки в формате Capture the Flag.
+  - <https://srega.me/>
