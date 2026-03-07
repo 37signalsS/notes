@@ -64,14 +64,14 @@ grep MemAvailable /proc/meminfo
 
 **Шаги диагностики:**
 
-1.  **Проверить рост Slab-кэша:**
+1. **Проверить рост Slab-кэша:**
     Сравните `Slab`, `SReclaimable` (освобождаемый) и `SUnreclaim` (неосвобождаемый). Если `Slab` и особенно `SReclaimable` велики, память занята кэшем ядра.
 
     ```bash
     cat /proc/meminfo | grep -E "Slab|SReclaimable|SUnreclaim"
     ```
 
-2.  **Определить, что именно занимает Slab:**
+2. **Определить, что именно занимает Slab:**
     Проверьте, какие структуры лидируют. В данном случае это будут `dentry` и `*_inode_cache`.
 
     ```bash

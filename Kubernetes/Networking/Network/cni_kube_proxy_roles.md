@@ -182,6 +182,7 @@ Kubernetes и CNI-плагины, такие как Calico, поддержива
   - **`calico-ipam`:** Необходимо создать два ресурса `IPPool`, по одному для каждого семейства (IPv4 и IPv6). Calico автоматически назначит поду по одному адресу из каждого пула.
 
 **Пример `IPPool` для IPv6:**
+
 ```yaml
 apiVersion: projectcalico.org/v3
 kind: IPPool
@@ -193,6 +194,7 @@ spec:
   natOutgoing: false # NAT обычно не используется в IPv6
   disabled: false
 ```
+
 Это позволит подам напрямую общаться по IPv6 без NAT.
 
 ---
