@@ -52,6 +52,55 @@ cache_connection = .cache/inventory
 | **Группировка** | Ручные группы | Автоматически, по тегам/фильтрам |
 | **Производительность**| Быстро локально | Требует кэширования для API |
 
+### Генерация инвентаря из вывода Terraform
+
+Помимо использования inventory-плагинов, распространенным паттерном является генерация инвентаря на основе вывода Terraform. Этот подход особенно полезен, когда для провайдера отсутствует качественный inventory-плагин или требуется сложная логика формирования групп.
+
+**Процесс:**
+
+1. **Terraform создает ресурсы** и описывает необходимые данные (IP-адреса, имена хостов) в блоках `output`.
+
+    ```hcl
+    output "instance_ips" {
+      value = {
+        for vm in yandex_compute_instance.my_vms:
+        vm.name => vm.network_interface.0.nat_ip_address
+      }
+    }
+    ```
+
+2. **Вывод сохраняется в JSON-файл** после применения (`terraform apply`).
+
+    ```bash
+    terraform output -json > tf_output.json
+    ```
+
+3. **Кастомный скрипт** (например, на Python) парсит этот JSON и генерирует инвентарь в формате, понятном Ansible (INI или YAML).
+
+    ```python
+    # pseudo-code
+    import json
+    
+    with open('tf_output.json') as f:
+        data = json.load(f)
+    
+    ips = data['instance_ips']['value']
+    
+    inventory_file = open('generated_inventory.ini', 'w')
+    inventory_file.write('[my_vms]\n')
+    for name, ip in ips.items():
+        inventory_file.write(f'{name} ansible_host={ip}\n')
+    inventory_file.close()
+    ```
+
+4. **Ansible использует сгенерированный файл** для дальнейшей настройки.
+
+    ```bash
+    ansible-playbook -i generated_inventory.ini my_playbook.yml
+    ```
+
+Этот метод обеспечивает тесную интеграцию между этапами предоставления (Terraform) и конфигурации (Ansible) в рамках одного CI/CD-пайплайна.
+
 ### Примеры конфигурации
 
 Документация по плагинам доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html).
