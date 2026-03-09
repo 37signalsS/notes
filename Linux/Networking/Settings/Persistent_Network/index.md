@@ -1,19 +1,19 @@
-# Постоянная настройка сети в Linux
+# Постоянная настройка сети: практические сценарии
 
-Индекс документов по постоянной настройке сети в Linux.
+Навигация по методам настройки сети в различных дистрибутивах Linux.
 
-## Документы
+## Навигация
 
-| Документ | Описание |
-| :--- | :--- |
-| **[Основные концепции](./network_configuration_concepts.md)** | Определения, сравнение систем настройки (NetworkManager, Netplan, systemd-networkd) |
-| **[Практические сценарии](./persistent_network_setup.md)** | Настройка в Debian/Ubuntu, CentOS/RHEL, Netplan, systemd-networkd |
-| **[Дополнительные темы](./network_advanced_topics.md)** | IPv6, фиксация имен интерфейсов, диагностика проблем |
+### Дистрибутивы
 
-## Связанные документы
+- **[Debian/Ubuntu: /etc/network/interfaces](./debian_ubuntu_interfaces.md)** — классический способ с hook-скриптами
+- **[CentOS/RHEL: NetworkManager](./centos_rhel_networkmanager.md)** — nmcli, nmtui, файлы ifcfg-*
+- **[Ubuntu: Netplan](./ubuntu_netplan.md)** — декларативная настройка (YAML), bonding, VLAN
+- **[systemd-networkd](./systemd_networkd.md)** — встроенный менеджер для серверов
 
-- **[Сетевые интерфейсы](../../Concepts/linux_network_interfaces.md)** — типы интерфейсов
+### Связанные документы
+
 - **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — DNS-резолвинг
-- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — bonding
-- **[VLAN](../../../Networking/Concepts/vlan_and_L2_switching.md)** — VLAN-конфигурация
-- **[iproute2](../Tools/iproute2/overview.md)** — временная настройка сети
+- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — маршрутизация на основе политик
+- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теория bonding
+- **[VLAN](../../../../Networking/Protocols/vlan.md)** — теория VLAN

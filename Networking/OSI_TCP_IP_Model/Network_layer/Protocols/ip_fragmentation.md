@@ -82,6 +82,6 @@
 
 **См. также:**
 
-- [MTU и VPN](../Troubleshooting/mtu_and_vpn.md) — диагностика и решение проблем MTU в VPN
+- [MTU (Maximum Transmission Unit)](../Troubleshooting/mtu_and_vpn.md) — виды MTU, PMTUD, диагностика, решение проблем в VPN
 - [Структура IP-пакета](./ip_packet_structure.md) — поля заголовка IPv4
 - [ICMP](../../../Protocols/icmp.md) — протокол для PMTUD

@@ -108,6 +108,18 @@ sysctl -w net.ipv4.conf.ens5.rp_filter=2
 | `1` | Strict mode (RFC 3704) — строгая проверка |
 | `2` | Loose mode — ослабленная проверка (рекомендуется для PBR) |
 
+**Взаимосвязь с PBR:**
+При использовании policy-based routing для асимметричной маршрутизации (когда входящий и исходящий интерфейсы различаются) strict mode (`rp_filter=1`) будет отбрасывать легитимные пакеты. Режим `loose mode` (`rp_filter=2`) проверяет только достижимость источника, а не совпадение интерфейса.
+
+**Постоянная настройка:**
+
+```bash
+# /etc/sysctl.d/99-pbr-rpfilter.conf
+net.ipv4.conf.all.rp_filter=2
+net.ipv4.conf.default.rp_filter=2
+net.ipv4.conf.ens5.rp_filter=2
+```
+
 ---
 
 ## Additional Information

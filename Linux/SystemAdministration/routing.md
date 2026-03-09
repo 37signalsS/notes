@@ -41,6 +41,30 @@ ip route show
 # 192.168.1.0/24 dev enp0s3 proto kernel scope link src 192.168.1.100 # Локальная сеть
 ```
 
+**Разбор записей:**
+
+| Поле | Значение | Описание |
+| :--- | :--- | :--- |
+| `default` | Шлюз по умолчанию | Пакеты вне локальной сети |
+| `192.168.1.0/24` | Сеть назначения | Локальная подсеть |
+| `via 192.168.1.1` | Шлюз | Адрес следующего хопа |
+| `dev enp0s3` | Интерфейс | Через который уходит трафик |
+| `proto kernel` | Источник | Добавлен ядром автоматически |
+| `scope link` | Область | Действителен для интерфейса |
+| `src 192.168.1.100` | Source IP | Адрес отправителя |
+
+**Таблица local (локальные маршруты):**
+
+```bash
+ip route show table local
+# local 127.0.0.1 dev lo scope host
+# broadcast 192.168.1.0 dev enp0s3 scope link
+# local 192.168.1.100 dev enp0s3 scope host
+# broadcast 192.168.1.255 dev enp0s3 scope link
+```
+
+> **Подробно:** [ip route](../Networking/Tools/iproute2/ip_route.md) — управление маршрутами, [Policy-Based Routing](../Networking/Policy_Based_Routing/index.md) — маршрутизация на основе политик
+
 ### 2. Включение IP Forwarding
 
 * **Проверить текущее состояние:**

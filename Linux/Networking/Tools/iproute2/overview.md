@@ -46,7 +46,7 @@ ip -s route show          # Статистика маршрутов
 | **address** | `ip a` | IP-адреса на интерфейсах | [`ip address`](./ip_address.md) |
 | **route** | `ip r` | Таблица маршрутизации | [`ip route`](./ip_route.md) |
 | **neighbour** | `ip n` | ARP/NDP-таблица | [`ip neighbour`](./ip_neighbour.md) |
-| **rule** | `ip rule` | Policy-Based Routing | [PBR](../../linux_policy_based_routing.md) |
+| **rule** | `ip rule` | Policy-Based Routing | [PBR](../../Policy_Based_Routing/index.md) |
 | **netns** | `ip netns` | Сетевые namespace | [`ip netns`](./ip_netns.md) |
 | **tunnel** | `ip tunnel` | Туннели (GRE, IPIP, SIT, VXLAN) | [`ip tunnel`](./ip_tunnel.md) |
 | **monitor** | `ip monitor` | Мониторинг событий | — |
@@ -103,7 +103,7 @@ ip rule add from 192.168.1.0/24 table 100
 ip route show table 100
 ```
 
-> **Подробно:** [Policy-Based Routing](../../linux_policy_based_routing.md)
+> **Подробно:** [Policy-Based Routing](../../Policy_Based_Routing/index.md)
 
 ## Дополнительная информация
 

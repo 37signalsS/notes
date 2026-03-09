@@ -108,6 +108,68 @@ spec:
     # ... правила ...
 ```
 
+### TLS в Ingress-NGINX: два режима работы
+
+Ingress-NGINX поддерживает два принципиально разных режима работы с TLS, которые определяют возможности маршрутизации:
+
+#### Режим 1: TLS Termination (терминирование на контроллере)
+
+Сертификат прикреплён к Ingress через Secret, контроллер расшифровывает трафик и передаёт бэкенду по HTTP.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+  - hosts:
+    - api.example.com
+    secretName: api-tls-secret
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8080
+```
+
+**Характеристики:**
+
+* Контроллер видит HTTP-заголовки
+* Доступна маршрутизация по пути, заголовкам, cookies
+* Бэкенд получает трафик по HTTP (или HTTPS при re-encrypt)
+
+#### Режим 2: SSL Passthrough (сквозное шифрование)
+
+Контроллер проксирует зашифрованный поток напрямую к поду, не расшифровывая его. Включается аннотацией:
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+```
+
+**Характеристики:**
+
+* Контроллер **не видит HTTP-заголовки**
+* Маршрутизация возможна **только по SNI** (имени хоста в TLS Client Hello)
+* Маршрутизация по пути или заголовкам **недоступна**
+* Бэкенд сам терминирует SSL
+
+#### Критично для миграции
+
+Если в текущей конфигурации для одного хоста одновременно используются passthrough и HTTP-маршрутизация — это признак того, что архитектуру придётся пересматривать, а не просто переписывать манифесты.
+
+**Рекомендация:** Зафиксируйте для каждого хоста, какой режим TLS используется. Это определит не только синтаксис Gateway API, но и выбор реализации — не все контроллеры поддерживают TLSRoute в полном объёме.
+
 ### Схема работы: путь трафика в Kubernetes
 
 Подробное описание пути трафика в Kubernetes, от внешнего запроса до пода, включая роль Ingress Controller, Service и kube-proxy, было перенесено в документ [Сетевая модель в Kubernetes](../Network/traffic_path_avoid_host_networking.md#путь-трафика-от-ingress-до-pod) для централизации информации.

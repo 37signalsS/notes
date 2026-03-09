@@ -94,6 +94,31 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
 
 - **Публикация портов**: Чтобы сделать сервис, работающий в `bridge`-сети, доступным извне, используется механизм публикации портов (`-p <порт_хоста>:<порт_контейнера>`), который Docker реализует с помощью правил `iptables` (DNAT).
 
+**Как работает публикация портов:**
+
+Docker добавляет два правила DNAT для каждого опубликованного порта:
+
+```bash
+# Для внешнего трафика (цепочка PREROUTING)
+iptables -t nat -A PREROUTING -d <IP_хоста> -p tcp --dport 5000 \
+  -j DNAT --to-destination 172.18.0.10:5000
+
+# Для локального трафика (цепочка OUTPUT)
+iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
+  -j DNAT --to-destination 172.18.0.10:5000
+```
+
+**Почему два правила:**
+
+- `PREROUTING` обрабатывает пакеты до маршрутизации (внешний трафик)
+- `OUTPUT` обрабатывает пакеты, созданные на хосте (локальный трафик)
+
+Также Docker включает обработку bridge-трафика: `modprobe br_netfilter`
+
+- **Выход контейнеров в Интернет:** Для доступа контейнеров во внешний мир Docker:
+  1. Включает IP-форвардинг: `net.ipv4.ip_forward=1`
+  2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
+
 - **Связанные темы**:
   - **[Управление сетями (CLI)](./management/cli.md)**: Подробный справочник по командам `docker network`.
   - **[DNS и Service Discovery](./concepts/dns_and_service_discovery.md)**: Как работает разрешение имен в Docker.
@@ -107,3 +132,14 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
     - **[none](./drivers/none.md)**
 
 - **[Изоляция в Linux: Namespaces и Cgroups](../Concepts/linux_isolation.md)** — сетевой namespace как часть общей изоляции
+
+**Режимы сети Docker и их связь с Linux:**
+
+| Режим Docker | Реализация в Linux | Описание |
+| :--- | :--- | :--- |
+| `bridge` (по умолчанию) | network namespace + veth + bridge | Изолированная сеть с NAT |
+| `host` | Без network namespace | Контейнер использует сетевой стек хоста напрямую |
+| `none` | network namespace без интерфейсов | Только loopback, полная изоляция |
+| `container:<name>` | Разделение network namespace с другим контейнером | Общий IP и localhost (используется в Kubernetes Pods) |
+
+> **См. также:** [NAT](../../Networking/Concepts/nat.md), [Linux network namespaces](../../Linux/Core/namespaces.md)

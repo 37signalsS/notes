@@ -95,7 +95,7 @@
 
 **Cloud VPN:**
 
-- IPsec-туннели для подключения on-prem инфраструктуры
+- [IPsec](../Networking/Tunnels/ipsec.md)-туннели для подключения on-prem инфраструктуры
 - Динамическая маршрутизация (BGP)
 
 **VPC Peering:**

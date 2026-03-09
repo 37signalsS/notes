@@ -142,6 +142,16 @@ sudo iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE
 sudo ip netns exec my_namespace ip route add default via 10.0.0.1
 ```
 
+**Пояснение MASQUERADE:**
+
+* `POSTROUTING` — цепочка для модификации пакетов перед отправкой наружу
+* `-s 10.0.0.0/24` — трафик из внутренней сети
+* `-o eth0` — внешний интерфейс хоста
+* `MASQUERADE` — автоматическая подмена IP источника на IP внешнего интерфейса
+* `! -o br0` (опционально) — исключение трафика, идущего в bridge
+
+> **См. также:** [NAT](../../../../Networking/Concepts/nat.md#snat-vs-masquerade)
+
 ## Дополнительная информация
 
 ### Связанные темы

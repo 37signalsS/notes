@@ -6,6 +6,8 @@
 
 **iptables** — классическая утилита управления правилами Netfilter. В современных системах часто является слоем совместимости над `nftables` (`iptables-nft`).
 
+**Важно:** В Debian 11+ и современных дистрибутивах по умолчанию используется `nftables`. Утилита `iptables` может быть слоем совместимости (`iptables-nft`) или устаревшим режимом (`iptables-legacy`). Для новых проектов рекомендуется использовать `nftables` напрямую.
+
 **Основные концепции:**
 
 - **Stateful Firewall** — фильтрация с отслеживанием состояния соединений
@@ -26,7 +28,7 @@
 
 - **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter, Stateful/Stateless
 - **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
-- **[nftables](./nftables.md)** — современная замена iptables
+- **[nftables](./nftables.md)** — современная замена iptables (Debian 11+)
 - **[firewalld](./firewalld.md)** — высокоуровневое управление на основе iptables/nftables
 
 ---

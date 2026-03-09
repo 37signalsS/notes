@@ -60,7 +60,7 @@
 - Собственные сокеты и порты
 - Несколько контейнеров могут использовать один network namespace (поды Kubernetes)
 
-> **Подробно:** [ip netns](../Networking/Tools/iproute2/overview.md)
+> **Подробно:** [ip netns](../Networking/Tools/iproute2/ip_netns.md), [Сетевые интерфейсы Linux](../Networking/Concepts/linux_network_interfaces.md)
 
 #### User
 

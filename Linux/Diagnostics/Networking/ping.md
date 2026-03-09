@@ -215,3 +215,4 @@ ping -s 2000 -M do ya.ru
 - **[tcpdump.md](./tcpdump.md)** — анализ ICMP-трафика
 - **[ping_alternatives.md](../../../Networking/Troubleshooting/ping_alternatives.md)** — альтернативы для случаев, когда ICMP блокируется
 - **[icmp.md](../../../Networking/Protocols/icmp.md)** — протокол ICMP (протоколы)
+- **[MTU (Maximum Transmission Unit)](../../../Networking/OSI_TCP_IP_Model/Network_layer/Troubleshooting/mtu_and_vpn.md)** — диагностика MTU с помощью ping

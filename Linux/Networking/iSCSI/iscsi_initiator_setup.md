@@ -105,7 +105,7 @@ UUID=abc123 /mnt/iscsi_data ext4 _netdev,nofail,noatime 0 2
 
 CHAP — протокол аутентификации, используемый для безопасного подключения iSCSI-инициаторов к таргетам. Обеспечивает взаимную аутентификацию (target-initiator и initiator-target) с использованием общего секрета.
 
-> **Важно:** CHAP защищает от несанкционированного доступа, но не шифрует трафик. Для шифрования используйте IPsec или выделенную сеть. Для изоляции iSCSI-трафика в отдельной сети рассмотрите **[Policy-Based Routing](../linux_policy_based_routing.md)**.
+> **Важно:** CHAP защищает от несанкционированного доступа, но не шифрует трафик. Для шифрования используйте [IPsec](../../../Networking/Tunnels/ipsec.md) или выделенную сеть. Для изоляции iSCSI-трафика в отдельной сети рассмотрите **[Policy-Based Routing](../Policy_Based_Routing/index.md)**.
 
 ### 3.1. Настройка на iSCSI Target (tgt)
 
@@ -197,6 +197,6 @@ sudo iscsiadm -m node --loginall=ALL
 
 - **[Основные концепции](./iscsi_concepts.md)** — определения и архитектура
 - **[Настройка Target](./iscsi_target_setup.md)** — установка и конфигурация tgt/LIO
-- **[Policy-Based Routing](../linux_policy_based_routing.md)** — изоляция iSCSI-трафика
+- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — изоляция iSCSI-трафика
 - **[LVM](../Storage/lvm.md)** — управление логическими томами
 - **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем

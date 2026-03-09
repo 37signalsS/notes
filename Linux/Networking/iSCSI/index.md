@@ -16,4 +16,4 @@
 - **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем
 - **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
 - **[Firewall](../Settings/linux_firewall_management.md)** — настройка firewall
-- **[Policy-Based Routing](./linux_policy_based_routing.md)** — изоляция iSCSI-трафика
+- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — изоляция iSCSI-трафика

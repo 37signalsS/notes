@@ -4,11 +4,14 @@
 
 Файл содержит общие вопросы настройки файрволов, не специфичные для конкретного инструмента (iptables/nftables/firewalld).
 
+**Важно:** В Debian 11+ и современных дистрибутивах по умолчанию используется `nftables`. Классический `iptables` может отсутствовать или быть слоем совместимости (`iptables-nft`).
+
 См. также:
 
 - **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
 - **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
 - **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
+- **[nftables](./nftables.md)** — современная подсистема (рекомендуется для Debian 11+)
 
 ---
 
@@ -18,13 +21,26 @@
 
 Правила файрволов не сохраняются после перезагрузки по умолчанию — требуется явное сохранение.
 
-| Дистрибутив | Инструмент | Команда сохранения |
-| :--- | :--- | :--- |
-| **Debian/Ubuntu** | `iptables-persistent` | `sudo netfilter-persistent save` |
-| **RHEL/CentOS 7+** | `iptables-services` | `sudo service iptables save` |
-| **Современные (nftables)** | `nft` | `sudo nft list ruleset > /etc/nftables.conf` |
+| Дистрибутив | Инструмент | Команда сохранения | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Debian 10/Ubuntu 18.04** | `iptables-persistent` | `sudo netfilter-persistent save` | Классический iptables |
+| **Debian 11+/Ubuntu 22.04+** | `nftables` | `sudo nft list ruleset > /etc/nftables.conf` | **nftables по умолчанию** |
+| **RHEL/CentOS 7+** | `iptables-services` | `sudo service iptables save` | |
+| **RHEL/Fedora (новые)** | `nftables` / `firewalld` | `sudo nft list ruleset > /etc/nftables.conf` | |
 
-**Debian/Ubuntu:**
+**Debian 11+ (nftables):**
+
+```bash
+# Сохранение правил
+sudo nft list ruleset > /etc/nftables.conf
+
+# Включение автозагрузки
+sudo systemctl enable --now nftables
+```
+
+**Подробнее:** **[nftables: современная подсистема фильтрации](./nftables.md)** — архитектура, синтаксис, практические сценарии (fail2ban, сегментирование, тестирование).
+
+**Debian/Ubuntu (классический iptables):**
 
 ```bash
 sudo apt-get update && sudo apt-get install -y iptables-persistent

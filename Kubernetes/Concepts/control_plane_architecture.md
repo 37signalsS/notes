@@ -61,6 +61,16 @@ rotateCertificates: true
 
 * **Центральный API (`kube-apiserver`)**: Все компоненты, включая пользователей (через `kubectl`) и другие части системы, взаимодействуют только с `kube-apiserver`. Он валидирует, аутентифицирует, авторизует и обрабатывает запросы, прежде чем сохранить их в `etcd`. Это делает API-сервер центральным шлюзом и единственным компонентом, имеющим прямой доступ к `etcd`.
 
+    **Архитектурная роль:** `kube-apiserver` по сути является CRUD-приложением (Create, Read, Update, Delete). Большая часть его работы — хранение и предоставление данных, аналогично другим системам управления контентом.
+
+    **Жизненный цикл запроса API:**
+    1. **Аутентификация:** Проверка личности пользователя или сервиса.
+    2. **Авторизация (RBAC):** Проверка прав на выполнение операции.
+    3. **Mutating Webhooks:** Модификация полезной нагрузки запроса (например, добавление default-значений).
+    4. **Валидация:** Проверка корректности данных (внутренняя + Validating Webhooks).
+    5. **Сохранение в etcd:** Запись объекта и возврат ответа клиенту.
+    6. **Уведомление подписчиков:** Отправка событий всем `watch`-клиентам (контроллерам, kubelet).
+
 * **Циклы согласования (`Reconciliation Loops`)**: `kube-controller-manager` реализует ключевой принцип Kubernetes. Контроллеры (например, `Deployment Controller`, `Node Controller`) "наблюдают" (`watch`) за изменениями в `etcd` через `kube-apiserver`. Когда контроллер обнаруживает расхождение между желаемым состоянием (записанным в `etcd`) и фактическим состоянием (в кластере), он предпринимает действия для устранения этого расхождения.
   * **Примеры контроллеров:**
     * **Node Controller:** Реагирует на отказы узлов, помечая их как неработоспособные.
@@ -132,8 +142,9 @@ rotateCertificates: true
   * [Мониторинг kube-apiserver](../MonitoringLogging/KubeAPIServer/kube_apiserver_monitoring.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kube-apiserver)](../Security/tls_and_mtls_in_kubernetes.md)
 * **etcd**:
-  * [Управление секретами в Kubernetes (хранение в etcd)](../Base/secrets/secrets_basics.md)
-  * [Обновление кластеров Kubernetes (важность снимков etcd)](../Operations/upgrading_clusters.md)
+  * [Обзор etcd](./etcd_overview.md)
+  * [Алгоритм Raft](../../etcd/raft_consensus.md)
+  * [Мониторинг etcd](../../etcd/etcd_monitoring.md)
   * [Высокая доступность etcd в процессе установки кластера](../Installation/ha_cluster_deployment_with_kubespray.md)
 * **kube-scheduler**:
   * [Quality of Service (QoS), Requests и Limits (использование планировщиком)](../Scheduling/qos_limit_and_requests.md)
