@@ -84,6 +84,7 @@ spec:
 
 - [Определения](./definitions.md) — концепции и ролевая модель
 - [Ресурсы](./resources.md) — описание CRD
+- [Миграция с Ingress](./migration.md) — руководство по переходу с Ingress NGINX, включая инструмент ingress2gateway
 - [Расширенные функции](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
 - [Traefik как реализация](./traefik.md) — пример с конкретным контроллером
 

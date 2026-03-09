@@ -6,6 +6,8 @@
 
 О роли CNI и kube-proxy в сетевой модели Kubernetes см. [cni_kube_proxy_roles.md](./cni_kube_proxy_roles.md).
 
+> **Примечание:** Calico расширяет стандартные NetworkPolicy дополнительными возможностями, включая фильтрацию трафика NodePort/LoadBalancer до NAT, работу с HostEndpoint и логирование. *Подробнее: [Calico HostEndpoint и GlobalNetworkPolicy](../../Security/network_policies/Calico/index.md)*
+
 ### Сетевая Модель по Умолчанию
 
 В Kubernetes по умолчанию реализуется **"плоская" сетевая модель**, описанная в [общем обзоре сетевой модели](./network_overview.md):
@@ -37,12 +39,128 @@
 2. **`namespaceSelector`**: Выбирает поды из неймспейсов по их меткам.
 3. **`ipBlock`**: Указывает диапазоны IP-адресов в формате CIDR.
 
+> **Важно:** `namespaceSelector` работает по **меткам namespace**, а не по его имени. По умолчанию у namespace нет меток — их нужно добавлять явно. Для выбора по имени используйте метку `kubernetes.io/metadata.name: <namespace-name>`.
+
+#### Target, Source, Destination — терминология
+
+При описании политик важно различать три концепции:
+
+* **Target (цель)**: Поды, к которым применяется политика (указываются в `spec.podSelector`)
+* **Source (источник)**: Откуда приходит трафик (указывается в `spec.ingress.from`)
+* **Destination (назначение)**: Куда уходит трафик (указывается в `spec.egress.to`)
+
+**Нюанс:** `target` может быть как `source`, так и `destination` в зависимости от направления политики:
+* В `ingress`-политике: target = destination, from = source
+* В `egress`-политике: target = source, to = destination
+
+#### Важные нюансы реализации
+
+**1. Порты указываются для Pod, а не для Service**
+
+Политики применяются к подам, поэтому в `ports` указываются порты контейнера, а не сервиса. Например, если сервис на порту 80 перенаправляет трафик на pod:8080, в политике нужно указать порт 8080.
+
+**2. Проблема NAT и Source IP**
+
+При использовании `NodePort` или `LoadBalancer` без `externalTrafficPolicy: Local` исходный IP клиента подменяется на IP ноды. В этом случае `ipBlock` в политиках должен указывать подсеть нод, а не клиентов. Для сохранения оригинального IP используйте:
+* `externalTrafficPolicy: Local`
+* CNI с поддержкой Direct Server Return (например, Calico)
+
+**3. Визуализация политик**
+
+Для проверки и отладки политик рекомендуется использовать визуализаторы, например [Orca Turfin](https://orca-tufin.com/), которые преобразуют YAML в графическое представление и текстовое описание правил.
+
 ### Логика Правил: "И" и "ИЛИ"
 
 Понимание логических операторов критически важно:
 
 * **Логическое "ИЛИ"**: Элементы в списках `ingress`, `egress`, `from`, `to` объединяются по "ИЛИ". Трафик разрешается, если он соответствует **любому** правилу в списке.
 * **Логическое "И"**: Поля внутри одного элемента (`podSelector`, `namespaceSelector`, `ports`) объединяются по "И". Трафик должен соответствовать **всем** условиям внутри правила.
+
+#### Примеры различной логики
+
+**Пример 1: Логическое "ИЛИ" в списке `from`**
+
+```yaml
+ingress:
+- from:
+  - podSelector:
+      matchLabels:
+        app: indexer
+  - podSelector:
+      matchLabels:
+        app: opadmin
+  ports:
+  - port: 5432
+```
+
+**Результат:** Разрешён трафик от подов с меткой `app: indexer` **ИЛИ** `app: opadmin` на порт 5432.
+
+**Пример 2: Логическое "И" внутри одного элемента**
+
+```yaml
+ingress:
+- from:
+  - namespaceSelector:
+      matchLabels:
+        env: default
+    podSelector:
+      matchLabels:
+        role: opadmin
+  ports:
+  - port: 5432
+```
+
+**Результат:** Разрешён трафик только от подов с меткой `role: opadmin`, находящихся в namespace с меткой `env: default`. Оба условия должны выполняться **одновременно**.
+
+**Пример 3: Разные порты для разных селекторов**
+
+```yaml
+ingress:
+- from:
+  - podSelector:
+      matchLabels:
+        app: indexer
+  ports:
+  - port: 443
+- from:
+  - podSelector:
+      matchLabels:
+        app: admin
+  ports:
+  - port: 80
+```
+
+**Результат:**
+* Для `indexer`: разрешён только порт 443
+* Для `admin`: разрешён только порт 80
+
+**Пример 4: Комбинация namespaceSelector и podSelector**
+
+```yaml
+# Вариант А: И (один элемент массива)
+ingress:
+- from:
+  - namespaceSelector:
+      matchLabels:
+        env: default
+    podSelector:
+      matchLabels:
+        role: opadmin
+
+# Вариант Б: ИЛИ (два элемента массива)
+ingress:
+- from:
+  - namespaceSelector:
+      matchLabels:
+        env: default
+  - podSelector:
+      matchLabels:
+        role: opadmin
+```
+
+**Результат:**
+* **Вариант А (И):** Поды `opadmin` из namespace `default`
+* **Вариант Б (ИЛИ):** Любые поды из namespace `default` **ИЛИ** любые поды с меткой `opadmin` из текущего namespace
 
 ---
 
@@ -227,3 +345,75 @@ ports:
   port: 30000
   endPort: 30002
 ```
+
+#### Реализация сетевыми плагинами (CNI)
+
+**Критически важно:** NetworkPolicy работает только при наличии CNI-плагина с поддержкой этой функциональности.
+
+| CNI | Поддержка NetworkPolicy | Примечания |
+|-----|------------------------|------------|
+| **Calico** | ✅ Полная | Расширения: HostEndpoint, GlobalNetworkPolicy, логирование, ICMP |
+| **Cilium** | ✅ Полная | Расширения: L7-политики, FQDN-фильтрация, eBPF |
+| **Weave Net** | ✅ Полная | Базовая поддержка |
+| **Flannel** | ❌ Нет | Только связность подов, без политик |
+| **Kube-router** | ✅ Полная | На основе iptables |
+| **Antrea** | ✅ Полная | На основе Open vSwitch |
+
+**Стандартная vs расширенная функциональность:**
+
+Все CNI с поддержкой NetworkPolicy реализуют **базовый стандарт** Kubernetes:
+* Селекторы: `podSelector`, `namespaceSelector`, `ipBlock`
+* Протоколы: TCP, UDP, SCTP
+* policyTypes: Ingress, Egress
+
+**Расширения CNI** (нестандартные, vendor-specific):
+* **Calico:**
+  * `HostEndpoint` — политики для интерфейсов нод
+  * `GlobalNetworkPolicy` — кластерные политики вне namespace
+  * `preDNAT` — фильтрация до NAT (для NodePort/LoadBalancer)
+  * Логирование заблокированного трафика
+  * Блокировка ICMP
+* **Cilium:**
+  * L7-политики (HTTP, gRPC, Kafka)
+  * FQDN-фильтрация (DNS-based)
+  * Identity-based политики
+
+> **Важно:** Если вы используете Flannel и создадите NetworkPolicy, ограничения **не будут применены** — трафик продолжит проходить свободно. Требуется замена CNI на поддерживающий политики.
+
+#### Allow-all и Deny-all политики
+
+**Явного правила "deny" в Kubernetes нет**, но можно достичь того же эффекта:
+
+**Deny-all (запрет всего):**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  # ingress: [] — пустой список или отсутствие поля
+```
+
+**Разрешить всё (для override):**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - {} # Пустое правило разрешает весь трафик
+```
+
+**Нюанс:** Если `policyTypes` не указан:
+* При наличии `ingress`-правил: автоматически добавляется `Ingress`
+* При наличии `egress`-правил: автоматически добавляется `Egress`
+* Если политик нет: политика не применяется

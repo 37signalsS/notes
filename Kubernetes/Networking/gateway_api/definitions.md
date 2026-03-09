@@ -25,13 +25,45 @@
 | **Direct Pod targeting** | Через Service | Напрямую (по endpoints) |
 | **Ролевая модель** | Отсутствует | Встроенная (allowedRoutes) |
 
-## Статус компонентов (по состоянию на 2026)
+## Статус компонентов (на март 2026)
 
-- **V1 (Stable):** GatewayClass, Gateway, HTTPRoute, GRPCRoute
-- **Beta:** TLSRoute, TCPRoute, UDPRoute
-- **Alpha:** некоторые расширенные функции
+**V1 (Stable/GA):**
 
-**Рекомендация:** Использовать только стабильные V1 ресурсы в production.
+- GatewayClass
+- Gateway
+- HTTPRoute
+- GRPCRoute
+- TLSRoute
+- TCPRoute
+- UDPRoute
+
+**Beta:**
+
+- ListenerSet
+- некоторые расширенные фильтры (CORS, компрессия)
+
+**Alpha:**
+
+- экспериментальные функции (уточнять в [спецификации](https://gateway-api.sigs.k8s.io/concepts/versioning/))
+
+**Рекомендация:** Использовать стабильные V1 ресурсы в production. Beta-функции требуют проверки conformance-отчётов реализации.
+
+---
+
+## Актуальность и миграция
+
+### Ingress NGINX деактивируется в марте 2026
+
+Сообщество Kubernetes приняло решение о прекращении поддержки `kubernetes/ingress-nginx`. **Gateway API является официальным преемником** для управления входящим трафиком в Kubernetes.
+
+**Почему миграция необходима:**
+
+- **Окончание поддержки Ingress NGINX** — март 2026
+- **Стандартизация** — Gateway API поддерживается всеми крупными вендорами
+- **Расширенные функции** — канареечные развертывания, gRPC, TCP/UDP маршрутизация
+- **Ролевая модель** — разделение ответственности между инфраструктурой и разработчиками
+
+**Подробное руководство по миграции:** [→ Миграция с Ingress на Gateway API](./migration.md)
 
 ## Gateway API — это стандарт, а не программа
 
@@ -47,6 +79,7 @@
 **См. также:**
 
 - [Ресурсы (CRD)](./resources.md) — GatewayClass, Gateway, Route
+- [Миграция с Ingress](./migration.md) — руководство по переходу с Ingress NGINX
 - [Базовые сценарии](./practical_basic.md) — практические примеры
 - [Расширенные функции маршрутизации](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
 - [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
@@ -57,6 +90,8 @@
 - [Traefik](./traefik.md)
 
 - **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
+- **Руководство по миграции:** [Migrating from Ingress-NGINX](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
+- **Инструмент миграции:** [ingress2gateway](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
 - **Обзор Ingress и его ограничений:** [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api)
 
 ---

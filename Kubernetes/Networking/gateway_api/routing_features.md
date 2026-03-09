@@ -170,6 +170,7 @@ spec:
 **См. также:**
 
 - [Базовые сценарии](./practical_basic.md) — основы создания HTTPRoute
+- [Миграция с Ingress](./migration.md) — примеры преобразования правил маршрутизации
 - [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
 
 **Parent:** [Gateway API](../gateway_api.md)

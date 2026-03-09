@@ -82,3 +82,4 @@ Netfilter организует правила в **таблицы** (по наз
 
 - Этот документ описывает теоретические основы. Рекомендации по проектированию безопасных и эффективных наборов правил см. в **[Контроль доступа на уровне сети: лучшие практики и правила Firewall](firewall_rules_best_practices.md)**.
 - Для понимания уровней L3/L4/L7 важна **[Модель OSI](../OSI_TCP_IP_Model/osi_model.md)**.
+- **Интеграция с Kubernetes:** [Интеграция внешних файрволов с Kubernetes](../../Kubernetes/Security/external_firewall_integration.md) — инспекция трафика Kubernetes через NGFW/IPS.

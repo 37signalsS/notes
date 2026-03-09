@@ -598,6 +598,7 @@ Kubernetes/Networking/gateway_api/definitions.md
 Kubernetes/Networking/gateway_api/envoy_gateway.md
 Kubernetes/Networking/gateway_api/issues_future.md
 Kubernetes/Networking/gateway_api/layer4_routing.md
+Kubernetes/Networking/gateway_api/migration.md
 Kubernetes/Networking/gateway_api/practical_basic.md
 Kubernetes/Networking/gateway_api/resources.md
 Kubernetes/Networking/gateway_api/routing_features.md

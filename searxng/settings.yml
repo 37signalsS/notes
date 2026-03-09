@@ -1,0 +1,35 @@
+use_default_settings: true
+
+server:
+  secret_key: "af363b911891f590f3b929c923b77a25"
+  bind_address: "0.0.0.0"
+  port: 8080
+  image_proxy: true
+
+search:
+  formats:
+    - json
+    - html
+
+rate_limit:
+  enabled: false
+
+enable_metrics: true
+
+engines:
+  - name: google
+    engine: google
+    api_key: ""
+    disabled: false
+  - name: bing
+    engine: bing
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    disabled: false
+  - name: github
+    engine: github
+    disabled: false
