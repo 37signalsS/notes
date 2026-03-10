@@ -188,7 +188,8 @@ sed -i 's|192.168.0.0/16|100.64.0.0/16|g' calico.yaml
 kubectl apply -f calico.yaml
 ```
 
-> **Важно**: 
+> **Важно**:
+>
 > - Версия Calico должна соответствовать версии Kubernetes (проверьте в [официальной документации](https://docs.tigera.io/calico/latest/about/supported-releases))
 > - CIDR в манифесте должен совпадать с `--pod-network-cidr` из `kubeadm init`
 
