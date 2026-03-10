@@ -64,6 +64,30 @@
 
 ## Практические сценарии
 
+### Этапы развёртывания HA кластера
+
+1. **Подготовка узлов** — настройка ОС, cgroups, sysctl на всех узлах
+2. **Установка containerd** — настройка CRI для Kubernetes
+3. **Установка kubeadm/kubelet/kubectl** — установка компонентов на всех узлах
+4. **Настройка балансировщика** — Keepalived + HAProxy для VIP
+5. **Инициализация первого мастера** — `kubeadm init` с `--control-plane-endpoint`
+6. **Установка CNI** — Calico или другой плагин для сети подов
+7. **Присоединение мастеров** — `kubeadm join` с `--control-plane`
+8. **Присоединение воркеров** — `kubeadm join` без дополнительных флагов
+
+Подробнее: [Node Preparation](./k8s_ha_node_preparation.md), [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md).
+
+### Выбор CIDR для подов и сервисов
+
+При инициализации кластера необходимо выбрать диапазоны IP-адресов, **не пересекающиеся** с существующей инфраструктурой:
+
+| Параметр | Назначение | Рекомендуемые значения | Примечание |
+| :--- | :--- | :--- | :--- |
+| `--pod-network-cidr` | IP-адреса для подов | `100.64.0.0/16`, `10.244.0.0/16` | Должен совпадать с настройками CNI |
+| `--service-cidr` | IP-адреса для сервисов | `100.65.0.0/16`, `10.96.0.0/12` | По умолчанию `10.96.0.0/12` |
+
+> **Важно**: Изменение CIDR после инициализации невозможно без полной пересоздания кластера.
+
 ### Сценарий 1: Отказ одного мастер-узла
 
 1. Keepalived обнаруживает отказ через VRRP heartbeat
@@ -93,7 +117,7 @@
 - **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
 - **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
 - **Альтернатива**: [Kubespray HA](../ha_cluster_deployment_with_kubespray.md)
-- **Keepalived + HAProxy**: [HA с kubeadm](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)
+- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
 - **Теория HA**: [High Availability Overview](../../../Concepts/High_Availability/ha_overview.md)
 - **Control Plane**: [Архитектура](../../Concepts/control_plane_architecture.md)
 - **etcd**: [Обзор](../../Concepts/etcd_overview.md)

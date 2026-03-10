@@ -1280,7 +1280,14 @@ Networking/Protocols/DNS/dns_resolution.md
 Networking/Protocols/DNS/dns_security.md
 Networking/Protocols/DNS/dns_zones.md
 Networking/Protocols/ethernet.md
-Networking/Protocols/http.md
+Networking/Protocols/HTTP/http_authentication.md
+Networking/Protocols/HTTP/http_basics.md
+Networking/Protocols/HTTP/http_caching.md
+Networking/Protocols/HTTP/http_methods.md
+Networking/Protocols/HTTP/http_rest_api.md
+Networking/Protocols/HTTP/http_status_codes.md
+Networking/Protocols/HTTP/http_versions.md
+Networking/Protocols/HTTP/index.md
 Networking/Protocols/http_protocols_optimization.md
 Networking/Protocols/icmp.md
 Networking/Protocols/ip.md

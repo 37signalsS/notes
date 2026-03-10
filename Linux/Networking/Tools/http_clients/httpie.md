@@ -262,4 +262,5 @@ pip install httpie-plugin-name
 ### 5. Связанные заметки
 
 - **[Обзор HTTP-клиентов](./overview.md)** — сравнение curl, wget, httpie
+- **[HTTP-методы](../../../../Networking/Protocols/http.md#методы-http)** — подробное описание методов GET, POST, PUT, PATCH, DELETE
 - **[Инструменты диагностики сети](../../network_diagnostics_tools.md)**

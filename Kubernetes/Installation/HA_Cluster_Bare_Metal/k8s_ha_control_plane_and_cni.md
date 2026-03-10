@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Control Plane Endpoint** — стабильная точка входа (VIP:PORT) для доступа к API-серверу через балансировщик нагрузки.
+**Control Plane Endpoint** — стабильная точка входа (VIP:PORT или DNS) для доступа к API-серверу через балансировщик нагрузки.
 
 **CNI (Container Network Interface)** — стандартный плагин для обеспечения сетевой связности между подами на разных узлах кластера.
 
@@ -11,6 +11,10 @@
 **kubeadm init** — команда инициализации Control Plane на первом мастер-узле.
 
 **kubeadm join** — команда присоединения узла к существующему кластеру.
+
+**pod-network-cidr** — диапазон IP-адресов для подов (не должен пересекаться с существующей инфраструктурой).
+
+**service-cidr** — диапазон IP-адресов для сервисов Kubernetes.
 
 ---
 
@@ -29,16 +33,31 @@
 | :--- | :--- | :--- |
 | `--control-plane-endpoint` | VIP балансировщика для HA | `192.168.1.100:6443` |
 | `--upload-certs` | Загрузка сертификатов в кластер для других мастеров | — |
-| `--pod-network-cidr` | Диапазон IP для подов (требуется CNI) | `192.168.0.0/16` |
+| `--pod-network-cidr` | Диапазон IP для подов (требуется CNI) | `100.64.0.0/16` |
+| `--service-cidr` | Диапазон IP для сервисов | `100.65.0.0/16` |
+| `--apiserver-advertise-address` | IP-адрес для публикации API | `192.168.1.1` |
+| `--apiserver-bind-port` | Порт API-сервера | `6443` |
+| `--cri-socket` | CRI-сокет среды выполнения | `unix:///run/containerd/containerd.sock` |
 
 ### Почему CNI устанавливается отдельно?
 
 Kubernetes не включает сетевой плагин по умолчанию. Администратор выбирает CNI в зависимости от требований:
 
-- **Calico** — баланс функциональности и производительности
+- **Calico** — баланс функциональности и производительности, поддержка BGP
 - **Flannel** — простой, минималистичный
-- **Cilium** — eBPF-based, продвинутая безопасность
+- **Cilium** — eBPF-based, продвинутая безопасность, замена kube-proxy
 - **Weave Net** — автоматическая настройка
+
+### Выбор CIDR для подов и сервисов
+
+При инициализации кластера необходимо выбрать диапазоны, **не пересекающиеся** с существующей сетевой инфраструктурой:
+
+| Диапазон | Назначение | Рекомендуемые CIDR | Примечание |
+| :--- | :--- | :--- | :--- |
+| `--pod-network-cidr` | IP-адреса для подов | `100.64.0.0/16`, `10.244.0.0/16`, `192.168.0.0/16` | Должен совпадать с настройками CNI |
+| `--service-cidr` | IP-адреса для сервисов | `100.65.0.0/16`, `10.96.0.0/12` | Default: `10.96.0.0/12` |
+
+> **Важно**: Изменение CIDR после инициализации кластера невозможно без полной пересоздания.
 
 ---
 
@@ -49,19 +68,29 @@ Kubernetes не включает сетевой плагин по умолчан
 На **первом** мастер-узле выполните:
 
 ```bash
-# Замените LOAD_BALANCER_VIP на VIP вашего балансировщика
-# --pod-network-cidr требуется для Calico и многих других CNI
+# Важно: выбираем CIDR, не пересекающиеся с вашей сетью
+# --pod-network-cidr=100.64.0.0/16 - для pod'ов
+# --service-cidr=100.65.0.0/16 - для сервисов
+
 sudo kubeadm init \
-  --control-plane-endpoint "LOAD_BALANCER_VIP:6443" \
-  --pod-network-cidr=192.168.0.0/16 \
-  --upload-certs
+  --control-plane-endpoint=k8s-node1:6443 \
+  --pod-network-cidr=100.64.0.0/16 \
+  --service-cidr=100.65.0.0/16 \
+  --upload-certs \
+  --apiserver-advertise-address=192.168.1.1 \
+  --apiserver-bind-port=6443 \
+  --cri-socket=unix:///run/containerd/containerd.sock
 ```
 
 **Параметры**:
 
-- `--control-plane-endpoint` — адрес балансировщика (Keepalived + HAProxy)
+- `--control-plane-endpoint` — адрес балансировщика (Keepalived + HAProxy) или DNS-имя
 - `--pod-network-cidr` — диапазон для подов (должен совпадать с выбранным CNI)
+- `--service-cidr` — диапазон для сервисов (по умолчанию `10.96.0.0/12`)
 - `--upload-certs` — загружает сертификаты в Secret для других мастеров
+- `--apiserver-advertise-address` — IP-адрес, который будет использоваться для доступа к API
+- `--apiserver-bind-port` — порт, на котором будет слушать API-сервер (по умолчанию `6443`)
+- `--cri-socket` — путь к CRI-сокету (для containerd: `/run/containerd/containerd.sock`)
 
 **Результат**:
 
@@ -69,12 +98,35 @@ sudo kubeadm init \
   1. Для других мастер-узлов (с `--control-plane` и `--certificate-key`)
   2. Для worker-узлов (без дополнительных флагов)
 
-> **Важно**: Сохраните вывод команды! Команды `join` содержат одноразовые токены.
+> **Важно**: Сохраните вывод команды! Команды `join` содержат одноразовые токены и хэши сертификатов.
 
-### Шаг 2: Настройка kubectl на первом мастере
+### Что происходит в процессе инициализации
+
+```
+[init] Using Kubernetes version: v1.34.3
+[preflight] Running pre-flight checks
+[certs] Generating certificates...
+[kubeconfig] Writing kubeconfig files...
+[etcd] Creating static Pod manifest for local etcd
+[control-plane] Creating static Pod manifests...
+[kubelet-start] Starting the kubelet
+[wait-control-plane] Waiting for control plane components...
+```
+
+**Этапы**:
+
+1. **Pre-flight checks** — проверка системных требований
+2. **Генерация сертификатов** — создание TLS-сертификатов для компонентов
+3. **Kubeconfig файлы** — создание файлов доступа к кластеру
+4. **etcd** — запуск локального etcd как статического пода
+5. **Control Plane** — запуск API server, controller manager, scheduler
+6. **Kubelet** — запуск агента узла
+7. **Ожидание** — проверка доступности компонентов control plane
+
+### Шаг 2: Настройка kubectl для обычного пользователя
 
 ```bash
-# Создать директорию для конфигурации
+# Выполняется как обычный пользователь (например, evdovichenko)
 mkdir -p $HOME/.kube
 
 # Скопировать admin.conf (учетные данные кластера)
@@ -88,45 +140,57 @@ kubectl cluster-info
 kubectl get nodes
 ```
 
-### Шаг 3: Присоединение остальных мастер-узлов
+> **Важно**: Статус `NotReady` — это **нормально** сразу после инициализации. Для перехода в `Ready` требуется установка CNI-плагина.
 
-На **втором и третьем** мастер-узлах выполните команду `kubeadm join` для мастеров:
+### Шаг 3: Сохранение команд для подключения нод
 
-```bash
-sudo kubeadm join LOAD_BALANCER_VIP:6443 \
-  --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash> \
-  --control-plane \
-  --certificate-key <key>
-```
+Из вывода `kubeadm init` сохраните команды для последующего присоединения узлов.
 
-**После выполнения**:
-
-- Мастер присоединяется к кластеру
-- Запускаются компоненты Control Plane как статические поды
-- `etcd` формирует кластер (3 узла)
-
-### Шаг 4: Присоединение worker-узлов
-
-На **каждом** worker-узле выполните команду `kubeadm join` для воркеров:
+**Для control-plane нод** (если будут дополнительные мастер-узлы):
 
 ```bash
-sudo kubeadm join LOAD_BALANCER_VIP:6443 \
-  --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash>
+kubeadm join k8s-node1:6443 --token XXX \
+  --discovery-token-ca-cert-hash sha256:XXX \
+  --control-plane --certificate-key XXX
 ```
 
-### Шаг 5: Установка CNI плагина (Calico)
+**Для worker-нод**:
+
+```bash
+kubeadm join k8s-node1:6443 --token XXX \
+  --discovery-token-ca-cert-hash sha256:XXX
+```
+
+> **Важно**: Токены действительны 24 часа по умолчанию. Для повторной генерации используйте `kubeadm token create --print-join-command`.
+
+### Шаг 4: Текущее состояние после инициализации
+
+| Компонент | Статус | Примечание |
+| :--- | :--- | :--- |
+| Control-plane | Инициализирован | Компоненты запущены |
+| kubectl | Настроен | Доступ к кластеру |
+| Node status | NotReady | Требуется CNI |
+| Сеть pod'ов | Не настроена | Следующий шаг |
+
+### Шаг 5: Установка CNI-плагина (Calico)
 
 Установка выполняется **один раз** с любого мастер-узла после инициализации кластера:
 
 ```bash
-# Применить манифест Calico
-# ⚠️ ВЕРСИЯ: v3.31.0 указана в оригинале — проверить совместимость
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml
+# Скачиваем Calico
+# ВЕРСИЯ: v3.28.0 — проверить совместимость с вашей версией Kubernetes
+curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -o calico.yaml
+
+# Меняем CIDR под наш pod-network-cidr
+sed -i 's|192.168.0.0/16|100.64.0.0/16|g' calico.yaml
+
+# Применяем
+kubectl apply -f calico.yaml
 ```
 
-> **Важно**: Проверяйте совместимость версии Calico с вашей версией Kubernetes в [официальной документации Calico](https://docs.tigera.io/calico/latest/about/supported-releases).
+> **Важно**: 
+> - Версия Calico должна соответствовать версии Kubernetes (проверьте в [официальной документации](https://docs.tigera.io/calico/latest/about/supported-releases))
+> - CIDR в манифесте должен совпадать с `--pod-network-cidr` из `kubeadm init`
 
 **Альтернативные CNI**:
 
@@ -139,7 +203,7 @@ kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/
 # Проверка системных подов (все должны быть Running)
 kubectl get pods -n kube-system
 
-# Проверка узлов (все должны быть Ready)
+# Проверка узлов (все должны быть Ready после установки CNI)
 kubectl get nodes
 
 # Проверка компонентов Control Plane
@@ -156,63 +220,53 @@ kubectl get pods -n kube-system -l k8s-app=calico-node
 
 - Все системные поды в статусе `Running`
 - Все узлы в статусе `Ready`
-- 3 пода `etcd`, 3 пода `kube-apiserver`, и т.д.
+- 3 пода `etcd`, 3 пода `kube-apiserver` (для HA кластера)
+- Поды Calico на каждом узле
+
+### Шаг 7: Присоединение остальных мастер-узлов
+
+На **втором и третьем** мастер-узлах выполните команду `kubeadm join` для мастеров (из вывода `kubeadm init`):
+
+```bash
+sudo kubeadm join LOAD_BALANCER_VIP:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash> \
+  --control-plane \
+  --certificate-key <key>
+```
+
+**Параметры**:
+
+- `--control-plane` — указывает, что узел присоединяется как мастер
+- `--certificate-key` — ключ для загрузки сертификатов из кластера (генерируется при `kubeadm init` с `--upload-certs`)
+
+**После выполнения**:
+
+- Мастер присоединяется к кластеру
+- Запускаются компоненты Control Plane как статические поды
+- `etcd` формирует кластер (3 узла для кворума)
+
+### Шаг 8: Присоединение worker-узлов
+
+На **каждом** worker-узле выполните команду `kubeadm join` для воркеров:
+
+```bash
+sudo kubeadm join LOAD_BALANCER_VIP:6443 \
+  --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+> **Примечание**: Worker-узлы не требуют дополнительных флагов, так как не запускают компоненты Control Plane.
 
 ---
 
 ## Дополнительная информация
-
-### Troubleshooting
-
-#### Поды не запускаются
-
-```bash
-# Проверка логов kubelet
-sudo journalctl -u kubelet -f
-
-# Проверка логов контейнеров
-kubectl logs -n kube-system <pod-name>
-
-# Описание проблемного пода
-kubectl describe pod -n kube-system <pod-name>
-```
-
-#### CNI не работает
-
-```bash
-# Проверка подов CNI
-kubectl get pods -n kube-system -l k8s-app=calico-node
-
-# Пересоздание подов CNI
-kubectl delete pod -n kube-system -l k8s-app=calico-node
-```
-
-#### Мастер не присоединяется
-
-- Проверьте доступность балансировщика (VIP)
-- Убедитесь, что `--certificate-key` корректен
-- Проверьте логи `kubeadm join`
 
 ### Связанные документы
 
 - **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
 - **Компоненты**: [Component Installation](./k8s_ha_component_installation.md)
 - **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
-- **Keepalived + HAProxy**: [HA с kubeadm](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)
-- **CNI**: [CNI Overview](../../Networking/Network/cni_overview.md)
+- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
+- **CNI**: [CNI Overview](../../Networking/Network/CNI/definitions.md)
 - **Calico**: [Calico Documentation](https://docs.tigera.io/calico/latest/)
-
-### Версии (требует проверки)
-
-| Компонент | Версия в файле | Статус | Примечание |
-| :--- | :--- | :--- | :--- |
-| **Calico** | v3.31.0 | ⚠️ Проверить | Поддерживает K8s 1.28-1.32 |
-
-### Надежность
-
-| Раздел | Confidence |
-| :--- | :--- |
-| kubeadm init | Этот файл + официалка | 10 |
-| kubeadm join | Этот файл + официалка | 10 |
-| Calico установка | Требует проверки версии | 7 |
-| CNI концепции | [CNI Overview](../../Networking/Network/cni_overview.md) | 10 |
