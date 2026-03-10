@@ -37,4 +37,4 @@ sudo xfs_repair /dev/sdXN
 - Подробнее о влиянии поля `<pass>` в `/etc/fstab` см. в [Управление монтированием файловых систем в Linux](mounting/fstab.md).
 - Для восстановления данных с поврежденных файловых систем или разделов см. [Логическое восстановление данных](data_recovery.md).
 - Для восстановления таблиц разделов (MBR/GPT) см. [Восстановление таблиц разделов](partition_tables_recovery.md).
-- Для мониторинга состояния дисков используйте [`smartctl`](../Diagnostics/Hardware/smartctl.md).
+- Для мониторинга состояния дисков используйте [`smartctl`](../Diagnostics/Hardware/smartctl/index.md).

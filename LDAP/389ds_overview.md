@@ -23,7 +23,7 @@
 
 * [LDAP основы](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
 * [OpenLDAP в Kubernetes](./openldap_kubernetes.md) — сравнение с 389DS
-* [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/ldap_sssd.md)
+* [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/LDAP_SSSD/index.md)
 * [Kubernetes основы](../../Kubernetes/kubernetes_overview.md)
 
 ## Внешние ресурсы

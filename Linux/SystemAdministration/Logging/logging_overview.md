@@ -26,7 +26,7 @@
 | :--- | :--- |
 | `/var/log/syslog` (Debian/Ubuntu) или `/var/log/messages` (RHEL/CentOS) | Главный системный лог |
 | `/var/log/auth.log` (Debian/Ubuntu) или `/var/log/secure` (RHEL/CentOS) | События аутентификации (SSH, sudo). Для детального аудита см. [auditd](./auditd.md) |
-| `/var/log/dmesg` | Сообщения ядра при загрузке. Подробнее: [dmesg](../../Diagnostics/Kernel/dmesg.md) |
+| `/var/log/dmesg` | Сообщения ядра при загрузке. Подробнее: [dmesg](../../Diagnostics/Kernel/dmesg/index.md) |
 | `/var/log/boot.log` | Лог процесса загрузки |
 | `/var/log/apt/` или `/var/log/yum.log` | Логи менеджера пакетов |
 | `/var/log/nginx/`, `/var/log/apache2/`, `/var/log/postgresql/` | Логи приложений |
@@ -90,7 +90,7 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 | :--- | :--- |
 | Сервис не запускается | 1. `journalctl -u <сервис> -b`<br>2. `systemctl status <сервис>`<br>3. `/var/log/<app>/` |
 | Ошибки аутентификации | 1. `journalctl -p err -b`<br>2. `/var/log/auth.log` или `/var/log/secure`<br>3. `ausearch -m USER_LOGIN` |
-| Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [dmesg -T](../../Diagnostics/Kernel/dmesg.md)<br>3. `dmesg --level=err,warn` |
+| Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [dmesg -T](../../Diagnostics/Kernel/dmesg/index.md)<br>3. `dmesg --level=err,warn` |
 | Дисковое пространство | 1. `journalctl --disk-usage`<br>2. `du -sh /var/log/*`<br>3. Проверка `logrotate` |
 | Проблемы загрузки | 1. `journalctl --list-boots`<br>2. `journalctl -b -1`<br>3. [reboot_troubleshooting](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) |
 | Инцидент безопасности | 1. `ausearch -m SYSCALL`<br>2. `/var/log/audit/audit.log`<br>3. `journalctl _UID=0` |

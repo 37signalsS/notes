@@ -200,7 +200,7 @@ backend tcp_backend
 - **Задача:** Распределить входящие запросы к API между несколькими master-узлами.
 - **Решение:** HAProxy работает в режиме L4 (`mode tcp`), принимая трафик на виртуальном IP-адресе (управляемом [Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md)) и пробрасывая его на порт `6443` активных master-узлов. HAProxy также выполняет health-check'и, чтобы направлять трафик только на работающие экземпляры API-сервера.
 
-> Подробное руководство по настройке этой связки приведено в документе [Настройка High Availability API-сервера с помощью Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm_ha_with_keepalived_haproxy.md).
+> Подробное руководство по настройке этой связки приведено в документе [Настройка High Availability API-сервера с помощью Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm/ha_keepalived_haproxy/index.md).
 
 ## Дополнительная информация
 

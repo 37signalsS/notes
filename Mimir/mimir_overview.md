@@ -2,7 +2,7 @@
 
 ## 1. Определения
 
-**Grafana Mimir** — это горизонтально масштабируемое, высокодоступное и мульти-тенантное решение для долгосрочного хранения метрик, полностью совместимое с [Prometheus](../Prometheus/overview.md). Проект разработан Grafana Labs как часть интегрированного стека наблюдаемости ([Loki](../Loki/loki_overview.md), [Grafana](../Grafana/grafana_overview.md), [Tempo](../Tempo/tempo_overview.md), Mimir).
+**Grafana Mimir** — это горизонтально масштабируемое, высокодоступное и мульти-тенантное решение для долгосрочного хранения метрик, полностью совместимое с [Prometheus](../Prometheus/overview.md). Проект разработан Grafana Labs как часть интегрированного стека наблюдаемости ([Loki](../Loki/loki_overview.md), [Grafana](../Grafana/grafana_overview.md), [Tempo](../Tempo/index.md), Mimir).
 
 **История:** Mimir является форком и развитием проекта **Cortex**. Grafana Labs взяла Cortex за основу, значительно доработала его и в 2022 году представила как Mimir, сделав его ключевым компонентом своего облачного и on-premise стека. Он появился как современный ответ на растущую популярность альтернативных решений для долгосрочного хранения, таких как [VictoriaMetrics](../VictoriaMetrics/overview.md) и [Thanos](../Prometheus/scaling/thanos_overview.md).
 
@@ -18,7 +18,7 @@
 
 ### Архитектурная философия
 
-Архитектура Mimir разделяет общие принципы с другими компонентами Grafana Stack ([Loki](../Loki/loki_overview.md), [Tempo](../Tempo/tempo_overview.md)):
+Архитектура Mimir разделяет общие принципы с другими компонентами Grafana Stack ([Loki](../Loki/loki_overview.md), [Tempo](../Tempo/index.md)):
 
 - **Язык:** Все компоненты написаны на **Go**.
 - **Режим развертывания:** Может быть запущен как в виде **одного бинарного файла** (монолит) для простых инсталляций, так и в виде набора **горизонтально масштабируемых микросервисов**.
@@ -217,7 +217,7 @@ prometheus.remote_write "mimir" {
 | [VictoriaMetrics overview](../VictoriaMetrics/overview.md) | Альтернативное решение для хранения |
 | [Thanos overview](../Prometheus/scaling/thanos_overview.md) | Альтернативное решение для хранения |
 | [Loki overview](../Loki/loki_overview.md) | Сбор и хранение логов |
-| [Tempo overview](../Tempo/tempo_overview.md) | Хранение распределённых трассировок |
+| [Tempo overview](../Tempo/index.md) | Хранение распределённых трассировок |
 | [Observability overview](../Concepts/Observability_and_Monitoring/observability_overview.md) | Концепция наблюдаемости |
 
 ### Ключевые концепции

@@ -24,7 +24,7 @@
 | **Nodes** | Минимум 2 worker nodes для HA |
 | **Storage** | StorageClass с поддержкой RWO |
 | **Network** | Ingress/LoadBalancer (MetalLB) для внешнего доступа |
-| **Certificates** | cert-manager для TLS-сертификатов (см. [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/private_ca.md)) |
+| **Certificates** | cert-manager для TLS-сертификатов (см. [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md)) |
 
 ## Компоненты развёртывания
 

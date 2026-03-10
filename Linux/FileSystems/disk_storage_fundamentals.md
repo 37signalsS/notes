@@ -48,7 +48,7 @@
 
 - Подробное описание того, как операционная система взаимодействует с блочными устройствами, см. в [Типы устройств в Linux: блочные и символьные](device_types.md).
 - Организация файловых систем поверх блочных устройств и работа с ними подробно описаны в [Разделы и файловые системы в Linux](partitions_and_filesystems.md).
-- Для мониторинга состояния HDD/SSD используйте утилиту [smartctl](../Diagnostics/Hardware/smartctl.md).
+- Для мониторинга состояния HDD/SSD используйте утилиту [smartctl](../Diagnostics/Hardware/smartctl/index.md).
 - Инвентаризация дисков и контроллеров: [lsscsi, lsblk](../Diagnostics/Hardware/hardware_listing.md).
 - **Связанные темы:**
   - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT

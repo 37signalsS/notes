@@ -76,7 +76,7 @@
 
 В облачных средах эту роль выполняет нативный балансировщик (например, AWS NLB, GCP TCP Load Balancer). В bare-metal окружениях классической реализацией является создание отказоустойчивой точки входа с помощью связки **[Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) + [HAProxy](../../WebServers/Haproxy/haproxy_overview.md)**.
 
-> Подробное пошаговое руководство по настройке этого решения для kubeadm: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kudeadm/kubeadm_ha_with_keepalived_haproxy.md). Альтернативный подход для bare-metal: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
+> Подробное пошаговое руководство по настройке этого решения для kubeadm: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kubeadm/ha_keepalived_haproxy/index.md). Альтернативный подход для bare-metal: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
 
 ### Сетевой и сервисный слой
 

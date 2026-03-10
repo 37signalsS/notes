@@ -1340,7 +1340,7 @@ Networking/Tunnels/gre/gre_architecture.md
 Networking/Tunnels/gre/gre_ipsec_integration.md
 Networking/Tunnels/gre/gre_practical_scenarios.md
 Networking/Tunnels/gre/gre_troubleshooting.md
-Networking/Tunnels/ipip_and_sit.md
+Networking/Tunnels/ipip_and_sit/index.md
 Networking/Tunnels/ipsec/ipsec.md
 Networking/Tunnels/ipsec/ipsec_architecture.md
 Networking/Tunnels/ipsec/ipsec_linux_setup.md

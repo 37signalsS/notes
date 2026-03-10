@@ -37,4 +37,4 @@
   - [Проверка и восстановление целостности ФС](./fsck.md) — `fsck`, `xfs_repair`
   - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT
   - [Создание образа диска](./dd.md) — резервное копирование с помощью `dd`
-  - [Мониторинг состояния дисков](../Diagnostics/Hardware/smartctl.md) —预防ка с помощью SMART
+  - [Мониторинг состояния дисков](../Diagnostics/Hardware/smartctl/index.md) —预防ка с помощью SMART

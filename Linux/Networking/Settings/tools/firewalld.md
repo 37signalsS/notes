@@ -14,7 +14,7 @@
 
 - **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
 - **[iptables основы](./iptables_basics.md)** — низкоуровневое управление
-- **[nftables](./nftables.md)** — современная подсистема
+- **[nftables](./nftables/index.md)** — современная подсистема
 
 ---
 

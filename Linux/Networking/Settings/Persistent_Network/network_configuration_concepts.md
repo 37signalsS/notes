@@ -32,9 +32,9 @@
 
 ## Связанные документы
 
-- **[Настройка статических IP](./persistent_network_setup.md)** — практические сценарии для всех систем
+- **[Настройка статических IP](./index.md)** — практические сценарии для всех систем
 - **[Дополнительные темы](./network_advanced_topics.md)** — IPv6, фиксация имен, диагностика
 - **[Сетевые интерфейсы](../../Concepts/linux_network_interfaces.md)** — типы интерфейсов
 - **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — DNS-резолвинг
 - **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — bonding
-- **[VLAN](../../../Networking/Concepts/vlan_and_L2_switching.md)** — VLAN-конфигурация
+- **[VLAN](../../../Networking/Concepts/vlan_l2_switching/definitions_and_concepts.md)** — VLAN-конфигурация

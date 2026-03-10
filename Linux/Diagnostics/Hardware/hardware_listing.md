@@ -276,7 +276,7 @@ lsmod | grep -i e1000  # Пример для Intel NIC
 
 ### Связанные инструменты
 
-- **`smartctl`**: Мониторинг здоровья дисков — см. [smartctl](./smartctl.md)
+- **`smartctl`**: Мониторинг здоровья дисков — см. [smartctl](./smartctl/index.md)
 - **`dmidecode`**: Низкоуровневая информация о CPU, памяти, BIOS — см. [Диагностика CPU](./cpu_info.md)
 - **`fdisk`, `parted`**: Управление разделами — см. [Разделы и файловые системы](../../FileSystems/partitions_and_filesystems.md)
 - **`mdadm`**: Управление RAID — см. [RAID management](../../FileSystems/raid_management.md)

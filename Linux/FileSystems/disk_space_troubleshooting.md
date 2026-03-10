@@ -43,5 +43,5 @@ sudo tune2fs -m 5 /dev/sdX
   - [Очистка места](../Administration/disk_cleanup.md) — рекомендации по очистке
 
 - **Профилактика:**
-  - [Мониторинг диска](../Diagnostics/Hardware/smartctl.md) — SMART для предупреждения проблем
+  - [Мониторинг диска](../Diagnostics/Hardware/smartctl/index.md) — SMART для предупреждения проблем
   - [Логирование](../Administration/log_rotation.md) — ротация логов для предотвращения переполнения

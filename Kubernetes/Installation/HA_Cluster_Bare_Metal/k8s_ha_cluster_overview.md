@@ -28,7 +28,7 @@
    - Распределяет TCP-трафик на порт `6443` между всеми `kube-apiserver`
    - Примеры: HAProxy, Nginx, F5, облачные NLB
    - Должен быть отказоустойчивым (например, связка Keepalived + HAProxy)
-   - Подробнее: [Keepalived + HAProxy для HA](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md)
+   - Подробнее: [Keepalived + HAProxy для HA](../kubeadm/ha_keepalived_haproxy/index.md)
 
 2. **Виртуальный IP (VIP)**
    - "Плавающий" IP, не привязанный к одному серверу
@@ -127,5 +127,5 @@
 | Компонент | Confidence |
 | :--- | :--- |
 | Архитектура HA | Этот файл | 10 |
-| Балансировка | [kubeadm_ha_with_keepalived_haproxy.md](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md) | 10 |
+| Балансировка | [kubeadm_ha_with_keepalived_haproxy/index.md](../kubeadm/ha_keepalived_haproxy/index.md) | 10 |
 | etcd кворум | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |

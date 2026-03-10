@@ -55,6 +55,6 @@
 ## Дополнительная информация
 
 * [RAID ≠ резервное копирование](./raid-vs-backup.md)
-* [Мониторинг SMART дисков в RAID](../../Diagnostics/Hardware/smartctl.md#проверка-дисков-в-raid-массивах)
+* [Мониторинг SMART дисков в RAID](../../Diagnostics/Hardware/smartctl/index.md#проверка-дисков-в-raid-массивах)
 * [LVM поверх RAID](../LVM/overview_concepts.md)
 * [Настройка fstab для RAID](../mounting/fstab.md)

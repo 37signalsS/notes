@@ -183,7 +183,7 @@ sudo iptables -A INPUT -p vrrp -j DROP
 - **Задача:** Обеспечить единый, стабильный IP-адрес (VIP) для нескольких `kube-apiserver`, развернутых на разных master-узлах.
 - **Решение:** Keepalived управляет VIP, гарантируя, что он всегда назначен на один из работающих master-узлов. Этот VIP затем используется L4-балансировщиком (например, HAProxy) для распределения трафика.
 
-> Подробное руководство по реализации этой схемы вы найдете в документе [Настройка High Availability API-сервера с помощью Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm_ha_with_keepalived_haproxy.md).
+> Подробное руководство по реализации этой схемы вы найдете в документе [Настройка High Availability API-сервера с помощью Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm/ha_keepalived_haproxy/index.md).
 
 ## Дополнительная информация
 
@@ -217,7 +217,7 @@ arping -I eth0 192.168.1.100
 
 ## Связанные документы
 
-- **[VRRP и HA для Kubernetes](../../Kubernetes/Installation/kubeadm_ha_with_keepalived_haproxy.md)** — настройка HA API-сервера.
+- **[VRRP и HA для Kubernetes](../../Kubernetes/Installation/kubeadm/ha_keepalived_haproxy/index.md)** — настройка HA API-сервера.
 - **[Split-Brain в репликации](../../Databases/Concepts/replication.md#проблема-split-brain-и-решение-через-кворум)** — проблема и механизмы защиты.
 - **[tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ VRRP-трафика.
 - **[IP-адресация](../Protocols/ip.md)** — основы VIP и адресации.

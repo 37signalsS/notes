@@ -41,7 +41,7 @@
 - **RAM**: 512 МБ+
 - **Network**: Статический IP, доступный всем узлам
 
-Подробнее: [Keepalived + HAProxy](../kudeadm/kubeadm_ha_with_keepalived_haproxy.md).
+Подробнее: [Keepalived + HAProxy](../kubeadm/ha_keepalived_haproxy/index.md).
 
 ---
 

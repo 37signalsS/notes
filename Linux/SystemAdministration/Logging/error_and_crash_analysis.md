@@ -105,7 +105,7 @@ journalctl -k | grep -i "oom\|killed process"
 
 ### Ссылки по теме
 
-- **Coredump и отладка приложений:** [Core/processes/troubleshooting.md](../../Core/processes/troubleshooting.md)
+- **Coredump и отладка приложений:** [Core/processes/troubleshooting.md](../../Core/processes/Troubleshooting/index.md)
 - **Kernel Panic и kdump:** [Core/kernel/kernel_panic.md](../../Core/kernel/kernel_panic.md)
-- **Логи ядра:** [dmesg.md](../../Diagnostics/Kernel/dmesg.md)
+- **Логи ядра:** [dmesg](../../Diagnostics/Kernel/dmesg/index.md)
 - **Обзор логирования:** [logging_overview.md](./logging_overview.md)

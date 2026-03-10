@@ -75,7 +75,7 @@ Prometheus имеет собственный UI для отладки, но Graf
 | **Grafana** | **Визуализация** | Единый интерфейс для метрик, логов, трассировок | [Обзор](./grafana_overview.md) |
 | **Mimir** | **Метрики** | Масштабируемое хранилище для метрик Prometheus | [Mimir](../Mimir/mimir_overview.md) |
 | **Loki** | **Логи** | Агрегация логов, оптимизированная по стоимости | [Loki](../Loki/loki_overview.md) |
-| **Tempo** | **Трассировки** | Хранилище распределённых трассировок | [Tempo](../Tempo/tempo_overview.md) |
+| **Tempo** | **Трассировки** | Хранилище распределённых трассировок | [Tempo](../Tempo/index.md) |
 | **Alloy** | **Сбор данных** | Унифицированный агент (метрики, логи, трейсы) | [Alloy](./grafana_alloy_overview.md) |
 | **Prometheus** | **Метрики** | Система мониторинга и оповещения | [Prometheus](../Prometheus/overview.md) |
 | **OpenTelemetry** | **Телеметрия** | Стандарт сбора и экспорта телеметрии | [OTel](../OpenTelemetry/opentelemetry_overview.md) |

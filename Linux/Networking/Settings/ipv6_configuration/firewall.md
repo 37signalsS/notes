@@ -168,5 +168,5 @@ nmap -6 -p 80,443 example.com
 
 * **[Настройка адресов](./address_configuration.md)** — конфигурация IPv6
 * **[iptables основы](../tools/iptables_basics.md)** — базовая настройка
-* **[nftables](../tools/nftables.md)** — современный firewall
+* **[nftables](../tools/nftables/index.md)** — современный firewall
 * **[Диагностика](./diagnostics.md)** — решение проблем

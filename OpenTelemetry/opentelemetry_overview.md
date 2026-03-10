@@ -117,7 +117,7 @@ SELECT * FROM users WHERE id = 1 /*traceparent='00-abc...-def...-01'*/;
 
 Гибкость OTel позволяет использовать его с широким спектром бэкендов. Популярные стеки:
 
-- **Стек Grafana Labs:** [Loki](../Loki/loki_overview.md) (логи), [Tempo](../Tempo/tempo_overview.md) (трассировки), [Mimir](../Mimir/mimir_overview.md) (метрики) и [Grafana](../Grafana/grafana_overview.md) для визуализации. Для сбора данных используется [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — агент на базе OTel Collector с языком конфигурации River.
+- **Стек Grafana Labs:** [Loki](../Loki/loki_overview.md) (логи), [Tempo](../Tempo/index.md) (трассировки), [Mimir](../Mimir/mimir_overview.md) (метрики) и [Grafana](../Grafana/grafana_overview.md) для визуализации. Для сбора данных используется [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — агент на базе OTel Collector с языком конфигурации River.
 - **Стек ELK/OpenSearch:** [Elasticsearch](../ELK_Stack/Elasticsearch/elasticsearch_overview.md) / [OpenSearch](../ELK_Stack/OpenSearch/opensearch_overview.md) как единое хранилище для всех трёх сигналов. Data Prepper используется как конвейер для OTLP.
 - **Jaeger:** [Jaeger v2](../Jaeger/jaeger_overview.md) для трассировок (построен на OTel Collector).
 - **Другие:** Коммерческие платформы (Datadog, New Relic, Dynatrace) поддерживают OTLP нативно.

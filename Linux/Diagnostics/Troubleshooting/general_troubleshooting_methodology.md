@@ -23,7 +23,7 @@
 2. **Системные ресурсы:** Убедиться, что сервер не исчерпал лимиты.
     * **CPU/RAM:** [**`htop`**](../Processes/htop.md), [**`top`**](../Processes/top.md)
     * **Дисковое пространство:** [**`df -h`**](../Filesystem/filesystem_and_disk_space_diagnostics.md) (проверка места), `df -i` (проверка inodes)
-    * **Системные ошибки (ядро, OOM Killer):** [**`dmesg -T`**](../Kernel/dmesg.md)
+    * **Системные ошибки (ядро, OOM Killer):** [**`dmesg -T`**](../Kernel/dmesg/index.md)
 
 ### Уровень 2: Процесс и порты
 

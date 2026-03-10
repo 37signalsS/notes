@@ -13,7 +13,7 @@
 - **Стек LGTM (Loki, Grafana, Tempo, Mimir/Prometheus)**: Современный, полностью интегрированный стек наблюдаемости с открытым исходным кодом от Grafana Labs. Подробнее в [обзоре наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
   - **[Loki](../../../Loki/loki_overview.md)**: Система для сбора и агрегации логов, оптимизированная для экономичного хранения.
   - **[Grafana](../../../Grafana/grafana_overview.md)**: Платформа для визуализации и анализа данных, позволяющая объединять метрики, логи и трейсы в едином интерфейсе.
-  - **[Tempo](../../../Tempo/tempo_overview.md)**: Высокомасштабируемое хранилище для распределенных трассировок.
+  - **[Tempo](../../../Tempo/index.md)**: Высокомасштабируемое хранилище для распределенных трассировок.
   - **[Mimir](../../../Mimir/mimir_overview.md)**: Горизонтально масштабируемое хранилище временных рядов для метрик Prometheus. В данном руководстве используется **Prometheus** из состава `kube-prometheus-stack` как упрощенная альтернатива Mimir для локальных окружений.
 - **[OpenTelemetry (OTel)](../../../OpenTelemetry/opentelemetry_overview.md)**: Открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (CNCF).
 - **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера [Kubernetes](../../kubernetes_overview.md). Идеально подходит для разработки, обучения и тестирования.
@@ -44,7 +44,7 @@
 1. **Приложение**: Тестовое Java-приложение, инструментированное с помощью [OpenTelemetry SDK](../../../OpenTelemetry/instrumentation_sdk.md) для генерации логов, метрик и трассировок.
 2. **OpenTelemetry Collector**: Центральный компонент [OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md), который получает телеметрию по протоколу [OTLP](../../../OpenTelemetry/otlp_protocol.md) и экспортирует в бэкенды:
     - Логи → **[Loki](../../../Loki/loki_overview.md)** (через HTTP/Push)
-    - Трассировки → **[Tempo](../../../Tempo/tempo_overview.md)** (через OTLP/gRPC)
+    - Трассировки → **[Tempo](../../../Tempo/index.md)** (через OTLP/gRPC)
     - Метрики → **Prometheus** (через Remote Write) или **[Mimir](../../../Mimir/mimir_overview.md)**
 3. **Grafana**: Единый интерфейс для анализа всех сигналов (метрики, логи, трейсы) с поддержкой кросс-сигнальной корреляции.
 4. **Вспомогательные компоненты**:
@@ -76,7 +76,7 @@
 | :--- | :--- | :--- | :--- |
 | **kube-prometheus-stack** | `>=60.x` | Prometheus 2.x, Grafana 11.x | [Prometheus K8s](../../Prometheus/kubernetes/overview.md) |
 | **Loki** | `>=6.x` | Loki 3.x | [Loki overview](../../../Loki/loki_overview.md) |
-| **Tempo** | `>=1.x` | Tempo 2.x | [Tempo overview](../../../Tempo/tempo_overview.md) |
+| **Tempo** | `>=1.x` | Tempo 2.x | [Tempo overview](../../../Tempo/index.md) |
 | **OpenTelemetry Operator** | `>=0.x` | Operator 0.x | [OTel overview](../../../OpenTelemetry/opentelemetry_overview.md) |
 | **Cert-Manager** | `>=0.16.x` | 1.x | [Cert-Manager](../../ToolsUtilities/cert_manager.md) |
 | **Docker Registry** | `>=2.x` | Registry 2.x | [Docker Registries](../../../Docker/docker_registries.md) |

@@ -46,7 +46,7 @@
 | Источник | Описание |
 | :--- | :--- |
 | **Официальная документация** | [kubeadm-certs](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) |
-| **kubeadm-специфичное** | [Управление сертификатами в kubeadm](../Installation/kudeadm/kubeadm_certificates.md) |
+| **kubeadm-специфичное** | [Управление сертификатами в kubeadm](../Installation/kubeadm/ha_keepalived_haproxy/index.md) |
 | **Kubespray** | [Kubespray installation](../Installation/Kubespray/kubespray_install/basic_concepts.md) |
 
 ## 3. Практические сценарии
@@ -214,7 +214,7 @@ spec:
 
 ### 4.3. Связанные темы
 
-* [kubeadm: Управление сертификатами](../Installation/kudeadm/kubeadm_certificates.md)
+* [kubeadm: Управление сертификатами](../Installation/kubeadm/ha_keepalived_haproxy/index.md)
 * [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
 * [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
 * [PKI Overview](../../Security/Concepts/pki_overview.md)

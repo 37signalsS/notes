@@ -6,7 +6,7 @@
 >
 > - **Метрики:** [Prometheus](../../Prometheus/overview.md) + [Grafana Alloy](../grafana_alloy_overview.md)
 > - **Логи:** [Loki](../../Loki/loki_overview.md) + Alloy
-> - **Трассировки:** [Tempo](../../Tempo/tempo_overview.md)
+> - **Трассировки:** [Tempo](../../Tempo/index.md)
 >
 > Данная документация сохранена для поддержки legacy-систем.
 

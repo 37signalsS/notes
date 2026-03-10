@@ -128,4 +128,4 @@ service:
 - **[Архитектура и Сигналы](./architecture_signals.md)** — модель данных сигналов
 - **[Инструментация и SDK](./instrumentation_sdk.md)** — генерация телеметрии
 - **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — альтернативный Collector с River
-- **[Tempo](../Tempo/tempo_overview.md)** — приём OTLP для трассировок
+- **[Tempo](../Tempo/index.md)** — приём OTLP для трассировок

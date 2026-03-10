@@ -51,7 +51,7 @@
 
 **Что делать:**
 
-1. Проверить SMART диска: [`smartctl -a /dev/sda`](../../Hardware/smartctl.md)
+1. Проверить SMART диска: [`smartctl -a /dev/sda`](../../../Hardware/smartctl/index.md)
 2. Заменить SATA-кабель или проверить подключение
 3. Проверить логи на предмет bad sectors: `dmesg | grep -i "reallocated\|pending\|uncorrectable"`
 
@@ -173,6 +173,6 @@ grep log_buf_len /proc/cmdline
 
 ### Связанные темы
 
-- **[smartctl](../../Hardware/smartctl.md)** — диагностика дисков
+- **[smartctl](../../../Hardware/smartctl/index.md)** — диагностика дисков
 - **[sysctl](../../../Core/kernel/sysctl.md)** — настройка параметров ядра
 - **[boot_process](../../../Core/kernel/boot_process.md)** — процесс загрузки ядра

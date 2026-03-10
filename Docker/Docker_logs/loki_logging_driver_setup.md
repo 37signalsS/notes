@@ -97,4 +97,4 @@ docker run \
 
 - **Общая структура логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
 - **Обзор Loki:** [Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)
-- **Пример развертывания Loki:** [Настройка Loki Stack через Docker Compose](../../Loki/docker_compose_setup.md)
+- **Пример развертывания Loki:** [Настройка Loki Stack через Docker Compose](../../Loki/Docker_Compose/index.md)

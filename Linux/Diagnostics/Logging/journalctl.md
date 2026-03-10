@@ -284,14 +284,14 @@ journalctl --mask
 ### Интеграция с другими системами логирования
 
 * **rsyslog:** `rsyslog` может забирать сообщения из `journald` через модуль `imjournal` для дальнейшей обработки и пересылки. Настройка описана в [rsyslog.md](../../SystemAdministration/Logging/rsyslog.md).
-* **dmesg:** Для просмотра только логов ядра можно использовать [`dmesg`](../../Diagnostics/Kernel/dmesg.md) — основное руководство для работы с кольцевым буфером ядра, низкоуровневой диагностики оборудования и OOM Killer. `journalctl -k` предоставляет больше возможностей фильтрации и долгосрочного хранения.
+* **dmesg:** Для просмотра только логов ядра можно использовать [`dmesg`](../../Diagnostics/Kernel/dmesg/index.md) — основное руководство для работы с кольцевым буфером ядра, низкоуровневой диагностики оборудования и OOM Killer. `journalctl -k` предоставляет больше возможностей фильтрации и долгосрочного хранения.
 * **auditd:** Для аудита событий безопасности (системные вызовы, доступ к файлам) используется [`auditd`](../../SystemAdministration/Logging/auditd.md). Это отдельная подсистема, не связанная с `journald`.
 
 ### Ссылки по теме
 
 * **Демон systemd-journald:** [journald.md](../../SystemAdministration/Logging/journald.md) — конфигурация демона, хранение логов.
 * **Обзор системы логирования:** [logging_overview.md](../../SystemAdministration/Logging/logging_overview.md) — общая архитектура, `logrotate`, `logger`.
-* **Логи ядра:** [dmesg.md](../../Diagnostics/Kernel/dmesg.md) — диагностика проблем ядра.
+* **Логи ядра:** [dmesg](../../Diagnostics/Kernel/dmesg/index.md) — диагностика проблем ядра.
 * **Устранение проблем с загрузкой:** [reboot_troubleshooting.md](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) — анализ проблем загрузки через `journalctl`.
 * **Systemd:** [overview.md](../../Core/systemd/overview.md) — общие концепции systemd.
 * **Анализ сбоев:** [error_and_crash_analysis.md](../../SystemAdministration/Logging/error_and_crash_analysis.md) — `coredumpctl`, `kdump`.

@@ -141,8 +141,8 @@ sudo ip link set vxlan0 mtu 1450
 
 ### Связанные темы
 
-* **[GRE](../../../../Networking/Tunnels/gre.md)** — детальное описание GRE
-* **[IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — туннели IP-in-IP и 6in4
+* **[GRE](../../../../Networking/Tunnels/gre/gre.md)** — детальное описание GRE
+* **[IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit/index.md)** — туннели IP-in-IP и 6in4
 * **[VXLAN](../../../../Networking/Tunnels/vxlan.md)** — виртуальные расширяемые LAN
 * **[Туннелирование](../../../../Networking/Tunnels/tunneling_overview.md)** — общие концепции
 

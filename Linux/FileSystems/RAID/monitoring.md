@@ -117,7 +117,7 @@ sudo smartctl -d 3ware,0 -a /dev/twe0      # 3ware RAID
 
 > **Важно:** Для `mdadm` (программный RAID) диски видны напрямую — `smartctl -a /dev/sdX` работает без ключей `-d`.
 
-Подробнее: [smartctl для RAID](../../Diagnostics/Hardware/smartctl.md#проверка-дисков-в-raid-массивах)
+Подробнее: [smartctl для RAID](../../Diagnostics/Hardware/smartctl/index.md#проверка-дисков-в-raid-массивах)
 
 ---
 
@@ -219,5 +219,5 @@ cat /sys/block/md0/md/sync_completed
 
 * [Управление RAID 1](./raid1-management.md#мониторинг-и-управление-сбоями)
 * [Управление RAID 5](./raid5-management.md#управление-сбоями)
-* [SMART мониторинг](../../Diagnostics/Hardware/smartctl.md)
+* [SMART мониторинг](../../Diagnostics/Hardware/smartctl/index.md)
 * [Диагностика hardware](../../Diagnostics/Hardware/hardware_listing.md)

@@ -63,7 +63,7 @@ Netfilter организует правила в **таблицы** (по наз
     nft add rule inet filter input tcp dport 22 accept
     ```
 
-    Подробнее: **[nftables: современная подсистема фильтрации](../../Linux/Networking/Settings/tools/nftables.md)** — архитектура, синтаксис, практические сценарии.
+    Подробнее: **[nftables: современная подсистема фильтрации](../../Linux/Networking/Settings/tools/nftables/index.md)** — архитектура, синтаксис, практические сценарии.
 
 - **ufw** (упрощенный интерфейс для `iptables`):
 

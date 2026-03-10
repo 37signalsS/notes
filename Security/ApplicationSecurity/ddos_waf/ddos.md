@@ -135,5 +135,5 @@ deny all;
 
 ### См. также
 
-* **[Защита от DoS-атак в Angie/Nginx](../../../WebServers/Angie/high_load_tuning_and_dos_protection.md)** — практическое руководство по настройке rate limiting, GeoIP-блокировки и других методов на уровне веб-сервера
+* **[Защита от DoS-атак в Angie/Nginx](../../../WebServers/Angie/High_Load/dos_protection.md)** — практическое руководство по настройке rate limiting, GeoIP-блокировки и других методов на уровне веб-сервера
 * **[Fail2Ban](../../../Linux/Security/Tools/Fail2Ban.md)** — автоматическая блокировка нарушителей на основе логов

@@ -31,7 +31,7 @@
 
 #### С помощью файрвола
 
-Альтернативный метод — фильтрация на сетевом уровне через `[iptables](../../../Networking/Settings/tools/iptables_basics.md)`, `[nftables](../../../Networking/Settings/tools/nftables.md)` или `firewalld`.
+Альтернативный метод — фильтрация на сетевом уровне через `[iptables](../../../Networking/Settings/tools/iptables_basics.md)`, `[nftables](../../../Networking/Settings/tools/nftables/index.md)` или `firewalld`.
 
 ### Смена стандартного порта
 

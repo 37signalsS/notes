@@ -42,7 +42,7 @@ nmcli connection up vlan10-users
 
 ### Вариант C: Netplan (Ubuntu 18.04+)
 
-**Подробная документация:** **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/persistent_network_setup.md#3-ubuntu-1710-netplan)** — полные примеры конфигураций (статические IP, bonding, VLAN, маршруты).
+**Подробная документация:** **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md#3-ubuntu-1710-netplan)** — полные примеры конфигураций (статические IP, bonding, VLAN, маршруты).
 
 ```yaml
 # /etc/netplan/01-netcfg.yaml

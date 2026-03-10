@@ -237,4 +237,4 @@
 * [Создание RAID 5](./raid5-management.md) — ⚠️ только для тестовых сред
 * [Мониторинг RAID](./monitoring.md)
 * [RAID ≠ бэкап](./raid-vs-backup.md)
-* [SMART для дисков в RAID](../../Diagnostics/Hardware/smartctl.md#проверка-дисков-в-raid-массивах)
+* [SMART для дисков в RAID](../../Diagnostics/Hardware/smartctl/index.md#проверка-дисков-в-raid-массивах)

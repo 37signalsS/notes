@@ -117,4 +117,4 @@ service:
 - **[Инструментация и SDK](./instrumentation_sdk.md)** — практическая инструментация
 - **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — альтернативный дистрибутив Collector
 - **[Jaeger v2](../Jaeger/jaeger_overview.md)** — система трассировки на базе OTel
-- **[Tempo](../Tempo/tempo_overview.md)** — хранилище трассировок Grafana Labs
+- **[Tempo](../Tempo/index.md)** — хранилище трассировок Grafana Labs

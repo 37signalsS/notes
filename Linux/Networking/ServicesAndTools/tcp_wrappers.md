@@ -124,7 +124,7 @@ journalctl -u ssh | grep -i "wrap"
 Для современных систем рекомендуется:
 
 1. **Для SSH**: Используйте директивы `AllowUsers`, `AllowGroups`, `DenyUsers`, `DenyGroups` в `/etc/ssh/sshd_config`
-2. **Для других служб**: Настройте правила в `[nftables](../Settings/tools/nftables.md)` или `[iptables](../Settings/tools/iptables_basics.md)`
+2. **Для других служб**: Настройте правила в `[nftables](../Settings/tools/nftables/index.md)` или `[iptables](../Settings/tools/iptables_basics.md)`
 3. **Для динамического управления**: Используйте `firewalld` или `ufw`
 
 **Пример миграции SSH с TCP Wrappers на sshd_config:**
