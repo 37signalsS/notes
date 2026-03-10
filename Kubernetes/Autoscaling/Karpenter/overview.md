@@ -42,7 +42,7 @@
 
 ### Интеграции
 
-* **[HPA](hpa_detailed.md)** — Karpenter реагирует на поды, созданные HPA.
+* **[HPA](../HPA/index.md)** — Karpenter реагирует на поды, созданные HPA.
 * **[VPA](vpa_detailed.md)** — VPA помогает оптимизировать `requests` для лучшего подбора узлов.
 * **[KEDA](keda_detailed.md)** — KEDA создаёт HPA, который активирует Karpenter.
 * **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — альтернатива Karpenter, не рекомендуется использовать одновременно.

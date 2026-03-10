@@ -17,7 +17,7 @@
 * **Задача**: Поддерживать заданное количество идентичных Подов (реплик).
 * **При сбое**: Если нода выходит из строя, `ReplicaSet` обнаруживает, что количество работающих реплик стало меньше желаемого. Он немедленно создает недостающие Поды, которые `Scheduler` размещает на здоровых нодах.
 
-> Подробнее см. [Deployment](./deployment.md).
+> Подробнее см. [Deployment](./Deployment/index.md).
 
 #### Service
 
@@ -148,7 +148,7 @@ spec:
 
 ## Связанные темы
 
-* [Deployment](./deployment.md) — управление stateless-приложениями
+* [Deployment](./Deployment/index.md) — управление stateless-приложениями
 * [StatefulSet](./statefulset.md) — управление stateful-приложениями
 * [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
 * [Пробы (Probes)](./probes.md) — проверки жизнеспособности

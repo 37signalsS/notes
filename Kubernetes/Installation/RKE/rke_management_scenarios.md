@@ -172,7 +172,7 @@ deploy:
 
 - **[RKE: Основные концепции](./rke_concepts.md)** — определения и архитектура
 - **[RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)** — установка и kubeconfig
-- **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — альтернативный метод установки
+- **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный метод установки
 
 ## Внешние ресурсы
 

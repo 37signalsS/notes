@@ -225,7 +225,7 @@ curl localhost:8080/health
 
 ## 3.9. Интеграция с Kubespray
 
-При использовании [Kubespray](../Installation/Kubespray/installation.md):
+При использовании [Kubespray](../Installation/Kubespray/kubespray_install/basic_concepts.md):
 
 ```bash
 # Получение admin.conf

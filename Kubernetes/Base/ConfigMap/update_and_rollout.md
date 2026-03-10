@@ -36,7 +36,7 @@
 kubectl rollout restart deployment/<deployment-name>
 ```
 
-Подробнее см. в документе [Deployment](../deployment.md).
+Подробнее см. в документе [Deployment](../Deployment/index.md).
 
 ### Механизм обновления томов (симлинки)
 
@@ -126,5 +126,5 @@ spec:
 
 * [Использование ConfigMap в подах](./pod_usage.md)
 * [Лучшие практики](./best_practices.md)
-* [Deployment](../deployment.md)
+* [Deployment](../Deployment/index.md)
 * [GitOps](../../../GitOps/GitOps_overview.md)

@@ -3,7 +3,7 @@
 > **Навигация:**
 >
 > - [Обзор Grafana](./grafana_overview.md)
-> - [Дашборды](./grafana_dashboards.md)
+> - [Дашборды](./dashboards/definitions_and_concepts.md)
 > - [Источники данных](./grafana_datasources.md)
 
 ## Определения

@@ -4,7 +4,7 @@
 
 **Bare-Metal** — физические серверы без гипервизора. Обеспечивают максимальную производительность, но требуют ручного управления инфраструктурой и отказами.
 
-**kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kudeadm/kubeadm_quickstart.md).
+**kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kubeadm/ha_keepalived_haproxy/index.md).
 
 **containerd** — высокоуровневая CRI-совместимая среда выполнения контейнеров. Проект CNCF, стандарт для Kubernetes. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
 
@@ -116,7 +116,7 @@
 - **Установка**: [Component Installation](./k8s_ha_component_installation.md)
 - **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
 - **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
-- **Альтернатива**: [Kubespray HA](../ha_cluster_deployment_with_kubespray.md)
+- **Альтернатива**: [Kubespray HA](../Kubespray/HA/index.md)
 - **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
 - **Теория HA**: [High Availability Overview](../../../Concepts/High_Availability/ha_overview.md)
 - **Control Plane**: [Архитектура](../../Concepts/control_plane_architecture.md)

@@ -161,7 +161,7 @@ resources:
 ### Связанные документы
 
 - **[VPA](../Autoscaling/vpa_detailed.md)** — подробная информация о Vertical Pod Autoscaler
-- **[HPA](../Autoscaling/hpa_detailed.md)** — горизонтальное масштабирование
+- **[HPA](../Autoscaling/HPA/index.md)** — горизонтальное масштабирование
 - **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик для VPA/Goldilocks
 - **[Prometheus](../../Prometheus/prometheus_api.md)** — система мониторинга
 

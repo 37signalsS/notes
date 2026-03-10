@@ -198,7 +198,7 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 - **Подготовка узлов**: [Node Preparation](./k8s_ha_node_preparation.md)
 - **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
 - **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
-- **kubeadm**: [Quickstart](../kudeadm/kubeadm_quickstart.md)
+- **kubeadm**: [Quickstart](../kubeadm/ha_keepalived_haproxy/index.md)
 - **CNI**: [CNI Overview](../../Networking/Network/cni_overview.md)
 
 ### Надежность

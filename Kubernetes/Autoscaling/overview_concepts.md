@@ -14,7 +14,7 @@
 
 | Уровень | Компонент | Что масштабирует | Направление |
 |---------|-----------|------------------|-------------|
-| **Поды** | [HPA](hpa_detailed.md) | Количество реплик | Горизонтально |
+| **Поды** | [HPA](HPA/index.md) | Количество реплик | Горизонтально |
 | **Контейнеры** | [VPA](vpa_detailed.md) | Resources (CPU/RAM) | Вертикально |
 | **Узлы** | [Cluster Autoscaler](cluster_autoscaler_detailed.md) | Количество узлов | Горизонтально |
 | **Узлы (оптимизировано)** | [Karpenter](karpenter_detailed.md) | Количество узлов | Горизонтально |
@@ -27,7 +27,7 @@
 
 Автоматически увеличивает или уменьшает количество реплик подов на основе метрик (CPU, memory, custom, external). Работает с Deployment, ReplicaSet, StatefulSet.
 
-**Подробнее:** [HPA Detailed](hpa_detailed.md)
+**Подробнее:** [HPA Detailed](HPA/index.md)
 
 #### Vertical Pod Autoscaler (VPA)
 
@@ -155,7 +155,7 @@
 ### Интеграции между компонентами
 
 * **HPA ↔ PDB** — HPA учитывает [PDB](pod_disruption_budget.md) при масштабировании вниз.
-* **HPA ↔ Pod Distribution** — созданные HPA поды распределяются согласно [правилам распределения](pod_distribution.md).
+* **HPA ↔ Pod Distribution** — созданные HPA поды распределяются согласно [правилам распределения](pod_distribution/basic_concepts.md).
 * **VPA ↔ In-Place Resize** — VPA использует In-Place Pod Resize для применения рекомендаций без перезапуска.
 * **KEDA ↔ HPA** — KEDA создаёт и управляет нативным HPA.
 * **CA/Karpenter ↔ HPA/KEDA** — CA/Karpenter реагируют на поды, созданные HPA/KEDA.
@@ -168,7 +168,7 @@
 ### Связанные темы
 
 * **[Pod Disruption Budget](pod_disruption_budget.md)** — защита от плановых выселений
-* **[Pod Distribution](pod_distribution.md)** — распределение подов для отказоустойчивости
+* **[Pod Distribution](pod_distribution/basic_concepts.md)** — распределение подов для отказоустойчивости
 * **[Scaling Patterns](scaling_patterns.md)** — шардирование, workers + queue
 * **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик для HPA/VPA
 * **[High Availability](../Base/high_availability.md)** — общая концепция высокой доступности

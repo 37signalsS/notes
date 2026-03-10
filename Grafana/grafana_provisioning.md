@@ -4,7 +4,7 @@
 >
 > - [Обзор Grafana](./grafana_overview.md)
 > - [Источники данных](./grafana_datasources.md)
-> - [Дашборды](./grafana_dashboards.md)
+> - [Дашборды](./dashboards/definitions_and_concepts.md)
 > - [Алертинг](./grafana_alerting.md)
 > - [Плагины](./grafana_plugins.md)
 > - [Установка через Docker](./Installation/docker_compose_setup.md)
@@ -256,5 +256,5 @@ Ansible позволяет управлять ресурсами Grafana чер�
 ### Ссылки
 
 - [Документация провиженинга](https://grafana.com/docs/grafana/latest/administration/provisioning/)
-- [Provisioning дашбордов](./grafana_dashboards.md)
+- [Provisioning дашбордов](./dashboards/provisioning_configmap.md)
 - [Provisioning алертов](./grafana_alerting.md)

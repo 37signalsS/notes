@@ -31,7 +31,7 @@ metadata:
 Не все ресурсы в Kubernetes привязаны к `Namespace`.
 
 * **Namespaced-ресурсы** (существуют внутри `Namespace`):
-  * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./deployment.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
+  * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
   * Конфигурация и сервисы: [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
   * Политики: `NetworkPolicy`, `ResourceQuota`, `LimitRange`.
 

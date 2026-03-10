@@ -51,7 +51,7 @@
 
 - **[RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)** — установка kubectl, получение kubeconfig
 - **[RKE: Управление и troubleshooting](./rke_management_scenarios.md)** — практические сценарии управления
-- **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — альтернативный метод установки
+- **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный метод установки
 - **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — детали конфигурации
 - **[RKE2 документация](https://docs.rke2.io/)** — следующая версия RKE
 

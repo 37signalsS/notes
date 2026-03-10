@@ -23,7 +23,7 @@
 
 | Инструмент | Подход | Безопасность | Сложность |
 | :--- | :--- | :--- | :--- |
-| **[kind](./kind_quickstart.md)** | Контейнеры с стандартным K8s | Стандартная | Низкая |
+| **[kind](./kind/kind_concepts.md)** | Контейнеры с стандартным K8s | Стандартная | Низкая |
 | **talosctl** | Контейнеры с Talos OS | mTLS, immutable | Средняя |
 | **minikube** | VM с стандартным K8s | Стандартная | Низкая |
 
@@ -234,7 +234,7 @@ Talos поддерживает system extensions для дополнительн
 
 ### Связанные документы
 
-- **[kind: Локальные кластеры](./kind_quickstart.md)** — альтернатива со стандартным K8s
+- **[kind: Локальные кластеры](./kind/kind_concepts.md)** — альтернатива со стандартным K8s
 - **[kubeconfig и подключение](../Operations/kubeconfig_and_connection.md)** — работа с контекстами
 - **[Control Plane архитектура](../Concepts/control_plane_architecture.md)** — компоненты управления
 

@@ -12,7 +12,7 @@
 
 По этой причине поды почти всегда управляются через **высокоуровневые контроллеры**, такие как:
 
-* **[Deployment](../deployment.md)** (для stateless-приложений)
+* **[Deployment](../Deployment/index.md)** (для stateless-приложений)
 * **[StatefulSet](../StatefulSet/statefulset_overview.md)** (для stateful-приложений)
 * **[DaemonSet](../daemonset.md)** (для запуска по одному поду на каждом узле)
 

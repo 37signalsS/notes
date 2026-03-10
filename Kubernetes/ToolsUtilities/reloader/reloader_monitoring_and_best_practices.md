@@ -63,7 +63,7 @@ kubectl describe deployment reloader -n monitoring
 - **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
 - **[ConfigMap](../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
 - **[Secrets](../Security/application_secrets_management.md)** — управление секретами
-- **[Deployment](../Base/deployment.md)** — rolling update стратегия
+- **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия
 
 ### Репозиторий и документация
 

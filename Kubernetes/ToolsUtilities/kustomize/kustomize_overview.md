@@ -135,7 +135,7 @@ kustomize version
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — практические сценарии
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — генерация ConfigMap/Secret, интеграция с Helm
 - **[Helm](../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
-- **[kubeconform](../kubeconform.md)** — валидация манифестов
+- **[kubeconform](../kubeconform/index.md)** — валидация манифестов
 - **[ConfigMap](../../Base/ConfigMap/pod_usage.md)** — использование ConfigMap
 - **[GitOps](../../GitOps/GitOps_overview.md)** — применение в GitOps
 

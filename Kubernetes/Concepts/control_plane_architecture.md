@@ -138,22 +138,22 @@ rotateCertificates: true
 ### Ссылки для углубленного изучения
 
 * **kube-apiserver**:
-  * [Высокая доступность kube-apiserver и его реализация](../Installation/ha_cluster_deployment_with_kubespray.md)
+  * [Высокая доступность kube-apiserver и его реализация](../Installation/Kubespray/HA/index.md)
   * [Мониторинг kube-apiserver](../MonitoringLogging/KubeAPIServer/kube_apiserver_monitoring.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kube-apiserver)](../Security/tls_and_mtls_in_kubernetes.md)
 * **etcd**:
   * [Обзор etcd](./etcd_overview.md)
   * [Алгоритм Raft](../../etcd/raft_consensus.md)
   * [Мониторинг etcd](../../etcd/etcd_monitoring.md)
-  * [Высокая доступность etcd в процессе установки кластера](../Installation/ha_cluster_deployment_with_kubespray.md)
+  * [Высокая доступность etcd в процессе установки кластера](../Installation/Kubespray/HA/index.md)
 * **kube-scheduler**:
   * [Quality of Service (QoS), Requests и Limits (использование планировщиком)](../Scheduling/qos_limit_and_requests.md)
 * **kubelet**:
   * [Пробы (Liveness, Readiness, Startup Probes) и их использование kubelet'ом](../Base/probes.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kubelet)](../Security/tls_and_mtls_in_kubernetes.md)
   * [Часто встречающиеся ошибки и их устранение (проблемы с kubelet)](../Troubleshooting/Common_Errors/overview.md)
-  * [kubeadm: Быстрый старт](../Installation/kudeadm/kubeadm_quickstart.md)
-  * [kubeadm: Создание кластера](../Installation/kudeadm/kubeadm_cluster_creation.md)
+  * [kubeadm: Быстрый старт](../Installation/kubeadm/ha_keepalived_haproxy/index.md)
+  * [kubeadm: Создание кластера](../Installation/kubeadm/ha_keepalived_haproxy/cluster_initialization.md)
   * [Глубокое погружение в DNS (настройки kubelet для DNS)](../Networking/dns_deep_dive.md)
   * [Альтернативные среды выполнения контейнеров (взаимодействие с CRI)](../../Docker/alternative_runtimes_and_tools.md)
 * **kube-proxy**:

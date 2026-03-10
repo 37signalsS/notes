@@ -109,4 +109,4 @@ deploy_job:
 - **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — полное руководство по базовым концепциям
 - **[Кэширование в GitLab CI](./gitlab_ci_caching.md)** — детальное сравнение `cache` и `artifacts`, стратегии кэширования
 - **[Продвинутые рабочие процессы](./gitlab_ci_advanced_workflow.md)** — `rules`, `needs`, `resource_group`, `parallel:matrix`
-- **[Дочерние пайплайны](./gitlab_ci_downstream_pipelines.md)** — декомпозиция сложных пайплайнов
+- **[Дочерние пайплайны](./Downstream_Pipelines/definitions.md)** — декомпозиция сложных пайплайнов

@@ -245,7 +245,7 @@ kubectl describe pod my-app-pod | grep -A 10 "Limits/Requests"
 ### Интеграции
 
 * **[VPA](vpa_detailed.md)** — VPA в режиме `Auto` использует In-Place Pod Resize для применения рекомендаций.
-* **[HPA](hpa_detailed.md)** — HPA масштабирует количество подов, In-Place Resize оптимизирует ресурсы каждого пода.
+* **[HPA](HPA/index.md)** — HPA масштабирует количество подов, In-Place Resize оптимизирует ресурсы каждого пода.
 * **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — CA реагирует на изменения `requests` при принятии решений о масштабировании кластера.
 
 ### Ограничения

@@ -34,7 +34,7 @@ iptables -L -n | grep -E 'KUBE|CNI'
 kubectl apply -f <cni-manifest.yaml>
 ```
 
-> **См. также:** [`../../../Security/network_policies.md`](../../../Security/network_policies.md), [`../../../Security/network_policies/calico.md`](../../../Security/network_policies/calico.md)
+> **См. также:** [`../../../Security/network_policies.md`](../../../Security/network_policies.md), [`../../../Security/network_policies/Calico/index.md`](../../../Security/network_policies/Calico/index.md)
 
 ## 4. Узел выключен или недоступен по сети
 

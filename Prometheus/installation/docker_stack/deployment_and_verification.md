@@ -9,5 +9,5 @@
     ```
 
 4. **Prometheus**: Откройте `http://localhost:9090`. На вкладке **Status -> Targets** убедитесь, что все цели (`prometheus`, `node-exporter`, `cadvisor`) имеют статус `UP`.
-5. **Grafana**: Откройте `http://localhost:3000`. Войдите (`admin`/`admin`), добавьте Prometheus как [Data Source](../../../Grafana/grafana_datasources.md) (`http://prometheus:9090`) и импортируйте [дашборды](../../../Grafana/grafana_dashboards.md) (например, `1860` для Node Exporter, `13981` для Docker/cAdvisor).
+5. **Grafana**: Откройте `http://localhost:3000`. Войдите (`admin`/`admin`), добавьте Prometheus как [Data Source](../../../Grafana/grafana_datasources.md) (`http://prometheus:9090`) и импортируйте [дашборды](../../../Grafana/dashboards/definitions_and_concepts.md) (например, `1860` для Node Exporter, `13981` для Docker/cAdvisor).
 6. **Alertmanager**: Откройте `http://localhost:9093`.

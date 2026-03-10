@@ -67,7 +67,7 @@ nodes:
 ## Связанные документы
 
 - **[Локальный кластер с Talos](./local_cluster_with_talosctl.md)** — альтернатива с Talos OS
-- **[kubeadm: Быстрый старт](./kudeadm/kubeadm_quickstart.md)** — базовая утилита инициализации
+- **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — базовая утилита инициализации
 - **[kubeconfig и подключение](../Operations/kubeconfig_and_connection.md)** — работа с контекстами
 - **[kind: Практические сценарии](./kind_practical_scenarios.md)** — установка, создание кластеров, примеры
 - **[kind: Конфигурация](./kind_configuration.md)** — подробное описание конфигурации YAML

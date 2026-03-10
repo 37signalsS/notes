@@ -256,7 +256,7 @@ spec:
 ## Связанные темы
 
 * [Pod Lifecycle](./Pod/pod_lifecycle_and_state.md) — фазы и условия пода
-* [Deployment](./deployment.md) — стратегии обновления с использованием проб
+* [Deployment](./Deployment/index.md) — стратегии обновления с использованием проб
 * [High Availability](./high_availability.md) — роль проб в обеспечении отказоустойчивости
 * [Service](../Networking/Service/service_overview.md) — как Service использует readinessProbe
 * [Graceful Shutdown](./Pod/pod_lifecycle_and_state.md#завершение-работы-пода) — корректное завершение работы приложений

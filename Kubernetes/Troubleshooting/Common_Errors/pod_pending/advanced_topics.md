@@ -43,7 +43,7 @@ expr: count(kube_pod_status_phase{phase="Pending"}) > 5
 for: 5m
 ```
 
-> **См. также:** [`pod_distribution.md`](../../../Autoscaling/pod_distribution.md)
+> **См. также:** [`pod_distribution.md`](../../../Autoscaling/pod_distribution/basic_concepts.md)
 
 ---
 

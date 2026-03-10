@@ -72,7 +72,7 @@
 ### Связанные темы
 
 * [Secret](./secrets/secrets_basics.md) — для конфиденциальных данных
-* [Deployment](./deployment.md) — управление жизненным циклом подов и перезапуск
+* [Deployment](./Deployment/index.md) — управление жизненным циклом подов и перезапуск
 * [StatefulSet](./statefulset.md) — использование ConfigMap в stateful-приложениях
 * [Безопасность Secret](./secrets/security.md) — дополнительные аспекты безопасности
 * [Pod](./Pod/pod_overview.md) — базовый объект развертывания

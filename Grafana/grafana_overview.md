@@ -5,7 +5,7 @@
 > - [Установка через Docker Compose](./Installation/docker_compose_setup.md)
 > - [Установка через Helm](./Installation/grafana_helm_installation.md)
 > - [Источники данных](./grafana_datasources.md)
-> - [Дашборды](./grafana_dashboards.md)
+> - [Дашборды](./dashboards/definitions_and_concepts.md)
 > - [Алертинг](./grafana_alerting.md)
 > - [Провиженинг](./grafana_provisioning.md)
 > - [Аутентификация](./grafana_user_management_and_authentication.md)
@@ -38,7 +38,7 @@
 
 | Возможность | Описание | Файл |
 | :--- | :--- | :--- |
-| **Визуализация** | Интерактивные дашборды, графики, таблицы | [Дашборды](./grafana_dashboards.md) |
+| **Визуализация** | Интерактивные дашборды, графики, таблицы | [Дашборды](./dashboards/definitions_and_concepts.md) |
 | **Источники данных** | Prometheus, Loki, PostgreSQL, MySQL и др. | [Источники данных](./grafana_datasources.md) |
 | **Алертинг** | Unified Alerting с уведомлениями | [Алертинг](./grafana_alerting.md) |
 | **Провиженинг** | Управление конфигурацией как код | [Провиженинг](./grafana_provisioning.md) |

@@ -41,7 +41,7 @@
 
 | Компонент | Интеграция |
 |-----------|------------|
-| **[HPA](../hpa_detailed.md)** | Масштабирование шардов по CPU/memory |
+| **[HPA](../HPA/index.md)** | Масштабирование шардов по CPU/memory |
 | **[Pod Distribution](../pod_distribution.md)** | Распределение шардов по узлам/зонам для отказоустойчивости |
 | **[Pod Disruption Budget](../pod_disruption_budget.md)** | Защита шардов при масштабировании узлов |
 | **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** | Добавление узлов при масштабировании шардов |

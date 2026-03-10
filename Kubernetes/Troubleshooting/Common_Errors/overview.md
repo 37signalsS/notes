@@ -79,6 +79,6 @@
 
 - [Общий обзор troubleshooting](../troubleshooting_overview.md) — инструменты, методы, sleep-паттерн
 - [Pod Lifecycle](../../Base/Pod/pod_lifecycle_and_state.md) — состояния пода, probe
-- [Deployment](../../Base/deployment.md) — стратегии развертывания, rollback
+- [Deployment](../../Base/Deployment/index.md) — стратегии развертывания, rollback
 - [High Availability](../../Base/high_availability.md) — PDB, eviction timeout
-- [Pod Distribution](../../Autoscaling/pod_distribution.md) — affinity, topologySpreadConstraints
+- [Pod Distribution](../../Autoscaling/pod_distribution/basic_concepts.md) — affinity, topologySpreadConstraints

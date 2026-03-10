@@ -268,5 +268,5 @@ Dex разворачивается как отдельное приложени�
 * **Базовые концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
 * **Архитектура:** [Istio Architecture](./istio_architecture.md)
 * **Трафик:** [Traffic Management](./traffic_management.md)
-* **Grafana:** [Grafana Dashboards](../Grafana/grafana_dashboards.md), [Grafana Helm Installation](../Grafana/Installation/grafana_helm_installation.md)
+* **Grafana:** [Grafana Dashboards](../Grafana/dashboards/definitions_and_concepts.md), [Grafana Helm Installation](../Grafana/Installation/grafana_helm_installation.md)
 * **Prometheus:** [Prometheus Service Discovery](../Prometheus/service_discovery_and_relabeling.md)

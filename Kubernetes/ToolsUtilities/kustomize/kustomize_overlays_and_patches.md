@@ -93,4 +93,4 @@ kubectl kustomize overlays/production | kubeconform -strict -
 - **[Обзор и концепции](./kustomize_overview.md)** — базовые определения
 - **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — структура проекта
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — генерация ConfigMap/Secret, интеграция с Helm
-- **[kubeconform](../kubeconform.md)** — валидация манифестов
+- **[kubeconform](../kubeconform/index.md)** — валидация манифестов

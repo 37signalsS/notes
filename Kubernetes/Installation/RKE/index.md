@@ -12,6 +12,6 @@
 
 ## Связанные документы
 
-- **[kubeadm: Быстрый старт](../kudeadm/kubeadm_quickstart.md)** — альтернативный метод установки Kubernetes
+- **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный метод установки Kubernetes
 - **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — детали конфигурации доступа
 - **[RKE2 документация](https://docs.rke2.io/)** — следующая версия RKE с улучшенной безопасностью

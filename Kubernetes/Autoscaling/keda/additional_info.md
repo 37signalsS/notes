@@ -2,7 +2,7 @@
 
 ## Интеграции
 
-* **[HPA](../hpa_detailed.md)** — KEDA создаёт и управляет HPA, не используйте одновременно для одного Deployment.
+* **[HPA](../HPA/index.md)** — KEDA создаёт и управляет HPA, не используйте одновременно для одного Deployment.
 * **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — CA реагирует на поды, созданные KEDA.
 * **[Karpenter](../karpenter_detailed.md)** — Karpenter создаёт узлы для подов, масштабированных KEDA.
 * **[Prometheus](../../Prometheus/overview.md)** — Prometheus как источник метрик для KEDA.

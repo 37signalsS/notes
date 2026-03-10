@@ -9,7 +9,7 @@
 > Связанные концепции:
 >
 > * [Обзор стратегий развертывания в CI/CD](../../CI-CD/Core_Concepts/deployment_strategies.md)
-> * [Основы Deployment в Kubernetes](../Base/deployment.md)
+> * [Основы Deployment в Kubernetes](../Base/Deployment/index.md)
 > * [Управление трафиком в Service Mesh](../../Service_Mesh/traffic_management.md)
 
 ---

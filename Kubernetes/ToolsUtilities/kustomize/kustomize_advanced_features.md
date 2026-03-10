@@ -64,7 +64,7 @@ EOF
 kubectl apply -k overlays/production/
 ```
 
-**Подробнее:** [Интеграция Helm + Kustomize](../Helm/helm_advanced_topics.md#2-гибридное-использование-с-kustomize)
+**Подробнее:** [Интеграция Helm + Kustomize](../Helm/Advanced/scenarios.md#2-гибридное-использование-с-kustomize)
 
 ## 3. Валидация с kubeconform
 
@@ -82,4 +82,4 @@ kubectl kustomize overlays/production | kubeconform -strict -
 - **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — структура проекта
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — типы патчей
 - **[Helm](../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
-- **[kubeconform](../kubeconform.md)** — валидация манифестов
+- **[kubeconform](../kubeconform/index.md)** — валидация манифестов

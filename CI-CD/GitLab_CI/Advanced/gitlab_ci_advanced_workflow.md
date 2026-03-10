@@ -32,5 +32,5 @@
 - **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции Pipeline, Stage, Job
 - **[Кэширование в GitLab CI](./gitlab_ci_caching.md)** — оптимизация скорости пайплайнов
 - **[Исполнители (Runners)](./gitlab_ci_runners_executors.md)** — настройка сред выполнения
-- **[Дочерние пайплайны](./gitlab_ci_downstream_pipelines.md)** — декомпозиция сложных пайплайнов
+- **[Дочерние пайплайны](./Downstream_Pipelines/definitions.md)** — декомпозиция сложных пайплайнов
 - **[Валидация и версионирование](./pipeline_validation_and_versioning.md)** — проверка конфигурации

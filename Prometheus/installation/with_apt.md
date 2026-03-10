@@ -204,5 +204,5 @@
 * **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
 * **Управление службами Systemd**: Подробное руководство по `systemctl` [service_management](../../Linux/Core/systemd/service_management.md).
 * **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).
-* **Дашборды в Grafana**: Создание, импорт и управление дашбордами [grafana_dashboards](../../Grafana/grafana_dashboards.md).
+* **Дашборды в Grafana**: Создание, импорт и управление дашбордами [grafana_dashboards](../../Grafana/dashboards/definitions_and_concepts.md).
 * **Утилита `ss`**: Подробнее о проверке сетевых соединений [ss](../../Linux/Diagnostics/Networking/ss.md).

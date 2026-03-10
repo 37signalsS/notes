@@ -50,7 +50,7 @@
 * **Что это?** Увеличение количества экземпляров (реплик) подов.
 * **Реализация в Kubernetes:**
   * Вручную: изменение поля `replicas` в `Deployment`.
-  * Автоматически: с помощью **[Horizontal Pod Autoscaler (HPA)](../Autoscaling/hpa_detailed.md)**.
+  * Автоматически: с помощью **[Horizontal Pod Autoscaler (HPA)](../Autoscaling/HPA/index.md)**.
 * **Плюсы:** Позволяет теоретически неограниченно масштабировать нагрузку, повышает отказоустойчивость.
 * **Минусы:** Требует, чтобы приложение было stateless или имело правильно настроенную работу с состоянием.
 * **Недостатки:** Требуется балансировщик нагрузки для распределения запросов/ответов между новыми ресурсами. Также может возникнуть проблема несогласованности данных при горизонтальном масштабировании.
@@ -83,7 +83,7 @@
 * **CPU Throttling**: Причины возникновения троттлинга CPU и его связь с `limits.cpu` описаны в документе о [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md).
 * **Автомасштабирование**: Для глубокого понимания механизмов автомасштабирования см.:
   * [Обзор концепций автомасштабирования](../Autoscaling/overview_concepts.md)
-  * [Horizontal Pod Autoscaler (HPA)](../Autoscaling/hpa_detailed.md)
+  * [Horizontal Pod Autoscaler (HPA)](../Autoscaling/HPA/index.md)
   * [Vertical Pod Autoscaler (VPA)](../Autoscaling/vpa_detailed.md)
   * [KEDA — масштабирование по событиям](../Autoscaling/keda_detailed.md)
   * [Cluster Autoscaler и Karpenter](../Autoscaling/cluster_autoscaler_detailed.md)

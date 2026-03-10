@@ -83,4 +83,4 @@ current-context: default-context
   * Конфигурация генерируется и добавляется в локальный `~/.kube/config` автоматически с помощью CLI-утилит провайдера (`gcloud container clusters get-credentials`, `aws eks update-kubeconfig`, `az aks get-credentials`).
 
 * **Локальные кластеры (Minikube, Kind)**
-  * Инструменты, такие как [Minikube](https://minikube.sigs.k8s.io/docs/) или [Kind](../Installation/kind_quickstart.md), автоматически создают и настраивают `kubeconfig` при создании кластера.
+  * Инструменты, такие как [Minikube](https://minikube.sigs.k8s.io/docs/) или [Kind](../Installation/kind/kind_concepts.md), автоматически создают и настраивают `kubeconfig` при создании кластера.

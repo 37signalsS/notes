@@ -105,7 +105,7 @@ Service Mesh состоит из двух независимых плоскос�
 **См. также:**
 
 - [Chaos Engineering](../Chaos_Engineering/chaos_engineering_overview.md) — fault injection через Service Mesh.
-- [Grafana Dashboards](../Grafana/grafana_dashboards.md) — импорт дашбордов через sidecar.
+- [Grafana Dashboards](../Grafana/dashboards/definitions_and_concepts.md) — импорт дашбордов через sidecar.
 
 ---
 

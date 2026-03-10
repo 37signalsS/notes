@@ -47,7 +47,7 @@
 | :--- | :--- |
 | **Официальная документация** | [kubeadm-certs](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) |
 | **kubeadm-специфичное** | [Управление сертификатами в kubeadm](../Installation/kudeadm/kubeadm_certificates.md) |
-| **Kubespray** | [Kubespray installation](../Installation/Kubespray/installation.md) |
+| **Kubespray** | [Kubespray installation](../Installation/Kubespray/kubespray_install/basic_concepts.md) |
 
 ## 3. Практические сценарии
 
