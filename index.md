@@ -239,7 +239,7 @@ Databases/PostgreSQL/Operations/zero_downtime_migration.md
 Databases/PostgreSQL/overview.md
 Databases/redis_overview.md
 Databases/redis_vs_memcached.md
-Databases/SQL/installation_security.md
+Databases/installation_security.md
 Databases/timescaledb.md
 devops_useful_links.md
 Docker/alternative_runtimes_and_tools.md
@@ -366,7 +366,7 @@ etcd/clustering_and_recovery.md
 etcd/etcd_monitoring.md
 etcd/mvcc_versioning_and_compaction.md
 etcd/raft_consensus.md
-FileD/file.d_overview.md
+file.d_overview.md
 GEMINI.md
 Git/git_basics.md
 Git/git_branching.md
@@ -411,7 +411,7 @@ GitOps/Crossplane/overview.md
 GitOps/Crossplane/provider_kubernetes_setup.md
 GitOps/Crossplane/provider_yandex_cloud_setup.md
 GitOps/Crossplane/terraform_comparison.md
-GitOps/overview.md
+GitOps/flux.md
 GitOps/GitOps_overview.md
 GitOps/gitops_notifications.md
 GitOps/secrets_encryption.md
@@ -599,7 +599,7 @@ Kubernetes/MonitoringLogging/kube_apiserver_monitoring.md
 Kubernetes/MonitoringLogging/metrics-server.md
 Kubernetes/MonitoringLogging/monitoring_and_logging_architecture_overview.md
 Kubernetes/MonitoringLogging/netdata.md
-Kubernetes/metallb.md
+Kubernetes/Networking/metallb.md
 Kubernetes/Networking/dns_deep_dive.md
 Kubernetes/Networking/gateway_api/definitions.md
 Kubernetes/Networking/gateway_api/envoy_gateway.md
@@ -1218,7 +1218,7 @@ Loki/loki_stack_setup/grafana_installation.md
 Loki/loki_stack_setup/logql_examples.md
 Loki/loki_stack_setup/loki_installation.md
 Loki/loki_stack_setup/promtail_installation.md
-mimir_overview.md
+Mimir/mimir_overview.md
 mise.md
 Networking/CDN/cdn_caching_and_invalidation.md
 Networking/CDN/cdn_overview.md
@@ -1339,7 +1339,7 @@ Networking/Tunnels/gre/gre_architecture.md
 Networking/Tunnels/gre/gre_ipsec_integration.md
 Networking/Tunnels/gre/gre_practical_scenarios.md
 Networking/Tunnels/gre/gre_troubleshooting.md
-Networking/Tunnels/ipip_and_sit/index.md
+Networking/Tunnels/ipip_and_sit.md
 Networking/Tunnels/ipsec/ipsec.md
 Networking/Tunnels/ipsec/ipsec_architecture.md
 Networking/Tunnels/ipsec/ipsec_linux_setup.md
@@ -1472,7 +1472,7 @@ Security/Concepts/oauth2_overview.md
 Security/Concepts/pki_overview.md
 Security/Concepts/secrets_management_overview.md
 Security/Concepts/steganography.md
-security_practice_platforms.md
+Security/security_practice_platforms.md
 Security/Supply_Chain_Security/artifact_signing.md
 Security/Supply_Chain_Security/build_integrity.md
 Security/Supply_Chain_Security/dependency_and_sbom_analysis.md
