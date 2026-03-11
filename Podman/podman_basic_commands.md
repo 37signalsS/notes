@@ -13,6 +13,7 @@
 - **Совместимость с Docker CLI** — команды работают идентично (`alias docker=podman`)
 - **Нативная поддержка подов** — группировка контейнеров по аналогии с Kubernetes
 - **Интеграция с systemd** — генерация unit-файлов для автозапуска контейнеров
+- **Автообновление контейнеров** — встроенный механизм updates/rollback через `podman auto-update`
 - **Экономия ресурсов** — на 65% меньше памяти в режиме простоя по сравнению с Docker
 
 ## Установка
@@ -263,5 +264,6 @@ Podman следует Unix-философии и является частью �
 - **Архитектура:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
 - **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
 - **Сравнение с Docker:** [Podman vs Docker](./podman_vs_docker.md)
+- **Автообновление:** [Автообновление и откат контейнеров](./podman_auto_update.md)
 - **Экосистема инструментов:** [Альтернативные среды выполнения](../Docker/alternative_runtimes_and_tools.md)
 - **Изоляция в Linux:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)

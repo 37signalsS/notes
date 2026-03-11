@@ -433,6 +433,7 @@ Grafana/Installation/docker_compose_setup.md
 Grafana/Installation/grafana_helm_installation.md
 Grafana/integrations/grafana_with_graphite_collectd.md
 Interview_and_Work/Interview/System_Design.md
+Interview_and_Work/Interview/ABT_фреймворк.md
 Interview_and_Work/Interview/Деньги_и_условия.md
 Interview_and_Work/Interview/Карьера_и_поиск_работы.md
 Interview_and_Work/Interview/Личные_вопросы_и_красные_флаги.md
@@ -541,6 +542,7 @@ Kubernetes/Concepts/etcd_overview.md
 Kubernetes/Concepts/high_load_preparation.md
 Kubernetes/Concepts/kubernetes_crd.md
 Kubernetes/Concepts/kubernetes_operators.md
+Kubernetes/Concepts/kube_scheduler.md
 Kubernetes/Concepts/metadata_and_labels.md
 Kubernetes/Concepts/multi-tenancy.md
 Kubernetes/Concepts/priorityclass.md
@@ -1359,6 +1361,7 @@ OpenTelemetry/instrumentation_sdk.md
 OpenTelemetry/opentelemetry_overview.md
 OpenTelemetry/otlp_protocol.md
 Podman/Concepts/linux_isolation.md
+Podman/podman_auto_update.md
 Podman/podman_basic_commands.md
 Podman/podman_daemonless_architecture.md
 Podman/podman_rootless.md

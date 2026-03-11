@@ -77,7 +77,7 @@ rotateCertificates: true
     * **ReplicaSet/Deployment Controller:** Поддерживает заданное количество реплик пода, создавая или удаляя их при необходимости.
     * **Endpoints Controller:** Обновляет объект `Endpoints` (IP-адреса подов), связывая `Services` с их реальными бэкендами.
 
-* **Планирование (`kube-scheduler`)**: `kube-scheduler` также "наблюдает" за API-сервером. Как только появляется новый под без назначенного узла, планировщик выбирает для него наиболее подходящий узел и сообщает об этом решении API-серверу, который записывает эту информацию в `etcd`.
+* **Планирование (`kube-scheduler`)**: `kube-scheduler` также "наблюдает" за API-сервером. Как только появляется новый под без назначенного узла, планировщик выбирает для него наиболее подходящий узел и сообщает об этом решении API-серверу, который записывает эту информацию в `etcd`. Подробно о процессе планирования: [Kube-scheduler](./kube_scheduler.md).
 
 ## Практические сценарии
 
@@ -147,7 +147,11 @@ rotateCertificates: true
   * [Мониторинг etcd](../../etcd/etcd_monitoring.md)
   * [Высокая доступность etcd в процессе установки кластера](../Installation/Kubespray/HA/index.md)
 * **kube-scheduler**:
-  * [Quality of Service (QoS), Requests и Limits (использование планировщиком)](../Scheduling/qos_limit_and_requests.md)
+  * [Kube-scheduler: Планировщик подов](./kube_scheduler.md) — SSoT по процессу планирования
+  * [Quality of Service (QoS), Requests и Limits](../Scheduling/qos_limit_and_requests.md) — использование ресурсов планировщиком
+  * [Affinity и Anti-Affinity](../Scheduling/affinity.md) — правила размещения подов
+  * [Taints and Tolerations](../Scheduling/taints_and_tolerations.md) — механизм отталкивания
+  * [PriorityClass](./priorityclass.md) — приоритеты подов и вытеснение
 * **kubelet**:
   * [Пробы (Liveness, Readiness, Startup Probes) и их использование kubelet'ом](../Base/probes.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kubelet)](../Security/tls_and_mtls_in_kubernetes.md)

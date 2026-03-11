@@ -39,6 +39,9 @@
 3. **Интеграция с `systemd`**:
     - Поскольку контейнеры (через `conmon`) являются обычными дочерними процессами пользовательской сессии, они идеально вписываются в модель управления `systemd`.
     - Podman может автоматически генерировать `systemd unit`-файлы (`podman generate systemd`), что позволяет управлять контейнерами как стандартными системными службами (автозапуск, зависимости, перезапуск при сбое).
+    - Нативная интеграция с systemd enables встроенные функции автообновления и отката контейнеров через `podman auto-update`.
+
+> **Подробнее:** [Автообновление и откат контейнеров](./podman_auto_update.md)
 
 ### Генерация systemd-юнитов для автозапуска
 
@@ -154,5 +157,6 @@ docker-compose up -d
 
 - **Сравнение с Docker:** [Podman vs Docker](./podman_vs_docker.md)
 - **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
+- **Автообновление:** [Автообновление и откат контейнеров](./podman_auto_update.md)
 - **Изоляция в Linux:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)
 - **Экосистема инструментов:** [Альтернативные среды выполнения](../Docker/alternative_runtimes_and_tools.md)

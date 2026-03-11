@@ -16,6 +16,7 @@
 | **Безопасность** | Изначально `root-centric`, но поддерживает `rootless` режим (требует настройки). Безопасность зависит от защиты демона. | `Rootless-first` дизайн. Контейнеры по умолчанию запускаются от имени обычного пользователя, используя **[user namespaces](../Docker/Concepts/linux_isolation.md#1-пространства-имён-namespaces)**. Работает "из коробки" без дополнительной настройки. |
 | **Среда выполнения** | `containerd` + `runc` | `crun` (часто по умолчанию, быстрее) или `runc`. |
 | **Интеграция с ОС** | Ограниченная. Для автозапуска контейнеров требуются [собственные systemd-юниты](../Docker/docker_systemd.md). | Глубокая. Команда `podman generate systemd` автоматически создает `unit`-файлы для управления контейнерами. |
+| **Автообновление** | Требует внешних инструментов (Watchtower). | Встроенное через `podman auto-update` + systemd-таймеры. |
 | **Группы контейнеров** | `docker-compose` (официальный инструмент) | `podman-compose` (сторонняя утилита) или концепция **Pods** — групп контейнеров с общими ресурсами. |
 | **Интеграция с K8s** | Отсутствует встроенная генерация манифестов. | `podman generate kube` / `podman play kube` для прямого взаимодействия с Kubernetes-манифестами. |
 | **Сеть** | `libnetwork` | `Netavark` и `Aardvark-dns` (для rootful) или `slirp4netns`/`pasta` (для rootless). |
@@ -125,6 +126,7 @@ podman login registry.example.com
 - **Архитектура Docker:** [Обзор Docker](../Docker/docker_overview.md)
 - **Архитектура Podman:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
 - **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
+- **Автообновление:** [Автообновление и откат контейнеров](./podman_auto_update.md)
 - **Механизмы изоляции:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)
 - **Экосистема инструментов:** [Альтернативные среды выполнения](../Docker/alternative_runtimes_and_tools.md)
 - **Запуск `systemd` в контейнере:** [Docker и systemd](../Docker/docker_systemd.md)
