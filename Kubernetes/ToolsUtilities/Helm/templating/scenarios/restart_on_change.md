@@ -70,4 +70,4 @@ spec:
 
 - [Функции](../functions.md) — sha256sum, include, toYaml
 - [Условная логика](./conditionals.md) — условное создание ресурсов
-- [helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../Helm/helm_templating.md) — обзорная страница

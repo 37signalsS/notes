@@ -176,5 +176,5 @@
 - **[Обзор туннелирования](./tunneling_overview.md)** — классификация туннельных протоколов
 - **[MTU и VPN](./Troubleshooting/mtu_and_vpn.md)** — проблемы MTU в VPN-туннелях
 - **[WireGuard](../../Vpn/wireguard.md)** — современная альтернатива IPSec
-- **[GRE с IPsec](./gre.md)** — комбинация GRE + IPSec
+- **[GRE с IPsec](./gre/gre.md)** — комбинация GRE + IPSec
 - **[Фрагментация IP](../Protocols/ip_fragmentation.md)** — теория фрагментации

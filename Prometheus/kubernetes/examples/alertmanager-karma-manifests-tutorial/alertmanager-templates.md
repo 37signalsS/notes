@@ -24,5 +24,5 @@ data:
 
 ## Смотрите также
 
-- [Конфигурация Alertmanager](./03-alertmanager-config.md) — подключение шаблонов
-- [Alertmanager StatefulSet](./05-alertmanager-statefulset.md) — монтирование шаблонов
+- [Конфигурация Alertmanager](./alertmanager-config.md) — подключение шаблонов
+- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — монтирование шаблонов

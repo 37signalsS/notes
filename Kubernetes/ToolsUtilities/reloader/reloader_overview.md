@@ -100,7 +100,7 @@ metadata:
 | **Checksum-аннотация** | Хеш в манифесте | Работает без контроллера | Требует настройки CI/CD |
 | **ArgoCD** | GitOps | Полный контроль | Сложнее в настройке |
 
-**Подробнее:** [Обновление ConfigMap и его влияние на поды](../Base/ConfigMap/update_and_rollout.md)
+**Подробнее:** [Обновление ConfigMap и его влияние на поды](../../Base/ConfigMap/update_and_rollout.md)
 
 ### Лучшие практики
 
@@ -121,10 +121,10 @@ metadata:
 - **[Установка Reloader](./reloader_installation.md)** — установка через Helm и манифесты
 - **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
 - **[Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)** — логи и диагностика
-- **[ConfigMap](../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
+- **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
 - **[Secrets](../Security/application_secrets_management.md)** — управление секретами
 - **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия
-- **[Helm](./Helm/helm_overview.md)** — установка через Helm
+- **[Helm](../Helm/helm_overview.md)** — установка через Helm
 
 ### Репозиторий и документация
 

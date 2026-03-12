@@ -105,18 +105,18 @@ ACK Number = 1024 (ожидается байт №1024)
 | Флаг | Название | Описание | Использование |
 | :--- | :--- | :--- | :--- |
 | **NS** | Nonce Sum | Экспериментальный, защита от сокрытия пакетов | Редко |
-| **CWR** | Congestion Window Reduced | Уведомление об уменьшении cwnd | [Congestion Control](./congestion_control.md) |
+| **CWR** | Congestion Window Reduced | Уведомление об уменьшении cwnd | [Congestion Control](./congestion/congestion_control.md) |
 | **ECE** | ECN-Echo | Сигнал о перегрузке (ECN) | [ECN](#ecn-explicit-congestion-notification) |
 | **URG** | Urgent | Указатель срочности активен | Устарел |
 | **ACK** | Acknowledgment | Поле Ack Number валидно | Всегда, кроме SYN |
 | **PSH** | Push | Немедленная доставка приложению | Редко |
 | **RST** | Reset | Немедленный разрыв соединения | Ошибки, отказы |
-| **SYN** | Synchronize | Синхронизация ISN | [Handshake](./connection_management.md) |
-| **FIN** | Finish | Завершение соединения | [Завершение](./connection_management.md#завершение-соединения) |
+| **SYN** | Synchronize | Синхронизация ISN | [Handshake](./connection/connection_management.md) |
+| **FIN** | Finish | Завершение соединения | [Завершение](./connection/connection_management.md#завершение-соединения) |
 
 #### 7. Размер окна (Window Size, 16 бит)
 
-**Назначение:** управление потоком ([Flow Control](./flow_control.md))
+**Назначение:** управление потоком ([Flow Control](./Flow_Control/flow_control.md))
 
 **Значение:**
 
@@ -161,5 +161,5 @@ ACK Number = 1024 (ожидается байт №1024)
 ### Связанные темы
 
 - **[Надежность TCP](./reliability_mechanisms.md)** — как поля заголовка обеспечивают надежность
-- **[Handshake](./connection_management.md)** — использование SYN, ACK, Sequence Number
+- **[Handshake](./connection/connection_management.md)** — использование SYN, ACK, Sequence Number
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — влияние параметров на заголовок

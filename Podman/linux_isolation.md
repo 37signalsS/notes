@@ -2,4 +2,4 @@
 
 Основная информация о механизмах изоляции в Linux (пространства имён и контрольные группы), которые используются в Podman, Docker и других системах контейнеризации, собрана в едином документе.
 
-> **Перейти к основному руководству: [Изоляция в Linux: Namespaces и Cgroups](../../Docker/Concepts/linux_isolation.md)**
+> **Перейти к основному руководству: [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md)**

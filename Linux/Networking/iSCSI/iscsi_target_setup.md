@@ -56,4 +56,4 @@ sudo targetcli
 
 - **[Основные концепции](./iscsi_concepts.md)** — определения и архитектура
 - **[Настройка Initiator](./iscsi_initiator_setup.md)** — подключение и использование
-- **[Firewall](../../Settings/linux_firewall_management.md)** — настройка firewall
+- **[Firewall](../../Settings/tools/linux_firewall_management.md)** — настройка firewall

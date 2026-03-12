@@ -184,6 +184,6 @@ docker exec 389ds tail -f /var/log/dirsrv/slapd-*/errors
 ### Связанные темы
 
 * [Docker развёртывание](./docker.md)
-* [Kubernetes развёртывание](./kubernetes.md)
+* [Kubernetes развёртывание](./k8s_deploy/basic_concepts.md)
 * [Плагины](./plugins.md)
 * [Безопасность](./overview.md#Безопасность)

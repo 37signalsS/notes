@@ -14,7 +14,7 @@
 
 * Защищает от старых дубликатов сегментов
 * Усложняет предсказание последовательности (защита от spoofing)
-* Обменивается в [handshake](./connection_management.md#установка-соединения-tcp-handshake)
+* Обменивается в [handshake](./connection/connection_management.md#установка-соединения-tcp-handshake)
 
 **Пример установки соединения:**
 
@@ -81,5 +81,5 @@ ACK:        ack=3001 (ожидается байт 3001)
 ## Связанные темы
 
 * **[Acknowledgments](./acknowledgments.md)** — подтверждения получения
-* **[Header Format](./header_format.md)** — поле Sequence Number в заголовке
-* **[Connection Management](./connection_management.md)** — обмен ISN в handshake
+* **[Header Format](./Header_Format/header_format.md)** — поле Sequence Number в заголовке
+* **[Connection Management](./connection/connection_management.md)** — обмен ISN в handshake

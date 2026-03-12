@@ -37,6 +37,6 @@ racoonctl show-sa esp
 ## Связанные документы
 
 - **[Обзор туннелирования](./tunneling_overview.md)** — классификация туннельных протоколов
-- **[GRE с IPsec](./gre.md)** — комбинация GRE + IPSec
+- **[GRE с IPsec](./gre/gre.md)** — комбинация GRE + IPSec
 - **[WireGuard](../../Vpn/wireguard.md)** — современная альтернатива
 - **[MTU и VPN](./Troubleshooting/mtu_and_vpn.md)** — проблемы фрагментации

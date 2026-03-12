@@ -114,7 +114,7 @@
 - **[Безопасность и синхронизация](./vcluster_security_and_sync.md)** — ResourceQuota, синхронизация ресурсов
 - **[Namespaces](../Base/namespace.md)** — основы namespace'ов
 - **[RBAC](../Security/rbac/rbac_overview.md)** — управление доступом
-- **[Helm](./Helm/helm_overview.md)** — установка через Helm
+- **[Helm](../Helm/helm_overview.md)** — установка через Helm
 
 ### Репозиторий и документация
 

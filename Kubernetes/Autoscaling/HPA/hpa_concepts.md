@@ -56,6 +56,6 @@ HPA работает по принципу термостата с период�
 
 - **[Практические сценарии](./hpa_scenarios.md)** — предварительные требования, сценарии использования
 - **[Дополнительные темы](./hpa_advanced.md)** — диагностика, проблемы, best practices, ограничения
-- **[KEDA](../keda_detailed.md)** — событийное масштабирование
+- **[KEDA](../Autoscaling/keda_detailed.md)** — событийное масштабирование
 - **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
 - **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик

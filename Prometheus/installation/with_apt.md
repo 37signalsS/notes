@@ -6,7 +6,7 @@
 * **Node Exporter**: Экспортер, устанавливаемый на отслеживаемые хосты для сбора метрик операционной системы (CPU, RAM, диск, сеть и т.д.).
 * **Grafana**: Платформа для визуализации данных, подключающаяся к Prometheus для отображения метрик в виде наглядных дашбордов.
 
-> **См. также:** [Prometheus overview](../overview.md), [Grafana](../../Grafana/grafana_overview.md).
+> **См. также:** [Prometheus overview](./overview.md), [Grafana](../../Grafana/grafana_overview.md).
 
 ## Основные концепции
 
@@ -198,7 +198,7 @@
 
 ## Дополнительная информация
 
-* **Prometheus**: Общая информация об архитектуре и компонентах [overview](../overview.md).
+* **Prometheus**: Общая информация об архитектуре и компонентах [overview](./overview.md).
 * **Grafana**: Полный обзор возможностей и функций платформы [grafana_overview](../../Grafana/grafana_overview.md).
 * **Node Exporter**: Детальное описание и настройка [exporters](../Exporters/overview.md).
 * **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).

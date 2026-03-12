@@ -96,4 +96,4 @@ spec:
 - [Traefik](./traefik.md) — альтернативная реализация
 - [cert-manager](./cert_manager.md) — интеграция с TLS
 
-**Parent:** [Gateway API](../gateway_api.md)
+**Parent:** [Gateway API](../gateway_api/definitions.md)

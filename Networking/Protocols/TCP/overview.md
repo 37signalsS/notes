@@ -24,9 +24,9 @@
 | :--- | :--- | :--- |
 | **Надежность** | Гарантирует доставку данных | [Механизмы надежности](./reliability_mechanisms.md) (ACK, retransmission) |
 | **Упорядоченность** | Данные получаются в порядке отправки | [Sequence Numbers](./reliability_mechanisms.md) |
-| **Ориентация на соединение** | Требуется установка соединения | [Управление соединением](./connection_management.md) |
-| **Управление потоком** | Защита буфера получателя от переполнения | [Flow Control](./flow_control.md) |
-| **Управление перегрузкой** | Адаптация к пропускной способности сети | [Congestion Control](./congestion_control.md) |
+| **Ориентация на соединение** | Требуется установка соединения | [Управление соединением](./connection/connection_management.md) |
+| **Управление потоком** | Защита буфера получателя от переполнения | [Flow Control](./Flow_Control/flow_control.md) |
+| **Управление перегрузкой** | Адаптация к пропускной способности сети | [Congestion Control](./congestion/congestion_control.md) |
 
 ### Место в стеке TCP/IP
 
@@ -79,11 +79,11 @@ TCP работает на **транспортном уровне** модели
 
 | Файл | Описание |
 | :--- | :--- |
-| [`header_format.md`](./header_format.md) | Структура заголовка TCP, флаги, опции |
-| [`connection_management.md`](./connection_management.md) | Handshake, состояния, завершение соединения |
+| [`header_format.md`](./Header_Format/header_format.md) | Структура заголовка TCP, флаги, опции |
+| [`connection_management.md`](./connection/connection_management.md) | Handshake, состояния, завершение соединения |
 | [`reliability_mechanisms.md`](./reliability_mechanisms.md) | Sequence numbers, ACK, retransmission, SACK |
-| [`flow_control.md`](./flow_control.md) | Управление потоком (receiver window) |
-| [`congestion_control.md`](./congestion_control.md) | Управление перегрузкой (cwnd, BBR, CUBIC) |
+| [`flow_control.md`](./Flow_Control/flow_control.md) | Управление потоком (receiver window) |
+| [`congestion_control.md`](./congestion/congestion_control.md) | Управление перегрузкой (cwnd, BBR, CUBIC) |
 
 ### Связанные темы
 

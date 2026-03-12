@@ -52,4 +52,4 @@ spec:
 ## Дополнительные ссылки
 
 - [Именованные шаблоны](../templates/_helpers.md) — создание и использование
-- [helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../Helm/helm_templating.md) — обзорная страница

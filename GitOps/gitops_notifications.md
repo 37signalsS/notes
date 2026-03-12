@@ -96,6 +96,6 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
 ## Дополнительная информация
 
 - **[ArgoCD Notifications](../ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
-- **[Flux Overview](../Flux/overview.md)**: Архитектура Flux и notification-controller.
+- **[Flux Overview](../overview.md)**: Архитектура Flux и notification-controller.
 - **Официальная документация ArgoCD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
 - **Официальная документация Flux**: [Notification Controller](https://fluxcd.io/flux/components/notification/)

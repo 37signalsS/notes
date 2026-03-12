@@ -11,7 +11,7 @@
 - **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
 - **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
 - **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
-- **[nftables](./nftables/index.md)** — современная подсистема (рекомендуется для Debian 11+)
+- **[nftables](./nftables_basics.md)** — современная подсистема (рекомендуется для Debian 11+)
 
 ---
 
@@ -38,7 +38,7 @@ sudo nft list ruleset > /etc/nftables.conf
 sudo systemctl enable --now nftables
 ```
 
-**Подробнее:** **[nftables: современная подсистема фильтрации](./nftables/index.md)** — архитектура, синтаксис, практические сценарии (fail2ban, сегментирование, тестирование).
+**Подробнее:** **[nftables: современная подсистема фильтрации](./nftables_basics.md)** — архитектура, синтаксис, практические сценарии (fail2ban, сегментирование, тестирование).
 
 **Debian/Ubuntu (классический iptables):**
 
@@ -99,5 +99,5 @@ Docker активно управляет `iptables` для сетевой изо
 ### Ссылки по теме
 
 - **[iptables основы](./iptables_basics.md)** — полезные команды iptables
-- **[nftables](./nftables/index.md)** — сохранение правил nftables
+- **[nftables](./nftables_basics.md)** — сохранение правил nftables
 - **[firewalld](./firewalld.md)** — управление зонами и сервисами

@@ -98,4 +98,4 @@ env:
 - [Функции](./functions.md) — ключевые функции для работы с шаблонами
 - [Именованные шаблоны](./templates/_helpers.md) — создание переиспользуемых блоков
 - [Практические сценарии](./scenarios/overview.md) — примеры использования
-- [helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../Helm/helm_templating.md) — обзорная страница

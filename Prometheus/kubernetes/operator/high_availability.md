@@ -209,5 +209,5 @@ spec:
 
 * **[Prometheus CRD](./crd/prometheus.md)** — описание Prometheus
 * **[Alertmanager CRD](./crd/alertmanager.md)** — описание Alertmanager
-* **[Security](./security.md)** — безопасность
-* **[Alertmanager кластеризация](../alertmanager.md#кластеризация)** — базовая настройка
+* **[Security](./Security/index.md)** — безопасность
+* **[Alertmanager кластеризация](../../alertmanager.md#кластеризация)** — базовая настройка

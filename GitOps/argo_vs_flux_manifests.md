@@ -198,7 +198,7 @@ spec:
 ---
 
 - **[Обзор ArgoCD](../ArgoCD/argocd_overview.md)**: Подробное введение в архитектуру и возможности ArgoCD.
-- **[Обзор Flux](../Flux/overview.md)**: Введение в философию и компоненты GitOps Toolkit от Flux.
+- **[Обзор Flux](../overview.md)**: Введение в философию и компоненты GitOps Toolkit от Flux.
 - **[Установка ArgoCD](../ArgoCD/argocd_installation_and_setup.md)**: Практическое руководство по установке ArgoCD v3.x.
 - **[Helm интеграция](../ArgoCD/helm_integration.md)**: Описание подходов к развёртыванию с помощью Helm.
 - **Официальная документация ArgoCD**: [argoproj.github.io/cd/](https://argoproj.github.io/cd/)

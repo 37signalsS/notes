@@ -6,7 +6,7 @@
 
 **Service Discovery (Обнаружение сервисов) в Kubernetes** — механизм автоматического нахождения целей для сбора метрик через Kubernetes API. Позволяет динамически получать информацию об объектах кластера (поды, сервисы, ноды).
 
-> **См. также:** [Prometheus Operator](./operator.md), [Configuration](../configuration.md).
+> **См. также:** [Prometheus Operator](./operator/concepts.md), [Configuration](../configuration.md).
 
 ## Основные концепции
 
@@ -175,7 +175,7 @@ metadata:
     prometheus.io/probe: "true"
 ```
 
-> **См. также:** [Blackbox Exporter](../Exporters/blackbox_exporter.md).
+> **См. также:** [Blackbox Exporter](./Exporters/blackbox_exporter.md).
 
 ### 5. Упрощенное обнаружение через ServiceMonitor
 
@@ -209,7 +209,7 @@ spec:
 * Интеграция с GitOps
 * Не требует ручного написания relabel_configs
 
-> **См. также:** [Prometheus Operator](./operator.md#servicemonitor).
+> **См. также:** [Prometheus Operator](../operator/concepts.md#servicemonitor).
 
 ## Дополнительная информация
 
@@ -252,8 +252,8 @@ spec:
 
 ### Связанные темы
 
-* [Prometheus Operator](./operator.md) — автоматизация через CRD
+* [Prometheus Operator](./operator/concepts.md) — автоматизация через CRD
 * [Overview](./overview.md) — обзор мониторинга в Kubernetes
 * [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — основные концепции
 * [Configuration](../configuration.md) — настройка Prometheus
-* [Blackbox Exporter](../Exporters/blackbox_exporter.md) — blackbox-мониторинг
+* [Blackbox Exporter](./Exporters/blackbox_exporter.md) — blackbox-мониторинг

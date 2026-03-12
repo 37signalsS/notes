@@ -111,6 +111,6 @@ ethtool -K eth0 tx-checksumming off rx-checksumming off
 
 ## Связанные темы
 
-* **[Header Format](./header_format.md)** — структура заголовка TCP
+* **[Header Format](./Header_Format/header_format.md)** — структура заголовка TCP
 * **[Retransmission](./retransmission.md)** — реакция на ошибки
 * **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика

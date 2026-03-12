@@ -88,4 +88,4 @@ spec:
 - [Расширенные функции](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
 - [Traefik как реализация](./traefik.md) — пример с конкретным контроллером
 
-**Parent:** [Gateway API](../gateway_api.md)
+**Parent:** [Gateway API](../gateway_api/definitions.md)

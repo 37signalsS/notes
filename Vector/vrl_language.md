@@ -98,5 +98,5 @@ del(@timestamp)
 
 | Тема | Ссылка |
 | :--- | :--- |
-| Vector Overview | **[Vector Overview](../Concepts/vector_overview.md)** |
-| Практические сценарии | **[Scenarios](../Scenarios/)** |
+| Vector Overview | **[Vector Overview](./vector_overview.md)** |
+| Практические сценарии | **[Scenarios](./practical_scenarios.md)** |

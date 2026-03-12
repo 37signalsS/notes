@@ -21,7 +21,7 @@ TCP нумерует **байты**, а не сегменты.
 
 * Случайное 32-битное число при установке соединения
 * Защищает от старых дубликатов сегментов
-* Обменивается в [handshake](./connection_management.md#установка-соединения-tcp-handshake)
+* Обменивается в [handshake](./connection/connection_management.md#установка-соединения-tcp-handshake)
 
 **Назначение:**
 
@@ -49,7 +49,7 @@ ACK подтверждает **все байты до указанного но�
 
 **Преимущество:** точная ретрансмиссия только потерянных сегментов.
 
-**Опция TCP:** [SACK в заголовке](./header_format.md#выборочное-подтверждение-selective-acknowledgment-sack)
+**Опция TCP:** [SACK в заголовке](./Header_Format/header_format.md#выборочное-подтверждение-selective-acknowledgment-sack)
 
 **Подробнее:** [Acknowledgments](acknowledgments.md)
 
@@ -133,7 +133,7 @@ LastByteSent - LastByteAcked ≤ rwnd (receiver window)
 
 **Важно:** RTO — более серьезное событие, означает значительную перегрузку или потерю связи.
 
-**Подробнее:** [Congestion Control](./congestion_control.md)
+**Подробнее:** [Congestion Control](./congestion/congestion_control.md)
 
 ## Диагностика
 
@@ -151,9 +151,9 @@ ss -tmo
 
 ## Связанные темы
 
-* **[Header Format](./header_format.md)** — поля Sequence Number, ACK
-* **[Connection Management](./connection_management.md)** — handshake, состояния
-* **[Congestion Control](./congestion_control.md)** — управление перегрузкой
+* **[Header Format](./Header_Format/header_format.md)** — поля Sequence Number, ACK
+* **[Connection Management](./connection/connection_management.md)** — handshake, состояния
+* **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой
 * **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
 
 ## RFC и стандарты

@@ -96,4 +96,4 @@
 
 ---
 
-**Parent:** [Gateway API](../gateway_api.md)
+**Parent:** [Gateway API](../gateway_api/definitions.md)

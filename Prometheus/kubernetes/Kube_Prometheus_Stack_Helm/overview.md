@@ -6,7 +6,7 @@
 
 **values.yaml** — файл конфигурации Helm для кастомизации компонентов.
 
-> **См. также:** [Prometheus Operator](../operator.md), [Helm](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
+> **См. также:** [Prometheus Operator](../operator/concepts.md), [Helm](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
 
 ## Основные концепции
 
@@ -263,7 +263,7 @@ alertmanager:
 
 ### Связанные темы
 
-* [Prometheus Operator](../operator.md) — управление через CRD
+* [Prometheus Operator](../operator/concepts.md) — управление через CRD
 * [Service Discovery](../service_discovery.md) — обнаружение целей
 * [Practical Scenarios](./practical_scenarios.md) — подробные руководства
 * [Installation](../../installation/overview.md) — установка на хост

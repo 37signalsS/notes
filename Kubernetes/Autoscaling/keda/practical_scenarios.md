@@ -278,4 +278,4 @@ kubectl logs -n keda -l app=keda-operator --tail=100
 
 ---
 
-*Этот файл является частью декомпозированной документации KEDA. Исходный файл: [keda_detailed.md](../keda_detailed.md)*
+*Этот файл является частью декомпозированной документации KEDA. Исходный файл: [keda_detailed.md](../Autoscaling/keda_detailed.md)*

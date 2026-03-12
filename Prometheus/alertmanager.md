@@ -214,8 +214,8 @@ Alertmanager имеет встроенную поддержку кластери
 Этот паттерн позволяет полностью автоматизировать развертывание, не сохраняя при этом чувствительные данные в открытом виде в системе контроля версий.
 
 > **Подробное пошаговое руководство** с примерами всех манифестов, включая настройку получателей для **Telegram**, находится в заметке:
-> **[Пример: Развертывание Alertmanager и Karma в Kubernetes с помощью манифестов](./Kubernetes/examples/alertmanager-karma-manifests-tutorial.md)**
+> **[Пример: Развертывание Alertmanager и Karma в Kubernetes с помощью манифестов](./kubernetes/examples/alertmanager-karma-manifests-tutorial/intro.md)**
 
 ## Дополнительная информация
 
-* **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [4-установка-alertmanager](./installation/from_binary.md#4-установка-alertmanager).
+* **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [4-установка-alertmanager](./installation/from_binary.md).

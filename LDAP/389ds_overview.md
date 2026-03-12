@@ -9,7 +9,7 @@
 | [overview.md](./389ds/overview.md) | Определения, архитектура, терминология, требования |
 | [docker.md](./389ds/docker.md) | Развёртывание в Docker, переменные окружения |
 | [replication.md](./389ds/replication.md) | Multi-Master репликация, troubleshooting |
-| [kubernetes.md](./389ds/kubernetes.md) | StatefulSet, Services, Job для инициализации |
+| [kubernetes.md](./389ds/k8s_deploy/basic_concepts.md) | StatefulSet, Services, Job для инициализации |
 | [plugins.md](./389ds/plugins.md) | RetroChangelog, MemberOf, DNA, ACI |
 | [aci.md](./389ds/aci.md) | Access Control Instructions, примеры, best practices |
 
@@ -17,14 +17,14 @@
 
 1. **Тестирование:** [Docker развёртывание](./389ds/docker.md)
 2. **Production HA:** [Настройка репликации](./389ds/replication.md)
-3. **Kubernetes:** [StatefulSet развёртывание](./389ds/kubernetes.md)
+3. **Kubernetes:** [StatefulSet развёртывание](./389ds/k8s_deploy/basic_concepts.md)
 
 ## Связанные темы
 
 * [LDAP основы](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
 * [OpenLDAP в Kubernetes](./openldap_kubernetes.md) — сравнение с 389DS
-* [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/LDAP_SSSD/index.md)
-* [Kubernetes основы](../../Kubernetes/kubernetes_overview.md)
+* [SSSD для LDAP-аутентификации](../Linux/SystemAdministration/users_management.md)
+* [Kubernetes основы](../Kubernetes/kubernetes_overview.md)
 
 ## Внешние ресурсы
 

@@ -6,7 +6,7 @@
 
 **Prometheus Operator** — контроллер Kubernetes для автоматизации управления Prometheus, Alertmanager и связанными компонентами через Custom Resource Definitions (CRD).
 
-> **См. также:** [Prometheus Operator](./operator.md), [Service Discovery](./service_discovery.md).
+> **См. также:** [Prometheus Operator](./operator/concepts.md), [Service Discovery](./service_discovery.md).
 
 ## Основные концепции
 
@@ -24,7 +24,7 @@
 
 ### Экосистема Prometheus
 
-* **[Prometheus Server](../overview.md):** Центральный компонент для сбора, хранения и обработки метрик. Разворачивается как `StatefulSet`.
+* **[Prometheus Server](./overview.md):** Центральный компонент для сбора, хранения и обработки метрик. Разворачивается как `StatefulSet`.
 * **[Alertmanager](../alertmanager.md):** Дедупликация, группировка и маршрутизация оповещений.
 * **[Push Gateway](../pushgateway.md):** Сбор метрик от кратковременных задач (batch jobs).
 * **[Экспортеры](../Exporters/overview.md):** Сбор метрик из различных систем (ОС, БД, приложения).
@@ -51,7 +51,7 @@
 * **Probe** — blackbox-мониторинг через Blackbox Exporter
 * **AlertmanagerConfig** — конфигурация маршрутизации Alertmanager
 
-> **См. также:** [Prometheus Operator](./operator.md) — детальное описание CRD.
+> **См. также:** [Prometheus Operator](./operator/concepts.md) — детальное описание CRD.
 
 ### Service Discovery в Kubernetes
 
@@ -135,7 +135,7 @@ prometheus:
               env: 'production'
 ```
 
-> **См. также:** [Blackbox Exporter](../Exporters/blackbox_exporter.md).
+> **См. также:** [Blackbox Exporter](./Exporters/blackbox_exporter.md).
 
 ## Дополнительная информация
 
@@ -214,7 +214,7 @@ spec:
 
 ### Связанные темы
 
-* [Prometheus Operator](./operator.md) — управление стеком
+* [Prometheus Operator](./operator/concepts.md) — управление стеком
 * [Service Discovery](./service_discovery.md) — обнаружение целей
 * [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md) — установка
 * [Installation](../installation/overview.md) — установка на хост

@@ -69,4 +69,4 @@
 
 - [Синтаксис шаблонов](./syntax.md) — базовый синтаксис и управляющие конструкции
 - [Функции](./functions.md) — ключевые функции для работы с шаблонами
-- [helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../Helm/helm_templating.md) — обзорная страница

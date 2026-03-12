@@ -9,7 +9,7 @@
 * Обработку запросов на языке PromQL
 * Выполнение правил алертинга и записи (recording rules)
 
-> **См. также:** [Архитектура Prometheus](../overview.md), [TSDB](../concepts/tsdb.md).
+> **См. также:** [Архитектура Prometheus](./overview.md), [TSDB](../concepts/tsdb.md).
 
 ## Основные концепции
 

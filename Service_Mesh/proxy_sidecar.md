@@ -244,4 +244,4 @@ istioctl x describe pod my-app-pod -n default
 - **Архитектура Istio:** [Istio Architecture](./istio_architecture.md)
 - **Сравнение:** [Istio vs Linkerd](./istio_vs_linkerd.md)
 - **Трафик:** [Traffic Management](./traffic_management.md)
-- **Docker Sidecar:** [Docker Container Network Mode](../Docker/Docker_network/special_modes/container_network.md)
+- **Docker Sidecar:** [Docker Container Network Mode](../Docker/Docker_network/container_network.md)

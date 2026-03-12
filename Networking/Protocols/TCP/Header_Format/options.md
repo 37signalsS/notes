@@ -131,6 +131,6 @@ MSS = 1500 - 20 - 20 = 1460 байт (стандартный Ethernet)
 
 ### Связанные темы
 
-- **[Congestion Control](./congestion_control.md)** — управление перегрузкой
-- **[Flow Control](./flow_control.md)** — управление потоком
+- **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой
+- **[Flow Control](./Flow_Control/flow_control.md)** — управление потоком
 - **[Надежность TCP](./reliability_mechanisms.md)** — механизмы надежности

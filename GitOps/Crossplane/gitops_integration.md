@@ -135,5 +135,5 @@ spec:
 - **[ArgoCD Overview](../ArgoCD/argocd_overview.md)**: Детальная информация об ArgoCD и его возможностях
 - **[Synchronization](../ArgoCD/synchronization.md)**: Политики синхронизации, Sync Waves, Hooks
 - **[Helm Integration](../ArgoCD/helm_integration.md)**: Использование Helm с ArgoCD для Crossplane чартов
-- **[Flux Overview](../Flux/overview.md)**: Альтернативный GitOps-инструмент от CNCF
+- **[Flux Overview](../overview.md)**: Альтернативный GitOps-инструмент от CNCF
 - **Официальная документация Crossplane**: [GitOps Workflows](https://docs.crossplane.io/latest/concepts/gitops/)

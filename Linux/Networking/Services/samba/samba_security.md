@@ -129,4 +129,4 @@ sudo setsebool -P samba_enable_home_dirs on
 - [Базовые концепции](./samba_basics.md)
 - [Настройка Samba](./samba_setup.md)
 - [AD-интеграция](./samba_ad.md) — домен, winbind
-- [Настройка файрвола](../Settings/linux_firewall_management.md)
+- [Настройка файрвола](../Settings/tools/linux_firewall_management.md)

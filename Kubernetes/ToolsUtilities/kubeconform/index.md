@@ -86,7 +86,7 @@ docker run --rm -i ghcr.io/yannh/kubeconform:latest - -summary
 ### Связанные документы
 
 - **[Kustomize](./kustomize_overview.md)** — валидация результатов kustomize
-- **[Helm](./Helm/helm_overview.md)** — валидация Helm-чартов
+- **[Helm](../Helm/helm_overview.md)** — валидация Helm-чартов
 - **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
 
 ### Репозиторий и документация

@@ -41,7 +41,7 @@
 | :--- | :--- |
 | Тестирование | [Docker](./docker.md) (один контейнер) |
 | Production (HA) | [Multi-master репликация](./replication.md) (2+ узла) |
-| Kubernetes | [StatefulSet](./kubernetes.md) с PVC |
+| Kubernetes | [StatefulSet](./k8s_deploy/basic_concepts.md) с PVC |
 | Миграция с OpenLDAP | [Руководство по миграции](https://www.port389.org/docs/389ds/howto/howto-migrate-openldap.html) |
 
 ## Требования к ресурсам
@@ -82,7 +82,7 @@
 
 * [Docker развёртывание](./docker.md)
 * [Настройка репликации](./replication.md)
-* [Kubernetes развёртывание](./kubernetes.md)
+* [Kubernetes развёртывание](./k8s_deploy/basic_concepts.md)
 * [Плагины](./plugins.md)
 * [Управление доступом (ACI)](./aci.md)
 * [LDAP основы](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)

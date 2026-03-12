@@ -195,4 +195,4 @@
 * **[Control Groups (cgroups)](../cgroups.md)** — механизм ограничения ресурсов
 * **[Namespaces](../namespaces.md)** — изоляция процессов
 * **[Udev](../udev.md)** — управление устройствами
-* **[Journalctl](../../Diagnostics/Logging/journalctl.md)** — просмотр логов
+* **[Journalctl](../../../Diagnostics/journalctl.md)** — просмотр логов

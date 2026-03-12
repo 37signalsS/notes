@@ -9,7 +9,7 @@
 - **Flow Control:** защита **получателя** (receiver-centric)
 - **Congestion Control:** защита **сети** (network-centric)
 
-**Реализация:** поле [Window Size](../header_format.md#7-размер-окна-window-size-16-бит) в заголовке TCP.
+**Реализация:** поле [Window Size](../Header_Format/header_format.md#7-размер-окна-window-size-16-бит) в заголовке TCP.
 
 ---
 
@@ -54,7 +54,7 @@
 **В заголовке TCP:**
 
 - Поле `Window Size` = 16 бит → максимум 65535 байт
-- С опцией [Window Scale](../header_format.md#масштаб-окна-window-scale) → до 1 ГБ
+- С опцией [Window Scale](../Header_Format/header_format.md#масштаб-окна-window-scale) → до 1 ГБ
 
 ---
 
@@ -106,7 +106,7 @@ Effective Window = min(cwnd, rwnd)
 
 ### Связанные темы
 
-- **[Congestion Control](./congestion_control.md)** — управление перегрузкой сети
-- **[Header Format](../header_format.md#7-размер-окна-window-size-16-бит)** — поле Window Size
+- **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой сети
+- **[Header Format](../Header_Format/header_format.md#7-размер-окна-window-size-16-бит)** — поле Window Size
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_buffer_tuning.md)** — настройка буферов
 - **[Wireshark: Диагностика производительности](../../../ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md)** — диагностика Zero Window

@@ -10,7 +10,7 @@
 * **Alertmanager**: Обрабатывает алерты, отправленные Prometheus. Отвечает за их дедупликацию, группировку и маршрутизацию в различные системы уведомлений (Email, Slack, PagerDuty).
 * **Pushgateway**: Позволяет кратковременным и batch-заданиям, которые не могут быть постоянно доступны для скрейпинга, отправлять свои метрики в Prometheus.
 
-> **См. также:** [Архитектура Prometheus](../overview.md), [Exporters](../Exporters/overview.md).
+> **См. также:** [Архитектура Prometheus](./overview.md), [Exporters](../Exporters/overview.md).
 
 ## Основные концепции
 

@@ -134,7 +134,7 @@ kustomize version
 - **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — структура kustomization.yaml
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — практические сценарии
 - **[Продвинутые возможности](./kustomize_advanced_features.md)** — генерация ConfigMap/Secret, интеграция с Helm
-- **[Helm](../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
+- **[Helm](.../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
 - **[kubeconform](../kubeconform/index.md)** — валидация манифестов
 - **[ConfigMap](../../Base/ConfigMap/pod_usage.md)** — использование ConfigMap
 - **[GitOps](../../GitOps/GitOps_overview.md)** — применение в GitOps

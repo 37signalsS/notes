@@ -127,10 +127,10 @@ sysctl -w net.ipv4.tcp_syn_retries=5
 
 **Важно:** RTO — более серьезное событие, означает значительную перегрузку или потерю связи.
 
-**Подробнее:** [Congestion Control](./congestion_control.md)
+**Подробнее:** [Congestion Control](./congestion/congestion_control.md)
 
 ## Связанные темы
 
 * **[Acknowledgments](./acknowledgments.md)** — DupACK и триггеры
-* **[Congestion Control](./congestion_control.md)** — реакция на потери
+* **[Congestion Control](./congestion/congestion_control.md)** — реакция на потери
 * **[Диагностика](./diagnostics.md)** — мониторинг ретрансмиссий

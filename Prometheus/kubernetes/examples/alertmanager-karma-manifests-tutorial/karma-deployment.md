@@ -37,5 +37,5 @@ spec:
 
 ## Смотрите также
 
-- [Karma ConfigMap](./06-karma-config.md) — конфигурация
-- [Сервисы](./08-services.md) — публикация наружу
+- [Karma ConfigMap](./karma-config.md) — конфигурация
+- [Сервисы](./services.md) — публикация наружу

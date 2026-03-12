@@ -48,4 +48,4 @@ iSCSI превращает IP-сеть в гибкое хранилище уро
 - **[LVM](../Storage/lvm.md)** — управление логическими томами
 - **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем
 - **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
-- **[Firewall](../Settings/linux_firewall_management.md)** — настройка firewall
+- **[Firewall](../Settings/tools/linux_firewall_management.md)** — настройка firewall

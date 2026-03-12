@@ -27,5 +27,5 @@ stringData:
 
 ## Смотрите также
 
-- [Alertmanager ConfigMap](./03-alertmanager-config.md) — шаблон конфигурации с переменными
-- [Alertmanager StatefulSet](./05-alertmanager-statefulset.md) — подстановка секретов через init-container
+- [Alertmanager ConfigMap](./alertmanager-config.md) — шаблон конфигурации с переменными
+- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — подстановка секретов через init-container

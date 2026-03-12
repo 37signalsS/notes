@@ -89,4 +89,4 @@ Helm использует библиотеку [Sprig](http://masterminds.github
 - [Синтаксис шаблонов](./syntax.md) — базовый синтаксис и управляющие конструкции
 - [Встроенные объекты](./objects.md) — .Values, .Release, .Chart и другие
 - [Именованные шаблоны](./templates/_helpers.md) — создание переиспользуемых блоков
-- [helm_templating](../helm_templating.md) — обзорная страница
+- [helm_templating](../Helm/helm_templating.md) — обзорная страница

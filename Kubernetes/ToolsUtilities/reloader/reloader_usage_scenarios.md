@@ -162,5 +162,5 @@ kubectl describe deployment reloader -n monitoring
 - **[Обзор и концепции](./reloader_overview.md)** — базовые определения
 - **[Установка Reloader](./reloader_installation.md)** — установка через Helm и манифесты
 - **[Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)** — дополнительные рекомендации
-- **[ConfigMap](../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
+- **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
 - **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия

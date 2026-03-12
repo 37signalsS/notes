@@ -25,5 +25,5 @@ data:
 
 ## Смотрите также
 
-- [Karma Deployment](./07-karma-deployment.md) — развертывание пода
-- [Alertmanager](./05-alertmanager-statefulset.md) — источник алертов
+- [Karma Deployment](./karma-deployment.md) — развертывание пода
+- [Alertmanager](./alertmanager-statefulset.md) — источник алертов

@@ -95,7 +95,7 @@ sudo systemctl restart vault
 
 ### Связанные документы
 
-* **[Vault Overview](../overview.md):** Общее описание технологии Vault.
+* **[Vault Overview](./overview.md):** Общее описание технологии Vault.
 * **[Consul Overview](../../Consul/consul_overview.md):** Обзор Consul, его функций и архитектуры.
 * **[Nginx в качестве обратного прокси для Consul](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md):** Пример настройки Nginx для безопасного доступа к UI Consul.
 * **[Концепты безопасности Vault](../concepts.md):** Обзор ключевых механизмов безопасности Vault, включая шифрование.

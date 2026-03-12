@@ -71,7 +71,7 @@ Git-репозиторий с манифестами Kubernetes служит "м
 - Автоматическое создание PR/коммитов в Git-репозиторий
 - Обновление digest для максимальной безопасности (Flux 2.6+)
 
-> **Подробная настройка:** см. **[ArgoCD Image Updater](../ArgoCD/argocd_overview.md#argocd-image-updater)** и **[Flux Image Automation](../Flux/overview.md)**.
+> **Подробная настройка:** см. **[ArgoCD Image Updater](../ArgoCD/argocd_overview.md#argocd-image-updater)** и **[Flux Image Automation](../overview.md)**.
 
 ## Дополнительная информация
 
@@ -80,4 +80,4 @@ Git-репозиторий с манифестами Kubernetes служит "м
 - **[Безопасность публичных реестров](../../Docker/Docker_registries/public_registry_security.md)**: Рекомендации по безопасной работе с Docker Hub и другими публичными реестрами.
 - **[Версионирование и тегирование образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)**: Основное руководство по стратегиям тегирования.
 - **[ArgoCD Image Updater](../ArgoCD/argocd_overview.md#argocd-image-updater)**: Подробная настройка для ArgoCD.
-- **[Flux Image Automation](../Flux/overview.md)**: Подробная настройка для Flux.
+- **[Flux Image Automation](../overview.md)**: Подробная настройка для Flux.

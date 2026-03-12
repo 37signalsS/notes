@@ -81,5 +81,5 @@ kubectl kustomize overlays/production | kubeconform -strict -
 - **[Обзор и концепции](./kustomize_overview.md)** — базовые определения
 - **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — структура проекта
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — типы патчей
-- **[Helm](../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
+- **[Helm](.../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
 - **[kubeconform](../kubeconform/index.md)** — валидация манифестов

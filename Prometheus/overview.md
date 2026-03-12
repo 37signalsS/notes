@@ -26,7 +26,7 @@ Prometheus фокусируется на сборе **метрик** в виде
 | **Pushgateway** | Приём метрик от кратковременных задач (batch jobs, cron). | [Pushgateway](./pushgateway.md) |
 | **Remote Storage** | Интеграция с внешними системами для долгосрочного хранения. | [Remote Read/Write](./scaling/remote_read_write.md) |
 
-> **Kubernetes:** Для развертывания в K8s см. [kube-prometheus-stack: Практические сценарии](./Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+> **Kubernetes:** Для развертывания в K8s см. [kube-prometheus-stack: Практические сценарии](./kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
 
 ### Хранение данных: TSDB
 

@@ -173,4 +173,4 @@ spec:
 - [Миграция с Ingress](./migration.md) — примеры преобразования правил маршрутизации
 - [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
 
-**Parent:** [Gateway API](../gateway_api.md)
+**Parent:** [Gateway API](../gateway_api/definitions.md)

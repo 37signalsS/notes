@@ -4,7 +4,7 @@
 
 **Congestion Control** — механизм TCP для предотвращения перегрузки сети путём адаптации скорости передачи к доступной пропускной способности канала.
 
-**Ключевое отличие от [Flow Control](./flow_control.md):**
+**Ключевое отличие от [Flow Control](./Flow_Control/flow_control.md):**
 
 - **Congestion Control:** защита **сети** (network-centric), параметр `cwnd`
 - **Flow Control:** защита **получателя** (receiver-centric), параметр `rwnd`
@@ -140,7 +140,7 @@ cwnd
 - **[Алгоритмы congestion control](./tcp_congestion_algorithms.md)** — CUBIC, BBR
 - **[Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md)** — правило 14 КБ
 - **[Диагностика](./tcp_congestion_diagnostics.md)** — практические сценарии
-- **[Flow Control](./flow_control.md)** — управление потоком получателя
+- **[Flow Control](./Flow_Control/flow_control.md)** — управление потоком получателя
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — практическая настройка
 
 ### Формулы

@@ -44,7 +44,7 @@ kubectl describe deployment reloader -n monitoring
 | **Checksum-аннотация** | Хеш в манифесте | Работает без контроллера | Требует настройки CI/CD |
 | **ArgoCD** | GitOps | Полный контроль | Сложнее в настройке |
 
-**Подробнее:** [Обновление ConfigMap и его влияние на поды](../Base/ConfigMap/update_and_rollout.md)
+**Подробнее:** [Обновление ConfigMap и его влияние на поды](../../Base/ConfigMap/update_and_rollout.md)
 
 ---
 
@@ -61,7 +61,7 @@ kubectl describe deployment reloader -n monitoring
 - **[Обзор и концепции](./reloader_overview.md)** — базовые определения
 - **[Установка Reloader](./reloader_installation.md)** — установка через Helm и манифесты
 - **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
-- **[ConfigMap](../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
+- **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
 - **[Secrets](../Security/application_secrets_management.md)** — управление секретами
 - **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия
 

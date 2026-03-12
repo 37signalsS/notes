@@ -61,5 +61,5 @@ data:
 
 ## Смотрите также
 
-- [Шаблоны сообщений](./04-alertmanager-templates.md) — Go-шаблоны для форматирования
-- [Alertmanager StatefulSet](./05-alertmanager-statefulset.md) — развертывание с init-container
+- [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования
+- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — развертывание с init-container

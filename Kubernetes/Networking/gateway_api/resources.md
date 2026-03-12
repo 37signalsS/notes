@@ -30,4 +30,4 @@ Gateway API вводит ролевую модель, где разные рол
 - [Миграция с Ingress](./migration.md) — руководство по переходу с Ingress NGINX
 - [Базовые сценарии](./practical_basic.md) — практические примеры создания ресурсов
 
-**Parent:** [Gateway API](../gateway_api.md)
+**Parent:** [Gateway API](../gateway_api/definitions.md)

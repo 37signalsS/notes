@@ -68,7 +68,7 @@ ss -tno
 ### Связанные темы
 
 - **[Надежность TCP](./reliability_mechanisms.md)** — как поля заголовка обеспечивают надежность
-- **[Handshake](./connection_management.md)** — использование SYN, ACK, Sequence Number
+- **[Handshake](./connection/connection_management.md)** — использование SYN, ACK, Sequence Number
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — влияние параметров на заголовок
 
 ### Инструменты анализа

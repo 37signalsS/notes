@@ -120,5 +120,5 @@ docker run -d \
 ### Связанные темы
 
 * [Настройка репликации](./replication.md)
-* [Развёртывание в Kubernetes](./kubernetes.md)
+* [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md)
 * [Безопасность](./overview.md#Безопасность)

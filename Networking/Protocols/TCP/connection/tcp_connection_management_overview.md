@@ -126,7 +126,7 @@
 - **[Завершение соединения](./tcp_connection_termination.md)** — четырёхэтапное завершение
 - **[Состояния TCP](./tcp_connection_states.md)** — полная таблица состояний
 - **[Диагностика](./tcp_connection_diagnostics.md)** — практические сценарии
-- **[Флаги TCP](./header_format.md#6-флаги-9-бит)** — SYN, FIN, ACK, RST
+- **[Флаги TCP](./Header_Format/header_format.md#6-флаги-9-бит)** — SYN, FIN, ACK, RST
 - **[TLS Handshake](../../tls.md#упрощенный-tls-12-handshake-2-rtt)** — поверх TCP-handshake
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление TIME_WAIT, SYN backlog
 - **[TCP Fast Open](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_fast_open.md)** — сокращение handshake до 1 RTT

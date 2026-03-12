@@ -4,7 +4,7 @@
 
 **Prometheus Operator** — контроллер Kubernetes для автоматизации управления стеком мониторинга (Prometheus, Alertmanager, Grafana). Использует Custom Resource Definitions (CRD) для декларативного управления конфигурацией.
 
-> **См. также:** [Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md), [kube-prometheus-stack](../overview.md).
+> **См. также:** [Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md), [kube-prometheus-stack](./overview.md).
 
 ## Архитектура
 
@@ -61,8 +61,8 @@ Prometheus Operator использует следующие CRD:
 
 ## Связанные темы
 
-* **[Overview](../overview.md)** — обзор мониторинга в Kubernetes
+* **[Overview](./overview.md)** — обзор мониторинга в Kubernetes
 * **[Service Discovery](../service_discovery.md)** — обнаружение целей
-* **[Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md)** — установка через Helm
+* **[Kube-Prometheus-Stack Helm](../Kube_Prometheus_Stack_Helm/overview.md)** — установка через Helm
 * **[Configuration](../configuration.md)** — настройка Prometheus
 * **[Rules](../../rules.md)** — правила алертинга

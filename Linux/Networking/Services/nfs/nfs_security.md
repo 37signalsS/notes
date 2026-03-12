@@ -61,7 +61,7 @@ STATDOPTS="--port 893 --outgoing-port 894"
 # Для iptables/nftables добавьте правила для портов 111, 2049, 892, 893, 894
 ```
 
-Подробнее см. [Настройка файрвола в Linux](../Settings/linux_firewall_management.md).
+Подробнее см. [Настройка файрвола в Linux](../Settings/tools/linux_firewall_management.md).
 
 ## Монтирование с Kerberos
 
@@ -92,4 +92,4 @@ kinit user@REALM
 - [Базовые концепции](./nfs_basics.md)
 - [Настройка NFS](./nfs_setup.md)
 - [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
-- [Настройка файрвола](../Settings/linux_firewall_management.md)
+- [Настройка файрвола](../Settings/tools/linux_firewall_management.md)

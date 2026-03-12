@@ -189,5 +189,5 @@ journalctl -u rsyslog -f
 
 - **Обзор логирования:** [logging_overview.md](./logging_overview.md)
 - **journald:** [journald.md](./journald.md)
-- **journalctl:** [journalctl.md](../../Diagnostics/Logging/journalctl.md)
+- **journalctl:** [journalctl.md](../../../Diagnostics/journalctl.md)
 - **Централизованное логирование:** [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_overview.md)

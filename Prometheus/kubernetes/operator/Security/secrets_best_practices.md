@@ -67,4 +67,4 @@ receivers:
 
 - **[High Availability](../high_availability.md)** — HA конфигурация
 - **[Prometheus CRD](../crd/prometheus.md)** — описание Prometheus
-- **[Alertmanager](../alertmanager.md)** — базовая настройка
+- **[Alertmanager](../../alertmanager.md)** — базовая настройка

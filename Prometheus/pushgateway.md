@@ -74,7 +74,7 @@ curl -X DELETE http://localhost:9091/metrics/job/my_batch_job/instance/server1
 
 ### Установка
 
-Подробные инструкции по ручной установке Pushgateway в виде `systemd`-сервиса находятся в заметке **[Руководство по ручной установке](./installation/from_binary.md#5-установка-pushgateway)**.
+Подробные инструкции по ручной установке Pushgateway в виде `systemd`-сервиса находятся в заметке **[Руководство по ручной установке](./installation/from_binary.md)**.
 
 ### Отправка метрик
 
@@ -122,7 +122,7 @@ scrape_configs:
 
 ### Конфигурация в Kubernetes
 
-При развертывании в Kubernetes Pushgateway может быть включен и настроен с помощью Helm-чарта Prometheus, как описано в заметке о **[конфигурации Helm-чарта](./kubernetes/helm_chart_configuration.md)**.
+При развертывании в Kubernetes Pushgateway может быть включен и настроен с помощью Helm-чарта Prometheus, как описано в заметке о **[конфигурации Helm-чарта](./kubernetes/helm_chart.md)**.
 
 ---
 

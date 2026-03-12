@@ -175,6 +175,6 @@ Vector может обогащать логи данными GeoIP на осно
 
 | Тема | Ссылка |
 | :--- | :--- |
-| Vector Overview | **[Vector Overview](../Concepts/vector_overview.md)** |
-| VRL Language | **[VRL Language](../VRL/vrl_language.md)** |
-| Fluent Bit → Kafka → Vector Pipeline | **[Tutorial](../../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
+| Vector Overview | **[Vector Overview](./vector_overview.md)** |
+| VRL Language | **[VRL Language](./vrl_language.md)** |
+| Fluent Bit → Kafka → Vector Pipeline | **[Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |

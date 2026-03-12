@@ -221,5 +221,5 @@ ip rule add fwmark 0x2/0x2 lookup 102
 ### Связанные темы
 
 * **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
-* **[iptables](../Settings/linux_firewall_management.md)** — маркировка пакетов
+* **[iptables](../Settings/tools/linux_firewall_management.md)** — маркировка пакетов
 * **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети

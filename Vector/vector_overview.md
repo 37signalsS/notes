@@ -26,7 +26,7 @@
     - Системные метрики (OS, Prometheus endpoints)
 
 2. **Transforms (Преобразования)** — модифицируют, фильтруют и обогащают данные:
-    - **`remap`** — преобразования с помощью [VRL](../VRL/vrl_language.md)
+    - **`remap`** — преобразования с помощью [VRL](./vrl_language.md)
     - **`filter`** — фильтрация событий по условиям
     - **`route`** — маршрутизация по разным sink'ам
     - **`reduce`** — агрегация нескольких событий
@@ -90,7 +90,7 @@ Vector разворачивается как отдельный сервис/к�
 
 **Сценарий:** `Fluent Bit → Kafka → Vector → OpenSearch`
 
-Подробный разбор см. в **[Практическом сценарии: Роутер логов из Kafka в OpenSearch](../Scenarios/kafka_to_opensearch_router.md)**.
+Подробный разбор см. в **[Практическом сценарии: Роутер логов из Kafka в OpenSearch](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)**.
 
 ---
 
@@ -113,7 +113,7 @@ Vector разворачивается как отдельный сервис/к�
 - **Выбор в пользу Vector:** Высоконагруженные системы, ограниченные ресурсы, безопасность
 - **Выбор в пользу Logstash:** Экзотические плагины, legacy-интеграции
 
-> Сравнение подробно разобрано в **[Logstash Overview](../../ELK_Stack/Logstash/logstash_overview.md#сравнение-logstash-и-vector)**.
+> Сравнение подробно разобрано в **[Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md#сравнение-logstash-и-vector)**.
 
 ### Vector vs file.d
 
@@ -122,7 +122,7 @@ Vector разворачивается как отдельный сервис/к�
 - **Выбор в пользу file.d:** Требования к импортозамещению, простая конфигурация
 - **Выбор в пользу Vector:** Сложные трансформации, международная поддержка
 
-> Подробнее о file.d см. в **[file.d Обзор](../../file.d_overview.md)**.
+> Подробнее о file.d см. в **[file.d Обзор](../file.d_overview.md)**.
 
 ### Vector vs Fluent Bit
 
@@ -182,11 +182,11 @@ Vector официально поддерживает развертывание 
 
 | Тема | Ссылка |
 | :--- | :--- |
-| Observability (4 столпа) | **[Обзор Observability](../../Concepts/Observability_and_Monitoring/observability_overview.md)** |
-| Архитектура сбора логов | **[Проектирование высоконагруженного мониторинга](../../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** |
-| Пайплайн Fluent Bit → Kafka → Vector | **[Tutorial](../../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
-| Сравнение с Logstash | **[Logstash Overview](../../ELK_Stack/Logstash/logstash_overview.md)** |
-| Альтернатива file.d | **[file.d Обзор](../../file.d_overview.md)** |
-| Хранение в OpenSearch | **[OpenSearch Overview](../../ELK_Stack/OpenSearch/opensearch_overview.md)** |
-| Хранение в Loki | **[Loki Overview](../../Loki/loki_overview.md)** |
-| Язык трансформации VRL | **[VRL Language](../VRL/vrl_language.md)** |
+| Observability (4 столпа) | **[Обзор Observability](../Concepts/Observability_and_Monitoring/observability_overview.md)** |
+| Архитектура сбора логов | **[Проектирование высоконагруженного мониторинга](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** |
+| Пайплайн Fluent Bit → Kafka → Vector | **[Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
+| Сравнение с Logstash | **[Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md)** |
+| Альтернатива file.d | **[file.d Обзор](../file.d_overview.md)** |
+| Хранение в OpenSearch | **[OpenSearch Overview](../ELK_Stack/OpenSearch/opensearch_overview.md)** |
+| Хранение в Loki | **[Loki Overview](../Loki/loki_overview.md)** |
+| Язык трансформации VRL | **[VRL Language](./vrl_language.md)** |

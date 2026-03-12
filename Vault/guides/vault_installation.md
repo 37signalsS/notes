@@ -161,7 +161,7 @@ sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
 
 ### Связанные документы
 
-* **[HashiCorp Vault Overview](../overview.md):** Общее описание технологии, ее назначения и ключевых компонентов.
+* **[HashiCorp Vault Overview](./overview.md):** Общее описание технологии, ее назначения и ключевых компонентов.
 * **[Основные концепции Vault](../concepts.md):** Подробное описание архитектуры, Seal/Unseal, бэкендов.
 * **[Использование Consul в качестве бэкенда](./vault_with_consul_backend.md):** Настройка HA-кластера с внешним хранилищем.
 * **[Официальная документация по установке](https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-install):** Руководство от HashiCorp.

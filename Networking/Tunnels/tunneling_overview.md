@@ -62,7 +62,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 **Технологии:**
 
 - **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec.md), OpenVPN
-- **Без шифрования (доверенные сети):** [GRE](./gre.md), [IPIP](./ipip_and_sit.md)
+- **Без шифрования (доверенные сети):** [GRE](./gre/gre.md), [IPIP](./ipip_and_sit.md)
 
 ### 2. Передача неподдерживаемого протокола
 

@@ -144,8 +144,8 @@ tcpdump proto 41 -n   # SIT
 |----------|----------------------|
 | IPv4 через IPv4 (просто) | IPIP |
 | IPv6 через IPv4 | SIT |
-| Мультипротокол | [GRE](./gre.md) |
-| L2-оверлей | [GRETAP](./gre.md) / [VXLAN](./vxlan.md) |
+| Мультипротокол | [GRE](./gre/gre.md) |
+| L2-оверлей | [GRETAP](./gre/gre.md) / [VXLAN](./vxlan.md) |
 | Безопасный туннель | [WireGuard](../../Vpn/wireguard.md) / [IPsec](./ipsec.md) |
 
 ### MTU considerations

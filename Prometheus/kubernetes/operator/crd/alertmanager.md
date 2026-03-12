@@ -76,7 +76,7 @@ spec:
 * Кластеризация через `--cluster.listen-address`
 * Дедупликация алертов между репликами
 
-**Подробнее:** [Alertmanager HA](../../alertmanager.md#кластеризация)
+**Подробнее:** [Alertmanager HA](../../../alertmanager.md#кластеризация)
 
 ## Конфигурация через AlertmanagerConfig
 

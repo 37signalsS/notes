@@ -277,4 +277,4 @@ ls -la /var/lib/pushgateway/
 * [Pushgateway](../pushgateway.md) — полное руководство
 * [Exporters](../Exporters/overview.md) — обзор экспортёров
 * [Configuration](../configuration.md) — настройка Prometheus
-* [Extensibility](../Exporters/extensibility.md) — создание метрик
+* [Extensibility](./extensibility.md) — создание метрик

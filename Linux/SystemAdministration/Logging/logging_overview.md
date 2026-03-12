@@ -9,7 +9,7 @@
 | Компонент | Назначение |
 | :--- | :--- |
 | `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald.md](./journald.md) |
-| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/Logging/journalctl.md) |
+| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../../Diagnostics/journalctl.md) |
 | `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
 | `auditd` | Аудит событий безопасности на уровне ядра | [auditd.md](./auditd.md) |
 | `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов-logrotate) |
@@ -141,7 +141,7 @@ sync  # Запись буферов на диск
 **Файлы по компонентам:**
 
 - journald: [journald.md](./journald.md)
-- journalctl: [journalctl.md](../../Diagnostics/Logging/journalctl.md)
+- journalctl: [journalctl.md](../../../Diagnostics/journalctl.md)
 - rsyslog: [rsyslog.md](./rsyslog.md)
 - auditd: [auditd.md](./auditd.md)
 - Анализ сбоев: [Core/processes/troubleshooting.md](../../Core/processes/troubleshooting.md), [Core/kernel/kernel_panic.md](../../Core/kernel/kernel_panic.md)

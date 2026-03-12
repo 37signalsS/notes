@@ -229,5 +229,5 @@ kubectl create secret generic pagerduty-secret \
 ## Связанные темы
 
 * **[Alertmanager CRD](./alertmanager.md)** — описание Alertmanager
-* **[Alertmanager](../../alertmanager.md)** — базовая настройка
+* **[Alertmanager](../../../alertmanager.md)** — базовая настройка
 * **[PrometheusRule](./prometheusrule.md)** — правила алертинга

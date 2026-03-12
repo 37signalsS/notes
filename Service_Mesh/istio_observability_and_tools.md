@@ -50,7 +50,7 @@ Kiali предоставляет наглядную карту (`traffic graph`)
 
 ### Шаг 1: Подготовка (Сертификаты и Gateway)
 
-Предполагается, что в кластере уже установлен `cert-manager` (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md) или [Gateway API](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api.md)).
+Предполагается, что в кластере уже установлен `cert-manager` (см. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/ingress/overview.md) или [Gateway API](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api/definitions.md)).
 
 1. **Создание TLS-сертификата:** Для защиты всех веб-интерфейсов (Kiali, Grafana, Prometheus, Dex) создается единый сертификат, который будет обслуживать несколько доменных имен.
 
@@ -240,7 +240,7 @@ Dex разворачивается как отдельное приложени�
 
 ### Сложность настройки
 
-Интеграция всех компонентов (Cert-Manager [ingress.md](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md), Gateway API [gateway_api.md](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api.md), Prometheus, Grafana, Dex, Kiali) является нетривиальной задачей и требует хорошего понимания каждого из них.
+Интеграция всех компонентов (Cert-Manager [ingress.md](../../Kubernetes/ToolsUtilities/cert_manager/ingress/overview.md), Gateway API [gateway_api.md](../../Kubernetes/ToolsUtilities/cert_manager/gateway_api/definitions.md), Prometheus, Grafana, Dex, Kiali) является нетривиальной задачей и требует хорошего понимания каждого из них.
 
 **Рекомендации:**
 

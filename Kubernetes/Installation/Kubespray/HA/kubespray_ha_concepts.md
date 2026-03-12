@@ -52,7 +52,7 @@ Kubespray автоматизирует настройку HA следующим 
 
 - **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** — инфраструктурные требования, inventory, развертывание
 - **[Дополнительные темы](./kubespray_ha_advanced.md)** — тестирование отказоустойчивости, troubleshooting
-- **[Kubespray: Обзор](../overview.md)** — общая информация
+- **[Kubespray: Обзор](./overview.md)** — общая информация
 - **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
 - **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA
 
