@@ -10,7 +10,7 @@
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 ```
 
-[Подробнее](../MonitoringLogging/metrics-server.md)
+[Подробнее](../../MonitoringLogging/metrics-server.md)
 
 ### 1.2. Задать requests для контейнеров
 
@@ -115,7 +115,7 @@ spec:
           averageValue: "200"  # 200 сообщений на под
 ```
 
-> **Примечание:** Для внешних метрик требуется Prometheus Adapter или [KEDA](../Autoscaling/keda_detailed.md).
+> **Примечание:** Для внешних метрик требуется Prometheus Adapter или [KEDA](../keda/basic_concepts.md).
 
 ## 5. Сценарий 4: HPA с продвинутым поведением
 
@@ -199,5 +199,5 @@ spec:
 
 - **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
 - **[Дополнительные темы](./hpa_advanced.md)** — диагностика, проблемы, best practices
-- **[KEDA](../Autoscaling/keda_detailed.md)** — событийное масштабирование
-- **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик
+- **[KEDA](../keda/basic_concepts.md)** — событийное масштабирование
+- **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник метрик

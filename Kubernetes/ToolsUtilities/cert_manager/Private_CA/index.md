@@ -53,4 +53,4 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 
 - [Administration](../Administration/) — администрирование cert-manager
 - [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../install.md) — установка cert-manager
+- [Installation](../installation.md) — установка cert-manager

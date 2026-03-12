@@ -49,4 +49,4 @@ openssl verify -CAfile <(kubectl get secret my-root-ca-secret -n default -o json
 
 - [Administration](../Administration/) — администрирование cert-manager
 - [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../install.md) — установка cert-manager
+- [Installation](../installation.md) — установка cert-manager
