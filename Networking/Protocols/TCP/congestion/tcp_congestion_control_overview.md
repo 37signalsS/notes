@@ -141,7 +141,7 @@ cwnd
 - **[Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md)** — правило 14 КБ
 - **[Диагностика](./tcp_congestion_diagnostics.md)** — практические сценарии
 - **[Flow Control](./flow_control.md)** — управление потоком получателя
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — практическая настройка
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — практическая настройка
 
 ### Формулы
 

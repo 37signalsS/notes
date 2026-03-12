@@ -24,7 +24,7 @@
 - **SYN-SENT:** Клиент отправил SYN для установки соединения
 - **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен [SYN-flood](../../../Security/DoS/syn_flood.md))
 - **ESTABLISHED:** Соединение установлено, данные передаются
-- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Networking/Concepts/tcp_tuning.md))
+- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md))
 - **CLOSED:** Соединение закрыто
 
 ### Основные флаги
@@ -200,7 +200,7 @@ ss -tan state time-wait | wc -l
 ss -tai state time-wait
 ```
 
-> **Решение:** См. [TCP tuning](../../Networking/Concepts/tcp_tuning.md) — параметры `tcp_tw_reuse`, `tcp_fin_timeout`
+> **Решение:** См. [TCP tuning](../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md) — параметры `tcp_tw_reuse`, `tcp_fin_timeout`
 
 ### Мониторинг в реальном времени
 
@@ -244,5 +244,5 @@ ss -s | awk '/TCP:/ {print $2}'
 - **[`netstat`](./netstat.md)** — устаревший инструмент (только для совместимости)
 - **[network_cli_tools.md](./network_cli_tools.md)** — TUI инструменты (`snitch`, `iftop`)
 - **[tcpdump.md](./tcpdump.md)** — анализ трафика на уровне пакетов
-- **[tcp_tuning](../../Networking/Concepts/tcp_tuning.md)** — оптимизация TCP
+- **[tcp_tuning](../../Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
 - **[iproute2 overview](../../Linux/Networking/Tools/iproute2/overview.md)** — современный инструментарий

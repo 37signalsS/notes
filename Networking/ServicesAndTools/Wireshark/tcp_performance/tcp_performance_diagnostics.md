@@ -262,7 +262,7 @@ BDP = 125 MB/s × 0.05 = 6.25 MB
 - **[Инструменты анализа](./tcp_performance_analysis_tools.md)** — графики Wireshark
 - **[Управление перегрузкой TCP](../../Protocols/TCP/congestion_control.md)** — cwnd, Slow Start, AIMD, BBR, CUBIC
 - **[Управление потоком TCP](../../Protocols/TCP/flow_control.md)** — rwnd, Zero Window
-- **[Оптимизация TCP в Linux](../../../Linux/Networking/Concepts/tcp_tuning.md)** — sysctl-параметры
+- **[Оптимизация TCP в Linux](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — sysctl-параметры
 - **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — захват трафика в CLI
 
 ### RFC и стандарты

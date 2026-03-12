@@ -45,4 +45,4 @@
 
 ## Дополнительная информация
 
-* О том, как управлять диапазоном динамических (эфемерных) портов в Linux, см. в статье **[Оптимизация TCP/IP стека в Linux](../../Linux/Networking/Concepts/tcp_tuning.md)**.
+* О том, как управлять диапазоном динамических (эфемерных) портов в Linux, см. в статье **[Оптимизация TCP/IP стека в Linux](../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)**.

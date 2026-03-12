@@ -170,7 +170,7 @@ GenericReceiveOffload=no
 ### Взаимосвязь с другими технологиями
 
 - **[RSS, RPS, RFS](./rss_rps_rfs.md)** — без распределения прерываний и RPS вся работа от offloading концентрируется на одном ядре
-- **[Оптимизация TCP](./tcp_tuning.md)** — offloading дополняет тюнинг TCP-стека
+- **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** — offloading дополняет тюнинг TCP-стека
 - **[ethtool](../Tools/ethtool.md)** — основной инструмент управления offloading
 - **[tc](../Tools/iproute2/tc.md)** — управление трафиком для комплексной оптимизации
 
@@ -188,5 +188,5 @@ GenericReceiveOffload=no
 
 - **[ethtool](../Tools/ethtool.md)** — детальное управление параметрами NIC
 - **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка нагрузки по CPU
-- **[Оптимизация TCP](./tcp_tuning.md)** — комплексная настройка сетевого стека
+- **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** — комплексная настройка сетевого стека
 - **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — обзор всех уровней оптимизации

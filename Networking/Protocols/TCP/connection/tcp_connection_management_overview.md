@@ -128,8 +128,8 @@
 - **[Диагностика](./tcp_connection_diagnostics.md)** — практические сценарии
 - **[Флаги TCP](./header_format.md#6-флаги-9-бит)** — SYN, FIN, ACK, RST
 - **[TLS Handshake](../../tls.md#упрощенный-tls-12-handshake-2-rtt)** — поверх TCP-handshake
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — управление TIME_WAIT, SYN backlog
-- **[TCP Fast Open](../../../../Linux/Networking/Concepts/tcp_tuning.md#включение-tcp-fast-open-для-сокращения-handshake)** — сокращение handshake до 1 RTT
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление TIME_WAIT, SYN backlog
+- **[TCP Fast Open](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_fast_open.md)** — сокращение handshake до 1 RTT
 
 ### Временные параметры
 

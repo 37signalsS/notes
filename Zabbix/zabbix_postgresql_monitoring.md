@@ -2,7 +2,7 @@
 
 > Подробный разбор архитектуры PostgreSQL доступен в основной заметке: **[PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md)**.
 >
-> Общее описание архитектуры Zabbix доступно в основной заметке: **[Обзор Zabbix](./zabbix_overview.md)**.
+> Общее описание архитектуры Zabbix доступно в основной заметке: **[Обзор Zabbix](./zabbix_best_practices.md)**.
 >
 > Полная наблюдаемость для PostgreSQL (метрики + логи + трассировки): **[Full-Stack Observability для PostgreSQL](../Databases/PostgreSQL/Operations/observability.md)**.
 

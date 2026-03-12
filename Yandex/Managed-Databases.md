@@ -268,7 +268,7 @@ annotations:
 
 - **[PostgreSQL](../Databases/PostgreSQL/overview.md)** — подробные концепции PostgreSQL
 - **[ClickHouse](../Databases/clickhouse.md)** — архитектура и использование
-- **[Redis](../Databases/Redis/redis_overview.md)** — сценарии использования Redis
+- **[Redis](../Databases/redis_overview.md)** — сценарии использования Redis
 - **[Kubernetes](../Kubernetes/)** — подключение приложений из K8s
 
 ### Безопасность

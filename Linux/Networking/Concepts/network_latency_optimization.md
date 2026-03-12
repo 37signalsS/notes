@@ -36,11 +36,11 @@
 
 | Параметр | Описание |
 |----------|----------|
-| **Алгоритмы контроля перегрузки** | Выбор между `CUBIC` (по умолчанию) и `BBR` | **[Оптимизация TCP](./tcp_tuning.md#алгоритмы-управления-перегрузкой)** |
-| **Дисциплины очередей (Qdisc)** | `fq_codel`, `fq` для борьбы с bufferbloat | **[Оптимизация TCP](./tcp_tuning.md#дисциплины-очередей-queueing-disciplines)** |
-| **Размеры буферов и очередей** | `somaxconn`, `netdev_max_backlog`, буферы TCP | **[Оптимизация TCP](./tcp_tuning.md#оптимизация-буферов-tcp)** |
-| **TIME_WAIT управление** | `tcp_tw_reuse`, `tcp_fin_timeout` | **[Оптимизация TCP](./tcp_tuning.md#управление-состоянием-time_wait)** |
-| **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning.md#комплексная-настройка-для-низкой-латентности)** |
+| **Алгоритмы контроля перегрузки** | Выбор между `CUBIC` (по умолчанию) и `BBR` | **[Оптимизация TCP](./tcp_tuning/tcp_congestion_algorithms.md)** |
+| **Дисциплины очередей (Qdisc)** | `fq_codel`, `fq` для борьбы с bufferbloat | **[Оптимизация TCP](./tcp_tuning/tcp_queueing_disciplines.md)** |
+| **Размеры буферов и очередей** | `somaxconn`, `netdev_max_backlog`, буферы TCP | **[Оптимизация TCP](./tcp_tuning/tcp_buffer_tuning.md)** |
+| **TIME_WAIT управление** | `tcp_tw_reuse`, `tcp_fin_timeout` | **[Оптимизация TCP](./tcp_tuning/tcp_time_wait_management.md)** |
+| **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning/tcp_fast_open.md)** |
 
 ### 2. Уровень сетевой карты (NIC) и драйвера
 
@@ -72,8 +72,8 @@
 | Аспект | Описание |
 |--------|----------|
 | **HTTP/2, HTTP/3 (QUIC)** | Мультиплексирование запросов | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/http_protocols_optimization.md) |
-| **Keep-alive, connection pooling** | Повторное использование TCP-сессий | **[Оптимизация TCP](./tcp_tuning.md)** |
-| **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning.md)** |
+| **Keep-alive, connection pooling** | Повторное использование TCP-сессий | **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** |
+| **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning/tcp_fast_open.md)** |
 | **Предзагрузка, preconnect** | Упреждающее установление соединений | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/http_protocols_optimization.md) |
 
 ### 5. Уровень инфраструктуры
@@ -150,7 +150,7 @@ sysctl -a | grep -E "net.ipv4.tcp|net.core"
 
 ### Связанные темы
 
-- **[Оптимизация TCP](./tcp_tuning.md)** — детальная настройка TCP-стека
+- **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** — детальная настройка TCP-стека
 - **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка нагрузки по CPU
 - **[Offloading](./offloading.md)** — разгрузка CPU через NIC
 - **[Сетевые интерфейсы](./linux_network_interfaces.md)** — типы и создание интерфейсов

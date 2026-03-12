@@ -46,7 +46,7 @@
 
 2. **Mean Time to Recovery (MTTR, Среднее время восстановления)**
     - **Что измеряет:** Отказоустойчивость системы и эффективность реагирования на инциденты.
-    - **Контекст:** MTTR является фундаментальной метрикой не только в CI/CD, но и в **[SRE (Site Reliability Engineering)](../../Concepts/SRE/sre_concepts_main.md#процесс-восстановления-декомпозиция-mttr)** и **[High Availability](../../Concepts/High_Availability/ha_overview.md)**.
+    - **Контекст:** MTTR является фундаментальной метрикой не только в CI/CD, но и в **[SRE (Site Reliability Engineering)](../../Concepts/sre_concepts_main.md#процесс-восстановления-декомпозиция-mttr)** и **[High Availability](../../Concepts/High_Availability/ha_overview.md)**.
     - **Целевые уровни:**
         - *Элитный:* < 1 часа
         - *Высокий:* < 1 дня

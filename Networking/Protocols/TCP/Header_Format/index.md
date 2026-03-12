@@ -162,4 +162,4 @@ ACK Number = 1024 (ожидается байт №1024)
 
 - **[Надежность TCP](./reliability_mechanisms.md)** — как поля заголовка обеспечивают надежность
 - **[Handshake](./connection_management.md)** — использование SYN, ACK, Sequence Number
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — влияние параметров на заголовк
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — влияние параметров на заголовок

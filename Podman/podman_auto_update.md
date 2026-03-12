@@ -35,8 +35,6 @@
 
 ### Требования для работы
 
-Для корректной работы автообновления и отката необходимы:
-
 1. **systemd-управление**: Контейнер должен быть запущен через systemd-юнит
 2. **Лейбл autoupdate**: При создании контейнера указан `--label "io.containers.autoupdate=registry"`
 3. **Флаг rollback**: В systemd-юните включён `--rollback`
@@ -94,8 +92,6 @@ WantedBy=multi-user.target
 ### 3. Настройка расписания обновлений
 
 **Проверка выражения OnCalendar:**
-
-Перед настройкой таймера проверьте корректность выражения:
 
 ```bash
 systemd-analyze calendar "Mon *-*-* 03:30:00"
@@ -261,24 +257,6 @@ while True:
 ```
 
 ### Troubleshooting
-
-**Таймер не запускается:**
-
-```bash
-# Проверка статуса таймера
-systemctl --user list-timers | grep podman
-
-# Проверка логов
-journalctl --user -u podman-auto-update.timer
-journalctl --user -u podman-auto-update.service
-```
-
-**Откат не работает:**
-
-1. Убедитесь, что `--rollback` указан в ExecStart
-2. Проверьте, что контейнер использует systemd-юнит
-3. Убедитесь в наличии `Type=notify` и `--sdnotify`
-4. Проверьте логи: `journalctl --user -u my-service.service`
 
 **Лейбл не распознаётся:**
 

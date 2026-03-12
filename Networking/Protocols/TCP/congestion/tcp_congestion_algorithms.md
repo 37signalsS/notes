@@ -98,4 +98,4 @@ ss -ti | grep bbr
 - **[Обзор и базовые алгоритмы](./tcp_congestion_control_overview.md)** — Slow Start, AIMD, Fast Recovery
 - **[Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md)** — правило 14 КБ
 - **[Диагностика](./tcp_congestion_diagnostics.md)** — практические сценарии
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — практическая настройка
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_congestion_algorithms.md)** — практическая настройка

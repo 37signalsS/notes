@@ -145,6 +145,6 @@ sudo ip addr add 172.18.0.1/16 dev br0
 
 ### Оптимизация сетевых интерфейсов
 
-* **[Оптимизация TCP](./tcp_tuning.md)** — настройка буферов, алгоритмов перегрузки
+* **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** — настройка буферов, алгоритмов перегрузки
 * **[Offloading](./offloading.md)** — разгрузка CPU через NIC (GRO/LRO/TSO)
 * **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка по ядрам CPU

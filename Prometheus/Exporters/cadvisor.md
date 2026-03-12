@@ -265,7 +265,7 @@ scrape_configs:
 
 * **[draganm/missing-container-metrics](https://github.com/draganm/missing-container-metrics)** — для специфичных метрик, отсутствующих в cAdvisor
 * **[Vector](../../Vector/Concepts/vector_overview.md)** — сбор метрик напрямую из cgroups
-* **[Filebeat](../../ELK_Stack/Filebeat/filebeat_overview.md)** — сбор метрик и логов
+* **[Filebeat](../../ELK_Stack/filebeat_overview.md)** — сбор метрик и логов
 
 ### Связанные темы
 

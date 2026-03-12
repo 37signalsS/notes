@@ -122,7 +122,7 @@ Vector разворачивается как отдельный сервис/к�
 - **Выбор в пользу file.d:** Требования к импортозамещению, простая конфигурация
 - **Выбор в пользу Vector:** Сложные трансформации, международная поддержка
 
-> Подробнее о file.d см. в **[file.d Обзор](../../FileD/file.d_overview.md)**.
+> Подробнее о file.d см. в **[file.d Обзор](../../file.d_overview.md)**.
 
 ### Vector vs Fluent Bit
 
@@ -186,7 +186,7 @@ Vector официально поддерживает развертывание 
 | Архитектура сбора логов | **[Проектирование высоконагруженного мониторинга](../../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** |
 | Пайплайн Fluent Bit → Kafka → Vector | **[Tutorial](../../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
 | Сравнение с Logstash | **[Logstash Overview](../../ELK_Stack/Logstash/logstash_overview.md)** |
-| Альтернатива file.d | **[file.d Обзор](../../FileD/file.d_overview.md)** |
+| Альтернатива file.d | **[file.d Обзор](../../file.d_overview.md)** |
 | Хранение в OpenSearch | **[OpenSearch Overview](../../ELK_Stack/OpenSearch/opensearch_overview.md)** |
 | Хранение в Loki | **[Loki Overview](../../Loki/loki_overview.md)** |
 | Язык трансформации VRL | **[VRL Language](../VRL/vrl_language.md)** |

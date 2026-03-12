@@ -83,6 +83,6 @@ tcpdump -i lo -nn port 12345
 ## Связанные темы
 
 * **[tc](./tc.md)** — полное руководство по управлению трафиком
-* **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — настройка TCP-стека, bufferbloat
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека, bufferbloat
 * **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 * **[tcpdump](../tcpdump.md)** — диагностика сетевых проблем

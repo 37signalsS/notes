@@ -110,7 +110,7 @@ ip route show table 100
 ### Связанные темы
 
 * **[Постоянная настройка сети](../../Settings/persistent_network_configuration.md)** — сохранение настроек
-* **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — tuning TCP-стека, QoS
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — tuning TCP-стека, QoS
 * **[Network namespaces](../../../../Linux/Core/namespaces.md)** — изоляция сети
 * **[Сетевая диагностика](../../network_diagnostics_tools.md)** — инструменты отладки
 

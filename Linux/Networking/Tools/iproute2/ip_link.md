@@ -173,7 +173,7 @@ ethtool -i eth0 | grep virtio
 * **[Сетевые интерфейсы](../../Concepts/linux_network_interfaces.md)** — типы, мосты, вeth-пары
 * **[ip address](./ip_address.md)** — управление IP-адресами
 * **[ethtool](../ethtool.md)** — диагностика адаптеров
-* **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — MTU, fragmentation
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — MTU, fragmentation
 
 ### Типичные проблемы
 

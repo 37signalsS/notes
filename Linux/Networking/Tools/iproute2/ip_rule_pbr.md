@@ -71,4 +71,4 @@ ip rule add from 192.168.1.100 table 100 priority 1000
 - **[ip route: основы](./ip_route_basics.md)** — структура маршрута, типы, таблицы
 - **[ip route: практика](./ip_route_practical.md)** — добавление, удаление, проверка маршрутов
 - **[Policy-Based Routing](../../Policy_Based_Routing/index.md)** — множественные таблицы
-- **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — initcwnd, MSS
+- **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_initcwnd.md)** — initcwnd, MSS

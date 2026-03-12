@@ -171,4 +171,4 @@ sysctl -w net.ipv4.tcp_max_syn_backlog=4096
 - **[Обзор и handshake](./tcp_connection_management_overview.md)** — установка соединения
 - **[Завершение соединения](./tcp_connection_termination.md)** — четырёхэтапное завершение
 - **[Диагностика](./tcp_connection_diagnostics.md)** — практические сценарии
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — управление TIME_WAIT, SYN backlog
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление TIME_WAIT, SYN backlog

@@ -21,7 +21,7 @@
 
 * [MySQL](../../Databases/MySQL/overview.md)
 * [PostgreSQL](../../Databases/PostgreSQL/overview.md)
-* [Redis](../../Databases/Redis/redis_overview.md)
+* [Redis](../../Databases/redis_overview.md)
 * [Elasticsearch](../../ELK_Stack/Elasticsearch/elasticsearch_overview.md)
 
 ## Веб-серверы и прокси

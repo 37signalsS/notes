@@ -169,7 +169,7 @@ ss -t '( dport = :443 or sport = :443 )'
 * **SYN-SENT:** Клиент отправил SYN (возможна проблема с сетью/firewall)
 * **SYN-RECV:** Сервер получил SYN (возможен [SYN-flood](../../Security/DoS/syn_flood.md))
 * **ESTABLISHED:** Соединение установлено
-* **TIME-WAIT:** Соединение закрывается (большое количество требует [TCP-tuning](./Concepts/tcp_tuning.md))
+* **TIME-WAIT:** Соединение закрывается (большое количество требует [TCP-tuning](./Concepts/tcp_tuning/tcp_time_wait_management.md))
 
 Подробное руководство по использованию `ss`, включая анализ `retransmits` и `RTT`, находится в специальной заметке: **[Анализ сокетов с помощью ss](../Diagnostics/Networking/ss.md)**.
 
@@ -243,7 +243,7 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 * **[TCP/IP](../../Networking/Protocols/TCP/tcp.md)** — протокол TCP
 * **[ICMP](../../Networking/Protocols/icmp.md)** — протокол ICMP (ping)
 * **[DNS](../../Networking/Concepts/dns_client.md)** — настройка DNS-клиента
-* **[TCP-tuning](./Concepts/tcp_tuning.md)** — оптимизация TCP
+* **[TCP-tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
 * **[Policy-Based Routing](./linux_policy_based_routing.md)** — маршрутизация на основе политик
 * **[iSCSI](./iSCSI.md)** — блочный доступ по IP-сети
 

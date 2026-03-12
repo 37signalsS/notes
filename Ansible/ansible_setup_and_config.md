@@ -200,6 +200,6 @@ end
 ## Дополнительная информация
 
 - **Структура проекта**: Рекомендации по организации файлов и каталогов см. в документе [Структура проекта Ansible](./examples/example_project_layout.md).
-- **Динамический инвентарь**: Для работы с облачными провайдерами и динамически изменяемой инфраструктурой см. [Dynamic inventory в Ansible](./Inventories/dynamic_inventory.md).
+- **Динамический инвентарь**: Для работы с облачными провайдерами и динамически изменяемой инфраструктурой см. [Dynamic inventory в Ansible](./dynamic_inventory.md).
 - **Безопасность**: Основные практики безопасности описаны в [ansible_security_best_practices.md](./ansible_security_best_practices.md).
 - **Введение**: Для знакомства с основами и ad-hoc командами см. [Введение в Ansible](./ansible_introduction.md).

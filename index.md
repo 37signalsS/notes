@@ -1016,7 +1016,15 @@ Linux/Networking/Concepts/network_latency_optimization.md
 Linux/Networking/Concepts/offloading.md
 Linux/Networking/Concepts/pxe_boot.md
 Linux/Networking/Concepts/rss_rps_rfs.md
-Linux/Networking/Concepts/tcp_tuning.md
+Linux/Networking/Concepts/tcp_tuning/tcp_buffer_tuning.md
+Linux/Networking/Concepts/tcp_tuning/tcp_congestion_algorithms.md
+Linux/Networking/Concepts/tcp_tuning/tcp_connection_queues.md
+Linux/Networking/Concepts/tcp_tuning/tcp_fast_open.md
+Linux/Networking/Concepts/tcp_tuning/tcp_initcwnd.md
+Linux/Networking/Concepts/tcp_tuning/tcp_queueing_disciplines.md
+Linux/Networking/Concepts/tcp_tuning/tcp_socket_diagnostics.md
+Linux/Networking/Concepts/tcp_tuning/tcp_time_wait_management.md
+Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md
 Linux/Networking/iSCSI/index.md
 Linux/Networking/iSCSI/iscsi_concepts.md
 Linux/Networking/iSCSI/iscsi_initiator_setup.md

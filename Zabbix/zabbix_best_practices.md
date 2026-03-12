@@ -56,7 +56,7 @@ Zabbix предлагает богатые возможности для нас�
 
 | Тема | Документ |
 |------|----------|
-| Общие концепции Zabbix | **[Обзор Zabbix](./zabbix_overview.md)** |
+| Общие концепции Zabbix | **[Обзор Zabbix](./zabbix_best_practices.md)** |
 | Диагностика и тюнинг | **[Поиск и устранение неисправностей](./zabbix_troubleshooting_and_performance_tuning.md)** |
 | Мониторинг СУБД | **[Мониторинг Баз Данных](./zabbix_database_monitoring.md)** |
 | Стратегии сбора метрик | **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_overview.md)** |

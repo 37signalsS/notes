@@ -61,7 +61,7 @@ node_taints:
 
 ### 3.2. Конфигурация MetalLB
 
-**MetalLB** — балансировщик нагрузки для bare-metal кластеров. Подробнее: [MetalLB](../../Networking/Addons/metallb.md).
+**MetalLB** — балансировщик нагрузки для bare-metal кластеров. Подробнее: [MetalLB](../../Networking/metallb.md).
 
 **Пример конфигурации:**
 
@@ -90,7 +90,7 @@ metallb_config:
 | `metallb_speaker_enabled` | Включает компонент `speaker` для анонсирования IP (L2/BGP) |
 | `metallb_config.address_pools` | Пулы IP-адресов для сервисов типа `LoadBalancer` |
 
-> **Важно:** При использовании `kube-proxy` в режиме `ipvs` необходимо установить `strictARP: true` в конфигурации kube-proxy. См. [MetalLB](../../Networking/Addons/metallb.md).
+> **Важно:** При использовании `kube-proxy` в режиме `ipvs` необходимо установить `strictARP: true` в конфигурации kube-proxy. См. [MetalLB](../../Networking/metallb.md).
 
 ### 3.3. Проверка системных подов
 
@@ -120,5 +120,5 @@ kubectl get pods -n kube-system -l app=flannel
 * [Установка кластера](./installation.md) — развертывание кластера.
 * [Управление кластером](./cluster_management.md) — масштабирование и обновление.
 * [CNI, kube-proxy и их роли](../../Networking/Network/cni_kube_proxy_roles.md) — сетевые плагины.
-* [MetalLB](../../Networking/Addons/metallb.md) — детальная документация по MetalLB.
+* [MetalLB](../../Networking/metallb.md) — детальная документация по MetalLB.
 * [Taints and Tolerations](../../Scheduling/taints_and_tolerations.md) — механизм изоляции подов.

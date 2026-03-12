@@ -43,6 +43,6 @@ ip route del default
 
 - **[Сетевой уровень](../../../../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md)** — основы маршрутизации
 - **[Policy-Based Routing](../../Policy_Based_Routing/index.md)** — множественные таблицы
-- **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — initcwnd, MSS
+- **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_initcwnd.md)** — initcwnd, MSS
 - **[ip address](./ip_address.md)** — управление адресами
 - **[ip neighbour](./ip_neighbour.md)** — ARP/NDP таблица

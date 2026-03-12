@@ -22,7 +22,7 @@
 
 ### Интеграция с TCP-стеком
 
-> Настройка дисциплин по умолчанию через `sysctl` описана в [Оптимизация TCP](../../Concepts/tcp_tuning.md).
+> Настройка дисциплин по умолчанию через `sysctl` описана в [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_queueing_disciplines.md).
 
 * `net.core.default_qdisc` — задает qdisc по умолчанию (например, `fq_codel`).
 * Детальная настройка классов и фильтров выполняется через `tc`.
@@ -143,12 +143,12 @@ sudo tc qdisc del dev eth0 root netem
 ### Интеграция с сетевым стеком
 
 * **Для initcwnd:** настройка через [`ip route`](../../Tools/iproute2/ip_route.md).
-* **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md) (см. [Оптимизация TCP](../../Concepts/tcp_tuning.md)).
+* **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md) (см. [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_buffer_tuning.md)).
 * **Для многопоточности:** [RSS, RPS, RFS](../../Concepts/rss_rps_rfs.md).
 
 ### Связанные темы
 
-* **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — настройка TCP-стека, алгоритмы congestion control
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека, алгоритмы congestion control
 * **[`ip route`](./ip_route.md)** — управление маршрутами и initcwnd
 * **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 * **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем

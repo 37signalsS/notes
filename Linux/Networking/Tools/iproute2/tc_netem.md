@@ -33,7 +33,7 @@ sudo tc qdisc del dev eth0 root netem
 ## Связанные темы
 
 - **[tc](./tc.md)** — полное руководство по управлению трафиком
-- **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — настройка TCP-стека
+- **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека
 - **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 - **[iptables](../Settings/tools/iptables_basics.md)** — эмуляция таймаутов
 - **[tcpdump](../tcpdump.md)** — диагностика сетевых проблем

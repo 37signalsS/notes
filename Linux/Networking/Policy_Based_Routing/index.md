@@ -255,4 +255,4 @@ PBR гарантирует, что ответный пакет будет отп
 - **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
 - **[iptables](../Settings/linux_firewall_management.md)** — маркировка пакетов
 - **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети
-- **[TCP-tuning](../Concepts/tcp_tuning.md)** — оптимизация TCP
+- **[TCP-tuning](../Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP

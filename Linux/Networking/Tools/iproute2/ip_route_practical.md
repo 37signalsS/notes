@@ -171,7 +171,7 @@ sudo ip route change default via 192.168.1.1 dev eth0 initcwnd 30
 ip route show | grep initcwnd
 ```
 
-> **Подробно:** [Оптимизация TCP](../../Concepts/tcp_tuning.md)
+> **Подробно:** [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_initcwnd.md)
 
 ### Multiple default routes
 
@@ -195,4 +195,4 @@ sudo ip route add blackhole 10.0.0.0/8
 
 - **[ip route: основы](./ip_route_basics.md)** — структура маршрута, типы, таблицы
 - **[Policy-Based Routing](../../Policy_Based_Routing/index.md)** — множественные таблицы
-- **[Оптимизация TCP](../../Concepts/tcp_tuning.md)** — initcwnd, MSS
+- **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_initcwnd.md)** — initcwnd, MSS

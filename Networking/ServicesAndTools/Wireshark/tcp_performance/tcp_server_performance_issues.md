@@ -87,4 +87,4 @@ Statistics → TCP Stream Graphs → Throughput
 - **[Обзор диагностики](./tcp_performance_diagnostics.md)** — базовые концепции
 - **[Диагностика проблем клиента](./tcp_client_performance_issues.md)** — проблемы на стороне клиента
 - **[Потери в сети](./tcp_network_losses_and_offloading.md)** — диагностика сетевых проблем
-- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — настройка параметров
+- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка параметров

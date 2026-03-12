@@ -256,7 +256,7 @@ AutoNegotiation=yes
 
 * **[Offloading](../Concepts/offloading.md)** — детальное описание технологий GRO/LRO/TSO
 * **[RSS, RPS, RFS](../Concepts/rss_rps_rfs.md)** — концепции многопоточной обработки
-* **[Оптимизация TCP](../Concepts/tcp_tuning.md)** — настройка TCP-стека
+* **[Оптимизация TCP](../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека
 * **[Оптимизация сетевых каналов](../Concepts/network_latency_optimization.md)** — комплексная оптимизация
 * **[`ip link`](iproute2/ip_link.md)** — управление MTU и состоянием интерфейса
 * **[`tc`](iproute2/tc.md)** — управление трафиком (QoS)

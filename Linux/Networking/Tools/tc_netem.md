@@ -229,6 +229,6 @@ sudo tc qdisc del dev eth0 root netem
 ### Связанные темы
 
 * **[`tc`](./iproute2/tc.md)** — полное руководство по управлению трафиком
-* **[Оптимизация TCP](../Concepts/tcp_tuning.md)** — настройка TCP-стека
+* **[Оптимизация TCP](../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека
 * **[Оптимизация сетевых каналов](../Concepts/network_latency_optimization.md)** — комплексная оптимизация
 * **[`iproute2` overview](./iproute2/overview.md)** — обзор утилит iproute2

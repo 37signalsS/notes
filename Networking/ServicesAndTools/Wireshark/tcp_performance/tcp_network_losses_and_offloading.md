@@ -165,4 +165,4 @@ ethtool -K eth0 tso off gso off gro off
 - **[Диагностика проблем сервера](./tcp_server_performance_issues.md)** — проблемы на стороне сервера
 - **[Диагностика проблем клиента](./tcp_client_performance_issues.md)** — проблемы на стороне клиента
 - **[Инструменты анализа](./tcp_performance_analysis_tools.md)** — графики Wireshark
-- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — настройка параметров
+- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка параметров

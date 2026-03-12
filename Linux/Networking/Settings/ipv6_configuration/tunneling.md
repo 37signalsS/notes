@@ -15,7 +15,7 @@
 | **GRE** | Generic Routing Encapsulation | Proto 47 |
 | **IP-in-IP** | Инкапсуляция IP в IP | Proto 4 |
 
-**См. также:** [Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit/index.md).
+**См. также:** [Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md).
 
 ## Настройка туннелей
 
@@ -138,4 +138,4 @@ ip6tables -A INPUT -p ipv6 -j ACCEPT
 
 * **[Концепции](./concepts.md)** — типы IPv6-адресов
 * **[Диагностика](./diagnostics.md)** — решение проблем
-* **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit/index.md)** — базовая настройка туннелей
+* **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — базовая настройка туннелей

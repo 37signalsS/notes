@@ -102,4 +102,4 @@ initContainers:
 - **[RBAC](./rbac/rbac_overview.md)** — управление доступом к секретам
 - **[Pod Security Context](./pod_security_context.md)** — безопасность подов
 - **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)** — обзор подходов
-- **[GitOps Secrets Encryption](../../GitOps/Security/secrets_encryption.md)** — шифрование в GitOps
+- **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)** — шифрование в GitOps

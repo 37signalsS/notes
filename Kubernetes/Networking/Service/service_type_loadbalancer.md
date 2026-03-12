@@ -26,7 +26,7 @@ External Traffic → Cloud LB → NodePort → ClusterIP → Pod
 
 - **Облачный провайдер:** Работает "из коробки" только в облаках (AWS, GCP, Azure)
 - **Контроллер:** Требуется cloud-controller-manager для взаимодействия с API провайдера
-- **On-premise:** Для bare-metal кластеров используйте [MetalLB](../Addons/metallb.md)
+- **On-premise:** Для bare-metal кластеров используйте [MetalLB](../metallb.md)
 
 ### externalTrafficPolicy
 

@@ -65,4 +65,4 @@ sysctl -w net.ipv4.tcp_tw_reuse=1
 - **[Обзор и handshake](./tcp_connection_management_overview.md)** — установка соединения
 - **[Завершение соединения](./tcp_connection_termination.md)** — четырёхэтапное завершение
 - **[Состояния TCP](./tcp_connection_states.md)** — полная таблица состояний
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning.md)** — управление TIME_WAIT, SYN backlog
+- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление TIME_WAIT, SYN backlog
