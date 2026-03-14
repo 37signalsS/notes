@@ -179,5 +179,6 @@
 * [Обзор Kubespray](./overview.md) — определения и основные концепции.
 * [Установка кластера](./installation.md) — развертывание кластера.
 * [Примеры конфигураций](./examples.md) — Ingress, MetalLB, системные поды.
+* [Offline установка](./offline_installation/offline_definitions.md) — развертывание в закрытом контуре
 * [Управление сертификатами](../../Operations/certificate_management.md) — обновление сертификатов.
 * [etcd: Обзор](../../Concepts/etcd_overview.md) — хранилище данных кластера.

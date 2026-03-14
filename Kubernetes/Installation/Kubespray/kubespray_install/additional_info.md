@@ -89,6 +89,7 @@
 * **[Управление кластером](./cluster_management.md)** — масштабирование и обновление.
 * **[Примеры конфигураций](./examples.md)** — Ingress, MetalLB, системные поды.
 * **[HA-кластер через Kubespray](../HA/index.md)** — развертывание высокодоступного кластера.
+* **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
 * **[kubeadm: Быстрый старт](../../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный ручной метод.
 * **[Управление сертификатами](../../Operations/certificate_management.md)** — обновление сертификатов кластера.
 * **[kind](../kind/kind_concepts.md)** — локальные кластеры для разработки.

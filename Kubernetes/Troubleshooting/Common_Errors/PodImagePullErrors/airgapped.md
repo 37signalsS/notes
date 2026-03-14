@@ -36,4 +36,6 @@ containers:
 imagePullPolicy: IfNotPresent  # Использовать локальный кэш
 ```
 
+> **Полное руководство:** См. **[Kubespray: Offline установка](../../../Installation/Kubespray/offline_installation/offline_definitions.md)** — комплексное руководство по развертыванию Kubernetes в закрытом контуре с использованием Kubespray и Harbor.
+
 > **См. также:** [`../../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios/offline_airgapped_installation.md`](../../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios/offline_airgapped_installation.md)

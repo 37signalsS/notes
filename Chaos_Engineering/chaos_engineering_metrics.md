@@ -61,3 +61,4 @@ p99_control = histogram_quantile(0.99, sum by (le) (rate(http_request_duration_s
 * [Обзор Chaos Engineering](chaos_engineering_overview.md)
 * [Концепция Chaos Monkey](chaos_monkey_concept.md)
 * [SRE: SLA, SLO, SLI и метрики надежности](../Concepts/sre_concepts_main.md)
+* [Перцентили и квантили в Prometheus](../Prometheus/concepts/metric_types.md#перцентили-и-квантили)

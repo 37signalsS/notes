@@ -43,6 +43,7 @@
 | Развертывание кластера | **[Установка кластера](./kubespray_install/basic_concepts.md)** |
 | Масштабирование и обновление | **[Управление кластером](./cluster_management.md)** |
 | **HA-кластер (Keepalived + HAProxy)** | **[HA через Kubespray](./HA/index.md)** |
+| **Offline-кластер (Air-gapped)** | **[Offline установка](./offline_installation/offline_definitions.md)** |
 | Примеры конфигураций | **[Примеры](./examples.md)** |
 | Альтернатива: ручная установка | **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** |
 

@@ -4,6 +4,8 @@
 
 `tshark` идеально подходит для автоматизации и работы в средах без GUI.
 
+**TUI-альтернатива:** Для интерактивного анализа трафика в терминале используйте **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md)** — TUI-интерфейс для tshark с возможностями Wireshark GUI.
+
 * **Установка (если не установлен с Wireshark)**: `sudo apt install tshark` (Debian/Ubuntu) или `sudo dnf install wireshark-cli` (Fedora/RHEL).
 
 ```bash

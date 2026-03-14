@@ -29,6 +29,8 @@ HTTP (Hypertext Transfer Protocol) — протокол передачи гип�
 
 Для обхода этого ограничения и создания "сессий" используются такие механизмы, как [Cookies](http_authentication.md#cookies) или токены в заголовках (`Authorization`).
 
+> Базовые концепции stateful/stateless в разных доменах см. в **[Stateful vs Stateless](../../../Concepts/stateful_vs_stateless.md)**.
+
 ### Структура HTTP-сообщения
 
 **Минимальный HTTP-запрос (HTTP/1.1)**

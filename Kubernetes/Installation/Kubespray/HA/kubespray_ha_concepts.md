@@ -54,6 +54,7 @@ Kubespray автоматизирует настройку HA следующим 
 - **[Дополнительные темы](./kubespray_ha_advanced.md)** — тестирование отказоустойчивости, troubleshooting
 - **[Kubespray: Обзор](./overview.md)** — общая информация
 - **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
 - **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA
 
 ## Внешние ресурсы

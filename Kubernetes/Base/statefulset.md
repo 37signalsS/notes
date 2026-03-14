@@ -4,6 +4,8 @@
 
 **StatefulSet** — это контроллер Kubernetes для управления stateful-приложениями с сохранением состояния. В отличие от [Deployment](./Deployment/index.md), StatefulSet обеспечивает стабильные сетевые идентификаторы и постоянное хранилище для каждого пода.
 
+> Базовые концепции stateful/stateless см. в **[Stateful vs Stateless](../../Concepts/stateful_vs_stateless.md)**.
+
 ## Краткое описание
 
 StatefulSet обеспечивает:

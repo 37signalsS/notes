@@ -125,6 +125,8 @@ spec:
 
 При конфликте имен файлов приоритет имеет последний источник в списке `sources`.
 
+> **Подробнее:** [Projected Volume в Pod Volumes](../Pod/pod_volumes.md) — полное описание всех источников (secret, configMap, downwardAPI, serviceAccountToken, clusterTrustBundle, podCertificate) и практические примеры.
+
 ## Дополнительная информация
 
 ### Рекомендации

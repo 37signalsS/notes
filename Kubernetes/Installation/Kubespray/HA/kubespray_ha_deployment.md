@@ -169,4 +169,5 @@ kubectl get pods -n kube-system -l component=etcd
 
 - **[Основные концепции](./kubespray_ha_concepts.md)** — определения и архитектура
 - **[Дополнительные темы](./kubespray_ha_advanced.md)** — тестирование отказоустойчивости, troubleshooting
-- **[Kubespray: Обзор](../Kubespray/overview.md)** — общая информация
+- **[Kubespray: Обзор](../overview.md)** — общая информация
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре

@@ -119,6 +119,7 @@ kubectl get pods -n kube-system -l app=flannel
 * [Обзор Kubespray](./overview.md) — определения и основные концепции.
 * [Установка кластера](./installation.md) — развертывание кластера.
 * [Управление кластером](./cluster_management.md) — масштабирование и обновление.
+* [Offline установка](./offline_installation/offline_definitions.md) — развертывание в закрытом контуре
 * [CNI, kube-proxy и их роли](../../Networking/Network/cni_kube_proxy_roles.md) — сетевые плагины.
 * [MetalLB](../../Networking/metallb.md) — детальная документация по MetalLB.
 * [Taints and Tolerations](../../Scheduling/taints_and_tolerations.md) — механизм изоляции подов.

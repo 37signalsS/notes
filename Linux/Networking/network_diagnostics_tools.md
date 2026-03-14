@@ -247,6 +247,10 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 * **[Policy-Based Routing](./linux_policy_based_routing.md)** — маршрутизация на основе политик
 * **[iSCSI](./iSCSI.md)** — блочный доступ по IP-сети
 
+**Практические руководства:**
+
+* **[Порядок диагностики сетевых проблем](./network_troubleshooting_order.md)** — пошаговый алгоритм с разбором типичных ошибок
+
 **Утилиты iproute2:**
 
 * **[iproute2 overview](./Tools/iproute2/overview.md)** — обзор утилит

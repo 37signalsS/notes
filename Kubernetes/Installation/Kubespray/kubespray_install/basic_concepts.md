@@ -62,6 +62,7 @@
 * **[Определения](./definitions.md)** — базовые термины
 * **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
 * **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
+* **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре без интернета
 
 ---
 

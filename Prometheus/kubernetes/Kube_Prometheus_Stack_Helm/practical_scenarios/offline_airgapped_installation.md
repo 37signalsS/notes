@@ -2,6 +2,8 @@
 
 > [Назад к оглавлению](../practical_scenarios.md)
 
+> **См. также:** **[Kubespray: Offline установка](../../../../Kubernetes/Installation/Kubespray/offline_installation/offline_definitions.md)** — полное руководство по развертыванию Kubernetes в закрытом контуре с использованием Kubespray и Harbor.
+
 ## Этап 1: Подготовка образов (на хосте с интернетом)
 
 **Скачивание чарта:**

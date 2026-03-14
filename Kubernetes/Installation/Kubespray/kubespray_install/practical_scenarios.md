@@ -205,6 +205,7 @@ ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cl
 - **[Определения](./definitions.md)** — базовые термины
 - **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
 - **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре без интернета
 
 ---
 
