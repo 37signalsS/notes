@@ -1,18 +1,14 @@
 # Инициализация HA кластера kubeadm
 
-> **Примечание**: Подробная инструкция по инициализации Control Plane и установке CNI находится в файле [Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md).
+> **Примечание**: Подробная инструкция по инициализации Control Plane, добавлению worker-нод и установке CNI находится в файле [Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md).
 
-## Инициализация кластера
+## Краткая инструкция
 
-### Параметры инициализации
+### Инициализация кластера
 
 **На первом master-узле:**
 
 ```bash
-# Важно: выбираем CIDR, не пересекающиеся с вашей сетью
-# --pod-network-cidr=100.64.0.0/16 - для pod'ов
-# --service-cidr=100.65.0.0/16 - для сервисов
-
 sudo kubeadm init \
   --control-plane-endpoint "192.168.122.189:7443" \
   --pod-network-cidr=100.64.0.0/16 \
@@ -40,27 +36,10 @@ sudo kubeadm init \
 
 > **Важно**: Сохраните вывод команды! Команды `join` содержат одноразовые токены.
 
-### Настройка kubectl
+### Присоединение узлов
 
+**Control-plane узлы:**
 ```bash
-# Выполняется как обычный пользователь
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-# Проверка
-kubectl cluster-info
-kubectl get nodes
-```
-
-> **Примечание**: Статус `NotReady` — это нормально до установки CNI.
-
-### Присоединение мастер-узлов
-
-**На остальных master-узлах:**
-
-```bash
-# Используйте команду из вывода kubeadm init
 sudo kubeadm join 192.168.122.189:7443 \
   --token <token> \
   --discovery-token-ca-cert-hash sha256:<hash> \
@@ -68,15 +47,15 @@ sudo kubeadm join 192.168.122.189:7443 \
   --certificate-key <key>
 ```
 
-### Присоединение worker-узлов
-
-**На worker-узлах:**
-
+**Worker-узлы:**
 ```bash
 sudo kubeadm join 192.168.122.189:7443 \
   --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash>
+  --discovery-token-ca-cert-hash sha256:<hash> \
+  --cri-socket=unix:///run/containerd/containerd.sock
 ```
+
+> **Примечание**: Worker-узлы не требуют флагов `--control-plane` и `--certificate-key`.
 
 ### Установка CNI (Calico)
 
@@ -84,7 +63,6 @@ sudo kubeadm join 192.168.122.189:7443 \
 
 ```bash
 # Скачиваем Calico
-# ВЕРСИЯ: проверить совместимость с вашей версией Kubernetes
 curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -o calico.yaml
 
 # Меняем CIDR под наш pod-network-cidr
@@ -104,53 +82,10 @@ kubectl get nodes
 # master   Ready    control-plane   10m   v1.34.3
 ```
 
-Подробнее: [Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md).
+## Подробная инструкция
 
-## Проверка
+Для развёрнутой инструкции с мониторингом присоединения, проверкой Calico и troubleshooting см.:
 
-### Проверка VIP
-
-```bash
-# На MASTER-узле VIP должен быть активен
-ip a | grep 192.168.122.189
-
-# Тест failover: остановить keepalived на MASTER
-sudo systemctl stop keepalived
-# VIP должен переместиться на BACKUP
-```
-
-**Проверка HAProxy:**
-
-```bash
-# Статистика (если включена)
-curl http://<master-ip>:8404/stats
-
-# Проверка доступности API через VIP
-curl -k https://192.168.122.189:7443/healthz
-```
-
-**Проверка кластера:**
-
-```bash
-kubectl get nodes
-kubectl get pods -n kube-system
-```
-
-## Troubleshooting
-
-| Проблема | Диагностика | Решение |
-| :--- | :--- | :--- |
-| **VIP не назначается** | `systemctl status keepalived`, `journalctl -u keepalived` | Проверить интерфейс, priority, `virtual_router_id` |
-| **HAProxy не стартует** | `haproxy -c -f /etc/haproxy/haproxy.cfg` | Проверить синтаксис, доступность бэкендов |
-| **API недоступен через VIP** | `curl -k https://VIP:7443/healthz` | Проверить `ip_nonlocal_bind`, firewall |
-| **Бэкенды DOWN** | `curl http://IP:8404/stats` | Проверить доступность API Server на узлах |
-| **VRRP конфликты** | `tcpdump -i <interface> vrrp` | Убедиться в уникальности `virtual_router_id` |
-
-## Связанные темы
-
-- **Control Plane & CNI**: [Подробная инструкция](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md)
-- **HA концепции**: [HA Concepts](./ha_concepts.md)
-- **Keepalived + HAProxy**: [Установка](./keepalived_haproxy_setup.md)
-- **HA кластер на bare metal**: [HA Overview](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-- **Keepalived обзор**: [Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)
-- **HAProxy обзор**: [HAProxy](../../../WebServers/Haproxy/haproxy_overview.md)
+- **[Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md)** — пошаговая инструкция (Шаги 1-10)
+- **[HA Cluster Overview](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)** — архитектурные концепции
+- **[Node Preparation](../../HA_Cluster_Bare_Metal/k8s_ha_node_preparation.md)** — подготовка узлов
