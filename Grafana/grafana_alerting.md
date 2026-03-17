@@ -132,6 +132,242 @@ policies:
 - **Разделение ответственности**: Grafana обнаруживает проблему и отправляет событие. Внешняя система управляет жизненным циклом инцидента: эскалацией, графиками дежурств, группировкой.
 - **Пример эскалации**: Если дежурный инженер не реагирует на алерт в течение 5 минут, система автоматически передает его руководителю.
 
+---
+
+### Сценарий 3: Алерты для Kubernetes-приложений
+
+Этот сценарий описывает настройку критически важных алертов для мониторинга здоровья приложения в Kubernetes.
+
+#### Алерт на падение контейнера
+
+```yaml
+# provisioning/alerting/kubernetes-container-alerts.yaml
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: kubernetes-container-health
+    folder: Kubernetes
+    interval: 30s
+    rules:
+      - uid: container_restarted
+        title: Container restarted
+        condition: A
+        for: 1m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          service: kubernetes
+          severity: critical
+        annotations:
+          summary: "Контейнер {{ $labels.container }} в поде {{ $labels.pod }} перезапустился"
+          description: "Причина: {{ $labels.reason }}, Exit code: {{ $labels.exit_code }}"
+          runbook: "Проверьте логи: kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }}"
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: 'increase(kube_pod_container_status_restarts_total{namespace=~".+"}[5m]) > 0'
+              instant: true
+              format: table
+```
+
+#### Алерт на OOM Killed
+
+```yaml
+      - uid: container_oom_killed
+        title: Container OOM Killed
+        condition: A
+        for: 0m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          service: kubernetes
+          severity: critical
+        annotations:
+          summary: "Контейнер {{ $labels.container }} убит по OOM в поде {{ $labels.pod }}"
+          description: "Namespace: {{ $labels.namespace }}, Причина: OOMKilled"
+          runbook: "Увеличьте memory limits или оптимизируйте потребление памяти"
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: 'kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1'
+              instant: true
+              format: table
+```
+
+#### Алерт на недоступность реплик
+
+```yaml
+      - uid: deployment_replicas_unavailable
+        title: Deployment replicas unavailable
+        condition: B
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          service: kubernetes
+          severity: warning
+        annotations:
+          summary: "Недоступны реплики в deployment {{ $labels.deployment }}"
+          description: "Доступно: {{ $value }}%, Ожидалось: 100%"
+          runbook: "Проверьте события: kubectl describe deployment -n {{ $labels.namespace }} {{ $labels.deployment }}"
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: 'kube_deployment_status_replicas_available{namespace=~".+"} / kube_deployment_status_replicas{namespace=~".+"} * 100'
+              instant: false
+              format: time_series
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: { type: lt, params: [90] }
+                  query: { params: [A] }
+```
+
+#### Алерт на высокое потребление CPU
+
+```yaml
+      - uid: container_cpu_high
+        title: Container CPU usage high
+        condition: B
+        for: 10m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          service: kubernetes
+          severity: warning
+        annotations:
+          summary: "Высокое потребление CPU контейнером {{ $labels.container }}"
+          description: "Потребление: {{ $value }}% от limits"
+          runbook: "Проанализируйте нагрузку на приложение"
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: |
+                rate(container_cpu_usage_seconds_total{namespace=~".+", container!=""}[5m])
+                /
+                kube_pod_container_resource_limits{resource="cpu", namespace=~".+"}
+                * 100
+              instant: false
+              format: time_series
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: { type: gt, params: [80] }
+                  query: { params: [A] }
+```
+
+#### Алерт на высокое потребление памяти
+
+```yaml
+      - uid: container_memory_high
+        title: Container Memory usage high
+        condition: B
+        for: 10m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          service: kubernetes
+          severity: warning
+        annotations:
+          summary: "Высокое потребление памяти контейнером {{ $labels.container }}"
+          description: "Потребление: {{ $value }}% от limits"
+          runbook: "Проверьте на наличие утечек памяти"
+        data:
+          - refId: A
+            datasourceUid: prometheus_ds_uid
+            model:
+              expr: |
+                container_memory_usage_bytes{namespace=~".+", container!=""}
+                /
+                kube_pod_container_resource_limits{resource="memory", namespace=~".+"}
+                * 100
+              instant: false
+              format: time_series
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              conditions:
+                - evaluator: { type: gt, params: [85] }
+                  query: { params: [A] }
+```
+
+---
+
+### Сценарий 4: Настройка уведомлений в Telegram
+
+Telegram — популярный канал для оперативных уведомлений благодаря мобильности и поддержке форматирования.
+
+#### Контакт-пойнт для Telegram
+
+```yaml
+# provisioning/alerting/contact-points-telegram.yaml
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: team-devops-telegram
+    receivers:
+      - uid: telegram-receiver
+        type: telegram
+        settings:
+          botToken: "<YOUR_BOT_TOKEN>"  # Получите от @BotFather
+          chatId: "<YOUR_CHAT_ID>"      # ID чата (канал или группа)
+          message: |
+            {{ define "telegram.default.message" }}
+            🚨 *{{ .CommonAnnotations.summary }}*
+            
+            {{ if .CommonAnnotations.description }}
+            {{ .CommonAnnotations.description }}
+            {{ end }}
+            
+            *Детали:*
+            - Алерт: {{ .CommonLabels.alertname }}
+            - Сервис: {{ .CommonLabels.service }}
+            - Критичность: {{ .CommonLabels.severity }}
+            - Время: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+            
+            {{ if .CommonAnnotations.runbook }}
+            *Runbook:* {{ .CommonAnnotations.runbook }}
+            {{ end }}
+            
+            [Перейти в Grafana]({{ .ExternalURL }})
+            {{ end }}
+```
+
+#### Политики уведомлений для Telegram
+
+```yaml
+policies:
+  - orgId: 1
+    receiver: team-devops-telegram
+    group_by: ["alertname", "namespace", "service"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: team-devops-telegram
+        object_matchers:
+          - ["severity", "=", "critical"]
+        group_wait: 10s  # Быстрая доставка для критичных алертов
+        repeat_interval: 1h
+      - receiver: team-devops-telegram
+        object_matchers:
+          - ["severity", "=", "warning"]
+        group_wait: 1m
+        repeat_interval: 4h
+```
+
+> **Важно:** Для работы Telegram-уведомлений требуется Grafana 9.0+. В более ранних версиях используйте webhook с Telegram Bot API.
+
 ## Дополнительная информация
 
 ### Практические нюансы

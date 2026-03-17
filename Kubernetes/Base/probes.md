@@ -260,3 +260,4 @@ spec:
 * [High Availability](./high_availability.md) — роль проб в обеспечении отказоустойчивости
 * [Service](../Networking/Service/service_overview.md) — как Service использует readinessProbe
 * [Graceful Shutdown](./Pod/pod_lifecycle_and_state.md#завершение-работы-пода) — корректное завершение работы приложений
+* [Алертинг в Grafana](../../Grafana/grafana_alerting.md) — алерты на перезапуск контейнеров и OOM Killed

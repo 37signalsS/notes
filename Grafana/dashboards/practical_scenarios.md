@@ -98,8 +98,139 @@
 
 ---
 
+## Сценарий 6: Дашборд здоровья приложения в Kubernetes
+
+Этот сценарий описывает создание дашборда для оценки здоровья приложения, запущенного в Kubernetes. Дашборд предназначен для дежурного инженера и должен позволять быстро оценить состояние сервиса.
+
+### 6.1 Базовые метрики состояния
+
+#### Количество контейнеров в поде
+
+Панель показывает соотношение работающих контейнеров к общему количеству:
+
+```promql
+# Доступные реплики / Желаемые реплики
+kube_deployment_status_replicas_available{deployment="<deployment_name>", namespace="<namespace>"}
+/
+kube_deployment_status_replicas{deployment="<deployment_name>", namespace="<namespace>"}
+```
+
+**Визуализация:** Stat или Gauge с пороговыми значениями:
+- **Зеленый:** 100% (все реплики доступны)
+- **Желтый:** 50-99% (частичная доступность)
+- **Красный:** <50% (критическая недоступность)
+
+#### Статусы подов и контейнеров
+
+Панель для отслеживания состояний подов:
+
+```promql
+# Поды по статусам
+count by (phase) (kube_pod_status_phase{namespace="<namespace>", phase=~"Running|Pending|Failed|Unknown|Succeeded"})
+```
+
+**Детализация по причинам завершения контейнеров:**
+
+```promql
+# OOM Killed контейнеры
+count(kube_pod_container_status_last_terminated_reason{reason="OOMKilled", namespace="<namespace>"})
+
+# Error статусы
+count(kube_pod_container_status_last_terminated_reason{reason="Error", namespace="<namespace>"})
+
+# Completed статусы
+count(kube_pod_container_status_state_completed{namespace="<namespace>"} == 1)
+```
+
+**Визуализация:** Table или State Timeline с группировкой по причинам (`reason`).
+
+### 6.2 Инфраструктурные метрики
+
+#### CPU (Total Seconds)
+
+```promql
+# Потребление CPU контейнером
+rate(container_cpu_usage_seconds_total{namespace="<namespace>", container="<container_name>"}[5m])
+```
+
+**Визуализация:** Time series с пороговыми значениями на основе `limits`.
+
+#### Память
+
+```promql
+# Использование памяти контейнером
+container_memory_usage_bytes{namespace="<namespace>", container="<container_name>"}
+
+# Процент использования от limits
+container_memory_usage_bytes{namespace="<namespace>", container="<container_name>"}
+/
+kube_pod_container_resource_limits{resource="memory", namespace="<namespace>", container="<container_name>"}
+* 100
+```
+
+**Визуализация:** Time series + Gauge с порогом 80-90%.
+
+### 6.3 Метрики деплойментов
+
+#### Реплики и доступность
+
+```promql
+# Желаемые vs Доступные реплики
+kube_deployment_status_replicas{deployment="<deployment_name>"}
+kube_deployment_status_replicas_available{deployment="<deployment_name>"}
+kube_deployment_status_replicas_unavailable{deployment="<deployment_name>"}
+```
+
+**Визуализация:** Stat с сравнением (например, `5/5 available`).
+
+#### Ошибки конфигурации
+
+```promql
+# ConfigMap не загружены
+count(kube_configmap_info{namespace="<namespace>"} == 0)
+
+# Secret не загружены
+count(kube_secret_info{namespace="<namespace>"} == 0)
+```
+
+### 6.4 Логи (опционально)
+
+При наличии Loki можно добавить панель с последними логами:
+
+```logql
+{namespace="<namespace>", pod=~"<pod_name>.*"} |~ "ERROR|Exception|Fatal" | line_format "{{.pod}}: {{.line}}"
+```
+
+**Визуализация:** Logs panel с фильтром по уровню ошибок.
+
+### 6.5 Рекомендуемая структура дашборда
+
+| Row | Панели | Тип визуализации |
+| :--- | :--- | :--- |
+| **Status Overview** | Доступность реплик, Статусы подов | Stat, State Timeline |
+| **Container Health** | OOM Killed, Error, Completed | Table, Bar chart |
+| **Resources** | CPU, Memory usage | Time series, Gauge |
+| **Deployment Metrics** | Реплики, ConfigMap/Secret статусы | Stat, Table |
+| **Logs** | Последние ошибки | Logs panel |
+
+### 6.6 Переменные для динамической фильтрации
+
+Создайте переменные для удобной навигации:
+
+| Имя | Query | Описание |
+| :--- | :--- | :--- |
+| `namespace` | `label_values(kube_namespace_labels, namespace)` | Выбор namespace |
+| `deployment` | `label_values(kube_deployment_labels{namespace="$namespace"}, deployment)` | Выбор деплоймента |
+| `pod` | `label_values(kube_pod_labels{namespace="$namespace"}, pod)` | Выбор пода |
+| `container` | `label_values(kube_pod_container_info{namespace="$namespace", pod="$pod"}, container)` | Выбор контейнера |
+
+> **См. также:** [Алертинг в Grafana](../grafana_alerting.md) для настройки уведомлений при критических состояниях.
+
+---
+
 ## Ссылки
 
 - **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
 - **[Провижионинг через ConfigMap](./provisioning_configmap.md)** — развертывание дашбордов
 - **[Provisioning](../grafana_provisioning.md)** — управление дашбордами как код
+- **[Kubernetes Monitoring](../../Kubernetes/MonitoringLogging/monitoring_and_logging_architecture_overview.md)** — мониторинг Kubernetes
