@@ -1,0 +1,174 @@
+# Инициализация Control Plane в HA кластере
+
+## Определения
+
+**Control Plane Endpoint** — стабильная точка входа (VIP:PORT или DNS) для доступа к API-серверу через балансировщик нагрузки.
+
+**kubeadm init** — команда инициализации Control Plane на первом мастер-узле.
+
+**kubeadm join** — команда присоединения узла к существующему кластеру.
+
+**pod-network-cidr** — диапазон IP-адресов для подов (не должен пересекаться с существующей инфраструктурой).
+
+**service-cidr** — диапазон IP-адресов для сервисов Kubernetes.
+
+---
+
+## Основные концепции
+
+### Архитектура инициализации HA кластера
+
+1. **Первый мастер-узел** — инициализирует кластер через `kubeadm init`
+2. **Остальные мастера** — присоединяются через `kubeadm join` с флагом `--control-plane`
+3. **Worker узлы** — присоединяются через `kubeadm join` без флагов мастера
+4. **CNI плагин** — устанавливается после инициализации первого мастера
+
+### Ключевые флаги kubeadm
+
+| Флаг | Назначение | Пример |
+| :--- | :--- | :--- |
+| `--control-plane-endpoint` | VIP балансировщика для HA | `192.168.1.100:6443` |
+| `--upload-certs` | Загрузка сертификатов в кластер для других мастеров | — |
+| `--pod-network-cidr` | Диапазон IP для подов (требуется CNI) | `100.64.0.0/16` |
+| `--service-cidr` | Диапазон IP для сервисов | `100.65.0.0/16` |
+| `--apiserver-advertise-address` | IP-адрес для публикации API | `192.168.1.1` |
+| `--apiserver-bind-port` | Порт API-сервера | `6443` |
+| `--cri-socket` | CRI-сокет среды выполнения | `unix:///run/containerd/containerd.sock` |
+
+### Выбор CIDR для подов и сервисов
+
+При инициализации кластера необходимо выбрать диапазоны, **не пересекающиеся** с существующей сетевой инфраструктурой:
+
+| Диапазон | Назначение | Рекомендуемые CIDR | Примечание |
+| :--- | :--- | :--- | :--- |
+| `--pod-network-cidr` | IP-адреса для подов | `100.64.0.0/16`, `10.244.0.0/16`, `192.168.0.0/16` | Должен совпадать с настройками CNI |
+| `--service-cidr` | IP-адреса для сервисов | `100.65.0.0/16`, `10.96.0.0/12` | Default: `10.96.0.0/12` |
+
+> **Важно**: Изменение CIDR после инициализации кластера невозможно без полной пересоздания.
+
+---
+
+## Практические сценарии
+
+### Шаг 1: Инициализация первого мастер-узла
+
+На **первом** мастер-узле выполните:
+
+```bash
+# Важно: выбираем CIDR, не пересекающиеся с вашей сетью
+# --pod-network-cidr=100.64.0.0/16 - для pod'ов
+# --service-cidr=100.65.0.0/16 - для сервисов
+
+sudo kubeadm init \
+  --control-plane-endpoint=k8s-node1:6443 \
+  --pod-network-cidr=100.64.0.0/16 \
+  --service-cidr=100.65.0.0/16 \
+  --upload-certs \
+  --apiserver-advertise-address=192.168.1.1 \
+  --apiserver-bind-port=6443 \
+  --cri-socket=unix:///run/containerd/containerd.sock
+```
+
+**Параметры**:
+
+- `--control-plane-endpoint` — адрес балансировщика (Keepalived + HAProxy) или DNS-имя
+- `--pod-network-cidr` — диапазон для подов (должен совпадать с выбранным CNI)
+- `--service-cidr` — диапазон для сервисов (по умолчанию `10.96.0.0/12`)
+- `--upload-certs` — загружает сертификаты в Secret для других мастеров
+- `--apiserver-advertise-address` — IP-адрес, который будет использоваться для доступа к API
+- `--apiserver-bind-port` — порт, на котором будет слушать API-сервер (по умолчанию `6443`)
+- `--cri-socket` — путь к CRI-сокету (для containerd: `/run/containerd/containerd.sock`)
+
+**Результат**:
+
+- `kubeadm` выведет **две команды `join`**:
+  1. Для других мастер-узлов (с `--control-plane` и `--certificate-key`)
+  2. Для worker-узлов (без дополнительных флагов)
+
+> **Важно**: Сохраните вывод команды! Команды `join` содержат одноразовые токены и хэши сертификатов.
+
+### Что происходит в процессе инициализации
+
+```
+[init] Using Kubernetes version: v1.34.3
+[preflight] Running pre-flight checks
+[certs] Generating certificates...
+[kubeconfig] Writing kubeconfig files...
+[etcd] Creating static Pod manifest for local etcd
+[control-plane] Creating static Pod manifests...
+[kubelet-start] Starting the kubelet
+[wait-control-plane] Waiting for control plane components...
+```
+
+**Этапы**:
+
+1. **Pre-flight checks** — проверка системных требований
+2. **Генерация сертификатов** — создание TLS-сертификатов для компонентов
+3. **Kubeconfig файлы** — создание файлов доступа к кластеру
+4. **etcd** — запуск локального etcd как статического пода
+5. **Control Plane** — запуск API server, controller manager, scheduler
+6. **Kubelet** — запуск агента узла
+7. **Ожидание** — проверка доступности компонентов control plane
+
+### Шаг 2: Настройка kubectl для обычного пользователя
+
+```bash
+# Выполняется как обычный пользователь (например, evdovichenko)
+mkdir -p $HOME/.kube
+
+# Скопировать admin.conf (учетные данные кластера)
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+
+# Установить права владельца
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+# Проверка доступа
+kubectl cluster-info
+kubectl get nodes
+```
+
+> **Важно**: Статус `NotReady` — это **нормально** сразу после инициализации. Для перехода в `Ready` требуется установка CNI-плагина.
+
+### Шаг 3: Сохранение команд для подключения нод
+
+Из вывода `kubeadm init` сохраните команды для последующего присоединения узлов.
+
+**Для control-plane нод** (если будут дополнительные мастер-узлы):
+
+```bash
+kubeadm join k8s-node1:6443 --token XXX \
+  --discovery-token-ca-cert-hash sha256:XXX \
+  --control-plane --certificate-key XXX
+```
+
+**Для worker-нод**:
+
+```bash
+kubeadm join k8s-node1:6443 --token XXX \
+  --discovery-token-ca-cert-hash sha256:XXX
+```
+
+> **Важно**: Токены действительны 24 часа по умолчанию. Для повторной генерации используйте `kubeadm token create --print-join-command`.
+
+### Шаг 4: Текущее состояние после инициализации
+
+| Компонент | Статус | Примечание |
+| :--- | :--- | :--- |
+| Control-plane | Инициализирован | Компоненты запущены |
+| kubectl | Настроен | Доступ к кластеру |
+| Node status | NotReady | Требуется CNI |
+| Сеть pod'ов | Не настроена | Следующий шаг |
+
+---
+
+## Дополнительная информация
+
+### Связанные документы
+
+- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
+- **Компоненты**: [Component Installation](./k8s_ha_component_installation.md)
+- **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
+- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
+- **CNI**: [CNI Installation](./cni_installation.md)
+- **Node Joining**: [Node Joining](./node_joining.md)
+- **CNI Overview**: [CNI Overview](../../Networking/Network/CNI/definitions.md)

@@ -285,6 +285,10 @@ acme_client letsencrypt {
 
 ### Альтернативы и смежные решения
 
-* **Certbot и acme.sh:** Классические утилиты командной строки. `certbot` имеет плагины для Nginx (см. **[Использование Let's Encrypt с Nginx в Docker](../Nginx/Scenarios/nginx_with_letsencrypt.md)**), а `acme.sh` известен широкой поддержкой DNS API.
-* **Traefik:** Современный обратный прокси со встроенной автоматической поддержкой Let's Encrypt. См. **[обзор Traefik](../Traefik/traefik_overview.md)**.
-* **Cert-manager:** Стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**.
+**Certbot** — классический инструмент с плагинами для веб-серверов. См. **[Использование Let's Encrypt с Certbot](../Concepts/https_with_certbot.md)**.
+
+**acme.sh** — легковесная альтернатива на bash с широкой поддержкой DNS API. См. **[Использование acme.sh](../Concepts/acme_sh.md)**.
+
+**Traefik** — современный обратный прокси со встроенной автоматической поддержкой Let's Encrypt. См. **[обзор Traefik](../Traefik/traefik_overview.md)**.
+
+**Cert-manager** — стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**.

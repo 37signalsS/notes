@@ -1,0 +1,297 @@
+# Использование acme.sh для получения TLS-сертификатов
+
+## Определения
+
+**acme.sh** — легковесный ACME-клиент, написанный на shell (bash). Предназначен для автоматического получения и обновления SSL/TLS сертификатов от центров сертификации, поддерживающих протокол ACME (Let's Encrypt, ZeroSSL, и др.).
+
+**Ключевые особенности:**
+
+- Написан на bash (нулевые зависимости, кроме curl и openssl)
+- Поддерживает 100+ DNS API провайдеров
+- Автоматическая поддержка wildcard-сертификатов
+- Встроенная поддержка ECDSA и RSA ключей
+- Автоматическое обновление сертификатов через cron
+
+**Преимущества перед Certbot:**
+
+- Меньше зависимостей (не требует Python)
+- Шире поддержка DNS API провайдеров
+- Гибкая настройка hook-скриптов
+- Поддержка нескольких типов ключей параллельно
+
+## Основные концепции
+
+### Методы авторизации
+
+**HTTP-01** — проверка через HTTP (аналогично Certbot).
+
+- Требует доступный 80 порт
+- Не поддерживает wildcard
+- Автоматическая обработка через веб-сервер
+
+**DNS-01** — проверка через DNS TXT-запись.
+
+- Поддерживает wildcard (`*.example.com`)
+- Не требует доступности сервера
+- Требует API ключ DNS-провайдера
+
+### Типы ключей
+
+**ECDSA (по умолчанию):**
+
+```bash
+acme.sh --issue -d example.com --keylength ec-256
+```
+
+**RSA:**
+
+```bash
+acme.sh --issue -d example.com --keylength 2048
+```
+
+**Параллельное использование:**
+
+acme.sh позволяет получить два сертификата (ECDSA + RSA) для одного домена:
+
+```bash
+# ECDSA сертификат
+acme.sh --issue -d example.com --keylength ec-256
+
+# RSA сертификат (отдельная пара)
+acme.sh --issue -d example.com --keylength 2048
+```
+
+Сертификаты хранятся в отдельных директориях и могут быть установлены в веб-сервер одновременно.
+
+### Структура хранения
+
+```
+~/.acme.sh/
+├── example.com/
+│   ├── example.com.cer      # Сертификат
+│   ├── example.com.key      # Приватный ключ
+│   ├── ca.cer               # Промежуточный CA
+│   └── fullchain.cer        # Полная цепочка
+├── account.conf             # Конфигурация аккаунта
+└── acme.sh.env              # Переменные окружения
+```
+
+> **Важно:** Файлы в `~/.acme.sh/` предназначены для внутреннего использования. Для установки в веб-сервер используйте команду `--install-cert`.
+
+## Практические сценарии
+
+### Сценарий 1: Установка acme.sh
+
+**Быстрая установка:**
+
+```bash
+# От имени обычного пользователя (не root!)
+curl https://get.acme.sh | sh
+
+# Активация в текущей сессии
+source ~/.bashrc
+
+# Или явное указание пути
+~/.acme.sh/acme.sh --version
+```
+
+**Установка от root:**
+
+```bash
+# Для системных задач (cron, DNS API)
+sudo -i
+curl https://get.acme.sh | sh
+source ~/.bashrc
+```
+
+### Сценарий 2: Получение сертификата (HTTP-01)
+
+**Для обычного домена:**
+
+```bash
+# Предварительная проверка (dry-run)
+acme.sh --issue -d example.com -w /var/www/html --test
+
+# Получение сертификата
+acme.sh --issue -d example.com -w /var/www/html
+
+# Получение с несколькими доменами
+acme.sh --issue -d example.com -d www.example.com -w /var/www/html
+```
+
+**Настройка веб-сервера:**
+
+```nginx
+server {
+    listen 80;
+    server_name example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        # Основная конфигурация
+    }
+}
+```
+
+### Сценарий 3: Wildcard-сертификат через DNS API
+
+**Подготовка API ключа:**
+
+```bash
+# Экспорт переменных окружения (для Cloudflare)
+export CF_Key="your_cloudflare_api_key"
+export CF_Email="your_cloudflare_email"
+
+# Или для других провайдеров
+# export DNSPod_API_key="your_key"
+# export AWS_ACCESS_KEY_ID="your_key"
+# export AWS_SECRET_ACCESS_KEY="your_secret"
+```
+
+**Получение wildcard-сертификата:**
+
+```bash
+# ECDSA сертификат
+acme.sh --issue --dns dns_cf \
+    -d example.com \
+    -d "*.example.com" \
+    --keylength ec-256
+
+# RSA сертификат (отдельно)
+acme.sh --issue --dns dns_cf \
+    -d example.com \
+    -d "*.example.com" \
+    --keylength 2048
+```
+
+**Поддерживаемые DNS провайдеры:**
+
+- Cloudflare (`dns_cf`)
+- AWS Route53 (`dns_aws`)
+- DigitalOcean (`dns_do`)
+- GoDaddy (`dns_gd`)
+- Яндекс.Облако (`dns_yandex`)
+- И ещё 90+ провайдеров
+
+Полный список: [acme.sh DNS API wiki](https://github.com/acmesh-official/acme.sh/wiki/dnsapi)
+
+### Сценарий 4: Установка сертификата в Nginx
+
+**Команда установки:**
+
+```bash
+acme.sh --install-cert -d example.com \
+    --key-file       /etc/nginx/ssl/example.com.key  \
+    --fullchain-file /etc/nginx/ssl/example.com.crt \
+    --reloadcmd     "systemctl reload nginx"
+```
+
+**Для двух сертификатов (ECDSA + RSA):**
+
+```bash
+# ECDSA
+acme.sh --install-cert -d example.com \
+    --key-file       /etc/nginx/ssl/example.com.ecdsa.key  \
+    --fullchain-file /etc/nginx/ssl/example.com.ecdsa.crt \
+    --reloadcmd     "systemctl reload nginx"
+
+# RSA (в те же файлы, но с другим суффиксом)
+acme.sh --install-cert -d example.com \
+    --key-file       /etc/nginx/ssl/example.com.rsa.key  \
+    --fullchain-file /etc/nginx/ssl/example.com.rsa.crt \
+    --reloadcmd     "systemctl reload nginx"
+```
+
+**Конфигурация Nginx:**
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name example.com;
+
+    # ECDSA (приоритет)
+    ssl_certificate /etc/nginx/ssl/example.com.ecdsa.crt;
+    ssl_certificate_key /etc/nginx/ssl/example.com.ecdsa.key;
+
+    # RSA (резерв)
+    ssl_certificate /etc/nginx/ssl/example.com.rsa.crt;
+    ssl_certificate_key /etc/nginx/ssl/example.com.rsa.key;
+}
+```
+
+> **Примечание:** Nginx автоматически выберет подходящий сертификат в зависимости от клиента.
+
+### Сценарий 5: Автоматическое обновление
+
+**Настройка cron:**
+
+acme.sh автоматически добавляет задачу в cron при установке. Проверка:
+
+```bash
+crontab -l
+# Должна быть строка:
+# 0 0 * * * "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" > /dev/null
+```
+
+**Ручное обновление:**
+
+```bash
+# Обновление всех сертификатов
+acme.sh --renew -d example.com
+
+# Принудительное обновление (даже если не скоро истекает)
+acme.sh --renew -d example.com --force
+```
+
+**Мониторинг:**
+
+```bash
+# Список установленных сертификатов
+acme.sh --list
+
+# Информация о конкретном сертификате
+openssl x509 -in ~/.acme.sh/example.com/fullchain.cer -text -noout
+```
+
+### Сценарий 6: Диагностика ошибок
+
+**Включение отладки:**
+
+```bash
+acme.sh --issue -d example.com --dns dns_cf --debug
+```
+
+**Распространённые ошибки:**
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| **DNS error** | DNS-запись не обновилась | Подождать 1-5 минут, проверить TTL |
+| **Rate limit** | Превышен лимит Let's Encrypt | Не повторять, устранить причину, ждать |
+| **API error** | Неверный API ключ | Проверить переменные окружения |
+| **404 Not Found** | Неправильный webroot | Проверить путь, конфиг nginx |
+
+> **Важно:** При ошибке не повторяйте команду сразу — это приведёт к rate limit. Сначала диагностируйте проблему.
+
+## Дополнительная информация
+
+### Сравнение: acme.sh vs Certbot
+
+| Критерий | acme.sh | Certbot |
+| :--- | :--- | :--- |
+| **Язык** | Bash (нулевые зависимости) | Python (требует pip/apt) |
+| **DNS API** | 100+ провайдеров | ~50 провайдеров |
+| **Wildcard** | Полная поддержка | Только DNS-01 |
+| **ECDSA/RSA** | Параллельная поддержка | Параллельная поддержка |
+| **Размер** | ~200 KB | ~10 MB |
+| **Сообщество** | GitHub (активная разработка) | EFF (корпоративная поддержка) |
+
+### Ссылки
+
+- **[Официальная документация](https://github.com/acmesh-official/acme.sh)**
+- **[DNS API wiki](https://github.com/acmesh-official/acme.sh/wiki/dnsapi)**
+- **[Использование Let's Encrypt с Certbot](./https_with_certbot.md)**
+- **[ACME в Angie](../Angie/angie_acme_module.md)**
+- **[Настройка TLS в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)**
