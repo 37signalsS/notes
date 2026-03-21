@@ -11,9 +11,9 @@
   - **[Prometheus PostgreSQL Exporter](https://github.com/prometheus-community/postgres_exporter)**: Специализированный сервис (экспортер), который запускается рядом с базой данных. Он выполняет запросы к PostgreSQL для сбора статистики (например, количество активных соединений, скорость транзакций) и предоставляет их по HTTP в формате, понятном для Prometheus.
   - **[Prometheus](../../Prometheus/overview.md)**: Система мониторинга, которая периодически опрашивает (scrape) HTTP-ендпоинт экспортера, собирает метрики и сохраняет их в свою базу данных временных рядов.
 
-- **Автоматизация с [Ansible](../../Ansible/ansible_introduction.md)**:
-  - **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспорtera, и `cloudalchemy.prometheus` для Prometheus.
-  - **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../../Ansible/Vault/basics.md).
+- **Автоматизация с [Ansible](../ansible_introduction.md)**:
+  - **Готовые роли Ansible Galaxy**: Чтобы не писать логику установки и настройки с нуля, используются проверенные сообществом роли: `community.postgresql` для PostgreSQL, `prometheus-community.postgres_exporter` для экспортера, и `cloudalchemy.prometheus` для Prometheus.
+  - **Защита секретов**: Чувствительные данные, такие как пароли от базы данных для экспортера, должны быть зашифрованы с помощью [Ansible Vault](../Vault/basics.md).
 
 ## Практические сценарии
 

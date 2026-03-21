@@ -107,7 +107,7 @@ cache_connection = .cache/inventory
 
 ## Дополнительная информация
 
-- **Основы инвентаря**: Базовые концепции статического инвентаря описаны в документе [Установка и настройка Ansible](./ansible_setup_and_config.md).
+- **Основы инвентаря**: Базовые концепции статического инвентаря описаны в документе [Установка и настройка Ansible](ansible_setup_and_config.md).
 - **Плагин `yandex_cloud`**: Подробную документацию по плагину `yandex.cloud.yandex_cloud` можно найти на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html).
 - **Плагин `vmware_vm_inventory`**: Документация доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html).
 - **Теги в облаках**: [Кроссплатформенные концепции](./CrossPlatform/concepts.md) — использование тегов для группировки
