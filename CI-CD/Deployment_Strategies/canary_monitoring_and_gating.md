@@ -151,5 +151,5 @@ canary_gate:
 ### Связанные документы
 
 * **[Canary Deployments: Пошаговое внедрение](./canary_deployment.md)** — основной документ, описывающий процесс канареечного развертывания.
-* **[Перцентили и квантили в Prometheus](../../Prometheus/concepts/metric_types/overview.md#перцентили-и-квантили)** — подробное объяснение перцентилей и их использования.
-* **[Агрегация Summary](../../Prometheus/concepts/metric_types/overview.md#агрегация-summary-проблема-и-решение)** — почему нельзя агрегировать перцентили из Summary.
+* **[Перцентили и квантили в Prometheus](../../Prometheus/concepts/metric_types/percentiles.md)** — подробное объяснение перцентилей и их использования.
+* **[Агрегация Summary](../../Prometheus/concepts/metric_types/summary.md)** — почему нельзя агрегировать перцентили из Summary.
