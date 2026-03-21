@@ -87,7 +87,7 @@ MSS = 1500 - 20 - 20 = 1460 байт (стандартный Ethernet)
 
 **Эффект:** отправитель ретранслирует только потерянный сегмент.
 
-См. также: [Механизмы надежности](./reliability_mechanisms.md#выборочное-подтверждение-sack)
+См. также: [Механизмы надежности](../reliability_mechanisms/diagnostics.md)
 
 ---
 
@@ -131,6 +131,6 @@ MSS = 1500 - 20 - 20 = 1460 байт (стандартный Ethernet)
 
 ### Связанные темы
 
-- **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой
-- **[Flow Control](./Flow_Control/flow_control.md)** — управление потоком
-- **[Надежность TCP](./reliability_mechanisms.md)** — механизмы надежности
+- **[Congestion Control](../congestion/tcp_congestion_control_overview.md** — управление перегрузкой
+- **[Flow Control](../../../../Ansible/PlaybookStructure/flow_control.md** — управление потоком
+- **[Надежность TCP](../reliability_mechanisms/diagnostics.md)** — механизмы надежности

@@ -94,5 +94,3 @@ spec:
     - protocol: TCP
       port: 443
 ```
-
-> **См. также:** [`../../../Security/network_policies.md`](../../../Security/network_policies.md), [`../../../Security/network_policies/Calico/index.md`](../../../Security/network_policies/Calico/index.md)

@@ -4,7 +4,7 @@
 
 **MetalLB** — это решение для балансировки нагрузки в bare-metal Kubernetes-кластерах, которое позволяет использовать сервисы типа `LoadBalancer` без интеграции с облачными провайдерами. MetalLB назначает сервисам внешние IP-адреса из заранее определенных пулов и анонсирует их в локальной сети.
 
-**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде [DaemonSet](../../Base/daemonset.md). `Speaker` отвечает за анонсирование IP-адресов во внешней сети, используя один из протоколов: L2 (ARP/NDP) или BGP. В современных версиях этот компонент использует **FRR (Free Range Routing)** для управления сетевыми протоколами.
+**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде [DaemonSet](../Base/daemonset.md). `Speaker` отвечает за анонсирование IP-адресов во внешней сети, используя один из протоколов: L2 (ARP/NDP) или BGP. В современных версиях этот компонент использует **FRR (Free Range Routing)** для управления сетевыми протоколами.
 
 **Controller** — компонент MetalLB, работающий как `Deployment`. Он отслеживает сервисы с типом `LoadBalancer` и назначает им свободные IP-адреса из сконфигурированных пулов (`IPAddressPool`).
 
@@ -189,6 +189,6 @@ data:
 ## Дополнительная информация
 
 - **Официальная документация:** [metallb.universe.tf](https://metallb.universe.tf/)
-- **Service типа LoadBalancer:** [service_type_loadbalancer.md](../Service/service_type_loadbalancer.md)
-- **Протокол BGP:** [Обзор BGP (Border Gateway Protocol)](../../../Networking/Protocols/bgp.md)
-- **DaemonSet:** [daemonset.md](../../Base/daemonset.md)
+- **Service типа LoadBalancer:** [service_type_loadbalancer.md](./Service/service_type_loadbalancer.md)
+- **Протокол BGP:** [Обзор BGP (Border Gateway Protocol)](../../Networking/Protocols/bgp.md)
+- **DaemonSet:** [daemonset.md](../Base/daemonset.md)

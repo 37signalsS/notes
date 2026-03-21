@@ -73,7 +73,7 @@ CRIU сохраняет практически все состояние про�
 
 ### Связь с observability
 
-Диагностика процессов является частью более широкой практики **Observability** (наблюдаемость системы). Подробнее см. в заметке [**Observability Overview**](../../../../Concepts/Observability_and_Monitoring/observability_overview.md).
+Диагностика процессов является частью более широкой практики **Observability** (наблюдаемость системы). Подробнее см. в заметке [**Observability Overview**](../../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
 
 **Три столпа observability применительно к процессам:**
 

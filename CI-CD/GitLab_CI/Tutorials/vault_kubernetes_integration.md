@@ -1,6 +1,6 @@
 ### Определения
 
-- **Аутентификация по JWT (JWT Auth Method)**: Метод аутентификации в [HashiCorp Vault](../../Vault/overview.md), который позволяет внешним системам, таким как GitLab, проходить аутентификацию с помощью стандарта JSON Web Token (JWT).
+- **Аутентификация по JWT (JWT Auth Method)**: Метод аутентификации в [HashiCorp Vault](../../../Vault/overview.md), который позволяет внешним системам, таким как GitLab, проходить аутентификацию с помощью стандарта JSON Web Token (JWT).
 - **OpenID Connect (OIDC)**: Протокол идентификации на базе OAuth 2.0. Подробнее см. в [OpenID Connect (OIDC)](../../../Security/Concepts/authentication_vs_authorization.md#протоколы-и-стандарты). GitLab может выступать в роли OIDC-провайдера.
 - **`CI_JOB_JWT_V2_TOKEN`**: Предопределенная переменная в GitLab CI, которая содержит короткоживущий, OIDC-совместимый JWT-токен. Этот токен уникален для каждой CI/CD-задачи и содержит набор "заявлений" (`claims`), описывающих контекст выполнения (ID проекта, имя ветки, тип ссылки и т.д.).
 
@@ -30,7 +30,7 @@
     ```
 
 2. **Создайте и примените манифест для экземпляра Vault:**
-    Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../Kubernetes/Networking/Ingress/overview.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
+    Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../../Linux/Networking/Services/BIND/overview.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
 
     ```yaml
     # vault-instance.yaml

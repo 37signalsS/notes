@@ -151,9 +151,9 @@ ssh -L 59001:localhost:5901 -N -f -l your_username your_server_ip
 
 **Другие протоколы:**
 
-* **[RDP](../../Networking/Protocols/rdp.md)** — Remote Desktop Protocol (Windows)
-* **[VNC](../../Networking/Protocols/vnc.md)** — Virtual Network Computing
-* **[Telnet](../../Networking/Protocols/telnet.md)** — устаревший незащищенный протокол
+* **[RDP](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — Remote Desktop Protocol (Windows)
+* **[VNC](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md** — Virtual Network Computing
+* **[Telnet](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — устаревший незащищенный протокол
 
 ### Безопасность удаленного доступа
 

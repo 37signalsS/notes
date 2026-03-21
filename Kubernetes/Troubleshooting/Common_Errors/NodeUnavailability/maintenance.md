@@ -21,8 +21,6 @@ kubectl drain <node-name> \
 kubectl uncordon <node-name>
 ```
 
-> **См. также:** [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)
-
 ## Мониторинг и алерты
 
 ```yaml

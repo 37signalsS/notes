@@ -63,7 +63,7 @@ remote_read:
 | `--storage.tsdb.path` | `data/` | Путь к каталогу для хранения [TSDB](./concepts/tsdb.md). |
 | `--storage.tsdb.retention.time` | `15d` | Срок хранения данных (например, `30d`, `2y`). |
 | `--storage.tsdb.retention.size`| `0B` | Максимальный размер хранилища (например, `50GB`). |
-| `--query.timeout` | `2m` | Максимальное время выполнения [PromQL](./concepts/promql.md)-запроса. |
+| `--query.timeout` | `2m` | Максимальное время выполнения [PromQLconcepts/promql/functions.md-запроса. |
 | `--query.max-concurrency` | `20` | Максимальное количество одновременных запросов. |
 | `--log.level` | `info` | Уровень логирования (`debug`, `info`, `warn`, `error`). |
 

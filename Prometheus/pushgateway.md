@@ -9,7 +9,7 @@
 
 Pushgateway — это компонент-посредник в экосистеме Prometheus, предназначенный для одного специфического случая: приёма метрик от короткоживущих или периодических задач, которые завершаются быстрее, чем Prometheus успевает их опросить (scrape).
 
-Этот компонент является частью общей **[концепции наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_overview.md)** и иногда используется при **[проектировании мониторинга в распределенных системах](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)**, однако его применение требует понимания ограничений.
+Этот компонент является частью общей **[концепции наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_definitions.md)** и иногда используется при **[проектировании мониторинга в распределенных системах](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)**, однако его применение требует понимания ограничений.
 
 ### Назначение и принцип работы
 
@@ -74,7 +74,7 @@ curl -X DELETE http://localhost:9091/metrics/job/my_batch_job/instance/server1
 
 ### Установка
 
-Подробные инструкции по ручной установке Pushgateway в виде `systemd`-сервиса находятся в заметке **[Руководство по ручной установке](./installation/from_binary.md)**.
+Подробные инструкции по ручной установке Pushgateway в виде `systemd`-сервиса находятся в заметке **[Руководство по ручной установке](./Exporters/blackbox/blackbox_exporter_installation_and_setup.md)**.
 
 ### Отправка метрик
 
@@ -122,7 +122,7 @@ scrape_configs:
 
 ### Конфигурация в Kubernetes
 
-При развертывании в Kubernetes Pushgateway может быть включен и настроен с помощью Helm-чарта Prometheus, как описано в заметке о **[конфигурации Helm-чарта](./kubernetes/helm_chart.md)**.
+При развертывании в Kubernetes Pushgateway может быть включен и настроен с помощью Helm-чарта Prometheus, как описано в заметке о **[конфигурации Helm-чарта](../Kubernetes/ToolsUtilities/Helm/helm_chart_structure.md)**.
 
 ---
 

@@ -77,7 +77,7 @@ kubeadm_enabled: false
 kube_read_only_port: 10255
 ```
 
-> **Важно:** Параметр `etcd_kubeadm_enabled: true` критичен для последующего [управления сертификатами](../../Operations/certificate_management.md).
+> **Важно:** Параметр `etcd_kubeadm_enabled: true` критичен для последующего [управления сертификатами](../../../Operations/certificate_management.md).
 
 ### 6.2. `inventory/my-cluster/group_vars/all/docker.yml` (опционально)
 
@@ -182,7 +182,7 @@ flannel_backend_type: "host-gw"
 flannel_interface_regexp: '192\.168\.1\.\d{1,3}'
 ```
 
-Подробнее о CNI-плагинах: [CNI, kube-proxy и их роли](../../Networking/Network/cni_kube_proxy_roles.md).
+Подробнее о CNI-плагинах: [CNI, kube-proxy и их роли](../../../Networking/Network/cni_kube_proxy_roles.md).
 
 ## Запуск развертывания
 
@@ -206,7 +206,3 @@ ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cl
 - **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
 - **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
 - **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре без интернета
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [installation.md](../installation.md)*

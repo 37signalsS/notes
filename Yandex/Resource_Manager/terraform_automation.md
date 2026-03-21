@@ -131,7 +131,7 @@ deploy:
 #!/bin/bash
 # setup-folders.sh
 
-CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0].id')
+CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0](id')
 SERVICES=("checkout" "payment" "delivery" "notifications")
 ENVIRONMENTS=("dev" "stage" "prod")
 

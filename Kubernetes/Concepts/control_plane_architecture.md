@@ -139,7 +139,7 @@ rotateCertificates: true
 
 * **kube-apiserver**:
   * [Высокая доступность kube-apiserver и его реализация](../Installation/Kubespray/HA/index.md)
-  * [Мониторинг kube-apiserver](../MonitoringLogging/KubeAPIServer/kube_apiserver_monitoring.md)
+  * [Мониторинг kube-apiserver](../MonitoringLogging/kube_apiserver_monitoring.md)
   * [TLS и mTLS в Kubernetes (включая коммуникацию с kube-apiserver)](../Security/tls_and_mtls_in_kubernetes.md)
 * **etcd**:
   * [Обзор etcd](./etcd_overview.md)

@@ -35,10 +35,10 @@ sudo sysctl -w net.ipv4.tcp_syncookies=1
 
 SYN cookies активируются автоматически при риске переполнения SYN backlog.
 
-> Детальная диагностика: [`ss`](../../Diagnostics/Networking/ss.md)
+> Детальная диагностика: [`ss`](../../../Diagnostics/Networking/ss.md
 
 ## Связанные темы
 
-* **[`sysctl`](../../Core/kernel/sysctl.md)** — управление параметрами ядра
+* **[`sysctl`](../../../Core/kernel/sysctl.md)** — управление параметрами ядра
 * **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
-* **[SYN-флуд](../../../Networking/Concepts/dos_ddos_overview.md#syn-флуд)** — информация об атаке
+* **[SYN-флуд](../../../../Networking/Concepts/dos_ddos_overview.md)** — информация об атаке

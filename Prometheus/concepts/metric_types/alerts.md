@@ -46,7 +46,7 @@
     description: "95-й перцентиль: {{ $value | humanizeDuration }}"
 ```
 
-> **См. также:** [Rules и алертинг](../rules.md) — полное руководство по созданию правил.
+> **См. также:** [Rules и алертинг](../../../Kubernetes/Security/kyverno/rules.md) — полное руководство по созданию правил.
 
 ---
 
@@ -55,4 +55,4 @@
 * [Counter](./counter.md) — алерты на основе счётчиков
 * [Gauge](./gauge.md) — алерты на основе измерителей
 * [Histogram](./histogram.md) — алерты на основе гистограмм
-* [Rules и алертинг](../rules.md)
+* [Rules и алертинг](../../../Kubernetes/Security/kyverno/rules.md)

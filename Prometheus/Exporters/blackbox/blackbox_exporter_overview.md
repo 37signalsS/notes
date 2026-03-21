@@ -56,7 +56,7 @@ blackbox_exporter возвращает метрики: probe_success, probe_dura
 * **[Конфигурация модулей](./blackbox_exporter_modules_configuration.md)** — HTTP, TCP, ICMP, DNS, gRPC модули
 * **[Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)** — метрики и правила оповещений
 * **[Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)**
-* **[Alertmanager](../alertmanager.md)**
+* **[Alertmanager](../../alertmanager.md)**
 * **[Правила оповещений](../../rules.md)**
 
 ### Официальные ресурсы

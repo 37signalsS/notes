@@ -64,6 +64,3 @@
 * **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
 * **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре без интернета
 
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [installation.md](../installation.md)*

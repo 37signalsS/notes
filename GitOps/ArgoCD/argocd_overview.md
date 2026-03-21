@@ -137,4 +137,4 @@ metadata:
 - **[Уведомления](./argocd_notifications.md)**: Настройка уведомлений в Telegram, Slack, Email
 - **[Vault интеграция](./argocd_vault_integration.md)**: Управление секретами через HashiCorp Vault
 - **[Troubleshooting](./argocd_troubleshooting_and_monitoring.md)**: Диагностика проблем и мониторинг
-- **[Сравнение с Flux](../Comparisons/argo_vs_flux_manifests.md)**: Детальный разбор различий в архитектуре, функциях и манифестах
+- **[Сравнение с Flux](../argo_vs_flux_manifests.md)**: Детальный разбор различий в архитектуре, функциях и манифестах

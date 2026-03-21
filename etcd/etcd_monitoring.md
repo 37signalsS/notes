@@ -56,7 +56,7 @@ etcdctl endpoint health --cluster
 
 ### Дополнительная информация
 
-Практические аспекты настройки мониторинга etcd с использованием `kube-prometheus-stack` в Kubernetes подробно описаны в файле [настройки Prometheus для Kubernetes](../Prometheus/Kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md).
+Практические аспекты настройки мониторинга etcd с использованием `kube-prometheus-stack` в Kubernetes подробно описаны в файле [настройки Prometheus для Kubernetes](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md).
 
 Для понимания общей картины также важны следующие документы:
 

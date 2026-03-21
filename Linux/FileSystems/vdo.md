@@ -134,4 +134,4 @@ sudo vdo disableDeduplication --name=vdo_name
 * [Монтирование](./mounting/fstab.md) — настройка автоматического монтирования
 * [Stratis](./stratis.md) — многоуровневое управление хранилищем
 * [Оптимизация производительности](./performance_tuning.md) — другие методы оптимизации
-* [Мониторинг диска](../Diagnostics/Hardware/iostat.md) — мониторинг ввода-вывода
+* [Мониторинг диска](../Diagnostics/Filesystem/iostat.md) — мониторинг ввода-вывода

@@ -96,7 +96,7 @@
     avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 < 20
     ```
 
-> **См. также:** [Rules и алертинг](../rules.md) — создание правил для Alertmanager.
+> **См. также:** [Rules и алертинг](../../../Kubernetes/Security/kyverno/rules.md) — создание правил для Alertmanager.
 
 ---
 
@@ -104,5 +104,5 @@
 
 * [Функции PromQL](./functions.md) — rate, histogram_quantile, predict_linear, absent
 * [Агрегация](./aggregation.md) — операторы sum, avg, irate
-* [Алертинг](../rules.md) — создание правил для Alertmanager
+* [Алертинг](../../../Kubernetes/Security/kyverno/rules.md) — создание правил для Alertmanager
 * [Kubernetes](../kubernetes/) — мониторинг Kubernetes

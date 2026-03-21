@@ -218,4 +218,4 @@ Alertmanager имеет встроенную поддержку кластери
 
 ## Дополнительная информация
 
-* **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [4-установка-alertmanager](./installation/from_binary.md).
+* **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [4-установка-alertmanager](./Exporters/blackbox/blackbox_exporter_installation_and_setup.md).

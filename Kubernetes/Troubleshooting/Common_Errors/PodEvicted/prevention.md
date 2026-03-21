@@ -61,8 +61,6 @@ spec:
 # при появлении Pending подов из-за нехватки ресурсов
 ```
 
-> **См. также:** [`../../../Autoscaling/cluster_autoscaler_detailed.md`](../../../Autoscaling/cluster_autoscaler_detailed.md)
-
 ## Удаление выселенных подов
 
 Выселенные поды не удаляются автоматически:

@@ -60,7 +60,7 @@ spec:
           containers:
           - name: killer
             image: bitnami/kubectl:latest
-            command: ["sh", "-c", "POD=$(kubectl get po -l app=frontend -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | shuf -n1) && kubectl delete pod $POD --wait=false"]
+            command: ["sh", "-c", "POD=$(kubectl get po -l app=frontend -o jsonpath='{.items[*](metadata.name}' | tr ' ' '\n' | shuf -n1) && kubectl delete pod $POD --wait=false"]
           restartPolicy: OnFailure
 ```
 

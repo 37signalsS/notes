@@ -1,6 +1,6 @@
 # Calico HostEndpoint и GlobalNetworkPolicy
 
-> Основная документация: [NetworkPolicy](../network_policies.md)
+> Основная документация: [NetworkPolicy](../../network_policies.md)
 
 ## Определения
 

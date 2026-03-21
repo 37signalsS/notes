@@ -182,9 +182,11 @@ Vector официально поддерживает развертывание 
 
 | Тема | Ссылка |
 | :--- | :--- |
-| Observability (4 столпа) | **[Обзор Observability](../Concepts/Observability_and_Monitoring/observability_overview.md)** |
+| Observability (4 столпа) | **[Обзор Observability](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md)** |
 | Архитектура сбора логов | **[Проектирование высоконагруженного мониторинга](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** |
 | Пайплайн Fluent Bit → Kafka → Vector | **[Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
+
+| Хранение в Loki | **[Loki Overview](../Loki/loki_overview.md)** |
 | Сравнение с Logstash | **[Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md)** |
 | Альтернатива file.d | **[file.d Обзор](../file.d_overview.md)** |
 | Хранение в OpenSearch | **[OpenSearch Overview](../ELK_Stack/OpenSearch/opensearch_overview.md)** |

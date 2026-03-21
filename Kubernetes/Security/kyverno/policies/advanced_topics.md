@@ -2,7 +2,7 @@
 
 ## Важные замечания
 
-1. **Background scan не применяется к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](./background.md))
+1. **Background scan не применяется к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](../background.md))
 2. По умолчанию примеры политик в документации используют `validationFailureAction: audit`
 3. Для полной защиты необходимо переключить на `validationFailureAction: Enforce`
 4. Политики применяются к **Pod** — Kyverno проверяет итоговый Pod, сгенерированный из Deployment/StatefulSet/DaemonSet

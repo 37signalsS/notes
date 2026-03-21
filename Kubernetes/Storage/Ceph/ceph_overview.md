@@ -27,8 +27,8 @@ Ceph хранит данные как объекты, но предоставл�
 
 Подробные руководства:
 
-- [Работа с RBD](ceph_rbd_usage.md)
-- [Настройка CephFS](cephfs_setup_and_usage.md)
+- [Работа с RBD](./ceph_rbd_usage/practical_scenarios.md)
+- [Настройка CephFS](./cephfs_setup_and_usage/definitions_and_concepts.md)
 
 ### Компоненты кластера (Демоны)
 
@@ -155,7 +155,7 @@ ceph mon dump
 ceph mgr dump
 ```
 
-Подробнее: [Администрирование Ceph](ceph_administration.md)
+Подробнее: [Администрирование Ceph](./Administration/index.md)
 
 ## Дополнительная информация
 

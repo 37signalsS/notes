@@ -185,7 +185,7 @@ git filter-repo --path secret.txt --invert-paths
 - Используйте `.gitignore` для исключения файлов с секретами
 - Применяйте pre-commit хуки для проверки на секреты (например, [git-secrets](https://github.com/awslabs/git-secrets))
 - Храните секреты во внешних хранилищах (Vault, SOPS)
-- Подробнее: [Управление секретами](../../Security/Concepts/secrets_management_overview.md)
+- Подробнее: [Управление секретами](../Security/Concepts/secrets_management_overview.md)
 
 #### `git reflog`: Журнал всех перемещений HEAD
 

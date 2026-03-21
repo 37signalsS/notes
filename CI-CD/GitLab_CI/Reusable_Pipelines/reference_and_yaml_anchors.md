@@ -26,7 +26,7 @@
 | **Область видимости** | Один документ YAML (файл) | Один документ YAML (файл) |
 | **Рекомендация GitLab** | ✅ **Предпочтительно** | ⚠️ Для простых случаев |
 
-> **Best Practice:** Используйте `!reference` в новых проектах для лучшей валидации и читаемости. Избегайте YAML Anchors в сложных конфигурациях [^1].
+> **Best Practice:** Используйте `!reference` в новых проектах для лучшей валидации и читаемости. Избегайте YAML Anchors в сложных конфигурациях [^1](
 
 [^1]: [GitLab CI Best Practices — Avoid YAML Anchors](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
 

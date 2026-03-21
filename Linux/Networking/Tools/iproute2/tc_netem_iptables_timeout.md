@@ -177,6 +177,6 @@ iptables -A INPUT -p tcp --tcp-flags PSH PSH --dport 12345 -j REJECT --reject-wi
 
 ## Связанные темы
 
-- **[iptables](../Settings/tools/iptables_basics.md)** — основы файрвола
+- **[iptables](../../Settings/tools/iptables_basics.md)** — основы файрвола
 - **[tc netem основы](./tc_netem_basics.md)** — базовая эмуляция сети
-- **[tcpdump](../tcpdump.md)** — диагностика сетевых проблем
+- **[tcpdump](../../../Diagnostics/Networking/tcpdump.md)** — диагностика сетевых проблем

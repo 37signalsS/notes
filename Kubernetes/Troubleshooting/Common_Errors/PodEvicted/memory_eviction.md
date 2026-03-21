@@ -46,4 +46,4 @@ evictionSoftGracePeriod:
   memory.available: 2m
 ```
 
-> **См. также:** [`oomkilled_pods.md`](./oomkilled_pods.md)
+> **См. также:** [`oomkilled_pods.md`](../oomkilled_pods.md)

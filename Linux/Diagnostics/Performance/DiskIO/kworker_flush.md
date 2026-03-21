@@ -64,4 +64,4 @@ EOF
 - [Невидимый I/O](./invisible_io.md)
 - [Настройка writeback](./writeback_tuning.md)
 - [Диагностический чеклист I/O](./diagnostic_checklist.md)
-- [Оптимизация памяти](../../Core/memory/performance_tuning.md)
+- [Оптимизация памяти](../../../FileSystems/performance_tuning.md)

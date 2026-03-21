@@ -72,4 +72,4 @@ resources:
 - **`Ingress`**: (Опционально) Открывает доступ к веб-интерфейсу Karma извне кластера.
 
 > **Подробное пошаговое руководство** с примерами всех манифестов находится в общей заметке по развертыванию связки Alertmanager + Karma:
-> **[Пример: Развертывание Alertmanager и Karma в Kubernetes с помощью манифестов](./Kubernetes/examples/alertmanager-karma-manifests-tutorial.md)**
+> **[Пример: Развертывание Alertmanager и Karma в Kubernetes с помощью манифестов](./kubernetes/examples/alertmanager-karma-manifests-tutorial/alertmanager-config.md)**

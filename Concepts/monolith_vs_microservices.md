@@ -96,7 +96,7 @@
   * **Распределенную трассировку:** Для отслеживания пути запроса через несколько сервисов.
   * **Централизованное логирование:** Сбор логов со всех сервисов в единую систему.
   * **Агрегацию метрик:** Сбор и визуализация метрик со всей системы.
-    Подробнее см. в [**обзоре Observability**](Observability_and_Monitoring/observability_overview.md).
+    Подробнее см. в [**обзоре Observability**](Observability_and_Monitoring/observability_definitions.md).
 
 * **Обнаружение сервисов (Service Discovery):** В динамической среде сервисы постоянно появляются и исчезают. Необходим механизм (например, Consul, etcd), который позволяет сервисам находить друг друга.
 
@@ -111,4 +111,4 @@
 ## Связанные документы
 
 * [API Gateway](./api_gateway_overview.md) — единая точка входа в микросервисной архитектуре.
-* [Observability](./Observability_and_Monitoring/observability_overview.md) — наблюдаемость в распределенных системах.
+* [Observability](./Observability_and_Monitoring/observability_definitions.md) — наблюдаемость в распределенных системах.

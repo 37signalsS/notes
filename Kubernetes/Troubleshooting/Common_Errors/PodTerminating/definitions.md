@@ -4,12 +4,6 @@
 
 **`Terminating`** — статус пода, означающий, что под был удален (получил `deletionTimestamp`), но не может завершить работу и освободить ресурсы.
 
-> - Volumes: [`../../../Base/Pod/pod_volumes.md`](../../../Base/Pod/pod_volumes.md)
-> - PV/PVC: [`../../../Storage/pv_and_pvc.md`](../../../Storage/pv_and_pvc.md)
-> - Node Maintenance: [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)
-> - High Availability: [`../../../Base/high_availability.md`](../../../Base/high_availability.md)
-> - Finalizers: [см. ниже](#finalizers)
-
 ## Основные концепции
 
 ### Workflow удаления пода

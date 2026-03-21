@@ -20,7 +20,7 @@
 
 * **[TLS](./tls.md)** — Шифрование HTTP (HTTPS)
 * **[Оптимизация HTTP](./http_protocols_optimization.md)** — Производительность, HTTP/2, HTTP/3
-* **[Nginx](../../WebServers/Nginx/nginx_core_concepts.md)** — Настройка веб-сервера
+* **[Nginx](../../WebServers/Nginx/Security/nginx_security_guide.md)** — Настройка веб-сервера
 * **[cURL](../../Linux/Networking/Tools/http_clients/curl.md)** — Утилиты для работы с HTTP
 * **[OAuth 2.0](../../Security/Concepts/oauth2_overview.md)** — Аутентификация и авторизация
 

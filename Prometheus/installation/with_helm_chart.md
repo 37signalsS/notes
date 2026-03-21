@@ -6,7 +6,7 @@
 
 **Helm** — менеджер пакетов для Kubernetes, упрощающий развертывание приложений через чарты.
 
-> **См. также:** [Alertmanager](../alertmanager.md), [Helm](../../Kubernetes/kubernetes_helm.md).
+> **См. также:** [Alertmanager](../alertmanager.md), [Helm](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md).
 
 ## Основные концепции
 
@@ -252,5 +252,5 @@ helm uninstall alertmanager -n monitoring
 
 * [Alertmanager](../alertmanager.md) — полное руководство
 * [Alertmanager installation](./alertmanager_installation.md) — ручная установка
-* [Kube-Prometheus-Stack](../Kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — полный стек
+* [Kube-Prometheus-Stack](../../Linux/Networking/Services/BIND/overview.md) — полный стек
 * [Rules](../rules.md) — создание правил алертинга

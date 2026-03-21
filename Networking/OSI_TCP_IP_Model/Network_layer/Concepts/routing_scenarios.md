@@ -68,4 +68,4 @@
 
 - [IP-адреса](../../../Protocols/ip.md) — структура и типы адресов
 - [ARP](../../../Protocols/arp.md) — разрешение IP в MAC
-- [Таблица маршрутизации](../Equipment/routing_protocols_equipment.md) — как маршрутизаторы принимают решения
+- [Таблица маршрутизации](../routing_protocols_equipment.md) — как маршрутизаторы принимают решения

@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Rancher Monitoring** — встроенный инструмент Rancher для развертывания и управления стеком мониторинга на базе Prometheus и Grafana в кластерах Kubernetes. Использует [Prometheus Operator](../../Concepts/kubernetes_operators.md#kubernetes-операторы-автоматизация-управления-приложениями) для автоматического конфигурирования Prometheus.
+**Rancher Monitoring** — встроенный инструмент Rancher для развертывания и управления стеком мониторинга на базе Prometheus и Grafana в кластерах Kubernetes. Использует [Prometheus Operator](../Concepts/kubernetes_operators.md) для автоматического конфигурирования Prometheus.
 
 ## Базовые концепции
 
@@ -63,7 +63,7 @@ Custom Resource, используемый Prometheus Operator для указа�
         * **Scrape Interval**: Интервал сбора метрик (например, `15s`).
         * **Retention Time**: Срок хранения данных.
     * **Enable Nodes Exporter**: Рекомендуется включить.
-    * **Persistent Storage for Prometheus**: Требует предварительно настроенного [PersistentVolume](../../Storage/pv_and_pvc.md).
+    * **Persistent Storage for Prometheus**: Требует предварительно настроенного [PersistentVolume](../Storage/pv_and_pvc.md).
     * **Persistent Storage for Grafana**: Опционально.
     * **Grafana Sidecar**: Для автоматического обнаружения кастомных дашбордов.
 
@@ -78,7 +78,7 @@ Custom Resource, используемый Prometheus Operator для указа�
 Для того чтобы Prometheus собирал метрики с вашего приложения, необходимо:
 
 1. **Развернуть приложение**: Создайте Deployment или StatefulSet для вашего приложения.
-2. **Создать Service**: Определите [Service](../../Networking/Service/service_overview.md) для вашего приложения.
+2. **Создать Service**: Определите [Service](../Networking/Service/service_overview.md) для вашего приложения.
 3. **Создать Service Monitor**: Custom Resource, который инструктирует Prometheus Operator о том, как собирать метрики.
 
 Пример Service Monitor:
@@ -111,10 +111,10 @@ spec:
 3. **Создание Kubernetes Service и Endpoint**: Для обнаружения ETCD-серверов.
 4. **Создание ServiceMonitor**: Используя Custom Resource `ServiceMonitor` из Prometheus Operator.
 
-**Детальная настройка и YAML-примеры для мониторинга ETCD**: см. [prometheus_config.md](../../Prometheus/Kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md). Концептуальная информация об ETCD: см. [architecture_and_concepts.md](../../etcd/architecture_and_concepts.md).
+**Детальная настройка и YAML-примеры для мониторинга ETCD**: см. [prometheus_config.md](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md). Концептуальная информация об ETCD: см. [architecture_and_concepts.md](../../etcd/architecture_and_concepts.md).
 
 ## Дополнительная информация
 
-Альтернативы для мониторинга: [VictoriaMetrics](../../VictoriaMetrics/victoriametrics_overview.md), [Mimir](../../Mimir/mimir_overview.md).
+Альтернативы для мониторинга: [VictoriaMetrics](../../VictoriaMetrics/overview.md), [Mimir](../../Mimir/mimir_overview.md).
 
 См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.

@@ -77,5 +77,5 @@ dig @127.0.0.1 version.bind chaos txt
 - **Обновления безопасности:** Проверяйте CVE-уведомления (CVE-2025-13878 исправлена в 9.18.44/9.20.18)
 - **Сопутствующие заметки:**
   - [Troubleshooting](./troubleshooting.md) — диагностика и отладка
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns_diagnostics.md) — утилиты `dig`, `nslookup`
+  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — утилиты `dig`, `nslookup`
   - [Настройка первичного сервера](./master_server_local_zone.md) — следующая конфигурация

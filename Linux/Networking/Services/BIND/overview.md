@@ -70,4 +70,4 @@ named-checkconf
   - [Протокол DNS](../../../../Networking/Protocols/DNS/dns.md) — теория протокола
   - [Зоны DNS и SOA](../../../../Networking/Protocols/DNS/dns_zones.md) — структура зон
   - [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md) — типы записей
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns_diagnostics.md) — инструменты отладки
+  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — инструменты отладки

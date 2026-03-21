@@ -66,8 +66,8 @@ fi
 
 ## Связанные темы
 
-- **[Управление репозиториями DNF](../dnf_repository_management.md)** — настройка репозиториев для RPM
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
+- **[Управление репозиториями DNF](../dnf_commands/basic_concepts.md** — настройка репозиториев для RPM
+- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
 
 ---
@@ -80,4 +80,4 @@ fi
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [apt_repository_mirror.md](../apt_repository_mirror.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [apt_repository_mirror.md](./additional_info.md)*

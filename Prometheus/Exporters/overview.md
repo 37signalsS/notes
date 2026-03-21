@@ -23,7 +23,7 @@ Prometheus собирает данные по HTTP протоколу, в фор
 * **Комментарии:** Для комментариев используется `#`.
 * **HELP и TYPE:** Строки, начинающиеся с `# HELP` и `# TYPE`, являются зарезервированными.
   * `# HELP <metric_name> <description>`: Описание метрики.
-  * `# TYPE <metric_name> <type>`: Указывает [тип метрики](../concepts/metric_types.md) (`counter`, `gauge`, `histogram`, `summary`). Эта строка должна быть объявлена до первого использования метрики.
+  * `# TYPE <metric_name> <type>`: Указывает [тип метрики](../concepts/metric_types/overview.md) (`counter`, `gauge`, `histogram`, `summary`). Эта строка должна быть объявлена до первого использования метрики.
 * **Формат метрики:**
 
     ```
@@ -62,7 +62,7 @@ Prometheus собирает данные по HTTP протоколу, в фор
 ### Whitebox vs Blackbox Мониторинг
 
 * **Whitebox (белый ящик)**: Мониторинг внутренних метрик системы. Это основной подход для Prometheus. Приложение инструментируется и само отдает метрики.
-* **Blackbox (черный ящик)**: Мониторинг внешнего поведения сервиса (доступен ли HTTP-эндпоинт, валиден ли SSL-сертификат). Реализуется с помощью **[Blackbox Exporter](./blackbox_exporter.md)**.
+* **Blackbox (черный ящик)**: Мониторинг внешнего поведения сервиса (доступен ли HTTP-эндпоинт, валиден ли SSL-сертификат). Реализуется с помощью **[Blackbox Exporter](./blackbox/blackbox_exporter_installation_and_setup.md)**.
 
 ### Выбор экспортера для задачи
 
@@ -70,13 +70,13 @@ Prometheus собирает данные по HTTP протоколу, в фор
 | :--- | :--- | :--- |
 | Мониторинг Linux-хоста (CPU, память, диск, сеть) | [node_exporter](./node_exporter.md) | [Установка](../installation/node_exporter_installation.md) |
 | Мониторинг контейнеров Docker | [cAdvisor](./cadvisor.md) | — |
-| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox_exporter.md) | [Установка](../installation/Blackbox_Exporter/blackbox_exporter_installation.md) |
+| Проверка доступности HTTP/TCP/DNS/ICMP | [blackbox_exporter](./blackbox/blackbox_exporter_installation_and_setup.md) | [Установка](../installation/Blackbox_Exporter/blackbox_exporter_installation.md) |
 | Мониторинг MySQL | mysqld_exporter | [MySQL](../../Databases/MySQL/overview.md) |
 | Мониторинг PostgreSQL | postgres_exporter | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
 | Мониторинг Nginx | nginx-prometheus-exporter | — |
 | Мониторинг RabbitMQ | rabbitmq_exporter | — |
 | Мониторинг Kafka | kafka_exporter | [Kafka](../../Kafka/kafka_for_monitoring.md) |
-| Кастомные метрики | [Textfile Collector](./extensibility.md#textfile-collector) / [Свой экспортер](./extensibility.md#написание-собственных-экспортеров) | — |
+| Кастомные метрики | [Textfile Collector](./extensibility/custom_exporters.md) / [Свой экспортер](./extensibility/custom_exporters.md) | — |
 
 ## Дополнительная информация
 
@@ -86,12 +86,12 @@ Prometheus собирает данные по HTTP протоколу, в фор
 
 ### Расширяемость
 
-* **[Textfile Collector](./extensibility.md#textfile-collector)** — механизм для сбора произвольных метрик через внешние скрипты
-* **[Написание своих экспортеров](./extensibility.md#написание-собственных-экспортеров)** — руководство по созданию кастомных экспортеров на Go
+* **[Textfile Collector](./extensibility/custom_exporters.md)** — механизм для сбора произвольных метрик через внешние скрипты
+* **[Написание своих экспортеров](./extensibility/custom_exporters.md)** — руководство по созданию кастомных экспортеров на Go
 
 ### Связанные темы
 
 * [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — автоматическое обнаружение экспортеров
 * [Конфигурация Prometheus](../configuration.md) — настройка сбора метрик
-* [Типы метрик](../concepts/metric_types.md) — counter, gauge, histogram, summary
+* [Типы метрик](../concepts/metric_types/overview.md) — counter, gauge, histogram, summary
 * [Лейблы и кардинальность](../concepts/labels_and_cardinality.md) — правильное использование лейблов

@@ -26,5 +26,3 @@ kubectl delete pod <pod-name> --force --grace-period=0
 # Для StatefulSet — важно удалить PVC отдельно если нужно
 kubectl delete pvc <pvc-name>
 ```
-
-> **См. также:** [`../../../Troubleshooting/Common_Errors/node_unavailability.md`](../../../Troubleshooting/Common_Errors/node_unavailability.md), [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)

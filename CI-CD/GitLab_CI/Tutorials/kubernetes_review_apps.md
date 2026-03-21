@@ -39,7 +39,7 @@
     Этот токен будет использоваться для аутентификации оператора в Kubernetes.
 
     ```bash
-    SECRET_NAME=$(kubectl get sa deploy-admin -n users -o jsonpath='{.secrets[0].name}')
+    SECRET_NAME=$(kubectl get sa deploy-admin -n users -o jsonpath='{.secrets[0](name}')
     KUBE_TOKEN=$(kubectl get secret ${SECRET_NAME} -n users -o jsonpath='{.data.token}' | base64 --decode)
     echo $KUBE_TOKEN
     ```

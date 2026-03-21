@@ -36,7 +36,7 @@
 
 ### Сценарий 1: Уведомления из Argo CD
 
-**Основное руководство:** Подробное руководство по настройке ArgoCD Notifications, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](../ArgoCD/argocd_notifications.md)**.
+**Основное руководство:** Подробное руководство по настройке ArgoCD Notifications, включая примеры для Telegram, доступно в основной заметке: **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
 
 Краткое описание:
 
@@ -95,7 +95,7 @@ Flux использует `notification-controller` и CRD `Provider` и `Alert`
 
 ## Дополнительная информация
 
-- **[ArgoCD Notifications](../ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
+- **[ArgoCD Notifications](./ArgoCD/argocd_notifications.md)**: Полное руководство по настройке ArgoCD.
 - **[Flux Overview](../overview.md)**: Архитектура Flux и notification-controller.
 - **Официальная документация ArgoCD**: [Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
 - **Официальная документация Flux**: [Notification Controller](https://fluxcd.io/flux/components/notification/)

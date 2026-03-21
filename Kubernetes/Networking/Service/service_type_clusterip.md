@@ -63,7 +63,7 @@ spec:
 
 Для временного доступа к ClusterIP сервису извне кластера используйте:
 
-- **`kubectl port-forward`** — проброс порта на локальную машину. Подробнее см. [Troubleshooting](../../../Troubleshooting/troubleshooting_overview.md#kubectl-port-forward-доступ-к-приложению)
+- **`kubectl port-forward`** — проброс порта на локальную машину. Подробнее см. [Troubleshooting](../../Troubleshooting/troubleshooting_overview.md)
 
 **Важно:** Эти методы предназначены только для отладки и разработки, **не для production**.
 

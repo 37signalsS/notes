@@ -55,7 +55,7 @@
 
 | Документ | Описание |
 | :--- | :--- |
-| **[Storage](./Storage.md)** | Object Storage, Block Storage, File Storage |
+| **[Storage](../Kubernetes/Base/secrets/etcd_storage.md)** | Object Storage, Block Storage, File Storage |
 
 **Ключевые темы:**
 
@@ -85,7 +85,7 @@
 
 | Документ | Описание |
 | :--- | :--- |
-| **[Resource Manager](./Resource-Manager.md)** | Иерархия ресурсов, каталоги, сервисные аккаунты, IAM |
+| **[Resource Manager](./index.md)** | Иерархия ресурсов, каталоги, сервисные аккаунты, IAM |
 
 **Ключевые темы:**
 

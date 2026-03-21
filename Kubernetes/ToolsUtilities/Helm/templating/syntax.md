@@ -96,6 +96,6 @@ env:
 
 - [Встроенные объекты](./objects.md) — .Values, .Release, .Chart и другие
 - [Функции](./functions.md) — ключевые функции для работы с шаблонами
-- [Именованные шаблоны](./templates/_helpers.md) — создание переиспользуемых блоков
+- [Именованные шаблоны](./_helpers.md) — создание переиспользуемых блоков
 - [Практические сценарии](./scenarios/overview.md) — примеры использования
-- [helm_templating](../Helm/helm_templating.md) — обзорная страница
+- [helm_templating](../helm_templating.md) — обзорная страница

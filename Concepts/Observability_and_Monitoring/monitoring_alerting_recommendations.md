@@ -15,11 +15,11 @@
   - **Высокое потребление CPU** — `>80%` от limits в течение `10m`
   - **Высокое потребление памяти** — `>85%` от limits в течение `10m`
 
-  > **Подробнее:** [Алерты для Kubernetes-приложений в Grafana](../../Grafana/grafana_alerting.md#сценарий-3-алерты-для-kubernetes-приложений)
+  > **Подробнее:** [Алерты для Kubernetes-приложений в Grafana](../../Grafana/alerting/concepts.md#сценарий-3-алерты-для-kubernetes-приложений)
 
 ---
 
 **См. также:**
 
 * [Observability в контейнерах](./observability_in_containers.md)
-* [Grafana Alerting](../../Grafana/grafana_alerting.md)
+* [Grafana Alerting](../../Grafana/alerting/concepts.md)

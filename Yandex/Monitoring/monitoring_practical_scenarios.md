@@ -78,7 +78,7 @@ import requests
 def handler(event, context):
     # Подсчёт 5xx за окно
     error_count = sum(1 for log in event['messages']
-                      if log['json'].get('status', 0) >= 500)
+                      if log['json'](get('status', 0) >= 500)
 
     # Публикация в Monitoring
     requests.post(
@@ -225,5 +225,5 @@ silence:
 
 - **[Основные концепции](./monitoring_concepts.md)** — определения и модель данных
 - **[Дополнительные темы](./monitoring_advanced_topics.md)** — интеграция с Grafana, best practices
-- **[Cloud Logging](./logging.md)** — сервис логов
+- **[Cloud Logging](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** — сервис логов
 - **[Alertmanager](../../Prometheus/alertmanager.md)** — управление оповещениями

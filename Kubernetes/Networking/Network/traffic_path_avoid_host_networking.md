@@ -16,7 +16,7 @@
 
 ### 2. Узел кластера -> Ingress Controller
 
-1. На узле кластера запрос принимает **под Ingress Controller'а** (например, Nginx, Traefik). Это обычный веб-сервер, запущенный в кластере и настроенный на прием внешнего трафика. Подробнее см. [Обзор Ingress](../Ingress/ingress_overview.md).
+1. На узле кластера запрос принимает **под Ingress Controller'а** (например, Nginx, Traefik). Это обычный веб-сервер, запущенный в кластере и настроенный на прием внешнего трафика. Подробнее см. [Обзор Ingress](../Ingress/overview.md).
 2. Ingress Controller смотрит на запрос:
     - **Хост:** `my-app.com`
     - **Путь:** `/path`
@@ -130,4 +130,4 @@ spec:
 - **Общая архитектура сети:** [Обзор сетевой модели Kubernetes](./network_overview.md)
 - **Компоненты и роли:** [Роли CNI и kube-proxy](./cni_kube_proxy_roles.md)
 - **Service:** [Обзор Service](../Service/service_overview.md)
-- **Ingress:** [Обзор Ingress](../Ingress/ingress_overview.md)
+- **Ingress:** [Обзор Ingress](../Ingress/overview.md)

@@ -6,10 +6,6 @@
 
 **`403 Forbidden`** — Kubernetes аутентифицировал запрос, но у субъекта нет прав (RBAC) на выполнение запрошенной операции.
 
-> - RBAC: [`../../../Security/rbac/rbac_overview.md`](../../../Security/rbac/rbac_overview.md)
-> - Authentication: [`../../../Security/authentication.md`](../../../Security/authentication.md)
-> - ServiceAccount: [`../../../Security/rbac/roles.md`](../../../Security/rbac/roles.md)
-> - Troubleshooting: [`../troubleshooting_overview.md`](../troubleshooting_overview.md)
 
 ### Различия
 

@@ -262,7 +262,7 @@ annotations:
 - **[VPC](./VPC.md)** — сети и security groups для кластеров
 - **[Compute Cloud](./Compute-Cloud.md)** — альтернатива: БД на ВМ
 - **[Monitoring](./Monitoring.md)** — интеграция метрик БД
-- **[Storage](./Storage.md)** — хранение бэкапов в Object Storage
+- **[Storage](../Kubernetes/Base/secrets/etcd_storage.md)** — хранение бэкапов в Object Storage
 
 ### Интеграции
 

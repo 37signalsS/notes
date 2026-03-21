@@ -216,4 +216,4 @@ sum(rate(prometheus_http_request_duration_seconds_count{code="401"}[5m]))
 * [Prometheus API](./prometheus_api.md) — защита HTTP API
 * [Alertmanager](./alertmanager.md) — безопасность Alertmanager
 * [Kubernetes](../Kubernetes/kubernetes_overview.md) — безопасность в K8s
-* [Docker Security](../Docker/Docker_security/docker_security_best_practices.md) — изоляция контейнеров
+* [Docker Security](../Docker/Docker_security/host_daemon_hardening.md) — изоляция контейнеров

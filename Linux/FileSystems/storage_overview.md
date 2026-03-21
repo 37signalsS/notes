@@ -74,7 +74,7 @@
   - **Подробности:** [Stratis](./stratis.md)
 
 - **Шифрование:** LUKS для шифрования блочных устройств.
-  - **Подробности:** [LUKS](../Security/luks.md)
+  - **Подробности:** [LUKS](../../Security/Tools/openssl_ca/single_tier/ca_setup.md)
 
 - **Восстановление:**
   - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT

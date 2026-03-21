@@ -1,6 +1,6 @@
 # HTTP/2 и HTTP/3
 
-Подробную информацию о принципах работы и конфигурации этих протоколов в Nginx можно найти в документе: [Конфигурация HTTP/2 и HTTP/3 в Nginx](../Nginx/Performance/nginx_http_versions.md).
+Подробную информацию о принципах работы и конфигурации этих протоколов в Nginx можно найти в документе: [Конфигурация HTTP/2 и HTTP/3 в Nginx](../../Nginx/Performance/nginx_http_versions.md).
 
 ## HTTP/2
 
@@ -32,7 +32,7 @@ add_header Alt-Svc 'h3=":443"; ma=86400';
 example.com HTTPS 1 . alpn="h2,h3"
 ```
 
-**Подробно:** [DNS-записи HTTPS/SVCB](../Networking/Protocols/DNS/dns_records.md#записи-для-сервисов), [Конфигурация HTTP/2 и HTTP/3 в Nginx](../Nginx/Performance/nginx_http_versions.md)
+**Подробно:** [DNS-записи HTTPS/SVCB](../../../Networking/Protocols/DNS/dns_records.md, [Конфигурация HTTP/2 и HTTP/3 в Nginx](../../Nginx/Performance/nginx_http_versions.md)
 
 ---
 

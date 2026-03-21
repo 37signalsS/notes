@@ -120,8 +120,8 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
   2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
 
 - **Связанные темы**:
-  - **[Управление сетями (CLI)](./management/cli.md)**: Подробный справочник по командам `docker network`.
-  - **[DNS и Service Discovery](./concepts/dns_and_service_discovery.md)**: Как работает разрешение имен в Docker.
+  - **[Управление сетями (CLI)](./cli.md)**: Подробный справочник по командам `docker network`.
+  - **[DNS и Service Discovery](./dns_and_service_discovery.md)**: Как работает разрешение имен в Docker.
   - **[Docker и iptables](./troubleshooting/iptables_integration.md)**: Как Docker взаимодействует с файрволом хоста.
   - **Детальное описание драйверов**:
     - **[bridge](./drivers/bridge.md)**

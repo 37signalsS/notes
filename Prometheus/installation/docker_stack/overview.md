@@ -2,7 +2,7 @@
 
 Это руководство описывает практический сценарий развертывания полноценного стека мониторинга с использованием [Docker](../../../Docker/docker_overview.md) и [Docker Compose](../../../Docker/Docker_compose/docker_compose_file_example.md).
 
-> **См. также:** [Установка в Docker](../with_docker.md), [Docker metrics](../../../Docker/Docker_metrics/docker_prometheus_integration.md).
+> **См. также:** [Установка в Docker](../../../WebServers/Traefik/traefik_with_docker_compose.md), [Docker metrics](../../../Docker/Docker_metrics/docker_prometheus_integration.md).
 
 Весь процесс декомпозирован на следующие шаги:
 
@@ -92,10 +92,10 @@ docker-compose down -v
 
 ### Связанные темы
 
-* [Установка в Docker](../with_docker.md) — базовая конфигурация
+* [Установка в Docker](../../../WebServers/Traefik/traefik_with_docker_compose.md) — базовая конфигурация
 * [Prometheus Server](../prometheus_server_installation.md) — установка на хост
 * [Docker metrics](../../../Docker/Docker_metrics/docker_prometheus_integration.md) — мониторинг контейнеров
 * [Grafana](../../../Grafana/grafana_overview.md) — визуализация
 * [Alertmanager](../../alertmanager.md) — обработка оповещений
-* [PromQL](../../concepts/promql.md) — язык запросов
+* [PromQL](../../concepts/promql/selectors_operators.md) — язык запросов
 * [Configuration](../../configuration.md) — настройка Prometheus

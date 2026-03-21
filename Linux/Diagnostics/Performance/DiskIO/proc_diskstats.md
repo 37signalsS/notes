@@ -64,4 +64,4 @@ awk '$3 == "sda" {print "Reads:", $4, "Writes:", $8, "IO_ticks:", $13}' /proc/di
 ### См. также
 
 - [Диагностический чеклист I/O](./diagnostic_checklist.md)
-- [`iostat` — подробное описание](../Filesystem/iostat.md)
+- [`iostat` — подробное описание](../../Filesystem/iostat.md)

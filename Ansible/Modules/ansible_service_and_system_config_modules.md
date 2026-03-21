@@ -61,4 +61,4 @@
 - [Официальная документация по модулю systemd](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html)
 - [Официальная документация по модулю hostname](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/hostname_module.html)
 - [Официальная документация по модулю timezone](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/timezone_module.html)
-- [Обработчики](../../PlaybookStructure/basics.md#обработчики-handlers-и-уведомления-notify): Перезапуск сервисов
+- [Обработчики](../../PlaybookStructure/basics.md): Перезапуск сервисов

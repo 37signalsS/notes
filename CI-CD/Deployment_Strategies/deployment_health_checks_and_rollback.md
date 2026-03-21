@@ -81,8 +81,8 @@ spec:
 set -e
 
 # Запрашиваем метрики из Prometheus
-ERROR_RATE=$(curl -s "$PROM_URL/api/v1/query" --data-urlencode "query=rate(http_requests_errors_total{app="myapp",version="canary"}[5m]) / rate(http_requests_total{app="myapp",version="canary"}[5m])" | jq -r '.data.result[0].value[1]')
-P95=$(curl -s "$PROM_URL/api/v1/query" --data-urlencode "query=histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="myapp",version="canary"}[5m])) by (le))" | jq -r '.data.result[0].value[1]')
+ERROR_RATE=$(curl -s "$PROM_URL/api/v1/query" --data-urlencode "query=rate(http_requests_errors_total{app="myapp",version="canary"}[5m]) / rate(http_requests_total{app="myapp",version="canary"}[5m])" | jq -r '.data.result[0](value[1]')
+P95=$(curl -s "$PROM_URL/api/v1/query" --data-urlencode "query=histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="myapp",version="canary"}[5m])) by (le))" | jq -r '.data.result[0](value[1]')
 
 # Сравниваем с пороговыми значениями
 if (( $(echo "$ERROR_RATE > 0.01 || $P95 > 0.3" | bc -l) )); then

@@ -54,4 +54,4 @@
 
 * [Настройка репликации](./setup_guide.md) — пошаговое руководство
 * [GTID](./gtid.md) — репликация на основе Global Transaction Identifier
-* [Multi-Source репликация](./multi-source-replication.md)
+* [Multi-Source репликация](../multi-source-replication.md)

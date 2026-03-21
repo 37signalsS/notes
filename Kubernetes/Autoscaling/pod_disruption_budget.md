@@ -214,7 +214,7 @@ kubectl drain node-1 --timeout=30s
 * **[HPA](HPA/index.md)** — HPA учитывает PDB при масштабировании вниз.
 * **[VPA](vpa_detailed.md)** — VPA использует PDB при eviction подов для обновления ресурсов.
 * **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — CA проверяет PDB перед удалением узла.
-* **[Karpenter](karpenter_detailed.md)** — Karpenter учитывает PDB при консолидации узлов.
+* **[Karpenter](./Karpenter/installation.md)** — Karpenter учитывает PDB при консолидации узлов.
 * **[Pod Distribution](pod_distribution/basic_concepts.md)** — совместное использование с Anti-Affinity для отказоустойчивости.
 * **[Node Maintenance](../Operations/node_maintenance.md)** — drain использует Eviction API с учётом PDB.
 

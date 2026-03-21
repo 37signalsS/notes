@@ -77,8 +77,8 @@
 
 ## Связанные документы
 
-- **[kubeswitches](./kubeswitches.md)** — управление контекстами
-- **[Prometheus](../../Prometheus/prometheus_api.md)** — система метрик
+- **[kubeswitches](../kubeswitches/usage.md)** — управление контекстами
+- **[Prometheus](../../../Prometheus/prometheus_api.md)** — система метрик
 - **[Helm](../Helm/helm_overview.md)** — управление чартами
 - **[Kubespray](../Installation/Kubespray/kubespray_install/basic_concepts.md)** — установка кластеров
 

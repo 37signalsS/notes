@@ -57,7 +57,7 @@
 | Slice | `.slice` | Иерархическая группа cgroups |
 | Scope | `.scope` | Внешние процессы (не systemd) |
 
-Подробнее о написании mount и automount юнитов: [Mount и Automount юниты](./units_and_dependencies.md#mount--и-automount-юниты).
+Подробнее о написании mount и automount юнитов: [Mount и Automount юниты](./systemd_units_overview.md#mount--и-automount-юниты).
 
 ### Управление ресурсами и изоляция: Control Groups (cgroups)
 
@@ -72,7 +72,7 @@
 
 **Важно:** systemd использует cgroups v2 (единая иерархия) в современных дистрибутивах. Подробнее см. [Control Groups (cgroups)](../cgroups.md#cgroups-v1-vs-cgroups-v2).
 
-Подробная информация о структуре unit-файлов и директивах: **[Юниты, таргеты и зависимости](./units_and_dependencies.md#структура-unit-файлов)**.
+Подробная информация о структуре unit-файлов и директивах: **[Юниты, таргеты и зависимости](./systemd_units_overview.md#структура-unit-файлов)**.
 
 ## Практические сценарии
 
@@ -168,7 +168,7 @@
 | Файл | Описание |
 | :--- | :--- |
 | **[Управление службами (systemctl)](./service_management.md)** | Команды `start`, `stop`, `enable`, `status`, редактирование юнитов |
-| **[Юниты, таргеты и зависимости](./units_and_dependencies.md)** | Типы юнитов, директивы зависимостей, создание собственных служб |
+| **[Юниты, таргеты и зависимости](./systemd_units_overview.md)** | Типы юнитов, директивы зависимостей, создание собственных служб |
 | **[Задачи по расписанию (Timers)](./timers.md)** | Замена `cron`, планирование задач через `.timer` |
 | **[Пользовательские службы](./user_services.md)** | Запуск служб от имени пользователя, режим `linger` |
 | **[Анализ производительности](./performance.md)** | `systemd-analyze`, ускорение загрузки |
@@ -187,4 +187,4 @@
 * **[Control Groups (cgroups)](../cgroups.md)** — механизм ограничения ресурсов
 * **[Namespaces](../namespaces.md)** — изоляция процессов
 * **[Udev](../udev.md)** — управление устройствами
-* **[Journalctl](../../../Diagnostics/journalctl.md)** — просмотр логов
+* **[Journalctl](../../Diagnostics/journalctl.md)** — просмотр логов

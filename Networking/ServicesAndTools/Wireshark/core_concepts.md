@@ -25,4 +25,4 @@
   * **FIN** — штатное завершение соединения
   * **RST** — аварийный обрыв
   * **PSH** — передача данных приложению
-  * Детальное описание механизмов TCP см. **[Протокол TCP: Обзор](../../Protocols/TCP/overview.md)**, **[Управление соединением](../../Protocols/TCP/connection_management.md)**.
+  * Детальное описание механизмов TCP см. **[Протокол TCP: Обзор](../../Protocols/TCP/overview.md)**, **[Управление соединением](../../Protocols/TCP/connection/tcp_connection_management_overview.md)**.

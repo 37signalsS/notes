@@ -61,7 +61,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 **Технологии:**
 
-- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec.md), OpenVPN
+- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec/ipsec.md), OpenVPN
 - **Без шифрования (доверенные сети):** [GRE](./gre/gre.md), [IPIP](./ipip_and_sit.md)
 
 ### 2. Передача неподдерживаемого протокола
@@ -111,8 +111,8 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 | Тип | Протоколы | Описание |
 |-----|-----------|----------|
-| **С шифрованием** | WireGuard, OpenVPN, [IPSec](./ipsec.md) | Защита «из коробки» |
-| **Без шифрования** | GRE, IPIP, SIT, VXLAN | Только инкапсуляция, шифрование опционально ([IPSec](./ipsec.md)) |
+| **С шифрованием** | WireGuard, OpenVPN, [IPSec](./ipsec/ipsec.md) | Защита «из коробки» |
+| **Без шифрования** | GRE, IPIP, SIT, VXLAN | Только инкапсуляция, шифрование опционально ([IPSec](./ipsec/ipsec.md)) |
 
 #### По топологии
 
@@ -133,7 +133,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 | **VXLAN** | L2 | Нет | ~50 байт | Высокая (16M VNI) | Дата-центры |
 | **WireGuard** | L3 | Да (встроенное) | ~60 байт | Высокая | Современный VPN |
 | **OpenVPN** | L2/L3 | Да (встроенное) | ~60-80 байт | Средняя | Корпоративный VPN |
-| **[IPSec](./ipsec.md)** | L3 | Да (ESP) | ~56-73 байта | Высокая | Site-to-site VPN, интеграция с партнёрами |
+| **[IPSec](./ipsec/ipsec.md)** | L3 | Да (ESP) | ~56-73 байта | Высокая | Site-to-site VPN, интеграция с партнёрами |
 
 ### Выбор протокола
 
@@ -141,7 +141,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 Требуется L2-оверлей?
 ├─ Да → VXLAN (масштабируемо) или GRETAP (просто)
 └─ Нет → Требуется шифрование?
-         ├─ Да → WireGuard (производительность), [IPSec](./ipsec.md) (site-to-site) или OpenVPN (зрелость)
+         ├─ Да → WireGuard (производительность), [IPSec](./ipsec/ipsec.md) (site-to-site) или OpenVPN (зрелость)
          └─ Нет → GRE (универсально) или IPIP/SIT (транзит протокола)
 ```
 

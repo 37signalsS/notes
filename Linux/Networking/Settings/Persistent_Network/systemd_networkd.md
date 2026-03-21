@@ -88,7 +88,7 @@ Table=101
 | `Destination` | Сеть назначения (по умолчанию `0.0.0.0/0`) |
 | `Gateway` | Шлюз |
 | `Metric` | Приоритет маршрута (для резервирования каналов) |
-| `Table` | ID таблицы маршрутизации (для [policy-based routing](../../../Policy_Based_Routing/index.md)) |
+| `Table` | ID таблицы маршрутизации (для [policy-based routing](./policy-based_routing/index.md)) |
 
 ---
 
@@ -181,7 +181,7 @@ resolvectl statistics
 
 ## Policy-Based Routing в systemd-networkd
 
-Для [policy-based routing](../../../Policy_Based_Routing/index.md) используется директива `[RoutingPolicyRule]`:
+Для [policy-based routingindex.md используется директива `[RoutingPolicyRule]`:
 
 ```ini
 # /etc/systemd/network/10-eth0.network

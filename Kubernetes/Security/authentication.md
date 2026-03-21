@@ -18,7 +18,7 @@
 
 Принцип работы: Kubernetes автоматически создает JWT-токен для каждого `ServiceAccount` и монтирует его в поды по пути `/var/run/secrets/kubernetes.io/serviceaccount/`.
 
-**Кастомизация токена:** Через [Projected Volume](../Base/Pod/pod_volumes.md) можно создать токен с измененными параметрами:
+**Кастомизация токена:** Через [Projected Volume](../Base/Pod/volume_types/projected_volumes.md) можно создать токен с измененными параметрами:
 - `expirationSeconds` — срок действия (по умолчанию 1 час, минимум 600 секунд)
 - `audience` — аудитория токена (для доступа к внешним API)
 - `path` — нестандартный путь монтирования

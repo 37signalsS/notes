@@ -6,11 +6,6 @@
 
 **`ImagePullBackOff`** — состояние, в которое переходит под после нескольких неудачных попыток скачивания образа. `kubelet` увеличивает задержку между попытками (exponential backoff).
 
-> - Docker Registry: [`../../../Docker/Docker_registries/docker_registries.md`](../../../Docker/Docker_registries/docker_registries.md)
-> - GitLab CI/CD: [`../../../CI-CD/GitLab_CI/Tutorials/ci_cd_pipeline_overview.md`](../../../CI-CD/GitLab_CI/Tutorials/ci_cd_pipeline_overview.md)
-> - ArgoCD: [`../../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md`](../../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md)
-> - Secrets: [`../../../Base/secrets/external_managers.md`](../../../Base/secrets/external_managers.md)
-
 **Backoff задержки:** 10s → 20s → 40s → 80s → 160s → 300s (максимум)
 
 ## Основные концепции

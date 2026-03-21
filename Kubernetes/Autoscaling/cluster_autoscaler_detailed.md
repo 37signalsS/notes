@@ -145,8 +145,8 @@ kubectl get events -n kube-system --field-selector reason=ScaleDown
 
 * **[HPA](HPA/index.md)** — CA реагирует на поды, созданные HPA, когда недостаточно ресурсов на существующих узлах.
 * **[VPA](vpa_detailed.md)** — VPA в режиме рекомендаций помогает оптимизировать `requests`, что улучшает работу CA.
-* **[KEDA](keda_detailed.md)** — KEDA создаёт HPA, который косвенно влияет на решения CA о масштабировании.
-* **[Karpenter](karpenter_detailed.md)** — альтернатива CA с более быстрым и эффективным масштабированием.
+* **[KEDA](./keda/practical_scenarios.md)** — KEDA создаёт HPA, который косвенно влияет на решения CA о масштабировании.
+* **[Karpenter](./Karpenter/installation.md)** — альтернатива CA с более быстрым и эффективным масштабированием.
 * **[Pod Disruption Budget](pod_disruption_budget.md)** — CA учитывает PDB при принятии решений о scale-down.
 * **[Pod Distribution](pod_distribution/basic_concepts.md)** — правила распределения подов влияют на способность CA удалить узел.
 

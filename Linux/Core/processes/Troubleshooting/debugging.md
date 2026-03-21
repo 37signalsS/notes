@@ -145,4 +145,4 @@ ps -eo pid,ppid,stat,cmd | grep ' Z '
 ### Связанные темы
 
 - **[strace](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md)** — трассировка системных вызовов
-- **[Observability Overview](../../../../Concepts/Observability_and_Monitoring/observability_overview.md)** — наблюдаемость системы
+- **[Observability Overview](../../../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — наблюдаемость системы

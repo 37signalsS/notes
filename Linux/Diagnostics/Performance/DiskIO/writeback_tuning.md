@@ -93,4 +93,4 @@ vm.dirty_writeback_centisecs = 300
 
 - [Роль kworker/u*:flush-*](./kworker_flush.md)
 - [Сценарии диагностики I/O](./troubleshooting_scenarios.md)
-- [Оптимизация памяти](../../Core/memory/performance_tuning.md)
+- [Оптимизация памяти](../../../FileSystems/performance_tuning.md)

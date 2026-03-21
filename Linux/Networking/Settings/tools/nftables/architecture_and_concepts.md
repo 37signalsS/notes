@@ -21,7 +21,7 @@
 
 - **[Концепции сетевых файрволов](../../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
 - **[iptables основы](../iptables_basics.md)** — классическая утилита
-- **[Firewalld](./firewalld.md)** — высокоуровневое управление на основе nftables
+- **[Firewalld](../firewalld.md)** — высокоуровневое управление на основе nftables
 - **[Общие вопросы файрволов](../firewall_common.md)** — сохранение правил, Docker
 
 ---

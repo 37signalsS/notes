@@ -124,8 +124,8 @@ nmcli connection up vlan10
 
 ### Связанные технологии
 
-- **[VLAN](./vlan_and_L2_switching.md):** VLAN можно настраивать поверх агрегированных интерфейсов.
-- **[LACP (802.3ad)](../Protocols/lacp.md):** Протокол динамической агрегации каналов.
+- **[VLAN](../OSI_TCP_IP_Model/data_link_layer.md):** VLAN можно настраивать поверх агрегированных интерфейсов.
+- **[LACP (802.3ad)](../Protocols/TCP/reliability_mechanisms/diagnostics.md):** Протокол динамической агрегации каналов.
 - **[QoS](./qos.md):** Агрегация может использоваться для увеличения пропускной способности для критического трафика.
 
 ### Сравнение bonding и teaming

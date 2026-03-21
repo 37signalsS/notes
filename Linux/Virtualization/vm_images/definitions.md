@@ -23,4 +23,4 @@
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [virtual_machine_images.md](../virtual_machine_images.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [virtual_machine_images.md](./definitions.md)*

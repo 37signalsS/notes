@@ -19,7 +19,7 @@
 
 ### Механизмы настройки
 
-Все параметры настраиваются через [`sysctl`](../../Core/kernel/sysctl.md):
+Все параметры настраиваются через [`sysctl`](../../../Core/kernel/sysctl.md):
 
 * Временно: `sudo sysctl -w <параметр>=<значение>`
 * Постоянно: `/etc/sysctl.conf` или `/etc/sysctl.d/99-network.conf`, затем `sudo sysctl -p`

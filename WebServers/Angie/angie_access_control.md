@@ -215,5 +215,5 @@ location = /_auth {
 
 Существуют и другие модули для более специфических задач аутентификации, которые доступны для Angie, например:
 
-- **`auth-jwt`**: Для валидации [JSON Web Tokens (JWT)](../../Security/Concepts/jwt.md).
+- **`auth-jwt`**: Для валидации [JSON Web Tokens (JWT)](../../Security/Concepts/authentication_vs_authorization.md).
 - **[LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)**: Для интеграции с корпоративными каталогами.

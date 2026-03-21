@@ -6,11 +6,6 @@
 
 **`Node Unreachable`** — состояние, при котором `kube-apiserver` не может связаться с `kubelet` на узле через контрольный канал (health check timeout).
 
-> - Taints: [`../../../Scheduling/taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)
-> - Eviction: [`pod_evicted.md`](./pod_evicted.md)
-> - Обслуживание узлов: [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)
-> - High Availability: [`../../../Base/high_availability.md`](../../../Base/high_availability.md)
-> - Cluster Autoscaler: [`../../../Autoscaling/cluster_autoscaler_detailed.md`](../../../Autoscaling/cluster_autoscaler_detailed.md)
 
 **Важно:** Это статусы узла, а не пода. Влияют на все поды, размещенные на проблемном узле.
 

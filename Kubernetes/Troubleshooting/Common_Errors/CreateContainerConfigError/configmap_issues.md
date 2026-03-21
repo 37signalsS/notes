@@ -66,8 +66,6 @@ volumes:
     name: app-config
 ```
 
-> **См. также:** [`../../../Base/configmap.md`](../../../Base/configmap.md)
-
 ## 2. Ключ ConfigMap не существует
 
 **Сообщение:**

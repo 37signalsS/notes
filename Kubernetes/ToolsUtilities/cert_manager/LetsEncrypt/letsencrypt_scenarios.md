@@ -228,4 +228,4 @@ spec:
 
 - **[Основные концепции](./letsencrypt_concepts.md)** — определения, ACME solvers, окружения
 - **[Дополнительные темы](./letsencrypt_advanced.md)** — диагностика, ошибки, best practices
-- **[cert_manager](../cert_manager_overview.md)** — обзор cert-manager
+- **[cert_manager](../../definitions.md)** — обзор cert-manager

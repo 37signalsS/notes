@@ -12,7 +12,6 @@
 
 ## Связанные документы
 
-- **[KEDA](../Autoscaling/keda_detailed.md)** — событийное масштабирование
 - **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
 - **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик
 - **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита от недоступности

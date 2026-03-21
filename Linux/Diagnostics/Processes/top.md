@@ -38,7 +38,7 @@
 | `running` | Выполняются или готовы к выполнению (R) |
 | `sleeping` | В прерываемом сне (S), ожидают события |
 | `stopped` | Остановлены сигналом (T) |
-| `zombie` | Завершены, не освобождены родителем (Z) — см. [overview.md](../../Core/processes/overview.md#чем-опасны-зомби-процессы) |
+| `zombie` | Завершены, не освобождены родителем (Z) — см. [overview.md](../../Core/processes/overview.md) |
 
 #### Статистика CPU (Cpu(s))
 
@@ -129,7 +129,7 @@ KiB Swap:  1024000 total,  800000 free,  224000 used. 1800000 avail Mem
 | `VIRT` | Виртуальная память (VSS) — см. [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md) |
 | `RES` | Резидентная память (RSS) в RAM |
 | `SHR` | Разделяемая память |
-| `S` | Состояние (R/S/D/Z/T) — см. [overview.md](../../Core/processes/overview.md#состояния-процесса) |
+| `S` | Состояние (R/S/D/Z/T) — см. [overview.md](../../Core/processes/overview.md) |
 | `%CPU` | Процент использования CPU (100% = одно ядро) |
 | `%MEM` | Процент использования физической памяти |
 | `TIME+` | Суммарное время CPU (мин:сек.сотые) |
@@ -222,8 +222,6 @@ top -b -n 1 -o %MEM | head -n 25 > memory_usage.txt
 # Или через ps:
 ps aux | awk '$8 ~ /Z/ {print}'
 ```
-
-Подробно о зомби: [overview.md](../../Core/processes/overview.md#чем-опасны-зомби-процессы).
 
 #### Анализ утечек памяти
 

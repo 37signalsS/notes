@@ -15,7 +15,7 @@
 * **Конфигурация:** `/etc/iproute2/` (таблицы маршрутизации, правила)
 * **Временные настройки:** Все изменения через `ip` действуют до перезагрузки
 
-> **Постоянная настройка:** См. [Постоянная настройка сети](../../Settings/persistent_network_configuration.md).
+> **Постоянная настройка:** См. [Постоянная настройка сети](../../Settings/Persistent_Network/systemd_networkd.md).
 
 ### Синтаксис команд
 
@@ -87,7 +87,7 @@ ip monitor
 ip -j link show | jq '.[] | select(.ifname == "eth0")'
 
 # Получить только IP-адрес
-ip -j address show eth0 | jq '.[0].addr_info[0].local'
+ip -j address show eth0 | jq '.[0](addr_info[0](local'
 ```
 
 ### Policy-Based Routing (PBR)
@@ -109,7 +109,7 @@ ip route show table 100
 
 ### Связанные темы
 
-* **[Постоянная настройка сети](../../Settings/persistent_network_configuration.md)** — сохранение настроек
+* **[Постоянная настройка сети](../../Settings/Persistent_Network/systemd_networkd.md)** — сохранение настроек
 * **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — tuning TCP-стека, QoS
 * **[Network namespaces](../../../../Linux/Core/namespaces.md)** — изоляция сети
 * **[Сетевая диагностика](../../network_diagnostics_tools.md)** — инструменты отладки

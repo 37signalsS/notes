@@ -75,13 +75,13 @@
    cp inventory/my-cluster/artifacts/admin.conf ~/.kube/config
    ```
 
-Подробнее: [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).
+Подробнее: [kubeconfig и подключение](../../../Operations/kubeconfig_and_connection.md).
 
 ### 8.4. Управление и мониторинг
 
-* **Обновление сертификатов:** Сертификаты живут 1 год. Требуется периодическое обновление. См. [Управление сертификатами](../../Operations/certificate_management.md).
-* **Графический интерфейс:** Используйте [Lens](../../../ToolsUtilities/lens.md) или другие IDE.
-* **Мониторинг:** Разверните [Prometheus](../../MonitoringLogging/Prometheus/prometheus_overview.md) и [Grafana](../../../Grafana/grafana_overview.md).
+* **Обновление сертификатов:** Сертификаты живут 1 год. Требуется периодическое обновление. См. [Управление сертификатами](../../../Operations/certificate_management.md).
+* **Графический интерфейс:** Используйте [Lens](../../../ToolsUtilities/lens/definitions_and_concepts.md) или другие IDE.
+* **Мониторинг:** Разверните [Prometheus](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_installation_and_setup.md) и [Grafana](../../../../Grafana/grafana_overview.md).
 
 ## Связанные документы
 
@@ -91,9 +91,9 @@
 * **[HA-кластер через Kubespray](../HA/index.md)** — развертывание высокодоступного кластера.
 * **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
 * **[kubeadm: Быстрый старт](../../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный ручной метод.
-* **[Управление сертификатами](../../Operations/certificate_management.md)** — обновление сертификатов кластера.
-* **[kind](../kind/kind_concepts.md)** — локальные кластеры для разработки.
-* **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.
+* **[Управление сертификатами](../../../Operations/certificate_management.md)** — обновление сертификатов кластера.
+* **[kind](../../kind/kind_concepts.md)** — локальные кластеры для разработки.
+* **[Talos](../../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.
 
 ---
 
@@ -102,7 +102,3 @@
 * **[Определения](./definitions.md)** — базовые термины
 * **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
 * **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [installation.md](../installation.md)*

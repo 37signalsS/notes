@@ -60,20 +60,20 @@ MAC-адрес уникален для каждого сетевого адап�
 
 | PDU | Основные функции | Протоколы | Оборудование |
 |-----|------------------|-----------|--------------|
-| **Пакеты (Packets)** | Глобальная адресация, маршрутизация, фрагментация, агрегация адресов | IPv4, IPv6, ICMP, [DHCP](../../../Protocols/dhcp.md), [IPSec](../../../Tunnels/ipsec.md), OSPF | [Маршрутизатор](../Equipment/routing_protocols_equipment.md), L3-коммутатор |
+| **Пакеты (Packets)** | Глобальная адресация, маршрутизация, фрагментация, агрегация адресов | IPv4, IPv6, ICMP, [DHCP](../../../Protocols/dhcp.md), [IPSec](../../../Tunnels/ipsec/ipsec.md, OSPF | [Маршрутизатор](../routing_protocols_equipment.md), L3-коммутатор |
 
 **См. также:**
 
 * [Модель OSI](../../osi_model.md) — общее описание уровней
 * [IP-адреса](../../../Protocols/ip.md) — структура и типы адресов
 * [Фрагментация](../Protocols/ip_fragmentation.md) — механизм фрагментации пакетов
-* [Маршрутизация](../Equipment/routing_protocols_equipment.md) — протоколы и оборудование
+* [Маршрутизация](../routing_protocols_equipment.md) — протоколы и оборудование
 
 ### Связанные документы
 
 * **[Канальный уровень](../../data_link_layer.md)** — уровень L2, предоставляющий среду для сетевого уровня
 * **[Транспортный уровень](../../transport_layer.md)** — уровень L4, использующий сетевой уровень
 * **[IP-адреса](../../../Protocols/ip.md)** — детальная информация об IP-адресации
-* **[Протоколы маршрутизации](../Equipment/routing_protocols_equipment.md)** — OSPF, BGP, RIP
+* **[Протоколы маршрутизации](../routing_protocols_equipment.md)** — OSPF, BGP, RIP
 * **[Фрагментация IP](../Protocols/ip_fragmentation.md)** — механизм фрагментации
-* **[MTU и VPN](../Troubleshooting/mtu_and_vpn.md)** — практические аспекты MTU
+* **[MTU и VPN](../mtu_and_vpn.md)** — практические аспекты MTU

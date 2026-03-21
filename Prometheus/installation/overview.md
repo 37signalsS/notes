@@ -84,7 +84,7 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
 
-> **Подробное руководство:** [Установка через Helm](./with_helm_chart.md), [Kube-Prometheus-Stack](../Kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
+> **Подробное руководство:** [Установка через Helm](./with_helm_chart.md), [Kube-Prometheus-Stack](../../Linux/Networking/Services/BIND/overview.md).
 
 ## Дополнительная информация
 
@@ -98,7 +98,7 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
     promtool check config /etc/prometheus/prometheus.yml
     ```
 
-    Подробнее об утилите `promtool` можно прочитать в заметке [`promtool_and_best_practices.md`](../promtool_and_best_practices.md).
+    Подробнее об утилите `promtool` можно прочитать в заметке [promtool и лучшие практики](../promtool_and_best_practices.md).
 
 * **Alertmanager**:
 

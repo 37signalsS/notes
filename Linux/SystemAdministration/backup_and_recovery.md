@@ -158,8 +158,8 @@ borg prune --keep-daily=7 --keep-weekly=4 /backup/borg-repo
 
 **Бэкапы баз данных:**
 
-- **[PostgreSQL бэкапы](../../Databases/PostgreSQL/Operations/backup_restore.md)** — pg_dump, WAL-архивирование
-- **[MySQL бэкапы](../../Databases/MySQL/backup_and_recovery.md)** — mysqldump, xtrabackup
+- **[PostgreSQL бэкапы](../../Databases/PostgreSQL/Operations/performance_tuning.md** — pg_dump, WAL-архивирование
+- **[MySQL бэкапы](../../Databases/PostgreSQL/Concepts/backup_and_recovery.md)** — mysqldump, xtrabackup
 - **[Общие концепции бэкапов БД](../../Databases/Concepts/backups.md)** — горячие/холодные бэкапы
 
 **Файловые системы и LVM:**
@@ -174,7 +174,7 @@ borg prune --keep-daily=7 --keep-weekly=4 /backup/borg-repo
 
 **Мониторинг:**
 
-- **[Monitoring Backups](../../Concepts/Observability_and_Monitoring/observability_overview.md)** — отслеживание успешности бэкапов
+- **[Monitoring Backups](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — отслеживание успешности бэкапов
 
 ### Тестирование восстановления
 

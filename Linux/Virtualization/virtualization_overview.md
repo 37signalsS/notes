@@ -1,6 +1,6 @@
 # Виртуализация и изоляция в Linux
 
-> **Связанные файлы:** [Образы ВМ](./virtual_machine_images.md), [Вложенная виртуализация](./nested_virtualization.md), [VirtualBox](../../virtualbox.md), [Docker overview](../../Docker/docker_overview.md), [Podman architecture](../../Podman/podman_daemonless_architecture.md)
+> **Связанные файлы:** [Образы ВМ](./vm_images/basic_concepts.md), [Вложенная виртуализация](./nested_virtualization/practical_scenarios.md), [VirtualBox](../../virtualbox.md), [Docker overview](../../Docker/docker_overview.md), [Podman architecture](../../Podman/podman_daemonless_architecture.md)
 
 ## Определения
 
@@ -69,7 +69,7 @@
 | **VirtualBox** | 2 | Гипервизор для рабочих станций, см. [VirtualBox](../../virtualbox.md) |
 | **VMware ESXi** | 1 | Коммерческий гипервизор |
 
-**Вложенная виртуализация:** Запуск гипервизора внутри ВМ. Подробно: [Nested Virtualization](./nested_virtualization.md).
+**Вложенная виртуализация:** Запуск гипервизора внутри ВМ. Подробно: [Nested Virtualization](./nested_virtualization/practical_scenarios.md).
 
 ##### Сравнение популярных решений для рабочих станций
 

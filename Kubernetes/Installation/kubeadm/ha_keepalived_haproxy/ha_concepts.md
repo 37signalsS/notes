@@ -83,5 +83,5 @@
 
 * [HA кластер на bare metal](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
 * [Keepalived обзор](../../../../Networking/ServicesAndTools/keepalived_overview.md)
-* [HAProxy обзор](../../../../WebServers/Haproxy/haproxy_overview.md)
+* [HAProxy обзор](../../../../WebServers/haproxy_overview.md)
 * [Высокая доступность Kubernetes](../../../Base/high_availability.md)

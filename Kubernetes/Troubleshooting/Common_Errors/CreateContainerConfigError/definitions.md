@@ -4,12 +4,6 @@
 
 **`CreateContainerConfigError`** — ошибка, возникающая до запуска контейнера, означающая, что `kubelet` не может создать конфигурацию контейнера из-за проблем с зависимостями (ConfigMap, Secret, Volume).
 
-> - ConfigMap: [`../../../Base/configmap.md`](../../../Base/configmap.md)
-> - Secrets: [`../../../Base/secrets/external_managers.md`](../../../Base/secrets/external_managers.md)
-> - Volumes: [`../../../Base/Pod/pod_volumes.md`](../../../Base/Pod/pod_volumes.md)
-> - PVC/PV: [`../../../Storage/pv_and_pvc.md`](../../../Storage/pv_and_pvc.md)
-> - RBAC: [`../../../Security/rbac/rbac_overview.md`](../../../Security/rbac/rbac_overview.md)
-
 ## Основные концепции
 
 ### Workflow создания контейнера

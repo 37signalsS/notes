@@ -143,5 +143,5 @@ arp -s 192.168.255.1 00:00:00:00:00:01 -i eth1:1
 ## Связанные документы
 
 - **[IPSec: архитектура](./ipsec_architecture.md)** — концепции SA, SP, режимы инкапсуляции
-- **[GRE с IPsec](./gre/gre.md)** — комбинация GRE + IPSec
+- **[GRE с IPsec](../gre/gre.md)** — комбинация GRE + IPSec
 - **[Troubleshooting IPSec](./ipsec_troubleshooting.md)** — диагностика проблем

@@ -135,7 +135,7 @@ prometheus:
               env: 'production'
 ```
 
-> **См. также:** [Blackbox Exporter](./Exporters/blackbox_exporter.md).
+> **См. также:** [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
 
 ## Дополнительная информация
 
@@ -147,7 +147,7 @@ prometheus:
 | **Логи** | ELK Stack, Grafana Loki | **Почему это произошло?** |
 | **Трассировка** | Jaeger, OpenTelemetry | **Как это произошло?** |
 
-> **См. также:** [Observability overview](../../Concepts/Observability_and_Monitoring/observability_overview.md).
+> **См. также:** [Observability overview](../../Concepts/Observability_and_Monitoring/observability_definitions.md).
 
 ### Рекомендации по безопасности
 

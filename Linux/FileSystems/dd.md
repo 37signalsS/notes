@@ -85,5 +85,5 @@ dd if=/dev/zero of=/dev/null
 
 - **Псевдо-устройства:** `/dev/zero`, `/dev/null`, `/dev/urandom` — специальные устройства в `/dev`. См. [Виртуальная файловая система /dev](./virtual_fs_dev.md#Специальные-псевдо-устройства).
 - **Типы устройств:** Блочные и символьные устройства описаны в [Типы устройств в Linux](./device_types.md).
-- **Тестирование дисков:** Для комплексного тестирования производительности используйте [`fio`](../Diagnostics/Hardware/disk_benchmarks.md), для мониторинга — [`iostat`](../Diagnostics/Filesystem/iostat.md).
-- **Безопасная очистка:** Для безопасного удаления данных рассмотрите [`shred`](../Security/file_secure_delete.md) вместо `dd`.
+- **Тестирование дисков:** Для комплексного тестирования производительности используйте [`fio`](../Diagnostics/Hardware/cpu_info.md), для мониторинга — [`iostat`](../Diagnostics/Filesystem/iostat.md).
+- **Безопасная очистка:** Для безопасного удаления данных рассмотрите [`shred`](../../Security/Tools/openssl_ca/single_tier/ca_setup.md) вместо `dd`.

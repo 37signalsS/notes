@@ -45,4 +45,4 @@
 - **[Fail2Ban](../../Tools/Fail2Ban.md):** Утилита, которая анализирует логи и автоматически блокирует IP-адреса, с которых ведутся [атаки перебора (brute-force)](../../../../Security/Concepts/brute_force_attacks.md).
 - **Endlessh:** SSH-ловушка ("tarpit"), которая "замораживает" ботов, бесконечно отправляя им SSH-баннер, но не завершая соединение. [GitHub-репозиторий](https://github.com/skeeto/endlessh).
 
-### Сокрытие SSH-сервера с помощью [Port Knocking](../client/port_knocking.md)
+### Сокрытие SSH-сервера с помощью [Port Knocking](./port_knocking.md)

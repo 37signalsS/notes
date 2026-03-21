@@ -31,14 +31,14 @@
 
 ### Централизованное управление
 
-- [LDAP и SSSD](Users/ldap_sssd.md) — централизованная аутентификация, кэширование
+- [LDAP и SSSD](./Users/LDAP_SSSD/operations.md) — централизованная аутентификация, кэширование
 
 ### Смежные темы
 
-- [Управление привилегиями](../privilege_management.md) — `su`, `sudo`, Polkit
-- [PAM](../../Security/pam_overview.md) — модули аутентификации
-- [Права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) — DAC, SUID, SGID, ACL
-- [Права доступа (кратко)](./file_permissions.md) — `chmod`, `chown`
+- [Управление привилегиями](./privilege_management.md) — `su`, `sudo`, Polkit
+- [PAM](../Security/pam_overview.md) — модули аутентификации
+- [Права доступа](../Security/Concepts/File_Permissions/overview_definitions.md) — DAC, SUID, SGID, ACL
+- [Права доступа (кратко)](./Users/file_permissions.md) — `chmod`, `chown`
 
 ## Лучшие практики
 

@@ -123,7 +123,7 @@ sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 
 > **Важно:** `tcp_tw_recycle` удалён в ядре 4.12+ из-за проблем с NAT.
 
-**Подробнее:** [Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning.md#управление-состоянием-time_wait-и-ephemeral-портами).
+**Подробнее:** [Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_congestion_algorithms.md).
 
 ---
 

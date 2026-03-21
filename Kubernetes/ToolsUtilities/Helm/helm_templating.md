@@ -23,7 +23,7 @@ Helm использует Go template engine с библиотекой Sprig д�
 - [Синтаксис шаблонов](./templating/syntax.md) — базовый синтаксис, управляющие конструкции (if/else, with, range), управление пробелами
 - [Встроенные объекты](./templating/objects.md) — .Values, .Release, .Chart, .Capabilities, .Files, .Template
 - [Функции](./templating/functions.md) — quote, default, required, toYaml, nindent, tpl, include, trunc, trimSuffix и другие
-- [Именованные шаблоны и хелперы](./templating/templates/_helpers.md) — создание переиспользуемых блоков в _helpers.tpl
+- [Именованные шаблоны и хелперы](./templating/_helpers.md) — создание переиспользуемых блоков в _helpers.tpl
 
 ### Практические сценарии
 

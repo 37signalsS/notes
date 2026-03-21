@@ -27,5 +27,3 @@ kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
 # 4. Uncordon (возврат в работу)
 kubectl uncordon <node-name>
 ```
-
-> **См. также:** [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)

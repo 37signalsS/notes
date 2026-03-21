@@ -184,7 +184,7 @@ curl -O https://example.com/file.zip &
 curl https://api.example.com/users | jq .
 
 # Выборка конкретных полей
-curl https://api.example.com/users | jq '.[].name'
+curl https://api.example.com/users | jq '.[](name'
 
 # Фильтрация
 curl https://api.example.com/users | jq '.[] | select(.age > 25)'

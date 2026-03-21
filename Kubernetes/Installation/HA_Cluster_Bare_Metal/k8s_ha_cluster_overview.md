@@ -75,7 +75,7 @@
 7. **Присоединение мастеров** — `kubeadm join` с `--control-plane`
 8. **Присоединение воркеров** — `kubeadm join` без дополнительных флагов
 
-Подробнее: [Node Preparation](./k8s_ha_node_preparation.md), [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md).
+Подробнее: [Node Preparation](./k8s_ha_node_preparation.md), [Control Plane & CNI](./control_plane_initialization.md).
 
 ### Выбор CIDR для подов и сервисов
 
@@ -103,7 +103,7 @@
 3. Обновление/ремонт
 4. Возврат в кластер: `kubectl uncordon <node>`
 
-Подробнее: [Обслуживание узлов](../../Maintenance/node_maintenance.md).
+Подробнее: [Обслуживание узлов](../../Operations/node_maintenance.md).
 
 ---
 
@@ -114,7 +114,7 @@
 - **Требования**: [Environment Requirements](./k8s_ha_environment_requirements.md)
 - **Подготовка**: [Node Preparation](./k8s_ha_node_preparation.md)
 - **Установка**: [Component Installation](./k8s_ha_component_installation.md)
-- **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
+- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
 - **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
 - **Альтернатива**: [Kubespray HA](../Kubespray/HA/index.md)
 - **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)

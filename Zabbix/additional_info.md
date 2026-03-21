@@ -90,5 +90,5 @@ UserParameter=otus.discovery,/usr/local/bin/my_discovery_script.sh
 | Мониторинг PostgreSQL | **[Мониторинг PostgreSQL в Zabbix](./zabbix_postgresql_monitoring.md)** |
 | Лучшие практики | **[Лучшие практики настройки Zabbix](./zabbix_best_practices.md)** |
 | Диагностика и тюнинг | **[Поиск и устранение неисправностей и тюнинг производительности Zabbix](./zabbix_troubleshooting_and_performance_tuning.md)** |
-| Стратегии сбора метрик | **[Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/observability_overview.md#стратегии-сбора-метрик)** |
+| Стратегии сбора метрик | **[Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/observability_definitions.md)** |
 | Интеграция с Grafana | **[Grafana](../Grafana/grafana_overview.md)** |

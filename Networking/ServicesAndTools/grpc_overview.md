@@ -78,7 +78,7 @@ gRPC изначально построен поверх протокола **HTT
 * **Real-time приложения:** Двунаправленный стриминг отлично подходит для приложений, требующих обмена данными в реальном времени (чаты, IoT, игровые сервисы).
 * **API для разных языков:** Когда у вас есть полиглотная система (сервисы на Go, Java, Python), gRPC упрощает их интеграцию благодаря автоматической генерации кода.
 * **Observability:** gRPC используется в [OpenTelemetry Protocol (OTLP)](../../OpenTelemetry/otlp_protocol.md) для передачи телеметрии (трассировки, метрики, логи) в Collector.
-* **Docker и Kubernetes:** [Docker](../../Docker/docker_overview.md) использует gRPC для взаимодействия `dockerd` с `containerd`. [Kubernetes](../../Kubernetes/Architecture/components.md) использует gRPC через CRI для управления контейнерами.
+* **Docker и Kubernetes:** [Docker](../../Docker/docker_overview.md) использует gRPC для взаимодействия `dockerd` с `containerd`. [Kubernetes](../../CI-CD/GitLab_CI/Reusable_Pipelines/ci_cd_catalog_components.md) использует gRPC через CRI для управления контейнерами.
 * **Service Mesh:** [Consul](../../Consul/consul_health_checks.md) использует gRPC для health checks сервисов.
 
 **Когда REST может быть лучше:**
@@ -88,7 +88,7 @@ gRPC изначально построен поверх протокола **HTT
 
 ### gRPC-Web
 
-**gRPC-Web** — это адаптация gRPC для работы в браузерах. Поскольку браузеры не поддерживают полный HTTP/2 (особенно raw TCP streams), gRPC-Web использует прокси-сервер (например, [Envoy](../../WebServers/Envoy/envoy_overview.md)), который транслирует запросы между браузером и gRPC-сервером.
+**gRPC-Web** — это адаптация gRPC для работы в браузерах. Поскольку браузеры не поддерживают полный HTTP/2 (особенно raw TCP streams), gRPC-Web использует прокси-сервер (например, [Envoy](../../Kubernetes/Networking/gateway_api/envoy_gateway.md)), который транслирует запросы между браузером и gRPC-сервером.
 
 * **Сценарий использования:** Прямое взаимодействие SPA-приложений (React, Vue, Angular) с gRPC-бэкендом.
 * **Ограничения:** Не поддерживает все типы стриминга (только client streaming и unary).
@@ -123,4 +123,4 @@ gRPC изначально построен поверх протокола **HTT
 * **[Docker Architecture](../../Docker/docker_overview.md)** — gRPC в Docker (containerd).
 * **[Consul Health Checks](../../Consul/consul_health_checks.md)** — gRPC для проверок.
 * **[HTTP/2 и оптимизация](../Protocols/http_protocols_optimization.md)** — детали HTTP/2.
-* **[Envoy Proxy](../../WebServers/Envoy/envoy_overview.md)** — прокси для gRPC-Web.
+* **[Envoy Proxy](../../Kubernetes/Networking/gateway_api/envoy_gateway.md)** — прокси для gRPC-Web.

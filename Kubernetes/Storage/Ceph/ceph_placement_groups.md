@@ -194,4 +194,4 @@ RAM_per_OSD (MB) = PG_per_OSD × 1 MB
 ### Ссылки
 
 - [Обзор Ceph](ceph_overview.md)
-- [Администрирование Ceph](ceph_administration.md)
+- [Администрирование Ceph](../Administration/index.md)

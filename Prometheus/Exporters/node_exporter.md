@@ -93,7 +93,7 @@ services:
 | `--web.telemetry-path` | `"/metrics"` | URI для экспозиции метрик |
 | `--log.level` | `"info"` | Уровень логирования (`debug`, `info`, `warn`, `error`) |
 | `--log.format` | `"logfmt"` | Формат логов (`logfmt`, `json`) |
-| `--collector.textfile.directory` | — | Директория для [Textfile Collector](./extensibility.md#textfile-collector) |
+| `--collector.textfile.directory` | — | Директория для [Textfile Collectorextensibility/custom_exporters.md |
 | `--collector.disable-defaults` | `false` | Отключить все коллекторы по умолчанию |
 
 ### Включение/отключение коллекторов
@@ -238,8 +238,8 @@ node_vmstat_pgmajfault          # Количество major page faults
 
 ### Расширяемость
 
-* **[Textfile Collector](./extensibility.md#textfile-collector)** — механизм для сбора произвольных метрик через внешние скрипты
-* **[Написание своих экспортеров](./extensibility.md#написание-собственных-экспортеров)** — руководство по созданию кастомных экспортеров
+* **[Textfile Collector](./extensibility/custom_exporters.md)** — механизм для сбора произвольных метрик через внешние скрипты
+* **[Написание своих экспортеров](./extensibility/custom_exporters.md)** — руководство по созданию кастомных экспортеров
 
 ### Связанные темы
 

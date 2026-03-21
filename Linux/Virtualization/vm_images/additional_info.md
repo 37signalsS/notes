@@ -76,4 +76,4 @@ qemu-img convert -f vmdk -O qcow2 disk.vmdk disk.qcow2
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [virtual_machine_images.md](../virtual_machine_images.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [virtual_machine_images.md](./additional_info.md)*

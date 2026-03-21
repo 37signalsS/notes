@@ -4,7 +4,7 @@
 
 **`ip address`** (`ip a`) — команда `iproute2` для управления IP-адресами на сетевых интерфейсах. Поддерживает IPv4 и IPv6.
 
-> **Важно:** Настройки через `ip address` временные. Для постоянного сохранения см. [Постоянная настройка сети](../../Settings/persistent_network_configuration.md).
+> **Важно:** Настройки через `ip address` временные. Для постоянного сохранения см. [Постоянная настройка сети](../../Settings/Persistent_Network/systemd_networkd.md).
 
 ## Базовые концепции
 
@@ -135,8 +135,8 @@ ip monitor address
 ### Связанные темы
 
 * **[ip route](./ip_route.md)** — управление маршрутизацией
-* **[Постоянная настройка сети](../../Settings/persistent_network_configuration.md)** — сохранение настроек
-* **[IPv6](../../Settings/ipv6_configuration.md)** — настройка IPv6
+* **[Постоянная настройка сети](../../Settings/Persistent_Network/systemd_networkd.md** — сохранение настроек
+* **[IPv6](../../Settings/ipv6_configuration/firewall.md)** — настройка IPv6
 * **[DHCP](../../../../Networking/Protocols/dhcp.md)** — протокол динамической настройки
 
 ### Типичные проблемы

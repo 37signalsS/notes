@@ -39,4 +39,4 @@ Consul часто используется в связке с другими с�
 
 - **[Официальная документация Consul](https://developer.hashicorp.com/consul)**: Первоисточник для изучения всех возможностей.
 - **[Интерактивные туториалы HashiCorp](https://developer.hashicorp.com/consul/tutorials)**: Практические руководства по настройке и использованию.
-- **[Обзор Nomad](../Nomad/nomad_overview.md)**: Узнайте, как Consul нативно интегрируется с оркестратором Nomad.
+- **[Обзор Nomad](../Nomad/definitions_and_concepts.md)**: Узнайте, как Consul нативно интегрируется с оркестратором Nomad.

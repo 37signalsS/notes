@@ -19,14 +19,14 @@
         * `ClusterRole` и `ClusterRoleBinding`: Предоставляют права на уровне всего кластера. Используются с осторожностью.
 
 2. **Изоляция ресурсов (Resource Isolation)**
-    * **Квоты на ресурсы ([`ResourceQuota`](../../Scheduling/qos_limit_and_requests.md#ограничение-суммарного-потребления-с-resourcequota))**: Ограничивают потребление ресурсов в рамках одного Namespace. Это предотвращает ситуацию, когда один тенант монополизирует все ресурсы кластера. Квоты можно установить на вычислительные ресурсы (`limits.cpu`, `requests.cpu`, `limits.memory`, `requests.memory`) и количество объектов (`pods`, `services`, `deployments`, `persistentvolumeclaims`).
+    * **Квоты на ресурсы ([`ResourceQuota`](../Scheduling/qos_limit_and_requests.md))**: Ограничивают потребление ресурсов в рамках одного Namespace. Это предотвращает ситуацию, когда один тенант монополизирует все ресурсы кластера. Квоты можно установить на вычислительные ресурсы (`limits.cpu`, `requests.cpu`, `limits.memory`, `requests.memory`) и количество объектов (`pods`, `services`, `deployments`, `persistentvolumeclaims`).
     * **Диапазоны лимитов (`LimitRange`)**: Задают значения по умолчанию, а также минимальные и максимальные лимиты на ресурсы для контейнеров в Namespace. Это гарантирует, что каждый под имеет разумные ограничения, даже если они не указаны явно.
 
-3. **Сетевая изоляция ([Network Isolation](../../Networking/Network/network_overview.md#сетевая-изоляция-и-networkpolicy))**
-    * **Сетевые политики ([`NetworkPolicy`](../../Networking/Network/network_overview.md#сетевая-изоляция-и-networkpolicy))**: Контролируют трафик между подами на уровне IP-адресов и портов (L3/L4). По умолчанию весь трафик разрешен, но можно настроить политики, которые запрещают подам из одного Namespace общаться с подами из другого, кроме случаев, когда это явно разрешено. Для работы `NetworkPolicy` необходим сетевой плагин (CNI), который их поддерживает (например, Calico, Cilium, Weave Net).
+3. **Сетевая изоляция ([Network Isolation](../Networking/Network/network_overview.md))**
+    * **Сетевые политики ([`NetworkPolicy`](../Networking/Network/network_overview.md))**: Контролируют трафик между подами на уровне IP-адресов и портов (L3/L4). По умолчанию весь трафик разрешен, но можно настроить политики, которые запрещают подам из одного Namespace общаться с подами из другого, кроме случаев, когда это явно разрешено. Для работы `NetworkPolicy` необходим сетевой плагин (CNI), который их поддерживает (например, Calico, Cilium, Weave Net).
 
 4. **Изоляция на уровне выполнения и безопасности (Runtime & Security Isolation)**
-    * **Политики безопасности подов ([`Pod Security Admission / Pod Security Policies`](../../Security/pod_security_context.md#pod-security-standards-pss-и-pod-security-admission-psa))**: Ограничивают возможности подов, запрещая, например, запуск привилегированных контейнеров, использование host network или монтирование томов с хоста. Это критически важно для предотвращения эскалации привилегий одним тенантом и атак на хост-систему или другие тенанты.
+    * **Политики безопасности подов ([`Pod Security Admission / Pod Security Policies`](../Security/pod_security_context.md))**: Ограничивают возможности подов, запрещая, например, запуск привилегированных контейнеров, использование host network или монтирование томов с хоста. Это критически важно для предотвращения эскалации привилегий одним тенантом и атак на хост-систему или другие тенанты.
     * **Изоляция хранилища (`Storage Isolation`)**:
         * `StorageClass`: Позволяет определять разные типы хранилищ. Можно создать отдельные `StorageClasses` для разных тенантов.
         * [`PersistentVolumeClaim (PVC)`](../Storage/pv_and_pvc.md): Запросы на хранилище привязаны к Namespace, что обеспечивает изоляцию данных.
@@ -106,7 +106,7 @@ spec:
      * Запрет `hostNetwork: true` (кроме исключений для мониторинга)
      * Проверка наличия securityContext
      * Валидация resources requests/limits
-   * **Open Source**: [Kyverno](../Security/kyverno.md) (валидация и мутация)
+   * **Open Source**: [Kyverno](../Security/kyverno/policies/practical_scenarios.md) (валидация и мутация)
 
 3. **Mutating Admission Webhook**
    * Модификация объектов перед сохранением

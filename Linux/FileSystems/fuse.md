@@ -83,6 +83,6 @@
 - **Связанные темы:**
   - [Виртуальные ФС](./virtual_filesystems.md) — псевдофайловые системы
   - [SSH](../Security/ssh/ssh_usage_and_tunnels.md) — sshfs для удалённого доступа
-  - [Облачные хранилища](../Storage/cloud_storage.md) — rclone, s3fs
-  - [Шифрование](../Security/encrypted_fs.md) — gocryptfs, EncFS
-  - [Производительность FUSE](../Diagnostics/Hardware/fuse_performance.md) — оптимизация
+  - [Облачные хранилища](../../Kubernetes/Storage/Ceph/ceph_rbd_usage/definitions_and_concepts.md — rclone, s3fs
+  - [Шифрование](../../Security/Tools/openssl_ca/single_tier/ca_setup.md — gocryptfs, EncFS
+  - [Производительность FUSE](../Diagnostics/Hardware/cpu_info.md) — оптимизация

@@ -186,7 +186,7 @@ scrape_configs:
 | **`scrape_configs`** | Источники логов (контейнеры, системные, приложения) |
 | **`pipeline_stages`** | Парсинг и обогащение логов метаданными |
 
-> **Примечание:** Для Kubernetes используется другая конфигурация с фильтром `kubernetes`. См. [loki_stack_setup_guide.md](../loki_stack_setup_guide.md).
+> **Примечание:** Для Kubernetes используется другая конфигурация с фильтром `kubernetes`. См. [loki_stack_setup_guide.md](../../Loki/loki_overview.md).
 
 ## 4. Запуск и проверка
 

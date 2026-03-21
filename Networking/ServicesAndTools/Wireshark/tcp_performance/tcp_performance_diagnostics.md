@@ -260,10 +260,10 @@ BDP = 125 MB/s × 0.05 = 6.25 MB
 - **[Диагностика проблем клиента](./tcp_client_performance_issues.md)** — Window Full, Zero Window
 - **[Потери в сети и offloading](./tcp_network_losses_and_offloading.md)** — диагностика потерь
 - **[Инструменты анализа](./tcp_performance_analysis_tools.md)** — графики Wireshark
-- **[Управление перегрузкой TCP](../../Protocols/TCP/congestion_control.md)** — cwnd, Slow Start, AIMD, BBR, CUBIC
-- **[Управление потоком TCP](../../Protocols/TCP/flow_control.md)** — rwnd, Zero Window
-- **[Оптимизация TCP в Linux](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — sysctl-параметры
-- **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — захват трафика в CLI
+- **[Управление перегрузкой TCP](../../../Protocols/TCP/congestion/tcp_congestion_control_overview.md** — cwnd, Slow Start, AIMD, BBR, CUBIC
+- **[Управление потоком TCP](../../../../Ansible/PlaybookStructure/flow_control.md** — rwnd, Zero Window
+- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md** — sysctl-параметры
+- **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — захват трафика в CLI
 
 ### RFC и стандарты
 

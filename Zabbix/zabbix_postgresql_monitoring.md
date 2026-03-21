@@ -1,6 +1,6 @@
 ## Мониторинг PostgreSQL в Zabbix
 
-> Подробный разбор архитектуры PostgreSQL доступен в основной заметке: **[PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md)**.
+> Подробный разбор архитектуры PostgreSQL доступен в основной заметке: **[PostgreSQL: Обзор](../Linux/Networking/Services/BIND/overview.md)**.
 >
 > Общее описание архитектуры Zabbix доступно в основной заметке: **[Обзор Zabbix](./zabbix_best_practices.md)**.
 >
@@ -111,8 +111,8 @@ Zabbix Agent 2 собирает обширный набор метрик, исп
 
 | Тема | Документ |
 |------|----------|
-| Архитектура PostgreSQL | **[PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md)** |
+| Архитектура PostgreSQL | **[PostgreSQL: Обзор](../Linux/Networking/Services/BIND/overview.md)** |
 | Observability для PostgreSQL | **[Full-Stack Observability](../Databases/PostgreSQL/Operations/observability.md)** |
-| Оптимизация производительности PostgreSQL | **[Performance Tuning](../../Databases/PostgreSQL/Operations/performance_tuning.md)** |
+| Оптимизация производительности PostgreSQL | **[Performance Tuning](../Linux/FileSystems/performance_tuning.md)** |
 | Общие подходы к мониторингу СУБД | **[Мониторинг Баз Данных](./zabbix_database_monitoring.md)** |
 | Лучшие практики Zabbix | **[Best Practices](./zabbix_best_practices.md)** |

@@ -3,7 +3,7 @@
 ## Определения
 
 * **`systemd-journald`** — системная служба, централизованно собирающая логи от всех компонентов ОС (ядро, службы, приложения, stdout/stderr) в структурированном бинарном формате.
-* **`journalctl`** — утилита для просмотра и анализа логов, собранных `systemd-journald`. **Подробное описание утилиты `journalctl` находится в [journalctl.md](../../../Diagnostics/journalctl.md).**
+* **`journalctl`** — утилита для просмотра и анализа логов, собранных `systemd-journald`. **Подробное описание утилиты `journalctl` находится в [journalctl.md](../../Diagnostics/journalctl.md).**
 
 ## Основные концепции
 
@@ -220,7 +220,7 @@ SyncIntervalSec=5m  # Принудительная синхронизация к
 
 ### Ссылки по теме
 
-* **Утилита journalctl:** [journalctl.md](../../../Diagnostics/journalctl.md) — просмотр, фильтрация, экспорт логов.
+  * **Утилита journalctl:** [journalctl.md](../../../Diagnostics/journalctl.md) — просмотр, фильтрация, экспорт логов.
 * **Обзор логирования:** [logging_overview.md](./logging_overview.md) — архитектура, `logrotate`, `logger`.
 * **rsyslog:** [rsyslog.md](./rsyslog.md) — фильтрация и пересылка логов.
 * **auditd:** [auditd.md](./auditd.md) — аудит безопасности.

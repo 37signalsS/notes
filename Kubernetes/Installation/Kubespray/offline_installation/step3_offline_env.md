@@ -227,8 +227,5 @@ ansible-playbook -i inventory/offline_cluster/inventory.ini --list-hosts all
 - **[Шаг 2: Подготовка окружения с интернетом](./step2_internet_env.md)** — загрузка артефактов
 - **[Шаг 4: Развертывание кластера](./step4_cluster_deploy.md)** — установка Kubernetes
 - **[Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md)** — информация о Harbor
-- **[Kubespray: Конфигурация](../offline_concepts.md)** — переменные offline-режима
+- **[Kubespray: Конфигурация](./offline_concepts.md)** — переменные offline-режима
 
----
-
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*

@@ -179,7 +179,7 @@ spec:
     replica_count:
       type: number
       description: "Number of replicas"
-      regex: '^([1-9]|[1-9][0-9])$'  # 1-99
+      regex: '^([1-9]|[1-9[0-9])$'  # 1-99
       default: 3
 
 ---

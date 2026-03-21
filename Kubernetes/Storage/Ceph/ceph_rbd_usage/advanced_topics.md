@@ -47,7 +47,7 @@ rbd export-diff kube/my-image@snap1 /backup/diff.snap1
 
 ## Ссылки
 
-- [Обзор Ceph](ceph_overview.md)
+- [Обзор Ceph](../ceph_overview.md)
 - [Официальная документация RBD](https://docs.ceph.com/en/latest/rbd/)
 
 ---

@@ -36,10 +36,10 @@
 
 ### 6. Single Sign-On (SSO)
 
-Механизм, позволяющий пользователю проходить аутентификацию один раз для доступа ко множеству приложений. Подробнее см. [SSO (Single Sign-On)](../../Security/Concepts/authentication_vs_authorization.md#федеративная-идентификация-federated-identity-и-sso-single-sign-on).
+Механизм, позволяющий пользователю проходить аутентификацию один раз для доступа ко множеству приложений. Подробнее см. [SSO (Single Sign-On)](../../../Security/Concepts/authentication_vs_authorization.md).
 
 ## Связанные документы
 
 * **[Базовые концепции HTTP](./http_basics.md)** — Stateless-протокол
-* **[OAuth 2.0](../../Security/Concepts/oauth2_overview.md)** — Аутентификация и авторизация
+* **[OAuth 2.0](../../../Security/Concepts/oauth2_overview.md)** — Аутентификация и авторизация
 * **[HTTPS](./http_versions.md#https)** — Шифрование HTTP

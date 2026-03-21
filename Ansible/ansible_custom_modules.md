@@ -144,7 +144,7 @@ def main():
     user_exists = client.execute(
         "SELECT count() FROM system.users WHERE name = %(user)s",
         {'user': user_to_manage}
-    )[0][0] > 0
+    )[0[0] > 0
 
     if module.check_mode:
         if state == 'present' and not user_exists:
@@ -165,7 +165,7 @@ def main():
             client.execute(query, params)
             
             result['changed'] = True
-            result['queries'].append(query % params)
+            result['queries'](append(query % params)
     
     elif state == 'absent':
         if user_exists:
@@ -174,7 +174,7 @@ def main():
             client.execute(query, params)
             
             result['changed'] = True
-            result['queries'].append(query % params)
+            result['queries'](append(query % params)
             
     module.exit_json(**result)
 

@@ -68,5 +68,5 @@ exclude=package3,package4    # Исключить указанные пакет�
 ### Связанные темы
 
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-- **[Команды DNF](./dnf_commands.md)** — полный справочник по DNF
-- **[Локальное зеркало репозитория](./local_repository_mirror.md)** — создание зеркал
+- **[Команды DNF](../dnf_commands/definitions.md** — полный справочник по DNF
+- **[Локальное зеркало репозитория](../apt_repository_mirror.md)** — создание зеркал

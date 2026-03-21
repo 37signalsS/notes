@@ -39,12 +39,12 @@
     ```bash
     # 1. Показать список всех зарегистрированных загрузок (boots)
     # Каждая загрузка имеет свой ID (например, -1, -2) и хэш.
-    [`journalctl --list-boots`](../../../Diagnostics/journalctl.md#список-всех-зарегистрированных-загрузок-для-выбора-конкретной)
+    [`journalctl --list-boots`](../journalctl.md)
 
     # 2. Изучить логи предыдущей загрузки (-1), чтобы найти причину сбоя.
     # Флаг -r выводит логи в обратном порядке (от новых к старым),
     # что позволяет сразу увидеть последние события перед сбоем.
-    [`journalctl -b -1 -r`](../../../Diagnostics/journalctl.md#логи-с-последней-загрузки)
+    [`journalctl -b -1 -r`](../journalctl.md)
     ```
 
     **Что искать:** Сообщения `reboot`, `shutdown`, `power off`, `Reached target Shutdown`, а также критические ошибки, непосредственно предшествующие потере связи.
@@ -88,7 +88,7 @@ sudo ausearch -i -m system_boot,system_shutdown
 3. Проверьте, что хранилище стало постоянным (`Storage: persistent`):
 
     ```bash
-    [`journalctl -b`](../../../Diagnostics/journalctl.md#логи-с-последней-загрузки) | head -n 1
+    [`journalctl -b`](../journalctl.md) | head -n 1
     ```
 
 #### Анализ паники ядра (Kernel Panic)

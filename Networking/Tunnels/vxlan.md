@@ -195,7 +195,7 @@ tcpdump -i vxlan0 -n
 
 | Ограничение | Описание | Митигация |
 |-------------|----------|-----------|
-| **Нет шифрования** | Трафик открыт | [IPsec](./ipsec.md), MACsec |
+| **Нет шифрования** | Трафик открыт | [IPSec](./ipsec/ipsec.md), MACsec |
 | **MTU** | Уменьшение на ~50 байт | Jumbo frames, PMTUD |
 | **Multicast** | Требует поддержки в сети | Unicast с FDB |
 | **CPU overhead** | Инкапсуляция в userspace | Offload на NIC |

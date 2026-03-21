@@ -51,5 +51,4 @@ sudo kubeadm certs renew all
 sudo systemctl restart kubelet
 
 # Или пересоздание сертификата kubelet
-# См. [`../../../Operations/certificate_management.md`](../../../Operations/certificate_management.md)
 ```

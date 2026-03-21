@@ -125,6 +125,6 @@ dmesg -T | grep -A 20 "Out of memory"
 
 ### Связанные темы
 
-- **[journalctl](../../Logging/journalctl.md)** — просмотр системных логов
+- **[journalctl](../../journalctl.md)** — просмотр системных логов
 - **[htop](../../Processes/htop.md)** — мониторинг процессов
-- **[OOM Killer в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md)** — диагностика в Kubernetes
+- **[OOM Killer в Kubernetes](../../../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md)** — диагностика в Kubernetes

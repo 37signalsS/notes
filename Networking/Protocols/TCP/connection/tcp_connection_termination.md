@@ -110,4 +110,4 @@
 - **[Обзор и handshake](./tcp_connection_management_overview.md)** — установка соединения
 - **[Состояния TCP](./tcp_connection_states.md)** — полная таблица состояний
 - **[Диагностика](./tcp_connection_diagnostics.md)** — практические сценарии
-- **[Флаги TCP](./Header_Format/header_format.md#6-флаги-9-бит)** — SYN, FIN, ACK, RST
+- **[Флаги TCP](../Header_Format/index.md)** — SYN, FIN, ACK, RST

@@ -74,7 +74,7 @@
 * Балансировщик должен быть отказоустойчивым и использовать проверку работоспособности (`health-check`) по эндпоинту `/readyz` API-сервера.
 * Все компоненты кластера (`kubelet`, `controller-manager`) и внешние клиенты (`kubectl`) должны обращаться к API-серверу через стабильный виртуальный IP (VIP) или DNS-имя этого балансировщика.
 
-В облачных средах эту роль выполняет нативный балансировщик (например, AWS NLB, GCP TCP Load Balancer). В bare-metal окружениях классической реализацией является создание отказоустойчивой точки входа с помощью связки **[Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) + [HAProxy](../../WebServers/Haproxy/haproxy_overview.md)**.
+В облачных средах эту роль выполняет нативный балансировщик (например, AWS NLB, GCP TCP Load Balancer). В bare-metal окружениях классической реализацией является создание отказоустойчивой точки входа с помощью связки **[Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) + [HAProxy](../../WebServers/haproxy_overview.md)**.
 
 > Подробное пошаговое руководство по настройке этого решения для kubeadm: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kubeadm/ha_keepalived_haproxy/index.md). Альтернативный подход для bare-metal: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
 
@@ -155,4 +155,4 @@ spec:
 * [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
 * [PriorityClass](../Concepts/priorityclass.md) — приоритеты и вытеснение
 * [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md) — защита от плановых выселений
-* [Обслуживание узлов](../Maintenance/node_maintenance.md) — cordon и drain
+* [Обслуживание узлов](../Operations/node_maintenance.md) — cordon и drain

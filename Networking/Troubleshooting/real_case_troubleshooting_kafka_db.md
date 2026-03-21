@@ -4,7 +4,7 @@
 > - Inodes и dentries: [`links_inodes_dentries.md`](../../Linux/FileSystems/links_inodes_dentries.md)
 > - Общая методология траблшутинга: [`general_troubleshooting_methodology.md`](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)
 > - Kafka (если есть): поиск по базе знаний
-> - Docker-логи: [`journalctl.md`](../../Linux/Diagnostics/Logging/journalctl.md)
+> - Docker-логи: [`journalctl.md`](../../Linux/Diagnostics/journalctl.md)
 
 ## Определения
 

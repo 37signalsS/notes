@@ -111,7 +111,7 @@ cat /proc/net/stat/arp_cache
 ### Связанные темы
 
 * **[ARP](../../../../Networking/Protocols/arp.md)** — детально о протоколе ARP
-* **[IPv6](../../Settings/ipv6_configuration.md)** — настройка IPv6, NDP
+* **[IPv6](../../Settings/ipv6_configuration/firewall.md)** — настройка IPv6, NDP
 * **[Сетевая диагностика](../../network_diagnostics_tools.md)** — инструменты отладки сети
 
 ### Типичные проблемы

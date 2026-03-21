@@ -210,7 +210,7 @@ ps aux | awk '$8 ~ /Z/ {print}'
 ps aux | awk '$8 ~ /Z/ {print $2}'
 ```
 
-Подробно о зомби: [overview.md](../../Core/processes/overview.md#чем-опасны-зомби-процессы).
+Подробно о зомби: [overview.md](../../Core/processes/overview.md).
 
 #### Поиск процессов в состоянии D (uninterruptible sleep)
 
@@ -240,7 +240,7 @@ ps -eo pid,comm,lstart | grep "$(date +%H:%M)"
 | [`top`](./top.md) | Интерактивный, реальное время | Не для скриптов |
 | [`htop`](./htop.md) | Цветной интерфейс, деревья | Требует установки |
 | [`pidstat`](./pidstat.md) | Статистика с интервалом | Требует sysstat |
-| [`pgrep`](./pgrep.md) | Простой поиск по имени | Ограниченный вывод |
+| [`pgrep`./ps.md | Простой поиск по имени | Ограниченный вывод |
 
 ### Ограничения
 
@@ -253,7 +253,7 @@ ps -eo pid,comm,lstart | grep "$(date +%H:%M)"
 - [`top`](./top.md) — интерактивный мониторинг
 - [`htop`](./htop.md) — улучшенная альтернатива
 - [`pidstat`](./pidstat.md) — статистика по процессам
-- [`pgrep`](./pgrep.md) — поиск процессов по имени
-- [`pkill`](./pgrep.md) — отправка сигналов по имени
+- [`pgrep`](./ps.md) — поиск процессов по имени
+- [`pkill`](./ps.md) — отправка сигналов по имени
 - [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md) — метрики памяти
 - [overview.md](../../Core/processes/overview.md) — обзор процессов в Linux

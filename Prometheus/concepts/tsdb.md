@@ -2,7 +2,7 @@
 
 ## Определения
 
-* **TSDB (Time Series Database):** Сердце [Prometheus](./overview.md), его собственная база данных временных рядов, спроектированная для эффективной записи, сжатия метрик и быстрого чтения при запросах. Модель данных Prometheus-подобна [модели Loki](../../Loki/loki_overview.md), где метрики и логи используют схожий подход к организации.
+* **TSDB (Time Series Database):** Сердце [Prometheus](../../Linux/Networking/Services/BIND/overview.md), его собственная база данных временных рядов, спроектированная для эффективной записи, сжатия метрик и быстрого чтения при запросах. Модель данных Prometheus-подобна [модели Loki](../../Loki/loki_overview.md), где метрики и логи используют схожий подход к организации.
 * **Сэмпл (Sample):** Одна точка данных, состоящая из значения (`float64`) и временной метки (`int64`, timestamp).
 * **Временной ряд (Time Series):** Поток сэмплов, принадлежащих одной и той же метрике с идентичным набором [лейблов](./labels_and_cardinality.md).
 * **Чанк (Chunk):** Сжатый контейнер для сэмплов одного временного ряда, обычно содержащий до 120 сэмплов.
@@ -236,8 +236,8 @@ prometheus \
 ### Связанные темы
 
 * [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние на TSDB
-* [Типы метрик](./metric_types.md) — хранение разных типов метрик
-* [PromQL](./promql.md) — запросы к TSDB
+* [Типы метрик](./metric_types/alerts.md) — хранение разных типов метрик
+* [PromQL](./promql/functions.md) — запросы к TSDB
 * [Configuration](../configuration.md) — настройки хранения
 * [promtool](../promtool_and_best_practices.md) — анализ TSDB
 * [Remote Read/Write](../scaling/remote_read_write.md) — внешние хранилища

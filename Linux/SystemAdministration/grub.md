@@ -156,8 +156,8 @@ boot                  # Загрузиться
 
 **Файловые системы и LVM:**
 
-- **[LVM](../../FileSystems/LVM/overview_concepts.md)** — логические тома
-- **[LVM и загрузка](../../FileSystems/LVM/advanced_topics.md)** — загрузка с LVM
+- **[LVM](../FileSystems/LVM/overview_concepts.md** — логические тома
+- **[LVM и загрузка](../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md)** — загрузка с LVM
 
 **Systemd:**
 

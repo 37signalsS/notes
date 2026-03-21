@@ -34,14 +34,14 @@ sudo tune2fs -m 5 /dev/sdX
 
 - **Диагностика использования места:**
   - [`df`](../Diagnostics/Filesystem/filesystem_and_disk_space_diagnostics.md) — свободное место по ФС
-  - [`du`](../Diagnostics/Filesystem/du.md) — использование места по директориям
-  - [`ncdu`](../Diagnostics/Filesystem/ncdu.md) — интерактивный анализ
+  - [`du`](../../Kubernetes/Concepts/kube_scheduler.md — использование места по директориям
+  - [`ncdu`](../Diagnostics/Filesystem/file_command.md) — интерактивный анализ
 
 - **Связанные проблемы:**
   - [Исчерпание inode](./links_inodes_dentries.md#Выделение-inodeов) — ошибка "No space left on device" при наличии места
   - [Дисковые квоты](./disk_quotas.md) — ограничение места для пользователей
-  - [Очистка места](../Administration/disk_cleanup.md) — рекомендации по очистке
+  - [Очистка места](../../Kubernetes/ToolsUtilities/cert_manager/Administration/operations.md) — рекомендации по очистке
 
 - **Профилактика:**
   - [Мониторинг диска](../Diagnostics/Hardware/smartctl/index.md) — SMART для предупреждения проблем
-  - [Логирование](../Administration/log_rotation.md) — ротация логов для предотвращения переполнения
+  - [Логирование](../../Docker/Docker_logs/docker_log_rotation.md) — ротация логов для предотвращения переполнения

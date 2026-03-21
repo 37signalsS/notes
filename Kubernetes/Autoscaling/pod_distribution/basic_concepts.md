@@ -7,7 +7,7 @@
 | **Pod Anti-Affinity** | Запрет или предпочтение размещения | Жёсткие требования к изоляции | `required` или `preferred` |
 | **Topology Spread** | Балансировка нагрузки | Равномерное распределение | `DoNotSchedule` или `ScheduleAnyway` |
 
-> **Примечание:** Подробное описание всех полей, операторов и примеров использования см. в [Scheduling/affinity.md](../Scheduling/affinity.md#основные-концепции).
+> **Примечание:** Подробное описание всех полей, операторов и примеров использования см. в [affinity](../../Scheduling/affinity.md).
 
 ## Pod Anti-Affinity
 
@@ -28,7 +28,7 @@
 | **Pod Affinity** | Размещение подов рядом с другими подами | Коликейшн связанных компонентов |
 | **Node Affinity** | Размещение подов на определённых узлах | Требования к инфраструктуре |
 
-> **Примечание:** Детальное сравнение механизмов притяжения и отталкивания см. в [Scheduling/affinity.md](../Scheduling/affinity.md#сравнение-механизмов-планирования) и [Scheduling/taints_and_tolerations.md](../Scheduling/taints_and_tolerations.md#taints-tolerations-vs-affinity-anti-affinity).
+> **Примечание:** Детальное сравнение механизмов притяжения и отталкивания см. в [affinity](../../Scheduling/affinity.md) и [taints и tolerations](../../Scheduling/taints_and_tolerations.md).
 
 ## Topology Spread Constraints
 
@@ -44,7 +44,7 @@
 | `labelSelector` | Метки подов для распределения | `matchLabels: app: my-app` |
 | `minDomains` | Минимальное количество доменов для распределения | `2`, `3` |
 
-> **Примечание:** Полное описание всех параметров TopologySpreadConstraints, включая `nodeAffinityPolicy` и `nodeTaintsPolicy`, см. в [Scheduling/affinity.md](../Scheduling/affinity.md#ключевые-поля-и-операторы).
+> **Примечание:** Полное описание всех параметров TopologySpreadConstraints, включая `nodeAffinityPolicy` и `nodeTaintsPolicy`, см. в [](../../Scheduling/affinity.md).
 
 ### Уровни строгости (`whenUnsatisfiable`)
 
@@ -60,7 +60,3 @@
 - **[Определения](./definitions.md)** — базовые термины
 - **[Практические сценарии](./practical_scenarios.md)** — примеры конфигурации, диагностика
 - **[Дополнительная информация](./additional_info.md)** — интеграции, ограничения, топология
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [pod_distribution.md](../pod_distribution.md)*

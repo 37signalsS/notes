@@ -131,4 +131,4 @@ sudo smartctl -d 3ware,0 -a /dev/twe0    # 3ware RAID
 sudo smartctl -a /dev/sda  # Проверка физических дисков
 ```
 
-Подробнее см. [Управление RAID в Linux](../../FileSystems/raid_management.md).
+Подробнее см. [Управление RAID в Linux](../../../FileSystems/raid_management.md).

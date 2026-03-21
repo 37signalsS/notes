@@ -76,7 +76,7 @@ VPN создает туннель, который инкапсулирует и�
 
 | Тип VPN | Дополнительный оверхед | Эффективный MTU |
 |---------|------------------------|-----------------|
-| **[IPsec (ESP)](../../../Tunnels/ipsec.md)** | ~56-73 байта | ~1427-1444 байта |
+| **[IPsec (ESP)](../../Tunnels/ipsec/ipsec.md)** | ~56-73 байта | ~1427-1444 байта |
 | **WireGuard** | ~60 байт (IP+UDP+WireGuard) | ~1440 байт |
 | **OpenVPN (UDP)** | ~69 байт | ~1431 байт |
 | **GRE** | ~24 байта | ~1476 байт |
@@ -237,6 +237,6 @@ ICMP гораздо гибче, чем принято считать. На МС�
 
 **См. также:**
 
-- [Фрагментация IP-пакетов](../Protocols/ip_fragmentation.md) — теория фрагментации
-- [ICMP](../../../Protocols/icmp.md) — протокол для PMTUD
-- [ping](../../../../Linux/Diagnostics/Networking/ping.md) — утилита диагностики MTU
+- [Фрагментация IP-пакетов](./Protocols/ip_fragmentation.md) — теория фрагментации
+- [ICMP](../../Protocols/icmp.md) — протокол для PMTUD
+- [ping](../../../Linux/Diagnostics/Networking/ping.md) — утилита диагностики MTU

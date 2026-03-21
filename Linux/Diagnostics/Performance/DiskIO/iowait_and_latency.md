@@ -49,4 +49,4 @@ iostat -x 1
 
 - [Диагностический чеклист I/O](./diagnostic_checklist.md)
 - [Сравнение инструментов диагностики](./diagnostic_tools_comparison.md)
-- [`iostat` — подробное описание](../Filesystem/iostat.md)
+- [`iostat` — подробное описание](../../Filesystem/iostat.md)

@@ -52,7 +52,7 @@
           name: my-secret
     ```
 
-> **Подробное руководство:** см. **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**.
+> **Подробное руководство:** см. **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md)**.
 
 ### Сценарий 2: Mozilla SOPS
 
@@ -75,13 +75,13 @@
           name: sops-age-key # Secret с приватным ключом age
     ```
 
-> **Подробное руководство:** см. **[SOPS](../../Security/Tools/sops_overview.md)**.
+> **Подробное руководство:** см. **[SOPS](../Security/Tools/sops_overview.md)**.
 
 ### Сценарий 3: HashiCorp Vault (Внешнее хранилище)
 
 Промышленный стандарт для крупных инсталляций.
 
-- **Как работает**: Секреты хранятся в Vault. В Git-репозитории в манифесте `Deployment` указываются аннотации, которые описывают, какие секреты и откуда из Vault нужно получить. Специальный компонент ([Vault Injector](../../Vault/guides/vault_agent_and_templates.md#vault-injector-auto-injection)) в Kubernetes "на лету" модифицирует создаваемые поды, добавляя в них init- или sidecar-контейнер, который аутентифицируется в Vault и инжектирует секреты в под.
+- **Как работает**: Секреты хранятся в Vault. В Git-репозитории в манифесте `Deployment` указываются аннотации, которые описывают, какие секреты и откуда из Vault нужно получить. Специальный компонент ([Vault Injector](../Vault/guides/vault_agent_and_templates.md)) в Kubernetes "на лету" модифицирует создаваемые поды, добавляя в них init- или sidecar-контейнер, который аутентифицируется в Vault и инжектирует секреты в под.
 - **Основная идея**: GitOps-инструмент не знает о самих секретах, он лишь деплоит "заглушку", которая будет заполнена секретами в runtime.
 
 > **Подробное руководство:** см. **[HashiCorp Vault](../../Vault/overview.md)** и **[ArgoCD Vault Integration](../ArgoCD/argocd_vault_integration.md)**.

@@ -175,7 +175,7 @@ metadata:
     prometheus.io/probe: "true"
 ```
 
-> **См. также:** [Blackbox Exporter](./Exporters/blackbox_exporter.md).
+> **См. также:** [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
 
 ### 5. Упрощенное обнаружение через ServiceMonitor
 
@@ -209,7 +209,7 @@ spec:
 * Интеграция с GitOps
 * Не требует ручного написания relabel_configs
 
-> **См. также:** [Prometheus Operator](../operator/concepts.md#servicemonitor).
+> **См. также:** [Prometheus Operator](../../GitOps/ArgoCD/synchronization/concepts.md).
 
 ## Дополнительная информация
 
@@ -256,4 +256,4 @@ spec:
 * [Overview](./overview.md) — обзор мониторинга в Kubernetes
 * [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — основные концепции
 * [Configuration](../configuration.md) — настройка Prometheus
-* [Blackbox Exporter](./Exporters/blackbox_exporter.md) — blackbox-мониторинг
+* [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md) — blackbox-мониторинг

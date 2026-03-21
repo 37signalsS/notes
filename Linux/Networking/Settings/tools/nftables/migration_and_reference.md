@@ -140,4 +140,4 @@ nft add rule nat prerouting numgen random mod 100 vmap { 0-69 : jump chain1 }
 - **[Сохранение правил](../firewall_common.md#сохранение-правил-между-перезагрузками)** — общие вопросы
 - **[Лучшие практики правил](../../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
 - **[Концепции сетевых файрволов](../../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
-- **[Docker интеграция](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — взаимодействие с Docker
+- **[Docker интеграция](../../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — взаимодействие с Docker

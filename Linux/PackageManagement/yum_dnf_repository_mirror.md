@@ -264,6 +264,6 @@ fi
 
 ### Связанные темы
 
-- **[Управление репозиториями APT](./apt_repository_mirror.md)** — зеркалирование DEB-репозиториев
-- **[Управление DNF-репозиториями](./dnf_repository_management.md)** — настройка репозиториев для RPM
+- **[Управление репозиториями APT](./apt_mirror/basic_concepts.md)** — зеркалирование DEB-репозиториев
+- **[Управление DNF-репозиториями](./dnf_commands/basic_concepts.md)** — настройка репозиториев для RPM
 - **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции

@@ -73,7 +73,7 @@ source ~/.bashrc  # или source ~/.zshrc
 
 - **[kubectl](../Base/kubectl.md)** — основы работы с kubectl
 - **[kubeconfig](../Base/kubeconfig.md)** — структура и использование kubeconfig
-- **[Lens](./lens.md)** — GUI для управления несколькими кластерами
+- **[Lens](../lens/definitions_and_concepts.md)** — GUI для управления несколькими кластерами
 
 ### Репозиторий и документация
 

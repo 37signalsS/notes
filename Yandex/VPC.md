@@ -95,7 +95,7 @@
 
 **Cloud VPN:**
 
-- [IPsec](../Networking/Tunnels/ipsec.md)-туннели для подключения on-prem инфраструктуры
+- [IPsec](../Networking/Tunnels/ipsec/ipsec.md)-туннели для подключения on-prem инфраструктуры
 - Динамическая маршрутизация (BGP)
 
 **VPC Peering:**
@@ -276,7 +276,7 @@ yc vpc subnet delete --name subnet-unused
 ### Связанные документы
 
 - **[Compute Cloud](./Compute-Cloud.md)** — размещение ВМ в подсетях
-- **[Resource Manager](./Resource-Manager.md)** — каталоги и метки для сетей
+- **[Resource Manager](./index.md)** — каталоги и метки для сетей
 - **[Monitoring](./Monitoring.md)** — мониторинг сетевого трафика
 
 ### Интеграции

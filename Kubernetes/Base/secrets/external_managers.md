@@ -17,7 +17,7 @@
 
 **Примеры провайдеров:** HashiCorp Vault, AWS Secrets Manager, Google Cloud Secret Manager, Azure Key Vault
 
-> Подробнее об интеграции Vault через CSI Driver см. [Интеграция Vault с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)
+> Подробнее об интеграции Vault через CSI Driver см. [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
 
 ### Sealed Secrets
 
@@ -51,7 +51,7 @@
 - Секреты доступны только как файлы (не как environment variables напрямую)
 - Требует установки CSI-компонентов на каждый узел кластера
 
-> **Подробно:** [CSI Drivers Comparison](../Storage/CSI/csi_drivers_comparison.md#secrets-store-csi-driver), [Интеграция Vault с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)
+> **Подробно:** [CSI Drivers Comparison](../../Storage/CSI/csi_drivers_comparison.md), [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
 
 ## Дополнительная информация
 

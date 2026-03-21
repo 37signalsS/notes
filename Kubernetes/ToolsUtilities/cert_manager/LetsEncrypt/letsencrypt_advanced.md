@@ -45,5 +45,5 @@ kubectl logs -n cert-manager -l app=cert-manager | grep -i acme
 
 - **[Основные концепции](./letsencrypt_concepts.md)** — определения, ACME solvers, окружения
 - **[Практические сценарии](./letsencrypt_scenarios.md)** — ClusterIssuer, HTTP-01, DNS-01, wildcard
-- **[cert_manager](../cert_manager_overview.md)** — обзор cert-manager
-- **[private_ca](../private_ca.md)** — частные CA для внутренних доменов
+- **[cert_manager](../../definitions.md** — обзор cert-manager
+- **[private_ca](../Private_CA/scenarios.md)** — частные CA для внутренних доменов

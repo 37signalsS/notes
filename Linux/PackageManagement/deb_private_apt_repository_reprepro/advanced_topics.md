@@ -59,8 +59,8 @@ reprepro export focal
 
 - **[Управление репозиториями DEB](../deb_repositories_sources_list.md)** — файл `sources.list`
 - **[Apt Pinning](../deb_apt_pinning.md)** — управление приоритетами пакетов
-- **[Сборка пакетов](./package_building.md)** — создание собственных DEB-пакетов
-- **[Локальное зеркало репозитория](./local_repository_mirror.md)** — создание зеркал для APT
+- **[Сборка пакетов](../package_build/definitions.md** — создание собственных DEB-пакетов
+- **[Локальное зеркало репозитория](../apt_repository_mirror.md)** — создание зеркал для APT
 
 ---
 

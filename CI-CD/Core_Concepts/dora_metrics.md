@@ -60,9 +60,9 @@
 Сбор метрик требует интеграции данных из разных источников:
 
 - **Система контроля версий (VCS):** [Git](../../Git/git_basics.md) (e.g., GitLab, GitHub) для времени коммитов.
-- **CI/CD-система:** [Jenkins](../Tools/jenkins_overview.md), [GitLab CI](../GitLab_CI/gitlab_ci_overview.md) для времени и частоты сборок.
-- **Система развертывания:** [ArgoCD](../../GitOps/ArgoCD/argocd_overview.md), [Flux](../../GitOps/Flux/flux_overview.md) для отслеживания частоты и статуса развертываний.
-- **Система мониторинга:** [Prometheus](../../Prometheus/prometheus_overview.md), [VictoriaMetrics](../../VictoriaMetrics/victoriametrics_overview.md) для отслеживания сбоев и времени восстановления.
+- **CI/CD-система:** [GitLab CI](../GitLab_CI/Concepts/gitlab_ci_basics.md), [GitHub Actions](../../Github_CI/Core_Concept.md) для времени и частоты сборок.
+- **Система развертывания:** [ArgoCD](../../GitOps/ArgoCD/argocd_overview.md), [Flux](../../GitOps/flux.md) для отслеживания частоты и статуса развертываний.
+- **Система мониторинга:** [Grafana](../../Grafana/grafana_overview.md) для отслеживания сбоев и времени восстановления.
 
 **Пример с ArgoCD и Prometheus:**
 Для отслеживания метрик в Kubernetes можно использовать дашборды в [Grafana](../../Grafana/grafana_overview.md), которые собирают данные из ArgoCD Events и метрик Prometheus, для визуализации всех четырех показателей DORA.

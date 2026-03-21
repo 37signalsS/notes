@@ -91,7 +91,7 @@ user_actions_total{user_email="..."}         # Высокая кардиналь
 * [Node Exporter](../node_exporter.md) — основной экспортер для Linux
 * [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)
 * [Лейблы и кардинальность](../../concepts/labels_and_cardinality.md)
-* [Типы метрик](../../concepts/metric_types.md)
+* [Типы метрик](../../concepts/metric_types/overview.md)
 
 ## Официальные ресурсы
 

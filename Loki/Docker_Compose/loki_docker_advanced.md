@@ -70,7 +70,7 @@ loki.write "default" {
 - **[Основные концепции](./loki_docker_concepts.md)** — определения и компоненты
 - **[Настройка Docker Compose](./loki_docker_compose_setup.md)** — конфигурация, запуск, проверка
 - **[loki_overview.md](../loki_overview.md)** — базовые концепции и архитектура Loki
-- **[loki_stack_setup_guide.md](../loki_stack_setup_guide.md)** — развертывание в Kubernetes
+- **[loki_stack_setup_guide.md](../../Loki/loki_overview.md)** — развертывание в Kubernetes
 - **[fluentbit_integration.md](../fluentbit_integration.md)** — интеграция Fluent Bit вместо Promtail
 - **[Loki Docker Driver](../../Docker/Docker_logs/loki_logging_driver_setup.md)** — отправка логов напрямую из Docker
 - **[Grafana Alloy](../../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для новых развертываний

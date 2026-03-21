@@ -37,12 +37,12 @@
 ### Уровень 3: Приложение и логи
 
 1. **Логи приложения:** Изучить журналы на предмет ошибок. Это самый важный этап для понимания внутренней логики работы сервиса.
-    * [**`journalctl -u <service_name> -f`**](../Logging/journalctl.md) (для сервисов, управляемых `systemd`)
+    * [**`journalctl -u <service_name> -f`**](../journalctl.md) (для сервисов, управляемых `systemd`)
     * `tail -f /var/log/<service_name>/error.log` (для "классических" лог-файлов)
 2. **Локальный доступ:** Проверить, отвечает ли сервис на запросы с самого сервера, чтобы исключить проблемы с внешней сетью.
     * `curl -v localhost:<port>`
 3. **Локальный файрвол:** Убедиться, что правила файрвола на сервере не блокируют трафик.
-    * `iptables -L -n` / `nft list ruleset` (см. [**Настройка файрвола в Linux**](../../Networking/Settings/linux_firewall_management.md))
+    * `iptables -L -n` / `nft list ruleset` (см. [**Настройка файрвола в Linux**](../../Networking/Settings/Persistent_Network/systemd_networkd.md))
 
 ### Уровень 4: Зависимости
 

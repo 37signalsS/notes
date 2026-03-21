@@ -63,7 +63,7 @@ db_password: "MySuperSecretPassword"
   
   vars:
     # Строка подключения для экспортера
-    postgres_exporter_dsn: "postgresql://{{ postgresql_users[0].name }}:{{ db_password }}@localhost:5432/{{ postgresql_databases[0].name }}?sslmode=disable"
+    postgres_exporter_dsn: "postgresql://{{ postgresql_users[0](name }}:{{ db_password }}@localhost:5432/{{ postgresql_databases[0](name }}?sslmode=disable"
 
   roles:
     # 1. Устанавливаем PostgreSQL
@@ -113,7 +113,7 @@ db_password: "MySuperSecretPassword"
             static_configs:
               - targets:
                   # Явно указываем хосты из группы postgres_servers
-                  - "{{ hostvars[item]['ansible_host'] }}:9187"
+                  - "{{ hostvars[item['ansible_host'] }}:9187"
                 with_items: "{{ groups['postgres_servers'] }}"
 ```
 

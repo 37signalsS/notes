@@ -144,7 +144,7 @@
         - helm upgrade --install my-app-release ./charts/my-app \
           --namespace production \
           --set image.tag=$CI_COMMIT_SHORT_SHA \
-          --set image.pullSecrets[0].name=gitlab-registry
+          --set image.pullSecrets[0](name=gitlab-registry
       rules:
         - if: '$CI_COMMIT_BRANCH == "main"'
     ```

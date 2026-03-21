@@ -83,4 +83,4 @@ spec:
 ### Связанные концепции
 
 * [Обзор Chaos Engineering](chaos_engineering_overview.md)
-* [Observability (Наблюдаемость)](../Concepts/Observability_and_Monitoring/observability_overview.md)
+* [Observability (Наблюдаемость)](../Concepts/Observability_and_Monitoring/observability_definitions.md)

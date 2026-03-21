@@ -47,7 +47,7 @@
 **Связанные темы:**
 
 * [Kafka](../../Kafka/kafka_for_monitoring.md)
-* [RabbitMQ](../../MessageQueues/RabbitMQ/rabbitmq_overview.md)
+* [RabbitMQ](../../Kafka/rabbitmq_vs_kafka.md)
 
 ## Облачные платформы
 
@@ -129,8 +129,8 @@
 
 Если подходящий экспортер не найден, его можно написать самостоятельно:
 
-* **[Textfile Collector](./extensibility.md#textfile-collector)** — простой способ через внешние скрипты
-* **[Написание своих экспортеров](./extensibility.md#написание-собственных-экспортеров)** — руководство по созданию кастомных экспортеров
+* **[Textfile Collector](./extensibility/custom_exporters.md)** — простой способ через внешние скрипты
+* **[Написание своих экспортеров](./extensibility/custom_exporters.md)** — руководство по созданию кастомных экспортеров
 
 ### Связанные темы
 

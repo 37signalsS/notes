@@ -4,17 +4,17 @@
 >
 > Graphite и Collectd — устаревшие компоненты. Для новых проектов рекомендуется:
 >
-> - **Метрики:** [Prometheus](../../Prometheus/overview.md) + [Grafana Alloy](../grafana_alloy_overview.md)
-> - **Логи:** [Loki](../../Loki/loki_overview.md) + Alloy
-> - **Трассировки:** [Tempo](../../Tempo/index.md)
+> - **Метрики:** [Prometheus](../Linux/Networking/Services/BIND/overview.md) + [Grafana Alloy](./grafana_alloy_overview.md)
+> - **Логи:** [Loki](../Loki/loki_overview.md) + Alloy
+> - **Трассировки:** [Tempo](./index.md)
 >
 > Данная документация сохранена для поддержки legacy-систем.
 
 > **Навигация:**
 >
-> - [Обзор Grafana](../grafana_overview.md)
-> - [Источники данных](../grafana_datasources.md)
-> - [Docker Compose установка](../Installation/docker_compose_setup.md)
+> - [Обзор Grafana](./grafana_overview.md)
+> - [Источники данных](./grafana_datasources.md)
+> - [Docker Compose установка](./Installation/docker_compose_setup.md)
 
 ## Определения
 

@@ -28,7 +28,7 @@ gitlab-ci lint --include-debug
 
 ## Связанные документы
 
-- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение подходов
+- **[Обзор переиспользуемых пайплайнов](../overview.md)** — сравнение подходов
 - **[Механизм `extends`](../extends_keyword.md)** — наследование конфигураций
 - **[CI/CD Catalog](../ci_cd_catalog_components.md)** — создание компонентов
 - **[Переменные и секреты](../../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными

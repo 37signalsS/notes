@@ -57,6 +57,6 @@
 ### Связанные темы
 
 - **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
-- **[389DS](../../../LDAP/389ds/overview.md)** — развёртывание LDAP-сервера
+- **[389DS](../../../Networking/Services/BIND/overview.md)** — развёртывание LDAP-сервера
 - **[OpenLDAP в Kubernetes](../../../../LDAP/openldap_kubernetes.md)** — контейнеризация
 - **[Kerberos](../../../../Security/Concepts/kerberos.md)** — аутентификация в AD

@@ -204,7 +204,7 @@ http --timeout=read:10,connect:5 GET https://api.example.com/users
 
 ```bash
 # HTTPie уже форматирует JSON, но можно добавить jq для фильтрации
-http GET https://api.example.com/users | jq '.[].name'
+http GET https://api.example.com/users | jq '.[](name'
 
 # Фильтрация по условию
 http GET https://api.example.com/users | jq '.[] | select(.age > 25)'

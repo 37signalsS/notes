@@ -5,7 +5,7 @@
 **`OOMKilled` (Out of Memory Killed)** — причина (`Reason`) завершения контейнера, означающая, что процесс был принудительно завершен ядром ОС узла из-за превышения выделенного лимита памяти. Не является статусом пода.
 
 > - QoS и управление ресурсами: [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
-> - Eviction: [`pod_evicted.md](./pod_evicted.md)
+> - Eviction: [`pod_evicted.md`](./PodEvicted/definitions.md)
 > - Мониторинг ресурсов: [`troubleshooting_overview.md`](../troubleshooting_overview.md)
 > - Docker exit codes: [`docker_exit_codes.md`](../../../Docker/Docker_troubleshooting/docker_exit_codes.md)
 
@@ -238,7 +238,7 @@ kubectl patch pod <pod-name> -p '{"spec":{"containers":[{"name":"app","resources
 
 1. `BestEffort` → 2. `Burstable` → 3. `Guaranteed`
 
-> **См. также:** [`pod_evicted.md`](./pod_evicted.md), [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
+> **См. также:** [`pod_evicted.md`](./PodEvicted/definitions.md), [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
 
 ### Инструменты анализа памяти
 

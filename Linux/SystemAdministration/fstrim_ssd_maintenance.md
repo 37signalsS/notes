@@ -142,8 +142,8 @@ sudo mount -o remount,discard /
 ### Связанные темы
 
 - **Мониторинг состояния SSD:** [smartctl](../Diagnostics/Hardware/smartctl/index.md) — проверка износа, температуры, переназначенных секторов
-- **Файловые системы:** [ext4](../../FileSystems/ext4.md), [xfs](../../FileSystems/xfs.md), [btrfs](../../FileSystems/btrfs.md) — поддержка TRIM зависит от ФС
-- **Планировщики задач:** [cron.md](./cron.md), [Systemd Timers](../Core/systemd/timers.md) — автоматизация fstrim
+- **Файловые системы:** [ext4](../FileSystems/RAID/overview.md, [xfs](../FileSystems/RAID/overview.md, [btrfs](../FileSystems/RAID/overview.md — поддержка TRIM зависит от ФС
+- **Планировщики задач:** [cro](n.md)(./cron.md), [Systemd Timers](../Core/systemd/timers.md) — автоматизация fstrim
 
 ### Рекомендации
 

@@ -46,4 +46,4 @@ add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; prelo
 
 * [Компрессия контента](./server_compression.md) — Gzip, Brotli, ZSTD
 * [HTTP/2 и HTTP/3](./http2_http3.md) — современные протоколы
-* [Конфигурация HTTP/2 и HTTP/3 в Nginx](../Nginx/Performance/nginx_http_versions.md)
+* [Конфигурация HTTP/2 и HTTP/3 в Nginx](../../Nginx/Performance/nginx_http_versions.md)

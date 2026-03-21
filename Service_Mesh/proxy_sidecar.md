@@ -83,7 +83,7 @@ spec:
 linkerd check -n my-app
 
 # ПросмотрInjected-контейнеров
-kubectl get pods -n my-app -o jsonpath='{.items[*].spec.containers[*].name}'
+kubectl get pods -n my-app -o jsonpath='{.items[*](spec.containers[*](name}'
 ```
 
 ### Диагностика трафика

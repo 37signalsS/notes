@@ -58,7 +58,7 @@ tcpdump -i eth0 -nn 'tcp port 80' -v
 sysctl -w net.ipv4.tcp_tw_reuse=1
 ```
 
-**Подробнее:** [Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning.md#управление-состоянием-time_wait-и-ephemeral-портами).
+**Подробнее:** [Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_congestion_algorithms.md).
 
 ---
 

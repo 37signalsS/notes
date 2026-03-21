@@ -85,7 +85,7 @@
   * [Обзор концепций автомасштабирования](../Autoscaling/overview_concepts.md)
   * [Horizontal Pod Autoscaler (HPA)](../Autoscaling/HPA/index.md)
   * [Vertical Pod Autoscaler (VPA)](../Autoscaling/vpa_detailed.md)
-  * [KEDA — масштабирование по событиям](../Autoscaling/keda_detailed.md)
+  * [KEDA — масштабирование по событиям](../Autoscaling/keda/practical_scenarios.md)
   * [Cluster Autoscaler и Karpenter](../Autoscaling/cluster_autoscaler_detailed.md)
   * [Шаблоны масштабирования](../Autoscaling/scaling_patterns.md)
 * **Высокая доступность**: Стратегии обеспечения отказоустойчивости при высоких нагрузках см. в документе [Высокая доступность в Kubernetes](../Base/high_availability.md).

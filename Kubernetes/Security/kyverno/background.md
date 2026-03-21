@@ -176,4 +176,4 @@ spec:
 
 - [Policy Reports](./reports.md) — формат и структура отчетов
 - [Policy Reporter](./reporter.md) — Web UI для просмотра отчетов
-- [Написание политик](./policies.md) — создание политик с `background` параметром
+- [Написание политик](./policies/practical_scenarios.md) — создание политик с `background` параметром

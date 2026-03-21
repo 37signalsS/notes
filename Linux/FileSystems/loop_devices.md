@@ -65,5 +65,5 @@ df -h /mnt/virtual_disk
   * [Типы устройств](./device_types.md) — блочные устройства
   * [Создание образа диска](./dd.md) — создание файлов-образов с `dd`
   * [Виртуальные ФС](./virtual_filesystems.md) — tmpfs для временных образов
-  * [Шифрование образов](../Security/luks.md) — LUKS для зашифрованных образов
+  * [Шифрование образов](../../Security/Tools/openssl_ca/single_tier/ca_setup.md) — LUKS для зашифрованных образов
   * [Монтирование](./mounting/index.md) — опции монтирования

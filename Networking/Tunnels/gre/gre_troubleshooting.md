@@ -48,4 +48,4 @@ ping -M do -s 1472 <remote_tunnel_ip>
 - **[GRE: архитектура](./gre_architecture.md)** — формат заголовка, версии GRE
 - **[GRE: практические сценарии](./gre_practical_scenarios.md)** — настройка point-to-point, mGRE, GRETAP
 - **[GRE с IPsec](./gre_ipsec_integration.md)** — защищённая комбинация
-- **[IPSec troubleshooting](./ipsec_troubleshooting.md)** — диагностика IPsec
+- **[IPSec troubleshooting](../ipsec/ipsec_troubleshooting.md)** — диагностика IPsec

@@ -41,7 +41,7 @@
 # yc init
 
 # Получить ID облака
-CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0].id')
+CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0](id')
 echo "Cloud ID: $CLOUD_ID"
 
 # Создать каталог с метками

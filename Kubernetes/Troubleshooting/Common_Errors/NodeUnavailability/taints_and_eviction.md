@@ -13,8 +13,6 @@ Kubernetes автоматически добавляет taints при проб�
 | `node.kubernetes.io/pid-pressure:NoSchedule` | `NoSchedule` | Condition `PIDPressure=True` |
 | `node.kubernetes.io/network-unavailable:NoSchedule` | `NoSchedule` | Condition `NetworkUnavailable=True` |
 
-> **См. также:** [`../../../Scheduling/taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)
-
 ## Eviction Timeout
 
 При недоступности узла:
@@ -36,7 +34,7 @@ node-controller ждет 40 секунд (по умолчанию)
 - `--pod-eviction-timeout` (по умолчанию 5m0s) — время до начала eviction
 - `--node-monitor-grace-period` (по умолчанию 40s) — время до статуса `Unknown`
 
-> **См. также:** [`../../../Base/high_availability.md`](../../../Base/high_availability.md)
+> **См. также:** [`](../../../Base/high_availability.md)`](../../../Base/high_availability.md)
 
 ## Taint tolerations для системных подов
 

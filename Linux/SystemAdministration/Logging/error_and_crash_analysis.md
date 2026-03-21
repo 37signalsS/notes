@@ -9,8 +9,8 @@
 | Тип | Описание |
 | :--- | :--- |
 | **Kernel Panic** | Критический сбой ядра, система не может продолжать работу | [kernel_panic.md](../../Core/kernel/kernel_panic.md) |
-| **Coredump** | Дамп памяти процесса при аварийном завершении | [troubleshooting.md#Анализ-сбоев-Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump) |
-| **OOM Killer** | Механизм завершения процессов при нехватке памяти | [troubleshooting.md](../../Core/processes/troubleshooting.md) |
+| **Coredump** | Дамп памяти процесса при аварийном завершении | [troubleshooting.md#Анализ-сбоев-Coredump](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md |
+| **OOM Killer** | Механизм завершения процессов при нехватке памяти | [troubleshooting.md](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md) |
 
 ## Базовые концепции
 
@@ -18,7 +18,7 @@
 
 Происходят при выполнении недопустимых операций (обращение к неверному адресу памяти, деление на ноль). Система завершает процесс, потенциально создавая `coredump`.
 
-**Анализ сбоев:** [Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump)
+**Анализ сбоев:** [Coredump](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md)
 
 ### Сбои пространства ядра (Kernel Crashes)
 
@@ -66,7 +66,7 @@ journalctl -k | grep -i "oom\|killed process"
    # В gdb: bt (backtrace)
    ```
 
-Подробнее: [Анализ сбоев: Coredump](../../Core/processes/troubleshooting.md#анализ-сбоев-coredump)
+Подробнее: [Анализ сбоев: Coredump](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md)
 
 ### Анализ Kernel Panic
 
@@ -97,8 +97,8 @@ journalctl -k | grep -i "oom\|killed process"
 
 | Инструмент | Назначение |
 | :--- | :--- |
-| `coredumpctl` | Управление дампами памяти процессов | [troubleshooting.md](../../Core/processes/troubleshooting.md) |
-| `kdump` | Механизм сбора дампов памяти ядра | [kernel_panic.md](../../Core/kernel/kernel_panic.md) |
+| `coredumpctl` | Управление дампами памяти процессов | [troubleshooting.md](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md |
+| `kdump` | Механизм сбора дампов памяти ядра | [kernel_pani](c.md)(../../Core/kernel/kernel_panic.md) |
 | `abrt` | Автоматическое создание отчетов об ошибках (RHEL/Fedora) | — |
 | `gdb` | Отладка дампов памяти | — |
 | `crash` | Анализ дампов ядра | — |

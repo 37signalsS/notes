@@ -23,9 +23,9 @@ DEVICE=$(ip route | grep default | awk '{print $5}')
 sudo ip route change default via $GATEWAY dev $DEVICE initcwnd 30
 ```
 
-> Подробнее о настройке через `ip route` см. в [`ip route`](../Tools/iproute2/ip_route.md).
+> Подробнее о настройке через `ip route` см. в [`ip route`](../../Tools/iproute2/ip_route.md).
 
 ## Связанные темы
 
-* **[`ip route`](../Tools/iproute2/ip_route.md)** — настройка initcwnd для маршрутов
+* **[`ip route`](../../Tools/iproute2/ip_route.md)** — настройка initcwnd для маршрутов
 * **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)

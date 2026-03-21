@@ -45,7 +45,7 @@ iSCSI превращает IP-сеть в гибкое хранилище уро
 
 - **[Настройка Target](./iscsi_target_setup.md)** — установка и конфигурация tgt/LIO
 - **[Настройка Initiator](./iscsi_initiator_setup.md)** — подключение, форматирование, CHAP
-- **[LVM](../Storage/lvm.md)** — управление логическими томами
-- **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем
-- **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
-- **[Firewall](../Settings/tools/linux_firewall_management.md)** — настройка firewall
+- **[LVM](../../FileSystems/LVM/operations/lvm_disk_replacement.md** — управление логическими томами
+- **[Mount](../../FileSystems/mounting/scenarios/udev_mount.md** — монтирование файловых систем
+- **[Network Diagnostics](../network_diagnostics_tools.md** — диагностика сети
+- **[Firewall](../../Development/build_tools.md)** — настройка firewall

@@ -38,7 +38,7 @@
 * **Анализаторы трафика:** Перехватывают и декодируют сетевые пакеты для глубокого анализа (`tcpdump`, `wireshark`). Подробно: **[tcpdump](../Diagnostics/Networking/tcpdump.md)**.
 * **Базовая проверка доступности:** `ping`, `nc`. Подробно: **[ping](../Diagnostics/Networking/ping.md)**.
 * **TUI-инструменты:** Интерактивный мониторинг в реальном времени (`iftop`, `nload`, `snitch`, `iptraf-ng`). Подробно: **[Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md)**.
-* **Диагностика DNS:** `dig`, `nslookup`, `resolvectl`. Подробно: **[Диагностика DNS](../Diagnostics/Networking/dns_diagnostics.md)**.
+* **Диагностика DNS:** `dig`, `nslookup`, `resolvectl`. Подробно: **[Диагностика DNS](../Diagnostics/Networking/dns/overview.md)**.
 * **Диагностика HTTP/HTTPS:** `curl`. Подробно: **[Диагностика сетевых задержек с cURL](../Diagnostics/Networking/curl_network_diagnostics.md)**.
 
 ## Практические сценарии
@@ -167,7 +167,7 @@ ss -t '( dport = :443 or sport = :443 )'
 
 * **LISTEN:** Сервер ожидает входящих подключений
 * **SYN-SENT:** Клиент отправил SYN (возможна проблема с сетью/firewall)
-* **SYN-RECV:** Сервер получил SYN (возможен [SYN-flood](../../Security/DoS/syn_flood.md))
+* **SYN-RECV:** Сервер получил SYN (возможен [SYN-flood](../../Security/Concepts/dos_protection.md))
 * **ESTABLISHED:** Соединение установлено
 * **TIME-WAIT:** Соединение закрывается (большое количество требует [TCP-tuning](./Concepts/tcp_tuning/tcp_time_wait_management.md))
 
@@ -199,7 +199,7 @@ ss -t '( dport = :443 or sport = :443 )'
 # 1. Проверка DNS
 ping -c 1 example.com
 # Видим IP → DNS работает
-# Ошибка → проблема с DNS (см. [Диагностика DNS](../Diagnostics/Networking/dns_diagnostics.md))
+# Ошибка → проблема с DNS (см. [Диагностика DNS](../Diagnostics/Networking/dns/overview.md))
 
 # 2. Проверка связности
 ping -c 10 example.com
@@ -235,17 +235,17 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 * **[tcpdump](../Diagnostics/Networking/tcpdump.md)** — анализ трафика
 * **[ss](../Diagnostics/Networking/ss.md)** — анализ сокетов
 * **[network_cli_tools.md](../Diagnostics/Networking/network_cli_tools.md)** — TUI-инструменты (iftop, nload, snitch)
-* **[dns_diagnostics.md](../Diagnostics/Networking/dns_diagnostics.md)** — диагностика DNS
+* **[dns/overview.md](../Diagnostics/Networking/dns/overview.md)** — диагностика DNS
 * **[curl_network_diagnostics.md](../Diagnostics/Networking/curl_network_diagnostics.md)** — диагностика HTTP/HTTPS
 
 **Протоколы и концепции:**
 
-* **[TCP/IP](../../Networking/Protocols/TCP/tcp.md)** — протокол TCP
+* **[TCP/IP](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — протокол TCP
 * **[ICMP](../../Networking/Protocols/icmp.md)** — протокол ICMP (ping)
-* **[DNS](../../Networking/Concepts/dns_client.md)** — настройка DNS-клиента
+* **[DNS](./Concepts/dns_client.md)** — настройка DNS-клиента
 * **[TCP-tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
-* **[Policy-Based Routing](./linux_policy_based_routing.md)** — маршрутизация на основе политик
-* **[iSCSI](./iSCSI.md)** — блочный доступ по IP-сети
+* **[Policy-Based Routing](./Policy_Based_Routing/index.md)** — маршрутизация на основе политик
+* **[iSCSI](./iSCSI/index.md)** — блочный доступ по IP-сети
 
 **Практические руководства:**
 

@@ -219,6 +219,6 @@ dig +dnssec example.com
   - Исправлена в BIND 9.18.44, 9.20.18, 9.21.17 (January 2026)
   - Рекомендуется обновить как можно скорее
 - **Сопутствующие заметки:**
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns_diagnostics.md) — общие инструменты
+  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — общие инструменты
   - [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — DNSSEC
   - [Настройка Master](./master_server_local_zone.md) — первичный сервер

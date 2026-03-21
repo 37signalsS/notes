@@ -220,6 +220,6 @@ ip rule add fwmark 0x2/0x2 lookup 102
 
 ### Связанные темы
 
-* **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
-* **[iptables](../Settings/tools/linux_firewall_management.md)** — маркировка пакетов
+* **[iproute2 overview](../Services/BIND/overview.md** — обзор утилит iproute2
+* **[iptables](../../Development/build_tools.md)** — маркировка пакетов
 * **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети

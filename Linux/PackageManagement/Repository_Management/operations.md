@@ -147,4 +147,4 @@ rpm -K <package_name.rpm>
 ### Связанные темы
 
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-- **[Команды DNF](./dnf_commands.md)** — полный справочник по DNF
+- **[Команды DNF](../dnf_commands/definitions.md)** — полный справочник по DNF

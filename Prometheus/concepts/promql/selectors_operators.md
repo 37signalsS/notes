@@ -4,7 +4,7 @@
 
 ### Селекторы и Матчеры
 
-Селекторы используются для выбора временных рядов на основе имени метрики и [лейблов](./labels_and_cardinality.md).
+Селекторы используются для выбора временных рядов на основе имени метрики и [лейблов](../labels_and_cardinality.md).
 
 * **Вектор мгновенных значений (Instant Vector)**: `node_memory_mem_available_bytes{job="node-exporter"}`
 * **Вектор диапазона значений (Range Vector)**: `node_network_receive_bytes_total[5m]`
@@ -49,4 +49,4 @@
 
 * [Типы данных](./data_types.md) — instant vector, range vector, scalar
 * [Операторы агрегации](./aggregation.md) — sum, avg, count, min, max
-* [Лейблы и кардинальность](./labels_and_cardinality.md) — правильное использование лейблов
+* [Лейблы и кардинальность](../labels_and_cardinality.md) — правильное использование лейблов

@@ -1,6 +1,6 @@
 # Filebeat: Обзор и Конфигурация
 
-> Эта заметка является частью обзора [ELK стека](../elk_stack_overview.md) и служит основной точкой входа для изучения Filebeat.
+> Эта заметка является частью обзора [ELK стека](./elk_stack_overview.md) и служит основной точкой входа для изучения Filebeat.
 
 ## Определения
 
@@ -118,5 +118,5 @@ filebeat.inputs:
 
 ## Дополнительная информация
 
-* **Настройка Filebeat и ELK**: Для ознакомления с полным циклом настройки стека см. [Практическое руководство по настройке ELK](../Tutorials/practical_setup_with_docker.md).
+* **Настройка Filebeat и ELK**: Для ознакомления с полным циклом настройки стека см. [Практическое руководство по настройке ELK](./Tutorials/practical_setup_with_docker.md).
 * **Официальный список модулей**: [Filebeat Modules](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html)

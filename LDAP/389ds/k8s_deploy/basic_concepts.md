@@ -24,7 +24,7 @@
 | **Nodes** | Минимум 2 worker nodes для HA |
 | **Storage** | StorageClass с поддержкой RWO |
 | **Network** | Ingress/LoadBalancer (MetalLB) для внешнего доступа |
-| **Certificates** | cert-manager для TLS-сертификатов (см. [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md)) |
+| **Certificates** | cert-manager для TLS-сертификатов (см. [Приватный CA](../../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md)) |
 
 ## Компоненты развёртывания
 
@@ -42,7 +42,3 @@
 * **[Определения](./definitions.md)** — базовые термины
 * **[Практические сценарии](./practical_scenarios.md)** — StatefulSet, сервисы, инициализация
 * **[Дополнительная информация](./additional_info.md)** — troubleshooting, мониторинг, best practices
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [kubernetes.md](./kubernetes.md)*

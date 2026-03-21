@@ -30,7 +30,7 @@ kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].resources.requests}
 kubectl describe nodes | grep -A 10 "Allocated resources"
 ```
 
-> **Best Practice:** Используйте `Burstable` QoS для гибкости. См. [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
+> **Best Practice:** Используйте `Burstable` QoS для гибкости. См. [`qos_limit_and_requests.md`](../../../Scheduling/qos_limit_and_requests.md)
 
 ---
 
@@ -67,7 +67,7 @@ nodeSelector:
 kubectl label node worker-1 disktype=ssd
 ```
 
-> **См. также:** [`affinity.md`](../../Scheduling/affinity.md)
+> **См. также:** [`affinity.md`](../../../Scheduling/affinity.md)
 
 ---
 
@@ -99,7 +99,7 @@ spec:
 kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 ```
 
-> **См. также:** [`taints_and_tolerations.md`](../../Scheduling/taints_and_tolerations.md)
+> **См. также:** [`taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)
 
 ---
 
@@ -213,7 +213,7 @@ kubectl get priorityclass
 - Настроить Preemption
 - Уменьшить приоритет пода
 
-> **См. также:** [`priorityclass.md`](../../../Concepts/priorityclass.md)
+> **См. также:** [PriorityClass](../../../Concepts/priorityclass.md)
 
 ---
 

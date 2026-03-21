@@ -268,6 +268,6 @@ apt policy nginx
 
 - **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
 - **[Apt Pinning](./deb_apt_pinning.md)** — управление приоритетами пакетов
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
-- **[Локальное зеркало репозитория](./local_repository_mirror.md)** — создание зеркал для APT
+- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
+- **[Локальное зеркало репозитория](./apt_repository_mirror.md)** — создание зеркал для APT
 - **[Анализ и получение пакетов](./package_analysis.md)** — изучение метаданных и содержимого

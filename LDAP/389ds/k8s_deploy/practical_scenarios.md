@@ -199,7 +199,7 @@ roleRef:
 
 ## Настройка TLS (cert-manager)
 
-**Подробно:** См. [Интеграция с Ingress](../../Kubernetes/ToolsUtilities/cert_manager/ingress.md) или [Приватный CA](../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md).
+**Подробно:** См. [Интеграция с Ingress](../../../Kubernetes/Networking/Ingress/overview.md) или [Приватный CA](../../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md).
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -225,7 +225,3 @@ spec:
 - **[Определения](./definitions.md)** — базовые термины
 - **[Основные концепции](./basic_concepts.md)** — архитектура развёртывания, требования
 - **[Дополнительная информация](./additional_info.md)** — troubleshooting, мониторинг, best practices
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [kubernetes.md](./kubernetes.md)*

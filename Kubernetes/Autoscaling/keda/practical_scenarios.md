@@ -275,7 +275,3 @@ kubectl logs -n keda -l app=keda-operator --tail=100
 * **[Определения](./definitions.md)** — базовые термины KEDA
 * **[Основные концепции](./basic_concepts.md)** — архитектура, принцип работы, типы scaler'ов
 * **[Дополнительная информация](./additional_info.md)** — интеграции, ограничения, сравнение с HPA
-
----
-
-*Этот файл является частью декомпозированной документации KEDA. Исходный файл: [keda_detailed.md](../Autoscaling/keda_detailed.md)*

@@ -227,5 +227,5 @@ vagrant ssh -c "mount | grep vagrant"
 ### См. также
 
 - [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
-- [Vagrant Troubleshooting](./vagrant_troubleshooting.md) — решение проблем
-- [Linux Filesystem](../Linux/filesystem.md) — работа с ФС Linux
+- [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md) — решение проблем
+- [Linux Filesystem](../Linux/FileSystems/RAID/overview.md) — работа с ФС Linux

@@ -68,7 +68,7 @@
 
 | Категория | Примеры |
 | :--- | :--- |
-| **Шифрование** | TLS/SSL, SSH, [IPsec](../Tunnels/ipsec.md) |
+| **Шифрование** | TLS/SSL, SSH, [IPsec](../Tunnels/ipsec/ipsec.md) |
 | **Сжатие** | gzip, zlib, LZ77 |
 | **Кодировки текста** | ASCII, UTF-8, UTF-16, EBCDIC |
 | **Медиаформаты** | JPEG, PNG, MPEG, GIF, MP3 |

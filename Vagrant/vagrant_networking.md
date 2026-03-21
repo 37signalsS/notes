@@ -156,4 +156,4 @@ netstat -tlnp | grep :8080
 
 - [Vagrantfile Reference](./vagrantfile.md) — конфигурация сети в Vagrantfile
 - [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — мульти-машинные сети
-- [Linux Networking](../Linux/networking.md) — основы сетевого взаимодействия
+- [Linux Networking](../Linux/Networking/Tools/tc_netem.md) — основы сетевого взаимодействия

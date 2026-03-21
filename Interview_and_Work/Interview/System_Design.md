@@ -236,4 +236,4 @@
 - **[CAP-теорема](../../Databases/Concepts/cap_theorem.md)** — компромиссы в распределенных системах.
 - **[Кэширование](../../Concepts/Caching/caching_overview.md)** — паттерны и стратегии.
 - **[Репликация](../../Databases/Concepts/replication.md)** — механизмы репликации данных.
-- **[Observability](../../Concepts/Observability_and_Monitoring/observability_overview.md)** — мониторинг распределенных систем.
+- **[Observability](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — мониторинг распределенных систем.

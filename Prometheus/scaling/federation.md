@@ -2,7 +2,7 @@
 >
 > **Федерация** — один из подходов к **[масштабированию Prometheus](./overview.md)**.
 
-> **См. также:** [PromQL](../concepts/promql.md) — язык запросов для федерации, [Remote Read/Write](./remote_read_write.md) — альтернативный способ масштабирования.
+> **См. также:** [PromQL](../concepts/promql/selectors_operators.md) — язык запросов для федерации, [Remote Read/Write](./remote_read_write.md) — альтернативный способ масштабирования.
 
 ## Определения
 

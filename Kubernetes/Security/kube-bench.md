@@ -5,7 +5,7 @@
 * **kube-bench**: Утилита от Aqua Security (<https://github.com/aquasecurity/kube-bench>), предназначенная для проверки конфигурации Kubernetes на соответствие рекомендациям **CIS Kubernetes Benchmark**.
 * **CIS Kubernetes Benchmark**: Общепринятый стандарт от Center for Internet Security (CIS), содержащий набор лучших практик по обеспечению безопасности кластеров Kubernetes.
 
-**Важно:** kube-bench проверяет **инфраструктуру кластера**, а не манифесты приложений. Для проверки манифестов используйте [kubesec](./kubesec.md) или [Kyverno](./kyverno.md).
+**Важно:** kube-bench проверяет **инфраструктуру кластера**, а не манифесты приложений. Для проверки манифестов используйте [kubesec](./kubesec.md) или [Kyverno](./kyverno/policies/practical_scenarios.md).
 
 ## Основные концепции
 
@@ -75,12 +75,12 @@ kube-bench классифицирует проверки:
 |------------|-----------------|----------------|
 | **kube-bench** | Инфраструктура кластера | Периодический аудит | Этот файл |
 | **[kubesec](./kubesec.md)** | Манифесты приложений | До деплоя (CI/CD) | kubesec.md |
-| **[Kyverno](./kyverno.md)** | Манифесты приложений | Во время деплоя (Admission) | kyverno.md |
+| **[Kyverno](./kyverno/policies/practical_scenarios.md)** | Манифесты приложений | Во время деплоя (Admission) | kyverno.md |
 | **[Falco](../../Security/Tools/falco.md)** | Runtime-поведение | После деплоя | falco.md |
 
 ### Связанные темы
 
 * **[Kubesec](./kubesec.md)** — анализ рисков в манифестах
-* **[Kyverno](./kyverno.md)** — политики безопасности
+* **[Kyverno](./kyverno/policies/practical_scenarios.md)** — политики безопасности
 * **[Pod Security Context](./pod_security_context.md)** — безопасность подов
 * **[CIS Benchmark](https://www.cisecurity.org/benchmark/kubernetes)** — официальный стандарт

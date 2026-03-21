@@ -47,5 +47,5 @@ sudo mount -t nfs4 10.0.0.5:/srv/nfs/shared /mnt/nfs/shared
 - [Samba: SMB для Windows-сетей](../samba/)
 - [AutoFS: монтирование по требованию](../../../FileSystems/mounting/scenarios/autofs_mount.md)
 - [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
-- [iSCSI: блочный доступ по сети](../iSCSI.md)
-- [Настройка файрвола](../Settings/tools/linux_firewall_management.md)
+- [iSCSI: блочный доступ по сети](../../iSCSI/index.md
+- [Настройка файрвола](../../../Development/build_tools.md)

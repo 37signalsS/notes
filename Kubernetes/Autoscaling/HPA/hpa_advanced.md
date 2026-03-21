@@ -50,7 +50,7 @@ kubectl top nodes
 
 ## 3. Ограничения
 
-- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте [KEDA](../Autoscaling/keda_detailed.md).
+- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте KEDA.
 - **Интервал метрик** — метрики собираются с интервалом 15 секунд (настройка Metrics Server).
 - **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](../vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
 - **Только Deployment/StatefulSet/ReplicaSet** — не работает с DaemonSet, Job, CronJob.
@@ -77,6 +77,5 @@ kubectl top nodes
 
 - **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
 - **[Практические сценарии](./hpa_scenarios.md)** — предварительные требования, сценарии использования
-- **[KEDA](../Autoscaling/keda_detailed.md)** — событийное масштабирование
 - **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
 - **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита от недоступности

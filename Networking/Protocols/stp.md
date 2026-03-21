@@ -212,7 +212,7 @@ Instance 2: VLAN 30, 40 → Root: Switch B
 
 - [VLAN](./vlan.md) — виртуальные LAN
 - [Ethernet](./ethernet.md) — канальный уровень
-- [L2 Switching](../Concepts/vlan_and_L2_switching.md) — коммутация L2
+- [L2 Switching](../../Security/Concepts/authentication_vs_authorization.md) — коммутация L2
 - [ARP](./arp.md) — источник broadcast-трафика
 
 ### RFC и стандарты

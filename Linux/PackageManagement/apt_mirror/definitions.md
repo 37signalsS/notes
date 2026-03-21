@@ -20,4 +20,4 @@
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [apt_repository_mirror.md](../apt_repository_mirror.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [apt_repository_mirror.md](./definitions.md)*

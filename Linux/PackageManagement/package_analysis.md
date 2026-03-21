@@ -257,6 +257,6 @@ rpm -V <package_name>
 
 - **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
 - **[База данных пакетов](./package_database.md)** — расположение и структура баз данных
-- **[Сборка пакетов](./package_building.md)** — создание собственных пакетов
+- **[Сборка пакетов](./package_build/basic_concepts.md)** — создание собственных пакетов
 - **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — настройка источников пакетов
-- **[Управление репозиториями DNF](./dnf_repository_management.md)** — настройка репозиториев для RPM
+- **[Управление репозиториями DNF](./dnf_commands/basic_concepts.md)** — настройка репозиториев для RPM

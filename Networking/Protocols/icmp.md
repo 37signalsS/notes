@@ -168,7 +168,7 @@ iptables -A INPUT -p icmp --icmp-type redirect -j DROP
 
 - [IP](./ip.md) — сетевой уровень
 - [TCP](./TCP/overview.md) — транспортный уровень
-- [traceroute](../../Linux/Networking/Tools/traceroute.md) — утилита диагностики
+- [traceroute](../../Linux/Diagnostics/Networking/traceroute_mtr.md) — утилита диагностики
 - [ping](../../Linux/Diagnostics/Networking/ping.md) — утилита проверки доступности
 
 ### RFC

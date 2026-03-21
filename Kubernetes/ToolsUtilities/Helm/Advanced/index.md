@@ -35,4 +35,4 @@
 
 - [Helm Overview](../helm_overview.md) — базовые концепции Helm
 - [Helm Commands](../helm_commands_and_workflow.md) — руководство по командам
-- [Kustomize](../kustomize_overview.md) — управление конфигурацией через патчи
+- [Kustomize](../../kustomize/kustomize_overview.md) — управление конфигурацией через патчи

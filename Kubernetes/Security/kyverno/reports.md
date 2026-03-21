@@ -213,4 +213,4 @@ spec:
 
 - [Background Scans](./background.md) — фоновое сканирование для отчетов
 - [Policy Reporter](./reporter.md) — Web UI и метрики для отчетов
-- [Написание политик](./policies.md) — создание политик с аннотациями
+- [Написание политик](./policies/practical_scenarios.md) — создание политик с аннотациями

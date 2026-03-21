@@ -67,7 +67,7 @@
 
 Этот сценарий описывает конфигурацию Fluent Bit для сбора логов из Kubernetes и системных файлов с последующей отправкой в Loki.
 
-> **Примечание:** Конфигурация актуальна для Fluent Bit v2.x/v3.x. Для Grafana Alloy см. [loki_stack_setup_guide.md](./loki_stack_setup_guide.md#альтернатива-grafana-alloy).
+> **Примечание:** Конфигурация актуальна для Fluent Bit v2.x/v3.x. Для Grafana Alloy см. [loki_stack_setup/alloy_installation.md](./loki_stack_setup/alloy_installation.md).
 
 ### Файл конфигурации `fluent-bit.conf`
 
@@ -205,7 +205,7 @@ spec:
 | :--- | :--- |
 | **[loki_overview.md](./loki_overview.md)** | Базовые концепции Loki, LogQL, архитектура |
 | **[docker_compose_setup.md](../Grafana/Installation/docker_compose_setup.md)** | Настройка Loki в Docker Compose |
-| **[loki_stack_setup_guide.md](./loki_stack_setup_guide.md)** | Развертывание в Kubernetes с Helm |
+| **[loki_stack_setup_guide.md](../Loki/loki_overview.md)** | Развертывание в Kubernetes с Helm |
 | **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** | Рекомендуемый агент для новых развертываний |
 | **[Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** | Базовая конфигурация Fluent Bit |
 | **[Fluent Bit Output: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki)** | Официальная документация Fluent Bit |

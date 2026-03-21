@@ -100,4 +100,4 @@ spec:
 - **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/Calico/index.md)
 - **CNI и kube-proxy:** [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md)
 - **Сетевая модель:** [Обзор сети Kubernetes](../Networking/Network/network_overview.md)
-- **Kyverno:** [Генерация NetworkPolicy](./kyverno.md)
+- **Kyverno:** [Генерация NetworkPolicy](./kyverno/policies/practical_scenarios.md)

@@ -207,7 +207,7 @@ spec:
 | Компонент | Интеграция |
 |-----------|------------|
 | **[HPA](./HPA/index.md)** | Масштабирование workers по внешним метрикам (длина очереди) |
-| **[KEDA](./keda_detailed.md)** | Рекомендуемое решение для событийного масштабирования |
+| **[KEDA](./keda/practical_scenarios.md)** | Рекомендуемое решение для событийного масштабирования |
 | **[Pod Distribution](./pod_distribution/basic_concepts.md)** | Распределение workers по узлам для отказоустойчивости |
 | **[Pod Disruption Budget](./pod_disruption_budget.md)** | Защита workers при масштабировании узлов |
 | **[Cluster Autoscaler](./cluster_autoscaler_detailed.md)** | Добавление узлов при масштабировании workers |

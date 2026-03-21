@@ -28,7 +28,7 @@
 
 - **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter, Stateful/Stateless
 - **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
-- **[nftables](./nftables_basics.md)** — современная замена iptables (Debian 11+)
+- **[nftables](../tools/nftables/practical_scenarios.md)** — современная замена iptables (Debian 11+)
 - **[firewalld](./firewalld.md)** — высокоуровневое управление на основе iptables/nftables
 
 ---
@@ -134,6 +134,6 @@ Docker добавляет свои правила в цепочки `DOCKER` и 
 
 ### Альтернативы iptables
 
-- **[nftables](./nftables_basics.md)** — современная подсистема (замена iptables)
+- **[nftables](../tools/nftables/practical_scenarios.md)** — современная подсистема (замена iptables)
 - **[ufw](#)** — упрощённый интерфейс для Ubuntu
 - **[firewalld](./firewalld.md)** — динамический менеджер для RHEL/CentOS

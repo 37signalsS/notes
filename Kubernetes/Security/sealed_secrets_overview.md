@@ -212,6 +212,6 @@ kubectl apply -f new.sealed.yaml
 - **Secrets Management:** [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)
 - **GitOps Encryption:** [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)
 - **SOPS:** [SOPS Overview](../../Security/Tools/sops_overview.md)
-- **Vault:** [Vault Overview](../../Vault/vault_overview.md)
+- **Vault:** [Vault Overview](../../Vault/zero_trust.md)
 - **RBAC:** [RBAC Overview](./rbac/rbac_overview.md)
 - **Application Secrets:** [Application Secrets Management](./application_secrets_management.md)

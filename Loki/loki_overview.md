@@ -2,7 +2,7 @@
 
 ## 1. Определения
 
-**Grafana Loki** — это горизонтально масштабируемая, высокодоступная, мульти-тенантовая система агрегации логов, вдохновленная Prometheus. Она использует аналогичный подход к индексации, фокусируясь на метаданных (метках), а не на полном тексте логов. Это позволяет значительно снизить затраты на хранение по сравнению с традиционными системами, такими как Elasticsearch. Являясь частью [стека Grafana LGTM](../Concepts/Observability_and_Monitoring/observability_overview.md#современные-стеки-наблюдаемости:-grafana-lgtm), Loki позиционируется как экономичное и эффективное решение для сбора и анализа логов.
+**Grafana Loki** — это горизонтально масштабируемая, высокодоступная, мульти-тенантовая система агрегации логов, вдохновленная Prometheus. Она использует аналогичный подход к индексации, фокусируясь на метаданных (метках), а не на полном тексте логов. Это позволяет значительно снизить затраты на хранение по сравнению с традиционными системами, такими как Elasticsearch. Являясь частью [стека Grafana LGTM](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md), Loki позиционируется как экономичное и эффективное решение для сбора и анализа логов.
 
 ### Важные изменения
 
@@ -90,7 +90,7 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 #### Практические руководства
 
 * **[Настройка в Docker Compose](../Grafana/Installation/docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
-* **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail, Grafana) в Kubernetes с помощью Helm.
+* **[Настройка в Kubernetes](./loki_stack_setup/loki_installation.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail, Grafana) в Kubernetes с помощью Helm.
 
 #### Агенты для сбора логов
 
@@ -108,7 +108,7 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 **Практические руководства:**
 
 * **[Настройка в Docker Compose](../Grafana/Installation/docker_compose_setup.md)**: Пошаговое руководство по интеграции Loki в существующий стек мониторинга на базе Docker Compose.
-* **[Настройка в Kubernetes](./loki_stack_setup_guide.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail/Alloy, Grafana) в Kubernetes с помощью Helm.
+* **[Настройка в Kubernetes](./loki_stack_setup/loki_installation.md)**: Руководство по развертыванию полного стека сбора логов (Loki, Promtail/Alloy, Grafana) в Kubernetes с помощью Helm.
 * **[Интеграция Fluent Bit](./fluentbit_integration.md)**: Практическое руководство по интеграции Fluent Bit с Loki.
 * **[Лог-драйвер Loki для Docker](../Docker/Docker_logs/loki_logging_driver_setup.md)**: Настройка прямой отправки логов из Docker в Loki без агента.
 * **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)**: Полный обзор и руководство по миграции на Alloy.
@@ -244,7 +244,7 @@ sum(rate({app="my-app", level="error"}[1m])) / sum(rate({app="my-app"}[1m]))
 ### Дополнительные ресурсы
 
 * **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для сбора телеметрии в Loki
-* **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_overview.md)** — место Loki в стеке наблюдаемости
+* **[Observability Overview](../Concepts/Observability_and_Monitoring/observability_definitions.md)** — место Loki в стеке наблюдаемости
 * **[High Availability Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** — архитектура высоконагруженного мониторинга с Loki
 * **[Docker Logging Drivers](../Docker/Docker_logs/docker_logging_drivers_overview.md)** — обзор подходов к логированию в Docker
 * **[Loki Docker Driver](../Docker/Docker_logs/loki_logging_driver_setup.md)** — прямая отправка логов из Docker в Loki

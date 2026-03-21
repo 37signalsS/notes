@@ -224,7 +224,7 @@ count(kube_secret_info{namespace="<namespace>"} == 0)
 | `pod` | `label_values(kube_pod_labels{namespace="$namespace"}, pod)` | Выбор пода |
 | `container` | `label_values(kube_pod_container_info{namespace="$namespace", pod="$pod"}, container)` | Выбор контейнера |
 
-> **См. также:** [Алертинг в Grafana](../grafana_alerting.md) для настройки уведомлений при критических состояниях.
+> **См. также:** [Алертинг в Grafana](../alerting/concepts.md) для настройки уведомлений при критических состояниях.
 
 ---
 

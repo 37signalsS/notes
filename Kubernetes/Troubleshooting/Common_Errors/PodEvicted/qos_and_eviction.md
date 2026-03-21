@@ -12,8 +12,6 @@
 3. Guaranteed (requests == limits)
 ```
 
-> **См. также:** [`../../../Scheduling/qos_limit_and_requests.md`](../../../Scheduling/qos_limit_and_requests.md)
-
 | QoS Класс | Условия | Приоритет вытеснения |
 |-----------|---------|---------------------|
 | **`BestEffort`** | Нет `requests`/`limits` | **Первые** |

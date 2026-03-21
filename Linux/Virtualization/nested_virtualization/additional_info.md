@@ -95,4 +95,4 @@ virt-top
 ## Связанные документы
 
 - **[Виртуализация overview](../virtualization_overview.md)**
-- **[Образы ВМ](./virtual_machine_images.md)**
+- **[Образы ВМ](../vm_images/definitions.md)**

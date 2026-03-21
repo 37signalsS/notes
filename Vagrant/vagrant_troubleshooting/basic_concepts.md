@@ -62,4 +62,4 @@ VAGRANT_LOG=debug vagrant up 2>&1 | tee debug.log
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](../vagrant_troubleshooting.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](./practical_scenarios.md)*

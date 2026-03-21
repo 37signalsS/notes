@@ -7,7 +7,7 @@
 Этот подход необходим, когда ICMP-трафик блокируется сетевыми устройствами, такими как брандмауэры, что делает невозможным использование традиционного `ping`.
 
 > - Базовая информация о `ping`: [`ping.md`](../../Linux/Diagnostics/Networking/ping.md)
-> - Диагностика DNS: [`dns_diagnostics.md`](../../Linux/Diagnostics/Networking/dns_diagnostics.md)
+> - Диагностика DNS: [`dns/overview.md`](../../Linux/Diagnostics/Networking/dns/overview.md)
 > - Сканер портов `nmap`: [`nmap.md`](../../Linux/Diagnostics/Networking/nmap.md)
 > - HTTP-клиенты `curl`/`wget`: [`curl.md`](../../Linux/Networking/Tools/http_clients/curl.md), [`wget.md`](../../Linux/Networking/Tools/http_clients/wget.md)
 > - Утилита `ss`: [`ss.md`](../../Linux/Diagnostics/Networking/ss.md)

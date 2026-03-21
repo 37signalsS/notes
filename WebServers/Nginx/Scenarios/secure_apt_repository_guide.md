@@ -42,11 +42,11 @@
 
 Далее, создадим сам репозиторий с помощью `reprepro` и подпишем его GPG-ключом.
 
-> **Подробное руководство: [Создание приватного Apt-репозитория с reprepro](../../../Linux/PackageManagement/deb_private_apt_repository_reprepro.md)**
+> **Подробное руководство: [Создание приватного Apt-репозитория с reprepro](../../../Linux/PackageManagement/deb_private_apt_repository_reprepro/practical_scenarios.md**
 
 На этом же этапе вы можете создать и добавить в репозиторий свои собственные пакеты.
 
-> **Подробное руководство: [Создание простого .deb пакета](../../Linux/PackageManagement/creating_deb_packages.md)**
+> **Подробное руководство: [Создание простого .deb пакета](../../../Linux/PackageManagement/package_build/definitions.md)**
 
 После выполнения этого шага у вас должна быть директория (например, `/var/www/my-repo`), содержащая структуру репозитория `reprepro`.
 

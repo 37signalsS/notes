@@ -26,7 +26,7 @@ request_duration_seconds_count 1210
 
 * **Имена:** `snake_case`.
 * **Единицы измерения:** Имена метрик должны содержать базовые единицы (например, `_seconds`, `_bytes`).
-* **Кардинальность:** Избегайте использования в лейблах значений с высокой кардинальностью (ID пользователей, хэши запросов), так как это приводит к "взрыву" количества временных рядов. Подробнее см. в [Лейблы и кардинальность](./labels_and_cardinality.md).
+* **Кардинальность:** Избегайте использования в лейблах значений с высокой кардинальностью (ID пользователей, хэши запросов), так как это приводит к "взрыву" количества временных рядов. Подробнее см. в [Лейблы и кардинальность](../labels_and_cardinality.md).
 * **Суффиксы по типу:**
   * `_total` — для Counter (обязательно)
   * `_bucket`, `_sum`, `_count` — для Histogram
@@ -41,7 +41,7 @@ request_duration_seconds_count 1210
 * **Java:** `io.prometheus:simpleclient`
 * **Node.js:** `prom-client`
 
-> **См. также:** [Extensibility — создание собственных экспортёров](./extensibility.md) — практические примеры на Python и Go.
+> **См. также:** [Extensibility — создание собственных экспортёров](../../Exporters/extensibility/custom_exporters.md) — практические примеры на Python и Go.
 
 ## Сравнение с VictoriaMetrics
 
@@ -51,7 +51,7 @@ VictoriaMetrics использует расширенный язык запро�
 
 **Связанные темы:**
 
-* [Лейблы и кардинальность](./labels_and_cardinality.md)
+* [Лейблы и кардинальность](../labels_and_cardinality.md)
 * [Counter](./counter.md) — суффикс `_total`
 * [Histogram](./histogram.md) — суффиксы `_bucket`, `_sum`, `_count`
 * [Summary](./summary.md) — суффиксы `{quantile="..."}`

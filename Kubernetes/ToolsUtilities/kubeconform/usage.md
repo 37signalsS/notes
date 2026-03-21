@@ -141,6 +141,6 @@ echo "Validation passed!"
 
 ### Связанные темы
 
-- **[Kustomize](./kustomize_overview.md)** — валидация результатов kustomize
+- **[Kustomize](../kustomize/kustomize_overview.md)** — валидация результатов kustomize
 - **[Helm](../Helm/helm_overview.md)** — валидация Helm-чартов
 - **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны

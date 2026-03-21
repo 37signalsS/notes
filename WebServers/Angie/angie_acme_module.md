@@ -291,4 +291,4 @@ acme_client letsencrypt {
 
 **Traefik** — современный обратный прокси со встроенной автоматической поддержкой Let's Encrypt. См. **[обзор Traefik](../Traefik/traefik_overview.md)**.
 
-**Cert-manager** — стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager](../../Kubernetes/ToolsUtilities/cert_manager.md)**.
+**Cert-manager** — стандарт де-факто для управления TLS-сертификатами в Kubernetes. См. **[Cert-manager](../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md)**.

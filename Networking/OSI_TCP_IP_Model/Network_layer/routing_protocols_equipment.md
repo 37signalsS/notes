@@ -12,10 +12,10 @@
 
 | Протокол | Назначение |
 |----------|------------|
-| **[IP (Internet Protocol)](../../../Protocols/ip.md)** | Передача данных и глобальная адресация | `Networking/Protocols/ip.md` |
-| **[ICMP (Internet Control Message Protocol)](../../../Protocols/icmp.md)** | Служебные и диагностические сообщения | `Networking/Protocols/icmp.md` |
-| **[ARP (Address Resolution Protocol)](../../../Protocols/arp.md)** | Сопоставление IP-адресов (L3) и MAC-адресов (L2) | `Networking/Protocols/arp.md` |
-| **[DHCP (Dynamic Host Configuration Protocol)](../../../Protocols/dhcp.md)** | Автоматическое назначение IP-адресов хостам | `Networking/Protocols/dhcp.md` |
+| **[IP (Internet Protocol)](../../Protocols/ip.md** | Передача данных и глобальная адресация | `Networking/Protocols/ip.md)` |
+| **[ICMP (Internet Control Message Protocol)](../../Protocols/icmp.md** | Служебные и диагностические сообщения | `Networking/Protocols/icmp.md)` |
+| **[ARP (Address Resolution Protocol)](../../Protocols/arp.md)** | Сопоставление IP-адресов (L3) и MAC-адресов (L2) | `Networking/Protocols/arp.md` |
+| **[DHCP (Dynamic Host Configuration Protocol)](../../Protocols/dhcp.md** | Автоматическое назначение IP-адресов хостам | `Networking/Protocols/dhcp.md)` |
 | **Протоколы маршрутизации** | Обмен информацией о сетях и построение таблиц маршрутизации | См. ниже |
 
 ### Типы маршрутизации
@@ -31,7 +31,7 @@
 |----------|-----|----------|------------|
 | **OSPF** | IGP (Interior Gateway Protocol) | Link State (состояние каналов) | Крупные корпоративные сети |
 | **RIP** | IGP | Distance Vector (вектор расстояния) | Малые сети (устаревший) |
-| **[BGP](../../../Protocols/bgp.md)** | EGP (Exterior Gateway Protocol) | Path Vector | Интернет, крупные провайдеры |
+| **[BGP](../../Protocols/bgp.md)** | EGP (Exterior Gateway Protocol) | Path Vector | Интернет, крупные провайдеры |
 | **EIGRP** | IGP | Advanced Distance Vector (Cisco) | Сети Cisco |
 
 ## Практические сценарии
@@ -70,7 +70,7 @@
 
 **См. также:**
 
-- [Практические сценарии маршрутизации](../Concepts/routing_scenarios.md) — логика маршрутизации на хосте
-- [Сетевой уровень — обзор](../Concepts/network_layer_overview.md) — функции L3
-- [BGP](../../../Protocols/bgp.md) — протокол пограничного шлюза
-- [Таблица маршрутизации](../../../Linux/Networking/routing_table.md) — просмотр и настройка (Linux)
+- [Практические сценарии маршрутизации](./Concepts/routing_scenarios.md) — логика маршрутизации на хосте
+- [Сетевой уровень — обзор](./Concepts/network_layer_overview.md) — функции L3
+- [BGP](../../Protocols/bgp.md) — протокол пограничного шлюза
+- [Таблица маршрутизации](../../../Linux/Networking/Tools/tc_netem.md) — просмотр и настройка (Linux)

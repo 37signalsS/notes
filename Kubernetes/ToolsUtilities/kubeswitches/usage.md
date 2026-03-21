@@ -231,4 +231,4 @@ cp ~/.kube/config ~/.kube/contexts/local-prod/config
 ### Связанные темы
 
 - **[kubectl](../Base/kubectl.md)** — основы работы с kubectl
-- **[kubeconfig](../Base/kubeconfig.md)** — структура и использование kubeconfig
+- **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — структура и использование kubeconfig

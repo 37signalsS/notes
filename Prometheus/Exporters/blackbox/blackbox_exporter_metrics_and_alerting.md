@@ -65,5 +65,5 @@ probe_icmp_round_trip_seconds              # Время ICMP ping
 - **[Обзор и концепции](./blackbox_exporter_overview.md)** — базовые определения
 - **[Установка и настройка](./blackbox_exporter_installation_and_setup.md)** — запуск и конфигурация
 - **[Конфигурация модулей](./blackbox_exporter_modules_configuration.md)** — HTTP, TCP, ICMP, DNS, gRPC модули
-- **[Alertmanager](../alertmanager.md)**
+- **[Alertmanager](../../alertmanager.md)**
 - **[Правила оповещений](../../rules.md)**

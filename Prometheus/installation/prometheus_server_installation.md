@@ -240,7 +240,7 @@ ls -la /etc/prometheus/
 
 * [Configuration](../configuration.md) — детальная настройка
 * [TSDB](../concepts/tsdb.md) — устройство хранилища
-* [PromQL](../concepts/promql.md) — язык запросов
+* [PromQL](../concepts/promql/selectors_operators.md) — язык запросов
 * [Rules](../rules.md) — правила алертинга
 * [Scaling](../scaling/overview.md) — масштабирование
 * [Exporters](../Exporters/overview.md) — сбор метрик

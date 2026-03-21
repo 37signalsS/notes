@@ -21,8 +21,6 @@ kubectl get events --field-selector reason=DisruptionBudgetExceeded
 - Добавить узлы для размещения подов
 - Временно удалить PDB (не рекомендуется для production)
 
-> **См. также:** [`../../../Autoscaling/pod_disruption_budget.md`](../../../Autoscaling/pod_disruption_budget.md)
-
 ## 5. Taint-based Eviction (`NoExecute`)
 
 **Сообщение:**
@@ -54,5 +52,3 @@ spec:
     effect: "NoExecute"
     tolerationSeconds: 300
 ```
-
-> **См. также:** [`../../../Scheduling/taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)

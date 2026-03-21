@@ -9,7 +9,7 @@
 | Компонент | Назначение |
 | :--- | :--- |
 | `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald.md](./journald.md) |
-| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../../Diagnostics/journalctl.md) |
+| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/journalctl.md |
 | `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
 | `auditd` | Аудит событий безопасности на уровне ядра | [auditd.md](./auditd.md) |
 | `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов-logrotate) |
@@ -117,7 +117,7 @@ grep -i "failed\|invalid\|error" /var/log/auth.log
 - Традиционные: `rsyslog` (подробнее в [rsyslog.md](./rsyslog.md))
 - Современные: Fluentd, Vector, Kafka, Loki, Elasticsearch
 
-Подробнее о централизованном логировании в контексте наблюдаемости: [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
+Подробнее о централизованном логировании в контексте наблюдаемости: [Observability and Monitoring](../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
 
 ### Ротация логов (`logrotate`)
 
@@ -213,7 +213,7 @@ sync  # Запись буферов на диск
 **Файлы по компонентам:**
 
 - journald: [journald.md](./journald.md)
-- journalctl: [journalctl.md](../../../Diagnostics/journalctl.md)
+  - journalctl: [journalctl.md](../../../Diagnostics/journalctl.md) — просмотр логов
 - rsyslog: [rsyslog.md](./rsyslog.md)
 - auditd: [auditd.md](./auditd.md)
-- Анализ сбоев: [Core/processes/troubleshooting.md](../../Core/processes/troubleshooting.md), [Core/kernel/kernel_panic.md](../../Core/kernel/kernel_panic.md)
+- Анализ сбоев: [](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md, [Core/kernel/kernel_pani](c.md)(../../Core/kernel/kernel_panic.md)

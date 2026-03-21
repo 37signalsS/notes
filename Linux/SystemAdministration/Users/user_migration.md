@@ -291,5 +291,5 @@ apt install sssd sssd-ldap
 
 - [Управление пользователями](./user_commands.md) — `useradd`, `usermod`
 - [Файлы конфигурации](./users_config_files.md) — `/etc/passwd`, `/etc/shadow`
-- [LDAP/SSSD](./ldap_sssd.md) — централизованное управление
+- [LDAP/SSSD](./LDAP_SSSD/operations.md) — централизованное управление
 - [Права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) — `chmod`, `chown`

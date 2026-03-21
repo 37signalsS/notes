@@ -115,7 +115,7 @@ journalctl -u ssh | grep -i "wrap"
 | Механизм | Уровень | Преимущества | Недостатки |
 | :--- | :--- | :--- | :--- |
 | **TCP Wrappers** | Прикладной (L7) | Простая настройка, гибкие правила по доменам | Устарел, не все службы поддерживают |
-| **[iptables/nftables](../../Settings/tools/linux_firewall_management.md)** | Сетевой (L3-L4) | Универсальность, производительность, stateful-фильтрация | Сложнее в настройке |
+| **[iptables/nftables](../Development/build_tools.md)** | Сетевой (L3-L4) | Универсальность, производительность, stateful-фильтрация | Сложнее в настройке |
 | **firewalld/ufw** | Сетевой (L3-L4) | Удобный интерфейс, динамическое управление | Надстройка над iptables/nftables |
 | **SSH AllowUsers/AllowGroups** | Прикладной (L7) | Встроенный механизм SSH | Только для SSH |
 
@@ -124,7 +124,7 @@ journalctl -u ssh | grep -i "wrap"
 Для современных систем рекомендуется:
 
 1. **Для SSH**: Используйте директивы `AllowUsers`, `AllowGroups`, `DenyUsers`, `DenyGroups` в `/etc/ssh/sshd_config`
-2. **Для других служб**: Настройте правила в `[nftables](../Settings/tools/nftables/index.md)` или `[iptables](../Settings/tools/iptables_basics.md)`
+2. **Для других служб**: Настройте правила в [nftables](./Settings/nftables/index.md) или [iptables](./Settings/tools/iptables_basics.md)
 3. **Для динамического управления**: Используйте `firewalld` или `ufw`
 
 **Пример миграции SSH с TCP Wrappers на sshd_config:**

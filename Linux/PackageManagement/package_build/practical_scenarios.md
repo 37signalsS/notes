@@ -157,4 +157,4 @@ sudo dnf install ~/rpmbuild/RPMS/<arch>/<package_name>.rpm
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [package_building.md](../package_building.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [package_building.md](./practical_scenarios.md)*

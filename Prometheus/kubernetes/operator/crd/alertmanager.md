@@ -99,4 +99,4 @@ spec:
 * **[Prometheus CRD](./prometheus.md)** — описание Prometheus
 * **[AlertmanagerConfig](./alertmanagerconfig.md)** — маршрутизация и получатели
 * **[High Availability](../high_availability.md)** — HA конфигурация
-* **[Alertmanager](../../alertmanager.md)** — базовая настройка
+* **[Alertmanager](../../../alertmanager.md)** — базовая настройка

@@ -29,10 +29,3 @@
 - [Автоматический перезапуск при изменении ConfigMap](./restart_on_change.md) — rolling update без внешних инструментов
 - [NOTES.txt для инструкций](./notes_txt.md) — вывод информации после установки
 
----
-
-## Обратная связь
-
-- [helm_templating](../Helm/helm_templating.md) — обзорная страница
-- [Именованные шаблоны](./templates/_helpers.md) — переиспользуемые блоки
-- [Функции](./functions.md) — ключевые функции

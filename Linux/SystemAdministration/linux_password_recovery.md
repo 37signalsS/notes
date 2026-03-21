@@ -127,5 +127,5 @@
 
 **Безопасность:**
 
-- **[Шифрование дисков](../Security/disk_encryption.md)** — LUKS, dm-crypt
-- **[Безопасность GRUB](../Security/secure_boot.md)** — Secure Boot, подписанные загрузчики
+- **[Шифрование дисков](../../Security/Tools/openssl_ca/single_tier/ca_setup.md** — LUKS, dm-crypt
+- **[Безопасность GRUB](../../Security/Tools/openssl_ca/single_tier/ca_setup.md)** — Secure Boot, подписанные загрузчики

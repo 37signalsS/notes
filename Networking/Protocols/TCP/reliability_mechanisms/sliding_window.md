@@ -93,7 +93,7 @@ LastByteSent - LastByteAcked ≤ rwnd (receiver window)
 * Отправитель динамически изменяет cwnd на основе потерь
 * Алгоритмы: Slow Start, Congestion Avoidance, Fast Recovery
 
-**Подробнее:** [Congestion Control](./congestion/congestion_control.md)
+**Подробнее:** [Congestion Control](../congestion/tcp_congestion_control_overview.md)
 
 ## Zero Window
 
@@ -136,6 +136,6 @@ Scale factor = 7 (сдвиг на 7 бит)
 
 ## Связанные темы
 
-* **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой
-* **[Header Format](./Header_Format/header_format.md)** — поле Window в заголовке
-* **[Connection Management](./connection/connection_management.md)** — handshake, Window Scale
+* **[Congestion Control](../congestion/tcp_congestion_control_overview.md** — управление перегрузкой
+* **[Header Format](../Header_Format/index.md** — поле Window в заголовке
+* **[Connection Management](../connection/tcp_connection_management_overview.md)** — handshake, Window Scale

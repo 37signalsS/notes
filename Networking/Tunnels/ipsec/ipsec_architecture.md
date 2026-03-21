@@ -92,19 +92,19 @@
 **Транспортный режим:**
 
 ```
-[IP][ESP][TCP/UDP][Данные][ESP Trailer][ESP Auth]
+[IP[ESP[TCP/UDP[Данные[ESP Trailer[ESP Auth]
 ```
 
 **Туннельный режим:**
 
 ```
-[Внешний IP][ESP][Внутренний IP][TCP/UDP][Данные][ESP Trailer][ESP Auth]
+[Внешний IP[ESP[Внутренний IP[TCP/UDP[Данные[ESP Trailer[ESP Auth]
 ```
 
 **GRE over IPsec (транспортный режим):**
 
 ```
-[Внешний IP][ESP][GRE][IP][ICMP][ESP Trailer][ESP Auth]
+[Внешний IP[ESP[GRE[IP[ICMP[ESP Trailer[ESP Auth]
 ```
 
 **Важно:** При использовании GRE с IPsec в транспортном режиме добавление GRE-заголовка увеличивает overhead и уменьшает объём полезных данных. В большинстве случаев рекомендуется **туннельный режим IPsec** или **GRE over IPsec**.
@@ -173,8 +173,8 @@
 
 ## Связанные документы
 
-- **[Обзор туннелирования](./tunneling_overview.md)** — классификация туннельных протоколов
-- **[MTU и VPN](./Troubleshooting/mtu_and_vpn.md)** — проблемы MTU в VPN-туннелях
-- **[WireGuard](../../Vpn/wireguard.md)** — современная альтернатива IPSec
-- **[GRE с IPsec](./gre/gre.md)** — комбинация GRE + IPSec
-- **[Фрагментация IP](../Protocols/ip_fragmentation.md)** — теория фрагментации
+- **[Обзор туннелирования](../tunneling_overview.md** — классификация туннельных протоколов
+- **[MTU и VPN](../../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md** — проблемы MTU в VPN-туннелях
+- **[WireGuard](../../../Vpn/wireguard.md** — современная альтернатива IPSec
+- **[GRE с IPsec](../gre/gre.md** — комбинация GRE + IPSec
+- **[Фрагментация IP](../../OSI_TCP_IP_Model/Network_layer/Protocols/ip_fragmentation.md)** — теория фрагментации

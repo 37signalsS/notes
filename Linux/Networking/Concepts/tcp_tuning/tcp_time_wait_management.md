@@ -1,6 +1,6 @@
 # Управление состоянием TIME_WAIT и ephemeral портами
 
-> **SSoT:** полная информация по управлению TIME_WAIT и ephemeral портами — в [[Оптимизация TCP в Linux](../tcp_tuning.md#управление-состоянием-time_wait-и-ephemeral-портами)].
+> **SSoT:** полная информация по управлению TIME_WAIT и ephemeral портами — в [Оптимизация TCP в Linux](./tcp_congestion_algorithms.md)
 
 ## Определения
 
@@ -42,5 +42,5 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 
 ## Связанные темы
 
-* **SSoT:** [Оптимизация TCP в Linux](../tcp_tuning.md)
+* **SSoT:** [Оптимизация TCP в Linux](./tcp_congestion_algorithms.md)
 * **Диагностика сокетов:** [Диагностика сокетов](./tcp_socket_diagnostics.md)

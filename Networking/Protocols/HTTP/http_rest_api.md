@@ -51,7 +51,7 @@ HTTP широко используется для взаимодействия �
   * **R**ead → `GET`
   * **U**pdate → `PUT` / `PATCH`
   * **D**elete → `DELETE`
-* **Инструменты:** Для работы с API используются [Postman](https://www.postman.com/), [cURL](../../Linux/Networking/Tools/http_clients/curl.md), [HTTPie](../../Linux/Networking/Tools/http_clients/httpie.md).
+* **Инструменты:** Для работы с API используются [Postman](https://www.postman.com/), [cURL](../../../Linux/Networking/Tools/http_clients/curl.md, [HTTPie](../../../Linux/Networking/Tools/http_clients/httpie.md).
 
 ## Связанные документы
 

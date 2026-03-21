@@ -15,6 +15,6 @@
 ## Связанные документы
 
 * **[TLS](../tls.md)** — Шифрование HTTP (HTTPS)
-* **[Nginx](../../WebServers/Nginx/nginx_core_concepts.md)** — Настройка веб-сервера
-* **[cURL](../../Linux/Networking/Tools/http_clients/curl.md)** — Утилиты для работы с HTTP
-* **[Оптимизация HTTP](./http_protocols_optimization.md)** — Производительность
+* **[Nginx](../../../WebServers/Nginx/Security/nginx_security_guide.md** — Настройка веб-сервера
+* **[cURL](../../../Linux/Networking/Tools/http_clients/curl.md** — Утилиты для работы с HTTP
+* **[Оптимизация HTTP](../http_protocols_optimization.md)** — Производительность

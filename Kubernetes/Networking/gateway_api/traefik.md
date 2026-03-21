@@ -94,6 +94,6 @@ spec:
 - [Определения](./definitions.md) — концепции Gateway API
 - [Базовые сценарии](./practical_basic.md) — примеры
 - [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация
-- [cert-manager](./cert_manager.md) — интеграция с TLS
+- [cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — интеграция с TLS
 
 **Parent:** [Gateway API](../gateway_api/definitions.md)

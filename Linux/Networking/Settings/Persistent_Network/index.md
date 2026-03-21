@@ -14,6 +14,6 @@
 ### Связанные документы
 
 - **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — DNS-резолвинг
-- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — маршрутизация на основе политик
+- **[Policy-Based Routing](./index.md)** — маршрутизация на основе политик
 - **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теория bonding
 - **[VLAN](../../../../Networking/Protocols/vlan.md)** — теория VLAN

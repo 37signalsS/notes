@@ -76,9 +76,9 @@ spec:
 * **Тонкая настройка:** Контроль над `securityContext`, `resources`, `command`.
 * **Air-gapped среды:** Где установка дополнительных компонентов нежелательна.
 
-**Подробное руководство:** [Интеграция Vault с Kubernetes через Secrets Store CSI Driver](./vault_kubernetes_integration.md) — альтернативный подход с использованием CSI-драйвера.
+**Подробное руководство:** [Интеграция Vault с Kubernetes через Secrets Store CSI Driver](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md) — альтернативный подход с использованием CSI-драйвера.
 
 ## Связанные темы
 
 * [Vault Agent: основы](./basics.md)
-* [Интеграция с Kubernetes](./vault_kubernetes_integration.md)
+* [Интеграция с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)

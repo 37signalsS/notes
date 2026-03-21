@@ -74,5 +74,3 @@ kubectl rollout restart daemonset -n kube-system <csi-driver-ds>
 # Удаление зависших VolumeAttachment
 kubectl delete volumeattachment -l <label-selector>
 ```
-
-> **См. также:** [`../../../Storage/CSI/csi_overview.md`](../../../Storage/CSI/csi_overview.md)

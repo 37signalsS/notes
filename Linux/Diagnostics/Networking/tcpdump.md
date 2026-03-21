@@ -165,7 +165,7 @@ sudo tcpdump -i eth0 -vvv port 53
 
 ## Связанные заметки
 
-- **[Диагностика DNS](./dns_diagnostics.md)** — анализ DNS-трафика
+- **[Диагностика DNS](./dns/overview.md)** — анализ DNS-трафика
 - **[ss (Socket Statistics)](./ss.md)** — анализ сокетов
 - **[traceroute и mtr](./traceroute_mtr.md)** — трассировка маршрута
 - **[ping](./ping.md)** — базовая проверка доступности

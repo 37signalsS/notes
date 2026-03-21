@@ -93,7 +93,7 @@ your_domain.com. IN HTTPS 1 . alpn="h2,h3"
 
 **Важно:** Запись типа `HTTPS` несовместима с `CNAME`. Требуется `A` или `AAAA` запись.
 
-**Подробная документация:** [DNS-записи HTTPS/SVCB](../../../Networking/Protocols/DNS/dns_records.md#записи-для-сервисов)
+**Подробная документация:** [DNS-записи HTTPS/SVCB](../../../../Networking/Protocols/DNS/dns_records.md)
 
 ### Использование EC и RSA сертификатов
 

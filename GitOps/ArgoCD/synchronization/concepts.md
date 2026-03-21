@@ -73,6 +73,6 @@ spec:
 - **[Sync Waves и Hooks](./scenarios/sync_waves_hooks.md)**
 - **[Окна синхронизации](./scenarios/sync_windows.md)**
 - **[Прогрессивная синхронизация](./scenarios/progressive_sync.md)**
-- **[Игнорирование различий](./advanced/ignore_differences.md)**
+- **[Игнорирование различий](./ignore_differences.md)**
 - **[Обзор ArgoCD](../argocd_overview.md)**
 - **[Установка и настройка](../argocd_installation_and_setup.md)**

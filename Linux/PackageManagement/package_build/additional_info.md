@@ -76,8 +76,8 @@ rpmbuild --target=aarch64 -ba SPECS/package.spec
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
 - **[Анализ и получение пакетов](../package_analysis.md)** — изучение метаданных и содержимого
 - **[База данных пакетов](../package_database.md)** — расположение и структура баз данных
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — публикация собственных DEB-пакетов
-- **[Управление репозиториями DNF](./dnf_repository_management.md)** — публикация RPM-пакетов
+- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md** — публикация собственных DEB-пакетов
+- **[Управление репозиториями DNF](../dnf_commands/basic_concepts.md)** — публикация RPM-пакетов
 
 ---
 
@@ -89,4 +89,4 @@ rpmbuild --target=aarch64 -ba SPECS/package.spec
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [package_building.md](../package_building.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [package_building.md](./additional_info.md)*

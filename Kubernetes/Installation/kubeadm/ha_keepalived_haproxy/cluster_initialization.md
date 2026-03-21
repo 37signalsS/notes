@@ -1,6 +1,6 @@
 # Инициализация HA кластера kubeadm
 
-> **Примечание**: Подробная инструкция по инициализации Control Plane, добавлению worker-нод и установке CNI находится в файле [Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md).
+> **Примечание**: Подробная инструкция по инициализации Control Plane, добавлению worker-нод и установке CNI находится в файле [Control Plane & CNI](../../HA_Cluster_Bare_Metal/control_plane_initialization.md).
 
 ## Краткая инструкция
 
@@ -86,6 +86,6 @@ kubectl get nodes
 
 Для развёрнутой инструкции с мониторингом присоединения, проверкой Calico и troubleshooting см.:
 
-- **[Control Plane & CNI](../../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md)** — пошаговая инструкция (Шаги 1-10)
+- **[Control Plane & CNI](../../HA_Cluster_Bare_Metal/control_plane_initialization.md)** — пошаговая инструкция (Шаги 1-10)
 - **[HA Cluster Overview](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)** — архитектурные концепции
 - **[Node Preparation](../../HA_Cluster_Bare_Metal/k8s_ha_node_preparation.md)** — подготовка узлов

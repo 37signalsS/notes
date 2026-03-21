@@ -148,5 +148,5 @@ GRE уменьшает эффективный MTU туннеля:
 
 - **[GRE: практические сценарии](./gre_practical_scenarios.md)** — настройка point-to-point, mGRE, GRETAP
 - **[GRE с IPsec](./gre_ipsec_integration.md)** — комбинация GRE + IPsec
-- **[IPSec](./ipsec.md)** — защищённое туннелирование
+- **[IPSec](../ipsec/ipsec.md)** — защищённое туннелирование
 - **[Troubleshooting GRE](./gre_troubleshooting.md)** — диагностика проблем

@@ -62,7 +62,7 @@ net.ipv6.conf.all.use_tempaddr=2
 net.ipv6.conf.default.use_tempaddr=2
 ```
 
-**См. также:** [Постоянная настройка сети](./persistent_network_configuration.md).
+**См. также:** [Постоянная настройка сети](../index.md).
 
 ## Специальные адреса
 

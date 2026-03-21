@@ -60,7 +60,7 @@ spec:
 
 - **Используйте `imagePullPolicy: IfNotPresent`:** Политика `Always` может привести к избыточной нагрузке на registry и проблемам с rate-лимитами, в то время как `IfNotPresent` является более предсказуемой для версионированных образов.
 
-- **Продвинутые стратегии:** Для минимизации рисков при выкатке критичных изменений используйте [расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md), такие как Blue/Green и Canary.
+- **Продвинутые стратегии:** Для минимизации рисков при выкатке критичных изменений используйте [расширенные стратегии развертывания](../../Operations/Advanced_Deployment_Strategies.md), такие как Blue/Green и Canary.
 
 ## Когда использовать Deployment vs StatefulSet
 
@@ -75,4 +75,4 @@ spec:
 - [Pod](../Pod/pod_overview.md) — базовый объект развертывания
 - [ReplicaSet](../replicaset.md) — управление репликами
 - [Horizontal Pod Autoscaler](../../Autoscaling/overview_concepts.md) — автоматическое масштабирование
-- [Расширенные стратегии развертывания](../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary
+- [Расширенные стратегии развертывания](../../Operations/Advanced_Deployment_Strategies.md) — Blue/Green, Canary

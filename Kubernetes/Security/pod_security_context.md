@@ -96,7 +96,7 @@ metadata:
     pod-security.kubernetes.io/enforce-version: latest
 ```
 
-Для более сложных политик можно использовать: [Kyverno](../../Kubernetes/Security/kyverno.md) или *OPA Gatekeeper*.
+Для более сложных политик можно использовать: [Kyverno](./kyverno/policies/practical_scenarios.md) или *OPA Gatekeeper*.
 
 ## Дополнительная информация
 
@@ -107,7 +107,7 @@ Security Context является базовым инструментом для
 
 ### Связанные темы
 
-* **[Kyverno](./kyverno.md)** — применение securityContext через политики
+* **[Kyverno](./kyverno/policies/practical_scenarios.md)** — применение securityContext через политики
 * **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — профили системных вызовов
 * **[Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — Linux capabilities
 * **[RBAC](./rbac/rbac_overview.md)** — управление доступом

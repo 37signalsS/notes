@@ -63,7 +63,7 @@
   * [Балансировка TCP/UDP (L4)](../../WebServers/Nginx/Proxy/nginx_l4_proxying.md)
   * [Кэширование (Proxy Cache)](../../WebServers/Nginx/Performance/Caching/proxy_caching.md)
 * **HAProxy:**
-  * [Обзор и настройка HAProxy](../../WebServers/Haproxy/haproxy_overview.md)
+  * [Обзор и настройка HAProxy](../../WebServers/haproxy_overview.md)
 * **Traefik:**
   * [Обзор Traefik (динамический прокси)](../../WebServers/Traefik/traefik_overview.md)
 

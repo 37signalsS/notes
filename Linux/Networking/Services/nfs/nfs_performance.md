@@ -66,5 +66,5 @@ ping -c 10 <сервер>
 
 - [Базовые концепции](./nfs_basics.md)
 - [Настройка NFS](./nfs_setup.md)
-- [iSCSI: блочный доступ по сети](../iSCSI.md)
+- [iSCSI: блочный доступ по сети](../../iSCSI/index.md)
 - [Диагностика I/O](../../../Diagnostics/Filesystem/fio.md)

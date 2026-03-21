@@ -64,7 +64,7 @@ iptables -A OUTPUT -p udp --dport 53 -d 10.0.1.53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
 ```
 
-**Альтернатива на nftables:** Эквивалентная конфигурация на современном nftables с дополнительными возможностями (rate limiting, fail2ban, динамические списки) описана в **[nftables: современная подсистема фильтрации](../../Linux/Networking/Settings/tools/nftables/index.md)**.
+**Альтернатива на nftables:** Эквивалентная конфигурация на современном nftables с дополнительными возможностями (rate limiting, fail2ban, динамические списки) описана в **[nftables: современная подсистема фильтрации](./index.md)**.
 
 #### Пример: Kubernetes NetworkPolicy
 

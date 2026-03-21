@@ -158,21 +158,21 @@ mount /dev/data_vg/data_lv /mnt/data
 - GRUB должен прочитать ядро и `initramfs` до активации LVM
 - Разместите `/boot` на обычном разделе (ext4/xfs)
 
-Подробнее: [Расширенные темы](./advanced_topics.md#lvm-и-процесс-загрузки-linux)
+Подробнее: [Расширенные темы](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md
 
 ### Связанные темы
 
 | Тема | Файл |
 | :--- | :--- |
-| Операции управления | [management_operations.md](./management_operations.md) |
+| Операции управления | [management_operation](s.md)(./management_operations.md) |
 | Снимки (Snapshots) | [snapshots.md](./snapshots.md) |
 | Тонкое провизионирование | [thin_provisioning.md](./thin_provisioning.md) |
-| Расширенные темы | [advanced_topics.md](./advanced_topics.md) |
-| Просмотр информации | [operations/lvm_view_info.md](./operations/lvm_view_info.md) |
+| Расширенные темы | [advanced_topics.md](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md |
+| Просмотр информации | [operations/lvm_view_inf](o.md)(./operations/lvm_view_info.md) |
 | Изменение размеров | [operations/lvm_resize.md](./operations/lvm_resize.md) |
 | Замена диска | [operations/lvm_disk_replacement.md](./operations/lvm_disk_replacement.md) |
 
 ### Внешние ресурсы
 
 - [LVM HOWTO (Linux Foundation)](https://wiki.linuxfoundation.org/lvm/start)
-- [dm-crypt/LUKS](../../Security/encryption.md) — шифрование поверх LVM
+- [dm-crypt/LUKS](../../../GitOps/secrets_encryption.md) — шифрование поверх LVM

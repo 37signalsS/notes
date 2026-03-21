@@ -153,4 +153,4 @@ host -t AAAA example.com
 * **[Концепции](./concepts.md)** — типы адресов, Privacy Extensions
 * **[Firewall](./firewall.md)** — настройка файрвола для IPv6
 * **[Настройка сервисов](./services_configuration.md)** — конфигурация демонов
-* **[Постоянная настройка сети](./persistent_network_configuration.md)** — персистентная конфигурация
+* **[Постоянная настройка сети](../index.md)** — персистентная конфигурация

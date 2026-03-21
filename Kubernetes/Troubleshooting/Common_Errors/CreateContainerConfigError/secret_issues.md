@@ -58,8 +58,6 @@ volumes:
     secretName: db-credentials
 ```
 
-> **См. также:** [`../../../Base/secrets/external_managers.md`](../../../Base/secrets/external_managers.md), [`../../../Security/rbac/rbac_overview.md`](../../../Security/rbac/rbac_overview.md)
-
 ## 2. Ключ Secret не существует
 
 **Сообщение:**

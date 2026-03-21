@@ -229,7 +229,7 @@ cat /proc/cmdline | grep isolcpus
 - **`top`, `htop`, `pidstat`**: Мониторинг использования CPU процессами — см. [Диагностика процессов](../Processes/)
 - **`perf`**: Профилирование производительности CPU — см. [perf](../Performance/perf.md)
 - **`sar`**: Исторические данные использования CPU — см. [sar](../Performance/sar.md)
-- **`numactl`**: Управление NUMA affinity — см. [NUMA](../../../Core/cpu_pinning.md)
+- **`numactl`**: Управление NUMA affinity — см. [NUMA](../../Core/cpu_pinning.md)
 
 ## Дополнительная информация
 

@@ -43,5 +43,5 @@ nstat -az | grep -i tfo
 
 ## Связанные темы
 
-* **[`ss`](../../Diagnostics/Networking/ss.md)** — детальная диагностика сокетов
+* **[`ss`](../../../Diagnostics/Networking/ss.md)** — детальная диагностика сокетов
 * **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)

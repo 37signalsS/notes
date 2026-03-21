@@ -241,7 +241,7 @@ spec:
 - Рекомендуется создавать Certificate вручную перед Gateway
 - Поддерживаются несколько HTTPS-слушателей на одном шлюзе
 
-**См.** [Gateway API: Интеграция](./gateway_api.md)
+**См.** [Gateway API: Интеграция](./gateway_api/practical_scenarios.md)
 
 ---
 

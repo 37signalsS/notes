@@ -16,7 +16,7 @@
 
 | Критерий | VPN | Service Mesh |
 | :--- | :--- | :--- |
-| **Сетевой уровень** | L3/L4 туннели ([IPsec](../Tunnels/ipsec.md), [WireGuard](../../Vpn/wireguard.md)) | L7 прокси/sidecar (Envoy), eBPF |
+| **Сетевой уровень** | L3/L4 туннели ([IPsec](../Tunnels/ipsec/ipsec.md), [WireGuard](../../Vpn/wireguard.md)) | L7 прокси/sidecar (Envoy), eBPF |
 | **Идентичность** | IP-адреса, подсети, сертификаты | SPIFFE/SVID, сервисные аккаунты |
 | **Шифрование** | Весь трафик внутри туннеля | mTLS между конкретными сервисами |
 | **Политики доступа** | ACL на основе IP/портов | Правила L7 (методы, пути, заголовки) |
@@ -83,4 +83,4 @@
 - Детальное описание технологий туннелирования: **[Обзор туннелирования](../Tunnels/tunneling_overview.md)**.
 - Углубленная информация по конкретным реализациям:
   - **[VPN на примере WireGuard](../../Vpn/wireguard.md)**.
-  - **[Service Mesh на примере Istio](../../Service_Mesh/Istio/istio_overview.md)** (путь может потребовать уточнения).
+  - **[Service Mesh на примере Istio](../../Service_Mesh/service_mesh_concepts.md)** (путь может потребовать уточнения).

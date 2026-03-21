@@ -120,7 +120,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-> **См. также:** [`rbac_overview.md`](../../Security/rbac/rbac_overview.md)
+> **См. также:** [`rbac_overview.md`](../../../Security/rbac/rbac_overview.md)
 
 ---
 
@@ -180,7 +180,7 @@ roleRef:
 - Exit Code: 137
 - Reason: OOMKilled
 
-**Решение:** См. [`oomkilled_pods.md`](./oomkilled_pods.md)
+**Решение:** См. [`oomkilled_pods.md`](../oomkilled_pods.md)
 
 ---
 

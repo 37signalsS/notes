@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Kubespray** — инструмент для автоматизации развертывания кластеров Kubernetes на базе Ansible. Подробнее в [обзоре](./overview.md).
+**Kubespray** — инструмент для автоматизации развертывания кластеров Kubernetes на базе Ansible. Подробнее в [обзоре](../../../../Linux/Networking/Services/BIND/overview.md).
 
 **Inventory** — файл `inventory.ini`, определяющий хосты и их роли в кластере.
 
@@ -20,6 +20,3 @@
 - **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
 - **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
 
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [installation.md](../installation.md)*

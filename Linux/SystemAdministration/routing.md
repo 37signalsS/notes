@@ -213,4 +213,4 @@ Gateway=192.168.1.254
 * **Policy-Based Routing:** [PBR](../Networking/Policy_Based_Routing/index.md)
 * **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
 * **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)
-* **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](../Networking/Settings/tools/nftables/index.md), [firewalld](../Networking/Settings/tools/firewalld.md)
+* **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](./index.md), [firewalld](../Networking/Settings/tools/firewalld.md)

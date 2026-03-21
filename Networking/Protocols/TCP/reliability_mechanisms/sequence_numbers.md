@@ -14,7 +14,7 @@
 
 * Защищает от старых дубликатов сегментов
 * Усложняет предсказание последовательности (защита от spoofing)
-* Обменивается в [handshake](./connection/connection_management.md#установка-соединения-tcp-handshake)
+* Обменивается в [handshake](../connection/tcp_connection_management_overview.md)
 
 **Пример установки соединения:**
 
@@ -37,7 +37,7 @@
 Отправлено: [1-1000] [1001-2000] [2001-3000]
 Получено:   [1-1000] [2001-3000] [1001-2000]  (перепутаны)
 Действие:   буферизация [2001-3000], ожидание [1001-2000]
-Результат:  передача приложению в порядке [1-1000][1001-2000][2001-3000]
+Результат:  передача приложению в порядке [1-1000[1001-2000[2001-3000]
 ```
 
 ### 2. Обнаружение дубликатов
@@ -81,5 +81,5 @@ ACK:        ack=3001 (ожидается байт 3001)
 ## Связанные темы
 
 * **[Acknowledgments](./acknowledgments.md)** — подтверждения получения
-* **[Header Format](./Header_Format/header_format.md)** — поле Sequence Number в заголовке
-* **[Connection Management](./connection/connection_management.md)** — обмен ISN в handshake
+* **[Header Format](../Header_Format/index.md** — поле Sequence Number в заголовке
+* **[Connection Management](../connection/tcp_connection_management_overview.md)** — обмен ISN в handshake

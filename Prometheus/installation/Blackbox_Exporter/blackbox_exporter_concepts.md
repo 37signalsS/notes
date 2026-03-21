@@ -13,7 +13,7 @@
 | **gRPC** | Проверка gRPC-сервисов (v0.28.0+) |
 | **HTTP/3 (QUIC)** | Проверка HTTP/3 (v0.28.0+) |
 
-> **См. также:** [Blackbox Exporter](../Exporters/blackbox_exporter.md).
+> **См. также:** [Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
 
 ## 2. Актуальная версия
 
@@ -33,5 +33,5 @@
 
 - **[Установка и настройка](./blackbox_exporter_installation.md)** — установка, конфигурация, интеграция с Prometheus
 - **[Дополнительные темы](./blackbox_exporter_advanced.md)** — безопасность, Docker, troubleshooting
-- **[Blackbox Exporter](../Exporters/blackbox_exporter.md)** — полное руководство
+- **[Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)** — полное руководство
 - **[Prometheus Server](../prometheus_server_installation.md)** — интеграция

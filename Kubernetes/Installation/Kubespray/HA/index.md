@@ -16,7 +16,7 @@
 - **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
 - **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA
 - **[Keepalived обзор](../../../../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
-- **[HAProxy обзор](../../../../WebServers/Haproxy/haproxy_overview.md)** — детали HAProxy
+- **[HAProxy обзор](../../../../WebServers/haproxy_overview.md)** — детали HAProxy
 
 ## Внешние ресурсы
 

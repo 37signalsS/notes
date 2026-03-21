@@ -30,5 +30,3 @@ kubectl delete pdb <pdb-name>
 ```bash
 kubectl patch pdb <pdb-name> -p '{"spec":{"maxUnavailable":2}}'
 ```
-
-> **См. также:** [`../../../Autoscaling/pod_disruption_budget.md`](../../../Autoscaling/pod_disruption_budget.md)

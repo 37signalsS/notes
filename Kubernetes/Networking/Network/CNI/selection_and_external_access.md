@@ -105,11 +105,11 @@ Calico в режиме eBPF реализует оптимизацию **Direct S
 
 **Подробнее:**
 
-- [NodePort и externalTrafficPolicy: Local](../Service/service_type_nodeport.md#externaltrafficpolicy-local)
+- [NodePort и externalTrafficPolicy: Local](../Service/service_type_nodeport.md)
 - [Путь трафика от Ingress до Pod](./traffic_path_avoid_host_networking.md)
 
 ## Связанные темы
 
-- [Сетевая модель Kubernetes](./network_overview.md)
+- [Сетевая модель Kubernetes](../network_overview.md)
 - [NetworkPolicy](../NetworkPolicy/best_practices.md)
 - [eBPF](./ebpf.md)

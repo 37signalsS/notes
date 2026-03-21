@@ -2,7 +2,7 @@
 
 ## 1. Определения
 
-**VictoriaMetrics** — это высокопроизводительная, экономичная и масштабируемая [система мониторинга](./../Concepts/Observability_and_Monitoring/observability_overview.md) и база данных временных рядов ([TSDB](./../Prometheus/concepts/tsdb.md)). Она часто используется как решение для долгосрочного хранения (Long-Term Storage) метрик [Prometheus](./../Prometheus/overview.md), являясь альтернативой таким системам, как [Thanos](./../Prometheus/scaling/thanos_overview.md) и [Mimir](./../Mimir/mimir_overview.md).
+**VictoriaMetrics** — это высокопроизводительная, экономичная и масштабируемая [система мониторинга](./../Concepts/Observability_and_Monitoring/observability_definitions.md) и база данных временных рядов ([TSDB](./../Prometheus/concepts/tsdb.md)). Она часто используется как решение для долгосрочного хранения (Long-Term Storage) метрик [Prometheus](./../Prometheus/overview.md), являясь альтернативой таким системам, как [Thanos](./../Prometheus/scaling/thanos_overview.md) и [Mimir](./../Mimir/mimir_overview.md).
 
 ## 2. Базовые концепции
 
@@ -19,7 +19,7 @@ VictoriaMetrics может быть установлена в двух режи�
 * **Протокол `remote_write`:** Легко интегрируется с Prometheus через стандартный механизм [`remote_write`](./../Prometheus/scaling/remote_read_write.md), выступая в роли централизованного хранилища.
 * **Горизонтальное масштабирование:** Компоненты системы могут быть развернуты в кластере для обеспечения высокой доступности и масштабируемости.
 * **Сжатие данных:** Эффективно сжимает данные для экономии дискового пространства, сохраняя при этом полную гранулярность (в отличие от downsampling'а в Thanos).
-* **MetricsQL:** Предлагает расширенный язык запросов `MetricsQL`, который обратно совместим с [PromQL](./../Prometheus/concepts/promql.md), но добавляет новые функции для более удобного анализа данных.
+* **MetricsQL:** Предлагает расширенный язык запросов `MetricsQL`, который обратно совместим с [PromQL](./../Prometheus/concepts/promql/selectors_operators.md), но добавляет новые функции для более удобного анализа данных.
 * **Мульти-тенатность:** Компонент `vmauth` позволяет логически разделять данные для разных команд или проектов, обеспечивая изоляцию.
 * **Дедупликация:** Умеет выполнять дедупликацию данных при сборе метрик от нескольких реплик Prometheus.
 

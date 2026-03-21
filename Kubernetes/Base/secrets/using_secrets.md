@@ -103,7 +103,7 @@ spec:
               path: settings/app.conf
 ```
 
-> **Подробнее:** [Projected Volume в Pod Volumes](../Pod/pod_volumes.md) — полное описание всех источников, включая serviceAccountToken, clusterTrustBundle и podCertificate.
+> **Подробнее:** [Projected Volume в Pod Volumes](../Pod/volume_types/projected_volumes.md) — полное описание всех источников, включая serviceAccountToken, clusterTrustBundle и podCertificate.
 
 ### Secret Data Mount (serviceAccount)
 
@@ -131,7 +131,7 @@ spec:
 * `kubernetes.io/serviceaccount/token` — JWT-токен
 * `kubernetes.io/serviceaccount/ca.crt` — CA сертификат для проверки API
 
-> **Кастомизация токена:** Для создания токена с измененными параметрами (срок действия, аудитория) используйте [Projected Volume с serviceAccountToken](../Pod/pod_volumes.md).
+> **Кастомизация токена:** Для создания токена с измененными параметрами (срок действия, аудитория) используйте [Projected Volume с serviceAccountToken](../Pod/volume_types/projected_volumes.md).
 
 ## Дополнительная информация
 

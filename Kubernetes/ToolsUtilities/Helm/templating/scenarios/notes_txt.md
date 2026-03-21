@@ -57,5 +57,5 @@ To learn more about the release, try:
 
 ## Дополнительные ссылки
 
-- [helm_templating](../Helm/helm_templating.md) — обзорная страница
+- [helm_templating](../../helm_templating.md) — обзорная страница
 - [Функции](../functions.md) — используемые функции

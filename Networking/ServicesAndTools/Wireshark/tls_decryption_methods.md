@@ -291,4 +291,4 @@ CLIENT_RANDOM <hex-random> <hex-secret>
 - **[Дешифрование TLS-трафика](./advanced_features.md#дешифрование-tls-трафика)** — методы в Wireshark
 - **[Протокол TLS](../../Protocols/tls.md)** — основы протокола
 - **[Perfect Forward Secrecy](../../Protocols/tls.md#perfect-forward-secrecy-pfs)** — механизм PFS
-- **[SSL Pinning](../../Security/Concepts/ssl_pinning.md)** — концепция и обход (TODO)
+- **[SSL Pinning](../../../Security/Concepts/authentication_vs_authorization.md)** — концепция и обход (TODO)

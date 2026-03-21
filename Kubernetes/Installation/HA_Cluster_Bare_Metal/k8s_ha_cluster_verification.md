@@ -274,7 +274,7 @@ kubectl logs -n kube-system -l k8s-app=calico-node
 ### Связанные документы
 
 - **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
+- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
 - **High Availability**: [HA Overview](../../../Concepts/High_Availability/ha_overview.md)
 - **Troubleshooting**: [Common Errors](../../Troubleshooting/Common_Errors/overview.md)
 - **Monitoring**: [Prometheus](../../Prometheus/prometheus_overview.md)
@@ -284,6 +284,6 @@ kubectl logs -n kube-system -l k8s-app=calico-node
 | Раздел | Confidence |
 | :--- | :--- |
 | Базовая проверка | Этот файл | 10 |
-| Проверка HA | Этот файл + [kubeadm_ha_with_keepalived_haproxy/index.md](../kubeadm/ha_keepalived_haproxy/index.md) | 10 |
+| Проверка HA | Этот файл + [kubeadm_ha_with_keepalived_haproxy/inde](x.md)(../kubeadm/ha_keepalived_haproxy/index.md) | 10 |
 | Проверка etcd | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |
 | Сетевая проверка | [CNI Overview](../../Networking/Network/cni_overview.md) | 10 |

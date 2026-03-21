@@ -122,8 +122,8 @@ metadata:
 - **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
 - **[Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)** — логи и диагностика
 - **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
-- **[Secrets](../Security/application_secrets_management.md)** — управление секретами
-- **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия
+- **[Secrets](../../Security/application_secrets_management.md)** — управление секретами
+- **[Deployment](./index.md)** — rolling update стратегия
 - **[Helm](../Helm/helm_overview.md)** — установка через Helm
 
 ### Репозиторий и документация

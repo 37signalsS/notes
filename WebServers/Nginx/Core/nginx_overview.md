@@ -135,6 +135,6 @@ server {
 ### Связанные технологии
 
 - **[Angie](../../Angie/angie_overview.md)**: Форк Nginx от ключевых бывших разработчиков.
-- **[HAProxy](../../Haproxy/haproxy_overview.md)**: Высокопроизводительный балансировщик нагрузки.
+- **[HAProxy](../../haproxy_overview.md)**: Высокопроизводительный балансировщик нагрузки.
 - **[Apache](../../Apache/apache_overview.md)**: Классический веб-сервер с гибкой конфигурацией через `.htaccess`.
 - **[Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)**: Создание отказоустойчивого кластера Nginx с помощью виртуального IP (VRRP).

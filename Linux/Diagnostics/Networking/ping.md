@@ -138,7 +138,7 @@ ping google.com       # Проверка DNS
 # Ошибка "Name or service not known" → DNS не работает
 ```
 
-> **Подробно:** См. [Диагностика DNS](./dns_diagnostics.md)
+> **Подробно:** См. [Диагностика DNS](./dns/overview.md)
 
 ### Flood ping (стресс-тест)
 
@@ -210,9 +210,9 @@ ping -s 2000 -M do ya.ru
 
 ### Связанные заметки
 
-- **[Диагностика DNS](./dns_diagnostics.md)** — разрешение имён
+- **[Диагностика DNS](./dns/overview.md)** — разрешение имён
 - **[traceroute_mtr.md](./traceroute_mtr.md)** — трассировка маршрута
 - **[tcpdump.md](./tcpdump.md)** — анализ ICMP-трафика
 - **[ping_alternatives.md](../../../Networking/Troubleshooting/ping_alternatives.md)** — альтернативы для случаев, когда ICMP блокируется
 - **[icmp.md](../../../Networking/Protocols/icmp.md)** — протокол ICMP (протоколы)
-- **[MTU (Maximum Transmission Unit)](../../../Networking/OSI_TCP_IP_Model/Network_layer/Troubleshooting/mtu_and_vpn.md)** — диагностика MTU с помощью ping
+- **[MTU (Maximum Transmission Unit)](../../../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — диагностика MTU с помощью ping

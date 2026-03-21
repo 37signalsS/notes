@@ -2,7 +2,7 @@
 
 ## Определения
 
-> **Основная статья: [Observability (Наблюдаемость)](../../Concepts/Observability_and_Monitoring/observability_overview.md)**
+> **Основная статья: [Observability (Наблюдаемость)](../../Concepts/Observability_and_Monitoring/observability_definitions.md)**
 
 **Мониторинг** — это процесс сбора, обработки и анализа данных (метрик) для получения представления о производительности и состоянии системы. В контексте Kubernetes это относится ко всему, от бизнес-показателей до утилизации CPU на отдельных нодах.
 
@@ -109,7 +109,7 @@
 #### Ключевые компоненты кластера для мониторинга
 
 - **etcd:** Доступность кластера, частота смены лидера.
-- **Control Plane:** [kube-apiserver](./KubeAPIServer/kube_apiserver_monitoring.md), `kube-controller-manager`, `kube-scheduler`, `kubelet`, `kube-proxy`.
+- **Control Plane:** [kube-apiserver](./kube_apiserver_monitoring.md), `kube-controller-manager`, `kube-scheduler`, `kubelet`, `kube-proxy`.
 - **Среда выполнения контейнеров:** Работоспособность Docker/containerd демонов.
 - **DNS (CoreDNS):** Количество запросов, ошибок, кэш-промахов.
 - **Ingress Controller:** Доступность подов, потребление ресурсов, внутренние метрики.

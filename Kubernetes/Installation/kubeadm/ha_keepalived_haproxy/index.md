@@ -17,7 +17,7 @@
 
 ## Связанные темы
 
-- **HA кластер на bare metal**: [HA Overview](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-- **Control Plane & CNI**: [Control Plane & CNI](../HA_Cluster_Bare_Metal/k8s_ha_control_plane_and_cni.md)
-- **Keepalived обзор**: [Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)
-- **HAProxy обзор**: [HAProxy](../../../WebServers/Haproxy/haproxy_overview.md)
+- **HA кластер на bare metal**: [HA Overview](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
+- **Control Plane & CNI**: [Control Plane & CNI](../../HA_Cluster_Bare_Metal/control_plane_initialization.md)
+- **Keepalived обзор**: [Keepalived](../../../../Networking/ServicesAndTools/keepalived_overview.md)
+- **HAProxy обзор**: [HAProxy](../../../../WebServers/haproxy_overview.md)

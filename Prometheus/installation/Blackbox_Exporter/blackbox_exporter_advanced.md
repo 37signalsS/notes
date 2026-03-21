@@ -71,7 +71,7 @@ blackbox_exporter --config.file=/etc/blackbox_exporter/blackbox.yml --dry-run
 
 - **[Основные концепции](./blackbox_exporter_concepts.md)** — определения и возможности
 - **[Установка и настройка](./blackbox_exporter_installation.md)** — установка, конфигурация, интеграция
-- **[Blackbox Exporter](../../Exporters/blackbox_exporter.md)** — полное руководство
+- **[Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)** — полное руководство
 - **[Prometheus Server](../prometheus_server_installation.md)** — интеграция
-- **[Configuration](../configuration.md)** — настройка Prometheus
+- **[Configuration](../../../Databases/MariaDB/configuration.md)** — настройка Prometheus
 - **[Docker Stack](../docker_stack/remote_hosts_monitoring.md)** — мониторинг удалённых хостов

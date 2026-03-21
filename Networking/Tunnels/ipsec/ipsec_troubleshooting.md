@@ -104,4 +104,4 @@ Oct 3 17:53:27 racoon: INFO: IPsec-SA established: ESP/Tunnel 10.0.1.1[500]->10.
 
 - **[IPSec: архитектура](./ipsec_architecture.md)** — концепции SA, SP, режимы инкапсуляции
 - **[IPSec: настройка на Linux](./ipsec_linux_setup.md)** — конфигурация racoon и setkey
-- **[tcpdump](../ServicesAndTools/Wireshark/tcpdump.md)** — основы работы с утилитой
+- **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — основы работы с утилитой

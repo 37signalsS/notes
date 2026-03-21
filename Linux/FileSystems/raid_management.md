@@ -76,7 +76,7 @@ sudo mdadm /dev/md0 --add /dev/sdd1
 ## Связанные темы
 
 * [Диагностика дисков (SMART)](../Diagnostics/Hardware/smartctl/index.md)
-* [LVM поверх RAID](../LVM/overview_concepts.md)
+* [LVM поверх RAID](./LVM/overview_concepts.md)
 * [Настройка fstab](mounting/fstab.md)
 * [Загрузка и initramfs](../Core/kernel/boot_process.md)
 * [Резервное копирование БД](../../Databases/Concepts/backups.md)

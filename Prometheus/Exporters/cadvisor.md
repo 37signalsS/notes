@@ -271,7 +271,7 @@ scrape_configs:
 
 * [Интеграция Docker с Prometheus](../../Docker/Docker_metrics/docker_prometheus_integration.md)
 * [Нативные метрики Docker](../../Docker/Docker_metrics/docker_native_metrics.md)
-* [Мониторинг Kubernetes](../../Kubernetes/monitoring.md)
+* [Мониторинг Kubernetes](../../Databases/Concepts/migrations/monitoring.md)
 
 ### Официальные ресурсы
 

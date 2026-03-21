@@ -6,7 +6,7 @@
 > - [Установка через Helm](./Installation/grafana_helm_installation.md)
 > - [Источники данных](./grafana_datasources.md)
 > - [Дашборды](./dashboards/definitions_and_concepts.md)
-> - [Алертинг](./grafana_alerting.md)
+> - [Алертинг](./alerting/concepts.md)
 > - [Провиженинг](./grafana_provisioning.md)
 > - [Аутентификация](./grafana_user_management_and_authentication.md)
 > - [Высокая доступность](./high_availability.md)
@@ -20,7 +20,7 @@
 
 ### Grafana Stack
 
-**Grafana Stack** (ранее LGTM: Loki, Grafana, Tempo, Mimir) — набор инструментов для реализации концепции [наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_overview.md). Grafana — центральный компонент, предоставляющий единый интерфейс для анализа:
+**Grafana Stack** (ранее LGTM: Loki, Grafana, Tempo, Mimir) — набор инструментов для реализации концепции [наблюдаемости (observability)](../Concepts/Observability_and_Monitoring/observability_definitions.md). Grafana — центральный компонент, предоставляющий единый интерфейс для анализа:
 
 - **Метрики** (Mimir/Prometheus)
 - **Логи** (Loki)
@@ -40,7 +40,7 @@
 | :--- | :--- | :--- |
 | **Визуализация** | Интерактивные дашборды, графики, таблицы | [Дашборды](./dashboards/definitions_and_concepts.md) |
 | **Источники данных** | Prometheus, Loki, PostgreSQL, MySQL и др. | [Источники данных](./grafana_datasources.md) |
-| **Алертинг** | Unified Alerting с уведомлениями | [Алертинг](./grafana_alerting.md) |
+| **Алертинг** | Unified Alerting с уведомлениями | [Алертинг](./alerting/concepts.md) |
 | **Провиженинг** | Управление конфигурацией как код | [Провиженинг](./grafana_provisioning.md) |
 | **Плагины** | Расширение функциональности | [Плагины](./grafana_plugins.md) |
 | **Аутентификация** | OAuth, LDAP, сервисные аккаунты | [Аутентификация](./grafana_user_management_and_authentication.md) |
@@ -55,7 +55,7 @@ Prometheus имеет собственный UI для отладки, но Graf
 
 - **Совместимость:** Встроенный плагин для Prometheus, полная поддержка PromQL.
 - **Готовые дашборды:** Тысячи дашбордов в [библиотеке Grafana](https://grafana.com/grafana/dashboards/) (например, Node Exporter Full — ID 1860).
-- **Kubernetes:** Для развёртывания полного стека см. [kube-prometheus-stack](../Prometheus/Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+- **Kubernetes:** Для развёртывания полного стека см. [kube-prometheus-stack](../Linux/PackageManagement/deb_private_apt_repository_reprepro/practical_scenarios.md).
 
 ### Отладка с использованием Grafana Stack
 

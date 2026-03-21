@@ -152,5 +152,5 @@ spec:
 
 ### Ссылки
 
-- **[GitOps: Уведомления](../Notifications/gitops_notifications.md)** — обзор уведомлений в GitOps
+- **[GitOps: Уведомления](../gitops_notifications.md)** — обзор уведомлений в GitOps
 - **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)**

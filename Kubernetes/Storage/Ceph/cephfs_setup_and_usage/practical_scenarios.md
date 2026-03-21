@@ -16,7 +16,7 @@ ceph osd pool application enable cephfs_data cephfs
 ceph osd pool application enable cephfs_metadata cephfs
 ```
 
-> **Примечание**: Количество PG рассчитывается по формуле в [ceph_placement_groups.md](ceph_placement_groups.md).
+> **Примечание**: Количество PG рассчитывается по формуле в [ceph_placement_groups.md](../ceph_placement_groups.md).
 
 ### 1.2. Создание файловой системы
 

@@ -82,6 +82,6 @@ sudo cat /proc/kmsg
 
 ### Связанные темы
 
-- **[journalctl](../../Logging/journalctl.md)** — просмотр системных логов
+- **[journalctl](../../journalctl.md)** — просмотр системных логов
 - **[sysctl](../../../Core/kernel/sysctl.md)** — настройка параметров ядра
 - **[boot_process](../../../Core/kernel/boot_process.md)** — процесс загрузки ядра

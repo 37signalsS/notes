@@ -189,8 +189,8 @@ yc compute snapshot list
 ### Связанные документы
 
 - **[VPC](./VPC.md)** — настройка сетей, подсетей, security groups
-- **[Resource Manager](./Resource-Manager.md)** — управление каталогами и сервисными аккаунтами
-- **[Storage](./Storage.md)** — объектные и блочные хранилища для данных ВМ
+- **[Resource Manager](./index.md)** — управление каталогами и сервисными аккаунтами
+- **[Storage](../Kubernetes/Base/secrets/etcd_storage.md)** — объектные и блочные хранилища для данных ВМ
 - **[Managed Databases](./Managed-Databases.md)** — управляемые БД как альтернатива развёртыванию на ВМ
 
 ### Интеграции

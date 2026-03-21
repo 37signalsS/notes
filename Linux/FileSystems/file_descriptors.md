@@ -51,7 +51,7 @@
     ulimit -n 4096
     ```
 
-    Подробнее о лимитах ресурсов см. в [Лимиты ресурсов в Linux: ulimit](../Core/processes/limits.md).
+    Подробнее о лимитах ресурсов см. в [Лимиты ресурсов в Linux: ulimit](../Core/processes/limits_hierarchy.md).
 
 - **`cat /proc/sys/fs/file-nr`:** Общесистемная информация о файловых дескрипторах.
 
@@ -75,4 +75,4 @@
   - [Типы файлов](./file_types.md) — файлы, сокеты, каналы
   - [Перенаправление ввода-вывода](../Shell/io_redirection.md) — работа с FD в Bash
   - [Inode и ссылки](./links_inodes_dentries.md) — фундаментальные структуры ФС
-  - [Системные вызовы](../Core/system_calls.md) — `open()`, `read()`, `write()`, `close()`
+  - [Системные вызовы](../Core/systemd/systemd_unit_file_structure.md) — `open()`, `read()`, `write()`, `close()`

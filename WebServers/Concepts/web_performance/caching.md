@@ -6,7 +6,7 @@
 
 ## Серверное кэширование (Nginx Proxy Cache)
 
-Кэширование ответов от бэкенд-серверов. Значительно снижает нагрузку на бэкенд. Подробно этот механизм рассмотрен в заметке о [кэшировании в Nginx](../Nginx/Performance/Caching/proxy_caching.md).
+Кэширование ответов от бэкенд-серверов. Значительно снижает нагрузку на бэкенд. Подробно этот механизм рассмотрен в заметке о [кэшировании в Nginx](../../Nginx/Performance/Caching/proxy_caching.md).
 
 * Настраивается с помощью `proxy_cache_path`, `proxy_cache`, `proxy_cache_valid`.
 * `proxy_use_stale` и `proxy_background_update` позволяют отдавать устаревший контент при проблемах с бэкендом и плавно обновлять кэш.
@@ -37,4 +37,4 @@ location / {
 
 * [Компрессия контента](./server_compression.md) — Gzip, Brotli, ZSTD
 * [Оптимизация TLS](./tls_optimization.md) — ускорение безопасного соединения
-* [Кэширование в Nginx](../Nginx/Performance/Caching/proxy_caching.md)
+* [Кэширование в Nginx](../../Nginx/Performance/Caching/proxy_caching.md)

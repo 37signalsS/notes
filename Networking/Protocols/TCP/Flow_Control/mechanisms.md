@@ -136,6 +136,6 @@ Window ≥ 125000000 × 0.05 = 6 250 000 байт (~6 МБ)
 
 ### Связанные темы
 
-- **[Congestion Control](./congestion/congestion_control.md)** — управление перегрузкой сети
-- **[Header Format](../Header_Format/header_format.md#7-размер-окна-window-size-16-бит)** — поле Window Size
+- **[Congestion Control](../congestion/tcp_congestion_control_overview.md** — управление перегрузкой сети
+- **[Header Format](../Header_Format/index.md)** — поле Window Size
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_buffer_tuning.md)** — настройка буферов

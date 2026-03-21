@@ -10,7 +10,7 @@
 
 ## Определения
 
-- **Стек LGTM (Loki, Grafana, Tempo, Mimir/Prometheus)**: Современный, полностью интегрированный стек наблюдаемости с открытым исходным кодом от Grafana Labs. Подробнее в [обзоре наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_overview.md).
+- **Стек LGTM (Loki, Grafana, Tempo, Mimir/Prometheus)**: Современный, полностью интегрированный стек наблюдаемости с открытым исходным кодом от Grafana Labs. Подробнее в [обзоре наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
   - **[Loki](../../../Loki/loki_overview.md)**: Система для сбора и агрегации логов, оптимизированная для экономичного хранения.
   - **[Grafana](../../../Grafana/grafana_overview.md)**: Платформа для визуализации и анализа данных, позволяющая объединять метрики, логи и трейсы в едином интерфейсе.
   - **[Tempo](../../../Tempo/index.md)**: Высокомасштабируемое хранилище для распределенных трассировок.
@@ -127,7 +127,7 @@
 
 ### Связанные документы
 
-- **[Observability Overview](../../../Concepts/Observability_and_Monitoring/observability_overview.md)** — концепция наблюдаемости
+- **[Observability Overview](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — концепция наблюдаемости
 - **[OpenTelemetry Architecture](../../../OpenTelemetry/architecture_signals.md)** — сигналы и архитектура OTel
 - **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для production
 - **[Cert-Manager Cluster CA](../../ToolsUtilities/cert_manager/cluster_ca.md)** — настройка CA для кластера

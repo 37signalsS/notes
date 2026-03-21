@@ -184,28 +184,11 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 - **Перезагрузка** — выполняется после установки на все узлы
 - **Настройка Control Plane** — следующий этап
 
-### Версии компонентов (требует проверки)
-
-| Компонент | Версия в файле | Статус | Примечание |
-| :--- | :--- | :--- | :--- |
-| **Kubernetes** | 1.34.* | ⚠️ Проверить | Уточнить актуальность |
-| **containerd** | из репозитория ОС | ✅ | 1.6+ совместим с K8s 1.24-1.34 |
-| **pause image** | 3.9 | ⚠️ Проверить | Актуальная версия может быть новее |
-| **Calico** | v3.31.0 | ⚠️ Проверить | В файле k8s_ha_control_plane_and_cni.md |
 
 ### Связанные документы
 
 - **Подготовка узлов**: [Node Preparation](./k8s_ha_node_preparation.md)
-- **Control Plane**: [Control Plane & CNI](./k8s_ha_control_plane_and_cni.md)
+- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
 - **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
 - **kubeadm**: [Quickstart](../kubeadm/ha_keepalived_haproxy/index.md)
 - **CNI**: [CNI Overview](../../Networking/Network/cni_overview.md)
-
-### Надежность
-
-| Раздел | Confidence |
-| :--- | :--- |
-| Установка containerd | Этот файл | 10 |
-| Конфигурация SystemdCgroup | Этот файл | 10 |
-| Версии Kubernetes | Требует проверки | 7 |
-| Версии Calico | Требует проверки | 7 |

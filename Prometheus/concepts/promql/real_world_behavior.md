@@ -74,6 +74,6 @@ api_http_requests_total{method="POST", url="/login", replica="app_2"} 3
 **Связанные темы:**
 
 * [Функции PromQL](./functions.md) — rate, increase, deriv, delta
-* [Лейблы и кардинальность](./labels_and_cardinality.md) — правильное использование лейблов для реплик
-* [Алертинг](../rules.md) — создание правил с учётом поведения метрик
+* [Лейблы и кардинальность](../labels_and_cardinality.md — правильное использование лейблов для реплик
+* [Алертинг](../../../Kubernetes/Security/kyverno/rules.md) — создание правил с учётом поведения метрик
 * [Grafana](../../../Grafana/grafana_overview.md) — использование $__rate_interval

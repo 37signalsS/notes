@@ -132,7 +132,7 @@ awk '/пет[^я]/' my_text.txt
 Найти последовательность "две цифры и одна буква".
 
 ```bash
-echo "12a" | awk '/[[:digit:]][[:digit:]][[:alpha:]]/'
+echo "12a" | awk '/[[:digit:][[:digit:][[:alpha:]]/'
 # Вывод: 12a
 ```
 

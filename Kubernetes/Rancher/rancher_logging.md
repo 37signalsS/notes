@@ -88,7 +88,7 @@ Rancher использует специализированный `Logging Opera
 
 Rancher предоставляет возможность тонкой настройки Fluentd через опцию **"Edit As File"**.
 
-После настройки логирования в Kibana можно создавать [индекс-паттерны](../../MonitoringLogging/EFK/kibana_guide.md#1-создание-индекс-паттерна-для-логов-kubernetes).
+После настройки логирования в Kibana можно создавать [индекс-паттерны](../MonitoringLogging/EFK/kibana_guide.md).
 
 #### 4. Создание ClusterOutput для OpenSearch
 

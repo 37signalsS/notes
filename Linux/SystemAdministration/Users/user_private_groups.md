@@ -136,7 +136,7 @@ shift
 USERS="$@"
 
 if [[ -z "$COMMON_GROUP" ]]; then
-    echo "Использование: $0 <common_group> <user1> [user2]..."
+    echo "Использование: $0 <common_group> <user1> [user2](.."
     exit 1
 fi
 

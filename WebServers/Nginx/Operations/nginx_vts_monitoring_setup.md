@@ -2,7 +2,7 @@
 
 ## Определения
 
-**nginx-module-vts** — это модуль для [Nginx](../Core/nginx_overview.md), который предоставляет подробную статистику в реальном времени. В отличие от стандартного `stub_status_module`, он предлагает детализированные метрики, совместимые с системами [мониторинга](../../../Concepts/Observability_and_Monitoring/observability_overview.md) вроде [Prometheus](../../../Prometheus/overview.md).
+**nginx-module-vts** — это модуль для [Nginx](../Core/nginx_overview.md), который предоставляет подробную статистику в реальном времени. В отличие от стандартного `stub_status_module`, он предлагает детализированные метрики, совместимые с системами [мониторинга](../../../Concepts/Observability_and_Monitoring/observability_definitions.md) вроде [Prometheus](../../../Prometheus/overview.md).
 
 ## Основные концепции
 

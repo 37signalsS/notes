@@ -56,4 +56,4 @@
 - **[Дополнительные темы](./monitoring_advanced_topics.md)** — интеграция с Grafana, best practices
 - **[Compute Cloud](../Compute-Cloud.md)** — метрики ВМ
 - **[Managed Databases](../Managed-Databases.md)** — метрики БД
-- **[Prometheus](../Prometheus/overview.md)** — альтернативная система мониторинга
+- **[Prometheus](../../Linux/Networking/Services/BIND/overview.md)** — альтернативная система мониторинга

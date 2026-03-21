@@ -274,4 +274,4 @@ config.vm.synced_folder ".", "/vagrant",
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](../vagrant_troubleshooting.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](./practical_scenarios.md)*

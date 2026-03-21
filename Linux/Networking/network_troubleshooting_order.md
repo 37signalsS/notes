@@ -116,7 +116,7 @@ nameserver 127.0.0.1
 | `ping 8.8.8.8` работает, `ping google.com` нет | Проблема с DNS |
 | `nslookup` не возвращает IP | DNS-сервер недоступен или не отвечает |
 
-**Подробно:** [Диагностика DNS](./Diagnostics/Networking/dns_diagnostics.md)
+**Подробно:** [Диагностика DNS](./Services/BIND/overview.md)
 
 ### Сценарий 5: Проверка firewall (в последнюю очередь!)
 
@@ -175,13 +175,13 @@ iptables -L -n | grep 5432
 
 **Методология:**
 - [Инструменты диагностики сети](./network_diagnostics_tools.md) — комплексный обзор
-- [Сетевые инструменты CLI и TUI](./Diagnostics/Networking/network_cli_tools.md) — мониторинг в реальном времени
+- [Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md — мониторинг в реальном времени
 
 **Инструменты:**
-- [ping](./Diagnostics/Networking/ping.md) — базовая проверка доступности
-- [traceroute и mtr](./Diagnostics/Networking/traceroute_mtr.md) — трассировка маршрута
-- [ss](./Diagnostics/Networking/ss.md) — анализ сокетов
-- [tcpdump](./Diagnostics/Networking/tcpdump.md) — анализ трафика
+- [ping](../Diagnostics/Networking/ping.md — базовая проверка доступности
+- [traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md — трассировка маршрута
+- [ss](../Diagnostics/Networking/ss.md — анализ сокетов
+- [tcpdump](../Diagnostics/Networking/tcpdump.md) — анализ трафика
 
 **Настройка:**
 - [Конфигурация сетевых интерфейсов](./Settings/Persistent_Network/network_configuration_concepts.md)

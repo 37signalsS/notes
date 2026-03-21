@@ -218,7 +218,7 @@ prometheus.remote_write "mimir" {
 | [Thanos overview](../Prometheus/scaling/thanos_overview.md) | Альтернативное решение для хранения |
 | [Loki overview](../Loki/loki_overview.md) | Сбор и хранение логов |
 | [Tempo overview](../Tempo/index.md) | Хранение распределённых трассировок |
-| [Observability overview](../Concepts/Observability_and_Monitoring/observability_overview.md) | Концепция наблюдаемости |
+| [Observability overview](../Concepts/Observability_and_Monitoring/observability_definitions.md) | Концепция наблюдаемости |
 
 ### Ключевые концепции
 

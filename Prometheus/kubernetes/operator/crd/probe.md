@@ -193,6 +193,6 @@ spec:
 
 ## Связанные темы
 
-* **[Blackbox Exporter](../../../Exporters/blackbox_exporter.md)** — установка и настройка
+* **[Blackbox Exporter](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)** — установка и настройка
 * **[Prometheus CRD](./prometheus.md)** — описание Prometheus
 * **[ServiceMonitor](./servicemonitor.md)** — мониторинг через Service

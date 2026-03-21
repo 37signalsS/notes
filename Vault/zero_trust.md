@@ -111,6 +111,6 @@ vault write transit/decrypt/payments \
 ## Дополнительная информация
 
 * **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md):** Альтернативный подход для безопасного хранения секретов в Git, который реализует часть принципов Zero Trust. Секрет шифруется для конкретного кластера и может быть расшифрован только в нем.
-* **[Антипаттерны управления секретами](./security/common_antipatterns.md):** Типичные ошибки и способы их предотвращения.
+* **[Антипаттерны управления секретами](./common_antipatterns.md):** Типичные ошибки и способы их предотвращения.
 * **[Vault Agent и шаблоны](./guides/vault_agent_and_templates.md):** Автоматизация доставки секретов с динамическим обновлением конфигурации.
 * **[18-point secrets management checklist](https://www.hashicorp.com/en/blog/the-18-point-secrets-management-checklist):** Полный чеклист лучших практик от HashiCorp.

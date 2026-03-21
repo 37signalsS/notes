@@ -13,7 +13,7 @@
 
 ### Ограничение доступа по IP-адресу
 
-#### С помощью [TCP Wrappers](../../../Networking/ServicesAndTools/tcp_wrappers.md)
+#### С помощью [TCP Wrappers](../../../Networking/tcp_wrappers.md)
 
 > **Устаревший метод**: TCP Wrappers не поддерживается в современных дистрибутивах по умолчанию. Рекомендуется использовать методы ниже.
 
@@ -31,7 +31,7 @@
 
 #### С помощью файрвола
 
-Альтернативный метод — фильтрация на сетевом уровне через `[iptables](../../../Networking/Settings/tools/iptables_basics.md)`, `[nftables](../../../Networking/Settings/tools/nftables/index.md)` или `firewalld`.
+Альтернативный метод — фильтрация на сетевом уровне через `[iptables](../../../Networking/Settings/tools/iptables_basics.md)`, `[nftablesindex.md` или `firewalld`.
 
 ### Смена стандартного порта
 

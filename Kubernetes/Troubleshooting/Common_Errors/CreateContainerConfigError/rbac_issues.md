@@ -45,5 +45,3 @@ roleRef:
   name: config-reader
   apiGroup: rbac.authorization.k8s.io
 ```
-
-> **См. также:** [`../../../Security/rbac/rbac_overview.md`](../../../Security/rbac/rbac_overview.md)

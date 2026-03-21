@@ -54,5 +54,5 @@ max_over_time(
 **Связанные темы:**
 
 * [Типы данных](./data_types.md) — instant vector, range vector
-* [Лейблы и кардинальность](./labels_and_cardinality.md) — правильное использование лейблов
+* [Лейблы и кардинальность](../labels_and_cardinality.md) — правильное использование лейблов
 * [Функции PromQL](./functions.md) — rate, histogram_quantile, avg_over_time

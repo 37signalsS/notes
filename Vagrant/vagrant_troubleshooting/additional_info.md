@@ -61,7 +61,7 @@ vagrant --debug
 
 - **[Vagrant Basic Workflow](../vagrant_basic_workflow.md)** — управление жизненным циклом
 - **[Vagrant Storage and Folders](../vagrant_storage_and_folders.md)** — работа с хранилищем
-- **[VirtualBox](../virtualbox.md)** — настройка провайдера VirtualBox
+- **[VirtualBox](./virtualbox.md)** — настройка провайдера VirtualBox
 
 ---
 
@@ -73,4 +73,4 @@ vagrant --debug
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](../vagrant_troubleshooting.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](./practical_scenarios.md)*

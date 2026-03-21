@@ -126,7 +126,7 @@ verifier:
     - name: Assert that nginx service is running
       ansible.builtin.assert:
         that:
-          - service_facts.ansible_facts.services['nginx.service'].state == 'running'
+          - service_facts.ansible_facts.services['nginx.service'](state == 'running'
         fail_msg: "Nginx service is not running"
 ```
 

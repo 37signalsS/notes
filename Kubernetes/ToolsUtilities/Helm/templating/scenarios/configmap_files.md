@@ -94,5 +94,5 @@ data:
 ## Дополнительные ссылки
 
 - [Функции](../functions.md) — toYaml, nindent и другие
-- [Именованные шаблоны](../templates/_helpers.md) — переиспользуемые блоки
-- [helm_templating](../Helm/helm_templating.md) — обзорная страница
+- [Именованные шаблоны](../_helpers.md) — переиспользуемые блоки
+- [helm_templating](../../helm_templating.md) — обзорная страница

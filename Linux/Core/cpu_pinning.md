@@ -190,7 +190,7 @@ perf sched latency
 - **[cgroups cpuset](./cgroups.md#контроллеры-cgroups)** — контроллер cpuset
 - **[NUMA](./memory/performance_tuning.md#numa-локальность-памяти)** — NUMA-архитектура и оптимизация
 - **[Prерывания](./kernel/interrupts.md)** — IRQ affinity
-- **[Планировщик](./kernel/scheduler.md)** — планировщик процессов Linux
+- **[Планировщик](../../Kubernetes/Concepts/kube_scheduler.md)** — планировщик процессов Linux
 
 ### Troubleshooting
 

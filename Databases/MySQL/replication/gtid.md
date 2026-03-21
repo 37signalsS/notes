@@ -82,4 +82,4 @@ GTID автоматически определит недостающие тра
 
 * [Настройка репликации](./setup_guide.md) — классическая настройка по binlog
 * [Управление и отладка](./management_debug.md) — команды диагностики
-* [Multi-Source репликация](./multi-source-replication.md)
+* [Multi-Source репликация](../multi-source-replication.md)

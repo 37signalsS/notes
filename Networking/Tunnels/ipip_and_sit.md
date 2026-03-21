@@ -129,7 +129,7 @@ tcpdump proto 41 -n   # SIT
 
 **Общие:**
 
-- **Нет шифрования:** Трафик передаётся открыто — требуется [IPsec](./ipsec.md) для безопасности
+- **Нет шифрования:** Трафик передаётся открыто — требуется [IPSec](./ipsec/ipsec.md) для безопасности
 - **Point-to-Point:** Только две конечные точки на туннель
 - **Один протокол:** IPIP — только IPv4, SIT — только IPv6
 
@@ -146,7 +146,7 @@ tcpdump proto 41 -n   # SIT
 | IPv6 через IPv4 | SIT |
 | Мультипротокол | [GRE](./gre/gre.md) |
 | L2-оверлей | [GRETAP](./gre/gre.md) / [VXLAN](./vxlan.md) |
-| Безопасный туннель | [WireGuard](../../Vpn/wireguard.md) / [IPsec](./ipsec.md) |
+| Безопасный туннель | [WireGuard](../../Vpn/wireguard.md) / [IPSec](./ipsec/ipsec.md) |
 
 ### MTU considerations
 

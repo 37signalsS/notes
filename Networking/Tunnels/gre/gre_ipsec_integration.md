@@ -73,5 +73,5 @@ IPsec-пакет инкапсулируется в GRE.
 
 - **[GRE: архитектура](./gre_architecture.md)** — формат заголовка, версии GRE
 - **[GRE: практические сценарии](./gre_practical_scenarios.md)** — настройка point-to-point, mGRE, GRETAP
-- **[IPSec](./ipsec.md)** — режимы инкапсуляции, ESP/AH
+- **[IPSec](../ipsec/ipsec.md)** — режимы инкапсуляции, ESP/AH
 - **[Troubleshooting GRE](./gre_troubleshooting.md)** — диагностика проблем

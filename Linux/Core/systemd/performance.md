@@ -63,5 +63,5 @@ systemd-analyze plot > plot.svg
 
 Утилита `systemd-analyze` также используется для других задач, не связанных напрямую с анализом производительности загрузки:
 
-- **Проверка синтаксиса юнит-файлов**: `systemd-analyze verify`. Подробнее см. в [документе о юнитах](./units_and_dependencies.md).
+- **Проверка синтаксиса юнит-файлов**: `systemd-analyze verify`. Подробнее см. в [документе о юнитах](./systemd_units_overview.md).
 - **Анализ выражений календаря**: `systemd-analyze calendar` для отладки [таймеров](./timers.md).

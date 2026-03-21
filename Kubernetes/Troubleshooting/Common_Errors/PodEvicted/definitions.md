@@ -4,12 +4,6 @@
 
 **`Evicted`** — статус пода, означающий, что Kubernetes принудительно выселил под с узла. Происходит при нехватке ресурсов на узле (память, диск, PID) или при выводе узла из эксплуатации.
 
-> - QoS и ресурсы: [`../../../Scheduling/qos_limit_and_requests.md`](../../../Scheduling/qos_limit_and_requests.md)
-> - OOMKilled: [`oomkilled_pods.md`](./oomkilled_pods.md)
-> - Taints: [`../../../Scheduling/taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)
-> - Обслуживание узлов: [`../../../Operations/node_maintenance.md`](../../../Operations/node_maintenance.md)
-> - Pod Disruption Budget: [`../../../Autoscaling/pod_disruption_budget.md`](../../../Autoscaling/pod_disruption_budget.md)
-
 ## Основные концепции
 
 ### Типы eviction

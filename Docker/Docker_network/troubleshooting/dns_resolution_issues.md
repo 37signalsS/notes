@@ -73,9 +73,9 @@ docker run --dns=1.1.1.1 my_image
 
 - **Связанные темы**:
   - **[Обзор сетевых моделей Docker](../docker_network.md)**: основной справочник по Docker Networking
-  - **[DNS и Service Discovery](../concepts/dns_and_service_discovery.md)**: Подробнее о встроенном DNS и сервис-дискавери
+  - **[DNS и Service Discovery](../dns_and_service_discovery.md)**: Подробнее о встроенном DNS и сервис-дискавери
   - **[Интеграция с iptables](./iptables_integration.md)**: Проблемы с NAT и файрволом
 
 - **Опция `dns-opt`:** Позволяет передавать дополнительные параметры резолверу. Например, `"dns-opt": ["use-vc"]` заставляет использовать TCP вместо UDP, что может быть полезно в нестабильных сетях.
 - **Проблемы с `iptables`:** В редких случаях DNS-трафик может блокироваться из-за некорректных правил SNAT в `iptables`. Для диагностики проверьте вывод команды `iptables -t nat -L -n -v`.
-- **Сервис-дискавери:** Встроенный DNS также отвечает за разрешение имен других контейнеров в той же сети. Подробнее см. в [DNS и Service Discovery](../concepts/dns_and_service_discovery.md).
+- **Сервис-дискавери:** Встроенный DNS также отвечает за разрешение имен других контейнеров в той же сети. Подробнее см. в [DNS и Service Discovery](../dns_and_service_discovery.md).

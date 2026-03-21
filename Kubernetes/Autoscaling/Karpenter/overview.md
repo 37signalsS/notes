@@ -54,10 +54,10 @@
 ### Интеграции
 
 * **[HPA](../HPA/index.md)** — Karpenter реагирует на поды, созданные HPA.
-* **[VPA](vpa_detailed.md)** — VPA помогает оптимизировать `requests` для лучшего подбора узлов.
-* **[KEDA](keda_detailed.md)** — KEDA создаёт HPA, который активирует Karpenter.
-* **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — альтернатива Karpenter, не рекомендуется использовать одновременно.
-* **[Pod Disruption Budget](pod_disruption_budget.md)** — Karpenter учитывает PDB при консолидации.
+* **[VPA](../vpa_detailed.md)** — VPA помогает оптимизировать `requests` для лучшего подбора узлов.
+* **[KEDA](../keda/practical_scenarios.md)** — KEDA создаёт HPA, который активирует Karpenter.
+* **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — альтернатива Karpenter, не рекомендуется использовать одновременно.
+* **[Pod Disruption Budget](../pod_disruption_budget.md)** — Karpenter учитывает PDB при консолидации.
 
 ### Ограничения
 

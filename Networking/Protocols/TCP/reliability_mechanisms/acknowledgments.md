@@ -56,7 +56,7 @@ SACK:       blocks=[2001-4000]
 Ретрансмиссия: только [1001-2000] (точно!)
 ```
 
-**Опция TCP:** [SACK в заголовке](./Header_Format/header_format.md#выборочное-подтверждение-selective-acknowledgment-sack)
+**Опция TCP:** [SACK в заголовке](../Header_Format/index.md)
 
 **SACK block format:**
 
@@ -125,5 +125,5 @@ ACK:        ack=1001             ack=1001 (DupACK #1)
 
 * **[Sequence Numbers](./sequence_numbers.md)** — нумерация байт
 * **[Retransmission](./retransmission.md)** — повторная передача
-* **[Header Format](./Header_Format/header_format.md)** — поле ACK в заголовке
+* **[Header Format](../Header_Format/index.md)** — поле ACK в заголовке
 * **[Fast Retransmit](./retransmission.md#быстрая-ретрансмиссия-fast-retransmit)** — реакция на DupACK

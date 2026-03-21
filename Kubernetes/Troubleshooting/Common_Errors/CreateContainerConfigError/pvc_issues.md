@@ -61,5 +61,3 @@ spec:
   hostPath:
     path: "/mnt/data"
 ```
-
-> **См. также:** [`../../../Storage/pv_and_pvc.md`](../../../Storage/pv_and_pvc.md), [`../../../Storage/CSI/csi_drivers_comparison.md`](../../../Storage/CSI/csi_drivers_comparison.md)

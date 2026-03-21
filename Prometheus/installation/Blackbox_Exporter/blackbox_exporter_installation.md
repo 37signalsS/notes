@@ -184,7 +184,7 @@ scrape_configs:
         replacement: localhost:9115
 ```
 
-> **См. также:** [Prometheus configuration](../configuration.md).
+> **См. также:** [Prometheus configuration](../../../Databases/MariaDB/configuration.md).
 
 ## 4. Примеры проверок
 
@@ -200,4 +200,4 @@ scrape_configs:
 
 - **[Основные концепции](./blackbox_exporter_concepts.md)** — определения и возможности
 - **[Дополнительные темы](./blackbox_exporter_advanced.md)** — безопасность, Docker, troubleshooting
-- **[Prometheus configuration](../configuration.md)** — настройка Prometheus
+- **[Prometheus configuration](../../../Databases/MariaDB/configuration.md)** — настройка Prometheus

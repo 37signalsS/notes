@@ -1,6 +1,6 @@
 # Траблшутинг №2: Периодические 500-е ошибки из-за DNS
 
-> - Диагностика DNS: [`dns_diagnostics.md`](../../Linux/Diagnostics/Networking/dns_diagnostics.md)
+> - Диагностика DNS: [`dns/overview.md`](../../Linux/Diagnostics/Networking/dns/overview.md)
 > - Протокол DNS: [`dns.md`](../Protocols/DNS/dns.md)
 > - Общая методология траблшутинга: [`general_troubleshooting_methodology.md`](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)
 > - Диагностика в Docker: [`dns_resolution_issues.md`](../../Docker/Docker_network/troubleshooting/dns_resolution_issues.md)
@@ -47,7 +47,7 @@
     - Проведена проверка разрешения DNS-имени хоста базы данных с проблемного и с рабочего серверов приложений (`nslookup <db_hostname>` изнутри контейнера).
     - **Результат**: На проблемном сервере DNS-имя базы данных разрешалось в IP-адрес **тестовой**, а не **боевой** БД.
 
-    > **Диагностика DNS (подробнее):** Для комплексной проверки DNS используйте [`dig`](../../Linux/Diagnostics/Networking/dns_diagnostics.md) или [`resolvectl`](../../Linux/Diagnostics/Networking/dns_diagnostics.md):
+    > **Диагностика DNS (подробнее):** Для комплексной проверки DNS используйте [`dig`](../../Linux/Diagnostics/Networking/dns/overview.md) или [`resolvectl`](../../Linux/Diagnostics/Networking/dns/overview.md):
 >
     > ```bash
     > # Проверка разрешения имени через dig

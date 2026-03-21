@@ -52,10 +52,10 @@ sudo dnf versionlock clear
 ## Связанные темы
 
 * **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-* **[Управление репозиториями DNF](./dnf_repository_management.md)** — настройка репозиториев
+* **[Управление репозиториями DNF](../dnf_commands/basic_concepts.md)** — настройка репозиториев
 * **[Анализ и получение пакетов](../package_analysis.md)** — изучение метаданных и содержимого
 * **[База данных пакетов](../package_database.md)** — история транзакций и восстановление
-* **[Локальное зеркало репозитория](./local_repository_mirror.md)** — создание зеркал для YUM/DNF
+* **[Локальное зеркало репозитория](../apt_repository_mirror.md)** — создание зеркал для YUM/DNF
 
 ---
 
@@ -67,4 +67,4 @@ sudo dnf versionlock clear
 
 ---
 
-*Этот файл является частью декомпозированной документации. Исходный файл: [dnf_commands.md](../dnf_commands.md)*
+*Этот файл является частью декомпозированной документации. Исходный файл: [dnf_commands.md](./practical_scenarios.md)*

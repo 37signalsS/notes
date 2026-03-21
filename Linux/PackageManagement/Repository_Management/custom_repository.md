@@ -137,6 +137,6 @@ createrepo_c --update /var/www/html/my-repo
 ### Связанные темы
 
 - **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-- **[Команды DNF](./dnf_commands.md)** — полный справочник по DNF
-- **[Локальное зеркало репозитория](../local_repository_mirror.md)** — создание зеркал для YUM/DNF
-- **[Сборка пакетов](./package_building.md)** — создание собственных RPM-пакетов
+- **[Команды DNF](../dnf_commands/definitions.md** — полный справочник по DNF
+- **[Локальное зеркало репозитория](../apt_repository_mirror.md** — создание зеркал для YUM/DNF
+- **[Сборка пакетов](../package_build/definitions.md)** — создание собственных RPM-пакетов

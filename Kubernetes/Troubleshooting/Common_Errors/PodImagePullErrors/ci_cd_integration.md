@@ -19,8 +19,6 @@ deploy:
   - kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}' -n $KUBE_NAMESPACE
 ```
 
-> **См. также:** [`../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md`](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)
-
 ### ArgoCD
 
 ArgoCD автоматически использует `imagePullSecrets`, указанные в манифесте. Убедитесь, что secret создан в том же namespace, где развертывается приложение.

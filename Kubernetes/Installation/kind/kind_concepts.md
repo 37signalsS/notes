@@ -34,7 +34,7 @@
 | Инструмент | Назначение | Отличие от kind |
 | :--- | :--- | :--- |
 | **[minikube](https://minikube.sigs.k8s.io/docs/)** | Локальная разработка | Запускает полноценную VM, тяжелее |
-| **[talosctl](./local_cluster_with_talosctl.md)** | Локальная разработка | Использует Talos OS, безопаснее, но сложнее |
+| **[talosctl](../local_cluster_with_talosctl.md)** | Локальная разработка | Использует Talos OS, безопаснее, но сложнее |
 | **k3d** | Локальная разработка | Запускает k3s (облегченный K8s) в контейнерах |
 
 ---
@@ -66,8 +66,8 @@ nodes:
 
 ## Связанные документы
 
-- **[Локальный кластер с Talos](./local_cluster_with_talosctl.md)** — альтернатива с Talos OS
+- **[Локальный кластер с Talos](../local_cluster_with_talosctl.md)** — альтернатива с Talos OS
 - **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — базовая утилита инициализации
-- **[kubeconfig и подключение](../Operations/kubeconfig_and_connection.md)** — работа с контекстами
+- **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — работа с контекстами
 - **[kind: Практические сценарии](./kind_practical_scenarios.md)** — установка, создание кластеров, примеры
 - **[kind: Конфигурация](./kind_configuration.md)** — подробное описание конфигурации YAML

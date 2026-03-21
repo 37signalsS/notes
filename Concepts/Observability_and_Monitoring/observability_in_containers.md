@@ -2,7 +2,7 @@
 
 ### Особенности в контейнеризированных средах и микросервисах
 
-В современных распределённых системах, особенно при использовании микросервисов и контейнеров (например, Docker, Kubernetes), возникают специфические вызовы для обеспечения Observability. Подходы к **[проектированию высоконагруженного мониторинга в таких средах](./designing_high_load_monitoring_in_distributed_systems.md)** требуют особого внимания.
+В современных распределённых системах, особенно при использовании микросервисов и контейнеров (например, Docker, Kubernetes), возникают специфические вызовы для обеспечения Observability. Подходы к **[проектированию высоконагруженного мониторинга в таких средах](../Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** требуют особого внимания.
 
 Ключевые вызовы и решения:
 
@@ -20,6 +20,6 @@
 
 **См. также:**
 
-* [Проектирование высоконагруженного мониторинга в распределённых системах](./designing_high_load_monitoring_in_distributed_systems.md)
+* [Проектирование высоконагруженного мониторинга в распределённых системах](../Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)
 * [OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md)
 * [Рекомендации по алертингу](./monitoring_alerting_recommendations.md)

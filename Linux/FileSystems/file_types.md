@@ -37,5 +37,5 @@ srwxrwxrwx 1 mysql mysql 0 фев 25 10:00 /tmp/mysql.sock # Сокет
   - [Типы устройств](./device_types.md) — блочные и символьные устройства
   - [Ссылки, Inode и Dentry](./links_inodes_dentries.md) — жёсткие и символические ссылки
   - [Виртуальная ФС /dev](./virtual_fs_dev.md) — файлы устройств
-  - [Сокеты IPC](../IPC/sockets.md) — межпроцессное взаимодействие
-  - [Именованные каналы](../IPC/pipes.md) — FIFO для IPC
+  - [Сокеты IPC](../Core/processes/ipc.md — межпроцессное взаимодействие
+  - [Именованные каналы](../Core/processes/ipc.md) — FIFO для IPC

@@ -41,7 +41,7 @@ Nomad полагается на другие инструменты HashiCorp д
 
 - **[Consul](../Consul/consul_overview.md):** Service discovery, health checking, service mesh
 - **[Vault](../Vault/overview.md):** Управление секретами, динамические credentials
-- **[Terraform](../Terraform/terraform_overview.md):** Provisioning инфраструктуры
+- **[Terraform](../Terraform/index.md):** Provisioning инфраструктуры
 - **Boundary:** Безопасный доступ к workload'ам (интеграция через Consul)
 
 ### Сравнение с другими оркестраторами

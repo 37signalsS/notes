@@ -95,7 +95,7 @@ etcdctl --endpoints=https://127.0.0.1:2379 \
 - **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
 - **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/index.md)** — ручная настройка HA
 - **[Keepalived обзор](../../../../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
-- **[HAProxy обзор](../../../../WebServers/Haproxy/haproxy_overview.md)** — детали HAProxy
+- **[HAProxy обзор](../../../../WebServers/haproxy_overview.md)** — детали HAProxy
 
 ## Внешние ресурсы
 

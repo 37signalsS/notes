@@ -282,6 +282,6 @@ APT::Default-Release "stable";
 ### Связанные темы
 
 - **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — файл `sources.list`
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro.md)** — создание репозитория с `reprepro`
+- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
 - **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
 - **[Анализ и получение пакетов](./package_analysis.md)** — изучение метаданных

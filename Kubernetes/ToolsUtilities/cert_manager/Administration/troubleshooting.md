@@ -134,6 +134,6 @@ openssl verify -CAfile ca.crt <cert.crt>
 
 ### Связанные темы
 
-- [Private CA](../private_ca.md) — создание собственного CA
+- [Private CA](../Private_CA/scenarios.md) — создание собственного CA
 - [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
 - [Installation](../install.md) — установка cert-manager

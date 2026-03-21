@@ -4,7 +4,7 @@
 
 * **[HPA](../HPA/index.md)** — KEDA создаёт и управляет HPA, не используйте одновременно для одного Deployment.
 * **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — CA реагирует на поды, созданные KEDA.
-* **[Karpenter](../karpenter_detailed.md)** — Karpenter создаёт узлы для подов, масштабированных KEDA.
+* **[Karpenter](../Karpenter/installation.md)** — Karpenter создаёт узлы для подов, масштабированных KEDA.
 * **[Prometheus](../../Prometheus/overview.md)** — Prometheus как источник метрик для KEDA.
 
 ## Ограничения
@@ -38,7 +38,3 @@
 * **[Определения](./definitions.md)** — базовые термины KEDA
 * **[Основные концепции](./basic_concepts.md)** — архитектура, принцип работы, типы scaler'ов
 * **[Практические сценарии](./practical_scenarios.md)** — установка, конфигурация, мониторинг
-
----
-
-*Этот файл является частью декомпозированной документации KEDA. Исходный файл: [keda_detailed.md](../Autoscaling/keda_detailed.md)*

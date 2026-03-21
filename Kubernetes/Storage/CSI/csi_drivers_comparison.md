@@ -193,7 +193,7 @@ spec:
           secretProviderClass: "vault-db-credentials"
 ```
 
-> **Подробно:** [External Secret Managers](../Base/secrets/external_managers.md), [Интеграция Vault с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)
+> **Подробно:** [External Secret Managers](../../Base/secrets/external_managers.md, [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
 
 ---
 

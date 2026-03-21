@@ -85,7 +85,7 @@ pvremove /dev/sdc1                    # Очистить LVM-метки
 
 ### Сценарий 5: Восстановление после потери метаданных
 
-Аварийное восстановление: [advanced_topics.md](./advanced_topics.md#восстановление-lvm-после-потери-метаданных)
+Аварийное восстановление: [advanced_topics.md](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md)
 
 ---
 
@@ -116,8 +116,8 @@ lvs -o+thin_pool,data_percent # Для тонких томов: состояни
 | :--- | :--- |
 | Снимки (Snapshots) | [snapshots.md](./snapshots.md) |
 | Тонкое провизионирование | [thin_provisioning.md](./thin_provisioning.md) |
-| Расширенные темы | [advanced_topics.md](./advanced_topics.md) |
-| Базовые концепции | [overview_concepts.md](./overview_concepts.md) |
+| Расширенные темы | [advanced_topics.md](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md |
+| Базовые концепции | [overview_concept](s.md)(./overview_concepts.md) |
 
 ---
 

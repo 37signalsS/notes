@@ -252,7 +252,7 @@ PBR гарантирует, что ответный пакет будет отп
 ### Связанные заметки
 
 - **[ip route](../Tools/iproute2/ip_route.md)** — базовая маршрутизация
-- **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
-- **[iptables](../Settings/tools/linux_firewall_management.md)** — маркировка пакетов
+- **[iproute2 overview](../Services/BIND/overview.md** — обзор утилит iproute2
+- **[iptables](../../Development/build_tools.md)** — маркировка пакетов
 - **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети
 - **[TCP-tuning](../Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP

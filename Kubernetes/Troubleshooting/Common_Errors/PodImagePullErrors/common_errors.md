@@ -91,8 +91,6 @@ kubectl patch serviceaccount default \
   -n <namespace>
 ```
 
-> **См. также:** [`../../../CI-CD/GitLab_CI/Tutorials/ci_cd_pipeline_overview.md`](../../../CI-CD/GitLab_CI/Tutorials/ci_cd_pipeline_overview.md) — интеграция с GitLab Deploy Tokens
-
 ## 3. Образ не существует
 
 **Сообщение:**

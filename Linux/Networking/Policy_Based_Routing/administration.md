@@ -127,6 +127,6 @@ net.ipv4.conf.ens5.rp_filter=2
 ### Связанные темы
 
 - **[ip route](../Tools/iproute2/ip_route.md)** — базовая маршрутизация
-- **[iproute2 overview](../../Tools/iproute2/overview.md)** — обзор утилит iproute2
-- **[iptables](../Settings/tools/linux_firewall_management.md)** — маркировка пакетов
+- **[iproute2 overview](../Services/BIND/overview.md** — обзор утилит iproute2
+- **[iptables](../../Development/build_tools.md)** — маркировка пакетов
 - **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети

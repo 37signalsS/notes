@@ -38,7 +38,7 @@
 | Шаринг шаблонов между проектами | [`include:project`](./include_keyword.md) с тегами | Централизованное управление |
 | Публичная/внутренняя библиотека компонентов | [CI/CD Catalog](./ci_cd_catalog_components.md) | Версионирование, типизация, каталог |
 
-> **Best Practice:** Избегайте YAML Anchors в новых проектах — используйте `!reference` для лучшей валидации и читаемости [^1].
+> **Best Practice:** Избегайте YAML Anchors в новых проектах — используйте `!reference` для лучшей валидации и читаемости [^1](
 
 [^1]: [GitLab CI Best Practices — Avoid YAML Anchors](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
 

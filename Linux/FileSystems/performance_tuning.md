@@ -55,6 +55,6 @@
 * **Мониторинг производительности:**
   * [`iostat`](../Diagnostics/Filesystem/iostat.md) — статистика ввода-вывода
   * [`iotop`](../Diagnostics/Filesystem/iotop.md) — мониторинг дисковой активности процессов
-  * [`blktrace`](../Diagnostics/Hardware/blktrace.md) — трассировка блочных устройств
+  * [`blktrace`](../Diagnostics/Hardware/cpu_info.md) — трассировка блочных устройств
 
 * **Настройка ядра:** Параметры ввода-вывода в [`/sys/block/<device>/queue/`](./virtual_fs_sys.md)

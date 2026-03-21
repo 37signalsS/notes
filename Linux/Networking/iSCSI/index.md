@@ -12,8 +12,8 @@
 
 ## Связанные документы
 
-- **[LVM](../Storage/lvm.md)** — управление логическими томами
-- **[Mount](../SystemAdministration/filesystems/mount.md)** — монтирование файловых систем
-- **[Network Diagnostics](./network_diagnostics_tools.md)** — диагностика сети
-- **[Firewall](../Settings/tools/linux_firewall_management.md)** — настройка firewall
+- **[LVM](../../FileSystems/LVM/operations/lvm_disk_replacement.md** — управление логическими томами
+- **[Mount](../../FileSystems/mounting/scenarios/udev_mount.md** — монтирование файловых систем
+- **[Network Diagnostics](../network_diagnostics_tools.md** — диагностика сети
+- **[Firewall](../../Development/build_tools.md)** — настройка firewall
 - **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — изоляция iSCSI-трафика

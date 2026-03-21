@@ -100,4 +100,4 @@ kubectl config use-context c-m-xxxxxxxxx
 
 - **[RKE: Основные концепции](./rke_concepts.md)** — определения и архитектура
 - **[RKE: Управление и troubleshooting](./rke_management_scenarios.md)** — практические сценарии
-- **[kubeconfig и подключение](../../../Operations/kubeconfig_and_connection.md)** — детали конфигурации
+- **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — детали конфигурации

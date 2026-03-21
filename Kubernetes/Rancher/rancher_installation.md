@@ -17,7 +17,7 @@
 
 * **Ingress Controller**: Для маршрутизации внешнего трафика к Rancher UI и API (например, Nginx Ingress Controller).
 * **Cert Manager**: Для автоматического управления TLS-сертификатами.
-* **Load Balancer (Балансировщик нагрузки)**: Для обеспечения внешнего доступа к Ingress Controller. На Bare Metal кластерах часто используется [MetalLB](../../Networking/LoadBalancing/metallb_overview.md).
+* **Load Balancer (Балансировщик нагрузки)**: Для обеспечения внешнего доступа к Ingress Controller. На Bare Metal кластерах часто используется [MetalLB](../../Kubernetes/Networking/metallb.md).
 
 ## Практические сценарии
 
@@ -75,7 +75,7 @@ docker run -d --name=rancher --restart=unless-stopped \
 
 * **Внутренняя структура:** Rancher в Docker-контейнере запускается в многослойной архитектуре: внутри контейнера разворачивается легковесный Kubernetes (например, K3S).
 * **Нестабильность:** Не рекомендуется для production-сред.
-* **Альтернатива для Single-Node:** Более стабильным подходом является прямая установка Rancher на [K3S](../../Kubernetes/k3s/k3s_overview.md).
+* **Альтернатива для Single-Node:** Более стабильным подходом является прямая установка Rancher на [K3S](../Installation/k3s_dev_environment/kubeutils_image.md).
 
 **Важное замечание по совместимости:** Rancher, особенно до версии 2.7.x, имеет строгие требования к версии Kubernetes. Часто требовалась Kubernetes версия **ниже 1.25** из-за деприкации `PodSecurityPolicy` (PSP) в Kubernetes 1.25.
 

@@ -23,7 +23,7 @@
 
 ### Роли компонентов
 
-1. **[Fluent Bit](../../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)**:
+1. **[Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)**:
     * **Роль**: Легковесный агент-сборщик.
     * **Задача**: Устанавливается на всех узлах. Собирает логи с хостов и из контейнеров Kubernetes. Минимально обрабатывает их (добавляет метаданные) и максимально быстро отправляет в Kafka.
 
@@ -49,7 +49,7 @@
 
 Ключевая часть — настройка `[OUTPUT]` для отправки логов в разные топики Kafka в зависимости от их тега.
 
-*См. практический пример в [Буферизация и маршрутизация в Fluent Bit](../../../Kubernetes/MonitoringLogging/EFK/fluentbit/buffering_routing.md#сценарий-4-отправка-логов-в-kafka-для-буферизации).*
+*См. практический пример в [Буферизация и маршрутизация в Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/buffering_routing.md).*
 
 ### Vector: Трансформация данных из Kafka
 

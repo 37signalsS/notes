@@ -17,8 +17,8 @@
 | **Поды** | [HPA](HPA/index.md) | Количество реплик | Горизонтально |
 | **Контейнеры** | [VPA](vpa_detailed.md) | Resources (CPU/RAM) | Вертикально |
 | **Узлы** | [Cluster Autoscaler](cluster_autoscaler_detailed.md) | Количество узлов | Горизонтально |
-| **Узлы (оптимизировано)** | [Karpenter](karpenter_detailed.md) | Количество узлов | Горизонтально |
-| **События** | [KEDA](keda_detailed.md) | Количество реплик по событиям | Горизонтально |
+| **Узлы (оптимизировано)** | [Karpenter](./Karpenter/installation.md) | Количество узлов | Горизонтально |
+| **События** | [KEDA](./keda/practical_scenarios.md) | Количество реплик по событиям | Горизонтально |
 | **Ресурсы без перезапуска** | [In-Place Pod Resize](in_place_pod_resize.md) | Resources у запущенных подов | Вертикально |
 
 ### Краткое описание компонентов
@@ -45,13 +45,13 @@
 
 Высокопроизводительная альтернатива CA. Создаёт узлы оптимального размера «точно в срок» под требования ожидающих подов. Быстрее и эффективнее CA.
 
-**Подробнее:** [Karpenter Detailed](karpenter_detailed.md)
+**Подробнее:** [Karpenter Detailed](./Karpenter/installation.md)
 
 #### KEDA (Kubernetes Event-driven Autoscaling)
 
 Расширяет возможности HPA, позволяя масштабировать поды на основе событий из 60+ источников (очереди, метрики, расписание). Поддерживает масштабирование до нуля.
 
-**Подробнее:** [KEDA Detailed](keda_detailed.md)
+**Подробнее:** [KEDA Detailed](./keda/practical_scenarios.md)
 
 #### In-Place Pod Resize
 

@@ -50,5 +50,5 @@
 - **Связанные темы:**
   - [Виртуальные ФС](./virtual_filesystems.md) — tmpfs, cgroupfs
   - [Монтирование](./mounting/index.md) — автоматическое монтирование
-  - [POSIX-права](../Security/posix_permissions.md) — детально о правах доступа
+  - [POSIX-права](../../Security/Tools/openssl_ca/single_tier/ca_setup.md) — детально о правах доступа
   - [FHS спецификация](https://refspecs.linuxfoundation.org/FHS/) — официальный стандарт

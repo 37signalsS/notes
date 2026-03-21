@@ -155,7 +155,7 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 - **[STP](./stp.md)** — предотвращение петель в VLAN-среде (MSTP, PVST+)
 - **[LACP](../Concepts/link_aggregation.md)** — агрегация каналов для trunk-портов
 - **[QoS](../Concepts/qos.md)** — приоритезация трафика через PCP-биты
-- **[VRF](../Tunnels/vrf.md)** — изоляция на L3 (аналог VLAN для маршрутизации)
+- **[VRF](../Tunnels/gre/gre_practical_scenarios.md)** — изоляция на L3 (аналог VLAN для маршрутизации)
 
 ### Связанные документы
 
@@ -166,7 +166,7 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 
 **Концепции и настройка:**
 
-- **[L2 Switching](../Concepts/vlan_and_L2_switching.md)** — принцип работы коммутаторов
+- **[L2 Switching](../../Security/Concepts/authentication_vs_authorization.md)** — принцип работы коммутаторов
 - **[Сетевая сегментация](../Concepts/network_segmentation_and_microsegmentation.md)** — стратегии сегментации
 
 ### RFC и стандарты

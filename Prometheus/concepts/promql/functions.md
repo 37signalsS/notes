@@ -1,6 +1,6 @@
 # Функции PromQL
 
-PromQL имеет большой набор функций, которые можно разделить по типам метрик, с которыми они работают. Подробнее о типах метрик см. в **[Типы метрик в Prometheus](./metric_types.md)**.
+PromQL имеет большой набор функций, которые можно разделить по типам метрик, с которыми они работают. Подробнее о типах метрик см. в **[Типы метрик в Prometheus](../metric_types/alerts.md)**.
 
 ## Функции для счётчиков (Counters)
 
@@ -41,7 +41,7 @@ PromQL имеет большой набор функций, которые мо�
   * **Не учитывает сбросы в 0** — может сойти с ума при рестарте приложения
   * Аналог `rate()`, но для метрик, которые могут убывать или скакать туда-сюда
 
-* `predict_linear(v range-vector, t scalar)`: Прогнозирует значение через `t` секунд. Полезно для [алертинга](../rules.md).
+* `predict_linear(v range-vector, t scalar)`: Прогнозирует значение через `t` секунд. Полезно для [алертинга](../../../Kubernetes/Security/kyverno/rules.md).
   * `predict_linear(node_filesystem_free_bytes[1h], 3600 * 4) < 0` — прогноз нехватки места на диске через 4 часа.
 
 * `delta(v range-vector)`: Разница между первым и последним значением в интервале.
@@ -56,7 +56,7 @@ PromQL имеет большой набор функций, которые мо�
 
 * `histogram_quantile(φ float, b histogram)`: Вычисляет φ-квантиль (0 ≤ φ ≤ 1). Это основной способ использования гистограмм для расчета перцентилей.
   * `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
-  * **Подробнее:** [Перцентили и квантили](./metric_types.md#перцентили-и-квантили)
+  * **Подробнее:** [Перцентили и квантили](../metric_types/alerts.md)
 
 ## Функции для сводок (Summaries)
 
@@ -65,7 +65,7 @@ Summary вычисляет квантили на стороне клиента, 
 * **Пример запроса 95-го перцентиля из Summary:**
   * `http_duration_summary{quantile="0.95"}`
 
-> **Важно:** Квантили из Summary **нельзя агрегировать** по нескольким инстансам. Для распределенных систем используйте Histogram + `histogram_quantile()`. Подробнее см. в [Типы метрик — Summary](./metric_types.md#4-summary-сводка) и [Агрегация Summary](./metric_types.md#агрегация-summary-проблема-и-решение).
+> **Важно:** Квантили из Summary **нельзя агрегировать** по нескольким инстансам. Для распределенных систем используйте Histogram + `histogram_quantile()`. Подробнее см. в [Типы метрик — Summary](../metric_types/alerts.md и [Агрегация Summary](../metric_types/alerts.md).
 
 ## Прочие функции
 
@@ -81,7 +81,7 @@ Summary вычисляет квантили на стороне клиента, 
 
 **Связанные темы:**
 
-* [Типы метрик](./metric_types.md) — counter, gauge, histogram, summary
+* [Типы метрик](../metric_types/alerts.md) — counter, gauge, histogram, summary
 * [Агрегация](./aggregation.md) — операторы агрегации и ..._over_time функции
 * [Шаблоны запросов](./query_patterns.md) — практическое применение функций
-* [Алертинг](../rules.md) — использование predict_linear и absent для алертов
+* [Алертинг](../../../Kubernetes/Security/kyverno/rules.md) — использование predict_linear и absent для алертов
