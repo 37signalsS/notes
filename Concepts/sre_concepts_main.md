@@ -153,5 +153,5 @@
 
 ## Связанные документы
 
-- [High Availability](../Concepts/High_Availability/ha_overview.md) — высокая доступность и отказоустойчивость.
+- [High Availability](./High_Availability/ha_overview.md) — высокая доступность и отказоустойчивость.
 - [Observability](./observability_definitions.md) — мониторинг и наблюдаемость системы.
