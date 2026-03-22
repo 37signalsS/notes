@@ -8,7 +8,7 @@
 * **Execution Strategy**: Плагин, управляющий потоком выполнения задач на группе хостов. Основные стратегии — `linear` (синхронная) и `free` (асинхронная).
 * **Facts (Факты)**: Переменные, содержащие информацию о системе (например, IP-адрес, версия ОС), которые Ansible собирает (`gathers`) на удаленных хостах в начале выполнения.
 * **Асинхронные задачи (Async Tasks)**: Задачи, которые Ansible запускает в фоновом режиме, не дожидаясь их завершения.
-* **Mitogen**: Сторонний плагин для Ansible, который заменяет стандартный транспортный уровень на более быстрый, значительно ускоряя выполнение плейбуков.
+* **Mitogen**: Сторонний плагин, заменяющий транспортный уровень Ansible (ускорение 1.5–8 раз). **Важно:** В Ansible 12+ (ansible-core 2.19+) strategy plugins объявлены устаревшими — следите за обновлениями проекта.
 * **Callback-плагины**: Расширения, которые реагируют на события в Ansible (например, завершение задачи) и позволяют изменять вывод, собирать статистику или выполнять другие действия.
 
 ## Основные концепции
@@ -98,22 +98,36 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=60s
 
 ### 5. Измерение производительности (Callback-плагины)
 
-Для поиска "узких мест" и оценки эффекта от оптимизаций используются callback-плагины.
+Для поиска узких мест и оценки эффекта от оптимизаций используйте callback-плагины.
 
-* **`timer`**: Показывает время выполнения каждой задачи.
-* **`profile_tasks`**: В конце выводит отсортированный список задач по времени выполнения.
-* **`profile_roles`**: Агрегирует время по ролям.
+**Доступные плагины:**
 
-**Включение в `ansible.cfg`**:
+- `timer` — показывает время выполнения каждой задачи
+- `profile_tasks` — выводит отсортированный список задач по времени выполнения (в конце)
+- `profile_roles` — агрегирует время по ролям
+
+**Включение (ansible-core < 2.13):**
 
 ```ini
 [defaults]
-# Плагины для сбора статистики
 callback_whitelist = timer, profile_tasks, profile_roles
-
-# Опционально: более компактный вывод
-# stdout_callback = dense
 ```
+
+**Включение (ansible-core >= 2.13):**
+
+```ini
+[defaults]
+callback_plugins = ~/.ansible/plugins/callback:/usr/share/ansible/plugins/callback
+```
+
+**Альтернатива через переменную окружения:**
+
+```bash
+export ANSIBLE_CALLBACK_PLUGINS="~/.ansible/plugins/callback:/usr/share/ansible/plugins/callback"
+ansible-playbook playbook.yml -e "callback_whitelist=timer,profile_tasks"
+```
+
+> **Примечание:** В ansible-core 2.13+ `callback_whitelist` заменён на `callback_plugins`. Для временного использования старых плагинов также можно указать `ANSIBLE_CALLBACK_WHITELIST`.
 
 ### 6. Оптимизация копирования файлов (`copy` vs `synchronize`)
 
@@ -179,23 +193,65 @@ callback_whitelist = timer, profile_tasks, profile_roles
 
 ### Плагин Mitogen
 
-**Mitogen** — это сторонний плагин, который заменяет транспортный уровень Ansible, обеспечивая прирост скорости от 1.5 до 8 раз. Он использует одно оптимизированное соединение, передает код модулей напрямую через STDIN и выполняет все задачи в одном долгоживущем Python-процессе.
+**Mitogen** — сторонний плагин, заменяющий транспортный уровень Ansible для ускорения выполнения плейбуков (прирост 1.5–8 раз). Использует одно оптимизированное соединение, передаёт код модулей через STDIN, выполняет задачи в одном долгоживущем Python-процессе.
+
+**Важно (Ansible 12+ / ansible-core 2.19+):** В Ansible 12+ сторонние плагины стратегий объявлены устаревшими. Текущий механизм интеграции Mitogen через strategy plugins может стать неработоспособным. Следите за обновлениями проекта Mitogen.
 
 **Использование:**
 
-1. Установите Mitogen.
-2. Настройте `ansible.cfg` для использования плагина.
+1. Установите Mitogen:
+   - Через Ansible Galaxy: `ansible-galaxy collection install serverscom.mitogen`
+   - Или из репозитория: `pip install mitogen`
+
+2. Настройте `ansible.cfg`:
+
+    ```ini
+    [defaults]
+    strategy_plugins = ~/.ansible/collections/ansible_collections/serverscom/mitogen/plugins/strategy
+    ```
+
 3. Задайте стратегию в плейбуке:
 
     ```yaml
     - hosts: all
-      strategy: mitogen_linear # или mitogen_free
+      strategy: mitogen_linear  # или mitogen_free
     ```
 
-> На текущий момент это один из самых эффективных способов ускорить Ansible.
+### Callback-плагины для профилирования
 
-## Дополнительная информация
+Для измерения производительности и поиска узких мест используйте callback-плагины:
 
-* [Тестирование ролей с Molecule](ansible_testing_with_molecule.md): Автоматизированное тестирование
-* [Ansible-bender](ansible_buildah_image_building.md): Сборка контейнеров через Ansible
-* [Pull-режим](ansible_pull.md): Альтернативный способ управления
+| Плагин | Описание |
+| :--- | :--- |
+| `timer` | Время выполнения каждой задачи |
+| `profile_tasks` | Отсортированный список задач по времени (в конце выполнения) |
+| `profile_roles` | Агрегация времени по ролям |
+| `ansible.builtin.default` (с `result_format=yaml`) | YAML-вывод (заменяет устаревший `community.general.yaml`) |
+
+**Включение в `ansible.cfg`** (ansible-core < 2.13):
+
+```ini
+[defaults]
+callback_whitelist = timer, profile_tasks, profile_roles
+```
+
+**Включение в `ansible.cfg`** (ansible-core >= 2.13):
+
+```ini
+[defaults]
+callback_plugins = ~/.ansible/plugins/callback:/usr/share/ansible/plugins/callback
+```
+
+**Включение через переменную окружения:**
+
+```bash
+export ANSIBLE_CALLBACK_PLUGINS="~/.ansible/plugins/callback:/usr/share/ansible/plugins/callback"
+ansible-playbook playbook.yml -e "callback_whitelist=timer,profile_tasks"
+```
+
+### Связанные документы
+
+- [Тестирование ролей с Molecule](ansible_testing_with_molecule.md) — автоматизированное тестирование
+- [Сборка контейнеров через Ansible](ansible_buildah_image_building.md) — Ansible-bender
+- [Pull-режим](ansible_pull.md) — альтернативный способ управления
+- [SSH-клиент: мультиплексирование](../Linux/Security/ssh/ssh_client_config.md) — подробная настройка SSH

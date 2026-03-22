@@ -126,7 +126,7 @@ verifier:
     - name: Assert that nginx service is running
       ansible.builtin.assert:
         that:
-          - service_facts.ansible_facts.services['nginx.service'](state == 'running'
+          - service_facts.ansible_facts.services['nginx.service'].state == 'running'
         fail_msg: "Nginx service is not running"
 ```
 
@@ -170,10 +170,6 @@ molecule init scenario centos -r nginx
 molecule test -s centos
 ```
 
-### Связанные документы
+### Интеграция с CI/CD
 
-* **[Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint)** — статический анализ плейбуков
-* **[Структура проекта](examples/example_project_layout.md)** — организация файлов и директорий
-* **[Роли](ansible_roles.md)** — тестирование ролей — ключевой компонент CI/CD
-* **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие практики тестирования
-* **[Quality Gates](../../Testing/testing_cicd_integration.md#quality-gates-лучшие-практики-20252026)** — Molecule как часть ворот качества
+Molecule является стандартным инструментом для [интеграции тестов в CI/CD пайплайны](../../Testing/testing_cicd_integration.md) и выступает частью [Quality Gates](../../Testing/testing_cicd_integration.md#quality-gates-лучшие-практики-20252026). Тестирование ролей — ключевой компонент автоматизации Ansible, который также упоминается в документации по [ролям](ansible_roles.md) и [Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint). Для организации файлов проекта см. [структуру проекта](examples/example_project_layout.md).

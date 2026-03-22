@@ -1,10 +1,20 @@
 # Ansible: Выполнение плейбуков
 
+## Определения
+
+**ansible-playbook** — утилита командной строки для запуска и выполнения плейбуков Ansible на управляемых хостах.
+
+**Плей (Play)** — логически сгруппированный набор задач, применяемый к определенной группе хостов из инвентаря.
+
+**Задача (Task)** — атомарная операция в плейбуке, вызывающая конкретный модуль Ansible для достижения желаемого состояния системы.
+
+**PLAY RECAP** — итоговая сводка выполнения плейбука, отображающая статус задач по каждому хосту (ok, changed, unreachable, failed).
+
 ## Основные концепции
 
 ### Запуск плейбука
 
-Плейбуки запускаются с помощью команды `ansible-playbook`. Целевые серверы определяются в файле [инвентаризации (inventory)](ansible_setup_and_config.md#определение-хостов-inventory).
+Плейбуки запускаются с помощью команды `ansible-playbook`. Целевые серверы определяются в файле [инвентаризации (inventory)](ansible_setup_and_config.md).
 
 ```bash
 ansible-playbook -i inventory.ini --ask-pass playbook.yml
@@ -37,7 +47,7 @@ TASK [install nginx] *******************************************************
 changed: [ws01]
 ```
 
-* `Gathering Facts`: Первая задача, выполняемая по умолчанию для сбора [фактов (facts)](PlaybookStructure/basics.md#факты-ansible-ansible-facts) о системе удаленного хоста.
+* `Gathering Facts`: Первая задача, выполняемая по умолчанию для сбора [фактов](PlaybookStructure/variables.md) о системе удаленного хоста.
 * `changed`: Статус задачи, означающий, что она внесла изменения в систему (например, установила пакет, изменила конфигурационный файл).
 * `ok`: Статус задачи, означающий, что система уже находилась в желаемом состоянии, и никаких изменений не потребовалось.
 
@@ -103,3 +113,7 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
     ```
 
     Это заставит Ansible использовать правильный инвентарь, и он сможет находить хосты и группы, определенные в нем.
+
+## Дополнительная информация
+
+Инструменты качества кода: `ansible-lint` (статический анализ), `ansible-doc` (документация по модулям). Альтернативный pull-режим описан в [Ansible Pull](ansible_pull.md). Детали структуры плейбуков — в [PlaybookStructure/basics.md](PlaybookStructure/basics.md), переменных — в [PlaybookStructure/variables.md](PlaybookStructure/variables.md), управление потоком — в [PlaybookStructure/flow_control.md](PlaybookStructure/flow_control.md). Настройка инвентаря — в [ansible_setup_and_config.md](ansible_setup_and_config.md), безопасность — в [ansible_security_best_practices.md](ansible_security_best_practices.md).

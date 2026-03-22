@@ -2,47 +2,37 @@
 
 ## Определения
 
-**Автоматизация PostgreSQL с помощью Ansible** — это процесс использования плейбуков для управления полным жизненным циклом экземпляров PostgreSQL, включая установку, настройку репликации, выполнение миграций схемы базы данных и обеспечение отказоустойчивости.
+**Автоматизация PostgreSQL с помощью Ansible** — использование плейбуков для управления жизненным циклом PostgreSQL: установка, настройка репликации, миграции схемы, обеспечение отказоустойчивости.
 
 ## Базовые концепции
 
-В экосистеме Ansible для управления PostgreSQL используются два основных подхода, которые можно комбинировать:
+Подходы к управлению PostgreSQL в Ansible:
 
-1. **Использование готовых ролей из Ansible Galaxy**: Для сложных, стандартизированных задач, таких как настройка потоковой репликации, рекомендуется использовать проверенные сообществом роли (например, `geerlingguy.postgresql`). Это экономит время и обеспечивает доступ к большому набору функций "из коробки".
+1. **Готовые роли из Ansible Galaxy** — для стандартизированных задач (например, `geerlingguy.postgresql`). Экономит время, предоставляет проверенные решения.
+2. **Модули `community.postgresql`** — для гранулярного контроля и кастомных SQL-запросов (`postgresql_db`, `postgresql_user`, `postgresql_query`). В сочетании с `block`/`rescue` обеспечивают атомарность операций.
 
-2. **Использование встроенных модулей `community.postgresql`**: Для гранулярного контроля и выполнения кастомных SQL-запросов (например, при миграции схемы) используются специализированные модули, такие как `postgresql_db`, `postgresql_user`, `postgresql_query`. В сочетании с конструкциями `block`/`rescue` они позволяют создавать надежные и атомарные операции.
+**Зависимости для управляющего узла:**
+
+```bash
+# Роль для установки PostgreSQL
+ansible-galaxy install geerlingguy.postgresql
+
+# Коллекция модулей community.postgresql
+ansible-galaxy collection install community.postgresql
+
+# Python-библиотека для работы с PostgreSQL
+pip install psycopg2-binary
+```
 
 ## Практические сценарии
 
 ### Сценарий 1: Настройка Master-Replica с использованием роли
 
-Этот пример демонстрирует, как развернуть PostgreSQL master и slave (replica), используя популярную роль `geerlingguy.postgresql`.
+Развертывание PostgreSQL master и replica с потоковой репликацией через роль `geerlingguy.postgresql`.
 
-* **Теоретическая база:** Подробное описание концепций потоковой репликации доступно в документе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
+**Теоретическая база:** Концепции репликации описаны в **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
 
-### Предварительные требования
-
-Для работы приведенных примеров необходимо установить зависимости на **управляющем узле** (где запускается `ansible-playbook`):
-
-1. **Роль `geerlingguy.postgresql`**:
-
-    ```bash
-    ansible-galaxy install geerlingguy.postgresql
-    ```
-
-2. **Коллекция `community.postgresql`**:
-
-    ```bash
-    ansible-galaxy collection install community.postgresql
-    ```
-
-3. **Python-библиотека `psycopg2`**:
-
-    ```bash
-    pip install psycopg2-binary
-    ```
-
-#### Файл инвентаря `hosts.ini`
+#### Инвентарь `hosts.ini`
 
 ```ini
 [postgres_master]
@@ -69,7 +59,7 @@ postgres_slave
       - 'replica1_slot'
     postgresql_users:
       - name: repluser
-        pass: 'your_strong_password' # Используйте Vault!
+        pass: 'your_strong_password' # Используйте Ansible Vault!
         replication: true
   roles:
     - geerlingguy.postgresql
@@ -79,30 +69,30 @@ postgres_slave
   become: true
   vars:
     postgresql_replication_role: 'replica'
-    postgresql_master_host: '192.168.51.2' # IP мастера
+    postgresql_master_host: '192.168.51.2'
     postgresql_replication_user:
       name: repluser
-      pass: 'your_strong_password' # Используйте Vault!
+      pass: 'your_strong_password' # Используйте Ansible Vault!
   roles:
     - geerlingguy.postgresql
 ```
 
 ### Сценарий 2: Атомарная миграция схемы с откатом
 
-Этот пример показывает, как выполнить SQL-скрипт для создания и наполнения таблицы, обеспечив автоматический откат в случае сбоя.
+Выполнение SQL-скрипта миграции с автоматическим откатом при ошибке через конструкцию `block`/`rescue`.
 
-* **Теоретическая база:** Подходы к изменению структуры БД описаны в документе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
+**Теоретическая база:** Стратегии миграции описаны в **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
 
-#### Плейбук для миграции
+#### Плейбук миграции
 
 ```yaml
 ---
 - name: Install PostgreSQL and Run Migrations
-  hosts: postgres_master # Целевой хост, где установлен PostgreSQL
+  hosts: postgres_master
   become: true
   vars:
     db_name: "namesdb"
-    db_user: "your_user" # Замените на вашего пользователя
+    db_user: "your_user"
 
   pre_tasks:
     - name: "Ensure database '{{ db_name }}' exists"
@@ -145,4 +135,21 @@ postgres_slave
           become_user: postgres
 ```
 
-Конструкция `block`/`rescue` гарантирует, что если любая задача внутри `block` завершится неудачно, Ansible выполнит задачи из секции `rescue` для отката изменений.
+Конструкция `block`/`rescue` выполняет задачи из секции `rescue` при ошибке любой задачи в `block`.
+
+## Дополнительная информация
+
+### Безопасность
+
+- Пароли и чувствительные данные храните в **Ansible Vault** ([Ansible Vault basics](../Vault/basics.md))
+- Используйте переменные окружения или vault для передачи секретов
+
+### Мониторинг
+
+Пример развертывания мониторинга PostgreSQL с Prometheus и `postgres_exporter` описан в **[Мониторинг PostgreSQL с Prometheus](./postgresql_prometheus_monitoring.md)**.
+
+### Смежные документы
+
+- **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)** — теория репликации (SSoT)
+- **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)** — стратегии миграций (SSoT)
+- **[Роли Ansible Galaxy](../Roles/galaxy.md)** — управление зависимостями (SSoT)

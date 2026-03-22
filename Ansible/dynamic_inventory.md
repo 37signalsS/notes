@@ -80,12 +80,12 @@ cache_connection = .cache/inventory
     ```python
     # pseudo-code
     import json
-    
+
     with open('tf_output.json') as f:
         data = json.load(f)
-    
-    ips = data['instance_ips'['value']
-    
+
+    ips = data['instance_ips']['value']
+
     inventory_file = open('generated_inventory.ini', 'w')
     inventory_file.write('[my_vms]\n')
     for name, ip in ips.items():
@@ -103,11 +103,4 @@ cache_connection = .cache/inventory
 
 ### Примеры конфигурации
 
-Документация по плагинам доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html).
-
-## Дополнительная информация
-
-- **Основы инвентаря**: Базовые концепции статического инвентаря описаны в документе [Установка и настройка Ansible](ansible_setup_and_config.md).
-- **Плагин `yandex_cloud`**: Подробную документацию по плагину `yandex.cloud.yandex_cloud` можно найти на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html).
-- **Плагин `vmware_vm_inventory`**: Документация доступна на [официальном сайте Ansible](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html).
-- **Теги в облаках**: [Кроссплатформенные концепции](./CrossPlatform/concepts.md) — использование тегов для группировки
+Базовые концепции статического инвентаря описаны в [Установке и настройке Ansible](ansible_setup_and_config.md). Для работы с облачными провайдерами используйте inventory-плагины: [`aws_ec2`](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html), [`yandex.cloud.yandex_cloud`](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html), [`community.vmware.vmware_vm_inventory`](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html). Использование тегов для группировки ресурсов рассмотрено в [кроссплатформенных концепциях](./CrossPlatform/concepts.md).

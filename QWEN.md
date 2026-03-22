@@ -133,7 +133,7 @@ When outdated info found:
 | Metric | Threshold |
 | :--- | :--- |
 | **Minimum file size** | 30 lines |
-| **Optimal file size** | 50–200 lines |
+| **Optimal file size** | 50–290 lines |
 | **Split trigger** | >300 lines OR >2 distinct subtopics |
 | **Merge trigger** | <30 lines AND >50% overlap with sibling |
 
