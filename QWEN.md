@@ -37,10 +37,10 @@
 **Mandatory for ALL files EXCEPT `Interview_and_Work/`:**
 
 - **Language:** English only
-- **Format:** kebab-case (lowercase with hyphens)
+- **Format:** kebab-case, kebab_case
 - **No spaces, no digits, no Cyrillic**
 - **Meaningful names** based on file content
-- **Examples:** `docker-commands.md`, `kubernetes-overview.md`, `deployment-strategies.md`
+- **Examples:** `docker-commands.md`, `kubernetes-overview.md`, `deployment-strategies.md`, `docker_commands.md`, `kubernetes_overview.md`, `deployment_strategies.md`
 
 **EXCEPTION — `Interview_and_Work/` directory:**
 - Files may contain Cyrillic characters
