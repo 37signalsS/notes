@@ -32,16 +32,32 @@
 
 ---
 
-## 2. Mandatory Tasks
+## 2. Naming Conventions
 
-1. **Structuring:** format files as
+**Mandatory for ALL files EXCEPT `Interview_and_Work/`:**
+
+- **Language:** English only
+- **Format:** kebab-case (lowercase with hyphens)
+- **No spaces, no digits, no Cyrillic**
+- **Meaningful names** based on file content
+- **Examples:** `docker-commands.md`, `kubernetes-overview.md`, `deployment-strategies.md`
+
+**EXCEPTION — `Interview_and_Work/` directory:**
+- Files may contain Cyrillic characters
+- Do NOT rename or suggest renaming files in this directory
+
+---
+
+## 3. Mandatory Tasks
+
+1. **Structuring:** format files as  
    `Definitions → Basic Concepts → Practical Scenarios → Additional Information`
 
 2. **SSoT Integration:** all changes — only after SSoT-analysis
 
 ---
 
-## 3. Language and Style
+## 4. Language and Style
 
 - **Language:** Russian (always)
 - **Style:** laconic, strict, meticulous
@@ -55,7 +71,7 @@ Definitions → Basic Concepts → Practical Scenarios → Additional Informatio
 
 ---
 
-## 4. Prohibited Actions
+## 5. Prohibited Actions
 
 - Actions without SSoT-analysis
 - Conclusions without duplicate check
@@ -63,10 +79,12 @@ Definitions → Basic Concepts → Practical Scenarios → Additional Informatio
 - Filling gaps without context
 - File modifications without verification
 - Creating duplicate facts outside SSoT
+- Renaming files in `Interview_and_Work/` directory
+- Using spaces, digits, or Cyrillic in file names (except `Interview_and_Work/`)
 
 ---
 
-## 5. Operating Principles
+## 6. Operating Principles
 
 1. **Safety:** every statement must be confirmed
 2. **SSoT:** one authoritative file per topic
@@ -78,7 +96,7 @@ Definitions → Basic Concepts → Practical Scenarios → Additional Informatio
 
 ---
 
-## 6. Reliability Assessment
+## 7. Reliability Assessment
 
 | Score | Criteria |
 | :--- | :--- |
@@ -94,7 +112,7 @@ Definitions → Basic Concepts → Practical Scenarios → Additional Informatio
 
 ---
 
-## 7. Currency Assessment
+## 8. Currency Assessment
 
 When outdated info found:
 
@@ -110,26 +128,26 @@ When outdated info found:
 
 ---
 
-## 8. Quality Recommendations
+## 9. Quality Thresholds
 
-- **File >300 lines** → suggest split
-- **File <30 lines with overlap** → suggest merge
-- **Weak topic coverage** → suggest expansion
-- **Broken "simple → complex" flow** → suggest restructuring
+| Metric | Threshold |
+| :--- | :--- |
+| **Minimum file size** | 15 lines |
+| **Optimal file size** | 50–200 lines |
+| **Split trigger** | >300 lines OR >2 distinct subtopics |
+| **Merge trigger** | <15 lines AND >50% overlap with sibling |
 
 ---
 
-## 9. Merge/Split Rules
+## 10. Merge/Split Rules
 
-### Split
->
+### Split criteria
 - >300 lines with multiple subtopics
 - Different technologies/cases in one file
 - Independent concepts
 - Each file keeps link to parent
 
-### Merge
-
+### Merge criteria
 - <30 lines with overlap
 - Same-directory files with similar naming
 - Cross-references >3 times
@@ -145,7 +163,7 @@ When outdated info found:
 
 ---
 
-## 10. Cross-Reference Rules
+## 11. Cross-Reference Rules
 
 | Type | Format | When to use |
 | :--- | :--- | :--- |
@@ -153,6 +171,11 @@ When outdated info found:
 | Relative | `[Concept](../Parent/file.md)` | Subdirectory → parent |
 | Absolute | `[Concept](../Directory/file.md)` | Different directory |
 | Anchor | `[Section](#section-name)` | Within file |
+
+**Link Validation (MANDATORY after any edit):**
+- Verify all internal links work
+- Check: relative paths, anchor links, cross-references
+- Fix broken links before completing edit
 
 **Forbidden:**
 
@@ -163,7 +186,7 @@ When outdated info found:
 
 ---
 
-## 11. Currency and Freshness
+## 12. Currency and Freshness
 
 ### Verification triggers
 
@@ -188,7 +211,7 @@ When outdated info found:
 
 ---
 
-## 12. Confidence Scale (summary)
+## 13. Confidence Scale (summary)
 
 ```
 10 — SSoT + current sources
@@ -197,3 +220,19 @@ When outdated info found:
  5-6 — fragmentary
  <4 — insufficient
 ```
+
+---
+
+## 14. Index Maintenance
+
+- `index.md` is auto-generated — do NOT edit manually
+- Keep directories with 3+ files
+- Remove empty directories
+
+---
+
+## 15. Scripts and Tools
+
+**Skip for knowledge base tasks:**
+- Python scripts (`clean_vtt.py`, `video_to_text_*.py`)
+- Focus on markdown documentation only
