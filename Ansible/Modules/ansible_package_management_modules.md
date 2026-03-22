@@ -14,9 +14,7 @@
 
 ## Практические сценарии
 
-### 1. Модули для управления пакетами
-
-#### `ansible.builtin.yum_repository`
+### Модуль `ansible.builtin.yum_repository`
 
 Управляет YUM-репозиториями в системах на базе Red Hat (CentOS, Fedora).
 
@@ -28,7 +26,7 @@
     baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
 ```
 
-#### `ansible.builtin.yum`
+### Модуль `ansible.builtin.yum`
 
 Управляет пакетами (установка, обновление, удаление) с помощью менеджера пакетов YUM.
 
@@ -39,7 +37,7 @@
     state: latest
 ```
 
-#### `ansible.builtin.apt`
+### Модуль `ansible.builtin.apt`
 
 ```yaml
 - name: Install the latest version of Nginx
@@ -54,9 +52,9 @@
 - Опция `update_cache: yes` выполняет аналог `apt update` перед установкой.
 - Для контроля частоты обновления кэша можно использовать `cache_valid_time` в блоке play. Например, `cache_valid_time: 3600` означает, что кэш не будет обновляться, если он свежее 1 часа.
 
-#### `ansible.builtin.package`
+### Модуль `ansible.builtin.package`
 
-Универсальный модуль, который пытается использовать системный менеджер пакетов по умолчанию (`apt`, `yum`, `dnf`, и т.д.).
+Универсальный модуль, который пытается использовать системный менеджер пакетов по умолчанию (`apt`, `yum`, `dnf` и т.д.).
 
 ```yaml
 - name: Install the latest version of Nginx using the generic package module
@@ -78,7 +76,4 @@
 
 ## Дополнительная информация
 
-- [Официальная документация по модулю apt](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html)
-- [Официальная документация по модулю yum](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/yum_module.html)
-- [Официальная документация по модулю package](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/package_module.html)
-- [Кроссплатформенные плейбуки](../CrossPlatform/concepts.md): Управление пакетами на разных ОС
+Официальная документация: [apt](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html), [yum](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/yum_module.html), [package](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/package_module.html). Кроссплатформенное управление пакетами — в [Кроссплатформенные плейбуки](../CrossPlatform/concepts.md).

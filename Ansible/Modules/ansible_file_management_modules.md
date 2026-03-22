@@ -13,9 +13,7 @@
 
 ## Практические сценарии
 
-### 2. Модули для управления файлами
-
-#### `ansible.builtin.file`
+### Модуль `ansible.builtin.file`
 
 Управляет файлами, символическими ссылками и каталогами.
 
@@ -50,7 +48,7 @@ ansible <hostname> -m file -a "path=/home/ansible_user/.ssh state=directory owne
     state: absent # удаление
 ```
 
-#### `ansible.builtin.copy`
+### Модуль `ansible.builtin.copy`
 
 Модуль для копирования файлов. Он может копировать файлы с управляющей машины на целевой хост, но также умеет создавать файлы "на лету" с помощью параметра `content`.
 
@@ -79,7 +77,7 @@ ansible <hostname> -m file -a "path=/home/ansible_user/.ssh state=directory owne
 ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }}" dest=/home/ansible_user/.ssh/authorized_keys owner=ansible_user group=ansible_user mode=0600' --become
 ```
 
-#### `ansible.builtin.template`
+### Модуль `ansible.builtin.template`
 
 Создает файл на целевом хосте на основе [шаблона Jinja2](../ansible_jinja2_templating.md). Это основной способ управления конфигурационными файлами. Модуль обрабатывает переменные и логику в `.j2` файле и создает на сервере статический `.conf` файл.
 
@@ -90,7 +88,7 @@ ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }
     dest: /etc/httpd/conf/httpd.conf
 ```
 
-#### `ansible.builtin.blockinfile`
+### Модуль `ansible.builtin.blockinfile`
 
 Модуль для вставки/обновления/удаления блока текста в файлах. Идеально подходит для управления фрагментами конфигурационных файлов, где нужно гарантировать наличие определенного блока текста между специальными маркерами, не перезаписывая весь файл.
 
@@ -117,7 +115,7 @@ ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }
 - Так как не указаны `insertafter` или `insertbefore`, этот блок будет добавлен в конец файла `/etc/nginx/nginx.conf`.
 - Ansible добавит комментарии-маркеры вокруг этого блока, чтобы в будущем при повторном запуске плейбука он мог обновить этот блок (если его содержимое изменится) или удалить (если `state` будет установлен в `absent`). Если маркер не указан, используются маркеры по умолчанию `BEGIN ANSIBLE MANAGED BLOCK` и `END ANSIBLE MANAGED BLOCK`.
 
-#### Более аккуратный вариант развертывания (через `file` + `copy`)
+### Безопасное развертывание файлов (через `file` + `copy`)
 
 В отличие от `ansible.builtin.synchronize` с опцией `delete: yes`, который полностью заменяет содержимое целевого каталога, существует более безопасный способ развертывания, особенно для критически важных веб-серверов.
 
@@ -150,8 +148,4 @@ ansible <hostname> -m copy -a 'content="{{ lookup("file", "~/.ssh/id_rsa.pub") }
 
 ## Дополнительная информация
 
-- [Шаблонизация с Jinja2](../ansible_jinja2_templating.md): Подробнее о создании динамических конфигураций.
-- [Официальная документация по модулю file](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/file_module.html)
-- [Официальная документация по модулю copy](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html)
-- [Официальная документация по модулю template](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/template_module.html)
-- [Официальная документация по модулю blockinfile](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/blockinfile_module.html)
+Официальная документация: [file](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/file_module.html), [copy](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html), [template](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/template_module.html), [blockinfile](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/blockinfile_module.html). Подробнее о шаблонизации — в [Шаблонизация с Jinja2](../ansible_jinja2_templating.md).

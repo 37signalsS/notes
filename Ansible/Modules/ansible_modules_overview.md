@@ -10,7 +10,7 @@
 
 ## Практические сценарии
 
-Модули Ansible можно разделить на категории по их назначению. Подробные примеры использования модулей каждой категории приведены в соответствующих файлах:
+Категории модулей по назначению:
 
 - [Управление пакетами](ansible_package_management_modules.md): `apt`, `yum`, `package`
 - [Управление файлами](ansible_file_management_modules.md): `file`, `copy`, `template`, `blockinfile`
@@ -19,8 +19,8 @@
 - [Выполнение команд](ansible_command_execution_modules.md): `command`, `shell`
 - [Управление пользователями и безопасностью](ansible_security_and_user_management_modules.md): `user`, `password`
 
+Справка по модулям доступна через утилиту `ansible-doc <module_name>` — подробности в [Дополнительная информация о модулях](ansible_modules_additional_info.md#получение-справки-по-модулю).
+
 ## Дополнительная информация
 
-- [Официальная документация Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules): Полный справочник по всем модулям
-- [Создание пользовательских модулей](../ansible_custom_modules.md): Как расширить функциональность
-- Команда `ansible-doc <module_name>` предоставляет справку по конкретному модулю
+Официальная документация: [все модули Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules). Создание пользовательских модулей — в [Пользовательские модули](../ansible_custom_modules.md).

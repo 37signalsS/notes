@@ -13,9 +13,7 @@
 
 ## Практические сценарии
 
-### 3. Модули для управления службами (сервисами)
-
-#### `ansible.builtin.systemd`
+### Модуль `ansible.builtin.systemd`
 
 Более современный и предпочтительный модуль для систем, использующих `systemd`. Предоставляет дополнительные возможности, которых нет в `service`. Ключевое преимущество — опция `daemon_reload: yes`, которая выполняет команду `systemctl daemon-reload`. Это необходимо после создания или изменения `unit`-файлов сервисов, чтобы `systemd` узнал о них. Модуль `service` этого делать не умеет.
 
@@ -30,9 +28,7 @@
     state: restarted
 ```
 
-### 4. Модули для системной конфигурации
-
-#### `ansible.builtin.timezone`
+### Модуль `ansible.builtin.timezone`
 
 Управляет системным часовым поясом.
 
@@ -42,7 +38,7 @@
     name: Europe/Moscow
 ```
 
-#### `ansible.builtin.hostname`
+### Модуль `ansible.builtin.hostname`
 
 Управляет именем хоста (hostname) системы.
 
@@ -58,7 +54,4 @@
 
 ## Дополнительная информация
 
-- [Официальная документация по модулю systemd](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html)
-- [Официальная документация по модулю hostname](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/hostname_module.html)
-- [Официальная документация по модулю timezone](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/timezone_module.html)
-- [Обработчики](../../PlaybookStructure/basics.md): Перезапуск сервисов
+Официальная документация: [systemd](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html), [hostname](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/hostname_module.html), [timezone](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/timezone_module.html). Перезапуск сервисов через обработчики — в [Обработчики](../../PlaybookStructure/basics.md).

@@ -13,9 +13,7 @@
 
 ## Практические сценарии
 
-### 6. Модули для выполнения команд
-
-#### `ansible.builtin.command`
+### Модуль `ansible.builtin.command`
 
 Этот модуль предназначен для выполнения простых команд на целевых хостах. В отличие от большинства модулей Ansible, **`command` не является идемпотентным по умолчанию**. Это означает, что он будет выполнять команду при каждом запуске плейбука, независимо от состояния системы.
 
@@ -55,7 +53,7 @@
 
 В этом случае `/opt/app/initialize.sh` будет запущен только один раз. При последующих запусках Ansible увидит, что файл `/opt/app/initialised.flag` уже существует, и пропустит эту задачу.
 
-#### `ansible.builtin.shell`
+### Модуль `ansible.builtin.shell`
 
 Модуль `ansible.builtin.shell` предназначен для выполнения команд через оболочку (shell) на целевых хостах. Это его ключевое отличие от `ansible.builtin.command`, который не использует оболочку.
 
@@ -102,7 +100,4 @@
 
 ## Дополнительная информация
 
-- [Официальная документация по модулю command](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html)
-- [Официальная документация по модулю shell](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/shell_module.html)
-- **Рекомендация**: Всегда отдавайте предпочтение специализированным модулям Ansible, если они доступны для вашей задачи
-- [Антипаттерны](../ansible_bad_practices.md): Избыточное использование shell/command
+Официальная документация: [command](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html), [shell](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/shell_module.html). Рекомендация: всегда отдавайте предпочтение специализированным модулям Ansible, если они доступны для вашей задачи. Подробнее об антипаттернах использования — в [Антипаттерны Ansible](../ansible_bad_practices.md).

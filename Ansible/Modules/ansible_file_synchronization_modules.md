@@ -13,9 +13,7 @@
 
 ## Практические сценарии
 
-### 5. Модули для синхронизации файлов
-
-#### `ansible.builtin.synchronize`
+### Модуль `ansible.builtin.synchronize`
 
 Использует `rsync` для эффективной синхронизации файлов и каталогов между хостами. Идеально подходит для больших сайтов и проектов, где важна скорость и идемпотентность.
 
@@ -36,7 +34,7 @@
   - Если файл удалён локально, он будет удалён и на сервере.
   - Сервер становится точной копией `files/html/`.
 
-##### Нюансы при использовании с Vagrant
+### Нюансы при использовании с Vagrant
 
 Модуль `synchronize` работает поверх `rsync` и инициирует прямое SSH-соединение с хоста управления на целевую машину. Это может вызывать проблемы в средах Vagrant, поскольку `synchronize` не использует автоматически настроенные Vagrant'ом SSH-ключи.
 
@@ -46,5 +44,4 @@
 
 ## Дополнительная информация
 
-- [Официальная документация по модулю synchronize](https://docs.ansible.com/ansible/latest/collections/ansible/posix/synchronize_module.html)
-- [Управление файлами](ansible_file_management_modules.md): Альтернативные способы копирования файлов.
+Официальная документация: [synchronize](https://docs.ansible.com/ansible/latest/collections/ansible/posix/synchronize_module.html). Альтернативные способы копирования файлов — в [Управление файлами](ansible_file_management_modules.md).

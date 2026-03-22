@@ -151,7 +151,6 @@ Ansible имеет несколько встроенных тегов с осо�
 
 ## Дополнительная информация
 
-- [Основы структуры плейбуков](basics.md): Обработчики (handlers) и уведомления (notify)
-- [Продвинутые возможности плейбуков](advanced.md): Делегирование, статическое и динамическое включение
-- [Переменные и факты](variables.md): Подробнее о переменных и их приоритетах
-- [Официальная документация по управлению ходом выполнения](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_conditionals.html): Подробнее об условиях
+Основы структуры плейбуков (обработчики и уведомления) описаны в [basics.md](basics.md). Продвинутые возможности плейбуков (делегирование, статическое и динамическое включение) — в [advanced.md](advanced.md). Переменные и их приоритеты — в [variables.md](variables.md).
+
+Примеры использования `when` с `ansible_os_family` — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md). Обработка ошибок с `block/rescue` на практике — в [examples/example_postgresql_setup.md](../examples/example_postgresql_setup.md) и [examples/example_docker_management.md](../examples/example_docker_management.md). Использование `changed_when` и `failed_when` — в [Modules/ansible_command_execution_modules.md](../Modules/ansible_command_execution_modules.md).
