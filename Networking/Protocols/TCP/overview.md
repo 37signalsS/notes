@@ -22,11 +22,41 @@
 
 | Характеристика | Описание | Реализация |
 | :--- | :--- | :--- |
-| **Надежность** | Гарантирует доставку данных | [ (ACK, retransmission) |
-| **Упорядоченность** | Данные получаются в порядке отправки | [Sequence Numbers](./reliability_mechanisms/diagnostics.md) |
-| **Ориентация на соединение** | Требуется установка соединения | [Управление соединением](./connection/tcp_connection_management_overview.md) |
-| **Управление потоком** | Защита буфера получателя от переполнения | [Flow Control](../../../Ansible/PlaybookStructure/flow_control.md) |
-| **Управление перегрузкой** | Адаптация к пропускной способности сети | [Congestion Control](./congestion/tcp_congestion_control_overview.md) |
+| **Надежность** | Гарантирует доставку данных | ACK, retransmission |
+| **Упорядоченность** | Данные получаются в порядке отправки | Sequence Numbers |
+| **Ориентация на соединение** | Требуется установка соединения | Handshake |
+| **Управление потоком** | Защита буфера получателя от переполнения | Window (Flow Control) |
+| **Управление перегрузкой** | Адаптация к пропускной способности сети | Congestion Control |
+
+### Заголовок TCP
+
+**Структура заголовка:**
+
+- **Минимальный размер:** 20 байт (без опций)
+- **Максимальный размер:** 60 байт (с опциями)
+
+**Основные поля:**
+
+| Поле | Размер | Описание |
+| :--- | :--- | :--- |
+| **Source/Destination Port** | 16 бит | Порт источника и получателя |
+| **Sequence Number** | 32 бита | Номер первого байта данных в сегменте |
+| **Acknowledgment Number** | 32 бита | Номер следующего ожидаемого байта |
+| **Флаги (URG, ACK, PSH, RST, SYN, FIN)** | 6 бит | Тип пакета (SYN — установка, ACK — подтверждение, FIN — завершение) |
+| **Window** | 16 бит | Размер свободного буфера получателя (управление потоком) |
+| **Checksum** | 16 бит | Контрольная сумма для обнаружения повреждений |
+| **Options** | переменная | Дополнительные опции (MSS, Window Scale, SACK, Timestamps) |
+
+**Флаги TCP:**
+
+- **SYN** — синхронизация, установка соединения
+- **ACK** — подтверждение получения
+- **FIN** — завершение соединения
+- **RST** — немедленный сброс соединения
+- **PSH** — немедленная доставка данных приложению
+- **URG** — срочные данные (устарел)
+
+**Подробнее:** [Формат заголовка TCP](./Header_Format/index.md)
 
 ### Место в стеке TCP/IP
 
@@ -77,10 +107,16 @@ TCP работает на **транспортном уровне** модели
 
 ### Структура документации TCP
 
-| Файл | Описание |
-| :--- | :--- |
-| [`](../../../Ansible/PlaybookStructure/flow_control.md) | Управление потоком (receiver window) |
-| [`congestion_control.md`](./congestion/tcp_congestion_control_overview.md) | Управление перегрузкой (cwnd, BBR, CUBIC) |
+| Раздел | Файл | Описание |
+| :--- | :--- | :--- |
+| **Заголовок** | [Header_Format/index.md](./Header_Format/index.md) | Структура заголовка, поля, флаги |
+| **Опции** | [Header_Format/options.md](./Header_Format/options.md) | MSS, Window Scale, SACK, Timestamps |
+| **Handshake** | [connection/tcp_connection_management_overview.md](./connection/tcp_connection_management_overview.md) | Установка соединения (3-way handshake) |
+| **Состояния** | [connection/tcp_connection_states.md](./connection/tcp_connection_states.md) | 11 состояний TCP, диагностика |
+| **Завершение** | [connection/tcp_connection_termination.md](./connection/tcp_connection_termination.md) | Четырёхэтапное завершение |
+| **Надежность** | [reliability_mechanisms/](./reliability_mechanisms/) | Sequence Numbers, ACK, retransmission |
+| **Управление потоком** | [Flow_Control/](./Flow_Control/) | Window, receiver window |
+| **Перегрузка** | [congestion/tcp_congestion_control_overview.md](./congestion/tcp_congestion_control_overview.md) | cwnd, BBR, CUBIC |
 
 ### Связанные темы
 

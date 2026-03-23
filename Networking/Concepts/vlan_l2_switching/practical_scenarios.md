@@ -124,33 +124,13 @@ ip addr add 192.168.20.1/24 dev vlan20
 
 ---
 
-## Сценарий 3: Меж-VLAN маршрутизация (Router-on-a-Stick)
+## Сценарий 3: Меж-VLAN маршрутизация
 
-**Задача:** Обеспечить связь между VLAN 10 и 20 через маршрутизатор.
+**Задача:** Обеспечить связь между VLAN 10 и 20.
 
-**Топология:**
+**SSoT:** Полная информация о маршрутизации между VLAN, включая схемы Router-on-a-Stick и сабинтерфейсы, доступна в **[VLAN (протокол)](../../Protocols/vlan.md#меж-vlan-маршрутизация-router-on-a-stick)**.
 
-```
-[Users VLAN 10] ----+
-                    |
-              [Router]
-                    |
-[Servers VLAN 20] --+
-```
-
-### Конфигурация роутера (Cisco)
-
-```cisco
-interface GigabitEthernet0/0.10
- encapsulation dot1Q 10
- ip address 192.168.10.1 255.255.255.0
-
-interface GigabitEthernet0/0.20
- encapsulation dot1Q 20
- ip address 192.168.20.1 255.255.255.0
-```
-
-### Конфигурация Linux (iproute2)
+**Краткая настройка в Linux:**
 
 ```bash
 # Включить IP forwarding
@@ -165,9 +145,6 @@ ip addr add 192.168.20.1/24 dev eth0.20
 
 ip link set eth0.10 up
 ip link set eth0.20 up
-
-# Настроить NAT (если нужен выход в интернет)
-iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 ```
 
 ---
