@@ -88,7 +88,7 @@ boot
 
 * Использовать iPXE с загрузкой по HTTPS.
 * Изолировать PXE-сегмент сети (VLAN).
-* Использовать функции безопасности коммутаторов, такие как [DHCP Snooping](../../../Networking/Protocols/dhcp.md#dhcp-snooping).
+* Использовать функции безопасности коммутаторов, такие как [DHCP Snooping](../../../Networking/Protocols/DHCP/dhcp_security.md#dhcp-snooping).
 
 ### Современные решения для Provisioning
 

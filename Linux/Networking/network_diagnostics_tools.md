@@ -241,7 +241,7 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 **Протоколы и концепции:**
 
 * **[TCP/IP](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — протокол TCP
-* **[ICMP](../../Networking/Protocols/icmp.md)** — протокол ICMP (ping)
+* **[ICMP](../../Networking/Protocols/ICMP/icmp_overview.md)** — протокол ICMP (ping)
 * **[DNS](./Concepts/dns_client.md)** — настройка DNS-клиента
 * **[TCP-tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
 * **[Policy-Based Routing](./Policy_Based_Routing/index.md)** — маршрутизация на основе политик

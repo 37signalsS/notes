@@ -113,13 +113,13 @@ journalctl --disk-usage
 ```ini
 [Journal]
 # Максимальный общий размер журнала (старые логи удаляются при превышении)
-SystemMaxUse=4G
+SystemMaxUse=500M
 
 # Минимальный объем свободного места на диске
 SystemKeepFree=15%
 
 # Максимальный размер одного файла журнала
-SystemMaxFileSize=200M
+SystemMaxFileSize=100M
 
 # Режим хранения: auto, persistent, volatile, none
 Storage=auto
@@ -134,6 +134,17 @@ RateLimitBurst=10000
 ```bash
 sudo systemctl restart systemd-journald
 ```
+
+**Параметры:**
+
+| Параметр | Описание | Пример |
+| :--- | :--- | :--- |
+| `SystemMaxUse` | Максимальный объем дискового пространства, занимаемый журналами | `500M`, `4G` |
+| `SystemKeepFree` | Минимальный объем свободного места на диске | `15%`, `10G` |
+| `SystemMaxFileSize` | Максимальный размер одного файла журнала | `100M`, `500M` |
+| `RuntimeMaxUse` | Лимит для volatile-хранилища (`/run/log/journal`) | `200M` |
+| `RateLimitIntervalSec` | Интервал ограничения скорости логирования | `5s`, `30s` |
+| `RateLimitBurst` | Максимальное количество сообщений за интервал | `10000` |
 
 **RateLimiting:** параметры `RateLimitIntervalSec` и `RateLimitBurst` защищают систему от интенсивного логирования одним сервисом. Превышающие лимит сообщения отбрасываются.
 

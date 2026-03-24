@@ -1,103 +1,82 @@
 # Алгоритмы управления перегрузкой TCP
 
+> **SSoT:** Основная документация по алгоритмам congestion control находится в [Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md](../../../Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md)
+
 ## Определения
 
 **Алгоритм управления перегрузкой (Congestion Control Algorithm)** — алгоритм, определяющий, как TCP-соединение реагирует на перегрузку сети, регулируя скорость передачи данных для предотвращения коллапса сети.
 
-## Основные алгоритмы
+## Краткий обзор
 
 ### CUBIC
 
-* **Статус:** Алгоритм по умолчанию в большинстве дистрибутивов
-* **Принцип:** Универсальный, но может создавать очереди при высокой нагрузке
-* **Основа:** Функция роста на основе времени с момента последней потери пакетов
+* **Статус:** Алгоритм по умолчанию в большинстве дистрибутивов Linux
+* **Принцип:** Функция роста на основе времени с момента последней потери пакетов
+* **Документация:** [CUBIC](../../../Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md#1-cubic-по-умолчанию-в-linux)
 
 ### BBR (Bottleneck Bandwidth and Round-trip time)
 
-* **Требования:** Ядро Linux 4.9+
-* **Принцип:** Минимизирует очереди, удерживая скорость близкой к пропускной способности канала
-* **Эффективность:** Эффективен на каналах с потерями (мобильные сети)
+* **Разработчик:** Google (2016)
+* **Принцип:** Модель сети на основе пропускной способности и RTT, а не потерь пакетов
+* **Требования:** Ядро Linux 4.9+ (BBRv1), 5.18+ (BBRv2)
+* **Документация:** [BBR](../../../Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md#2-bbr-bottleneck-bandwidth-and-round-trip-time)
 
-**Принцип работы BBR:**
-
-В отличие от классических алгоритмов, основанных на потерях (таких как CUBIC), BBR не ждет потери пакетов, чтобы снизить скорость. Вместо этого он постоянно моделирует сеть, измеряя два ключевых параметра:
-
-1. **Пропускную способность узкого места** (Bottleneck Bandwidth)
-2. **Время кругового пути** (RTT)
-
-На основе этих данных BBR старается поддерживать объем передаваемых данных на уровне, который точно соответствует произведению `Bandwidth * RTT` (Bandwidth-Delay Product), не создавая при этом лишних очередей на маршрутизаторах (bufferbloat).
+**Ключевое отличие от CUBIC:** BBR не ждёт потерь пакетов для снижения скорости — он постоянно измеряет пропускную способность и RTT, поддерживая передачу на уровне BDP (Bandwidth-Delay Product), что минимизирует задержки (bufferbloat).
 
 ### BBRv2
 
-* **Требования:** Ядро Linux 5.18+
-* **Улучшения по сравнению с BBRv1:**
-  * Лучшая справедливость (fairness) при совместной работе с CUBIC
-  * Улучшенная производительность в сетях с потерями пакетов
-  * Более стабильная работа с WiFi и мобильными сетями
-  * Поддержка ECN (Explicit Congestion Notification)
-
-**Настройка:**
-
-```ini
-# /etc/sysctl.conf
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr2
-```
-
-**Проверка поддержки:**
-
-```bash
-# Проверка поддержки BBRv2
-modprobe tcp_bbr2
-cat /proc/sys/net/ipv4/tcp_available_congestion_control | grep bbr2
-```
-
-> **Примечание:** BBRv2 может быть недоступен в старых дистрибутивах. Требуется ядро 5.18+.
-
-### BBRv3 (experimental)
-
-> **Внимание:** BBRv3 **НЕ** включен в mainline Linux kernel (2026). Требует патчей или сборки ядра.
-
-```ini
-# /etc/sysctl.conf
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr3
-```
+* **Улучшения:** Лучшая fairness с CUBIC, поддержка ECN, стабильность в WiFi/мобильных сетях
+* **Документация:** [Версии BBR](../../../Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md#версии-bbr)
 
 ### Reno
 
-* **Статус:** Классический алгоритм, основанный на потерях
-* **Актуальность:** Устарел для современных сетей
+* **Статус:** Классический алгоритм, устарел для современных сетей
 
-## Просмотр и переключение алгоритмов
+## Практическое применение в Linux
+
+### Просмотр доступных алгоритмов
 
 ```bash
-# Просмотр доступных алгоритмов
 cat /proc/sys/net/ipv4/tcp_available_congestion_control
-
-# Текущий алгоритм
-sysctl net.ipv4.tcp_congestion_control
 ```
 
-## Включение BBR
+### Проверка текущего алгоритма
 
-Требования: ядро Linux 4.9+
+```bash
+sysctl net.ipv4.tcp_congestion_control
+# или
+ss -ti | grep -o 'cong:[[:space:]]*[a-z0-9]*'
+```
+
+### Включение BBR
+
+**Требования:** ядро Linux 4.9+
 
 ```ini
-# /etc/sysctl.conf
-# Включить Fair Queuing (обязательно для BBR)
+# /etc/sysctl.conf или /etc/sysctl.d/99-network.conf
 net.core.default_qdisc = fq
-# Установить BBR как алгоритм контроля перегрузки
 net.ipv4.tcp_congestion_control = bbr
 ```
 
 ```bash
 sudo sysctl -p
-# Проверка
+```
+
+**Проверка:**
+
+```bash
 ss -ti | grep bbr
 ```
 
+> **Примечание:** BBR автоматически использует pacing (ядро 4.x+). Для BBRv2 требуется ядро 5.18+.
+
+### BBRv3 (experimental)
+
+> **Внимание:** BBRv3 **НЕ** включен в mainline Linux kernel (2026). Требует патчей или сборки ядра.
+
 ## Связанные темы
 
+* **SSoT:** [Алгоритмы congestion control](../../../Networking/Protocols/TCP/congestion/tcp_congestion_algorithms.md) — подробная документация
 * **Дисциплины очередей:** [Дисциплины очередей](./tcp_queueing_disciplines.md)
 * **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
+* **Диагностика:** [Диагностика congestion control](../../../Networking/Protocols/TCP/congestion/tcp_congestion_diagnostics.md)

@@ -248,5 +248,5 @@ networkctl status
 ## Дополнительные ресурсы
 
 - **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теория bonding
-- **[VLAN](../../../../Networking/Protocols/vlan.md)** — теория VLAN
+- **[VLAN](../../../../Networking/Protocols/VLAN/vlan_overview.md)** — теория VLAN
 - **[VLAN: практические сценарии](../../../../Networking/Concepts/vlan_l2_switching/practical_scenarios.md)** — примеры настройки

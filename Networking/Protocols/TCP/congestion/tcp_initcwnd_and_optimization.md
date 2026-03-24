@@ -8,7 +8,7 @@
 
 ```
 MTU = 1500 байт
-IP Header = 20 байт
+IP Header = 20 байт (см. [Структура IP-пакета](../../../OSI_TCP_IP_Model/Network_layer/Protocols/ip_packet_structure.md))
 TCP Header = 20 байт
 MSS = 1500 - 20 - 20 = 1460 байт
 

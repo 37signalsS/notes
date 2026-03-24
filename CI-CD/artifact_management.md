@@ -250,3 +250,4 @@ pipeline {
 - **[CI/CD: Паттерны](./ci_cd_patterns.md)** — иммутабельные артефакты как паттерн.
 - **[CI/CD: Анти-паттерны](./ci_cd_antipatterns.md)** — проблема пересборки артефактов.
 - **[Стратегии развертывания](./Core_Concepts/deployment_strategies.md)** — продвижение артефактов между окружениями.
+- **[Артефакты и кэш в GitLab CI](./GitLab_CI/Advanced/gitlab_ci_caching/cache_concepts.md)** — специфика работы с артефактами в GitLab CI.

@@ -167,7 +167,7 @@ ping -s 2000 -M do ya.ru
 
 ### Интерпретация TTL
 
-Значение TTL в ответе указывает на ОС хоста:
+Значение TTL в ответе указывает на ОС хоста и количество пройденных хопов:
 
 | TTL (ответ) | ОС (начальное значение) |
 | :--- | :--- |
@@ -175,11 +175,38 @@ ping -s 2000 -M do ya.ru
 | 128 | Windows (начальное 128) |
 | 255 | Сетевое оборудование (начальное 255) |
 
-**Формула:**
+**Формула расчёта количества хопов:**
 
 ```
 Хопы = начальное_TTL - полученное_TTL
 ```
+
+**Пример:**
+```bash
+$ ping 8.8.8.8
+64 bytes from 8.8.8.8: icmp_seq=1 ttl=117 time=12.3 ms
+```
+- Получено TTL = 117
+- Начальное TTL = 128 (Windows) или 64 (Linux)
+- Если отправитель Windows: 128 - 117 = **11 хопов**
+
+**Установка TTL для исходящих пакетов:**
+
+```bash
+# Linux/macOS: установить TTL=5
+ping -c 1 -t 5 8.8.8.8
+
+# Windows: установить TTL=5
+ping -n 1 -i 5 8.8.8.8
+```
+
+**Практическое применение TTL:**
+
+1. **Определение количества маршрутизаторов** до цели
+2. **Обнаружение сетевых петель** — если пакет отбрасывается с "Time to live exceeded"
+3. **Тестирование маршрутизации** — постепенное увеличение TTL для прохождения каждого хопа
+
+Подробнее о механизме TTL и ICMP-сообщениях см. [`icmp_time_exceeded.md`](../../../Networking/Protocols/ICMP/icmp_time_exceeded.md).
 
 ### ICMP типы и коды
 
@@ -214,5 +241,5 @@ ping -s 2000 -M do ya.ru
 - **[traceroute_mtr.md](./traceroute_mtr.md)** — трассировка маршрута
 - **[tcpdump.md](./tcpdump.md)** — анализ ICMP-трафика
 - **[ping_alternatives.md](../../../Networking/Troubleshooting/ping_alternatives.md)** — альтернативы для случаев, когда ICMP блокируется
-- **[icmp.md](../../../Networking/Protocols/icmp.md)** — протокол ICMP (протоколы)
+- **[ICMP](../../../Networking/Protocols/ICMP/icmp_overview.md)** — протокол ICMP (протоколы)
 - **[MTU (Maximum Transmission Unit)](../../../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — диагностика MTU с помощью ping

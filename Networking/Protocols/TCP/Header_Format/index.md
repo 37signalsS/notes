@@ -111,8 +111,8 @@ ACK Number = 1024 (ожидается байт №1024)
 | **ACK** | Acknowledgment | Поле Ack Number валидно | Всегда, кроме SYN |
 | **PSH** | Push | Немедленная доставка приложению | Интерактивные данные |
 | **RST** | Reset | Немедленный разрыв соединения | Ошибки, отказы |
-| **SYN** | Synchronize | Синхронизация ISN | [Handshake](../connection/tcp_connection_management_overview.md) |
-| **FIN** | Finish | Завершение соединения | [Завершение](../connection/tcp_connection_management_overview.md) |
+| **SYN** | Synchronize | Синхронизация ISN | [Handshake](../connection/tcp_connection_overview.md) |
+| **FIN** | Finish | Завершение соединения | [Завершение](../connection/tcp_connection_termination.md) |
 
 **Флаг PSH (Push) — подробно:**
 
@@ -122,7 +122,7 @@ ACK Number = 1024 (ожидается байт №1024)
 - **Использование:** интерактивные данные (SSH, терминал), конец HTTP-запроса
 - **Диагностика:** `tcpdump -i eth0 -nn 'tcp[tcpflags] & tcp-push != 0'`
 
-**Подробнее:** [Передача данных](../connection/tcp_connection_management_overview.md#передача-данных)
+**Подробнее:** [Передача данных](../connection/tcp_data_transfer.md)
 
 #### 7. Размер окна (Window Size, 16 бит)
 
@@ -211,5 +211,5 @@ ACK Number = 1024 (ожидается байт №1024)
 ### Связанные темы
 
 - **[Надежность TCP](../reliability_mechanisms/diagnostics.md** — как поля заголовка обеспечивают надежность
-- **[Handshake](../connection/tcp_connection_management_overview.md)** — использование SYN, ACK, Sequence Number
+- **[Handshake](../connection/tcp_connection_overview.md)** — использование SYN, ACK, Sequence Number
 - **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — влияние параметров на заголовок

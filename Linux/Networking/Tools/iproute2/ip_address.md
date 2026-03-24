@@ -137,7 +137,7 @@ ip monitor address
 * **[ip route](./ip_route.md)** — управление маршрутизацией
 * **[Постоянная настройка сети](../../Settings/Persistent_Network/systemd_networkd.md** — сохранение настроек
 * **[IPv6](../../Settings/ipv6_configuration/firewall.md)** — настройка IPv6
-* **[DHCP](../../../../Networking/Protocols/dhcp.md)** — протокол динамической настройки
+* **[DHCP](../../../../Networking/Protocols/DHCP/dhcp_overview.md)** — протокол динамической настройки
 
 ### Типичные проблемы
 

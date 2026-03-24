@@ -58,7 +58,7 @@
 | `to <IP>` | По адресу назначения | `to 10.0.0.0/8` |
 | `iif <dev>` | По входящему интерфейсу | `iif eth1` |
 | `oif <dev>` | По исходящему интерфейсу | `oif eth0` |
-| `tos <value>` | По полю TOS IP-пакета | `tos 0x10` |
+| `tos <value>` | По полю TOS IP-пакета (см. [Type of Service](../../../Networking/OSI_TCP_IP_Model/Network_layer/Protocols/ip_packet_structure.md)) | `tos 0x10` |
 | `fwmark <mark>` | По метке iptables/nftables | `fwmark 0x2/0x2` |
 | `sport/dport` | По порту источника/назначения | `sport 22` |
 | `protocol` | По протоколу | `protocol tcp` |

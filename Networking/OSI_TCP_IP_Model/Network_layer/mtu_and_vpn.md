@@ -40,6 +40,8 @@ MSS = 1500 - 40 = 1460 байт (для стандартного Ethernet)
 L3 PDU = payload (32 байта) + IP header (20 байт) + ICMP header (8 байт) = 60 байт
 ```
 
+Подробнее о структуре IP-пакета: [Структура IP-пакета (IPv4)](./Protocols/ip_packet_structure.md).
+
 ### Path MTU Discovery (PMTUD)
 
 **PMTUD** — алгоритм определения минимального MTU на пути следования пакета (RFC 1191).

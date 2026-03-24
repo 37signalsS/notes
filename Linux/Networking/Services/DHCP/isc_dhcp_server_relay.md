@@ -4,7 +4,7 @@
 
 DHCP-запросы являются широковещательными и по умолчанию не выходят за пределы своей подсети (VLAN). Если DHCP-сервер находится в другой подсети, клиенты не смогут его обнаружить. Эту проблему решает **DHCP Relay Agent**.
 
-> **См. также:** [DHCP Relay Agent](../../../../Networking/Protocols/dhcp.md#базовые-концепции) — концепция.
+> **См. также:** [DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — концепция.
 
 ## Принцип работы
 
@@ -95,4 +95,4 @@ DHCP-запросы являются широковещательными и п�
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../../Networking/Protocols/DHCP/dhcp_overview.md)** | Теория, DORA, безопасность |

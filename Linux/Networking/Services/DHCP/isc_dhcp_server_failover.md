@@ -4,7 +4,7 @@
 
 Для обеспечения высокой доступности (High Availability) службы DHCP настраивают два сервера в режиме failover. Они синхронизируют между собой информацию о выданных адресах и могут подменять друг друга в случае сбоя.
 
-> **См. также:** [Протокол DHCP: безопасность](../../../../Networking/Protocols/dhcp.md#безопасность-dhcp-защита-от-несанкционированных-dhcp-серверов-rogue-dhcp-server) — защита от rogue DHCP.
+> **См. также:** [Протокол DHCP: безопасность](../../../../Networking/Protocols/DHCP/dhcp_security.md) — защита от rogue DHCP.
 
 ## Принцип работы
 
@@ -146,4 +146,4 @@ sudo systemctl start isc-dhcp-server
 | **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
 | **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
 | **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../../Networking/Protocols/dhcp.md)** | Теория, DORA, безопасность |
+| **[Протокол DHCP](../../../../Networking/Protocols/DHCP/dhcp_overview.md)** | Теория, DORA, безопасность |

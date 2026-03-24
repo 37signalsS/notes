@@ -38,6 +38,10 @@ W(t) = C × (t - K)³ + W_max
 
 **Принцип:** модель сети на основе **пропускной способности** и **RTT**, а не потерь.
 
+**Ключевое отличие от классических алгоритмов (Reno, Cubic):**
+- **Reno/Cubic:** реагируют на потери пакетов (реактивный подход)
+- **BBR:** измеряет доступную пропускную способность и RTT (проактивный подход)
+
 **Ключевые метрики:**
 
 - **BDP (Bandwidth-Delay Product):** `max_bandwidth × min_rtt`
@@ -49,6 +53,13 @@ W(t) = C × (t - K)³ + W_max
 2. **Drain:** очистка очереди, если создана
 3. **ProbeBW:** циклическое изменение скорости для поиска оптимума
 4. **ProbeRTT:** периодическое снижение cwnd для измерения min_rtt
+
+**Преимущества BBR:**
+
+- Эффективная работа в сетях с высокой задержкой (LDN — Long Distance Networks)
+- Устойчивость к переменной пропускной способности (мобильные сети, WiFi)
+- Минимизация bufferbloat (не создаёт излишних очередей)
+- Лучшая утилизация каналов с большим BDP
 
 ### Версии BBR
 
@@ -98,4 +109,4 @@ ss -ti | grep bbr
 - **[Обзор и базовые алгоритмы](./tcp_congestion_control_overview.md)** — Slow Start, AIMD, Fast Recovery
 - **[Оптимизация initcwnd](./tcp_initcwnd_and_optimization.md)** — правило 14 КБ
 - **[Диагностика](./tcp_congestion_diagnostics.md)** — практические сценарии
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_congestion_algorithms.md)** — практическая настройка
+- **[Оптимизация TCP в Linux](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — общая настройка TCP

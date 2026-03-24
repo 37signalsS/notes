@@ -6,7 +6,28 @@
 
 В отличие от Docker, `nspawn` не использует образы, а работает напрямую с корневой файловой системой (rootfs) другого дистрибутива, расположенной в директории.
 
+**Архитектурное положение:** systemd-nspawn занимает промежуточное положение между:
+- **Docker/Podman** (OCI-образы, слои, сеть, реестры)
+- **Виртуальными машинами** (гипервизор, собственное ядро)
+
+Это **системный контейнер на уровне ОС**: изолированный процесс со своим корнем файловой системы, PID-пространством и сетью. Ядро при этом общее с хостом.
+
 ## Основные концепции
+
+### Когда использовать systemd-nspawn
+
+| Сценарий | Рекомендация |
+| :--- | :--- |
+| **Docker/Podman** | Когда нужны образы, реестры, оркестрация, микросервисы |
+| **systemd-nspawn** | Когда нужно: <br>• Быстро поднять изолированное окружение для теста или сборки <br>• Запустить другой дистрибутив на том же хосте без VM <br>• Отлаживать chroot, но с нормальной изоляцией <br>• Не тащить Docker на минималистичный сервер |
+
+### Преимущества перед альтернативами
+
+- **Никакого демона** — не требует отдельного сервиса в продакшене
+- **Никакого рантайма** — не нужны containerd, runc, crun
+- **Никакой регистрации** — не нужен Docker Hub или другие реестры
+- **Нулевые накладные расходы** — весит ноль байт сверх того, что уже есть в systemd
+- **Готов "из коробки"** — часть systemd, доступен сразу после установки
 
 Ключевые преимущества `systemd-nspawn` перед традиционным `chroot`:
 
@@ -33,25 +54,30 @@
 sudo apt install debootstrap
 
 # Создаем директорию для нашего контейнера
-sudo mkdir /srv/my-container
+sudo mkdir -p /var/lib/machines/mydebian
 
 # Устанавливаем минимальную систему Debian в эту директорию
-sudo debootstrap stable /srv/my-container http://deb.debian.org/debian/
+sudo debootstrap stable /var/lib/machines/mydebian http://deb.debian.org/debian/
 ```
+
+> **Примечание:** systemd-nspawn работает с директориями в `/var/lib/machines` или `/srv`. Использование `/var/lib/machines` предпочтительнее для интеграции с `machinectl`.
 
 ### 2. Запуск и управление
 
 #### Интерактивный запуск
 
 ```bash
-# Запустить контейнер из директории /srv/my-container и войти в него
-sudo systemd-nspawn -D /srv/my-container
+# Запустить контейнер из директории и войти в него
+sudo systemd-nspawn -D /var/lib/machines/mydebian
 
-# Запустить контейнер с приватной виртуальной сетью
-sudo systemd-nspawn -D /srv/my-container --network-veth
+# Запустить контейнер с приватной виртуальной сетью (veth-пара)
+sudo systemd-nspawn -D /var/lib/machines/mydebian --network-veth
 
 # Запустить и сразу выполнить команду
-sudo systemd-nspawn -D /srv/my-container /bin/bash -c "ls -la /"
+sudo systemd-nspawn -D /var/lib/machines/mydebian /bin/bash -c "ls -la /"
+
+# Запуск как полноценный systemd-контейнер (с init-процессом)
+sudo systemd-nspawn -D /var/lib/machines/mydebian --boot --network-veth
 ```
 
 #### Утилита `machinectl`
@@ -63,34 +89,65 @@ sudo systemd-nspawn -D /srv/my-container /bin/bash -c "ls -la /"
 machinectl list
 
 # Войти в работающий контейнер (получить shell)
-machinectl shell my-container
+machinectl shell mydebian
 
 # Посмотреть статус машины
-machinectl status my-container
+machinectl status mydebian
 
 # Остановить машину
-machinectl stop my-container
+machinectl stop mydebian
+
+# Запустить машину
+machinectl start mydebian
 ```
 
 #### Запуск как системная служба
 
-`systemd` предоставляет шаблонный юнит `systemd-nspawn@.service`, который позволяет легко запускать `nspawn`-контейнеры как обычные службы. Имя экземпляра — это имя директории в `/srv` или `/var/lib/machines`.
+`systemd` предоставляет шаблонный юнит `systemd-nspawn@.service`, который позволяет легко запускать `nspawn`-контейнеры как обычные службы. Имя экземпляра — это имя директории в `/var/lib/machines` или `/srv`.
 
-Если наш контейнер находится в `/srv/my-container`, то служба будет называться `systemd-nspawn@my-container.service`.
+Если наш контейнер находится в `/var/lib/machines/mydebian`, то служба будет называться `systemd-nspawn@mydebian.service`.
 
 ```bash
 # Запустить контейнер как службу
-sudo systemctl start systemd-nspawn@my-container.service
+sudo systemctl start systemd-nspawn@mydebian.service
 
 # Включить автозапуск
-sudo systemctl enable systemd-nspawn@my-container.service
+sudo systemctl enable systemd-nspawn@mydebian.service
 
 # Проверить статус
-systemctl status systemd-nspawn@my-container.service
+systemctl status systemd-nspawn@mydebian.service
+```
+
+### 3. Минимальный пример: быстрый тест изоляции
+
+```bash
+# Создаём тестовое окружение
+sudo debootstrap stable /var/lib/machines/testenv
+
+# Запускаем изолированно
+systemd-nspawn -D /var/lib/machines/testenv
+
+# Внутри контейнера:
+# - Отдельная файловая система
+# - Отдельные PID (первый процесс имеет PID 1)
+# - Отдельное пространство имён
+# - Но общее ядро с хостом
 ```
 
 ## Дополнительная информация
 
-- **[Обзор виртуализации в Linux](../../Virtualization/virtualization_overview.md)**: Для более широкого понимания различных технологий виртуализации и контейнеризации в Linux.
-- **[Пространства имен (Namespaces) в Linux](../namespaces.md)**: Для углубленного изучения технологии изоляции, используемой `systemd-nspawn`.
-- **[Контрольные группы (cgroups) в Linux](../cgroups.md)**: Для понимания механизмов управления ресурсами, применяемых `systemd-nspawn`.
+### Сравнение с альтернативами
+
+- **[Docker overview](../../../Docker/docker_overview.md)** — контейнеры с образами, реестрами, оркестрацией
+- **[Podman vs Docker](../../../Podman/podman_vs_docker.md)** — daemonless-альтернатива Docker
+- **[Виртуализация в Linux](../../Virtualization/virtualization_overview.md)** — полный обзор технологий виртуализации
+
+### Технологии изоляции
+
+- **[Namespaces в Linux](../namespaces.md)** — пространства имён для изоляции процессов
+- **[Cgroups в Linux](../cgroups.md)** — контрольные группы для ограничения ресурсов
+
+### Интеграция с systemd
+
+- **[Systemd units overview](./systemd_units_overview.md)** — управление службами
+- **[Docker и systemd](../../../Docker/docker_systemd.md)** — сравнение интеграции Docker с systemd

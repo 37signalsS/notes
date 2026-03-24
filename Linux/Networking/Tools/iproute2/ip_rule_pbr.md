@@ -29,7 +29,7 @@ ip rule show
 | `to <IP>` | Адрес получателя | `to 10.0.0.0/8` |
 | `iif <dev>` | Входной интерфейс | `iif eth1` |
 | `oif <dev>` | Исходящий интерфейс | `oif eth0` |
-| `tos <value>` | Поле TOS IP-пакета | `tos 0x10` |
+| `tos <value>` | Поле TOS IP-пакета (см. [Type of Service](../../../../Networking/OSI_TCP_IP_Model/Network_layer/Protocols/ip_packet_structure.md)) | `tos 0x10` |
 | `fwmark <mark>` | Метка пакета (iptables) | `fwmark 0x2/0x2` |
 
 ### Комбинирование условий
