@@ -4,6 +4,8 @@
 
 **`needs`**: Директива для создания **направленного ациклического графа (DAG)**. Позволяет запускать задачи сразу после завершения зависимостей, не дожидаясь окончания всей стадии.
 
+Подробное определение: [Определения директив](./directives_definitions.md).
+
 ## Основные концепции
 
 По умолчанию задачи в стадии выполняются параллельно, а стадии — последовательно. `needs` нарушает эту модель:
@@ -12,7 +14,7 @@
 - Не нужно ждать окончания всей стадии
 - Создается **направленный ациклический граф (DAG)**
 
-**Важно:** `needs` автоматически устанавливает `dependencies`, загружая артефакты от указанных задач. Для отмены: `dependencies: []`.
+**Важно:** `needs` автоматически устанавливает `dependencies`, загружая артефакты от указанных задач. Для отмены: `dependencies: []`. Подробнее о директивах: [directives_definitions.md](./directives_definitions.md).
 
 ## Практические сценарии
 
@@ -80,6 +82,8 @@ deploy:
     - echo "Deploying..."
 ```
 
+Для сериализации развертываний и защиты от гонок состояний используется `resource_group` ([practical_scenarios.md](./practical_scenarios.md)).
+
 ### Complex DAG с несколькими зависимостями
 
 ```yaml
@@ -114,45 +118,6 @@ lint ──┬─→ test:integration ──→ deploy
 test:unit ──┘
 ```
 
-### Сериализация развертываний с `resource_group`
+## Дополнительная информация
 
-**Защита production от гонок состояний:**
-
-```yaml
-deploy_prod:
-  stage: deploy
-  script:
-    - ./scripts/deploy.sh production
-  resource_group: production
-  environment:
-    name: production
-    url: https://app.example.com
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual
-```
-
-**Очереди для разных окружений:**
-
-```yaml
-deploy_staging:
-  stage: deploy
-  resource_group: staging
-  script:
-    - ./deploy.sh staging
-
-deploy_prod:
-  stage: deploy
-  resource_group: production
-  script:
-    - ./deploy.sh production
-```
-
-Если два пайплайна одновременно пытаются задеплоить в `production`, второй будет ждать завершения первого.
-
-## Связанные документы
-
-- **[Определения директив](./directives_definitions.md)** — ключевые директивы
-- **[workflow:rules и pipeline inputs](./pipeline_inputs.md)** — управление пайплайнами
-- **[Правила запуска задач](./job_rules.md)** — условия для задач
-- **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые концепции
+См. также: [определения директив](./directives_definitions.md), [основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md).

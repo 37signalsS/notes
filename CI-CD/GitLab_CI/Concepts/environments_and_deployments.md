@@ -1,12 +1,12 @@
-### Определения
+## Определения
 
 - **Окружение (Environment):** Логическое представление инфраструктуры, куда развертывается приложение (например, `development`, `staging`, `production`). Ключевое слово `environment` в `.gitlab-ci.yml` создает в GitLab соответствующий объект, который отслеживает историю развертываний.
 - **Развертывание (Deployment):** Процесс доставки и запуска определенной версии приложения в конкретном окружении. Каждое успешное выполнение `job` с ключевым словом `environment` создает запись о развертывании.
-- **Откат (Rollback):** Возврат окружения к предыдущей стабильной версии приложения. В GitLab это, как правило, означает перезапуск пайплайна от более раннего коммита.
+- **Откат (Rollback):** Возврат окружения к предыдущей стабильной версии приложения. В GitLab это, как правило, означает перезапуск пайплайна от более раннего коммита. Механизм отката описан в разделе [Deployment Health Checks and Rollback](../../Deployment_Strategies/deployment_health_checks_and_rollback.md).
 - **Статическое окружение (Static Environment):** Долгоживущее, постоянное окружение, такое как `staging` или `production`.
-- **Динамическое окружение (Dynamic Environment / Review App):** Временное окружение, автоматически создаваемое для тестирования изменений в изолированной среде (например, для каждой `feature-ветки` или `Merge Request`). Оно существует ограниченное время и затем уничтожается.
+- **Динамическое окружение (Dynamic Environment / Review App):** Временное окружение, автоматически создаваемое для тестирования изменений в изолированной среде (например, для каждой `feature-ветки` или `Merge Request`). Оно существует ограниченное время и затем уничтожается. Подробное руководство по настройке — [Настройка динамических окружений (Review Apps) с Kubernetes](../Tutorials/kubernetes_review_apps.md).
 
-### Основные концепции
+## Основные концепции
 
 #### Создание и типы окружений
 
@@ -66,7 +66,7 @@ stop_review_app:
 
 #### Масштабирование конфигурации с `extends`
 
-Для избежания дублирования кода при настройке нескольких окружений используются YAML-шаблоны и `extends`.
+Для избежания дублирования кода при настройке нескольких окружений используются YAML-шаблоны и `extends`. Механизмы переиспользования подробно описаны в [Обзоре переиспользуемых пайплайнов](../Reusable_Pipelines/overview.md).
 
 1. **Определите шаблон:**
 
@@ -101,7 +101,7 @@ stop_review_app:
           when: manual # Деплой в production только вручную
     ```
 
-### Практические сценарии
+## Практические сценарии
 
 #### Сценарий 1: Ручная задача отката с Helm
 
@@ -146,7 +146,9 @@ rollback_prod:
 > Подробное пошаговое руководство по настройке Review Apps с Kubernetes доступно в документе:
 > **[Настройка динамических окружений (Review Apps) с Kubernetes](../Tutorials/kubernetes_review_apps.md)**
 
-### Дополнительная информация
+Общая информация по интеграции GitLab с Kubernetes — в [gitlab_kubernetes_integration_guide.md](../Advanced/gitlab_kubernetes_integration_guide.md).
+
+## Дополнительная информация
 
 #### Пользовательский интерфейс и откаты
 
@@ -158,19 +160,10 @@ rollback_prod:
 
 Нажатие кнопки **Rollback** не запускает специальную логику, а **перезапускает задачу (`job`) от предыдущего успешного развертывания**. Если развертывания идемпотентны и версионированы (например, через теги Docker-образов по хешу коммита), это действие безопасно вернет окружение к предыдущей стабильной версии.
 
+Подробнее о стратегиях развертывания — в [Core_Concepts/deployment_strategies.md](../../Core_Concepts/deployment_strategies.md) и [Deployment_Strategies/comparison.md](../../Deployment_Strategies/comparison.md). О GitOps-подходе (Pull-модель) — в [GitOps Overview](../../../GitOps/GitOps_overview.md).
+
 > **Критичные изменения GitLab 18.x:**
 >
 > - **18.4**: `environment:kubernetes:namespace` deprecated → используйте `environment:kubernetes:dashboard:namespace`
 > - **18.4**: `environment:kubernetes:flux_resource_path` deprecated → используйте `environment:kubernetes:dashboard:flux_resource_path`
 > - **18.4**: Новая структура `environment:kubernetes:dashboard` для интеграции с Kubernetes
-
-### Связанные документы
-
-- **[Основы GitLab CI/CD](./gitlab_ci_basics.md)** — базовые концепции (Pipeline, Stage, Job).
-- **[Переменные и управление секретами](./gitlab_ci_variables_secrets.md)** — работа с переменными окружения.
-- **[Продвинутые рабочие процессы](../Advanced/gitlab_ci_advanced_workflow.md)** — правила `rules` и оптимизация пайплайнов.
-- **[Переиспользуемые пайплайны](../Reusable_Pipelines/overview.md)** — использование `extends` и `include` для избежания дублирования.
-- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — общее руководство по развертыванию в Kubernetes.
-- **[Настройка Review Apps с Kubernetes](../Tutorials/kubernetes_review_apps.md)** — пошаговое руководство.
-- **[Стратегии развертывания](../../Core_Concepts/deployment_strategies.md)** — Blue/Green, Canary, Rolling Update.
-- **[GitOps Overview](../../../GitOps/GitOps_overview.md)** — Pull-модель развертывания.

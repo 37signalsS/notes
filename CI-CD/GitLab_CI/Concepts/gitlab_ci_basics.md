@@ -2,12 +2,12 @@
 
 ## Определения
 
-Иерархия компонентов в GitLab CI/CD строится по принципу "от общего к частному".
+Иерархия компонентов в GitLab CI/CD строится по принципу "от общего к частному". Подробный глоссарий — в [pipeline_glossary.md](../../Core_Concepts/pipeline_glossary.md).
 
 * **[Конвейер (Pipeline)](https://docs.gitlab.com/ci/pipelines/)**: Высокоуровневая структура, которая определяет полный цикл CI/CD. Состоит из этапов и запускается по различным событиям (коммит, Merge Request, расписание).
 * **[Этап (Stage)](https://docs.gitlab.com/ci/yaml/stages/)**: Группирует задачи и определяет порядок их выполнения. Все задачи одного этапа выполняются параллельно, а сами этапы — последовательно.
 * **[Задача (Job)](https://docs.gitlab.com/ci/jobs/)**: Минимальная единица работы. Выполняет определенный набор команд (скриптов) для сборки, тестирования или развертывания.
-* **[Исполнитель (Runner)](https://docs.gitlab.com/runner/)**: Приложение, которое выполняет задачи (Jobs). Оно устанавливается на сервер или запускается в контейнере и постоянно опрашивает GitLab на предмет новых задач.
+* **[Исполнитель (Runner)](https://docs.gitlab.com/runner/)**: Приложение, которое выполняет задачи (Jobs). Оно устанавливается на сервер или запускается в контейнере и постоянно опрашивает GitLab на предмет новых задач. Настройка — в [gitlab_ci_runners_executors.md](../Advanced/gitlab_ci_runners_executors.md).
 
 ## Основные концепции
 
@@ -58,7 +58,7 @@
 
 Для избежания дублирования кода GitLab CI предлагает несколько механизмов, таких как `extends`, `!reference` и `include`.
 
-Подробное описание этих механизмов см. в статье: **[Создание переиспользуемых и композитных пайплайнов](../Reusable_Pipelines/overview.md)**.
+Подробное описание этих механизмов см. в статье: **[Создание переиспользуемых и композитных пайплайнов](../Reusable_Pipelines/overview.md)**. Продвинутые сценарии — в [gitlab_ci_advanced_workflow.md](../Advanced/gitlab_ci_advanced_workflow.md).
 
 > **Новое в GitLab 18.x:**
 >
@@ -143,18 +143,11 @@ deploy_job:
 
 * **Полный справочник ключевых слов**: Детальное описание всех доступных ключевых слов и их опций можно найти в [официальной документации GitLab](https://docs.gitlab.com/ci/yaml/).
 
+* **Стратегия ветвления**: О стратегии ветвления GitLab Flow для эффективной разработки — в [gitlab_flow.md](../Tutorials/gitlab_flow.md).
+
 > **Критичные изменения GitLab 18.x:**
 >
 > * **18.3**: Переменные по умолчанию маскируются (`Masked` вместо `Visible`)
 > * **18.4**: `environment:kubernetes:namespace` deprecated → используйте `environment:kubernetes:dashboard:namespace`
 > * **18.6**: `expand variable reference` отключён по умолчанию
 > * **18.9**: `include:cache` (experiment) для кэширования remote includes
-
-### Связанные документы
-
-* **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов.
-* **[Переменные и управление секретами в GitLab CI](./gitlab_ci_variables_secrets.md)** — для работы с переменными окружения.
-* **[Исполнители (Runners) и их типы (Executors)](../Advanced/gitlab_ci_runners_executors.md)** — для настройки сред выполнения задач.
-* **[Переиспользуемые пайплайны](../Reusable_Pipelines/overview.md)** — `extends`, `include` для избежания дублирования.
-* **[Продвинутые рабочие процессы в GitLab CI](../Advanced/gitlab_ci_advanced_workflow.md)** — для более сложных сценариев.
-* **[GitLab Flow](../Tutorials/gitlab_flow.md)** — стратегия ветвления для эффективной разработки.

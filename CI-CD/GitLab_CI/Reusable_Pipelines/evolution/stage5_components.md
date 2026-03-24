@@ -1,10 +1,61 @@
-# Этап 5: Зрелость — CI/CD Catalog Components
+# CI/CD Catalog Components — зрелый подход к переиспользованию
+
+## Определения
+
+**CI/CD Components** — версионируемые, типизированные компоненты GitLab с публикуемым интерфейсом (`spec:inputs`). Предоставляют каталог переиспользуемых пайплайнов.
+
+**`spec:inputs`** — явный интерфейс компонента, определяющий входные параметры с типами, значениями по умолчанию и описаниями.
+
+**Semver** — семантическое версионирование (`MAJOR.MINOR.PATCH`). Для компонентов GitLab поддерживает частичные версии (`@1.0`, `@1`).
+
+**Контекст этапа:** Финальный этап эволюции — решение проблем типизации, валидации и документирования через CI/CD Components.
+
+## Базовые концепции
+
+### Архитектура компонентов
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Репозиторий компонента: group/ci-components/docker-build   │
+│  ├── .gitlab-ci.yml      (spec:inputs + метаданные)         │
+│  └── templates/                                             │
+│      └── build.yml       (основная логика)                  │
+└─────────────────────────────────────────────────────────────┘
+                          ↓ include:component
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  Проект 1    │  │  Проект 2    │  │  Проект N    │
+│  (явные      │  │  (явные      │  │  (явные      │
+│   inputs)    │  │   inputs)    │  │   inputs)    │
+└──────────────┘  └──────────────┘  └──────────────┘
+```
+
+### Типы входных параметров
+
+| Тип | Описание | Пример |
+| :--- | :--- | :--- |
+| `string` | Строковое значение | `dockerfile: Dockerfile` |
+| `boolean` | Логическое значение | `enable_cache: true` |
+| `number` | Числовое значение | `timeout: 3600` |
+| `array` | Массив значений | `tags: [docker, k8s]` |
+
+### Версионирование компонентов
+
+| Версия | Описание |
+| :--- | :--- |
+| `@1.0.0` | Точная версия |
+| `@1.0` | Последняя минорная версия 1.0.x |
+| `@1` | Последняя мажорная версия 1.x.x |
+
+### Синтаксис подстановки inputs
+
+```yaml
+# В шаблонах компонентов используется $[[ inputs.<name> ]]
+stage: $[[ inputs.stage ]]
+dockerfile: $[[ inputs.dockerfile ]]
+cache: $[[ inputs.enable_cache ]]
+```
 
 ## Практические сценарии
-
-### Решение
-
-Переход на CI/CD Components с явным интерфейсом (`spec:inputs`), версионированием через Semver и публикацией в каталоге.
 
 ### Создание компонента
 
@@ -29,22 +80,22 @@ spec:
       default: build
       type: string
       description: "CI stage name"
-    
+
     dockerfile:
       default: Dockerfile
       type: string
       description: "Path to Dockerfile"
-    
+
     context:
       default: $CI_PROJECT_DIR
       type: string
       description: "Build context path"
-    
+
     enable_cache:
       default: true
       type: boolean
       description: "Enable Kaniko caching"
-    
+
     cache_repo:
       default: $CI_REGISTRY_IMAGE/cache
       type: string
@@ -58,12 +109,12 @@ docker-build-job:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
   script:
-    - /kaniko/executor
-      --context $[[ inputs.context ]]
-      --dockerfile $[[ inputs.dockerfile ]]
-      --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-      --cache=$[[ inputs.enable_cache ]]
-      --cache-repo=$[[ inputs.cache_repo ]]
+    - /kaniko/executor \
+        --context $[[ inputs.context ]] \
+        --dockerfile $[[ inputs.dockerfile ]] \
+        --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA \
+        --cache=$[[ inputs.enable_cache ]] \
+        --cache-repo=$[[ inputs.cache_repo ]]
 ```
 
 ### Публикация в каталог
@@ -74,8 +125,6 @@ docker-build-job:
 # Создание тега с SemVer
 git tag -a v1.0.0 -m "Initial release of docker-build component"
 git push origin v1.0.0
-
-# Или через GitLab UI: Releases → New release
 ```
 
 **CI для автоматического релиза:**
@@ -120,13 +169,10 @@ include:
 
 ## Дополнительная информация
 
-### Связанные документы
+**Предыдущий этап:** [Абстрагирование с Kaniko](./stage4_kaniko.md) описывает переход на безопасный сборщик образов.
 
-- **[Этап 4: Абстрагирование (Kaniko)](stage4_kaniko.md)** — предыдущий этап
-- **[CI/CD Catalog](../ci_cd_catalog_components.md)** — создание компонентов
-- **[Обзор переиспользуемых пайплайнов](../../overview.md)** — сравнение всех подходов
+**Детали создания:** [CI/CD Catalog](../ci_cd_catalog_components.md) содержит полное руководство по созданию компонентов.
 
-### Внешние ресурсы
+**Сравнение подходов:** [Обзор переиспользуемых пайплайнов](../../overview.md) содержит таблицу всех механизмов переиспользования.
 
-- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
-- [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
+**Внешние ресурсы:** [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/), [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5).

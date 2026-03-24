@@ -92,15 +92,17 @@ Feature: Shopping Cart
 - **Независимые тесты:** Не должны зависеть от порядка выполнения.
 - **FIRST принципы:** Fast, Independent, Repeatable, Self-validating, Timely.
 
+### Дополнительная информация
+
 #### Внешние ресурсы
 
 - [Test-Driven Development by Kent Beck](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530)
 - [Cucumber Documentation](https://cucumber.io/docs/guides/overview/)
 
-#### Внешние связи
+#### Связанные документы
 
 - **[CI-CD: Обзор пайплайна](../ci_cd_overview.md)** — TDD/BDD является частью процесса непрерывной интеграции.
 - **[Стратегии развертывания](../Core_Concepts/deployment_strategies.md)** — после успешного тестирования код развертывается с использованием различных стратегий.
-- **[Виды тестов: Unit, Integration, E2E](../../Testing/testing_types_unit_integration_e2e.md)** — применение TDD/BDD на разных уровнях тестирования
-- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — встраивание TDD/BDD в пайплайн
-- **[Метрики покрытия](../../Testing/testing_coverage_metrics.md)** — 100% покрытие нового кода в TDD
+- **[Виды тестов: Unit, Integration, E2E](../../Testing/testing_types_unit_integration_e2e.md)** — применение TDD/BDD на разных уровнях тестирования.
+- **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — встраивание TDD/BDD в пайплайн.
+- **[Метрики покрытия](../../Testing/testing_coverage_metrics.md)** — 100% покрытие нового кода в TDD.

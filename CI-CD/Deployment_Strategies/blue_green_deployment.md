@@ -77,6 +77,6 @@ kubectl patch service app-svc -p '{
 
 #### Связанные документы
 
-- **[Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md)** — для понимания места Blue-Green среди других стратегий.
-- **[Сравнение стратегий развертывания](./comparison.md)** — для выбора оптимальной стратегии под вашу задачу.
-- **[Проверки здоровья и откат](./deployment_health_checks_and_rollback.md)** — критически важный аспект для автоматизации Blue-Green.
+- [Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md)
+- [Сравнение стратегий развертывания](./comparison.md)
+- [Проверки здоровья и откат](./deployment_health_checks_and_rollback.md)

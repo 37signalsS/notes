@@ -1,10 +1,17 @@
 # GitLab CI: Каталог Компонентов — Практические сценарии
 
-## Сценарий 1: Использование компонента из каталога
+## Определения
 
-**Проект (`.gitlab-ci.yml`):**
+**Практический сценарий** — пошаговое руководство по решению конкретной задачи с использованием CI/CD Components в реальных условиях.
+
+---
+
+## Основные концепции
+
+### Сценарий 1: Использование компонента из каталога
 
 ```yaml
+# Проект (.gitlab-ci.yml)
 include:
   - component: '$CI_SERVER_FQDN/group/security/secret-detection@1.0.0'
     inputs:
@@ -12,35 +19,29 @@ include:
       scan_path: './config'
 ```
 
-**Преимущества:**
+**Преимущества:** автоматическая валидация inputs, версионирование через Semver, видимость в UI GitLab Catalog.
 
-- Автоматическая валидация inputs
-- Версионирование через Semver
-- Видимость в UI GitLab Catalog
-
-## Сценарий 2: Создание собственного компонента
-
-**Репозиторий компонента (`group/ci-components/build-docker`):**
+### Сценарий 2: Создание собственного компонента
 
 ```yaml
-# .gitlab-ci.yml (метаданные компонента)
+# Репозиторий компонента (group/ci-components/build-docker/.gitlab-ci.yml)
 spec:
   inputs:
     stage:
       default: build
       type: string
       description: "CI stage name"
-    
+
     dockerfile:
       default: Dockerfile
       type: string
       description: "Path to Dockerfile"
-    
+
     image:
       default: docker:24.0
       type: string
       description: "Docker image for runner"
-    
+
     push_registry:
       type: boolean
       default: true
@@ -80,11 +81,10 @@ include:
       push_registry: true
 ```
 
-## Сценарий 3: Компонент с множественными jobs
-
-**Компонент (`group/ci-components/full-pipeline`):**
+### Сценарий 3: Компонент с множественными jobs
 
 ```yaml
+# Компонент (group/ci-components/full-pipeline/.gitlab-ci.yml)
 spec:
   inputs:
     node_version:
@@ -98,7 +98,6 @@ spec:
       type: string
 
 ---
-# Множественные jobs в одном компоненте
 install_job:
   stage: build
   image: node:$[[ inputs.node_version ]]
@@ -129,7 +128,7 @@ build_job:
     - test_job
 ```
 
-## Сценарий 4: Версионирование компонента
+### Сценарий 4: Версионирование компонента
 
 **Стратегия версионирования:**
 
@@ -142,30 +141,27 @@ build_job:
 **Создание релиза:**
 
 ```bash
-# Создание тега
 git tag -a v1.0.0 -m "Release version 1.0.0"
 git push origin v1.0.0
-
-# Или через GitLab UI: Releases → New release
 ```
 
-**Использование в проекте:**
+**Варианты использования в проекте:**
 
 ```yaml
 include:
   # Конкретная версия (рекомендуется для стабильности)
   - component: '$CI_SERVER_FQDN/group/component@1.0.0'
-  
+
   # Частичная версия (автообновление в рамках minor)
   - component: '$CI_SERVER_FQDN/group/component@1.0'
-  
+
   # Только major (автообновление в рамках major версии)
   - component: '$CI_SERVER_FQDN/group/component@1'
 ```
 
-> **Важно:** Для компонентов в CI/CD Catalog обязательно семантическое версионирование (GitLab 16.10+).
+> **Важно:** для компонентов в CI/CD Catalog обязательно семантическое версионирование (GitLab 16.10+).
 
-## Сценарий 5: Компонент с валидацией через regex
+### Сценарий 5: Компонент с валидацией через regex
 
 ```yaml
 spec:
@@ -175,7 +171,7 @@ spec:
       description: "Deployment environment"
       regex: '^(dev|staging|production)$'
       default: dev
-    
+
     replica_count:
       type: number
       description: "Number of replicas"
@@ -190,9 +186,34 @@ deploy_job:
     - kubectl scale deployment app --replicas=$[[ inputs.replica_count ]]
 ```
 
+---
+
+## Справочная информация
+
+### Матрица совместимости версий
+
+| Версия GitLab | Компоненты | SemVer обязателен | Макс. компонентов |
+| :--- | :--- | :--- | :--- |
+| 16.0 – 16.1 | Experimental | Нет | 10 |
+| 16.2 – 16.8 | Enabled by default | Нет | 10 |
+| 16.9 – 16.11 | Stable | Нет | 30 |
+| 17.0 – 18.4 | GA | Да (для каталога) | 30 |
+| 18.5+ | GA | Да | 100 |
+
+### Внешние ресурсы
+
+- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
+- [GitLab Components Catalog](https://gitlab.com/explore/catalog)
+- [Примеры компонентов GitLab](https://gitlab.com/gitlab-org/ci-cd/components)
+
+---
+
 ## Связанные документы
 
+- **SSoT:** [GitLab CI: Каталог Компонентов](./ci_cd_catalog_components.md)
 - [Определения](./ci_cd_catalog_definitions.md)
-- [Основные концепции](./ci_cd_catalog_concepts.md)
+- [Концепции](./ci_cd_catalog_concepts.md)
 - [Ограничения](./ci_cd_catalog_limits.md)
 - [Справочная информация](./ci_cd_catalog_reference.md)
+- [Продвинутые сценарии](./ci_cd_catalog_advanced_scenarios.md)
+- [Механизм include](./include_keyword.md)

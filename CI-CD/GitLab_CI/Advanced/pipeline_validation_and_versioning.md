@@ -35,7 +35,7 @@ stages:
 
 validate_templates:
   stage: lint
-  image: alpine:3.19
+  image: alpine:3.21
   rules:
     - if: $CI_COMMIT_BRANCH
       when: always
@@ -110,3 +110,10 @@ include:
 - **`project`**: Путь к проекту GitLab, содержащему шаблоны.
 - **`file`**: Путь к конкретному файлу шаблона внутри этого проекта.
 - **`ref`**: Ключевой параметр. Указывает конкретный Git-тег (предпочтительно), ветку или SHA коммита. Использование тегов гарантирует, что ваш пайплайн всегда будет использовать стабильную и протестированную версию шаблона.
+
+## Дополнительная информация
+
+- **Механизмы переиспользования:** Сравнение подходов (`extends`, `!reference`, `include`) — в **[обзоре переиспользуемых пайплайнов](../Reusable_Pipelines/overview.md)**.
+- **Валидация через CI Lint:** Детальная информация о валидации конфигураций — в **[руководстве по `!reference` и YAML Anchors](../Reusable_Pipelines/reference_and_yaml_anchors.md)**.
+- **Downstream Pipelines:** Лучшие практики версионирования для дочерних пайплайнов — в **[best practices для Downstream Pipelines](./Downstream_Pipelines/best_practices.md)**.
+- **Базовые концепции:** Основы работы с `.gitlab-ci.yml` и CI Lint — в **[Основах GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**.

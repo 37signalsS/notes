@@ -8,68 +8,20 @@
 
 ### Ключевые принципы
 
-1. **Используйте `inputs` вместо `variables` (GitLab 17+)**
-2. **`strategy: depend` для отчётов**
-3. **`strategy: mirror` для синхронизации статусов**
-4. **Версионирование шаблонов**
-5. **Минимальные права для multi-project pipelines**
-6. **Ограничение вложенности**
+1. **Используйте `inputs` вместо `variables`** (GitLab 17+) — типизированные параметры с валидацией
+2. **`strategy: depend` для отчётов** — обязательно для тестов, security, code quality
+3. **`strategy: mirror` для синхронизации статусов** — критично для зависимых stages
+4. **Версионирование шаблонов** — используйте `ref: 'v1.2.3'` для include
+5. **Минимальные права** — Deploy Tokens с ограниченными правами для multi-project
+6. **Ограничение вложенности** — parent-child максимум 2 уровня
+7. **Безопасность переменных** — блокировка наследования masked variables
+8. **Мониторинг** — настройка timeout и логирование upstream/downstream relationships
 
 ## Практические сценарии
 
-### 1. Используйте `inputs` вместо `variables` (GitLab 17+)
+### 1. Версионирование шаблонов
 
-**Преимущества:**
-
-- Типизированные параметры с валидацией
-- Защита от инъекций и несанкционированного изменения
-
-```yaml
-# child-pipeline.yml
-spec:
-  inputs:
-    environment:
-      options: [staging, production]
-      default: staging
-
-# parent-pipeline.yml
-deploy:
-  trigger:
-    include: child.yml
-    inputs:
-      environment: production
-```
-
-### 2. `strategy: depend` для отчётов
-
-- Обязательно для unit-тестов, code quality, security отчётов
-- Гарантирует отображение в Merge Request
-- Без `strategy: depend` отчёты не появятся в MR
-
-```yaml
-test:
-  trigger:
-    include: tests.yml
-    strategy: depend  # Обязательно!
-```
-
-### 3. `strategy: mirror` для синхронизации статусов
-
-- Отображает реальный статус downstream в trigger job
-- Авто-отмена при провале child pipeline
-- Критично для зависимых stages
-
-```yaml
-critical-deploy:
-  trigger:
-    include: deploy.yml
-    strategy: mirror
-```
-
-### 4. Версионирование шаблонов
-
-- Используйте `ref: 'v1.2.3'` для include из других проектов
-- Избегайте поломки при обновлении шаблонов
+Используйте `ref` для include из других проектов — избегайте поломки при обновлении шаблонов.
 
 ```yaml
 trigger:
@@ -79,34 +31,28 @@ trigger:
       file: 'pipeline.yml'
 ```
 
-### 5. Минимальные права для multi-project pipelines
+### 2. Минимальные права для multi-project pipelines
 
-- Проверяйте права пользователя на запуск в downstream-проекте
-- Используйте Deploy Tokens с ограниченными правами
-- Избегайте передачи secret variables
+Проверяйте права пользователя на запуск в downstream-проекте. Используйте Deploy Tokens с ограниченными правами. Избегайте передачи secret variables.
 
 ```yaml
-# Использование deploy token
 deploy:
   trigger:
     project: 'group/production'
-    token: $DEPLOY_TOKEN  # Только для конкретной задачи
+    token: $DEPLOY_TOKEN
 ```
 
-### 6. Ограничение вложенности
+### 3. Ограничение вложенности
 
-- Parent-child: максимум 2 уровня
-- Multi-project: без ограничений, но следите за сложностью
-- Избегайте глубокой вложенности
+- **Parent-child:** максимум 2 уровня вложенности
+- **Multi-project:** без ограничений, но следите за сложностью
+- Избегайте глубокой вложенности — усложняет отладку
 
-### 7. Безопасность
+### 4. Безопасность
 
-- Не передавайте masked variables в multi-project
-- Используйте `inherit: variables: false` когда нужно
-- Проверяйте конфиденциальность проектов
+Не передавайте masked variables в multi-project pipelines — риск unmask и утечки данных. Используйте `inherit: variables: false` для блокировки наследования.
 
 ```yaml
-# Блокировка наследования переменных
 secure-trigger:
   trigger:
     include: sensitive.yml
@@ -116,7 +62,9 @@ secure-trigger:
     SAFE_VAR: value
 ```
 
-### 8. Мониторинг и отладка
+Проверяйте конфиденциальность проектов при использовании multi-project pipelines.
+
+### 5. Мониторинг и отладка
 
 - Используйте `needs` для управления зависимостями
 - Настраивайте timeout для long-running pipelines
@@ -129,7 +77,7 @@ secure-trigger:
 - [ ] Используется `inputs` вместо `variables` (GitLab 17+)
 - [ ] `strategy: depend` для всех отчётов
 - [ ] `strategy: mirror` для критичных зависимостей
-- [ ] Версионирование шаблонов через ref
+- [ ] Версионирование шаблонов через `ref`
 - [ ] Минимальные права для запуска
 - [ ] Нет передачи secret/masked variables
 - [ ] Ограничения вложенности соблюдены
@@ -137,16 +85,12 @@ secure-trigger:
 
 ### Распространённые ошибки
 
-1. Отсутствие `strategy: depend` → отчёты не появляются в MR
-2. Передача masked variables в multi-project → утечка данных
-3. Глубокая вложенность parent-child → сложность отладки
-4. Отсутствие версионирования → поломка при обновлении шаблонов
-5. Использование `variables` вместо `inputs` → нет валидации
+1. **Отсутствие `strategy: depend`** — отчёты не появляются в MR
+2. **Передача masked variables в multi-project** — утечка данных
+3. **Глубокая вложенность parent-child** — сложность отладки
+4. **Отсутствие версионирования** — поломка при обновлении шаблонов
+5. **Использование `variables` вместо `inputs`** — нет валидации типов
 
 ---
 
-**Связанные документы:**
-
-- [Определения](./definitions.md)
-- [Наследование переменных](./variable_inheritance.md)
-- [Стратегии выполнения](./strategies.md)
+**Связанные документы:** [Определения](./definitions.md), [Наследование переменных](./variable_inheritance.md), [Стратегии выполнения](./strategies.md).

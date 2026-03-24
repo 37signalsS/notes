@@ -1,36 +1,20 @@
 # Регистрация GitLab Runner
 
-### Определения
+## Определения
 
-- **[GitLab Runner](https://docs.gitlab.com/runner/)**: Отдельное приложение, которое выполняет задания (jobs) из пайплайнов GitLab CI/CD. Runner опрашивает сервер GitLab, забирает задачи и выполняет их в указанной среде.
-- **[Executor](https://docs.gitlab.com/runner/executors/)**: Модуль внутри Runner'а, определяющий, как и где будут выполняться скрипты (в Docker-контейнере, на хосте через shell или в Kubernetes Pod).
-- **Регистрационный токен**: Уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
+Базовые понятия (GitLab Runner, Executor, типы Runner'ов) описаны в SSoT: **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
 
-### Основные концепции
+**Регистрационный токен** — уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
 
-#### Типы Runner'ов по области видимости
-
-| Тип | Область видимости | Контроль | Использование |
-| :--- | :--- | :--- | :--- |
-| **Shared** | Вся инстанция GitLab | Администраторы | Общие задачи |
-| **Group** | Все проекты в группе | Владельцы группы | Командные задачи |
-| **Specific** | Конкретный проект | Владельцы проекта | Специфичные задачи |
-
-Подробнее о типах Runner'ов см. в статье: **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)**.
-
-#### Docker Executor
-
-Docker Executor — один из наиболее популярных типов исполнителей. Он запускает каждую задачу в изолированном Docker-контейнере, что обеспечивает воспроизводимость и безопасность.
-
-### Предварительные требования
+## Предварительные требования
 
 1. **Проект в GitLab.**
 2. **Сервер** (Linux), на котором будет работать Runner.
 3. **Установленный Docker** на этом сервере.
 
-## Практический сценарий: Регистрация Runner с Docker Executor
+## Практический сценарий: регистрация Runner с Docker Executor
 
-### Шаг 1: Получение регистрационного токена
+### Шаг 1: получение регистрационного токена
 
 1. В вашем проекте GitLab перейдите в **Settings > CI/CD**.
 2. Найдите раздел **Runners** и нажмите **Expand**.
@@ -47,7 +31,7 @@ Docker Executor — один из наиболее популярных типо
 docker run --rm -it \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  gitlab/gitlab-runner:alpine-v16.2.0 \
+  gitlab/gitlab-runner:alpine-v18.10.0 \
   register
 ```
 
@@ -56,7 +40,7 @@ docker run --rm -it \
 - `--rm -it`: Запускает контейнер в интерактивном режиме и автоматически удаляет его после завершения.
 - `-v /srv/gitlab-runner/config:/etc/gitlab-runner`: **Критически важный шаг.** Мы монтируем директорию с хоста (`/srv/gitlab-runner/config`) внутрь контейнера. В этой директории Runner создаст файл `config.toml`, который будет сохранен на хосте и использован для постоянной работы.
 - `-v /var/run/docker.sock:/var/run/docker.sock`: Позволяет Runner'у внутри контейнера управлять Docker-демоном на хост-машине для запуска CI/CD-задач.
-- `gitlab/gitlab-runner:alpine-v16.2.0`: Используем образ Runner'а с **зафиксированной версией**, а не `latest`, для предсказуемости.
+- `gitlab/gitlab-runner:alpine-v18.10.0`: Используем образ Runner'а с **зафиксированной версией**, а не `latest`, для предсказуемости.
 - `register`: Команда, инициирующая процесс регистрации.
 
 ### Шаг 3: Ответы на вопросы
@@ -80,7 +64,7 @@ docker run --rm -it \
 docker run -d --name gitlab-runner --restart always \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  gitlab/gitlab-runner:alpine-v16.2.0
+  gitlab/gitlab-runner:alpine-v18.10.0
 ```
 
 - `-d`: Запуск в фоновом режиме (detached).
@@ -110,8 +94,4 @@ docker run -d --name gitlab-runner --restart always \
 2. **Регистрация:** Запустите `sudo gitlab-runner register` и в качестве Executor'а выберите `shell`.
 3. **Статус:** Runner будет запущен как системный сервис. Проверить его можно командой `sudo gitlab-runner status`.
 
-### Связанные документы
-
-- **[Обзор Runner'ов и Исполнителей в GitLab CI](../Advanced/gitlab_ci_runners_executors.md)** — подробное сравнение типов executor'ов.
-- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — настройка Kubernetes Executor.
-- **[Официальная документация GitLab Runner](https://docs.gitlab.com/runner/)**
+Подробное сравнение типов executor'ов — в **[Обзоре GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**. Настройка Kubernetes Executor описана в **[Интеграции GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)**.

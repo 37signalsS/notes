@@ -93,13 +93,9 @@ runners:
   - **`privileged = true`**: Предоставляет контейнеру полный доступ к хост-системе, что является серьезной угрозой безопасности.
   - **Docker-in-Docker (`dind`)**: Требует привилегированного режима для запуска Docker-демона внутри контейнера.
   - **Монтирование сокета Docker (`/var/run/docker.sock`)**: Позволяет контейнеру управлять Docker-демоном на хосте, что эквивалентно root-доступу.
-  
-  **Рекомендация**: Используйте **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**. Этот инструмент собирает образы в userspace без необходимости в привилегированном доступе или Docker-демоне, что делает его безопасным стандартом для сборки в Kubernetes и GitLab CI.
+
+  **Рекомендация**: Используйте **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — инструмент собирает образы в userspace без привилегированного доступа или Docker-демона.
 - **Наблюдаемость:** Включите `metrics_server` в `config.toml` для сбора метрик в формате Prometheus.
-
-## Связанные документы
-
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — для понимания базовых концепций.
-- **[Общий глоссарий элементов CI/CD](../../Core_Concepts/pipeline_elements.md)** — для понимания универсальных терминов.
-- **Практическое руководство:** **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)**.
-- **Интеграция с Kubernetes:** **[Интеграция GitLab CI с Kubernetes](./gitlab_kubernetes_integration_guide.md)**.
+- **Практическое применение:** Пошаговые инструкции по регистрации Runner'а см. в руководстве **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)**.
+- **Интеграция с Kubernetes:** Детальная настройка Kubernetes Executor описана в **[Интеграция GitLab CI с Kubernetes](./gitlab_kubernetes_integration_guide.md)**.
+- **Базовые концепции:** Для понимания контекста CI/CD обратитесь к **[Основам GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** и **[Глоссарию элементов CI/CD](../../Core_Concepts/pipeline_glossary.md)**.

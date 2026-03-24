@@ -1,19 +1,25 @@
-### Определения
+# Комплексный CI/CD пайплайн для Python-проекта
+
+## Определения
 
 - **Комплексный CI/CD пайплайн**: Автоматизированный процесс, охватывающий все этапы жизненного цикла ПО — от статического анализа кода до развертывания в production, управляемый через `.gitlab-ci.yml`.
 - **Стратегия Multi-Environment**: Подход, при котором приложение последовательно развертывается в несколько окружений (`development`, `staging`, `production`), каждое со своим набором тестов и правил развертывания.
 - **"Ворота качества" (Quality Gates)**: Набор автоматических проверок (линтинг, unit-тесты, сканирование безопасности), которые должны быть успешно пройдены, прежде чем код будет допущен к слиянию в основную ветку или развертыванию.
 - **Многостадийная сборка (Multi-stage build)**: Техника создания Docker-образов, при которой для сборки зависимостей используется один образ, а для финального артефакта — другой, минималистичный. Это позволяет значительно уменьшить размер и уязвимость итогового образа.
 
-### Основные концепции
+> **Примечание:** Данный туториал описывает комплексный подход. Для базового ознакомления см. **[Начинающее руководство для Python-приложений](./beginner_guide_python_app.md)**.
 
-#### Архитектура и рабочий процесс
+## Основные концепции
+
+### Архитектура и рабочий процесс
 
 1. **Стратегия ветвления (модифицированный Git Flow):**
     - **`feature-*`**: Ветки для разработки нового функционала. Создаются от `develop`.
     - **`develop`**: Основная ветка разработки, куда сливаются feature-ветки. Автоматически развертывается в `development` окружение.
     - **`main`**: Стабильная ветка. Периодически синхронизируется с `develop`. Развертывается в `staging` окружение.
     - **Теги (`v*.*.*`)**: Создаются из ветки `main` для релиза. Только теги развертываются в `production`.
+
+    > **Примечание:** Подробное описание стратегий ветвления см. в **[GitLab Flow](./gitlab_flow.md)** и **[Обзоре рабочих процессов Git](../../../Git/git_workflows.md)**.
 
 2. **Стратегия окружений:**
     - **Development (`dev`)**: Для разработчиков. Развертывается из `develop`.
@@ -25,7 +31,9 @@
     - **`develop` -> `main`**: Прогоняются интеграционные тесты.
     - После развертывания в каждое окружение выполняются smoke- или e2e-тесты для верификации.
 
-#### Инструментарий и структура проекта
+    > **Примечание:** Интеграция тестов в CI/CD описана в **[Testing in CI/CD](../../Testing/testing_cicd_integration.md)**.
+
+### Инструментарий и структура проекта
 
 - **CI/CD:** GitLab CI
 - **Контейнеризация:** Docker, Kaniko (для безопасной сборки)
@@ -33,9 +41,11 @@
 - **Тестирование:** Pytest (unit/integration), cURL (smoke/e2e)
 - **Релизы:** `semantic-release`
 
+> **Примечание:** Альтернативный подход к управлению релизами см. в **[Управлении релизами и семантическим версионированием](../Advanced/release_management_and_semver.md)**.
+
 Приложение представляет собой простой веб-сервис на **Flask**. `Dockerfile` использует многостадийную сборку для создания минималистичного и безопасного образа на базе "distroless".
 
-#### Полный рабочий цикл
+### Полный рабочий цикл
 
 1. **Разработка фичи:** Разработчик создает Merge Request из `feature/*` в `develop`. Пайплайн запускает линтеры, unit-тесты, SAST и `helm diff` для dev-окружения.
 2. **Слияние в `develop`:** После код-ревью и успешного пайплайна MR сливается. Запускается новый пайплайн, который развертывает приложение в `dev` окружение и запускает smoke-тесты.
@@ -43,16 +53,18 @@
 4. **Слияние в `main`:** После слияния запускается пайплайн, который разворачивает приложение в `staging` и выполняет e2e-тесты.
 5. **Релиз в Production:** Менеджер вручную запускает задачу `create-release`, которая с помощью `semantic-release` создает Git-тег. Это инициирует пайплайн для тега, в котором доступна ручная задача `deploy-production`. После подтверждения приложение развертывается в production.
 
-#### Подготовка окружения
+### Подготовка окружения
 
 - **Доступ к Kubernetes**: В переменных CI/CD проекта (`Settings > CI/CD > Variables`) должны быть настроены учетные данные для доступа к кластеру (`KUBE_URL`, `KUBE_TOKEN` или `KUBECONFIG`).
 - **Доступ к Registry**: В Kubernetes должен быть создан секрет типа `docker-registry` с `Deploy Token` для доступа к GitLab Container Registry.
 
-### Практические сценарии
+> **Примечание:** Настройка переменных и секретов описана в **[Переменных и секретах в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)**. Интеграция с Kubernetes — в **[GitLab CI Kubernetes Integration](../Advanced/gitlab_kubernetes_integration_guide.md)**.
 
-#### Реализация полного CI/CD пайплайна в `.gitlab-ci.yml`
+## Практические сценарии
 
-##### Шаг 1: Общая структура и правила (`workflow`, `stages`, `default`)
+### Реализация полного CI/CD пайплайна в `.gitlab-ci.yml`
+
+#### Шаг 1: Общая структура и правила (`workflow`, `stages`, `default`)
 
 ```yaml
 # 1. Глобальные правила запуска и переменные
@@ -84,7 +96,7 @@ stages:
 
 # 3. Настройки по умолчанию
 default:
-  image: python:3.9
+  image: python:3.11
   cache:
     key: "$CI_COMMIT_REF_SLUG"
     paths:
@@ -112,7 +124,9 @@ include:
   - template: Security/Container-Scanning.yml
 ```
 
-##### Шаг 2: Стадии `linting`, `building`, `testing`
+> **Примечание:** Подробное описание директив `workflow:rules` и `rules` см. в **[Директивах workflow_rules](../Advanced/workflow_rules/directives_definitions.md)**.
+
+#### Шаг 2: Стадии `linting`, `building`, `testing`
 
 ```yaml
 # Задачи линтинга
@@ -134,7 +148,7 @@ black:
 build-docker:
   stage: building
   image:
-    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    name: gcr.io/kaniko-project/executor:v1.21.0-debug
     entrypoint: [""]
   script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
@@ -142,6 +156,8 @@ build-docker:
       --context $CI_PROJECT_DIR
       --dockerfile $CI_PROJECT_DIR/Dockerfile
       --destination $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG
+
+> **Примечание:** Безопасная сборка образов с Kaniko описана в **[Best Practices Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)**.
 
 # Задачи функционального тестирования
 unit-tests:
@@ -168,13 +184,13 @@ container_scanning:
   <<: *main_rules
 ```
 
-##### Шаг 3: Стадия `deployment`
+#### Шаг 3: Стадия `deployment`
 
 ```yaml
 # Шаблон для развертывания
 .deploy_template:
   stage: deployment
-  image: bitnami/kubectl:latest
+  image: bitnami/kubectl:1.29.0
   before_script:
     - helm plugin install https://github.com/databus23/helm-diff
     # Для Yandex Cloud Managed Kubernetes
@@ -236,13 +252,15 @@ deploy-production:
         HELM_APPLY: "true"
 ```
 
-##### Шаг 4: Стадии `validate_deployment` и `release`
+> **Примечание:** Развертывание в Kubernetes с Helm описано в **[GitLab CI Kubernetes Integration](../Advanced/gitlab_kubernetes_integration_guide.md)**. Проверки здоровья и откат — в **[Deployment Health Checks](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)**.
+
+#### Шаг 4: Стадии `validate_deployment` и `release`
 
 ```yaml
 # Задачи валидации после развертывания
 validate-dev-smoke:
   stage: validate_deployment
-  image: curlimages/curl:7.75.0
+  image: curlimages/curl:8.6.0
   script:
     - curl -s --head http://dev.example.com | grep "200 OK"
   rules:
@@ -250,7 +268,7 @@ validate-dev-smoke:
 
 validate-staging-e2e:
   stage: validate_deployment
-  image: curlimages/curl:7.75.0
+  image: curlimages/curl:8.6.0
   script:
     - |
       CONTENT=$(curl http://staging.example.com/version)
@@ -266,7 +284,7 @@ validate-staging-e2e:
 # Задача создания релиза
 create-release:
   stage: release
-  image: node:16-alpine
+  image: node:20-alpine
   script:
     - npm install -g semantic-release @semantic-release/gitlab
     - semantic-release

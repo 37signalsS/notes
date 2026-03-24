@@ -247,12 +247,8 @@ gitlab-ci lint --include-debug
 
 ### Связанные документы
 
-- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов
-- **[`!reference` и YAML Anchors](./reference_and_yaml_anchors.md)** — вставка фрагментов
-- **[Механизм `include`](./include_keyword.md)** — подключение внешних файлов
-- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными
+[Обзор переиспользуемых пайплайнов](./overview.md) — сравнение всех подходов, [`!reference` и YAML Anchors](./reference_and_yaml_anchors.md) — вставка фрагментов, [Механизм `include`](./include_keyword.md) — подключение внешних файлов, [Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md) — управление переменными.
 
 ### Внешние ресурсы
 
-- [Официальная документация: `extends`](https://docs.gitlab.com/ci/yaml/#extends)
-- [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
+[Официальная документация: `extends`](https://docs.gitlab.com/ci/yaml/#extends), [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5).

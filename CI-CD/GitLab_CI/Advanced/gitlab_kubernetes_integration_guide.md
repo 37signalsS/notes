@@ -161,10 +161,7 @@
     1. Обнаружить изменение в репозитории конфигурации.
     2. Автоматически применить изменения в кластере.
 
-Подробные инструкции по настройке specific-инструментов находятся в соответствующих разделах:
-
-* **[Обзор методологии GitOps](../../../GitOps/GitOps_overview.md)**
-* **[Пример реализации с помощью ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)**
+Подробные инструкции по настройке инструментов — в **[обзоре методологии GitOps](../../../GitOps/GitOps_overview.md)** и **[руководстве по ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)**.
 
 ## Дополнительная информация
 
@@ -183,9 +180,5 @@
 * **`ImagePullBackOff`**: Самая частая ошибка. Проверьте, что `imagePullSecrets` создан в правильном `namespace` и указан в `ServiceAccount` или непосредственно в манифесте `Deployment`. Убедитесь, что `Deploy Token` имеет права на чтение репозитория.
 * **`Error: pods is forbidden`** (или другой ресурс): `ServiceAccount`, используемый задачей, не имеет необходимых RBAC-прав. Проверьте `Role` и `RoleBinding`. Используйте `kubectl auth can-i ... --as=system:serviceaccount:<ns>:<sa>` для отладки.
 * **`Connection timed out`**: Runner не может связаться с API-сервером Kubernetes. Проверьте сетевые политики (`NetworkPolicy`), правила файрвола и корректность адреса API-сервера.
-
-### Связанные документы
-
-* **[Исполнители (Runners)](./gitlab_ci_runners_executors.md)** — Kubernetes Executor и типы runner'ов.
-* **[Обзор GitOps](../../../GitOps/GitOps_overview.md)** — методология GitOps.
-* **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.
+* **Детальная настройка Runner'ов:** Сравнение типов executor'ов и конфигурация — в **[руководстве по GitLab Runners](./gitlab_ci_runners_executors.md)**.
+* **Работа с окружениями:** Управление environment'ами и deployment'ами — в **[концепциях окружений и развертываний](../Concepts/environments_and_deployments.md)**.

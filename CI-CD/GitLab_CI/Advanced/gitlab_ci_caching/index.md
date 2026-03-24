@@ -2,11 +2,7 @@
 
 ## Навигация
 
-**Основная информация:**
-- **[caching_overview.md](./caching_overview.md)** — определения, кэш vs. артефакты
-- **[artifacts.md](./artifacts.md)** — конфигурация артефактов, передача между задачами
-- **[cache_keys.md](./cache_keys.md)** — ключи кэша, политики, fallback
-- **[cache_best_practices.md](./cache_best_practices.md)** — лучшие практики, troubleshooting
+**Основная информация:** [концепции кэширования](./cache_concepts.md), [обзор кэширования](./caching_overview.md), [артефакты](./gitlab_ci_artifacts.md), [ключи кэша](./cache_keys.md), [лучшие практики](./cache_best_practices.md), [сценарии кэширования](./cache_scenarios.md).
 
 ## Краткое описание
 
@@ -22,8 +18,4 @@
 | **Гарантия** | Не гарантируется | Гарантируются |
 | **Хранение** | Локально на Runner | На сервере GitLab |
 
-## Связанные документы
-
-- **[Основы GitLab CI](../../Concepts/gitlab_ci_basics.md)** — базовые концепции
-- **[Артефакты и управление релизами](../../../artifact_management.md)** — общая теория
-- **[Сценарии кэширования](./cache_scenarios.md)** — практические примеры
+Подробнее — в [основы GitLab CI](../../Concepts/gitlab_ci_basics.md), [артефакты и управление релизами](../../../artifact_management.md).

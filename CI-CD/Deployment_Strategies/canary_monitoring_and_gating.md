@@ -148,8 +148,4 @@ canary_gate:
 
 При срабатывании порогов метрик рекомендуется включать повышенную выборку логов и трейсов только для канареечной версии. Используйте метки `version` и `correlation_id` для связывания событий. Это помогает подтвердить, что рост ошибок обусловлен конкретными эндпойнтами или зависимостями, а не случайной дисперсией.
 
-### Связанные документы
-
-* **[Canary Deployments: Пошаговое внедрение](./canary_deployment.md)** — основной документ, описывающий процесс канареечного развертывания.
-* **[Перцентили и квантили в Prometheus](../../Prometheus/concepts/metric_types/percentiles.md)** — подробное объяснение перцентилей и их использования.
-* **[Агрегация Summary](../../Prometheus/concepts/metric_types/summary.md)** — почему нельзя агрегировать перцентили из Summary.
+Детали процесса канареечного развертывания — в [canary_deployment.md](./canary_deployment.md). Теория перцентилей и квантилей — в [percentiles.md](../../Prometheus/concepts/metric_types/percentiles.md), ограничения Summary — в [summary.md](../../Prometheus/concepts/metric_types/summary.md).

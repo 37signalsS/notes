@@ -65,7 +65,7 @@ CI-CD/ci_cd_overview.md
 CI-CD/ci_cd_patterns.md
 CI-CD/Core_Concepts/deployment_strategies.md
 CI-CD/Core_Concepts/dora_metrics.md
-CI-CD/Core_Concepts/pipeline_elements.md
+CI-CD/Core_Concepts/pipeline_glossary.md
 CI-CD/Core_Concepts/pipeline_workflow.md
 CI-CD/Deployment_Strategies/blue_green_deployment.md
 CI-CD/Deployment_Strategies/canary_deployment.md
@@ -136,9 +136,9 @@ CI-CD/GitLab_CI/Reusable_Pipelines/reference_and_yaml_anchors.md
 CI-CD/GitLab_CI/Tutorials/ansible_integration.md
 CI-CD/GitLab_CI/Tutorials/beginner_guide_python_app.md
 CI-CD/GitLab_CI/Tutorials/ci_cd_pipeline_overview.md
-CI-CD/GitLab_CI/Tutorials/gitlab_ci_advanced_workflow_example.md
 CI-CD/GitLab_CI/Tutorials/gitlab_ci_spring_boot_docker_deploy.md
 CI-CD/GitLab_CI/Tutorials/gitlab_flow.md
+CI-CD/GitLab_CI/Tutorials/go_application_pipeline_guide.md
 CI-CD/GitLab_CI/Tutorials/kubernetes_review_apps.md
 CI-CD/GitLab_CI/Tutorials/python_project_pipeline_guide.md
 CI-CD/GitLab_CI/Tutorials/runner_registration.md

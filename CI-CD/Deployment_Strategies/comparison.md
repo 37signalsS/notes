@@ -87,11 +87,4 @@
 
 ## Дополнительная информация
 
-### Связанные документы
-
-* **[Обзор стратегий развертывания](../Core_Concepts/deployment_strategies.md)** — высокоуровневый обзор всех стратегий.
-* **[Rolling Update: Детальное руководство](./rolling_update.md)**
-* **[Blue-Green Deployment: Детальное руководство](./blue_green_deployment.md)**
-* **[Canary Deployments: Пошаговое внедрение](./canary_deployment.md)**
-* **[Shadow Deployment (Traffic Mirroring)](./shadow_deployment.md)**
-* **[Мониторинг и Gating при Canary](./canary_monitoring_and_gating.md)** — ключевые аспекты анализа для Canary.
+Детальное описание каждой стратегии: [Rolling Update](./rolling_update.md), [Blue-Green](./blue_green_deployment.md), [Canary](./canary_deployment.md), [Shadow](./shadow_deployment.md). Высокоуровневый обзор — в [Core_Concepts/deployment_strategies.md](../Core_Concepts/deployment_strategies.md). Мониторинг и gating при Canary — в [canary_monitoring_and_gating.md](./canary_monitoring_and_gating.md).

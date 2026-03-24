@@ -1,30 +1,27 @@
 # CI/CD: Метрики
 
-> **Примечание:** Эта информация была объединена и перенесена в основной документ.
-> **Актуальная версия находится здесь: [Метрики DORA](./Core_Concepts/dora_metrics.md)**
+> **Примечание:** Этот документ перенаправляет на основной SSoT-файл по теме метрик CI/CD.
+>
+> **Актуальная версия:** [Метрики DORA](./Core_Concepts/dora_metrics.md)
 
-### Определения
+## Определения
 
-- **CI/CD Метрики** — количественные показатели, позволяющие оценить эффективность, скорость, стабильность и качество процессов непрерывной интеграции и доставки.
-- **DORA (DevOps Research and Assessment)** — исследовательская программа, определившая четыре ключевые метрики: Lead Time, Deployment Frequency, Change Failure Rate, MTTR. Подробнее см. в разделе [Метрики DORA](./Core_Concepts/dora_metrics.md).
+**CI/CD Метрики** — количественные показатели для оценки эффективности, скорости, стабильности и качества процессов непрерывной интеграции и доставки. Основным стандартом являются **[метрики DORA](./Core_Concepts/dora_metrics.md)** (DevOps Research and Assessment).
 
-### Основные концепции
+## Основные концепции
 
-1. **Скорость (Throughput):** Как быстро изменения доходят до пользователя (Lead Time, Deployment Frequency).
-2. **Стабильность (Stability):** Насколько надежен процесс (Change Failure Rate, MTTR).
+Метрики CI/CD делятся на две категории:
 
-### Практический сценарий: Оценка зрелости CI/CD
+1.  **Скорость (Throughput):** Как быстро изменения доходят до пользователя — [Lead Time](./Core_Concepts/dora_metrics.md#1-lead-time-for-changes-время-выполнения-изменений), [Deployment Frequency](./Core_Concepts/dora_metrics.md#2-deployment-frequency-частота-развертывания).
+2.  **Стабильность (Stability):** Насколько надежен процесс доставки — [Change Failure Rate](./Core_Concepts/dora_metrics.md#3-change-failure-rate-cfr-процент-сбоев), [MTTR](./Core_Concepts/dora_metrics.md#4-mean-time-to-recovery-mttr-среднее-время-восстановления).
 
-| Метрика | Описание | Элитный уровень |
-| :--- | :--- | :--- |
-| **Lead Time** | Время от коммита до прода | < 1 дня |
-| **Deployment Frequency** | Частота релизов | По запросу |
-| **Change Failure Rate** | % сбоев при деплое | 0-15% |
-| **MTTR** | Время восстановления | < 1 часа |
+## Практический сценарий: Оценка зрелости CI/CD
 
-### Дополнительная информация
+Подробное описание метрик, целевых уровней (Элитный, Высокий, Средний, Низкий) и практические сценарии сбора — в [Метрики DORA](./Core_Concepts/dora_metrics.md).
 
-- **[Метрики DORA](./Core_Concepts/dora_metrics.md)** — подробный разбор ключевых метрик.
-- **[Паттерны CI/CD](./ci_cd_patterns.md)** — как улучшать эти метрики.
-- **[Анти-паттерны](./ci_cd_antipatterns.md)** — чего избегать.
-- **[Observability](../Concepts/Observability_and_Monitoring/observability_definitions.md)** — метрики CI/CD являются частью общей наблюдаемости системы.
+## Дополнительная информация
+
+- **SSoT:** [Метрики DORA](./Core_Concepts/dora_metrics.md) — полный разбор четырёх ключевых метрик.
+- **Паттерны CI/CD:** [Улучшение метрик](./ci_cd_patterns.md) через внедрение эффективных практик.
+- **Анти-паттерны CI/CD:** [Избегание проблем](./ci_cd_antipatterns.md), снижающих показатели.
+- **Observability:** [Метрики наблюдаемости](../Concepts/Observability_and_Monitoring/observability_definitions.md) — CI/CD-метрики как часть общей наблюдаемости системы.

@@ -55,25 +55,11 @@ run_tests:
     - docker
 ```
 
-### Динамическая генерация с переменными
+### Динамическая генерация
 
-```yaml
-# Родительский пайплайн
-generate-config:
-  stage: build
-  script:
-    - python generate_ci_config.py > generated-config.yml
-  artifacts:
-    paths:
-      - generated-config.yml
+Генерация конфигурации child pipeline во время выполнения родительского пайплайна. Используется для монорепозиториев и сложных сценариев.
 
-child-pipeline:
-  stage: test
-  trigger:
-    include:
-      - artifact: generated-config.yml
-        job: generate-config
-```
+Подробный пример с Python и Jinja2: [Динамическая генерация](./dynamic_generation.md).
 
 ## Дополнительная информация
 
@@ -83,17 +69,3 @@ child-pipeline:
 - Изоляция expensive jobs в отдельный pipeline
 - Улучшение читаемости конфигурации
 - Повторное использование через `include`
-
-### Ограничения динамических child pipelines
-
-- Артефакт должен быть в пределах лимитов инстанса
-- Нельзя использовать CI/CD переменные в `include` секции динамического child pipeline
-- Нельзя передать все типы переменных
-
----
-
-**Связанные документы:**
-
-- [Определения](./definitions.md)
-- [Стратегии выполнения](./strategies.md)
-- [Наследование переменных](./variable_inheritance.md)

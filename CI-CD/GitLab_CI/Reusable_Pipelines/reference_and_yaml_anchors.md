@@ -26,9 +26,7 @@
 | **Область видимости** | Один документ YAML (файл) | Один документ YAML (файл) |
 | **Рекомендация GitLab** | ✅ **Предпочтительно** | ⚠️ Для простых случаев |
 
-> **Best Practice:** Используйте `!reference` в новых проектах для лучшей валидации и читаемости. Избегайте YAML Anchors в сложных конфигурациях [^1](
-
-[^1]: [GitLab CI Best Practices — Avoid YAML Anchors](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
+> **Best Practice:** Используйте `!reference` в новых проектах для лучшей валидации и читаемости. Избегайте YAML Anchors в сложных конфигурациях ([GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)).
 
 ### Синтаксис `!reference`
 
@@ -277,12 +275,8 @@ gitlab-ci lint --include-debug
 
 ### Связанные документы
 
-- **[Обзор переиспользуемых пайплайнов](./overview.md)** — сравнение всех подходов
-- **[Механизм `extends`](./extends_keyword.md)** — наследование конфигураций
-- **[Механизм `include`](./include_keyword.md)** — подключение внешних файлов
+[Обзор переиспользуемых пайплайнов](./overview.md) — сравнение всех подходов, [Механизм `extends`](./extends_keyword.md) — наследование конфигураций, [Механизм `include`](./include_keyword.md) — подключение внешних файлов.
 
 ### Внешние ресурсы
 
-- [Официальная документация: `!reference`](https://docs.gitlab.com/ci/yaml/#reference)
-- [YAML Specification: Anchors and Aliases](https://yaml.org/spec/1.2.2/#anchors-and-aliases)
-- [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
+[Официальная документация: `!reference`](https://docs.gitlab.com/ci/yaml/#reference), [YAML Specification: Anchors and Aliases](https://yaml.org/spec/1.2.2/#anchors-and-aliases), [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5).

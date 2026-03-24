@@ -4,7 +4,33 @@
 
 - **Сценарии использования** — это типовые задачи и проблемы, которые эффективно решаются с помощью техники Feature Toggles.
 
-### Практические сценарии
+---
+
+## Basic Concepts
+
+### Критерии выбора сценария
+
+Выбор сценария зависит от цели и требуемой динамичности управления флагом:
+
+| Цель | Сценарий | Тип флага | Динамичность |
+| :--- | :--- | :--- | :--- |
+| Постепенный запуск | Canary Deployment | Экспериментальный / Релизный | Высокая |
+| Минимизация риска | Аварийный выключатель | Операционный | Критически высокая |
+| Ограниченный доступ | Бета-тестирование | Доступный / Релизный | Средняя |
+| Проверка гипотез | A/B тестирование | Экспериментальный | Высокая |
+
+### Общие принципы реализации
+
+Все сценарии требуют:
+- **Контекстная проверка** — передача атрибутов пользователя (ID, роль, регион) для принятия решений
+- **Безопасные fallback-значения** — предсказуемое поведение при недоступности хранилища флагов
+- **Мониторинг** — логирование проверок и отправка метрик использования
+
+Детали архитектуры — в **[Архитектура систем Feature Toggles](./architecture.md)**, реализация в коде — в **[Реализация Feature Toggles](./implementation.md)**.
+
+---
+
+## Practical Scenarios
 
 #### Сценарий 1: Canary Deployment
 
@@ -15,7 +41,7 @@
 ```python
 # Постепенный rollout новой версии
 rollout_percentage = feature_flags.get_value(
-    'payment-v2-rollout', 
+    'payment-v2-rollout',
     default=0
 )
 
@@ -29,6 +55,8 @@ else:
 # Если ошибок < 0.1%, увеличиваем rollout_percentage
 ```
 
+Подробнее о стратегии канареечного развертывания — в **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)**.
+
 #### Сценарий 2: Аварийный выключатель (Kill Switch)
 
 Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
@@ -40,7 +68,7 @@ else:
 def get_recommendations():
     if not feature_flags.is_enabled('recommendations-api', default=True):
         return get_popular_items() # Fallback-логика
-    
+
     # ... основная логика ...
 ```
 
@@ -58,7 +86,7 @@ def beta_dashboard():
     context = {'user_id': current_user.id}
     if not feature_flags.is_enabled('beta-dashboard', context=context):
         abort(403, "Beta access required")
-    
+
     return render_template('beta/dashboard.html')
 ```
 
@@ -86,16 +114,12 @@ else: # Контрольная группа
 statsd.increment(f'checkout.button.shown.{button_variant}')
 ```
 
-### Дополнительная информация
+---
 
-#### Внешние ресурсы
+## Additional Information
 
-- [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html)
-- [LaunchDarkly Documentation](https://docs.launchdarkly.com/)
-- [Unleash Documentation](https://docs.getunleash.io/)
+Базовые концепции Feature Toggles описаны в **[Обзор Feature Toggles](./overview.md)**.
 
-#### Связанные документы
+Классификация флагов по назначению и жизненному циклу — в **[Типы Feature Toggles](./types.md)**.
 
-- **[Обзор Feature Toggles](./overview.md)** — для понимания базовых концепций.
-- **[Типы Feature Toggles](./types.md)** — для выбора правильного типа флага под конкретный сценарий.
-- **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)** — более глубокое описание канареечных развертываний, которые реализуются через этот сценарий.
+Рекомендации по внешним источникам: статья [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html), документация [LaunchDarkly](https://docs.launchdarkly.com/) и [Unleash](https://docs.getunleash.io/).

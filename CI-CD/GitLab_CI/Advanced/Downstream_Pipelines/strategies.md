@@ -14,11 +14,11 @@
 
 - Parent job отображает реальный статус child pipeline
 - При провале child pipeline — parent job также показывает failed
-- Авто-отмена родительского пайплайна при провале child (если настроен `workflow: auto_cancel`)
+- При настройке auto-cancel — родительский пайплайн может быть отменён при провале child (см. [directives_definitions.md](../workflow_rules/directives_definitions.md))
 
 **Применение:**
 
-- Parent-child и multi-project pipelines
+- [Parent-child](./parent_child_pipelines.md) и [multi-project](./multi_project_pipelines.md) pipelines
 - Критичные зависимости, где статус downstream важен
 
 ```yaml
@@ -103,11 +103,3 @@ deploy-critical:
 
 - `strategy: depend` замедляет общий pipeline (ожидает завершения child)
 - `strategy: mirror` требует внимания к order of execution
-
----
-
-**Связанные документы:**
-
-- [Parent-child Pipelines](./parent_child_pipelines.md)
-- [Multi-project Pipelines](./multi_project_pipelines.md)
-- [Наследование переменных](./variable_inheritance.md)

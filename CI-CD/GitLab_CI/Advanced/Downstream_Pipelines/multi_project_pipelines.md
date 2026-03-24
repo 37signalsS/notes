@@ -11,7 +11,7 @@
 - Запускаются из пайплайна другого проекта
 - Upstream может выбрать ref downstream и передать переменные
 - Отображаются в списке пайплайнов downstream-проекта
-- **Нет ограничений на вложенность** (в отличие от parent-child)
+- **Нет ограничений на вложенность** (в отличие от [parent-child](./parent_child_pipelines.md))
 - Downstream выполняется в контексте downstream проекта
 
 ### Требования безопасности
@@ -20,26 +20,18 @@
 - При использовании публичного проекта для запуска private проверьте конфиденциальность
 - Рекомендуется использовать Deploy Tokens с ограниченными правами
 
-### Переменные
+### Наследование переменных
 
-| Тип переменных | Child Pipelines | Multi-project Pipelines |
-| :--- | :--- | :--- |
-| **Predefined (CI_*)** | Наследуют все | Наследуют только относящиеся к downstream проекту |
-| **Project/Group variables** | Наследуют все | **НЕ наследуют** |
-| **Variables из задачи** | Наследуют | **Только явно указанные** в `trigger:variables` |
-| **Masked variables** | Наследуют | **НЕ наследуют** (риск unmask!) |
+Наследование переменных в multi-project pipelines отличается от [parent-child](./parent_child_pipelines.md):
+
+- **Predefined (CI_\*)** — наследуют только относящиеся к downstream проекту
+- **Project/Group variables** — **НЕ наследуются**
+- **Variables из задачи** — **только явно указанные** в `trigger:variables`
+- **Masked variables** — **НЕ наследуются** (риск unmask!)
+
+Подробно: [Наследование переменных](./variable_inheritance.md).
 
 ## Практические сценарии
-
-### Базовый триггер
-
-```yaml
-trigger_downstream:
-  stage: deploy
-  trigger:
-    project: 'group/downstream-project'
-    branch: main
-```
 
 ### С передачей переменных
 
@@ -55,6 +47,8 @@ trigger_downstream_build:
     CUSTOM_MESSAGE: "Hello from upstream!"
 ```
 
+В дочернем пайплайне будут доступны `UPSTREAM_PIPELINE_ID` и `CUSTOM_MESSAGE`.
+
 ### С ожиданием завершения
 
 ```yaml
@@ -65,6 +59,8 @@ trigger_downstream:
     branch: main
     strategy: depend
 ```
+
+`strategy: depend` заставляет родительский job ожидать завершения downstream pipeline. Подробнее: [Стратегии выполнения](./strategies.md).
 
 ## Дополнительная информация
 
@@ -80,12 +76,3 @@ trigger_downstream:
 - Нельзя передать masked variables
 - Project/Group variables не наследуются
 - Требуются права на запуск в downstream проекте
-
----
-
-**Связанные документы:**
-
-- [Определения](./definitions.md)
-- [Стратегии выполнения](./strategies.md)
-- [Наследование переменных](./variable_inheritance.md)
-- [Практические сценарии](./practical_scenarios.md)

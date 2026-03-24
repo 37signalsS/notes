@@ -1,25 +1,27 @@
-### Определения
+# GitLab CI и Vault интеграция через JWT
 
-- **Аутентификация по JWT (JWT Auth Method)**: Метод аутентификации в [HashiCorp Vault](../../../Vault/overview.md), который позволяет внешним системам, таким как GitLab, проходить аутентификацию с помощью стандарта JSON Web Token (JWT).
-- **OpenID Connect (OIDC)**: Протокол идентификации на базе OAuth 2.0. Подробнее см. в [OpenID Connect (OIDC)](../../../Security/Concepts/authentication_vs_authorization.md#протоколы-и-стандарты). GitLab может выступать в роли OIDC-провайдера.
-- **`CI_JOB_JWT_V2_TOKEN`**: Предопределенная переменная в GitLab CI, которая содержит короткоживущий, OIDC-совместимый JWT-токен. Этот токен уникален для каждой CI/CD-задачи и содержит набор "заявлений" (`claims`), описывающих контекст выполнения (ID проекта, имя ветки, тип ссылки и т.д.).
+## Definitions
 
-### Основные концепции
+**Аутентификация по JWT (JWT Auth Method)** — метод аутентификации в [HashiCorp Vault](../../../Vault/overview.md), позволяющий внешним системам (GitLab) проходить аутентификацию через JSON Web Token (JWT).
 
-1. **Генерация токена**: Для каждой запущенной CI/CD-задачи GitLab генерирует уникальный JWT-токен и помещает его в переменную `CI_JOB_JWT_V2_TOKEN`.
-2. **Аутентификация в Vault**: CI-задача отправляет этот токен в Vault, используя метод аутентификации JWT.
-3. **Валидация токена**: Vault получает токен и выполняет проверку его подлинности. Для этого он обращается по публичному адресу (`JWKS URL`) GitLab, чтобы получить ключ, которым был подписан токен.
-4. **Проверка привязок (Claims)**: После подтверждения подлинности Vault анализирует "заявления" (`claims`) внутри токена. В Vault заранее настраиваются **роли**, которые связывают определенный набор `claims` с **политиками доступа**.
-5. **Выдача токена Vault**: Если `claims` из JWT соответствуют условиям, заданным в роли (например, `project_id`, `ref_type: branch`, `ref: main`), Vault генерирует и возвращает CI-задаче новый, короткоживущий **токен Vault**.
-6. **Получение секрета**: CI-задача использует полученный токен Vault для выполнения запросов к секретам. Политики, привязанные к роли, строго ограничивают, какие именно секреты может читать или изменять данная задача.
+**OpenID Connect (OIDC)** — протокол идентификации на базе OAuth 2.0 ([подробнее](../../../Security/Concepts/authentication_vs_authorization.md#протоколы-и-стандарты)). GitLab выступает OIDC-провайдером.
 
-### Практические сценарии
+**`CI_JOB_JWT_V2_TOKEN`** — предопределенная переменная GitLab CI с короткоживущим OIDC-совместимым JWT-токеном. Уникален для каждой задачи, содержит claims (project_id, ветка, тип ссылки).
 
-#### Настройка интеграции GitLab CI и Vault в Kubernetes
+## Basic Concepts
 
-##### Шаг 1: Развертывание Vault в Kubernetes
+1. **Генерация токена**: GitLab генерирует уникальный JWT для каждой CI/CD-задачи → переменная `CI_JOB_JWT_V2_TOKEN`.
+2. **Аутентификация в Vault**: CI-задача отправляет токен в Vault через JWT auth method.
+3. **Валидация токена**: Vault проверяет подлинность через JWKS URL GitLab.
+4. **Проверка claims**: Vault анализирует заявления токена. Роли связывают claims с политиками доступа.
+5. **Выдача токена Vault**: При соответствии claims роли → Vault выдает короткоживущий токен.
+6. **Получение секрета**: Задача использует токен Vault для чтения секретов в рамках политик.
 
-Мы развернем Vault с помощью [**Helm**](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
+## Practical Scenarios
+
+### Vault развертывание в Kubernetes
+
+Развертывание через [**Helm**](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
 
 1. **Добавьте Helm-репозиторий и установите оператор:**
 
@@ -30,7 +32,7 @@
     ```
 
 2. **Создайте и примените манифест для экземпляра Vault:**
-    Создайте файл `vault-instance.yaml`. `externalConfig` настроит [Ingress](../../../Linux/Networking/Services/BIND/overview.md) для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
+    Создайте файл `vault-instance.yaml`. Параметр `externalConfig` настроит Ingress для доступа к UI. Замените `vault.your-domain.com` на ваш домен.
 
     ```yaml
     # vault-instance.yaml
@@ -40,7 +42,7 @@
       name: vault
     spec:
       size: 1
-      image: vault:1.10.3 # Рекомендуется использовать актуальную версию
+      image: vault:1.21 # Актуальная стабильная версия (март 2026)
       bankVaultsConfig:
         externalConfig:
           policies:
@@ -85,9 +87,9 @@
     vault status
     ```
 
-##### Шаг 2: Настройка JWT-аутентификации для GitLab
+### JWT-аутентификация для GitLab
 
-Настроим Vault так, чтобы он доверял токенам от GitLab.
+Настройка Vault для доверия токенам GitLab.
 
 1. **Включите метод JWT-аутентификации:**
 
@@ -153,7 +155,7 @@
     vault kv put secret/my-project/production db_password="!production_secret_@#$"
     ```
 
-##### Шаг 3: Настройка `.gitlab-ci.yml` для получения секретов
+### GitLab CI настройка для получения секретов
 
 ```yaml
 stages:
@@ -191,15 +193,11 @@ get-production-secrets:
 
 После запуска этого пайплайна на ветке `main` в логах вы увидите, что пароль для `production` был успешно получен, а попытка получить пароль для `staging` завершилась ошибкой **permission denied**, что подтверждает корректную работу модели безопасности.
 
-### Дополнительная информация
+## Additional Information
 
 - **Безопасность `bound_claims`**: Поле `bound_claims` является ключевым для безопасности. Всегда указывайте как минимум `project_id`, чтобы гарантировать, что токен не будет использован из другого проекта. Дополнительные `claims` (`ref`, `ref_type`, `ref_protected`) усиливают гранулярность доступа.
 - **Аудит с `user_claim`**: Поле `user_claim="user_email"` указывает Vault использовать email пользователя, инициировавшего пайплайн, в качестве идентификатора для логов аудита. Это упрощает отслеживание, кто именно получил доступ к секрету.
 - **Helm-чарты Vault**: В данном руководстве используется оператор от Banzai Cloud. Существует также официальный Helm-чарт от HashiCorp (`hashicorp/vault`), который является более предпочтительным для новых установок, так как поддерживается непосредственно разработчиками Vault.
-- **Self-Hosted GitLab**: При использовании собственного экземпляра GitLab не забудьте заменить `https://gitlab.com` на ваш домен в параметре `jwks_url` и `bound_issuer` при настройке JWT-аутентификации.
+- **Self-Hosted GitLab**: При использовании собственного экземпляра GitLab замените `https://gitlab.com` на ваш домен в параметрах `jwks_url` и `bound_issuer`.
 
-### Связанные документы
-
-- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными и секретами.
-- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — развертывание в Kubernetes.
-- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)** — работа с окружениями.
+**См. также:** [Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), [Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md), [Окружения и развертывания](../Concepts/environments_and_deployments.md).

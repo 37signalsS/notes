@@ -2,24 +2,26 @@
 
 ## Определения
 
-* **[Container Registry](../../ci_cd_overview.md)**: Встроенное в GitLab хранилище для Docker-образов. В данном руководстве мы будем публиковать образ приложения в этот реестр.
-* **[Deploy Token](../../ci_cd_overview.md)**: Специальный токен для аутентификации в Container Registry без использования учетных данных пользователя. Это безопаснее, чем использовать личные пароли в CI-скриптах.
+- **Container Registry**: Встроенное в GitLab хранилище для Docker-образов. В данном руководстве мы публикуем образ приложения в этот реестр. Подробнее: [GitLab Container Registry](https://docs.gitlab.com/user/packages/container_registry/).
+- **Deploy Token**: Специальный токен для аутентификации в Container Registry без использования учетных данных пользователя. Безопаснее, чем использование личных паролей в CI-скриптах. Подробнее: [Deploy Tokens](../Concepts/gitlab_ci_variables_secrets.md).
+- **GitLab Runner**: Исполнитель, который получает и выполняет задачи из пайплайна. Типы исполнителей: [GitLab CI Runners и Executors](../Advanced/gitlab_ci_runners_executors.md).
+- **`.gitlab-ci.yml`**: Файл конфигурации в корне репозитория, описывающий стадии и шаги пайплайна. Основы: [GitLab CI Basics](../Concepts/gitlab_ci_basics.md).
 
-### Основные концепции
+## Основные концепции
 
-* **Код приложения (`app.py`, `requirements.txt`)**: Простое веб-приложение на Flask.
-* **`Dockerfile`**: Инструкция для сборки Docker-образа, содержащего приложение и его зависимости. Подробнее о лучших практиках для Python см. [здесь](../../../Docker/Dockerfile/Docker_best_practices/python.md).
-* **[GitLab Runner](../Advanced/gitlab_ci_runners_executors.md)**: Исполнитель, который получает и выполняет задачи из пайплайна. В этом примере используется `shell` executor, который выполняет команды непосредственно на хост-машине.
-* **[`.gitlab-ci.yml`](../Concepts/gitlab_ci_basics.md)**: Файл конфигурации, описывающий стадии и шаги пайплайна.
+- **Код приложения**: Простое веб-приложение на Flask (`app.py`, `requirements.txt`).
+- **Dockerfile**: Инструкция для сборки Docker-образа с приложением и зависимостями. Лучшие практики: [Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md).
+- **GitLab Runner (Shell Executor)**: В этом примере используется `shell` executor, выполняющий команды непосредственно на хост-машине. **Не рекомендуется для production** из-за отсутствия изоляции.
+- **Регистрация Runner**: Пошаговая инструкция доступна в [Регистрация GitLab Runner](./runner_registration.md).
 
-### Практический сценарий: Настройка CI/CD для Python-приложения
+## Практические сценарии
 
-#### Предварительные требования
+### Предварительные требования
 
-1. **Проект в GitLab:** Пустой приватный проект с инициализированным `README`.
-2. **Сервер для развертывания:** Виртуальная или физическая машина с доступом в интернет, на которой установлены **[Docker](https://docs.docker.com/engine/install/)** и **[GitLab Runner](runner_registration.md)**.
+1. **Проект в GitLab**: Пустой приватный проект с инициализированным `README`.
+2. **Сервер для развертывания**: Виртуальная или физическая машина с доступом в интернет, на которой установлены **[Docker](https://docs.docker.com/engine/install/)** и **[GitLab Runner](./runner_registration.md)**.
 
-#### Шаг 1: Подготовка проекта и кода
+### Шаг 1: Подготовка проекта и кода
 
 1. В вашем проекте GitLab создайте три файла: `app.py`, `requirements.txt` и `Dockerfile`.
 
@@ -57,36 +59,36 @@
 
 2. **Закоммитьте** эти три файла в ветку `main`.
 
-#### Шаг 2: Регистрация GitLab Runner
+### Шаг 2: Регистрация GitLab Runner
 
-Для выполнения нашего пайплайна нужен исполнитель (Runner). Подробное руководство по регистрации доступно [здесь](runner_registration.md).
+Для выполнения пайплайна нужен исполнитель (Runner). Подробное руководство по регистрации доступно в [Регистрация GitLab Runner](./runner_registration.md).
 
 > **Важно:** `shell` executor выполняет команды прямо на хост-машине. Это небезопасно и подходит только для обучения. В реальных проектах используйте **[Docker Executor](../Advanced/gitlab_ci_runners_executors.md)**.
 
 1. **Установите Runner** на ваш сервер.
 2. **Получите токен для регистрации**: В проекте GitLab перейдите в **Settings -> CI/CD -> Runners** и скопируйте токен.
 3. **Зарегистрируйте Runner**, выполнив `sudo gitlab-runner register` и указав:
-    * URL вашего GitLab.
-    * Регистрационный токен.
-    * Описание (e.g., `my-shell-runner`).
-    * Тег (e.g., `shell-runner`). **Запомните этот тег**, он понадобится в `.gitlab-ci.yml`.
-    * Executor: `shell`.
+    - URL вашего GitLab.
+    - Регистрационный токен.
+    - Описание (например, `my-shell-runner`).
+    - Тег (например, `shell-runner`). **Запомните этот тег**, он понадобится в `.gitlab-ci.yml`.
+    - Executor: `shell`.
 4. Убедитесь, что Runner запущен (`sudo gitlab-runner status`) и виден с зеленым индикатором в UI GitLab.
 
-#### Шаг 3: Создание Deploy Token для доступа к Registry
+### Шаг 3: Создание Deploy Token для доступа к Registry
 
 Чтобы CI-пайплайн мог публиковать и скачивать образы из GitLab Container Registry, ему нужны права.
 
 1. Перейдите в **Settings -> Repository -> Deploy Tokens**.
 2. Нажмите **Add token**.
-    * **Name**: `registry-token`
-    * **Scopes**: Отметьте `read_registry` и `write_registry`.
+    - **Name**: `registry-token`
+    - **Scopes**: Отметьте `read_registry` и `write_registry`.
 3. Нажмите **Create deploy token**. **Сразу же сохраните `username` и `password`**, они больше не будут показаны.
 4. Перейдите в **Settings -> CI/CD -> Variables** и создайте две [защищенные переменные](../Concepts/gitlab_ci_variables_secrets.md):
-    * `REGISTRY_USER`: `username` из Deploy Token.
-    * `REGISTRY_PASSWORD`: `password` из Deploy Token. Отметьте эту переменную как **Masked** и **Protected**.
+    - `REGISTRY_USER`: `username` из Deploy Token.
+    - `REGISTRY_PASSWORD`: `password` из Deploy Token. Отметьте эту переменную как **Masked** и **Protected**.
 
-#### Шаг 4: Создание `.gitlab-ci.yml`
+### Шаг 4: Создание `.gitlab-ci.yml`
 
 Создайте в корне проекта файл `.gitlab-ci.yml`.
 
@@ -129,19 +131,23 @@ deploy_job:
     - docker run -d --name my-app -p 5000:5000 $IMAGE_NAME
 ```
 
-#### Шаг 5: Запуск и проверка
+### Шаг 5: Запуск и проверка
 
 1. **Закоммитьте файл `.gitlab-ci.yml`** в ветку `main`.
 2. Перейдите в **CI/CD -> Pipelines** и наблюдайте за выполнением.
 3. После успеха обеих задач:
-    * Проверьте, что приложение доступно на вашем сервере по адресу `http://<server_ip>:5000`.
-    * Убедитесь, что новый образ появился в **Deploy -> Container Registry**.
+    - Проверьте, что приложение доступно на вашем сервере по адресу `http://<server_ip>:5000`.
+    - Убедитесь, что новый образ появился в **Deploy -> Container Registry**.
 
-### Дополнительная информация
+## Дополнительная информация
 
-* **Идемпотентность развертывания**: Конструкция `docker ... || true` гарантирует, что пайплайн не упадет, если при первом развертывании контейнера с именем `my-app` еще не существует.
-* **Безопасность**: Данный пример использует `shell` executor и развертывание через `docker run`. Это просто для понимания, но **небезопасно для производственных сред**. Такой подход дает CI-задачам полный контроль над хост-машиной.
-* **Следующие шаги**:
-  * Изучите и перейдите на **[Docker Executor](../Advanced/gitlab_ci_runners_executors.md)** для изоляции задач.
-  * Используйте более надежные инструменты для развертывания, такие как **Docker Compose**, **Ansible** или **Kubernetes**.
-  * Храните SSH-ключи и другие секреты в [переменных GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), а не в файлах.
+- **Идемпотентность развертывания**: Конструкция `docker ... || true` гарантирует, что пайплайн не упадет, если при первом развертывании контейнера с именем `my-app` еще не существует.
+- **Безопасность**: Данный пример использует `shell` executor и развертывание через `docker run`. Это просто для понимания, но **небезопасно для производственных сред**. Такой подход дает CI-задачам полный контроль над хост-машиной.
+- **Рекомендации для production**:
+  - Используйте **[Docker Executor](../Advanced/gitlab_ci_runners_executors.md)** для изоляции задач.
+  - Применяйте более надежные инструменты развертывания: **Docker Compose**, **Ansible** или **Kubernetes**.
+  - Храните секреты в [переменных GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), а не в файлах.
+- **Смежные руководства**:
+  - Комплексный пайплайн для Python-проекта: [Python Project Pipeline Guide](./python_project_pipeline_guide.md).
+  - Регистрация Runner: [Регистрация GitLab Runner](./runner_registration.md).
+  - Основы GitLab CI: [GitLab CI Basics](../Concepts/gitlab_ci_basics.md).

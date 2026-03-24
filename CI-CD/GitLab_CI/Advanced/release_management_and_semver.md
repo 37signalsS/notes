@@ -207,43 +207,24 @@ deploy_prod:
 
 ## Дополнительная информация
 
-- **Спецификация Conventional Commits**: [www.conventionalcommits.org](https://www.conventionalcommits.org/ru/v1.0.0/)
-- **Документация `release-cli`**: [docs.gitlab.com/ee/api/releases/#create-a-release](https://docs.gitlab.com/ee/api/releases/#create-a-release)
-- **GitLab Releases API**: [docs.gitlab.com/ee/api/releases/](https://docs.gitlab.com/ee/api/releases/)
+### Лучшие практики (2025-2026)
 
-## Best Practices (2025-2026)
+- **Декларативный блок `release:`** — предпочтительнее использовать встроенный блок `release:` вместо release-cli (GitLab 16+).
+- **Автоматическая генерация changelog** — используйте `git log` с фильтрацией по тегам, включайте только коммиты с `feat:`, `fix:`, `BREAKING CHANGE:`.
+- **Ручное подтверждение для production** — всегда используйте `when: manual` для создания релизов в production.
+- **Связывание артефактов** — добавляйте ссылки на Docker-образы в `assets.links`, прикрепляйте бинарные файлы через `assets:links` или `artifacts`.
+- **Защита тегов** — используйте защищённые теги для production-релизов, требуйте approval от maintainer.
+- **Интеграция с Package Registry** — публикуйте пакеты в GitLab Package Registry, связывайте релизы с соответствующими пакетами.
+- **Спецификации:** Подробно о [Conventional Commits](https://www.conventionalcommits.org/ru/v1.0.0/) и [GitLab Releases API](https://docs.gitlab.com/ee/api/releases/).
 
-1. **Используйте декларативный блок `release:`**
-   - Начиная с GitLab 16+, предпочтительнее использовать встроенный блок `release:` вместо release-cli
-   - Упрощает конфигурацию и уменьшает зависимости
+### Альтернатива release-cli (GitLab 17+)
 
-2. **Автоматическая генерация changelog**
-   - Используйте `git log` с фильтрацией по тегам
-   - Включайте только коммиты с `feat:`, `fix:`, `BREAKING CHANGE:`
-
-3. **Ручное подтверждение для production**
-   - Всегда используйте `when: manual` для создания релизов в production
-   - Дайте возможность проверить changelog перед публикацией
-
-4. **Связывание артефактов**
-   - Добавляйте ссылки на Docker-образы в `assets.links`
-   - Прикрепляйте бинарные файлы через `assets:links` или `artifacts`
-
-5. **Защита тегов**
-   - Используйте защищённые теги для production-релизов
-   - Требуйте approval от maintainer перед созданием тега
-
-6. **Интеграция с Package Registry**
-   - Публикуйте пакеты в GitLab Package Registry
-   - Связывайте релизы с соответствующими пакетами
-
-## Альтернатива release-cli (GitLab 17+)
+Современный подход — использование GitLab Releases API напрямую вместо release-cli:
 
 ```yaml
-# Современный подход с использованием декларативного release
 create_release:
   stage: release
-  image: alpine:3.19
+  image: alpine:3.21
   needs:
     - job: analyze_commit
       artifacts: true
@@ -271,3 +252,8 @@ create_release:
         }" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
 ```
+
+### Связанные концепции
+
+- **Версионирование артефактов:** Схемы версионирования (SemVer, CalVer) описаны в **[Управлении артефактами](../../artifact_management.md)**.
+- **CI/CD Catalog:** Публикация компонентов с SemVer — в **[CI/CD Catalog Reference](../Reusable_Pipelines/ci_cd_catalog_reference.md)**.

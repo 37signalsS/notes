@@ -1,99 +1,24 @@
 # GitLab CI: Каталог Компонентов — Основные концепции
 
-## Преимущества компонентов перед `include`
+> **SSoT:** [GitLab CI: Каталог Компонентов (CI/CD Catalog)](./ci_cd_catalog_components.md)
 
-| Критерий | `include:project` | CI/CD Catalog (Components) |
-| :--- | :--- | :--- |
-| **Версионирование** | Теги (рекомендуется) | **Semver** (обязательно для каталога) |
-| **Типизация** | Нет | **Да** (`spec:inputs` с типами) |
-| **Валидация** | Базовая | **Полная** (валидация inputs) |
-| **Каталог** | Внешний репозиторий | **Встроенный в GitLab** (UI, поиск) |
-| **Документация** | Ручная | **Автоматическая** (из `spec:inputs`) |
-| **Изоляция** | Высокая | **Полная** (самодостаточные блоки) |
+## Основные концепции
 
-## Архитектура компонента
+Концепции GitLab CI Components изложены в основном документе SSoT:
 
-**Минимальная структура:**
+- **Преимущества компонентов перед `include`** — сравнение по версионированию, типизации, валидации, каталогу, документации и изоляции
+- **Архитектура компонента** — минимальная структура (один файл) и структура с шаблонами (множественные файлы)
+- **Синтаксис `spec:inputs`** — определение типов параметров, значений по умолчанию, валидация через regex
+- **Интерполяция переменных** — механизм подстановки значений через `$[[ inputs.<name> ]]`
 
-```
-component-repo/
-├── .gitlab-ci.yml          # Метаданные: spec:inputs
-└── templates/
-    └── build.yml           # Основная логика компонента
-```
+Подробное описание с примерами — в [ci_cd_catalog_components.md](./ci_cd_catalog_components.md#основные-концепции).
 
-**Или упрощённая (один файл):**
-
-```
-component-repo/
-└── .gitlab-ci.yml          # spec:inputs + логика
-```
-
-## Синтаксис `spec:inputs`
-
-```yaml
-spec:
-  inputs:
-    <input-name>:
-      default: <value>          # Необязательно: значение по умолчанию
-      description: "<text>"     # Необязательно: описание для документации
-      type: <string|boolean|number>  # Необязательно: тип данных
-      regex: "<pattern>"        # Необязательно: валидация через regex
-```
-
-**Пример:**
-
-```yaml
-spec:
-  inputs:
-    stage:
-      default: build
-      type: string
-      description: "CI stage for the job"
-    
-    target_branch:
-      type: string
-      default: main
-      description: "Branch to trigger on"
-      regex: '^(main|develop|feature/.*)$'
-    
-    enable_cache:
-      type: boolean
-      default: true
-      description: "Enable caching"
-    
-    timeout:
-      type: number
-      default: 30
-      description: "Job timeout in minutes"
-```
-
-> **Важно:** `spec:inputs` не может быть пустым. Если входы не используются, сделайте `spec:` пустым:
->
-> ```yaml
-> spec:
-> ---
-> ```
-
-## Использование интерполяции в компонентах
-
-Компоненты поддерживают интерполяцию переменных через синтаксис `$[[ inputs.<name> ]]`:
-
-```yaml
-# templates/build.yml
-build_job:
-  stage: $[[ inputs.stage ]]
-  image: $[[ inputs.image ]]
-  timeout: $[[ inputs.timeout ]]m
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $[[ inputs.target_branch ]]'
-  script:
-    - echo "Building with cache: $[[ inputs.enable_cache ]]"
-```
+---
 
 ## Связанные документы
 
 - [Определения](./ci_cd_catalog_definitions.md)
-- [Практические сценарии](./ci_cd_catalog_scenarios.md)
+- [Базовые сценарии](./ci_cd_catalog_scenarios.md)
+- [Продвинутые сценарии](./ci_cd_catalog_advanced_scenarios.md)
 - [Ограничения](./ci_cd_catalog_limits.md)
 - [Справочная информация](./ci_cd_catalog_reference.md)
