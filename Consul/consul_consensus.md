@@ -60,8 +60,6 @@ consul operator raft list-peers
 consul operator raft remove-peer <NodeID>
 ```
 
-```
-
 ## Конфигурация сервера
 
 Пример минимальной конфигурации для серверного узла:
@@ -78,8 +76,4 @@ consul operator raft remove-peer <NodeID>
 
 Современные версии Consul включают механизм **Autopilot**, который автоматизирует многие задачи по управлению кластером, такие как очистка неработающих серверов и управление обновлениями.
 
-# Дополнительная информация
-
-- **[Обзор архитектуры Consul](./consul_architecture.md):** Узнайте, как консенсус вписывается в общую архитектуру.
-- **[The Raft Consensus Algorithm](https://raft.github.io/):** Оригинальный сайт с визуализацией и ссылкой на научную работу.
-- **[Официальная документация по консенсусу в Consul](https://developer.hashicorp.com/consul/docs/architecture/consensus):** Детали реализации от HashiCorp.
+Подробнее о том, как консенсус вписывается в общую архитектуру Consul, см. в [обзоре архитектуры](./consul_architecture.md). Детали реализации от HashiCorp доступны в [официальной документации](https://developer.hashicorp.com/consul/docs/architecture/consensus), а визуализация алгоритма Raft — на [raft.github.io](https://raft.github.io/).

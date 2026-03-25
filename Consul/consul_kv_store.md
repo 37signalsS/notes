@@ -98,6 +98,10 @@ curl --request PUT http://127.0.0.1:8500/v1/txn -d '
 
 # Дополнительная информация
 
-- **[Обзор Consul](./consul_overview.md):** Вернуться к общему обзору системы.
-- **[Официальная документация по KV Store](https://developer.hashicorp.com/consul/docs/services/kv-store):** Детальное описание всех операций.
-- **[Интеграция с Vault](../Vault/overview.md):** Для хранения секретов рекомендуется использовать Vault, который может использовать Consul как защищенное хранилище.
+**Лимиты размера:** По умолчанию 512 КБ на запись. Настраивается параметром `kv_max_value_size` (с версии 1.5.3). Для транзакций — `txn_max_req_len` (с версии 1.7.2). Превышение лимитов вызывает ошибку `"Request body too large"`.
+
+**Производительность:** Чрезмерный размер данных негативно влияет на стабильность лидерства и тайминги Raft heartbeat. Рекомендуется хранить только данные малого объёма.
+
+**Связанные документы:** [Обзор Consul](./consul_overview.md), [Raft-консенсус](./consul_consensus.md), [Vault с Consul бэкендом](../Vault/guides/vault_with_consul_backend.md).
+
+**Официальная документация:** [HashiCorp Consul KV](https://developer.hashicorp.com/consul).

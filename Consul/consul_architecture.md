@@ -77,5 +77,4 @@ consul event -name=deploy v1.2.3
 
 # Дополнительная информация
 
-- **[Обзор Consul](../Consul/consul_overview.md):** Вернуться к общему обзору системы.
-- **[Глубокое погружение в архитектуру (HashiCorp)](https://developer.hashicorp.com/consul/docs/architecture):** Официальное описание архитектурных принципов.
+См. также [обзор Consul](../Consul/consul_overview.md) и [официальную документацию по архитектуре](https://developer.hashicorp.com/consul/docs/architecture).
