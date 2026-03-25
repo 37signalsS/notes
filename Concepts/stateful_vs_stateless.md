@@ -76,81 +76,43 @@
 
 ### Kubernetes: Deployment vs StatefulSet
 
-| Характеристика | Deployment (Stateless) | StatefulSet (Stateful) |
-| :--- | :--- | :--- |
-| **Имена подов** | Случайные, эфемерные | Стабильные (`app-0`, `app-1`) |
-| **Сетевая идентификация** | Взаимозаменяемые IP | Уникальные DNS через [Headless Service](../Kubernetes/Networking/dns_deep_dive.md) |
-| **Хранилище** | Общее (RWX) или отсутствует | Индивидуальное PVC на под (RWO) |
-| **Порядок развертывания** | Параллельный | Упорядоченный (0→1→2) |
-| **Масштабирование** | Произвольный порядок | Последовательное создание/удаление |
-| **Применение** | Веб-серверы, API, функции | БД, брокеры, распределённые системы |
+В Kubernetes концепция stateful/stateless реализуется через контроллеры [Deployment](../Kubernetes/Base/Deployment/index.md) (stateless) и [StatefulSet](../Kubernetes/Base/StatefulSet/statefulset_overview.md) (stateful).
 
-> Подробное руководство: **[StatefulSet в Kubernetes](../Kubernetes/Base/statefulset.md)**
+**Deployment** управляет stateless-приложениями: поды взаимозаменяемы, имеют случайные имена и IP, используют общее хранилище (RWX) или временное.
+
+**StatefulSet** управляет stateful-приложениями: поды получают стабильные имена (`app-0`, `app-1`), уникальные DNS-записи через [Headless Service](../Kubernetes/Networking/Service/service_type_headless.md), индивидуальное персистентное хранилище (RWO), упорядоченное развертывание.
+
+> Подробное сравнение: **[StatefulSet vs Deployment](../Kubernetes/Base/StatefulSet/statefulset_vs_deployment.md)**
 
 ### Сетевая фильтрация: Stateless vs Stateful Firewall
 
-| Критерий | Stateless | Stateful |
-| :--- | :--- | :--- |
-| **Принцип** | Каждый пакет анализируется изолированно | Отслеживание состояния соединений (`conntrack`) |
-| **Производительность** | Максимальная | Ниже (память для таблицы состояний) |
-| **Безопасность** | Ниже (сложные правила) | Выше (автоматический ответный трафик) |
-| **Состояния** | — | `NEW`, `ESTABLISHED`, `RELATED`, `INVALID` |
+В сетевой безопасности применяется [stateful-фильтрация](../Networking/Concepts/firewall_concepts.md#stateless-vs-stateful-фильтрация) — отслеживание состояния соединений (`NEW`, `ESTABLISHED`, `RELATED`, `INVALID`) через таблицу `conntrack`. Stateful-файрволы обеспечивают более высокий уровень безопасности по сравнению со stateless.
 
-> **Stateful-фильтрация** — стандарт для современных файрволов. Подробнее: **[Концепции файрволов](../Networking/Concepts/firewall_concepts.md)**
+> Детально: **[Концепции файрволов](../Networking/Concepts/firewall_concepts.md)**
 
 ### HTTP-протокол
 
-**HTTP — stateless-протокол:** сервер не хранит информацию о предыдущих запросах. Каждый запрос — независимая транзакция.
+[HTTP](../Networking/Protocols/HTTP/http_basics.md) — stateless-протокол: каждый запрос независим, сервер не хранит информацию о предыдущих запросах. Для эмуляции состояния используются [Cookies](../Networking/Protocols/HTTP/http_authentication.md#cookies), заголовки авторизации (Bearer, JWT), [токены](../Networking/Protocols/HTTP/http_basics.md#stateless-протокол).
 
-**Преимущества для масштабирования:**
-
-- Любой сервер в кластере обрабатывает запрос
-- Отказ сервера не влияет на сессию
-- Упрощенная архитектура сервера
-
-**Механизмы добавления состояния:**
-
-- Cookies для сессий
-- Заголовки авторизации (Bearer, JWT)
-- URL-параметры сессии
-
-> Детали: **[HTTP Basics](../Networking/Protocols/HTTP/http_basics.md#stateless-протокол-протокол-без-сохранения-состояния)**
+> Подробнее: **[HTTP Basics](../Networking/Protocols/HTTP/http_basics.md)**
 
 ### IaC: Terraform vs Ansible
 
-| Аспект | Terraform (Stateful) | Ansible (Stateless) |
-| :--- | :--- | :--- |
-| **Управление состоянием** | State file (соответствие кода и ресурсов) | Динамический сбор фактов при запуске |
-| **Парадигма** | Декларативная (конечное состояние) | Процедурно-декларативная |
-| **Назначение** | Provisioning инфраструктуры | Configuration Management |
+В Infrastructure as Code: [Terraform](iac_overview.md) использует stateful-подход (state file для хранения соответствия ресурсов), [Ansible](iac_overview.md) — stateless (сбор фактов при каждом запуске).
 
-> Подробнее: **[IaC Overview](./iac_overview.md)**
+> Сравнение: **[IaC Overview](iac_overview.md#сравнение-инструментов-terraform-vs-ansible)**
 
 ### Высокая доступность
 
-**Шаблоны кластеризации:**
+Шаблоны кластеризации: **Active-Active** для stateless-сервисов (все узлы обрабатывают трафик), **Active-Passive** для stateful-сервисов (один узел активен, остальные в резерве).
 
-- **Active-Active** — все узлы обрабатывают трафик
-  - *Применение:* stateless-сервисы, API-шлюзы, веб-серверы
-- **Active-Passive** — один узел активен, остальные в резерве
-  - *Применение:* stateful-сервисы, базы данных
-
-> Детали: **[HA Clustering and Load Balancing](./High_Availability/ha_clustering_and_load_balancing.md)**
+> Детали: **[HA Clustering](High_Availability/ha_clustering_and_load_balancing.md)**
 
 ### Микросервисы: масштабирование
 
-**Stateless-сервисы:**
+В микросервисной архитектуре stateless-сервисы масштабируются горизонтально простым добавлением экземпляров. Stateful-сервисы требуют синхронизации состояния, механизмов консистентности, шардирования или репликации.
 
-- Горизонтальное масштабирование — простое добавление экземпляров
-- Балансировщик равномерно распределяет трафик
-
-**Stateful-сервисы:**
-
-- Требуют синхронизации состояния между экземплярами
-- Необходимы сложные механизмы консистентности
-- Часто используется шардирование или репликация
-
-> Контекст: **[Monolith vs Microservices](./monolith_vs_microservices.md)**
+> Контекст: **[Monolith vs Microservices](monolith_vs_microservices.md)**
 
 ## Дополнительная информация
 
@@ -174,13 +136,3 @@
 2. **Replication** — репликация состояния между экземплярами
 3. **Sharding** — разделение состояния по экземплярам (шардам)
 4. **Sticky Sessions** — привязка клиента к конкретному экземпляру
-
-### Связанные документы
-
-- **[StatefulSet в Kubernetes](../Kubernetes/Base/statefulset.md)** — управление stateful-приложениями в K8s
-- **[Deployment](../Kubernetes/Base/Deployment/index.md)** — управление stateless-приложениями в K8s
-- **[HTTP Basics](../Networking/Protocols/HTTP/http_basics.md)** — stateless-протокол HTTP
-- **[Firewall Concepts](../Networking/Concepts/firewall_concepts.md)** — stateful фильтрация
-- **[HA Clustering](./High_Availability/ha_clustering_and_load_balancing.md)** — шаблоны кластеризации
-- **[Microservices](./monolith_vs_microservices.md)** — масштабирование сервисов
-- **[IaC Overview](./iac_overview.md)** — stateful/stateless в инструментах IaC
