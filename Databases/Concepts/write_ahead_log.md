@@ -27,3 +27,18 @@
 3. **Изменение в памяти:** После успешной записи в WAL, СУБД вносит изменения в копию данных, которая находится в оперативной памяти.
 4. **Подтверждение клиенту:** Только после фиксации в журнале СУБД сообщает клиенту, что операция успешно выполнена и данные в безопасности.
 5. **Запись на диск (Checkpoint):** Измененные страницы данных из памяти записываются в основные файлы базы данных позже, во время очередного чекпоинта, что оптимизирует производительность дисковых операций.
+
+## Дополнительная информация
+
+### WAL в PostgreSQL
+
+- **Архивирование WAL:** Для PITR необходимо настроить непрерывное архивирование WAL-сегментов через `archive_mode` и `archive_command` — [PostgreSQL/Concepts/backup_and_recovery.md](../PostgreSQL/Concepts/backup_and_recovery.md).
+- **Параметры настройки:** `wal_buffers`, `checkpoint_timeout`, `max_wal_size` влияют на производительность записи — [PostgreSQL/Operations/performance_tuning.md](../PostgreSQL/Operations/performance_tuning.md).
+- **Слоты репликации:** Механизм `replication slot` гарантирует, что WAL не будет удалён до получения репликой — [PostgreSQL/Concepts/replication.md](../PostgreSQL/Concepts/replication.md).
+
+### Смежные темы
+
+- **PITR:** Восстановление на точку во времени через применение WAL к бэкапу — [backups.md](./backups.md).
+- **Производительность записи:** Роль `fsync` и чекпоинтов в обеспечении долговечности — [database_performance_concepts.md](./database_performance_concepts.md).
+- **Массовые операции:** Запись больших объёмов изменений может раздуть WAL — [safe_large_scale_data_modification.md](./safe_large_scale_data_modification.md).
+- **Репликация:** Потоковая репликация передаёт WAL на реплики — [replication.md](./replication.md).

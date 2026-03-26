@@ -23,9 +23,9 @@ Ansible ищет файл `ansible.cfg` в нескольких местах в 
 
 Файл инвентаризации определяет хосты и группы хостов, которыми вы управляете.
 
-#### Форматы инвентаря: INI и YAML
+#### Форматы инвентаря: INI, YAML и JSON
 
-Ansible поддерживает два основных формата для файлов инвентаризации: INI (классический) и YAML.
+Ansible поддерживает три основных формата для файлов инвентаризации: INI (классический), YAML и JSON.
 
 **INI-формат**
 
@@ -64,8 +64,30 @@ all:
     servers:
       children:
         webservers:
-        dbservers:
+        dbservers
 ```
+
+**JSON-формат**
+
+Используется реже, преимущественно для динамических инвентарей.
+
+```json
+{
+  "webservers": {
+    "hosts": {
+      "web1.example.com": {},
+      "web2.example.com": {"ansible_port": 2222}
+    }
+  },
+  "dbservers": {
+    "hosts": {
+      "db1.example.com": {}
+    }
+  }
+}
+```
+
+**Метагруппа `all`:** специальная группа, объединяющая все хосты и все группы в инвентаре. Переменные, определённые для `all`, применяются глобально ко всем управляемым узлам. Например, глобальная переменная `ansible_python_interpreter` указывает путь к интерпретатору Python для всех хостов.
 
 #### Переменные инвентаря
 
@@ -87,10 +109,36 @@ all:
 
 Плагин для хоста задается через переменную `ansible_connection`. Узнать, какие плагины доступны, можно командой `ansible-doc -t connection -l`.
 
+**Базовые плагины подключения:**
+
 - `ssh`: Стандартное подключение (по умолчанию).
 - `local`: Для выполнения задач на самом контрольном узле.
 - `docker`: Для подключения к Docker-контейнерам. В современных версиях требуется полное имя коллекции (FQCN), например `community.docker.docker`.
 - `winrm`: Для подключения к машинам Windows.
+
+**Плагины подключения для сетевого оборудования:**
+
+Сетевые модули Ansible имеют важное отличие: они **выполняются на управляющем узле**, а не на управляемом устройстве. Это связано с тем, что на большинстве сетевого оборудования (маршрутизаторы, коммутаторы) отсутствует возможность запускать Python-код.
+
+- `ansible.netcommon.network_cli`: Подключение через CLI over SSH. Основной способ для работы с Cisco EOS, Juniper JunOS и другими сетевыми ОС. Команды передаются через SSH-сессию как интерактивные команды CLI.
+- `ansible.netcommon.netconf`: Подключение через NETCONF (XML over SSH). Требует поддержки NETCONF на сетевом устройстве.
+- `ansible.netcommon.httpapi`: Подключение через HTTP/HTTPS API. Используется для устройств с REST API (например, MikroTik RouterOS).
+- `ansible.netcommon.network_cli` с `telnet`: Для устаревших устройств, поддерживающих только Telnet.
+
+Пример использования в инвентаре для сетевого устройства:
+
+```ini
+[cisco_switches]
+192.168.1.60 ansible_network_os=cisco.eos.eos ansible_connection=ansible.netcommon.network_cli ansible_user=admin ansible_ssh_pass=password
+```
+
+Просмотр всех доступных сетевых модулей:
+
+```bash
+ansible-doc -l | grep eos
+```
+
+Документация по сетевой автоматизации: [docs.ansible.com](https://docs.ansible.com/ansible/latest/network/index.html).
 
 ### Управление привилегиями
 
@@ -106,6 +154,14 @@ all:
 python3 -m venv ansible_env
 source ansible_env/bin/activate
 pip install ansible
+```
+
+#### Генерация конфигурационного файла
+
+Для создания базового конфигурационного файла с настройками по умолчанию используйте команду:
+
+```bash
+ansible-config init --disabled > ansible.cfg
 ```
 
 #### Настройка `ansible.cfg` и `inventory`

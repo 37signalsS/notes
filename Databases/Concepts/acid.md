@@ -36,4 +36,7 @@
 
 ## Дополнительная информация
 
-В реальных системах строгое соблюдение изолированности (Isolation) может снижать производительность. Поэтому большинство СУБД предлагают несколько **[уровней изоляции транзакций](../PostgreSQL/Concepts/concurrency_and_locking.md#уровни-изоляции-транзакций)** (например, `Read Committed`, `Repeatable Read`, `Serializable`), которые позволяют разработчикам находить баланс между производительностью и строгостью гарантий.
+- **Уровни изоляции:** В реальных системах строгое соблюдение изолированности (Isolation) может снижать производительность. Поэтому СУБД предлагают несколько уровней изоляции транзакций (`Read Committed`, `Repeatable Read`, `Serializable`), позволяющих находить баланс между производительностью и строгостью гарантий. Подробности: [PostgreSQL/Concepts/concurrency_and_locking.md](../PostgreSQL/Concepts/concurrency_and_locking.md).
+- **ACID vs BASE:** Реляционные СУБД следуют модели ACID, тогда как многие NoSQL-системы используют модель BASE (Basically Available, Soft state, Eventual consistency), жертвуя строгой согласованностью ради доступности. См. [sql_vs_nosql.md](./sql_vs_nosql.md).
+- **Согласованность в ACID vs CAP:** Важно различать *Consistency* в ACID (соответствие данных ограничениям БД) и *Consistency* в CAP-теореме (все узлы видят одинаковые данные одновременно). См. [cap_theorem.md](./cap_theorem.md).
+- **Связанные концепции:** [WAL](./write_ahead_log.md), [DDL vs DML](./DDL_vs_DML.md), [репликация](./replication.md).

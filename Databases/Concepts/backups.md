@@ -209,7 +209,6 @@ Offsite-хранилища обеспечивают географическую
 
 ## Дополнительная информация
 
-- **RPO (Recovery Point Objective)** и **RTO (Recovery Time Objective)** — ключевые метрики, определяющие требования к процессу восстановления (допустимое время простоя и объем потерь данных). Подробно описаны в основной заметке: **[Концепции SRE: SLA, SLO, SLI и метрики надежности](../../Concepts/sre_concepts_main.md)**.
-- Специфичные для конкретных СУБД инструменты и сценарии описаны в отдельных статьях:
-  - **[Резервное копирование в PostgreSQL](../PostgreSQL/Concepts/backup_and_recovery.md)**
-  - **[Резервное копирование в MariaDB](../MariaDB/backup_and_recovery.md)**
+- **RPO (Recovery Point Objective)** и **RTO (Recovery Time Objective)** — ключевые метрики, определяющие требования к процессу восстановления (допустимое время простоя и объем потерь данных). Подробно описаны в основной заметке: [Концепции SRE: SLA, SLO, SLI и метрики надежности](../../Concepts/sre_concepts_main.md).
+- **Специфичные для СУБД инструменты:** Детальное описание инструментов и сценариев для конкретных СУБД — [PostgreSQL/Concepts/backup_and_recovery.md](../PostgreSQL/Concepts/backup_and_recovery.md), [MariaDB/backup_and_recovery.md](../MariaDB/backup_and_recovery.md).
+- **Связанные концепции:** [backup_security.md](./backup_security.md) (шифрование и сжатие), [backup_validation.md](./backup_validation.md) (проверка целостности), [replication.md](./replication.md) (отличие репликации от бэкапа), [write_ahead_log.md](./write_ahead_log.md) (основа для PITR).

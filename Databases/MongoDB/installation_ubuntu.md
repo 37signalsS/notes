@@ -1,42 +1,46 @@
-# Установка MongoDB Community Edition на Ubuntu
+# Установка MongoDB на Ubuntu
 
 ## Определения
 
-**MongoDB Community Edition** — бесплатная версия MongoDB с открытым исходным кодом. Версия 7.0 — текущая стабильная версия.
+**MongoDB Community Edition** — бесплатная версия MongoDB с открытым исходным кодом. Текущая стабильная версия — 8.0.
 
 ## Основные концепции
 
-### Компоненты MongoDB
+### Компоненты
 
-- **mongod** — основной демон (серверный процесс)
-- **mongosh** — командная оболочка (MongoDB Shell) для взаимодействия с БД
+- **mongod** — серверный процесс MongoDB.
+- **mongosh** — командная оболочка для взаимодействия с БД.
 
 ## Практические сценарии
 
-### 1. Импорт GPG ключа
-
-Для установки из официального репозитория MongoDB необходимо сначала добавить его GPG-ключ в систему.
+### 1. Импорт GPG-ключа
 
 ```bash
-# Устанавливаем зависимости, если их нет
 sudo apt-get install gnupg curl
-
-# Импортируем ключ MongoDB
-curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | \
-   sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
+  sudo gpg -o /usr/share/keyrings/mongodb-server-8.0.gpg --dearmor
 ```
 
-### 2. Добавление репозитория
+### 2. Настройка репозитория
 
-Создайте файл `/etc/apt/sources.list.d/mongodb-org-7.0.list`, чтобы `apt` знал, откуда скачивать пакеты.
+Создайте файл `/etc/apt/sources.list.d/mongodb-org-8.0.list`:
 
+**Ubuntu 24.04 (Noble):**
 ```bash
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+```
+
+**Ubuntu 22.04 (Jammy):**
+```bash
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+```
+
+**Ubuntu 20.04 (Focal):**
+```bash
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
 ```
 
 ### 3. Установка пакетов
-
-Обновите список пакетов и установите мета-пакет `mongodb-org`, который включает в себя все необходимые компоненты (сервер, клиент, утилиты).
 
 ```bash
 sudo apt-get update
@@ -45,29 +49,19 @@ sudo apt-get install -y mongodb-org
 
 ### 4. Управление службой
 
-После установки служба `mongod` не запускается автоматически.
+```bash
+sudo systemctl start mongod
+sudo systemctl status mongod
+sudo systemctl enable mongod
+```
 
-- **Запустить службу:**
+**Остановка и перезапуск:**
+```bash
+sudo systemctl stop mongod
+sudo systemctl restart mongod
+```
 
-    ```bash
-    sudo systemctl start mongod
-    ```
-
-- **Проверить статус службы:**
-
-    ```bash
-    sudo systemctl status mongod
-    ```
-
-- **Добавить в автозагрузку:**
-
-    ```bash
-    sudo systemctl enable mongod
-    ```
-
-### 5. Подключение к базе данных
-
-Для подключения к базе данных используется `mongosh` (новый shell, который устанавливается вместе с сервером).
+### 5. Подключение к БД
 
 ```bash
 mongosh
@@ -75,5 +69,5 @@ mongosh
 
 ## Дополнительная информация
 
-- **Основная документация:** Полное описание концепций MongoDB доступно в заметке **[Основы MongoDB](./mongodb.md)**.
-- **Версия Ubuntu**: В примере добавления репозитория используется кодовое имя `jammy` для Ubuntu 22.04. Для других версий Ubuntu (например, `focal` для 20.04) необходимо изменить его в файле `/etc/apt/sources.list.d/mongodb-org-7.0.list`.
+- **Основная документация:** **[Основы MongoDB](./mongodb.md)**.
+- **Версии Ubuntu:** Кодовые имена: `noble` (24.04), `jammy` (22.04), `focal` (20.04).

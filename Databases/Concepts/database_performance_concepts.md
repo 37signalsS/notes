@@ -49,4 +49,7 @@
 
 ## Дополнительная информация
 
-Производительность также тесно связана с управлением параллельным доступом и блокировками. Подробности можно найти в документе **[Конкурентность и блокировки в PostgreSQL](../PostgreSQL/Concepts/concurrency_and_locking.md)**.
+- **Диагностика I/O-узких мест:** Практическое руководство по выявлению и устранению дисковых узких мест — [db_disk_bottleneck_troubleshooting.md](../../db_disk_bottleneck_troubleshooting.md).
+- **Оптимизация PostgreSQL:** Конкретные параметры настройки (`shared_buffers`, `work_mem`, `checkpoint_timeout`) и методы анализа запросов — [PostgreSQL/Operations/performance_tuning.md](../PostgreSQL/Operations/performance_tuning.md).
+- **Управление параллелизмом:** Блокировки, уровни изоляции и MVCC подробно описаны в [PostgreSQL/Concepts/concurrency_and_locking.md](../PostgreSQL/Concepts/concurrency_and_locking.md).
+- **Связанные концепции:** [acid.md](./acid.md) (Durability), [write_ahead_log.md](./write_ahead_log.md) (WAL и чекпоинты), [indexes.md](./indexes.md) (оптимизация чтения), [replication.md](./replication.md) (масштабирование).

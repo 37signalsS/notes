@@ -1,12 +1,12 @@
 # MySQL: Репликация Multi-Source (Multi-Master)
 
-## Определения
+## Definitions
 
 **Репликация Multi-Source** — это топология репликации в MySQL/MariaDB, при которой один slave-сервер может принимать данные от нескольких master-серверов одновременно. Это достигается созданием отдельных каналов репликации для каждого мастера.
 
 **Репликация Multi-Master** — более общее понятие, описывающее конфигурацию, где несколько узлов в кластере могут принимать запросы на запись. Multi-Source является технологической основой для построения некоторых видов Multi-Master кластеров. В контексте асинхронной репликации, "активный" Multi-Master (где запись идет на все узлы) **крайне не рекомендуется** из-за риска конфликтов и рассинхронизации данных. Безопасной схемой является "пассивный" Multi-Master, где запись всегда идет только на один узел, а остальные находятся в режиме ожидания.
 
-## Базовые концепции
+## Basic Concepts
 
 ### 1. Топология "Кольцо" или "Треугольник"
 
@@ -55,7 +55,7 @@
 - **Кворум**: Механизм защиты, который гласит, что узел может стать мастером, только если он "видит" большинство (50% + 1) других узлов кластера.
 - **Ограничение**: `keepalived` "из коробки" не имеет встроенного механизма кворума. В конфигурации из двух узлов он бессилен против split-brain. Для надежной защиты в `keepalived` необходимо реализовывать логику кворума с помощью **внешних проверочных скриптов**, которые будут анализировать доступность соседей.
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Настройка 3-узловой Multi-Source репликации (кольцо)
 
@@ -70,19 +70,23 @@ server-id = 1 # (на втором - 2, на третьем - 3)
 
 # 2. Включение бинарного лога и использование GTID
 log_bin             = /var/log/mysql/mysql-bin.log
-gtid_domain_id      = 1 # (Одинаковый на всех узлах, если это один кластер)
+binlog_format       = ROW
+
+# Для MySQL 8.0+:
 enforce_gtid_consistency = ON
 gtid_mode           = ON
 
-# 3. Формат лога и предотвращение зацикливания
-binlog_format       = ROW
 # Для MariaDB:
-gtid_ignore_duplicates = ON 
-# Для MySQL:
-# replicate_same_server_id = OFF (по умолчанию)
+# gtid_domain_id = 1 # (Одинаковый на всех узлах)
+
+# 3. Предотвращение зацикливания
+# Для MariaDB:
+# gtid_ignore_duplicates = ON
+# Для MySQL (по умолчанию OFF):
+# replicate_same_server_id = OFF
 ```
 
-*После изменения перезапустите сервис MySQL/MariaDB на всех узлах.*
+> **Примечание:** После изменения перезапустите сервис MySQL/MariaDB на всех узлах. Параметры GTID отличаются в MySQL и MariaDB — используйте директивы для вашей СУБД.
 
 #### Шаг 2: Создание пользователя для репликации
 
@@ -102,19 +106,19 @@ FLUSH PRIVILEGES;
 
 ```sql
 -- Канал от Узла 2
-CHANGE MASTER TO 
-  MASTER_HOST='<ip_node_2>', 
-  MASTER_USER='repl_user', 
-  MASTER_PASSWORD='your_password', 
-  MASTER_USE_GTID=slave_pos
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='<ip_node_2>',
+  SOURCE_USER='repl_user',
+  SOURCE_PASSWORD='your_password',
+  SOURCE_AUTO_POSITION=1
 FOR CHANNEL 'node2';
 
 -- Канал от Узла 3
-CHANGE MASTER TO 
-  MASTER_HOST='<ip_node_3>', 
-  MASTER_USER='repl_user', 
-  MASTER_PASSWORD='your_password', 
-  MASTER_USE_GTID=slave_pos
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='<ip_node_3>',
+  SOURCE_USER='repl_user',
+  SOURCE_PASSWORD='your_password',
+  SOURCE_AUTO_POSITION=1
 FOR CHANNEL 'node3';
 ```
 
@@ -134,22 +138,26 @@ FOR CHANNEL 'node3';
 ... FOR CHANNEL 'node2';
 ```
 
+> **Примечание:** В MySQL 8.0+ используется синтаксис `CHANGE REPLICATION SOURCE TO`. В MariaDB и старых версиях MySQL — `CHANGE MASTER TO`.
+
 #### Шаг 4: Запуск и проверка
 
 На каждом узле запустите все настроенные каналы:
 
 ```sql
-START SLAVE FOR CHANNEL 'nodeX';
-START SLAVE FOR CHANNEL 'nodeY';
+START REPLICA FOR CHANNEL 'nodeX';
+START REPLICA FOR CHANNEL 'nodeY';
 ```
 
 Проверка статуса для конкретного канала:
 
 ```sql
-SHOW SLAVE 'nodeX' STATUS\G
+SHOW REPLICA STATUS FOR CHANNEL 'nodeX'\G
 ```
 
-Убедитесь, что `Slave_IO_Running: Yes` и `Slave_SQL_Running: Yes` для всех каналов на всех узлах.
+Убедитесь, что `Replica_IO_Running: Yes` и `Replica_SQL_Running: Yes` для всех каналов на всех узлах.
+
+> **Примечание:** В MySQL 8.0+ команды переименованы: `START REPLICA` вместо `START SLAVE`, `SHOW REPLICA STATUS` вместо `SHOW SLAVE STATUS`. В MariaDB используются старые названия.
 
 ### Настройка плавающего IP с помощью `keepalived`
 
@@ -163,6 +171,8 @@ sudo apt install keepalived
 
 Создайте `/etc/keepalived/keepalived.conf`. Конфиг на всех узлах может быть почти идентичным, за исключением `priority` (у мастера он должен быть выше) и `state` (у мастера `MASTER`, у остальных `BACKUP`).
 
+> **Важно:** Для production рекомендуется использовать **unicast-режим** вместо мультикаста. Это повышает безопасность и работает в облачных средах.
+
 ```conf
 global_defs {
    router_id MYSQL_HA
@@ -170,7 +180,7 @@ global_defs {
 
 # Скрипт для проверки, жив ли локальный сервис MySQL
 vrrp_script chk_mysql {
-    script "/usr/bin/killall -0 mysqld" # Простая проверка, что процесс существует
+    script "/usr/bin/killall -0 mysqld"
     interval 2
     fall 2
     rise 2
@@ -182,9 +192,12 @@ vrrp_instance VI_1 {
     virtual_router_id 51 # Должен быть одинаковым на всех узлах
     priority 101 # У MASTER - выше (напр. 101), у BACKUP - ниже (напр. 100)
     advert_int 1
-    authentication {
-        auth_type PASS
-        auth_pass 1111 # Простой пароль для группы
+    
+    # Unicast-режим (рекомендуется для production)
+    unicast_src_ip 192.168.1.101  # IP этого узла
+    unicast_peer {
+        192.168.1.102  # IP соседа 1
+        192.168.1.103  # IP соседа 2
     }
 
     # VIP-адрес
@@ -199,6 +212,8 @@ vrrp_instance VI_1 {
 }
 ```
 
+> **Примечание:** Блок `authentication` удалён — в VRRPv3 аутентификация передаётся в открытом виде и не рекомендуется. Используйте выделенную сеть + firewall rules.
+
 #### Шаг 3: Запуск сервиса
 
 ```bash
@@ -208,8 +223,12 @@ sudo systemctl start keepalived
 
 После запуска проверьте, что VIP-адрес (`192.168.1.100`) появился на узле с состоянием `MASTER` с помощью команды `ip addr`.
 
-## Дополнительная информация
+Подробнее о keepalived — [Keepalived: Обзор](../../Networking/ServicesAndTools/keepalived_overview.md).
 
-- **Отладка GTID**: Если репликация не запускается из-за расхождения позиций GTID, может потребоваться ручная синхронизация. Это делается путем остановки репликации (`STOP SLAVE`), установки нужной позиции с помощью `SET GLOBAL gtid_slave_pos = "..."`, и перезапуска.
-- **Альтернативы**: Для построения надежных Multi-Master кластеров часто используют решения с **синхронной репликацией**, такие как **Galera Cluster** (Percona XtraDB Cluster, MariaDB Galera Cluster). Они решают проблему конфликтов на уровне протокола, но ценой более высоких задержек при записи.
-- **[Стандартная репликация Master-Slave](./replication.md)**: Основа, которую полезно понимать перед настройкой более сложных топологий.
+## Additional Information
+
+**Отладка GTID:** Если репликация не запускается из-за расхождения позиций GTID, может потребоваться ручная синхронизация. В MySQL 8.4+: `STOP REPLICA`, `SET GLOBAL gtid_executed = "..."`, `START REPLICA`. В MariaDB: `SET GLOBAL gtid_slave_pos = "..."`.
+
+**Альтернативы:** Для построения надежных Multi-Master кластеров часто используют решения с **синхронной репликацией**, такие как **Galera Cluster** (Percona XtraDB Cluster, MariaDB Galera Cluster). Они решают проблему конфликтов на уровне протокола, но ценой более высоких задержек при записи.
+
+**См. также:** [Обзор репликации MySQL](./replication/overview.md), [GTID](./replication/gtid.md), [Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md), [Split-Brain и кворум](../../Databases/Concepts/replication.md#проблема-split-brain-и-решение-через-кворум).

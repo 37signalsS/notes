@@ -54,6 +54,67 @@
 | Точечное во времени | Реплей журналов до целевой метки | WAL/binlog PITR |
 | Репозиторий | Отсутствие порчи, дедупликация | restic/borg check |
 
+### Сценарий 1: Проверка репозитория restic
+
+```bash
+# Проверка целостности всех пакетов в репозитории
+restic -r s3:s3.example.com/backup check
+
+# Проверка с чтением всех данных (медленнее, но надёжнее)
+restic -r s3:s3.example.com/check --check-unused
+
+# Тестовое восстановление случайного снапшота
+restic -r s3:s3.example.com/backup restore latest --target /tmp/restore-test
+```
+
+### Сценарий 2: Проверка репозитория borgbackup
+
+```bash
+# Проверка целостности репозитория
+borg check /path/to/repo
+
+# Проверка конкретного архива
+borg check /path/to/repo::archive-name
+
+# Тестовое извлечение (dry-run)
+borg extract --dry-run /path/to/repo::archive-name
+```
+
+### Сценарий 3: PostgreSQL — PITR с wal-g
+
+```bash
+# Проверка целостности WAL-архива
+wal-g wal-fetch 000000010000000000000001 /tmp/test_wal
+
+# Восстановление на точку во времени
+wal-g backup-fetch /var/lib/postgresql/data LATEST
+# Или на конкретную метку времени
+wal-g backup-fetch /var/lib/postgresql/data "2025-03-25T10:00:00"
+```
+
+### Сценарий 4: PostgreSQL — pgBackRest verify
+
+```bash
+# Проверка целостности бэкапа
+pgbackrest --stanza=main check
+
+# Информация о доступных бэкапах
+pgbackrest --stanza=main info
+
+# Тестовое восстановление в отдельную директорию
+pgbackrest --stanza=main --delta --pg1-path=/tmp/restore restore
+```
+
+### Сценарий 5: MySQL — проверка бэкапа Percona XtraBackup
+
+```bash
+# Подготовка бэкапа (применение логов)
+xtrabackup --prepare --target-dir=/backups/2025-10-01
+
+# Проверка возможности запуска (dry-run)
+mysqld --datadir=/tmp/restore-test --skip-networking --dry-run
+```
+
 ### Автоматизация и критерии приемки
 
 - **Регулярность:** Самопроверка репозитория ежедневно; выборочное восстановление еженедельно; полнотекстовое восстановление критических систем по календарю.
@@ -61,3 +122,10 @@
 - **Метрики:** Длительность восстановления, пропускная способность хранилища, ошибки целостности, соответствие таймбоксам.
 - **Изоляция:** Восстановление в отдельные неймспейсы/ВМ, с маскированием секретов и отключёнными внешними интеграциями.
 - **Трассируемость:** Протокол выполнения, версии инструментов, контрольные суммы до/после, артефакты логов для аудита.
+
+## Дополнительная информация
+
+- **RTO/RPO и метрики SRE:** Подробно о целевых показателях восстановления (RTO, RPO) и их связи с SLA/SLO см. [Concepts/sre_concepts_main.md](../../Concepts/sre_concepts_main.md).
+- **Инструменты проверки:** [restic](https://restic.net/), [borgbackup](https://www.borgbackup.org/), [wal-g](https://github.com/wal-g/wal-g), [pgBackRest](https://pgbackrest.org/), [Percona XtraBackup](https://www.percona.com/software/mysql-database/percona-xtrabackup).
+- **PITR в PostgreSQL:** Детальное описание восстановления на точку во времени — [PostgreSQL/Concepts/backup_and_recovery.md](../PostgreSQL/Concepts/backup_and_recovery.md).
+- **Связанные концепции:** [backups.md](./backups.md), [backup_security.md](./backup_security.md), [write_ahead_log.md](./write_ahead_log.md), [replication.md](./replication.md).
