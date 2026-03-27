@@ -48,3 +48,4 @@ Helm использует Go template engine с библиотекой Sprig д�
 - Документация Go templates: <https://golang.org/pkg/text/template/>
 - Библиотека Sprig: <http://masterminds.github.io/sprig/>
 - Локальная отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`
+- **Использование в werf:** [Шаблонизация манифеста Kubernetes](../../../CI-CD/Tools/werf_overview.md#сценарий-3-шаблонизация-манифеста-kubernetes) — Go template для динамической подстановки имён образов

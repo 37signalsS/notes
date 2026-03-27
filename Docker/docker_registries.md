@@ -54,7 +54,41 @@ docker pull my-registry.example.com/my-project/my-app:1.0.0
 
 ## Практические сценарии
 
-### Пример: [Harbor - корпоративный реестр образов](Docker_registries/Harbor/overview.md)
+### Сценарий 1: GitHub Container Registry (GHCR)
+
+**GitHub Container Registry** — OCI-совместимый реестр, интегрированный с GitHub. Поддерживает аутентификацию через Personal Access Tokens.
+
+**Настройка доступа:**
+
+1. **Создание токена:**
+   ```bash
+   # Профиль → Settings → Developer settings → Personal access tokens
+   # Scope: write:packages (push), read:packages (pull)
+   ```
+
+2. **Аутентификация:**
+   ```bash
+   docker login ghcr.io -u <username> -p <token>
+   ```
+
+3. **Тегирование и публикация:**
+   ```bash
+   docker tag my-app:latest ghcr.io/<username>/<repo>:v1.0.0
+   docker push ghcr.io/<username>/<repo>:v1.0.0
+   ```
+
+4. **Kubernetes Secret для imagePullSecrets:**
+   ```bash
+   kubectl create secret docker-registry registry-secret \
+     --docker-server=ghcr.io \
+     --docker-username=<username> \
+     --docker-password=<token> \
+     -n <namespace>
+   ```
+
+**Использование в werf:** См. [Werf: Автоматизация сборки и развёртывания](../CI-CD/Tools/werf_overview.md#сценарий-1-настройка-доступа-к-github-container-registry).
+
+### Сценарий 2: [Harbor - корпоративный реестр образов](Docker_registries/Harbor/overview.md)
 
 ## Дополнительная информация
 

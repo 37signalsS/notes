@@ -78,11 +78,44 @@ cat /sys/module/zfs/parameters/zfs_arc_max
 
 Это позволяет получить актуальные значения параметров модуля, что не всегда возможно с помощью `modinfo`.
 
+### 5. Связь между /sys и /dev/disk/by-path
+
+Каталог `/dev/disk/by-path/` содержит символические ссылки на блочные устройства, где имена отражают физическое расположение устройства на шине.
+
+```bash
+# Просмотр ссылок
+ls -l /dev/disk/by-path/
+
+# Пример вывода:
+# pci-0000:00:1f.2-ata-1 -> ../../sda
+# pci-0000:00:1f.2-ata-2 -> ../../sdb
+```
+
+**Как найти устройство в /sys:**
+
+```bash
+# 1. Узнать путь устройства из /dev/disk/by-path/
+readlink /dev/disk/by-path/pci-0000:00:1f.2-ata-1
+# Вывод: ../../sda
+
+# 2. Найти соответствующий каталог в /sys/block/
+ls -l /sys/block/sda/
+
+# 3. Проверить путь к устройству на шине
+cat /sys/block/sda/dev
+# Вывод: 8:0 (major:minor)
+
+# 4. Найти информацию о производителе устройства
+cat /sys/block/sda/device/vendor
+```
+
+Эта связь полезна для идентификации физических дисков в системах с множеством накопителей.
+
 ## Дополнительная информация
 
 * **Связанные темы:**
   * [Виртуальные ФС](./virtual_filesystems.md) — обзор псевдо-ФС
   * [Procfs](./virtual_fs_proc.md) — информация о процессах
   * [Udev](../Core/udev.md) — управление устройствами
-  * [Lspci](../Diagnostics/Hardware/cpu_info.md — информация о PCI устройствах
-  * [Lsusb](../Diagnostics/Hardware/cpu_info.md) — информация о USB устройствах
+  * [Lspci](../Diagnostics/Hardware/hardware_listing.md#lspci-список-устройств-на-шине-pci) — информация о PCI устройствах
+  * [Lsusb](../Diagnostics/Hardware/hardware_listing.md#lsusb-список-usb-устройств) — информация о USB устройствах

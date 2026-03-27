@@ -80,15 +80,24 @@ def clean_vtt(input_file: str, output_file: str = None) -> None:
     
     print(f"Очищенный файл сохранён: {output_file}")
     print(f"Строк обработано: {len(final_lines)}")
+    
+    Path(input_file).unlink()
+    print(f"Удалён исходный файл: {input_file}")
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("Использование: python clean_vtt.py <input_file> [output_file]")
         print("Пример: python clean_vtt.py 'Разбор резюме на позицию DevОps. Часть 1 [K5xl_UFNr7s].ru.vtt'")
+        print("       python clean_vtt.py *.ru.vtt")
         sys.exit(1)
     
-    input_file = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else None
+    input_files = sys.argv[1:]
+    output_file = None
     
-    clean_vtt(input_file, output_file)
+    # Если последний аргумент похож на output файл (не .vtt), используем его как output
+    if len(input_files) > 1 and not input_files[-1].endswith('.vtt'):
+        output_file = input_files.pop()
+    
+    for input_file in input_files:
+        clean_vtt(input_file, output_file)

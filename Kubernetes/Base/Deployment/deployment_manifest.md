@@ -62,6 +62,72 @@ spec:
 
 - **Продвинутые стратегии:** Для минимизации рисков при выкатке критичных изменений используйте [расширенные стратегии развертывания](../../Operations/Advanced_Deployment_Strategies.md), такие как Blue/Green и Canary.
 
+## Многоконтейнерные Deployment
+
+В некоторых сценариях требуется запуск нескольких контейнеров в одном поде. Типичные случаи:
+
+| Сценарий | Описание | Пример |
+| :--- | :--- | :--- |
+| **Sidecar-паттерн** | Вспомогательный контейнер дополняет основное приложение | Nginx для раздачи статики + Go-приложение |
+| **Сбор логов** | Агент логирования собирает логи основного приложения | Fluent Bit + приложение |
+| **Service Mesh** | Прокси перехватывает сетевой трафик | Envoy (Istio) + сервис |
+| **Адаптер** | Преобразование данных для внешних систем | Форматирование метрик для Prometheus |
+
+### Пример: Deployment с Nginx Sidecar
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-with-nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      volumes:
+      - name: static-files
+        emptyDir: {}
+      
+      containers:
+      # Основное приложение
+      - name: app
+        image: myapp:1.0
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: static-files
+          mountPath: /app/static
+      
+      # Nginx sidecar для раздачи статики и проксирования
+      - name: nginx
+        image: nginx:1.27.0
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: static-files
+          mountPath: /usr/share/nginx/html/static
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+```
+
+**Ключевые моменты:**
+- Оба контейнера работают в одном поде и разделяют volume `static-files`
+- Nginx слушает порт `80`, приложение — порт `8080`
+- Service должен направлять трафик на порт Nginx (`targetPort: 80`)
+
+> **Подробно:** Паттерны многоконтейнерных подов описаны в [Sidecar Pattern](../Pod/pod_sidecar_pattern.md).
+
 ## Когда использовать Deployment vs StatefulSet
 
 > Подробнее о различиях и особенностях работы с приложениями, требующими сохранения состояния, читайте в документе [StatefulSet](../statefulset.md).

@@ -10,6 +10,21 @@
 
 ## Основные концепции
 
+### Двухэтапный процесс подключения ConfigMap
+
+Подключение ConfigMap к поду состоит из двух обязательных этапов:
+
+**Шаг 1. Объявление тома (Volumes)** — делаем ConfigMap доступным для пода в целом. В спецификации пода добавляется секция `volumes`, где создаётся том с именем (например, `nginx-config`) и указывается источник данных — ConfigMap по имени.
+
+**Шаг 2. Монтирование тома (VolumeMounts)** — монтируем том в файловую систему конкретного контейнера. В секции `volumeMounts` внутри описания контейнера указывается:
+- `name` — имя тома, объявленного на шаге 1
+- `mountPath` — путь внутри контейнера, где будет доступен файл
+- `subPath` (опционально) — какой именно ключ из ConfigMap монтировать
+
+**Аналогия:** Процесс можно сравнить с подключением USB-флешки к компьютеру:
+1. Сначала вы подключаете флешку к системе (Volumes)
+2. Затем монтируете её в конкретную точку файловой системы (VolumeMounts)
+
 ### Сравнение способов использования
 
 | Способ | Типичные случаи | Обновления | Особенности |
@@ -80,21 +95,54 @@ spec:
 
 ### Том с `subPath`
 
-Используйте `subPath`, чтобы смонтировать только один файл из ConfigMap, не скрывая остальное содержимое целевой директории.
+Используйте `subPath`, чтобы смонтировать только один файл из ConfigMap в конкретный путь, не скрывая остальное содержимое целевой директории.
+
+**Двухэтапный процесс подключения ConfigMap:**
+
+1. **Объявление тома (Volumes)** — делаем ConfigMap доступным для пода:
+   ```yaml
+   volumes:
+     - name: nginx-config
+       configMap:
+         name: nginx-configmap
+   ```
+
+2. **Монтирование тома (VolumeMounts)** — монтируем в контейнер:
+   ```yaml
+   volumeMounts:
+     - name: nginx-config
+       mountPath: /etc/nginx/nginx.conf
+       subPath: nginx.conf
+   ```
+
+**Полный пример Deployment с nginx:**
 
 ```yaml
-# ...
-volumeMounts:
-  - name: config-volume
-    mountPath: /etc/nginx/nginx.conf # Указываем полный путь к файлу
-    subPath: nginx.conf # Имя ключа в ConfigMap
-# ...
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.29.0
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-configmap
 ```
 
 **Важно знать:**
 
 1. Использование `subPath` имеет побочный эффект — **смонтированный файл перестает обновляться автоматически** при изменении ConfigMap.
 2. При использовании `subPath` содержимое директории монтирования **не скрывается** — остальные файлы в ней остаются доступными.
+3. Для применения изменений в ConfigMap при использовании `subPath` требуется **перезапуск пода** (`kubectl rollout restart deployment/...`).
 
 ### Projected том
 

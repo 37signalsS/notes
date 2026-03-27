@@ -64,8 +64,26 @@ dependencies:
 
 Определяет параметры для шаблонизации. Используется с [Go templates](./helm_templating.md).
 
+**Принцип единого источника правды (SSoT):**
+
+`values.yaml` должен быть единственным источником истины для всех изменяемых параметров чарта. Это решает ключевые проблемы:
+
+| Проблема без SSoT | Решение через values.yaml |
+|-------------------|---------------------------|
+| Дублирование значений в разных манифестах | Одно значение → использование в нескольких шаблонах |
+| Риск рассинхронизации (порт в Deployment ≠ порт в Service) | Синхронизация через одну переменную |
+| Ручные правки в шаблонах | Параметризация через плейсхолдеры |
+| Сложность поддержки при масштабировании | Централизованное управление конфигурацией |
+
+**Пример организации:**
+
 ```yaml
-replicaCount: 3
+# values.yaml — единый источник правды
+app:
+  name: kosms-zero-to-hero
+  replicas: 3
+  port: 8080
+  domain: app.example.com
 
 image:
   repository: nginx
@@ -74,17 +92,102 @@ image:
 
 service:
   type: ClusterIP
-  port: 80
 
 ingress:
   enabled: true
-  hosts:
-    - host: app.example.com
 ```
+
+**Использование в шаблонах:**
+
+```yaml
+# templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}-web
+spec:
+  replicas: {{ .Values.app.replicas }}
+  template:
+    spec:
+      containers:
+        - ports:
+            - containerPort: {{ .Values.app.port }}
+
+# templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.app.name }}-service
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - targetPort: {{ .Values.app.port }}  # То же значение, что в Deployment
+
+# templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.app.name }}-ingress
+spec:
+  rules:
+    - host: {{ .Values.app.domain }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Values.app.name }}-service
+                port:
+                  number: {{ .Values.app.port }}
+```
+
+При изменении порта в `values.yaml` все ресурсы автоматически используют новое значение без риска рассинхронизации.
 
 ### Директория templates/
 
 Содержит Go-шаблоны, которые Helm рендерит в манифесты Kubernetes. Поддерживает встроенные объекты: `.Values`, `.Release`, `.Chart`, `.Capabilities`, `.Files`. См. подробнее в [Шаблонизация в Helm](./helm_templating.md).
+
+**Встроенная переменная `.Chart.Name`:**
+
+Используется для динамической генерации имён ресурсов на основе названия чарта:
+
+```yaml
+# templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}-web
+  labels:
+    app: {{ .Chart.Name }}
+```
+
+При имени чарта `kosms-zero-to-hero` ресурс получит имя `kosms-zero-to-hero-web`.
+
+**Локальные переменные в шаблонах:**
+
+Для упрощения повторяющихся конструкций можно объявлять локальные переменные в начале файла шаблона:
+
+```yaml
+# templates/ingress.yaml
+{{- $domain := .Values.app.domain }}
+{{- $port := .Values.app.port }}
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Chart.Name }}-ingress
+spec:
+  rules:
+    - host: {{ $domain }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Chart.Name }}-service
+                port:
+                  number: {{ $port }}
+```
+
+Локальные переменные действуют только в пределах одного файла, но делают код чище и проще в поддержке.
 
 ### Файл _helpers.tpl
 
@@ -204,6 +307,23 @@ helm template myrelease .
 helm template myrelease . -f values-production.yaml
 
 # Проверка с подключением к кластеру (dry-run)
+helm install --dry-run --debug myrelease .
+```
+
+**Команда `helm template`:**
+
+Рендерит шаблоны на локальной машине без подключения к кластеру. Полезна для:
+
+- Визуальной проверки итоговых манифестов
+- Отладки шаблонов перед коммитом
+- Генерации манифестов для применения через `kubectl apply -f`
+
+**Флаг `--debug` при dry-run:**
+
+Позволяет проверять шаблоны с незакоммиченными изменениями без риска поломать развёртывание:
+
+```bash
+# Рендер с отладочной информацией
 helm install --dry-run --debug myrelease .
 ```
 

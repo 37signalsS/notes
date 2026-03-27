@@ -118,6 +118,49 @@ kubectl create secret docker-registry myregistry-secret \
   --docker-email=email@example.com
 ```
 
+**Использование в Deployment:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/username/myapp:v1.0.0
+      imagePullSecrets:
+        - name: myregistry-secret
+```
+
+**Сценарий: GitHub Container Registry (GHCR)**
+
+```bash
+# Создание токена: Профиль → Settings → Developer settings → Personal access tokens
+# Scope: read:packages (pull), write:packages (push)
+
+# Создание Secret
+kubectl create secret docker-registry registry-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<username> \
+  --docker-password=<token> \
+  -n <namespace>
+```
+
+**Автоматизация через ServiceAccount:**
+
+Чтобы не указывать `imagePullSecrets` в каждом Deployment, можно привязать Secret к ServiceAccount:
+
+```bash
+kubectl patch serviceaccount default \
+  -p '{"imagePullSecrets": [{"name": "registry-secret"}]}' \
+  -n <namespace>
+```
+
+Подробнее о работе с GHCR в контексте werf: [Werf: Настройка доступа к GitHub Container Registry](../../../CI-CD/Tools/werf_overview.md#сценарий-1-настройка-доступа-к-github-container-registry).
+
 ## Дополнительная информация
 
 ### Типы Secret

@@ -2,89 +2,239 @@
 
 ## Определения
 
-**TimescaleDB** — это расширение (extension) для PostgreSQL, которое превращает его в полноценную базу данных временных рядов (time-series database). Оно оптимизировано для хранения и анализа данных, привязанных ко времени, таких как метрики мониторинга, данные с IoT-устройств или финансовые котировки.
+**TimescaleDB** — это расширение (extension) для PostgreSQL, которое превращает его в полноценную базу данных временных рядов (time-series database). Оно оптимизировано для хранения и анализа данных, привязанных ко времени.
+
+**Текущая версия:** TimescaleDB 2.25 (январь 2026).
+
+**Временные ряды (Time-Series Data):** Данные, которые изменяются во времени — метрики мониторинга, данные с IoT-устройств, финансовые котировки, логи событий.
 
 ## Основные концепции
 
 ### Архитектура: Гипертаблицы и Чанки
 
-Основная концепция TimescaleDB — это **гипертаблицы (Hypertables)**.
+**Гипертаблица (Hypertable)** — абстракция над множеством обычных таблиц PostgreSQL, называемых **чанками (chunks)**. Для пользователя выглядит как единая таблица.
 
-- **Гипертаблица** — это абстракция над множеством обычных таблиц PostgreSQL, называемых **чанками (chunks)**. Для пользователя она выглядит как единая, обычная таблица.
-- **Чанк (Chunk)** — это внутренняя, дочерняя таблица, в которой физически хранятся данные за определенный промежуток времени и, опционально, для определенного ключа (например, ID устройства).
-- TimescaleDB автоматически партиционирует (разбивает) данные на чанки по заданным измерениям.
+**Чанк (Chunk)** — внутренняя дочерняя таблица, в которой физически хранятся данные за определённый промежуток времени и/или для определённого ключа (например, ID устройства).
 
-Такой подход сочетает простоту работы с единой таблицей и все преимущества партиционирования для производительности запросов и управления данными.
+**Принцип работы:**
+1. Создаётся обычная таблица PostgreSQL
+2. Вызывается `create_hypertable()` для преобразования в гипертаблицу
+3. TimescaleDB автоматически создаёт и управляет чанками
+4. Запросы к гипертаблице прозрачно распределяются по чанкам
+
+**Преимущества:**
+- Простота работы с единой таблицей
+- Автоматическое партиционирование по времени
+- Возможность дополнительного разбиения по пространственному ключу (space partitioning)
+- Все преимущества экосистемы PostgreSQL
 
 ### Ключевые особенности
 
-- **Полная совместимость с SQL:** Поддерживает весь синтаксис SQL и экосистему PostgreSQL (инструменты, коннекторы, драйверы).
-- **Автоматическое партиционирование:** Автоматически создает и управляет партициями (чанками) по времени и другим измерениям (space partitioning), избавляя от необходимости делать это вручную.
-- **Оптимизация для временных рядов:** Включает специализированные функции (например, `time_bucket`, `first`, `last`) и оптимизации для быстрого выполнения запросов по временным данным.
-- **Непрерывные агрегаты (Continuous Aggregates):** Автоматически обновляемые материализованные представления для ускорения часто запрашиваемых агрегатов.
-- **Сжатие данных:** Поддерживает нативное колоночное сжатие для старых данных, что значительно уменьшает объем хранения.
-- **Политики управления данными:** Автоматизация удаления или сжатия старых данных.
+| Функция | Описание |
+| :--- | :--- |
+| **Автоматическое партиционирование** | Создание и управление чанками по времени и другим измерениям |
+| **Специализированные функции** | `time_bucket`, `first`, `last`, `histogram`, `interpolate` |
+| **Непрерывные агрегаты** | Автоматически обновляемые материализованные представления |
+| **Сжатие данных** | Колоночное сжатие для старых данных (до 90% экономии) |
+| **Политики управления** | Автоматическое удаление или сжатие старых данных |
+| **Гипертаблицы** | Прозрачное распределение данных по чанкам |
+
+### Непрерывные агрегаты (Continuous Aggregates)
+
+Материализованные представления, которые автоматически обновляются при вставке новых данных:
+
+```sql
+-- Создание непрерывного агрегата
+CREATE MATERIALIZED VIEW hourly_metrics
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', time) AS bucket,
+    device_id,
+    AVG(cpu_usage) AS avg_cpu
+FROM device_metrics
+GROUP BY bucket, device_id;
+
+-- Запрос к агрегату (автоматически использует предрасчитанные данные)
+SELECT * FROM hourly_metrics
+WHERE bucket > NOW() - INTERVAL '7 days';
+```
+
+### Сжатие данных
+
+TimescaleDB поддерживает колоночное сжатие для старых данных:
+
+```sql
+-- Включение сжатия для гипертаблицы
+ALTER TABLE device_metrics SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'device_id'
+);
+
+-- Добавление политики сжатия (сжимать данные старше 7 дней)
+SELECT add_compression_policy('device_metrics', INTERVAL '7 days');
+```
+
+**Преимущества:**
+- Экономия места до 90%
+- Ускорение запросов к сжатым данным
+- Прозрачное сжатие/расжатие для приложений
+
+### Политики управления данными
+
+Автоматизация рутинных задач:
+
+```sql
+-- Удаление данных старше 30 дней
+SELECT add_retention_policy('device_metrics', INTERVAL '30 days');
+
+-- Сжатие данных старше 7 дней
+SELECT add_compression_policy('device_metrics', INTERVAL '7 days');
+
+-- Реорганализация чанков (оптимизация)
+SELECT add_reorder_policy('device_metrics', index_name => 'device_metrics_time_idx');
+```
 
 ## Практические сценарии
 
-### 1. Начальная настройка
+### Установка и активация
 
+**Установка через apt (Debian/Ubuntu):**
+```bash
+# Добавление репозитория Timescale
+sudo add-apt-repository ppa:timescale/timescaledb-ppa
+sudo apt update
+
+# Установка TimescaleDB для PostgreSQL 16
+sudo apt install timescaledb-2-loader-postgresql-16
+
+# Инициализация
+sudo timescaledb-tune
+
+# Перезапуск PostgreSQL
+sudo systemctl restart postgresql
+```
+
+**Активация расширения:**
 ```sql
--- Активация расширения в базе данных
+-- В каждой базе данных, где нужен TimescaleDB
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 ```
 
-### 2. Создание гипертаблицы
+### Создание гипертаблицы
 
 ```sql
--- Сначала создается обычная таблица PostgreSQL
+-- 1. Создание обычной таблицы
 CREATE TABLE device_metrics (
     time TIMESTAMPTZ NOT NULL,
     device_id TEXT NOT NULL,
     cpu_usage DOUBLE PRECISION,
-    memory_usage DOUBLE PRECISION
+    memory_usage DOUBLE PRECISION,
+    disk_io BIGINT
 );
 
--- Затем она преобразуется в гипертаблицу
--- Данные будут разбиваться на чанки по 7 дней
-SELECT create_hypertable('device_metrics', 'time', chunk_time_interval => INTERVAL '7 days');
+-- 2. Преобразование в гипертаблицу
+-- Разбиение на чанки по 7 дней
+SELECT create_hypertable(
+    'device_metrics',
+    'time',
+    chunk_time_interval => INTERVAL '7 days'
+);
+
+-- 3. Создание индексов
+CREATE INDEX ON device_metrics (device_id, time DESC);
 ```
 
-### 3. Вставка и запрос данных
+### Вставка и запрос данных
 
 ```sql
--- Вставка данных выполняется стандартным INSERT
+-- Вставка (стандартный INSERT)
 INSERT INTO device_metrics(time, device_id, cpu_usage, memory_usage)
-VALUES (NOW(), 'device-001', 85.5, 76.2);
+VALUES 
+    (NOW(), 'device-001', 85.5, 76.2),
+    (NOW(), 'device-002', 42.1, 58.9);
 
--- Пример аналитического запроса:
--- Рассчитать среднее значение cpu_usage за каждый 5-минутный интервал
--- для устройства 'device-001' за последний день
+-- Запрос с time_bucket (аналог GROUP BY для временных интервалов)
 SELECT
     time_bucket('5 minutes', time) AS five_min,
-    AVG(cpu_usage) AS avg_cpu
-FROM
-    device_metrics
-WHERE
-    device_id = 'device-001' AND time > NOW() - INTERVAL '1 day'
-GROUP BY
-    five_min
-ORDER BY
-    five_min DESC;
+    device_id,
+    AVG(cpu_usage) AS avg_cpu,
+    MAX(memory_usage) AS max_mem
+FROM device_metrics
+WHERE time > NOW() - INTERVAL '1 day'
+GROUP BY five_min, device_id
+ORDER BY five_min DESC;
+
+-- Запрос с функциями TimescaleDB
+SELECT
+    time_bucket('1 hour', time) AS hour,
+    first(cpu_usage, time) AS first_cpu,
+    last(cpu_usage, time) AS last_cpu,
+    avg(cpu_usage) AS avg_cpu
+FROM device_metrics
+WHERE device_id = 'device-001'
+  AND time > NOW() - INTERVAL '7 days'
+GROUP BY hour;
+```
+
+### Мониторинг и обслуживание
+
+```sql
+-- Просмотр информации о гипертаблице
+SELECT * FROM timescaledb_information.hypertables;
+
+-- Просмотр чанков
+SELECT * FROM timescaledb_information.chunks 
+WHERE hypertable_name = 'device_metrics';
+
+-- Статистика сжатия
+SELECT 
+    hypertable_name,
+    compressed,
+    total_bytes,
+    compressed_bytes,
+    compression_ratio
+FROM timescaledb_information.compressed_hypertable_stats;
+
+-- Размер гипертаблицы
+SELECT hypertable_size('device_metrics');
 ```
 
 ## Дополнительная информация
 
+### Сравнение с альтернативами
+
+| Система | Тип | Назначение | Особенности |
+| :--- | :--- | :--- | :--- |
+| **TimescaleDB** | Extension для PostgreSQL | Временные ряды + реляционные данные | Полная совместимость с PostgreSQL |
+| **[ClickHouse](./clickhouse.md)** | OLAP-СУБД | Аналитика, временные ряды | Высокая производительность, колоночное хранение |
+| **[Prometheus](../Prometheus/overview.md)** | TSDB | Метрики мониторинга | Pull-модель, PromQL |
+| **[VictoriaMetrics](../VictoriaMetrics/overview.md)** | TSDB | Долгосрочное хранение метрик | Совместимость с Prometheus |
+
 ### Преимущества интеграции с PostgreSQL
 
-Использование TimescaleDB как расширения дает доступ ко всей экосистеме PostgreSQL:
+- **Надёжность:** Проверенная временем СУБД с ACID-гарантиями
+- **Гибкость:** Временные ряды + реляционные данные + JSONB в одной базе
+- **Совместимость:** Все инструменты PostgreSQL (pg_dump, репликация, бэкапы)
+- **SQL:** Полная поддержка SQL, включая сложные JOIN и подзапросы
 
-- **Надежность:** Проверенная временем система управления базами данных.
-- **Гибкость:** Возможность хранить временные ряды, реляционные и неструктурированные (JSONB) данные в одной базе.
-- **Совместимость:** Огромное количество инструментов для резервного копирования, репликации, администрирования и визуализации.
+### Ограничения
+
+- **Оверхеад расширения:** Небольшая дополнительная нагрузка по сравнению с ванильным PostgreSQL
+- **Сложность шардирования:** Для горизонтального масштабирования требуется дополнительное решение
+- **Версия PostgreSQL:** Может отставать от последней версии PostgreSQL
 
 ### Примеры использования
 
-- **Мониторинг:** Хранение метрик производительности систем и приложений (например, для [Zabbix](../Zabbix/zabbix_troubleshooting_and_performance_tuning.md)).
-- **IoT:** Сбор и анализ данных с сенсоров и устройств.
-- **Финансовый анализ:** Хранение и обработка биржевых котировок, транзакций.
+- **Мониторинг:** Хранение метрик производительности систем и приложений
+- **IoT:** Сбор и анализ данных с сенсоров и устройств
+- **Финансовый анализ:** Хранение биржевых котировок, транзакций
+- **Логирование:** Анализ логов событий во времени
+- **Метрики приложений:** APM-системы, трассировка запросов
+
+### Смежные темы
+
+- Масштабирование PostgreSQL — **[PostgreSQL Scaling](./PostgreSQL/Concepts/scaling.md)**
+- Партиционирование в PostgreSQL — **[PostgreSQL Scaling: Partitioning](./PostgreSQL/Concepts/scaling.md)**
+- Альтернативы для аналитики — **[ClickHouse](./clickhouse.md)**, **[Greenplum](./greenplum.md)**
+- Мониторинг с Prometheus — **[Prometheus Overview](../Prometheus/overview.md)**
+- Долгосрочное хранение метрик — **[VictoriaMetrics](../VictoriaMetrics/overview.md)**
