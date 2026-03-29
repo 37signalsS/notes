@@ -135,9 +135,11 @@ gedit .bashrc
   ```bash
   # Прямая команда
   ssh -J user@jump_host user@internal_server
-
-  # Более удобная настройка через ~/.ssh/config:
   ```
+
+  **Принцип работы:** Сначала устанавливается SSH-соединение с `jump_host`, затем через него — подключение к `internal_server`. Промежуточный узел выступает только как транспортный посредник.
+
+  **Настройка через `~/.ssh/config` (для частого использования):**
 
   ```ini
   Host internal_server
@@ -146,7 +148,7 @@ gedit .bashrc
     ProxyJump jump_user@jump.example.com
   ```
 
-  Подробные инструкции находятся в [руководстве по конфигурации клиента SSH](./ssh_client_config.md#настройка-подключения-через-jump-host-proxyjump).
+  После настройки достаточно ввести `ssh internal_server`. Подробные инструкции — в [руководстве по конфигурации клиента SSH](./ssh_client_config.md#настройка-подключения-через-jump-host-proxyjump).
 
 - **Альтернатива на сетевом уровне (iptables DNAT):** Если требуется производительность или постоянный доступ, можно использовать проброс портов через iptables на промежуточном сервере. См. [Проброс SSH через iptables](../../Networking/Concepts/nat.md#проброс-ssh-через-iptables-альтернатива-ssh-proxyjump).
 

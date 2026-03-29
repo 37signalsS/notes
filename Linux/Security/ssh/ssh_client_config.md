@@ -91,24 +91,48 @@ Host home
 
 Это рекомендуемый способ для доступа к серверам во внутренней сети.
 
-1. **Опишите Jump Host** в `~/.ssh/config`:
+**Сценарий:** Сервер находится за другим SSH-сервером (DMZ, закрытая сеть), и у вас есть доступ к обоим.
 
-    ```ini
-    Host bastion
-        HostName 203.0.113.10
-        User admin
+1. **Подключение через командную строку (опция `-J`):**
+
+    ```bash
+    ssh -J username_jump@jump_host_ip username_target@target_host_ip
     ```
 
-2. **Опишите целевой сервер**, указав `ProxyJump`:
-
-    ```ini
-    Host internal-server
-        HostName 192.168.1.100
-        User app_user
-        ProxyJump bastion
+    Пример:
+    ```bash
+    ssh -J ilya@miminet.ru ilya@10.130.0.28
     ```
 
-Теперь команда `ssh internal-server` автоматически подключится через `bastion`.
+    Сначала устанавливается соединение с `jump_host_ip`, затем через него — к `target_host_ip`.
+
+2. **Настройка через `~/.ssh/config` (рекомендуется для частого использования):**
+
+    1. **Опишите Jump Host:**
+
+        ```ini
+        Host bastion
+            HostName 203.0.113.10
+            User admin
+            IdentityFile ~/.ssh/private_key.txt
+        ```
+
+    2. **Опишите целевой сервер**, указав `ProxyJump`:
+
+        ```ini
+        Host internal-server
+            HostName 192.168.1.100
+            User app_user
+            ProxyJump bastion
+            IdentityFile ~/.ssh/private_key.txt
+        ```
+
+    Теперь вместо длинной команды достаточно ввести:
+    ```bash
+    ssh internal-server
+    ```
+
+    > **Примечание:** Конфигурация работает одинаково на Linux, macOS и Windows (при использовании OpenSSH для Windows).
 
 ### Настройка SSH Multiplexing
 
