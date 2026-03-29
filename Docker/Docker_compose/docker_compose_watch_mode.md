@@ -67,7 +67,7 @@ services:
 
 ### Сравнение с `volumes` (bind mounts)
 
-До появления `watch` для разработки использовались **bind mounts** из секции `volumes`. Важно понимать их отличия.
+До появления `watch` для разработки использовались **bind mounts** из секции `volumes`. Важно понимать их отличия. Подробнее о томах см. в [Docker Volumes](../../Docker/Docker_fs/docker_volumes.md).
 
 | Аспект | `volumes: ['./src:/app']` (старый подход) | `develop.watch` (новый подход) |
 | :--- | :--- | :--- |

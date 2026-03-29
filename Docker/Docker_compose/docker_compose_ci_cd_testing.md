@@ -79,8 +79,4 @@ docker compose -f compose.yml -f compose.test.yml up \
 | **Параметризация** | Через env и volumes | Динамическая, из кода |
 | **Когда использовать** | Локальное тестирование, простые сценарии | Интеграционные тесты в CI/CD |
 
-### Связанные документы
-
-* **[Testcontainers Overview](../../Testing/testcontainers_overview.md)** — альтернативный подход к изоляции зависимостей
-* **[Интеграция тестов в CI/CD](../../Testing/testing_cicd_integration.md)** — общие практики
-* **[Docker Overview](../docker_overview.md)** — основы Docker
+Подробнее о Testcontainers см. в [обзоре Testcontainers](../../Testing/testcontainers_overview.md). Общие практики интеграции тестов в CI/CD описаны в [интеграции тестов в CI/CD](../../Testing/testing_cicd_integration.md).

@@ -2,41 +2,53 @@
 
 ## Определения
 
-**WORKDIR** — инструкция Dockerfile, устанавливающая текущий рабочий каталог для всех последующих инструкций `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`.
+**`WORKDIR`** — инструкция Dockerfile, устанавливающая текущий рабочий каталог для всех последующих инструкций `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`.
 
-**SHELL** — инструкция Dockerfile, определяющая оболочку по умолчанию для выполнения команд в инструкциях `RUN`, `CMD` и `ENTRYPOINT` в формате shell.
+**`SHELL`** — инструкция Dockerfile, определяющая оболочку по умолчанию для выполнения команд в инструкциях `RUN`, `CMD` и `ENTRYPOINT` в формате shell.
 
 ## Основные концепции
 
-### WORKDIR
+### `WORKDIR`
 
-Устанавливает текущий рабочий каталог. Если каталог не существует, он будет создан.
+Устанавливает текущий рабочий каталог. Если каталог не существует, он будет создан автоматически.
 
 **Синтаксис:**
 
 ```dockerfile
 WORKDIR /path/to/directory
-WORKDIR /app
-WORKDIR /var/www/html
 ```
 
-**Особенности:**
+**Поведение:**
 
-- Может использоваться несколько раз в Dockerfile
-- Поддерживает как абсолютные, так и относительные пути
-- Относительные пути разрешаются относительно предыдущего `WORKDIR`
+| Характеристика | Описание |
+| :--- | :--- |
+| **Создание директории** | Автоматически создаёт, если не существует |
+| **Количество использований** | Может использоваться несколько раз в Dockerfile |
+| **Типы путей** | Поддерживает абсолютные и относительные пути |
+| **Разрешение относительных путей** | Относительно предыдущего `WORKDIR` |
+| **Переменные окружения** | Поддерживает подстановку `$VAR` и `${VAR}` |
 
-**Пример:**
+**Пример с последовательными `WORKDIR`:**
 
 ```dockerfile
-WORKDIR /app
-COPY . .
-RUN npm install
-WORKDIR /app/dist
-RUN npm run build
+WORKDIR /a
+WORKDIR b
+WORKDIR c
+RUN pwd  # Вывод: /a/b/c
 ```
 
-### SHELL
+**Пример с переменными окружения:**
+
+```dockerfile
+ENV DIRPATH=/path
+ENV DIRNAME=app
+WORKDIR $DIRPATH/$DIRNAME
+RUN pwd  # Вывод: /path/app
+```
+
+> **Важно:** По умолчанию рабочая директория — `/`. Всегда явно устанавливайте `WORKDIR` для предсказуемости сборки.
+
+### `SHELL`
 
 Позволяет переопределить оболочку по умолчанию (`/bin/sh -c` для Linux).
 
@@ -44,8 +56,16 @@ RUN npm run build
 
 ```dockerfile
 SHELL ["/bin/bash", "-c"]
-SHELL ["/bin/sh", "-c"]
 ```
+
+**Поведение:**
+
+| Характеристика | Описание |
+| :--- | :--- |
+| **Формат** | Требует JSON array (exec form) |
+| **Применение** | К последующим инструкциям в shell form |
+| **Не влияет на** | Инструкции в exec form (`CMD ["..."]`, `ENTRYPOINT ["..."]`) |
+| **По умолчанию** | `/bin/sh -c` (Linux), `cmd /S /C` (Windows) |
 
 **Пример PowerShell на Windows:**
 
@@ -53,6 +73,17 @@ SHELL ["/bin/sh", "-c"]
 SHELL ["powershell", "-Command"]
 RUN Write-Host 'Hello, World!'
 ```
+
+**Пример с bash-специфичными конструкциями:**
+
+```dockerfile
+SHELL ["/bin/bash", "-c"]
+RUN if [[ -f /etc/os-release ]]; then \
+      cat /etc/os-release; \
+    fi
+```
+
+> **Важно:** `SHELL` влияет только на shell form инструкций. Exec form (`["command", "arg"]`) выполняется напрямую без оболочки.
 
 ## Практические сценарии
 
@@ -89,8 +120,44 @@ RUN echo "Hello" >> /file.txt && \
     cat /file.txt
 ```
 
+### Сценарий 4: Python-приложение с виртуальным окружением
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install -r requirements.txt
+ENV PATH="/opt/venv/bin:$PATH"
+COPY . .
+CMD ["python", "app.py"]
+```
+
+### Сценарий 5: Windows-контейнер с PowerShell
+
+```dockerfile
+FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
+SHELL ["powershell", "-Command"]
+RUN New-Item -Path C:\app -ItemType Directory -Force
+WORKDIR C:\app
+COPY . .
+CMD ["pwsh", "-File", "app.ps1"]
+```
+
+### Сценарий 6: Организация структуры проекта
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+WORKDIR /app/src
+COPY src/ ./src
+WORKDIR /app/tests
+COPY tests/ ./tests
+CMD ["npm", "test"]
+```
+
 ## Дополнительная информация
 
-- Рекомендуется всегда использовать `WORKDIR` вместо абсолютных путей в `COPY` или `RUN`
-- `WORKDIR` автоматически создаёт директорию, если она не существует
-- Подробнее об оптимизации см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**
+Рекомендуется всегда использовать `WORKDIR` вместо абсолютных путей в `COPY` или `RUN` — это делает Dockerfile более читаемым и переносимым. `WORKDIR` автоматически создаёт директорию, если она не существует. Подробнее об оптимизации см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**.

@@ -1,22 +1,63 @@
-# Развертывание приложений в Docker Swarm с помощью Docker Stack
+# Docker Swarm: Stack Deployment
 
 ## Определения
 
-**Docker Swarm Mode** позволяет использовать файлы `docker-compose.yml` для декларативного управления многоконтейнерными приложениями. В контексте Swarm такое приложение называется **стеком (stack)**. Этот подход значительно упрощает развертывание и управление сложными, распределенными системами.
+**Stack (Стек)** — многоконтейнерное приложение в Docker Swarm, описанное декларативно через файл `docker-compose.yml`. Управляется командой `docker stack deploy`.
+
+**Docker Stack** — механизм развертывания стеков в Swarm, преобразующий `docker-compose.yml` в Swarm-сервисы с поддержкой репликации, балансировки нагрузки и отказоустойчивости.
 
 ## Базовые концепции
 
-### Ключевые отличия от `docker compose`
+### Отличия от `docker compose`
 
-* **Команда:** Вместо `docker compose up` используется команда `docker stack deploy`.
-* **Секция `deploy`:** Все Swarm-специфичные настройки, такие как количество реплик, ограничения ресурсов, стратегии обновления и размещения, определяются в секции `deploy`. Обычная команда `docker compose up` **полностью игнорирует** эту секцию.
-* **Игнорируемые параметры:** Параметры верхнего уровня, такие как `container_name`, `restart` (вместо него используется `restart_policy` внутри `deploy`) и `depends_on`, игнорируются, так как Swarm самостоятельно управляет жизненным циклом, именованием и перезапуском контейнеров (задач).
+| Параметр | `docker compose` | `docker stack` |
+|---|---|---|
+| **Команда** | `docker compose up` | `docker stack deploy` |
+| **Режим** | Одиночный хост | Swarm-кластер |
+| **Секция `deploy`** | Частично поддерживается | Полная поддержка |
+| **`container_name`** | Поддерживается | Игнорируется |
+| **`restart`** | Поддерживается | Игнорируется (используется `restart_policy`) |
+| **`depends_on`** | Поддерживается | Игнорируется (Swarm управляет зависимостями) |
+
+**Важно:** Современные версии `docker compose` (v2.20+) частично поддерживают `deploy.replicas` и `deploy.resources` без Swarm, но полная функциональность доступна только в режиме Swarm.
+
+### Игнорируемые параметры
+
+При развертывании через `docker stack deploy` игнорируются:
+
+- `container_name` — Swarm автоматически именует контейнеры
+- `restart` — используется `restart_policy` внутри `deploy`
+- `depends_on` — Swarm управляет порядком запуска
+- `build` — образы должны быть собраны заранее
+- `profiles` — не поддерживаются в Swarm
+
+### Структура файла для Swarm
+
+```yaml
+version: '3.8'
+
+services:
+  <service-name>:
+    image: <image>:<tag>
+    deploy:
+      replicas: <count>
+      resources:
+        limits: ...
+      placement:
+        constraints: ...
+      update_config: ...
+      restart_policy: ...
+    networks: ...
+    volumes: ...
+    secrets: ...
+    configs: ...
+```
 
 ## Практические сценарии
 
-### Пример `docker-compose.yml` для Swarm
+### Базовое развертывание стека
 
-В этом примере определяются два сервиса (`web` и `backend`) с различными правилами развертывания.
+#### Пример `docker-compose.yml`
 
 ```yaml
 version: '3.8'
@@ -27,15 +68,15 @@ services:
     ports:
       - "80:80"
     deploy:
-      replicas: 3 # Запустить 3 реплики сервиса
+      replicas: 3
       placement:
         constraints:
-          - node.role == worker # Размещать только на worker-нодах
-      update_config: # Стратегия "rolling update"
-        parallelism: 1 # Обновлять по одному контейнеру за раз
-        delay: 10s # Задержка 10 секунд между обновлениями
+          - node.role == worker
+      update_config:
+        parallelism: 1
+        delay: 10s
       restart_policy:
-        condition: on-failure # Перезапускать только в случае сбоя
+        condition: on-failure
 
   backend:
     image: my-backend-app:1.0
@@ -43,39 +84,218 @@ services:
       replicas: 2
       placement:
         constraints:
-          # Размещать на нодах с определенной меткой
           - node.labels.app == backend
 ```
 
-### Управление стеком через CLI
-
-**1. Развертывание или обновление стека:**
+#### Управление стеком (CLI)
 
 ```sh
+# Развертывание или обновление стека
 docker stack deploy -c docker-compose.yml my-app-stack
-```
 
-Эта команда является идемпотентной: она создаст стек, если его нет, или обновит его в соответствии с новым `docker-compose.yml`, если он уже существует.
-
-**2. Просмотр запущенных стеков:**
-
-```sh
+# Просмотр запущенных стеков
 docker stack ls
-```
 
-**3. Просмотр сервисов в конкретном стеке:**
-
-```sh
+# Просмотр сервисов в стеке
 docker stack services my-app-stack
+
+# Просмотр задач сервиса
+docker stack ps my-app-stack
+
+# Удаление стека
+docker stack rm my-app-stack
 ```
 
-**4. Удаление стека:**
-Эта команда остановит и удалит все сервисы, сети и конфигурации, связанные со стеком.
+**Важно:** `docker stack deploy` идемпотентна — создает стек или обновляет его согласно новому `docker-compose.yml`.
 
+### Работа с сетями
+
+#### Создание external-сети
+
+```yaml
+version: '3.8'
+
+services:
+  web:
+    image: nginx
+    networks:
+      - frontend
+      - backend
+
+  db:
+    image: postgres:15
+    networks:
+      - backend
+
+networks:
+  frontend:
+    external: true
+  backend:
+    driver: overlay
+```
+
+**Предварительная настройка:**
 ```sh
-docker stack rm my-app-stack
+docker network create --driver overlay frontend
+docker stack deploy -c docker-compose.yml myapp
+```
+
+#### Изоляция трафика
+
+```yaml
+services:
+  frontend:
+    networks:
+      - public
+      - internal
+  
+  backend:
+    networks:
+      - internal
+      - database
+  
+  db:
+    networks:
+      - database
+
+networks:
+  public:
+    driver: overlay
+  internal:
+    driver: overlay
+    internal: true
+  database:
+    driver: overlay
+    internal: true
+```
+
+### Работа с томами
+
+#### Named volumes
+
+```yaml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    deploy:
+      placement:
+        constraints:
+          - node.labels.db == true
+
+volumes:
+  db-data:
+    driver: local
+```
+
+**Важно:** Named volumes привязаны к конкретному узлу. Для репликации используйте external-хранилища (NFS, Ceph).
+
+### Работа с секретами и конфигурациями
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    image: my-app:latest
+    secrets:
+      - db_password
+      - api_token
+    configs:
+      - app_config
+    deploy:
+      replicas: 3
+
+  db:
+    image: postgres:15
+    secrets:
+      - db_password
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+
+secrets:
+  db_password:
+    external: true
+  api_token:
+    external: true
+
+configs:
+  app_config:
+    external: true
+```
+
+**Предварительная настройка:**
+```sh
+docker secret create db_password ./password.txt
+docker secret create api_token ./token.txt
+docker config create app_config ./app.yaml
+```
+
+### Ограничение ресурсов
+
+```yaml
+services:
+  app:
+    image: my-app:latest
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+```
+
+### Placement Constraints
+
+```yaml
+services:
+  db:
+    image: postgres:15
+    deploy:
+      placement:
+        constraints:
+          - node.labels.db == true
+          - node.role == worker
+        preferences:
+          - spread: node.labels.zone
+
+  cache:
+    image: redis:7
+    deploy:
+      placement:
+        constraints:
+          - node.labels.cache == true
+```
+
+**Установка меток на узлы:**
+```sh
+docker node update --label-add db=true node-1
+docker node update --label-add cache=true node-2
 ```
 
 ## Дополнительная информация
 
-* Более подробную информацию о параметрах, доступных в секции `deploy`, можно найти в документе **[Продвинутые возможности Docker Compose](../Docker/Docker_compose/docker_compose_advanced_topics.md#секция-deploy-и-интеграция-с-docker-swarm)**.
+### Лучшие практики
+
+- **Идемпотентность:** Файлы `docker-compose.yml` должны быть идемпотентными
+- **Version pinning:** Фиксируйте версии образов (`nginx:1.26.3`, не `nginx:latest`)
+- **Resource limits:** Всегда указывайте ограничения ресурсов
+- **Health checks:** Используйте `healthcheck` для мониторинга состояния
+- **External networks:** Создавайте сети заранее для контроля конфигурации
+
+### Продвинутые стратегии
+
+Для Canary, Blue-Green развертывания и troubleshooting см. **[swarm_stack_advanced.md](./swarm_stack_advanced.md)**.
+
+### Связанные документы
+
+- **Docker Compose Advanced** — **[../Docker/Docker_compose/docker_compose_advanced_topics.md](../Docker/Docker_compose/docker_compose_advanced_topics.md)**
+- **Secrets and Configs** — **[swarm_secrets_configs.md](./swarm_secrets_configs.md)**
+- **CLI Reference** — **[swarm_management_cli.md](./swarm_management_cli.md)**
+- **Продвинутые стратегии** — **[swarm_stack_advanced.md](./swarm_stack_advanced.md)**

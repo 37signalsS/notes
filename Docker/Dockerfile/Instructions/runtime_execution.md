@@ -6,6 +6,8 @@
 
 **`ENTRYPOINT`** — инструкция, настраивающая контейнер как исполняемый файл. Аргументы из командной строки **добавляются** к ENTRYPOINT.
 
+**`USER`** — инструкция, устанавливающая пользователя (и опционально группу) для запуска процессов в контейнере.
+
 ## Основные концепции
 
 ### CMD vs ENTRYPOINT
@@ -25,6 +27,16 @@ CMD ["world"]
 - `docker run <image>` → `Hello world`
 - `docker run <image> John` → `Hello John`
 
+**Таблица комбинаций:**
+
+| ENTRYPOINT | CMD | Результат |
+| :--- | :--- | :--- |
+| Не указано | `["exec_cmd", "p1"]` | `exec_cmd p1` |
+| `["entry", "p1"]` | Не указано | `entry p1` |
+| `["entry", "p1"]` | `["cmd", "p2"]` | `entry p1 cmd p2` |
+
+> **Правило:** Dockerfile должен содержать хотя бы одну из `CMD` или `ENTRYPOINT`. В Dockerfile действует только **последняя** инструкция каждого типа.
+
 ### Формы записи: Shell vs Exec
 
 | Форма | Синтаксис | Особенности |
@@ -34,6 +46,24 @@ CMD ["world"]
 
 > ⚠️ **Важно:** В образах `gcr.io/distroless/static` и `FROM scratch` **отсутствует `/bin/sh`**. Shell-форма приведёт к ошибке.
 
+### Передача сигналов процессу PID 1
+
+Docker отправляет `SIGTERM` процессу с PID 1 при остановке контейнера. При использовании shell-формы сигнал получает оболочка, а не приложение.
+
+**Решение:** использовать `exec` в скрипте-обёртке:
+
+```bash
+#!/bin/sh
+echo "Starting application..."
+exec "$@"  # Заменяет shell на приложение, приложение становится PID 1
+```
+
+Или использовать exec-форму в Dockerfile:
+
+```dockerfile
+ENTRYPOINT ["/app/entrypoint.sh"]
+```
+
 ### Запуск в режиме Foreground
 
 Docker отслеживает процесс PID 1. Когда он завершается — контейнер останавливается.
@@ -42,6 +72,39 @@ Docker отслеживает процесс PID 1. Когда он заверш
 | :--- | :--- | :--- |
 | Foreground | `CMD ["nginx", "-g", "daemon off;"]` | ✅ Правильно |
 | Background (daemon) | `CMD ["nginx"]` | ❌ Контейнер сразу завершится |
+
+### Инструкция USER
+
+**Синтаксис:**
+
+```dockerfile
+# По имени пользователя/группы
+USER <user>[:<group>]
+
+# По UID/GID
+USER <UID>[:<GID>]
+```
+
+**Описание:**
+
+- Устанавливает имя пользователя (или UID) и опционально группу (или GID)
+- Применяется к последующим инструкциям `RUN` и командам `ENTRYPOINT`/`CMD` при запуске
+- При указании группы пользователь имеет **только** эту принадлежность к группе
+
+**Предупреждения:**
+
+- Если у пользователя нет основной группы — образ выполняется с группой `root`
+- **Windows:** пользователь должен быть создан заранее (через `net user`)
+
+**Пример безопасности:**
+
+```dockerfile
+FROM python:3
+RUN useradd -m appuser
+USER appuser
+WORKDIR /home/appuser
+CMD ["python", "app.py"]
+```
 
 ## Практические сценарии
 
@@ -86,8 +149,41 @@ echo "Starting $APP_NAME"
 exec "$@"
 ```
 
+### Сценарий 5: Запуск от непривилегированного пользователя
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --only=production
+COPY . .
+RUN adduser -D nonroot
+USER nonroot
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+### Сценарий 6: ENTRYPOINT с аргументами по умолчанию
+
+```dockerfile
+FROM ubuntu:22.04
+ENTRYPOINT ["top", "-b"]
+CMD ["-c"]
+```
+
+- `docker run my-image` → `top -b -c`
+- `docker run my-image -d 1` → `top -b -d 1`
+
+### Сценарий 7: Java-приложение с правильной обработкой сигналов
+
+```dockerfile
+FROM openjdk:17-slim
+WORKDIR /app
+COPY app.jar .
+USER appuser
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
 ## Дополнительная информация
 
-- Подробнее о переопределении CMD/ENTRYPOINT см. **[Практические сценарии](./practical_scenarios.md)**
-- Подробнее об оптимизации образов (distroless, scratch) см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**
-- Подробнее об отладке distroless см. **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)**
+Подробнее о переопределении CMD/ENTRYPOINT см. **[Практические сценарии](./practical_scenarios.md)**. Об оптимизации образов (distroless, scratch) читайте в **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**, об отладке — в **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)**.

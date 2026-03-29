@@ -2,31 +2,43 @@
 
 ## Определения
 
-**Проблема несовместимости libc** — это ситуация, когда бинарный файл, скомпилированный для одной стандартной библиотеки C (libc), не может быть запущен в операционной системе, использующей другую, несовместимую реализацию libc. Классический пример — ошибка `file not found` или `error while loading shared libraries` при попытке запустить в Alpine Linux приложение, собранное в Ubuntu.
+**Проблема несовместимости libc** — ситуация, когда бинарный файл, скомпилированный для одной реализации стандартной библиотеки C, не работает в системе с другой реализацией. Типичный случай — ошибка `file not found` или `error while loading shared libraries` при запуске в Alpine Linux приложения, собранного в Ubuntu/Debian.
 
-### Основные концепции
+Подробное сравнение библиотек: **[Glibc vs Musl](../../Linux/Core/glibc_vs_musl.md)**.
 
-Ошибка возникает из-за фундаментальных различий между двумя популярными реализациями libc:
+## Основные концепции
 
-1. **`glibc` (GNU C Library):** Стандарт де-факто для большинства дистрибутивов Linux (Debian, Ubuntu, Fedora, CentOS). Ориентирована на максимальную совместимость и богатый функционал, включая множество нестандартных расширений GNU.
-2. **`musl libc`:** Легковесная реализация, используемая в Alpine Linux. Сфокусирована на минимализме, безопасности и статической линковке.
+### Причина ошибки
 
-Приложения, скомпилированные с `glibc`, ожидают найти в системе именно её, и не могут работать с `musl` без специальных мер. Подробное сравнение этих библиотек находится в документе **[Glibc vs Musl](../../Linux/Core/glibc_vs_musl.md)**.
+Alpine Linux использует **`musl libc`** вместо стандартной **`glibc`**. Бинарные файлы, скомпилированные с `glibc`, содержат зависимости от её символов и не могут выполняться в среде `musl` без специальных мер.
 
-### Практические сценарии решения
+### Диагностика
 
-#### Сценарий 1: Пересборка приложения в Alpine (Рекомендуемый способ)
+```bash
+# Проверка зависимостей бинарного файла
+ldd ./myapp
+# Ошибка: "not a dynamic executable" или ссылки на libc.so.6
 
-Это наиболее правильный и "чистый" подход. Он сохраняет все преимущества Alpine (малый размер, безопасность) и гарантирует, что приложение будет нативно работать в своей среде. Используйте [многоэтапную сборку (multi-stage build)](../Dockerfile/Docker_best_practices/build_optimization.md#многоэтапная-сборка-multi-stage-builds), чтобы отделить сборочное окружение от финального.
+# Проверка интерпретера
+readelf -l ./myapp | grep interpreter
+# glibc: /lib64/ld-linux-x86-64.so.2
+# musl: /lib/ld-musl-x86_64.so.1
+```
+
+## Практические сценарии
+
+### Сценарий 1: Пересборка для musl (рекомендуемый)
+
+Нативная компиляция в Alpine сохраняет преимущества дистрибутива (размер, безопасность). Используйте [многоэтапную сборку](../Dockerfile/Docker_best_practices/build_optimization.md#многоэтапная-сборка-multi-stage-builds).
 
 **Пример для Go:**
 
 ```dockerfile
-# Этап сборки (может быть на любом дистрибутиве)
-FROM golang:1.25.1-alpine AS builder
+# Этап сборки
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY . .
-# Собираем статически связанный бинарный файл
+# Статическая компиляция без CGO
 RUN CGO_ENABLED=0 go build -o /app .
 
 # Финальный этап
@@ -35,31 +47,59 @@ COPY --from=builder /app /app
 CMD ["/app"]
 ```
 
-#### Сценарий 2: Установка `glibc` в Alpine (Компромисс)
-
-Этот способ следует использовать только в крайних случаях, например, когда у вас нет исходного кода приложения и есть только готовый бинарный файл.
-
-**Dockerfile с установкой `glibc`:**
+**Пример для C/C++:**
 
 ```dockerfile
-FROM alpine:3.22.1
+FROM alpine:3.23 AS builder
+RUN apk add --no-cache gcc musl-dev
+WORKDIR /src
+COPY . .
+RUN gcc -static myapp.c -o myapp
 
-# Версия пакета может меняться
-ENV GLIBC_VERSION="2.35-r1"
+FROM scratch
+COPY --from=builder /src/myapp /app
+CMD ["/app"]
+```
 
-# Установка glibc из стороннего репозитория
+### Сценарий 2: Установка glibc в Alpine (компромисс)
+
+Использовать только при отсутствии исходного кода.
+
+```dockerfile
+FROM alpine:3.23
+
+ENV GLIBC_VERSION="2.40-r0"
+
 RUN apk add --no-cache wget ca-certificates && \
-    wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
+    wget -q -O /etc/apk/keys/sgerrand.rsa.pub \
+        https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
     wget "https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk" && \
     apk add --no-cache glibc-${GLIBC_VERSION}.apk && \
     rm -f glibc-*.apk
 
-# Теперь можно копировать и запускать glibc-совместимые приложения
 COPY ./my-glibc-app /usr/local/bin/
 CMD ["my-glibc-app"]
 ```
 
-### Дополнительная информация
+### Сценарий 3: Альтернативные базовые образы
 
-* **Недостатки второго подхода:** Установка `glibc` в Alpine нивелирует ключевые преимущества этого дистрибутива: увеличивает размер и сложность образа, а также добавляет потенциальные точки отказа.
-* **Альтернативы:** Вместо Alpine рассмотрите использование минималистичных `slim`-образов на базе Debian или полностью статических `distroless`-образов, которые изначально используют `glibc`.
+Если glibc критична, рассмотрите:
+
+- **`debian:slim`** — минималистичные образы Debian с glibc
+- **`distroless`** — образы без shell, только приложение и glibc
+- **`gcr.io/distroless/static-debian12`** — для статических бинарников
+
+## Дополнительная информация
+
+### Недостатки установки glibc в Alpine
+
+- Увеличение размера образа (~15 МБ дополнительно)
+- Нарушение философии минимализма Alpine
+- Потенциальные конфликты между glibc и musl
+- Сторонний репозиторий (вопросы безопасности)
+
+### Предупреждение о версиях
+
+Версии пакетов glibc для Alpine могут обновляться. Проверяйте актуальные релизы:
+- [sgerrand/alpine-pkg-glibc releases](https://github.com/sgerrand/alpine-pkg-glibc/releases)
+- [Alpine Linux packages](https://pkgs.alpinelinux.org/packages)

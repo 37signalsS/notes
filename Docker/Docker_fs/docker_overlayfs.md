@@ -120,10 +120,11 @@ docker info | grep "Storage Driver"
 - **`overlay` vs `overlay2`**: `overlay2` является современным стандартом. Старый драйвер `overlay` имел серьезные проблемы с исчерпанием `inode`, особенно при большом количестве слоев, и его использование не рекомендуется.
 - **`aufs`**: Исторически первый union-драйвер в Docker. Никогда не был включен в основное ядро Linux, что усложняло его поддержку.
 - **`devicemapper`**: Работает на блочном уровне, а не на файловом. Требует сложной предварительной настройки LVM (`direct-lvm`) и показывает меньшую производительность для типичных контейнерных нагрузок по сравнению с `overlay2`.
-- **containerd snapshotter**: Начиная с Docker 29.0, по умолчанию используется containerd со snapshotters (overlayfs), который является современным стандартом для containerd. Для классического Docker daemon по-прежнему используется `overlay2`.
+- **containerd snapshotter**: Начиная с Docker 29.0, по умолчанию используется containerd со snapshotters (overlayfs), который является современным стандартом для containerd. Слои образов перемещены в `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/`. Для классического Docker daemon (с отключенным feature flag `containerd-snapshotter`) по-прежнему используется `overlay2`.
 
 ### Связанные темы
 
-- **[Основы Docker-образов](./images/docker_images_basics.md)**: Документ, объясняющий концепцию слоев в образах.
-- **[Тома (Volumes) в Docker](./docker_volumes.md)**: Рекомендуемый способ для хранения персистентных и write-heavy данных.
-- **[Обзор Docker](../docker_overview.md)**: Общая архитектура и компоненты Docker.
+- **[Основы Docker-образов](./images/docker_images_basics.md)** — концепция слоев в образах
+- **[Тома (Volumes) в Docker](./docker_volumes.md)** — рекомендуемый способ для персистентных и write-heavy данных
+- **[Обзор Docker](../docker_overview.md)** — общая архитектура и компоненты Docker
+- **[Copy-on-Write в Linux](../../Linux/Core/processes/basic_concepts.md#copy-on-write-cow)** — базовый принцип работы CoW в ядре

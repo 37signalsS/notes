@@ -22,7 +22,7 @@
 
 ## Практические сценарии
 
-### 3.1. Драйвер `journald`
+### Драйвер `journald`
 
 Интегрируется с `systemd-journald`, позволяя использовать стандартную утилиту [`journalctl`](../../Linux/Diagnostics/journalctl.md) для просмотра логов всех контейнеров. Это предпочтительный выбор для систем на базе `systemd`.
 
@@ -50,7 +50,7 @@
 >
 > После этого перезапустите службу: `sudo systemctl restart systemd-journald`.
 
-### 3.2. Драйвер `syslog`
+### Драйвер `syslog`
 
 Отправляет логи на Syslog-сервер (локальный или удаленный) по стандартному протоколу Syslog.
 
@@ -60,7 +60,7 @@
 docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_image
 ```
 
-### 3.3. Драйвер `gelf`
+### Драйвер `gelf`
 
 Отправляет логи на GELF-совместимый сервер, такой как Graylog или Logstash. Протокол GELF (Graylog Extended Log Format) позволяет передавать структурированные данные.
 
@@ -70,7 +70,7 @@ docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_ima
 docker run --log-driver=gelf --log-opt gelf-address=udp://1.2.3.4:12201 my_image
 ```
 
-### 3.4. Драйвер `fluentd`
+### Драйвер `fluentd`
 
 Отправляет логи на сервер-агрегатор Fluentd.
 

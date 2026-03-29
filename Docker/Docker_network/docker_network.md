@@ -200,31 +200,21 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 
 Также Docker включает обработку bridge-трафика: `modprobe br_netfilter`
 
-- **Выход контейнеров в Интернет:** Для доступа контейнеров во внешний мир Docker:
-  1. Включает IP-форвардинг: `net.ipv4.ip_forward=1`
-  2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
+**Выход контейнеров в Интернет:**
+1. Включает IP-форвардинг: `net.ipv4.ip_forward=1`
+2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
 
-- **Связанные темы**:
-  - **[Управление сетями (CLI)](./cli.md)**: Подробный справочник по командам `docker network`.
-  - **[DNS и Service Discovery](./dns_and_service_discovery.md)**: Как работает разрешение имен в Docker.
-  - **[Docker и iptables](./troubleshooting/iptables_integration.md)**: Как Docker взаимодействует с файрволом хоста.
-  - **Детальное описание драйверов**:
-    - **[bridge](./drivers/bridge.md)**
-    - **[host](./drivers/host.md)**
-    - **[overlay](./drivers/overlay.md)**
-    - **[macvlan](./drivers/macvlan.md)**
-    - **[ipvlan](./drivers/ipvlan.md)**
-    - **[none](./drivers/none.md)**
-
-- **[Изоляция в Linux: Namespaces и Cgroups](../Concepts/linux_isolation.md)** — сетевой namespace как часть общей изоляции
-
-**Режимы сети Docker и их связь с Linux:**
+### Режимы Docker и реализация в Linux
 
 | Режим Docker | Реализация в Linux | Описание |
 | :--- | :--- | :--- |
 | `bridge` (по умолчанию) | network namespace + veth + bridge | Изолированная сеть с NAT |
-| `host` | Без network namespace | Контейнер использует сетевой стек хоста напрямую |
-| `none` | network namespace без интерфейсов | Только loopback, полная изоляция |
-| `container:<name>` | Разделение network namespace с другим контейнером | Общий IP и localhost (используется в Kubernetes Pods) |
+| `host` | Без network namespace | Стек хоста напрямую |
+| `none` | network namespace без интерфейсов | Только loopback |
+| `container:<name>` | Разделение namespace с другим контейнером | Общий IP и localhost |
 
-> **См. также:** [NAT](../../Networking/Concepts/nat.md), [Linux network namespaces](../../Linux/Core/namespaces.md)
+См. также: [NAT](../../Networking/Concepts/nat.md), [Linux network namespaces](../../Linux/Core/namespaces.md), [Изоляция в Linux](../Concepts/linux_isolation.md).
+
+**Связанные документы:** [Управление сетями (CLI)](./cli.md), [DNS и Service Discovery](./dns_and_service_discovery.md), [Docker и iptables](./troubleshooting/iptables_integration.md).
+
+**Драйверы:** [bridge](./drivers/bridge.md), [host](./drivers/host.md), [overlay](./drivers/overlay.md), [macvlan](./drivers/macvlan.md), [ipvlan](./drivers/ipvlan.md), [none](./drivers/none.md).

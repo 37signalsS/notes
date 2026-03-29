@@ -1,26 +1,45 @@
-# Интеграция с Kubernetes: Kompose
+# Kompose: Конвертация Docker Compose в Kubernetes
 
 ## Определения
 
-`**`kompose`** — это инструмент командной строки, предназначенный для упрощения перехода с [Docker Compose](../Docker_compose/docker_compose_file_example.md) на Kubernetes**. Он читает файл`docker-compose.yml` и автоматически конвертирует его в ресурсы Kubernetes (Deployments, Services и т.д.).
+**Kompose** — инструмент командной строки для конвертации файлов `docker-compose.yml` в ресурсы Kubernetes (Deployments, Services, ConfigMaps и др.). Упрощает миграцию приложений с Docker Compose на Kubernetes.
 
-### Основные концепции
+Официальный репозиторий: **[github.com/kubernetes/kompose](https://github.com/kubernetes/kompose)**.
 
-`kompose` анализирует сервисы, порты, тома и другие директивы в файле `docker-compose.yml` и генерирует на их основе стандартные манифесты Kubernetes в формате YAML. Это позволяет быстро развернуть простое приложение в Kubernetes без необходимости вручную писать все манифесты с нуля.
+## Основные концепции
 
-### Практические сценарии
+### Принцип работы
 
-#### Сценарий: Конвертация и развертывание
+Kompose анализирует сервисы, порты, тома и другие директивы в `docker-compose.yml` и генерирует стандартные манифесты Kubernetes в формате YAML. Это позволяет быстро развернуть простое приложение в Kubernetes без ручного написания манифестов.
 
-**1. Установка**
+### Поддерживаемые директивы Compose
 
-Инструкции по установке `kompose` зависят от операционной системы и доступны на официальном сайте инструмента.
+- `image` → `Deployment` с указанием образа
+- `ports` → `Service` с настройкой портов
+- `volumes` → `PersistentVolumeClaim` или `hostPath`
+- `environment` / `env_file` → `ConfigMap` или переменные окружения в `Deployment`
+- `depends_on` → не поддерживается напрямую (требуется ручная доработка)
+- `networks` → ограниченная поддержка (требуется ручная настройка)
 
-**2. Конвертация `docker-compose.yml`**
+## Практические сценарии
 
-Предположим, у вас есть следующий файл `docker-compose.yml`:
+### Сценарий 1: Конвертация и развертывание
+
+**Установка:**
+
+```bash
+# macOS (Homebrew)
+brew install kompose
+
+# Linux
+curl -L https://github.com/kubernetes/kompose/releases/latest/download/kompose-linux-amd64 \
+  -o kompose && chmod +x kompose && sudo mv kompose /usr/local/bin/
+```
+
+**Конвертация:**
 
 ```yaml
+# docker-compose.yml
 version: '3.8'
 services:
   web:
@@ -33,35 +52,34 @@ services:
       - "5000:5000"
 ```
 
-Для конвертации выполните команду:
-
 ```bash
+# Конвертация в манифесты Kubernetes
 kompose convert
 ```
 
-В результате будут созданы файлы `web-deployment.yaml`, `web-service.yaml`, `app-deployment.yaml` и `app-service.yaml`.
+Будут созданы файлы: `web-deployment.yaml`, `web-service.yaml`, `app-deployment.yaml`, `app-service.yaml`.
 
-**3. Развертывание в Kubernetes**
-
-Сгенерированные манифесты можно применить к кластеру с помощью `kubectl`:
+**Развертывание:**
 
 ```bash
 kubectl apply -f .
 ```
 
-### Дополнительная информация
+### Сценарий 2: Конвертация с флагами
 
-#### Ограничения и лучшие практики
+```bash
+# Генерация с указанием controller type
+kompose convert --controller deployment
 
-**Лучшие сценарии использования:**
+# Конвертация с chart для Helm
+kompose convert --chart
 
-- **Первоначальная миграция:** Отлично подходит для быстрого старта и преобразования простых проектов.
-- **Обучение:** Помогает понять, как концепции Docker Compose (сервисы, порты) соотносятся с ресурсами Kubernetes (Deployments, Services).
+# Вывод в stdout вместо файлов
+kompose convert -o -
+```
 
-**Ограничения:**
+## Дополнительная информация
 
-- **Не для сложных проектов:** `Kompose` плохо справляется со сложными `docker-compose.yml` файлами, особенно с кастомными сетями, сложными зависимостями и специфичными конфигурациями томов.
-- **Требуется ручная доработка:** Сгенерированные манифесты почти всегда требуют ручной проверки и доработки для соответствия требованиям production-среды (например, добавление `health checks`, `resource limits`, `affinity rules`).
-- **Не заменяет знание Kubernetes:** `Kompose` — это вспомогательный инструмент, а не долгосрочное решение. Для серьезной работы с Kubernetes необходимо глубокое понимание его объектов и принципов.
-
-**Рекомендация:** Используйте `kompose convert` для генерации базовых манифестов, а затем дорабатывайте их вручную. Избегайте использования `kompose up`, который был признан устаревшим.
+- **[Docker Compose](../Docker_compose/docker_compose_file_example.md)** — примеры файлов Compose
+- **[Kubernetes Overview](../../Kubernetes/kubernetes_overview.md)** — основы Kubernetes
+- **[Kustomize](../../Kubernetes/ToolsUtilities/kustomize/)** — альтернативный инструмент управления манифестами

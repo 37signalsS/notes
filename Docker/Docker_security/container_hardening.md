@@ -145,3 +145,38 @@ docker run --read-only --tmpfs /tmp:rw,noexec,nosuid <image>
 - `rw`: разрешает запись.
 - `noexec`: запрещает выполнение бинарных файлов.
 - `nosuid`: игнорирует `set-user-identifier` / `set-group-identifier` биты.
+
+## Дополнительная информация
+
+### Связанные документы
+
+- **[Усиление защиты хоста и демона Docker](./host_daemon_hardening.md)** — защита хостовой системы и конфигурация демона `dockerd`.
+- **[Обзор безопасности Docker](./overview.md)** — анализ векторов атак и угроз Docker Socket.
+- **[Управление секретами](./secrets_management.md)** — безопасное хранение паролей, токенов и ключей.
+- **[Механизмы безопасности Linux](../../Linux/Security/Linux_Security_Mechanisms_Overview.md)** — Seccomp, AppArmor, SELinux, capabilities.
+- **[Rootless Docker](./host_daemon_hardening.md#2-режим-rootless-docker)** — запуск демона и контейнеров без root-прав.
+
+### CIS Docker Benchmark
+
+Большинство практик из этого документа входят в рекомендации **CIS Docker Benchmark** — стандарта безопасности для контейнеризированных сред. Полную спецификацию можно найти в официальном репозитории [Center for Internet Security](https://www.cisecurity.org/).
+
+### Проверка конфигурации безопасности
+
+Для аудита текущих настроек контейнера используйте:
+
+```bash
+# Проверка запущенных контейнеров на безопасность
+docker inspect <container_id>
+
+# Ключевые параметры для проверки:
+# - User (запуск от непривилегированного пользователя)
+# - Capabilities (минимальный набор)
+# - ReadonlyRootfs (файловая система read-only)
+# - SecurityOpt (no-new-privileges, seccomp, apparmor)
+```
+
+### Инструменты автоматизации
+
+- **[Docker Bench for Security](https://github.com/docker/docker-bench-security)** — скрипт для автоматической проверки конфигурации Docker по CIS Benchmark.
+- **[Trivy](./vulnerability_scanning.md)** — сканер уязвимостей образов и контейнеров.
+- **[Falco](../../Security/Tools/falco.md)** — система обнаружения аномалий и вторжений в runtime.

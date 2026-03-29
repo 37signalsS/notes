@@ -1,32 +1,103 @@
-# Инструменты для оптимизации и анализа Dockerfile
+# Инструменты оптимизации и анализа Dockerfile
 
 ## Определения
 
-- **Оптимизация размера образа:** Уменьшение размера Docker-образов критически важно для ускорения процессов сборки и развертывания, а также для сокращения поверхности атаки. Это достигается за счет использования минималистичных базовых образов, очистки кэша пакетных менеджеров и удаления ненужных файлов.
-- **Линтинг и статический анализ:** Проверка `Dockerfile` на соответствие лучшим практикам и выявление потенциальных проблем до начала сборки. Это помогает избежать распространенных ошибок и неэффективных конструкций.
-- **Анализ безопасности:** Сканирование образов на наличие уязвимостей (CVE), небезопасных конфигураций и секретов. Это неотъемлемая часть производственного цикла для обеспечения безопасности контейнеризированных приложений.
+**Оптимизация размера образа** — уменьшение размера Docker-образов для ускорения сборки, развертывания и сокращения поверхности атаки.
 
-### Основные концепции
+**Линтинг** — статический анализ `Dockerfile` на соответствие лучшим практикам до начала сборки.
 
-#### Анализ и Оптимизация Размера
+**Анализ безопасности** — сканирование образов на уязвимости (CVE), небезопасные конфигурации и секреты.
 
-- **`dive`:** Интерактивный инструмент для исследования содержимого Docker-образа по слоям. Позволяет визуально анализировать изменения между слоями и находить файлы, которые неоправданно увеличивают размер образа.
-- **`docker-slim` (Slim):** Утилита для автоматического уменьшения размера образов. `Slim` анализирует приложение и удаляет все ненужные компоненты, включая системные библиотеки и утилиты, что может сократить размер образа до 30 раз.
-- **`strip`:** Стандартная утилита из GNU Binutils для удаления отладочной информации и символьных таблиц из бинарных файлов. Эффективно применяется в `multi-stage` сборках для уменьшения размера скомпилированных приложений.
+## Основные концепции
 
-#### Линтинг и проверка лучших практик
+### Анализ и оптимизация размера
 
-- **`hadolint`:** Линтер для статического анализа `Dockerfile`. Он проверяет синтаксис на соответствие [официальным рекомендациям](https://docs.docker.com/develop/develop-images/dockerfile_best-practices/) и предупреждает о потенциальных проблемах.
-  - *Пример запуска:* `docker run --rm -i hadolint/hadolint < Dockerfile`
+| Инструмент | Назначение | Репозиторий |
+| :--- | :--- | :--- |
+| **dive** | Интерактивное исследование слоев образа, поиск файлов, увеличивающих размер | [github.com/wagoodman/dive](https://github.com/wagoodman/dive) |
+| **docker-slim** | Автоматическое уменьшение размера образов (до 30 раз) | [github.com/docker-slim/docker-slim](https://github.com/docker-slim/docker-slim) |
+| **strip** | Удаление отладочной информации из бинарных файлов (GNU Binutils) | — |
 
-#### Сканирование безопасности
+### Линтинг
 
-- **`dockle`:** Инструмент для проверки образов на соответствие лучшим практикам безопасности (CIS Benchmarks). Он выявляет уязвимости, "толстые" слои и небезопасные конфигурации (например, запуск от `root`).
-  - *Пример запуска:* `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock goodwithtech/dockle:v0.4.15 my-image:latest`
-- **`docker-bench-security`:** Скрипт, который проверяет безопасность конфигурации самого хоста Docker, а не отдельных образов. Он выполняет тесты на основе рекомендаций CIS Docker Benchmark.
+| Инструмент | Назначение | Репозиторий |
+| :--- | :--- | :--- |
+| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
 
-### Дополнительная информация
+### Сканирование безопасности
 
-- Общие принципы оптимизации кеширования слоев и выбора базовых образов описаны в документе [**Лучшие практики Dockerfile**](Docker_best_practices/build_optimization.md).
-- Для объединения слоев образа можно использовать флаг `docker build --squash` или утилиту `docker-squash`, подробнее об этом см. в [**документации по Docker-образам**](../Docker_fs/images/docker_images_basics.md).
-- Комплексный подход к защите контейнеров изложен в руководстве по [**безопасности Docker**](../Docker_security/overview.md).
+| Инструмент | Назначение | Репозиторий |
+| :--- | :--- | :--- |
+| **dockle** | Проверка на соответствие CIS Benchmarks, поиск уязвимостей | [github.com/goodwithtech/dockle](https://github.com/goodwithtech/dockle) |
+| **docker-bench-security** | Аудит безопасности хоста Docker (CIS Docker Benchmark) | [github.com/docker/docker-bench-security](https://github.com/docker/docker-bench-security) |
+
+## Практические сценарии
+
+### Сценарий 1: Анализ слоев с dive
+
+```bash
+# Установка dive
+# macOS
+brew install dive
+
+# Linux
+curl -L https://github.com/wagoodman/dive/releases/download/v0.12.0/dive_0.12.0_linux_amd64.tar.gz | tar xz && sudo mv dive /usr/local/bin/
+
+# Анализ образа
+dive my-app:latest
+```
+
+**Возможности dive:**
+- Просмотр содержимого каждого слоя
+- Обнаружение файлов, удаленных в последующих слоях ( wasted space)
+- Оценка эффективности слоев (image efficiency)
+
+### Сценарий 2: Линтинг Dockerfile с hadolint
+
+```bash
+# Запуск через Docker
+docker run --rm -i hadolint/hadolint < Dockerfile
+
+# Локальная установка (macOS)
+brew install hadolint
+hadolint Dockerfile
+```
+
+**Пример вывода:**
+```
+Dockerfile:5 DL3008: Pin versions in apt get install.
+Dockerfile:12 DL3002: Warning: Last USER should not be root
+```
+
+### Сценарий 3: Сканирование безопасности с dockle
+
+```bash
+# Запуск через Docker
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/goodwithtech/dockle:v0.4.15 my-image:latest
+
+# Локальная установка
+dockle my-image:latest
+```
+
+**Пример вывода:**
+```
+FATAL - CIS-DI-0010: Suspicious mount: '/var/run/docker.sock'
+WARN  - CIS-DI-0001: Create a user for the container
+```
+
+### Сценарий 4: Автоматическая оптимизация с docker-slim
+
+```bash
+# Запуск через Docker
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  dockerslim/docker-slim:latest build my-app:latest
+
+# Результат: my-app.slim:latest (уменьшенная версия)
+```
+
+## Дополнительная информация
+
+- **[Оптимизация сборки](./Docker_best_practices/build_optimization.md)** — принципы кэширования и multi-stage сборок
+- **[Docker Images](../Docker_fs/images/docker_images_basics.md)** — основы работы с образами
+- **[Docker Security](../Docker_security/overview.md)** — комплексная защита контейнеров

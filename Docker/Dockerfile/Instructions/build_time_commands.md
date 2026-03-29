@@ -4,8 +4,6 @@
 
 **Инструкция `RUN`** — команда, выполняемая во время сборки образа, создающая новый слой в образе.
 
-**BuildKit** — современный движок сборки Docker (включён по умолчанию в Docker 18.09+), обеспечивающий расширенную функциональность: кэширование, параллельную сборку, mount points для секретов и кэшей.
-
 ## Основные концепции
 
 ### `RUN`
@@ -28,7 +26,7 @@ RUN set -ex && \
 
 `--mount=type=cache` позволяет монтировать кэш в процессе выполнения `RUN`. Кэш не попадает в финальный образ.
 
-> Подробнее о кэшировании и оптимизации сборки см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**
+> Подробнее о кэшировании и оптимизации сборки см. **[Оптимизация сборки](../../Dockerfile/Docker_best_practices/build_optimization.md)**
 
 ```dockerfile
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -48,6 +46,8 @@ RUN --mount=type=bind,source=./src,target=/app/src \
 
 `--mount=type=secret` временно монтирует секрет и не хранит его в финальном образе.
 
+> Подробнее о безопасном управлении секретами см. **[Управление секретами](../../Docker_security/secrets_management.md)**
+
 ```dockerfile
 RUN --mount=type=secret,id=ssh,target=/root/.ssh/id_rsa \
     git clone git@github.com:user/repo.git .
@@ -57,9 +57,11 @@ RUN --mount=type=secret,id=api_key,target=/run/secrets/api_key \
     pip install --extra-index-url "$API_KEY"@private-repo.com/packages some-package
 ```
 
+> **Примечание:** Для использования директив `--mount` требуется BuildKit. В современных версиях Docker (18.09+) BuildKit включён по умолчанию. Подробнее о BuildKit см. **[Dockerfile BuildKit](../dockerfile_buildkit.md)**
+
 ## Практические сценарии
 
-### Сценарий 1: Установка пакетов с очисткой
+### Установка пакетов с очисткой кэша
 
 ```dockerfile
 RUN apt-get update && \
@@ -67,7 +69,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ```
 
-### Сценарий 2: Использование BuildKit secrets для приватных npm-пакетов
+### Использование BuildKit secrets для приватных npm-пакетов
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -76,7 +78,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
     npm install express
 ```
 
-### Сценарий 3: Кэширование pip-пакетов между сборками
+### Кэширование pip-пакетов между сборками
 
 ```dockerfile
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -85,39 +87,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ## Дополнительная информация
 
-- Для активации BuildKit: `export DOCKER_BUILDKIT=1`
-- BuildKit требуется для функций `--mount=type=cache`, `--mount=type=bind`, `--mount=type=secret`
-- Подробнее о безопасном управлении secrets см. **[Управление секретами](../../Docker_security/secrets_management.md)**
-
-  - `set -e`: **Exit Immediately.** Если какая-либо команда завершится с ошибкой (ненулевым кодом выхода), выполнение всей `RUN` инструкции немедленно прекратится. Без этого флага Docker продолжит выполнение следующих команд, как будто ничего не произошло, и сборка может успешно завершиться, скрыв проблему.
-  - `set -x`: **Print Commands.** Перед выполнением каждой команды она будет напечатана в лог сборки. Это помогает четко видеть, какая именно команда выполняется в данный момент и какие у нее аргументы, что неоценимо при отладке.
-
-- **Кэширование зависимостей:**
-   `--mount=type=cache` позволяет монтировать кэш в процессе выполнения `RUN`. Это ускоряет повторные сборки, так как зависимости будут взяты из кэша, хранящегося на хосте. Кэш не попадает в финальный образ, но доступен для повторного использования.
-
-   > Подробнее о кэшировании и оптимизации сборки см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**
-
-  ```dockerfile
-  RUN --mount=type=cache,target=/root/.cache/pip 
-      pip install -r requirements.txt
-  ```
-
-- **Bind mounts при сборке:**
-  `--mount=type=bind` позволяет монтировать директорию или файл с хостовой системы в контейнер во время выполнения команды `RUN`. В отличие от `COPY`, данные не копируются в образ, а временно подключаются с хоста для процесса сборки.
-
-  ```dockerfile
-  RUN --mount=type=bind,source=./src,target=/app/src 
-      go build -o app ./src
-  ```
-
-- **Работа с секретами:**
-  `--mount=type=secret` временно монтирует секрет с хоста и не хранит его в финальном образе.
-
-  ```dockerfile
-  RUN --mount=type=secret,id=ssh,target=/root/.ssh/id_rsa 
-      git clone git@github.com:user/repo.git .
-      
-  RUN --mount=type=secret,id=api_key,target=/run/secrets/api_key 
-      export API_KEY=$(cat /run/secrets/api_key) && 
-      pip install --extra-index-url "$API_KEY"@private-repo.com/packages some-package
-  ```
+- Инструкция `RUN` должна использоваться только для команд, выполняемых при сборке
+- Для запуска команд при старте контейнера используйте [`CMD`](./runtime_execution.md) или [`ENTRYPOINT`](./runtime_execution.md)
+- Каждая инструкция `RUN` создаёт новый слой — объединяйте команды для уменьшения количества слоёв
+- Обзор всех инструкций Dockerfile см. **[Инструкции Dockerfile: Обзор](./overview_definitions.md)**

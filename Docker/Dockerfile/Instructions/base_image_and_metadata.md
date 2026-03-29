@@ -12,7 +12,7 @@
 
 Определяет базовый образ для сборки нового образа. Для повышения безопасности от подмены образа (например, на Docker Hub) рекомендуется указывать хэш образа (`FROM <image>@sha256:<digest>`). Дайджест (хэш) образа можно получить из вывода команды `docker pull my-image:tag`.
 
-> Подробнее о верификации образов см. **[Подпись и верификация образов](../../Docker_security/image_signature_and_verification.md)**
+> Подробнее о верификации образов см. **[Подписание и верификация образов](../../Docker_security/image_signature_and_verification.md)**
 
 Если тег не указан (например, `FROM debian`), Docker по умолчанию использует тег `latest`. **Важно:** При изменении образа, на который указывает тег `latest`, образ будет пересобираться.
 
@@ -53,11 +53,20 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 ## Практические сценарии
 
-### Пример: Использование digest для безопасности
+### Использование digest для безопасности
 
 ```dockerfile
 # Вместо FROM ubuntu:22.04 (тег может измениться)
 FROM ubuntu@sha256:1408f3f47e7d2fec5c1a5b6b8c8e5c8b8c8e5c8b8c8e5c8b8c8e5c8b8c8e5c
+```
+
+### Добавление метаданных для отслеживаемости в CI/CD
+
+```dockerfile
+FROM node:20-alpine
+LABEL org.opencontainers.image.source="https://github.com/company/my-app"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.revision="abc123"
 ```
 
 ## Дополнительная информация
@@ -65,4 +74,5 @@ FROM ubuntu@sha256:1408f3f47e7d2fec5c1a5b6b8c8e5c8b8c8e5c8b8c8e5c8b8c8e5c8b8c8e5
 - Инструкция `FROM` должна быть первой в Dockerfile (после обязательных комментариев и директив)
 - Рекомендуется использовать конкретные теги версий вместо `latest` для воспроизводимости сборок
 - Для языковых образов (Node.js, Python, Go) существуют официальные образы с оптимизированными дистрибутивами (например, `node:alpine`)
-- Подробнее об оптимизации размера образов см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**
+- Подробнее об оптимизации размера образов см. **[Оптимизация сборки](../../Dockerfile/Docker_best_practices/build_optimization.md)**
+- Обзор всех инструкций Dockerfile см. **[Инструкции Dockerfile: Обзор](./overview_definitions.md)**

@@ -115,5 +115,4 @@ CMD ["bundle", "exec", "puma"]
 
 ## Дополнительная информация
 
-- **[Оптимизация сборки](./build_optimization.md):** Общие принципы многоэтапных сборок и кеширования.
-- **[Безопасность в Dockerfile](./security.md):** Создание непривилегированных пользователей.
+Общие принципы многоэтапных сборок и кеширования описаны в **[Оптимизация сборки Docker-образов](./build_optimization.md)**, создание непривилегированных пользователей — в **[Безопасность в Dockerfile](./security.md)**. Для отладки контейнеров см. **[Отладка с помощью docker events](../../Docker_troubleshooting/debugging_with_docker_events.md)** и **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)**. Переменные окружения подробно описаны в **[Инструкции Dockerfile: Переменные Окружения и Аргументы](../Instructions/environment_variables.md)**, а жизненный цикл контейнера — в **[Выполнение приложений в контейнере](./container_execution.md)**.

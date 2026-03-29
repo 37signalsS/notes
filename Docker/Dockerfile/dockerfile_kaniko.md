@@ -1,63 +1,65 @@
-# Сборка Docker-образов без демона с помощью Kaniko
+# Kaniko: Сборка Docker-образов без демона
 
 ## Определения
 
-**Kaniko** — это инструмент от Google для сборки образов контейнеров из `Dockerfile` **без зависимости от Docker-демона**. Он выполняет каждую команду `Dockerfile` полностью в пользовательском пространстве (userspace) внутри контейнера, что делает его идеальным для сред с повышенными требованиями к безопасности, таких как CI/CD пайплайны.
+**Kaniko** — инструмент от Google для сборки образов контейнеров из `Dockerfile` без зависимости от Docker-демона. Выполняет команды `Dockerfile` в пользовательском пространстве (userspace) внутри контейнера. Идеален для CI/CD и Kubernetes.
 
-### Основные концепции
+Официальный репозиторий: **[github.com/GoogleContainerTools/kaniko](https://github.com/GoogleContainerTools/kaniko)**.
 
-#### Проблема: Зависимость от Docker-демона
+## Основные концепции
 
-В некоторых окружениях, особенно в CI/CD-пайплайнах (GitLab CI, Jenkins) или внутри Kubernetes-подов, доступ к сокету Docker-демона (`/var/run/docker.sock`) ограничен или отсутствует по соображениям безопасности. Использование подхода "Docker-in-Docker" (`dind`) решает эту проблему, но является сложным в настройке, небезопасным (требует привилегированного режима) и ресурсоемким.
+### Проблема: Зависимость от Docker-демона
 
-#### Решение: Kaniko
+В CI/CD-пайплайнах (GitLab CI, Jenkins) и Kubernetes-подах доступ к `/var/run/docker.sock` ограничен или отсутствует. Подход "Docker-in-Docker" (`dind`) требует привилегированного режима и небезопасен.
 
-1. Запускается в виде обычного, непривилегированного контейнера.
+### Решение: Kaniko
+
+1. Запускается как обычный непривилегированный контейнер.
 2. Извлекает файловую систему базового образа.
-3. Выполняет каждую команду `Dockerfile`, создавая слои в userspace.
-4. Делает снапшот файловой системы после каждой команды и формирует слои на основе разницы снапшотов.
-5. Отправляет собранный образ в указанный реестр контейнеров.
+3. Выполняет команды `Dockerfile`, создавая слои в userspace.
+4. Формирует слои на основе разницы снапшотов.
+5. Отправляет образ в указанный реестр.
 
-#### Преимущества
+### Преимущества
 
-- **Безопасность:** Не требует привилегированного доступа или монтирования Docker-сокета.
-- **Простота:** Легко интегрируется в существующие пайплайны, так как запускается как обычный контейнер.
-- **Совместимость с Kubernetes:** Идеально подходит для сборки образов непосредственно в кластере.
+- **Безопасность:** Не требует привилегированного доступа или Docker-сокета.
+- **Простота:** Запускается как обычный контейнер.
+- **Совместимость с Kubernetes:** Идеально для сборки в кластере.
 
-### Практические сценарии
+### Альтернативы
 
-#### Сценарий: Сборка образа в GitLab CI
+- **[BuildKit](./dockerfile_buildkit.md)** — современный движок сборки Docker (включен по умолчанию).
+- **[Buildah](../alternative_runtimes_and_tools.md)** — сборка образов без демона.
+
+## Практические сценарии
+
+### Сценарий 1: Сборка образа в GitLab CI
 
 ```yaml
 build-image:
   stage: build
   image:
-    # Рекомендуется использовать debug-образ, так как он содержит shell
+    # Debug-образ содержит shell для отладки
     name: gcr.io/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   script:
-    # 1. Создание файла конфигурации для аутентификации в реестре
-    # Kaniko ожидает найти credentials в /kaniko/.docker/config.json
+    # Аутентификация в реестре
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    # 2. Запуск сборки и отправка образа
-    - /kaniko/executor
-        --context "${CI_PROJECT_DIR}"
-        --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+    # Запуск сборки
+    - /kaniko/executor \
+        --context "${CI_PROJECT_DIR}" \
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
         --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}"
 ```
 
-- **`--context`**: Путь к исходным файлам для сборки.
-- **`--dockerfile`**: Путь к `Dockerfile`.
-- **`--destination`**: Имя и тег итогового образа.
+**Параметры:**
+- `--context` — путь к исходным файлам.
+- `--dockerfile` — путь к `Dockerfile`.
+- `--destination` — имя и тег итогового образа.
 
-#### Сценарий: Сборка с приватным реестром (Harbor) и кастомным CA
+### Сценарий 2: Сборка с приватным реестром и кастомным CA
 
-При работе с on-premise реестрами, использующими сертификаты, подписанные внутренним центром сертификации (CA), необходимо предоставить Kaniko этот CA для проверки доверия.
-
-В этом примере предполагается, что в переменных GitLab CI определены:
-
-- `HARBOR_REGISTRY`, `HARBOR_USER`, `HARBOR_PASSWORD` — для доступа к Harbor.
-- `CUSTOM_CA_CERT` — переменная типа `File` с содержимым публичного ключа CA.
+Для on-premise реестров (Harbor) с внутренними CA-сертификатами:
 
 ```yaml
 build-custom:
@@ -66,31 +68,22 @@ build-custom:
     name: gcr.io/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   script:
-    # 1. Аутентификация в приватном реестре
+    # Аутентификация
     - echo "{\"auths\":{\"$HARBOR_REGISTRY\":{\"username\":\"$HARBOR_USER\",\"password\":\"$HARBOR_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    
-    # 2. Сборка с передачей CA и аргументов
-    - /kaniko/executor
-      --context $CI_PROJECT_DIR
-      --dockerfile $CI_PROJECT_DIR/Dockerfile
-      --destination "$HARBOR_REGISTRY/my-project/my-image:latest"
-      --build-arg "APP_VERSION=${CI_COMMIT_TAG}" # Пример передачи build-arg
-      --registry-certificate $CUSTOM_CA_CERT # Путь к файлу с CA, предоставленный GitLab Runner
+    # Сборка с CA и build-arg
+    - /kaniko/executor \
+      --context $CI_PROJECT_DIR \
+      --dockerfile $CI_PROJECT_DIR/Dockerfile \
+      --destination "$HARBOR_REGISTRY/my-project/my-image:latest" \
+      --build-arg "APP_VERSION=${CI_COMMIT_TAG}" \
+      --registry-certificate $CUSTOM_CA_CERT
 ```
 
-- **`--registry-certificate`**: Указывает путь к файлу с CA-сертификатом, которому Kaniko должен доверять.
-- **`--build-arg`**: Передает переменные времени сборки в `Dockerfile`.
+**Параметры:**
+- `--registry-certificate` — путь к CA-сертификату.
+- `--build-arg` — переменные времени сборки.
 
-### Дополнительная информация
-
-#### Кэширование с Kaniko для ускорения сборок
-
-Для ускорения повторных сборок в CI/CD Kaniko поддерживает кэширование слоев в удаленном реестре. Это особенно эффективно для распределенных и эфемерных `runners`.
-
-- **`--cache=true`**: Включает механизм кэширования.
-- **`--cache-repo`**: Указывает репозиторий для хранения кэшированных слоев. Если не указан, Kaniko использует репозиторий из `--destination`, добавляя к нему суффикс (например, `/cache`).
-
-**Пример использования с кэшированием в GitLab CI:**
+### Сценарий 3: Кэширование для ускорения сборок
 
 ```yaml
 build-image-with-cache:
@@ -100,12 +93,18 @@ build-image-with-cache:
     entrypoint: [""]
   script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor
-        --context "${CI_PROJECT_DIR}"
-        --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
-        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}"
-        --cache=true
+    - /kaniko/executor \
+        --context "${CI_PROJECT_DIR}" \
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
+        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}" \
+        --cache=true \
         --cache-repo "${CI_REGISTRY_IMAGE}/cache"
 ```
 
-В этом примере кэшированные слои будут храниться в отдельном образе `${CI_REGISTRY_IMAGE}/cache` в том же реестре.
+Кэшированные слои хранятся в образе `${CI_REGISTRY_IMAGE}/cache`.
+
+## Дополнительная информация
+
+- **[GitLab CI Tutorials](../../CI-CD/GitLab_CI/Tutorials/)** — руководства по GitLab CI
+- **[Docker Swarm CI/CD](../../Docker_swarm/CI_CD/overview.md)** — развертывание в Swarm
+- **[Security Overview](../Docker_security/overview.md)** — безопасность сборки

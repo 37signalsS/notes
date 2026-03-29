@@ -1,75 +1,84 @@
-# Установка Harbor
+# Harbor: Установка
 
-Harbor устанавливается с помощью Docker Compose.
+## Определения
 
-## Шаг 1.1 Ставим docker
+* **Docker Compose**: Инструмент для определения и запуска многоконтейнерных приложений Docker. Используется для установки Harbor на отдельном хосте.
+* **Helm**: Менеджер пакетов для Kubernetes, упрощающий развертывание сложных приложений через чарты (наборы манифестов).
+* **Оффлайн-установка (Air-gapped)**: Развертывание в изолированной среде без доступа к интернету. Требует предварительной загрузки артефактов и настройки локальных репозиториев.
 
-Установим docker и docker-compose:
+## Основные концепции
+
+Harbor поддерживает два основных способа развертывания:
+
+| Способ | Назначение | Требования |
+| :--- | :--- | :--- |
+| **Docker Compose** | Тестовые среды, небольшие продакшен-развертывания | Один хост с Docker, доменное имя или IP |
+| **Helm (Kubernetes)** | Продакшен-среды, масштабируемые кластеры | Kubernetes-кластер, внешние БД и кэш (рекомендуется) |
+
+**Ключевые требования для обоих способов:**
+
+* **TLS-сертификаты**: Все клиенты должны доверять сертификату Harbor. См. [создание CA и сертификатов](./certificates.md).
+* **Доменное имя**: `hostname` должен совпадать с CN/SAN в сертификате.
+* **Пароли**: Храните в защищённом месте (`.env` с правами `600`, Kubernetes Secrets).
+
+**Оффлайн-режим:** Для закрытых контуров без доступа к интернету конфигурация Trivy требует дополнительных настроек (`skip_update: true`, `offline_scan: true`). Обновление баз уязвимостей выполняется вручную (см. [оффлайн-обновление Trivy](./offline_trivy_update.md)).
+
+## Практические сценарии
+
+### Сценарий 1: Установка Harbor с Docker Compose
+
+#### 1. Установка Docker
 
 ```bash
-apt update && 
-apt install containerd docker.io docker-compose -y
-systemctl enable docker --now && 
-sudo usermod -aG docker $USER
+apt update
+apt install -y containerd docker.io docker-compose
+systemctl enable --now docker
+usermod -aG docker $USER
 ```
 
-## Шаг 1.2 Скачиваем Harbor и готовим конфиги
-
-Клонируем репозиторий Harbor, используя актуальную версию:
+#### 2. Загрузка Harbor
 
 ```bash
-LATEST=$(curl -s https://api.github.com/repos/goharbor/harbor/releases/latest 
-  | grep browser_download_url 
-  | grep offline-installer 
-  | cut -d '"' -f 4)
+# Загрузка оффлайн-установщика последней версии
+LATEST=$(curl -s https://api.github.com/repos/goharbor/harbor/releases/latest \
+  | grep browser_download_url | grep offline-installer | cut -d '"' -f 4)
 
 FILE=$(basename "$LATEST")
-
-wget "$LATEST" && 
-tar xvzf "$FILE" && 
-rm "$FILE" && 
+wget "$LATEST"
+tar xvzf "$FILE"
+rm "$FILE"
 cd harbor
 ```
 
-Создаём файл `.env` для хранения паролей:
+#### 3. Настройка переменных окружения
+
+Создайте файл `.env` с паролями:
 
 ```bash
 sudo nano .env
 ```
 
-Прописываем в переменных пароль Админа и БД:
-
-```
-HARBOR_ADMIN_PASSWORD=super_admin_pazzword
-DB_PASSWORD=super_db_mazafaka
+```ini
+HARBOR_ADMIN_PASSWORD=<надёжный_пароль_администратора>
+DB_PASSWORD=<надёжный_пароль_БД>
 ```
 
-Изменяем права:
+Установите права доступа:
 
 ```bash
 sudo chmod 600 .env
 ```
 
-Далее работаем с файлом `harbor.yml`. Создаём резервную копию:
+#### 4. Настройка harbor.yml
+
+Создайте резервную копию и отредактируйте конфигурацию:
 
 ```bash
-sudo cp harbor.yml.copy harbor.yml
-```
-
-Чтобы хосты доверяли этому репозиторию, нужно создать сертификаты в Центре Сертификации (CA).
-Создайте сертификаты в вашем ЦА с именами:
-`harbor.example.local.key`
-`harbor.example.local.crt`
-где `harbor.example.local` доменное имя вашего будущего репозитория.
-Или перейдите на Шаг 3 (в отдельном разделе ниже), затем вернитесь сюда.
-
-Открываем на редактирование:
-
-```bash
+cp harbor.yml harbor.yml.bak
 sudo nano harbor.yml
 ```
 
-Удаляем содержимое файла и вставляем следующие параметры:
+Минимальная конфигурация:
 
 ```yaml
 hostname: harbor.example.local
@@ -89,9 +98,9 @@ database:
 data_volume: /data
 trivy:
   ignore_unfixed: false
-  skip_update: true           # Если нет интернета, базу Trivy нужно обновлять вручную
-  skip_java_db_update: true   # Если нет интернета, базу Trivy нужно обновлять вручную
-  offline_scan: true          # Если нет интернета, то сканирование будет в оффлайн режиме
+  skip_update: true
+  skip_java_db_update: true
+  offline_scan: true
   security_check: vuln
   insecure: false
   timeout: 5m0s
@@ -101,10 +110,10 @@ jobservice:
   job_loggers:
     - STD_OUTPUT
     - FILE
-  logger_sweeper_duration: 1 #days
+  logger_sweeper_duration: 1
 notification:
   webhook_job_max_retry: 3
-  webhook_job_http_client_timeout: 3 #seconds
+  webhook_job_http_client_timeout: 3
 log:
   level: info
   local:
@@ -130,66 +139,60 @@ cache:
   expire_hours: 24
 ```
 
-*Примечание: Данная конфигурация Trivy предназначена для работы в закрытом контуре (без доступа к интернету). Это означает, что базы сканера уязвимостей Trivy не будут обновляться напрямую, а только вручную (см. [Оффлайн обновление Trivy](./offline_trivy_update.md)). Настройки конфигурации `skip_update: true` и `offline_scan: true` сделаны исходя из этого требования.*
+**Важно:** Перед запуском убедитесь, что сертификаты созданы и размещены в директории, указанной в `https.certificate` и `https.private_key` (см. [создание сертификатов](./certificates.md)).
 
-## Шаг 2. Запуск установки
-
-Запустите установку с компонентом Trivy:
+#### 5. Запуск установки
 
 ```bash
 sudo ./install.sh --with-trivy
 ```
 
-## Шаг 2.1 Вход в UI
+#### 6. Вход в веб-интерфейс
 
-После установки вы сможете войти в веб-интерфейс Harbor по адресу, указанному в `hostname` (например, `https://harbor.example.local`). Логин и пароль администратора были заданы в `.env` файле.
+Откройте `https://harbor.example.local` и войдите под учётной записью:
 
-## Установка в Kubernetes через Helm
+* **Логин:** `admin`
+* **Пароль:** значение из `HARBOR_ADMIN_PASSWORD`
 
-Для установки в [Kubernetes](../../../Kubernetes/kubernetes_overview.md) рекомендуется использовать [Helm](https://helm.sh/). Это предпочтительный способ для производственных сред, так как он упрощает управление сложным приложением, каким является Harbor.
+---
 
-### Выбор Helm-чарта
+### Сценарий 2: Установка Harbor в Kubernetes через Helm
 
-* **Bitnami Charts**: Рекомендуется использовать чарты от [Bitnami](https://bitnami.com/stack/harbor/helm). Они хорошо поддерживаются и имеют ряд преимуществ с точки зрения безопасности, например, запуск контейнеров от имени non-root пользователя. Кроме того, их образы часто хранятся на альтернативных реестрах, таких как `Quay.io`, что может быть полезно при ограничениях доступа к Docker Hub.
+#### Предварительные требования
 
-### Архитектура с внешними зависимостями
-
-Для максимального контроля и надежности рекомендуется разворачивать Harbor с внешними сервисами, а не использовать встроенные в чарт зависимости.
-
-* **База данных**: Используйте внешний кластер [PostgreSQL](../../../Databases/PostgreSQL/postgresql_overview.md). Это позволяет централизованно управлять резервным копированием, восстановлением и настройками производительности БД.
-* **Кэш**: Используйте внешний [Redis](../../../Databases/redis_overview.md).
-
-### Конфигурация через `values.yaml`
-
-Вся конфигурация производится через файл `values.yaml`. Ключевые параметры для настройки:
-
-* **`ingress`**: Настройка Ingress-ресурса для доступа к веб-интерфейсу Harbor. Важно правильно указать `hostname` и `annotations` для вашего Ingress-контроллера.
-* **`externalPsql` и `externalRedis`**: Секции для указания параметров подключения к внешним экземплярам PostgreSQL и Redis. Здесь прописываются хосты, порты, имена пользователей и пароли.
-  * **Важно:** Некоторые Helm-чарты могут требовать указания паролей в открытом виде в `values.yaml`. Это является их недостатком. Если возможно, следует использовать чарты, поддерживающие чтение паролей из Kubernetes Secrets.
-* **`persistence`**: Настройка Persistent Volumes для хранения данных реестра, логов и других компонентов. Необходимо указать `storageClass` и требуемый объем.
-* **`image`**: Возможность переопределить реестр и тег для каждого из образов компонентов Harbor, что полезно для работы в закрытых контурах или при использовании прокси-реестров.
-
-### Пример: Установка в k3s с помощью ArgoCD
-
-Этот пример демонстрирует установку Harbor в кластер k3s с использованием GitOps-подхода через ArgoCD.
-
-**Предварительные условия:**
-
-* Установлен и настроен [ArgoCD](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md#argocd).
-* Установлен [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) для автоматического выпуска TLS-сертификатов.
-* Присутствуют внешние экземпляры PostgreSQL и Redis.
+* Kubernetes-кластер (например, k3s)
+* Установленный [Helm](https://helm.sh/)
+* Установленный [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) (опционально, для автоматических TLS-сертификатов)
+* Внешние PostgreSQL и Redis (рекомендуется для продакшена)
 
 #### 1. Подготовка базы данных
 
-Перед установкой необходимо создать базу данных для Harbor в вашем кластере PostgreSQL.
+Создайте базу данных для Harbor в PostgreSQL:
 
 ```sql
 CREATE DATABASE harbor;
 ```
 
-#### 2. Манифест Application для ArgoCD
+#### 2. Выбор Helm-чарта
 
-Создайте манифест `Application` для развертывания Harbor. Этот манифест описывает, откуда брать Helm-чарт, в какой namespace его устанавливать и с какими параметрами.
+Рекомендуется использовать чарты от [Bitnami](https://bitnami.com/stack/harbor/helm):
+
+* Хорошо поддерживаются
+* Запуск контейнеров от non-root пользователя (безопасность)
+* Образы доступны на альтернативных реестрах (Quay.io)
+
+#### 3. Конфигурация values.yaml
+
+Ключевые параметры:
+
+* **`expose.ingress`**: Ingress-ресурс для доступа к веб-интерфейсу
+* **`externalDatabase` / `externalRedis`**: Подключение к внешним сервисам
+* **`persistence`**: Persistent Volumes для хранения данных
+* **`image`**: Переопределение реестра и тегов образов
+
+#### 4. Развертывание через ArgoCD
+
+Пример манифеста `Application`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -202,13 +205,10 @@ spec:
   source:
     repoURL: 'https://charts.bitnami.com/bitnami'
     chart: harbor
-    targetRevision: 19.3.5 # Укажите актуальную версию чарта
+    targetRevision: 19.3.5
     helm:
       values: |
-        # Админ пароль по умолчанию, смените его после установки
-        harborAdminPassword: "password"
-
-        # Внешний URL, по которому будет доступен Harbor
+        harborAdminPassword: "<смените_после_установки>"
         expose:
           type: ingress
           tls:
@@ -216,16 +216,11 @@ spec:
             secretName: harbor-tls
           ingress:
             hostname: registry.krukov.local
-            # Аннотации для cert-manager
             annotations:
               cert-manager.io/cluster-issuer: "letsencrypt-staging"
               cert-manager.io/renew-before: "360h"
-              # ... другие аннотации
-
-        # Настройка хранилища (PV/PVC)
         persistence:
           enabled: true
-          # Используется StorageClass по умолчанию (в примере это local-path-provisioner)
           registry:
             size: 30Gi
           jobservice:
@@ -236,36 +231,44 @@ spec:
             size: 1Gi
           trivy:
             size: 5Gi
-
-        # Отключение встроенной базы данных PostgreSQL
         postgresql:
           enabled: false
-
-        # Подключение к внешней базе данных PostgreSQL
         externalDatabase:
           host: "postgresql.database.svc.cluster.local"
           port: 5432
           user: "postgres"
-          password: "password"
+          password: "<пароль>"
           database: "harbor"
-
-        # Отключение встроенного Redis
         redis:
           enabled: false
-
-        # Подключение к внешнему Redis
         externalRedis:
           host: "redis-master.database.svc.cluster.local"
           port: 6379
-          password: "password"
+          password: "<пароль>"
           database: 0
 ```
 
-**Ключевые моменты конфигурации:**
+**Ключевые моменты:**
 
-* **`expose.ingress`**: Настраивает Ingress-ресурс. Аннотации `cert-manager.io/*` указывают `cert-manager` выпустить сертификат для домена `registry.krukov.local` и сохранить его в секрете `harbor-tls`.
-* **`persistence`**: Включает постоянное хранилище. Размер тома для реестра (`registry`) увеличен до 30Gi. Так как `storageClass` не указан, будет использован `StorageClass` по умолчанию в кластере.
-* **`postgresql.enabled: false`**: Отключает развертывание PostgreSQL в составе чарта.
-* **`externalDatabase`**: Содержит данные для подключения к вашему существующему экземпляру PostgreSQL.
-* **`redis.enabled: false`**: Отключает развертывание Redis в составе чарта.
-* **`externalRedis`**: Содержит данные для подключения к вашему существующему экземпляру Redis.
+* **`expose.ingress.annotations`**: cert-manager автоматически выпустит сертификат для `registry.krukov.local`
+* **`persistence`**: Том реестра увеличен до 30Gi
+* **`postgresql.enabled: false`**: Отключает встроенную БД, используется внешняя
+* **`externalDatabase`**: Параметры подключения к существующему PostgreSQL
+
+## Дополнительная информация
+
+### Архитектура с внешними зависимостями
+
+Для продакшен-сред рекомендуется использовать внешние сервисы:
+
+* **PostgreSQL**: Централизованное управление БД, резервное копирование, настройка производительности. См. [PostgreSQL overview](../../../Databases/PostgreSQL/overview.md).
+* **Redis**: Внешний кэш для сессий и очередей. См. [Redis overview](../../../Databases/redis_overview.md).
+
+### Безопасность
+
+* **Пароли в values.yaml**: Некоторые чарты требуют указания паролей в открытом виде. По возможности используйте чарты с поддержкой Kubernetes Secrets.
+* **TLS-сертификаты**: Для публичных сервисов используйте доверенные CA (Let's Encrypt). Для внутренних — собственный CA (см. [certificates.md](./certificates.md)).
+
+### Связанные документы
+
+[Обзор Harbor](./overview.md) описывает возможности и назначение. [Создание сертификатов](./certificates.md) — создание CA и серверных сертификатов. [Работа с Harbor](./usage.md) — аутентификация, тегирование, push/pull. [Оффлайн-обновление Trivy](./offline_trivy_update.md) — обновление баз уязвимостей.

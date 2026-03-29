@@ -78,5 +78,10 @@ USER nonroot
 
 ## Дополнительная информация
 
-- Комплексное руководство по всем аспектам безопасности Docker, включая защиту демона и управление секретами, находится в документе **[Безопасность Docker](../../Docker_security/overview.md)**.
-- Подробнее о безопасном развертывании PostgreSQL можно прочитать в руководстве [**Развертывание PostgreSQL в Docker**](../../../Databases/PostgreSQL/Operations/docker_deployment.md).
+- **[Безопасность Docker](../../Docker_security/overview.md)** — комплексное руководство (защита демона, управление секретами)
+- **[Оптимизация сборки Docker-образов](./build_optimization.md)** — многоэтапные сборки, кеширование
+- **[Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)** — диагностика минималистичных образов
+- **[Развертывание PostgreSQL в Docker](../../../Databases/PostgreSQL/Operations/docker_deployment.md)** — безопасная конфигурация БД
+
+Языковые лучшие практики с примерами создания непривилегированных пользователей:
+- **[Python](./python.md)**, **[Node.js](./nodejs.md)**, **[Go](./go.md)**, **[Ruby](./ruby.md)**

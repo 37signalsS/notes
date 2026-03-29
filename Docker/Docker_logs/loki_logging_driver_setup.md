@@ -4,7 +4,7 @@
 
 **Драйвер логирования Loki** — это плагин для Docker от Grafana Labs, который позволяет отправлять логи из контейнеров напрямую в систему сбора логов [Grafana Loki](../../Loki/loki_overview.md) без промежуточных агентов.
 
-## Основные концепции
+## Базовые концепции
 
 ### Архитектура
 
@@ -24,7 +24,7 @@
 docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
 ```
 
-> **Рекомендация:** Для production-систем используйте фиксированную версию вместо `latest` (например, `grafana/loki-docker-driver:3.2.0`), чтобы избежать непредсказуемых изменений при обновлении.
+> **Рекомендация:** Для production-систем используйте фиксированную версию вместо `latest` (например, `grafana/loki-docker-driver:3.7.0`), чтобы избежать непредсказуемых изменений при обновлении. Актуальная версия Loki — 3.7.x (март 2026).
 
 - **`docker plugin install ...`**: Команда для установки плагинов в Docker.
 - **`grafana/loki-docker-driver:latest`**: Имя плагина. Для production-систем рекомендуется использовать фиксированную версию вместо `latest`.
@@ -95,6 +95,4 @@ docker run \
 
 ## Дополнительная информация
 
-- **Общая структура логирования:** [Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)
-- **Обзор Loki:** [Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)
-- **Пример развертывания Loki:** [Настройка Loki Stack через Docker Compose](../../Loki/Docker_Compose/index.md)
+Обзор системы логирования Docker см. в **[Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)**. Для детального изучения Loki рекомендуется начать с **[Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)**, а пример развертывания доступен в **[Настройка Loki Stack через Docker Compose](../../Loki/Docker_Compose/index.md)**.
