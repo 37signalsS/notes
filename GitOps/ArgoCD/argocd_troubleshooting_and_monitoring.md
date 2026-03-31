@@ -1,5 +1,7 @@
 # ArgoCD: Устранение неполадок и мониторинг
 
+См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка](./argocd_installation_and_setup.md), [Синхронизация](./synchronization.md).
+
 ## Определения
 
 **Troubleshooting ArgoCD** — процесс диагностики и устранения проблем с синхронизацией, развёртыванием и мониторингом приложений в ArgoCD.
@@ -195,6 +197,8 @@ sum(increase(argocd_app_sync_status[24h])) * 100
 - **Backstage:** Developer Portal для единой точки входа
 - **Grafana:** Визуализация метрик из нескольких источников
 
+Подробнее о метриках DORA — [Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md).
+
 ## Дополнительная информация
 
 ### Полезные команды CLI
@@ -216,8 +220,4 @@ argocd app rollback <app-name> [revision]
 argocd app wait <app-name> --sync --health
 ```
 
-### Ссылки
-
-- **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)** — основное руководство по метрикам
-- **[Синхронизация](./synchronization.md)** — политики и опции
-- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/)**
+[Официальная документация по troubleshooting](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/).

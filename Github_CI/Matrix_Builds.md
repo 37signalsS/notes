@@ -84,7 +84,4 @@ jobs:
 
 ## Дополнительная информация
 
-- **[Ключевые концепции GitHub Actions](./Core_Concept.md)**: Общее описание платформы.
-- **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**: Как матрица встраивается в `job` через `strategy`.
-- **[Синтаксис Workflow](./Workflow_Syntax.md)**: Описание контекста `matrix`.
-- **[Оптимизация воркфлоу](./Optimization.md)**: Как матрица помогает ускорять CI.
+Общее описание платформы в **[Ключевые концепции GitHub Actions](./Core_Concept.md)**, интеграция в `strategy` в **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**, контекст `matrix` в **[Синтаксис Workflow](./Workflow_Syntax.md)**, оптимизация через распараллеливание в **[Оптимизация воркфлоу](./Optimization.md)**. Официальная документация: [Using a matrix for your jobs](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs).

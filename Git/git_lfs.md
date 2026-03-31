@@ -10,13 +10,13 @@
 
 Git LFS решает эту проблему, заменяя большие файлы в репозитории Git на маленькие текстовые "указатели" (pointers). Сами большие файлы хранятся на удаленном LFS-сервере. Когда вы клонируете репозиторий или переключаете ветку, Git LFS автоматически скачивает нужные версии больших файлов с LFS-сервера.
 
-> **См. также:** Подробная информация о `.gitattributes` и `.lfsconfig` в документе [Специальные файлы конфигурации Git](./git_special_files_overview.md#gitattributes).
+### Преимущества Git LFS
 
-Преимущества использования Git LFS:
+- **Оптимизация производительности:** Ускоряет операции с репозиторием, поскольку Git работает только с легкими указателями.
+- **Управление версиями больших файлов:** Позволяет эффективно версионировать файлы, которые обычно не подходят для Git.
+- **Сохранение истории:** История изменений больших файлов сохраняется без раздувания основного репозитория.
 
-* **Оптимизация производительности:** Ускоряет операции с репозиторием, поскольку Git работает только с легкими указателями.
-* **Управление версиями больших файлов:** Позволяет эффективно версионировать файлы, которые обычно не подходят для Git.
-* **Сохранение истории:** История изменений больших файлов сохраняется без раздувания основного репозитория.
+---
 
 ## Практические сценарии
 
@@ -60,5 +60,12 @@ Git LFS решает эту проблему, заменяя большие фа
 
 ## Дополнительная информация
 
-* Официальный сайт Git LFS: [Git Large File Storage](https://git-lfs.com/)
-* GitHub документация по Git LFS: [About Git Large File Storage - GitHub Docs](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage)
+### Официальные ресурсы
+
+- **Git LFS:** [git-lfs.com](https://git-lfs.com/)
+- **Документация GitHub:** [docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage)
+- **Документация GitLab:** [docs.gitlab.com/ee/topics/git/git_lfs.html](https://docs.gitlab.com/ee/topics/git/git_lfs.html)
+
+### Связанные темы
+
+Конфигурация `.lfsconfig` описана в [git_lfs_config.md](./git_lfs_config.md). Специальные файлы Git в [git_special_files_overview.md](./git_special_files_overview.md). Обработка бинарных файлов через `.gitattributes` в [git_attributes.md](./git_attributes.md).

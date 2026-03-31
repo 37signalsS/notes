@@ -1,27 +1,54 @@
-# Практическое руководство по StatefulSet
+# StatefulSet: Практическое руководство
 
-## Сценарий использования: Stateful-приложения (Kafka, базы данных)
+## Определения
 
-`StatefulSet` является единственным правильным выбором для запуска приложений, которые требуют стабильного хранения данных и сетевой идентификации. Классический пример — **Apache Kafka**.
+**StatefulSet** — контроллер Kubernetes для управления stateful-приложениями, требующими стабильных сетевых идентификаторов и персистентного хранилища.
 
-**Проблема:** Если развернуть Kafka с помощью `Deployment`, при любом рестарте пода (из-за сбоя ноды, обновления или масштабирования) он потеряет связь со своим диском (`PersistentVolume`). `Deployment` создает новый под как "чистый лист", без привязки к состоянию предыдущего. Это неминуемо приведет к **потере данных** в брокере Kafka.
+> **SSoT:** Полное описание концепций см. в **[Ключевые концепции StatefulSet](./statefulset_core_concepts.md)**.
 
-**Решение с `StatefulSet`:**
+## Основные концепции
 
-`StatefulSet` решает эту проблему, предоставляя каждому поду:
+### Архитектурные компоненты
 
-1. **Стабильное имя**: `kafka-0`, `kafka-1`, и т.д.
-2. **Стабильный PVC**: Для `kafka-0` будет автоматически создан и привязан PVC `data-kafka-0`, для `kafka-1` — `data-kafka-1`.
+Для работы StatefulSet требуется комбинация компонентов:
 
-При рестарте пода `kafka-0` (даже на другой ноде) `StatefulSet` гарантирует, что он будет снова подключен к своему уникальному PVC `data-kafka-0`, сохраняя все данные.
+| Компонент | Назначение |
+|-----------|------------|
+| **StatefulSet** | Главный оркестратор: предоставляет подам стабильные имена и привязывает к дискам |
+| **Headless Service** | Сервис с `clusterIP: None` для стабильных DNS-имен подов |
+| **PersistentVolumeClaim (PVC)** | Запрос пода на выделение диска; создается автоматически через `volumeClaimTemplates` |
+| **PersistentVolume (PV)** | Физическое хранилище (NFS, Ceph, диск облачного провайдера) |
 
-## Пример: Развертывание Nginx с StatefulSet
+Подробнее: [Headless Service](../../Networking/Service/service_type_headless.md), [PV и PVC](../../Storage/pv_and_pvc.md).
 
-Развернем простое stateful-приложение на базе Nginx, где каждый экземпляр будет иметь свой собственный, постоянный `index.html`.
+### Именование и DNS
 
-### Шаг 1: Создание Headless Service
+- **Формат имени пода:** `<имя-StatefulSet>-<порядковый-номер>` (например, `kafka-0`, `kafka-1`)
+- **DNS-запись:** `pod-ordinal.service.namespace.svc.cluster.local`
+- **Метка для таргетирования:** `statefulset.kubernetes.io/pod-name: <pod-name>`
 
-Необходимо для присвоения подам уникальных DNS-имен в формате `<pod-name>.<service-name>.<namespace>.svc.cluster.local`.
+### Хранилище
+
+- **Имя PVC:** `<имя-claim>-<имя-pod>` (например, `data-kafka-0`)
+- **Сохранение:** PVC сохраняется после удаления пода
+- **Важно:** При удалении StatefulSet PVC **не удаляются автоматически**
+
+## Практические сценарии
+
+### Сценарий 1: Stateful-приложения (Kafka, базы данных)
+
+**Проблема:** При развертывании Kafka через `Deployment` под теряет связь со своим диском при рестарте, что приводит к **потере данных**.
+
+**Решение:** `StatefulSet` гарантирует:
+1. Стабильное имя: `kafka-0`, `kafka-1`
+2. Стабильный PVC: `data-kafka-0` для `kafka-0`, `data-kafka-1` для `kafka-1`
+3. Подключение к тому же PVC при пересоздании даже на другой ноде
+
+### Сценарий 2: Развертывание Nginx с StatefulSet
+
+Развертывание stateful-приложения на базе Nginx, где каждый экземпляр имеет собственный `index.html`.
+
+#### Шаг 1: Создание Headless Service
 
 ```yaml
 # service-headless.yaml
@@ -30,15 +57,21 @@ kind: Service
 metadata:
   name: my-app-headless
 spec:
-  clusterIP: None # <-- Ключевой параметр, делающий сервис "безголовым"
+  clusterIP: None # Ключевой параметр "безголового" сервиса
   selector:
-    app: my-stateful-app # Должен соответствовать меткам подов
+    app: my-stateful-app
   ports:
   - port: 80
     name: web
 ```
 
-### Шаг 2: Создание StatefulSet
+Применение:
+
+```bash
+kubectl apply -f service-headless.yaml
+```
+
+#### Шаг 2: Создание StatefulSet
 
 ```yaml
 # statefulset.yaml
@@ -47,13 +80,12 @@ kind: StatefulSet
 metadata:
   name: my-app
 spec:
-  # serviceName должен соответствовать имени Headless Service
-  serviceName: "my-app-headless"
+  serviceName: "my-app-headless" # Должен соответствовать имени Headless Service
   replicas: 2
   selector:
     matchLabels:
-      app: my-stateful-app # Должен соответствовать меткам в шаблоне
-  template: # Шаблон для создания подов
+      app: my-stateful-app
+  template:
     metadata:
       labels:
         app: my-stateful-app
@@ -65,60 +97,55 @@ spec:
         - containerPort: 80
           name: web
         volumeMounts:
-        - name: data-volume # Имя, которое будет связано с PVC
-          mountPath: /usr/share/nginx/html # Путь монтирования внутри контейнера
-        env: # Добавление переменных окружения
-        - name: POD_IP # Название переменной окружения
+        - name: data-volume
+          mountPath: /usr/share/nginx/html
+        env:
+        - name: POD_IP
           valueFrom:
             fieldRef:
-              fieldPath: status.podIP # берет из описания пода IP и прокидывает его в контейнер как env
-
-  # Шаблон для автоматического создания PVC для каждого пода
+              fieldPath: status.podIP
   volumeClaimTemplates:
   - metadata:
-      name: data-volume # Имя PVC
+      name: data-volume
     spec:
-      accessModes: [ "ReadWriteOnce" ]
-      # storageClassName: "your-storage-class" # Укажите ваш StorageClass
+      accessModes: ["ReadWriteOnce"]
       resources:
         requests:
-          storage: 1Gi # Размер диска для каждого пода
+          storage: 1Gi
 ```
 
-### Шаг 3: Проверка развертывания и состояния
-
-**Применить манифесты:**
+Применение:
 
 ```bash
-kubectl apply -f service-headless.yaml
 kubectl apply -f statefulset.yaml
 ```
 
-**Проверить поды и PVC:**
+#### Шаг 3: Проверка развертывания
 
-Поды (`my-app-0`, `my-app-1`) и PVC (`data-volume-my-app-0`, `data-volume-my-app-1`) будут созданы последовательно.
+**Проверка подов и PVC:**
 
 ```bash
 kubectl get pods,pvc -l app=my-stateful-app
 ```
 
-**Записать уникальные данные в каждый под:**
+Ожидаемый вывод:
+- Поды: `my-app-0`, `my-app-1` (создаются последовательно)
+- PVC: `data-volume-my-app-0`, `data-volume-my-app-1`
+
+**Запись уникальных данных в каждый под:**
 
 ```bash
 kubectl exec my-app-0 -- /bin/sh -c 'echo "Hello from Pod 0" > /usr/share/nginx/html/index.html'
 kubectl exec my-app-1 -- /bin/sh -c 'echo "Hello from Pod 1" > /usr/share/nginx/html/index.html'
 ```
 
-**Проверить восстановление состояния:**
-
-Удалим один из подов, чтобы увидеть, как `StatefulSet` его восстановит с тем же состоянием.
+**Проверка восстановления состояния:**
 
 ```bash
 kubectl delete pod my-app-1
-# ...подождите немного...
-kubectl get pods # Убедитесь, что my-app-1 снова запущен
+kubectl get pods # Дождаться восстановления my-app-1
 kubectl exec my-app-1 -- cat /usr/share/nginx/html/index.html
-# Вывод должен быть: Hello from Pod 1
+# Вывод: Hello from Pod 1 (данные сохранены)
 ```
 
 **Проверка DNS:**
@@ -127,59 +154,134 @@ kubectl exec my-app-1 -- cat /usr/share/nginx/html/index.html
 kubectl run -it --rm --image=busybox dns-test -- /bin/sh
 
 # Внутри dns-test пода:
-# Запрос к сервису вернет IP обоих подов
 nslookup my-app-headless
+# Вернет IP обоих подов
 
-# Запрос к конкретному поду вернет его собственный IP
 nslookup my-app-0.my-app-headless
+# Вернет IP конкретного пода
 ```
 
-### Шаг 4: Публикация конкретного пода StatefulSet
+### Сценарий 3: Публикация конкретного пода через Ingress
 
-**Проблема:** Стабильное DNS-имя пода (например, `my-app-0.my-app-headless...`) доступно только внутри кластера. Вы не можете использовать это FQDN напрямую в `Ingress`, так как поле `service.name` ожидает имя сервиса, а не произвольное доменное имя.
+**Проблема:** Стабильное DNS-имя пода доступно только внутри кластера. `Ingress` требует имя сервиса, а не FQDN пода.
 
-**Решение:** Создать стандартный сервис типа `ClusterIP`, который будет нацелен только на один конкретный под `StatefulSet`. Это достигается с помощью метки `statefulset.kubernetes.io/pod-name`, которую Kubernetes автоматически добавляет к каждому поду.
+**Решение:** Создать `Service` типа `ClusterIP`, нацеленный на конкретный под через метку `statefulset.kubernetes.io/pod-name`.
 
-**Пример:** Опубликуем под `my-app-0` через Ingress.
+#### Шаг 1: Сервис для конкретного пода
 
-1. **Создаем сервис, нацеленный на `my-app-0`:**
+```yaml
+# service-for-pod-0.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-0-service
+spec:
+  selector:
+    statefulset.kubernetes.io/pod-name: my-app-0 # Метка уникальна для пода
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+```
 
-    ```yaml
-    # service-for-pod-0.yaml
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: my-app-0-service # Имя нового сервиса
-    spec:
-      selector:
-        # Указываем метку, уникальную для пода my-app-0
-        statefulset.kubernetes.io/pod-name: my-app-0
-      ports:
-        - protocol: TCP
-          port: 80
-          targetPort: 80
-    ```
+Применение:
 
-2. **Создаем `Ingress`, указывающий на этот сервис:**
+```bash
+kubectl apply -f service-for-pod-0.yaml
+```
 
-    ```yaml
-    # ingress-for-pod-0.yaml
-    apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: my-app-0-ingress
-    spec:
-      rules:
-      - host: "app-0.example.com"
-        http:
-          paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-app-0-service # Ссылаемся на наш новый сервис
-                port:
-                  number: 80
-    ```
+#### Шаг 2: Ingress для сервиса
 
-После применения этих манифестов, трафик, приходящий на `app-0.example.com`, будет направлен через `Ingress` на `my-app-0-service` и далее только на под `my-app-0`.
+```yaml
+# ingress-for-pod-0.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-0-ingress
+spec:
+  rules:
+  - host: "app-0.example.com"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-app-0-service
+            port:
+              number: 80
+```
+
+Применение:
+
+```bash
+kubectl apply -f ingress-for-pod-0.yaml
+```
+
+Результат: Трафик на `app-0.example.com` направляется только на `my-app-0`.
+
+### Сценарий 4: Масштабирование с проверкой порядка
+
+**Увеличение масштаба:**
+
+```bash
+kubectl scale statefulset my-app --replicas=5
+kubectl get pods -w
+# Поды создаются последовательно: my-app-2, my-app-3, my-app-4
+```
+
+**Уменьшение масштаба:**
+
+```bash
+kubectl scale statefulset my-app --replicas=2
+kubectl get pods -w
+# Поды удаляются в обратном порядке: my-app-4, my-app-3, my-app-2
+```
+
+### Сценарий 5: Диагностика проблем
+
+**Проверка событий StatefulSet:**
+
+```bash
+kubectl describe statefulset my-app
+```
+
+**Проверка PVC:**
+
+```bash
+kubectl get pvc -l app=my-stateful-app
+```
+
+**Проверка меток подов:**
+
+```bash
+kubectl get pods --show-labels -l app=my-stateful-app
+```
+
+**Проверка порядка создания через события:**
+
+```bash
+kubectl get events --field-selector involvedObject.kind=StatefulSet
+```
+
+## Дополнительная информация
+
+### Связанные документы
+
+- **[Ключевые концепции](./statefulset_core_concepts.md)** (SSoT) — детальное описание принципов работы
+- **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — сравнение контроллеров
+- **[Лучшие практики](./statefulset_best_practices.md)** — рекомендации по эксплуатации
+- **[Headless Service](../../Networking/Service/service_type_headless.md)** — DNS для StatefulSet
+- **[PV и PVC](../../Storage/pv_and_pvc.md)** — управление хранилищем
+
+### Ограничения
+
+- Не поддерживает автоматическое восстановление при сбое ноды (требуется ручное вмешательство или оператор)
+- `ReadWriteOnce` тома ограничивают размещение пода одной зоной
+- Удаление StatefulSet не удаляет PVC автоматически
+- Масштабирование медленнее Deployment из-за упорядоченного создания
+
+### Дополнительные ресурсы
+
+- [Официальная документация Kubernetes: StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
+- [Официальная документация: Headless Service](https://kubernetes.io/docs/concepts/services-networking/service/#headless-services)

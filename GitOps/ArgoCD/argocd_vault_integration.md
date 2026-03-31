@@ -1,6 +1,8 @@
 # ArgoCD + HashiCorp Vault: Интеграция через ArgoCD Vault Plugin
 
-> **Версия плагина:** v1.18.1 (июнь 2024). Совместимость с ArgoCD v3 требует тестирования.
+> **Актуальная версия плагина:** v1.18.x (2025). Совместимость: ArgoCD v1.8.x, v2.x. Для ArgoCD v3 требуется тестирование.
+
+См. также: [Управление секретами в ArgoCD](./argocd_overview.md#управление-секретами), [GitOps: Управление секретами](../secrets_encryption.md).
 
 ## Определения
 
@@ -12,14 +14,9 @@
 
 Секреты Kubernetes хранятся в base64-кодировке, что не является шифрованием. Хранение секретов в Git считается анти-паттерном.
 
-**Решения:**
+Подробное сравнение инструментов управления секретами (Sealed Secrets, SOPS, Vault, External Secrets) доступно в заметке **[GitOps: Управление секретами](../secrets_encryption.md)**.
 
-| Инструмент | Принцип | Когда использовать |
-| :--- | :--- | :--- |
-| **Sealed Secrets** | Шифрование секретов для Git | Простые сценарии, один кластер |
-| **SOPS** | Шифрование файлов целиком | Частые изменения секретов |
-| **External Secrets** | Синхронизация из внешних провайдеров | Мульти-облачные окружения |
-| **ArgoCD Vault Plugin** | Подстановка из Vault при синхронизации | Интеграция с существующим Vault |
+**ArgoCD Vault Plugin** — решение для интеграции с существующим HashiCorp Vault. Плагин подставляет секреты из Vault при синхронизации, не храня их в Git.
 
 ### Архитектура AVP
 
@@ -255,8 +252,4 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c avp
 - `connection refused` — проверка сетевого доступа к Vault
 - `secret not found` — проверка пути и версии секрета
 
-### Ссылки
-
-- **[Официальная документация AVP](https://argocd-vault-plugin.readthedocs.io/)**
-- **[GitHub репозиторий](https://github.com/argoproj-labs/argocd-vault-plugin)**
-- **[Управление секретами в ArgoCD](./argocd_overview.md#управление-секретами)**
+[Официальная документация AVP](https://argocd-vault-plugin.readthedocs.io/) и [GitHub репозиторий](https://github.com/argoproj-labs/argocd-vault-plugin).

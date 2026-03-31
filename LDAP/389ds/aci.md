@@ -10,7 +10,7 @@
 
 **Subject** — субъект доступа (user, group, role, anonymous).
 
-## Базовые концепты
+## Базовые концепции
 
 ### Отличие от OpenLDAP
 
@@ -181,8 +181,9 @@ aci: (target="ldap:///cn=admins,ou=groups,dc=example,dc=com")
   deny (delete); userdn!="ldap:///cn=Directory Manager";)
 ```
 
-### Связанные темы
+### Связанные документы
 
-* [Безопасность](./overview.md#Безопасность)
-* [Плагины](./plugins.md)
-* [Docker развёртывание](./docker.md)
+- [Обзор 389DS](./overview.md) — общая информация
+- [Плагины](./plugins.md) — модули расширения
+- [Docker развёртывание](./docker.md) — запуск в контейнере
+- [Репликация](./replication.md) — multi-master настройка

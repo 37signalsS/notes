@@ -7,7 +7,9 @@
 | **Pod Anti-Affinity** | Запрет или предпочтение размещения | Жёсткие требования к изоляции | `required` или `preferred` |
 | **Topology Spread** | Балансировка нагрузки | Равномерное распределение | `DoNotSchedule` или `ScheduleAnyway` |
 
-> **Примечание:** Подробное описание всех полей, операторов и примеров использования см. в [affinity](../../Scheduling/affinity.md).
+**Ключевое различие:** `podAntiAffinity` работает по бинарному принципу («размещать вместе» или «не размещать вместе»), но не балансирует нагрузку. `topologySpreadConstraints` обеспечивает равномерное распределение, следя за отклонением не более чем на `maxSkew`.
+
+Подробное описание всех полей, операторов и примеров использования см. в [Affinity и Anti-Affinity](../../Scheduling/affinity.md).
 
 ## Pod Anti-Affinity
 
@@ -20,15 +22,7 @@
 | **Required** | `requiredDuringSchedulingIgnoredDuringExecution` | Жёсткое требование. Если невозможно выполнить — под не будет запланирован |
 | **Preferred** | `preferredDuringSchedulingIgnoredDuringExecution` | Предпочтение. Планировщик старается выполнить, но может нарушить |
 
-### Типы Anti-Affinity
-
-| Тип | Описание | Когда использовать |
-|-----|----------|-------------------|
-| **Pod Anti-Affinity** | Распределение подов относительно других подов | Изоляция реплик одного приложения |
-| **Pod Affinity** | Размещение подов рядом с другими подами | Коликейшн связанных компонентов |
-| **Node Affinity** | Размещение подов на определённых узлах | Требования к инфраструктуре |
-
-> **Примечание:** Детальное сравнение механизмов притяжения и отталкивания см. в [affinity](../../Scheduling/affinity.md) и [taints и tolerations](../../Scheduling/taints_and_tolerations.md).
+Подробное описание типов Affinity (Pod Affinity, Pod Anti-Affinity, Node Affinity) см. в [Affinity и Anti-Affinity](../../Scheduling/affinity.md).
 
 ## Topology Spread Constraints
 
@@ -44,7 +38,7 @@
 | `labelSelector` | Метки подов для распределения | `matchLabels: app: my-app` |
 | `minDomains` | Минимальное количество доменов для распределения | `2`, `3` |
 
-> **Примечание:** Полное описание всех параметров TopologySpreadConstraints, включая `nodeAffinityPolicy` и `nodeTaintsPolicy`, см. в [](../../Scheduling/affinity.md).
+Полное описание всех параметров TopologySpreadConstraints, включая `nodeAffinityPolicy` и `nodeTaintsPolicy`, см. в [Affinity и Anti-Affinity](../../Scheduling/affinity.md).
 
 ### Уровни строгости (`whenUnsatisfiable`)
 
@@ -53,10 +47,8 @@
 | `DoNotSchedule` | Жёсткое требование. Под не будет запланирован при нарушении |
 | `ScheduleAnyway` | Предпочтение. Планировщик старается соблюдать, но может нарушить |
 
----
+## Навигация по разделу
 
-## Связанные документы
-
-- **[Определения](./definitions.md)** — базовые термины
-- **[Практические сценарии](./practical_scenarios.md)** — примеры конфигурации, диагностика
-- **[Дополнительная информация](./additional_info.md)** — интеграции, ограничения, топология
+- **[Определения](definitions.md)** — базовые термины
+- **[Практические сценарии](practical_scenarios.md)** — примеры конфигурации, диагностика
+- **[Дополнительная информация](additional_info.md)** — интеграции, ограничения, топология

@@ -45,37 +45,63 @@ Git ищет специальные файлы в нескольких мест�
 Формат: `[section "subsection"] key = value`
 
 **Рекомендации:**
-* Используйте `git config` CLI для чтения/записи
-* Библиотеки: `go-git` (Go), `GitPython` (Python), `libgit2` (C)
+- Используйте `git config` CLI для чтения/записи
+- Библиотеки: `go-git` (Go), `GitPython` (Python), `libgit2` (C)
 
 ---
 
-## Связанные документы
+## Практические сценарии
 
-### Git-файлы
-- **Git Ignore**: [git_ignore.md](./git_ignore.md) — .gitignore и .dockerignore
-- **Git Attributes**: [git_attributes.md](./git_attributes.md) — .gitattributes
-- **Git LFS Config**: [git_lfs_config.md](./git_lfs_config.md) — .lfsconfig
-- **Git Submodules**: [git_submodules.md](./git_submodules.md) — .gitmodules
-- **Git Mailmap**: [git_mailmap.md](./git_mailmap.md) — .mailmap
-- **Git Blame Ignore**: [git_blame_ignore.md](./git_blame_ignore.md) — .git-blame-ignore-revs
-- **Git Commit Template**: [git_commit_template.md](./git_commit_template.md) — .gitmessage
-- **Git Forge Directories**: [git_forge_directories.md](./git_forge_directories.md) — .github/, .gitlab/ и др.
-- **Git Other Conventions**: [git_other_conventions.md](./git_other_conventions.md) — .gitkeep, .gitreview, .gitlint и др.
+### Сценарий 1: Быстрая проверка специальных файлов в проекте
 
-### Другие файлы конфигурации
-- **Version Files**: [version_files.md](./version_files.md) — .ruby-version, .tool-versions и др.
-- **Editorconfig**: [editorconfig.md](./editorconfig.md) — .editorconfig
+```bash
+# Проверить наличие основных файлов
+ls -la .gitignore .gitattributes .gitmodules .mailmap 2>/dev/null
+
+# Просмотреть содержимое .gitignore
+cat .gitignore
+
+# Проверить, какие файлы игнорируются
+git check-ignore -v <файл>
+```
+
+### Сценарий 2: Валидация .gitattributes
+
+```bash
+# Проверить атрибуты для конкретного файла
+git check-attr -a -- <файл>
+
+# Проверить атрибуты для всех файлов
+git check-attr -a -- '*'
+```
+
+### Сценарий 3: Проверка .mailmap
+
+```bash
+# Посмотреть статистику авторов с учётом mailmap
+git shortlog -sn --all
+
+# Проверить log с каноническими именами
+git log --use-mailmap --format="%an <%ae>" | sort | uniq -c
+```
 
 ---
 
 ## Дополнительная информация
 
-* **Официальная документация:**
-  * [gitignore](https://git-scm.com/docs/gitignore)
-  * [gitattributes](https://git-scm.com/docs/gitattributes)
-  * [gitmodules](https://git-scm.com/docs/gitmodules)
-  * [gitmailmap](https://git-scm.com/docs/gitmailmap)
-  * [Git LFS](https://git-lfs.com/)
-* **Шаблоны .gitignore:** [GitHub gitignore templates](https://github.com/github/gitignore)
-* **GitHub Linguist:** [Атрибуты для переопределения языков](https://github.com/github-linguist/linguist/blob/master/README.md)
+### Официальные ресурсы
+
+- **gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
+- **gitattributes:** [git-scm.com/docs/gitattributes](https://git-scm.com/docs/gitattributes)
+- **gitmodules:** [git-scm.com/docs/gitmodules](https://git-scm.com/docs/gitmodules)
+- **gitmailmap:** [git-scm.com/docs/gitmailmap](https://git-scm.com/docs/gitmailmap)
+- **Git LFS:** [git-lfs.com](https://git-lfs.com/)
+
+### Ресурсы
+
+- **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
+- **GitHub Linguist:** [github.com/github-linguist/linguist](https://github.com/github-linguist/linguist)
+
+### Связанные темы
+
+Подробная информация о файлах: .gitignore в [git_ignore.md](./git_ignore.md), .gitattributes в [git_attributes.md](./git_attributes.md), .lfsconfig в [git_lfs_config.md](./git_lfs_config.md), .gitmodules в [git_submodules.md](./git_submodules.md), .mailmap в [git_mailmap.md](./git_mailmap.md), .git-blame-ignore-revs в [git_blame_ignore.md](./git_blame_ignore.md), .gitmessage в [git_commit_template.md](./git_commit_template.md), директории платформ в [git_forge_directories.md](./git_forge_directories.md), другие соглашения в [git_other_conventions.md](./git_other_conventions.md). Файлы версий в [version_files.md](./version_files.md), editorconfig в [editorconfig.md](./editorconfig.md).

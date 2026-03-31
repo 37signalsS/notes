@@ -77,6 +77,9 @@ rules:
 
 ## Дополнительная информация
 
-- **[Аудит и комплаенс](../../Security/audit_and_compliance_overview.md)**: Основное руководство по принципам аудита, стандартам комплаенса и требованиям к логам.
-- **Официальная документация ArgoCD**: [Audit Trails](https://argo-cd.readthedocs.io/en/stable/operator-manual/audit/)
-- **Официальная документация Flux**: [Events и логирование](https://fluxcd.io/flux/cheatsheets/events/)
+Принципы аудита, стандарты комплаенса и требования к логам описаны в [обзоре аудита и комплаенса](../../Security/audit_and_compliance_overview.md).
+
+Внешние ресурсы:
+
+- Официальная документация ArgoCD: [Audit Trails](https://argo-cd.readthedocs.io/en/stable/operator-manual/audit/)
+- Официальная документация Flux: [Events и логирование](https://fluxcd.io/flux/cheatsheets/events/)

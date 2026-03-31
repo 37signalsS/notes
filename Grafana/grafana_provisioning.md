@@ -1,20 +1,17 @@
 # Grafana: Провиженинг
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [Источники данных](./grafana_datasources.md)
-> - [Дашборды](./dashboards/definitions_and_concepts.md)
-> - [Алертинг](./alerting/concepts.md)
-> - [Плагины](./grafana_plugins.md)
-> - [Установка через Docker](./Installation/docker_compose_setup.md)
-> - [Установка через Helm](./Installation/grafana_helm_installation.md)
-
 ## Определения
 
 **Провиженинг (Provisioning)** — подход Infrastructure as Code для автоматизированного управления конфигурацией Grafana (источники данных, дашборды, оповещения, плагины).
 
-**Текущая версия (февраль 2026):** Grafana 12.x
+**Текущая версия (март 2026):** Grafana 12.x
+
+**Связанные темы:**
+- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
+- [Источники данных](./grafana_datasources.md) — провижинг источников
+- [Дашборды](./dashboards/definitions_and_concepts.md) — провижинг дашбордов
+- [Алертинг](./alerting/concepts.md) — провижинг правил оповещений
+- [Плагины](./grafana_plugins.md) — установка плагинов
 
 ### Преимущества
 
@@ -253,8 +250,4 @@ Ansible позволяет управлять ресурсами Grafana чер�
 | **`isDefault: true`** | Переопределяет ручной дефолтный источник |
 | **Имя JSON** | Не должно совпадать с именем директории |
 
-### Ссылки
-
-- [Документация провиженинга](https://grafana.com/docs/grafana/latest/administration/provisioning/)
-- [Provisioning дашбордов](./dashboards/provisioning_configmap.md)
-- [Provisioning алертов](./alerting/provisioning.md)
+Подробная [документация провиженинга](https://grafana.com/docs/grafana/latest/administration/provisioning/) доступна на сайте Grafana Labs. Дополнительные примеры: [Provisioning дашбордов](./dashboards/provisioning_configmap.md) и [Provisioning алертов](./alerting/provisioning.md).

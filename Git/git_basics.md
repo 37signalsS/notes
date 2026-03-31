@@ -69,7 +69,7 @@
 
 Обе команды служат для отмены изменений, но `revert` сохраняет историю, а `reset` её перезаписывает.
 
-* **Подробнее:** [Манипуляции с историей → `revert` и `reset`](./git_history_manipulation.md#методы-отмены-изменений)
+* **Подробнее:** [Манипуляции с историей → методы отмены изменений](./git_history_manipulation.md#методы-отмены-изменений)
 
 ### Метки (Tags)
 
@@ -255,10 +255,20 @@ git config --global user.email "ваш@email.com"
 
 ## Дополнительная информация
 
-* **[Oh My Git!](https://ohmygit.org/)**: Интерактивная игра с открытым исходным кодом для изучения Git.
-* **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)**: Интерактивный веб-тренажер для изучения и отработки команд, связанных с ветвлением.
-* **Связанные темы:**
-  * [Конфигурация Git](./git_configuration.md)
-  * [Работа с ветками](./git_branching.md)
-  * [Рабочие процессы в Git](./git_workflows.md)
-  * [Инструменты (TUI и CLI)](./git_tools.md)
+### Официальные ресурсы
+
+- **Документация Git:** [git-scm.com/doc](https://git-scm.com/doc)
+- **Книга Pro Git:** [git-scm.com/book](https://git-scm.com/book/ru/v2)
+
+### Интерактивные тренажёры
+
+- **[Oh My Git!](https://ohmygit.org/)** — интерактивная игра с открытым исходным кодом для изучения Git.
+- **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления.
+
+### Видеоуроки
+
+- **[Основы командной разработки git в Visual Studio Code](https://www.youtube.com/watch?v=9e5OSBCCvvU)**: Видео, демонстрирующее базовый рабочий процесс совместной разработки с использованием Git и VS Code.
+
+### Связанные темы
+
+Подробная конфигурация в [git_configuration.md](./git_configuration.md), работа с ветками в [git_branching.md](./git_branching.md), рабочие процессы в [git_workflows.md](./git_workflows.md), инструменты в [git_tools.md](./git_tools.md).

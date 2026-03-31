@@ -207,7 +207,7 @@ spec:
 ### Связанные темы
 
 - **[PersistentVolume и PVC](./pv_and_pvc.md)** — базовые концепции
-- **[StatefulSet](../Base/StatefulSet/statefulset_overview.md)** — контроллер для stateful-приложений
+- **[StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md)** — контроллер для stateful-приложений
 - **[NFS Provisioner](./nfs-subdir-external-provisioner.md)** — альтернатива для RWX
 
 ### Ресурсы

@@ -1,18 +1,11 @@
 # Установка Grafana в Kubernetes с использованием Helm
 
-> **Навигация:**
->
-> - [Обзор Grafana](../grafana_overview.md) — основная информация о платформе
-> - [Провиженинг](../grafana_provisioning.md) — управление конфигурацией как код
-> - [Источники данных](../grafana_datasources.md) — подключение систем мониторинга
-> - [Установка через Docker Compose](./docker_compose_setup.md) — для standalone-развертывания
-
 ## Определения
 
 - **Helm-чарт Grafana** — это пакет преднастроенных ресурсов Kubernetes, который автоматизирует установку, обновление и управление Grafana в кластере.
-- **`values.yaml`** — файл конфигурации, используемый для кастомизации Helm-чарта перед установкой.
+- **`values.yaml`**: Файл конфигурации, используемый для кастомизации Helm-чарта перед установкой.
 
-> **Примечание:** Для установки полного стека мониторинга (Prometheus + Grafana + Alertmanager) см. [kube-prometheus-stack: Практические сценарии](../../Prometheus/Kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+> **Примечание:** Для установки полного стека мониторинга (Prometheus + Grafana + Alertmanager) см. [kube-prometheus-stack: Практические сценарии](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
 
 > **КРИТИЧЕСКИ ВАЖНО: Миграция Helm-репозитория (30 января 2026)**
 >
@@ -62,10 +55,10 @@ helm repo update
 
 Создайте файл `grafana-values.yaml` с основными параметрами. Этот файл определяет ключевые аспекты развертывания.
 
-> **Актуальные версии (февраль 2026):**
+> **Актуальные версии (март 2026):**
 >
-> - **Grafana:** 11.x.x (последняя стабильная)
-> - **Helm-чарт grafana:** 10.5.x+ (из нового репозитория `grafana-community`)
+> - **Grafana:** 12.4.2 (последняя стабильная)
+> - **Helm-чарт grafana-community:** 8.14.x+ (из репозитория `grafana-community`)
 > - **Минимальная версия Kubernetes:** 1.25+
 
 **Пример `grafana-values.yaml`:**
@@ -155,7 +148,7 @@ networkPolicy:
 Выполнение установки с помощью `helm install`, используя созданный файл конфигурации.
 
 ```bash
-helm install grafana grafana/grafana \
+helm install grafana grafana-community/grafana \
   -f grafana-values.yaml \
   --namespace monitoring --create-namespace \
   --wait --atomic
@@ -223,7 +216,7 @@ helm show values grafana-community/grafana > grafana-default-values.yaml
 
 Перед развертыванием в production убедитесь:
 
-- [ ] **Версии зафиксированы:** Используете конкретную версию чарта (`--version 10.5.8`), а не `latest`
+- [ ] **Версии зафиксированы:** Используете конкретную версию чарта (`--version 8.14.1`), а не `latest`
 - [ ] **Секреты защищены:** Пароли хранятся в Kubernetes Secrets или Vault, а не в `values.yaml`
 - [ ] **Персистентность включена:** `persistence.enabled: true` с appropriate storage class
 - [ ] **Resource limits настроены:** `resources.limits` для CPU и memory
@@ -232,10 +225,3 @@ helm show values grafana-community/grafana > grafana-default-values.yaml
 - [ ] **Backup настроен:** Регулярный бэкап PostgreSQL/MySQL (для HA) или PVC
 - [ ] **Monitoring включен:** ServiceMonitor для сбора метрик самой Grafana
 - [ ] **HA готов:** Несколько реплик для production (`replicas: 2+`)
-
-### Ссылки
-
-- [Официальная документация Grafana](https://grafana.com/docs/grafana/latest/)
-- [Helm-чарт grafana-community](https://github.com/grafana-community/helm-charts)
-- [Grafana на Artifact Hub](https://artifacthub.io/packages/helm/grafana-community/grafana)
-- [Миграция Helm-чартов (30.01.2026)](https://iits-consulting.de/blog/grafana-helm-charts-moved-what-do)

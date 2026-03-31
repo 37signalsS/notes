@@ -1,7 +1,5 @@
 # Crossplane: Настройка с провайдером Yandex Cloud
 
-> **Актуальные версии (февраль 2026):** Crossplane v1.20, provider-yandex-cloud v0.5.1 (официальный от Yandex Cloud).
-
 ## Определения
 
 **provider-yandex-cloud** — официальный кроссплатформенный Crossplane-провайдер от Yandex Cloud для управления ресурсами облака (Compute, VPC, Managed Services) через Kubernetes API.
@@ -26,11 +24,11 @@
 - **Managed Services**: Kubernetes, PostgreSQL, MySQL, Redis
 - **IAM**: Сервисные аккаунты, API-ключи
 
+Обзор Crossplane и его возможностей см. в [Crossplane: Обзор](./overview.md).
+
 ## Практические сценарии
 
-### Установка и настройка Crossplane с провайдером Yandex Cloud
-
-#### Предварительные требования
+### Предварительные требования
 
 - **Кластер Kubernetes**: Локальный (Minikube, Kind) или облачный
 - **Helm**: Установлен и настроен
@@ -38,7 +36,7 @@
 - **Argo CD**: (Опционально) Развернут в кластере для реализации GitOps-подхода
 - **Yandex Cloud CLI**: Установлен и настроен (`yc init`)
 
-#### Установка Crossplane и его CLI
+### Установка Crossplane и его CLI
 
 **Шаг 1: Добавление Helm-репозитория Crossplane**
 
@@ -68,7 +66,7 @@ kubectl get pods -n crossplane-system
 
 Скачайте бинарный файл для вашей ОС с [официальной страницы релизов](https://github.com/crossplane/crossplane/releases) и поместите его в директорию, доступную в `PATH`.
 
-#### Установка и конфигурация провайдера
+### Установка и конфигурация провайдера
 
 **Шаг 1: Установка провайдера Yandex Cloud**
 
@@ -182,7 +180,7 @@ spec:
       coreFraction: 20
     bootDisk:
       initializeParams:
-        imageId: fd80m5rnb5lsvj0s2k91  # Ubuntu 24.04 LTS
+        imageId: fd80m5rnb5lsvj0s2k91
         size: 15G
     networkInterfaces:
       - subnetId: <YOUR_SUBNET_ID>
@@ -259,13 +257,11 @@ kubectl -n crossplane-system logs -l app=crossplane-provider-yandex-cloud
 
 ## Дополнительная информация
 
-- **[Yandex Cloud — навигатор](../../../Yandex/index.md)**: Полная документация по сервисам YC
-- **[Crossplane Overview](./overview.md)**: Введение в Crossplane и его возможности
-- **[Provider Kubernetes](./provider_kubernetes_setup.md)**: Управление ресурсами внутри Kubernetes
-- **[Compute Cloud](../../Yandex/Compute-Cloud.md)**: Виртуальные машины и платформы
-- **[VPC](../../Yandex/VPC.md)**: Сети и security groups
-- **[Managed Databases](../../Yandex/Managed-Databases.md)**: Управляемые СУБД
-- **Официальная документация провайдера**: [github.com/yandexcloud/crossplane-provider-yc](https://github.com/yandexcloud/crossplane-provider-yc)
-- **Yandex Cloud Marketplace**: [Crossplane with Yandex Cloud support](https://yandex.cloud/en/marketplace/products/yc/crossplane)
-- **Yandex Cloud API**: [cloud.yandex.ru/docs](https://cloud.yandex.ru/docs)
-- **[Upbound Registry](https://upbound.io/marketplace/providers/yandexcloud/crossplane-provider-yc)**: Реестр провайдеров Crossplane
+Навигатор по сервисам Yandex Cloud: [Yandex Cloud — навигатор](../../../Yandex/index.md). Смежные руководства: [Provider Kubernetes](./provider_kubernetes_setup.md), [Compute Cloud](../../Yandex/Compute-Cloud.md), [VPC](../../Yandex/VPC.md), [Managed Databases](../../Yandex/Managed-Databases.md).
+
+Внешние ресурсы:
+
+- Официальная документация провайдера: [github.com/yandexcloud/crossplane-provider-yc](https://github.com/yandexcloud/crossplane-provider-yc)
+- Yandex Cloud Marketplace: [Crossplane with Yandex Cloud support](https://yandex.cloud/en/marketplace/products/yc/crossplane)
+- Yandex Cloud API: [cloud.yandex.ru/docs](https://cloud.yandex.ru/docs)
+- Upbound Registry: [providers/yandexcloud/crossplane-provider-yc](https://upbound.io/marketplace/providers/yandexcloud/crossplane-provider-yc)

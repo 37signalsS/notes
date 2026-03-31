@@ -8,7 +8,7 @@
 
 **Pull/Merge Request (PR/MR)** — это центральный механизм совместной работы в большинстве современных Git-платформ (GitHub, GitLab, Bitbucket). Он представляет собой формальный запрос на слияние изменений из одной ветки в другую, позволяя проводить код-ревью, обсуждение и автоматизированное тестирование перед интеграцией кода.
 
-## Основные концепции
+## Базовые концепции
 
 ### Pull/Merge Request как центр совместной работы
 
@@ -38,7 +38,7 @@
 
 **Feature Flags** — это механизм, который позволяет включать или выключать функциональность в приложении без изменения кода и развертывания новых версий. Это мощная техника, которая позволяет безопасно интегрировать незавершенный код в основную ветку, не затрагивая пользователей. Она является неотъемлемой частью Trunk-Based Development, но может применяться и в других рабочих процессах.
 
-## Практические сценарии: Модели ветвления
+## Практические сценарии
 
 ### 1. Git Flow
 
@@ -126,4 +126,17 @@ glab mr approve <номер_MR>
 
 ## Дополнительная информация
 
-* **[Основы командной разработки git в Visual Studio Code](https://www.youtube.com/watch?v=9e5OSBCCvvU)**: Видео, демонстрирующее базовый рабочий процесс совместной разработки с использованием Git и VS Code.
+### Официальные ресурсы
+
+- **GitHub Flow:** [docs.github.com/en/get-started/using-github/github-flow](https://docs.github.com/en/get-started/using-github/github-flow)
+- **Git Flow:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
+- **Trunk-Based Development:** [trunkbaseddevelopment.com](https://trunkbaseddevelopment.com/)
+
+### Инструменты CLI
+
+- **GitHub CLI:** [cli.github.com](https://cli.github.com/)
+- **GitLab CLI:** [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli)
+
+### Связанные темы
+
+Feature Flags подробно описаны в [CI-CD/Testing/feature_toggles/overview.md](../CI-CD/Testing/feature_toggles/overview.md). Основы командной разработки в [git_basics.md](./git_basics.md). Ветвление в [git_branching.md](./git_branching.md).

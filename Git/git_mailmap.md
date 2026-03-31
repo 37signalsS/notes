@@ -2,17 +2,26 @@
 
 ## Определения
 
-**`.mailmap`:** Файл для маппинга имён и email авторов на канонические идентичности.
+**`.mailmap`** — файл для маппинга имён и email авторов на канонические идентичности в истории Git.
+
+**Mailmap** — механизм Git для объединения записей об авторах, которые используют разные имена или email-адреса.
 
 ---
 
-## .mailmap
+## Базовые концепции
 
 ### Назначение
 
 Файл `.mailmap` маппит имена и email авторов на канонические идентичности. Git использует его для вывода `git log`, `git shortlog`, `git blame`.
 
-### Формат
+### Проблемы, которые решает mailmap
+
+- **Смена email:** Автор сменил работу и использует новый корпоративный email
+- **Разные написания имени:** `Jane Dev`, `Jane Developer`, `J. Developer`
+- **Личный и рабочий email:** Коммиты с разных адресов считаются разными авторами
+- **Опечатки:** Случайные ошибки в имени или email при настройке Git
+
+### Формат файла
 
 ```mailmap
 # Маппинг старого email на новый
@@ -24,18 +33,97 @@ Jane Developer <jane@company.com> Jane Dev <jane@company.com>
 # Исправление обоих
 Jane Developer <jane@company.com> <janed@personal.com>
 Jane Developer <jane@company.com> J Developer <janed@personal.com>
+
+# Маппинг только по имени (без email)
+Jane Developer <jane@company.com> Jane Dev
 ```
 
-Формат: `Proper Name <proper@email.com> Commit Name <commit@email.com>`
+**Формат строки:** `Proper Name <proper@email.com> Commit Name <commit@email.com>`
 
 ### Особенности
 
-* **Инструменты:** `git shortlog -sn`, `git log`, `git blame` используют mailmap для агрегации коммитов.
-* **GitHub:** Графики контрибьюторов GitHub **не используют** `.mailmap`, дубликаты сохраняются в веб-интерфейсе.
-* **Расположение:** По умолчанию `.mailmap` в корне репозитория или путь настраивается через `mailmap.file`.
+- **Инструменты:** `git shortlog -sn`, `git log`, `git blame` используют mailmap для агрегации коммитов
+- **GitHub:** Графики контрибьюторов GitHub **не используют** `.mailmap`, дубликаты сохраняются в веб-интерфейсе
+- **Расположение:** По умолчанию `.mailmap` в корне репозитория или путь настраивается через `mailmap.file`
 
 ---
 
-## Связанные документы
+## Практические сценарии
 
-- **Обзор**: [git_special_files_overview.md](./git_special_files_overview.md)
+### Сценарий 1: Объединение коммитов после смены email
+
+Автор перешёл из старой компании в новую:
+
+```mailmap
+# .mailmap
+# Новый email ← старый email
+Ivan Petrov <ivan@newcompany.com> <ivan@oldcompany.com>
+Ivan Petrov <ivan@newcompany.com> <i.petrov@personal.com>
+```
+
+### Сценарий 2: Стандартизация написания имён в команде
+
+Разные разработчики по-разному писали одно имя:
+
+```mailmap
+# .mailmap
+# Каноническое имя ← варианты написания
+Alexander Ivanov <alex@company.com> Alex Ivanov <alex@company.com>
+Alexander Ivanov <alex@company.com> A. Ivanov <alex@company.com>
+Alexander Ivanov <alex@company.com> alex.ivanov <alex@company.com>
+```
+
+### Сценарий 3: Исправление опечаток в истории
+
+```mailmap
+# .mailmap
+# Правильное написание ← опечатки
+Maria Sidorova <maria@company.com> Maria Sidorova <maira@company.com>
+Maria Sidorova <maria@company.com> Maria Sidorova <maria@compnay.com>
+```
+
+### Сценарий 4: Настройка кастомного пути к mailmap
+
+```bash
+# Использовать файл в другой директории
+git config mailmap.file .github/mailmap
+
+# Или глобально для всех репозиториев
+git config --global mailmap.file ~/.git-mailmap
+```
+
+### Сценарий 5: Проверка результата
+
+```bash
+# Посмотреть статистику авторов с учётом mailmap
+git shortlog -sn --all
+
+# Проверить log с каноническими именами
+git log --use-mailmap --format="%an <%ae>" | sort | uniq -c
+
+# Blame с правильными именами
+git blame --use-mailmap file.txt
+```
+
+### Сценарий 6: Генерация mailmap из существующей истории
+
+```bash
+# Получить список всех авторов
+git log --format='%aN <%aE>' | sort -u
+
+# Использовать для создания начального .mailmap
+git log --format='%aN <%aE>' | sort -u > .mailmap.template
+```
+
+---
+
+## Дополнительная информация
+
+### Официальные ресурсы
+
+- **Документация Git:** [git-scm.com/docs/gitmailmap](https://git-scm.com/docs/gitmailmap)
+- **Формат mailmap:** [git-scm.com/docs/git-check-mailmap](https://git-scm.com/docs/git-check-mailmap)
+
+### Связанные темы
+
+Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md).

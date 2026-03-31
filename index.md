@@ -454,7 +454,6 @@ Grafana/alerting/escalation_integrations.md
 Grafana/alerting/kubernetes_alerts.md
 Grafana/alerting/provisioning.md
 Grafana/alerting/telegram_integration.md
-Grafana/dashboards/additional_info.md
 Grafana/dashboards/definitions_and_concepts.md
 Grafana/dashboards/practical_scenarios.md
 Grafana/dashboards/provisioning_configmap.md
@@ -903,7 +902,6 @@ LDAP/389ds/k8s_deploy/basic_concepts.md
 LDAP/389ds/k8s_deploy/definitions.md
 LDAP/389ds/k8s_deploy/practical_scenarios.md
 LDAP/389ds/overview.md
-LDAP/389ds_overview.md
 LDAP/389ds/plugins.md
 LDAP/389ds/replication.md
 LDAP/openldap_kubernetes.md

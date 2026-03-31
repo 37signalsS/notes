@@ -6,6 +6,27 @@
 
 > Подробнее о безопасности см. [Безопасность Secret](security.md) и [Хранение в etcd](etcd_storage.md).
 
+## Основные концепции
+
+### Методы создания
+
+1. **Декларативно** — через YAML-манифесты (рекомендуется для GitOps)
+   - `stringData` — значения в открытом виде (автоматическое кодирование в Base64)
+   - `data` — значения вручную кодируются в Base64
+
+2. **Императивно** — через `kubectl create secret`
+   - `--from-literal` — из отдельных значений
+   - `--from-file` — из файлов
+   - `--from-env-file` — из файла с переменными окружения
+
+3. **Автоматически** — Kubernetes создаёт ServiceAccount-токены
+
+### Типы Secret
+
+По умолчанию используется тип `Opaque` (произвольные данные). Другие типы: `kubernetes.io/tls`, `kubernetes.io/dockerconfigjson`, `kubernetes.io/basic-auth`, `kubernetes.io/ssh-auth`.
+
+> **Подробнее:** [Типы Secret в secrets_basics.md](secrets_basics.md#типы-secret)
+
 ## Практические сценарии
 
 ### Декларативно с `stringData` (рекомендуемый)
@@ -163,10 +184,6 @@ kubectl patch serviceaccount default \
 
 ## Дополнительная информация
 
-### Типы Secret
-
-По умолчанию используется тип `Opaque`. Другие типы см. в [Основах Secret](secrets_basics.md#типы-secret).
-
 ### Использование созданных Secret
 
 - [Монтирование как том](using_secrets.md#как-файлы-в-томе-volume)
@@ -174,7 +191,4 @@ kubectl patch serviceaccount default \
 
 ### Связанные темы
 
-- [Основы Secret](secrets_basics.md)
-- [Использование Secret](using_secrets.md)
-- [Хранение в etcd](etcd_storage.md)
-- [Безопасность](security.md)
+[Основы Secret](secrets_basics.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Безопасность](security.md), [Внешние менеджеры](external_managers.md).

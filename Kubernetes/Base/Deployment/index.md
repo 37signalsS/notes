@@ -2,7 +2,7 @@
 
 Декларативное управление жизненным циклом подов в Kubernetes.
 
-## Структура
+## Структура раздела
 
 - **[deployment_concepts.md](./deployment_concepts.md)** — Определения, анатомия манифеста, стратегии обновления
 - **[deployment_manifest.md](./deployment_manifest.md)** — Пример манифеста, лучшие практики
@@ -24,11 +24,10 @@ kubectl rollout status deployment/my-app
 kubectl rollout undo deployment/my-app
 ```
 
-## Связанные темы
+## Навигация по связанным темам
 
-- [ConfigMap](../configmap.md)
-- [Secret](../secrets/secrets_basics.md)
-- [StatefulSet](../statefulset.md)
-- [ReplicaSet](../replicaset.md)
-- [Pod](../Pod/pod_overview.md)
-- [Высокая доступность](../high_availability.md)
+Базовые объекты: [`Pod`](../Pod/pod_overview.md), [`ReplicaSet`](../replicaset.md), [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md).
+
+Stateful-приложения: [`StatefulSet`](../statefulset.md).
+
+Отказоустойчивость: [`Высокая доступность`](../high_availability.md).

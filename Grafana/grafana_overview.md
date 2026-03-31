@@ -1,22 +1,10 @@
 # Grafana: Обзор
 
-> **Навигация:**
->
-> - [Установка через Docker Compose](./Installation/docker_compose_setup.md)
-> - [Установка через Helm](./Installation/grafana_helm_installation.md)
-> - [Источники данных](./grafana_datasources.md)
-> - [Дашборды](./dashboards/definitions_and_concepts.md)
-> - [Алертинг](./alerting/concepts.md)
-> - [Провиженинг](./grafana_provisioning.md)
-> - [Аутентификация](./grafana_user_management_and_authentication.md)
-> - [Высокая доступность](./high_availability.md)
-> - [Grafana Alloy](./grafana_alloy_overview.md)
-
 ## Определения
 
 **Grafana** — open-source платформа для аналитики и интерактивной визуализации данных из различных источников (Prometheus, Loki, PostgreSQL и др.). Ключевой принцип: Grafana **не хранит данные**, а только запрашивает и визуализирует их из подключенных систем-хранилищ.
 
-**Текущая версия (февраль 2026):** Grafana 12.x (стабильная 11.6.x — LTS)
+**Текущая версия (март 2026):** Grafana 12.4.2 (стабильная 11.6.x — LTS)
 
 ### Grafana Stack
 
@@ -55,7 +43,7 @@ Prometheus имеет собственный UI для отладки, но Graf
 
 - **Совместимость:** Встроенный плагин для Prometheus, полная поддержка PromQL.
 - **Готовые дашборды:** Тысячи дашбордов в [библиотеке Grafana](https://grafana.com/grafana/dashboards/) (например, Node Exporter Full — ID 1860).
-- **Kubernetes:** Для развёртывания полного стека см. [kube-prometheus-stack](../Linux/PackageManagement/deb_private_apt_repository_reprepro/practical_scenarios.md).
+- **Kubernetes:** Для развёртывания полного стека см. [kube-prometheus-stack](../../Kubernetes/Installation/LGTM_Stack/lgtm_otel_minikube_overview.md).
 
 ### Отладка с использованием Grafana Stack
 
@@ -70,22 +58,17 @@ Prometheus имеет собственный UI для отладки, но Graf
 
 ### Компоненты экосистемы Grafana Labs
 
-| Компонент | Область | Описание | Ссылка |
-| :--- | :--- | :--- | :--- |
-| **Grafana** | **Визуализация** | Единый интерфейс для метрик, логов, трассировок | [Обзор](./grafana_overview.md) |
-| **Mimir** | **Метрики** | Масштабируемое хранилище для метрик Prometheus | [Mimir](../Mimir/mimir_overview.md) |
-| **Loki** | **Логи** | Агрегация логов, оптимизированная по стоимости | [Loki](../Loki/loki_overview.md) |
-| **Tempo** | **Трассировки** | Хранилище распределённых трассировок | [Tempo](../Tempo/index.md) |
-| **Alloy** | **Сбор данных** | Унифицированный агент (метрики, логи, трейсы) | [Alloy](./grafana_alloy_overview.md) |
-| **Prometheus** | **Метрики** | Система мониторинга и оповещения | [Prometheus](../Prometheus/overview.md) |
-| **OpenTelemetry** | **Телеметрия** | Стандарт сбора и экспорта телеметрии | [OTel](../OpenTelemetry/opentelemetry_overview.md) |
-| **k6** | **Нагрузочное тестирование** | Тестирование на JavaScript | — |
-| **Faro** | **Real User Monitoring** | Телеметрия фронтенда | — |
-| **OnCall** | **Управление инцидентами** | Дежурства и эскалации | ⚠️ Self-hosted не обновляется с весны 2026 |
+| Компонент | Область | Описание |
+| :--- | :--- | :--- |
+| **Grafana** | **Визуализация** | Единый интерфейс для метрик, логов, трассировок |
+| **Mimir** | **Метрики** | Масштабируемое хранилище для метрик Prometheus (форк Cortex) |
+| **Loki** | **Логи** | Агрегация логов, оптимизированная по стоимости |
+| **Tempo** | **Трассировки** | Хранилище распределённых трассировок |
+| **Alloy** | **Сбор данных** | Унифицированный агент на базе OpenTelemetry Collector (язык River) |
+| **Prometheus** | **Метрики** | Система мониторинга и оповещения (CNCF) |
+| **OpenTelemetry** | **Телеметрия** | Стандарт сбора и экспорта телеметрии (CNCF) |
+| **k6** | **Нагрузочное тестирование** | Тестирование на JavaScript |
+| **Faro** | **Real User Monitoring** | Телеметрия фронтенда |
+| **OnCall** | **Управление инцидентами** | Дежурства и эскалации (⚠️ self-hosted не обновляется с весны 2026) |
 
-### Ссылки
-
-- [Официальная документация](https://grafana.com/docs/grafana/latest/)
-- [Библиотека дашбордов](https://grafana.com/grafana/dashboards/)
-- [Плагины](https://grafana.com/grafana/plugins/)
-- [Миграция Helm-репозитория (30.01.2026)](https://iits-consulting.de/blog/grafana-helm-charts-moved-what-do)
+**См. также:** [Mimir overview](../Mimir/mimir_overview.md), [Loki overview](../Loki/loki_overview.md), [Tempo overview](../Tempo/index.md), [Grafana Alloy](./grafana_alloy_overview.md).

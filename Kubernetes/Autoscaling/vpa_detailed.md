@@ -267,13 +267,4 @@ containerRecommendations:
 
 ### Интеграции
 
-* **[In-Place Pod Resize](in_place_pod_resize.md)** — VPA в режиме `Auto` использует для применения без перезапуска (Kubernetes 1.35+).
-* **[HPA](HPA/index.md)** — используйте VPA в режиме `Off` для рекомендаций, HPA — для горизонтального масштабирования.
-* **[Pod Disruption Budget](pod_disruption_budget.md)** — PDB минимизирует прерывания при eviction подов VPA.
-* **[Scaling Patterns](scaling_patterns.md)** — VPA помогает оптимизировать ресурсы для различных паттернов.
-
-### Ресурсы
-
-* [Официальная документация Kubernetes: VPA](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler)
-* [GitHub репозиторий VPA](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler)
-* [Kubernetes 1.35: In-Place Pod Resize GA](https://kubernetes.io/blog/2024/12/kubernetes-v1-35-in-place-pod-resize-ga/)
+VPA работает в связке с другими компонентами: в режиме `Auto` использует [In-Place Pod Resize](in_place_pod_resize.md) для применения без перезапуска (Kubernetes 1.35+), в режиме `Off` предоставляет рекомендации для [HPA](HPA/index.md), который масштабирует горизонтально, а [Pod Disruption Budget](pod_disruption_budget.md) минимизирует прерывания при eviction подов VPA.

@@ -67,7 +67,4 @@ jobs:
 
 ## Дополнительная информация
 
-- **[Ключевые концепции GitHub Actions](./Core_Concept.md)**: Общее описание платформы.
-- **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**: Как `actions` встраиваются в `steps`.
-- **[Кеширование](./Caching.md)**: Подробное описание работы `actions/cache`.
-- **[Синтаксис Workflow](./Workflow_Syntax.md)**: Детальное описание `permissions`.
+Общее описание платформы в **[Ключевые концепции GitHub Actions](./Core_Concept.md)**, интеграция в шаги в **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**, кеширование зависимостей в **[Кеширование](./Caching.md)**, синтаксис `permissions` в **[Синтаксис Workflow](./Workflow_Syntax.md)**. Официальная документация: [GitHub Marketplace](https://github.com/marketplace?type=actions).

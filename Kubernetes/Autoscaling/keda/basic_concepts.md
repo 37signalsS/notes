@@ -2,19 +2,32 @@
 
 ## Ключевые возможности
 
-* **Масштабирование до нуля** — KEDA может уменьшить количество реплик до 0 при отсутствии событий.
-* **Событийное масштабирование** — реакция на события из 60+ источников (Kafka, RabbitMQ, Prometheus, Cron и др.).
-* **Управление HPA** — KEDA создаёт и управляет нативным объектом HPA на основе конфигурации ScaledObject.
-* **Внешние метрики** — использование метрик, недоступных в стандартном Metrics Server.
+**Масштабирование до нуля** — KEDA может уменьшить количество реплик до 0 при отсутствии событий и восстановить их при появлении новых событий.
+
+**Событийное масштабирование** — реакция на события из 60+ источников (Kafka, RabbitMQ, Prometheus, Cron и др.) через scaler'ы.
+
+**Управление HPA** — KEDA создаёт и управляет нативным объектом HPA на основе конфигурации ScaledObject, используя External Metrics API.
+
+**Внешние метрики** — использование метрик, недоступных в стандартном Metrics Server (очереди, бизнес-показатели).
 
 ## Архитектура KEDA
 
-1. **KEDA Operator** — оператор, работающий как Deployment в namespace `keda`.
-2. **Metrics Server** — компонент KEDA, предоставляющий внешние метрики через Kubernetes Metrics API.
-3. **Admission Webhook** — валидация ресурсов KEDA при создании.
-4. **Scalers** — плагины для подключения к источникам событий.
+**KEDA Operator** — оператор, работающий как Deployment в namespace `keda`. Обрабатывает ресурсы ScaledObject и TriggerAuthentication, управляет внешними метриками.
+
+**Metrics Server** — компонент KEDA, предоставляющий внешние метрики через Kubernetes External Metrics API. Запрашивает данные у scaler'ов и передаёт их в HPA.
+
+**Admission Webhook** — валидация ресурсов KEDA при создании и обновлении. Проверяет корректность конфигурации ScaledObject и TriggerAuthentication.
+
+**Scalers** — плагины для подключения к источникам событий. Каждый scaler отвечает за свой тип источника (Kafka, RabbitMQ, Prometheus и др.).
 
 ## Принцип работы
+
+KEDA работает в связке с HPA через External Metrics API:
+
+1. **Сбор метрик** — scaler подключается к источнику событий и получает текущее значение (длина очереди, количество сообщений, метрика Prometheus).
+2. **Обработка в Operator** — KEDA Operator вычисляет целевое количество реплик на основе метрики и порогового значения (triggerThreshold).
+3. **Передача в HPA** — Metrics Server предоставляет метрику через External Metrics API, HPA запрашивает её каждые 15 секунд (по умолчанию).
+4. **Масштабирование** — HPA изменяет количество реплик Deployment на основе полученной метрики.
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────┐
@@ -31,20 +44,18 @@
 
 ## Типы scaler'ов
 
-| Категория | Примеры scaler'ов |
-|-----------|-------------------|
-| **Очереди сообщений** | Kafka, RabbitMQ, AWS SQS, Azure Service Bus, Google Pub/Sub |
-| **Метрики и мониторинг** | Prometheus, Datadog, New Relic, Grafana Loki |
-| **Хранилища и базы данных** | MySQL, PostgreSQL, MongoDB, Redis, Elasticsearch |
-| **Облачные события** | AWS CloudWatch, Azure Monitor, Google Cloud Monitoring |
-| **Расписание и время** | Cron, Azure Event Hubs |
-| **Другие** | HTTP requests, GitHub Actions, GitLab, Jenkins |
+KEDA поддерживает 60+ scaler'ов, разделённых по категориям:
 
----
+**Очереди сообщений** — Kafka, RabbitMQ, AWS SQS, Azure Service Bus, Google Pub/Sub. Масштабирование по длине очереди или количеству неподтверждённых сообщений.
 
-## Связанные документы
+**Метрики и мониторинг** — Prometheus, Datadog, New Relic, Grafana Loki. Использование PromQL-запросов и аналогичных языков запросов.
 
-* **[Определения](./definitions.md)** — базовые термины KEDA
-* **[Практические сценарии](./practical_scenarios.md)** — установка, конфигурация, мониторинг
-* **[Дополнительная информация](./additional_info.md)** — интеграции, ограничения, сравнение с HPA
+**Хранилища и базы данных** — MySQL, PostgreSQL, MongoDB, Redis, Elasticsearch. Масштабирование по количеству соединений, запросов или задержкам.
 
+**Облачные события** — AWS CloudWatch, Azure Monitor, Google Cloud Monitoring. Интеграция с облачными провайдерами через их API.
+
+**Расписание и время** — Cron, Azure Event Hubs. Масштабирование по расписанию (рабочие часы, пиковые нагрузки).
+
+**Другие** — HTTP requests, GitHub Actions, GitLab, Jenkins. Специализированные scaler'ы для конкретных сценариев.
+
+Полный список: [keda.sh/docs/latest/scalers](https://keda.sh/docs/latest/scalers/).

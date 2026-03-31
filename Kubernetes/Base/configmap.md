@@ -77,20 +77,6 @@
 
 ## Дополнительная информация
 
-### Детальные руководства
+Детальные руководства по ConfigMap: [создание](./ConfigMap/creation.md), [использование в подах](./ConfigMap/pod_usage.md), [обновление и перезапуск](./ConfigMap/update_and_rollout.md), [неизменяемые ConfigMap](./ConfigMap/immutable.md), [лучшие практики](./ConfigMap/best_practices.md).
 
-* **[Создание ConfigMap](./ConfigMap/creation.md)**: Декларативные и императивные способы.
-* **[Использование в подах](./ConfigMap/pod_usage.md)**: Передача данных в контейнеры через переменные окружения и смонтированные тома (`volume`, `subPath`, `projected`).
-* **[Обновление и автоматический перезапуск подов](./ConfigMap/update_and_rollout.md)**: Механизмы обновления конфигурации и стратегии для автоматического применения изменений.
-* **[Неизменяемые ConfigMap](./ConfigMap/immutable.md)**: Повышение стабильности за счет создания immutable-ресурсов.
-* **[Лучшие практики](./ConfigMap/best_practices.md)**: Рекомендации по эффективному и безопасному использованию ConfigMap.
-
-### Связанные темы
-
-* [Secret](./secrets/secrets_basics.md) — для конфиденциальных данных
-* [Deployment](./Deployment/index.md) — управление жизненным циклом подов и перезапуск
-* [StatefulSet](./statefulset.md) — использование ConfigMap в stateful-приложениях
-* [Безопасность Secret](./secrets/security.md) — дополнительные аспекты безопасности
-* [Pod](./Pod/pod_overview.md) — базовый объект развертывания
-* [ResourceQuota](./namespace.md#resourcequota-и-limitrange) — квотирование ресурсов в Namespace
-* [GitOps](../../GitOps/GitOps_overview.md) — подход к управлению конфигурацией
+См. также: [Secret](./secrets/secrets_basics.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [ResourceQuota](./namespace.md#resourcequota-and-limitrange), [GitOps](../../GitOps/GitOps_overview.md).

@@ -2,15 +2,17 @@
 
 ## Определения
 
-**`.gitignore`:** Файл с паттернами файлов, которые Git никогда не должен отслеживать.
+**`.gitignore`** — файл с паттернами файлов, которые Git никогда не должен отслеживать.
+
+**Игнорируемые файлы** — файлы, исключённые из системы контроля версий: временные файлы, логи, скомпилированные артефакты, зависимости, чувствительные данные.
 
 ---
 
-## .gitignore
+## Базовые концепции
 
-### Назначение
+### Назначение .gitignore
 
-Файл `.gitignore` указывает Git, какие файлы и директории следует игнорировать и не включать в систему контроля версий. Используется для исключения временных файлов, логов, скомпилированных артефактов, зависимостей и чувствительных данных.
+Файл `.gitignore` указывает Git, какие файлы и директории следует игнорировать и не включать в систему контроля версий.
 
 ### Синтаксис паттернов
 
@@ -85,26 +87,69 @@ git update-index --no-assume-unchanged <файл>
 
 ---
 
-## .dockerignore
+## Практические сценарии
 
-**Назначение:** Исключение файлов из контекста сборки Docker (аналогично `.gitignore`).
+### Сценарий 1: Настройка .gitignore для нового проекта
 
-**Пример:**
+Создайте файл в корне репозитория:
+
+```bash
+# Создать .gitignore с шаблоном для вашего стека
+curl -o .gitignore https://raw.githubusercontent.com/github/gitignore/main/Global/Node.gitignore
+```
+
+### Сценарий 2: Удаление уже отслеживаемого файла из Git
+
+Если файл уже закоммичен, простое добавление в `.gitignore` не поможет:
+
+```bash
+# Удалить файл из репозитория, но оставить на диске
+git rm --cached <файл>
+
+# Закоммитить изменения
+git commit -m "chore: remove file from tracking"
+```
+
+### Сценарий 3: Глобальный .gitignore для OS-файлов
+
+Для игнорирования системных файлов на всех проектах:
+
+```bash
+# Создать глобальный ignore-файл
+echo ".DS_Store" >> ~/.gitignore_global
+echo "Thumbs.db" >> ~/.gitignore_global
+
+# Настроить Git
+git config --global core.excludesFile ~/.gitignore_global
+```
+
+### Сценарий 4: .dockerignore для сборки образов
+
 ```dockerignore
+# Исключить из контекста сборки Docker
 .git
 node_modules
 *.log
 .env
+Dockerfile
+docker-compose.yml
 ```
 
-**Особенности:**
-* Ускоряет сборку (меньше файлов отправляется демону)
-* Предотвращает попадание секретов в образы
-* Синтаксис идентичен `.gitignore`: wildcards, negation, directory markers
+**Преимущества:**
+- Ускоряет сборку (меньше файлов отправляется демону)
+- Предотвращает попадание секретов в образы
+- Синтаксис идентичен `.gitignore`: wildcards, negation, directory markers
 
 ---
 
-## Связанные документы
+## Дополнительная информация
 
-- **Обзор**: [git_special_files_overview.md](./git_special_files_overview.md)
-- **Git Attributes**: [git_attributes.md](./git_attributes.md)
+### Официальные ресурсы
+
+- **Документация Git по gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
+- **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
+- **toptal gitignore generator:** [toptal.com/developers/gitignore](https://www.toptal.com/developers/gitignore)
+
+### Связанные темы
+
+Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Обработка файлов через .gitattributes описана в [git_attributes.md](./git_attributes.md).

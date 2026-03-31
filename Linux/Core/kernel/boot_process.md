@@ -102,11 +102,45 @@
   sudo dracut --force
   ```
 
+- **Arch Linux:**
+
+  ```bash
+  # Пересобрать initramfs для всех ядер
+  sudo mkinitcpio -P
+  ```
+
 - **Просмотреть содержимое `initramfs`:**
 
   ```bash
-  lsinitramfs /boot/initrd.img-$(uname -r) | less
+  lsinitramfs /boot/initrd.img-$(uname -r) | less    # Debian/Ubuntu
+  lsinitrd /boot/initramfs-$(uname -r).img | less    # RHEL/CentOS
+  lsinitcpio /boot/initramfs-$(uname -r).img | less  # Arch
   ```
+
+- **Включение модуля lvm2 в initramfs:**
+
+  Если корневая ФС находится на LVM, убедитесь, что модуль `lvm2` включён в initramfs.
+
+  **Debian/Ubuntu:**
+  ```bash
+  echo "lvm2" >> /etc/initramfs-tools/modules
+  update-initramfs -u
+  ```
+
+  **RHEL/CentOS/Fedora:**
+  ```bash
+  echo 'add_dracutmodules+=" lvm "' >> /etc/dracut.conf.d/lvm.conf
+  dracut --force
+  ```
+
+  **Arch Linux:**
+  ```bash
+  # В /etc/mkinitcpio.conf добавить lvm2 в HOOKS:
+  # HOOKS=(base udev autodetect modconf block lvm2 filesystems)
+  mkinitcpio -P
+  ```
+
+  Подробнее: **[Загрузка с LVM — Troubleshooting](../../FileSystems/LVM/advanced_topics/definitions_and_concepts.md#проблема-volume-group-not-found-после-рестарта)**.
 
 ## Дополнительная информация
 

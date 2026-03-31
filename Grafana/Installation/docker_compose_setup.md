@@ -1,15 +1,8 @@
 # Настройка Grafana с помощью Docker Compose
 
-> **Навигация:**
->
-> - [Обзор Grafana](../grafana_overview.md) — основная информация о платформе
-> - [Провиженинг](../grafana_provisioning.md) — управление конфигурацией как код
-> - [Источники данных](../grafana_datasources.md) — подключение систем мониторинга
-> - [Установка через Helm](./grafana_helm_installation.md) — для Kubernetes
-
 ## Определения
 
-- **Grafana**: Открытая платформа для аналитики и интерактивной визуализации данных из различных источников ([Prometheus](./overview.md), [Loki](../../Loki/loki_overview.md), InfluxDB и др.).
+- **Grafana**: Открытая платформа для аналитики и интерактивной визуализации данных из различных источников ([Prometheus](../../Prometheus/overview.md), [Loki](../../Loki/loki_overview.md), InfluxDB и др.).
 - **Docker Compose**: Инструмент для определения и запуска многоконтейнерных Docker-приложений с помощью одного YAML-файла.
 - **Prometheus**: Система мониторинга и сбора метрик с открытым исходным кодом.
 - **Провиженинг (Provisioning)**: Процесс автоматической конфигурации Grafana при запуске. Позволяет декларировать в файлах источники данных, дашборды и другие настройки.
@@ -61,7 +54,7 @@ monitoring/
 
 services:
   prometheus:
-    image: prom/prometheus:v3.0.0
+    image: prom/prometheus:v3.10.0
     container_name: ${PROJECT_NAME:-monitoring}-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -82,7 +75,7 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:11.4.0
+    image: grafana/grafana:12.4.2
     container_name: ${PROJECT_NAME:-monitoring}-grafana
     user: "472:472"
     volumes:
@@ -214,7 +207,7 @@ curl http://localhost:9090/-/healthy
 ### Production Recommendations
 
 - **Безопасность**: Всегда меняйте пароль администратора по умолчанию при первом входе.
-- **Version pinning**: Для производственной среды используйте фиксированные версии образов (например, `grafana/grafana:11.4.0` вместо `grafana/grafana` или `grafana/grafana:latest`).
+- **Version pinning**: Для производственной среды используйте фиксированные версии образов (например, `grafana/grafana:12.4.2` вместо `grafana/grafana` или `grafana/grafana:latest`).
 - **Backup**: Настройте регулярный бэкап директории `/var/lib/grafana` (дашборды, БД) и файлов провиженинга.
 - **Monitoring**: Разверните мониторинг для самой Grafana (метрики, логи).
 - **High Availability**: Для HA-конфигурации используйте внешнюю БД (PostgreSQL/MySQL) и балансировщик. См. [Высокая доступность](../high_availability.md).

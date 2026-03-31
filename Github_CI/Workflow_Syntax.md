@@ -112,7 +112,4 @@ jobs:
 
 ## Дополнительная информация
 
-- **[Ключевые концепции GitHub Actions](./Core_Concept.md)**: Общее описание платформы.
-- **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**: Концептуальное описание `on`, `jobs` и `steps`.
-- **[Оптимизация воркфлоу](./Optimization.md)**: Как `concurrency` помогает в оптимизации.
-- **Официальная документация**: [Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
+Общее описание платформы в **[Ключевые концепции GitHub Actions](./Core_Concept.md)**, концепции событий и задач в **[События, Задачи и Шаги](./Events_Jobs_Steps.md)**, использование `concurrency` для оптимизации в **[Оптимизация воркфлоу](./Optimization.md)**. Официальная документация: [Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions).

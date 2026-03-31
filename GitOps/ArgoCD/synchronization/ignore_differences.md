@@ -1,11 +1,12 @@
 # ArgoCD: Игнорирование различий и принудительная синхронизация
 
+См. также: [Синхронизация](../synchronization.md), [Концепции синхронизации](./concepts.md).
+
 ## Определения
 
-| Термин | Определение |
-| :--- | :--- |
-| **Ignore Differences** | Механизм игнорирования определённых различий между Desired State и Live State |
-| **Force Sync** | Принудительная синхронизация с игнорированием различий |
+**Ignore Differences** — механизм игнорирования определённых различий между Desired State и Live State. Используется для ресурсов, где допустим дрейф конфигурации (например, `replicas` для HPA).
+
+**Force Sync** — принудительная синхронизация с игнорированием различий между состояниями.
 
 ## Базовые концепции
 
@@ -52,10 +53,4 @@ argocd app sync my-app --skip-schema-validation
 | `jsonPointers` | JSON Pointer для точного пути в объекте |
 | `jqPathExpressions` | jq-выражение для извлечения значения |
 
-## Дополнительная информация
-
-### Ссылки
-
-- **[Основные концепции синхронизации](./concepts.md)**
-- **[Ручная синхронизация](./scenarios/manual_sync.md)**
-- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)**
+[Официальная документация по ignoreDifferences](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/).

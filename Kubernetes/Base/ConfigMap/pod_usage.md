@@ -184,8 +184,4 @@ spec:
 - **Для комбинации Secret + ConfigMap** — `projected` volumes
 - **Избегайте `subPath`** если требуется автообновление конфигурации
 
-### Связанные документы
-
-- [Создание ConfigMap](./creation.md)
-- [Обновление и rollout](./update_and_rollout.md)
-- [Лучшие практики](./best_practices.md)
+Дополнительную информацию см. в документах [создание ConfigMap](./creation.md), [обновление и rollout](./update_and_rollout.md) и [лучшие практики](./best_practices.md).

@@ -1,7 +1,5 @@
 # Crossplane: Управление ресурсами Kubernetes
 
-> **Актуальная версия (февраль 2026):** provider-kubernetes v1.2.0 (декабрь 2025).
-
 ## Определения
 
 **provider-kubernetes** — кроссплатформенный Crossplane-провайдер для управления нативными ресурсами Kubernetes в любом кластере. Позволяет использовать Crossplane Composition API для создания абстракций над Kubernetes-ресурсами.
@@ -20,7 +18,7 @@
 ### Предварительные требования
 
 - **Кластер Kubernetes**: Локальный (Minikube, Kind) или облачный
-- **Установленный Crossplane**: Следуйте шагам по установке из **[provider_yandex_cloud_setup.md](./provider_yandex_cloud_setup.md#установка-crossplane-и-его-cli)**
+- **Установленный Crossplane**: Следуйте шагам по установке из [настройки Yandex Cloud провайдера](./provider_yandex_cloud_setup.md#установка-crossplane-и-его-cli)
 
 ### Установка и конфигурация provider-kubernetes
 
@@ -147,7 +145,7 @@ spec:
           spec:
             containers:
             - name: nginx
-              image: nginx:1.26.4  # Используйте стабильную версию
+              image: nginx:1.26.4
               ports:
               - containerPort: 80
   providerConfigRef:
@@ -183,6 +181,8 @@ kubectl -n crossplane-system logs -l app=crossplane-provider-kubernetes
 
 ## Дополнительная информация
 
-- **[Provider Yandex Cloud](./provider_yandex_cloud_setup.md)**: Настройка Crossplane для работы с Yandex Cloud
-- **[GitOps Integration](./gitops_integration.md)**: Интеграция с ArgoCD для автоматической синхронизации
-- **Официальная документация provider-kubernetes**: [github.com/crossplane-contrib/provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes)
+Настройка провайдера для Yandex Cloud описана в [Provider Yandex Cloud](./provider_yandex_cloud_setup.md), интеграция с ArgoCD — в [GitOps Integration](./gitops_integration.md).
+
+Внешние ресурсы:
+
+- Официальная документация provider-kubernetes: [github.com/crossplane-contrib/provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes)

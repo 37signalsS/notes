@@ -1,53 +1,42 @@
 # Руководство: Настройка ELK стека с помощью Docker Compose
 
-> Эта заметка является частью обзора [ELK стека](../elk_stack_overview.md) и описывает практический способ развертывания Elastic Stack (Elasticsearch, Kibana, Filebeat) для локальной разработки и тестирования с использованием Docker Compose.
+> Практическое руководство по развертыванию Elastic Stack (Elasticsearch, Kibana, Filebeat) для локальной разработки и тестирования через Docker Compose.
+>
+> **Базовые понятия:** [Elasticsearch](../Elasticsearch/elasticsearch_overview.md), [Kibana](../Kibana/kibana_overview.md), [Filebeat](../filebeat_overview.md), [Маппинг и ILM](../Elasticsearch/elasticsearch_mapping_and_indexing.md).
 
 ## Определения
 
-Для получения подробных определений Elasticsearch и Kibana, а также концепции Индекса, обратитесь к соответствующим обзорным документам: **[Обзор Elasticsearch](../Elasticsearch/elasticsearch_overview.md)** и **[Обзор Kibana](../Kibana/kibana_overview.md)**.
-
-* **Filebeat**: Легковесный агент для сбора и отправки логов в Elasticsearch или Logstash.
-* **Маппинг (Mapping)**: Схема данных для индекса, определяющая типы полей (например, `text`, `keyword`, `date`).
-* **Data Stream**: Абстракция поверх индексов, предназначенная для работы с временными рядами (логи, метрики), которая упрощает управление ротацией данных.
+* **Docker Compose**: Инструмент для определения и запуска многоконтейнерных приложений Docker через YAML-файл.
+* **ELK стек в Docker**: Контейнеризированная версия Elastic Stack для локальной разработки с упрощенной конфигурацией.
 
 ## Основные концепции
 
-### Зачем нужна централизация логов?
+### Назначение локального ELK стека
 
-1. **Трудоемкий поиск**: Приходится подключаться к разным серверам и вручную агрегировать логи.
-2. **Неэффективное хранение**: Растущий объем логов требует масштабирования дискового пространства на каждом сервере.
-3. **Небезопасный доступ**: Предоставлять разработчикам и аналитикам прямой доступ к логам на боевых серверах небезопасно.
+* **Тестирование конфигураций**: Отладка filebeat.yml, elasticsearch.yml перед развертыванием в production.
+* **Локальная разработка**: Запуск полного стека на рабочей машине для отладки интеграций.
+* **Демонстрация**: Быстрое развертывание для демонстрации возможностей Elastic Stack.
 
-Эти проблемы решает централизованная система логирования, такая как Elastic Stack.
+### Особенности Docker-развертывания
 
-### Важность маппинга
-
-Правильный маппинг позволяет Elasticsearch эффективно индексировать и искать данные. Поле, определенное как `date`, можно сортировать по времени; поле `keyword` — использовать для точных совпадений и агрегаций. По умолчанию Elasticsearch использует **динамический маппинг**, но в продуктивных средах это **не рекомендуется**, так как может привести к неоптимальному использованию ресурсов.
-
-### Управление жизненным циклом (ILM)
-
-**ILM (Index Lifecycle Management)** — это механизм, который автоматизирует управление индексами по фазам:
-
-* **Hot**: Индекс активно используется для записи и чтения.
-* **Warm**: Запись прекращена, но данные все еще часто запрашиваются.
-* **Cold**: Данные редко используются, индекс можно сжать.
-* **Delete**: Индекс удаляется по истечении срока хранения.
-
-Ключевая операция — **Rollover (Ротация)**, при которой ILM автоматически создает новый индекс для записи, когда старый достигает определенного размера или возраста.
+* **Упрощенная безопасность**: Для локальных тестов безопасность отключается (`xpack.security.enabled=false`).
+* **Single-node режим**: Elasticsearch запускается как один узел (`discovery.type=single-node`).
+* **Отключение ILM**: Для тестов ILM отключается, чтобы индексы не удалялись автоматически.
+* **Сбор логов Docker**: Filebeat настроен на сбор логов контейнеров через `/var/lib/docker/containers` и Docker socket.
 
 ## Практические сценарии
 
-### Шаг 1: Подготовка окружения
+### Подготовка файлов конфигурации
+
+Создайте директорию `elk-stack` и три файла:
 
 1. `docker-compose.yml`
-2. `filebeat.yml`
-3. `elasticsearch.yml`
+2. `elasticsearch.yml`
+3. `filebeat.yml`
 
-### Шаг 2: Конфигурация компонентов
+### Конфигурация компонентов
 
 #### `docker-compose.yml`
-
-Этот файл описывает все три сервиса (Elasticsearch, Kibana, Filebeat) и их взаимодействие.
 
 ```yaml
 version: '3.8'
@@ -58,7 +47,7 @@ services:
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false # Отключаем безопасность для упрощения
+      - xpack.security.enabled=false
     volumes:
       - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - esdata:/usr/share/elasticsearch/data
@@ -83,9 +72,9 @@ services:
     command: filebeat -e -strict.perms=false
     volumes:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro # Сбор логов Docker
-      - /var/run/docker.sock:/var/run/docker.sock:ro # Доступ к метаданным Docker
-    user: root # Требуется для доступа к сокету Docker
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    user: root
     depends_on:
       - elasticsearch
     networks:
@@ -100,20 +89,13 @@ networks:
     driver: bridge
 ```
 
-* **Важно:** Для простоты в этом примере отключена безопасность (`xpack.security.enabled=false`). В реальных проектах используйте встроенные механизмы аутентификации.
-
 #### `elasticsearch.yml`
 
-Минимальная конфигурация для отключения ILM по умолчанию, чтобы индексы не удалялись автоматически во время тестов.
-
 ```yaml
-# Отключить ILM по умолчанию
 xpack.ilm.enabled: false
 ```
 
 #### `filebeat.yml`
-
-Filebeat будет собирать логи всех Docker-контейнеров на хосте и отправлять их в Elasticsearch.
 
 ```yaml
 filebeat.autodiscover:
@@ -131,40 +113,35 @@ output.elasticsearch:
 logging.level: info
 ```
 
-* `autodiscover` позволяет Filebeat автоматически обнаруживать контейнеры и применять к ним нужные настройки.
-* `add_docker_metadata` обогащает логи метаданными из Docker (имя контейнера, метки и т.д.).
+### Запуск стека
 
-### Шаг 3: Запуск стека
-
-1. **Настройте системный параметр** для Elasticsearch на хост-машине:
+1. **Настройте системный параметр** на хост-машине:
 
     ```bash
     sudo sysctl -w vm.max_map_count=262144
     ```
 
-2. **Запустите все сервисы** из директории `elk-stack`:
+2. **Запустите сервисы** из директории `elk-stack`:
 
     ```bash
     docker-compose up -d
     ```
 
-### Шаг 4: Проверка и просмотр логов
+### Проверка и просмотр логов
 
-1. **Проверьте состояние Elasticsearch**. Откройте в браузере `http://localhost:9200`. Вы должны увидеть JSON-ответ с информацией о кластере.
-2. **Откройте Kibana** по адресу `http://localhost:5601`.
+1. **Elasticsearch**: Откройте `http://localhost:9200` — JSON-ответ с информацией о кластере.
+2. **Kibana**: Откройте `http://localhost:5601`.
 3. **Создайте Data View**:
-    * Перейдите в `Stack Management` -> `Data Views`.
-    * Нажмите `Create data view`.
-    * В качестве паттерна индекса (`Index pattern`) введите `filebeat-*` и нажмите `Create data view`.
-4. **Просмотрите логи**:
-    * Перейдите в меню `Discover`.
-    * Вы должны увидеть логи от самих компонентов ELK-стека (`elasticsearch`, `kibana`, `filebeat`), которые Filebeat собрал и отправил.
-
-Теперь любые логи, которые ваши приложения пишут в `stdout` внутри Docker-контейнеров, будут автоматически собираться и появляться в Kibana.
+   * `Stack Management` → `Data Views` → `Create data view`
+   * Введите `filebeat-*` → `Create data view`
+4. **Просмотр логов**:
+   * Перейдите в `Discover`
+   * Выберите `filebeat-*`
+   * Отобразятся логи компонентов ELK-стека
 
 ## Дополнительная информация
 
-* **Logstash**: Для более сложной обработки логов (например, парсинг с помощью Grok, обогащение из внешних источников) между Filebeat и Elasticsearch добавляется Logstash.
-* **Безопасность**: В продуктивной среде обязательно включите `xpack.security.enabled=true` и настройте пароли и TLS-сертификаты.
-* **Производительность**: Для реальных нагрузок изучите официальные рекомендации Elastic по настройке JVM heap, дисковой подсистемы и других параметров.
-* Более подробно с концепциями можно ознакомиться в [обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md).
+* **Безопасность**: В production включите `xpack.security.enabled=true`, настройте пароли и TLS-сертификаты.
+* **Logstash**: Для сложной обработки (Grok, обогащение) добавьте Logstash между Filebeat и Elasticsearch.
+* **Производительность**: Изучите рекомендации Elastic по настройке JVM heap и дисковой подсистемы для production.
+* **Версии**: Используйте конкретные версии образов (например, `8.14.1`), избегайте тега `latest`.

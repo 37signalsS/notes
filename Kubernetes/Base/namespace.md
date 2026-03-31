@@ -31,80 +31,9 @@ metadata:
 Не все ресурсы в Kubernetes привязаны к `Namespace`.
 
 * **Namespaced-ресурсы** (существуют внутри `Namespace`):
-  * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md).
+  * Рабочие нагрузки: [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [DaemonSet](./daemonset.md), [Job](./job.md), [CronJob](./job.md#концепции-cronjob).
   * Конфигурация и сервисы: [Service](../Networking/Service/service_overview.md), [Ingress](../Networking/Ingress/overview.md), [ConfigMap](./configmap.md), [Secret](./secrets/secrets_basics.md), `PersistentVolumeClaim`.
   * Политики: `NetworkPolicy`, `ResourceQuota`, `LimitRange`.
-
-* **Cluster-wide ресурсы** (существуют на уровне всего кластера):
-  * Инфраструктура: `Node`, `PersistentVolume`.
-  * Безопасность и доступ: `ClusterRole`, `ClusterRoleBinding`.
-  * Системные: `Namespace` (сам по себе), `StorageClass`.
-
-### ResourceQuota и LimitRange
-
-**ResourceQuota** — объект для ограничения суммарного потребления ресурсов всеми подами в Namespace:
-
-```yaml
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: compute-quota
-  namespace: production
-spec:
-  hard:
-    requests.cpu: "10"
-    requests.memory: 20Gi
-    limits.cpu: "20"
-    limits.memory: 40Gi
-    pods: "50"
-```
-
-**LimitRange** — устанавливает ограничения по умолчанию для отдельных контейнеров в Namespace:
-
-```yaml
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: container-limits
-  namespace: production
-spec:
-  limits:
-  - type: Container
-    default:
-      cpu: "500m"
-      memory: "512Mi"
-    defaultRequest:
-      cpu: "100m"
-      memory: "128Mi"
-```
-
-## Стандартные Namespaces
-
-При создании кластера Kubernetes инициализирует несколько пространств имен:
-
-* `default`: Пространство имен по умолчанию для объектов, у которых оно не указано в манифесте. Если при создании ресурса не указать `namespace`, он будет помещен сюда.
-  * **Лучшая практика — не использовать его для реальных проектов, а создавать отдельные `Namespace` для каждой команды или приложения.**
-  * **Предупреждение:** Не удаляйте это пространство имен. Оно содержит важные системные компоненты, и его удаление может нарушить работу кластера.
-
-* `kube-system`: Пространство имён для системных служебных объектов Kubernetes. В нем находятся все компоненты **control-plane**: `etcd`, `kube-api-server`, `kube-controller-manager`, `kube-scheduler`, а также системные сервисы, такие как `CoreDNS` и `kube-proxy`. Сюда же часто устанавливаются системные приложения, расширяющие функциональность кластера (например, сетевые плагины). **Не трогать!**
-
-* `kube-public`: Создаваемое автоматически пространство имён, которое доступно для чтения всем пользователям, даже неаутентифицированным. Это пространство используется для публикации общедоступной информации о кластере. Например, `kubeadm` использует его для обмена информацией при присоединении новых узлов.
-
-* `kube-node-lease`: Содержит объекты `Lease` для каждого узла. `kubelet` на каждом узле периодически обновляет свой объект `Lease`, сообщая control-plane о своей работоспособности (heartbeats). Это более легковесный механизм по сравнению со старым способом обновления всего объекта `Node`.
-
-### Ограничения изоляции и удаление
-
-Важно понимать, что `Namespace` **не обеспечивает** полную физическую изоляцию:
-
-* **Узлы (Nodes):** Поды из разных `Namespace` могут работать на одном и том же узле.
-* **Сеть:** По умолчанию поды из разных `Namespace` могут свободно общаться друг с другом. Для изоляции используются [NetworkPolicy](../Networking/Network/network_policy.md).
-
-**Критически важное замечание:** Удаление `Namespace` приводит к **каскадному удалению всех ресурсов**, которые находятся внутри него: подов, деплойментов, сервисов и т.д. Эта операция необратима, поэтому выполняйте ее с особой осторожностью.
-
-```bash
-# Эта команда удалит НЕ ТОЛЬКО namespace, но и ВСЕ, что в нем находится!
-kubectl delete namespace my-namespace
-```
 
 ## Практические сценарии
 
@@ -168,6 +97,80 @@ kubectl config view --minify | grep namespace
 ```
 
 ## Дополнительная информация
+
+### Cluster-wide ресурсы
+
+Ресурсы, которые существуют на уровне всего кластера и не привязаны к Namespace:
+
+* **Инфраструктура:** `Node`, `PersistentVolume`.
+* **Безопасность и доступ:** `ClusterRole`, `ClusterRoleBinding`.
+* **Системные:** `Namespace` (сам по себе), `StorageClass`.
+
+### ResourceQuota и LimitRange
+
+**ResourceQuota** — объект для ограничения суммарного потребления ресурсов всеми подами в Namespace:
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    pods: "50"
+```
+
+**LimitRange** — устанавливает ограничения по умолчанию для отдельных контейнеров в Namespace:
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: container-limits
+  namespace: production
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+```
+
+### Стандартные Namespaces
+
+При создании кластера Kubernetes инициализирует несколько пространств имен:
+
+* **`default`** — пространство имен по умолчанию для объектов, у которых оно не указано в манифесте.
+  * **Лучшая практика:** не использовать для реальных проектов, создавать отдельные `Namespace` для каждой команды или приложения.
+  * **Предупреждение:** не удаляйте — содержит важные системные компоненты.
+
+* **`kube-system`** — для системных служебных объектов Kubernetes. Здесь находятся компоненты **control-plane**: `etcd`, `kube-api-server`, `kube-controller-manager`, `kube-scheduler`, а также `CoreDNS`, `kube-proxy`, сетевые плагины. **Не трогать!**
+
+* **`kube-public`** — доступно для чтения всем пользователям (даже неаутентифицированным). Используется для публикации общедоступной информации о кластере (например, `kubeadm` использует для обмена информацией при присоединении узлов).
+
+* **`kube-node-lease`** — содержит объекты `Lease` для каждого узла. `kubelet` периодически обновляет свой `Lease`, сообщая control-plane о работоспособности (heartbeats). Более легковесный механизм по сравнению с обновлением всего объекта `Node`.
+
+### Ограничения изоляции
+
+`Namespace` **не обеспечивает** полную физическую изоляцию:
+
+* **Узлы (Nodes):** поды из разных `Namespace` могут работать на одном узле.
+* **Сеть:** по умолчанию поды из разных `Namespace` могут свободно общаться. Для изоляции используются [NetworkPolicy](../Networking/Network/network_policy.md).
+
+**Важно:** удаление `Namespace` приводит к каскадному удалению всех ресурсов внутри него (поды, деплойменты, сервисы и т.д.). Операция необратима.
+
+```bash
+# Удалит namespace и ВСЕ ресурсы внутри!
+kubectl delete namespace my-namespace
+```
 
 ### Namespaces и Kubespray
 

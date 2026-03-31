@@ -199,35 +199,26 @@ kubectl drain node-1 --timeout=30s
 
 ## Дополнительная информация
 
-### Сценарии использования
-
-| Сценарий | Описание |
-|----------|----------|
-| **Обновления узлов** | Предотвращение одновременной недоступности всех реплик при drain |
-| **Масштабирование узлов** | Защита при освобождении узлов Cluster Autoscaler/Karpenter |
-| **Обновления приложений** | Контроль rolling update Deployment |
-| **Вертикальное масштабирование** | [VPA](vpa_detailed.md) использует PDB для минимизации прерываний |
-| **Горизонтальное масштабирование** | [HPA](HPA/index.md) при масштабировании вниз учитывает PDB |
-
 ### Интеграции
 
-* **[HPA](HPA/index.md)** — HPA учитывает PDB при масштабировании вниз.
-* **[VPA](vpa_detailed.md)** — VPA использует PDB при eviction подов для обновления ресурсов.
-* **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — CA проверяет PDB перед удалением узла.
-* **[Karpenter](./Karpenter/installation.md)** — Karpenter учитывает PDB при консолидации узлов.
-* **[Pod Distribution](pod_distribution/basic_concepts.md)** — совместное использование с Anti-Affinity для отказоустойчивости.
-* **[Node Maintenance](../Operations/node_maintenance.md)** — drain использует Eviction API с учётом PDB.
+PDB взаимодействует с другими компонентами экосистемы Kubernetes:
 
-### Эволюция PDB
+- **[HPA](HPA/index.md)** — учитывает PDB при масштабировании вниз
+- **[VPA](vpa_detailed.md)** — использует PDB при eviction подов для обновления ресурсов
+- **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — проверяет PDB перед удалением узла
+- **[Karpenter](Karpenter/installation.md)** — учитывает PDB при консолидации узлов
+- **[Pod Distribution](pod_distribution/basic_concepts.md)** — совместное использование с Anti-Affinity для отказоустойчивости
+- **[Node Maintenance](../Operations/node_maintenance.md)** — drain использует Eviction API с учётом PDB
+
+### Эволюция API
 
 | Версия Kubernetes | Изменения |
 |-------------------|-----------|
 | 1.4 | Введён PDB (API `policy/v1beta1`) |
 | 1.21 | Стабилизация API `policy/v1` |
 | 1.25 | Удаление `policy/v1beta1` |
-| 1.32+ | Улучшенная обработка deletionCost |
 
-### Ресурсы
+### Внешние ресурсы
 
-* [Официальная документация Kubernetes: PDB](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
-* [Kubernetes Eviction API](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/#eviction-api)
+- [Официальная документация: Pod Disruption Budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/)
+- [Документация: Eviction API](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/#eviction-api)

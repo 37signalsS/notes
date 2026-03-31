@@ -1,15 +1,20 @@
 # ArgoCD: Синхронизация и её политики
 
+См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка](./argocd_installation_and_setup.md), [Troubleshooting](./argocd_troubleshooting_and_monitoring.md).
+
 ## Определения
 
-| Термин | Определение |
-| :--- | :--- |
-| **Синхронизация (Synchronization)** | Процесс приведения состояния Kubernetes-кластера в соответствие с конфигурацией из Git-репозитория |
-| **Desired State** | Желаемое состояние, описанное в манифестах (YAML, Helm, Kustomize) в Git |
-| **Live State** | Фактическое состояние объектов в Kubernetes-кластере |
-| **OutOfSync** | Статус приложения при расхождении `Live State` и `Desired State` |
-| **Sync Status** | Соответствие состояния кластера Git: `Synced` или `OutOfSync` |
-| **Health Status** | Состояние здоровья ресурсов: `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing` |
+**Синхронизация (Synchronization)** — процесс приведения состояния Kubernetes-кластера в соответствие с конфигурацией из Git-репозитория.
+
+**Desired State** — желаемое состояние, описанное в манифестах (YAML, Helm, Kustomize) в Git.
+
+**Live State** — фактическое состояние объектов в Kubernetes-кластере.
+
+**OutOfSync** — статус приложения при расхождении `Live State` и `Desired State`.
+
+**Sync Status** — соответствие состояния кластера Git: `Synced` или `OutOfSync`.
+
+**Health Status** — состояние здоровья ресурсов: `Healthy`, `Progressing`, `Degraded`, `Suspended`, `Missing`.
 
 ## Базовые концепции
 
@@ -39,26 +44,20 @@ spec:
     - PruneLast=true
 ```
 
-## Сценарии синхронизации
+## Практические сценарии
 
-| Сценарий | Описание |
-| :--- | :--- |
-| **[Ручная синхронизация](./synchronization/scenarios/manual_sync.md)** | Изменения применяются только после явного триггера |
-| **[Автоматическая синхронизация](./synchronization/scenarios/auto_sync.md)** | ArgoCD применяет изменения при обнаружении расхождений |
-| **[Sync Waves и Hooks](./synchronization/scenarios/sync_waves_hooks.md)** | Управление порядком синхронизации ресурсов |
-| **[Окна синхронизации](./synchronization/scenarios/sync_windows.md)** | Ограничение синхронизации по расписанию |
-| **[Прогрессивная синхронизация](./synchronization/scenarios/progressive_sync.md)** | Постепенное развёртывание с валидацией (v3.x) |
+Подробные руководства по сценариям синхронизации:
+
+- **[Ручная синхронизация](./synchronization/scenarios/manual_sync.md)** — изменения применяются только после явного триггера
+- **[Автоматическая синхронизация](./synchronization/scenarios/auto_sync.md)** — ArgoCD применяет изменения при обнаружении расхождений
+- **[Sync Waves и Hooks](./synchronization/scenarios/sync_waves_hooks.md)** — управление порядком синхронизации ресурсов
+- **[Окна синхронизации](./synchronization/scenarios/sync_windows.md)** — ограничение синхронизации по расписанию
+- **[Прогрессивная синхронизация](./synchronization/scenarios/progressive_sync.md)** — постепенное развёртывание с валидацией (v3.x)
 
 ## Дополнительная информация
 
 ### Расширенные возможности
 
-| Тема | Описание |
-| :--- | :--- |
-| **[Игнорирование различий](./synchronization/ignore_differences.md)** | Игнорирование дрейфа и принудительная синхронизация |
+**[Игнорирование различий](./synchronization/ignore_differences.md)** — игнорирование дрейфа и принудительная синхронизация.
 
-### Ссылки
-
-- **[Обзор ArgoCD](./argocd_overview.md)**
-- **[Установка и настройка](./argocd_installation_and_setup.md)**
-- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)**
+[Официальная документация по sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/).

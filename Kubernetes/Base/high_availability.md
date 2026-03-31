@@ -1,6 +1,6 @@
-# Определения
+# Высокая доступность
 
-## Высокая доступность (High Availability) в Kubernetes
+## Определения
 
 **Высокая доступность (High Availability, HA)** в контексте Kubernetes — это способность системы автоматически восстанавливаться после сбоев компонентов (как программных, так и аппаратных) и продолжать обслуживать приложения с минимальным или нулевым простоем.
 
@@ -17,33 +17,33 @@
 * **Задача**: Поддерживать заданное количество идентичных Подов (реплик).
 * **При сбое**: Если нода выходит из строя, `ReplicaSet` обнаруживает, что количество работающих реплик стало меньше желаемого. Он немедленно создает недостающие Поды, которые `Scheduler` размещает на здоровых нодах.
 
-> Подробнее см. [Deployment](./Deployment/index.md).
+Подробнее: [Deployment](./Deployment/index.md).
 
 #### Service
 
 * **Задача**: Предоставить единую, стабильную точку доступа (IP-адрес и DNS-имя) для группы Подов.
 * **При сбое**: `Service` отслеживает состояние своих эндпоинтов (Подов). Если Под становится недоступным, `Service` немедленно исключает его из списка и перестает направлять на него трафик. Как только новый Под запускается и становится готов, `Service` автоматически добавляет его в балансировщик.
 
-> Подробнее см. [Service](../Networking/Service/service_overview.md).
+Подробнее: [Service](../Networking/Service/service_overview.md).
 
 #### Probes (Пробы жизнеспособности и готовности)
 
 * **Readiness Probe (Проба готовности)**: Сообщает, готов ли Под принимать новый трафик. Если проба не проходит, `Service` временно убирает Под из ротации.
 * **Liveness Probe (Проба жизнеспособности)**: Проверяет, работает ли приложение внутри Пода. Если проба фейлится, `Kubelet` перезапускает контейнер.
 
-> Подробнее о настройке проб можно прочитать в документе [Пробы (Probes)](./probes.md).
+Подробнее: [Пробы (Probes)](./probes.md).
 
 ### PodDisruptionBudget (PDB): Защита от плановых выселений
 
 **PodDisruptionBudget (PDB)** — объект Kubernetes, ограничивающий количество одновременно недоступных подов во время добровольных выселений. PDB не защищает от аппаратных сбоев — только от плановых операций.
 
-Подробное описание см. в [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md).
+Подробнее: [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md).
 
 ### Приоритеты и вытеснение (Pod Priority and Preemption)
 
 Механизм **Priority and Preemption** позволяет гарантировать запуск критически важных компонентов даже при нехватке ресурсов в кластере.
 
-Подробное описание механизма PriorityClass, включая создание иерархии приоритетов и сценарии вытеснения, см. в документе [PriorityClass](../Concepts/priorityclass.md).
+Подробнее: [PriorityClass](../Concepts/priorityclass.md).
 
 ### Управление размещением подов (Affinity и Anti-Affinity)
 
@@ -52,7 +52,7 @@
 * **`podAntiAffinity`**: Используется для распределения подов по разным доменам отказа.
 * **`topologySpreadConstraints`**: Более современный и гибкий механизм для равномерного распределения подов.
 
-Подробнее об этом можно прочитать в документе [Affinity и Anti-Affinity](../Scheduling/affinity.md).
+Подробнее: [Affinity и Anti-Affinity](../Scheduling/affinity.md).
 
 ### Топологии Control Plane
 
@@ -63,7 +63,7 @@
 | **Stacked etcd** | `etcd` запущен на тех же узлах, что и компоненты control plane. | Упрощённое управление, меньше серверов. | Совместный отказ узла влияет и на `etcd`, и на API; сложнее масштабировать. |
 | **External etcd** | `etcd` развернут как отдельный, внешний кластер. | Лучшее разделение отказов, гибкость в обновлениях. | Требует больше инфраструктуры и усложняет обслуживание. |
 
-Подробнее об архитектуре Control Plane см. в документе [Архитектура Control Plane](../Concepts/control_plane_architecture.md), об устройстве etcd — в [Обзор etcd](../Concepts/etcd_overview.md).
+Подробнее: [Архитектура Control Plane](../Concepts/control_plane_architecture.md), [Обзор etcd](../Concepts/etcd_overview.md).
 
 Для продакшн-кластеров рекомендуется использовать нечётное количество `etcd` членов (3 или 5), размещенных в разных зонах доступности на быстрых SSD.
 
@@ -74,9 +74,9 @@
 * Балансировщик должен быть отказоустойчивым и использовать проверку работоспособности (`health-check`) по эндпоинту `/readyz` API-сервера.
 * Все компоненты кластера (`kubelet`, `controller-manager`) и внешние клиенты (`kubectl`) должны обращаться к API-серверу через стабильный виртуальный IP (VIP) или DNS-имя этого балансировщика.
 
-В облачных средах эту роль выполняет нативный балансировщик (например, AWS NLB, GCP TCP Load Balancer). В bare-metal окружениях классической реализацией является создание отказоустойчивой точки входа с помощью связки **[Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) + [HAProxy](../../WebServers/haproxy_overview.md)**.
+В облачных средах эту роль выполняет нативный балансировщик (например, AWS NLB, GCP TCP Load Balancer). В bare-metal окружениях классической реализацией является создание отказоустойчивой точки входа с помощью связки Keepalived + HAProxy.
 
-> Подробное пошаговое руководство по настройке этого решения для kubeadm: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kubeadm/ha_keepalived_haproxy/index.md). Альтернативный подход для bare-metal: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
+> Подробное пошаговое руководство: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kubeadm/ha_keepalived_haproxy/index.md). Альтернативный подход: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
 
 ### Сетевой и сервисный слой
 
@@ -95,7 +95,9 @@
 
 Это необходимо для предотвращения проблемы **Split-Brain** ("расщепление мозга"), когда из-за потери связи узлы кластера могут решить, что они единственные "живые", и начать независимо изменять состояние, что приводит к катастрофической потере консистентности данных.
 
-В Kubernetes для предотвращения Split-Brain на уровне `etcd` используется **алгоритм консенсуса Raft** и требование **нечетного количества мастер-нод** (3, 5, 7 и т.д.) для формирования кворума. Подробнее об архитектуре etcd и алгоритме Raft см. в документе [Обзор etcd](../Concepts/etcd_overview.md).
+В Kubernetes для предотвращения Split-Brain на уровне `etcd` используется **алгоритм консенсуса Raft** и требование **нечетного количества мастер-нод** (3, 5, 7 и т.д.) для формирования кворума.
+
+Подробнее: [Обзор etcd](../Concepts/etcd_overview.md).
 
 # Практические сценарии
 
@@ -114,7 +116,7 @@
 
 Для планового обслуживания узлов Kubernetes без простоя для приложений используются команды `kubectl cordon`, `kubectl drain` и `kubectl uncordon`. Эти команды позволяют безопасно вывести узел из эксплуатации, провести необходимые работы и вернуть его в кластер.
 
-Подробное описание процесса обслуживания узлов, включая нюансы использования команды `kubectl drain` и практические сценарии, вы найдете в документе [Обслуживание узлов кластера: Cordon и Drain](../Operations/node_maintenance.md).
+Подробнее: [Обслуживание узлов кластера: Cordon и Drain](../Operations/node_maintenance.md).
 
 ## Примеры PriorityClass
 
@@ -146,13 +148,6 @@ spec:
 
 Теперь, если для `my-critical-app` не хватит ресурсов, планировщик попытается удалить поды с приоритетом ниже `1000000`, чтобы запустить его.
 
-## Связанные темы
+## Дополнительная информация
 
-* [Deployment](./Deployment/index.md) — управление stateless-приложениями
-* [StatefulSet](./statefulset.md) — управление stateful-приложениями
-* [Service](../Networking/Service/service_overview.md) — сетевой доступ к подам
-* [Пробы (Probes)](./probes.md) — проверки жизнеспособности
-* [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
-* [PriorityClass](../Concepts/priorityclass.md) — приоритеты и вытеснение
-* [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md) — защита от плановых выселений
-* [Обслуживание узлов](../Operations/node_maintenance.md) — cordon и drain
+См. также: [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Service](../Networking/Service/service_overview.md), [Пробы (Probes)](./probes.md), [Affinity и Anti-Affinity](../Scheduling/affinity.md), [PriorityClass](../Concepts/priorityclass.md), [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md), [Обслуживание узлов](../Operations/node_maintenance.md), [Архитектура Control Plane](../Concepts/control_plane_architecture.md), [Обзор etcd](../Concepts/etcd_overview.md).

@@ -1,31 +1,43 @@
-# StatefulSet
+# StatefulSet: Обзор
 
-## Определения
+**StatefulSet** — контроллер Kubernetes для управления stateful-приложениями. Подробное описание ключевых концепций см. в **[Ключевые концепции StatefulSet](./statefulset_core_concepts.md)**.
 
-**StatefulSet** — это объект Kubernetes, предназначенный для управления приложениями, которые требуют сохранения состояния и/или стабильных сетевых идентификаторов. В отличие от [Deployment](../Deployment/index.md), который обращается с подами как со взаимозаменяемыми "копиями", StatefulSet обеспечивает гарантии порядка и уникальности для своих подов.
+## Краткая справка
 
-Ключевая задача `StatefulSet` — обеспечить каждому поду:
+### Что обеспечивает StatefulSet
 
-1. **Стабильное, уникальное сетевое имя** в формате `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`).
-2. **Стабильное, постоянное хранилище** через [PersistentVolumeClaim](../../Storage/pv_and_pvc.md), привязанное к конкретному поду.
+| Гарантия | Описание |
+|----------|----------|
+| **Стабильные сетевые идентификаторы** | Поды получают имена `<имя-StatefulSet>-<порядковый-номер>` (например, `web-0`, `web-1`) |
+| **Стабильное хранилище** | Каждый под имеет свой PVC, привязанный к имени пода |
+| **Упорядоченное развертывание** | Поды создаются и удаляются последовательно |
 
-> **Проблема:** Стандартный [Deployment](../Deployment/index.md) при перезапуске или переносе пода может присвоить новый IP-адрес и имя, а также **потерять связь со своим хранилищем**. Для баз данных и других stateful-приложений это равносильно потере данных.
+### Архитектурные компоненты
 
-> Базовые концепции stateful/stateless см. в **[Stateful vs Stateless](../../../Concepts/stateful_vs_stateless.md)**.
+Для работы StatefulSet требует комбинации компонентов:
 
-## Глубокое погружение
+1. **StatefulSet** — главный оркестратор
+2. **[PersistentVolumeClaim (PVC)](../../Storage/pv_and_pvc.md)** — запрос на выделение диска
+3. **[PersistentVolume (PV)](../../Storage/pv_and_pvc.md)** — физическое хранилище
+4. **[Headless Service](../../Networking/Service/service_type_headless.md)** — сервис с `clusterIP: None` для стабильных DNS-имен
 
-* [Ключевые концепции StatefulSet](./statefulset_core_concepts.md) — детальное рассмотрение стабильных идентификаторов, хранилищ, порядка развертывания и поведения при сбоях.
-* [StatefulSet vs. Deployment](./statefulset_vs_deployment.md) — сравнение двух контроллеров и сценарии выбора.
-* [Практическое руководство](./statefulset_practical_guide.md) — примеры использования и развертывания.
-* [Лучшие практики](./statefulset_best_practices.md) — рекомендации по эксплуатации.
+### Стратегии обновлений
 
-## Связанные темы
+- **RollingUpdate** — поочередное обновление подов с поддержкой `partition`
+- **OnDelete** — новая спецификация применяется только к вручную удаленным подам
 
-* [Deployment](../Deployment/index.md) — управление stateless-приложениями
-* [Pod](../Pod/pod_overview.md) — базовый объект развертывания
-* [PersistentVolumeClaim](../../Storage/pv_and_pvc.md) — запросы на хранилище
-* [Headless Service](../../Networking/Service/service_type_headless.md) — стабильные DNS-имена для подов
-* [Service](../../Networking/Service/service_overview.md) — сетевой доступ к подам
-* [Высокая доступность](../high_availability.md) — PodDisruptionBudget, отказоустойчивость
-* [Affinity и Anti-Affinity](../../Scheduling/affinity.md) — управление размещением подов
+Подробнее: [Ключевые концепции StatefulSet](./statefulset_core_concepts.md).
+
+### Ограничения
+
+- Не поддерживает автоматическое восстановление при сбое ноды
+- `ReadWriteOnce` тома ограничивают размещение пода одной зоной
+- Удаление StatefulSet не удаляет PVC автоматически
+- Масштабирование медленнее Deployment из-за упорядоченного создания
+
+## Связанные документы
+
+- **[Ключевые концепции](./statefulset_core_concepts.md)** (SSoT) — детальное описание принципов работы
+- **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — сравнение контроллеров
+- **[Практическое руководство](./statefulset_practical_guide.md)** — пошаговые инструкции
+- **[Лучшие практики](./statefulset_best_practices.md)** — рекомендации по эксплуатации

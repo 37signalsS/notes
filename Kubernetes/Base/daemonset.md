@@ -140,4 +140,8 @@ spec:
 3. После успешного запуска пода `DaemonSet`, внешний контроллер (или логика самого демона) убирает `taint` с узла.
 4. Планировщик начинает размещать на узле обычные поды.
 
-> Подробное описание этого сценария можно найти в документе **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md#практический-сценарий-отложенный-запуск-подов-до-готовности-daemonset)**.
+Подробнее: [Taints and Tolerations](../Scheduling/taints_and_tolerations.md#отложенный-запуск-подов-до-готовности-daemonset).
+
+## Дополнительная информация
+
+См. также: [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [NodeLocalDNS](../Networking/dns_deep_dive.md#принцип-работы-nodelocaldns), [MetalLB](../Networking/metallb.md), [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).

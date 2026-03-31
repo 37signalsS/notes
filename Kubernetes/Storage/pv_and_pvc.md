@@ -401,7 +401,7 @@ spec:
 
 ### StatefulSet с PersistentVolume
 
-Для stateful-приложений (БД) используется **[StatefulSet](../Base/StatefulSet/statefulset_overview.md)**. Он автоматически создаёт уникальный PVC для каждого пода на основе `volumeClaimTemplates`.
+Для stateful-приложений (БД) используется **[StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md)**. Он автоматически создаёт уникальный PVC для каждого пода на основе `volumeClaimTemplates`.
 
 ```yaml
 apiVersion: apps/v1

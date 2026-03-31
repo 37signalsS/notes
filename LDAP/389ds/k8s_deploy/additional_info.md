@@ -45,18 +45,3 @@ kubectl logs -f 389ds-0 -n ldap
   - DIT                - Secret
   - Плагины
 ```
-
-## Связанные темы
-
-* [Docker развёртывание](./docker.md)
-* [Настройка репликации](./replication.md)
-* [Плагины](./plugins.md)
-* [OpenLDAP в Kubernetes](../../openldap_kubernetes.md)
-
----
-
-## Связанные документы
-
-* **[Определения](./definitions.md)** — базовые термины
-* **[Основные концепции](./basic_concepts.md)** — архитектура развёртывания, требования
-* **[Практические сценарии](./practical_scenarios.md)** — StatefulSet, сервисы, инициализация

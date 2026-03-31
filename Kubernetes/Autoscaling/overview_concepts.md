@@ -135,14 +135,6 @@
 
 ## Дополнительная информация
 
-### Что мешает удалению узла Cluster Autoscaler?
-
-* Поды с жесткими правилами `podAntiAffinity`
-* Поды, не управляемые контроллерами (Deployment, StatefulSet)
-* Поды с локальным хранилищем (`hostPath`, `emptyDir`)
-* Поды, для которых не соблюдается [PDB](pod_disruption_budget.md)
-* Поды с аннотацией `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`
-
 ### Конфликты и ограничения
 
 | Конфликт | Решение |
@@ -154,21 +146,8 @@
 
 ### Интеграции между компонентами
 
-* **HPA ↔ PDB** — HPA учитывает [PDB](pod_disruption_budget.md) при масштабировании вниз.
-* **HPA ↔ Pod Distribution** — созданные HPA поды распределяются согласно [правилам распределения](pod_distribution/basic_concepts.md).
-* **VPA ↔ In-Place Resize** — VPA использует In-Place Pod Resize для применения рекомендаций без перезапуска.
-* **KEDA ↔ HPA** — KEDA создаёт и управляет нативным HPA.
-* **CA/Karpenter ↔ HPA/KEDA** — CA/Karpenter реагируют на поды, созданные HPA/KEDA.
-* **Все компоненты ↔ PDB** — все учитывают PDB при удалении подов/узлов.
-
-### Паттерны масштабирования
-
-Для сложных сценариев (шардирование, workers + queue) см. [Паттерны масштабирования](scaling_patterns.md).
+HPA учитывает [PDB](pod_disruption_budget.md) при масштабировании вниз, а созданные HPA поды распределяются согласно [правилам распределения](pod_distribution/basic_concepts.md). VPA использует In-Place Pod Resize для применения рекомендаций без перезапуска, KEDA создаёт и управляет нативным HPA, а CA/Karpenter реагируют на поды, созданные HPA/KEDA. Все компоненты учитывают PDB при удалении подов/узлов.
 
 ### Связанные темы
 
-* **[Pod Disruption Budget](pod_disruption_budget.md)** — защита от плановых выселений
-* **[Pod Distribution](pod_distribution/basic_concepts.md)** — распределение подов для отказоустойчивости
-* **[Scaling Patterns](scaling_patterns.md)** — шардирование, workers + queue
-* **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик для HPA/VPA
-* **[High Availability](../Base/high_availability.md)** — общая концепция высокой доступности
+См. также: [Pod Disruption Budget](pod_disruption_budget.md) для защиты от плановых выселений, [Pod Distribution](pod_distribution/basic_concepts.md) для распределения подов, [Metrics Server](../MonitoringLogging/metrics-server.md) как источник метрик для HPA/VPA и [High Availability](../Base/high_availability.md) для общей концепции высокой доступности.

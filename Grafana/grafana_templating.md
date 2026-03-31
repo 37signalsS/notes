@@ -1,16 +1,10 @@
 # Grafana: Шаблонизация (Templating)
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [Дашборды](./dashboards/definitions_and_concepts.md)
-> - [Источники данных](./grafana_datasources.md)
-
 ## Определения
 
 **Шаблонизация (Templating)** — механизм создания динамических дашбордов через переменные. Значения подставляются в запросы, заголовки, аннотации.
 
-**Текущая версия (февраль 2026):** Grafana 12.x
+**Текущая версия (март 2026):** Grafana 12.4.2
 
 ### Преимущества
 
@@ -123,7 +117,4 @@ sum by (app) (rate({cluster=~"$cluster", namespace=~"$namespace"} |= "ERROR" [5m
 - **`Refresh: On Time Range Change`** — для длинных списков (тысячи подов)
 - **Минимальный интервал** — задавайте `Min time interval` для производительности
 
-### Ссылки
-
-- [Документация по переменным](https://grafana.com/docs/grafana/latest/dashboards/use-variables/)
-- [Template variables API](https://grafana.com/docs/grafana/latest/developers/http_api/dashboard/)
+**См. также:** [Дашборды: определения и концепции](./dashboards/definitions_and_concepts.md), [Источники данных](./grafana_datasources.md), [Обзор Grafana](./grafana_overview.md).

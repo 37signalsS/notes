@@ -117,8 +117,9 @@ docker run -d \
 * **RAM:** 2 ГБ минимум, 4–8 ГБ для production
 * **Диск:** 10 ГБ+, SSD рекомендуется
 
-### Связанные темы
+### Связанные документы
 
-* [Настройка репликации](./replication.md)
-* [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md)
-* [Безопасность](./overview.md#Безопасность)
+- [Обзор 389DS](./overview.md) — общая информация
+- [Настройка репликации](./replication.md) — multi-master конфигурация
+- [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md) — StatefulSet deployment
+- [ACI](./aci.md) — управление доступом

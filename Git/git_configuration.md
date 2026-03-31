@@ -147,7 +147,7 @@ Host project-alias
 
 ### Игнорирование файлов с помощью `.gitignore`
 
-> **Полное руководство:** Подробный синтаксис паттернов, порядок проверки и примеры использования см. в разделе [.gitignore](./git_special_files_overview.md#gitignore).
+> **Полное руководство:** Подробный синтаксис паттернов, порядок проверки и примеры использования см. в [git_ignore.md](./git_ignore.md).
 
 Ниже приведены основные примеры паттернов:
 
@@ -179,7 +179,7 @@ git update-index --no-assume-unchanged <файл>
 
 #### Шифрование файлов в репозитории (`git-crypt`)
 
-> **Примечание:** Настройка `.gitattributes` для git-crypt описана в разделе [`.gitattributes`](./git_special_files_overview.md#gitattributes).
+> **Примечание:** Настройка `.gitattributes` для git-crypt описана в [git_attributes.md](./git_attributes.md).
 
 1. **Инициализация в репозитории:**
 
@@ -210,6 +210,11 @@ git update-index --no-assume-unchanged <файл>
 
 ## Дополнительная информация
 
-* Для получения более подробной информации о SSH, генерации ключей и управлении ими, обратитесь к документу [SSH (Secure Shell)](../Linux/Security/ssh/ssh_overview.md).
-* Общие настройки SSH-клиента: [Конфигурация SSH-клиента](../Linux/Security/ssh/ssh_client_config.md)
-* Подробности об SSH-агенте: [Аутентификация по SSH: ssh-agent и управление ключами](../Linux/Security/ssh/ssh_client_config.md#управление-ключами-с-помощью-ssh-agent)
+### Официальные ресурсы
+
+- **Документация Git по конфигурации:** [git-scm.com/docs/git-config](https://git-scm.com/docs/git-config)
+- **SSH-ключи:** [Документация по SSH](../Linux/Security/ssh/ssh_overview.md)
+
+### Связанные темы
+
+Конфигурация SSH-клиента описана в [ssh_client_config.md](../Linux/Security/ssh/ssh_client_config.md). Специальные файлы Git (.gitignore, .gitattributes) подробно рассмотрены в [git_special_files_overview.md](./git_special_files_overview.md).

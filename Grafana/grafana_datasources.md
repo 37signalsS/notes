@@ -1,17 +1,16 @@
 # Grafana: Источники данных
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [Провиженинг](./grafana_provisioning.md)
-> - [Установка через Docker](./Installation/docker_compose_setup.md)
-> - [Установка через Helm](./Installation/grafana_helm_installation.md)
-
 ## Определения
 
 **Источник данных (Datasource)** — подключение к системе хранения данных (Prometheus, MySQL, Loki и др.). Grafana **не хранит данные**, а выполняет запросы к источникам и визуализирует результаты.
 
-**Текущая версия (февраль 2026):** Grafana 12.x поддерживает 50+ источников данных
+**Текущая версия (март 2026):** Grafana 12.x поддерживает 50+ источников данных
+
+**Связанные темы:**
+- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
+- [Провиженинг](./grafana_provisioning.md) — автоматизация настройки
+- [Дашборды](./dashboards/definitions_and_concepts.md) — визуализация данных
+- [Алертинг](./alerting/concepts.md) — настройка оповещений
 
 ### Атрибуты источника
 
@@ -140,7 +139,4 @@ grafana:
 | **CloudWatch** | Метрики AWS | Мониторинг AWS-ресурсов |
 | **Azure Monitor** | Метрики Azure | Мониторинг Azure-ресурсов |
 
-### Ссылки
-
-- [Документация по источникам](https://grafana.com/docs/grafana/latest/datasources/)
-- [Провиженинг источников](./grafana_provisioning.md)
+Подробная [документация по источникам](https://grafana.com/docs/grafana/latest/datasources/) доступна на сайте Grafana Labs.

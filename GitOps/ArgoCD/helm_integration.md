@@ -1,8 +1,10 @@
 # Интеграция ArgoCD с Helm
 
+См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка ArgoCD](./argocd_installation_and_setup.md), [Синхронизация](./synchronization.md).
+
 ## Определения
 
-**Helm** — пакетный менеджер для Kubernetes, который использует формат чартов для описания приложений. ArgoCD предоставляет два подхода к интеграции с Helm.
+**Helm** — пакетный менеджер для Kubernetes, который использует формат чартов для описания приложений. ArgoCD предоставляет три подхода к интеграции с Helm.
 
 ## Базовые концепции
 
@@ -248,15 +250,10 @@ spec:
 
 | Критерий | Нативный Helm | `helm template` + Git | Hybrid |
 | :--- | :--- | :--- | :--- |
-| **Простота** | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ |
-| **GitOps-совместимость** | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Гибкость** | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **Аудит** | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Рекомендация** | Dev/Test | Production | Balance |
+| **Простота** | Высокая | Средняя | Высокая |
+| **GitOps-совместимость** | Низкая | Полная | Частичная |
+| **Гибкость** | Низкая | Высокая | Средняя |
+| **Аудит** | Низкий | Полный | Частичный |
+| **Рекомендация** | Dev/Test | Production | Баланс |
 
-### Ссылки
-
-- **[Обзор ArgoCD](./argocd_overview.md)**
-- **[Синхронизация](./synchronization.md)**
-- **[Официальная документация Helm](https://helm.sh/docs/)**
-- **[ArgoCD Helm Documentation](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/)**
+[Официальная документация ArgoCD Helm](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/) и [Helm](https://helm.sh/docs/).

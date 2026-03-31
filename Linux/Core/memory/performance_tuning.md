@@ -181,6 +181,37 @@ cat /proc/meminfo | grep AnonHugePages
 
 Подробнее о метриках памяти, включая `AnonHugePages`, см. в [`/proc/meminfo`](../../Diagnostics/Memory/proc_meminfo.md).
 
+#### Диагностика использования HugePages
+
+**Симптом:** Память есть, CPU не упирается, но приложение не даёт ожидаемый throughput. Вместо больших страниц всё идёт через обычные 4KB — больше TLB misses, больше page faults, больше overhead на управление памятью.
+
+**Комплексная диагностика:**
+
+```bash
+# 1. Проверка выделения HugePages
+cat /proc/meminfo | grep -i huge
+# Показывает, сколько HugePages выделено и сколько реально используется
+
+# 2. Проверка состояния THP и режима дефрагментации
+cat /sys/kernel/mm/transparent_hugepage/enabled
+cat /sys/kernel/mm/transparent_hugepage/defrag
+
+# 3. Распределение памяти процесса по NUMA и использование huge pages
+numastat -p <pid>
+
+# 4. Какие сегменты процесса реально используют huge pages
+pmap -x <pid> | grep -i huge
+
+# 5. Проверка TLB-узкого места (прямое следствие отсутствия HugePages)
+perf stat -e dTLB-load-misses,dTLB-loads <cmd>
+```
+
+**Интерпретация:**
+
+- Высокий `dTLB-load-misses` / `dTLB-loads` (>1-5%) — процессор тратит время на трансляцию адресов
+- `AnonHugePages` близко к 0 при выделенных `HugePages_Total` — приложение не использует huge pages
+- Отсутствие строк с `huge` в выводе `pmap` — сегменты памяти не используют большие страницы
+
 При активном THP и фрагментированной памяти попытки выделить huge pages создают периодические паузы. В high-load среде это проявляется как кратковременные latency spikes без явных CPU или I/O bottleneck.
 
 #### Сравнение и ключевые различия

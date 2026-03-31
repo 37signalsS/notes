@@ -2,39 +2,39 @@
 
 ## Интеграции
 
-* **[HPA](../HPA/index.md)** — KEDA создаёт и управляет HPA, не используйте одновременно для одного Deployment.
-* **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — CA реагирует на поды, созданные KEDA.
-* **[Karpenter](../Karpenter/installation.md)** — Karpenter создаёт узлы для подов, масштабированных KEDA.
-* **[Prometheus](../../Prometheus/overview.md)** — Prometheus как источник метрик для KEDA.
+**HPA** — KEDA создаёт и управляет HPA на основе ScaledObject. Не используйте HPA и KEDA одновременно для одного Deployment — возникнет конфликт управления. KEDA автоматически создаёт HPA и контролирует его метрики через External Metrics API.
+
+**Cluster Autoscaler** — CA реагирует на поды, созданные при масштабировании KEDA. Когда KEDA увеличивает количество реплик, CA добавляет узлы при нехватке ресурсов. Задержка масштабирования = `pollingInterval` KEDA + время запуска узлов CA.
+
+**Karpenter** — альтернатива CA с более быстрым добавлением узлов. Karpenter создаёт узлы для подов, масштабированных KEDA. Оптимально для событийных нагрузок с резкими скачками.
+
+**Prometheus** — источник внешних метрик через Prometheus scaler. KEDA выполняет PromQL-запросы и использует результаты для масштабирования. Требует доступности Prometheus и настройки `serverAddress` в ScaledObject.
 
 ## Ограничения
 
-* **Один ScaledObject на Deployment** — нельзя применить несколько ScaledObject к одному ресурсу.
-* **Только Deployment/StatefulSet** — не работает с DaemonSet, Job, CronJob.
-* **Задержка масштабирования** — зависит от `pollingInterval` (минимум 5 секунд).
-* **Внешние зависимости** — требует доступности источника метрик (RabbitMQ, Kafka, Prometheus).
+**Один ScaledObject на Deployment** — нельзя применить несколько ScaledObject к одному ресурсу. Для комбинирования триггеров используйте несколько triggers в одном ScaledObject (логика ИЛИ).
+
+**Только Deployment/StatefulSet** — KEDA не работает с DaemonSet, Job, CronJob. Для Job используйте [KEDA Jobs](https://keda.sh/docs/latest/concepts/scaling-jobs/).
+
+**Задержка масштабирования** — зависит от `pollingInterval` (минимум 5 секунд, по умолчанию 30). Реальная задержка = `pollingInterval` + время применения HPA + время запуска подов.
+
+**Внешние зависимости** — требует доступности источника метрик (RabbitMQ, Kafka, Prometheus). При недоступности источника используется fallback (если настроен).
+
+**Масштабирование до нуля** — при `minReplicaCount: 0` поды удаляются полностью. При новых событиях требуется время на запуск (cold start). Для production рассмотрите `minReplicaCount: 1`.
 
 ## Сравнение с нативным HPA
 
 | Характеристика | HPA | KEDA |
 |----------------|-----|------|
-| Источники метрик | CPU, Memory, Custom, External | 60+ scaler'ов |
+| Источники метрик | CPU, Memory, Custom, External | 60+ scaler'ов (очереди, метрики, расписание) |
 | Масштабирование до 0 | Нет | Да |
 | Событийное масштабирование | Нет | Да |
 | Расписание (Cron) | Нет | Да |
 | Сложность настройки | Низкая | Средняя |
-| Управление | Прямое | Через HPA |
+| Управление | Прямое | Через HPA (KEDA создаёт HPA) |
+| Время реакции | 15 секунд (по умолчанию) | Зависит от `pollingInterval` (5-30 секунд) |
+| External Metrics API | Требуется адаптер | Встроен в KEDA Metrics Server |
 
-## Ресурсы
+## Дополнительные ресурсы
 
-* [Официальная документация KEDA](https://keda.sh/)
-* [GitHub репозиторий](https://github.com/kedacore/keda)
-* [Список поддерживаемых scaler'ов](https://keda.sh/docs/latest/scalers/)
-
----
-
-## Связанные документы
-
-* **[Определения](./definitions.md)** — базовые термины KEDA
-* **[Основные концепции](./basic_concepts.md)** — архитектура, принцип работы, типы scaler'ов
-* **[Практические сценарии](./practical_scenarios.md)** — установка, конфигурация, мониторинг
+Официальная документация KEDA: [keda.sh](https://keda.sh/), [GitHub](https://github.com/kedacore/keda), [список scaler'ов](https://keda.sh/docs/latest/scalers/).

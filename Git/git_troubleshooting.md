@@ -22,7 +22,7 @@ Git использует HTTP/HTTPS и SSH для обмена данными с
 
 Для решения этой проблемы в Git существует механизм автоматического преобразования окончаний строк, который настраивается с помощью параметра `core.autocrlf`.
 
-* **Подробнее:** [Конфигурация Git → Управление окончаниями строк](./git_configuration.md#управление-окончаниями-строк-coreautocrlf)
+* **Подробнее:** [Конфигурация Git → Управление окончаниями строк](./git_configuration.md#управление-окончаниями-строк)
 
 ### Разрешение конфликтов
 
@@ -224,15 +224,12 @@ unset GIT_SSH_COMMAND # Отключить отладку
 
 ## Дополнительная информация
 
-### Внутренние ресурсы
+### Официальные ресурсы
 
-* **[Основы Git](./git_basics.md)**: для понимания базовых команд и концепций.
-* **[Ветвление в Git](./git_branching.md)**: для углубленного изучения слияний и `rebase`.
-* **[Манипуляция историей](./git_history_manipulation.md)**: для исправления коммитов и решения более сложных проблем.
-* **[Настройка Git](./git_configuration.md)**: для управления конфигурационными параметрами, такими как `core.autocrlf`.
+- **git bundle:** [git-scm.com/docs/git-bundle](https://git-scm.com/docs/git-bundle)
+- **core.autocrlf:** [git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
+- **Debugging Git:** [git-scm.com/book/en/v2/Git-Internals-Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)
 
-### Внешние ресурсы
+### Связанные темы
 
-* Официальная документация Git по `git bundle`: [Git SCM - git-bundle](https://git-scm.com/docs/git-bundle)
-* Подробнее об окончаниях строк в Git: [Git SCM - Git Configuration - core.autocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
-* Общие советы по отладке Git: [Git SCM - Git Internals - Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)
+Основы Git в [git_basics.md](./git_basics.md). Ветвление и слияние в [git_branching.md](./git_branching.md). Манипуляции с историей в [git_history_manipulation.md](./git_history_manipulation.md). Настройка Git в [git_configuration.md](./git_configuration.md). Оптимизация производительности в [git_performance.md](./git_performance.md).

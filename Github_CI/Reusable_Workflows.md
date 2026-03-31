@@ -99,6 +99,4 @@ jobs:
 
 ## Дополнительная информация
 
-- **[Оптимизация воркфлоу](./Optimization.md)**: Переиспользование — важный аспект оптимизации и поддержки.
-- **[Синтаксис Workflow](./Workflow_Syntax.md)**: Детали синтаксиса `uses`, `with`, `secrets`.
-- **Официальная документация**: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+Переиспользование как техника оптимизации в **[Оптимизация воркфлоу](./Optimization.md)**, синтаксис `uses`, `with`, `secrets` в **[Синтаксис Workflow](./Workflow_Syntax.md)**. Официальная документация: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows).

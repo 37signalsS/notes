@@ -1,14 +1,13 @@
 # Grafana: Управление пользователями и аутентификация
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [Провиженинг](./grafana_provisioning.md)
-> - [Установка через Helm](./Installation/grafana_helm_installation.md)
-
 ## Определения
 
-**Текущая версия (февраль 2026):** Grafana 12.x
+**Текущая версия (март 2026):** Grafana 12.x
+
+**Связанные темы:**
+- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
+- [Провиженинг](./grafana_provisioning.md) — автоматизация настройки
+- [Алертинг](./alerting/concepts.md) — сервисные аккаунты для алертов
 
 ### Роли пользователей
 
@@ -27,7 +26,7 @@
 | **Сервисные аккаунты** | Учетные записи для API-автоматизации (Grafana 9+) |
 | **API-ключи** | Устаревший способ автоматизации (привязан к пользователю) |
 
-## Базовые концепции
+## Основные концепции
 
 ### Иерархия доступа
 
@@ -142,8 +141,4 @@ API-ключи создаются в разделе **Configuration -> API Keys*
 - **Минимальные привилегии** — выдавайте роли по принципу least privilege
 - **Регулярный аудит** — проверяйте активных пользователей и права
 
-### Ссылки
-
-- [Документация по аутентификации](https://grafana.com/docs/grafana/latest/administration/authentication/)
-- [API Grafana](https://grafana.com/docs/grafana/latest/developers/http_api/)
-- [LDAP-конфигурация](../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
+Подробная [документация по аутентификации](https://grafana.com/docs/grafana/latest/administration/authentication/) и [API Grafana](https://grafana.com/docs/grafana/latest/developers/http_api/) доступны на сайте Grafana Labs. См. также [LDAP-конфигурацию](../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md) для интеграции с Active Directory.

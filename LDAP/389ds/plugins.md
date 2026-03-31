@@ -12,7 +12,7 @@
 | :--- | :--- |
 | **Репликация** | Replication, Changelog |
 | **Аутентификация** | PAM, Kerberos, GSSAPI |
-| **Авторизация** | ACI, Roles, CoS |
+| **Авторизация** | [ACI](./aci.md), Roles, CoS |
 | **Аудит** | Audit Log, Retro Changelog |
 | **Синхронизация** | AD Sync, DNA |
 | **Утилиты** | MemberOf, Referential Integrity |
@@ -38,6 +38,8 @@ nsslapd-pluginEnabled: on
 docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
   -D "cn=Directory Manager" -W -f retro-changelog.ldif
 ```
+
+> Подробнее о развёртывании в [Docker](./docker.md).
 
 **Проверка:**
 
@@ -176,10 +178,5 @@ docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
 
 ### Репликация конфигурации плагинов
 
-> **Важно:** Конфигурация плагинов (`cn=config`) **не реплицируется**. Настройки применяются на каждом сервере отдельно.
+> **Важно:** Конфигурация плагинов (`cn=config`) **не реплицируется**. Настройки применяются на каждом сервере отдельно. Подробнее о репликации данных — в [настройке репликации](./replication.md).
 
-### Связанные темы
-
-* [Docker развёртывание](./docker.md)
-* [Настройка репликации](./replication.md)
-* [Управление доступом (ACI)](./aci.md)

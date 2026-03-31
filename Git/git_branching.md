@@ -240,4 +240,15 @@ git rebase -i HEAD~3 # Пример для последних 3 коммитов
 
 ## Дополнительная информация
 
-* **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)**: Интерактивный веб-тренажер для изучения и отработки команд, связанных с ветвлением, слиянием и перебазированием.
+### Официальные ресурсы
+
+- **Документация Git по ветвлению:** [git-scm.com/book/ru/v2/Основы-Git-Ветвление](https://git-scm.com/book/ru/v2/Основы-Git-Ветвление)
+- **Git Branching Model:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
+
+### Интерактивные тренажёры
+
+- **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления, слияния и перебазирования.
+
+### Связанные темы
+
+Манипуляции с историей в [git_history_manipulation.md](./git_history_manipulation.md), синхронизация в [git_synchronization.md](./git_synchronization.md), рабочие процессы в [git_workflows.md](./git_workflows.md).

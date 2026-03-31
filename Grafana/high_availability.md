@@ -1,16 +1,15 @@
 # Grafana: Высокая доступность (HA)
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [Установка через Docker](./Installation/docker_compose_setup.md)
-> - [Установка через Helm](./Installation/grafana_helm_installation.md)
-
 ## Определения
 
 **Высокая доступность (HA)** — архитектурный подход с развёртыванием нескольких stateless-экземпляров Grafana за балансировщиком нагрузки с общей внешней БД.
 
-**Текущая версия (февраль 2026):** Grafana 12.x поддерживает HA-режим
+**Текущая версия (март 2026):** Grafana 12.x поддерживает HA-режим
+
+**Связанные темы:**
+- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
+- [Установка через Docker](./Installation/docker_compose_setup.md) — развёртывание в Docker
+- [Установка через Helm](./Installation/grafana_helm_installation.md) — развёртывание в Kubernetes
 
 ### Ключевые компоненты HA
 
@@ -175,8 +174,4 @@ Grafana не имеет встроенной кластеризации; HA ре
 - [ ] **Backup:** Регулярный бэкап БД
 - [ ] **Resource limits:** CPU/memory limits для подов
 
-### Ссылки
-
-- [Документация HA](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/high-availability/)
-- [Настройка PostgreSQL HA](https://patroni.readthedocs.io/)
-- [Helm-чарт Grafana](./Installation/grafana_helm_installation.md)
+Подробная [документация HA](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/high-availability/) доступна на сайте Grafana Labs. Для настройки отказоустойчивого кластера PostgreSQL см. [Patroni](https://patroni.readthedocs.io/). Дополнительные примеры развёртывания — в [установке через Helm](./Installation/grafana_helm_installation.md).

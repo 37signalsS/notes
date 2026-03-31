@@ -216,5 +216,13 @@ git fsck --lost-found
 
 ## Дополнительная информация
 
-* Сравнение `merge` и `rebase`: [Ветвление в Git: Команды и Механизмы - Сравнение merge и rebase](./git_branching.md#Сравнение-merge-и-rebase)
-* [TUI инструменты для визуализации истории](./git_tools.md)
+### Официальные ресурсы
+
+- **Документация Git по reset:** [git-scm.com/docs/git-reset](https://git-scm.com/docs/git-reset)
+- **Документация Git по revert:** [git-scm.com/docs/git-revert](https://git-scm.com/docs/git-revert)
+- **Документация Git по reflog:** [git-scm.com/docs/git-reflog](https://git-scm.com/docs/git-reflog)
+- **git-filter-repo:** [github.com/newren/git-filter-repo](https://github.com/newren/git-filter-repo)
+
+### Связанные темы
+
+Сравнение `merge` и `rebase` в [git_branching.md](./git_branching.md#сравнение-merge-и-rebase). TUI-инструменты в [git_tools.md](./git_tools.md).

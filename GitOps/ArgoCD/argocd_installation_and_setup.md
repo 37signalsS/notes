@@ -276,7 +276,7 @@ argocd app diff <app-name>
 
 ### Ссылки
 
-- **[Обзор ArgoCD](./argocd_overview.md)**
-- **[Синхронизация](./synchronization.md)**
-- **[Уведомления](./argocd_notifications.md)**
-- **[Официальная документация](https://argo-cd.readthedocs.io/en/stable/)**
+- [Обзор ArgoCD](./argocd_overview.md)
+- [Синхронизация](./synchronization.md)
+- [Уведомления](./argocd_notifications.md)
+- [Официальная документация](https://argo-cd.readthedocs.io/en/stable/)

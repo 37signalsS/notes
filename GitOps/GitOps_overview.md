@@ -34,11 +34,37 @@
 | **Высокая скорость развертывания:** Автоматизация и унификация процессов ускоряют доставку изменений.       | **Динамические окружения:** Создание новых или временных окружений может потребовать ручной подготовки конфигурации в Git.                                                                       |
 | **Консистентность окружений:** Гарантия того, что dev, staging и production окружения настроены идентично. |                                                                                                                                                                                                    |
 
+## Практические сценарии
+
+### Сценарий 1: Выбор GitOps-инструмента
+
+| Критерий | ArgoCD | Flux | Crossplane |
+| :--- | :--- | :--- | :--- |
+| **Назначение** | CD для Kubernetes | CD для Kubernetes | IaC за пределами K8s |
+| **Интерфейс** | Веб-UI + CLI | CLI-only | Kubernetes API |
+| **Подход** | Монолитный оператор | Модульный toolkit | Расширение K8s API |
+| **Когда использовать** | Визуальный контроль, мультикластер | "Unix-way", автоматизация | Управление облачной инфраструктурой |
+
+**Подробнее:** [ArgoCD](./ArgoCD/argocd_overview.md), [Flux](./flux.md), [Crossplane](./Crossplane/overview.md).
+
+### Сценарий 2: Типичный GitOps-пайплайн
+
+1. **CI-этап:** Сборка Docker-образа, публикация в реестр с неизменяемым тегом (SemVer или digest).
+2. **Обновление манифеста:** CI-пайплайн обновляет тег образа в Git-репозитории с манифестами.
+3. **CD-этап:** GitOps-оператор обнаруживает изменения и синхронизирует кластер.
+
+**Подробнее:** [GitOps Pipeline Example](../CI-CD/Core_Concepts/gitops_pipeline_example.md), [Образы контейнеров](./Concepts/containerization_and_image_storage.md).
+
+### Сценарий 3: Управление секретами
+
+Для хранения секретов в Git используются инструменты шифрования:
+
+- **[SOPS](../Security/Tools/sops_overview.md)** — шифрование значений в YAML/JSON
+- **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md)** — шифрование Kubernetes Secret
+- **[Vault](../Vault/overview.md)** — внешнее хранилище с динамическими секретами
+
 ## Дополнительная информация
 
-Наиболее популярные инструменты для реализации GitOps-подхода:
+**Популярные инструменты:** ArgoCD (веб-интерфейс, мультикластер), Flux (модульность, CNCF), Crossplane (IaC за пределами K8s), Jenkins X (GitOps "из коробки").
 
-* **[ArgoCD](./ArgoCD/argocd_overview.md)** — самый популярный оператор для Kubernetes с богатым веб-интерфейсом и широкими возможностями.
-* **[Flux](./flux.md)** — проект от создателей Kubernetes (CNCF), который является гибким и расширяемым набором инструментов для GitOps.
-* **[Crossplane](./Crossplane/overview.md)** — расширяет принципы GitOps за пределы Kubernetes, позволяя управлять внешней облачной инфраструктурой (IaC) через Kubernetes API.
-* **Jenkins X** — CI/CD платформа, ориентированная на Kubernetes и включающая в себя GitOps-практики "из коробки".
+**Официальные ресурсы:** [ArgoCD](https://argoproj.github.io/cd/), [Flux](https://fluxcd.io/), [Crossplane](https://crossplane.io/), [CNCF GitOps WG](https://github.com/cncf/tag-app-delivery/tree/main/gitops-wg).

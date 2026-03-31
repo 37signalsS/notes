@@ -143,9 +143,6 @@ spec:
 
 ## Дополнительная информация
 
-- **[Сравнение с ArgoCD](./argo_vs_flux_manifests.md)**: Детальный разбор различий в философии и структуре манифестов.
-- **[GitOps Notifications](./gitops_notifications.md)**: Настройка уведомлений в Slack, Teams для Flux.
-- **[GitOps Security](./secrets_encryption.md)**: Управление секретами с SOPS и Sealed Secrets.
-- **Официальная документация**: [fluxcd.io](https://fluxcd.io/)
-- **GitHub Repository**: [fluxcd/flux2](https://github.com/fluxcd/flux2)
-- **Changelog**: [flux2 releases](https://github.com/fluxcd/flux2/releases)
+**Связанные документы:** [Сравнение с ArgoCD](./argo_vs_flux_manifests.md), [GitOps Notifications](./gitops_notifications.md), [GitOps Security](./secrets_encryption.md).
+
+**Официальные ресурсы:** [Документация](https://fluxcd.io/), [GitHub](https://github.com/fluxcd/flux2), [Changelog](https://github.com/fluxcd/flux2/releases).

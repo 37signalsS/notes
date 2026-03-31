@@ -58,11 +58,4 @@ Secret можно использовать как переменные окру�
 
 ### Связанные темы
 
-- [Создание Secret](creating_secrets.md)
-- [Использование Secret](using_secrets.md)
-- [Хранение в etcd](etcd_storage.md)
-- [Безопасность Secret](security.md)
-- [Внешние менеджеры](external_managers.md)
-- [ConfigMap](../configmap.md) — для неконфиденциальных данных
-- [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)
-- [RBAC](../../Security/rbac/rbac_overview.md) — управление доступом
+[Создание Secret](creating_secrets.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [ConfigMap](../configmap.md), [Sealed Secrets](../../Security/sealed_secrets_overview.md), [RBAC](../../Security/rbac/rbac_overview.md).

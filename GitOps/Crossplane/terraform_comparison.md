@@ -1,7 +1,5 @@
 # Crossplane: Сравнение с Terraform
 
-> **Актуальные версии (февраль 2026):** Crossplane v1.20/v2.0, Terraform v1.10+, OpenTofu v1.8.
-
 ## Определения
 
 **Crossplane** — Kubernetes-native инструмент для управления инфраструктурой через CRD с непрерывной сверкой состояния.
@@ -49,9 +47,11 @@
 - **Terraform**: Для начальной настройки кластера Kubernetes и базовой инфраструктуры (сеть, VPC)
 - **Crossplane**: Для управления приложениями и сервисами внутри Kubernetes, ежедневные операции
 
+Введение в Crossplane см. в [Crossplane Overview](./overview.md), интеграция с GitOps описана в [GitOps Integration](./gitops_integration.md).
+
 ## Дополнительная информация
 
-- **[Crossplane Overview](./overview.md)**: Введение в Crossplane и его возможности
-- **[GitOps Integration](./gitops_integration.md)**: Интеграция Crossplane с ArgoCD и Flux
-- **[Terraform vs Crossplane 2026](https://www.crossplane.io/blog/crossplane-vs-terraform)**: Официальное сравнение от создателей
-- **Официальная документация Terraform**: [terraform.io](https://www.terraform.io/)
+Внешние ресурсы:
+
+- Официальное сравнение от создателей Crossplane: [Terraform vs Crossplane 2026](https://www.crossplane.io/blog/crossplane-vs-terraform)
+- Официальная документация Terraform: [terraform.io](https://www.terraform.io/)

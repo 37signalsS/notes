@@ -122,9 +122,4 @@ spec:
 | **Аннотация с хешем** | Production, GitOps | Автоматизация, надёжность | Требует настройки CI/CD |
 | **Пересоздание пода** | Stateful-приложения | Полный контроль | Простой приложения |
 
-### Связанные документы
-
-* [Использование ConfigMap в подах](./pod_usage.md)
-* [Лучшие практики](./best_practices.md)
-* [Deployment](../Deployment/index.md)
-* [GitOps](../../../GitOps/GitOps_overview.md)
+Дополнительную информацию см. в документах [использование ConfigMap в подах](./pod_usage.md), [лучшие практики](./best_practices.md), [Deployment](../Deployment/index.md) и [GitOps](../../../GitOps/GitOps_overview.md).

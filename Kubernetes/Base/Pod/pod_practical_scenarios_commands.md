@@ -1,6 +1,40 @@
+# Pod: Практические сценарии и команды kubectl
+
+## Определения
+
+**Императивная команда** — команда kubectl, создающая объект напрямую (например, `kubectl create`). Если объект существует, команда завершится ошибкой.
+
+**Декларативная команда** — команда kubectl, применяющая конфигурацию из файла (например, `kubectl apply`). Создает объект или обновляет существующий.
+
+**Ephemeral Container** — временный отладочный контейнер, добавляемый в работающий Pod без его перезапуска.
+
+---
+
+## Базовые концепции
+
+### kubectl apply vs kubectl create
+
+| Команда | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| `kubectl create` | Императивная команда. Создает объект с нуля. При наличии объекта вернет ошибку | Одноразовое создание, скрипты, dev-среда |
+| `kubectl apply` | Декларативная команда. Применяет конфигурацию из файла. Создает или обновляет объект | **Предпочтительный способ** для production, CI/CD, GitOps |
+
+**Ключевое отличие:** `kubectl apply` хранит последнюю примененную конфигурацию в аннотации `kubectl.kubernetes.io/last-applied-configuration`. Это позволяет отслеживать изменения и применять только дельту при следующем вызове.
+
+### Диагностика проблем с Pod
+
+Две основные команды для отладки:
+
+| Команда | Назначение |
+| :--- | :--- |
+| `kubectl describe pod` | Подробная сводка состояния пода с событиями |
+| `kubectl logs` | Вывод stdout/stderr процессов в контейнере |
+
+---
+
 ## Практические сценарии
 
-## Пример манифеста Pod
+### Пример 1: Базовый манифест Pod
 
 ```yaml
 apiVersion: v1
@@ -15,16 +49,11 @@ spec:
       image: nginx:1.28.0
       ports:
         - containerPort: 80
-
-  # nodeName: worker-node-1 # Можно жестко указать узел для запуска, но это не рекомендуется.
-                           # Лучше использовать nodeSelector или affinity.
 ```
 
-## Пример: Взаимодействие контейнеров в одном поде
+### Пример 2: Multi-container Pod с взаимодействием через localhost
 
-Этот пример демонстрирует, как два контейнера (`web-server` и `client`) могут взаимодействовать внутри одного пода, используя общее сетевое пространство (`localhost`).
-
-**Манифест пода:**
+Два контейнера в одном поде используют общее сетевое пространство:
 
 ```yaml
 apiVersion: v1
@@ -33,174 +62,144 @@ metadata:
   name: multi-container-demo
 spec:
   containers:
-  # 1. Контейнер с веб-сервером
   - name: web-server
-    image: my-date-server:1.0 # Предполагается, что этот образ собран и доступен
+    image: my-date-server:1.0
     ports:
       - containerPort: 5005
-
-  # 2. Контейнер-клиент
   - name: client
     image: busybox:1.36.1
-    # Бесконечный цикл, который делает запросы к серверу
     command: ['sh', '-c', 'while true; do wget -q -O- http://localhost:5005/date; sleep 5; done']
 ```
 
 **Как это работает:**
+- Контейнер `client` обращается к `web-server` через `http://localhost:5005`
+- Просмотр логов: `kubectl logs multi-container-demo -c client` и `kubectl logs multi-container-demo -c web-server`
 
-- Контейнер `client` может напрямую обращаться к `web-server` через `http://localhost:5005`.
-- Посмотреть логи можно командами `kubectl logs multi-container-demo -c client` и `kubectl logs multi-container-demo -c web-server`.
-
-## Настройка Graceful Shutdown
-
-Grace period и lifecycle определяют, успеет ли сервис завершить работу корректно.
-
-**Почему важно:** Срезанные запросы, потерянные сообщения, corrupted state и странные ошибки у клиентов при релизах/эвиктах.
-
-```yaml
-spec:
-  terminationGracePeriodSeconds: 90  # Увеличено для запаса на graceful shutdown
-  containers:
-  - name: app
-    lifecycle:
-      preStop:
-        exec:
-          command:
-          - /bin/sh
-          - -c
-          - |
-            # 1. Сигнализируем приложению начать graceful shutdown
-            # Например, через HTTP-эндпоинт или пользовательский сигнал
-            curl -sf -X POST http://localhost:8080/prestop || true
-            
-            # 2. Короткая пауза, чтобы сигнал был обработан
-            sleep 2
-    # КРИТИЧЕСКИ ВАЖНО: Настроенные Readiness Probe!
-    # Они заставят K8s немедленно исключить pod из Service
-    readinessProbe: # Подробности см. в документе [Пробы (Probes)](../probes.md)
-      httpGet:
-        path: /health/ready
-        port: 8080
-      initialDelaySeconds: 5
-      periodSeconds: 2  # Частая проверка для быстрого исключения
-      failureThreshold: 1  # Одного провала достаточно
-```
-
-**Порядок действий при завершении работы пода:**
-
-1. **Начало eviction:** Kubernetes решает завершить pod.
-2. **Срабатывает preStop-хук:** Ваш скрипт отправляет сигнал приложению начать подготовку к завершению (например, перестать принимать новые соединения).
-3. **Readiness Probe сразу проваливается:** Приложение, получив сигнал, начинает отвечать 503 на запросы к эндпоинту готовности (`/health/ready`). Kubelet видит это и мгновенно удаляет pod из Endpoints Service.
-4. **Kubernetes отправляет SIGTERM:** После выполнения preStop-хука K8s отправляет `SIGTERM` процессу в контейнере. Ваше приложение должно быть готово его обработать.
-5. **Grace period:** У приложения есть оставшееся время до `terminationGracePeriodSeconds` (90с), чтобы завершить текущие запросы и корректно выключиться.
-6. **SIGKILL (если необходимо):** Если по истечении grace period процесс ещё жив, K8s отправляет `SIGKILL`.
-
-## Диагностика и отладка
-
-Две основные команды для диагностики проблем с подами — `kubectl describe` и `kubectl logs`.
-
-### `kubectl describe pod <pod-name>`
-
-Эта команда предоставляет подробную сводку о состоянии пода. Это первый шаг при отладке пода, который не запускается или ведет себя некорректно.
-
-**Что смотреть в выводе `describe`:**
-
-1. **`Status`**: Текущая фаза пода (`Pending`, `Running`, `Failed` и т.д.).
-2. **`Conditions`**: Детальные условия состояния (`PodScheduled`, `Initialized`, `Ready`).
-3. **`Events`**: **Самая важная часть для отладки.** Это журнал событий, связанных с подом. Здесь вы увидите:
-    - Сообщения от планировщика (`Scheduler`) о назначении пода на узел.
-    - Ошибки при скачивании образов (`Failed to pull image...`).
-    - Ошибки, связанные с нехваткой ресурсов (`FailedScheduling`).
-    - Результаты выполнения проб (`Liveness probe failed...`).
-    - Информацию о запуске и остановке контейнеров.
+### Пример 3: Диагностика пода с проблемами
 
 ```bash
-# Получить подробную информацию и события для пода
+# Получить подробную информацию о поде с событиями
 kubectl describe pod my-nginx-pod -n <namespace>
-```
 
-### `kubectl logs <pod-name>`
+# Что смотреть в выводе:
+# 1. Status — текущая фаза пода (Pending, Running, Failed)
+# 2. Conditions — детали состояния (PodScheduled, Initialized, Ready)
+# 3. Events — журнал событий (ошибки pull image, нехватка ресурсов, результаты проб)
 
-Эта команда показывает стандартный вывод (`stdout`) и стандартный вывод ошибок (`stderr`) процессов, запущенных в контейнере.
-
-```bash
-# Посмотреть логи основного контейнера в поде
+# Посмотреть логи контейнера
 kubectl logs my-pod-name
 
-# Следить за логами в реальном времени (как tail -f)
+# Следить за логами в реальном времени
 kubectl logs -f my-pod-name
 
-# Посмотреть логи для пода с несколькими контейнерами
-# Необходимо указать имя контейнера с помощью флага -c
+# Логи для multi-container Pod (указать контейнер)
 kubectl logs my-multi-container-pod -c main-app
 
-# Посмотреть логи init-контейнера
-# Логи init-контейнеров также доступны после их завершения
+# Логи init-контейнера
 kubectl logs my-pod-with-init -c my-init-container
+
+# Логи предыдущего экземпляра контейнера (после перезапуска)
+kubectl logs my-pod-name --previous
 ```
 
-## Отладка с помощью Ephemeral Containers при отсутствии инструментов диагностики и отладки
+### Пример 4: Отладка с помощью Ephemeral Containers
 
-**Проблема:** Приложение в работающем Pod'е ведет себя некорректно, но в его контейнере отсутствуют необходимые инструменты для диагностики (`netstat`, `tcpdump`, `ps` и т.д.). Добавлять их в основной образ — плохая практика, так как это увеличивает его размер и поверхность атаки.
+**Проблема:** В контейнере отсутствуют инструменты диагностики (`tcpdump`, `netstat`, `ps`).
 
-**Решение:** Использовать **Ephemeral Containers** (эфемерные контейнеры) — временные контейнеры, которые "внедряются" в уже запущенный Pod для отладки без его перезапуска.
-
-**Пример: Добавление контейнера `busybox` для отладки**
+**Решение:** Добавить временный отладочный контейнер без перезапуска пода:
 
 ```bash
-kubectl debug -it pod/my-pod 
-  --image=busybox:1.36.1 
-  --target=app-container 
-  --share-processes 
+kubectl debug -it pod/my-pod \
+  --image=busybox:1.36.1 \
+  --target=app-container \
+  --share-processes \
   -- bash
 ```
 
-- `--target=app-container`: Указывает, к какому основному контейнеру в Pod'е мы хотим "прицепиться".
-- `--share-processes`: Позволяет эфемерному контейнеру видеть и взаимодействовать с процессами целевого контейнера.
+| Параметр | Описание |
+| :--- | :--- |
+| `--target=app-container` | Целевой контейнер для отладки |
+| `--share-processes` | Доступ к процессам целевого контейнера |
 
-## Команды для работы с подами
+### Пример 5: Graceful Shutdown
+
+Настройка корректного завершения работы пода:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: graceful-pod
+spec:
+  terminationGracePeriodSeconds: 90
+  containers:
+  - name: app
+    image: my-app:1.0
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "curl -sf -X POST http://localhost:8080/shutdown || true"]
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+        port: 8080
+      periodSeconds: 2
+      failureThreshold: 1
+```
+
+**Порядок завершения:**
+1. Kubernetes решает завершить pod
+2. Выполняется `preStop` hook (уведомление приложения)
+3. `readinessProbe` возвращает 503 → pod исключается из Service
+4. Отправляется `SIGTERM`
+5. Приложение завершает текущие запросы (до 90с)
+6. При необходимости отправляется `SIGKILL`
+
+Подробнее: [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md), [Пробы](../probes.md), [Жизненный цикл пода](./pod_lifecycle_and_state.md).
+
+### Пример 6: Основные команды управления Pod
 
 ```bash
 # Создать под из файла
 kubectl apply -f pod.yaml
 
-# Получить информацию о подах
+# Получить список подов
 kubectl get pods
 
-# Вывести поды только определенного неймспейса
-kubectl -n <имя неймспейса> get pod
+# Поды в конкретном namespace
+kubectl -n <namespace> get pod
 
-# Получить подробную информацию о конкретном поде
+# Подробная информация о поде
 kubectl describe pod my-nginx-pod
 
 # Удалить под
 kubectl delete pod my-nginx-pod
 
-# Получить поды на конкретной ноде
-kubectl get pod --field-selector spec.nodeName=<имя_ноды>
+# Поды на конкретной ноде
+kubectl get pod --field-selector spec.nodeName=<node-name>
 ```
 
-**Примеры использования меток:**
+### Пример 7: Использование меток (label selectors)
 
 ```bash
-# Получить все frontend поды
+# Получить поды по метке
 kubectl get pods -l app=frontend
 
-# Получить все ресурсы в production окружении
+# Получить все ресурсы в namespace по метке
 kubectl get all -l environment=production
 
-# Удалить все тестовые ресурсы
+# Удалить ресурсы по метке
 kubectl delete all -l environment=test
 
-# Комбинировать селекторы
+# Комбинированные селекторы
 kubectl get pods -l 'app=web,environment in (staging,production)'
+
+# Отрицание
+kubectl get pods -l 'app!=backend'
 ```
 
-## `kubectl apply` vs `kubectl create`
+---
 
-| Команда | Описание | Когда использовать |
-|---------|----------|-------------------|
-| **`kubectl create`** | **Императивная команда.** Создает новый объект с нуля. Если объект с таким именем уже существует, команда вернет ошибку. | Для одноразового создания объектов, когда вы уверены, что их еще нет. Удобно для простых сценариев или скриптов. |
-| **`kubectl apply`** | **Декларативная команда.** Применяет конфигурацию из файла. Если объекта не существует, он будет создан. Если объект уже существует, `apply` сравнит текущую конфигурацию с новой и применит только изменения. | **Предпочтительный способ** для управления ресурсами в Kubernetes. Идеально подходит для CI/CD и управления инфраструктурой как кодом (IaC), так как позволяет отслеживать изменения в Git. |
+## Дополнительная информация
 
-**Ключевое отличие:** `kubectl apply` хранит последнюю примененную конфигурацию в аннотации `kubectl.kubernetes.io/last-applied-configuration` внутри самого объекта. Это позволяет ему понимать, какие поля были изменены при следующем вызове `apply`. `kubectl create` этого не делает.
+**Связанные темы:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Пробы](../probes.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md), [Рекомендации по написанию манифестов](./pod_best_practices.md).

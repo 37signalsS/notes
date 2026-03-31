@@ -204,44 +204,16 @@ spec:
 
 ### Интеграция с Kubernetes
 
-| Компонент | Интеграция |
-|-----------|------------|
-| **[HPA](./HPA/index.md)** | Масштабирование workers по внешним метрикам (длина очереди) |
-| **[KEDA](./keda/practical_scenarios.md)** | Рекомендуемое решение для событийного масштабирования |
-| **[Pod Distribution](./pod_distribution/basic_concepts.md)** | Распределение workers по узлам для отказоустойчивости |
-| **[Pod Disruption Budget](./pod_disruption_budget.md)** | Защита workers при масштабировании узлов |
-| **[Cluster Autoscaler](./cluster_autoscaler_detailed.md)** | Добавление узлов при масштабировании workers |
+Паттерн интегрируется с компонентами экосистемы: [HPA](./HPA/index.md) масштабирует workers по внешним метрикам (длина очереди), [KEDA](./keda/practical_scenarios.md) является рекомендуемым решением для событийного масштабирования, [Pod Distribution](./pod_distribution/basic_concepts.md) обеспечивает распределение workers по узлам для отказоустойчивости, [Pod Disruption Budget](./pod_disruption_budget.md) защищает workers при масштабировании узлов, а [Cluster Autoscaler](./cluster_autoscaler_detailed.md) добавляет узлы при масштабировании workers.
 
 ### Технологии очередей
 
-| Технология | Назначение | Интеграция с KEDA |
-|------------|------------|-------------------|
-| **RabbitMQ** | Традиционные очереди с подтверждением | ✅ RabbitMQ scaler |
-| **Apache Kafka** | Потоковая обработка с высокой пропускной способностью | ✅ Kafka scaler |
-| **AWS SQS** | Управляемая очередь без инфраструктурных затрат | ✅ AWS SQS scaler |
-| **Azure Service Bus** | Управляемая очередь в Azure | ✅ Azure Service Bus scaler |
-| **Google Pub/Sub** | Потоковая передача событий в GCP | ✅ Google Pub/Sub scaler |
-| **Redis Streams** | Лёгковесная очередь на базе Redis | ✅ Redis Streams scaler |
+Поддерживаемые брокеры сообщений: RabbitMQ (традиционные очереди с подтверждением), Apache Kafka (потоковая обработка с высокой пропускной способностью), AWS SQS (управляемая очередь без инфраструктурных затрат), Azure Service Bus (управляемая очередь в Azure), Google Pub/Sub (потоковая передача событий в GCP), Redis Streams (лёгковесная очередь на базе Redis). Все перечисленные технологии имеют scalers для KEDA.
 
 ### Мониторинг
 
-| Метрика | Описание | Алерт |
-|---------|----------|-------|
-| `queue_length` | Длина очереди | >1000 сообщений |
-| `processing_latency` | Задержка обработки | >5 секунд |
-| `error_rate` | Процент ошибок | >1% |
-| `consumer_lag` (Kafka) | Отставание потребителя | >10000 сообщений |
-| `dead_letter_queue_size` | Размер DLQ | >100 задач |
+Ключевые метрики для мониторинга: `queue_length` (длина очереди, алерт >1000 сообщений), `processing_latency` (задержка обработки, алерт >5 секунд), `error_rate` (процент ошибок, алерт >1%), `consumer_lag` для Kafka (отставание потребителя, алерт >10000 сообщений), `dead_letter_queue_size` (размер DLQ, алерт >100 задач).
 
 ### Сценарии использования
 
-| Сценарий | Обоснование |
-|----------|-------------|
-| Видео-обработка, отчёты | Асинхронная обработка, сглаживание пиков |
-| Пиковые нагрузки с непредсказуемым трафиком | Очередь как буфер |
-| Обработка платежей | Асинхронность + гарантии доставки |
-
-### Ресурсы
-
-* [KEDA Scalers Documentation](https://keda.sh/docs/latest/scalers/)
-* [Kubernetes HPA with Custom Metrics](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
+Паттерн применим для видео-обработки и отчётов (асинхронная обработка, сглаживание пиков), пиковых нагрузок с непредсказуемым трафиком (очередь как буфер), обработки платежей (асинхронность + гарантии доставки).

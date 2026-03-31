@@ -80,8 +80,6 @@ kubectl apply -f configmap.yaml --force
 | Безопасность | Стандартная | Повышенная |
 | Use case | Dev, динамические настройки | Production, стабильная конфигурация |
 
-### Связанные документы
+### Ссылки
 
-* [Создание ConfigMap](./creation.md)
-* [Лучшие практики](./best_practices.md)
-* [Безопасность Secret](../secrets/security.md)
+Подробнее о создании — в документе [создание ConfigMap](./creation.md), дополнительные рекомендации в [лучшие практики](./best_practices.md). О безопасности хранения конфиденциальных данных см. [Безопасность Secret](../secrets/security.md).

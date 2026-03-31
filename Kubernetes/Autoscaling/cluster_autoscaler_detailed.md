@@ -95,17 +95,6 @@ spec:
     image: my-app:latest
 ```
 
-### Что мешает удалению узла Cluster Autoscaler?
-
-CA не может удалить узел, если на нём есть:
-
-* Поды с жесткими правилами `podAntiAffinity`, которые невозможно выполнить на других узлах
-* Поды, не управляемые контроллерами (`Deployment`, `StatefulSet`, `DaemonSet`, `ReplicaSet`)
-* Поды с локальным хранилищем (`hostPath`, `emptyDir`), если `--skip-nodes-with-local-storage=true`
-* Поды, для которых не соблюдается [PodDisruptionBudget](pod_disruption_budget.md)
-* Поды с аннотацией `cluster-autoscaler.kubernetes.io/safe-to-evict: "false"`
-* Поды с локальными IP-адресами, привязанными к конкретному узлу
-
 ### Диагностика и мониторинг
 
 #### Проверка статуса CA
@@ -143,17 +132,12 @@ kubectl get events -n kube-system --field-selector reason=ScaleDown
 
 ### Интеграции
 
-* **[HPA](HPA/index.md)** — CA реагирует на поды, созданные HPA, когда недостаточно ресурсов на существующих узлах.
-* **[VPA](vpa_detailed.md)** — VPA в режиме рекомендаций помогает оптимизировать `requests`, что улучшает работу CA.
-* **[KEDA](./keda/practical_scenarios.md)** — KEDA создаёт HPA, который косвенно влияет на решения CA о масштабировании.
-* **[Karpenter](./Karpenter/installation.md)** — альтернатива CA с более быстрым и эффективным масштабированием.
-* **[Pod Disruption Budget](pod_disruption_budget.md)** — CA учитывает PDB при принятии решений о scale-down.
-* **[Pod Distribution](pod_distribution/basic_concepts.md)** — правила распределения подов влияют на способность CA удалить узел.
+CA работает в связке с другими компонентами экосистемы Kubernetes: [HPA](HPA/index.md) и [KEDA](./keda/practical_scenarios.md) создают поды, которые триггерят масштабирование CA, [VPA](vpa_detailed.md) оптимизирует `requests` для улучшения работы CA, а [Karpenter](./Karpenter/installation.md) является альтернативой CA. При scale-down CA учитывает [Pod Disruption Budget](pod_disruption_budget.md), а правила [Pod Distribution](pod_distribution/basic_concepts.md) влияют на возможность удаления узла.
 
 ### Ограничения
 
 * **Задержка масштабирования** — создание нового узла занимает 3-15 минут в зависимости от облака.
-* **Требует облачной интеграции** — для bare-metal нужны дополнительные инструменты.
+* **Требует облачной интеграции** — для bare-metal нужны дополнительные инструменты (Metal3, Tinkerbell, MAAS).
 * **Не работает с DaemonSet** — CA не учитывает DaemonSet при расчёте утилизации.
 * **Масштабирование до нуля** — требует специальной настройки и не всегда поддерживается.
 
@@ -167,9 +151,3 @@ kubectl get events -n kube-system --field-selector reason=ScaleDown
 | Гибкость | Ограничена группами узлов | Высокая (любые типы инстансов) |
 | Сложность настройки | Средняя | Высокая |
 | Поддержка bare-metal | Требуется интеграция | Ограниченная |
-
-### Ресурсы
-
-* [Официальная документация Kubernetes](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler)
-* [Yandex Cloud Managed Kubernetes Autoscaling](https://yandex.cloud/ru/docs/managed-kubernetes/concepts/autoscaling)
-* [VMware Tanzu Kubernetes Grid Autoscaling](https://docs.vmware.com/en/VMware-Tanzu-Kubernetes-Grid/index.html)

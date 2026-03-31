@@ -76,7 +76,7 @@
 
 ### Kubernetes: Deployment vs StatefulSet
 
-В Kubernetes концепция stateful/stateless реализуется через контроллеры [Deployment](../Kubernetes/Base/Deployment/index.md) (stateless) и [StatefulSet](../Kubernetes/Base/StatefulSet/statefulset_overview.md) (stateful).
+В Kubernetes концепция stateful/stateless реализуется через контроллеры [Deployment](../Kubernetes/Base/Deployment/index.md) (stateless) и [StatefulSet](../Kubernetes/Base/StatefulSet/statefulset_core_concepts.md) (stateful).
 
 **Deployment** управляет stateless-приложениями: поды взаимозаменяемы, имеют случайные имена и IP, используют общее хранилище (RWX) или временное.
 

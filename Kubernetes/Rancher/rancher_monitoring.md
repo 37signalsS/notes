@@ -111,7 +111,7 @@ spec:
 3. **Создание Kubernetes Service и Endpoint**: Для обнаружения ETCD-серверов.
 4. **Создание ServiceMonitor**: Используя Custom Resource `ServiceMonitor` из Prometheus Operator.
 
-**Детальная настройка и YAML-примеры для мониторинга ETCD**: см. [prometheus_config.md](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md). Концептуальная информация об ETCD: см. [architecture_and_concepts.md](../../etcd/architecture_and_concepts.md).
+**Детальная настройка и YAML-примеры для мониторинга ETCD**: см. [prometheus_config.md](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md). Концептуальная информация об ETCD: см. [architecture-and-concepts.md](../../etcd/architecture-and-concepts.md).
 
 ## Дополнительная информация
 

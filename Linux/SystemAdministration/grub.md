@@ -81,7 +81,7 @@ sudo update-grub
 
 ### Добавление модулей в initramfs (dracut)
 
-При миграции ВМ между гипервизорами (например, с VMware ESXi на KVM) могут потребоваться дополнительные драйверы.
+При миграции ВМ между гипервизорами (например, с VMware ESXi на KVM) могут потребоваться дополнительные драйверы. Также это критично для систем с LVM или RAID.
 
 1. Просмотр содержимого initramfs:
 
@@ -89,7 +89,7 @@ sudo update-grub
 lsinitrd /boot/initramfs-$(uname -r).img | less
 ```
 
-1. Создание конфигурации добавления модулей:
+2. Создание конфигурации добавления модулей:
 
 ```bash
 # Создать файл в /etc/dracut.conf.d/
@@ -97,7 +97,7 @@ lsinitrd /boot/initramfs-$(uname -r).img | less
 add_drivers+=" mpt3sas vmw_balloon vmw_vmci vmd "
 ```
 
-1. Пересоздание initramfs:
+3. Пересоздание initramfs:
 
 ```bash
 # RHEL/CentOS
@@ -106,6 +106,32 @@ sudo dracut --force
 # Debian/Ubuntu
 sudo update-initramfs -u
 ```
+
+### Включение lvm2 в initramfs
+
+Если корневая ФС находится на LVM, модуль `lvm2` должен быть включён в initramfs для активации VG при загрузке.
+
+**Debian/Ubuntu:**
+```bash
+echo "lvm2" >> /etc/initramfs-tools/modules
+update-initramfs -u
+update-grub
+```
+
+**RHEL/CentOS/Fedora:**
+```bash
+echo 'add_dracutmodules+=" lvm "' >> /etc/dracut.conf.d/lvm.conf
+dracut --force
+grub2-mkconfig -o /boot/grub2/grub.cfg
+```
+
+**Проверка:**
+```bash
+# Убедиться, что lvm2 попал в initramfs
+lsinitrd /boot/initramfs-$(uname -r).img | grep lvm
+```
+
+**Troubleshooting:** **[Загрузка с LVM — Volume group not found](../FileSystems/LVM/advanced_topics/definitions_and_concepts.md#проблема-volume-group-not-found-после-рестарта)**
 
 ### Восстановление GRUB
 

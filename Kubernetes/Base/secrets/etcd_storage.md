@@ -14,6 +14,28 @@
 
 > Без Encryption at Rest любой, имеющий доступ к etcd, может прочитать секреты. Подробнее о безопасности см. [Безопасность Secret](security.md).
 
+## Основные концепции
+
+### Принцип хранения
+
+- **Путь в etcd:** `/registry/secrets/<namespace>/<name>`
+- **Кодировка:** Base64 (не шифрование) — данные легко декодировать
+- **Ограничение:** до 1 MiB на один Secret (ограничение etcd)
+
+### Encryption at Rest
+
+**Минимальная защита для production-кластеров.**
+
+**Провайдеры шифрования:**
+
+- **aescbc** — AES-CBC (256-bit), рекомендуется для большинства сценариев
+- **aesgcm** — AES-GCM (более современный, но требует больше CPU)
+- **secretbox** — XSalsa20-Poly1305 (альтернатива от Kubernetes)
+- **kms** — интеграция с внешними KMS (AWS KMS, GCP KMS, Azure Key Vault)
+- **identity** — без шифрования (только для чтения старых данных)
+
+> **Подробнее:** [Шифрование etcd в etcd_alternatives_and_security.md](../../Concepts/etcd_alternatives_and_security.md#конфигурация-encryptionconfiguration)
+
 ## Практические сценарии
 
 ### Просмотр ресурсов в etcd
@@ -101,7 +123,4 @@ kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 
 ### Связанные темы
 
-- [Основы Secret](secrets_basics.md)
-- [Создание Secret](creating_secrets.md)
-- [Безопасность Secret](security.md)
-- [Внешние менеджеры](external_managers.md) — для исключения Secret из etcd
+[Основы Secret](secrets_basics.md), [Создание Secret](creating_secrets.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [Шифрование etcd](../../Concepts/etcd_alternatives_and_security.md).

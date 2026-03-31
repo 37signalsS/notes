@@ -1,15 +1,16 @@
 # Grafana Alloy
 
-> **Навигация:**
->
-> - [Обзор Grafana](./grafana_overview.md)
-> - [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md)
-
 ## Определения
 
 **Grafana Alloy** — флагманский агент Grafana Labs для унифицированного сбора телеметрии (метрики, логи, трейсы, профили). Основан на [OpenTelemetry Collector](../OpenTelemetry/opentelemetry_overview.md), использует язык конфигурации River.
 
 **River** — язык конфигурации на базе HCL (HashiCorp Configuration Language) для описания потоков данных в виде графа компонентов.
+
+**Связанные темы:**
+- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
+- [Источники данных](./grafana_datasources.md) — настройка подключения к бэкендам
+- [Провижининг](./grafana_provisioning.md) — автоматизация конфигурации Grafana
+- [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md) — стандарт телеметрии
 
 ### Миграция с устаревших агентов
 
@@ -184,8 +185,11 @@ prometheus.remote_write "metrics_writer" {
 - **Зависимость** — развитие определяется Grafana Labs
 - **Компоненты** — меньше встроенных компонентов vs FluentBit/Vector
 
-### Ссылки
+### Актуальность информации
 
-- [Документация Alloy](https://grafana.com/docs/alloy/latest/)
-- [Конвертер конфигураций](https://grafana.com/docs/alloy/latest/tasks/migrate/)
-- [Сравнение с OTel Collector](https://grafana.com/docs/alloy/latest/concepts/compare/)
+Информация актуальна на 2026 год. Статус агентов:
+- **Promtail** — deprecated (весна 2026), миграция через [конвертер конфигураций](https://grafana.com/docs/alloy/latest/tasks/migrate/)
+- **Grafana Agent (static mode)** — deprecated (ноябрь 2025)
+- **Grafana Alloy** — активно развивается
+
+Подробная [документация Alloy](https://grafana.com/docs/alloy/latest/) и [сравнение с OTel Collector](https://grafana.com/docs/alloy/latest/concepts/compare/) доступны на сайте Grafana Labs.

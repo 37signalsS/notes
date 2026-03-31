@@ -244,9 +244,7 @@ kubectl describe pod my-app-pod | grep -A 10 "Limits/Requests"
 
 ### Интеграции
 
-* **[VPA](vpa_detailed.md)** — VPA в режиме `Auto` использует In-Place Pod Resize для применения рекомендаций.
-* **[HPA](HPA/index.md)** — HPA масштабирует количество подов, In-Place Resize оптимизирует ресурсы каждого пода.
-* **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — CA реагирует на изменения `requests` при принятии решений о масштабировании кластера.
+In-Place Pod Resize работает в связке с другими компонентами: [VPA](vpa_detailed.md) в режиме `Auto` использует функцию для применения рекомендаций без перезапуска, [HPA](HPA/index.md) масштабирует количество подов, пока In-Place Resize оптимизирует ресурсы каждого пода, а [Cluster Autoscaler](cluster_autoscaler_detailed.md) реагирует на изменения `requests` при масштабировании кластера.
 
 ### Ограничения
 
@@ -264,9 +262,3 @@ kubectl describe pod my-app-pod | grep -A 10 "Limits/Requests"
 | Batch-обработка | Низкое | Рекомендуется |
 | Real-time (стриминг) | Среднее | Проверить потерю соединений |
 | Java (JVM) | Высокое | JVM может не увидеть изменения |
-
-### Ресурсы
-
-* [Официальный блог Kubernetes: In-Place Pod Resize GA](https://kubernetes.io/blog/2024/12/kubernetes-v1-35-in-place-pod-resize-ga/)
-* [Kubernetes Enhancement Proposal: In-Place Pod Resize](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/1287-in-place-update-pod-resources)
-* [Документация Kubernetes: Pod Resources](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)

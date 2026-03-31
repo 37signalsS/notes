@@ -1,5 +1,29 @@
 # Karpenter: Установка и конфигурация
 
+## Определения
+
+**Karpenter Helm Chart** — официальный пакет для развёртывания Karpenter в Kubernetes кластере. Управляет установкой контроллера, webhook и необходимых RBAC-ресурсов.
+
+**EC2NodeClass** — ресурс Karpenter для AWS, определяющий конфигурацию создаваемых узлов (AMI, IAM-роль, подсети, группы безопасности).
+
+**NodePool** — ресурс Karpenter, определяющий параметры масштабирования (типы инстансов, зоны, лимиты ресурсов).
+
+## Основные концепции
+
+### Предварительные требования
+
+**Кластер EKS** — требуется Kubernetes 1.24+ и совместимость с Karpenter v1.x.
+
+**IAM Roles** — необходимы две роли: для контроллера Karpenter и для создаваемых узлов.
+
+**Helm v3+** — требуется для установки Karpenter через Helm chart.
+
+**Очередь SQS** — для обработки событий прерывания (interruption handling) в AWS.
+
+### Архитектура развёртывания
+
+Karpenter устанавливается в отдельный namespace `karpenter`. Контроллер работает как Deployment, требует доступа к API AWS EC2, IAM, SQS, CloudFormation.
+
 ## Практические сценарии
 
 ### Установка Karpenter (AWS EKS)
@@ -33,7 +57,7 @@ helm upgrade --install karpenter karpenter/karpenter \
   --set serviceAccount.name=karpenter-sa \
   --set settings.clusterName=my-cluster \
   --set settings.interruptionQueue=my-queue \
-  --version 1.0.0
+  --version 1.10.0
 ```
 
 #### Шаг 3: Создание Node Pool
@@ -223,21 +247,27 @@ spec:
           operator: Exists
 ```
 
-## Диагностика и мониторинг
+## Дополнительная информация
 
-### Проверка статуса Karpenter
+### Диагностика и мониторинг
 
+**Проверка логов контроллера:**
 ```bash
-# Просмотр логов контроллера
 kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100
+```
 
-# Проверка Node Pool
+**Проверка Node Pool:**
+```bash
 kubectl get nodepool
+```
 
-# Проверка созданных узлов
+**Проверка созданных узлов:**
+```bash
 kubectl get nodes -l karpenter.sh/nodepool=default
+```
 
-# Просмотр событий Karpenter
+**Просмотр событий Karpenter:**
+```bash
 kubectl get events -n karpenter --sort-by='.lastTimestamp'
 ```
 
@@ -252,12 +282,26 @@ kubectl get events -n karpenter --sort-by='.lastTimestamp'
 | `karpenter_disruption_actions_total` | Количество операций консолидации |
 | `karpenter_provisioning_latency_seconds` | Задержка создания узла |
 
-## Лучшие практики
+### Лучшие практики
 
-* **Используйте несколько Node Pool** — разделяйте workloads по типам (критические, пакетные, GPU).
-* **Consolidation** — включите консолидацию для автоматической оптимизации затрат.
-* **Spot + On-Demand** — комбинируйте spot для fault-tolerant и on-demand для критических нагрузок.
-* **Limit Range** — устанавливайте лимиты на Node Pool для контроля затрат.
-* **ExpireAfter** — настройте принудительное обновление узлов для безопасности.
-* **Мониторинг Pending Pods** — алерты на поды в `Pending` более 2 минут.
-* **Используйте latest AMI** — обновляйте образы узлов автоматически через `amiSelectorTerms: alias`.
+**Используйте несколько Node Pool** — разделяйте workloads по типам (критические, пакетные, GPU).
+
+**Consolidation** — включите консолидацию для автоматической оптимизации затрат.
+
+**Spot + On-Demand** — комбинируйте spot для fault-tolerant и on-demand для критических нагрузок.
+
+**Limit Range** — устанавливайте лимиты на Node Pool для контроля затрат.
+
+**ExpireAfter** — настройте принудительное обновление узлов для безопасности.
+
+**Мониторинг Pending Pods** — алерты на поды в `Pending` более 2 минут.
+
+**Используйте latest AMI** — обновляйте образы узлов автоматически через `amiSelectorTerms: alias`.
+
+### Связанные ресурсы
+
+**[Обзор Karpenter](./overview.md)** — концепции, архитектура, отличия от Cluster Autoscaler.
+
+**[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — альтернативное решение для масштабирования узлов.
+
+**[KEDA](../keda/basic_concepts.md)** — интеграция для масштабирования по внешним метрикам.

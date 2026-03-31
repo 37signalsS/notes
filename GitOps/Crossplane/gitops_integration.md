@@ -1,7 +1,5 @@
 # Crossplane: Интеграция с GitOps
 
-> **Актуальные версии (февраль 2026):** ArgoCD v3.3, Flux v2.x, Crossplane v1.20/v2.0.
-
 ## Определения
 
 **GitOps для инфраструктуры** — подход, при котором Git-репозиторий становится единым источником правды как для приложений, так и для инфраструктуры. Crossplane предоставляет декларативный API для управления облачными ресурсами, а GitOps-инструменты автоматизируют доставку и синхронизацию.
@@ -38,6 +36,8 @@ Crossplane идеально вписывается в методологию Git
 | :--- | :--- | :--- |
 | **ArgoCD** | Полная | Нативная синхронизация CRD, Application, ApplicationSet |
 | **Flux** | Полная | Kustomize Controller, Helm Controller для Crossplane манифестов |
+
+Обзор Crossplane и его возможностей см. в [Crossplane: Обзор](./overview.md).
 
 ## Практические сценарии
 
@@ -94,7 +94,7 @@ Crossplane идеально вписывается в методологию Git
    kubectl get rdsinstance my-postgres-db -o yaml
    ```
 
-### Сценарий 3: Мультикластерная синхронизация с ArgoCD
+### Сценарий 2: Мультикластерная синхронизация с ArgoCD
 
 ArgoCD может управлять несколькими кластерами с Crossplane:
 
@@ -132,8 +132,8 @@ spec:
 
 ## Дополнительная информация
 
-- **[ArgoCD Overview](../ArgoCD/argocd_overview.md)**: Детальная информация об ArgoCD и его возможностях
-- **[Synchronization](../ArgoCD/synchronization.md)**: Политики синхронизации, Sync Waves, Hooks
-- **[Helm Integration](../ArgoCD/helm_integration.md)**: Использование Helm с ArgoCD для Crossplane чартов
-- **[Flux Overview](../overview.md)**: Альтернативный GitOps-инструмент от CNCF
-- **Официальная документация Crossplane**: [GitOps Workflows](https://docs.crossplane.io/latest/concepts/gitops/)
+Обзор ArgoCD и его возможностей см. в [ArgoCD Overview](../ArgoCD/argocd_overview.md), политики синхронизации — в [Synchronization](../ArgoCD/synchronization.md), использование Helm — в [Helm Integration](../ArgoCD/helm_integration.md). Альтернативный GitOps-инструмент описан в [Flux](../flux.md).
+
+Внешние ресурсы:
+
+- Официальная документация Crossplane: [GitOps Workflows](https://docs.crossplane.io/latest/concepts/gitops/)

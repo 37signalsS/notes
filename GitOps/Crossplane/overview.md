@@ -1,10 +1,8 @@
 # Crossplane: Обзор
 
-> **Актуальные версии (февраль 2026):** Crossplane v1.20 (стабильная), Crossplane v2.0 (анонсирована в ноябре 2025, CNCF Graduated).
-
 ## Определения
 
-**Crossplane** — это решение класса "инфраструктура как код" (IaC) с открытым исходным кодом, которое расширяет Kubernetes API для управления облачной инфраструктурой от различных провайдеров. Он устанавливается в кластер Kubernetes и позволяет определять и настраивать облачные ресурсы (такие как базы данных, сети, виртуальные машины) с помощью декларативных YAML-манифестов, так же, как и нативные ресурсы Kubernetes.
+**Crossplane** — это решение класса "инфраструктура как код" (IaC) с открытым исходным кодом, которое расширяет Kubernetes API для управления облачной инфраструктурой от различных провайдеров. Он устанавливается в кластер Kubernetes и позволяет определять и настраивать облачные ресурсы (такие как базы данные, сети, виртуальные машины) с помощью декларативных YAML-манифестов, так же, как и нативные ресурсы Kubernetes.
 
 ## Базовые концепции
 
@@ -43,15 +41,20 @@
 
 ## Практические сценарии
 
-* **[Yandex Cloud — навигатор](../../Yandex/index.md)**: Полная документация по сервисам YC
-* **[Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)**: Установка и конфигурация Crossplane для работы с Yandex Cloud
-* **[Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)**: Локальный пример управления ресурсами внутри кластера
-* **[Интеграция с GitOps](./gitops_integration.md)**: Полное руководство по интеграцией с ArgoCD и Flux
-* **[Сравнение с Terraform](./terraform_comparison.md)**: Детальное сравнение подходов и инструментов
+Руководства по настройке и использованию:
+
+- Настройка провайдера для Yandex Cloud: [Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)
+- Управление ресурсами внутри кластера: [Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)
+- Интеграция с GitOps-инструментами: [Интеграция с GitOps](./gitops_integration.md)
+- Сравнение с альтернативами: [Сравнение с Terraform](./terraform_comparison.md)
+
+Навигатор по сервисам Yandex Cloud: [Yandex Cloud — навигатор](../../Yandex/index.md).
 
 ## Дополнительная информация
 
-* **[GitOps Overview](../GitOps_overview.md)**: Общие принципы GitOps и место Crossplane в экосистеме
-* **[ArgoCD Overview](../ArgoCD/argocd_overview.md)**: Инструмент для GitOps-доставки приложений и инфраструктуры
-* **Официальная документация Crossplane**: [docs.crossplane.io](https://docs.crossplane.io/)
-* **CNCF Announcement**: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)
+Общие принципы GitOps описаны в [GitOps Overview](../GitOps_overview.md), инструмент для GitOps-доставки — в [ArgoCD Overview](../ArgoCD/argocd_overview.md).
+
+Внешние ресурсы:
+
+- Официальная документация Crossplane: [docs.crossplane.io](https://docs.crossplane.io/)
+- CNCF Announcement: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)

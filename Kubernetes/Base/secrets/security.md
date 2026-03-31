@@ -90,11 +90,4 @@ spec:
 
 ### Связанные темы
 
-- [Основы Secret](secrets_basics.md)
-- [Создание Secret](creating_secrets.md)
-- [Использование Secret](using_secrets.md)
-- [Хранение в etcd](etcd_storage.md)
-- [Внешние менеджеры](external_managers.md)
-- [Sealed Secrets (Security)](../../Security/sealed_secrets_overview.md)
-- [SOPS (Security)](../../../Security/Tools/sops_overview.md)
-- [ConfigMap](../configmap.md)
+[Основы Secret](secrets_basics.md), [Создание Secret](creating_secrets.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Внешние менеджеры](external_managers.md), [Sealed Secrets](../../Security/sealed_secrets_overview.md), [SOPS](../../../Security/Tools/sops_overview.md), [ConfigMap](../configmap.md), [RBAC](../../Security/rbac/rbac_overview.md).

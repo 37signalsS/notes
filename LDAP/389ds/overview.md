@@ -44,9 +44,11 @@
 | Kubernetes | [StatefulSet](./k8s_deploy/basic_concepts.md) с PVC |
 | Миграция с OpenLDAP | [Руководство по миграции](https://www.port389.org/docs/389ds/howto/howto-migrate-openldap.html) |
 
-## Требования к ресурсам
+## Дополнительная информация
 
-### Минимальные требования
+### Требования к ресурсам
+
+#### Минимальные требования
 
 | Ресурс | Значение | Примечание |
 | :--- | :--- | :--- |
@@ -61,9 +63,9 @@
 * **Диск:** NVMe SSD, отдельный том для `/data/db`
 * **Сеть:** Выделенный VLAN для репликации
 
-## Безопасность
+### Безопасность
 
-### Базовые меры
+#### Базовые меры
 
 * **LDAPS (порт 3636)** или **StartTLS (порт 3389)** — обязательно в production
 * **Firewall:** Ограничить доступ к портам (только доверенные IP)
@@ -77,15 +79,3 @@
 * **Account Lockout:** Блокировка после неудачных попыток
 * **Audit Logging:** Логирование изменений (плагин Audit Log)
 * **Certificate Mapping:** Аутентификация по клиентским сертификатам
-
-## Связанные темы
-
-* [Docker развёртывание](./docker.md)
-* [Настройка репликации](./replication.md)
-* [Kubernetes развёртывание](./k8s_deploy/basic_concepts.md)
-* [Плагины](./plugins.md)
-* [Управление доступом (ACI)](./aci.md)
-* [LDAP основы](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)
-* [OpenLDAP в Kubernetes](../openldap_kubernetes.md)
-* [SSSD для LDAP-аутентификации](../../Linux/SystemAdministration/Users/LDAP_SSSD/index.md)
-* [Kubernetes основы](../../Kubernetes/kubernetes_overview.md)
