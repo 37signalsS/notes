@@ -10,17 +10,19 @@
 
 ## Определения
 
-- **Стек LGTM (Loki, Grafana, Tempo, Mimir/Prometheus)**: Современный, полностью интегрированный стек наблюдаемости с открытым исходным кодом от Grafana Labs. Подробнее в [обзоре наблюдаемости](../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
-  - **[Loki](../../../Loki/loki_overview.md)**: Система для сбора и агрегации логов, оптимизированная для экономичного хранения.
-  - **[Grafana](../../../Grafana/grafana_overview.md)**: Платформа для визуализации и анализа данных, позволяющая объединять метрики, логи и трейсы в едином интерфейсе.
-  - **[Tempo](../../../Tempo/index.md)**: Высокомасштабируемое хранилище для распределенных трассировок.
-  - **[Mimir](../../../Mimir/mimir_overview.md)**: Горизонтально масштабируемое хранилище временных рядов для метрик Prometheus. В данном руководстве используется **Prometheus** из состава `kube-prometheus-stack` как упрощенная альтернатива Mimir для локальных окружений.
-- **[OpenTelemetry (OTel)](../../../OpenTelemetry/opentelemetry_overview.md)**: Открытый стандарт и набор инструментов для сбора, обработки и экспорта телеметрических данных (CNCF).
-- **[Minikube](https://minikube.sigs.k8s.io/docs/)**: Инструмент для запуска локального однонодового кластера [Kubernetes](../../kubernetes_overview.md). Идеально подходит для разработки, обучения и тестирования.
-- **[Docker Registry](../../../Docker/docker_registries.md)**: Сервис для хранения и распространения Docker-образов.
-- **[Cert-Manager](../../ToolsUtilities/cert_manager.md)**: Нативный для Kubernetes инструмент для управления TLS-сертификатами. Полная документация: [Cert-Manager](../../ToolsUtilities/cert_manager.md).
+**Стек LGTM** — интегрированный набор компонентов наблюдаемости от Grafana Labs: **L**oki (логи), **G**rafana (визуализация), **T**empo (трассировки), **M**imir/Prometheus (метрики). В данном руководстве используется Prometheus из состава `kube-prometheus-stack` как упрощённая альтернатива Mimir для локальных окружений. Полная документация: **[Loki](../../../Loki/loki_overview.md)**, **[Grafana](../../../Grafana/grafana_overview.md)**, **[Tempo](../../../Tempo/index.md)**, **[Mimir](../../../Mimir/mimir_overview.md)**.
 
-> **Важно:** Для production-развертываний рекомендуется использовать **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — унифицированный агент от Grafana Labs (замена Promtail и Grafana Agent, EOL 2025-2026).
+**OpenTelemetry (OTel)** — открытый стандарт CNCF для сбора, обработки и экспорта телеметрических данных (трассировки, метрики, логи). Полная документация: **[OpenTelemetry overview](../../../OpenTelemetry/opentelemetry_overview.md)**.
+
+**Minikube** — инструмент для запуска локального однонодового кластера Kubernetes. Идеально подходит для разработки, обучения и тестирования. Подробнее: **[Minikube concepts](../../Installation/minikube/minikube_concepts.md)**.
+
+**Docker Registry** — сервис для хранения и распространения Docker-образов. В данном руководстве разворачивается локальный registry внутри кластера. Полная документация: **[Docker Registries](../../../Docker/docker_registries.md)**.
+
+**Cert-manager** — нативный для Kubernetes контроллер для автоматизации управления TLS-сертификатами. В данном руководстве используется для выпуска самоподписанных сертификатов. Полная документация: **[Cert-manager definitions](../../ToolsUtilities/cert_manager/definitions.md)**, **[Installation](../../ToolsUtilities/cert_manager/installation.md)**, **[Cluster CA](../../ToolsUtilities/cert_manager/cluster_ca.md)**.
+
+> **Важно:** Для production-развертываний рекомендуется использовать **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — унифицированный агент от Grafana Labs. Promtail и Grafana Agent объявлены устаревшими (EOL: Promtail — весна 2026, Grafana Agent static mode — ноябрь 2025).
+
+---
 
 ## Основные концепции
 
@@ -41,16 +43,21 @@
               └──────────┘     └──────────┘    └──────────┘  └────────────┘
 ```
 
-1. **Приложение**: Тестовое Java-приложение, инструментированное с помощью [OpenTelemetry SDK](../../../OpenTelemetry/instrumentation_sdk.md) для генерации логов, метрик и трассировок.
-2. **OpenTelemetry Collector**: Центральный компонент [OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md), который получает телеметрию по протоколу [OTLP](../../../OpenTelemetry/otlp_protocol.md) и экспортирует в бэкенды:
-    - Логи → **[Loki](../../../Loki/loki_overview.md)** (через HTTP/Push)
-    - Трассировки → **[Tempo](../../../Tempo/index.md)** (через OTLP/gRPC)
-    - Метрики → **Prometheus** (через Remote Write) или **[Mimir](../../../Mimir/mimir_overview.md)**
-3. **Grafana**: Единый интерфейс для анализа всех сигналов (метрики, логи, трейсы) с поддержкой кросс-сигнальной корреляции.
-4. **Вспомогательные компоненты**:
-    - **[Cert-Manager](../../ToolsUtilities/cert_manager/cluster_ca.md)**: Выпуск самоподписанных сертификатов для Ingress.
-    - **[Local Docker Registry](../../../Docker/docker_registries.md)**: Хранение кастомных образов внутри кластера.
-    - **Ingress Controller** (nginx): Маршрутизация внешнего трафика к веб-интерфейсам.
+**Компоненты архитектуры:**
+
+1. **Приложение** — тестовое Java-приложение, инструментированное с помощью **[OpenTelemetry SDK](../../../OpenTelemetry/instrumentation_sdk.md)** для генерации логов, метрик и трассировок.
+
+2. **OpenTelemetry Collector** — центральный компонент **[OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md)**, который получает телеметрию по протоколу **[OTLP](../../../OpenTelemetry/otlp_protocol.md)** и экспортирует в бэкенды:
+   - Логи → **[Loki](../../../Loki/loki_overview.md)** (через HTTP/Push)
+   - Трассировки → **[Tempo](../../../Tempo/index.md)** (через OTLP/gRPC)
+   - Метрики → Prometheus (через remote write) или **[Mimir](../../../Mimir/mimir_overview.md)**
+
+3. **Grafana** — единый интерфейс для анализа всех сигналов (метрики, логи, трейсы) с поддержкой кросс-сигнальной корреляции.
+
+4. **Вспомогательные компоненты:**
+   - **[Cert-manager](../../ToolsUtilities/cert_manager/cluster_ca.md)** — выпуск самоподписанных сертификатов для Ingress
+   - **[Local Docker Registry](../../../Docker/docker_registries.md)** — хранение кастомных образов внутри кластера
+   - **Ingress Controller (nginx)** — маршрутизация внешнего трафика к веб-интерфейсам
 
 ### Сигналы наблюдаемости
 
@@ -64,22 +71,51 @@
 
 Ключевое преимущество стека — возможность перехода между сигналами:
 
-1. **Метрики → Трассировки**: Через **Exemplars** (Prometheus + Tempo) — клик по точке на графике открывает трассировку.
-2. **Логи → Трассировки**: Через **Derived Fields** (Loki + Tempo) — извлечение `trace_id` из лога и переход к трассировке.
-3. **Трассировки → Логи**: Через **Traces to Logs** (Tempo + Loki) — поиск логов по времени и меткам спана.
+1. **Метрики → Трассировки** — через **Exemplars** (Prometheus + Tempo): клик по точке на графике открывает трассировку.
+2. **Логи → Трассировки** — через **Derived Fields** (Loki + Tempo): извлечение `trace_id` из лога и переход к трассировке.
+3. **Трассировки → Логи** — через **Traces to Logs** (Tempo + Loki): поиск логов по времени и меткам спана.
+
+Подробнее о концепции наблюдаемости: **[Observability Overview](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)**.
+
+---
+
+## Практические сценарии
+
+### Сценарий: Развертывание полного стека наблюдаемости на Minikube
+
+**Цель:** Развернуть полный стек наблюдаемости (LGTM + OTel) на локальном кластере Minikube для разработки и тестирования.
+
+**Предварительные требования:**
+
+- Docker для запуска Minikube
+- Minikube с ресурсами: `--cpus 4 --memory 8192mb`
+- Helm 3+ для установки чартов
+- kubectl, настроенный на кластер Minikube
+
+**Этапы развёртывания:**
+
+1. **[Подготовка окружения](./lgtm_otel_minikube_prerequisites_environment.md)** — установка Minikube, добавление Helm-репозиториев
+2. **[Вспомогательные компоненты](./lgtm_otel_minikube_auxiliary_components.md)** — cert-manager, Docker Registry
+3. **[Стек LGTM](./lgtm_otel_minikube_lgtm_stack_deployment.md)** — Prometheus, Grafana, Loki, Tempo
+4. **[OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)** — OTel Operator, Collector, автоматическая инструментация
+5. **[Тестирование](./lgtm_otel_minikube_test_app_verification.md)** — верификация сбора телеметрии
+
+---
 
 ## Дополнительная информация
 
 ### Таблица компонентов и версий
 
-| Компонент | Версия Helm | Версия приложения |
+| Компонент | Версия Helm | Версия приложения | Документация |
 | :--- | :--- | :--- | :--- |
-| **kube-prometheus-stack** | `>=60.x` | Prometheus 2.x, Grafana 11.x | [Prometheus K8s](../../Prometheus/kubernetes/overview.md) |
-| **Loki** | `>=6.x` | Loki 3.x | [Loki overview](../../../Loki/loki_overview.md) |
-| **Tempo** | `>=1.x` | Tempo 2.x | [Tempo overview](../../../Tempo/index.md) |
-| **OpenTelemetry Operator** | `>=0.x` | Operator 0.x | [OTel overview](../../../OpenTelemetry/opentelemetry_overview.md) |
-| **Cert-Manager** | `>=0.16.x` | 1.x | [Cert-Manager](../../ToolsUtilities/cert_manager.md) |
-| **Docker Registry** | `>=2.x` | Registry 2.x | [Docker Registries](../../../Docker/docker_registries.md) |
+| **kube-prometheus-stack** | `>=82.x` | Prometheus 3.x, Grafana 11.x | **[Prometheus K8s](../../Prometheus/kubernetes/overview.md)** |
+| **Loki** | `>=6.x` | Loki 3.x | **[Loki overview](../../../Loki/loki_overview.md)** |
+| **Tempo** | `>=1.x` | Tempo 2.x | **[Tempo overview](../../../Tempo/index.md)** |
+| **OpenTelemetry Operator** | `>=0.x` | Operator 0.x | **[OTel overview](../../../OpenTelemetry/opentelemetry_overview.md)** |
+| **Cert-Manager** | `>=0.16.x` | 1.x | **[Cert-manager](../../ToolsUtilities/cert_manager/definitions.md)** |
+| **Docker Registry** | `>=2.x` | Registry 2.x | **[Docker Registries](../../../Docker/docker_registries.md)** |
+
+> **Примечание:** Проверяйте актуальные версии на **[Artifact Hub](https://artifacthub.io/)** и в официальной документации.
 
 ### Требования к ресурсам (Minikube)
 
@@ -125,9 +161,9 @@
 | **Агент** | OTel Collector | Grafana Alloy, OTel Collector |
 | **Сертификаты** | Self-signed CA | Let's Encrypt, корпоративный CA |
 
-### Связанные документы
+---
 
-- **[Observability Overview](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — концепция наблюдаемости
-- **[OpenTelemetry Architecture](../../../OpenTelemetry/architecture_signals.md)** — сигналы и архитектура OTel
-- **[Grafana Alloy](../../../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для production
-- **[Cert-Manager Cluster CA](../../ToolsUtilities/cert_manager/cluster_ca.md)** — настройка CA для кластера
+**Навигация по руководству:**
+
+- **[← Предварительные требования](./lgtm_otel_minikube_prerequisites_environment.md)**
+- **[Развертывание вспомогательных компонентов →](./lgtm_otel_minikube_auxiliary_components.md)**

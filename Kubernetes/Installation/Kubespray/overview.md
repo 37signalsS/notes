@@ -19,7 +19,7 @@
 
 ### Поддерживаемые компоненты
 
-* **CNI-плагины:** [Calico](../../Networking/Network/cni_kube_proxy_roles.md), Cilium, Flannel, Weave Net.
+* **CNI-плагины:** Calico, Cilium, Flannel, Weave Net. *Подробнее: [CNI и kube-proxy: навигатор](../../Networking/Network/cni_kube_proxy_roles.md)*
 * **DNS-провайдеры:** [CoreDNS](../../Networking/dns_deep_dive.md), NodeLocal DNSCache.
 * **Container Runtime:** containerd (рекомендуется), CRI-O, Docker (устарел).
 * **Ingress:** NGINX Ingress Controller.
@@ -49,17 +49,6 @@
 
 ## 4. Дополнительная информация
 
-### Связанные документы
+См. также: [Ansible: Введение](../../../Ansible/ansible_introduction.md), [kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md), [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md), [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md), [etcd: Обзор](../../Concepts/etcd_overview.md), [kind](../kind/kind_concepts.md), [Talos](../local_cluster_with_talosctl.md).
 
-* **[Ansible: Введение](../../../Ansible/ansible_introduction.md)** — основы Ansible.
-* **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — базовая утилита для инициализации кластера.
-* **[HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA.
-* **[Control Plane: Архитектура](../../Concepts/control_plane_architecture.md)** — компоненты управления кластером.
-* **[etcd: Обзор](../../Concepts/etcd_overview.md)** — распределённое хранилище данных кластера.
-* **[kind](../kind/kind_concepts.md)** — локальные кластеры для разработки.
-* **[Talos](../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.
-
-### Внешние ресурсы
-
-* **Официальный репозиторий:** [github.com/kubernetes-sigs/kubespray](https://github.com/kubernetes-sigs/kubespray)
-* **Документация Kubespray:** [kubespray.io](https://kubespray.io/)
+Внешние ресурсы: [официальный репозиторий](https://github.com/kubernetes-sigs/kubespray), [документация Kubespray](https://kubespray.io/).

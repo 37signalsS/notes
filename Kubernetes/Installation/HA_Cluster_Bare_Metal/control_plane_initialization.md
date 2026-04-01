@@ -16,14 +16,18 @@
 
 ## Основные концепции
 
-### Архитектура инициализации HA кластера
+### Процесс инициализации HA кластера
 
-1. **Первый мастер-узел** — инициализирует кластер через `kubeadm init`
-2. **Остальные мастера** — присоединяются через `kubeadm join` с флагом `--control-plane`
-3. **Worker узлы** — присоединяются через `kubeadm join` без флагов мастера
-4. **CNI плагин** — устанавливается после инициализации первого мастера
+Инициализация выполняется на **первом мастер-узле** через `kubeadm init`. Остальные узлы присоединяются позже через [`kubeadm join`](./node_joining.md):
+
+1. Первый мастер инициализирует кластер через `kubeadm init`
+2. Остальные мастера присоединяются через `kubeadm join --control-plane`
+3. Worker-узлы присоединяются через `kubeadm join` без флагов мастера
+4. CNI-плагин устанавливается после инициализации первого мастера ([инструкция](./cni_installation.md))
 
 ### Ключевые флаги kubeadm
+
+Флаги, специфичные для инициализации Control Plane. Полный список флагов `kubeadm join` — в [документации по присоединению узлов](./node_joining.md).
 
 | Флаг | Назначение | Пример |
 | :--- | :--- | :--- |
@@ -163,12 +167,30 @@ kubeadm join k8s-node1:6443 --token XXX \
 
 ## Дополнительная информация
 
-### Связанные документы
+### Отладка проблем инициализации
 
-- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Компоненты**: [Component Installation](./k8s_ha_component_installation.md)
-- **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
-- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
-- **CNI**: [CNI Installation](./cni_installation.md)
-- **Node Joining**: [Node Joining](./node_joining.md)
-- **CNI Overview**: [CNI Overview](../../Networking/Network/CNI/definitions.md)
+```bash
+# Логи kubelet (управление подами Control Plane)
+sudo journalctl -u kubelet -f
+
+# Логи компонентов Control Plane (статические поды)
+sudo crictl ps -a | grep -E 'apiserver|controller|scheduler|etcd'
+sudo crictl logs <container-id>
+
+# Проверка сертификатов
+sudo ls -la /etc/kubernetes/pki/
+sudo kubeadm init phase certs check-expiration
+```
+
+**Типичные проблемы:**
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `error execution phase preflight` | Порт 6443 занят | Освободить порт или изменить `--apiserver-bind-port` |
+| `etcd cluster unhealthy` | Проблемы с etcd | Проверить логи etcd, время на узлах |
+| `certificate-key expired` | Токен устарел (>24ч) | `kubeadm init phase upload-certs --upload-certs` |
+| `control-plane-endpoint unreachable` | Балансировщик не работает | Проверить HAProxy/Keepalived |
+
+### Интеграция с процессом развёртывания
+
+Инициализация Control Plane — **шаг 4** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [установкой CNI](./cni_installation.md). Подробнее об архитектуре — в [обзоре HA кластера](./k8s_ha_cluster_overview.md), о присоединении узлов — в [руководстве по node joining](./node_joining.md). Настройка балансировщика описана в [документации по HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md).

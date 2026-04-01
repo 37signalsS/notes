@@ -1,6 +1,12 @@
 # Kubespray: Развертывание HA-кластера — Практика
 
-## 1. Инфраструктурные требования
+## Definitions
+
+Термины и определения см. в [основных концепциях](./kubespray_ha_concepts.md).
+
+## Basic Concepts
+
+### Инфраструктурные требования
 
 **Минимальная конфигурация HA-кластера:**
 
@@ -12,7 +18,9 @@
 
 > **Важно:** Количество master-узлов должно быть нечетным (3, 5) для обеспечения кворума etcd.
 
-## 2. Конфигурация Inventory
+## Practical Scenarios
+
+### Конфигурация Inventory
 
 **Файл `inventory/my-cluster/inventory.ini`:**
 
@@ -52,7 +60,7 @@ ansible_user=root
 ansible_ssh_private_key_file=~/.ssh/id_rsa
 ```
 
-## 3. Настройка переменных для HA
+### Настройка переменных для HA
 
 **Файл `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`:**
 
@@ -94,7 +102,7 @@ keepalived_auth_pass: "k8s-ha-secret"
 kube_apiserver_insecure_port: 0
 ```
 
-## 4. Развертывание HA-кластера
+### Развертывание HA-кластера
 
 **Запуск playbook:**
 
@@ -123,9 +131,9 @@ ansible-playbook -i inventory/my-cluster/inventory.ini \
   --become recover-node.yml
 ```
 
-## 5. Проверка HA-конфигурации
+### Проверка HA-конфигурации
 
-### 5.1. Проверка VIP
+#### Проверка VIP
 
 ```bash
 # На master-узле с MASTER статусом
@@ -138,7 +146,7 @@ systemctl status keepalived
 journalctl -u keepalived -f
 ```
 
-### 5.2. Проверка HAProxy
+#### Проверка HAProxy
 
 ```bash
 # Статус HAProxy
@@ -152,7 +160,7 @@ echo "show stat" | socat stdio /var/run/haproxy/admin.sock | \
 tail -f /var/log/haproxy.log
 ```
 
-### 5.3. Проверка Kubernetes API
+#### Проверка Kubernetes API
 
 ```bash
 # Подключение через VIP
@@ -165,9 +173,6 @@ kubectl get nodes -l node-role.kubernetes.io/control-plane
 kubectl get pods -n kube-system -l component=etcd
 ```
 
-## Связанные документы
+## Additional Information
 
-- **[Основные концепции](./kubespray_ha_concepts.md)** — определения и архитектура
-- **[Дополнительные темы](./kubespray_ha_advanced.md)** — тестирование отказоустойчивости, troubleshooting
-- **[Kubespray: Обзор](../overview.md)** — общая информация
-- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
+Тестирование отказоустойчивости и troubleshooting см. в [дополнительных темах](./kubespray_ha_advanced.md). Общая информация — в [обзоре Kubespray](../overview.md).

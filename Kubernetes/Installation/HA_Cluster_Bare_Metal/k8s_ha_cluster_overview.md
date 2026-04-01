@@ -66,27 +66,18 @@
 
 ### Этапы развёртывания HA кластера
 
-1. **Подготовка узлов** — настройка ОС, cgroups, sysctl на всех узлах
-2. **Установка containerd** — настройка CRI для Kubernetes
-3. **Установка kubeadm/kubelet/kubectl** — установка компонентов на всех узлах
-4. **Настройка балансировщика** — Keepalived + HAProxy для VIP
-5. **Инициализация первого мастера** — `kubeadm init` с `--control-plane-endpoint`
-6. **Установка CNI** — Calico или другой плагин для сети подов
-7. **Присоединение мастеров** — `kubeadm join` с `--control-plane`
+Полный процесс развёртывания включает 8 шагов. Детальные инструкции — в соответствующих руководствах:
+
+1. **Подготовка узлов** — настройка ОС, cgroups, sysctl ([требования](./k8s_ha_environment_requirements.md), [подготовка](./k8s_ha_node_preparation.md))
+2. **Установка containerd** — настройка CRI ([инструкция](./k8s_ha_component_installation.md))
+3. **Установка kubeadm/kubelet/kubectl** — установка компонентов
+4. **Настройка балансировщика** — Keepalived + HAProxy для VIP ([инструкция](../kubeadm/ha_keepalived_haproxy/ha_concepts.md))
+5. **Инициализация первого мастера** — `kubeadm init` с `--control-plane-endpoint` ([инструкция](./control_plane_initialization.md))
+6. **Установка CNI** — Calico или другой плагин ([инструкция](./cni_installation.md))
+7. **Присоединение мастеров** — `kubeadm join` с `--control-plane` ([инструкция](./node_joining.md))
 8. **Присоединение воркеров** — `kubeadm join` без дополнительных флагов
 
-Подробнее: [Node Preparation](./k8s_ha_node_preparation.md), [Control Plane & CNI](./control_plane_initialization.md).
-
-### Выбор CIDR для подов и сервисов
-
-При инициализации кластера необходимо выбрать диапазоны IP-адресов, **не пересекающиеся** с существующей инфраструктурой:
-
-| Параметр | Назначение | Рекомендуемые значения | Примечание |
-| :--- | :--- | :--- | :--- |
-| `--pod-network-cidr` | IP-адреса для подов | `100.64.0.0/16`, `10.244.0.0/16` | Должен совпадать с настройками CNI |
-| `--service-cidr` | IP-адреса для сервисов | `100.65.0.0/16`, `10.96.0.0/12` | По умолчанию `10.96.0.0/12` |
-
-> **Важно**: Изменение CIDR после инициализации невозможно без полной пересоздания кластера.
+**Важно**: CIDR для подов и сервисов выбираются на шаге 5. Диапазоны не должны пересекаться с существующей инфраструктурой. Подробнее: [Выбор CIDR](./control_plane_initialization.md#выбор-cidr-для-подов-и-сервисов).
 
 ### Сценарий 1: Отказ одного мастер-узла
 
@@ -109,23 +100,38 @@
 
 ## Дополнительная информация
 
-### Связанные документы
+### Отладка проблем HA
 
-- **Требования**: [Environment Requirements](./k8s_ha_environment_requirements.md)
-- **Подготовка**: [Node Preparation](./k8s_ha_node_preparation.md)
-- **Установка**: [Component Installation](./k8s_ha_component_installation.md)
-- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
-- **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
-- **Альтернатива**: [Kubespray HA](../Kubespray/HA/index.md)
-- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
-- **Теория HA**: [High Availability Overview](../../../Concepts/High_Availability/ha_overview.md)
-- **Control Plane**: [Архитектура](../../Concepts/control_plane_architecture.md)
-- **etcd**: [Обзор](../../Concepts/etcd_overview.md)
+```bash
+# Проверка статуса VIP (на любом узле с Keepalived)
+ip addr show | grep <VIP>
 
-### Надежность
+# Проверка состояния Keepalived
+systemctl status keepalived
+journalctl -u keepalived -f
 
-| Компонент | Confidence |
-| :--- | :--- |
-| Архитектура HA | Этот файл | 10 |
-| Балансировка | [kubeadm_ha_with_keepalived_haproxy/index.md](../kubeadm/ha_keepalived_haproxy/index.md) | 10 |
-| etcd кворум | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |
+# Проверка HAProxy
+systemctl status haproxy
+echo "show stat" | socat /var/run/haproxy.sock stdio
+
+# Проверка кворума etcd
+etcdctl --endpoints=https://<VIP>:2379 endpoint health
+etcdctl --endpoints=https://<VIP>:2379 member list
+
+# Проверка статуса Control Plane
+kubectl get --raw='/readyz?verbose'
+kubectl get --raw='/healthz?verbose'
+```
+
+**Типичные проблемы:**
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `VIP не доступен` | Keepalived не запущен | `systemctl start keepalived` |
+| `etcd lost quorum` | Отказ ≥2 мастеров | Восстановить узлы или форсировать кворум |
+| `HAProxy 503` | Бэкенды недоступны | Проверить `kube-apiserver` на мастерах |
+| `VRRP advertisement` | Блокировка firewall | Разрешить протокол 112 (VRRP) |
+
+### Интеграция с документацией
+
+Архитектура HA описана в этом файле. Требования к среде — в [environment requirements](./k8s_ha_environment_requirements.md), подготовка узлов — в [node preparation](./k8s_ha_node_preparation.md). Практические инструкции: [component installation](./k8s_ha_component_installation.md), [control plane initialization](./control_plane_initialization.md), [CNI installation](./cni_installation.md), [node joining](./node_joining.md), [cluster verification](./k8s_ha_cluster_verification.md). Теория: [HA overview](../../../Concepts/High_Availability/ha_overview.md), [Control Plane architecture](../../Concepts/control_plane_architecture.md), [etcd overview](../../Concepts/etcd_overview.md). Альтернативный подход: [Kubespray HA](../Kubespray/HA/index.md).

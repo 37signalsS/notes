@@ -1,18 +1,20 @@
 # Minikube: Определения и концепции
 
-## Определения
+## Definitions
 
 **Minikube** — инструмент для запуска локального однонодового кластера Kubernetes на рабочей машине. Предназначен для разработки, тестирования и обучения. Minikube разворачивает полноценный, но упрощённый кластер Kubernetes внутри виртуальной машины, Docker-контейнера или на bare metal.
 
-**kubeconfig** — YAML-файл (`~/.kube/config`), содержащий информацию о кластерах, пользователях и контекстах для подключения к Kubernetes. Minikube автоматически добавляет свой контекст при создании кластера.
-
-**kubectl** — основная CLI-утилита для управления кластером Kubernetes. Используется для выполнения команд (`kubectl get`, `kubectl apply`, `kubectl describe`) и проверки состояния кластера.
-
 **container runtime** — программа для запуска и управления контейнерами (Docker, containerd, CRI-O). Обязательный компонент для работы Minikube.
+
+> **Связанные определения:**
+> - **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — файл конфигурации для подключения к Kubernetes
+> - **[kubectl](../../kubernetes_overview.md)** — CLI-утилита для управления кластером
 
 ---
 
-## Архитектура Minikube
+## Basic Concepts
+
+### Архитектура Minikube
 
 | Компонент | Описание |
 | :--- | :--- |
@@ -23,9 +25,7 @@
 
 ---
 
-## Требования и зависимости
-
-### Обязательные требования
+### Требования и зависимости
 
 | Компонент | Назначение | Проверка |
 | :--- | :--- | :--- |
@@ -45,7 +45,7 @@
 
 ---
 
-## Сравнение с аналогами
+### Сравнение с аналогами
 
 | Инструмент | Подход | Безопасность | Сложность | Назначение |
 | :--- | :--- | :--- | :--- | :--- |
@@ -68,7 +68,7 @@
 
 ---
 
-## Основные команды Minikube
+### Основные команды Minikube
 
 | Команда | Описание |
 | :--- | :--- |
@@ -83,7 +83,7 @@
 
 ---
 
-## kubeconfig и контексты
+### kubeconfig и контексты
 
 Minikube автоматически управляет конфигурацией подключения:
 
@@ -113,7 +113,7 @@ minikube kubectl -- get pods -A
 
 ---
 
-## Драйверы Minikube
+### Драйверы Minikube
 
 Minikube поддерживает различные драйверы для запуска кластера:
 
@@ -138,7 +138,7 @@ minikube config set driver docker
 
 ---
 
-## Аддоны
+### Аддоны
 
 Minikube включает набор встроенных аддонов для расширения функциональности:
 
@@ -166,18 +166,9 @@ minikube addons disable registry
 
 ---
 
-## Связанные документы
-
-- **[Minikube: Практические сценарии](./minikube_practical_scenarios.md)** — установка, создание кластера, примеры
-- **[kind: Локальные кластеры](../kind/kind_concepts.md)** — альтернатива на основе Docker
-- **[Talos: Локальный кластер](../local_cluster_with_talosctl.md)** — альтернатива с Talos OS
-- **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — работа с контекстами
-- **[kubectl команды](../../ToolsUtilities/kubectl/kubectl_overview.md)** — справочник команд kubectl
-
----
-
-## Внешние ресурсы
+## Additional Information
 
 - **Официальная документация:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
 - **GitHub:** [kubernetes/minikube](https://github.com/kubernetes/minikube)
-- **Установка Docker Desktop:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+- **Установка Docker Desktop:** [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)
+- **Практические сценарии:** [minikube_practical_scenarios.md](./minikube_practical_scenarios.md)

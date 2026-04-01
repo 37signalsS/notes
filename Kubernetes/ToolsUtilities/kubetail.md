@@ -194,7 +194,7 @@ alias kt-app='kubetail -l app='
 ### См. также
 
 - [`kubectl logs`](../Troubleshooting/troubleshooting_overview.md#kubectl-logs-анализ-логов-контейнеров) — базовая команда для просмотра логов
-- [Централизованное логирование](../MonitoringLogging/monitoring_and_logging_architecture_overview.md) — архитектура сбора логов
+- [Централизованное логирование](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — архитектура сбора логов
 - [Loki Stack](../../Loki/loki_stack_setup/loki_installation.md) — легковесная система логирования
 - [EFK Stack](../MonitoringLogging/EFK/efk_stack_setup_guide.md) — полноценная система логирования
 - [`stern`](https://github.com/stern/stern) — альтернатива на Go

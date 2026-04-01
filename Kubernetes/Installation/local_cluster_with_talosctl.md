@@ -1,6 +1,6 @@
 # Talos: Локальный кластер Kubernetes
 
-## 1. Определения
+## Определения
 
 **Talos Linux** — современная, безопасная и минималистичная ОС для запуска Kubernetes. Управляется исключительно через API, что исключает SSH и обеспечивает предсказуемость конфигурации (immutable infrastructure).
 
@@ -8,7 +8,7 @@
 
 **Machine Config** — декларативный YAML-файл, определяющий конфигурацию каждого узла Talos (role, network, extensions).
 
-## 2. Основные концепции
+## Основные концепции
 
 ### Архитектура Talos
 
@@ -34,9 +34,9 @@
 3. **Bootstrapping кластера** — инициализация через `talosctl bootstrap`
 4. **Автоматический kubeconfig** — обновление `~/.kube/config` и `~/.talos/config`
 
-## 3. Практические сценарии
+## Практические сценарии
 
-### 3.1. Подготовка
+### Подготовка
 
 **Требования:**
 
@@ -56,7 +56,7 @@ sudo mv talosctl /usr/local/bin/
 talosctl version
 ```
 
-### 3.2. Создание кластера
+### Создание кластера
 
 **Базовый кластер (1 control-plane + 1 worker):**
 
@@ -81,7 +81,7 @@ talosctl cluster create --name ha-cluster --masters 3 --workers 3 --wait
 talosctl cluster create --image ghcr.io/siderolabs/kubelet:v1.31.0
 ```
 
-### 3.3. Работа с kubeconfig
+### Работа с kubeconfig
 
 talosctl автоматически обновляет конфигурацию после создания кластера:
 
@@ -98,7 +98,7 @@ kubectl run nginx --image=nginx:1.27
 kubectl expose pod nginx --port=80 --type=NodePort
 ```
 
-### 3.4. Использование talosctl
+### Использование talosctl
 
 **Dashboard (веб-интерфейс):**
 
@@ -146,7 +146,7 @@ talosctl reboot -n <node-ip>
 talosctl shutdown -n <node-ip>
 ```
 
-### 3.5. Машинные конфиги (расширенная конфигурация)
+### Машинные конфиги (расширенная конфигурация)
 
 **Генерация конфигов:**
 
@@ -184,7 +184,7 @@ cluster:
     endpoint: https://192.168.1.100:6443
 ```
 
-### 3.6. Уничтожение кластера
+### Уничтожение кластера
 
 ```bash
 # Удаление конкретного кластера
@@ -194,7 +194,7 @@ talosctl cluster destroy --name talos-default
 talosctl cluster destroy
 ```
 
-## 4. Дополнительная информация
+## Дополнительная информация
 
 ### Версии и совместимость
 
@@ -232,14 +232,6 @@ Talos поддерживает system extensions для дополнительн
 - **NVIDIA GPU** — поддержка GPU
 - **WireGuard** — VPN
 
-### Связанные документы
+Подробнее в [официальной документации](https://www.talos.dev/) и [GitHub](https://github.com/siderolabs/talos). Для генерации конфигов используйте [Machine Config Generator](https://www.talos.dev/config/).
 
-- **[kind: Локальные кластеры](./kind/kind_concepts.md)** — альтернатива со стандартным K8s
-- **[kubeconfig и подключение](../Operations/kubeconfig_and_connection.md)** — работа с контекстами
-- **[Control Plane архитектура](../Concepts/control_plane_architecture.md)** — компоненты управления
-
-### Внешние ресурсы
-
-- **Официальная документация:** [talos.dev](https://www.talos.dev/)
-- **GitHub:** [siderolabs/talos](https://github.com/siderolabs/talos)
-- **Machine Config Generator:** [talos.dev/config](https://www.talos.dev/config/)
+Альтернативные решения для локальных кластеров: [kind](./kind/kind_concepts.md) (стандартный K8s в контейнерах). Работа с контекстами описана в [kubeconfig и подключение](../Operations/kubeconfig_and_connection.md), архитектура Control Plane — в [Control Plane архитектура](../Concepts/control_plane_architecture.md).

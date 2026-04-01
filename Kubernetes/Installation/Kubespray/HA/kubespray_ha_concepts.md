@@ -1,6 +1,6 @@
 # Kubespray: Развертывание HA-кластера — Основные концепции
 
-## 1. Определения
+## Definitions
 
 **HA-кластер (High Availability)** — кластер Kubernetes с несколькими узлами Control Plane для устранения единой точки отказа (SPoF).
 
@@ -8,9 +8,9 @@
 
 **Kubespray** — инструмент автоматизации развертывания Kubernetes на базе Ansible, поддерживающий встроенную настройку HA через Keepalived + HAProxy.
 
-> **Основное руководство:** Подробное описание архитектуры Keepalived + HAProxy см. в [Настройка HA с kubeadm](./index.md).
+## Basic Concepts
 
-## 2. Архитектура HA через Kubespray
+### Архитектура HA через Kubespray
 
 Kubespray автоматизирует настройку HA следующим образом:
 
@@ -31,7 +31,7 @@ Kubespray автоматизирует настройку HA следующим 
      └────────────────┘ └────────────┘ └────────────┘
 ```
 
-### Компоненты
+#### Компоненты
 
 | Компонент | Назначение | Порт |
 | :--- | :--- | :--- |
@@ -39,7 +39,7 @@ Kubespray автоматизирует настройку HA следующим 
 | **HAProxy** | Балансировка трафика к API-серверам | 6443 (VIP), 6444 (local) |
 | **kube-apiserver** | API Kubernetes | 6444 (локально) |
 
-## 3. Отличия от ручного kubeadm
+#### Отличия от ручного kubeadm
 
 | Аспект | Kubespray | Ручной kubeadm |
 | :--- | :--- | :--- |
@@ -48,16 +48,14 @@ Kubespray автоматизирует настройку HA следующим 
 | **Сертификаты** | Авто-генерация с VIP | Ручное добавление SAN |
 | **Время развертывания** | 15-30 минут | 1-2 часа |
 
-## Связанные документы
+Подробное описание архитектуры Keepalived + HAProxy см. в [ручной настройке HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md).
 
-- **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** — инфраструктурные требования, inventory, развертывание
-- **[Дополнительные темы](./kubespray_ha_advanced.md)** — тестирование отказоустойчивости, troubleshooting
-- **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
-- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
-- **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA
+## Practical Scenarios
 
-## Внешние ресурсы
+Базовая установка Kubespray описана в [руководстве по установке](../kubespray_install/basic_concepts.md). Развертывание HA-кластера — в [практическом руководстве](./kubespray_ha_deployment.md).
 
-- **Kubespray Documentation:** [kubespray.io](https://kubespray.io/)
-- **GitHub:** [kubernetes-sigs/kubespray](https://github.com/kubernetes-sigs/kubespray)
-- **VRRP RFC:** [RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798)
+## Additional Information
+
+**См. также:** [развертывание в закрытом контуре](../offline_installation/offline_definitions.md).
+
+**Внешние ресурсы:** [документация Kubespray](https://kubespray.io/), [GitHub](https://github.com/kubernetes-sigs/kubespray), [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798).

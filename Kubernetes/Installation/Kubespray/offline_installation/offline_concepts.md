@@ -1,10 +1,22 @@
 # Kubespray: Offline установка — Основные концепции
 
-## Принципы offline-развертывания
+## Определения
+
+**Offline-кластер (Air-gapped)** — кластер Kubernetes, развёртываемый в изолированной среде без доступа к интернету, где все артефакты предварительно загружаются и доставляются в закрытый контур.
+
+**Закрытый контур** — изолированная сеть без прямого доступа к интернету, требующая локальных реестров образов (Harbor) и зеркал пакетов.
+
+**Артефакты Kubespray** — бинарные файлы Kubernetes, образы контейнеров, Helm-чарты и Python-зависимости, необходимые для установки кластера.
+
+---
+
+## Основные концепции
+
+### Принципы offline-развертывания
 
 Offline-установка Kubernetes через Kubespray требует предварительной загрузки всех артефактов на машине с доступом в интернет и последующей их передачи в закрытый контур.
 
-### Ключевые отличия от online-установки
+#### Ключевые отличия от online-установки
 
 | Аспект | Online | Offline |
 | :--- | :--- | :--- |
@@ -13,9 +25,9 @@ Offline-установка Kubernetes через Kubespray требует пре
 | **Python зависимости** | `pip install` на узле | Перенос venv архивом |
 | **Helm чарты** | `helm pull` | Локальный OCI registry |
 | **Время установки** | 15-30 мин | 15-30 мин (после подготовки) |
-| **Подготовка** | Минимальная | 1-2 часа на машине с inet |
+| **Подготовка** | Минимальная | 1-2 часа на машине с интернетом |
 
-## Этапы offline-установки
+#### Этапы offline-установки
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -49,31 +61,9 @@ Offline-установка Kubernetes через Kubespray требует пре
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Требования к инфраструктуре
+### Выбор компонентов
 
-### Минимальная конфигурация
-
-| Роль | CPU | RAM | SSD | ОС | Пример IP |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **pc-inet** | 2 | 4GB | 20GB | Ubuntu 24.04 | 192.168.1.99 |
-| **harbor** | 2 | 4GB | 50GB | Ubuntu 24.04 | 192.168.1.100 |
-| **master-1** | 2 | 4GB | 50GB | Ubuntu 24.04 | 192.168.1.101 |
-| **master-2** | 2 | 4GB | 50GB | Ubuntu 24.04 | 192.168.1.102 |
-| **master-3** | 2 | 4GB | 50GB | Ubuntu 24.04 | 192.168.1.103 |
-| **node-1** | 4 | 8GB | 100GB | Ubuntu 24.04 | 192.168.1.104 |
-| **node-2** | 4 | 8GB | 100GB | Ubuntu 24.04 | 192.168.1.105 |
-| **MetalLB VIP** | - | - | - | - | 192.168.1.200 |
-
-### Предварительные требования
-
-1. **SSH доступ:** master-1 должен иметь доступ ко всем узлам по SSH с sudo правами
-2. **Harbor:** Настроенный HTTPS реестр в закрытом контуре
-3. **Сеть:** Все узлы в одной подсети, свободный IP для MetalLB
-4. **Пользователь:** root или пользователь с беспарольным sudo (например, `admin`)
-
-## Выбор компонентов
-
-### Container Runtime: containerd vs CRI-O
+#### Container Runtime: containerd vs CRI-O
 
 | Критерий | containerd | CRI-O |
 | :--- | :--- | :--- |
@@ -83,7 +73,7 @@ Offline-установка Kubernetes через Kubespray требует пре
 | **Интеграция с K8s** | Полная | Tight (OpenShift) |
 | **Рекомендация** | **Выбран для гайда** | Альтернатива |
 
-### CNI плагин: Cilium
+#### CNI плагин: Cilium
 
 **Выбор Cilium обусловлен:**
 
@@ -102,7 +92,7 @@ cilium_tunnel_mode: geneve  # Для VMware
 cilium_mtu: "1450"
 ```
 
-### Балансировщик: MetalLB
+#### Балансировщик: MetalLB
 
 Для bare-metal кластеров без облачного провайдера:
 
@@ -110,11 +100,23 @@ cilium_mtu: "1450"
 metallb_enabled: true
 ```
 
-Дополнительно см. [MetalLB](../../../Networking/metallb.md).
+Подробнее о MetalLB — в [документации по балансировщику](../../../Networking/metallb.md).
 
-## Конфигурация Kubespray для offline
+---
 
-### Переменные offline-режима
+## Практические сценарии
+
+### Требования к инфраструктуре
+
+Информация о минимальной конфигурации VM и предварительных требованиях приведена в [практических сценариях offline-установки](./offline_practical.md#Инфраструктура).
+
+---
+
+## Дополнительная информация
+
+### Справочник конфигураций Kubespray
+
+#### Переменные offline-режима
 
 Файл: `group_vars/all/offline.yml`
 
@@ -127,7 +129,7 @@ download_force_cache: true        # Принудительное использ�
 download_cache_dir: /opt/kubespray-cache  # Директория кэша
 ```
 
-### Настройка для Harbor
+#### Настройка для Harbor
 
 Файл: `group_vars/all/offline.yml`
 
@@ -142,7 +144,7 @@ quay_image_repo: "{{ registry_host }}/k8s/quay.io"
 cilium_install_extra_flags: "--repository oci://{{registry_host}}/helm/cilium"
 ```
 
-### Аутентификация containerd
+#### Аутентификация containerd
 
 Файл: `group_vars/all/containerd.yml`
 
@@ -156,11 +158,9 @@ containerd_registry_auth:
 
 > **Важно:** Проект `k8s` в Harbor должен быть **публичным**, так как containerd не считывает логин/пароль из конфига автоматически.
 
-## Отключение проверки digest образов
+### Отключение проверки digest образов
 
-При загрузке в Harbor SHA образов изменяется. Необходимо отключить проверку digest для Cilium:
-
-Файл: `group_vars/k8s_cluster/k8s-net-cilium.yml`
+При загрузке в Harbor SHA образов изменяется. Необходимо отключить проверку digest для Cilium в файле `group_vars/k8s_cluster/k8s-net-cilium.yml`:
 
 ```yaml
 cilium_extra_values:
@@ -191,20 +191,10 @@ cilium_extra_values:
           digest: ""
 ```
 
-## Связанные документы
+Эта конфигурация также описана в разделе [troubleshooting](./troubleshooting.md#Проблема-Cilium-image-с-SHA-digest).
 
-- **[Определения](./offline_definitions.md)** — базовые термины
-- **[Практические сценарии](./offline_practical.md)** — обзор этапов
-- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — подготовка серверов
-- **[Шаг 2: Подготовка с интернетом](./step2_internet_env.md)** — загрузка артефактов
-- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — загрузка в Harbor
-- **[Шаг 4: Развертывание кластера](./step4_cluster_deploy.md)** — установка Kubernetes
-- **[Шаг 5: MetalLB и Ingress](./step5_metallb_ingress.md)** — настройка LoadBalancer
-- **[Troubleshooting](./troubleshooting.md)** — решение проблем
-- **[Kubespray: Обзор](../overview.md)** — общая информация
-- **[Harbor: Установка](../../../../Docker/Docker_registries/Harbor/installation.md)** — развертывание Harbor
-- **[MetalLB](../../../Networking/metallb.md)** — настройка балансировщика
+### Связанные темы
 
----
+Базовые термины — в [определениях offline-установки](./offline_definitions.md), обзор этапов — в [практических сценариях](./offline_practical.md). Детальные инструкции: [подготовка VM](./step1_vm_preparation.md), [загрузка артефактов](./step2_internet_env.md), [подготовка закрытого контура](./step3_offline_env.md), [развёртывание кластера](./step4_cluster_deploy.md), [настройка MetalLB и Ingress](./step5_metallb_ingress.md). Валидация — в [проверке кластера](./cluster_verification.md), решение проблем — в [troubleshooting](./troubleshooting.md), управление — в [post-install управлении](./post_install_management.md).
 
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+Общий обзор Kubespray — в [overview.md](../overview.md). Смежные темы: [Harbor](../../../../Docker/Docker_registries/Harbor/installation.md), [MetalLB](../../../Networking/metallb.md).

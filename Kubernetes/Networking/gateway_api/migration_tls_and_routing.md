@@ -1,13 +1,20 @@
 # Миграция TLS и маршрутизации на Gateway API
 
-## Миграция TLS: два сценария
+## Определения
 
-### Сценарий 1: TLS Termination → Gateway с Terminate
+**TLS Termination** — терминирование TLS на шлюзе (Gateway). Шлюз расшифровывает трафик и передаёт его на бэкенд в открытом виде.
+
+**TLS Passthrough** — сквозное шифрование. Трафик передаётся на бэкенд без расшифровки на шлюзе. Маршрутизация возможна только по SNI (имени хоста).
+
+**TLSRoute** — ресурс Gateway API для маршрутизации TLS-трафика (статус: `v1alpha2`, Alpha). Используется для сценариев Passthrough.
+
+## Базовые концепции
+
+### Сценарий 1: TLS Termination
 
 Если в Ingress используется обычное TLS с Secret (терминирование на контроллере):
 
 ```yaml
-# Gateway с TLS termination
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -23,20 +30,19 @@ spec:
       mode: Terminate
       certificateRefs:
       - name: app-tls-secret
-        namespace: my-app  # Secret может быть в другом namespace!
+        namespace: my-app
     allowedRoutes:
       namespaces:
         from: All
 ```
 
----
+**Преимущество:** Secret может находиться в другом namespace (не в namespace приложения).
 
-### Сценарий 2: SSL Passthrough → TLSRoute
+### Сценарий 2: SSL Passthrough
 
 Если в Ingress используется `ssl-passthrough: "true"` (сквозное шифрование):
 
 ```yaml
-# Gateway с TLS Passthrough
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -49,12 +55,11 @@ spec:
     protocol: TLS
     port: 443
     tls:
-      mode: Passthrough  # Трафик не расшифровывается
+      mode: Passthrough
     allowedRoutes:
       namespaces:
         from: All
 ---
-# TLSRoute для маршрутизации по SNI
 apiVersion: gateway.networking.k8s.io/v1alpha2
 kind: TLSRoute
 metadata:
@@ -65,7 +70,7 @@ spec:
   - name: passthrough-gateway
     sectionName: tls-passthrough
   hostnames:
-  - app.example.com  # Маршрутизация только по SNI!
+  - app.example.com
   rules:
   - backendRefs:
     - name: app-service
@@ -75,21 +80,19 @@ spec:
 
 **Важно:** При использовании TLSRoute маршрутизация возможна **только по SNI** (имени хоста). Маршрутизация по пути, заголовкам или методам HTTP недоступна, так как контроллер не видит содержимое запроса.
 
----
+### Сценарий 3: Смешанный режим
 
-### Сценарий 3: Смешанный режим (passthrough + HTTP-маршрутизация)
-
-Если для одного хоста одновременно используются passthrough и HTTP-маршрутизация — это требует пересмотра архитектуры:
+Если для одного хоста одновременно используются passthrough и HTTP-маршрутизация — архитектуру необходимо пересмотреть:
 
 - Разделить хосты: passthrough для одних доменов, termination для других
 - Использовать разные Gateway с разными listener
 - Рассмотреть возможность терминирования на бэкенде с re-encrypt
 
----
+## Практические сценарии
 
-## Пример ручной миграции
+### Пример ручной миграции с Ingress
 
-### Исходный Ingress
+**Исходный Ingress:**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -126,9 +129,7 @@ spec:
     secretName: app-tls-secret
 ```
 
-### Эквивалент на Gateway API
-
-#### 1. HTTPRoute для маршрутизации
+**Эквивалент на Gateway API — HTTPRoute для маршрутизации:**
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -143,7 +144,6 @@ spec:
   hostnames:
   - "app.example.com"
   rules:
-  # Правило для /api/*
   - matches:
     - path:
         type: PathPrefix
@@ -158,7 +158,6 @@ spec:
     - name: api-service
       port:
         number: 8080
-  # Правило для /
   - matches:
     - path:
         type: PathPrefix
@@ -169,7 +168,7 @@ spec:
         number: 80
 ```
 
-#### 2. HTTPRoute для HTTPS redirect
+**HTTPRoute для HTTPS redirect:**
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -192,9 +191,7 @@ spec:
         statusCode: 301
 ```
 
----
-
-## Типичные проблемы при миграции
+### Типичные проблемы при миграции
 
 | Проблема | Решение |
 | :--- | :--- |
@@ -203,10 +200,10 @@ spec:
 | Маршруты не привязываются к Gateway | Проверить `allowedRoutes` в Gateway и `parentRefs` в HTTPRoute |
 | Разные namespace для Gateway и Route | Убедиться, что Gateway разрешает routes из других namespace (`from: All`) |
 
----
+## Дополнительная информация
 
-## Связанные документы
+Концепции Gateway API: [Определения](./definitions.md).
 
-- **[Определения Gateway API](./definitions.md)** — концепции и ролевая модель
-- **[Миграция: основы](./migration_basics.md)** — ingress2gateway, параллельный запуск
-- **[Ресурсы (CRD)](./resources.md)** — GatewayClass, Gateway, HTTPRoute, TLSRoute
+Основы миграции: [Миграция с Ingress](./migration.md).
+
+Ресурсы (CRD): [Ресурсы](./resources.md).

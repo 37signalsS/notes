@@ -1,26 +1,25 @@
 # RKE: Основные концепции
 
-## 1. Определения
+> **Примечание:** Полная документация RKE доступна в [основном файле](./index.md). Данный документ содержит дополнительные материалы и сравнения.
 
-**RKE (Rancher Kubernetes Engine)** — дистрибутив Kubernetes от Rancher Labs, предназначенный для развертывания production-кластеров на bare-metal и виртуальных машинах.
+## Определения
 
-**Rancher** — платформа управления Kubernetes, предоставляющая веб-UI для развертывания, мониторинга и управления кластерами (включая RKE).
+**RKE (Rancher Kubernetes Engine)** — дистрибутив Kubernetes от Rancher Labs для развертывания production-кластеров на bare-metal и виртуальных машинах.
 
-**kubeconfig** — YAML-файл с конфигурацией доступа к Kubernetes API (контексты, пользователи, кластеры).
+**Rancher** — платформа управления Kubernetes с веб-UI для развертывания и управления кластерами.
 
-> **Примечание:** RKE2 (Rancher Government Kubernetes) — следующая версия RKE с улучшенной безопасностью. Не путать с RKE1.
+**kubeconfig** — YAML-файл конфигурации доступа к Kubernetes API (контексты, пользователи, кластеры). Расположен в `~/.kube/config`.
 
-## 2. Основные концепции
+## Базовые концепции
 
-### Отличия RKE от kubeadm
+### Сравнение методов управления
 
-| Аспект | kubeadm | RKE |
+| Метод | Преимущества | Недостатки |
 | :--- | :--- | :--- |
-| **Установка** | Команды `kubeadm init/join` на узлах | Через `cluster.yml` + `./rke up` |
-| **Конфигурация** | Ручная на каждом узле | Декларативная (YAML) |
-| **Управление** | kubectl + kubeadm | Rancher UI + kubectl |
-| **kubectl на узлах** | Устанавливается автоматически | Не устанавливается (только через Rancher) |
-| **HA** | Ручная настройка | Встроенная поддержка |
+| **Rancher UI** | Визуальный интерфейс, мониторинг, упрощенное развертывание | Требует ресурсов на Rancher Server |
+| **kubectl** | Стандартный инструмент, скрипты, CI/CD-интеграция | Только CLI, нет визуализации |
+| **RKE CLI** | Полная автоматизация, infrastructure as code | Меньше возможностей чем UI |
+| **Terraform RKE provider** | Infrastructure as Code, версионирование | Сложнее настройка |
 
 ### Архитектура доступа
 
@@ -38,25 +37,31 @@
                          └────────────────┘ └─────────────┘ └──────────────┘
 ```
 
-## 3. Сравнение методов управления
+## Практические сценарии
 
-| Метод | Преимущества | Недостатки |
-| :--- | :--- | :--- |
-| **Rancher UI** | Визуальный интерфейс, мониторинг | Требует ресурсов на Rancher |
-| **kubectl** | Стандартный инструмент, скрипты | Только CLI |
-| **RKE CLI** | Полная автоматизация | Меньше возможностей чем UI |
-| **Terraform RKE provider** | Infrastructure as Code | Сложнее настройка |
+### Выбор метода развертывания
 
-## Связанные документы
+**Rancher UI** рекомендуется для:
+* Команд с операторами, предпочитающими визуальный интерфейс
+* Сред, где требуется мониторинг и управление через единый портал
+* Быстрого прототипирования и тестирования
 
-- **[RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)** — установка kubectl, получение kubeconfig
-- **[RKE: Управление и troubleshooting](./rke_management_scenarios.md)** — практические сценарии управления
-- **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный метод установки
-- **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — детали конфигурации
-- **[RKE2 документация](https://docs.rke2.io/)** — следующая версия RKE
+**RKE CLI** рекомендуется для:
+* Автоматизированных развертываний (CI/CD)
+* Infrastructure as Code подходов
+* Сред без доступа к веб-интерфейсу
 
-## Внешние ресурсы
+**Terraform RKE provider** рекомендуется для:
+* Полной автоматизации инфраструктуры
+* Версионирования конфигураций кластера
+* Интеграции с другими Terraform-модулями
 
-- **Rancher Documentation:** [ranchermanager.docs.rancher.com](https://ranchermanager.docs.rancher.com/)
-- **RKE GitHub:** [github.com/rancher/rke](https://github.com/rancher/rke)
-- **kubectl Reference:** [kubernetes.io/docs/reference/kubectl/](https://kubernetes.io/docs/reference/kubectl/)
+## Дополнительная информация
+
+**Внешние ресурсы:**
+
+* **Rancher Documentation:** [ranchermanager.docs.rancher.com](https://ranchermanager.docs.rancher.com/)
+* **RKE GitHub:** [github.com/rancher/rke](https://github.com/rancher/rke)
+* **kubectl Reference:** [kubernetes.io/docs/reference/kubectl/](https://kubernetes.io/docs/reference/kubectl/)
+
+**См. также:** [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md).

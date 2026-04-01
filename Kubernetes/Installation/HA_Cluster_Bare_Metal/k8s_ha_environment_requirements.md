@@ -106,34 +106,12 @@
 
 ### Предварительные требования
 
-1. **SSH-доступ** с правами `sudo` на все узлы
-2. **Статические IP-адреса** для всех серверов
-3. **DNS или `/etc/hosts`** — разрешение имён между узлами
-4. **Доступ в интернет** или локальный mirror для пакетов Kubernetes
-5. **Временная синхронизация** (NTP/chrony) — критично для etcd
+**SSH-доступ** с правами `sudo` на все узлы. **Статические IP-адреса** для всех серверов. **DNS или `/etc/hosts`** — разрешение имён между узлами. **Доступ в интернет** или локальный mirror для пакетов Kubernetes. **Временная синхронизация** (NTP/chrony) — критично для etcd.
 
-### Проверка совместимости версий
+### Актуальность версий
 
-| Компонент | Версия в файлах | Актуальность | Примечание |
-| :--- | :--- | :--- | :--- |
-| **Kubernetes** | 1.34 | ⚠️ Проверить | Уточнить актуальность |
-| **containerd** | 1.6+ | ✅ | Совместим с K8s 1.24-1.34 |
-| **Calico** | v3.31.0 | ⚠️ Проверить | Поддерживает K8s 1.28-1.32 |
+**Kubernetes** — актуальная версия 1.35 (проверить на [kubernetes.io/releases](https://kubernetes.io/releases/)). **containerd** — 1.6+ совместим с K8s 1.24–1.35. **Calico** — v3.31.x поддерживает K8s 1.29–1.31 (проверить [матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases)). Версии требуют периодической проверки из-за политики N-2 поддержки.
 
-> **Важно**: Версии указаны на момент создания документации. Проверяйте совместимость в официальной документации перед установкой.
+### Интеграция с документацией
 
-### Связанные документы
-
-- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Подготовка узлов**: [Node Preparation](./k8s_ha_node_preparation.md)
-- **Установка компонентов**: [Component Installation](./k8s_ha_component_installation.md)
-- **Порты**: [Kubernetes Ports](https://kubernetes.io/docs/reference/ports-and-protocols/)
-- **CNI**: [CNI Plugins](../../Networking/Network/cni_overview.md)
-
-### Надежность
-
-| Раздел | Confidence |
-| :--- | :--- |
-| Аппаратные требования | Этот файл | 9 |
-| Сетевые требования | Этот файл + официалка | 10 |
-| Версии компонентов | Требует проверки | 7 |
+Требования к среде — **шаг 1** перед [подготовкой узлов](./k8s_ha_node_preparation.md). Архитектура HA описана в [обзоре кластера](./k8s_ha_cluster_overview.md), теория Control Plane — в [Control Plane architecture](../../Concepts/control_plane_architecture.md), балансировщик — в [Keepalived + HAProxy](../kubeadm/ha_keepalived_haproxy/index.md), порты — в [Kubernetes Ports and Protocols](https://kubernetes.io/docs/reference/ports-and-protocols/), CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

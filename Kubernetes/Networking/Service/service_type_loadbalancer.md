@@ -2,13 +2,15 @@
 
 ## Определения
 
-**LoadBalancer** — тип Service, который создает внешний балансировщик нагрузки у облачного провайдера (AWS, GCP, Azure). Балансировщик получает публичный IP-адрес и направляет трафик на `Service`.
+**LoadBalancer** — тип Service, создающий внешний балансировщик нагрузки у облачного провайдера (AWS, GCP, Azure). Балансировщик получает публичный IP-адрес и направляет трафик на сервис.
 
-LoadBalancer является расширением [NodePort](./service_type_nodeport.md) и [ClusterIP](./service_type_clusterip.md):
+LoadBalancer расширяет [NodePort](./service_type_nodeport.md) и [ClusterIP](./service_type_clusterip.md):
 
 ```
 External Traffic → Cloud LB → NodePort → ClusterIP → Pod
 ```
+
+**Ключевое отличие:** Единственный тип сервиса, автоматически создающий внешнюю инфраструктуру в облаке.
 
 ## Основные концепции
 
@@ -17,27 +19,44 @@ External Traffic → Cloud LB → NodePort → ClusterIP → Pod
 При создании Service типа LoadBalancer:
 
 1. Kubernetes запрашивает создание внешнего балансировщика через API облачного провайдера
-2. Облачный провайдер создает балансировщик (например, AWS ELB) с публичным IP
-3. Балансировщик направляет трафик на `NodePort` (автоматически созданный) на всех узлах
+2. Облачный провайдер создаёт балансировщик (AWS ELB, GCP Load Balancing, Azure LB) с публичным IP
+3. Балансировщик направляет трафик на `NodePort` (автоматически создаётся) на всех узлах
 4. `kube-proxy` перенаправляет трафик на Pod
 5. Облачный балансировщик выполняет **health-check** на уровне провайдера
 
 ### Требования
 
-- **Облачный провайдер:** Работает "из коробки" только в облаках (AWS, GCP, Azure)
-- **Контроллер:** Требуется cloud-controller-manager для взаимодействия с API провайдера
-- **On-premise:** Для bare-metal кластеров используйте [MetalLB](../metallb.md)
+| Требование | Описание |
+| :--- | :--- |
+| **Облачный провайдер** | Работает "из коробки" в AWS, GCP, Azure |
+| **Контроллер** | Требуется cloud-controller-manager для взаимодействия с API провайдера |
+| **On-premise** | Для bare-metal используйте [MetalLB](../metallb.md) |
 
 ### externalTrafficPolicy
 
-Для сохранения реального IP-адреса клиента используйте:
+Для сохранения реального IP-адреса клиента:
 
 ```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
 spec:
-  externalTrafficPolicy: Local
+  type: LoadBalancer
+  externalTrafficPolicy: Local  # Сохраняет IP клиента
+  ports:
+    - port: 80
+      targetPort: 80
 ```
 
-Подробное описание работы `externalTrafficPolicy` см. в [документации NodePort](./service_type_nodeport.md#externaltrafficpolicy-local).
+**Режимы работы:**
+
+| Режим | Описание |
+| :--- | :--- |
+| **Cluster** (по умолчанию) | Трафик может перенаправляться на Pod на другом узле, IP клиента теряется |
+| **Local** | Трафик только на локальные Pod, сохраняется IP клиента, возможна неравномерная балансировка |
+
+> **Подробно:** [externalTrafficPolicy в NodePort](./service_type_nodeport.md#externaltrafficpolicy-local)
 
 ### Статический IP-адрес
 
@@ -46,6 +65,8 @@ spec:
   type: LoadBalancer
   loadBalancerIP: "1.1.1.1"  # Статический IP (поддерживается не всеми провайдерами)
 ```
+
+**Важно:** Поле `loadBalancerIP` депрецируется. Для статических IP используйте аннотации провайдера или `Gateway API`.
 
 ## Практические сценарии
 
@@ -85,37 +106,48 @@ spec:
       targetPort: 80
 ```
 
-### Распространенные use-case
+### Распространённые use-case
 
-- **Публикация в production:** Стандартный способ в облачных средах
-- **TCP/UDP приложения:** Базы данных, кэши, message brokers
-- **Не-HTTP трафик:** Прямая публикация сервисов без Ingress
+| Сценарий | Описание |
+| :--- | :--- |
+| **Production в облаке** | Стандартный способ публикации приложений в AWS, GCP, Azure |
+| **TCP/UDP приложения** | Базы данных, кэши, message brokers (не-HTTP трафик) |
+| **Прямая публикация** | Сервисы без Ingress, требующие отдельного внешнего IP |
 
 ## Дополнительная информация
 
 ### Ограничения
 
 | Ограничение | Описание |
-|-------------|----------|
-| **L4 only** | Работает только на транспортном уровне (TCP/UDP), без понимания HTTP |
+| :--- | :--- |
+| **L4 only** | Работает на транспортном уровне (TCP/UDP), без понимания HTTP |
 | **Один IP на сервис** | Каждый сервис требует отдельный внешний IP |
-| **Зависимость от провайдера** | Не работает в bare-metal без дополнительных компонентов |
-| **Стоимость** | Каждый LoadBalancer = отдельный ресурс в облаке |
+| **Зависимость от провайдера** | Не работает в bare-metal без дополнительных компонентов (MetalLB) |
+| **Стоимость** | Каждый LoadBalancer = отдельный платный ресурс в облаке |
 
-### Когда использовать Ingress вместо LoadBalancer
+### LoadBalancer vs Ingress
 
 Для HTTP/HTTPS приложений предпочтительнее использовать [Ingress](../Ingress/overview.md):
 
 | Критерий | LoadBalancer | Ingress |
-|----------|--------------|---------|
-| **Уровень** | L4 (TCP/UDP) | L7 (HTTP/HTTPS) |
+| :--- | :--- | :--- |
+| **Уровень OSI** | L4 (TCP/UDP) | L7 (HTTP/HTTPS) |
 | **Маршрутизация** | По порту | По хосту, пути, заголовкам |
 | **IP-адреса** | Один сервис = один IP | Множество сервисов через один IP |
 | **SSL/TLS** | На уровне сервиса | Централизованное управление |
+| **Стоимость** | Платный ресурс за каждый сервис | Один балансировщик на множество сервисов |
 
-### Переход к другим типам
+### Альтернативы для bare-metal
 
-- Для внутреннего доступа: [ClusterIP](./service_type_clusterip.md)
-- Для разработки/on-prem: [NodePort](./service_type_nodeport.md)
-- Для HTTP приложений: [Ingress](../Ingress/overview.md)
-- Полная сводка типов: [service_types_summary.md](./service_types_summary.md)
+| Решение | Описание |
+| :--- | :--- |
+| **[MetalLB](../metallb.md)** | Балансировщик для bare-metal кластеров (L2/BGP режимы) |
+| **NodePort + внешний LB** | Внешний балансировщик направляет трафик на NodePort |
+| **[Gateway API](../gateway_api/definitions.md)** | Современная альтернатива Ingress с поддержкой LoadBalancer |
+
+### Связанные концепции
+
+- **[ClusterIP](./service_type_clusterip.md)** — базовый тип для внутреннего доступа
+- **[NodePort](./service_type_nodeport.md)** — публикация через порт узла
+- **[Ingress](../Ingress/overview.md)** — L7 маршрутизация для HTTP/HTTPS
+- **[Сводка типов сервисов](./service_types_summary.md)** — полное сравнение всех типов

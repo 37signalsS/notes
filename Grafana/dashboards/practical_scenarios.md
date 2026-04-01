@@ -233,4 +233,4 @@ count(kube_secret_info{namespace="<namespace>"} == 0)
 - **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
 - **[Провижионинг через ConfigMap](./provisioning_configmap.md)** — развертывание дашбордов
 - **[Provisioning](../grafana_provisioning.md)** — управление дашбордами как код
-- **[Kubernetes Monitoring](../../Kubernetes/MonitoringLogging/monitoring_and_logging_architecture_overview.md)** — мониторинг Kubernetes
+- **[Kubernetes Monitoring](../../Kubernetes/MonitoringLogging/kubernetes-monitoring-logging-architecture.md)** — мониторинг Kubernetes

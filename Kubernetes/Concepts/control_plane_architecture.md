@@ -15,48 +15,11 @@
 **Data Plane (Плоскость данных)** — это совокупность рабочих узлов (Nodes), на которых непосредственно запускаются и работают приложения пользователей в контейнерах.
 
 * **`kubelet`**: Агент, работающий на каждом узле. Он получает инструкции от `kube-apiserver` и отвечает за жизненный цикл подов на своем узле: запускает, останавливает и следит за состоянием контейнеров.
-* **`kube-proxy`**: Сетевой прокси, работающий на каждом узле. Он реализует сетевые правила и концепцию сервисов (`Services`) в Kubernetes, управляя сетевым трафиком между подами.
-
-    * *Подробнее: [CNI и kube-proxy: определения](../Networking/Network/CNI/definitions.md)*
+* **`kube-proxy`**: Сетевой прокси, работающий на каждом узле. Он реализует сетевые правила и концепцию сервисов (`Services`) в Kubernetes, управляя сетевым трафиком между подами. Подробнее: [CNI и kube-proxy: определения](../Networking/Network/CNI/definitions.md).
 
 * **Среда выполнения контейнеров (Container Runtime)**: Программное обеспечение, отвечающее за запуск контейнеров (например, `containerd`, `CRI-O`).
 
-#### Компоненты Worker-ноды: Обзор
-
-| Компонент | Роль | Основные функции |
-| :--- | :--- | :--- |
-| **kubelet** | Агент узла | Поддерживает желаемое состояние Pod’ов, запускает контейнеры через CRI, выполняет пробы, сообщает статус. |
-| **kube-proxy**| Сетевой прокси | Реализует сервисную абстракцию (`ClusterIP`/`NodePort`), программирует `iptables`/`ipvs`. |
-| **Container Runtime** | Исполнитель контейнеров| Реализует CRI (например, `containerd`, `CRI-O`), отвечает за `pull` образов, сандбоксы, жизненный цикл. |
-| **CNI плагины** | Сеть | Назначение IP-адресов, подключение к сети подов, маршрутизация. |
-| **CSI плагины** | Хранение | Подключение томов, монтирование и управление на уровне узла. |
-
-#### Конфигурация Kubelet
-
-`kubelet` настраивается через конфигурационный файл, который позволяет задавать важные параметры для управления ресурсами узла.
-
-> **Примечание о версиях API:** В примере используется `kubelet.config.k8s.io/v1beta1`. Начиная с Kubernetes 1.24+, рекомендуется использовать стабильную версию `kubelet.config.k8s.io/v1`.
-
-* `evictionHard`: Определяет "жесткие" пороги вытеснения. Когда доступный ресурс (например, память) опускается ниже этого порога, `kubelet` начинает принудительно останавливать поды.
-* `kubeReserved` / `systemReserved`: Резервирует ресурсы (CPU/память) для системных компонентов Kubernetes и операционной системы, чтобы рабочие нагрузки не могли их "задушить".
-
-Пример конфигурации (`/var/lib/kubelet/config.yaml`):
-
-```yaml
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: "systemd"
-evictionHard:
-  memory.available: "200Mi"
-  nodefs.available: "10%"
-kubeReserved:
-  cpu: "200m"
-  memory: "512Mi"
-systemReserved:
-  cpu: "100m"
-  memory: "256Mi"
-rotateCertificates: true
-```
+Подробнее о компонентах worker-ноды: [Kubelet](./kubelet.md), [CNI и kube-proxy](../Networking/Network/CNI/definitions.md).
 
 ## Основные концепции
 
@@ -74,11 +37,7 @@ rotateCertificates: true
     5. **Сохранение в etcd:** Запись объекта и возврат ответа клиенту.
     6. **Уведомление подписчиков:** Отправка событий всем `watch`-клиентам (контроллерам, kubelet).
 
-* **Циклы согласования (`Reconciliation Loops`)**: `kube-controller-manager` реализует ключевой принцип Kubernetes. Контроллеры (например, `Deployment Controller`, `Node Controller`) "наблюдают" (`watch`) за изменениями в `etcd` через `kube-apiserver`. Когда контроллер обнаруживает расхождение между желаемым состоянием (записанным в `etcd`) и фактическим состоянием (в кластере), он предпринимает действия для устранения этого расхождения.
-  * **Примеры контроллеров:**
-    * **Node Controller:** Реагирует на отказы узлов, помечая их как неработоспособные.
-    * **ReplicaSet/Deployment Controller:** Поддерживает заданное количество реплик пода, создавая или удаляя их при необходимости.
-    * **Endpoints Controller:** Обновляет объект `Endpoints` (IP-адреса подов), связывая `Services` с их реальными бэкендами.
+* **Циклы согласования (`Reconciliation Loops`)**: `kube-controller-manager` реализует ключевой принцип Kubernetes. Контроллеры "наблюдают" (`watch`) за изменениями в `etcd` через `kube-apiserver`. Когда контроллер обнаруживает расхождение между желаемым состоянием (записанным в `etcd`) и фактическим состоянием (в кластере), он предпринимает действия для устранения этого расхождения. Подробнее о паттерне reconciliation loop см. [Kubernetes-операторы](./kubernetes_operators.md).
 
 * **Планирование (`kube-scheduler`)**: `kube-scheduler` также "наблюдает" за API-сервером. Как только появляется новый под без назначенного узла, планировщик выбирает для него наиболее подходящий узел и сообщает об этом решении API-серверу, который записывает эту информацию в `etcd`. Подробно о процессе планирования: [Kube-scheduler](./kube_scheduler.md).
 
@@ -93,7 +52,7 @@ rotateCertificates: true
 * **CoreDNS**: Отслеживает объекты `Service` и `EndpointSlice` для предоставления DNS-имен внутри кластера.
 * **Пользователи и операторы**: Взаимодействуют с кластером через `kubectl`, дашборды или кастомные контроллеры, которые также обращаются к `kube-apiserver`.
 
-#### Сервисная сеть и безопасность
+#### Сетевая коммуникация и безопасность
 
 * **Pod-to-Pod**: Связность обеспечивается CNI-плагином, который настраивает маршрутизацию в кластере.
 * **Pod-to-Service**: `kube-proxy` на каждом узле отслеживает `EndpointSlices` и программирует правила `iptables` или `IPVS` для перенаправления трафика с виртуального `ClusterIP` на реальные IP-адреса подов.
@@ -121,7 +80,7 @@ rotateCertificates: true
 5. **Запуск**: `kubelet` на целевом узле обнаруживает, что ему назначен новый под. Он скачивает необходимые образы контейнеров и запускает их.
 6. **Обновление статуса**: `kubelet` регулярно сообщает о состоянии пода `kube-apiserver`, который обновляет эту информацию в `etcd`.
 
-### Обеспечение отказоустойчивости (High Availability)
+### Обеспечение отказоустойчивости
 
 * **Кворум `etcd`**: Кластер `etcd` требует наличия "кворума" — большинства работающих узлов (`(N/2) + 1`) — для выполнения операций записи. Кластер из **3 мастеров** может пережить отказ **1** мастера, а кластер из **5 мастеров** — отказ **2** мастеров. Четное число узлов не добавляет отказоустойчивости по сравнению с предыдущим нечетным числом, но требует больше ресурсов.
 
@@ -132,36 +91,6 @@ rotateCertificates: true
 ## Дополнительная информация
 
 * **Механизм `Watch`**: Компоненты Control Plane активно используют механизм подписки (`watch`) через `kube-apiserver` для отслеживания изменений в `etcd` в реальном времени, вместо постоянного опроса.
-* **Контроллеры в `kube-controller-manager`**:
-  * **Node Controller**: Отвечает за жизненный цикл узлов. Замечает, когда узел становится недоступным (перестает получать heartbeats от kubelet), и помечает его соответствующими таинтами (`NoSchedule`, `NoExecute`), чтобы планировщик перестал отправлять на него новые поды, а существующие были вытеснены.
-  * **Deployment/ReplicaSet Controller**: Отвечает за поддержание желаемого состояния развертываний. `Deployment Controller` следит за объектами `Deployment` и создает `ReplicaSet`'ы, а `ReplicaSet Controller` в свою очередь следит, чтобы количество работающих подов соответствовало полю `replicas`.
-  * **Endpoints/EndpointSlice Controller**: Связывает объекты `Service` с подами. Он отслеживает поды, соответствующие селектору сервиса, и обновляет объекты `EndpointSlice` их IP-адресами.
 * **Восстановление после сбоев**: `etcd` поддерживает создание **снимков (snapshots)**, которые позволяют восстанавливать состояние кластера.
+* **Контроллеры**: Подробное описание паттерна reconciliation loop и операторов см. в документе [Kubernetes-операторы](./kubernetes_operators.md).
 
-### Ссылки для углубленного изучения
-
-* **kube-apiserver**:
-  * [Высокая доступность kube-apiserver и его реализация](../Installation/Kubespray/HA/index.md)
-  * [Мониторинг kube-apiserver](../MonitoringLogging/kube_apiserver_monitoring.md)
-  * [TLS и mTLS в Kubernetes (включая коммуникацию с kube-apiserver)](../Security/tls_and_mtls_in_kubernetes.md)
-* **etcd**:
-  * [Обзор etcd](./etcd_overview.md)
-  * [Алгоритм Raft](../../etcd/raft_consensus.md)
-  * [Мониторинг etcd](../../etcd/etcd_monitoring.md)
-  * [Высокая доступность etcd в процессе установки кластера](../Installation/Kubespray/HA/index.md)
-* **kube-scheduler**:
-  * [Kube-scheduler: Планировщик подов](./kube_scheduler.md) — SSoT по процессу планирования
-  * [Quality of Service (QoS), Requests и Limits](../Scheduling/qos_limit_and_requests.md) — использование ресурсов планировщиком
-  * [Affinity и Anti-Affinity](../Scheduling/affinity.md) — правила размещения подов
-  * [Taints and Tolerations](../Scheduling/taints_and_tolerations.md) — механизм отталкивания
-  * [PriorityClass](./priorityclass.md) — приоритеты подов и вытеснение
-* **kubelet**:
-  * [Пробы (Liveness, Readiness, Startup Probes) и их использование kubelet'ом](../Base/probes.md)
-  * [TLS и mTLS в Kubernetes (включая коммуникацию с kubelet)](../Security/tls_and_mtls_in_kubernetes.md)
-  * [Часто встречающиеся ошибки и их устранение (проблемы с kubelet)](../Troubleshooting/Common_Errors/overview.md)
-  * [kubeadm: Быстрый старт](../Installation/kubeadm/ha_keepalived_haproxy/index.md)
-  * [kubeadm: Создание кластера](../Installation/kubeadm/ha_keepalived_haproxy/cluster_initialization.md)
-  * [Глубокое погружение в DNS (настройки kubelet для DNS)](../Networking/dns_deep_dive.md)
-  * [Альтернативные среды выполнения контейнеров (взаимодействие с CRI)](../../Docker/alternative_runtimes_and_tools.md)
-* **kube-proxy**:
-  * [Сетевая модель в Kubernetes (подробно о kube-proxy и его режимах)](../Networking/Network/network_overview.md)

@@ -84,7 +84,7 @@ spec:
 ### Связанные темы
 
 - Стандартные NetworkPolicy: [Сетевая Изоляция и NetworkPolicy](../../Networking/Network/network_policy.md)
-- CNI и kube-proxy: [Роли CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md)
+- CNI и kube-proxy: [CNI и kube-proxy: навигатор](../../Networking/Network/cni_kube_proxy_roles.md)
 - Сетевая модель: [Обзор сети Kubernetes](../../Networking/Network/network_overview.md)
 - **Внешние файрволы:** [Интеграция внешних файрволов с Kubernetes](../external_firewall_integration.md)
 - Официальная документация: [Calico Documentation](https://docs.tigera.io/calico/latest/)

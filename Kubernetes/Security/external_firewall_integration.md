@@ -202,7 +202,7 @@ kubectl patch ippool default-ipv4-ippool \
 
 - **NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../../Kubernetes/Networking/Network/network_policy.md)
 - **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](../../Kubernetes/Security/network_policies/Calico/index.md)
-- **CNI и kube-proxy:** [Роли CNI и kube-proxy](../../Kubernetes/Networking/Network/cni_kube_proxy_roles.md)
+- **CNI и kube-proxy:** [CNI и kube-proxy: навигатор](../../Kubernetes/Networking/Network/cni_kube_proxy_roles.md)
 - **Файрволы:** [Концепции сетевых файрволов](../../Networking/Concepts/firewall_concepts.md)
 - **Микросегментация:** [Сегментация и микросегментация](../../Networking/Concepts/network_segmentation_and_microsegmentation.md)
 

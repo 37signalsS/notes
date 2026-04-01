@@ -1,112 +1,138 @@
-# NetworkPolicy: Лучшие Практики и Дополнительная Информация
+# NetworkPolicy: Лучшие Практики
 
-## Лучшие практики
+## Определения
 
-* **Начинайте с "Default Deny":** Всегда начинайте с политики, которая блокирует весь трафик для неймспейса, а затем явно разрешайте необходимый.
-* **Используйте `NamespaceSelector`:** Для контроля доступа между неймспейсами это надежнее, чем `ipBlock`.
-* **Дисциплина меток:** `NetworkPolicy` сильно зависят от корректных меток. Поддерживайте строгую дисциплину маркировки.
-* **Разрешайте системный трафик:** Всегда явно разрешайте Egress-трафик к DNS и API Server.
-* **Тестируйте:** Используйте временные поды с `curl`, `netcat`, `dig` для проверки связности после применения политик.
-* **Используйте логирование:** Некоторые CNI (например, Calico) позволяют логировать заблокированный трафик, что помогает при отладке.
+**Лучшие практики NetworkPolicy** — проверенные рекомендации по безопасному и эффективному внедрению сетевой изоляции в Kubernetes.
 
-## Дополнительные сведения
+## Базовые Концепции
 
-### Локальный трафик пода
+### Принцип минимальных привилегий
 
-**NetworkPolicy не ограничивает трафик между контейнерами внутри одного пода**. Они могут свободно общаться через loopback-интерфейс.
+Следуйте принципу **минимальных привилегий**: разрешайте только тот трафик, который необходим для работы приложений.
 
-### Двусторонний трафик
+## Практические Сценарии
 
-Для подключения от пода А к поду Б необходимо разрешить трафик **и в `egress`-политике пода А, и в `ingress`-политике пода Б**.
+### 1. Начинайте с Default Deny
 
-### Диапазоны портов
-
-Для указания диапазона портов можно использовать параметр `endPort`, который указывает конец диапазона включительно:
-
-```yaml
-ports:
-- protocol: TCP
-  port: 30000
-  endPort: 30002
-```
-
-### Allow-all и Deny-all политики
-
-**Явного правила "deny" в Kubernetes нет**, но можно достичь того же эффекта:
-
-**Deny-all (запрет всего):**
+Всегда начинайте с политики, которая блокирует весь трафик для неймспейса, а затем явно разрешайте необходимый:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: deny-all
+  name: default-deny-ingress
+  namespace: <namespace>
 spec:
   podSelector: {}
   policyTypes:
   - Ingress
-  # ingress: [] — пустой список или отсутствие поля
+  ingress: []
 ```
 
-**Разрешить всё (для override):**
+*Подробнее: [Типовые политики](./definitions.md#типовые-политики-allow-all-и-deny-all)*
+
+### 2. Разрешайте системный трафик
+
+Всегда явно разрешайте Egress-трафик к DNS и API Server:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-all
+  name: allow-dns-egress
+  namespace: <namespace>
 spec:
   podSelector: {}
   policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+```
+
+### 3. Используйте NamespaceSelector
+
+Для контроля доступа между неймспейсами используйте `namespaceSelector` — это надежнее, чем `ipBlock`:
+
+- `namespaceSelector` работает с метками namespace
+- `ipBlock` требует знания CIDR и не учитывает динамические изменения
+
+### 4. Поддерживайте дисциплину меток
+
+NetworkPolicy сильно зависят от корректных меток:
+
+- Используйте согласованную схему именования меток
+- Документируйте обязательные метки для каждого типа workload
+- Автоматизируйте проверку наличия меток через Admission Controllers
+
+### 5. Тестируйте связность
+
+Используйте временные поды для проверки политик:
+
+```bash
+# Тестирование ingress
+kubectl run test-curl --rm -it --image=curlimages/curl -- curl -v http://<service>:<port>
+
+# Тестирование egress
+kubectl run test-dig --rm -it --image=registry.k8s.io/dnsutils:1.3 -- dig <service>.<namespace>.svc.cluster.local
+
+# Тестирование блокировки
+kubectl run test-nc --rm -it --image=busybox -- nc -zv <target-ip> <port>
+```
+
+### 6. Используйте логирование
+
+Некоторые CNI (например, Calico) позволяют логировать заблокированный трафик:
+
+```yaml
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: log-deny-all
+spec:
+  selector: all()
+  types:
   - Ingress
+  - Egress
   ingress:
-  - {} # Пустое правило разрешает весь трафик
+  - action: Log
+    protocol: TCP
+  egress:
+  - action: Log
+    protocol: TCP
 ```
 
-**Нюанс:** Если `policyTypes` не указан:
+## Дополнительные Сведения
 
-* При наличии `ingress`-правил: автоматически добавляется `Ingress`
-* При наличии `egress`-правил: автоматически добавляется `Egress`
-* Если политик нет: политика не применяется
+### Реализация CNI-плагинами
 
-## Реализация сетевыми плагинами (CNI)
+NetworkPolicy работает только при наличии CNI с поддержкой этой функциональности:
 
-**Критически важно:** NetworkPolicy работает только при наличии CNI-плагина с поддержкой этой функциональности.
+- **Calico, Cilium, Weave Net** — полная поддержка + расширения
+- **Flannel** — не поддерживает NetworkPolicy
+- **Kube-router, Antrea** — полная поддержка
 
-| CNI | Поддержка NetworkPolicy | Примечания |
-|-----|------------------------|------------|
-| **Calico** | ✅ Полная | Расширения: HostEndpoint, GlobalNetworkPolicy, логирование, ICMP |
-| **Cilium** | ✅ Полная | Расширения: L7-политики, FQDN-фильтрация, eBPF |
-| **Weave Net** | ✅ Полная | Базовая поддержка |
-| **Flannel** | ❌ Нет | Только связность подов, без политик |
-| **Kube-router** | ✅ Полная | На основе iptables |
-| **Antrea** | ✅ Полная | На основе Open vSwitch |
+*Подробнее: [Реализация CNI](./cni_implementation.md)*
 
-### Стандартная vs расширенная функциональность
+### Визуализация и отладка
 
-Все CNI с поддержкой NetworkPolicy реализуют **базовый стандарт** Kubernetes:
+Для проверки политик рекомендуется использовать:
 
-* Селекторы: `podSelector`, `namespaceSelector`, `ipBlock`
-* Протоколы: TCP, UDP, SCTP
-* policyTypes: Ingress, Egress
+- [Orca Turfin](https://orca-tufin.com/) — визуализация YAML в графическое представление
+- `kubectl get networkpolicy` — просмотр применённых политик
+- `kubectl describe networkpolicy <name>` — детальная информация
 
-**Расширения CNI** (нестандартные, vendor-specific):
-
-* **Calico:**
-  * `HostEndpoint` — политики для интерфейсов нод
-  * `GlobalNetworkPolicy` — кластерные политики вне namespace
-  * `preDNAT` — фильтрация до NAT (для NodePort/LoadBalancer)
-  * Логирование заблокированного трафика
-  * Блокировка ICMP
-* **Cilium:**
-  * L7-политики (HTTP, gRPC, Kafka)
-  * FQDN-фильтрация (DNS-based)
-  * Identity-based политики
-
-> **Важно:** Если вы используете Flannel и создадите NetworkPolicy, ограничения **не будут применены** — трафик продолжит проходить свободно. Требуется замена CNI на поддерживающий политики.
-
-## Связанные темы
-
-* [Сетевая модель Kubernetes](./network_overview.md)
-* [Роль CNI и kube-proxy](./cni_kube_proxy_roles.md)
-* [Calico HostEndpoint и GlobalNetworkPolicy](../../Security/network_policies/Calico/index.md)
+*Подробнее: [Определения и структура](./definitions.md)*  
+*Подробнее: [Логика правил](./rule_logic.md)*  
+*Подробнее: [Практический сценарий](./practical_scenarios.md)*  
+*Подробнее: [Реализация CNI](./cni_implementation.md)*

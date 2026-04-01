@@ -1,8 +1,30 @@
 # RKE: Установка kubectl и настройка доступа
 
-## 1. Установка kubectl
+## Определения
 
-### Linux (AMD64)
+**kubectl** — CLI-утилита командной строки для управления кластером Kubernetes через API.
+
+**kubeconfig** — YAML-файл конфигурации доступа к Kubernetes API. Содержит контексты, пользователей, кластеры и сертификаты.
+
+**контекст** — набор параметров доступа к кластеру (кластер + пользователь + namespace по умолчанию).
+
+## Базовые концепции
+
+### Требования к версии kubectl
+
+Версия kubectl должна совпадать с версией кластера (допускается отклонение ±1 минорную версию).
+
+Проверка версии кластера:
+
+```bash
+kubectl version --short
+```
+
+## Практические сценарии
+
+### Установка kubectl
+
+**Linux (AMD64):**
 
 ```bash
 # Скачивание актуальной версии
@@ -12,7 +34,7 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
 echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
 
-# Установка исполняемого файла
+# Установка
 chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
 
@@ -20,24 +42,20 @@ sudo mv kubectl /usr/local/bin/
 kubectl version --client
 ```
 
-### macOS (Homebrew)
+**macOS (Homebrew):**
 
 ```bash
 brew install kubectl
 kubectl version --client
 ```
 
-### Windows (PowerShell)
+**Windows (PowerShell):**
 
 ```powershell
 curl.exe -LO "https://dl.k8s.io/release/v1.31.0/bin/windows/amd64/kubectl.exe"
 ```
 
-> **Важно:** Версия kubectl должна совпадать с версией кластера (допускается отклонение ±1 минорную версию).
-
-## 2. Получение kubeconfig из Rancher UI
-
-### Шаги
+### Получение kubeconfig из Rancher UI
 
 1. **Открыть Rancher UI** (`https://rancher.your-domain.com`)
 
@@ -64,21 +82,21 @@ curl.exe -LO "https://dl.k8s.io/release/v1.31.0/bin/windows/amd64/kubectl.exe"
    kubectl get pods --all-namespaces
    ```
 
-## 3. Работа с несколькими контекстами
+### Работа с несколькими контекстами
 
-### Просмотр контекстов
+**Просмотр контекстов:**
 
 ```bash
 kubectl config get-contexts
 ```
 
-### Переключение контекста
+**Переключение контекста:**
 
 ```bash
 kubectl config use-context c-m-xxxxxxxxx  # Имя из Rancher
 ```
 
-### Слияние конфигураций
+**Слияние конфигураций:**
 
 Если уже есть `~/.kube/config` (например, от kubeadm):
 
@@ -96,8 +114,41 @@ kubectl config get-contexts
 kubectl config use-context c-m-xxxxxxxxx
 ```
 
-## Связанные документы
+**Текущий контекст:**
 
-- **[RKE: Основные концепции](./rke_concepts.md)** — определения и архитектура
-- **[RKE: Управление и troubleshooting](./rke_management_scenarios.md)** — практические сценарии
-- **[kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — детали конфигурации
+```bash
+kubectl config current-context
+```
+
+### Настройка autocomplete
+
+**Bash:**
+
+```bash
+source <(kubectl completion bash)
+echo "source <(kubectl completion bash)" >> ~/.bashrc
+```
+
+**Zsh:**
+
+```bash
+source <(kubectl completion zsh)
+echo "source <(kubectl completion zsh)" >> ~/.zshrc
+```
+
+**Fish:**
+
+```bash
+kubectl completion fish | source
+echo "kubectl completion fish | source" >> ~/.config/fish/config.fish
+```
+
+## Дополнительная информация
+
+**Безопасность kubeconfig:**
+
+* Установить права: `chmod 600 ~/.kube/config`
+* Не передавать файл через незащищенные каналы
+* Использовать ServiceAccount с минимальными правами для CI/CD
+
+**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).

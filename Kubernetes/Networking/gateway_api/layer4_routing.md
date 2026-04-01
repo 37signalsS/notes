@@ -1,74 +1,145 @@
-# Kubernetes Gateway API — L4 маршрутизация
+# Gateway API L4 Routing — TCPRoute и UDPRoute
 
-## Маршрутизация 4-го уровня (TCPRoute и UDPRoute)
+## Определения
 
-Хотя основное преимущество Gateway API проявляется в маршрутизации 7-го уровня (HTTP/gRPC), он также стандартизирует и маршрутизацию на 4-м уровне для TCP и UDP трафика. Это позволяет пропускать через единую точку входа трафик, не относящийся к HTTP, например, для баз данных, SSH или игровых серверов.
+**TCPRoute** — ресурс Gateway API для маршрутизации TCP-трафика (базы данных, SSH, кастомные протоколы). Статус: `v1alpha2` (Alpha).
 
-### Процесс настройки (на примере Traefik и SSH)
+**UDPRoute** — ресурс Gateway API для маршрутизации UDP-трафика (DNS, игровые серверы, VoIP). Статус: `v1alpha2` (Alpha).
 
-В отличие от `HTTPRoute`, настройка `TCPRoute` — это не операция самообслуживания для разработчика. Она требует координации с администратором кластера.
+**L4 маршрутизация** — маршрутизация на транспортном уровне (TCP/UDP) без анализа содержимого пакетов. В отличие от L7 (HTTP/gRPC), не требует понимания прикладного протокола.
 
-1. **Настройка контроллера (Администратор):** Администратор должен настроить контроллер (например, для прослушивания дополнительного TCP-порта. Traefik) Это делается через конфигурацию контроллера (например, Helm `values.yaml`).
+## Базовые концепции
 
-    ```yaml
-    # values.yaml для Traefik Helm Chart
-    ports:
-      ssh:
-        port: 3000
-        expose: true
-        protocol: TCP
-    # Также может потребоваться включить экспериментальную поддержку
-    experimental:
-      kubernetesGateway:
-        enabled: true
-    # Или через аргументы командной строки
-    # --experimental.tcp.enabled=true
-    ```
+### Область применения
 
-2. **Создание Gateway (Оператор/Разработчик):** Создается `Gateway` (или добавляется `listener` в существующий), который слушает трафик на порту, открытом администратором.
+Gateway API стандартизирует маршрутизацию L4 для трафика, не относящегося к HTTP: базы данных (PostgreSQL, MySQL), SSH, DNS, игровые серверы, VoIP.
 
-    ```yaml
-    apiVersion: gateway.networking.k8s.io/v1
-    kind: Gateway
-    metadata:
-      name: traffic-gateway-ssh
-    spec:
-      gatewayClassName: traefik
-      listeners:
-      - name: ssh
-        protocol: TCP # Важно указать протокол
-        port: 3000     # Порт, открытый на контроллере
-    ```
+### Статус ресурсов (2026)
 
-3. **Создание TCPRoute (Разработчик):** Разработчик создает правило, которое направляет трафик с этого `listener` на внутренний сервис.
+| Ресурс | API Version | Статус |
+| :--- | :--- | :--- |
+| **TCPRoute** | `gateway.networking.k8s.io/v1alpha2` | Alpha |
+| **UDPRoute** | `gateway.networking.k8s.io/v1alpha2` | Alpha |
+| **Gateway** | `gateway.networking.k8s.io/v1` | GA |
 
-    ```yaml
-    apiVersion: gateway.networking.k8s.io/v1beta1 # TCPRoute может быть в alpha/beta
-    kind: TCPRoute
-    metadata:
-      name: ssh-route
-    spec:
-      parentRefs:
-      - name: traffic-gateway-ssh
-        sectionName: ssh
-      rules:
-      - backendRefs:
-        - name: ubuntu-ssh-service # Сервис с SSH-сервером
-          port: 22
-    ```
+**Рекомендация:** Ресурсы в статусе Alpha могут измениться в будущих версиях. Использовать с осторожностью в production.
 
-### Ключевые отличия и недостатки
+### Разделение ответственности
 
-- **Сложность и разделение ролей:** Настройка требует участия администратора, что усложняет процесс по сравнению с `HTTPRoute`, который разработчики могут создавать самостоятельно.
-- **"Перпендикулярный" трафик:** Прокси 7-го уровня (как Traefik, NGINX) изначально не предназначены для сквозного проброса TCP-соединений. Такая функциональность добавляет сложности.
-- **Задержки:** Пропуск L4-трафика через L7-прокси может вносить дополнительные задержки по сравнению с прямым доступом через `NodePort` или `LoadBalancer`.
-- **Альтернативы:** Для простых случаев `NodePort` или `LoadBalancer` для сервиса часто являются более простым и производительным решением.
+В отличие от `HTTPRoute`, настройка `TCPRoute`/`UDPRoute` требует координации с администратором кластера:
 
----
+1. **Администратор** настраивает контроллер на прослушивание TCP/UDP-портов.
+2. **Разработчик** создаёт Gateway listener и Route для направления трафика.
 
-**См. также:**
+### Ограничения и альтернативы
 
-- [Расширенные функции](./routing_features.md) — L7 маршрутизация
-- [Базовые сценарии](./practical_basic.md) — основы HTTPRoute
+**Недостатки L4 через L7-прокси:**
+- Прокси 7-го уровня (Traefik, NGINX, Envoy) не предназначены для сквозного проброса TCP-соединений.
+- Возможны дополнительные задержки по сравнению с прямым доступом.
+- Требуется участие администратора для настройки портов.
 
-**Parent:** [Gateway API](../gateway_api/definitions.md)
+**Альтернативы для простых случаев:**
+- `NodePort` — прямой доступ к сервису через порт на каждой ноде.
+- `LoadBalancer` — внешний балансировщик для сервиса.
+- `MetalLB` — программная реализация LoadBalancer для bare-metal.
+
+## Практические сценарии
+
+### Настройка TCPRoute (SSH через Traefik)
+
+**Шаг 1: Настройка контроллера (администратор)**
+
+```yaml
+# values.yaml для Traefik Helm Chart
+ports:
+  ssh:
+    port: 3000
+    expose: true
+    protocol: TCP
+experimental:
+  kubernetesGateway:
+    enabled: true
+```
+
+**Шаг 2: Создание Gateway**
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: traffic-gateway-ssh
+spec:
+  gatewayClassName: traefik
+  listeners:
+  - name: ssh
+    protocol: TCP
+    port: 3000
+    allowedRoutes:
+      kinds:
+      - kind: TCPRoute
+```
+
+**Шаг 3: Создание TCPRoute**
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: ssh-route
+spec:
+  parentRefs:
+  - name: traffic-gateway-ssh
+    sectionName: ssh
+  rules:
+  - backendRefs:
+    - name: ubuntu-ssh-service
+      port: 22
+```
+
+### Настройка TCPRoute (PostgreSQL)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: postgres-route
+  namespace: default
+spec:
+  parentRefs:
+  - name: tcp-gateway
+    sectionName: postgres
+  rules:
+  - backendRefs:
+    - name: postgres-service
+      port: 5432
+```
+
+### Настройка UDPRoute (DNS)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: dns-route
+  namespace: default
+spec:
+  parentRefs:
+  - name: udp-gateway
+    sectionName: dns
+  rules:
+  - backendRefs:
+    - name: coredns-service
+      port: 53
+```
+
+## Дополнительная информация
+
+L7-маршрутизация (HTTP/gRPC): [Расширенные функции маршрутизации](./routing_features.md).
+
+Базовые примеры HTTPRoute: [Базовые сценарии](./practical_basic.md).
+
+Концепции Gateway API: [Определения](./definitions.md).
+
+Реализации: [Envoy Gateway](./envoy_gateway.md), [Traefik](./traefik.md).
+
+Официальная документация: [Gateway API TCPRoute](https://gateway-api.sigs.k8s.io/api-types/tcproute/), [UDPRoute](https://gateway-api.sigs.k8s.io/api-types/udproute/).

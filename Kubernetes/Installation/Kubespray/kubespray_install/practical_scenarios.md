@@ -1,6 +1,8 @@
 # Kubespray: Установка — Практические сценарии
 
-## Установка Kubespray и зависимостей
+## Практические сценарии
+
+### Установка Kubespray и зависимостей
 
 1. **Клонировать репозиторий:**
 
@@ -15,7 +17,7 @@
    pip install -r requirements.txt
    ```
 
-## Конфигурация Inventory
+### Конфигурация Inventory
 
 1. **Скопировать пример inventory:**
 
@@ -25,7 +27,7 @@
 
 2. **Отредактировать `inventory/my-cluster/inventory.ini`:**
 
-   **Пример для HA-кластера (3 master + 2 worker):**
+   **Пример для HA-кластера (3 control plane + 2 worker):**
 
    ```ini
    [all]
@@ -54,11 +56,11 @@
    kube_node
    ```
 
-   > **Примечание:** Для небольших кластеров `etcd` можно размещать на узлах control plane. Для HA-кластеров см. [Развертывание HA-кластера](../HA/index.md).
+   **Примечание:** Для небольших кластеров `etcd` можно размещать на узлах control plane. Для HA-кластеров см. [Развертывание HA-кластера](../HA/index.md).
 
-## Конфигурация переменных (group_vars)
+### Конфигурация переменных (group_vars)
 
-### 6.1. `inventory/my-cluster/group_vars/all/all.yml`
+#### `inventory/my-cluster/group_vars/all/all.yml`
 
 ```yaml
 # Управлять etcd через kubeadm (критично для управления сертификатами)
@@ -77,9 +79,9 @@ kubeadm_enabled: false
 kube_read_only_port: 10255
 ```
 
-> **Важно:** Параметр `etcd_kubeadm_enabled: true` критичен для последующего [управления сертификатами](../../../Operations/certificate_management.md).
+**Важно:** Параметр `etcd_kubeadm_enabled: true` критичен для последующего [управления сертификатами](../../../Operations/certificate_management.md).
 
-### 6.2. `inventory/my-cluster/group_vars/all/docker.yml` (опционально)
+#### `inventory/my-cluster/group_vars/all/docker.yml` (опционально)
 
 Настройки для Docker (если используется вместо containerd):
 
@@ -88,7 +90,7 @@ kube_read_only_port: 10255
 docker_storage_options: -s overlay2
 ```
 
-### 6.3. `inventory/my-cluster/group_vars/all/download.yml`
+#### `inventory/my-cluster/group_vars/all/download.yml`
 
 Оптимизация загрузки артефактов:
 
@@ -98,7 +100,7 @@ docker_storage_options: -s overlay2
 download_run_once: true
 ```
 
-### 6.4. `inventory/my-cluster/group_vars/etcd.yml`
+#### `inventory/my-cluster/group_vars/etcd.yml`
 
 Настройки для компонента etcd:
 
@@ -113,7 +115,7 @@ etcd_ionice: '-c2 -n0'
 etcd_memory_limit: 0
 ```
 
-### 6.5. `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`
+#### `inventory/my-cluster/group_vars/k8s_cluster/k8s-cluster.yml`
 
 Основные параметры кластера:
 
@@ -161,9 +163,9 @@ enable_nodelocaldns: true
 auto_renew_certificates: true
 ```
 
-> **Важно:** Версия Kubernetes должна соответствовать версии Kubespray. Проверьте поддерживаемые версии в файле `roles/download/defaults/main.yml` (переменная `kubelet_checksums`).
+**Важно:** Версия Kubernetes должна соответствовать версии Kubespray. Проверьте поддерживаемые версии в файле `roles/download/defaults/main.yml` (переменная `kubelet_checksums`).
 
-### 6.6. Настройки сетевого плагина
+#### Настройки сетевого плагина
 
 **Для Calico** (`k8s-net-calico.yml`):
 
@@ -182,9 +184,9 @@ flannel_backend_type: "host-gw"
 flannel_interface_regexp: '192\.168\.1\.\d{1,3}'
 ```
 
-Подробнее о CNI-плагинах: [CNI, kube-proxy и их роли](../../../Networking/Network/cni_kube_proxy_roles.md).
+Подробнее о CNI-плагинах: [CNI и kube-proxy: навигатор](../../../Networking/Network/cni_kube_proxy_roles.md).
 
-## Запуск развертывания
+### Запуск развертывания
 
 Выполните плейбук `cluster.yml` из корневой директории Kubespray:
 
@@ -196,13 +198,15 @@ ansible-playbook -i inventory/my-cluster/inventory.ini cluster.yml
 ansible-playbook -i inventory/my-cluster/inventory.ini --become --user=myuser cluster.yml
 ```
 
-> **Время выполнения:** 15–30 минут в зависимости от количества узлов и скорости сети.
+**Время выполнения:** 15–30 минут в зависимости от количества узлов и скорости сети.
 
 ---
 
-## Связанные документы
+## Дополнительная информация
+
+### Связанные темы
 
 - **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
-- **[Дополнительная информация](./additional_info.md)** — действия после установки, troubleshooting
-- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре без интернета
+- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, требования, этапы установки
+- **[Дополнительная информация](./additional_info.md)** — действия после установки, проверка кластера
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре

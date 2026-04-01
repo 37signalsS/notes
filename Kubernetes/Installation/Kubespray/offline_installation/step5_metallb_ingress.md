@@ -1,15 +1,55 @@
-# Kubespray: Offline установка — Шаг 5: Настройка MetalLB и Ingress для Hubble
+# Kubespray: Offline установка — Шаг 5: Настройка MetalLB и Ingress
 
-## 5.1. Создание манифестов
+## Определения
+
+**MetalLB** — балансировщик нагрузки для bare-metal кластеров Kubernetes, назначающий внешние IP-адреса сервисам типа `LoadBalancer`.
+
+**IPAddressPool** — ресурс MetalLB, определяющий пул IP-адресов для назначения сервисам `LoadBalancer`.
+
+**L2Advertisement** — ресурс MetalLB, анонсирующий IP-адреса через L2-протокол (ARP/NDP) в локальной сети.
+
+**Ingress** — ресурс Kubernetes для маршрутизации внешнего HTTP/HTTPS-трафика к сервисам внутри кластера.
+
+---
+
+## Основные концепции
+
+### Цель этапа
+
+Настройка внешнего доступа к сервисам кластера:
+
+- Развёртывание MetalLB для назначения внешних IP
+- Создание Ingress для доступа к Hubble UI
+- Настройка DNS для доменного имени Hubble
+
+### Компоненты
+
+| Компонент | Назначение |
+| :--- | :--- |
+| **MetalLB** | Балансировщик нагрузки (LoadBalancer) |
+| **Ingress-nginx** | Ingress-контроллер для маршрутизации HTTP |
+| **Hubble UI** | Веб-интерфейс для визуализации сетевого трафика Cilium |
+
+### Архитектура доступа
+
+```
+Внешний пользователь → MetalLB VIP (192.168.1.200) → Ingress → Hubble UI Service → Pod
+```
+
+---
+
+## Практические сценарии
+
+### Создание манифестов
 
 ```bash
 mkdir kube-manifests
 cd kube-manifests
 ```
 
-## 5.2. Настройка MetalLB
+### Настройка MetalLB
 
-### Создание IPAddressPool
+#### Создание IPAddressPool и L2Advertisement
 
 Файл: `metallb.yml`
 
@@ -35,13 +75,13 @@ spec:
 
 > **Важно:** Выберите свободный IP-адрес или пул из той же подсети, где находится кластер. В примере используется `192.168.1.200/32`.
 
-### Применение конфигурации MetalLB
+#### Применение конфигурации
 
 ```bash
 kubectl apply -f metallb.yml
 ```
 
-### Проверка MetalLB
+#### Проверка MetalLB
 
 ```bash
 # Статус контроллера
@@ -57,9 +97,9 @@ kubectl get ipaddresspool -n metallb-system
 kubectl get l2advertisement -n metallb-system
 ```
 
-## 5.3. Настройка Ingress для Hubble UI
+### Настройка Ingress для Hubble UI
 
-### Создание Ingress манифеста
+#### Создание Ingress манифеста
 
 Файл: `ingress-hubble-ui.yml`
 
@@ -84,13 +124,13 @@ spec:
               number: 80
 ```
 
-### Применение Ingress
+#### Применение Ingress
 
 ```bash
 kubectl apply -f ingress-hubble-ui.yml
 ```
 
-### Проверка Ingress
+#### Проверка Ingress
 
 ```bash
 # Статус Ingress
@@ -103,17 +143,17 @@ kubectl get svc -n kube-system hubble-ui
 kubectl get pods -n ingress-nginx
 ```
 
-## 5.4. Настройка DNS
+### Настройка DNS
 
-### Вариант 1: Локальный DNS сервер
+#### Вариант 1: Локальный DNS сервер
 
-Добавить A-запись в DNS сервер:
+Добавить A-запись в DNS-сервер:
 
 ```
 hubble.k8s.domain.local.  IN  A  192.168.1.200
 ```
 
-### Вариант 2: Файл hosts (временное решение)
+#### Вариант 2: Файл hosts (временное решение)
 
 **Linux (`/etc/hosts`):**
 
@@ -127,9 +167,9 @@ hubble.k8s.domain.local.  IN  A  192.168.1.200
 192.168.1.200  hubble.k8s.domain.local
 ```
 
-## 5.5. Проверка доступа к Hubble UI
+### Проверка доступа к Hubble UI
 
-### Через порт-форвардинг
+#### Через порт-форвардинг
 
 ```bash
 kubectl port-forward -n kube-system svc/hubble-ui 8080:80
@@ -137,15 +177,13 @@ kubectl port-forward -n kube-system svc/hubble-ui 8080:80
 
 Открыть в браузере: `http://localhost:8080`
 
-### Через Ingress
+#### Через Ingress
 
 Открыть в браузере: `http://hubble.k8s.domain.local`
 
 **Ожидаемый результат:** Веб-интерфейс Hubble с визуализацией сетевого трафика.
 
-## Проверка LoadBalancer
-
-### Тестирование сервиса LoadBalancer
+### Тестирование LoadBalancer
 
 ```bash
 # Создание тестового сервиса
@@ -171,13 +209,10 @@ kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker
 kubectl get ipaddresspool ingress-pool -n metallb-system -o yaml
 ```
 
-## Связанные документы
-
-- **[Шаг 4: Развертывание кластера](./step4_cluster_deploy.md)** — установка Kubernetes
-- **[Дополнительная информация](./offline_additional.md)** — troubleshooting
-- **[MetalLB](../../../Networking/metallb.md)** — детальная документация по MetalLB
-- **[Ingress Controllers](../../../Networking/Ingress/controllers_comparison.md)** — сравнение Ingress контроллеров
-
 ---
 
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+## Дополнительная информация
+
+### Связанные темы
+
+Развёртывание кластера описано в [шаге 4](./step4_cluster_deploy.md), решение проблем — в [troubleshooting.md](./troubleshooting.md). Детальная документация по MetalLB — в [metallb.md](../../../Networking/metallb.md), сравнение Ingress-контроллеров — в [controllers_comparison.md](../../../Networking/Ingress/controllers_comparison.md).

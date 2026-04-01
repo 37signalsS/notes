@@ -221,14 +221,7 @@ kubectl run test-curl --image=curlimages/curl --rm -it --restart=Never -- \
 
 ### Чек-лист успешной проверки
 
-- [ ] Все узлы в статусе `Ready`
-- [ ] Все системные поды в статусе `Running`
-- [ ] 3 мастера (etcd, apiserver) работают
-- [ ] CNI поды активны
-- [ ] Тестовое приложение доступно через NodePort
-- [ ] VIP мигрирует при отказе мастера
-- [ ] API доступен после отказа мастера
-- [ ] etcd сохраняет кворум
+**Базовая проверка:** все узлы `Ready`, все системные поды `Running`, 3 мастера работают, CNI поды активны. **Функциональная проверка:** тестовое приложение доступно через NodePort. **HA проверка:** VIP мигрирует при отказе мастера, API доступен после отказа, etcd сохраняет кворум.
 
 ### Troubleshooting
 
@@ -271,19 +264,6 @@ kubectl delete pod -n kube-system -l k8s-app=calico-node
 kubectl logs -n kube-system -l k8s-app=calico-node
 ```
 
-### Связанные документы
+### Интеграция с документацией
 
-- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
-- **High Availability**: [HA Overview](../../../Concepts/High_Availability/ha_overview.md)
-- **Troubleshooting**: [Common Errors](../../Troubleshooting/Common_Errors/overview.md)
-- **Monitoring**: [Prometheus](../../Prometheus/prometheus_overview.md)
-
-### Надежность
-
-| Раздел | Confidence |
-| :--- | :--- |
-| Базовая проверка | Этот файл | 10 |
-| Проверка HA | Этот файл + [kubeadm_ha_with_keepalived_haproxy/inde](x.md)(../kubeadm/ha_keepalived_haproxy/index.md) | 10 |
-| Проверка etcd | [etcd_overview.md](../../Concepts/etcd_overview.md) | 10 |
-| Сетевая проверка | [CNI Overview](../../Networking/Network/cni_overview.md) | 10 |
+Проверка HA кластера — завершающий этап развёртывания после [присоединения узлов](./node_joining.md). Архитектура HA описана в [обзоре кластера](./k8s_ha_cluster_overview.md), теория высокой доступности — в [HA overview](../../../Concepts/High_Availability/ha_overview.md). Общий troubleshooting — в [common errors overview](../../Troubleshooting/Common_Errors/overview.md), мониторинг — в [Prometheus overview](../../../Prometheus/overview.md), сетевая модель — в [network overview](../../Networking/Network/network_overview.md), CNI и kube-proxy — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

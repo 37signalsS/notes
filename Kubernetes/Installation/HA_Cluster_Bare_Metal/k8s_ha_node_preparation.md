@@ -197,32 +197,12 @@ fi
 
 ### Что НЕ делается на этом этапе
 
-- **Перезагрузка** — выполняется позже, после установки всех компонентов
-- **Установка Kubernetes** — следующий этап
-- **Изменение существующих контейнеров** — Docker/containerd продолжают работать
+**Перезагрузка** — выполняется позже, после установки всех компонентов. **Установка Kubernetes** — следующий этап ([component installation](./k8s_ha_component_installation.md)). **Изменение существующих контейнеров** — Docker/containerd продолжают работать.
 
 ### Следующие шаги
 
-После подготовки всех узлов:
+После подготовки всех узлов: установка `containerd`, установка `kubeadm`/`kubelet`/`kubectl`, перезагрузка всех узлов, инициализация кластера.
 
-1. Установка `containerd` → [Component Installation](./k8s_ha_component_installation.md)
-2. Установка `kubeadm`, `kubelet`, `kubectl`
-3. Перезагрузка всех узлов
-4. Инициализация кластера
+### Интеграция с документацией
 
-### Связанные документы
-
-- **Требования**: [Environment Requirements](./k8s_ha_environment_requirements.md)
-- **Установка компонентов**: [Component Installation](./k8s_ha_component_installation.md)
-- **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
-- **cgroups**: [Kubelet Configuration](../../Concepts/control_plane_architecture.md#конфигурация-kubelet)
-- **Сеть**: [CNI Overview](../../Networking/Network/cni_overview.md)
-
-### Надежность
-
-| Раздел | Confidence |
-| :--- | :--- |
-| Отключение SWAP | Этот файл | 10 |
-| cgroups v2 настройка | Этот файл | 10 |
-| Сетевые модули | Этот файл + официалка | 10 |
-| Sysctl параметры | Этот файл | 10 |
+Подготовка узлов — **шаг 2** после [требований к среде](./k8s_ha_environment_requirements.md) и перед [установкой компонентов](./k8s_ha_component_installation.md). Подробнее о containerd — в [alternative runtimes](../../../Docker/alternative_runtimes_and_tools.md), о CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

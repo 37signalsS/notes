@@ -58,7 +58,7 @@
 
 ### Секция `[INPUT]`: Сбор логов
 
-**Плагин `tail`** — чтение логов из файлов. Основной плагин для Kubernetes.
+**Плагин `tail`** — чтение логов из файлов. Основной плагин для Kubernetes. Детали парсинга описаны в [parsing.md](./parsing.md).
 
 ```ini
 [INPUT]
@@ -124,6 +124,8 @@
 - `Logstash_Format On`: Создает индексы в формате `logstash-YYYY.MM.DD`.
 - `Replace_Dots On`: Заменяет точки в именах полей на подчеркивания, чтобы избежать конфликтов маппинга в Elasticsearch.
 - `Retry_Limit False`: Включает бесконечные попытки переотправки.
+
+Детали буферизации и маршрутизации описаны в [buffering_routing.md](./buffering_routing.md).
 
 ## Практические сценарии
 
@@ -196,11 +198,4 @@ config:
         Retry_Limit     False
 ```
 
-## Дополнительная информация
-
-- Детали парсинга и форматы: [parsing.md](./parsing.md)
-- Буферизация и надежность: [buffering_routing.md](./buffering_routing.md)
-- Сравнение с Fluentd и выбор архитектуры: [fluent_comparison.md](./fluent_comparison.md)
-
-**Версия**: Данная конфигурация актуальна для **Fluent Bit v3.x**.
-**Примечание**: Парсеры и форматы логов подробно описаны в [parsing.md](./parsing.md).
+Сравнение с Fluentd и выбор архитектуры описаны в [fluent_comparison.md](./fluent_comparison.md).

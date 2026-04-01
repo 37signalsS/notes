@@ -2,7 +2,15 @@
 
 Индекс документов по развертыванию HA-кластера Kubernetes с помощью Kubespray.
 
-## Документы
+## Definitions
+
+**HA-кластер (High Availability)** — кластер Kubernetes с несколькими узлами Control Plane для устранения единой точки отказа (SPoF).
+
+**Kubespray HA** — автоматизированное развертывание HA-кластера через Ansible с использованием Keepalived + HAProxy.
+
+## Basic Concepts
+
+### Документы
 
 | Документ | Описание |
 | :--- | :--- |
@@ -10,16 +18,12 @@
 | **[Развертывание HA-кластера](./kubespray_ha_deployment.md)** | Инфраструктурные требования, inventory, переменные, развертывание, проверка |
 | **[Дополнительные темы](./kubespray_ha_advanced.md)** | Тестирование отказоустойчивости, конфигурационные файлы, troubleshooting |
 
-## Связанные документы
+## Practical Scenarios
 
-- **[Kubespray: Обзор](./overview.md)** — общая информация
-- **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
-- **[HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md)** — ручная настройка HA
-- **[Keepalived обзор](../../../../Networking/ServicesAndTools/keepalived_overview.md)** — детали Keepalived
-- **[HAProxy обзор](../../../../WebServers/haproxy_overview.md)** — детали HAProxy
+Практическое руководство по развертыванию — в [kubespray_ha_deployment.md](./kubespray_ha_deployment.md).
 
-## Внешние ресурсы
+## Additional Information
 
-- **Kubespray Documentation:** [kubespray.io](https://kubespray.io/)
-- **GitHub:** [kubernetes-sigs/kubespray](https://github.com/kubernetes-sigs/kubespray)
-- **VRRP RFC:** [RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798)
+**См. также:** [обзор Kubespray](../overview.md), [базовая установка](../kubespray_install/basic_concepts.md), [ручная настройка HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md), [развертывание в закрытом контуре](../offline_installation/offline_definitions.md).
+
+**Внешние ресурсы:** [документация Kubespray](https://kubespray.io/), [GitHub](https://github.com/kubernetes-sigs/kubespray), [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798).

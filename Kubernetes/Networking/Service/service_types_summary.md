@@ -1,10 +1,8 @@
-# Сводка по типам сервисов Kubernetes
+# Service Types Summary
 
 ## Определения
 
-Kubernetes предоставляет несколько типов **Service** для различных сценариев доступа к приложениям. Выбор типа определяет **границы доступности** (внутри кластера vs. извне) и **способ маршрутизации** трафика.
-
-> Для быстрого сравнения характеристик в виде таблицы см. **[Сравнительная таблица типов Service](./service_types_comparison.md)**.
+**Service Types Summary** — сводная информация по всем типам сервисов Kubernetes с иерархией, критериями выбора и сравнением характеристик.
 
 ## Основные концепции
 
@@ -22,50 +20,78 @@ LoadBalancer (NodePort + облачный балансировщик)
 
 ### Критерии выбора типа
 
-| Критерий | Рекомендация |
-|----------|--------------|
-| **Внутреннее взаимодействие** | [ClusterIP](./service_type_clusterip.md) |
-| **Разработка/отладка** | [NodePort](./service_type_nodeport.md) или `kubectl port-forward` |
-| **Production в облаке** | [LoadBalancer](./service_type_loadbalancer.md) или [Ingress](../Ingress/overview.md) |
-| **On-premise production** | [NodePort](./service_type_nodeport.md) + внешний LB или MetalLB |
-| **HTTP/HTTPS приложения** | [Ingress](../Ingress/overview.md) (L7) вместо [LoadBalancer](./service_type_loadbalancer.md) (L4) |
+| Критерий | Рекомендуемый тип | Альтернатива |
+| :--- | :--- | :--- |
+| **Внутреннее взаимодействие** | [ClusterIP](./service_type_clusterip.md) | — |
+| **Разработка/отладка** | [NodePort](./service_type_nodeport.md) | `kubectl port-forward` |
+| **Production в облаке** | [LoadBalancer](./service_type_loadbalancer.md) | [Ingress](../Ingress/overview.md) |
+| **On-premise production** | NodePort + внешний LB | [MetalLB](../metallb.md) |
+| **HTTP/HTTPS приложения** | [Ingress](../Ingress/overview.md) (L7) | [LoadBalancer](./service_type_loadbalancer.md) (L4) |
+| **Stateful-приложения** | [Headless](./service_type_headless.md) | — |
+| **Внешние ресурсы (БД, API)** | [ExternalName](./service_type_externalname.md) | Endpoints без селектора |
 
 ## Практические сценарии
 
 ### Сводная таблица типов сервисов
 
 | Тип | Доступность | Основной сценарий | Ограничения |
-|-----|-------------|-------------------|-------------|
+| :--- | :--- | :--- | :--- |
 | **[ClusterIP](./service_type_clusterip.md)** | Только внутри кластера | Внутренние коммуникации (backend-to-db) | Нет прямого внешнего доступа |
-| **[NodePort](./service_type_nodeport.md)** | Внутри и снаружи (через `IP_узла:NodePort`) | Разработка, отладка, простой внешний доступ, on-prem | Диапазон портов 30000-32767, зависимость от IP узла |
+| **[NodePort](./service_type_nodeport.md)** | Внутри и снаружи (через `IP_узла:NodePort`) | Разработка, отладка, on-prem | Диапазон портов 30000-32767, зависимость от IP узла |
 | **[LoadBalancer](./service_type_loadbalancer.md)** | Из интернета (через внешний IP от облака) | Публикация приложений в облаке (production) | Зависит от облачного провайдера; в bare-metal требует MetalLB |
-| **[ExternalName](./service_type_externalname.md)** | Только DNS (CNAME) | Доступ к внешним сервисам по внутреннему имени | Не проксирует трафик, работает только на уровне DNS |
+| **[ExternalName](./service_type_externalname.md)** | Только DNS (CNAME) | Доступ к внешним сервисам по внутреннему имени | Не проксирует трафик, только DNS |
 | **[Headless](./service_type_headless.md)** | Прямой доступ к Pod-ам | Stateful-приложения (StatefulSet), service discovery | Нет балансировки на уровне Service |
 
 ### Сравнение по уровням OSI
 
 | Тип | Уровень OSI | Протоколы | Маршрутизация |
-|-----|-------------|-----------|---------------|
-| ClusterIP | L4 | TCP, UDP | IP + порт |
-| NodePort | L4 | TCP, UDP | IP узла + порт |
-| LoadBalancer | L4 | TCP, UDP | Публичный IP + порт |
-| Ingress | L7 | HTTP, HTTPS | Хост, путь, заголовки |
+| :--- | :--- | :--- | :--- |
+| **ClusterIP** | L4 | TCP, UDP | IP + порт |
+| **NodePort** | L4 | TCP, UDP | IP узла + порт |
+| **LoadBalancer** | L4 | TCP, UDP | Публичный IP + порт |
+| **ExternalName** | DNS | DNS (CNAME) | DNS-разрешение |
+| **Headless** | L4 | TCP, UDP | Прямой IP Pod |
+| **Ingress** | L7 | HTTP, HTTPS | Хост, путь, заголовки |
+
+### Матрица принятия решений
+
+| Вопрос | Ответ | Рекомендуемый тип |
+| :--- | :--- | :--- |
+| **Нужен ли внешний доступ?** | Нет | ClusterIP |
+| **Нужен ли внешний доступ?** | Да, для отладки | NodePort |
+| **Нужен ли внешний доступ?** | Да, production в облаке | LoadBalancer или Ingress |
+| **Нужен ли внешний доступ?** | Да, on-premise | NodePort + внешний LB или MetalLB |
+| **Это HTTP/HTTPS трафик?** | Да | Ingress (L7 маршрутизация) |
+| **Это TCP/UDP трафик?** | Да | LoadBalancer / NodePort |
+| **Нужны ли стабильные имена Pod?** | Да | Headless (для StatefulSet) |
+| **Нужен доступ к внешнему ресурсу?** | Да | ExternalName |
 
 ## Дополнительная информация
 
-### ExternalIPs
+### Ограничения типов
 
-Поле `externalIPs` позволяет назначить сервису заранее известный внешний IP-адрес. Это не тип, а свойство, применимое к другим типам.
-**Подробнее: [ExternalIPs](./service_externalips.md)**
+| Тип | Основное ограничение |
+| :--- | :--- |
+| **ClusterIP** | Нет внешнего доступа без port-forward |
+| **NodePort** | Диапазон портов 30000-32767, зависимость от IP узла |
+| **LoadBalancer** | Зависит от облачного провайдера, стоимость за каждый IP |
+| **ExternalName** | Только DNS, нет проксирования трафика |
+| **Headless** | Нет балансировки на уровне Service |
 
-### Headless Service
+### Дополнительные свойства сервисов
 
-Сервис без `ClusterIP` (`clusterIP: None`), который используется для прямого обнаружения подов.
-**Подробнее: [Headless Service](./service_type_headless.md)**
+Помимо основных типов, существуют важные поля и концепции, расширяющие функциональность сервисов:
 
-### Дополнительные ресурсы
+| Свойство | Описание | Подробнее |
+| :--- | :--- | :--- |
+| **`externalIPs`** | Привязка сервиса к статическим внешним IP | [ExternalIPs](./service_externalips.md) (депрецируется v1.36) |
+| **`externalTrafficPolicy: Local`** | Сохранение IP клиента для NodePort/LoadBalancer | [NodePort](./service_type_nodeport.md#externaltrafficpolicy-local) |
+| **`sessionAffinity: ClientIP`** | Привязка сессии клиента к одному Pod | [ClusterIP](./service_type_clusterip.md#session-affinity) |
+| **`clusterIP: None`** | Headless Service — DNS возвращает IP Pod напрямую | [Headless](./service_type_headless.md) |
 
-- [Обзор Service](./service_overview.md) — базовые концепции и архитектура
-- [Сравнительная таблица](./service_types_comparison.md) — быстрое сравнение всех типов
-- [Практический сценарий](./service_practical_scenarios.md) — пошаговый пример публикации
-- [Ingress](../Ingress/overview.md) — L7 маршрутизация для HTTP/HTTPS
+### Связанные концепции
+
+- **[Service Overview](./service_overview.md)** — базовые концепции и архитектура сервисов
+- **[Практический сценарий](./service_practical_scenarios.md)** — пошаговый пример публикации приложения
+- **[Ingress](../Ingress/overview.md)** — L7 маршрутизация для HTTP/HTTPS приложений
+- **[Gateway API](../gateway_api/definitions.md)** — современная альтернатива Ingress

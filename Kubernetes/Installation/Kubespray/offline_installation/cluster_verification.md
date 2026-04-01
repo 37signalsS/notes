@@ -1,8 +1,54 @@
 # Kubespray: Offline установка — Проверка кластера
 
-## Проверка узлов кластера
+## Определения
 
-### Статус узлов
+**Cluster Verification** — процесс валидации корректности установки и функционирования всех компонентов кластера Kubernetes после развёртывания через Kubespray в offline-режиме.
+
+**Control Plane** — плоскость управления: `kube-apiserver`, `kube-controller-manager`, `kube-scheduler`, `etcd`.
+
+**CNI (Container Network Interface)** — плагин сетевой связности подов; в данной инструкции — Cilium с заменой kube-proxy.
+
+**Hubble** — инструмент наблюдаемости для Cilium, предоставляющий визуализацию сетевого трафика на базе eBPF.
+
+**MetalLB** — балансировщик нагрузки для bare-metal кластеров, назначающий внешние IP сервисам типа `LoadBalancer`.
+
+---
+
+## Основные концепции
+
+### Уровни проверки
+
+1. **Базовая проверка** — узлы и системные поды
+2. **Проверка CNI** — Cilium и Hubble
+3. **Проверка LoadBalancer** — MetalLB
+4. **Сетевая проверка** — DNS и связность подов
+5. **Проверка runtime** — containerd на узлах
+
+### Критерии успешной проверки
+
+- Все узлы в статусе `Ready`
+- Все системные поды в статусе `Running`
+- Cilium показывает `Cluster health: N/N reachable`
+- Hubble UI доступен
+- MetalLB назначил внешний IP для LoadBalancer сервисов
+- DNS резолвит имена сервисов
+
+### Версии компонентов
+
+| Компонент | Версия |
+| :--- | :--- |
+| Kubernetes | v1.34.3 |
+| Cilium | v1.18.5 |
+| MetalLB | v0.13.9 |
+| Ingress-nginx | v1.13.3 |
+
+---
+
+## Практические сценарии
+
+### Проверка узлов кластера
+
+#### Статус узлов
 
 ```bash
 kubectl get nodes -o wide
@@ -19,7 +65,7 @@ node-1-k8s      Ready    <none>          1h    v1.34.3   192.168.1.104   Ubuntu 
 node-2-k8s      Ready    <none>          1h    v1.34.3   192.168.1.105   Ubuntu 24.04
 ```
 
-### Детальная информация о ноде
+#### Детальная информация о ноде
 
 ```bash
 kubectl describe node master-1-k8s
@@ -33,9 +79,9 @@ kubectl describe node master-1-k8s
 
 ---
 
-## Проверка системных компонентов
+### Проверка системных компонентов
 
-### Pod'ы в kube-system
+#### Pod'ы в kube-system
 
 ```bash
 kubectl get pods -n kube-system
@@ -55,7 +101,7 @@ kubectl get pods -n kube-system
 | **kube-scheduler** | `component=kube-scheduler` |
 | **etcd** | `component=etcd` |
 
-### Проверка Cilium
+#### Проверка Cilium
 
 ```bash
 # Pod'ы Cilium
@@ -72,7 +118,7 @@ KubeProxyReplacement:    True   [ens33  192.168.1.104 (Direct Routing)]
 Cluster health:          5/5 reachable   (2026-03-13T10:00:00Z)
 ```
 
-### Проверка Hubble
+#### Проверка Hubble
 
 ```bash
 # Pod'ы Hubble
@@ -82,7 +128,7 @@ kubectl get pods -n kube-system -l k8s-app=hubble
 kubectl -n kube-system exec -it ds/cilium -- hubble status
 ```
 
-### Проверка MetalLB
+#### Проверка MetalLB
 
 ```bash
 # Pod'ы MetalLB
@@ -93,7 +139,7 @@ kubectl get deployment -n metallb-system
 kubectl get daemonset -n metallb-system
 ```
 
-### Проверка Ingress
+#### Проверка Ingress
 
 ```bash
 # Pod'ы ingress-nginx
@@ -105,9 +151,9 @@ kubectl get deployment -n ingress-nginx
 
 ---
 
-## Проверка сетевых компонентов
+### Проверка сетевых компонентов
 
-### Проверка MetalLB
+#### Проверка MetalLB
 
 ```bash
 # Статус IPAddressPool
@@ -128,7 +174,7 @@ kubernetes      ClusterIP      10.233.0.1      <none>          443/TCP
 hubble-ui       LoadBalancer   10.233.X.X      192.168.1.200   80:31234/TCP
 ```
 
-### Проверка DNS
+#### Проверка DNS
 
 ```bash
 # Тестовый pod для проверки DNS
@@ -145,7 +191,7 @@ Name:      kubernetes.default
 Address 1: 10.233.0.1 kubernetes.default.svc.cluster.local
 ```
 
-### Проверка сетевых политик
+#### Проверка сетевых политик
 
 ```bash
 # Список CiliumNetworkPolicy
@@ -157,9 +203,9 @@ kubectl -n kube-system exec -it ds/cilium -- cilium policy get
 
 ---
 
-## Проверка Hubble UI
+### Проверка Hubble UI
 
-### Доступ через port-forward
+#### Доступ через port-forward
 
 ```bash
 kubectl port-forward -n kube-system svc/hubble-ui 8080:80
@@ -167,13 +213,9 @@ kubectl port-forward -n kube-system svc/hubble-ui 8080:80
 
 Открыть в браузере: `http://localhost:8080`
 
-### Доступ через Ingress
+#### Доступ через Ingress
 
-**Требуется DNS:**
-
-```
-hubble.k8s.domain.local → 192.168.1.200
-```
+**Требуется DNS:** `hubble.k8s.domain.local → 192.168.1.200`
 
 Открыть в браузере: `http://hubble.k8s.domain.local`
 
@@ -181,9 +223,9 @@ hubble.k8s.domain.local → 192.168.1.200
 
 ---
 
-## Проверка containerd на узлах
+### Проверка containerd на узлах
 
-### crictl команды
+#### crictl команды
 
 ```bash
 # На узле кластера
@@ -201,7 +243,7 @@ sudo crictl logs <CONTAINER_ID>
 sudo crictl images | grep cilium
 ```
 
-### nerdctl команды
+#### nerdctl команды
 
 ```bash
 # Версия
@@ -219,9 +261,9 @@ nerdctl save -o <file.tar> <image>
 
 ---
 
-## Диагностика проблем
+### Диагностика проблем
 
-### Pod не запускается
+#### Pod не запускается
 
 ```bash
 # Описание pod
@@ -234,7 +276,7 @@ kubectl logs <pod-name> -n kube-system
 kubectl logs <pod-name> -n kube-system --previous
 ```
 
-### Сетевые проблемы
+#### Сетевые проблемы
 
 ```bash
 # Проверка связности между подами
@@ -244,7 +286,7 @@ kubectl run test1 --image=busybox --rm -it --restart=Never -- ping -c 3 <pod-ip>
 kubectl run test2 --image=busybox --rm -it --restart=Never -- nslookup <service>
 ```
 
-### Проблемы с узлами
+#### Проблемы с узлами
 
 ```bash
 # Статус kubelet
@@ -259,7 +301,9 @@ systemctl status containerd
 
 ---
 
-## Чек-лист успешной установки
+## Дополнительная информация
+
+### Чек-лист успешной установки
 
 - [ ] Все узлы в статусе `Ready`
 - [ ] Все pod'ы в `kube-system` в статусе `Running`
@@ -269,15 +313,6 @@ systemctl status containerd
 - [ ] DNS резолвит имена сервисов
 - [ ] Тестовые поды могут связываться друг с другом
 
----
+### Связанные темы
 
-## Связанные документы
-
-- **[Определения](./offline_definitions.md)** — базовые термины
-- **[Troubleshooting](./troubleshooting.md)** — решение проблем
-- **[Post-Install управление](./post_install_management.md)** — управление после установки
-- **[MetalLB](../../../Networking/metallb.md)** — балансировщик
-
----
-
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+Проверка кластера является завершающим этапом [развёртывания кластера](./step4_cluster_deploy.md) и предшествует [post-install управлению](./post_install_management.md). Детали настройки MetalLB и Ingress описаны в [шаге 5](./step5_metallb_ingress.md). Базовые термины — в [определениях offline-установки](./offline_definitions.md). Troubleshooting — в [соответствующем разделе](./troubleshooting.md). Общая информация о MetalLB — в [документации по балансировщику](../../../Networking/metallb.md).

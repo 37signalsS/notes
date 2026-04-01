@@ -114,18 +114,18 @@ Kubelet автоматически обнаружит манифест и зап
 
 ## Дополнительная информация
 
-### Важные особенности
+**Важные особенности:**
 
-**Управляет только контейнерами:** Kubelet работает исключительно с подами и их контейнерами. Он не знает про Deployment, Service, Ingress — эти абстракции обрабатывает [kube-controller-manager](./control_plane_architecture.md).
+* **Управляет только контейнерами:** Kubelet работает исключительно с подами и их контейнерами. Он не знает про Deployment, Service, Ingress — эти абстракции обрабатывает [kube-controller-manager](./control_plane_architecture.md).
 
-**Автономность при сбоях control plane:** Если API-сервер временно недоступен, kubelet продолжает работать с запущенными подами и следить за их состоянием. Новые поды назначить не сможет, но уже работающие не остановятся.
+* **Автономность при сбоях control plane:** Если API-сервер временно недоступен, kubelet продолжает работать с запущенными подами и следить за их состоянием. Новые поды назначить не сможет, но уже работающие не остановятся.
 
-**Связь через watch:** Вместо постоянного опроса (polling) kubelet использует механизм `watch` — длинные соединения с API-сервером для мгновенного получения обновлений. Это снижает нагрузку на API и ускоряет реакцию на изменения.
+* **Связь через watch:** Вместо постоянного опроса (polling) kubelet использует механизм `watch` — длинные соединения с API-сервером для мгновенного получения обновлений. Это снижает нагрузку на API и ускоряет реакцию на изменения.
 
-### Связанные темы
+* **Пробы (Probes):** Kubelet выполняет проверки liveness, readiness, startup для определения состояния контейнеров. Подробнее: [Пробы](../Base/probes.md).
 
-- **[Архитектура Control Plane](./control_plane_architecture.md)** — обзор компонентов Kubernetes
-- **[Пробы (Probes)](../Base/probes.md)** — liveness, readiness, startup
-- **[Управление сертификатами](../Operations/certificate_management.md)** — ротация сертификатов kubelet
-- **[TLS и mTLS](../Security/tls_and_mtls_in_kubernetes.md)** — аутентификация kubelet
-- **[Troubleshooting kubelet](../Troubleshooting/Common_Errors/NodeUnavailability/kubelet_issues.md)** — диагностика проблем
+* **Безопасность:** Аутентификация kubelet происходит через TLS-сертификаты. Подробнее: [TLS и mTLS](../Security/tls_and_mtls_in_kubernetes.md).
+
+* **Ротация сертификатов:** Сертификаты kubelet требуют периодической ротации. Подробнее: [Управление сертификатами](../Operations/certificate_management.md).
+
+* **Диагностика проблем:** При статусе узла `NotReady` или `Unknown` см. [Проблемы с kubelet](../Troubleshooting/Common_Errors/NodeUnavailability/kubelet_issues.md).

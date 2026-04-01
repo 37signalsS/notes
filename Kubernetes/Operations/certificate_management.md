@@ -1,14 +1,14 @@
-# Управление сертификатами кластера Kubernetes
+# Управление сертификатами Kubernetes через kubeadm
 
-## 1. Определения
+## Определения
 
-| Термин | Описание |
-| :--- | :--- |
-| **CA (Certificate Authority)** | Корневой центр сертификации, подписывающий все сертификаты кластера. |
-| **TLS-сертификаты** | Сертификаты для шифрования и аутентификации компонентов Control Plane. |
-| **mTLS** | Mutual TLS — взаимная аутентификация клиента и сервера через сертификаты. |
+**kubeadm** — утилита для управления жизненным циклом сертификатов Control Plane в кластерах, развёрнутых через `kubeadm init`.
 
-### Ключевые сертификаты
+**CA (Certificate Authority)** — корневой центр сертификации, подписывающий все сертификаты кластера. Подробнее: [PKI Overview](../../Security/Concepts/pki_overview.md).
+
+**mTLS** — взаимная аутентификация компонентов через сертификаты. Подробнее: [TLS и mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md).
+
+### Ключевые сертификаты Control Plane
 
 | Сертификат | Назначение | Подписан |
 | :--- | :--- | :--- |
@@ -21,9 +21,9 @@
 | **etcd/server.crt** | etcd Server для клиентов | etcd-ca |
 | **kubelet.crt** | Kubelet для API Server | ca |
 
-## 2. Основные концепции
+## Основные концепции
 
-### 2.1. Срок действия сертификатов
+### Срок действия сертификатов
 
 | Тип сертификата | Срок действия | Обновляется через kubeadm |
 | :--- | :--- | :--- |
@@ -33,7 +33,7 @@
 
 > **Важно:** Истечение сертификатов — частая причина отказа кластера. Компоненты Control Plane не смогут взаимодействовать, кластер перестанет функционировать.
 
-### 2.2. Требования для управления через kubeadm
+### Требования для управления через kubeadm
 
 Для управления сертификатами `etcd` через `kubeadm`:
 
@@ -41,19 +41,22 @@
 * **Kubespray:** Требуется `etcd_kubeadm_enabled: true` в inventory.
 * **Другие инструменты:** Проверить документацию инструмента.
 
-### 2.3. Источники информации
+### Настройка сроков действия
 
-| Источник | Описание |
-| :--- | :--- |
-| **Официальная документация** | [kubeadm-certs](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/) |
-| **kubeadm-специфичное** | [Управление сертификатами в kubeadm](../Installation/kubeadm/ha_keepalived_haproxy/index.md) |
-| **Kubespray** | [Kubespray installation](../Installation/Kubespray/kubespray_install/basic_concepts.md) |
+С версии `kubeadm.k8s.io/v1beta4` сроки настраиваются в конфигурации:
 
-## 3. Практические сценарии
+```yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+certificateValidityPeriod: 8760h      # leaf-сертификаты, по умолчанию 1 год
+caCertificateValidityPeriod: 87600h   # CA-сертификаты, по умолчанию 10 лет
+```
+
+## Практические сценарии
 
 Все команды выполняются на одном из узлов Control Plane.
 
-### 3.1. Проверка срока действия
+### Проверка срока действия
 
 ```bash
 # Проверка всех сертификатов
@@ -74,7 +77,7 @@ etcd-server                Feb 27, 2027 10:00 UTC   364d            etcd-ca     
 
 > **Примечание:** Корневые CA не отображаются, так как не управляются `kubeadm`.
 
-### 3.2. Обновление сертификатов
+### Обновление сертификатов
 
 **Обновление всех сертификатов:**
 
@@ -98,7 +101,9 @@ sudo kubeadm certs renew etcd-server
 sudo kubeadm certs renew apiserver-etcd-client
 ```
 
-### 3.3. Применение новых сертификатов
+> **Важно:** После обновления требуется перезапуск компонентов Control Plane.
+
+### Применение новых сертификатов
 
 После обновления требуется перезапуск компонентов Control Plane.
 
@@ -130,7 +135,7 @@ sleep 20
 sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
 ```
 
-### 3.4. Troubleshooting
+### Troubleshooting
 
 | Проблема | Диагностика | Решение |
 | :--- | :--- | :--- |
@@ -140,11 +145,11 @@ sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
 | **Cluster не отвечает** | `curl -k https://localhost:6443/healthz` | Проверить `apiserver` сертификат |
 | **x509: certificate expired** | `openssl x509 -in <cert> -text -noout` | Обновить + перезапустить компоненты |
 
-## 4. Дополнительная информация
+## Дополнительная информация
 
 > **Примечание:** При обновлении кластера Kubernetes необходимо проверить и обновить сертификаты. Подробнее в разделе [Обновление кластера](upgrading_clusters.md).
 
-### 4.1. Best Practices
+### Best Practices
 
 | Практика | Описание |
 | :--- | :--- |
@@ -154,7 +159,7 @@ sudo mv /tmp/k8s-manifests-backup/*.yaml /etc/kubernetes/manifests/
 | **Автоматизация** | CronJob для проверки + alerting |
 | **Документирование** | Фиксация даты обновления и остаточного времени |
 
-### 4.2. Автоматизация проверки
+### Автоматизация проверки
 
 **CronJob для ежедневной проверки (с доступом к хост-сертификатам):**
 
@@ -212,9 +217,18 @@ spec:
 
 > **Важно:** CronJob требует доступа к hostPath `/etc/kubernetes/pki` для чтения сертификатов. Альтернативно — использовать `kubeadm certs check-expiration` через DaemonSet с доступом к `/etc/kubernetes`.
 
-### 4.3. Связанные темы
+### Ограничения kubeadm
 
-* [kubeadm: Управление сертификатами](../Installation/kubeadm/ha_keepalived_haproxy/index.md)
+* `kubeadm` **не управляет** сертификатами, подписанными внешним CA
+* Ротация CA-сертификатов **не поддерживается** автоматически (требуется ручная ротация)
+* Kubelet client certificate обновляется автоматически через `/var/lib/kubelet/pki/`
+* Kubelet serving certificate по умолчанию self-signed (требуется `serverTLSBootstrap: true` для подписи через API)
+
+### Связанные темы
+
+* [kubeadm: Кластер инициализация](../Installation/kubeadm/cluster_initialization.md) — `--upload-certs` для HA
 * [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
 * [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
-* [PKI Overview](../../Security/Concepts/pki_overview.md)
+* [PKI Overview](../../Security/Concepts/pki_overview.md) — теория PKI
+* [TLS и mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md) — теория TLS в K8s
+* [cert-manager](../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — автоматизация сертификатов в Kubernetes

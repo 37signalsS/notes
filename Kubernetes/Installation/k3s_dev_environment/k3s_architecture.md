@@ -1,13 +1,22 @@
-# K3s Dev Environment: Архитектура и Обзор
+# Архитектура Dev-окружения на K3s
 
-> **Последнее обновление:** 2026-03-04
-> **Версии компонентов:** Требуют проверки (см. [Актуальность версий](#актуальность-версий))
+Обзор архитектуры самодостаточной лаборатории для изучения DevOps-практик на базе легковесного дистрибутива Kubernetes K3s. Все вспомогательные сервисы (CI/CD, реестр, GitOps) запускаются внутри кластера.
+
+> **Контекст:** Этот файл описывает общую архитектуру. Детали реализации см. в [Создание Dev-контейнера с SSH](./dev_container_ssh.md), [Развертывание через Helm](./dev_container_helm_deployment.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
+
+---
 
 ## Определения
 
-**K3s Dev Environment** — самодостаточная лаборатория для изучения DevOps-практик на базе одного сервера с легковесным дистрибутивом Kubernetes **K3s**. Все вспомогательные сервисы (CI/CD, реестр, GitOps) запускаются внутри кластера.
+| Термин | Описание |
+|--------|----------|
+| **K3s Dev Environment** | Самодостаточная лаборатория для изучения DevOps-практик на базе одного сервера с K3s. Все сервисы (GitLab, Harbor, ArgoCD) запускаются внутри кластера |
+| **Dev-контейнер** | Изолированное рабочее пространство в кластере с SSH-доступом и персистентной домашней директорией через `hostPath`. См. [Создание Dev-контейнера](./dev_container_ssh.md) |
+| **Local Path Provisioner** | Встроенный в K3s provisioner для динамического выделения хранилища. Поддерживает только `ReadWriteOnce` |
 
-**Dev-контейнер** — изолированное рабочее пространство в кластере: Docker-образ с SSH-сервером и инструментами разработки, развёрнутый как `Deployment` с персистентной домашней директорией через `hostPath`.
+**Навигация по K3s:** [Kubernetes Overview](../../kubernetes_overview.md) | [K3s Installation](../kubeadm/) | [Local Path Provisioner](../../Storage/local-path-provisioner.md)
+
+---
 
 ## Основные концепции
 
@@ -17,16 +26,30 @@
 
 **Ключевые компоненты:**
 
-| Компонент | Назначение |
-|-----------|------------|
+| Компонент | Назначение | Ссылка |
+|-----------|------------|--------|
 | **Платформа** | K3s вместо "ванильного" Kubernetes для простоты на одном узле | [Kubernetes Overview](../../kubernetes_overview.md) |
 | **Ingress Controller** | NGINX вместо стандартного Traefik | [Ingress Overview](../../Networking/Ingress/overview.md) |
-| **Хранилище** | Local Path Provisioner (только `ReadWriteOnce`, для однонодовых кластеров) | [Local Path Provisioner](../../Storage/local-path-provisioner.md) |
+| **Хранилище** | Local Path Provisioner (только `ReadWriteOnce`) | [Local Path Provisioner](../../Storage/local-path-provisioner.md) |
 | **CI/CD** | GitLab для хранения кода и автоматизации пайплайнов | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) |
 | **GitOps** | ArgoCD для декларативного развёртывания | [ArgoCD Overview](../../../GitOps/ArgoCD/argocd_overview.md) |
-| **Реестр** | Harbor для Docker-образов и Helm-чартов (вместо встроенного реестра GitLab) | [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md) |
+| **Реестр** | Harbor для Docker-образов и Helm-чартов | [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md) |
 | **S3** | Minio для объектного хранения артефактов | — |
-| **БД** | PostgreSQL как основная реляционная СУБД | [PostgreSQL Overview](../../../Databases/PostgreSQL/postgresql_overview.md) |
+| **БД** | PostgreSQL как основная реляционная СУБД | [PostgreSQL Overview](../../../Databases/PostgreSQL/overview.md) |
+
+### Почему K3s для dev-окружения?
+
+**Преимущества K3s:**
+
+- **Легковесность:** ~70MB бинарный файл, минимальные требования к ресурсам
+- **Простота установки:** Один бинарник, автоматическая настройка
+- **Встроенные компоненты:** Local Path Provisioner, ServiceLB, Helm Controller
+- **Production-совместимость:** Полная совместимость с Kubernetes API
+
+**Ограничения:**
+
+- **Один узел:** Для multi-node требуется дополнительная настройка etcd
+- **Local Path Provisioner:** Только `ReadWriteOnce`, нет контроля ёмкости
 
 ### Рабочий процесс "Dev-контейнер"
 
@@ -34,8 +57,8 @@
 
 **Процесс:**
 
-1. **Создание образа** — Docker-образ на базе Ubuntu с SSH-сервером и инструментами (Go, Python, Java, SDK).
-2. **Развёртывание в K3s** — запуск как `Deployment` с `hostPath` Volume.
+1. **Создание образа** — Docker-образ на базе Ubuntu с SSH-сервером и инструментами (Go, Python, Java, SDK). Детали в [Создание Dev-контейнера с SSH](./dev_container_ssh.md).
+2. **Развёртывание в K3s** — запуск как `Deployment` с `hostPath` Volume. Инструкция в [Развертывание через Helm](./dev_container_helm_deployment.md).
 3. **Персистентность** — домашняя директория (`/home/user`) монтируется с хоста, данные переживают перезапуски.
 4. **Удалённая разработка** — подключение через **VS Code Remote - SSH** (локальная машина как "тонкий клиент").
 
@@ -45,38 +68,39 @@
 - Изоляция инструментов от хоста
 - Воспроизводимость окружения
 
-### Связанные документы
-
-| Файл | Описание |
-|------|----------|
-| [`dev_container_ssh.md`](./dev_container_ssh.md) | Создание Docker-образа с SSH |
-| [`dev_container_helm_deployment.md`](./dev_container_helm_deployment.md) | Развёртывание через Helm и ArgoCD |
-| [`kubeutils_image.md`](./kubeutils_image.md) | Вспомогательный образ с kubectl/helm/regclient |
-| [`gitlab_harbor_integration.md`](./gitlab_harbor_integration.md) | Настройка GitLab и интеграция с Harbor |
+---
 
 ## Практические сценарии
 
 ### Типовая последовательность развёртывания
 
-1. Установка K3s на сервер
-2. Замена Traefik на NGINX Ingress Controller
-3. Развёртывание Harbor и GitLab
-4. Настройка интеграции GitLab ↔ Harbor
-5. Создание образа `kubeutils` для пайплайнов
-6. Создание и развёртывание `dev-container`
-7. Подключение через SSH и начало работы
+1. **Установка K3s** на сервер
+2. **Замена Traefik на NGINX Ingress Controller**
+3. **Развёртывание Harbor и GitLab** через Helm
+4. **Настройка интеграции GitLab ↔ Harbor** — см. [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md)
+5. **Создание образа `kubeutils`** для пайплайнов — см. [Kubeutils Image](./kubeutils_image.md)
+6. **Создание и развёртывание `dev-container`**
+7. **Подключение через SSH** и начало работы
+
+---
 
 ## Дополнительная информация
 
 ### Актуальность версий
 
-> **Требует проверки:** В файлах указаны версии 2024 года. Перед развёртыванием проверьте актуальные стабильные версии:
->
-> - K3s: проверить на [release.k3s.io](https://github.com/k3s-io/k3s/releases)
-> - Kubernetes: [v1.28.6](https://kubernetes.io/releases/) (указан в `kubeutils_image.md`) — устарел, рекомендуется v1.31+
-> - Helm: [v3.13.0](https://github.com/helm/helm/releases) — проверить актуальность
-> - regclient: [v0.5.6](https://github.com/regclient/regclient/releases) — проверить актуальность
-> - kubeconform: [v0.6.4](https://github.com/yannh/kubeconform/releases) — проверить актуальность
+> **Внимание:** В файлах серии K3s Dev Environment указаны версии компонентов 2024 года. Перед развёртыванием проверьте актуальные стабильные версии:
+
+| Компонент | Указанная версия | Статус | Рекомендация |
+|-----------|------------------|--------|--------------|
+| **Kubernetes** | v1.28.6 | ⚠️ Устарел | Рекомендуется v1.31+ |
+| **Helm** | v3.13.0 | ⚠️ Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
+| **regclient** | v0.5.6 | ⚠️ Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
+| **kubeconform** | v0.6.4 | ⚠️ Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
+
+**Проверка версий:**
+
+- K3s: [release.k3s.io](https://github.com/k3s-io/k3s/releases)
+- Kubernetes: [kubernetes.io/releases/](https://kubernetes.io/releases/)
 
 ### Ограничения Local Path Provisioner
 
@@ -89,3 +113,15 @@
 ### Безопасность hostPath
 
 > **Внимание:** Использование `hostPath` небезопасно в production. Допустимо только для локальных dev-сред. См. [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md).
+
+**Риски:**
+
+- Доступ к файловой системе узла из контейнера
+- Возможность эскалации привилегий при неправильной настройке
+- Отсутствие изоляции между подами на одном узле
+
+**Рекомендации:**
+
+- Ограничьте права доступа на уровне OS
+- Используйте отдельные директории для каждого пода
+- Применяйте `securityContext` с минимальными привилегиями

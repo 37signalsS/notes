@@ -1,70 +1,40 @@
 # Kubespray: Offline установка — Post-Install управление
 
-## Управление через Kubespray
+## Определения
+
+**Post-Install управление** — операции по настройке, масштабированию и обслуживанию кластера Kubernetes после завершения установки через Kubespray в offline-режиме.
+
+**CiliumNetworkPolicy** — ресурс Kubernetes для декларативного управления правилами сетевого доступа (L3/L4) между подами; часть CNI Cilium.
+
+---
+
+## Основные концепции
 
 ### Операции управления
 
-| Задача | Команда |
+| Задача | Команда | SSoT |
+| :--- | :--- | :--- |
+| **Добавить ноду** | `scale.yml` | [cluster_management.md](../cluster_management.md) |
+| **Обновить k8s** | `upgrade-cluster.yml` | [cluster_management.md](../cluster_management.md) |
+| **Изменить сеть** | `--tags cilium,network` | Ниже |
+| **Удалить ноду** | `remove-node.yml` | [cluster_management.md](../cluster_management.md) |
+| **Бэкап etcd** | `etcdctl snapshot save` | [cluster_management.md](../cluster_management.md) |
+
+### Файлы конфигурации offline-кластера
+
+| Файл | Назначение |
 | :--- | :--- |
-| **Добавить ноду** | Добавить в `inventory.ini` + `scale.yml` |
-| **Обновить k8s** | Поменять `kube_version` + `upgrade-cluster.yml` |
-| **Изменить сеть** | Править `group_vars/k8s_cluster/k8s-net-cilium.yml` + `--tags cilium` |
-| **Удалить ноду** | `remove-node.yml` с обновлённым inventory |
+| `group_vars/all/offline.yml` | Offline настройки, registry |
+| `group_vars/all/containerd.yml` | Containerd конфигурация |
+| `group_vars/k8s_cluster/k8s-cluster.yml` | Основные параметры K8s |
+| `group_vars/k8s_cluster/k8s-net-cilium.yml` | Настройки Cilium |
+| `group_vars/k8s_cluster/addons.yml` | Аддоны (Helm, Ingress, MetalLB) |
 
-### Масштабирование кластера
+---
 
-**Добавление worker-ноды:**
+## Практические сценарии
 
-```ini
-# Добавить в inventory.ini
-[kube_node]
-node-1-k8s
-node-2-k8s
-node-3-k8s  # Новая нода
-```
-
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  scale.yml -b -u admin
-```
-
-**Добавление master-ноды:**
-
-```ini
-# Добавить в inventory.ini
-[kube_control_plane]
-master-1-k8s
-master-2-k8s
-master-3-k8s
-master-4-k8s  # Новая master-нода
-
-[etcd]
-master-1-k8s
-master-2-k8s
-master-3-k8s
-master-4-k8s  # etcd на master
-```
-
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin
-```
-
-### Обновление Kubernetes
-
-**Важно:** Обновлять можно только на одну минорную версию за раз.
-
-```yaml
-# group_vars/k8s_cluster/k8s-cluster.yml
-kube_version: v1.35.0  # Было v1.34.3
-```
-
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  upgrade-cluster.yml -b -u admin
-```
-
-### Изменение сетевых настроек
+### Изменение сетевых настроек Cilium
 
 ```yaml
 # group_vars/k8s_cluster/k8s-net-cilium.yml
@@ -73,18 +43,16 @@ cilium_tunnel_mode: geneve
 cilium_kube_proxy_replacement: true
 ```
 
+**Применение изменений:**
+
 ```bash
 ansible-playbook -i inventory/offline_cluster/inventory.ini \
   cluster.yml -b --tags "cilium,network" -v
 ```
 
----
+### Применение CiliumNetworkPolicy
 
-## Управление Cilium
-
-### Сетевые политики
-
-**Пример CiliumNetworkPolicy:**
+**Пример политики (frontend → backend):**
 
 ```yaml
 apiVersion: cilium.io/v2
@@ -112,7 +80,7 @@ spec:
 kubectl apply -f policy.yaml
 ```
 
-### Диагностика сети
+### Диагностика Cilium и Hubble
 
 ```bash
 # Статус кластера
@@ -128,9 +96,7 @@ kubectl -n kube-system exec -it ds/cilium -- hubble observe --follow
 kubectl -n kube-system exec -it ds/cilium -- cilium bgp summary
 ```
 
-### Мониторинг через Hubble
-
-**Доступ к Hubble UI:**
+### Мониторинг через Hubble UI
 
 ```bash
 kubectl port-forward -n kube-system svc/hubble-ui 8080:80
@@ -154,22 +120,6 @@ kubectl -n kube-system exec -it ds/cilium -- \
   hubble observe --pod <pod-name>
 ```
 
----
-
-## Управление конфигурацией
-
-### Изменение переменных cluster
-
-**Файлы конфигурации:**
-
-| Файл | Назначение |
-| :--- | :--- |
-| `group_vars/all/offline.yml` | Offline настройки, registry |
-| `group_vars/all/containerd.yml` | Containerd конфигурация |
-| `group_vars/k8s_cluster/k8s-cluster.yml` | Основные параметры K8s |
-| `group_vars/k8s_cluster/k8s-net-cilium.yml` | Настройки Cilium |
-| `group_vars/k8s_cluster/addons.yml` | Аддоны (Helm, Ingress, MetalLB) |
-
 ### Применение изменений конфигурации
 
 ```bash
@@ -192,37 +142,8 @@ ansible-playbook -i inventory/offline_cluster/inventory.ini \
 
 ---
 
-## Резервное копирование
+## Дополнительная информация
 
-### Бэкап etcd
+### Связанные темы
 
-```bash
-# На master-ноде
-ETCDCTL_ENDPOINTS=https://127.0.0.1:2379
-ETCDCTL_CACERT=/etc/ssl/etcd/ssl/ca.pem
-ETCDCTL_CERT=/etc/ssl/etcd/ssl/peer-$(hostname).pem
-ETCDCTL_KEY=/etc/ssl/etcd/ssl/peer-$(hostname)-key.pem
-
-etcdctl snapshot save backup.db
-```
-
-### Бэкап конфигурации
-
-```bash
-# Сохранение inventory и group_vars
-tar -czf kubespray-config-backup.tar.gz \
-  inventory/offline_cluster/
-```
-
----
-
-## Связанные документы
-
-- **[Troubleshooting](./troubleshooting.md)** — решение проблем
-- **[Проверка кластера](./cluster_verification.md)** — валидация установки
-- **[Kubespray: Управление кластером](../cluster_management.md)** — масштабирование и обновление
-- **[CNI и kube-proxy](../../../Networking/Network/CNI/definitions.md)** — сетевые плагины
-
----
-
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+Масштабирование и обновление кластера описано в [cluster_management.md](../cluster_management.md), валидация установки — в [проверке кластера](./cluster_verification.md), решение проблем — в [troubleshooting](./troubleshooting.md). Сетевые плагины — в [CNI definitions](../../../Networking/Network/CNI/definitions.md).

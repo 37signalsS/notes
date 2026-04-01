@@ -32,7 +32,7 @@ NetworkPolicy работает только при условии поддерж
 - ✅ Calico, Cilium, Weave Net
 - ❌ Flannel (не поддерживает)
 
-Подробно о ролях CNI: [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md).
+Подробно о ролях CNI: [CNI и kube-proxy: навигатор](../Networking/Network/cni_kube_proxy_roles.md) и [определения](../Networking/Network/CNI/definitions.md).
 
 ## Практические сценарии
 
@@ -98,6 +98,6 @@ spec:
 
 - **NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md) (полное руководство)
 - **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/Calico/index.md)
-- **CNI и kube-proxy:** [Роли CNI и kube-proxy](../Networking/Network/cni_kube_proxy_roles.md)
+- **CNI и kube-proxy:** [CNI и kube-proxy: навигатор](../Networking/Network/cni_kube_proxy_roles.md)
 - **Сетевая модель:** [Обзор сети Kubernetes](../Networking/Network/network_overview.md)
 - **Kyverno:** [Генерация NetworkPolicy](./kyverno/policies/practical_scenarios.md)

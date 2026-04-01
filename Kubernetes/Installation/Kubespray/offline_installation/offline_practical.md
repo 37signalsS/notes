@@ -1,8 +1,14 @@
 # Kubespray: Offline установка — Практические сценарии
 
-## Обзор этапов
+## Определения
 
-Offline-установка Kubernetes через Kubespray состоит из 5 основных этапов:
+Базовые термины (Offline-установка, Kubespray, Артефакты) описаны в [определениях offline-установки](./offline_definitions.md).
+
+---
+
+## Основные концепции
+
+### Этапы установки
 
 | Этап | Название | Файл |
 | :--- | :--- | :--- |
@@ -12,27 +18,15 @@ Offline-установка Kubernetes через Kubespray состоит из 5
 | **Шаг 4** | Развертывание кластера | [step4_cluster_deploy.md](./step4_cluster_deploy.md) |
 | **Шаг 5** | Настройка MetalLB и Ingress | [step5_metallb_ingress.md](./step5_metallb_ingress.md) |
 
-## Инфраструктура
+### Инфраструктура и требования
 
-| Роль | IP | Назначение |
-| :--- | :--- | :--- |
-| pc-inet | 192.168.1.99 | Машина с интернетом |
-| harbor | 192.168.1.100 | Harbor реестр |
-| master-1-k8s | 192.168.1.101 | Control Plane + Ansible control |
-| master-2-k8s | 192.168.1.102 | Control Plane |
-| master-3-k8s | 192.168.1.103 | Control Plane |
-| node-1-k8s | 192.168.1.104 | Worker |
-| node-2-k8s | 192.168.1.105 | Worker |
-| MetalLB VIP | 192.168.1.200 | Виртуальный IP для LoadBalancer |
+Информация о ролях узлов (IP-адреса, назначение) и предварительных требованиях (SSH, Harbor, сеть, пользователь) приведена в [подготовке виртуальных серверов](./step1_vm_preparation.md).
 
-## Предварительные требования
+---
 
-1. **SSH доступ:** master-1 должен иметь доступ ко всем узлам по SSH с sudo правами
-2. **Harbor:** Настроенный HTTPS реестр в закрытом контуре
-3. **Сеть:** Все узлы в одной подсети, свободный IP для MetalLB
-4. **Пользователь:** root или пользователь с беспарольным sudo (например, `admin`)
+## Практические сценарии
 
-## Быстрый старт
+### Быстрый старт
 
 ```bash
 # 1. Подготовка VM (Шаг 1)
@@ -52,20 +46,14 @@ ansible-playbook -i inventory/offline_cluster/inventory.ini \
 kubectl apply -f kube-manifests/
 ```
 
-## Связанные документы
-
-- **[Определения](./offline_definitions.md)** — базовые термины
-- **[Основные концепции](./offline_concepts.md)** — принципы offline-установки
-- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — подготовка серверов
-- **[Шаг 2: Подготовка с интернетом](./step2_internet_env.md)** — загрузка артефактов
-- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — загрузка в Harbor
-- **[Шаг 4: Развертывание кластера](./step4_cluster_deploy.md)** — установка Kubernetes
-- **[Шаг 5: MetalLB и Ingress](./step5_metallb_ingress.md)** — настройка LoadBalancer
-- **[Troubleshooting](./troubleshooting.md)** — решение проблем
-- **[Post-Install управление](./post_install_management.md)** — управление после установки
-- **[Проверка кластера](./cluster_verification.md)** — валидация установки
-- **[Kubespray: Управление кластером](../cluster_management.md)** — масштабирование и обновление
-
 ---
 
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+## Дополнительная информация
+
+### Навигация по документации
+
+Базовые термины описаны в [определениях offline-установки](./offline_definitions.md), принципы — в [основных концепциях](./offline_concepts.md). Детальные инструкции по этапам: [подготовка VM](./step1_vm_preparation.md), [загрузка артефактов](./step2_internet_env.md), [подготовка закрытого контура](./step3_offline_env.md), [развёртывание кластера](./step4_cluster_deploy.md), [настройка MetalLB и Ingress](./step5_metallb_ingress.md).
+
+Валидация установки — в [проверке кластера](./cluster_verification.md), решение проблем — в [troubleshooting](./troubleshooting.md), управление после установки — в [post-install управлении](./post_install_management.md). Общее управление кластером Kubespray — в [cluster_management.md](../cluster_management.md), общий обзор — в [overview.md](../overview.md).
+
+Смежные темы: [Harbor](../../../../Docker/Docker_registries/Harbor/overview.md), [MetalLB](../../../Networking/metallb.md), [CNI](../../../Networking/Network/CNI/definitions.md), [air-gapped кластеры](../../../Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md).

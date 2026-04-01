@@ -1,10 +1,36 @@
 # Kubespray: Установка — Дополнительная информация
 
-## Действия после установки
+## Основные концепции
 
-### 8.1. Проверка кластера
+После успешного завершения Ansible playbook `cluster.yml` кластер требует дополнительной проверки и настройки для начала эксплуатации.
 
-1. **Подключиться к любому узлу control plane.**
+### Проверка кластера
+
+**Требования:**
+- Доступ к любому узлу control plane по SSH
+- Kubeconfig файл (`admin.conf`)
+
+**Ожидаемый результат:** Все узлы в статусе `Ready`, runtime — `containerd`.
+
+### Работа с containerd
+
+Kubespray использует `containerd` как среду выполнения контейнеров. Docker не устанавливается. Для диагностики на уровне узлов применяется `crictl` — CLI для Container Runtime Interface.
+
+### kubeconfig
+
+При настройке `kubeconfig_localhost: true` Kubespray копирует `admin.conf` на локальную машину в `inventory/<cluster>/artifacts/admin.conf`.
+
+---
+
+## Практические сценарии
+
+### Проверка статуса узлов
+
+1. **Подключиться к узлу control plane:**
+
+   ```bash
+   ssh user@control-plane-ip
+   ```
 
 2. **Проверить статус узлов:**
 
@@ -12,7 +38,7 @@
    kubectl get nodes -o wide
    ```
 
-   **Ожидаемый результат:**
+   **Ожидаемый вывод:**
 
    ```
    NAME        STATUS   ROLES                  AGE   VERSION   INTERNAL-IP     OS-IMAGE         KERNEL-VERSION    CONTAINER-RUNTIME
@@ -20,43 +46,39 @@
    worker-1    Ready    <none>                 1h    v1.31.0   192.168.1.21    CentOS Linux 7   3.10.0-1160...    containerd://1.7.x
    ```
 
-   Обратите внимание на `CONTAINER-RUNTIME` — должен быть `containerd`.
+   Обратите внимание на `CONTAINER-RUNTIME` — должен быть `containerd://`.
 
-### 8.2. Работа с containerd через crictl
+### Работа с crictl
 
-Поскольку Docker не используется, для взаимодействия с контейнерами на уровне узла применяется `crictl`:
+**Запущенные контейнеры на узле** (аналог `docker ps`):
 
-* **Запущенные контейнеры** (аналог `docker ps`):
+```bash
+sudo crictl ps
+```
 
-  ```bash
-  sudo crictl ps
-  ```
+**Запущенные поды на текущем узле:**
 
-* **Запущенные поды на текущем узле:**
+```bash
+sudo crictl pods
+```
 
-  ```bash
-  sudo crictl pods
-  ```
+**Просмотр логов контейнера:**
 
-* **Логи контейнера:**
+```bash
+sudo crictl logs <CONTAINER_ID>
+```
 
-  ```bash
-  sudo crictl logs <CONTAINER_ID>
-  ```
+Подробнее о средах выполнения: [Альтернативные среды выполнения](../../../Podman/alternatives_crio_containerd.md).
 
-Подробнее: [Альтернативные среды выполнения](../../../Podman/alternatives_crio_containerd.md).
+### Настройка kubeconfig
 
-### 8.3. Работа с kubeconfig
-
-Если установлен параметр `kubeconfig_localhost: true`, Kubespray скопирует `admin.conf` на локальную машину:
-
-1. **Найти файл:**
+1. **Найти файл на локальной машине:**
 
    ```
    inventory/my-cluster/artifacts/admin.conf
    ```
 
-2. **Проверить статус узлов:**
+2. **Проверить кластер без установки переменной:**
 
    ```bash
    kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
@@ -68,37 +90,37 @@
    export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
    ```
 
-4. **Скопировать в домашнюю директорию (опционально):**
+4. **Скопировать в домашнюю директорию:**
 
    ```bash
    mkdir -p ~/.kube
    cp inventory/my-cluster/artifacts/admin.conf ~/.kube/config
+   chmod 600 ~/.kube/config
    ```
 
 Подробнее: [kubeconfig и подключение](../../../Operations/kubeconfig_and_connection.md).
 
-### 8.4. Управление и мониторинг
+### Управление и мониторинг
 
-* **Обновление сертификатов:** Сертификаты живут 1 год. Требуется периодическое обновление. См. [Управление сертификатами](../../../Operations/certificate_management.md).
-* **Графический интерфейс:** Используйте [Lens](../../../ToolsUtilities/lens/definitions_and_concepts.md) или другие IDE.
-* **Мониторинг:** Разверните [Prometheus](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_installation_and_setup.md) и [Grafana](../../../../Grafana/grafana_overview.md).
+**Обновление сертификатов:** Сертификаты живут 1 год. Требуется периодическое обновление через [Управление сертификатами](../../../Operations/certificate_management.md).
 
-## Связанные документы
+**Графический интерфейс:** Используйте [Lens](../../../ToolsUtilities/lens/definitions_and_concepts.md) или другие IDE.
 
-* **[Обзор Kubespray](./overview.md)** — определения и основные концепции.
-* **[Управление кластером](./cluster_management.md)** — масштабирование и обновление.
-* **[Примеры конфигураций](./examples.md)** — Ingress, MetalLB, системные поды.
-* **[HA-кластер через Kubespray](../HA/index.md)** — развертывание высокодоступного кластера.
-* **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
-* **[kubeadm: Быстрый старт](../../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный ручной метод.
-* **[Управление сертификатами](../../../Operations/certificate_management.md)** — обновление сертификатов кластера.
-* **[kind](../../kind/kind_concepts.md)** — локальные кластеры для разработки.
-* **[Talos](../../local_cluster_with_talosctl.md)** — безопасная ОС для K8s.
+**Мониторинг:** Разверните [Prometheus](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_installation_and_setup.md) и [Grafana](../../../../Grafana/grafana_overview.md).
 
 ---
 
-## Связанные документы
+## Дополнительная информация
 
-* **[Определения](./definitions.md)** — базовые термины
-* **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
-* **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
+### Связанные темы
+
+- **[Определения](./definitions.md)** — базовые термины
+- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
+- **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
+- **[Управление кластером](./cluster_management.md)** — масштабирование и обновление
+- **[Примеры конфигураций](./examples.md)** — Ingress, MetalLB, системные поды
+- **[HA-кластер](../HA/index.md)** — развертывание высокодоступного кластера
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
+- **[kubeadm](../../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный ручной метод
+- **[kind](../../kind/kind_concepts.md)** — локальные кластеры для разработки
+- **[Talos](../../local_cluster_with_talosctl.md)** — безопасная ОС для K8s

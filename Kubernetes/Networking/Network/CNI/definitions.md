@@ -145,10 +145,7 @@ ipvsadm -Ln
 - **IPVS:** Хэш-таблицы обеспечивают константное время поиска независимо от количества сервисов
 - **eBPF:** Обработка на уровне ядра без переключения контекста userspace/kernelspace
 
----
-
-## Связанные темы
-
-- [Сетевая модель Kubernetes](./network_overview.md)
-- [NetworkPolicy](./network_policy.md)
-- [Обзор Service](../Service/service_overview.md)
+**См. также:**
+- Детали маршрутизации и оверлейных сетей — [Сетевая модель Kubernetes](../network_overview.md)
+- Фильтрация трафика между подами — [NetworkPolicy](../NetworkPolicy/network_policy.md)
+- Абстракция Service и типы сервисов — [Обзор Service](../../Service/service_overview.md)

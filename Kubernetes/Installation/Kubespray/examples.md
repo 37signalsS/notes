@@ -2,22 +2,23 @@
 
 ## 1. Определения
 
-**Системные поды** — поды, развертываемые в пространстве имен `kube-system` для работы кластера Kubernetes.
-
-**Addons** — дополнительные компоненты, устанавливаемые в кластер (Ingress, MetalLB, Dashboard).
+**Addons** — дополнительные компоненты Kubernetes, устанавливаемые через Kubespray в пространство имен `kube-system`: Ingress, MetalLB, Dashboard. Подробнее: [Namespace](../../Base/namespace.md).
 
 ## 2. Основные концепции
 
-### Системные компоненты
+### Системные компоненты в kube-system
 
-После установки в `kube-system` развертываются:
+После установки Kubespray разворачивает в `kube-system`:
 
-* **Control Plane (Static Pods):** `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*`.
-* **Сетевые компоненты:** CNI-плагин (Calico, Cilium, Flannel), `kube-proxy-*`.
-* **DNS и сервисы:** `coredns-*`, `dns-autoscaler`, `nodelocaldns-*`.
-* **Дополнения (Addons):** `kubernetes-dashboard-*`, Ingress-контроллер и др.
+| Компонент | Поды | Описание |
+| :--- | :--- | :--- |
+| **Control Plane** | `kube-apiserver-*`, `kube-controller-manager-*`, `kube-scheduler-*` | Статические поды управления кластером |
+| **CNI** | `calico-node-*`, `cilium-*`, `flannel-*` | Сетевой плагин (зависит от `kube_network_plugin`) |
+| **kube-proxy** | `kube-proxy-*` | Сетевой прокси (режим: `iptables` или `ipvs`) |
+| **DNS** | `coredns-*`, `dns-autoscaler`, `nodelocaldns-*` | DNS-сервис кластера |
+| **Addons** | `kubernetes-dashboard-*`, `nginx-ingress-*`, `metallb-*` | Опциональные компоненты |
 
-Подробнее о пространствах имен: [Namespace](../../Base/namespace.md).
+Проверка системных подов описана в [разделе 3.3](#33-проверка-системных-подов).
 
 ## 3. Практические сценарии
 
@@ -116,10 +117,4 @@ kubectl get pods -n kube-system -l app=flannel
 
 ## 4. Дополнительная информация
 
-* [Обзор Kubespray](./overview.md) — определения и основные концепции.
-* [Установка кластера](./installation.md) — развертывание кластера.
-* [Управление кластером](./cluster_management.md) — масштабирование и обновление.
-* [Offline установка](./offline_installation/offline_definitions.md) — развертывание в закрытом контуре
-* [CNI, kube-proxy и их роли](../../Networking/Network/cni_kube_proxy_roles.md) — сетевые плагины.
-* [MetalLB](../../Networking/metallb.md) — детальная документация по MetalLB.
-* [Taints and Tolerations](../../Scheduling/taints_and_tolerations.md) — механизм изоляции подов.
+См. также: [Обзор Kubespray](./overview.md), [Установка кластера](./kubespray_install/basic_concepts.md), [Управление кластером](./cluster_management.md), [Offline установка](./offline_installation/offline_definitions.md), [CNI и kube-proxy](../../Networking/Network/cni_kube_proxy_roles.md), [MetalLB](../../Networking/metallb.md), [Taints and Tolerations](../../Scheduling/taints_and_tolerations.md).

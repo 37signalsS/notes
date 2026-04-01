@@ -10,24 +10,15 @@
 
 ## Основные концепции
 
-### Архитектура инициализации HA кластера
+### Процесс присоединения узлов
 
-1. **Первый мастер-узел** — инициализирует кластер через `kubeadm init`
-2. **Остальные мастера** — присоединяются через `kubeadm join` с флагом `--control-plane`
-3. **Worker узлы** — присоединяются через `kubeadm join` без флагов мастера
-4. **CNI плагин** — устанавливается после инициализации первого мастера
+Присоединение выполняется после [инициализации Control Plane](./control_plane_initialization.md) на первом мастер-узле. Команды `kubeadm join` получаются из вывода `kubeadm init`:
 
-### Ключевые флаги kubeadm
+1. Остальные мастера присоединяются через `kubeadm join --control-plane --certificate-key`
+2. Worker-узлы присоединяются через `kubeadm join` без дополнительных флагов
+3. CNI-плагин разворачивается на всех узлах автоматически (DaemonSet)
 
-| Флаг | Назначение | Пример |
-| :--- | :--- | :--- |
-| `--control-plane-endpoint` | VIP балансировщика для HA | `192.168.1.100:6443` |
-| `--upload-certs` | Загрузка сертификатов в кластер для других мастеров | — |
-| `--pod-network-cidr` | Диапазон IP для подов (требуется CNI) | `100.64.0.0/16` |
-| `--service-cidr` | Диапазон IP для сервисов | `100.65.0.0/16` |
-| `--apiserver-advertise-address` | IP-адрес для публикации API | `192.168.1.1` |
-| `--apiserver-bind-port` | Порт API-сервера | `6443` |
-| `--cri-socket` | CRI-сокет среды выполнения | `unix:///run/containerd/containerd.sock` |
+Подробнее об архитектуре инициализации — в [руководстве по control plane initialization](./control_plane_initialization.md).
 
 ---
 
@@ -101,9 +92,9 @@ kubectl get nodes -w
 **Через некоторое время** (когда Calico развернётся на worker-нодах):
 ```
 NAME       STATUS   ROLES           AGE   VERSION
-k8s-node1  Ready    control-plane   42m   v1.34.3
-k8s-node2  Ready    <none>          7m    v1.34.3
-k8s-node3  Ready    <none>          6m    v1.34.3
+k8s-node1  Ready    control-plane   42m   v1.35.x
+k8s-node2  Ready    <none>          7m    v1.35.x
+k8s-node3  Ready    <none>          6m    v1.35.x
 ```
 
 > **Обратите внимание:** У worker-нод роль `<none>` — это нормально, они просто workers.
@@ -120,9 +111,9 @@ kubectl get nodes -o wide
 **Ожидаемый вывод:**
 ```
 NAME       STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP
-k8s-node1  Ready    control-plane   42m   v1.34.3   192.168.1.1    <none>
-k8s-node2  Ready    <none>          7m    v1.34.3   192.168.1.2    <none>
-k8s-node3  Ready    <none>          6m    v1.34.3   192.168.1.3    <none>
+k8s-node1  Ready    control-plane   42m   v1.35.x   192.168.1.1    <none>
+k8s-node2  Ready    <none>          7m    v1.35.x   192.168.1.2    <none>
+k8s-node3  Ready    <none>          6m    v1.35.x   192.168.1.3    <none>
 ```
 
 **Проверка системных подов:**
@@ -147,15 +138,33 @@ kubectl logs -n kube-system -l k8s-app=calico-node --tail=50
 
 Должны увидеть по одному поду на каждой ноде со статусом `Running`.
 
----
-
 ## Дополнительная информация
 
-### Связанные документы
+### Отладка проблем присоединения
 
-- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Компоненты**: [Component Installation](./k8s_ha_component_installation.md)
-- **Проверка**: [Cluster Verification](./k8s_ha_cluster_verification.md)
-- **Control Plane**: [Control Plane Initialization](./control_plane_initialization.md)
-- **CNI Installation**: [CNI Installation](./cni_installation.md)
-- **Keepalived + HAProxy**: [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md)
+```bash
+# Логи kubelet на присоединяемом узле
+sudo journalctl -u kubelet -f
+
+# Проверка токена (на master)
+kubeadm token list
+
+# Пересоздание токена если истёк
+kubeadm token create --print-join-command
+
+# Проверка сертификатов
+sudo kubeadm init phase upload-certs --upload-certs
+```
+
+**Типичные проблемы:**
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `token expired` | Токен устарел (>24ч) | `kubeadm token create --print-join-command` |
+| `certificate-key invalid` | Неправильный ключ | Пересоздать: `kubeadm init phase upload-certs` |
+| `connection refused` | Балансировщик не работает | Проверить HAProxy/Keepalived |
+| `node already exists` | Узел уже в кластере | `kubeadm reset` на узле |
+
+### Интеграция с процессом развёртывания
+
+Присоединение узлов — **шаг 7–8** после [инициализации Control Plane](./control_plane_initialization.md) и [установки CNI](./cni_installation.md). Проверка состояния кластера описана в [руководстве по верификации](./k8s_ha_cluster_verification.md), настройка балансировщика — в [документации по HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md).

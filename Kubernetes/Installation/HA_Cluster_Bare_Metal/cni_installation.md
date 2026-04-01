@@ -2,104 +2,108 @@
 
 ## Определения
 
-**CNI (Container Network Interface)** — стандартный плагин для обеспечения сетевой связности между подами на разных узлах кластера.
+**CNI (Container Network Interface)** — стандартный плагин для обеспечения сетевой связности между подами на разных узлах кластера. Kubernetes не включает CNI по умолчанию — администратор выбирает плагин в зависимости от требований ([подробнее о выборе CNI](../../Networking/Network/CNI/selection_and_external_access.md)).
 
-**Calico** — популярный CNI-плагин с поддержкой NetworkPolicy, BGP-маршрутизации и policy-based управления сетью.
-
-**pod-network-cidr** — диапазон IP-адресов для подов (не должен пересекаться с существующей инфраструктурой).
+**pod-network-cidr** — диапазон IP-адресов для подов, указываемый при инициализации кластера (`kubeadm init --pod-network-cidr`). Не должен пересекаться с существующей инфраструктурой.
 
 ---
 
 ## Основные концепции
 
-### Почему CNI устанавливается отдельно?
+### Почему CNI устанавливается отдельно
 
-Kubernetes не включает сетевой плагин по умолчанию. Администратор выбирает CNI в зависимости от требований:
+Kubernetes делегирует сетевую функциональность внешним плагинам через CNI-спецификацию. До установки CNI все узлы кластера находятся в статусе `NotReady`, а поды не могут быть запланированы.
 
-| Критерий | Flannel | Calico | Cilium |
-| :--- | :--- | :--- | :--- |
-| **Сложность** | Простая | Средняя | Высокая |
-| **NetworkPolicy** | Нет | Да | Да |
-| **Производительность** | Средняя (overlay) | Высокая (BGP) | Очень высокая (eBPF) |
-| **Замена kube-proxy** | Нет | Нет (кроме eBPF режима) | Да |
-| **Режим работы** | Overlay (VXLAN) | Overlay/BGP | eBPF/Direct Routing |
-| **Рекомендация** | Dev/Test | **Production (bare-metal)** | Production (eBPF) |
+**Рекомендация для bare-metal HA кластеров**: Calico — проверенное решение с поддержкой BGP-маршрутизации и NetworkPolicy ([сравнение CNI](../../Networking/Network/CNI/selection_and_external_access.md)).
 
-**Рекомендации**:
+### Версии и совместимость
 
-- **Calico** — наиболее стабильное и функциональное решение для bare-metal, хорошая производительность, поддержка NetworkPolicy, проверенное решение
-- **Flannel** — проще в настройке, но без поддержки NetworkPolicy, подходит для dev/test
-- **Cilium** — современный CNI на базе eBPF, продвинутая безопасность, замена kube-proxy, но сложнее в настройке и отладке
+| Компонент | Версия | Примечание |
+| :--- | :--- | :--- |
+| **Calico** | v3.31.x | Актуальная стабильная ветка (поддерживается до 2026) |
+| **Kubernetes** | 1.29–1.31 | Calico v3.31 совместим с N-2 версиями K8s |
 
-Подробнее: [Выбор CNI](../../Networking/Network/CNI/selection_and_external_access.md), [eBPF режим](../../Networking/Network/CNI/ebpf.md)
+> **Важно**: Calico следует политике N-2 — каждая версия поддерживает текущую и две предыдущие версии Kubernetes. Проверяйте [матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases) перед установкой.
 
 ---
 
 ## Практические сценарии
 
-### Шаг 5: Установка CNI-плагина (Calico)
+### Шаг 5: Установка Calico
 
-Установка выполняется **один раз** с любого мастер-узла после инициализации кластера. Master-нода будет в статусе `NotReady` до установки CNI.
+Установка выполняется **один раз** с любого мастер-узла после `kubeadm init`. Master-ноды будут в статусе `NotReady` до применения CNI.
 
 ```bash
-# Скачиваем Calico
-# ВЕРСИЯ: v3.28.0 — проверить совместимость с вашей версией Kubernetes
-curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml -o calico.yaml
+# 1. Скачиваем манифест Calico
+# Замените v3.31.4 на актуальную версию из официальной документации
+curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/calico.yaml -o calico.yaml
 
-# Меняем CIDR под наш pod-network-cidr
+# 2. Заменяем CIDR на ваш pod-network-cidr
+# (должен совпадать с --pod-network-cidr из kubeadm init)
 sed -i 's|192.168.0.0/16|100.64.0.0/16|g' calico.yaml
 
-# Применяем
+# 3. Применяем манифест
 kubectl apply -f calico.yaml
 ```
 
-> **Важно**:
->
-> - Версия Calico должна соответствовать версии Kubernetes (проверьте в [официальной документации](https://docs.tigera.io/calico/latest/about/supported-releases))
-> - CIDR в манифесте должен совпадать с `--pod-network-cidr` из `kubeadm init`
-> - Изменение CIDR после применения невозможно без пересоздания CNI
+**Критические требования**:
 
-**Альтернативные CNI**:
+- CIDR в манифесте **должен совпадать** с `--pod-network-cidr` из `kubeadm init`
+- Изменение CIDR после применения невозможно без пересоздания CNI
+- Версия Calico должна соответствовать версии Kubernetes
 
-- **Cilium**: `kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/master/install/kubernetes/quick-install.yaml`
-- **Flannel**: `kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml`
+**Альтернативные CNI** (не рекомендуются для production bare-metal):
+
+- **Flannel**: `kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml` — проще в настройке, но без NetworkPolicy
+- **Cilium**: `kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/master/install/kubernetes/quick-install.yaml` — eBPF-режим с заменой kube-proxy, сложнее в отладке
 
 ### Шаг 6: Проверка состояния кластера
 
 ```bash
-# Проверка системных подов (все должны быть Running)
+# Проверка всех системных подов
 kubectl get pods -n kube-system
 
-# Проверка узлов (все должны быть Ready после установки CNI)
+# Проверка узлов (должны быть Ready после установки CNI)
 kubectl get nodes
 
-# Проверка компонентов Control Plane
+# Проверка подов Calico
+kubectl get pods -n kube-system -l k8s-app=calico-node
+
+# Детальная проверка компонентов Control Plane
 kubectl get pods -n kube-system -l component=kube-apiserver
 kubectl get pods -n kube-system -l component=kube-controller-manager
 kubectl get pods -n kube-system -l component=kube-scheduler
 kubectl get pods -n kube-system -l component=etcd
-
-# Проверка CNI подов (Calico)
-kubectl get pods -n kube-system -l k8s-app=calico-node
 ```
 
-**Ожидаемый результат**:
+**Ожидаемый результат для HA кластера**:
 
-- Все системные поды в статусе `Running`
-- Все узлы в статусе `Ready`
-- 3 пода `etcd`, 3 пода `kube-apiserver` (для HA кластера)
-- Поды Calico на каждом узле
+| Компонент | Количество | Статус |
+| :--- | :--- | :--- |
+| `etcd` | 3 | Running |
+| `kube-apiserver` | 3 | Running |
+| `kube-controller-manager` | 2+ | Running |
+| `kube-scheduler` | 2+ | Running |
+| `calico-node` | По одному на узел | Running |
+| Все узлы | — | Ready |
 
 ---
 
 ## Дополнительная информация
 
-### Связанные документы
+### Отладка проблем с CNI
 
-- **Обзор HA**: [HA Cluster Overview](./k8s_ha_cluster_overview.md)
-- **Control Plane**: [Control Plane Initialization](./control_plane_initialization.md)
-- **Node Joining**: [Node Joining](./node_joining.md)
-- **CNI Overview**: [CNI Overview](../../Networking/Network/CNI/definitions.md)
-- **Выбор CNI**: [Выбор CNI](../../Networking/Network/CNI/selection_and_external_access.md)
-- **eBPF режим**: [eBPF режим](../../Networking/Network/CNI/ebpf.md)
-- **Calico Documentation**: [Calico Documentation](https://docs.tigera.io/calico/latest/)
+```bash
+# Логи Calico на узле
+kubectl logs -n kube-system -l k8s-app=calico-node
+
+# Проверка IPAM (выделение IP)
+kubectl exec -n kube-system <calico-pod> -- calicoctl ipam show
+
+# Диагностика сетевых политик
+kubectl exec -n kube-system <calico-pod> -- calicoctl get networkpolicy
+```
+
+### Интеграция с процессом развёртывания HA кластера
+
+Установка CNI — **шаг 5** после [инициализации Control Plane](./control_plane_initialization.md) и перед [подключением узлов](./node_joining.md). Подробнее об архитектуре HA кластера — в [обзоре](./k8s_ha_cluster_overview.md). Теоретические основы CNI и разделение ролей с kube-proxy описаны в [документации по CNI](../../Networking/Network/CNI/definitions.md), сравнение плагинов — в [руководстве по выбору CNI](../../Networking/Network/CNI/selection_and_external_access.md). Официальная документация Calico: https://docs.tigera.io/calico/latest/

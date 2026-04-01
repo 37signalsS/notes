@@ -38,6 +38,8 @@
 - Обеспечение надежности: TLS, переотправка с экспоненциальной задержкой, буферизация
 - Парсинг многострочных логов (например, stack traces)
 
+Детали парсинга логов в Fluent Bit описаны в [parsing.md](./parsing.md).
+
 ### Буферизация и надежность
 
 | Аспект | Fluentd | Fluent Bit |
@@ -58,6 +60,8 @@
 | Сложная маршрутизация и трансформация | **Fluentd** | Плагины для дедупликации, `copy`, `@label`. |
 | Отправка в экзотические хранилища | **Fluentd** | Огромное количество output-плагинов. |
 | **Production-кластер Kubernetes** | **Fluent Bit → Fluentd** | **(Рекомендуемый гибридный подход)**. |
+
+Детальная конфигурация Fluent Bit описана в [fluentbit_configuration.md](./fluentbit_configuration.md).
 
 ## Практические сценарии
 
@@ -127,7 +131,7 @@ config:
 
 <match kube.**>
   @type copy
-  
+
   <store>
     @type elasticsearch
     host es.logging.svc
@@ -140,7 +144,7 @@ config:
       retry_forever true
     </buffer>
   </store>
-  
+
   <store>
     @type s3
     s3_bucket my-logs-archive-bucket
@@ -156,11 +160,4 @@ config:
 </match>
 ```
 
-## Дополнительная информация
-
-- Детальная конфигурация Fluent Bit: [fluentbit_configuration.md](./fluentbit_configuration.md)
-- Буферизация и маршрутизация в Fluent Bit: [buffering_routing.md](./buffering_routing.md)
-- Парсинг логов в Fluent Bit: [parsing.md](./parsing.md)
-
-**Версия**: Данные актуальны для **Fluent Bit v3.x** и **Fluentd v1.17.x**.
-**Примечание**: Для установки Fluentd рекомендуется использовать `fluent-package`, который является заменой `td-agent`.
+Детальная настройка буферизации Fluentd описана в официальной документации Fluentd. Для сравнения с буферизацией Fluent Bit см. [buffering_routing.md](./buffering_routing.md).

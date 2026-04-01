@@ -123,23 +123,21 @@ sudo apt-get update
 sudo apt-get install -y apt-transport-https ca-certificates curl gpg
 
 # Добавление GPG-ключа Kubernetes
-# ВЕРСИЯ: 1.34 указана в оригинале — проверить актуальность
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+# ВЕРСИЯ: Укажите актуальную стабильную версию (проверить на https://kubernetes.io/releases/)
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
 # Добавление репозитория
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
 # Обновление списка пакетов
 sudo apt-get update
 ```
 
-> **Важно**: Версия Kubernetes 1.34 указана в исходном файле. Проверьте актуальную стабильную версию в [официальной документации](https://kubernetes.io/releases/).
-
 #### Установка компонентов
 
 ```bash
-# Установка конкретной версии (замените 1.34.* на актуальную)
-sudo apt-get install -y kubelet=1.34.* kubeadm=1.34.* kubectl=1.34.*
+# Установка конкретной версии (замените 1.35.* на актуальную)
+sudo apt-get install -y kubelet=1.35.* kubeadm=1.35.* kubectl=1.35.*
 
 # Фиксация версий (предотвращение случайного обновления)
 sudo apt-mark hold kubelet kubeadm kubectl
@@ -180,15 +178,8 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 
 ### Что НЕ делается на этом этапе
 
-- **kubeadm init** — не выполняется до готовности всех узлов
-- **Перезагрузка** — выполняется после установки на все узлы
-- **Настройка Control Plane** — следующий этап
+**kubeadm init** — не выполняется до готовности всех узлов. **Перезагрузка** — выполняется после установки на все узлы. **Настройка Control Plane** — следующий этап ([инициализация](./control_plane_initialization.md)).
 
+### Интеграция с документацией
 
-### Связанные документы
-
-- **Подготовка узлов**: [Node Preparation](./k8s_ha_node_preparation.md)
-- **Control Plane**: [Control Plane & CNI](./control_plane_initialization.md)
-- **containerd**: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md)
-- **kubeadm**: [Quickstart](../kubeadm/ha_keepalived_haproxy/index.md)
-- **CNI**: [CNI Overview](../../Networking/Network/cni_overview.md)
+Установка компонентов — **шаг 2–3** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [инициализацией Control Plane](./control_plane_initialization.md). Подробнее о containerd — в [alternative runtimes](../../../Docker/alternative_runtimes_and_tools.md), о kubeadm — в [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md), о CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

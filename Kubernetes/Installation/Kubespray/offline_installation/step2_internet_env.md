@@ -1,6 +1,52 @@
 # Kubespray: Offline установка — Шаг 2: Подготовка окружения на машине с интернетом
 
-## 2.1. Установка зависимостей
+## Определения
+
+**pc-inet** — узел с доступом к интернету, используемый для предварительной загрузки артефактов Kubespray (образы, бинарные файлы, Helm-чарты).
+
+**Артефакты Kubespray** — бинарные файлы Kubernetes, образы контейнеров, Helm-чарты и Python-зависимости, загружаемые через механизм кэширования Kubespray.
+
+**download_localhost** — переменная Kubespray для загрузки артефактов на локальную машину (pc-inet) вместо узлов кластера.
+
+---
+
+## Основные концепции
+
+### Цель этапа
+
+Загрузка всех необходимых артефактов на машину с интернетом для последующей передачи в закрытый контур:
+
+- Python-зависимости Kubespray
+- Бинарные файлы (kubeadm, helm, nerdctl, crictl)
+- Образы контейнеров (Kubernetes, Cilium, системные)
+- Helm-чарты (Cilium)
+
+### Версии компонентов
+
+| Компонент | Версия |
+| :--- | :--- |
+| Kubespray | v2.29.1 |
+| Kubernetes | v1.34.3 |
+| Cilium | v1.18.5 |
+| Helm | 3.18.4 |
+
+### Структура директорий
+
+```
+/opt/
+├── kuber_off/              # Рабочая директория
+│   └── kubespray/          # Kubespray репозиторий
+├── kubespray-cache/        # Кэш артефактов
+│   ├── images/             # Сохранённые образы (.tar)
+│   └── kubeadm-*           # Бинарные файлы k8s
+└── kubespray-releases/     # Бинарные файлы (helm, nerdctl)
+```
+
+---
+
+## Практические сценарии
+
+### Установка зависимостей
 
 ```bash
 mkdir /opt/kuber_off && cd /opt/kuber_off
@@ -10,7 +56,7 @@ python3.12 -m venv venv
 source venv/bin/activate
 ```
 
-## 2.2. Клонирование Kubespray
+### Клонирование Kubespray
 
 ```bash
 git clone --branch v2.29.1 --single-branch https://github.com/kubernetes-sigs/kubespray.git
@@ -20,7 +66,7 @@ cd kubespray
 git describe --tags  # Должно быть: v2.29.1
 ```
 
-## 2.3. Подготовка inventory для download
+### Подготовка inventory для download
 
 ```bash
 cp -r /opt/kuber_off/kubespray/inventory/sample \
@@ -49,9 +95,9 @@ kube_control_plane
 kube_node
 ```
 
-## 2.4. Настройка переменных
+### Настройка переменных
 
-### Включение аддонов
+#### Включение аддонов
 
 Файл: `group_vars/k8s_cluster/addons.yml`
 
@@ -61,7 +107,7 @@ ingress_nginx_enabled: true
 metallb_enabled: true
 ```
 
-### Основные параметры
+#### Основные параметры
 
 Файл: `group_vars/k8s_cluster/k8s-cluster.yml`
 
@@ -77,7 +123,7 @@ cluster_name: k8s.domain.local
 container_manager: containerd
 ```
 
-### Настройка etcd
+#### Настройка etcd
 
 Файл: `group_vars/all/etcd.yml`
 
@@ -85,7 +131,7 @@ container_manager: containerd
 etcd_deployment_type: host
 ```
 
-### Настройка Cilium
+#### Настройка Cilium
 
 Файл: `group_vars/k8s_cluster/k8s-net-cilium.yml`
 
@@ -107,7 +153,7 @@ cilium_hubble_metrics:
   - http
 ```
 
-### Offline переменные
+#### Offline-переменные
 
 Файл: `group_vars/all/offline.yml`
 
@@ -120,7 +166,7 @@ download_force_cache: true
 download_cache_dir: /opt/kubespray-cache
 ```
 
-### Прокси (если требуется)
+#### Прокси (если требуется)
 
 Файл: `group_vars/all/all.yml`
 
@@ -129,17 +175,16 @@ download_cache_dir: /opt/kubespray-cache
 # https_proxy: ""
 ```
 
-## 2.5. Загрузка артефактов
+### Загрузка артефактов
 
-### Установка Python зависимостей
+#### Установка Python-зависимостей
 
 ```bash
 cd /opt/kuber_off/kubespray
-
 pip install -r requirements.txt
 ```
 
-### Создание директорий
+#### Создание директорий
 
 ```bash
 apt install containerd -y
@@ -147,7 +192,7 @@ mkdir -p /opt/kubespray-cache/images/
 mkdir /opt/kubespray-releases/
 ```
 
-### Первый запуск (может завершиться ошибкой)
+#### Первый запуск (может завершиться ошибкой)
 
 ```bash
 /opt/kuber_off/venv/bin/ansible-playbook \
@@ -159,7 +204,7 @@ mkdir /opt/kubespray-releases/
   -b -u admin
 ```
 
-### Исправление ошибки с nerdctl
+#### Исправление ошибки с nerdctl
 
 ```bash
 cp /opt/kubespray-releases/nerdctl /opt/kubespray-releases/crictl /usr/local/bin
@@ -167,7 +212,7 @@ sudo ln -sf /usr/bin/ctr /usr/local/bin/ctr
 /usr/local/bin/nerdctl --version
 ```
 
-### Повторный запуск
+#### Повторный запуск
 
 ```bash
 /opt/kuber_off/venv/bin/ansible-playbook \
@@ -181,9 +226,9 @@ sudo ln -sf /usr/bin/ctr /usr/local/bin/ctr
 
 Должно завершиться успешно, без ошибок.
 
-## 2.6. Загрузка дополнительных образов
+### Загрузка дополнительных образов
 
-Некоторые образы не скачиваются автоматически. Создаем скрипт для докачки:
+Некоторые образы не скачиваются автоматически. Создаём скрипт для докачки:
 
 ```bash
 cd /opt/
@@ -228,7 +273,7 @@ nerdctl save -o /opt/kubespray-cache/images/quay.io_cilium_operator-generic_v1.1
   quay.io/cilium/operator-generic:v1.18.5
 ```
 
-## 2.7. Загрузка Helm чарта Cilium
+### Загрузка Helm-чарта Cilium
 
 ```bash
 cp /opt/kubespray-releases/helm-3.18.4/linux-amd64/helm /usr/local/bin/
@@ -241,7 +286,7 @@ helm pull cilium/cilium --version 1.18.5
 mv cilium-1.18.5.tgz /opt/cilium-1.18.5.tgz
 ```
 
-## 2.8. Упаковка артефактов
+### Упаковка артефактов
 
 ```bash
 tar -C /opt -czf kubespray-code.tar.gz kuber_off
@@ -256,7 +301,7 @@ tar -C /opt -czf kubespray-offline-bundle.tar.gz \
 scp kubespray-code.tar.gz kubespray-offline-bundle.tar.gz admin@192.168.1.101:/home/admin/
 ```
 
-## Проверка после загрузки
+### Проверка после загрузки
 
 **Проверка кэша образов:**
 
@@ -271,13 +316,10 @@ ls -lh /opt/kubespray-cache/images/*.tar | wc -l  # Должно быть 20+ о
 /opt/kubespray-releases/nerdctl --version
 ```
 
-## Связанные документы
-
-- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — подготовка серверов
-- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — загрузка в Harbor
-- **[Шаг 4: Развертывание кластера](./step4_cluster_deploy.md)** — установка Kubernetes
-- **[Kubespray: Установка](../kubespray_install/basic_concepts.md)** — базовая установка
-
 ---
 
-*Этот файл является частью декомпозированной документации по offline-установке Kubespray.*
+## Дополнительная информация
+
+### Связанные темы
+
+Подготовка VM описана в [шаге 1](./step1_vm_preparation.md), загрузка в закрытом контуре — в [шаге 3](./step3_offline_env.md), развёртывание кластера — в [шаге 4](./step4_cluster_deploy.md). Базовая установка Kubespray — в [kubespray_install/basic_concepts.md](../kubespray_install/basic_concepts.md).

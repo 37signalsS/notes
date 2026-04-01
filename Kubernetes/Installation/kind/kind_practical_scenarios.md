@@ -1,34 +1,79 @@
 # kind: Практические сценарии
 
-## Установка kind
+## Definitions
 
-**Требования:**
+**kind** — инструмент для запуска локальных Kubernetes-кластеров, где каждый узел работает как Docker-контейнер.
 
-- Docker версии 18.03+
-- Linux/macOS/Windows
-
-**Установка на Linux:**
-
-```bash
-# Скачивание актуальной версии (проверьте версию на https://github.com/kubernetes-sigs/kind/releases)
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
-chmod +x ./kind
-sudo mv ./kind /usr/local/bin/kind
-
-# Проверка установки
-kind version
-```
-
-> **Примечание:** Версия `v0.24.0` актуальна на начало 2025. Проверяйте [releases](https://github.com/kubernetes-sigs/kind/releases) для свежих версий.
+**kind-кластер** — изолированная среда Kubernetes, управляемая через kind CLI.
 
 ---
 
-## Создание кластера
+## Basic Concepts
 
-### Базовый кластер (1 control-plane + 1 worker)
+### Требования
+
+| Компонент | Версия | Примечание |
+| :--- | :--- | :--- |
+| Docker | 18.03+ | Обязательное требование |
+| Go | 1.16+ | Только для сборки из исходников |
+| kubectl | Любая | Для управления кластером |
+| ОС | Linux/macOS/Windows | Полная поддержка |
+
+### Команды kind
+
+| Команда | Описание |
+| :--- | :--- |
+| `kind create cluster` | Создание нового кластера |
+| `kind get clusters` | Список существующих кластеров |
+| `kind delete cluster` | Удаление кластера |
+| `kind load docker-image` | Загрузка Docker-образа в кластер |
+| `kind export kubeconfig` | Экспорт kubeconfig кластера |
+
+---
+
+## Practical Scenarios
+
+### Установка kind
+
+**Linux (amd64):**
+
+```bash
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+kind version
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install kind
+```
+
+**Windows (PowerShell):**
+
+```powershell
+curl.exe -Lo kind-windows-amd64.exe https://kind.sigs.k8s.io/dl/v0.31.0/kind-windows-amd64
+Move-Item .\kind-windows-amd64.exe c:\some-dir-in-your-PATH\kind.exe
+```
+
+> **Примечание:** Версия `v0.31.0` актуальна на 2026 год. Проверяйте [releases](https://github.com/kubernetes-sigs/kind/releases).
+
+---
+
+### Создание базового кластера
+
+```bash
+# Минимальный кластер
+kind create cluster --name my-cluster
+
+# С конфигурацией
+kind create cluster --name my-cluster --config kind-config.yaml
+```
+
+**Конфигурация (kind-config.yaml):**
 
 ```yaml
-# kind-config.yaml
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -36,11 +81,9 @@ nodes:
 - role: worker
 ```
 
-```bash
-kind create cluster --name my-cluster --config kind-config.yaml
-```
+---
 
-### Multi-node кластер для тестирования HA
+### HA-кластер (multi-node)
 
 ```yaml
 # kind-config-ha.yaml
@@ -74,38 +117,43 @@ kind create cluster --name ha-cluster --config kind-config-ha.yaml
 
 ---
 
-## Проверка кластера
+### Проверка кластера
 
 ```bash
 # Список кластеров
 kind get clusters
 
 # Контекст kubectl
-kubectl config get-contexts
 kubectl config use-context kind-my-cluster
 
-# Статус узлов
+# Статус узлов и подов
 kubectl get nodes
+kubectl get pods -A
 ```
 
 ---
 
-## Загрузка локальных Docker-образов
+### Загрузка локальных Docker-образов
 
 ```bash
-# Сборка образа
+# Сборка и загрузка
 docker build -t my-app:dev .
-
-# Загрузка в кластер kind
 kind load docker-image my-app:dev --name my-cluster
 
 # Развертывание
 kubectl create deployment my-app --image=my-app:dev
 ```
 
+**Загрузка из tar-архива:**
+
+```bash
+docker save -o my-app.tar my-app:dev
+kind load image-archive my-app.tar --name my-cluster
+```
+
 ---
 
-## Развертывание простого приложения
+### Развертывание тестового приложения
 
 ```yaml
 # nginx-deployment.yaml
@@ -113,10 +161,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx-deployment
-  labels:
-    app: nginx
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: nginx
@@ -127,9 +173,14 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:1.25.5
+        image: nginx:1.27
         ports:
         - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
 ---
 apiVersion: v1
 kind: Service
@@ -146,47 +197,98 @@ spec:
 ```
 
 ```bash
-# Применение манифеста
 kubectl apply -f nginx-deployment.yaml
-
-# Проверка
 kubectl get pods
-kubectl get svc
-
-# Доступ к приложению
 kubectl get svc nginx-service
-# Доступ по адресу localhost:<NodePort>
+# Доступ: localhost:<NodePort>
 ```
 
 ---
 
-## Удаление кластера
+### Удаление кластера
 
 ```bash
-# Удаление конкретного кластера
+# Конкретный кластер
 kind delete cluster --name my-cluster
 
-# Удаление всех кластеров
+# Все кластеры
 kind delete clusters --all
 ```
 
 ---
 
-## Интеграция с CI/CD
+### Интеграция с CI/CD
 
-**Пример GitHub Actions:**
+**GitHub Actions:**
 
 ```yaml
-- name: Create kind cluster
-  uses: helm/kind-action@v1
-  with:
-    cluster_name: 'test-cluster'
-    config: kind-config.yaml
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup kind
+      uses: helm/kind-action@v1
+      with:
+        cluster_name: 'test-cluster'
+        config: kind-config.yaml
+        version: v0.31.0
+    - name: Run tests
+      run: |
+        kubectl apply -f manifests/
+        kubectl wait --for=condition=ready pod -l app=test --timeout=120s
+```
+
+**GitLab CI:**
+
+```yaml
+test:
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+    - chmod +x ./kind
+    - ./kind create cluster --name test-cluster
+    - kubectl apply -f manifests/
 ```
 
 ---
 
-## Связанные документы
+### Отладка и диагностика
 
-- **[kind: Концепции](./kind_concepts.md)** — определения, архитектура, сравнение
-- **[kind: Конфигурация](./kind_configuration.md)** — подробное описание конфигурации YAML
+```bash
+# Логи узлов
+docker logs kind-control-plane
+
+# Экспорт логов кластера
+kind export logs ./log-directory --name my-cluster
+
+# Подключение к узлу
+docker exec -it kind-control-plane bash
+
+# Экспорт kubeconfig
+kind export kubeconfig --name my-cluster
+```
+
+---
+
+## Additional Information
+
+### Версии Kubernetes
+
+| Kubernetes | Образ | Статус |
+| :--- | :--- | :--- |
+| 1.35 | `kindest/node:v1.35.0` | Активная |
+| 1.34 | `kindest/node:v1.34.0` | Активная |
+| 1.33 | `kindest/node:v1.33.0` | Активная |
+
+> **Примечание:** Версии 1.32 и ниже достигли EOL (февраль 2026).
+
+### Ссылки
+
+- [kind: Концепции](./kind_concepts.md)
+- [kind: Конфигурация](./kind_configuration.md)
+- [Официальная документация](https://kind.sigs.k8s.io/)

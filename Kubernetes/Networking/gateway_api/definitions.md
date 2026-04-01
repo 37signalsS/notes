@@ -2,98 +2,69 @@
 
 ## Определения
 
-**Gateway API** — это новая стандартная спецификация с открытым исходным кодом для управления внешним доступом к сервисам в Kubernetes. Она представляет собой следующее поколение API для управления трафиком, приходя на смену Ingress. Ключевая особенность Gateway API — это более выразительный, расширяемый и ролевой подход к маршрутизации.
+**Gateway API** — стандартная спецификация с открытым исходным кодом для управления внешним доступом к сервисам в Kubernetes. Представляет собой следующее поколение API для управления трафиком, приходя на смену Ingress. Ключевая особенность — более выразительный, расширяемый и ролевой подход к маршрутизации.
 
-## Зачем нужен Gateway API?
+**Важно:** Gateway API — это стандарт (спецификация), а не конкретная программа. Стандарт описывает, *какие* ресурсы (CRD) существуют и *какие* поля можно использовать в манифестах. Контроллер (Envoy, Traefik, Istio) — это программа, которая реализует этот стандарт, читает манифесты и настраивает нижележащий прокси.
 
-Стандартный ресурс `Ingress` имеет ряд ограничений, которые Gateway API призван решить:
+## Базовые концепции
 
-- **Разделение ответственности**: В Ingress инфраструктурные и прикладные настройки часто смешаны. Gateway API разделяет их: администраторы кластера управляют шлюзами (`Gateway`), а разработчики — правилами маршрутизации (`HTTPRoute`).
-- **Единый стандарт**: Вместо множества специфичных аннотаций для каждого Ingress-контроллера, Gateway API предлагает унифицированные CRD (Custom Resource Definitions) для всех реализаций.
-- **Расширенные функции**: Встроенная поддержка TLS, балансировки нагрузки, канареечных развертываний, зеркалирования трафика, взвешенного сплиттинга и многопротокольной маршрутизации (HTTP, HTTPS, gRPC, TCP/UDP).
-- **Переносимость**: Единая конфигурация работает с различными нижележащими реализациями (Istio, Cilium, NGINX, GKE, и др.).
+### Ролевая модель
 
-## Сравнение с Ingress
+Gateway API разделяет ответственность между инфраструктурой и разработчиками:
+
+- **Администраторы кластера** управляют шлюзами (`Gateway`)
+- **Разработчики** управляют правилами маршрутизации (`HTTPRoute`)
+
+### Преимущества перед Ingress
 
 | Характеристика | Ingress | Gateway API |
 |---------------|---------|-------------|
-| **Разделение ролей** | Слабое, все в одном манифесте | Четкое: GatewayClass → Gateway → Route |
-| **Аннотации** | Множество специфичных для каждого контроллера | Унифицированные CRD |
+| **Разделение ролей** | Слабое, всё в одном манифесте | Четкое: GatewayClass → Gateway → Route |
+| **Аннотации** | Множество специфичных для контроллера | Унифицированные CRD |
 | **Namespace маршрутов** | Только в namespace приложения | В любом namespace |
 | **Secret для TLS** | Только в том же namespace | В любом namespace |
-| **Поддержка протоколов** | mainly HTTP/HTTPS | HTTP, HTTPS, gRPC, TCP, UDP |
+| **Поддержка протоколов** | HTTP/HTTPS | HTTP, HTTPS, gRPC, TCP, UDP |
 | **Direct Pod targeting** | Через Service | Напрямую (по endpoints) |
-| **Ролевая модель** | Отсутствует | Встроенная (allowedRoutes) |
+| **Ролевая модель** | Отсутствует | Встроенная (`allowedRoutes`) |
 
-## Статус компонентов (на март 2026)
+### Статус компонентов (март 2026)
 
-**V1 (Stable/GA):**
+**V1 (Stable/GA):** GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute.
 
-- GatewayClass
-- Gateway
-- HTTPRoute
-- GRPCRoute
-- TLSRoute
-- TCPRoute
-- UDPRoute
+**Beta:** ListenerSet, расширенные фильтры (CORS, компрессия).
 
-**Beta:**
+**Alpha:** Экспериментальные функции ([спецификация](https://gateway-api.sigs.k8s.io/concepts/versioning/)).
 
-- ListenerSet
-- некоторые расширенные фильтры (CORS, компрессия)
+**Рекомендация:** Использовать стабильные V1-ресурсы в production. Beta-функции требуют проверки conformance-отчётов реализации.
 
-**Alpha:**
+### Актуальность
 
-- экспериментальные функции (уточнять в [спецификации](https://gateway-api.sigs.k8s.io/concepts/versioning/))
+Сообщество Kubernetes прекратило поддержку `kubernetes/ingress-nginx` в марте 2026. Gateway API является официальным преемником для управления входящим трафиком.
 
-**Рекомендация:** Использовать стабильные V1 ресурсы в production. Beta-функции требуют проверки conformance-отчётов реализации.
+Подробное руководство по миграции: [Миграция с Ingress на Gateway API](./migration.md).
 
----
+## Практические сценарии
 
-## Актуальность и миграция
+### Выбор реализации Gateway API
 
-### Ingress NGINX деактивируется в марте 2026
+Конфигурации Gateway API переносимы между различными реализациями: Envoy Gateway, Traefik, Cilium, Istio, Kong, GKE. Правильный вопрос: «Поддерживает ли Envoy Gateway API?», а не «Включает ли Gateway API в себя Envoy?».
 
-Сообщество Kubernetes приняло решение о прекращении поддержки `kubernetes/ingress-nginx`. **Gateway API является официальным преемником** для управления входящим трафиком в Kubernetes.
-
-**Почему миграция необходима:**
-
-- **Окончание поддержки Ingress NGINX** — март 2026
-- **Стандартизация** — Gateway API поддерживается всеми крупными вендорами
-- **Расширенные функции** — канареечные развертывания, gRPC, TCP/UDP маршрутизация
-- **Ролевая модель** — разделение ответственности между инфраструктурой и разработчиками
-
-**Подробное руководство по миграции:** [→ Миграция с Ingress на Gateway API](./migration.md)
-
-## Gateway API — это стандарт, а не программа
-
-Ключевое отличие Gateway API от многих других инструментов в экосистеме Kubernetes заключается в том, что **Gateway API — это стандарт (спецификация), а не конкретная программа**.
-
-- **Стандарт**: Описывает, *какие* ресурсы (CRD) существуют (`Gateway`, `HTTPRoute` и т.д.) и *какие* поля и значения можно использовать в их манифестах. Это общий язык для описания маршрутизации.
-- **Контроллер**: Это программа (например, Envoy, Traefik, Istio), которая *реализует* этот стандарт. Контроллер "читает" манифесты Gateway API и на их основе настраивает нижележащий прокси для управления трафиком.
-
-Правильный вопрос: "Поддерживает ли Envoy Gateway API?", а не "Включает ли Gateway API в себя Envoy?". Эта концепция объясняет, почему конфигурации переносимы между разными реализациями.
+Сравнение реализаций: [Envoy Gateway](./envoy_gateway.md), [Traefik](./traefik.md).
 
 ## Дополнительная информация
 
-**См. также:**
+Основные ресурсы (CRD): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute — см. [Ресурсы (CRD)](./resources.md).
 
-- [Ресурсы (CRD)](./resources.md) — GatewayClass, Gateway, Route
-- [Миграция с Ingress](./migration.md) — руководство по переходу с Ingress NGINX
-- [Базовые сценарии](./practical_basic.md) — практические примеры
-- [Расширенные функции маршрутизации](./routing_features.md) — Redirect, Rewrite, Traffic Splitting
-- [L4 маршрутизация](./layer4_routing.md) — TCPRoute, UDPRoute
+Базовые примеры использования: [Базовые сценарии](./practical_basic.md).
 
-**Реализации:**
+Расширенные функции маршрутизации (Redirect, Rewrite, Traffic Splitting): [Расширенные функции маршрутизации](./routing_features.md).
 
-- [Envoy Gateway](./envoy_gateway.md)
-- [Traefik](./traefik.md)
+Маршрутизация L4 (TCP/UDP): [L4 маршрутизация](./layer4_routing.md).
 
-- **Официальная документация:** [Gateway API](https://gateway-api.sigs.k8s.io/)
-- **Руководство по миграции:** [Migrating from Ingress-NGINX](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
-- **Инструмент миграции:** [ingress2gateway](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
-- **Обзор Ingress и его ограничений:** [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api)
+Официальная документация: [Gateway API](https://gateway-api.sigs.k8s.io/).
 
----
+Руководство по миграции с Ingress-NGINX: [Migrating from Ingress-NGINX](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/).
 
-**Parent:** [Gateway API](../gateway_api/definitions.md)
+Инструмент автоматической миграции: [ingress2gateway](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway).
+
+Обзор Ingress и его ограничений: [Ingress: Будущее — Gateway API](../Ingress/overview.md#будущее-ingress-gateway-api).

@@ -145,3 +145,25 @@ status:
   readyInstances: 1
   lastBackup: "2024-12-01T12:00:00Z"
 ```
+
+## Дополнительная информация
+
+**Инструменты для разработки операторов:**
+
+- **[Kubebuilder](https://book.kubebuilder.io/)** — фреймворк от Kubernetes SIGs для быстрого создания операторов на Go с использованием `controller-runtime`. Предоставляет готовую структуру проекта, генерацию кода и манифестов.
+- **[Operator SDK](https://sdk.operatorframework.io/)** — инструмент от Red Hat, поддерживающий создание операторов на Go, Ansible и Helm. Включает CLI для генерации проекта, тестирования и упаковки.
+- **[controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)** — базовая библиотека, используемая обоими фреймворками. Предоставляет абстракции для контроллеров, кэширования, очередей и вебхуков.
+
+**Популярные операторы:**
+
+- **Prometheus Operator** — автоматизация развертывания и управления Prometheus, Alertmanager.
+- **Cert Manager** — управление SSL/TLS сертификатами, интеграция с Let's Encrypt.
+- **Strimzi** — управление Apache Kafka в Kubernetes.
+- **Cloud Native PostgreSQL (CNPG)** — управление кластерами PostgreSQL с репликацией и бэкапами.
+- **VictoriaMetrics Operator** — развертывание стека мониторинга VictoriaMetrics.
+
+**Тестирование операторов:**
+
+- **Unit-тесты** — тестирование логики `Reconcile` с моками клиента Kubernetes.
+- **Integration-тесты** — запуск в test-кластере (envtest) с реальным API-сервером.
+- **E2E-тесты** — развертывание оператора в реальном кластере и проверка полного жизненного цикла.

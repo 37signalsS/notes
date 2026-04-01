@@ -1,29 +1,30 @@
 # Metrics Server
 
-## 1. Определения
+## Definitions
 
-**Metrics Server** — это легковесный, запускаемый в памяти (in-memory) агрегатор данных об использовании ресурсов в кластере Kubernetes. Он собирает метрики (CPU и RAM) с каждого узла через Summary API, предоставляемый `kubelet`, и отдает их через официальный Metrics API (`metrics.k8s.io`).
+**Metrics Server** — легковесный in-memory агрегатор данных об использовании ресурсов в кластере Kubernetes. Собирает метрики CPU и RAM с каждого узла через Summary API (`kubelet`), предоставляет через Metrics API (`metrics.k8s.io`).
 
-Metrics Server не предназначен для долгосрочного хранения метрик и не предоставляет возможностей для сложного анализа. Его основная задача — предоставлять актуальные данные о потреблении ресурсов для других компонентов Kubernetes.
+Не предназначен для долгосрочного хранения метрик и сложного анализа. Основная задача — предоставление актуальных данных о потреблении ресурсов для других компонентов Kubernetes.
 
-## 2. Основные концепции
+## Basic Concepts
 
 ### Назначение
 
-1. **Включение `kubectl top`**: Без Metrics Server команды `kubectl top nodes` и `kubectl top pods` не будут работать, так как они запрашивают данные именно из Metrics API.
-2. **Основа для автоскейлинга**:
-    * **Horizontal Pod Autoscaler (HPA)** использует данные Metrics Server для принятия решений о масштабировании количества подов в `Deployment` или `StatefulSet` на основе загрузки CPU или потребления памяти.
-    * **Vertical Pod Autoscaler (VPA)** также может использовать эти метрики для рекомендации или автоматического изменения `requests` и `limits` для контейнеров.
+**Включение `kubectl top`** — без Metrics Server команды `kubectl top nodes` и `kubectl top pods` не работают, так как запрашивают данные из Metrics API.
+
+**Основа для автоскейлинга:**
+- **Horizontal Pod Autoscaler (HPA)** использует данные Metrics Server для масштабирования количества подов в `Deployment`/`StatefulSet` на основе CPU/memory.
+- **Vertical Pod Autoscaler (VPA)** использует метрики для рекомендации или автоматического изменения `requests` и `limits` контейнеров.
 
 ### Архитектура
 
-* **Deployment**: Metrics Server развертывается как `Deployment` в `kube-system` namespace.
-* **Сбор данных**: Периодически опрашивает все `kubelet`'ы в кластере для сбора метрик.
-* **API**: Регистрирует себя в `kube-aggregator` как `APIService`, предоставляющий `v1beta1.metrics.k8s.io`.
+- **Deployment** — развертывается как `Deployment` в namespace `kube-system`.
+- **Сбор данных** — периодически опрашивает все `kubelet` в кластере.
+- **API** — регистрируется в `kube-aggregator` как `APIService` с `v1beta1.metrics.k8s.io`.
 
-## 3. Практические сценарии
+## Practical Scenarios
 
-### 3.1. Установка
+### Установка
 
 Установка выполняется применением одного манифеста, который содержит все необходимые компоненты (`ServiceAccount`, `ClusterRole`, `Deployment`, `APIService` и др.).
 
@@ -39,44 +40,45 @@ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/late
 kubectl get pods -n kube-system | grep metrics-server
 ```
 
-### 3.2. Использование `kubectl top`
+### Использование `kubectl top`
 
-Через несколько минут после установки Metrics Server начнет собирать данные, и вы сможете использовать команду `kubectl top`.
+Через несколько минут после установки Metrics Server начнет собирать данные.
 
-* **Просмотр потребления ресурсов узлами:**
+**Просмотр потребления ресурсов узлами:**
 
-    ```bash
-    kubectl top nodes
-    ```
+```bash
+kubectl top nodes
+```
 
-    **Вывод:**
+**Вывод:**
 
-    ```
-    NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
-    control-1   150m         7%     1400Mi          36%       
-    worker-1    80m          4%     950Mi           24%
-    worker-2    110m         5%     1100Mi          28%
-    ```
+```
+NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+control-1   150m         7%     1400Mi          36%
+worker-1    80m          4%     950Mi           24%
+worker-2    110m         5%     1100Mi          28%
+```
 
-* **Просмотр потребления ресурсов подами:**
+**Просмотр потребления ресурсов подами:**
 
-    ```bash
-    # Поды во всех namespace'ах
-    kubectl top pods -A
-    
-    # Поды в конкретном namespace
-    kubectl top pods -n default
-    ```
+```bash
+# Поды во всех namespace'ах
+kubectl top pods -A
 
-    **Вывод:**
+# Поды в конкретном namespace
+kubectl top pods -n default
+```
 
-    ```
-    NAME                      CPU(cores)   MEMORY(bytes)   
-    openresty-deployment-xyz  1m           15Mi
-    my-app-abcdef-12345       15m          128Mi
-    ```
+**Вывод:**
 
-## 4. Дополнительная информация
+```
+NAME                      CPU(cores)   MEMORY(bytes)
+openresty-deployment-xyz  1m           15Mi
+my-app-abcdef-12345       15m          128Mi
+```
 
-* **Отличие от Prometheus**: Metrics Server предоставляет только самые базовые метрики и не хранит историю. Для полноценного мониторинга, алертинга и визуализации исторических данных используется [Prometheus](../../Prometheus/prometheus_overview.md). Metrics Server и Prometheus могут и должны работать вместе.
-* [Официальный репозиторий](https://github.com/kubernetes-sigs/metrics-server)
+## Additional Information
+
+**Отличие от Prometheus** — Metrics Server предоставляет только базовые метрики и не хранит историю. Для полноценного мониторинга, алертинга и визуализации исторических данных используется [Prometheus](../../Prometheus/overview.md). Оба компонента работают совместно.
+
+[Официальный репозиторий](https://github.com/kubernetes-sigs/metrics-server)
