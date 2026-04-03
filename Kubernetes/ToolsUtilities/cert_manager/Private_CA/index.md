@@ -1,17 +1,13 @@
 # Приватный CA для внутренних сервисов
 
-## Определения
+## Definitions
 
-**Приватный CA** — собственный центр сертификации, созданный внутри кластера для выпуска сертификатов, доверенных только внутри периметра кластера.
+**Приватный CA** — собственный центр сертификации, созданный внутри кластера Kubernetes для выпуска сертификатов, доверенных только внутри периметра кластера. Отличается от CA кластера ([cluster_ca.md](../cluster_ca.md)) источником доверия: приватный CA использует self-signed корневой сертификат, тогда как CA кластера опирается на `/etc/kubernetes/pki/ca.crt`.
 
-**Отличия от CA кластера:**
-
-| Аспект | Приватный CA | CA кластера |
-| :--- | :--- | :--- |
-| **Источник доверия** | Self-signed, создан в кластере | Корневой CA Kubernetes (`/etc/kubernetes/pki/ca.crt`) |
-| **Сценарий** | Сервисы внутри кластера (mTLS, OpenSearch, Kafka) | Внутренние Ingress, сервисы кластера |
-| **Изоляция** | Полный контроль, отдельный namespace | Зависит от жизненного цикла кластера |
-| **Сложность** | Низкая | Средняя (требует доступа к master-узлам) |
+**Основные сценарии применения:**
+- mTLS между сервисами внутри кластера
+- Сертификаты для OpenSearch, Elasticsearch, Kafka
+- Изолированные PKI-цепочки с полным контролем
 
 ---
 
@@ -19,27 +15,51 @@
 
 ### Поток создания приватного CA
 
+Последовательность ресурсов cert-manager для создания приватного CA:
+
 ```
 SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты сервисов
 ```
 
-1. **SelfSigned Issuer** — временный источник для подписи корневого CA
-2. **CA Certificate** — корневой сертификат с `isCA: true`
+1. **SelfSigned Issuer** — временный источник для подписи корневого CA-сертификата
+2. **CA Certificate** — корневой сертификат с `isCA: true`, может подписывать другие сертификаты
 3. **CA Issuer** — использует CA-сертификат для подписи остальных сертификатов
-4. **Сертификаты сервисов** — выпускаются для конкретных сервисов
+4. **Сертификаты сервисов** — выпускаются для конкретных сервисов с указанием `issuerRef`
+
+### Типы Issuer
+
+- **Issuer** — действует в пределах одного namespace
+- **ClusterIssuer** — доступен из всех namespace кластера (требует создания CA-сертификата в namespace `cert-manager`)
+
+### Ключевые параметры
+
+- `isCA: true` — разрешает сертификату подписывать другие сертификаты
+- `privateKey.encoding: PKCS8` — обязательно для Java-приложений (OpenSearch, Elasticsearch)
+- `duration` / `renewBefore` — срок действия и окно продления
 
 ---
 
-## Файлы
+## Practical Scenarios
 
-| Файл | Описание |
-|------|----------|
-| [scenarios.md](./scenarios.md) | Практические сценарии: базовый CA, CA для OpenSearch, ClusterIssuer |
-| [operations.md](./operations.md) | Проверка сертификатов, частые ошибки |
+Практические сценарии создания приватного CA описаны в [scenarios.md](./scenarios.md):
+- Базовый приватный CA в namespace
+- CA для OpenSearch/Elasticsearch с PKCS8
+- ClusterIssuer для общекластерного CA
+
+Операции проверки и устранения ошибок — в [operations.md](./operations.md).
 
 ---
 
 ## Additional Information
+
+### Сравнение с CA кластера
+
+| Аспект | Приватный CA | CA кластера |
+| :--- | :--- | :--- |
+| **Источник доверия** | Self-signed, создан в кластере | Корневой CA Kubernetes (`/etc/kubernetes/pki/ca.crt`) |
+| **Сценарий** | Сервисы внутри кластера (mTLS, OpenSearch, Kafka) | Внутренние Ingress, сервисы кластера |
+| **Изоляция** | Полный контроль, отдельный namespace | Зависит от жизненного цикла кластера |
+| **Сложность** | Низкая | Средняя (требует доступа к master-узлам) |
 
 ### Надёжность информации
 
@@ -49,8 +69,4 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 | PKCS8 encoding | **10** | Требуется для Java (OpenSearch, Elasticsearch) |
 | ClusterIssuer | **10** | Стандартный паттерн cert-manager |
 
-### Связанные темы
-
-- [Administration](../Administration/) — администрирование cert-manager
-- [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../installation.md) — установка cert-manager
+См. также: [Administration](../Administration/), [LetsEncrypt](../LetsEncrypt/), [Installation](../installation.md).

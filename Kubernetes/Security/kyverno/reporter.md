@@ -2,13 +2,11 @@
 
 ## Определения
 
-**Policy Reporter** — отдельное приложение для просмотра и управления отчетами Kyverno. Предоставляет Web UI, метрики для Prometheus/Grafana, REST API и уведомления.
-
-> **Официальный репозиторий**: <https://github.com/kyverno/policy-reporter>
+**Policy Reporter** — отдельное приложение для просмотра и управления отчетами Kyverno. Предоставляет Web UI, метрики для Prometheus/Grafana, REST API и уведомления. Официальный репозиторий: <https://github.com/kyverno/policy-reporter>
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Возможности Policy Reporter
 
@@ -38,7 +36,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка через Helm
 
@@ -119,6 +117,10 @@ kubectl port-forward svc/policy-reporter-ui -n policy-reporter 8080:80
 
 ### Доступные метрики
 
+Метрики экспортируются в формате Prometheus. Детальная структура метрик описана в [Policy Reports](./reports.md).
+
+Основные метрики:
+
 ```prometheus
 # Общее количество результатов
 policy_report_result_total{result="fail", policy="require-run-as-non-root"}
@@ -137,17 +139,6 @@ increase(policy_report_result_total{result="fail"}[1h])
 # По категориям
 policy_report_result_total{category="security", result="fail"}
 policy_report_result_total{category="best-practices", result="fail"}
-```
-
-### Пример Grafana Dashboard
-
-Импортировать dashboard из [официального репозитория](https://github.com/kyverno/policy-reporter/tree/main/charts/policy-reporter/files/grafana):
-
-```bash
-# Импорт dashboard через kubectl
-kubectl create configmap grafana-dashboard \
-  --from-file=kyverno-policy-reporter.json \
-  -n grafana
 ```
 
 ### Настройка уведомлений
@@ -203,7 +194,7 @@ curl http://localhost:8080/api/v1/summary
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Производительность
 
@@ -222,8 +213,12 @@ curl http://localhost:8080/api/v1/summary
 | Уведомления не приходят | Проверить webhook URL и права доступа |
 | Отчеты не обновляются | Проверить права на чтение Policy Reports |
 
-### Связанные темы
+### Grafana Dashboard
 
-- [Policy Reports](./reports.md) — формат и структура отчетов
-- [Background Scans](./background.md) — источник данных для отчетов
-- [Prometheus](../../../Monitoring/Prometheus/prometheus.md) — интеграция метрик
+Официальные dashboard доступны в [репозитории Policy Reporter](https://github.com/kyverno/policy-reporter/tree/main/charts/policy-reporter/files/grafana). Импорт через ConfigMap:
+
+```bash
+kubectl create configmap grafana-dashboard \
+  --from-file=kyverno-policy-reporter.json \
+  -n grafana
+```

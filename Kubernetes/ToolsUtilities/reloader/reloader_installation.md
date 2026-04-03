@@ -1,44 +1,58 @@
 # Reloader — Установка и настройка
 
-## 1. Установка через Helm
+## Definitions
 
-### Добавление репозитория
+**Установка Reloader** — процесс развёртывания контроллера Reloader в Kubernetes-кластере для автоматического отслеживания изменений в ConfigMap/Secret и инициирования rolling upgrade workload'ов.
+
+**SSoT:** [Обзор и концепции Reloader](./reloader_overview.md)
+
+---
+
+## Basic Concepts
+
+### Способы установки
+
+| Способ | Когда использовать | Преимущества |
+| :--- | :--- | :--- |
+| **Helm** | Production, GitOps | Управление версиями, параметризация |
+| **Манифесты** | Быстрое развёртывание, air-gapped | Не требует Helm |
+
+### RBAC-требования
+
+Reloader требует доступ к:
+- **secrets, configmaps** — `list`, `get`, `watch`
+- **deployments, daemonsets, statefulsets** — `list`, `get`, `watch`, `update`, `patch`
+- **cronjobs** — `list`, `get`, `watch`
+
+### Ресурсы контроллера
+
+| Ресурс | Request | Limit |
+| :--- | :--- | :--- |
+| CPU | 100m | 300m |
+| Memory | 128Mi | 256Mi |
+
+---
+
+## Practical Scenarios
+
+### Сценарий 1: Установка через Helm (рекомендуется)
+
+**1. Добавление репозитория:**
 
 ```bash
 helm repo add stakater https://stakater.github.io/stakater-charts
 helm repo update
 ```
 
-### Установка Reloader
-
-```bash
-helm install reloader stakater/reloader \
-  --namespace monitoring \
-  --create-namespace \
-  --set reloader.watchGlobally=true \
-  --set reloader.deployment.resources.requests.cpu=100m \
-  --set reloader.deployment.resources.requests.memory=128Mi
-```
-
-### Основные параметры Helm
-
-| Параметр | Значение по умолчанию | Описание |
-| :--- | :--- | :--- |
-| `reloader.watchGlobally` | `true` | Следить во всех namespace'ах |
-| `reloader.namespace` | `default` | Namespace для установки |
-| `reloader.replicas` | `1` | Количество реплик |
-| `reloader.resources` | `{}` | Ресурсы контроллера |
-
-### Пример values.yaml
+**2. Создание values.yaml:**
 
 ```yaml
 # values.yaml
-
 reloader:
   namespace: monitoring
   watchGlobally: true
   replicas: 1
-  
+
   deployment:
     resources:
       requests:
@@ -47,21 +61,37 @@ reloader:
       limits:
         cpu: 300m
         memory: 256Mi
-  
+
   args:
     - --namespaces-to-ignore=kube-system,kube-public,kube-node-lease
     - --log-level=info
 ```
 
+**3. Установка:**
+
+```bash
+helm install reloader stakater/reloader \
+  --namespace monitoring \
+  --create-namespace \
+  --values values.yaml
+```
+
+**Основные параметры Helm:**
+
+| Параметр | Значение по умолчанию | Описание |
+| :--- | :--- | :--- |
+| `reloader.watchGlobally` | `true` | Следить во всех namespace'ах |
+| `reloader.namespace` | `default` | Namespace для установки |
+| `reloader.replicas` | `1` | Количество реплик |
+| `reloader.resources` | `{}` | Ресурсы контроллера |
+
 ---
 
-## 2. Установка через манифесты
+### Сценарий 2: Установка через манифесты
 
-### Полный манифест установки
+**Полный манифест `reloader-setup.yaml`:**
 
 ```yaml
-# reloader-setup.yaml
-
 ---
 # ServiceAccount
 apiVersion: v1
@@ -184,28 +214,17 @@ spec:
     app: reloader
 ```
 
-### Применение манифестов
+**Применение:**
 
 ```bash
 kubectl apply -f reloader-setup.yaml
 ```
 
-### Проверка установки
-
-```bash
-# Проверка статуса
-kubectl get deployment reloader -n monitoring
-kubectl describe deployment reloader -n monitoring
-
-# Проверка подов
-kubectl get pods -n monitoring -l app=reloader
-```
-
 ---
 
-## 3. Исключение namespace'ов
+### Сценарий 3: Исключение namespace'ов
 
-### При установке через Helm
+**Через Helm:**
 
 ```yaml
 # values.yaml
@@ -215,7 +234,7 @@ reloader:
     - --namespaces-to-select=default,production,staging
 ```
 
-### При установке через манифесты
+**Через манифест:**
 
 ```yaml
 spec:
@@ -227,8 +246,40 @@ spec:
 
 ---
 
-## 4. Связанные документы
+### Проверка установки
 
-- **[Обзор и концепции](./reloader_overview.md)** — базовые определения
-- **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
-- **[Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)** — логи и диагностика
+```bash
+# Статус deployment
+kubectl get deployment reloader -n monitoring
+kubectl describe deployment reloader -n monitoring
+
+# Статус подов
+kubectl get pods -n monitoring -l app=reloader
+
+# Логи
+kubectl logs -f deployment/reloader -n monitoring
+```
+
+---
+
+## Additional Information
+
+### Требования
+
+| Компонент | Минимальная версия |
+| :--- | :--- |
+| Kubernetes | 1.19+ |
+| Helm | 3.0+ |
+
+### Безопасность
+
+Манифест установки включает securityContext:
+- `runAsNonRoot: true`
+- `runAsUser: 65534` (nobody)
+- `allowPrivilegeEscalation: false`
+- `capabilities.drop: ALL`
+
+### Репозиторий и документация
+
+- [GitHub: stakater/Reloader](https://github.com/stakater/Reloader)
+- [Helm Chart](https://github.com/stakater/stakater-charts/tree/master/charts/reloader)

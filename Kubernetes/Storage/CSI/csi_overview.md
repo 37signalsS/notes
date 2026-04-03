@@ -96,24 +96,14 @@ CSI-драйвер для конкретной СХД обычно состои�
   - **Автоматическая ротация:** Драйвер может автоматически обновлять смонтированные секреты.
   - **Повышенная безопасность:** Секреты не хранятся в `etcd` в base64.
 
-> **Подробно:** [CSI Drivers Comparison](./csi_drivers_comparison.md#secrets-store-csi-driver), [External Secret Managers](../../Base/secrets/external_managers.md, [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
+> **Подробно:** [Secrets Store CSI Driver — сравнение и примеры](./csi_drivers_comparison.md#secrets-store-csi-driver)
 
 ---
 
 ## Дополнительная информация
 
-### Связанные темы
+Продвинутые возможности (Snapshots, Cloning, Topology, Expansion, Migration) описаны в [CSI Advanced Features](./csi_advanced.md). Таблица возможностей драйверов, диагностика и best practices — в [CSI Drivers Comparison](./csi_drivers_comparison.md).
 
-- **Продвинутые возможности:** [CSI Advanced Features](./csi_advanced.md) — Snapshots, Cloning, Topology, Expansion, Migration
-- **Сравнение драйверов:** [CSI Drivers Comparison](./csi_drivers_comparison.md) — таблица возможностей, диагностика, best practices
-- **PV и PVC:** [Хранение данных: PV, PVC и StorageClass](../pv_and_pvc.md)
-- **Ceph CSI:** [Ceph Overview](../Ceph/ceph_overview.md)
-- **Secrets Management:** [External Secret Managers](../../Base/secrets/external_managers.md)
-- **StatefulSet:** [StatefulSet](../../Base/statefulset.md)
+Базовые концепции PV, PVC и StorageClass — в [Хранение данных: PV, PVC и StorageClass](../pv_and_pvc.md). Примеры интеграции с Ceph — в [Ceph Overview](../Ceph/ceph_overview.md). Управление секретами через CSI — в [External Secret Managers](../../Base/secrets/external_managers.md).
 
-### Официальные источники
-
-- [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
-- [Kubernetes CSI Documentation](https://kubernetes.io/docs/concepts/storage/volumes/#csi)
-- [CSI Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
-- [CSI Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
+Официальные источники: [CSI Specification](https://github.com/container-storage-interface/spec), [Kubernetes CSI Documentation](https://kubernetes.io/docs/concepts/storage/volumes/#csi), [CSI Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/), [CSI Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/).

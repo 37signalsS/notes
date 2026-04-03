@@ -1,31 +1,84 @@
-# Kustomize — Продвинутые возможности
+# Kustomize — Advanced Features
 
-## 1. Генерация ConfigMap и Secret
+## 1. Definitions
 
-### Из литералов
+**ConfigMap/Secret Generator** — механизм Kustomize для автоматического создания ConfigMap и Secret из файлов или литералов с автоматическим добавлением хеша содержимого к имени ресурса (immutable pattern).
+
+**Behavior** — директива, управляющая поведением генератора при наследовании: `create` (по умолчанию), `merge` (объединение с базовым), `replace` (полная замена).
+
+**Helm-Kustomize Hybrid** — подход генерации базовых манифестов через `helm template` с последующим управлением окружениями через Kustomize overlays.
+
+## 2. Basic Concepts
+
+### Hash-суффиксы для ConfigMap/Secret
+
+Kustomize автоматически добавляет хеш содержимого к имени ресурса:
 
 ```yaml
+# kustomization.yaml
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DATABASE_URL=postgres://localhost:5432/db
+```
+
+Результат: `app-config-<hash>` — это гарантирует обновление Pods при изменении данных (immutable ConfigMap pattern).
+
+### Behavior при наследовании
+
+| Значение | Поведение |
+| :--- | :--- |
+| `create` | Создание нового ресурса (default) |
+| `merge` | Объединение с базовым генератором |
+| `replace` | Полная замена базового генератора |
+
+### Ограничения генераторов
+
+- **Нет условной логики** — нельзя генерировать разные ConfigMap для разных окружений в одном файле
+- **Нет циклов** — каждая запись создаёт один ресурс
+- **Хеширование нельзя отключить** — для статических имён используйте `generatorOptions.disableNameSuffixHash: true`
+
+## 3. Practical Scenarios
+
+### 3.1. Генерация ConfigMap из литералов
+
+```yaml
+# base/kustomization.yaml
 configMapGenerator:
   - name: app-config
     literals:
       - DATABASE_URL=postgres://localhost:5432/db
       - CACHE_TTL=3600
+```
 
+### 3.2. Генерация ConfigMap из файлов
+
+```yaml
+# base/kustomization.yaml
+configMapGenerator:
+  - name: nginx-config
+    files:
+      - nginx.conf
+```
+
+Файл `nginx.conf` должен существовать в той же директории, что и `kustomization.yaml`.
+
+### 3.3. Генерация Secret из литералов
+
+```yaml
+# overlays/production/kustomization.yaml
 secretGenerator:
   - name: db-secret
     literals:
       - username=admin
       - password=S3cr3t
+    type: Opaque  # default
 ```
 
-### Из файлов
+### 3.4. Генерация TLS Secret из файлов
 
 ```yaml
-configMapGenerator:
-  - name: nginx-config
-    files:
-      - nginx.conf
-
+# overlays/production/kustomization.yaml
 secretGenerator:
   - name: tls-secret
     files:
@@ -34,52 +87,97 @@ secretGenerator:
     type: kubernetes.io/tls
 ```
 
-### С поведением (behavior)
+Файлы `tls.crt` и `tls.key` должны существовать в директории overlay.
+
+### 3.5. Behavior: merge для наследования
 
 ```yaml
+# overlays/production/kustomization.yaml
 configMapGenerator:
   - name: app-config
-    behavior: merge  # merge, replace, create
+    behavior: merge  # объединение с base
     literals:
-      - NEW_KEY=new_value
+      - LOG_LEVEL=info
+      - ENV=production
 ```
 
-## 2. Интеграция с Helm
+Базовые ключи из `base/` сохраняются, новые — добавляются. При конфликте побеждает значение из overlay.
 
-**Гибридный подход:**
+### 3.6. Behavior: replace для полной замены
+
+```yaml
+# overlays/production/kustomization.yaml
+configMapGenerator:
+  - name: app-config
+    behavior: replace  # игнорирование base
+    literals:
+      - DATABASE_URL=postgres://prod-db:5432/prod
+      - CACHE_TTL=7200
+```
+
+### 3.7. Отключение hash-суффикса
+
+```yaml
+# kustomization.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: static-config
+    literals:
+      - KEY=value
+```
+
+Результат: `static-config` (без хеша).
+
+### 3.8. Гибридный подход Helm + Kustomize
+
+Для использования существующих Helm charts с Kustomize overlays:
 
 ```bash
-# Генерация базовых манифестов из Helm
-helm template my-chart > base/manifest.yaml
+# Шаг 1: Генерация базовых манифестов из Helm
+helm template my-chart ./chart > base/manifests.yaml
 
-# Создание kustomization.yaml для base
+# Шаг 2: Создание kustomization.yaml для base
 cat > base/kustomization.yaml <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - manifest.yaml
+  - manifests.yaml
 EOF
 
-# Применение overlay через kustomize
+# Шаг 3: Применение overlay через kustomize
 kubectl apply -k overlays/production/
 ```
 
-**Подробнее:** [Интеграция Helm + Kustomize](../Helm/Advanced/scenarios.md#2-гибридное-использование-с-kustomize)
+**Преимущества:**
+- Переиспользование готовых Helm charts
+- Управление окружениями через Kustomize overlays
+- Отсутствие необходимости поддерживать Helm в CI/CD
 
-## 3. Валидация с kubeconform
+**Недостатки:**
+- Ручная перегенерация при обновлении chart
+- Потеря связи с Helm values
+- Подробнее: [Интеграция Helm + Kustomize](../Helm/Advanced/scenarios.md)
+
+### 3.9. Валидация результата kustomize
+
+Перед применением в кластер рекомендуется валидировать манифесты через [kubeconform](../kubeconform/index.md):
 
 ```bash
-# Валидация результата kustomize
+# Валидация с выводом сводки
 kubectl kustomize overlays/production | kubeconform -summary -
 
-# Или в одном шаге
+# Строгая валидация (отклонение неизвестных полей)
 kubectl kustomize overlays/production | kubeconform -strict -
 ```
 
-## 4. Связанные документы
+Интеграция в CI/CD: валидация должна выполняться автоматически при каждом изменении kustomization файлов.
 
-- **[Обзор и концепции](./kustomize_overview.md)** — базовые определения
-- **[Структура и синтаксис](./kustomize_structure_and_syntax.md)** — структура проекта
-- **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — типы патчей
-- **[Helm](../Helm/helm_overview.md)** — шаблонизация и пакетный менеджер
-- **[kubeconform](../kubeconform/index.md)** — валидация манифестов
+## 4. Additional Information
+
+### Связь с базовыми концепциями
+
+- [Overview and Core Concepts](./kustomize_overview.md) — базовые определения
+- [Структура и синтаксис](./kustomize_structure_and_syntax.md) — структура проекта
+- [Наложения и патчи](./kustomize_overlays_and_patches.md) — типы патчей

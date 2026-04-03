@@ -185,7 +185,7 @@ kubectl patch ippool default-ipv4-ippool \
 
 ---
 
-## Дополнительные сведения
+## Дополнительная информация
 
 ### Требования к NGFW
 
@@ -198,14 +198,6 @@ kubectl patch ippool default-ipv4-ippool \
 | **Application Control** | Идентификация приложений независимо от порта |
 | **Высокая производительность** | Задержка <1 мс для East-West трафика |
 
-### Связанные темы
-
-- **NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../../Kubernetes/Networking/Network/network_policy.md)
-- **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](../../Kubernetes/Security/network_policies/Calico/index.md)
-- **CNI и kube-proxy:** [CNI и kube-proxy: навигатор](../../Kubernetes/Networking/Network/cni_kube_proxy_roles.md)
-- **Файрволы:** [Концепции сетевых файрволов](../../Networking/Concepts/firewall_concepts.md)
-- **Микросегментация:** [Сегментация и микросегментация](../../Networking/Concepts/network_segmentation_and_microsegmentation.md)
-
 ### Ограничения и рекомендации
 
 1. **Задержка Identity Awareness:** Не используйте для подов с временем жизни <1 сек
@@ -213,3 +205,5 @@ kubectl patch ippool default-ipv4-ippool \
 3. **NAT:** Всегда отключайте NAT для видимости IP подов на файрволе
 4. **Маршрутизация:** Убедитесь, что UDR не создаёт циклов маршрутизации
 5. **Тестирование:** Проверяйте политики на тестовом кластере перед production
+
+Сетевая изоляция на уровне Kubernetes — [NetworkPolicy](../../Kubernetes/Networking/Network/network_policy.md). Политики Calico на уровне хостов — [Calico HostEndpoint и GlobalNetworkPolicy](../../Kubernetes/Security/network_policies/Calico/index.md). Роли CNI и kube-proxy — [CNI и kube-proxy: навигатор](../../Kubernetes/Networking/Network/cni_kube_proxy_roles.md). Общие концепции файрволов — [Концепции сетевых файрволов](../../Networking/Concepts/firewall_concepts.md). Микросегментация — [Сегментация и микросегментация](../../Networking/Concepts/network_segmentation_and_microsegmentation.md).

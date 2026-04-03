@@ -4,10 +4,6 @@
 
 **Администрирование cert-manager** — управление жизненным циклом сертификатов, диагностика, мониторинг и обеспечение безопасности.
 
-> **Навигация:** [Troubleshooting](./troubleshooting.md) | [Операции](./operations.md)
-
----
-
 ## Basic Concepts
 
 ### Управление секретами при удалении сертификатов
@@ -44,16 +40,70 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 
 > **Рекомендация:** Используйте с осторожностью в production. Включайте в development/staging.
 
----
+## Practical Scenarios
 
-## Файлы
+### Сценарий: Включение garbage collection в существующем кластере
 
-| Файл | Описание |
-|------|----------|
-| [troubleshooting.md](./troubleshooting.md) | Диагностика, проверка состояния, логи, частые проблемы |
-| [operations.md](./operations.md) | Мониторинг, алертинг, backup, обновление, безопасность |
+1. Проверьте текущие флаги контроллера:
 
----
+   ```bash
+   kubectl get deployment cert-manager -n cert-manager -o jsonpath='{.spec.template.spec.containers[0].args}'
+   ```
+
+2. Если флаг `--enable-certificate-owner-ref` отсутствует, добавьте его:
+
+   ```bash
+   helm upgrade cert-manager jetstack/cert-manager \
+     --namespace cert-manager \
+     --reuse-values \
+     --set "extraArgs={--enable-certificate-owner-ref=true}"
+   ```
+
+3. Убедитесь, что поды перезапустились:
+
+   ```bash
+   kubectl rollout status deployment/cert-manager -n cert-manager
+   ```
+
+4. Проверьте, что `ownerReference` добавлен к существующим Secret:
+
+   ```bash
+   kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.metadata.ownerReferences}'
+   ```
+
+### Сценарий: Безопасное удаление Certificate с сохранением Secret
+
+Если garbage collection **не включён** и нужно удалить `Certificate`, сохранив Secret:
+
+1. Убедитесь, что Secret существует и содержит актуальный сертификат:
+
+   ```bash
+   kubectl get secret <tls-secret> -n <namespace> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -dates
+   ```
+
+2. Удалите ресурс Certificate:
+
+   ```bash
+   kubectl delete certificate <name> -n <namespace>
+   ```
+
+3. Проверьте, что Secret остался на месте:
+
+   ```bash
+   kubectl get secret <tls-secret> -n <namespace>
+   ```
+
+### Сценарий: Восстановление после случайного удаления Certificate
+
+При включённом garbage collection удаление Certificate удалит Secret. Для восстановления:
+
+1. Пересоздайте ресурс Certificate с тем же `secretName` — cert-manager автоматически запросит новый сертификат.
+
+2. Если требуется тот же сертификат — восстановите Secret из backup (см. [операции backup/restore](./operations.md)).
+
+### Диагностика проблем
+
+Для проверки состояния Certificate, Order, Challenge и анализа логов используйте [руководство по troubleshooting](./troubleshooting.md). Для мониторинга, алертинга, backup и обновления — [операции cert-manager](./operations.md).
 
 ## Additional Information
 
@@ -65,9 +115,3 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 | Prometheus-метрики | **10** | Встроены в cert-manager с версии 0.11 |
 | Troubleshooting | **9** | Основано на официальной документации и опыте |
 | Backup/Restore | **9** | Стандартная практика Kubernetes |
-
-### Связанные темы
-
-- [Private CA](../Private_CA/scenarios.md) — создание собственного CA
-- [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../install.md) — установка cert-manager

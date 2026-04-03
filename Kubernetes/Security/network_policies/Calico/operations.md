@@ -1,10 +1,20 @@
-# Операции Calico: troubleshooting и обслуживание
+# Calico Operations: Troubleshooting и Обслуживание
 
-## Определения
+> Основная документация: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md)
 
-**Операции Calico** — проверка состояния, отладка и устранение проблем при использовании HostEndpoint и GlobalNetworkPolicy.
+## Definitions
 
-> **Навигация:** [Главная Calico](./index.md) | [Сценарии](./scenarios.md)
+**Calico Operations** — процедуры проверки состояния, отладки и устранения проблем при использовании HostEndpoint и GlobalNetworkPolicy.
+
+---
+
+## Basic Concepts
+
+### Инструменты диагностики
+
+**calicoctl** — CLI-утилита для управления ресурсами Calico (HostEndpoint, GlobalNetworkPolicy, FelixConfiguration). Требует доступ к Kubernetes API.
+
+**Felix status** — статус агента Felix на узле, проверяется через `calicoctl node status`. Показывает состояние BGP-пиров, применённых политик и маршрутов.
 
 ---
 
@@ -26,8 +36,6 @@ calicoctl get globalnetworkpolicy -o wide
 calicoctl node status
 ```
 
----
-
 ### Troubleshooting
 
 | Проблема | Возможная причина | Решение |
@@ -37,24 +45,17 @@ calicoctl node status
 | BGP не работает | Блокировка порта 179 | Разрешить BGP в политике |
 | DNS не работает | Блокировка outbound 53 | Добавить egress правило для DNS |
 
----
+### NodePort фильтрация
 
-### Известные проблемы
+Трафик на `NodePort` может обходить политики из-за особенностей реализации в `iptables` и порядка применения правил до/после DNAT.
 
-#### NodePort фильтрация
-
-Трафик на `NodePort` может обходить политики из-за:
-
-- Особенностей реализации в `iptables`
-- Порядка применения правил до/после DNAT
-
-**Временное решение:**
+**Решение:**
 
 - Использовать `preDNAT: true` + явные правила для портов NodePort
 - Рассмотреть `LoadBalancer` вместо `NodePort`
 - Использовать `eBPF` режим Calico (более предсказуемое поведение)
 
-#### Изменение IP узлов
+### Изменение IP узлов
 
 При изменении IP узла требуется обновить `expectedIPs` в `HostEndpoint`:
 
@@ -64,17 +65,9 @@ calicoctl get hostendpoint <name> -o yaml | \
   calicoctl apply -f -
 ```
 
----
-
 ### eBPF режим
 
-Calico поддерживает режим `eBPF` для замены `iptables`:
-
-**Преимущества:**
-
-- Выше производительность
-- Предсказуемое поведение с NodePort
-- Встроенная замена `kube-proxy`
+Calico поддерживает режим `eBPF` для замены `iptables`. Преимущества: выше производительность, предсказуемое поведение с NodePort, встроенная замена `kube-proxy`.
 
 **Включение:**
 
@@ -84,7 +77,7 @@ Calico поддерживает режим `eBPF` для замены `iptables`
   value: "true"
 ```
 
----
+> **Подробнее:** [eBPF в Calico](../../../Networking/Network/CNI/ebpf.md)
 
 ### Совместимость версий
 
@@ -93,14 +86,10 @@ Calico поддерживает режим `eBPF` для замены `iptables`
 | v3.28.x | 1.28–1.31 | ⚠️ Проверить |
 | v3.31.x | 1.28–1.32 | ✅ Рекомендуется |
 
-> **Важно:** Всегда проверяйте [официальную матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases).
+Всегда проверяйте [официальную матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases).
 
 ---
 
 ## Additional Information
 
-### Связанные темы
-
-- **[NetworkPolicy](../network_policies.md)** — стандартные NetworkPolicy
-- **[Сетевая модель](../../Networking/Network/network_overview.md)** — обзор сети Kubernetes
-- **[Официальная документация](https://docs.tigera.io/calico/latest/)** — документация Calico
+Связанные ресурсы: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md), [Сценарии Calico](./scenarios.md), [NetworkPolicy](../../network_policies.md), [Сетевая модель](../../../Networking/Network/network_overview.md), [eBPF в Calico](../../../Networking/Network/CNI/ebpf.md).

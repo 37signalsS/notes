@@ -77,36 +77,24 @@ Kubesec (<https://github.com/controlplaneio/kubesec>) проверяет YAML-м
 
 ## Дополнительная информация
 
-### Сравнение инструментов безопасности
+**Сравнение с другими инструментами:** kubesec работает до деплоя (статический анализ манифестов). [Kyverno](./kyverno/policies/practical_scenarios.md) применяет политики во время деплоя (admission controller). [kube-bench](./kube-bench.md) проводит периодический аудит конфигурации кластера на CIS Benchmark. [Falco](../../Security/Tools/falco.md) мониторит runtime-поведение после деплоя.
 
-| Инструмент | Когда работает | Назначение |
-|------------|----------------|------------|
-| **[kubesec](./kubesec.md)** | До деплоя (статический анализ) | Проверка манифестов на уязвимости | Этот файл |
-| **[Kyverno](./kyverno/policies/practical_scenarios.md)** | Во время деплоя (Admission) | Применение политик к ресурсам | kyverno.md |
-| **[kube-bench](./kube-bench.md)** | Периодический аудит | Проверка конфигурации кластера на CIS Benchmark | kube-bench.md |
-| **[Falco](../../Security/Tools/falco.md)** | Runtime (после деплоя) | Мониторинг поведения приложений | falco.md |
-
-### Интеграция в CI/CD
-
-**GitLab CI пример**:
+**Интеграция в CI/CD:**
 
 ```yaml
+# GitLab CI пример
 security-scan:
   stage: test
   image: kubesec/kubesec:latest
   script:
-    - kubesec scan k8s/ | jq '.score' | grep -q '^^2$' || exit 1
+    - SCORE=$(kubesec scan k8s/manifest.yaml | jq '.[0].score')
+    - test "$SCORE" -gt 0 || exit 1
 ```
 
-**Пороговые значения**:
+**Пороговые значения score:**
 
-* **score < 0** — критические уязвимости, блокировка деплоя
+* **score < 0** — критические проблемы, блокировка деплоя
 * **score 0–5** — предупреждения, рекомендуется исправление
 * **score > 5** — приемлемый уровень
 
-### Связанные темы
-
-* **[Kyverno](./kyverno/policies/practical_scenarios.md)** — политики безопасности во время деплоя
-* **[Pod Security Context](./pod_security_context.md)** — securityContext для подов
-* **[kube-bench](./kube-bench.md)** — аудит инфраструктуры
-* **[Kubesec GitHub](https://github.com/controlplaneio/kubesec)** — официальный репозиторий
+**Безопасность:** При использовании [Kubesec-as-a-Service](https://v2.kubesec.io/scan) не отправляйте манифесты с конфиденциальными данными — используйте локальный HTTP-сервер или бинарный файл. Официальный репозиторий — [controlplaneio/kubesec](https://github.com/controlplaneio/kubesec).

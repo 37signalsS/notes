@@ -1,10 +1,21 @@
-# Использование kubeconform
+# kubeconform usage
 
-## Определения
+## Definitions
 
-**Использование kubeconform** — практические сценарии валидации манифестов Kubernetes, интеграции в CI/CD, Helm и Kustomize.
+**Использование kubeconform** — практические сценарии: локальная валидация, CI/CD-интеграция (GitLab CI, GitHub Actions), валидация Helm-чартов и Kustomize.
 
-> **Навигация:** [Главная kubeconform](./index.md) | [Операции](./operations.md)
+---
+
+## Basic Concepts
+
+### Форматы вывода для CI/CD
+
+| Формат | Флаг | Описание |
+| :--- | :--- | :--- |
+| **TAP** | `-output tap` | Test Anything Protocol, парсится в CI |
+| **JUnit** | `-output junit` | JUnit XML для Jenkins/GitLab |
+| **JSON** | `-output json` | Программная обработка |
+| **Text** | `-output text` | Человекочитаемый (по умолчанию) |
 
 ---
 
@@ -12,7 +23,7 @@
 
 ### Локальная валидация
 
-**Проверка отдельных файлов:**
+**Отдельные файлы:**
 
 ```bash
 kubeconform deployment.yaml service.yaml configmap.yaml
@@ -24,7 +35,7 @@ kubeconform deployment.yaml service.yaml configmap.yaml
 kubeconform -R ./manifests/
 ```
 
-**Проверка с подробным выводом:**
+**Подробный вывод:**
 
 ```bash
 kubeconform -verbose ./manifests/
@@ -36,8 +47,6 @@ kubeconform -verbose ./manifests/
 cat deployment.yaml | kubeconform -
 ```
 
----
-
 ### Интеграция в CI/CD
 
 **GitLab CI:**
@@ -47,7 +56,6 @@ validate-k8s-manifests:
   image: ghcr.io/yannh/kubeconform:latest
   stage: test
   script:
-    - echo "Validating Kubernetes manifests..."
     - kubeconform -summary -output tap 'manifests/**/*.yaml'
   rules:
     - changes:
@@ -78,69 +86,37 @@ jobs:
           strict: true
 ```
 
-**Форматы вывода для CI:**
-
-| Формат | Флаг | Описание |
-| :--- | :--- | :--- |
-| **TAP** | `-output tap` | Test Anything Protocol, парсится в CI |
-| **JUnit** | `-output junit` | JUnit XML для интеграции с Jenkins/GitLab |
-| **JSON** | `-output json` | JSON для программной обработки |
-| **Text** | `-output text` | Человекочитаемый текст (по умолчанию) |
-
----
-
 ### Валидация Helm-чартов
 
-**Рендеринг и валидация:**
-
 ```bash
-# Простая валидация
 helm template my-chart | kubeconform -
-
-# С параметрами
 helm template my-chart --values values-prod.yaml | kubeconform -summary -
-
-# Валидация с указанием версии Kubernetes
 helm template my-chart | kubeconform -kubernetes-version 1.31.0 -
-```
-
-**Проверка чарта перед установкой:**
-
-```bash
 helm lint my-chart && helm template my-chart | kubeconform -summary -
 ```
 
----
-
 ### Валидация Kustomize
-
-**Проверка результатов kustomize:**
 
 ```bash
 kubectl kustomize overlays/production | kubeconform -summary -
 ```
 
-**В одном конвейере:**
+**Конвейер kustomize → kubeconform:**
 
 ```bash
 #!/bin/bash
 set -e
-
-echo "Building Kustomize overlay..."
 kubectl kustomize overlays/production > /tmp/manifests.yaml
-
-echo "Validating with kubeconform..."
 kubeconform -summary -strict /tmp/manifests.yaml
-
-echo "Validation passed!"
 ```
 
 ---
 
 ## Additional Information
 
-### Связанные темы
+### Связанные документы
 
-- **[Kustomize](../kustomize/kustomize_overview.md)** — валидация результатов kustomize
-- **[Helm](../Helm/helm_overview.md)** — валидация Helm-чартов
-- **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
+- [Главная kubeconform](./index.md)
+- [Операции kubeconform](./operations.md)
+- [Kustomize](../kustomize/kustomize_overview.md) — валидация результатов `kubectl kustomize`
+- [Helm](../../ToolsUtilities/Helm/helm_overview.md) — валидация отрендеренных чартов

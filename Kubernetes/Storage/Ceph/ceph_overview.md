@@ -130,7 +130,7 @@ Ceph — популярное решение для persistent storage в Kubern
 | Драйвер | Тип | Режим доступа | Руководство |
 |---------|-----|---------------|-------------|
 | **Ceph CSI RBD** | Блочное | RWO, ROX | [ceph_csi_rbd_driver_setup.md](ceph_csi_rbd_driver_setup.md) |
-| **Ceph CSI CephFS** | Файловое | RWX, ROX | [ceph_csi_cephfs_driver_setup_setup.md](ceph_csi_cephfs_driver_setup.md) |
+| **Ceph CSI CephFS** | Файловое | RWX, ROX | [ceph_csi_cephfs_driver_setup.md](ceph_csi_cephfs_driver_setup.md) |
 
 ### Администрирование
 

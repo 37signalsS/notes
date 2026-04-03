@@ -1,38 +1,32 @@
-# Работа с ConfigMap и файлами
+# ConfigMap and File Management
 
 ---
 
-## Определения
+## Definitions
 
-**Объект .Files** — встроенный объект Helm для чтения файлов из чарта (не из templates/).
+**.Files** — встроенный объект Helm для чтения файлов из директории чарта (не из `templates/`). Определение и полный список методов — в [Встроенные объекты Helm](../objects.md).
 
----
-
-## Вставка данных в ConfigMap
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "myapp.fullname" . }}-config
-data:
-  app.conf: |
-    {{ .Values.configContent | nindent 4 }}
-  
-  config.json: |
-    {{ .Files.Get "files/config.json" | nindent 4 }}
-```
+**Экранирование шаблонизатора** — приём с обратными кавычками (`` ` ``) для предотвращения интерпретации пользовательских `{{ }}` в конфигурационных файлах.
 
 ---
 
-## Чтение файлов из чарта
+## Basic Concepts
 
-- `.Files.Get "path"` — чтение содержимого файла
-- `.Files.Glob "patterns/*"` — поиск по шаблону
-- `.Files.AsSecrets` — доступ как к секретам
-- `.Files.AsConfig` — доступ как к ConfigMap
+Файл охватывает два практических сценария при работе с ConfigMap:
 
-**Пример структуры чарта:**
+1. **Вставка файлов в ConfigMap** — чтение содержимого из директории `files/` через `.Files.Get` и `.Files.Glob`.
+2. **Экранирование `{{ }}`** — конфигурационные файлы (Postfix, Prometheus и др.) могут содержать синтаксис, конфликтующий с Helm-шаблонизатором.
+
+Оба сценария не дублируют определение `.Files`, а показывают практическое применение. Методы объекта:
+
+| Метод | Назначение |
+|-------|------------|
+| `.Files.Get "path"` | Чтение содержимого файла |
+| `.Files.Glob "pattern"` | Поиск файлов по шаблону |
+| `.Files.AsSecrets` | Кодирование как base64 для Secret |
+| `.Files.AsConfig` | Вставка как данные ConfigMap |
+
+Структура чарта для работы с файлами:
 
 ```
 chart/
@@ -42,7 +36,25 @@ chart/
     └── configmap.yaml
 ```
 
-**templates/configmap.yaml:**
+Файлы из `templates/` **недоступны** через `.Files` — они обрабатываются шаблонизатором. Файлы из `files/` — доступны как raw-данные.
+
+---
+
+## Practical Scenarios
+
+### Вставка отдельного файла
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "myapp.fullname" . }}-config
+data:
+  config.json: |
+    {{ .Files.Get "files/config.json" | nindent 4 }}
+```
+
+### Массовая вставка всех файлов из директории
 
 ```yaml
 apiVersion: v1
@@ -53,46 +65,36 @@ data:
   {{- $files := .Files }}
   {{- range $path, $bytes := .Files.Glob "files/**" }}
   {{ $path | replace "files/" "" }}: |
-    {{ $files.Get $path | nindent 2 }}
+    {{ $files.Get $path | nindent 4 }}
   {{- end }}
 ```
 
----
+Каждый файл из `files/` становится отдельным ключом в `data` ConfigMap с именем, равным относительному пути.
 
-## Экранирование символов шаблонизатора
+### Экранирование `{{ }}` в конфигурационных файлах
 
-Конфигурационные файлы могут содержать синтаксис `{{ .Value }}` (Postfix, Prometheus и др.), что конфликтует с Helm.
+Файлы вроде Postfix или Prometheus могут содержать `{{ .Value }}`, что Helm интерпретирует как шаблон.
 
-**Неправильно (ошибка):**
+**Неправильно (ошибка рендеринга):**
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: my-config
 data:
   config.file: |
     value = {{ .POSTFIX_VALUE }}
 ```
 
-**Правильно (экранирование):**
+**Правильно (обратные кавычки):**
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: my-config
 data:
   config.file: |
     value = `{{` .POSTFIX_VALUE `}}`
 ```
 
-Используются обратные одинарные кавычки (`` ` ``). В итоговом манифесте останется `{{ .POSTFIX_VALUE }}`.
+В итоговом манифесте останется литерал `{{ .POSTFIX_VALUE }}` — Helm не будет его интерпретировать.
 
 ---
 
-## Дополнительные ссылки
+## Additional Information
 
-- [Функции](../functions.md) — toYaml, nindent и другие
-- [Именованные шаблоны](../_helpers.md) — переиспользуемые блоки
-- [helm_templating](../../helm_templating.md) — обзорная страница
+Определение `.Files` и все методы — в [Встроенные объекты Helm](../objects.md). Работа с функциями (`nindent`, `sha256sum`) — в [Функции Helm](../functions.md). Автоматический перезапуск при изменении ConfigMap — в [Restart on Change](./restart_on_change.md).

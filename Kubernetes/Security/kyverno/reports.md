@@ -118,9 +118,11 @@ kubectl get clusterpolicyreports -o jsonpath='{range .items[*]}{.metadata.name}{
 kubectl get policyreports --all-namespaces -o jsonpath='{range .items[*].results[?(@.result=="fail")]}{.resource}{"\n"}{end}' | sort | uniq -c | sort -nr | head -10
 ```
 
-### Интеграция с Prometheus
+### Интеграция с Policy Reporter
 
-Policy Reporter экспортирует метрики:
+Метрики Prometheus и визуализация отчетов реализованы через [Policy Reporter](./reporter.md) — отдельное приложение, предоставляющее Web UI, REST API и уведомления (Slack, Telegram, Discord).
+
+Основные метрики экспортируются в формате Prometheus:
 
 ```prometheus
 # Количество результатов по статусам
@@ -132,32 +134,7 @@ policy_report_summary_fail{namespace="default"}
 policy_report_summary_pass{namespace="default"}
 ```
 
-### Пример Grafana Dashboard
-
-```json
-{
-  "panels": [
-    {
-      "title": "Policy Violations Over Time",
-      "targets": [
-        {
-          "expr": "rate(policy_report_result_total{result=\"fail\"}[5m])",
-          "legendFormat": "{{policy}}"
-        }
-      ]
-    },
-    {
-      "title": "Pass/Fail Ratio",
-      "targets": [
-        {
-          "expr": "sum(policy_report_result_total{result=\"pass\"}) / sum(policy_report_result_total{result=\"fail\"})",
-          "legendFormat": "Ratio"
-        }
-      ]
-    }
-  ]
-}
-```
+Примеры запросов для Grafana и детальная настройка описаны в [Policy Reporter](./reporter.md).
 
 ---
 
@@ -208,9 +185,3 @@ spec:
 - Отчеты хранятся в etcd — при большом количестве ресурсов возможен рост占用
 - Историческая информация не сохраняется — только текущее состояние
 - При удалении политики отчеты не удаляются автоматически
-
-### Связанные темы
-
-- [Background Scans](./background.md) — фоновое сканирование для отчетов
-- [Policy Reporter](./reporter.md) — Web UI и метрики для отчетов
-- [Написание политик](./policies/practical_scenarios.md) — создание политик с аннотациями

@@ -1,10 +1,27 @@
-# Сценарии Calico: периметральный файрвол
+# Calico Scenarios: Периметральный Файрвол
 
-## Определения
+> Основная документация: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md)
 
-**Сценарии Calico** — практические случаи использования HostEndpoint и GlobalNetworkPolicy для защиты кластера Kubernetes.
+## Definitions
 
-> **Навигация:** [Главная Calico](./index.md) | [Операции](./operations.md)
+**Calico Scenarios** — практические случаи использования HostEndpoint и GlobalNetworkPolicy для защиты кластера Kubernetes.
+
+---
+
+## Basic Concepts
+
+### Архитектура периметрального файрвола
+
+Периметральный файрвол Calico работает на уровне узлов (host-level), фильтруя трафик до достижения подов. Ключевые принципы:
+
+- **HostEndpoint** определяет интерфейсы узлов, к которым применяются политики
+- **GlobalNetworkPolicy** с `preDNAT: true` фильтрует входящий трафик до NAT (NodePort, LoadBalancer)
+- **Приоритеты (`order`)** определяют порядок применения: меньший `order` → раньше
+- **Failsafe Ports** всегда открыты (SSH 22, BGP 179, K8s API 6443, etcd 2379/2380) — защита от блокировки
+
+### Порядок применения политик
+
+Стандартный паттерн: разрешающая политика (order 5–10) → запрещающая политика (order 20+) → явный Deny в конце цепочки.
 
 ---
 
@@ -48,7 +65,7 @@ spec:
   expectedIPs: ["192.168.218.175"]
 ```
 
-> **Примечание:** Для получения имени узла: `kubectl get nodes -o wide`. Для IP интерфейса: `ip addr show ens160`.
+Для получения имени узла: `kubectl get nodes -o wide`. Для IP интерфейса: `ip addr show ens160`.
 
 #### Шаг 2: Разрешающая политика (order: 10)
 
@@ -116,8 +133,6 @@ kubectl apply -f default-deny-policy.yaml
 kubectl apply -f host-endpoints.yaml
 ```
 
----
-
 ### Сценарий 2: Разрешение только системного трафика
 
 Минимальная конфигурация для новых узлов:
@@ -150,8 +165,6 @@ spec:
         ports: [6443, 7443]
 ```
 
----
-
 ### Сценарий 3: Логирование заблокированного трафика
 
 Для отладки политик включите логирование denied-трафика:
@@ -177,13 +190,10 @@ spec:
     - action: Deny
 ```
 
-**Просмотр логов:** `journalctl -u calico-node -f | grep "calico-denied"`
+Просмотр логов: `journalctl -u calico-node -f | grep "calico-denied"`.
 
 ---
 
 ## Additional Information
 
-### Связанные темы
-
-- **[NetworkPolicy](../network_policies.md)** — стандартные NetworkPolicy
-- **[Сетевая Изоляция](../../Networking/Network/network_policy.md)** — сетевая изоляция
+Связанные ресурсы: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md), [Операции Calico](./operations.md), [NetworkPolicy](../../network_policies.md). Концепции: [Failsafe Ports](./index.md#failsafe-ports), [Приоритеты политик](./index.md#приоритеты-политик-order).

@@ -101,30 +101,7 @@ resource:
 
 ### 5. Установка Kyverno через Argo CD
 
-**Проблема**: При установке Kyverno через Argo CD возможны конфликты с webhook.
-
-**Решение**: Использовать server-side apply.
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: kyverno
-  namespace: argocd
-spec:
-  syncPolicy:
-    automated:
-      applyServerSide: true  # Обязательно!
-      # replace: true  # НЕ использовать!
-  source:
-    repoURL: https://kyverno.github.io/kyverno
-    chart: kyverno
-    targetRevision: 3.2.0
-    helm:
-      releaseName: kyverno
-```
-
-> **Важно**: Параметр `spec.syncPolicy.automated.replace: true` использовать **нельзя** — вызывает конфликты с webhook.
+Подробная инструкция — в [Установка Kyverno](./install.md).
 
 ---
 

@@ -191,13 +191,6 @@ spec:
 
 ## Дополнительная информация
 
-### Связанные темы
+Базовые концепции: [PersistentVolume и PVC](./pv_and_pvc.md). Альтернатива для RWO: [Local Path Provisioner](./local-path-provisioner.md). Альтернатива для RWX с репликацией: [Ceph CephFS](./Ceph/ceph_csi_cephfs_driver_setup.md).
 
-- **[PersistentVolume и PVC](./pv_and_pvc.md)** — базовые концепции
-- **[Local Path Provisioner](./local-path-provisioner.md)** — альтернатива для RWO
-- **[Ceph CephFS](./Ceph/ceph_csi_cephfs_driver_setup.md)** — альтернатива для RWX с лучшей производительностью
-
-### Ресурсы
-
-- [Официальный репозиторий](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner)
-- [NFS-клиенты для Kubernetes](https://kubernetes.io/docs/concepts/storage/volumes/#nfs)
+Официальный репозиторий: [kubernetes-sigs/nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner). Документация Kubernetes по NFS: [Volumes — NFS](https://kubernetes.io/docs/concepts/storage/volumes/#nfs).

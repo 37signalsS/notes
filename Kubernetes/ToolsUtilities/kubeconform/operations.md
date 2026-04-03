@@ -1,10 +1,35 @@
-# Операции kubeconform: офлайн, CRD, лучшие практики
+# kubeconform operations
 
-## Определения
+## Definitions
 
-**Операции kubeconform** — офлайн-валидация, работа с CRD, настройка флагов и лучшие практики.
+**Операции kubeconform** — расширенные сценарии: офлайн-валидация, работа с CRD, строгий режим, настройка флагов.
 
-> **Навигация:** [Главная kubeconform](./index.md) | [Использование](./usage.md)
+---
+
+## Basic Concepts
+
+### Флаги командной строки
+
+| Флаг | Описание |
+| :--- | :--- |
+| `-R` | Рекурсивная проверка директорий |
+| `-summary` | Краткая сводка в конце вывода |
+| `-verbose` | Подробный вывод по каждому файлу |
+| `-strict` | Запрет дополнительных полей в манифестах |
+| `-output <format>` | Формат: text, json, tap, junit |
+| `-kubernetes-version <ver>` | Версия K8s для схем (например, `1.31.0`, `master`) |
+| `-schema-location <url>` | Путь к схемам с поддержкой шаблонов `{{ .ResourceKind }}` |
+| `-ignore-missing-schemas` | Пропуск ресурсов без схем |
+| `-skip-tls` | Отключение проверки TLS для удалённых схем |
+| `-cache <dir>` | Директория кэширования схем |
+
+### Сравнение с аналогами
+
+| Инструмент | Производительность | CRD | Офлайн | CI/CD форматы |
+| :--- | :--- | :--- | :--- | :--- |
+| **kubeconform** | Высокая (Go, параллелизм) | Да | Да | TAP, JUnit, JSON |
+| **kubeval** | Низкая | Нет | Нет | Text |
+| **kube-linter** | Средняя | Да | Да | SARIF, JSON |
 
 ---
 
@@ -12,31 +37,27 @@
 
 ### Офлайн-валидация
 
-**Загрузка схем для офлайн-работы:**
+**Подготовка локального кэша схем:**
 
 ```bash
-# Создание локального кэша схем
 mkdir -p ~/kubeconform-schemas
 kubeconform -list-schemas > schemas.txt
 
-# Загрузка схем (скрипт)
 while read schema; do
   curl -L "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/master/${schema}" \
     -o "~/kubeconform-schemas/${schema}"
 done < schemas.txt
 ```
 
-**Использование локальных схем:**
+**Использование:**
 
 ```bash
-kubeconform -schema-location ~/kubeconform-schemas/{{ .ResourceKind }}.yaml manifests/
+kubeconform -schema-location '~/kubeconform-schemas/{{ .ResourceKind }}.yaml' manifests/
 ```
-
----
 
 ### Валидация CRD
 
-**С указанием путей к схемам CRD:**
+**Удалённые схемы (datree CRDs catalog):**
 
 ```bash
 kubeconform \
@@ -45,7 +66,7 @@ kubeconform \
   manifests/
 ```
 
-**С локальными CRD схемами:**
+**Локальные CRD-схемы:**
 
 ```bash
 kubeconform \
@@ -54,23 +75,18 @@ kubeconform \
   manifests/
 ```
 
----
-
 ### Строгая валидация
 
-**Режим strict (запрет дополнительных полей):**
+**Режим strict (отклонение неизвестных полей):**
 
 ```bash
 kubeconform -strict deployment.yaml
 ```
 
-**С указанием версии Kubernetes:**
+**Против конкретной версии K8s:**
 
 ```bash
-# Валидация против конкретной версии K8s
 kubeconform -kubernetes-version 1.31.0 manifests/
-
-# Валидация против master-ветки
 kubeconform -kubernetes-version master manifests/
 ```
 
@@ -78,59 +94,17 @@ kubeconform -kubernetes-version master manifests/
 
 ## Additional Information
 
-### Флаги командной строки
-
-| Флаг | Описание |
-| :--- | :--- |
-| `-R` | Рекурсивная проверка директорий |
-| `-summary` | Вывод краткой сводки в конце |
-| `-verbose` | Подробный вывод по каждому файлу |
-| `-strict` | Строгий режим (запрет дополнительных полей) |
-| `-output <format>` | Формат вывода (text, json, tap, junit) |
-| `-kubernetes-version <ver>` | Версия Kubernetes для схем |
-| `-schema-location <url>` | Путь к схемам (поддержка шаблонов) |
-| `-ignore-missing-schemas` | Не ошибаться при отсутствии схем |
-| `-skip-tls` | Пропускать проверку TLS для удалённых схем |
-| `-cache <dir>` | Директория для кэширования схем |
-
----
-
-### Сравнение с аналогами
-
-| Инструмент | Производительность | CRD | Офлайн | CI/CD форматы |
-| :--- | :--- | :--- | :--- | :--- |
-| **kubeconform** | ⚡⚡⚡ | ✅ | ✅ | TAP, JUnit, JSON |
-| **kubeval** | ⚡ | ❌ | ❌ | Text |
-| **kube-linter** | ⚡⚡ | ✅ | ✅ | SARIF, JSON |
-
----
-
 ### Лучшие практики
 
-1. **Интегрируйте в pre-commit хуки** для раннего обнаружения ошибок
-2. **Используйте кэширование схем** для ускорения CI/CD
-3. **Валидируйте против конкретной версии** Kubernetes вашего кластера
-4. **Используйте strict режим** для предотвращения опечаток
-5. **Настройте CRD схемы** для кастомных ресурсов
-
----
-
-### Требования
-
-| Компонент | Минимальная версия | Примечание |
-| :--- | :--- | :--- |
-| Kubernetes схемы | 1.20+ | Поддержка до 1.32+ |
-| Go | 1.21+ | Для сборки из исходников |
-
----
+1. Интеграция в pre-commit хуки для раннего обнаружения ошибок.
+2. Кэширование схем для ускорения CI/CD.
+3. Валидация против версии K8s целевого кластера.
+4. Использование `-strict` для предотвращения опечаток.
+5. Настройка `-schema-location` для CRD.
 
 ### Связанные документы
 
-- **[Kustomize](../kustomize/kustomize_overview.md)** — валидация результатов kustomize
-- **[Helm](../Helm/helm_overview.md)** — валидация Helm-чартов
-- **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
-
-### Репозиторий и документация
-
-- [GitHub: yannh/kubeconform](https://github.com/yannh/kubeconform)
-- [Схемы Kubernetes JSON](https://github.com/yannh/kubernetes-json-schema)
+- [Главная kubeconform](./index.md)
+- [Использование kubeconform](./usage.md)
+- [Kustomize](../kustomize/kustomize_overview.md) — валидация результатов `kubectl kustomize`
+- [Helm](../../ToolsUtilities/Helm/helm_overview.md) — валидация отрендеренных чартов

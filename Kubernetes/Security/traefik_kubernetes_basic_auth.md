@@ -74,7 +74,7 @@ data:
 Создайте ресурс `Middleware` и укажите в нем созданный секрет.
 
 ```yaml
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: auth
@@ -90,9 +90,4 @@ spec:
 
 Хотя `stringData` упрощает создание секрета, важно помнить, что **для Traefik `basicAuth` всегда требуется хэшированный пароль**, а не пароль в открытом виде. Несоблюдение этого требования — частая причина ошибок при настройке.
 
-### Связанные темы
-
-* **[Authentication](./authentication.md)** — аутентификация в Kubernetes
-* **[Secret](./application_secrets_management.md)** — работа с секретами
-* **[Ingress Overview](../Networking/Ingress/overview.md)** — ingress-контроллеры
-* **[Traefik](../Networking/gateway_api/traefik.md)** — документация по Traefik
+Аутентификация компонентов — [Authentication](./authentication.md). Работа с секретами — [Secret](./application_secrets_management.md). Ingress-контроллеры — [Ingress Overview](../Networking/Ingress/overview.md). Документация по Traefik — [Traefik](../Networking/gateway_api/traefik.md).

@@ -10,7 +10,9 @@
 
 ---
 
-## Роли и ответственность
+## Базовые концепции
+
+### Роли и ответственность
 
 | Роль | Задача | Объекты |
 |------|--------|---------|
@@ -18,10 +20,6 @@
 | **Разработчик** | Запрос хранилища для приложения, использование в поде | PVC, Pod |
 
 **Принцип разделения:** Разработчик не знает деталей инфраструктуры (какой тип СХД, где физически расположен том). Администратор не знает требований конкретных приложений. Связующее звено — PVC.
-
----
-
-## Базовые концепции
 
 ### Проблема прямого управления томами
 
@@ -256,199 +254,12 @@ Kubernetes связывает PVC с PV по алгоритму:
 
 ---
 
-## StorageClass и динамическое выделение
-
-### Назначение StorageClass
-
-`StorageClass` описывает "классы" или "профили" хранилища с различными характеристиками:
-
-- **Тип хранилища** (SSD, HDD, сетевое)
-- **Provisioner** (CSI-драйвер для работы с конкретной СХД)
-- **Параметры выделения** (тип диска, зона доступности, шифрование)
-- **Политика возврата** (`Retain` или `Delete`)
-- **Режим привязки** (`Immediate` или `WaitForFirstConsumer`)
-
-### Ключевые параметры
-
-```yaml
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: standard-ssd
-provisioner: ebs.csi.aws.com        # CSI-драйвер
-parameters:
-  type: gp2                         # Параметры для драйвера
-reclaimPolicy: Delete               # Политика возврата
-volumeBindingMode: WaitForFirstConsumer  # Режим привязки
-allowVolumeExpansion: true          # Разрешить расширение
-```
-
-#### `volumeBindingMode`
-
-| Режим | Описание | Когда использовать |
-|-------|----------|-------------------|
-| `Immediate` | PV создаётся сразу при создании PVC | Простые однозонные кластеры |
-| `WaitForFirstConsumer` | PV создаётся после появления пода | Многозонные кластеры, локальные хранилища |
-
-> **Важно:** Для stateful-приложений в многозонных кластерах всегда используйте `WaitForFirstConsumer`.
-
----
-
 ## Практические сценарии
 
-### Пример: Динамическое выделение для Ceph RBD (локальный аринт)
-
-```yaml
-# 1. StorageClass
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ceph-ssd
-provisioner: rbd.csi.ceph.com
-parameters:
-  pool: replicapool
-  clusterID: rook-ceph
-  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
-reclaimPolicy: Retain
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
-
----
-# 2. PersistentVolumeClaim
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: my-app-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: ceph-ssd
-  resources:
-    requests:
-      storage: 10Gi
-
----
-# 3. Pod с PVC
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app-pod
-spec:
-  containers:
-    - name: my-app
-      image: nginx
-      volumeMounts:
-        - name: my-storage
-          mountPath: /usr/share/nginx/html
-  volumes:
-    - name: my-storage
-      persistentVolumeClaim:
-        claimName: my-app-pvc
-```
-
-### Пример: Статическое выделение для NFS
-
-```yaml
-# 1. PV (администратор)
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: nfs-logs-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteMany
-  persistentVolumeReclaimPolicy: Retain
-  nfs:
-    path: /var/k8s-logs
-    server: 192.168.1.100
-
----
-# 2. PVC (разработчик)
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: fluentd-logs-pvc
-  namespace: logging
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 10Gi
-
----
-# 3. Pod с PVC
-apiVersion: v1
-kind: Pod
-metadata:
-  name: fluentd
-  namespace: logging
-spec:
-  containers:
-    - name: fluentd
-      image: fluent/fluentd
-      volumeMounts:
-        - name: log-storage
-          mountPath: /fluentd/log
-  volumes:
-    - name: log-storage
-      persistentVolumeClaim:
-        claimName: fluentd-logs-pvc
-```
-
-### StatefulSet с PersistentVolume
-
-Для stateful-приложений (БД) используется **[StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md)**. Он автоматически создаёт уникальный PVC для каждого пода на основе `volumeClaimTemplates`.
-
-```yaml
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: postgres
-spec:
-  serviceName: postgres
-  replicas: 3
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    spec:
-      containers:
-        - name: postgres
-          image: postgres:15
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: standard-ssd
-        resources:
-          requests:
-            storage: 10Gi
-```
+Подробные примеры с полным манифестами (Ceph RBD, NFS, StatefulSet) вынесены в отдельный файл: [PV/PVC Practical Scenarios](./pv_and_pvc_scenarios.md).
 
 ---
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- **[CSI Overview](./CSI/csi_overview.md)** — базовая информация об архитектуре CSI
-- **[CSI Advanced](./CSI/csi_advanced.md)** — VolumeSnapshots, клонирование, расширение томов, топология
-- **[CSI Drivers Comparison](./CSI/csi_drivers_comparison.md)** — сравнение драйверов, диагностика
-- **[Local Path Provisioner](./local-path-provisioner.md)** — локальное хранилище на узлах
-- **[NFS Provisioner](./nfs-subdir-external-provisioner.md)** — динамическое выделение на NFS
-- **[Ceph RBD](./Ceph/ceph_csi_rbd_driver_setup.md)** — блочное хранилище Ceph
-- **[Ceph CephFS](./Ceph/ceph_csi_cephfs_driver_setup.md)** — файловая система Ceph
-
-### Официальная документация
-
-- [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
-- [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
-- [Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
+Подробнее о StorageClass: [StorageClass](./storageclass.md). Расширенные возможности CSI (snapshots, клонирование, топология): [CSI Advanced](./CSI/csi_advanced.md). Обзор CSI: [CSI Overview](./CSI/csi_overview.md). Официальная документация: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/), [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/).

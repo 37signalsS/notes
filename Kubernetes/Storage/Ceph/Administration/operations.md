@@ -1,10 +1,43 @@
 # Операции Ceph: управление компонентами
 
-## Определения
+## Definitions
 
 **Операции Ceph** — управление компонентами кластера: OSD, пулы, мониторы, MGR, MDS, PG.
 
-> **Навигация:** [Главная Administration](./index.md) | [Мониторинг](./monitoring.md)
+---
+
+## Basic Concepts
+
+### Иерархия компонентов
+
+Кластер Ceph управляется через централизованный CLI `ceph`, который взаимодействует с демонами в строгой иерархии:
+
+1. **MON** (мониторы) — хранят карту кластера, обеспечивают кворум
+2. **MGR** (менеджеры) — метрики, модули, внешние API
+3. **OSD** (демоны хранения) — хранение данных на дисках, репликация
+4. **MDS** (серверы метаданных) — метаданные для CephFS
+
+### Placement Groups (PG)
+
+PG — внутренняя абстракция для распределения объектов по OSD. Каждый пул делится на PG, PG распределяются по OSD через алгоритм CRUSH.
+
+> **Расчёт:** [ceph_placement_groups.md](../ceph_placement_groups.md)
+
+### Режимы здоровья
+
+| Статус | Описание |
+|--------|----------|
+| `HEALTH_OK` | Все компоненты работают штатно |
+| `HEALTH_WARN` | Есть предупреждения, работа продолжается |
+| `HEALTH_ERR` | Критические ошибки, требуется вмешательство |
+
+### Ключевые индикаторы `ceph status`
+
+| Компонент | Норма | Предупреждение | Критическое |
+|-----------|-------|----------------|-------------|
+| **MON** | `quorum node1,node2,node3` | `quorum 0,1` (не все) | Нет кворума |
+| **OSD** | `3 up, 3 in` | `2 up, 3 in` | `0 up` |
+| **PG** | `active+clean` | `recovering`, `degraded` | `down` |
 
 ---
 
@@ -22,11 +55,9 @@ ceph status
 # Детали здоровья
 ceph health detail
 
-# Только ошибки
+# Отключение предупреждений (временное)
 ceph health mute
 ```
-
-#### Анализ вывода ceph status
 
 Пример вывода команды `ceph status`:
 
@@ -50,26 +81,6 @@ $ ceph status
     pgs:     64 active+clean
 ```
 
-**Ключевые индикаторы:**
-
-**Мониторы (mon):**
-
-* `quorum node1,node2,node3` — все мониторы в кворуме (норма)
-* `quorum 0,1` — кворум есть, но не все мониторы (требуется проверка)
-
-**OSD:**
-
-* `3 up, 3 in` — все OSD работают (норма)
-* `2 up, 3 in` — один OSD недоступен (требуется восстановление)
-* `3 up, 2 in` — один OSD исключен из кластера
-
-**PG:**
-
-* `active+clean` — норма
-* `recovering` — идет восстановление
-* `degraded` — не все реплики доступны
-* `down` — критическая ошибка
-
 ---
 
 ### Управление OSD
@@ -81,13 +92,13 @@ ceph osd tree
 # Статус конкретного OSD
 ceph osd stat <osd_id>
 
-# Вывод OSD из кластера
+# Вывод OSD из кластера (данные реплицируются)
 ceph osd out <osd_id>
 
 # Возврат OSD в кластер
 ceph osd in <osd_id>
 
-# Удаление OSD (после замены диска)
+# Удаление OSD (после замены диска, данные удаляются)
 ceph osd purge <osd_id> --yes-i-really-mean-it
 ```
 
@@ -102,16 +113,18 @@ ceph osd pool ls
 # Информация о пуле
 ceph osd pool get <pool_name> all
 
-# Изменение количества PG
+# Изменение количества PG (увеличение)
 ceph osd pool set <pool_name> pg_num <new_pg_num>
 ceph osd pool set <pool_name> pgp_num <new_pgp_num>
 
 # Изменение размера репликации
 ceph osd pool set <pool_name> size 3
 
-# Удаление пула (осторожно!)
+# Удаление пула (требует подтверждения безопасности)
 ceph osd pool delete <pool_name> --yes-i-really-really-mean-it
 ```
+
+> **Важно:** Уменьшение `pg_num` возможно, но требует осторожности. См. [Расчет PG](../ceph_placement_groups.md).
 
 ---
 
@@ -142,8 +155,9 @@ ceph mgr dump
 # Список доступных модулей
 ceph mgr module ls
 
-# Включение модуля (например, dashboard)
+# Включение модуля (например, dashboard или prometheus)
 ceph mgr module enable dashboard
+ceph mgr module enable prometheus
 
 # Перезапуск MGR
 ceph mgr fail <mgr_name>
@@ -177,7 +191,6 @@ ceph pg stat
 
 # PG в неоптимальном состоянии
 ceph pg dump_stale
-ceph pg dump_undersed
 ceph pg dump_incomplete
 
 # Детали по конкретной PG
@@ -191,7 +204,4 @@ ceph pg repair <pg_id>
 
 ## Additional Information
 
-### Связанные темы
-
-* **[Обзор Ceph](../ceph_overview.md)** — общая информация о Ceph
-* **[Расчет PG](../ceph_placement_groups.md)** — расчет Placement Groups
+**Связанные темы:** [Обзор Ceph](../ceph_overview.md) · [Расчет PG](../ceph_placement_groups.md) · [Мониторинг Ceph](./monitoring.md) · [Главная Administration](./index.md) · [Настройка CephFS](../cephfs_setup_and_usage/practical_scenarios.md)

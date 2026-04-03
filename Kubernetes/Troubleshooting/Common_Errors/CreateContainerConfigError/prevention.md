@@ -1,21 +1,40 @@
 # CreateContainerConfigError: Профилактика
 
-## Prevention (Профилактика)
+## Definitions
 
-### 1. Валидация манифестов
+**Профилактика CreateContainerConfigError** — набор практик и инструментов, направленных на предотвращение ошибок конфигурации контейнеров до их попадания в кластер: валидация манифестов, управление зависимостями, CI/CD-проверки.
+
+## Basic Concepts
+
+### Стратегии предотвращения
+
+| Стратегия | Описание | Эффект |
+|-----------|----------|--------|
+| **Валидация манифестов** | Проверка синтаксиса и схем до apply | Исключает опечатки, неверные поля |
+| **Генерация ConfigMap/Secret** | Kustomize `configMapGenerator`, Helm | Ресурсы создаются вместе с Pod |
+| **Namespace consistency** | Все ресурсы деплоя в одном namespace | Исключает namespace mismatch |
+| **CI/CD gate** | Блокировка деплоя при ошибках валидации | Предотвращает попадание ошибок в кластер |
+| **Monitoring** | Алерты на CreateContainerConfigError | Раннее обнаружение |
+
+### Валидация манифестов
 
 ```bash
-# Проверка манифеста перед применением
+# Встроенная проверка Kubernetes
 kubectl apply -f deployment.yaml --dry-run=client
 
-# Проверка с помощью kubeval
-kubeval deployment.yaml
-
-# Проверка с помощью kubeconform
-kubeconform deployment.yaml
+# Валидация схем через kubeconform
+kubeconform -strict deployment.yaml
 ```
 
-### 2. Использование Kustomize
+kubeconform проверяет манифесты против JSON Schema API Kubernetes. Подробности: [kubeconform usage](../../../ToolsUtilities/kubeconform/usage.md).
+
+> **Примечание:** `kubeval` — deprecated. Рекомендуется [kubeconform](../../../ToolsUtilities/kubeconform/index.md) (выше производительность, поддержка CRD, активная разработка).
+
+## Practical Scenarios
+
+### Сценарий 1: Kustomize для управления зависимостями
+
+`configMapGenerator` и `secretGenerator` гарантируют, что ConfigMap/Secret создаются до Pod.
 
 ```yaml
 # kustomization.yaml
@@ -29,6 +48,7 @@ configMapGenerator:
 - name: app-config
   literals:
   - DATABASE_URL=postgres://db:5432/mydb
+  - LOG_LEVEL=info
 
 secretGenerator:
 - name: db-credentials
@@ -37,13 +57,17 @@ secretGenerator:
   - password=SuperSecret
 ```
 
-**Применение:**
+Применение:
 
 ```bash
 kubectl apply -k .
 ```
 
-### 3. Helm values validation
+Kustomize автоматически добавляет хеш в имя ConfigMap — при изменении содержимого создаётся новый ресурс, и Pod получает обновлённую конфигурацию через restart.
+
+### Сценарий 2: Helm values validation
+
+Валидация values.yaml предотвращает ошибки конфигурации до рендеринга шаблонов.
 
 ```yaml
 # values.yaml
@@ -58,18 +82,71 @@ secret:
     password: changeme
 ```
 
-## Best Practices
+Проверка рендеринга без применения в кластер:
 
-| Практика | Описание |
-|----------|----------|
-| **Используйте один namespace** | ConfigMap/Secret должны быть в том же namespace |
-| **Валидируйте манифесты** | `kubectl apply --dry-run=client` |
-| **Используйте Kustomize/Helm** | Управление зависимостями |
-| **Настройте RBAC** | Права для ServiceAccount |
-| **Мониторьте события** | Алерты на CreateContainerConfigError |
+```bash
+helm template release ./chart --values values.yaml | kubeconform -strict
+```
 
-## Ссылки
+### Сценарий 3: CI/CD pipeline с валидацией
 
-- [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/)
-- [Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
-- [Volumes](https://kubernetes.io/docs/concepts/storage/volumes/)
+Пример GitLab CI step, блокирующий деплой при ошибках манифестов:
+
+```yaml
+validate-manifests:
+  stage: validate
+  image: ghcr.io/yannh/kubeconform:latest
+  script:
+    - kubeconform -strict -summary -output tap manifests/**/*.yaml
+```
+
+При обнаружении ошибок пайплайн останавливается — ресурсы не попадают в кластер.
+
+### Сценарий 4: Monitoring и алерты
+
+Настройка алертов на CreateContainerConfigError для раннего обнаружения:
+
+```yaml
+# Пример PrometheusRule
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: create-container-config-error
+spec:
+  groups:
+  - name: kubernetes.rules
+    rules:
+    - alert: CreateContainerConfigError
+      expr: kube_pod_container_status_waiting_reason{reason="CreateContainerConfigError"} > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ $labels.pod }} в CreateContainerConfigError"
+        description: "Container не может запуститься: {{ $labels.reason }}"
+```
+
+### Сценарий 5: Best Practices checklist
+
+| Практика | Реализация |
+|----------|------------|
+| **Единый namespace** | ConfigMap/Secret/PVC в том же namespace, что и Pod |
+| **Валидация перед apply** | `kubectl apply --dry-run=client` + `kubeconform` |
+| **Kustomize/Helm** | Автоматическое управление зависимостями |
+| **RBAC** | Права `get/list` на ConfigMap/Secret для ServiceAccount пода |
+| **Мониторинг** | Алерты на `kube_pod_container_status_waiting_reason{reason="CreateContainerConfigError"}` |
+
+## Additional Information
+
+### Связь с другими практиками
+
+- Валидация Helm-чартов: [Helm security best practices](../../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
+- Валидация Kustomize: [kustomize overlays and patches](../../../ToolsUtilities/kustomize/kustomize_overlays_and_patches.md)
+
+### Связанные ресурсы
+
+- Определения: [definitions.md](./definitions.md)
+- Диагностика: [diagnostics.md](./diagnostics.md)
+- ConfigMap: [configmap_issues.md](./configmap_issues.md)
+- Secrets: [secret_issues.md](./secret_issues.md)
+- Обзор ошибки: [create_container_config_error.md](../create_container_config_error.md)

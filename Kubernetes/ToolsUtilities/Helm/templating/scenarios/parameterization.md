@@ -1,69 +1,35 @@
-# Вынос параметров в values.yaml
+# Parameterization with values.yaml
 
 ---
 
-## Определения
+## Definitions
 
-**Параметризация** — процесс замены жёстко заданных значений в манифестах на переменные, ссылающиеся на `values.yaml`.
-
-**Единый источник правды (SSoT)** — принцип, при котором `values.yaml` становится централизованным хранилищем всех изменяемых параметров чарта.
+**Параметризация** — замена жёстко заданных значений в манифестах на переменные из `values.yaml` и `.Values`. Подробнее об объекте `.Values`: [Встроенные объекты Helm](../objects.md). Управление values-файлами для окружений — в [Практические сценарии чартов](../../helm_chart_practical_scenarios.md).
 
 ---
 
-## Проблема жёстко заданных значений
+## Basic Concepts
 
-Рассмотрим типичную проблему до параметризации:
+### Проблема хардкода
 
-**deployment.yaml:**
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-        - name: app
-          ports:
-            - containerPort: 8080
-```
-
-**service.yaml:**
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: web
-spec:
-  type: ClusterIP
-  ports:
-    - port: 80
-      targetPort: 8080
-```
-
-**Проблемы:**
+Без параметризации одни и те же значения (имена, порты, репозитории) дублируются в Deployment, Service, Ingress. Изменение требует правки в каждом файле, что приводит к рассинхронизации.
 
 | Проблема | Риск |
 |----------|------|
-| Дублирование порта в Deployment и Service | При изменении нужно править оба файла |
-| Хардкод имени `web` | Невозможно использовать чарт для нескольких экземпляров |
-| Ручные правки в шаблонах | Ошибка в одном месте ломает развёртывание |
-| Отсутствие гибкости | Нельзя развернуть с разными параметрами без изменения шаблонов |
+| Дублирование порта в Deployment и Service | Рассинхронизация при изменении |
+| Хардкод имён | Невозможно несколько экземпляров |
+| Ручные правки шаблонов | Ошибка ломает развёртывание |
+| Отсутствие гибкости | Нельзя развернуть с другими параметрами |
 
----
+### Принцип SSoT для values.yaml
 
-## Решение: вынос в values.yaml
+`values.yaml` становится единственным источником всех изменяемых параметров. Шаблоны только ссылаются на `.Values`, не содержат жёстких значений.
 
-### Шаг 1: Создание values.yaml
+Структура группировки:
 
 ```yaml
-# values.yaml — единый источник правды
 app:
-  name: kosms-zero-to-hero
+  name: myapp
   replicas: 3
   port: 8080
   domain: app.example.com
@@ -81,7 +47,11 @@ ingress:
   enabled: true
 ```
 
-### Шаг 2: Параметризация Deployment
+---
+
+## Practical Scenarios
+
+### Параметризация Deployment
 
 **templates/deployment.yaml:**
 
@@ -89,7 +59,7 @@ ingress:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.app.name }}-web
+  name: {{ include "myapp.fullname" . }}
   labels:
     app: {{ .Values.app.name }}
 spec:
@@ -109,7 +79,7 @@ spec:
             - containerPort: {{ .Values.app.port }}
 ```
 
-### Шаг 3: Параметризация Service
+### Параметризация Service (синхронизация с Deployment)
 
 **templates/service.yaml:**
 
@@ -117,19 +87,21 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.app.name }}-service
+  name: {{ include "myapp.fullname" . }}
 spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
-      targetPort: {{ .Values.app.port }}  # Синхронизировано с Deployment
+      targetPort: {{ .Values.app.port }}
       protocol: TCP
       name: http
   selector:
     app: {{ .Values.app.name }}
 ```
 
-### Шаг 4: Параметризация Ingress
+`targetPort` ссылается на `.Values.app.port` — тот же источник, что и `containerPort` в Deployment. Рассинхронизация невозможна.
+
+### Параметризация Ingress с условным включением
 
 **templates/ingress.yaml:**
 
@@ -138,7 +110,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Values.app.name }}-ingress
+  name: {{ include "myapp.fullname" . }}
 spec:
   rules:
     - host: {{ .Values.app.domain }}
@@ -148,101 +120,25 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ .Values.app.name }}-service
+                name: {{ include "myapp.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}
 ```
 
----
+### Локальные переменные для уменьшения дублирования
 
-## Преимущества параметризации
-
-| Аспект | До | После |
-|--------|-----|-------|
-| Изменение порта | Правка в 2+ файлах | Изменение в одном месте |
-| Развёртывание в разных окружениях | Копирование шаблонов | Разные values-файлы |
-| Риск ошибки | Высокий | Минимальный |
-| Поддержка | Сложная | Централизованная |
-
----
-
-## Практика: проверка шаблонов
-
-### Локальный рендер
-
-```bash
-# Проверка итоговых манифестов
-helm template myrelease .
-
-# Рендер с кастомными значениями
-helm template myrelease . --set app.port=9090
-
-# Рендер с альтернативным values-файлом
-helm template myrelease . -f values-production.yaml
-```
-
-### Dry-run с кластером
-
-```bash
-# Проверка без применения изменений (показывает итоговые манифесты)
-helm install --dry-run --debug myrelease .
-
-# Проверка существующего релиза перед обновлением
-helm upgrade --dry-run --debug myrelease .
-```
-
-### Валидация чарта
-
-```bash
-# Линтинг чарта (проверка синтаксиса и структуры)
-helm lint .
-
-# Линтинг с альтернативными values
-helm lint . -f values-production.yaml
-```
-
-### Проверка с незакоммиченными изменениями
-
-При разработке шаблонов удобно использовать `helm template` с флагом, позволяющим рендерить манифесты с локальными изменениями без коммита в Git:
-
-```bash
-# Рендер с незакоммиченными изменениями
-helm template myrelease . --debug
-```
-
-Это позволяет итеративно проверять изменения шаблонов без необходимости коммитить каждое изменение.
-
----
-
-## Лучшие практики
-
-| Практика | Описание |
-|----------|----------|
-| **Единый источник правды** | Все изменяемые параметры выносятся в `values.yaml` |
-| **Группировка параметров** | Логическая группировка в секции (`app`, `image`, `service`, `ingress`) |
-| **Синхронизация через переменные** | Один шаблон используется в нескольких файлах (например, порт в Deployment и Service) |
-| **Локальные переменные** | Уменьшение дублирования в пределах одного файла шаблона |
-| **Итеративная проверка** | `helm template` + `helm lint` перед применением в кластер |
-| **Dry-run перед deploy** | `helm upgrade --dry-run --debug` для финальной проверки |
-
----
-
-## Локальные переменные в шаблонах
-
-Для упрощения повторяющихся конструкций используйте локальные переменные:
-
-**templates/ingress.yaml:**
+В пределах одного файла шаблона длинные конструкции выносятся в переменные:
 
 ```yaml
 {{- $domain := .Values.app.domain }}
 {{- $port := .Values.app.port }}
-{{- $serviceName := printf "%s-service" .Values.app.name }}
+{{- $fullName := include "myapp.fullname" . }}
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Values.app.name }}-ingress
+  name: {{ $fullName }}
 spec:
   rules:
     - host: {{ $domain }}
@@ -252,24 +148,16 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ $serviceName }}
+                name: {{ $fullName }}
                 port:
                   number: {{ $port }}
 ```
 
-**Преимущества локальных переменных:**
+Локальные переменные действуют **только в пределах одного файла**. Для межфайлового доступа используются именованные шаблоны (`include`).
 
-- Уменьшение дублирования длинных конструкций
-- Улучшение читаемости шаблона
-- Упрощение поддержки (изменение в одном месте)
+### Использование .Chart.Name
 
-**Ограничение:** действуют только в пределах одного файла шаблона.
-
----
-
-## Встроенная переменная .Chart.Name
-
-Для динамической генерации имён на основе названия чарта:
+Для динамической генерации имён на основе чарта:
 
 ```yaml
 metadata:
@@ -278,13 +166,61 @@ metadata:
     app.kubernetes.io/name: {{ .Chart.Name }}
 ```
 
-При имени чарта `myapp` ресурс получит имя `myapp-web`.
+При имени чарта `myapp` ресурс получит имя `myapp-web`. Подробнее: [Встроенные объекты Helm](../objects.md).
 
 ---
 
-## Дополнительные ссылки
+## Validation and Testing
 
-- [Структура Helm-чарта](../../helm_chart_structure.md) — организация values.yaml
-- [Встроенные объекты](../objects.md) — .Values, .Chart, .Release
-- [Синтаксис шаблонов](../syntax.md) — базовый синтаксис Go templates
-- [Условная логика](./conditionals.md) — if/else, with
+### Локальный рендер
+
+```bash
+# Итоговые манифесты
+helm template myrelease .
+
+# С кастомными значениями
+helm template myrelease . --set app.port=9090
+
+# С альтернативным values-файлом
+helm template myrelease . -f values-production.yaml
+```
+
+### Dry-run с кластером
+
+```bash
+# Проверка без применения
+helm install --dry-run --debug myrelease .
+
+# Проверка перед обновлением
+helm upgrade --dry-run --debug myrelease .
+```
+
+### Линтинг
+
+```bash
+# Проверка синтаксиса и структуры
+helm lint .
+
+# С альтернативными values
+helm lint . -f values-production.yaml
+```
+
+---
+
+## Best Practices
+
+| Практика | Описание |
+|----------|----------|
+| **SSoT** | Все изменяемые параметры — в `values.yaml` |
+| **Группировка** | Логические секции: `app`, `image`, `service`, `ingress` |
+| **Синхронизация** | Один `.Values` используется в Deployment, Service, Ingress |
+| **Локальные переменные** | Уменьшение дублирования внутри одного файла |
+| **Именованные шаблоны** | Для межфайловых конструкций (имена, метки) — [Именованные шаблоны](../_helpers.md) |
+| **Валидация** | `helm template` + `helm lint` перед `helm install` |
+| **Dry-run** | `helm upgrade --dry-run --debug` для финальной проверки |
+
+---
+
+## Additional Information
+
+Объект `.Values` — в [Встроенные объекты Helm](../objects.md). Управление values-файлами для окружений — в [Практические сценарии чартов](../../helm_chart_practical_scenarios.md). Условная логика с параметрами — в [Условная логика](./conditionals.md).

@@ -1,8 +1,51 @@
 # Let's Encrypt: Практические сценарии
 
-## 1. Базовый ClusterIssuer с HTTP-01
+## Definitions
 
-**Цель:** Получить публичный сертификат для Ingress.
+**ClusterIssuer** — общекластерный ресурс cert-manager, представляющий ACME-аккаунт Let's Encrypt. Доступен из любого namespace.
+
+**Certificate** — запрос на выпуск сертификата. Cert-manager автоматически создаёт Order, проходит Challenges и обновляет Secret.
+
+> **Базовые концепции:** [index.md](../index.md) | **CRD-спецификация:** [definitions.md](../../definitions.md)
+
+---
+
+## Basic Concepts
+
+### Структура ClusterIssuer
+
+```
+ClusterIssuer
+├── acme.server          # ACME-сервер (production/staging)
+├── acme.email           # Уведомления об истечении
+├── acme.privateKeySecretRef  # ACME Account Key (хранить в backup!)
+└── acme.solvers         # Методы проверки владения (http01, dns01)
+```
+
+### Параметры Certificate
+
+| Поле | Значение (45 дней) | Значение (90 дней, legacy) |
+| :--- | :--- | :--- |
+| `duration` | `1080h` (45 дней) | `2160h` (90 дней) |
+| `renewBefore` | `168h` (7 дней) | `360h` (15 дней) |
+
+> **Важно:** Let's Encrypt переходит на 45-дневные сертификаты в 2026. cert-manager 1.15+ с поддержкой ARI обновит `renewBefore` автоматически. Подробнее: [letsencrypt_concepts](./letsencrypt_concepts.md).
+
+### Сравнение solvers для сценариев
+
+| Сценарий | Solver | Wildcard | Требование |
+| :--- | :--- | :--- | :--- |
+| Публичный Ingress | HTTP-01 | ❌ | Доступность порта 80 извне |
+| Wildcard / нет HTTP | DNS-01 | ✅ | API-ключ DNS-провайдера |
+| Внутренний сервис | DNS-01 | ✅ | DNS webhook |
+
+---
+
+## Practical Scenarios
+
+### Сценарий 1: ClusterIssuer с HTTP-01
+
+**Применение:** Публичный сертификат для Ingress (без wildcard).
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -21,16 +64,7 @@ spec:
           ingressClassName: nginx
 ```
 
-### Параметры
-
-| Поле | Описание |
-| :--- | :--- |
-| `server` | ACME-сервер Let's Encrypt |
-| `email` | Уведомления об истечении, восстановлении |
-| `privateKeySecretRef` | Secret для хранения ACME-ключа |
-| `ingressClassName` | Ingress Controller для solver |
-
-### Запрос сертификата
+**Запрос сертификата:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -40,8 +74,8 @@ metadata:
   namespace: default
 spec:
   secretName: example-com-tls
-  duration: 2160h  # 90 дней
-  renewBefore: 360h  # 15 дней
+  duration: 1080h       # 45 дней (2026+)
+  renewBefore: 168h     # 7 дней до истечения
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
@@ -50,13 +84,11 @@ spec:
     - www.example.com
 ```
 
-## 2. DNS-01 solver (Cloudflare)
+### Сценарий 2: DNS-01 (Cloudflare) — Wildcard
 
-**Цель:** Получить wildcard-сертификат или когда нет публичного HTTP.
+**Применение:** Wildcard-сертификат `*.example.com`.
 
-### Подготовка
-
-**1. Создать API-ключ Cloudflare в Secret:**
+**1. Создать Secret с API-ключом:**
 
 ```bash
 kubectl create secret generic cloudflare-api-key \
@@ -86,7 +118,7 @@ spec:
             key: api-key
 ```
 
-### Запрос wildcard-сертификата
+**3. Запрос wildcard-сертификата:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -96,17 +128,19 @@ metadata:
   namespace: default
 spec:
   secretName: example-wildcard-tls
+  duration: 1080h       # 45 дней
+  renewBefore: 168h     # 7 дней
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
     - example.com
-    - "*.example.com"  # Wildcard
+    - "*.example.com"
 ```
 
-## 3. DNS-01 solver (Yandex Cloud DNS)
+### Сценарий 3: DNS-01 (Yandex Cloud DNS)
 
-**Цель:** Использовать Yandex Cloud DNS для проверок.
+**Применение:** Wildcard для доменов в Yandex Cloud.
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -133,9 +167,9 @@ spec:
 
 > **Требуется:** cert-manager Webhook для Yandex Cloud DNS (отдельный Helm-чарт).
 
-## 4. Staging для тестирования
+### Сценарий 4: Staging для тестирования
 
-**Цель:** Протестировать конфигурацию без лимитов production.
+**Применение:** Отладка конфигурации без риска превысить лимиты production.
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -154,11 +188,11 @@ spec:
           ingressClassName: nginx
 ```
 
-> **Важно:** После успешного тестирования переключитесь на production, создав отдельный `ClusterIssuer`.
+> **Важно:** Создайте отдельный `ClusterIssuer` для staging, не переиспользуйте production. Staging-сертификаты не доверяются браузерами.
 
-## 5. Несколько Issuer для разных доменов
+### Сценарий 5: Несколько Issuer (разделение окружений)
 
-**Цель:** Разделить сертификаты для разных доменов/окружений.
+**Применение:** Раздельные production/staging Issuer для разных доменов.
 
 ```yaml
 # Production Issuer
@@ -177,7 +211,7 @@ spec:
         ingress:
           ingressClassName: nginx
 ---
-# Staging Issuer для тестов
+# Staging Issuer
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -194,7 +228,7 @@ spec:
           ingressClassName: nginx
 ```
 
-### Использование
+**Использование:**
 
 ```yaml
 # Production Certificate
@@ -224,8 +258,18 @@ spec:
     - test.example.com
 ```
 
-## Связанные документы
+---
 
-- **[Основные концепции](./letsencrypt_concepts.md)** — определения, ACME solvers, окружения
-- **[Дополнительные темы](./letsencrypt_advanced.md)** — диагностика, ошибки, best practices
-- **[cert_manager](../../definitions.md)** — обзор cert-manager
+## Additional Information
+
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| HTTP-01 ClusterIssuer | **10** | cert-manager docs, стандартный паттерн |
+| DNS-01 Cloudflare | **10** | Подтверждено в cert-manager 1.13+ |
+| Yandex Cloud DNS webhook | **8** | Community webhook, может меняться |
+| Staging configuration | **10** | Официальное тестовое окружение LE |
+| 45-дневные duration | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
+
+**Связанные документы:** [углублённые концепции](./letsencrypt_concepts.md), [диагностика](./letsencrypt_advanced.md), [cert_manager CRD](../../definitions.md).

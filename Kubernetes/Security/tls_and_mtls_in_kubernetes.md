@@ -161,9 +161,4 @@ openssl verify -CAfile ca.crt kubelet.crt
 * Общая информация о протоколе и процессе "рукопожатия" доступна в заметке **[Протокол TLS](../../Networking/Protocols/tls.md)**.
 * Более сложный пример создания CA и управления сертификатами можно найти в **[управлении CA с помощью OpenSSL](../../Security/Tools/openssl_ca/single_tier/overview.md)**.
 
-### Связанные темы
-
-* **[PKI Overview](../../Security/Concepts/pki_overview.md)** — инфраструктура открытых ключей
-* **[cert-manager](../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md)** — автоматизация сертификатов в Kubernetes
-* **[Authentication](./authentication.md)** — аутентификация в Kubernetes
-* **[Sealed Secrets](./sealed_secrets_overview.md)** — хранение сертификатов и ключей
+Инфраструктура открытых ключей — [PKI Overview](../../Security/Concepts/pki_overview.md). Аутентификация компонентов — [Authentication](./authentication.md). Для хранения сертификатов и ключей в Git используйте [Sealed Secrets](./sealed_secrets_overview.md).

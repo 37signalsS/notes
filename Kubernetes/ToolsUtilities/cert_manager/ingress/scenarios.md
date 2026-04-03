@@ -1,8 +1,41 @@
-# Сценарии интеграции Cert-manager с Ingress
+# Cert-manager: Сценарии интеграции с Ingress
 
-## Сценарий 1: Базовый Ingress с HTTP-01
+## Определения
 
-**Цель:** Автоматически получить сертификат для домена.
+**Сценарии интеграции** — практические примеры использования cert-manager с Ingress для автоматического получения и продления TLS-сертификатов. Каждый сценарий демонстрирует конкретный паттерн конфигурации.
+
+> **См. также:** [Обзор интеграции](./overview.md) — концепции, аннотации, поток работы, диагностика.
+
+---
+
+## Основные концепции
+
+Все сценарии используют один и тот же принцип:
+
+```
+Ingress с аннотацией cert-manager
+       ↓
+Автоматическое создание Certificate
+       ↓
+ACME-проверка (HTTP-01 / DNS-01)
+       ↓
+Сертификат в Secret → Ingress использует для TLS
+```
+
+**Типы сценариев:**
+
+| Тип | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| Через аннотации | cert-manager автоматически создаёт Certificate | Быстрая настройка, стандартные случаи |
+| Прямой Certificate | Ручное создание Certificate без аннотаций | Тонкий контроль параметров, не-Ingress сценарии |
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Базовый Ingress с HTTP-01
+
+**Цель:** Автоматически получить сертификат для одного домена.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -40,9 +73,9 @@ spec:
 
 ---
 
-## Сценарий 2: Несколько доменов в одном Ingress
+### Сценарий 2: Несколько доменов в одном Ingress (SAN)
 
-**Цель:** Один сертификат для нескольких доменов (SAN).
+**Цель:** Один сертификат для нескольких доменов.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -95,7 +128,7 @@ spec:
 
 ---
 
-## Сценарий 3: Временный сертификат до ACME-проверки
+### Сценарий 3: Временный сертификат до ACME-проверки
 
 **Цель:** Избежать ошибок TLS во время ACME-проверки.
 
@@ -133,7 +166,7 @@ spec:
 
 ---
 
-## Сценарий 4: DNS-01 для wildcard-доменов
+### Сценарий 4: DNS-01 для wildcard-доменов
 
 **Цель:** Wildcard-сертификат `*.example.com`.
 
@@ -175,13 +208,13 @@ spec:
               number: 80
 ```
 
-> **Важно:** Требуется настроенный DNS-01 solver в ClusterIssuer.
+> **Важно:** Требуется настроенный DNS-01 solver в ClusterIssuer. HTTP-01 не поддерживает wildcard-сертификаты.
 
 ---
 
-## Сценарий 5: Прямое создание Certificate (без аннотаций)
+### Сценарий 5: Прямое создание Certificate (без аннотаций)
 
-**Цель:** Больший контроль над параметрами сертификата.
+**Цель:** Полный контроль над параметрами сертификата.
 
 ```yaml
 # 1. Certificate ресурс
@@ -192,8 +225,8 @@ metadata:
   namespace: default
 spec:
   secretName: my-domain-tls
-  duration: 2160h  # 90 дней
-  renewBefore: 360h  # 15 дней
+  duration: 2160h       # 90 дней
+  renewBefore: 360h     # 15 дней
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
@@ -203,7 +236,7 @@ spec:
   privateKey:
     algorithm: ECDSA
     size: 256
-    encoding: PKCS8
+    encoding: PKCS8     # Обязательно для Java-приложений
 ---
 # 2. Ingress без аннотаций cert-manager
 apiVersion: networking.k8s.io/v1
@@ -217,7 +250,7 @@ spec:
   - hosts:
     - my-domain.com
     - www.my-domain.com
-    secretName: my-domain-tls  # Ссылка на Secret из Certificate
+    secretName: my-domain-tls
   rules:
   - host: my-domain.com
     http:
@@ -240,19 +273,23 @@ spec:
 
 ## Дополнительная информация
 
-### Частые ошибки
+### Диагностика
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `Waiting for HTTP-01 challenge` | Ingress недоступен извне | Проверить LoadBalancer, firewall |
-| `Secret not found` | Certificate ещё не создан | Подождать 1-2 минуты, проверить логи |
-| `Issuer not found` | Неправильный namespace/имя | Проверить `issuerRef` или аннотацию |
-| `Rate limit exceeded` | Лимит Let's Encrypt | Использовать staging, подождать |
+Диагностика cert-manager описана в [Обзоре интеграции](./overview.md#диагностика).
 
-### Надёжность информации
+Краткие команды для проверки сценариев:
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Ingress аннотации | **10** | Официальная документация cert-manager.io |
-| Временные сертификаты | **9** | Подтверждено в релизах 1.10+ |
-| Wildcard через DNS-01 | **10** | Стандартный паттерн ACME |
+```bash
+# Проверить статус Certificate, созданного через аннотации
+kubectl get certificate -n <namespace>
+
+# Посмотреть связанный Challenge (ACME-проверка)
+kubectl get challenge -n <namespace>
+```
+
+### Связанные документы
+
+- **[Обзор интеграции](./overview.md)** — концепции, аннотации, диагностика, частые ошибки
+- **[Cert-manager: Определения](../definitions.md)** — CRD, Issuer, ACME Solvers
+- **[Let's Encrypt](../LetsEncrypt/index.md)** — публичные сертификаты через ACME
+- **[Private CA](../Private_CA/index.md)** — собственные центры сертификации

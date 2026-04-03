@@ -210,7 +210,7 @@ spec:
 
 > **См. также:** [`vpa_detailed.md`](../../Autoscaling/vpa_detailed.md)
 
-#### 3. In-Place Pod Resize (Kubernetes 1.33+ beta)
+#### 3. In-Place Pod Resize (Kubernetes 1.35+ stable)
 
 Изменение ресурсов без пересоздания пода:
 
@@ -261,8 +261,4 @@ kubectl patch pod <pod-name> -p '{"spec":{"containers":[{"name":"app","resources
 
 > **Примечание:** Значения зависят от конкретной нагрузки и требуют эмпирической настройки.
 
-### Ссылки
-
-- [Kubernetes Memory Management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
-- [Debug Memory Leaks](https://kubernetes.io/docs/tasks/debug/debug-application/debug-memory-leak/)
-- [JVM in Containers](https://www.oracle.com/java/technologies/javase/8u-release-notes.html#JDK-8u191)
+Подробнее: [Kubernetes Memory Management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/), [Debug Memory Leaks](https://kubernetes.io/docs/tasks/debug/debug-application/debug-memory-leak/), [JVM in Containers](https://www.oracle.com/java/technologies/javase/8u-release-notes.html#JDK-8u191).

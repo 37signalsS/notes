@@ -1,8 +1,8 @@
-# Calico HostEndpoint и GlobalNetworkPolicy
+# Calico HostEndpoint and GlobalNetworkPolicy
 
 > Основная документация: [NetworkPolicy](../../network_policies.md)
 
-## Определения
+## Definitions
 
 **HostEndpoint** — ресурс Calico, представляющий один или несколько сетевых интерфейсов на узле Kubernetes. Позволяет применять политики к трафику узла до достижения уровня подов, создавая **периметральный файрвол** кластера.
 
@@ -23,7 +23,7 @@
 
 > **Важно:** При создании `HostEndpoint` для интерфейса Calico немедленно применяет правило **"запретить весь трафик"**. Требуется осторожность: сначала создайте разрешающие правила, затем применяйте `HostEndpoint`.
 
-### Failsafe Ports (Защита от блокировки)
+### Failsafe Ports
 
 Механизм `Failsafe Ports` оставляет открытыми критически важные порты независимо от политик:
 
@@ -70,21 +70,16 @@ spec:
 
 ---
 
-## Файлы
+## Practical Scenarios
 
-| Файл | Описание |
-|------|----------|
-| [scenarios.md](./scenarios.md) | Практические сценарии: периметральный файрвол, системный трафик, логирование |
-| [operations.md](./operations.md) | Troubleshooting, проверка состояния, eBPF, совместимость |
+Практические сценарии описаны в отдельном файле: [Сценарии Calico](./scenarios.md) — периметральный файрвол, системный трафик, логирование.
+
+Операции обслуживания: [Операции Calico](./operations.md) — troubleshooting, проверка состояния, eBPF, совместимость.
 
 ---
 
 ## Additional Information
 
-### Связанные темы
+### Связанные ресурсы
 
-- Стандартные NetworkPolicy: [Сетевая Изоляция и NetworkPolicy](../../Networking/Network/network_policy.md)
-- CNI и kube-proxy: [CNI и kube-proxy: навигатор](../../Networking/Network/cni_kube_proxy_roles.md)
-- Сетевая модель: [Обзор сети Kubernetes](../../Networking/Network/network_overview.md)
-- **Внешние файрволы:** [Интеграция внешних файрволов с Kubernetes](../external_firewall_integration.md)
-- Официальная документация: [Calico Documentation](https://docs.tigera.io/calico/latest/)
+Стандартные NetworkPolicy: [Сетевая изоляция и NetworkPolicy](../../../Networking/Network/NetworkPolicy/definitions.md). Роли CNI и kube-proxy: [CNI и kube-proxy](../../../Networking/Network/CNI/definitions.md). Внешние файрволы: [Интеграция внешних файрволов](../../external_firewall_integration.md). Официальная документация: [Calico Documentation](https://docs.tigera.io/calico/latest/).

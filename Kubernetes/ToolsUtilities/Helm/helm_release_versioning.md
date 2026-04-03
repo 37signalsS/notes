@@ -190,10 +190,4 @@ diff rev5.yaml rev6.yaml
 - **Хранение values**: Держите `values` файлы под версионным контролем
 - **Тестирование**: Проверяйте обновления в staging перед production
 
----
-
-## Дополнительная информация
-
-- [Обзор Helm](./helm_overview.md) — общие концепции, жизненный цикл релиза
-- [Структура Helm-чарта](./helm_chart_structure.md) — Chart.yaml, зависимости, Chart.lock
-- [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) — различия в хранении истории релизов
+См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Сравнение v2/v3](./helm_v2_vs_v3.md).

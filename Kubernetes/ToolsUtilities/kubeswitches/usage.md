@@ -1,10 +1,29 @@
-# Использование kubeswitches
+# kubeswitches usage
 
-## Определения
+## Definitions
 
-**Использование kubeswitches** — практические сценарии установки, настройки и переключения между контекстами Kubernetes.
+**kubeswitches usage** — практические сценарии установки, настройки и переключения между контекстами Kubernetes.
 
-> **Навигация:** [Главная kubeswitches](./index.md) | [Операции](./operations.md)
+---
+
+## Basic Concepts
+
+### Архитектура работы
+
+kubeswitches работает по принципу копирования файлов:
+
+1. Каждый кластер хранится в `~/.kube/contexts/<name>/config`
+2. При переключении файл копируется в `~/.kube/config`
+3. Стандартные утилиты (`kubectl`, `helm`) работают с `~/.kube/config` без изменений
+
+### Необходимые компоненты
+
+| Компонент | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| kubectl | 1.20+ | Для работы с кластерами |
+| Bash/Zsh | 4.0+ | Для скриптов интеграции |
+
+> **Настройка окружения** описана в [index.md](./index.md).
 
 ---
 
@@ -12,28 +31,20 @@
 
 ### Установка
 
-**macOS (Homebrew):**
-
-```bash
-# Если доступен в homebrew
-brew install kubeswitches
-```
+> ⚠️ **Примечание:** kubeswitches — малоизвестный проект. URL и команды могут требовать верификации.
 
 **Ручная установка (Linux/macOS):**
 
 ```bash
-# Загрузка бинарного файла (замените URL на актуальный)
-curl -LO https://github.com/your-org/kubeswitches/releases/latest/download/kubeswitches-linux-amd64
-
-# Установка
-chmod +x kubeswitches-linux-amd64
-sudo mv kubeswitches-linux-amd64 /usr/local/bin/kubeswitches
+curl -LO <актуальный_URL_бинарного_файла>
+chmod +x kubeswitches
+sudo mv kubeswitches /usr/local/bin/
 ```
 
 **Сборка из исходников:**
 
 ```bash
-git clone https://github.com/your-org/kubeswitches.git
+git clone <актуальный_URL_репозитория>
 cd kubeswitches
 go build -o kubeswitches ./cmd/kubeswitches
 sudo mv kubeswitches /usr/local/bin/
@@ -43,94 +54,48 @@ sudo mv kubeswitches /usr/local/bin/
 
 ### Первоначальная настройка
 
-**Шаг 1: Создание директории для контекстов**
+После установки:
 
 ```bash
+# Создание директории для контекстов
 mkdir -p ~/.kube/contexts
-```
 
-**Шаг 2: Настройка переменной окружения**
-
-```bash
-echo 'export KUBESWITCH_CONTEXT_DIR="$HOME/.kube/contexts"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-**Шаг 3: Резервное копирование существующего kubeconfig**
-
-```bash
+# Резервное копирование существующего kubeconfig
 cp ~/.kube/config ~/.kube/config.backup
-```
 
-**Шаг 4: Создание первого контекста**
-
-```bash
-# Создание директории для dev-кластера
+# Создание первого контекста
 mkdir -p ~/.kube/contexts/dev
-
-# Копирование текущей конфигурации
 cp ~/.kube/config ~/.kube/contexts/dev/config
 ```
+
+Переменная окружения и структура каталогов описаны в [index.md](./index.md).
 
 ---
 
 ### Основные команды
 
-**Список доступных контекстов:**
+> ⚠️ Команды приведены на основе общей документации проекта и требуют верификации.
 
-```bash
-kubeswitches list
-```
-
-**Пример вывода:**
-
-```
-Available contexts:
-  - dev
-  - stage
-  - prod
-```
-
-**Переключение контекста:**
-
-```bash
-kubeswitches set dev
-```
-
-**Проверка текущего контекста:**
-
-```bash
-kubectl config current-context
-```
-
-**Просмотр конфигурации:**
-
-```bash
-kubectl config view
-```
+| Команда | Описание |
+| :--- | :--- |
+| `kubeswitches list` | Список доступных контекстов |
+| `kubeswitches set <name>` | Переключение на контекст |
+| `kubectl config current-context` | Проверка текущего контекста |
+| `kubectl config view` | Просмотр конфигурации |
 
 ---
 
 ### Добавление нового кластера
 
-**Шаг 1: Получение kubeconfig нового кластера**
-
 ```bash
-# Пример: получение от администратора кластера
-# или экспорт из существующей конфигурации
+# Экспорт конфигурации из существующего kubeconfig
 kubectl config view --raw --minify > new-cluster-config.yaml
-```
 
-**Шаг 2: Создание контекста в kubeswitches**
-
-```bash
+# Создание контекста
 mkdir -p ~/.kube/contexts/new-cluster
 cp new-cluster-config.yaml ~/.kube/contexts/new-cluster/config
-```
 
-**Шаг 3: Переключение на новый контекст**
-
-```bash
+# Переключение
 kubeswitches set new-cluster
 ```
 
@@ -141,7 +106,6 @@ kubeswitches set new-cluster
 **Bash/Zsh алиасы:**
 
 ```bash
-# Добавление в ~/.bashrc или ~/.zshrc
 alias ks='kubeswitches'
 alias ksl='kubeswitches list'
 alias kss='kubeswitches set'
@@ -153,17 +117,9 @@ ksw() {
 }
 ```
 
-**Использование:**
-
-```bash
-ksw dev    # Переключение на dev
-ksw prod   # Переключение на prod
-```
-
 **Отображение текущего контекста в prompt:**
 
 ```bash
-# Добавление в ~/.bashrc или ~/.zshrc
 parse_kube_context() {
   if [ -f ~/.kube/config ]; then
     local context=$(kubectl config current-context 2>/dev/null)
@@ -175,60 +131,20 @@ parse_kube_context() {
 
 # Для bash
 PS1='\u@\h:\w$(parse_kube_context)$ '
-
-# Для zsh с oh-my-zsh
-# Использовать плагин kubectx
 ```
 
 ---
 
 ### Синхронизация с cloud-провайдерами
 
-**GKE (Google Kubernetes Engine):**
-
-```bash
-# Получение credentials для кластера
-gcloud container clusters get-credentials cluster-name --zone zone --project project
-
-# Сохранение как отдельный контекст
-mkdir -p ~/.kube/contexts/gke-prod
-cp ~/.kube/config ~/.kube/contexts/gke-prod/config
-```
-
-**Yandex Cloud Managed Kubernetes:**
-
-```bash
-# Обновление kubeconfig
-yc managed-kubernetes cluster get-credentials --name cluster-name --folder-id folder-id
-
-# Сохранение как отдельный контекст
-mkdir -p ~/.kube/contexts/yandex-prod
-cp ~/.kube/config ~/.kube/contexts/yandex-prod/config
-```
-
-**Локальный кластер (kubeadm/k3s/minikube):**
-
-```bash
-# kubeconfig обычно находится в ~/.kube/config
-# Для переключения между кластерами используйте контексты
-
-# Сохранение как отдельный контекст
-mkdir -p ~/.kube/contexts/local-prod
-cp ~/.kube/config ~/.kube/contexts/local-prod/config
-```
+Процедура обновления credentials описана в [operations.md](./operations.md).
 
 ---
 
 ## Additional Information
 
-### Требования
+### Связанные документы
 
-| Компонент | Минимальная версия | Примечание |
-| :--- | :--- | :--- |
-| kubectl | 1.20+ | Для работы с кластерами |
-| Bash/Zsh | 4.0+ | Для скриптов интеграции |
-
-### Связанные темы
-
-- **[kubectl](../Base/kubectl.md)** — основы работы с kubectl
-- **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — структура и использование kubeconfig
+- **[kubeswitches index](./index.md)** — основные понятия и настройка окружения
+- **[Операции](./operations.md)** — безопасность и обновление credentials
+- **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — структура kubeconfig

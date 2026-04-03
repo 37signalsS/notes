@@ -204,13 +204,6 @@ spec:
 
 ## Дополнительная информация
 
-### Связанные темы
+Базовые концепции хранения: [PersistentVolume и PVC](./pv_and_pvc.md). Контроллер для stateful-приложений: [StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md). Альтернатива для RWX: [NFS Provisioner](./nfs-subdir-external-provisioner.md).
 
-- **[PersistentVolume и PVC](./pv_and_pvc.md)** — базовые концепции
-- **[StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md)** — контроллер для stateful-приложений
-- **[NFS Provisioner](./nfs-subdir-external-provisioner.md)** — альтернатива для RWX
-
-### Ресурсы
-
-- [Официальный репозиторий](https://github.com/rancher/local-path-provisioner)
-- [Документация Rancher](https://rancher.com/docs/)
+Официальный репозиторий: [rancher/local-path-provisioner](https://github.com/rancher/local-path-provisioner). Документация: [Rancher Docs](https://rancher.com/docs/).

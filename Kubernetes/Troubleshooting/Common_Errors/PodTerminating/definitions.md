@@ -2,59 +2,100 @@
 
 ## Определения
 
-**`Terminating`** — статус пода, означающий, что под был удален (получил `deletionTimestamp`), но не может завершить работу и освободить ресурсы.
+**`Terminating`** — статус пода, означающий, что объект получил `deletionTimestamp`, но не может завершить работу и освободить ресурсы. Под находится в процессе корректного завершения (graceful shutdown) или заблокирован external условиями.
 
-## Основные концепции
+**`deletionTimestamp`** — метка времени, устанавливаемая API server при получении команды на удаление объекта. После установки объект переходит в режим удаления.
 
-### Workflow удаления пода
+**`terminationGracePeriodSeconds`** — период ожидания (по умолчанию 30s), в течение которого контейнеры получают SIGTERM для корректного завершения до принудительного SIGKILL.
+
+**Finalizer** — механизм защиты от удаления, предотвращающий удаление объекта из etcd до выполнения определённых действий (освобождение volumes, cleanup внешних ресурсов).
+
+---
+
+## Базовые концепции
+
+### Процесс удаления пода
 
 ```
 kubectl delete pod
     ↓
-API устанавливает deletionTimestamp
-    ↓
-Pod переходит в Terminating
+API устанавливает deletionTimestamp → pod в Terminating
     ↓
 kubelet получает уведомление
     ↓
-Остановка контейнеров (SIGTERM → SIGKILL)
+preStop hook (если определён)
+    ↓
+SIGTERM → graceful shutdown
+    ↓
+[ожидание terminationGracePeriodSeconds]
+    ↓
+SIGKILL (если не завершился)
     ↓
 Размонтирование volumes
     ↓
-Удаление записи из etcd
+Удаление finalizers
     ↓
-Pod удален
+Удаление записи из etcd
 ```
 
-**Время ожидания:**
+Полный процесс graceful shutdown: [Graceful Shutdown](./graceful_shutdown.md).
 
-- `terminationGracePeriodSeconds` (по умолчанию 30s) — время на graceful shutdown
-- После — SIGKILL и принудительное удаление
-
-### Finalizers
-
-**Finalizer** — это механизм, который предотвращает удаление объекта из etcd до тех пор, пока не будут выполнены определенные действия.
-
-**Стандартные finalizers:**
+### Стандартные finalizers
 
 | Finalizer | Описание |
 |-----------|----------|
 | `kubernetes.io/pod-protection` | Защита пода от удаления |
-| `foregroundDeletion` | Ожидание удаления зависимостей |
-| `external-attacher/csi-driver` | CSI volume attachment |
-| `kubernetes.io/pvc-protection` | Защита PVC |
+| `foregroundDeletion` | Ожидание удаления зависимостей (Deployment → ReplicaSet → Pod) |
+| `external-attacher/<csi-driver>` | CSI volume attachment |
+| `kubernetes.io/pvc-protection` | Защита PVC от удаления |
 
-**Проверка finalizers:**
+Проверка: `kubectl get pod <name> -o jsonpath='{.metadata.finalizers}'`
+
+Подробно: [Finalizer и CSI проблемы](./finalizer_issues.md).
+
+### Основные причины зависания в Terminating
+
+| Причина | Частота | Описание | Ссылка |
+|---------|---------|----------|--------|
+| **Volume unmount** | ~50% | Volume не может размонтироваться (CSI driver, node unavailable) | [Volume Unmount](./volume_unmount_issues.md) |
+| **Finalizers** | ~30% | External controller не удаляет finalizer | [Finalizer Issues](./finalizer_issues.md) |
+| **Node unavailable** | ~15% | Узел недоступен, kubelet не отвечает | [Node Unavailable](./node_unavailable_issues.md) |
+| **PDB blocking** | ~5% | PodDisruptionBudget не позволяет удалить pod | [PDB Blocking](./pdb_blocking.md) |
+
+---
+
+## Практические сценарии
+
+### Быстрая диагностика
 
 ```bash
+# 1. Проверка статуса и deletionTimestamp
+kubectl get pod <pod-name> -o wide
+
+# 2. Детальная информация (Events + Finalizers)
+kubectl describe pod <pod-name>
+
+# 3. Проверка finalizers
 kubectl get pod <pod-name> -o jsonpath='{.metadata.finalizers}'
+
+# 4. Поиск всех terminating pods
+kubectl get pods --field-selector status.phase=Running | grep Terminating
 ```
 
-### Причины зависания в Terminating
+Полный чек-лист диагностики: [Diagnostics](./diagnostics.md).
 
-| Причина | % случаев | Описание |
-|---------|-----------|----------|
-| **Volume unmount** | ~50% | Volume не может размонтироваться |
-| **Finalizers** | ~30% | Finalizer не удаляется |
-| **Node unavailable** | ~15% | Узел недоступен, kubelet не отвечает |
-| **API server issues** | ~5% | Проблемы с control plane |
+---
+
+## Дополнительная информация
+
+**Связанные разделы:**
+
+- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — фазы, условия, graceful shutdown
+- [Обзор ошибок Troubleshooting](../overview.md) — классификация ошибок Kubernetes
+- [Обслуживание узлов](../../../Operations/node_maintenance.md) — drain, eviction, PDB
+- [Node Unavailable](./node_unavailable_issues.md) — диагностика недоступности узла
+- [Volume Unmount](./volume_unmount_issues.md) — проблемы размонтирования volumes
+- [Finalizer Issues](./finalizer_issues.md) — удаление finalizers, CSI driver
+- [Graceful Shutdown](./graceful_shutdown.md) — настройка terminationGracePeriodSeconds, preStop hooks
+- [PDB Blocking](./pdb_blocking.md) — PodDisruptionBudget блокирует удаление
+- [Diagnostics](./diagnostics.md) — пошаговый чек-лист диагностики

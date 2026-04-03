@@ -1,26 +1,56 @@
 # Интеграция Cert-manager с Gateway API: Практические сценарии
 
-## Сценарий 1: Базовый Gateway с TLS Termination
+## Определения
 
-**Цель:** Настроить Gateway с TLS-сертификатом.
+**TLS Termination** — режим Gateway, при котором TLS-трафик расшифровывается на шлюзе и передаётся бэкенду в открытом виде.
 
-### Шаг 1: Установка Gateway API CRD
+**TLS Passthrough** — режим, при котором TLS-трафик передаётся напрямую бэкенду без расшифровки на шлюзе (требуется `TLSRoute`, статус: `v1alpha2`).
 
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml
+**Wildcard-сертификат** — единый сертификат для всех поддоменов (например, `*.example.com`). Требует DNS-01 solver.
+
+## Базовые концепции
+
+### Подготовительные шаги
+
+Перед созданием сценариев необходимо:
+
+1. Установить CRD Gateway API
+2. Установить cert-manager с флагом `--enable-gateway-api`
+3. Создать ClusterIssuer (ACME Let's Encrypt)
+
+Подробные инструкции: [Установка cert-manager](../../installation.md), [Определения cert-manager](../../definitions.md#интеграция-с-gateway-api).
+
+### Архитектура интеграции
+
+```
+Certificate (cert-manager)
+    ↓ создаёт
+Secret (tls secret)
+    ↓ используется
+Gateway.certificateRefs
+    ↓ обрабатывает
+Gateway Controller (Traefik, Envoy Gateway, Cilium)
 ```
 
-### Шаг 2: Установка cert-manager с поддержкой Gateway API
+### Типы сценариев
 
-```bash
-helm install cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --create-namespace \
-  --set installCRDs=true \
-  --set "extraArgs={--enable-gateway-api=true}"
-```
+| Сценарий | Режим TLS | Solver | Примечание |
+| :--- | :--- | :--- | :--- |
+| Базовый Gateway | Terminate | HTTP-01 / DNS-01 | Один домен, один сертификат |
+| Несколько слушателей | Terminate | HTTP-01 / DNS-01 | Несколько доменов, отдельные сертификаты |
+| Wildcard | Terminate | DNS-01 | Один сертификат на все поддомены |
+| TLS Passthrough | Passthrough | Не требуется | Бэкенд управляет TLS самостоятельно |
+| HTTP-to-HTTPS Redirect | Terminate + HTTP | — | Редирект через HTTPRoute filter |
 
-### Шаг 3: Создание Certificate
+---
+
+## Практические сценарии
+
+### Сценарий 1: Базовый Gateway с TLS Termination
+
+**Цель:** Настроить Gateway с TLS-сертификатом для одного домена.
+
+**Certificate:**
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -39,7 +69,7 @@ spec:
   renewBefore: 360h
 ```
 
-### Шаг 4: Создание Gateway
+**Gateway:**
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -65,9 +95,9 @@ spec:
 
 ---
 
-## Сценарий 2: Несколько HTTPS-слушателей
+### Сценарий 2: Несколько HTTPS-слушателей
 
-**Цель:** Один Gateway с несколькими доменами и сертификатами.
+**Цель:** Один Gateway с несколькими доменами и отдельными сертификатами.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -107,7 +137,7 @@ spec:
       from: Same
 ```
 
-**Сертификаты:**
+**Сертификаты** (по одному на домен):
 
 ```yaml
 # main.example.com
@@ -155,7 +185,7 @@ spec:
 
 ---
 
-## Сценарий 3: Wildcard-сертификат для Gateway
+### Сценарий 3: Wildcard-сертификат для Gateway
 
 **Цель:** Один wildcard-сертификат для всех поддоменов.
 
@@ -194,11 +224,11 @@ spec:
       from: All
 ```
 
-> **Важно:** Требуется DNS-01 solver в ClusterIssuer для wildcard.
+> **Важно:** Требуется DNS-01 solver в ClusterIssuer. Подробности: [ACME Solvers](../../definitions.md#acme-solvers-проверки-владения).
 
 ---
 
-## Сценарий 4: TLS Passthrough
+### Сценарий 4: TLS Passthrough
 
 **Цель:** Передать TLS-трафик напрямую бэкенду (mTLS).
 
@@ -221,7 +251,7 @@ spec:
       from: Same
 ```
 
-**HTTPRoute для passthrough:**
+**TLSRoute для passthrough:**
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1alpha2
@@ -238,9 +268,11 @@ spec:
       port: 8443
 ```
 
+> **Примечание:** cert-manager не участвует в терминации — бэкенд самостоятельно управляет сертификатами. Подробности: [Дополнительные темы](./advanced_topics.md#особенности-tls-passthrough).
+
 ---
 
-## Сценарий 5: HTTP-to-HTTPS Redirect
+### Сценарий 5: HTTP-to-HTTPS Redirect
 
 **Цель:** Автоматический редирект с HTTP на HTTPS.
 
@@ -289,7 +321,16 @@ spec:
 
 ---
 
-## Ссылки
+## Дополнительная информация
 
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
-- [Дополнительная информация](./advanced_topics.md) — диагностика и особенности
+### Диагностика
+
+Проверка статусов ресурсов и логи cert-manager: [Дополнительные темы](./advanced_topics.md#диагностика-интеграции).
+
+### Troubleshooting
+
+Частые ошибки и решения: [Дополнительные темы](./advanced_topics.md#частые-ошибки).
+
+### Определения и концепции
+
+Базовые понятия и отличия от Ingress: [Определения и концепции](./definitions_and_concepts.md).

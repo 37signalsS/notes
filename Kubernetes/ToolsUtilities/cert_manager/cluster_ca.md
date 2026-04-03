@@ -1,48 +1,60 @@
 # Использование CA кластера для внутренних сертификатов
 
-## Определения
+## Definitions
 
-**CA кластера** — корневой центр сертификации Kubernetes, который подписывает сертификаты всех компонентов кластера (kubelet, kube-apiserver, etcd, webhook).
+**CA кластера** — корневой центр сертификации Kubernetes, расположенный в `/etc/kubernetes/pki/ca.crt`. Подписывает сертификаты компонентов кластера (kubelet, kube-apiserver, etcd, admission webhooks).
 
-**Сценарий использования:** Внутренние сервисы кластера (Ingress, mTLS), которым нужно доверять со стороны компонентов Kubernetes.
+**Применение:** Выпуск внутренних TLS-сертификатов для Ingress, mTLS и сервисов, которым должно доверять инфраструктурное ПО кластера.
+
+**Связанные темы:**
+- Приватный CA (self-signed): [Private_CA/scenarios.md](./Private_CA/scenarios.md)
+- Troubleshooting cert-manager: [Administration/troubleshooting.md](./Administration/troubleshooting.md)
+- Операции приватного CA (ротация, проверка): [Private_CA/operations.md](./Private_CA/operations.md)
 
 ---
 
-## Основные концепции
+## Basic Concepts
 
-### Отличия от приватного CA
+### Отличия от приватного CA (self-signed)
 
-| Аспект | CA кластера | Приватный CA |
+| Аспект | CA кластера | Приватный CA (self-signed) |
 | :--- | :--- | :--- |
-| **Источник доверия** | `/etc/kubernetes/pki/ca.crt` | Self-signed в кластере |
-| **Доступ** | Требуется доступ к master-узлам | Только kubectl API |
-| **Доверие** | Все компоненты кластера | Только явно настроенные сервисы |
-| **Жизненный цикл** | Зависит от кластера | Независимый |
-| **Сложность** | Средняя | Низкая |
+| **Источник доверия** | `/etc/kubernetes/pki/ca.crt` | Self-signed Issuer в cert-manager |
+| **Доступ** | Требуется доступ к control plane | Только kubectl API |
+| **Доверие** | Автоматическое для компонентов кластера | Только явно настроенные сервисы |
+| **Жизненный цикл** | Зависит от кластера (совпадает с kubelet) | Независимый, управляется вручную |
+| **Риски** | Компрометация = полный доступ к кластеру | Изолированный риск |
+| **Сложность** | Средняя (требует доступа к master) | Низкая |
 
 ### Архитектура
 
 ```
-/etc/kubernetes/pki/ca.crt
+/etc/kubernetes/pki/ca.crt + ca.key
          ↓
-Secret (tls) в cert-manager
+Secret (Opaque) в namespace cert-manager
          ↓
-CA Issuer
+CA Issuer / ClusterIssuer
          ↓
-Сертификаты сервисов
+Сертификаты сервисов (Ingress, mTLS, API)
 ```
+
+### Критичные требования безопасности
+
+- **Хранение `ca.key`:** Ключ CA кластера даёт возможность подписывать любые сертификаты в кластере. Использовать только в защищённом хранилище (например, encrypted backup).
+- **RBAC:** Ограничить доступ к Secret с ключом через `resourceNames` и аудит.
+- **Изоляция:** Для production-кластеров рекомендуется отдельный приватный CA вместо использования CA кластера.
 
 ---
 
-## Практические сценарии
+## Practical Scenarios
 
-### Сценарий 1: Базовый CA кластера
+### Сценарий 1: Базовый выпуск сертификата для Ingress
 
 **Цель:** Выпустить сертификат для внутреннего Ingress, подписанный CA кластера.
 
 #### Шаг 1: Создание Secret с CA кластера
 
-> **Требование:** Доступ к master-узлу и файлам в `/etc/kubernetes/pki/`.
+> **Требование:** Доступ к control plane узлу и файлам `/etc/kubernetes/pki/`.
 
 ```bash
 kubectl create secret tls kubernetes-ca-secret \
@@ -52,12 +64,11 @@ kubectl create secret tls kubernetes-ca-secret \
 ```
 
 **Важно:**
+- Операция требует прав cluster-admin
+- Secret создаётся в namespace `cert-manager` (для ClusterIssuer) или в namespace Issuer
+- Ограничить доступ к Secret через RBAC
 
-- Операция требует прав администратора кластера
-- Ключ CA (`ca.key`) должен храниться в секрете
-- Рекомендуется ограничить доступ к Secret через RBAC
-
-#### Шаг 2: Создание Issuer на основе CA
+#### Шаг 2: Создание Issuer
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -70,10 +81,7 @@ spec:
     secretName: kubernetes-ca-secret
 ```
 
-**Issuer vs ClusterIssuer:**
-
-- `Issuer` — доступен только в том же namespace (cert-manager)
-- `ClusterIssuer` — доступен из всех namespace (рекомендуется для общих сервисов)
+> **Issuer vs ClusterIssuer:** `Issuer` работает только в своём namespace. Для общекластерного доступа использовать `ClusterIssuer` — [Сценарий 2](#сценарий-2-clusterissuer-для-общекластерного-доступа).
 
 #### Шаг 3: Запрос сертификата
 
@@ -85,8 +93,8 @@ metadata:
   namespace: monitoring
 spec:
   secretName: internal-services-secret
-  duration: 2160h  # 90 дней
-  renewBefore: 360h  # 15 дней
+  duration: 2160h          # 90 дней
+  renewBefore: 360h        # 15 дней
   issuerRef:
     name: kubernetes-ca-issuer
     kind: Issuer
@@ -110,20 +118,20 @@ metadata:
 spec:
   ingressClassName: system-ingress
   tls:
-  - hosts:
-    - netdata.k8s.local
-    secretName: internal-services-secret
+    - hosts:
+        - netdata.k8s.local
+      secretName: internal-services-secret
   rules:
-  - host: netdata.k8s.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: netdata
-            port:
-              name: http
+    - host: netdata.k8s.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: netdata
+                port:
+                  name: http
 ```
 
 ---
@@ -152,14 +160,16 @@ metadata:
   namespace: production
 spec:
   secretName: my-app-tls
-  duration: 8760h
-  renewBefore: 720h
+  duration: 8760h           # 1 год
+  renewBefore: 720h         # 30 дней
   issuerRef:
     name: kubernetes-cluster-ca
     kind: ClusterIssuer
   dnsNames:
     - my-app.production.svc.cluster.local
 ```
+
+> **Примечание:** Аналогичный сценарий для self-signed CA описан в [Private_CA/scenarios.md](./Private_CA/scenarios.md).
 
 ---
 
@@ -206,7 +216,7 @@ spec:
     - client auth
 ```
 
-**Использование в Pod:**
+**Монтирование в Pod:**
 
 ```yaml
 apiVersion: v1
@@ -215,54 +225,58 @@ metadata:
   name: backend
 spec:
   containers:
-  - name: backend
-    image: my-backend
-    volumeMounts:
-    - name: tls
-      mountPath: /etc/tls
-      readOnly: true
+    - name: backend
+      image: my-backend
+      volumeMounts:
+        - name: tls
+          mountPath: /etc/tls
+          readOnly: true
   volumes:
-  - name: tls
-    secret:
-      secretName: backend-server-tls
+    - name: tls
+      secret:
+        secretName: backend-server-tls
 ```
 
 ---
 
-## Дополнительная информация
+## Additional Information
 
 ### Проверка доверия
 
 ```bash
 # Получить CA кластера из Secret
-kubectl get secret kubernetes-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d > cluster-ca.crt
+kubectl get secret kubernetes-ca-secret -n cert-manager \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > cluster-ca.crt
 
 # Проверить сертификат сервиса
-openssl verify -CAfile cluster-ca.crt <(kubectl get secret internal-services-secret -n monitoring -o jsonpath='{.data.tls\.crt}' | base64 -d)
+openssl verify -CAfile cluster-ca.crt \
+  <(kubectl get secret internal-services-secret -n monitoring \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d)
 ```
+
+> Детальная проверка цепочки доверия и кодировки ключей — в [Private_CA/operations.md](./Private_CA/operations.md).
 
 ### Безопасность
 
 | Риск | Митигация |
 | :--- | :--- |
-| Утечка ключа CA | Ограничить RBAC на Secret, аудит доступа |
-| Компрометация сервиса | Использовать отдельные Certificate для каждого сервиса |
-| Отсутствие ротации | Настроить `duration` и `renewBefore` |
-
-### Надёжность информации
-
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Доступ к CA кластера | **10** | Стандартная практика Kubernetes |
-| mTLS сценарии | **9** | Подтверждено документацией cert-manager |
-| RBAC для Secret | **10** | Стандарт Kubernetes |
+| Утечка `ca.key` | Ограничить RBAC на Secret, аудит доступа, encrypted backup |
+| Компрометация сервиса | Отдельный Certificate для каждого сервиса |
+| Отсутствие ротации | Настроить `duration` и `renewBefore`, мониторинг истечения |
 
 ### Частые ошибки
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `Permission denied` к `/etc/kubernetes/pki/` | Недостаточно прав | Выполнять от имени пользователя с доступом к master |
-| Certificate `Pending` | Secret не найден | Проверить namespace Secret и Issuer |
-| Ошибка доверия в приложении | CA не добавлен в trust store | Импортировать `ca.crt` из Secret в приложение |
+| `Permission denied` к `/etc/kubernetes/pki/` | Недостаточно прав | Выполнять на control plane с правами root/cluster-admin |
+| Certificate `Pending` | Secret не найден или Issuer недоступен | Проверить namespace Secret и статус Issuer (`kubectl describe issuer`) |
+| Ошибка доверия в приложении | CA не добавлен в trust store приложения | Импортировать `ca.crt` из Secret в приложение |
+| Конфликт с kube-apiserver cert | CA кластера истёк при kubeadm upgrade | Выполнить ротацию CA кластера (документация kubeadm) |
 
----
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| Доступ к CA кластера | **10** | Стандартная практика Kubernetes (kubeadm) |
+| mTLS сценарии | **9** | Подтверждено документацией cert-manager |
+| RBAC для Secret | **10** | Стандарт Kubernetes RBAC |

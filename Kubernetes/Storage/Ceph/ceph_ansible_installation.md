@@ -1,224 +1,142 @@
-# Установка кластера Ceph: ceph-ansible и cephadm
+# Установка кластера Ceph: ceph-ansible
 
 ## Определения
 
-**`ceph-ansible`** — набор ролей и плейбуков Ansible для автоматизации развертывания Ceph. **Устарел**: поддержка прекращена после Ceph Octopus (14.x). Не рекомендуется для новых развертываний.
+**`ceph-ansible`** — набор ролей Ansible для автоматизации развертывания Ceph. **Устарел**: поддержка прекращена после Ceph Octopus (15.x). Не рекомендуется для новых развертываний.
 
-**`cephadm`** — современный инструмент для развертывания Ceph в контейнерах (Docker/Podman). Официально поддерживается для всех актуальных версий (Reef 18.x, Squid 19.x+).
-
-> **Важно**: Информация о ceph-ansible историческая. Для новых развертываний используйте [`cephadm`](#современный-способ-установки-cephadm).
+> **⚠️ Важно**: ceph-ansible используется только для поддержки легаси-кластеров. Для новых развертываний используйте [cephadm](https://docs.ceph.com/en/latest/cephadm/). Данный файл содержит историческую информацию.
+>
+> **⚠️ EOL**: Ceph Nautilus (14.x) — EOL с июля 2021. Luminous (12.x) — EOL с 2020. Octopus (15.x) — EOL с 2023. Актуальные версии: Reef (18.x), Squid (19.x). Обзор всех версий — в [ceph_overview.md](ceph_overview.md).
 
 ## Основные концепции
 
-`ceph-ansible` управляется через переменные, которые определяют ключевые параметры кластера. Понимание этих параметров необходимо для создания стабильной и производительной конфигурации.
+### Ключевые переменные конфигурации
 
-* **Сетевые настройки (`public_network`, `cluster_network`)**:
-  * `public_network`: Сеть, через которую клиенты подключаются к кластеру Ceph.
-  * `cluster_network`: Сеть для внутреннего обмена данными между компонентами Ceph (репликация OSD, heartbeat'ы).
-  * **Рекомендация**: Для production-кластеров крайне рекомендуется использовать для `cluster_network` отдельную физическую сеть (минимум 10 Гбит/с), чтобы трафик репликации не влиял на производительность клиентских операций.
+`ceph-ansible` управляется через переменные в `group_vars/all.yml`, определяющие параметры кластера.
+
+* **Сетевые настройки**:
+  - `public_network`: Сеть для клиентских подключений к Ceph
+  - `cluster_network`: Сеть для внутреннего трафика (репликация OSD, heartbeat'ы)
+  - **Рекомендация**: для production использовать отдельную физическую сеть 10+ Гбит/с под `cluster_network`
 
 * **Тип хранилища OSD (`osd_objectstore`)**:
-  * `bluestore`: Современный, производительный и рекомендуемый тип хранилища. Напрямую управляет диском.
-  * `filestore`: Устаревший вариант, который использовал файловую систему (например, XFS) под данными Ceph.
+  - `bluestore`: Современный, рекомендуемый тип. Напрямую управляет диском
+  - `filestore`: Устаревший вариант через файловую систему (XFS)
 
 * **Сценарий развертывания OSD (`osd_scenario`)**:
-  * `lvm`: Наиболее гибкий и рекомендуемый сценарий. Ansible автоматически находит диски и создает на них LVM-тома для OSD. Он может автоматически разделять данные и журналы (WAL/DB) на разные типы дисков (например, данные на HDD, журналы на SSD).
-  * `collocated` и `non-collocated`: Устаревшие сценарии, где `collocated` размещал данные и журнал на одном диске, а `non-collocated` — на разных. `lvm` полностью заменяет их функциональность.
+  - `lvm`: Рекомендуемый. Автоматически находит диски и создает LVM-тома
+  - `collocated` / `non-collocated`: Устаревшие сценарии, заменены на `lvm`
 
-* **Ключевые параметры кластера (`ceph_conf_overrides`)**:
-  * `osd_pool_default_size`: Фактор репликации по умолчанию. Значение `3` означает, что каждый объект будет храниться в трех копиях, что является минимумом для обеспечения отказоустойчивости.
-  * `osd_pool_default_min_size`: Минимальное количество "живых" реплик для продолжения операций записи. Значение `2` при `size=3` позволяет кластеру пережить отказ одного OSD без перехода в режим "только чтение".
-  * `osd_pool_default_pg_num`, `osd_pool_default_pgp_num`: Количество Placement Groups (PG) по умолчанию. Это один из важнейших параметров для равномерного распределения данных по кластеру. `pgp_num` всегда должен быть равен `pg_num`.
+* **Параметры кластера (`ceph_conf_overrides`)**:
+  - `osd_pool_default_size`: Фактор репликации (минимум 3 для отказоустойчивости)
+  - `osd_pool_default_min_size`: Минимум "живых" реплик для записи (обычно 2 при size=3)
+  - `osd_pool_default_pg_num` / `osd_pool_default_pgp_num`: Количество PG для равномерного распределения данных. `pgp_num` всегда равен `pg_num`. Расчет см. в [ceph_placement_groups.md](ceph_placement_groups.md)
 
-* **Синхронизация времени (`ntp_service`)**: Ceph крайне чувствителен к расхождению времени между узлами. Расхождение более чем на 0.05 секунды может привести к проблемам с кворумом мониторов и состоянием OSD. `ceph-ansible` автоматически настраивает службу синхронизации времени (NTPD или Chrony).
+* **Синхронизация времени (`ntp_service`)**: Ceph чувствителен к расхождению времени (>0.05 сек вызывает проблемы с кворумом). Автоматически настраивается через NTPD или Chrony.
 
-### Конфигурация переменных кластера Ceph
+### Пример конфигурации group_vars/all.yml
 
-Основные переменные для настройки кластера находятся в файле `group_vars/all.yml` (или аналогичном, в зависимости от версии ceph-ansible и выбранного сценария).
+```yaml
+# Источник пакетов
+ceph_origin: repository
+ceph_repository: community
+ceph_stable_release: octopus  # ⚠️ EOL с 2023. Только для легаси. Актуальные: reef (18.x), squid (19.x)
 
-1. **Источник пакетов Ceph (`ceph_origin`, `ceph_repository`):**
+# Сетевые настройки
+public_network: 172.21.0.0/24
+cluster_network: 172.21.0.0/24  # Для production выделить отдельную сеть 10+ Гбит/с
 
-    ```yaml
-    ceph_origin: repository
-    ceph_repository: community # или redhat, если используете Red Hat
-    ```
+# Синхронизация времени
+ntp_service: chronyd  # chronyd предпочтительнее ntpd
 
-    * `repository`: Установка из репозитория.
-    * `community`: Основной репозиторий на `download.ceph.com`.
-    * `redhat`: Проприетарный репозиторий от Red Hat (для Enterprise).
+# Тип хранилища и сценарий
+osd_objectstore: bluestore
+osd_scenario: lvm
+# devices: ['/dev/sdb', '/dev/sdc']  # Опционально: явное указание дисков
 
-2. **Версия Ceph (`ceph_stable_release`):**
+# Параметры кластера
+ceph_conf_overrides:
+  global:
+    osd_pool_default_pg_num: 32
+    osd_pool_default_pgp_num: 32
+    osd_journal_size: 1024  # MB, корректировать под размер дисков
+    osd_pool_default_size: 3
+    osd_pool_default_min_size: 2
+```
 
-    ```yaml
-    ceph_stable_release: luminous # Например, версия 12.2, последняя LTS
-    ```
+### Соответствие веток ceph-ansible и версий Ceph
 
-    Рекомендуется использовать LTS релизы.
-
-3. **Сетевые настройки (`public_network`, `cluster_network`):**
-
-    ```yaml
-    public_network: 172.21.0.0/24
-    cluster_network: 172.21.0.0/24
-    ```
-
-    * `public_network`: Сеть, с которой кластер Ceph принимает клиентские подключения.
-    * `cluster_network`: Сеть для обмена информацией между компонентами Ceph.
-    * **Важно:** Для больших production-кластеров `cluster_network` рекомендуется выделять отдельную локальную сеть 10 Гбит/с, используемую только Ceph.
-
-4. **Синхронизация времени:**
-    Ceph очень чувствителен к точности времени на серверах. Отклонение более чем на полсекунды вызывает предупреждения. Ansible сценарий запустит демон для синхронизации времени (например, NTPD).
-
-    ```yaml
-    # Пример конфигурации
-    ntp_service: ntpd # Или chronyd
-    ```
-
-5. **Тип хранилища OSD (`osd_objectstore`):**
-
-    ```yaml
-    osd_objectstore: bluestore # Рекомендуется
-    ```
-
-    * `bluestore`: Современный и рекомендуемый тип хранилища.
-    * `filestore`: Более старый вариант, признан устаревшим.
-
-6. **Сценарий развертывания OSD (`osd_scenario`):**
-
-    ```yaml
-    osd_scenario: lvm # Рекомендуется
-    ```
-
-    * `lvm`: Современный сценарий, при котором для хранения данных создается отдельный LVM том. Ansible автоматически определяет доступные диски и их тип.
-        * Если есть HDD и SSD, действует как `non-collocated`: данные на HDD, журналы на SSD.
-        * Можно указать конкретные диски с помощью переменной `devices: ['/dev/sdb', '/dev/sdc']`.
-    * `collocated`: Создает на отдельном диске два раздела (данные + журналы). Признан устаревшим.
-    * `non-collocated`: Создает разделы для данных и журналов на разных дисках (например, данные на HDD, журналы на SSD). Признан устаревшим.
-
-7. **Настройки кластера Ceph (`ceph_conf_overrides`):**
-    Это блок для тонкой настройки Ceph. Переменные в этом блоке будут применены в конфигурации Ceph.
-
-    ```yaml
-    ceph_conf_overrides:
-      global:
-        osd_pool_default_pg_num: 32
-        osd_pool_default_pgp_num: 32
-        osd_journal_size: 1024 # MB, по умолчанию 5GB. Уменьшено для дисков по 10GB.
-        osd_pool_default_size: 3 # Количество реплик данных
-        osd_pool_default_min_size: 2 # Минимальное количество живых реплик
-    ```
-
-    * `osd_pool_default_pg_num`, `osd_pool_default_pgp_num`: Количество Placement Group (PG) по умолчанию для новых пулов. `pgp_num` должен быть равен `pg_num`. Подробнее о том, как правильно рассчитать это значение, см. в руководстве [Расчет количества Placement Group (PG) в Ceph](ceph_placement_groups.md).
-    * `osd_journal_size`: Размер журнала OSD в мегабайтах. Важно настраивать в зависимости от размера дисков.
-    * `osd_pool_default_size`: Фактор репликации (количество копий данных). `3` — минимально для отказоустойчивости.
-    * `osd_pool_default_min_size`: Минимальное количество "живых" реплик для продолжения работы пула. Если количество реплик падает ниже этого значения, пул прекращает принимать записи до восстановления.
+| Ветка ceph-ansible | Версия Ceph | Статус |
+|---------------------|-------------|--------|
+| `stable-3.2` | Nautilus (14.x) | ❌ EOL |
+| `stable-4.0` | Nautilus (14.x) | ❌ EOL |
+| `stable-5.0` | Octopus (15.x) | ❌ EOL |
+| `stable-6.0` | Pacific (16.x) | ❌ EOL |
 
 ## Практические сценарии
 
-### Развертывание кластера Ceph с помощью `ceph-ansible`
+### Развертывание кластера через ceph-ansible
 
-#### 1. Подготовка управляющего узла (Ansible Controller)
+#### 1. Подготовка Ansible Controller
 
-1. **Клонирование репозитория `ceph-ansible`**:
+```bash
+# Клонирование репозитория
+git clone https://github.com/ceph/ceph-ansible.git
+cd ceph-ansible
 
-    ```bash
-    git clone https://github.com/ceph/ceph-ansible.git
-    cd ceph-ansible
-    ```
+# Переключение на стабильную ветку (пример для Octopus)
+git checkout stable-5.0  # Octopus (15.x) — EOL. Для Nautilus: stable-4.0
 
-2. **Переключение на последнюю стабильную ветку** (например, `stable-6.0`):
+# Установка зависимостей (Debian/Ubuntu)
+sudo apt update && sudo apt install -y ansible python3-netaddr
+pip install -r requirements.txt
+```
 
-    ```bash
-    # Замените x.y на актуальную стабильную версию
-    git checkout stable-6.0
-    ```
+#### 2. Настройка инвентаря (inventory.ini)
 
-3. **Установка зависимостей Ansible**:
+```ini
+[mons]
+ceph-node1 monitor_address=172.21.0.10
+ceph-node2 monitor_address=172.21.0.11
+ceph-node3 monitor_address=172.21.0.12
 
-    ```bash
-    # Пример для Debian/Ubuntu
-    sudo apt update
-    sudo apt install -y ansible python3-netaddr
-    # Notario и другие зависимости Python рекомендуется ставить через pip
-    pip install -r requirements.txt
-    ```
+[osds]
+ceph-node1
+ceph-node2
+ceph-node3
 
-#### 2. Конфигурация развертывания
+[managers]
+ceph-node1
+ceph-node2
+ceph-node3
 
-##### Файл инвентаря (Inventory)
+[mdss]
+ceph-node1
+ceph-node2
+ceph-node3
+```
 
-Создайте файл инвентаря (например, `inventory.ini`), который описывает, на каких хостах какие роли Ceph будут развернуты.
+> **Рекомендация**: для production минимум 3 узла с MON + MGR + OSD на каждом. Компоненты и их назначение — в [ceph_overview.md](ceph_overview.md).
 
-1. **Структура инвентаря:**
-    Инвентарь обычно содержит список серверов, разделенных по группам ролей Ceph: `mons` (мониторы), `osds` (хранилища), `managers` (менеджеры), `mdss` (серверы метаданных CephFS).
+#### 3. Запуск развертывания
 
-    ```ini
-    # inventory.ini (пример)
-    [mons]
-    ceph-node1
-    ceph-node2
-    ceph-node3
+```bash
+# Подготовка playbook (если отсутствует)
+cp site.yml.sample site.yml
 
-    [osds]
-    ceph-node1
-    ceph-node2
-    ceph-node3
+# Запуск
+ansible-playbook -i inventory.ini site.yml \
+  -u <username> -b --ask-become-pass --diff
+```
 
-    [managers]
-    ceph-node1
-    ceph-node2
-    ceph-node3
+После завершения кластер готов к работе. Проверка состояния:
 
-    [mdss]
-    ceph-node1
-    ceph-node2
-    ceph-node3
-
-    [all:vars]
-    # Общие переменные
-    ```
-
-    На всех трех серверах будут запущены экземпляры демонов каждой роли.
-
-2. **Дополнительные переменные в группе `mons`:**
-
-    ```ini
-    [mons]
-    ceph-node1 monitor_address=172.21.0.10
-    ceph-node2 monitor_address=172.21.0.11
-    ceph-node3 monitor_address=172.21.0.12
-    ```
-
-    Переменная `monitor_address` указывает сценарию Ansible, на каком IP-адресе монитор будет принимать соединения от клиентов.
-
-#### 3. Запуск и проверка
-
-1. **Подготовка Playbook:**
-    Обычно сценарий установки называется `site.yml`. Если его нет, но есть `site.yml.sample`, скопируйте его:
-
-    ```bash
-    cp site.yml.sample site.yml
-    ```
-
-    Рекомендуется не удалять из него "лишние" части, если вы не уверены в их назначении.
-
-2. **Запуск Playbook:**
-    Используйте команду `ansible-playbook` с необходимыми параметрами.
-
-    ```bash
-    ansible-playbook -i inventory.ini site.yml -u <username> -b --ask-become-pass --diff
-    ```
-
-    * `-i inventory.ini`: Указывает файл инвентаря.
-    * `site.yml`: Основной Playbook для установки.
-    * `-u <username>`: Имя пользователя для подключения к удаленным серверам.
-    * `-b`: Использовать `sudo` (become root).
-    * `--ask-become-pass`: Запросить пароль для `sudo`.
-    * `--diff`: Показать изменения, которые вносит Ansible.
-
-После завершения плейбука кластер Ceph будет развернут и готов к работе.
+```bash
+ceph -s
+ceph osd status
+ceph mon stat
+```
 
 ## Дополнительная информация
 
-* Для понимания основных компонентов Ceph, обратитесь к главной заметке [Обзор Ceph](ceph_overview.md).
-* Для правильного расчета количества Placement Groups (PG), см. руководство [Расчет количества Placement Group (PG) в Ceph](ceph_placement_groups.md).
+Современный метод развертывания — [cephadm](https://docs.ceph.com/en/latest/cephadm/). Расчет PG — [ceph_placement_groups.md](ceph_placement_groups.md). Компоненты кластера — [ceph_overview.md](ceph_overview.md).

@@ -40,11 +40,24 @@ Rancher использует специализированный `Logging Opera
   * **`Flow`**: Привязан к конкретному `namespace`.
   * **`ClusterFlow`**: Кластерный ресурс.
 
+### Ограничения RBAC
+
+* **`ClusterFlow` и `ClusterOutput`**: Только для администраторов Rancher.
+* **`Flow` и `Output`** (namespace-level):
+  * `Project Owner` — создание/изменение.
+  * `Project Member` — только чтение.
+
+| Роль | ClusterFlow/Output | Flow/Output |
+| :--- | :--- | :--- |
+| **Admin** | ✅ Создание/чтение/удаление | ✅ Создание/чтение/удаление |
+| **Project Owner** | ❌ Нет доступа | ✅ Создание/чтение/удаление |
+| **Project Member** | ❌ Нет доступа | ⚠️ Только чтение |
+
+**Практическое следствие:** `Project Member` не может самостоятельно настроить сбор логов своего приложения — требуется участие администратора или `Project Owner`.
+
 ## Практические сценарии
 
 ### Включение логирования через Web UI
-
-#### 1. Включение логирования для кластера или проекта
 
 1. **Создайте отдельный Rancher Project для логирования**: Рекомендуется.
 2. Перейдите в **Cluster Dashboard** -> **Tools** -> **Logging**.
@@ -75,7 +88,7 @@ Rancher использует специализированный `Logging Opera
     * **Syslog**
     * **Fluentd**
 
-#### 2. Конфигурация для Elasticsearch (пример)
+### Конфигурация для Elasticsearch (пример)
 
 * **Endpoint**: Полный URL Elasticsearch (например, `http://<elasticsearch-ip>:9200`).
 * **Authentication**: Учетные данные пользователя Elasticsearch.
@@ -84,13 +97,13 @@ Rancher использует специализированный `Logging Opera
 * **Include System Log**: Включение/отключение сбора логов системных компонентов Kubernetes.
 * **Enable JSON Parsing**: Попытка парсить логи в формате JSON.
 
-#### 3. Расширенная конфигурация Fluentd
+### Расширенная конфигурация Fluentd
 
 Rancher предоставляет возможность тонкой настройки Fluentd через опцию **"Edit As File"**.
 
 После настройки логирования в Kibana можно создавать [индекс-паттерны](../MonitoringLogging/EFK/kibana_guide.md).
 
-#### 4. Создание ClusterOutput для OpenSearch
+### Создание ClusterOutput для OpenSearch
 
 1. **Подготовка Secret с учетными данными**: Создайте Kubernetes `Secret` в `namespace cattle-logging-system`.
 
@@ -144,7 +157,7 @@ Rancher предоставляет возможность тонкой наст�
 
     **Важно:** Веб-интерфейс Rancher не поддерживает OpenSearch напрямую — после создания через UI необходимо редактировать YAML вручную. Параметр `suppress_type_name: true` обязателен для современных версий OpenSearch/Elasticsearch. Индекс с `%Y%m%d` создаётся ежедневно.
 
-#### 5. Создание Flow для сбора логов Control Plane
+### Создание Flow для сбора логов Control Plane
 
 1. **Создание `Flow`**:
     * Выберите `namespace` (например, `kube-system`).
@@ -187,17 +200,9 @@ Rancher предоставляет возможность тонкой наст�
       - opensearch-output
     ```
 
-### Важный нюанс логирования Fluentd
+### Troubleshooting
 
-По умолчанию логи самого `Fluentd` не выводятся в `stdout/stderr` контейнера, а сохраняются внутри него (например, `/var/log/fluentd/out`). Для отладки может потребоваться `kubectl exec` в контейнер `fluentd`:
-
-```bash
-kubectl exec -n cattle-logging-system <fluentd-pod> -- cat /var/log/fluentd/out
-```
-
-**Просмотр конфигурации Fluentd:** Текущая конфигурация хранится в `Secret` (например, `fluentd-app`), который автоматически обновляется при изменении `Flow` и `Output`.
-
-**Troubleshooting:**
+**Логи Fluentd:** По умолчанию логи самого `Fluentd` не выводятся в `stdout/stderr`, а сохраняются внутри контейнера (`/var/log/fluentd/out`). Конфигурация хранится в `Secret` (например, `fluentd-app`), автоматически обновляется при изменении `Flow`/`Output`.
 
 1. **Проверка логов Fluent Bit** (сборщики на узлах):
 
@@ -217,23 +222,19 @@ kubectl exec -n cattle-logging-system <fluentd-pod> -- cat /var/log/fluentd/out
 
 3. **Буферизация:** Если логи не появляются в OpenSearch сразу, проверьте настройки буфера в `ClusterOutput`. По умолчанию Fluentd может отправлять логи пакетами раз в минуту.
 
-## Ограничения RBAC
-
-* **`ClusterFlow` и `ClusterOutput`**: Могут быть созданы только администраторами Rancher.
-* **`Flow` и `Output` (привязанные к `namespace`)**:
-  * `Project Owner` может создавать и изменять `Flow` и `Output`.
-  * `Project Member` **не может** создавать `Flow` и `Output` (только просмотр).
-
-**Критическое замечание:** Это ограничение делает функциональность логирования Rancher для пользовательских приложений малопригодной для самостоятельного использования разработчиками с ролью `Project Member`. Пользователь с ролью `Project Member` не может самостоятельно настроить сбор логов своего приложения — требуется вмешательство администратора или `Project Owner`.
-
-**Сравнение ролей:**
-
-| Роль | ClusterFlow/Output | Flow/Output |
-| :--- | :--- | :--- |
-| **Admin** | ✅ Создание/чтение/удаление | ✅ Создание/чтение/удаление |
-| **Project Owner** | ❌ Нет доступа | ✅ Создание/чтение/удаление |
-| **Project Member** | ❌ Нет доступа | ⚠️ Только чтение |
-
 ## Дополнительная информация
+
+### Актуальность версий
+
+> **Внимание:** Rancher Logging базируется на Logging Operator (Banzai Cloud/SUSE) с Fluent Bit + Fluentd. Архитектура стабильна и не менялась с 2024 года. Перед развёртыванием проверьте актуальные версии:
+
+| Компонент | Указанная информация | Статус | Рекомендация |
+|-----------|---------------------|--------|--------------|
+| **Logging Operator** | Banzai Cloud (перенесён в SUSE) | ✅ Актуален | [Logging Operator Docs](https://kube-logging.dev/) |
+| **Fluent Bit** | DaemonSet на каждом узле | ✅ Evergreen | Обновляется через Rancher UI |
+| **Fluentd** | StatefulSet-маршрутизатор | ✅ Evergreen | Обновляется через Rancher UI |
+| **API version** | `logging.banzaicloud.io/v1beta1` | ✅ Актуален | Не менялся с 2024 |
+
+**Связанные темы:** [Fluent Bit Configuration](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md), [Kibana Guide](../MonitoringLogging/EFK/kibana_guide.md), [EFK Stack Setup](../MonitoringLogging/EFK/efk_stack_setup_guide.md).
 
 См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.

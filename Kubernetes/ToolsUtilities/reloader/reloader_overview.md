@@ -1,12 +1,16 @@
 # Reloader — Обзор и основные концепции
 
-## 1. Определения
+## Definitions
 
-**Reloader** — это контроллер для Kubernetes от Stakater, который отслеживает изменения в `ConfigMap` и `Secret` и автоматически выполняет rolling upgrade для связанных с ними `Deployment`, `StatefulSet` или `DaemonSet`.
+**Reloader** — контроллер Kubernetes от Stakater, который отслеживает изменения в `ConfigMap` и `Secret` и автоматически инициирует rolling upgrade для связанных `Deployment`, `StatefulSet` или `DaemonSet`.
 
-**Проблема:** По умолчанию Kubernetes не перезапускает поды при изменении ConfigMap или Secret, что требует ручного вмешательства (`kubectl rollout restart`).
+**Проблема:** По умолчанию Kubernetes не перезапускает поды при изменении ConfigMap/Secret, требуя ручного вмешательства (`kubectl rollout restart`).
 
-## 2. Основные концепции
+**Связанные файлы:** [Установка](./reloader_installation.md) · [Использование](./reloader_usage_scenarios.md) · [Мониторинг](./reloader_monitoring_and_best_practices.md)
+
+---
+
+## Basic Concepts
 
 ### Принцип работы
 
@@ -18,7 +22,7 @@
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
-1. **Отслеживание (Watch):** Reloader следит за событиями обновления ConfigMap и Secret через Kubernetes Watch API
+1. **Отслеживание (Watch):** Reloader следит за событиями обновления ConfigMap/Secret через Kubernetes Watch API
 2. **Поиск зависимостей:** При изменении ресурса ищет workload'ы, использующие этот ресурс
 3. **Инициирование rollout:** Выполняет `rollout restart` для найденных workload'ов
 
@@ -40,7 +44,7 @@ metadata:
     reloader.stakater.com/auto: "true"
 ```
 
-В этом режиме Reloader автоматически следит за всеми ConfigMap и Secret, используемыми в поде.
+Reloader автоматически следит за всеми ConfigMap и Secret, используемыми в поде.
 
 **Явное указание ресурсов:**
 
@@ -76,7 +80,31 @@ metadata:
 | **Strategy: Rename** | Переименование ресурса для принудительного обновления (enterprise) |
 | **Ignore** | Игнорирование определённых namespace'ов или ресурсов |
 
-## 3. Дополнительная информация
+---
+
+## Practical Scenarios
+
+### Сценарий 1: Выбор между Reloader и альтернативами
+
+| Инструмент | Подход | Когда использовать |
+| :--- | :--- | :--- |
+| **Reloader** | Аннотации | Простота, гибкость, минимальные настройки |
+| **Checksum-аннотация** | Хеш в манифесте | Работа без контроллера, настроенный CI/CD |
+| **ArgoCD** | GitOps | Полный контроль, уже используется ArgoCD |
+
+Подробнее: [Обновление ConfigMap и его влияние на поды](../../Base/ConfigMap/update_and_rollout.md)
+
+### Сценарий 2: Применение лучших практик
+
+1. **Игнорируйте системные namespace'ы** — `kube-system`, `kube-public`, `kube-node-lease`
+2. **Используйте явные аннотации** — предсказуемее чем `auto: "true"`
+3. **Настройте мониторинг** — отслеживайте логи Reloader
+4. **Тестируйте в staging** — перед применением в production
+5. **Задавайте ресурсы** — limits и requests для контроллера
+
+---
+
+## Additional Information
 
 ### Требования
 
@@ -87,28 +115,12 @@ metadata:
 
 ### Ресурсы контроллера
 
+Подробнее: [Установка Reloader](./reloader_installation.md)
+
 | Ресурс | Request | Limit |
 | :--- | :--- | :--- |
 | **CPU** | 100m | 300m |
 | **Memory** | 128Mi | 256Mi |
-
-### Сравнение с альтернативами
-
-| Инструмент | Подход | Преимущества | Недостатки |
-| :--- | :--- | :--- | :--- |
-| **Reloader** | Аннотации | Простота, гибкость | Требует аннотаций |
-| **Checksum-аннотация** | Хеш в манифесте | Работает без контроллера | Требует настройки CI/CD |
-| **ArgoCD** | GitOps | Полный контроль | Сложнее в настройке |
-
-**Подробнее:** [Обновление ConfigMap и его влияние на поды](../../Base/ConfigMap/update_and_rollout.md)
-
-### Лучшие практики
-
-1. **Игнорируйте системные namespace'ы** — `kube-system`, `kube-public`
-2. **Используйте явные аннотации** — предсказуемее чем `auto: "true"`
-3. **Настройте мониторинг** — отслеживайте логи Reloader
-4. **Тестируйте в staging** — перед применением в production
-5. **Задавайте ресурсы** — limits и requests для контроллера
 
 ### Ограничения
 
@@ -116,18 +128,7 @@ metadata:
 - **Только rolling restart** — не обновляет поды in-place
 - **Один контроллер на кластер** — может быть bottleneck в больших кластерах
 
-### Связанные документы
-
-- **[Установка Reloader](./reloader_installation.md)** — установка через Helm и манифесты
-- **[Сценарии использования](./reloader_usage_scenarios.md)** — практические примеры
-- **[Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)** — логи и диагностика
-- **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
-- **[Secrets](../../Security/application_secrets_management.md)** — управление секретами
-- **[Deployment](./index.md)** — rolling update стратегия
-- **[Helm](../Helm/helm_overview.md)** — установка через Helm
-
-### Репозиторий и документация
+### Репозиторий
 
 - [GitHub: stakater/Reloader](https://github.com/stakater/Reloader)
-- [Документация Stakater](https://github.com/stakater/Reloader#readme)
 - [Helm Chart](https://github.com/stakater/stakater-charts/tree/master/charts/reloader)

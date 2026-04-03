@@ -1,6 +1,46 @@
 # Pod Image Pull Errors: Распространённые ошибки
 
-## 1. Неверное имя или тег образа
+## Определения
+
+**Manifest unknown** — ошибка реестра, означающая, что указанный образ с данным именем или тегом не найден в registry.
+
+**Unauthorized** — ошибка аутентификации, означающая, что kubelet не имеет корректных учётных данных для доступа к приватному реестру.
+
+**ImagePullSecret** — Kubernetes Secret типа `kubernetes.io/dockerconfigjson`, содержащий учётные данные для аутентификации в приватном registry.
+
+---
+
+## Основные концепции
+
+### Классификация ошибок
+
+| Код ошибки | Категория | Корневая причина |
+| :--- | :--- | :--- |
+| `manifest not found` | Образ/тег не существует | Опечатка, удалённый тег, CI/CD не выполнил push |
+| `unauthorized: authentication required` | Аутентификация | Отсутствует/некорректный imagePullSecret |
+| `pull access denied` | Аутентификация/авторизация | Пользователь не имеет прав чтения в registry |
+| `404 Not Found` | Образ не существует | Неверный path, образ никогда не загружался |
+
+### Жизненный цикл диагностики
+
+```
+kubectl describe pod
+    ↓
+Анализ Events → определение типа ошибки
+    ↓
+manifest not found? → Проверить имя/тег образа
+unauthorized? → Проверить imagePullSecret
+    ↓
+Исправление → kubectl apply / kubectl patch
+    ↓
+Подтверждение: pod запущен
+```
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Неверное имя или тег образа
 
 **Сообщение:**
 
@@ -9,7 +49,7 @@ manifest for my-app:1.1 not found
 manifest unknown: manifest unknown
 ```
 
-**Причина:** Опечатка в имени, тег не существует, образ удален.
+**Причина:** Опечатка в имени, тег не существует, образ удалён из registry.
 
 **Решение:**
 
@@ -27,17 +67,17 @@ spec:
     image: myregistry.io/my-app:1.2  # Исправленный тег
 ```
 
-**Проверка:**
+**Проверка доступных тегов:**
 
 ```bash
-# Список тегов в registry (для Docker Hub)
+# Docker Hub
 curl -s https://hub.docker.com/v2/repositories/<user>/<repo>/tags?page_size=100
 
-# Для Harbor
+# Harbor
 curl -k https://harbor.example.com/api/v2.0/projects/<project>/repositories/<repo>/artifacts
 ```
 
-## 2. Проблемы с доступом к приватному репозиторию
+### Сценарий 2: Проблемы с доступом к приватному репозиторию
 
 **Сообщение:**
 
@@ -46,14 +86,12 @@ unauthorized: authentication required
 pull access denied for my-app, repository does not exist or may require 'docker login'
 ```
 
-**Причина:** Отсутствует или неверно настроен `imagePullSecrets`.
+**Причина:** Отсутствует или некорректно настроен `imagePullSecrets`.
 
-**Решение:**
-
-### Создание imagePullSecret
+**Решение — создание imagePullSecret:**
 
 ```bash
-# Способ 1: kubectl create secret
+# Способ 1: kubectl create secret (рекомендуется)
 kubectl create secret docker-registry regcred \
   --docker-server=https://registry.example.com \
   --docker-username=<username> \
@@ -68,7 +106,7 @@ kubectl create secret generic regcred \
   -n <namespace>
 ```
 
-### Привязка secret к Pod
+**Привязка secret к Pod:**
 
 ```yaml
 apiVersion: v1
@@ -83,7 +121,7 @@ spec:
   - name: regcred
 ```
 
-### Привязка secret к ServiceAccount (автоматически для всех подов)
+**Привязка secret к ServiceAccount (автоматически для всех подов):**
 
 ```bash
 kubectl patch serviceaccount default \
@@ -91,7 +129,7 @@ kubectl patch serviceaccount default \
   -n <namespace>
 ```
 
-## 3. Образ не существует
+### Сценарий 3: Образ не существует
 
 **Сообщение:**
 
@@ -100,7 +138,7 @@ manifest unknown: manifest unknown
 404 Not Found
 ```
 
-**Причина:** Образ никогда не был загружен в репозиторий, удален, или неверно указан path.
+**Причина:** Образ никогда не загружался в репозиторий, был удалён, или неверно указан path.
 
 **Решение:**
 
@@ -108,12 +146,24 @@ manifest unknown: manifest unknown
 # Проверка наличия образа
 docker pull <image-name>
 
-# Для CI/CD: убедиться, что image build шаг выполнен успешно
+# Для CI/CD: убедиться, что шаг build/push выполнен успешно
 # Проверить pipeline в GitLab CI / GitHub Actions
 ```
 
-**Best Practice:** Используйте immutable tags (SHA256 digest) в production:
+**Рекомендация:** Используйте immutable tags (SHA256 digest) в production:
 
 ```yaml
 image: myregistry.io/my-app@sha256:abc123...
 ```
+
+---
+
+## Дополнительная информация
+
+### Связанные темы
+
+- Определения и базовые концепции: [Definitions](./definitions.md)
+- Пошаговая диагностика: [Diagnostics](./diagnostics.md)
+- Глобальная настройка imagePullSecrets: [Best Practices](./best_practices.md#сценарий-1-глобальная-настройка-imagepullsecrets)
+- Автоматическое создание secret в CI/CD: [CI/CD Integration](./ci_cd_integration.md#сценарий-1-gitlab-ci--автоматическое-создание-secret)
+- Документация Kubernetes — приватные registry: [Pull Private Images](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/)

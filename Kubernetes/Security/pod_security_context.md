@@ -102,12 +102,4 @@ metadata:
 
 Security Context является базовым инструментом для обеспечения **security-in-depth** в Kubernetes. Он не заменяет сетевые политики или Pod Security Standards, но создает фундамент для безопасной работы приложений, значительно снижая поверхность атаки.
 
-* **Pod Security Standards**: [Официальная документация Kubernetes](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
-* **Конфигурация Security Context**: [Официальная документация Kubernetes](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
-
-### Связанные темы
-
-* **[Kyverno](./kyverno/policies/practical_scenarios.md)** — применение securityContext через политики
-* **[Seccomp](../../Linux/Security/Mechanisms/Seccomp.md)** — профили системных вызовов
-* **[Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)** — Linux capabilities
-* **[RBAC](./rbac/rbac_overview.md)** — управление доступом
+Подробная документация: [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/), [конфигурация Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/). Применение securityContext через политики — [Kyverno](./kyverno/policies/practical_scenarios.md). Механизмы Linux: [Seccomp](../../Linux/Security/Mechanisms/Seccomp.md), [Capabilities](../../Linux/Security/Mechanisms/Capabilities.md). Управление доступом — [RBAC](./rbac/rbac_overview.md).

@@ -196,22 +196,16 @@ kubectl apply -f new.sealed.yaml
 
 ### Ограничения
 
-- Нет фильтрации по FQDN/доменам (L3/L4 только)
-- Требует поддержки со стороны CNI
-- Не работает с Flannel
+- Секреты привязаны к конкретному кластеру (в режиме `strict` — также к namespace и имени)
+- При потере приватного ключа контроллера расшифровка невозможна
+- Не обеспечивает ротацию секретов — только шифрование при хранении
+- Для ротации требуется перешифрование всех SealedSecret новым ключом
 
 ### Альтернативы
 
-- **External Secrets Operator** — интеграция с внешними KMS
-- **SOPS** — шифрование с ключами AWS/GCP/Azure
-- **Vault** — полноценное secrets management
-- Другие подходы см. [Внешние менеджеры](../Base/secrets/external_managers.md)
+- **[External Secrets Operator](../Base/secrets/external_managers.md)** — интеграция с внешними KMS
+- **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование с ключами AWS/GCP/Age
+- **[Vault](../../Vault/zero_trust.md)** — полноценное secrets management
+- Общий обзор — [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md). Для GitOps-пайплайнов см. [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md).
 
-### Связанные темы
-
-- **Secrets Management:** [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)
-- **GitOps Encryption:** [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)
-- **SOPS:** [SOPS Overview](../../Security/Tools/sops_overview.md)
-- **Vault:** [Vault Overview](../../Vault/zero_trust.md)
-- **RBAC:** [RBAC Overview](./rbac/rbac_overview.md)
-- **Application Secrets:** [Application Secrets Management](./application_secrets_management.md)
+Паттерн динамической генерации конфигурации с initContainer — [Application Secrets Management](./application_secrets_management.md).

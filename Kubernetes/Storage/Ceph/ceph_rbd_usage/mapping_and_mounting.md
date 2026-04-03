@@ -1,35 +1,46 @@
 # RBD: Маппинг, монтирование и troubleshooting
 
-## 1. Маппинг образа
+## Определения и базовые концепции
 
-```bash
-# Маппинг
-sudo rbd map kube/my-image --id user
+**Маппинг** — привязка RBD-образа к блочному устройству ядра (`/dev/rbdN`). Выполняется через `librbd` и модуль ядра `rbd`.
 
-# Проверка
-rbd showmapped
+**Файловая система** — RBD-устройство требует форматирования перед использованием. Поддерживаемые ФС: `ext4`, `xfs`, `btrfs`.
 
-# Вывод:
-# dev  "/dev/rbd0"
-# pool "kube"
-# name "my-image"
-```
+**Автоматическое монтирование** — настройка маппинга и монтирования при загрузке. Требует опции `_netdev` для ожидания сети.
 
 ---
 
-## 2. Создание файловой системы
+## Практические сценарии
+
+### Маппинг образа
 
 ```bash
-# Только для нового образа!
+# Маппинг образа на устройство
+sudo rbd map kube/my-image --id user
+
+# Проверка замапленных устройств
+rbd showmapped
+```
+
+Пример вывода `showmapped`:
+```
+dev    pool   name       ...
+/dev/rbd0  kube   my-image   ...
+```
+
+### Создание файловой системы
+
+```bash
+# ext4
 sudo mkfs.ext4 /dev/rbd0
 
-# Или xfs
+# xfs
 sudo mkfs.xfs /dev/rbd0
 ```
 
----
+> **Внимание:** Форматирование уничтожает данные. Выполняйте только на новых образах.
 
-## 3. Монтирование
+### Монтирование
 
 ```bash
 # Создание точки монтирования
@@ -42,9 +53,7 @@ sudo mount /dev/rbd0 /mnt/rbd
 df -h /mnt/rbd
 ```
 
----
-
-## 4. Демонтирование и размаппинг
+### Демонтирование и размаппинг
 
 ```bash
 # Демонтирование
@@ -53,20 +62,18 @@ sudo umount /mnt/rbd
 # Размаппинг по устройству
 sudo rbd unmap /dev/rbd0
 
-# Размаппинг по имени
+# Размаппинг по имени образа
 sudo rbd unmap kube/my-image
 
-# Принудительное размаппинг (если занят)
+# Принудительное размаппинг (если устройство занято)
 sudo rbd unmap kube/my-image --force
 ```
 
----
+### Автоматическое монтирование
 
-## 5. Автоматическое монтирование
+**Вариант 1: udev + fstab**
 
-### Настройка udev правила
-
-Создайте файл `/etc/udev/rules.d/50-rbd.rules`:
+Создайте `/etc/udev/rules.d/50-rbd.rules`:
 
 ```bash
 # Автоматический маппинг при загрузке
@@ -74,22 +81,17 @@ ACTION=="add", SUBSYSTEM=="rbd", ATTR{pool}=="kube", ATTR{name}=="my-image", \
   RUN+="/usr/bin/rbd map kube/my-image"
 ```
 
-### Настройка /etc/fstab
+Получите UUID и добавьте в `/etc/fstab`:
 
 ```bash
-# Получение UUID образа
 blkid /dev/rbd0
-
-# Добавление в /etc/fstab
-UUID=<uuid> /mnt/rbd ext4 _netdev,noatime 0 0
-
-# Или по устройству
-/dev/rbd0 /mnt/rbd ext4 _netdev,noatime 0 0
 ```
 
-> **Важно**: Опция `_netdev` критична! Без неё система может зависнуть при загрузке.
+```
+UUID=<uuid> /mnt/rbd ext4 _netdev,noatime 0 0
+```
 
-### Альтернатива: systemd mount
+**Вариант 2: systemd mount (рекомендуется)**
 
 Создайте `/etc/systemd/system/mnt-rbd.mount`:
 
@@ -109,53 +111,42 @@ Options=_netdev,noatime
 WantedBy=multi-user.target
 ```
 
----
+> **Критично:** Опция `_netdev` предотвращает зависание при загрузке, ожидая доступности сети. Без неё монтирование может произойти до инициализации сетевого стека.
 
-## 6. Устранение ошибок
+### Устранение ошибок
 
-### RBD image features set mismatch
-
-**Ошибка**: Ядро не поддерживает функции образа.
-
-**Решение**:
+**`RBD image features set mismatch`** — ядро не поддерживает функции образа.
 
 ```bash
 # Отключение неподдерживаемых функций
 rbd feature disable kube/my-image layering,striping
 ```
 
-### Image is busy
-
-**Ошибка**: Образ занят другим клиентом.
-
-**Решение**:
+**`Image is busy`** — образ используется другим клиентом.
 
 ```bash
-# Проверка кто использует
+# Проверка активных клиентов
 rbd status kube/my-image
 
 # Принудительное размаппинг
 rbd unmap kube/my-image --force
 ```
 
-### Permission denied
-
-**Ошибка**: Недостаточно прав у пользователя.
-
-**Решение**:
+**`Permission denied`** — недостаточно прав у пользователя.
 
 ```bash
-# Проверка прав
+# Проверка текущих прав
 ceph auth get client.user
 
-# Исправление прав на сервере Ceph
+# Исправление прав (на сервере Ceph)
 ceph auth caps client.user mon 'allow r' osd 'allow rwx pool=kube'
 ```
 
 ---
 
-## Ссылки
+## Дополнительная информация
 
-- **[Установка и настройка](./installation_and_setup.md)** — установка клиента
-- **[Управление образами](./image_management.md)** — создание, изменение, удаление
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
+- [Официальная документация RBD](https://docs.ceph.com/en/latest/rbd/rbd-map/)
+- [Определения и концепции](./definitions_and_concepts.md) — image-features, требования к ядру
+- [Установка и настройка](./installation_and_setup.md) — установка клиента
+- [Управление образами](./image_management.md) — создание, изменение, удаление

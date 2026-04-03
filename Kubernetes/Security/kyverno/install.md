@@ -8,7 +8,7 @@
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Компоненты Kyverno
 
@@ -30,7 +30,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка через Helm
 
@@ -43,12 +43,14 @@ helm repo update
 helm install kyverno kyverno/kyverno \
   --namespace kyverno \
   --create-namespace \
-  --version 3.2.0 \
+  --version 3.3.0 \
   --set admissionController.replicas=2 \
   --set backgroundController.replicas=2 \
   --set cleanupController.replicas=1 \
   --set reportsController.replicas=1
 ```
+
+> **Примечание**: Версия чарта 3.3.0 соответствует Kyverno ~1.15. Актуальную версию проверяйте на [Artifact Hub](https://artifacthub.io/packages/helm/kyverno/kyverno).
 
 ### Проверка установки
 
@@ -103,7 +105,7 @@ spec:
   source:
     repoURL: https://kyverno.github.io/kyverno
     chart: kyverno
-    targetRevision: 3.2.0
+    targetRevision: 3.3.0
     helm:
       releaseName: kyverno
       values: |
@@ -134,25 +136,11 @@ resource:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Aggregated Cluster Roles
 
 По умолчанию Kyverno не имеет прав на создание некоторых ресурсов (например, `Secret`). Для расширения прав используются **Aggregated Cluster Roles** ([подробнее](./additional.md)).
-
-**Пример для генерации Secret**:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    kyverno.io/aggregate-to-background-controller: "true"
-rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create", "update", "delete", "get", "list"]
-```
 
 ### Troubleshooting
 

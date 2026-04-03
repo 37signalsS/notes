@@ -1,6 +1,6 @@
 # Lens: Практические сценарии
 
-## 3.1. Установка
+## Installation
 
 **macOS (Homebrew):**
 
@@ -21,225 +21,190 @@ choco install kubernetes-lens
 **Linux (Ubuntu/Debian):**
 
 ```bash
-# Добавление репозитория
+# Добавление репозитория и установка
 curl -fsSL https://api.k8slens.dev/repos/deb/gpg.key | sudo apt-key add -
 echo "deb https://api.k8slens.dev/repos/deb/ /" | sudo tee /etc/apt/sources.list.d/lens-repo.list
-
-# Установка
-sudo apt update
-sudo apt install lens
+sudo apt update && sudo apt install lens
 ```
 
 **Linux (AppImage):**
 
 ```bash
-# Загрузка
-wget https://api.k8slens.dev/releases/download/v5.9.0/Lens-5.9.0-latest.20240103.1-linux-x86_64.AppImage
-
-# Запуск
+# Загрузка последней версии: https://k8slens.dev/
 chmod +x Lens-*.AppImage
 ./Lens-*.AppImage
 ```
 
 ---
 
-## 3.2. Первоначальная настройка
+## Initial Configuration
 
-**Импорт kubeconfig:**
+**Импорт kubeconfig:** Lens автоматически обнаруживает `~/.kube/config`. Для резервной копии: `cp ~/.kube/config ~/.kube/config.lens-backup`.
 
-```bash
-# Копирование существующего kubeconfig
-cp ~/.kube/config ~/.kube/config.lens-backup
-
-# Lens автоматически обнаружит ~/.kube/config
-```
-
-**Настройка путей:**
-
-1. Откройте `File > Preferences` (или `⌘/Ctrl + ,`)
-2. Перейдите в раздел **Kubernetes**
-3. Укажите путь к kubeconfig, если отличается от стандартного
+**Настройка путей:** `File > Preferences` (или `⌘/Ctrl + ,`) → **Kubernetes** → указать путь к kubeconfig, если отличается от стандартного.
 
 ---
 
-## 3.3. Отображение метрик производительности
+## Metrics Configuration
 
 По умолчанию метрики могут быть недоступны (`metrics not available`).
 
-**Вариант 1: Установка встроенного Prometheus (Lens Metric Stack)**
+**Вариант 1: Встроенный Lens Metric Stack** — ПКМ на кластер → **Settings** → **Metric Stack** → **Install**. Lens развернёт Prometheus в кластере.
 
-1. Кликните правой кнопкой мыши на кластер в левой панели
-2. Выберите **Settings**
-3. Прокрутите до раздела **Metric Stack**
-4. Нажмите **Install**
+**Вариант 2: Существующий Prometheus** — `Cluster Settings > Metrics` → **Custom Prometheus** → URL: `http://prometheus-server.prometheus.svc.cluster.local:9090`.
 
-Lens развернет адаптированную версию Prometheus в кластере.
-
-**Вариант 2: Подключение существующего Prometheus**
-
-1. `Cluster Settings > Metrics`
-2. Выберите **Custom Prometheus**
-3. Укажите URL вашего Prometheus:
-
-   ```
-   http://prometheus-server.prometheus.svc.cluster.local:9090
-   ```
-
-**Вариант 3: Через kube-prometheus-stack**
+**Вариант 3: kube-prometheus-stack через Helm:**
 
 ```bash
-# Установка prometheus-stack через Helm
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm install monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace
-
-# В Lens: Settings > Metrics > Prometheus
-# URL: http://prometheus-operated.monitoring.svc.cluster.local:9090
+  --namespace monitoring --create-namespace
 ```
+URL в Lens: `http://prometheus-operated.monitoring.svc.cluster.local:9090`
 
 ---
 
-## 3.4. Управление Helm-чартами
+## Helm Charts Management
 
-**Просмотр установленных чартов:**
+**Просмотр:** выбрать кластер → **Helm** (левая панель) → отображаются все релизы.
 
-1. Выберите кластер
-2. Перейдите в раздел **Helm** (левая панель)
-3. Отобразятся все установленные релизы
+**Установка:** `Helm > Charts` → найти чарт → **Install** → настроить values и namespace.
 
-**Установка нового чарта:**
+**Обновление:** `Helm > Releases` → выбрать релиз → **Upgrade** → изменить values/версию.
 
-1. `Helm > Charts`
-2. Найдите нужный чарт (например, `nginx-ingress`)
-3. Нажмите **Install**
-4. Настройте values и namespace
-5. Подтвердите установку
-
-**Обновление релиза:**
-
-1. `Helm > Releases`
-2. Выберите релиз
-3. Нажмите **Upgrade**
-4. Измените values или версию чарта
-
-**Удаление релиза:**
-
-1. `Helm > Releases`
-2. Выберите релиз
-3. Нажмите **Delete**
+**Удаление:** `Helm > Releases` → выбрать релиз → **Delete**.
 
 ---
 
-## 3.5. Просмотр и анализ логов
+## Log Viewing and Analysis
 
-**Просмотр логов пода:**
+**Просмотр логов пода:** `Workloads > Pods` → кликнуть на под → вкладка **Logs**.
 
-1. Перейдите в **Workloads > Pods**
-2. Кликните на под
-3. Выберите вкладку **Logs**
+**Множественные контейнеры:** выбрать контейнер из списка или включить **All Containers**.
 
-**Множественные контейнеры:**
+**Фильтрация:** поиск по тексту (например, `error`), по времени (Last 1 hour, Last 24 hours, Custom range).
 
-Если под содержит несколько контейнеров:
-
-- Выберите контейнер из выпадающего списка
-- Или включите **All Containers** для просмотра всех логов
-
-**Фильтрация логов:**
-
-```
-# Поиск по тексту
-error
-
-# По времени
-Last 1 hour
-Last 24 hours
-Custom range
-```
-
-**Копирование логов:**
-
-- Кнопка **Copy** для копирования в буфер
-- Или выделите текст и используйте `Ctrl+C`
+**Копирование:** кнопка **Copy** или выделение + `Ctrl+C`.
 
 ---
 
-## 3.6. Встроенный терминал
+## Built-in Terminal
 
-**Подключение к контейнеру:**
+**Подключение:** `Workloads > Pods` → кликнуть на под → **Shell** или **Connect**.
 
-1. Перейдите в **Workloads > Pods**
-2. Кликните на под
-3. Нажмите **Shell** (если доступен bash) или **Connect**
-
-**Команды в терминале:**
+**Примеры команд:**
 
 ```bash
-# Проверка переменных окружения
-env
-
-# Просмотр файлов конфигурации
-ls /etc/config
-cat /etc/config/app.properties
-
-# Проверка сетевых подключений
-netstat -tlnp
-curl localhost:8080/health
+env                          # переменные окружения
+ls /etc/config               # файлы конфигурации
+netstat -tlnp                # сетевые подключения
+curl localhost:8080/health   # проверка health endpoint
 ```
 
 ---
 
-## 3.7. Редактирование ресурсов
+## Resource Editing
 
-**Редактирование YAML:**
+**Редактирование YAML:** перейти к ресурсу → кликнуть → **Edit** (карандаш) → изменить → **Save**.
 
-1. Перейдите к ресурсу (например, **Workloads > Deployments**)
-2. Кликните на ресурс
-3. Нажмите **Edit** (карандаш)
-4. Измените YAML
-5. Нажмите **Save**
-
-**Применение манифеста из файла:**
-
-1. `File > Apply from File` (или `⌘/Ctrl + Shift + A`)
-2. Выберите YAML файл
-3. Подтвердите применение
+**Применение из файла:** `File > Apply from File` (или `⌘/Ctrl + Shift + A`) → выбрать YAML → подтвердить.
 
 ---
 
-## 3.8. Мониторинг состояния кластера
+## Cluster Monitoring
 
-**Обзор кластера:**
+**Обзор:** **Nodes** — статус узлов, CPU/memory; **Namespaces** — список и квоты; **Events** — последние события.
 
-- **Nodes** — статус узлов, метрики CPU/memory
-- **Namespaces** — список и квоты namespace'ов
-- **Events** — последние события кластера
-
-**Алерты и уведомления:**
-
-1. Перейдите в **Config > Alerts**
-2. Настройте уведомления о критических событиях
+**Алерты:** `Config > Alerts` → настроить уведомления о критических событиях.
 
 ---
 
-## 3.9. Интеграция с Kubespray
+## Kubespray Integration
 
-При использовании [Kubespray](../Installation/Kubespray/kubespray_install/basic_concepts.md):
+При использовании [Kubespray](../../Installation/Kubespray/kubespray_install/basic_concepts.md):
 
 ```bash
-# Получение admin.conf
-# Файл находится в: inventory/имя_кластера/artifacts/admin.conf
-
-# Копирование в стандартное расположение
+# admin.conf находится в: inventory/имя_кластера/artifacts/admin.conf
 cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
-
 # Lens автоматически обнаружит кластер
 ```
 
 ---
 
-## Ссылки
+## Hotbar и Command Palette
+
+**Hotbar** — панель быстрого доступа к часто используемым кластерам и ресурсам.
+
+- **Добавление:** ПКМ на элемент → **Add to Hotbar**
+- **Навигация:** `⌘/Ctrl + 1-9` для переключения между слотами
+- **Управление:** ПКМ на слот → **Remove from Hotbar**
+
+**Command Palette** — универсальный поиск и выполнение команд.
+
+- **Вызов:** `⌘/Ctrl + Shift + P` или `⌘/Ctrl + P`
+- **Поиск ресурсов:** ввести имя пода, deployment, namespace
+- **Вызов действий:** `Restart`, `Delete`, `Edit`, `Scale`
+
+---
+
+## Port Forwarding
+
+**Создание проброса:** `Workloads > Pods` → ПКМ на под → **Port Forward** → указать локальный и целевой порт.
+
+**Управление:** `Network > Port Forwarding` — централизованный список всех активных пробросов.
+
+---
+
+## AI Assistant (Lens Prism)
+
+**Настройка:** `Preferences > AI` → выбрать провайдера (OpenAI, Azure, совместимые API) → указать API key и endpoint.
+
+**Возможности:**
+- Генерация YAML-манифестов по описанию
+- Объяснение ошибок и логов
+- Рекомендации по конфигурации
+- Prompt-инжиниринг для Kubernetes-задач
+
+---
+
+## Security Center
+
+**Сканирование уязвимостей:** выбрать кластер → **Security Center** → **Scan**.
+
+**Типы отчётов:**
+- **Images** — уязвимости в образах контейнеров
+- **Resources** — уязвимые ресурсы кластера
+- **Roles** — избыточные права и роли
+
+**Air-gapped режим:** сканирование в изолированных средах без выхода в интернет, экспорт отчётов.
+
+---
+
+## Lens Teamwork
+
+**Создание пространства:** `Teamwork > Create Space` → указать имя → пригласить участников.
+
+**Управление кластерами:** добавить кластер в пространство → настроить роли и разрешения для участников.
+
+**Ролевая модель:** Admin, Editor, Viewer — настраиваемые права на чтение/запись/управление.
+
+**Lens Cloud:** синхронизация данных пространства и кластеров через облачный сервис.
+
+---
+
+## Troubleshooting
+
+**ZScaler / корпоративный прокси:** ошибка входа — настроить исключения SSL-инспекции или прокси в ZScaler.
+
+**Integrity check error:** проверка целостности файлов не пройдена — переустановка или отключение блокирующих антивирусных правил.
+
+**Pod shell connection error:** диагностика сетевых политик кластера, проверка прав RBAC для `exec`, доступности kubelet API.
+
+**Metrics not available:** см. раздел [Metrics Configuration](#metrics-configuration) выше.
+
+---
+
+## Связанные файлы
 
 - [Определения и концепции](./definitions_and_concepts.md) — базовая информация
 - [Дополнительная информация](./advanced_topics.md) — требования, альтернативы, безопасность

@@ -12,6 +12,25 @@
 
 **Envoy Proxy** — отдельные поды, обслуживающие конкретный Gateway. По умолчанию создаётся Service типа LoadBalancer. Автоматически получает Endpoints из Service приложения, может работать напрямую с подами или через Service.
 
+### Control Plane / Data Plane
+
+Envoy Gateway следует архитектуре разделения управляющей и передающей плоскостей:
+
+- **Control Plane** — Envoy Gateway Controller. Читает манифесты Gateway API (GatewayClass, Gateway, HTTPRoute и т.д.), формирует конфигурацию и передаёт её в Data Plane.
+- **Data Plane** — Envoy Proxy. Бинарный прокси, который принимает и маршрутизирует трафик согласно полученной конфигурации.
+
+Эта архитектура отличается от монолитных решений типа ingress-nginx, где один бинарник одновременно читает манифесты и обрабатывает трафик.
+
+### Agent Gateway
+
+**Agent Gateway** — альтернативный Data Plane, написанный на Rust. Специализирован для AI/LLM-нагрузок:
+- Кэширование запросов к моделям
+- Проксирование запросов к внешним и внутренним моделям
+- Подсчёт токенов, rate limiting
+- Поддержка протоколов Agent-to-Agent (A2A) и Model Context Protocol (MCP)
+
+Agent Gateway может использоваться как самостоятельный контроллер Gateway API или как Data Plane под управлением других Control Plane (например, Kgateway). При создании GatewayClass с именем `agent-gateway` трафик обрабатывается через Agent Gateway вместо Envoy Proxy.
+
 ### Интеграция с MetalLB
 
 Для работы LoadBalancer-сервисов необходим MetalLB в кластере. Требуется создать `IPAddressPool` с диапазоном адресов для выделения внешних IP.

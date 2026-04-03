@@ -1,10 +1,32 @@
 # Сценарии приватного CA
 
-## Определения
+## Definitions
 
-**Сценарии приватного CA** — практические случаи использования cert-manager для создания внутренних центров сертификации.
+**Сценарии приватного CA** — практические случаи использования cert-manager для создания внутренних центров сертификации. Полный обзор — в [index.md](./index.md).
 
-> **Навигация:** [Главная Private CA](./index.md) | [Операции](./operations.md)
+---
+
+## Basic Concepts
+
+### Ключевые параметры Certificate для приватного CA
+
+| Параметр | Назначение | Критичность |
+| :--- | :--- | :--- |
+| `isCA: true` | Разрешает сертификату подписывать другие сертификаты | Обязательно для корневого CA |
+| `privateKey.encoding: PKCS8` | Формат кодирования закрытого ключа | Обязательно для Java (OpenSearch, Elasticsearch) |
+| `privateKey.algorithm: ECDSA` | Алгоритм ключа (ECDSA vs RSA) | Рекомендуется ECDSA (меньше размер, быстрее) |
+| `duration` | Срок действия сертификата | CA: 2–5 лет, сервисы: 1 год |
+| `renewBefore` | Окно начала продления до истечения | 30 дней для сервисов, 90 дней для CA |
+| `dnsNames` | SAN (Subject Alternative Names) | Обязательно для Kubernetes: `svc`, `svc.namespace.svc`, `svc.namespace.svc.cluster.local` |
+
+### Issuer vs ClusterIssuer
+
+| Тип | Область | Namespace Secret | Когда использовать |
+| :--- | :--- | :--- | :--- |
+| **Issuer** | Один namespace | Тот же namespace | Изолированные сервисы, multi-tenant |
+| **ClusterIssuer** | Весь кластер | Namespace CA-сертификата | Общекластерный CA, единый trust |
+
+**Важно:** при использовании ClusterIssuer CA-сертификат должен находиться в том же namespace, где создан ClusterIssuer (обычно `cert-manager`). Сертификаты сервисов могут запрашиваться из любого namespace.
 
 ---
 
@@ -255,8 +277,4 @@ spec:
 
 ## Additional Information
 
-### Связанные темы
-
-- [Administration](../Administration/) — администрирование cert-manager
-- [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../installation.md) — установка cert-manager
+Данные о надёжности информации и ссылки на связанные темы — в [index.md](./index.md).

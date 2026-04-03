@@ -93,13 +93,6 @@ initContainers:
 ## Дополнительная информация
 
 - **Безопасность и производительность**: Для `emptyDir` тома рекомендуется использовать опцию `medium: Memory`. Это создаст том в оперативной памяти (tmpfs), что предотвратит запись конфигурационного файла с секретами на диск ноды.
-- **RBAC**: Доступ к объектам `Secret` должен быть строго ограничен с помощью RBAC. Только `ServiceAccount`, от имени которого запускается под приложения, должен иметь права `get` и `list` на используемые им секреты.
-- **Безопасность образа**: Для повышения безопасности основной контейнер приложения может быть собран без `shell` (`bash`, `sh` и т.д.). Это усложнит злоумышленнику, получившему доступ к контейнеру, исследование файловой системы и чтение конфигурационных файлов.
-
-### Связанные темы
-
-- **[Sealed Secrets](./sealed_secrets_overview.md)** — шифрование секретов для Git
-- **[RBAC](./rbac/rbac_overview.md)** — управление доступом к секретам
-- **[Pod Security Context](./pod_security_context.md)** — безопасность подов
-- **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)** — обзор подходов
-- **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)** — шифрование в GitOps
+- **RBAC**: Доступ к объектам `Secret` должен быть строго ограничен с помощью [RBAC](./rbac/rbac_overview.md). Только `ServiceAccount`, от имени которого запускается под приложения, должен иметь права `get` и `list` на используемые им секреты.
+- **Безопасность образа**: Для повышения безопасности основной контейнер приложения может быть собран без `shell` (`bash`, `sh` и т.д.). Это усложнит злоумышленнику, получившему доступ к контейнеру, исследование файловой системы и чтение конфигурационных файлов. См. [Pod Security Context](./pod_security_context.md).
+- **Шифрование в Git**: Для безопасного хранения секретов в Git используйте [Sealed Secrets](./sealed_secrets_overview.md) или [SOPS](../../Security/Tools/sops_overview.md). Общий обзор подходов — в [Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md). Для GitOps-пайплайнов см. [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md).

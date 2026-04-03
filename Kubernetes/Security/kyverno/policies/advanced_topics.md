@@ -1,30 +1,20 @@
-# Политики Kyverno: Дополнительная информация
+# Политики Kyverno: Расширенные возможности
 
-## Важные замечания
+## Определения
 
-1. **Background scan не применяется к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](../background.md))
-2. По умолчанию примеры политик в документации используют `validationFailureAction: audit`
-3. Для полной защиты необходимо переключить на `validationFailureAction: Enforce`
-4. Политики применяются к **Pod** — Kyverno проверяет итоговый Pod, сгенерированный из Deployment/StatefulSet/DaemonSet
+**Переменные Kyverno** — механизм подстановки значений из контекста запроса в правила политики.
 
----
+**Foreach** — конструкция для итерации по массивам элементов (контейнеры, volumes, initContainers) в рамках одного правила.
 
-## Операторы условий
-
-| Оператор | Описание | Пример |
-|----------|----------|--------|
-| `AnyIn` / `AnyNotIn` | Проверка элемента массива на вхождение/невхождение | `AnyNotIn: ["value1", "value2"]` |
-| `AllIn` / `AllNotIn` | Проверка всех элементов массива | `AllIn: ["value1", "value2"]` |
-| `Equal` / `NotEqual` | Равенство / неравенство | `Equal: "value"` |
-| `GreaterThanOrEquals` / `LessThanOrEquals` | Числовые сравнения | `GreaterThanOrEquals: 100` |
-| `PatternMatch` | Проверка по regex-шаблону | `PatternMatch: "^prod-*"` |
-| `In` / `NotIn` | Проверка значения в списке | `In: ["value1", "value2"]` |
+> **Основное руководство:** Операторы условий описаны в [Типы правил](../rules.md). Практические примеры политик — в [Практические сценарии](./practical_scenarios.md).
 
 ---
 
-## Переменные в политиках
+## Basic Concepts
 
-Kyverno поддерживает подстановку переменных:
+### Переменные в политиках
+
+Kyverno поддерживает подстановку переменных из контекста запроса:
 
 | Переменная | Описание |
 |------------|----------|
@@ -32,10 +22,28 @@ Kyverno поддерживает подстановку переменных:
 | `{{request.object.metadata.namespace}}` | Namespace ресурса |
 | `{{request.userInfo.username}}` | Имя пользователя |
 | `{{@}}` | Ссылка на текущий элемент в foreach |
+| `{{element}}` | Альтернативный синтаксис для текущего элемента |
+
+### Синтаксис переменных
+
+```yaml
+# Прямая подстановка
+message: "Container {{ element.name }} must have limits"
+
+# С фильтрацией
+key: "{{ request.object.spec.containers[0].image }}"
+
+# С оператором JMESPath
+key: "{{ request.object.spec.containers[].image | length(@) }}"
+```
 
 ---
 
-## Пример с foreach
+## Practical Scenarios
+
+### Пример с foreach
+
+Итерация по всем контейнерам в Pod:
 
 ```yaml
 rules:
@@ -51,22 +59,86 @@ rules:
           deny:
             conditions:
               - key: "{{ element.securityContext.readOnlyRootFilesystem }}"
-                operator: NotEquals
+                operator: NotEqual
+                value: true
+```
+
+### foreach с несколькими условиями
+
+```yaml
+rules:
+  - name: require-limits-for-all-containers
+    match:
+      resources:
+        kinds:
+          - Pod
+    validate:
+      message: "All containers must have CPU and memory limits"
+      foreach:
+        - list: "request.object.spec.containers"
+          deny:
+            conditions:
+              any:
+                - key: "{{ element.resources.limits.cpu }}"
+                  operator: Equal
+                  value: ""
+                - key: "{{ element.resources.limits.memory }}"
+                  operator: Equal
+                  value: ""
+```
+
+### Валидация initContainers и containers
+
+```yaml
+rules:
+  - name: no-privileged-containers
+    match:
+      resources:
+        kinds:
+          - Pod
+    validate:
+      message: "Privileged containers are forbidden"
+      foreach:
+        - list: "request.object.spec.containers"
+          deny:
+            conditions:
+              - key: "{{ element.securityContext.privileged }}"
+                operator: Equal
+                value: true
+        - list: "request.object.spec.initContainers"
+          deny:
+            conditions:
+              - key: "{{ element.securityContext.privileged }}"
+                operator: Equal
                 value: true
 ```
 
 ---
 
-## Связанные темы
+## Additional Information
 
-- [Типы правил](./rules.md) — детальное описание типов правил
-- [Практические сценарии](./scenarios.md) — реальные случаи использования
-- [Отчеты](./reports.md) — мониторинг применения политик
-- [Background Scans](./background.md) — фоновое сканирование
+### Важные замечания
 
----
+1. **Background scan не применяет политики к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](../background.md))
+2. Политики с `validationFailureAction: Enforce` блокируют несоответствующие ресурсы
+3. Kyverno проверяет итоговый Pod, сгенерированный из Deployment/StatefulSet/DaemonSet
+4. Операторы условий подробно описаны в [Типы правил](../rules.md)
 
-## Ссылки на связанные файлы
+### JMESPath в переменных
 
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
+Kyverno поддерживает функции JMESPath для обработки данных:
+
+| Функция | Описание | Пример |
+|---------|----------|--------|
+| `length(@)` | Количество элементов | `{{ request.object.spec.containers[] | length(@) }}` |
+| `contains()` | Проверка вхождения | `{{ contains(request.object.metadata.labels, 'app') }}` |
+| `join()` | Объединение массива | `{{ join(', ', request.object.spec.containers[].name) }}` |
+| `sort()` | Сортировка | `{{ sort(request.object.spec.containers[].name) }}` |
+
+### Связанные темы
+
+- [Типы правил](../rules.md) — операторы условий, типы правил
 - [Практические сценарии](./practical_scenarios.md) — примеры политик
+- [Определения и концепции](./definitions_and_concepts.md) — базовая структура политик
+- [Background Scans](../background.md) — фоновое сканирование
+- [Отчеты](../reports.md) — мониторинг применения политик

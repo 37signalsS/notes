@@ -61,7 +61,7 @@
 #### Особенности развертывания
 
 * **Создание дополнительных Namespace:** Rancher Server при запуске создает множество служебных `namespaces` (например, `cattle-fleet`, `cattle-fleet-local-system`, `cattle-system`).
-* **Совместимость с Kubernetes:** Критически важно проверять совместимость версии Rancher с версией целевого кластера Kubernetes. Проблемы с `PodSecurityPolicy` (PSP) в Kubernetes 1.25+ являются примером.
+* **Совместимость с Kubernetes:** Критически важно проверять совместимость версии Rancher с версией целевого кластера Kubernetes через [Rancher Support Matrix](https://www.suse.com/suse-rancher/support-matrix/). Rancher v2.13.x поддерживает Kubernetes v1.32–v1.34. Начиная с v2.7.2, вместо удалённых в Kubernetes 1.25 `PodSecurityPolicy` (PSP) используется [Pod Security Admission (PSA)](../Security/pod_security_context.md).
 
 ### 2. Установка в Docker (для тестирования/ознакомления)
 
@@ -75,9 +75,9 @@ docker run -d --name=rancher --restart=unless-stopped \
 
 * **Внутренняя структура:** Rancher в Docker-контейнере запускается в многослойной архитектуре: внутри контейнера разворачивается легковесный Kubernetes (например, K3S).
 * **Нестабильность:** Не рекомендуется для production-сред.
-* **Альтернатива для Single-Node:** Более стабильным подходом является прямая установка Rancher на [K3S](../Installation/k3s_dev_environment/kubeutils_image.md).
+* **Альтернатива для Single-Node:** Более стабильным подходом является установка Rancher на [K3S](../Installation/k3s_dev_environment/k3s_architecture.md).
 
-**Важное замечание по совместимости:** Rancher, особенно до версии 2.7.x, имеет строгие требования к версии Kubernetes. Часто требовалась Kubernetes версия **ниже 1.25** из-за деприкации `PodSecurityPolicy` (PSP) в Kubernetes 1.25.
+**Актуальная совместимость с Kubernetes:** Rancher v2.13.x поддерживает Kubernetes v1.32–v1.34 (RKE2, K3s, AKS, EKS, GKE). Начиная с Rancher v2.7.2, вместо удалённых в Kubernetes 1.25 `PodSecurityPolicy` (PSP) используется механизм [Pod Security Admission (PSA)](../Security/pod_security_context.md) с встроенными шаблонами `rancher-privileged` и `rancher-restricted`. Архивные версии Rancher (≤2.7) не поддерживают Kubernetes 1.25+.
 
 ### 3. Удаление компонентов Rancher/K3S
 

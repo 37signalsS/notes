@@ -1,8 +1,38 @@
 # Reloader — Практические сценарии использования
 
-## 1. Веб-сервер с конфигурацией в ConfigMap
+## Definitions
 
-### Шаг 1: Создание ConfigMap и Deployment
+**Сценарии использования Reloader** — типовые конфигурации и примеры применения контроллера Reloader для автоматического обновления подов при изменении ConfigMap и Secret.
+
+**SSoT:** [Обзор и концепции Reloader](./reloader_overview.md) · [Мониторинг и отладка](./reloader_monitoring_and_best_practices.md)
+
+---
+
+## Basic Concepts
+
+### Типы аннотаций
+
+| Аннотация | Назначение | Когда использовать |
+| :--- | :--- | :--- |
+| `configmap.reloader.stakater.com/reload` | Явное указание ConfigMap | Контроль над конкретными ресурсами |
+| `secret.reloader.stakater.com/reload` | Явное указание Secret | TLS-сертификаты, учётные данные |
+| `reloader.stakater.com/auto: "true"` | Автоматическое обнаружение | Простые конфигурации, все ресурсы |
+
+### Способы подключения ресурсов
+
+- **volumeMounts** — ConfigMap/Secret как файл в поде
+- **envFrom** — все ключи ConfigMap/Secret как переменные окружения
+- **env.valueFrom** — отдельные ключи как переменные окружения
+
+---
+
+## Practical Scenarios
+
+### Сценарий 1: Веб-сервер с конфигурацией в ConfigMap
+
+**Задача:** Автоматический перезапуск OpenResty при обновлении HTML-контента через ConfigMap.
+
+**Шаг 1: Создание ресурсов**
 
 ```yaml
 # openresty-app.yaml
@@ -56,29 +86,26 @@ spec:
             name: openresty-index-html
 ```
 
-### Шаг 2: Обновление ConfigMap
+**Шаг 2: Обновление ConfigMap**
 
 ```bash
-# Обновляем ConfigMap с новой версией
 kubectl apply -f openresty-app-v2.yaml
 ```
 
-### Шаг 3: Наблюдение за результатом
+**Шаг 3: Наблюдение за результатом**
 
 ```bash
 # Watch за подами
 kubectl get pods -w
-
-# Вывод:
-# NAME                                    READY   STATUS        RESTARTS   AGE
-# openresty-deployment-5f8b9d6f6f-abcde   1/1     Running       0          2m
-# openresty-deployment-5f8b9d6f6f-abcde   1/1     Terminating   0          3m
-# openresty-deployment-c79f8f49d-fghij    1/1     Running       0          10s
 ```
+
+Ожидаемый результат: старый pod завершается (`Terminating`), новый запускается с обновлённым контентом. Подробнее о мониторинге: [Мониторинг и отладка](./reloader_monitoring_and_best_practices.md).
 
 ---
 
-## 2. Использование с Secret (TLS-сертификаты)
+### Сценарий 2: TLS-сертификаты через Secret
+
+**Задача:** Перезапуск nginx-ingress при обновлении TLS-сертификата.
 
 ```yaml
 apiVersion: apps/v1
@@ -86,7 +113,6 @@ kind: Deployment
 metadata:
   name: nginx-ingress
   annotations:
-    # Перезапуск при обновлении TLS-секрета
     secret.reloader.stakater.com/reload: "nginx-tls-secret"
 spec:
   template:
@@ -106,7 +132,9 @@ spec:
 
 ---
 
-## 3. Автоматическое обнаружение для всех ресурсов
+### Сценарий 3: Автоматическое обнаружение всех ресурсов
+
+**Задача:** Не перечислять ресурсы вручную — Reloader сам найдёт все ConfigMap и Secret, используемые подом.
 
 ```yaml
 apiVersion: apps/v1
@@ -114,7 +142,6 @@ kind: Deployment
 metadata:
   name: myapp
   annotations:
-    # Автоматически следить за ВСЕМИ ConfigMap и Secret
     reloader.stakater.com/auto: "true"
 spec:
   template:
@@ -129,38 +156,17 @@ spec:
                 name: app-secrets
 ```
 
----
-
-## 4. Мониторинг и отладка
-
-### Просмотр логов Reloader
-
-```bash
-kubectl logs -f deployment/reloader -n monitoring
-```
-
-### Пример вывода логов
-
-```
-time="2025-01-15T10:30:45Z" level=info msg="Reloader started"
-time="2025-01-15T10:30:46Z" level=info msg="Watching for changes in namespace: default"
-time="2025-01-15T10:31:00Z" level=info msg="ConfigMap 'openresty-index-html' updated in namespace 'default'"
-time="2025-01-15T10:31:01Z" level=info msg="Triggering rolling upgrade for Deployment 'openresty-deployment'"
-```
-
-### Проверка статуса
-
-```bash
-kubectl get deployment reloader -n monitoring
-kubectl describe deployment reloader -n monitoring
-```
+**Предупреждение:** `auto: "true"` менее предсказуем — любое изменение любого ConfigMap/Secret в поде вызовет перезапуск.
 
 ---
 
-## 5. Связанные документы
+## Additional Information
 
-- **[Обзор и концепции](./reloader_overview.md)** — базовые определения
-- **[Установка Reloader](./reloader_installation.md)** — установка через Helm и манифесты
-- **[Мониторинг и лучшие практики](./reloader_monitoring_and_best_practices.md)** — дополнительные рекомендации
-- **[ConfigMap](../../Base/ConfigMap/update_and_rollout.md)** — обновление ConfigMap и rollout
-- **[Deployment](../Base/Deployment/index.md)** — rolling update стратегия
+### Ограничения при использовании subPath
+
+При монтировании через `subPath` Reloader может не отследить изменения. В этом случае рекомендуется:
+
+- Использовать монтирование всей директории вместо `subPath`
+- Или добавить явную аннотацию `configmap.reloader.stakater.com/reload`
+
+Подробнее об ограничениях: [Обзор и концепции](./reloader_overview.md)

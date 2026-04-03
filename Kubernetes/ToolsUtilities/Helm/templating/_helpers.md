@@ -10,6 +10,46 @@
 
 ---
 
+## Основные концепции
+
+### Почему файл начинается с подчёркивания
+
+Helm не рендерит файлы с префиксом `_` как Kubernetes-манифесты. Файл `_helpers.tpl` обрабатывается только как источник именованных шаблонов, но не создаёт ресурсов при `helm install`.
+
+### Передача области видимости (scope)
+
+При вызове `{{ include "template" . }}` передаётся текущий контекст через точку (`.`):
+
+| Объект контекста | Описание |
+|------------------|----------|
+| `.Chart` | Метаданные чарта (Name, Version, AppVersion) |
+| `.Release` | Информация о релизе (Name, Namespace, Service, IsUpgrade, IsInstall) |
+| `.Values` | Значения из `values.yaml` и `--set` |
+| `.Capabilities` | Возможности кластера (KubeVersion, APIVersions) |
+
+### Именование хелперов
+
+Стандартная конвенция: `<chart-name>.<purpose>`. Например, для чарта `myapp`:
+
+- `myapp.name` — краткое имя приложения
+- `myapp.fullname` — полное имя с учётом release
+- `myapp.chart` — имя и версия чарта
+- `myapp.labels` — стандартные метки
+- `myapp.selectorLabels` — метки для selector (неизменяемые)
+- `myapp.commonLabels` — общие метки для всех ресурсов
+
+### `include` vs `template` vs `tpl`
+
+| Функция | Синтаксис | Передача scope | Контекст |
+|---------|-----------|----------------|----------|
+| `include` | `{{ include "name" . }}` | Явная через второй аргумент | Возвращает строку (можно пайпить в `nindent`, `quote`) |
+| `template` | `{{ template "name" . }}` | Аналогично | Выводит напрямую (нельзя пайпить) |
+| `tpl` | `{{ tpl "string" . }}` | Явная | Рендерит строку как шаблон (динамические шаблоны из values) |
+
+**Рекомендация:** использовать `include` в большинстве случаев, `tpl` — только для динамических шаблонов из `values.yaml`.
+
+---
+
 ## Создание именованных шаблонов
 
 Определяются в файле `templates/_helpers.tpl`:
@@ -42,6 +82,21 @@ app.kubernetes.io/name: {{ include "myapp.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Создаёт имя чарта с версией.
+*/}}
+{{- define "myapp.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Метки для spec.selector (неизменяемые после создания Deployment).
+*/}}
+{{- define "myapp.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "myapp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 ```
 
@@ -139,8 +194,23 @@ spec:
 
 ---
 
-## Дополнительные ссылки
+## Дополнительная информация
 
-- [Функции](./functions.md) — ключевые функции для работы с шаблонами
-- [Сценарии: NetworkPolicy](./scenarios/networkpolicy.md) — подробнее о сетевых политиках
-- [helm_templating](../helm_templating.md) — обзорная страница
+### Best practices
+
+- **Не меняйте `selectorLabels`** после создания Deployment — Kubernetes не позволяет изменять `spec.selector.matchLabels`.
+- **Используйте `include` вместо `template`** — `include` возвращает строку, которую можно пайпить в `nindent`, `quote`, `b64enc`.
+- **Ограничивайте длину имён** через `trunc 63 | trimSuffix "-"` — Kubernetes лимит на имена ресурсов = 63 символа.
+- **Выносите общие метки** в отдельный хелпер (`commonLabels`) для единообразия across всех ресурсов.
+- **Избегайте хардкода** — используйте `.Chart.Name`, `.Release.Name` вместо жёстких значений.
+
+### Troubleshooting
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `wrong type for value` | Передан неверный scope в `include` | Проверяйте, что второй аргумент — `.` или `$` |
+| `nil pointer evaluating` | Отсутствует значение в `values.yaml` | Добавьте default через `{{- default "value" .Values.key -}}` |
+| Имя ресурса > 63 символа | Нет `trunc` в хелпере | Добавьте `| trunc 63 | trimSuffix "-"` |
+| Файл `_helpers.tpl` рендерится как манифест | Файл не начинается с `_` | Переименуйте в `_helpers.tpl` |
+
+[Функции](./functions.md) · [Сценарии: NetworkPolicy](./scenarios/networkpolicy.md) · [Обзор шаблонизации](../helm_templating.md)

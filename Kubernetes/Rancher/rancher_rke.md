@@ -25,7 +25,7 @@
                      └──────────────┘ └─────────────┘
 ```
 
-**Важно:** Rancher Server не «лезет» напрямую в кластер. Cattle Cluster Agent сам устанавливает соединение с Rancher и передаёт данные о кластере.
+**Важно:** Rancher Server не подключается к кластеру напрямую. Cattle Cluster Agent сам устанавливает исходящее соединение с Rancher и передаёт данные о состоянии кластера.
 
 ## Практические сценарии
 
@@ -59,4 +59,16 @@
 
 ## Дополнительная информация
 
-**См. также:** [RKE: Основные концепции](../Installation/RKE/rke_concepts.md), [RKE: Установка kubectl и настройка доступа](../Installation/RKE/rke_kubectl_setup.md), [Rancher: Обзор](./rancher_overview.md).
+### Актуальность версий
+
+> **Внимание:** RKE1 — legacy-дистрибутив. Для новых развёртываний рекомендуется RKE2 или K3s.
+
+| Компонент | Указанная информация | Статус | Рекомендация |
+|-----------|---------------------|--------|--------------|
+| **RKE1** | v1.6.x | ⚠️ Legacy | Мигрировать на RKE2 |
+| **RKE2** | Рекомендуемый для production | ✅ Актуален | [RKE2 Docs](https://docs.rke2.io/) |
+| **K3s** | Для edge/dev-сред | ✅ Актуален | [K3s Docs](https://docs.k3s.io/) |
+
+Подробная документация RKE: [RKE Overview](../Installation/RKE/index.md), [RKE Concepts](../Installation/RKE/rke_concepts.md), [kubectl Setup](../Installation/RKE/rke_kubectl_setup.md).
+
+См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.

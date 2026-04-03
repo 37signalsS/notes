@@ -1,18 +1,39 @@
-# Шаблонизация NetworkPolicy
+# NetworkPolicy Templating
 
 ---
 
-## Определения
+## Definitions
 
-**NetworkPolicy** — ресурс Kubernetes для управления сетевым трафиком между подами. Требует точного соответствия селекторов меткам подов.
+**NetworkPolicy** — ресурс Kubernetes для управления сетевым трафиком между подами (L3/L4). Подробнее о концепции: [NetworkPolicy: навигатор](../../../Networking/Network/network_policy.md).
+
+**Ключевая особенность:** NetworkPolicy требует **точного совпадения** селекторов `podSelector` с метками подов. Рассинхронизация меток между Deployment и NetworkPolicy приводит к тому, что политика либо не применяется, либо блокирует легитимный трафик.
 
 ---
 
-## Использование с именованными шаблонами
+## Basic Concepts
 
-NetworkPolicy требует точного соответствия селекторов меткам подов. Использование именованных шаблонов исключает рассинхронизацию.
+При шаблонизации NetworkPolicy в Helm возникают две типовые проблемы:
 
-**Пример политики в `templates/mail-relay-netpol.yaml`:**
+1. **Рассинхронизация меток** — метки в `podSelector` NetworkPolicy не совпадают с метками в `spec.selector` Deployment.
+2. **Хардкод имён** — имена ресурсов и меток жёстко заданы, что ломает логику при изменении `fullnameOverride` или `nameOverride`.
+
+Решение — использование именованных шаблонов (`include`), определённых в `_helpers.tpl`. Это гарантирует единый источник истины для всех меток. Подробнее: [Именованные шаблоны и хелперы](../_helpers.md).
+
+### Почему именно NetworkPolicy
+
+В отличие от Service и Deployment, где Kubernetes допускает некоторые расхождения, NetworkPolicy работает по принципу **exact match**:
+
+- `podSelector.matchLabels` должен **в точности** совпадать с `spec.selector.matchLabels` пода
+- `from[].podSelector.matchLabels` должен совпадать с метками подов-источников
+- Любая опечатка → политика не применяется или блокирует не тот трафик
+
+---
+
+## Practical Scenarios
+
+### NetworkPolicy для sidecar-компонента
+
+Политика для mail-relay, разрешающая ingress только от подов основного приложения:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -20,36 +41,73 @@ kind: NetworkPolicy
 metadata:
   name: {{ include "myapp.fullname" . }}-mail-relay
 spec:
-  # Применяем политику к подам mail-relay
   podSelector:
     matchLabels:
       {{- include "myapp.mail-relay.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:
-    # Разрешаем трафик от подов основного приложения
     - from:
       - podSelector:
           matchLabels:
-            {{- include "myapp.labels" . | nindent 12 }}
+            {{- include "myapp.selectorLabels" . | nindent 12 }}
       ports:
         - protocol: TCP
           port: 25
 ```
 
-Здесь `include` гарантирует, что селекторы в NetworkPolicy точно соответствуют меткам в Deployment и Service.
+`include` гарантирует, что:
+- `podSelector` совпадает с метками mail-relay Deployment
+- `from[].podSelector` совпадает с метками основного приложения
+
+### Условное включение NetworkPolicy
+
+Создание политики только при включённом флаге:
+
+```yaml
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "myapp.fullname" . }}-default-deny
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+{{- end }}
+```
+
+### Разрешение трафика между namespace
+
+NetworkPolicy с динамическим namespaceSelector:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "myapp.fullname" . }}-allow-monitoring
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "myapp.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: {{ .Values.monitoringNamespace | default "monitoring" }}
+        podSelector:
+          matchLabels:
+            app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+```
 
 ---
 
-## Преимущества подхода
+## Additional Information
 
-- Централизованное управление метками
-- Упрощение использования в Service, Deployment, NetworkPolicy
-- Снижение риска ошибок из-за опечаток
-
----
-
-## Дополнительные ссылки
-
-- [Именованные шаблоны](../_helpers.md) — создание и использование
-- [helm_templating](../../helm_templating.md) — обзорная страница
+Именованные шаблоны для меток — в [Именованные шаблоны и хелперы](../_helpers.md). Концепция NetworkPolicy — в [NetworkPolicy: навигатор](../../../Networking/Network/network_policy.md). Другие практические сценарии — в [Обзор сценариев](./overview.md).

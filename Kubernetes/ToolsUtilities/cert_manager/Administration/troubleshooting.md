@@ -4,9 +4,15 @@
 
 **Troubleshooting cert-manager** — процесс выявления и устранения проблем при выпуске и продлении сертификатов.
 
-> **Навигация:** [Главная Administration](./index.md) | [Операции](./operations.md)
+## Basic Concepts
 
----
+### Компоненты и их логи
+
+cert-manager состоит из трёх компонентов: **controller** (основная логика Certificate/Issuer), **webhook** (валидация и мутация ресурсов), **cainjector** (инжекция CA в Admission webhook). Диагностика начинается с проверки логов каждого компонента и статусов ACME-ресурсов (Order, Challenge).
+
+### ACME-поток
+
+ACME-процесс: `Certificate → Order → Challenge → HTTP-01/DNS-01 проверка → Secret`. Сбой на любом этапе отражается в `.status.conditions` ресурса Certificate. Ключевые статусы: `Ready=True` (готов), `Ready=False` (ошибка), `Ready=Unknown` (ожидание).
 
 ## Practical Scenarios
 
@@ -30,8 +36,6 @@ kubectl get issuers,clusterissuers --all-namespaces
 kubectl describe issuer <name> -n <namespace>
 ```
 
----
-
 ### Логи компонентов
 
 ```bash
@@ -47,8 +51,6 @@ kubectl logs -n cert-manager -l app=cainjector --tail=100
 # Поиск ошибок ACME
 kubectl logs -n cert-manager -l app=cert-manager | grep -i "acme\|error"
 ```
-
----
 
 ### Частые проблемы и решения
 
@@ -75,8 +77,6 @@ kubectl describe order <name> -n <namespace>
 | **DNS-01 не прошёл** | Проверить TXT-запись: `dig TXT _acme-challenge.<domain>` | Проверить DNS API credentials |
 | **Rate limit** | `kubectl get order -o yaml` | Использовать staging, подождать |
 
----
-
 #### Secret не создаётся
 
 **Причина:** Certificate не готов или ошибка записи Secret.
@@ -88,8 +88,6 @@ kubectl get events -n <namespace> --sort-by='.lastTimestamp'
 # Проверить RBAC для cert-manager
 kubectl describe clusterrole cert-manager-controller-certificates
 ```
-
----
 
 #### Webhook timeout
 
@@ -112,8 +110,6 @@ kubectl get endpoints cert-manager-webhook -n cert-manager
 kubectl rollout restart deployment cert-manager-webhook -n cert-manager
 ```
 
----
-
 #### Ошибка цепочки доверия
 
 **Причина:** Приложение не доверяет CA.
@@ -132,8 +128,12 @@ openssl verify -CAfile ca.crt <cert.crt>
 
 ## Additional Information
 
-### Связанные темы
+Troubleshooting приватного CA (ротация, PKCS8, trust store) — в [Private_CA/operations.md](../Private_CA/operations.md). Диагностика проблем с установкой — в [installation.md](../installation.md). Алертинг и мониторинг — в [operations.md](./operations.md).
 
-- [Private CA](../Private_CA/scenarios.md) — создание собственного CA
-- [LetsEncrypt](../LetsEncrypt/) — практические сценарии с Let's Encrypt
-- [Installation](../install.md) — установка cert-manager
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| Проверка ресурсов | **10** | Официальная документация cert-manager.io |
+| Логи компонентов | **10** | Стандартные kubectl-команды |
+| Частые проблемы | **9** | Основано на официальной документации и практике |

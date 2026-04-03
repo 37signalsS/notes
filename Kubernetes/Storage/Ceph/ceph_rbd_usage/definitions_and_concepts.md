@@ -48,7 +48,9 @@
 
 ---
 
-## Ссылки
+## Дополнительные ссылки
 
+- [Официальная документация RBD](https://docs.ceph.com/en/latest/rbd/)
 - [Практические сценарии](./practical_scenarios.md) — установка, управление, монтирование
-- [Дополнительная информация](./advanced_topics.md) — производительность, бэкап, troubleshooting
+- [Расширенные темы](./advanced_topics.md) — производительность, бэкап, troubleshooting
+- [Обзор Ceph](../ceph_overview.md) — общая архитектура Ceph

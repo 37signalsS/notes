@@ -1,40 +1,162 @@
-# Let's Encrypt: Основные концепции
+# Let's Encrypt: Углублённые концепции ACME
 
-## 1. Определения
+## Definitions
 
-**Let's Encrypt** — бесплатный, автоматизированный и открытый центр сертификации, использующий протокол ACME для выдачи TLS-сертификатов.
+**Let's Encrypt** — бесплатный, автоматизированный и открытый центр сертификации (CA), использующий протокол ACME (RFC 8555) для выдачи TLS-сертификатов.
 
-**ACME (Automatic Certificate Management Environment)** — протокол (RFC 8555) для автоматизированного получения и продления сертификатов.
+**ACME Account** — учётная запись в ACME-сервере с ключевой парой, используемой для подписи всех запросов. Хранится в Secret `letsencrypt-<env>-key`.
 
-## 2. Ограничения Let's Encrypt
+**Certificate Transparency (CT)** — публичный лог всех выпущенных сертификатов. Let's Encrypt обязан записывать каждый сертификат в CT-логи.
 
-| Лимит | Значение | Период |
+**ARI (ACME Renewal Information)** — расширение ACME (draft-ietf-acme-ari), предоставляющее информацию об оптимальном времени продления.
+
+> **Базовые концепции (лимиты, solvers, окружения):** [index.md](../index.md)
+
+---
+
+## Basic Concepts
+
+### ACME Account и ключи
+
+Каждый `ClusterIssuer` создаёт ACME Account — учётную запись на сервере Let's Encrypt.
+
+| Параметр | Описание |
+| :--- | :--- |
+| **Account Key** | ECDSA или RSA ключ для подписи ACME-запросов |
+| **Account URL** | Уникальный идентификатор аккаунта на ACME-сервере |
+| **Email** | Привязан к аккаунту, используется для уведомлений об истечении |
+| **Terms of Service** | Согласие с условиями Let's Encrypt (автоматически принимается cert-manager) |
+
+**Важно:** Потеря `privateKeySecretRef` означает потерю аккаунта. Все ранее выданные сертификаты придётся запрашивать заново с новым аккаунтом.
+
+```yaml
+spec:
+  acme:
+    privateKeySecretRef:
+      name: letsencrypt-prod-key  # Хранить в backup!
+    email: admin@example.com
+```
+
+### Certificate Transparency (CT)
+
+Все сертификаты Let's Encrypt записываются в публичные CT-логи:
+
+| Лог | Оператор | URL |
 | :--- | :--- | :--- |
-| Сертификатов на домен | 50 | 7 дней |
-| Запросов на регистрацию | 10 | 3 часа |
-| Wildcard-сертификатов | 50 | 7 дней |
-| Срок действия | 90 дней | — |
+| Google Argon 2026 | Google | `ct.googleapis.com/logs/argon2026/` |
+| Cloudflare Nimbus 2026 | Cloudflare | `nimbus2026.ct.cloudflare.com/` |
+| Let's Encrypt Oak 2026 | ISRG | `oak2026.letsencrypt.org/` |
 
-## 3. ACME Solvers (проверки владения)
+**Последствия:**
 
-| Метод | Принцип | Wildcard | Требования |
-| :--- | :--- | :--- | :--- |
-| **HTTP-01** | Файл по `http://<domain>/.well-known/acme-challenge/` | ❌ Нет | Публичный Ingress |
-| **DNS-01** | TXT-запись `_acme-challenge.<domain>` | ✅ Да | Доступ к DNS API |
-| **TLS-ALPN-01** | TLS-соединение на порт 443 | ❌ Нет | Прямой доступ к 443 |
+- Любой выпущенный сертификат виден публично
+- Невозможно скрыть домены из сертификата
+- Можно проверить историю выдачи: `https://crt.sh/?q=<domain>`
 
-## 4. Окружения Let's Encrypt
+### Изменения 2026: сокращение срока действия
 
-| Окружение | URL | Назначение |
+| Период | Срок действия | `renewBefore` рекомендация |
 | :--- | :--- | :--- |
-| **Production** | `https://acme-v02.api.letsencrypt.org/directory` | Боевые сертификаты |
-| **Staging** | `https://acme-staging-v02.api.letsencrypt.org/directory` | Тестирование (лимиты выше) |
+| До 2026 | 90 дней | 360h (15 дней) |
+| Переходный период | 64 дня | 240h (10 дней) |
+| Конец 2026+ | **45 дней** | 168h (7 дней) |
 
-> **Важно:** Staging использует отдельные тестовые CA, которые не доверяются браузерами. Используйте для отладки конфигурации.
+> **Важно:** Для поддержки ARI (ACME Renewal Information) используйте cert-manager **1.15+**. Продление будет автоматическим без изменения конфигурации.
 
-## Связанные документы
+### Сравнение ACME-CA
 
-- **[Практические сценарии](./letsencrypt_scenarios.md)** — ClusterIssuer, HTTP-01, DNS-01, wildcard
-- **[Дополнительные темы](./letsencrypt_advanced.md)** — диагностика, ошибки, best practices
-- **[cert_manager](../../definitions.md** — обзор cert-manager
-- **[private_ca](../Private_CA/scenarios.md)** — частные CA для внутренних доменов
+| CA | Срок | Wildcard | Лимиты | Особенности |
+| :--- | :--- | :--- | :--- | :--- |
+| **Let's Encrypt** | 90 → 45 дней | ✅ DNS-01 | 50/домен/7д | Самый популярный, 400M+ сертификатов |
+| **ZeroSSL** | 90 дней | ✅ DNS-01 | 3/домен/7д (free) | ACME-совместимый, платные тарифы |
+| **Buypass Go SSL** | 180 дней | ❌ | 5/домен/7д | Дольший срок, только DV |
+| **Google Trust Services** | 90 дней | ❌ | N/A | Публичный CA, без ACME |
+
+---
+
+## Practical Scenarios
+
+### Просмотр ACME Account
+
+```bash
+# Secret с ключом аккаунта
+kubectl get secret letsencrypt-prod-key -n cert-manager -o yaml
+
+# Расшифровка URL аккаунта (из данных секрета)
+kubectl get secret letsencrypt-prod-key -n cert-manager \
+  -o jsonpath='{.data.url}' | base64 -d
+# Результат: https://acme-v02.api.letsencrypt.org/acme/acct/123456789
+```
+
+### Проверка Certificate Transparency
+
+```bash
+# Получить сертификат из Secret
+kubectl get secret example-com-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > cert.pem
+
+# Извлечь Subject Alternative Names
+openssl x509 -in cert.pem -noout -text | grep -A1 "Subject Alternative Name"
+
+# Проверить в CT-логах (онлайн)
+# https://crt.sh/?q=example.com
+```
+
+### Миграция при потере ACME Account Key
+
+**Сценарий:** Secret `letsencrypt-prod-key` удалён или повреждён.
+
+1. Создать новый ClusterIssuer с новым ключом:
+   ```yaml
+   spec:
+     acme:
+       privateKeySecretRef:
+         name: letsencrypt-prod-key-new  # Новый Secret
+   ```
+2. Обновить все Certificate на новый `issuerRef`:
+   ```yaml
+   issuerRef:
+     name: letsencrypt-prod-new
+     kind: ClusterIssuer
+   ```
+3. Удалить старый Issuer после продления всех сертификатов
+
+### Подготовка к 45-дневным сертификатам
+
+**Что проверить:**
+
+| Проверка | Статус |
+| :--- | :--- |
+| cert-manager ≥ 1.15 | `kubectl get deployments -n cert-manager -o wide` |
+| ARI поддержка | Подтверждена в release notes cert-manager |
+| `renewBefore` ≥ 168h | Обновить в Certificate spec |
+| Мониторинг продления | Prometheus-алерты на `Certificate Ready` |
+
+---
+
+## Additional Information
+
+### ACME-протокол: ключевые эндпоинты
+
+| Эндпоинт | Назначение |
+| :--- | :--- |
+| `/acme/new-nonce` | Получить одноразовый токен для запроса |
+| `/acme/new-account` | Создать или найти аккаунт |
+| `/acme/new-order` | Создать заказ на сертификат |
+| `/acme/authz/{id}` | Статус авторизации домена |
+| `/acme/chall/{id}` | Детали challenge (проверки) |
+| `/acme/finalize/{id}` | Получить сертификат после прохождения проверок |
+| `/acme/renewal-info` | ARI: рекомендуемое время продления |
+
+**Полная спецификация:** [RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555)
+
+### Надёжность информации
+
+| Аспект | Оценка | Обоснование |
+| :--- | :--- | :--- |
+| ACME Account lifecycle | **10** | RFC 8555, cert-manager docs |
+| Certificate Transparency | **10** | RFC 6962, crt.sh |
+| Срок 45 дней (2026) | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
+| ARI поддержка | **9** | Draft IETF, cert-manager 1.15+ |
+| Сравнение CA | **8** | Документация CA, может меняться |
+
+**Связанные документы:** [базовые сведения](../index.md), [практические сценарии](./letsencrypt_scenarios.md), [cert_manager CRD](../definitions.md), [диагностика](./letsencrypt_advanced.md).

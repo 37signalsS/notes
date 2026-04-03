@@ -9,7 +9,7 @@
 - **Policy** — namespace-scoped, применяется к ресурсам в конкретном namespace
 - **ClusterPolicy** — cluster-scoped, применяется ко всему кластеру
 
-> **Основное руководство:** Это основной файл по написанию политик. [Типы правил](../rules.md) описывают детали правил.
+> **Основное руководство:** Это основной файл по структуре политик. [Типы правил](../rules.md) описывают детали правил и match/exclude условия.
 
 ---
 
@@ -40,51 +40,135 @@ spec:
         # ... правило валидации
 ```
 
+### Поля metadata.annotations
+
+| Аннотация | Описание | Пример |
+|-----------|----------|--------|
+| `policies.kyverno.io/title` | Отображаемое имя политики | `Require Non-Root User` |
+| `policies.kyverno.io/category` | Категория (группировка) | `security`, `best-practices` |
+| `policies.kyverno.io/severity` | Критичность нарушения | `low`, `medium`, `high`, `critical` |
+| `policies.kyverno.io/description` | Подробное описание | Текст с описанием цели политики |
+
 ### Поля spec
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `validationFailureAction` | `Enforce` / `Audit` | Действие при нарушении (`Enforce` — запретить, `Audit` — только отчет) |
-| `background` | `true` / `false` | Включить фоновое сканирование (по умолчанию `true`) |
+| `validationFailureAction` | `Enforce` / `Audit` | Действие при нарушении (`Enforce` — блокировать, `Audit` — только отчёт) |
+| `background` | `true` / `false` | Фоновое сканирование существующих ресурсов (по умолчанию `true`) |
 | `rules` | array | Набор правил (минимум одно) |
 | `failurePolicy` | `Fail` / `Ignore` | Действие при ошибке webhook (по умолчанию `Fail`) |
 
+### Разница между Enforce и Audit
+
+| Режим | Поведение | Когда использовать |
+|-------|-----------|-------------------|
+| `Enforce` | Блокирует создание/обновление ресурса при нарушении | Продакшен, после отладки |
+| `Audit` | Только генерирует отчёт, ресурс создаётся | Отладка политик, аудит существующих ресурсов |
+
 ### Match и Exclude
 
-```yaml
-rules:
-  - name: example-rule
-    match:
-      any:  # Логическое OR
-        - resources:
-            kinds:
-              - Pod
-            namespaces:
-              - default
-              - user1
-            operations:
-              - CREATE
-              - UPDATE
-    exclude:
-      all:  # Логическое AND
-        - resources:
-            namespaces:
-              - kube-system
-            names:
-              - "kube-*"
-```
-
-| Параметр | Описание |
-|----------|----------|
-| `any` / `all` | Логическое объединение условий (OR / AND) |
-| `kinds` | Типы ресурсов (Pod, Deployment, Service, etc.) |
-| `namespaces` | Namespace для применения |
-| `names` | Имена ресурсов (поддерживает wildcard `*`) |
-| `operations` | Операции: CREATE, UPDATE, DELETE, CONNECT |
+Условия применения правил подробно описаны в разделе [Типы правил](../rules.md#match-и-exclude). Ключевые параметры: `any`/`all` (логическое объединение), `kinds` (типы ресурсов), `namespaces`, `names` (поддерживает wildcard `*`), `operations` (CREATE, UPDATE, DELETE, CONNECT).
 
 ---
 
-## Ссылки
+## Practical Scenarios
 
+### Минимальная политика
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: minimal-policy
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: require-label
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "Label 'app' is required"
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+```
+
+### Политика с background: false
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: enforce-only-new
+spec:
+  validationFailureAction: Enforce
+  background: false  # Не сканировать существующие ресурсы
+  rules:
+    - name: require-label
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "Label 'app' is required"
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+```
+
+**Когда использовать `background: false`:**
+- Политики применяются только к новым ресурсам
+- Не нужны отчёты для существующих ресурсов
+- Экономия ресурсов кластера
+
+### Политика с failurePolicy: Ignore
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: soft-enforce
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Ignore  # При ошибке webhook — пропустить запрос
+  rules:
+    - name: require-label
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "Label 'app' is required"
+        pattern:
+          metadata:
+            labels:
+              app: "?*"
+```
+
+**Когда использовать `failurePolicy: Ignore`:**
+- Критичные workloads, которые не должны блокироваться при сбое Kyverno
+- Риск: нарушение может пройти при недоступности webhook
+
+---
+
+## Additional Information
+
+### Жизненный цикл политики
+
+1. **Создание** — политика применяется к кластеру
+2. **Background scan** — существующие ресурсы проверяются, генерируются отчёты
+3. **Admission** — новые/обновлённые ресурсы проверяются в реальном времени
+4. **Отчёты** — результаты записываются в [Policy Reports](../reports.md)
+5. **Enforce** — при нарушении и режиме `Enforce` ресурс блокируется
+
+### Связанные темы
+
+- [Типы правил](../rules.md) — типы правил, match/exclude, операторы условий
 - [Практические сценарии](./practical_scenarios.md) — примеры политик
-- [Дополнительная информация](./advanced_topics.md) — операторы, переменные, важные замечания
+- [Расширенные возможности](./advanced_topics.md) — переменные, foreach, JMESPath
+- [Background Scans](../background.md) — фоновое сканирование
+- [Отчеты](../reports.md) — мониторинг применения политик

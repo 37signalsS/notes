@@ -1,8 +1,42 @@
 # vCluster — Безопасность и синхронизация
 
-## 1. Безопасность: ResourceQuota и LimitRange
+## Definitions
 
-### Ограничение ресурсов vCluster
+**ResourceQuota** — Kubernetes-ресурс, ограничивающий суммарное потребление ресурсов (CPU, память, количество объектов) внутри namespace vCluster.
+
+**LimitRange** — Kubernetes-ресурс, задающий значения по умолчанию и ограничения для CPU/памяти отдельных подов и контейнеров.
+
+**Rootless Mode** — режим запуска контейнеров vCluster без привилегий root (не-root пользователь), повышающий безопасность.
+
+**Syncer** — компонент vCluster, отвечающий за двустороннюю синхронизацию ресурсов между виртуальным и хостовым кластером.
+
+## Basic Concepts
+
+### Направления синхронизации
+
+| Направление | Описание | Ресурсы |
+| :--- | :--- | :--- |
+| **toHost** (vCluster → Host) | Экспорт рабочих нагрузок в host-кластер | Pods, Services, Endpoints, Secrets, ConfigMaps, PVC, Ingresses |
+| **fromHost** (Host → vCluster) | Импорт инфраструктуры host-кластера | StorageClasses, IngressClasses, Nodes, PersistentVolumes |
+
+### Ресурсы, синхронизируемые по умолчанию
+
+Pods, Services, Endpoints, Secrets, ConfigMaps, PersistentVolumeClaims синхронизируются автоматически. Ingresses, StorageClasses, IngressClasses требуют явного включения в `values.yaml`.
+
+### Потребление ресурсов Control Plane
+
+При настройке ResourceQuota необходимо учитывать ресурсы самого vCluster:
+
+| Компонент | CPU | Memory |
+| :--- | :--- | :--- |
+| etcd | 100m | 100–200Mi |
+| API Server | 200m | 200–300Mi |
+| CoreDNS | 50m | ~50Mi |
+| Syncer | 100m | ~100Mi |
+
+## Practical Scenarios
+
+### Настройка ResourceQuota и LimitRange
 
 ```yaml
 # values.yaml
@@ -24,18 +58,7 @@ policies:
       cpu: 250m
 ```
 
-**Важно:** При накладывании квот учитывайте ресурсы Control Plane vCluster:
-
-- etcd: ~100-200MB RAM, 100m CPU
-- API Server: ~200-300MB RAM, 200m CPU
-- CoreDNS: ~50MB RAM, 50m CPU
-- Syncer: ~100MB RAM, 100m CPU
-
----
-
-## 2. Безопасность: Rootless Mode
-
-### Запуск без привилегий суперпользователя
+### Запуск в Rootless Mode
 
 ```yaml
 # values.yaml
@@ -48,23 +71,7 @@ controlPlane:
       runAsNonRoot: true
 ```
 
----
-
-## 3. Синхронизация ресурсов
-
-### Sync to Host (из vCluster в Host)
-
-Ресурсы, синхронизируемые по умолчанию:
-
-- Pods
-- Services
-- Endpoints
-- Secrets
-- ConfigMaps
-- PersistentVolumeClaims
-- Ingresses (требует включения)
-
-### Sync from Host (из Host в vCluster)
+### Синхронизация ресурсов из host-кластера
 
 ```yaml
 # values.yaml
@@ -76,7 +83,6 @@ sync:
       enabled: true
     nodes:
       enabled: true
-      # Выбор узлов по лейблам
       selector:
         matchLabels:
           vcluster-ready: "true"
@@ -84,36 +90,20 @@ sync:
       enabled: true
 ```
 
----
+## Additional Information
 
-## 4. Лучшие практики
+### Лучшие практики
 
-1. **Изолируйте по командам** — один vCluster на команду
-2. **Настройте квоты** — ResourceQuota для контроля ресурсов
-3. **Мониторьте Control Plane** — метрики самого vCluster
-4. **Используйте Helm** — для управления конфигурацией
-5. **Backup etcd** — для production-кластеров
+1. Изолируйте по командам — один vCluster на команду.
+2. Настраивайте квоты — ResourceQuota для контроля ресурсов.
+3. Мониторьте Control Plane — метрики самого vCluster.
+4. Используйте Helm — для управления конфигурацией.
+5. Backup etcd — для production-кластеров.
 
----
+### Ограничения
 
-## 5. Ограничения
+- **Ресурсы на кластер** — ~500MB–1GB RAM на каждый vCluster.
+- **Сетевая сложность** — требуется настройка Network Policies.
+- **Не все ресурсы синхронизируются** — некоторые CRD требуют Enterprise.
 
-- **Ресурсы на кластер** — ~500MB-1GB RAM на каждый vCluster
-- **Сетевая сложность** — требуется настройка Network Policies
-- **Не все ресурсы синхронизируются** — некоторые CRD требуют Enterprise
-
----
-
-## 6. Связанные документы
-
-- **[Обзор и архитектура](./vcluster_overview.md)** — базовые определения
-- **[Установка и развертывание](./vcluster_installation.md)** — установка CLI и создание vCluster
-- **[Подключение и доступ](./vcluster_connectivity.md)** — kubeconfig, Ingress, Storage
-- **[Namespaces](../Base/namespace.md)** — основы namespace'ов
-- **[RBAC](../Security/rbac/rbac_overview.md)** — управление доступом
-
-### Репозиторий и документация
-
-- [GitHub: loft-sh/vcluster](https://github.com/loft-sh/vcluster)
-- [Официальная документация](https://www.vcluster.com/docs)
-- [Helm Chart](https://github.com/loft-sh/vcluster/tree/main/chart)
+Подробная документация: [официальная документация vCluster](https://www.vcluster.com/docs), [репозиторий GitHub](https://github.com/loft-sh/vcluster). Обзор и архитектура: [vcluster_overview.md](./vcluster_overview.md). Установка и развертывание: [vcluster_installation.md](./vcluster_installation.md). Подключение и доступ: [vcluster_connectivity.md](./vcluster_connectivity.md). Основы namespace'ов: [namespace.md](../Base/namespace.md). Управление доступом: [rbac_overview.md](../Security/rbac/rbac_overview.md).

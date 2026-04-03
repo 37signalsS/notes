@@ -1,10 +1,10 @@
 # kor
 
-## 1. Определения
+## Определения
 
-**`kor`** — это инструмент командной строки (CLI) на Go для обнаружения и удаления неиспользуемых ресурсов в кластере Kubernetes. Он помогает поддерживать чистоту в кластере и сокращать затраты, выявляя ресурсы, не связанные с активными рабочими нагрузками.
+**`kor`** — CLI-инструмент на Go для обнаружения и удаления неиспользуемых ресурсов в кластере Kubernetes. Помогает поддерживать чистоту кластера и сокращать затраты, выявляя ресурсы, не связанные с активными рабочими нагрузками.
 
-## 2. Основные концепции
+## Основные концепции
 
 ### Поддерживаемые типы ресурсов
 
@@ -15,7 +15,7 @@ kor обнаруживает неиспользуемые ресурсы сле�
 | **ConfigMaps** | Конфигурационные данные, не используемые подами |
 | **Secrets** | Секреты, не смонтированные в подах |
 | **Services** | Сервисы без активных endpoint'ов |
-| **Deployments** | Деплойменты без подов (редко) |
+| **Deployments** | Деплойменты без подов |
 | **StatefulSets** | StatefulSets без подов |
 | **DaemonSets** | DaemonSets без активных подов |
 | **Roles/ClusterRoles** | RBAC-роли без привязок |
@@ -28,19 +28,19 @@ kor обнаруживает неиспользуемые ресурсы сле�
 
 ### Ключевые особенности
 
-- **Широкий охват:** Поддерживает 20+ типов ресурсов Kubernetes
-- **Мульти-namespace:** Проверка всех namespace'ов или выборочных
-- **Интеграция с CI/CD:** Возвращает ненулевой код выхода при обнаружении неиспользуемых ресурсов
-- **JSON-вывод:** Поддержка формата JSON для программной обработки
-- **Dry-run:** Безопасный предварительный просмотр перед удалением
-- **Исключения:** Поддержка списков исключений через флаги или конфиг
+- **Широкий охват:** 20+ типов ресурсов Kubernetes
+- **Мульти-namespace:** проверка всех или выбранных namespace'ов
+- **CI/CD-интеграция:** ненулевой код выхода при обнаружении неиспользуемых ресурсов
+- **Форматы вывода:** `table` (по умолчанию), `json`, `yaml`
+- **Helm-установка:** запуск как CronJob или Deployment с метриками Prometheus
+- **Исключения:** фильтрация по namespace'ам через флаги
 
 ### Установка
 
-**Через Go (рекомендуется):**
+**Через Go:**
 
 ```bash
-go install github.com/yonahd/kor/cmd/kor@latest
+go install github.com/yonahd/kor@latest
 ```
 
 **Через Homebrew (macOS/Linux):**
@@ -49,33 +49,36 @@ go install github.com/yonahd/kor/cmd/kor@latest
 brew install kor
 ```
 
-**Бинарный файл:**
+**Через krew:**
 
 ```bash
-# Загрузка для Linux amd64
-curl -LO https://github.com/yonahd/kor/releases/latest/download/kor_linux_amd64.tar.gz
-tar -xzf kor_linux_amd64.tar.gz
-sudo mv kor /usr/local/bin/
-chmod +x /usr/local/bin/kor
+kubectl krew install kor
+```
+
+**Через Helm (CronJob/Deployment с метриками):**
+
+```bash
+helm repo add kor https://yonahd.github.io/kor
+helm upgrade -i kor kor/kor -n kor --create-namespace
 ```
 
 **Docker:**
 
 ```bash
-docker run --rm -v ~/.kube:/root/.kube ghcr.io/yonahd/kor --all
+docker run --rm -i yonahdissen/kor
 ```
 
-## 3. Практические сценарии
+## Практические сценарии
 
-### 3.1. Поиск неиспользуемых ресурсов
+### Поиск неиспользуемых ресурсов
 
 **Все типы ресурсов во всех namespace'ах:**
 
 ```bash
-kor --all
+kor all
 ```
 
-**Конкретные типы ресурсов:**
+**Конкретные типы ресурсов (подкоманды):**
 
 ```bash
 # ConfigMaps и Secrets
@@ -88,106 +91,94 @@ kor service serviceaccount
 **В конкретном namespace:**
 
 ```bash
-kor --all -n default
+kor all -n default
 kor configmap -n kube-system
 ```
 
 **С выводом в JSON:**
 
 ```bash
-kor --all -o json
+kor all -o json
 ```
 
-### 3.2. Удаление неиспользуемых ресурсов
+### Удаление неиспользуемых ресурсов
 
-**⚠️ Внимание:** Перед удалением всегда выполняйте dry-run!
+**⚠️ Внимание:** перед удалением всегда запускайте без `--delete` для просмотра.
 
-**Dry-run (предварительный просмотр):**
+**Предварительный просмотр (без удаления):**
 
 ```bash
-kor --all --delete --dry-run
+kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
 ```
 
-**Фактическое удаление:**
+**Удаление с интерактивным подтверждением (по умолчанию):**
 
 ```bash
-# Удаление всех найденных неиспользуемых ресурсов
-kor --all --delete
-
-# Удаление конкретных типов
-kor configmap secret --delete
+kor all --delete
 ```
 
-**Удаление с подтверждением:**
+**Удаление без интерактивного подтверждения:**
 
 ```bash
-# Интерактивное подтверждение (если поддерживается версией)
-kor --all --delete --interactive
+kor all --delete --no-interactive
 ```
 
-### 3.3. Исключение ресурсов
+**Удаление конкретных типов:**
+
+```bash
+kor configmap secret --delete --no-interactive
+```
+
+### Исключение ресурсов
 
 **Исключение namespace'ов:**
 
 ```bash
-# Исключение системных namespace'ов
-kor --all --exclude-namespaces=kube-system,kube-public,kube-node-lease
+kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
 ```
 
 **Исключение конкретных ресурсов по имени:**
 
 ```bash
-# Исключение ConfigMap по имени
 kor configmap --exclude-namespaces=kube-system --exclude-resources=my-important-config
 ```
 
-**Исключение через лейблы:**
+### Интеграция с CI/CD
 
-```bash
-# Исключение ресурсов с определённым лейблом
-kor --all --exclude-labels=protected=true
-```
-
-### 3.4. Интеграция с CI/CD
-
-**GitLab CI пример:**
+**GitLab CI:**
 
 ```yaml
 check-unused-resources:
-  image: ghcr.io/yonahd/kor:latest
+  image: yonahdissen/kor:latest
   stage: test
   script:
-    - echo "Checking for unused Kubernetes resources..."
-    - kor --all --exclude-namespaces=kube-system,kube-public
-  allow_failure: true  # Не блокировать пайплайн, только предупреждение
+    - kor all --exclude-namespaces=kube-system,kube-public
+  allow_failure: true
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"  # Запуск по расписанию
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 ```
 
-**GitHub Actions пример:**
+**GitHub Actions:**
 
 ```yaml
 name: Check Unused Resources
 on:
   schedule:
-    - cron: '0 2 * * 1'  # Каждый понедельник в 02:00
+    - cron: '0 2 * * 1'
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Install kor
         run: |
-          curl -LO https://github.com/yonahd/kor/releases/latest/download/kor_linux_amd64.tar.gz
-          tar -xzf kor_linux_amd64.tar.gz
-          sudo mv kor /usr/local/bin/
+          go install github.com/yonahd/kor@latest
       - name: Check unused resources
         run: |
-          kor --all --exclude-namespaces=kube-system,kube-public,kube-node-lease
+          kor all --exclude-namespaces=kube-system,kube-public,kube-node-lease
         continue-on-error: true
 ```
 
-### 3.5. Автоматическая очистка (cron)
+### Автоматическая очистка (cron)
 
 **Скрипт для регулярной очистки:**
 
@@ -200,11 +191,11 @@ EXCLUDE_NS="kube-system,kube-public,kube-node-lease"
 
 echo "=== Kor cleanup started at $(date) ===" >> $LOG_FILE
 
-# Dry-run для логирования
-kor --all --exclude-namespaces=$EXCLUDE_NS --delete --dry-run >> $LOG_FILE 2>&1
+# Просмотр (без удаления)
+kor all --exclude-namespaces=$EXCLUDE_NS -o json >> $LOG_FILE 2>&1
 
 # Фактическое удаление (раскомментировать для production)
-# kor --all --exclude-namespaces=$EXCLUDE_NS --delete >> $LOG_FILE 2>&1
+# kor all --exclude-namespaces=$EXCLUDE_NS --delete --no-interactive >> $LOG_FILE 2>&1
 
 echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
 ```
@@ -212,11 +203,10 @@ echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
 **Cron job (еженедельно):**
 
 ```bash
-# Добавление в crontab
 0 3 * * 0 /usr/local/bin/kor-cleanup.sh
 ```
 
-## 4. Дополнительная информация
+## Дополнительная информация
 
 ### Требования
 
@@ -228,17 +218,17 @@ echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
 
 ### Ограничения
 
-- **Не удаляет ресурсы по умолчанию:** Требуется явный флаг `--delete`
-- **Ложные срабатывания:** Некоторые ресурсы могут использоваться операторами или внешними системами
-- **Не проверяет вложенные зависимости:** Например, Secret может использоваться Init Container
+- **Не удаляет ресурсы по умолчанию:** требуется явный флаг `--delete`
+- **Ложные срабатывания:** некоторые ресурсы могут использоваться операторами или внешними системами
+- **Не проверяет вложенные зависимости:** Secret может использоваться Init Container
 
 ### Лучшие практики
 
-1. **Всегда выполняйте dry-run** перед фактическим удалением
-2. **Исключайте системные namespace'ы** (`kube-system`, `kube-public`)
-3. **Настройте исключения** для критических ресурсов через лейблы
-4. **Запускайте регулярно** по расписанию для поддержания чистоты
-5. **Интегрируйте с уведомлениями** (Slack, email) для отчётов
+1. Всегда запускать без `--delete` перед фактическим удалением
+2. Исключать системные namespace'ы (`kube-system`, `kube-public`)
+3. Настраивать исключения для критических ресурсов
+4. Запускать регулярно по расписанию для поддержания чистоты
+5. Интегрировать с уведомлениями (Slack, email) для отчётов
 
 ### Связанные документы
 
@@ -249,4 +239,3 @@ echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
 ### Репозиторий и документация
 
 - [GitHub: yonahd/kor](https://github.com/yonahd/kor)
-- [Документация kor](https://github.com/yonahd/kor#readme)

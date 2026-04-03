@@ -35,17 +35,6 @@ Helm использует Go template engine с библиотекой Sprig д�
 - [NOTES.txt](./templating/scenarios/notes_txt.md) — инструкции после установки
 - [NetworkPolicy](./templating/scenarios/networkpolicy.md) — шаблонизация сетевых политик
 
----
+См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Управление версиями](./helm_release_versioning.md). Отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`.
 
-## Дополнительная информация
-
-- [Обзор Helm](./helm_overview.md) — общие концепции, жизненный цикл релиза
-- [Структура Helm-чарта](./helm_chart_structure.md) — расположение шаблонов, _helpers.tpl, values.yaml
-- [Управление версиями релизов](./helm_release_versioning.md) — ревизии релизов, откаты
-
-**Полезные ресурсы:**
-
-- Документация Go templates: <https://golang.org/pkg/text/template/>
-- Библиотека Sprig: <http://masterminds.github.io/sprig/>
-- Локальная отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`
 - **Использование в werf:** [Шаблонизация манифеста Kubernetes](../../../CI-CD/Tools/werf_overview.md#сценарий-3-шаблонизация-манифеста-kubernetes) — Go template для динамической подстановки имён образов

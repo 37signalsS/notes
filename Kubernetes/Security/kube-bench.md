@@ -21,27 +21,29 @@
 
 * Поддержка различных версий Kubernetes и облачных сред (GKE, EKS, AKS, OpenShift).
 * Автоматическое определение роли узла (master или worker) для применения релевантных тестов.
-* Генерация отчетов в текстовом или JSON-формате, классифицирующих проверки как пройденные (PASS), проваленные (FAIL) или требующие внимания (WARN).
+* Генерация отчётов в текстовом или JSON-формате, классифицирующих проверки как пройденные (PASS), проваленные (FAIL) или требующие внимания (WARN).
 
-## Практические сценарии
+**Место в экосистеме безопасности:**
 
-`kube-bench` и [Kubesec](./kubesec.md) являются взаимодополняющими инструментами, каждый из которых ориентирован на свой аспект безопасности Kubernetes:
+kube-bench и [kubesec](./kubesec.md) дополняют друг друга, охватывая разные аспекты:
 
-* **Аудит инфраструктуры кластера (`kube-bench`)**: Используется для проверки текущей конфигурации самого кластера (настроек компонентов, безопасности узлов) на соответствие рекомендациям CIS. Это важно для обеспечения базовой защищенности среды выполнения.
-* **Аудит манифестов приложений (`Kubesec`)**: Применяется для анализа YAML-файлов приложений на наличие потенциальных рисков и уязвимостей еще до их развертывания в кластере. Это позволяет предотвратить внедрение небезопасных конфигураций на уровне рабочих нагрузок.
+* **kube-bench** — аудит работающей инфраструктуры кластера (конфигурация компонентов, безопасность узлов).
+* **kubesec** — статический анализ манифестов приложений до деплоя.
+* [Kyverno](./kyverno/policies/practical_scenarios.md) — проверка манифестов во время деплоя (admission controller).
+* [Falco](../../Security/Tools/falco.md) — мониторинг runtime-поведения после деплоя.
 
 ## Практические сценарии
 
 ### Запуск kube-bench
 
-**Способ 1: Запуск как Job в Kubernetes** (рекомендуется):
+**Способ 1: Job в Kubernetes** (рекомендуется):
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
 kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-node.yaml
 ```
 
-**Способ 2: Запуск в Docker**:
+**Способ 2: Docker**:
 
 ```bash
 docker run --rm \
@@ -50,11 +52,10 @@ docker run --rm \
   kube-bench --config-dir /host/config --config /host/config/<version>/master.yaml
 ```
 
-**Способ 3: Установка бинарного файла**:
+**Способ 3: Бинарный файл**:
 
 ```bash
-wget https://github.com/aquasecurity/kube-bench/releases/download/v0.7.2/kube-bench_0.7.2_linux_amd64.deb
-sudo dpkg -i kube-bench_0.7.2_linux_amd64.deb
+# Скачать актуальную версию: https://github.com/aquasecurity/kube-bench/releases
 kube-bench master  # или node
 ```
 
@@ -69,18 +70,4 @@ kube-bench классифицирует проверки:
 
 ## Дополнительная информация
 
-### Сравнение инструментов безопасности
-
-| Инструмент | Объект проверки | Когда работает |
-|------------|-----------------|----------------|
-| **kube-bench** | Инфраструктура кластера | Периодический аудит | Этот файл |
-| **[kubesec](./kubesec.md)** | Манифесты приложений | До деплоя (CI/CD) | kubesec.md |
-| **[Kyverno](./kyverno/policies/practical_scenarios.md)** | Манифесты приложений | Во время деплоя (Admission) | kyverno.md |
-| **[Falco](../../Security/Tools/falco.md)** | Runtime-поведение | После деплоя | falco.md |
-
-### Связанные темы
-
-* **[Kubesec](./kubesec.md)** — анализ рисков в манифестах
-* **[Kyverno](./kyverno/policies/practical_scenarios.md)** — политики безопасности
-* **[Pod Security Context](./pod_security_context.md)** — безопасность подов
-* **[CIS Benchmark](https://www.cisecurity.org/benchmark/kubernetes)** — официальный стандарт
+Сравнение с другими инструментами безопасности Kubernetes: [kubesec](./kubesec.md) — анализ рисков в манифестах, [Kyverno](./kyverno/policies/practical_scenarios.md) — политики безопасности при деплое, [Pod Security Context](./pod_security_context.md) — безопасность подов. Официальный стандарт CIS — [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes).

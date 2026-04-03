@@ -2,7 +2,7 @@
 
 ## Определения
 
-* **Пользователь Rancher**: Учетная запись, созданная в Rancher (лококально или через внешние провайдеры), позволяющая получить доступ к UI и управляемым кластерам.
+* **Пользователь Rancher**: Учётная запись, созданная в Rancher (локально или через внешние провайдеры), позволяющая получить доступ к UI и управляемым кластерам.
 * **Global Role (Глобальная роль)**: Определяет права доступа пользователя к функционалу самого Rancher.
 * **Cluster Role (Роль уровня кластера)**: Определяет права доступа пользователя в рамках конкретного кластера Kubernetes.
 * **Project (Проект)**: Уровень абстракции в Rancher, группирующий один или несколько `namespaces`.
@@ -41,18 +41,18 @@
 
 ## Практические сценарии
 
-### 1. Создание локального пользователя и назначение глобальных прав
+### Создание локального пользователя и назначение глобальных прав
 
-1. В Rancher UI перейдите в **Global Settings** -> **User & Authentication** -> **Users**.
+1. В Rancher UI перейдите в **Global Settings** → **User & Authentication** → **Users**.
 2. Нажмите **Add User**.
 3. Укажите `Username`, `Display Name`, `Description` и `Password`.
 4. В разделе **Global Permissions** выберите глобальную роль:
     * **Standard User**: Может создавать новые кластеры, управлять своими кластерами и проектами.
     * **User-Base**: Может только логиниться в Rancher UI и видеть доступные кластеры/проекты.
 
-### 2. Создание проекта с ресурсными квотами и добавление пользователя
+### Создание проекта с ресурсными квотами и добавление пользователя
 
-1. В Rancher UI перейдите в **Global** -> **Clusters** -> (ваш кластер) -> **Projects/Namespaces**.
+1. В Rancher UI перейдите в **Global** → **Clusters** → (ваш кластер) → **Projects/Namespaces**.
 2. Нажмите **Create Project**.
 3. Укажите `Project Name` и `Description`.
 4. В разделе **Project Members** добавьте пользователя и назначьте роль:
@@ -60,48 +60,53 @@
     * **Project Member**: Может создавать и управлять ресурсами внутри проекта.
     * **Read-only**: Только просмотр всех ресурсов проекта, кроме секретов.
 5. **Настройка Resource Quotas**:
-    * **Project Limits**: Определите лимиты ресурсов для всего проекта (CPU, Memory).
+    * **Project Limits**: Лимиты ресурсов для всего проекта (CPU, Memory).
     * **Namespace Default Limits**: Значения по умолчанию для новых `namespaces`.
 
-### 3. Работа пользователя в проекте
+### Работа пользователя в проекте
 
-1. **Логин как обычный пользователь**: Пользователь видит только кластеры и проекты, к которым ему предоставлен доступ.
-2. **Скачивание Kubeconfig**: Раздел **Cluster Explorer** -> **Kubeconfig File**.
+1. Пользователь видит только кластеры и проекты, к которым предоставлен доступ.
+2. **Скачивание Kubeconfig**: **Cluster Explorer** → **Kubeconfig File**.
 3. **Создание Namespace (через Rancher UI)**:
-    * В разделе **Projects/Namespaces** -> (ваш проект) -> **Namespaces** нажмите **Create Namespace**.
+    * **Projects/Namespaces** → (ваш проект) → **Namespaces** → **Create Namespace**.
     * **Настройка Resource Limits**: Распределение квот на конкретный `namespace`.
-    * **Container Default Resource Limits**: **Рекомендуется не устанавливать.**
+    * **Container Default Resource Limits**: Не рекомендуется устанавливать.
 4. **Развертывание приложения**:
-    * Через Rancher UI: настройка Image, Port Mapping, Resource Requests/Limits.
+    * Через Rancher UI: Image, Port Mapping, Resource Requests/Limits.
     * Или через `kubectl apply -f your-app.yaml`.
 
-### 4. Настройка RBAC для просмотра мониторинга приложений
+### Настройка RBAC для просмотра мониторинга приложений
 
-1. Для просмотра метрик в общей Grafana Rancher пользователю необходимы соответствующие права на `Project Monitoring`.
-2. **Минимальные роли**:
-    * `View Monitoring`: Позволяет просматривать Grafana, Prometheus и Alertmanager.
-    * `Manage Services`: **Крайне важно** добавить эту роль вместе с `View Monitoring`. Без `Manage Services` пользователь будет сталкиваться с ошибками в UI.
-3. **Процесс**:
-    * Перейдите в `Project/Namespaces` -> (Project мониторинга, например, `Monitoring`).
-    * В разделе `Members` добавьте пользователя и назначьте обе роли.
+Для просмотра метрик в Grafana Rancher пользователю необходимы права на `Project Monitoring`:
 
-### 5. Создание и привязка кастомных ролей
+* `View Monitoring`: Просмотр Grafana, Prometheus, Alertmanager.
+* `Manage Services`: Обязательное дополнение — без него пользователь сталкивается с ошибками в UI.
 
-1. В Rancher UI перейдите в **Global Settings** -> **Role Based Access Control** -> **Cluster Roles** (или **Project/Namespace Roles**).
-2. Нажмите **Create Cluster Role**.
-3. Укажите `Name` и `Description`.
-4. В разделе **Rules** укажите `Verbs` и `Resources`.
-5. После создания роли, ее можно привязать к пользователю.
+**Процесс:** `Project/Namespaces` → (проект мониторинга) → `Members` → добавить пользователя с обеими ролями.
 
-### 6. Ограничения RBAC для пользователей при работе с логированием
+### Создание и привязка кастомных ролей
 
-* **`ClusterFlow` и `ClusterOutput`**: Могут создаваться только администраторами.
-* **`Flow` и `Output`**: Только `Project Owner` может создавать и изменять. `Project Member` — только просмотр.
+1. В Rancher UI: **Global Settings** → **Role Based Access Control** → **Cluster Roles** (или **Project/Namespace Roles**).
+2. **Create Cluster Role** → укажите `Name`, `Description`.
+3. В разделе **Rules** укажите `Verbs` и `Resources`.
+4. Привяжите роль к пользователю через Members проекта или кластера.
+
+### Ограничения RBAC для логирования
+
+Ограничения для `ClusterFlow`/`ClusterOutput` и `Flow`/`Output` описаны в разделе [логирование Rancher](./rancher_logging.md#ограничения-rbac).
 
 ## Дополнительная информация
 
-* **Rancher как "точка входа" для RBAC**: Предоставляет централизованное и удобное средство для управления Kubernetes RBAC.
-* **Гибкость настройки**: Возможность использования встроенных и кастомных ролей, интеграция с внешними аутентификационными провайдерами.
-* **Альтернативы**: Некоторые организации используют [ArgoCD](../../GitOps/ArgoCD/synchronization/scenarios/progressive_sync.md) для управления правами доступа.
+### Актуальность версий
+
+> **Внимание:** Rancher RBAC стабильно развивается. Ключевые изменения привязаны к мажорным версиям Rancher.
+
+| Компонент | Указанная информация | Статус | Рекомендация |
+|-----------|---------------------|--------|--------------|
+| **Global/Cluster/Project Roles** | Базовая модель RBAC | ✅ Evergreen | Не менялась с 2.x |
+| **Auth Providers** | LDAP, AD, Keycloak, GitHub | ✅ Актуален | [Auth Providers Docs](https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config) |
+| **Custom Roles** | Создание через UI и API | ✅ Актуален | Расширяется в каждой версии |
+
+Rancher RBAC транслирует права в нативный [Kubernetes RBAC](../../Kubernetes/Security/rbac/rbac_overview.md). Альтернативы для управления доступом: [ArgoCD](../../GitOps/ArgoCD/argocd_overview.md).
 
 См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.

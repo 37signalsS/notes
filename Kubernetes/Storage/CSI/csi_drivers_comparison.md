@@ -8,9 +8,11 @@
 
 ---
 
-## Сравнение CSI-драйверов
+## Базовые концепции
 
-### Облачные провайдеры
+### Сравнение CSI-драйверов
+
+#### Облачные провайдеры
 
 > **Примечание:** Для локального аринта используйте on-premise решения (Ceph, NFS, Longhorn).
 
@@ -20,7 +22,7 @@
 | **vSphere CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
 | **OpenStack Cinder CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
 
-### On-premise решения
+#### On-premise решения
 
 | Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -35,9 +37,11 @@
 
 ---
 
-## Диагностика и мониторинг CSI
+## Практические сценарии
 
-### Проверка статуса CSI-драйвера
+### Диагностика и мониторинг CSI
+
+#### Проверка статуса CSI-драйвера
 
 ```bash
 # Проверка установленных CSI-драйверов
@@ -53,7 +57,7 @@ kubectl get events -n kube-system --field-selector reason=Provisioning
 kubectl describe csidriver rbd.csi.ceph.com
 ```
 
-### Диагностика проблем с томами
+#### Диагностика проблем с томами
 
 ```bash
 # Статус PVC и PV
@@ -69,7 +73,7 @@ kubectl get volumesnapshot,volumesnapshotcontent,volumesnapshotclass
 kubectl logs -n kube-system -l app=csi-driver --all-containers=true
 ```
 
-### Распространённые проблемы
+#### Распространённые проблемы
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
@@ -78,43 +82,6 @@ kubectl logs -n kube-system -l app=csi-driver --all-containers=true
 | Под не запускается | Том не монтируется | Проверить логи CSI Node Plugin, совместимость FS |
 | Snapshot не создаётся | Драйвер не поддерживает `CREATE_DELETE_SNAPSHOT` | Проверить возможности драйвера |
 | Timeout при монтировании | Сетевые проблемы, недоступность СХД | Проверить сеть, доступность СХД, firewall |
-
----
-
-## Лучшие практики
-
-### Выбор StorageClass
-
-- Используйте `WaitForFirstConsumer` для stateful-приложений в многозонных кластерах
-- Устанавливайте `reclaimPolicy: Retain` для production-данных
-- Включайте `allowVolumeExpansion: true` для гибкости
-- Для баз данных используйте блочные хранилища (RWO)
-- Для общих данных — файловые хранилища (RWX)
-
-### Безопасность
-
-- Ограничивайте доступ к `StorageClass` через RBAC
-- Используйте отдельные secrets для provisioner и node plugin
-- Шифруйте данные на уровне СХД (encryption at rest)
-- Регулярно тестируйте восстановление из snapshots
-
-### Мониторинг
-
-- Отслеживайте использование дискового пространства (алерты на 80%, 90%)
-- Мониторьте latency и IOPS томов
-- Настройте алерты на ошибки provisioning
-- Собирайте метрики CSI-драйвера (если поддерживает)
-
-### Бэкапы
-
-- Используйте VolumeSnapshots для быстрых локальных бэкапов
-- Не полагайтесь только на snapshots — экспортируйте данные во внешнее хранилище
-- Тестируйте восстановление регулярно
-- Автоматизируйте создание snapshots через CronJob или внешние инструменты
-
----
-
-## Практические сценарии
 
 ### Secrets Store CSI Driver
 
@@ -193,21 +160,46 @@ spec:
           secretProviderClass: "vault-db-credentials"
 ```
 
-> **Подробно:** [External Secret Managers](../../Base/secrets/external_managers.md, [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
+> **Подробно:** [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
+
+### Лучшие практики
+
+#### Выбор StorageClass
+
+- Используйте `WaitForFirstConsumer` для stateful-приложений в многозонных кластерах
+- Устанавливайте `reclaimPolicy: Retain` для production-данных
+- Включайте `allowVolumeExpansion: true` для гибкости
+- Для баз данных используйте блочные хранилища (RWO)
+- Для общих данных — файловые хранилища (RWX)
+
+#### Безопасность
+
+- Ограничивайте доступ к `StorageClass` через RBAC
+- Используйте отдельные secrets для provisioner и node plugin
+- Шифруйте данные на уровне СХД (encryption at rest)
+- Регулярно тестируйте восстановление из snapshots
+
+#### Мониторинг
+
+- Отслеживайте использование дискового пространства (алерты на 80%, 90%)
+- Мониторьте latency и IOPS томов
+- Настройте алерты на ошибки provisioning
+- Собирайте метрики CSI-драйвера (если поддерживает)
+
+#### Бэкапы
+
+- Используйте VolumeSnapshots для быстрых локальных бэкапов
+- Не полагайтесь только на snapshots — экспортируйте данные во внешнее хранилище
+- Тестируйте восстановление регулярно
+- Автоматизируйте создание snapshots через CronJob или внешние инструменты
 
 ---
 
-## Связанные темы
+## Дополнительная информация
+
+### Связанные темы
 
 - **Базовая информация:** [Container Storage Interface (CSI)](./csi_overview.md)
 - **Продвинутые возможности:** [CSI Advanced Features](./csi_advanced.md)
 - **PV и PVC:** [Хранение данных: PV, PVC и StorageClass](../pv_and_pvc.md)
 - **Ceph CSI:** [Ceph Overview](../Ceph/ceph_overview.md)
-
-## Официальные источники
-
-- [Container Storage Interface (CSI) Specification](https://github.com/container-storage-interface/spec)
-- [Kubernetes CSI Documentation](https://kubernetes.io/docs/concepts/storage/volumes/#csi)
-- [CSI Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
-- [CSI Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/)
-- [Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/)

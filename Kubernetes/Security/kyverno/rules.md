@@ -9,11 +9,11 @@
 - **Policy** — namespace-scoped, применяется к ресурсам в конкретном namespace
 - **ClusterPolicy** — cluster-scoped, применяется ко всему кластеру
 
-> **Основное руководство:** Подробное описание структуры политик и примеров — в [Написание политик](./policies/practical_scenarios.md).
+Подробное описание структуры политик и примеров — в [Написание политик](./policies/practical_scenarios.md).
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Типы правил
 
@@ -58,7 +58,7 @@ rules:
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Валидация с помощью pattern
 
@@ -173,7 +173,7 @@ rules:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Важные замечания
 
@@ -191,9 +191,3 @@ rules:
 | `Equal` / `NotEqual` | Равенство / неравенство |
 | `GreaterThanOrEquals` / `LessThanOrEquals` | Числовые сравнения |
 | `PatternMatch` | Проверка по regex-шаблону |
-
-### Связанные темы
-
-- [Написание политик](./policies/practical_scenarios.md) — подробные примеры политик
-- [Policy Reports](./reports.md) — отчеты о применении правил
-- [Aggregated Cluster Roles](./additional.md) — права для генерации ресурсов

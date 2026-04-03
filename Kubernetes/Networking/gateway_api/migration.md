@@ -162,6 +162,50 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 - Инструмент: [ingress2gateway GitHub](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
 - Conformance-отчёты: [Gateway API Implementations](https://gateway-api.sigs.k8s.io/implementations/)
 
+### Troubleshooting: cert-manager + Gateway API
+
+При миграции с Ingress NGINX на Gateway API распространённая проблема — cert-manager не видит Gateway-ресурсы и не получает сертификаты.
+
+**Проблема 1: cert-manager не видит Gateway API**
+
+При установке cert-manager через манифесты (не Helm) Gateway API support может быть отключён по умолчанию.
+
+**Решение:**
+- При установке через Helm указать `config.controller.config.enableGatewayAPI: true`
+- Или добавить `--enable-gateway-api` в аргументы контейнера контроллера
+- Начиная с Kubernetes 1.31+ Gateway API CRD включены в стандартный установочный пакет cert-manager
+
+**Проблема 2: ACME solver не проходит через Gateway**
+
+Если в ClusterIssuer указан `ingressClassName: nginx`, cert-manager пытается создать Ingress-ресурс для HTTP-01 challenge. При использовании Gateway API это не работает.
+
+**Решение:** В ClusterIssuer использовать `gatewayHTTPRoute` вместо `ingress`:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs:
+          - name: my-gateway
+            namespace: default
+            kind: Gateway
+```
+
+**Проблема 3: Listener помечен как Invalid — Secret не существует**
+
+При создании Gateway с TLS- listener и ссылкой на несуществующий Secret, listener переходит в статус `Invalid`.
+
+**Решение:** Убедиться, что cert-manager успел создать Secret до того, как Gateway начнёт обработку. Аннотация `cert-manager.io/cluster-issuer` на Gateway должна быть корректной. Проверить статус через `kubectl describe gateway <name>`.
+
 **Связанные документы:**
 - Концепции Gateway API: [Определения](./definitions.md)
 - Ресурсы (CRD): [Ресурсы](./resources.md)

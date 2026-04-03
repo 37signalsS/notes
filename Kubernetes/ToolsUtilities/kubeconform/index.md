@@ -1,8 +1,8 @@
 # kubeconform
 
-## Определения
+## Definitions
 
-**`kubeconform`** — это высокопроизводительный валидатор манифестов Kubernetes, который проверяет их на соответствие официальным схемам JSON Schema API Kubernetes.
+**`kubeconform`** — высокопроизводительный валидатор манифестов Kubernetes, проверяющий соответствие официальным схемам JSON Schema API Kubernetes. Написан на Go, работает в 10–100 раз быстрее kubeval.
 
 ---
 
@@ -12,12 +12,11 @@
 
 | Особенность | Описание |
 | :--- | :--- |
-| **Высокая производительность** | Параллельная обработка файлов, кэширование схем, в 10-100 раз быстрее kubeval |
-| **Интеграция с CI/CD** | Возвращает ненулевой код выхода при ошибках, поддержка TAP/JUnit форматов |
-| **Поддержка CRD** | Валидация Custom Resources при указании пути к OpenAPI схемам |
-| **Офлайн-режим** | Работа без интернета при предварительно загруженных схемах |
-| **Гибкость ввода** | Поддержка файлов, директорий, stdin, Helm-чартов |
-| **Кэширование схем** | Локальное кэширование для ускорения повторных проверок |
+| **Производительность** | Параллельная обработка, кэширование схем |
+| **CI/CD-интеграция** | Ненулевой код выхода при ошибках, форматы TAP/JUnit/JSON |
+| **Поддержка CRD** | Валидация Custom Resources через OpenAPI-схемы |
+| **Офлайн-режим** | Работа с локально загруженными схемами |
+| **Гибкость ввода** | Файлы, директории, stdin, Helm-чарты, Kustomize |
 
 ### Архитектура
 
@@ -37,59 +36,34 @@
 
 ### Установка
 
-**Через Go:**
+**Go:** `go install github.com/yannh/kubeconform/cmd/kubeconform@latest`
 
-```bash
-go install github.com/yannh/kubeconform/cmd/kubeconform@latest
-```
+**Homebrew:** `brew install kubeconform`
 
-**Через Homebrew (macOS/Linux):**
+**Docker:** `docker run --rm -i ghcr.io/yannh/kubeconform:latest - -summary`
 
-```bash
-brew install kubeconform
-```
-
-**Бинарный файл:**
-
-```bash
-# Linux amd64
-curl -LO https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
-tar -xzf kubeconform-linux-amd64.tar.gz
-sudo mv kubeconform /usr/local/bin/
-chmod +x /usr/local/bin/kubeconform
-
-# macOS arm64
-curl -LO https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-darwin-arm64.tar.gz
-tar -xzf kubeconform-darwin-arm64.tar.gz
-sudo mv kubeconform /usr/local/bin/
-```
-
-**Docker:**
-
-```bash
-docker run --rm -i ghcr.io/yannh/kubeconform:latest - -summary
-```
+**Бинарный файл:** скачать с [GitHub Releases](https://github.com/yannh/kubeconform/releases) и поместить в `$PATH`.
 
 ---
 
-## Файлы
+## Practical Scenarios
 
-| Файл | Описание |
-|------|----------|
-| [usage.md](./usage.md) | Локальная валидация, CI/CD, Helm, Kustomize |
-| [operations.md](./operations.md) | Офлайн-валидация, CRD, флаги, сравнение, лучшие практики |
+Практические сценарии разделены на два документа:
+
+- **[Использование](./usage.md)** — локальная валидация, CI/CD (GitLab CI, GitHub Actions), интеграция с Helm и Kustomize
+- **[Операции](./operations.md)** — офлайн-режим, валидация CRD, флаги, сравнение с аналогами, лучшие практики
 
 ---
 
 ## Additional Information
 
-### Связанные документы
+### Связанные инструменты
 
-- **[Kustomize](../kustomize/kustomize_overview.md)** — валидация результатов kustomize
-- **[Helm](../Helm/helm_overview.md)** — валидация Helm-чартов
+- **[Kustomize](../kustomize/kustomize_overview.md)** — валидация результатов `kubectl kustomize`
+- **[Helm](../../ToolsUtilities/Helm/helm_overview.md)** — валидация отрендеренных чартов
 - **[GitOps](../../../GitOps/GitOps_overview.md)** — интеграция в GitOps-пайплайны
 
-### Репозиторий и документация
+### Ресурсы
 
 - [GitHub: yannh/kubeconform](https://github.com/yannh/kubeconform)
 - [Схемы Kubernetes JSON](https://github.com/yannh/kubernetes-json-schema)
