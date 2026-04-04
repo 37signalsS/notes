@@ -1,11 +1,11 @@
 # Настройка writeback: параметры ядра
 
-## Определения
+## Definitions
 
 - **Dirty Pages (Грязные страницы)**: Страницы в оперативной памяти (page cache), которые были изменены, но ещё не записаны на диск.
 - **Writeback**: Фоновый процесс записи dirty pages из кэша памяти на диск.
 
-## Основные концепции
+## Basic Concepts
 
 ### Параметры ядра для tuning writeback
 
@@ -17,7 +17,7 @@
 | `vm.dirty_writeback_centisecs` | 500 | Интервал проверки dirty pages | 300–500 |
 | `vm.swappiness` | 60 | Агрессивность использования swap | 1–10 (БД), 60 (общие) |
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Просмотр текущих значений
 
@@ -87,10 +87,6 @@ vm.dirty_background_ratio = 15
 vm.dirty_writeback_centisecs = 300
 ```
 
-## Дополнительная информация
+## Additional Information
 
-### См. также
-
-- [Роль kworker/u*:flush-*](./kworker_flush.md)
-- [Сценарии диагностики I/O](./troubleshooting_scenarios.md)
-- [Оптимизация памяти](../../../FileSystems/performance_tuning.md)
+Смежные темы: [Роль kworker/u*:flush-*](./kworker_flush.md), [Сценарии диагностики I/O](./troubleshooting_scenarios.md), [Оптимизация памяти](../../../FileSystems/performance_tuning.md).

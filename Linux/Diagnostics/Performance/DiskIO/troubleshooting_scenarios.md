@@ -1,13 +1,17 @@
 # Сценарии диагностики дискового I/O
 
-## Определения
+## Definitions
 
 - **I/O Wait (`wa`)**: Процент времени, в течение которого процессор простаивал, ожидая завершения операций ввода-вывода.
 - **Uninterruptible Sleep (D-state)**: Состояние процесса, ожидающего завершения I/O операции.
 - **Dirty Pages (Грязные страницы)**: Страницы в оперативной памяти (page cache), которые были изменены, но ещё не записаны на диск.
 - **Direct I/O**: Операции чтения/записи, минуя page cache ядра.
 
-## Практические сценарии
+## Basic Concepts
+
+Файл содержит 7 практических сценариев диагностики дискового I/O с командами диагностики и решениями. Каждый сценарий описывает конкретную проблему, инструменты для диагностики и шаги решения.
+
+## Practical Scenarios
 
 ### Сценарий 1: Высокий I/O wait, `iotop` пуст
 
@@ -182,12 +186,6 @@ cat /sys/fs/cgroup/system.slice/<unit>.service/io.max
 cat /sys/fs/cgroup/system.slice/<unit>.service/io.bfq.weight
 ```
 
-## Дополнительная информация
+## Additional Information
 
-### См. также
-
-- [Диагностический чеклист I/O](./diagnostic_checklist.md)
-- [Роль kworker/u*:flush-*](./kworker_flush.md)
-- [Настройка writeback](./writeback_tuning.md)
-- [`biosnoop` и eBPF инструменты](../../../Tools/bcc_bpf_tools.md)
-- [SMART: проверка здоровья диска](../Hardware/smartctl/disk_health_check.md)
+Смежные темы: [Диагностический чеклист I/O](./diagnostic_checklist.md), [Роль kworker/u*:flush-*](./kworker_flush.md), [Настройка writeback](./writeback_tuning.md), [SMART: проверка здоровья диска](../Hardware/smartctl/disk_health_check.md).

@@ -33,46 +33,49 @@
 
 > **Примечание:** В 2024-2025 гг. также появился новый планировщик **ADIOS (Adaptive Deadline I/O Scheduler)**, разработанный для современных многоочередных блочных устройств, но он ещё не получил широкого распространения в основных дистрибутивах.
 
-### Управление планировщиком (временно)
+### Управление планировщиком
 
-- **Проверить текущий планировщик для устройства `nvme0n1`:**
+**Проверить текущий планировщик:**
 
-    ```bash
-    cat /sys/block/nvme0n1/queue/scheduler
-    # Вывод: [none] mq-deadline kyber bfq
-    ```
+```bash
+cat /sys/block/nvme0n1/queue/scheduler
+# Вывод: [none] mq-deadline kyber bfq
+```
 
-    Активный планировщик указан в квадратных скобках.
+Активный планировщик указан в квадратных скобках.
 
-- **Изменить планировщик временно (до перезагрузки):**
+**Изменить временно (до перезагрузки):**
 
-    ```bash
-    # Установить планировщик 'mq-deadline' для nvme0n1
-    echo mq-deadline | sudo tee /sys/block/nvme0n1/queue/scheduler
-    ```
+```bash
+echo mq-deadline | sudo tee /sys/block/nvme0n1/queue/scheduler
+```
+
+**Изменить постоянно (через udev):**
+
+Создать файл `/etc/udev/rules.d/60-io-schedulers.rules`:
+
+```
+# NVMe — mq-deadline
+ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="mq-deadline"
+
+# SATA/SAS — bfq
+ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/scheduler}="bfq"
+```
+
+Применить без перезагрузки:
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Подробнее: **[Udev](../udev.md)**.
 
 ## Дополнительная информация
 
-### Постоянное изменение планировщика (с помощью [udev](../udev.md))
+### Связанные темы
 
-Чтобы изменение сохранялось после перезагрузки, можно создать правило `udev`.
-
-> **Примечание:** Полное описание синтаксиса и управления правилами `udev` находится в заметке [Udev](../udev.md).
-
-1. Создайте файл `/etc/udev/rules.d/60-io-schedulers.rules`.
-2. Добавьте в него строки для нужного типа дисков:
-
-    ```
-    # Установить mq-deadline для всех дисков NVMe
-    ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="mq-deadline"
-
-    # Установить bfq для всех дисков SATA/SAS (sd*)
-    ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/scheduler}="bfq"
-    ```
-
-3. Перезагрузите правила `udev`:
-
-    ```bash
-    sudo udevadm control --reload-rules
-    sudo udevadm trigger
-    ```
+- **Диагностика I/O:** [iostat](../../../Diagnostics/Filesystem/iostat.md) — мониторинг дисковой подсистемы
+- **Приоритеты I/O:** [ionice](../../../Diagnostics/Filesystem/ionice.md) — установка классов приоритета (работает с `bfq`, не работает с `none`/`kyber`)
+- **Прерывания:** [Interrupts](./interrupts.md) — обработка прерываний блочных устройств
+- **Udev:** [Udev](../udev.md) — постоянная настройка планировщика через правила udev
+- **eBPF для I/O:** [eBPF](./ebpf.md) — `biosnoop` и другие инструменты на базе BCC

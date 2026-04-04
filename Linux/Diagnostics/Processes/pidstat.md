@@ -274,13 +274,4 @@ sudo systemctl start sysstat
 - **Требует установки:** Не входит в базовую поставку
 - **Ограниченная интерактивность:** Не заменяет `top`/`htop`
 - **Требует прав root:** Для полной информации по всем процессам
-
-### См. также
-
-- [`top`](./top.md) — интерактивный мониторинг
-- [`htop`](./htop.md) — улучшенная альтернатива
-- [`ps`](./ps.md) — снимок процессов
-- [`iotop`](../Filesystem/iotop.md) — I/O по процессам
-- [`atop`](../Performance/atop.md) — исторический анализ
-- [`sar`](../Performance/sar.md) — системная статистика
-- [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md) — метрики памяти
+- Для интерактивного мониторинга используйте [`top`](./top.md) или [`htop`](./htop.md), для снимков в скриптах — [`ps`](./ps.md), для I/O в реальном времени — [`iotop`](../Filesystem/iotop.md), для комплексного исторического анализа — [`atop`](../Performance/atop.md), для системной статистики — [`sar`](../Performance/sar.md), о метриках памяти — в [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md).

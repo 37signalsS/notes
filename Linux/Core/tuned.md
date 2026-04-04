@@ -195,9 +195,3 @@ tuned-adm active
 - **[Memory Tuning](./memory/performance_tuning.md)** — оптимизация памяти
 - **[CPU Pinning](./cpu_pinning.md)** — привязка к ядрам CPU
 - **[Systemd](./systemd/overview.md)** — управление сервисами
-
-### Дополнительные ресурсы
-
-- **Официальная документация:** [access.redhat.com/tuned](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/monitoring_and_managing_system_status_and_performance/tuned)
-- **GitHub репозиторий:** [github.com/redhat-performance/tuned](https://github.com/redhat-performance/tuned)
-- **Man page:** [tuned-adm(8)](https://man7.org/linux/man-pages/man8/tuned-adm.8.html)

@@ -1,6 +1,37 @@
 # Проверка здоровья дисков с помощью smartctl
 
-## Определение имени диска
+## Определения
+
+**`smartctl`** — утилита из пакета `smartmontools` для чтения и анализа данных S.M.A.R.T. Подробные концепции и атрибуты см. в [smart_concepts](./smart_concepts.md).
+
+**Ключевые типы накопителей:**
+
+- **HDD (ATA/SATA)** — `/dev/sda`, `/dev/sdb`
+- **NVMe** — `/dev/nvme0n1`, `/dev/nvme1n1`
+- **SAS** — `/dev/sda` (протокол SCSI)
+
+## Основные концепции
+
+### Различия ATA и NVMe
+
+| Аспект | ATA/SATA | NVMe |
+|--------|----------|------|
+| Флаг статуса | `smartctl -H` | `smartctl -H` |
+| Полная информация | `smartctl -a` | `smartctl -a` |
+| Ключевые атрибуты износа | `Wear_Leveling`, `Total_LBAs_Written` | `Percentage Used`, `Media Wearout` |
+| Тесты самодиагностики | `short`, `long`, `conveyance` | Аналогично (зависит от диска) |
+
+### Результаты проверки здоровья
+
+| Статус | Значение |
+|--------|----------|
+| `PASSED` | Диск исправен |
+| `FAILED` | Диск неисправен, требуется замена |
+| `DISK FAILURE IS IMMINENT` | Скорый отказ — немедленная замена |
+
+## Практические сценарии
+
+### Определение имени диска
 
 ```bash
 # Список всех дисков
@@ -13,12 +44,9 @@ lsscsi
 ls /dev/nvme*
 ```
 
-**Имена дисков:**
+Подробнее об инвентаризации оборудования см. [hardware_listing](../hardware_listing.md).
 
-- SATA/SCSI: `/dev/sda`, `/dev/sdb`, `/dev/nvme0n1`
-- NVMe: `/dev/nvme0n1`, `/dev/nvme1n1`
-
-## Быстрая проверка здоровья диска
+### Быстрая проверка здоровья
 
 ```bash
 # Общий статус здоровья (ATA/SATA)
@@ -27,17 +55,11 @@ sudo smartctl -H /dev/sda
 # Общий статус здоровья (NVMe)
 sudo smartctl -H /dev/nvme0n1
 
-# Проверка с автоопределением типа диска
+# Полная информация с автоопределением типа
 sudo smartctl -a /dev/sda
 ```
 
-**Возможные результаты:**
-
-- `PASSED` — диск исправен
-- `FAILED` — диск неисправен, требуется замена
-- `DISK FAILURE IS IMMINENT` — скорый отказ
-
-## Просмотр всех атрибутов S.M.A.R.T
+### Просмотр атрибутов S.M.A.R.T.
 
 ```bash
 # Полная информация (ATA/SATA)
@@ -46,49 +68,48 @@ sudo smartctl -a /dev/sda
 # Полная информация (NVMe)
 sudo smartctl -a /dev/nvme0n1
 
-# Только атрибуты
+# Только атрибуты (без заголовка)
 sudo smartctl -A /dev/sda
 
-# С дополнительной информацией о диске
+# Информация о диске (модель, серийный номер, версия прошивки)
 sudo smartctl -i /dev/sda
 ```
 
-## Запуск тестов самодиагностики
+Подробнее о ключевых атрибутах для HDD/SSD/NVMe см. [smart_concepts](./smart_concepts.md).
 
-`smartctl` может инициировать встроенные в диск тесты:
+### Запуск тестов самодиагностики
 
 | Тип теста | Длительность | Описание |
 |-----------|--------------|----------|
-| `short` | 2-5 минут | Быстрая проверка электроники и части поверхности |
-| `long` | 1-8 часов | Полное сканирование поверхности |
-| `conveyance` | 1-5 минут | Тест после транспортировки (не все диски поддерживают) |
+| `short` | 2-5 мин | Быстрая проверка электроники и части поверхности |
+| `long` | 1-8 ч | Полное сканирование поверхности |
+| `conveyance` | 1-5 мин | Тест после транспортировки (не все диски поддерживают) |
 
 ```bash
-# Запустить короткий тест в фоновом режиме
+# Запустить короткий тест (фоновый режим)
 sudo smartctl -t short /dev/sda
 
-# Запустить длинный тест в фоновом режиме
+# Запустить полный тест (фоновый режим)
 sudo smartctl -t long /dev/sda
 
-# Посмотреть результаты последнего теста
-sudo smartctl -l selftest /dev/sda
-
-# Полная история самопроверок
+# Результаты последнего теста
 sudo smartctl -l selftest /dev/sda
 
 # Прервать текущий тест
 sudo smartctl -X /dev/sda
 ```
 
-**Интерпретация результатов самопроверки:**
+**Интерпретация результатов:**
 
-- `Completed without error` — тест пройден
-- `Completed: read failure` — ошибки чтения (bad sectors)
-- `Completed: servo failure` — проблемы с сервоприводом
-- `Completed: electrical failure` — проблемы с электроникой
-- `Aborted by host` — тест прерван пользователем
+| Статус | Значение |
+|--------|----------|
+| `Completed without error` | Тест пройден |
+| `Completed: read failure` | Ошибки чтения (bad sectors) |
+| `Completed: servo failure` | Проблемы с сервоприводом |
+| `Completed: electrical failure` | Проблемы с электроникой |
+| `Aborted by host` | Тест прерван пользователем |
 
-## Мониторинг ошибок диска
+### Мониторинг ошибок
 
 ```bash
 # Журнал ошибок (ATA)
@@ -99,36 +120,58 @@ sudo smartctl -l error /dev/nvme0n1
 
 # Журнал дефектов (grown defects list)
 sudo smartctl -l defect /dev/sda
-
-# Статистика по секторам (SATA)
-sudo smartctl -l xselftest /dev/sda
 ```
 
-## Диагностика проблем с производительностью
+### Диагностика проблем с производительностью
 
 ```bash
-# Проверка температуры
+# Температура
 sudo smartctl -A /dev/sda | grep -i temperature
 
-# Проверка количества записанных данных (для SSD)
+# Объём записанных данных (SSD)
 sudo smartctl -A /dev/sda | grep -E "Total_LBAs_Written|Data_Units_Written"
 
-# Проверка износа SSD
+# Износ SSD
 sudo smartctl -A /dev/sda | grep -E "Wear_Leveling|Media_Wearout|Percentage_Used"
 
-# Проверка CRC ошибок (проблемы с кабелем SATA)
+# CRC-ошибки (проблемы с кабелем SATA)
 sudo smartctl -A /dev/sda | grep -i CRC
 ```
 
-## Проверка дисков в RAID-массивах
+Рекомендуемые пороги для замены дисков см. в [smart_concepts](./smart_concepts.md#recommended-thresholds).
+
+### Проверка дисков в RAID-массивах
 
 ```bash
-# Для аппаратных RAID может потребоваться указание типа контроллера
-sudo smartctl -d megaraid,0 -a /dev/sda  # LSI MegaRAID, первый диск
-sudo smartctl -d 3ware,0 -a /dev/twe0    # 3ware RAID
+# Аппаратный RAID (LSI MegaRAID, первый диск)
+sudo smartctl -d megaraid,0 -a /dev/sda
 
-# Для soft RAID (mdadm)
-sudo smartctl -a /dev/sda  # Проверка физических дисков
+# Аппаратный RAID (3ware)
+sudo smartctl -d 3ware,0 -a /dev/twe0
+
+# Soft RAID (mdadm) — проверка физических дисков
+sudo smartctl -a /dev/sda
 ```
 
-Подробнее см. [Управление RAID в Linux](../../../FileSystems/raid_management.md).
+Подробнее об управлении RAID см. [raid_management](../../../FileSystems/raid_management.md).
+
+## Дополнительная информация
+
+### Надёжность S.M.A.R. диагностики
+
+| Аспект | Надёжность | Примечания |
+|--------|------------|------------|
+| Раннее предупреждение | Средняя | ~50-70% отказов предсказуемы |
+| Reallocated_Sectors | Высокая | Надёжный индикатор деградации HDD |
+| Wear_Leveling (SSD) | Высокая | Точно отражает износ флеш-памяти |
+| Температура | Средняя | Важно для долгосрочной надёжности |
+
+**Важно:** S.M.A.R.T. не гарантирует обнаружение всех сбоев. Регулярные бэкапы обязательны.
+
+### Автоматический мониторинг
+
+Для автоматического мониторинга и оповещений используйте `smartd`. Подробнее см. [smartd_monitoring](./smartd_monitoring.md).
+
+### Диагностика сложных проблем
+
+Для комплексной диагностики ошибок диска, интерпретации атрибутов и восстановления данных см. [troubleshooting](./troubleshooting.md).

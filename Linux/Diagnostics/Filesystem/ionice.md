@@ -111,9 +111,6 @@ sudo iotop -o -p <PID>
 iostat -x 2
 ```
 
-### См. также
+### Дополнительная информация
 
-- [Диагностика filesystem и дискового пространства](./filesystem_and_disk_space_diagnostics.md)
-- [Мониторинг I/O (iotop)](./iotop.md)
-- [Планировщики I/O](../../Core/kernel/io_schedulers.md)
-- [Cgroups](../../Core/cgroups.md)
+- Связанные темы: [Мониторинг I/O (iotop)](./iotop.md), [Планировщики I/O](../../Core/kernel/io_schedulers.md), [Cgroups](../../Core/cgroups.md), [Диагностика ФС и дискового пространства](./filesystem_and_disk_space_diagnostics.md)

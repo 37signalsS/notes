@@ -110,6 +110,23 @@ tail -f /var/log/nginx/error.log
         1. Проверьте, что ваш бэкенд запущен: `systemctl status my-app`.
         2. Проверьте, что он слушает тот же порт, что указан в `proxy_pass` (например, `127.0.0.1:8000`). Сделайте это с сервера Nginx: `curl http://127.0.0.1:8000`.
 
+* **`"connect() failed (111: Connection refused)"` только под нагрузкой (ошибка 502 Bad Gateway):**
+  * **Проблема:** Upstream-сервер принимает соединения, но очередь входящих соединений (backlog) переполнена. Ядро отклоняет новые SYN-пакеты, потому что listen-очередь достигла лимита.
+  * **Причина:** Произведение `worker_processes` × `worker_connections` превышает capacity бэкенда, либо параметр `backlog` в директиве `listen` upstream-сервера слишком мал (по умолчанию обычно 511).
+  * **Решение:**
+        1. **Увеличьте backlog на upstream-сервере:**
+           - **Node.js:** `server.listen(port, hostname, backlog)` → `server.listen(3000, '0.0.0.0', 4096)`
+           - **Gunicorn:** `--backlog 2048`
+           - **PHP-FPM:** `listen.backlog = 4096` в `www.conf`
+           - **Golang:** `net.Listen("tcp", addr)` → использовать `net.ListenConfig` с `Control` для установки `SO_BACKLOG`
+        2. **Увеличьте `somaxconn` на сервере Nginx:**
+           ```bash
+           sysctl -w net.core.somaxconn=4096
+           ```
+           Добавьте в `/etc/sysctl.conf`: `net.core.somaxconn=4096`
+        3. **Проверьте capacity upstream-сервера:** Возможно, бэкенд не справляется с текущей нагрузкой — добавьте больше воркеров/инстансов.
+        4. **Настройте health checks:** Nginx может временно исключать перегруженные бэкенды из ротации.
+
 ### Проверка системных ресурсов
 
 * **Закончилось место на диске:** `df -h`

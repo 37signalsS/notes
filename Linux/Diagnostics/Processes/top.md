@@ -38,7 +38,7 @@
 | `running` | Выполняются или готовы к выполнению (R) |
 | `sleeping` | В прерываемом сне (S), ожидают события |
 | `stopped` | Остановлены сигналом (T) |
-| `zombie` | Завершены, не освобождены родителем (Z) — см. [overview.md](../../Core/processes/overview.md) |
+| `zombie` | Завершены, не освобождены родителем (Z) — см. [basic_concepts.md](../../Core/processes/basic_concepts.md) |
 
 #### Статистика CPU (Cpu(s))
 
@@ -129,7 +129,7 @@ KiB Swap:  1024000 total,  800000 free,  224000 used. 1800000 avail Mem
 | `VIRT` | Виртуальная память (VSS) — см. [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md) |
 | `RES` | Резидентная память (RSS) в RAM |
 | `SHR` | Разделяемая память |
-| `S` | Состояние (R/S/D/Z/T) — см. [overview.md](../../Core/processes/overview.md) |
+| `S` | Состояние (R/S/D/Z/T) — см. [basic_concepts.md](../../Core/processes/basic_concepts.md) |
 | `%CPU` | Процент использования CPU (100% = одно ядро) |
 | `%MEM` | Процент использования физической памяти |
 | `TIME+` | Суммарное время CPU (мин:сек.сотые) |
@@ -254,14 +254,4 @@ ps aux | awk '$8 ~ /Z/ {print}'
 
 - **Одномоментный снимок:** Для истории требуется [`atop`](../Performance/atop.md) или [`sar`](../Performance/sar.md)
 - **Ограниченная детализация:** Для глубокого анализа I/O — [`pidstat`](./pidstat.md), памяти — [`smem`](../Memory/smem.md)
-- **Нет агрегации по сервисам:** Для systemd — [`systemd-cgtop`](../../Core/systemd/cgtop.md)
-
-### См. также
-
-- [`htop`](./htop.md) — улучшенная альтернатива
-- [`ps`](./ps.md) — снимок процессов
-- [`pidstat`](./pidstat.md) — статистика по процессам
-- [`atop`](../Performance/atop.md) — исторический анализ
-- [`iotop`](../Filesystem/iotop.md) — мониторинг I/O
-- [process_memory_metrics.md](../../Core/memory/process_memory_metrics.md) — метрики памяти
-- [scheduling.md](../../Core/processes/scheduling.md) — планировщик и Load Average
+- **Нет агрегации по сервисам:** Для systemd — [`systemd-cgtop`](../../Core/systemd/cgtop.md).

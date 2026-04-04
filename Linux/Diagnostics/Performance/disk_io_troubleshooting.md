@@ -40,15 +40,6 @@
 
 ## Дополнительная информация
 
-### См. также
+Смежные области диагностики: оптимизация памяти ([performance tuning](../../Core/memory/performance_tuning.md), [кэширование и освобождение](../../Core/memory/caching_and_reclaiming.md)), диагностика [файловых систем и дискового пространства](../Filesystem/filesystem_and_disk_space_diagnostics.md), проверка [здоровья диска через SMART](../Hardware/smartctl/disk_health_check.md), [планировщики I/O](../../Core/kernel/io_schedulers.md), диагностика [disk bottleneck в БД](../../../Databases/db_disk_bottleneck_troubleshooting.md).
 
-- [Оптимизация памяти](../../Core/memory/performance_tuning.md) — dirty pages, writeback
-- [Кэширование и освобождение памяти](../../Core/memory/caching_and_reclaiming.md)
-- [Диагностика filesystem и дискового пространства](../Filesystem/filesystem_and_disk_space_diagnostics.md)
-- [SMART: проверка здоровья диска](../Hardware/smartctl/disk_health_check.md)
-- [Планировщики I/O](../../Core/kernel/io_schedulers.md)
-- [Быстрая диагностика disk bottleneck в БД](../../../Databases/db_disk_bottleneck_troubleshooting.md)
-- [`iotop` — подробное описание](../Filesystem/iotop.md)
-- [`iostat` — подробное описание](../Filesystem/iostat.md)
-- [`pidstat` — подробное описание](../Processes/pidstat.md)
-- [`vmstat` — подробное описание](../Memory/vmstat.md)
+Инструменты: [`iotop`](../Filesystem/iotop.md), [`iostat`](../Filesystem/iostat.md), [`pidstat`](../Processes/pidstat.md), [`vmstat`](../Memory/vmstat.md).

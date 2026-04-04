@@ -5,7 +5,7 @@
 - **Служба (Service):** В контексте `systemd` — это процесс или группа процессов, управляемых системой инициализации. Каждая служба определяется в конфигурационном файле, называемом **юнит-файлом** (например, `nginx.service`).
 - **`systemctl`:** Основная утилита командной строки для взаимодействия с `systemd`. Она позволяет инспектировать и контролировать состояние системы и служб.
 
-## Базовые концепции
+## Основные концепции
 
 ### Управление состоянием службы
 
@@ -174,34 +174,4 @@ sudo systemctl unmask NetworkManager.service
 
 ## Дополнительная информация
 
-### Логирование
-
-- **Просмотр логов (`journalctl`):**
-    `systemd` включает подсистему логирования `journald`. Для просмотра логов используется утилита `journalctl`.
-    Подробное описание `journalctl` находится в основной заметке: **[systemd-journald: Современная система логирования](../../SystemAdministration/Logging/journald.md)**.
-
-| Команда | Описание |
-| :--- | :--- |
-| `journalctl -u <service>` | Логи конкретной службы |
-| `journalctl -u <service> -f` | Логи в реальном времени |
-| `journalctl -u <service> --since "1 hour ago"` | Логи за период |
-| `journalctl -u <service> -b` | Логи с последней загрузки |
-| `journalctl -u <service> -p err` | Только ошибки (priority) |
-| `journalctl -t <identifier>` | Логи по SYSLOG_IDENTIFIER |
-
-- **`logrotate` и службы `systemd`:**
-    Многие приложения пишут текстовые логи, которые ротируются с помощью `logrotate`. `systemd` используется для отправки сигнала `reload` службе после ротации, чтобы она корректно переоткрыла лог-файл.
-
-    Пример из `logrotate` для Nginx:
-
-    ```
-    /var/log/nginx/*.log {
-        ...
-        postrotate
-            # Старый метод через PID-файл
-            [ -f /var/run/nginx.pid ] && kill -USR1 `cat /var/run/nginx.pid`
-            # Современный метод через systemd
-            # systemctl reload nginx.service
-        endscript
-    }
-    ```
+Логирование служб: [Journald](../../SystemAdministration/Logging/journald.md). Основные команды: `journalctl -u <service>` (логи службы), `-f` (реальное время), `--since` (период), `-b` (с загрузки), `-p err` (ошибки). Ротация логов: `logrotate` отправляет `reload` службе после ротации для переоткрытия файлов.

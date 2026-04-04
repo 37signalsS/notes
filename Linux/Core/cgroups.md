@@ -9,7 +9,7 @@
 - **`namespaces`** отвечают за **изоляцию видимости** (что процесс может *видеть*)
 - **`cgroups`** отвечают за **ограничение потребления** (что процесс может *использовать*)
 
-**Ключевая файловая система:** [cgroupfs](../../FileSystems/other_virtual_fs.md#cgroupfs), монтируется в `/sys/fs/cgroup`.
+**Ключевая файловая система:** [cgroupfs](../FileSystems/virtual_filesystems.md#cgroupfs), монтируется в `/sys/fs/cgroup`.
 
 **Основные возможности:**
 
@@ -220,8 +220,8 @@ echo $(pgrep stress) | sudo tee /sys/fs/cgroup/test_group/cgroup.procs
 | Контроллер недоступен | Не включён в `cgroup.subtree_control` | `echo "+controller" > /sys/fs/cgroup/cgroup.subtree_control` |
 | Cgroups v1 вместо v2 | Старый дистрибутив или параметр ядра | Добавить `systemd.unified_cgroup_hierarchy=1` в GRUB |
 
-### Дополнительные ресурсы
+### Ресурсы
 
-- **Официальная документация ядра:** [Documentation/admin-guide/cgroup-v2.rst](https://docs.kernel.org/admin-guide/cgroup-v2.html)
-- **Systemd и cgroups:** [systemd.resource-control](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html)
-- **Docker и cgroups:** [Docker documentation](https://docs.docker.com/config/containers/resource_constraints/)
+- Официальная документация ядра: [cgroup-v2.rst](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+- Systemd и cgroups: [systemd.resource-control](https://www.freedesktop.org/software/systemd/man/systemd.resource-control.html)
+- Docker и cgroups: [resource constraints](https://docs.docker.com/config/containers/resource_constraints/)

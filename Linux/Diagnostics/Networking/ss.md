@@ -1,10 +1,10 @@
 # ss (Socket Statistics)
 
-## Определения
+## Definitions
 
 **`ss`** (Socket Statistics) — современная консольная утилита в Linux для просмотра информации о сетевых сокетах. Является частью пакета `iproute2` и получает данные напрямую из ядра через интерфейс `netlink`, что обеспечивает высокую производительность даже на системах с десятками тысяч соединений.
 
-## Основные концепции
+## Basic Concepts
 
 ### Преимущества перед netstat
 
@@ -16,13 +16,15 @@
 | **TCP-детали** | Расширенные (`-ti`) | Базовые |
 | **Поддержка** | Активная | Прекращена |
 
+> **История:** `net-tools` (пакет с `netstat`) объявлен устаревшим в 2010 году. `iproute2` (с `ss`) разработан как замена с прямым доступом к ядру через `netlink`.
+
 ### Ключевые состояния TCP-соединений
 
 `ss` отображает стандартные состояния TCP, критичные для диагностики:
 
 - **LISTEN:** Сервер ожидает входящих подключений на порту
 - **SYN-SENT:** Клиент отправил SYN для установки соединения
-- **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен [SYN-flood](../../../Security/DoS/syn_flood.md))
+- **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен SYN-flood, см. [Security overview](../../../Security/security_practice_platforms.md))
 - **ESTABLISHED:** Соединение установлено, данные передаются
 - **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md))
 - **CLOSED:** Соединение закрыто
@@ -41,7 +43,7 @@
 - `-m`: Статистика памяти сокетов
 - `-Z`: Контекст безопасности (SELinux)
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Просмотр слушающих портов
 
@@ -200,7 +202,7 @@ ss -tan state time-wait | wc -l
 ss -tai state time-wait
 ```
 
-> **Решение:** См. [TCP tuning](../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md) — параметры `tcp_tw_reuse`, `tcp_fin_timeout`
+> **Решение:** См. [TCP tuning](../../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md) — параметры `tcp_tw_reuse`, `tcp_fin_timeout`
 
 ### Мониторинг в реальном времени
 
@@ -225,7 +227,7 @@ ss -tulpn --json
 ss -s | awk '/TCP:/ {print $2}'
 ```
 
-### Сравнение с netstat
+### Сравнение команд: netstat → ss
 
 | Задача | netstat | ss (рекомендуется) |
 | :--- | :--- | :--- |
@@ -237,12 +239,8 @@ ss -s | awk '/TCP:/ {print $2}'
 | Маршруты | `netstat -rn` | `ip route show` |
 | Интерфейсы | `netstat -i` | `ip -s link` |
 
-> **История:** `net-tools` (пакет с `netstat`) объявлен устаревшим в 2010 году. `iproute2` (с `ss`) разработан как замена с прямым доступом к ядру через `netlink`.
+## Additional Information
 
-### Связанные заметки
+### Связанные инструменты
 
-- **[`netstat`](./netstat.md)** — устаревший инструмент (только для совместимости)
-- **[network_cli_tools.md](./network_cli_tools.md)** — TUI инструменты (`snitch`, `iftop`)
-- **[tcpdump.md](./tcpdump.md)** — анализ трафика на уровне пакетов
-- **[tcp_tuning](../../Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
-- **[iproute2 overview](../../Linux/Networking/Tools/iproute2/overview.md)** — современный инструментарий
+Для анализа устаревших скриптов см. [`netstat`](./netstat.md) (только для совместимости), TUI-мониторинг — [`network_cli_tools`](./network_cli_tools.md), анализ трафика — [`tcpdump`](./tcpdump.md), оптимизация TCP — [`tcp_tuning`](../../Networking/Concepts/tcp_tuning/tcp_tuning_overview.md), современный инструментарий — [`iproute2`](../../Networking/Tools/iproute2/overview.md).

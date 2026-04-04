@@ -75,7 +75,7 @@
 | **Keep-alive, connection pooling** | Повторное использование TCP-сессий | **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** |
 | **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning/tcp_fast_open.md)** |
 | **Предзагрузка, preconnect** | Упреждающее установление соединений | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/http_protocols_optimization.md) |
-| **DNS-кэширование** | Кэширование результатов `getaddrinfo()` | [Диагностика DNS](../../Diagnostics/Networking/dns/overview.md#сценарий-5-dns-resolution-как-узкое-место-производительности) |
+| **DNS-кэширование** | Кэширование результатов `getaddrinfo()` | [DNS resolution performance](../../Diagnostics/Networking/dns/dns_resolution_performance.md) |
 
 ### DNS как источник задержек
 
@@ -118,7 +118,7 @@ cat /etc/resolv.conf
    ```
 5. **Для Kubernetes:** `NodeLocalDNS` для кэширования на каждой ноде
 
-**См. также:** [Диагностика DNS-блокировок](../../Diagnostics/Networking/dns/overview.md#сценарий-5-dns-resolution-как-узкое-место-производительности).
+**См. также:** [DNS resolution performance](../../Diagnostics/Networking/dns/dns_resolution_performance.md).
 
 ### 5. Уровень инфраструктуры
 

@@ -46,22 +46,15 @@ ExecStop=/usr/bin/docker stop nginx-container
 WantedBy=multi-user.target
 ```
 
-**Разбор ключевых директив:**
+**Ключевые директивы:**
 
-* **`[Unit]`**: Определяет метаданные и зависимости.
-  * `Requires=docker.service`: Юнит не запустится, если `docker.service` не активен.
-  * `After=docker.service`: Юнит будет запущен *после* `docker.service`.
-* **`[Service]`**: Конфигурирует поведение сервиса.
-  * `Restart=always`: `systemd` будет всегда пытаться перезапустить контейнер при его остановке.
-  * `ExecStartPre=-...`: Команды, выполняемые перед основным процессом для предотвращения конфликтов имен при перезапуске.
-  * `ExecStart`: Основная команда, запускающая контейнер.
-  * `ExecStop`: Команда, которая корректно останавливает контейнер.
-* **`[Install]`**: Определяет, как сервис должен вести себя при включении (`enable`).
-  * `WantedBy=multi-user.target`: Включает сервис в стандартный набор служб для многопользовательского режима.
+* **`[Unit]`**: Зависимости — `Requires=docker.service` (жёсткая), `After=docker.service` (порядок). Подробнее: [Dependencies SSoT](./systemd_dependencies.md).
+* **`[Service]`**: `Restart=always` — перезапуск при любом завершении. `ExecStartPre=-...` — очистка перед стартом (знак `-` игнорирует ошибки). `ExecStop` — корректная остановка.
+* **`[Install]`**: `WantedBy=multi-user.target` — стандартный многопользовательский режим.
 
 ### 2. Управление сервисом
 
-После создания файла `/etc/systemd/system/nginx-container.service`, управление им осуществляется стандартными командами `systemctl`. Подробнее об управлении службами с помощью `systemctl` см. в [Управление службами Systemd (systemctl)](./service_management.md).
+После создания файла `/etc/systemd/system/nginx-container.service` управление осуществляется стандартными командами `systemctl`. Подробнее: [Управление службами (systemctl)](./service_management.md).
 
 ```bash
 # Перечитать конфигурацию systemd после создания или изменения юнита

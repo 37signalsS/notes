@@ -81,37 +81,15 @@ sudo sysctl -w net.ipv4.ip_forward=1
 
 ## Дополнительная информация
 
-### Индекс заметок по темам
+### Связанные темы
 
-#### Загрузка и инициализация
-
-- **[Процесс загрузки (boot_process.md)](./boot_process.md)** — этапы загрузки ядра: от передачи управления загрузчиком до запуска systemd
-- **[BIOS и UEFI (firmware_bios_uefi.md)](../firmware_bios_uefi.md)** — прошивка, ранняя загрузка, работа загрузчика *(вне директории kernel/)*
-- **["Живые" патчи (live_patching.md)](./live_patching.md)** — обновление ядра без перезагрузки (kpatch, ksplice)
-- **[kexec](./live_patching.md#Быстрая-перезагрузка-kexec)** — быстрая перезагрузка с минуем BIOS/UEFI
-
-#### Управление ресурсами и планирование
-
-- **[Вытесняющая многозадачность (preemption.md)](./preemption.md)** — модели вытеснения ядра (No Forced, Voluntary, Preemptible)
-- **[Изоляция CPU (cpu_isolation.md)](./cpu_isolation.md)** — изоляция ядер на уровне ядра (`isolcpus`, `nohz_full`)
-- **[CPU Pinning (../cpu_pinning.md)](../cpu_pinning.md)** — привязка процессов к ядрам из userspace *(в директории Core/)*
-- **[Планировщики ввода-вывода (io_schedulers.md)](./io_schedulers.md)** — управление очередями запросов к дискам (none, mq-deadline, bfq, kyber)
-- **[Pressure Stall Information (psi.md)](./psi.md)** — мониторинг давления на ресурсы CPU, памяти, I/O
-
-#### Синхронизация и отладка
-
-- **[Механизмы синхронизации (kernel_synchronization.md)](./kernel_synchronization.md)** — блокировки, RCU, lock-free программирование
-- **[Зависания ядра (lockups.md)](./lockups.md)** — Soft Lockup, Hard Lockup, Watchdog
-- **[Паника ядра (kernel_panic.md)](./kernel_panic.md)** — анализ и отладка критических сбоев, kdump
-
-#### Интерфейсы и расширяемость
-
-- **[Интерфейсы ядра (kernel_interfaces.md)](./kernel_interfaces.md)** — syscalls, `/proc`, `/sys`
-- **[Модули ядра (kernel_modules.md)](./kernel_modules.md)** — управление драйверами и компонентами
-- **[Настройка параметров (sysctl.md)](./sysctl.md)** — управление поведением ядра "на лету"
-
-#### Современные технологии
-
-- **[eBPF](./ebpf.md)** — безопасное выполнение кода в пространстве ядра для наблюдаемости, сети и безопасности
-- **[io_uring](./io_uring.md)** — высокопроизводительный асинхронный ввод-вывод
-- **[Прерывания (interrupts.md)](./interrupts.md)** — обработка аппаратных и программных прерываний (Hard IRQ, SoftIRQ, Tasklets)
+- **Загрузка ядра:** [Boot Process](./boot_process.md) — от передачи управления загрузчиком до запуска systemd
+- **Прошивка:** [BIOS и UEFI](../firmware_bios_uefi.md) — этапы до загрузки ядра
+- **Интерфейсы ядра:** [Kernel Interfaces](./kernel_interfaces.md) — syscalls, `/proc`, `/sys`
+- **Настройка ядра:** [sysctl](./sysctl.md) — управление параметрами runtime
+- **Модули:** [Kernel Modules](./kernel_modules.md) — управление драйверами
+- **Синхронизация:** [Kernel Synchronization](./kernel_synchronization.md) — блокировки, RCU, lock-free
+- **Зависания:** [Lockups](./lockups.md) — soft/hard lockup, watchdog
+- **Паника:** [Kernel Panic](./kernel_panic.md) — kdump, анализ дампов
+- **Live Patching:** [Live Patching](./live_patching.md) — kpatch, ksplice, обновление без перезагрузки
+- **Современные технологии:** [eBPF](./ebpf.md), [io_uring](./io_uring.md), [Прерывания](./interrupts.md)

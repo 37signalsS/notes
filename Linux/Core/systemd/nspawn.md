@@ -136,18 +136,4 @@ systemd-nspawn -D /var/lib/machines/testenv
 
 ## Дополнительная информация
 
-### Сравнение с альтернативами
-
-- **[Docker overview](../../../Docker/docker_overview.md)** — контейнеры с образами, реестрами, оркестрацией
-- **[Podman vs Docker](../../../Podman/podman_vs_docker.md)** — daemonless-альтернатива Docker
-- **[Виртуализация в Linux](../../Virtualization/virtualization_overview.md)** — полный обзор технологий виртуализации
-
-### Технологии изоляции
-
-- **[Namespaces в Linux](../namespaces.md)** — пространства имён для изоляции процессов
-- **[Cgroups в Linux](../cgroups.md)** — контрольные группы для ограничения ресурсов
-
-### Интеграция с systemd
-
-- **[Systemd units overview](./systemd_units_overview.md)** — управление службами
-- **[Docker и systemd](../../../Docker/docker_systemd.md)** — сравнение интеграции Docker с systemd
+Альтернативы контейнеризации: [Docker](../../../Docker/docker_overview.md), [Podman vs Docker](../../../Podman/podman_vs_docker.md). Общий обзор: [Виртуализация в Linux](../../Virtualization/virtualization_overview.md). Технологии изоляции: [Namespaces](../namespaces.md), [Cgroups](../cgroups.md). Интеграция: [Systemd units](./systemd_units_overview.md), [Docker и systemd](../../../Docker/docker_systemd.md).

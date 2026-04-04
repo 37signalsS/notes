@@ -57,7 +57,7 @@
 | Slice | `.slice` | Иерархическая группа cgroups |
 | Scope | `.scope` | Внешние процессы (не systemd) |
 
-Подробнее о написании mount и automount юнитов: [Mount и Automount юниты](./systemd_units_overview.md#mount--и-automount-юниты).
+Подробнее о написании mount и automount юнитов: [Mount и Automount юниты](./systemd_units_overview.md).
 
 ### Управление ресурсами и изоляция: Control Groups (cgroups)
 
@@ -72,7 +72,7 @@
 
 **Важно:** systemd использует cgroups v2 (единая иерархия) в современных дистрибутивах. Подробнее см. [Control Groups (cgroups)](../cgroups.md#cgroups-v1-vs-cgroups-v2).
 
-Подробная информация о структуре unit-файлов и директивах: **[Юниты, таргеты и зависимости](./systemd_units_overview.md#структура-unit-файлов)**.
+Подробная информация о структуре unit-файлов и директивах: [Юниты, таргеты и зависимости](./systemd_units_overview.md).
 
 ## Практические сценарии
 
@@ -163,28 +163,6 @@
 
 ## Дополнительная информация
 
-### Навигация по документации systemd
+Навигация по документации systemd: [Управление службами](./service_management.md), [Юниты, таргеты и зависимости](./systemd_units_overview.md), [Timers](./timers.md), [Пользовательские службы](./user_services.md), [Анализ производительности](./performance.md), [Контейнеризация (nspawn)](./nspawn.md), [Интеграция с Docker](./docker_integration.md), [Синхронизация времени](./time_synchronization.md), [Временные файлы](./tmpfiles.md), [Мониторинг ресурсов (cgtop)](./cgtop.md), [Запуск команд (systemd-run)](./systemd_run.md), [Сессии и пользователи](./logind_session_management.md), [Диагностика загрузки](./boot_troubleshooting.md).
 
-| Файл | Описание |
-| :--- | :--- |
-| **[Управление службами (systemctl)](./service_management.md)** | Команды `start`, `stop`, `enable`, `status`, редактирование юнитов |
-| **[Юниты, таргеты и зависимости](./systemd_units_overview.md)** | Типы юнитов, директивы зависимостей, создание собственных служб |
-| **[Задачи по расписанию (Timers)](./timers.md)** | Замена `cron`, планирование задач через `.timer` |
-| **[Пользовательские службы](./user_services.md)** | Запуск служб от имени пользователя, режим `linger` |
-| **[Анализ производительности](./performance.md)** | `systemd-analyze`, ускорение загрузки |
-| **[Контейнеризация (nspawn)](./nspawn.md)** | Легковесные контейнеры через `systemd-nspawn` |
-| **[Интеграция с Docker](./docker_integration.md)** | Управление Docker-контейнерами как systemd-службами |
-| **[Синхронизация времени](./time_synchronization.md)** | `timedatectl`, `systemd-timesyncd`, `chrony` |
-| **[Временные файлы (tmpfiles)](./tmpfiles.md)** | Автоматическое создание и очистка временных файлов |
-| **[Мониторинг ресурсов (cgtop)](./cgtop.md)** | Мониторинг CPU, памяти, I/O по cgroups |
-| **[Запуск команд (systemd-run)](./systemd_run.md)** | Временные службы и таймеры без создания файлов |
-| **[Сессии и пользователи (logind)](./logind_session_management.md)** | Управление сессиями через `loginctl` |
-| **[Диагностика загрузки](./boot_troubleshooting.md)** | Решение проблем с запуском служб |
-
-### Связанная документация
-
-* **[Journald: Централизованный сбор логов](../../SystemAdministration/Logging/journald.md)** — логирование в systemd
-* **[Control Groups (cgroups)](../cgroups.md)** — механизм ограничения ресурсов
-* **[Namespaces](../namespaces.md)** — изоляция процессов
-* **[Udev](../udev.md)** — управление устройствами
-* **[Journalctl](../../Diagnostics/journalctl.md)** — просмотр логов
+Связанная документация: [Journald](../../SystemAdministration/Logging/journald.md), [Cgroups](../cgroups.md), [Namespaces](../namespaces.md), [Udev](../udev.md), [Journalctl](../../Diagnostics/journalctl.md).

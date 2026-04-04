@@ -117,36 +117,17 @@
   lsinitcpio /boot/initramfs-$(uname -r).img | less  # Arch
   ```
 
-- **Включение модуля lvm2 в initramfs:**
+- **Включение модулей в initramfs:**
 
-  Если корневая ФС находится на LVM, убедитесь, что модуль `lvm2` включён в initramfs.
+  При изменении конфигурации хранилища (LVM, RAID) необходимо пересобрать initramfs с нужными модулями.
 
-  **Debian/Ubuntu:**
-  ```bash
-  echo "lvm2" >> /etc/initramfs-tools/modules
-  update-initramfs -u
-  ```
-
-  **RHEL/CentOS/Fedora:**
-  ```bash
-  echo 'add_dracutmodules+=" lvm "' >> /etc/dracut.conf.d/lvm.conf
-  dracut --force
-  ```
-
-  **Arch Linux:**
-  ```bash
-  # В /etc/mkinitcpio.conf добавить lvm2 в HOOKS:
-  # HOOKS=(base udev autodetect modconf block lvm2 filesystems)
-  mkinitcpio -P
-  ```
-
-  Подробнее: **[Загрузка с LVM — Troubleshooting](../../FileSystems/LVM/advanced_topics/definitions_and_concepts.md#проблема-volume-group-not-found-после-рестарта)**.
+  Подробные инструкции для различных дистрибутивов: **[GRUB — Включение lvm2 в initramfs](../../SystemAdministration/grub.md#включение-lvm2-в-initramfs)**.
 
 ## Дополнительная информация
 
 ### Связанные темы
 
 - **Прошивка и ранняя загрузка (BIOS/UEFI, GRUB)**: [BIOS и UEFI: Прошивка и старт системы](../firmware_bios_uefi.md) — *этапы до передачи управления ядру*
-- **Система инициализации `systemd`**: `Linux/systemd/overview.md`
-- **Монтирование файловых систем**: [Linux/FileSystems/mounting/index.md](../../FileSystems/mounting/index.md)
+- **Система инициализации `systemd`**: [Systemd: Управление системой и службами](../systemd/overview.md)
+- **Монтирование файловых систем**: [Монтирование файловых систем](../../FileSystems/mounting/index.md)
 - **Альтернативные архитектуры**: [Обзор Unikernels](../../../Concepts/unikernel/unikernel_overview.md)

@@ -1,12 +1,12 @@
 # Невидимый I/O: почему iotop может не показывать виновника
 
-## Определения
+## Definitions
 
 - **Uninterruptible Sleep (D-state)**: Состояние процесса, ожидающего завершения I/O операции. Процесс не может быть прерван сигналами, включая `SIGKILL`.
 - **Direct I/O**: Операции чтения/записи, минуя page cache ядра.
 - **Block I/O**: Операции на уровне блочного устройства, видимые ядру.
 
-## Основные концепции
+## Basic Concepts
 
 `iotop` снимает **моментальные снимки** состояния процессов. Процесс попадает в отчёт только если находится в состоянии I/O ожидания **в момент сэмпла**.
 
@@ -24,7 +24,7 @@
 | **Swap I/O** | Страницы выгружаются в swap | `vmstat 1` (si/so) |
 | **fsync/fdatasync** | Синхронный сброс на диск | `strace -e fsync -p <pid>` |
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Диагностика невидимого I/O
 
@@ -54,12 +54,6 @@ vmstat 1
 strace -e fsync -p <pid>
 ```
 
-## Дополнительная информация
+## Additional Information
 
-### См. также
-
-- [Низкий iowait при высокой задержке](./iowait_and_latency.md)
-- [Роль kworker/u*:flush-*](./kworker_flush.md)
-- [Диагностический чеклист I/O](./diagnostic_checklist.md)
-- [`iotop` — подробное описание](../Filesystem/iotop.md)
-- [`pidstat` — подробное описание](../Processes/pidstat.md)
+Смежные темы: [Низкий iowait при высокой задержке](./iowait_and_latency.md), [Роль kworker/u*:flush-*](./kworker_flush.md), [Диагностический чеклист I/O](./diagnostic_checklist.md), [`iotop` — подробное описание](../Filesystem/iotop.md), [`pidstat` — подробное описание](../Processes/pidstat.md).

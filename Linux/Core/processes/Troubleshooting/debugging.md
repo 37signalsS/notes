@@ -1,10 +1,18 @@
 # Debugging процессов: утечки памяти, coredump, зомби
 
-## Определения
+## Definitions
 
 **Debugging процессов** — диагностика и устранение проблем с памятью, аварийными завершениями и зомби-процессами.
 
-> **Навигация:** [Главная Troubleshooting](./index.md) | [Checkpoint/Restore](./checkpoint_restore.md)
+---
+
+## Basic Concepts
+
+### Типичные проблемы процессов
+
+- **Утечки памяти** — процесс не освобождает выделенную память, что ведёт к постепенному росту потребления RAM и eventual OOM
+- **Coredump** — дамп памяти процесса при аварийном завершении (сигналы `SIGSEGV`, `SIGFPE`, `SIGQUIT`); используется для посмертной отладки — см. [Troubleshooting index](./index.md#дамп-памяти-coredump)
+- **Зомби-процессы** — завершённые процессы, не «забранные» родителем через `wait()`; занимают записи в таблице процессов — см. [additional_info](../additional_info.md#чем-опасны-зомби-процессы)
 
 ---
 
@@ -28,7 +36,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./your-program
 strace -e trace=mmap,munmap -p <PID>
 ```
 
-Подробнее об утилите см. [**Трассировка и отладка**](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md).
+> Подробнее: [Трассировка и отладка](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md)
 
 #### 3. /proc/<PID>/status
 
@@ -114,6 +122,8 @@ ps aux | awk '$8 ~ /Z/ {print}' | wc -l
 ps -eo pid,ppid,stat,cmd | grep ' Z '
 ```
 
+> Подробно о рисках зомби-процессов: [additional_info](../additional_info.md#чем-опасны-зомби-процессы)
+
 #### Устранение
 
 1. **Отправить SIGCHLD родителю:**
@@ -142,7 +152,7 @@ ps -eo pid,ppid,stat,cmd | grep ' Z '
 
 ## Additional Information
 
-### Связанные темы
-
-- **[strace](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md)** — трассировка системных вызовов
-- **[Observability Overview](../../../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — наблюдаемость системы
+- Трассировка системных вызовов — [`strace`](../../../Diagnostics/Troubleshooting/tracing_and_debugging.md)
+- Обзор наблюдаемости системы — [Observability Overview](../../../../Concepts/Observability_and_Monitoring/observability_definitions.md)
+- Сигналы и их обработка — [`signals`](../signals.md)
+- Мониторинг процессов — [`practical_scenarios`](../practical_scenarios.md)

@@ -32,11 +32,11 @@
 
 #### Mount (mnt)
 
-Изолирует таблицу монтирования файловой системы. Позволяет процессам иметь собственный набор точек монтирования:
+Изолирует таблицу монтирования. Позволяет процессам иметь собственный набор точек монтирования:
 
 - Создание изолированной корневой ФС (`/`) для контейнера
 - Приватные точки монтирования (`/tmp`, `/sys`, `/proc`)
-- **Propagation:** Управление распространением событий монтирования между namespaces
+- **Propagation:** управление распространением событий монтирования между namespaces
 
 > **Подробно:** [Mount Namespaces](../Virtualization/mount_namespaces.md)
 
@@ -44,23 +44,20 @@
 
 Изолирует дерево процессов:
 
-- Процессы видят только другие процессы в том же PID namespace
 - Каждый namespace имеет собственную иерархию, начинающуюся с PID 1
 - Первый процесс становится «init-процессом» для namespace
 - При завершении PID 1 ядро завершает все процессы в namespace
-- Снаружи процессы имеют другие PID (видны в родительском namespace)
+- Снаружи процессы видны с другими PID (в родительском namespace)
 
 #### Network (net)
 
 Изолирует сетевой стек:
 
 - Собственные сетевые интерфейсы (включая `lo`)
-- Отдельная таблица маршрутизации
-- Изолированные правила `iptables`/`nftables`
-- Собственные сокеты и порты
+- Отдельная таблица маршрутизации и правила `iptables`/`nftables`
 - Несколько контейнеров могут использовать один network namespace (поды Kubernetes)
 
-> **Подробно:** [ip netns](../Networking/Tools/iproute2/ip_netns.md), [Сетевые интерфейсы Linux](../Networking/Concepts/linux_network_interfaces.md)
+> **Подробно:** [ip netns](../Networking/Tools/iproute2/ip_netns.md)
 
 #### User
 
@@ -69,31 +66,22 @@
 - Маппинг пользователей внутри namespace на пользователей хоста
 - UID 0 внутри namespace может быть обычным пользователем на хосте
 - Основа для **rootless containers** (Podman, Docker rootless)
-- Безопасное выполнение с привилегиями внутри изолированной среды
 
 #### IPC (Inter-Process Communication)
 
-Изолирует механизмы межпроцессного взаимодействия:
-
-- System V IPC (очереди, семафоры, разделяемая память)
-- POSIX IPC (очереди, семафоры, shared memory)
-- Предотвращает конфликты IPC между контейнерами
+Изолирует System V и POSIX IPC: очереди, семафоры, разделяемую память.
 
 #### UTS (UNIX Timesharing System)
 
-Изолирует имя хоста и домена:
-
-- Собственное `hostname` для каждого контейнера
-- Собственное `domainname` (NIS domain)
-- Позволяет контейнерам иметь уникальные сетевые имена
+Изолирует `hostname` и `domainname` (NIS domain).
 
 #### Cgroup
 
-Изолирует представление об иерархии cgroups:
+Изолирует представление об иерархии cgroups — контейнер видит только свою ветку cgroup-дерева.
 
-- Контейнер видит только свою ветку cgroup-дерева
-- Предотвращает доступ к информации о других контейнерах
-- Улучшает безопасность и изоляцию
+#### Time (5.6+)
+
+Изолирует часы `CLOCK_BOOTTIME` и `CLOCK_TAI`. Добавлен в ядре 5.6, используется для миграции контейнеров.
 
 ### Системные вызовы
 
@@ -177,18 +165,6 @@ ls -l /proc/$$/ns
 # Вывод:
 # lrwxrwxrwx 1 user user 0 мар  3 10:00 /proc/1234/ns/net -> 'net:[4026531840]'
 # lrwxrwxrwx 1 user user 0 мар  3 10:00 /proc/1234/ns/pid -> 'pid:[4026531836]'
-# ...
-```
-
-### 5. Копирование namespace
-
-```bash
-# Создать копию network namespace для отладки
-ip netns add debug_ns
-ip netns exec debug_ns ip addr
-
-# Удалить после использования
-ip netns delete debug_ns
 ```
 
 ## Дополнительная информация
@@ -197,10 +173,10 @@ ip netns delete debug_ns
 
 - **[cgroups](./cgroups.md)** — механизм ограничения ресурсов
 - **[Mount Namespaces](../Virtualization/mount_namespaces.md)** — propagation и монтирования
-- **[ip netns](../Networking/Tools/iproute2/overview.md)** — управление network namespaces
+- **[ip netns](../Networking/Tools/iproute2/ip_netns.md)** — управление network namespaces
 - **[systemd-nspawn](./systemd/nspawn.md)** — легковесная контейнеризация
 - **[seccomp](../Security/Mechanisms/Seccomp.md)** — фильтрация системных вызовов
-- **[Docker Isolation](../../Docker/Concepts/linux_isolation.md)** — применение в Docker
+- **[Docker Isolation](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
 
 ### Troubleshooting
 
@@ -210,10 +186,3 @@ ip netns delete debug_ns
 | Процесс не видит другие процессы | PID namespace изолирован | Это ожидаемое поведение, проверить в другом namespace |
 | Сеть не работает в namespace | Нет интерфейсов кроме lo | Создать veth-пару или подключить к bridge |
 | `nsenter` не находит namespace | Процесс завершён или неверный PID | Проверить `ps -p <PID>` |
-
-### Дополнительные ресурсы
-
-- **Официальная документация ядра:** [namespaces(7)](https://man7.org/linux/man-pages/man7/namespaces.7.html)
-- **User namespaces:** [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)
-- **unshare(1):** [unshare(1)](https://man7.org/linux/man-pages/man1/unshare.1.html)
-- **nsenter(1):** [nsenter(1)](https://man7.org/linux/man-pages/man1/nsenter.1.html)

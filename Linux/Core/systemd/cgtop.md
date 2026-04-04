@@ -89,10 +89,4 @@ Control Group          Tasks  %CPU  Memory
 
 ## Дополнительная информация
 
-* **[systemd: Управление системой и службами](./overview.md)**: Общие сведения о `systemd` и его компонентах.
-* **[Control Groups (cgroups)](../cgroups.md)**: Подробное описание механизма cgroups в Linux.
-* **[systemd-cgls: Визуализация иерархии процессов](./overview.md#визуализация-иерархии-процессов-systemd-cgls)**: Другой инструмент `systemd` для просмотра иерархии cgroups.
-* **[`top`: Мониторинг процессов](../../Diagnostics/Processes/top.md)**: Общая информация о классической утилите `top`.
-* **[`htop`: Интерактивный монитор процессов](../../Diagnostics/Processes/htop.md)**: Более продвинутая альтернатива `top`.
-
-Если вы используете `systemd` и хотите быстро понять, какой сервис или группа сервисов потребляет ресурсы, не утопая в списке отдельных процессов, `systemd-cgtop` — ваш инструмент.
+Общие сведения о `systemd`: [Управление системой и службами](./overview.md). Механизм cgroups: [Control Groups](../cgroups.md). Иерархия процессов: [systemd-cgls](./overview.md#визуализация-иерархии-процессов-systemd-cgls). Альтернативы: [`top`](../../Diagnostics/Processes/top.md), [`htop`](../../Diagnostics/Processes/htop.md).

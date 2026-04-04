@@ -4,11 +4,11 @@
 
 **Troubleshooting с dmesg** — расшифровка типичных ошибок ядра и сообщений об ошибках оборудования.
 
-> **Навигация:** [Главная dmesg](./index.md) | [Использование](./usage.md)
+> **См. также:** [Главная dmesg](./index.md), [Использование dmesg](./usage.md)
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Расшифровка типичных ошибок ядра
 
@@ -105,7 +105,7 @@
 
 **Что делать:**
 
-1. Проверить температуру: [`sensors`](../../Hardware/hardware_listing.md#мониторинг-температуры)
+1. Проверить температуру: `sensors` (пакет `lm-sensors`)
 2. Очистить систему охлаждения, заменить термопасту
 3. Проверить работу вентиляторов
 
@@ -165,14 +165,10 @@ grep log_buf_len /proc/cmdline
 | `debug` | Включить отладочные сообщения ядра |
 | `earlyprintk` | Включить ранний вывод через консоль (для отладки загрузки) |
 
-> **См. также:** [Настройка параметров ядра (sysctl)](../../../Core/kernel/sysctl.md), [Процесс загрузки ядра](../../../Core/kernel/boot_process.md)
-
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-- **[smartctl](../../../Hardware/smartctl/index.md)** — диагностика дисков
-- **[sysctl](../../../Core/kernel/sysctl.md)** — настройка параметров ядра
-- **[boot_process](../../../Core/kernel/boot_process.md)** — процесс загрузки ядра
+Диагностика дисков: [`smartctl`](../../../Hardware/smartctl/index.md). Настройка параметров ядра: [`sysctl`](../../../Core/kernel/sysctl.md). Процесс загрузки: [`boot_process`](../../../Core/kernel/boot_process.md).

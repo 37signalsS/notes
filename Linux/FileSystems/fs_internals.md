@@ -56,8 +56,9 @@
 - Подробнее об [Inode и Dentry](links_inodes_dentries.md) как фундаментальных структурах файловой системы.
 - Управление памятью для ядерных объектов, таких как inode и dentry, осуществляется с помощью [Slab Allocator](../Core/memory/slab_allocator.md).
 - Обзор различных файловых систем и их функций представлен в [Разделы и файловые системы в Linux](partitions_and_filesystems.md).
+- Детальное сравнение типов ФС (ext4, XFS, Btrfs, ZFS, F2FS) — в [Сравнительный обзор типов ФС](./filesystem_types_comparison.md).
 - **Связанные темы:**
-  - [Page Cache](../Core/memory/caching_and_reclaiming.md — кэширование страниц
-  - [Buffer Cache](../Core/memory/caching_and_reclaiming.md — кэш блочных устройств
+  - [Page Cache](../Core/memory/caching_and_reclaiming.md) — кэширование страниц
+  - [Buffer Cache](../Core/memory/caching_and_reclaiming.md) — кэш блочных устройств
   - [Write-back кэш](../Diagnostics/Performance/DiskIO/writeback_tuning.md) — отложенная запись
   - [VFS](./virtual_filesystems.md) — виртуальный слой ФС

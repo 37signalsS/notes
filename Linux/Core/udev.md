@@ -181,10 +181,3 @@ udevadm --version
 | События не генерируются | Проверить `udevadm monitor`, права доступа к устройству |
 | Конфликт правил | Правила выполняются по алфавиту, проверить приоритет |
 | RUN не выполняется | Проверить путь к скрипту, права выполнения, лог `journalctl -u systemd-udevd` |
-
-### Дополнительные ресурсы
-
-- **Официальная документация:** [kernel.org/doc/html/latest/driver-api/usb/udev.html](https://www.kernel.org/doc/html/latest/driver-api/usb/udev.html)
-- **Man page:** [udev(7)](https://man7.org/linux/man-pages/man7/udev.7.html)
-- **udevadm:** [udevadm(8)](https://man7.org/linux/man-pages/man8/udevadm.8.html)
-- **Arch Wiki:** [Udev](https://wiki.archlinux.org/title/Udev)

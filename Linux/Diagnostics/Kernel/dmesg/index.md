@@ -8,7 +8,7 @@
 
 ---
 
-## Basic Concepts
+## Основные понятия
 
 ### Кольцевой буфер ядра
 
@@ -50,7 +50,7 @@
 
 ### Интеграция с `systemd-journald`
 
-В современных системах с `systemd` логи ядра также собираются в [`systemd-journald`](../../../SystemAdministration/Logging/journald.md) и доступны через команду [`journalctl -k`](../../Logging/journalctl.md#логи-ядра-аналог-dmesg) или `journalctl --dmesg`. [`journalctl`](../../Logging/journalctl.md) предоставляет более мощные средства для фильтрации, но `dmesg` остается быстрым инструментом для оперативной диагностики, особенно в окружениях, где `journald` недоступен (например, в `initramfs`).
+В современных системах с `systemd` логи ядра также собираются [`systemd-journald`](../../../SystemAdministration/Logging/journald.md) и доступны через команду [`journalctl -k`](../../journalctl.md) или `journalctl --dmesg`. [`journalctl`](../../journalctl.md) предоставляет более мощные средства для фильтрации, но `dmesg` остаётся быстрым инструментом для оперативной диагностики, особенно в окружениях, где `journald` недоступен (например, в `initramfs`).
 
 ### Интерфейс `/proc/kmsg`
 
@@ -69,19 +69,15 @@ sudo cat /proc/kmsg
 
 ---
 
-## Файлы
+## Дополнительная информация
 
-| Файл | Описание |
-|------|----------|
-| [usage.md](./usage.md) | Практические сценарии: просмотр, фильтрация, управление буфером, OOM Killer |
-| [troubleshooting.md](./troubleshooting.md) | Расшифровка ошибок, сообщения об ошибках оборудования, параметры ядра |
+### Практические руководства
 
----
-
-## Additional Information
+- **Просмотр, фильтрация, управление буфером, OOM Killer:** [`usage.md`](./usage.md)
+- **Расшифровка ошибок оборудования и ядра:** [`troubleshooting.md`](./troubleshooting.md)
 
 ### Связанные темы
 
-- **[journalctl](../../journalctl.md)** — просмотр системных логов
-- **[sysctl](../../../Core/kernel/sysctl.md)** — настройка параметров ядра
-- **[boot_process](../../../Core/kernel/boot_process.md)** — процесс загрузки ядра
+- Настройка параметров ядра: [`sysctl`](../../../Core/kernel/sysctl.md)
+- Процесс загрузки ядра: [`boot_process`](../../../Core/kernel/boot_process.md)
+- Просмотр системных логов: [`journalctl`](../../journalctl.md)

@@ -95,16 +95,12 @@ archive.tar.gz: gzip compressed data, from Unix, ... (tar archive)
 
 ### Альтернативы и дополнения
 
-| Инструмент | Назначение |
-| :--- | :--- |
-| `xdg-mime query filetype` | Определение по расширению (менее надежно) |
-| `mimeopen` | Выбор приложения по MIME-типу |
-| `trid` | Идентификация по расширенным сигнатурам |
-| `exiftool` | Метаданные файлов (фото, документы) |
+- `xdg-mime query filetype` — определение по расширению (менее надежно)
+- `mimeopen` — выбор приложения по MIME-типу
+- `trid` — идентификация по расширенным сигнатурам
+- `exiftool` — метаданные файлов (фото, документы)
 
-### См. также
+### Дополнительная информация
 
-- [Типы файлов в Linux](../../FileSystems/file_types.md)
-- [Дескрипторы файлов](../../FileSystems/file_descriptors.md)
-- [man 1 file](https://man7.org/linux/man-pages/man1/file.1.html)
-- [File command source](https://github.com/file/file)
+- Документация: [man 1 file](https://man7.org/linux/man-pages/man1/file.1.html), [исходный код](https://github.com/file/file)
+- Связанные темы: [Типы файлов в Linux](../../FileSystems/file_types.md), [Дескрипторы файлов](../../FileSystems/file_descriptors.md)

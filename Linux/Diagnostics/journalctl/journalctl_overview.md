@@ -4,7 +4,7 @@
 
 **`journalctl`** — утилита командной строки для просмотра, фильтрации и анализа логов, собранных службой `systemd-journald`. Является основным инструментом для работы с журналом systemd.
 
-**`systemd-journald`** — системная служба, централизованно собирающая логи от всех компонентов ОС (ядро, службы, приложения, stdout/stderr) в структурированном бинарном формате.
+**`systemd-journald`** — системная служба, централизованно собирающая логи от всех компонентов ОС (ядро, службы, приложения, stdout/stderr) в структурированном бинарном формате. Подробная конфигурация демона описана в [journald.md](../../SystemAdministration/Logging/journald.md).
 
 ## Основные концепции
 
@@ -27,7 +27,7 @@
 | **Энергозависимое (Volatile)** | `/run/log/journal` | По умолчанию. Директория монтируется как `tmpfs` и очищается при каждой перезагрузке системы |
 | **Постоянное (Persistent)** | `/var/log/journal` | Если директория существует, `systemd-journald` автоматически начинает использовать её для постоянного хранения логов |
 
-**Важно:** Настройка хранения логов (persistent/volatile, лимиты размера) выполняется на уровне демона `systemd-journald`. Подробное описание конфигурации находится в [journald.md](../SystemAdministration/Logging/journald.md).
+Настройка хранения логов (persistent/volatile, лимиты размера) выполняется на уровне демона `systemd-journald` в `/etc/systemd/journald.conf`.
 
 ### Уровни приоритета логов
 
@@ -44,17 +44,116 @@
 | `6` | info | Informational messages |
 | `7` | debug | Debug-level messages |
 
-## Связанные документы
+Фильтрация по приоритету: `journalctl -p err` (ошибки и критичнее), `journalctl -p warning..err` (диапазон уровней).
 
-**Детальное описание:**
-- **[Использование journalctl](./journalctl_usage.md)** — просмотр, фильтрация, форматирование
-- **[Управление хранением](./journalctl_management.md)** — очистка, лимиты, интеграция
+## Практические сценарии
 
-**Системные службы:**
-- **[journald.md](../SystemAdministration/Logging/journald.md)** — конфигурация демона
-- **[systemd overview](../Core/systemd/overview.md)** — общие концепции systemd
+### Быстрый просмотр логов
 
-**Другие системы логирования:**
-- **[rsyslog](../SystemAdministration/Logging/rsyslog.md)** — традиционная система логирования
-- **[dmesg](./Kernel/dmesg/index.md)** — логи ядра
-- **[auditd](../SystemAdministration/Logging/auditd.md)** — аудит безопасности
+Базовые команды для повседневного использования:
+
+```bash
+# Все логи (в обратном хронологическом порядке)
+journalctl
+
+# Логи в реальном времени (поток событий)
+journalctl -f
+
+# Логи с последней загрузки
+journalctl -b
+
+# Логи с предыдущей загрузки
+journalctl -b -1
+
+# Список всех зарегистрированных загрузок
+journalctl --list-boots
+
+# Логи ядра (аналог dmesg)
+journalctl -k
+```
+
+### Фильтрация по службе и времени
+
+```bash
+# Логи конкретного сервиса
+journalctl -u nginx.service
+
+# Логи сервиса в реальном времени
+journalctl -u nginx.service -f
+
+# Логи за последний час
+journalctl --since "1 hour ago"
+
+# Между двумя датами
+journalctl --since "2023-10-26 18:00:00" --until "2023-10-26 18:10:00"
+```
+
+### Поиск и экспорт
+
+```bash
+# Встроенный поиск (использует индексы, быстрее)
+journalctl -g "error pattern"
+
+# JSON-формат (для скриптов)
+journalctl -u nginx.service --output=json
+
+# Традиционный syslog-формат
+journalctl -u nginx.service --output=syslog
+```
+
+### Управление хранением
+
+```bash
+# Проверить текущий размер журнала
+journalctl --disk-usage
+
+# Оставить только последние 500 МБ логов
+sudo journalctl --vacuum-size=500M
+
+# Оставить логи только за последние 2 дня
+sudo journalctl --vacuum-time=2d
+```
+
+Настройка автоматической очистки и лимитов выполняется в `/etc/systemd/journald.conf` (параметры `SystemMaxUse`, `SystemKeepFree`). Подробное описание — в [journalctl_management.md](./journalctl_management.md).
+
+### Диагностика проблем
+
+```bash
+# Проверка статуса службы journald
+systemctl status systemd-journald
+
+# Показать доступные поля метаданных
+journalctl --fields
+
+# Фильтрация по PID процесса
+journalctl _PID=1234
+
+# Фильтрация по UID пользователя
+journalctl _UID=1000
+```
+
+## Дополнительная информация
+
+### Производительность и ограничения
+
+`journalctl` использует индексы для быстрого поиска по времени, PID, UID и другим полям. Бинарный формат обеспечивает высокую скорость записи и чтения, но требует специальных утилит для просмотра. При достижении лимитов (`SystemMaxUse`) старые логи автоматически удаляются по принципу FIFO.
+
+Всегда предпочтительна фильтрация по метаданным (`-u`, `-p`, `--since`) — она использует индексы журнала. Текстовый поиск (`-g` или `grep`) требует полного сканирования записей и работает медленнее.
+
+### Безопасность
+
+Доступ к логам ограничен пользователями группы `systemd-journal` и `wheel`. Бинарный формат усложняет ручное редактирование логов. Для критически важных систем доступна настройка FSS (Forward Secure Sealing) — криптографическое подписывание логов для обнаружения изменений.
+
+### Интеграция с другими системами логирования
+
+**rsyslog:** Модуль `imjournal` позволяет `rsyslog` забирать сообщения из `journald` для фильтрации и пересылки. Настройка описана в [rsyslog.md](../../SystemAdministration/Logging/rsyslog.md).
+
+**dmesg:** Для просмотра только логов ядра можно использовать [`dmesg`](../Kernel/dmesg/index.md). `journalctl -k` предоставляет больше возможностей фильтрации и долгосрочного хранения.
+
+**auditd:** Для аудита событий безопасности используется [`auditd`](../../SystemAdministration/Logging/auditd.md) — отдельная подсистема, не связанная с `journald`.
+
+**Централизованные системы:** Для долгосрочного хранения и анализа логов (месяцы/годы) рекомендуется пересылка в ELK Stack, Loki, Splunk или аналогичные системы.
+
+### Связанные документы
+
+Практическое использование journalctl: [journalctl_usage.md](./journalctl_usage.md). Управление хранением и очистка: [journalctl_management.md](./journalctl_management.md). Конфигурация демона journald: [journald.md](../../SystemAdministration/Logging/journald.md). Общие концепции systemd: [systemd overview](../../Core/systemd/overview.md). Обзор систем логирования: [logging_overview.md](../../SystemAdministration/Logging/logging_overview.md).

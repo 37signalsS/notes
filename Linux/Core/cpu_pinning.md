@@ -189,8 +189,8 @@ perf sched latency
 - **[CPU Isolation](./kernel/cpu_isolation.md)** — kernel-level изоляция через параметры ядра
 - **[cgroups cpuset](./cgroups.md#контроллеры-cgroups)** — контроллер cpuset
 - **[NUMA](./memory/performance_tuning.md#numa-локальность-памяти)** — NUMA-архитектура и оптимизация
-- **[Prерывания](./kernel/interrupts.md)** — IRQ affinity
-- **[Планировщик](../../Kubernetes/Concepts/kube_scheduler.md)** — планировщик процессов Linux
+- **[Прерывания](./kernel/interrupts.md)** — IRQ affinity
+- **[Планировщик Linux](./kernel/overview.md)** — планировщик процессов Linux (CFS, RT, Deadline)
 
 ### Troubleshooting
 
@@ -203,38 +203,8 @@ perf sched latency
 
 ### Предостережения
 
-- **Не изолируйте все ядра:** Оставьте хотя бы 1-2 ядра для системных задач
+- **Не изолируйте все ядра:** Оставьте хотя бы 1–2 ядра для системных задач
 - **Мониторинг обязателен:** Используйте `mpstat`, `pidstat`, `perf` для контроля
 - **Тестируйте нагрузку:** CPU pinning может ухудшить производительность при неправильной настройке
 - **IRQ affinity:** Без настройки прерываний изоляция неполная
-
-### Выбор конфигурации CPU: один мощный vs несколько менее мощных
-
-| Аспект | **Один CPU (больше ядер)** | **Несколько CPU (меньше ядер каждый)** |
-| :--- | :--- | :--- |
-| **Стоимость** | Дешевле (1 сокет, меньше RAM-модулей) | Дороже (больше сокетов, больше RAM-слотов) |
-| **Латентность памяти** | Ниже (единый контроллер памяти, нет NUMA) | Выше (NUMA, доступ к «чужой» памяти медленнее) |
-| **Масштабируемость RAM** | Ограничена 1 каналом/контроллером | Выше (больше контроллеров и каналов памяти) |
-| **Отказоустойчивость** | Одна точка отказа | При сбое одного CPU система может выжить |
-| **Лицензирование ПО** | Дешевле (лицензии часто по сокетам) | Дороже (больше сокетов = больше лицензий) |
-| **Производительность** | Лучше для латентно-чувствительных нагрузок | Лучше для пропускной способности (memory bandwidth) |
-| **CPU pinning** | Проще (нет NUMA-нод) | Требует учёта NUMA-топологии |
-
-**Рекомендации:**
-
-- **Один CPU** — для баз данных (PostgreSQL, MySQL, Redis), виртуализации, Kubernetes-нод, latency-sensitive приложений (меньше латентность, проще эксплуатация, нет NUMA)
-- **Несколько CPU** — для параллельных нагрузок (рендеринг, компиляция, batch), когда нужен максимальный объём RAM, при требованиях к отказоустойчивости
-
-**NUMA-эффект в многопроцессорных системах:**
-
-- Доступ к «своей» памяти: ~100 ns
-- Доступ к «чужой» памяти (через QPI/UPI): ~150-200 ns
-
-**Решение для NUMA:** Включить NUMA-aware scheduling (`numactl`, `taskset`) или использовать `interleave` mode для равномерного распределения памяти.
-
-### Дополнительные ресурсы
-
-- **man taskset:** [taskset(1)](https://man7.org/linux/man-pages/man1/taskset.1.html)
-- **man numactl:** [numactl(1)](https://man7.org/linux/man-pages/man8/numactl.8.html)
-- **Kernel CPU affinity:** [sched_setaffinity(2)](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html)
-- **Kubernetes CPU Manager:** [CPU Management Policies](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/)
+- **Выбор конфигурации CPU:** [Single vs Multi-Socket](./cpu_selection.md) — сравнение одно- и многопроцессорных систем

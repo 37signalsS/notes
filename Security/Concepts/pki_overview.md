@@ -222,6 +222,7 @@ openssl x509 -in server.crt -noout -pubkey
 ### Связанные темы
 
 - [TLS/SSL протокол](../../Networking/Protocols/tls.md) — использование сертификатов в TLS
+- [Диагностика SSL-сертификатов](../Tools/ssl_certificate_diagnostics.md) — проверка даты окончания, цепочки, incomplete chain
 - [Управление CA на OpenSSL](../Tools/openssl_ca/single_tier/overview.md) — практическое руководство
 - [mTLS в Kubernetes](../../Kubernetes/Security/tls_and_mtls_in_kubernetes.md) — сервисная сетка
 - [Сертификаты в Kubernetes](../../Kubernetes/Operations/certificate_management.md) — управление сертификатами кластера

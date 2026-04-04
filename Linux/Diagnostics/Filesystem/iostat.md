@@ -95,7 +95,7 @@ iostat -x 1
 - **Смешанная read/write нагрузка:** Устройство не успевает обслуживать очередь равномерно
 - **Медленный диск:** Высокая латентность устройства
 
-> **Важно:** Смотрите на `await` и `avgqu-sz`, а не только на `iowait`. Подробно: [disk_io_troubleshooting.md](../Performance/disk_io_troubleshooting.md#низкий-iowait-при-высокой-задержке-диска).
+> **Важно:** Смотрите на `await` и `avgqu-sz`, а не только на `iowait`. Подробно: [Низкий iowait при высокой задержке](../Performance/DiskIO/iowait_and_latency.md).
 
 ### Сбор данных для анализа
 
@@ -159,16 +159,12 @@ ps aux | awk '$8 ~ /D/ {print}'
 
 ### Альтернативы и дополнения
 
-| Инструмент | Отличие от iostat |
-| :--- | :--- |
-| [iotop](./iotop.md) | Показывает I/O по процессам |
-| [dstat](../Performance/dstat.md) | Комплексный мониторинг (CPU, диск, сеть) |
-| `pidstat -d` | I/O статистика по PID |
-| `blktrace` | Трассировка блочного I/O (низкий уровень) |
+- [iotop](./iotop.md) — I/O по процессам
+- [dstat](../Performance/dstat.md) — комплексный мониторинг (CPU, диск, сеть)
+- `pidstat -d` — I/O статистика по PID
+- `blktrace` — трассировка блочного I/O (низкий уровень)
 
-### См. также
+### Дополнительная информация
 
-- [Диагностика filesystem и дискового пространства](./filesystem_and_disk_space_diagnostics.md)
-- [Планировщики I/O](../../Core/kernel/io_schedulers.md)
-- [Бенчмаркинг I/O (fio)](./fio.md)
-- [Официальная документация sysstat](https://sysstat.github.io/)
+- Документация: [официальный сайт sysstat](https://sysstat.github.io/)
+- Связанные темы: [Диагностика ФС и дискового пространства](./filesystem_and_disk_space_diagnostics.md), [Планировщики I/O](../../Core/kernel/io_schedulers.md), [Бенчмаркинг I/O (fio)](./fio.md)

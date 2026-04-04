@@ -169,7 +169,7 @@ cat /proc/<PID>/limits | grep "open files"
 lsof -u <user> | awk '{print $2}' | sort | uniq -c | sort -rn | head
 ```
 
-Ошибка «too many open files» указывает на исчерпание лимита. Подробно: [limits.md](../../Core/processes/limits.md).
+Ошибка «too many open files» указывает на исчерпание лимита. Подробно: [ulimit_usage.md](../../Core/processes/ulimit_usage.md).
 
 ### Фильтрация по типу доступа
 
@@ -236,11 +236,4 @@ lsof -p 1234 -F pfn
 - **Требует root:** Для полной информации по чужим процессам
 - **Производительность:** Может быть медленным на системах с тысячами процессов
 - **Моментальный снимок:** Данные актуальны на момент вызова
-
-### См. также
-
-- [`ps`](./ps.md) — информация о процессах
-- [`ss`](../Networking/ss.md) — сетевые сокеты
-- [`fuser`](../Networking/ss.md) — процессы по порту/файлу
-- [file_descriptors.md](../../FileSystems/file_descriptors.md) — файловые дескрипторы
-- [limits.md](../../Core/processes/limits.md) — лимиты ресурсов
+- Для поиска процессов по порту/файлу также подходит `fuser` (меньше деталей, но проще в использовании); информацию о процессах см. в [`ps`](./ps.md), о сетевых сокетах — в [`ss`](../Networking/ss.md), о файловых дескрипторах — в [file_descriptors.md](../../FileSystems/file_descriptors.md), о лимитах ресурсов — в [ulimit_usage.md](../../Core/processes/ulimit_usage.md).

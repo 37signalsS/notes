@@ -232,8 +232,4 @@ grep multipathd var/log/messages | grep "Jul 12" | grep mpathr
 - `sosreport-hostname-YYYY-MM-DD-xxxxxx.tar.xz` — основной архив
 - `sosreport-hostname-YYYY-MM-DD-xxxxxx.tar.xz.sha256` — контрольная сумма
 
-### Ссылки
-
-- [Документация Oracle Linux 9 — sos](https://docs.oracle.com/en/operating-systems/oracle-linux/9/sos/about_the_sos_command.html)
-- [Блог: sos report — Universal Diagnostic Tool](https://blogs.oracle.com/linux/post/sos-report)
-- [Блог: sosdiff — Compare Two Linux sos reports](https://blogs.oracle.com/linux/oled-sosdiff)
+Подробнее: [документация Oracle Linux 9](https://docs.oracle.com/en/operating-systems/oracle-linux/9/sos/about_the_sos_command.html), [sos report — Universal Diagnostic Tool](https://blogs.oracle.com/linux/post/sos-report), [sosdiff — Compare Two Linux sos reports](https://blogs.oracle.com/linux/oled-sosdiff).

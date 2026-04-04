@@ -1,10 +1,10 @@
 # Расшифровка /proc/diskstats
 
-## Определения
+## Definitions
 
 - **`/proc/diskstats`**: Псевдофайл ядра, содержащий детальную статистику операций ввода-вывода для всех блочных устройств.
 
-## Основные концепции
+## Basic Concepts
 
 ### Формат данных
 
@@ -29,7 +29,7 @@
 | 13 | Time spent doing I/O (ms) | Общее время I/O |
 | 14 | Weighted I/O time (ms) | Взвешенное время I/O |
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Чтение статистики
 
@@ -59,9 +59,6 @@ watch -n1 'cat /proc/diskstats'
 awk '$3 == "sda" {print "Reads:", $4, "Writes:", $8, "IO_ticks:", $13}' /proc/diskstats
 ```
 
-## Дополнительная информация
+## Additional Information
 
-### См. также
-
-- [Диагностический чеклист I/O](./diagnostic_checklist.md)
-- [`iostat` — подробное описание](../../Filesystem/iostat.md)
+Смежные темы: [Диагностический чеклист I/O](./diagnostic_checklist.md), [`iostat` — подробное описание](../../Filesystem/iostat.md).

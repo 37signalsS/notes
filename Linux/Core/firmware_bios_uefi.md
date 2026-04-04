@@ -1,4 +1,4 @@
-# BIOS и UEFI: Прошивка и старт системы
+# BIOS и UEFI: Firmware и загрузка системы
 
 ## Определения
 
@@ -23,6 +23,8 @@
 | **Конфигурация** | Настройки в CMOS | Переменные в NVRAM (`efibootmgr`) |
 | **Сеть** | Нет | Поддержка сети (PXE) |
 | **Время загрузки** | Медленнее | Быстрее (Parallel init) |
+
+## Основные концепции
 
 ### Путь загрузки: BIOS + MBR
 
@@ -58,6 +60,21 @@
 - **Secure Boot** для проверки подлинности
 - Графический интерфейс, поддержка мыши и сети
 - Быстрая загрузка (parallel init)
+
+### Глоссарий терминов
+
+| Термин | Определение |
+| :--- | :--- |
+| **Reset Vector** | Адрес (`0xFFFFFFF0` для x86), с которого CPU начинает выполнение после сброса |
+| **POST** | Power-On Self Test — ранняя самодиагностика оборудования |
+| **MBR** | Master Boot Record — первый сектор диска (512 байт), загрузочный код + таблица разделов |
+| **GPT** | GUID Partition Table — современная разметка с глобальными уникальными идентификаторами |
+| **ESP** | EFI System Partition — раздел FAT32 для EFI-загрузчиков (`.efi`-файлы) |
+| **NVRAM** | Энергонезависимая память UEFI для переменных и записей загрузки |
+| **Secure Boot** | Механизм проверки криптографических подписей загрузчика и ядра |
+| **shim.efi** | Прослойка, подписанная Microsoft, для загрузки GRUB с подписью дистрибутива |
+| **EFI stub** | Возможность ядра Linux запускаться напрямую как EFI-приложение |
+| **DXE** | Driver Execution Environment — фаза загрузки драйверов в UEFI |
 
 ## Практические сценарии
 
@@ -139,31 +156,9 @@ reboot
 
 ## Дополнительная информация
 
-### Глоссарий терминов
-
-| Термин | Определение |
-| :--- | :--- |
-| **Reset Vector** | Адрес (`0xFFFFFFF0` для x86), с которого CPU начинает выполнение после сброса |
-| **POST** | Power-On Self Test — ранняя самодиагностика оборудования |
-| **MBR** | Master Boot Record — первый сектор диска (512 байт), загрузочный код + таблица разделов |
-| **GPT** | GUID Partition Table — современная разметка с глобальными уникальными идентификаторами |
-| **ESP** | EFI System Partition — раздел FAT32 для EFI-загрузчиков (`.efi`-файлы) |
-| **NVRAM** | Энергонезависимая память UEFI для переменных и записей загрузки |
-| **Secure Boot** | Механизм проверки криптографических подписей загрузчика и ядра |
-| **shim.efi** | Прослойка, подписанная Microsoft, для загрузки GRUB с подписью дистрибутива |
-| **EFI stub** | Возможность ядра Linux запускаться напрямую как EFI-приложение |
-| **DXE** | Driver Execution Environment — фаза загрузки драйверов в UEFI |
-
 ### Связанные темы
 
 - **[Boot Process](./kernel/boot_process.md)** — загрузка ядра после передачи управления от загрузчика
 - **[GRUB](../SystemAdministration/grub.md)** — настройка загрузчика GRUB
 - **[Разметка диска](../FileSystems/partitions_and_filesystems.md)** — MBR и GPT
 - **[PXE Boot](../Networking/Concepts/pxe_boot.md)** — сетевая загрузка
-
-### Дополнительные ресурсы
-
-- **UEFI Specification:** [uefi.org](https://uefi.org/specifications)
-- **GRUB Manual:** [gnu.org/software/grub/manual](https://www.gnu.org/software/grub/manual/grub.html)
-- **efibootmgr:** [man page](https://man7.org/linux/man-pages/man8/efibootmgr.8.html)
-- **Systemd Boot:** [systemd-boot](https://www.freedesktop.org/software/systemd/man/systemd-boot.html)

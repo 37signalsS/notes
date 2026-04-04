@@ -5,7 +5,7 @@
 * **Swap (подкачка)** — это пространство на диске, которое операционная система использует, когда ей не хватает оперативной памяти (RAM), для выгрузки неактивных страниц памяти.
 * **Анонимные страницы (Anonymous Pages)** — страницы памяти, не связанные напрямую с файлом на диске (например, память стека или кучи процесса). При нехватке RAM они выгружаются в swap.
 * **Page Fault ("ошибка страницы")** — исключение от [MMU (Memory Management Unit)](./virtual_vs_physical_memory.md), когда процесс обращается к виртуальной странице, которой нет в физической памяти. Ядро обрабатывает его, загружая страницу из swap или с диска.
-* **Swappiness** — параметр ядра (от 0 до 100), который контролирует, насколько агрессивно система будет использовать swap-пространство.
+* **Swappiness** — параметр ядра (от 0 до 200), контролирующий агрессивность использования swap-пространства.
 
 ## Основные концепции
 
@@ -74,7 +74,7 @@ sudo mkswap /swapfile
 # 4. Активировать
 sudo swapon /swapfile
 
-# 5. Сделать постоянным (добавить в [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab))
+# 5. Добавить в `/etc/fstab` для постоянного подключения
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
@@ -84,9 +84,9 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 Дополнительные инструменты диагностики:
 
-* **`vmstat`** — детальная статистика по swap-in/swap-out и давлению памяти. Подробное описание см. в [vmstat.md](../../Diagnostics/Memory/vmstat.md).
-* **`pmap`** — анализ распределения памяти процесса. Подробное описание см. в [pmap.md](../../Diagnostics/Memory/pmap.md).
-* **`/proc/meminfo`** — исчерпывающая статистика по памяти системы. Подробное описание см. в [proc_meminfo.md](../../Diagnostics/Memory/proc_meminfo.md).
+* **`vmstat`** — детальная статистика по swap-in/swap-out и давлению памяти. Подробнее: [vmstat](../../Diagnostics/Memory/vmstat.md).
+* **`pmap`** — анализ распределения памяти процесса. Подробнее: [pmap](../../Diagnostics/Memory/pmap.md).
+* **`/proc/meminfo`** — исчерпывающая статистика по памяти системы. Подробнее: [proc_meminfo](../../Diagnostics/Memory/proc_meminfo.md).
 
 1. **Проверяем, сколько страниц реально перемещается в swap**
 
@@ -101,7 +101,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     cat /proc/zoneinfo | less
     ```
 
-    Отображает, какие зоны памяти (DMA, Normal, HighMem) близки к исчерпанию. Столбцы `nr_free_pages` и `low` помогают понять, когда ядро начинает активно тревожить swap или `kswapd`. Полезно для диагностики проблем, связанных с фрагментацией памяти или специфическим использованием памяти ядром. Подробнее о `kswapd` и reclaim-процессах см. в [кэшировании и освобождении памяти](caching_and_reclaiming.md).
+    Отображает, какие зоны памяти (DMA, Normal, HighMem) близки к исчерпанию. Столбцы `nr_free_pages` и `low` помогают понять, когда ядро начинает активно использовать swap или `kswapd`. Подробнее о `kswapd` и reclaim-процессах: [кэширование и освобождение памяти](caching_and_reclaiming.md).
 3. **Динамика использования swap и RAM по [cgroups](../cgroups.md) (для контейнеров/VM)**
 
     ```bash
@@ -138,7 +138,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     - `si` / `so` — swap-in / swap-out (КБ/с). Ненулевые значения указывают на активный свопинг.
     - `wa` (iowait) — процент времени CPU в ожидании I/O. Рост `wa` вместе с `si`/`so` подтверждает проблемы с памятью.
 
-    Подробное описание см. в [vmstat.md](../../Diagnostics/Memory/vmstat.md).
+    Подробное описание: [vmstat](../../Diagnostics/Memory/vmstat.md).
 
 2. **`pidstat -r` — page faults по процессам**
 
@@ -150,7 +150,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     - `minflt/s` — minor faults в секунду. Высокие значения означают интенсивную работу с памятью.
     - `majflt/s` — major faults в секунду. Рост указывает на нехватку RAM и чтение с диска.
 
-    Сравнивайте процессы: кто генерирует больше `majflt/s`, тот создаёт нагрузку на подсистему памяти. Подробное описание см. в [pidstat.md](../../Diagnostics/Processes/pidstat.md).
+    Сравнивайте процессы: кто генерирует больше `majflt/s`, тот создаёт нагрузку на подсистему памяти. Подробнее: [pidstat](../../Diagnostics/Processes/pidstat.md).
 
 3. **`perf stat` — точный подсчёт faults**
 
@@ -158,7 +158,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     perf stat -e page-faults,minor-faults,major-faults <cmd>
     ```
 
-    Даёт точное количество всех типов faults для конкретного процесса или команды. Используйте для оценки масштаба проблемы.
+    Даёт точное количество всех типов faults для конкретного процесса или команды.
 
 4. **`/proc/<pid>/stat` — сырые счётчики процесса**
 
@@ -166,7 +166,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     cat /proc/<pid>/stat | awk '{print $10,$12}'
     ```
 
-    Выводит накопленные значения minor faults (поле 10) и major faults (поле 12) для конкретного PID. Удобно для скриптов и мониторинга.
+    Выводит накопленные значения minor faults (поле 10) и major faults (поле 12) для конкретного PID.
 
 5. **`perf top` — анализ "горячих" точек кода**
 
@@ -174,9 +174,9 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
     sudo perf top
     ```
 
-    Если faults частые, `perf top` показывает, какие функции ядра или приложения вызывают наибольшую активность. Ищите функции, связанные с выделением памяти, обработкой страниц или системными вызовами.
+    Если faults частые, `perf top` показывает, какие функции ядра или приложения вызывают наибольшую активность.
 
-    Подробное описание см. в [perf.md](../../Diagnostics/Performance/perf.md).
+    Подробнее: [perf](../../Diagnostics/Performance/perf.md).
 
 **Интерпретация результатов:**
 
@@ -184,13 +184,13 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 - **Высокие `majflt/s` + рост `si`/`so`:** Критическая нехватка RAM, активный свопинг. Требуется увеличение памяти или оптимизация приложения.
 - **Высокие `majflt/s` без `si`/`so`:** Приложение активно работает с файловым кэшем или mmap-файлами.
 
-5. **Анализ распределения `dirty pages` и их сброса на диск**
+### Анализ распределения `dirty pages`
 
-    ```bash
-    cat /proc/meminfo | grep -E 'Dirty|Writeback'
-    ```
+```bash
+cat /proc/meminfo | grep -E 'Dirty|Writeback'
+```
 
-    Если `Dirty` растёт, значит процессы создают много кэшируемых страниц, а ядро их ещё не сбросило на диск. Это может вызвать задержки для других процессов и фоновые I/O spikes. Подробнее о файле [/proc/meminfo](../../Diagnostics/Memory/proc_meminfo.md) можно узнать в соответствующей заметке.
+Если `Dirty` растёт, процессы создают много кэшируемых страниц, а ядро ещё не сбросило их на диск. Это может вызвать задержки и фоновые I/O spikes. Подробнее: [proc_meminfo](../../Diagnostics/Memory/proc_meminfo.md).
 
 ### Отключение и удаление Swap-файла
 
@@ -198,7 +198,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 # 1. Деактивировать swap
 sudo swapoff /swapfile
 
-# 2. Удалить запись из [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab) (если она была добавлена)
+# 2. Удалить запись из `/etc/fstab` (если была добавлена)
 
 # 3. Удалить сам файл
 sudo rm /swapfile
@@ -206,7 +206,7 @@ sudo rm /swapfile
 
 ### Тюнинг `vm.swappiness`
 
-**Важно:** В ядрах Linux 6.8+ диапазон `vm.swappiness` расширен с **0–100** до **0–200** для более точной настройки.
+**Диапазон:** `vm.swappiness` имеет диапазон **0–200** (расширен с ядра Linux 3.5). Значения `101–200` делают свопинг более агрессивным, чем `100`.
 
 | Значение | Поведение |
 | :--- | :--- |
@@ -223,8 +223,6 @@ cat /proc/sys/vm/swappiness
 
 # Временно изменить
 sudo sysctl vm.swappiness=10
-
-# Для постоянного изменения добавьте vm.swappiness=10 в /etc/sysctl.conf. Затем примените изменения: `sudo sysctl -p`.
 ```
 
 ## Дополнительная информация
@@ -248,8 +246,7 @@ sudo swapoff /swapfile
 sudo swapon /swapfile -p 10
 
 # 3. Закрепить в /etc/fstab
-# `/swapfile none swap sw,pri=10 0 0` (см. [`/etc/fstab`](../FileSystems/mounting.md#структура-и-синтаксис-файла-etcfstab))
-# /dev/sdb2   none swap sw,pri=5  0 0
+# /swapfile none swap sw,pri=10 0 0
 ```
 
 ### Рекомендации по размеру и `swappiness`

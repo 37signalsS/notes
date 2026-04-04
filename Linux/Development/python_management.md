@@ -1,97 +1,160 @@
 # Управление версиями Python в Linux
 
-### Определения
+## Определения
 
-**Python** — это высокоуровневый, универсальный и интерпретируемый язык программирования.
+**Python** — высокоуровневый, универсальный, интерпретируемый язык программирования.
 
-**`pyenv`** — это инструмент для установки нескольких версий Python и управления ими в одной операционной системе.
+**`pyenv`** — инструмент для установки и управления несколькими версиями Python в одной ОС.
 
-**`pyenv-virtualenv`** — это плагин для `pyenv`, который позволяет создавать и управлять изолированными виртуальными окружениями для проектов.
+**`pyenv-virtualenv`** — плагин для `pyenv`, создающий и управляющий изолированными виртуальными окружениями для проектов.
 
-### Основные концепции
+## Базовые концепции
 
-* **Принцип работы `pyenv`:**
-    `pyenv` работает путем вставки "прокладок" (shims) в начало переменной окружения `PATH`. Когда вызывается команда, например, `python`, операционная система сначала находит "прокладку" `pyenv`. `pyenv` затем определяет, какую версию Python использовать (глобальную, локальную для каталога или активированную через `shell`), и передает команду соответствующему исполняемому файлу Python.
+### Принцип работы `pyenv`
 
-* **Изоляция зависимостей:**
-    Изоляция зависимостей — это практика разделения пакетов, необходимых для разных проектов. `pyenv-virtualenv` решает эту задачу, позволяя создавать отдельные окружения, каждое со своим набором библиотек, привязанных к определенной версии Python.
+`pyenv` вставляет «прокладки» (shims) в начало `PATH`. При вызове `python` система находит shim `pyenv`, который определяет целевую версию Python (глобальную, локальную или через `shell`) и передаёт управление соответствующему исполняемому файлу.
 
-* **Безопасность системной версии:**
-    Python является критическим компонентом многих дистрибутивов Linux. Системные утилиты (например, `yum`, `apt`) зависят от системной версии Python (`/usr/bin/python`). **Никогда не пытайтесь изменять или удалять системный Python**. `pyenv` устанавливает версии Python в домашний каталог пользователя (`~/.pyenv`), не затрагивая системные файлы.
+### Изоляция зависимостей
 
-### Практические сценарии
+Практика разделения пакетов для разных проектов. `pyenv-virtualenv` создаёт отдельные окружения с собственным набором библиотек, привязанных к конкретной версии Python.
 
-* **Установка `pyenv` и его зависимостей:**
-  * **Установка зависимостей для сборки Python:**
-        `pyenv` собирает Python из исходного кода, поэтому требуются компилятор и сопутствующие библиотеки.
-    * **Для CentOS 7 (`yum`):**
+### Безопасность системной версии
 
-            ```bash
-            sudo yum update -y && sudo yum install -y epel-release && sudo yum install -y git gcc zlib-devel bzip2-devel readline-devel sqlite-devel openssl-devel libffi-devel xz-devel
-            ```
+Python — критический компонент дистрибутивов Linux. Системные утилиты (`yum`, `apt`, `dnf`) зависят от системного Python (`/usr/bin/python`). **Запрещено изменять или удалять системный Python.** `pyenv` устанавливает версии в `~/.pyenv`, не затрагивая системные файлы.
 
-    * **Для CentOS 8 / RHEL 8 (`dnf`):**
+## Практические сценарии
 
-            ```bash
-            sudo dnf update -y && sudo dnf install -y make gcc zlib-devel bzip2 bzip2-devel readline-devel sqlite sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel gdbm-libs libnsl2 git
-            ```
+### Установка `pyenv`
 
-  * **Установка `pyenv`:**
+**Зависимости для сборки Python:**
 
-        ```bash
-        git clone https://github.com/pyenv/pyenv.git ~/.pyenv
-        ```
+`pyenv` собирает Python из исходников, требуются компилятор и библиотеки.
 
-  * **Настройка окружения:**
-        Добавьте следующие команды в `~/.bashrc` (или `~/.zshrc`) для автоматической инициализации `pyenv`.
+**Для RHEL-совместимых систем:**
 
-        ```bash
-        echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
-        echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
-        echo -e 'if command -v pyenv 1>/dev/null 2>&1; then\n  eval "$(pyenv init -)"\nfi' >> ~/.bashrc
-        source ~/.bashrc
-        ```
+```bash
+# RHEL 8 / AlmaLinux 8 / Rocky Linux 8
+sudo dnf groupinstall "Development Tools" -y
+sudo dnf install -y git gcc make zlib-devel bzip2-devel readline-devel \
+  sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel \
+  gdbm-libs libnsl2
 
-* **Установка и управление версиями Python:**
-  * **Просмотр доступных версий:**
+# RHEL 9 / AlmaLinux 9 / Rocky Linux 9
+sudo dnf groupinstall "Development Tools" -y
+sudo dnf install -y git gcc make zlib-devel bzip2-devel readline-devel \
+  sqlite-devel openssl-devel tk-devel libffi-devel xz-devel libuuid-devel \
+  python3-libnsl2
+```
 
-        ```bash
-        pyenv install --list
-        ```
+**Для Debian/Ubuntu:**
 
-  * **Установка нужной версии:**
+```bash
+sudo apt update && sudo apt install -y make build-essential libssl-dev zlib1g-dev \
+  libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncursesw5-dev \
+  xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+```
 
-        ```bash
-        # Пример установки версии 3.10.4
-        pyenv install 3.10.4
-        ```
+**Установка `pyenv`:**
 
-  * **Выбор версии Python:**
-    * **Глобально:** `pyenv global 3.10.4` (версия по умолчанию для пользователя).
-    * **Локально:** `pyenv local 3.10.4` (версия для конкретного каталога, создает файл `.python-version`).
-  * **Просмотр версий:**
-    * `pyenv versions` — покажет все установленные версии.
-    * `pyenv version` — покажет активную версию.
+```bash
+git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+```
 
-* **Установка и использование `pyenv-virtualenv`:**
-  * **Установка плагина:**
+**Настройка окружения:**
 
-        ```bash
-        git clone https://github.com/pyenv/pyenv-virtualenv.git $(pyenv root)/plugins/pyenv-virtualenv
-        echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.bashrc
-        source ~/.bashrc
-        ```
+Добавить в `~/.bashrc` (или `~/.zshrc`):
 
-  * **Создание и активация виртуального окружения:**
+```bash
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+echo -e 'if command -v pyenv 1>/dev/null 2>&1; then\n  eval "$(pyenv init -)"\nfi' >> ~/.bashrc
+source ~/.bashrc
+```
 
-        ```bash
-        # Создать окружение 'my-project-env' на базе Python 3.10.4
-        pyenv virtualenv 3.10.4 my-project-env
+### Управление версиями Python
 
-        # Активировать его для текущего проекта (локально)
-        pyenv local my-project-env
+**Просмотр доступных версий:**
 
-        # Теперь окружение активируется автоматически при входе в каталог.
-        # Пакеты, установленные через pip, будут изолированы.
-        pip install numpy pandas
-        ```
+```bash
+pyenv install --list
+```
+
+**Установка версии:**
+
+```bash
+pyenv install 3.12.4
+```
+
+**Выбор версии:**
+
+| Область | Команда | Описание |
+| :--- | :--- | :--- |
+| Глобально | `pyenv global 3.12.4` | Версия по умолчанию для пользователя |
+| Локально | `pyenv local 3.12.4` | Версия для каталога (создаёт `.python-version`) |
+| Сессия | `pyenv shell 3.12.4` | Версия для текущей сессии shell |
+
+**Просмотр версий:**
+
+```bash
+pyenv versions   # все установленные версии
+pyenv version    # активная версия
+```
+
+### Работа с `pyenv-virtualenv`
+
+**Установка плагина:**
+
+```bash
+git clone https://github.com/pyenv/pyenv-virtualenv.git $(pyenv root)/plugins/pyenv-virtualenv
+echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Создание и активация окружения:**
+
+```bash
+# Создать окружение на базе Python 3.12.4
+pyenv virtualenv 3.12.4 my-project-env
+
+# Активировать локально (автоматическая активация при входе в каталог)
+pyenv local my-project-env
+
+# Установка пакетов в изолированное окружение
+pip install numpy pandas
+```
+
+**Удаление окружения:**
+
+```bash
+pyenv virtualenv-delete my-project-env
+```
+
+## Дополнительная информация
+
+### Альтернативные инструменты
+
+| Инструмент | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| **`venv`** | Встроенный модуль Python3 | Простые проекты, одна версия Python |
+| **`pipenv`** | Комбинация `pip` + `virtualenv` + `Pipfile` | Проекты с зависимостями в стиле JavaScript |
+| **`poetry`** | Менеджер зависимостей и сборок | Современные Python-проекты с packaging |
+| **`uv`** | Быстрый менеджер пакетов на Rust | Высокая производительность установки |
+| **`asdf`** | Универсальный менеджер версий | Несколько языков в одном инструменте |
+
+### Файл `.python-version`
+
+Автоматически создаётся командой `pyenv local`. Содержит номер версии или имя окружения. Рекомендуется коммитить в репозиторий для фиксации версии Python проекта.
+
+### Диагностика проблем
+
+| Проблема | Решение |
+| :--- | :--- |
+| `pyenv: command not found` | Проверить `PATH` и инициализацию в `~/.bashrc` |
+| Ошибка сборки Python | Установить зависимости (zlib, openssl, libffi) |
+| Shim не обновлён | Выполнить `pyenv rehash` |
+
+### Полезные ссылки
+
+- [Официальная документация pyenv](https://github.com/pyenv/pyenv)
+- [Документация pyenv-virtualenv](https://github.com/pyenv/pyenv-virtualenv)
+- [Рекомендованные зависимости для сборки](https://github.com/pyenv/pyenv/wiki#suggested-build-environment)

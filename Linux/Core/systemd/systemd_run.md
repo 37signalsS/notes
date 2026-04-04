@@ -1,50 +1,116 @@
-# systemd-run: Мгновенные временные сервисы
+# systemd-run
 
 ## Определения
 
-`systemd-run` — это мощная утилита, позволяющая мгновенно запускать задачи в изолированных временных сервисах `systemd` без необходимости создания отдельных unit-файлов.
+**`systemd-run`** — утилита для запуска команд в изолированных временных сервисах или скопах без необходимости создания unit-файлов. Команда становится полноценным `systemd`-юнитом с логированием через `journald`, управлением ресурсами через `cgroups` и sandbox-изоляцией.
 
-Она позволяет запускать команды как полноценные `systemd`-сервисы "на лету". Это идеальный инструмент для:
+## Базовые концепции
 
-* Временных задач
-* Отладки
-* Ограничения ресурсов
-* Тестирования поведения в боевых условиях
+### Два режима работы
 
-## Основные концепции
+| Режим | Флаг | Поведение | Когда использовать |
+| :--- | :--- | :--- | :--- |
+| **Service** | (по умолчанию) | Создаёт временный `.service` юнит, запускает команду асинхронно | Фоновые задачи, отложенный запуск, периодические задачи |
+| **Scope** | `--scope` | Подключает текущий процесс к новому cgroup scope | Ограничение ресурсов для уже запущенных команд |
 
-* **Без unit-файлов:** Нет необходимости создавать и очищать временные unit-файлы.
-* **Полные возможности systemd:** Команда получает все преимущества `systemd`, включая логирование через `journald`, управление через `cgroups` и использование sandbox-изоляции.
+### Ключевые опции
+
+| Опция | Описание | Пример |
+| :--- | :--- | :--- |
+| `-p`, `--property=` | Установить свойство юнита | `-p CPUQuota=50%` |
+| `--unit=` | Имя создаваемого юнита | `--unit=my-task` |
+| `--on-active=` | Запуск через время | `--on-active=30s` |
+| `--on-calendar=` | Запуск по расписанию | `--on-calendar="daily"` |
+| `--on-boot=` | Запуск после загрузки | `--on-boot=1min` |
+| `--service-type=` | Тип сервиса | `--service-type=oneshot` |
+| `--working-directory=` | Рабочая директория | `--working-directory=/opt/app` |
+| `--uid=` / `--gid=` | Запуск от пользователя/группы | `--uid=www-data` |
+| `--remain-after-exit` | Не удалять юнит после завершения | Для отладки |
+| `--collect` | Автоматически удалять юнит после завершения | По умолчанию включено |
+
+### Именование юнитов
+
+Без `--unit=` systemd генерирует имя вида `run-rXXXXXXXX.service`. Для отладки и управления явно задавайте `--unit=`.
 
 ## Практические сценарии
 
-### 1. Запуск команды в отдельном cgroup с лимитом CPU
+### Ограничение CPU для сборки
 
 ```bash
 systemd-run --scope -p CPUQuota=20% bash -c "make build"
 ```
 
-### 2. Запуск периодической задачи
+Процесс `make build` будет ограничен 20% CPU. Результат доступен через `journalctl`.
+
+### Одноразовая задача с отложенным запуском
 
 ```bash
-systemd-run --on-calendar="hourly" /usr/local/bin/cleanup.sh
+systemd-run --on-active=300 --unit=delayed-cleanup /usr/local/bin/cleanup.sh
 ```
 
-### 3. Проверка сервиса в sandbox-режиме (изоляция временной директории и системы)
+Команда выполнится через 5 минут. Статус: `systemctl status delayed-cleanup.service`.
+
+### Периодическая задача (временный таймер)
 
 ```bash
-systemd-run --property=PrivateTmp=yes --property=ProtectSystem=strict bash
+systemd-run --on-calendar="hourly" --unit=hourly-cleanup /usr/local/bin/cleanup.sh
 ```
 
-### 4. Изоляция для небезопасной команды (без новых привилегий и доступа к устройствам)
+Создаёт временный timer + service. Существует до перезагрузки. Проверка: `systemctl list-timers --all`.
+
+> Постоянные таймеры через файлы юнитов описаны в [timers.md](./timers.md).
+
+### Sandbox для небезопасного скрипта
 
 ```bash
-systemd-run -p NoNewPrivileges=yes -p PrivateDevices=yes ./script.sh
+systemd-run \
+  -p PrivateTmp=yes \
+  -p ProtectSystem=strict \
+  -p NoNewPrivileges=yes \
+  -p PrivateDevices=yes \
+  -p ProtectHome=yes \
+  ./untrusted-script.sh
 ```
+
+Изоляция: отдельный `/tmp`, защита ФС, запрет повышения привилегий, нет доступа к устройствам и `/home`.
+
+### Запуск от другого пользователя
+
+```bash
+systemd-run --uid=www-data --gid=www-data -p WorkingDirectory=/var/www /usr/local/bin/app-init.sh
+```
+
+### Отладка утечки ресурсов
+
+```bash
+# Запуск с логированием и последующим анализом
+systemd-run --unit=memory-test -p MemoryMax=2G ./memory-intensive-task
+
+# После завершения — просмотр логов и cgroup-статистики
+journalctl -u memory-intensive-task -e
+systemctl show memory-test.service | grep -i memory
+```
+
+### Временный сервис с сохранением юнита после завершения
+
+```bash
+systemd-run --remain-after-exit --unit=post-deploy-check /usr/local/bin/check.sh
+```
+
+Юнит не удаляется после завершения — можно проверить `systemctl status post-deploy-check` и логи.
 
 ## Дополнительная информация
 
-* **[Обзор Systemd: Управление системой и службами](./overview.md)**: Общая информация о `systemd` и его архитектуре.
-* **[Контрольные группы (cgroups) в Linux](../cgroups.md)**: Для понимания механизмов управления ресурсами, используемых `systemd`.
-* **[Journald: Централизованный сбор логов](../../SystemAdministration/Logging/journald.md)**: Для подробной информации о системе логирования `systemd`.
-* **[Задачи по расписанию (Timers)](./timers.md)**: Для изучения альтернативного механизма планирования задач в `systemd`.
+### Отличия от прямого запуска команд
+
+| Характеристика | Прямой запуск (`./script.sh`) | `systemd-run` |
+| :--- | :--- | :--- |
+| Логирование | stdout/stderr | `journald` (централизованное) |
+| Управление ресурсами | Ручное (`ulimit`, `cgexec`) | Встроенное (`-p CPUQuota=`, `-p MemoryMax=`) |
+| Изоляция | Нет | Sandbox (`PrivateTmp`, `ProtectSystem`, и др.) |
+| Мониторинг | Нет | `systemctl status`, `journalctl -u` |
+| Жизненный цикл | Завершение = потеря | `--remain-after-exit`, автоочистка |
+
+### Связанные файлы
+
+Механизм таймеров с файлами юнитов — в [timers.md](./timers.md). Логирование через `journald` — в [journald.md](../../SystemAdministration/Logging/journald.md). Контрольные группы и ресурсы — в [cgroups.md](../cgroups.md). Обзор systemd — в [overview.md](./overview.md).

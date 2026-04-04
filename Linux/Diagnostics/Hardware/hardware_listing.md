@@ -236,9 +236,9 @@ lsblk -J
 - `rom`: Оптический привод
 - `raid`: RAID массив
 
-## Диагностика проблем
+### Диагностика проблем с оборудованием
 
-### Проблемы с распознаванием оборудования
+#### Проблемы с распознаванием оборудования
 
 ```bash
 # PCI устройство не видно
@@ -258,7 +258,7 @@ dmesg | grep -i sd  # SCSI/SATA диски
 dmesg | grep -i nvme  # NVMe диски
 ```
 
-### Поиск драйверов для оборудования
+#### Поиск драйверов для оборудования
 
 ```bash
 # Какой драйвер использует сетевая карта
@@ -274,12 +274,36 @@ lspci -nnk
 lsmod | grep -i e1000  # Пример для Intel NIC
 ```
 
+## Дополнительная информация
+
+### Надёжность источников
+
+| Утилита | Надёжность | Примечания |
+|---------|------------|------------|
+| `lshw` | Высокая | Комплексные данные из sysfs/DMI |
+| `lspci` | Высокая | Прямое чтение из `/sys/bus/pci` |
+| `lsusb` | Высокая | Прямое чтение из `/sys/bus/usb` |
+| `lsscsi` | Высокая | Данные из `/sys/class/scsi_device` |
+| `lsblk` | Высокая | Данные из `/sys/block` и udev |
+| `hwinfo` | Средняя | Зависит от полноты базы данных |
+
+### Экспорт отчётов
+
+Для инвентаризации и аудии используйте форматы экспорта:
+
+```bash
+# HTML-отчёт для руководства
+sudo lshw -html > hardware_report.html
+
+# JSON для автоматизации (Ansible, скрипты)
+sudo lshw -json > hardware_report.json
+lsblk -J > block_devices.json
+```
+
 ### Связанные инструменты
 
-- **`smartctl`**: Мониторинг здоровья дисков — см. [smartctl](./smartctl/index.md)
-- **`dmidecode`**: Низкоуровневая информация о CPU, памяти, BIOS — см. [Диагностика CPU](./cpu_info.md)
-- **`fdisk`, `parted`**: Управление разделами — см. [Разделы и файловые системы](../../FileSystems/partitions_and_filesystems.md)
-- **`mdadm`**: Управление RAID — см. [RAID management](../../FileSystems/raid_management.md)
-- **`lvm2`**: Управление логическими томами — см. [LVM](../../FileSystems/LVM/operations/lvm_disk_replacement.md)
-
-## Дополнительная информация
+- **`smartctl`**: Мониторинг здоровья дисков — [smartctl](./smartctl/index.md)
+- **`dmidecode`**: Низкоуровневая информация о CPU, памяти, BIOS — [cpu_info](./cpu_info.md)
+- **`fdisk`, `parted`**: Управление разделами — [partitions_and_filesystems](../../FileSystems/partitions_and_filesystems.md)
+- **`mdadm`**: Управление RAID — [raid_management](../../FileSystems/raid_management.md)
+- **`lvm2`**: Управление логическими томами — [lvm_disk_replacement](../../FileSystems/LVM/operations/lvm_disk_replacement.md)

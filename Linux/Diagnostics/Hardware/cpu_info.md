@@ -191,7 +191,7 @@ ls /sys/devices/system/cpu/
 - `conservative`: Более плавное масштабирование, чем ondemand
 - `schedutil`: Современный governor на основе планировщика (рекомендуется)
 
-Подробнее о CPU governor см. [CPU Frequency Scaling](../../Core/cpu_pinning.md).
+Подробнее об управлении governor см. [tuned](../../Core/tuned.md).
 
 ### Диагностика проблем с CPU
 
@@ -224,15 +224,6 @@ cat /proc/cmdline | grep isolcpus
 | `dmidecode` | Средняя | Зависит от качества DMI таблиц от производителя |
 | `/sys` | Высокая | Реальное состояние в реальном времени |
 
-### Связанные инструменты
-
-- **`top`, `htop`, `pidstat`**: Мониторинг использования CPU процессами — см. [Диагностика процессов](../Processes/)
-- **`perf`**: Профилирование производительности CPU — см. [perf](../Performance/perf.md)
-- **`sar`**: Исторические данные использования CPU — см. [sar](../Performance/sar.md)
-- **`numactl`**: Управление NUMA affinity — см. [NUMA](../../Core/cpu_pinning.md)
-
-## Дополнительная информация
-
 ### Выбор конфигурации CPU: один мощный vs несколько менее мощных
 
 | Аспект | **Один CPU (больше ядер)** | **Несколько CPU (меньше ядер каждый)** |
@@ -258,3 +249,11 @@ numactl --hardware
 # Показать распределение ядер по NUMA-нодам
 lscpu | grep -i numa
 ```
+
+### Связанные инструменты
+
+- **`top`, `htop`, `pidstat`**: Мониторинг использования CPU процессами — [top](../Processes/top.md), [htop](../Processes/htop.md), [pidstat](../Processes/pidstat.md)
+- **`perf`**: Профилирование производительности CPU — [perf](../Performance/perf.md)
+- **`sar`**: Исторические данные использования CPU — [sar](../Performance/sar.md)
+- **`numactl`**: Управление NUMA affinity — [CPU Pining](../../Core/cpu_pinning.md)
+- **`tuned`**: Управление governor и профилями энергопотребления — [tuned](../../Core/tuned.md)

@@ -82,14 +82,10 @@ sudo iotop -b -d 10 >> /var/log/iotop.log &
 
 ### Альтернативы
 
-| Инструмент | Преимущество |
-| :--- | :--- |
-| `pidstat -d 1` | I/O по PID с историей |
-| [iostat](./iostat.md) | Общая статистика устройств |
-| `blktrace` | Низкоуровневая трассировка I/O |
+- `pidstat -d 1` — I/O по PID с историей
+- [iostat](./iostat.md) — общая статистика устройств
+- `blktrace` — низкоуровневая трассировка I/O
 
-### См. также
+### Дополнительная информация
 
-- [Диагностика filesystem и дискового пространства](./filesystem_and_disk_space_diagnostics.md)
-- [Приоритеты I/O (ionice)](./ionice.md)
-- [Планировщики I/O](../../Core/kernel/io_schedulers.md)
+- Связанные темы: [Диагностика ФС и дискового пространства](./filesystem_and_disk_space_diagnostics.md), [Приоритеты I/O (ionice)](./ionice.md), [Планировщики I/O](../../Core/kernel/io_schedulers.md)

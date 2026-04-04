@@ -173,10 +173,7 @@ fio --name=test --rw=randread --bs=4k --size=1G \
 - **Фоновая нагрузка:** Закройте другие приложения для чистых результатов.
 - **RAID:** Результаты зависят от уровня RAID и контроллера.
 
-### См. также
+### Дополнительная информация
 
-- [Диагностика filesystem и дискового пространства](./filesystem_and_disk_space_diagnostics.md)
-- [Статистика I/O (iostat)](./iostat.md)
-- [Планировщики I/O](../../Core/kernel/io_schedulers.md)
-- [Официальная документация fio](https://fio.readthedocs.io/)
-- [GitHub: axboe/fio](https://github.com/axboe/fio)
+- Документация: [официальный manual fio](https://fio.readthedocs.io/), [исходный код](https://github.com/axboe/fio)
+- Связанные темы: [Диагностика ФС и дискового пространства](./filesystem_and_disk_space_diagnostics.md), [Статистика I/O (iostat)](./iostat.md), [Планировщики I/O](../../Core/kernel/io_schedulers.md)

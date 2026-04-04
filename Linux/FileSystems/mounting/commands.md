@@ -58,6 +58,7 @@ sudo mount -t ext4 /dev/sdb1 /mnt/data
 sudo mount -o ro /dev/sdb1 /mnt/data
 
 # Перемонтирование с изменением опций (без размонтирования)
+# Подробное описание — [remount.md](./remount.md)
 sudo mount -o remount,rw /mnt/data
 
 # Размонтирование

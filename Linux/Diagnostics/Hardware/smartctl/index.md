@@ -1,30 +1,58 @@
 # Диагностика дисков с помощью smartctl
 
-Инструменты для мониторинга и диагностики состояния дисков.
+## Определения
 
-## Структура
+**`smartctl`** — утилита из пакета `smartmontools` для чтения и анализа данных S.M.A.R.T. с HDD, SSD и NVMe-накопителей. Подробные концепции см. в [smart_concepts](./smart_concepts.md).
 
-- **[smart_concepts.md](./smart_concepts.md)** — Определения, концепции S.M.A.R.T., атрибуты для HDD/SSD/NVMe
-- **[disk_health_check.md](./disk_health_check.md)** — Проверка здоровья, запуск тестов, мониторинг ошибок
-- **[smartd_monitoring.md](./smartd_monitoring.md)** — Настройка автоматического мониторинга через smartd
-- **[troubleshooting.md](./troubleshooting.md)** — Диагностика проблем
+**`smartd`** — демон для автоматического мониторинга S.M.A.R.T. и отправки уведомлений. Настройка см. в [smartd_monitoring](./smartd_monitoring.md).
 
-## Быстрый старт
+**S.M.A.R.T. (Self-Monitoring, Analysis and Reporting Technology)** — встроенная система самодиагностики накопителей, отслеживающая атрибуты физического состояния диска.
+
+## Основные концепции
+
+### Типы накопителей и протоколы
+
+| Тип | Протокол | Пример устройства |
+|-----|----------|-------------------|
+| HDD (SATA) | ATA/ATAPI | `/dev/sda` |
+| SATA SSD | ATA/ATAPI | `/dev/sda` |
+| NVMe SSD | NVMe | `/dev/nvme0n1` |
+| SAS | SCSI | `/dev/sda` |
+
+### Структура документации
+
+Данный каталог содержит четыре файла, покрывающих все аспекты работы со smartctl:
+
+- [Определения и концепции S.M.A.R.T.](./smart_concepts.md) — атрибуты для HDD/SSD/NVMe, интерпретация значений, пороги замены
+- [Проверка здоровья дисков](./disk_health_check.md) — запуск тестов, мониторинг ошибок, диагностика производительности
+- [Мониторинг через smartd](./smartd_monitoring.md) — настройка демона, алерты, конфигурация
+- [Диагностика проблем](./troubleshooting.md) — разбор типичных ошибок, восстановление данных
+
+## Практические сценарии
+
+### Быстрая проверка здоровья
 
 ```bash
-# Быстрая проверка здоровья
+# Статус здоровья
 sudo smartctl -H /dev/sda
 
-# Полная информация
+# Полная информация (все атрибуты, логи ошибок, тесты)
 sudo smartctl -a /dev/sda
 
-# Запустить длинный тест
+# Запуск длительного теста (фоновый режим)
 sudo smartctl -t long /dev/sda
 ```
 
-## Связанные темы
+Подробнее о командах и флагах см. в [disk_health_check](./disk_health_check.md).
 
-- [Инвентаризация оборудования](./hardware_listing.md)
-- [RAID management](../../FileSystems/raid_management.md)
-- [iostat](../Filesystem/iostat.md)
-- [iotop](../Filesystem/iotop.md)
+## Дополнительная информация
+
+### Надёжность S.M.A.R.T. диагностики
+
+S.M.A.R.T. предсказывает ~50-70% отказов. Атрибуты `Reallocated_Sectors` (HDD) и `Wear_Leveling` (SSD) — наиболее надёжные индикаторы деградации. Регулярные бэкапы обязательны.
+
+### Связанные инструменты
+
+- [Инвентаризация оборудования](../hardware_listing.md) — `lsblk`, `lsscsi` для обнаружения дисков
+- [RAID management](../../../FileSystems/raid_management.md) — управление RAID-массивами
+- [iostat](../../Filesystem/iostat.md), [iotop](../../Filesystem/iotop.md) — мониторинг производительности дисков

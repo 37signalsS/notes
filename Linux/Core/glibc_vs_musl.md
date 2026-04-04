@@ -18,54 +18,6 @@
 | **Философия** | Полнота и совместимость | Минимализм, корректность, простота |
 | **Стандарт** | POSIX + расширения GNU | Строгий POSIX |
 | **Целевая аудитория** | Десктопы, серверы общего назначения | Контейнеры, встраиваемые системы |
-| **Размер** | Значительно больше | Очень маленький |
-| **Статическая линковка** | Проблематична | Идеально |
-
-## Практические сценарии
-
-### 1. Статические бинарные файлы для контейнеров
-
-**Musl** — идеальный выбор для легковесных переносимых образов:
-
-```bash
-# Сборка статического бинарника с musl
-musl-gcc -static myapp.c -o myapp
-
-# Проверка типа бинарного файла
-file myapp
-# Вывод: "statically linked"
-
-# Размер: ~500 КБ vs ~2 МБ для glibc
-ls -lh myapp
-```
-
-**Применение:**
-
-- Alpine Linux образы
-- Distroless контейнеры
-- Однобинаторные приложения (Go, Rust)
-
-### 2. Десктопы и серверы общего назначения
-
-**Glibc** — выбор по умолчанию:
-
-- Подавляющее ПО собирается и тестируется с glibc
-- Максимальная совместимость
-- Поддержка расширений GNU
-
-**Дистрибутивы:** Debian, Ubuntu, Fedora, RHEL, CentOS
-
-### 3. Встраиваемые системы
-
-**Musl** предпочтителен для:
-
-- Устройств с ограниченной памятью
-- Требований к быстрому старту
-- Статической линковки без зависимостей
-
-**Примеры:** OpenWrt, Void Linux (musl variant)
-
-## Дополнительная информация
 
 ### Технические различия
 
@@ -80,11 +32,42 @@ ls -lh myapp
 | **Локали** | Полная поддержка | Ограниченная поддержка |
 | **Производительность** | Оптимизирован для общих нагрузок | Оптимизирован для предсказуемости |
 
-### Проблемы совместимости
+## Практические сценарии
 
-#### Glibc → Alpine (musl)
+### 1. Статические бинарные файлы для контейнеров
 
-**Ошибка:**
+**Musl** — идеальный выбор для легковесных переносимых образов:
+
+```bash
+# Сборка статического бинарника с musl
+musl-gcc -static myapp.c -o myapp
+
+# Проверка типа бинарного файла
+file myapp
+# Вывод: "statically linked"
+```
+
+**Применение:** Alpine Linux образы, distroless-контейнеры, статически собранные приложения (Go, Rust с `CGO_ENABLED=0`).
+
+### 2. Десктопы и серверы общего назначения
+
+**Glibc** — выбор по умолчанию:
+
+- Подавляющее ПО собирается и тестируется с glibc
+- Максимальная совместимость
+- Поддержка расширений GNU
+
+**Дистрибутивы:** Debian, Ubuntu, Fedora, RHEL, CentOS.
+
+### 3. Встраиваемые системы
+
+**Musl** предпочтителен для устройств с ограниченной памятью, требованиями к быстрому старту и статической линковки без зависимостей.
+
+**Примеры:** OpenWrt, Void Linux (musl variant).
+
+### 4. Проблемы совместимости: Glibc → Alpine (musl)
+
+**Симптом:**
 
 ```
 bash: ./myapp: No such file or directory
@@ -106,39 +89,25 @@ error while loading shared libraries: libc.so.6: cannot open shared object file
    CMD ["./myapp"]
    ```
 
-2. **Использовать glibc в Alpine (компромисс):**
+2. **Многоэтапная сборка со статической линковкой (Go):**
 
    ```dockerfile
-   FROM alpine:latest
-   ENV GLIBC_VERSION="2.35-r1"
-   RUN wget "https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk" && \
-       apk add --no-cache glibc-${GLIBC_VERSION}.apk
-   COPY ./my-glibc-app /usr/local/bin/
-   ```
-
-3. **Многоэтапная сборка со статической линковкой:**
-
-   ```dockerfile
-   # Этап сборки
    FROM golang:1.21 AS builder
    ENV CGO_ENABLED=0
    RUN go build -o myapp .
 
-   # Финальный образ
    FROM alpine:latest
    COPY --from=builder /go/myapp /usr/local/bin/
    CMD ["myapp"]
    ```
+
+3. **Установка glibc в Alpine (компромисс):** Пакет [sgerrand/alpine-pkg-glibc](https://github.com/sgerrand/alpine-pkg-glibc). Имеет недостатки: увеличивает размер образа, нарушает философию Alpine, возможны конфликты между glibc и musl. Альтернатива — использовать `debian:slim` или `distroless` образы.
+
+## Дополнительная информация
 
 ### Связанные темы
 
 - **[Alpine Dockerfile](../../Docker/Dockerfile/dockerfile_alpine_linux.md)** — использование Alpine в Docker
 - **[Distroless Images](../../Docker/Dockerfile/Docker_best_practices/security.md)** — минималистичные образы
 - **[Glibc Compatibility](../../Docker/Docker_troubleshooting/alpine_glibc_compatibility.md)** — troubleshooting совместимости
-
-### Дополнительные ресурсы
-
-- **Glibc Manual:** [gnu.org/software/libc/manual](https://www.gnu.org/software/libc/manual/)
-- **Musl Homepage:** [musl.libc.org](https://musl.libc.org/)
-- **Alpine Linux:** [alpinelinux.org](https://alpinelinux.org/)
-- **Static Linking Issues:** [github.com/golang/go/issues/12634](https://github.com/golang/go/issues/12634)
+- **[Kernel Interfaces](./kernel/kernel_interfaces.md)** — роль glibc как обёртки над системными вызовами

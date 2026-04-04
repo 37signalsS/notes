@@ -64,85 +64,64 @@ eBPF позволяет осуществлять глубокий, неинтр�
 
 #### Безопасное использование в production
 
-BPF — мощный инструмент, но на production-системах его следует использовать с осторожностью, чтобы избежать избыточной нагрузки.
+eBPF-трассировка создаёт нагрузку на систему. На production следует использовать его с осторожностью.
 
-**С чего начинать, чтобы не навредить**
-
-Первое правило — не прикрепляться к "горячим" tracepoint'ам (вызываемым тысячи раз в секунду) без четкого понимания последствий. Начинать следует с read-only наблюдений: задержки, системные вызовы, работа планировщика.
-
-Сначала проверьте, готова ли система:
+**Проверка готовности системы:**
 
 ```bash
 # Проверка версии ядра
 uname -r
 
 # Проверка поддерживаемых функций BPF
-sudo bpftrace -e 'BEGIN { printf("OK"); }'
-# или более детально
 sudo bpftool feature
 ```
 
-Если ядро старое или поддержка BPF частичная, от сложных трейсинговых сценариев лучше отказаться.
+**Безопасные сценарии (низкий overhead):**
 
-**Безопасные сценарии (низкий overhead)**
+- **Планировщик и задержки CPU:**
+  ```bash
+  perf sched latency
+  bpftrace -e 'tracepoint:sched:sched_switch { @[comm] = count(); }'
+  ```
 
-- **Планировщик и задержки CPU**
-    Полезно, когда CPU кажется свободным, но приложения "тормозят".
+- **Задержки системных вызовов для конкретного процесса:**
+  ```bash
+  bpftrace -e '
+  tracepoint:syscalls:sys_enter_read { @start[tid] = nsecs; }
+  tracepoint:syscalls:sys_exit_read /@start[tid]/ {
+    @us = hist((nsecs - @start[tid]) / 1000);
+    delete(@start[tid]);
+  }'
+  ```
 
-    ```bash
-    # Через perf
-    perf sched latency
+- **Операции ввода-вывода (I/O):**
+  ```bash
+  sudo biosnoop
+  bpftrace -e 'tracepoint:block:block_rq_issue { @[comm] = count(); }'
+  ```
 
-    # или через bpftrace
-    bpftrace -e 'tracepoint:sched:sched_switch { @[comm] = count(); }'
-    ```
+**Сценарии с осторожностью (высокий overhead):**
 
-- **Задержки системных вызовов для конкретного процесса**
-    Помогает понять, чего именно ожидает процесс.
+- **Стектрейсы (Stack Traces):** Частая причина нагрузки. Использовать только с точными фильтрами:
+  ```bash
+  bpftrace -e 'tracepoint:syscalls:sys_enter_openat /comm == "my-app"/ { @[kstack] = count(); }'
+  ```
 
-    ```bash
-    # Измерение задержки системного вызова read() в микросекундах
-    bpftrace -e '
-    tracepoint:syscalls:sys_enter_read { @start[tid] = nsecs; }
-    tracepoint:syscalls:sys_exit_read /@start[tid]/ {
-      @us = hist((nsecs - @start[tid]) / 1000);
-      delete(@start[tid]);
-    }'
-    ```
-
-- **Операции ввода-вывода (I/O)**
-    Безопасно, если не включать сборку стектрейсов.
-
-    ```bash
-    # Готовая утилита из BCC
-    sudo biosnoop
-
-    # или через bpftrace
-    bpftrace -e 'tracepoint:block:block_rq_issue { @[comm] = count(); }'
-    ```
-
-**Что включать с осторожностью**
-
-- **Стектрейсы (Stack Traces)**
-    Самая частая причина overhead. Использовать только кратковременно и с точными фильтрами.
-
-    ```bash
-    # ОПАСНО на нагруженных системах без фильтра
-    # bpftrace -e 'tracepoint:... { @[kstack] = count(); }'
-
-    # Пример с фильтром по имени процесса
-    bpftrace -e 'tracepoint:syscalls:sys_enter_openat /comm == "my-app"/ { @[kstack] = count(); }'
-    ```
-
-- **Tracepoint'ы сетевого стека**
-    Могут вызывать проблемы, если трафика много. Всегда используйте фильтры.
-
-    ```bash
-    # Отслеживание TCP retransmits только для процесса с определенным PID
-    bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb /pid == 1234/ { @[comm] = count(); }'
-    ```
+- **Tracepoint'ы сетевого стека:** Опасны при высоком трафике. Всегда применять фильтры:
+  ```bash
+  bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb /pid == 1234/ { @[comm] = count(); }'
+  ```
 
 ### Безопасность
 
-- **Falco:** Популярный инструмент для обнаружения аномальной активности и угроз в реальном времени. Falco использует eBPF для перехвата системных вызовов и сравнения их с набором правил безопасности.
-- **Tetragon:** Компонент безопасности от создателей Cilium, который также использует eBPF для мониторинга событий безопасности на уровне ядра.
+- **Falco:** Инструмент для обнаружения аномальной активности в реальном времени. Перехватывает системные вызовы через eBPF и сравнивает с правилами безопасности.
+- **Tetragon:** Компонент безопасности от создателей Cilium. Мониторит события безопасности на уровне ядра через eBPF.
+
+## Дополнительная информация
+
+### Связанные темы
+
+- **Интерфейсы ядра:** [Kernel Interfaces](./kernel_interfaces.md#системные-вызовы) — системные вызовы как точки прикрепления eBPF
+- **RSS/RPS/RFS:** [Распределение нагрузки по ядрам](../../Networking/Concepts/rss_rps_rfs.md) — программное и аппаратное распределение сетевого трафика
+- **Диагностика процессов:** [Troubleshooting](../../processes/Troubleshooting/index.md) — трассировка через strace, perf, bpftrace
+- **Диагностика Disk I/O:** [Diagnostic Checklist](../../../Diagnostics/Performance/DiskIO/diagnostic_checklist.md) — использование bcc-tools для анализа I/O
