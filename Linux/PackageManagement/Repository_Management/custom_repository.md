@@ -1,88 +1,57 @@
-# Создание репозиториев DNF
+# Создание собственных RPM-репозиториев
 
 ## Определения
 
-**Создание репозиториев** — настройка локального зеркала или собственного репозитория с пакетами для DNF/YUM.
+**Собственный репозиторий** — локальный или внутренний репозиторий с кастомными RPM-пакетами, созданный для распространения собственного ПО внутри организации.
 
-> **Навигация:** [Главная Repository Management](./index.md) | [Операции](./operations.md)
+**Метаданные репозитория** — файлы в директории `repodata/`, описывающие содержимое репозитория (repomd.xml, primary.xml, filelists.xml, other.xml).
 
----
+**GPG-подпись репозитория** — криптографическая подпись пакетов и метаданных для проверки целостности и аутентичности.
 
-## Practical Scenarios
+## Основные понятия
 
-### Создание локального репозитория
+### Отличие от зеркалирования
 
-#### Шаг 1: Установка инструментов
+| Аспект | Зеркалирование | Создание собственного репозитория |
+| :--- | :--- | :--- |
+| **Цель** | Копирование внешнего репозитория | Распространение собственных пакетов |
+| **Источник** | Внешний upstream-репозиторий | Собственные .rpm пакеты |
+| **Инструменты** | `reposync` + `createrepo_c` | `createrepo_c` + `rpmsign` |
+| **SSoT** | [yum_dnf_repository_mirror.md](../../yum_dnf_repository_mirror.md) | Данный файл |
 
-```bash
-sudo dnf install yum-utils createrepo_c httpd
+### Структура репозитория
+
+```
+my-repo/
+├── packages/           # .rpm файлы
+│   ├── app-1.0-1.el9.x86_64.rpm
+│   ├── lib-2.3-1.el9.x86_64.rpm
+│   └── repodata/       # Автоматически создаётся createrepo_c
+│       ├── repomd.xml
+│       ├── *-primary.xml
+│       ├── *-filelists.xml
+│       └── *-other.xml
+├── RPM-GPG-KEY-myrepo  # Публичный GPG-ключ
+└── metadata/           # Дополнительная документация
 ```
 
-#### Шаг 2: Синхронизация с удалённым репозиторием
+### Инструменты
 
-```bash
-# Создать директорию для зеркала
-sudo mkdir -p /var/www/html/yum
+| Инструмент | Назначение |
+| :--- | :--- |
+| `createrepo_c` | Создание и обновление метаданных репозитория |
+| `rpm --addsign` | Подпись RPM-пакетов GPG-ключом |
+| `signrepo` | Подпись метаданных репозитория |
+| `gpg` | Генерация и управление GPG-ключами |
 
-# Синхронизировать репозиторий (пример для base)
-sudo reposync --gpgcheck -l --repoid=base --download-path=/var/www/html/yum
+## Практические сценарии
 
-# Для нескольких репозиториев
-sudo reposync --gpgcheck -l -p /var/www/html/yum
-```
-
-#### Шаг 3: Создание метаданных
-
-```bash
-# Создать метаданные для DNF/YUM
-sudo createrepo_c /var/www/html/yum/base
-
-# Обновить метаданные после добавления пакетов
-sudo createrepo_c --update /var/www/html/yum/base
-
-# Полная пересоздание метаданных
-sudo createrepo_c --cleanup --update /var/www/html/yum/base
-```
-
-#### Шаг 4: Публикация через HTTP
-
-```bash
-# Настроить SELinux для HTTP-доступа (если включён)
-sudo setsebool -P httpd_can_network_connect 1
-sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/html/yum(/.*)?"
-sudo restorecon -Rv /var/www/html/yum
-
-# Включить и запустить httpd
-sudo systemctl enable --now httpd
-
-# Открыть порт в firewall
-sudo firewall-cmd --permanent --add-service=http
-sudo firewall-cmd --reload
-```
-
-#### Шаг 5: Конфигурация клиентов
-
-Создать файл `/etc/yum.repos.d/local-mirror.repo` на клиентских машинах:
-
-```ini
-[local-base]
-name=Local Base Mirror
-baseurl=http://mirror.local/yum/base/
-gpgcheck=0
-enabled=1
-```
-
----
-
-### Создание собственного репозитория с пакетами
+### Сценарий 1: Создание репозитория с собственными пакетами
 
 #### Шаг 1: Подготовка структуры
 
 ```bash
-# Создать директорию репозитория
 mkdir -p ~/my-repo/{packages,metadata}
-
-# Поместить .rpm пакеты в директорию
 cp *.rpm ~/my-repo/packages/
 ```
 
@@ -91,52 +60,128 @@ cp *.rpm ~/my-repo/packages/
 ```bash
 cd ~/my-repo/packages
 
-# Создать метаданные
+# Инициализация репозитория
 createrepo_c .
 
-# Результат:
-# repodata/repomd.xml    # Основной файл метаданных
-# repodata/*-primary.xml # Информация о пакетах
-# repodata/*-filelists.xml # Списки файлов
-# repodata/*-other.xml   # Дополнительная информация
+# Обновление после добавления новых пакетов
+createrepo_c --update .
+
+# Полная пересоздание с очисткой устаревших записей
+createrepo_c --cleanup --update .
 ```
 
-#### Шаг 3: Подпись репозитория (опционально)
+**Результат:** директория `repodata/` с файлами метаданных.
 
-```bash
-# Создать GPG-ключ
-gpg --gen-key
-
-# Экспорт публичного ключа
-gpg --export -a "Your Name" > ~/my-repo/RPM-GPG-KEY-myrepo
-
-# Подпись пакетов
-for pkg in *.rpm; do
-    rpm --addsign "$pkg"
-done
-
-# Подпись метаданных
-signrepo --gpg-key "Your Name" ~/my-repo/packages/
-```
-
-#### Шаг 4: Публикация
+#### Шаг 3: Публикация через HTTP
 
 ```bash
 # Копирование в веб-директорию
 sudo cp -r ~/my-repo/packages /var/www/html/my-repo
-sudo cp ~/my-repo/RPM-GPG-KEY-myrepo /var/www/html/my-repo/
 
-# Обновление метаданных после изменений
-createrepo_c --update /var/www/html/my-repo
+# SELinux (если включён)
+sudo semanage fcontext -a -t httpd_sys_content_t "/var/www/html/my-repo(/.*)?"
+sudo restorecon -Rv /var/www/html/my-repo
+
+# Запуск веб-сервера
+sudo systemctl enable --now httpd
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --reload
+```
+
+#### Шаг 4: Настройка клиентов
+
+Создать файл `/etc/yum.repos.d/my-repo.repo`:
+
+```ini
+[my-custom-repo]
+name=My Custom Repository
+baseurl=http://repo-server.local/my-repo/
+gpgcheck=1
+gpgkey=http://repo-server.local/my-repo/RPM-GPG-KEY-myrepo
+enabled=1
+```
+
+```bash
+# Проверка на клиенте
+sudo dnf makecache
+sudo dnf repolist
 ```
 
 ---
 
-## Additional Information
+### Сценарий 2: GPG-подпись репозитория
+
+#### Шаг 1: Генерация GPG-ключа
+
+```bash
+gpg --full-generate-key
+# Выбрать: RSA (4096), без срока действия
+# Указать: имя и email
+```
+
+#### Шаг 2: Экспорт публичного ключа
+
+```bash
+gpg --export -a "Your Name <email@example.com>" > ~/my-repo/RPM-GPG-KEY-myrepo
+```
+
+#### Шаг 3: Подпись пакетов
+
+```bash
+# Настройка rpm для использования ключа
+# Создать ~/.rpmmacros:
+%_gpg_name Your Name <email@example.com>
+
+# Подпись всех пакетов
+cd ~/my-repo/packages
+for pkg in *.rpm; do
+    rpm --addsign "$pkg"
+done
+
+# Проверка подписи
+rpm -K app-1.0-1.el9.x86_64.rpm
+```
+
+#### Шаг 4: Подпись метаданных
+
+```bash
+signrepo --gpg-key "Your Name <email@example.com>" ~/my-repo/packages/
+```
+
+---
+
+### Сценарий 3: Автоматизация обновления репозитория
+
+#### Cron-скрипт для обновления
+
+```bash
+# /etc/cron.daily/repo-update
+#!/bin/bash
+REPO_DIR="/var/www/html/my-repo"
+LOG_FILE="/var/log/repo-update.log"
+
+echo "=== Repo Update: $(date) ===" >> "$LOG_FILE"
+
+# Обновление метаданных
+createrepo_c --update "$REPO_DIR" >> "$LOG_FILE" 2>&1
+
+# Проверка результата
+if [ $? -eq 0 ]; then
+    echo "SUCCESS" >> "$LOG_FILE"
+else
+    echo "FAILED" >> "$LOG_FILE"
+    mail -s "Repo Update Failed" admin@example.com < "$LOG_FILE"
+fi
+```
+
+```bash
+sudo chmod +x /etc/cron.daily/repo-update
+```
+
+## Дополнительная информация
 
 ### Связанные темы
 
-- **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-- **[Команды DNF](../dnf_commands/definitions.md** — полный справочник по DNF
-- **[Локальное зеркало репозитория](../apt_repository_mirror.md** — создание зеркал для YUM/DNF
-- **[Сборка пакетов](../package_build/definitions.md)** — создание собственных RPM-пакетов
+- **[Зеркалирование YUM/DNF](../../yum_dnf_repository_mirror.md)** — полное руководство по зеркалированию внешних репозиториев
+- **[Команды DNF](../../dnf_commands/definitions.md)** — управление пакетами через DNF
+- **[Обзор управления пакетами](../../linux_package_management_overview.md)** — базовые концепции

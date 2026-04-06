@@ -33,9 +33,4 @@ srwxrwxrwx 1 mysql mysql 0 фев 25 10:00 /tmp/mysql.sock # Сокет
 
 ## Дополнительная информация
 
-- **Связанные темы:**
-  - [Типы устройств](./device_types.md) — блочные и символьные устройства
-  - [Ссылки, Inode и Dentry](./links_inodes_dentries.md) — жёсткие и символические ссылки
-  - [Виртуальная ФС /dev](./virtual_fs_dev.md) — файлы устройств
-  - [Сокеты IPC](../Core/processes/ipc.md — межпроцессное взаимодействие
-  - [Именованные каналы](../Core/processes/ipc.md) — FIFO для IPC
+- Подробная информация об устройствах: [Типы устройств](./device_types.md), [Виртуальная ФС /dev](./virtual_fs_dev.md). Структура ссылок и inode описана в [Ссылки, Inode и Dentry](./links_inodes_dentries.md). Межпроцессное взаимодействие через сокеты и именованные каналы — в [IPC в Linux](../Core/processes/ipc.md). Диагностику типов файлов по содержимому см. в [Утилита file](../Diagnostics/Filesystem/file_command.md).

@@ -260,20 +260,8 @@ UUID=xxx / ext4 defaults,noatime,discard 0 1
 
 ### Связанные темы
 
-- **[Журналирование ФС](./journaling.md)** — механизмы, режимы, восстановление
-- **[Внутреннее устройство ФС](./fs_internals.md)** — суперблок, Page Cache
-- **[Inode и Dentry](./links_inodes_dentries.md)** — фундаментальные структуры
-- **[LVM](./LVM/overview_concepts.md)** — логические тома (снапшоты для ext4/XFS)
-- **[Оптимизация производительности](./performance_tuning.md)** — тюнинг I/O
-- **[Проверка и восстановление](./fsck.md)** — fsck, xfs_repair
-- **[RAID управление](./raid_management.md)** — программные RAID-массивы
-- **[Stratis](./stratis.md)** — упрощённое управление хранилищем (XFS)
-- **[VDO](./vdo.md)** — дедупликация и компрессия на уровне блока
+Механизмы журналирования описаны в [Журналирование ФС](./journaling.md). Внутреннее устройство ФС — в [Внутреннее устройство ФС](./fs_internals.md). Фундаментальные структуры (inode, dentry) — в [Inode и Dentry](./links_inodes_dentries.md). Снапшоты для ext4/XFS через LVM — в [LVM](./LVM/overview_concepts.md). Тюнинг I/O — в [Оптимизация производительности](./performance_tuning.md). Проверка и восстановление — в [Проверка и восстановление](./fsck.md). Программные RAID-массивы — в [RAID управление](./raid_management.md). Упрощённое управление хранилищем (XFS) — в [Stratis](./stratis.md). Дедупликация и компрессия на уровне блока — в [VDO](./vdo.md).
 
-### Ресурсы
+### Документация
 
-- **Ext4:** `man ext4`, [Ext4 Wiki](https://ext4.wiki.kernel.org/)
-- **XFS:** `man xfs`, [XFS.org](https://xfs.org/)
-- **Btrfs:** `man btrfs`, [Btrfs Wiki](https://btrfs.wiki.kernel.org/)
-- **ZFS:** [OpenZFS Documentation](https://openzfs.github.io/openzfs-docs/)
-- **F2FS:** `man f2fs`, [F2FS Wiki](https://kernel.googlesource.com/pub/scm/linux/kernel/git/jaegeuk/f2fs-tools/+/refs/heads/master/Documentation/technical/f2fs.txt)
+Официальная документация: `man ext4`, `man xfs`, `man btrfs`, `man f2fs`. Онлайн-ресурсы — [Ext4 Wiki](https://ext4.wiki.kernel.org/), [XFS.org](https://xfs.org/), [Btrfs Wiki](https://btrfs.wiki.kernel.org/), [OpenZFS Documentation](https://openzfs.github.io/openzfs-docs/), [F2FS Wiki](https://kernel.googlesource.com/pub/scm/linux/kernel/git/jaegeuk/f2fs-tools/+/refs/heads/master/Documentation/technical/f2fs.txt).

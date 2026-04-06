@@ -12,6 +12,39 @@
 
 ## Основные понятия
 
+### Форматы файлов источников
+
+#### One-line формат (традиционный)
+
+Однострочная запись в `/etc/apt/sources.list` или `/etc/apt/sources.list.d/<name>.list`:
+
+```
+<type> [options] <url> <distribution> <component_1> <component_2> ...
+```
+
+#### DEB822 формат (современный, Debian 12+, Ubuntu 24.04+)
+
+Многострочный формат в `/etc/apt/sources.list.d/<name>.sources`:
+
+```
+Types: deb
+URIs: https://packages.example.com/repo
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/example.gpg
+Enabled: yes
+```
+
+| Аспект | One-line | DEB822 |
+| :--- | :--- | :--- |
+| **Файл** | `.list` | `.sources` |
+| **Несколько suit** | Отдельная строка на каждый | Один блок `Suites:` с запятыми |
+| **Читаемость** | Ниже | Выше |
+| **Миграция** | `apt modernize-sources` | — |
+
+> **Рекомендация:** Для новых репозиториев на Debian 12+ и Ubuntu 24.04+ предпочтительнее DEB822 формат.
+
 ### Структура записи в `sources.list`
 
 Каждая строка в файле `sources.list` (или в файле в `/etc/apt/sources.list.d/`) определяет источник пакетов:
@@ -151,19 +184,16 @@
     sudo apt-get install docker-ce docker-ce-cli containerd.io
     ```
 
-### Пример 4: Репозиторий Google Chrome
+### Пример 4: Google Chrome
 
 ```bash
-# Добавление репозитория и ключа (автоматически при установке .deb)
+# Установка .deb пакета (репозиторий и ключ добавляются автоматически)
 wget https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_current_amd64.deb
 sudo dpkg -i google-chrome-stable_current_amd64.deb
-
-# Разрешение зависимостей
 sudo apt-get install -f
 
-# Файл репозитория создаётся автоматически:
+# Созданный файл репозитория:
 # /etc/apt/sources.list.d/google-chrome.list
-# Ключ импортируется в /etc/apt/trusted.gpg.d/
 ```
 
 ### Пример 5: PPA (Personal Package Archive) на Ubuntu
@@ -183,36 +213,31 @@ sudo apt-get update
 sudo apt-get install nginx
 ```
 
-Альтернативно вручную:
+Альтернативно вручную (современный метод):
 
 ```bash
-# Импортировать ключ
-sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys <KEY_ID>
+# Импортировать ключ в изолированное хранилище
+sudo gpg --keyserver keyserver.ubuntu.com --recv-keys <KEY_ID>
+sudo gpg --export --armor <KEY_ID> | \
+    sudo gpg --dearmor -o /etc/apt/keyrings/ondrej-nginx.gpg
 
-# Добавить репозиторий
-echo "deb http://ppa.launchpad.net/ondrej/nginx/ubuntu $(lsb_release -cs) main" | \
+# Добавить репозиторий с привязкой к ключу
+echo "deb [signed-by=/etc/apt/keyrings/ondrej-nginx.gpg] \
+    http://ppa.launchpad.net/ondrej/nginx/ubuntu $(lsb_release -cs) main" | \
     sudo tee /etc/apt/sources.list.d/ondrej-nginx.list
 ```
 
 ### Пример 6: Локальное зеркало репозитория
 
+Создание зеркала для автономной или ускоренной работы (подробнее: [Зеркалирование репозиториев](./apt_mirror/practical_scenarios.md)):
+
 ```bash
-# Создание зеркала с apt-mirror (см. local_repository_mirror.md)
-sudo apt install apt-mirror
-
-# Настройка /etc/apt/mirror.list
-# ... конфигурация ...
-
-# Синхронизация
-sudo apt-mirror
-
-# Публикация через HTTP
-sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/ubuntu /var/www/html/ubuntu
-
-# Настройка клиента
+# Настройка клиента на использование локального зеркала
 echo "deb http://mirror.local/ubuntu focal main restricted universe multiverse" | \
     sudo tee /etc/apt/sources.list.d/local-mirror.list
 ```
+
+> **Примечание:** Полная инструкция по созданию зеркала — в [apt_mirror/practical_scenarios.md](./apt_mirror/practical_scenarios.md).
 
 ## Дополнительная информация
 
@@ -249,7 +274,7 @@ apt policy nginx
 
 | Проблема | Решение |
 | :--- | :--- |
-| **NO_PUBKEY** | `sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys <KEY_ID>` |
+| **NO_PUBKEY** | Импортировать ключ: `curl -fsSL <URL>/key.gpg \| sudo gpg --dearmor -o /etc/apt/keyrings/repo.gpg`, добавить `[signed-by=...]` в `sources.list` |
 | **GPG error** | Перейти на современный метод с `signed-by=` и `/etc/apt/keyrings/` |
 | **404 Not Found** | Актуализировать кодовое имя дистрибутива в `sources.list` |
 | **Certificate verification failed** | Проверить `ca-certificates`, дату системы, proxy |
@@ -263,11 +288,3 @@ apt policy nginx
 4. **Регулярно обновляйте кэш** (`apt update`)
 5. **Проверяйте подписи** при установке из сторонних источников
 6. **Избегайте `apt-key add`** — этот метод устарел
-
-### Связанные темы
-
-- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
-- **[Apt Pinning](./deb_apt_pinning.md)** — управление приоритетами пакетов
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
-- **[Локальное зеркало репозитория](./apt_repository_mirror.md)** — создание зеркал для APT
-- **[Анализ и получение пакетов](./package_analysis.md)** — изучение метаданных и содержимого

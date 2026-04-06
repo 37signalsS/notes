@@ -24,7 +24,7 @@
 
 - Тип и размер файловой системы.
 - Размер блока.
-- Количество свободных и занятых [блоков](disk_storage_fundamentals.md#Блок-Block) и [inode'ов](links_inodes_dentries.md#Inode-Индексный-дескриптор).
+- Количество свободных и занятых [блоков](disk_storage_fundamentals.md) и [inode'ов](links_inodes_dentries.md#inode-индексный-дескриптор).
 - Точку монтирования и статус ("чистая" или "грязная").
 
 Из-за его важности файловая система хранит несколько резервных копий суперблока.
@@ -53,12 +53,6 @@
 
 ## Дополнительная информация
 
-- Подробнее об [Inode и Dentry](links_inodes_dentries.md) как фундаментальных структурах файловой системы.
-- Управление памятью для ядерных объектов, таких как inode и dentry, осуществляется с помощью [Slab Allocator](../Core/memory/slab_allocator.md).
-- Обзор различных файловых систем и их функций представлен в [Разделы и файловые системы в Linux](partitions_and_filesystems.md).
-- Детальное сравнение типов ФС (ext4, XFS, Btrfs, ZFS, F2FS) — в [Сравнительный обзор типов ФС](./filesystem_types_comparison.md).
-- **Связанные темы:**
-  - [Page Cache](../Core/memory/caching_and_reclaiming.md) — кэширование страниц
-  - [Buffer Cache](../Core/memory/caching_and_reclaiming.md) — кэш блочных устройств
-  - [Write-back кэш](../Diagnostics/Performance/DiskIO/writeback_tuning.md) — отложенная запись
-  - [VFS](./virtual_filesystems.md) — виртуальный слой ФС
+Фундаментальные структуры файловой системы, такие как [Inode и Dentry](links_inodes_dentries.md), тесно связаны с внутренним устройством ФС. Управление памятью для ядерных объектов осуществляется через [Slab Allocator](../Core/memory/slab_allocator.md). Обзор различных файловых систем и их функций представлен в [Разделах и файловых системах в Linux](partitions_and_filesystems.md), а детальное сравнение типов ФС (ext4, XFS, Btrfs, ZFS, F2FS) — в [Сравнительном обзоре типов ФС](./filesystem_types_comparison.md).
+
+Механизм [Page Cache](../Core/memory/caching_and_reclaiming.md) реализуется на уровне виртуальной файловой системы [VFS](./virtual_filesystems.md). Настройка [writeback кэша](../Diagnostics/Performance/DiskIO/writeback_tuning.md) влияет на скорость сброса dirty pages на диск.

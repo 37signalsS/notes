@@ -8,7 +8,27 @@
 
 ---
 
-## Practical Scenarios
+## Basic Concepts
+
+### Принципы построения сценариев PBR
+
+Все практические сценарии PBR строятся на трёх базовых компонентах:
+
+1. **Дополнительные таблицы маршрутизации** — создаются через `/etc/iproute2/rt_tables`, содержат независимые наборы маршрутов
+2. **Правила `ip rule`** — определяют, какую таблицу использовать для конкретного пакета (селекторы: `from`, `fwmark`, `iif`, `oif`)
+3. **Маркировка пакетов `iptables`** — позволяет классифицировать трафик по приложениям, портам, пользователям и выставлять `fwmark`
+
+Подробнее о принципах работы PBR, селекторах и порядке обработки правил — в [index.md](./index.md).
+
+### Сохранение конфигурации
+
+Настройки `ip rule` и `ip route` **не сохраняются** после перезагрузки. Для постоянного применения используйте механизмы, описанные в [administration.md](./administration.md).
+
+Правила `iptables` также требуют сохранения через `iptables-persistent` или аналогичные инструменты.
+
+---
+
+## Практические сценарии
 
 ### Сценарий 1: Разделение трафика по приложениям (VPN для браузера)
 
@@ -216,10 +236,11 @@ ip rule add fwmark 0x2/0x2 lookup 102
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-* **[iproute2 overview](../Services/BIND/overview.md** — обзор утилит iproute2
-* **[iptables](../../Development/build_tools.md)** — маркировка пакетов
-* **[Network Diagnostics](../network_diagnostics_tools.md)** — диагностика сети
+- [iproute2 overview](../Tools/iproute2/overview.md) — обзор утилит iproute2
+- [iptables](../Settings/tools/iptables_basics.md) — маркировка пакетов
+- [Network Diagnostics](../network_diagnostics_tools.md) — диагностика сети
+- [Администрирование PBR](./administration.md) — проверка и сохранение конфигурации

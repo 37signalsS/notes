@@ -117,13 +117,12 @@ dig @localhost 5.0.16.172.in-addr.arpa PTR
 
 ## Дополнительная информация
 
-- **RFC 1035** — спецификация PTR-записей
-- **RFC 2317** — делегирование обратных зон для подсетей меньше /24
-- **Применение:**
-  - Почтовые сервера (требуют PTR для SPF)
-  - Логирование (человекочитаемые имена в логах)
-  - Диагностика (`traceroute`, `dig -x`)
-- **Сопутствующие заметки BIND:**
-  - [Master-сервер](./master_server_local_zone.md) — настройка прямой зоны
-  - [Slave-сервер](./slave_server_configuration.md) — репликация
-  - [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md) — типы записей
+**Версии:** BIND 9.18+ (LTS), 9.20+ (ESV).
+
+**Спецификации:** RFC 1035 (PTR-записи), RFC 2317 (делегирование подсетей < /24).
+
+**Применение:** PTR-записи требуются почтовым серверам (SPF-верификация), используются в логировании и диагностике (`traceroute`, `dig -x`).
+
+**Теория:** Общие концепции зон DNS — [dns_zones.md](../../../../Networking/Protocols/DNS/dns_zones.md).
+
+**См. также:** [Master-сервер](./master_server_local_zone.md), [Slave-сервер](./slave_server_configuration.md), [Forwarding-сервер](./forwarding_server.md), [Диагностика](./troubleshooting.md), [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md).

@@ -102,7 +102,7 @@ sudo mount -a
 df -h /mnt/raid1
 ```
 
-Подробнее: [Настройка fstab](../mounting/fstab.md)
+См. [настройка fstab](../mounting/fstab.md).
 
 ---
 
@@ -201,8 +201,4 @@ sudo update-initramfs -u
 
 ## Дополнительная информация
 
-* [Мониторинг RAID](./monitoring.md)
-* [Уровни RAID](./raid-levels.md#raid-1---зеркалирование-mirroring)
-* [Удаление RAID](./raid-removal.md)
-* [Настройка fstab](../mounting/fstab.md)
-* [initramfs и загрузка](../../Core/kernel/boot_process.md#initramfs)
+См. также: [мониторинг RAID](./monitoring.md), [уровни RAID](./raid-levels.md#raid-1---зеркалирование-mirroring), [удаление RAID](./raid-removal.md), [настройка fstab](../mounting/fstab.md), [initramfs и загрузка](../../Core/kernel/boot_process.md#initramfs).

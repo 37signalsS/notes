@@ -1,106 +1,122 @@
-# Samba: Устранение неполадок
+# Samba: Troubleshooting
 
-## Проверка конфигурации
+## Definitions
+
+**testparm** — утилита проверки синтаксиса `smb.conf`. Показывает ошибки конфигурации и итоговые параметры после обработки всех директив.
+
+**smbstatus** — утилита просмотра активных сессий, подключённых пользователей, открытых файлов и блокировок.
+
+## Basic Concepts
+
+### Диагностические утилиты
+
+| Утилита | Назначение |
+| :--- | :--- |
+| `testparm [-v] [-s]` | Проверка конфигурации; `-v` — все параметры, `-s` — без пауз |
+| `smbstatus [-S] [-v]` | Активные сессии; `-S` — статистика по шарам, `-v` — с блокировками |
+| `pdbedit -L [-v] [-u user]` | Управление базой пользователей Samba |
+| `smbclient -L //server [-U%]` | Тест видимости шар с сервера/клиента |
+| `net ads testjoin` | Проверка членства в домене AD |
+| `klist` | Просмотр Kerberos-билетов |
+
+> **Важно:** Параметры `read raw`, `write raw`, `socket options` не влияют на производительность SMB2/SMB3 — см. [безопасность и VFS](./samba_security.md).
+
+### Файлы логов
+
+| Путь | Описание |
+| :--- | :--- |
+| `journalctl -u smb -f` | Журнал smbd (systemd) |
+| `journalctl -u nmb -f` | Журнал nmbd (systemd) |
+| `journalctl -u winbind -f` | Журнал winbind (systemd) |
+| `/var/log/samba/log.%m` | Лог по клиенту (%m = NetBIOS-имя) |
+| `/var/log/samba/log.smbd` | Общий лог smbd |
+
+## Practical Scenarios
+
+### Быстрая диагностика
 
 ```bash
-# Синтаксическая проверка
-testparm
-
-# Проверка с подробным выводом
-testparm -v
-
-# Проверка доступных шар
+# 1. Проверка конфигурации
 testparm -s
-```
 
-## Диагностика подключений
-
-```bash
-# Проверка служб
+# 2. Статус служб
 systemctl status smb nmb winbind
 
-# Просмотр активных сессий
+# 3. Активные сессии
 smbstatus
 
-# Проверка пользователей
+# 4. Список пользователей
 pdbedit -L
 
-# Тест подключения
+# 5. Тест видимости шар
 smbclient -L //localhost -U%
 ```
 
-## Распространённые проблемы
+### Таблица распространённых ошибок
 
-| Проблема | Причина | Решение |
+| Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `Permission denied` | Неправильные UNIX-права | `chown`, `chmod`, проверка `valid users` |
-| `NT_STATUS_ACCESS_DENIED` | Ошибка аутентификации | Проверка `smbpasswd`, `ntlm auth` |
-| `NT_STATUS_BAD_NETWORK_NAME` | Шара не существует | Проверка имени шары в `smb.conf` |
-| `NT_STATUS_LOGON_FAILURE` | Неверный пароль | `smbpasswd -a <user>`, проверка PAM |
-| Медленная работа | MTU/сетевые настройки | `socket options`, `read raw` |
-| Проблемы с доменом | Рассинхронизация времени | Настройка NTP, проверка Kerberos |
-| `winbind: can't fetch domain info` | Нет связи с DC | Проверка сети, DNS, `net ads testjoin` |
+| `Permission denied` | UNIX-права на директорию | Проверить `chown`/`chmod`, `valid users` |
+| `NT_STATUS_ACCESS_DENIED` | Аутентификация | `smbpasswd -a <user>`, проверить `ntlm auth` |
+| `NT_STATUS_BAD_NETWORK_NAME` | Шара не найдена | Проверить имя шары в `smb.conf`, `testparm` |
+| `NT_STATUS_LOGON_FAILURE` | Неверный пароль | Перезадать пароль через `smbpasswd` |
+| Медленная работа | Сеть/MTU, DNS | Проверить задержки, отключить DNS-lookup в `[global]` |
+| Проблемы с доменом | Рассинхронизация времени | Настроить NTP, проверить Kerberos (`klist`) |
+| `winbind: can't fetch domain info` | Нет связи с DC | Проверить сеть, DNS, `net ads testjoin` |
 
-## Пользователи Samba
-
-Samba использует собственную базу паролей (`/var/lib/samba/private/smbpasswd`).
-
-**Управление через `smbpasswd`:**
+### Управление пользователями
 
 ```bash
-smbpasswd -a [user]  # Добавление пользователя
-smbpasswd -x [user]  # Удаление
-smbpasswd -e [user]  # Активация
-smbpasswd -d [user]  # Деактивация
+# Добавление
+smbpasswd -a username
+# или
+pdbedit -a -u username
+
+# Список
+pdbedit -L
+
+# Подробная информация
+pdbedit -v username
+
+# Деактивация / активация
+smbpasswd -d username  # отключить
+smbpasswd -e username  # включить
+
+# Удаление
+smbpasswd -x username
+# или
+pdbedit -x username
 ```
 
-**Управление через `pdbedit`:**
+### Уровни логирования
 
-```bash
-pdbedit -a -u smbuser  # Добавление
-pdbedit -L             # Список пользователей
-pdbedit -v smbuser     # Подробная информация
-pdbedit -x smbuser     # Удаление
-```
-
-## Логи
-
-```bash
-# Журналы Samba (Debian/Ubuntu)
-journalctl -u smb -f
-journalctl -u nmb -f
-journalctl -u winbind -f
-
-# Логи в файлах
-/var/log/samba/log.smbd
-/var/log/samba/log.nmbd
-/var/log/samba/log.winbindd
-
-# Увеличение уровня логирования (в smb.conf)
+```ini
 [global]
    log level = 3
+   log file = /var/log/samba/log.%m
+   max log size = 10000
 ```
 
-## Kerberos-проблемы
+Уровни: `0` — только критические, `1` — стандартный, `2` — подробности, `3+` — отладка. Для продакшена не выше `2`.
+
+### Kerberos-диагностика (AD-членство)
 
 ```bash
 # Проверка билета
 klist
 
-# Получение нового билета
+# Получение билета
 kinit administrator@EXAMPLE.COM
 
-# Проверка ключей
+# Проверка keytab
 klist -ke
 
-# Синхронизация времени
+# Синхронизация времени (NTP критичен для Kerberos)
 timedatectl status
-sudo systemctl restart systemd-timesyncd
 ```
 
-## Связанные документы
+> Рассинхронизация >5 минут делает Kerberos-билеты невалидными.
 
-- [Базовые концепции](./samba_basics.md)
-- [Настройка Samba](./samba_setup.md)
-- [AD-интеграция](./samba_ad.md) — домен, winbind, idmap
-- [Kerberos](../../../../Security/Concepts/kerberos.md)
+## Additional Information
+
+Связанные документы: [обзор Samba](./index.md), [настройка сервера](./samba_setup.md), [безопасность и VFS](./samba_security.md), [AD-интеграция](./samba_ad.md). Kerberos: [протокол Kerberos](../../../../Security/Concepts/kerberos.md).

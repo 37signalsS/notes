@@ -217,7 +217,4 @@ cat /sys/block/md0/md/sync_completed
 
 ## Дополнительная информация
 
-* [Управление RAID 1](./raid1-management.md#мониторинг-и-управление-сбоями)
-* [Управление RAID 5](./raid5-management.md#управление-сбоями)
-* [SMART мониторинг](../../Diagnostics/Hardware/smartctl/index.md)
-* [Диагностика hardware](../../Diagnostics/Hardware/hardware_listing.md)
+См. также: [управление RAID 1](./raid1-management.md#мониторинг-и-управление-сбоями), [управление RAID 5](./raid5-management.md#управление-сбоями), [SMART мониторинг](../../Diagnostics/Hardware/smartctl/index.md), [диагностика hardware](../../Diagnostics/Hardware/hardware_listing.md).

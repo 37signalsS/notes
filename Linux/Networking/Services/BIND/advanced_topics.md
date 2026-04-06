@@ -1,4 +1,4 @@
-# BIND: Дополнительная информация
+# BIND: Расширенные возможности
 
 ## Определения
 
@@ -12,7 +12,7 @@
 
 | Сценарий | Описание |
 |----------|----------|
-| **Split-horizon DNS** | Разные ответы для внутренней и внешней сети |
+| **Split-horizon DNS** | Разные ответы для внутренней и внешней сети ([RFC 9704](https://datatracker.ietf.org/doc/rfc9704/)) |
 | **Геораспределение** | Разные IP для клиентов из разных регионов |
 | **Тестирование** | Отдельные зоны для staging/production |
 
@@ -168,6 +168,8 @@ sudo rndc querylog off
 sudo rndc stop
 ```
 
+Подробнее: [Диагностика BIND](./troubleshooting.md) — разделы логирования, отладки, управления кэшем.
+
 ### 4. DNSSEC-подпись зоны
 
 **Генерация ключей:**
@@ -200,17 +202,10 @@ zone "example.com" {
 };
 ```
 
+Подробнее: [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — DNSSEC, DoH, DoT; [Проверка DNSSEC](./troubleshooting.md#8-проверка-dnssec) — диагностика.
+
 ## Дополнительная информация
 
-- **RFC 970** — Split-horizon DNS
-- **RFC 6781** — DNSSEC-операции
-- **QP-trie:** BIND 9.20+ использует QP-trie вместо RBTDB (улучшение производительности на 4-7%)
-- **Утилиты:**
-  - `named-checkconf` — проверка конфигурации
-  - `named-checkzone` — проверка файла зоны
-  - `dig`, `nslookup` — диагностика
-  - `rndc` — удалённое управление
-- **Сопутствующие заметки BIND:**
-  - [Overview](./overview.md) — общая информация
-  - [Troubleshooting](./troubleshooting.md) — диагностика
-  - [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — DNSSEC, DoH, DoT
+- **QP-trie:** BIND 9.20+ использует QP-trie вместо RBTDB для хранения данных зон и кэша — улучшение масштабируемости и снижение нагрузки на CPU ([ISC 2025 BIND Report](https://www.isc.org/blogs/2025-bind-report/))
+- **Утилиты:** `named-checkconf` — проверка конфигурации, `named-checkzone` — проверка файла зоны, `dig`/`nslookup` — диагностика, `rndc` — удалённое управление
+- **Официальная документация:** [ISC BIND 9 ARM](https://bind9.readthedocs.io/)

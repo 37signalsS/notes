@@ -1,60 +1,72 @@
 # Samba: Обзор
 
-**Samba** — программный комплекс, реализующий протокол **SMB/CIFS** (Server Message Block / Common Internet File System). Позволяет Unix-подобным системам (включая Linux) предоставлять общий доступ к файлам и принтерам для клиентов Windows, а также функционировать в качестве члена домена Active Directory.
+## Определения
 
-## Структура документации
+**Samba** — программный комплекс с открытым исходным кодом, реализующий протокол **SMB/CIFS** (Server Message Block / Common Internet File System). Позволяет Unix-подобным системам предоставлять общий доступ к файлам и принтерам для клиентов Windows, функционировать как член домена Active Directory, а также выступать в роли контроллера домена.
 
-| Файл | Описание |
+**SMB (Server Message Block)** — сетевой протокол для совместного использования файлов, принтеров и других ресурсов. Актуальная версия — SMBv3.1.1 с поддержкой шифрования AES-256.
+
+**NetBIOS** — legacy-протокол для обнаружения и разрешения имен в локальных сетях. В современных реализациях заменен на DNS.
+
+## Базовые концепции
+
+### Архитектура Samba
+
+| Демон | Назначение |
 | :--- | :--- |
-| [samba_basics.md](./samba_basics.md) | Базовые концепции, версии SMB, архитектура |
-| [samba_setup.md](./samba_setup.md) | Настройка сервера, создание шар |
-| [samba_security.md](./samba_security.md) | Безопасность, шифрование, VFS модули |
-| [samba_ad.md](./samba_ad.md) | Интеграция с Active Directory |
-| [samba_troubleshooting.md](./samba_troubleshooting.md) | Устранение неполадок |
+| **`smbd`** | Файловые ресурсы, аутентификация, авторизация, блокировки |
+| **`nmbd`** | Разрешение имён NetBIOS (legacy) |
+| **`winbindd`** | Интеграция с Active Directory, маппинг UID/GID |
 
-## Краткая справка
+### Режимы работы
+
+| Режим | Параметр `security` | Описание |
+| :--- | :--- | :--- |
+| Standalone | `user` | Локальная аутентификация, без домена |
+| Domain Member | `ads` | Член домена Active Directory с Kerberos |
+| Domain Controller | `ads` + `server role = active directory domain controller` | Samba AD DC |
 
 ### Версии SMB
 
-| Версия | Особенности | Статус |
+| Версия | Статус | Ключевые особенности |
 | :--- | :--- | :--- |
-| **SMBv1 (CIFS)** | Устаревший, нет шифрования, уязвимости (EternalBlue) | **Запрещён** |
-| **SMBv2.x** | Улучшенная производительность, поддержка WAN | Устарела |
-| **SMBv3.0** | Шифрование, Secure Dialect Negotiation | Рекомендуется |
-| **SMBv3.1.1** | AES-256, улучшенная безопасность | Актуальная |
+| SMBv1 (CIFS) | **Запрещён** | Уязвимости (EternalBlue, WannaCry) |
+| SMBv2.x | Устарела | Улучшенная производительность |
+| SMBv3.0+ | **Рекомендуется** | Шифрование AES-256, Secure Dialect Negotiation |
 
-### Быстрый старт
+> **Важно:** Всегда отключайте SMBv1. Минимальная версия: `server min protocol = SMB3`.
 
-**Установка (Debian/Ubuntu):**
+## Практические сценарии
 
-```bash
-sudo apt-get install -y samba
-```
+- Предоставление сетевых шар для Windows/Linux клиентов
+- Интеграция Linux-сервера в Active Directory
+- Настройка гостевого и authenticated доступа
+- Настройка ACL, аудита и корзины через VFS модули
+- Миграция файловых серверов Windows → Linux
 
-**Минимальная конфигурация (`/etc/samba/smb.conf`):**
+## Дополнительные сведения
 
-```ini
-[global]
-   workgroup = WORKGROUP
-   security = user
-   server min protocol = SMB3
+### Основные конфигурационные файлы
 
-[Public]
-   path = /srv/samba/public
-   guest ok = yes
-   read only = no
-```
+| Файл | Описание |
+| :--- | :--- |
+| `/etc/samba/smb.conf` | Главный конфигурационный файл |
+| `/var/lib/samba/private/smbpasswd` | База паролей Samba |
+| `/etc/krb5.conf` | Конфигурация Kerberos (для AD) |
 
-**Запуск:**
+### Порты
 
-```bash
-sudo systemctl enable --now smb nmb
-```
+| Порт | Протокол | Назначение |
+| :--- | :--- | :--- |
+| 445 | TCP | SMB over TCP (основной) |
+| 137-139 | TCP/UDP | NetBIOS (legacy) |
 
-## Связанные темы
+### Ключевые утилиты
 
-- [NFS: файловая система для UNIX](../nfs/)
-- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
-- [SELinux: контексты безопасности](../../../Security/Mechanisms/SELinux.md)
-- [Настройка файрвола](../../../Development/build_tools.md)
-- [Монтирование CIFS в fstab](../../../FileSystems/mounting/fstab.md)
+- `testparm` — проверка конфигурации
+- `smbclient` — CLI-клиент для SMB
+- `smbstatus` — просмотр активных сессий
+- `pdbedit` / `smbpasswd` — управление пользователями
+- `net ads` — управление членством в домене
+
+Подробная документация: [настройка сервера](./samba_setup.md), [безопасность и VFS](./samba_security.md), [интеграция с AD](./samba_ad.md), [устранение неполадок](./samba_troubleshooting.md). Связанные темы: [NFS](../nfs/index.md), [Kerberos](../../../../Security/Concepts/kerberos.md), [SELinux](../../../Security/Mechanisms/SELinux.md), [монтирование CIFS](../../../FileSystems/mounting/fstab.md).

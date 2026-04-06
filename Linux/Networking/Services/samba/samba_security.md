@@ -1,41 +1,57 @@
-# Samba: Безопасность и производительность
+# Samba: Security and VFS Modules
 
-## Конфигурация безопасности
+## Definitions
 
-**Минимальные безопасные настройки для `/etc/samba/smb.conf`:**
+**VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к шарам для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects` без префикса `vfs_`.
 
-```ini
-[global]
-   # Версии протокола
-   server min protocol = SMB3
-   server max protocol = SMB3_11
-   
-   # Аутентификация
-   ntlm auth = only-ntlmv2-permit
-   reject md5 passwords = yes
-   
-   # Шифрование
-   smb encrypt = auto  # или 'required' для обязательного шифрования
-   
-   # Защита
-   map to guest = Never  # отключить гостевой доступ по умолчанию
-   restrict anonymous = 2  # запретить анонимные запросы
-```
+**SMB encryption** — шифрование трафика на уровне SMB-протокола (AES-256 в SMBv3+). Не зависит от TLS/IPsec, согласуется между клиентом и сервером.
 
-## VFS (Virtual File System) модули
+## Basic Concepts
 
-Samba поддерживает модули VFS для расширения функциональности:
+### Безопасность протокола
+
+| Параметр | Назначение | Рекомендация |
+| :--- | :--- | :--- |
+| `server min protocol` | Минимальная версия SMB | `SMB3` |
+| `server max protocol` | Максимальная версия SMB | `SMB3_11` |
+| `smb encrypt` | Шифрование трафика | `required` (обязательное) или `auto` (по выбору клиента) |
+| `ntlm auth` | Тип NTLM-аутентификации | `ntlmv2-only` |
+| `map to guest` | Гостевой доступ | `Never` (по умолчанию), `bad user` — только для публичных шар |
+| `restrict anonymous` | Анонимные запросы | `2` |
+
+> **Важно:** Параметры `read raw`, `write raw`, `max xmit`, `getwd cache`, `strict allocate`, `strict sync` удалены в Samba 4.x — они относились к SMB1 и не применяются к SMB2/SMB3.
+
+### VFS-модули
 
 | Модуль | Описание |
 | :--- | :--- |
-| `vfs_objects` | Рекурсивное удаление объектов |
-| `vfs_audit` | Аудит операций с файлами |
-| `vfs_full_audit` | Расширенное логирование |
-| `vfs_recycle` | Корзина для удалённых файлов |
-| `vfs_shadow_copy` | Снимки (snapshots) для Volume Shadow Copy |
-| `vfs_virusfilter` | Проверка файлов на вирусы |
+| `audit` | Базовый аудит операций (устаревший, заменён на `full_audit`) |
+| `full_audit` | Расширенный аудит с логированием success/failure |
+| `recycle` | Корзина — перемещение удалённых файлов вместо удаления |
+| `shadow_copy2` | Интеграция со снапшотами ФС (Volume Shadow Copy для Windows-клиентов) |
+| `virusfilter` | Проверка файлов антивирусом при записи |
+| `acl_xattr` | Хранение Windows ACL в extended attributes |
+| `zfsacl` | Поддержка ACL на ZFS |
 
-**Пример использования:**
+### SELinux контексты
+
+Для RHEL/CentOS/Fedora требуется контекст `samba_share_t` на директориях шар. Булевы `samba_enable_home_dirs` — доступ к домашним каталогам.
+
+## Practical Scenarios
+
+### Минимальная безопасная конфигурация
+
+```ini
+[global]
+   server min protocol = SMB3
+   server max protocol = SMB3_11
+   ntlm auth = ntlmv2-only
+   smb encrypt = required
+   map to guest = Never
+   restrict anonymous = 2
+```
+
+### Шара с аудитом и корзиной
 
 ```ini
 [secure_share]
@@ -43,61 +59,50 @@ Samba поддерживает модули VFS для расширения фу
    vfs objects = full_audit recycle
    full_audit:success = open mkdir rename unlink
    full_audit:failure = open mkdir
+   full_audit:prefix = %u|%I|%m|%S
    recycle:repository = /srv/samba/.recycle/%U
+   recycle:keeptree = yes
+   recycle:versions = yes
 ```
 
-## Производительность и оптимизация
-
-**Настройки для улучшения производительности:**
+### Шара со снапшотами (shadow_copy2)
 
 ```ini
-[global]
-   # Размер блоков
-   socket options = TCP_NODELAY IPTOS_LOWDELAY
-   read raw = yes
-   write raw = yes
-   
-   # Кэширование
-   max xmit = 65535
-   getwd cache = yes
-   
-   # Для больших файлов
-   strict allocate = no
-   strict sync = no
-   sync always = no
+[snapshots]
+   path = /srv/data
+   vfs objects = shadow_copy2
+   shadow:snapdir = /srv/data/.snapshots
+   shadow:format = auto-%Y-%m-%d_%H:%M:%S
+   shadow:sort = desc
+   shadow:localtime = yes
 ```
 
-**Диагностика производительности:**
+### SELinux — настройка контекстов
 
 ```bash
-# Мониторинг подключений
-smbstatus
+# Временная установка
+sudo chcon -t samba_share_t /srv/samba/public/
 
-# Статистика по шарам
-smbstatus -S
+# Постоянное (через semanage)
+sudo semanage fcontext -a -t samba_share_t '/srv/samba/public(/.*)?'
+sudo restorecon -Rv /srv/samba/public/
 
-# Тестирование скорости
-smbclient //server/share -U user -c 'prompt; mget *'
+# Доступ к домашним директориям
+sudo setsebool -P samba_enable_home_dirs on
 ```
 
-## Аудит и логирование
-
-**Включение расширенного логирования:**
+### Расширенное логирование
 
 ```ini
 [global]
    log level = 2
    log file = /var/log/samba/%m.log
    max log size = 10000
-   log rotation = daily
 ```
 
-**Аудит операций с файлами:**
+Аудит на уровне шары:
 
 ```ini
-[global]
-   vfs objects = full_audit
-   
 [audited_share]
    path = /srv/samba/audited
    vfs objects = full_audit
@@ -106,27 +111,14 @@ smbclient //server/share -U user -c 'prompt; mget *'
    full_audit:prefix = %u|%I|%m|%S
 ```
 
-## SELinux
-
-**Настройка контекстов для CentOS/RHEL:**
+### Диагностика подключений
 
 ```bash
-# Установка правильного контекста
-sudo chcon -t samba_share_t /srv/samba/public/
-
-# Постоянное решение
-sudo semanage fcontext -a -t samba_share_t '/srv/samba/public(/.*)?'
-sudo restorecon -Rv /srv/samba/public/
-
-# Разрешение доступа к домашним директориям
-sudo setsebool -P samba_enable_home_dirs on
+smbstatus              # Активные подключения
+smbstatus -S           # Статистика по шарам
+smbstatus -v           # Подробный вывод с блокировками
 ```
 
-Подробнее см. [SELinux](../../../Security/Mechanisms/SELinux.md).
+## Additional Information
 
-## Связанные документы
-
-- [Базовые концепции](./samba_basics.md)
-- [Настройка Samba](./samba_setup.md)
-- [AD-интеграция](./samba_ad.md) — домен, winbind
-- [Настройка файрвола](../../../Development/build_tools.md)
+Связанные документы: [обзор Samba](./index.md), [настройка сервера](./samba_setup.md), [AD-интеграция](./samba_ad.md), [устранение неполадок](./samba_troubleshooting.md). SELinux: [механизмы SELinux](../../../Security/Mechanisms/SELinux.md). Файрволы: [firewalld](../../../Settings/tools/firewalld.md), [nftables](../../../Settings/tools/nftables/practical_scenarios.md).

@@ -119,11 +119,4 @@ boot
 | **iSCSI Boot** | Загрузка по iSCSI напрямую | Требует поддержки NIC |
 | **HTTP Boot (UEFI)** | Быстрее TFTP, проще настройка | Требуется UEFI 2.0+ |
 
-### Связанные темы
-
-* **[DHCP-сервер](../Services/DHCP/isc_dhcp_server_overview.md)** — настройка DHCP для PXE
-* **[TFTP](../ServicesAndTools/)** — базовый файловый сервер для PXE (документация в разработке)
-* **[iSCSI](../iSCSI/index.md)** — загрузка rootfs по iSCSI
-* **[NFS](../Services/nfs/index.md)** — сетевая файловая система для PXE
-* **[Процесс загрузки Linux](../../Core/kernel/boot_process.md)** — этапы загрузки системы
-* **[Оптимизация сетевых каналов](./network_latency_optimization.md)** — влияние латентности сети на загрузку
+См. также: настройка [DHCP-сервера](../Services/DHCP/isc_dhcp_server_overview.md) (опции `next-server`, `filename`), загрузка rootfs по [iSCSI](../iSCSI/index.md) или [NFS](../Services/nfs/index.md), [процесс загрузки Linux](../../Core/kernel/boot_process.md), [Secure Boot и UEFI](../../Core/firmware_bios_uefi.md), [защита DHCP](../../../Networking/Protocols/DHCP/dhcp_security.md#1-dhcp-snooping) (DHCP Snooping).

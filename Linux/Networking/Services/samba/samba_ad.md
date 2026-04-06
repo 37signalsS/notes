@@ -1,14 +1,49 @@
 # Samba: Интеграция с Active Directory
 
-## Требования
+## Definitions
+
+**Samba AD Member** — режим работы Samba как члена домена Active Directory с использованием Kerberos для аутентификации и winbind для маппинга пользователей.
+
+**winbind** — сервис, обеспечивающий интеграцию между Linux и Windows-доменами: маппинг UID/GID ↔ SID, получение списков пользователей/групп из AD.
+
+**idmap** — подсистема Samba для маппинга идентификаторов безопасности Windows (SID) на Unix-идентификаторы (UID/GID). Централизованное управление UID/GID критично для корректной работы в домене.
+
+## Basic Concepts
+
+### Требования
 
 - Настроенный домен Active Directory
-- Синхронизация времени (Kerberos требует точного времени)
+- Синхронизация времени (Kerberos требует точного времени, расхождение ≤5 минут)
 - Пакет `winbind`
 
-## Настройка членства в домене
+### Уровни безопасности (`security`)
 
-### Шаг 1: Установка пакетов
+| Режим | Описание |
+| :--- | :--- |
+| `security = user` | Стандартный режим, локальная аутентификация |
+| `security = ads` | Член домена Active Directory, Kerberos |
+| `security = domain` | Устаревший режим для NT4-доменов |
+
+### Бэкенды idmap
+
+| Бэкенд | Описание | Использование |
+| :--- | :--- | :--- |
+| `tdb` | Локальная база (trivial database) | Для локальных пользователей (`*`) |
+| `rid` | Маппинг на основе RID домена | Для доменных пользователей |
+| `ad` | Маппинг из атрибутов AD (uidNumber/gidNumber) | Для сложных схем с RFC2307 |
+| `autorid` | Автоматическое выделение диапазонов | Для нескольких доменов |
+
+### Принципы маппинга UID/GID
+
+Без централизованного управления UID/GID возможны конфликты прав доступа. Диапазоны должны быть непересекающимися:
+
+- `*` (локальные пользователи): 3000–7999
+- `EXAMPLE` (основной домен): 10000–999999
+- `TRUSTED` (доверенные домены): 2000000–2999999
+
+## Practical Scenarios
+
+### Установка пакетов
 
 ```bash
 # Debian/Ubuntu
@@ -18,7 +53,7 @@ sudo apt-get install -y samba winbind libnss-winbind libpam-winbind
 sudo yum install -y samba-winbind samba-winbind-clients
 ```
 
-### Шаг 2: Конфигурация (`/etc/samba/smb.conf`)
+### Конфигурация (`/etc/samba/smb.conf`)
 
 ```ini
 [global]
@@ -27,18 +62,18 @@ sudo yum install -y samba-winbind samba-winbind-clients
    security = ADS
    encrypt passwords = yes
    kerberos method = secrets and keytab
-   
+
    # ID mapping (важно для корректного маппинга UID/GID)
    idmap config * : backend = tdb
    idmap config * : range = 3000-7999
    idmap config EXAMPLE : backend = rid
    idmap config EXAMPLE : range = 10000-999999
-   
+
    winbind use default domain = yes
    winbind offline logon = yes
 ```
 
-### Шаг 3: Присоединение к домену
+### Присоединение к домену
 
 ```bash
 # Присоединение к домену
@@ -51,7 +86,7 @@ net ads testjoin
 sudo systemctl enable --now smb nmb winbind
 ```
 
-### Шаг 4: Настройка NSS и PAM
+### Настройка NSS и PAM
 
 **`/etc/nsswitch.conf`:**
 
@@ -67,7 +102,7 @@ shadow:         compat
 sudo pam-auth-update
 ```
 
-## Проверка и диагностика
+### Проверка и диагностика
 
 ```bash
 # Информация о домене
@@ -89,47 +124,9 @@ wbinfo --sid-to-uid S-1-5-21-...
 klist
 ```
 
-## idmap: маппинг UID/GID
+## Additional Information
 
-**Важно:** Для корректной работы в домене требуется централизованное управление UID/GID через `idmap`. Без этого возможны конфликты прав доступа.
-
-### Бэкенды idmap
-
-| Бэкенд | Описание | Использование |
-| :--- | :--- | :--- |
-| `tdb` | Локальная база (тривиальный) | Для локальных пользователей (`*`) |
-| `rid` | Маппинг на основе RID домена | Для доменных пользователей |
-| `ad` | Маппинг из атрибутов AD | Для сложных схем |
-| `autorid` | Автоматическое выделение диапазонов | Для нескольких доменов |
-
-### Пример конфигурации idmap
-
-```ini
-[global]
-   # Локальные пользователи (3000-7999)
-   idmap config * : backend = tdb
-   idmap config * : range = 3000-7999
-   
-   # Домен EXAMPLE (10000-999999)
-   idmap config EXAMPLE : backend = rid
-   idmap config EXAMPLE : range = 10000-999999
-   
-   # Домен TRUSTED (2000000-2999999)
-   idmap config TRUSTED : backend = rid
-   idmap config TRUSTED : range = 2000000-2999999
-```
-
-## Уровни безопасности (`security`)
-
-| Режим | Описание |
-| :--- | :--- |
-| `security = user` | Стандартный режим, локальная аутентификация |
-| `security = ads` | Член домена Active Directory, Kerberos |
-| `security = domain` | Устаревший режим для NT4-доменов |
-
-## Связанные документы
-
-- [Базовые концепции](./samba_basics.md)
-- [Настройка Samba](./samba_setup.md)
-- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md)
-- [Управление пользователями](../../../SystemAdministration/users_management.md)
+- [Обзор Samba (SSoT)](./index.md) — архитектура, версии SMB, режимы работы
+- [Настройка Samba](./samba_setup.md) — конфигурация шар и доступов
+- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md) — протокол аутентификации AD
+- [Управление пользователями](../../../SystemAdministration/users_management.md) — NSS/PAM конфигурация

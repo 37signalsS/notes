@@ -4,6 +4,8 @@
 
 ### Чистое окружение для сборки
 
+Использование изолированных окружений гарантирует воспроизводимость сборки и отсутствие скрытых зависимостей ([основные понятия сборки](./basic_concepts.md)).
+
 **DEB: pbuilder**
 
 ```bash
@@ -36,6 +38,8 @@ mock -r fedora-38-x86_64 ~/rpmbuild/SRPMS/package-name.src.rpm
 
 ### Кросс-компиляция
 
+Сборка пакетов для архитектуры, отличной от хостовой:
+
 ```bash
 # DEB: Сборка для другой архитектуры
 dpkg-buildpackage -aarm64 -us -uc
@@ -46,8 +50,10 @@ rpmbuild --target=aarch64 -ba SPECS/package.spec
 
 ### Автоматизация с CI/CD
 
-- **DEB:** Использование `git-buildpackage` для управления версиями в Git
-- **RPM:** Интеграция с Copr (Fedora) или OBS (openSUSE) для автоматической сборки
+Интеграция сборки пакетов в пайплайны непрерывной доставки:
+
+- **DEB:** `git-buildpackage` — управление версиями и сборка из Git-репозитория
+- **RPM:** Copr (Fedora) и OBS (openSUSE) — сервисы автоматической сборки и публикации
 
 ## Полезные утилиты
 
@@ -60,33 +66,10 @@ rpmbuild --target=aarch64 -ba SPECS/package.spec
 | `rpmdev-bumpspec` | Автоматическое увеличение версии в spec |
 | `fedpkg` / `centpkg` | Работа с Fedora/CentOS DistGit |
 
-## Сравнение систем сборки
-
-| Аспект | DEB | RPM |
-|--------|-----|-----|
-| Формат пакета | `.deb` | `.rpm` |
-| Файл спецификации | `debian/*` | `.spec` |
-| Чистое окружение | `pbuilder`, `sbuild` | `mock` |
-| Проверка качества | `lintian` | `rpmlint` |
-| Управление версиями | `dch`, `git-buildpackage` | `rpmdev-bumpspec` |
-| Дистрибутивы | Debian, Ubuntu | Fedora, RHEL, CentOS, openSUSE |
+Дополнительные инструменты описаны в [основных понятиях сборки](./basic_concepts.md), сравнение DEB/RPM — в [обзоре управления пакетами](../linux_package_management_overview.md).
 
 ## Связанные темы
 
-- **[Обзор управления пакетами](../linux_package_management_overview.md)** — базовые концепции
-- **[Анализ и получение пакетов](../package_analysis.md)** — изучение метаданных и содержимого
-- **[База данных пакетов](../package_database.md)** — расположение и структура баз данных
-- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md** — публикация собственных DEB-пакетов
-- **[Управление репозиториями DNF](../dnf_commands/basic_concepts.md)** — публикация RPM-пакетов
+Базовые концепции: [определения](./definitions.md), [основные понятия](./basic_concepts.md), [практические сценарии](./practical_scenarios.md).
 
----
-
-## Связанные документы
-
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные понятия](./basic_concepts.md)** — этапы сборки, инструменты
-- **[Практические сценарии](./practical_scenarios.md)** — сборка DEB и RPM пакетов
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [package_building.md](./additional_info.md)*
+Публикация пакетов: [приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md) (DEB), [управление репозиториями DNF](../dnf_commands/basic_concepts.md) (RPM).

@@ -141,11 +141,4 @@ dnsserver.local.lan.  604800  IN  A  192.168.52.149
 
 ## Дополнительная информация
 
-- **Serial Number:** Формат `YYYYMMDDNN` (дата + номер изменения за день)
-- **Трансфер зоны:** Secondary-серверы запрашивают обновление при изменении Serial
-- **Сопутствующие заметки BIND:**
-  - [Настройка Secondary](./slave_server_configuration.md) — добавление резервного сервера
-  - [Обратная зона](./reverse_zone_configuration.md) — PTR-записи
-  - [Forwarding-сервер](./forwarding_server.md) — перенаправляющий DNS
-  - [Диагностика](./troubleshooting.md) — проверка и отладка
-  - [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md) — типы записей
+Актуально для BIND 9.18+ (LTS) и 9.20+ (ESV). Формат Serial: `YYYYMMDDNN`. Теория SOA и зон — в [dns_zones.md](../../../../Networking/Protocols/DNS/dns_zones.md). Подробнее: [Настройка Secondary](./slave_server_configuration.md), [Обратная зона](./reverse_zone_configuration.md), [Forwarding-сервер](./forwarding_server.md), [Диагностика](./troubleshooting.md), [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md).

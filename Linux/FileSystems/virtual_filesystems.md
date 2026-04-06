@@ -73,18 +73,8 @@ tmpfs /mnt/my_tmpfs tmpfs defaults,size=512M 0 0
 
 ### Связанные темы
 
-- **VFS и системные вызовы:** [Внутреннее устройство ФС](./fs_internals.md)
-- **Page Cache:** [Внутреннее устройство ФС](./fs_internals.md#Page-Cache)
-- **Контрольные группы:** [Cgroups](../Core/cgroups.md)
-- **Systemd:** [Systemd overview](../Core/systemd/overview.md)
-- **Контейнеризация:** [Docker overview](../../Docker/docker_overview.md), [Kubernetes overview](../../Kubernetes/kubernetes_overview.md)
+Архитектура VFS и системные вызовы описаны в документе [Внутреннее устройство ФС](./fs_internals.md), там же рассмотрен механизм [Page Cache](./fs_internals.md#Page-Cache). Управление ресурсами через cgroupfs детально разобрано в материале [Cgroups](../Core/cgroups.md), который также описывает интеграцию с [Systemd](../Core/systemd/overview.md). Контейнеризация использует cgroups для изоляции — подробности в [Docker overview](../../Docker/docker_overview.md) и [Kubernetes overview](../../Kubernetes/kubernetes_overview.md).
 
 ### Детальные документы по виртуальным ФС
 
-| ФС | Точка монтирования | Файл |
-| :--- | :--- | :--- |
-| **Procfs** | `/proc` | [virtual_fs_proc.md](./virtual_fs_proc.md) |
-| **Sysfs** | `/sys` | [virtual_fs_sys.md](./virtual_fs_sys.md) |
-| **Devtmpfs** | `/dev` | [virtual_fs_dev.md](./virtual_fs_dev.md) |
-| **Tmpfs** | `/tmp`, `/run`, `/dev/shm` | Этот файл |
-| **Cgroupfs** | `/sys/fs/cgroup` | Этот файл |
+Отдельные файлы посвящены другим псевдофайловым системам: [procfs](./virtual_fs_proc.md) монтируется в `/proc`, [sysfs](./virtual_fs_sys.md) — в `/sys`, [devtmpfs](./virtual_fs_dev.md) — в `/dev`. Tmpfs используется в точках монтирования `/tmp`, `/run`, `/dev/shm`, а cgroupfs — в `/sys/fs/cgroup`.

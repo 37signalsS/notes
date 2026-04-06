@@ -61,22 +61,6 @@
 
 ## Дополнительная информация
 
-- **LVM (Logical Volume Manager):** Объединение дисков в пулы, динамическое изменение размеров и создание снимков.
-  - **Подробности:** [LVM (Logical Volume Manager)](./LVM/overview_concepts.md)
+Альтернативные технологии управления хранилищами: [LVM](./LVM/overview_concepts.md) — логические тома и снапшоты, [RAID/mdadm](./raid_management.md) — отказоустойчивые массивы, [VDO](./vdo.md) — дедупликация и сжатие, [Stratis](./stratis.md) — многоуровневое управление с кэшированием.
 
-- **RAID (Redundant Array of Independent Disks):** Объединение дисков в массив для повышения производительности и/или отказоустойчивости.
-  - **Подробности:** [Управление программным RAID с помощью mdadm](./raid_management.md)
-
-- **VDO (Virtual Data Optimizer):** Дедупликация, сжатие и thin provisioning на уровне блочного устройства.
-  - **Подробности:** [VDO (Virtual Data Optimizer)](./vdo.md)
-
-- **Stratis:** Многоуровневое управление хранилищем с автоматическим кэшированием.
-  - **Подробности:** [Stratis](./stratis.md)
-
-- **Шифрование:** LUKS для шифрования блочных устройств.
-  - **Подробности:** [LUKS](../../Security/Tools/openssl_ca/single_tier/ca_setup.md)
-
-- **Восстановление:**
-  - [Восстановление таблиц разделов](./partition_tables_recovery.md) — MBR, GPT
-  - [Логическое восстановление данных](./data_recovery.md) — TestDisk, PhotoRec
-  - [Проверка целостности ФС](./fsck.md) — `fsck`, `xfs_repair`
+Восстановление данных: [таблицы разделов](./partition_tables_recovery.md) — MBR/GPT, [логическое восстановление](./data_recovery.md) — TestDisk/PhotoRec, [проверка целостности ФС](./fsck.md) — `fsck`/`xfs_repair`.

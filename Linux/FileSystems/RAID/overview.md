@@ -41,7 +41,7 @@
 
 > **Важно:** RAID 5 **устарел** для дисков >1ТБ из-за риска URE при rebuild. Рекомендуется RAID 6 или RAID 10.
 
-### Практическое использование
+## Практические сценарии
 
 | Задача | Файл |
 | :--- | :--- |
@@ -54,7 +54,4 @@
 
 ## Дополнительная информация
 
-* [RAID ≠ резервное копирование](./raid-vs-backup.md)
-* [Мониторинг SMART дисков в RAID](../../Diagnostics/Hardware/smartctl/index.md#проверка-дисков-в-raid-массивах)
-* [LVM поверх RAID](../LVM/overview_concepts.md)
-* [Настройка fstab для RAID](../mounting/fstab.md)
+См. также: [RAID ≠ резервное копирование](./raid-vs-backup.md), [мониторинг SMART дисков в RAID](../../Diagnostics/Hardware/smartctl/index.md#проверка-дисков-в-raid-массивах), [LVM поверх RAID](../LVM/overview_concepts.md), [настройка fstab для RAID](../mounting/fstab.md).

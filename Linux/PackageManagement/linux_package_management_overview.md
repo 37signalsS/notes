@@ -14,7 +14,7 @@
 
 **Транзакция (Transaction)** — атомарная операция установки, удаления или обновления пакетов, которая может быть отменена или повторена.
 
-## Основные понятия
+## Базовые концепции
 
 ### Сравнение систем пакетов
 
@@ -64,25 +64,4 @@
 
 ## Дополнительная информация
 
-### Связанные темы
-
-* **[Определения и основные понятия](../PackageManagement/package_database.md)** — базовые термины (дублируется, рекомендуется удаление)
-* **[Получение файлов пакетов](../PackageManagement/linux_package_management_overview.md)** — скачивание пакетов без установки
-* **[Низкоуровневые утилиты](../Core/kernel/overview.md)** — работа с `dpkg` и `rpm` напрямую
-* **[Команды DNF](./dnf_commands/practical_scenarios.md)** — полный справочник по DNF
-* **[Анализ файлов пакетов](./package_analysis.md)** — просмотр метаданных и содержимого
-* **[Извлечение содержимого](../PackageManagement/package_database.md)** — распаковка `.deb` и `.rpm`
-* **[Сборка пакетов](./package_build/basic_concepts.md)** — создание собственных пакетов
-* **[База данных пакетов](./package_database.md)** — расположение и структура баз данных
-* **[Управление репозиториями DNF](./dnf_commands/basic_concepts.md)** — настройка репозиториев для RPM-систем
-* **[Локальное зеркало репозитория](./apt_repository_mirror.md)** — создание зеркал для APT и YUM/DNF
-* **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — файл `sources.list` для Debian/Ubuntu
-* **[Apt Pinning](./deb_apt_pinning.md)** — управление приоритетами пакетов
-* **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
-
-### Рекомендуемые ресурсы
-
-* **Debian:** [packages.debian.org](https://packages.debian.org/) — поиск пакетов
-* **Ubuntu:** [packages.ubuntu.com](https://packages.ubuntu.com/) — поиск пакетов
-* **Fedora:** [packages.fedoraproject.org](https://packages.fedoraproject.org/) — поиск пакетов
-* **RHEL:** [access.redhat.com/downloads](https://access.redhat.com/downloads) — официальные пакеты
+См. также: [база данных пакетов](./package_database.md), [анализ и распаковка пакетов](./package_analysis.md), [команды DNF](./dnf_commands/practical_scenarios.md), [сборка пакетов](./package_build/basic_concepts.md), [Apt Pinning](./deb_apt_pinning.md), [управление репозиториями DEB](./deb_repositories_sources_list.md), [локальное зеркало репозитория](./yum_dnf_repository_mirror.md).

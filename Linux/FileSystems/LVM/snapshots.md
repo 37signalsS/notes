@@ -149,7 +149,7 @@ lvextend -L +500M /dev/my_vg/my_lv_snapshot
 
 ## Тонкие снимки (Thin Snapshots)
 
-При использовании тонкого провизионирования ([thin_provisioning.md](./thin_provisioning.md)) снимки создаются без выделения фиксированного размера:
+При использовании тонкого провизионирования ([thin-provisioning.md](./thin-provisioning.md)) снимки создаются без выделения фиксированного размера:
 
 ```bash
 # Создать тонкий снимок (не требует указания размера)
@@ -203,13 +203,10 @@ lvconvert --merge <снимок>
 
 ### Связанные темы
 
-| Тема | Файл |
-| :--- | :--- |
-| Базовые концепции LVM | [overview_concepts.md](./overview_concepts.md) |
-| Тонкое провизионирование | [thin_provisioning.md](./thin_provisioning.md) |
-| Операции управления | [management_operations.md](./management_operations.md) |
+Базовые концепции LVM описаны в [overview_concepts.md](./overview_concepts.md). Тонкое провизионирование — в [thin-provisioning.md](./thin-provisioning.md). Операции управления — в [management_operations.md](./management_operations.md).
+
+Тонкие снимки (thin snapshots) рассмотрены в разделе [Тонкие снимки в thin-provisioning.md](./thin-provisioning.md#тонкие-снимки-thin-snapshots).
 
 ### Внешние ресурсы
 
-- [LVM Snapshot HOWTO](https://wiki.linuxfoundation.org/lvm/snapshot)
-- [Red Hat: LVM Snapshots](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_logical_volumes/using-lvm-snapshots)
+Официальная документация: [LVM Snapshot HOWTO](https://wiki.linuxfoundation.org/lvm/snapshot), [Red Hat: LVM Snapshots](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_logical_volumes/using-lvm-snapshots).

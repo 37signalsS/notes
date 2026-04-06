@@ -269,6 +269,8 @@ systemctl is-active systemd-timesyncd  # должен быть inactive
 systemctl is-active chrony             # должен быть active
 ```
 
+Подробности управления временем через systemd: [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md).
+
 ### IPv6-поддержка
 
 ```ini
@@ -289,6 +291,4 @@ sudo systemctl restart chrony
 ss -6 -unap | grep chrony
 ```
 
-### Связанные файлы
-
-Базовая синхронизация времени (systemd-timesyncd): [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md). Настройка IPv6 для сервисов: [services_configuration.md](../Settings/ipv6_configuration/services_configuration.md). Troubleshooting SAMBA (зависит от NTP): [samba_troubleshooting.md](../Services/samba/samba_troubleshooting.md).
+Подробнее об IPv6-настройке сервисов: [services_configuration.md](../Settings/ipv6_configuration/services_configuration.md). Troubleshooting SAMBA (зависит от NTP): [samba_troubleshooting.md](../Services/samba/samba_troubleshooting.md).

@@ -214,11 +214,6 @@ dig +dnssec example.com
 
 - **Логи BIND:** `/var/log/syslog`, `/var/log/named/`, `journalctl -u bind9`
 - **Утилиты:** `named-checkconf`, `named-checkzone`, `dig`, `rndc`, `delv`
-- **Безопасность:**
-  - **CVE-2025-13878:** Уязвимость в обработке BRID/HHIT записей — удалённый crash сервера (CVSS 7.5)
-  - Исправлена в BIND 9.18.44, 9.20.18, 9.21.17 (January 2026)
-  - Рекомендуется обновить как можно скорее
-- **Сопутствующие заметки:**
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — общие инструменты
-  - [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — DNSSEC
-  - [Настройка Master](./master_server_local_zone.md) — первичный сервер
+- **CVE-2025-13878:** Malformed BRID/HHIT records → `named` termination (CVSS 7.5). Затронуты: 9.18.40–9.18.43, 9.20.13–9.20.17. Исправлена в 9.18.44, 9.20.18, 9.21.17 (January 2026). [Ubuntu CVE-2025-13878](https://ubuntu.com/security/CVE-2025-13878).
+
+**Связанные заметки:** [Общая диагностика DNS](../../../Diagnostics/Networking/dns/overview.md), [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md), [Настройка Master](./master_server_local_zone.md).

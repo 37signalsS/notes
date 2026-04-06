@@ -1,131 +1,130 @@
-# ISC DHCP-сервер: Настройка отказоустойчивости (Failover)
+# ISC DHCP Failover: Отказоустойчивая пара серверов
 
-> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. В Kea используется HA (High Availability) через hook modules.
+> **Важно:** ISC DHCP устарел. Для новых развёртываний используйте [Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива) с HA через hook modules.
+> См. также: [Защита от rogue DHCP](../../../../Networking/Protocols/DHCP/dhcp_security.md).
 
-Для обеспечения высокой доступности (High Availability) службы DHCP настраивают два сервера в режиме failover. Они синхронизируют между собой информацию о выданных адресах и могут подменять друг друга в случае сбоя.
+## Definitions
 
-> **См. также:** [Протокол DHCP: безопасность](../../../../Networking/Protocols/DHCP/dhcp_security.md) — защита от rogue DHCP.
+**DHCP Failover** — механизм высокой доступности (HA), при котором два DHCP-сервера синхронизируют информацию об арендах и подменяют друг друга при сбое.
 
-## Принцип работы
+**Primary/Secondary** — роли серверов в паре. Оба способны выдавать адреса, но primary имеет приоритет при управлении пулом.
 
-1. **Два сервера:** Один настраивается как `primary`, другой как `secondary`.
-2. **Синхронизация:** Серверы обмениваются информацией о выданных арендах по TCP-порту 647.
-3. **Разделение нагрузки:** Пул адресов делится между серверами (`split`), что позволяет распределять нагрузку.
+**MCLT (Max Client Lead Time)** — максимальное время, на которое сервер может продлить аренду без согласования с партнёром.
 
-## Шаг 1: Организация конфигурационных файлов
+**Split** — параметр распределения пула адресов между серверами (0–256, где 128 = 50/50).
 
-Конфигурация для failover-пары почти идентична, за исключением нескольких параметров. Рекомендуется вынести общие части в отдельные файлы и подключать их через `include`.
+## Basic Concepts
 
-Структура может быть такой:
+### Принцип работы
 
-- `/etc/dhcp/dhcpd.conf`: Содержит уникальные для каждого сервера failover-параметры.
-- `/etc/dhcp/dhcpd.conf.d/subnets.conf`: Общие определения `subnet`.
-- `/etc/dhcp/dhcpd.conf.d/reservations.conf`: Общие определения `host` (резервации).
+1. **Два сервера:** один настраивается как `primary`, другой как `secondary`.
+2. **Синхронизация:** обмен информацией об арендах по TCP-порту 647.
+3. **Разделение нагрузки:** пул адресов делится параметром `split`, что позволяет обоим серверам отвечать на запросы клиентов.
 
-## Шаг 2: Настройка `dhcpd.conf`
+### Состояния failover-пары
 
-**Конфигурация для `primary` сервера (например, 10.0.4.4):**
+| Состояние | Описание |
+| :--- | :--- |
+| `normal` / `balanced` | Оба сервера работают, синхронизация активна |
+| `communications-interrupted` | Потеря связи между серверами |
+| `partner-down` | Партёр считается неработающим |
+| `potentially-down` | Требуется подтверждение состояния партнёра |
+| `reboot` | Сервер перезапускается после сбоя |
+| `shutdown` | Сервер остановлен администратором |
+| `paused` | Временная приостановка обработки запросов |
+
+## Practical Scenarios
+
+### Сценарий 1: Настройка failover-пары
+
+**Шаг 1: Организация конфигурационных файлов**
+
+Рекомендуется вынести общие части в отдельные файлы и подключать через `include`:
+
+- `/etc/dhcp/dhcpd.conf` — уникальные failover-параметры каждого сервера.
+- `/etc/dhcp/dhcpd.conf.d/subnets.conf` — общие определения `subnet`.
+- `/etc/dhcp/dhcpd.conf.d/reservations.conf` — общие определения `host` (резервации).
+
+**Шаг 2: Конфигурация `dhcpd.conf`**
+
+Primary сервер (10.0.4.4):
 
 ```ini
-# /etc/dhcp/dhcpd.conf на PRIMARY сервере
-
-# Определение failover-пары
 failover peer "dhcp-failover" {
-    primary; # Этот сервер - основной
-    address 10.0.4.4; # Его собственный IP для обмена
+    primary;
+    address 10.0.4.4;
     port 647;
-    peer address 10.0.4.5; # IP второго сервера
+    peer address 10.0.4.5;
     peer port 647;
-    
-    max-response-delay 60; # Ждать 60 сек, прежде чем считать партнера "упавшим"
-    max-unacked-updates 10; # Кол-во обновлений без подтверждения
-    
-    # Обязательные параметры для primary
-    mclt 3600; # Max Client Lead Time. Время, на которое один сервер может продлить аренду без ведома другого
-    split 128; # Распределение адресов 50/50 (256 - все на primary, 0 - все на secondary)
+
+    max-response-delay 60;
+    max-unacked-updates 10;
+    mclt 3600;
+    split 128;
     load balance max seconds 3;
 }
 
-# Подключение общих файлов конфигурации
 include "/etc/dhcp/dhcpd.conf.d/subnets.conf";
 include "/etc/dhcp/dhcpd.conf.d/reservations.conf";
 ```
 
-**Конфигурация для `secondary` сервера (например, 10.0.4.5):**
+Secondary сервер (10.0.4.5):
 
 ```ini
-# /etc/dhcp/dhcpd.conf на SECONDARY сервере
-
 failover peer "dhcp-failover" {
-    secondary; # Этот сервер - вторичный
-    address 10.0.4.5; # Его собственный IP
+    secondary;
+    address 10.0.4.5;
     port 647;
-    peer address 10.0.4.4; # IP первого сервера
+    peer address 10.0.4.4;
     peer port 647;
-    
+
     max-response-delay 60;
     max-unacked-updates 10;
     load balance max seconds 3;
 }
 
-# Подключение общих файлов конфигурации
 include "/etc/dhcp/dhcpd.conf.d/subnets.conf";
 include "/etc/dhcp/dhcpd.conf.d/reservations.conf";
 ```
 
-## Шаг 3: Модификация `subnets.conf`
+**Шаг 3: Модификация `subnets.conf`**
 
-В каждой подсети, которая должна быть отказоустойчивой, необходимо указать имя failover-пары. Диапазон адресов (`range`) заключается в блок `pool`.
+В каждой подсети указать имя failover-пары внутри блока `pool`:
 
 ```ini
-# /etc/dhcp/dhcpd.conf.d/subnets.conf
-
 subnet 10.0.10.0 netmask 255.255.255.0 {
     option routers 10.0.10.1;
-    
+
     pool {
-        failover peer "dhcp-failover"; # Указываем нашу failover-пару
+        failover peer "dhcp-failover";
         range 10.0.10.100 10.0.10.200;
     }
 }
 ```
 
-## Шаг 4: Настройка файрвола
+**Шаг 4: Настройка файрвола**
 
-На обоих DHCP-серверах необходимо разрешить входящие подключения на порт **TCP/647** для обмена failover-сообщениями.
+На обоих серверах разрешить входящие подключения на **TCP/647**.
 
-## Состояния failover-пары
+### Сценарий 2: Troubleshooting
 
-| Состояние | Описание |
-| :--- | :--- |
-| **normal** | Оба сервера работают, синхронизация активна |
-| **balanced** | Нормальная работа с распределением нагрузки |
-| **communications-interrupted** | Потеря связи между серверами |
-| **partner-down** | Партнер считается неработающим |
-| **potentially-down** | Сервер под вопросом, требуется подтверждение |
-| **reboot** | Сервер перезапускается после сбоя |
-| **shutdown** | Сервер остановлен администратором |
-| **paused** | Временная приостановка обработки запросов |
-
-## Troubleshooting failover
-
-**Проблема:** Серверы не синхронизируются
+**Проблема: Серверы не синхронизируются**
 
 ```bash
-# Проверка логов на наличие ошибок
+# Проверка логов
 sudo journalctl -u isc-dhcp-server -f | grep failover
 
-# Проверка подключения к порту партнера
+# Проверка подключения к порту партнёра
 telnet 10.0.4.5 647
 
-# Проверка состояния failover в логах
+# Поиск событий failover в логах
 grep "failover peer" /var/log/syslog
 ```
 
-**Проблема:** Конфликты IP-адресов
+**Проблема: Конфликты IP-адресов**
 
 ```bash
-# Проверка файла аренды на обоих серверах
+# Проверка файлов аренды на обоих серверах
 cat /var/lib/dhcp/dhcpd.leases
 
 # Принудительная синхронизация (на secondary)
@@ -134,16 +133,11 @@ sudo rm /var/lib/dhcp/dhcpd.leases~
 sudo systemctl start isc-dhcp-server
 ```
 
----
+## Additional Information
 
-## Навигация по документации DHCP
-
-| Тема | Файл |
-| :--- | :--- |
-| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
-| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
-| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
-| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
-| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
-| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../../Networking/Protocols/DHCP/dhcp_overview.md)** | Теория, DORA, безопасность |
+- [Обзор ISC DHCP и Kea](./isc_dhcp_server_overview.md)
+- [Базовая настройка](./isc_dhcp_server_basic_config.md)
+- [Резервирование IP](./isc_dhcp_server_reservations.md)
+- [DHCP Relay](./isc_dhcp_server_relay.md)
+- [Проверка и мониторинг](./isc_dhcp_server_verification.md)
+- [Протокол DHCP: теория](../../../../Networking/Protocols/DHCP/dhcp_overview.md)

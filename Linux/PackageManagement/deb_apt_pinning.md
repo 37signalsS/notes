@@ -278,10 +278,3 @@ APT::Default-Release "stable";
 3. **Тестируйте изменения** с `apt-cache policy` перед установкой
 4. **Избегайте глобальных правил** `Package: *` без необходимости
 5. **Документируйте причины** pinning в комментариях файлов
-
-### Связанные темы
-
-- **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — файл `sources.list`
-- **[Приватный APT-репозиторий](./deb_private_apt_repository_reprepro/practical_scenarios.md)** — создание репозитория с `reprepro`
-- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
-- **[Анализ и получение пакетов](./package_analysis.md)** — изучение метаданных

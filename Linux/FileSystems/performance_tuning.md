@@ -2,7 +2,9 @@
 
 ## Определения
 
-Производительность файловой системы определяется совокупностью параметров: режимы журналирования, mount-опции, планировщик I/O, размеры блоков и настройки ядра.
+### Оптимизация производительности ФС
+
+**Оптимизация производительности файловой системы** — это совокупная настройка параметров на уровнях ФС, ядра и оборудования для достижения требуемого баланса между скоростью записи/чтения, надёжностью данных и потреблением ресурсов. Ключевые параметры: режимы журналирования, mount-опции, планировщик I/O, размеры блоков, настройки ядра (`vm.dirty_*`).
 
 ## Основные концепции
 
@@ -47,12 +49,9 @@ mkfs.ext4 -b 4096 /dev/sda1
 
 ### I/O Scheduler (Планировщик ввода-вывода)
 
-Ядро Linux использует планировщик для упорядочивания запросов к диску. Доступные планировщики:
+Подробное описание планировщиков, их эволюции и настроек см. в **[I/O Scheduler](../../Core/kernel/io_schedulers.md)** (SSoT).
 
-```bash
-cat /sys/block/sda/queue/scheduler
-# [mq-deadline] kyber bfq none
-```
+Краткая сводка для выбора:
 
 | Планировщик | Когда использовать |
 | :--- | :--- |
@@ -62,11 +61,11 @@ cat /sys/block/sda/queue/scheduler
 | **`none`** | Виртуализация (планировщик гипервизора) |
 
 ```bash
+# Проверить текущий планировщик
+cat /sys/block/sda/queue/scheduler
+
 # Временно изменить
 echo kyber | sudo tee /sys/block/sda/queue/scheduler
-
-# Постоянно через udev: /etc/udev/rules.d/60-io-scheduler.rules
-ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/scheduler}="kyber"
 ```
 
 ### Read-Ahead (Опережающее чтение)
@@ -144,14 +143,8 @@ UUID=xxx /var/log ext4 defaults,noatime,data=writeback 0 2
 
 ## Дополнительная информация
 
-* **Альтернативные технологии оптимизации:**
-  * [VDO (Virtual Data Optimizer)](./vdo.md) — дедупликация и сжатие на уровне блочного устройства
-  * [Stratis](./stratis.md) — многоуровневое управление хранилищем с кэшированием
-  * [LVM](./LVM/overview_concepts.md) — логическое управление томами, thin provisioning
+Альтернативные технологии оптимизации: [VDO (Virtual Data Optimizer)](./vdo.md) — дедупликация и сжатие на уровне блочного устройства, [Stratis](./stratis.md) — многоуровневое управление хранилищем с кэшированием, [LVM](./LVM/overview_concepts.md) — логическое управление томами, thin provisioning.
 
-* **Мониторинг производительности:**
-  * [`iostat`](../Diagnostics/Filesystem/iostat.md) — статистика ввода-вывода
-  * [`iotop`](../Diagnostics/Filesystem/iotop.md) — мониторинг дисковой активности процессов
-  * [`blktrace`](../Diagnostics/Hardware/cpu_info.md) — трассировка блочных устройств
+Мониторинг производительности: [`iostat`](../Diagnostics/Filesystem/iostat.md) — статистика ввода-вывода, [`iotop`](../Diagnostics/Filesystem/iotop.md) — мониторинг дисковой активности процессов, [`blktrace`](../Diagnostics/Performance/DiskIO/diagnostic_tools_comparison.md) — трассировка блочных устройств.
 
-* **Настройка ядра:** Параметры ввода-вывода в [`/sys/block/<device>/queue/`](./virtual_fs_sys.md)
+Настройка ядра: параметры ввода-вывода в [`/sys/block/<device>/queue/`](./virtual_fs_sys.md).

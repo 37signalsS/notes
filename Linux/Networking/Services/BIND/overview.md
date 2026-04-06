@@ -36,20 +36,6 @@
 
 ## Практические сценарии
 
-### Быстрый старт
-
-```bash
-# Установка BIND9 (Debian/Ubuntu)
-sudo apt-get update
-sudo apt-get install -y bind9 dnsutils
-
-# Проверка статуса
-systemctl status bind9
-
-# Базовая проверка конфигурации
-named-checkconf
-```
-
 ### Структура конфигурации BIND
 
 | Файл | Назначение |
@@ -62,12 +48,4 @@ named-checkconf
 
 ## Дополнительная информация
 
-- **Официальная документация:** [ISC BIND 9 ARM](https://bind9.readthedocs.io/)
-- **Версии:** BIND 9.18.x (LTS), BIND 9.20.x (ESV), BIND 9.21.x (development)
-- **Актуальная версия:** 9.20.18 / 9.18.44
-- **Безопасность:** CVE-2025-13878 — уязвимость в обработке BRID/HHIT записей (исправлена в 9.18.44, 9.20.18)
-- **Сопутствующие заметки:**
-  - [Протокол DNS](../../../../Networking/Protocols/DNS/dns.md) — теория протокола
-  - [Зоны DNS и SOA](../../../../Networking/Protocols/DNS/dns_zones.md) — структура зон
-  - [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md) — типы записей
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — инструменты отладки
+Официальная документация: [ISC BIND 9 ARM](https://bind9.readthedocs.io/). Актуальные версии: 9.20.x (ESV), 9.18.x (LTS). CVE-2025-13878 исправлена в 9.18.44/9.20.18. Подробнее: [Протокол DNS](../../../../Networking/Protocols/DNS/dns.md), [Зоны DNS и SOA](../../../../Networking/Protocols/DNS/dns_zones.md), [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md), [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md).

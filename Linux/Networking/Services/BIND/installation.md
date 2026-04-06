@@ -72,10 +72,4 @@ dig @127.0.0.1 version.bind chaos txt
 
 ## Дополнительная информация
 
-- **AppArmor/SELinux:** При проблемах с запуском проверьте логи безопасности
-- **Брандмауэр:** Откройте порты UDP/53 и TCP/53 для входящих соединений
-- **Обновления безопасности:** Проверяйте CVE-уведомления (CVE-2025-13878 исправлена в 9.18.44/9.20.18)
-- **Сопутствующие заметки:**
-  - [Troubleshooting](./troubleshooting.md) — диагностика и отладка
-  - [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md) — утилиты `dig`, `nslookup`
-  - [Настройка первичного сервера](./master_server_local_zone.md) — следующая конфигурация
+Актуально для BIND 9.18+ (LTS) и 9.20+ (ESV). При проблемах с запуском проверьте логи AppArmor/SELinux, откройте в брандмауэре UDP/53 и TCP/53. Подробнее: [Troubleshooting](./troubleshooting.md), [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md), [Настройка master-сервера](./master_server_local_zone.md).

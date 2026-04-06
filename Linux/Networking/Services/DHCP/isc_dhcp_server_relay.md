@@ -1,41 +1,54 @@
-# ISC DHCP-сервер: Настройка DHCP Relay
+# ISC DHCP Relay — настройка утилиты `dhcrelay`
 
-> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Утилита `dhcrelay` все еще используется.
+> **Важно:** ISC DHCP устарел. Для новых развертываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Утилита `dhcrelay` всё ещё поддерживается.
 
-DHCP-запросы являются широковещательными и по умолчанию не выходят за пределы своей подсети (VLAN). Если DHCP-сервер находится в другой подсети, клиенты не смогут его обнаружить. Эту проблему решает **DHCP Relay Agent**.
+## Definitions
 
-> **См. также:** [DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — концепция.
+**DHCP Relay Agent** — компонент (обычно на маршрутизаторе или Linux-хосте), который пересылает DHCP-запросы между подсетями, преобразуя broadcast в unicast.
 
-## Принцип работы
+**Проблема:** DHCP-запросы (`DHCPDISCOVER`) являются широковещательными и не выходят за пределы своей подсети. Если DHCP-сервер расположен в другой подсети, клиенты не смогут его обнаружить без Relay Agent.
 
-1. Маршрутизатор (или другой L3-устройство), имеющий интерфейсы в нескольких подсетях, настраивается как DHCP Relay.
-2. Получив широковещательный `DHCPDISCOVER` от клиента, Relay "заворачивает" его в unicast-пакет и пересылает на указанный IP-адрес реального DHCP-сервера.
-3. DHCP-сервер отправляет ответ обратно Relay-агенту, который, в свою очередь, пересылает его клиенту.
+> **Концепция:** [DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md) — принцип работы, поля `giaddr`/`hops`, RFC.
 
-## Установка и настройка
+## Basic Concepts
+
+### Принцип работы
+
+1. Клиент отправляет broadcast `DHCPDISCOVER`.
+2. Relay Agent перехватывает запрос, добавляет `giaddr` (IP шлюза), увеличивает `hops`.
+3. Relay пересылает запрос через unicast на указанный DHCP-сервер.
+4. DHCP-сервер определяет подсеть клиента по `giaddr`, подбирает IP из пула и возвращает ответ.
+5. Relay доставляет ответ (`DHCPOFFER`/`DHCPACK`) клиенту.
+
+### Когда использовать
+
+- Центральная DHCP-инфраструктура для множества VLAN/подсетей.
+- Отказ от развёртывания DHCP-сервера в каждой подсети.
+- Linux-маршрутизатор как альтернатива аппаратным решениям (Cisco `ip helper-address`).
+
+## Practical Scenarios
 
 ### Debian/Ubuntu
 
-1. **Установка пакета:**
+1. **Установка:**
 
     ```bash
     sudo apt update
     sudo apt install isc-dhcp-relay
     ```
 
-2. **Настройка:**
-    В Debian настройки DHCP Relay задаются в `/etc/default/isc-dhcp-relay`:
-
-    ```bash
-    sudo systemctl edit --full isc-dhcp-relay
-    ```
-
-    Можно отредактировать файл напрямую:
+2. **Настройка** (`/etc/default/isc-dhcp-relay`):
 
     ```ini
     SERVERS="10.0.4.4 10.0.4.5"
     INTERFACES="eth0 eth1"
     OPTIONS=""
+    ```
+
+    Либо через systemd-override:
+
+    ```bash
+    sudo systemctl edit --full isc-dhcp-relay
     ```
 
 3. **Запуск:**
@@ -47,23 +60,19 @@ DHCP-запросы являются широковещательными и п�
 
 ### RHEL/Rocky Linux/AlmaLinux
 
-1. **Установка пакета:**
-    Пакет `dhcp-relay` является частью `dhcp-server`.
+1. **Установка:**
 
     ```bash
-    sudo dnf install dhcp-server 
+    sudo dnf install dhcp-server
     ```
 
-2. **Настройка службы:**
-    В systemd-юните службы `dhcrelay.service` нужно указать IP-адреса DHCP-серверов.
+2. **Настройка** — редактирование systemd-юнита `dhcrelay.service`:
 
     ```bash
     sudo systemctl edit --full dhcrelay.service
     ```
 
-    В секции `[Service]` найдите строку `ExecStart` и добавьте в конец IP-адреса ваших DHCP-серверов.
-
-    Пример:
+    В секции `[Service]` изменить `ExecStart`:
 
     ```ini
     [Service]
@@ -71,9 +80,7 @@ DHCP-запросы являются широковещательными и п�
     ExecStart=/usr/sbin/dhcrelay -d --no-pid $DHCRELAY_ARGS 10.0.4.4 10.0.4.5
     ```
 
-    Где `10.0.4.4` и `10.0.4.5` — адреса ваших отказоустойчивых DHCP-серверов.
-
-3. **Запуск службы:**
+3. **Запуск:**
 
     ```bash
     sudo systemctl daemon-reload
@@ -81,18 +88,17 @@ DHCP-запросы являются широковещательными и п�
     sudo systemctl enable dhcrelay
     ```
 
-    После этого устройство начнет пересылать DHCP-запросы из всех подсетей, в которых у него есть активные интерфейсы.
+## Additional Information
 
----
+### Диагностика
 
-## Навигация по документации DHCP
+- `journalctl -u isc-dhcp-relay -f` — логи Relay на Debian/Ubuntu.
+- `journalctl -u dhcrelay -f` — логи на RHEL-подобных системах.
+- `tcpdump -i eth0 port 67 or port 68` — проверка прохождения DHCP-запросов.
 
-| Тема | Файл |
-| :--- | :--- |
-| **[Обзор и архитектура](./isc_dhcp_server_overview.md)** | Точка входа, Kea DHCP |
-| **[Базовая настройка](./isc_dhcp_server_basic_config.md)** | Установка, конфигурация |
-| **[Резервирование IP](./isc_dhcp_server_reservations.md)** | Static allocation, маршруты |
-| **[Failover](./isc_dhcp_server_failover.md)** | Отказоустойчивость |
-| **[DHCP Relay](./isc_dhcp_server_relay.md)** | Ретрансляция между подсетями |
-| **[Проверка и мониторинг](./isc_dhcp_server_verification.md)** | Верификация, логи |
-| **[Протокол DHCP](../../../../Networking/Protocols/DHCP/dhcp_overview.md)** | Теория, DORA, безопасность |
+### Связанные документы
+
+- Концепция: [DHCP Relay Agent](../../../../Networking/Protocols/DHCP/dhcp_relay.md)
+- Обзор ISC DHCP: [isc_dhcp_server_overview.md](./isc_dhcp_server_overview.md)
+- Базовая настройка: [isc_dhcp_server_basic_config.md](./isc_dhcp_server_basic_config.md)
+- Failover: [isc_dhcp_server_failover.md](./isc_dhcp_server_failover.md)

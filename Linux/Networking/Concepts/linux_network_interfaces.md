@@ -31,7 +31,7 @@
     - Интерфейс `lo` всегда активен и имеет состояние `UNKNOWN` (не `UP`), что является нормальным
     - Используется для тестирования сетевого стека, межпроцессного взаимодействия, изоляции сервисов
 
-* **`bridge` (мост, например, `br0`)**: "Виртуальный свитч" 2-го уровня. Он объединяет несколько других интерфейсов (физических или виртуальных) в единый broadcast-домен, позволяя им общаться друг с другом. Широко используется в [Docker](Docker) и системах виртуализации (KVM, Proxmox). Подробнее об использовании мостов в Docker см. в [Драйвер сети: bridge](../../../Docker/Docker_network/drivers/bridge.md).
+* **`bridge` (мост, например, `br0`)**: "Виртуальный свитч" 2-го уровня. Он объединяет несколько других интерфейсов (физических или виртуальных) в единый broadcast-домен, позволяя им общаться друг с другом. Широко используется в контейнеризации и системах виртуализации (KVM, Proxmox). Подробнее: [Драйвер сети: bridge в Docker](../../../Docker/Docker_network/drivers/bridge.md).
 
 * **`veth` (Virtual Ethernet)**: "Виртуальный патч-корд". `veth` интерфейсы всегда создаются парами. Все, что отправляется в один конец пары, выходит из другого. Это ключевая технология для контейнеризации, позволяющая соединить сетевой namespace контейнера с хост-системой. Подробнее о сетевых пространствах имен см. в [Сетевые Namespace в Linux](../../Core/namespaces.md#сетевые-пространства-имен).
 
@@ -78,58 +78,7 @@ sudo ip link set veth-host up
 sudo ip link set veth-guest up # Этот интерфейс обычно перемещается в namespace контейнера
 ```
 
-### Подключение нескольких контейнеров: проблема и решение
-
-**Проблема:** При использовании нескольких veth-пар без bridge возникает конфликт маршрутов.
-
-```bash
-# Контейнер 1: veth0 → netns0 (172.18.0.10/16)
-sudo ip link add veth0 type veth peer name ceth0
-sudo ip link set ceth0 netns netns0
-sudo ip addr add 172.18.0.11/16 dev veth0
-
-# Контейнер 2: veth1 → netns1 (172.18.0.20/16)
-sudo ip link add veth1 type veth peer name ceth1
-sudo ip link set ceth1 netns netns1
-sudo ip addr add 172.18.0.21/16 dev veth1
-```
-
-**Результат:** В таблице маршрутизации хоста появляются два одинаковых маршрута:
-
-```
-172.18.0.0/16 dev veth0 proto kernel scope link src 172.18.0.11
-172.18.0.0/16 dev veth1 proto kernel scope link src 172.18.0.21
-```
-
-Первый маршрут выбирается для всего трафика в сети 172.18.0.0/16, что нарушает связность со вторым контейнером.
-
-**Решение:** Использование bridge для объединения контейнеров на уровне L2.
-
-```bash
-# 1. Создать bridge
-sudo ip link add br0 type bridge
-sudo ip link set br0 up
-
-# 2. Подключить veth-интерфейсы к bridge (вместо назначения IP)
-sudo ip link set veth0 master br0
-sudo ip link set veth1 master br0
-
-# 3. Назначить IP-адреса только внутри контейнеров
-sudo ip netns exec netns0 ip addr add 172.18.0.10/16 dev ceth0
-sudo ip netns exec netns1 ip addr add 172.18.0.20/16 dev ceth1
-
-# 4. Назначить IP-адрес bridge (шлюз)
-sudo ip addr add 172.18.0.1/16 dev br0
-```
-
-**Преимущества bridge:**
-
-* Работает на уровне L2 (Ethernet), не требует маршрутов для каждого контейнера
-* Контейнеры в одной подсети видят друг друга напрямую через MAC-адреса
-* В таблице маршрутизации хоста — один маршрут: `172.18.0.0/16 dev br0`
-* Масштабируется на десятки контейнеров без конфликтов
-
-> **См. также:** [Docker bridge](../../../Docker/Docker_network/drivers/bridge.md), [Network namespaces](../../Core/namespaces.md)
+> **Проблема конфликта маршрутов при нескольких veth-парах и решение через bridge:** [Драйвер сети: bridge — конфликт маршрутов](../../../Docker/Docker_network/drivers/bridge.md).
 
 ## Дополнительная информация
 
@@ -152,6 +101,4 @@ sudo ip addr add 172.18.0.1/16 dev br0
 
 ### Оптимизация сетевых интерфейсов
 
-* **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** — настройка буферов, алгоритмов перегрузки
-* **[Offloading](./offloading.md)** — разгрузка CPU через NIC (GRO/LRO/TSO)
-* **[RSS, RPS, RFS](./rss_rps_rfs.md)** — балансировка по ядрам CPU
+Настройка производительности интерфейсов включает [оптимизацию TCP](./tcp_tuning/tcp_tuning_overview.md) (буферы, алгоритмы перегрузки), [offloading](./offloading.md) (разгрузка CPU через NIC: GRO/LRO/TSO) и [балансировку по ядрам CPU — RSS, RPS, RFS](./rss_rps_rfs.md).

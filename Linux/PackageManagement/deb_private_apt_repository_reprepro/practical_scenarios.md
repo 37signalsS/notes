@@ -1,46 +1,58 @@
 # Приватный Apt-репозиторий с reprepro: Практические сценарии
 
-## Сценарий 1: Настройка репозитория с нуля
+## Определения
 
-### Шаг 1: Установка `reprepro` и создание структуры
+**Публикация пакета** — процесс добавления `.deb`-пакета в репозиторий, обновления метаданных и подписи репозитория GPG-ключом.
+
+**Клиентская настройка** — конфигурация APT на клиентской машине для работы с приватным репозиторием (доверенный ключ, sources.list).
+
+Подробные определения и концепции: [Определения и концепции](./definitions_and_concepts.md).
+
+## Основные понятия
+
+### Рабочий процесс
+
+1. **Создание GPG-ключа** → RSA 4096 бит, срок 2-3 года
+2. **Конфигурация `conf/distributions`** → определение дистрибутивов, архитектур, компонентов
+3. **Добавление пакетов** → `reprepro includedeb`, автоматическое обновление метаданных
+4. **Публикация** → веб-сервер (Nginx/Apache) со статическими файлами
+5. **Клиентская настройка** → установка ключа, добавление источника, `apt-get update`
+
+### Требования к инфраструктуре
+
+- Веб-сервер (Nginx/Apache) или файловый доступ
+- GPG-ключ для подписи репозитория
+- CI/CD для автоматизации публикации
+
+## Практические сценарии
+
+### Сценарий 1: Настройка репозитория с нуля
+
+#### Установка и создание структуры
 
 ```bash
-sudo apt-get update
-sudo apt-get install reprepro
-
-# Создать директорию репозитория
-mkdir -p ~/my-repo/conf
-cd ~/my-repo
+sudo apt-get update && sudo apt-get install reprepro
+mkdir -p ~/my-repo/conf && cd ~/my-repo
 ```
 
-### Шаг 2: Создание GPG-ключа для подписи
+#### Создание GPG-ключа
 
 ```bash
 # Генерация ключа (интерактивно)
 gpg --gen-key
 
-# Определение ID ключа (длинный формат)
+# Определение ID ключа
 gpg --list-secret-keys --keyid-format LONG
 
-# Пример вывода:
-# sec   rsa4096/ABCDEF1234567890 2024-01-01 [SC]
-#       ABCDEF1234567890...
-# uid                 [ultimate] Your Name <you@example.com>
-
-# Экспорт публичного ключа для распространения
+# Экспорт публичного ключа
 gpg --export -a "ABCDEF1234567890" > ~/my-repo/repo.key
 ```
 
-**Параметры ключа (рекомендации):**
+Параметры ключа: RSA 4096 бит, срок 2-3 года, comment `APT Repository Key`.
 
-- **Тип:** RSA
-- **Размер:** 4096 бит
-- **Срок действия:** 2-3 года (или без ограничения)
-- **Comment:** `APT Repository Key`
+#### Конфигурация репозитория
 
-### Шаг 3: Конфигурация репозитория
-
-Создание `~/my-repo/conf/distributions`:
+Файл `~/my-repo/conf/distributions`:
 
 ```bash
 cat > ~/my-repo/conf/distributions << 'EOF'
@@ -66,35 +78,24 @@ SignWith: ABCDEF1234567890
 EOF
 ```
 
-### Шаг 4: Добавление пакетов
+#### Добавление пакетов
 
 ```bash
 cd ~/my-repo
 
-# Добавить .deb пакет в репозиторий
-reprepro includedeb focal /path/to/your/package_1.0_amd64.deb
+# Добавить .deb пакет
+reprepro includedeb focal /path/to/package_1.0_amd64.deb
 
 # Добавить пакет с исходниками
-reprepro includesource focal /path/to/your/package_1.0.dsc
+reprepro includesource focal /path/to/package_1.0.dsc
 
-# Добавить несколько пакетов
-reprepro includedeb focal *.deb
-
-# Удалить пакет из репозитория
+# Удалить пакет
 reprepro removepackage focal package-name
 ```
 
-`reprepro` автоматически:
+`reprepro` автоматически создаёт `dists/` и `pool/`, обновляет `Packages.gz` и `Release`, подписывает репозиторий.
 
-- Создаёт структуру `dists/` и `pool/`
-- Обновляет метаданные (`Packages.gz`, `Release`)
-- Подписывает репозиторий GPG-ключом
-
-### Шаг 5: Публикация репозитория (Nginx)
-
-Репозиторий состоит из статических файлов и может быть опубликован любым веб-сервером.
-
-**Конфигурация Nginx:**
+#### Публикация (Nginx)
 
 ```bash
 sudo apt-get install nginx
@@ -103,15 +104,14 @@ sudo tee /etc/nginx/sites-available/repo << 'EOF'
 server {
     listen 80;
     server_name repo.your.domain;
-    root /home/user/my-repo;  # Путь к корневой директории репозитория
+    root /home/user/my-repo;
 
     location / {
-        autoindex on;         # Включение листинга директорий
+        autoindex on;
         autoindex_format html;
         autoindex_localtime on;
     }
 
-    # Блокировка доступа к служебным файлам
     location ~ /conf { deny all; }
     location ~ /dbs { deny all; }
 }
@@ -121,7 +121,9 @@ sudo ln -s /etc/nginx/sites-available/repo /etc/nginx/sites-enabled/repo
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-**Конфигурация Apache:**
+Блокировка `/conf` и `/dbs` обязательна — там хранятся конфиденциальные данные.
+
+#### Публикация (Apache)
 
 ```bash
 sudo apt-get install apache2
@@ -142,97 +144,58 @@ sudo a2ensite repo.conf
 sudo apache2ctl configtest && sudo systemctl reload apache2
 ```
 
-### Шаг 6: Настройка клиента
+#### Настройка клиента
 
-1. **Скопируйте публичный GPG-ключ (`repo.key`)** на клиентскую машину:
-
-    ```bash
-    scp user@repo.server:~/my-repo/repo.key /tmp/
-    ```
-
-2. **Добавьте ключ в доверенные** (современный метод):
-
-    ```bash
-    sudo cp /tmp/repo.key /etc/apt/keyrings/my-repo.gpg
-    ```
-
-3. **Создайте файл списка источников** `/etc/apt/sources.list.d/my-repo.list`:
+1. Скопировать публичный ключ: `scp user@repo.server:~/my-repo/repo.key /tmp/`
+2. Добавить в доверенные: `sudo cp /tmp/repo.key /etc/apt/keyrings/my-repo.gpg`
+3. Создать `/etc/apt/sources.list.d/my-repo.list`:
 
     ```bash
     echo "deb [signed-by=/etc/apt/keyrings/my-repo.gpg] http://repo.your.domain focal main" | \
         sudo tee /etc/apt/sources.list.d/my-repo.list
     ```
 
-4. **Обновите список пакетов:**
+4. Обновить и установить: `sudo apt-get update && sudo apt-get install your-package`
 
-    ```bash
-    sudo apt-get update
-    ```
-
-5. **Установите пакет из приватного репозитория:**
-
-    ```bash
-    sudo apt-get install your-package
-    ```
-
----
-
-## Сценарий 2: Обновление репозитория
+### Сценарий 2: Обновление репозитория
 
 ```bash
 cd ~/my-repo
 
-# Добавить новую версию пакета
+# Добавить новую версию
 reprepro includedeb focal new-package_2.0_amd64.deb
 
-# Удалить старую версию (опционально)
-reprepro removepackage focal old-package
-
-# Проверить целостность репозитория
+# Проверить целостность
 reprepro verify
 
-# Показать содержимое репозитория
+# Показать содержимое
 reprepro list focal
 ```
 
----
+### Сценарий 3: Автоматизация с CI/CD
 
-## Сценарий 3: Автоматизация с CI/CD
-
-**Пример скрипта для публикации пакетов:**
+Скрипт `publish-to-repo.sh`:
 
 ```bash
 #!/bin/bash
-# publish-to-repo.sh
-
 set -e
 
 REPO_DIR="/home/user/my-repo"
 DISTRIBUTION="focal"
 PACKAGE_PATH="$1"
 
-if [ -z "$PACKAGE_PATH" ]; then
-    echo "Usage: $0 <package.deb>"
-    exit 1
-fi
+[ -z "$PACKAGE_PATH" ] && { echo "Usage: $0 <package.deb>"; exit 1; }
 
 cd "$REPO_DIR"
-
-# Добавить пакет
 reprepro includedeb "$DISTRIBUTION" "$PACKAGE_PATH"
-
-# Обновить права доступа
 chmod -R g+r "$REPO_DIR"
-
 echo "Package published successfully"
 ```
 
-**Интеграция с GitHub Actions:**
+Интеграция с GitHub Actions:
 
 ```yaml
-# .github/workflows/publish-repo.yml
 name: Publish to APT Repository
-
 on:
   release:
     types: [published]
@@ -242,39 +205,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
       - name: Download .deb package
         uses: actions/download-release-artifact@v3
         with:
           name: package-amd64.deb
-
       - name: Publish to repository
         run: |
-          # Настроить SSH-ключ для доступа к серверу
           echo "${{ secrets.SSH_KEY }}" > /tmp/key
           chmod 600 /tmp/key
-
-          # Скопировать пакет и опубликовать
           scp -i /tmp/key package-amd64.deb user@repo.server:/tmp/
           ssh -i /tmp/key user@repo.server \
               "reprepro includedeb focal /tmp/package-amd64.deb"
 ```
 
----
-
-## Сценарий 4: Синхронизация с официальным репозиторием
+### Сценарий 4: Синхронизация с официальным репозиторием
 
 ```bash
-# Создать зеркало выбранных пакетов
+# Зеркало выбранных пакетов
 reprepro includepattern focal "nginx-*"
 
-# Импортировать пакет из другого репозитория
+# Импорт из другого репозитория
 reprepro pull focal other-repo focal main nginx
 ```
 
----
+## Дополнительная информация
 
-## Ссылки
-
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
-- [Дополнительная информация](./advanced_topics.md) — управление ключами, безопасность
+Связанные файлы: [Определения и концепции](./definitions_and_concepts.md) (архитектура, конфигурация), [Дополнительная информация](./advanced_topics.md) (управление ключами, безопасность, альтернативы).

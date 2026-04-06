@@ -32,7 +32,7 @@ sudo mdadm --detail --scan | sudo tee -a /etc/mdadm/mdadm.conf
 sudo update-initramfs -u
 ```
 
-Подробнее: [Создание RAID 1](./raid1-management.md) (аналогичные шаги)
+Шаги создания аналогичны [созданию RAID 1](./raid1-management.md).
 
 ---
 
@@ -149,7 +149,4 @@ watch cat /proc/mdstat
 
 ## Дополнительная информация
 
-* [Мониторинг RAID](./monitoring.md)
-* [Уровни RAID](./raid-levels.md#raid-5---чередование-с-распределённой-чётностью)
-* [Расширение RAID 1](./raid1-management.md#добавление-зеркала-расширение)
-* [RAID 6 рекомендации](./raid-levels.md#raid-6---чередование-с-двойной-чётностью)
+См. также: [мониторинг RAID](./monitoring.md), [уровни RAID](./raid-levels.md#raid-5---чередование-с-распределённой-чётностью), [расширение RAID 1](./raid1-management.md#добавление-зеркала-расширение), [рекомендации по RAID 6](./raid-levels.md#raid-6---чередование-с-двойной-чётностью).

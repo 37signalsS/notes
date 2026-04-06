@@ -252,11 +252,3 @@ rpm -V <package_name>
 | **Разрешение зависимостей** | Автоматически | `apt-get install -f` | Автоматически | Вручную |
 | **Удаление** | `apt remove pkg` | `dpkg -r pkg` | `dnf remove pkg` | `rpm -e pkg` |
 | **Обновление базы** | Автоматически | — | Автоматически | `rpm --rebuilddb` |
-
-### Связанные темы
-
-- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
-- **[База данных пакетов](./package_database.md)** — расположение и структура баз данных
-- **[Сборка пакетов](./package_build/basic_concepts.md)** — создание собственных пакетов
-- **[Управление репозиториями DEB](./deb_repositories_sources_list.md)** — настройка источников пакетов
-- **[Управление репозиториями DNF](./dnf_commands/basic_concepts.md)** — настройка репозиториев для RPM

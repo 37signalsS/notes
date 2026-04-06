@@ -69,10 +69,5 @@
 
 ## Дополнительная информация
 
-- Проблемы, связанные с утечками файловых дескрипторов или превышением их лимитов, могут проявляться как ошибка "Too many open files". Диагностика таких проблем подробно описана в [Диагностика ошибки "too many open files"](../Diagnostics/Troubleshooting/troubleshooting_too_many_open_files.md) и [Локализация утечек файловых дескрипторов и блокировок](../Diagnostics/troubleshooting_file_descriptor_leaks.md).
-- Понимание файловых дескрипторов критически важно для отладки приложений и системного программирования в Linux.
-- **Связанные темы:**
-  - [Типы файлов](./file_types.md) — файлы, сокеты, каналы
-  - [Перенаправление ввода-вывода](../Shell/io_redirection.md) — работа с FD в Bash
-  - [Inode и ссылки](./links_inodes_dentries.md) — фундаментальные структуры ФС
-  - [Системные вызовы](../Core/systemd/systemd_unit_file_structure.md) — `open()`, `read()`, `write()`, `close()`
+- Проблемы, связанные с утечками файловых дескрипторов или превышением их лимитов, могут проявляться как ошибка "Too many open files". Диагностика таких проблем подробно описана в [Диагностика ошибки "too many open files"](../Diagnostics/Troubleshooting/troubleshooting_too_many_open_files.md) и [Локализация утечек файловых дескрипторов и блокировок](../Diagnostics/Troubleshooting/troubleshooting_file_descriptor_leaks.md).
+- Понимание файловых дескрипторов критически важно для отладки приложений и системного программирования в Linux. Детали реализации см. в [Типы файлов](./file_types.md), [Inode и ссылки](./links_inodes_dentries.md). Перенаправление дескрипторов в оболочке описано в [Перенаправление ввода-вывода в Bash](../Shell/io_redirection.md). Системные вызовы работы с дескрипторами (`open()`, `read()`, `write()`, `close()`) — в [Структура unit-файлов systemd](../Core/systemd/systemd_unit_file_structure.md).

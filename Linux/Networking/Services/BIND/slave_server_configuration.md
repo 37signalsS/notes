@@ -131,8 +131,5 @@ ls -la /var/lib/bind/
 - **AXFR:** Полный трансфер зоны (TCP/53)
 - **IXFR:** Инкрементальный трансфер (только изменения)
 - **NOTIFY:** Механизм уведомления Slave об изменениях (RFC 1996)
-- **Сопутствующие заметки BIND:**
-  - [Настройка Master](./master_server_local_zone.md) — первичный сервер
-  - [Обратная зона](./reverse_zone_configuration.md) — PTR-записи для Slave
-  - [Тoubleshooting](./troubleshooting.md) — диагностика трансфера
-  - [Зоны DNS](../../../../Networking/Protocols/DNS/dns_zones.md) — теория зон
+
+**Связанные заметки:** [Настройка Master](./master_server_local_zone.md), [Обратная зона](./reverse_zone_configuration.md), [Диагностика](./troubleshooting.md), [Зоны DNS](../../../../Networking/Protocols/DNS/dns_zones.md).

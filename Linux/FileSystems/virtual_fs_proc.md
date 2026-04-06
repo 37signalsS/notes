@@ -110,15 +110,12 @@ cat /proc/1/maps
 
 - `/proc/cpuinfo`: Детальная информация о процессоре. Подробнее см. в [cpu_info.md](../Diagnostics/Hardware/cpu_info.md).
 - `/proc/meminfo`: Подробная статистика по использованию оперативной памяти. Подробнее см. в [proc_meminfo.md](../Diagnostics/Memory/proc_meminfo.md).
-- `/proc/devices`: Список зарегистрированных в ядре символьных и блочных устройств.
-  - **См. подробнее о major/minor номерах:** [Виртуальная файловая система /dev](./virtual_fs_dev.md)
+- `/proc/devices`: Список зарегистрированных в ядре символьных и блочных устройств. Подробнее о major/minor номерах — в документе [Виртуальная файловая система /dev](./virtual_fs_dev.md).
 - `/proc/interrupts`: Статистика по каждому вектору прерывания для каждого CPU. Подробнее см. в [interrupts.md](../Core/kernel/interrupts.md).
 - `/proc/pressure/`: Метрики давления ресурсов (CPU, память, I/O). Подробнее см. в [psi.md](../Core/kernel/psi.md).
 - `/proc/mounts`: Список всех примонтированных файловых систем. Подробнее см. в [mounting.md](./mounting/index.md).
 - `/proc/version`: Версия ядра Linux.
 - `/proc/uptime`: Время работы системы с момента загрузки.
 - `/proc/kcore`: Виртуальный файл, представляющий всю физическую память системы (требует прав root).
-- **Связанные темы:**
-  - [Виртуальные ФС](./virtual_filesystems.md) — обзор псевдо-ФС
-  - [Sysfs](./virtual_fs_sys.md) — информация об устройствах
-  - [Sysctl](../Core/kernel/sysctl.md) — настройка параметров ядра
+
+Обзор всех псевдофайловых систем, включая procfs, находится в файле [Виртуальные ФС](./virtual_filesystems.md). Информация об устройствах и драйверах представлена в [Sysfs](./virtual_fs_sys.md), а настройка параметров ядра через `/proc/sys/` детально описана в материале [Sysctl](../Core/kernel/sysctl.md).

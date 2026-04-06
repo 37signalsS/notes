@@ -1,25 +1,52 @@
 # Полный жизненный цикл LVM
 
-## Этапы жизненного цикла
+## Определения
 
-### 1. Подготовка диска и создание PV
+**Жизненный цикл LVM** — последовательность операций от инициализации физического диска до создания, эксплуатации и полного удаления LVM-структуры.
 
-- Добавьте новый диск (`/dev/sdc`).
-- Создайте на нем раздел (`/dev/sdc1`) и пометьте его для LVM (`parted`, `set 1 lvm on`).
-- Инициализируйте PV:
+## Базовые концепции
 
-    ```bash
-    sudo pvcreate /dev/sdc1
-    ```
+Жизненный цикл LVM состоит из пяти этапов:
 
-### 2. Создание VG и LV
+1. **Инициализация PV** — подготовка диска/раздела для LVM
+2. **Создание VG** — объединение PV в пул хранения
+3. **Создание LV** — выделение логических томов из VG
+4. **Эксплуатация** — форматирование, монтирование, масштабирование
+5. **Удаление** — обратный порядок: umount → LV → VG → PV
+
+**Ключевые принципы:**
+
+- Удаление всегда выполняется в **обратном порядке** создания
+- Перед удалением LV необходимо размонтировать файловую систему
+- `vgreduce` удаляет PV из VG, но не уничтожает данные на диске — `pvremove` очищает LVM-метки
+- Расширение "на лету" возможно без остановки сервисов
+
+## Практические сценарии
+
+### Сценарий: End-to-end — от нового диска до удаления
+
+**Шаг 1: Подготовка диска и создание PV**
+
+Подключите диск (`/dev/sdc`), создайте раздел и пометьте его для LVM:
+
+```bash
+# Создание раздела (parted или fdisk)
+parted /dev/sdc -- mklabel gpt mkpart primary ext4 0% 100% set 1 lvm on
+
+# Инициализация PV
+sudo pvcreate /dev/sdc1
+```
+
+> Детальное руководство по разметке: [Создание PV, VG и LV](./pv_vg_creation.md)
+
+**Шаг 2: Создание VG и LV**
 
 ```bash
 sudo vgcreate my_vg /dev/sdc1
 sudo lvcreate -L 1G -n my_test_lv my_vg
 ```
 
-### 3. Форматирование и монтирование
+**Шаг 3: Форматирование и монтирование**
 
 ```bash
 sudo mkfs.ext4 /dev/my_vg/my_test_lv
@@ -27,27 +54,43 @@ sudo mkdir /mnt/test
 sudo mount /dev/my_vg/my_test_lv /mnt/test
 ```
 
-*(Не забудьте про [`/etc/fstab`](../../mounting/fstab.md#структура-и-синтаксис-файла-etcfstab) для постоянного монтирования)*.
+Для постоянного монтирования добавьте запись в [`/etc/fstab`](../../mounting/fstab.md#структура-и-синтаксис-файла-etcfstab) по UUID (`blkid`).
 
-### 4. Расширение "на лету"
+**Шаг 4: Расширение "на лету"**
 
-- Добавьте еще один диск/раздел (`/dev/sdd1`) в VG: `pvcreate /dev/sdd1`, `vgextend my_vg /dev/sdd1`.
-- Расширьте LV и файловую систему одной командой:
-
-    ```bash
-    sudo lvextend -L +500M -r /dev/my_vg/my_test_lv
-    ```
-
-### 5. Полное удаление (в обратном порядке)
+Добавьте ещё один диск и расширьте LV без простоя:
 
 ```bash
-sudo umount /mnt/test
-sudo lvremove /dev/my_vg/my_test_lv
-sudo vgreduce my_vg /dev/sdc1
-sudo vgreduce my_vg /dev/sdd1
-sudo pvremove /dev/sdc1 /dev/sdd1
+pvcreate /dev/sdd1
+vgextend my_vg /dev/sdd1
+sudo lvextend -L +500M -r /dev/my_vg/my_test_lv
 ```
+
+> Подробно о масштабировании: [Изменение размеров LVM](./lvm_resize.md)
+
+**Шаг 5: Полное удаление (обратный порядок)**
+
+```bash
+sudo umount /mnt/test                # Размонтировать ФС
+sudo lvremove /dev/my_vg/my_test_lv  # Удалить LV
+sudo vgreduce my_vg /dev/sdc1        # Удалить PV из VG
+sudo vgreduce my_vg /dev/sdd1
+sudo pvremove /dev/sdc1 /dev/sdd1    # Очистить LVM-метки
+```
+
+### Сценарий: Замена диска в работающей системе
+
+Для замены диска без простоя используется `pvmove` для миграции данных:
+
+```bash
+vgextend my_vg /dev/sdd1    # Добавить новый диск
+pvmove /dev/sdc1            # Мигрировать данные
+vgreduce my_vg /dev/sdc1    # Удалить старый диск
+pvremove /dev/sdc1          # Очистить метки
+```
+
+> Подробно: [Замена физического диска](./lvm_disk_replacement.md)
 
 ## Дополнительная информация
 
-См. также: [Создание PV, VG и LV](./pv_vg_creation.md), [Изменение размеров LVM](./lvm_resize.md), [Замена физического диска](./lvm_disk_replacement.md), [Просмотр информации](./lvm_view_info.md)
+См. также: [Создание PV, VG и LV](./pv_vg_creation.md), [Изменение размеров LVM](./lvm_resize.md), [Замена физического диска](./lvm_disk_replacement.md), [Просмотр информации](./lvm_view_info.md), [Управление LVM](../management_operations.md)

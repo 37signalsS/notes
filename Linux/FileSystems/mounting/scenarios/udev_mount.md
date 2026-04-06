@@ -77,8 +77,4 @@ udevadm info -a -n /dev/sdb1
 
 # Дополнительная информация
 
-* **Теория и синтаксис udev:** [Udev: подсистема динамического управления устройствами](../../../Core/udev.md)
-* **Альтернативы для автоматического монтирования:**
-  * [Systemd mount units](./systemd_mount.md) — рекомендуется для большинства сценариев
-  * [Autofs](./autofs_mount.md) — для сетевых ресурсов
-  * [udisks2](https://wiki.archlinux.org/title/Udisks2) — для desktop-сред
+Теория и синтаксис udev описаны в [Udev: подсистема динамического управления устройствами](../../../Core/udev.md). Для альтернативных способов автоматического монтирования рекомендуется использовать [Systemd mount units](./systemd_mount.md) для большинства сценариев, [Autofs](./autofs_mount.md) для сетевых ресурсов или [udisks2](https://wiki.archlinux.org/title/Udisks2) для desktop-сред.

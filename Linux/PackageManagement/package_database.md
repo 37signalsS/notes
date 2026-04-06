@@ -192,10 +192,3 @@ rpm -qa --nodigest | grep -v "@.*@"
 # Проверка целостности пакета
 rpm -V <package_name>
 ```
-
-### Связанные темы
-
-- **[Обзор управления пакетами](./linux_package_management_overview.md)** — базовые концепции
-- **[Анализ и получение пакетов](./package_analysis.md)** — изучение метаданных и содержимого
-- **[Команды DNF](./dnf_commands/practical_scenarios.md)** — работа с историей транзакций
-- **[Низкоуровневые утилиты](./package_analysis.md#низкоуровневые-утилиты-dpkg-и-rpm)** — dpkg и rpm напрямую

@@ -103,7 +103,7 @@ PV1: PE[100-500], PV2: PE[501-1500], PV3: PE[1501-2560]
 | :--- | :--- |
 | **Гибкость** | Объединение дисков, изменение размеров "на лету" |
 | **Абстракция** | LV не привязаны к физическому расположению на дисках |
-| **Продвинутые функции** | [Снимки](./snapshots.md), [Тонкое провизионирование](./thin_provisioning.md) |
+| **Продвинутые функции** | [Снимки](./snapshots.md), [Тонкое провизионирование](./thin-provisioning.md) |
 | **Простота управления** | Нет жесткого планирования разделов |
 
 #### Рекомендации по свободному пространству
@@ -158,19 +158,9 @@ mount /dev/data_vg/data_lv /mnt/data
 - GRUB должен прочитать ядро и `initramfs` до активации LVM
 - Разместите `/boot` на обычном разделе (ext4/xfs)
 
-Подробнее: [Расширенные темы](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md
+Подробнее: [Расширенные темы](./advanced_topics/advanced_topics.md)
 
-### Связанные темы
-
-| Тема | Файл |
-| :--- | :--- |
-| Операции управления | [management_operation](s.md)(./management_operations.md) |
-| Снимки (Snapshots) | [snapshots.md](./snapshots.md) |
-| Тонкое провизионирование | [thin_provisioning.md](./thin_provisioning.md) |
-| Расширенные темы | [advanced_topics.md](../../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md |
-| Просмотр информации | [operations/lvm_view_inf](o.md)(./operations/lvm_view_info.md) |
-| Изменение размеров | [operations/lvm_resize.md](./operations/lvm_resize.md) |
-| Замена диска | [operations/lvm_disk_replacement.md](./operations/lvm_disk_replacement.md) |
+См. также: [Снимки](./snapshots.md) · [Тонкое провизионирование](./thin-provisioning.md) · [Управление LVM](./management_operations.md) · [Операции](./operations/lvm_view_info.md) · [Изменение размеров](./operations/lvm_resize.md) · [Замена диска](./operations/lvm_disk_replacement.md) · [Создание PV/VG](./operations/pv_vg_creation.md)
 
 ### Внешние ресурсы
 

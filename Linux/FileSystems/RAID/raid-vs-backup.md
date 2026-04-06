@@ -102,6 +102,4 @@ RAID мгновенно синхронизирует удаление на вс�
 
 ## Дополнительная информация
 
-* [Уровни RAID](./raid-levels.md)
-* [Мониторинг RAID](./monitoring.md)
-* [Резервное копирование БД](../../../Databases/Concepts/backups.md)
+См. также: [уровни RAID](./raid-levels.md), [мониторинг RAID](./monitoring.md), [резервное копирование БД](../../../Databases/Concepts/backups.md).

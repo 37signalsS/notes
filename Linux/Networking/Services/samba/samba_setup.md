@@ -1,19 +1,64 @@
-# Samba: Настройка сервера
+# Samba: Server Configuration
 
-## Установка
+## Definitions
+
+**smb.conf** — главный конфигурационный файл Samba (`/etc/samba/smb.conf`). Состоит из секции `[global]` и отдельных секций шар (`[share_name]`).
+
+**Шара (share)** — общий ресурс Samba, доступный клиентам по сети. Определяется секцией в `smb.conf` с параметрами доступа, пути и прав.
+
+**Гостевой доступ** — доступ к шаре без аутентификации. Управляется параметром `map to guest` и `guest ok`.
+
+## Basic Concepts
+
+### Структура smb.conf
+
+| Секция | Назначение |
+| :--- | :--- |
+| `[global]` | Глобальные параметры сервера, значения по умолчанию |
+| `[homes]` | Автоматические шары домашних директорий пользователей |
+| `[printers]` | Доступ к принтерам |
+| `[имя]` | Именованная шара с произвольными параметрами |
+
+### Ключевые параметры
+
+| Параметр | Описание | Значение по умолчанию |
+| :--- | :--- | :--- |
+| `workgroup` | Имя рабочей группы / домена | `WORKGROUP` |
+| `server string` | Описание сервера (отображается клиентам) | `%h server` |
+| `security` | Режим аутентификации | `user` |
+| `map to guest` | Маппинг неудачных логинов | `Never` |
+| `server min protocol` | Минимальная версия SMB | `SMB2_10` |
+| `load printers` | Загрузка списка принтеров | `yes` |
+| `disable spoolss` | Отключение подсистемы печати | `no` |
+
+> **Важно:** Параметр `encrypt passwords` deprecated с Samba 4.11, удалён в 4.24. Шифрование паролей всегда включено по умолчанию.
+
+### Переменные подстановки
+
+| Переменная | Описание |
+| :--- | :--- |
+| `%u` | Имя пользователя |
+| `%g` | Группа пользователя |
+| `%I` | IP-адрес клиента |
+| `%m` | NetBIOS-имя клиента |
+| `%S` | Имя теку шары |
+| `%H` | Домашняя директория пользователя |
+
+### Установка пакетов
 
 ```bash
 # Debian/Ubuntu
-sudo apt-get update
-sudo apt-get install -y samba
+sudo apt-get update && sudo apt-get install -y samba
 
 # RHEL/CentOS
 sudo yum install -y samba samba-common samba-client
 ```
 
-## Настройка гостевого (анонимного) доступа
+Проверка конфигурации: `testparm -s`
 
-### Шаг 1: Создание директории
+## Practical Scenarios
+
+### Гостевой (анонимный) доступ
 
 ```bash
 sudo mkdir -p /srv/samba/public
@@ -21,13 +66,10 @@ sudo chown -R nobody:nogroup /srv/samba/public/
 sudo chmod -R 0775 /srv/samba/public/
 ```
 
-### Шаг 2: Конфигурация (`/etc/samba/smb.conf`)
-
 ```ini
 [global]
    workgroup = WORKGROUP
    server string = Samba Server
-   netbios name = smb-server
    security = user
    map to guest = bad user
    server min protocol = SMB3
@@ -43,36 +85,20 @@ sudo chmod -R 0775 /srv/samba/public/
    read only = no
 ```
 
-### Шаг 3: Проверка и запуск
+### Доступ по паролю
 
 ```bash
-testparm  # Проверка конфигурации
-
-sudo systemctl enable --now smb
-sudo systemctl enable --now nmb
-```
-
-## Настройка доступа по паролю
-
-### Шаг 1: Создание пользователя
-
-```bash
-# Создание системного пользователя
+# Создание системного пользователя без shell
 sudo useradd --no-create-home --shell /usr/sbin/nologin smbuser
 
-# Установка пароля Samba (отдельная база паролей)
+# Установка пароля Samba (отдельная база)
 sudo smbpasswd -a smbuser
-```
 
-### Шаг 2: Создание ресурса
-
-```bash
+# Создание директории
 sudo mkdir -p /srv/samba/private
 sudo chown -R smbuser:smbuser /srv/samba/private/
 sudo chmod -R 0770 /srv/samba/private/
 ```
-
-### Шаг 3: Добавление шары в конфигурацию
 
 ```ini
 [Private]
@@ -84,71 +110,36 @@ sudo chmod -R 0770 /srv/samba/private/
    browsable = yes
 ```
 
-Перезапустите Samba: `sudo systemctl restart smb nmb`.
-
-## Структура `/etc/samba/smb.conf`
-
-### Секции
-
-| Секция | Описание |
-| :--- | :--- |
-| `[global]` | Параметры Samba, значения по умолчанию |
-| `[homes]` | Автоматический доступ к домашним директориям |
-| `[printers]` | Доступ к принтерам |
-| **Именованные** | Конкретные общие ресурсы |
-
-### Основные параметры секций
-
-| Параметр | Описание |
-| :--- | :--- |
-| `path` | Путь к директории |
-| `browseable` | Показывать в списке доступных |
-| `writable` / `read only` | Разрешена ли запись |
-| `valid users` | Список пользователей (группы с `@`) |
-| `guest ok` | Разрешить гостевой доступ |
-| `inherit ACLs` | Наследование ACL родительской директории |
-
-### Переменные
-
-| Переменная | Описание |
-| :--- | :--- |
-| `%s` | Имя секции |
-| `%u` | Имя пользователя |
-| `%w` | Имя рабочей группы |
-| `%d` | ID пользователя (UID) |
-
-## Монтирование SMB на клиенте Linux
-
-### Временное монтирование
+### Шара для группы
 
 ```bash
-# Гостевой доступ
-sudo mount -t cifs //smb-server/Public /mnt/samba -o guest
-
-# С паролем
-sudo mount -t cifs //smb-server/Private /mnt/private -o username=smbuser
-```
-
-### Постоянное монтирование (`/etc/fstab`)
-
-```bash
-# Создание файла с учётными данными
-sudo mkdir -p /root/.smb
-sudo tee /root/.smb/credentials <<EOF
-username=smbuser
-password=secretpassword
-EOF
-sudo chmod 600 /root/.smb/credentials
+sudo groupadd sambashare
+sudo usermod -aG sambashare username
+sudo mkdir -p /srv/samba/share
+sudo chown -R root:sambashare /srv/samba/share
+sudo chmod 2770 /srv/samba/share  # setgid для наследования группы
+sudo smbpasswd -a username
 ```
 
 ```ini
-# /etc/fstab
-//smb-server/private /mnt/samba cifs credentials=/root/.smb/credentials,uid=1000,gid=1000,file_mode=0755,dir_mode=0755,nofail 0 0
+[share]
+   path = /srv/samba/share
+   browsable = yes
+   read only = no
+   valid users = @sambashare
+   create mask = 0660
+   directory mask = 0770
+   force group = sambashare
 ```
 
-## Связанные документы
+### Управление службами
 
-- [Базовые концепции](./samba_basics.md)
-- [Безопасность](./samba_security.md) — шифрование, VFS модули
-- [AD-интеграция](./samba_ad.md) — домен, winbind
-- [Монтирование в fstab](../../../FileSystems/mounting/fstab.md)
+```bash
+sudo systemctl enable --now smb nmb    # Debian/Ubuntu
+sudo systemctl restart smb nmb          # Перезапуск
+testparm -s                             # Проверка конфигурации
+```
+
+## Additional Information
+
+Связанные документы: [обзор Samba](./index.md), [безопасность и VFS](./samba_security.md), [AD-интеграция](./samba_ad.md), [устранение неполадок](./samba_troubleshooting.md). Клиентское монтирование: [fstab](../../../FileSystems/mounting/fstab.md), [systemd mount](../../../FileSystems/mounting/scenarios/systemd_mount.md).

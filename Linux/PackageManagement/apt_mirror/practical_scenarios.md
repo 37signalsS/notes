@@ -1,6 +1,18 @@
 # Зеркалирование APT: Практические сценарии
 
-## Сценарий 1: Создание зеркала для APT (Debian/Ubuntu)
+## Definitions
+
+Определения терминов — [Definitions](./definitions.md).
+
+## Basic Concepts
+
+Обзор архитектуры, инструменты и принципы работы — [Basic Concepts](./basic_concepts.md).
+
+---
+
+## Practical Scenarios
+
+### Сценарий 1: Создание зеркала для APT (Debian/Ubuntu)
 
 ### Шаг 1: Установка
 
@@ -234,14 +246,12 @@ deb file:///var/www/html/offline-repo/ubuntu jammy main restricted universe mult
 sudo apt update
 ```
 
----
+## Additional Information
 
-## Связанные документы
+**Оптимизация и мониторинг** — фильтрация по архитектурам, инкрементальная синхронизация, логирование, уведомления об ошибках: [Additional Info](./additional_info.md).
 
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные понятия](./basic_concepts.md)** — назначение, архитектура, инструменты
-- **[Дополнительная информация](./additional_info.md)** — оптимизация, мониторинг, проблемы
+**Термины и концепции** — [Definitions](./definitions.md), [Основные понятия](./basic_concepts.md).
 
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [apt_repository_mirror.md](./practical_scenarios.md)*
+**Смежные темы:**
+- **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — публикация внутренних .deb-пакетов
+- **[Зеркалирование YUM/DNF](../yum_dnf_repository_mirror.md)** — аналогичный процесс для RPM-экосистемы
