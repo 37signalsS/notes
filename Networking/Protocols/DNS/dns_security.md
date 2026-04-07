@@ -10,7 +10,7 @@
 
 **Cache Poisoning (Отравление кэша)** — атака, при которой злоумышленник внедряет поддельные DNS-записи в кэш резолвера, перенаправляя пользователей на фишинговые сайты.
 
-## Основные концепции
+## Базовые концепции
 
 ### Проблемы безопасности стандартного DNS
 
@@ -72,7 +72,7 @@ dig +multi +noall +answer DS example.com
 
 ## Дополнительная информация
 
-- **RFC 4033–4035** — спецификация DNSSEC
-- **RFC 8484** — спецификация DoH
-- **RFC 7858** — спецификация DoT
-- **Статистика DNSSEC:** [State of DNSSEC 2025](https://www.linkedin.com/posts/botterman_state-of-dnssec-2025-whisper-activity-7407089672415322112-CJaR) — анализ 209 млн доменов
+- DNSSEC: RFC 4033–4035
+- DoH: RFC 8484
+- DoT: RFC 7858
+- Статистика DNSSEC: [State of DNSSEC 2025](https://www.linkedin.com/posts/botterman_state-of-dnssec-2025-whisper-activity-7407089672415322112-CJaR) — анализ 209 млн доменов

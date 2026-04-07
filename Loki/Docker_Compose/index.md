@@ -4,16 +4,10 @@
 
 ## Документы
 
-| Документ | Описание |
-| :--- | :--- |
-| **[Основные концепции](./loki_docker_concepts.md)** | Определения, компоненты стека (Loki, Promtail, Grafana, Alloy) |
-| **[Настройка Docker Compose](./loki_docker_compose_setup.md)** | Конфигурация сервисов, datasources, Promtail, запуск и проверка |
-| **[Дополнительные темы](./loki_docker_advanced.md)** | Grafana Alloy, постоянное хранилище, troubleshooting |
+**[Настройка Docker Compose](./loki_docker_compose_setup.md)** — определения, компоненты стека, конфигурация сервисов, datasources, Promtail/Alloy, запуск и проверка.
 
-## Связанные документы
+**[Дополнительные темы](./loki_docker_advanced.md)** — постоянное хранилище, troubleshooting.
 
-- **[loki_overview.md](../loki_overview.md)** — базовые концепции и архитектура Loki
-- **[loki_stack_setup_guide.md](../../Loki/loki_overview.md)** — развертывание в Kubernetes
-- **[fluentbit_integration.md](../fluentbit_integration.md)** — интеграция Fluent Bit вместо Promtail
-- **[Loki Docker Driver](../../Docker/Docker_logs/loki_logging_driver_setup.md)** — отправка логов напрямую из Docker
-- **[Grafana Alloy](../../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для новых развертываний
+## Связанные темы
+
+Базовые концепции и архитектура: [loki_overview.md](../loki_overview.md). Развертывание в Kubernetes: [loki_stack_setup_guide.md](../../Loki/loki_overview.md). Интеграция Fluent Bit: [fluentbit_integration.md](../fluentbit_integration.md). Отправка логов напрямую из Docker: [Loki Docker Driver](../../Docker/Docker_logs/loki_logging_driver_setup.md). Рекомендуемый агент для новых развёртываний: [Grafana Alloy](../../Grafana/grafana_alloy_overview.md).

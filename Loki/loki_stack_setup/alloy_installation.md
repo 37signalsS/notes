@@ -1,42 +1,65 @@
 # Установка Grafana Alloy в Kubernetes
 
-## Обзор
+## Определения
 
-**Grafana Alloy** — универсальный агент для сбора телеметрии (метрики, логи, трассировки), рекомендуемый для новых развертываний вместо Promtail.
+**Grafana Alloy** — универсальный агент для сбора телеметрии (метрики, логи, трассировки, профили), рекомендуемый для новых развертываний вместо Promtail и Grafana Agent.
 
-> **⚠️ Важно:** Promtail находится в статусе deprecated (весна 2026). Для новых развертываний используйте Grafana Alloy.
+> **⚠️ Важно:** Promtail в статусе deprecated (весна 2026), Grafana Agent (static mode) — deprecated (ноябрь 2025). Для новых развертываний используйте Grafana Alloy.
 
-## Преимущества Alloy
+**Подробнее:** [Обзор Grafana Alloy](../../Grafana/grafana_alloy_overview.md)
 
-* **Универсальность:** метрики + логи + трассировки
-* **Активная разработка:** официальная поддержка Grafana Labs
-* **Конвертеры конфигураций:** автоматическая миграция с Promtail/Grafana Agent
-* **Язык River:** декларативный язык конфигурации (похож на Terraform)
+## Основные концепции
 
-**Подробнее:** [Grafana Alloy Overview](../../Grafana/grafana_alloy_overview.md)
+### Архитектура развертывания в Kubernetes
 
-## Подготовка
+| Компонент | Тип контроллера | Назначение |
+| :--- | :--- | :--- |
+| **Alloy** | DaemonSet | Сбор логов с файлов на нодах |
+| **Alloy** | Deployment | Сбор метрик из подов, трассировок |
+| **Alloy** | StatefulSet | Агрегация данных в кластерном режиме |
+
+### Язык конфигурации River
+
+Alloy использует River (диалект HCL) для описания графа компонентов. Поток данных: `discovery` → `source` → `process` → `write`.
+
+**Пример базового потока:**
+
+```river
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.kubernetes.pods.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki-gateway.logging.svc.cluster.local:80/loki/api/v1/push"
+  }
+}
+```
+
+## Практические сценарии
+
+### Подготовка репозитория Helm
 
 ```bash
 helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
-```
-
-## Настройка Values для Alloy
-
-```bash
 helm show values grafana/alloy > alloy_values.yaml
 ```
 
-### Пример `alloy_values.yaml` для сбора логов
+### Сценарий 1: Сбор логов из подов Kubernetes
+
+**Файл `alloy_values.yaml`:**
 
 ```yaml
-# alloy_values.yaml
 alloy:
   configMap:
     create: true
     content: |
-      // Сбор логов из подов Kubernetes
       discovery.kubernetes "pods" {
         role = "pod"
       }
@@ -46,7 +69,6 @@ alloy:
         forward_to = [loki.write.default.receiver]
       }
 
-      // Отправка в Loki
       loki.write "default" {
         endpoint {
           url = "http://loki-gateway.logging.svc.cluster.local:80/loki/api/v1/push"
@@ -54,30 +76,35 @@ alloy:
       }
 
 controller:
-  type: daemonset  # DaemonSet для сбора логов со всех нод
+  type: daemonset
 
 tolerations:
   - operator: "Exists"
 ```
 
-### Конфигурация для различных сценариев
-
-#### Сбор логов с файлов
+### Сценарий 2: Сбор логов с файлов на нодах
 
 ```river
-local.file "var_log" {
-  path      = "/var/log/*.log"
-  type      = "text"
-  forward_to = [loki.source.file.logs.receiver]
+discovery.file "var_log" {
+  path_targets = [{
+    __path__ = "/var/log/*.log",
+    "job"    = "node-logs",
+  }]
 }
 
 loki.source.file "logs" {
-  targets    = local.file.var_log.targets
+  targets    = discovery.file.var_log.targets
   forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki-gateway.logging.svc.cluster.local:80/loki/api/v1/push"
+  }
 }
 ```
 
-#### Сбор метрик Prometheus
+### Сценарий 3: Сбор метрик Prometheus
 
 ```river
 discovery.kubernetes "pods" {
@@ -88,15 +115,20 @@ prometheus.scrape "pods" {
   targets    = discovery.kubernetes.pods.targets
   forward_to = [prometheus.remote_write.default.receiver]
 }
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://mimir-gateway.monitoring.svc.cluster.local:9009/api/v1/push"
+  }
+}
 ```
 
-## Установка Alloy
-
-Установим Alloy с помощью Helm в `logging` namespace:
+### Установка Alloy
 
 ```bash
 helm upgrade --install alloy grafana/alloy \
   --namespace logging \
+  --create-namespace \
   -f alloy_values.yaml
 ```
 
@@ -113,17 +145,24 @@ kubectl describe daemonset -n logging -l app.kubernetes.io/name=alloy
 kubectl logs -n logging -l app.kubernetes.io/name=alloy -f
 ```
 
-## Миграция с Promtail
+### Миграция с Promtail
 
-Grafana предоставляет конвертер конфигураций Promtail → Alloy:
+Grafana предоставляет онлайн-конвертер конфигураций: [Migrate from Promtail to Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate-from-promtail/)
 
-```bash
-# Использование конвертера (онлайн)
-# https://grafana.com/docs/alloy/latest/tasks/migrate-from-promtail/
-```
+**Процесс миграции:**
+1. Экспортируйте текущую конфигурацию Promtail (`promtail.yaml`).
+2. Конвертируйте через онлайн-инструмент.
+3. Протестируйте новую конфигурацию в staging.
+4. Обновите Helm-релиз с новой конфигурацией Alloy.
 
-## Связанные темы
+## Дополнительная информация
 
-* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL
-* **[Установка Promtail](promtail_installation.md)** — устаревший агент
-* **[Grafana Alloy Overview](../../Grafana/grafana_alloy_overview.md)** — подробная информация об Alloy
+### Рекомендуемые ресурсы
+
+| Ресурс | Описание |
+| :--- | :--- |
+| [Обзор Grafana Alloy](../../Grafana/grafana_alloy_overview.md) | Архитектура, язык River, сравнение с OTel Collector |
+| [Документация Alloy](https://grafana.com/docs/alloy/latest/) | Официальная документация Grafana Labs |
+| [Конвертер Promtail → Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate-from-promtail/) | Миграция конфигураций |
+| [Обзор Loki](../loki_overview.md) | Архитектура, LogQL |
+| [Установка Promtail](promtail_installation.md) | Устаревший агент (deprecated) |

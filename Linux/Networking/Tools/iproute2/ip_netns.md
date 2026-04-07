@@ -150,7 +150,7 @@ sudo ip netns exec my_namespace ip route add default via 10.0.0.1
 * `MASQUERADE` — автоматическая подмена IP источника на IP внешнего интерфейса
 * `! -o br0` (опционально) — исключение трафика, идущего в bridge
 
-> **См. также:** [NAT](../../../../Networking/Concepts/nat.md#snat-vs-masquerade)
+> **См. также:** [NAT](../../../../Networking/Concepts/nat/overview.md#snat-vs-masquerade-linux-iptablesnftables)
 
 ## Дополнительная информация
 

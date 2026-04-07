@@ -66,27 +66,27 @@ ICMP помогает диагностировать два типа ошибо�
 
 Таким образом, ICMP сообщает отправителю об ошибке, позволяя идентифицировать проблемное соединение или приложение.
 
-## Основные типы ICMP-сообщений
+## Практические сценарии
 
 ### Диагностика доступности
 
 | Type | Code | Название | Использование |
 |------|------|----------|---------------|
-| **8/0** | 0 | Echo Request/Reply | `ping` — проверка доступности |
+| **8/0** | 0 | Echo Request/Reply | `ping` — проверка доступности ([подробнее](./icmp_echo_ping.md)) |
 | **13/14** | 0 | Timestamp Request/Reply | Синхронизация времени, измерение RTT |
 
 ### Сообщения об ошибках
 
 | Type | Code | Название | Описание |
 |------|------|----------|----------|
-| **3** | 0-15 | Destination Unreachable | Недостижимость цели |
+| **3** | 0-15 | Destination Unreachable | Недостижимость цели ([подробнее](./icmp_destination_unreachable.md)) |
 | | **0** | **Net Unreachable** | Сеть недоступна (нет маршрута) |
 | | **1** | **Host Unreachable** | Хост недоступен (не отвечает) |
 | | **2** | **Protocol Unreachable** | Протокол не поддерживается |
 | | **3** | **Port Unreachable** | Порт закрыт (UDP) |
 | | **4** | **Fragmentation Needed** | Требуется фрагментация, но установлен флаг DF |
-| **5** | 0-3 | Redirect | Перенаправление к лучшему шлюзу |
-| **11** | 0 | Time Exceeded (TTL) | Истечение TTL (используется в `traceroute`) |
+| **5** | 0-3 | Redirect | Перенаправление к лучшему шлюзу ([подробнее](./icmp_redirect.md)) |
+| **11** | 0 | Time Exceeded (TTL) | Истечение TTL, используется в `traceroute` ([подробнее](./icmp_time_exceeded.md)) |
 | | 1 | Time Exceeded (Fragment) | Превышено время сборки фрагментов |
 | **12** | 0-2 | Parameter Problem | Ошибка в заголовке пакета |
 
@@ -98,24 +98,10 @@ ICMP помогает диагностировать два типа ошибо�
 | **10** | Router Solicitation | Хост запрашивает информацию о маршрутизаторах |
 | **4** | **Source Quench** | Запрос на уменьшение скорости отправки (устарел) |
 
-## Связанные документы
+## Дополнительная информация
 
-**Детальное описание типов ICMP:**
-- **[Echo Request/Reply и ping](./icmp_echo_ping.md)** — диагностика доступности
-- **[Destination Unreachable](./icmp_destination_unreachable.md)** — сообщения об ошибках доставки
-- **[ICMP Redirect](./icmp_redirect.md)** — управление маршрутизацией
-- **[Time Exceeded](./icmp_time_exceeded.md)** — TTL и traceroute
+**Спецификации:** RFC 792 (ICMPv4), RFC 4443 (ICMPv6), RFC 4884 (Extended ICMP).
 
-**Протоколы:**
-- **[IP](../ip.md)** — сетевой уровень
-- **[TCP](../TCP/overview.md)** — транспортный уровень
+**Смежные протоколы:** [IP](../ip.md) — сетевой уровень, [TCP](../TCP/overview.md) — транспортный уровень.
 
-**Утилиты:**
-- **[ping](../../Linux/Diagnostics/Networking/ping.md)** — проверка доступности
-- **[traceroute](../../Linux/Diagnostics/Networking/traceroute_mtr.md)** — трассировка маршрута
-
-## RFC
-
-- **RFC 792** — спецификация ICMP для IPv4
-- **RFC 4443** — ICMPv6 для IPv6 (обязательный протокол для IPv6)
-- **RFC 4884** — Extended ICMP
+**Диагностические утилиты:** [ping](../../../Linux/Diagnostics/Networking/ping.md), [traceroute](../../../Linux/Diagnostics/Networking/traceroute_mtr.md).

@@ -59,6 +59,13 @@ Mimir состоит из набора микросервисов, каждый 
 - **Мульти-тенатность:** Встроенная поддержка изоляции данных, запросов и лимитов для разных команд или клиентов.
 - **Глобальный обзор:** Позволяет выполнять запросы к метрикам со всех ваших Prometheus-серверов в одном месте.
 
+### Ключевые концепции
+
+- **Remote Write API** — стандартный протокол Prometheus для отправки метрик в удалённое хранилище. Подробнее: [Prometheus remote_read_write](../Prometheus/scaling/remote_read_write.md).
+- **PromQL** — язык запросов к метрикам, полностью поддерживаемый Mimir. Подробнее: [PromQL functions](../Prometheus/concepts/promql/functions.md).
+- **Мульти-тенантность** — изоляция данных через HTTP-заголовок `X-Scope-OrgID`.
+- **TSDB Blocks** — сжатые блоки данных временных рядов, хранимые в объектном хранилище. Подробнее: [TSDB concepts](../Prometheus/concepts/tsdb.md).
+
 ### Сравнение с альтернативами
 
 **Сравнение производительности (2025):**
@@ -204,28 +211,6 @@ prometheus.remote_write "mimir" {
 - **[GitHub-репозиторий](https://github.com/grafana/mimir)** — исходный код, release notes, issues
 - **[Grafana Cloud](https://grafana.com/products/cloud/mimir/)** — управляемая версия Mimir от Grafana Labs
 - **[Helm-чарт](https://github.com/grafana/helm-charts/tree/main/charts/mimir)** — официальные чарты для Kubernetes
-
-### Связанные файлы в базе знаний
-
-| Файл | Описание |
-| :--- | :--- |
-| [Grafana overview](../Grafana/grafana_overview.md) | Визуализация метрик из Mimir |
-| [Grafana datasources](../Grafana/grafana_datasources.md) | Настройка Mimir как источника данных |
-| [Grafana Alloy](../Grafana/grafana_alloy_overview.md) | Агент для сбора и отправки метрик |
-| [Prometheus overview](../Prometheus/overview.md) | Сбор метрик, remote_write |
-| [Prometheus remote_read_write](../Prometheus/scaling/remote_read_write.md) | Конфигурация remote_write |
-| [VictoriaMetrics overview](../VictoriaMetrics/overview.md) | Альтернативное решение для хранения |
-| [Thanos overview](../Prometheus/scaling/thanos_overview.md) | Альтернативное решение для хранения |
-| [Loki overview](../Loki/loki_overview.md) | Сбор и хранение логов |
-| [Tempo overview](../Tempo/index.md) | Хранение распределённых трассировок |
-| [Observability overview](../Concepts/Observability_and_Monitoring/observability_definitions.md) | Концепция наблюдаемости |
-
-### Ключевые концепции
-
-- **Remote Write API** — стандартный протокол Prometheus для отправки метрик в удалённое хранилище
-- **PromQL** — язык запросов к метрикам, полностью поддерживаемый Mimir
-- **Мульти-тенантность** — изоляция данных через HTTP-заголовок `X-Scope-OrgID`
-- **TSDB Blocks** — сжатые блоки данных временных рядов, хранимые в объектном хранилище
 
 ### Рекомендации по эксплуатации
 

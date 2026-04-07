@@ -247,13 +247,7 @@ NDP заменяет ARP в IPv6 и работает на основе ICMPv6.
 
 ### Совместимость и переход
 
-**Стратегии перехода с IPv4 на IPv6:**
-
-| Стратегия | Описание |
-| :--- | :--- |
-| **Dual Stack** | Одновременная поддержка IPv4 и IPv6 |
-| **Tunneling** | Инкапсуляция IPv6 в IPv4 (6to4, Teredo, ISATAP) |
-| **Translation** | Трансляция между IPv4 и IPv6 (NAT64, SIIT) |
+**Стратегии перехода с IPv4 на IPv6:** Dual Stack, Tunneling, Translation (NAT64/SIIT). Подробнее — [Сосуществование IPv4 и IPv6 (Dual Stack)](../OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
 
 ### Актуальность (2025)
 

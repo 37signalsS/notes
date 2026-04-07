@@ -1,40 +1,74 @@
 # Установка Loki в Kubernetes
 
-## Подготовка
+## Определения
 
-Добавьте официальный Helm-репозиторий Grafana:
+**Loki Helm-чарт** — пакет для развертывания Loki в Kubernetes с поддержкой трёх режимов: Single Binary, Simple Scalable, Distributed.
 
-```bash
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
-```
+> **⚠️ Важно (март 2026):** Репозиторий `grafana https://grafana.github.io/helm-charts` более не обновляется. Чарт Loki мигрировал на `grafana-community`.
+>
+> ```bash
+> helm repo add grafana-community https://grafana-community.github.io/helm-charts
+> helm repo update
+> ```
 
-## Настройка Values для Loki
+**Текущая версия (апрель 2026):** Loki 3.x (стабильная), Helm-чарт 6.55.x+
 
-Сохраним стандартные `values` для дальнейшей кастомизации:
+**Подробнее:** [Обзор Grafana Loki](../loki_overview.md)
 
-```bash
-helm show values grafana/loki > loki_values.yaml
-```
+## Основные концепции
 
-### Актуальные параметры для Loki 3.x
+### Режимы развертывания
 
-| Параметр | Описание | Рекомендуемое значение |
+| Режим | Компоненты | Назначение |
 | :--- | :--- | :--- |
-| **`loki.storage.type`** | Тип хранилища | `s3`, `gcs`, `azure`, `filesystem` |
-| **`loki.storage.bucketNames.chunks`** | Bucket для чанков | `loki-chunks` |
-| **`loki.storage.bucketNames.ruler`** | Bucket для правил | `loki-ruler` |
-| **`loki.storage.bucketNames.admin`** | Bucket для конфигураций | `loki-admin` |
-| **`deploymentMode`** | Режим развертывания | `SimpleScalable` (рекомендуется) |
-| **`loki.commonConfig.replication_factor`** | Фактор репликации | `3` (для HA) |
-| **`read.replicas`** | Реплики для чтения | `2` |
-| **`write.replicas`** | Реплики для записи | `2` |
-| **`backend.replicas`** | Реплики бэкенда | `2` |
+| **Single Binary** | Все в одном поде | Тестирование, разработка, малые нагрузки |
+| **Simple Scalable** (рекомендуется) | Разделение read/write/backend | Production-средние нагрузки |
+| **Distributed** | Каждый компонент отдельно | Крупные production-кластеры |
 
-### Пример `loki_values.yaml` для production
+### Архитектура Simple Scalable (рекомендуемый режим)
+
+```
+┌─────────┐     ┌──────────┐     ┌─────────┐
+│ Gateway │────→│  Write   │────→│ Storage │
+│  (RO)   │     │ (Ingester)│     │  (S3)   │
+└────┬────┘     └──────────┘     └─────────┘
+     │
+     │     ┌──────────┐     ┌─────────┐
+     └────→│   Read   │────→│  Cache  │
+           │(Querier) │     │ (Redis) │
+           └──────────┘     └─────────┘
+           ┌──────────┐
+           │ Backend  │
+           │(Compactor)│
+           └──────────┘
+```
+
+### Схема хранения данных
+
+| Параметр | Loki 3.x (актуально) | Loki 2.x (устарело) |
+| :--- | :--- | :--- |
+| **Schema** | `v13` | `v12`, `v11` |
+| **Store** | `tsdb` | `boltdb-shipper` |
+| **Index period** | `24h` | `24h` |
+
+## Практические сценарии
+
+### Подготовка репозитория Helm
+
+```bash
+# Новый репозиторий (после 16 марта 2026)
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
+
+# Просмотр значений по умолчанию
+helm show values grafana-community/loki > loki_values.yaml
+```
+
+### Сценарий 1: Production — Simple Scalable с S3
+
+**Файл `loki_values.yaml`:**
 
 ```yaml
-# loki_values.yaml
 deploymentMode: SimpleScalable
 
 loki:
@@ -44,6 +78,10 @@ loki:
       chunks: loki-chunks
       ruler: loki-ruler
       admin: loki-admin
+    s3:
+      endpoint: s3.amazonaws.com
+      secretAccessKey: ${S3_SECRET_KEY}
+      accessKeyId: ${S3_ACCESS_KEY}
   commonConfig:
     replication_factor: 3
   schemaConfig:
@@ -55,6 +93,10 @@ loki:
         index:
           prefix: index_
           period: 24h
+  limits_config:
+    retention_period: 744h  # 31 день
+    max_query_series: 5000
+    max_query_parallelism: 14
 
 read:
   replicas: 2
@@ -99,16 +141,49 @@ monitoring:
     enabled: true
 ```
 
-> **Примечание:** Схема `v13` с хранилищем `tsdb` — актуальная схема для Loki 3.x. Для тестовых сред можно использовать `filesystem` вместо `s3`.
+### Сценарий 2: Тестирование — Single Binary с filesystem
 
-## Установка Loki
+```yaml
+deploymentMode: SingleBinary
 
-Установим Loki с помощью Helm в `logging` namespace:
+loki:
+  storage:
+    type: filesystem
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+singleBinary:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+gateway:
+  enabled: true
+  replicas: 1
+```
+
+### Установка Loki
 
 ```bash
-helm upgrade --install loki grafana/loki \
+helm upgrade --install loki grafana-community/loki \
   --namespace logging \
-  -f loki_values.yaml
+  --create-namespace \
+  -f loki_values.yaml \
+  --wait --atomic
 ```
 
 ### Проверка статуса
@@ -117,13 +192,50 @@ helm upgrade --install loki grafana/loki \
 # Проверка подов
 kubectl get pods -n logging -l app.kubernetes.io/name=loki
 
-# Детальная информация
+# Проверка сервисов
+kubectl get svc -n logging -l app.kubernetes.io/name=loki
+
+# Детали StatefulSet
 kubectl describe statefulset -n logging -l app.kubernetes.io/name=loki
+
+# Логи Loki
+kubectl logs -n logging -l app.kubernetes.io/name=loki -f
 ```
 
-## Связанные темы
+### Troubleshooting
 
-* **[Обзор Grafana Loki](../loki_overview.md)** — архитектура, LogQL, базовые концепции
-* **[Установка Promtail](promtail_installation.md)** — агент для сбора логов
-* **[Установка Grafana](grafana_installation.md)** — визуализация логов
-* **[Grafana Alloy](../../Grafana/grafana_alloy_overview.md)** — альтернатива Promtail
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Pod в Pending** | Нет PV/нет доступа к S3 | Проверьте `kubectl get pvc -n logging` и credentials S3 |
+| **CrashLoopBackOff** | Ошибка схемы/хранилища | Логи: `kubectl logs -n logging -l app.kubernetes.io/name=loki` |
+| **Gateway 502** | Backend не готов | Подождите инициализации всех компонент |
+| **Schema mismatch** | Неправильная `from` дата | Убедитесь, что `from` >= даты первого запуска |
+
+### Полезные команды
+
+```bash
+# Статус релиза
+helm status loki -n logging
+
+# История обновлений
+helm history loki -n logging
+
+# Откат к предыдущей версии
+helm rollback loki -n logging
+
+# Удаление релиза
+helm uninstall loki -n logging
+
+# Просмотр значений
+helm get values loki -n logging -o yaml
+```
+
+## Дополнительная информация
+
+| Ресурс | Описание |
+| :--- | :--- |
+| [Обзор Loki](../loki_overview.md) | Архитектура, LogQL, сравнение с Elasticsearch |
+| [Установка Grafana](grafana_installation.md) | Визуализация логов, datasource Loki |
+| [Примеры LogQL](logql_examples.md) | Запросы для анализа логов |
+| [Установка Alloy](alloy_installation.md) | Рекомендуемый агент для сбора логов |
+| [Документация Loki Helm](https://grafana.com/docs/loki/latest/setup/install/helm/) | Официальная документация Grafana Labs |

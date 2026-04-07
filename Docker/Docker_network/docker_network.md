@@ -213,7 +213,7 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 | `none` | network namespace без интерфейсов | Только loopback |
 | `container:<name>` | Разделение namespace с другим контейнером | Общий IP и localhost |
 
-См. также: [NAT](../../Networking/Concepts/nat.md), [Linux network namespaces](../../Linux/Core/namespaces.md), [Изоляция в Linux](../Concepts/linux_isolation.md).
+См. также: [NAT](../../Networking/Concepts/nat/overview.md), [Linux network namespaces](../../Linux/Core/namespaces.md), [Изоляция в Linux](../Concepts/linux_isolation.md).
 
 **Связанные документы:** [Управление сетями (CLI)](./cli.md), [DNS и Service Discovery](./dns_and_service_discovery.md), [Docker и iptables](./troubleshooting/iptables_integration.md).
 

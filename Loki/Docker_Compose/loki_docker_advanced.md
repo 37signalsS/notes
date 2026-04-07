@@ -1,8 +1,20 @@
-# Настройка Loki с помощью Docker Compose — Дополнительные темы
+# Дополнительные темы настройки Loki в Docker Compose
 
-## 1. Альтернатива: Grafana Alloy вместо Promtail
+## Definitions
 
-Для новых развертываний рекомендуется использовать **Grafana Alloy** вместо Promtail.
+**Grafana Alloy** — универсальный агент сбора телеметрии от Grafana Labs, рекомендуемый для новых развёртываний вместо Promtail.
+
+## Basic Concepts
+
+### Альтернатива: Grafana Alloy вместо Promtail
+
+Для новых развёртываний рекомендуется использовать Grafana Alloy вместо Promtail. Подробный обзор: [Grafana Alloy](../../Grafana/grafana_alloy_overview.md).
+
+### Постоянное хранилище (Persistence)
+
+В базовой конфигурации используются Docker volumes (`loki_data`, `grafana_data`), обеспечивающие персистентность данных при перезапуске контейнеров. Конфигурация volumes описана в [Настройка Docker Compose](./loki_docker_compose_setup.md).
+
+## Practical Scenarios
 
 ### docker-compose.yml с Alloy
 
@@ -40,13 +52,7 @@ loki.write "default" {
 }
 ```
 
-> **Подробнее:** [Grafana Alloy](../../Grafana/grafana_alloy_overview.md) — полный обзор и руководство по миграции.
-
-## 2. Постоянное хранилище (Persistence)
-
-В базовой конфигурации выше используются Docker volumes (`loki_data`, `grafana_data`), что обеспечивает **персистентность данных** при перезапуске контейнеров.
-
-Для production-окружения рассмотрите:
+### Варианты хранилищ для production
 
 | Тип хранилища | Описание | Пример |
 | :--- | :--- | :--- |
@@ -54,9 +60,9 @@ loki.write "default" {
 | **S3-совместимое** | Масштабируемое хранилище для production | MinIO, Ceph, AWS S3, Yandex Object Storage |
 | **GCS** | Google Cloud Storage | Для GCP-окружений |
 
-> **Конфигурация S3:** [loki_overview.md](../loki_overview.md#конфигурация) — пример настройки хранения в S3.
+Пример настройки S3: [loki_overview.md](../loki_overview.md#конфигурация).
 
-## 3. Troubleshooting
+### Troubleshooting
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
@@ -65,12 +71,6 @@ loki.write "default" {
 | **Grafana не видит Loki** | Проблема с сетью Docker | Убедитесь, что сервисы в одной сети (`networks: - monitoring`) |
 | **413 Request Entity Too Large** | Превышен размер батча | Уменьшите `batch_size` в Promtail или увеличьте лимит в Loki |
 
-## Связанные документы
+## Additional Information
 
-- **[Основные концепции](./loki_docker_concepts.md)** — определения и компоненты
-- **[Настройка Docker Compose](./loki_docker_compose_setup.md)** — конфигурация, запуск, проверка
-- **[loki_overview.md](../loki_overview.md)** — базовые концепции и архитектура Loki
-- **[loki_stack_setup_guide.md](../../Loki/loki_overview.md)** — развертывание в Kubernetes
-- **[fluentbit_integration.md](../fluentbit_integration.md)** — интеграция Fluent Bit вместо Promtail
-- **[Loki Docker Driver](../../Docker/Docker_logs/loki_logging_driver_setup.md)** — отправка логов напрямую из Docker
-- **[Grafana Alloy](../../Grafana/grafana_alloy_overview.md)** — рекомендуемый агент для новых развертываний
+Практическая настройка: [loki_docker_compose_setup.md](./loki_docker_compose_setup.md). Интеграция Fluent Bit: [fluentbit_integration.md](../fluentbit_integration.md). Отправка логов напрямую из Docker: [Loki Docker Driver](../../Docker/Docker_logs/loki_logging_driver_setup.md). Развёртывание в Kubernetes: [loki_stack_setup_guide.md](../../Loki/loki_overview.md).

@@ -11,7 +11,7 @@
 
 Для оценки качества real-time трафика используются **четыре ключевых параметра**: **Latency**, **Bandwidth**, **Jitter**, **Loss**.
 
-## Основные понятия
+## Базовые концепции
 
 ### 1. Latency (Задержка)
 
@@ -183,13 +183,7 @@ rtt min/avg/max/mdev = 18.234/20.567/25.891/2.345 ms
 
 ## Дополнительная информация
 
-### Связанные документы
-
-- **[QoS](./qos.md)** — управление качеством обслуживания
-- **[ping](../../Linux/Diagnostics/Networking/ping.md)** — базовая диагностика
-- **[tracert/mtr](../../Linux/Diagnostics/Networking/traceroute_mtr.md)** — трассировка маршрута
-- **[tc netem](../../Linux/Networking/Tools/tc_netem.md)** — эмуляция проблем сети
-- **[Оптимизация задержек](../../Linux/Networking/Concepts/network_latency_optimization.md)**
+Для глубокого изучения темы рекомендуется документация по [QoS](./qos.md), [эмуляции проблем сети через tc netem](../../Linux/Networking/Tools/tc_netem.md), [оптимизации задержек](../../Linux/Networking/Concepts/network_latency_optimization.md), а также руководства по [ping](../../Linux/Diagnostics/Networking/ping.md) и [tracert/mtr](../../Linux/Diagnostics/Networking/traceroute_mtr.md).
 
 ### Рекомендации по настройке
 

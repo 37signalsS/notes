@@ -123,9 +123,4 @@
 
 ## Дополнительная информация
 
-**См. также:**
-
-- [Практические сценарии маршрутизации](./Concepts/routing_scenarios.md) — логика маршрутизации на хосте
-- [Сетевой уровень — обзор](./Concepts/network_layer_overview.md) — функции L3
-- [BGP](../../Protocols/bgp.md) — протокол пограничного шлюза
-- [Таблица маршрутизации](../../../Linux/Networking/Tools/tc_netem.md) — просмотр и настройка (Linux)
+Подробнее о логике маршрутизации на хосте — [Практические сценарии маршрутизации](./Concepts/routing_scenarios.md), функции L3 — [Сетевой уровень — обзор](./Concepts/network_layer_overview.md), протокол BGP — [BGP](../../Protocols/bgp.md), таблица маршрутизации в Linux — [Маршрутизация](../../../Linux/SystemAdministration/routing.md).

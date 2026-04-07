@@ -125,6 +125,36 @@ spec:
 
 ## Практические сценарии
 
+### Обновление StatefulSet через Helm
+
+**Проблема:** При обновлении StatefulSet через `helm upgrade` новая версия образа не применяется корректно, Pod остаётся в `CrashLoopBackOff`.
+
+**Типичные причины:**
+- PVC содержит данные от старой версии, которые несовместимы с новой версией приложения
+- StatefulSet обновляет Pod по одному (RollingUpdate), и первый Pod с новым образом не может запуститься из-за старых данных на PVC
+- Helm не управляет содержимым PVC — только манифестами
+
+**Решение:**
+1. **Проверить совместимость данных:** Убедиться, что новая версия приложения может работать с существующими данными на PVC.
+2. **Очистка PVC перед обновлением:** Если данные несовместимы и не требуется их сохранять (тестовые окружения):
+   ```bash
+   # Удалить StatefulSet (PVC сохраняются)
+   kubectl delete statefulset <name>
+   # Удалить PVC вручную
+   kubectl delete pvc -l app=<app-name>
+   # Задеплоить новую версию
+   helm upgrade <release> <chart> --version 2.0
+   ```
+3. **Миграция данных:** Для production — использовать init-контейнер или Job для миграции данных перед обновлением.
+4. **Partitioned rollout:** Использовать `spec.updateStrategy.rollingUpdate.partition` для поэтапного обновления:
+   ```yaml
+   spec:
+     updateStrategy:
+       type: RollingUpdate
+       rollingUpdate:
+         partition: 2  # Обновит только pod с ordinal >= 2
+   ```
+
 ### Канареечное развертывание с partition
 
 Используйте `partition` в `updateStrategy` для постепенного обновления:

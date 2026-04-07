@@ -1,11 +1,16 @@
 # Интеграция Fluent Bit с Loki
 
-## 1. Определения
+## Определения
 
-Для ознакомления с базовыми концепциями Loki, обратитесь к основному источнику знаний: **[Обзор Grafana Loki](./loki_overview.md)**.
-Для изучения основ конфигурации Fluent Bit: **[Конфигурация Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)**.
+**Fluent Bit** — легковесный агент сбора и пересылки логов (log shipper), написанный на C. Используется для сбора логов из контейнеров, файлов и системных журналов с последующей отправкой в централизованные хранилища (Loki, Elasticsearch, Kafka).
 
-## 2. Базовые концепции
+**Output-плагин `grafana-loki`** — встроенный плагин Fluent Bit для отправки логов в Grafana Loki. Поддерживает динамические лейблы, сжатие и буферизацию.
+
+**Динамические лейблы** — метки, извлекаемые из полей лога (например, метаданных Kubernetes) в момент выполнения. Обеспечивают уникальность потока логов в Loki.
+
+> **См. также:** [Обзор Grafana Loki](./loki_overview.md) — архитектура и базовые концепции Loki. [Конфигурация Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — основы настройки Fluent Bit.
+
+## Базовые концепции
 
 ### Выбор версии Fluent Bit
 
@@ -63,7 +68,7 @@
 
 > **Подробнее:** [Grafana Alloy](../Grafana/grafana_alloy_overview.md) — универсальный агент Grafana Labs.
 
-## 3. Практический сценарий: Настройка Fluent Bit для Loki
+## Практический сценарий: Настройка Fluent Bit для Loki
 
 Этот сценарий описывает конфигурацию Fluent Bit для сбора логов из Kubernetes и системных файлов с последующей отправкой в Loki.
 
@@ -158,7 +163,7 @@
 2. **`syslog.*`**:
     - `Labels`: Использует `hostname` (внутренняя переменная Fluent Bit), `application` (добавлено фильтром) и `filename` (внутренняя переменная) для создания уникального набора лейблов.
 
-## 4. Устранение неполадок
+## Устранение неполадок
 
 ### Ошибка: `413 Request Entity Too Large`
 
@@ -199,13 +204,10 @@ spec:
                   number: 80
 ```
 
-## 4. Дополнительные ресурсы
+## Дополнительные ресурсы
 
-| Ресурс | Описание |
-| :--- | :--- |
-| **[loki_overview.md](./loki_overview.md)** | Базовые концепции Loki, LogQL, архитектура |
-| **[docker_compose_setup.md](../Grafana/Installation/docker_compose_setup.md)** | Настройка Loki в Docker Compose |
-| **[loki_stack_setup_guide.md](../Loki/loki_overview.md)** | Развертывание в Kubernetes с Helm |
-| **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** | Рекомендуемый агент для новых развертываний |
-| **[Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)** | Базовая конфигурация Fluent Bit |
-| **[Fluent Bit Output: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki)** | Официальная документация Fluent Bit |
+Конфигурация Fluent Bit для Loki описана в официальной документации: [Fluent Bit Output: Loki](https://docs.fluentbit.io/manual/pipeline/outputs/loki).
+
+Базовые концепции Loki и LogQL: [Обзор Grafana Loki](./loki_overview.md). Настройка Loki в Docker Compose: [Docker Compose Setup](../Grafana/Installation/docker_compose_setup.md). Развертывание Loki Stack в Kubernetes с Helm: [Loki Installation](./loki_stack_setup/loki_installation.md).
+
+Рекомендуемый агент для новых развёртываний: [Grafana Alloy](../Grafana/grafana_alloy_overview.md). Основы конфигурации Fluent Bit: [Fluent Bit Configuration](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md).

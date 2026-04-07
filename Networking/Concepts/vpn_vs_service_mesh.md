@@ -2,85 +2,75 @@
 
 ## Определения
 
-- **VPN (Virtual Private Network)**: Технология, создающая зашифрованный туннель на сетевом уровне (L3/L4) для безопасного подключения к частной сети через публичную. Традиционно используется для защиты трафика **north-south** (удаленный доступ, соединение площадок).
+- **VPN (Virtual Private Network):** Зашифрованный туннель на L3/L4 для безопасного подключения к частной сети через публичную. Защищает трафик **north-south** (удалённый доступ, site-to-site).
+- **Service Mesh:** Инфраструктурный слой на L7 для управления взаимодействием между сервисами. Защищает трафик **east-west** (между микросервисами).
 
-- **Service Mesh (Сетка сервисов)**: Выделенный слой инфраструктуры на уровне приложений (L7), который управляет взаимодействием между сервисами. Является ключевым инструментом для защиты трафика **east-west** (между сервисами) в микросервисных архитектурах.
+Оба инструмента — компоненты [Zero Trust](./zero_trust_overview.md), решающие разные задачи.
 
-> Оба инструмента являются важными компонентами современной [архитектуры Zero Trust](./zero_trust_overview.md), но решают разные задачи.
+## Основные концепции
 
----
-
-### Основные концепции
-
-#### Ключевые различия
+### Ключевые различия
 
 | Критерий | VPN | Service Mesh |
 | :--- | :--- | :--- |
-| **Сетевой уровень** | L3/L4 туннели ([IPsec](../Tunnels/ipsec/ipsec.md), [WireGuard](../../Vpn/wireguard.md)) | L7 прокси/sidecar (Envoy), eBPF |
+| **Уровень** | L3/L4 туннели ([IPsec](../Tunnels/ipsec/ipsec.md), [WireGuard](../../Vpn/wireguard.md)) | L7 прокси/sidecar (Envoy), eBPF |
 | **Идентичность** | IP-адреса, подсети, сертификаты | SPIFFE/SVID, сервисные аккаунты |
 | **Шифрование** | Весь трафик внутри туннеля | mTLS между конкретными сервисами |
 | **Политики доступа** | ACL на основе IP/портов | Правила L7 (методы, пути, заголовки) |
-| **Наблюдаемость** | Ограничена (счетчики трафика) | Детальная (трассировка, метрики запросов) |
-| **Гранулярность** | Макросегментация (сетевые сегменты) | Микросегментация (на уровне сервисов) |
+| **Наблюдаемость** | Ограничена (счётчики трафика) | Детальная (трассировка, метрики запросов) |
+| **Гранулярность** | Макросегментация (сетевые сегменты) | Микросегментация (уровень сервисов) |
 
----
+## Практические сценарии
 
-### Практические сценарии
+### Гибридный подход
 
-#### 1. Гибридный подход
+Типовой паттерн: VPN для site-to-site между облаком и on-premise (north-south), Service Mesh для контроля трафика между микросервисами в Kubernetes (east-west).
 
-Наиболее распространенный паттерн:
+### Пример конфигурации VPN (WireGuard)
 
-- **VPN** используется для создания безопасного транспортного канала между облаком и on-premise дата-центром (защита north-south).
-- **Service Mesh** применяется для контроля и защиты трафика между микросервисами внутри облачного кластера Kubernetes (защита east-west).
+```ini
+# Хост A
+[Interface]
+Address = 10.10.0.1/24
+PrivateKey = <A-PRIVATE>
 
-#### 2. Примеры конфигураций
+[Peer]
+PublicKey = <B-PUBLIC>
+AllowedIPs = 10.10.0.2/32
+Endpoint = 203.0.113.2:51820
+```
 
-- **VPN (Туннель WireGuard):** Создает простое site-to-site соединение.
+### Пример политики Service Mesh (Istio AuthorizationPolicy)
 
-    ```ini
-    # Хост A
-    [Interface]
-    Address = 10.10.0.1/24
-    PrivateKey = <A-PRIVATE>
+Требует mTLS и разрешает `POST` к `orders` только от `payments`:
 
-    [Peer]
-    PublicKey = <B-PUBLIC>
-    AllowedIPs = 10.10.0.2/32
-    Endpoint = 203.0.113.2:51820
-    ```
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-payments-to-orders
+spec:
+  selector:
+    matchLabels:
+      app: orders
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/payments/sa/payments-sa"]
+    to:
+    - operation:
+        methods: ["POST"]
+```
 
-- **Service Mesh (Политика доступа в Istio):** Требует mTLS и разрешает `POST`-запросы к сервису `orders` только от сервиса `payments` на основе его криптографической идентичности.
+### Компромиссы
 
-    ```yaml
-    apiVersion: security.istio.io/v1beta1
-    kind: AuthorizationPolicy
-    metadata:
-      name: allow-payments-to-orders
-    spec:
-      selector:
-        matchLabels:
-          app: orders
-      action: ALLOW
-      rules:
-      - from:
-        - source:
-            principals: ["cluster.local/ns/payments/sa/payments-sa"]
-        to:
-        - operation:
-            methods: ["POST"]
-    ```
+- **Производительность:** VPN на L3/L4 вносит минимальные задержки. Service Mesh (sidecar-прокси) добавляет оверхед за счёт L7-обработки и телеметрии.
+- **Сложность:** VPN — управление ключами и маршрутизацией. Service Mesh — плоскость управления, ротация сертификатов, конфигурация прокси.
 
-#### 3. Ограничения и компромиссы
+## Дополнительная информация
 
-- **Производительность**: VPN, работая на L3/L4, обычно вносит меньше задержек. Оверхед Service Mesh (sidecar-прокси) — это плата за детальные политики и телеметрию на L7.
-- **Сложность**: VPN требует управления ключами и маршрутизацией. Service Mesh — развертывания и управления плоскостью контроля, сертификатами и конфигурацией прокси.
-
----
-
-### Дополнительная информация
-
-- Детальное описание технологий туннелирования: **[Обзор туннелирования](../Tunnels/tunneling_overview.md)**.
-- Углубленная информация по конкретным реализациям:
-  - **[VPN на примере WireGuard](../../Vpn/wireguard.md)**.
-  - **[Service Mesh на примере Istio](../../Service_Mesh/service_mesh_concepts.md)** (путь может потребовать уточнения).
+- Туннелирование: [Tunneling Overview](../Tunnels/tunneling_overview.md)
+- WireGuard: [WireGuide Setup](../../Vpn/wireguard.md)
+- Service Mesh: [Service Mesh Concepts](../../Service_Mesh/service_mesh_concepts.md)
+- Сегментация: [Network Segmentation](./network_segmentation_and_microsegmentation.md)

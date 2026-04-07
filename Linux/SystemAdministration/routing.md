@@ -168,12 +168,12 @@ ip route | grep default
 
 ### 5. Превращение Linux в роутер с NAT
 
-Для организации доступа во внутреннюю сеть через NAT (как описано в [NAT (Network Address Translation)](../../Networking/Concepts/nat.md)):
+Для организации доступа во внутреннюю сеть через NAT (как описано в [NAT (Network Address Translation)](../../Networking/Concepts/nat/overview.md)):
 
 1. Включите IP Forwarding (см. раздел 2)
 2. Настройте NAT в файрволе (firewalld, iptables или nftables)
 
-Подробнее см. **[NAT в Linux](../../Networking/Concepts/nat.md#настройка-nat-в-firewalld-linux-router)**.
+Подробнее см. **[NAT в Linux](../../Networking/Concepts/nat/practical_scenarios.md#настройка-nat-в-firewalld-linux-router)**.
 
 ## Дополнительная информация
 
@@ -233,4 +233,4 @@ Gateway=192.168.1.254
 | Дублирование маршрутов | `ip route show \| grep <сеть>` | Удалить конфликтующие маршруты |
 | Медленная маршрутизация | `traceroute -n <цель>` | Проверить задержки на шлюзах |
 
-> **Подробно:** [ip route — управление маршрутами](../Networking/Tools/iproute2/ip_route.md) · [Policy-Based Routing](../Networking/Policy_Based_Routing/index.md) · [NAT в Linux](../../Networking/Concepts/nat.md) · [Диагностика: ping](../Diagnostics/Networking/ping.md) · [traceroute/mtr](../Diagnostics/Networking/traceroute_mtr.md) · [iptables](../Networking/Settings/tools/iptables_basics.md) · [firewalld](../Networking/Settings/tools/firewalld.md)
+> **Подробно:** [ip route — управление маршрутами](../Networking/Tools/iproute2/ip_route.md) · [Policy-Based Routing](../Networking/Policy_Based_Routing/index.md) · [NAT в Linux](../../Networking/Concepts/nat/overview.md) · [Диагностика: ping](../Diagnostics/Networking/ping.md) · [traceroute/mtr](../Diagnostics/Networking/traceroute_mtr.md) · [iptables](../Networking/Settings/tools/iptables_basics.md) · [firewalld](../Networking/Settings/tools/firewalld.md)
