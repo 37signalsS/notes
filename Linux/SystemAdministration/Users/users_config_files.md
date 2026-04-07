@@ -77,7 +77,7 @@ grep -v nologin /etc/passwd | grep -v false
 | 8 | (пусто) | Дата истечения учётной записи |
 | 9 | (пусто) | Зарезервировано |
 
-**Формат хэша:** `$id$salt$hashed`
+**Формат хэша:** `$id$salt$hashed`. Подробнее о механизме хэширования — [password_hashing.md](./password_hashing.md).
 
 | id | Алгоритм |
 | :--- | :--- |
@@ -106,7 +106,7 @@ sudo awk -F: '($5 == 99999) {print $1}' /etc/shadow
 
 ### /etc/group
 
-Определяет группы и их членов.
+Определяет группы и их членов. Настройка сроков действия паролей выполняется через `chage` — [password_policy_chage.md](./password_policy_chage.md).
 
 **Формат:** `group_name:password:GID:user_list`
 
@@ -141,7 +141,7 @@ groups username
 
 ### /etc/skel
 
-Содержит шаблоны файлов для домашней директории нового пользователя.
+Содержит шаблоны файлов для домашней директории нового пользователя. Базовые определения UID/GID/UPG описаны в [users_definitions.md](./users_definitions.md).
 
 ```bash
 # Просмотр содержимого
@@ -226,14 +226,8 @@ cut -d: -f3 /etc/group | sort | uniq -d
 
 | Файл | Описание |
 | :--- | :--- |
-| `/etc/default/useradd` | Настройки `useradd` по умолчанию |
-| `/etc/login.defs` | Политики паролей, диапазоны UID/GID |
-| `/etc/nologin.txt` | Сообщение для `/sbin/nologin` |
-| `/etc/securetty` | Терминалы, разрешённые для root |
-
-### Связанные темы
-
-- [Хэширование паролей](./password_hashing.md) — механизм хэширования
-- [Политики паролей](./password_policy_chage.md) — `chage`
-- [Определения](./users_definitions.md) — базовые понятия
-- [PAM](../../Security/pam_overview.md) — модули аутентификации
+| `/etc/default/useradd` | Настройки `useradd` по умолчанию (параметры создания, SKEL, SHELL) |
+| `/etc/login.defs` | Политики паролей (`PASS_MAX_DAYS`, `ENCRYPT_METHOD`), диапазоны UID/GID |
+| `/etc/nologin.txt` | Сообщение, выводимое при входе через `/usr/sbin/nologin` |
+| `/etc/securetty` | Терминалы, разрешённые для входа root |
+| `/etc/pam.d/` | Модули аутентификации PAM — [pam_overview.md](../../Security/pam_overview.md) |

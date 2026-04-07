@@ -6,8 +6,8 @@
 * **Внутриполосное управление (In-Band Management)**: Доступ через основную операционную систему и сетевой стек (SSH, VNC, RDP). Требует работающей ОС.
 * **Внеполосное управление (Out-of-Band Management, OOB)**: Аппаратный доступ, независимый от состояния ОС (IPMI, iDRAC, iLO). Используется для восстановления зависших или выключенных серверов.
 * **IPMI (Intelligent Platform Management Interface)**: Стандарт для встроенного модуля управления (**Baseboard Management Controller, BMC**), предоставляющего OOB-доступ.
-* **IP-KVM (KVM-over-IP)**: Технология передачи сигналов клавиатуры, видео и мыши по IP-сети. *Не следует путать с [KVM-виртуализацией](../../Linux/Virtualization/kvm/overview.md).*
-* **VNC (Virtual Network Computing)**: Протокол для графического удаленного доступа к рабочему столу (In-Band).
+* **IP-KVM (KVM-over-IP)**: Технология передачи сигналов клавиатуры, видео и мыши по IP-сети. *Не следует путать с [KVM-виртуализацией](../Virtualization/kvm/overview.md).*
+* **VNC (Virtual Network Computing)**: Протокол для графического удаленного доступа к рабочему столу (In-Band). Всегда должен туннелироваться через SSH из-за отсутствия шифрования.
 
 ## Базовые концепции
 
@@ -124,7 +124,7 @@ ssh -L 59001:localhost:5901 -N -f -l your_username your_server_ip
 | **Монтирование образов (.iso)** | ✅ | ❌ |
 | **Мониторинг датчиков** | ✅ | ❌ |
 
-Ключевое различие: IPMI — это комплексная система управления, IP-KVM — только доступ к консоли.
+Ключевое различие: IPMI — комплексная система управления, IP-KVM — только доступ к консоли.
 
 ### Проприетарные реализации IPMI/BMC
 
@@ -138,36 +138,12 @@ ssh -L 59001:localhost:5901 -N -f -l your_username your_server_ip
 
 Альтернативный метод OOB для оборудования с последовательным портом (COM). Администратор подключается по SSH к консольному серверу, а с него получает текстовый доступ к консоли устройства. Часто используется для сетевого оборудования.
 
-### Связанные темы
-
-**SSH (Secure Shell):**
-
-* **[Обзор SSH](../Security/ssh/ssh_overview.md)** — основы протокола, аутентификация, шифрование
-* **[SSH утилиты](../Security/ssh/ssh_cli_tools.md)** — scp, sftp, ssh-copy-id
-* **[SSH туннели](../Security/ssh/ssh_usage_and_tunnels.md)** — проброс портов, VPN-туннели
-* **[SSH клиент](../Security/ssh/ssh_client_config.md)** — конфигурация ~/.ssh/config
-* **[SSH сессии](../Security/ssh/ssh_session_management.md)** — управление подключениями
-* **[Диагностика SSH](../Security/ssh/ssh_troubleshooting.md)** — решение проблем
-
-**Другие протоколы:**
-
-* **[RDP](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — Remote Desktop Protocol (Windows)
-* **[VNC](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md** — Virtual Network Computing
-* **[Telnet](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — устаревший незащищенный протокол
-
-### Безопасность удаленного доступа
-
-| Метод | Риски | Меры защиты |
-| :--- | :--- | :--- |
-| **SSH** | Brute-force, MITM-атаки | Ключи вместо паролей, 2FA, fail2ban |
-| **VNC** | Перехват трафика, отсутствие шифрования | Только через SSH-туннель, пароль |
-| **IPMI/iDRAC/iLO** | Уязвимости прошивок, слабый пароль | Изолированная сеть управления, обновление прошивок |
-| **RDP** | BlueKeep, brute-force | NLA, VPN, 2FA |
-
-**Рекомендации:**
+### Рекомендации по безопасности
 
 1. Всегда используйте SSH вместо Telnet/rlogin
 2. VNC только через SSH-туннель
 3. OOB-интерфейсы в изолированной сети управления
 4. Регулярно обновляйте прошивки BMC/iDRAC/iLO
 5. Используйте ключи SSH вместо паролей
+
+> **Подробно:** [SSH — обзор, аутентификация, шифрование](../Security/ssh/ssh_overview.md) · [SSH-туннели и проброс портов](../Security/ssh/ssh_usage_and_tunnels.md) · [Диагностика SSH](../Security/ssh/ssh_troubleshooting.md)

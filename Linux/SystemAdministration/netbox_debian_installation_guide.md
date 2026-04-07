@@ -76,7 +76,13 @@ sudo apt install -y python3-venv libxml2-dev libxslt1-dev libffi-dev libpq-dev l
 
 1. **Клонирование репозитория:** Установите NetBox в `/opt`.
 
+    > **Важно:** Для production используйте стабильный релиз, а не ветку `master`. Список тегов: `git tag --list | grep '^v4\.'`.
+
     ```bash
+    # Production: стабильный релиз (замените v4.x.x на актуальный)
+    sudo git clone -b v4.x.x https://github.com/netbox-community/netbox.git /opt/netbox
+
+    # Для тестирования: последняя разработка
     sudo git clone -b master https://github.com/netbox-community/netbox.git /opt/netbox
     ```
 

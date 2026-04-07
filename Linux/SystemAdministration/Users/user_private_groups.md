@@ -149,10 +149,10 @@ fi
 for user in $USERS; do
     # Смена первичной группы
     sudo usermod -g "$COMMON_GROUP" "$user"
-    
+
     # Добавление в группу (для доступа к файлам)
     sudo usermod -aG "$COMMON_GROUP" "$user"
-    
+
     echo "Пользователь $user мигрирован на группу $COMMON_GROUP"
 done
 
@@ -163,9 +163,11 @@ for user in $USERS; do
 done
 ```
 
-## Лучшие практики
+## Дополнительная информация
 
-### Когда использовать UPG
+### Лучшие практики
+
+#### Когда использовать UPG
 
 | Сценарий | Рекомендация |
 | :--- | :--- |
@@ -174,33 +176,23 @@ done
 | **Совместная работа над файлами** | ❌ Используйте SGID + общие группы |
 | **Изолированные сервисы** | ✅ UPG подходит |
 
-### Безопасность
+#### Аудит безопасности
 
-1. **Проверка членства в группах:**
+```bash
+# Все пользователи и их первичные группы
+awk -F: '{print $1, $4}' /etc/passwd | while read user gid; do
+    group=$(getent group "$gid" | cut -d: -f1)
+    echo "$user: primary group = $group"
+done
 
-   ```bash
-   # Все пользователи и их первичные группы
-   awk -F: '{print $1, $4}' /etc/passwd | while read user gid; do
-       group=$(getent group "$gid" | cut -d: -f1)
-       echo "$user: primary group = $group"
-   done
-   ```
+# Пользователи с первичной группой не равной имени
+awk -F: '$1 != $4 {print $1}' /etc/passwd
 
-2. **Поиск пользователей без приватной группы:**
+# Группы с несколькими участниками
+awk -F: 'NF==4 && $4!="" {n=split($4,a,","); if(n>1) print $1, n, $4}' /etc/group
+```
 
-   ```bash
-   # Пользователи с первичной группой не равной имени
-   awk -F: '$1 != $4 {print $1}' /etc/passwd
-   ```
-
-3. **Аудит общих групп:**
-
-   ```bash
-   # Группы с несколькими участниками
-   awk -F: 'NF==4 && $4!="" {n=split($4,a,","); if(n>1) print $1, n, $4}' /etc/group
-   ```
-
-### _umask_ и UPG
+#### _umask_ и UPG
 
 При UPG рекомендуется umask 002 для возможности совместной работы:
 
@@ -213,8 +205,6 @@ umask 002  # Файлы: 664, Директории: 775
 USERGROUPS_MOD 002
 USERGROUPS_CHMOD 002
 ```
-
-## Дополнительная информация
 
 ### Распространённые проблемы
 
@@ -229,5 +219,5 @@ USERGROUPS_CHMOD 002
 - [Определения](./users_definitions.md) — базовые понятия
 - [Управление группами](./group_commands.md) — `groupadd`, `usermod`
 - [Управление пользователями](./user_commands.md) — `useradd`
-- [Права доступа](../../Security/Concepts/File_Permissions/special_permissions.md) — SGID бит
+- [Права доступа](../../../Linux/Security/Concepts/File_Permissions/special_permissions.md) — SGID бит
 - [Файлы конфигурации](./users_config_files.md) — `/etc/login.defs`

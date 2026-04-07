@@ -5,7 +5,7 @@
 * **`systemd-journald`** — системная служба, централизованно собирающая логи от всех компонентов ОС (ядро, службы, приложения, stdout/stderr) в структурированном бинарном формате.
 * **`journalctl`** — утилита для просмотра и анализа логов, собранных `systemd-journald`. **Подробное описание утилиты `journalctl` находится в [journalctl.md](../../Diagnostics/journalctl.md).**
 
-## Основные концепции
+## Базовые концепции
 
 ### Архитектура и принцип работы
 
@@ -223,16 +223,12 @@ SyncIntervalSec=5m  # Принудительная синхронизация к
 | Сообщения отбрасываются | Превышен RateLimit | Настроить `RateLimitIntervalSec` и `RateLimitBurst` |
 | Файлы журнала повреждены | Внезапное выключение, сбой ФС | Удалить поврежденный файл в `/var/log/journal/`, служба создаст новый |
 
-### Интеграция с другими системами
+### Интеграция с другими системами и связанные темы
 
-* **rsyslog:** Модуль `imjournal` позволяет `rsyslog` забирать сообщения из `journald` для фильтрации и пересылки. Настройка в [rsyslog.md](./rsyslog.md).
+* **rsyslog:** Модуль `imjournal` позволяет `rsyslog` забирать сообщения из `journald` для фильтрации и пересылки. Подробнее: [rsyslog](./rsyslog.md).
+* **auditd:** Аудит безопасности на уровне ядра, работает параллельно с journald. Подробнее: [auditd](./auditd.md).
 * **Fluentd/Fluent Bit:** Агенты для сбора и пересылки логов в централизованные системы (Elasticsearch, Loki).
 * **systemd-coredump:** Компонент для обработки дампов памяти (coredump), интегрирован с `journald`.
-
-### Ссылки по теме
-
-  * **Утилита journalctl:** [journalctl.md](../../../Diagnostics/journalctl.md) — просмотр, фильтрация, экспорт логов.
-* **Обзор логирования:** [logging_overview.md](./logging_overview.md) — архитектура, `logrotate`, `logger`.
-* **rsyslog:** [rsyslog.md](./rsyslog.md) — фильтрация и пересылка логов.
-* **auditd:** [auditd.md](./auditd.md) — аудит безопасности.
-* **Systemd:** [overview.md](../../Core/systemd/overview.md) — общие концепции systemd.
+* **journalctl:** Утилита просмотра журналов. Полное описание: [journalctl](../../Diagnostics/journalctl.md).
+* **Обзор логирования:** [logging_overview](./logging_overview.md).
+* **Systemd:** Общие концепции — [systemd overview](../../Core/systemd/overview.md).

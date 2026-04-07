@@ -200,7 +200,4 @@ sudo grep -E '^\$6\$rounds=' /etc/shadow
 
 ### Связанные темы
 
-- [Файлы конфигурации](./users_config_files.md) — `/etc/shadow`
-- [Политики паролей](./password_policy_chage.md) — `chage`
-- [PAM](../../Security/pam_overview.md) — модули аутентификации
-- [Безопасность паролей](../../../Security/Concepts/brute_force_attacks.md) — защита от перебора
+[Файлы конфигурации](./users_config_files.md) — `/etc/shadow`, [Политики паролей](./password_policy_chage.md) — `chage`, [PAM](../../Security/pam_overview.md) — модули аутентификации

@@ -51,7 +51,7 @@
     fusermount -u ~/remote_server
     ```
 
-    Подробнее об использовании `sshfs` см. в [Практическое использование SSH](../Security/ssh/ssh_usage_and_tunnels.md#передача-файлов-и-работа-с-файловой-системой).
+    Подробнее об использовании `sshfs` см. в [Инструменты командной строки SSH](../Security/ssh/ssh_cli_tools.md#sshfs-ssh-file-system).
 
 ### Монтирование облачных хранилищ с `rclone`
 

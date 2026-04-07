@@ -14,29 +14,30 @@
 
 ### initrd vs initramfs
 
-- **initrd (Initial RAM Disk)**: Файл-образ блочного устройства с файловой системой внутри. Требовал от ядра встроенного модуля хотя бы одной файловой системы для работы.
-- **initramfs (Initial RAM File System)**: Архив (cpio), распаковываемый в виртуальную файловую систему `tmpfs` (часть ядра). Ядро работает с `tmpfs` напрямую, что устраняет недостаток initrd.
+Кратко: оба служат временной корневой ФС для загрузки модулей ядра до монтирования реального корня.
 
-Оба служат временной корневой файловой системой для загрузки модулей ядра (драйверов SCSI, файловых систем, LVM, RAID) до монтирования реального корня.
+- **initrd**: файл-образ блочного устройства с ФС внутри (устарел).
+- **initramfs**: архив cpio, распаковываемый в `tmpfs` (часть ядра) — современный стандарт.
+
+> **Подробное описание:** [initramfs и этапы загрузки ядра](../Core/kernel/boot_process.md#initramfs-initial-ram-file-system)
 
 ## Базовые концепции
 
 ### Путь загрузки: BIOS + MBR + GRUB
 
-1. BIOS выполняет POST и обращается к порядку загрузки.
-2. BIOS загружает первый сектор диска (MBR, 512 байт).
-3. Из MBR запускается Stage 1 загрузчика GRUB.
-4. GRUB загружает Stage 1.5 (при необходимости) и Stage 2.
-5. GRUB читает `/boot/grub/grub.cfg`, загружает ядро (`vmlinuz`) и `initramfs` в память.
-6. Ядру передаются параметры: корень (`root=`), файловая система, дополнительные опции (например, `rhgb`, `quiet`).
-7. Управление передается ядру.
+GRUB загружается после POST и чтения MBR BIOS. Краткий процесс:
+
+1. BIOS → MBR (512 байт) → Stage 1 GRUB.
+2. Stage 1 → Stage 1.5 (опционально) → Stage 2 (`/boot/grub/`).
+3. GRUB читает `grub.cfg`, загружает `vmlinuz` + `initramfs`, передаёт управление ядру.
+
+> **Подробный путь BIOS/UEFI:** [BIOS + MBR путь загрузки](../Core/firmware_bios_uefi.md#путь-загрузки-bios--mbr)
 
 ### Путь загрузки: UEFI + GPT + GRUB
 
-1. UEFI ищет загрузочную запись в NVRAM.
-2. Загружает `.efi`-файл загрузчика с раздела ESP (EFI System Partition, FAT32).
-3. Запускается GRUB (файл `grubx64.efi` или через `shim.efi`).
-4. GRUB обращается к `/boot/grub/` (обычно на той же ФС, что и ESP) и далее процесс аналогичен.
+UEFI загружает `.efi`-файл GRUB (`grubx64.efi` или через `shim.efi`) с раздела ESP (FAT32). Далее процесс аналогичен BIOS-пути.
+
+> **Подробный путь UEFI:** [UEFI + GPT путь загрузки](../Core/firmware_bios_uefi.md#путь-загрузки-uefi--gpt)
 
 ### LVM и /boot
 
@@ -172,24 +173,6 @@ initrd /initrd.img    # Загрузить initrd
 boot                  # Загрузиться
 ```
 
-### Связанные темы
-
-**Процесс загрузки:**
-
-- **[Процесс загрузки ядра](../Core/kernel/boot_process.md)** — этапы от GRUB до systemd
-- **[BIOS и UEFI](../Core/firmware_bios_uefi.md)** — прошивка, ранняя загрузка
-- **[Восстановление пароля](./linux_password_recovery.md)** — использование GRUB для сброса пароля
-
-**Файловые системы и LVM:**
-
-- **[LVM](../FileSystems/LVM/overview_concepts.md** — логические тома
-- **[LVM и загрузка](../../Kubernetes/Troubleshooting/Common_Errors/pod_crash_loop_back_off/advanced_topics.md)** — загрузка с LVM
-
-**Systemd:**
-
-- **[Параметры ядра](../Core/kernel/kernel_interfaces.md)** — /proc/cmdline
-- **[Systemd загрузка](../Core/systemd/boot_troubleshooting.md)** — диагностика загрузки systemd
-
 ### Безопасность GRUB
 
 **Пароль на GRUB:**
@@ -213,3 +196,5 @@ sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # RHEL/CentOS
 - GRUB должен быть подписан для работы с Secure Boot
 - Используйте `shim.efi` для загрузки в системах с Secure Boot
 - Отключение Secure Boot может потребоваться для кастомных ядер
+
+**Связанные темы:** процесс загрузки — [Process загрузки ядра](../Core/kernel/boot_process.md), [BIOS и UEFI](../Core/firmware_bios_uefi.md); восстановление доступа — [Восстановление пароля](./linux_password_recovery.md); LVM — [LVM Overview](../FileSystems/LVM/overview_concepts.md); диагностика systemd — [Boot Troubleshooting](../Core/systemd/boot_troubleshooting.md).

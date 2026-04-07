@@ -1,66 +1,187 @@
-# Мониторинг и устранение неполадок SSH
+# SSH Monitoring and Troubleshooting
 
-## Основные концепции
+## Definitions → Basic Concepts → Practical Scenarios → Additional Information
 
-### Логирование и криминалистика
+## Definitions
 
-- `/var/log/auth.log` (Debian/Ubuntu) или `/var/log/secure` (CentOS/RHEL): Основной лог аутентификации.
-- `/var/log/wtmp`: Журнал успешных входов, выходов и перезагрузок.
-- `/var/log/btmp`: Журнал неудачных попыток входа (ключевой для выявления brute-force атак).
-- `/var/log/lastlog`: Информация о последнем входе каждого пользователя.
+**SSH Monitoring** — процесс сбора, анализа и визуализации данных о работе SSH-сервера: логи аутентификации, активные сессии, попытки несанкционированного доступа.
 
-## Практические сценарии
+**SSH Forensics** — ретроспективный анализ логов для расследования инцидентов: кто, когда и откуда подключался, какие команды выполнялись.
 
-### Расширенное логирование SFTP
+## Basic Concepts
 
-Для отслеживания файловых операций через SFTP измените директиву `Subsystem` в `/etc/ssh/sshd_config`:
+### Журналы SSH
 
+| Файл | Система | Содержание |
+| :--- | :--- | :--- |
+| `/var/log/auth.log` | Debian/Ubuntu | События аутентификации (успешные/неудачные входы SSH, sudo) |
+| `/var/log/secure` | RHEL/CentOS | Аналог `auth.log` |
+| `/var/log/btmp` | Все | Неудачные попытки входа (двоичный формат) |
+| `/var/log/wtmp` | Все | История успешных входов/выходов (двоичный формат) |
+| `/var/log/lastlog` | Все | Время последнего входа каждого пользователя |
+
+### Уровни логирования sshd
+
+| Уровень | Директива `LogLevel` | Содержание |
+| :--- | :--- | :--- |
+| **Базовый** | `INFO` | Успешные/неудачные входы, закрытие сессий |
+| **Расширенный** | `VERBOSE` | Отпечатки SSH-ключей (fingerprint) |
+| **Детальный** | `DEBUG` | Пошаговая отладка SSH-протокола (только для диагностики) |
+
+**Настройка:** `/etc/ssh/sshd_config`
 ```ini
-Subsystem sftp /usr/lib/openssh/sftp-server -f AUTHPRIV -l INFO
+LogLevel VERBOSE
 ```
 
-### Отладка проблем с `sshd`
+### Типичные паттерны в логах
 
-- **Проверка синтаксиса конфигурации:** Перед каждым перезапуском сервиса `sshd` необходимо проверять конфигурационный файл на наличие синтаксических ошибок:
+| Паттерн | Значение |
+| :--- | :--- |
+| `Accepted publickey for user from 192.168.1.100` | Успешный вход по ключу |
+| `Failed password for user from 10.0.0.5` | Неудачная попытка входа (пароль) |
+| `Invalid user admin from 10.0.0.5` | Несуществующий пользователь |
+| `Connection closed by authenticating user` | Клиент прервал аутентификацию |
+| `Received disconnect from 192.168.1.100` | Нормальное завершение сессии |
+| `Bad ownership or modes for directory` | Нарушены права `~/.ssh` |
 
-    ```bash
-    sudo sshd -t
-    ```
+## Practical Scenarios
 
-- **Диагностика в реальном времени:** Для более глубокого анализа проблем, таких как ошибки аутентификации или согласования алгоритмов, используется запуск `sshd` в отладочном режиме. Подробное руководство по этой теме, а также по анализу логов и использованию `ssh -v`, находится в основной статье: **[Диагностика и устранение неисправностей SSH](../ssh_troubleshooting.md)**.
+### Сценарий 1: Анализ неудачных попыток входа (brute-force detection)
 
-### Ошибка "True/False" в `sshd_config` при использовании Ansible
+**Задача:** Выявить IP-адреса с множественными неудачными попытками.
 
-При генерации `sshd_config` из шаблона Ansible (`.j2`) может возникнуть проблема: YAML-парсер Ansible преобразует строковые `"yes"` и `"no"` в булевы `True` и `False`, что делает конфигурацию невалидной для `sshd`.
+```bash
+# Неудачные входы (auth.log)
+grep "Failed" /var/log/auth.log | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
 
-- **Проблема:**
+# Неудачные входы (journalctl, последние 24 часа)
+journalctl -u sshd --since "24 hours ago" | grep "Failed" | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
 
-    ```yaml
-    # vars.yml
-    sshd_permit_root_login: "yes"
-    ```
+# Просмотр btmp (неудачные попытки)
+lastb | head -20
+lastb | awk '{print $3}' | sort | uniq -c | sort -rn | head
+```
 
-    ```jinja2
-    # sshd_config.j2
-    PermitRootLogin {{ sshd_permit_root_login }}
-    ```
+### Сценарий 2: Аудит успешных входов
 
-    **Результат в файле:** `PermitRootLogin True` (неверно).
+**Задача:** Получить список всех успешных подключений за период.
 
-- **Решение 1 (кавычки в шаблоне):**
+```bash
+# Успешные входы (auth.log)
+grep "Accepted" /var/log/auth.log | awk '{print $1, $2, $3, $9, $11}'
 
-    ```jinja2
-    PermitRootLogin "{{ sshd_permit_root_login }}"
-    ```
+# История входов (wtmp)
+last | grep -E "pts|tty" | head -30
 
-- **Решение 2 (логика в шаблоне):**
+# Последний вход каждого пользователя
+lastlog
 
-    ```jinja2
-    PermitRootLogin {% if sshd_permit_root_login %}yes{% else %}no{% endif %}
-    ```
+# Конкретный пользователь
+last username
+lastb username
+```
 
-## Дополнительная информация
+### Сценарий 3: Расширенное логирование SFTP
 
-### Инструменты для аудита безопасности
+**Задача:** Логировать файловые операции через SFTP.
 
-- **`ssh-audit`:** Инструмент командной строки для аудита конфигурации SSH-сервера и клиента. Проверяет используемые алгоритмы, выявляет уязвимости и дает рекомендации. [GitHub-репозиторий](https://github.com/jtesta/ssh-audit).
+```bash
+# 1. Изменить Subsystem в /etc/ssh/sshd_config
+sudo sed -i 's|^Subsystem sftp.*|Subsystem sftp /usr/lib/openssh/sftp-server -f AUTHPRIV -l INFO|' /etc/ssh/sshd_config
+
+# 2. Перезапустить SSH
+sudo systemctl restart sshd
+
+# 3. Просмотр логов SFTP
+grep sftp /var/log/auth.log
+```
+
+### Сценарий 4: Мониторинг активных SSH-сессий
+
+**Задача:** Получить список текущих подключений.
+
+```bash
+# Активные сессии (who)
+who
+
+# Детальная информация (w)
+w
+
+# Сетевые подключения SSH
+ss -tnp | grep :22
+
+# Процессы sshd
+ps aux | grep sshd | grep -v grep
+```
+
+### Сценарий 5: Проверка конфигурации sshd
+
+**Задача:** Убедиться в корректности конфигурации до перезапуска.
+
+```bash
+# Проверка синтаксиса
+sudo sshd -t
+
+# Показать эффективную конфигурацию
+sudo sshd -T
+
+# Проверить конкретную директиву
+sudo sshd -T | grep -i loglevel
+sudo sshd -T | grep -i auth
+```
+
+### Сценарий 6: Отладка sshd в реальном времени
+
+**Задача:** Запустить sshd в режиме отладки для диагностики.
+
+```bash
+# Остановить sshd
+sudo systemctl stop sshd
+
+# Запустить в debug-режиме (foreground)
+sudo /usr/sbin/sshd -d -p 2222
+
+# Клиент подключается к порту 2222
+ssh -vvv -p 2222 user@host
+
+# После диагностики перезапустить штатно
+sudo systemctl start sshd
+```
+
+## Additional Information
+
+### Инструменты аудита
+
+**ssh-audit** — анализ алгоритмов, шифров и уязвимостей SSH-сервера.
+
+```bash
+# Установка
+pip install ssh-audit
+
+# Аудит
+ssh-audit <hostname>
+ssh-audit -p 2239 <hostname>  # Нестандартный порт
+```
+
+**fail2ban** — автоматическая блокировка brute-force. См. [fail2ban: настройка и использование](../../Tools/fail2ban.md).
+
+### Автоматизация мониторинга
+
+```bash
+# Скрипт: топ-10 IP с неудачными входами за 24 часа
+journalctl -u sshd --since "24 hours ago" \
+  | grep "Failed" \
+  | awk '{print $(NF-3)}' \
+  | sort | uniq -c | sort -rn | head -10
+
+# Скрипт: количество неудачных входов за последний час
+journalctl -u sshd --since "1 hour ago" | grep -c "Failed"
+```
+
+### Связанные темы
+
+- [SSH Troubleshooting](../ssh_troubleshooting.md) — диагностика проблем подключения
+- [SSH Hardening Best Practices](./ssh_hardening_best_practices.md) — укрепление безопасности
+- [SSH Authentication](./ssh_authentication.md) — методы аутентификации
+- [Logging Overview](../../../SystemAdministration/Logging/logging_overview.md) — общая система логов
+- [fail2ban](../../Tools/fail2ban.md) — защита от brute-force

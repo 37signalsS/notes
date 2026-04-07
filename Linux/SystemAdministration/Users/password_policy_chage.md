@@ -68,6 +68,9 @@ sudo chage -m 7 -M 90 -W 7 -I 30 -E 2026-12-31 username
 # Сброс счётчика дней (пароль нужно сменить при следующем входе)
 sudo chage -d 0 username
 
+# Альтернативный способ (эквивалент chage -d 0)
+sudo passwd --expire username
+
 # Установка даты последней смены (например, сегодня)
 sudo chage -d $(date +%Y-%m-%d) username
 ```
@@ -193,9 +196,4 @@ password [success=1 default=ignore] pam_unix.so obscure sha512
 password requisite pam_pwquality.so retry=3 minlen=12
 ```
 
-### Связанные темы
-
-- [Хэширование паролей](./password_hashing.md) — алгоритмы хэширования
-- [Файлы конфигурации](./users_config_files.md) — `/etc/shadow`, `/etc/login.defs`
-- [Управление пользователями](./user_commands.md) — `passwd`, `usermod`
-- [PAM](../../Security/pam_overview.md) — модули аутентификации
+Подробнее о связанных темах: [алгоритмы хэширования](./password_hashing.md), [файлы конфигурации](./users_config_files.md), [управление пользователями](./user_commands.md), [восстановление пароля](../linux_password_recovery.md), [модули PAM](../../Security/pam_overview.md).

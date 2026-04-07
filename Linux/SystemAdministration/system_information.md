@@ -4,11 +4,13 @@
 
 **Системная информация** — данные о конфигурации, состоянии и характеристиках системы Linux, включая аппаратное обеспечение, ядро, операционную систему и запущенные процессы.
 
+## Базовые концепции
+
 ### Источники системной информации
 
-- **Виртуальные файловые системы:** `/proc` (процессы и системные параметры), `/sys` (аппаратное обеспечение и ядро).
-- **Логи ядра:** [`dmesg`](../Diagnostics/Kernel/dmesg/index.md) (сообщения ядра при загрузке и работе).
-- **Утилиты:** Специализированные команды, которые парсят данные из этих источников и представляют их в удобном виде (например, `lscpu`, `dmidecode`, `ip`). Подробное сравнение `lscpu` и `dmidecode`, а также источников их данных, см. в [Аппаратная информация о CPU](../Diagnostics/Hardware/cpu_info.md).
+- **Виртуальные файловые системы:** `/proc` (процессы и системные параметры, см. [виртуальная ФС /proc](../FileSystems/virtual_fs_proc.md)), `/sys` (аппаратное обеспечение и ядро, см. [виртуальная ФС /sys](../FileSystems/virtual_fs_sys.md)).
+- **Логи ядра:** [dmesg](../Diagnostics/Kernel/dmesg/index.md) — сообщения ядра при загрузке и работе.
+- **Утилиты:** Специализированные команды (`lscpu`, `dmidecode`, `ip`), парсящие данные из виртуальных ФС. Подробное сравнение `lscpu` и `dmidecode` — в [аппаратная информация о CPU](../Diagnostics/Hardware/cpu_info.md).
 
 ### Различия для виртуальных и физических серверов
 
@@ -174,28 +176,10 @@
 
 ## Дополнительная информация
 
-### Связанные темы
-
-**Диагностика Hardware:**
-
-- **[Диагностика CPU](../Diagnostics/Hardware/cpu_info.md)** — подробная информация о процессоре
-- **[Hardware listing](../Diagnostics/Hardware/hardware_listing.md)** — полная инвентаризация оборудования
-- **[smartctl](../Diagnostics/Hardware/smartctl/index.md)** — мониторинг состояния дисков
-
-**Диагностика процессов и памяти:**
-
-- **[ps](../Diagnostics/Processes/ps.md)** — информация о процессах
-- **[top/htop](../Diagnostics/Processes/htop.md)** — мониторинг процессов в реальном времени
-- **[vmstat](../Diagnostics/Memory/vmstat.md)** — статистика памяти и CPU
-- **[proc_meminfo](../Diagnostics/Memory/proc_meminfo.md)** — информация о памяти
-
-**Файловые системы:**
-
-- **[/proc](../FileSystems/virtual_fs_proc.md)** — виртуальная ФС процессов
-- **[/sys](../FileSystems/virtual_fs_sys.md)** — виртуальная ФС ядра
-
-**Диагностика сети:**
-
-- **[ip](../Networking/Tools/iproute2/ip_address.md)** — информация о сетевых интерфейсах
-- **[ss](../Diagnostics/Networking/ss.md)** — сетевые сокеты
-- **[netstat](../Diagnostics/Networking/netstat.md)** — устаревшая, но полезная
+- Инвентаризация оборудования: [hardware_listing.md](../Diagnostics/Hardware/hardware_listing.md)
+- Диагностика CPU: [cpu_info.md](../Diagnostics/Hardware/cpu_info.md)
+- Мониторинг дисков: [smartctl](../Diagnostics/Hardware/smartctl/index.md)
+- Мониторинг процессов: [ps](../Diagnostics/Processes/ps.md), [htop](../Diagnostics/Processes/htop.md)
+- Статистика памяти: [vmstat](../Diagnostics/Memory/vmstat.md), [proc_meminfo](../Diagnostics/Memory/proc_meminfo.md)
+- Сетевые интерфейсы: [ip address](../Networking/Tools/iproute2/ip_address.md)
+- Сетевые сокеты: [ss](../Diagnostics/Networking/ss.md), [netstat](../Diagnostics/Networking/netstat.md)

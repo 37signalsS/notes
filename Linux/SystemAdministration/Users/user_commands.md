@@ -76,12 +76,17 @@ sudo passwd test-user
 # Установка пустого пароля (не рекомендуется!)
 sudo passwd -d test-user
 
-# Блокировка пароля
+# Блокировка пароля (запрет входа по паролю)
 sudo passwd -l test-user
 
 # Разблокировка пароля
 sudo passwd -u test-user
+
+# Принудительная смена пароля при следующем входе
+sudo passwd --expire test-user
 ```
+
+> **Примечание:** Для полноценного управления сроком действия паролей используйте [`chage`](./password_policy_chage.md).
 
 ### Изменение пользователей
 
@@ -194,10 +199,4 @@ sudo passwd "$USERNAME"
 | Пользователь не может войти | Нет домашней директории | Используйте `-m` при создании |
 | Пользователь удален из групп | `usermod -G` без `-a` | Используйте `usermod -aG` |
 
-### Связанные темы
-
-- [Управление группами](./group_commands.md) — `groupadd`, `groupmod`, `groupdel`
-- [Политики паролей](./password_policy_chage.md) — `chage`
-- [Мониторинг пользователей](./user_monitoring.md) — `id`, `who`, `w`, `last`
-- [Файлы конфигурации](./users_config_files.md) — `/etc/passwd`, `/etc/shadow`
-- [Управление привилегиями](../privilege_management.md) — `sudo`, `su`
+Смежные темы: [управление группами](./group_commands.md), [политики паролей](./password_policy_chage.md), [мониторинг пользователей](./user_monitoring.md), [файлы конфигурации](./users_config_files.md), [управление привилегиями](../privilege_management.md).

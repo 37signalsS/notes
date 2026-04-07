@@ -151,11 +151,6 @@ sudo auditctl -l
 
 ### Интеграция с другими системами
 
-- **journald:** События auditd могут дублироваться в journal (настраивается в `auditd.conf`)
-- **SIEM-системы:** Логи `/var/log/audit/audit.log` отправляются в Splunk, ELK, QRadar
-
-### Ссылки по теме
-
-- **Обзор логирования:** [logging_overview.md](./logging_overview.md)
-- **journald:** [journald.md](./journald.md)
-- **Анализ сбоев:** [error_and_crash_analysis.md](./error_and_crash_analysis.md)
+- **journald:** События auditd могут дублироваться в journal (настраивается в `auditd.conf`). Подробнее: [journald](./journald.md).
+- **SIEM-системы:** Логи `/var/log/audit/audit.log` отправляются в Splunk, ELK, QRadar. Общий обзор логирования: [logging_overview](./logging_overview.md).
+- **Анализ сбоев:** см. [error_and_crash_analysis](./error_and_crash_analysis.md).

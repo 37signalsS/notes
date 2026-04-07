@@ -26,33 +26,16 @@
 
 ### Подготовка
 
-#### Шаг 1: Аудит исходной системы
+> **Перед миграцией:** выполните аудит исходной системы и создайте резервные копии. Подробные инструкции: [аудит пользователей](./users_config_files.md#аудит), [резервное копирование](./users_config_files.md#резервное-копирование).
+
+#### Шаг 1: Проверка конфликтов на целевой системе
 
 ```bash
-# Список всех пользователей с UID >= 1000
-awk -F: '$3 >= 1000 {print $1, $3, $4}' /etc/passwd
-
-# Список всех групп с GID >= 1000
-awk -F: '$3 >= 1000 {print $1, $3}' /etc/group
-
 # Проверка на дублирующиеся UID
 cut -d: -f3 /etc/passwd | sort | uniq -d
 
 # Проверка на дублирующиеся GID
 cut -d: -f3 /etc/group | sort | uniq -d
-```
-
-#### Шаг 2: Резервное копирование на целевой системе
-
-```bash
-# Создание резервных копий файлов конфигурации
-sudo cp /etc/passwd /etc/passwd.bak.$(date +%Y%m%d)
-sudo cp /etc/shadow /etc/shadow.bak.$(date +%Y%m%d)
-sudo cp /etc/group /etc/group.bak.$(date +%Y%m%d)
-sudo cp /etc/gshadow /etc/gshadow.bak.$(date +%Y%m%d)
-
-# Резервное копирование существующих домашних директорий
-sudo tar -czvf /backup/home_backup_$(date +%Y%m%d).tar.gz /home/
 ```
 
 ### Метод 1: Ручной перенос (для нескольких пользователей)
@@ -229,23 +212,25 @@ rsync -avz /source/home/$USERNAME/.[!.]* /home/$USERNAME/
 echo "Пользователь $USERNAME создан с UID $NEW_UID"
 ```
 
-## Лучшие практики
+## Дополнительная информация
 
-### Перед миграцией
+### Лучшие практики
+
+#### Перед миграцией
 
 1. **Проверьте конфликты UID/GID** — используйте `getent passwd` и `cut -d: -f3`
-2. **Создайте резервные копии** — всегда备份ируйте /etc/* и /home
+2. **Создайте резервные копии** — всегда резервируйте /etc/* и /home
 3. **Тестируйте на тестовой системе** — не миграйте сразу на production
 4. **Запланируйте downtime** — пользователи не должны быть активны
 
-### Во время миграции
+#### Во время миграции
 
 1. **Используйте rsync** — сохраняет права и атрибуты
 2. **Проверяйте права** — `ls -la /home/username`
 3. **Тестируйте вход** — сразу проверяйте возможность входа
 4. **Проверяйте sudo** — если пользователь должен иметь привилегии
 
-### После миграции
+#### После миграции
 
 ```bash
 # Проверка владельца домашней директории
@@ -264,19 +249,16 @@ find /home/username -not -user username
 find /home/username -exec chown username:username {} \;
 ```
 
-### Альтернатива: Централизованное управление
+#### Альтернатива: Централизованное управление
 
 Вместо миграции рассмотрите LDAP/SSSD:
 
 ```bash
 # Установка SSSD
 apt install sssd sssd-ldap
-
-# Настройка /etc/sssd/sssd.conf
-# См. ldap_sssd.md для подробной конфигурации
 ```
 
-## Дополнительная информация
+Подробная настройка: [LDAP/SSSD operations](./LDAP_SSSD/operations.md).
 
 ### Распространённые проблемы
 
@@ -287,9 +269,4 @@ apt install sssd sssd-ldap
 | Конфликт UID | Одинаковые UID на системах | Измените UID через `usermod -u` |
 | Не работает sudo | Пользователь не в группе sudo | `usermod -aG sudo username` |
 
-### Связанные темы
-
-- [Управление пользователями](./user_commands.md) — `useradd`, `usermod`
-- [Файлы конфигурации](./users_config_files.md) — `/etc/passwd`, `/etc/shadow`
-- [LDAP/SSSD](./LDAP_SSSD/operations.md) — централизованное управление
-- [Права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) — `chmod`, `chown`
+Смежные темы: [управление пользователями](./user_commands.md) (`useradd`, `usermod`), [файлы конфигурации](./users_config_files.md) (`/etc/passwd`, `/etc/shadow`), [LDAP/SSSD](./LDAP_SSSD/operations.md) — централизованное управление, [права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) (`chmod`, `chown`).

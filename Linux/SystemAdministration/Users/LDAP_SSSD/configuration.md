@@ -2,13 +2,29 @@
 
 ## Определения
 
-**Конфигурация LDAP/SSSD** — установка и настройка интеграции Linux с LDAP-серверами через SSSD.
-
-> **Навигация:** [Главная LDAP_SSSD](./index.md) | [Операции](./operations.md)
+**Конфигурация LDAP/SSSD** — установка и настройка интеграции Linux с LDAP-серверами через SSSD для централизованного управления учётными записями.
 
 ---
 
-## Practical Scenarios
+## Базовые понятия
+
+**Основные компоненты конфигурации:**
+
+- **sssd.conf** — основной файл конфигурации SSSD (`/etc/sssd/sssd.conf`), определяет провайдеры идентификации, аутентификации и доступа
+- **NSS (Name Service Switch)** — механизм интеграции LDAP-пользователей в систему (`/etc/nsswitch.conf`)
+- **PAM (Pluggable Authentication Modules)** — модули аутентификации для работы с SSSD
+- **TLS/SSL** — шифрование LDAP-соединений (LDAPS на порту 636 или StartTLS)
+
+**Ключевые параметры sssd.conf:**
+
+- **id_provider/auth_provider/chpass_provider/access_provider** — тип провайдера (ldap, ipa, ad, krb5)
+- **ldap_schema** — схема LDAP (rfc2307 для OpenLDAP, ad для Active Directory)
+- **cache_credentials** — кэширование учётных данных для офлайн-аутентификации
+- **ldap_tls_reqcert** — проверка серверных сертификатов (demand = обязательная)
+
+---
+
+## Практические сценарии
 
 ### Установка пакетов
 
@@ -180,9 +196,6 @@ sss_ssh_authorizedkeys username
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Связанные темы
-
-- **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
-- **[389DS](../../../Networking/Services/BIND/overview.md)** — развёртывание LDAP-сервера
+**Связанные темы:** [PAM](../../../Security/pam_overview.md) — модули аутентификации; [389DS](../../../../../LDAP/389ds/overview.md) — развёртывание LDAP-сервера; [Операции LDAP/SSSD](./operations.md) — отладка и лучшие практики.

@@ -7,7 +7,7 @@
 * **IP Forwarding (Пересылка IP):** Функция ядра Linux, позволяющая пересылать пакеты между сетевыми интерфейсами. Когда она включена, Linux-система может работать как маршрутизатор.
 * **Шлюз по умолчанию (Default Gateway):** Маршрут, используемый для отправки пакетов в сети, для которых нет явного маршрута (0.0.0.0/0).
 
-## Основные концепции
+## Базовые концепции
 
 ### Как работает маршрутизация?
 
@@ -233,10 +233,4 @@ Gateway=192.168.1.254
 | Дублирование маршрутов | `ip route show \| grep <сеть>` | Удалить конфликтующие маршруты |
 | Медленная маршрутизация | `traceroute -n <цель>` | Проверить задержки на шлюзах |
 
-### Связанные темы
-
-* **NAT и масquerading:** [NAT в Linux](../../Networking/Concepts/nat.md)
-* **Policy-Based Routing:** [PBR](../Networking/Policy_Based_Routing/index.md)
-* **Сетевые утилиты:** [iproute2](../Networking/Tools/iproute2/overview.md)
-* **Диагностика:** [ping](../Diagnostics/Networking/ping.md), [traceroute](../Diagnostics/Networking/traceroute_mtr.md), [tcpdump](../Diagnostics/Networking/tcpdump.md)
-* **Firewall:** [iptables](../Networking/Settings/tools/iptables_basics.md), [nftables](./index.md), [firewalld](../Networking/Settings/tools/firewalld.md)
+> **Подробно:** [ip route — управление маршрутами](../Networking/Tools/iproute2/ip_route.md) · [Policy-Based Routing](../Networking/Policy_Based_Routing/index.md) · [NAT в Linux](../../Networking/Concepts/nat.md) · [Диагностика: ping](../Diagnostics/Networking/ping.md) · [traceroute/mtr](../Diagnostics/Networking/traceroute_mtr.md) · [iptables](../Networking/Settings/tools/iptables_basics.md) · [firewalld](../Networking/Settings/tools/firewalld.md)

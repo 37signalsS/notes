@@ -133,7 +133,4 @@ qemu-system-x86_64 -cpu host ...
 
 ---
 
-## Ссылки
-
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
-- **[Дополнительная информация](./additional_info.md)** — производительность, troubleshooting
+*См. также: [определения и концепции](./definitions_and_concepts.md), [дополнительная информация](./additional_info.md)*

@@ -9,7 +9,7 @@
 
 ---
 
-## Basic Concepts
+## Базовые понятия
 
 ### Архитектура
 
@@ -43,20 +43,15 @@
 
 ---
 
-## Файлы
+## Практические сценарии
 
-| Файл | Описание |
-|------|----------|
-| [configuration.md](./configuration.md) | Установка, настройка TLS, конфигурация sssd.conf, NSS/PAM |
-| [operations.md](./operations.md) | Отладка, лучшие практики, типовые проблемы, AD |
+### Навигация по документации
+
+- **Конфигурация** — установка, настройка TLS, конфигурация sssd.conf, NSS/PAM: [configuration.md](./configuration.md)
+- **Операции** — отладка, лучшие практики, типовые проблемы, AD: [operations.md](./operations.md)
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Связанные темы
-
-- **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
-- **[389DS](../../../Networking/Services/BIND/overview.md)** — развёртывание LDAP-сервера
-- **[OpenLDAP в Kubernetes](../../../../LDAP/openldap_kubernetes.md)** — контейнеризация
-- **[Kerberos](../../../../Security/Concepts/kerberos.md)** — аутентификация в AD
+**Связанные темы:** [PAM](../../../Security/pam_overview.md) — модули аутентификации; [389DS](../../../../../LDAP/389ds/overview.md) — развёртывание LDAP-сервера; [OpenLDAP в Kubernetes](../../../../LDAP/openldap_kubernetes.md) — контейнеризация; [Kerberos](../../../../Security/Concepts/kerberos.md) — аутентификация в AD.

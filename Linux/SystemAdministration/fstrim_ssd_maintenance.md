@@ -139,19 +139,13 @@ sudo mount -o remount,discard /
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- **Мониторинг состояния SSD:** [smartctl](../Diagnostics/Hardware/smartctl/index.md) — проверка износа, температуры, переназначенных секторов
-- **Файловые системы:** [ext4](../FileSystems/RAID/overview.md, [xfs](../FileSystems/RAID/overview.md, [btrfs](../FileSystems/RAID/overview.md — поддержка TRIM зависит от ФС
-- **Планировщики задач:** [cro](n.md)(./cron.md), [Systemd Timers](../Core/systemd/timers.md) — автоматизация fstrim
-
 ### Рекомендации
 
 1. **Periodic TRIM предпочтителен:** Еженедельный запуск через `fstrim.timer` достаточен для большинства сценариев.
 2. **Не используйте `discard` на старых SSD:** Может снижать производительность.
 3. **Проверяйте поддержку ФС:** ext4, xfs, btrfs поддерживают TRIM, но некоторые ФС (например, zfs) требуют дополнительной настройки.
 4. **NVMe и TRIM:** Современные NVMe накопители хорошо обрабатывают periodic TRIM.
-5. **Шифрованные диски:** LUKS поддерживает TRIM, но требует осторожности (может раскрыть информацию об использовании пространства).
+5. **Шифрованные диски:** LUKS поддерживает TRIM, но требует осторожности — может раскрыть информацию об использовании пространства.
 
 ### Безопасность
 
@@ -159,10 +153,12 @@ sudo mount -o remount,discard /
 
 ```bash
 # Проверить, включен ли TRIM для LUKS
-sudo cryptsetup status /dev/sdX
+sudo cryptsetup status /dev/mapper/<имя>
 
 # При необходимости отключить TRIM в LUKS
 # В /etc/crypttab добавить опцию: no-discard
 ```
 
 Для большинства сценариев периодический TRIM на зашифрованных дисках безопасен, но в средах с высокими требованиями к безопасности следует оценить риски.
+
+**Связанные темы:** мониторинг состояния SSD — [smartctl](../Diagnostics/Hardware/smartctl/index.md); автоматизация по расписанию — [cron](./cron.md), [Systemd Timers](../Core/systemd/timers.md).

@@ -2,13 +2,34 @@
 
 ## Определения
 
-**Операции LDAP/SSSD** — отладка, мониторинг, устранение проблем и лучшие практики эксплуатации.
-
-> **Навигация:** [Главная LDAP_SSSD](./index.md) | [Конфигурация](./configuration.md)
+**Операции LDAP/SSSD** — отладка, мониторинг, устранение проблем и лучшие практики эксплуатации интеграции Linux с LDAP/SSSD.
 
 ---
 
-## Practical Scenarios
+## Базовые понятия
+
+**Ключевые инструменты:**
+
+- **journalctl** — просмотр логов SSSD (юнит `sssd.service`)
+- **sss_cache** — управление кэшем SSSD (очистка, обновление)
+- **sssctl** — диагностика состояния доменов и пользователей SSSD
+- **ldapsearch/ldapwhoami** — утилиты прямой проверки LDAP-подключения
+
+**Уровни логирования SSSD:**
+
+- **0–2** — критические ошибки
+- **3–5** — предупреждения и обычные ошибки
+- **6–9** — детальная отладка (использовать только при troubleshooting)
+
+**Расположение данных:**
+
+- **Логи:** `/var/log/sssd/` (основной), `journalctl -u sssd`
+- **Кэш:** `/var/lib/sss/db/` (база данных кэша)
+- **Memory cache:** `/var/lib/sss/mc/` (passwd, group, initgroups)
+
+---
+
+## Практические сценарии
 
 ### Отладка и мониторинг
 
@@ -112,29 +133,10 @@ entry_cache_timeout = 60
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Полезные команды
+**Полезные команды:** `ldapsearch -x -H ldaps://ldap.example.com -b dc=example,dc=com "(objectClass=*)"` — проверка подключения к LDAP; `ldapwhoami -x -H ldaps://ldap.example.com -D "cn=admin,dc=example,dc=com" -W` — тест аутентификации; `sssctl domain-status ldap` и `sssctl user-check username` — проверка SSSD.
 
-```bash
-# Проверка подключения к LDAP
-ldapsearch -x -H ldaps://ldap.example.com -b dc=example,dc=com "(objectClass=*)"
+**Ресурсы:** [Официальная документация SSSD](https://sssd.io/); [Red Hat SSSD Guide](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_authentication_and_authorization_in_rhel/configuring-identity-management-with-sssd_system-configuring-identity-management-with-sssd); [LDAP Schema RFC2307](https://www.rfc-editor.org/rfc/rfc2307).
 
-# Тест аутентификации
-ldapwhoami -x -H ldaps://ldap.example.com -D "cn=admin,dc=example,dc=com" -W
-
-# Проверка SSSD
-sssctl domain-status ldap
-sssctl user-check username
-```
-
-### Ресурсы
-
-- [Официальная документация SSSD](https://sssd.io/)
-- [Red Hat SSSD Guide](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_authentication_and_authorization_in_rhel/configuring-identity-management-with-sssd_system-configuring-identity-management-with-sssd)
-- [LDAP Schema RFC2307](https://www.rfc-editor.org/rfc/rfc2307)
-
-### Связанные темы
-
-- **[PAM](../../../Security/pam_overview.md)** — модули аутентификации
-- **[Kerberos](../../../../Security/Concepts/kerberos.md)** — аутентификация в AD
+**Связанные темы:** [PAM](../../../Security/pam_overview.md) — модули аутентификации; [Kerberos](../../../../Security/Concepts/kerberos.md) — аутентификация в AD; [Конфигурация LDAP/SSSD](./configuration.md) — установка и настройка.

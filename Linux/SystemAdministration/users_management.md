@@ -9,60 +9,58 @@
 - **Дополнительные группы (Supplementary Groups):** Группы, в которые пользователь может быть добавлен для получения дополнительных прав.
 - **UPG (User Private Group):** Схема, где для каждого пользователя создаётся группа с тем же именем.
 
-## Структура знаний
+## Базовые понятия
 
-### Базовые понятия
+Управление пользователями в Linux включает создание, модификацию и удаление учетных записей, а также настройку прав доступа через группировку. Основные аспекты:
 
-- [Определения пользователей и групп](Users/users_definitions.md) — UID, GID, диапазоны, привилегии
-- [Файлы конфигурации](Users/users_config_files.md) — `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`
-- [Приватные группы (UPG)](Users/user_private_groups.md) — схема именования групп
+**Идентификация:** Каждый пользователь имеет UID, определяющий его тип и привилегии. Диапазоны UID распределяются: UID 0 для root, UID 1-999 для системных служб, UID 1000+ для обычных пользователей. Подробности в [определениях пользователей и групп](Users/users_definitions.md).
 
-### Управление
+**Конфигурация:** Параметры пользователей хранятся в файлах `/etc/passwd`, `/etc/shadow`, `/etc/group` и `/etc/gshadow`. Настройки создания по умолчанию задаются в `/etc/default/useradd` и `/etc/login.defs`. Детали в [файлах конфигурации](Users/users_config_files.md).
 
-- [Управление пользователями](Users/user_commands.md) — `useradd`, `usermod`, `userdel`
-- [Управление группами](Users/group_commands.md) — `groupadd`, `groupmod`, `groupdel`, `gpasswd`
-- [Хэширование паролей](Users/password_hashing.md) — алгоритмы, соль, безопасность
-- [Политики паролей](Users/password_policy_chage.md) — `chage`, сроки действия
+**Управление:** Для операций используются команды `useradd`/`adduser` (создание), `usermod` (изменение), `userdel` (удаление). Полное руководство в [управлении пользователями](Users/user_commands.md).
 
-### Мониторинг и аудит
+**Группы:** Управление группами осуществляется через `groupadd`, `groupmod`, `groupdel` и `gpasswd`. Подробности в [управлении группами](Users/group_commands.md).
 
-- [Мониторинг пользователей](Users/user_monitoring.md) — `id`, `who`, `w`, `last`, процессы, файлы
-- [Миграция пользователей](Users/user_migration.md) — перенос между системами
+**Пароли:** Хэширование паролей (алгоритмы SHA-512, Yescrypt) описано в [хэшировании паролей](Users/password_hashing.md). Политики сроков действия настраиваются через `chage` — см. [политики паролей](Users/password_policy_chage.md).
 
-### Централизованное управление
+**Схема UPG:** В современных дистрибутивах используется схема User Private Group, где для каждого пользователя создается приватная группа. Подробнее в [приватных группах](Users/user_private_groups.md).
 
-- [LDAP и SSSD](./Users/LDAP_SSSD/operations.md) — централизованная аутентификация, кэширование
+## Практические сценарии
 
-### Смежные темы
-
-- [Управление привилегиями](./privilege_management.md) — `su`, `sudo`, Polkit
-- [PAM](../Security/pam_overview.md) — модули аутентификации
-- [Права доступа](../Security/Concepts/File_Permissions/overview_definitions.md) — DAC, SUID, SGID, ACL
-- [Права доступа (кратко)](./Users/file_permissions.md) — `chmod`, `chown`
-
-## Лучшие практики
-
-### Безопасность
-
-1. **Принцип наименьших привилегий** — предоставляйте только необходимые права
-2. **Регулярный аудит** — проверяйте членство в привилегированных группах
-3. **Сложные пароли** — минимум 12 символов, SHA-512 или Yescrypt
-4. **Блокировка неактивных учётных записей** — используйте `chage -I`
-5. **Мониторинг входов** — проверяйте `/var/log/auth.log`
-
-### Конфигурация
+### Быстрое создание пользователя
 
 ```bash
-# Рекомендуемые настройки в /etc/login.defs
-PASS_MAX_DAYS   90
-PASS_MIN_DAYS   7
-PASS_WARN_AGE   7
-USERGROUPS_MOD  002
-ENCRYPT_METHOD  SHA512
-SHA_CRYPT_MIN_ROUNDS 5000
+# Создание пользователя с домашней директорией и bash
+sudo useradd -m -s /bin/bash username
+
+# Установка пароля
+sudo passwd username
+
+# Добавление в группу sudo (Debian/Ubuntu) или wheel (RHEL/CentOS)
+sudo usermod -aG sudo username    # Debian/Ubuntu
+sudo usermod -aG wheel username   # RHEL/CentOS
 ```
 
-### Аудит
+### Блокировка и разблокировка учетной записи
+
+```bash
+# Блокировка учетной записи
+sudo usermod -L username
+
+# Разблокировка учетной записи
+sudo usermod -U username
+
+# Отключение входа (установка nologin shell)
+sudo usermod -s /usr/sbin/nologin username
+```
+
+### Принудительная смена пароля при следующем входе
+
+```bash
+sudo chage -d 0 username
+```
+
+### Аудит пользователей
 
 ```bash
 # Проверка пользователей с UID >= 1000
@@ -76,30 +74,39 @@ getent group docker
 # Проверка пользователей без пароля
 sudo awk -F: '($2 == "" || $2 == "!") {print $1}' /etc/shadow
 
-# Проверка пользователей с бессрочным паролем
-sudo chage -l username | grep "expires"
+# Проверка информации о пользователе
+id username
 ```
+
+### Удаление пользователя
+
+```bash
+# Удаление с домашней директорией и почтовым ящиком
+sudo userdel -r username
+```
+
+Для сложных сценариев мониторинга (проверка сессий, процессов, файлов) см. [мониторинг пользователей](Users/user_monitoring.md). Для миграции между системами — [миграция пользователей](Users/user_migration.md).
 
 ## Дополнительная информация
 
-### Диапазоны UID/GID
+### Рекомендуемые настройки безопасности
 
-| Диапазон | Назначение |
-| :--- | :--- |
-| **UID 0** | `root` — суперпользователь |
-| **UID 1-99** | Статические системные сервисы |
-| **UID 100-999** | Динамические системные сервисы |
-| **UID 1000+** | Обычные пользователи |
+1. **Принцип наименьших привилегий** — предоставляйте только необходимые права
+2. **Регулярный аудит** — проверяйте членство в привилегированных группах
+3. **Сложные пароли** — минимум 12 символов, SHA-512 или Yescrypt
+4. **Блокировка неактивных учётных записей** — используйте `chage -I`
+5. **Мониторинг входов** — проверяйте `/var/log/auth.log`
 
-### Привилегированные группы
+### Рекомендуемые параметры `/etc/login.defs`
 
-| Группа | Назначение | Дистрибутив |
-| :--- | :--- | :--- |
-| `wheel` | Доступ к `sudo` | RHEL/CentOS/Fedora |
-| `sudo` | Доступ к `sudo` | Debian/Ubuntu |
-| `docker` | Управление Docker | Все |
-| `kvm` | Доступ к KVM | Все |
-| `libvirt` | Управление libvirt | Все |
+```bash
+PASS_MAX_DAYS   90
+PASS_MIN_DAYS   7
+PASS_WARN_AGE   7
+USERGROUPS_MOD  002
+ENCRYPT_METHOD  SHA512
+SHA_CRYPT_MIN_ROUNDS 5000
+```
 
 ### Распространённые ошибки
 
@@ -110,21 +117,9 @@ sudo chage -l username | grep "expires"
 | Конфликт UID | Одинаковые UID | Проверьте перед миграцией |
 | Не работает sudo | Нет в группе wheel/sudo | `usermod -aG wheel username` |
 
-### Полезные команды
+### Смежные темы
 
-```bash
-# Создание пользователя с домашней директорией
-sudo useradd -m -s /bin/bash username
-
-# Добавление в группу sudo
-sudo usermod -aG sudo username
-
-# Блокировка учётной записи
-sudo usermod -L username
-
-# Принудительная смена пароля
-sudo chage -d 0 username
-
-# Проверка информации о пользователе
-id username
-```
+- [Управление привилегиями](./privilege_management.md) — `su`, `sudo`, Polkit
+- [PAM](../Security/pam_overview.md) — модули аутентификации
+- [Права доступа к файлам](../Security/Concepts/File_Permissions/overview_definitions.md) — DAC, SUID, SGID, ACL
+- [LDAP и SSSD](./Users/LDAP_SSSD/operations.md) — централизованная аутентификация

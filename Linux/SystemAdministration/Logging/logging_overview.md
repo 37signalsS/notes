@@ -8,10 +8,10 @@
 
 | Компонент | Назначение |
 | :--- | :--- |
-| `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald.md](./journald.md) |
-| `journalctl` | Просмотр и анализ логов journald | [journalctl.md](../../Diagnostics/journalctl.md |
-| `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog.md](./rsyslog.md) |
-| `auditd` | Аудит событий безопасности на уровне ядра | [auditd.md](./auditd.md) |
+| `systemd-journald` | Централизованный сбор логов в бинарном формате | [journald](./journald.md) |
+| `journalctl` | Просмотр и анализ логов journald | [journalctl](../../Diagnostics/journalctl.md) |
+| `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog](./rsyslog.md) |
+| `auditd` | Аудит событий безопасности на уровне ядра | [auditd](./auditd.md) |
 | `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов-logrotate) |
 
 Компоненты работают совместно: `journald` собирает сообщения, `rsyslog` забирает их для фильтрации и пересылки, `logrotate` управляет размером файлов.
@@ -244,12 +244,10 @@ sync  # Запись буферов на диск
 
 Полезна перед выключением системы или для гарантии записи критических данных.
 
----
+### Связанные компоненты и SSoT-файлы
 
-**Файлы по компонентам:**
-
-- journald: [journald.md](./journald.md)
-  - journalctl: [journalctl.md](../../../Diagnostics/journalctl.md) — просмотр логов
-- rsyslog: [rsyslog.md](./rsyslog.md)
-- auditd: [auditd.md](./auditd.md)
-- Анализ сбоев: [](../../../Kubernetes/Installation/Kubespray/offline_installation/troubleshooting.md, [Core/kernel/kernel_pani](c.md)(../../Core/kernel/kernel_panic.md)
+- **journald / journalctl:** [journald](./journald.md), [journalctl](../../Diagnostics/journalctl.md)
+- **rsyslog:** [rsyslog](./rsyslog.md)
+- **auditd:** [auditd](./auditd.md)
+- **Анализ сбоев и kernel panic:** [error_and_crash_analysis](./error_and_crash_analysis.md), [kernel_panic](../../Core/kernel/kernel_panic.md)
+- **Централизованное логирование:** [observability_definitions](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)
