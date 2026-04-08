@@ -98,10 +98,18 @@ ICMP помогает диагностировать два типа ошибо�
 | **10** | Router Solicitation | Хост запрашивает информацию о маршрутизаторах |
 | **4** | **Source Quench** | Запрос на уменьшение скорости отправки (устарел) |
 
+## Навигация по подтемам
+
+- **[icmp_echo_ping.md](./icmp_echo_ping.md)** — Echo Request/Reply, утилита ping, broadcast
+- **[icmp_destination_unreachable.md](./icmp_destination_unreachable.md)** — Type 3, коды 0-4
+- **[icmp_redirect.md](./icmp_redirect.md)** — Type 5 (Redirect), Type 4 (Source Quench)
+- **[icmp_time_exceeded.md](./icmp_time_exceeded.md)** — Type 11, TTL, traceroute
+- **[icmp_diagnostics_security.md](./icmp_diagnostics_security.md)** — диагностика, безопасность, ICMPv6
+
 ## Дополнительная информация
 
 **Спецификации:** RFC 792 (ICMPv4), RFC 4443 (ICMPv6), RFC 4884 (Extended ICMP).
 
-**Смежные протоколы:** [IP](../ip.md) — сетевой уровень, [TCP](../TCP/overview.md) — транспортный уровень.
+**Смежные протоколы:** [IP](../ip.md) — сетевой уровень, [TCP](../TCP/overview.md) — транспортный уровень, [ARP](../arp.md) — разрешение адресов.
 
 **Диагностические утилиты:** [ping](../../../Linux/Diagnostics/Networking/ping.md), [traceroute](../../../Linux/Diagnostics/Networking/traceroute_mtr.md).

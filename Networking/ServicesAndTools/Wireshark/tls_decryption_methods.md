@@ -4,253 +4,180 @@
 
 **Расшифровка TLS-трафика** — процесс получения доступа к содержимому зашифрованного TLS-соединения с использованием ключей сессии или промежуточных значений, полученных на этапе handshake.
 
-**SSLKEYLOGFILE** — формат файла для записи TLS-ключей, поддерживаемый современными браузерами и инструментами анализа трафика.
+**SSLKEYLOGFILE** — стандартный формат файла для записи TLS-ключей. Поддерживается Chromium, Firefox, Electron-приложениями, Mitmproxy. Формат записи: `LABEL <ClientRandom> <Secret>`.
+
+**SSL Pinning** — механизм безопасности, при котором приложение проверяет не только валидность сертификата, но и его соответствие заранее заданным значениям (хеш, публичный ключ). Блокирует MITM-прокси.
+
+**SChannel (Secure Channel)** — криптографическая подсистема Windows, управляющая TLS-соединениями через интерфейс SSPI. Хранит ключи в защищённой памяти `lsass.exe`.
 
 ## Основные концепции
 
-### Архитектура шифрования в ОС
+### Ключевое для расшифровки: TLS 1.2 vs TLS 1.3
 
-Различные операционные системы используют разные подсистемы для управления TLS-соединениями:
+Полное описание handshake-процесса: **[Протокол TLS](../../Protocols/tls.md#процесс-рукопожатия-tls-handshake)**.
 
-| ОС | Подсистема | Интерфейс | Процесс |
-|---|---|---|---|
-| **Windows** | SChannel (Secure Channel) | SSPI | lsass.exe |
-| **Linux** | OpenSSL, GnuTLS | POSIX API | varies |
-| **macOS** | Secure Transport | Security Framework | varied |
+Различия, критичные для расшифровки:
 
-**Windows SChannel/SSPI**:
-
-- **SChannel** — криптографическая подсистема Windows для безопасной связи
-- **SSPI** (Security Support Provider Interface) — интерфейс для аутентификации и шифрования
-- **lsass.exe** (Local Security Authority Subsystem Service) — процесс, управляющий ключами и политиками безопасности
-- Поддерживает механизмы аутентификации: Kerberos, NTLM, Negotiate
-
-**Проблема**: Ключи хранятся в защищённой памяти lsass.exe, доступ к которой ограничен. Требуется ядерная отладка или специализированные инструменты для дампа.
-
-### TLS 1.2 vs TLS 1.3: различия для расшифровки
-
-#### TLS 1.2
-
-**Процесс генерации ключей**:
-
-1. ClientHello → ServerHello (согласование шифров)
-2. Сервер отправляет сертификат
-3. Клиент генерирует **premaster secret**
-4. Premaster secret шифруется открытым ключом сервера (RSA) или используется ECDHE
-5. Из premaster secret генерируется **master secret**
-6. Из master secret выводятся **session keys**
-
-**Особенности**:
-
-- Ключи генерируются последовательно, перехват на ранних этапах позволяет расшифровать сессию
-- При использовании RSA ключи можно восстановить из приватного ключа сервера
-- ECDHE требует перехвата эфемерных ключей
-
-#### TLS 1.3
-
-**Упрощённый handshake (1-RTT)**:
-
-1. ClientHello с параметрами для обмена ключами
-2. ServerHello + Certificate + Finished (в одном бандле)
-3. Клиент отправляет Finished
-
-**Особенности**:
-
-- Ключи генерируются из множества промежуточных значений
-- Нет явного premaster/master secret в памяти
-- Ключи «разбросаны» по разным этапам handshake
-- Прямое извлечение ключей из памяти затруднено
-- Требуется мониторинг процесса на уровне ОС
+| Аспект | TLS 1.2 | TLS 1.3 |
+|---|---|---|
+| **Генерация ключей** | Последовательная: premaster → master → session keys | Из множества промежуточных значений, «разбросаны» по handshake |
+| **RSA-шифры** | Поддерживаются — можно расшифровать из приватного ключа сервера | Удалены — только ECDHE (PFS) |
+| **Явные секреты в памяти** | premaster secret, master secret | Нет явных premaster/master — ключи выводятся на лету |
+| **SSLKEYLOGFILE** | `CLIENT_RANDOM` (master secret) | Множество записей: `CLIENT_HANDSHAKE_TRAFFIC_SECRET`, `CLIENT_TRAFFIC_SECRET`, `SERVER_TRAFFIC_SECRET` |
+| **Извлечение из памяти ОС** | Возможно при дампе lsass.exe/memory | Затруднено — ключи кратковременны |
 
 ### Perfect Forward Secrecy (PFS)
 
-**PFS** — свойство, гарантирующее, что компрометация долгосрочного ключа сервера не позволит расшифровать перехваченные сессии.
+Кратко: каждая TLS-сессия использует уникальные эфемерные ключи (ECDHE). Подробности: **[PFS в TLS](../../Protocols/tls.md#perfect-forward-secrecy-pfs)**.
 
-**Механизм**:
+**Влияние на анализ:**
 
-- Для каждой сессии генерируются уникальные **эфемерные ключи** (ECDHE)
-- Ключи не сохраняются после завершения сессии
-- Перехват трафика с PFS требует записи ключей **в реальном времени**
-
-**Влияние на анализ**:
-
-- Файл `SSLKEYLOGFILE` должен записываться непрерывно
-- Ключи действительны только для сессий, установленных **после** начала записи
+- Ключи действительны **только** для сессий, установленных **после** начала записи `SSLKEYLOGFILE`
 - Старые сессии расшифровать невозможно
+- Файл ключей должен записываться **непрерывно** во время захвата трафика
+
+### Архитектура хранения ключей в ОС
+
+| ОС | Подсистема | Процесс хранения | Метод доступа |
+|---|---|---|---|
+| **Windows** | SChannel / SSPI | `lsass.exe` | Ядерная отладка, специализированные скрипты |
+| **Linux** | OpenSSL, GnuTLS | Процесс приложения | `SSLKEYLOGFILE`, LD_PRELOAD, eBPF |
+| **macOS** | Secure Transport / Security Framework | Системные процессы | Keychain access, dtrace |
 
 ## Практические сценарии
 
 ### Сценарий 1: Расшифровка трафика браузера (SSLKEYLOGFILE)
 
-**Применимость**: Браузеры на базе Chromium (Chrome, Edge, Яндекс), Firefox, Electron-приложения (Slack, Mattermost, Discord).
+**Применимость:** Chromium (Chrome, Edge, Яндекс), Firefox, Electron-приложения (Slack, Discord, VS Code).
 
-**Шаги**:
+**Шаги:**
 
-1. **Создание файла для ключей**:
-
+1. Создание файла для ключей:
    ```bash
    export SSLKEYLOGFILE=~/tls-keys.log
    ```
 
-2. **Запуск браузера**:
-
+2. Запуск браузера:
    ```bash
    chromium --ssl-key-log-file=~/tls-keys.log
-   # или для Firefox
+   # или Firefox
    firefox --ssl-key-log-file=~/tls-keys.log
    ```
 
-3. **Настройка Wireshark**:
+3. Настройка Wireshark:
    - `Edit → Preferences → Protocols → TLS`
-   - В поле `(Pre)-Master-Secret log filename` укажите путь к `~/tls-keys.log`
+   - Поле `(Pre)-Master-Secret log filename` → `~/tls-keys.log`
 
-4. **Захват трафика**:
-   - Начните захват в Wireshark
-   - Посетите HTTPS-сайты в браузере
-   - В Wireshark появятся записи `Decrypted TLS`, `HTTP2`
+4. Захват трафика → в Wireshark появятся `Decrypted TLS`, `HTTP2`.
 
-5. **Анализ**:
-   - Используйте `Follow → TCP Stream` для просмотра содержимого
-   - Фильтр: `http2` или `tls`
+5. Анализ: `Follow → TCP Stream`, фильтр `http2` или `tls`.
 
-**Ограничения**:
-
-- Не работает с продакшен-версиями некоторых браузеров без дополнительных флагов
+**Ограничения:**
+- Не работает с продакшен-версиями некоторых браузеров без флагов
 - Ключи действительны только для текущей сессии
-- Требуется перезапуск браузера для новых сессий
+- После перезапуска браузера — новые ключи
+
+**tshark:** `tshark -r capture.pcapng -o tls.keylog_file:/path/to/tls-keys.log`
 
 ### Сценарий 2: Использование MITM-прокси (Mitmproxy)
 
-**Применимость**: Отладка мобильных приложений, десктопных клиентов без SSL Pinning.
+**Применимость:** Отладка мобильных приложений, десктопных клиентов **без SSL Pinning**.
 
-**Шаги**:
+**Шаги:**
 
-1. **Установка и запуск**:
-
+1. Установка и запуск:
    ```bash
    pip install mitmproxy
    mitmproxy --listen-host 127.0.0.1 --listen-port 8080
    ```
 
-2. **Настройка клиента**:
+2. Настройка клиента:
    - Прокси: `127.0.0.1:8080`
-   - Для мобильных устройств: настройте Wi-Fi прокси на IP хоста с Mitmproxy
+   - Для мобильных: Wi-Fi → прокси на IP хоста
 
-3. **Установка сертификата**:
-   - Посетите `http://mitm.it` в браузере через прокси
+3. Установка сертификата:
+   - Посетите `http://mitm.it` через прокси
    - Скачайте и установите сертификат для вашей ОС
-   - Для Android/iOS требуется дополнительная настройка доверенных сертификатов
+   - Android 7+: требуется root или модификация приложения
 
-4. **Запись ключей для Wireshark**:
-
+4. Запись ключей для Wireshark:
    ```bash
    mitmproxy --set sslkeylogfile=~/tls-keys.log
    ```
 
-5. **Анализ в Mitmproxy**:
-   - Просмотр запросов/ответов в реальном времени
-   - Модификация трафика на лету
-   - Экспорт сессий
+5. Анализ в Mitmproxy: просмотр запросов/ответов, модификация на лету, экспорт.
 
-**Ограничения**:
-
-- **Не работает с SSL Pinning** (требуется патчинг приложения)
-- Некоторые приложения проверяют целостность сертификата
-- Firefox использует собственное хранилище сертификатов
+**Ограничения:**
+- **Не работает с SSL Pinning**
+- Firefox использует собственное хранилище сертификатов (нужен `--cert TrustStore`)
 
 ### Сценарий 3: Обход SSL Pinning
 
-**SSL Pinning** — механизм, при котором приложение проверяет соответствие сертификата заранее заданным значениям.
+**Применимость:** Мобильные приложения (Android/iOS), десктопные клиенты с повышенными требованиями к безопасности.
 
-**Методы обхода**:
+| Метод | Платформа | Описание |
+|---|---|---|
+| **Frida** | Все | Динамическое внедрение JS для перехвата функций проверки сертификата |
+| **Xposed Module** | Android | JustTrustMe, SSLUnpinning — хуки системных вызовов |
+| **Патчинг** | Android/iOS | Дизассемблирование (IDA Pro, Ghidra) → модификация байт-кода |
+| **Отключение на уровне ОС** | Android 7+ | Рут, переподпись приложения с разрешением user-сертификатов |
 
-1. **Frida (динамический перехват)**:
+**Пример Frida:**
+```bash
+frida -U -f com.example.app --no-pause -l ssl-unpinning.js
+```
 
-   ```bash
-   frida -U -f com.example.app --no-pause -l ssl-unpinning.js
-   ```
-
-   - Скрипты для обхода: [ssl-kill-switch2](https://github.com/nabla-c0d3/ssl-kill-switch2), [frida-multiple-unpinning](https://github.com/mwrlabs/frida-ssl-unpinning)
-
-2. **Xposed Module (Android)**:
-   - Установите Xposed Framework
-   - Модули: JustTrustMe, SSLUnpinning
-
-3. **Патчинг приложения**:
-   - Дизассемблирование (IDA Pro, Ghidra)
-   - Поиск функций проверки сертификата
-   - Модификация байт-кода (apktool, Frida)
-
-4. **Отключение на уровне ОС**:
-   - Android 7+: пользовательские сертификаты не доверяются по умолчанию
-   - Решение: рут-доступ, переподпись приложения
-
-**Инструменты**:
-
-- **Frida**: Динамическое внедрение JavaScript в процессы
-- **Objection**: Фреймворк для исследования приложений на базе Frida
-- **MobSF**: Автоматизированный анализ мобильных приложений
+**Инструменты:**
+- **Frida** + **Objection** — фреймворк для исследования мобильных приложений
+- **MobSF** — автоматизированный статический и динамический анализ
 
 ### Сценарий 4: Расшифровка трафика Windows (SChannel)
 
-**Применимость**: Анализ трафика системных процессов, приложений Windows.
+**Применимость:** Анализ трафика системных процессов, приложений Windows.
 
-**Метод**: Ядерная отладка между двумя ВМ.
+**Метод:** Ядерная отладка между двумя ВМ.
 
-**Требования**:
-
+**Требования:**
 - Две виртуальные машины Windows
-- Настройка kernel debugging через COM/Named Pipe
+- Kernel debugging через COM/Named Pipe/Network
 - Инструменты: WinDbg, специализированные скрипты
 
-**Шаги**:
+**Шаги:**
 
-1. **Настройка отладки**:
-   - Включите kernel debugging на целевой ВМ:
+1. Настройка отладки на целевой ВМ:
+   ```cmd
+   bcdedit /debug on
+   bcdedit /dbgsettings serial debugport:1 baudrate:115200
+   ```
 
-     ```cmd
-     bcdedit /debug on
-     bcdedit /dbgsettings serial debugport:1 baudrate:115200
-     ```
+2. Подключение WinDbg с хоста, установка breakpoints на функции SChannel.
 
-   - Подключите WinDbg с хоста
+3. Дамп памяти `lsass.exe` в момент TLS handshake → извлечение ключей из структур данных.
 
-2. **Поиск ключей в памяти**:
-   - Установите breakpoints на функции SChannel
-   - Дамп памяти lsass.exe в момент handshake
-   - Извлечение ключей из структур данных
-
-3. **Конвертация в формат Wireshark**:
-   - Специализированные скрипты (например, [tls-master-secrets](https://github.com/openssl/openssl/issues))
+4. Конвертация в формат Wireshark:
    - Формат: `CLIENT_RANDOM <random> <secret>`
+   - Специализированные скрипты (например, [tls-key-extractor](https://github.com/JamesForshaw/Keylogger))
 
-**Ограничения**:
-
-- Сложная настройка
-- Требуется глубокое знание Windows Internals
-- Не все версии Windows поддерживаются
+**Ограничения:** Сложная настройка, требует глубокое знание Windows Internals, не все версии Windows поддерживаются.
 
 ### Сценарий 5: Приватный ключ сервера
 
-**Применимость**: Когда у вас есть контроль над сервером.
+**Применимость:** Когда у вас есть контроль над сервером.
 
-**Шаги**:
+**Шаги:**
 
-1. **Получение приватного ключа**:
+1. Получение приватного ключа:
    - Файл `.key` или `.pem` с сервера
    - Обычно位於 `/etc/ssl/private/` или `/etc/nginx/ssl/`
 
-2. **Настройка Wireshark**:
+2. Настройка Wireshark:
    - `Edit → Preferences → Protocols → TLS → RSA keys list`
-   - Добавьте запись: `<IP>,<Port>,<Protocol>,<Keyfile>`
+   - Запись: `<IP>,<Port>,<Protocol>,<Keyfile>`
    - Пример: `192.168.1.100,443,http,/path/to/server.key`
 
-3. **Анализ**:
-   - Wireshark автоматически расшифрует трафик
-   - Работает только для шифров с RSA (без PFS)
+3. Анализ: Wireshark автоматически расшифрует трафик.
 
-**Ограничения**:
-
+**Ограничения:**
 - **Не работает с ECDHE/DHE** (алгоритмы с PFS)
 - Требует доступа к серверу
 - Не применимо для сторонних сервисов
@@ -263,32 +190,35 @@
 # SSL/TLS secrets log file
 # Format: LABEL <ClientRandom> <Secret>
 CLIENT_RANDOM <hex-random> <hex-secret>
-CLIENT_RANDOM <hex-random> <hex-secret>
+CLIENT_HANDSHAKE_TRAFFIC_SECRET <hex-random> <hex-secret>
+CLIENT_TRAFFIC_SECRET <hex-random> <hex-secret>
+SERVER_TRAFFIC_SECRET <hex-random> <hex-secret>
 ```
 
-**Типы секретов**:
+| Тип секрета | Версия TLS | Описание |
+|---|---|---|
+| `CLIENT_RANDOM` | TLS 1.2 | Master secret для расшифровки всей сессии |
+| `CLIENT_EARLY_TRAFFIC_SECRET` | TLS 1.3 | 0-RTT ключи (ранние данные) |
+| `CLIENT_HANDSHAKE_TRAFFIC_SECRET` | TLS 1.3 | Ключи handshake-фазы (клиент) |
+| `SERVER_HANDSHAKE_TRAFFIC_SECRET` | TLS 1.3 | Ключи handshake-фазы (сервер) |
+| `CLIENT_TRAFFIC_SECRET` | TLS 1.3 | Ключи трафика клиента (application data) |
+| `SERVER_TRAFFIC_SECRET` | TLS 1.3 | Ключи трафика сервера (application data) |
 
-- `CLIENT_RANDOM`: Master secret для TLS 1.2
-- `CLIENT_EARLY_TRAFFIC_SECRET`: 0-RTT ключи для TLS 1.3
-- `CLIENT_HANDSHAKE_TRAFFIC_SECRET`: Ключи handshake TLS 1.3
-- `SERVER_HANDSHAKE_TRAFFIC_SECRET`: Ключи handshake сервера TLS 1.3
-- `CLIENT_TRAFFIC_SECRET`: Ключи трафика клиента TLS 1.3
-- `SERVER_TRAFFIC_SECRET`: Ключи трафика сервера TLS 1.3
-
-### Инструменты для анализа
+### Инструменты для расшифровки
 
 | Инструмент | Назначение | Платформа |
 |---|---|---|
-| **Wireshark** | Визуализация и расшифровка трафика | Все |
-| **Mitmproxy** | MITM-прокси с инспекцией | Все |
-| **Frida** | Динамический перехват вызовов | Все |
-| **Objection** | Исследование мобильных приложений | Android/iOS |
-| **tcpdump** | Консольный захват трафика | Linux/Unix |
-| **tshark** | Консольная версия Wireshark | Все |
+| **Wireshark** | Визуализация и расшифровка через SSLKEYLOGFILE / RSA keys | Все |
+| **tshark** | Консольная расшифровка (`-o tls.keylog_file:...`) | Все |
+| **Mitmproxy** | MITM-прокси с инспекцией и записью ключей | Все |
+| **Frida** | Динамический перехват вызовов (обход SSL Pinning) | Все |
+| **Objection** | Фреймворк для исследования мобильных приложений | Android/iOS |
+| **Burp Suite** | Профессиональный MITM-прокси с GUI | Все |
 
 ### Связанные документы
 
-- **[Дешифрование TLS-трафика](./advanced_features.md#дешифрование-tls-трафика)** — методы в Wireshark
-- **[Протокол TLS](../../Protocols/tls.md)** — основы протокола
-- **[Perfect Forward Secrecy](../../Protocols/tls.md#perfect-forward-secrecy-pfs)** — механизм PFS
-- **[SSL Pinning](../../../Security/Concepts/authentication_vs_authorization.md)** — концепция и обход (TODO)
+- **[Протокол TLS](../../Protocols/tls.md)** — handshake, шифрование, PFS, Session Resumption
+- **[Определения Wireshark](./definitions.md)** — инструменты захвата, форматы файлов, проблемы TLS
+- **[Дополнительные возможности Wireshark](./advanced_features.md)** — coloring rules, flow graph, комментарии
+- **[Практические сценарии](./practical_scenarios.md)** — установка, анализ протоколов
+- **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — консольный захват для последующей расшифровки

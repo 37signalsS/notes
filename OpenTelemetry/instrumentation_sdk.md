@@ -122,11 +122,3 @@ def process_payment(order_id: str):
 - В разработке
 
 **Рекомендация:** Комбинируйте eBPF для инфраструктурного уровня с SDK-инструментацией для бизнес-логики.
-
-### Связанные документы
-
-- **[Обзор OpenTelemetry](./opentelemetry_overview.md)** — общая архитектура
-- **[Архитектура и Сигналы](./architecture_signals.md)** — модель данных
-- **[Протокол OTLP](./otlp_protocol.md)** — формат экспорта
-- **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — сбор телеметрии в Grafana
-- **[Jaeger v2](../Jaeger/jaeger_overview.md)** — трассировка на базе OTel

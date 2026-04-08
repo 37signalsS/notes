@@ -1,22 +1,21 @@
 # VXLAN (Virtual Extensible LAN)
 
-## Определения
+## Definitions
 
-**VXLAN (Virtual Extensible LAN)** — протокол туннелирования для создания оверлейных сетей в крупных виртуализированных средах и облачных дата-центрах.
+**VXLAN (Virtual Extensible LAN)** — протокол туннелирования для создания оверлейных сетей в крупных виртуализированных средах и облачных дата-центрах ([RFC 7348](https://datatracker.ietf.org/doc/html/rfc7348)).
 
 **Ключевые характеристики:**
 
 - **Уровень:** L2 (инкапсуляция Ethernet в UDP)
 - **Транспорт:** UDP порт `4789` (IANA), `8472` (Linux по умолчанию до стандартизации)
 - **Идентификатор:** VNI (24 бита) — до 16 миллионов сетей
-- **RFC:** [RFC 7348](https://datatracker.ietf.org/doc/html/rfc7348)
-- **Шифрование:** Отсутствует (опционально через IPsec)
+- **Шифрование:** Отсутствует (опционально через [IPsec](./ipsec/ipsec.md))
 
 **VTEP (VXLAN Tunnel End Point)** — конечная точка, выполняющая инкапсуляцию/декапсуляцию VXLAN.
 
-## Базовые концепции
+## Basic Concepts
 
-### Формат заголовка VXLAN
+### VXLAN Header Format
 
 ```
  0                   1                   2                   3
@@ -191,6 +190,8 @@ tcpdump -i vxlan0 -n
 | **STT** | ~50 байт | 16M | TCP | VMware NSX |
 | **NVGRE** | ~42 байта | 16M | GRE | Hyper-V |
 
+**Примечание:** VXLAN-GPE ([RFC 8365](https://datatracker.ietf.org/doc/html/rfc8365)) — расширение для поддержки L3-протоколов поверх VXLAN.
+
 ### Ограничения
 
 | Ограничение | Описание | Митигация |
@@ -230,9 +231,3 @@ ip link set eth0 mtu 9000
 # Для VXLAN-интерфейса
 ip link set vxlan0 mtu 1450
 ```
-
-### Ссылки
-
-- [RFC 7348 — VXLAN](https://datatracker.ietf.org/doc/html/rfc7348)
-- [RFC 8365 — VXLAN-GPE (Generic Protocol Extension)](https://datatracker.ietf.org/doc/html/rfc8365)
-- [Linux VXLAN Documentation](https://www.kernel.org/doc/Documentation/networking/vxlan.txt)

@@ -1,10 +1,45 @@
 # HashiCorp Nomad: Практические сценарии
 
-## 1. Развёртывание микросервисов
+## Definitions
 
-**Сценарий:** Микросервисная архитектура с service discovery и управлением секретами.
+**Job** — основная единица развёртывания в Nomad, описываемая в HCL-файле. Определяет тип (service/batch/system), группы задач, ресурсы, ограничения и политики развёртывания.
 
-**Конфигурация:**
+**Task Group** — логическая группа задач, размещаемых на одном узле. Параметр `count` задаёт количество реплик.
+
+**Task** — минимальная единица работы с конкретным driver (docker, exec, qemu, java, raw_exec).
+
+---
+
+## Basic Concepts
+
+### Типы jobs
+
+| Тип | Назначение | Примеры |
+| :--- | :--- | :--- |
+| **service** | Долгоживущие процессы (daemon) | Веб-серверы, API, микросервисы |
+| **batch** | Одноразовые/периодические задачи | ETL, бэкапы, cron |
+| **system** | Запуск по одной копии на каждом узле | Мониторинг, логи, security agents |
+
+### Ключевые блоки job-файла
+
+- `job` — корневой блок: имя, датацентры, тип
+- `group` — группа задач, `count` реплик
+- `network` — порты, режимы (static/dynamic)
+- `service` — регистрация в Consul, health checks
+- `task` — driver, image/command, resources, vault/consul интеграция
+- `periodic` — cron-расписание для batch jobs
+- `constraint` — ограничения на размещение узлов
+- `resources` — CPU, memory, GPU
+- `vault` — политики для секретов
+- `consul` — параметры Consul Connect (sidecar)
+
+---
+
+## Practical Scenarios
+
+### 1. Развёртывание микросервисов
+
+Микросервисная архитектура с service discovery и управлением секретами:
 
 ```hcl
 job "webapp" {
@@ -41,12 +76,10 @@ job "webapp" {
         ports = ["http"]
       }
 
-      # Интеграция с Vault для секретов
       vault {
         policies = ["webapp-policy"]
       }
 
-      # Интеграция с Consul Connect
       consul {
         connect {
           sidecar_service {}
@@ -57,16 +90,11 @@ job "webapp" {
 }
 ```
 
-**Ресурсы:**
+Документация: [Secret Management с Vault](https://developer.hashicorp.com/nomad/tutorials/enterprise/nomad-vault-secret-management), [Consul Connect Integration](https://developer.hashicorp.com/nomad/tutorials/connect).
 
-- [Secret Management с Vault](https://developer.hashicorp.com/nomad/tutorials/enterprise/nomad-vault-secret-management)
-- [Consul Connect Integration](https://developer.hashicorp.com/nomad/tutorials/connect)
+### 2. Периодические пакетные задания (Batch)
 
----
-
-## 2. Выполнение пакетных заданий (Batch Jobs)
-
-**Сценарий:** Периодические задачи (cron), ETL-процессы, обработка данных.
+ETL-процессы, бэкапы, обработка данных:
 
 ```hcl
 job "backup" {
@@ -78,7 +106,7 @@ job "backup" {
       driver = "docker"
 
       config {
-        image = "postgres:15"
+        image   = "postgres:15"
         command = "pg_dump"
         args    = ["-h", "${attr.unique.network.ip-address}", "-U", "postgres", "mydb"]
       }
@@ -89,19 +117,16 @@ job "backup" {
     }
   }
 
-  # Расписание: каждый день в 3:00
   periodic {
-    cron = "0 3 * * *"
+    cron     = "0 3 * * *"
     timeZone = "UTC"
   }
 }
 ```
 
----
+### 3. Оркестрация виртуальных машин (QEMU)
 
-## 3. Оркестрация виртуальных машин (QEMU)
-
-**Сценарий:** Запуск legacy-приложений или Windows-workload'ов в VM.
+Legacy-приложения или Windows-workload'ы в VM:
 
 ```hcl
 job "legacy-app" {
@@ -133,11 +158,9 @@ job "legacy-app" {
 }
 ```
 
----
+### 4. GPU и AI/ML Workloads
 
-## 4. GPU и AI/ML Workloads
-
-**Сценарий:** Обучение моделей машинного обучения, инференс, обработка видео.
+Обучение моделей, инференс, обработка видео:
 
 ```hcl
 job "ml-training" {
@@ -151,7 +174,7 @@ job "ml-training" {
       driver = "docker"
 
       config {
-        image = "tensorflow/tensorflow:latest-gpu"
+        image   = "tensorflow/tensorflow:latest-gpu"
         command = "python"
         args    = ["train.py", "--epochs", "100"]
       }
@@ -159,38 +182,26 @@ job "ml-training" {
       resources {
         cpu    = 8000
         memory = 32768
-        gpu    = 2  # Автоматическое обнаружение GPU через fingerprinting
+        gpu    = 2
       }
     }
   }
 }
 ```
 
-**Возможности GPU:**
+**Возможности GPU:** автоматическое обнаружение NVIDIA GPU через fingerprinting, поддержка MIG (Multi-Instance GPU), интеграция с NVIDIA Device Plugin.
 
-- Автоматическое обнаружение NVIDIA GPU через fingerprinting
-- Поддержка MIG (Multi-Instance GPU)
-- Интеграция с NVIDIA Device Plugin
+### 5. Edge Computing
 
----
+Развёртывание на периферийных устройствах с ограниченными ресурсами.
 
-## 5. Edge Computing
-
-**Сценарий:** Развёртывание на периферийных устройствах с ограниченными ресурсами.
-
-**Преимущества Nomad для Edge:**
-
-- Минимальные требования к ресурсам (~50 MB RAM для клиента)
-- Работа в нестабильных сетях (автоматическое переподключение)
-- Мульти-регион федерация для централизованного управления
-- Поддержка разнородных workload'ов (контейнеры + бинарники)
+**Преимущества Nomad для Edge:** минимальные требования (~50 MB RAM для клиента), работа в нестабильных сетях (автоматическое переподключение), мульти-регион федерация, поддержка разнородных workload'ов.
 
 ```hcl
 job "edge-processor" {
   datacenters = ["edge-dc"]
   type        = "service"
 
-  # Ограничиваем размещение на edge-узлах
   constraint {
     attribute = "${attr.unique.hostname}"
     operator  = "prefix"
@@ -212,18 +223,14 @@ job "edge-processor" {
 }
 ```
 
----
+### 6. Мульти-регион федерация
 
-## 6. Мульти-регион федерация
-
-**Сценарий:** Глобальное развёртывание с автоматической репликацией ACL-политик и квот.
-
-**Конфигурация серверов:**
+Глобальное развёртывание с репликацией ACL-политик и квот:
 
 ```hcl
 # server-dc1.hcl
-datacenter = "dc1"
-server     = true
+datacenter       = "dc1"
+server           = true
 bootstrap_expect = 3
 
 acl {
@@ -233,14 +240,7 @@ acl {
 replication {
   enabled = true
 }
-
-# server-dc2.hcl
-datacenter = "dc2"
-server     = true
-bootstrap_expect = 3
 ```
-
-**Команды федерации:**
 
 ```bash
 # Получение токена репликации из dc1
@@ -255,7 +255,7 @@ nomad system federation join dc1 \
 
 ---
 
-## Ссылки
+## Additional Information
 
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
-- [Дополнительная информация](./advanced_topics.md) — версии, production adoption, ресурсы
+Базовые определения и архитектура: [definitions_and_concepts.md](./definitions_and_concepts.md).
+Версии, production adoption, выбор Nomad vs Kubernetes: [advanced_topics.md](./advanced_topics.md).

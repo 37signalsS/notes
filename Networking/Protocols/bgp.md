@@ -120,15 +120,10 @@ router bgp 65001
 ### Порты и протоколы
 
 - **Порт:** 179/TCP
-- **Протокол:** TCP (гарантирует надежную доставку обновлений)
+- **Протокол:** TCP (гарантирует надёжную доставку обновлений)
 
-### Связанные документы
+### Связанные документы и RFC
 
-- [Сетевой уровень](../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md) — основы маршрутизации
-- [RPKI Deployment](https://rpki.readthedocs.io/) — документация по развёртыванию
+Основы маршрутизации: [Сетевой уровень](../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md). Протоколы маршрутизации: [routing_protocols_equipment.md](../OSI_TCP_IP_Model/Network_layer/routing_protocols_equipment.md). Документация по развёртыванию RPKI: [rpki.readthedocs.io](https://rpki.readthedocs.io/).
 
-### RFC
-
-- **RFC 4271** — спецификация BGP-4
-- **RFC 6811** — BGP Prefix Origin Validation (ROV)
-- **RFC 8416** — RPKI-Router Protocol
+**RFC:** [RFC 4271](https://datatracker.ietf.org/doc/html/rfc4271) — спецификация BGP-4; [RFC 6811](https://datatracker.ietf.org/doc/html/rfc6811) — BGP Prefix Origin Validation (ROV); [RFC 8416](https://datatracker.ietf.org/doc/html/rfc8416) — RPKI-Router Protocol.

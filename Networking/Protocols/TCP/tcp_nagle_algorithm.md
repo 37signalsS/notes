@@ -180,15 +180,6 @@ sysctl -w net.ipv4.tcp_ack_delayed=0
 
 ## Дополнительная информация
 
-### Сравнение с другими алгоритмами
-
-| Алгоритм | Цель | Уровень |
-| :--- | :--- | :--- |
-| **Nagle** | Уменьшение мелких пакетов | Отправитель |
-| **Delayed ACK** | Уменьшение служебного трафика | Получатель |
-| **TCP Fast Open** | Ускорение handshake | Отправитель/Получатель |
-| **SACK** | Эффективная ретрансмиссия | Получатель |
-
 ### RFC и стандарты
 
 | RFC | Описание |
@@ -196,13 +187,6 @@ sysctl -w net.ipv4.tcp_ack_delayed=0
 | **RFC 896** | Оригинальное описание алгоритма Нагла |
 | **RFC 1122** | Требования к хостам (раздел 4.2.3.2) |
 | **RFC 3465** | Ограничения на отправку мелких пакетов |
-
-### Связанные документы
-
-- **[TCP Overview](./TCP/overview.md)** — обзор протокола TCP
-- **[Sliding Window](./TCP/reliability_mechanisms/sliding_window.md)** — скользящее окно
-- **[Delayed ACK](./TCP/reliability_mechanisms/acknowledgments.md#delayed-ack)** — отложенные подтверждения
-- **[TCP Performance](../ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md)** — диагностика производительности
 
 ### Рекомендации по использованию
 
@@ -219,3 +203,10 @@ sysctl -w net.ipv4.tcp_ack_delayed=0
 
 - **Потоковая передача данных** → оставить включённым
 - **Интерактивный трафик** → отключить
+
+### Связанные документы
+
+- **[TCP Overview](./overview.md)** — обзор протокола TCP
+- **[Sliding Window](./reliability_mechanisms/sliding_window.md)** — скользящее окно
+- **[Delayed ACK](./reliability_mechanisms/acknowledgments.md#delayed-ack)** — отложенные подтверждения
+- **[TCP Performance](../../ServicesAndTools/Wireshark/tcp_performance/tcp_performance_diagnostics.md)** — диагностика производительности

@@ -1,19 +1,14 @@
 # Proxy Protocol
 
-## Определения
+## Definitions
 
 **Proxy Protocol** — протокол, передающий информацию о первоначальном соединении (IP-адреса клиента и сервера, порты) в начале TCP-соединения через L4-прокси.
 
-**Проблема:** При использовании L4-балансировщиков (HAProxy, Nginx stream, AWS ELB) бэкенд-сервер видит только IP-адрес прокси, а не реального клиента. Это ломает:
-
-- Логирование реальных IP
-- Rate limiting по IP
-- Геолокацию
-- ACL и firewall rules
+**Проблема:** при использовании L4-балансировщиков (HAProxy, Nginx stream, AWS ELB) бэкенд видит только IP прокси, а не реального клиента. Это ломает логирование, rate limiting, геолокацию, ACL и firewall rules.
 
 **Решение:** Proxy Protocol добавляет заголовок **перед** данными приложения, сохраняя метаданные соединения.
 
-## Базовые концепции
+## Basic Concepts
 
 ### Версии протокола
 
@@ -25,70 +20,50 @@
 PROXY TCP4 192.168.0.1 192.168.0.11 56324 443\r\n
 ```
 
-**Формат:**
+**Формат:** `PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n`
 
-```
-PROXY <protocol> <client-IP> <server-IP> <client-port> <server-port>\r\n
-```
+**Типы протоколов:** `TCP4` (TCP/IPv4), `TCP6` (TCP/IPv6), `UNKNOWN` (нет информации, для совместимости).
 
-**Типы протоколов:**
+**Преимущества:** простая отладка (видно в tcpdump), лёгкая реализация.
 
-- `TCP4` — TCP over IPv4
-- `TCP6` — TCP over IPv6
-- `UNKNOWN` — нет информации (используется для совместимости)
-
-**Преимущества:**
-
-- Простая отладка (видно в tcpdump)
-- Легкая реализация
-
-**Недостатки:**
-
-- Больше размер (до 108 байт)
-- Нет расширения для дополнительных данных
+**Недостатки:** размер до 108 байт, нет расширения для дополнительных данных.
 
 #### Proxy Protocol v2 (бинарный)
 
-Компактный бинарный формат с поддержкой расширений:
+Компактный бинарный формат с поддержкой TLV-расширений:
 
 ```
-\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A  (signature)
+\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A  (signature, 12 байт)
 \x21\x11\x00\x0C  (version+command, family+protocol, length)
-<client-IP> <server-IP> <client-port> <server-port>  (data)
+<client-IP> <server-IP> <client-port> <server-port>  (address data)
+[TLV blocks...]  (опционально)
 ```
 
-**Преимущества:**
-
-- Компактный (минимум 16 байт)
-- Поддержка **TLV** (Type-Length-Value) для дополнительных данных:
-  - SSL/TLS информация (cipher, version, client certificate)
-  - Авторизация (username)
-  - NetNS ID
-  - Custom metadata
+**Преимущества:** компактный (минимум 16 байт), поддержка **TLV** (Type-Length-Value): SSL/TLS-информация (cipher, version, клиентский сертификат), авторизация (username), NetNS ID, custom metadata.
 
 **Формат заголовка v2:**
 
 | Поле | Размер | Описание |
 |------|--------|----------|
-| **Signature** | 12 байт | `\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A` |
-| **Version+Command** | 1 байт | Версия (0x2) + команда (LOCAL/PROXY) |
-| **Family+Protocol** | 1 байт | AF_INET/AF_INET6 + STREAM/DGRAM |
-| **Length** | 2 байта | Длина данных |
-| **Data** | var | Адреса и порты + опционально TLV |
+| Signature | 12 байт | `\x0D\x0A\x0D\x0A\x00\x0D\x0A\x51\x55\x49\x54\x0A` |
+| Version+Command | 1 байт | Версия (0x2) + команда (LOCAL/PROXY) |
+| Family+Protocol | 1 байт | AF_INET/AF_INET6 + STREAM/DGRAM |
+| Length | 2 байта | Длина данных |
+| Data | var | Адреса, порты + опционально TLV |
 
-### Когда используется
+### Сценарии использования
 
 | Сценарий | Описание |
 |----------|----------|
-| **L4 Балансировка** | HAProxy/Nginx в режиме `stream` передают TCP-трафик |
-| **Сохранение IP клиента** | Бэкенд видит реальный IP для логирования и ACL |
-| **Цепочки прокси** | Информация передаётся через несколько уровней |
-| **Kubernetes Ingress** | Ingress-контроллеры передают IP клиента подам |
-| **Yandex Cloud Load Balancer** | Поддерживает Proxy Protocol для сохранения IP клиента |
+| L4-балансировка | HAProxy/Nginx `stream` передают TCP-трафик с IP клиента |
+| Сохранение IP клиента | Бэкенд видит реальный IP для логирования и ACL |
+| Цепочки прокси | Метаданные передаются через несколько уровней |
+| Kubernetes Ingress | Ingress-контроллеры передают IP клиента подам |
+| Yandex Cloud Load Balancer | Поддержка v2 для сохранения IP клиента |
 
-## Практические сценарии
+## Practical Scenarios
 
-### Настройка HAProxy → Nginx
+### HAProxy → Nginx
 
 **HAProxy (отправитель):**
 
@@ -112,11 +87,10 @@ stream {
 http {
     server {
         listen 443 ssl proxy_protocol;
-        
-        # Реальный IP клиента теперь доступен
+
         set_real_ip_from 192.168.1.0/24;
         real_ip_header proxy_protocol;
-        
+
         location / {
             # $remote_addr содержит реальный IP клиента
             access_log /var/log/nginx/access.log;
@@ -125,19 +99,9 @@ http {
 }
 ```
 
-### Настройка для PostgreSQL
+### HAProxy → PostgreSQL
 
-PostgreSQL поддерживает Proxy Protocol через расширение `pg_proxy_protocol` или нативно в новых версиях:
-
-```postgresql
-# postgresql.conf
-listen_addresses = '*'
-
-# pg_hba.conf
-host    all    all    0.0.0.0/0    md5
-```
-
-**Пример с HAProxy:**
+PostgreSQL поддерживает Proxy Protocol через расширение `pg_proxy_protocol` или нативно в новых версиях.
 
 ```haproxy
 frontend postgres
@@ -146,79 +110,55 @@ frontend postgres
     server db1 192.168.1.20:5432 send-proxy-v2
 ```
 
-PostgreSQL будет видеть реальный IP клиента в `pg_stat_activity`.
+PostgreSQL видит реальный IP клиента в `pg_stat_activity`. Настройка `pg_hba.conf` и `postgresql.conf` стандартная.
 
-### Диагностика и troubleshooting
+### Диагностика
 
-**Проверка заголовка v1:**
+**Проверка v1:**
 
 ```bash
-# Подключиться и увидеть заголовок
 telnet backend.example.com 80
-PROXY TCP4 192.168.1.100 10.0.0.1 54321 80
+# PROXY TCP4 192.168.1.100 10.0.0.1 54321 80
 
-# Или через tcpdump
 tcpdump -i eth0 -A port 80 | head -20
 ```
 
-**Проверка заголовка v2:**
+**Проверка v2:**
 
 ```bash
-# Бинарный заголовок не виден в текстовом виде
 tcpdump -i eth0 -X port 80 | head -30
-# Искать signature: 0D 0A 0D 0A 00 0D 0A 51 55 49 54 0A
+# Signature: 0D 0A 0D 0A 00 0D 0A 51 55 49 54 0A
 ```
 
 **Типичные проблемы:**
 
 | Проблема | Симптомы | Решение |
 |----------|----------|---------|
-| **Бэкенд не ожидает Proxy Protocol** | Ошибки соединения, таймауты | Включить поддержку на бэкенде |
-| **Несоответствие версий** | v2 отправляется на v1-получатель | Настроить совместимую версию |
-| **Отсутствие заголовка** | Бэкенд ждёт, но не получает | Проверить `send-proxy` на балансировщике |
+| Бэкенд не ожидает Proxy Protocol | Ошибки соединения, таймауты | Включить поддержку на бэкенде |
+| Несоответствие версий | v2 на v1-получателе | Настроить совместимую версию |
+| Отсутствует заголовок | Бэкенд ждёт, но не получает | Проверить `send-proxy` на балансировщике |
 
 ### Безопасность
 
-**Риски:**
+**Риски:** IP spoofing (поддельные заголовки), DoS (некорректные заголовки).
 
-- **IP spoofing:** Злоумышленник может отправить поддельный Proxy Protocol заголовок
-- **DoS:** Отправка некорректных заголовков для нарушения работы бэкенда
-
-**Защита:**
-
-1. **Доверенная сеть:** Proxy Protocol должен использоваться только между доверенными узлами
-2. **Firewall rules:** Разрешить соединения только от балансировщиков
-3. **Валидация:** Бэкенд должен отбрасывать заголовки от недоверенных источников
-
-**Пример (Nginx):**
+**Защита:** доверенная сеть (только между доверенными узлами), firewall rules (разрешить соединения только от балансировщиков), валидация (отбрасывать заголовки от недоверенных источников).
 
 ```nginx
-# Принимать Proxy Protocol только от доверенных IP
 set_real_ip_from 10.0.0.0/8;
 set_real_ip_from 192.168.0.0/16;
-# Все остальные IP будут отклонены
 ```
 
-## Дополнительная информация
+## Additional Information
 
 ### Поддержка в ПО
 
-| Отправители | Получатели |
-|------------|-----------|
-| HAProxy (v1, v2) | Nginx (v1, v2) |
-| Nginx (v2) | HAProxy (v1, v2) |
-| Envoy (v2) | Apache (mod_remoteip, v1) |
-| Yandex Cloud Load Balancer (v2) | PostgreSQL (native/plugin) |
-| Kubernetes Ingress | MySQL (plugin) |
-| | Redis (plugin) |
+Отправители: HAProxy (v1, v2), Nginx (v2), Envoy (v2), Yandex Cloud Load Balancer (v2), Kubernetes Ingress. Получатели: Nginx (v1, v2), HAProxy (v1, v2), Apache (mod_remoteip, v1), PostgreSQL/MySQL/Redis (native/plugin).
 
 ### Связанные документы
 
-- [HTTP](./http.md) — прикладной уровень
-- [TCP](./TCP/overview.md) — транспортный уровень
-- [Load Balancing](../Concepts/proxy.md) — балансировка нагрузки
+[Proxy Server](../../Concepts/proxy.md) — типы прокси-серверов, [TCP](./TCP/overview.md) — транспортный уровень, [HTTP](./HTTP/http_basics.md) — прикладной уровень, [HAProxy Overview](../../WebServers/haproxy_overview.md) — основной отправитель, [Nginx L4 Proxying](../../WebServers/Nginx/Proxy/nginx_l4_proxying.md) — настройка L4.
 
-### Спецификации
+### Спецификация
 
-- **HAProxy Proxy Protocol:** [Официальная спецификация](https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt)
-- **RFC:** Не является RFC, де-факто стандарт
+[HAProxy Proxy Protocol (официальная спецификация)](https://www.haproxy.org/download/2.0/doc/proxy-protocol.txt) — де-факто стандарт, не RFC.

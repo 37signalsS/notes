@@ -111,7 +111,7 @@ TCP работает на **транспортном уровне** модели
 | :--- | :--- | :--- |
 | **Заголовок** | [Header_Format/index.md](./Header_Format/index.md) | Структура заголовка, поля, флаги |
 | **Опции** | [Header_Format/options.md](./Header_Format/options.md) | MSS, Window Scale, SACK, Timestamps |
-| **Handshake** | [connection/tcp_connection_management_overview.md](./connection/tcp_connection_management_overview.md) | Установка соединения (3-way handshake) |
+| **Handshake** | [connection/tcp_connection_overview.md](./connection/tcp_connection_overview.md) | Установка соединения (3-way handshake) |
 | **Состояния** | [connection/tcp_connection_states.md](./connection/tcp_connection_states.md) | 11 состояний TCP, диагностика |
 | **Завершение** | [connection/tcp_connection_termination.md](./connection/tcp_connection_termination.md) | Четырёхэтапное завершение |
 | **Надежность** | [reliability_mechanisms/](./reliability_mechanisms/) | Sequence Numbers, ACK, retransmission |

@@ -14,13 +14,15 @@
 
 К 2010 году осталось всего 7 свободных сетей класса A. Несмотря на внедрение NAT, нехватка IPv4-адресов ощущалась всё острее (например, аренда «белого» IP в облаке стала платной услугой).
 
+Подробнее об IPv4: [IP-адресация — Обзор](./IP_addressing/ip_overview.md). О NAT: [NAT Overview](../Concepts/nat/overview.md).
+
 **Преимущества IPv6 по сравнению с IPv4:**
 
 | Преимущество | Описание |
 | :--- | :--- |
 | **Огромное адресное пространство** | 2¹²⁸ адресов (~3,4×10³⁸) |
 | **Отсутствие широковещательных пакетов** | Заменены на multicast, нет ARP-протокола |
-| **Отсутствие необходимости в NAT** | Прямая端到-end связность |
+| **Отсутствие необходимости в NAT** | Прямая end-to-end связность |
 | **Мобильность** | Хост может перемещаться между сетями со своим IP |
 | **Встроенный IPsec** | Безопасность на уровне протокола |
 | **Упрощённый заголовок** | Фиксированный размер 40 байт, нет checksum |
@@ -226,6 +228,8 @@ NDP заменяет ARP в IPv6 и работает на основе ICMPv6.
 - **Neighbor Advertisement (NA)** — ответ соседа (аналог ARP-ответа)
 - **Redirect** — перенаправление к лучшему шлюзу
 
+Подробнее об ICMPv6: [ICMP: Диагностика и безопасность](./ICMP/icmp_diagnostics_security.md#icmp-в-ipv6-icmpv6).
+
 ### Stateless Address Autoconfiguration (SLAAC)
 
 Механизм автоматической конфигурации адресов без DHCP.
@@ -243,18 +247,22 @@ NDP заменяет ARP в IPv6 и работает на основе ICMPv6.
 - **EUI-64 (из MAC):** `XX:XX:XX:FF:FE:XX:XX:XX` (вставка `FF:FE` и инверсия 7-го бита)
 - **Privacy Extensions (RFC 4941):** случайный Interface ID для конфиденциальности
 
+SLAAC — альтернатива DHCPv6. Подробнее о DHCPv6: [DHCP Overview](./DHCP/dhcp_overview.md) (раздел DHCPv6).
+
 ## Дополнительная информация
 
 ### Совместимость и переход
 
 **Стратегии перехода с IPv4 на IPv6:** Dual Stack, Tunneling, Translation (NAT64/SIIT). Подробнее — [Сосуществование IPv4 и IPv6 (Dual Stack)](../OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md).
 
-### Актуальность (2025)
+Настройка IPv6 в Linux: [IPv6 в Linux](../../Linux/Networking/Settings/ipv6_configuration/concepts.md).
+
+### Актуальность (2026)
 
 **Статистика использования IPv6:**
 
-- **~40% трафика Google** — через IPv6
-- **~30% сайтов в мире** — поддерживают IPv6
+- **~48% трафика Google** — через IPv6 (март 2026, [Google IPv6 Statistics](https://www.google.com/intl/en/ipv6/))
+- **~35–40% сайтов в мире** — поддерживают IPv6
 - **Мобильные сети** — почти повсеместно используют IPv6
 
 **Рекомендации:**
@@ -273,11 +281,3 @@ NDP заменяет ARP в IPv6 и работает на основе ICMPv6.
 | **RFC 4862** | Stateless Address Autoconfiguration (SLAAC) |
 | **RFC 4941** | Privacy Extensions for SLAAC |
 | **RFC 4291** | Адресация IPv6 |
-
-### Связанные документы
-
-- **[IPv4](./ip.md)** — протокол IPv4, адресация
-- **[ICMPv6](./icmpv6.md)** — протокол ICMPv6, NDP
-- **[DHCPv6](./dhcpv6.md)** — динамическая конфигурация
-- **[NAT](../Concepts/nat.md)** — трансляция адресов (не требуется в IPv6)
-- **[Модель OSI](../OSI_TCP_IP_Model/osi_model.md)** — сетевой уровень

@@ -138,4 +138,4 @@ Scale factor = 7 (сдвиг на 7 бит)
 
 * **[Congestion Control](../congestion/tcp_congestion_control_overview.md** — управление перегрузкой
 * **[Header Format](../Header_Format/index.md** — поле Window в заголовке
-* **[Connection Management](../connection/tcp_connection_management_overview.md)** — handshake, Window Scale
+* **[Connection Management](../connection/tcp_connection_overview.md)** — handshake, Window Scale

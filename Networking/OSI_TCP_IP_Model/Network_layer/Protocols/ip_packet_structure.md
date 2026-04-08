@@ -72,4 +72,4 @@ traceroute example.com
 | **Фрагментация** | В заголовке | В расширении (Extension Header) |
 | **Опции** | В заголовке | В Extension Headers |
 
-Подробный механизм фрагментации описан в [Фрагментация IP-пакетов](./ip_fragmentation.md). Основы IP-адресации — в [IP-адреса](../../../Protocols/ip.md). Диагностика пути — через [ICMP](../../../Protocols/icmp.md). Определение версии IP в Ethernet-кадре: [Версии IP и EtherType](../../../Protocols/ip.md#определение-версии-ip-на-канальном-уровне).
+Подробный механизм фрагментации описан в [Фрагментация IP-пакетов](./ip_fragmentation.md). Основы IP-адресации — в [IP-адреса](../../../Protocols/ip.md). Диагностика пути — через [ICMP](../../../Protocols/ICMP/icmp_overview.md). Определение версии IP в Ethernet-кадре: [Версии IP и EtherType](../../../Protocols/ip.md#определение-версии-ip-на-канальном-уровне).

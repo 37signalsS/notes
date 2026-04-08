@@ -6,11 +6,9 @@
 
 **ECN (Explicit Congestion Notification)** — явное уведомление о перегрузке без потери пакетов.
 
-> **Навигация:** [Главная Header Format](./index.md) | [Практика](./practical.md)
-
 ---
 
-## Basic Concepts
+## Основные понятия
 
 ### Опции (Options)
 
@@ -127,10 +125,10 @@ MSS = 1500 - 20 - 20 = 1460 байт (стандартный Ethernet)
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-- **[Congestion Control](../congestion/tcp_congestion_control_overview.md** — управление перегрузкой
-- **[Flow Control](../../../../Ansible/PlaybookStructure/flow_control.md** — управление потоком
+- **[Congestion Control](../congestion/tcp_congestion_control_overview.md)** — управление перегрузкой
+- **[Flow Control](../../../../Ansible/PlaybookStructure/flow_control.md)** — управление потоком
 - **[Надежность TCP](../reliability_mechanisms/diagnostics.md)** — механизмы надежности

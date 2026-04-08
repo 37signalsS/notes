@@ -1,18 +1,21 @@
 # Tun vs Tap
 
-## Определения
+## Definitions
 
-**`tun` (network tunnel)** — виртуальный сетевой интерфейс L3 (сетевой уровень), эмулирующий IP-интерфейс точка-точка.
+**`tun` (network tunnel)** — виртуальный сетевой интерфейс L3 (сетевой уровень), эмулирующий IP-интерфейс точка-точка. Работает с IP-пакетами, не передаёт Ethernet-кадры.
 
-**`tap` (network tap)** — виртуальный сетевой интерфейс L2 (канальный уровень), эмулирующий Ethernet-адаптер (NIC).
+**`tap` (network tap)** — виртуальный сетевой интерфейс L2 (канальный уровень), эмулирующий Ethernet-адаптер (NIC). Работает с полноценными Ethernet-кадрами, включая MAC-адреса.
 
 **Общее:**
 
 - Реализованы как модули ядра Linux (`tun.ko`, `tap.ko`)
 - Доступны из пользовательского пространства через `/dev/net/tun`
-- Используются VPN, виртуализацией, контейнерами
+- Используются VPN (OpenVPN, WireGuard), виртуализацией (QEMU/KVM), контейнерами
+- Связь с user-space через `ioctl()` и файловые операции read/write
 
-## Базовые концепции
+**Связанные темы:** [Сетевые туннели — обзор](./tunneling_overview.md), [Сетевые интерфейсы Linux](../../Linux/Networking/Concepts/linux_network_interfaces.md)
+
+## Basic Concepts
 
 ### Сравнительная таблица
 
@@ -24,8 +27,9 @@
 | **Заголовки** | Только IP | Ethernet + MAC-адреса |
 | **Broadcast** | Не передаёт | Передаёт (как физический NIC) |
 | **ARP/DHCP** | Не поддерживает | Поддерживает |
-| **Overhead** | Минимальный | +14 байт (Ethernet) |
+| **Overhead** | Минимальный (~20-40 байт IP) | +14 байт Ethernet |
 | **Маршрутизация** | Нативная | Через bridge |
+| **Не-IP трафик** | Не поддерживает | Поддерживает (IPX, NetBIOS) |
 
 ### Принцип работы
 
@@ -35,36 +39,61 @@
 [Приложение] → [IP-пакет] → [/dev/net/tun] → [tun0] → [IP-стек] → [Сеть]
 ```
 
+Приложение читает/пишет IP-пакеты напрямую. Ядро маршрутизирует трафик через `tun0` как обычный сетевой интерфейс.
+
 **`tap` (L2):**
 
 ```
 [Приложение] → [Ethernet-кадр] → [/dev/net/tap] → [tap0] → [bridge] → [eth0] → [Сеть]
 ```
 
+Приложение работает с Ethernet-кадрами. Для интеграции с физической сетью требуется bridge, объединяющий `tap0` и `eth0`.
+
 ### Заголовки данных
 
 **tun:**
 
-- Инкапсулирует только IP-пакеты
+- Инкапсулирует только IP-пакеты (IPv4/IPv6)
 - Нет MAC-адресов
-- Меньший overhead (~20-40 байт IP)
+- Overhead: ~20 байт (IPv4) или ~40 байт (IPv6)
 
 **tap:**
 
 - Полноценный Ethernet-кадр
 - MAC-адреса источника/назначения (12 байт)
 - EtherType (2 байта)
-- Больший overhead (~40-60 байт)
+- Overhead: ~40-60 байт (Ethernet + IP)
 
-## Практические сценарии
+### Управление интерфейсами
+
+```bash
+# Создание tun-интерфейса
+ip tuntap add mode tun dev tun0
+ip link set tun0 up
+ip addr add 10.0.0.1/24 dev tun0
+
+# Создание tap-интерфейса
+ip tuntap add mode tap dev tap0
+ip link set tap0 up
+
+# Удаление интерфейса
+ip link delete tun0
+ip link delete tap0
+
+# Проверка типа интерфейса
+ip -d link show tun0
+# tun: тип tun, tap: тип tap
+```
+
+## Practical Scenarios
 
 ### 1. tun: VPN для маршрутизации (L3)
 
-**Сценарий:** Безопасное соединение сетей или клиента с сетью.
+**Сценарий:** Безопасное соединение сетей или клиента с корпоративной сетью.
 
 **Примеры:**
 
-- **WireGuard:** Использует только `tun`
+- **WireGuard:** Использует только `tun` ([подробнее](../../Vpn/wireguard.md))
 - **OpenVPN:** Режим `dev tun`
 - **IPsec:** Транспортный режим ([подробнее](./ipsec/ipsec.md))
 
@@ -123,6 +152,7 @@ ip link add name br0 type bridge
 ip link set tap0 master br0
 ip link set eth0 master br0
 ip link set br0 up
+ip addr add 192.168.1.10/24 dev br0
 ```
 
 **Преимущества:**
@@ -135,25 +165,26 @@ ip link set br0 up
 
 - Виртуальные машины в сети хоста
 - Промышленные сети (PROFIBUS, Modbus TCP)
-- Старые сетевые игры
 - Требуется полный L2-доступ
 
-### 3. tun: Контейнеры и namespace
+### 3. tun: Контейнеры и network namespace
 
 **Сценарий:** Сетевая изоляция контейнеров.
 
 ```bash
-# Создание tun в network namespace
+# Создание network namespace
 ip netns add container1
-ip netns exec container1 ip link add dev tun0 type tun
-ip netns exec container1 ip link set tun0 up
-ip netns exec container1 ip address add 10.0.0.2/24 dev tun0
+
+# Создание tun в namespace
+ip -n container1 link add dev tun0 type tun
+ip -n container1 link set tun0 up
+ip -n container1 addr add 10.0.0.2/24 dev tun0
 ```
 
 **Применение:**
 
-- Docker (через bridge + veth)
-- Kubernetes CNI
+- Docker (через bridge + veth, [подробнее](../../Docker/Docker_network/drivers/bridge.md))
+- Kubernetes CNI (Calico, Cilium)
 - LXC/LXD
 
 ### 4. tap: Виртуализация (QEMU/KVM)
@@ -177,57 +208,71 @@ qemu-system-x86_64 \
 </interface>
 ```
 
-### 5. Проверка и диагностика
+### 5. Диагностика и мониторинг
 
 ```bash
 # Статус интерфейса
 ip -d link show tun0
 ip -d link show tap0
 
-# Тип интерфейса
-ethtool -i tun0 | grep driver
-
 # Мониторинг трафика
-tcpdump -i tun0 -n      # Только IP
-tcpdump -i tap0 -e      # Ethernet + MAC
+tcpdump -i tun0 -n       # Только IP-пакеты
+tcpdump -i tap0 -e       # Ethernet-кадры + MAC
+
+# Статистика по интерфейсу
+ip -s link show tun0
+
+# Проверка драйвера
+ethtool -i tun0 | grep driver
+# driver: tun (для tun) или tap (для tap)
 ```
 
-## Дополнительная информация
+## Additional Information
 
 ### Производительность
 
 | Параметр | tun | tap |
 |----------|-----|-----|
-| **Overhead** | ~20-40 байт | ~40-60 байт |
-| **CPU** | Ниже | Выше (обработка Ethernet) |
+| **Overhead** | ~20-40 байт (IP) | ~40-60 байт (Ethernet + IP) |
+| **CPU usage** | Ниже | Выше (обработка Ethernet) |
 | **Пропускная способность** | Выше | Ниже (~5-10%) |
+| **Latency** | Минимальная | Немного выше |
 
 ### Ограничения
 
 **tun:**
 
 - Только IP-трафик (IPv4/IPv6)
-- Нет broadcast/multicast
-- Не работает с DHCP (нужна статическая адресация)
+- Нет broadcast/multicast на уровне L2
+- Не работает с DHCP (нужна статическая адресация или DHCP relay на L3)
 
 **tap:**
 
-- Больший overhead
-- Требует bridge для интеграции
+- Больший overhead на каждый пакет
+- Требует bridge для интеграции с физической сетью
 - Может вызывать broadcast-штормы при неправильной настройке
+- Неприменим для маршрутизации без bridge
 
-### Выбор между tun и tap
+### Алгоритм выбора
 
 ```
 Требуется передача не-IP трафика?
 ├─ Да → tap
-└─ Нет → Требуется DHCP/broadcast?
+└─ Нет → Требуется DHCP/broadcast на L2?
          ├─ Да → tap
          └─ Нет → tun (эффективнее)
 ```
 
-### Ссылки
+### Безопасность
 
-- [Linux Tun/Tap Documentation](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
-- [OpenVPN Tun/Tap Guide](https://openvpn.net/community-resources/how-to/#tun-vs-tap)
-- [QEMU Networking](https://wiki.qemu.org/Documentation/Networking)
+- **tun:** Изоляция на L3, трафик не виден другим хостам в сегменте
+- **tap:** Полный L2-доступ, возможен sniffing трафика (как на физическом NIC)
+- Для VPN-сценариев предпочтителен `tun` (меньшая поверхность атаки)
+
+### Связанные темы
+
+- [Сетевые туннели — обзор](./tunneling_overview.md)
+- [Сетевые интерфейсы Linux](../../Linux/Networking/Concepts/linux_network_interfaces.md)
+- [WireGuard](../../Vpn/wireguard.md)
+- [IPsec](./ipsec/ipsec.md)
+- [Docker bridge](../../Docker/Docker_network/drivers/bridge.md)

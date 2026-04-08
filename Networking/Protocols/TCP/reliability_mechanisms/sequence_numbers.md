@@ -14,7 +14,7 @@
 
 * Защищает от старых дубликатов сегментов
 * Усложняет предсказание последовательности (защита от spoofing и **TCP-hijacking**)
-* Обменивается в [handshake](../connection/tcp_connection_management_overview.md)
+* Обменивается в [handshake](../connection/tcp_connection_overview.md)
 
 **Важно:** начальное значение ISN не равно 0. Обе стороны устанавливают случайное значение при установке соединения, которое считается начальным отсчётом (0). Это сделано для безопасности и предотвращения атак TCP-hijacking.
 
@@ -169,4 +169,4 @@ ACK:        ack=3001 (ожидается байт 3001)
 
 * **[Acknowledgments](./acknowledgments.md)** — подтверждения получения
 * **[Header Format](../Header_Format/index.md** — поле Sequence Number в заголовке
-* **[Connection Management](../connection/tcp_connection_management_overview.md)** — обмен ISN в handshake
+* **[Connection Management](../connection/tcp_connection_overview.md)** — обмен ISN в handshake

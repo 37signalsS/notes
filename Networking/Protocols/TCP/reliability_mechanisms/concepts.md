@@ -21,7 +21,7 @@ TCP нумерует **байты**, а не сегменты.
 
 * Случайное 32-битное число при установке соединения
 * Защищает от старых дубликатов сегментов
-* Обменивается в [handshake](../connection/tcp_connection_management_overview.md)
+* Обменивается в [handshake](../connection/tcp_connection_overview.md)
 
 **Назначение:**
 
@@ -152,7 +152,7 @@ ss -tmo
 ## Связанные темы
 
 * **[Header Format](../Header_Format/index.md** — поля Sequence Number, ACK
-* **[Connection Management](../connection/tcp_connection_management_overview.md** — handshake, состояния
+* **[Connection Management](../connection/tcp_connection_overview.md)** — handshake, состояния
 * **[Congestion Control](../congestion/tcp_congestion_control_overview.md)** — управление перегрузкой
 * **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — анализ трафика
 

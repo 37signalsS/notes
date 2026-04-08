@@ -281,4 +281,4 @@ ICMP гораздо гибче, чем принято считать. На МС�
 - ICMP Type 11 (Time Exceeded) — для traceroute
 - ICMP Type 8/0 (Echo Request/Reply) — для мониторинга
 
-Теория фрагментации описана в [Фрагментация IP-пакетов](./Protocols/ip_fragmentation.md). Протокол для PMTUD — [ICMP](../../Protocols/icmp.md). Утилита диагностики MTU — [ping](../../../Linux/Diagnostics/Networking/ping.md).
+Теория фрагментации описана в [Фрагментация IP-пакетов](./Protocols/ip_fragmentation.md). Протокол для PMTUD — [ICMP](../../Protocols/ICMP/icmp_overview.md). Утилита диагностики MTU — [ping](../../../Linux/Diagnostics/Networking/ping.md).

@@ -118,4 +118,4 @@ IP-заголовок = 20 байт (без опций)
 
 - [MTU (Maximum Transmission Unit)](../mtu_and_vpn.md) — виды MTU, PMTUD, диагностика, решение проблем в VPN
 - [Структура IP-пакета](./ip_packet_structure.md) — поля заголовка IPv4
-- [ICMP](../../../Protocols/icmp.md) — протокол для PMTUD
+- [ICMP](../../../Protocols/ICMP/icmp_overview.md) — протокол для PMTUD

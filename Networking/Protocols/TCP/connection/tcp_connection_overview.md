@@ -1,4 +1,15 @@
-# Управление TCP-соединением — Обзор и установка соединения
+# Управление TCP-соединением (TCP Connection Management)
+
+## Навигация
+
+**Основная информация:**
+- **[tcp_connection_refusal.md](./tcp_connection_refusal.md)** — сценарии отказа, RST, тайм-ауты
+- **[tcp_data_transfer.md](./tcp_data_transfer.md)** — передача данных, поток байт, PSH, seq/ack
+- **[tcp_connection_termination.md](./tcp_connection_termination.md)** — четырёхэтапное завершение
+- **[tcp_connection_states.md](./tcp_connection_states.md)** — полная таблица состояний
+- **[tcp_connection_diagnostics.md](./tcp_connection_diagnostics.md)** — практические сценарии
+
+---
 
 ## Определения
 
@@ -131,7 +142,9 @@
 - **[Acknowledgments](../reliability_mechanisms/acknowledgments.md)** — подтверждения
 
 **Оптимизация:**
+- **[TCP tuning](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление параметрами
 - **[TCP Fast Open](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_fast_open.md)** — сокращение handshake до 1 RTT
+- **[TIME_WAIT](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_timewait.md)** — управление состоянием TIME_WAIT
 - **[TLS Handshake](../../tls.md#упрощенный-tls-12-handshake-2-rtt)** — поверх TCP-handshake
 
 ## RFC

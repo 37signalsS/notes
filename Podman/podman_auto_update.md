@@ -129,69 +129,85 @@ Persistent=true
 
 ### 4. Настройка отката (Rollback)
 
+**Как работает rollback:**
+
+Rollback — встроенное поведение `podman auto-update`. При обновлении Podman сохраняет дайджест предыдущего образа. Если новый контейнер не проходит health check, Podman автоматически откатывается к предыдущей версии.
+
 **Требования для отката:**
 
 1. Контейнер управляется через systemd
-2. В юните указан флаг `--rollback`
-3. Настроен health check с sdnotify
+2. Установлен лейбл `io.containers.autoupdate=registry`
+3. Настроен health check (`--health-cmd` или `HealthCmd` в Quadlet)
+4. systemd-юнит имеет `Restart=always` или `Restart=on-failure`
 
-**Модификация systemd-юнита для отката:**
+**Настройка через Quadlet (рекомендуемый способ):**
 
-Файл `~/.config/systemd/user/my-service.service`:
+Файл `/etc/containers/systemd/my-service.container`:
 
 ```ini
 [Unit]
 Description=My Service Container
-Requires=podman-auto-update.service
-After=podman-auto-update.service
+
+[Container]
+Image=docker.io/library/nginx:latest
+ContainerName=my-service
+AutoUpdate=registry
+PublishPort=8080:80
+HealthCmd=curl -f http://localhost/ || exit 1
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
 
 [Service]
-ExecStartPre=-/usr/bin/podman stop my-service
-ExecStart=/usr/bin/podman run \
-  --cidfile=%t/%n.ctr-id \
-  --rollback \
-  --sdnotify \
-  --health-cmd="curl -f http://localhost/ || exit 1" \
-  --health-interval=30s \
-  --health-timeout=10s \
-  --health-retries=3 \
-  --label "io.containers.autoupdate=registry" \
-  -d docker.io/library/nginx:latest
-ExecStop=/usr/bin/podman stop --ignore --cidfile=%t/%n.ctr-id
-ExecStopPost=-/usr/bin/podman rm --ignore -f --cidfile=%t/%n.ctr-id
-Type=notify
-NotifyAccess=all
+Restart=on-failure
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
 
-**Ключевые параметры:**
+**Настройка через `podman generate systemd`:**
 
-- `--rollback` — автоматический откат при сбое
-- `--sdnotify` — контейнер сигнализирует systemd о готовности
-- `--health-cmd` — команда проверки здоровья
-- `Type=notify` — systemd ожидает сигнал готовности
+```bash
+# Создание контейнера с health check
+podman run -d --name my-service \
+  --label "io.containers.autoupdate=registry" \
+  --health-cmd="curl -f http://localhost/ || exit 1" \
+  --health-interval=30s \
+  --health-timeout=5s \
+  --health-retries=3 \
+  --health-start-period=10s \
+  docker.io/library/nginx:latest
+
+# Генерация systemd-юнита
+podman generate systemd --name my-service --files --new
+```
+
+> **Важно:** Флаг `--rollback` не существует как отдельный параметр `podman run`. Rollback — это автоматическое поведение `podman auto-update`, активируемое при наличии health check.
 
 ### 5. Механизм отката: последовательность
 
 ```
-1. podman auto-update получает новый образ
+1. podman auto-update скачивает новый образ
    ↓
 2. systemd останавливает текущий контейнер
    ↓
 3. Запускается контейнер с новым образом
    ↓
-4. systemd ожидает сигнал sdnotify (готовность)
+4. Начинают выполняться health check'и
    ↓
-5a. Сигнал получен     → Контейнер работает, обновление завершено
+5a. Health OK (в течение HealthRetries × HealthInterval)
+    → Контейнер работает, обновление завершено
    ↓
-5b. Таймаут/сбой       → systemd фиксирует failure
+5b. Health FAIL (превышены HealthRetries)
+    → Podman фиксирует неработоспособность
    ↓
 6. Podman откатывается к предыдущему дайджесту образа
    ↓
 7. Контейнер перезапускается со старой версией
 ```
+
+> **Примечание:** Для Quadlet-контейнеров настройка health check и rollback полностью декларативна — достаточно указать `HealthCmd` и связанные параметры в секции `[Container]`.
 
 ### 6. Проверка статуса обновлений
 
@@ -276,4 +292,4 @@ podman run -d --name my-service \
 - **systemd-интеграция:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
 - **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
 - **Основные команды:** [Podman: Основные команды](./podman_basic_commands.md)
-- **Health check:** [Docker Health Check](../Docker/docker_commands.md#health-check)
+- **Health check:** [HEALTHCHECK в Dockerfile](../Docker/Dockerfile/Instructions/health_signals.md) — встраивание проверок здоровья в образ

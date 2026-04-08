@@ -109,12 +109,3 @@ service:
 | Логи        | Записи событий | Детальный анализ ошибок и аудит | Могут **фильтроваться** и обогащаться `trace_id` для контекста. |
 
 > **Важно:** Экспортёр Zipkin устарел. Рекомендуется использовать OTLP или нативные экспортёры бэкендов.
-
-### Связанные документы
-
-- **[Обзор OpenTelemetry](./opentelemetry_overview.md)** — общая архитектура и дистрибутивы Collector
-- **[Протокол OTLP](./otlp_protocol.md)** — формат передачи данных
-- **[Инструментация и SDK](./instrumentation_sdk.md)** — практическая инструментация
-- **[Grafana Alloy](../Grafana/grafana_alloy_overview.md)** — альтернативный дистрибутив Collector
-- **[Jaeger v2](../Jaeger/jaeger_overview.md)** — система трассировки на базе OTel
-- **[Tempo](../Tempo/index.md)** — хранилище трассировок Grafana Labs

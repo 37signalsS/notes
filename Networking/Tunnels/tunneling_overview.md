@@ -57,11 +57,11 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 ### 1. Связь сегментов частной сети через публичную сеть (VPN)
 
-Два или более офиса с [частными IP-адресами](../Protocols/ip.md) взаимодействуют через Интернет.
+Два или более офиса с [частными IP-адресами](../Protocols/IP_addressing/special_addresses.md) взаимодействуют через Интернет.
 
 **Технологии:**
 
-- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec/ipsec.md), OpenVPN
+- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec/ipsec.md), OpenVPN 
 - **Без шифрования (доверенные сети):** [GRE](./gre/gre.md), [IPIP](./ipip_and_sit.md)
 
 ### 2. Передача неподдерживаемого протокола
@@ -139,46 +139,16 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 #### Детали протоколов
 
-**IPIP (IP-in-IP, RFC 2003):**
-- Самый простой тип туннеля
-- Инкапсулирует только IPv4
-- Нет аутентификации и шифрования
-- Не работает через NAT
-- Заголовок: 20 байт (дополнительный IP)
+Подробные описания протоколов — в специализированных файлах:
 
-**GRE (Generic Routing Encapsulation, RFC 2784):**
-- Универсальный протокол от Cisco
-- Пробрасывает IPv4/IPv6, multicast и немаршрутизируемые протоколы (NetBIOS, IPX, AppleTalk)
-- Заголовок: 4 байта (минимальный) + опционально Key/Sequence
-- Без состояния (stateless)
-- Нет шифрования, не работает через NAT без дополнительных настроек
-
-**OpenVPN:**
-- Работает через TCP/UDP (порт 1194)
-- Проходит через NAT
-- Режимы: **TUN** (L3) и **TAP** (L2/Ethernet)
-- Поддерживает шифрование и сжатие данных
-- Требует демон/сервис
-
-**IPsec (IP Security):**
-- Набор протоколов для защиты IP-трафика
-- **ESP:** Шифрование и аутентификация данных
-- **AH:** Проверка целостности и аутентификация источника (без шифрования)
-- **IKE:** Согласование алгоритмов и обмен ключами
-- Режимы: **Транспортный** (шифруются только данные) и **Туннельный** (шифруется весь пакет)
-- Не создаёт явных туннельных интерфейсов (использует Security Associations)
-
-**L2TP (Layer 2 Tunneling Protocol):**
-- Использует UDP (порт 1701)
-- Работает через NAT
-- Часто применяется в связке **L2TP/IPsec** для высокого уровня безопасности
-- Сам по себе не шифрует трафик
-
-**PPTP (Point-to-Point Tunneling Protocol):**
-- Устаревший протокол
-- Использует TCP 1723 для управления и GRE для передачи данных
-- Небезопасен (известные уязвимости)
-- Не рекомендуется к использованию
+- **IPIP:** [Туннели IPIP и SIT](./ipip_and_sit.md)
+- **GRE/GRETAP:** [GRE (SSoT)](./gre/gre.md)
+- **VXLAN:** [VXLAN (SSoT)](./vxlan.md)
+- **WireGuard:** [WireGuard (SSoT)](../../Vpn/wireguard.md)
+- **OpenVPN:**
+- **IPsec:** [IPSec (SSoT)](./ipsec/ipsec.md)
+- **L2TP:** Протокол L2, требует IPsec для шифрования. Порт UDP 1701. Применяется в связке L2TP/IPsec.
+- **PPTP:** Устаревший протокол (TCP 1723 + GRE). Известные уязвимости. Не рекомендуется к использованию.
 
 ### Выбор протокола
 
@@ -189,10 +159,3 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
          ├─ Да → WireGuard (производительность), [IPSec](./ipsec/ipsec.md) (site-to-site) или OpenVPN (зрелость)
          └─ Нет → GRE (универсально) или IPIP/SIT (транзит протокола)
 ```
-
-### Ссылки
-
-- [RFC 2890 — Key and Sequence Number Extensions to GRE](https://datatracker.ietf.org/doc/html/rfc2890)
-- [RFC 2003 — IP Encapsulation within IP (IPIP)](https://datatracker.ietf.org/doc/html/rfc2003)
-- [RFC 4213 — Basic Transition Mechanisms for IPv6 (SIT)](https://datatracker.ietf.org/doc/html/rfc4213)
-- [RFC 7348 — VXLAN](https://datatracker.ietf.org/doc/html/rfc7348)

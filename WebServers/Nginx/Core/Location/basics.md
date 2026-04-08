@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Директива `location`** является одним из ключевых элементов [конфигурации](../nginx_setup.md) [Nginx](../nginx_overview.md). Она позволяет гибко управлять [обработкой запросов](../nginx_rewrite_rules_and_try_files.md) в зависимости от [URI (Uniform Resource Identifier)](../../../../Networking/Protocols/http.md).
+**Директива `location`** является одним из ключевых элементов [конфигурации](../nginx_setup.md) [Nginx](../nginx_overview.md). Она позволяет гибко управлять [обработкой запросов](../nginx_rewrite_rules_and_try_files.md) в зависимости от [URI (Uniform Resource Identifier)](../../../../Networking/Protocols/HTTP/http_basics.md).
 
 ## Базовые концепции
 

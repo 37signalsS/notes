@@ -101,7 +101,7 @@ ip address add fc00::2/64 dev sit1
 
 **Адресация:**
 
-- `fc00::/64` — [Unique Local Address (ULA)](../Protocols/ip.md) для IPv6
+- `fc00::/64` — Unique Local Address (ULA) для IPv6
 - `2001:db8::/32` — документационный префикс IPv6
 
 ### 3. Проверка и диагностика
@@ -162,8 +162,7 @@ tcpdump proto 41 -n   # SIT
 ip link set <tun_if> mtu 1480
 ```
 
-### Ссылки
+**Рекомендации:**
 
-- [RFC 2003 — IP Encapsulation within IP](https://datatracker.ietf.org/doc/html/rfc2003)
-- [RFC 4213 — Basic Transition Mechanisms for IPv6](https://datatracker.ietf.org/doc/html/rfc4213)
-- [Linux IP Tunneling HOWTO](<https://tldp.org/HOWTO/IP-> Tunneling-HOWTO/)
+- Включить Path MTU Discovery: `sysctl -w net.ipv4.ip_no_pmtu_disc=0`
+- Для TCP: `tcp_mtu_probing=1`

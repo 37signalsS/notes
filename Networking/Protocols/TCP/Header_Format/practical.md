@@ -4,13 +4,40 @@
 
 **Анализ заголовка TCP** — диагностика и проверка параметров TCP-соединений через tcpdump и ss.
 
-> **Навигация:** [Главная Header Format](./index.md) | [Опции](./options.md)
+---
+
+## Основные понятия
+
+### Флаги TCP в выводе tcpdump
+
+| Обозначение | Флаг | Назначение |
+| :--- | :--- | :--- |
+| `[S]` | SYN | Установка соединения (handshake) |
+| `[S.]` | SYN+ACK | Подтверждение handshake |
+| `[.]` | ACK | Подтверждение данных |
+| `[P]` | PSH | Немедленная доставка приложению |
+| `[F]` | FIN | Завершение соединения |
+| `[R]` | RST | Сброс соединения (ошибка/отказ) |
+
+### Опции TCP в выводе ss
+
+Опции отображаются в сокращенном формате:
+
+- `cubic` — алгоритм congestion control
+- `ts` — timestamps включены
+- `sack` — SACK разрешен
+- `wscale:X,Y` — window scale отправителя (X) и получателя (Y)
+- `mss:N` — согласованный MSS
+
+**Расшифровка wscale:** `wscale:7,7` означает множитель 2^7 = 128 для обеих сторон. Реальное окно = Window Size × 128.
+
+**Подробнее о опциях:** [Опции TCP](./options.md) | **Подробнее о флагах:** [Формат заголовка TCP](./index.md)
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Анализ заголовка tcpdump
+### Анализ заголовка через tcpdump
 
 ```bash
 # Показать заголовки TCP с флагами
@@ -23,11 +50,24 @@ tcpdump -i eth0 -nn -v tcp
 
 **Расшифровка:**
 
-- `Flags [S]` — SYN-пакет (handshake)
-- `win 65535` — максимальное окно без scaling
-- `mss 1460` — MSS = 1460 байт
+- `Flags [S]` — SYN-пакет (начало handshake)
+- `seq 1234567890` — Initial Sequence Number (ISN)
+- `win 65535` — максимальное окно без scaling (64 КБ)
+- `mss 1460` — MSS = 1460 байт (стандарт для Ethernet MTU 1500)
+- `sackOK` — поддержка SACK разрешена
+- `TS val 1234567890 ecr 0` — timestamp отправителя, echo = 0 (первый пакет)
 - `wscale 7` — window scale = 2^7 = 128
-- `length 0` — только заголовок, без данных
+- `length 0` — только заголовок, без данных (характерно для handshake)
+
+**Диагностика handshake:**
+
+```bash
+# Перехват только SYN-пакетов
+tcpdump -i eth0 -nn 'tcp[tcpflags] & tcp-syn != 0 and not tcp[tcpflags] & tcp-ack != 0'
+
+# Перехват RST-пакетов (сброс соединений)
+tcpdump -i eth0 -nn 'tcp[tcpflags] & tcp-rst != 0'
+```
 
 ---
 
@@ -43,17 +83,20 @@ ss -tno
 #          cubic ts sack wscale:7,7 mss:1460
 ```
 
-**Опции:**
+**Диагностика проблем:**
 
-- `cubic` — алгоритм congestion control
-- `ts` — timestamps включены
-- `sack` — SACK разрешен
-- `wscale:7,7` — scale отправителя и получателя
-- `mss:1460` — согласованный MSS
+| Симптом | Возможная причина | Команда проверки |
+| :--- | :--- | :--- |
+| Малое окно без scaling | Window scale не согласован | `ss -tno` → проверить `wscale` |
+| Отсутствие `sack` | SACK отключен в ядре | `sysctl net.ipv4.tcp_sack` |
+| Отсутствие `ts` | Timestamps отключены | `sysctl net.ipv4.tcp_timestamps` |
+| Низкий MSS | Проблемы MTU на пути | `ss -tno` → проверить `mss` |
+
+**Подробнее о диагностике надежности:** [Диагностика надежности TCP](../reliability_mechanisms/diagnostics.md)
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Эволюция заголовка TCP
 
@@ -67,12 +110,4 @@ ss -tno
 
 ### Связанные темы
 
-- **[Надежность TCP](../reliability_mechanisms/diagnostics.md** — как поля заголовка обеспечивают надежность
-- **[Handshake](../connection/tcp_connection_management_overview.md)** — использование SYN, ACK, Sequence Number
-- **[Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — влияние параметров на заголовок
-
-### Инструменты анализа
-
-- **[tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md)** — перехват и анализ пакетов
-- **[ss](../../../../Linux/Diagnostics/Networking/ss.md)** — информация о сокетах
-- **Wireshark** — графический анализатор трафика
+Для анализа TCP-трафика используются инструменты [tcpdump](../../../../Linux/Diagnostics/Networking/tcpdump.md) (перехват пакетов) и [ss](../../../../Linux/Diagnostics/Networking/ss.md) (информация о сокетах). Графический анализатор Wireshark предоставляет расширенную визуализацию заголовков. Влияние параметров заголовка на производительность описано в [Оптимизация TCP](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md), использование флагов при установке соединения — в [Handshake](../connection/tcp_connection_overview.md).

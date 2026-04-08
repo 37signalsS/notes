@@ -71,10 +71,10 @@
 
 | Аспект | Описание |
 |--------|----------|
-| **HTTP/2, HTTP/3 (QUIC)** | Мультиплексирование запросов | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/http_protocols_optimization.md) |
+| **HTTP/2, HTTP/3 (QUIC)** | Мультиплексирование запросов | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/HTTP/http_protocols_optimization.md) |
 | **Keep-alive, connection pooling** | Повторное использование TCP-сессий | **[Оптимизация TCP](./tcp_tuning/tcp_tuning_overview.md)** |
 | **TCP Fast Open** | Сокращение handshake | **[Оптимизация TCP](./tcp_tuning/tcp_fast_open.md)** |
-| **Предзагрузка, preconnect** | Упреждающее установление соединений | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/http_protocols_optimization.md) |
+| **Предзагрузка, preconnect** | Упреждающее установление соединений | [Оптимизация HTTP-протоколов](../../../Networking/Protocols/HTTP/http_protocols_optimization.md) |
 | **DNS-кэширование** | Кэширование результатов `getaddrinfo()` | [DNS resolution performance](../../Diagnostics/Networking/dns/dns_resolution_performance.md) |
 
 ### DNS как источник задержек
