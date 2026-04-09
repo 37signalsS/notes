@@ -1,21 +1,21 @@
 # Vector: Обзор
 
-## Определения
+## Definitions
 
-**Vector** — это высокопроизводительный конвейер для сбора, обработки и отправки логов, метрик и событий. Написан на языке Rust, что обеспечивает высокую производительность, безопасность памяти и низкое потребление ресурсов.
+**Vector** — высокопроизводительный конвейер для сбора, обработки и отправки логов, метрик и событий. Написан на Rust — высокая производительность, безопасность памяти, низкое потребление ресурсов.
 
-**Ключевая особенность:** Vector может работать в двух режимах:
+**Режимы работы:**
 
 - **Agent** — легковесный агент на каждом хосте (замена Filebeat/Fluent Bit)
 - **Aggregator** — централизованный обработчик потоков данных (замена Logstash/Fluentd)
 
 ---
 
-## Основные концепции
+## Basic Concepts
 
 ### Архитектура
 
-Архитектура Vector состоит из трёх компонентов:
+Три компонента:
 
 1. **Sources (Источники)** — определяют, откуда Vector получает данные:
     - Файлы логов (`/var/log/*.log`, journald)
@@ -26,14 +26,14 @@
     - Системные метрики (OS, Prometheus endpoints)
 
 2. **Transforms (Преобразования)** — модифицируют, фильтруют и обогащают данные:
-    - **`remap`** — преобразования с помощью [VRL](./vrl_language.md)
+    - **`remap`** — преобразования через [VRL](./vrl_language.md)
     - **`filter`** — фильтрация событий по условиям
     - **`route`** — маршрутизация по разным sink'ам
     - **`reduce`** — агрегация нескольких событий
     - **`luajit`** — кастомная логика на Lua
 
-3. **Sinks (Приемники)** — определяют, куда отправлять обработанные данные:
-    - Хранилища логов (Elasticsearch, OpenSearch, Loki, ClickHouse)
+3. **Sinks (Приёмники)** — определяют, куда отправлять обработанные данные:
+    - Хранилища логов (Elasticsearch, OpenSearch, [Loki](../Loki/loki_overview.md), ClickHouse)
     - Очереди (Kafka, NATS, AWS SQS)
     - Метрики (Prometheus remote write, Datadog, StatsD)
     - Облака (AWS S3, GCS, Azure Blob Storage)
@@ -47,54 +47,32 @@
 | **Безопасность памяти** | Гарантии Rust исключают уязвимости типа buffer overflow |
 | **Гарантия доставки** | At-least-once delivery с персистентным буфером на диске |
 | **Мультиплатформенность** | Linux, macOS, Windows, Docker, Kubernetes |
-| **Конфигурация** | TOML, YAML, JSON (TOML рекомендуется для строгости) |
-| **Обработка ошибок** | Встроенные механизмы retry, dead letter queue |
+| **Конфигурация** | TOML, YAML, JSON (TOML рекомендуется) |
+| **Обработка ошибок** | Встроенные retry, dead letter queue |
 
-### Режимы развертывания
+### Режимы развёртывания
 
-#### Agent Mode (Агент на каждом хосте)
+#### Agent Mode
 
-Vector устанавливается на каждый хост как DaemonSet (Kubernetes) или systemd-сервис (VM).
+Vector на каждом хосте — DaemonSet (Kubernetes) или systemd-сервис (VM).
 
-**Преимущества:**
+**Преимущества:** минимальная задержка, локальная буферизация при потере сети, сжатие на месте.
 
-- Минимальная задержка доставки
-- Локальная буферизация при потере сети
-- Снижение нагрузки на сеть (сжатие, агрегация на месте)
+**Сценарии:** сбор логов с файлов (`/var/log`, journald), сбор метрик с экспортёров, отправка в хранилище или Kafka.
 
-**Сценарии:**
+#### Aggregator Mode
 
-- Сбор логов с файлов (`/var/log`, journald)
-- Сбор метрик с экспортеров
-- Отправка напрямую в хранилище или в Kafka
+Отдельный сервис/кластер для обработки потоков от агентов.
 
-#### Aggregator Mode (Централизованный обработчик)
+**Преимущества:** централизованная трансформация и обогащение, снижение нагрузки на агенты.
 
-Vector разворачивается как отдельный сервис/кластер для обработки потоков от агентов.
+**Сценарии:** чтение из Kafka и трансформация, агрегация логов из нескольких K8s-кластеров, обогащение внешними данными (GeoIP, K8s metadata).
 
-**Преимущества:**
+#### Hybrid Mode
 
-- Централизованная трансформация и обогащение
-- Снижение нагрузки на агенты
-- Удобство управления конфигурацией
+Агенты → Kafka → Aggregator → хранилища. Сценарий: `Fluent Bit → Kafka → Vector → OpenSearch` (подробно в [туториале](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)).
 
-**Сценарии:**
-
-- Чтение из Kafka и трансформация перед отправкой в хранилище
-- Агрегация логов из нескольких кластеров Kubernetes
-- Обогащение данными из внешних источников (GeoIP, Kubernetes metadata)
-
-#### Hybrid Mode (Комбинированный)
-
-Агенты собирают и отправляют в Kafka → Aggregator читает из Kafka, трансформирует и отправляет в хранилища.
-
-**Сценарий:** `Fluent Bit → Kafka → Vector → OpenSearch`
-
-Подробный разбор см. в **[Практическом сценарии: Роутер логов из Kafka в OpenSearch](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)**.
-
----
-
-## Сравнение с аналогами
+### Сравнение с аналогами
 
 | Характеристика | Vector | Logstash | Fluentd/Fluent Bit | file.d |
 | :--- | :--- | :--- | :--- | :--- |
@@ -106,89 +84,43 @@ Vector разворачивается как отдельный сервис/к�
 | **Язык трансформации** | VRL | Filter-плагины | Record-modifier | Lua/Go |
 | **Гарантия доставки** | At-least-once | At-least-once | At-least-once | At-least-once |
 
-### Vector vs Logstash
+**Vector vs Logstash** — Vector быстрее (в 5–10 раз), потребляет меньше ресурсов; Logstash имеет зрелую экосистему плагинов (200+ против ~100). Подробнее: [Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md#сравнение-logstash-и-vector).
 
-- **Vector** превосходит Logstash по производительности (в 5–10 раз) и потреблению ресурсов
-- **Logstash** имеет более зрелую экосистему плагинов (200+ против ~100 у Vector)
-- **Выбор в пользу Vector:** Высоконагруженные системы, ограниченные ресурсы, безопасность
-- **Выбор в пользу Logstash:** Экзотические плагины, legacy-интеграции
+**Vector vs file.d** — file.d (OzonTech) ориентирован на импортозамещение; Vector имеет более богатые трансформации (VRL vs Lua). Подробнее: [file.d Overview](../file.d_overview.md).
 
-> Сравнение подробно разобрано в **[Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md#сравнение-logstash-и-vector)**.
+**Vector vs Fluent Bit** — Fluent Bit легче (~5 MB), но с ограниченными трансформациями; Vector (~30 MB) предоставляет полноценный VRL. Оптимальная связка: Fluent Bit → Kafka → Vector.
 
-### Vector vs file.d
+### Интеграция с Kubernetes
 
-- **file.d** — российская альтернатива от OzonTech, также ориентирована на производительность
-- **Vector** имеет более богатый функционал трансформаций (VRL vs Lua) и шире распространен
-- **Выбор в пользу file.d:** Требования к импортозамещению, простая конфигурация
-- **Выбор в пользу Vector:** Сложные трансформации, международная поддержка
+Официальная поддержка через Helm-чарт:
 
-> Подробнее о file.d см. в **[file.d Обзор](../file.d_overview.md)**.
+1. **DaemonSet** — сбор логов с `/var/log/pods/*`, обогащение K8s metadata.
+2. **Deployment** — агрегация из Kafka, горизонтальное масштабирование, consumer groups.
+3. **StatefulSet** — stateful-источники, персистентный буфер, гарантированная доставка.
 
-### Vector vs Fluent Bit
+### Миграция с других инструментов
 
-- **Fluent Bit** — сверхлегкий агент (образ ~5 MB), но с ограниченными возможностями трансформации
-- **Vector** тяжелее (~30 MB), но предоставляет полноценный язык трансформаций VRL
-- **Оптимальная связка:** Fluent Bit как агент → Kafka → Vector как агрегатор
+**С Logstash:** экспорт конфигурации → переписывание фильтров на VRL → тестирование на параллельном потоке → переключение трафика.
+
+**С Fluent Bit:** Fluent Bit остаётся агентом, Vector разворачивается как агрегатор вместо Fluentd → постепенная миграция sink'ов.
 
 ---
 
-## Интеграция с Kubernetes
+## Practical Scenarios
 
-Vector официально поддерживает развертывание в Kubernetes через Helm-чарт.
+Практические сценарии вынесены в отдельный файл: **[Practical Scenarios](./practical_scenarios.md)**.
 
-**Рекомендуемые паттерны:**
-
-1. **DaemonSet для сбора логов с хостов:**
-    - Сбор с `/var/log/pods/*`
-    - Автоматическое обогащение Kubernetes metadata
-
-2. **Deployment для агрегации из Kafka:**
-    - Горизонтальное масштабирование по CPU/RAM
-    - Consumer groups для балансировки нагрузки
-
-3. **StatefulSet для stateful-источников:**
-    - Персистентный буфер на диске
-    - Гарантированная доставка при перезапусках
+Краткий перечень:
+- Роутер логов из Kafka в OpenSearch ([подробнее](./practical_scenarios.md#практический-сценарий-роутер-логов-из-kafka-в-opensearch))
+- Сбор метрик с Prometheus endpoints ([подробнее](./practical_scenarios.md#практический-сценарий-сбор-метрик-с-prometheus-endpoints))
+- Обогащение логов GeoIP ([подробнее](./practical_scenarios.md#практический-сценарий-обогащение-логов-geoip))
 
 ---
 
-## Миграция с других инструментов
+## Additional Information
 
-### С Logstash на Vector
+**Инструменты:** [VRL Playground](https://vrl.dev) — онлайн-песочница для тестирования скриптов; [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl) — подсветка синтаксиса.
 
-1. Экспорт конфигурации Logstash (pipeline, фильтры)
-2. Переписывание фильтров на VRL (синтаксис отличается)
-3. Тестирование на параллельном потоке данных
-4. Переключение трафика через балансировщик
+**Ресурсы:** [Официальная документация](https://vector.dev/docs/), [GitHub Repository](https://github.com/vectordotdev/vector), [Vector Discord](https://discord.gg/vectordotdev).
 
-### С Fluent Bit на Vector
-
-1. Fluent Bit уже может работать как агент — замена не требуется
-2. Vector разворачивается как агрегатор вместо Fluentd
-3. Постепенная миграция sink'ов
-
----
-
-## Ресурсы
-
-- **[Официальная документация](https://vector.dev/docs/)** — полные docs, tutorials, API reference
-- **[VRL Playground](https://vrl.dev)** — онлайн-песочница для тестирования скриптов
-- **[GitHub Repository](https://github.com/vectordotdev/vector)** — исходный код, issues, RFC
-- **[Vector Discord](https://discord.gg/vectordotdev)** — сообщество для вопросов
-
----
-
-## Связанные заметки
-
-| Тема | Ссылка |
-| :--- | :--- |
-| Observability (4 столпа) | **[Обзор Observability](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md)** |
-| Архитектура сбора логов | **[Проектирование высоконагруженного мониторинга](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** |
-| Пайплайн Fluent Bit → Kafka → Vector | **[Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
-
-| Хранение в Loki | **[Loki Overview](../Loki/loki_overview.md)** |
-| Сравнение с Logstash | **[Logstash Overview](../ELK_Stack/Logstash/logstash_overview.md)** |
-| Альтернатива file.d | **[file.d Обзор](../file.d_overview.md)** |
-| Хранение в OpenSearch | **[OpenSearch Overview](../ELK_Stack/OpenSearch/opensearch_overview.md)** |
-| Хранение в Loki | **[Loki Overview](../Loki/loki_overview.md)** |
-| Язык трансформации VRL | **[VRL Language](./vrl_language.md)** |
+**Связанные заметки:** Observability — [Four Pillars](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md); проектирование высоконагруженного мониторинга — [Designing High-Load Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md); язык трансформации — [VRL Language](./vrl_language.md); практические сценарии — [Practical Scenarios](./practical_scenarios.md).

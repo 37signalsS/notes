@@ -1,20 +1,20 @@
-# Установка и базовая настройка Vault
+# Vault Installation Guide
 
-## Определения
+## Definitions
 
-* **Установка Vault**: Процесс развертывания бинарного файла Vault, его настройка как системной службы и первоначальная инициализация для подготовки к работе.
+* **Vault Installation** — процесс развёртывания бинарного файла Vault, настройки его как системной службы, инициализации и приведения в рабочее состояние (unseal).
 
-## Основные концепции
+## Basic Concepts
 
-### 1. Подготовка системы
+### System Preparation
 
-1. **Непривилегированный пользователь:** Запуск от выделенного пользователя `vault` изолирует сервис от других процессов.
+1. **Непривилегированный пользователь:** запуск от выделенного пользователя `vault` изолирует сервис от других процессов.
 
     ```bash
     sudo useradd --system --home /etc/vault.d --shell /bin/false vault
     ```
 
-2. **Выделенные директории:** Создание отдельных каталогов для конфигурации (`/etc/vault.d`) и данных (`/var/lib/vault/data`) позволяет гранулярно управлять правами доступа.
+2. **Выделенные директории:** отдельные каталоги для конфигурации (`/etc/vault.d`) и данных (`/var/lib/vault/data`) позволяют гранулярно управлять правами.
 
     ```bash
     sudo mkdir --parents /etc/vault.d /var/lib/vault/data
@@ -22,39 +22,33 @@
     sudo chmod 750 /var/lib/vault/data
     ```
 
-### 2. Базовая конфигурация (`vault.hcl`)
+### Base Configuration (`vault.hcl`)
 
-Основной файл, определяющий поведение Vault.
+Файл `/etc/vault.d/vault.hcl` определяет поведение Vault:
 
 ```hcl
-// /etc/vault.d/vault.hcl
+ui = true
 
-ui = true // Включить веб-интерфейс
-
-// Настройки слушателя для API
 listener "tcp" {
   address     = "0.0.0.0:8200"
-  tls_disable = 1 // Отключить TLS для первоначальной настройки
+  tls_disable = 1  // Отключить TLS только для первоначальной настройки
 }
 
-// Конфигурация хранилища (storage).
-// В данном примере используется файловое хранилище Raft.
-// Для production с внешним бэкендом см. [vault_with_consul_backend.md](./vault_with_consul_backend.md).
 storage "raft" {
   path    = "/var/lib/vault/data"
   node_id = "vault_node_1"
 }
 
-// Адрес для коммуникации между узлами кластера
-api_addr = "http://127.0.0.1:8200"
+api_addr     = "http://127.0.0.1:8200"
 cluster_addr = "https://127.0.0.1:8201"
 ```
 
-* **Важно:** Установите права на конфигурационный файл: `sudo chown vault:vault /etc/vault.d/vault.hcl` и `sudo chmod 640 /etc/vault.d/vault.hcl`.
+* Права: `sudo chown vault:vault /etc/vault.d/vault.hcl && sudo chmod 640 /etc/vault.d/vault.hcl`
+* Для production с внешним бэкендом: [vault_with_consul_backend.md](./vault_with_consul_backend.md)
 
-### 3. Systemd Unit
+### Systemd Unit
 
-Создание файла `/etc/systemd/system/vault.service` для управления Vault как системной службой.
+Файл `/etc/systemd/system/vault.service` управляет Vault как системной службой:
 
 ```ini
 [Unit]
@@ -87,48 +81,62 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 ```
 
-## Практические сценарии
+### CAP_IPC_LOCK Capability
 
-### Шаг 1: Загрузка и размещение бинарного файла
+Capability `cap_ipc_lock` позволяет Vault блокировать память от выгрузки в swap через `mlock()`, предотвращая попадание чувствительных данных на диск:
 
-1. **Скачайте бинарный файл** с [официального сайта](https://developer.hashicorp.com/vault/downloads).
-2. Распакуйте архив и переместите исполняемый файл `vault` в директорию, доступную в `PATH`, например, `/usr/local/bin`.
+```bash
+sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
+```
+
+### Seal/Unseal Process
+
+Процесс запечатывания/распечатывания описан в [concepts.md#процесс-запечатывания-seal-и-распечатывания-unseal](../concepts.md#процесс-запечатывания-seal-и-распечатывания-unseal). Кратко:
+
+* При инициализации генерируются unseal keys и root token
+* Для перевода в рабочее состояние требуется ввести минимум `K` из `N` ключей (по умолчанию 3 из 5)
+
+## Practical Scenarios
+
+### Step 1: Download and Install Binary
+
+1. Скачать бинарный файл с [официального сайта](https://developer.hashicorp.com/vault/downloads).
+2. Распаковать и переместить в `PATH`:
 
     ```bash
     unzip vault_*_linux_amd64.zip
     sudo mv vault /usr/local/bin/
     ```
 
-### Шаг 2: Запуск и инициализация
+3. Установить capability (см. [Basic Concepts → CAP_IPC_LOCK](#cap_ipc_lock-capability)).
 
-1. **Перезагрузите конфигурацию systemd** и запустите сервис Vault:
+### Step 2: Start and Initialize Vault
+
+1. Перезагрузить конфигурацию systemd и запустить сервис:
 
     ```bash
     sudo systemctl daemon-reload
     sudo systemctl start vault
-    sudo systemctl enable vault # Для автозапуска при загрузке системы
+    sudo systemctl enable vault
     ```
 
-2. **Экспортируйте адрес Vault** в переменную окружения для удобства:
+2. Экспортировать адрес Vault:
 
     ```bash
     export VAULT_ADDR='http://127.0.0.1:8200'
     ```
 
-3. **Инициализируйте Vault**:
-    Эта команда создает мастер-ключ, делит его на части (ключи распечатывания) и генерирует корневой токен (root token).
+3. Инициализировать Vault (генерирует unseal keys + root token):
 
     ```bash
     vault operator init
     ```
 
-    **Обязательно сохраните ключи распечатывания и корневой токен в надежном месте!** Они не могут быть восстановлены.
+    > **Критично:** сохранить unseal keys и root token в надёжном месте. Восстановление невозможно.
 
-### Шаг 3: Распечатывание (Unseal) и вход
+### Step 3: Unseal and Login
 
-Процесс "распечатывания" подробно описан в документе [основных концепций Vault](../concepts.md#процесс-запечатывания-seal-и-распечатывания-unseal).
-
-1. **Выполните команду `unseal`** несколько раз (по умолчанию 3 раза) с разными ключами.
+1. Ввести unseal keys (минимум 3):
 
     ```bash
     vault operator unseal <unseal_key_1>
@@ -136,32 +144,27 @@ WantedBy=multi-user.target
     vault operator unseal <unseal_key_3>
     ```
 
-2. После успешного ввода необходимого количества ключей Vault перейдет в рабочее состояние (`Sealed: false`).
-
-3. **Войдите в систему** с помощью корневого токена:
+2. Проверить статус: `vault status` → `Sealed: false`.
+3. Войти с root token:
 
     ```bash
     vault login <root_token>
     ```
 
-## Дополнительная информация
+## Additional Information
 
-### Capabilities для блокировки памяти
+### Troubleshooting
 
-**Установите capabilities** на бинарный файл. Это необходимо, чтобы Vault мог заблокировать свою память от выгрузки в swap (через системный вызов `mlock()`), не требуя при этом root-прав. Этот шаг критичен для безопасности, так как предотвращает попадание чувствительных данных на диск.
+| Проблема | Решение |
+| :--- | :--- |
+| Нет прав на конфигурацию/данные | Проверить `chown vault:vault` на `/etc/vault.d/` и `/var/lib/vault/data` |
+| Конфликт storage backend | Активен только один блок `storage` в `vault.hcl` |
+| Vault не стартует | Проверить `journalctl -u vault -e`, валидность HCL-синтаксиса |
 
-```bash
-sudo setcap cap_ipc_lock=+eip /usr/local/bin/vault
-```
+### Related Documents
 
-### Частые ошибки
-
-* **Проблемы с правами:** Убедитесь, что пользователь `vault` имеет права на чтение конфигурации и на чтение/запись в директорию данных.
-* **Конфликт `storage`:** Если вы переключаетесь между разными бэкендами (например, `raft` и `consul`), убедитесь, что активен только один блок `storage`.
-
-### Связанные документы
-
-* **[HashiCorp Vault Overview](../../Linux/Networking/Services/BIND/overview.md):** Общее описание технологии, ее назначения и ключевых компонентов.
-* **[Основные концепции Vault](../concepts.md):** Подробное описание архитектуры, Seal/Unseal, бэкендов.
-* **[Использование Consul в качестве бэкенда](./vault_with_consul_backend.md):** Настройка HA-кластера с внешним хранилищем.
-* **[Официальная документация по установке](https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-install):** Руководство от HashiCorp.
+* [Vault Overview](../overview.md) — общее описание технологии
+* [Vault Concepts](../concepts.md) — архитектура, Seal/Unseal, бэкенды, аутентификация
+* [Consul Backend for Vault](./vault_with_consul_backend.md) — HA-кластер с внешним хранилищем
+* [Vault Docker Integration](./vault_docker_integration.md) — запуск в контейнерах
+* [Official Installation Guide](https://developer.hashicorp.com/vault/tutorials/getting-started/getting-started-install)

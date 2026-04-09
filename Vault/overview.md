@@ -61,7 +61,7 @@ vault kv get app/config
 * **[Типичные ошибки при хранении секретов](./common_antipatterns.md):** Антипаттерны, которых следует избегать, и как Vault помогает их решить.
 * **[Установка и базовая настройка](./guides/vault_installation.md):** Пошаговое руководство по установке Vault.
 * **[Высокая доступность (High Availability)](./guides/vault_with_consul_backend.md):** Настройка HA-кластера с Consul или Raft.
-* **[Vault Agent](./guides/vault_agent_and_templates.md):** Автоматизация аутентификации и рендеринга секретов.
+* **[Vault Agent](./guides/vault_agent/basics.md):** Автоматизация аутентификации и рендеринга секретов.
 * **[Интеграция с Kubernetes](./guides/vault_kubernetes_integration.md):** Использование CSI Driver для доставки секретов в поды.
 * **[Официальная документация HashiCorp](https://developer.hashicorp.com/vault/docs):** Актуальная документация, CLI и API reference.
 * **[Vault Radar](https://www.hashicorp.com/products/vault/radar):** Сервис для обнаружения скомпрометированных секретов в репозиториях и AWS Secrets Manager.

@@ -1,4 +1,4 @@
-# Provisioning (Автоматическая настройка) в Vagrant
+# Provisioning в Vagrant
 
 ## Определения
 
@@ -20,13 +20,12 @@
 
 ### Типы провижинеров
 
-| Провижинер | Описание | Сложность |
-| --- | --- | --- |
-| **Shell** | Выполнение bash-скриптов | Низкая |
-| **Ansible** | Управление конфигурацией | Средняя |
-| **Puppet** | Декларативная конфигурация | Высокая |
-| **Chef** | Управление конфигурацией | Высокая |
-| **Docker** | Запуск контейнеров | Средняя |
+| Провижинер | Описание | Сложность | Идемпотентность |
+| --- | --- | --- | --- |
+| **Shell** | Выполнение bash-скриптов | Низкая | ❌ (требует ручной проверки) |
+| **Ansible** | Управление конфигурацией | Средняя | ✅ (встроенная) |
+| **Docker** | Запуск контейнеров | Средняя | ✅ (образы декларативны) |
+| **Puppet** | Декларативная конфигурация | Высокая | ✅ (встроенная) |
 
 ## Практические сценарии
 
@@ -45,7 +44,6 @@ SHELL
 **Внешний скрипт (рекомендуется):**
 
 ```ruby
-# Vagrantfile
 config.vm.provision :shell, path: "scripts/provision.sh"
 ```
 
@@ -100,10 +98,7 @@ end
 config.vm.provision "ansible" do |ansible|
   ansible.playbook = "playbooks/site.yml"
   ansible.verbose = "-vv"
-  ansible.extra_vars = { 
-    nginx_port: 80,
-    app_env: "development"
-  }
+  ansible.extra_vars = { nginx_port: 80, app_env: "development" }
   ansible.raw_arguments = ["--forks=10"]
 end
 ```
@@ -117,9 +112,7 @@ config.vm.provision "ansible" do |ansible|
 end
 ```
 
-Файл `.vault_password` должен быть в `.gitignore`.
-
-**Подробности:** [Ansible Vault Examples](../Ansible/Vault/examples.md)
+Файл `.vault_password` должен быть в `.gitignore`. Подробнее: [Ansible Vault Examples](../Ansible/Vault/examples.md), [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md).
 
 ### Сценарий 3: Docker внутри ВМ
 
@@ -181,22 +174,20 @@ config.vm.provision "puppet" do |puppet|
 end
 ```
 
-### Сценарий 5: Множественные провижинеры
-
-Комбинирование различных типов:
+### Сценарий 5: Комбинирование провижинеров
 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
-  
-  # 1. Базовая настройка через Shell
+
+  # 1. Базовая настройка
   config.vm.provision "shell", path: "scripts/base.sh"
-  
+
   # 2. Установка Docker
   config.vm.provision "docker" do |d|
     d.run "nginx", image: "nginx:alpine"
   end
-  
+
   # 3. Настройка через Ansible
   config.vm.provision "ansible" do |ansible|
     ansible.playbook = "playbooks/configure.yml"
@@ -216,10 +207,9 @@ end
 | **Порог входа** | Низкий | Средний | Высокий |
 
 **Рекомендации:**
-
-- **Shell:** Быстрые задачи, установка зависимостей, bootstrap
-- **Ansible:** Управление конфигурацией, идемпотентность, сложная логика
-- **Docker:** Тестирование контейнеров, микросервисы
+- **Shell** — быстрые задачи, установка зависимостей, bootstrap
+- **Ansible** — управление конфигурацией, идемпотентность, сложная логика
+- **Docker** — тестирование контейнеров, микросервисы
 
 ### Лучшие практики
 
@@ -228,10 +218,12 @@ end
    ```bash
    # Плохо
    echo "line" >> /etc/config
-   
+
    # Хорошо
    grep -q "line" /etc/config || echo "line" >> /etc/config
    ```
+
+   Скрипты должны быть идемпотентными — повторный запуск не должен ломать систему.
 
 2. **Модульность:** Разделяйте скрипты по функциям:
    - `base.sh` — базовая настройка ОС
@@ -241,31 +233,25 @@ end
 3. **Версионирование:** Фиксируйте версии ПО:
 
    ```ruby
-   d.run "nginx", image: "nginx:1.25-alpine"  # Конкретная версия
+   d.run "nginx", image: "nginx:1.25-alpine"
    ```
 
-4. **Секреты:** Не храните секреты в Vagrantfile:
+4. **Секреты:** Не храните секреты в Vagrantfile, используйте `ENV`:
 
    ```ruby
-   # Используйте ENV
    env: { "API_KEY" => ENV['API_KEY'] }
    ```
 
 ### Отладка provisioning
 
+Уровни логирования: [Vagrant Troubleshooting](./vagrant_troubleshooting/basic_concepts.md).
+
 ```bash
-# Запуск с подробными логами
-VAGRANT_LOG=info vagrant up
-
-# Принудительный provisioning
-vagrant provision --debug
-
-# Провижининг конкретной машины
-vagrant provision web-server
+vagrant provision --debug           # Подробный вывод
+vagrant provision web-server        # Конкретная машина (multi-machine)
 ```
 
 ### См. также
 
+- [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
 - [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — сложные сценарии
-- [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md) — запуск Ansible
-- [Ansible Vault Examples](../Ansible/Vault/examples.md) — работа с секретами

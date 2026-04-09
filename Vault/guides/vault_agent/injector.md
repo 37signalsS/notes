@@ -1,28 +1,50 @@
 # Vault Injector (Auto-Injection) в Kubernetes
 
-**Vault Injector** — это компонент, который автоматически внедряет Vault Agent в поды Kubernetes через механизм **Mutating Admission Webhook**. В отличие от ручного добавления sidecar-контейнера в манифест, Injector делает это автоматически на основе аннотаций.
+## Definitions
 
-## Как работает Injector
+**Vault Agent Injector** — компонент Vault, реализованный как **Mutating Admission Webhook** в Kubernetes. Автоматически внедряет Vault Agent (init-контейнер и/или sidecar) в поды на основе аннотаций `vault.hashicorp.com/*`, без необходимости модифицировать манифесты приложений.
 
-1. **Аннотирование пода:** В `metadata.annotations` пода добавляются специальные аннотации (например, `vault.hashicorp.com/agent-inject: "true"`).
-2. **Перехват запроса:** При создании пода Kubernetes API отправляет запрос в Vault Injector (webhook).
-3. **Модификация спецификации:** Injector модифицирует спецификацию пода, добавляя:
-   * **Init-контейнер** Vault Agent — для первоначальной аутентификации и получения секретов.
-   * **Sidecar-контейнер** Vault Agent — для постоянного мониторинга и ротации секретов (опционально).
-   * **Аннотации и volumes** — для монтирования секретов в основной контейнер.
-4. **Запуск пода:** Под запускается уже с инжектированными контейнерами Vault Agent.
+**Mutating Admission Webhook** — механизм Kubernetes, позволяющий внешнему сервису модифицировать ресурсы (Pod, Deployment и т.д.) до их создания в API-сервере. Injector перехватывает запросы на создание подов и добавляет контейнеры Vault Agent.
 
-## Ключевые аннотации
+## Basic Concepts
+
+### Принцип работы
+
+1. **Аннотирование пода** — в `metadata.annotations` добавляются аннотации `vault.hashicorp.com/*`.
+2. **Перехват** — Kubernetes API отправляет запрос на создание пода в Vault Injector (webhook).
+3. **Модификация** — Injector добавляет:
+   - **Init-контейнер** Vault Agent — аутентификация и первичное получение секретов.
+   - **Sidecar-контейнер** Vault Agent (опционально) — непрерывная ротация секретов.
+   - **Shared volumes** — для монтирования секретов в основной контейнер.
+4. **Запуск** — под создаётся уже с инжектированными контейнерами.
+
+### Режимы работы
+
+| Режим | Поведение | Когда использовать |
+| :--- | :--- | :--- |
+| **Init-container** (по умолчанию) | Vault Agent запускается, получает секреты и завершается | Статические секреты, однократное получение |
+| **Sidecar** | Vault Agent работает постоянно, обновляет секреты | Динамические секреты с ротацией (DB creds, PKI certs) |
+
+### Ключевые аннотации
 
 | Аннотация | Описание | Пример |
 | :--- | :--- | :--- |
 | `vault.hashicorp.com/agent-inject` | Включает инъекцию Vault Agent | `"true"` |
-| `vault.hashicorp.com/agent-inject-secret-<name>` | Путь к секрету в Vault для инъекции | `database/creds/readonly:db-creds.txt` |
-| `vault.hashicorp.com/role` | Роль Vault для аутентификации Kubernetes | `"my-app-role"` |
-| `vault.hashicorp.com/agent-inject-template` | Шаблон для рендеринга секрета | См. ниже |
-| `vault.hashicorp.com/agent-inject-command-<name>` | Команда для выполнения после обновления секрета | `"pkill -HUP nginx"` |
+| `vault.hashicorp.com/role` | Роль Vault для K8s-аутентификации | `"my-app-role"` |
+| `vault.hashicorp.com/agent-inject-secret-<name>` | Путь к секрету в Vault | `database/creds/readonly` |
+| `vault.hashicorp.com/agent-inject-template-<name>` | Go-шаблон для рендеринга секрета | См. примеры ниже |
+| `vault.hashicorp.com/agent-inject-command-<name>` | Команда после обновления секрета | `"pkill -HUP myapp"` |
+| `vault.hashicorp.com/agent-pre-populate-only` | `"false"` — sidecar-режим; `"true"` — только init | `"false"` |
+| `vault.hashicorp.com/agent-image` | Образ Vault Agent | `"hashicorp/vault:1.16"` |
+| `vault.hashicorp.com/namespace` | Vault namespace (Enterprise) | `"team-a"` |
+| `vault.hashicorp.com/tls-skip-verify` | Пропуск TLS-верификации | `"true"` |
+| `vault.hashicorp.com/secret-volume-path-<name>` | Путь монтирования секрета | `"/etc/secrets/db"` |
 
-## Пример манифеста
+> **Важно:** Аннотация `vault.hashicorp.com/agent-inject-secret-<name>` поддерживает формат `path:filename` для указания имени файла. Пример: `database/creds/readonly:db-creds.txt`.
+
+## Practical Scenarios
+
+### Сценарий 1: Базовая инъекция (init-container)
 
 ```yaml
 apiVersion: v1
@@ -33,52 +55,104 @@ metadata:
     vault.hashicorp.com/agent-inject: "true"
     vault.hashicorp.com/role: "my-app-role"
     vault.hashicorp.com/agent-inject-secret-db: "database/creds/readonly"
+spec:
+  containers:
+  - name: app
+    image: my-app:latest
+    # Секрет доступен в /vault/secrets/db
+```
+
+По умолчанию Injector создаёт init-контейнер. После получения секрета он завершается, а файл остаётся в `/vault/secrets/db`.
+
+### Сценарий 2: Sidecar с ротацией секретов
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-rotating
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "my-app-role"
+    vault.hashicorp.com/agent-inject-secret-db: "database/creds/readonly"
+    vault.hashicorp.com/agent-pre-populate-only: "false"
     vault.hashicorp.com/agent-inject-template-db: |
       {{- with secret "database/creds/readonly" -}}
-      username={{ .Data.data.username }}
-      password={{ .Data.data.password }}
+      DB_USERNAME={{ .Data.username }}
+      DB_PASSWORD={{ .Data.password }}
       {{- end }}
     vault.hashicorp.com/agent-inject-command-db: "pkill -HUP myapp"
 spec:
   containers:
   - name: app
     image: my-app:latest
-    # Секреты будут доступны в /vault/secrets/db
+    envFrom:
+    - configMapRef:
+        name: db-config
+    # Перечитывает конфиг при обновлении секрета
 ```
 
-## Injector vs Ручной Sidecar
+Аннотация `agent-pre-populate-only: "false"` запускает Vault Agent как sidecar. При ротации учётных данных агент обновляет файл и выполняет указанную команду.
 
-| Критерий | Ручной Sidecar | Vault Injector |
-| :--- | :--- | :--- |
-| **Гибкость** | Полный контроль над конфигурацией | Ограничено возможностями аннотаций |
-| **Сложность** | Требует явного описания в манифесте | Автоматическое внедрение |
-| **Поддержка** | Работает в любом Kubernetes | Требует установленного Vault Injector |
-| **Ротация секретов** | Настраивается вручную через `command` | Автоматическая через аннотации |
-| **Использование** | Сложные сценарии, кастомная логика | Стандартные сценарии, быстрое внедрение |
+### Сценарий 3: Несколько секретов с разными путями
 
-## Ограничения Injector
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-secret-app
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "backend-role"
+    vault.hashicorp.com/agent-inject-secret-db: "database/creds/app"
+    vault.hashicorp.com/agent-inject-template-db: |
+      {{- with secret "database/creds/app" -}}
+      export DB_CONN="postgresql://{{ .Data.username }}:{{ .Data.password }}@db:5432/app"
+      {{- end }}
+    vault.hashicorp.com/secret-volume-path-db: "/etc/secrets/db"
+    vault.hashicorp.com/agent-inject-secret-api: "secret/data/api-keys"
+    vault.hashicorp.com/secret-volume-path-api: "/etc/secrets/api"
+spec:
+  containers:
+  - name: app
+    image: backend:latest
+```
 
-* **Требует установленного компонента:** Vault Injector должен быть развёрнут в кластере (обычно через Helm-чарт Vault).
-* **Ограниченная гибкость:** Сложные сценарии (например, несколько шаблонов с разной логикой) могут требовать ручного подхода.
-* **Версионность:** Аннотации могут меняться между версиями Vault.
+Каждый секрет рендерится в отдельный файл и монтируется в свой каталог.
 
-> **Примечание:** Injector по умолчанию использует **режим init-контейнера** (завершается после аутентификации). Для постоянной ротации секретов требуется включить sidecar-режим через аннотацию `vault.hashicorp.com/agent-inject-token: "true"` или явное указание в конфигурации Helm.
+### Сравнение: Injector vs Ручной Sidecar vs CSI Driver
 
-## Когда использовать Injector
+| Критерий | Ручной Sidecar | Vault Injector | CSI Driver |
+| :--- | :--- | :--- | :--- |
+| **Гибкость** | Полный контроль | Ограничена аннотациями | Средняя (через SecretProviderClass) |
+| **Сложность** | Явный манифест | Автоматика по аннотациям | Отдельный ресурс K8s |
+| **Ротация** | Ручная настройка | Автоматическая (sidecar) | Автоматическая |
+| **Требования** | Любой K8s | Компонент Injector | CSI Driver + Kubelet 1.20+ |
+| **Использование** | Кастомная логика | Быстрое внедрение | Статические + динамические секреты |
 
-* **Быстрое внедрение:** Не нужно модифицировать манифесты приложений.
-* **Стандартные сценарии:** Простая инъекция секретов в файлы или переменные окружения.
-* **Централизованное управление:** Политики инъекции управляются через Vault.
+## Additional Information
 
-## Когда использовать ручной Sidecar
+### Ограничения
 
-* **Сложная логика:** Кастомные шаблоны, несколько источников секретов.
-* **Тонкая настройка:** Контроль над `securityContext`, `resources`, `command`.
-* **Air-gapped среды:** Где установка дополнительных компонентов нежелательна.
+- **Зависимость от компонента:** Injector должен быть развёрнут в кластере (обычно через Helm-чарт Vault).
+- **Ограниченная гибкость:** Сложные сценарии (условная логика в шаблонах, несколько источников с зависимостями) требуют ручного sidecar.
+- **Версионность:** Аннотации могут меняться между мажорными версиями Vault.
+- **TLS:** Webhook требует корректной настройки TLS между API-сервером и Injector.
 
-**Подробное руководство:** [Интеграция Vault с Kubernetes через Secrets Store CSI Driver](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md) — альтернативный подход с использованием CSI-драйвера.
+### Когда использовать Injector
 
-## Связанные темы
+- **Быстрое внедрение** — без модификации манифестов приложений.
+- **Стандартные сценарии** — инъекция секретов в файлы/env-переменные.
+- **Централизованное управление** — политики управляются через Vault.
 
-* [Vault Agent: основы](./basics.md)
-* [Интеграция с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
+### Когда использовать ручной Sidecar
+
+- **Сложная логика** — кастомные шаблоны, несколько источников с зависимостями.
+- **Тонкая настройка** — контроль `securityContext`, `resources`, `command`.
+- **Air-gapped среды** — без установки дополнительных компонентов в кластер.
+
+### Связанные документы
+
+- Основа: [Vault Agent: основы](./basics.md) — `auto_auth`, `template`, `sink`, `cache`.
+- Ручной sidecar: [Vault Agent Sidecar](./sidecar_pattern.md) — `shareProcessNamespace`, `SIGHUP`, `exit_after_auth`.
+- Альтернатива: [Интеграция Vault с Kubernetes](../vault_kubernetes_integration.md) — CSI Driver и обзор всех стратегий.

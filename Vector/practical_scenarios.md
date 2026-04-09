@@ -1,10 +1,14 @@
-# Практические сценарии использования Vector
+# Vector: Practical Scenarios
 
-## Конфигурация Vector
+## Definitions
 
-Vector использует формат **TOML** (`vector.toml`) для конфигурации. Конфигурация состоит из секций `[sources]`, `[transforms]`, и `[sinks]`, которые связываются через параметры `inputs`.
+**Конфигурация Vector** — TOML/YAML-файл с тремя секциями: `[sources]`, `[transforms]`, `[sinks]`. Компоненты связываются через параметр `inputs`.
 
-**Пример базовой конфигурации:**
+---
+
+## Basic Concepts
+
+### Базовая конфигурация
 
 ```toml
 # Источник: чтение логов из файлов
@@ -12,7 +16,7 @@ Vector использует формат **TOML** (`vector.toml`) для кон�
   type = "file"
   include = ["/var/log/app/*.log"]
 
-# Трансформация: парсинг JSON и добавление поля
+# Трансформация: парсинг JSON
 [transforms.parse_json]
   type = "remap"
   inputs = ["app_logs"]
@@ -21,7 +25,7 @@ Vector использует формат **TOML** (`vector.toml`) для кон�
     .processed_at = now()
   '''
 
-# Приемник: отправка в Elasticsearch
+# Приёмник: отправка в Elasticsearch
 [sinks.elasticsearch]
   type = "elasticsearch"
   inputs = ["parse_json"]
@@ -29,25 +33,19 @@ Vector использует формат **TOML** (`vector.toml`) для кон�
   index = "app-logs-%Y.%m.%d"
 ```
 
-Для Kubernetes рекомендуется использовать Helm-чарт с передачей конфигурации через `values.yaml`.
+Для Kubernetes используется Helm-чарт с передачей конфигурации через `values.yaml`.
 
 ---
 
-## Практический сценарий: Роутер логов из Kafka в OpenSearch
+## Practical Scenarios
+
+### Сценарий: Роутер логов из Kafka в OpenSearch
 
 **Архитектура:** `Fluent Bit → Kafka → Vector → OpenSearch`
 
-### Проблема
+**Проблема:** прямой поток от агентов к хранилищу при высоких нагрузках приводит к потере данных; поля с точками (`annotations.kubernetes.io/name`) не индексируются в ES/OS.
 
-1. **Масштабируемость:** При высоких нагрузках прямой поток от агентов к хранилищу приводит к потере данных. Kafka используется как буфер.
-2. **Ограничения агентов:** Легковесные агенты (Fluent Bit) не умеют читать из Kafka — только отправляют.
-3. **Совместимость данных:** Поля с точками (`annotations.kubernetes.io/name`) не индексируются в Elasticsearch/OpenSearch.
-
-### Решение с помощью Vector
-
-Vector выступает как «мост», который забирает данные из Kafka, трансформирует и отправляет в OpenSearch.
-
-**Конфигурация (Helm values.yaml):**
+**Решение** — Vector читает из Kafka, трансформирует через VRL, отправляет в OpenSearch:
 
 ```yaml
 customConfig:
@@ -57,30 +55,14 @@ customConfig:
       bootstrap_servers: "kafka-broker.kafka.svc:9092"
       topics: ["kube"]
       group_id: "vector-loggers"
-    host_logs:
-      type: kafka
-      bootstrap_servers: "kafka-broker.kafka.svc:9092"
-      topics: ["host"]
-      group_id: "vector-loggers"
 
   transforms:
     process_kube_logs:
       type: remap
       inputs: ["kube_logs"]
       source: |
-        # Распаковка JSON из Kafka-сообщения
         . = parse_json!(.message)
-
-        # Удаление ненужных полей
         remove(.p)
-        remove(@timestamp)
-
-        # Рекурсивная замена точек на подчеркивания в ключах
-        if exists(.kubernetes.labels) {
-          .kubernetes.labels = map_keys(.kubernetes.labels, recursive: true) -> |key| {
-            replace(key, ".", "_")
-          }
-        }
         if exists(.kubernetes.annotations) {
           .kubernetes.annotations = map_keys(.kubernetes.annotations, recursive: true) -> |key| {
             replace(key, ".", "_")
@@ -93,34 +75,20 @@ customConfig:
       inputs: ["process_kube_logs"]
       endpoint: "https://opensearch-master.logging.svc:9200"
       index: "kube-{{`{{ EventTime }}`|strftime(format:`%Y.%m.%d`)}}"
-      tls:
-        verify: false  # Только для dev-среды!
-      auth:
-        strategy: basic
-        user: "admin"
-        password: "admin_password"
 ```
 
-### Ключевые моменты трансформации
+**Ключевые VRL-команды:**
 
 | Команда | Назначение |
 | :--- | :--- |
-| `. = parse_json!(.message)` | Распаковка JSON из поля `message` в корневой объект |
-| `map_keys(..., recursive: true)` | Рекурсивный обход всех вложенных ключей |
-| `replace(key, ".", "_")` | Замена точек на подчеркивания для совместимости с ES/OS |
-| `remove(.field)` | Удаление ненужных полей для экономии места |
+| `. = parse_json!(.message)` | Распаковка JSON в корневой объект |
+| `map_keys(..., recursive: true)` | Рекурсивный обход вложенных ключей |
+| `replace(key, ".", "_")` | Замена точек для совместимости с ES/OS |
+| `remove(.field)` | Удаление ненужных полей |
 
-### Преимущества архитектуры
+Полное руководство с развёртыванием: **[Fluent Bit → Kafka → Vector → OpenSearch Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)**.
 
-- **Масштабируемость:** Каждый компонент масштабируется независимо
-- **Гибкость:** Централизованная обработка в Vector позволяет менять логику без изменения конфигурации агентов
-- **Надежность:** Kafka сохраняет данные при недоступности OpenSearch
-
----
-
-## Практический сценарий: Сбор метрик с Prometheus endpoints
-
-Vector может собирать метрики с Prometheus-экспортеров и отправлять их в удаленное хранилище.
+### Сценарий: Сбор метрик с Prometheus endpoints
 
 ```toml
 [sources.prometheus]
@@ -141,27 +109,30 @@ Vector может собирать метрики с Prometheus-экспорте
   labels = {job = "metrics"}
 ```
 
----
+### Сценарий: Обогащение логов GeoIP
 
-## Практический сценарий: Обогащение логов GeoIP
-
-Vector может обогащать логи данными GeoIP на основе IP-адресов.
+GeoIP в VRL выполняется через **enrichment tables**, а не через отдельную функцию:
 
 ```toml
+# Объявление таблицы GeoIP
+[enrichment_tables.geoip_table]
+  type = "geoip"
+  path = "/usr/share/GeoIP/GeoLite2-City.mmdb"
+
+# Источник
 [sources.app]
   type = "file"
   include = ["/var/log/app/access.log"]
 
+# Трансформация с обогащением
 [transforms.geoip]
   type = "remap"
   inputs = ["app"]
   source = '''
-    .geo = parse_groks!(.client_ip, patterns: [
-      "%{IPORHOST:client_ip}"
-    ])
-    .geo.city = get_geoip_city(.client_ip)  # Требуется база GeoIP
+    .geoip = get_enrichment_table_record!("geoip_table", { "ip": .client_ip })
   '''
 
+# Приёмник
 [sinks.elasticsearch]
   type = "elasticsearch"
   inputs = ["geoip"]
@@ -169,12 +140,10 @@ Vector может обогащать логи данными GeoIP на осно
   index = "access-logs-%Y.%m.%d"
 ```
 
+Функция `get_enrichment_table_record!` принимает имя таблицы и маппинг полей (`"ip"` — обязательный ключ для GeoIP). Результат — структура с городом, страной, координатами.
+
 ---
 
-## Связанные заметки
+## Additional Information
 
-| Тема | Ссылка |
-| :--- | :--- |
-| Vector Overview | **[Vector Overview](./vector_overview.md)** |
-| VRL Language | **[VRL Language](./vrl_language.md)** |
-| Fluent Bit → Kafka → Vector Pipeline | **[Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)** |
+**Связанные заметки:** [Vector Overview](./vector_overview.md) — общий обзор; [VRL Language](./vrl_language.md) — язык трансформации; полный туториал пайплайна — [Fluent Bit → Kafka → Vector → OpenSearch](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md).

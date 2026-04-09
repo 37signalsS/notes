@@ -263,15 +263,3 @@ config.vm.synced_folder ".", "/vagrant",
   rsync__exclude: [".git/", ".vagrant/"],
   rsync__args: ["--verbose", "--archive", "--delete"]
 ```
-
----
-
-## Связанные документы
-
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — источники проблем, полный сброс
-- **[Дополнительная информация](./additional_info.md)** — логирование, профилактика
-
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](./practical_scenarios.md)*

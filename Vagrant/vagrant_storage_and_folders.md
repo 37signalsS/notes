@@ -224,8 +224,4 @@ vagrant ssh -c "lsblk"
 vagrant ssh -c "mount | grep vagrant"
 ```
 
-### См. также
-
-- [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
-- [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md) — решение проблем
-- [Linux Filesystem](../Linux/FileSystems/RAID/overview.md) — работа с ФС Linux
+Решение проблем с синхронизацией описано в [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md), полный синтаксис конфигурации — в [Vagrantfile Reference](./vagrantfile.md).

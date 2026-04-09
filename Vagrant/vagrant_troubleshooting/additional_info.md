@@ -1,76 +1,43 @@
-# Vagrant: Решение проблем — Дополнительная информация
-
-## Логирование и отладка
-
-### Уровни логирования
-
-```bash
-# Минимальный
-VAGRANT_LOG=warn vagrant up
-
-# Подробный
-VAGRANT_LOG=info vagrant up
-
-# Отладочный
-VAGRANT_LOG=debug vagrant up 2>&1 | tee debug.log
-```
-
-### Полезные команды диагностики
-
-```bash
-# Глобальный статус всех ВМ
-vagrant global-status
-
-# Проверка box'ов
-vagrant box list
-
-# Проверка плагинов
-vagrant plugin list
-
-# Информация о системе Vagrant
-vagrant --version
-vagrant --debug
-```
+# Vagrant Troubleshooting — Дополнительная информация
 
 ## Профилактика проблем
 
-1. **Регулярная очистка:**
+### Регулярная очистка
 
-   ```bash
-   vagrant global-status --prune
-   vagrant box prune
-   ```
+```bash
+# Очистить записи о несуществующих ВМ
+vagrant global-status --prune
 
-2. **Версионирование:** Фиксируйте версии Vagrant, плагинов и box'ов в документации проекта.
+# Удалить неиспользуемые box'ы
+vagrant box prune
+```
 
-3. **Бэкапы:** Перед критическими изменениями делайте snapshot ВМ или экспортируйте данные.
+### Управление версиями
 
-4. **Документирование:** Ведите журнал изменений Vagrantfile и версий компонентов.
+Фиксируйте версии компонентов в документации проекта:
 
-## Таблица быстрых решений
+```bash
+# Версия Vagrant
+vagrant --version
 
-| Проблема | Быстрое решение |
-|----------|-----------------|
-| Рассинхронизация | `vagrant destroy -f && rm -rf .vagrant` |
-| SSH не работает | `vagrant destroy -f && vagrant up` |
-| Нет места | `vagrant box prune && df -h` |
-| Прокси | `export VAGRANT_HTTP_PROXY=...` |
-| Конфликт имён | Изменить `config.vm.define` без `_` |
+# Версии плагинов
+vagrant plugin list
 
-## Связанные темы
+# Список box'ов с версиями
+vagrant box list
+```
 
-- **[Vagrant Basic Workflow](../vagrant_basic_workflow.md)** — управление жизненным циклом
-- **[Vagrant Storage and Folders](../vagrant_storage_and_folders.md)** — работа с хранилищем
-- **[VirtualBox](./virtualbox.md)** — настройка провайдера VirtualBox
+### Бэкапы перед критическими изменениями
 
----
+- **Snapshot ВМ** — через провайдера (VirtualBox/Libvirt)
+- **Экспорт данных** — скопировать важные данные из ВМ
+- **Резервная копия Vagrantfile** — зафиксировать в git
 
-## Связанные документы
+### Документирование изменений
 
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — источники проблем, полный сброс
-- **[Практические сценарии](./practical_scenarios.md)** — прокси, диски, SSH, сети
+Ведите журнал изменений:
 
----
-
-*Этот файл является частью декомпозированной документации. Исходный файл: [vagrant_troubleshooting.md](./practical_scenarios.md)*
+- Версии Vagrantfile в git
+- Версии box'ов (`config.vm.box_version`)
+- Версии плагинов
+- Изменения конфигурации провайдера

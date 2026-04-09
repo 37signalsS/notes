@@ -262,12 +262,11 @@ end
 # Проверка синтаксиса
 vagrant validate
 
-# Проверка с выводом логов
-VAGRANT_LOG=info vagrant up
-
 # Просмотр финальной конфигурации
 vagrant status
 ```
+
+Подробные уровни логирования: [VAGRANT_LOG](./vagrant_troubleshooting/basic_concepts.md).
 
 ### См. также
 

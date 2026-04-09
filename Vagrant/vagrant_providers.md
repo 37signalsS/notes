@@ -2,13 +2,9 @@
 
 ## Определения
 
-1. **Провайдер (Provider)**
-    * "Движок" виртуализации, используемый Vagrant для создания и управления ВМ. Vagrant выступает как унифицированная оболочка.
-    * *Примеры*: VirtualBox, Libvirt (KVM/QEMU), Hyper-V, VMware, Docker.
+**Провайдер (Provider)** — «движок» виртуализации, используемый Vagrant для создания и управления ВМ. Vagrant выступает как унифицированная оболочка управления. Примеры: VirtualBox, Libvirt (KVM/QEMU), Hyper-V, VMware, Docker.
 
-2. **Образ (Box)**
-    * Базовый шаблон ВМ, упакованный в формат Vagrant. Содержит минимальную ОС и служит основой для клонирования окружений.
-    * **Важно:** Образы создаются для конкретных провайдеров — образ для VirtualBox несовместим с Libvirt.
+**Образ (Box)** — базовый шаблон ВМ, упакованный в формат Vagrant. Содержит минимальную ОС и служит основой для клонирования окружений. Образы создаются для конкретных провайдеров — образ для VirtualBox несовместим с Libvirt.
 
 > **Важно:** По состоянию на 2026 год Canonical прекратила выпуск официальных Vagrant-образов Ubuntu начиная с 24.04 (Noble Numbat). Используйте альтернативы от HashiCorp или Bento.
 
@@ -155,8 +151,6 @@ config.vm.box = "ubuntu/jammy64"
 * **Тестирование enterprise:** `almalinux/9` или `rockylinux/9`
 * **Минимальный размер:** `generic/alpine318` или `generic/ubuntu2204`
 
-### См. также
+### Связанные документы
 
-* [Vagrant Installation](./vagrant_installation.md) — установка Vagrant и плагинов
-* [Vagrantfile Reference](./vagrantfile.md) — синтаксис конфигурации
-* [Vagrant Networking](./vagrant_networking.md) — настройка сети
+Установка Vagrant и плагинов: [Vagrant Installation](./vagrant_installation.md). Синтаксис конфигурации провайдеров: [Vagrantfile Reference](./vagrantfile.md). Настройка сетей: [Vagrant Networking](./vagrant_networking.md).

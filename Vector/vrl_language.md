@@ -1,49 +1,35 @@
-# Vector Remap Language (VRL)
+# VRL (Vector Remap Language)
 
-## Определения
+## Definitions
 
-**VRL (Vector Remap Language)** — это предметно-ориентированный язык (DSL) для трансформации данных в Vector. Компилируется в нативный код Rust, обеспечивая высокую производительность и безопасность.
+**VRL (Vector Remap Language)** — предметно-ориентированный язык (DSL) для трансформации данных в Vector. Компилируется в нативный код Rust — высокая производительность, безопасность, отсутствие GC.
 
 ---
 
-## Основные возможности VRL
+## Basic Concepts
 
-### 1. Трансформация событий
+### Возможности
 
+**Трансформация событий:**
 - Парсинг структурированных данных (JSON, syslog, logfmt, regex)
 - Преобразование типов данных
 - Создание, удаление, переименование полей
 
-### 2. Фильтрация и маршрутизация
-
+**Фильтрация и маршрутизация:**
 - Булевы выражения для условий
 - Проверка существования полей (`exists(.field)`)
 
-### 3. Библиотека функций
+### Библиотека функций
 
-**Парсинг:**
+| Категория | Функции |
+| :--- | :--- |
+| **Парсинг** | `parse_json!()`, `parse_syslog!()`, `parse_key_value!()`, `parse_regex!()` |
+| **Время** | `now()`, `parse_timestamp()`, `to_unix_timestamp()`, `strftime()` |
+| **Строки** | `downcase()`, `upcase()`, `split()`, `replace()`, `trim()` |
+| **Когерция типов** | `string!()`, `to_int()`, `to_bool()` |
+| **Коллекции** | `map_keys()`, `map_values()`, `recursive: true` |
 
-- `parse_json!()`, `parse_syslog!()`, `parse_key_value!()`, `parse_regex!()`
-
-**Время:**
-
-- `now()`, `parse_timestamp()`, `to_unix_timestamp()`, `strftime()`
-
-**Строки:**
-
-- `downcase()`, `upcase()`, `split()`, `replace()`, `trim()`
-
-**Когерция типов:**
-
-- `string!()`, `to_int()`, `to_bool()`
-
-**Работа с коллекциями:**
-
-- `map_keys()`, `map_values()`, `recursive: true`
-
----
-
-## Характеристики VRL
+### Характеристики
 
 | Характеристика | Описание |
 | :--- | :--- |
@@ -52,11 +38,9 @@
 | **Stateless** | Каждое событие обрабатывается независимо |
 | **Ограничения** | Нет пользовательских функций, нет рекурсии, нет состояния между событиями |
 
-**Ограничения намеренные** — обеспечивают безопасность, предсказуемость и высокую производительность.
+Ограничения намеренные — обеспечивают безопасность, предсказуемость и высокую производительность.
 
----
-
-## Пример VRL-скрипта
+### Пример VRL-скрипта
 
 ```vrl
 # Парсинг JSON из поля message
@@ -87,16 +71,16 @@ del(@timestamp)
 
 ---
 
-## Инструменты для работы с VRL
+## Practical Scenarios
 
-- **[VRL Playground](https://vrl.dev)** — онлайн-песочница для тестирования
-- **[VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl)** — подсветка синтаксиса и автодополнение
+Практические примеры использования VRL в конфигурациях Vector описаны в **[Practical Scenarios](./practical_scenarios.md)**:
+- Парсинг JSON из Kafka и замена точек в K8s-метаданных ([подробнее](./practical_scenarios.md#практический-сценарий-роутер-логов-из-kafka-в-opensearch))
+- Обогащение логов GeoIP через `parse_groks!` ([подробнее](./practical_scenarios.md#практический-сценарий-обогащение-логов-geoip))
 
 ---
 
-## Связанные заметки
+## Additional Information
 
-| Тема | Ссылка |
-| :--- | :--- |
-| Vector Overview | **[Vector Overview](./vector_overview.md)** |
-| Практические сценарии | **[Scenarios](./practical_scenarios.md)** |
+**Инструменты:** [VRL Playground](https://vrl.dev) — онлайн-песочница; [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl) — подсветка синтаксиса и автодополнение.
+
+**Связанные заметки:** [Vector Overview](./vector_overview.md) — общий обзор Vector; [Practical Scenarios](./practical_scenarios.md) — практические сценарии с конфигурациями.

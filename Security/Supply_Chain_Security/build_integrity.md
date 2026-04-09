@@ -22,6 +22,8 @@
 
 ### Уровни SLSA (кратко)
 
+Уровни SLSA формализованы в [обзоре Supply Chain Security](./overview.md#уровни-slsa-сводная-таблица). Ключевые для Build Integrity:
+
 | Уровень | Требование | Защита от |
 | :--- | :--- | :--- |
 | **SLSA 1** | Документированный процесс сборки | Случайных ошибок |
@@ -109,14 +111,7 @@ cosign verify my-registry/app:v1.0.0
 ### Рекомендации
 
 * **Исходный код:** Используйте подписанные Git-теги для релизов.
-* **Зависимости:** Фиксируйте версии в lock-файлах (`package-lock.json`, `go.sum`). Подробнее — в [анализе зависимостей и SBOM](./dependency_and_sbom_analysis.md).
+* **Зависимости:** Фиксируйте версии в lock-файлах (`package-lock.json`, `go.sum`). Используйте `npm ci` вместо `npm install` в CI/CD — подробнее в [анализе зависимостей и SBOM](./dependency_and_sbom_analysis.md#безопасная-установка-зависимостей-в-cicd-npm-ci-вместо-npm-install). Для Node.js в Dockerfile — [лучшие практики Node.js](../../Docker/Dockerfile/Docker_best_practices/nodejs.md).
 * **Сборка:** Стремитесь к герметичным и воспроизводимым сборкам. Генерируйте и подписывайте provenance-аттестации.
-* **Артефакты:** Храните подписи и SBOM рядом с артефактами.
-* **Развёртывание:** Проверяйте подписи через admission-политики (Kyverno, Gatekeeper). Пример — в [подписи артефактов](./artifact_signing.md).
-
-### Связанные документы
-
-* [Подпись артефактов](./artifact_signing.md) — криптографическая подпись образов, файлов, аттестаций
-* [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, lock-файлы, сканирование зависимостей
-* [Sigstore/Cosign](../Tools/sigstore.md) — инструментарий keyless-подписи и верификации
-* [Подпись Docker-образов](../../Docker/Docker_security/image_signature_and_verification.md) — Docker BuildKit, provenance, digest pinning
+* **Артефакты:** Храните подписи и SBOM рядом с артефактами. Подписывайте образы через [Sigstore/Cosign](../Tools/sigstore.md), фиксируйте базовые образы по дайджесту — [подпись Docker-образов](../../Docker/Docker_security/image_signature_and_verification.md).
+* **Развёртывание:** Проверяйте подписи через admission-политики (Kyverno, Gatekeeper) — примеры в [подписи артефактов](./artifact_signing.md).

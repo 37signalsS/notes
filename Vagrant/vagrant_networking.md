@@ -152,8 +152,6 @@ netstat -tlnp | grep :8080
 | Неправильный bridge | Указать `bridge: "interface_name"` |
 | Нет доступа к private network | Проверить firewall на хосте |
 
-### См. также
+### Связанные документы
 
-- [Vagrantfile Reference](./vagrantfile.md) — конфигурация сети в Vagrantfile
-- [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — мульти-машинные сети
-- [Linux Networking](../Linux/Networking/Tools/tc_netem.md) — основы сетевого взаимодействия
+Конфигурация сети в Vagrantfile: [Vagrantfile Reference](./vagrantfile.md). Мульти-машинные сети: [Vagrant Advanced Usage](./vagrant_advanced_usage.md). Основы сетевого взаимодействия: [Linux Networking](../Linux/Networking/Tools/tc_netem.md).
