@@ -120,20 +120,12 @@ e2e_tests:
 
 ### Надёжность и метрики
 
-- **Данные для тестов**: Предпочитайте детерминированные фикстуры, фабрики и эфемерные окружения на базе контейнеров.
+- **Данные для тестов**: Предпочитайте детерминированные фикстуры, фабрики и эфемерные окружения на базе контейнеров. Подробности — в **[Testcontainers](./testcontainers_overview.md)** и **[Docker Compose для тестирования](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)**.
 - **Метрики качества**:
   - Длительность конвейера и MTTR для «красных» сборок.
   - Доля падений по типам тестов.
   - Уровень ложных срабатываний.
   - **[Тестовое покрытие](./testing_coverage_metrics.md)** по критическим путям.
 - **Отчётность**: Результаты тестов сохраняются в виде артефактов, как описано в **[Инструменты для генерации отчётов](./testing_reporting_tools.md)**.
-
-### Связанные документы
-
-- **[Виды тестов: Unit, Integration, E2E](./testing_types_unit_integration_e2e.md)** — классификация тестов
-- **[Метрики тестового покрытия](./testing_coverage_metrics.md)** — измерение полноты тестирования
-- **[Инструменты отчётности](./testing_reporting_tools.md)** — визуализация результатов
-- **[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)** — методологии разработки
-- **[Testcontainers](./testcontainers_overview.md)** — изоляция зависимостей
-- **[Docker Compose для тестирования](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)** — оркестрация сервисов
-- **[Molecule для Ansible](../Ansible/ansible_testing_with_molecule.md)** — тестирование инфраструктурного кода
+- **Методологии разработки**: TDD и BDD описаны в **[обзоре TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)**.
+- **Тестирование инфраструктуры**: Molecule для Ansible — в **[руководстве по Molecule](../Ansible/ansible_testing_with_molecule.md)**.

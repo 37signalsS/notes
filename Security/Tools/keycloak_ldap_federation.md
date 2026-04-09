@@ -71,7 +71,7 @@ Keycloak может выступать как:
 | Параметр | Значение | Описание |
 | :--- | :--- | :--- |
 | **Users DN** | `ou=users,dc=example,dc=com` | DN для поиска пользователей |
-| **LDAP Username Attribute** | `uid` | Атрибут для логина (RDn) |
+| **LDAP Username Attribute** | `uid` | Атрибут для логина (RDN) |
 | **RDN Attribute** | `uid` | Атрибут RDN |
 | **User Object Classes** | `person, organizationalPerson, inetOrgPerson, posixAccount` | Object Classes пользователя |
 
@@ -102,8 +102,8 @@ Keycloak может выступать как:
 ### Ограничения
 
 1. **Сертификаты:** При использовании LDAPS (port 636) требуется добавить CA-сертификат в доверенные хранилища Keycloak
-2. **StartTLS:** Для шифрования на порту 389 требуется дополнительная настройка
-3. **Атрибуты:** Не все атрибуты LDAP автоматически маппируются в Keycloak
+2. **StartTLS:** Для шифрования на порту 389 требуется дополнительная настройка. Подробности: [LDAP/SSSD operations](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md)
+3. **Атрибуты:** Не все атрибуты LDAP автоматически маппируются в Keycloak. Развёртывание OpenLDAP в Kubernetes: [OpenLDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)
 
 ### Безопасность
 
@@ -116,8 +116,3 @@ Keycloak может выступать как:
 
 - **Apache Directory Studio** — для управления LDAP
 - **Keycloak Admin Console** — веб-интерфейс управления
-
-### Ссылки
-
-- [OpenLDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)
-- [LDAP в Linux](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)

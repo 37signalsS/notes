@@ -1,8 +1,49 @@
-# Высокая доступность Prometheus Operator
+# Prometheus Operator — Высокая доступность
 
-## Prometheus HA
+## Definitions
 
-### Конфигурация
+**High Availability (HA) в Prometheus Operator** — обеспечение отказоустойчивости стека мониторинга через запуск нескольких реплик Prometheus и Alertmanager с автоматической синхронизацией состояния.
+
+> **См. также:** [Scaling Overview](../../scaling/overview.md) — базовая HA без Operator, [Alertmanager HA](../../alertmanager.md#высокая-доступность-ha) — gossip-протокол.
+
+## Basic Concepts
+
+### HA Prometheus
+
+Prometheus Operator управляет репликами Prometheus через StatefulSet. Каждая реплика собирает **одни и те же метрики** независимо.
+
+**Ключевые принципы:**
+
+- **Минимум 2 реплики** для отказоустойчивости
+- **Одинаковая конфигурация** на всех репликах (управляется Operator)
+- **StatefulSet** сохраняет идентичность pod'ов при перезапусках
+- **Каждый экземпляр** хранит собственную локальную TSDB
+
+### HA Alertmanager
+
+Alertmanager использует **gossip-протокол** (порт 9094) для кластеризации:
+
+- **Минимум 3 реплики** для кворума
+- **Дедупликация алертов** — при получении одинакового алерта от нескольких Prometheus, уведомление отправляется один раз
+- **Синхронизация silences** между репликами через gossip
+- Prometheus Operator автоматически настраивает `--cluster.peer` для всех pod'ов
+
+### Шардирование (Sharding)
+
+Для распределения нагрузки цели скрейпинга разделяются между несколькими StatefulSet:
+
+| Параметр | Описание |
+|---|---|
+| `replicas` | Количество реплик внутри каждого шарда (HA) |
+| `shards` | Количество независимых StatefulSet (горизонтальное масштабирование) |
+
+**Пример:** `replicas: 2, shards: 2` → 4 pod'а (2 шарда × 2 реплики), каждый шард собирает свою подмножество целей.
+
+> **Важно:** Шардирование не обеспечивает дедупликацию — каждый шард хранит уникальные данные. Для глобального запроса используйте [Thanos](../../scaling/thanos_overview.md) или [Mimir](../../../Mimir/mimir_overview.md).
+
+## Practical Scenarios
+
+### HA Prometheus конфигурация
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -35,26 +76,7 @@ spec:
             storage: 50Gi
 ```
 
-### Важные замечания
-
-* **Минимум 2 реплики** для HA
-* **StatefulSet** не перезапускается при падении ноды
-* **Используйте external storage** для долгосрочных данных
-* **Одинаковая конфигурация** на всех репликах
-
-### Шардирование
-
-Для распределения нагрузки:
-
-```yaml
-spec:
-  replicas: 2
-  shards: 2  # Разделение целей между 2 StatefulSet
-```
-
-## Alertmanager HA
-
-### Конфигурация
+### HA Alertmanager конфигурация
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -75,36 +97,44 @@ spec:
             storage: 10Gi
 ```
 
-### Важные замечания
-
-* **Минимум 3 реплики** для кворума
-* **Кластеризация** через `--cluster.listen-address`
-* **Дедупликация алертов** между репликами
-* **Gossip-протокол** для синхронизации состояния
-
-### Проверка кластера
-
-```bash
-# Проверка статуса кластера Alertmanager
-kubectl exec -it alertmanager-main-0 -n monitoring -- /bin/alertmanager --version
-
-# Логи кластеризации
-kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager | grep cluster
-```
-
-## Storage HA
-
-### External Storage
-
-Для долгосрочного хранения используйте external storage:
-
-* **Thanos** — долгосрочное хранение, глобальный query
-* **Cortex** — масштабируемое хранилище
-* **Mimir** — масштабируемый Prometheus от Grafana Labs
-
-### Thanos Sidecar
+### Шардирование Prometheus
 
 ```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: main
+  namespace: monitoring
+spec:
+  replicas: 2
+  shards: 2
+  # Остальные параметры аналогично HA конфигурации
+```
+
+### Проверка HA статуса
+
+```bash
+# Проверка реплик Prometheus
+kubectl get prometheus -n monitoring
+kubectl get statefulset -n monitoring -l app.kubernetes.io/name=prometheus
+
+# Проверка кластера Alertmanager
+kubectl get alertmanager -n monitoring
+kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager | grep cluster
+
+# Проверка gossip-соединений
+kubectl exec -it alertmanager-main-0 -n monitoring -- \
+  wget -qO- http://localhost:9094/api/v2/status | jq '.cluster'
+```
+
+### Thanos Sidecar для долгосрочного хранения
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: main
+  namespace: monitoring
 spec:
   replicas: 2
   thanos:
@@ -116,98 +146,35 @@ spec:
         cpu: 100m
 ```
 
-## Network Policies
+> **Детали:** [Thanos Overview](../../scaling/thanos_overview.md), [Remote Read/Write](../../scaling/remote_read_write.md).
 
-### Ограничение доступа к Prometheus
+## Additional Information
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: prometheus-access
-  namespace: monitoring
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: prometheus
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: monitoring
-        - podSelector:
-            matchLabels:
-              app: grafana
-      ports:
-        - port: 9090
-          protocol: TCP
-```
+### Метрики для мониторинга HA
 
-## Load Balancing
+| Метрика | Описание | Alert |
+|---|---|---|
+| `prometheus_operator_spec_replicas` | Ожидаемое количество реплик из spec | `!= actual` |
+| `alertmanager_cluster_members` | Членов кластера Alertmanager | `< 3` |
+| `alertmanager_cluster_alive_members` | Активных членов кластера | `< quorum` |
+| `up{job="prometheus"}` | Статус экземпляров Prometheus | `== 0` |
+| `prometheus_operator_reconcile_errors_total` | Ошибки reconciliation Operator | `rate > 0` |
 
-### Service для Prometheus
+### Ограничения базового HA
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: prometheus
-  namespace: monitoring
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: prometheus
-  ports:
-    - name: web
-      port: 9090
-      targetPort: web
-```
+| Ограничение | Описание | Решение |
+|---|---|---|
+| **Расхождение данных** | Реплики никогда не имеют идентичных TSDB | Thanos Query для глобального обзора |
+| **Визуализация** | Grafana получает дублированные ряды | HAProxy в режиме standby или Thanos |
+| **Масштабирование** | HA не решает проблемы нагрузки | Шардирование или Remote Write |
+| **Долгосрочное хранение** | Локальная TSDB ограничена 30-60 днями | Thanos Sidecar + S3 |
 
-### Ingress с TLS
+### Рекомендации по ресурсам
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: prometheus
-  namespace: monitoring
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/auth-type: basic
-    nginx.ingress.kubernetes.io/auth-secret: prometheus-auth
-spec:
-  tls:
-    - hosts:
-        - prometheus.example.com
-      secretName: prometheus-tls
-  rules:
-    - host: prometheus.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: prometheus
-                port:
-                  number: 9090
-```
+| Компонент | CPU request | Memory request | CPU limit | Memory limit |
+|---|---|---|---|---|
+| **Prometheus (HA)** | 200m | 400Mi | 1000m | 2Gi |
+| **Alertmanager (HA)** | 100m | 128Mi | 200m | 256Mi |
+| **Thanos Sidecar** | 100m | 128Mi | 250m | 256Mi |
 
-## Метрики для мониторинга HA
-
-| Метрика | Описание |
-| :--- | :--- |
-| `prometheus_operator_reconcile_duration_seconds` | Длительность reconciliation |
-| `prometheus_operator_reconcile_errors_total` | Ошибки reconciliation |
-| `prometheus_operator_spec_replicas` | Количество реплик из spec |
-| `alertmanager_cluster_members` | Количество членов кластера |
-| `alertmanager_cluster_alive_members` | Количество активных членов |
-
-## Связанные темы
-
-* **[Prometheus CRD](./crd/prometheus.md)** — описание Prometheus
-* **[Alertmanager CRD](./crd/alertmanager.md)** — описание Alertmanager
-* **[Security](./Security/index.md)** — безопасность
-* **[Alertmanager кластеризация](../../alertmanager.md#кластеризация)** — базовая настройка
+> **См. также:** [Prometheus CRD](./crd/prometheus.md), [Alertmanager CRD](./crd/alertmanager.md), [Security](./Security/index.md), [Troubleshooting](./troubleshooting.md).

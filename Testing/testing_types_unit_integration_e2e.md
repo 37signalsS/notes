@@ -165,13 +165,4 @@ def test_login_dashboard():
 - **Внешние сервисы:** Зависимость от нестабильных сторонних API или сервисов.
 - **Проблемы с ресурсами:** Нехватка памяти или CPU на тестовом агенте.
 
-Способы борьбы с такими тестами описаны в документе **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)**.
-
-### Связанные документы
-
-- Практическое применение этих тестов в CI/CD: **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)**
-- Оценка полноты тестирования: **[Метрики тестового покрытия](./testing_coverage_metrics.md)**
-- Инструменты для визуализации результатов: **[Инструменты для генерации отчётов](./testing_reporting_tools.md)**
-- TDD и BDD методологии: **[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)**
-- Testcontainers для интеграционных тестов: **[Testcontainers Overview](./testcontainers_overview.md)**
-- Docker Compose для тестирования: **[Docker Compose CI/CD Testing](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)**
+Способы борьбы с flaky-тестами описаны в **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)**. Практическое применение тестов в пайплайнах, метрики покрытия (**[Метрики тестового покрытия](./testing_coverage_metrics.md)**), отчётность (**[Инструменты отчётности](./testing_reporting_tools.md)**), методологии TDD/BDD (**[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)**), изоляция зависимостей через Testcontainers (**[Testcontainers](./testcontainers_overview.md)**) и Docker Compose (**[Docker Compose для тестирования](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)**) — в соответствующих документах.

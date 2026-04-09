@@ -1,6 +1,36 @@
-# Конфигурация Alertmanager (ConfigMap)
+# Конфигурация Alertmanager (ConfigMap-шаблон)
 
-Создадим `ConfigMap`, содержащий **шаблон** конфигурации `alertmanager.yml`. Вместо реальных секретов в нем используются переменные-заглушки (например, `##SMTP_USER##`), которые `init-container` заменит на значения из `Secret`.
+## Definitions
+
+**ConfigMap-шаблон Alertmanager** — Kubernetes ConfigMap, содержащий шаблон `alertmanager.yml` с переменными-плейсхолдерами (`##SMTP_USER##`, `##TELEGRAM_TOKEN##`) вместо реальных секретов. Финальный конфиг генерируется init-container'ом, который подставляет значения из Kubernetes Secret.
+
+> **См. также:** [Полная конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml) (SSoT)
+
+## Basic Concepts
+
+### Паттерн безопасного управления конфигурацией
+
+| Компонент | Роль |
+|---|---|
+| **ConfigMap (шаблон)** | Хранит `alertmanager.yml.tpl` с плейсхолдерами; безопасен для Git |
+| **Kubernetes Secret** | Содержит реальные токены, пароли, bot_token |
+| **Init Container** | Читает шаблон + Secret → генерирует финальный `alertmanager.yml` в `emptyDir` |
+| **Основной контейнер** | Монтирует готовый конфиг из `emptyDir` |
+
+> Паттерн описан в [Alertmanager SSoT](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты)
+
+### Структура шаблона alertmanager.yml.tpl
+
+| Блок | Назначение |
+|---|---|
+| `global` | SMTP-параметры с плейсхолдерами (`##SMTP_USER##`, `##SMTP_PASSWORD##`) |
+| `route` | Маршрутизация алертов по severity (`critical`, `warning`) |
+| `receivers` | Получатели: email, Telegram, blackhole (для алертов без маршрута) |
+| `templates` | Путь к Go-шаблонам сообщений (`/etc/alertmanager/templates/*.tmpl`) |
+
+## Practical Scenarios
+
+### Манифест ConfigMap
 
 **`alertmanager-config-template.yaml`**
 
@@ -56,10 +86,15 @@ data:
     # Подключаем шаблоны для сообщений
     templates:
       - '/etc/alertmanager/templates/*.tmpl'
-
 ```
 
-## Смотрите также
+### Логика маршрутизации
 
-- [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования
-- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — развертывание с init-container
+- **`severity =~ "critical|warning"`** → алерты идут в `telegram-receiver` **и** `email-receiver` (благодаря `continue: true` в первом маршруте)
+- **Алерты без matching-меток** → попадают в `default-receiver` (blackhole, уведомления не отправляются)
+
+## Additional Information
+
+- [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования Telegram/email уведомлений
+- [Alertmanager StatefulSet](./alertmanager-statefulset.md) — манифест StatefulSet с init-container для генерации конфига
+- [Kubernetes Secrets](./secrets.md) — хранение токенов и паролей для подстановки в шаблон

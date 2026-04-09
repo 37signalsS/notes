@@ -1,24 +1,33 @@
-# Установка Alertmanager с помощью Helm-чарта
+# Установка Alertmanager через Helm-чарт
 
 ## Определения
 
-**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация.
+**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация, подавление. Полное руководство — [Alertmanager (SSoT)](../alertmanager.md).
 
-**Helm** — менеджер пакетов для Kubernetes, упрощающий развертывание приложений через чарты.
+**Helm** — менеджер пакетов для Kubernetes. Обзор — [Helm overview](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
 
-> **См. также:** [Alertmanager](../alertmanager.md), [Helm](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md).
+**kube-prometheus-stack** — umbrella Helm-чарт для развёртывания полного стека мониторинга (Prometheus, Alertmanager, Grafana, Exporters). Обзор — [kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
 
 ## Основные концепции
 
-### Актуальная версия чарта
+### Отличие standalone-чарта от kube-prometheus-stack
+
+| Параметр | `prometheus-community/alertmanager` | `kube-prometheus-stack` (subchart) |
+|---|---|---|
+| **Назначение** | Только Alertmanager в K8s | Полный стек мониторинга |
+| **Управление** | Прямое через `values.yaml` чарта | Через `alertmanager.*` в umbrella-чарте |
+| **Сценарий** | Alertmanager уже есть свой Prometheus | Новое развёртывание с нуля |
+| **Service Discovery** | Требует ручной настройки в Prometheus | Автоматический через Prometheus Operator |
+
+### Актуальные версии
 
 | Параметр | Значение |
 |---|---|
-| **Репозиторий** | `prometheus-community/alertmanager` |
-| **Последняя версия** | Проверьте на [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/alertmanager) |
+| **Репозиторий standalone** | `prometheus-community/alertmanager` |
 | **Версия Alertmanager** | 0.31.0 (февраль 2026) |
+| **Минимальный Kubernetes** | 1.21+ |
 
-> **Важно:** Версии чарта и приложения могут отличаться. Проверяйте [официальный репозиторий](https://github.com/prometheus-community/helm-charts).
+> **Важно:** Версии чарта и приложения могут отличаться. Проверяйте [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/alertmanager).
 
 ### Преимущества установки через Helm
 
@@ -27,9 +36,9 @@
 * **Версионирование:** Откат к предыдущим версиям
 * **Шаблоны:** Автоматизация сложных манифестов
 
-## Практические сценарии
+## Practical Scenarios
 
-### Базовая установка
+### Базовая установка (standalone чарт)
 
 **1. Добавление репозитория:**
 
@@ -41,7 +50,6 @@ helm repo update
 **2. Создание `values.yaml`:**
 
 ```yaml
-# values.yaml
 nameOverride: alertmanager
 
 # Ingress для доступа к UI
@@ -82,6 +90,8 @@ persistence:
   size: 2Gi
 ```
 
+> Структура `config` идентична [alertmanager.yml (SSoT)](../alertmanager.md#конфигурация-alertmanageryml).
+
 **3. Установка:**
 
 ```bash
@@ -115,7 +125,7 @@ spec:
   source:
     repoURL: 'https://prometheus-community.github.io/helm-charts'
     chart: alertmanager
-    targetRevision: 'x.y.z'  # Укажите версию чарта
+    targetRevision: 'x.y.z'
     helm:
       valuesFiles:
         - 'values.yaml'
@@ -130,81 +140,9 @@ spec:
       - CreateNamespace=true
 ```
 
-**Применение:**
-
-```bash
-kubectl apply -f argocd-app-alertmanager.yaml
-```
-
-### Продвинутая конфигурация
-
-**Настройка Slack-уведомлений:**
-
-```yaml
-config:
-  global:
-    slack_api_url: 'https://hooks.slack.com/services/XXX/YYY/ZZZ'
-  route:
-    group_by: ['alertname', 'severity']
-    group_wait: 30s
-    group_interval: 5m
-    repeat_interval: 4h
-    receiver: 'slack-notifications'
-    routes:
-      - match:
-          severity: critical
-        receiver: 'slack-critical'
-  receivers:
-    - name: 'slack-notifications'
-      slack_configs:
-        - channel: '#monitoring'
-          send_resolved: true
-    - name: 'slack-critical'
-      slack_configs:
-        - channel: '#alerts-critical'
-          send_resolved: true
-```
-
-**Настройка Email-уведомлений:**
-
-```yaml
-config:
-  global:
-    smtp_smarthost: 'smtp.example.com:587'
-    smtp_from: 'alertmanager@example.com'
-    smtp_auth_username: 'alertmanager@example.com'
-    smtp_auth_password: 'password'
-  route:
-    receiver: 'email-receiver'
-  receivers:
-    - name: 'email-receiver'
-      email_configs:
-        - to: 'team@example.com'
-          send_resolved: true
-```
-
-> **См. также:** [Alertmanager — конфигурация](../alertmanager.md).
-
 ### Интеграция с Prometheus
 
-**Добавьте в `values.yaml` Prometheus:**
-
-```yaml
-# Для kube-prometheus-stack
-alertmanager:
-  enabled: true
-  config:
-    global:
-      resolve_timeout: 5m
-    route:
-      receiver: 'slack-notifications'
-    receivers:
-      - name: 'slack-notifications'
-        slack_configs:
-          - channel: '#monitoring'
-```
-
-**Или вручную в `prometheus.yml`:**
+**В `prometheus.yml` укажите target Alertmanager:**
 
 ```yaml
 alerting:
@@ -214,31 +152,33 @@ alerting:
             - 'alertmanager.monitoring.svc.cluster.local:9093'
 ```
 
-## Дополнительная информация
+> Для kube-prometheus-stack интеграция автоматическая — см. [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md).
 
-### Проверка состояния
+### Проверка конфигурации
 
 ```bash
-# Статус релиза
-helm status alertmanager -n monitoring
+# Проверка синтаксиса внутри пода
+kubectl exec -n monitoring deploy/alertmanager -- \
+  amtool check-config /etc/alertmanager/alertmanager.yml
 
 # Логи
 kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager
 
-# Проверка конфигурации
-kubectl exec -n monitoring deploy/alertmanager -- amtool check-config /etc/alertmanager/alertmanager.yml
+# Статус релиза
+helm status alertmanager -n monitoring
 ```
 
-### Обновление
+## Additional Information
+
+### Обновление чарта
 
 ```bash
-# Обновление чарта
 helm repo update
 helm upgrade alertmanager prometheus-community/alertmanager \
   --namespace monitoring \
   -f values.yaml
 
-# Откат
+# Откат к предыдущей версии
 helm rollback alertmanager -n monitoring
 ```
 
@@ -248,9 +188,6 @@ helm rollback alertmanager -n monitoring
 helm uninstall alertmanager -n monitoring
 ```
 
-### Связанные темы
+### Related topics
 
-* [Alertmanager](../alertmanager.md) — полное руководство
-* [Alertmanager installation](./alertmanager_installation.md) — ручная установка
-* [Kube-Prometheus-Stack](../../Linux/Networking/Services/BIND/overview.md) — полный стек
-* [Rules](../rules.md) — создание правил алертинга
+Архитектура и конвейер обработки оповещений — [Alertmanager (SSoT)](../alertmanager.md). Бинарная установка и Docker — [Alertmanager installation — manual](./alertmanager_installation.md). Конфигурация Alertmanager в umbrella-чарте — [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md). Обзор всех способов установки — [Installation overview](./overview.md).

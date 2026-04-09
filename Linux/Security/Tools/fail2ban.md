@@ -99,7 +99,7 @@ findtime = 300
 
 #### Интеграция с Nginx Rate Limiting
 
-1. Настройка Nginx `limit_req` ([ddos защита](../../../../Security/ApplicationSecurity/ddos_waf/ddos.md)):
+1. Настройка Nginx `limit_req` ([DDoS-защита](../../../../Security/ApplicationSecurity/ddos_overview.md#rate-limiting-nginx)):
 
 ```nginx
 http {
@@ -165,7 +165,7 @@ sudo fail2ban-client set <jail_name> banip <IP>
 
 - [SSH hardening](../../ssh/server/ssh_hardening_best_practices.md) — интеграция fail2ban для SSH
 - [nftables интеграция](../../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md) — специфичная настройка для nftables
-- [DDoS/WAF обзор](../../../../Security/ApplicationSecurity/ddos_waf/ddos.md) — rate limiting с fail2ban
+- [DDoS/WAF обзор](../../../../Security/ApplicationSecurity/ddos_overview.md) — rate limiting с fail2ban
 - [Linux security механизмы](../../Linux_Security_Mechanisms_Overview.md) — fail2ban в экосистеме безопасности
 
 ### Best Practices

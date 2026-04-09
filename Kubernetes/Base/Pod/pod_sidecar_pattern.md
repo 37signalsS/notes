@@ -205,7 +205,64 @@ spec:
 
 Подробнее: [Service и Sidecar](../../Networking/Service/service_overview.md).
 
-### Пример 5: Adapter Pattern для форматирования метрик
+### Пример 6: Ambassador для проброса localhost-трафика
+
+**Проблема:** Приложение внутри контейнера слушает **только на `127.0.0.1`** (localhost), и это нельзя изменить — нет доступа к конфигурации или исходному коду. Внешний трафик от Service не может попасть на localhost контейнера.
+
+**Решение:** Sidecar-контейнер в том же поде работает как **ambassador** — принимает трафик на `0.0.0.0` и проксирует его на `127.0.0.1` основного приложения. Контейнеры в поде разделяют сетевой namespace, поэтому `127.0.0.1` — общий для всех.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-localhost-proxy
+spec:
+  containers:
+  - name: app
+    image: legacy-app:1.0  # Слушает только на 127.0.0.1:8080
+    # Приложение не конфигурируется — нельзя изменить bind address
+
+  - name: localhost-proxy
+    image: nginx:alpine
+    # Nginx принимает трафик на 0.0.0.0:80 и проксируем на 127.0.0.1:8080
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d
+  volumes:
+  - name: nginx-config
+    configMap:
+      name: nginx-proxy-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-proxy-config
+data:
+  proxy.conf: |
+    server {
+      listen 80;
+      location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+spec:
+  selector:
+    app: legacy-app
+  ports:
+  - port: 80
+    targetPort: 80  # Трафик идёт на sidecar, он проксирует на localhost приложения
+```
+
+> **Предостережение:**  Правильный подход — исправить приложение, чтобы оно слушало на `0.0.0.0`. Sidecar-прокси — временная мера для legacy-приложений.
+
+### Пример 7: Adapter Pattern для форматирования метрик
 
 Adapter преобразует метрики приложения в формат Prometheus:
 

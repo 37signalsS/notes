@@ -1,98 +1,92 @@
-# Prometheus: Обзор
+# Prometheus
 
-## Определения
+## Definitions
 
-**Prometheus** — это система мониторинга и оповещения с открытым исходным кодом, ставшая стандартом де-факто в Cloud Native экосистеме. Разработанный в SoundCloud и вдохновленный системой Borgmon от Google, проект был передан в Cloud Native Computing Foundation (CNCF), где стал вторым по значимости после [Kubernetes](../Kubernetes/kubernetes_overview.md).
+**Prometheus** — система мониторинга и оповещения с открытым исходным кодом, стандарт де-факто в Cloud Native экосистеме. Разработан в SoundCloud (вдохновлён Borgmon от Google), передан в CNCF — второй по значимости проект после [Kubernetes](../Kubernetes/kubernetes_overview.md).
 
-Prometheus фокусируется на сборе **метрик** в виде **временных рядов**, предоставляя мощный язык запросов [PromQL](./concepts/promql/functions.md) для их анализа. Ограничения Prometheus в долгосрочном хранении и глобальном масштабировании привели к появлению совместимых решений, таких как [Mimir](../Mimir/mimir_overview.md), Thanos и [VictoriaMetrics](../VictoriaMetrics/overview.md).
+**Ключевые особенности:**
+- Сбор **метрик** в виде **временных рядов**
+- Язык запросов [PromQL](./concepts/promql/functions.md)
+- Ограничения в долгосрочном хранении и масштабировании решаются через [Mimir](../Mimir/mimir_overview.md), Thanos, [VictoriaMetrics](../VictoriaMetrics/overview.md)
 
-## Основные концепции
+## Basic Concepts
 
-### Философия Prometheus
+### Философия
 
-1. **Pull-модель (Модель опроса)**: Prometheus сам активно опрашивает (scrapes) HTTP-эндпоинты целевых сервисов для сбора метрик. Это обеспечивает централизованный контроль и упрощает настройку. Подробнее о сравнении подходов см. в [Стратегиях сбора метрик](../Concepts/Observability_and_Monitoring/metrics_collection_strategies.md).
-2. **Многомерная модель данных**: Данные хранятся как временные ряды, которые идентифицируются **именем метрики** и набором пар ключ-значение — **лейблами (labels)**. Например: `http_requests_total{method="POST", path="/api"}`. Правильное использование лейблов критически важно для производительности. Подробнее см. в [Лейблы и кардинальность](./concepts/labels_and_cardinality.md).
-3. **Service Discovery**: В динамических средах Prometheus автоматически обнаруживает новые цели для сбора метрик, интегрируясь с Kubernetes, Consul, облачными провайдерами и т.д. Детали см. в [Service Discovery и Relabeling](./service_discovery_and_relabeling.md).
-4. **Мощный язык запросов [PromQL](./concepts/promql/functions.md)**: Функциональный язык, созданный специально для работы с временными рядами.
+| Принцип | Описание |
+|---|---|
+| **Pull-модель** | Prometheus сам опрашивает (scrapes) HTTP-эндпоинты целей. Подробнее: [Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/metrics_collection_strategies.md) |
+| **Многомерная модель** | Временные ряды идентифицируются **именем метрики** + **лейблами** (labels). Пример: `http_requests_total{method="POST", path="/api"}`. См. [Лейблы и кардинальность](./concepts/labels_and_cardinality.md) |
+| **Service Discovery** | Автообнаружение целей (Kubernetes, Consul и др.). См. [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
+| **PromQL** | Специализированный язык запросов для временных рядов |
 
-### Scrape-модель: как работает сбор метрик
+### Scrape-модель
 
-**Scrape** — это процесс сбора метрик, при котором Prometheus периодически отправляет HTTP-запрос `GET /metrics` к целевому приложению.
+**Scrape** — периодический HTTP-запрос `GET /metrics` к целевому приложению.
 
-#### Принцип работы
+**Принцип работы:**
 
-1. **Задача приложения** — выставить HTTP-страницу со своими метриками в [определённом формате](./concepts/metric_types/alerts.md).
-2. **Сервер Prometheus** периодически делает HTTP-запрос `GET /metrics` к приложению. Интервал настраивается (по умолчанию 15–30 секунд).
-3. **Ответ приложения** сервер сохраняет в [TSDB](./concepts/tsdb.md) с текущим timestamp.
-4. **Метрики остаются в памяти приложения** — они дополняются и агрегируются дальше.
+| Шаг | Действие |
+|---|---|
+| 1 | Приложение отдаёт метрики по HTTP (`/metrics`) в [определённом формате](./concepts/metric_types/alerts.md) |
+| 2 | Prometheus делает `GET /metrics` (интервал: 15–30с) |
+| 3 | Ответ сохраняется в [TSDB](./concepts/tsdb.md) с timestamp |
+| 4 | Метрики остаются в памяти приложения — дополняются и агрегируются |
 
-Prometheus собирает **срез во времени**, а потом средствами PromQL вычисляются изменения.
+Prometheus собирает **срез во времени**, изменения вычисляются через PromQL (`rate()`, `increase()`).
 
-#### Поведение счетчиков
-
-Важно понимать, что происходит со счетчиками после scrape:
+**Поведение счётчиков:**
 
 | Правильно | Неправильно |
-| :--- | :--- |
-| Продолжать инкрементить счетчик | Сбрасывать счетчик после scrape |
+|---|---|
+| Монотонно инкрементить | Сбрасывать после scrape |
 
-Счетчик должен быть **монотонно возрастающим**. Сброс происходит только при рестарте приложения. Это свойство используется функциями PromQL (`rate()`, `increase()`) для вычисления производной и определения количества событий за интервал.
+Сброс — только при рестарте приложения.
 
-> **См. также:** [Типы метрик — Counter](./concepts/metric_types/alerts.md).
+**Альтернативные способы скрапинга** (для сервисов без HTTP, cronjob):
 
-#### Альтернативные способы скрапинга
-
-Не всегда код живет как приложение с HTTP-сервером. Бывает, что это сервис без HTTP (обработчик очередей RabbitMQ) или cronjob, который запускается по таймеру, отрабатывает и умирает.
-
-**Варианты решения:**
-
-1. **Добавить HTTP-сервер** — накладные расходы на добавление HTTP-сервера только ради `/metrics` приемлемы для долгоживущих процессов.
-2. **Pushgateway** — промежуточное приложение, в которое можно отправить метрики, а Prometheus заберет их оттуда. См. [Pushgateway](./pushgateway.md).
-3. **Telegraf** — универсальный конвертер и агрегатор метрик. Умеет фильтровать и конвертировать данные, результат заберет Prometheus.
-4. **StatsD Exporter** — приложение отправляет метрики в формате statsd, а exporter выставляет их для Prometheus.
-
-> **Важно:** Telegraf и StatsD Exporter требуют постоянного запуска, как и Pushgateway.
-
-> **См. также:** [Pushgateway](./pushgateway.md) — подробное руководство по использованию.
+| Способ | Описание |
+|---|---|
+| HTTP-сервер | Накладные расходы приемлемы для долгоживущих процессов |
+| [Pushgateway](./pushgateway.md) | Промежуточное приложение для batch/cron задач |
+| Telegraf | Универсальный конвертер/агрегатор метрик |
+| StatsD Exporter | Приём метрик в формате statsd → экспорт для Prometheus |
 
 ### Архитектура
 
-| Компонент | Роль | Ссылка на детали |
-| :--- | :--- | :--- |
-| **Prometheus Server** | Центральный компонент: сбор, хранение, обработка запросов, выполнение правил. | - |
-| **Exporters** | Утилиты для преобразования метрик сторонних систем в формат Prometheus. | [Exporters](./Exporters/overview.md) |
-| **Service Discovery** | Механизм автоматического обнаружения целей для сбора метрик. | [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
-| **Alertmanager** | Управление оповещениями: группировка, подавление, маршрутизация. | [Alertmanager](./alertmanager.md) |
-| **Pushgateway** | Приём метрик от кратковременных задач (batch jobs, cron). | [Pushgateway](./pushgateway.md) |
-| **Remote Storage** | Интеграция с внешними системами для долгосрочного хранения. | [Remote Read/Write](./scaling/remote_read_write.md) |
+| Компонент | Роль | Ссылка |
+|---|---|---|
+| **Prometheus Server** | Сбор, хранение, PromQL, правила | — |
+| **Exporters** | Преобразование метрик сторонних систем | [Exporters](./Exporters/overview.md) |
+| **Service Discovery** | Автообнаружение целей | [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
+| **Alertmanager** | Группировка, подавление, маршрутизация алертов | [Alertmanager](./alertmanager.md) |
+| **Pushgateway** | Приём метрик от кратковременных задач | [Pushgateway](./pushgateway.md) |
+| **Remote Storage** | Долгосрочное хранение (Mimir, Thanos, VM) | [Remote Read/Write](./scaling/remote_read_write.md) |
 
-> **Kubernetes:** Для развертывания в K8s см. [kube-prometheus-stack: Практические сценарии](./kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md).
+> Kubernetes: [kube-prometheus-stack](./kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios.md)
 
 ### Хранение данных: TSDB
 
-Prometheus использует собственную локальную базу данных временных рядов ([TSDB](./concepts/tsdb.md)).
+| Этап | Описание |
+|---|---|
+| **Запись** | WAL (write-ahead log) → память |
+| **Блоки** | Каждые 2ч — сброс из памяти на диск в виде блока |
+| **Компакция** | Фоновое объединение старых блоков для оптимизации |
+| **Retention** | Флаги `--storage.tsdb.retention.time` и `--storage.tsdb.retention.size` |
 
-* **Запись**: Данные сначала пишутся в WAL (write-ahead log) для защиты от сбоев, а затем сохраняются в памяти.
-* **Блоки**: Каждые 2 часа данные из памяти сбрасываются на диск в виде блока.
-* **Компакция (Compaction)**: В фоновом режиме старые блоки объединяются в более крупные для оптимизации хранения и ускорения запросов.
-* **Срок хранения (Retention)**: Управляется флагами `--storage.tsdb.retention.time` и `--storage.tsdb.retention.size`. По истечении срока старые блоки удаляются.
-
-> **Концепты:** [Типы метрик](./concepts/metric_types/alerts.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql/functions.md), [TSDB](./concepts/tsdb.md), [Безопасность](./security.md).
+> Концепты: [Типы метрик](./concepts/metric_types/overview.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql/functions.md), [TSDB](./concepts/tsdb.md), [Безопасность](./security.md)
 
 ## Практические сценарии
 
-### Whitebox vs Blackbox Мониторинг
-
-* **Whitebox (белый ящик)**: Мониторинг внутренних метрик системы. Это основной подход для Prometheus. Приложение инструментируется и само отдает метрики.
-* **Blackbox (черный ящик)**: Мониторинг внешнего поведения сервиса (доступен ли HTTP-эндпоинт, валиден ли SSL-сертификат). Реализуется с помощью **[Blackbox Exporter](./Exporters/overview.md#blackbox-exporter)**.
-
 ### Типовой жизненный цикл метрики
 
-1. **Инструментация**: Разработчик добавляет в код приложения клиентскую библиотеку Prometheus.
-2. **Экспорт**: Приложение запускает HTTP-сервер, который по адресу `/metrics` отдает текущие значения метрик в текстовом формате.
-3. **Сбор (Scraping)**: Prometheus, согласно [конфигурации](./configuration.md), периодически опрашивает эндпоинт `/metrics` и сохраняет полученные данные в свою TSDB.
-4. **Анализ и Визуализация**: Пользователь пишет запросы на [PromQL](./concepts/promql/functions.md) в веб-интерфейсе Prometheus или в [Grafana](../Grafana/grafana_overview.md) для построения графиков и дашбордов.
-5. **Оповещение**: Prometheus непрерывно выполняет [правила](./rules.md). Если условие правила выполняется, генерируется алерт, который отправляется в [Alertmanager](./alertmanager.md) для дальнейшей обработки.
+1. **Инструментация**: разработчик добавляет клиентскую библиотеку Prometheus в код приложения.
+2. **Экспорт**: приложение запускает HTTP-сервер, отдающий метрики по `/metrics` в текстовом формате.
+3. **Сбор (Scraping)**: Prometheus периодически опрашивает `/metrics` согласно [конфигурации](./configuration.md), сохраняет данные в TSDB.
+4. **Анализ и визуализация**: запросы [PromQL](./concepts/promql/functions.md) в веб-интерфейсе Prometheus или [Grafana](../Grafana/grafana_overview.md).
+5. **Оповещение**: Prometheus выполняет [правила](./rules.md). При срабатывании алерт отправляется в [Alertmanager](./alertmanager.md).
+
+> **Whitebox vs Blackbox Monitoring** — описано в [Exporters Overview](./Exporters/overview.md#whitebox-vs-blackbox-мониторинг).
 
 ## Дополнительная информация
 
@@ -103,12 +97,14 @@ Prometheus использует собственную локальную баз
 * **Федерация ([Federation](./scaling/federation.md))**: Иерархическая модель, где один сервер Prometheus опрашивает другие, агрегируя их данные. Используется для объединения данных из разных дата-центров или команд.
 * **Удаленное хранилище ([Remote Read/Write](./scaling/remote_read_write.md))**: Локальные серверы Prometheus отправляют все собираемые метрики в единое, глобальное, долгосрочное хранилище (например, Mimir, Thanos, VictoriaMetrics). Это предпочтительный современный подход.
 
-### Сравнение с традиционными системами (на примере Zabbix)
+### Сравнение с Zabbix
 
-| Характеристика | Prometheus | Zabbix (традиционный подход) |
-| :--- | :--- | :--- |
-| **Архитектура** | Распределенная, компоненты независимы. | Монолитная (сервер, база данных, веб-интерфейс). |
-| **Модель сбора** | **Pull-модель** (опрос). Эффективно для динамических сред. | **Push-модель** (агенты отправляют данные). |
-| **Хранение данных**| Специализированная TSDB. | Реляционная СУБД (MySQL/PostgreSQL). |
-| **Язык запросов** | Мощный и гибкий **PromQL**. | Ограниченные возможности для анализа. |
-| **Целевая среда**| Динамичные облачные среды, Kubernetes. | Статичные инфраструктуры, серверы. |
+| Характеристика | Prometheus | Zabbix |
+|---|---|---|
+| Архитектура | Распределённая, независимые компоненты | Монолитная (сервер + БД + UI) |
+| Модель сбора | Pull-модель (опрос) | Push-модель (агенты) |
+| Хранение | TSDB | Реляционная СУБД (MySQL/PostgreSQL) |
+| Язык запросов | PromQL (гибкий, мощный) | Ограниченный |
+| Целевая среда | Динамичные облачные среды, Kubernetes | Статичные инфраструктуры, серверы |
+
+Подробно: [Observability & Monitoring](../Concepts/Observability_and_Monitoring/observability_definitions.md)

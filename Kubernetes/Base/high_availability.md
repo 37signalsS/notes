@@ -78,6 +78,18 @@
 
 > Подробное пошаговое руководство: [High Availability API-сервера с Keepalived и HAProxy](../Installation/kubeadm/ha_keepalived_haproxy/index.md). Альтернативный подход: [HA кластер на bare metal](../Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md).
 
+### Leader Election: scheduler и controller-manager
+
+В HA-кластере компоненты `kube-scheduler` и `kube-controller-manager` запускаются **на каждой master-ноде** в нескольких экземплярах, но **активен только один** (leader). Остальные работают в режиме standby.
+
+**Механизм leader election:**
+- Активный лидер захватывает объект-lease в `kube-system` namespace (`kube-scheduler` / `kube-controller-manager` Lease)
+- Лидер выполняет рабочую нагрузку (планирование подов / управление контроллерами)
+- Standby-реплики периодически проверяют лизинг лидера
+- При сбое лидера лизинг истекает, и standby-реплика становится новым лидером
+
+**Масштабирование:** Worker-ноды масштабируются горизонтально простым добавлением новых нод с одинаковой конфигурацией. Master-ноды требуют HA-конфигурации с кворумом etcd (нечётное количество: 3, 5, 7).
+
 ### Сетевой и сервисный слой
 
 * **kube-proxy**: В режиме `IPVS` обеспечивает более предсказуемую производительность при большом количестве сервисов.

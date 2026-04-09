@@ -278,15 +278,4 @@ spec:
 - **Kubernetes 1.31–1.35:** Полная поддержка Gateway API.
 - **Linkerd 2.x:** SMI TrafficSplit остается основным способом маршрутизации.
 
-**Источники:**
-
-- [Istio Gateway API Documentation](https://istio.io/latest/docs/tasks/traffic-management/gateway-api/)
-- [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/)
-- [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)
-
-### Связанные документы
-
-- **Архитектура:** [Istio Architecture](./istio_architecture.md)
-- **Концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
-- **Сравнение:** [Istio vs Linkerd](./istio_vs_linkerd.md)
-- **Proxy:** [Proxy Sidecar](./proxy_sidecar.md)
+Документация: [Istio Gateway API](https://istio.io/latest/docs/tasks/traffic-management/gateway-api/), [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/), [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/). Связанные темы: [Istio Architecture](./istio_architecture.md), [Service Mesh Concepts](./service_mesh_concepts.md), [Istio vs Linkerd](./istio_vs_linkerd.md), [Proxy Sidecar](./proxy_sidecar.md).

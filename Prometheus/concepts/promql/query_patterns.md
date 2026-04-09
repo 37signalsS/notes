@@ -1,108 +1,166 @@
 # Шаблоны запросов PromQL
 
-## Мониторинг инфраструктуры
+## Definitions
 
-* **Утилизация CPU по instance (в %):**
+**Шаблоны запросов (Query Patterns)** — повторно используемые PromQL-выражения для типовых задач мониторинга. Каждый шаблон решает конкретную задачу: расчёт утилизации, скорости событий, перцентилей или алертинга. Шаблоны комбинируют [функции PromQL](./functions.md), [операторы агрегации](./aggregation.md) и [селекторы](./selectors_operators.md) в единое выражение.
 
-    ```promql
-    avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
-    ```
+**Принцип построения:** выбор метрики → фильтрация по лейблам → обработка функцией (`rate()`, `histogram_quantile()`) → агрегация (`sum by`, `avg by`) → математическая операция (проценты, доли).
 
-* **Использование памяти (в %):**
+## Basic Concepts
 
-    ```promql
-    (1 - node_memory_mem_available_bytes / node_memory_mem_total_bytes) * 100
-    ```
+### Утилизация ресурсов
 
-* **Использование диска (в %):**
+Для расчёта утилизации используется формула `(1 - available / total) × 100`. Для CPU — средняя скорость idle-времени через `rate()` или `irate()`.
 
-    ```promql
-    (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100
-    ```
+### Доли и отношения
 
-* **Входящий сетевой трафик (байт/сек):**
+Доля событий вычисляется как `rate(нужные_события) / rate(все_события)`. Используется для SLO/SLI — например, доля успешных HTTP-запросов.
 
-    ```promql
-    rate(node_network_receive_bytes_total[5m])
-    ```
+### Перцентили
 
-## Мониторинг приложений
+Вычисляются через `histogram_quantile(φ, sum by (le) (rate(..._bucket[interval])))`. Показывают распределение латентности, размеров запросов и других величин ([Гистограммы](../metric_types/histogram.md)).
 
-* **Доля ошибок HTTP 5xx:**
+### Алертинг по отсутствию метрики
 
-    ```promql
-    sum(rate(http_requests_total{code=~"5.."}[5m]))
-    /
-    sum(rate(http_requests_total[5m]))
-    ```
+Функция `absent()` возвращает `1`, если метрика не найдена. Используется для обнаружения упавших exporter'ов или сервисов.
 
-* **95-й перцентиль времени ответа:**
+## Practical Scenarios
 
-    ```promql
-    histogram_quantile(0.95,
-      sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
-    )
-    ```
+### Мониторинг инфраструктуры (Node Exporter)
 
-* **RPS (запросов в секунду):**
+**Утилизация CPU по instance (в %):**
 
-    ```promql
-    sum(rate(http_requests_total[5m]))
-    ```
+```promql
+avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
+```
 
-## Мониторинг Kubernetes
+Использует `irate()` для мгновенной скорости idle-времени. Инверсия (`* 100`) даёт процент использования. Подробнее о метриках — [Node Exporter](../../Exporters/node_exporter.md).
 
-* **Количество подов в состоянии Running:**
+**Использование памяти (в %):**
 
-    ```promql
-    sum(kube_pod_status_phase{phase="Running"})
-    ```
+```promql
+(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+```
 
-* **Использование CPU контейнером (в ядрах):**
+Gauge-метрики, не требуют `rate()`. Показывают текущее состояние.
 
-    ```promql
-    rate(container_cpu_usage_seconds_total[5m])
-    ```
+**Использование диска (в %):**
 
-* **Использование памяти контейнером:**
+```promql
+(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100
+```
 
-    ```promql
-    container_memory_usage_bytes
-    ```
+Рекомендуется фильтровать по `mountpoint` для избежания дублирования виртуальных ФС.
 
-## Алертинг
+**Входящий сетевой трафик (байт/сек):**
 
-* **Проверка отсутствия метрики (для алертинга):**
+```promql
+rate(node_network_receive_bytes_total{device="eth0"}[5m])
+```
 
-    ```promql
-    absent(up{job="my-critical-service"})
-    ```
+Counter — обязательно `rate()`. Фильтр по `device` для конкретного интерфейса.
 
-* **Сервис недоступен:**
+### Мониторинг приложений
 
-    ```promql
-    up{job="api-server"} == 0
-    ```
+**Доля ошибок HTTP 5xx:**
 
-* **Прогноз нехватки диска через 4 часа:**
+```promql
+sum(rate(http_requests_total{code=~"5.."}[5m]))
+/
+sum(rate(http_requests_total[5m]))
+```
 
-    ```promql
-    predict_linear(node_filesystem_free_bytes[1h], 3600 * 4) < 0
-    ```
+Отношение rate'ов — ключевой SLO/SLI для доступности. Результат — доля (0.05 = 5%).
 
-* **Высокая загрузка CPU (>80% в течение 10 минут):**
+**95-й перцентиль времени ответа:**
 
-    ```promql
-    avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 < 20
-    ```
+```promql
+histogram_quantile(0.95,
+  sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+)
+```
 
-> **См. также:** [Rules и алертинг](../../../Kubernetes/Security/kyverno/rules.md) — создание правил для Alertmanager.
+Обязательна агрегация `sum by (le)` перед `histogram_quantile()` — иначе перцентиль посчитается для каждого инстанса отдельно ([Перцентили](../metric_types/percentiles.md)).
 
----
+**RPS (запросов в секунду):**
 
-**Связанные темы:**
+```promql
+sum(rate(http_requests_total[5m]))
+```
 
-* [Функции PromQL](./functions.md) — rate, histogram_quantile, predict_linear, absent
-* [Агрегация](./aggregation.md) — операторы sum, avg, irate
-* [Алертинг](../../../Kubernetes/Security/kyverno/rules.md) — создание правил для Alertmanager
-* [Kubernetes](../kubernetes/) — мониторинг Kubernetes
+Суммарная скорость запросов по всем инстансам — единственно корректный способ агрегации Counter ([Счётчики](../metric_types/counter.md)).
+
+### Мониторинг Kubernetes
+
+**Количество подов в состоянии Running:**
+
+```promql
+sum(kube_pod_status_phase{phase="Running"})
+```
+
+Метрика из kube-state-metrics. Gauge — aggregация через `sum()`. Подробнее — [Kubernetes](../kubernetes/overview.md).
+
+**Использование CPU контейнером (в ядрах):**
+
+```promql
+rate(container_cpu_usage_seconds_total{container!=""}[5m])
+```
+
+Counter — `rate()` даёт ядра CPU. Фильтр `container!=""` исключает мета-контейнеры. Подробнее — [cAdvisor](../../Exporters/cadvisor.md).
+
+**Использование памяти контейнером:**
+
+```promql
+container_memory_usage_bytes{container!=""}
+```
+
+Gauge — показывает текущее потребление без обработки.
+
+### Алертинг
+
+**Проверка отсутствия метрики:**
+
+```promql
+absent(up{job="my-critical-service"})
+```
+
+Возвращает `1`, если сервис не скрейпится — алерт для Alertmanager ([Rules](../../rules.md)).
+
+**Сервис недоступен:**
+
+```promql
+up{job="api-server"} == 0
+```
+
+Метрика `up` = 0 — таргет не отвечает.
+
+**Прогноз нехватки диска через 4 часа:**
+
+```promql
+predict_linear(node_filesystem_free_bytes{mountpoint="/"}[1h], 3600 * 4) < 0
+```
+
+Линейная экстраполяция по данным за последний час. Срабатывает **до** того, как место закончится ([Измерители](../metric_types/gauge.md)).
+
+**Высокая загрузка CPU (>80% в течение 10 минут):**
+
+```promql
+avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 < 20
+```
+
+Инверсия idle (< 20% idle = > 80% usage). Порог 10 минут снижает ложные срабатывания при кратковременных всплесках.
+
+## Additional Information
+
+### Предостережения
+
+- **`irate()` vs `rate()` для алертинга** — `irate()` чувствителен к шуму, для алертов предпочтительнее `rate()` с длительным окном ([Реальное поведение метрик](./real_world_behavior.md))
+- **Гистограммы без `sum by (le)`** — `histogram_quantile()` без агрегации посчитает перцентиль для каждого инстанса, что приведёт к множеству линий на графике
+- **`$__rate_interval` в Grafana** — используйте вместо `$__interval` для корректного расчёта rate, минимум 4×scrape_interval
+- **Counter vs Gauge** — не применяйте `rate()` к Gauge и `deriv()` к Counter. Counter только растёт, Gauge — произвольно меняется ([Типы метрик](../metric_types/overview.md))
+
+### Выбор интервала
+
+- **Ручные запросы:** 5m для сглаженных графиков, 1–2m для детального анализа
+- **Grafana:** переменная `$__rate_interval`, минимум 1m (2×scrape_interval)
+- **Алертинг:** 5–15m для снижения шума, с `for` для задержки срабатывания

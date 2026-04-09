@@ -6,12 +6,28 @@
 
 ---
 
-## Файлы
+## Basic Concepts
 
-| Файл | Описание |
-|------|----------|
-| [access_control.md](./access_control.md) | Network Policies, RBAC |
-| [secrets_best_practices.md](./secrets_best_practices.md) | Secrets Management, лучшие практики |
+### Компоненты безопасности
+
+Безопасность Prometheus Operator строится на четырёх уровнях:
+
+| Уровень | Механизм | Описание | SSoT |
+|---|---|---|---|
+| **Аутентификация** | Basic Auth, OAuth | Защита веб-интерфейсов Prometheus, Alertmanager, Grafana | Настоящий файл |
+| **TLS** | Ingress TLS, mTLS | Шифрование внешнего и внутреннего трафика | Настоящий файл |
+| **Контроль доступа** | NetworkPolicy, RBAC | Сетевая изоляция и авторизация Kubernetes API | [access_control.md](./access_control.md) |
+| **Управление секретами** | Kubernetes Secrets | Безопасное хранение учётных данных и ключей | [secrets_best_practices.md](./secrets_best_practices.md) |
+
+### Матрица аутентификации компонентов
+
+| Компонент | Встроенная auth | Ingress Basic Auth | TLS |
+|---|---|---|---|
+| **Prometheus** | Да (через `web.webConfig.basicAuth`, v2.48+) | Да | Да (mTLS для scrape) |
+| **Alertmanager** | **Нет** | Да (единственный вариант) | Да (Ingress TLS) |
+| **Grafana** | Да (локальные пользователи, OAuth) | Возможно (избыточно) | Да (Ingress TLS) |
+
+> **Подробно:** [Web Authentication](../Kube_Prometheus_Stack_Helm/practical_scenarios/web_authentication.md) — полный обзор аутентификации в kube-prometheus-stack.
 
 ---
 
@@ -182,8 +198,4 @@ spec:
 
 ## Additional Information
 
-### Связанные темы
-
-- **[High Availability](../high_availability.md)** — HA конфигурация
-- **[Prometheus CRD](../crd/prometheus.md)** — описание Prometheus
-- **[Alertmanager](../../../alertmanager.md)** — базовая настройка
+> **См. также:** [High Availability](../high_availability.md) — HA конфигурация; [Prometheus CRD](../crd/prometheus.md) — описание Prometheus CRD; [Alertmanager](../../../alertmanager.md) — базовая настройка Alertmanager.

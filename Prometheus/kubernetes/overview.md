@@ -2,56 +2,34 @@
 
 ## Определения
 
-**kube-prometheus-stack** — Helm-чарт для развертывания полноценной системы мониторинга на базе Prometheus в Kubernetes. Упрощает установку, настройку и управление всеми компонентами стека.
+**Мониторинг Kubernetes** — практика наблюдения за состоянием кластера, его компонентов (control plane, worker nodes) и workload'ов (Pods, Deployments, Services) с использованием метрик, логов и трейсов.
 
-**Prometheus Operator** — контроллер Kubernetes для автоматизации управления Prometheus, Alertmanager и связанными компонентами через Custom Resource Definitions (CRD).
+**kube-prometheus-stack** — Helm-чарт для развёртывания полного стека мониторинга (Prometheus, Alertmanager, Grafana, Exporters, Prometheus Operator) в Kubernetes.
 
-> **См. также:** [Prometheus Operator](./operator/concepts.md), [Service Discovery](./service_discovery.md).
+> **См. также:** [kube-prometheus-stack — Helm](./Kube_Prometheus_Stack_Helm/overview.md), [Prometheus Operator](./operator/concepts.md), [Service Discovery](./service_discovery.md).
 
 ## Основные концепции
 
-### Актуальные версии
-
-| Компонент | Версия |
-|---|---|
-| **kube-prometheus-stack** | 82.4.3 |
-| **Prometheus Operator** | 0.89.0 |
-| **Prometheus** | 3.10.0 |
-| **Alertmanager** | 0.31.0 |
-| **Grafana** | 11.x |
-
-> **Важно:** Проверяйте [Artifact Hub](https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack) и [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) для получения последних версий.
-
 ### Экосистема Prometheus
 
-* **[Prometheus Server](./overview.md):** Центральный компонент для сбора, хранения и обработки метрик. Разворачивается как `StatefulSet`.
+* **[Prometheus Server](../overview.md):** Центральный компонент для сбора, хранения и обработки метрик.
 * **[Alertmanager](../alertmanager.md):** Дедупликация, группировка и маршрутизация оповещений.
 * **[Push Gateway](../pushgateway.md):** Сбор метрик от кратковременных задач (batch jobs).
 * **[Экспортеры](../Exporters/overview.md):** Сбор метрик из различных систем (ОС, БД, приложения).
 * **[Grafana](../../Grafana/grafana_overview.md):** Визуализация метрик, дашборды, алерты.
 
-### Архитектура kube-prometheus-stack
+### Архитектура мониторинга в Kubernetes
 
-**Компоненты:**
+**Компоненты стека:**
 
-* **Prometheus Operator** — контроллер для управления стеком
-* **Prometheus Server** — сбор и хранение метрик
-* **Alertmanager** — обработка оповещений
-* **Grafana** — визуализация
-* **Node Exporter** — метрики хостов (DaemonSet)
-* **Kube-State-Metrics** — метрики объектов Kubernetes
-
-### Custom Resource Definitions (CRD)
-
-**Ключевые CRD:**
-
-* **ServiceMonitor** — описание целей для скрейпинга через Service
-* **PodMonitor** — мониторинг подов напрямую по лейблам
-* **PrometheusRule** — правила алертинга и записи
-* **Probe** — blackbox-мониторинг через Blackbox Exporter
-* **AlertmanagerConfig** — конфигурация маршрутизации Alertmanager
-
-> **См. также:** [Prometheus Operator](./operator/concepts.md) — детальное описание CRD.
+| Компонент | Тип объекта | Назначение |
+|---|---|---|
+| **Prometheus Server** | StatefulSet | Сбор и хранение метрик |
+| **Alertmanager** | StatefulSet | Обработка оповещений |
+| **Grafana** | Deployment | Визуализация |
+| **Prometheus Operator** | Deployment | Управление стеком через CRD |
+| **Node Exporter** | DaemonSet | Метрики хостов |
+| **Kube-State-Metrics** | Deployment | Метрики объектов K8s |
 
 ### Service Discovery в Kubernetes
 
@@ -65,77 +43,55 @@ Prometheus использует Kubernetes API для автоматическо
 
 > **См. также:** [Service Discovery](./service_discovery.md) — детальное руководство.
 
+### Ключевые метрики Kubernetes
+
+**Control Plane:**
+
+* `apiserver_request_total` — количество запросов к API Server
+* `etcd_server_has_leader` — наличие лидера в etcd
+* `scheduler_schedule_attempts_total` — попытки планирования подов
+
+**Workloads:**
+
+* `kube_deployment_status_replicas_unavailable` — недоступные реплики
+* `kube_pod_container_status_restart_total` — перезапуски контейнеров
+* `kube_pod_container_status_ready` — готовность контейнера
+* `kube_pod_status_phase` — фаза пода (Running, Pending, Failed)
+
+**Nodes:**
+
+* `kube_node_status_capacity_memory_bytes` — ёмкость памяти ноды
+* `kube_node_status_condition` — состояние ноды (Ready, MemoryPressure, DiskPressure)
+* `kubelet_running_pods` — количество запущенных подов на ноде
+* `node_cpu_seconds_total` — утилизация CPU (Node Exporter)
+
 ## Практические сценарии
 
-### Быстрый старт
+### Подходы к мониторингу
 
-```bash
-# Создание namespace
-kubectl create namespace monitoring
+**1. Whitebox (внутренний):**
 
-# Добавление репозитория
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+Экспортеры работают внутри кластера или на хостах, собирают метрики через Kubernetes Service:
+- Node Exporter → метрики хостов
+- cAdvisor → метрики контейнеров
+- Kube-State-Metrics → метрики объектов K8s
 
-# Установка kube-prometheus-stack
-helm install monitoring prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace
-```
+> **См. также:** [Экспортеры](../Exporters/overview.md).
 
-> **См. также:** [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md).
+**2. Blackbox (внешний):**
 
-### Проверка установки
+Проверка доступности эндпоинтов (HTTP/TCP/ICMP/DNS) извне через Probe CRD:
+- Доступность Ingress
+- Health-check эндпоинты
+- DNS-резолвинг
 
-```bash
-# Проверка подов
-kubectl get pods -n monitoring
+> **См. также:** [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md), [Probe CRD](./operator/crd/probe.md).
 
-# Проверка ServiceMonitor
-kubectl get servicemonitor -n monitoring
+**3. Мониторинг внешних ресурсов:**
 
-# Доступ к Prometheus
-kubectl port-forward svc/prometheus-operated -n monitoring 9090:9090
+Интеграция внешних серверов с экспортерами через `additionalScrapeConfigs` + `static_configs`:
 
-# Доступ к Grafana
-kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80
-```
-
-### Мониторинг внешних ресурсов
-
-**Blackbox-мониторинг через CRD Probe:**
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: google-probe
-  namespace: monitoring
-spec:
-  prober:
-    url: blackbox-exporter.monitoring.svc.cluster.local:9115
-  module: http_2xx
-  targets:
-    staticConfig:
-      static:
-        - https://google.com
-```
-
-**Whitebox-мониторинг внешних хостов:**
-
-```yaml
-# В values.yaml
-prometheus:
-  prometheusSpec:
-    additionalScrapeConfigs:
-      - job_name: 'external-host'
-        static_configs:
-          - targets: ['192.168.1.100:9100']
-            labels:
-              env: 'production'
-```
-
-> **См. также:** [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
+> **См. также:** [External Monitoring via static_configs (SSoT)](./Kube_Prometheus_Stack_Helm/practical_scenarios/external_monitoring.md).
 
 ## Дополнительная информация
 
@@ -153,13 +109,12 @@ prometheus:
 
 **1. Аутентификация Prometheus:**
 
-* Используйте встроенную аутентификацию (доступна в новых версиях)
-* Или Basic-аутентификацию на Ingress + Network Policies
+* Встроенная аутентификация (новые версии Prometheus)
+* Basic-auth на Ingress + Network Policies
 
-**2. Ограничение доступа:**
+**2. Network Policies:**
 
 ```yaml
-# NetworkPolicy для Prometheus
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -184,40 +139,18 @@ spec:
           protocol: TCP
 ```
 
-**3. TLS для внешних соединений:**
+**3. TLS:**
 
-* Используйте Ingress с TLS для доступа к UI
-* Настройте mTLS для внутренних соединений (опционально)
+* Ingress с TLS для внешнего доступа к UI
+* mTLS для внутренних соединений (опционально)
+
+> **См. также:** [Prometheus Security](../security.md).
 
 ### Высокая доступность
 
-**Prometheus:**
+| Компонент | Минимум реплик | Механизм |
+|---|---|---|
+| **Prometheus** | 2 | StatefulSet, одинаковая конфигурация |
+| **Alertmanager** | 3 | Кластеризация, кворум, дедупликация |
 
-* Минимум 2 реплики (StatefulSet)
-* Одинаковая конфигурация на всех репликах
-* Внешнее хранилище для долгосрочных данных
-
-**Alertmanager:**
-
-* Минимум 3 реплики для кворума
-* Кластеризация для дедупликации алертов
-
-> **См. также:** [Scaling](../scaling/overview.md), [Thanos](../scaling/thanos_overview.md).
-
-### Полезные метрики Kubernetes
-
-* `kube_deployment_status_replicas_unavailable` — недоступные реплики
-* `kube_node_status_capacity_memory_bytes` — ёмкость памяти ноды
-* `kube_pod_container_status_restart_total` — перезапуски контейнеров
-* `kube_pod_container_status_ready` — готовность контейнера
-* `kubelet_running_pods` — количество запущенных подов на ноде
-
-### Связанные темы
-
-* [Prometheus Operator](./operator/concepts.md) — управление стеком
-* [Service Discovery](./service_discovery.md) — обнаружение целей
-* [Kube-Prometheus-Stack Helm](./Kube_Prometheus_Stack_Helm/overview.md) — установка
-* [Installation](../installation/overview.md) — установка на хост
-* [Configuration](../configuration.md) — настройка Prometheus
-* [Rules](../rules.md) — правила алертинга
-* [Scaling](../scaling/overview.md) — масштабирование
+> **См. также:** [Scaling](../scaling/overview.md), [Thanos](../scaling/thanos_overview.md), [HA](./operator/high_availability.md).

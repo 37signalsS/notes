@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Istio** и **Linkerd** — две ведущие реализации [Service Mesh](./service_mesh_concepts.md), предназначенные для управления и обеспечения безопасности микросервисных приложений. Несмотря на общую цель, они основаны на разных философиях, что приводит к значительным различиям в архитектуре, функциональности и эксплуатации.
+**Istio** и **Linkerd** — две ведущие реализации [Service Mesh](./service_mesh_concepts.md) для управления и обеспечения безопасности микросервисных приложений. Несмотря на общую цель, они основаны на разных философиях, что приводит к различиям в архитектуре, функциональности и эксплуатации.
 
 ---
 
@@ -10,14 +10,14 @@
 
 | Аспект | Istio | Linkerd |
 | :--- | :--- | :--- |
-| **Философия** | **Гибкость и мощность**: Предоставляет исчерпывающий набор инструментов для любых сетевых сценариев. | **Простота и производительность**: Фокусируется на безопасности, наблюдаемости и низких накладных расходах "из коробки". |
-| **Прокси** | **Envoy**: Универсальный прокси на C++, известный своей расширяемостью и богатой функциональностью. | **Linkerd-proxy**: Сверхлегкий прокси на Rust, оптимизированный для скорости и безопасности. |
-| **Архитектура** | Единый control plane `istiod`. Поддерживает как [sidecar](./proxy_sidecar.md), так и sidecar-less (Ambient) модели. | Минималистичный control plane. Использует исключительно sidecar-модель. |
-| **Управление трафиком** | **Очень гибкое**: Gateway API (предпочтительно), VirtualService, DestinationRule. Полная L7-маршрутизация, зеркалирование, fault injection. | **Базовое**: ServiceProfile, TrafficSplit (SMI). Ретраи, таймауты. Сложная маршрутизация — через Ingress-контроллеры. |
-| **Безопасность (mTLS)** | Автоматическая, с гибкими политиками доступа (`AuthorizationPolicy`, `PeerAuthentication`). | Автоматическая, включена по умолчанию для всего TCP-трафика, с упором на безопасные дефолты. |
-| **Наблюдаемость** | Гибкая интеграция с внешними системами (Prometheus, Jaeger, Kiali). Требует настройки. | Встроенный дашборд `linkerd-viz` с "золотыми метриками" и диагностикой на лету (`tap`). |
-| **Сложность** | **Высокая**: Требует глубокого понимания CRD и сетевых концепций. | **Низкая**: Простая установка и эксплуатация, минимум конфигурации. |
-| **Производительность** | Sidecar: ~5–10 мс задержка, 100–300 МБ RAM на под. <br> Ambient: ~30–50% меньше оверхед. | ~1–3 мс задержка, 40–60% меньше CPU/RAM чем Istio sidecar. |
+| **Философия** | **Гибкость и мощность**: исчерпывающий набор инструментов для любых сетевых сценариев. | **Простота и производительность**: безопасность, наблюдаемость и низкие накладные расходы «из коробки». |
+| **Прокси** | **Envoy**: универсальный прокси на C++, расширяемый, с богатой функциональностью. | **Linkerd-proxy**: сверхлёгкий прокси на Rust, оптимизированный для скорости и безопасности. |
+| **Архитектура** | Control plane `istiod`. Поддерживает [sidecar](./proxy_sidecar.md) и sidecar-less ([Ambient](./istio_architecture.md)) модели. | Минималистичный control plane. Только sidecar-модель. |
+| **Управление трафиком** | **Гибкое**: Gateway API (предпочтительно), VirtualService, DestinationRule. L7-маршрутизация, зеркалирование, fault injection. | **Базовое**: ServiceProfile, TrafficSplit (SMI). Ретраи, таймауты. |
+| **Безопасность (mTLS)** | Автоматическая, гибкие политики (`AuthorizationPolicy`, `PeerAuthentication`). | Автоматическая, включена по умолчанию для всего TCP-трафика. |
+| **Наблюдаемость** | Интеграция с внешними системами (Prometheus, Jaeger, [Kiali](./istio_observability_and_tools.md)). Требует настройки. | Встроенный `linkerd-viz` с «золотыми метриками» и диагностикой (`tap`). |
+| **Сложность** | **Высокая**: CRD, сетевые концепции. | **Низкая**: быстрая установка, минимум конфигурации. |
+| **Производительность** | Sidecar: ~5–10 мс, 100–300 МБ RAM. <br>Ambient: на 30–50 % меньше оверхед. | ~1–3 мс, 40–60 % меньше CPU/RAM, чем Istio sidecar. |
 | **Мультикластер** | Production-ready (sidecar), Beta (Ambient, до Istio 1.30+). | Production-ready (нативная поддержка). |
 | **Production-ready** | **Да** (Ambient Mesh стабилен с Istio 1.29). | **Да**. |
 
@@ -25,14 +25,12 @@
 
 ## Практические сценарии: Сравнение подходов
 
-Istio и Linkerd используют разные подходы для решения одних и тех же задач.
-
 ### Канареечное развертывание
 
 | Платформа | Метод | Пример |
 | :--- | :--- | :--- |
-| **Istio** | Один `HTTPRoute` (Gateway API) или `VirtualService` с весами. | [Traffic Management](./traffic_management.md) — сценарии 1, 2. |
-| **Linkerd** | Отдельный CRD `TrafficSplit` из спецификации SMI. | `TrafficSplit` с `backendRefs` и весами. |
+| **Istio** | `HTTPRoute` (Gateway API) или `VirtualService` с весами. | [Traffic Management](./traffic_management.md) — сценарии 1, 2. |
+| **Linkerd** | CRD `TrafficSplit` (SMI) с `backendRefs` и весами. | [Traffic Management](./traffic_management.md) — сценарий 5 (аналогичный паттерн). |
 
 ### Настройка ретраев и таймаутов
 
@@ -46,14 +44,14 @@ Istio и Linkerd используют разные подходы для реш�
 | Платформа | Поддержка | Пример |
 | :--- | :--- | :--- |
 | **Istio** | **Нативно**: `HTTPRoute.rules.mirrors` (Gateway API) или `VirtualService.mirror`. | [Traffic Management](./traffic_management.md) — сценарии 3, 4. |
-| **Linkerd** | **Ограниченно**: Через кастомные решения или Ingress-контроллеры. | Требуется внешняя интеграция. |
+| **Linkerd** | **Ограниченно**: кастомные решения или Ingress-контроллеры. | Внешняя интеграция. |
 
 ### Circuit Breaking
 
 | Платформа | Поддержка | Пример |
 | :--- | :--- | :--- |
 | **Istio** | **Нативно**: `DestinationRule.outlierDetection`, `connectionPool`. | [Traffic Management](./traffic_management.md) — сценарий 7. |
-| **Linkerd** | **Ограниченно**: На уровне прокси, без явных CRD. | Автоматическая защита от перегрузки. |
+| **Linkerd** | **Ограниченно**: на уровне прокси, без явных CRD. | Автоматическая защита от перегрузки. |
 
 ### Диагностика и отладка
 
@@ -62,33 +60,15 @@ Istio и Linkerd используют разные подходы для реш�
 | **Istio** | `istioctl analyze`, Kiali, `istioctl proxy-config`. | `istioctl proxy-config routes deploy/my-app` |
 | **Linkerd** | `linkerd check`, `linkerd stat`, `linkerd tap`, `linkerd viz`. | `linkerd tap deploy/my-backend -n my-app` |
 
-Подробные примеры конфигураций для этих и других сценариев управления трафиком находятся в документе [Управление трафиком в Service Mesh](./traffic_management.md).
-
 ---
 
 ## Дополнительная информация
 
-### Выбор между Istio и Linkerd: Рекомендации
+### Рекомендации по выбору
 
-#### Выбирайте Istio, если
+**Istio:** сложные L7-сценарии (маршрутизация по заголовкам, зеркалирование, fault injection); production-ready мультикластер (sidecar); кастомные политики (`AuthorizationPolicy`, `RequestAuthentication`, JWT); [Gateway API](./traffic_management.md); [Ambient Mesh](./istio_architecture.md) для снижения оверхеда; WASM-расширения, внешние CA, кастомные телеметрические бэкенды.
 
-1. **Сложные L7-сценарии:** Требуется маршрутизация по заголовкам, зеркалирование, fault injection.
-2. **Мультикластер (sidecar):** Production-ready мультикластерная сетка.
-3. **Кастомные политики:** Гибкие `AuthorizationPolicy`, `RequestAuthentication`, JWT-аутентификация.
-4. **Gateway API:** Предпочитаете стандартный Kubernetes API для маршрутизации.
-5. **Ambient Mesh:** Хотите снизить оверхед без sidecar (production-ready с Istio 1.29).
-6. **Enterprise-функции:** WASM-расширения, интеграция с внешними CA, кастомные телеметрические бэкенды.
-
-Подробнее об архитектуре Istio можно прочитать в [Istio: компоненты и архитектура](./istio_architecture.md).
-
-#### Выбирайте Linkerd, если
-
-1. **Простота:** Быстрая установка (`linkerd install | kubectl apply -f -`), минимум конфигурации.
-2. **Низкий оверхед:** 40–60% меньше CPU/RAM по сравнению с Istio sidecar.
-3. **Безопасность "из коробки":** mTLS включен по умолчанию без дополнительной настройки.
-4. **Встроенная наблюдаемость:** `linkerd-viz` предоставляет дашборды и диагностику без установки Kiali/Prometheus.
-5. **Стабильность:** Linkerd известен своей надежностью и предсказуемостью.
-6. **Мультикластер:** Нативная поддержка мультикластерных развертываний.
+**Linkerd:** простота (`linkerd install | kubectl apply -f -`); низкий оверхед (40–60 % меньше CPU/RAM); mTLS «из коробки»; встроенная наблюдаемость (`linkerd-viz` без Kiali/Prometheus); стабильность; нативный мультикластер.
 
 ### Актуальность и тенденции
 
@@ -96,22 +76,9 @@ Istio и Linkerd используют разные подходы для реш�
 | :--- | :--- |
 | **Ambient Mesh** | Istio Ambient снижает оверхед, конкурируя с Linkerd по производительности. |
 | **Gateway API** | Стандарт де-факто для маршрутизации в Kubernetes (Istio лидирует). |
-| **eBPF-конкуренция** | Cilium Service Mesh растет, но Istio и Linkerd доминируют в enterprise. |
-| **Consolidation** | Linkerd фокусируется на простоте, Istio — на функциональности. |
+| **eBPF-конкуренция** | Cilium Service Mesh растёт, но Istio и Linkerd доминируют в enterprise. |
+| **Consolidation** | Linkerd — простота, Istio — функциональность. |
 
-### Источники и документация
+### Альтернативы
 
-- **[Istio vs Linkerd Comparison](https://tasrieit.com/blog/istio-vs-linkerd-service-mesh-comparison-2026)** — независимое сравнение.
-- **[Service Mesh Comparison](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)** — Istio, Linkerd, Consul Connect.
-- **[Linkerd vs Istio](https://slickfinch.com/istio-vs-linkerd-service-mesh-solutions-comparison-for-microservices/)** — производительность и эффективность.
-- **[Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)** — Ambient Mesh production-ready.
-- **[Linkerd Documentation](https://linkerd.io/docs/)** — официальная документация.
-
-### Связанные документы
-
-- **Базовые концепции:** [Service Mesh Concepts](./service_mesh_concepts.md)
-- **Архитектура Istio:** [Istio Architecture](./istio_architecture.md)
-- **Трафик:** [Traffic Management](./traffic_management.md)
-- **Proxy:** [Proxy Sidecar](./proxy_sidecar.md)
-- **Observability:** [Kiali и Dex](./istio_observability_and_tools.md)
-- **Альтернативы:** [Consul Connect](../Consul/consul_overview.md)
+Помимо Istio и Linkerd, существует [Consul Connect](../Consul/consul_overview.md) — универсальное решение (Service Discovery + Service Mesh) для гетерогенных сред (VM + Kubernetes).

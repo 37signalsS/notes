@@ -1,42 +1,29 @@
 # Архитектура и операции Tempo
 
-## Определения
+## Definitions
 
-**Архитектура Tempo** — компоненты системы: Distributor, Ingester, Querier, Compactor, Metric Generator.
+**Архитектура Tempo** — компоненты системы (Distributor, Ingester, Querier, Compactor, Query Frontend, Metric Generator), форматы хранения vParquet, режимы развёртывания (монолит/распределённый).
 
-**Операции Tempo** — конфигурация, интеграции, рекомендации по эксплуатации.
+**Операции Tempo** — конфигурация хранилищ, breaking changes, рекомендации по эксплуатации.
 
-> **Навигация:** [Главная Tempo](./index.md) | [Установка](./installation_traceql.md)
+Навигация: [Главная Tempo](./index.md). Компоненты описаны в [разделе архитектуры index.md](./index.md#архитектура).
 
 ---
 
 ## Basic Concepts
 
-### Архитектура
+### Форматы хранения (vParquet)
 
-Архитектура Tempo очень похожа на [Loki](../Loki/loki_overview.md) и [Mimir](../Mimir/mimir_overview.md), что упрощает администрирование Grafana Stack. Tempo может быть развернут как в монолитном, так и в распределенном режиме.
-
-#### Основные компоненты Tempo
-
-* **Distributor (Диспетчер):** Принимает входящие трассировки в различных форматах ([OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md), [Jaeger](../Jaeger/jaeger_overview.md), Zipkin), выполняет базовую валидацию и распределяет их между инжестерами.
-* **Ingester (Инжестер):** Принимает трассировки от Distributor, буферизует их в памяти, а затем записывает в долгосрочное хранилище (S3/NFS) в сжатом виде.
-* **Querier (Запросчик):** Обрабатывает запросы TraceQL. Получает трассировки из инжестеров (для недавних данных) и из долгосрочного хранилища.
-* **Query Frontend:** Опциональный компонент, который ставится перед Querier'ами для улучшения производительности запросов на чтение за счет кэширования и параллелизации.
-* **Compactor:** Фоновый процесс, который отвечает за оптимизацию хранения трассировок в долгосрочном хранилище, объединяя небольшие файлы и применяя политики хранения.
-* **Metric Generator (Генератор метрик):** Опциональный компонент, который может генерировать метрики на основе поступающих трассировок (например, количество запросов, среднее время выполнения, количество ошибок). Эти метрики затем могут быть собраны [Prometheus](../Prometheus/overview.md) или [Mimir](../Mimir/mimir_overview.md) и визуализированы в [Grafana](../Grafana/grafana_overview.md), что позволяет коррелировать метрики с трассировками.
-
-#### Форматы хранения (vParquet)
-
-Tempo использует собственный формат хранения на базе Parquet:
+Tempo использует собственный формат хранения на базе Apache Parquet. По умолчанию — vParquet4 (с Tempo 2.0). В Tempo 2.10 добавлен vParquet5.
 
 | Версия | Tempo | Статус |
 | :--- | :--- | :--- |
-| vParquet2 | <2.4 | Устаревший |
-| vParquet3 | 2.4-2.5 | Поддерживается |
-| **vParquet4** | **≥2.5** | **Формат по умолчанию** (требуется для новых функций TraceQL) |
-| vParquet5 | 2026 (ожидается) | В разработке |
+| v2 | <2.1 | Устаревший (удалён в Tempo 3.0) |
+| vParquet3 | 2.1–2.5 | Устаревший (удалён в Tempo 3.0) |
+| **vParquet4** | **≥2.0** | **Формат по умолчанию** (требуется для новых функций TraceQL) |
+| **vParquet5** | **≥2.10** | **Добавлен в Tempo 2.10** |
 
-> **Breaking Change:** Новые функции TraceQL (events, links) работают только с vParquet4+.
+> **Breaking Change:** Форматы v2 и vParquet3 удалены в Tempo 3.0. Для миграции требуется vParquet4+. Новые функции TraceQL (events, links) работают только с vParquet4+.
 
 ---
 
@@ -46,19 +33,16 @@ Tempo использует собственный формат хранения 
 
 | Изменение | Описание | Требуемое действие |
 | :--- | :--- | :--- |
-| **vParquet4 по умолчанию** | Новый формат хранения | Требуется Tempo ≥2.5 для чтения |
+| **vParquet4 по умолчанию** | Формат хранения по умолчанию | Требуется Tempo ≥2.0 для чтения |
 | **TraceQL Metrics** | Экспериментальная функция | Настройка `local-blocks` processor, `replication_factor: 1` |
 | **tempo-query** | Отдельный сервер (не gRPC plugin) | Обновление конфигурации на `0.0.0.0:7777` |
 | **Удалённые параметры** | `storage.azure.use_v2_sdk`, `autocomplete_filtering_enabled` | Проверка конфигурации |
-
----
 
 ### Конфигурация
 
 #### Минимальная конфигурация (монолит)
 
 ```yaml
-# tempo.yaml
 server:
   http_listen_port: 3200
 
@@ -119,101 +103,29 @@ storage:
       queue_depth: 10000
 ```
 
-#### TraceQL Metrics configuration
+### TraceQL Metrics configuration
 
 ```yaml
 overrides:
   defaults:
     metrics_generator:
-      processors: [local-blocks]  # Обязательно для Metrics
+      processors: [local-blocks]
       storage_path: /var/tempo/metrics-generator
     tracing:
       enabled: true
 
-# Для исторических данных
 metrics_generator:
   processor:
     local_blocks:
       flush_to_storage: true
 ```
 
----
+### Интеграции и рекомендации
 
-### Интеграции
-
-#### Grafana (визуализация)
-
-Tempo не имеет собственного UI. Визуализация осуществляется через [Grafana](../Grafana/grafana_overview.md):
-
-* Поиск и фильтрация трассировок через TraceQL
-* Просмотр диаграммы Ганта для трассировки
-* Корреляция с метриками (Exemplars) и логами (Derived Fields)
-
-> **См. также:** [Grafana datasources](../Grafana/grafana_datasources.md#сценарий-2-интеграция-loki-и-tempo-derived-fields)
-
-#### OpenTelemetry Collector
-
-Рекомендуемый способ отправки трассировок в Tempo:
-
-```yaml
-# otel-collector.yaml
-receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-
-exporters:
-  otlphttp:
-    endpoint: http://tempo:4318
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [otlphttp]
-```
-
-> **См. также:** [OTLP Protocol](../OpenTelemetry/otlp_protocol.md)
-
-#### Loki (корреляция логов и трассировок)
-
-Настройка Derived Fields в Loki позволяет переходить от логов к трассировкам:
-
-1. Извлечение `trace_id` из логов через regex
-2. Создание внутренней ссылки на datasource Tempo
-3. Клик по `trace_id` в логах открывает трассировку в Grafana
-
-> **См. также:** [Loki overview](../Loki/loki_overview.md)
-
----
-
-### Рекомендации по эксплуатации
-
-| Рекомендация | Описание |
-| :--- | :--- |
-| **Head sampling** | Настройка сэмплирования на уровне приложения для управления объёмом данных |
-| **Retention policy** | Настройка политик хранения до развёртывания в production |
-| **Единые trace_id** | Поддержка единых идентификаторов для трассировок, метрик и логов |
-| **Кэширование** | Использование Redis/Memcached для Query Frontend |
-| **Мониторинг Tempo** | Развёртывание Prometheus для мониторинга метрик самого Tempo |
-| **TLS** | Включение TLS для всех внутренних коммуникаций в production |
+Интеграции с [Grafana](../Grafana/grafana_overview.md), [OpenTelemetry Collector](../OpenTelemetry/otlp_protocol.md), [Loki](../Loki/loki_overview.md) и рекомендации по эксплуатации описаны в [index.md](./index.md#интеграции).
 
 ---
 
 ## Additional Information
 
-### Дополнительные ресурсы
-
-* **[Официальная документация](https://grafana.com/docs/tempo/latest/)** — полное руководство по установке и конфигурации
-* **[GitHub-репозиторий](https://github.com/grafana/tempo)** — исходный код, release notes, issues
-* **[TraceQL Documentation](https://grafana.com/docs/tempo/latest/traceql/)** — полный справочник по языку запросов
-* **[Tempo 2.10 Release Notes](https://grafana.com/docs/tempo/latest/release-notes/v2-10/)** — последние изменения
-* **[Grafana Cloud](https://grafana.com/products/cloud/tempo/)** — управляемая версия Tempo от Grafana Labs
-
-### Связанные темы
-
-* **[OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md)** — стандарт телеметрии
-* **[Grafana](../Grafana/grafana_overview.md)** — визуализация
-* **[Loki](../Loki/loki_overview.md)** — корреляция логов
-* **[Prometheus](../Prometheus/overview.md)** — метрики
+Документация: [официальная документация](https://grafana.com/docs/tempo/latest/), [формат vParquet](https://grafana.com/docs/tempo/latest/configuration/parquet/), [release notes v2.10](https://grafana.com/docs/tempo/latest/release-notes/v2-10/), [Tempo в Grafana Cloud](https://grafana.com/products/cloud/tempo/).

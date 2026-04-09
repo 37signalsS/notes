@@ -1,50 +1,39 @@
 # Service Discovery и Relabeling в Prometheus
 
-> Эта заметка описывает общие принципы. Для специфики работы в Kubernetes см. **[Обнаружение сервисов в Kubernetes](./kubernetes/service_discovery.md)**.
+> Общие концепции. Специфика Kubernetes — в [Service Discovery в Kubernetes](./kubernetes/service_discovery.md).
 
-> **См. также:** [Лейблы и кардинальность](./concepts/labels_and_cardinality.md) — правильное использование лейблов.
+> **См. также:** [Лейблы и кардинальность](./concepts/labels_and_cardinality.md) — правильное использование лейблов; [Конфигурация Prometheus](./configuration.md) — блок `scrape_configs`.
 
-## Определения
+## Definitions
 
-**Service Discovery (Обнаружение сервисов)** — это механизм, который [Prometheus](./overview.md) использует для автоматического нахождения целей (targets) для сбора метрик. Вместо ручного перечисления хостов в [конфигурации](./configuration.md), Prometheus запрашивает у внешних систем (API облаков, Kubernetes, [Consul](../Consul/consul_overview.md)) актуальный список эндпоинтов.
+**Service Discovery (SD)** — механизм автоматического обнаружения целей (targets) для сбора метрик. Prometheus запрашивает у внешних систем (Kubernetes API, [Consul](../Consul/consul_overview.md), файлы, облачные API) актуальный список эндпоинтов вместо ручного перечисления в [конфигурации](./configuration.md).
 
-**Relabeling (Перемаркировка)** — это процесс модификации меток, связанных с целью. Он позволяет фильтровать цели, стандартизировать метки и обогащать их метаданными, полученными в процессе Service Discovery.
+**Relabeling** — процесс модификации меток цели до и после сбора метрик. Позволяет фильтровать цели, стандартизировать метки, обогащать данные метаданными из SD.
 
-## Основные концепции
+## Basic Concepts
 
 ### Жизненный цикл обнаружения и перемаркировки
 
-1. **Обнаружение:** Prometheus обращается к настроенному источнику (например, `kubernetes_sd_configs`).
-2. **Метаданные:** Источник возвращает список целей с набором временных меток, имеющих префикс `__meta_` (например, `__meta_kubernetes_pod_name`).
-3. **Перемаркировка (`relabel_configs`):** Prometheus применяет правила из секции `relabel_configs` для фильтрации и преобразования целей и их меток *до* сбора метрик.
-4. **Сбор метрик (Scrape):** Prometheus опрашивает финальный список целей.
-5. **Перемаркировка метрик (`metric_relabel_configs`):** Prometheus применяет правила из `metric_relabel_configs` для фильтрации и преобразования уже собранных временных рядов *до* их сохранения в базу данных.
+1. **Обнаружение** — Prometheus обращается к источнику SD (`kubernetes_sd_configs`, `file_sd_configs` и др.).
+2. **Метаданные** — источник возвращает список целей с временными метками `__meta_*` (например, `__meta_kubernetes_pod_name`).
+3. **`relabel_configs`** — правила модификации меток цели **до** сбора метрик. Решают, будет ли цель опрошена, и формируют её адрес (`__address__`).
+4. **Scrape** — Prometheus опрашивает финальный список целей.
+5. **`metric_relabel_configs`** — правила модификации меток **после** сбора, но **до** записи в TSDB. Фильтруют временные ряды.
 
 ### `relabel_configs` vs `metric_relabel_configs`
 
-Это два разных этапа с разными задачами:
-
-1. **`relabel_configs`** (управление **целями**):
-    * Выполняется **до** сбора метрик.
-    * Решает, **будет ли** Prometheus опрашивать цель (`action: keep/drop`).
-    * Устанавливает адрес цели (формирует метку `__address__`).
-    * Преобразует метаданные (`__meta_*`) в постоянные метки цели (например, `pod_name`). Это помогает управлять [кардинальностью](./concepts/labels_and_cardinality.md).
-
-2. **`metric_relabel_configs`** (управление **метриками**):
-    * Выполняется **после** сбора метрик, но **до** сохранения в TSDB.
-    * Фильтрует ненужные **временные ряды**.
-    * Изменяет или удаляет метки у уже собранных метрик.
-    * **Важно:** Использовать аккуратно, так как это создает дополнительную нагрузку на Prometheus.
-
-## Практические сценарии
+| Параметр | `relabel_configs` | `metric_relabel_configs` |
+| :--- | :--- | :--- |
+| **Когда** | До сбора метрик | После сбора, до записи в TSDB |
+| **Что управляет** | Целями (targets) | Метриками (временными рядами) |
+| **Типичные задачи** | Фильтрация целей, формирование `__address__`, копирование `__meta_*` → постоянные метки | Удаление лишних метрик, фильтрация временных рядов, управление [кардинальностью](./concepts/labels_and_cardinality.md) |
+| **Влияние на производительность** | Минимальное | Дополнительная нагрузка на Prometheus |
 
 ### Механизмы Service Discovery
 
-Все механизмы настраиваются в секции `scrape_configs` файла `prometheus.yml`.
-
 #### `static_configs`
 
-Самый простой способ, подходит для статичной инфраструктуры.
+Статическое перечисление целей. Подходит для неизменной инфраструктуры.
 
 ```yaml
 scrape_configs:
@@ -57,9 +46,17 @@ scrape_configs:
 
 #### `file_sd_configs`
 
-Prometheus периодически читает YAML/JSON файлы со списками целей. Позволяет изменять цели без перезагрузки Prometheus.
+Prometheus периодически читает YAML/JSON-файлы со списками целей. Изменения применяются без перезагрузки.
 
-**Шаг 1: Создать файл с целями (`/etc/prometheus/sd/hosts.yml`)**
+```yaml
+scrape_configs:
+  - job_name: 'file_sd'
+    file_sd_configs:
+      - files: ['/etc/prometheus/sd/*.yml']
+        refresh_interval: 2m
+```
+
+**Файл целей (`/etc/prometheus/sd/hosts.yml`):**
 
 ```yaml
 - targets:
@@ -69,20 +66,9 @@ Prometheus периодически читает YAML/JSON файлы со сп�
     service: 'backend'
 ```
 
-**Шаг 2: Настроить Prometheus**
+#### `consul_sd_configs`
 
-```yaml
-scrape_configs:
-  - job_name: 'file_sd'
-    file_sd_configs:
-      - files:
-        - '/etc/prometheus/sd/*.yml'
-        refresh_interval: 2m
-```
-
-#### Обнаружение через API (`consul_sd_config`)
-
-Пример интеграции с Consul для обнаружения сервисов.
+Обнаружение сервисов через Consul API.
 
 ```yaml
 scrape_configs:
@@ -91,16 +77,34 @@ scrape_configs:
       - server: 'localhost:8500'
 ```
 
-Prometheus будет автоматически находить сервисы, зарегистрированные в Consul.
+#### Другие механизмы
 
-## Дополнительная информация: Действия в `relabel_configs`
+| Механизм | Описание |
+| :--- | :--- |
+| `kubernetes_sd_configs` | Kubernetes API (pod, service, endpoint, node, ingress). См. [SD в Kubernetes](./kubernetes/service_discovery.md) |
+| `ec2_sd_configs` | AWS EC2 API |
+| `azure_sd_configs` | Azure API |
+| `gce_sd_configs` | Google Compute Engine |
+| `dns_sd_configs` | DNS-записи (SRV, A) |
+| `http_sd_configs` | HTTP-эндпоинт, возвращающий JSON со списком целей |
 
-#### `keep` / `drop` (Фильтрация целей)
+### Действия в `relabel_configs`
 
-* `keep`: Оставить только те цели, которые соответствуют `regex`.
-* `drop`: Отбросить цели, которые соответствуют `regex`.
+| Действие | Описание |
+| :--- | :--- |
+| `keep` | Оставить цели, соответствующие `regex` |
+| `drop` | Отбросить цели, соответствующие `regex` |
+| `replace` | Заменить/создать метку (`source_labels` → `target_label`) |
+| `labelmap` | Копировать метки по regex (часто `__meta_*` → постоянные) |
+| `labeldrop` | Удалить метки, имена которых соответствуют `regex` |
+| `labelkeep` | Сохранить только метки, имена которых соответствуют `regex` |
+| `hashmod` | Хэширование метки с модулем — для шардирования Prometheus |
 
-**Пример:** Собирать метрики только с хостов, у которых есть тег `env="production"`.
+## Practical Scenarios
+
+### Фильтрация целей — `keep` / `drop`
+
+Собирать метрики только с хостов, у которых тег `production` в Consul:
 
 ```yaml
 relabel_configs:
@@ -109,10 +113,9 @@ relabel_configs:
     action: keep
 ```
 
-#### `replace` (Замена значения метки)
+### Создание метки из метаданных — `replace`
 
-Заменяет или создает `target_label` на основе `regex`, примененного к `source_labels`.
-**Пример:** Создать метку `pod_name` из мета-метки `__meta_kubernetes_pod_name`.
+Создать метку `pod_name` из `__meta_kubernetes_pod_name`:
 
 ```yaml
 relabel_configs:
@@ -121,10 +124,9 @@ relabel_configs:
     action: replace
 ```
 
-#### `labelmap` (Копирование меток)
+### Копирование множества меток — `labelmap`
 
-Копирует метки, имена которых соответствуют `regex`. Часто используется для преобразования `__meta_` меток в постоянные.
-**Пример:** Превратить `__meta_kubernetes_pod_label_app` в `app`.
+Префикс `__meta_kubernetes_pod_label_*` → краткие имена:
 
 ```yaml
 relabel_configs:
@@ -133,20 +135,65 @@ relabel_configs:
     action: labelmap
 ```
 
-Это правило найдет все метки вида `__meta_kubernetes_pod_label_*` и создаст новые, убрав префикс.
+Результат: `__meta_kubernetes_pod_label_app` → `app`, `__meta_kubernetes_pod_label_version` → `version`.
 
-#### `labeldrop` / `labelkeep` (Удаление меток)
+### Удаление метаданных — `labeldrop`
 
-* `labeldrop`: Удалить все метки, имена которых соответствуют `regex`.
-* `labelkeep`: Сохранить только те метки, имена которых соответствуют `regex`.
-
-**Пример:** Удалить все мета-метки Kubernetes после того, как нужные из них были скопированы.
+Удалить все `__meta_kubernetes_*` после копирования нужных:
 
 ```yaml
 relabel_configs:
-  # ... другие правила ...
   - regex: __meta_kubernetes_.+
     action: labeldrop
 ```
 
-> **Внимание!** Используйте `labelkeep` с осторожностью, чтобы случайно не удалить служебные метки, такие как `__address__`, что сделает сбор метрик невозможным.
+> **Внимание:** `labelkeep` используйте с осторожностью — можно удалить служебные метки (`__address__`, `__scheme__`), что сломает сбор метрик.
+
+### Blackbox Exporter — подмена `__address__`
+
+Blackbox Exporter требует передачи целевого URL как параметра. Relabeling подменяет адрес цели:
+
+```yaml
+scrape_configs:
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['https://example.com', 'https://api.example.com']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: 'blackbox-exporter:9115'
+      - source_labels: [__param_target]
+        target_label: instance
+```
+
+Логика: оригинальный `__address__` (целевой URL) → `__param_target` → `__address__` заменяется на адрес Blackbox Exporter → `instance` сохраняет оригинальный URL для идентификации.
+
+### Шардирование — `hashmod`
+
+Распределение целей между несколькими экземплярами Prometheus:
+
+```yaml
+relabel_configs:
+  - source_labels: [__address__]
+    modulus: 4
+    target_label: __tmp_hash
+    action: hashmod
+  - source_labels: [__tmp_hash]
+    regex: '0'
+    action: keep
+```
+
+Каждый экземпляр Prometheus получает свой `modulus` (0, 1, 2, 3) и забирает только соответствующие цели.
+
+## Additional Information
+
+### Связанные темы
+
+- [SD в Kubernetes](./kubernetes/service_discovery.md) — специфика `kubernetes_sd_configs`, ServiceMonitor/PodMonitor
+- [Blackbox Exporter](./Exporters/blackbox/blackbox_exporter_installation_and_setup.md) — relabeling для probe-мониторинга
+- [promtool](./promtool_and_best_practices.md) — валидация конфигурации
+- [Remote Write](./scaling/remote_read_write.md) — `write_relabel_configs` для фильтрации перед отправкой

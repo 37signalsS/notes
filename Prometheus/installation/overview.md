@@ -1,18 +1,18 @@
-# Установка Prometheus: Обзор
+# Prometheus Installation: Overview
 
-## Определения
+## Definitions
 
-**Prometheus** — это система мониторинга и оповещения с открытым исходным кодом. Для полноценной работы требуются дополнительные компоненты:
+**Prometheus** — система мониторинга и оповещения с открытым исходным кодом. Для полноценной работы требуются дополнительные компоненты. Полная архитектура — [Prometheus overview](../overview.md).
 
-* **Prometheus Server**: Основной компонент стека, отвечающий за сбор, хранение и обработку метрик в формате временных рядов (TSDB).
-* **Node Exporter**: Экспортер для сбора метрик с аппаратного и программного обеспечения хостовой системы (CPU, RAM, диск, сеть).
-* **Blackbox Exporter**: Экспортер для проверки доступности эндпоинтов по различным протоколам (HTTP, HTTPS, TCP, ICMP, DNS). Работает по принципу "черного ящика".
-* **Alertmanager**: Обрабатывает алерты, отправленные Prometheus. Отвечает за их дедупликацию, группировку и маршрутизацию в различные системы уведомлений (Email, Slack, PagerDuty).
-* **Pushgateway**: Позволяет кратковременным и batch-заданиям, которые не могут быть постоянно доступны для скрейпинга, отправлять свои метрики в Prometheus.
+* **Prometheus Server**: сбор, хранение и обработка метрик в формате временных рядов (TSDB). Подробно: [Prometheus Server installation](./prometheus_server_installation.md).
+* **Node Exporter**: сбор метрик хостовой системы (CPU, RAM, диск, сеть). Подробно: [Node Exporter installation](./node_exporter_installation.md).
+* **Blackbox Exporter**: проверка доступности эндпоинтов (HTTP, HTTPS, TCP, ICMP, DNS). Подробно: [Blackbox Exporter installation](./Blackbox_Exporter/blackbox_exporter_installation.md).
+* **Alertmanager**: обработка алертов — дедупликация, группировка, маршрутизация. Подробно: [Alertmanager installation](./alertmanager_installation.md).
+* **Pushgateway**: отправка метрик кратковременными и batch-заданиями. Подробно: [Pushgateway installation](./pushgateway_installation.md).
 
-> **См. также:** [Архитектура Prometheus](./overview.md), [Exporters](../Exporters/overview.md).
+> **См. также:** [Архитектура Prometheus](../overview.md), [Exporters](../Exporters/overview.md).
 
-## Основные концепции
+## Basic Concepts
 
 ### Способы установки
 
@@ -45,7 +45,7 @@
 * `systemctl restart <service>`: Перезапустить сервис.
 * `systemctl reload <service>`: Перезагрузить конфигурацию сервиса без его полной остановки (поддерживается не всеми сервисами).
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Быстрый старт
 
@@ -84,9 +84,9 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
 
-> **Подробное руководство:** [Установка через Helm](./with_helm_chart.md), [Kube-Prometheus-Stack](../../Linux/Networking/Services/BIND/overview.md).
+> **Подробное руководство:** [Установка через Helm](./with_helm_chart.md), [Kube-Prometheus-Stack](../kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
 
-## Дополнительная информация
+## Additional Information
 
 ### Проверка конфигурации компонентов
 
@@ -118,19 +118,10 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
 
 | Компонент | Версия |
 |---|---|
-| **Prometheus** | 3.10.0 |
-| **Node Exporter** | 1.10.2 |
+| **Prometheus** | 3.11.1 |
+| **Node Exporter** | 1.11.1 |
 | **Blackbox Exporter** | 0.28.0 |
-| **Alertmanager** | 0.31.0 |
+| **Alertmanager** | 0.32.0 |
 | **Pushgateway** | 1.11.2 |
 
 > **Важно:** Всегда проверяйте [официальные репозитории GitHub](https://github.com/prometheus) для получения последних стабильных версий.
-
-### Связанные темы
-
-* [Концепты Prometheus](../concepts/) — типы метрик, PromQL, TSDB
-* [Exporters](../Exporters/overview.md) — обзор экспортёров
-* [Configuration](../configuration.md) — настройка Prometheus
-* [Rules и алертинг](../rules.md) — создание правил
-* [Scaling](../scaling/overview.md) — масштабирование и долгосрочное хранение
-* [Docker Stack](./docker_stack/overview.md) — установка в Docker

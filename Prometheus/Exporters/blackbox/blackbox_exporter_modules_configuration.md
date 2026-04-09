@@ -1,10 +1,14 @@
 # Blackbox Exporter — Конфигурация модулей
 
-## 1. Общая структура
+## Definitions
 
-Конфигурационный файл `blackbox.yml` содержит `modules`. Каждый модуль описывает тип проверки (`prober`) и её параметры.
+Конфигурационный файл `blackbox.yml` содержит секцию `modules`. Каждый модуль описывает тип проверки (`prober`) и её параметры.
 
-**Общая структура:**
+> **См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md).
+
+## Basic Concepts
+
+### Общая структура модуля
 
 ```yaml
 modules:
@@ -16,11 +20,13 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
----
+**Типы проберов:** `http`, `tcp`, `icmp`, `dns`, `grpc`
 
-## 2. HTTP-проверки
+## Practical Scenarios
 
-### Базовая проверка на 200 OK
+### HTTP-проверки
+
+**Базовая проверка на 200 OK:**
 
 ```yaml
 modules:
@@ -34,7 +40,7 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-### Проверка с авторизацией
+**Проверка с авторизацией:**
 
 ```yaml
 modules:
@@ -49,7 +55,7 @@ modules:
       valid_status_codes: [200, 201]
 ```
 
-### Проверка наличия текста в ответе
+**Проверка наличия текста в ответе:**
 
 ```yaml
 modules:
@@ -63,7 +69,7 @@ modules:
         - "Time Series Database"
 ```
 
-### Проверка SSL-сертификата
+**Проверка SSL-сертификата:**
 
 ```yaml
 modules:
@@ -78,7 +84,7 @@ modules:
       fail_if_not_ssl: true
 ```
 
-### Проверка срока действия SSL-сертификата
+**Проверка срока действия SSL-сертификата:**
 
 ```yaml
 modules:
@@ -91,7 +97,7 @@ modules:
       fail_if_cert_not_expiry_after: 2592000s  # 30 дней
 ```
 
-### Проверка redirect
+**Проверка redirect:**
 
 ```yaml
 modules:
@@ -103,11 +109,21 @@ modules:
       follow_redirects: true
 ```
 
----
+**HTTP/3 (QUIC) — v0.28.0+:**
 
-## 3. TCP-проверки
+```yaml
+modules:
+  http3_check:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      http3: true
+```
 
-### Базовая проверка порта
+### TCP-проверки
+
+**Базовая проверка порта:**
 
 ```yaml
 modules:
@@ -118,7 +134,7 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-### Проверка SSH-баннера
+**Проверка SSH-баннера:**
 
 ```yaml
 modules:
@@ -131,7 +147,7 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-### Проверка SMTP
+**Проверка SMTP:**
 
 ```yaml
 modules:
@@ -145,7 +161,7 @@ modules:
         - expect: "^250"
 ```
 
-### Проверка через Unix Socket
+**Проверка через Unix Socket:**
 
 ```yaml
 modules:
@@ -156,11 +172,9 @@ modules:
       address: /var/run/docker.sock
 ```
 
----
+### ICMP-проверки (ping)
 
-## 4. ICMP-проверки (ping)
-
-### Базовый ping
+**Базовый ping:**
 
 ```yaml
 modules:
@@ -171,25 +185,11 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-### Ping с указанием количества пакетов
-
-```yaml
-modules:
-  icmp_verbose:
-    prober: icmp
-    timeout: 5s
-    icmp:
-      preferred_ip_protocol: "ip4"
-      ip_protocol: 4
-```
-
 > **Важно:** Для ICMP-проверок требуется запуск от `root` или с capability `CAP_NET_RAW`.
 
----
+### DNS-проверки
 
-## 5. DNS-проверки
-
-### Базовая проверка DNS
+**Базовая проверка DNS:**
 
 ```yaml
 modules:
@@ -200,10 +200,9 @@ modules:
       query_name: "google.com"
       query_type: "A"
       preferred_ip_protocol: "ip4"
-      dns_over_https: false
 ```
 
-### Проверка DNS-сервера
+**Проверка DNS-сервера:**
 
 ```yaml
 modules:
@@ -219,7 +218,7 @@ modules:
         fail_if_matches_regexp: [".*NXDOMAIN.*"]
 ```
 
-### Проверка MX-записей
+**Проверка MX-записей:**
 
 ```yaml
 modules:
@@ -231,9 +230,7 @@ modules:
       query_type: "MX"
 ```
 
----
-
-## 6. gRPC-проверки (новая функция v0.28.0)
+### gRPC-проверки (v0.28.0+)
 
 ```yaml
 modules:
@@ -247,10 +244,78 @@ modules:
         insecure_skip_verify: false
 ```
 
----
+## Additional Information
 
-## 7. Связанные документы
+**Связанные темы:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md).
 
-- **[Обзор и концепции](./blackbox_exporter_overview.md)** — базовые определения
-- **[Установка и настройка](./blackbox_exporter_installation_and_setup.md)** — запуск и конфигурация
-- **[Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)** — метрики и правила оповещений
+### Таблица параметров по типам проберов
+
+#### HTTP-пробер
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `method` | string | HTTP-метод (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`) |
+| `headers` | map | Пользовательские заголовки запроса |
+| `valid_status_codes` | list[int] | Допустимые статус-коды (по умолчанию `[200]`) |
+| `valid_http_versions` | list[string] | Допустимые версии HTTP |
+| `follow_redirects` | bool | Следовать редиректам (по умолчанию `true`) |
+| `fail_if_ssl` | bool | Считать ошибкой наличие SSL |
+| `fail_if_not_ssl` | bool | Считать ошибкой отсутствие SSL |
+| `fail_if_body_matches_regexp` | list[string] | Ошибка если тело совпало с regex |
+| `fail_if_body_not_matches_regexp` | list[string] | Ошибка если тело не совпало с regex |
+| `fail_if_header_matches_regexp` | map | Ошибка если заголовок совпал с regex |
+| `tls_config` | object | Настройки TLS (`insecure_skip_verify`, `ca_file`, `cert_file`, `key_file`) |
+| `preferred_ip_protocol` | string | `ip4` или `ip6` |
+| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
+| `http3` | bool | Включить HTTP/3 (QUIC), v0.28.0+ |
+| `body` | string | Тело запроса (для POST/PUT) |
+| `compression` | string | Тип сжатия (`gzip`, `deflate`, `br`, `identity`) |
+| `skip_resolve_phase_with_old_dns` | bool | Пропустить DNS-resolve при HTTP/3 |
+
+#### TCP-пробер
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `tls` | bool | Использовать TLS |
+| `tls_config` | object | Настройки TLS |
+| `preferred_ip_protocol` | string | `ip4` или `ip6` |
+| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
+| `source_ip_address` | string | IP источника |
+| `query_response` | list[object] | Сценарий ожидания/отправки данных |
+| `query_response[].expect` | string | Regex ожидаемого ответа |
+| `query_response[].send` | string | Отправляемые данные |
+| `query_response[].starttls` | bool | Инициировать STARTTLS |
+
+#### ICMP-пробер
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `preferred_ip_protocol` | string | `ip4` или `ip6` |
+| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
+| `payload_size` | int | Размер payload (по умолчанию `56`) |
+| `ttl` | int | Time-to-live |
+| `source_ip_address` | string | IP источника |
+
+#### DNS-пробер
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `query_name` | string | Имя для запроса (обязательный) |
+| `query_type` | string | Тип записи (`A`, `AAAA`, `CNAME`, `MX`, `NS`, `SOA`, `TXT`, `SRV`) |
+| `transport_protocol` | string | `udp` (по умолчанию) или `tcp` |
+| `preferred_ip_protocol` | string | `ip4` или `ip6` |
+| `validate_answer_rrs` | object | Валидация ответов |
+| `validate_answer_rrs.fail_if_matches_regexp` | list[string] | Ошибка при совпадении |
+| `validate_answer_rrs.fail_if_all_match_regexp` | list[string] | Ошибка если все совпали |
+| `valid_rcodes` | list[string] | Допустимые RCODE (по умолчанию `[NOERROR]`) |
+
+#### gRPC-пробер
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `tls` | bool | Использовать TLS |
+| `tls_config` | object | Настройки TLS |
+| `preferred_ip_protocol` | string | `ip4` или `ip6` |
+| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
+| `service` | string | Имя сервиса для health check (grpc.health.v1) |
+| `metadata` | map | Пользовательские метаданные запроса |

@@ -209,7 +209,7 @@ spec:
 * Интеграция с GitOps
 * Не требует ручного написания relabel_configs
 
-> **См. также:** [Prometheus Operator](../../GitOps/ArgoCD/synchronization/concepts.md).
+> **См. также:** [ArgoCD синхронизация](../../GitOps/ArgoCD/synchronization.md).
 
 ## Дополнительная информация
 
@@ -249,11 +249,3 @@ spec:
 * Нужна максимальная гибкость
 * Сложные правила фильтрации
 * Интеграция с внешними системами
-
-### Связанные темы
-
-* [Prometheus Operator](./operator/concepts.md) — автоматизация через CRD
-* [Overview](./overview.md) — обзор мониторинга в Kubernetes
-* [Service Discovery и Relabeling](../service_discovery_and_relabeling.md) — основные концепции
-* [Configuration](../configuration.md) — настройка Prometheus
-* [Blackbox Exporter](../Exporters/blackbox/blackbox_exporter_installation_and_setup.md) — blackbox-мониторинг

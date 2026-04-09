@@ -1,121 +1,69 @@
-# Интеграция с Grafana
+# Интеграция Grafana с Prometheus Operator
 
-## Обзор
+## Определения
 
-Grafana не имеет собственного CRD в Prometheus Operator, но использует ConfigMap с лейблами для автоматического provisioning дашбордов.
+**Grafana в Prometheus Operator** — Grafana не имеет собственного CRD в Prometheus Operator. Визуализация и provisioning управляются через механизм ConfigMap с лейблами + Grafana Sidecar, который разворачивается в составе Helm-чарта kube-prometheus-stack.
 
-## Управление дашбордами через ConfigMap
+> **См. также:** [Обзор Grafana](../../../Grafana/grafana_overview.md), [Концепции Prometheus Operator](./concepts.md).
 
-### Создание ConfigMap с дашбордом
+## Основные концепции
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboard-my-app
-  namespace: monitoring
-  labels:
-    grafana_dashboard: "1"
-  annotations:
-    grafana_folder: "My App"
-data:
-  my-app-dashboard.json: |
-    {
-      "title": "My App Dashboard",
-      "panels": [
-        {
-          "title": "Request Rate",
-          "targets": [
-            {
-              "expr": "rate(http_requests_total[5m])",
-              "legendFormat": "{{ method }}"
-            }
-          ]
-        }
-      ]
-    }
+### Почему нет CRD для Grafana
+
+Prometheus Operator фокусируется на управлении компонентами мониторинга через CRD (Prometheus, Alertmanager, ServiceMonitor, etc.). Grafana — отдельный продукт, который интегрируется через стандартные механизмы Kubernetes:
+
+- **ConfigMap с лейблами** — обнаружение дашбордов и источников данных
+- **Sidecar-контейнер** — автоматическая загрузка ресурсов в Grafana
+- **Helm values.yaml** — конфигурация Grafana при установке
+
+### Архитектура интеграции
+
+```
+ConfigMap (label: grafana_dashboard: "1")
+         ↓
+Grafana Sidecar (k8s-sidecar контейнер в Pod Grafana)
+         ↓
+Grafana (автоматическая загрузка дашбордов и datasource)
 ```
 
-## Принцип работы
+### Ключевые компоненты
 
-1. ConfigMap с лейблом `grafana_dashboard: "1"` создается в namespace
-2. Grafana sidecar обнаруживает ConfigMap
-3. Монтирует JSON в Grafana
-4. Grafana загружает дашборд
+| Компонент | Назначение | SSoT |
+|---|---|---|
+| ConfigMap + лейблы | Хранение JSON-дашбордов и datasource-конфигураций | [Provisioning через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md) |
+| Grafana Sidecar | Обнаружение и загрузка ConfigMap в Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
+| Helm values.yaml | Общая конфигурация Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
+| Файловый provisioning | Провиженинг через YAML/JSON в `/etc/grafana/provisioning` | [Grafana Provisioning](../../../Grafana/grafana_provisioning.md) |
 
-## Настройка Grafana Sidecar
+## Практические сценарии
 
-В Helm-чарте kube-prometheus-stack:
+Сценарии использования описаны в SSoT-файлах:
 
-```yaml
-# values.yaml
-grafana:
-  sidecar:
-    dashboards:
-      enabled: true
-      label: grafana_dashboard
-      labelValue: "1"
-      folder: /tmp/dashboards
-      searchNamespace: ALL
-```
+- **Создание ConfigMap с дашбордом** → [Provisioning через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md)
+- **Настройка sidecar (label, searchNamespace)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
+- **Провиженинг datasource (Prometheus, Loki)** → [Источники данных Grafana](../../../Grafana/grafana_datasources.md)
+- **Полная конфигурация Grafana (PV, Ingress, HA)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
+- **Файловый провижининг (standalone, Docker)** → [Grafana Provisioning](../../../Grafana/grafana_provisioning.md)
 
-## Источники данных (Datasources)
+## Дополнительная информация
 
-### Настройка через values.yaml
+### Встроенные дашборды kube-prometheus-stack
 
-```yaml
-grafana:
-  datasources:
-    datasources.yaml:
-      apiVersion: 1
-      datasources:
-        - name: Prometheus
-          type: prometheus
-          access: proxy
-          orgId: 1
-          url: http://prometheus-server.monitoring.svc.cluster.local:80
-          isDefault: true
-          editable: false
-        - name: Loki
-          type: loki
-          access: proxy
-          orgId: 1
-          url: http://loki-gateway.logging.svc.cluster.local:80
-          editable: false
-```
+Helm-чарт kube-prometheus-stack включает предустановленные дашборды:
 
-### Настройка через Secret
+- Kubernetes / Compute Resources / Cluster
+- Kubernetes / Compute Resources / Namespace (pods)
+- Kubernetes / Compute Resources / Node (pods)
+- Prometheus / Overview
+- Alertmanager / Overview
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: grafana-datasources
-  namespace: monitoring
-type: Opaque
-stringData:
-  datasources.yaml: |
-    apiVersion: 1
-    datasources:
-      - name: Prometheus
-        type: prometheus
-        access: proxy
-        url: http://prometheus-server.monitoring.svc.cluster.local:80
-        isDefault: true
-```
+> Подробный список и настройка — в [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md).
 
-## Дашборды из Helm-чарта
+### Связанные темы
 
-kube-prometheus-stack включает встроенные дашборды:
-
-* Kubernetes / Compute Resources / Cluster
-* Kubernetes / Compute Resources / Namespace (pods)
-* Kubernetes / Compute Resources / Node (pods)
-* Prometheus / Overview
-* Alertmanager / Overview
-
-## Связанные темы
-
-* **[Grafana Provisioning](../../../Grafana/grafana_provisioning.md)** — автоматическая настройка Grafana
-* **[Prometheus CRD](./crd/prometheus.md)** — описание Prometheus
-* **[Kube-Prometheus-Stack Helm](../Kube_Prometheus_Stack_Helm/overview.md)** — установка через Helm
+- **[Концепции Prometheus Operator](./concepts.md)** — CRD и архитектура
+- **[Установка Prometheus Operator](./installation.md)** — установка и настройка
+- **[Grafana Provisioning](../../../Grafana/grafana_provisioning.md)** — общий провижининг Grafana
+- **[Provisioning дашбордов через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md)** — sidecar-механизм
+- **[Конфигурация Grafana в kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/grafana_config.md)** — Helm-параметры
+- **[Источники данных Grafana](../../../Grafana/grafana_datasources.md)** — Prometheus, Loki, и др.

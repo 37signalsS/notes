@@ -1,208 +1,112 @@
-# Установка Prometheus и Grafana с использованием APT
+# Установка Prometheus через APT
 
-## Определения
+## Definitions
 
-* **Prometheus Server**: Основной сервер, который собирает (scrape), хранит и обрабатывает метрики.
-* **Node Exporter**: Экспортер, устанавливаемый на отслеживаемые хосты для сбора метрик операционной системы (CPU, RAM, диск, сеть и т.д.).
-* **Grafana**: Платформа для визуализации данных, подключающаяся к Prometheus для отображения метрик в виде наглядных дашбордов.
+- **Prometheus Server** — основной компонент, выполняющий сбор (scrape), хранение и обработку метрик в TSDB.
+- **Node Exporter** — агент для сбора метрик ОС (CPU, RAM, диск, сеть), предоставляет метрики по HTTP на порту `9100`.
 
-> **См. также:** [Prometheus overview](./overview.md), [Grafana](../../Grafana/grafana_overview.md).
+> См. также: [Prometheus overview](./overview.md), [Node Exporter](../Exporters/overview.md), [TSDB](../concepts/tsdb.md).
 
-## Основные концепции
+## Basic Concepts
 
-### Общая схема мониторинга
+### Архитектура мониторинга
 
-1. **Сбор метрик**: `Node Exporter` собирает метрики с отслеживаемых серверов и предоставляет их по HTTP.
-2. **Хранение и обработка**: `Prometheus Server` периодически опрашивает (scrape) `Node Exporter` и другие цели, сохраняя полученные метрики в своей временной базе данных (TSDB).
-3. **Визуализация**: `Grafana` подключается к `Prometheus Server` как к источнику данных и используется для построения графиков, дашбордов и анализа метрик.
+1. **Сбор**: Node Exporter собирает метрики с хоста и отдаёт их через HTTP-эндпоинт `/metrics`.
+2. **Хранение**: Prometheus Server периодически опрашивает (scrape) цели и сохраняет данные в TSDB.
+3. **Визуализация**: Grafana подключается к Prometheus как datasource для построения дашбордов. Подробнее: [Grafana overview](../../Grafana/grafana_overview.md), [Grafana dashboards](../../Grafana/dashboards/definitions_and_concepts.md).
 
 ### Преимущества установки через APT
 
-Установка через менеджер пакетов `apt` (для дистрибутивов на базе Debian/Ubuntu) упрощает процесс развертывания, обновления и управления сервисами, так как пакеты уже сконфигурированы для работы с `systemd`.
+Пакетный менеджер `apt` (Debian/Ubuntu) упрощает развёртывание и обновление — пакеты предустановлены для работы с `systemd` ([service_management](../../Linux/Core/systemd/service_management.md)). Установка одной командой включает автозапуск и стандартную конфигурацию в `/etc/prometheus/`.
 
-> **См. также:** [TSDB](../concepts/tsdb.md) — устройство базы данных Prometheus.
+> См. также: [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
 
-## Практические сценарии
+## Practical Scenarios
 
-#### Установка компонентов на основной сервер
+### Установка Prometheus Server и Node Exporter
 
-1. **Обновление списка пакетов**:
+1. Обновление списка пакетов:
 
     ```bash
     sudo apt update
     ```
 
-2. **Установка Prometheus Server и Node Exporter**:
+2. Установка Prometheus Server и Node Exporter:
 
     ```bash
     sudo apt install prometheus prometheus-node-exporter
     ```
 
-    После установки `systemd` автоматически запустит сервисы `prometheus.service` и `prometheus-node-exporter.service`.
+    Сервисы `prometheus.service` и `prometheus-node-exporter.service` запускаются автоматически.
 
-3. **Проверка доступности Prometheus и Node Exporter**:
-    Используйте утилиту `ss` для проверки открытых портов:
+3. Проверка доступности:
 
     ```bash
     ss -tnlp
     ```
 
-    В выводе должны быть порты:
-    * `*:9090` — веб-интерфейс и API Prometheus Server.
-    * `*:9100` — эндпоинт метрик Node Exporter (собственного, на сервере мониторинга).
+    Ожидаемые порты:
+    - `*:9090` — Prometheus Server (веб-интерфейс и API)
+    - `*:9100` — Node Exporter (метрики хоста)
 
-    Проверьте веб-интерфейс Prometheus по адресу `http://<ip_сервера>:9090`. На вкладке **Status -> Targets** должен быть виден `localhost:9100` со статусом `UP`.
+    Веб-интерфейс Prometheus: `http://<ip_сервера>:9090`. На **Status → Targets** должен быть виден `localhost:9100` со статусом `UP`.
 
-4. **Установка Grafana**:
+    > Подробнее об утилите `ss`: [ss](../../Linux/Diagnostics/Networking/ss.md).
 
-    ```bash
-    # Добавление репозитория Grafana и установка
-    sudo apt-get install -y apt-transport-https software-properties-common wget
-    sudo wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key
-    echo "deb [signed-by=/usr/share/keyrings/grafana.key] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+### Добавление нового хоста для мониторинга
 
-    sudo apt-get update
-    sudo apt-get install grafana
-    ```
-
-    После установки Grafana не запустится автоматически.
-
-5. **Запуск и включение автозапуска Grafana**:
-
-    ```bash
-    sudo systemctl start grafana-server
-    sudo systemctl enable grafana-server
-    ```
-
-6. **Проверка доступности Grafana**:
-
-    ```bash
-    ss -tnlp | grep 3000
-    ```
-
-    Grafana должна быть доступна по адресу `http://<ip_сервера>:3000`.
-
-#### Настройка Grafana
-
-1. **Первый вход в систему**:
-    * Откройте `http://<ip_сервера>:3000`.
-    * Используйте логин/пароль по умолчанию: `admin`/`admin`.
-    * Система предложит сменить пароль.
-
-2. **Добавление источника данных Prometheus**:
-    * Перейдите в **Configuration (значок шестеренки) -> Data Sources**.
-    * Нажмите **Add data source** и выберите **Prometheus**.
-    * В поле **URL** укажите адрес вашего Prometheus-сервера: `http://localhost:9090`.
-    * Нажмите **Save & test**. Должно появиться сообщение "Data source is working".
-
-3. **Импорт дашборда Node Exporter Full**:
-    * Перейдите в **Dashboards (значок четырех квадратов) -> Browse**.
-    * Нажмите **Import**.
-    * В поле "Import via grafana.com" введите ID дашборда: `1860` (популярный дашборд для Node Exporter) и нажмите **Load**.
-    * На следующей странице в выпадающем списке выберите ваш источник данных Prometheus.
-    * Нажмите **Import**.
-
-#### Добавление нового хоста для мониторинга
-
-1. **На целевом хосте (Node Exporter)**:
-    Установите `Node Exporter` на целевой хост, который вы хотите мониторить:
+1. **На целевом хосте** — установка Node Exporter:
 
     ```bash
     sudo apt update
     sudo apt install prometheus-node-exporter
     ```
 
-    Убедитесь, что сервис запущен и порт `9100` слушается. Проверьте сетевой доступ с сервера мониторинга:
+    Проверка с сервера мониторинга:
 
     ```bash
-    # На сервере мониторинга
     curl http://<ip_целевого_хоста>:9100/metrics
     ```
 
-    Вы должны получить большой текстовый вывод с метриками.
+    Подробнее: [node_exporter_installation](./node_exporter_installation.md).
 
-2. **На сервере мониторинга (Prometheus Server)**:
-    * Найдите конфигурационный файл Prometheus:
+2. **На сервере мониторинга** — редактирование `/etc/prometheus/prometheus.yml`:
 
-        ```bash
-        /usr/bin/prometheus --help 2>&1 | grep 'config.file'
-        # Обычно это /etc/prometheus/prometheus.yml
-        ```
+    ```yaml
+    scrape_configs:
+      - job_name: "prometheus"
+        static_configs:
+          - targets: ["localhost:9090"]
 
-    * Отредактируйте `/etc/prometheus/prometheus.yml`, добавив новый хост в секцию `scrape_configs` для `job_name: "node"`:
+      - job_name: "node"
+        static_configs:
+          - targets: ["localhost:9100", "192.168.1.100:9100"]  # IP нового хоста
+    ```
 
-        ```yaml
-        # ...
-        scrape_configs:
-          - job_name: "prometheus"
-            static_configs:
-              - targets: ["localhost:9090"]
-
-          - job_name: "node"
-            static_configs:
-              - targets: ["localhost:9100", "192.168.1.100:9100"] # <-- Добавьте IP:порт вашего хоста
-        ```
-
-    * Перезагрузите конфигурацию Prometheus (без перезапуска сервиса):
-
-        ```bash
-        sudo killall -HUP prometheus
-        ```
-
-        *Или: `sudo systemctl reload prometheus.service`*
-    * **Проверка**: Вернитесь в веб-интерфейс Prometheus (**Status -> Targets**). Новый хост должен появиться в списке `node` со статусом `UP`. В дашборде Grafana вы сможете выбрать его из выпадающего списка `Node`.
-
-#### (Опционально) Настройка Nginx как обратного прокси для Grafana
-
-Для доступа к Grafana по стандартному 80-му порту вместо 3000 можно настроить [Nginx](../../WebServers/Nginx/Core/nginx_overview.md).
-
-1. **Установите Nginx**:
+    Перезагрузка конфигурации:
 
     ```bash
-    sudo apt install nginx
+    sudo systemctl reload prometheus.service
     ```
 
-2. **Настройте конфигурацию сайта**:
-    Отредактируйте файл `/etc/nginx/sites-available/default`. **Важно**: закомментируйте или удалите стандартную директиву `try_files` в `location /`.
+    Проверка: **Status → Targets** в веб-интерфейсе Prometheus. Новый хост должен иметь статус `UP`.
 
-    ```nginx
-    server {
-        listen 80 default_server;
-        listen [::]:80 default_server;
+    > Подробнее о конфигурации: [Prometheus configuration](../configuration.md).
 
-        root /var/www/html;
-        index index.html index.htm index.nginx-debian.html;
+### Интеграция с Grafana
 
-        server_name _;
+После установки Prometheus подключите Grafana как источник данных:
 
-        location / {
-                # try_files $uri $uri/ =404; # <-- Закомментировать эту строку
-                proxy_pass http://localhost:3000;
-                proxy_set_header Host \$host;
-                proxy_set_header X-Real-IP \$remote_addr;
-                proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto \$scheme;
-        }
-    }
-    ```
+1. Установка Grafana: [Grafana installation](../../Grafana/Installation/).
+2. Добавление datasource: **Configuration → Data Sources → Prometheus** → URL: `http://localhost:9090`.
+3. Импорт дашборда Node Exporter Full (ID `1860`): **Dashboards → Import**.
 
-3. **Перезапустите Nginx**:
+> См. также: [Grafana dashboards](../../Grafana/dashboards/definitions_and_concepts.md), [Docker Compose setup](./docker_stack/overview.md) для автоматизированного развёртывания.
 
-    ```bash
-    sudo systemctl restart nginx
-    ```
+### Настройка Nginx как обратного прокси
 
-    Теперь Grafana будет доступна по адресу `http://<ip_сервера>`. Подробное руководство по этой теме: [nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md).
+Для доступа к Grafana по порту `80` вместо `3000` настройте reverse proxy ([nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md)).
 
----
+## Additional Information
 
-## Дополнительная информация
-
-* **Prometheus**: Общая информация об архитектуре и компонентах [overview](./overview.md).
-* **Grafana**: Полный обзор возможностей и функций платформы [grafana_overview](../../Grafana/grafana_overview.md).
-* **Node Exporter**: Детальное описание и настройка [exporters](../Exporters/overview.md).
-* **Управление пакетами в Linux**: Принципы работы `apt` и других пакетных менеджеров [linux_package_management_overview](../../Linux/PackageManagement/linux_package_management_overview.md).
-* **Управление службами Systemd**: Подробное руководство по `systemctl` [service_management](../../Linux/Core/systemd/service_management.md).
-* **Конфигурация Prometheus**: Детальное описание директив `prometheus.yml` [configuration](../configuration.md).
-* **Дашборды в Grafana**: Создание, импорт и управление дашбордами [grafana_dashboards](../../Grafana/dashboards/definitions_and_concepts.md).
-* **Утилита `ss`**: Подробнее о проверке сетевых соединений [ss](../../Linux/Diagnostics/Networking/ss.md).
+Файл охватывает установку Prometheus Server и Node Exporter через APT на Debian/Ubuntu. Связанные темы: конфигурация Prometheus ([configuration](../configuration.md)), экспортёры ([exporters](../Exporters/overview.md)), Grafana ([grafana_overview](../../Grafana/grafana_overview.md), [installation](../../Grafana/Installation/)), Nginx reverse proxy ([nginx_as_reverse_proxy_for_grafana](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_grafana.md)).

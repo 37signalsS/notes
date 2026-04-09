@@ -1,25 +1,46 @@
 # Blackbox Exporter — Метрики и алертинг
 
-## 1. Основные метрики
+## Definitions
 
-```
-probe_success                              # 1 если проверка успешна, 0 если нет
-probe_duration_seconds                     # Время выполнения проверки
-probe_dns_lookup_time_seconds              # Время DNS-запроса
-probe_connect_duration_seconds             # Время подключения
-probe_ssl_earliest_cert_expiry             # Время истечения SSL-сертификата
-probe_tls_version_info{version="TLSv1.3"}  # Версия TLS
-probe_http_status_code                     # HTTP статус код
-probe_http_duration_seconds                # Время HTTP-запроса
-probe_ip_addr_protocol                     # Протокол IP (ipv4/ipv6)
-probe_icmp_round_trip_seconds              # Время ICMP ping
-```
+**Метрики Blackbox Exporter** — временные ряды, генерируемые exporter при выполнении проверок (probes) целевых эндпоинтов. Результаты проверок доступны по пути `/probe`, метрики работы самого exporter — по `/metrics`.
 
----
+> **См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
 
-## 2. Алертинг
+## Basic Concepts
 
-### Эндпоинт недоступен
+### Основные метрики
+
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `probe_success` | gauge | `1` если проверка успешна, `0` если нет |
+| `probe_duration_seconds` | gauge | Общее время выполнения проверки |
+| `probe_dns_lookup_time_seconds` | gauge | Время DNS-запроса |
+| `probe_connect_duration_seconds` | gauge | Время установления соединения (TCP/TLS) |
+| `probe_tls_version_info{version="TLSv1.3"}` | info | Информация о версии TLS |
+| `probe_ssl_earliest_cert_expiry` | gauge | Время истечения SSL-сертификата (epoch seconds) |
+| `probe_ssl_last_chain_expiry_timestamp_seconds` | gauge | Время истечения последнего сертификата в цепочке |
+| `probe_http_status_code` | gauge | HTTP статус-код ответа |
+| `probe_http_duration_seconds` | gauge | Время HTTP-запроса (по фазам: connect, tls, processing, transfer) |
+| `probe_http_content_length` | gauge | Размер тела ответа (Content-Length) |
+| `probe_http_redirects` | gauge | Количество редиректов |
+| `probe_ip_protocol` | gauge | Протокол IP (`4`/`6`) |
+| `probe_icmp_round_trip_seconds` | gauge | Время ICMP ping (RTT) |
+| `probe_tcp_connect_duration_seconds` | gauge | Время TCP-соединения |
+| `probe_icmp_duration_seconds` | gauge | Время ICMP-проверки (phase: resolve, rtt, etc.) |
+| `up` | gauge | `1` если Prometheus успешно скрейпил exporter, `0` если нет |
+
+### Лейблы метрик
+
+| Лейбл | Описание | Пример |
+| :--- | :--- | :--- |
+| `instance` | Адрес Blackbox Exporter | `blackbox:9115` |
+| `job` | Имя job в Prometheus | `blackbox-http` |
+| `target` | Целевой эндпоинт (после relabeling → `instance`) | `https://example.com` |
+| `module` | Использованный модуль | `http_2xx`, `tcp_connect`, `icmp` |
+
+## Practical Scenarios
+
+### Алерт: эндпоинт недоступен
 
 ```yaml
 - alert: BlackboxProbeFailed
@@ -29,10 +50,10 @@ probe_icmp_round_trip_seconds              # Время ICMP ping
     severity: critical
   annotations:
     summary: "Проверка {{ $labels.instance }} не удалась"
-    description: "Blackbox-проверка не удалась более 5 минут"
+    description: "Blackbox-проверка (модуль {{ $labels.module }}) не удалась более 5 минут"
 ```
 
-### Высокое время ответа
+### Алерт: высокое время ответа
 
 ```yaml
 - alert: BlackboxSlowResponse
@@ -42,10 +63,10 @@ probe_icmp_round_trip_seconds              # Время ICMP ping
     severity: warning
   annotations:
     summary: "Медленный ответ от {{ $labels.instance }}"
-    description: "Время ответа превышает 2 секунды"
+    description: "Время ответа превышает 2 секунды (текущее: {{ $value }}s)"
 ```
 
-### SSL-сертификат истекает
+### Алерт: SSL-сертификат истекает
 
 ```yaml
 - alert: BlackboxSSLCertExpiring
@@ -55,15 +76,64 @@ probe_icmp_round_trip_seconds              # Время ICMP ping
     severity: warning
   annotations:
     summary: "SSL-сертификат истекает на {{ $labels.instance }}"
-    description: "До истечения SSL-сертификата осталось менее 30 дней"
+    description: "До истечения SSL-сертификата осталось менее 30 дней ({{ $value | humanizeDuration }})"
 ```
 
----
+### Алерт: SSL-сертификат истёк
 
-## 3. Связанные документы
+```yaml
+- alert: BlackboxSSLCertExpired
+  expr: probe_ssl_earliest_cert_expiry < time()
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "SSL-сертификат истёк на {{ $labels.instance }}"
+    description: "SSL-сертификат более недействителен"
+```
 
-- **[Обзор и концепции](./blackbox_exporter_overview.md)** — базовые определения
-- **[Установка и настройка](./blackbox_exporter_installation_and_setup.md)** — запуск и конфигурация
-- **[Конфигурация модулей](./blackbox_exporter_modules_configuration.md)** — HTTP, TCP, ICMP, DNS, gRPC модули
-- **[Alertmanager](../../alertmanager.md)**
-- **[Правила оповещений](../../rules.md)**
+### Алерт: некорректный HTTP статус-код
+
+```yaml
+- alert: BlackboxUnexpectedHTTPStatus
+  expr: probe_http_status_code < 200 or probe_http_status_code >= 400
+  for: 3m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Неожиданный HTTP статус от {{ $labels.instance }}"
+    description: "Получен HTTP статус-код {{ $value }}"
+```
+
+### Алерт: недоступность самого exporter
+
+```yaml
+- alert: BlackboxExporterDown
+  expr: up{job=~"blackbox.*"} == 0
+  for: 3m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Blackbox Exporter недоступен ({{ $labels.instance }})"
+    description: "Prometheus не может получить метрики от Blackbox Exporter"
+```
+
+### Recording rules для агрегации доступности
+
+```yaml
+groups:
+  - name: blackbox-recording-rules
+    interval: 30s
+    rules:
+      # Доступность эндпоинта в процентах за 5 минут
+      - record: job:probe_availability:ratio
+        expr: avg_over_time(probe_success[5m]) * 100
+
+      # 95-й перцентиль времени ответа по job
+      - record: job:probe_duration:p95
+        expr: histogram_quantile(0.95, sum(rate(probe_duration_seconds_bucket[5m])) by (le, job))
+```
+
+## Additional Information
+
+**Связанные темы:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md), [Alertmanager](../../alertmanager.md), [Правила оповещений](../../rules.md), [CRD Probe](../../kubernetes/operator/crd/probe.md).

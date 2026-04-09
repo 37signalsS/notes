@@ -1,69 +1,85 @@
-# Эксплуатация Prometheus: лучшие практики и promtool
+# Prometheus: promtool и лучшие практики
 
-В этой заметке собраны ключевые практики по управлению, автоматизации и обеспечению стабильности работы [Prometheus](./overview.md), а также описана утилита `promtool`.
+Утилита `promtool` и ключевые практики эксплуатации [Prometheus](./overview.md).
 
-## Определения
+## Definitions
 
-- **`promtool`**: Утилита командной строки, предназначенная для статической проверки (линтер) корректности файлов конфигурации, правил и метрик Prometheus.
-- **Кардинальность**: Количество уникальных временных рядов. Является критическим фактором, влияющим на потребление ресурсов. Подробнее см. **[здесь](./concepts/labels_and_cardinality.md)**.
-- **Долгосрочное хранение (LTS)**: Процесс сохранения метрик за пределами локального хранилища Prometheus для долговременного анализа и отказоустойчивости.
+| Термин | Описание |
+|---|---|
+| **`promtool`** | CLI-утилита для статической проверки конфигурации, правил и метрик Prometheus |
+| **Кардинальность** | Количество уникальных временных рядов. Критический фактор потребления ресурсов. Подробности: [Labels & Cardinality](./concepts/labels_and_cardinality.md) |
+| **Долгосрочное хранение (LTS)** | Сохранение метрик за пределами локальной TSDB. Подробности: [Remote Read/Write](./scaling/remote_read_write.md), [Scaling](./scaling/overview.md) |
 
-## Основные концепции
+## Basic Concepts
 
 ### Валидация конфигурации
 
-Ошибки в конфигурации или правилах могут привести к полной остановке сбора метрик. Статическая проверка с помощью `promtool` перед развертыванием — обязательный шаг для обеспечения надежности.
+Ошибки в конфигурации/правилах останавливают сбор метрик. Статическая проверка через `promtool` — обязательный шаг перед применением изменений.
 
 ### Управление ресурсами
 
-Prometheus требователен к CPU и особенно к оперативной памяти. Отсутствие явных [лимитов на ресурсы](../Kubernetes/Scheduling/qos_limit_and_requests.md) в контейнеризированных средах (например, Kubernetes) может привести к нестабильности всего узла.
+Prometheus требователен к CPU и RAM. В контейнеризированных средах всегда задавать явные `requests`/`limits`. Подробности: [QoS, Limits, Requests](../Kubernetes/Scheduling/qos_limit_and_requests.md).
 
 ### Контроль кардинальности
 
-Главная причина высокого потребления ресурсов и низкой производительности Prometheus — высокая кардинальность. В метках (labels) нельзя использовать данные с высокой степенью уникальности (ID пользователей, хэши запросов).
+Высокая кардинальность — главная причина деградации производительности.
 
-### Отказоустойчивость (HA) и LTS
+**Запрещено** в лейблах:
+- ID пользователей, email, хэши запросов
+- URL с динамическими сегментами (`/api/users/12345`)
 
-Локальная [TSDB](./concepts/tsdb.md) не предназначена для долгосрочного хранения и не кластеризуется. Для production-сред необходимо использовать внешние решения, принимающие данные по протоколу `remote_write`.
+**Рекомендовано:**
+- Шаблонизация URL (`/api/users/:id`) на этапе [relabeling](./service_discovery_and_relabeling.md)
+- Мониторинг churn rate через `promtool tsdb analyze`
 
-## Практические сценарии
+### Отказоустойчивость и LTS
 
-### Автоматизация проверок в CI/CD
+Локальная [TSDB](./concepts/tsdb.md) не предназначена для долгосрочного хранения и не кластеризуется. Для production — внешние хранилища через `remote_write`.
 
-Внедрите `promtool` в ваш CI/CD-пайплайн для предотвращения развертывания некорректных конфигураций.
+## Practical Scenarios
 
-- **Проверка основного конфига:**
+### Проверка конфигурации
 
-    ```bash
-    promtool check config /etc/prometheus/prometheus.yml
-    ```
+```bash
+promtool check config /etc/prometheus/prometheus.yml
+```
 
-- **Проверка файлов с правилами:**
+### Проверка файлов с правилами
 
-    ```bash
-    promtool check rules /etc/prometheus/rules/*.yml
-    ```
+```bash
+promtool check rules /etc/prometheus/rules/*.yml
+```
 
 ### Валидация метрик экспортеров
 
-`promtool` может проверять метрики на соответствие стандартам Prometheus. Это полезно при разработке кастомных экспортеров.
+Проверка метрик на соответствие стандартам Prometheus (разработка кастомных экспортеров):
 
-- **Проверка метрик `node_exporter`:**
+```bash
+curl -s http://localhost:9100/metrics | promtool check metrics
+```
 
-    ```bash
-    curl -s http://localhost:9100/metrics | promtool check metrics
-    ```
+### Анализ TSDB
+
+Поиск метрик с высокой кардинальностью:
+
+```bash
+promtool tsdb analyze /path/to/tsdb/data
+promtool tsdb analyze --block-id <block-id> /path/to/tsdb/data
+```
+
+### Дамп данных TSDB
+
+```bash
+promtool tsdb dump /path/to/tsdb/data
+```
 
 ### Управление конфигурацией через GitOps
 
-Храните все конфигурационные файлы (`prometheus.yml`, `*.rules.yml`) в [Git](../Git/git_basics.md) и используйте [GitOps-подход](../GitOps/GitOps_overview.md) для их развертывания.
+Хранить `prometheus.yml`, `*.rules.yml` в Git, использовать [GitOps](../GitOps/GitOps_overview.md) для развёртывания.
 
-### Задание лимитов в Kubernetes
-
-Всегда указывайте `requests` и `limits` для подов Prometheus.
+### Лимиты ресурсов в Kubernetes
 
 ```yaml
-# Пример для Kubernetes
 resources:
   requests:
     memory: "2Gi"
@@ -75,30 +91,36 @@ resources:
 
 ### Версионирование образов
 
-Никогда не используйте тег `latest` для Docker-образов. Всегда закрепляйте конкретную, протестированную версию.
+Не использовать `latest`. Закреплять конкретную версию:
 
 ```
-# Пример
-image: prom/prometheus:v2.53.1
+image: prom/prometheus:v3.10.0
 ```
 
 ### Настройка Remote Write для LTS
 
-Для отправки метрик во внешнее хранилище (например, [VictoriaMetrics](../VictoriaMetrics/overview.md)) используется секция `remote_write`.
+Отправка метрик во внешнее хранилище через секцию `remote_write`.
 
-> Подробнее о конфигурации см. **[Prometheus Remote Read/Write](./scaling/remote_read_write.md)**.
-> Обзор архитектурных подходов: **[Масштабирование Prometheus](./scaling/overview.md)**.
+Подробно: [Remote Read/Write](./scaling/remote_read_write.md), [Scaling](./scaling/overview.md).
 
-## Дополнительная информация
+## Additional Information
 
-### Отладочные команды `promtool`
+### Сводка команд promtool
 
-- `promtool tsdb dump`: Создание дампа данных из TSDB для отладки.
-- `promtool tsdb analyze`: Анализ блоков данных TSDB для поиска метрик с высокой кардинальностью.
-- `promtool debug`: Предоставление различной отладочной информации.
+| Команда | Описание |
+|---|---|
+| `promtool check config <file>` | Валидация конфигурации |
+| `promtool check rules <file>` | Валидация файлов правил |
+| `promtool check metrics` | Валидация метрик (stdin) |
+| `promtool tsdb analyze <path>` | Анализ блоков TSDB |
+| `promtool tsdb dump <path>` | Дамп данных TSDB |
 
 ### Решения для долгосрочного хранения
 
-- **[VictoriaMetrics](../VictoriaMetrics/overview.md)**: Высокопроизводительное и эффективное решение.
-- **[Thanos](./scaling/thanos_overview.md)**: Решение, интегрированное с объектными хранилищами (S3).
-- **[Grafana Mimir](../Mimir/mimir_overview.md)**: Горизонтально масштабируемое решение от Grafana Labs.
+| Решение | Подход | Особенности |
+|---|---|---|
+| [VictoriaMetrics](../VictoriaMetrics/overview.md) | `remote_write` | Высокая производительность, простота |
+| [Thanos](./scaling/thanos_overview.md) | Sidecar + S3 | Интеграция с объектными хранилищами |
+| [Grafana Mimir](../Mimir/mimir_overview.md) | `remote_write` | Горизонтальное масштабирование |
+
+Подробное сравнение: [Scaling Overview](./scaling/overview.md#решения-для-долгосрочного-хранения-long-term-storage).

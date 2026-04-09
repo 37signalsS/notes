@@ -1,13 +1,40 @@
-# Alertmanager StatefulSet
+# Alertmanager StatefulSet (манифест)
 
-Манифест `StatefulSet` для Alertmanager.
+## Definitions
 
-- **`initContainers`**: Секция, где происходит магия. Контейнер `config-init` читает шаблон из `alertmanager-config-template`, подставляет в него секреты из `alertmanager-secret` и записывает готовый `alertmanager.yml` в `emptyDir` volume.
-- **Основной контейнер `alertmanager`**: Запускается уже с готовым конфигурационным файлом.
-- **Volumes**:
-  - `config-template`: монтирует шаблон.
-  - `config`: `emptyDir` для обмена готовым конфигом между `init-container` и основным контейнером.
-  - `templates`: монтирует шаблоны сообщений.
+**Alertmanager StatefulSet** — Kubernetes StatefulSet для развёртывания Alertmanager с инициализацией конфигурации через init-container. Паттерн обеспечивает безопасную подстановку секретов (токены, пароли) из Kubernetes Secret в шаблон `alertmanager.yml` во время запуска пода.
+
+> **См. также:** [Паттерн безопасного управления конфигурацией](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты) (SSoT)
+
+## Basic Concepts
+
+### Архитектура подов
+
+| Компонент | Описание |
+|---|---|
+| **Init Container (`config-init`)** | Образ `busybox:1.36`, читает шаблон из ConfigMap, подставляет секреты через `sed`, записывает готовый `alertmanager.yml` в `emptyDir` |
+| **Основной контейнер (`alertmanager`)** | Образ `prom/alertmanager:v0.26.0`, монтирует готовый конфиг из `emptyDir`, запускается с `--config.file` и `--storage.path` |
+
+### Схема volumes
+
+| Volume | Тип | Назначение |
+|---|---|---|
+| `config-template` | ConfigMap | Шаблон `alertmanager.yml.tpl` с плейсхолдерами |
+| `config` | emptyDir | Временный том для готового конфига (init-container → основной контейнер) |
+| `templates` | ConfigMap | Go-шаблоны для форматирования уведомлений |
+| `alertmanager-data` | PersistentVolumeClaim | Постоянное хранение silences и данных (1Gi, ReadWriteOnce) |
+
+### Ключевые параметры запуска
+
+| Параметр | Значение | Описание |
+|---|---|---|
+| `--config.file` | `/etc/alertmanager/alertmanager.yml` | Путь к сгенерированному конфигу |
+| `--storage.path` | `/alertmanager` | Путь к PVC для данных |
+| `containerPort` | `9093` | Порт веб-интерфейса и API |
+
+## Practical Scenarios
+
+### Манифест StatefulSet
 
 **`alertmanager-statefulset.yaml`**
 
@@ -38,11 +65,11 @@ spec:
               #!/bin/sh
               set -e
               # Читаем шаблон и подставляем переменные окружения
-              cat /config-template/alertmanager.yml.tpl | 
-              sed "s/##SMTP_USER##/$SMTP_USER/g" | 
-              sed "s/##SMTP_PASSWORD##/$SMTP_PASSWORD/g" | 
-              sed "s/##TELEGRAM_TOKEN##/$TELEGRAM_TOKEN/g" | 
-              sed "s/##TELEGRAM_CHAT_ID##/$TELEGRAM_CHAT_ID/g" 
+              cat /config-template/alertmanager.yml.tpl |
+              sed "s/##SMTP_USER##/$SMTP_USER/g" |
+              sed "s/##SMTP_PASSWORD##/$SMTP_PASSWORD/g" |
+              sed "s/##TELEGRAM_TOKEN##/$TELEGRAM_TOKEN/g" |
+              sed "s/##TELEGRAM_CHAT_ID##/$TELEGRAM_CHAT_ID/g"
               > /config/alertmanager.yml
           # Переменные окружения, извлеченные из секрета
           env:
@@ -92,9 +119,25 @@ spec:
         resources: { requests: { storage: 1Gi } }
 ```
 
-## Смотрите также
+### Пояснения к манифесту
 
-- [Секреты](./secrets.md) — исходные данные
-- [Конфигурация](./alertmanager-config.md) — шаблон конфига
-- [Шаблоны сообщений](./alertmanager-templates.md) — форматирование уведомлений
-- [Сервисы](./services.md) — публикация наружу
+**Init Container:**
+- Образ `busybox:1.36` — минимальный, быстрый, содержит `sed` и `cat`
+- Команда читает шаблон из `/config-template/alertmanager.yml.tpl`, подставляет 4 переменные окружения из Secret, записывает результат в `/config/alertmanager.yml`
+- `set -e` — аварийное завершение при ошибке подстановки (под не запустится без валидного конфига)
+
+**Основной контейнер:**
+- `prom/alertmanager:v0.26.0` — проверяйте актуальность версии в [Alertmanager Installation](../../installation/alertmanager_installation.md#актуальная-версия)
+- Монтирует готовый конфиг из `emptyDir` (путь `/etc/alertmanager`)
+- Данные хранятся на PVC (`alertmanager-data`, 1Gi) — silences и состояние сохраняются при перезапусках
+
+**StatefulSet vs Deployment:**
+- StatefulSet выбран для стабильного сетевого идентификатора (`alertmanager-0`) и возможности масштабирования в HA-кластер с gossip-протоколем
+- `serviceName: alertmanager` — требуется для DNS-разрешения пода
+
+## Additional Information
+
+- [Секреты](./secrets.md) — Kubernetes Secret с токенами SMTP и Telegram
+- [ConfigMap-шаблон](./alertmanager-config.md) — шаблон `alertmanager.yml.tpl` с плейсхолдерами
+- [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования уведомлений
+- [Сервисы](./services.md) — публикация Alertmanager и Karma наружу

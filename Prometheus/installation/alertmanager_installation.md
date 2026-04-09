@@ -1,35 +1,42 @@
-# Установка Alertmanager
+# Alertmanager Installation
 
-## Определения
+## Definitions
 
-**Alertmanager** — компонент экосистемы Prometheus, отвечающий за обработку оповещений:
+**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, подавление и маршрутизация. Полное руководство — [Alertmanager](../alertmanager.md).
 
-* Дедупликация алертов
-* Группировка по лейблам
-* Маршрутизация к получателям (Email, Slack, PagerDuty, webhook)
-* Подавление (inhibition) и тишина (silencing)
+> **См. также:** [Alertmanager](../alertmanager.md), [Rules](../rules.md), [Prometheus Server installation](./prometheus_server_installation.md).
 
-> **См. также:** [Alertmanager](../alertmanager.md), [Rules](../rules.md).
-
-## Основные концепции
+## Basic Concepts
 
 ### Актуальная версия
 
 | Параметр | Значение |
 |---|---|
-| **Последняя стабильная версия** | `0.31.0` |
+| **Последняя стабильная версия** | `0.32.0` (апрель 2026) |
 | **Репозиторий** | [prometheus/alertmanager](https://github.com/prometheus/alertmanager) |
 
 > **Важно:** Проверяйте [официальный репозиторий](https://github.com/prometheus/alertmanager/releases) для получения последних версий.
 
-### Ключевые изменения в версии 0.31.0
+### Ключевые изменения в версии 0.32.0
 
 * Улучшенная обработка дедупликации алертов
 * Поддержка новых receiver-типов
-* Улучшения в маршрутизации и группировке
 * Исправления безопасности и производительности
 
-## Практические сценарии
+### Параметры запуска
+
+| Параметр | По умолчанию | Описание |
+|---|---|---|
+| `--config.file` | `alertmanager.yml` | Путь к файлу конфигурации |
+| `--storage.path` | `data/` | Путь к хранилищу данных |
+| `--web.listen-address` | `:9093` | Адрес для веб-интерфейса |
+| `--web.external-url` | `` | Внешний URL для ссылок |
+| `--web.route-prefix` | `/` | Префикс маршрута |
+| `--cluster.listen-address` | `:9094` | Адрес для кластеризации |
+| `--cluster.peers` | `` | Список пиров для кластера |
+| `--log.level` | `info` | Уровень логирования |
+
+## Practical Scenarios
 
 ### Установка из бинарных файлов (Linux)
 
@@ -161,29 +168,16 @@ docker run -d \
   -p 9093:9093 \
   -v /etc/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml \
   -v alertmanager-data:/alertmanager \
-  prom/alertmanager:v0.31.0 \
+  prom/alertmanager:v0.32.0 \
   --config.file=/etc/alertmanager/alertmanager.yml \
   --storage.path=/alertmanager
 ```
 
 > **См. также:** [Docker Stack](./docker_stack/overview.md).
 
-### Параметры запуска
+## Additional Information
 
-| Параметр | По умолчанию | Описание |
-|---|---|---|
-| `--config.file` | `alertmanager.yml` | Путь к файлу конфигурации |
-| `--storage.path` | `data/` | Путь к хранилищу данных |
-| `--web.listen-address` | `:9093` | Адрес для веб-интерфейса |
-| `--web.external-url` | `` | Внешний URL для ссылок |
-| `--web.route-prefix` | `/` | Префикс маршрута |
-| `--cluster.listen-address` | `:9094` | Адрес для кластеризации |
-| `--cluster.peers` | `` | Список пиров для кластера |
-| `--log.level` | `info` | Уровень логирования |
-
-## Дополнительная информация
-
-### Рекомендации по безопасности
+### Security Recommendations
 
 **1. Запуск от непривилегированного пользователя:**
 
@@ -216,7 +210,7 @@ server {
 }
 ```
 
-### Кластеризация Alertmanager
+### Alertmanager Clustering
 
 Для высокой доступности разверните несколько инстансов в режиме кластера:
 
@@ -232,7 +226,7 @@ server {
 
 > **См. также:** [Alertmanager HA](../alertmanager.md#кластеризация).
 
-### Интеграция с Prometheus
+### Prometheus Integration
 
 **Добавьте в `prometheus.yml`:**
 
@@ -244,7 +238,7 @@ alerting:
             - 'localhost:9093'
 ```
 
-### Устранение неполадок
+### Troubleshooting
 
 **Alertmanager не запускается:**
 
@@ -266,10 +260,3 @@ amtool check-config /etc/alertmanager/alertmanager.yml
 * Проверьте логи на ошибки отправки
 
 > **См. также:** [Rules и алертинг](../rules.md).
-
-### Связанные темы
-
-* [Alertmanager](../alertmanager.md) — полное руководство
-* [Rules](../rules.md) — создание правил алертинга
-* [Prometheus Server](./prometheus_server_installation.md) — интеграция
-* [Docker Stack](./docker_stack/alertmanager_config.md) — установка в Docker

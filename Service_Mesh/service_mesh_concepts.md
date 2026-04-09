@@ -95,17 +95,14 @@ Service Mesh состоит из двух независимых плоскос�
 
 | Инструмент | Интеграция с Service Mesh |
 | :--- | :--- |
-| **Prometheus** | Сбор метрик из прокси ( scrape-конфигурация через ServiceMonitor или `annotations`). |
-| **Grafana** | Визуализация метрик (дашборды через sidecar или provisioning). |
+| **Prometheus** | Сбор метрик из прокси (scrape-конфигурация через ServiceMonitor или `annotations`). |
+| **Grafana** | Визуализация метрик (дашборды через sidecar или provisioning). Подробнее: [концепции дашбордов](../Grafana/dashboards/definitions_and_concepts.md). |
 | **Jaeger/Tempo** | Распределенная трассировка через прокси (Envoy поддерживает Zipkin, Jaeger, OpenTelemetry). |
-| **Kiali** | Визуализация топологии, политик, телеметрии для Istio (требует Prometheus). |
+| **Kiali** | Визуализация топологии, политик, телеметрии для Istio (требует Prometheus). Подробнее: [Kiali и Dex](./istio_observability_and_tools.md). |
 | **Vault** | Доставка секретов через sidecar (Vault Agent), интеграция с mTLS (CA). |
 | **ArgoCD** | GitOps для конфигураций Istio (VirtualService, DestinationRule). |
 
-**См. также:**
-
-- [Chaos Engineering](../Chaos_Engineering/chaos_engineering_overview.md) — fault injection через Service Mesh.
-- [Grafana Dashboards](../Grafana/dashboards/definitions_and_concepts.md) — импорт дашбордов через sidecar.
+Fault injection через Service Mesh описан в [Chaos Engineering](../Chaos_Engineering/chaos_engineering_overview.md).
 
 ---
 
@@ -128,16 +125,4 @@ Service Mesh состоит из двух независимых плоскос�
 - **Gateway API:** Предпочтительный способ конфигурации в Istio (вместо VirtualService/DestinationRule).
 - **eBPF:** Растущая конкуренция (Cilium Service Mesh), но классические mesh (Istio, Linkerd) доминируют.
 
-**Источники:**
-
-- [Istio 1.29 Release Notes](https://istio.io/latest/news/releases/1.29.x/announcing-1.29/)
-- [Istio Ambient Multicluster Beta](https://istio.io/latest/blog/2026/ambient-multinetwork-multicluster-beta/)
-- [Service Mesh Comparison](https://dasroot.net/posts/2025/12/service-mesh-comparison-istio-linkerd-consul-connect/)
-
-### Связанные документы
-
-- **Реализации:** [Istio Architecture](./istio_architecture.md), [Istio vs Linkerd](./istio_vs_linkerd.md)
-- **Трафик:** [Traffic Management](./traffic_management.md), [Proxy Sidecar](./proxy_sidecar.md)
-- **Observability:** [Kiali и Dex](./istio_observability_and_tools.md)
-- **Безопасность:** [Zero Trust](../Networking/Concepts/zero_trust_overview.md), [VPN vs Service Mesh](../Networking/Concepts/vpn_vs_service_mesh.md)
-- **Альтернативы:** [Consul Connect](../Consul/consul_overview.md)
+Рекомендации по выбору: Istio — сложные L7-сценарии, мультикластер, кастомные политики ([Istio Architecture](./istio_architecture.md), [Istio vs Linkerd](./istio_vs_linkerd.md)); Linkerd — простота, низкий оверхед; Consul — гетерогенные среды VM + Kubernetes ([Consul Connect](../Consul/consul_overview.md)). Безопасность: [Zero Trust](../Networking/Concepts/zero_trust_overview.md), [VPN vs Service Mesh](../Networking/Concepts/vpn_vs_service_mesh.md). Сегментация: [Network Segmentation](../Networking/Concepts/network_segmentation_and_microsegmentation.md).

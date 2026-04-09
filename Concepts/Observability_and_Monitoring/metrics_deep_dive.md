@@ -131,7 +131,7 @@ sum(rate(http_request_duration_seconds_count[5m]))
 http_request_duration_seconds{quantile="0.95"}
 ```
 
-**Подробнее:** **[Summary: детали](../../../Prometheus/concepts/metric_types/summary.md)**, **[Histogram vs Summary](../../../Prometheus/concepts/metric_types/histogram_vs_summary.md)**, **[Агрегация Summary](../../../Prometheus/concepts/metric_types/overview.md#агрегация-summary-проблема-и-решение)**.
+**Подробнее:** **[Summary: детали](../../../Prometheus/concepts/metric_types/summary.md)**, **[Histogram: сравнение с Summary](../../../Prometheus/concepts/metric_types/histogram.md#сравнение-с-summary)**, **[Агрегация Summary](../../../Prometheus/concepts/metric_types/percentiles.md#агрегация-summary-проблема-и-решение)**.
 
 ### Характеристики метрик
 

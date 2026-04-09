@@ -6,7 +6,7 @@
 
 **DDoS (Distributed Denial of Service)** — распределённая атака типа «отказ в обслуживании» из множества географически распределённых точек (ботнет). Значительно сложнее для отражения из-за большого количества атакующих хостов.
 
-> **Подробный разбор:** Классификация атак, архитектура многоуровневой защиты и практические примеры — в [DDoS (Distributed Denial of Service)](../../Security/ApplicationSecurity/ddos_waf/ddos.md).
+> **Подробный разбор:** Классификация атак, архитектура многоуровневой защиты и практические примеры — в [DDoS (Distributed Denial of Service)](../../Security/ApplicationSecurity/ddos_overview.md).
 
 ## Basic Concepts
 
@@ -74,7 +74,7 @@
 
 ### Связанные файлы
 
-- **[DDoS — подробный разбор](../../Security/ApplicationSecurity/ddos_waf/ddos.md)** — классификация атак, архитектура защиты, best practices, примеры конфигураций
-- **[WAF](../../Security/ApplicationSecurity/ddos_waf/waf.md)** — Web Application Firewall для защиты на уровне приложения
+- **[DDoS — подробный разбор](../../Security/ApplicationSecurity/ddos_overview.md)** — классификация атак, архитектура защиты, best practices, примеры конфигураций
+- **[WAF](../../Security/ApplicationSecurity/waf.md)** — Web Application Firewall для защиты на уровне приложения
 - **[Защита от DoS в Angie/Nginx](../../WebServers/Angie/High_Load/dos_protection.md)** — rate limiting, GeoIP-блокировка, test cookie
 - **[fail2ban](../../Linux/Security/Tools/fail2ban.md)** — автоматическая блокировка нарушителей по логам

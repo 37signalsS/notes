@@ -40,6 +40,12 @@
 
 ## Дополнительная информация
 
+- **[SSD: Burst I/O и деградация производительности](../../Core/kernel/ssd_burst_io.md)** — архитектура SSD, garbage collection, write amplification, queue depth
+- **[I/O Schedulers](../../Core/kernel/io_schedulers.md)** — планировщики ввода-вывода
+- **[Оптимизация производительности ФС](../../FileSystems/performance_tuning.md)** — mount-опции, read-ahead, barriers
+
+## Дополнительная информация
+
 Смежные области диагностики: оптимизация памяти ([performance tuning](../../Core/memory/performance_tuning.md), [кэширование и освобождение](../../Core/memory/caching_and_reclaiming.md)), диагностика [файловых систем и дискового пространства](../Filesystem/filesystem_and_disk_space_diagnostics.md), проверка [здоровья диска через SMART](../Hardware/smartctl/disk_health_check.md), [планировщики I/O](../../Core/kernel/io_schedulers.md), диагностика [disk bottleneck в БД](../../../Databases/db_disk_bottleneck_troubleshooting.md).
 
 Инструменты: [`iotop`](../Filesystem/iotop.md), [`iostat`](../Filesystem/iostat.md), [`pidstat`](../Processes/pidstat.md), [`vmstat`](../Memory/vmstat.md).

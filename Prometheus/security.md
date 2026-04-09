@@ -1,38 +1,40 @@
-# Безопасность в Prometheus
+# Безопасность Prometheus
 
-## Определения
+## Definitions
 
-**Безопасность Prometheus** — это набор практик и механизмов для защиты метрик и сервера Prometheus от несанкционированного доступа. По умолчанию Prometheus приходит за метриками **без аутентификации**, что создает риски утечки данных при доступе из интернета.
+**Безопасность Prometheus** — практики и механизмы защиты метрик и сервера Prometheus от несанкционированного доступа. По умолчанию Prometheus собирает метрики **без аутентификации**, что создаёт риски утечки при доступе из интернета.
 
-> **См. также:** [DevSecOps](../CI-CD/DevSecOps/devsecops_overview.md) — интеграция безопасности в CI/CD.
+> **См. также:** [DevSecOps](../CI-CD/DevSecOps/devsecops_overview.md) — интеграция безопасности в CI/CD; [Prometheus Operator Security](./kubernetes/operator/Security/index.md) — безопасность в Kubernetes через Operator.
 
-## Основные концепции
+## Basic Concepts
 
 ### Проблемы безопасности по умолчанию
 
-1. **Отсутствие аутентификации** — любой, кто имеет доступ к порту Prometheus, может читать метрики.
-2. **Отсутствие шифрования** — данные передаются по HTTP без TLS.
-3. **Открытый API** — [HTTP API](./prometheus_api.md) доступен без ограничений.
-4. **Метрики могут содержать чувствительные данные** — имена хостов, пути, версии ПО.
+| Проблема | Риск |
+| :--- | :--- |
+| **Отсутствие аутентификации** | Любой с доступом к порту читает метрики |
+| **Отсутствие шифрования** | Данные передаются по HTTP без TLS |
+| **Открытый API** | [HTTP API](./prometheus_api.md) доступен без ограничений |
+| **Чувствительные данные в метриках** | Имена хостов, пути, версии ПО могут раскрыть инфраструктуру |
 
 ### Способы защиты
 
 | Способ | Описание | Когда использовать |
 | :--- | :--- | :--- |
-| **Аутентификация в Prometheus** | Настройка заголовков для запросов к метрикам | Для внутренних сервисов с поддержкой аутентификации |
-| **Отдельный порт для /metrics** | Эндпоинт метрик на порту, не выставленном наружу | Для всех приложений |
-| **Файерволл** | Ограничение доступа к порту Prometheus на уровне сети | Обязательно для продакшена |
-| **Whitelist на уровне приложения** | Разрешение запросов только с IP Prometheus | Для критичных сервисов |
-| **TLS/HTTPS** | Шифрование трафика между Prometheus и целями | При передаче через ненадежные сети |
+| **Аутентификация (scrape)** | Basic Auth / Bearer Token в запросах к `/metrics` | Для сервисов с поддержкой аутентификации |
+| **Отдельный порт для `/metrics`** | Эндпоинт метрик на порту, не доступном извне | Для всех приложений |
+| **Файерволл** | Ограничение доступа к порту Prometheus (9090) на уровне сети | Обязательно для продакшена |
+| **IP Whitelist на уровне приложения** | Приём запросов к `/metrics` только с IP Prometheus | Для критичных сервисов |
+| **TLS/HTTPS** | Шифрование трафика между Prometheus и целями | При передаче через ненадёжные сети |
 | **Network Policies (Kubernetes)** | Ограничение сетевого доступа между подами | В Kubernetes |
 
-## Практические сценарии
+## Practical Scenarios
 
-### Настройка аутентификации в Prometheus
+### Аутентификация в scrape-конфигурации
 
-Prometheus может отправлять запросы с заголовками для аутентификации на целевых сервисах.
+Prometheus отправляет запросы с заголовками аутентификации к целевым сервисам.
 
-**Пример конфигурации `prometheus.yml`:**
+**`prometheus.yml` — Bearer Token:**
 
 ```yaml
 scrape_configs:
@@ -41,77 +43,75 @@ scrape_configs:
     authorization:
       type: Bearer
       credentials: my-secret-token
-    # Или basic_auth:
-    # basic_auth:
-    #   username: prometheus
-    #   password: secret
 ```
 
-> **Важно:** Токены и пароли должны храниться в защищенном месте (secrets manager, Vault).
+**`prometheus.yml` — Basic Auth:**
 
-### Выделение отдельного порта для метрик
+```yaml
+scrape_configs:
+  - job_name: 'secure-app'
+    basic_auth:
+      username: prometheus
+      password: secret
+```
 
-Настройте приложение так, чтобы эндпоинт `/metrics` слушал отдельный порт, не доступный извне.
+> **Важно:** Токены и пароли хранить в защищённом месте (Vault, secrets manager).
 
-**Пример для Node.js:**
+### Отдельный порт для метрик
+
+Эндпоинт `/metrics` на отдельном порту, не выставленном наружу.
+
+**Node.js:**
 
 ```javascript
-// Основной сервер на порту 3000 (публичный)
+// Основной сервер — порт 3000 (публичный)
 app.listen(3000);
 
-// Метрики на порту 9090 (внутренний)
+// Метрики — порт 9090 (только localhost)
 const metricsServer = express();
 metricsServer.get('/metrics', (req, res) => {
   res.send(register.metrics());
 });
-metricsServer.listen(9090, '127.0.0.1'); // Только localhost
+metricsServer.listen(9090, '127.0.0.1');
 ```
 
-**Пример для Go:**
+**Go:**
 
 ```go
 // Основной сервер
 go http.ListenAndServe(":8080", mainMux)
 
-// Метрики только для localhost
+// Метрики — только localhost
 metricsMux := http.NewServeMux()
 metricsMux.Handle("/metrics", promhttp.Handler())
 go http.ListenAndServe("127.0.0.1:9091", metricsMux)
 ```
 
-### Настройка файерволла
+### Ограничение доступа файерволлом
 
-Ограничьте доступ к порту Prometheus (по умолчанию 9090) на уровне ОС или сетевого оборудования.
-
-**Пример для `ufw` (Ubuntu):**
+**`ufw` (Ubuntu):**
 
 ```bash
-# Разрешить доступ только с доверенных IP
 ufw allow from 10.0.0.0/8 to any port 9090
 ufw allow from 192.168.1.100 to any port 9090
-
-# Запретить доступ из интернета
 ufw deny 9090/tcp
 ```
 
-**Пример для `iptables`:**
+**`iptables`:**
 
 ```bash
 iptables -A INPUT -p tcp --dport 9090 -s 10.0.0.0/8 -j ACCEPT
 iptables -A INPUT -p tcp --dport 9090 -j DROP
 ```
 
-### Whitelist на уровне приложения
+### IP Whitelist на уровне приложения
 
-Настройте приложение на прием запросов к `/metrics` только с определенных IP.
-
-**Пример для Python (Flask):**
+**Python (Flask):**
 
 ```python
 from flask import Flask, request, abort
 
 app = Flask(__name__)
-
 ALLOWED_METRICS_IPS = ['10.0.0.5', '10.0.0.6']  # IP Prometheus
 
 @app.route('/metrics')
@@ -123,9 +123,7 @@ def metrics():
 
 ### TLS для scrape-целей
 
-Для шифрования трафика между Prometheus и целями используйте HTTPS.
-
-**Конфигурация `prometheus.yml`:**
+**`prometheus.yml` — клиентские сертификаты:**
 
 ```yaml
 scrape_configs:
@@ -135,12 +133,12 @@ scrape_configs:
       ca_file: /etc/prometheus/ca.crt
       cert_file: /etc/prometheus/client.crt
       key_file: /etc/prometheus/client.key
-      insecure_skip_verify: false  # Всегда true в продакшене!
+      insecure_skip_verify: false
 ```
 
 ### Security в Kubernetes
 
-**NetworkPolicy для ограничения доступа:**
+**NetworkPolicy — ограничение доступа к Prometheus:**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -151,8 +149,7 @@ spec:
   podSelector:
     matchLabels:
       app: prometheus
-  policyTypes:
-  - Ingress
+  policyTypes: [Ingress]
   ingress:
   - from:
     - namespaceSelector:
@@ -177,11 +174,13 @@ securityContext:
   readOnlyRootFilesystem: true
 ```
 
-## Дополнительная информация
+> **См. также:** [Prometheus Operator Security](./kubernetes/operator/Security/index.md) — полная настройка безопасности через Operator (аутентификация, TLS, RBAC, Secrets).
+
+## Additional Information
 
 ### Best Practices
 
-1. **Никогда не выставляйте Prometheus в интернет** без прокси с аутентификацией.
+1. **Не выставляйте Prometheus в интернет** без прокси с аутентификацией.
 2. **Используйте отдельные сервис-аккаунты** для scrape в Kubernetes.
 3. **Регулярно обновляйте Prometheus** — следите за security advisory.
 4. **Минимизируйте данные в метриках** — не включайте PII, секреты, чувствительные пути.
@@ -190,30 +189,18 @@ securityContext:
 
 ### Проверка безопасности
 
-**Сканирование уязвимостей:**
+**Сканирование уязвимостей образа:**
 
 ```bash
-# Проверка образа Prometheus
 trivy image prom/prometheus:latest
-
-# Проверка конфигурации
-kube-bench check --targets node,master
 ```
 
-**Аудит доступа:**
+**Аудит доступа к API:**
 
 ```promql
-# Количество запросов к API Prometheus
+# Запросы к API Prometheus по эндпоинтам
 sum(rate(prometheus_http_requests_total[5m])) by (handler)
 
-# Ошибки аутентификации (если включено)
-sum(rate(prometheus_http_request_duration_seconds_count{code="401"}[5m]))
+# Ошибки аутентификации (401)
+sum(rate(prometheus_http_requests_total{code="401"}[5m]))
 ```
-
-### Связанные темы
-
-* [Configuration](./configuration.md) — настройка аутентификации в `prometheus.yml`
-* [Prometheus API](./prometheus_api.md) — защита HTTP API
-* [Alertmanager](./alertmanager.md) — безопасность Alertmanager
-* [Kubernetes](../Kubernetes/kubernetes_overview.md) — безопасность в K8s
-* [Docker Security](../Docker/Docker_security/host_daemon_hardening.md) — изоляция контейнеров

@@ -2,10 +2,9 @@
 
 ## Определения
 
-**cAdvisor (Container Advisor)** — open-source инструмент от Google для мониторинга контейнеров. Автоматически обнаруживает все контейнеры на хосте и собирает информацию об их производительности и потреблении ресурсов.
+**cAdvisor (Container Advisor)** — open-source инструмент от Google для мониторинга контейнеров. Автоматически обнаруживает все контейнеры на хосте и собирает информацию об их производительности и потреблении ресурсов ([GitHub](https://github.com/google/cadvisor), [Releases](https://github.com/google/cadvisor/releases), [Docker Image](https://ghcr.io/google/cadvisor)).
 
 * **Порт по умолчанию:** `8080`
-* **Репозиторий:** [google/cadvisor](https://github.com/google/cadvisor)
 * **Docker-образ:** `ghcr.io/google/cadvisor:v0.56.2`
 
 > **Важно:** Начиная с v0.56.0, cAdvisor мигрировал с `gcr.io/cadvisor/cadvisor` на `ghcr.io/google/cadvisor`.
@@ -198,58 +197,34 @@ container_spec_cpu_period{container_name="myapp"}             # CPU period
 
 ### Интеграция с Prometheus
 
-**Конфигурация scrape:**
+**Базовая конфигурация scrape:**
 
 ```yaml
 scrape_configs:
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
-    metric_relabel_configs:
-      # Удалить ненужные метрики
-      - source_labels: [__name__]
-        regex: 'container_.*_seconds_total'
-        action: keep
 ```
+
+Полная конфигурация с `metric_relabel_configs` — [Prometheus config для Docker Stack](../../Prometheus/installation/docker_stack/prometheus_config.md). Для удалённых хостов — [Remote hosts monitoring](../../Prometheus/installation/docker_stack/remote_hosts_monitoring.md).
 
 ### Алертинг
 
-**Контейнер использует много CPU:**
+Базовые PromQL-выражения для алертов (полные правила — [Kubernetes Alerts в Grafana](../../Grafana/alerting/kubernetes_alerts.md)):
 
-```yaml
-- alert: ContainerHighCPU
-  expr: rate(container_cpu_usage_seconds_total{container_name="myapp"}[5m]) > 0.8
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Контейнер {{ $labels.container_name }} использует много CPU"
-    description: "Использование CPU превышает 80%"
+**High CPU:**
+```promql
+rate(container_cpu_usage_seconds_total{container_name="myapp"}[5m]) > 0.8
 ```
 
-**Контейнер использует много памяти:**
-
-```yaml
-- alert: ContainerHighMemory
-  expr: container_memory_working_set_bytes{container_name="myapp"} / container_spec_memory_limit_bytes{container_name="myapp"} > 0.9
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Контейнер {{ $labels.container_name }} использует много памяти"
-    description: "Использование памяти превышает 90% лимита"
+**High Memory (от лимита):**
+```promql
+container_memory_working_set_bytes{container_name="myapp"} / container_spec_memory_limit_bytes{container_name="myapp"} > 0.9
 ```
 
-**Контейнер перезапустился:**
-
-```yaml
-- alert: ContainerRestarted
-  expr: increase(container_start_time_seconds{container_name="myapp"}[1h]) > 0
-  labels:
-    severity: warning
-  annotations:
-    summary: "Контейнер {{ $labels.container_name }} перезапустился"
-    description: "Контейнер был перезапущен в течение последнего часа"
+**Container Restarted:**
+```promql
+increase(container_start_time_seconds{container_name="myapp"}[1h]) > 0
 ```
 
 ## Дополнительная информация
@@ -272,9 +247,5 @@ scrape_configs:
 * [Интеграция Docker с Prometheus](../../Docker/Docker_metrics/docker_prometheus_integration.md)
 * [Нативные метрики Docker](../../Docker/Docker_metrics/docker_native_metrics.md)
 * [Мониторинг Kubernetes](../../Databases/Concepts/migrations/monitoring.md)
-
-### Официальные ресурсы
-
-* [GitHub Repository](https://github.com/google/cadvisor)
-* [Docker Image](https://ghcr.io/google/cadvisor)
-* [Releases](https://github.com/google/cadvisor/releases)
+* [Алертинг контейнеров в Grafana](../../Grafana/alerting/kubernetes_alerts.md)
+* [Docker Stack мониторинга](../../Prometheus/installation/docker_stack/overview.md)

@@ -71,63 +71,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:9115
 
 ## 2. Конфигурация модулей
 
-**Базовый `/etc/blackbox_exporter/blackbox.yml`:**
-
-```yaml
-modules:
-  http_2xx:
-    prober: http
-    timeout: 5s
-    http:
-      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
-      valid_status_codes: [200, 201, 202, 204]
-      method: GET
-      follow_redirects: true
-      preferred_ip_protocol: "ip4"
-
-  http_post_2xx:
-    prober: http
-    timeout: 5s
-    http:
-      method: POST
-      valid_status_codes: [200, 201, 204]
-
-  tcp_connect:
-    prober: tcp
-    timeout: 5s
-    tcp:
-      preferred_ip_protocol: "ip4"
-
-  icmp_check:
-    prober: icmp
-    timeout: 5s
-    icmp:
-      preferred_ip_protocol: "ip4"
-      payload_size: 56
-
-  dns_check:
-    prober: dns
-    timeout: 5s
-    dns:
-      preferred_ip_protocol: "ip4"
-      query_name: "example.com"
-      query_type: "A"
-      valid_rcodes: [NOERROR]
-
-  grpc_check:
-    prober: grpc
-    timeout: 5s
-    grpc:
-      preferred_ip_protocol: "ip4"
-      tls: true
-
-  http3_check:
-    prober: http
-    timeout: 5s
-    http:
-      preferred_ip_protocol: "ip4"
-      http3: true  # Новая возможность v0.28.0
-```
+Подробное описание конфигурации модулей (HTTP, TCP, ICMP, DNS, gRPC) находится в SSoT: [Конфигурация модулей Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
 
 ## 3. Интеграция с Prometheus
 
@@ -196,8 +140,4 @@ scrape_configs:
 | **gRPC (v0.28.0+)** | `curl "http://localhost:9115/probe?target=grpc.example.com:443&module=grpc_check"` |
 | **HTTP/3 (v0.28.0+)** | `curl "http://localhost:9115/probe?target=https://example.com&module=http3_check"` |
 
-## Связанные документы
-
-- **[Основные концепции](./blackbox_exporter_concepts.md)** — определения и возможности
-- **[Дополнительные темы](./blackbox_exporter_advanced.md)** — безопасность, Docker, troubleshooting
-- **[Prometheus configuration](../../../Databases/MariaDB/configuration.md)** — настройка Prometheus
+**Связанные темы:** [Основные концепции](./blackbox_exporter_concepts.md), [Дополнительные темы](./blackbox_exporter_advanced.md), [Конфигурация модулей](../../Exporters/blackbox/blackbox_exporter_modules_configuration.md), [Prometheus configuration](../../../Databases/MariaDB/configuration.md).

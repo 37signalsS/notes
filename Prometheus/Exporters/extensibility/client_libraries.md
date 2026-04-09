@@ -1,10 +1,16 @@
 # Клиентские библиотеки Prometheus
 
-## Обзор
+## Определения
 
-Клиентские библиотеки Prometheus предоставляют API для создания метрик и экспортеров на различных языках программирования.
+**Клиентская библиотека Prometheus** — программная библиотека для конкретного языка программирования, предоставляющая API для создания метрик (Counter, Gauge, Histogram, Summary) и реализации HTTP-эндпоинта `/metrics` в формате, совместимом с Prometheus.
 
-## Поддерживаемые языки
+Используются для:
+- **Прямой инструментации** — встраивания метрик непосредственно в код приложения
+- **Создания кастомных экспортеров** — написания отдельных программ, собирающих и отдающих метрики ([Создание собственных экспортеров](./custom_exporters.md))
+
+## Основные понятия
+
+### Поддерживаемые языки
 
 | Язык | Репозиторий | Документация |
 | :--- | :--- | :--- |
@@ -15,23 +21,29 @@
 | **Ruby** | [prometheus/client_ruby](https://github.com/prometheus/client_ruby) | [rubygems.org](https://rubygems.org/gems/prometheus-client) |
 | **.NET** | [prometheus-net](https://github.com/prometheus-net/prometheus-net) | [nuget.org](https://www.nuget.org/packages/prometheus-net) |
 
-## Типы метрик
+### Типы метрик
 
-Все клиентские библиотеки поддерживают следующие типы метрик:
+Все клиентские библиотеки поддерживают четыре основных типа:
 
-* **Counter** — монотонно возрастающий счетчик
-* **Gauge** — метрика, которая может увеличиваться и уменьшаться
-* **Histogram** — распределение значений по бакетам
-* **Summary** — квантили распределения
+* **Counter** — монотонно возрастающий счётчик (например, количество запросов). Суффикс `_total` обязателен.
+* **Gauge** — метрика, которая может увеличиваться и уменьшаться (например, использование памяти).
+* **Histogram** — распределение значений по бакетам, автоматически выдаёт `_count`, `_sum` и `_bucket`. Подходит для измерения длительности операций.
+* **Summary** — квантили распределения, вычисляются на стороне клиента. Подходит когда нужны точные квантили без аппроксимации.
 
-## Примеры использования
+**Подробнее о типах:** [Типы метрик](../../concepts/metric_types/overview.md)
 
-### Go
+Правила именования, работы с лейблами и рекомендации по коду — в [Расширяемость экспортеров — Концепции](./concepts.md).
+
+## Практические сценарии
+
+### Инструментация Go-приложения
 
 ```go
 import (
+    "net/http"
     "github.com/prometheus/client_golang/prometheus"
     "github.com/prometheus/client_golang/prometheus/promauto"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -39,42 +51,51 @@ var (
         Name: "http_requests_total",
         Help: "Total number of HTTP requests",
     })
-    
+
     memory = promauto.NewGauge(prometheus.GaugeOpts{
         Name: "app_memory_usage_bytes",
         Help: "Memory usage in bytes",
     })
 )
+
+func main() {
+    // Регистрация обработчика /metrics
+    http.Handle("/metrics", promhttp.Handler())
+    http.ListenAndServe(":8080", nil)
+}
 ```
 
-### Python
+### Инструментация Python-приложения
 
 ```python
-from prometheus_client import Counter, Gauge
+from prometheus_client import start_http_server, Counter, Gauge
 
+# Создание метрик
 requests = Counter('http_requests_total', 'Total number of HTTP requests')
 memory = Gauge('app_memory_usage_bytes', 'Memory usage in bytes')
 
-# Инкремент счетчика
+# Инкремент счётчика
 requests.inc()
 
 # Установка значения gauge
 memory.set(524288000)
+
+# Запуск HTTP-сервера на порту 8000
+start_http_server(8000)
 ```
 
-## Выбор порта
+### Выбор порта для кастомного экспортера
 
-При создании экспортера выбирайте порт с учетом [официального списка](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
+При создании собственного экспортера выбирайте порт с учётом [официального списка](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
 
-**Рекомендуемый диапазон:** 9100-9200
+**Рекомендуемый диапазон:** 9100–9200
 
-## Связанные темы
+## Дополнительная информация
 
-* [Расширяемость экспортеров](./concepts.md) — базовые концепции
-* [Создание собственных экспортеров](./custom_exporters.md) — примеры кода на Go и Python
-* [Textfile Collector](./textfile_collector.md) — альтернативный способ добавления метрик
+### Связанные темы
 
-## Официальные ресурсы
-
-* [Instrumenting Client Libraries](https://prometheus.io/docs/instrumenting/clientlibs/)
-* [Exposition Formats](https://prometheus.io/docs/instrumenting/exposition_formats/)
+* [Расширяемость экспортеров](./concepts.md) — правила именования метрик, labels, рекомендации по коду
+* [Создание собственных экспортеров](./custom_exporters.md) — полные примеры экспортеров на Go и Python
+* [Textfile Collector](./textfile_collector.md) — альтернативный способ добавления метрик без написания кода
+* [Лейблы и кардинальность](../../concepts/labels_and_cardinality.md) — правила работы с лейблами
+* [Формат экспозиции](../../concepts/metric_types/exposition_format.md) — текстовый формат метрик Prometheus

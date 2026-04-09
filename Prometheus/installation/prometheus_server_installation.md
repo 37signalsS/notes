@@ -1,36 +1,31 @@
-# Установка Prometheus Server
+# Prometheus Server Installation
 
-## Определения
+## Definitions
 
-**Prometheus Server** — центральный компонент системы мониторинга, отвечающий за:
+**Prometheus Server** — центральный компонент системы мониторинга: сбор метрик (scraping), хранение во встроенной TSDB, запросы на PromQL, выполнение правил алертинга и записи. Полная архитектура — [Prometheus overview](../overview.md).
 
-* Сбор метрик (scraping) с целевых сервисов
-* Хранение данных во встроенной TSDB (Time Series Database)
-* Обработку запросов на языке PromQL
-* Выполнение правил алертинга и записи (recording rules)
+> **См. также:** [Архитектура Prometheus](../overview.md), [TSDB](../concepts/tsdb.md), [Configuration](../configuration.md).
 
-> **См. также:** [Архитектура Prometheus](./overview.md), [TSDB](../concepts/tsdb.md).
-
-## Основные концепции
+## Basic Concepts
 
 ### Актуальная версия
 
 | Параметр | Значение |
 |---|---|
-| **Последняя стабильная версия** | `3.10.0` |
+| **Последняя стабильная версия** | `3.11.1` (апрель 2026) |
 | **Репозиторий** | [prometheus/prometheus](https://github.com/prometheus/prometheus) |
 
 > **Важно:** Проверяйте [официальный репозиторий](https://github.com/prometheus/prometheus/releases) для получения последних версий.
 
-### Ключевые изменения в версии 3.10.0
+### Ключевые изменения в версии 3.11.x
 
-* **Docker:** Добавлен distroless-вариант образа (`-distroless`) с UID/GID 65532
+* **Docker:** Distroless-вариант образа (`-distroless`) с UID/GID 65532
 * **PromQL:** Модификаторы `fill()` / `fill_left()` / `fill_right()` для бинарных операций
 * **API:** Спецификация OpenAPI 3.2 по адресу `/api/v1/openapi.yaml`
 * **Service Discovery:** Поддержка MSK Role для AWS
 * **Производительность:** Улучшения в PromQL, OTLP-конвертации и TSDB
 
-## Практические сценарии
+## Practical Scenarios
 
 ### Установка из бинарных файлов (Linux)
 
@@ -43,7 +38,7 @@ useradd --no-create-home --shell /bin/false prometheus --comment "Prometheus ser
 **2. Загрузка и установка:**
 
 ```bash
-PROMETHEUS_VERSION="3.10.0"
+PROMETHEUS_VERSION="3.11.1"
 cd /tmp
 wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
 tar xvfz prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
@@ -130,7 +125,7 @@ docker run -d \
   -p 9090:9090 \
   -v /etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
   -v prometheus-data:/prometheus \
-  prom/prometheus:v3.10.0 \
+  prom/prometheus:v3.11.1 \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/prometheus/ \
   --storage.tsdb.retention.time=15d
@@ -154,7 +149,7 @@ docker run -d \
 
 > **См. также:** [Configuration](../configuration.md).
 
-## Дополнительная информация
+## Additional Information
 
 ### Рекомендации по безопасности
 

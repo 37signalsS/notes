@@ -79,3 +79,4 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - **Прерывания:** [Interrupts](./interrupts.md) — обработка прерываний блочных устройств
 - **Udev:** [Udev](../udev.md) — постоянная настройка планировщика через правила udev
 - **eBPF для I/O:** [eBPF](./ebpf.md) — `biosnoop` и другие инструменты на базе BCC
+- **SSD Burst I/O:** [SSD: Burst I/O и деградация производительности](./ssd_burst_io.md) — почему скорость SSD падает при пиковых нагрузках

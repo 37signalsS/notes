@@ -1,6 +1,6 @@
 # Node Exporter
 
-## Определения
+## Overview
 
 **Node Exporter** — экспортер для сбора метрик с хост-машины на базе Linux. Предоставляет детальную ресурсную мониторинговую информацию: загрузку CPU, использование памяти, дисковое I/O, сетевую активность и другие системные метрики.
 
@@ -8,9 +8,9 @@
 * **Репозиторий:** [prometheus/node_exporter](https://github.com/prometheus/node_exporter)
 * **Установка:** [installation/node_exporter_installation.md](../installation/node_exporter_installation.md)
 
-## Основные концепции
+## Basic Concepts
 
-### Источник данных
+### Data Source
 
 `node_exporter` не обращается напрямую к ядру. Он читает и парсит файлы из виртуальных файловых систем Linux:
 
@@ -19,7 +19,7 @@
 
 Например, для получения информации о памяти он читает `/proc/meminfo`, для статистики CPU — `/proc/stat`.
 
-### Совместимость с ОС
+### OS Compatibility
 
 `node_exporter` предназначен исключительно для операционных систем на базе Linux. Для мониторинга Windows-систем используется [wmi_exporter](https://github.com/prometheus-community/windows_exporter).
 
@@ -35,7 +35,7 @@ Node Exporter состоит из множества **коллекторов** 
 
 ```bash
 # Скачать последнюю версию
-NODE_EXPORTER_VERSION="1.10.2"
+NODE_EXPORTER_VERSION="1.11.0"
 wget https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
 tar xvfz node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz
 mv node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64/node_exporter /usr/local/bin/
@@ -69,7 +69,7 @@ systemctl enable node_exporter
 ```yaml
 services:
   node_exporter:
-    image: prom/node-exporter:v1.10.2
+    image: prom/node-exporter:v1.11.0
     container_name: node_exporter
     ports:
       - "9100:9100"
@@ -93,19 +93,19 @@ services:
 | `--web.telemetry-path` | `"/metrics"` | URI для экспозиции метрик |
 | `--log.level` | `"info"` | Уровень логирования (`debug`, `info`, `warn`, `error`) |
 | `--log.format` | `"logfmt"` | Формат логов (`logfmt`, `json`) |
-| `--collector.textfile.directory` | — | Директория для [Textfile Collectorextensibility/custom_exporters.md |
+| `--collector.textfile.directory` | — | Директория для [Textfile Collector](./extensibility/textfile_collector.md) |
 | `--collector.disable-defaults` | `false` | Отключить все коллекторы по умолчанию |
 
 ### Включение/отключение коллекторов
 
 ```bash
 # Отключить конкретный коллектор
---collector.no<name>
+--no-collector.<name>
 
-# Включить коллектор (если отключены по умолчанию)
+# Включить коллектор (если отключены по умолчанию через --collector.disable-defaults)
 --collector.<name>
 
-# Пример: отключить сбор метрик файловой системы
+# Пример: игнорировать монтированные точки виртуальных ФС
 --collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($|/)"
 ```
 
@@ -234,11 +234,76 @@ node_vmstat_pgmajfault          # Количество major page faults
     description: "Использовано более 85% дискового пространства"
 ```
 
+### Интеграция с Prometheus
+
+**Добавьте в `prometheus.yml`:**
+
+```yaml
+scrape_configs:
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+        labels:
+          instance: 'my-server'
+          environment: 'production'
+```
+
+**Для нескольких хостов:**
+
+```yaml
+scrape_configs:
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets:
+          - 'server1.example.com:9100'
+          - 'server2.example.com:9100'
+          - 'server3.example.com:9100'
+```
+
+> **См. также:** [Configuration](../configuration.md).
+
+### Безопасность
+
+**Ограничение сетевого доступа:**
+
+```bash
+# Разрешить доступ только с доверенных IP
+ufw allow from 10.0.0.0/8 to any port 9100
+ufw allow from 192.168.1.0/24 to any port 9100
+```
+
+**TLS через reverse proxy (Nginx):**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name node-exporter.example.com;
+
+    ssl_certificate /etc/ssl/certs/node-exporter.crt;
+    ssl_certificate_key /etc/ssl/private/node-exporter.key;
+
+    location / {
+        proxy_pass http://localhost:9100;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+**Рекомендации:**
+
+- Для сбора всех метрик `node_exporter` рекомендуется запускать от `root`
+- Ограничивайте доступ к порту 9100 на уровне файрвола
+- Используйте TLS через reverse proxy для передачи метрик по незащищённым сетям
+- Отключайте неиспользуемые коллекторы для уменьшения кардинальности метрик
+
+> **См. также:** [Лейблы и кардинальность](../concepts/labels_and_cardinality.md).
+
 ## Дополнительная информация
 
 ### Расширяемость
 
-* **[Textfile Collector](./extensibility/custom_exporters.md)** — механизм для сбора произвольных метрик через внешние скрипты
+* **[Textfile Collector](./extensibility/textfile_collector.md)** — механизм для сбора произвольных метрик через внешние скрипты
 * **[Написание своих экспортеров](./extensibility/custom_exporters.md)** — руководство по созданию кастомных экспортеров
 
 ### Связанные темы
