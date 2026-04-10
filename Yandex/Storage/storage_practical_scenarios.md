@@ -1,6 +1,35 @@
 # Yandex Storage: Практические сценарии
 
-## 1. Object Storage: создание бакета и загрузка
+## Определения
+
+**Практические сценарии** — пошаговые команды и конфигурации для работы с [Object Storage](./storage_concepts.md#object-storage), [Block Storage](./storage_concepts.md#block-storage-диски) и [File Storage](./storage_concepts.md#file-storage) через aws-cli и yc CLI.
+
+Инструменты: [aws-cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) (S3-совместимый API), [yc CLI](https://yandex.cloud/ru/docs/cli/quickstart) (нативный CLI Yandex Cloud).
+
+---
+
+## Основные концепции
+
+### Группировка по типу хранилища
+
+Сценарии разделены по типу хранилища и задаче:
+- **Object Storage** — создание бакетов, загрузка объектов, версионирование, lifecycle, статические сайты
+- **Block Storage** — создание дисков, подключение к ВМ, снапшоты, восстановление
+- **File Storage** — создание NFS-хранилищ, монтирование
+- **Кросс-сервисные** — бэкапы Managed DB в Object Storage, интеграция с CI/CD
+
+### Общие требования
+
+- Для aws-cli: `--endpoint-url https://storage.yandexcloud.net` обязателен
+- Для yc CLI: требуется авторизация через `yc init`
+- IAM-роли и сервисные аккаунты — [Storage advanced topics](./storage_advanced_topics.md#практические-сценарии)
+- Определения и характеристики хранилищ — [Storage concepts](./storage_concepts.md)
+
+---
+
+## Практические сценарии
+
+### Object Storage: создание бакета и загрузка
 
 ```bash
 # Создание бакета
@@ -23,7 +52,7 @@ aws s3 sync ./dist s3://my-artifacts/www/ \
   --endpoint-url https://storage.yandexcloud.net
 ```
 
-## 2. Object Storage: версионирование и lifecycle
+### Object Storage: версионирование и lifecycle
 
 ```bash
 # Включение версионирования
@@ -52,7 +81,7 @@ aws s3api put-bucket-lifecycle-configuration \
   --endpoint-url https://storage.yandexcloud.net
 ```
 
-## 3. Object Storage: статический сайт
+### Object Storage: статический сайт
 
 ```bash
 # Настройка website hosting
@@ -82,7 +111,7 @@ aws s3api put-bucket-policy \
 # URL сайта: https://my-artifacts.storage.yandexcloud.net
 ```
 
-## 4. Block Storage: создание и подключение диска
+### Block Storage: создание и подключение диска
 
 ```bash
 # Создание диска
@@ -106,7 +135,7 @@ sudo mount /dev/vdb /data
 echo '/dev/vdb /data ext4 defaults 0 2' | sudo tee -a /etc/fstab
 ```
 
-## 5. Block Storage: снимки дисков
+### Block Storage: снимки дисков
 
 ```bash
 # Создание снапшота
@@ -128,7 +157,7 @@ yc compute disk create \
 yc compute snapshot delete --name data-snapshot-20260301
 ```
 
-## 6. File Storage: создание и монтирование
+### File Storage: создание и монтирование
 
 ```bash
 # Создание файлового хранилища
@@ -147,7 +176,7 @@ sudo mount -t nfs4 \
 echo '<filesystem_endpoint>:/ /shared nfs4 defaults 0 0' | sudo tee -a /etc/fstab
 ```
 
-## 7. Бэкапы Managed DB в Object Storage
+### Бэкапы Managed DB в Object Storage
 
 ```bash
 # Экспорт бэкапа PostgreSQL в S3
@@ -167,7 +196,7 @@ EOF
 sudo chmod +x /etc/cron.daily/db-backup
 ```
 
-## 8. Интеграция с CI/CD
+### Интеграция с CI/CD
 
 **GitLab CI пример:**
 
@@ -193,8 +222,8 @@ deploy:
     - ./deploy.sh
 ```
 
-## Связанные документы
+---
 
-- **[Основные концепции](./storage_concepts.md)** — определения и типы хранилищ
-- **[Дополнительные темы](./storage_advanced_topics.md)** — интеграции, безопасность, best practices
-- **[CI/CD](../../CI-CD/artifact_management.md)** — управление артефактами
+## Дополнительная информация
+
+Определения и характеристики хранилищ — [Storage concepts](./storage_concepts.md). IAM-политики, шифрование SSE-KMS, best practices — [Storage advanced topics](./storage_advanced_topics.md). Управление артефактами CI/CD — [CI/CD artifact management](../../CI-CD/artifact_management.md). Сценарии управления дисками в контексте ВМ — [Compute Cloud](../Compute-Cloud.md#снимки-дисков), бэкапы БД — [Managed Databases](../Managed-Databases.md#бэкапы-и-восстановление).

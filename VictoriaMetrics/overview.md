@@ -27,8 +27,6 @@ VictoriaMetrics может быть установлена в двух режи�
 
 VictoriaMetrics имеет простую и понятную архитектуру, состоящую из нескольких ключевых компонентов.
 
-![VictoriaMetrics Architecture](https://docs.victoriametrics.com/assets/cluster-overview.webp)
-
 #### Основные компоненты
 
 1. **`vminsert`**
@@ -90,9 +88,4 @@ VictoriaMetrics имеет простую и понятную архитекту
 
 ## 4. Дополнительная информация
 
-### Интеграция с экосистемой
-
-* **[Prometheus](../Prometheus/overview.md)** — VictoriaMetrics совместима с Prometheus через `remote_write` API
-* **[Grafana](../Grafana/grafana_overview.md)** — подключается как datasource через Prometheus-compatible API
-* **[Alertmanager](../Prometheus/alertmanager.md)** — получает алерты от vmalert
-* **[Kubernetes](../Kubernetes/kubernetes_overview.md)** — рекомендуется для оркестрации кластера VictoriaMetrics
+VictoriaMetrics интегрируется с экосистемой мониторинга: [Prometheus](../Prometheus/overview.md) (совместимость через `remote_write` API), [Grafana](../Grafana/grafana_overview.md) (datasource через Prometheus-compatible API), [Alertmanager](../Prometheus/alertmanager.md) (получает алерты от vmalert), [Kubernetes](../Kubernetes/kubernetes_overview.md) (рекомендуемая платформа для оркестрации кластера).

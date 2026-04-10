@@ -36,6 +36,26 @@ Signed-By: /etc/apt/keyrings/example.gpg
 Enabled: yes
 ```
 
+**Поля фильтрации компонентов (APT 3.2+):**
+
+В APT 3.2 в `.sources` файлах появились поля `Include` и `Exclude` для фильтрации пакетов репозитория:
+
+```
+Types: deb
+URIs: https://packages.example.com/repo
+Suites: stable
+Components: main
+Include: nginx*,certbot*
+Exclude: *-dbg,*-dev
+```
+
+| Поле | Назначение | Пример |
+| :--- | :--- | :--- |
+| `Include` | whitelist пакетов (glob-паттерны) | `Include: nginx*,certbot*` |
+| `Exclude` | blacklist пакетов (glob-паттерны) | `Exclude: *-dbg,*-dev` |
+
+Это позволяет загружать только нужные пакеты, экономя трафик и место.
+
 | Аспект | One-line | DEB822 |
 | :--- | :--- | :--- |
 | **Файл** | `.list` | `.sources` |

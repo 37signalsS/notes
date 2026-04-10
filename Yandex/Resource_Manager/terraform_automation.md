@@ -1,12 +1,33 @@
 # Yandex Resource Manager: Автоматизация через Terraform
 
-## Определения
+## Definitions
 
 **Terraform Automation** — декларативное управление ресурсами Yandex Cloud через HashiCorp Terraform с версионированием и аудитом изменений.
 
 ---
 
-## Практические сценарии
+## Basic Concepts
+
+### Ресурсы Terraform для Resource Manager
+
+Основные ресурсы провайдера `yandex`:
+
+- `yandex_resourcemanager_folder` — создание и настройка каталогов
+- `yandex_iam_service_account` — сервисные аккаунты
+- `yandex_resourcemanager_folder_iam_binding` — привязка ролей к субъектам
+- `yandex_iam_service_account_key` — API-ключи сервисных аккаунтов
+
+### Структура конфигурации
+
+Конфигурация состоит из трёх блоков: `variable` (входные параметры), `provider` (аутентификация в Yandex Cloud), `resource` (описание ресурсов). Чувствительные данные (`token`, `key_file`) маркируются как `sensitive`.
+
+### Интеграция с CI/CD
+
+Terraform запускается из CI/CD-пайплайна ([GitLab CI](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)): валидация через `terraform plan`, применение через `terraform apply`. Ключи сервисных аккаунтов передаются через CI/CD-переменные.
+
+---
+
+## Practical Scenarios
 
 ### Terraform: декларативное описание
 
@@ -161,10 +182,6 @@ done
 
 ---
 
-## Дополнительная информация
+## Additional Information
 
-### Связанные документы
-
-- **[Overview](./overview.md)** — базовые концепции Resource Manager
-- **[IAM Roles](./iam_roles.md)** — роли и права доступа
-- **[IAC Overview](../../Concepts/iac_overview.md)** — концепции Infrastructure as Code
+Концепции Infrastructure as Code — [IAC Overview](../../Concepts/iac_overview.md). Базовые концепции Resource Manager — [Overview](./overview.md), роли и права доступа — [IAM Roles](./iam_roles.md).

@@ -257,43 +257,18 @@ annotations:
 
 ## Дополнительная информация
 
-### Связанные документы
+Сети и security groups для кластеров — [VPC](./VPC.md), альтернатива: БД на ВМ — [Compute Cloud](./Compute-Cloud.md), интеграция метрик БД — [Monitoring](./Monitoring/index.md), хранение бэкапов — [Storage](./Storage/index.md).
 
-- **[VPC](./VPC.md)** — сети и security groups для кластеров
-- **[Compute Cloud](./Compute-Cloud.md)** — альтернатива: БД на ВМ
-- **[Monitoring](./Monitoring.md)** — интеграция метрик БД
-- **[Storage](../Kubernetes/Base/secrets/etcd_storage.md)** — хранение бэкапов в Object Storage
+Подробные концепции СУБД: [PostgreSQL](../Databases/PostgreSQL/overview.md), [ClickHouse](../Databases/clickhouse.md), [Redis](../Databases/redis_overview.md). Подключение приложений из [Kubernetes](../Kubernetes/).
 
-### Интеграции
-
-- **[PostgreSQL](../Databases/PostgreSQL/overview.md)** — подробные концепции PostgreSQL
-- **[ClickHouse](../Databases/clickhouse.md)** — архитектура и использование
-- **[Redis](../Databases/redis_overview.md)** — сценарии использования Redis
-- **[Kubernetes](../Kubernetes/)** — подключение приложений из K8s
-
-### Безопасность
-
-- **Security Groups** — изоляция трафика БД
-- **TLS** — шифрование соединений
-- **IAM-аутентификация** — для PostgreSQL
-- **Приватные подсети** — без публичного доступа
+Безопасность: [Security Groups](./VPC.md#security-groups) для изоляции трафика, TLS для шифрования соединений, IAM-аутентификация для PostgreSQL, приватные подсети — без публичного доступа.
 
 ### Актуальные версии
 
-- **PostgreSQL:** 14, 15, 16, 17, 18 (10–13 прекращены)
+- **PostgreSQL:** 14 (EOL ноябрь 2026), 15, 16, 17, 18. Версии 10–13 прекращены (EOL: 10 — ноябрь 2022, 11 — ноябрь 2023, 12 — ноябрь 2024, 13 — ноябрь 2025).
 - **MySQL:** 8.0, 8.4
 - **Redis:** 6.2, 7.0, 7.2
 - **ClickHouse:** 23.8+, 24.8+
 - **MongoDB:** 5.0, 6.0, 7.0
 - **MariaDB:** 10.6, 10.11, 11.2
-
-### Рекомендации по выбору
-
-| Профиль нагрузки | Рекомендуемый движок |
-| :--- | :--- |
-| Транзакции (OLTP) | PostgreSQL, MySQL |
-| Аналитика (OLAP) | ClickHouse |
-| Кэш/сессии | Redis |
-| Гибкая схема | MongoDB |
-| Enterprise .NET | MSSQL |
-| Наследие MySQL | MariaDB |
+- **MSSQL:** 2017, 2019, 2022

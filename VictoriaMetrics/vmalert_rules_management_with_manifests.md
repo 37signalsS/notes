@@ -186,8 +186,6 @@ spec:
     namespace: monitoring
 ```
 
-## 4. Дополнительная информация
-
 ### Troubleshooting
 
 | Проблема | Возможная причина | Решение |
@@ -197,25 +195,8 @@ spec:
 | ConfigMap не монтируется | Ошибка в имени или namespace | Проверить `kubectl describe deployment vmalert` |
 | Правила не видны в UI | vmalert не перезагружен | Для ConfigMap: перезапустить под, для VMRule: проверить статус |
 
-### Полезные команды
+## 4. Дополнительная информация
 
-```bash
-# Получить все VMRule в кластере
-kubectl get vmrule --all-namespaces
+Полезные команды: `kubectl get vmrule --all-namespaces` (все VMRule), `kubectl describe vmrule <name> -n <namespace>` (статус), `kubectl logs -l app=vmalert -n monitoring` (логи), `kubectl rollout restart deployment vmalert -n monitoring` (перезапуск для ConfigMap).
 
-# Проверить статус VMRule
-kubectl describe vmrule <name> -n <namespace>
-
-# Проверить логи vmalert
-kubectl logs -l app=vmalert -n monitoring
-
-# Горячая перезагрузка (для ConfigMap подхода)
-kubectl rollout restart deployment vmalert -n monitoring
-```
-
-### Связанные ресурсы
-
-- **[VMRule CRD документация](https://docs.victoriametrics.com/operator/resources/vmrule/)**
-- **[VMAlert документация](https://docs.victoriametrics.com/vmalert/)**
-- **[VictoriaMetrics Operator](https://docs.victoriametrics.com/operator/)**
-- **[vmalert](./vmalert_overview.md)** — обзор компонента
+Документация: [VMRule CRD](https://docs.victoriametrics.com/operator/resources/vmrule/), [VMAlert](https://docs.victoriametrics.com/vmalert/), [VictoriaMetrics Operator](https://docs.victoriametrics.com/operator/). Связанный файл: [vmalert](./vmalert_overview.md).

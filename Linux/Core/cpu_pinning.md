@@ -187,7 +187,7 @@ perf sched latency
 ### Связанные темы
 
 - **[CPU Isolation](./kernel/cpu_isolation.md)** — kernel-level изоляция через параметры ядра
-- **[cgroups cpuset](./cgroups.md#контроллеры-cgroups)** — контроллер cpuset
+- **[cgroups cpuset](./cgroups.md#контроллер-cpuset-изоляция-cpu-и-памяти-numa)** — контроллер cpuset для привязки + изоляции памяти NUMA
 - **[NUMA](./memory/performance_tuning.md#numa-локальность-памяти)** — NUMA-архитектура и оптимизация
 - **[Прерывания](./kernel/interrupts.md)** — IRQ affinity
 - **[Планировщик Linux](./kernel/overview.md)** — планировщик процессов Linux (CFS, RT, Deadline)

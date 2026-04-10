@@ -273,26 +273,13 @@ yc vpc subnet delete --name subnet-unused
 
 ## Дополнительная информация
 
-### Связанные документы
+Размещение ВМ в подсетях — [Compute Cloud](./Compute-Cloud.md), управление каталогами и метками для сетей — [Resource Manager](./Resource_Manager/overview.md), мониторинг сетевого трафика — [Monitoring](./Monitoring/index.md).
 
-- **[Compute Cloud](./Compute-Cloud.md)** — размещение ВМ в подсетях
-- **[Resource Manager](./index.md)** — каталоги и метки для сетей
-- **[Monitoring](./Monitoring.md)** — мониторинг сетевого трафика
+Сетевая модель CNI в [Kubernetes](../Kubernetes/) использует VPC, интеграция балансировщиков с подсетями — [Load Balancer](../Networking/), декларативное управление сетью — [Terraform](../Concepts/iac_overview.md).
 
-### Интеграции
-
-- **[Kubernetes](../Kubernetes/)** — сетевая модель CNI использует VPC
-- **[Load Balancer](../Networking/)** — интеграция с подсетями VPC
-- **[Terraform](../Concepts/iac_overview.md)** — декларативное управление сетью
-
-### Безопасность
-
-- **Security Groups** — основной механизм сегментации
-- **Private Subnets** — изоляция критичных ресурсов
-- **VPN/Peering** — безопасное подключение on-prem
+Безопасность: Security Groups как основной механизм сегментации, приватные подсети для изоляции критичных ресурсов, [VPN/Peering](../Networking/Tunnels/) для подключения on-prem.
 
 ### Актуальная информация
 
 - **Egress NAT** — устарел, использовать NAT Gateway
-- **Лимиты:** 10 security groups, 20 NAT Gateway на каталог
-- **Новые регионы:** добавлены зоны доступности в 2025
+- **Лимиты:** до 10 security groups и до 20 NAT Gateway на каталог (квоты могут отличаться, проверять через `yc vpc`)

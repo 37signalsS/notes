@@ -24,12 +24,14 @@
 
 ### Типы дисков
 
-| Тип | Характеристики | Сценарии |
-| :--- | :--- | :--- |
-| **network-ssd** | Высокая IOPS, низкая задержка | Базы данных, системы реального времени |
-| **network-ssd-nonreplicated** | Макс. производительность, 3 копии в одной зоне | Критичные к задержкам БД |
-| **network-hdd** | Экономичное хранение | Файловые серверы, архивы |
-| **network-ssd-readonly** | Только чтение, высокая плотность | Статические данные, реплики БД |
+Подробные характеристики дисков (IOPS, throughput, latency) — в [Storage concepts](./Storage/storage_concepts.md#типы-дисков).
+
+| Тип | Сценарии |
+| :--- | :--- |
+| **network-ssd** | Базы данных, системы реального времени |
+| **network-ssd-nonreplicated** | Критичные к задержкам БД |
+| **network-hdd** | Файловые серверы, архивы |
+| **network-ssd-readonly** | Статические данные, реплики БД |
 
 ### Сетевые возможности
 
@@ -186,33 +188,15 @@ yc compute snapshot list
 
 ## Дополнительная информация
 
-### Связанные документы
+Управляемые кластеры [Kubernetes](../Kubernetes/) используют Compute Cloud для нод. Контейнеризация приложений на ВМ — [Docker](../Docker/docker_overview.md), автоматизация настройки — [Ansible](../Ansible/ansible_introduction.md), декларативное управление — [Terraform](../Concepts/iac_overview.md).
 
-- **[VPC](./VPC.md)** — настройка сетей, подсетей, security groups
-- **[Resource Manager](./index.md)** — управление каталогами и сервисными аккаунтами
-- **[Storage](../Kubernetes/Base/secrets/etcd_storage.md)** — объектные и блочные хранилища для данных ВМ
-- **[Managed Databases](./Managed-Databases.md)** — управляемые БД как альтернатива развёртыванию на ВМ
+Метрики ВМ (CPU, память, диск, сеть) собираются через [Yandex Monitoring](./Monitoring/index.md), логи — через [Cloud Logging](./Monitoring/monitoring_practical_scenarios.md#2-логи--метрики-log-based-metrics).
 
-### Интеграции
+Сетевой уровень защиты — [Security Groups](./VPC.md#security-groups), управление доступом через сервисные аккаунты — [IAM](../Security/), шифрование дисков — [KMS](../Security/).
 
-- **[Kubernetes](../Kubernetes/)** — управляемые кластеры K8s используют Compute Cloud для нод
-- **[Docker](../Docker/docker_overview.md)** — контейнеризация приложений на ВМ
-- **[Ansible](../Ansible/ansible_introduction.md)** — автоматизация настройки ВМ
-- **[Terraform](../Concepts/iac_overview.md)** — декларативное управление ВМ
-
-### Мониторинг
-
-- **[Yandex Monitoring](./Monitoring.md)** — метрики ВМ (CPU, память, диск, сеть)
-- **[Cloud Logging](./Monitoring.md#логи-→-метрики)** — централизованный сбор логов
-
-### Безопасность
-
-- **[Security Groups](./VPC.md#security-groups)** — сетевой уровень защиты
-- **[IAM](../Security/)** — управление доступом через сервисные аккаунты
-- **[KMS](../Security/)** — шифрование дисков
+Диски для ВМ — [Storage](./Storage/index.md), управляемые БД как альтернатива развёртыванию на ВМ — [Managed Databases](./Managed-Databases.md), управление каталогами и сервисными аккаунтами — [Resource Manager](./index.md).
 
 ### Актуальные версии
 
 - **Платформы:** standard-v3, standard-v4a (AMD Zen 4), highfreq-v3, highfreq-v4a
 - **ОС:** Ubuntu 22.04/24.04 LTS, AlmaLinux 8/9, Debian 11/12, CentOS 7/8/9, Windows Server 2019/2022
-- **PostgreSQL в Managed:** 14, 15, 16, 17, 18 (версии 10–13 прекращены)

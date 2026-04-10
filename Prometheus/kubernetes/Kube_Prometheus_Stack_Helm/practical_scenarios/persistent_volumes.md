@@ -109,7 +109,7 @@ kubectl get pvc -n monitoring
 kubectl get pv
 ```
 
-> **Подробнее:** [Longhorn](../../../../Kubernetes/Storage/longhorn.md) — распределённое блочное хранилище для Kubernetes.
+> **Подробнее:** [Longhorn — установка и настройка](../../../../Kubernetes/Storage/longhorn.md) — распределённое блочное хранилище для Kubernetes, онлайн и оффлайн установка.
 
 ### Сценарий 2: Ручной PV для local-storage (static provisioning)
 

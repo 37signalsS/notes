@@ -154,14 +154,6 @@ spec:
 
 ## 4. Дополнительная информация
 
-### Дополнительные ресурсы
+Официальная документация: [vmalert](https://docs.victoriametrics.com/vmalert/), [шаблоны правил алертинга](https://docs.victoriametrics.com/vmalert/#alerting-template-rules), [recording rules best practices](https://docs.victoriametrics.com/vmalert/#recording-rules).
 
-- [Официальная документация vmalert](https://docs.victoriametrics.com/vmalert/)
-- [Шаблоны правил алертинга](https://docs.victoriametrics.com/vmalert/#alerting-template-rules)
-- [Recording rules best practices](https://docs.victoriametrics.com/vmalert/#recording-rules)
-
-### Связанные компоненты
-
-- **[vmalertmanager](../Prometheus/alertmanager.md)** — принимает и маршрутизирует алерты от vmalert
-- **[VictoriaMetrics](./overview.md)** — хранилище данных для выполнения запросов
-- **[Grafana](../Grafana/grafana_overview.md)** — визуализация метрик и алертов
+Связанные компоненты: [vmalertmanager](../Prometheus/alertmanager.md) (маршрутизация алертов), [VictoriaMetrics](./overview.md) (хранилище данных), [Grafana](../Grafana/grafana_overview.md) (визуализация).

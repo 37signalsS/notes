@@ -1,62 +1,111 @@
 # Yandex Storage: Дополнительные темы
 
-## 1. Интеграции
+## Определения
 
-### Docker
+**IAM-политики** — правила управления доступом к ресурсам Yandex Cloud через привязку ролей к субъектам (пользователям, [сервисным аккаунтам](../Resource_Manager/iam_roles.md#субъекты-iam)).
 
-- **[Docker overview](../../Docker/docker_overview.md)** — хранение образов в Object Storage
+**SSE-S3 / SSE-KMS** — шифрование на стороне сервера: SSE-S3 использует управляемые ключи Yandex Cloud, SSE-KMS — ключи из сервиса [KMS](../Resource_Manager/overview.md), предоставляя контроль над ключами шифрования.
 
-### Kubernetes
+**Приватный доступ** — подключение к хранилищам через VPC без выхода в интернет, с использованием [Security Groups](../VPC.md#security-groups) для контроля трафика.
 
-- **[Kubernetes](../../Kubernetes/)** — Persistent Volumes из Block/File Storage
+---
 
-### Terraform
+## Основные концепции
 
-- **[IaC overview](../../Concepts/iac_overview.md)** — декларативное управление хранилищами
+### Интеграции
 
-## 2. Безопасность
+Object Storage используется для хранения Docker-образов в [частных реестрах](../../Docker/docker_overview.md#реестры). Block Storage и File Storage выступают источником [Persistent Volumes](../../Kubernetes/) для stateful-нагрузок. Декларативное управление всеми хранилищами — через [Terraform](../../Concepts/iac_overview.md) и провайдер `yandex`.
 
-| Механизм | Описание |
-| :--- | :--- |
-| **IAM-политики** | Доступ к бакетам и дискам |
-| **Шифрование** | SSE-S3, SSE-KMS для Object Storage |
-| **Security Groups** | Сетевой доступ к File Storage |
-| **Приватный доступ** | Через VPC без выхода в интернет |
+### Безопасность
 
-## 3. Best Practices
+| Механизм | Что защищает | Подробности |
+| :--- | :--- | :--- |
+| **IAM-политики** | Доступ к бакетам, дискам, снапшотам | Роли `storage.admin`, `storage.editor`, `storage.viewer` — [IAM roles](../Resource_Manager/iam_roles.md) |
+| **SSE-S3** | Данные Object Storage at rest | Автоматическое, без дополнительной настройки |
+| **SSE-KMS** | Данные Object Storage at rest | Свои ключи, аудит использования, ротация через KMS |
+| **Security Groups** | Сетевой доступ к File Storage | Правила ingress/egress на L3/L4 для NFS-эндпоинтов |
+| **Приватный эндпоинт** | Object Storage без публичного интернета | Через VPC, без NAT, изоляция от внешней сети |
 
-### Object Storage
+**Шифрование в транзите:** все хранилища поддерживают HTTPS/TLS. Object Storage требует явного указания `--endpoint-url https://` в aws-cli.
 
-- Используйте lifecycle-политики для экономии
-- Включайте версионирование для критичных данных
-- Применяйте префиксы для организации объектов
-- Используйте multipart upload для файлов >100 МБ
+---
 
-### Block Storage
+## Практические сценарии
 
-- Делайте снапшоты перед обновлениями
-- Используйте SSD для БД и latency-критичных приложений
-- Монтируйте диски через /etc/fstab для авто-подключения
+### IAM: выдача доступа сервисному аккаунту к бакету
 
-### File Storage
+```bash
+# Создать сервисный аккаунт
+yc iam service-account create --name ci-deployer
+SA_ID=$(yc iam service-account get --name ci-deployer --format json | jq -r .id)
 
-- Используйте для общих данных между ВМ
-- Настраивайте backup через снапшоты
-- Мониторьте использование места
+# Назначить роль storage.editor на каталог
+yc resource-manager folder add-access-binding \
+  --id <folder_id> \
+  --subject serviceAccount:$SA_ID \
+  --role storage.editor
+```
 
-## 4. Актуальная информация (2025–2026)
+### SSE-KMS: шифрование бакета своим ключом
 
-- **Object Storage:** добавлен класс Cold Storage (Q4 2025)
-- **Block Storage:** новые типы network-ssd-readonly (Q3 2025)
-- **Лимиты:** увеличены до 100 бакетов на каталог
+```bash
+# Создать ключ KMS
+yc kms symmetric-key create --name storage-key --default-algorithm aes-256
+KEY_ID=$(yc kms symmetric-key get --name storage-key --format json | jq -r .id)
 
-## Связанные документы
+# Создать бакет с KMS-шифрованием
+cat <<EOF > bucket-config.json
+{
+  "SSEAlgorithm": "aws:kms",
+  "KMSMasterKeyID": "$KEY_ID"
+}
+EOF
 
-- **[Основные концепции](./storage_concepts.md)** — определения и типы хранилищ
-- **[Практические сценарии](./storage_practical_scenarios.md)** — создание бакетов, дисков, монтирование
-- **[Compute Cloud](../Compute-Cloud.md)** — диски для ВМ
-- **[Managed Databases](../Managed-Databases.md)** — бэкапы БД
-- **[CI/CD](../../CI-CD/artifact_management.md)** — управление артефактами
-- **[Docker](../../Docker/docker_overview.md)** — хранение образов
-- **[Kubernetes](../../Kubernetes/)** — Persistent Volumes
-- **[Terraform](../../Concepts/iac_overview.md)** — инфраструктура как код
+aws s3api put-bucket-encryption \
+  --bucket my-secure-bucket \
+  --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "aws:kms", "KMSMasterKeyID": "'$KEY_ID'"}}]}' \
+  --endpoint-url https://storage.yandexcloud.net
+```
+
+### Security Groups: ограничение доступа к File Storage
+
+```bash
+# Разрешить NFS (порт 2049) только из подсети ВМ
+yc vpc security-group-rule create \
+  --security-group-name fs-access \
+  --rule-name allow-nfs-from-app-subnet \
+  --direction ingress \
+  --protocol TCP \
+  --port 2049 \
+  --cidr 10.0.1.0/24
+```
+
+---
+
+## Дополнительная информация
+
+### Best Practices
+
+**Object Storage:**
+- Lifecycle-политики: удалять старые версии через 30–90 дней, архивы — переводить в Cold Storage через 180 дней ([пример](./storage_practical_scenarios.md#object-storage-версионирование-и-lifecycle))
+- Версионирование: обязательно для production-бакетов с артефактами и бэкапами
+- Префиксы: использовать иерархию `releases/<version>/`, `backups/<db>/<date>/` для оптимизации запросов
+- Multipart upload: для файлов >100 МБ (макс. chunk — 5 ГБ, рекомендуемый — 100 МБ)
+
+**Block Storage:**
+- Снапшоты — перед обновлениями ОС, миграциями, изменениями конфигурации; удалять через 7–14 дней после подтверждения стабильности
+- Тип диска: `network-ssd` для БД и latency-критичных приложений, `network-hdd` для логов и архивов
+- `/etc/fstab`: обязательное авто-монтирование с опцией `nofail` для graceful boot
+
+**File Storage:**
+- Использовать для общих данных между ВМ (конфиги, медиа-библиотеки, шаринг между микросервисами)
+- Бэкапы: снапшоты файлового хранилища + копирование в Object Storage для offsite-хранения
+- Мониторинг: алерт на заполнение >80%, контроль IOPS через [Yandex Monitoring](../Monitoring/index.md)
+
+### Актуальная информация (2025–2026)
+
+- **Object Storage:** добавлен класс Cold Storage (Q4 2025) — минимальная стоимость, доступ за часы, для архивов и долгосрочного хранения
+- **Block Storage:** новый тип `network-ssd-readonly` (Q3 2025) — до 20 000 IOPS, мульти-аттач для реплик БД и статических данных
+- **Лимиты:** увеличено до 100 бакетов на каталог (ранее — 50)
+
+Связанные темы: определения и типы хранилищ — [Storage concepts](./storage_concepts.md), практические сценарии — [Storage practical scenarios](./storage_practical_scenarios.md), обзор хранилищ — [Storage index](./index.md).

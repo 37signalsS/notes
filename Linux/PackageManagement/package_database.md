@@ -130,6 +130,39 @@ sudo dnf history redo <transaction_id>
 dnf history history-list > dnf-history.txt
 ```
 
+### APT (Debian/Ubuntu)
+
+#### История транзакций (APT 3.2+)
+
+APT 3.2 добавил пять команд для работы с историей операций:
+
+```bash
+# Список всех транзакций
+apt history-list
+
+# Детали конкретной транзакции
+apt history-info <transaction_id>
+
+# Отмена транзакции
+apt history-undo <transaction_id>
+
+# Повтор транзакции
+apt history-redo <transaction_id>
+
+# Откат к более раннему состоянию системы
+apt history-rollback <target_state>
+```
+
+**Расположение логов:**
+
+| Файл | Назначение |
+| :--- | :--- |
+| `/var/log/dpkg.log` | Логи всех операций dpkg |
+| `/var/log/apt/history.log` | История операций apt (до APT 3.2) |
+| `/var/log/apt/term.log` | Терминальный вывод apt |
+
+**Предотвращение засыпания системы:** APT 3.2 блокирует suspend/hibernate на время выполнения операций dpkg, предотвращая прерывание установки пакетов.
+
 ## Дополнительная информация
 
 ### Сравнение баз данных DPKG и RPM

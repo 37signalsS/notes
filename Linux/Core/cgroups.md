@@ -191,12 +191,82 @@ echo $(pgrep stress) | sudo tee /sys/fs/cgroup/test_group/cgroup.procs
 
 ---
 
+### Контроллер cpuset: изоляция CPU и памяти NUMA
+
+**CPUSET** — контроллер cgroups, позволяющий назначать определённые ядра CPU и узлы NUMA для группы процессов. В отличие от контроллера `cpu` (который ограничивает долю процессорного времени), `cpuset` обеспечивает **жёсткую привязку** процессов к конкретным ядрам.
+
+#### Назначение
+
+- **Изоляция высоконагруженных сервисов:** Гарантия, что критичные процессы не будут конкурировать за CPU с фоновыми задачами
+- **Снижение кэш-промахов:** Процессы не мигрируют между ядрами, сохраняя данные в кэше L1/L2/L3
+- **Предсказуемость задержек:** Исключение «шумных соседей» и переключений контекста
+- **Оптимизация для NUMA-архитектур:** Привязка процессов к памяти локального NUMA-узла
+
+#### Ключевые файлы контроллера
+
+| Файл | Назначение | Пример значения |
+| :--- | :--- | :--- |
+| `cpuset.cpus` | Список разрешённых ядер CPU | `0-3`, `1,3,5-7` |
+| `cpuset.mems` | Список разрешённых NUMA-узлов | `0`, `0-1` |
+| `cpuset.cpus.effective` | Фактически доступные ядра (учитывает родительскую группу) | Автоматически |
+| `cpuset.mems.effective` | Фактически доступные NUMA-узлы | Автоматически |
+
+#### Пример: создание изолированной группы
+
+```bash
+# Создание группы
+mkdir /sys/fs/cgroup/cpuset/isolated
+
+# Разрешить ядра 2-3 и NUMA-узел 0
+echo "2-3" > /sys/fs/cgroup/cpuset/isolated/cpuset.cpus
+echo "0" > /sys/fs/cgroup/cpuset/isolated/cpuset.mems
+
+# Включить контроллер для дочерних групп
+echo "+cpuset" > /sys/fs/cgroup/cgroup.subtree_control
+
+# Переместить процесс в группу
+echo <PID> > /sys/fs/cgroup/cpuset/isolated/cgroup.procs
+```
+
+После этого процессы в группе `isolated` будут выполняться **только** на ядрах 2 и 3, используя память NUMA-узла 0. Планировщик Linux не сможет перемещать эти процессы на другие ядра.
+
+#### CPUSET vs CPU affinity (`taskset`)
+
+| Характеристика | `cpuset` (cgroups) | `taskset` (CPU affinity) |
+| :--- | :--- | :--- |
+| **Уровень** | Kernel (cgroups) | User-space (`sched_setaffinity`) |
+| **Изоляция памяти NUMA** | ✅ Да | ❌ Нет |
+| **Управление группой процессов** | ✅ Через cgroup.procs | ❌ Только по одному PID |
+| **Наследование** | ✅ Дочерние процессы наследуют ограничения | ❌ Требуется явная установка для каждого процесса |
+| **Интеграция с контейнерами** | ✅ Docker (`--cpuset-cpus`), Kubernetes | ❌ Не используется напрямую |
+
+#### Применение в контейнеризации
+
+**Docker:**
+```bash
+docker run --cpuset-cpus="0-3" --cpuset-mems="0" my-app
+```
+
+**Kubernetes** (требует CPU Manager с политикой `static`):
+```yaml
+resources:
+  requests:
+    cpu: "2"    # Гарантированные ядра (при integer значении)
+  limits:
+    cpu: "2"
+```
+
+> **Связанные темы:** [CPU Pinning](./cpu_pinning.md) — подробное руководство по привязке процессов, [CPU Isolation](./kernel/cpu_isolation.md) — изоляция на уровне ядра (`isolcpus`, `nohz_full`).
+
+---
+
 ## Дополнительная информация
 
 ### Связанные темы
 
 - **[Namespaces](./namespaces.md)** — механизм изоляции видимости ресурсов
 - **[CPU Pinning](./cpu_pinning.md)** — привязка процессов к ядрам CPU
+- **[CPU Isolation](./kernel/cpu_isolation.md)** — kernel-level изоляция (`isolcpus`)
 - **[Systemd Overview](./systemd/overview.md)** — использование cgroups в systemd
 - **[Docker Isolation](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
 - **[Kernel Interfaces](./kernel/kernel_interfaces.md)** — файловые интерфейсы ядра
