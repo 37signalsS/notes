@@ -200,8 +200,8 @@ server {
 
 Настройки ядра Linux критически важны для высоконагруженных серверов. Для глубокого понимания и детального тюнинга `sysctl` и параметров TCP обратитесь к следующим заметкам:
 
-* **Главная заметка о `sysctl`**: [[.](./](../../Linux/Core/kernel/sysctl.md))](../../../Linux/Core/kernel/sysctl.md)
-* **Детальный тюнинг TCP**: [[.](./](../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md))](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)
+- **Главная заметка о `sysctl`**: [Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)
+- **Детальный тюнинг TCP**: [TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)
 
 ### Оптимизация TCP/IP сокетов
 
@@ -248,3 +248,11 @@ open_file_cache_errors on;
     ```nginx
     access_log /var/log/nginx/access.log main buffer=32k flush=5s gzip;
     ```
+
+## Дополнительная информация
+
+### Связанные темы
+
+- **[TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — тюнинг TCP/IP стека
+- **[Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)** — параметры ядра Linux
+- **[Кэширование прокси](./Caching/proxy_caching.md)** — серверное кэширование в Nginx

@@ -1,252 +1,208 @@
-# Traefik с Docker Compose: Практическое руководство
+# Traefik with Docker Compose
 
-Это руководство представляет собой пошаговую инструкцию по настройке Traefik в качестве reverse proxy для ваших сервисов с использованием **[Docker Compose](../../Docker/Docker_compose/docker_compose_directives.md)**.
+> **SSoT:** Теоретические концепции (Providers, Routers, Services, Middleware, SSL/TLS) — в [Traefik Overview](./traefik_overview.md).
+>
+> **Версия:** Конфигурация актуальна для Traefik v3.x. Для миграции с v2 см. [официальный гайд](https://doc.traefik.io/traefik/migrate/v2-to-v3/).
 
-> Для понимания основных теоретических концепций Traefik (провайдеры, маршрутизаторы, сервисы) обратитесь к основной заметке: **[Traefik: Обзор](traefik_overview.md)**.
+## Definitions
 
----
+- **Статическая конфигурация** (`traefik.yml`) — entrypoints, providers, certificatesResolvers. Загружается при старте, изменения требуют перезапуска.
+- **Динамическая конфигурация** (labels в `docker-compose.yml`, `dynamic.yml`) — routers, services, middleware. Обновляется на лету через `watch: true`.
+- **`acme.json`** — хранилище SSL-сертификатов Let's Encrypt. Права: `600`, владелец — UID контейнера Traefik.
 
-## Определения
+## Basic Concepts
 
-- **`traefik.yml` (Статическая конфигурация):** Основной конфигурационный файл Traefik, который определяет точки входа (entrypoints), провайдеров (providers) и другие параметры, не изменяющиеся во время работы.
-- **`dynamic.yml` (Динамическая конфигурация):** Файл для определения динамических элементов, таких как middleware, которые могут быть применены к различным маршрутам. Traefik отслеживает изменения в этом файле без перезапуска.
-- **`docker-compose.yml`:** Файл, описывающий и запускающий многоконтейнерные приложения. В данном контексте он используется для запуска самого Traefik и сервисов, которые будут за ним работать.
-- **`acme.json`:** JSON-файл для хранения SSL-сертификатов, автоматически полученных от Let's Encrypt. Важно обеспечить ему правильные права доступа (`600`).
+### Docker Provider и Labels
 
----
+Traefik подключается к Docker socket (`/var/run/docker.sock`) и обнаруживает контейнеры. Маршрутизация задаётся через labels:
 
-## Основные концепции
+| Label | Назначение |
+|---|---|
+| `traefik.enable=true` | Активировать Traefik для контейнера |
+| `traefik.http.routers.<name>.rule` | Правило маршрутизации (Host, PathPrefix) |
+| `traefik.http.routers.<name>.entrypoints` | Точка входа (`web`, `websecure`) |
+| `traefik.http.routers.<name>.tls.certresolver` | ACME resolver для SSL |
+| `traefik.http.routers.<name>.middlewares` | Цепочка middleware |
+| `traefik.http.services.<name>.loadbalancer.server.port` | Порт внутри контейнера |
 
-### Провайдер Docker и конфигурация через Labels
+### `expose` vs `ports`
 
-Traefik использует **провайдер Docker** для автоматического обнаружения контейнеров. Конфигурация маршрутизации, middleware и TLS для каждого сервиса задается с помощью **меток (labels)** прямо в `docker-compose.yml`.
+- **`expose`** — порт доступен только контейнерам в той же Docker-сети. Сервисы за Traefik должны использовать `expose`, а не `ports`, чтобы избежать обхода прокси.
+- **`ports`** — публикует порт на хосте. Используется только для самого Traefik (80, 443).
 
-- `traefik.enable=true`: "Включает" Traefik для данного контейнера.
-- `traefik.http.routers.*`: Определяет правила маршрутизации.
-- `traefik.http.services.*`: Настраивает, как Traefik должен подключаться к вашему сервису (например, указывает порт).
-- `traefik.http.middlewares.*`: Применяет различные middleware (например, для аутентификации).
+### Docker Network
 
-### `ports` vs `expose`
+Traefik и сервисы должны находиться в одной сети. Для изолированных проектов создаётся пользовательская bridge-сеть:
 
-При работе с Traefik важно правильно определять порты в `docker-compose.yml`:
+```bash
+docker network create traefik_net
+```
 
-- **`expose`**: "Открывает" порт только для других контейнеров в той же Docker-сети, но не публикует его на хосте. **Это идеальный вариант** для сервисов, которые должны быть доступны *только* через Traefik.
-- **`ports`**: Публикует порт контейнера на хост-машине, делая сервис доступным извне напрямую, в обход Traefik.
+В `docker-compose.yml` сеть объявляется как `external: true`, если создана вручную, или через секцию `networks` при авто-создании.
 
-### HTTP-Challenge от Let's Encrypt
+## Practical Scenarios
 
-Для автоматического получения SSL-сертификатов используется `certificatesResolver` с методом **HTTP-Challenge**. Traefik автоматически создает временный маршрут и эндпоинт, чтобы Let's Encrypt мог проверить, что домен действительно указывает на ваш сервер. Этот процесс происходит без прерывания работы основных сервисов.
+### Полная настройка: Traefik + Nginx + SSL
 
----
+Цель: запустить Traefik, защитить Dashboard через BasicAuth, опубликовать Nginx с автоматическим SSL.
 
-## Практический сценарий: Настройка Traefik и сервиса
+#### 1. Структура проекта
 
-Этот сценарий показывает, как запустить Traefik, защитить его Dashboard с помощью BasicAuth и опубликовать за ним веб-сервис (Nginx) с автоматическим получением SSL-сертификата.
+```
+project/
+├── traefik/
+│   ├── traefik.yml       # статическая конфигурация
+│   └── dynamic.yml       # динамическая конфигурация (middleware)
+├── docker-compose.yml
+└── acme.json             # chmod 600
+```
 
-### Шаг 1: Структура проекта и сеть
+```bash
+touch acme.json && chmod 600 acme.json
+```
 
-1. Создайте следующую структуру файлов и директорий:
-
-    ```
-    /
-    ├── traefik/
-    │   ├── traefik.yml
-    │   └── dynamic.yml
-    ├── docker-compose.yml
-    └── acme.json
-    ```
-
-2. Создайте внешнюю Docker-сеть, через которую Traefik будет взаимодействовать с другими контейнерами:
-
-    ```bash
-    docker network create traefik_net
-    ```
-
-3. Создайте пустой файл `acme.json` и установите на него безопасные права доступа:
-
-    ```bash
-    touch acme.json
-    chmod 600 acme.json
-    ```
-
-### Шаг 2: Статическая конфигурация (`traefik.yml`)
-
-Этот файл настраивает точки входа, провайдеры и получение сертификатов.
+#### 2. Статическая конфигурация (`traefik/traefik.yml`)
 
 ```yaml
 # traefik/traefik.yml
 
-# Включаем Dashboard и API (в небезопасном режиме для демонстрации)
 api:
   dashboard: true
-  insecure: true
+  insecure: false  # в проде — false, доступ через router
 
-# Определяем точки входа для HTTP и HTTPS
 entryPoints:
-  http:
+  web:
     address: ":80"
-    # Настраиваем глобальный редирект с HTTP на HTTPS
     http:
       redirections:
         entryPoint:
-          to: "https"
-          scheme: "https"
-  https:
+          to: websecure
+          scheme: https
+  websecure:
     address: ":443"
 
-# Настраиваем провайдеров
 providers:
-  # Провайдер Docker для автоматического обнаружения контейнеров
   docker:
     endpoint: "unix:///var/run/docker.sock"
-    exposedByDefault: false # Не открывать все контейнеры по умолчанию
-    network: "traefik_net"  # Указываем, в какой сети искать сервисы
-  # Файловый провайдер для подключения динамической конфигурации
+    exposedByDefault: false
+    network: traefik_net
   file:
-    filename: "/etc/traefik/dynamic.yml"
+    filename: /etc/traefik/dynamic.yml
     watch: true
 
-# Настраиваем логирование
 log:
-  level: DEBUG # Используйте INFO или WARN для продакшена
+  level: INFO  # DEBUG для отладки, WARN/ERROR для продакшена
 
-# Настраиваем получение сертификатов от Let's Encrypt
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "your-email@example.com" # Укажите ваш email
-      storage: "/etc/traefik/acme.json"
-      # Используем HTTP-Challenge для верификации домена.
-      # Traefik создаст временный эндпоинт для подтверждения владения доменом.
+      email: "your-email@example.com"
+      storage: /etc/traefik/acme.json
       httpChallenge:
-        entryPoint: "http"
-      # Для отладки можно использовать staging-сервер Let's Encrypt
-      # caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+        entryPoint: web
+        # delay: 0  # опционально, задержка перед ответом на challenge
+      # caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"  # staging для тестов
 ```
 
-### Шаг 3: Динамическая конфигурация (`dynamic.yml`)
-
-Здесь определим middleware для базовой аутентификации, который будем использовать для защиты Dashboard.
+#### 3. Динамическая конфигурация (`traefik/dynamic.yml`)
 
 ```yaml
 # traefik/dynamic.yml
 
 http:
   middlewares:
-    # Middleware для базовой аутентификации (пример)
-    # Сгенерировать строку можно с помощью htpasswd
-    # echo $(htpasswd -nb admin your_password) | sed -e s/\\$/\\$\\$/g
     basic-auth:
       basicAuth:
         users:
-          - "admin:$$apr1$$...$$..." # Замените на вашу сгенерированную строку
+          # Генерация: echo $(htpasswd -nb admin password) | sed -e 's/\$/\$\$/g'
+          - "admin:$$apr1$$...$$..."
 ```
 
-### Шаг 4: Основной `docker-compose.yml`
-
-Этот файл запускает Traefik и пример сервиса `nginx`.
+#### 4. Docker Compose (`docker-compose.yml`)
 
 ```yaml
-# docker-compose.yml
-
-version: '3.8'
+version: "3.8"
 
 services:
   traefik:
-    image: traefik:v2.7 # Рекомендуется использовать конкретную версию
+    image: traefik:v3.6
     container_name: traefik
     restart: always
     ports:
       - "80:80"
       - "443:443"
-      # Порт для Dashboard (опционально, если insecure=true)
-      # - "8080:8080"
     volumes:
-      # Подключаем сокет Docker для обнаружения сервисов
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      # Подключаем статическую конфигурацию
-      - "./traefik/traefik.yml:/etc/traefik/traefik.yml:ro"
-      # Подключаем динамическую конфигурацию
-      - "./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro"
-      # Подключаем хранилище сертификатов
-      - "./acme.json:/etc/traefik/acme.json"
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./acme.json:/etc/traefik/acme.json
     networks:
       - traefik_net
     labels:
-      # Включаем Traefik для самого себя, чтобы открыть Dashboard
       - "traefik.enable=true"
-      # --- Маршрутизатор для Dashboard (HTTPS) ---
-      - "traefik.http.routers.dashboard.rule=Host(`traefik.your-domain.com`)"
-      - "traefik.http.routers.dashboard.entrypoints=https"
+      # Dashboard router
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.example.com`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls=true"
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.dashboard.service=api@internal" # Внутренний сервис API Traefik
-      - "traefik.http.routers.dashboard.middlewares=basic-auth@file" # Middleware из файла dynamic.yml
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=basic-auth@file"
 
   nginx:
-    image: nginx:1.21
+    image: nginx:1.26
     container_name: nginx_app
     restart: always
+    expose:
+      - "80"
     networks:
       - traefik_net
-    expose: # Открываем порт только внутри Docker-сети
-      - "80"
     labels:
       - "traefik.enable=true"
-      # Указываем, что Traefik должен использовать эту сеть для данного сервиса
-      - "traefik.docker.network=traefik_net"
-
-      # --- Маршрутизатор для сервиса (HTTPS) ---
-      # Имя роутера (nginx-https) может быть любым
-      - "traefik.http.routers.nginx-https.rule=Host(`app.your-domain.com`)"
-      - "traefik.http.routers.nginx-https.entrypoints=https"
-      - "traefik.http.routers.nginx-https.tls=true"
-      - "traefik.http.routers.nginx-https.tls.certresolver=letsencrypt"
-      # --- Сервис Traefik, указывающий на порт контейнера Nginx ---
-      - "traefik.http.services.nginx-service.loadbalancer.server.port=80"
+      - "traefik.http.routers.nginx.rule=Host(`app.example.com`)"
+      - "traefik.http.routers.nginx.entrypoints=websecure"
+      - "traefik.http.routers.nginx.tls=true"
+      - "traefik.http.routers.nginx.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nginx.loadbalancer.server.port=80"
 
 networks:
   traefik_net:
     external: true
 ```
 
-### Шаг 5: Запуск
+#### 5. Запуск
 
-1. Убедитесь, что DNS-записи для `traefik.your-domain.com` и `app.your-domain.com` указывают на IP-адрес вашего сервера.
-2. Запустите все сервисы:
+```bash
+# DNS: traefik.example.com и app.example.com → IP сервера
+docker-compose up -d
+```
 
-    ```bash
-    docker-compose up -d
-    ```
+Проверка:
 
-    Подробнее о командах см. **[Основные команды docker compose](../../Docker/Docker_compose/docker_compose_cli_commands.md)**.
+```bash
+docker-compose ps
+docker-compose logs -f traefik
+curl -I http://app.example.com  # → 301 → https://
+curl -vI https://app.example.com  # → 200, valid cert
+```
 
-После запуска Traefik обнаружит сервис `nginx`, получит для него SSL-сертификат и начнет маршрутизировать трафик. Dashboard будет доступен по адресу `https://traefik.your-domain.com` после ввода логина и пароля.
+## Additional Information
 
----
+### End-to-End Encryption
 
-## Дополнительная информация
+Трафик Traefik → бэкенд по умолчанию HTTP. В изолированной Docker-сети это допустимо. Для требований безопасности — настройка TLS между контейнерами через внутренние сертификаты.
 
-### Сквозное шифрование (End-to-End Encryption)
+### Извлечение сертификатов
 
-По умолчанию, трафик между Traefik и вашим сервисом (`nginx`) идет по HTTP без шифрования. Это приемлемо, так как они находятся в одной изолированной **[сети Docker](../../Docker/Docker_network/docker_network.md)**. Однако для повышения безопасности можно настроить и шифрование на этом участке.
-
-### Извлечение сертификатов из `acme.json`
-
-Traefik хранит сертификаты в `acme.json`. Чтобы использовать их в других сервисах (например, для gRPC-сервера), их нужно извлечь в формате `.crt` и `.key`. Для этого существуют сторонние утилиты, например `traefik-certs-dumper`.
-
-Пример добавления `certs-dumper` в `docker-compose.yml`:
+Для сервисов, требующих `.crt`/`.key` файлы (gRPC, некоторые Java-приложения), используется `traefik-certs-dumper`:
 
 ```yaml
-# ... (другие сервисы)
-
   certs-dumper:
-    image: ldez/traefik-certs-dumper:v2.7.0
+    image: ldez/traefik-certs-dumper:v2.11.0
     container_name: certs_dumper
     restart: always
     volumes:
-      - "./acme.json:/traefik/acme.json:ro" # Подключаем acme.json от Traefik
-      - "./certs:/dump" # Директория, куда будут складываться сертификаты
+      - ./acme.json:/traefik/acme.json:ro
+      - ./certs:/dump
     networks:
       - traefik_net
     command: >
@@ -255,4 +211,20 @@ Traefik хранит сертификаты в `acme.json`. Чтобы испо�
       --watch
 ```
 
-Этот контейнер будет отслеживать `acme.json` и автоматически извлекать/обновлять сертификаты в папку `./certs`.
+Альтернативный форк: [kereis/traefik-certs-dumper](https://github.com/kereis/traefik-certs-dumper).
+
+### Troubleshooting
+
+| Проблема | Причина | Решение |
+|---|---|---|
+| 404 | Нет `traefik.enable=true` или неверный Host | Проверить labels через `docker inspect` |
+| 502 | Неверный порт в `loadbalancer.server.port` | Порт должен совпадать с `EXPOSE` контейнера |
+| SSL не работает | `acme.json` имеет неверные права | `chmod 600 acme.json`, проверить email |
+| Dashboard недоступен | `api.insecure: false`, нет router | Добавить router с middleware auth |
+
+### Связанные документы
+
+- [Traefik Overview (SSoT)](./traefik_overview.md)
+- [Swarm Ingress with Traefik](../../Docker_swarm/swarm_ingress_traefik.md)
+- [Docker Compose Commands](../../Docker/Docker_compose/docker_compose_cli_commands.md)
+- [Docker Networks](../../Docker/Docker_network/docker_network.md)

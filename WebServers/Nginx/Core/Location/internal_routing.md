@@ -1,76 +1,155 @@
-# Nginx location: Внутренняя маршрутизация
+# Nginx: Internal Routing
 
-## Именованные `location` и `internal`
+## Definitions
 
-### Именованные `location` (`@name`)
+**Internal routing (внутренняя маршрутизация)** — механизм Nginx, при котором запросы перенаправляются внутри сервера без участия клиента. Клиент не знает о внутренних перенаправлениях — URL в браузере не меняется.
+
+Ключевые инструменты internal routing:
+- **Именованные `location`** (`@name`) — блоки для внутренних перенаправлений
+- **Директива `internal`** — ограничивает доступ к `location` только внутренними запросами
+- **Директива `error_page`** — обработка ошибок через внутренние редиректы
+
+## Basic Concepts
+
+### Именованные location (`@name`)
 
 Именованные `location` не могут быть вызваны напрямую клиентом. Они используются для внутренних перенаправлений внутри Nginx, например, с помощью `try_files` или `error_page`.
 
-* **Пример:**
+**Синтаксис:** `@name`
 
-    ```nginx
-    location / {
-        try_files $uri @backend;
-    }
+**Пример:**
 
-    location @backend {
-        proxy_pass http://my_backend_servers;
-    }
-    ```
+```nginx
+location / {
+    try_files $uri @backend;
+}
 
-    В этом примере, если Nginx не находит статический файл, он внутренне перенаправляет запрос на именованный `location @backend`, который затем проксирует запрос к бэкенд-серверам. Эта техника является основой для [настройки Nginx в роли обратного HTTP-прокси](../../../Angie/angie_reverse_proxy.md) и [балансировки нагрузки HTTP(S)](../../../Angie/angie_http_load_balancing.md). (Ссылки адаптированы под Nginx)
+location @backend {
+    proxy_pass http://my_backend_servers;
+}
+```
+
+В этом примере, если Nginx не находит статический файл, он внутренне перенаправляет запрос на именованный `location @backend`, который затем проксирует запрос к бэкенд-серверам.
 
 ### Директива `internal`
 
-Директива `internal` внутри `location` делает этот `location` доступным только для внутренних запросов Nginx. Клиентские запросы к такому `location` будут отклонены (обычно с ошибкой 404 Not Found).
+Директива `internal` внутри `location` делает этот `location` доступным только для внутренних запросов Nginx. Клиентские запросы к такому `location` будут отклонены с ошибкой 404 Not Found.
 
-* **Пример:**
+**Пример:**
 
-    ```nginx
-    location /private_data/ {
+```nginx
+location /private_data/ {
+    internal;
+    root /var/www/internal_files;
+}
+
+location /error_pages/ {
+    internal;
+    root /var/www/errors;
+}
+```
+
+Это полезно для защиты конфиденциальных ресурсов или для организации внутренних API, которые не должны быть доступны извне.
+
+## Practical Scenarios
+
+### Сценарий 1: Обработка ошибок через error_page
+
+Директива `error_page` позволяет определить кастомные страницы ошибок. Она выполняет **внутреннее перенаправление** при возникновении указанной ошибки.
+
+**Синтаксис:** `error_page code ... [=[response]] uri;`
+
+```nginx
+server {
+    root /var/www/html;
+
+    error_page 404 /404.html;
+    error_page 500 502 503 504 /50x.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location = /404.html {
         internal;
-        root /var/www/internal_files;
-        # Этот location доступен только для внутренних перенаправлений Nginx.
-        # Прямой запрос клиента к /private_data/ будет отклонен.
     }
-    location /error_pages/ {
+
+    location = /50x.html {
         internal;
-        root /var/www/errors;
-        # Если клиент попытается напрямую обратиться к /error_pages/404.html,
-        # он получит ошибку 404 Not Found, несмотря на существование файла.
-        # Этот location предназначен для использования с error_page директивой.
     }
-    ```
+}
+```
 
-* Это полезно для защиты конфиденциальных ресурсов или для организации внутренних API, которые не должны быть доступны извне.
+**Как это работает:**
+- `error_page 404 /404.html;` — при ошибке 404 Nginx выполняет внутреннее перенаправление на `/404.html`
+- `location = /404.html { internal; }` — страница ошибки доступна только для внутренних запросов; прямой запрос клиента вернёт 404
 
-## Кастомные страницы ошибок (error_page)
+### Сценарий 2: Fallback на бэкенд
 
-Директива `error_page` позволяет определить, что увидит пользователь при возникновении ошибки (например, 404 Not Found). Хоть она и не является частью `location`, ее работа напрямую связана с результатом обработки запроса в `location`.
+Типичный паттерн для SPA-приложений или статических сайтов с динамическим fallback:
 
-* **Синтаксис:** `error_page code ... [=[response]] uri;`
-* **Пример:**
+```nginx
+server {
+    root /var/www/app;
 
-    ```nginx
-    server {
-        root /var/www/html;
-
-        # Если try_files вернет ошибку 404, будет выполнен
-        # внутренний редирект на /404.html
-        error_page 404 /404.html;
-
-        location / {
-            try_files $uri $uri/ =404;
-        }
-
-        # Важно: для /404.html тоже нужен location, чтобы Nginx смог его найти.
-        # Этот location должен быть доступен для внутренних запросов.
-        location = /404.html {
-            internal;
-        }
+    location / {
+        try_files $uri $uri/ @app;
     }
-    ```
 
-* **Объяснение:**
-  * `error_page 404 /404.html;`: Настраивает обработку ошибки 404. Если Nginx не может найти ресурс (например, `try_files` завершается с `=404`), он не показывает стандартную страницу "404 Not Found". Вместо этого он выполняет **внутреннее перенаправление** и отдает пользователю содержимое файла `/404.html`.
-  * `location = /404.html { internal; }`: Этот блок предназначен для обработки запросов к странице 404. Специальная директива `internal;` делает этот `location` доступным только для внутренних запросов Nginx (например, от `error_page`). Это означает, что пользователь не сможет напрямую перейти по адресу `http://site1.local/404.html` и увидеть страницу ошибки. Это хорошая практика для предотвращения индексации страниц ошибок поисковыми системами.
+    location @app {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        internal;
+        proxy_pass http://127.0.0.1:8080;
+    }
+}
+```
+
+**Порядок обработки:**
+1. Запрос `/index.html` → ищется статический файл
+2. Запрос `/dashboard` → файл не найден → внутренний редирект на `@app`
+3. Запрос `/api/data` напрямую клиентом → 404 (директива `internal`)
+
+### Сценарий 3: Внутренний API для обработки ошибок
+
+```nginx
+server {
+    error_page 404 = @handle_404;
+    error_page 500 = @handle_500;
+
+    location @handle_404 {
+        internal;
+        return 404 '{"error": "not_found", "path": "$uri"}';
+        default_type application/json;
+    }
+
+    location @handle_500 {
+        internal;
+        return 500 '{"error": "internal_server_error"}';
+        default_type application/json;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+Этот паттерн возвращает JSON-ответы для API вместо HTML-страниц ошибок.
+
+## Additional Information
+
+### Связь с другими директивами
+
+- `try_files` — основной триггер внутренних перенаправлений
+- `proxy_intercept_errors` — перехват ошибок от бэкенда для обработки через `error_page`
+
+### См. также
+
+- [Директива location: основы и приоритеты](./basics.md)
+- [Rewrite правила и try_files](../nginx_rewrite_rules_and_try_files.md)
+- [Лучшие практики и отладка location](./best_practices.md)

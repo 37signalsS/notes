@@ -95,6 +95,7 @@ runners:
   - **Монтирование сокета Docker (`/var/run/docker.sock`)**: Позволяет контейнеру управлять Docker-демоном на хосте, что эквивалентно root-доступу.
 
   **Рекомендация**: Используйте **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — инструмент собирает образы в userspace без привилегированного доступа или Docker-демона.
+  - Подробное сравнение подходов DinD, DooD и Kaniko: **[Docker-in-Docker: Запуск Docker внутри контейнера](../../../Docker/docker-in-docker.md)**.
 - **Наблюдаемость:** Включите `metrics_server` в `config.toml` для сбора метрик в формате Prometheus.
 - **Практическое применение:** Пошаговые инструкции по регистрации Runner'а см. в руководстве **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)**.
 - **Интеграция с Kubernetes:** Детальная настройка Kubernetes Executor описана в **[Интеграция GitLab CI с Kubernetes](./gitlab_kubernetes_integration_guide.md)**.

@@ -211,9 +211,15 @@ location = /_auth {
 
 ## Дополнительная информация
 
-> **Примечание:** Механизмы контроля доступа, общие для Angie и Nginx, подробно описаны в общем руководстве по безопасности: **[Руководство по безопасности веб-сервера Nginx](../Nginx/Security/nginx_security_guide.md)**.
+Механизмы контроля доступа, общие для Angie и Nginx, подробно описаны в общем руководстве: **[Руководство по безопасности веб-сервера Nginx](../Nginx/Security/nginx_security_guide.md)**.
 
-Существуют и другие модули для более специфических задач аутентификации, которые доступны для Angie, например:
+Существуют и другие модули для специфических задач аутентификации:
 
 - **`auth-jwt`**: Для валидации [JSON Web Tokens (JWT)](../../Security/Concepts/authentication_vs_authorization.md).
-- **[LDAP (Lightweight Directory Access Protocol)](../../Linux/SystemAdministration/users_management.md#LDAP-Lightweight-Directory-Access-Protocol)**: Для интеграции с корпоративными каталогами.
+- **LDAP (Lightweight Directory Access Protocol)**: Для интеграции с корпоративными каталогами. Подробнее: [LDAP и SSSD](../../Linux/SystemAdministration/Users/LDAP_SSSD/operations.md).
+
+### Смотрите также
+
+- [Настройка TLS в Angie](./angie_tls_setup.md)
+- [mTLS в Angie](./angie_client_cert_auth.md)
+- [Логирование в Angie](./angie_logging.md)

@@ -1,24 +1,23 @@
-# Балансировка и проксирование L4-трафика ([TCP](../../../Networking/Protocols/TCP/overview.md)/[UDP](../../../Networking/Protocols/udp.md)) в Nginx
+# Балансировка и проксирование L4-трафика (TCP/UDP) в Nginx
 
 ## Определения
 
-* **Модуль `stream` Nginx**: Расширение функциональности Nginx, предоставляющее мощные возможности для балансировки нагрузки и проксирования трафика на **уровне L4 (TCP/UDP)**. Это позволяет работать с различными протоколами, которые не основаны на HTTP, такими как базы данных ([MySQL](../../../Databases/MySQL/configuration.md), [PostgreSQL](../../../Databases/PostgreSQL/overview.md)), [DNS](../../../Networking/Protocols/DNS/dns.md), NTP, [SSH](../../../Linux/Security/ssh/ssh_overview.md) и др.
+* **Модуль `stream` Nginx**: Расширение функциональности Nginx, предоставляющее возможности для балансировки нагрузки и проксирования трафика на **уровне L4 (Transport layer)**. Позволяет работать с протоколами, не основанными на HTTP: базами данных (MySQL, PostgreSQL), DNS, NTP, SSH и др.
 
-* **L4 против L7 проксирования**:
-  * Традиционно Nginx используется для работы с HTTP-трафиком (L7), где конфигурация находится в контексте `http` и позволяет работать с запросами на уровне приложения.
-  * Модуль `stream` позволяет работать на уровне транспорта ([TCP](../../../Networking/Protocols/TCP/overview.md)/[UDP](../../../Networking/Protocols/udp.md))), что открывает возможности для проксирования любых протоколов, не ограничиваясь HTTP/HTTPS.
-  * **Отличия модуля `stream` от `http`**:
-    * **Уровень работы:** L4 (TCP/UDP) вместо L7 (HTTP/S).
-    * **Протоколы:** Поддержка любых [TCP](../../../Networking/Protocols/TCP/overview.md)/[UDP](../../../Networking/Protocols/udp.md) протоколов (базы данных, [DNS](../../../Networking/Protocols/DNS/dns.md), NTP, SSH и т.д.).
-    * **Обработка трафика:** Работа с сессиями подключения, а не с отдельными запросами.
-    * **Ограничения:** Меньше возможностей для глубокой инспекции трафика по сравнению с L7, но достаточная гибкость для маршрутизации на основе данных сессии.
-  * Такой подход требует значительно меньше ресурсов, так как балансировщику не нужно разбирать протокол уровня приложения, что позволяет пропускать через себя больше трафика.
+* **L4 vs L7 проксирование**:
+  * **L7 (Application layer):** Nginx работает с HTTP-трафиком в контексте `http`, обрабатывая запросы на уровне приложения.
+  * **L4 (Transport layer):** Модуль `stream` работает на уровне транспорта (TCP/UDP), проксируя соединения без разбора содержимого.
+  * **Ключевые отличия:**
+    * Уровень работы: L4 (TCP/UDP) вместо L7 (HTTP/S)
+    * Протоколы: Любые TCP/UDP-протоколы (базы данных, DNS, NTP, SSH)
+    * Обработка: Сессии подключения вместо отдельных запросов
+    * Ресурсы: Меньше накладных расходов, так как не требуется разбор протокола приложения
 
 ## Основные концепции
 
 ### Конфигурация и основные директивы
 
-Для использования L4-функциональности необходимо, чтобы в главном конфигурационном файле [`nginx.conf`](../Core/nginx_setup.md#структура-конфигурации) присутствовал блок `stream`.
+Для использования L4-функциональности в [`nginx.conf`](../Core/nginx_setup.md#структура-конфигурации) должен присутствовать блок `stream`.
 
 ```nginx
 # /etc/nginx/nginx.conf
@@ -36,18 +35,18 @@ stream {
 
 ### Логирование в `stream`
 
-По умолчанию логирование в модуле `stream` отключено. Его можно настроить с помощью директивы `access_log`. Логирование будет отличаться от HTTP, так как фиксируются параметры сессии, а не запросов.
+По умолчанию логирование в модуле `stream` отключено. Настраивается через `access_log`. Фиксируются параметры сессии, а не запросов.
 
-**Пример переменных для логирования:**
+**Переменные для логирования:**
 
-* `$remote_addr`: IP-адрес клиента.
-* `$time_local`: Локальное время.
-* `$protocol`: Используемый протокол (TCP/UDP).
-* `$status`: Статус сессии.
-* `$bytes_sent`: Количество отправленных байт.
-* `$bytes_received`: Количество полученных байт.
-* `$session_time`: Продолжительность сессии.
-* `$upstream_addr`: Адрес вышестоящего сервера.
+* `$remote_addr`: IP-адрес клиента
+* `$time_local`: Локальное время
+* `$protocol`: Протокол (TCP/UDP)
+* `$status`: Статус сессии
+* `$bytes_sent`: Отправленные байты
+* `$bytes_received`: Полученные байты
+* `$session_time`: Продолжительность сессии
+* `$upstream_addr`: Адрес upstream-сервера
 
 ### Ограничение подключений
 
@@ -59,7 +58,7 @@ stream {
 
     server {
         listen 12345;
-        limit_conn per_ip 10; # Ограничение до 10 подключений с одного IP
+        limit_conn per_ip 10; # До 10 подключений с одного IP
         proxy_pass backend_service;
     }
 }
@@ -67,9 +66,9 @@ stream {
 
 ## Практические сценарии
 
-### Проксирование [MySQL](../../../Databases/MySQL/configuration.md) ([TCP](../../../Networking/Protocols/TCP/overview.md)) с сохранением IP клиента
+### Проксирование MySQL (TCP) с балансировкой master/slave
 
-Это классический сценарий, где Nginx используется для распределения нагрузки между master-сервером базы данных (на запись) и slave-серверами (на чтение).
+Сценарий распределения нагрузки между master-сервером БД (на запись) и slave-серверами (на чтение).
 
 **Пример конфигурации (`/etc/nginx/stream.d/mysql.conf`):**
 
@@ -77,29 +76,29 @@ stream {
 # Группа для мастера (запись)
 upstream mysql_master {
     zone mysql_master_zone 64k;
-    server 192.168.77.14:3307 proxy_protocol; 
+    server 192.168.77.14:3307 proxy_protocol;
 }
 
 # Группа для слейвов (чтение)
 upstream mysql_slave {
     zone mysql_slave_zone 64k;
     server 192.168.77.12:3308 proxy_protocol;
-    server 192.168.77.13:3309 proxy_protocol; 
+    server 192.168.77.13:3309 proxy_protocol;
 }
 
 # Виртуальный сервер для мастера
 server {
     listen 6306;
     proxy_pass mysql_master;
-    
+
     # Ограничение подключений для защиты мастера
     limit_conn_zone $binary_remote_addr zone=per_ip_conn:10m;
     limit_conn per_ip_conn 10;
-    
+
     access_log /var/log/nginx/mysql-master-access.log basic;
     error_log /var/log/nginx/mysql-master-error.log warn;
     status_zone mysql_master_status;
-}         
+}
 
 # Виртуальный сервер для слейвов
 server {
@@ -112,23 +111,18 @@ server {
 **Разбор конфигурации:**
 
 1. **Блоки `upstream`**:
-    * `upstream mysql_master { ... }`: Определяет группу серверов (в данном случае один) для "мастер" базы данных.
-    * `upstream mysql_slave { ... }`: Аналогично определяет группу "слейв" серверов. Nginx будет распределять нагрузку между ними по умолчанию методом Round Robin (поочередно).
-    * `zone <name> 64k;`: Выделяет 64 килобайта общей памяти для хранения состояния группы (например, для статистики соединений и динамического управления).
-    * `server ... proxy_protocol;`: Включает **[Proxy Protocol](../../../Networking/Concepts/proxy.md)**, который добавляет к TCP-соединению специальный заголовок, содержащий **реальный IP-адрес клиента**. Без этой опции база данных видела бы только IP-адрес самого Nginx, что делает невозможным аудит, мониторинг и применение правил безопасности на основе IP клиента.
+    * `zone <name> 64k;`: Выделяет общую память для хранения состояния группы (статистика соединений, динамическое управление).
+    * `server ... proxy_protocol;`: Включает **[Proxy Protocol](../../../Networking/Concepts/proxy.md)** — добавляет к TCP-соединению заголовок с **реальным IP-адресом клиента**. Без этого БД видит только IP Nginx.
 
 2. **Блоки `server`**:
-    * `server { listen 6306; ... }`: Создает виртуальный TCP-сервер, слушающий порт `6306`.
-    * `proxy_pass mysql_master;`: Все поступающие на этот порт соединения направляет в `upstream` с именем `mysql_master`.
-    * `limit_conn_*`: Директивы для ограничения количества одновременных соединений с одного IP-адреса, что помогает защитить "мастер" от перегрузки.
-    * `status_zone <name>;`: Связывает сервер с зоной статистики, позволяя отслеживать метрики (активные соединения и т.д.) через API Nginx.
-    * `server { listen 6307; ... }`: Аналогичный сервер, но для слейвов: слушает порт `6307` и направляет трафик на `upstream` `mysql_slave`.
+    * `listen 6306;`: Виртуальный TCP-сервер на порту `6306`.
+    * `proxy_pass mysql_master;`: Направление трафика в upstream `mysql_master`.
+    * `limit_conn_*`: Ограничение одновременных соединений с одного IP для защиты мастера.
+    * `status_zone <name>;`: Зона статистики для мониторинга через API Nginx.
 
-> Пример автоматизации этой конфигурации с помощью Ansible можно найти в заметке **[Ansible: Часто используемые модули](../../../Ansible/Modules/ansible_modules_overview.md)**.
+### SSL/TLS терминация на L4
 
-### [SSL/TLS терминация](../Security/TLS_SSL/nginx_tls_ssl_overview.md) на L4
-
-Nginx может выступать в роли SSL-терминатора, принимая зашифрованные соединения, расшифровывая их и затем проксируя трафик дальше в открытом виде.
+Nginx принимает зашифрованные соединения, расшифровывает и проксирует трафик в открытом виде.
 
 ```nginx
 # /etc/nginx/stream.d/ssl_termination.conf
@@ -137,54 +131,53 @@ upstream web_backend {
 }
 
 server {
-    listen 9443 ssl; # Прослушивание порта с SSL
+    listen 9443 ssl;
     ssl_certificate /etc/nginx/certs/server.crt;
     ssl_certificate_key /etc/nginx/certs/server.key;
     proxy_pass web_backend; # Проксирование на незашифрованный бэкенд
 }
 ```
 
+Подробнее: [SSL/TLS в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md).
+
 ### Передача в HTTP-модуль
 
-Особенно мощной является возможность передать расшифрованный трафик напрямую в `http` контекст самого Nginx для дальнейшей обработки.
+Расшифрованный трафик передаётся в `http` контекст для L7-обработки.
 
 ```nginx
-# /etc/nginx/nginx.conf
-# В http-контексте создается сервер, слушающий на внутреннем сокете
+# /etc/nginx/nginx.conf — http-контекст
 http {
-    # ...
     server {
-        listen 127.0.0.1:8000; # Слушает только локально
-        # ... здесь обычная обработка HTTP-запроса
+        listen 127.0.0.1:8000; # Только локально
+        # ... обработка HTTP-запроса
     }
 }
 
-# /etc/nginx/stream.d/ssl_pass.conf
-# В stream-контексте
+# /etc/nginx/stream.d/ssl_pass.conf — stream-контекст
 server {
     listen 9444 ssl;
     ssl_certificate /etc/nginx/certs/server.crt;
     ssl_certificate_key /etc/nginx/certs/server.key;
-    
+
     # Передача расшифрованного соединения в http-модуль
     proxy_pass 127.0.0.1:8000;
 }
 ```
 
-Эта связка позволяет использовать `stream` для эффективной терминации TLS, а `http` — для всей мощи L7-обработки.
+`stream` эффективен для терминации TLS, `http` — для L7-обработки.
 
 ### SSL Pre-read (маршрутизация TLS vs SSH)
 
-Функция SSL Pre-read позволяет Nginx "заглянуть" в начало входящего TCP-соединения, чтобы определить, используется ли TLS, без полной терминации сессии. Это позволяет маршрутизировать разный трафик, приходящий на один порт.
+Функция SSL Pre-read позволяет Nginx "заглянуть" в начало TCP-соединения и определить тип трафика без полной терминации сессии.
 
-Классический пример — мультиплексирование HTTPS и [SSH](../../../Linux/Security/ssh/ssh_overview.md) на одном порту (443).
+**Пример: мультиплексирование HTTPS и SSH на порту 443**
 
 ```nginx
 # /etc/nginx/stream.d/ssl_preread.conf
 map $ssl_preread_server_name $backend_by_sni {
     hostnames;
-    default         ssh_backend; # По умолчанию отправляем на SSH
-    www.example.com http_backend;  # Если SNI совпал, на HTTP
+    default         ssh_backend;
+    www.example.com http_backend;
 }
 
 upstream http_backend {
@@ -196,56 +189,46 @@ upstream ssh_backend {
 
 server {
     listen 443;
-    
-    # Включаем "подглядывание" в соединение
-    ssl_preread on;
-    
-    # Проксируем на основе переменной, определенной в map
+
+    ssl_preread on; # Включаем анализ Client Hello
     proxy_pass $backend_by_sni;
-    
+
     status_zone ssl_preread_status;
 }
 ```
 
 **Особенности:**
 
-* **[`map`](../Core/nginx_rewrite_rules_and_try_files.md#директива-map):** Создает переменную `$backend_by_sni` на основе значения другой переменной. В данном случае, значение (имя апстрима) зависит от имени сервера, переданного в TLS SNI (`$ssl_preread_server_name`). Если клиент не передает SNI (как в случае с SSH), используется значение `default`.
-* **`listen 443;`**: Обратите внимание, что флаг `ssl` не используется, так как Nginx не терминирует соединение.
-* **`ssl_preread on;`:** Включает "подглядывание" в Client Hello.
-* **`proxy_pass $backend_by_sni;`:** Динамическое проксирование на основе результата `map`.
+* **[`map`](../Core/nginx_rewrite_rules_and_try_files.md#директива-map):** Определяет `$backend_by_sni` на основе SNI (`$ssl_preread_server_name`). Без SNI (как в SSH) — используется `default`.
+* **`listen 443;`**: Без флага `ssl` — Nginx не терминирует соединение.
+* **`ssl_preread on;`:** Включает анализ Client Hello.
+* **`proxy_pass $backend_by_sni;`:** Динамическое проксирование на основе `map`.
 
-### Использование [Proxy Protocol](../../../Networking/Concepts/proxy.md)
+### Использование Proxy Protocol
 
-Proxy Protocol позволяет передавать исходный IP-адрес клиента через прокси-сервер к бэкенду, что критически важно для корректного логирования и работы приложений.
+Proxy Protocol передаёт исходный IP клиента через прокси к бэкенду.
 
 ```nginx
 # Фронтенд-балансировщик
 server {
     listen 982;
-    # Добавляем заголовок Proxy Protocol перед отправкой на бэкенд
-    proxy_pass 127.0.0.1:820 proxy_protocol;
+    proxy_pass 127.0.0.1:820 proxy_protocol; # Добавляем заголовок Proxy Protocol
 }
 
-# Бэкенд-сервер (может быть другим Nginx)
+# Бэкенд-сервер (другой Nginx)
 server {
-    # Указываем, что на этом порту ожидается заголовок Proxy Protocol
-    listen 820 proxy_protocol;
-    
-    # Указываем доверенные IP-адреса прокси
-    set_real_ip_from 127.0.0.0/8;
-    
-    # Указываем, что реальный IP нужно брать из заголовка Proxy Protocol
-    real_ip_header proxy_protocol;
-    
+    listen 820 proxy_protocol; # Ожидание заголовка Proxy Protocol
+
+    set_real_ip_from 127.0.0.0/8; # Доверенные IP прокси
+    real_ip_header proxy_protocol; # Извлечение реального IP
+
     access_log /var/log/nginx/proxy-protocol-access.log basic;
-    
-    # ... дальнейшая обработка
 }
 ```
 
-### Проксирование UDP [DNS](../../../Networking/Protocols/DNS/dns.md)
+### Проксирование UDP (DNS)
 
-Nginx может проксировать UDP-трафик, например, для DNS-серверов.
+Nginx проксирует UDP-трафик, например для DNS-серверов.
 
 ```nginx
 # /etc/nginx/stream.d/udp_dns.conf
@@ -256,34 +239,41 @@ upstream dns_servers {
 }
 
 server {
-    listen 53 udp; # Прослушивание UDP-порта
-    listen 53;     # Прослушивание TCP-порта (DNS также использует TCP)
-    
-    # Для UDP, где нет формального закрытия сессии, эта директива указывает Nginx,
-    # что нужно ждать только один ответ от бэкенда, после чего сессия считается завершенной.
-    proxy_responses 1;
-    
+    listen 53 udp; # UDP-порт
+    listen 53;     # TCP-порт (DNS использует оба)
+
+    proxy_responses 1; # Ожидание одного ответа от бэкенда
+
     proxy_pass dns_servers;
 }
 ```
 
 **Особенности:**
 
-* **`listen ... udp`:** Указывает, что порт прослушивается для UDP-трафика.
-* **`proxy_responses 1`:** Критически важно для UDP-протоколов без состояния, чтобы Nginx не держал сессию открытой бесконечно.
-* **Без конвертации:** Модуль `stream` не конвертирует протоколы. Если Nginx получает UDP-трафик, он будет проксирован дальше как UDP.
+* **`listen ... udp`:** Указывает прослушивание UDP-трафика.
+* **`proxy_responses 1`:** Критично для UDP без состояния — предотвращает бесконечное удержание сессии.
+* **Без конвертации протоколов:** UDP проксируется как UDP, TCP — как TCP.
 
 ## Дополнительная информация
 
 ### Мониторинг L4-трафика
 
-Для сбора метрик L4-трафика можно использовать `status_zone` в блоке `server` модуля `stream`.
+Для сбора метрик используется `status_zone` в блоке `server` модуля `stream`.
 
 ```nginx
 stream {
     server {
         listen 12345;
         proxy_pass backend_service;
-        status_zone my_l4_service; # Имя зоны для сбора метрик
+        status_zone my_l4_service; # Зона для сбора метрик
     }
 }
+```
+
+Метрики (активные соединения, трафик и т.д.) доступны через API Nginx (модуль `ngx_http_stub_status_module` или NGINX Plus API).
+
+### See also
+
+* [Основы Nginx](../Core/nginx_overview.md)
+* [Конфигурация Nginx](../Core/nginx_setup.md)
+* [Концепции проксирования](../../../Networking/Concepts/proxy.md)

@@ -87,54 +87,20 @@ server {
 
 ## Дополнительная информация
 
-### Навигация по темам Nginx
-
-Этот раздел служит точкой входа для навигации по всем заметкам о Nginx, сгруппированным по темам.
-
-#### I. Основы и Конфигурация (Core)
-
-- **[Установка и базовая настройка](./nginx_setup.md)**: Установка, управление службой, структура конфигурации.
-- **[Глубокое погружение в директиву location](./Location/basics.md)**: Приоритеты и правила обработки запросов.
-- **[Правила Rewrite, Redirect и try_files](./nginx_rewrite_rules_and_try_files.md)**: Изменение URI и перенаправление клиентов.
-
-#### II. Проксирование и Балансировка (Proxy)
-
-- **[Балансировка нагрузки HTTP (L7)](../Proxy/Load_Balancing/overview_concepts.md)**: Распределение запросов между серверами.
-- **[Балансировка и проксирование TCP/UDP (L4)](../Proxy/nginx_l4_proxying.md)**: Настройка модуля `stream`.
-- **Примеры:**
-  - **[Nginx как реверс-прокси для Consul](../Scenarios/nginx_as_reverse_proxy_for_consul.md)**
-  - **[Nginx как реверс-прокси для Grafana](../Scenarios/nginx_as_reverse_proxy_for_grafana.md)**
-
-#### III. Производительность и Кэширование (Performance)
-
-- **[Оптимизация производительности](../Performance/nginx_performance_tuning.md)**: Тюнинг ядра Linux и рабочих процессов Nginx.
-- **[Конфигурация HTTP/2 и HTTP/3](../Performance/nginx_http_versions.md)**: Использование современных протоколов.
-- **[Сжатие (Gzip, Brotli, ZSTD)](../Performance/nginx_compression.md)**: Уменьшение объема передаваемых данных.
-- **[Адаптивная доставка изображений](../Performance/nginx_adaptive_content.md)**: Отдача WebP/AVIF для поддерживающих браузеров.
-- **Кэширование:**
-  - **[Кэширование ответов бэкенда (Proxy Cache)](../Performance/Caching/proxy_caching.md)**: Снижение нагрузки на бэкенды.
-  - **[Кэширование статики на клиенте](../Performance/nginx_static_file_caching.md)**: Управление кэшем в браузере.
-
-#### IV. Безопасность (Security)
-
-- **[Руководство по безопасности](../Security/nginx_security_guide.md)**: Защита от DoS, контроль доступа, заголовки безопасности.
-- **[Настройка TLS/SSL](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**: Полное руководство по настройке HTTPS.
-- **[Интеграция с Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md)**: Автоматизация получения сертификатов.
-
-#### V. Эксплуатация и Мониторинг (Operations)
-
-- **[Запуск Nginx в Docker](../../../Docker/Docker_compose/docker_compose_file_example.md)**: Руководство по контейнеризации.
-- **[Поиск и устранение неисправностей](../Operations/nginx_troubleshooting.md)**: Пошаговая диагностика.
-- **[Мониторинг с помощью vts-модуля](../Operations/nginx_vts_monitoring_setup.md)**: Настройка связки с Prometheus и Grafana.
-
-#### VI. Комплексные сценарии (Scenarios)
-
-- **[Создание защищенного Apt-репозитория с mTLS](../Scenarios/secure_apt_repository_guide.md)**: Пример комплексной настройки `reprepro`, `OpenSSL` и `Nginx`.
-- **[Nginx как Ingress-контроллер в Kubernetes](../../../Kubernetes/Networking/Ingress/overview.md)**: Управление внешним доступом к сервисам в кластере.
-
 ### Связанные технологии
 
-- **[Angie](../../Angie/angie_overview.md)**: Форк Nginx от ключевых бывших разработчиков.
-- **[HAProxy](../../haproxy_overview.md)**: Высокопроизводительный балансировщик нагрузки.
-- **[Apache](../../Apache/apache_overview.md)**: Классический веб-сервер с гибкой конфигурацией через `.htaccess`.
+- **[Angie](../../Angie/angie_overview.md)**: Форк Nginx от ключевых бывших разработчиков, включающий в Open Source версии многие функции из платного Nginx Plus.
+- **[HAProxy](../../haproxy_overview.md)**: Высокопроизводительный балансировщик нагрузки, специализированный для чистой балансировки.
+- **[Apache](../../Apache/apache_overview.md)**: Классический веб-сервер с гибкой конфигурацией через `.htaccess` и процессной моделью `pre-fork`/`worker`.
 - **[Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)**: Создание отказоустойчивого кластера Nginx с помощью виртуального IP (VRRP).
+
+### Навигация по теме Nginx
+
+Подробные руководства по конкретным аспектам Nginx находятся в соответствующих разделах:
+
+- **Конфигурация:** [Установка и базовая настройка](./nginx_setup.md), [Директива location](./Location/basics.md), [Rewrite и try_files](./nginx_rewrite_rules_and_try_files.md).
+- **Проксирование:** [Балансировка HTTP (L7)](../Proxy/Load_Balancing/overview_concepts.md), [Проксирование TCP/UDP (L4)](../Proxy/nginx_l4_proxying.md).
+- **Производительность:** [Тюнинг](../Performance/nginx_performance_tuning.md), [HTTP/2 и HTTP/3](../Performance/nginx_http_versions.md), [Сжатие](../Performance/nginx_compression.md), [Кэширование](../Performance/Caching/proxy_caching.md).
+- **Безопасность:** [Руководство по безопасности](../Security/nginx_security_guide.md), [TLS/SSL](../Security/TLS_SSL/nginx_tls_ssl_overview.md), [Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md).
+- **Эксплуатация:** [Troubleshooting](../Operations/nginx_troubleshooting.md), [VTS-мониторинг](../Operations/nginx_vts_monitoring_setup.md).
+- **Сценарии:** [Реверс-прокси для Consul](../Scenarios/nginx_as_reverse_proxy_for_consul.md), [Реверс-прокси для Grafana](../Scenarios/nginx_as_reverse_proxy_for_grafana.md), [Ingress в Kubernetes](../../../Kubernetes/Networking/Ingress/overview.md).

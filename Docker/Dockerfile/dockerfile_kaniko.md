@@ -10,7 +10,7 @@
 
 ### Проблема: Зависимость от Docker-демона
 
-В CI/CD-пайплайнах (GitLab CI, Jenkins) и Kubernetes-подах доступ к `/var/run/docker.sock` ограничен или отсутствует. Подход "Docker-in-Docker" (`dind`) требует привилегированного режима и небезопасен.
+В CI/CD-пайплайнах (GitLab CI, Jenkins) и Kubernetes-подах доступ к `/var/run/docker.sock` ограничен или отсутствует. Подходы DinD и DooD требуют привилегированного режима или монтирования сокета, что создаёт риски безопасности. Подробнее: **[Docker-in-Docker: Запуск Docker внутри контейнера](../docker-in-docker.md)**.
 
 ### Решение: Kaniko
 

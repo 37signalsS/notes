@@ -17,7 +17,7 @@
 **Альтернативы:**
 - **Прокси:** `docker-socket-proxy` для фильтрации API-вызовов.
 - **Сборка без демона:** **[Kaniko](../Dockerfile/dockerfile_kaniko.md)**, **[Buildah](../alternative_runtimes_and_tools.md)**.
-- **Изолированный dind:** Непривилегированный демон внутри контейнера.
+- **Изолированный dind:** Непривилегированный демон внутри контейнера — см. **[Docker-in-Docker: Запуск Docker внутри контейнера](../docker-in-docker.md)**.
 
 ### 2. Сетевой доступ по TCP
 

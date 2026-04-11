@@ -212,3 +212,19 @@ spec:
 ## Дополнительная информация
 
 **Связанные темы:** [Базовые концепции Volume](./volumes_basics.md), [Projected Volumes](./projected_volumes.md), [ConfigMap](../../ConfigMap/configmap.md), [Secret](../../secrets/secrets_basics.md), [PV и PVC](../../../Storage/pv_and_pvc.md).
+
+### Kubernetes Volumes vs Docker Volumes
+
+Тома Kubernetes и Docker volumes решают схожую задачу, но на разных уровнях:
+
+| Характеристика | Kubernetes Volume | Docker Volume |
+| :--- | :--- | :--- |
+| **Уровень абстракции** | Кластер (множество нод) | Один хост |
+| **Управление** | Kubernetes API, декларативно | Docker CLI / API, императивно |
+| **Персистентность** | Зависит от типа (`emptyDir` — нет, `PVC` — да) | Всегда персистентны |
+| **Бэкенды хранения** | Локальный диск, NFS, Ceph, облачные диски (через CSI) | Локальный диск, NFS (через volume drivers) |
+| **Совместное использование** | Между подами (ReadWriteMany PVC) | Между контейнерами на одном хосте |
+
+**Ключевое отличие:** В Docker volume — это конкретный ресурс на хосте (`/var/lib/docker/volumes/`). В Kubernetes volume — абстракция, которая через StorageClass и CSI динамически подключается к нужному бэкенду хранения без привязки к ноде.
+
+> **См. также:** [Docker Volumes](../../../../Docker/Docker_fs/docker_volumes.md)

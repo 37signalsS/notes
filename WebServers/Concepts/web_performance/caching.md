@@ -1,40 +1,65 @@
-# Кэширование в веб-серверах
+# Кэширование как инструмент производительности
 
-## Клиентское кэширование (Browser Caching)
+## Definitions
 
-Управляется заголовками `Cache-Control` (например, `max-age`, `immutable`), `Expires`, `ETag`.
+**Кэширование в контексте веб-производительности** — стратегия снижения времени загрузки и уменьшения количества запросов к серверу за счёт сохранения копий ресурсов на промежуточных узлах: браузер клиента, CDN, обратный прокси (Nginx/Angie).
 
-## Серверное кэширование (Nginx Proxy Cache)
+Правильно настроенное кэширование — один из наиболее эффективных инструментов оптимизации, способный снизить время загрузки страниц на 40–60%.
 
-Кэширование ответов от бэкенд-серверов. Значительно снижает нагрузку на бэкенд. Подробно этот механизм рассмотрен в заметке о [кэшировании в Nginx](../../Nginx/Performance/Caching/proxy_caching.md).
+## Basic Concepts
 
-* Настраивается с помощью `proxy_cache_path`, `proxy_cache`, `proxy_cache_valid`.
-* `proxy_use_stale` и `proxy_background_update` позволяют отдавать устаревший контент при проблемах с бэкендом и плавно обновлять кэш.
-* **Ограничение:** Стандартный Nginx не имеет встроенных средств для точечной инвалидации кэша.
+### Типы кэширования
 
-## Пример конфигурации Nginx Proxy Cache
+| Тип | Уровень | Что кэширует | Заголовки / Директивы |
+| :--- | :--- | :--- | :--- |
+| **Клиентское (Browser Cache)** | Браузер | Статика (CSS, JS, изображения) | `Cache-Control`, `ETag`, `Expires` |
+| **Серверное (Proxy Cache)** | Обратный прокси | Ответы бэкенда | `proxy_cache`, `proxy_cache_valid` |
+| **CDN Cache** | Edge-серверы | Статический и динамический контент | `Cache-Control: s-maxage`, CDN API |
 
-```nginx
-# Определение зоны кэширования в http-блоке
-proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=my_cache:10m inactive=60m max_size=1g;
+### Влияние на Web Vitals
 
-# Использование кэша в location
-location / {
-    proxy_pass http://my_backend;
-    proxy_cache my_cache;
-    proxy_cache_valid 200 302 1h;
-    proxy_cache_valid 404 1m;
-    proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
-    proxy_cache_background_update on;
-    proxy_cache_lock on;
-    add_header X-Proxy-Cache $upstream_cache_status;
-}
-```
+- **LCP (Largest Contentful Paint):** Кэширование LCP-элемента (часто изображение или шрифт) критически ускоряет его отрисовку при повторных визитах.
+- **INP (Interaction to Next Paint):** Кэширование JS/CSS ускоряет выполнение и рендеринг, снижая время до интерактивности.
+- **CLS (Cumulative Layout Shift):** Кэширование шрифтов и CSS предотвращает задержки загрузки стилей, вызывающие сдвиги макета.
 
----
+### Ключевые стратегии
 
-**Связанные темы:**
+- **Вечное кэширование статики** — `max-age=31536000, immutable` + cache busting (хэш в имени файла).
+- **Валидационное кэширование динамики** — `no-cache` или короткий TTL, чтобы HTML всегда содержал актуальные ссылки на кэшированную статику.
+- **Stale-while-revalidate** — отдача устаревшего кэша с фоновым обновлением для отказоустойчивости.
 
-* [Компрессия контента](./server_compression.md) — Gzip, Brotli, ZSTD
-* [Оптимизация TLS](./tls_optimization.md) — ускорение безопасного соединения
-* [Кэширование в Nginx](../../Nginx/Performance/Caching/proxy_caching.md)
+## Practical Scenarios
+
+### Сценарий: повторный визит пользователя
+
+При первом визите браузер загружает все ресурсы с сервера (`MISS`). При повторном визите:
+
+1. **Статика с `immutable`:** браузер вообще не отправляет запрос — ресурс загружается мгновенно из локального кэша.
+2. **HTML с `no-cache`:** браузер отправляет условный запрос (`If-None-Match`). Сервер отвечает `304 Not Modified` — экономия трафика.
+3. **API-ответы с TTL:** кэшируются на сервере (proxy cache), снижая нагрузку на бэкенд.
+
+### Сценарий: защита бэкенда от нагрузки
+
+`proxy_cache_lock` предотвращает эффект "стада бизонов" — при одновременных запросах к одному некэшированному ресурсу только один запрос уходит на бэкенд, остальные ожидают ответа из кэша. Подробнее — [proxy_caching.md](../../Nginx/Performance/Caching/proxy_caching.md).
+
+### Сценарий: деплой новой версии
+
+При обновлении статических активов изменяется хэш в имени файла (`app.a1b2c3.js` → `app.d4e5f6.js`). Браузер воспринимает это как новый ресурс и загружает свежую версию, игнорируя старый кэш. HTML-страница с новыми ссылками отдаётся с `no-cache`, гарантируя актуальность.
+
+## Additional Information
+
+### SSoT-файлы
+
+Детальная конфигурация и полные руководства находятся в специализированных файлах:
+
+- HTTP-кэширование (заголовки, директивы, сценарии) — [http_caching.md](../../../Networking/Protocols/HTTP/http_caching.md).
+- Клиентское кэширование в Nginx — [client_caching.md](../../Nginx/Performance/Caching/client_caching.md).
+- Серверное кэширование (Proxy Cache) — [proxy_caching.md](../../Nginx/Performance/Caching/proxy_caching.md).
+- Обзор кэширования в Nginx/Angie — [overview.md](../../Nginx/Performance/Caching/overview.md).
+
+### Связанные темы
+
+- Обзор производительности — [overview.md](./overview.md).
+- Лучшие практики оптимизации — [best_practices.md](./best_practices.md).
+- Компрессия контента — [server_compression.md](./server_compression.md).
+- Оптимизация TLS — [tls_optimization.md](./tls_optimization.md).
