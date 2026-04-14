@@ -73,6 +73,7 @@ vault write auth/approle/role/ansible token_policies="consul-read-policy"
 ```
 
 Параметры:
+
 * `auth/approle/role/ansible` — путь создания роли `ansible`
 * `token_policies` — список политик для токена
 

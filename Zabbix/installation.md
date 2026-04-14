@@ -19,6 +19,7 @@
 ### Компоненты стека Zabbix Server
 
 Для работы Zabbix Server требуются:
+
 * **Веб-сервер:** Apache или Nginx
 * **СУБД:** MySQL/MariaDB или PostgreSQL
 * **PHP:** с расширениями `php-cgi`, `php-mbstring`, `php-gd`, `php-xml`, `php-mysql`, `php-bcmath`, `php-ldap`, `php-json`
@@ -27,6 +28,7 @@
 ### Компоненты Zabbix Agent
 
 Агент состоит из:
+
 * Демона `zabbix-agent` (classic) или `zabbix-agent2` (Go)
 * Конфигурационного файла `/etc/zabbix/zabbix_agentd.conf`
 * Каталогов дополнительных конфигураций `/etc/zabbix/zabbix_agentd.conf.d/`
@@ -156,6 +158,7 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 ### Настройка SNMP-мониторинга
 
 При создании хоста в Zabbix добавляется интерфейс типа **SNMP** с параметрами:
+
 * **SNMP version:** `2` (наиболее распространён)
 * **SNMP community:** строка-пароль (например, `public`), совпадающая с настроенной на устройстве
 

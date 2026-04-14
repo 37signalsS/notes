@@ -72,6 +72,7 @@ Prometheus использует Kubernetes API для автоматическо
 **1. Whitebox (внутренний):**
 
 Экспортеры работают внутри кластера или на хостах, собирают метрики через Kubernetes Service:
+
 * Node Exporter → метрики хостов
 * cAdvisor → метрики контейнеров
 * Kube-State-Metrics → метрики объектов K8s
@@ -81,6 +82,7 @@ Prometheus использует Kubernetes API для автоматическо
 **2. Blackbox (внешний):**
 
 Проверка доступности эндпоинтов (HTTP/TCP/ICMP/DNS) извне через Probe CRD:
+
 * Доступность Ingress
 * Health-check эндпоинты
 * DNS-резолвинг

@@ -83,6 +83,7 @@
 В HA-кластере компоненты `kube-scheduler` и `kube-controller-manager` запускаются **на каждой master-ноде** в нескольких экземплярах, но **активен только один** (leader). Остальные работают в режиме standby.
 
 **Механизм leader election:**
+
 * Активный лидер захватывает объект-lease в `kube-system` namespace (`kube-scheduler` / `kube-controller-manager` Lease)
 * Лидер выполняет рабочую нагрузку (планирование подов / управление контроллерами)
 * Standby-реплики периодически проверяют лизинг лидера

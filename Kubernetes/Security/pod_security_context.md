@@ -32,17 +32,17 @@
 
 **PSS (Pod Security Standards)** — набор из трёх политик безопасности, определяющих допустимые конфигурации подов в кластере:
 
-- **`privileged`** — без ограничений (аналог отсутствия политик).
-- **`baseline`** — запрещает известные опасные конфигурации, но допускает большинство стандартных workload.
-- **`restricted`** — максимально строгая политика, требующая соблюдения лучших практик (не-root, без privilege escalation, drop всех capabilities).
+* **`privileged`** — без ограничений (аналог отсутствия политик).
+* **`baseline`** — запрещает известные опасные конфигурации, но допускает большинство стандартных workload.
+* **`restricted`** — максимально строгая политика, требующая соблюдения лучших практик (не-root, без privilege escalation, drop всех capabilities).
 
 **PSA (Pod Security Admission)** — встроенный контроллер (admission controller) Kubernetes, применяющий PSS на уровне неймспейсов. Заменяет PodSecurityPolicy (PSP), удалённый в Kubernetes v1.25.
 
 PSA работает через метки неймспейса и поддерживает три режима:
 
-- **`enforce`** — отклоняет поды, не соответствующие политике.
-- **`audit`** — пропускает поды, но записывает нарушения в аудит-логи API-сервера.
-- **`warn`** — пропускает поды, но возвращает предупреждение пользователю через `kubectl`.
+* **`enforce`** — отклоняет поды, не соответствующие политике.
+* **`audit`** — пропускает поды, но записывает нарушения в аудит-логи API-сервера.
+* **`warn`** — пропускает поды, но возвращает предупреждение пользователю через `kubectl`.
 
 ## Практические сценарии
 
@@ -156,6 +156,6 @@ Security Context — базовый инструмент для обеспече
 
 ## См. также
 
-- [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
-- [Конфигурация Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
-- [Применение Security Context через Kyverno](./kyverno/policies/practical_scenarios.md)
+* [Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+* [Конфигурация Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
+* [Применение Security Context через Kyverno](./kyverno/policies/practical_scenarios.md)

@@ -115,6 +115,7 @@ kubectl get pods -v=8
 ```
 
 В выводе видны HTTP-запросы к `/api/v1/namespaces/default/pods`. API-сервер:
+
 * Аутентифицирует запрос
 * Проверяет RBAC
 * Загружает данные из etcd (или из cache)

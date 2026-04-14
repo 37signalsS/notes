@@ -197,6 +197,6 @@
 
 ### См. также
 
-- [Типы файлов](./file_types.md)
-- [Файловые дескрипторы](./file_descriptors.md)
-- [Диагностика дискового пространства](./disk_space_troubleshooting.md)
+* [Типы файлов](./file_types.md)
+* [Файловые дескрипторы](./file_descriptors.md)
+* [Диагностика дискового пространства](./disk_space_troubleshooting.md)

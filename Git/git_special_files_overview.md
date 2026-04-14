@@ -45,6 +45,7 @@ Git ищет специальные файлы в нескольких мест�
 Формат: `[section "subsection"] key = value`
 
 **Рекомендации:**
+
 * Используйте `git config` CLI для чтения/записи
 * Библиотеки: `go-git` (Go), `GitPython` (Python), `libgit2` (C)
 

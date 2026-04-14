@@ -76,13 +76,13 @@ lsblk
 fdisk -l
 ```
 
-3. Смонтируйте корневой раздел основной системы:
+1. Смонтируйте корневой раздел основной системы:
 
 ```bash
 mount /dev/sdaX /mnt
 ```
 
-4. Подготовьте окружение для `chroot`:
+1. Подготовьте окружение для `chroot`:
 
 ```bash
 mount --bind /dev /mnt/dev
@@ -91,14 +91,14 @@ mount --bind /sys /mnt/sys
 chroot /mnt
 ```
 
-5. Смените пароль:
+1. Смените пароль:
 
 ```bash
 passwd
 ```
 
-6. Для SELinux: `touch /.autorelabel`.
-7. Выйдите и перезагрузитесь: `exit` и `reboot`.
+1. Для SELinux: `touch /.autorelabel`.
+2. Выйдите и перезагрузитесь: `exit` и `reboot`.
 
 ### Rescue mode у хостера
 

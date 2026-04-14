@@ -167,6 +167,7 @@ Skopeo — это мощный инструмент для работы с ко�
 **Интеграция с CI/CD:** Skopeo идеален для пайплайнов — не требует Docker-демона, проверяет подписи образов до использования.
 
 **Связанные темы:**
+
 * [Сборка образов с Buildah и Ansible](../Ansible/ansible_buildah_image_building.md)
 * [TUI инструменты (lazydocker, oxker)](./docker_tools.md)
 * [Podman: основные команды](../Podman/podman_basic_commands.md)
