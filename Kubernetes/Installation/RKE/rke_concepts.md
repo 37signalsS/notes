@@ -42,16 +42,19 @@
 ### Выбор метода развертывания
 
 **Rancher UI** рекомендуется для:
+
 * Команд с операторами, предпочитающими визуальный интерфейс
 * Сред, где требуется мониторинг и управление через единый портал
 * Быстрого прототипирования и тестирования
 
 **RKE CLI** рекомендуется для:
+
 * Автоматизированных развертываний (CI/CD)
 * Infrastructure as Code подходов
 * Сред без доступа к веб-интерфейсу
 
 **Terraform RKE provider** рекомендуется для:
+
 * Полной автоматизации инфраструктуры
 * Версионирования конфигураций кластера
 * Интеграции с другими Terraform-модулями
@@ -64,4 +67,4 @@
 * **RKE GitHub:** [github.com/rancher/rke](https://github.com/rancher/rke)
 * **kubectl Reference:** [kubernetes.io/docs/reference/kubectl/](https://kubernetes.io/docs/reference/kubectl/)
 
-**См. также:** [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md).
+**См. также:** [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeadm: Быстрый старт](../kubeadm/index.md).

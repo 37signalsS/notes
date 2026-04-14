@@ -11,6 +11,7 @@
 ### Синтаксис
 
 **ENV:**
+
 ```dockerfile
 # Форма 1: несколько переменных в одной инструкции (рекомендуется)
 ENV <key>=<value> [<key>=<value>...]
@@ -20,6 +21,7 @@ ENV <key> <value>
 ```
 
 **Примеры:**
+
 ```dockerfile
 ENV MY_NAME="John Doe"
 ENV MY_DOG=Rex\ The\ Dog
@@ -27,11 +29,13 @@ ENV DB_HOST=localhost DB_PORT=5432
 ```
 
 **ARG:**
+
 ```dockerfile
 ARG <name>[=<default value>] [<name>[=<default value>]...]
 ```
 
 **Примеры:**
+
 ```dockerfile
 ARG APP_VERSION=1.0
 ARG user1
@@ -51,11 +55,13 @@ ARG buildno=1
 ### Переопределение значений
 
 **ARG при сборке:**
+
 ```bash
 docker build --build-arg APP_VERSION=2.1 .
 ```
 
 **ENV при запуске:**
+
 ```bash
 docker run -e DB_HOST=db.example.com my-image
 ```
@@ -154,6 +160,7 @@ RUN --mount=type=secret,id=npm_token \
 ```
 
 **Сборка:**
+
 ```bash
 docker buildx build --secret id=npm_token,src=$HOME/.npmrc .
 ```
@@ -168,6 +175,7 @@ RUN --mount=type=secret,id=API_KEY,env=API_KEY \
 ```
 
 **Сборка:**
+
 ```bash
 docker buildx build --secret id=API_KEY .
 ```

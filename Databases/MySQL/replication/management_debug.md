@@ -145,6 +145,7 @@ START SLAVE;
 **Ошибка:** `Last_IO_Error: error connecting to master`
 
 **Решение:**
+
 - Проверить сеть между slave и master
 - Убедиться, что master доступен (`ping`, `telnet master_host 3306`)
 - Проверить пользователя репликации на master
@@ -153,12 +154,14 @@ START SLAVE;
 **Ошибка:** `Last_SQL_Error: Duplicate entry for key 'PRIMARY'`
 
 **Решение:**
+
 - Пропустить транзакцию (см. выше)
 - Или найти причину конфликта данных
 
 **Ошибка:** `Seconds_Behind_Master: NULL`
 
 **Решение:**
+
 - Проверить, работает ли SQL-поток
 - Проверить `Last_SQL_Error`
 - NULL может означать, что slave не может определить отставание

@@ -88,6 +88,7 @@ spec:
 ```
 
 **Результат в файловой системе:**
+
 - `/projected-volume/app-credentials/user.txt` — данные из Secret
 - `/projected-volume/app-config/settings.yaml` — данные из ConfigMap
 - `/projected-volume/pod-labels` — метаданные пода из DownwardAPI

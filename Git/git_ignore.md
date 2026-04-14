@@ -136,9 +136,9 @@ docker-compose.yml
 ```
 
 **Преимущества:**
-- Ускоряет сборку (меньше файлов отправляется демону)
-- Предотвращает попадание секретов в образы
-- Синтаксис идентичен `.gitignore`: wildcards, negation, directory markers
+* Ускоряет сборку (меньше файлов отправляется демону)
+* Предотвращает попадание секретов в образы
+* Синтаксис идентичен `.gitignore`: wildcards, negation, directory markers
 
 ---
 
@@ -146,9 +146,9 @@ docker-compose.yml
 
 ### Официальные ресурсы
 
-- **Документация Git по gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
-- **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
-- **toptal gitignore generator:** [toptal.com/developers/gitignore](https://www.toptal.com/developers/gitignore)
+* **Документация Git по gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
+* **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
+* **toptal gitignore generator:** [toptal.com/developers/gitignore](https://www.toptal.com/developers/gitignore)
 
 ### Связанные темы
 

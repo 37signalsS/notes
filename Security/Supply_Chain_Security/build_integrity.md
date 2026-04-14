@@ -62,6 +62,7 @@ go build -trimpath -buildvcs=false -ldflags="-w -s" .
 ```
 
 Флаги:
+
 * `-trimpath` — удаляет локальные пути из бинарника
 * `-buildvcs=false` — исключает VCS-метаданные
 * `SOURCE_DATE_EPOCH` — стандартизирует метку времени сборки

@@ -24,6 +24,7 @@ ETCD в kubeadm-кластерах запускается как static Pod на
 ### TLS-аутентификация
 
 ETCD использует mutual TLS. Для сбора метрик Prometheus должен предоставить:
+
 - **CA-сертификат** — для валидации серверного сертификата ETCD
 - **Клиентский сертификат** — для аутентификации Prometheus перед ETCD
 - **Клиентский ключ** — для подписи клиентского сертификата
@@ -33,6 +34,7 @@ ETCD использует mutual TLS. Для сбора метрик Prometheus 
 `kube-prometheus-stack` предоставляет параметры `kubeEtcd.*` для автоматической настройки мониторинга ETCD через `values.yaml`. Этот подход описан в [other_components_config.md](./other_components_config.md).
 
 Ручной подход (описанный ниже) применяется, когда:
+
 - ETCD использует нестандартную конфигурацию TLS
 - Требуется детальный контроль над ServiceMonitor
 - Helm values не покрывают специфический сценарий
@@ -59,6 +61,7 @@ data:
 ```
 
 **Важно:**
+
 - Ключи в `data` должны совпадать с именами, используемыми в `ServiceMonitor.tlsConfig`
 - Prometheus Operator должен иметь права на чтение этого Secret
 - Базовое кодирование: `cat etcd-client-ca.crt | base64 -w 0`
@@ -103,6 +106,7 @@ subsets:
 ```
 
 **Важно:**
+
 - Метка `k8s-app: etcd-metrics` используется ServiceMonitor для обнаружения
 - Замените `<IP_ETCD_узла_N>` на реальные IP control-plane узлов
 - `clusterIP: None` делает Service headless — трафик идёт напрямую в Endpoints
@@ -165,6 +169,7 @@ spec:
 После применения манифестов:
 
 1. **Проверить статус ServiceMonitor:**
+
    ```bash
    kubectl get servicemonitor etcd-k8s-monitor -n kube-system
    ```
@@ -175,6 +180,7 @@ spec:
    - Убедиться в статусе `UP`
 
 3. **Проверить метрики в Prometheus:**
+
    ```
    etcd_server_has_leader
    etcd_mvcc_db_total_size_in_bytes
@@ -202,6 +208,7 @@ spec:
 ### Альтернативные подходы к TLS
 
 В зависимости от конфигурации кластера, TLS-сертификаты могут подключаться через:
+
 - **Kubernetes Secret** (описано выше) — универсальный подход
 - **hostPath volume** — прямое монтирование с хоста (описано в [other_components_config.md](./other_components_config.md))
 

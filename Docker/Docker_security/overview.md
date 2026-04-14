@@ -15,6 +15,7 @@
 Сокет принадлежит `root:docker` с правами `660`. Запись в сокет = полный контроль над демоном. Доступ необходим для Portainer, GitLab Runner — требуется доверие к образам.
 
 **Альтернативы:**
+
 - **Прокси:** `docker-socket-proxy` для фильтрации API-вызовов.
 - **Сборка без демона:** **[Kaniko](../Dockerfile/dockerfile_kaniko.md)**, **[Buildah](../alternative_runtimes_and_tools.md)**.
 - **Изолированный dind:** Непривилегированный демон внутри контейнера — см. **[Docker-in-Docker: Запуск Docker внутри контейнера](../docker-in-docker.md)**.

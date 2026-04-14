@@ -60,6 +60,7 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
+
 URL в Lens: `http://prometheus-operated.monitoring.svc.cluster.local:9090`
 
 ---
@@ -160,6 +161,7 @@ cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
 **Настройка:** `Preferences > AI` → выбрать провайдера (OpenAI, Azure, совместимые API) → указать API key и endpoint.
 
 **Возможности:**
+
 - Генерация YAML-манифестов по описанию
 - Объяснение ошибок и логов
 - Рекомендации по конфигурации
@@ -172,6 +174,7 @@ cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
 **Сканирование уязвимостей:** выбрать кластер → **Security Center** → **Scan**.
 
 **Типы отчётов:**
+
 - **Images** — уязвимости в образах контейнеров
 - **Resources** — уязвимые ресурсы кластера
 - **Roles** — избыточные права и роли

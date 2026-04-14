@@ -119,6 +119,39 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
 
 Теперь Nginx доступен по адресу `http://<IP-адрес_хоста>:80` без необходимости пробрасывать порты (`-p 8080:80`).
 
+### Сценарий 4: PostgreSQL в кастомной сети с изоляцией
+
+По умолчанию контейнеры подключаются к сети `bridge` и могут общаться только по IP-адресам. В кастомной сети контейнеры резолвят друг друга по имени.
+
+```bash
+# 1. Создание кастомной сети
+docker network create my-network
+
+# 2. Запуск PostgreSQL в кастомной сети
+docker run -d \
+  --name pg-isolated \
+  -e POSTGRES_PASSWORD=secret \
+  -p 5434:5432 \
+  --network my-network \
+  postgres:14
+
+# 3. Проверка подключения
+docker network inspect my-network
+# → Containers: pg-isolated (172.19.0.2)
+
+# 4. Запуск второго контейнера в той же сети — DNS-резолвинг работает
+docker run -it --rm --network my-network alpine sh
+/ # ping pg-isolated
+# → PING pg-isolated (172.19.0.2) — резолвится по имени!
+```
+
+**Ключевые различия стандартной и кастомной сети:**
+
+| Возможность | `bridge` (по умолчанию) | Кастомная сеть |
+|:------------|:------------------------|:---------------|
+| DNS-резолвинг | Только по IP (флаг `--link` устарел) | По имени контейнера и `--network-alias` |
+| Изоляция | Все контейнеры в одной сети | Только подключённые контейнеры |
+
 ## Дополнительная информация
 
 ### Безопасность публикации портов
@@ -143,6 +176,7 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
    - Используйте пользовательские сети для связи между контейнерами
 
 2. **Публикация только на localhost:**
+
    ```bash
    # Доступно только с хоста (127.0.0.1)
    docker run -d -p 127.0.0.1:5432:5432 postgres:14
@@ -153,6 +187,7 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
    - Разрешайте доступ только с доверенных IP-адресов
 
 4. **Пример безопасной конфигурации:**
+
    ```bash
    # Создаем сеть для приложения
    docker network create myapp-net
@@ -171,6 +206,7 @@ docker run -d --name my-host-nginx --net=host nginx:alpine
    ```
 
 В этом примере:
+
 - PostgreSQL доступен **только** из контейнера `app` по имени `postgres`
 - Порт 5432 **не опубликован** наружу
 - Приложение доступно извне на порту 8080
@@ -201,6 +237,7 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 Также Docker включает обработку bridge-трафика: `modprobe br_netfilter`
 
 **Выход контейнеров в Интернет:**
+
 1. Включает IP-форвардинг: `net.ipv4.ip_forward=1`
 2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
 
@@ -213,8 +250,4 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 | `none` | network namespace без интерфейсов | Только loopback |
 | `container:<name>` | Разделение namespace с другим контейнером | Общий IP и localhost |
 
-См. также: [NAT](../../Networking/Concepts/nat/overview.md), [Linux network namespaces](../../Linux/Core/namespaces.md), [Изоляция в Linux](../Concepts/linux_isolation.md).
-
-**Связанные документы:** [Управление сетями (CLI)](./cli.md), [DNS и Service Discovery](./dns_and_service_discovery.md), [Docker и iptables](./troubleshooting/iptables_integration.md).
-
-**Драйверы:** [bridge](./drivers/bridge.md), [host](./drivers/host.md), [overlay](./drivers/overlay.md), [macvlan](./drivers/macvlan.md), [ipvlan](./drivers/ipvlan.md), [none](./drivers/none.md).
+См. также: [Управление сетями (CLI)](./cli.md), [DNS и Service Discovery](./dns_and_service_discovery.md), [NAT](../../Networking/Concepts/nat/overview.md).

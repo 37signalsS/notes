@@ -25,6 +25,7 @@
 | `prometheus-node-exporter.*` | Параметры вложенного чарта (subchart) | См. [subchart values](https://artifacthub.io/packages/helm/prometheus-community/prometheus-node-exporter) |
 
 **Ключевые особенности:**
+
 - Работает как DaemonSet — по одному Pod на каждую ноду
 - Монтирует `/proc`, `/sys`, `/` с хоста через `hostPath` для доступа к метрикам ядра
 - При `hostNetwork: true` Pod использует сеть хоста, что даёт корректные метрики сетевого стека
@@ -40,6 +41,7 @@
 | `prometheusOperator.kubeStateMetrics.enabled` | Управление через Operator | `true` |
 
 **Ключевые особенности:**
+
 - Работает как Deployment — один экземпляр (или 2 для HA)
 - Опрос Kubernetes API для генерации метрик о состоянии объектов
 - Не путать с metrics-server — ksm отдаёт метрики в Prometheus, а metrics-server — в kubelet (HPA)
@@ -53,6 +55,7 @@
 | `prometheus-blackbox-exporter.resources` | Requests/limits CPU/memory | `{}` |
 
 **Ключевые особенности:**
+
 - Не включён по умолчанию — опциональный компонент
 - Конфигурация модулей задаётся в `config` (см. [Blackbox Exporter modules](../../Exporters/blackbox/blackbox_exporter_modules_configuration.md))
 - Для скрейпинга используются Probe CRD (Prometheus Operator)
@@ -201,9 +204,9 @@ spec:
 
 ### Связанные темы
 
-* [Экспортеры — общая информация](../../Exporters/overview.md) — принцип работы, выбор экспортера
-* [Node Exporter](../../Exporters/node_exporter.md) — метрики, коллекторы, алерты
-* [Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_overview.md) — blackbox-мониторинг
-* [Обогащение метрик node-exporter](./practical_scenarios/node_exporter_enrichment.md) — relabeling
-* [Сбор метрик с master-нод](./practical_scenarios/master_nodes_monitoring.md) — tolerations
-* [Prometheus Operator CRD: Probe](../operator/crd/probe.md) — CRD для Blackbox Exporter
+- [Экспортеры — общая информация](../../Exporters/overview.md) — принцип работы, выбор экспортера
+- [Node Exporter](../../Exporters/node_exporter.md) — метрики, коллекторы, алерты
+- [Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_overview.md) — blackbox-мониторинг
+- [Обогащение метрик node-exporter](./practical_scenarios/node_exporter_enrichment.md) — relabeling
+- [Сбор метрик с master-нод](./practical_scenarios/master_nodes_monitoring.md) — tolerations
+- [Prometheus Operator CRD: Probe](../operator/crd/probe.md) — CRD для Blackbox Exporter

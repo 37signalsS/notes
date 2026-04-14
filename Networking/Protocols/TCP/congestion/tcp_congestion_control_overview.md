@@ -5,6 +5,7 @@
 **Congestion Control** — механизм TCP для предотвращения перегрузки сети путём адаптации скорости передачи к доступной пропускной способности канала.
 
 **Ключевое отличие от [Flow Control](../../../../Ansible/PlaybookStructure/flow_control.md):**
+
 - **Congestion Control:** защита **сети** (network-centric), параметр `cwnd`
 - **Flow Control:** защита **получателя** (receiver-centric), параметр `rwnd`
 
@@ -68,6 +69,7 @@ RTT: 15 000 / 300 000 = 0.05 сек (50 мс)
 **Цель:** быстро определить доступную пропускную способность при старте соединения.
 
 **Механизм:**
+
 - **Начальное значение:** `initcwnd = 10 MSS` (RFC 5681, ~14.6 КБ)
 - **Рост:** экспоненциальный (+1 MSS на каждый ACK)
 - **Завершение:** при достижении `ssthresh` или потере пакета
@@ -88,6 +90,7 @@ RTT 3:  cwnd = 80 MSS   (получено 40 ACK, +40 MSS)
 **AIMD (Additive Increase Multiplicative Decrease)** — алгоритм работы после достижения порога `ssthresh`.
 
 **Механизм:**
+
 - **Additive Increase:** +1 MSS на RTT (линейный рост)
 - **Multiplicative Decrease:** при потере пакета `cwnd = cwnd / 2`
 
@@ -110,6 +113,7 @@ cwnd
 ```
 
 **Порог ssthresh (slow start threshold):**
+
 - Начальное значение: обычно 65535 байт
 - При потере пакета: `ssthresh = cwnd / 2`
 
@@ -120,6 +124,7 @@ cwnd
 **Триггер:** получение **3 дубликатов ACK** (DupACK).
 
 **Алгоритм (RFC 5681):**
+
 1. `ssthresh = cwnd / 2`
 2. `cwnd = ssthresh + 3 MSS` (учитываем 3 сегмента, вышедшие из сети)
 3. Переход в режим Congestion Avoidance (не Slow Start!)

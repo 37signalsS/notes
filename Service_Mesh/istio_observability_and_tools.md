@@ -72,7 +72,7 @@ spec:
     kind: ClusterIssuer
 ```
 
-2. **Gateway** для инструментов мониторинга (HTTPS, порт 443):
+1. **Gateway** для инструментов мониторинга (HTTPS, порт 443):
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -116,7 +116,7 @@ spec:
       port: 80
 ```
 
-2. **Grafana**: установка через Helm, создание `HTTPRoute` «из коробки», определение `dataSource` в `values.yaml`.
+1. **Grafana**: установка через Helm, создание `HTTPRoute` «из коробки», определение `dataSource` в `values.yaml`.
 
 #### Шаг 3: установка и настройка Dex
 
@@ -168,7 +168,7 @@ kubectl create secret generic kiali-oidc-secret \
   -n istio-system
 ```
 
-2. **Конфигурация Kiali (`values.yaml` для Helm):**
+1. **Конфигурация Kiali (`values.yaml` для Helm):**
 
 ```yaml
 auth:
@@ -198,7 +198,7 @@ kiali_feature_flags:
     enabled: true
 ```
 
-3. **Публикация Kiali через `HTTPRoute`:**
+1. **Публикация Kiali через `HTTPRoute`:**
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1

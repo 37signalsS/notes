@@ -101,12 +101,14 @@
 - **Прямая вставка:** выбранная команда подставляется в приглашение терминала.
 
 **Установка:**
+
 ```bash
 go install github.com/itcaat/cli-stash@latest   # Go
 brew install itcaat/tap/cli-stash               # macOS
 ```
 
 **Использование:**
+
 1. Запустить `cli-stash`.
 2. `Ctrl+A` — поиск в истории.
 3. Выбрать и сохранить в «избранное».
@@ -191,7 +193,7 @@ sudo systemctl restart nginx
 ### Скрытие команды из истории
 
 ```bash
-$ export SECRET_KEY=my_secret  # пробел в начале — команда не попадёт в историю
+export SECRET_KEY=my_secret  # пробел в начале — команда не попадёт в историю
 ```
 
 ---

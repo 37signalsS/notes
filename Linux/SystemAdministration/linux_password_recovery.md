@@ -62,6 +62,55 @@
 4. Смените пароль: `passwd username`.
 5. Вернитесь в меню (`exit`) и выберите `Resume boot`.
 
+### Live-ISO или Rescue через IPMI
+
+Универсальный метод, когда GRUB недоступен, система не загружается или требуется вмешаться на уровне дисков. Подходит для любых серверов с IPMI/iDRAC/iLO.
+
+Суть: сервер загружается не в основную ОС, а во временную live-систему (ISO через IPMI или rescue-образ хостера). Оттуда монтируется диск основной системы и выполняется `chroot`.
+
+1. Смонтируйте ISO через IPMI Virtual Media и загрузитесь в LiveCD.
+2. Найдите основной диск:
+
+```bash
+lsblk
+fdisk -l
+```
+
+3. Смонтируйте корневой раздел основной системы:
+
+```bash
+mount /dev/sdaX /mnt
+```
+
+4. Подготовьте окружение для `chroot`:
+
+```bash
+mount --bind /dev /mnt/dev
+mount --bind /proc /mnt/proc
+mount --bind /sys /mnt/sys
+chroot /mnt
+```
+
+5. Смените пароль:
+
+```bash
+passwd
+```
+
+6. Для SELinux: `touch /.autorelabel`.
+7. Выйдите и перезагрузитесь: `exit` и `reboot`.
+
+### Rescue mode у хостера
+
+Самый спокойный вариант при наличии провайдера с поддержкой rescue mode (Hetzner, OVH и аналогичные).
+
+1. Включите rescue mode в панели управления хостера.
+2. Сервер перезагрузится в минимальную временную систему.
+3. Подключитесь по SSH (логин и пароль обычно показывают в панели).
+4. Найдите диск основной системы (`lsblk`, `fdisk -l`).
+5. Смонтируйте и выполните `chroot` (как в методе Live-ISO выше).
+6. Смените пароль и перезагрузитесь.
+
 ## Дополнительная информация
 
 ### Диагностика типовых проблем
@@ -87,8 +136,8 @@
 - Проверка контекста: `ls -Z /etc/shadow`; восстановление: `restorecon /etc/shadow`.
 - Автоматическая перемаркировка: `touch /.autorelabel` (или параметр `autorelabel=1` в GRUB).
 
-> **Подробно о SELinux:** [SELinux: Механизмы и настройка](../Security/Mechanisms/SELinux.md)
+> **Подробно о SELinux:** [SELinux: Механизмы и настройка](../../Security/Mechanisms/SELinux.md)
 
-### Связанные темы
+### Смотрите также
 
-[GRUB](./grub.md) · [Процесс загрузки ядра](../Core/kernel/boot_process.md) · [BIOS и UEFI](../Core/firmware_bios_uefi.md) · [Управление пользователями](./users_management.md) · [Управление привилегиями](./privilege_management.md) · [Политики паролей](./Users/password_policy_chage.md)
+[GRUB](./grub.md) · [Процесс загрузки ядра](../Core/kernel/boot_process.md) · [Управление пользователями](./users_management.md)

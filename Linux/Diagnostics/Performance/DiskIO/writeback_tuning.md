@@ -59,6 +59,7 @@ sudo sysctl -p
 ### Рекомендации для разных сценариев
 
 **Веб-сервер / Общее назначение:**
+
 ```bash
 vm.dirty_ratio = 20
 vm.dirty_background_ratio = 10
@@ -66,6 +67,7 @@ vm.dirty_writeback_centisecs = 500
 ```
 
 **База данных (низкая латентность записи):**
+
 ```bash
 vm.dirty_ratio = 10
 vm.dirty_background_ratio = 5
@@ -74,6 +76,7 @@ vm.swappiness = 1
 ```
 
 **Файловый сервер / Бэкапы (высокая пропускная способность):**
+
 ```bash
 vm.dirty_ratio = 40
 vm.dirty_background_ratio = 20
@@ -81,6 +84,7 @@ vm.dirty_writeback_centisecs = 500
 ```
 
 **Медленные диски (HDD, сетевое хранилище):**
+
 ```bash
 vm.dirty_ratio = 30
 vm.dirty_background_ratio = 15

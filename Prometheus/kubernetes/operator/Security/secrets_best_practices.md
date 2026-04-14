@@ -87,15 +87,15 @@ receivers:
 
 ### Использование в конфигурации
 
-4. **Используйте `secretKeyRef` вместо hardcode** — монтируйте секреты через environment variables или volume mounts.
-5. **Отдельный Secret на каждый тип** — не объединяйте Slack, PagerDuty, SMTP в одном Secret.
-6. **Не логируйте значения секретов** — убедитесь, что лог-уровень не выводит содержимое env-переменных.
+1. **Используйте `secretKeyRef` вместо hardcode** — монтируйте секреты через environment variables или volume mounts.
+2. **Отдельный Secret на каждый тип** — не объединяйте Slack, PagerDuty, SMTP в одном Secret.
+3. **Не логируйте значения секретов** — убедитесь, что лог-уровень не выводит содержимое env-переменных.
 
 ### Ротация и мониторинг
 
-7. **Ротируйте секреты минимум раз в 90 дней** — автоматизируйте через External Secrets Operator + Vault.
-8. **Мониторьте доступ к Secrets** — audit-лог Kubernetes API (`watch`/`get` на `secrets`).
-9. **Исключите секреты из Git** — `.gitignore` для файлов с реальными значениями; используйте SOPS или Sealed Secrets для GitOps.
+1. **Ротируйте секреты минимум раз в 90 дней** — автоматизируйте через External Secrets Operator + Vault.
+2. **Мониторьте доступ к Secrets** — audit-лог Kubernetes API (`watch`/`get` на `secrets`).
+3. **Исключите секреты из Git** — `.gitignore` для файлов с реальными значениями; используйте SOPS или Sealed Secrets для GitOps.
 
 ---
 

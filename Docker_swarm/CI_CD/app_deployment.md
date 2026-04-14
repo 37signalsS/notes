@@ -20,12 +20,14 @@
 ```
 
 **Этап 1: Build**
+
 - Сборка Docker-образа из `Dockerfile`
 - Использование Kaniko для безопасности (без Docker-in-Docker)
 - Пуш образа в Container Registry (GitLab Registry)
 - Тегирование по `CI_COMMIT_SHORT_SHA`
 
 **Этап 2: Deploy**
+
 - Подключение к Swarm через mTLS и Docker Context
 - Развертывание через `docker stack deploy`
 - Использование `--with-registry-auth` для доступа к приватному registry
@@ -44,6 +46,7 @@
 | `COMPOSE_FILE` | `docker-compose.dev.yml` | `docker-compose.prod.yml` |
 
 **Механизм работы:**
+
 1. В GitLab создаются переменные с одинаковыми именами, но разными значениями
 2. Каждая переменная привязывается к окружению через Environment scope
 3. При запуске задачи с `environment: production` GitLab подставляет prod-значения
@@ -181,6 +184,7 @@ deploy_dev:
 ```
 
 **Ключевые моменты:**
+
 - `entrypoint: [""]` — отключение entrypoint для Kaniko
 - `--with-registry-auth` — передача учетных данных registry в Swarm
 - `update_config` — настройка rolling update с rollback при ошибке

@@ -55,6 +55,7 @@ nodeExporter:
 ```
 
 **Что происходит:**
+
 - `operator: "Exists"` — toleration срабатывает для **любого** taint с эффектом `NoSchedule` (включая `control-plane`, `master`, и любые пользовательские).
 - DaemonSet Node Exporter запускается на **всех** нодах: и worker, и master.
 - Метрики `node_*` появляются в Prometheus для master-нод.

@@ -125,9 +125,9 @@ nameserver 8.8.8.8
 
 **Особенности:**
 
-- `/etc/resolv.conf` → symlink на `/run/systemd/resolve/stub-resolv.conf`
-- `nameserver 127.0.0.53` — локальный stub-резолвер
-- Получает DNS-серверы от DHCP, NetworkManager или статической конфигурации
+* `/etc/resolv.conf` → symlink на `/run/systemd/resolve/stub-resolv.conf`
+* `nameserver 127.0.0.53` — локальный stub-резолвер
+* Получает DNS-серверы от DHCP, NetworkManager или статической конфигурации
 
 #### Конфигурация: `/etc/systemd/resolved.conf`
 

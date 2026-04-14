@@ -92,11 +92,13 @@ processors:
 ## Дополнительная информация
 
 **Рекомендуемые атрибуты для анализа:**
+
 - HTTP: `http.method`, `http.route`, `http.status_code`
 - БД: `db.system`, `db.statement` (без чувствительных данных)
 - Очереди: `messaging.system`, `messaging.destination`
 - Бизнес-контекст: `user.id`, `tenant.id` (в хешированном виде)
 
 **Смежные темы:**
+
 - Общий обзор: **[Jaeger Overview](./jaeger_overview.md)**
 - Архитектура: **[Jaeger Architecture](./jaeger_architecture.md)**

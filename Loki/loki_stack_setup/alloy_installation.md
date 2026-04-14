@@ -150,6 +150,7 @@ kubectl logs -n logging -l app.kubernetes.io/name=alloy -f
 Grafana предоставляет онлайн-конвертер конфигураций: [Migrate from Promtail to Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate-from-promtail/)
 
 **Процесс миграции:**
+
 1. Экспортируйте текущую конфигурацию Promtail (`promtail.yaml`).
 2. Конвертируйте через онлайн-инструмент.
 3. Протестируйте новую конфигурацию в staging.

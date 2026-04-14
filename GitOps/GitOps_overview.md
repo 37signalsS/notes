@@ -59,9 +59,9 @@
 
 Для хранения секретов в Git используются инструменты шифрования:
 
-- **[SOPS](../Security/Tools/sops_overview.md)** — шифрование значений в YAML/JSON
-- **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md)** — шифрование Kubernetes Secret
-- **[Vault](../Vault/overview.md)** — внешнее хранилище с динамическими секретами
+* **[SOPS](../Security/Tools/sops_overview.md)** — шифрование значений в YAML/JSON
+* **[Sealed Secrets](../Kubernetes/Security/sealed_secrets_overview.md)** — шифрование Kubernetes Secret
+* **[Vault](../Vault/overview.md)** — внешнее хранилище с динамическими секретами
 
 ## Дополнительная информация
 

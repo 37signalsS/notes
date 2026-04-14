@@ -2,7 +2,7 @@
 
 ## Определения
 
-**CI/CD** — это совокупность практик, объединяющих непрерывную интеграцию (Continuous Integration), непрерывную доставку (Continuous Delivery) и непрерывное развертывание (Continuous Deployment).
+**CI/CD** — это совокупность практик, объединяющих непрерывную интеграцию (Continuous Integration), непрерывную доставку (Continuous Delivery) и непрерывное развертывание (Continuous Deployment). CI/CD представляет собой техническую реализацию автоматизации в рамках [SDLC](./Core_Concepts/sdlc_overview.md) (Software Development Life Cycle).
 
 * **Continuous Integration (CI, Непрерывная интеграция):**
     Практика частой автоматической сборки и тестирования кода после каждого коммита в основной репозиторий. Главная цель — раннее обнаружение ошибок интеграции.
@@ -120,9 +120,9 @@
 
 ### Связанные темы
 
-- Базовый синтаксис и примеры пайплайнов: [Основы GitLab CI/CD](./GitLab_CI/Concepts/gitlab_ci_basics.md)
-- Принципы работы с артефактами: [Управление артефактами](./artifact_management.md)
-- Проверенные подходы к построению пайплайнов: [CI/CD: Паттерны](./ci_cd_patterns.md)
-- Типичные ошибки и их решения: [CI/CD: Анти-паттерны](./ci_cd_antipatterns.md)
-- Методы выкатки приложений: [Стратегии развертывания](./Core_Concepts/deployment_strategies.md)
-- Количественная оценка эффективности: [Метрики DORA](./Core_Concepts/dora_metrics.md)
+* Базовый синтаксис и примеры пайплайнов: [Основы GitLab CI/CD](./GitLab_CI/Concepts/gitlab_ci_basics.md)
+* Принципы работы с артефактами: [Управление артефактами](./artifact_management.md)
+* Проверенные подходы к построению пайплайнов: [CI/CD: Паттерны](./ci_cd_patterns.md)
+* Типичные ошибки и их решения: [CI/CD: Анти-паттерны](./ci_cd_antipatterns.md)
+* Методы выкатки приложений: [Стратегии развертывания](./Core_Concepts/deployment_strategies.md)
+* Количественная оценка эффективности: [Метрики DORA](./Core_Concepts/dora_metrics.md)

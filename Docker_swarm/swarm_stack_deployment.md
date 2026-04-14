@@ -135,6 +135,7 @@ networks:
 ```
 
 **Предварительная настройка:**
+
 ```sh
 docker network create --driver overlay frontend
 docker stack deploy -c docker-compose.yml myapp
@@ -228,6 +229,7 @@ configs:
 ```
 
 **Предварительная настройка:**
+
 ```sh
 docker secret create db_password ./password.txt
 docker secret create api_token ./token.txt
@@ -274,6 +276,7 @@ services:
 ```
 
 **Установка меток на узлы:**
+
 ```sh
 docker node update --label-add db=true node-1
 docker node update --label-add cache=true node-2

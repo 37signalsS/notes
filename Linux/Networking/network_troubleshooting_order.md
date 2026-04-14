@@ -30,6 +30,7 @@
 ### Сценарий 1: Проверка интерфейсов
 
 **Команда:**
+
 ```bash
 ip addr show
 ```
@@ -43,6 +44,7 @@ ip addr show
 **Типичная ошибка:** Отладка `eth0`, тогда как реальный трафик идёт через `ens192`.
 
 **Проверка:**
+
 ```bash
 # Краткий вывод всех интерфейсов
 ip -br addr
@@ -54,6 +56,7 @@ ip -br addr show up
 ### Сценарий 2: Проверка маршрутизации
 
 **Команда:**
+
 ```bash
 ip route
 ```
@@ -69,6 +72,7 @@ ip route
 **Важно:** Если Linux не знает, куда отправлять пакеты, неважно, насколько правильны остальные настройки.
 
 **Примеры:**
+
 ```bash
 # Показать только маршрут по умолчанию
 ip route | grep default
@@ -80,6 +84,7 @@ ip route get 8.8.8.8
 ### Сценарий 3: Проверка связности (пинг)
 
 **Команда:**
+
 ```bash
 ping -c 3 8.8.8.8
 ```
@@ -96,6 +101,7 @@ ping -c 3 8.8.8.8
 ### Сценарий 4: Проверка DNS
 
 **Команды:**
+
 ```bash
 cat /etc/resolv.conf
 nslookup google.com
@@ -104,6 +110,7 @@ dig google.com
 ```
 
 **Типичная проблема:**
+
 ```bash
 # nameserver указывает на локальный сервис, который не запущен
 nameserver 127.0.0.1
@@ -121,6 +128,7 @@ nameserver 127.0.0.1
 ### Сценарий 5: Проверка firewall (в последнюю очередь!)
 
 **Команды:**
+
 ```bash
 # Для iptables
 iptables -L -n
@@ -174,16 +182,19 @@ iptables -L -n | grep 5432
 ### Связанные документы
 
 **Методология:**
+
 - [Инструменты диагностики сети](./network_diagnostics_tools.md) — комплексный обзор
 - [Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md — мониторинг в реальном времени
 
 **Инструменты:**
+
 - [ping](../Diagnostics/Networking/ping.md — базовая проверка доступности
 - [traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md — трассировка маршрута
 - [ss](../Diagnostics/Networking/ss.md — анализ сокетов
 - [tcpdump](../Diagnostics/Networking/tcpdump.md) — анализ трафика
 
 **Настройка:**
+
 - [Конфигурация сетевых интерфейсов](./Settings/Persistent_Network/network_configuration_concepts.md)
 - [Policy-Based Routing](./Policy_Based_Routing/index.md) — маршрутизация на основе политик
 - [TCP tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md) — оптимизация TCP

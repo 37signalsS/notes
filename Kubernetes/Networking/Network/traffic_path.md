@@ -72,11 +72,13 @@
 Для внутренних запросов между подами путь короче:
 
 **Внутри одного узла:**
+
 ```
 Pod A → veth → cni0 (мост) → veth → Pod B
 ```
 
 **Между узлами (на примере Flannel VXLAN):**
+
 ```
 Pod A (Node 1) → veth → cni0 → flannel.1 → VXLAN → Node 2 → cni0 → Pod B
 ```
@@ -121,11 +123,13 @@ kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller
 ```
 
 **Преимущества:**
+
 - Изоляция внешнего трафика от рабочих нагрузок
 - Независимое масштабирование ingress и backend
 - Оптимизация узлов под конкретные задачи (TLS, L7-маршрутизация)
 
 **Реализация:**
+
 - `nodeSelector` или `affinity` для привязки Ingress Controller
 - `taints/tolerations` для предотвращения планирования других подов
 - `NetworkPolicy` для изоляции трафика между зонами
@@ -146,17 +150,20 @@ spec:
 ```
 
 **Проблемы:**
+
 - Ограничение планирования (под может запуститься только на узле со свободным портом)
 - Расширение поверхности атаки (прямой доступ к портам узла)
 - Конфликты портов между подами
 
 **Альтернативы:**
+
 - `NodePort` — базовый внешний доступ
 - `LoadBalancer` — облачные среды
 - `Ingress` — HTTP/HTTPS трафик
 - `kubectl port-forward` — отладка
 
 **Легитимные сценарии использования:**
+
 - DaemonSet мониторинга (Node Exporter)
 - CNI-плагины (Calico, Cilium)
 - NodeLocalDNS
@@ -165,6 +172,7 @@ spec:
 ## Дополнительная информация
 
 **См. также:**
+
 - [Обзор сетевой модели Kubernetes](./network_overview.md) — CNI, kube-proxy, принципы
 - [CNI и kube-proxy: роли](./cni_kube_proxy_roles.md) — детальное описание компонентов
 - [Обзор Service](../Service/service_overview.md) — абстракция Service, типы

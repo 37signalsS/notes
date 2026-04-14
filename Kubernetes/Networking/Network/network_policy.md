@@ -30,9 +30,9 @@
 
 ### Принцип работы
 
-- **Default Allow**: Без политик весь трафик разрешён (плоская сетевая модель Kubernetes)
-- **Default Deny**: При применении хотя бы одной политики весь трафик запрещается, кроме явно разрешённого
-- **Направления**: `Ingress` (входящий), `Egress` (исходящий) или оба (`policyTypes`)
+* **Default Allow**: Без политик весь трафик разрешён (плоская сетевая модель Kubernetes)
+* **Default Deny**: При применении хотя бы одной политики весь трафик запрещается, кроме явно разрешённого
+* **Направления**: `Ingress` (входящий), `Egress` (исходящий) или оба (`policyTypes`)
 
 * *Структура NetworkPolicy и примеры YAML: [definitions.md](./NetworkPolicy/definitions.md#структура-networkpolicy)*
 
@@ -49,14 +49,15 @@
 
 ### Логика правил
 
-- **Логическое "ИЛИ"**: Элементы в списках `ingress`, `egress`, `from`, `to` объединяются по "ИЛИ"
-- **Логическое "И"**: Поля внутри одного элемента (`podSelector`, `namespaceSelector`, `ports`) объединяются по "И"
+* **Логическое "ИЛИ"**: Элементы в списках `ingress`, `egress`, `from`, `to` объединяются по "ИЛИ"
+* **Логическое "И"**: Поля внутри одного элемента (`podSelector`, `namespaceSelector`, `ports`) объединяются по "И"
 
 * *Примеры комбинаций правил: [rule_logic.md](./NetworkPolicy/rule_logic.md)*
 
 ### Типовые политики
 
 **Deny-all (запрет всего входящего трафика):**
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -69,6 +70,7 @@ spec:
 ```
 
 **Allow-all (разрешение всего трафика):**
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -144,8 +146,8 @@ NetworkPolicy работает в контексте общей сетевой �
 
 Calico расширяет стандартные NetworkPolicy дополнительными возможностями:
 
-- **HostEndpoint**: Политики для узлов кластера
-- **GlobalNetworkPolicy**: Глобальные политики на уровне кластера
-- **Логирование**: Логирование заблокированного трафика
+* **HostEndpoint**: Политики для узлов кластера
+* **GlobalNetworkPolicy**: Глобальные политики на уровне кластера
+* **Логирование**: Логирование заблокированного трафика
 
 * *Calico HostEndpoint и GlobalNetworkPolicy: [../../Security/network_policies/Calico/index.md](../../Security/network_policies/Calico/index.md)*

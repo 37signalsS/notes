@@ -71,21 +71,25 @@ kubectl top nodes
 ### 3.1. Диагностика проблем масштабирования
 
 1. **Проверка статуса HPA:**
+
    ```bash
    kubectl describe hpa <hpa-name> -n <namespace>
    ```
 
 2. **Анализ событий:**
+
    ```bash
    kubectl get events -n <namespace> --field-selector involvedObject.kind=HorizontalPodAutoscaler
    ```
 
 3. **Проверка Metrics Server:**
+
    ```bash
    kubectl logs -n kube-system deployment/metrics-server
    ```
 
 4. **Валидация requests:**
+
    ```bash
    kubectl get deployment <deployment-name> -o jsonpath='{.spec.template.spec.containers[*].resources.requests}'
    ```

@@ -7,11 +7,10 @@
 **Распространенные ошибки** — типичные состояния подов и узлов, указывающие на проблемы с планированием, конфигурацией, ресурсами или доступностью компонентов кластера.
 
 > **Смежные разделы:**
+>
 > - Классификация ошибок: [Common Errors](./Common_Errors/)
 > - QoS и управление ресурсами: [qos_limit_and_requests](../Scheduling/qos_limit_and_requests.md)
 > - Taints и tolerations: [taints_and_tolerations](../Scheduling/taints_and_tolerations.md)
-> - RBAC: [rbac_overview](../Security/rbac/rbac_overview.md)
-> - Node maintenance: [node_maintenance](../Operations/node_maintenance.md)
 
 ## Основные концепции
 
@@ -41,6 +40,7 @@
 ```
 
 Дополнительные команды для специфичных проблем:
+
 - `kubectl auth can-i [...]` — для диагностики RBAC
 - `kubectl top pod/node` — для мониторинга ресурсов
 
@@ -106,6 +106,7 @@
 Интерактивный доступ к shell запущенного контейнера.
 
 **Синтаксис:**
+
 ```bash
 kubectl exec -it <pod-name> -- /bin/bash
 kubectl exec -it <pod-name> -c <container-name> -- /bin/sh  # multi-container
@@ -116,6 +117,7 @@ kubectl exec -it <pod-name> -c <container-name> -- /bin/sh  # multi-container
 Проброс локального порта на порт пода для отладки внутренних сервисов.
 
 **Синтаксис:**
+
 ```bash
 kubectl port-forward pod/<pod-name> 8080:80
 ```
@@ -124,13 +126,26 @@ kubectl port-forward pod/<pod-name> 8080:80
 
 Подключение отладочных контейнеров (`netshoot`, `busybox`) без перезапуска пода.
 
-**Пример:**
+**Базовый пример:**
+
 ```bash
 # Подключить контейнер с сетевыми утилитами
 kubectl debug -it my-pod --image=nicolaka/netshoot --target=app-container
 ```
 
 Команда позволяет запускать `tcpdump`, `ping`, `nslookup` в сетевом namespace проблемного пода.
+
+**Ключевые возможности:**
+
+- `--copy-to=<name>` — создание копии пода для отладки (при крашах приложения)
+- `--set-image=*=<image>` — изменение образа контейнера
+- `--container=<name> -- <cmd>` — изменение команды запуска
+- `--share-processes` — доступ к процессам всех контейнеров пода
+- `node/<node>` — отладка конкретной ноды
+
+> **Важно:** Ephemeral контейнеры нельзя удалить или модифицировать после добавления. Stable с Kubernetes 1.25.
+
+Полное руководство по всем сценариям: **[Ephemeral Containers](../Base/Pod/ephemeral_containers.md)**.
 
 ## Практические сценарии
 
@@ -220,7 +235,5 @@ strace -f -e status=failed -p 1
 ### Связанные разделы
 
 - [Pod Lifecycle](../Base/Pod/pod_lifecycle_and_state.md) — состояния пода, probes
-- [Deployment](../Base/Deployment/index.md) — стратегии развертывания, rollback
+- [Ephemeral Containers](../Base/Pod/ephemeral_containers.md) — отладочные контейнеры
 - [High Availability](../Base/high_availability.md) — PDB, eviction timeout
-- [Node Maintenance](../Operations/node_maintenance.md) — обслуживание узлов
-- [Pod Distribution](../Autoscaling/pod_distribution/basic_concepts.md) — affinity, topologySpreadConstraints

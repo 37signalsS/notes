@@ -253,5 +253,6 @@ sudo apt update
 **Термины и концепции** — [Definitions](./definitions.md), [Основные понятия](./basic_concepts.md).
 
 **Смежные темы:**
+
 - **[Приватный APT-репозиторий](../deb_private_apt_repository_reprepro/practical_scenarios.md)** — публикация внутренних .deb-пакетов
 - **[Зеркалирование YUM/DNF](../yum_dnf_repository_mirror.md)** — аналогичный процесс для RPM-экосистемы

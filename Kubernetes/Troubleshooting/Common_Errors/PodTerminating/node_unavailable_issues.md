@@ -100,6 +100,7 @@ systemctl status kubelet
 ```
 
 После восстановления kubelet:
+
 - Pod получит SIGTERM и завершится
 - Volumes размонтируются
 - Запись удалится из etcd

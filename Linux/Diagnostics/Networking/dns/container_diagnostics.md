@@ -100,6 +100,7 @@ kubectl exec <pod> -- tcpdump -n -p -i eth0 port 53
 **Симптом:** Высокая задержка при обращении к внешним доменам из подов.
 
 **Причина:** При `ndots:5` запрос к `yandex.ru` генерирует 4 DNS-запроса:
+
 1. `yandex.ru.default.svc.cluster.local`
 2. `yandex.ru.svc.cluster.local`
 3. `yandex.ru.cluster.local`

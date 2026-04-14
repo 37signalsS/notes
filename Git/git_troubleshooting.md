@@ -226,9 +226,9 @@ unset GIT_SSH_COMMAND # Отключить отладку
 
 ### Официальные ресурсы
 
-- **git bundle:** [git-scm.com/docs/git-bundle](https://git-scm.com/docs/git-bundle)
-- **core.autocrlf:** [git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
-- **Debugging Git:** [git-scm.com/book/en/v2/Git-Internals-Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)
+* **git bundle:** [git-scm.com/docs/git-bundle](https://git-scm.com/docs/git-bundle)
+* **core.autocrlf:** [git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coreautocrlf)
+* **Debugging Git:** [git-scm.com/book/en/v2/Git-Internals-Debugging](https://git-scm.com/book/en/v2/Git-Internals-Debugging)
 
 ### Связанные темы
 

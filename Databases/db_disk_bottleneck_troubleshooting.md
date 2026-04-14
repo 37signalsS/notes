@@ -23,6 +23,7 @@
 2. **Уровень БД:** Какие запросы создают наибольшую нагрузку на чтение/запись
 
 Подробнее об инструментах:
+
 - **[iostat](../Linux/Diagnostics/Filesystem/iostat.md)** — статистика по дискам
 - **[iotop](../Linux/Diagnostics/Filesystem/iotop.md)** — I/O по процессам
 
@@ -42,6 +43,7 @@ iostat -xz 1
 ```
 
 **Интерпретация:**
+
 - Если основной потребитель I/O — процесс БД (`postgres`, `mysqld`), переходите к шагу 2
 - Если другой процесс — оптимизируйте его или ограничьте приоритет I/O (`ionice`)
 
@@ -90,12 +92,14 @@ LIMIT 10;
 Если запрос делает `Seq Scan` по большой таблице, добавьте индекс на столбцы из `WHERE`.
 
 **PostgreSQL (безопасно для production):**
+
 ```sql
 CREATE INDEX CONCURRENTLY my_table_my_column_idx 
 ON my_table (my_column);
 ```
 
 **MySQL:**
+
 ```sql
 ALTER TABLE my_table ADD INDEX my_table_my_column_idx (my_column);
 ```
@@ -115,6 +119,7 @@ ALTER TABLE my_table ADD INDEX my_table_my_column_idx (my_column);
 Если проблема в нагрузке на запись, можно временно отключить синхронную запись.
 
 **PostgreSQL:**
+
 ```sql
 ALTER SYSTEM SET synchronous_commit = 'off';
 ```
@@ -140,6 +145,7 @@ WHERE backend_type = 'autovacuum worker';
 **Причина:** `iowait` показывает только время простоя CPU. Если процессы в очереди на диск, но CPU переключается на другие задачи, `iowait` остаётся низким.
 
 **Диагностика:**
+
 ```bash
 iostat -x 1
 # Ключевые метрики:

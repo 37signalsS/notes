@@ -84,4 +84,5 @@ USER nonroot
 - **[Развертывание PostgreSQL в Docker](../../../Databases/PostgreSQL/Operations/docker_deployment.md)** — безопасная конфигурация БД
 
 Языковые лучшие практики с примерами создания непривилегированных пользователей:
+
 - **[Python](./python.md)**, **[Node.js](./nodejs.md)**, **[Go](./go.md)**, **[Ruby](./ruby.md)**

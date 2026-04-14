@@ -77,6 +77,7 @@ SELECT * FROM users WHERE id = 1 /*application='backend',traceparent='00-traceid
 ### pg_tracing (экспериментальное)
 
 **Функционал:**
+
 - Создаёт спаны для фаз выполнения (parsing, planning, execution)
 - Читает `traceparent` из `sqlcommenter`
 - Экспортирует спаны по протоколу OTLP

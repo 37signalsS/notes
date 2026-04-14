@@ -46,6 +46,7 @@
 **Когда использовать:** Доступно хранилище с поддержкой RWX (NFS, CephFS, GlusterFS).
 
 **Как работает:**
+
 1. Создается один `PersistentVolumeClaim` с `accessMode: ReadWriteMany`
 2. `Deployment` управляет подами приложения
 3. Все реплики монтируют **один и тот же** PVC
@@ -163,7 +164,7 @@ spec:
   - port: 80
 ```
 
-2. **Создать StatefulSet с новыми PVC:**
+1. **Создать StatefulSet с новыми PVC:**
 
 ```yaml
 apiVersion: apps/v1
@@ -197,15 +198,15 @@ spec:
           storage: 5Gi
 ```
 
-3. **Скопировать данные со старых томов на новые** (через временные поды)
+1. **Скопировать данные со старых томов на новые** (через временные поды)
 
-4. **Удалить старый Deployment:**
+2. **Удалить старый Deployment:**
 
 ```bash
 kubectl delete deployment my-app
 ```
 
-5. **Проверить работу StatefulSet:**
+1. **Проверить работу StatefulSet:**
 
 ```bash
 kubectl get pods -l app=my-app

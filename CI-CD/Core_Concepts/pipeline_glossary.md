@@ -23,6 +23,7 @@
 **Описание:** Событие, которое автоматически запускает пайплайн.
 
 **Примеры:**
+
 - `push` в ветку
 - Создание merge request
 - Запуск по расписанию (cron)
@@ -63,6 +64,7 @@
 **Примеры:** Бинарные файлы, Docker-образы, отчеты о тестах.
 
 **SSoT:**
+
 - [Управление артефактами — общая теория](../artifact_management.md)
 - [Артефакты в GitLab CI](../GitLab_CI/Advanced/gitlab_ci_caching/artifacts.md)
 - [Кэш vs. Артефакты](../GitLab_CI/Advanced/gitlab_ci_caching/caching_overview.md#кэш-vs-артефакты)
@@ -74,6 +76,7 @@
 **Описание:** Механизм сохранения файлов (например, зависимостей) между запусками пайплайна для ускорения сборок. Сохранность кэша не гарантируется.
 
 **SSoT:**
+
 - [Кэширование в GitLab CI — обзор](../GitLab_CI/Advanced/gitlab_ci_caching/caching_overview.md)
 - [Ключи кэша и политики](../GitLab_CI/Advanced/gitlab_ci_caching/cache_keys.md)
 - [Лучшие практики кэширования](../GitLab_CI/Advanced/gitlab_ci_caching/cache_best_practices.md)
@@ -87,6 +90,7 @@
 **Типичная схема:** `development` → `staging` → `production`
 
 **SSoT:**
+
 - [Deployment Strategies — модели развертывания](./deployment_strategies.md)
 - [Стратегии развертывания](../Deployment_Strategies/comparison.md)
 
@@ -97,6 +101,7 @@
 **Описание:** Практика безопасного хранения, ротации и предоставления доступа к чувствительным данным (паролям, API-ключам) во время выполнения пайплайна.
 
 **SSoT:**
+
 - [Управление секретами в CI/CD](../DevSecOps/secrets_management.md)
 - [Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)
 

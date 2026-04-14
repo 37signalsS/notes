@@ -7,7 +7,7 @@
 * **Лог доступа (`access_log`)**: Записывает информацию о каждом обработанном запросе клиента.
 * **Лог ошибок (`error_log`)**: Предназначен для записи информации о проблемах, возникших в процессе работы сервера.
 
-## Основные концепции
+## Базовые концепции
 
 ### Лог доступа (`access_log`)
 
@@ -143,3 +143,9 @@ access_log /var/log/angie/access.log.gz extended gzip=1;
 ```nginx
 open_log_file_cache max=1000 inactive=20s min_uses=2 valid=1m;
 ```
+
+## См. также
+
+* [Мониторинг Angie](./angie_monitoring.md)
+* [Руководство по безопасности Nginx — настройка логирования](../Nginx/Security/nginx_security_guide.md)
+* [Оптимизация производительности Nginx — буферизация логов](../Nginx/Performance/nginx_performance_tuning.md)

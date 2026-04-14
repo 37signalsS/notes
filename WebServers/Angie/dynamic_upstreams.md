@@ -37,8 +37,6 @@ http {
         listen 80;
 
         location / {
-            # Для проксирования запросов используется директива proxy_pass
-            # Подробнее: https://github.com/qdn-dev/notes/blob/main/WebServers/Angie/angie_reverse_proxy.md
             proxy_pass http://backend;
         }
     }
@@ -49,7 +47,7 @@ http {
 
 ### Сценарий 2: Использование DNS SRV-записей
 
-Более гибкий метод, использующий **[SRV-записи в DNS](../../Networking/Protocols/DNS/dns.md#запись-srv-service-locator)**, которые позволяют указать для службы хост, порт, вес и приоритет каждого сервера.
+Более гибкий метод, использующий **[SRV-записи в DNS](../../Networking/Protocols/DNS/dns_records.md)**, которые позволяют указать для службы хост, порт, вес и приоритет каждого сервера.
 
 #### Конфигурация DNS (пример для BIND)
 

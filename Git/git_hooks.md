@@ -79,9 +79,9 @@ Git Hooks являются мощным механизмом для автома
 
 ### Официальные ресурсы
 
-- **Документация Git по хукам:** [git-scm.com/book/en/v2/Customizing-Git-Git-Hooks](https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks)
-- **pre-commit фреймворк:** [pre-commit.com](https://pre-commit.com/)
-- **Husky для Node.js:** [npmjs.com/package/husky](https://www.npmjs.com/package/husky)
+* **Документация Git по хукам:** [git-scm.com/book/en/v2/Customizing-Git-Git-Hooks](https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks)
+* **pre-commit фреймворк:** [pre-commit.com](https://pre-commit.com/)
+* **Husky для Node.js:** [npmjs.com/package/husky](https://www.npmjs.com/package/husky)
 
 ### Связанные темы
 

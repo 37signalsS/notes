@@ -240,7 +240,7 @@ ip rule add fwmark 0x2/0x2 lookup 102
 
 ### Связанные темы
 
-- [iproute2 overview](../Tools/iproute2/overview.md) — обзор утилит iproute2
-- [iptables](../Settings/tools/iptables_basics.md) — маркировка пакетов
-- [Network Diagnostics](../network_diagnostics_tools.md) — диагностика сети
-- [Администрирование PBR](./administration.md) — проверка и сохранение конфигурации
+* [iproute2 overview](../Tools/iproute2/overview.md) — обзор утилит iproute2
+* [iptables](../Settings/tools/iptables_basics.md) — маркировка пакетов
+* [Network Diagnostics](../network_diagnostics_tools.md) — диагностика сети
+* [Администрирование PBR](./administration.md) — проверка и сохранение конфигурации

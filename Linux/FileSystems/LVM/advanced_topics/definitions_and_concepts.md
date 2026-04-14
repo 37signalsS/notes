@@ -23,6 +23,7 @@
 #### Проблема: «Volume group not found» после рестарта
 
 **Симптомы:**
+
 - Система не загружается, initramfs выдаёт ошибку `Volume group not found`
 - Drop to initramfs shell или emergency mode
 - VG не активируется автоматически при загрузке
@@ -51,6 +52,7 @@ vgchange -ay
 #### 2. Включение lvm2 в initramfs
 
 **Debian/Ubuntu:**
+
 ```bash
 # Добавить модуль lvm2 в конфигурацию
 echo "lvm2" >> /etc/initramfs-tools/modules
@@ -66,6 +68,7 @@ update-grub
 ```
 
 **RHEL/CentOS/Fedora:**
+
 ```bash
 # Проверить наличие lvm2 в dracut
 dracut --list-modules | grep lvm
@@ -78,6 +81,7 @@ dracut --force --regenerate-all
 ```
 
 **Arch Linux:**
+
 ```bash
 # Добавить lvm2 в mkinitcpio.conf
 # /etc/mkinitcpio.conf

@@ -97,6 +97,6 @@ etcdctl --endpoints=https://127.0.0.1:2379 \
 
 ## Additional Information
 
-**См. также:** [обзор Kubespray](../overview.md), [развертывание в закрытом контуре](../offline_installation/offline_definitions.md), [ручная настройка HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md), [Keepalived](../../../../Networking/ServicesAndTools/keepalived_overview.md), [HAProxy](../../../../WebServers/haproxy_overview.md).
+**См. также:** [обзор Kubespray](../overview.md), [развертывание в закрытом контуре](../offline_installation/offline_definitions.md), [ручная настройка HA с kubeadm](../../kubeadm/ha_concepts.md), [Keepalived](../../../../Networking/ServicesAndTools/keepalived_overview.md), [HAProxy](../../../../WebServers/haproxy_overview.md).
 
 **Внешние ресурсы:** [документация Kubespray](https://kubespray.io/), [GitHub](https://github.com/kubernetes-sigs/kubespray), [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798).

@@ -132,14 +132,14 @@ glab mr approve <номер_MR>
 
 ### Официальные ресурсы
 
-- **GitHub Flow:** [docs.github.com/en/get-started/using-github/github-flow](https://docs.github.com/en/get-started/using-github/github-flow)
-- **Git Flow:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
-- **Trunk-Based Development:** [trunkbaseddevelopment.com](https://trunkbaseddevelopment.com/)
+* **GitHub Flow:** [docs.github.com/en/get-started/using-github/github-flow](https://docs.github.com/en/get-started/using-github/github-flow)
+* **Git Flow:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
+* **Trunk-Based Development:** [trunkbaseddevelopment.com](https://trunkbaseddevelopment.com/)
 
 ### Инструменты CLI
 
-- **GitHub CLI:** [cli.github.com](https://cli.github.com/)
-- **GitLab CLI:** [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli)
+* **GitHub CLI:** [cli.github.com](https://cli.github.com/)
+* **GitLab CLI:** [gitlab.com/gitlab-org/cli](https://gitlab.com/gitlab-org/cli)
 
 ### Связанные темы
 

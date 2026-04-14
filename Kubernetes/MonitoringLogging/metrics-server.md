@@ -13,6 +13,7 @@
 **Включение `kubectl top`** — без Metrics Server команды `kubectl top nodes` и `kubectl top pods` не работают, так как запрашивают данные из Metrics API.
 
 **Основа для автоскейлинга:**
+
 - **Horizontal Pod Autoscaler (HPA)** использует данные Metrics Server для масштабирования количества подов в `Deployment`/`StatefulSet` на основе CPU/memory.
 - **Vertical Pod Autoscaler (VPA)** использует метрики для рекомендации или автоматического изменения `requests` и `limits` контейнеров.
 

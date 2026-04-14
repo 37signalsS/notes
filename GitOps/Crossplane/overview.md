@@ -43,10 +43,10 @@
 
 Руководства по настройке и использованию:
 
-- Настройка провайдера для Yandex Cloud: [Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)
-- Управление ресурсами внутри кластера: [Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)
-- Интеграция с GitOps-инструментами: [Интеграция с GitOps](./gitops_integration.md)
-- Сравнение с альтернативами: [Сравнение с Terraform](./terraform_comparison.md)
+* Настройка провайдера для Yandex Cloud: [Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)
+* Управление ресурсами внутри кластера: [Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)
+* Интеграция с GitOps-инструментами: [Интеграция с GitOps](./gitops_integration.md)
+* Сравнение с альтернативами: [Сравнение с Terraform](./terraform_comparison.md)
 
 Навигатор по сервисам Yandex Cloud: [Yandex Cloud — навигатор](../../Yandex/index.md).
 
@@ -56,5 +56,5 @@
 
 Внешние ресурсы:
 
-- Официальная документация Crossplane: [docs.crossplane.io](https://docs.crossplane.io/)
-- CNCF Announcement: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)
+* Официальная документация Crossplane: [docs.crossplane.io](https://docs.crossplane.io/)
+* CNCF Announcement: [Crossplane Graduation](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)

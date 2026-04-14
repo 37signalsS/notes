@@ -43,6 +43,7 @@
     ```
 
     Ожидаемый результат:
+
     ```
     nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
     nginx: configuration file /etc/nginx/nginx.conf test is successful
@@ -69,9 +70,9 @@
     Параметр `-servername` (Server Name Indication, SNI) критически важен, если на одном IP-адресе размещено несколько HTTPS-сайтов, чтобы Nginx мог выбрать правильный сертификат.
 
     **Ключевые элементы вывода:**
-    - `Protocol` — версия TLS (должна быть TLSv1.2 или TLSv1.3)
-    - `Cipher` — используемый шифр
-    - `Verify return code: 0 (ok)` — успешная проверка цепочки сертификатов
+  - `Protocol` — версия TLS (должна быть TLSv1.2 или TLSv1.3)
+  - `Cipher` — используемый шифр
+  - `Verify return code: 0 (ok)` — успешная проверка цепочки сертификатов
 
 ### Диагностика через браузер
 

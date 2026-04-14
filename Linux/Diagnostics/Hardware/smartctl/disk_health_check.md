@@ -59,7 +59,7 @@ sudo smartctl -H /dev/nvme0n1
 sudo smartctl -a /dev/sda
 ```
 
-### Просмотр атрибутов S.M.A.R.T.
+### Просмотр атрибутов S.M.A.R.T
 
 ```bash
 # Полная информация (ATA/SATA)

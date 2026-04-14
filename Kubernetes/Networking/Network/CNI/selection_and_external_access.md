@@ -131,6 +131,7 @@ Calico в режиме eBPF реализует оптимизацию **Direct S
 ## Дополнительные сведения
 
 **См. также:**
+
 - Сетевая модель Kubernetes — [Обзор сетевой модели](../network_overview.md)
 - NodePort и externalTrafficPolicy — [Типы Service: NodePort](../../Service/service_type_nodeport.md)
 - Путь трафика от Ingress до Pod — [Путь трафика в Kubernetes](../traffic_path.md)

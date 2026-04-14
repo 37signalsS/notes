@@ -19,17 +19,17 @@
 ### Компоненты стека Zabbix Server
 
 Для работы Zabbix Server требуются:
-- **Веб-сервер:** Apache или Nginx
-- **СУБД:** MySQL/MariaDB или PostgreSQL
-- **PHP:** с расширениями `php-cgi`, `php-mbstring`, `php-gd`, `php-xml`, `php-mysql`, `php-bcmath`, `php-ldap`, `php-json`
-- **Zabbix Frontend:** веб-интерфейс управления
+* **Веб-сервер:** Apache или Nginx
+* **СУБД:** MySQL/MariaDB или PostgreSQL
+* **PHP:** с расширениями `php-cgi`, `php-mbstring`, `php-gd`, `php-xml`, `php-mysql`, `php-bcmath`, `php-ldap`, `php-json`
+* **Zabbix Frontend:** веб-интерфейс управления
 
 ### Компоненты Zabbix Agent
 
 Агент состоит из:
-- Демона `zabbix-agent` (classic) или `zabbix-agent2` (Go)
-- Конфигурационного файла `/etc/zabbix/zabbix_agentd.conf`
-- Каталогов дополнительных конфигураций `/etc/zabbix/zabbix_agentd.conf.d/`
+* Демона `zabbix-agent` (classic) или `zabbix-agent2` (Go)
+* Конфигурационного файла `/etc/zabbix/zabbix_agentd.conf`
+* Каталогов дополнительных конфигураций `/etc/zabbix/zabbix_agentd.conf.d/`
 
 Режимы работы описаны в разделе [модели сбора данных](./definitions_and_concepts.md#модель-pull-vs-push).
 
@@ -80,8 +80,8 @@ zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | sudo mysql -uzabbix -p 
 
 #### 6. Конфигурация Zabbix Server и PHP
 
-- В `/etc/zabbix/zabbix_server.conf` указать `DBPassword=your_password`
-- В `/etc/php/8.1/apache2/php.ini` задать `date.timezone = Europe/Moscow`
+* В `/etc/zabbix/zabbix_server.conf` указать `DBPassword=your_password`
+* В `/etc/php/8.1/apache2/php.ini` задать `date.timezone = Europe/Moscow`
 
 #### 7. Запуск служб
 
@@ -156,8 +156,8 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 ### Настройка SNMP-мониторинга
 
 При создании хоста в Zabbix добавляется интерфейс типа **SNMP** с параметрами:
-- **SNMP version:** `2` (наиболее распространён)
-- **SNMP community:** строка-пароль (например, `public`), совпадающая с настроенной на устройстве
+* **SNMP version:** `2` (наиболее распространён)
+* **SNMP community:** строка-пароль (например, `public`), совпадающая с настроенной на устройстве
 
 Подробнее: [SNMP](./definitions_and_concepts.md).
 
@@ -181,7 +181,7 @@ zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <val
 
 ### Связанные документы
 
-- **[Мониторинг MySQL](../Databases/MySQL/monitoring.md)** — настройка UserParameter для MySQL
-- **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — мониторинг через Zabbix Agent 2
-- **[Мониторинг БД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу СУБД
-- **[Лучшие практики](./zabbix_best_practices.md)** — рекомендации по настройке триггеров и оповещений
+* **[Мониторинг MySQL](../Databases/MySQL/monitoring.md)** — настройка UserParameter для MySQL
+* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — мониторинг через Zabbix Agent 2
+* **[Мониторинг БД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу СУБД
+* **[Лучшие практики](./zabbix_best_practices.md)** — рекомендации по настройке триггеров и оповещений

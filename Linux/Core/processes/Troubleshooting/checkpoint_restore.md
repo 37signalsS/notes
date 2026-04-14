@@ -151,4 +151,3 @@ sudo nsenter -t 1234 -m -u -i -n -p -- bash -c 'exec /usr/local/bin/nginx-new -c
 - Параметры `nsenter` и примеры использования — в [namespaces](../../namespaces.md)
 - Диагностика открытых файлов процесса — [`lsof`](../../../Diagnostics/Processes/lsof.md)
 - Обзор CRIU, коды завершения, coredump — в [Troubleshooting index](./index.md)
-

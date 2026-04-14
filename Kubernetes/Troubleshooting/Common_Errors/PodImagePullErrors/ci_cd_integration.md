@@ -64,6 +64,7 @@ deploy:
 ```
 
 **Преимущества:**
+
 - Идемпотентность — `dry-run=client -o yaml | kubectl apply -f -` обновляет существующий secret
 - Автоматическая привязка — все pod'ы с `default` SA получают доступ к registry
 - Не требуется хранить credentials в репозитории
@@ -85,7 +86,7 @@ data:
   .dockerconfigjson: <base64-encoded-config>
 ```
 
-2. **Указать imagePullSecrets в манифесте Deployment:**
+1. **Указать imagePullSecrets в манифесте Deployment:**
 
 ```yaml
 spec:
@@ -98,7 +99,7 @@ spec:
       - name: regcred
 ```
 
-3. **Убедиться, что secret существует до деплоя** — ArgoCD выдаст ошибку, если secret не найден.
+1. **Убедиться, что secret существует до деплоя** — ArgoCD выдаст ошибку, если secret не найден.
 
 **Рекомендация:** Для автоматического создания секретов в GitOps используйте [Sealed Secrets](../../../Kubernetes/Base/secrets/external_managers.md) или [External Secrets Operator](../../../Kubernetes/Base/secrets/external_managers.md).
 

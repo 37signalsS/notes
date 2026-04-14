@@ -268,4 +268,3 @@ ansible-playbook -i inventory/offline_cluster/inventory.ini --list-hosts all
 ### Связанные темы
 
 Загрузка артефактов на машине с интернетом описана в [шаге 2](./step2_internet_env.md), развёртывание кластера — в [шаге 4](./step4_cluster_deploy.md). Информация о Harbor — в [Harbor overview](../../../../Docker/Docker_registries/Harbor/overview.md). Переменные offline-режима — в [offline_concepts.md](./offline_concepts.md).
-

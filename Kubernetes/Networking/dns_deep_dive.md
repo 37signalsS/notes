@@ -37,6 +37,7 @@ CoreDNS следит за API-сервером Kubernetes и автоматич�
 3. **Локальное кеширование:** Агент слушает адрес `169.254.20.10` или `169.254.25.10`
 
 **Преимущества:**
+
 - Снижение нагрузки на CoreDNS
 - Уменьшение задержки разрешения имён
 - Повышение надёжности (UDP → TCP конвертация)
@@ -105,6 +106,7 @@ tcpdump -n -p -i eth0 port 53
 ```
 
 Запрос к `yandex.ru` генерирует 4 DNS-запроса:
+
 1. `yandex.ru.default.svc.example.com`
 2. `yandex.ru.svc.example.com`
 3. `yandex.ru.example.com`
@@ -176,6 +178,7 @@ tcpdump -n -p -i eth0 port 53
 Запросы к CoreDNS идут через `Service` с `ClusterIP`. При реализации через `IPtables` возможны потери UDP-пакетов.
 
 **Решения:**
+
 - **NodeLocalDNS** — кеширование локально, уменьшение трафика через Service
 - **TCP для CoreDNS** — NodeLocalDNS конвертирует UDP → TCP
 

@@ -76,6 +76,7 @@ spec:
 ```
 
 **Пояснения:**
+
 - `selector: app: alertmanager` — связывает Service с подами из [alertmanager-statefulset.md](./alertmanager-statefulset.md)
 - `targetPort: web` — ссылается на именованный порт `web` (9093) в контейнере
 - Тип не указан — по умолчанию `ClusterIP`
@@ -100,6 +101,7 @@ spec:
 ```
 
 **Пояснения:**
+
 - `selector: app: karma` — связывает Service с подами из [karma-deployment.md](./karma-deployment.md)
 - `targetPort: web` — ссылается на именованный порт `web` (8080) в контейнере
 
@@ -138,6 +140,7 @@ spec:
 ```
 
 **Пояснения:**
+
 - `pathType: Prefix` — маршрутизация по префиксу пути (в данном случае `/` — все пути)
 - `port.number` — явное указание номера порта (альтернатива `port.name`)
 - Требуется работающий Ingress Controller (NGINX, Traefik, HAProxy и т.д.) — см. [Ingress Overview](../../../Kubernetes/Networking/Ingress/overview.md)

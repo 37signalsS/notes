@@ -7,6 +7,7 @@
 **Текущая версия (март 2026):** Grafana 12.x
 
 **Связанные темы:**
+
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
 - [Источники данных](./grafana_datasources.md) — провижинг источников
 - [Дашборды](./dashboards/definitions_and_concepts.md) — провижинг дашбордов

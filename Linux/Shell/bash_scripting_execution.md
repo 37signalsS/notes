@@ -37,6 +37,7 @@
 ### Subshell vs `source`
 
 `setup_env.sh`:
+
 ```bash
 #!/bin/bash
 export MY_APP_VERSION="1.2.3"

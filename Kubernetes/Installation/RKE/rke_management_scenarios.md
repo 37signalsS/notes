@@ -295,4 +295,4 @@ kubectl top pods --all-namespaces
 kubectl get pv,pvc --all-namespaces
 ```
 
-**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md).
+**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [kubeadm: Быстрый старт](../kubeadm/index.md).

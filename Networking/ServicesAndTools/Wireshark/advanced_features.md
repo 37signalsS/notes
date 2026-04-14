@@ -27,6 +27,7 @@ Wireshark использует цвета для выделения трафик
 > **Важно:** чёрные и красные пакеты не всегда означают реальные ошибки — это может быть следствием **checksum offloading**. Подробности: **[Диагностика offloading](tcp_performance/tcp_network_losses_and_offloading.md#влияние-offloading-на-анализ-в-wireshark)**.
 
 Пользовательские правила создаются через `View → Coloring Rules → New`. Каждое правило содержит:
+
 - **Display Filter** — условие применения (например, `tcp.flags.syn == 1 && tcp.flags.ack == 0`)
 - **Foreground/Background Color** — цвета текста и фона
 

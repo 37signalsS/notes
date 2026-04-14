@@ -42,7 +42,12 @@
 
 ```bash
 #!/bin/bash
-STATUS_CODE=$(/usr/bin/curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/health_check)
+# Проверка доступности Angie через HTTP-эндпоинт
+# -f: exit code != 0 при HTTP-ошибках (4xx, 5xx)
+# -s: тихий режим, без прогресс-бара
+# -o /dev/null: тело ответа не сохранять
+# -w "%{http_code}": вывести только HTTP-код
+STATUS_CODE=$(/usr/bin/curl -f -s -o /dev/null -w "%{http_code}" http://127.0.0.1/health_check)
 if [ "$STATUS_CODE" -eq 200 ]; then
   exit 0
 else
@@ -233,3 +238,9 @@ Keepalived отвечает только за "миграцию" VIP и **не �
 
 - **Конфигурация Angie:** Конфигурационные файлы Angie, включая SSL-сертификаты, на всех узлах кластера должны быть идентичны. Для их синхронизации используйте внешние инструменты (Ansible, `rsync`, `angie-sync`).
 - **Состояние сессий:** При переключении все активные TCP-соединения с бывшим `MASTER` разрываются. Для L7-трафика (HTTP) это обычно не является проблемой, так как клиенты автоматически переподключаются к VIP, попадая уже на новый `MASTER`.
+
+## См. также
+
+- [Обзор Keepalived](../../Networking/ServicesAndTools/keepalived_overview.md) — общие принципы работы Keepalived, VRRPv3, unicast-режим
+- [Обзор Angie](./angie_overview.md) — возможности и архитектура Angie
+- [HA для Kubernetes с Keepalived и HAProxy](../../Kubernetes/Installation/kubeadm/keepalived_haproxy_setup.md) — аналогичный паттерн для kube-apiserver

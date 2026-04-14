@@ -133,6 +133,7 @@ remote_user = ansible_user
 ```
 
 **Порядок выполнения:**
+
 1. `ansible_user` подключается по SSH
 2. Выполняется `sudo apt update` через беспарольный `sudo`
 

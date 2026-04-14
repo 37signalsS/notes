@@ -34,13 +34,16 @@
 ### Уровень 1: Сервер и ОС
 
 **Доступность сервера:**
+
 ```bash
 ping <server_ip>
 ssh user@<server_ip>
 ```
+
 Подробно: [SSH Overview](../../Security/ssh/ssh_overview.md)
 
 **Системные ресурсы:**
+
 ```bash
 # CPU/RAM
 htop    # подробнее: [htop](../Processes/htop.md)
@@ -53,17 +56,20 @@ df -i
 # Системные ошибки (ядро, OOM Killer)
 dmesg -T    # подробнее: [dmesg](../Kernel/dmesg/index.md)
 ```
+
 Подробнее о диагностике дискового пространства: [Filesystem Diagnostics](../Filesystem/filesystem_and_disk_space_diagnostics.md)
 
 ### Уровень 2: Процесс и порты
 
 **Статус процесса:**
+
 ```bash
 systemctl status <service_name>    # подробнее: [systemd Service Management](../../Core/systemd/service_management.md)
 ps aux | grep <process_name>       # подробнее: [ps](../Processes/ps.md)
 ```
 
 **Сетевые порты:**
+
 ```bash
 ss -tlpn | grep :<port>     # современная утилита: [ss](../Networking/ss.md)
 netstat -tlpn | grep :<port> # устаревшая утилита
@@ -72,6 +78,7 @@ netstat -tlpn | grep :<port> # устаревшая утилита
 ### Уровень 3: Приложение и логи
 
 **Логи приложения:**
+
 ```bash
 # systemd-сервисы
 journalctl -u <service_name> -f    # подробнее: [journalctl](../journalctl.md)
@@ -81,20 +88,24 @@ tail -f /var/log/<service_name>/error.log
 ```
 
 **Локальный доступ:**
+
 ```bash
 curl -v localhost:<port>
 ```
 
 **Локальный файрвол:**
+
 ```bash
 iptables -L -n
 nft list ruleset
 ```
+
 Подробнее: [Настройка файрвола в Linux](../../Networking/Settings/Persistent_Network/systemd_networkd.md)
 
 ### Уровень 4: Зависимости
 
 **Проверка доступности БД, кэшей, микросервисов:**
+
 ```bash
 telnet <db_host> <db_port>
 ```
@@ -104,6 +115,7 @@ telnet <db_host> <db_port>
 ### Уровень 5: Конфигурация и код
 
 **Проверка изменений:**
+
 ```bash
 git log    # история коммитов
 ```

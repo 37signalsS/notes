@@ -51,9 +51,11 @@ grep "Max open files" /proc/<PID>/limits
 ```
 
 Пример вывода:
+
 ```
 Max open files            8192                 65535                files
 ```
+
 Здесь `8192` — soft limit, `65535` — hard limit.
 
 ### Шаг 3: Проверка лимитов на разных уровнях
@@ -75,16 +77,19 @@ systemctl show <service_name> -p LimitNOFILE
 ### Шаг 4: Увеличение лимита
 
 **systemd-сервис:**
+
 ```ini
 [Service]
 LimitNOFILE=65535
 ```
+
 ```bash
 sudo systemctl daemon-reexec
 sudo systemctl restart <service_name>
 ```
 
 **Системный уровень:**
+
 ```bash
 # Временно
 sudo sysctl -w fs.file-max=2097152
@@ -94,6 +99,7 @@ fs.file-max = 2097152
 ```
 
 **Пользовательский уровень (`/etc/security/limits.conf`):**
+
 ```
 *    soft    nofile    65535
 *    hard    nofile    65535

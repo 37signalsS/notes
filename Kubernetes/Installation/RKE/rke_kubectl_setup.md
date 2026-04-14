@@ -147,8 +147,8 @@ echo "kubectl completion fish | source" >> ~/.config/fish/config.fish
 
 **Безопасность kubeconfig:**
 
-* Установить права: `chmod 600 ~/.kube/config`
-* Не передавать файл через незащищенные каналы
-* Использовать ServiceAccount с минимальными правами для CI/CD
+- Установить права: `chmod 600 ~/.kube/config`
+- Не передавать файл через незащищенные каналы
+- Использовать ServiceAccount с минимальными правами для CI/CD
 
 **См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).

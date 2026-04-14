@@ -191,6 +191,14 @@ spec:
 
 ## Дополнительная информация
 
-Базовые концепции: [PersistentVolume и PVC](./pv_and_pvc.md). Альтернатива для RWO: [Local Path Provisioner](./local-path-provisioner.md). Альтернатива для RWX с репликацией: [Ceph CephFS](./Ceph/ceph_csi_cephfs_driver_setup.md).
+### Устаревший Helm-чарт `stable/nfs-server-provisioner`
 
-Официальный репозиторий: [kubernetes-sigs/nfs-subdir-external-provisioner](https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner). Документация Kubernetes по NFS: [Volumes — NFS](https://kubernetes.io/docs/concepts/storage/volumes/#nfs).
+См. отдельный файл: [NFS Server Provisioner (устаревший Helm-чарт)](./nfs-server-provisioner-helm.md).
+
+Краткое описание: чарт разворачивает монолитное приложение (StatefulSet) со встроенным NFS-сервером и provisioner. Использует `hostPath` volume на ноде, что создаёт привязку к конкретной ноде. Не поддерживается, только для тестовых сред.
+
+### См. также
+
+- Базовые концепции хранения: [PersistentVolume и PVC](./pv_and_pvc.md)
+- Альтернатива для RWO: [Local Path Provisioner](./local-path-provisioner.md)
+- Альтернатива для RWX с репликацией: [Ceph CephFS](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)

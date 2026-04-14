@@ -57,12 +57,14 @@ kubeadm token create --print-join-command
 ```
 
 **Вывод:**
+
 ```bash
 kubeadm join k8s-node1:6443 --token xmyjho.oi5i30jgskg5esi3 \
   --discovery-token-ca-cert-hash sha256:d3e0fa38c572bbed10f3e67fa709769b1cd9bed80f0d2c80a87d7db45b8ea75a
 ```
 
 > **Важно:** Добавляем флаг `--cri-socket`, так как используем containerd:
+>
 > ```bash
 > --cri-socket=unix:///run/containerd/containerd.sock
 > ```
@@ -90,6 +92,7 @@ kubectl get nodes -w
 ```
 
 **Через некоторое время** (когда Calico развернётся на worker-нодах):
+
 ```
 NAME       STATUS   ROLES           AGE   VERSION
 k8s-node1  Ready    control-plane   42m   v1.35.x
@@ -104,11 +107,13 @@ k8s-node3  Ready    <none>          6m    v1.35.x
 ### Шаг 10: Проверка состояния кластера
 
 **Детальная информация о нодах:**
+
 ```bash
 kubectl get nodes -o wide
 ```
 
 **Ожидаемый вывод:**
+
 ```
 NAME       STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP
 k8s-node1  Ready    control-plane   42m   v1.35.x   192.168.1.1    <none>
@@ -117,17 +122,20 @@ k8s-node3  Ready    <none>          6m    v1.35.x   192.168.1.3    <none>
 ```
 
 **Проверка системных подов:**
+
 ```bash
 kubectl get pods -n kube-system -o wide
 ```
 
 **Должны увидеть:**
+
 - На каждой ноде — `calico-node-xxx` (по одному на ноду)
 - На master — поды control-plane (apiserver, etcd, scheduler, controller-manager)
 - `CoreDNS` (2 реплики) — распределены по нодам
 - `kube-proxy` на каждой ноде
 
 **Проверка Calico на worker-нодах:**
+
 ```bash
 # Проверяем поды Calico на всех нодах
 kubectl get pods -n kube-system -l k8s-app=calico-node -o wide
@@ -167,4 +175,4 @@ sudo kubeadm init phase upload-certs --upload-certs
 
 ### Интеграция с процессом развёртывания
 
-Присоединение узлов — **шаг 7–8** после [инициализации Control Plane](./control_plane_initialization.md) и [установки CNI](./cni_installation.md). Проверка состояния кластера описана в [руководстве по верификации](./k8s_ha_cluster_verification.md), настройка балансировщика — в [документации по HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md).
+Присоединение узлов — **шаг 7–8** после [инициализации Control Plane](./control_plane_initialization.md) и [установки CNI](./cni_installation.md). Проверка состояния кластера описана в [руководстве по верификации](./k8s_ha_cluster_verification.md), настройка балансировщика — в [документации по HA с kubeadm](../kubeadm/ha_concepts.md).

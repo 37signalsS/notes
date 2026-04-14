@@ -32,11 +32,13 @@
 **Причина:** Jinja2-выражения (`{{ ... }}`) в YAML-файлах **обязательно** заключать в кавычки. Без них YAML-парсер не может обработать строку.
 
 **Неправильно:**
+
 ```yaml
 my_variable: {{ some_other_variable }}
 ```
 
 **Решение:**
+
 ```yaml
 my_variable: "{{ some_other_variable }}"
 ```
@@ -60,6 +62,7 @@ my_variable: "{{ some_other_variable }}"
 **Причина:** `host_key_checking = false` в `ansible.cfg` не влияет на дочерний SSH-процесс для `ProxyCommand`. Он использует системные настройки и проверяет `~/.ssh/known_hosts`.
 
 **Решение:**
+
 ```ini
 [ssh_connection]
 ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
@@ -74,6 +77,7 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=
 **Причина:** Операция (`union`, `join`) получила `None` вместо списка. Происходит при комментировании всех элементов списка:
 
 **Неправильно (создает `None`):**
+
 ```yaml
 my_list:
 # - item1
@@ -81,6 +85,7 @@ my_list:
 ```
 
 **Решение:** Явно указать пустой список:
+
 ```yaml
 my_list: []
 ```
@@ -96,11 +101,13 @@ my_list: []
 **Решения:**
 
 1. **Быстрый фикс (в переменных):**
+
    ```yaml
    sshd_permit_root_login: "yes"
    ```
 
 2. **Надежный фикс (в шаблоне):**
+
    ```jinja
    PermitRootLogin {% if sshd_permit_root_login %}yes{% else %}no{% endif %}
    ```
@@ -139,18 +146,21 @@ my_list: []
 **Решение:**
 
 1. Указать пользователя в инвентаре:
+
    ```ini
    [production]
    server1 ansible_host=IP ansible_user=ansible_user
    ```
 
 2. Или в `ansible.cfg`:
+
    ```ini
    [defaults]
    remote_user = ansible_user
    ```
 
 3. Добавить `become: true` для задач, требующих привилегий:
+
    ```yaml
    - name: Update apt cache
      ansible.builtin.apt:

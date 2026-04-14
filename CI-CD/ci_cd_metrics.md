@@ -12,8 +12,8 @@
 
 Метрики CI/CD делятся на две категории:
 
-1.  **Скорость (Throughput):** Как быстро изменения доходят до пользователя — [Lead Time](./Core_Concepts/dora_metrics.md#1-lead-time-for-changes-время-выполнения-изменений), [Deployment Frequency](./Core_Concepts/dora_metrics.md#2-deployment-frequency-частота-развертывания).
-2.  **Стабильность (Stability):** Насколько надежен процесс доставки — [Change Failure Rate](./Core_Concepts/dora_metrics.md#3-change-failure-rate-cfr-процент-сбоев), [MTTR](./Core_Concepts/dora_metrics.md#4-mean-time-to-recovery-mttr-среднее-время-восстановления).
+1. **Скорость (Throughput):** Как быстро изменения доходят до пользователя — [Lead Time](./Core_Concepts/dora_metrics.md#1-lead-time-for-changes-время-выполнения-изменений), [Deployment Frequency](./Core_Concepts/dora_metrics.md#2-deployment-frequency-частота-развертывания).
+2. **Стабильность (Stability):** Насколько надежен процесс доставки — [Change Failure Rate](./Core_Concepts/dora_metrics.md#3-change-failure-rate-cfr-процент-сбоев), [MTTR](./Core_Concepts/dora_metrics.md#4-mean-time-to-recovery-mttr-среднее-время-восстановления).
 
 ## Практический сценарий: Оценка зрелости CI/CD
 

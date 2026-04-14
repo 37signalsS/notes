@@ -31,6 +31,7 @@
 ### Типовое содержимое
 
 **GitHub (`.github/`):**
+
 - `workflows/` — GitHub Actions workflow-файлы
 - `ISSUE_TEMPLATE/` — шаблоны для новых issue
 - `PULL_REQUEST_TEMPLATE.md` — шаблон Pull Request
@@ -41,12 +42,14 @@
 - `dependabot.yml` — конфигурация Dependabot
 
 **GitLab (`.gitlab/`):**
+
 - `ci.yml` — основной CI-конфиг (альтернатива `.gitlab-ci.yml` в корне)
 - `issue_templates/` — шаблоны issue
 - `merge_request_templates/` — шаблоны MR
 - `labelling.toml` — конфигурация лейблов
 
 **Gitea/Forgejo (`.gitea/`, `.forgejo/`):**
+
 - `workflows/` — workflow-файлы (совместимы с GitHub Actions)
 - `issue_templates/` — шаблоны issue
 - `pull_request_template.md` — шаблон PR

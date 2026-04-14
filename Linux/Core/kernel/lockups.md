@@ -68,6 +68,7 @@ sudo sysctl -w kernel.softlockup_panic=1
 ### Инструменты диагностики
 
 - **`perf`:** Профилирование CPU, выявление «горячих» функций:
+
   ```bash
   perf record -a -g -- sleep 10
   perf report

@@ -51,6 +51,7 @@ cluster_addr = "https://<private_ip_vault_node>:8201"
 ```
 
 Параметры:
+
 - `address` — адрес агента Consul или балансировщика (например, [Nginx reverse proxy](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md)).
 - `path` — префикс в K/V-хранилище Consul для данных Vault.
 - `scheme` — протокол подключения (`http` или `https`).

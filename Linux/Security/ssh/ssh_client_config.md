@@ -111,7 +111,7 @@ mkdir -p ~/.ssh/sockets
 chmod 700 ~/.ssh/sockets
 ```
 
-2. Добавить в `~/.ssh/config` (блок `Host *`):
+1. Добавить в `~/.ssh/config` (блок `Host *`):
 
 ```ini
 Host *

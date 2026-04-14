@@ -9,6 +9,7 @@
 ### Когда использовать `docker events`
 
 Стандартные инструменты (`docker logs`, `docker exec`) бесполезны, если:
+
 - Контейнер перезапускается слишком быстро
 - Приложение не пишет в stdout/stderr
 - Проблема вызвана внешними факторами (OOM kill, healthcheck, оркестрация)
@@ -73,6 +74,7 @@ docker events --filter type=container --filter event=oom-kill --since 1h
 ```
 
 **Действия:**
+
 1. Проверить лимиты: `docker inspect <container> --format '{{.HostConfig.Memory}}'`
 2. Увеличить лимит памяти или оптимизировать приложение
 3. Проверить `dmesg | grep -i "killed process"`

@@ -7,6 +7,7 @@
 **Inventory** — файл `inventory.ini`, определяющий хосты и их роли в кластере (control plane, worker, etcd).
 
 **Group vars** — переменные для групп хостов в директории `group_vars/`. Основные файлы:
+
 - `all/all.yml` — общие настройки кластера
 - `k8s-cluster/k8s-cluster.yml` — параметры компонентов Kubernetes
 - `etcd.yml` — настройки etcd
@@ -22,6 +23,7 @@
 **kubeconfig** — файл конфигурации для доступа к API кластера (обычно `admin.conf`).
 
 **Плейбуки Kubespray** — Ansible playbooks для управления кластером:
+
 - `cluster.yml` — развертывание кластера
 - `scale.yml` — добавление узлов
 - `upgrade-cluster.yml` — обновление Kubernetes
@@ -39,4 +41,3 @@
 - **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
 - **[Дополнительная информация](./additional_info.md)** — действия после установки, проверка кластера
 - **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
-

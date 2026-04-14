@@ -59,6 +59,7 @@ git config --global commit.template ~/.gitmessage
 **Формат:** `<type>(<scope>): <subject>`
 
 **Примеры:**
+
 - `feat(auth): добавить OAuth2 аутентификацию`
 - `fix(api): исправить утечку памяти в обработчике`
 - `docs(readme): обновить инструкции по установке`
@@ -86,13 +87,13 @@ cat > .gitmessage << 'EOF'
 EOF
 ```
 
-2. Настройте локальный шаблон:
+1. Настройте локальный шаблон:
 
 ```bash
 git config commit.template .gitmessage
 ```
 
-3. Закоммитьте шаблон:
+1. Закоммитьте шаблон:
 
 ```bash
 git add .gitmessage

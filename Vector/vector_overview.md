@@ -111,6 +111,7 @@ Vector на каждом хосте — DaemonSet (Kubernetes) или systemd-с
 Практические сценарии вынесены в отдельный файл: **[Practical Scenarios](./practical_scenarios.md)**.
 
 Краткий перечень:
+
 - Роутер логов из Kafka в OpenSearch ([подробнее](./practical_scenarios.md#практический-сценарий-роутер-логов-из-kafka-в-opensearch))
 - Сбор метрик с Prometheus endpoints ([подробнее](./practical_scenarios.md#практический-сценарий-сбор-метрик-с-prometheus-endpoints))
 - Обогащение логов GeoIP ([подробнее](./practical_scenarios.md#практический-сценарий-обогащение-логов-geoip))

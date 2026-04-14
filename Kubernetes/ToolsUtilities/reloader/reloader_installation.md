@@ -20,6 +20,7 @@
 ### RBAC-требования
 
 Reloader требует доступ к:
+
 - **secrets, configmaps** — `list`, `get`, `watch`
 - **deployments, daemonsets, statefulsets** — `list`, `get`, `watch`, `update`, `patch`
 - **cronjobs** — `list`, `get`, `watch`
@@ -274,6 +275,7 @@ kubectl logs -f deployment/reloader -n monitoring
 ### Безопасность
 
 Манифест установки включает securityContext:
+
 - `runAsNonRoot: true`
 - `runAsUser: 65534` (nobody)
 - `allowPrivilegeEscalation: false`

@@ -90,7 +90,7 @@ sudo update-grub
 lsinitrd /boot/initramfs-$(uname -r).img | less
 ```
 
-2. Создание конфигурации добавления модулей:
+1. Создание конфигурации добавления модулей:
 
 ```bash
 # Создать файл в /etc/dracut.conf.d/
@@ -98,7 +98,7 @@ lsinitrd /boot/initramfs-$(uname -r).img | less
 add_drivers+=" mpt3sas vmw_balloon vmw_vmci vmd "
 ```
 
-3. Пересоздание initramfs:
+1. Пересоздание initramfs:
 
 ```bash
 # RHEL/CentOS
@@ -113,6 +113,7 @@ sudo update-initramfs -u
 Если корневая ФС находится на LVM, модуль `lvm2` должен быть включён в initramfs для активации VG при загрузке.
 
 **Debian/Ubuntu:**
+
 ```bash
 echo "lvm2" >> /etc/initramfs-tools/modules
 update-initramfs -u
@@ -120,6 +121,7 @@ update-grub
 ```
 
 **RHEL/CentOS/Fedora:**
+
 ```bash
 echo 'add_dracutmodules+=" lvm "' >> /etc/dracut.conf.d/lvm.conf
 dracut --force
@@ -127,6 +129,7 @@ grub2-mkconfig -o /boot/grub2/grub.cfg
 ```
 
 **Проверка:**
+
 ```bash
 # Убедиться, что lvm2 попал в initramfs
 lsinitrd /boot/initramfs-$(uname -r).img | grep lvm

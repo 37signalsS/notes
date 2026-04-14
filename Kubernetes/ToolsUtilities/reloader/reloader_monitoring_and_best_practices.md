@@ -87,14 +87,19 @@ kubectl get pods -n <namespace> -l app=<имя-приложения>
 Если ConfigMap/Secret изменён, а Reloader не реагирует:
 
 1. **Проверить аннотации** на workload'е:
+
    ```bash
    kubectl get deployment <имя> -n <namespace> -o yaml | grep -A2 reloader
    ```
+
 2. **Проверить логи Reloader** — нет ли ошибок:
+
    ```bash
    kubectl logs deployment/reloader -n monitoring | grep -i error
    ```
+
 3. **Проверить RBAC** — есть ли доступ к secrets/configmaps:
+
    ```bash
    kubectl auth can-i get configmaps --as=system:serviceaccount:monitoring:reloader
    ```

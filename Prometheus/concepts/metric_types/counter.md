@@ -31,6 +31,7 @@
 | `irate(v[range])` | Мгновенная скорость (2 последние точки) | Локальная производная |
 
 **Ключевые особенности:**
+
 - `rate()` и `increase()` **автоматически учитывают сбросы** — при рестарте приложения и обнулении счётчика функция корректно вычислит производную
 - `increase()` — это `rate() × интервал`, поэтому результат может быть дробным даже для целочисленных счётчиков (экстраполяция)
 - `irate()` чувствителен к шуму — рекомендуется для резко прыгающих счётчиков, но в большинстве случаев предпочтительнее `rate()`
@@ -84,30 +85,32 @@ increase(log_errors_total[1h])
 
 ## Дополнительная информация
 
-* **Экспорт в формате Prometheus:**
+- **Экспорт в формате Prometheus:**
+
   ```
   # HELP http_requests_total Total number of HTTP requests.
   # TYPE http_requests_total counter
   http_requests_total{method="GET",status="200"} 1523
   ```
+
   Директива `# TYPE` объявляется до первого использования метрики.
 
-* **Инструментация:** Используйте клиентские библиотеки ([Go](../../Exporters/extensibility/client_libraries.md), [Python](../../Exporters/extensibility/client_libraries.md), [Java](../../Exporters/extensibility/client_libraries.md)).
+- **Инструментация:** Используйте клиентские библиотеки ([Go](../../Exporters/extensibility/client_libraries.md), [Python](../../Exporters/extensibility/client_libraries.md), [Java](../../Exporters/extensibility/client_libraries.md)).
 
-* **Частые ошибки:**
+- **Частые ошибки:**
   - ❌ Ручной сброс счётчика после каждого scrape — нарушит работу `rate()`/`increase()`
   - ❌ Сравнение сырых значений — бессмысленно без `rate()`/`increase()`
   - ❌ Использование `deriv()` — функция для Gauge, не учитывает сбросы
 
-* **Сравнение с Gauge:** Counter только растёт, Gauge — произвольно меняется. Для CPU-утилизации используйте Counter (`node_cpu_seconds_total`) с `rate()`, а не Gauge.
+- **Сравнение с Gauge:** Counter только растёт, Gauge — произвольно меняется. Для CPU-утилизации используйте Counter (`node_cpu_seconds_total`) с `rate()`, а не Gauge.
 
-* **Агрегация:** Counter — единственный тип метрик, который можно безопасно суммировать по всем инстансам: `sum(rate(http_requests_total[5m]))` даст корректную общую скорость.
+- **Агрегация:** Counter — единственный тип метрик, который можно безопасно суммировать по всем инстансам: `sum(rate(http_requests_total[5m]))` даст корректную общую скорость.
 
 ---
 
 **Связанные темы:**
 
-* [Gauge](./gauge.md) — метрики с произвольными изменениями
-* [Histogram](./histogram.md) — гистограммы для распределений
-* [PromQL функции](../promql/functions.md) — rate(), increase(), resets()
-* [Примеры алертов](./alerts.md) — алерты на основе Counter
+- [Gauge](./gauge.md) — метрики с произвольными изменениями
+- [Histogram](./histogram.md) — гистограммы для распределений
+- [PromQL функции](../promql/functions.md) — rate(), increase(), resets()
+- [Примеры алертов](./alerts.md) — алерты на основе Counter

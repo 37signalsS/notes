@@ -66,6 +66,7 @@ binlog_expire_logs_seconds = 604800  # 7 дней
 ```
 
 Перезапустите сервис MySQL:
+
 ```bash
 sudo systemctl restart mysql
 ```
@@ -97,6 +98,7 @@ mysqldump -u root -p --all-databases --single-transaction --master-data=2 > mast
 ```
 
 **Описание флагов:**
+
 - `--single-transaction` — создает консистентный дамп для InnoDB без блокировки
 - `--master-data=2` — добавляет закомментированную `CHANGE MASTER TO` в дамп
 - `--master-data=1` — то же, но команда не закомментирована (используйте осторожно)
@@ -112,6 +114,7 @@ mysqldump -u root -p --all-databases --single-transaction --master-data=2 > mast
 Запишите эти значения — они потребуются на шаге 4.
 
 **Альтернатива:** Текущую позицию можно получить командой:
+
 ```sql
 SHOW MASTER STATUS;
 -- Запомните: File (mysql-bin.000001), Position (154)
@@ -135,6 +138,7 @@ log_bin = /var/log/mysql/mysql-bin.log
 ```
 
 Перезапустите сервис MySQL:
+
 ```bash
 sudo systemctl restart mysql
 ```
@@ -171,6 +175,7 @@ SHOW SLAVE STATUS\G
 ```
 
 **Ожидаемый результат:**
+
 - `Slave_IO_Running: Yes` — I/O-поток получает данные от Master
 - `Slave_SQL_Running: Yes` — SQL-поток применяет данные
 - `Seconds_Behind_Master: 0` — отставание отсутствует
@@ -199,6 +204,7 @@ log_slave_updates = ON
 #### Шаг 2: Создание пользователя репликации
 
 На Master:
+
 ```sql
 CREATE USER 'slave_user'@'%' IDENTIFIED BY '${REPLICATION_PASSWORD}';
 GRANT REPLICATION SLAVE ON *.* TO 'slave_user'@'%';
@@ -218,6 +224,7 @@ mysql -u root -p < master_dump.sql
 #### Шаг 4: Запуск репликации с GTID
 
 На Slave:
+
 ```sql
 CHANGE MASTER TO
   MASTER_HOST='192.168.1.1',
@@ -248,9 +255,11 @@ SHOW SLAVE STATUS\G
 **Проблема:** `Slave_IO_Running: No`, ошибка подключения
 
 **Решение:**
+
 ```sql
 SHOW SLAVE STATUS\G | grep Last_IO_Error
 ```
+
 - Проверьте сетевую доступность Master (`telnet master_host 3306`)
 - Убедитесь в правильности `MASTER_USER` и `MASTER_PASSWORD`
 - Проверьте привилегии пользователя на Master
@@ -258,6 +267,7 @@ SHOW SLAVE STATUS\G | grep Last_IO_Error
 **Проблема:** `Slave_SQL_Running: No`, ошибка дубликата ключа
 
 **Решение:**
+
 ```sql
 SHOW SLAVE STATUS\G | grep Last_SQL_Error
 
@@ -270,8 +280,10 @@ START SLAVE;
 **Проблема:** `Seconds_Behind_Master` постоянно растет
 
 **Решение:**
+
 - Проверьте нагрузку на Slave (возможно, не хватает ресурсов)
 - Включите параллельную репликацию (MySQL 5.7+):
+
   ```ini
   [mysqld]
   slave_parallel_workers = 4
@@ -281,6 +293,7 @@ START SLAVE;
 **Проблема:** Репликация не запускается после восстановления из дампа
 
 **Решение:**
+
 - Убедитесь, что `server-id` уникален на каждом сервере
 - Проверьте, что пользователь репликации существует на Master
 - Убедитесь, что binlog Master содержит указанную позицию

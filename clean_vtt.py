@@ -86,18 +86,32 @@ def clean_vtt(input_file: str, output_file: str = None) -> None:
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Использование: python clean_vtt.py <input_file> [output_file]")
-        print("Пример: python clean_vtt.py 'Разбор резюме на позицию DevОps. Часть 1 [K5xl_UFNr7s].ru.vtt'")
-        print("       python clean_vtt.py *.ru.vtt")
-        sys.exit(1)
-    
-    input_files = sys.argv[1:]
-    output_file = None
-    
-    # Если последний аргумент похож на output файл (не .vtt), используем его как output
-    if len(input_files) > 1 and not input_files[-1].endswith('.vtt'):
-        output_file = input_files.pop()
-    
-    for input_file in input_files:
-        clean_vtt(input_file, output_file)
+    # Если переданы аргументы — обрабатываем их (обратная совместимость)
+    if len(sys.argv) > 1:
+        input_files = sys.argv[1:]
+        output_file = None
+
+        # Если последний аргумент похож на output файл (не .vtt), используем его как output
+        if len(input_files) > 1 and not input_files[-1].endswith('.vtt'):
+            output_file = input_files.pop()
+
+        for input_file in input_files:
+            clean_vtt(input_file, output_file)
+    else:
+        # Автоматический поиск всех .vtt файлов в текущей директории
+        search_dir = Path('.')
+        vtt_files = sorted(search_dir.glob('*.vtt'))
+
+        if not vtt_files:
+            print('VTT-файлы не найдены в текущей директории')
+            sys.exit(0)
+
+        print(f'Найдено VTT-файлов: {len(vtt_files)}')
+        print('-' * 60)
+
+        for vtt_file in vtt_files:
+            print(f'\nОбработка: {vtt_file.name}')
+            clean_vtt(str(vtt_file))
+            print('-' * 60)
+
+        print(f'\nОбработано файлов: {len(vtt_files)}')

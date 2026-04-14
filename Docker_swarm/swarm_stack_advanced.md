@@ -36,6 +36,7 @@ services:
 | `order` | Порядок обновления | `start-first`, `stop-first` |
 
 **CLI-обновление:**
+
 ```sh
 docker service update --image nginx:1.27 web
 ```
@@ -68,12 +69,14 @@ services:
 ```
 
 **Принцип работы:**
+
 1. Развернуть обе версии одновременно
 2. Traefik распределяет трафик пропорционально репликам
 3. При успехе — увеличить количество canary-реплик
 4. При ошибке — удалить canary-сервис
 
 **Масштабирование canary:**
+
 ```sh
 docker service scale web-canary=3 web-stable=7
 ```
@@ -124,11 +127,13 @@ docker stack rm myapp-blue
 ```
 
 **Преимущества:**
+
 - Мгновенное переключение
 - Быстрый откат (развернуть blue заново)
 - Тестирование перед переключением
 
 **Недостатки:**
+
 - Требует двойных ресурсов
 - Ручное переключение трафика
 
@@ -137,6 +142,7 @@ docker stack rm myapp-blue
 ### Стек не развертывается
 
 **Проверка:**
+
 ```sh
 # Проверить синтаксис YAML
 docker compose config
@@ -160,6 +166,7 @@ docker stack ps myapp --no-trunc
 ### Сервис не запускается
 
 **Проверка:**
+
 ```sh
 # Детали задачи
 docker service ps <service> --no-trunc
@@ -183,6 +190,7 @@ docker node inspect <node>
 ### Проблемы с сетью
 
 **Проверка:**
+
 ```sh
 # Список сетей
 docker network ls

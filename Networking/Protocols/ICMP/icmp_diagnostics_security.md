@@ -11,11 +11,13 @@
 ### Блокировка ICMP файрволом
 
 При блокировке ICMP на файрволе наблюдаются:
+
 - `ping` не работает, но TCP-соединения устанавливаются
 - `traceroute` показывает `* * *` на некоторых хопах
 - PMTUD не работает (black hole), если заблокирован Type 3 Code 4
 
 **Проверка:**
+
 ```bash
 tcpdump -i eth0 icmp
 tcpdump -i eth0 'icmp[0] = 8 or icmp[0] = 0'
@@ -44,6 +46,7 @@ tcpdump -i eth0 'icmp[0] = 8 or icmp[0] = 0'
 ### ICMP в IPv6 (ICMPv6)
 
 В IPv6 ICMP стал **обязательным** и получил дополнительные функции:
+
 - **NDP (Neighbor Discovery Protocol)** — замена ARP
 - **SLAAC (Stateless Address Autoconfiguration)** — автоконфигурация адресов
 - **MLD (Multicast Listener Discovery)** — управление multicast-группами

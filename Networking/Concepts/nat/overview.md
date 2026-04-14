@@ -15,11 +15,13 @@ NAT работает на [сетевом уровне (L3)](../OSI_TCP_IP_Model
 **Белый IP-адрес** — публичный IP-адрес, который маршрутизируется в интернете и уникален в глобальном масштабе.
 
 **Как проверить свой IP:**
-1. Открыть https://2ip.ru/ или https://whatismyip.com/
+
+1. Открыть <https://2ip.ru/> или <https://whatismyip.com/>
 2. Если отображаемый IP совпадает с локальным (например, `192.168.x.x`) — у вас белый IP
 3. Если отличается — вы за NAT (серый IP)
 
 **Пример:**
+
 ```bash
 # В Windows (cmd):
 ipconfig
@@ -45,24 +47,24 @@ ipconfig
 ### Типы NAT по поведению при трансляции
 
 1. **Full-cone NAT (Статический NAT 1:1)**
-   - Одна пара `внутренний IP:порт` ↔ одна пара `внешний IP:порт`
-   - Любой внешний хост может отправить пакет, зная внешний IP:порт
+   * Одна пара `внутренний IP:порт` ↔ одна пара `внешний IP:порт`
+   * Любой внешний хост может отправить пакет, зная внешний IP:порт
 
 2. **Address-restricted-cone NAT**
-   - Как Full-cone, но с фильтрацией по IP
-   - Пакет пройдёт, только если внутренний хост ранее отправлял пакет на этот внешний IP
+   * Как Full-cone, но с фильтрацией по IP
+   * Пакет пройдёт, только если внутренний хост ранее отправлял пакет на этот внешний IP
 
 3. **Port-restricted-cone NAT**
-   - Добавляет фильтрацию по порту
-   - Внешний хост должен отвечать с того же порта, на который пришёл пакет
+   * Добавляет фильтрацию по порту
+   * Внешний хост должен отвечать с того же порта, на который пришёл пакет
 
 4. **Symmetric NAT (PAT / Port Address Translation)**
-   - Для каждого нового адреса назначения — уникальная трансляция
-   - Затрудняет работу P2P-приложений
+   * Для каждого нового адреса назначения — уникальная трансляция
+   * Затрудняет работу P2P-приложений
 
 5. **One-to-Many (NAPT / IP Masquerading)**
-   - Множество внутренних адресов → один внешний белый IP
-   - Разделение потоков за счёт динамической подмены портов
+   * Множество внутренних адресов → один внешний белый IP
+   * Разделение потоков за счёт динамической подмены портов
 
 **NAT traversal** — техники (STUN, TURN, ICE) для установки прямого соединения между хостами за NAT.
 
@@ -77,6 +79,7 @@ ipconfig
 | **Когда использовать** | Серверы со статическим IP | Домашние роутеры, динамические IP |
 
 **SNAT:**
+
 ```bash
 # Конкретный хост → публичный IP
 iptables -t nat -A POSTROUTING -s 192.168.1.100 -o eth0 -j SNAT --to-source 203.0.113.50
@@ -86,6 +89,7 @@ iptables -t nat -A POSTROUTING -s 192.168.1.0/24 -o eth0 -j SNAT --to-source 203
 ```
 
 **Masquerade:**
+
 ```bash
 # Автоматически использует IP внешнего интерфейса
 iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
@@ -95,7 +99,7 @@ iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 
 ## Связанные документы
 
-- **[Практические сценарии NAT](./practical_scenarios.md)** — PAT, firewalld, DNAT, проброс SSH, двойной NAT
-- **[Специальные IP-адреса](../Protocols/IP_addressing/special_addresses.md)** — RFC 1918, Carrier-Grade NAT (RFC 6598)
-- **[Docker Network — iptables](../../Docker/Docker_network/docker_network.md)** — NAT в Docker
-- **[Firewalld — NAT команды](../../Linux/Networking/Settings/tools/firewalld.md)** — справочник команд firewalld
+* **[Практические сценарии NAT](./practical_scenarios.md)** — PAT, firewalld, DNAT, проброс SSH, двойной NAT
+* **[Специальные IP-адреса](../Protocols/IP_addressing/special_addresses.md)** — RFC 1918, Carrier-Grade NAT (RFC 6598)
+* **[Docker Network — iptables](../../Docker/Docker_network/docker_network.md)** — NAT в Docker
+* **[Firewalld — NAT команды](../../Linux/Networking/Settings/tools/firewalld.md)** — справочник команд firewalld

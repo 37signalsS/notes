@@ -117,6 +117,7 @@ curl -v http://example.com/
 ```
 
 Вывод покажет:
+
 - Стартовую строку запроса: `> GET / HTTP/1.1`
 - Заголовки: `> Host: example.com`, `> User-Agent: curl/...`
 - Строку состояния ответа: `< HTTP/1.1 200 OK`

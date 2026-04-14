@@ -117,24 +117,26 @@ server {
 #### Проверка работы
 
 1. **Включите debug-логирование** в Nginx:
+
    ```nginx
    error_log /var/log/nginx/error.log debug;
    ```
+
 2. **Ищите в логах:** Записи `SSL_sendfile` и сообщения о kTLS
 3. **Проверка модуля:** `lsmod | grep tls` должен показать загруженный модуль ядра
 
 #### Рекомендации
 
 * **Используйте kTLS для:**
-  - Файловых хранилищ
-  - Репозиториев
-  - Сервисов отдачи больших файлов (бэкапы, медиа)
-  - Протокол: **HTTP/1.1**
+  * Файловых хранилищ
+  * Репозиториев
+  * Сервисов отдачи больших файлов (бэкапы, медиа)
+  * Протокол: **HTTP/1.1**
 
 * **Не используйте kTLS для:**
-  - Обычных веб-сайтов с мелкими файлами
-  - HTTP/2 (деградация производительности)
-  - Динамического контента
+  * Обычных веб-сайтов с мелкими файлами
+  * HTTP/2 (деградация производительности)
+  * Динамического контента
 
 > **Дополнительно:** [Настройка TLS в Angie](../../Angie/angie_tls_setup.md)
 
@@ -200,8 +202,8 @@ server {
 
 Настройки ядра Linux критически важны для высоконагруженных серверов. Для глубокого понимания и детального тюнинга `sysctl` и параметров TCP обратитесь к следующим заметкам:
 
-- **Главная заметка о `sysctl`**: [Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)
-- **Детальный тюнинг TCP**: [TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)
+* **Главная заметка о `sysctl`**: [Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)
+* **Детальный тюнинг TCP**: [TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)
 
 ### Оптимизация TCP/IP сокетов
 
@@ -253,6 +255,6 @@ open_file_cache_errors on;
 
 ### Связанные темы
 
-- **[TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — тюнинг TCP/IP стека
-- **[Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)** — параметры ядра Linux
-- **[Кэширование прокси](./Caching/proxy_caching.md)** — серверное кэширование в Nginx
+* **[TCP tuning overview](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — тюнинг TCP/IP стека
+* **[Sysctl tuning](../../../Linux/Core/kernel/sysctl.md)** — параметры ядра Linux
+* **[Кэширование прокси](./Caching/proxy_caching.md)** — серверное кэширование в Nginx

@@ -2,7 +2,7 @@
 
 ## 1. Определения
 
-**Kubespray** — проект с открытым исходным кодом для автоматизации установки и управления жизненным циклом кластеров Kubernetes с помощью [Ansible](../../../Ansible/ansible_introduction.md) и [kubeadm](../kubeadm/ha_keepalived_haproxy/index.md).
+**Kubespray** — проект с открытым исходным кодом для автоматизации установки и управления жизненным циклом кластеров Kubernetes с помощью [Ansible](../../../Ansible/ansible_introduction.md) и [kubeadm](../kubeadm/index.md).
 
 **Принцип работы:** Kubespray автоматизирует выполнение команд `kubeadm` на всех хостах (control plane и worker узлах) через Ansible-плейбуки. Это позволяет декларативно описывать желаемое состояние кластера и применять его к целевым серверам.
 
@@ -45,10 +45,10 @@
 | **HA-кластер (Keepalived + HAProxy)** | **[HA через Kubespray](./HA/index.md)** |
 | **Offline-кластер (Air-gapped)** | **[Offline установка](./offline_installation/offline_definitions.md)** |
 | Примеры конфигураций | **[Примеры](./examples.md)** |
-| Альтернатива: ручная установка | **[kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md)** |
+| Альтернатива: ручная установка | **[kubeadm: Быстрый старт](../kubeadm/index.md)** |
 
 ## 4. Дополнительная информация
 
-См. также: [Ansible: Введение](../../../Ansible/ansible_introduction.md), [kubeadm: Быстрый старт](../kubeadm/ha_keepalived_haproxy/index.md), [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md), [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md), [etcd: Обзор](../../Concepts/etcd_overview.md), [kind](../kind/kind_concepts.md), [Talos](../local_cluster_with_talosctl.md).
+См. также: [Ansible: Введение](../../../Ansible/ansible_introduction.md), [kubeadm: Быстрый старт](../kubeadm/index.md), [HA с kubeadm](../kubeadm/ha_concepts.md), [Control Plane: Архитектура](../../Concepts/control_plane_architecture.md), [etcd: Обзор](../../Concepts/etcd_overview.md), [kind](../kind/kind_concepts.md), [Talos](../local_cluster_with_talosctl.md).
 
 Внешние ресурсы: [официальный репозиторий](https://github.com/kubernetes-sigs/kubespray), [документация Kubespray](https://kubespray.io/).

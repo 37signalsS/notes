@@ -30,16 +30,19 @@ $ chmod 755 some_file
 Используются встроенные функции языков программирования для вызова `chmod(2)`.
 
 **Perl:**
+
 ```bash
 perl -e 'chmod 0755, "/bin/chmod"'
 ```
 
 **Python (однострочник):**
+
 ```bash
 python -c 'import os; os.chmod("/bin/chmod", 0o755)'
 ```
 
 **Python (heredoc):**
+
 ```bash
 python3 - <<'EOF'
 import os
@@ -72,6 +75,7 @@ busybox chmod 755 /bin/chmod
 ```
 
 **Проверка пути к компоновщику:**
+
 ```bash
 file /bin/chmod | grep interpreter
 ```
@@ -83,11 +87,13 @@ file /bin/chmod | grep interpreter
 Полная переустановка пакета `coreutils`, содержащего `chmod`.
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt-get install --reinstall coreutils
 ```
 
 **CentOS/RHEL/Fedora:**
+
 ```bash
 sudo yum reinstall coreutils
 # или
@@ -102,14 +108,19 @@ sudo dnf reinstall coreutils
 
 1. Загрузить систему с LiveCD/LiveUSB
 2. Примонтировать корневую ФС:
+
    ```bash
    mount /dev/sdXN /mnt
    ```
+
 3. Восстановить права:
+
    ```bash
    chmod 755 /mnt/bin/chmod
    ```
+
 4. Отмонтировать и перезагрузиться:
+
    ```bash
    umount /mnt && reboot
    ```
@@ -121,6 +132,7 @@ sudo dnf reinstall coreutils
 ### Порядок применения методов
 
 Рекомендуется применять методы в следующем порядке:
+
 1. Perl/Python → 2. BusyBox → 3. Динамический компоновщик → 4. Переустановка пакета → 5. LiveCD
 
 ### Предотвращение проблемы

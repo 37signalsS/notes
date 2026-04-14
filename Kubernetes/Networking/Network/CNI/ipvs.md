@@ -11,6 +11,7 @@
 ### Балансировка нагрузки L4
 
 IPVS работает на уровне TCP/UDP/SCTP, анализируя IP-адреса и порты:
+
 - Перехватывает входящие соединения на VIP
 - Перенаправляет трафик на backend-серверы согласно алгоритму балансировки
 - Поддерживает таблицу сессий для отслеживания активных соединений
@@ -101,6 +102,7 @@ kubectl -n kube-system get configmap kube-proxy -o yaml | grep mode
 ## Дополнительные сведения
 
 **См. также:**
+
 - Режимы работы kube-proxy (iptables, IPVS, userspace) — [CNI и kube-proxy: определения](./definitions.md#режимы-работы-kube-proxy)
 - Замена kube-proxy через eBPF — [Решения на базе eBPF](./ebpf.md)
 - Выбор CNI и внешние типы доступа — [CNI: Выбор плагина](./selection_and_external_access.md)

@@ -2,9 +2,9 @@
 
 ## Определения
 
-В этом документе рассматриваются различные способы установки [Angie](./angie_overview.md) — форка Nginx с расширенной функциональностью.
+Angie — форк Nginx с расширенной функциональностью, включая динамические модули, улучшенную балансировку нагрузки и встроенную поддержку TLS (Transport Layer Security) 1.3.
 
-## Основные концепции
+## Базовые понятия
 
 Существует несколько основных способов развертывания Angie:
 
@@ -40,8 +40,12 @@
 
     ```bash
     sudo angie -t
+    # → angie: the configuration file /etc/angie/angie.conf syntax is ok
+    # → angie: configuration file /etc/angie/angie.conf test is successful
+
     sudo systemctl enable --now angie
     sudo systemctl status angie
+    # → active (running)
     ```
 
 ### Сценарий 2: Установка на Ubuntu/Debian
@@ -66,10 +70,12 @@
 
     ```bash
     sudo angie -t
-    sudo systemctl status angie
-    ```
+    # → angie: the configuration file /etc/angie/angie.conf syntax is ok
+    # → angie: configuration file /etc/angie/angie.conf test is successful
 
-    Для пользователей, переходящих с Nginx, рекомендуется ознакомиться с [руководством по миграции](./migration_from_nginx.md).
+    sudo systemctl status angie
+    # → active (running)
+    ```
 
 ### Сценарий 3: Использование в Docker-контейнерах
 
@@ -116,7 +122,7 @@
     * Поместите файлы лицензии репозитория (`angie-repo.crt`, `angie-repo.key`) в `/etc/ssl/angie/`, выставив права `600`.
     * Создайте файл `/etc/apt/apt.conf.d/90angie-pro` для аутентификации в репозитории:
 
-        ```
+        ```nginx
         Acquire::https::download.angie.software {
             Verify-Peer "true";
             Verify-Host "true";
@@ -135,6 +141,8 @@
 3. **Установка лицензии Angie Pro:**
     * Поместите файл `license.pem` в `/etc/angie/`.
     * Перезагрузите сервис: `sudo systemctl reload angie`. Если лицензия корректна, запустятся все worker-процессы.
+
+Для пользователей, переходящих с Nginx, рекомендуется ознакомиться с [руководством по миграции](./migration_from_nginx.md).
 
 ## Дополнительная информация
 
@@ -160,3 +168,9 @@ load_module modules/ngx_http_brotli_static_module.so;
 ```
 
 Полный список модулей доступен в [официальной документации Angie](https://angie.software/ru/modules/).
+
+## См. также
+
+* [Обзор Angie](./angie_overview.md)
+* [Настройка обратного прокси](./angie_reverse_proxy.md)
+* [Настройка TLS](./angie_tls_setup.md)

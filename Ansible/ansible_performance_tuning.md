@@ -102,9 +102,9 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=60s
 
 **Доступные плагины:**
 
-- `timer` — показывает время выполнения каждой задачи
-- `profile_tasks` — выводит отсортированный список задач по времени выполнения (в конце)
-- `profile_roles` — агрегирует время по ролям
+* `timer` — показывает время выполнения каждой задачи
+* `profile_tasks` — выводит отсортированный список задач по времени выполнения (в конце)
+* `profile_roles` — агрегирует время по ролям
 
 **Включение (ansible-core < 2.13):**
 
@@ -200,8 +200,8 @@ ansible-playbook playbook.yml -e "callback_whitelist=timer,profile_tasks"
 **Использование:**
 
 1. Установите Mitogen:
-   - Через Ansible Galaxy: `ansible-galaxy collection install serverscom.mitogen`
-   - Или из репозитория: `pip install mitogen`
+   * Через Ansible Galaxy: `ansible-galaxy collection install serverscom.mitogen`
+   * Или из репозитория: `pip install mitogen`
 
 2. Настройте `ansible.cfg`:
 
@@ -251,7 +251,7 @@ ansible-playbook playbook.yml -e "callback_whitelist=timer,profile_tasks"
 
 ### Связанные документы
 
-- [Тестирование ролей с Molecule](ansible_testing_with_molecule.md) — автоматизированное тестирование
-- [Сборка контейнеров через Ansible](ansible_buildah_image_building.md) — Ansible-bender
-- [Pull-режим](ansible_pull.md) — альтернативный способ управления
-- [SSH-клиент: мультиплексирование](../Linux/Security/ssh/ssh_client_config.md) — подробная настройка SSH
+* [Тестирование ролей с Molecule](ansible_testing_with_molecule.md) — автоматизированное тестирование
+* [Сборка контейнеров через Ansible](ansible_buildah_image_building.md) — Ansible-bender
+* [Pull-режим](ansible_pull.md) — альтернативный способ управления
+* [SSH-клиент: мультиплексирование](../Linux/Security/ssh/ssh_client_config.md) — подробная настройка SSH

@@ -66,6 +66,7 @@ docker run --rm -it --pid=host --net=host --privileged ubuntu bash -lc \
 ```
 
 **Параметры nsenter:**
+
 - `-m` — mount namespace (ФС)
 - `-u` — UTS namespace (hostname)
 - `-i` — IPC namespace
@@ -99,6 +100,7 @@ docker debug <container_name>
 ```
 
 **Ограничения:**
+
 - Требует Docker CLI с поддержкой плагина
 - Может не работать с `scratch` и минимальными distroless-образами
 - Изменения не сохраняются после перезапуска

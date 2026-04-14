@@ -45,8 +45,8 @@ Git ищет специальные файлы в нескольких мест�
 Формат: `[section "subsection"] key = value`
 
 **Рекомендации:**
-- Используйте `git config` CLI для чтения/записи
-- Библиотеки: `go-git` (Go), `GitPython` (Python), `libgit2` (C)
+* Используйте `git config` CLI для чтения/записи
+* Библиотеки: `go-git` (Go), `GitPython` (Python), `libgit2` (C)
 
 ---
 
@@ -91,16 +91,16 @@ git log --use-mailmap --format="%an <%ae>" | sort | uniq -c
 
 ### Официальные ресурсы
 
-- **gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
-- **gitattributes:** [git-scm.com/docs/gitattributes](https://git-scm.com/docs/gitattributes)
-- **gitmodules:** [git-scm.com/docs/gitmodules](https://git-scm.com/docs/gitmodules)
-- **gitmailmap:** [git-scm.com/docs/gitmailmap](https://git-scm.com/docs/gitmailmap)
-- **Git LFS:** [git-lfs.com](https://git-lfs.com/)
+* **gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
+* **gitattributes:** [git-scm.com/docs/gitattributes](https://git-scm.com/docs/gitattributes)
+* **gitmodules:** [git-scm.com/docs/gitmodules](https://git-scm.com/docs/gitmodules)
+* **gitmailmap:** [git-scm.com/docs/gitmailmap](https://git-scm.com/docs/gitmailmap)
+* **Git LFS:** [git-lfs.com](https://git-lfs.com/)
 
 ### Ресурсы
 
-- **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
-- **GitHub Linguist:** [github.com/github-linguist/linguist](https://github.com/github-linguist/linguist)
+* **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
+* **GitHub Linguist:** [github.com/github-linguist/linguist](https://github.com/github-linguist/linguist)
 
 ### Связанные темы
 

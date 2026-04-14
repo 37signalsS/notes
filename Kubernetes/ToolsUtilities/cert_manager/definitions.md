@@ -15,6 +15,7 @@
 | **Жизненный цикл** | Создание, продление, отзыв сертификатов через CRD |
 
 **Связанные темы:**
+
 - Установка: [installation.md](./installation.md)
 - Let's Encrypt / ACME: [LetsEncrypt/index.md](./LetsEncrypt/index.md)
 - Ingress-интеграция: [ingress/overview.md](./ingress/overview.md)

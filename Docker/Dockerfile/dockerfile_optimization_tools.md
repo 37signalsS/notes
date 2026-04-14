@@ -48,6 +48,7 @@ dive my-app:latest
 ```
 
 **Возможности dive:**
+
 - Просмотр содержимого каждого слоя
 - Обнаружение файлов, удаленных в последующих слоях ( wasted space)
 - Оценка эффективности слоев (image efficiency)
@@ -64,6 +65,7 @@ hadolint Dockerfile
 ```
 
 **Пример вывода:**
+
 ```
 Dockerfile:5 DL3008: Pin versions in apt get install.
 Dockerfile:12 DL3002: Warning: Last USER should not be root
@@ -81,6 +83,7 @@ dockle my-image:latest
 ```
 
 **Пример вывода:**
+
 ```
 FATAL - CIS-DI-0010: Suspicious mount: '/var/run/docker.sock'
 WARN  - CIS-DI-0001: Create a user for the container

@@ -97,6 +97,7 @@ scrape_configs:
 **Проверка:** Status → Command-Line Flags → `storage.tsdb.retention.time`
 
 **Зачем настраивать:**
+
 - Оптимизация дискового пространства
 - Производительность запросов (длительное хранение замедляет PromQL)
 

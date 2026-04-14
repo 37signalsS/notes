@@ -85,8 +85,8 @@
 
 ### Связанные документы
 
-- **[Низкоуровневое обнаружение (LLD)](./low_level_discovery.md)** — LLD: принципы, лучшие практики, кастомные метрики
-- **[Мониторинг БД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу СУБД
-- **[Поиск и устранение неисправностей](./zabbix_troubleshooting_and_performance_tuning.md)** — диагностика и тюнинг производительности
-- **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — мониторинг через Zabbix Agent 2
-- **[Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/observability_definitions.md)** — сравнение подходов к мониторингу
+* **[Низкоуровневое обнаружение (LLD)](./low_level_discovery.md)** — LLD: принципы, лучшие практики, кастомные метрики
+* **[Мониторинг БД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу СУБД
+* **[Поиск и устранение неисправностей](./zabbix_troubleshooting_and_performance_tuning.md)** — диагностика и тюнинг производительности
+* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — мониторинг через Zabbix Agent 2
+* **[Стратегии сбора метрик](../Concepts/Observability_and_Monitoring/observability_definitions.md)** — сравнение подходов к мониторингу

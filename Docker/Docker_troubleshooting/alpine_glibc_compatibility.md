@@ -101,5 +101,6 @@ CMD ["my-glibc-app"]
 ### Предупреждение о версиях
 
 Версии пакетов glibc для Alpine могут обновляться. Проверяйте актуальные релизы:
+
 - [sgerrand/alpine-pkg-glibc releases](https://github.com/sgerrand/alpine-pkg-glibc/releases)
 - [Alpine Linux packages](https://pkgs.alpinelinux.org/packages)

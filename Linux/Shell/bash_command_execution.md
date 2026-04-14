@@ -113,11 +113,13 @@ docker run non_existent_image 2>&1 | grep "Error"
 #### Решения
 
 1. **Subshell с `bash -c`**:
+
    ```bash
    sudo bash -c 'cd /root && ls -l'
    ```
 
 2. **Интерактивная сессия root (`sudo su -`)**:
+
    ```bash
    sudo su -
    # работа от root

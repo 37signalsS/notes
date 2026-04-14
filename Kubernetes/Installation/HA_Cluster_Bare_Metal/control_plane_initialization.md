@@ -193,4 +193,4 @@ sudo kubeadm init phase certs check-expiration
 
 ### Интеграция с процессом развёртывания
 
-Инициализация Control Plane — **шаг 4** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [установкой CNI](./cni_installation.md). Подробнее об архитектуре — в [обзоре HA кластера](./k8s_ha_cluster_overview.md), о присоединении узлов — в [руководстве по node joining](./node_joining.md). Настройка балансировщика описана в [документации по HA с kubeadm](../kubeadm/ha_keepalived_haproxy/ha_concepts.md).
+Инициализация Control Plane — **шаг 4** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [установкой CNI](./cni_installation.md). Подробнее об архитектуре — в [обзоре HA кластера](./k8s_ha_cluster_overview.md), о присоединении узлов — в [руководстве по node joining](./node_joining.md). Настройка балансировщика описана в [документации по HA с kubeadm](../kubeadm/ha_concepts.md).

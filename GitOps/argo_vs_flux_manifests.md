@@ -136,6 +136,7 @@ spec:
 ### Новые функции и изменения (2025-2026)
 
 **ArgoCD:**
+
 - **AWS EKS Managed ArgoCD** (GA ноябрь 2025): полностью управляемый сервис вне кластера клиента
 - Интеграции: AWS Secrets Manager, Amazon ECR, AWS CodeCommit, CodeConnections
 - ApplicationSet: сокращение multi-cluster развёртывания с 30+ до ~5 минут
@@ -145,6 +146,7 @@ spec:
 - Progressive Sync: постепенное развёртывание на несколько кластеров с валидацией
 
 **Flux:**
+
 - **Публикация roadmap 2025** после закрытия Weaveworks (февраль 2024)
 - Поддержка от ControlPlane, Microsoft Azure, GitLab, Cisco
 - Стабильные и beta API для production
@@ -163,6 +165,7 @@ spec:
 ### Рекомендации по выбору
 
 **Выбирайте ArgoCD когда:**
+
 - Команда новичок в GitOps и нужен визуальный интерфейс
 - Приоритет — developer experience
 - Управление приложениями на множестве кластеров из единой консоли
@@ -172,6 +175,7 @@ spec:
 - Регулируемые отрасли (compliance, аудит)
 
 **Выбирайте Flux когда:**
+
 - Platform engineering команда строит модульные инфраструктурные паттерны
 - Ограничения по ресурсам (edge, staging, малые пулы)
 - Требуется нативная SOPS для секретов в Git

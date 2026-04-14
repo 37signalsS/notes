@@ -32,6 +32,7 @@ Gauge показывает состояние «здесь и сейчас». В
 | `changes(v[range])` | Количество изменений значения | Подсчёт переходов |
 
 **Ключевые особенности:**
+
 - `deriv()` — аналог `rate()` для Gauge, но **не учитывает сбросы в 0**. При рестарте приложения может дать некорректный результат
 - `predict_linear()` — полезен для [алертинга](../../rules.md): прогноз нехватки ресурсов (диск, память)
 - `delta()` — отбрасывает промежуточные значения, можно пропустить резкий всплеск с быстрым откатом
@@ -91,11 +92,13 @@ changes(kube_pod_status_phase{namespace="default"}[1h])
 ## Дополнительная информация
 
 - **Экспорт в формате Prometheus:**
+
   ```
   # HELP node_memory_mem_available_bytes Available memory in bytes.
   # TYPE node_memory_mem_available_bytes gauge
   node_memory_mem_available_bytes{instance="server-1"} 4294967296
   ```
+
   Директива `# TYPE` объявляется до первого использования метрики.
 
 - **Сравнение с Counter:** Gauge произвольно меняется, Counter только растёт. Для CPU-утилизации используйте Counter (`node_cpu_seconds_total`) с `rate()`, а не Gauge.

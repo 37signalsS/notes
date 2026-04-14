@@ -21,9 +21,9 @@
     * **Подробное руководство**: **[Централизованное логирование: Лог-драйверы](./docker_centralized_logging.md)**
 
 Дополнительные материалы по смежным темам:
-- **Ротация логов**: **[Управление ротацией логов Docker](./docker_log_rotation.md)**
-- **Драйвер Loki**: **[Настройка лог-драйвера Grafana Loki](./loki_logging_driver_setup.md)**
-- **Multi-Process паттерн**: **[Паттерн Multi-Process в Docker](./docker_multi_process_logging.md)**
+* **Ротация логов**: **[Управление ротацией логов Docker](./docker_log_rotation.md)**
+* **Драйвер Loki**: **[Настройка лог-драйвера Grafana Loki](./loki_logging_driver_setup.md)**
+* **Multi-Process паттерн**: **[Паттерн Multi-Process в Docker](./docker_multi_process_logging.md)**
 
 ## Практические сценарии
 

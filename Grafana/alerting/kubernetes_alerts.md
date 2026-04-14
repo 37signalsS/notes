@@ -76,6 +76,7 @@ groups:
 ```
 
 **Параметры:**
+
 - **Выражение:** `increase(kube_pod_container_status_restarts_total[5m]) > 0`
 - **Порог:** Любой рестарт за 5 минут
 - **`for`:** 1m (подтверждение)
@@ -110,6 +111,7 @@ groups:
 ```
 
 **Параметры:**
+
 - **Выражение:** `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1`
 - **Порог:** Любое событие
 - **`for`:** 0m (немедленное срабатывание)
@@ -151,6 +153,7 @@ groups:
 ```
 
 **Параметры:**
+
 - **Выражение:** `kube_deployment_status_replicas_available / kube_deployment_status_replicas * 100`
 - **Порог:** < 90%
 - **`for`:** 5m
@@ -196,6 +199,7 @@ groups:
 ```
 
 **Параметры:**
+
 - **Выражение:** `rate(container_cpu_usage_seconds_total[5m]) / kube_pod_container_resource_limits{resource="cpu"} * 100`
 - **Порог:** > 80% от limits
 - **`for`:** 10m
@@ -241,6 +245,7 @@ groups:
 ```
 
 **Параметры:**
+
 - **Выражение:** `container_memory_usage_bytes / kube_pod_container_resource_limits{resource="memory"} * 100`
 - **Порог:** > 85% от limits
 - **`for`:** 10m

@@ -85,12 +85,14 @@ REST API использует [HTTP-коды ответа](./http_status_codes.m
 ### Сценарий 1: REST API для управления библиотекой
 
 **Получение списка книг:**
+
 ```bash
 curl -X GET https://api.library.com/books \
   -H "Accept: application/json"
 ```
 
 Ответ:
+
 ```json
 [
   {"id": 1, "title": "1984", "author": "George Orwell"},
@@ -99,6 +101,7 @@ curl -X GET https://api.library.com/books \
 ```
 
 **Создание новой книги:**
+
 ```bash
 curl -X POST https://api.library.com/books \
   -H "Content-Type: application/json" \
@@ -106,12 +109,14 @@ curl -X POST https://api.library.com/books \
 ```
 
 Ответ:
+
 ```http
 HTTP/1.1 201 Created
 Location: https://api.library.com/books/3
 ```
 
 **Частичное обновление (только заголовок):**
+
 ```bash
 curl -X PATCH https://api.library.com/books/2 \
   -H "Content-Type: application/json" \
@@ -119,6 +124,7 @@ curl -X PATCH https://api.library.com/books/2 \
 ```
 
 **Удаление:**
+
 ```bash
 curl -X DELETE https://api.library.com/books/2
 # Ответ: 204 No Content
@@ -147,12 +153,14 @@ GET /books?q=dystopia
 При изменении структуры ответа необходимо версионировать API, чтобы не сломать существующих клиентов:
 
 **Через URL (наиболее распространено):**
+
 ```
 https://api.example.com/v1/books
 https://api.example.com/v2/books
 ```
 
 **Через заголовок:**
+
 ```bash
 curl -X GET https://api.example.com/books \
   -H "Accept: application/vnd.library.v2+json"

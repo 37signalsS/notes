@@ -27,6 +27,7 @@
 | **DaemonSet** | Один экземпляр Collector развертывается на каждом узле кластера | Эффективное использование ресурсов. Упрощение сетевого пути | Приложению нужно знать `hostIP`. Требует `hostPort` и `hostNetwork: true` |
 
 **Реализация:**
+
 - **Sidecar:** Автоматически управляется Jaeger Operator через аннотацию.
 - **DaemonSet:** Задается в CR `Jaeger` в секции `spec.collector`. Требуется `dnsPolicy: ClusterFirstWithHostNet` для корректного DNS-резолвинга.
 
@@ -210,5 +211,6 @@ env:
 ## Дополнительная информация
 
 **Смежные темы:**
+
 - Варианты развертывания: **[Jaeger Deployment Options](./jaeger_deployment_options.md)**
 - Архитектура компонентов: **[Jaeger Architecture](./jaeger_architecture.md)**

@@ -19,9 +19,11 @@
 - **Назначение:** Предлагаемая конфигурация для разработчиков
 - **Ограничение:** Git **не загружает** такие файлы автоматически (безопасность)
 - **Использование:** Проекты включают инструкции для ручной настройки:
+
   ```bash
   git config include.path ../.gitconfig
   ```
+
 - **Применение:** Монорепозитории, проекты со специфичными настройками Git
 
 ### .gitsigners / allowedSigners
@@ -35,6 +37,7 @@
 - **Назначение:** Конфигурация интеграции с Gerrit
 - **Проекты:** OpenStack, Android, Eclipse
 - **Формат:**
+
   ```ini
   [gerrit]
   host=review.opendev.org
@@ -42,12 +45,14 @@
   project=openstack/nova.git
   defaultbranch=master
   ```
+
 - **Использование:** `git review` читает файл и пушит коммиты в Gerrit для ревью
 
 ### .gitlint
 
 - **Назначение:** Конфигурация линтера сообщений коммитов
 - **Пример:**
+
   ```ini
   [general]
   ignore=body-is-missing
@@ -103,6 +108,7 @@ min-length=10
 ```
 
 Использование:
+
 ```bash
 # Проверить последний коммит
 gitlint HEAD
@@ -140,6 +146,7 @@ defaultbranch=main
 ```
 
 Использование:
+
 ```bash
 # Установить git-review
 pip install git-review

@@ -51,6 +51,7 @@ git clone --depth 1 --branch main <url_репозитория>
 ```
 
 **Разворачивание поверхностной копии:**
+
 ```bash
 # Получить полную историю после поверхностного клонирования
 git fetch --unshallow
@@ -91,6 +92,7 @@ git pull repo.bundle main
 ### Сценарий 4: Оптимизация клонирования в CI/CD
 
 Для GitHub Actions:
+
 ```yaml
 - uses: actions/checkout@v4
   with:
@@ -98,6 +100,7 @@ git pull repo.bundle main
 ```
 
 Для GitLab CI:
+
 ```yaml
 variables:
   GIT_DEPTH: 1  # Поверхностное клонирование

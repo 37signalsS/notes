@@ -19,6 +19,7 @@
 - **Повторное использование:** Несколько приложений используют общую инфраструктуру
 
 **Компоненты стека:**
+
 ```
 [infra-stack репозиторий]
     ├── docker-compose.yml      # Конфигурация сервисов
@@ -121,6 +122,7 @@ networks:
 **Получение сертификатов:**
 
 Сертификаты берутся из настройки mTLS (см. **[swarm_setup.md](./swarm_setup.md)**):
+
 - `ca.pem` — корневой сертификат CA
 - `cert.pem` — клиентский сертификат для GitLab Runner
 - `key.pem` — клиентский ключ
@@ -151,6 +153,7 @@ deploy_infra:
 ```
 
 **Параметры пайплайна:**
+
 - `image: docker:24` — образ Docker CLI для выполнения команд
 - `when: manual` — ручной запуск (требует подтверждения в UI GitLab)
 - `--with-registry-auth` — передача учетных данных registry в Swarm
@@ -197,11 +200,13 @@ curl http://manager.example.com:8080/api/http/routers
 **Обновление версии Traefik:**
 
 1. Измените версию образа в `docker-compose.yml`:
+
    ```yaml
    image: traefik:v3.7  # было traefik:v3.6
    ```
 
 2. Закоммитьте и отправьте изменения:
+
    ```bash
    git commit -am "Upgrade Traefik to v3.7"
    git push
@@ -249,6 +254,7 @@ volumes:
 ```
 
 **Добавление переменных в GitLab:**
+
 - `POSTGRES_DB` — имя базы данных
 - `POSTGRES_USER` — пользователь
 - `POSTGRES_PASSWORD` (Masked) — пароль

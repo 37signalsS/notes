@@ -6,7 +6,7 @@
 
 **Ключевое правило:** Используйте ConfigMap для настроек, которые могут меняться, а [Secret](./secrets/secrets_basics.md) — для конфиденциальных данных (пароли, токены, ключи API).
 
-## Основные концепции
+## Базовые концепции
 
 ### Проблема встраивания конфигурации в образ
 
@@ -27,17 +27,47 @@
 ### Ограничения ConfigMap
 
 * Максимальный размер: **1 MiB**
-* Типы данных: строки (UTF-8), бинарные данные (base64)
+* Типы данных: строки (UTF-8) в поле `data`, бинарные данные (base64) в поле `binaryData`
 * Количество ключей: не ограничено (в пределах 1 MiB)
+* **Не предоставляет шифрования или безопасности** — данные хранятся в открытом виде. Для конфиденциальных данных используйте [Secret](./secrets/secrets_basics.md)
+
+### Структура объекта
+
+В отличие от большинства объектов Kubernetes, у ConfigMap **нет поля `spec`**. Вместо него используются поля `data` и `binaryData`:
+
+* **`data`** — строковые пары ключ-значение (UTF-8). Поле опционально — можно создать пустой ConfigMap, хотя практического смысла в этом мало
+* **`binaryData`** — бинарные данные, закодированные в Base64. Также опционально
+* Можно использовать оба поля одновременно или только одно из них
+
+**Пример структуры:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: game-config
+data:
+  # Простая переменная
+  player_initial_lives: "3"
+  # Файл конфигурации как значение
+  game.properties: |
+    enemy=dragon
+    level=10
+  ui.properties: |
+    color.good=purple
+    color.bad=yellow
+binaryData:
+  logo.png: "iVBORw0KGgoAAAANSUhEUg..."
+```
 
 ### Способы использования
 
 | Способ | Обновление | Когда использовать |
 | :--- | :--- | :--- |
-| **Переменные окружения** (`env`, `envFrom`) | ❌ Не обновляются | Простые флаги, параметры |
-| **Тома** (`volume`) | ✅ Автоматически | Конфигурационные файлы |
-| **subPath** | ❌ Не обновляется | Один файл в директории |
-| **Projected** | ✅ Автоматически | Комбинация источников |
+| **Переменные окружения** (`env`, `envFrom`) | Нет | Простые флаги, параметры |
+| **Тома** (`volume`) | Да, автоматически | Конфигурационные файлы |
+| **subPath** | Нет | Один файл в директории |
+| **Projected** | Да, автоматически | Комбинация источников |
 
 ## Практические сценарии
 
@@ -52,10 +82,19 @@
 2. **Использование в поде (переменные окружения):**
 
    ```yaml
+   env:
+     - name: LOG_LEVEL_VAR          # Имя переменной в поде (может отличаться от ключа)
+       valueFrom:
+         configMapKeyRef:
+           name: app-config
+           key: LOG_LEVEL            # Ключ в ConfigMap
+   # Или все ключи сразу:
    envFrom:
      - configMapRef:
          name: app-config
    ```
+
+   > **Важно:** Имя переменной окружения в поде (`name`) **не обязано совпадать** с ключом в ConfigMap (`key`). Это позволяет выбирать понятные имена переменных независимо от структуры ConfigMap.
 
 3. **Использование в поде (том):**
 
@@ -79,4 +118,4 @@
 
 Детальные руководства по ConfigMap: [создание](./ConfigMap/creation.md), [использование в подах](./ConfigMap/pod_usage.md), [обновление и перезапуск](./ConfigMap/update_and_rollout.md), [неизменяемые ConfigMap](./ConfigMap/immutable.md), [лучшие практики](./ConfigMap/best_practices.md).
 
-См. также: [Secret](./secrets/secrets_basics.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [ResourceQuota](./namespace.md#resourcequota-and-limitrange), [GitOps](../../GitOps/GitOps_overview.md).
+См. также: [Secret](./secrets/secrets_basics.md), [Pod](./Pod/pod_overview.md), [Deployment](./Deployment/index.md).

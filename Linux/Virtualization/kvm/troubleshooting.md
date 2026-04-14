@@ -35,6 +35,7 @@
 3. Производительность падает в сотни раз
 
 Лог-сообщение:
+
 ```log
 kvm: host doesn't support requested feature...
 falling back to tcg
@@ -77,11 +78,13 @@ virsh edit <имя_вм>
 В секции `<domain>` измените конфигурацию CPU:
 
 **Одинаковые CPU на хостах:**
+
 ```xml
 <cpu mode="host-passthrough"/>
 ```
 
 **Разные CPU на хостах:**
+
 ```xml
 <cpu mode="host-model"/>
 ```

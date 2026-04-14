@@ -40,29 +40,29 @@
 
 * **Проблема:** тысячи коротких HTTP-соединений, накопление `TIME_WAIT`, переполнение backlog
 * **Решение:**
-  - Увеличить `net.core.somaxconn` до 4096–65535
-  - Включить `net.ipv4.tcp_tw_reuse=1`
-  - Расширить диапазон ephemeral ports: `net.ipv4.ip_local_port_range=1024 65535`
-  - Настроить `net.ipv4.tcp_max_syn_backlog=8192`
+  * Увеличить `net.core.somaxconn` до 4096–65535
+  * Включить `net.ipv4.tcp_tw_reuse=1`
+  * Расширить диапазон ephemeral ports: `net.ipv4.ip_local_port_range=1024 65535`
+  * Настроить `net.ipv4.tcp_max_syn_backlog=8192`
 * **Дополнительно:** рассмотреть BBR для улучшения пропускной способности
 
 ### Микросервисная архитектура (service mesh)
 
 * **Проблема:** большое количество короткоживущих соединений между сервисами, задержки установления соединения
 * **Решение:**
-  - Включить TCP Fast Open (`net.ipv4.tcp_fastopen=3`)
-  - Увеличить initcwnd до 10–30 сегментов для уменьшения Slow Start
-  - Использовать `fq` qdisc для packet pacing
+  * Включить TCP Fast Open (`net.ipv4.tcp_fastopen=3`)
+  * Увеличить initcwnd до 10–30 сегментов для уменьшения Slow Start
+  * Использовать `fq` qdisc для packet pacing
 * **Дополнительно:** мониторинг через `ss -ti` для контроля RTT и retransmits
 
 ### Высокая пропускная способность (CDN, streaming)
 
 * **Проблема:** необходимость передачи больших объемов данных на большие расстояния
 * **Решение:**
-  - Включить BBR: `net.ipv4.tcp_congestion_control=bbr`
-  - Настроить автонастройку буферов: `net.ipv4.tcp_moderate_rcvbuf=1`
-  - Увеличить `net.core.rmem_max` и `net.core.wmem_max` до 16–134 МБ
-  - Рассчитать оптимальный размер буфера по формуле BDP
+  * Включить BBR: `net.ipv4.tcp_congestion_control=bbr`
+  * Настроить автонастройку буферов: `net.ipv4.tcp_moderate_rcvbuf=1`
+  * Увеличить `net.core.rmem_max` и `net.core.wmem_max` до 16–134 МБ
+  * Рассчитать оптимальный размер буфера по формуле BDP
 * **Дополнительно:** отключить TCP timestamps для снижения overhead (`net.ipv4.tcp_timestamps=0`)
 
 ### Диагностика проблем

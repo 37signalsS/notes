@@ -7,6 +7,7 @@
 **container runtime** — программа для запуска и управления контейнерами (Docker, containerd, CRI-O). Обязательный компонент для работы Minikube.
 
 > **Связанные определения:**
+>
 > - **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — файл конфигурации для подключения к Kubernetes
 > - **[kubectl](../../kubernetes_overview.md)** — CLI-утилита для управления кластером
 
@@ -119,12 +120,28 @@ Minikube поддерживает различные драйверы для з�
 
 | Драйвер | Платформа | Требования |
 | :--- | :--- | :--- |
-| **docker** | Linux/macOS/Windows | Docker Desktop |
+| **docker** | Linux/macOS/Windows | Docker Engine или Docker Desktop |
 | **virtualbox** | Linux/macOS/Windows | VirtualBox |
 | **kvm2** | Linux | KVM, libvirt |
 | **hyperkit** | macOS | Hyperkit |
 | **hyper-v** | Windows | Hyper-V |
-| **none** | Linux | Bare metal (требует root) |
+| **none** | Linux | Bare metal, Docker (deb-пакет), root |
+
+**Автоматический выбор драйвера:**
+
+Minikube автоматически определяет доступный драйвер в системе. Если установлен Docker — будет выбран `docker`. Явное указание через `--driver` не требуется.
+
+**Драйвер none (bare metal):**
+
+Запускает компоненты Kubernetes напрямую на хост-системе без виртуализации.
+
+- **Требования:** только Linux, Docker установлен как **deb-пакет** (snap-пакет не работает), root-привилегии
+- **Предупреждение:** устанавливает kubelet, kube-apiserver и другие компоненты на хост. Может конфликтовать с существующими сервисами.
+- **Не рекомендуется** для продакшн-окружений
+
+**Проблема со snap-пакетом:**
+
+На Debian и производных (Ubuntu) **snap-пакет Docker не работает** с Minikube. Необходимо использовать Docker из официального deb-репозитория.
 
 **Выбор драйвера:**
 

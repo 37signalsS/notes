@@ -72,6 +72,7 @@ spec:
 ```
 
 **Как это работает:**
+
 - Контейнер `client` обращается к `web-server` через `http://localhost:5005`
 - Просмотр логов: `kubectl logs multi-container-demo -c client` и `kubectl logs multi-container-demo -c web-server`
 
@@ -102,60 +103,45 @@ kubectl logs my-pod-with-init -c my-init-container
 kubectl logs my-pod-name --previous
 ```
 
+Подробнее об init-контейнерах: [Init Containers](./pod_init_containers.md).
+Подробнее о sidecar-паттернах: [Sidecar Patterns](./pod_sidecar_patterns.md).
+
 ### Пример 4: Отладка с помощью Ephemeral Containers
 
-**Проблема:** В контейнере отсутствуют инструменты диагностики (`tcpdump`, `netstat`, `ps`).
+**Проблема:** В контейнере отсутствуют инструменты диагностики (`tcpdump`, `netstat`, `ps`) или distroless-образ без shell.
 
-**Решение:** Добавить временный отладочный контейнер без перезапуска пода:
+**Решение:** Добавить временный отладочный контейнер без перезапуска пода.
+
+Полное руководство: **[Ephemeral Containers](./ephemeral_containers.md)**.
+
+**Быстрый старт:**
 
 ```bash
+# Базовая отладка — добавить ephemeral контейнер
 kubectl debug -it pod/my-pod \
   --image=busybox:1.36.1 \
-  --target=app-container \
-  --share-processes \
-  -- bash
+  --target=app-container
 ```
-
-| Параметр | Описание |
-| :--- | :--- |
-| `--target=app-container` | Целевой контейнер для отладки |
-| `--share-processes` | Доступ к процессам целевого контейнера |
 
 ### Пример 5: Graceful Shutdown
 
-Настройка корректного завершения работы пода:
+Настройка корректного завершения работы пода. Полное описание процесса: **[Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)**.
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: graceful-pod
-spec:
-  terminationGracePeriodSeconds: 90
-  containers:
-  - name: app
-    image: my-app:1.0
-    lifecycle:
-      preStop:
-        exec:
-          command: ["/bin/sh", "-c", "curl -sf -X POST http://localhost:8080/shutdown || true"]
-    readinessProbe:
-      httpGet:
-        path: /health/ready
-        port: 8080
-      periodSeconds: 2
-      failureThreshold: 1
-```
+**Ключевые параметры:**
+
+- `terminationGracePeriodSeconds` — время на корректное завершение (по умолчанию 30с)
+- `preStop` hook — выполняется до отправки SIGTERM (уведомление приложения, дренаж трафика)
+- `readinessProbe` — при возврате 503 pod исключается из Service
 
 **Порядок завершения:**
-1. Kubernetes решает завершить pod
-2. Выполняется `preStop` hook (уведомление приложения)
-3. `readinessProbe` возвращает 503 → pod исключается из Service
-4. Отправляется `SIGTERM`
-5. Приложение завершает текущие запросы (до 90с)
-6. При необходимости отправляется `SIGKILL`
 
-Подробнее: [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md), [Пробы](../probes.md), [Жизненный цикл пода](./pod_lifecycle_and_state.md).
+1. Kubernetes решает завершить pod
+2. `preStop` hook + SIGTERM отправляются одновременно
+3. `readinessProbe` возвращает ошибку → pod исключается из Service
+4. Приложение завершает текущие запросы
+5. По истечении grace period → SIGKILL
+
+**Связанные темы:** [Пробы](../probes.md), [Жизненный цикл пода](./pod_lifecycle_and_state.md).
 
 ### Пример 6: Основные команды управления Pod
 
@@ -202,4 +188,4 @@ kubectl get pods -l 'app!=backend'
 
 ## Дополнительная информация
 
-**Связанные темы:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Пробы](../probes.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md), [Рекомендации по написанию манифестов](./pod_best_practices.md).
+**См. также:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Ephemeral Containers](./ephemeral_containers.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).

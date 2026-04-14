@@ -60,12 +60,14 @@ strace -p <PID> -e getrandom,read
 `haveged` (HArdware Volatile Entropy Gathering and Expansion daemon) — демон, использующий алгоритм HAVEGE на основе колебаний таймеров CPU.
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt update && sudo apt install haveged
 sudo systemctl enable --now haveged
 ```
 
 **CentOS/RHEL/Fedora:**
+
 ```bash
 sudo dnf install haveged
 sudo systemctl enable --now haveged
@@ -76,12 +78,14 @@ sudo systemctl enable --now haveged
 `rng-tools` — утилиты для работы с аппаратными генераторами случайных чисел (TRNG: TPM-модули, инструкции CPU). При отсутствии аппаратных источников служит программным генератором.
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt update && sudo apt install rng-tools
 sudo systemctl enable --now rng-tools
 ```
 
 **CentOS/RHEL/Fedora:**
+
 ```bash
 sudo dnf install rng-tools
 sudo systemctl enable --now rng-tools

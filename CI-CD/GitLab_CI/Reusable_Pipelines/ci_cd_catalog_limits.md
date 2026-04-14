@@ -104,6 +104,7 @@ gitlab-ci lint --project=group/project --show-expanded
 ### Технические детали
 
 **Лимит 150 include** включает:
+
 - `include:component`
 - `include:project`
 - `include:local`

@@ -43,6 +43,7 @@
 ### Шаг 1: Выбор реализации
 
 Критерии выбора:
+
 - Поддержка требуемых функций (L4/L7, TLS, CORS)
 - Интеграция с облачным провайдером (AWS ALB, GCP Load Balancer)
 - Производительность и масштабируемость
@@ -121,6 +122,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 ```
 
 **Ограничения конвертации:**
+
 - Не все аннотации Ingress NGINX поддерживаются автоматически
 - Сложные кастомные правила требуют ручного перевода
 - Требуется ручная проверка после конвертации
@@ -151,6 +153,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 | **2025** | Gateway API v1.0 GA |
 
 **Рекомендации по планированию:**
+
 - Начните миграцию за 6 месяцев до окончания поддержки Ingress NGINX
 - Используйте ingress2gateway как отправную точку, но не как финальное решение
 - Тестируйте в staging перед переносом production-трафика
@@ -158,6 +161,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 - Обучите команду ролевой модели Gateway API
 
 **Официальные ресурсы:**
+
 - Документация: [Gateway API Migration Guide](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
 - Инструмент: [ingress2gateway GitHub](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
 - Conformance-отчёты: [Gateway API Implementations](https://gateway-api.sigs.k8s.io/implementations/)
@@ -171,6 +175,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 При установке cert-manager через манифесты (не Helm) Gateway API support может быть отключён по умолчанию.
 
 **Решение:**
+
 - При установке через Helm указать `config.controller.config.enableGatewayAPI: true`
 - Или добавить `--enable-gateway-api` в аргументы контейнера контроллера
 - Начиная с Kubernetes 1.31+ Gateway API CRD включены в стандартный установочный пакет cert-manager
@@ -207,6 +212,7 @@ spec:
 **Решение:** Убедиться, что cert-manager успел создать Secret до того, как Gateway начнёт обработку. Аннотация `cert-manager.io/cluster-issuer` на Gateway должна быть корректной. Проверить статус через `kubectl describe gateway <name>`.
 
 **Связанные документы:**
+
 - Концепции Gateway API: [Определения](./definitions.md)
 - Ресурсы (CRD): [Ресурсы](./resources.md)
 - Базовые примеры: [Базовые сценарии](./practical_basic.md)

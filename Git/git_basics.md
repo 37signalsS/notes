@@ -257,17 +257,17 @@ git config --global user.email "ваш@email.com"
 
 ### Официальные ресурсы
 
-- **Документация Git:** [git-scm.com/doc](https://git-scm.com/doc)
-- **Книга Pro Git:** [git-scm.com/book](https://git-scm.com/book/ru/v2)
+* **Документация Git:** [git-scm.com/doc](https://git-scm.com/doc)
+* **Книга Pro Git:** [git-scm.com/book](https://git-scm.com/book/ru/v2)
 
 ### Интерактивные тренажёры
 
-- **[Oh My Git!](https://ohmygit.org/)** — интерактивная игра с открытым исходным кодом для изучения Git.
-- **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления.
+* **[Oh My Git!](https://ohmygit.org/)** — интерактивная игра с открытым исходным кодом для изучения Git.
+* **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления.
 
 ### Видеоуроки
 
-- **[Основы командной разработки git в Visual Studio Code](https://www.youtube.com/watch?v=9e5OSBCCvvU)**: Видео, демонстрирующее базовый рабочий процесс совместной разработки с использованием Git и VS Code.
+* **[Основы командной разработки git в Visual Studio Code](https://www.youtube.com/watch?v=9e5OSBCCvvU)**: Видео, демонстрирующее базовый рабочий процесс совместной разработки с использованием Git и VS Code.
 
 ### Связанные темы
 

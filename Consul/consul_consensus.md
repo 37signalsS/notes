@@ -63,6 +63,7 @@ consul operator raft remove-peer <NodeID>
 ## Конфигурация сервера
 
 Пример минимальной конфигурации для серверного узла:
+
 ```json
 {
   "server": true,

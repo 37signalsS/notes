@@ -65,4 +65,3 @@
 ```bash
 docker network create -d ipvlan -o parent=eth0.100 ...
 ```
-

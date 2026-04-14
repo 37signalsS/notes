@@ -50,6 +50,7 @@ timedatectl status
 ```
 
 Пример вывода:
+
 ```
                Local time: Сб 2026-04-04 15:30:00 MSK
            Universal time: Сб 2026-04-04 12:30:00 UTC
@@ -122,6 +123,7 @@ timedatectl timesync-status
 ```
 
 Пример `timesync-status`:
+
 ```
 Server: 185.209.136.132 (0.pool.ntp.org)
 Poll interval: 1min 4s (min: 32s; max 34min 8s)

@@ -11,6 +11,7 @@
 ### Сценарий 0: Установка werf
 
 **Установка (macOS):**
+
 ```bash
 # Установка одной командой через curl
 curl -sL https://werf.io/install.sh | bash
@@ -19,12 +20,14 @@ curl -sL https://werf.io/install.sh | bash
 Для других ОС и вариантов установки см. [официальную документацию](https://werf.io/documentation/install.html).
 
 **Проверка установки:**
+
 ```bash
 werf version
 # Вывод: 2.5.1 (или новее)
 ```
 
 **Настройка для локальной разработки:**
+
 1. Перейдите на [werf.io](https://werf.io/)
 2. Выберите параметры: Локальная разработка → ОС → Сборщик образов (Docker)
 3. Выполните рекомендованную команду установки
@@ -36,17 +39,20 @@ werf version
 **Решение:**
 
 1. **Создание Personal Access Token в GitHub:**
+
    ```bash
    # Настройки профиля → Developer settings → Personal access tokens
    # Scope: write:packages (или read:packages для pull)
    ```
 
 2. **Аутентификация в registry:**
+
    ```bash
    docker login ghcr.io -u <username> -p <token>
    ```
 
 3. **Создание Kubernetes Secret для imagePullSecrets:**
+
    ```bash
    kubectl create secret docker-registry registry-secret \
      --docker-server=ghcr.io \
@@ -58,6 +64,7 @@ werf version
 ### Сценарий 2: Переписывание Dockerfile на Stapel
 
 **Исходный Dockerfile (multi-stage):**
+
 ```dockerfile
 # Build stage
 FROM golang:1.21 AS builder
@@ -72,6 +79,7 @@ CMD ["/myapp"]
 ```
 
 **Эквивалент на Stapel (werf.yaml):**
+
 ```yaml
 project: myapp
 configVersion: "1"
@@ -82,6 +90,7 @@ build:
 ```
 
 Или нативный Stapel:
+
 ```yaml
 project: myapp
 configVersion: "1"
@@ -127,6 +136,7 @@ spec:
 ### Сценарий 4: Развёртывание командой werf converge
 
 **Подготовка:**
+
 ```bash
 # Логин в registry
 docker login ghcr.io -u <username> -p <token>
@@ -139,6 +149,7 @@ kubectl create secret docker-registry registry-secret \
 ```
 
 **Запуск деплоя:**
+
 ```bash
 werf converge \
   --repo ghcr.io/<username>/<repo> \
@@ -147,6 +158,7 @@ werf converge \
 ```
 
 **Что происходит:**
+
 1. Анализ werf.yaml и локального кэша
 2. Сборка образов (или использование кэша)
 3. Публикация в GitHub Container Registry
@@ -192,6 +204,7 @@ werf build --platform linux/amd64
 ```
 
 **Применение:**
+
 - Кросс-платформенная разработка (ARM → AMD64)
 - Сборка образов под несколько архитектур
 - Тестирование на разных платформах без смены железа
@@ -207,11 +220,13 @@ werf build --dev
 ```
 
 **Особенности:**
+
 - Werf игнорирует незакоммиченные изменения и выполняет сборку
 - Удобно для быстрой проверки гипотез и локальной отладки
 - **Не используйте в CI/CD** — флаг только для локальной разработки
 
 **Пример использования:**
+
 ```bash
 # Внесены изменения в код, но не закоммичены
 werf build --dev  # Сборка выполнится

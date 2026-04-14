@@ -14,6 +14,7 @@
 | **Частный реестр** | Реестр с ограниченным доступом (on-premise, VPN) |
 
 **Типы реестров:**
+
 - **Публичные:** Docker Hub (бесплатно с ограничениями)
 - **Частные:** Harbor, GitLab Registry, Nexus, GHCR (GitHub Container Registry)
 
@@ -114,20 +115,49 @@ docker push harbor.example.com/library/my-app:v1
 docker pull harbor.example.com/library/my-app:v1
 ```
 
-**Документация Harbor:**
-- [Обзор возможностей](./Docker_registries/Harbor/overview.md)
-- [Установка (Docker Compose, Helm)](./Docker_registries/Harbor/installation.md)
-- [Работа с реестром](./Docker_registries/Harbor/usage.md)
-- [Настройка TLS](./Docker_registries/Harbor/certificates.md)
+**Документация Harbor:** подробное описание см. в [обзоре Harbor](./Docker_registries/Harbor/overview.md), [установке](./Docker_registries/Harbor/installation.md), [настройке TLS](./Docker_registries/Harbor/certificates.md) и [работе с реестром](./Docker_registries/Harbor/usage.md).
+
+### Docker Hub — реестр по умолчанию
+
+**Docker Hub** (hub.docker.com) — официальный публичный реестр, который Docker использует по умолчанию при отсутствии явного указания другого registry.
+
+**Ключевые особенности:**
+
+- При выполнении `docker pull nginx` образ загружается из Docker Hub (`docker.io/library/nginx:latest`)
+- Содержит каталог **официальных образов** (Docker Official Images) — образы, прошедшие проверку качества и безопасности (Ubuntu, Node, MySQL, Nginx, PostgreSQL и др.)
+- Официальные образы отмечены бейджем «Official Image» и имеют высокий рейтинг (звёзды) и количество загрузок
+- Поддерживает публичные и приватные репозитории (бесплатно — 1 приватный)
+- Авторизация через `docker login` или OAuth (GitHub)
+
+**Полный путь к образу:**
+
+```bash
+# Короткая запись (по умолчанию Docker Hub)
+docker pull ubuntu:22.04
+
+# Полный путь (docker.io — адрес Docker Hub, library — пространство официальных образов)
+docker pull docker.io/library/ubuntu:22.04
+
+# Образ пользователя/организации
+docker pull evsq/getting-started-todo-app:latest
+```
+
+> **Рекомендация:** в production используйте частные реестры (Harbor, GHCR, GitLab Registry). Публичные образы из Docker Hub следует проверять: смотреть рейтинг, количество загрузок, дату последнего обновления.
+
+**Авторизация для push:**
+
+```bash
+# Вход в Docker Hub
+docker login
+
+# После входа можно отправлять образы в свой репозиторий
+docker tag my-app:latest evsq/my-app:v1
+docker push evsq/my-app:v1
+```
+
+При сборке образа с целью последующей отправки в реестр необходимо указывать имя пользователя в теге. Без этого Docker не сможет определить целевой реестр.
 
 ## Дополнительная информация
-
-**Безопасность:**
-- [Безопасность публичных реестров](./Docker_registries/public_registry_security.md) — угрозы, сканирование, подписи
-- [Сканирование уязвимостей](./Docker_security/vulnerability_scanning.md) — Trivy, Clair, Dockle
-
-**Версионирование:**
-- [Версионирование и тегирование образов](./Docker_registries/image_versioning_and_tagging.md) — стратегии, best practices
 
 **Сравнение реестров:**
 
@@ -138,6 +168,8 @@ docker pull harbor.example.com/library/my-app:v1
 | **Harbor** | Private | Trivy/Clair | Notary/Cosign | ✓ |
 | **GitLab Registry** | Private | Зависит от интеграции | — | — |
 
-**Связанные темы:**
+**См. также:**
+
+- [Безопасность публичных реестров](./Docker_registries/public_registry_security.md)
+- [Версионирование и тегирование образов](./Docker_registries/image_versioning_and_tagging.md)
 - [Команды Docker CLI](./docker_commands.md)
-- [Управление артефактами в CI/CD](../CI-CD/artifact_management.md)

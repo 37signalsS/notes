@@ -3,6 +3,7 @@
 ## Навигация
 
 **Основная информация:**
+
 - **[tcp_connection_refusal.md](./tcp_connection_refusal.md)** — сценарии отказа, RST, тайм-ауты
 - **[tcp_data_transfer.md](./tcp_data_transfer.md)** — передача данных, поток байт, PSH, seq/ack
 - **[tcp_connection_termination.md](./tcp_connection_termination.md)** — четырёхэтапное завершение
@@ -131,17 +132,20 @@
 ## Связанные документы
 
 **Детальное описание:**
+
 - **[Отказ в установке соединения](./tcp_connection_refusal.md)** — сценарии отказа, RST, тайм-ауты
 - **[Передача данных](./tcp_data_transfer.md)** — поток байт, PSH, seq/ack
 - **[Завершение соединения](./tcp_connection_termination.md)** — четырёхэтапное завершение
 - **[Состояния TCP](./tcp_connection_states.md)** — полная таблица состояний
 
 **Протоколы:**
+
 - **[Флаги TCP](../Header_Format/index.md)** — SYN, FIN, ACK, RST
 - **[Sequence Numbers](../reliability_mechanisms/sequence_numbers.md)** — нумерация байт
 - **[Acknowledgments](../reliability_mechanisms/acknowledgments.md)** — подтверждения
 
 **Оптимизация:**
+
 - **[TCP tuning](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — управление параметрами
 - **[TCP Fast Open](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_fast_open.md)** — сокращение handshake до 1 RTT
 - **[TIME_WAIT](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_timewait.md)** — управление состоянием TIME_WAIT

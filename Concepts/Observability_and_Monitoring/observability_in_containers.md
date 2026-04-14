@@ -36,6 +36,7 @@ Kubernetes предоставляет механизм проб для упра�
 **Sidecar-паттерн** — запуск вспомогательных контейнеров в том же Pod для сбора логов, метрик и трассировок.
 
 **Преимущества:**
+
 - Общий network namespace — агент видит весь трафик основного приложения
 - Общий volume — доступ к лог-файлам без проброса с хоста
 - Изоляция ответственности — приложение не содержит кода инструментирования
@@ -49,13 +50,14 @@ Kubernetes предоставляет механизм проб для упра�
 | **Vault Agent** | Инжекция секретов | Vault → volume приложения |
 | **Service Mesh Proxy** | Перехват сетевого трафика | Envoy (Istio), linkerd-proxy |
 
-> **Подробно:** Паттерн sidecar описан в [`Kubernetes/Base/Pod/pod_sidecar_pattern.md`](../../../Kubernetes/Base/Pod/pod_sidecar_pattern.md), реализации прокси — в [`Service_Mesh/proxy_sidecar.md`](../../../Service_Mesh/proxy_sidecar.md).
+> **Подробно:** Паттерн sidecar описан в [`Sidecar Patterns`](../../../Kubernetes/Base/Pod/pod_sidecar_patterns.md), реализации прокси — в [`Service_Mesh/proxy_sidecar.md`](../../../Service_Mesh/proxy_sidecar.md).
 
 #### 3. Стандартизация сбора данных
 
 **[OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md)** — стандарт инструментирования для сбора метрик, трассировок и логов.
 
 **Преимущества для контейнеров:**
+
 - Единый SDK для всех языков программирования
 - Автоматическое инструментирование (auto-instrumentation) для популярных фреймворков
 - Контекстная корреляция через `trace_id`, `span_id`
@@ -111,6 +113,7 @@ spec:
 ```
 
 **Принцип работы:**
+
 1. Основное приложение пишет логи в `/var/log/app/app.log`
 2. Sidecar монтирует тот же volume и читает логи
 3. Fluent Bit парсит, обогащает метаданными Pod и отправляет в централизованное хранилище (Loki, Elasticsearch)
@@ -142,7 +145,7 @@ spec:
 - **[Четыре столпа Observability](./four_pillars_of_observability.md)** — логи, метрики, трассировки, профилирование
 - **[Методологии мониторинга](./monitoring_methodologies.md)** — Golden Signals, RED, USE
 - **[Пробы (Probes)](../../../Kubernetes/Base/probes.md)** — детальное описание liveness, readiness, startup probe
-- **[Sidecar-паттерн](../../../Kubernetes/Base/Pod/pod_sidecar_pattern.md)** — использование sidecar-контейнеров в Pod
+- **[Sidecar-паттерн](../../../Kubernetes/Base/Pod/pod_sidecar_patterns.md)** — использование sidecar-контейнеров в Pod
 - **[OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md)** — стандарт инструментирования приложений
 
 ### Инструменты для контейнеров

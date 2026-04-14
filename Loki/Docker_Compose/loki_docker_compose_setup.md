@@ -208,19 +208,19 @@ mkdir -p monitoring/grafana/provisioning/datasources
 mkdir -p monitoring/promtail
 ```
 
-2. Размещение файлов конфигурации:
+1. Размещение файлов конфигурации:
    - `monitoring/docker-compose.yml`
    - `monitoring/grafana/provisioning/datasources/datasources.yaml`
    - `monitoring/promtail/config.yml`
 
-3. Запуск стека:
+2. Запуск стека:
 
 ```bash
 cd monitoring
 docker-compose up -d
 ```
 
-4. Проверка статуса контейнеров:
+1. Проверка статуса контейнеров:
 
 ```bash
 docker-compose ps
@@ -228,13 +228,13 @@ docker-compose ps
 docker ps --filter "name=monitoring"
 ```
 
-5. Проверка логов Loki:
+1. Проверка логов Loki:
 
 ```bash
 docker-compose logs loki
 ```
 
-6. Проверка в Grafana: откройте `http://localhost:3000`, перейдите в **Explore** → выберите источник **Loki** → выполните запрос `{}`.
+1. Проверка в Grafana: откройте `http://localhost:3000`, перейдите в **Explore** → выберите источник **Loki** → выполните запрос `{}`.
 
 ## Additional Information
 

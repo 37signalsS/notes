@@ -37,9 +37,9 @@
 └── playbook.yml
 ```
 
-* `main.py`: Код Flask-приложения.
-* `requirements.txt`: Зависимости (`flask`, `gunicorn`).
-* `app.service.j2`: Jinja2-шаблон для systemd-юнита.
+- `main.py`: Код Flask-приложения.
+- `requirements.txt`: Зависимости (`flask`, `gunicorn`).
+- `app.service.j2`: Jinja2-шаблон для systemd-юнита.
 
 ### Шаблон `templates/app.service.j2`
 

@@ -127,7 +127,7 @@ onINP(console.log);
 onCLS(console.log);
 ```
 
-3. **Google Analytics 4** — встроенная поддержка Web Vitals через web-vitals library + GA4 custom events.
+1. **Google Analytics 4** — встроенная поддержка Web Vitals через web-vitals library + GA4 custom events.
 
 ### Локальная диагностика через Chrome DevTools
 

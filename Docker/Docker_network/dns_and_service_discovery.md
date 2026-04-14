@@ -32,11 +32,13 @@ docker run -d --name web2 --network-alias web --network my-app-net nginx
 ```
 
 **DNS Round-Robin:**
+
 - При запросе `web` DNS возвращает оба IP в порядке ротации
 - Клиент использует первый адрес из списка
 - Простейшая балансировка без внешних инструментов
 
 **Динамическое обновление (для nginx):**
+
 ```nginx
 resolver 127.0.0.11 valid=10s;
 server {
@@ -70,16 +72,19 @@ docker run --dns 8.8.8.8 --dns-search corp.local --network my-app-net alpine nsl
 ### Базовое взаимодействие контейнеров
 
 1. **Создание пользовательской сети:**
+
    ```bash
    docker network create my-app-net
    ```
 
 2. **Запуск сервера:**
+
    ```bash
    docker run -d --name server --network my-app-net nginx
    ```
 
 3. **Проверка разрешения имени:**
+
    ```bash
    docker run --rm --network my-app-net alpine ping -c 4 server
    # PING server (172.20.0.2): 56 data bytes
@@ -89,12 +94,14 @@ docker run --dns 8.8.8.8 --dns-search corp.local --network my-app-net alpine nsl
 ### Диагностика DNS
 
 **Проверка `/etc/resolv.conf`:**
+
 ```bash
 docker exec my-container cat /etc/resolv.conf
 # nameserver 127.0.0.11
 ```
 
 **Проверка разрешения имени:**
+
 ```bash
 docker run --rm --network my-app-net alpine nslookup server
 # Name:      server
@@ -102,6 +109,7 @@ docker run --rm --network my-app-net alpine nslookup server
 ```
 
 **Тестирование connectivity:**
+
 ```bash
 docker run --rm --network my-app-net alpine wget -qO- http://server
 ```
@@ -109,6 +117,7 @@ docker run --rm --network my-app-net alpine wget -qO- http://server
 ### Сравнение: пользовательская сеть vs bridge по умолчанию
 
 **Bridge по умолчанию (DNS не работает):**
+
 ```bash
 docker run -d --name nginx1 nginx:alpine
 docker run --rm alpine ping -c 2 nginx1
@@ -116,6 +125,7 @@ docker run --rm alpine ping -c 2 nginx1
 ```
 
 **Пользовательская сеть (DNS работает):**
+
 ```bash
 docker network create test-net
 docker run -d --name nginx2 --network test-net nginx:alpine
@@ -129,6 +139,7 @@ docker run --rm --network test-net alpine ping -c 2 nginx2
 ## Дополнительная информация
 
 **Ограничения:**
+
 - DNS не работает в `bridge` по умолчанию — только в пользовательских сетях
 - Для внешних запросов требуется корректная настройка DNS на хосте
 - При изменении DNS на хосте может потребоваться перезапуск контейнеров

@@ -7,6 +7,7 @@
 **Применение:** Выпуск внутренних TLS-сертификатов для Ingress, mTLS и сервисов, которым должно доверять инфраструктурное ПО кластера.
 
 **Связанные темы:**
+
 - Приватный CA (self-signed): [Private_CA/scenarios.md](./Private_CA/scenarios.md)
 - Troubleshooting cert-manager: [Administration/troubleshooting.md](./Administration/troubleshooting.md)
 - Операции приватного CA (ротация, проверка): [Private_CA/operations.md](./Private_CA/operations.md)
@@ -64,6 +65,7 @@ kubectl create secret tls kubernetes-ca-secret \
 ```
 
 **Важно:**
+
 - Операция требует прав cluster-admin
 - Secret создаётся в namespace `cert-manager` (для ClusterIssuer) или в namespace Issuer
 - Ограничить доступ к Secret через RBAC

@@ -53,6 +53,7 @@ Warning  Failed     1m (x6 over 2m)    kubelet            Error: ImagePullBackOf
 ```
 
 **Интерпретация:**
+
 - `Failed to pull image` — kubelet попытался скачать образ, но получил ошибку от daemon (containerd/docker)
 - `ErrImagePull` — начальная ошибка pull
 - `Back-off pulling image` — kubelet повторяет попытку с увеличенной задержкой

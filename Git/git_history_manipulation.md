@@ -182,10 +182,10 @@ git filter-repo --path secret.txt --invert-paths
 **Важно:** Простое удаление файла или коммита **не достаточно**. История Git хранит все предыдущие версии, и злоумышленник с доступом к репозиторию может извлечь секрет из старых коммитов.
 
 **Профилактика:**
-- Используйте `.gitignore` для исключения файлов с секретами
-- Применяйте pre-commit хуки для проверки на секреты (например, [git-secrets](https://github.com/awslabs/git-secrets))
-- Храните секреты во внешних хранилищах (Vault, SOPS)
-- Подробнее: [Управление секретами](../Security/Concepts/secrets_management_overview.md)
+* Используйте `.gitignore` для исключения файлов с секретами
+* Применяйте pre-commit хуки для проверки на секреты (например, [git-secrets](https://github.com/awslabs/git-secrets))
+* Храните секреты во внешних хранилищах (Vault, SOPS)
+* Подробнее: [Управление секретами](../Security/Concepts/secrets_management_overview.md)
 
 #### `git reflog`: Журнал всех перемещений HEAD
 
@@ -231,17 +231,17 @@ git reset --hard ORIG_HEAD
 
 #### Альтернативные способы восстановления
 
-- **Local History в IDE:** VS Code, IntelliJ IDEA и другие IDE хранят локальную историю изменений файлов независимо от Git. Часто позволяет восстановить незакоммиченные изменения.
-- **Незакоммиченные изменения:** `git reset --hard` уничтожает их без следа. Если `reflog` и `fsck` не помогли, Local History IDE — последний шанс.
+* **Local History в IDE:** VS Code, IntelliJ IDEA и другие IDE хранят локальную историю изменений файлов независимо от Git. Часто позволяет восстановить незакоммиченные изменения.
+* **Незакоммиченные изменения:** `git reset --hard` уничтожает их без следа. Если `reflog` и `fsck` не помогли, Local History IDE — последний шанс.
 
 ## Дополнительная информация
 
 ### Официальные ресурсы
 
-- **Документация Git по reset:** [git-scm.com/docs/git-reset](https://git-scm.com/docs/git-reset)
-- **Документация Git по revert:** [git-scm.com/docs/git-revert](https://git-scm.com/docs/git-revert)
-- **Документация Git по reflog:** [git-scm.com/docs/git-reflog](https://git-scm.com/docs/git-reflog)
-- **git-filter-repo:** [github.com/newren/git-filter-repo](https://github.com/newren/git-filter-repo)
+* **Документация Git по reset:** [git-scm.com/docs/git-reset](https://git-scm.com/docs/git-reset)
+* **Документация Git по revert:** [git-scm.com/docs/git-revert](https://git-scm.com/docs/git-revert)
+* **Документация Git по reflog:** [git-scm.com/docs/git-reflog](https://git-scm.com/docs/git-reflog)
+* **git-filter-repo:** [github.com/newren/git-filter-repo](https://github.com/newren/git-filter-repo)
 
 ### Связанные темы
 

@@ -41,7 +41,7 @@
 - **RAM**: 512 МБ+
 - **Network**: Статический IP, доступный всем узлам
 
-Подробнее: [Keepalived + HAProxy](../kubeadm/ha_keepalived_haproxy/index.md).
+Подробнее: [Keepalived + HAProxy](../kubeadm/ha_concepts.md).
 
 ---
 
@@ -114,4 +114,4 @@
 
 ### Интеграция с документацией
 
-Требования к среде — **шаг 1** перед [подготовкой узлов](./k8s_ha_node_preparation.md). Архитектура HA описана в [обзоре кластера](./k8s_ha_cluster_overview.md), теория Control Plane — в [Control Plane architecture](../../Concepts/control_plane_architecture.md), балансировщик — в [Keepalived + HAProxy](../kubeadm/ha_keepalived_haproxy/index.md), порты — в [Kubernetes Ports and Protocols](https://kubernetes.io/docs/reference/ports-and-protocols/), CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).
+Требования к среде — **шаг 1** перед [подготовкой узлов](./k8s_ha_node_preparation.md). Архитектура HA описана в [обзоре кластера](./k8s_ha_cluster_overview.md), теория Control Plane — в [Control Plane architecture](../../Concepts/control_plane_architecture.md), балансировщик — в [Keepalived + HAProxy](../kubeadm/ha_concepts.md), порты — в [Kubernetes Ports and Protocols](https://kubernetes.io/docs/reference/ports-and-protocols/), CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

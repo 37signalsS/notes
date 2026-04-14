@@ -1,14 +1,14 @@
 # Minikube: Практические сценарии
 
-## Definitions
+## Определения
 
 **Minikube** — инструмент для запуска локального однонодового кластера Kubernetes. Используется для разработки, тестирования и обучения.
 
-**Драйвер Minikube** — механизм виртуализации для запуска кластера (docker, virtualbox, kvm2, hyperkit, hyper-v, none).
+> **Связанные концепции:** [Определения и архитектура Minikube](./minikube_concepts.md)
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Требования
 
@@ -18,14 +18,16 @@
 | **Minikube** | Последняя | Инструмент развёртывания |
 | **kubectl** | Любая | Управление кластером (опционально, встроен в Minikube) |
 | **CPU** | 2 ядра | Минимум, рекомендовано 4 |
-| **Память** | 2 ГБ | Минимум, рекомендовано 4-8 ГБ |
+| **Память** | 2 ГБ | Минимум, рекомендовано 4–8 ГБ |
 | **Диск** | 20 ГБ | Минимум, рекомендовано 40 ГБ |
+
+> **Примечание:** Подробная информация о драйверах, kubeconfig и архитектуре — в [minikube_concepts.md](./minikube_concepts.md).
 
 ### Поддерживаемые версии Kubernetes
 
 Minikube поддерживает последнюю версию Kubernetes + 6 предыдущих минорных версий.
 
-| Версия Kubernetes | Статус | EOL |
+| Версия Kubernetes | Статус | EOL (End of Life) |
 | :--- | :--- | :--- |
 | 1.33 | Активная поддержка | Апрель 2027 |
 | 1.32 | Активная поддержка | Декабрь 2026 |
@@ -35,41 +37,78 @@ Minikube поддерживает последнюю версию Kubernetes + 6
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Установка
+### Установка Docker Engine (Linux — Ubuntu/Debian)
 
-#### Docker Desktop
+> **Важно:** Minikube не работает со **snap-пакетом** Docker на Debian и производных. Используйте **deb-пакеты** из официального репозитория.
 
-**Требование:** Docker Desktop должен быть установлен и запущен.
+**1. Обновление репозиториев и установка зависимостей:**
 
-**Проверка:** `docker system info`
+```bash
+sudo apt update && sudo apt install -y ca-certificates curl gnupg
+```
 
-**Установка:**
+**2. Добавление GPG-ключа и репозитория Docker:**
+
+```bash
+# Создание директории для ключей
+sudo install -m 0755 -d /etc/apt/keyrings
+
+# Скачивание официального GPG-ключа Docker
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Добавление репозитория Docker
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+```
+
+**3. Установка Docker Engine:**
+
+```bash
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+**4. Добавление пользователя в группу docker (без sudo):**
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+> **Важно:** Без добавления в группу `docker` Minikube не сможет запустить контейнеры с нужными привилегиями.
+
+**5. Проверка статуса Docker:**
+
+```bash
+systemctl status docker
+# → Active: active (running)
+```
+
+> **Ресурсы ВМ:** Для стабильной работы Minikube рекомендуется виртуальная машина с **4 ГБ RAM** минимум. При 2 ГБ возможны ошибки при запуске кластера.
+
+### Установка Minikube
 
 | ОС | Команда |
 | :--- | :--- |
-| **macOS** | Скачать с [docker.com](https://www.docker.com/products/docker-desktop/) |
-| **Linux** | `curl -fsSL https://get.docker.com \| sh` |
-| **Windows** | Скачать с [docker.com](https://www.docker.com/products/docker-desktop/) |
-
-#### Minikube
-
-**macOS (Homebrew):** `brew install minikube`
-
-**Linux (binary):** `curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube`
-
-**Windows (Chocolatey):** `choco install minikube`
+| **macOS (Homebrew)** | `brew install minikube` |
+| **Linux (binary)** | `curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube` |
+| **Windows (Chocolatey)** | `choco install minikube` |
 
 **Проверка:** `minikube version`
 
-#### kubectl (опционально)
+### Установка kubectl (опционально)
 
 Minikube включает встроенную версию kubectl. Для установки отдельной версии:
 
-**macOS:** `brew install kubectl`
-
-**Linux:** `curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl`
+| ОС | Команда |
+| :--- | :--- |
+| **macOS** | `brew install kubectl` |
+| **Linux** | `curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl` |
 
 **Проверка:** `kubectl version --client`
 
@@ -83,93 +122,124 @@ Minikube включает встроенную версию kubectl. Для ус
 minikube start
 ```
 
-**Что происходит:** проверка драйвера, скачивание образа узла, создание контейнера/VM, инициализация Kubernetes, настройка kubeconfig.
+**Что происходит:** автоматический выбор драйвера, проверка драйвера, скачивание образа узла, создание контейнера/VM, инициализация Kubernetes (включая storage-provisioner и default-storageclass для имитации PV/PVC), настройка kubeconfig.
 
 **Результат:** кластер запущен, kubectl настроен на использование контекста `minikube`.
 
-### Запуск с параметрами
+> **Примечание:** Флаг `--driver=docker` необязателен — Minikube автоматически определяет доступный драйвер. Подробнее о драйверах — в [minikube_concepts.md](./minikube_concepts.md).
 
-**Выделение ресурсов:** `minikube start --cpus=4 --memory=8192mb`
+#### Запуск с драйвером none (bare metal)
 
-**Версия Kubernetes:** `minikube start --kubernetes-version=v1.33.0`
+```bash
+minikube start --driver=none
+```
 
-**Драйвер:** `minikube start --driver=virtualbox`
+**Требования:**
 
-**Сеть:** `minikube start --insecure-registry="10.0.0.0/24"`
+- Только Linux
+- Docker установлен как deb-пакет (не snap)
+- Запуск от root или пользователя с привилегиями
+
+> **Внимание:** Драйвер `none` устанавливает компоненты Kubernetes на хост-систему. Это может конфликтовать с другими сервисами и не рекомендуется для продакшн. Подробнее — в [minikube_concepts.md](./minikube_concepts.md).
+
+#### Запуск с параметрами
+
+| Параметр | Команда |
+| :--- | :--- |
+| **Выделение ресурсов** | `minikube start --cpus=4 --memory=8192mb` |
+| **Версия Kubernetes** | `minikube start --kubernetes-version=v1.33.0` |
+| **Драйвер** | `minikube start --driver=virtualbox` |
+| **Сеть (insecure registry)** | `minikube start --insecure-registry="10.0.0.0/24"` |
 
 ### Проверка состояния
 
-**Статус:** `minikube status`
+| Проверка | Команда |
+| :--- | :--- |
+| **Статус кластера** | `minikube status` |
+| **Узлы** | `minikube kubectl -- get nodes` или `kubectl get nodes` |
+| **Namespaces** | `minikube kubectl -- get namespaces` |
 
-**Узлы:** `minikube kubectl -- get nodes` или `kubectl get nodes`
+**Ожидаемый вывод для узлов:**
 
-**Ожидаемый вывод:**
 ```
 NAME       STATUS   ROLES           AGE   VERSION
 minikube   Ready    control-plane   2m    v1.33.0
 ```
 
-**Namespace:** `minikube kubectl -- get namespaces`
-
 ---
 
 ### Работа с кластером
 
-### Развёртывание приложений
+#### Развёртывание приложений
 
-**Деплоймент:** `kubectl create deployment nginx --image=nginx:1.27`
+```bash
+# Создание deployment
+kubectl create deployment nginx --image=nginx:1.27
 
-**Проверка:** `kubectl get pods`
+# Проверка подов
+kubectl get pods
 
-**Сервис:** `kubectl expose deployment nginx --port=80 --type=NodePort`
+# Создание сервиса
+kubectl expose deployment nginx --port=80 --type=NodePort
 
-**URL сервиса:** `minikube service nginx --url`
+# Получение URL сервиса
+minikube service nginx --url
+```
 
-### Доступ к Dashboard
+#### Доступ к Dashboard
 
-`minikube dashboard` — открывает Kubernetes Dashboard в браузере.
+```bash
+minikube dashboard
+```
 
-### SSH-доступ к узлу
+Открывает Kubernetes Dashboard в браузере.
 
-`minikube ssh` — подключение к узлу.
+#### SSH-доступ к узлу
+
+```bash
+minikube ssh
+```
 
 **Внутри узла:**
-- Проверка компонентов: `kubectl get pods -n kube-system`
-- Логи kubelet: `journalctl -u kubelet`
 
-### Копирование файлов
+```bash
+# Проверка компонентов
+kubectl get pods -n kube-system
 
-**В кластер:** `minikube cp ./config.yaml /home/docker/config.yaml`
+# Логи kubelet
+journalctl -u kubelet
+```
 
-**Из кластера:** `minikube cp /var/log/pods/mypod.log ./logs/`
+#### Копирование файлов
+
+```bash
+# В кластер
+minikube cp ./config.yaml /home/docker/config.yaml
+
+# Из кластера
+minikube cp /var/log/pods/mypod.log ./logs/
+```
 
 ---
 
 ### Управление кластером
 
-### Остановка и запуск
-
-**Остановка (сохранение данных):** `minikube stop`
-
-**Запуск:** `minikube start`
-
-### Перезапуск
-
-`minikube restart`
-
-### Удаление кластера
-
-**Текущий:** `minikube delete`
-
-**Конкретный:** `minikube delete -p cluster-name`
-
-**Все:** `minikube delete --all`
+| Операция | Команда |
+| :--- | :--- |
+| **Остановка (сохранение данных)** | `minikube stop` |
+| **Запуск** | `minikube start` |
+| **Перезапуск** | `minikube restart` |
+| **Удаление текущего кластера** | `minikube delete` |
+| **Удаление конкретного кластера** | `minikube delete -p cluster-name` |
+| **Удаление всех кластеров** | `minikube delete --all` |
 
 ---
 
 ### Работа с аддонами
 
-### Список аддонов
+> **Полный список аддонов и их назначение** — в [minikube_concepts.md](./minikube_concepts.md).
+
+#### Просмотр списка аддонов
 
 ```bash
 minikube addons list
@@ -180,49 +250,68 @@ minikube addons list
 ```
 |         ADDON NAME          | PROFILE  |    STATUS    |
 |-----------------------------|----------|--------------|
-| dashboard                   | minikube | ✅ enabled   |
-| default-storageclass        | minikube | ✅ enabled   |
-| ingress                     | minikube | 💡 disabled  |
-| metrics-server              | minikube | 💡 disabled  |
-| registry                    | minikube | 💡 disabled  |
-| storage-provisioner         | minikube | ✅ enabled   |
+| dashboard                   | minikube | enabled      |
+| default-storageclass        | minikube | enabled      |
+| ingress                     | minikube | disabled     |
+| metrics-server              | minikube | disabled     |
+| registry                    | minikube | disabled     |
+| storage-provisioner         | minikube | enabled      |
 ```
 
-### Включение аддонов
-
-**Ingress:** `minikube addons enable ingress`
-
-**Metrics-server:** `minikube addons enable metrics-server`
-
-**Registry:** `minikube addons enable registry`
-
-### Настройка Ingress
+#### Включение аддонов
 
 ```bash
+# Ingress-контроллер
 minikube addons enable ingress
+
+# Metrics-server
+minikube addons enable metrics-server
+
+# Локальный Docker Registry
+minikube addons enable registry
+```
+
+#### Настройка Ingress
+
+```bash
+# Включение аддона
+minikube addons enable ingress
+
+# Проверка подов ingress-nginx
 kubectl get pods -n ingress-nginx
+
+# Применение Ingress-ресурса
 kubectl apply -f ingress.yaml
 ```
 
 ---
 
-### Работа с изображениями Docker
+### Работа с образами Docker
 
-### Загрузка образов в Minikube
+#### Сборка образов внутри Minikube
 
-**Сборка внутри Minikube:**
 ```bash
+# Переключение на Docker-демон Minikube
 eval $(minikube docker-env)
+
+# Сборка образа
 docker build -t myapp:1.0 .
+
+# Развёртывание из локального образа
 kubectl create deployment myapp --image=myapp:1.0
 ```
 
-### Использование локального Registry
+#### Использование локального Registry
 
 ```bash
+# Включение registry-аддона
 minikube addons enable registry
+
+# Тегирование и отправка образа
 docker tag myapp:1.0 localhost:5000/myapp:1.0
 docker push localhost:5000/myapp:1.0
+
+# Развёртывание из registry
 kubectl create deployment myapp --image=localhost:5000/myapp:1.0
 ```
 
@@ -230,14 +319,15 @@ kubectl create deployment myapp --image=localhost:5000/myapp:1.0
 
 ### Multi-node кластеры
 
-### Создание multi-node кластера
+#### Создание multi-node кластера
 
 ```bash
 minikube start --nodes=3 --cpus=2 --memory=4096mb
 kubectl get nodes
 ```
 
-**Вывод:**
+**Ожидаемый вывод:**
+
 ```
 NAME           STATUS   ROLES           AGE   VERSION
 minikube       Ready    control-plane   5m    v1.33.0
@@ -245,23 +335,45 @@ minikube-m02   Ready    <none>          4m    v1.33.0
 minikube-m03   Ready    <none>          3m    v1.33.0
 ```
 
-**Добавление узлов:** `minikube node add --worker`
-
-**Удаление узлов:** `minikube node remove minikube-m03`
+| Операция | Команда |
+| :--- | :--- |
+| **Добавление узла** | `minikube node add --worker` |
+| **Удаление узла** | `minikube node remove minikube-m03` |
 
 ---
 
 ### Отладка и мониторинг
 
-**Просмотр логов:**
-- Все поды в namespace: `kubectl logs -n kube-system -l app=coredns`
-- Конкретный под: `kubectl logs <pod-name> -n <namespace>`
+#### Просмотр логов
 
-**Описание ресурсов:**
-- Узел: `kubectl describe node minikube`
-- Под: `kubectl describe pod <pod-name>`
+```bash
+# Все поды в namespace по метке
+kubectl logs -n kube-system -l app=coredns
 
-**Метрики ресурсов:** `minikube addons enable metrics-server`, затем `kubectl top nodes`, `kubectl top pods`
+# Конкретный под
+kubectl logs <pod-name> -n <namespace>
+```
+
+#### Описание ресурсов
+
+```bash
+# Информация об узле
+kubectl describe node minikube
+
+# Информация о поде
+kubectl describe pod <pod-name>
+```
+
+#### Метрики ресурсов
+
+```bash
+# Включение metrics-server
+minikube addons enable metrics-server
+
+# Метрики узлов и подов
+kubectl top nodes
+kubectl top pods
+```
 
 ---
 
@@ -272,14 +384,24 @@ minikube-m03   Ready    <none>          3m    v1.33.0
 | `docker system info` не работает | Docker не запущен | Запустить Docker Desktop |
 | `Unable to connect to the server` | Кластер остановлен | `minikube start` |
 | `context "minikube" does not exist` | kubeconfig повреждён | `minikube start` (пересоздаст) |
-| Pod в статусе `Pending` | Нет ресурсов | `minikube stop && minikube start --cpus=4 --memory=8192mb` |
+| Под в статусе `Pending` | Нет ресурсов | `minikube stop && minikube start --cpus=4 --memory=8192mb` |
 | `ImagePullBackOff` | Образ недоступен | Проверить имя образа, использовать `eval $(minikube docker-env)` |
 
 ---
 
-## Additional Information
+## Дополнительная информация
+
+### Рекомендации по поиску инструкций
+
+Официальная документация Minikube не всегда содержит полные пошаговые инструкции для конкретных ОС. Рекомендуется использовать детализированные поисковые запросы:
+
+- **Пример:** `install minikube ubuntu 22.04` вместо общей страницы установки
+- Кастомные инструкции часто включают важные нюансы (добавление пользователя в группу docker, работа с репозиториями), отсутствующие в официальной документации
+
+---
+
+### Смотрите также
 
 - **Официальная документация:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
 - **GitHub:** [kubernetes/minikube](https://github.com/kubernetes/minikube)
 - **Определения и концепции:** [minikube_concepts.md](./minikube_concepts.md)
-- **kubeconfig и подключение:** [../../Operations/kubeconfig_and_connection.md](../../Operations/kubeconfig_and_connection.md)

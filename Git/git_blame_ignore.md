@@ -55,7 +55,7 @@ git config --global blame.ignoreRevsFile .git-blame-ignore-revs
 touch .git-blame-ignore-revs
 ```
 
-2. Добавьте хэши коммитов с массовыми изменениями:
+1. Добавьте хэши коммитов с массовыми изменениями:
 
 ```bash
 # Найти коммиты с большим количеством изменений
@@ -65,13 +65,13 @@ git log --oneline --all -- '*.py' | head -20
 git show --stat a1b2c3d4
 ```
 
-3. Настройте локальное игнорирование:
+1. Настройте локальное игнорирование:
 
 ```bash
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
-4. Закоммитьте файл:
+1. Закоммитьте файл:
 
 ```bash
 git add .git-blame-ignore-revs
@@ -115,16 +115,19 @@ git blame --ignore-revs-file .git-blame-ignore-revs --color-lines file.py
 ### Сценарий 4: Интеграция с GitHub и GitLab
 
 **GitHub:**
+
 - Автоматически читает `.git-blame-ignore-revs` из репозитория
 - Не требует дополнительной конфигурации
 - Работает в веб-интерфейсе и API
 
 **GitLab:**
+
 - Поддержка с версии 15.4+
 - Требуется включить в настройках проекта
 - Файл должен быть в корне репозитория
 
 **Gitea / Forgejo:**
+
 - Автоматическое чтение из репозитория
 - Требуется версия 1.18+
 

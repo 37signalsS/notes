@@ -54,7 +54,96 @@ Kubernetes присваивает подам один из трёх классо
 2. **`Burstable`**: Выселяются после `BestEffort`.
 3. **`Guaranteed`**: Выселяются в последнюю очередь, только если узел всё ещё находится под давлением после удаления всех подов других классов.
 
+#### Поведение подов и контейнеров при нехватке ресурсов
+
+* **Ресурсы пода = сумма ресурсов всех контейнеров.** Requests и limits пода вычисляются как сумма requests и limits каждого контейнера в поде.
+* **Превышение `limits` контейнера:** Если отдельный контейнер превышает свой `limits.memory` или `limits.cpu`, kubelet перезапускает только этот контейнер, не затрагивая остальные в поде.
+* **Node Pressure (нехватка ресурсов на узле):** При эвакуации из-за нехватки ресурсов **все контейнеры в поде** будут терминализированы. Под будет пересоздан контролирующим объектом (Deployment, ReplicaSet и т.д.), обычно на другой ноде. Если под создан напрямую (без owner reference), он **не будет пересоздан** после eviction.
+
 Таким образом, QoS напрямую влияет на стабильность и предсказуемость работы пода в условиях ограниченных ресурсов. Для повышения отказоустойчивости рекомендуется использовать совместно с [Affinity и Anti-Affinity](./affinity.md) для распределения подов по разным узлам и зонам.
+
+### Static CPU Manager Policy
+
+Kubernetes поддерживает **Static CPU Management Policy** — механизм, позволяющий подам с QoS-классом `Guaranteed` получать **эксклюзивный доступ к физическим ядрам CPU** на ноде.
+
+#### Как это работает
+
+* При включённой политике `static` (настраивается в kubelet конфигурации) ядра CPU распределяются между подами через **cpuset cgroup controller**.
+* Поды с QoS `Guaranteed`, у которых `requests.cpu` указан в **целых ядрах** (например, `cpu: "2"`), получают эксклюзивные физические ядра.
+* Другие поды (Burstable, BestEffort) **не могут** использовать ядра, зарезервированные за Guaranteed подами.
+
+#### Требования для использования
+
+1. QoS-класс пода должен быть **`Guaranteed`** (`requests` == `limits` для всех контейнеров).
+2. `requests.cpu` должен быть указан в **целых числах** (например, `cpu: "2"`, а не `cpu: "500m"`).
+3. В kubelet должна быть включена политика `cpuManagerPolicy: static`.
+
+```yaml
+# /var/lib/kubelet/config.yaml
+cpuManagerPolicy: static
+cpuManagerReconcilePeriod: 5s
+```
+
+#### Сценарии использования
+
+* Базы данных, работающие с интенсивными CPU-операциями.
+* Сетевые функции (DPDK, сервис-меши), чувствительные к задержкам.
+* Приложения, требующие предсказуемой производительности без «шумных соседей».
+
+> **Важно:** Static CPU Policy не защищает от OOMKill при превышении `limits.memory`.
+
+### Memory QoS через cgroups v2 (Alpha, с Kubernetes 1.22)
+
+Начиная с Kubernetes 1.22 (alpha), Memory QoS использует **cgroups v2** для более точного управления памятью. Этот механизм заменяет грубый OOMKill на троттлинг и резервирование.
+
+#### Ключевые параметры cgroups v2
+
+| Параметр | Аналог в Kubernetes | Описание |
+|----------|--------------------|----------|
+| **`memory.min`** | `requests.memory` | Резервирует память для контейнера. Эта память **никогда не будет перераспределена** другим подам. |
+| **`memory.high`** | `limits.memory` | При приближении к лимиту ядро начинает **троттлить** приложение, замедляя аллокации, вместо мгновенного OOMKill. Даёт приложению шанс освободить память. |
+
+#### Отличия от текущей модели (cgroups v1)
+
+| Характеристика | cgroups v1 (текущая модель) | cgroups v2 (Memory QoS) |
+|----------------|----------------|----------------|----------|
+| **Превышение лимита** | Мгновенный OOMKill | Троттлинг → попытка освобождения → OOMKill |
+| **Резервирование** | Нет (только `oom_score_adj`) | `memory.min` гарантирует резерв |
+| **Поведение при пике** | Внезапная смерть контейнера | Плавное замедление приложения |
+
+> **Важно:** Memory QoS — alpha-фича. Механизм может измениться или быть удалён в будущих версиях Kubernetes. QoS-классы (`Guaranteed`, `Burstable`, `BestEffort`) и Memory QoS — **разные механизмы**, которые дополняют друг друга в управлении ресурсами.
+
+### Preemption и QoS
+
+**Preemption (вытеснение при планировании)** — механизм, при котором планировщик (`kube-scheduler`) может удалить низкоприоритетные поды с ноды, чтобы разместить ожидающий под с более высоким приоритетом.
+
+* **Preemption НЕ учитывает QoS-классы.** При вытеснении используется только **Pod Priority** (`priorityClassName`).
+* Под с QoS `BestEffort` но высоким `priorityClassName` может вытеснить под с QoS `Guaranteed` но низким приоритетом.
+* QoS-классы влияют только на **Node Pressure Eviction** (kubelet), но не на **Preemption** (scheduler).
+
+Подробнее: [PriorityClass](../Concepts/priorityclass.md).
+
+### Автоматическое назначение requests
+
+Kubernetes применяет правила автоматического назначения `requests` на основе указанных `limits`:
+
+* **Если указан `limits.cpu`, но не указан `requests.cpu`** → Kubernetes автоматически устанавливает `requests.cpu == limits.cpu`.
+* **Если указан `limits.memory`, но не указан `requests.memory`** → `requests.memory` **НЕ** устанавливается автоматически (остаётся пустым).
+* **Если указаны только `requests` без `limits`** → `limits` **НЕ** устанавливаются автоматически.
+
+> **Следствие:** Под с `limits.cpu: "700m"` и `requests.memory: "200Mi"` (без `limits.memory`) получит QoS-класс `Burstable`, так как `requests.memory != limits.memory` (лимит памяти отсутствует).
+
+### Multi-Container Pod и QoS
+
+В поде с несколькими контейнерами QoS-класс определяется **для всего пода целиком**, исходя из ресурсов **каждого** контейнера:
+
+* **`Guaranteed`** → **Каждый** контейнер в поде должен иметь `requests` == `limits` для CPU и памяти.
+* **`Burstable`** → Если хотя бы один контейнер не соответствует критериям `Guaranteed`, но у любого контейнера есть `requests`.
+* **`BestEffort`** → Если **ни у одного** контейнера в поде нет `requests` и `limits`.
+
+> **Важно:** Если в поде из двух контейнеров первый имеет `requests.memory: "128Mi"`, а второй не имеет никаких ресурсов — под получит `Burstable`, а не `Guaranteed`.
+
+> **Best Practice:** При создании multi-container подов всегда указывайте `requests` и `limits` для **каждого** контейнера, иначе под не получит класс `Guaranteed`.
 
 ### Автоматизация и ограничения ресурсов
 
@@ -123,6 +212,20 @@ spec:
     - name: main
       image: nginx
       # requests и limits не указаны
+```
+
+### Проверка QoS-класса пода
+
+```bash
+# Быстрая проверка QoS-класса
+kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
+# → Guaranteed / Burstable / BestEffort
+
+# Все поды с BestEffort (кандидаты на eviction)
+kubectl get pods --all-namespaces -o json | jq '.items[] | select(.status.qosClass=="BestEffort") | {name: .metadata.name, ns: .metadata.namespace}'
+
+# Распределение подов по QoS в кластере
+kubectl get pods --all-namespaces -o json | jq '[.items[].status.qosClass] | group_by(.) | map({class: .[0], count: length})'
 ```
 
 ### Пример: `LimitRange`
@@ -194,4 +297,10 @@ spec:
   * **Корректировка:** Уменьшайте `requests` и `limits` для более эффективного использования ресурсов или увеличивайте их, если приложение часто упирается в лимиты, после оптимизации кода.
 
 * **In-Place Pod Resize**
-  * Начиная с Kubernetes 1.27 (alpha), доступна функция [In-Place Pod Resize](../Autoscaling/in_place_pod_resize.md), позволяющая изменять `requests` и `limits` у запущенных подов без их пересоздания. В Kubernetes 1.33+ функция находится в статусе beta. Это позволяет корректировать ресурсы без простоя приложения.
+  * Начиная с Kubernetes 1.27 (alpha), доступна функция [In-Place Pod Resize](../Autoscaling/in_place_pod_resize.md), позволяющая изменять `requests` и `limits` у запущенных подов без их пересоздания. В Kubernetes 1.33 функция перешла в статус beta, а в **Kubernetes 1.35 стала GA (стабильной)**. Это позволяет корректировать ресурсы без простоя приложения.
+
+### См. также
+
+* [OOM Killer в контейнерах](../../Linux/Core/processes/oom_killer_containers.md) — отличие OOMKill от Eviction
+* [Pod Evicted](../../Kubernetes/Troubleshooting/Common_Errors/PodEvicted/definitions.md) — Node Pressure Eviction, пороги, диагностика
+* [PriorityClass](../Concepts/priorityclass.md) — приоритеты подов и Preemption

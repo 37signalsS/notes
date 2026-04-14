@@ -35,6 +35,7 @@
 ### Базовые операции
 
 **Список сетей:**
+
 ```bash
 docker network ls
 # NETWORK ID     NAME      DRIVER    SCOPE
@@ -44,6 +45,7 @@ docker network ls
 ```
 
 **Создание сети:**
+
 ```bash
 # Стандартная bridge-сеть
 docker network create my-bridge-net
@@ -59,18 +61,21 @@ docker network create -d bridge --subnet=172.20.0.0/16 --subnet=172.21.0.0/16 mu
 ```
 
 **Инспекция сети:**
+
 ```bash
 docker network inspect my-bridge-net
 # Вывод: драйвер, подсеть, шлюз, список подключенных контейнеров
 ```
 
 **Удаление сети:**
+
 ```bash
 docker network rm my-bridge-net
 # Ошибка, если к сети подключен хотя бы один контейнер
 ```
 
 **Очистка неиспользуемых сетей:**
+
 ```bash
 docker network prune
 # Требует подтверждения
@@ -79,22 +84,26 @@ docker network prune
 ### Полный жизненный цикл сети
 
 1. **Создание сети для приложения:**
+
    ```bash
    docker network create my-app-net
    ```
 
 2. **Запуск контейнера в сети:**
+
    ```bash
    docker run -d --name server --network my-app-net nginx
    ```
 
 3. **Проверка подключения:**
+
    ```bash
    docker network inspect my-app-net
    # Секция "Containers" покажет контейнер "server"
    ```
 
 4. **Подключение второго контейнера "на лету":**
+
    ```bash
    docker run -d --name client alpine sleep 3600
    docker network connect my-app-net client
@@ -102,6 +111,7 @@ docker network prune
    ```
 
 5. **Отключение и очистка:**
+
    ```bash
    docker network disconnect my-app-net client
    docker stop server client && docker rm server client

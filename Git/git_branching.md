@@ -242,12 +242,12 @@ git rebase -i HEAD~3 # Пример для последних 3 коммитов
 
 ### Официальные ресурсы
 
-- **Документация Git по ветвлению:** [git-scm.com/book/ru/v2/Основы-Git-Ветвление](https://git-scm.com/book/ru/v2/Основы-Git-Ветвление)
-- **Git Branching Model:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
+* **Документация Git по ветвлению:** [git-scm.com/book/ru/v2/Основы-Git-Ветвление](https://git-scm.com/book/ru/v2/Основы-Git-Ветвление)
+* **Git Branching Model:** [nvie.com/posts/a-successful-git-branching-model](https://nvie.com/posts/a-successful-git-branching-model)
 
 ### Интерактивные тренажёры
 
-- **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления, слияния и перебазирования.
+* **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU)** — веб-тренажёр для отработки команд ветвления, слияния и перебазирования.
 
 ### Связанные темы
 

@@ -76,6 +76,7 @@ sudo kubeadm init \
 ### Присоединение узлов
 
 **Control-plane узлы:**
+
 ```bash
 sudo kubeadm join 192.168.122.189:7443 \
   --token <token> \
@@ -85,6 +86,7 @@ sudo kubeadm join 192.168.122.189:7443 \
 ```
 
 **Worker-узлы:**
+
 ```bash
 sudo kubeadm join 192.168.122.189:7443 \
   --token <token> \
@@ -160,6 +162,56 @@ kubeadm init phase upload-certs --upload-certs
 | `certificate-key expired` | Токен устарел (>24ч) | `kubeadm init phase upload-certs --upload-certs` |
 | `control-plane-endpoint unreachable` | Балансировщик не работает | Проверить HAProxy/Keepalived |
 | `token expired` | Токен устарел (>24ч) | `kubeadm token create --print-join-command` |
+| `CRI container runtime not running` | containerd не запущен или misconfigured | `sudo systemctl status containerd`, проверить config.toml |
+| `nodes NotReady after init` | CNI-плагин не установлен | Установить CNI (Calico/Flannel), см. [Руководство по установке](./kubeadm_installation_guide.md#установка-cni-плагина) |
+| `pods Pending indefinitely` | Ноды NotReady или taint | Проверить `kubectl describe pod`, убедиться что CNI работает |
+| `sandbox image mismatch` | Версия pause-образа не соответствует | Обновить containerd или настроить `sandbox_image` в config.toml |
+
+### Диагностика через Conditions ноды
+
+Для определения причины статуса `NotReady`:
+
+```bash
+kubectl describe node <node-name>
+```
+
+**Ключевые Conditions:**
+
+| Condition | Status=False означает |
+| :--- | :--- |
+| `Ready` | Нода не готова (kubelet не отвечает, CNI не инициализирован) |
+| `MemoryPressure` | Нет давления на память |
+| `DiskPressure` | Нет давления на диск |
+| `PIDPressure` | Нет давления на PID |
+
+**Пример вывода при проблеме с CNI:**
+
+```
+Conditions:
+  Type    Status  Reason
+  ----    ------  ------
+  Ready   False   KubeletNotReady
+  ...
+  Network plugin not ready
+```
+
+### Полная очистка узла
+
+Если инициализация провалилась и требуется начать заново:
+
+```bash
+# Сброс кубера
+sudo kubeadm reset --force
+
+# Очистка остаточных данных
+sudo rm -rf /etc/kubernetes/*
+sudo rm -rf /var/lib/etcd/*
+sudo rm -rf /var/lib/kubelet/*
+sudo rm -rf /var/lib/cni/*
+
+# Перед повторным init — удалить CNI манифесты
+kubectl delete -f <cni-manifest>
+```
 
 ### Интеграция с процессом развёртывания HA кластера
 

@@ -57,11 +57,13 @@ dig TXT _acme-challenge.<domain> +short
 **Решение:**
 
 1. Переключиться на staging-сервер для отладки:
+
    ```yaml
    spec:
      acme:
        server: https://acme-staging-v02.api.letsencrypt.org/directory
    ```
+
 2. Дождаться сброса лимита (1 час для Failed Validation, 7 дней для Certificates per Domain)
 3. Проверить конфигурацию на staging перед повторным запросом в production
 

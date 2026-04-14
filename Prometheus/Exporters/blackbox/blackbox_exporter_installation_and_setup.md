@@ -248,6 +248,7 @@ blackbox_exporter --config.file=/etc/blackbox_exporter/blackbox.yml --dry-run
 ```
 
 **Проверка не выполняется:**
+
 - Убедиться в доступности цели из сети blackbox_exporter
 - Проверить достаточность таймаута
 - Проверить логи на ошибки

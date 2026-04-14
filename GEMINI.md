@@ -16,6 +16,7 @@
 ### 0.2 Search for Duplicates
 
 Search by:
+
 - Key terms (exact and stemmed)
 - Technologies / protocols / standards
 - Semantic equivalents
@@ -36,6 +37,7 @@ Topics often overlap — always check adjacent domains:
 3. In all other files — replace duplicate content with a link to SSoT
 
 **If SSoT does not exist:**
+
 - Create it in the most specific domain directory
 - Move verified content from duplicates
 - If uncertain — ask user before creating
@@ -74,6 +76,7 @@ Priority — knowledge extraction and application, not archiving.
 - **Digits:** allowed only in root-level files (`2.md`, `3.md`); subdirectory files must not contain digits
 
 **EXCEPTION — `Interview_and_Work/` directory:**
+
 - Files may contain Cyrillic characters
 - Do NOT rename or suggest renaming files in this directory
 
@@ -115,30 +118,34 @@ Priority — knowledge extraction and application, not archiving.
 ## 5. Prohibited Actions (Single Source — all prohibitions are here)
 
 ### SSoT & duplicates
+
 - No modification/creation without prior SSoT-analysis (§0)
 - No unresolved duplicates — merge or link to SSoT
 - No duplicate facts outside SSoT
 
 ### Content integrity
+
 - No hypotheses without confirmation — state "insufficient data" (§7)
 - No guessing at technical details — ask the user instead
 - No secrets / tokens / passwords in knowledge-base files
 - No placeholder / «to be filled» content — file must be complete or not exist
 
 ### Tool discipline
+
 - No `edit` without prior `read_file` on the same file (§6)
 - No automatic git commits — only by explicit user request
 
 ### File management
+
 - No link lists >5 items at end of files; curated "See also" (2–3 links) is acceptable
 - No broken links — validate after every edit (§10)
 - No circular references without explicit purpose
 - No renaming files in `Interview_and_Work/`
 - No spaces or Cyrillic in filenames outside `Interview_and_Work/`
 - No modifying binary originals (.docx, .pdf, .xlsx) — extract key points to .md instead
-- No modifying auto-generated files (`index.md`)
 
 ### Scope
+
 - No modifying infrastructure files (`.git/`, `.qwen/`, `.gitignore`, scripts) unless explicitly requested
 - No restructuring >3 directories in one session without user confirmation
 - No parallel tool calls >4 per batch
@@ -161,6 +168,7 @@ Priority — knowledge extraction and application, not archiving.
 **Parallel calls:** allowed when queries are fully independent; limit 4 per batch (§5).
 
 **Fallbacks:**
+
 - `websearch` unavailable → internal sources only, cap confidence at 9 (§7)
 - `grep_search` unavailable → `read_file` + manual search
 
@@ -247,18 +255,20 @@ Priority — knowledge extraction and application, not archiving.
 | Merge trigger | <30 lines AND >50% overlap with sibling |
 
 **Exceptions:**
+
 - Reference/cheatsheet files may be <30 lines
 - Files <10 lines → strong merge candidate
-- Auto-generated files (`index.md`) exempt from all thresholds
 
 ### 9.2 Split Rules
 
 **Split only when ALL of the following are true:**
+
 1. File exceeds 300 lines
 2. Subtopics can each stand alone (≥30 lines, self-contained, independently useful)
 3. Subtopics are **not tightly coupled**
 
 **Tightly coupled = do NOT split** — when:
+
 - One subtopic requires the other to make sense (e.g., commands + their networking context for the same tool)
 - Splitting would force readers to constantly jump between files
 - The topics share the same primary entity (one technology, one protocol)
@@ -270,12 +280,14 @@ Each split result must keep a link to the parent file.
 ### 9.3 Merge Rules
 
 **Merge when any of the following apply:**
+
 - File <30 lines with >50% overlap with a sibling
 - Same-directory files with similar naming
 - Cross-references between files occur >3 times
 - Files are semantic duplicates
 
 **Procedure:**
+
 1. Identify all files for merge
 2. Choose best location (primary domain, most specific)
 3. Combine using structure: `Definitions → Basic Concepts → Practical Scenarios → Additional Information`
@@ -294,6 +306,7 @@ Each split result must keep a link to the parent file.
 | Anchor | `[Section](#section-name)` | Within file |
 
 **Link Validation (MANDATORY after any edit):**
+
 - Verify all internal links resolve correctly
 - Check: relative paths, anchor links, cross-references
 - Fix broken links before completing the edit
@@ -345,6 +358,7 @@ Each split result must keep a link to the parent file.
 ### 12.2 Clarifying Questions — When to Ask
 
 **Ask when:**
+
 - Request allows >1 valid interpretation
   - *Example:* "update the networking file" — which one? `Linux/Networking` or `Docker/Docker_network`?
 - SSoT choice is ambiguous (>2 equally relevant candidates)
@@ -355,6 +369,7 @@ Each split result must keep a link to the parent file.
   - *Example:* "add K8s ingress examples" — which version? which ingress controller?
 
 **Do NOT ask when:**
+
 - Request is unambiguous and within scope
 - Information can be obtained via tools (`grep_search`, `read_file`, `glob`)
 - Answer is trivial
@@ -380,4 +395,3 @@ When rules conflict, apply in this order:
 
 > **Example:** user asks to create a file that would duplicate an existing SSoT →
 > SSoT rule (2) wins over user intent (3): stop, explain conflict, propose merge.
-

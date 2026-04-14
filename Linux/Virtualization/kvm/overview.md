@@ -78,6 +78,7 @@ lsmod | grep -i kvm
 ```
 
 Ожидаемый вывод `lsmod`:
+
 - `kvm_intel` (или `kvm_amd`)
 - `kvm` (базовый модуль)
 

@@ -24,6 +24,6 @@
 
 ## Additional Information
 
-**См. также:** [обзор Kubespray](../overview.md), [базовая установка](../kubespray_install/basic_concepts.md), [ручная настройка HA с kubeadm](../../kubeadm/ha_keepalived_haproxy/ha_concepts.md), [развертывание в закрытом контуре](../offline_installation/offline_definitions.md).
+**См. также:** [обзор Kubespray](../overview.md), [базовая установка](../kubespray_install/basic_concepts.md), [ручная настройка HA с kubeadm](../../kubeadm/ha_concepts.md), [развертывание в закрытом контуре](../offline_installation/offline_definitions.md).
 
 **Внешние ресурсы:** [документация Kubespray](https://kubespray.io/), [GitHub](https://github.com/kubernetes-sigs/kubespray), [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798).

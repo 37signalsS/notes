@@ -5,6 +5,7 @@
 **Приватный CA** — собственный центр сертификации, созданный внутри кластера Kubernetes для выпуска сертификатов, доверенных только внутри периметра кластера. Отличается от CA кластера ([cluster_ca.md](../cluster_ca.md)) источником доверия: приватный CA использует self-signed корневой сертификат, тогда как CA кластера опирается на `/etc/kubernetes/pki/ca.crt`.
 
 **Основные сценарии применения:**
+
 - mTLS между сервисами внутри кластера
 - Сертификаты для OpenSearch, Elasticsearch, Kafka
 - Изолированные PKI-цепочки с полным контролем
@@ -42,6 +43,7 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 ## Practical Scenarios
 
 Практические сценарии создания приватного CA описаны в [scenarios.md](./scenarios.md):
+
 - Базовый приватный CA в namespace
 - CA для OpenSearch/Elasticsearch с PKCS8
 - ClusterIssuer для общекластерного CA

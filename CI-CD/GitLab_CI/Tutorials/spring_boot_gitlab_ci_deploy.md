@@ -110,6 +110,7 @@ cat ~/.ssh/id_rsa
 | `ENV_FILE` | File | Переменные для docker-compose |
 
 Пример содержимого `ENV_FILE`:
+
 ```
 TEST_SERVICE_PORT=8080
 OPEN_API_TITLE=My Spring App

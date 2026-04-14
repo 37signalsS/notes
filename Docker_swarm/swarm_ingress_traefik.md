@@ -37,6 +37,7 @@
 ```
 
 **Требования:**
+
 - Общая `overlay`-сеть для Traefik и приложений
 - Docker Socket volume (только для manager-узлов)
 - Внешний доступ на порты 80, 443, 8080 (dashboard)
@@ -98,6 +99,7 @@ networks:
 ```
 
 **Развертывание:**
+
 ```sh
 docker stack deploy -c docker-compose.traefik.yml traefik-stack
 ```
@@ -127,6 +129,7 @@ networks:
 ```
 
 **Развертывание:**
+
 ```sh
 docker stack deploy -c docker-compose.app.yml my-app
 ```
@@ -148,6 +151,7 @@ labels:
 ```
 
 **Генерация пароля:**
+
 ```sh
 docker run --rm httpd:2.4 htpasswd -nb admin password
 ```
@@ -214,6 +218,7 @@ nslookup nginx.your-domain.com
 ### Справочник меток
 
 **Основные метки:**
+
 - `traefik.enable=true` — активировать Traefik для сервиса
 - `traefik.http.routers.<name>.rule=Host(\`...\`)` — правило маршрутизации по хосту
 - `traefik.http.routers.<name>.entrypoints=<entrypoint>` — точка входа (`web` или `websecure`)
@@ -221,6 +226,7 @@ nslookup nginx.your-domain.com
 - `traefik.http.services.<name>.loadbalancer.server.port=<port>` — порт внутри контейнера
 
 **Middleware:**
+
 - `traefik.http.routers.<name>.middlewares=<middleware>` — применение middleware
 - `traefik.http.middlewares.<name>.basicauth.users=...` — BasicAuth пользователи
 - `traefik.http.middlewares.<name>.stripprefix.prefixes=...` — удаление префикса пути
@@ -229,6 +235,7 @@ nslookup nginx.your-domain.com
 ### Безопасность
 
 **Рекомендации для продакшена:**
+
 - Отключить `--api.insecure=true`, использовать BasicAuth для dashboard
 - Настроить firewall для ограничения доступа к портам
 - Использовать production ACME server (`https://acme-v02.api.letsencrypt.org/directory`)

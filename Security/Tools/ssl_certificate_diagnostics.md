@@ -31,11 +31,13 @@ openssl s_client -connect example.com:443 \
 ```
 
 **Результат без ошибки:**
+
 ```
 Verification: OK
 ```
 
 **Результат с ошибкой:**
+
 ```
 Verification error: unable to verify the first certificate
 ```
@@ -56,12 +58,14 @@ Verification error: unable to verify the first certificate
 Ошибка означает, что нет доверия ко всей цепочке сертификатов. Самая частая причина — сервер настроен отдавать только сертификат домена, без промежуточных.
 
 **Неправильно (Nginx):**
+
 ```nginx
 ssl_certificate     /path/example.com.cer;      # только сертификат домена
 ssl_certificate_key /path/example.com.key;
 ```
 
 **Правильно (Nginx):**
+
 ```nginx
 ssl_certificate     /path/fullchain.cer;         # домен + промежуточные CA
 ssl_certificate_key /path/example.com.key;

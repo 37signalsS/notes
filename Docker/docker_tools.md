@@ -20,6 +20,7 @@
 TUI-инструменты работают через Docker API (Unix-сокет `/var/run/docker.sock` или TCP). Не требуют установки дополнительных демонов.
 
 **Альтернативы для анализа образов:**
+
 - **[dive](../Dockerfile/dockerfile_optimization_tools.md)** — исследование слоев образа
 - **[dockle](../Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности
 
@@ -51,6 +52,7 @@ go install github.com/jesseduffield/lazydocker@latest
 | **q** | Выход |
 
 **Сценарии использования:**
+
 - Мониторинг CPU/Memory в реальном времени
 - Просмотр логов нескольких контейнеров одновременно
 - Очистка ресурсов (`prune`) через меню
@@ -90,5 +92,6 @@ cargo install oxker
 **Репозитории:** [lazydocker](https://github.com/jesseduffield/lazydocker), [oxker](https://github.com/mrvillage/oxker), [dry](https://github.com/moncho/dry), [ctop](https://github.com/bcicen/ctop).
 
 **Связанные темы:**
+
 - [Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)
 - [Инструменты оптимизации Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)

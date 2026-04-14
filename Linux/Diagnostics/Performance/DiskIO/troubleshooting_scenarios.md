@@ -80,6 +80,7 @@ sudo biosnoop
 ```
 
 **Вывод:**
+
 ```
 TIME(s)        COMM           PID    DISK    T  SECTOR    BYTES   LAT(ms)
 12345.678901   postgres       1234   sda     W  123456    4096    12.34
@@ -139,6 +140,7 @@ sudo fatrace | grep "/var/log"
 ```
 
 **Вывод:**
+
 ```
 chrome:1234   [U] /home/user/Downloads/file.zip:WRITE
 rsync:5678    [O] /var/log/syslog:OPEN

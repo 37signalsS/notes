@@ -50,6 +50,7 @@ ansible-galaxy init my_new_role
 ```
 
 Результат:
+
 ```
 my_new_role/
 ├── defaults/
@@ -100,6 +101,7 @@ dependencies:
 ### Сценарий 3: Организация шаблонов и файлов
 
 **Структура для роли `nginx`:**
+
 ```
 roles/nginx/
 ├── files/
@@ -115,6 +117,7 @@ roles/nginx/
 ```
 
 **Использование в задачах:**
+
 ```yaml
 - name: Copy static config
   ansible.builtin.copy:
@@ -134,6 +137,7 @@ roles/nginx/
 ### Приоритеты переменных
 
 Полная иерархия приоритетов (от низкого к высокому):
+
 1. `defaults/main.yml` в роли
 2. Переменные из инвентаря
 3. Переменные из `group_vars/` и `host_vars/`

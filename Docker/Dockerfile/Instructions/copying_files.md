@@ -13,12 +13,14 @@
 ### Синтаксис
 
 **COPY:**
+
 ```dockerfile
 COPY [OPTIONS] <src> ... <dest>
 COPY [OPTIONS] ["<src>", ... "<dest>"]
 ```
 
 **ADD:**
+
 ```dockerfile
 ADD [OPTIONS] <src> ... <dest>
 ADD [OPTIONS] ["<src>", ... "<dest>"]

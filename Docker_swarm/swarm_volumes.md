@@ -35,6 +35,7 @@
 | Не требует дополнительных плагинов | Ручное управление вне Docker |
 
 **Использование:**
+
 ```yaml
 volumes:
   nfs-data:
@@ -65,6 +66,7 @@ volumes:
 **Принцип:** Монтирование пути с хоста в контейнер.
 
 **Ограничения в Swarm:**
+
 - Путь должен существовать на **всех** узлах
 - Не рекомендуется для production
 - Подходит для конфигурационных файлов
@@ -103,6 +105,7 @@ volumes:
 ```
 
 **Требования:**
+
 - NFS-сервер доступен со всех узлов Swarm
 - Установлен NFS-клиент (`nfs-common` на Ubuntu/Debian)
 - Открыты порты NFS (2049 TCP/UDP)
@@ -143,6 +146,7 @@ volumes:
 **Сценарий использования:** Кэширование, где потеря данных допустима.
 
 **Установка метки:**
+
 ```sh
 docker node update --label-add cache-node=true node-1
 ```
@@ -152,6 +156,7 @@ docker node update --label-add cache-node=true node-1
 #### Том не монтируется
 
 **Проверка:**
+
 ```sh
 # Проверить доступность NFS
 showmount -e nfs-server.example.com
@@ -164,6 +169,7 @@ docker service logs <service>
 ```
 
 **Возможные причины:**
+
 - NFS-сервер недоступен
 - Неправильный путь (`device: ":/path"`)
 - Firewall блокирует порты NFS
@@ -171,6 +177,7 @@ docker service logs <service>
 #### Данные не сохраняются
 
 **Проверка:**
+
 ```sh
 # Проверить монтирование внутри контейнера
 docker exec <container> mount | grep data
@@ -180,6 +187,7 @@ docker exec <container> ls -la /data
 ```
 
 **Возможные причины:**
+
 - Неправильные права на NFS-шаре
 - Том создан на другом узле
 - Storage plugin не запущен
@@ -187,6 +195,7 @@ docker exec <container> ls -la /data
 #### Ошибка "volume not found"
 
 **Проверка:**
+
 ```sh
 # Список томов на узле
 docker volume ls

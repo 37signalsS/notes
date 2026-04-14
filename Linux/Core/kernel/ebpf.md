@@ -79,12 +79,14 @@ sudo bpftool feature
 **Безопасные сценарии (низкий overhead):**
 
 - **Планировщик и задержки CPU:**
+
   ```bash
   perf sched latency
   bpftrace -e 'tracepoint:sched:sched_switch { @[comm] = count(); }'
   ```
 
 - **Задержки системных вызовов для конкретного процесса:**
+
   ```bash
   bpftrace -e '
   tracepoint:syscalls:sys_enter_read { @start[tid] = nsecs; }
@@ -95,6 +97,7 @@ sudo bpftool feature
   ```
 
 - **Операции ввода-вывода (I/O):**
+
   ```bash
   sudo biosnoop
   bpftrace -e 'tracepoint:block:block_rq_issue { @[comm] = count(); }'
@@ -103,11 +106,13 @@ sudo bpftool feature
 **Сценарии с осторожностью (высокий overhead):**
 
 - **Стектрейсы (Stack Traces):** Частая причина нагрузки. Использовать только с точными фильтрами:
+
   ```bash
   bpftrace -e 'tracepoint:syscalls:sys_enter_openat /comm == "my-app"/ { @[kstack] = count(); }'
   ```
 
 - **Tracepoint'ы сетевого стека:** Опасны при высоком трафике. Всегда применять фильтры:
+
   ```bash
   bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb /pid == 1234/ { @[comm] = count(); }'
   ```

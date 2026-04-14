@@ -77,6 +77,7 @@ MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 ```
 
 **Проверка текущих настроек:**
+
 ```bash
 ssh -Q kex       # Доступные KexAlgorithms
 ssh -Q cipher    # Доступные Ciphers

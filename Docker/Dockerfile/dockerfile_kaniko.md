@@ -53,6 +53,7 @@ build-image:
 ```
 
 **Параметры:**
+
 - `--context` — путь к исходным файлам.
 - `--dockerfile` — путь к `Dockerfile`.
 - `--destination` — имя и тег итогового образа.
@@ -80,6 +81,7 @@ build-custom:
 ```
 
 **Параметры:**
+
 - `--registry-certificate` — путь к CA-сертификату.
 - `--build-arg` — переменные времени сборки.
 

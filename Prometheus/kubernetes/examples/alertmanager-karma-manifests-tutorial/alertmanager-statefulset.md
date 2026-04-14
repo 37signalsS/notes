@@ -122,16 +122,19 @@ spec:
 ### Пояснения к манифесту
 
 **Init Container:**
+
 - Образ `busybox:1.36` — минимальный, быстрый, содержит `sed` и `cat`
 - Команда читает шаблон из `/config-template/alertmanager.yml.tpl`, подставляет 4 переменные окружения из Secret, записывает результат в `/config/alertmanager.yml`
 - `set -e` — аварийное завершение при ошибке подстановки (под не запустится без валидного конфига)
 
 **Основной контейнер:**
+
 - `prom/alertmanager:v0.26.0` — проверяйте актуальность версии в [Alertmanager Installation](../../installation/alertmanager_installation.md#актуальная-версия)
 - Монтирует готовый конфиг из `emptyDir` (путь `/etc/alertmanager`)
 - Данные хранятся на PVC (`alertmanager-data`, 1Gi) — silences и состояние сохраняются при перезапусках
 
 **StatefulSet vs Deployment:**
+
 - StatefulSet выбран для стабильного сетевого идентификатора (`alertmanager-0`) и возможности масштабирования в HA-кластер с gossip-протоколем
 - `serviceName: alertmanager` — требуется для DNS-разрешения пода
 

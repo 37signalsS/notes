@@ -68,6 +68,7 @@ Jaeger и [Grafana Tempo](../Tempo/index.md) — ключевые решения
 ## Дополнительная информация
 
 **Смежные темы:**
+
 - Детальная архитектура: **[Jaeger Architecture](./jaeger_architecture.md)**
 - Варианты развертывания: **[Jaeger Deployment Options](./jaeger_deployment_options.md)**
 - Интеграция с Kubernetes: **[Jaeger Kubernetes Integration](./jaeger_kubernetes_integration.md)**

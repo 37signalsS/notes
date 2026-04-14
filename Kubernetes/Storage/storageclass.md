@@ -119,7 +119,7 @@ volumeBindingMode: Immediate
 
 > **Важно:** Только один StorageClass может быть default в кластере. PVC без указания `storageClassName` будет использовать класс по умолчанию.
 
-### Практические примеры использования StorageClass с конкретными СХД см. в [сценариях PV/PVC](./pv_and_pvc_scenarios.md).
+### Практические примеры использования StorageClass с конкретными СХД см. в [сценариях PV/PVC](./pv_and_pvc_scenarios.md)
 
 ---
 

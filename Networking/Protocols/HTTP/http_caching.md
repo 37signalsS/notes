@@ -28,9 +28,11 @@
 - **`Cache-Control: max-age=<секунды>`:** Современный механизм, задающий время жизни ресурса в секундах с момента получения. Имеет приоритет над `Expires`.
 
 **Пример:**
+
 ```http
 Cache-Control: max-age=3600
 ```
+
 Ресурс будет считаться свежим в течение 1 часа (3600 секунд) после получения.
 
 ### Кэширование с валидацией (Validation)
@@ -64,21 +66,27 @@ Cache-Control: max-age=3600
 ### Стратегии кэширования для разных типов контента
 
 **Статические ресурсы (CSS, JS, изображения с хэш-версионированием):**
+
 ```http
 Cache-Control: public, max-age=31536000, immutable
 ```
+
 Кэширование на 1 год с флагом `immutable` — ресурс не изменится, т.к. при обновлении изменится имя файла (хэш).
 
 **Динамический контент (HTML-страницы, API-ответы):**
+
 ```http
 Cache-Control: private, no-cache
 ```
+
 Кэширование разрешено, но требуется валидация перед использованием.
 
 **Конфиденциальные данные (банковские операции, персональные данные):**
+
 ```http
 Cache-Control: no-store
 ```
+
 Полный запрет кэширования.
 
 ## Practical Scenarios
@@ -90,6 +98,7 @@ curl -I https://example.com/static/app.abc123.js
 ```
 
 Пример ответа:
+
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/javascript
@@ -99,11 +108,13 @@ Last-Modified: Mon, 01 Apr 2025 10:00:00 GMT
 ```
 
 Проверка валидации (повторный запрос с If-None-Match):
+
 ```bash
 curl -I -H 'If-None-Match: "abc123"' https://example.com/static/app.abc123.js
 ```
 
 Ответ сервера при неизменённом ресурсе:
+
 ```http
 HTTP/1.1 304 Not Modified
 ETag: "abc123"
@@ -126,11 +137,13 @@ location /static/ {
 **Проблема:** Пользователи видят старую версию CSS/JS после деплоя.
 
 **Диагностика:**
+
 1. Проверить заголовки ответа сервера: `curl -I https://example.com/style.css`
 2. Убедиться, что `Cache-Control` установлен корректно.
 3. Проверить наличие `ETag` или `Last-Modified` для валидации.
 
 **Решение:**
+
 - Добавить версионирование файлов: `style.css?v=1.2.3` или `style.abc123.css` (хэш в имени).
 - Для версионированных файлов: `Cache-Control: public, max-age=31536000, immutable`.
 - Для HTML: `Cache-Control: private, no-cache` (валидация при каждой загрузке).
@@ -142,6 +155,7 @@ location /static/ {
 **Методы инвалидации:**
 
 1. **Purge (принудительная очистка):** API-запрос к CDN для удаления конкретных URL из кэша.
+
    ```bash
    curl -X POST "https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache" \
      -H "Authorization: Bearer {token}" \

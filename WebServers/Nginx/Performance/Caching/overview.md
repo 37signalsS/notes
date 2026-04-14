@@ -59,10 +59,10 @@ Nginx сохраняет ответы от бэкендов и отдаёт их
 
 **Основные сценарии использования:**
 
-- **Кэширование API-ответов** — снижение нагрузки на бэкенд при повторяющихся запросах
-- **Кэширование статического контента** — раздача без обращения к бэкенду
-- **Защита от сбоев** — `proxy_cache_use_stale` отдаёт устаревший кэш при ошибках бэкенда
-- **Предотвращение thundering herd** — `proxy_cache_lock` отправляет на бэкенд только первый запрос
+* **Кэширование API-ответов** — снижение нагрузки на бэкенд при повторяющихся запросах
+* **Кэширование статического контента** — раздача без обращения к бэкенду
+* **Защита от сбоев** — `proxy_cache_use_stale` отдаёт устаревший кэш при ошибках бэкенда
+* **Предотвращение thundering herd** — `proxy_cache_lock` отправляет на бэкенд только первый запрос
 
 Подробная документация с примерами конфигурации — [серверное кэширование в Nginx](./proxy_caching.md).
 
@@ -72,9 +72,9 @@ Nginx сохраняет ответы от бэкендов и отдаёт их
 
 Ключевые инструменты мониторинга:
 
-- **Логирование** — `$upstream_cache_status` в `access.log` (HIT, MISS, EXPIRED, STALE)
-- **Prometheus + Grafana** — сбор и визуализация метрик через VTS-модуль
-- **Специализированные дашборды** — встроенные инструменты Nginx Plus / сторонние решения
+* **Логирование** — `$upstream_cache_status` в `access.log` (HIT, MISS, EXPIRED, STALE)
+* **Prometheus + Grafana** — сбор и визуализация метрик через VTS-модуль
+* **Специализированные дашборды** — встроенные инструменты Nginx Plus / сторонние решения
 
 Подробная документация — [мониторинг кэширования](./monitoring.md).
 
@@ -104,9 +104,9 @@ Nginx сохраняет ответы от бэкендов и отдаёт их
 
 Решение — `proxy_cache_lock on;`:
 
-- Первый запрос идёт на бэкенд (`MISS`)
-- Остальные ожидают ответа из кэша
-- После заполнения кэша все получают `HIT`
+* Первый запрос идёт на бэкенд (`MISS`)
+* Остальные ожидают ответа из кэша
+* После заполнения кэша все получают `HIT`
 
 ### Сценарий 4: Отказоустойчивость при недоступности бэкенда
 
@@ -123,13 +123,13 @@ Nginx отдаёт устаревший кэш (`STALE`) и фоновом об�
 
 ### Связанные файлы
 
-- Клиентское кэширование в Nginx — [client_caching.md](./client_caching.md)
-- Серверное кэширование (Proxy Cache) — [proxy_caching.md](./proxy_caching.md)
-- Мониторинг кэширования — [monitoring.md](./monitoring.md)
-- Кэширование как инструмент производительности — [caching_overview.md](../../../../Concepts/Caching/caching_overview.md)
-- Паттерны кэширования — [caching_patterns.md](../../../../Concepts/Caching/caching_patterns.md)
+* Клиентское кэширование в Nginx — [client_caching.md](./client_caching.md)
+* Серверное кэширование (Proxy Cache) — [proxy_caching.md](./proxy_caching.md)
+* Мониторинг кэширования — [monitoring.md](./monitoring.md)
+* Кэширование как инструмент производительности — [caching_overview.md](../../../../Concepts/Caching/caching_overview.md)
+* Паттерны кэширования — [caching_patterns.md](../../../../Concepts/Caching/caching_patterns.md)
 
 ### Смотрите также
 
-- HTTP-кэширование (протокол, заголовки) — [http_caching.md](../../../../Networking/Protocols/HTTP/http_caching.md)
-- Оптимизация производительности Nginx — [nginx_performance_tuning.md](../nginx_performance_tuning.md)
+* HTTP-кэширование (протокол, заголовки) — [http_caching.md](../../../../Networking/Protocols/HTTP/http_caching.md)
+* Оптимизация производительности Nginx — [nginx_performance_tuning.md](../nginx_performance_tuning.md)

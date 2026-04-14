@@ -73,8 +73,8 @@ vault write auth/approle/role/ansible token_policies="consul-read-policy"
 ```
 
 Параметры:
-- `auth/approle/role/ansible` — путь создания роли `ansible`
-- `token_policies` — список политик для токена
+* `auth/approle/role/ansible` — путь создания роли `ansible`
+* `token_policies` — список политик для токена
 
 Дополнительно можно задать TTL токена, CIDR-ограничения, количество использований `SecretID`.
 
@@ -85,6 +85,7 @@ vault read auth/approle/role/ansible/role-id
 ```
 
 Результат:
+
 ```
 Key        Value
 ---        -----
@@ -98,6 +99,7 @@ vault write -f auth/approle/role/ansible/secret-id
 ```
 
 Результат:
+
 ```
 Key                   Value
 ---                   -----

@@ -43,4 +43,3 @@
 ## Additional Information
 
 Общая информация о шаблонизации Helm — в [helm_templating](../../helm_templating.md). Синтаксис — в [Синтаксис шаблонов](../syntax.md).
-

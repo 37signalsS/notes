@@ -43,6 +43,7 @@ CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
 ```
 
 **Преимущества:**
+
 - Не требует `--privileged`
 - Агрегация логов через `docker logs`
 - Корректная обработка сигналов (`SIGTERM`)
@@ -60,11 +61,13 @@ docker run -d --name systemd-container \
 ```
 
 **Флаги:**
+
 - `--privileged`: Передает все capabilities контейнеру (угроза безопасности)
 - `-v /sys/fs/cgroup:ro`: Монтирует cgroups хоста для управления ресурсами
 - `/sbin/init`: Явно указывает `systemd` как PID 1
 
 **Ограничения:**
+
 - Контейнер может взаимодействовать с устройствами хоста
 - Нарушается изоляция процессов
 - Не рекомендуется для production
@@ -72,10 +75,12 @@ docker run -d --name systemd-container \
 ## Дополнительная информация
 
 **Разграничение подходов:**
+
 - **systemd внутри контейнера** — анти-паттерн (требует `--privileged`)
 - **systemd на хосте для управления контейнерами** — рекомендуемая практика [Интеграция Docker с systemd](../Linux/Core/systemd/docker_integration.md)
 
 **Связанные темы:**
+
 - [Паттерн "Multi-Process" в Docker](./Docker_logs/docker_multi_process_logging.md)
 - [Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)
 - [Проблема PID 1 и zombi-процессы](./Dockerfile/Docker_best_practices/container_execution.md)

@@ -44,6 +44,7 @@ docker inspect <container> --format '{{json .State}}'
 ```
 
 **Диагностика:**
+
 - `OOMKilled: true` → контейнер превысил лимит памяти
 - `OOMKilled: false` + код 137 → внешнее вмешательство (`docker kill`, системный монитор)
 
@@ -78,6 +79,7 @@ dmesg | grep -i "killed process"
 ```
 
 **Решение:**
+
 1. Увеличить лимит памяти: `docker run -m 512m ...`
 2. Оптимизировать потребление памяти приложением
 3. Проверить утечки памяти (memory leaks)

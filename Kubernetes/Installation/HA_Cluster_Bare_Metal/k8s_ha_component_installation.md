@@ -182,4 +182,4 @@ apt-mark showhold | grep -E "kubelet|kubeadm|kubectl" && echo "✅ Версии 
 
 ### Интеграция с документацией
 
-Установка компонентов — **шаг 2–3** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [инициализацией Control Plane](./control_plane_initialization.md). Подробнее о containerd — в [alternative runtimes](../../../Docker/alternative_runtimes_and_tools.md), о kubeadm — в [HA с kubeadm](../kubeadm/ha_keepalived_haproxy/index.md), о CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).
+Установка компонентов — **шаг 2–3** после [подготовки узлов](./k8s_ha_node_preparation.md) и перед [инициализацией Control Plane](./control_plane_initialization.md). Подробнее о containerd — в [alternative runtimes](../../../Docker/alternative_runtimes_and_tools.md), о kubeadm — в [HA с kubeadm](../kubeadm/index.md), о CNI — в [CNI definitions](../../Networking/Network/CNI/definitions.md).

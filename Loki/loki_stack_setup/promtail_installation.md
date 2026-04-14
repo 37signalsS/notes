@@ -138,11 +138,11 @@ kubectl logs -n logging -l app.kubernetes.io/name=promtail -f
 kubectl get configmap -n logging -l app.kubernetes.io/name=promtail -o yaml > promtail_config.yaml
 ```
 
-2. **Конвертируйте через онлайн-инструмент:**
+1. **Конвертируйте через онлайн-инструмент:**
 
 Используйте [конвертер Promtail → Alloy](https://grafana.com/docs/alloy/latest/tasks/migrate/) для автоматической трансляции YAML в River.
 
-3. **Протестируйте Alloy в staging:**
+1. **Протестируйте Alloy в staging:**
 
 ```bash
 helm install alloy-test grafana-community/alloy \
@@ -150,7 +150,7 @@ helm install alloy-test grafana-community/alloy \
   -f converted_alloy_values.yaml
 ```
 
-4. **Переключите трафик на Alloy:**
+1. **Переключите трафик на Alloy:**
 
 Убедитесь, что Alloy собирает те же логи, затем удалите Promtail:
 

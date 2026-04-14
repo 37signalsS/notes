@@ -7,6 +7,7 @@
 **River** — язык конфигурации на базе HCL (HashiCorp Configuration Language) для описания потоков данных в виде графа компонентов.
 
 **Связанные темы:**
+
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
 - [Источники данных](./grafana_datasources.md) — настройка подключения к бэкендам
 - [Провижининг](./grafana_provisioning.md) — автоматизация конфигурации Grafana
@@ -188,6 +189,7 @@ prometheus.remote_write "metrics_writer" {
 ### Актуальность информации
 
 Информация актуальна на 2026 год. Статус агентов:
+
 - **Promtail** — deprecated (весна 2026), миграция через [конвертер конфигураций](https://grafana.com/docs/alloy/latest/tasks/migrate/)
 - **Grafana Agent (static mode)** — deprecated (ноябрь 2025)
 - **Grafana Alloy** — активно развивается

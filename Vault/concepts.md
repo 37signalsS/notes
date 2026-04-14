@@ -177,11 +177,11 @@ Vault позволяет включить один или несколько **�
 
 #### Специальные политики
 
-- [Политика доступа для Transit Engine](./guides/transit-encryption-policies.md) — разделение обязанностей между приложениями и администраторами ключей
+* [Политика доступа для Transit Engine](./guides/transit-encryption-policies.md) — разделение обязанностей между приложениями и администраторами ключей
 
 ## Дополнительная информация
 
-- [Официальная документация HashiCorp Vault](https://developer.hashicorp.com/vault/docs)
-- [Vault Agent](./guides/vault_agent/basics.md) — автоматизация аутентификации и рендеринга секретов
-- [Интеграция с Kubernetes](./guides/vault_kubernetes_integration.md) — CSI Driver для доставки секретов в поды
-- [Подход Zero Trust](./zero_trust.md) — как Vault реализует принципы нулевого доверия
+* [Официальная документация HashiCorp Vault](https://developer.hashicorp.com/vault/docs)
+* [Vault Agent](./guides/vault_agent/basics.md) — автоматизация аутентификации и рендеринга секретов
+* [Интеграция с Kubernetes](./guides/vault_kubernetes_integration.md) — CSI Driver для доставки секретов в поды
+* [Подход Zero Trust](./zero_trust.md) — как Vault реализует принципы нулевого доверия

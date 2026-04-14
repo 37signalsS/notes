@@ -10,6 +10,10 @@
 
 **Finalizer** — механизм защиты от удаления, предотвращающий удаление объекта из etcd до выполнения определённых действий (освобождение volumes, cleanup внешних ресурсов).
 
+**Terminal Phase** — финальная фаза пода (`Succeeded` или `Failed`), в которую kubelet переводит под после завершения всех контейнеров. Гарантировано в Kubernetes 1.27+.
+
+**Pod Garbage Collector (Pod GC)** — контроллер в `kube-controller-manager`, автоматически удаляющий завершённые поды при превышении порога `terminated-pod-gc-threshold`.
+
 ---
 
 ## Базовые концепции
@@ -33,6 +37,10 @@ SIGKILL (если не завершился)
     ↓
 Размонтирование volumes
     ↓
+Очистка pause container
+    ↓
+Kubelet → terminal phase (Succeeded / Failed)
+    ↓
 Удаление finalizers
     ↓
 Удаление записи из etcd
@@ -53,7 +61,7 @@ SIGKILL (если не завершился)
 
 Подробно: [Finalizer и CSI проблемы](./finalizer_issues.md).
 
-### Основные причины зависания в Terminating
+### Практические сценарии: основные причины зависания
 
 | Причина | Частота | Описание | Ссылка |
 |---------|---------|----------|--------|
@@ -88,14 +96,23 @@ kubectl get pods --field-selector status.phase=Running | grep Terminating
 
 ## Дополнительная информация
 
+### Pod Garbage Collector
+
+**Pod Garbage Collector (Pod GC)** — контроллер в `kube-controller-manager`, предотвращающий накопление «мусора» из завершённых подов.
+
+**Когда Pod GC удаляет поды:**
+
+- Количество подов в фазах `Succeeded`/`Failed` превышает `terminated-pod-gc-threshold`
+- Под привязан к узлу, который больше не существует
+- Под не был запланирован, но находится в статусе `Terminating`
+- Под привязан к узлу с `NodeVolumeOut` (CSI driver не может отмонтировать volume)
+
+Pod GC также маркирует «бесхозные» поды (без привязанного узла) как завершённые, даже если они ещё не в терминальной фазе.
+
+> **Примечание:** Завершённые поды (`Succeeded`/`Failed`) остаются в класте до тех пор, пока не будут удалены явно (пользователем, контроллером или Pod GC). Это позволяет анализировать причины завершения.
+
 **Связанные разделы:**
 
-- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — фазы, условия, graceful shutdown
-- [Обзор ошибок Troubleshooting](../overview.md) — классификация ошибок Kubernetes
-- [Обслуживание узлов](../../../Operations/node_maintenance.md) — drain, eviction, PDB
-- [Node Unavailable](./node_unavailable_issues.md) — диагностика недоступности узла
-- [Volume Unmount](./volume_unmount_issues.md) — проблемы размонтирования volumes
-- [Finalizer Issues](./finalizer_issues.md) — удаление finalizers, CSI driver
+- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — фазы, условия, graceful shutdown, Pod GC
 - [Graceful Shutdown](./graceful_shutdown.md) — настройка terminationGracePeriodSeconds, preStop hooks
-- [PDB Blocking](./pdb_blocking.md) — PodDisruptionBudget блокирует удаление
-- [Diagnostics](./diagnostics.md) — пошаговый чек-лист диагностики
+- [Обслуживание узлов](../../../Operations/node_maintenance.md) — drain, eviction, PDB

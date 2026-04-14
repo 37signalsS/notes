@@ -11,6 +11,7 @@
 ### Принцип работы
 
 `docker debug` создаёт временный контейнер, который:
+
 - Использует файловую систему целевого контейнера/образа
 - Предоставляет toolbox с предустановленными утилитами
 - Не модифицирует исходный образ
@@ -25,7 +26,7 @@
 
 | Команда | Описание |
 | :--- | :--- |
-| `install <pkg>` | Установить пакет из Nix (https://search.nixos.org/packages) |
+| `install <pkg>` | Установить пакет из Nix (<https://search.nixos.org/packages>) |
 | `uninstall <pkg>` | Удалить пакет |
 | `entrypoint --print` | Показать entrypoint контейнера |
 | `entrypoint --run` | Запустить entrypoint без старта контейнера |
@@ -170,7 +171,7 @@ docker commit my-container my-container:edited
 - **Distroless/scratch:** Может требовать дополнительных инструментов через `install`
 - **Изменения эфемерны:** Не сохраняются в образ автоматически
 - **Доступность:** Требуется Docker CLI с поддержкой команды
-- **Nix registry:** Для установки пакетов нужен доступ к https://search.nixos.org/packages
+- **Nix registry:** Для установки пакетов нужен доступ к <https://search.nixos.org/packages>
 
 ### Флаги команды
 

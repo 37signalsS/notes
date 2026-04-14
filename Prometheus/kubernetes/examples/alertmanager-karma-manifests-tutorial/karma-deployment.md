@@ -72,15 +72,18 @@ spec:
 ### Пояснения к манифесту
 
 **Контейнер:**
+
 - Образ `ghcr.io/prymitive/karma:v0.117` — проверяйте актуальность версии в [официальном репозитории](https://github.com/prymitive/karma/releases)
 - Аргумент `--config.file=/etc/karma/config.yaml` — указывает путь к конфигурации, смонтированной из ConfigMap
 - Порт `8080` — стандартный порт Karma, используется Service для маршрутизации
 
 **Volume:**
+
 - ConfigMap `karma-config` монтируется в `/etc/karma` — содержит `config.yaml` с адресом Alertmanager и настройками отображения
 - `readOnly: true` не указан явно — по умолчанию ConfigMap монтируется как read-only
 
 **Stateless-архитектура:**
+
 - Karma не требует PVC — все настройки (фильтры, темы) хранятся в `localStorage` браузера
 - При перезапуске пода конфигурация восстанавливается из ConfigMap автоматически
 

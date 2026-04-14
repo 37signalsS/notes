@@ -20,6 +20,7 @@ AlertmanagerConfig решает задачу **разделенного упра
 | **`v1alpha1`** | Legacy | `v0.40.0+` | Поддерживается для обратной совместимости |
 
 **Ключевые отличия `v1beta1` от `v1alpha1`:**
+
 - `spec.muteTimeIntervals` переименовано в `spec.timeIntervals`
 - Поле `regex` удалено из типа `Matcher` (вместо этого используется `matchType`: `=`, `!=`, `=~`, `!~`)
 - `SecretKeySelector`: поля `name` и `key` стали обязательными, `optional` удалено

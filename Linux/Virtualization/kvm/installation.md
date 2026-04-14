@@ -49,6 +49,7 @@ egrep -c '(vmx|svm)' /proc/cpuinfo
 ```
 
 Результат `> 0` означает поддержку виртуализации:
+
 - `vmx` — Intel VT-x
 - `svm` — AMD-V
 
@@ -60,6 +61,7 @@ sudo kvm-ok
 ```
 
 Пример корректного вывода:
+
 ```
 INFO: /dev/kvm exists
 KVM acceleration can be used
@@ -105,6 +107,7 @@ lsmod | grep -i kvm
 ```
 
 Ожидаемый вывод:
+
 - `kvm_intel` (или `kvm_amd`)
 - `kvm` (базовый модуль)
 

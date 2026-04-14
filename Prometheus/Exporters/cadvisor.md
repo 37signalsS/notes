@@ -213,16 +213,19 @@ scrape_configs:
 Базовые PromQL-выражения для алертов (полные правила — [Kubernetes Alerts в Grafana](../../Grafana/alerting/kubernetes_alerts.md)):
 
 **High CPU:**
+
 ```promql
 rate(container_cpu_usage_seconds_total{container_name="myapp"}[5m]) > 0.8
 ```
 
 **High Memory (от лимита):**
+
 ```promql
 container_memory_working_set_bytes{container_name="myapp"} / container_spec_memory_limit_bytes{container_name="myapp"} > 0.9
 ```
 
 **Container Restarted:**
+
 ```promql
 increase(container_start_time_seconds{container_name="myapp"}[1h]) > 0
 ```

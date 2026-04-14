@@ -35,18 +35,21 @@ MemoryPressure / DiskPressure
 ### Как Eviction Manager ранжирует поды внутри QoS
 
 **BestEffort:**
+
 ```
 Сортировка: working set memory (по убыванию)
 → Под с наибольшим потреблением → первый на eviction
 ```
 
 **Burstable:**
+
 ```
 Сортировка: (current_usage - requests) / (limits - requests)  (по убыванию)
 → Под с наибольшим превышением requests → первый на eviction
 ```
 
 **Guaranteed:**
+
 ```
 Выселяются только если BestEffort + Burstable не освободили достаточно ресурсов
 → Сортировка по working set (как BestEffort)
@@ -83,16 +86,7 @@ Eviction Manager активируется
 
 ### Диагностика QoS-класса пода
 
-```bash
-# Проверка QoS-класса
-kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
-
-# Все поды с BestEffort (кандидаты на eviction)
-kubectl get pods --all-namespaces -o json | jq '.items[] | select(.status.qosClass=="BestEffort") | {name: .metadata.name, ns: .metadata.namespace}'
-
-# Распределение подов по QoS в кластере
-kubectl get pods --all-namespaces -o json | jq '[.items[].status.qosClass] | group_by(.) | map({class: .[0], count: length})'
-```
+Команды диагностики и примеры использования: [Управление ресурсами: Requests, Limits, QoS](../../../Scheduling/qos_limit_and_requests.md#проверка-qos-класса-пода).
 
 ### Анализ: почему под был выселен
 

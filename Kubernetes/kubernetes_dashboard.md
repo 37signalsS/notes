@@ -12,6 +12,7 @@
 ### Архитектура и компоненты
 
 Dashboard разворачивается как набор ресурсов Kubernetes в отдельном namespace `kubernetes-dashboard`:
+
 - **Deployment** — поды с веб-интерфейсом
 - **Service** — внутренний сервис для доступа
 - **Role/RoleBinding** — RBAC-правила для функционирования дашборда
@@ -20,6 +21,7 @@ Dashboard разворачивается как набор ресурсов Kube
 ### Аутентификация и авторизация
 
 Dashboard не имеет собственной системы пользователей — он делегирует аутентификацию механизмам Kubernetes:
+
 - **kubectl proxy** — использует локальный `kubeconfig`, предоставляя права текущего пользователя
 - **ServiceAccount + Token** — вход по токену сервисного аккаунта с заданными RBAC-ролями
 - **OIDC / Webhook** — внешние провайдеры (зависит от конфигурации API-сервера)
@@ -119,6 +121,7 @@ kubectl -n kubernetes-dashboard create token admin-user
 ```
 
 > **Kubernetes < v1.24:** Токен извлекался из автоматически созданного Secret:
+>
 > ```bash
 > kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get sa/admin-user -o jsonpath="{.secrets[0].name}") -o go-template="{{.data.token | base64decode}}"
 > ```

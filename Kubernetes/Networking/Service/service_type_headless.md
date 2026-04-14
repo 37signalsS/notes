@@ -42,6 +42,7 @@
 **StatefulSet** требует стабильных уникальных имён для Pod. Headless Service обеспечивает это через DNS.
 
 **Последствия без Headless Service:**
+
 - StatefulSet не получит стабильные DNS-имена
 - Кластерные протоколы (кворум БД, брокеры сообщений) не смогут работать
 - Нестабильность приложения
@@ -99,6 +100,7 @@ spec:
 ```
 
 **Результат:** Созданы Pod `web-0` и `web-1` с уникальными DNS-записями:
+
 - `web-0.nginx-headless.default.svc.cluster.local`
 - `web-1.nginx-headless.default.svc.cluster.local`
 

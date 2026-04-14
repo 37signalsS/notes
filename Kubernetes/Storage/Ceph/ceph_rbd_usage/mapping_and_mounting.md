@@ -23,6 +23,7 @@ rbd showmapped
 ```
 
 Пример вывода `showmapped`:
+
 ```
 dev    pool   name       ...
 /dev/rbd0  kube   my-image   ...

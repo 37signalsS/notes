@@ -63,6 +63,7 @@ sort < names.txt
 ### Фатальная ошибка: `grep "pattern" file > file`
 
 Перенаправление (`>`) обрабатывается оболочкой **до** запуска команды:
+
 1. Shell очищает `file`.
 2. `grep` запускается — файл уже пуст.
 3. **Результат: потеря данных.**
@@ -70,16 +71,19 @@ sort < names.txt
 **Решения:**
 
 - **Временный файл**:
+
   ```bash
   grep "pattern" a.txt > a.tmp && mv a.tmp a.txt
   ```
 
 - **`sponge` (пакет `moreutils`)**:
+
   ```bash
   grep "pattern" a.txt | sponge a.txt
   ```
 
 - **Утилиты с `-i` (редактирование на месте)**:
+
   ```bash
   sed -i '/pattern/!d' a.txt
   ```

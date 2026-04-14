@@ -36,6 +36,7 @@
 | `/etc/security/` | Файлы настроек модулей (`access.conf`, `time.conf`, `limits.conf`) |
 
 **Общие конфигурационные файлы (Debian/Ubuntu):**
+
 - `/etc/pam.d/common-auth` — общая аутентификация
 - `/etc/pam.d/common-account` — общие правила учётных записей
 - `/etc/pam.d/common-password` — общие правила управления паролями
@@ -164,17 +165,21 @@ session    required    pam_limits.so
 ### Связанные документы
 
 **PAM-модули и конфигурация:**
+
 - [Управление доступом ФСТЭК](./Fstec/user_access_control.md)
 - [Лимиты ресурсов](../Core/processes/resource_limits_concepts.md)
 - [Персистентные лимиты](../Core/processes/persistent_limits_configuration.md)
 
 **Парольные политики:**
+
 - [Хэширование паролей](../SystemAdministration/Users/password_hashing.md)
 - [Политика паролей](../SystemAdministration/Users/password_policy_chage.md)
 
 **Интеграция с LDAP/SSSD:**
+
 - [Настройка SSSD](../SystemAdministration/Users/LDAP_SSSD/configuration.md)
 
 **Смежные темы:**
+
 - [Управление пользователями](../SystemAdministration/users_management.md)
 - [Управление привилегиями](../SystemAdministration/privilege_management.md)

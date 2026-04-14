@@ -112,7 +112,7 @@ http {
 }
 ```
 
-2. Настройка fail2ban jail:
+1. Настройка fail2ban jail:
 
 ```ini
 [nginx-limit-req]

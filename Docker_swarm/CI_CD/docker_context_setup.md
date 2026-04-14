@@ -26,6 +26,7 @@
 ```
 
 **Компоненты контекста:**
+
 - `host` — TCP-адрес Docker Daemon (`tcp://manager.example.com:2376`)
 - `ca` — путь к корневому сертификату
 - `cert` — путь к клиентскому сертификату
@@ -44,6 +45,7 @@
 **Шаг 1: Подготовка сертификатов**
 
 Скопируйте клиентские сертификаты с менеджера Swarm на локальную машину:
+
 - `ca.pem` — корневой сертификат
 - `cert.pem` — клиентский сертификат
 - `key.pem` — клиентский ключ
@@ -126,6 +128,7 @@ docker context ls
 ```
 
 **Вывод:**
+
 ```
 NAME          DESCRIPTION                               DOCKER ENDPOINT
 default       Current DOCKER_HOST based configuration   unix:///var/run/docker.sock

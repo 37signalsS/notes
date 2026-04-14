@@ -78,6 +78,7 @@ ImagePullBackOff (после нескольких неудач)
 ### Rate limiting Docker Hub
 
 Docker Hub ограничивает количество pull-запросов для анонимных пользователей:
+
 - **Anonymous:** 100 pull / 6 часов
 - **Authenticated (free):** 200 pull / 6 часов
 - **Pro/Team:** без ограничений

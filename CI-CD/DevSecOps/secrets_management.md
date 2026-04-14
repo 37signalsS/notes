@@ -67,16 +67,16 @@ docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:latest git
 > **Важно:** Маскирование — это базовый уровень защиты, а не полноценное решение. Секреты всё ещё существуют в окружении задачи и могут быть доступны администраторам CI/CD-платформы.
 
 **Требования GitLab для маскирования:**
-- Одна строка без пробелов
-- Длина от 8 символов
-- Символы из набора Base64 (RFC4648)
+* Одна строка без пробелов
+* Длина от 8 символов
+* Символы из набора Base64 (RFC4648)
 
 Подробное руководство по управлению переменными и секретами в GitLab CI доступно в документе **[Переменные и секреты в GitLab CI](../GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**.
 
 ## Дополнительная информация
 
-- **[DevSecOps: обзор методологии](./devsecops_overview.md)** — комплексный обзор практик безопасности в CI/CD
-- **[Переменные и секреты в GitLab CI](../GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — управление переменными окружения в GitLab
-- **[Интеграция GitLab CI с HashiCorp Vault](../GitLab_CI/Tutorials/vault_kubernetes_integration.md)** — пошаговое руководство по JWT-аутентификации
-- **[HashiCorp Vault: обзор](../../Vault/overview.md)** — централизованное управление секретами
-- **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — секреты в контейнеризированных средах
+* **[DevSecOps: обзор методологии](./devsecops_overview.md)** — комплексный обзор практик безопасности в CI/CD
+* **[Переменные и секреты в GitLab CI](../GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — управление переменными окружения в GitLab
+* **[Интеграция GitLab CI с HashiCorp Vault](../GitLab_CI/Tutorials/vault_kubernetes_integration.md)** — пошаговое руководство по JWT-аутентификации
+* **[HashiCorp Vault: обзор](../../Vault/overview.md)** — централизованное управление секретами
+* **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — секреты в контейнеризированных средах

@@ -12,9 +12,9 @@ Git LFS решает эту проблему, заменяя большие фа
 
 ### Преимущества Git LFS
 
-- **Оптимизация производительности:** Ускоряет операции с репозиторием, поскольку Git работает только с легкими указателями.
-- **Управление версиями больших файлов:** Позволяет эффективно версионировать файлы, которые обычно не подходят для Git.
-- **Сохранение истории:** История изменений больших файлов сохраняется без раздувания основного репозитория.
+* **Оптимизация производительности:** Ускоряет операции с репозиторием, поскольку Git работает только с легкими указателями.
+* **Управление версиями больших файлов:** Позволяет эффективно версионировать файлы, которые обычно не подходят для Git.
+* **Сохранение истории:** История изменений больших файлов сохраняется без раздувания основного репозитория.
 
 ---
 
@@ -62,9 +62,9 @@ Git LFS решает эту проблему, заменяя большие фа
 
 ### Официальные ресурсы
 
-- **Git LFS:** [git-lfs.com](https://git-lfs.com/)
-- **Документация GitHub:** [docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage)
-- **Документация GitLab:** [docs.gitlab.com/ee/topics/git/git_lfs.html](https://docs.gitlab.com/ee/topics/git/git_lfs.html)
+* **Git LFS:** [git-lfs.com](https://git-lfs.com/)
+* **Документация GitHub:** [docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-git-large-file-storage)
+* **Документация GitLab:** [docs.gitlab.com/ee/topics/git/git_lfs.html](https://docs.gitlab.com/ee/topics/git/git_lfs.html)
 
 ### Связанные темы
 

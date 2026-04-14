@@ -5,6 +5,7 @@
 **Диагностика Evicted** — процесс выявления причины выселения пода через анализ статуса пода, состояния узла, событий кластера и потребления ресурсов.
 
 **Ключевые артефакты:**
+
 - `Reason: Evicted` — поле в статусе пода
 - `Message` — содержит конкретную причину (memory, ephemeral-storage, PID)
 - Node Conditions — `MemoryPressure`, `DiskPressure`, `PIDPressure`

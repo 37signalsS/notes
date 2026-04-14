@@ -15,6 +15,7 @@
 ### Структура полного примера
 
 Каждый пример содержит:
+
 - `apiVersion: kyverno.io/v1` — версия API
 - `kind: ClusterPolicy` или `Policy` — область применения
 - `metadata.annotations` — аннотации для категоризации ([подробнее](./definitions_and_concepts.md))

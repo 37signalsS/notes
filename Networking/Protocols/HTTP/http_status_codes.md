@@ -5,6 +5,7 @@
 **HTTP-код ответа (Status Code)** — трёхзначное число в первой строке HTTP-ответа сервера, указывающее на результат обработки запроса клиента. Является частью [строки состояния (Status Line)](./http_basics.md#23-структура-http-сообщения) формата `HTTP/<версия> <код> <текст>`.
 
 **Структура кода:**
+
 - **Первая цифра** — класс ответа (1-5).
 - **Вторая и третья цифры** — конкретный код внутри класса.
 
@@ -102,6 +103,7 @@ curl -v https://api.example.com/resource 2>&1 | grep -E "< HTTP|< Location|< Con
 ```
 
 Вывод покажет:
+
 - `< HTTP/1.1 200 OK` — код ответа.
 - `< Location: https://...` — URL перенаправления (для 3xx).
 - `< Content-Type: application/json` — тип ответа.
@@ -115,6 +117,7 @@ awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
 ```
 
 Вывод:
+
 ```
   15234 200
    1234 304
@@ -130,26 +133,32 @@ awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
 **Алгоритм диагностики:**
 
 1. **Проверить статус бэкенда:**
+
    ```bash
    curl -v http://backend:8080/healthz
    ```
+
    Если бэкенд не отвечает — проблема в приложении.
 
 2. **Проверить логи бэкенда:**
+
    ```bash
    journalctl -u myapp --since "5 min ago" --priority err
    ```
 
 3. **Проверить сетевую доступность:**
+
    ```bash
    nc -zv backend 8080
    ```
 
 4. **Проверить таймауты в Nginx:**
+
    ```nginx
    proxy_connect_timeout 10s;
    proxy_read_timeout 30s;
    ```
+
    Если бэкенд обрабатывает дольше `proxy_read_timeout`, Nginx вернёт 504.
 
 ### Сценарий 4: Мониторинг ошибок через Prometheus
@@ -184,6 +193,7 @@ curl -IL https://example.com/old-page
 Ключ `-I` запрашивает только заголовки, `-L` следуетует за перенаправлениями.
 
 Пример вывода:
+
 ```http
 HTTP/1.1 301 Moved Permanently
 Location: https://example.com/new-page

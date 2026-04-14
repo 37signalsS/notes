@@ -29,12 +29,14 @@
 ### Установка
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt update
 sudo apt install isc-dhcp-server
 ```
 
 **RHEL/Rocky Linux/AlmaLinux:**
+
 ```bash
 sudo dnf install dhcp-server
 ```
@@ -44,11 +46,13 @@ sudo dnf install dhcp-server
 Указание сетевого интерфейса для приёма DHCP-запросов:
 
 **Debian/Ubuntu** (`/etc/default/isc-dhcp-server`):
+
 ```ini
 INTERFACESv4="eth0"
 ```
 
 **RHEL/CentOS** (`/etc/sysconfig/dhcpd`):
+
 ```ini
 DHCPDARGS="eth0"
 ```

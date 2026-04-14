@@ -95,6 +95,7 @@ iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 8080 -j DNAT --to-destinati
 **Сценарий:** Доступ к серверу B (серый IP) через сервер A (белый IP). Работает на сетевом уровне, в отличие от [SSH ProxyJump](../../../Linux/Security/ssh/ssh_client_config.md).
 
 **Схема:**
+
 ```
 [Клиент] --(SSH:2222)--> [Сервер A: белый IP] --(SSH:22)--> [Сервер B: серый IP]
 ```
@@ -102,27 +103,32 @@ iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 8080 -j DNAT --to-destinati
 **Настройка на сервере A:**
 
 1. **DNAT:**
+
    ```bash
    iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination <IP_сервера_B>:22
    ```
 
 2. **MASQUERADE:**
+
    ```bash
    iptables -t nat -A POSTROUTING -d <IP_сервера_B> -o eth0 -j MASQUERADE
    ```
 
 3. **FORWARD:**
+
    ```bash
    iptables -A FORWARD -p tcp -d <IP_сервера_B> --dport 22 -j ACCEPT
    iptables -A FORWARD -p tcp -s <IP_сервера_B> -j ACCEPT
    ```
 
 4. **IP-форвардинг:**
+
    ```bash
    sysctl -w net.ipv4.ip_forward=1
    ```
 
 **Подключение:**
+
 ```bash
 ssh user@сервер_A -p 2222 -i my_private_key
 ```
@@ -166,6 +172,7 @@ ssh user@сервер_A -p 2222 -i my_private_key
 При обратном следовании каждый NAT выполняет обратную подмену прозрачно для хоста.
 
 **Двойной NAT (Carrier-Grade NAT):** Возникает, когда провайдер также использует NAT. Создаёт проблемы для:
+
 - Проброса портов (нужна настройка на обоих роутерах)
 - P2P-приложений (торренты, VoIP, онлайн-игры)
 - Удалённого доступа к домашним устройствам
@@ -175,6 +182,7 @@ ssh user@сервер_A -p 2222 -i my_private_key
 ### Одинаковые IP-адреса за разными NAT
 
 Разные хосты могут иметь одинаковые IP-адреса в своих локальных сетях:
+
 - Хост 1: `192.168.1.1` за маршрутизатором 1
 - Хост 2: `192.168.1.1` за маршрутизатором 2
 

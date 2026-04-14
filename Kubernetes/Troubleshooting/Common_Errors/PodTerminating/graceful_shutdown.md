@@ -48,6 +48,9 @@ kubectl delete pod / scaling down / eviction
 | preStop короткий | preStop → SIGTERM → ожидание → SIGKILL |
 | preStop длинный | preStop может быть убит SIGKILL, если > grace period |
 | grace period = 0 | SIGKILL немедленно (preStop не выполняется) |
+| preStop > grace period | Kubelet запрашивает **+2 секунды** дополнительно (emergency termination), затем SIGKILL |
+
+> **Рекомендация:** preStop hook должен содержать быструю команду (например, уведомление о завершении), не требующую длительного ожидания. Если приложению нужно больше времени — увеличьте `terminationGracePeriodSeconds`, а не полагайтесь на автоматическое расширение.
 
 ### Как приложение должно обрабатывать SIGTERM
 
@@ -89,6 +92,7 @@ spec:
 ```
 
 **Порядок завершения:**
+
 1. preStop: `sleep 10` (ожидание удаления из Endpoints)
 2. readinessProbe → `/ready` → `503` (исключение из Service)
 3. SIGTERM → приложение завершает соединения
@@ -103,7 +107,7 @@ spec:
 | Принудительное | `kubectl delete pod --force --grace-period=0` | Pod застрял в Terminating | Высокий: потеря данных, volume attached |
 | Удаление finalizers | `kubectl patch pod -p '{"metadata":{"finalizers":[]}}'` | Крайняя мера | Высокий: утечка ресурсов |
 
-> **Warning:** `--force --grace-period=0` не решает проблему на узле. Volume может остаться в состоянии "attached". Данные могут быть потеряны.
+> **Warning:** `--force --grace-period=0` не решает проблему на узле. API-сервер удаляет объект Pod из etcd **немедленно**, не дожидаясь подтверждения от kubelet о фактической терминации контейнеров на узле. Ресурсы (процессы, volumes) могут продолжать работать. Volume может остаться в состоянии «attached». Данные могут быть потеряны. После force delete необходимо самостоятельно убедиться, что под полностью удалён с узла.
 
 ### Сценарий 3: Диагностика проблем graceful shutdown
 
@@ -147,10 +151,10 @@ containers:
 
 **Связанные разделы:**
 
-- [Определения Pod Terminating](./definitions.md) — базовые понятия, finalizers
+- [Определения Pod Terminating](./definitions.md) — базовые понятия, finalizers, Pod GC
 - [Diagnostics](./diagnostics.md) — чек-лист диагностики terminating pods
 - [Finalizer и CSI проблемы](./finalizer_issues.md) — удаление finalizers
-- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — SIGTERM обработка, фазы пода
+- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — SIGTERM обработка, фазы пода, sidecar termination
 - [Node Unavailable](./node_unavailable_issues.md) — узел недоступен
 - [PDB Blocking](./pdb_blocking.md) — PodDisruptionBudget
-- [Обзор Troubleshooting](../overview.md) — классификация ошибок Kubernetes
+- [Обзор Troubleshooting](../../troubleshooting_overview.md) — классификация ошибок Kubernetes

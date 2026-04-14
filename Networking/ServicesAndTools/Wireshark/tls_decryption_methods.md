@@ -53,11 +53,13 @@
 **Шаги:**
 
 1. Создание файла для ключей:
+
    ```bash
    export SSLKEYLOGFILE=~/tls-keys.log
    ```
 
 2. Запуск браузера:
+
    ```bash
    chromium --ssl-key-log-file=~/tls-keys.log
    # или Firefox
@@ -73,6 +75,7 @@
 5. Анализ: `Follow → TCP Stream`, фильтр `http2` или `tls`.
 
 **Ограничения:**
+
 - Не работает с продакшен-версиями некоторых браузеров без флагов
 - Ключи действительны только для текущей сессии
 - После перезапуска браузера — новые ключи
@@ -86,6 +89,7 @@
 **Шаги:**
 
 1. Установка и запуск:
+
    ```bash
    pip install mitmproxy
    mitmproxy --listen-host 127.0.0.1 --listen-port 8080
@@ -101,6 +105,7 @@
    - Android 7+: требуется root или модификация приложения
 
 4. Запись ключей для Wireshark:
+
    ```bash
    mitmproxy --set sslkeylogfile=~/tls-keys.log
    ```
@@ -108,6 +113,7 @@
 5. Анализ в Mitmproxy: просмотр запросов/ответов, модификация на лету, экспорт.
 
 **Ограничения:**
+
 - **Не работает с SSL Pinning**
 - Firefox использует собственное хранилище сертификатов (нужен `--cert TrustStore`)
 
@@ -123,11 +129,13 @@
 | **Отключение на уровне ОС** | Android 7+ | Рут, переподпись приложения с разрешением user-сертификатов |
 
 **Пример Frida:**
+
 ```bash
 frida -U -f com.example.app --no-pause -l ssl-unpinning.js
 ```
 
 **Инструменты:**
+
 - **Frida** + **Objection** — фреймворк для исследования мобильных приложений
 - **MobSF** — автоматизированный статический и динамический анализ
 
@@ -138,6 +146,7 @@ frida -U -f com.example.app --no-pause -l ssl-unpinning.js
 **Метод:** Ядерная отладка между двумя ВМ.
 
 **Требования:**
+
 - Две виртуальные машины Windows
 - Kernel debugging через COM/Named Pipe/Network
 - Инструменты: WinDbg, специализированные скрипты
@@ -145,6 +154,7 @@ frida -U -f com.example.app --no-pause -l ssl-unpinning.js
 **Шаги:**
 
 1. Настройка отладки на целевой ВМ:
+
    ```cmd
    bcdedit /debug on
    bcdedit /dbgsettings serial debugport:1 baudrate:115200
@@ -178,6 +188,7 @@ frida -U -f com.example.app --no-pause -l ssl-unpinning.js
 3. Анализ: Wireshark автоматически расшифрует трафик.
 
 **Ограничения:**
+
 - **Не работает с ECDHE/DHE** (алгоритмы с PFS)
 - Требует доступа к серверу
 - Не применимо для сторонних сервисов

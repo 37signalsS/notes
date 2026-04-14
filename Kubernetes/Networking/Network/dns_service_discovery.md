@@ -13,6 +13,7 @@
 ### Проблема изменчивых IP-адресов
 
 IP-адреса подов в Kubernetes динамические и могут меняться при:
+
 - Перезапуске пода
 - Масштабировании Deployment
 - Миграции пода между узлами
@@ -40,6 +41,7 @@ IP-адреса подов в Kubernetes динамические и могут 
 ### Важное замечание о Docker DNS
 
 Настройки DNS на уровне Docker **игнорируются** для подов Kubernetes:
+
 - Флаг `--dns` в `docker run`
 - Файл `/etc/docker/daemon.json`
 - Настройки DNS в Docker Compose
@@ -89,6 +91,7 @@ kubectl logs -n kube-system -l k8s-app=kube-dns
 ## Дополнительная информация
 
 **См. также:**
+
 - [DNS в Kubernetes (SSoT)](../dns_deep_dive.md) — CoreDNS, NodeLocalDNS, конфигурация, оптимизация
 - [Обзор сетевой модели Kubernetes](./network_overview.md) — CNI, kube-proxy, NetworkPolicy
 - [Диагностика DNS в Linux](../../Linux/Diagnostics/Networking/dns/overview.md) — общие принципы диагностики

@@ -243,11 +243,13 @@ echo <PID> > /sys/fs/cgroup/cpuset/isolated/cgroup.procs
 #### Применение в контейнеризации
 
 **Docker:**
+
 ```bash
 docker run --cpuset-cpus="0-3" --cpuset-mems="0" my-app
 ```
 
 **Kubernetes** (требует CPU Manager с политикой `static`):
+
 ```yaml
 resources:
   requests:

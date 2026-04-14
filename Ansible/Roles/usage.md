@@ -119,6 +119,7 @@ ansible-galaxy init my_new_role
 ```
 
 Запуск только кэширования:
+
 ```bash
 ansible-playbook deploy.yml --tags "cache"
 ```
@@ -149,6 +150,7 @@ ansible-playbook deploy.yml --tags "cache"
 ```
 
 Предварительная установка:
+
 ```bash
 ansible-galaxy install geerlingguy.nginx geerlingguy.php
 ```
@@ -158,6 +160,7 @@ ansible-galaxy install geerlingguy.nginx geerlingguy.php
 ### Сценарий 6: Полная параметризация через group_vars
 
 **Структура проекта:**
+
 ```
 project/
 ├── group_vars/
@@ -168,6 +171,7 @@ project/
 ```
 
 **`group_vars/webservers.yml`:**
+
 ```yaml
 nginx_port: 80
 nginx_worker_processes: auto
@@ -175,6 +179,7 @@ nginx_server_name: example.com
 ```
 
 **`playbook.yml`:**
+
 ```yaml
 - name: Configure webservers
   hosts: webservers

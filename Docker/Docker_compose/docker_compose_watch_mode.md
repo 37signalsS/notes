@@ -36,6 +36,8 @@ services:
 
 ## Практические сценарии
 
+### Сценарий 1: Single-service приложение
+
 ```yaml
 services:
   app:
@@ -50,18 +52,101 @@ services:
         - path: ./app
           action: sync
           target: /app
-        
+
         # 2. При изменении файла зависимостей, нужно пересобрать образ,
         #    чтобы установить их. Используем 'rebuild'.
         - path: requirements.txt
           action: rebuild
-        
+
         # 3. При изменении конфигурации nginx, достаточно пересоздать
         #    контейнер, чтобы он подхватил новый файл.
         - path: ./config/nginx.conf
           action: recreate
           target: /etc/nginx/nginx.conf
 ```
+
+### Сценарий 2: Multi-service приложение (TODO App)
+
+Типичное окружение для разработки полнофункционального веб-приложения:
+
+| Сервис | Назначение |
+| :--- | :--- |
+| **React Frontend** | Фронтенд на React с dev server |
+| **Node.js Backend** | Бэкенд с REST API (CRUD операции) |
+| **MySQL** | База данных для хранения данных |
+| **phpMyAdmin** | Веб-интерфейс управления базой |
+| **Traefik Proxy** | Роутинг запросов: `/api` → backend, `/` → frontend |
+
+```yaml
+services:
+  frontend:
+    build:
+      context: ./client
+      target: development
+    develop:
+      watch:
+        - path: ./client/src
+          action: sync
+          target: /app/src
+        - path: ./client/package.json
+          action: rebuild
+
+  backend:
+    build:
+      context: ./backend
+      target: development
+    develop:
+      watch:
+        - path: ./backend/src
+          action: sync
+          target: /app/src
+        - path: ./backend/package.json
+          action: rebuild
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: todo_db
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    environment:
+      PMA_HOST: mysql
+
+  proxy:
+    image: traefik:v2.10
+    ports:
+      - "80:80"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml
+
+volumes:
+  mysql_data:
+```
+
+**Запуск:**
+
+```bash
+docker compose watch
+```
+
+**Как работает:**
+
+1. Docker Compose автоматически создаёт сеть для изоляции сервисов
+2. Volume `mysql_data` обеспечивает персистентность данных базы при перезапусках
+3. Traefik роутит запросы: `localhost/api/*` → backend, `localhost/*` → frontend
+4. При изменении файлов в `./client/src` или `./backend/src` изменения синхронизируются в контейнеры в реальном времени
+5. При изменении `package.json` происходит автоматическая пересборка образа (кэширование предыдущих слоёв ускоряет процесс)
+6. Доступ к приложению — через единый порт 80 (благодаря Traefik), вместо указания отдельных портов для каждого сервиса
+
+**Преимущества такого подхода:**
+* Не нужно устанавливать Node.js, MySQL, phpMyAdmin локально
+* Одинаковое окружение у всех разработчиков
+* Изменения в коде видны мгновенно без ручного перезапуска
+* Всё управление — одна команда `docker compose watch`
 
 ## Дополнительная информация
 

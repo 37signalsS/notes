@@ -20,6 +20,7 @@ Docker Swarm поддерживает несколько стратегий об
 | **Canary** | Постепенное увеличение трафика | Нет | Низкий |
 
 **Rolling Update (по умолчанию):**
+
 - Обновляет реплики по одной или группами
 - Сохраняет доступность сервиса во время обновления
 - Автоматический откат при ошибке health check
@@ -42,6 +43,7 @@ deploy:
 ```
 
 **Параметры:**
+
 - `parallelism: 1` — обновлять по одной реплике за раз (минимальный риск)
 - `delay: 10s` — задержка для стабилизации перед следующей репликой
 - `failure_action: rollback` — автоматический откат при ошибке
@@ -61,6 +63,7 @@ healthcheck:
 ```
 
 **Принцип работы:**
+
 1. Swarm ждет `start_period` перед началом проверок
 2. Проверки выполняются каждые `interval`
 3. После `retries` неудач контейнер помечается unhealthy
@@ -130,6 +133,7 @@ watch -n 2 'docker service ps my-app_app --format "table {{.Name}}\t{{.CurrentSt
 ```
 
 **Пример вывода:**
+
 ```
 NAME                CURRENT STATE            DESIRED STATE
 my-app_app.1        Running 2 minutes ago    Running
@@ -172,6 +176,7 @@ docker service logs my-app_app --since 5m | grep -i "rollback\|error"
 ```
 
 **Пример логов при откате:**
+
 ```
 my-app_app.2 rollback: health check failed
 my-app_app.2 shutting down

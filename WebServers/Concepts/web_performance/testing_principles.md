@@ -112,8 +112,8 @@
 
 ### Связанные темы
 
-- Обзор производительности — [overview.md](./overview.md)
-- Ключевые метрики — [web_vitals.md](./web_vitals.md)
-- Детальный анализ в браузере — [chrome_devtools.md](./chrome_devtools.md)
-- Профессиональное тестирование — [webpagetest.md](./webpagetest.md)
-- Лучшие практики оптимизации — [best_practices.md](./best_practices.md)
+* Обзор производительности — [overview.md](./overview.md)
+* Ключевые метрики — [web_vitals.md](./web_vitals.md)
+* Детальный анализ в браузере — [chrome_devtools.md](./chrome_devtools.md)
+* Профессиональное тестирование — [webpagetest.md](./webpagetest.md)
+* Лучшие практики оптимизации — [best_practices.md](./best_practices.md)

@@ -212,8 +212,8 @@ git update-index --no-assume-unchanged <файл>
 
 ### Официальные ресурсы
 
-- **Документация Git по конфигурации:** [git-scm.com/docs/git-config](https://git-scm.com/docs/git-config)
-- **SSH-ключи:** [Документация по SSH](../Linux/Security/ssh/ssh_overview.md)
+* **Документация Git по конфигурации:** [git-scm.com/docs/git-config](https://git-scm.com/docs/git-config)
+* **SSH-ключи:** [Документация по SSH](../Linux/Security/ssh/ssh_overview.md)
 
 ### Связанные темы
 

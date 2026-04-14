@@ -54,6 +54,7 @@ wal-g backup-fetch /var/lib/postgresql/data "2025-03-25T10:00:00"
 ```
 
 Альтернатива через `recovery.conf` (PostgreSQL 12+):
+
 ```bash
 restore_command = 'cp /wal_archive/%f %p'
 recovery_target_time = '2025-03-25 10:00:00'

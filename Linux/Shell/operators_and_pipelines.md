@@ -51,6 +51,7 @@ ls -l | grep -v '^total' | cut -c 2-10 | sort | uniq -c | sort -nr
 ```
 
 **Разбор:**
+
 1. `ls -l` → список файлов.
 2. `grep -v '^total'` → убрать строку `total`.
 3. `cut -c 2-10` → вырезать права (`rwxr-xr-x`).

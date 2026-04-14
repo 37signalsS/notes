@@ -62,16 +62,16 @@
 
 **Дополнительные метрики:**
 
-- **RPS (Requests Per Second)** — общий трафик запросов через балансировщик
-- **Throughput** — объём передаваемых данных в единицу времени
-- **Health Check Failures** — частота неудачных проверок работоспособности
-- **Connection Queue Length** — длина очереди соединений (при перегрузке)
+* **RPS (Requests Per Second)** — общий трафик запросов через балансировщик
+* **Throughput** — объём передаваемых данных в единицу времени
+* **Health Check Failures** — частота неудачных проверок работоспособности
+* **Connection Queue Length** — длина очереди соединений (при перегрузке)
 
 **Инструменты мониторинга:**
 
-- **Nginx:** VTS-модуль, nginx-prometheus-exporter, **[модуль metric в Angie](../../WebServers/Angie/angie_monitoring/angie_monitoring_pro.md)**
-- **HAProxy:** встроенная страница статистики, haproxy-exporter
-- **Универсальные:** Prometheus + Grafana для визуализации и алертинга
+* **Nginx:** VTS-модуль, nginx-prometheus-exporter, **[модуль metric в Angie](../../WebServers/Angie/angie_monitoring/angie_monitoring_pro.md)**
+* **HAProxy:** встроенная страница статистики, haproxy-exporter
+* **Универсальные:** Prometheus + Grafana для визуализации и алертинга
 
 Пример PromQL для мониторинга балансировки:
 

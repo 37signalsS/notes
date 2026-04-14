@@ -40,6 +40,7 @@ docker swarm init --advertise-addr <MANAGER-IP>
 ```
 
 **Параметры:**
+
 - `--advertise-addr` — IP-адрес для связи с другими узлами (обязательно для многохостовых конфигураций)
 - `--listen-addr` — адрес прослушивания (по умолчанию `:2377`)
 
@@ -178,6 +179,7 @@ docker service rollback my-service
 ```
 
 **Параметры обновления:**
+
 - `--update-parallelism` — количество реплик, обновляемых одновременно
 - `--update-delay` — задержка между группами обновлений
 - `--update-failure-action` — действие при ошибке (`continue`, `pause`, `rollback`)

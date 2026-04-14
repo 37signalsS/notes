@@ -49,6 +49,7 @@
 | **Netavark** | Новый сетевой бэкенд Podman | Лучшая интеграция | Podman 4+ (по умолчанию, rootful) |
 
 Изменения в Podman 4+:
+
 - **Netavark** заменил CNI как сетевой бэкенд по умолчанию.
 - **Aardvark-dns** заменил dnsmasq для DNS.
 - **pasta** стала рекомендуемой заменой slirp4netns.

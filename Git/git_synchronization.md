@@ -142,10 +142,10 @@ git push --set-upstream origin <имя_ветки>
 
 ### Официальные ресурсы
 
-- **Работа с удалёнными репозиториями:** [git-scm.com/book/ru/v2/Основы-Git-Работа-с-удалёнными-репозиториями](https://git-scm.com/book/ru/v2/Основы-Git-Работа-с-удалёнными-репозиториями)
-- **git-push:** [git-scm.com/docs/git-push](https://git-scm.com/docs/git-push)
-- **git-fetch:** [git-scm.com/docs/git-fetch](https://git-scm.com/docs/git-fetch)
-- **git-pull:** [git-scm.com/docs/git-pull](https://git-scm.com/docs/git-pull)
+* **Работа с удалёнными репозиториями:** [git-scm.com/book/ru/v2/Основы-Git-Работа-с-удалёнными-репозиториями](https://git-scm.com/book/ru/v2/Основы-Git-Работа-с-удалёнными-репозиториями)
+* **git-push:** [git-scm.com/docs/git-push](https://git-scm.com/docs/git-push)
+* **git-fetch:** [git-scm.com/docs/git-fetch](https://git-scm.com/docs/git-fetch)
+* **git-pull:** [git-scm.com/docs/git-pull](https://git-scm.com/docs/git-pull)
 
 ### Связанные темы
 

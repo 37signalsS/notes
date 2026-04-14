@@ -151,11 +151,13 @@ kubectl apply -k overlays/production/
 ```
 
 **Преимущества:**
+
 - Переиспользование готовых Helm charts
 - Управление окружениями через Kustomize overlays
 - Отсутствие необходимости поддерживать Helm в CI/CD
 
 **Недостатки:**
+
 - Ручная перегенерация при обновлении chart
 - Потеря связи с Helm values
 - Подробнее: [Интеграция Helm + Kustomize](../Helm/Advanced/scenarios.md)

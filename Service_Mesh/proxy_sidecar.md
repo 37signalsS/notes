@@ -220,4 +220,4 @@ Ztunnel работает как DaemonSet, ресурсы разделяются
 - **Linkerd 2.x:** стабильная работа, фокус на безопасности и простоте.
 - **eBPF:** растущая конкуренция (Cilium), но sidecar остаётся доминирующим паттерном.
 
-Документация: [Envoy Proxy](https://www.envoyproxy.io/docs), [Linkerd Architecture](https://linkerd.io/docs/reference/architecture/), [Istio Ambient](https://istio.io/latest/docs/ambient/). Общее описание sidecar-паттерна в Kubernetes — в [Pod Sidecar Pattern](../Kubernetes/Base/Pod/pod_sidecar_pattern.md).
+Документация: [Envoy Proxy](https://www.envoyproxy.io/docs), [Linkerd Architecture](https://linkerd.io/docs/reference/architecture/), [Istio Ambient](https://istio.io/latest/docs/ambient/). Общее описание sidecar-паттерна в Kubernetes — в [Sidecar Patterns](../Kubernetes/Base/Pod/pod_sidecar_patterns.md).

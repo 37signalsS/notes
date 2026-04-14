@@ -11,6 +11,7 @@
 ### Назначение CRD Alertmanager
 
 CRD `Alertmanager` управляет жизненным циклом StatefulSet Alertmanager, включая:
+
 - Масштабирование (реплики для кворума)
 - Хранилище (PVC через `volumeClaimTemplate` или ephemeral)
 - Привязку к нодам (`nodeSelector`, `tolerations`, `affinity`)
@@ -103,6 +104,7 @@ spec:
 ```
 
 **Важно:**
+
 - Дедупликация алертов между репликами работает автоматически
 - При использовании `volumeClaimTemplate` каждая реплика получает собственный PVC
 - Подробнее о механизме кластеризации: [Alertmanager — HA](../../../alertmanager.md#высокая-доступность-ha)

@@ -100,6 +100,7 @@ kubectl apply -f felix-config.yaml
 ## Дополнительные сведения
 
 **См. также:**
+
 - Режимы работы `kube-proxy` (iptables, IPVS) — [CNI и kube-proxy: определения](./definitions.md#режимы-работы-kube-proxy)
 - Фильтрация трафика между подами — [NetworkPolicy](../NetworkPolicy/network_policy.md)
 - Оптимизация DSR через eBPF — [CNI: Выбор плагина и внешние типы доступа](./selection_and_external_access.md#direct-service-return-dsr-через-ebpf)

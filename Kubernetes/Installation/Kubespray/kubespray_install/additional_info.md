@@ -6,26 +6,6 @@
 
 ### Проверка кластера
 
-**Требования:**
-- Доступ к любому узлу control plane по SSH
-- Kubeconfig файл (`admin.conf`)
-
-**Ожидаемый результат:** Все узлы в статусе `Ready`, runtime — `containerd`.
-
-### Работа с containerd
-
-Kubespray использует `containerd` как среду выполнения контейнеров. Docker не устанавливается. Для диагностики на уровне узлов применяется `crictl` — CLI для Container Runtime Interface.
-
-### kubeconfig
-
-При настройке `kubeconfig_localhost: true` Kubespray копирует `admin.conf` на локальную машину в `inventory/<cluster>/artifacts/admin.conf`.
-
----
-
-## Практические сценарии
-
-### Проверка статуса узлов
-
 1. **Подключиться к узлу control plane:**
 
    ```bash
@@ -48,65 +28,28 @@ Kubespray использует `containerd` как среду выполнени
 
    Обратите внимание на `CONTAINER-RUNTIME` — должен быть `containerd://`.
 
-### Работа с crictl
-
-**Запущенные контейнеры на узле** (аналог `docker ps`):
-
-```bash
-sudo crictl ps
-```
-
-**Запущенные поды на текущем узле:**
-
-```bash
-sudo crictl pods
-```
-
-**Просмотр логов контейнера:**
-
-```bash
-sudo crictl logs <CONTAINER_ID>
-```
-
-Подробнее о средах выполнения: [Альтернативные среды выполнения](../../../Podman/alternatives_crio_containerd.md).
-
-### Настройка kubeconfig
-
-1. **Найти файл на локальной машине:**
-
-   ```
-   inventory/my-cluster/artifacts/admin.conf
-   ```
-
-2. **Проверить кластер без установки переменной:**
+3. **Запустить тестовый под для проверки работоспособности:**
 
    ```bash
-   kubectl --kubeconfig=inventory/my-cluster/artifacts/admin.conf get nodes
+   kubectl run test-busybox --image=busybox --restart=Never --command -- sleep 3600
+   kubectl get pods
    ```
 
-3. **Установить переменную окружения:**
+   Если под успешно создался и перешёл в статус `Running` — кластер функционирует. Для учебных целей можно удалить:
 
    ```bash
-   export KUBECONFIG=$(pwd)/inventory/my-cluster/artifacts/admin.conf
+   kubectl delete pod test-busybox
    ```
 
-4. **Скопировать в домашнюю директорию:**
+   > **Примечание:** Запуск пода без команд (`busybox` без `sleep`) приведёт к CrashLoopBackOff, так как контейнер завершает работу немедленно. Это нормальное поведение — главное, что под создаётся и запускается.
 
-   ```bash
-   mkdir -p ~/.kube
-   cp inventory/my-cluster/artifacts/admin.conf ~/.kube/config
-   chmod 600 ~/.kube/config
-   ```
+### Работа с containerd
 
-Подробнее: [kubeconfig и подключение](../../../Operations/kubeconfig_and_connection.md).
+Kubespray использует `containerd` как среду выполнения контейнеров. Docker не устанавливается. Для диагностики на уровне узлов применяется `crictl` — CLI для Container Runtime Interface.
 
-### Управление и мониторинг
+### kubeconfig
 
-**Обновление сертификатов:** Сертификаты живут 1 год. Требуется периодическое обновление через [Управление сертификатами](../../../Operations/certificate_management.md).
-
-**Графический интерфейс:** Используйте [Lens](../../../ToolsUtilities/lens/definitions_and_concepts.md) или другие IDE.
-
-**Мониторинг:** Разверните [Prometheus](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_installation_and_setup.md) и [Grafana](../../../../Grafana/grafana_overview.md).
+При настройке `kubeconfig_localhost: true` Kubespray копирует `admin.conf` на локальную машину в `inventory/<cluster>/artifacts/admin.conf`.
 
 ---
 
@@ -115,12 +58,6 @@ sudo crictl logs <CONTAINER_ID>
 ### Связанные темы
 
 - **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, этапы установки
-- **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
-- **[Управление кластером](./cluster_management.md)** — масштабирование и обновление
-- **[Примеры конфигураций](./examples.md)** — Ingress, MetalLB, системные поды
-- **[HA-кластер](../HA/index.md)** — развертывание высокодоступного кластера
+- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, требования, этапы установки
+- **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания, post-install проверка
 - **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
-- **[kubeadm](../../kubeadm/ha_keepalived_haproxy/index.md)** — альтернативный ручной метод
-- **[kind](../../kind/kind_concepts.md)** — локальные кластеры для разработки
-- **[Talos](../../local_cluster_with_talosctl.md)** — безопасная ОС для K8s

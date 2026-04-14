@@ -88,12 +88,14 @@
 ## Связанные ресурсы
 
 **Репозитории и документация:**
+
 - [GitHub: OpenLens](https://github.com/MuhammedKalkan/openlens)
 - [GitHub: Lens](https://github.com/lensapp/lens)
 - [Официальный сайт](https://k8slens.dev/)
 - [Документация](https://docs.k8slens.dev/)
 
 **Связанные файлы:**
+
 - [Определения и концепции](./definitions_and_concepts.md) — базовая информация о Lens
 - [Практические сценарии](./practical_scenarios.md) — установка, настройка, использование
 - [kubeswitches](../kubeswitches/usage.md) — управление контекстами

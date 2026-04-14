@@ -187,11 +187,13 @@ git commit -S -m "Подписанный коммит"
 GPG-Agent заменяет ssh-agent:
 
 1. `~/.gnupg/gpg-agent.conf`:
+
    ```
    enable-ssh-support
    ```
 
 2. Получить keygrip и добавить в `~/.gnupg/sshcontrol`:
+
    ```sh
    gpg -K --with-keygrip <AuthKeyID>!
    echo "<KEYGRIP>" >> ~/.gnupg/sshcontrol
@@ -200,6 +202,7 @@ GPG-Agent заменяет ssh-agent:
 3. Настроить переменные окружения в `.bashrc`/`.zshrc` на сокет `gpg-agent`.
 
 4. Экспорт SSH-ключа для сервера:
+
    ```sh
    gpg --export-ssh-key <AuthKeyID>!
    ```

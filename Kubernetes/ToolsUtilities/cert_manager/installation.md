@@ -5,6 +5,7 @@
 **Установка cert-manager** — процесс развёртывания Kubernetes-контроллера для автоматизации управления TLS-сертификатами. Официальная документация: [cert-manager.io/docs](https://cert-manager.io/docs/installation/).
 
 **Связанные темы:**
+
 - Определения и CRD: [definitions.md](./definitions.md)
 - Обновление и мониторинг: [Administration/operations.md](./Administration/operations.md)
 - Troubleshooting: [Administration/troubleshooting.md](./Administration/troubleshooting.md)

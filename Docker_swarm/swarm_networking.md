@@ -19,6 +19,7 @@ Overlay-сети используют **[VXLAN](../Networking/Tunnels/vxlan.md)*
 ```
 
 **Требования к сети:**
+
 - **TCP 2377** — коммуникация между узлами кластера
 - **TCP/UDP 7946** — обнаружение узлов
 - **UDP 4789** — трафик VXLAN (data plane)
@@ -141,6 +142,7 @@ ip link show | grep mtu
 #### Проблема: Контейнеры не видят друг друга
 
 **Проверка:**
+
 ```sh
 # Убедиться, что сервисы в одной сети
 docker service inspect --format='{{range .Spec.Networks.Attachments}}{{.Network.Name}}{{end}}' service-name
@@ -150,6 +152,7 @@ docker exec <container> nslookup <service-name>
 ```
 
 **Возможные причины:**
+
 - Сервисы в разных overlay-сетях
 - Firewall блокирует UDP 4789
 - Неправильный MTU
@@ -157,6 +160,7 @@ docker exec <container> nslookup <service-name>
 #### Проблема: Медленная связь между узлами
 
 **Проверка:**
+
 ```sh
 # Тест скорости
 docker run --rm --network my-overlay-network nicolaka/netshoot iperf3 -c <target-ip>
@@ -166,6 +170,7 @@ docker run --rm --network my-overlay-network alpine ping -c 10 <service-ip>
 ```
 
 **Решение:**
+
 - Включить шифрование только для чувствительных данных (оверхед CPU)
 - Проверить физическую сеть на предмет узких мест
 - Настроить MTU для избежания фрагментации
@@ -175,6 +180,7 @@ docker run --rm --network my-overlay-network alpine ping -c 10 <service-ip>
 **Симптомы:** Запрос на опубликованный порт не достигает сервиса.
 
 **Проверка:**
+
 ```sh
 # Проверка ingress-сети
 docker network inspect ingress
@@ -201,6 +207,7 @@ iptables -t nat -L DOCKER-INGRESS -n
 ### Безопасность
 
 **Рекомендации:**
+
 - Включайте шифрование (`--opt encrypted`) для чувствительных данных
 - Используйте отдельные сети для разных уровней приложения (frontend/backend)
 - Ограничивайте доступ к портам VXLAN (UDP 4789) на фаерволе

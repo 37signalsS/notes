@@ -4,7 +4,7 @@
 
 **Bare-Metal** — физические серверы без гипервизора. Обеспечивают максимальную производительность, но требуют ручного управления инфраструктурой и отказами.
 
-**kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kubeadm/ha_keepalived_haproxy/index.md).
+**kubeadm** — официальный инструмент для bootstrapping production-ready кластеров Kubernetes. Фокус на командах `init` и `join`. Подробнее: [kubeadm quickstart](../kubeadm/index.md).
 
 **containerd** — высокоуровневая CRI-совместимая среда выполнения контейнеров. Проект CNCF, стандарт для Kubernetes. Подробнее: [Альтернативные среды выполнения](../../../Docker/alternative_runtimes_and_tools.md).
 
@@ -28,7 +28,7 @@
    - Распределяет TCP-трафик на порт `6443` между всеми `kube-apiserver`
    - Примеры: HAProxy, Nginx, F5, облачные NLB
    - Должен быть отказоустойчивым (например, связка Keepalived + HAProxy)
-   - Подробнее: [Keepalived + HAProxy для HA](../kubeadm/ha_keepalived_haproxy/index.md)
+   - Подробнее: [Keepalived + HAProxy для HA](../kubeadm/index.md)
 
 2. **Виртуальный IP (VIP)**
    - "Плавающий" IP, не привязанный к одному серверу
@@ -71,7 +71,7 @@
 1. **Подготовка узлов** — настройка ОС, cgroups, sysctl ([требования](./k8s_ha_environment_requirements.md), [подготовка](./k8s_ha_node_preparation.md))
 2. **Установка containerd** — настройка CRI ([инструкция](./k8s_ha_component_installation.md))
 3. **Установка kubeadm/kubelet/kubectl** — установка компонентов
-4. **Настройка балансировщика** — Keepalived + HAProxy для VIP ([инструкция](../kubeadm/ha_keepalived_haproxy/ha_concepts.md))
+4. **Настройка балансировщика** — Keepalived + HAProxy для VIP ([инструкция](../kubeadm/ha_concepts.md))
 5. **Инициализация первого мастера** — `kubeadm init` с `--control-plane-endpoint` ([инструкция](./control_plane_initialization.md))
 6. **Установка CNI** — Calico или другой плагин ([инструкция](./cni_installation.md))
 7. **Присоединение мастеров** — `kubeadm join` с `--control-plane` ([инструкция](./node_joining.md))

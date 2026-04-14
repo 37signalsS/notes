@@ -30,6 +30,7 @@ Context = Cluster + User + Namespace (опционально)
 ```
 
 **Пример:**
+
 - Cluster: `production-cluster` → `https://prod-api.example.com:6443`
 - User: `admin-user` → сертификат администратора
 - Namespace: `default`
@@ -174,7 +175,7 @@ kubectl --kubeconfig=/path/to/other-config.yaml get pods
 
 ### Связанные темы
 
-* [Управление сертификатами](certificate_management.md) — ротация сертификатов в kubeconfig
-* [Обновление кластера](upgrading_clusters.md) — генерация нового kubeconfig при обновлении
-* [Аутентификация в Kubernetes](../Security/authentication.md) — методы аутентификации
-* [kubeadm: Инициализация кластера](../Installation/kubeadm/cluster_initialization.md) — создание admin.conf
+- [Управление сертификатами](certificate_management.md) — ротация сертификатов в kubeconfig
+- [Обновление кластера](upgrading_clusters.md) — генерация нового kubeconfig при обновлении
+- [Аутентификация в Kubernetes](../Security/authentication.md) — методы аутентификации
+- [kubeadm: Инициализация кластера](../Installation/kubeadm/cluster_initialization.md) — создание admin.conf

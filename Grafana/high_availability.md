@@ -7,6 +7,7 @@
 **Текущая версия (март 2026):** Grafana 12.x поддерживает HA-режим
 
 **Связанные темы:**
+
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
 - [Установка через Docker](./Installation/docker_compose_setup.md) — развёртывание в Docker
 - [Установка через Helm](./Installation/grafana_helm_installation.md) — развёртывание в Kubernetes

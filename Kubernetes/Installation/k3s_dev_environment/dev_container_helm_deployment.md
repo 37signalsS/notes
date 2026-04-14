@@ -230,7 +230,7 @@ ssh -p 32022 artur@<k3s-node-ip>
 - **CI/CD:** [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md)
 - **Helm:** [Обзор Helm](../../ToolsUtilities/Helm/helm_overview.md), [Структура чарта](../../ToolsUtilities/Helm/helm_chart_structure.md)
 - **Безопасность:** [Best practices Helm](../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
-- ** volumes:** [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md)
+- **volumes:** [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md)
 
 ### Предупреждения
 

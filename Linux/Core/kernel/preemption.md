@@ -40,6 +40,7 @@ grep CONFIG_PREEMPT /boot/config-$(uname -r)
 ```
 
 Вывод:
+
 - `CONFIG_PREEMPT_NONE=y` — невытесняемое ядро
 - `CONFIG_PREEMPT_VOLUNTARY=y` — добровольное вытеснение
 - `CONFIG_PREEMPT=y` — полностью вытесняемое ядро

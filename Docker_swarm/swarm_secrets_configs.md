@@ -146,6 +146,7 @@ configs:
 ```
 
 **Развертывание:**
+
 ```sh
 # Создать секреты и конфигурации
 docker secret create db_password ./password.txt
@@ -211,6 +212,7 @@ secrets:
 #### Секрет не доступен в контейнере
 
 **Проверка:**
+
 ```sh
 # Убедиться, что секрет назначен сервису
 docker service inspect --format='{{range .Spec.TaskTemplate.ContainerSpec.Secrets}}{{.SecretName}}{{end}}' my-service
@@ -220,6 +222,7 @@ docker exec <container> ls -la /run/secrets/
 ```
 
 **Возможные причины:**
+
 - Секрет не назначен сервису
 - Неправильный путь (`/run/secrets/` по умолчанию)
 - Контейнер запущен с `--privileged` (может изменить поведение tmpfs)
@@ -227,6 +230,7 @@ docker exec <container> ls -la /run/secrets/
 #### Ошибка "secret not found"
 
 **Проверка:**
+
 ```sh
 # Проверить существование секрета
 docker secret ls
@@ -282,6 +286,7 @@ docker service create --name my-app \
 ### Интеграция с Vault
 
 Для enterprise-сценариев рассмотрите интеграцию с HashiCorp Vault:
+
 - Динамическая генерация секретов
 - Политики доступа и аудит
 - Автоматическая ротация

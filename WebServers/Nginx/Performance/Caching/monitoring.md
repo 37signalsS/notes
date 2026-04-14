@@ -67,6 +67,7 @@ awk '{print $NF}' /var/log/nginx/cache_access.log | sort | uniq -c | sort -rn
 Для сбора метрик через **nginx-module-vts** (подробная настройка — [Nginx VTS Monitoring Setup](../../Operations/nginx_vts_monitoring_setup.md)):
 
 1. Добавьте endpoint для метрик в Nginx:
+
    ```nginx
    location /metrics {
        vhost_traffic_status_display;

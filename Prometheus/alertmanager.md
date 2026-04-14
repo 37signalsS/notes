@@ -153,6 +153,7 @@ receivers:
 ```
 
 **Логика маршрутизации:**
+
 - `service: prom` → `team-ops`
 - `severity: warnings|error|critical` → `team-monitoring`
 - Активный `PrometheusConfigurationReload` подавляет алерты с `severity: critical`
@@ -188,4 +189,4 @@ systemctl reload alertmanager.service
 
 ## Дополнительная информация
 
-* **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [Alertmanager installation](./installation/alertmanager_installation.md).
+- **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [Alertmanager installation](./installation/alertmanager_installation.md).

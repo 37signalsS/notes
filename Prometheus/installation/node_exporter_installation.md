@@ -172,7 +172,7 @@ node_exporter --help | grep collector
 
 ### Связанные темы
 
-* [Node Exporter (SSoT)](../Exporters/node_exporter.md) — полное руководство
-* [Exporters overview](../Exporters/overview.md) — обзор экспортёров
-* [Prometheus Server installation](./prometheus_server_installation.md)
-* [Configuration](../configuration.md) — настройка Prometheus
+- [Node Exporter (SSoT)](../Exporters/node_exporter.md) — полное руководство
+- [Exporters overview](../Exporters/overview.md) — обзор экспортёров
+- [Prometheus Server installation](./prometheus_server_installation.md)
+- [Configuration](../configuration.md) — настройка Prometheus

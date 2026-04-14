@@ -181,6 +181,7 @@ waitid(P_PIDFD, pidfd, &siginfo, WEXITED);
 ### Graceful Shutdown в контейнерах
 
 **Docker:**
+
 - `docker stop` → `SIGTERM`, через 10s → `SIGKILL`
 - `STOPSIGNAL` в Dockerfile меняет сигнал остановки
 
@@ -189,6 +190,7 @@ STOPSIGNAL SIGQUIT
 ```
 
 **Kubernetes:**
+
 - Pod получает `SIGTERM` при удалении/масштабировании
 - `terminationGracePeriodSeconds` (по умолчанию 30s) → время до `SIGKILL`
 
@@ -215,6 +217,7 @@ cat /proc/<PID>/status | grep Sig
 ### SIGKILL и зомби-процессы
 
 Зомби-процесс **невозможно** удалить сигналом `SIGKILL` — это уже не исполняемый код, а запись в таблице процессов. Удаление возможно через:
+
 - Корректное завершение родительского процесса
 - Обработку `SIGCHLD` родителем
 

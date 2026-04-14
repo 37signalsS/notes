@@ -119,7 +119,7 @@ docker run -d \
 
 ### Связанные документы
 
-- [Обзор 389DS](./overview.md) — общая информация
-- [Настройка репликации](./replication.md) — multi-master конфигурация
-- [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md) — StatefulSet deployment
-- [ACI](./aci.md) — управление доступом
+* [Обзор 389DS](./overview.md) — общая информация
+* [Настройка репликации](./replication.md) — multi-master конфигурация
+* [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md) — StatefulSet deployment
+* [ACI](./aci.md) — управление доступом

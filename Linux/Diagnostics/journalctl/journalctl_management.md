@@ -34,6 +34,7 @@ journalctl --disk-usage
 ```
 
 **Пример вывода:**
+
 ```
 Archived and active journals take up 2.3G in total.
 ```

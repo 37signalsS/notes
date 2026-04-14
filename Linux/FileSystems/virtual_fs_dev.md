@@ -31,6 +31,7 @@ cat /proc/devices
 ```
 
 Пример вывода:
+
 ```
 Character devices:
   1 mem

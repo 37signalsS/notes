@@ -65,6 +65,7 @@ kubectl get secret $(kubectl get serviceaccount default \
 ```
 
 **Частые причины 401:**
+
 - Истёкший токен ServiceAccount
 - Истёкший клиентский сертификат
 - Неверный kubeconfig (смена кластера/контекста)

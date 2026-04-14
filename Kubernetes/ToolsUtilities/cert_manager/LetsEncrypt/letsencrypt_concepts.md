@@ -106,18 +106,22 @@ openssl x509 -in cert.pem -noout -text | grep -A1 "Subject Alternative Name"
 **Сценарий:** Secret `letsencrypt-prod-key` удалён или повреждён.
 
 1. Создать новый ClusterIssuer с новым ключом:
+
    ```yaml
    spec:
      acme:
        privateKeySecretRef:
          name: letsencrypt-prod-key-new  # Новый Secret
    ```
+
 2. Обновить все Certificate на новый `issuerRef`:
+
    ```yaml
    issuerRef:
      name: letsencrypt-prod-new
      kind: ClusterIssuer
    ```
+
 3. Удалить старый Issuer после продления всех сертификатов
 
 ### Подготовка к 45-дневным сертификатам
