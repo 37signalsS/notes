@@ -41,6 +41,7 @@
 | :--- | :--- |
 | `Type=` | Тип сервиса: `simple` (по умолчанию), `forking`, `oneshot`, `notify`, `dbus` |
 | `User=` | Пользователь, от имени которого запускается процесс |
+| `EnvironmentFile=` | Путь к файлу с переменными окружения (для секретов) |
 | `ExecStart=` | Команда для запуска службы |
 | `ExecStartPre=` | Команда перед запуском (подготовка) |
 | `ExecStop=` | Команда для остановки службы |
@@ -48,6 +49,42 @@
 | `RestartSec=` | Задержка перед перезапуском |
 | `StandardOutput=` | Куда направлять stdout: `journal`, `syslog`, `file` |
 | `StandardError=` | Куда направлять stderr |
+
+#### Использование `EnvironmentFile` для управления секретами
+
+Передача секретов через `EnvironmentFile` — безопасный способ для приложений, работающих как systemd-сервисы. Файл с секретами хранится на сервере с ограниченными правами и не коммитится в Git.
+
+1. **Создать файл с секретами:**
+
+    ```bash
+    sudo mkdir -p /etc/myapp
+    sudo nano /etc/myapp/secrets.env
+    ```
+
+    Содержимое файла (`DB_PASSWORD=...`):
+
+    ```
+    DB_PASSWORD=my_super_password
+    API_TOKEN=abc123xyz
+    ```
+
+2. **Ограничить права доступа:**
+
+    ```bash
+    sudo chmod 600 /etc/myapp/secrets.env
+    sudo chown root:root /etc/myapp/secrets.env
+    ```
+
+3. **Подключить в юнит-файле:**
+
+    ```ini
+    [Service]
+    User=appuser
+    EnvironmentFile=/etc/myapp/secrets.env
+    ExecStart=/usr/bin/myapp
+    ```
+
+Приложение получит переменные окружения, как если бы они были переданы напрямую.
 
 > Подробнее о типах сервисов: [systemd_service_types.md](./systemd_service_types.md)
 

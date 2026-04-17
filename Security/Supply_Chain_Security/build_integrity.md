@@ -71,6 +71,9 @@ go build -trimpath -buildvcs=false -ldflags="-w -s" .
 
 Ограничение сетевого доступа во время сборки для предотвращения загрузки неконтролируемых зависимостей.
 
+* **Docker BuildKit:** Сборка без сети через `--network=none` (требует предварительной загрузки зависимостей).
+* **GitHub Actions:** Использование инструментов контроля трафика, таких как **[Harden-Runner](../../Github_CI/network-security.md)**, для мониторинга и блокировки несанкционированных внешних соединений.
+
 ```dockerfile
 # Docker BuildKit: сборка без сети
 RUN --network=none pip install --no-index --find-links=./wheels -r requirements.txt

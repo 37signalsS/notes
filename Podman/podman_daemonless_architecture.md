@@ -55,12 +55,36 @@
 
 **Ключевые возможности:**
 
-- Автоматическая генерация unit-файлов: `podman generate systemd`
-- Управление контейнерами как системными службами (автозапуск, зависимости, перезапуск при сбое)
-- Логи контейнеров по умолчанию отправляются в `journald`
-- Встроенные функции [автообновления и отката](./podman_auto_update.md) через `podman auto-update`
+- **Quadlet (рекомендуется)**: современный декларативный способ описания контейнеров.
+- **podman generate systemd (устарело)**: автоматическая генерация unit-файлов (не рекомендуется в новых проектах).
+- Управление контейнерами как системными службами (автозапуск, зависимости, перезапуск при сбое).
+- Логи контейнеров по умолчанию отправляются в `journald`.
+- Встроенные функции [автообновления и отката](./podman_auto_update.md) через `podman auto-update`.
+- [Проверки состояния (Healthchecks)](./podman_healthchecks.md) через юниты systemd.
 
-**Процесс настройки автозапуска:**
+**Процесс настройки через Quadlet (современный подход):**
+
+1. Создайте файл `/etc/containers/systemd/my_app.container` (для root) или `~/.config/containers/systemd/my_app.container` (для пользователя).
+2. Опишите параметры:
+
+   ```ini
+   [Container]
+   Image=nginx
+   PublishPort=8080:80
+   
+   # Переменные окружения
+   Environment=DEBUG=true
+   EnvironmentFile=%h/app/.env
+   
+   # Секреты
+   Secret=db_password
+   Secret=api_key,target=/app/key
+   ```
+
+3. Выполните `systemctl daemon-reload` (или `systemctl --user daemon-reload`).
+4. Сервис `my_app.service` будет сгенерирован и запущен автоматически (если указан `[Install]`).
+
+**Устаревший процесс (podman generate systemd):**
 
 ```bash
 # 1. Создание контейнера

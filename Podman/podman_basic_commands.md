@@ -80,11 +80,13 @@ podman info
 
 ### Ключевые особенности Podman
 
+- **Поддержка Compose** — запуск многоконтейнерных приложений через **[Podman Compose](./podman-compose.md)** или нативную утилиту `podman-compose`.
 - **Rootless по умолчанию** — контейнеры запускаются от непривилегированного пользователя. Подробнее: [Rootless режим](./podman_rootless.md)
 - **Совместимость с Docker CLI** — `alias docker=podman` для прозрачной миграции
 - **Нативная поддержка подов** — группировка контейнеров по аналогии с Kubernetes
 - **Интеграция с systemd** — генерация unit-файлов для автозапуска ([Daemonless архитектура](./podman_daemonless_architecture.md))
 - **Автообновление** — встроенный механизм updates/rollback через `podman auto-update`. Подробнее: [Автообновление и откат](./podman_auto_update.md)
+- **Конфигурация и секреты** — гибкое управление через [Переменные окружения](./podman_environment_variables.md) и безопасные [Секреты](./podman_secrets.md)
 - **Экономия ресурсов** — 0 МБ памяти в режиме простоя (нет демона)
 
 ### Очистка системы (Prune)
@@ -130,6 +132,12 @@ podman run -d --name myapp -v mydata:/data myimage
 
 # SELinux relabel (RHEL/Fedora)
 podman run -d --name myapp -v /home/user/data:/data:Z myimage
+
+# Дополнительные флаги Podman
+# :U — автоматический chown (rootless)
+# :O — временный overlay (не меняет хост)
+podman run -d -v ./data:/data:U myimage
+podman run -it -v ./data:/data:O alpine sh
 ```
 
 ### Работа с подами

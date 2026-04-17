@@ -81,3 +81,9 @@ docker run --rm -it -v "$PWD:/pwd" ghcr.io/trufflesecurity/trufflehog:latest git
 * **[Интеграция GitLab CI с HashiCorp Vault](../GitLab_CI/Tutorials/vault_kubernetes_integration.md)** — пошаговое руководство по JWT-аутентификации
 * **[HashiCorp Vault: обзор](../../Vault/overview.md)** — централизованное управление секретами
 * **[Безопасное управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — секреты в контейнеризированных средах
+
+### Альтернативные методы без менеджеров секретов
+
+* **[Управление секретами в GitHub Actions](../../Github_CI/secrets_management.md)** — использование встроенных зашифрованных переменных в GitHub.
+* **[Шифрование файлов в репозитории с помощью git-crypt](../../Git/git_tools.md#сценарий-7-использование-git-crypt-для-шифрования-секретов-в-репозитории)** — шифрование файлов с секретами напрямую в Git с помощью GPG-ключей.
+* **[Использование EnvironmentFile в systemd для передачи секретов](../../Linux/Core/systemd/systemd_unit_file_structure.md#использование-environmentfile-для-управления-секретами)** — безопасная передача переменных окружения в сервисы на серверах Linux.

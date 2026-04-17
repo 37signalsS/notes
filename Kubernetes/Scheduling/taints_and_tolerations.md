@@ -52,6 +52,8 @@ Kubernetes автоматически применяет следующие `tai
 * `operator: "Equal"`: `toleration` срабатывает, если `key`, `value` и `effect` точно совпадают с `taint`.
 * `operator: "Exists"`: `toleration` срабатывает для любого `taint` с указанным `key` и `effect`, независимо от `value`.
 
+> **Важно:** `toleration` не гарантирует, что под попадёт именно на ноду с соответствующим `taint` — он лишь снимает запрет на размещение. Для направления пода на конкретную ноду используйте `nodeSelector` или `nodeAffinity`.
+
 ```yaml
 apiVersion: v1
 kind: Pod
@@ -67,6 +69,16 @@ spec:
   - key: "key2"
     operator: "Exists"
     effect: "NoExecute"
+```
+
+#### Toleration для любого Taint
+
+Если не указать `key` совсем — `toleration` сработает для любого `taint` на ноде (при совпадении `effect`):
+
+```yaml
+tolerations:
+- operator: "Exists"
+  effect: "NoSchedule"
 ```
 
 ### `tolerationSeconds` для `NoExecute`

@@ -21,6 +21,7 @@
 
 - **SAST-инструменты:** Checkov (IaC), SonarQube, Bandit (Python), Semgrep, gosec (Go).
 - **DAST-инструменты:** OWASP ZAP, Burp Suite.
+- **Сетевой контроль (CI-раннеры):** **[Harden-Runner](../../Github_CI/network-security.md)** (GitHub Actions).
 - **Классификации уязвимостей:** CWE (Common Weakness Enumeration), CVE (Common Vulnerabilities and Exposures).
 
 ## Практические сценарии
