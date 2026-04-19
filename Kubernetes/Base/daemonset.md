@@ -158,4 +158,4 @@ spec:
 
 ## Дополнительная информация
 
-См. также: [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [NodeLocalDNS](../Networking/dns_deep_dive.md#принцип-работы-nodelocaldns), [MetalLB](../Networking/metallb.md), [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).
+См. также: [Security Context](../Security/pod_security_context.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [NodeLocalDNS](../Networking/dns_deep_dive.md#принцип-работы-nodelocaldns), [MetalLB](../Networking/metallb.md), [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).

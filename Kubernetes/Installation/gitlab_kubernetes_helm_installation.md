@@ -15,7 +15,7 @@
 | **StorageClass** | Kubernetes-объект для динамического выделения PersistentVolume. Требуется для хранения данных GitLab (NFS, Ceph, облачные решения) |
 | **MetalLB** | Решение для реализации сервиса типа LoadBalancer в bare-metal кластерах. По умолчанию в kubeadm/k3s LoadBalancer не работает |
 
-**Навигация:** [GitLab CI Basics](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) | [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
+**Навигация:** [Архитектура GitLab](../../CI-CD/GitLab_CI/Concepts/gitlab_platform_architecture.md) | [GitLab CI Basics](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) | [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
 
 ---
 

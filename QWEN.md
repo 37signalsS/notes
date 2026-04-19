@@ -70,7 +70,7 @@ Priority — knowledge extraction and application, not archiving.
 **Mandatory for ALL files EXCEPT `Interview_and_Work/`:**
 
 - **Language:** English only
-- **Format:** kebab-case (`docker-commands.md`, `kubernetes-overview.md`)
+- **Format:** kebab_case or kebab-case (`docker_commands.md`, `kubernetes-overview.md`)
 - **No spaces, no Cyrillic**
 - **Meaningful names** reflecting file content
 - **Digits:** allowed only in root-level files (`2.md`, `3.md`); subdirectory files must not contain digits

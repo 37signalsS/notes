@@ -190,8 +190,8 @@ spec:
 
 **Безопасность:**
 
-- Запускайте контейнеры от непривилегированного пользователя (`securityContext.runAsNonRoot: true`)
-- Избегайте `privileged: true`
+- Запускайте контейнеры от непривилегированного пользователя (`securityContext.runAsNonRoot: true`). Подробнее: [Security Context](../../Security/pod_security_context.md).
+- Избегайте `privileged: true`.
 
 ### 4.2. Расширенные стратегии развертывания
 

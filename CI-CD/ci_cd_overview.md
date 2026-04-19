@@ -120,6 +120,7 @@
 
 ### Связанные темы
 
+* Архитектура и масштабирование GitLab: [Архитектура GitLab](./GitLab_CI/Concepts/gitlab_platform_architecture.md)
 * Базовый синтаксис и примеры пайплайнов: [Основы GitLab CI/CD](./GitLab_CI/Concepts/gitlab_ci_basics.md)
 * Принципы работы с артефактами: [Управление артефактами](./artifact_management.md)
 * Проверенные подходы к построению пайплайнов: [CI/CD: Паттерны](./ci_cd_patterns.md)
