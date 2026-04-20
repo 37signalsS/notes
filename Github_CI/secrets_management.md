@@ -77,6 +77,41 @@ jobs:
         run: ./deploy.sh
 ```
 
+### Принцип минимальных прав в GitHub Actions
+
+Согласно [общему принципу минимальных прав в CI/CD](../CI-CD/DevSecOps/secrets_management.md#1-принцип-минимальных-прав-least-privilege), задачи пайплайна должны иметь доступ только к тем секретам, которые необходимы для их выполнения.
+
+Параметр `environment: production` в GitHub Actions не просто логическая метка. Он изолирует секреты этого окружения от других задач и, по умолчанию, может требовать ручного подтверждения перед запуском деплоя.
+
+**Пример разделения прав между тестами и деплоем:**
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Продовых секретов здесь нет. Тесты используют моки или тестовую базу.
+    env:
+      DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production  # Изолированный scope секретов + подтверждение
+    needs: test              # Запуск только после успешных тестов
+    env:
+      # Продовые секреты доступны только здесь
+      AWS_ROLE_ARN: ${{ secrets.PROD_AWS_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to AWS
+        run: ./deploy.sh
+```
+
+Ключевой момент: задача `test` не имеет доступа к `PROD_AWS_ROLE_ARN`, так как она не привязана к `environment: production`. Это минимизирует ущерб при возможной компрометации тестового этапа.
+
 ## Дополнительная информация
 
 - [Синтаксис воркфлоу](./Workflow_Syntax.md)
