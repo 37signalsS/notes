@@ -115,6 +115,7 @@ mount /dev/my_vg/my_lv /data
 **Шаг 1: Обновление информации о диске (Rescan)**
 
 Если новый размер диска не виден в `lsblk`, принудительно обновите его:
+
 ```bash
 echo 1 > /sys/class/block/sda/device/rescan
 ```
@@ -122,6 +123,7 @@ echo 1 > /sys/class/block/sda/device/rescan
 **Шаг 2: Расширение раздела с помощью growpart**
 
 Самый простой способ расширить раздел без размонтирования:
+
 ```bash
 sudo growpart /dev/sda 2  # Расширить раздел 2 на диске /dev/sda
 ```

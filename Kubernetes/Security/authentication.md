@@ -24,9 +24,11 @@
 - `audience` — аудитория токена (для доступа к внешним API)
 - `path` — нестандартный путь монтирования
 
-### 3. OpenID Connect (OIDC)
+### 3. OpenID Connect (OIDC) и Pinniped
 
 Принцип работы: Пользователь аутентифицируется через внешнего провайдера, получает OIDC токен (ID Token) и передает его API-серверу. API-сервер проверяет подлинность токена, обращаясь к IdP.
+
+**Pinniped:** Специализированный сервис, упрощающий интеграцию с OIDC, LDAP и Active Directory. Он выступает посредником между пользователем и Kubernetes API. Подробнее: [Pinniped](./pinniped.md).
 
 Подробнее: [OAuth2 Overview](../../Security/Concepts/oauth2_overview.md).
 
@@ -84,9 +86,9 @@ API-сервер отправляет токен на внешний webhook-с�
 |-------|----------|--------------|-----------|
 | **X.509** | Компоненты кластера, администраторы | Высокая | Средняя |
 | **Service Account** | Приложения внутри кластера | Средняя | Низкая |
-| **OIDC** | Пользователи (SSO) | Высокая | Средняя |
+| **OIDC / Pinniped** | Пользователи (SSO, LDAP, AD) | Высокая | Средняя |
 | **Bootstrap** | Временная аутентификация kubelet | Средняя | Низкая |
 | **Webhook** | Кастомные сценарии | Зависит от реализации | Высокая |
 | **Static Token** | Разработка/тестирование | Низкая | Низкая |
 
-Защита канала передачи — [TLS и mTLS](./tls_and_mtls_in_kubernetes.md). Инфраструктура ключей — [PKI Overview](../../Security/Concepts/pki_overview.md). Различие аутентификации и авторизации — [Authentication vs Authorization](../../Security/Concepts/authentication_vs_authorization.md). Для хранения токенов и сертификатов в Git используйте [Sealed Secrets](./sealed_secrets_overview.md).
+Защита канала передачи — [TLS и mTLS](./tls_and_mtls_in_kubernetes.md). Инфраструктура ключей — [PKI Overview](../../Security/Concepts/pki_overview.md). Различие аутентификации и авторизации — [Authentication vs Authorization](../../Security/Concepts/authentication_vs_authorization.md). Для хранения токенов и сертификатов в Git используйте [Sealed Secrets](./sealed_secrets_overview.md). Подробно об интеграции с IdP: [Pinniped](./pinniped.md).

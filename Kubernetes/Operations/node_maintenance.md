@@ -155,6 +155,67 @@ kubectl rollout restart deployment <app>
 kubectl drain <source-node> --ignore-daemonsets --delete-emptydir-data
 ```
 
+### Перенос данных рантайма на другой раздел
+
+Когда корневой раздел `/` на узлах заполняется данными подов и образов, рекомендуется перенести `/var/lib/kubelet` и `/var/lib/containerd` на отдельный большой раздел (например, `/storage`).
+
+**Важно:**
+
+* Для **master-нод** рекомендуется оставить пути по умолчанию, чтобы избежать рисков для etcd.
+* Если на узле запущены старые **Docker Compose** сервисы (`/var/lib/docker`), их обычно оставляют на месте для сохранения стабильности.
+
+#### Процесс переноса (для worker-ноды)
+
+1. **Остановка компонентов:**
+   Приведет к кратковременной остановке контейнеров на узле.
+
+   ```bash
+   systemctl stop kubelet containerd
+   ```
+
+2. **Подготовка директорий и копирование данных:**
+   Использование `rsync` позволяет сохранить права доступа и структуру.
+
+   ```bash
+   mkdir -p /storage/kubelet /storage/containerd
+   rsync -av /var/lib/kubelet/ /storage/kubelet/
+   rsync -av /var/lib/containerd/ /storage/containerd/
+   ```
+
+3. **Изменение конфигурации containerd:**
+   Отредактируйте `/etc/containerd/config.toml`:
+
+   ```toml
+   # Укажите новый путь к корню рантайма
+   root = "/storage/containerd"
+   ```
+
+4. **Изменение конфигурации kubelet:**
+   Для Debian/Ubuntu добавьте параметр в `/etc/default/kubelet`:
+
+   ```bash
+   KUBELET_EXTRA_ARGS="--root-dir=/storage/kubelet"
+   ```
+
+5. **Применение изменений и запуск:**
+
+   ```bash
+   systemctl daemon-reload
+   systemctl start containerd kubelet
+   ```
+
+#### Верификация
+
+```bash
+# Проверка аргументов запуска kubelet
+ps aux | grep kubelet | grep root-dir
+
+# Проверка записи данных в новое место (появление UID подов)
+ls -la /storage/kubelet/pods/ | tail -5
+```
+
+**Откат:** В случае проблем верните старые пути в конфигурационных файлах и перезапустите сервисы. Исходные данные в `/var/lib/` сохраняются до момента их ручного удаления.
+
 ### Проверка статуса узла
 
 ```bash

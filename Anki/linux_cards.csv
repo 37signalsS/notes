@@ -1298,8 +1298,8 @@ question;answer;tags
 1327: Что такое OOM Score Adj?;Корректирующий коэффициент (-1000 до +1000) для влияния на oom_score процесса.;linux::core::memory
 1328: Что такое Fork Bomb?;Атака DoS через экспоненциальное создание процессов. Исчерпывает лимиты системы.;linux::security::attacks
 1329: Что такое IO Scheduler?;Планировщик ввода-вывода ядра. Управляет порядком выполнения запросов к блочным устройствам.;linux::core::io
-1330: Что такое Single-Queue IO Scheduler?;Устаревшие планировщики с одной очередью на устройство. Плохо масштабировались.;linux::core::io
-1331: Что такое Multi-Queue (blk-mq)?;Современный фреймворк с несколькими очередями на устройство (по одной на CPU).;linux::core::io
+1330: Что такое Single-Queue IO Scheduler?;Устаревшие планировщики с одной глобальной очередью на устройство. На многоядерных системах вызывали lock contention (конкуренцию за блокировку).;linux::core::io
+1331: Что такое Multi-Queue (blk-mq)?;Современная архитектура I/O, разделяющая нагрузку на множество программных очередей (по одной на CPU) и сопоставляющая их с аппаратными очередями SSD/NVMe.;linux::core::io
 1332: Что такое noop/none Scheduler?;Простейший планировщик (FIFO). Используется для NVMe SSD и виртуальных дисков.;linux::core::io
 1333: Что такое mq-deadline Scheduler?;Планировщик с гарантией дедлайнов. Предотвращает голодание запросов.;linux::core::io
 1334: Что такое bfq Scheduler?;Budget Fair Queueing - справедливое распределение I/O с низкой латентностью для интерактивных задач.;linux::core::io
@@ -1893,3 +1893,4 @@ question;answer;tags
 1894: Зачем устанавливать CPU Type = host в Proxmox?;Чтобы пробросить все флаги и инструкции физического процессора (AES-NI, AVX) в ВМ, что ускоряет шифрование и AI нагрузки.;linux::virtualization::proxmox
 1895: В чем разница между VM Escape и Container Escape?;VM Escape — взлом гипервизора из ВМ (редко); Container Escape — выход из контейнера на хост через ядро (чаще из-за общего ядра).;linux::security::virtualization
 1896: Можно ли запускать Docker внутри LXC?;Да, с включенной опцией Nesting (обычно в Proxmox), но это требует настройки и может снижать уровень безопасности.;linux::virtualization::lxc
+Как диагностировать ситуацию, когда сеть не «умерла», а всё уткнулось в ARP-cache (хаос, часть IP не пингуется)?;1. ip -s neigh (ищем INCOMPLETE/FAILED) 2. ip neigh show | wc -l (количество записей) 3. Проверяем лимит: cat /proc/sys/net/ipv4/neigh/default/gc_thresh3 4. dmesg | grep -i arp;linux::networking::arp::troubleshooting

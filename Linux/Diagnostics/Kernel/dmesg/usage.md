@@ -39,13 +39,16 @@ dmesg --follow # или dmesg -w
     ```bash
     # Поиск сообщений, связанных с USB
     dmesg | grep -i usb
+
+    # Поиск информации о конкретном диске
+    dmesg | grep sdb
     ```
 
 - **По уровню важности:**
 
     ```bash
-    # Показать только ошибки и критические сообщения
-    dmesg --level=err,crit
+    # Показать только ошибки и предупреждения
+    dmesg --level=err,warn
     ```
 
     _Доступные уровни: `emerg`, `alert`, `crit`, `err`, `warn`, `notice`, `info`, `debug`._

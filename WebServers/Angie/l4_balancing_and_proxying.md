@@ -161,18 +161,19 @@ server {
 
 Функция SSL Pre-read позволяет Angie «заглянуть» в начало TCP-соединения и определить тип трафика без полной терминации сессии.
 
-**Пример: мультиплексирование HTTPS и SSH на порту 443**
+**Пример: мультиплексирование HTTPS и SSH на одном порту (например, 443)**
+Это позволяет обходить ограничения брандмауэров, разрешающих только 443 порт.
 
 ```nginx
 # /etc/angie/stream.d/ssl_preread.conf
-map $ssl_preread_server_name $backend_by_sni {
-    hostnames;
-    default         ssh_backend;
-    www.example.com http_backend;
+map $ssl_preread_protocol $backend_by_protocol {
+    "TLSv1.2"  http_backend;
+    "TLSv1.3"  http_backend;
+    default    ssh_backend; # Если протокол не распознан как TLS (например, SSH)
 }
 
 upstream http_backend {
-    server 127.0.0.1:8080;
+    server 127.0.0.1:8443;
 }
 upstream ssh_backend {
     server 127.0.0.1:22;
@@ -181,8 +182,8 @@ upstream ssh_backend {
 server {
     listen 443;
 
-    ssl_preread on; # Включаем анализ Client Hello
-    proxy_pass $backend_by_sni;
+    ssl_preread on; # Включаем анализ рукопожатия (handshake)
+    proxy_pass $backend_by_protocol;
 
     status_zone ssl_preread_status;
 }
@@ -190,14 +191,12 @@ server {
 
 **Особенности:**
 
-- **[`map`](../Nginx/Core/nginx_rewrite_rules_and_try_files.md#директива-map)** — определяет `$backend_by_sni` на основе SNI (`$ssl_preread_server_name`). Без SNI (как в SSH) — используется `default`.
-- **`listen 443;`** — без флага `ssl`, Angie не терминирует соединение.
-- **`ssl_preread on;`** — включает анализ Client Hello.
-- **`proxy_pass $backend_by_sni;`** — динамическое проксирование на основе `map`.
+- **`$ssl_preread_protocol`**: переменная содержит версию протокола TLS. Если это не TLS-трафик, переменная будет пустой, и `map` выберет `default` (SSH).
+- **Без терминации SSL**: Angie не расшифровывает трафик для `http_backend`, она просто перенаправляет байты после анализа начала сессии.
 
 ### Сценарий: проксирование UDP (DNS)
 
-Angie проксирует UDP-трафик, например для DNS-серверов.
+Angie проксирует UDP-трафик, например для DNS-серверов. Поскольку UDP не имеет состояния (без установления соединения), Angie имитирует сессии для управления трафиком.
 
 ```nginx
 # /etc/angie/stream.d/udp_dns.conf
@@ -211,7 +210,11 @@ server {
     listen 53 udp; # UDP-порт
     listen 53;     # TCP-порт (DNS использует оба)
 
-    proxy_responses 1; # Ожидание одного ответа от бэкенда
+    # Ожидание ровно одного ответа от бэкенда перед закрытием "сессии"
+    proxy_responses 1; 
+    
+    # Тайм-аут ожидания ответа
+    proxy_timeout 3s;
 
     proxy_pass dns_servers;
 }
@@ -219,9 +222,8 @@ server {
 
 **Особенности:**
 
-- **`listen ... udp;`** — указывает прослушивание UDP-трафика.
-- **`proxy_responses 1;`** — критично для UDP без состояния — предотвращает бесконечное удержание сессии.
-- **Без конвертации протоколов:** UDP проксируется как UDP, TCP — как TCP.
+- **`proxy_responses`**: Критически важная директива для UDP. Она сообщает Angie, сколько пакетов-ответов ожидать от бэкенда, прежде чем считать транзакцию завершенной. Для DNS это обычно 1.
+- **Отсутствие конвертации**: UDP проксируется как UDP, TCP — как TCP. Angie не умеет конвертировать UDP в TCP (например, для DNS over TCP) «из коробки» без дополнительных модулей.
 
 ## Дополнительная информация
 

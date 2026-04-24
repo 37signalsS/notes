@@ -42,6 +42,7 @@
 | Тестирование | [Docker](./docker.md) (один контейнер) |
 | Production (HA) | [Multi-master репликация](./replication.md) (2+ узла) |
 | Kubernetes | [StatefulSet](./k8s_deploy/basic_concepts.md) с PVC |
+| Аутентификация в K8s | Интеграция через [Pinniped](../../Kubernetes/Security/pinniped.md) |
 | Миграция с OpenLDAP | [Руководство по миграции](https://www.port389.org/docs/389ds/howto/howto-migrate-openldap.html) |
 
 ## Дополнительная информация

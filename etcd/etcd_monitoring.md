@@ -21,7 +21,8 @@
     * **Метрики**: `etcd_server_has_leader`, `etcd_server_health_success`, `etcd_server_leader_changes_seen_total`.
 
 2. **Производительность (Performance)**:
-    * **Задержки**: Мониторинг задержек фиксации записей в WAL (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`). Высокие значения могут сигнализировать о проблемах с дисковой подсистемой.
+    * **Задержки**: Мониторинг задержек фиксации записей в WAL (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`).
+        * **Пороговые значения**: Норма — до **10 мс**. Для нагруженных систем — до **2 мс**. Постоянное превышение 10 мс ведет к деградации производительности кластера.
     * **RPC**: Задержки междоузлового общения (`etcd_network_peer_round_trip_time_seconds`) важны для оценки здоровья сети.
     * **Транзакции**: Количество медленных запросов (`etcd_server_slow_apply_total`) и общая частота запросов (`etcd_server_proposals_applied_total`).
 

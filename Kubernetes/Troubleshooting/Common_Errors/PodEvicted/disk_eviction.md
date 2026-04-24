@@ -189,7 +189,7 @@ systemctl restart containerd
 | **Ограничивайте `emptyDir.sizeLimit`** | Защита от бесконтрольного роста temporary volumes |
 | **Настраивайте log rotation** | Автоматическая ротация логов контейнеров |
 | **Image garbage collection** | Настройка `imageGCHighThresholdPercent` в kubelet |
-| **Отдельный диск для `/var/lib/kubelet`** | Изоляция от системного раздела |
+| **Отдельный диск для `/var/lib/kubelet`** | Изоляция от системного раздела. См. [Инструкция по переносу](../../Operations/node_maintenance.md#перенос-данных-рантайма-на-другой-раздел) |
 
 ### Связанные файлы
 

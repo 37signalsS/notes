@@ -40,15 +40,19 @@
 ### Общий алгоритм подготовки
 
 #### 1. Аудит и проверка готовности
+
 * **Изучение Release Notes:** Проверка разделов "Urgent Upgrade Notes" для целевой версии.
 * **Проверка API:**
+
   ```bash
   # Пример использования kubent для поиска устаревших API
   kubent --helm3 --exit-error
   ```
+
 * **Проверка здоровья кластера:** Убедиться, что все узлы и поды в статусе `Ready/Running`.
 
 #### 2. Резервное копирование etcd
+
 ```bash
 # Сохранение снапшота на одном из master-узлов
 ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
@@ -63,13 +67,16 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
 Для каждого узла (сначала Master, затем Worker) выполняется стандартный цикл:
 
 1. **Изоляция и Дренаж:**
+
    ```bash
    kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
    ```
+
 2. **Обновление управляющих утилит** (например, `kubeadm`, `kubelet`, `kubectl`).
 3. **Применение обновления:** Команда обновления конфигурации (например, `kubeadm upgrade node`).
 4. **Перезапуск агентов:** Перезапуск сервиса `kubelet` для применения новых бинарных файлов.
 5. **Возврат в работу:**
+
    ```bash
    kubectl uncordon <node-name>
    ```
