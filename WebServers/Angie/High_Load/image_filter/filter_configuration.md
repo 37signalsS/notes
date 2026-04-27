@@ -48,11 +48,11 @@ location ~* ^/vp(/img/.+\.(png|gif))$ {
 
 ### Конвертация в WebP с resize
 
-Изменение размера и конвертация в формат WebP:
+Изменение размера и конвертация в формат WebP (в Angie рекомендуется использовать `convert webp`):
 
 ```nginx
 location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.(jpe?g|png|gif))$ {
-    image_filter webp;
+    image_filter convert webp;
     image_filter resize $2 $3;
     image_filter_webp_quality 80;
     image_filter_sharpen 1;
@@ -66,7 +66,7 @@ location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.(jpe?g|png|gif))$ {
 
 ```nginx
 location ~* ^/vp(/img/.+\.(jpe?g|png|gif))$ {
-    image_filter webp;
+    image_filter convert webp;
     image_filter_webp_quality 80;
     error_page 415 = @empty;
 }
@@ -74,11 +74,11 @@ location ~* ^/vp(/img/.+\.(jpe?g|png|gif))$ {
 
 ### Конвертация в AVIF
 
-Конвертация в формат AVIF (требует наличие библиотеки `libavif`):
+Конвертация в формат AVIF (требует наличие библиотеки `libavif` и поддержки в Angie):
 
 ```nginx
 location ~* ^/avif(/img/.+\.(jpe?g|png|gif))$ {
-    image_filter avif;
+    image_filter convert avif;
     image_filter_avif_quality 80;
     error_page 415 = @empty;
 }
@@ -111,7 +111,7 @@ server {
 
     # Конвертация в WebP с resize
     location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.(jpe?g|png|gif))$ {
-        image_filter webp;
+        image_filter convert webp;
         image_filter resize $2 $3;
         image_filter_webp_quality 80;
         image_filter_sharpen 1;
@@ -120,14 +120,14 @@ server {
 
     # Конвертация в WebP без resize
     location ~* ^/vp(/img/.+\.(jpe?g|png|gif))$ {
-        image_filter webp;
+        image_filter convert webp;
         image_filter_webp_quality 80;
         error_page 415 = @empty;
     }
 
     # Конвертация в AVIF (требует libavif)
     location ~* ^/avif(/img/.+\.(jpe?g|png|gif))$ {
-        image_filter avif;
+        image_filter convert avif;
         image_filter_avif_quality 80;
         error_page 415 = @empty;
     }

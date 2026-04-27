@@ -51,7 +51,7 @@ network:
 
 - **Несколько IP:** указываются в квадратных скобках через запятую с пробелом
 - **`macaddress:`** — привязка к MAC-адресу
-- **`routes:`** — статические маршруты (заменяет `gateway4` в новых версиях). Поддерживает параметры `table` и `metric` для [policy-based routingindex.md.
+- **`routes:`** — статические маршруты (заменяет `gateway4` в новых версиях). Поддерживает параметры `table` и `metric` для policy-based routing.
 - **`nameservers.addresses:`** — DNS-серверы (список)
 
 ### DHCP с переопределением параметров (dhcp4-overrides)

@@ -136,6 +136,7 @@ ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
 
 ### Связанные темы
 
+- [Общее управление и тюнинг JVM](../../../Linux/Development/java_management.md) — лимиты, cgroups, флаги (`-Xmx`, `ActiveProcessorCount`).
 - [Оптимизация сборки Dockerfile](./build_optimization.md) — многоэтапная сборка, jlink, минимизация образа
 - [Безопасность в Dockerfile](./security.md) — непривилегированные пользователи, distroless-образы
 - [Выполнение контейнеров: сигналы и health checks](../Instructions/health_signals.md) — корректная обработка сигналов JVM

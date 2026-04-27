@@ -61,4 +61,6 @@ systemd-analyze plot > plot.svg
 
 ## Дополнительная информация
 
-Проверка юнит-файлов: `systemd-analyze verify` — [Юниты, таргеты и зависимости](./systemd_units_overview.md). Отладка таймеров: `systemd-analyze calendar` — [Задачи по расписанию (Timers)](./timers.md).
+- **Оптимизация командной оболочки**: Использование легковесного `/bin/sh` (например, `dash` в Debian/Ubuntu) значительно ускоряет выполнение скриптов инициализации, что критично для минимальных облачных образов. Подробнее: [Типы оболочек](../../Shell/shell_intro.md#типы-командных-оболочек).
+- **Проверка юнит-файлов**: `systemd-analyze verify` — [Юниты, таргеты и зависимости](./systemd_units_overview.md).
+- **Отладка таймеров**: `systemd-analyze calendar` — [Задачи по расписанию (Timers)](./timers.md).
