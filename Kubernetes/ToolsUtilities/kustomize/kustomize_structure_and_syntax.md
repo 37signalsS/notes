@@ -298,18 +298,24 @@ components:
 
 ## 4. Additional Information
 
-### Порядок применения трансформаций
+### Порядок применения трансформаций и сортировка
 
 Kustomize применяет изменения в следующем порядке:
 
-1. **resources** — загрузка ресурсов
-2. **namePrefix/nameSuffix** — модификация имён
-3. **namespace** — установка namespace
-4. **commonLabels/commonAnnotations** — добавление метаданных
-5. **patches** — наложение патчей
-6. **images** — override образов
-7. **configMapGenerator/secretGenerator** — генерация ресурсов
-8. **generatorOptions** — финальные настройки генераторов
+1. **resources** — загрузка ресурсов.
+2. **namePrefix/nameSuffix** — модификация имён.
+3. **namespace** — установка namespace.
+4. **commonLabels/commonAnnotations** — добавление метаданных.
+5. **patches** — наложение патчей.
+6. **images** — override образов.
+7. **configMapGenerator/secretGenerator** — генерация ресурсов.
+8. **generatorOptions** — финальные настройки генераторов.
+
+**Автоматическая сортировка ресурсов:**
+При сборке (`kustomize build`) Kustomize автоматически сортирует ресурсы в итоговом манифесте независимо от их порядка в `kustomization.yaml`. 
+- **CRD (CustomResourceDefinition)** всегда выносятся в начало списка. Это гарантирует, что определения ресурсов будут применены раньше, чем сами кастомные ресурсы, предотвращая ошибки при деплое.
+- Последовательность обычно выглядит так: `Namespace` → `ResourceQuota` → `StorageClass` → `CustomResourceDefinition` → ... → `Deployment` → `Service`.
+
 
 ### Устаревшие поля
 

@@ -155,7 +155,33 @@ patches:
       value: info
 ```
 
-### 3.4. Patch через target: изменение specific контейнера
+### 3.4. JSON Patch: удаление поля или ресурса
+
+Для удаления специфических полей (например, `livenessProbe`) в конкретном окружении используется операция `remove`:
+
+```yaml
+# overlays/staging/remove-probe-patch.yaml
+- op: remove
+  path: /spec/template/spec/containers/0/livenessProbe
+```
+
+**Удаление ресурса целиком:**
+Хотя Kustomize спроектирован для добавления и изменения ресурсов, полностью удалить ресурс из `base` можно через JSON Patch с фильтрацией (в новых версиях Kustomize) или через пустой патч с операцией `remove` в `kustomization.yaml`:
+
+```yaml
+# kustomization.yaml
+patches:
+  - target:
+      kind: Service
+      name: unused-service
+    patch: |-
+      - op: remove
+        path: /metadata/name  # Нестандартный способ, лучше исключать из resources
+```
+
+*Примечание: Если ресурс не нужен в большинстве окружений, лучше не включать его в `base`, а добавлять только в нужные `overlays` через `resources`.*
+
+### 3.5. Patch через target: изменение specific контейнера
 
 ```yaml
 # kustomization.yaml

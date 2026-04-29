@@ -15,7 +15,7 @@
 | **StorageClass** | Kubernetes-объект для динамического выделения PersistentVolume. Требуется для хранения данных GitLab (NFS, Ceph, облачные решения) |
 | **MetalLB** | Решение для реализации сервиса типа LoadBalancer в bare-metal кластерах. По умолчанию в kubeadm/k3s LoadBalancer не работает |
 
-**Навигация:** [Архитектура GitLab](../../CI-CD/GitLab_CI/Concepts/gitlab_platform_architecture.md) | [GitLab CI Basics](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) | [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
+**Навигация:** [Архитектура GitLab](../../CI-CD/GitLab_CI/Concepts/gitlab_platform_architecture.md) | [GitLab CI Basics](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) | [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md) | [Установка в закрытом контуре](./gitlab_offline_kubernetes_installation.md)
 
 ---
 
@@ -497,6 +497,7 @@ helm upgrade --install gitlab gitlab/gitlab \
 
 - [Обзор Helm](../ToolsUtilities/Helm/helm_overview.md) — основы работы с Helm
 - [Структура Helm-чарта](../ToolsUtilities/Helm/helm_chart_structure.md) — организация файлов чарта
+- [Установка GitLab в закрытом контуре](./gitlab_offline_kubernetes_installation.md) — развертывание в air-gapped окружении
 - [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md) — отключение Registry и настройка внешнего реестра
 - [GitLab CI Basics](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) — основы CI/CD в GitLab
 - [Docker-in-Docker](../../Docker/docker-in-docker.md) — запуск Docker внутри контейнера (требует privileged-режим)

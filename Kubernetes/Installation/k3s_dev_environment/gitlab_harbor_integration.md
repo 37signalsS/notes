@@ -190,6 +190,7 @@ cp /opt/harbor/certs/root-ca.crt ./root-ca.crt
 
 ### Связанные темы
 
+- **Установка:** [Установка GitLab через Helm](../gitlab_kubernetes_helm_installation.md), [Установка в закрытом контуре](../gitlab_offline_kubernetes_installation.md)
 - **Harbor:** [Обзор Harbor](../../../Docker/Docker_registries/Harbor/overview.md), [Установка Harbor](../../../Docker/Docker_registries/Harbor/installation.md), [Сертификаты](../../../Docker/Docker_registries/Harbor/certificates.md)
 - **GitLab CI:** [Основы GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md), [Kubernetes Integration](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)
 - **Dev-окружение:** [Архитектура K3s](./k3s_architecture.md), [Kubeutils Image](./kubeutils_image.md), [Dev Container Helm](./dev_container_helm_deployment.md)

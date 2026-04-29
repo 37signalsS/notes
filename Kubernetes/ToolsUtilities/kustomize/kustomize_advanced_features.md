@@ -130,37 +130,49 @@ configMapGenerator:
 
 Результат: `static-config` (без хеша).
 
-### 3.8. Гибридный подход Helm + Kustomize
+### 3.8. Интеграция Helm + Kustomize
 
-Для использования существующих Helm charts с Kustomize overlays:
+Существует два основных способа совместного использования Helm и Kustomize.
+
+#### Вариант А: Гибридный подход (ручной)
+
+Генерация базовых манифестов из Helm с последующим использованием их в качестве `resources` в Kustomize:
 
 ```bash
-# Шаг 1: Генерация базовых манифестов из Helm
+# Шаг 1: Генерация манифестов
 helm template my-chart ./chart > base/manifests.yaml
 
-# Шаг 2: Создание kustomization.yaml для base
-cat > base/kustomization.yaml <<EOF
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
+# Шаг 2: Использование в Kustomize
+# base/kustomization.yaml
 resources:
   - manifests.yaml
-EOF
-
-# Шаг 3: Применение overlay через kustomize
-kubectl apply -k overlays/production/
 ```
 
-**Преимущества:**
+#### Вариант Б: Нативная интеграция (helmCharts)
 
-- Переиспользование готовых Helm charts
-- Управление окружениями через Kustomize overlays
-- Отсутствие необходимости поддерживать Helm в CI/CD
+Kustomize (начиная с v4.1.0) поддерживает декларативное описание Helm-чартов непосредственно в `kustomization.yaml`. Это позволяет Kustomize автоматически скачивать и рендерить чарты при сборке.
 
-**Недостатки:**
+```yaml
+# kustomization.yaml
+helmCharts:
+  - name: podinfo
+    repo: https://stefanprodan.github.io/podinfo
+    version: 6.3.5
+    releaseName: my-podinfo
+    namespace: my-namespace
+    valuesFile: values.yaml  # внешние значения
+    # valuesInline:          # или встроенные значения
+    #   replicaCount: 2
+```
 
-- Ручная перегенерация при обновлении chart
-- Потеря связи с Helm values
-- Подробнее: [Интеграция Helm + Kustomize](../Helm/Advanced/scenarios.md)
+**Преимущества нативной интеграции:**
+- **Автоматизация**: Kustomize сам управляет скачиванием и рендерингом (требуется установленный бинарник `helm`).
+- **Патчинг**: Можно накладывать Kustomize патчи поверх ресурсов, сгенерированных Helm, даже если автор чарта не предусмотрел нужных параметров в `values.yaml`.
+- **Чистота**: Нет необходимости хранить огромные сгенерированные YAML-файлы в Git.
+
+**Особенности использования:**
+- Требуется запуск сборки с флагом `--enable-helm`: `kustomize build --enable-helm`.
+- Для `kubectl` эта функция может потребовать дополнительных настроек или использования отдельного CLI `kustomize`.
 
 ### 3.9. Валидация результата kustomize
 
