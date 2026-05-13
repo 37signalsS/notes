@@ -63,6 +63,8 @@
 
 ### Политика перезапуска контейнеров (Restart Policy)
 
+Подробный разбор типов перезапусков, отличий между перезапуском контейнера и пересозданием пода, а также триггеров обновления см. в статье **[Перезапуск подов в Kubernetes](./pod_restarts.md)**.
+
 Политика перезапуска применяется ко **всем** контейнерам в поде (основным, init и sidecar). Указывается в `spec.restartPolicy` и принимает одно из трёх значений:
 
 | Значение | Поведение | Когда использовать |
@@ -261,4 +263,4 @@ kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[*].state}'
 
 > **Важно:** Pod GC работает только с завершёнными подами. Активные поды не удаляются этим контроллером.
 
-**Связанные темы:** [Обзор пода](./pod_overview.md), [Пробы (Probes)](../probes.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).
+**Связанные темы:** [Обзор пода](./pod_overview.md), [Перезапуск подов](./pod_restarts.md), [Пробы (Probes)](../probes.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).

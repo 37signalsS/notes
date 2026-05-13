@@ -12,7 +12,7 @@
 
 | Сценарий | Описание |
 |----------|----------|
-| **Split-horizon DNS** | Разные ответы для внутренней и внешней сети ([RFC 9704](https://datatracker.ietf.org/doc/rfc9704/)) |
+| **Split-horizon DNS** | Разные ответы для внутренней и внешней сети ([подробнее](../../../../Networking/Protocols/DNS/dns_advanced.md#split-horizon-dns-split-dns), [RFC 9704](https://datatracker.ietf.org/doc/rfc9704/)) |
 | **Геораспределение** | Разные IP для клиентов из разных регионов |
 | **Тестирование** | Отдельные зоны для staging/production |
 

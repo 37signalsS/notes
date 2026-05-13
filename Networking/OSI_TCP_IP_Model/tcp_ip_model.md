@@ -26,7 +26,7 @@
 | :--- | :--- | :--- | :--- |
 | **4. Прикладной (Application)** | L7, L6, L5 | Взаимодействие с приложениями, представление данных, сеансы | [HTTP](../Protocols/http.md), [DNS](../Protocols/DNS/dns.md), SMTP, FTP, [TLS](../Protocols/tls.md) | [application_layer.md](./application_layer.md) |
 | **3. Транспортный (Transport)** | L4 | Доставка между процессами, надёжность, поток | [TCP](../Protocols/TCP/overview.md), [UDP](../Protocols/udp.md), SCTP | [transport_layer.md](./transport_layer.md) |
-| **2. Сетевой (Internet)** | L3 | Глобальная адресация, маршрутизация, фрагментация | [IP](../Protocols/ip.md), [ICMP](../Protocols/ICMP/icmp_overview.md), [ARP](../Protocols/arp.md), OSPF, [BGP](../Protocols/bgp.md) | [Network_layer/Concepts/network_layer_overview.md](./Network_layer/Concepts/network_layer_overview.md) |
+| **2. Сетевой (Internet)** | L3 | Глобальная адресация, маршрутизация, фрагментация | [IP](../Protocols/IP_addressing/ip_overview.md), [ICMP](../Protocols/ICMP/icmp_overview.md), [ARP](../Protocols/arp.md), OSPF, [BGP](../Protocols/bgp.md) | [Network_layer/Concepts/network_layer_overview.md](./Network_layer/Concepts/network_layer_overview.md) |
 | **1. Канальный (Network Access)** | L2, L1 | Доставка в пределах ЛВС | [Ethernet](../Protocols/ethernet.md), Wi-Fi, PPP | [data_link_layer.md](./data_link_layer.md), [physical_layer.md](./physical_layer.md) |
 
 #### Краткое описание уровней

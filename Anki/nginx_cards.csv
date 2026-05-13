@@ -270,7 +270,7 @@ proxy_hide_header;proxy_hide_header Server; - скрывает заголово�
 270: Почему высокое сжатие критично для HTTP/2?;При HTTP/2 все запросы в одном соединении, динамическое сжатие блокирует воркера - может значительно снизить RPS;nginx::compression
 271: Как проверить сжатие в браузере?;DevTools -> Network -> столбец Content-Encoding (gzip, br, zstd). Сравнить Size и Content;nginx::compression
 272: Как проверить сжатие через curl?;curl -H "Accept-Encoding: gzip, deflate, br, zstd" -I https://domain.com/path - проверить заголовок Content-Encoding;nginx::compression
-273: Какие инструменты для нагрузочного тестирования сжатия?;Apache Benchmark (ab), wrk - позволяют оценить влияние сжатия на RPS и время ответа;nginx::compression
+273: Какие инструменты для нагрузочного тестирования сжатия?;ab (Apache Benchmark), wrk, wrkx, h2load - позволяют оценить влияние сжатия на RPS и время ответа (см. WebServers/webserver_benchmarking.md);nginx::compression
 274: Пример тестирования сжатия ab;ab -n 1000 -c 100 -H "Accept-Encoding: gzip" https://domain.com/style.css - 1000 запросов, 100 одновременных;nginx::compression
 275: Почему gzip_types важно настраивать?;По умолчанию сжимается только text/html. Для CSS, JS, JSON нужно добавить явно;nginx::compression
 276: Почему не стоит использовать gzip_static глобально?;Будет искать сжатые версии для всех файлов, включая изображения - неэффективно. Использовать внутри location для CSS/JS;nginx::compression

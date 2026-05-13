@@ -43,7 +43,10 @@
 | :--- | :--- | :--- |
 | **LoadBalancer** | Service типа `LoadBalancer`, облачный провайдер выделяет внешний IP | Облачные среды (AWS, GCP, Azure) |
 | **NodePort** | Service типа `NodePort`, доступ на порту каждого узла | On-premise, тестовые среды |
+| **Manual Proxy** | Внешний Nginx/HAProxy проксирует трафик на NodePort | Bare-metal при отсутствии MetalLB |
 | **HostPort** | Публикация порта непосредственно на сетевом интерфейсе узла | Специализированные сценарии |
+
+Подробное описание настройки Manual Proxy (NodePort + Nginx + dnsmasq) см. в [соответствующем руководстве](./bare_metal_manual_proxy.md).
 
 ### Правила маршрутизации
 

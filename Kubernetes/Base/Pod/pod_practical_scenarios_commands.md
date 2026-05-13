@@ -78,6 +78,8 @@ spec:
 
 ### Пример 3: Диагностика пода с проблемами
 
+Подробный разбор того, как отличить перезапуск контейнера от пересоздания пода с помощью UID, см. в **[Перезапуск подов в Kubernetes](./pod_restarts.md)**.
+
 ```bash
 # Получить подробную информацию о поде с событиями
 kubectl describe pod my-nginx-pod -n <namespace>
@@ -188,4 +190,4 @@ kubectl get pods -l 'app!=backend'
 
 ## Дополнительная информация
 
-**См. также:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Ephemeral Containers](./ephemeral_containers.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).
+**См. также:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Перезапуск подов](./pod_restarts.md), [Ephemeral Containers](./ephemeral_containers.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).

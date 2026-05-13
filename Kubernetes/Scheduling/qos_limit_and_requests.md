@@ -299,6 +299,9 @@ spec:
 * **In-Place Pod Resize**
   * Начиная с Kubernetes 1.27 (alpha), доступна функция [In-Place Pod Resize](../Autoscaling/in_place_pod_resize.md), позволяющая изменять `requests` и `limits` у запущенных подов без их пересоздания. В Kubernetes 1.33 функция перешла в статус beta, а в **Kubernetes 1.35 стала GA (стабильной)**. Это позволяет корректировать ресурсы без простоя приложения.
 
+* **Изменение ресурсов в Job (Mutable Pod Resources)**
+  * Начиная с Kubernetes v1.36 (бета), можно изменять ресурсы в шаблоне пода приостановленных Job (`suspend: true`). Это позволяет системам пакетной обработки (например, Kueue) адаптировать ресурсы задачи под текущую емкость кластера перед её фактическим запуском. Подробнее: [Mutable Pod Resources в Job](../Base/job.md#изменение-ресурсов-в-приостановленных-job-v136).
+
 ### См. также
 
 * [OOM Killer в контейнерах](../../Linux/Core/processes/oom_killer_containers.md) — отличие OOMKill от Eviction

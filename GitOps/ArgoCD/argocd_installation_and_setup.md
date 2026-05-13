@@ -25,7 +25,7 @@
 1. **Declarative (рекомендуется для production):** Применение манифестов через GitOps
 2. **Imperative (для тестирования):** Установка через CLI/UI
 3. **Helm-чарт:** Гибкая настройка через values.yaml
-4. **Kustomize:** Кастомизация базовых манифестов
+4. **Kustomize:** Кастомизация базовых манифестов (рекомендуется для Offline и сложных конфигураций)
 
 ## Практические сценарии
 
@@ -243,6 +243,135 @@ spec:
     policies:
     - p, proj:production-apps:developer, applications, get, production-apps/*, allow
     - p, proj:production-apps:developer, applications, sync, production-apps/*, allow
+```
+
+### Сценарий 8: Offline-установка в закрытый контур (Air-gapped)
+
+**Суть:** Скачивание манифестов и образов во внешней сети с последующим переносом и развертыванием в изолированном сегменте через приватный реестр (например, Harbor).
+
+#### 1. Подготовка во внешней сети
+
+```bash
+# Определение актуальной версии
+export ARGO_VERSION=$(curl --silent "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+
+# Скачивание манифеста
+curl -LO https://raw.githubusercontent.com/argoproj/argo-cd/$ARGO_VERSION/manifests/install.yaml
+
+# Определение версий вспомогательных компонентов из манифеста
+DEX_VERSION=$(grep 'dex:' install.yaml | awk -F: '{print $NF}')
+REDIS_VERSION=$(grep 'redis:' install.yaml | awk -F: '{print $NF}')
+
+# Скачивание и сохранение Docker-образов
+docker pull quay.io/argoproj/argocd:$ARGO_VERSION
+docker pull redis:$REDIS_VERSION
+docker pull ghcr.io/dexidp/dex:$DEX_VERSION
+
+docker save quay.io/argoproj/argocd:$ARGO_VERSION -o argocd.tar
+docker save redis:$REDIS_VERSION -o redis.tar
+docker save ghcr.io/dexidp/dex:$DEX_VERSION -o dex.tar
+```
+
+#### 2. Загрузка в приватный реестр (Harbor)
+
+После переноса архивов в закрытый контур:
+
+```bash
+# Загрузка локально
+docker load -i argocd.tar
+docker load -i redis.tar
+docker load -i dex.tar
+
+# Настройка переменных (пример: v3.3.0)
+export ARGO_VERSION=v3.3.0
+export HARBOR=harbor.domain.local
+export PROJECT=platform
+
+# Тегирование и отправка в Harbor
+docker tag quay.io/argoproj/argocd:$ARGO_VERSION $HARBOR/$PROJECT/argocd:$ARGO_VERSION
+docker push $HARBOR/$PROJECT/argocd:$ARGO_VERSION
+
+docker tag redis:$REDIS_VERSION $HARBOR/$PROJECT/redis:$REDIS_VERSION
+docker push $HARBOR/$PROJECT/redis:$REDIS_VERSION
+
+docker tag ghcr.io/dexidp/dex:$DEX_VERSION $HARBOR/$PROJECT/dex:$DEX_VERSION
+docker push $HARBOR/$PROJECT/dex:$DEX_VERSION
+
+# Замена путей к образам в манифесте
+sed -i "s#quay.io/argoproj/argocd:$ARGO_VERSION#$HARBOR/$PROJECT/argocd:$ARGO_VERSION#g" install.yaml
+sed -i "s#public.ecr.aws/docker/library/redis:$REDIS_VERSION#$HARBOR/$PROJECT/redis:$REDIS_VERSION#g" install.yaml
+sed -i "s#ghcr.io/dexidp/dex:$DEX_VERSION#$HARBOR/$PROJECT/dex:$DEX_VERSION#g" install.yaml
+```
+
+#### 3. Настройка Kustomize для закрытого контура
+
+Для работы в изолированном кластере часто требуется `imagePullSecrets` для всех компонентов.
+
+**Структура каталогов:**
+```text
+argocd/
+├── base/
+│   ├── install.yaml
+│   └── kustomization.yaml
+└── overlays/
+    ├── kustomization.yaml
+    └── sa-patch.yaml
+```
+
+**base/kustomization.yaml:**
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - install.yaml
+```
+
+**overlays/sa-patch.yaml (Патч для ServiceAccounts/Deployments):**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: cred-harbor
+---
+# ... аналогично пропатчить argocd-repo-server, argocd-applicationset-controller, 
+# argocd-dex-server, argocd-redis, argocd-notifications-controller через Deployment
+# и argocd-application-controller через StatefulSet
+```
+
+**overlays/kustomization.yaml:**
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - ../base
+patchesStrategicMerge:
+  - sa-patch.yaml
+```
+
+#### 4. Развертывание и настройка Insecure-режима
+
+```bash
+# Создание секрета для Harbor
+kubectl -n argocd create secret docker-registry cred-harbor \
+  --docker-server=harbor.domain.local \
+  --docker-username='robot$platform+argocd-puller' \
+  --docker-password='PASSWORD'
+
+# Применение конфигурации
+kubectl apply -k overlays/
+
+# Включение insecure-режима (HTTP) через ConfigMap
+kubectl -n argocd patch configmap argocd-cmd-params-cm \
+  -p '{"data":{"server.insecure":"true"}}'
+
+# Перезапуск сервера
+kubectl -n argocd rollout restart deploy argocd-server
 ```
 
 ## Дополнительная информация

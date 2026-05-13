@@ -14,11 +14,27 @@
 
 ### Принцип работы
 
-1. **Запрос (PVC):** Пользователь создаёт PVC с указанием `StorageClass`.
-2. **Действие Provisioner'а:** Контроллер (Deployment) обнаруживает новый PVC.
-3. **Создание директории:** Provisioner подключается к NFS-серверу и создаёт уникальную поддиректорию.
-4. **Создание PV:** Provisioner создаёт `PersistentVolume` с типом `NFS`, указывающий на новую директорию.
-5. **Привязка:** Kubernetes связывает PV с PVC (статус `Bound`).
+1.  **Запрос (PVC):** Пользователь создаёт PVC с указанием `StorageClass`.
+2.  **Обнаружение:** Контроллер (Provisioner Deployment) видит новый PVC, ассоциированный с его `PROVISIONER_NAME`.
+3.  **Создание директории:**
+    -   Provisioner-под имеет смонтированный корень NFS-шары (указанный в `NFS_SERVER` и `NFS_PATH`).
+    -   Внутри этой шары он создаёт уникальную поддиректорию вида `${namespace}-${pvcName}-${pvName}`.
+4.  **Создание PV:** Provisioner создаёт объект `PersistentVolume` типа `NFS`, указывающий на **конкретную поддиректорию** на сервере.
+5.  **Привязка:** Kubernetes связывает созданный PV с исходным PVC (статус `Bound`).
+
+> **Важно:** Provisioner выступает в роли посредника, который автоматизирует рутинную работу по созданию папок и манифестов PV.
+
+### Переменные окружения (Environment Variables)
+
+Для настройки Provisioner используются следующие переменные в манифесте `Deployment`:
+
+| Переменная | Описание | Значение |
+| :--- | :--- | :--- |
+| `PROVISIONER_NAME` | Уникальное имя провижинера. Должно совпадать с полем `provisioner` в `StorageClass`. | Например, `cluster.local/nfs-client-provisioner` |
+| `NFS_SERVER` | IP-адрес или DNS-имя NFS-сервера. | Например, `192.168.1.10` |
+| `NFS_PATH` | Путь к экспортируемой директории на NFS-сервере. | Например, `/var/nfs/kubedata` |
+
+> **Предупреждение о совместимости (K8s 1.33+):** В текущих версиях провижинера (на момент 2023-2024 гг.) используется ресурс `Endpoints`, который объявлен устаревшим и может быть удалён в Kubernetes 1.33+ в пользу `EndpointSlice`. При использовании в новых кластерах следует проверить наличие обновлений образа или патчей от сообщества.
 
 ### Политика очистки (ReclaimPolicy)
 
@@ -50,9 +66,11 @@
 
 ### Установка и настройка
 
+> **Рекомендация:** Для обеспечения изоляции и безопасности рекомендуется разворачивать провижинер в отдельном `namespace` (например, `nfs-provisioner` или `storage`), а не в `default`.
+
 #### Шаг 1: RBAC
 
-Provisioner'у нужны права на управление PV:
+Provisioner'у нужны права на управление PV (создание, удаление, просмотр) и событиями:
 
 ```yaml
 # nfs-provisioner-rbac.yaml
@@ -60,7 +78,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: nfs-client-provisioner
-  namespace: default
+  namespace: nfs-provisioner
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -79,6 +97,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "update", "patch"]
+  # Дополнительно для работы с эндпоинтами (см. предупреждение в Базовых концепциях)
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -87,7 +109,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: nfs-client-provisioner
-    namespace: default
+    namespace: nfs-provisioner
 roleRef:
   kind: ClusterRole
   name: nfs-client-provisioner-runner
@@ -102,12 +124,20 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nfs-client-provisioner
+  namespace: nfs-provisioner
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-client-provisioner
   template:
+    metadata:
+      labels:
+        app: nfs-client-provisioner
     spec:
       serviceAccountName: nfs-client-provisioner
-      priorityClassName: high-priority
       containers:
         - name: nfs-client-provisioner
           image: registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
@@ -140,7 +170,7 @@ metadata:
   name: managed-nfs-storage
 provisioner: cluster.local/nfs-client-provisioner
 parameters:
-  archiveOnDelete: "false"  # false = удалять, true = архивировать
+  archiveOnDelete: "false"  # "true" = переименовать в archived-..., "false" = физически удалить поддиректорию
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
 ```

@@ -14,6 +14,7 @@
 |------|----------|
 | [scenarios.md](./scenarios.md) | Создание репозитория, гибридное использование с Kustomize, адаптивные шаблоны |
 | [patterns_troubleshooting.md](./patterns_troubleshooting.md) | Частые проблемы и паттерны их решения |
+| [helm_skeleton_pattern.md](../helm_skeleton_pattern.md) | Паттерн Skeleton для стандартизации множества сервисов |
 | [security_best_practices.md](./security_best_practices.md) | Безопасность и best practices |
 
 ---

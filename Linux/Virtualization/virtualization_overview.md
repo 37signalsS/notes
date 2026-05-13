@@ -116,7 +116,7 @@ lsmod | grep kvm
 ### Эволюция изоляции в Linux
 
 ```
-chroot (1979) → namespaces (2002) → cgroups (2007) → LXC (2008) → Docker (2013)
+[chroot](../Core/chroot.md) (1979) → [namespaces](../Core/namespaces.md) (2002) → [cgroups](../Core/cgroups.md) (2007) → LXC (2008) → Docker (2013)
 ```
 
 ### Аппаратная поддержка виртуализации

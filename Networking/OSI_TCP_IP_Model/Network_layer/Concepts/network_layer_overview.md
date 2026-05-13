@@ -6,7 +6,7 @@
 
 **PDU (Protocol Data Unit)** сетевого уровня — **пакет (Packet)**.
 
-* **Адресация:** [IP-адреса](../../../Protocols/ip.md) (логические адреса, 32 бита IPv4 / 128 бит IPv6)
+* **Адресация:** [IP-адреса](../../../Protocols/IP_addressing/ip_overview.md) (логические адреса, 32 бита IPv4 / 128 бит IPv6)
 
 **Важная особенность:** Сетевой уровень — это первый полностью программный уровень в модели OSI. Он полностью не зависит от оборудования: один и тот же сетевой уровень может успешно работать на проводном Ethernet, на Wi-Fi, в 3G/4G/5G сетях и других технологиях канального уровня.
 
@@ -75,4 +75,4 @@ MAC-адрес уникален для каждого сетевого адап�
 |-----|------------------|-----------|--------------|
 | **Пакеты (Packets)** | Глобальная адресация, маршрутизация, фрагментация, агрегация адресов | IPv4, IPv6, ICMP, [DHCP](../../../Protocols/dhcp.md), IPSec, OSPF, [BGP](../../../Protocols/bgp.md) | [Маршрутизатор](../routing_protocols_equipment.md), L3-коммутатор |
 
-См. также: [Модель OSI](../../osi_model.md), [IP-адреса](../../../Protocols/ip.md), [Фрагментация](../Protocols/ip_fragmentation.md), [Маршрутизация](../routing_protocols_equipment.md), [Канальный уровень](../../data_link_layer.md), [Транспортный уровень](../../transport_layer.md), [MTU и VPN](../mtu_and_vpn.md).
+См. также: [Модель OSI](../../osi_model.md), [IP-адреса](../../../Protocols/IP_addressing/ip_overview.md), [Фрагментация](../Protocols/ip_fragmentation.md), [Маршрутизация](../routing_protocols_equipment.md), [Канальный уровень](../../data_link_layer.md), [Транспортный уровень](../../transport_layer.md), [MTU и VPN](../mtu_and_vpn.md).

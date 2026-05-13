@@ -58,6 +58,8 @@ Sprig подключён автоматически — не требует им
 | `toJson` / `fromJson` | Сериализация/парсинг JSON | `{{ .Values.data \| toJson }}` |
 | `toToml` | Сериализация в TOML | `{{ .Values.config \| toToml }}` |
 | `merge` | Слияние словарей | `{{ merge $base $override }}` |
+| `mergeOverwrite` | Слияние с перезаписью существующих ключей | `{{ mergeOverwrite $base $override }}` |
+| `omit` | Удаление ключей из словаря | `{{ omit $dict "key1" "key2" }}` |
 | `dict` | Создание словаря | `{{ dict "key" "value" }}` |
 | `hasKey` | Проверка наличия ключа | `{{ if hasKey .Values "config" }}` |
 | `set` | Установка значения в словаре | `{{ $_ := set $dict "key" "val" }}` |
