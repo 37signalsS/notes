@@ -70,4 +70,11 @@ kube-bench классифицирует проверки:
 
 ## Дополнительная информация
 
-Сравнение с другими инструментами безопасности Kubernetes: [kubesec](./kubesec.md) — анализ рисков в манифестах, [Kyverno](./kyverno/policies/practical_scenarios.md) — политики безопасности при деплое, [Pod Security Context](./pod_security_context.md) — безопасность подов. Официальный стандарт CIS — [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes).
+Сравнение с другими инструментами безопасности Kubernetes:
+* **kube-bench** — аудит инфраструктуры на соответствие CIS Kubernetes Benchmark.
+* **kubescape** — комплексный инструмент для сканирования кластера на наличие проблем безопасности, misconfigurations (включая манифесты) и уязвимостей, часто используется для проверки соответствия политикам (например, NSA, MITRE).
+* **kube-hunter** — инструмент для пентеста (penetration testing) кластера. Выполняет активное сканирование для выявления уязвимостей с точки зрения атакующего. Потенциально может нарушить работу кластера, поэтому требует осторожности при использовании.
+* **kubesec** — статический анализ рисков в манифестах до деплоя.
+* [Kyverno](./kyverno/policies/practical_scenarios.md) — политики безопасности при деплое.
+* [Pod Security Context](./pod_security_context.md) — безопасность подов.
+* Официальный стандарт CIS — [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes).

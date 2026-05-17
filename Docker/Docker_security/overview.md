@@ -46,6 +46,6 @@ whoami # -> root
 
 ## Дополнительная информация
 
-**Связанные документы:** **[Защита хоста и демона](./host_daemon_hardening.md)** (userns-remap, Rootless), **[Укрепление контейнеров](./container_hardening.md)** (capabilities, seccomp), **[Механизмы изоляции Linux](../../Docker/Concepts/linux_isolation.md)**, **[Безопасность цепочки поставок](../../Security/Supply_Chain_Security/overview.md)**.
+**Связанные документы:** **[Защита хоста и демона](./host_daemon_hardening.md)** (userns-remap, Rootless), **[Укрепление контейнеров](./container_hardening.md)** (capabilities, seccomp), **[Механизмы изоляции Linux](../../Docker/Concepts/linux_isolation.md)**, **[Безопасность цепочки поставок](../../Security/Supply_Chain_Security/overview.md)**, **[Мониторинг в Runtime](./runtime_monitoring.md)** (eBPF, Tetragon, Falco).
 
 **CIS Docker Benchmark:** Рекомендации 1.1–1.5 (конфигурация хоста), 2.1–2.4 (демон), 4.1–4.6 (образы).

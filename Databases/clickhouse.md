@@ -181,7 +181,8 @@ ORDER BY date DESC;
 - **Строковые:** `String`, `FixedString(N)`
 - **Дата и время:** `Date`, `DateTime`, `DateTime64`
 - **Сложные:** `Array(T)`, `Tuple(T1, T2, ...)`, `Map(Key, Value)`, `Nested`
-- **Специализированные:** `UUID`, `IPv4`, `IPv6`, `JSON` (экспериментальный)
+- **Специализированные:** `UUID`, `IPv4`, `IPv6`
+- **Работа с JSON:** Тип `String` (для хранения сырых данных) в комбинации с функциями валидации (`isValidJSON()`) и извлечения (`JSONExtract*()`). Также доступен специализированный тип `JSON` (экспериментальный) для автоматического вывода динамической схемы без явного парсинга.
 
 ### Особенности ClickHouse
 
@@ -201,10 +202,14 @@ ORDER BY date DESC;
 - **Trigger-based:** Реагируют только на INSERT, данные хранятся в отдельной таблице
 - **Refreshable:** Обновляются по расписанию (минимальный интервал — 1 минута)
 
-**Интеграция с Kafka:**
+**Интеграция с Kafka (ETL Pipeline):**
 
-- Движок `Kafka` создаёт "окно" в топик
-- Поддерживает форматы: `JSONEachRow`, `CSV`, `Avro`, `Parquet`, `Protobuf`
+Для получения данных из Kafka используется паттерн из трёх сущностей:
+1. **Таблица-источник (ENGINE = Kafka):** Создаёт "окно" в топик. В настройках указываются `kafka_broker_list`, `kafka_topic_list`, `kafka_group_name` (Consumer Group) и формат (например, `JSONEachRow`). Если сделать `SELECT` напрямую из этой таблицы, курсор Consumer Group сместится.
+2. **Целевая таблица (ENGINE = MergeTree):** Физическое хранилище на диске для аналитики.
+3. **Материализованное представление (MATERIALIZED VIEW):** Работает как триггер (Trigger-based). Как только данные поступают в таблицу Kafka, они автоматически вычитываются, трансформируются (при необходимости) и переливаются в целевую MergeTree таблицу.
+
+*Примечание:* Настройки подключения к Kafka (логины, пароли) для безопасности рекомендуется выносить в отдельные конфигурационные файлы сервера (например, `/etc/clickhouse-server/config.d/kafka.xml`).
 
 ### Требования к оборудованию
 
@@ -236,3 +241,4 @@ ORDER BY date DESC;
 - Интеграция с PostgreSQL — **[Интеграция PostgreSQL и ClickHouse](./PostgreSQL/Integrations/clickhouse.md)**
 - Общая теория шардирования — **[Шардирование](./Concepts/sharding.md)**
 - Масштабирование PostgreSQL — **[PostgreSQL Scaling](./PostgreSQL/Concepts/scaling.md)**
+абирование PostgreSQL — **[PostgreSQL Scaling](./PostgreSQL/Concepts/scaling.md)**

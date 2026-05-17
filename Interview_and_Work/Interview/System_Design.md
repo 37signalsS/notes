@@ -236,6 +236,9 @@
 * **[Монолитная и микросервисная архитектуры](../../Concepts/monolith_vs_microservices.md)** — подробное сравнение архитектур.
 * **[Stateful vs Stateless](../../Concepts/stateful_vs_stateless.md)** — принципы работы с состоянием.
 * **[CAP-теорема](../../Databases/Concepts/cap_theorem.md)** — компромиссы в распределенных системах.
+* **[Законы масштабируемости](../../Concepts/High_Availability/scalability_laws.md)** — Законы Литтла, Амдала, Густафсона и USL.
+* **[Tail Latency Mitigation](../../Concepts/High_Availability/tail_latency_mitigation.md)** — борьба с "хвостами" задержек.
+* **[Распределенные транзакции](../../Databases/Concepts/distributed_transactions.md)** — 2PC, 3PC, TCC, Saga и консистентность данных.
 * **[Кэширование](../../Concepts/Caching/caching_overview.md)** — паттерны и стратегии.
 * **[Репликация](../../Databases/Concepts/replication.md)** — механизмы репликации данных.
 * **[Observability](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** — мониторинг распределенных систем.

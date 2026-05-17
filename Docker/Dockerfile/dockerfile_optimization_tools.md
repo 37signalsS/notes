@@ -22,13 +22,16 @@
 
 | Инструмент | Назначение | Репозиторий |
 | :--- | :--- | :--- |
-| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
+| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик. Использует `shellcheck` для анализа скриптов в `RUN`. *Особенности:* написан на Haskell (сложно писать кастомные правила), может не парсить новые флаги инструкций (например, `ADD --checksum`). | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
+| **semgrep** | Универсальный SAST-сканер, поддерживающий `Dockerfile`. *Особенности:* правила пишутся на YAML (или как регулярные выражения), что значительно упрощает создание кастомных проверок по сравнению с hadolint. | [github.com/semgrep/semgrep](https://github.com/semgrep/semgrep) |
 
 ### Сканирование безопасности
 
 | Инструмент | Назначение | Репозиторий |
 | :--- | :--- | :--- |
-| **dockle** | Проверка на соответствие CIS Benchmarks, поиск уязвимостей | [github.com/goodwithtech/dockle](https://github.com/goodwithtech/dockle) |
+| **dockle** | Проверка образа на соответствие CIS Benchmarks. Находит забытые папки `.git`, пароли в переменных, неочищенный кэш. *Особенности:* возможны false positives (например, ругается на сам факт установки `sudo`). | [github.com/goodwithtech/dockle](https://github.com/goodwithtech/dockle) |
+| **checkov** | Инструмент для сканирования IaC (Infrastructure as Code). В `Dockerfile` находит открытые опасные порты (например, 22), запуск под `root`, а также небезопасные флаги в командах (отключение проверки SSL в `curl`/`wget`). Правила пишутся на Python и YAML. | [github.com/bridgecrewio/checkov](https://github.com/bridgecrewio/checkov) |
+| **kics** | Open-source сканер от Checkmarx. *Преимущество:* умеет сканировать мисконфигурации не только в `Dockerfile`, но и в `docker-compose.yml`, что отличает его от многих других инструментов. | [github.com/Checkmarx/kics](https://github.com/Checkmarx/kics) |
 | **docker-bench-security** | Аудит безопасности хоста Docker (CIS Docker Benchmark) | [github.com/docker/docker-bench-security](https://github.com/docker/docker-bench-security) |
 
 ## Практические сценарии

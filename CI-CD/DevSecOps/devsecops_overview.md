@@ -89,4 +89,4 @@ send-report:
 
 ## Дополнительная информация
 
-См. также детальные обзоры: [SAST](./sast_overview.md), [DAST](./dast_overview.md), [сравнение подходов](./sast_vs_dast.md), [интеграция в CI/CD](./sast_dast_cicd_integration.md), [типичные уязвимости](./sast_dast_vulnerabilities.md), [управление секретами](./secrets_management.md).
+См. также детальные обзоры: [SAST](./sast_overview.md), [DAST](./dast_overview.md), [сравнение подходов](./sast_vs_dast.md), [интеграция в CI/CD](./sast_dast_cicd_integration.md), [типичные уязвимости](./sast_dast_vulnerabilities.md), [управление секретами](./secrets_management.md), [атаки на CI/CD](./cicd_attacks.md).

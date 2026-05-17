@@ -36,7 +36,7 @@
 * **Измерители производительности:** Тестируют реальную пропускную способность (`iperf3`, **[xfr](../Diagnostics/Networking/xfr.md)**). Подробно: **[iperf3](../Diagnostics/Networking/iperf3.md)**, **[xfr](../Diagnostics/Networking/xfr.md)**.
 * **Инструменты трассировки:** Отслеживают маршрут пакетов и задержки на каждом узле (`mtr`, `traceroute`). Подробно: **[traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md)**.
 * **Анализаторы трафика:** Перехватывают и декодируют сетевые пакеты для глубокого анализа (`tcpdump`, `wireshark`). Подробно: **[tcpdump](../Diagnostics/Networking/tcpdump.md)**.
-* **Базовая проверка доступности:** `ping`, `nc`. Подробно: **[ping](../Diagnostics/Networking/ping.md)**.
+* **Базовая проверка доступности:** `ping`, `nc`, `arping`. Подробно: **[ping](../Diagnostics/Networking/ping.md)**, **[ARP и arping](../../Networking/Protocols/arp.md)**.
 * **TUI-инструменты:** Интерактивный мониторинг в реальном времени (`iftop`, `nload`, `snitch`, `iptraf-ng`). Подробно: **[Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md)**.
 * **Диагностика DNS:** `dig`, `nslookup`, `resolvectl`. Подробно: **[Диагностика DNS](../Diagnostics/Networking/dns/overview.md)**.
 * **Диагностика HTTP/HTTPS:** `curl`. Подробно: **[Диагностика сетевых задержек с cURL](../Diagnostics/Networking/curl_network_diagnostics.md)**.
