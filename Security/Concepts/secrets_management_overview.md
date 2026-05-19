@@ -115,7 +115,7 @@ Vault генерирует временные credentials по запросу (�
 - Автоматическая ротация и отзыв
 - Минимизация blast radius при компрометации
 
-Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md#динамические-секреты), [AWS IAM credentials](../../Vault/concepts.md).
+Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md#движки-секретов-secret-engines), [AWS IAM credentials](../../Vault/concepts.md).
 
 ### Рекомендации по выбору инструмента
 

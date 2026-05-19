@@ -140,7 +140,7 @@ all:
 ansible-doc -l | grep eos
 ```
 
-Документация по сетевой автоматизации: [docs.ansible.com](https://docs.ansible.com/ansible/latest/network/index.html).
+Документация по сетевой автоматизации: [docs.ansible.com](https://docs.ansible.com/ansible/latest/network/index.html). Подробное описание принципов работы с сетью — в [Автоматизации сетевого оборудования](./ansible_network_automation.md).
 
 ### Управление привилегиями
 

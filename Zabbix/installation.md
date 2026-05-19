@@ -98,6 +98,63 @@ sudo systemctl enable zabbix-server zabbix-agent apache2
 2. Следовать шагам мастера, указав пароль от БД
 3. Стандартные учётные данные: `Admin` / `zabbix`
 
+### Установка Zabbix Server с PostgreSQL и TimescaleDB (Оптимально)
+
+TimescaleDB оптимизирует работу с временными рядами (time-series) в PostgreSQL, превращая обычные таблицы истории Zabbix в партицированные гипертаблицы. Это значительно снижает деградацию производительности СУБД с ростом объема данных.
+
+#### 1. Установка PostgreSQL и TimescaleDB
+(Пример для Ubuntu 24.04 и Zabbix 7.0/7.4)
+Установите пакеты PostgreSQL и расширение TimescaleDB, затем настройте предзагрузку библиотеки:
+```bash
+sudo apt install postgresql postgresql-contrib timescaledb-2-postgresql-16
+```
+Отредактируйте `/etc/postgresql/16/main/postgresql.conf`:
+```ini
+shared_preload_libraries = 'timescaledb'
+```
+Перезапустите PostgreSQL:
+```bash
+sudo systemctl restart postgresql
+```
+
+#### 2. Установка пакетов Zabbix Server
+```bash
+sudo apt install zabbix-server-pgsql zabbix-frontend-php php8.1-pgsql zabbix-apache-conf zabbix-sql-scripts zabbix-agent
+```
+
+#### 3. Настройка базы данных и TimescaleDB
+```bash
+sudo -u postgres psql
+```
+В консоли PostgreSQL:
+```sql
+CREATE USER zabbix WITH PASSWORD 'zabbix';
+CREATE DATABASE zabbix OWNER zabbix;
+\c zabbix
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+\q
+```
+
+#### 4. Импорт начальной схемы данных
+Сначала импортируем основную схему Zabbix:
+```bash
+zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | sudo -u zabbix psql zabbix
+```
+Затем применяем скрипт активации гипертаблиц для TimescaleDB:
+```bash
+cat /usr/share/zabbix-sql-scripts/postgresql/timescaledb.sql | sudo -u zabbix psql zabbix
+```
+
+#### 5. Конфигурация Zabbix Server
+В файле `/etc/zabbix/zabbix_server.conf` укажите параметры:
+```ini
+DBHost=localhost
+DBName=zabbix
+DBUser=zabbix
+DBPassword=zabbix
+```
+Запустите `zabbix-server` и перейдите в веб-интерфейс для завершения установки.
+
 ---
 
 ### Установка Zabbix Agent на Ubuntu

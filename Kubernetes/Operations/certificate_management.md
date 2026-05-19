@@ -226,6 +226,7 @@ spec:
 
 ### Связанные темы
 
+* [Предотвращение истечения SSL-сертификатов](./ssl_expiration_prevention.md) — комплексное руководство по автоматизации и мониторингу
 * [kubeadm: Кластер инициализация](../Installation/kubeadm/cluster_initialization.md) — `--upload-certs` для HA
 * [Обновление кластера](upgrading_clusters.md) — при обновлении проверка и обновление сертификатов
 * [Kubespray: Cluster Management](../Installation/Kubespray/cluster_management.md)
