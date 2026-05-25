@@ -150,4 +150,5 @@ spec:
 - **[ClusterIP](./service_type_clusterip.md)** — базовый тип для внутреннего доступа
 - **[NodePort](./service_type_nodeport.md)** — публикация через порт узла
 - **[Ingress](../Ingress/overview.md)** — L7 маршрутизация для HTTP/HTTPS
+- **[Архитектурные паттерны: LB, Ingress и ALB](../Ingress/overview.md#архитектурные-паттерны-связка-lb-ingress-и-alb)** — варианты связки внешних LB с кластером
 - **[Сводка типов сервисов](./service_types_summary.md)** — полное сравнение всех типов

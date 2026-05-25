@@ -46,6 +46,10 @@ grep -i "error" /var/log/syslog /var/log/messages
 ### Рекурсивный поиск файлов по содержимому
 
 ```bash
+# Найти строку "my konfu is the best" во всех файлах текущей директории и поддиректориях
+grep -r "my konfu is the best" .
+
+# Вывести только имена файлов (без содержимого строк)
 grep -r -l "TODO" .
 ```
 

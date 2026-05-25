@@ -96,6 +96,41 @@ def process_payment(order_id: str):
         # ... здесь логика обработки платежа ...
 ```
 
+### Сценарий 3: Инструментация в .NET (C#)
+
+В платформе .NET базовые абстракции (API) для генерации телеметрии встроены непосредственно в фреймворк (в `System.Diagnostics`), что делает интеграцию с OpenTelemetry максимально нативной.
+
+**Основные классы API:**
+- **`ActivitySource`** и **`Activity`**: Выступают в роли Tracer и Span соответственно.
+- **`Meter`**: Фабрика для метрик (Counter, Gauge, Histogram).
+
+**Настройка автоинструментации и экспорта (ASP.NET Core):**
+
+```csharp
+// Идентификатор ресурса
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService("checkout-service");
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracerProviderBuilder => tracerProviderBuilder
+        .SetResourceBuilder(resourceBuilder)
+        .AddAspNetCoreInstrumentation() // Автоинструментация входящих HTTP-запросов
+        .AddHttpClientInstrumentation() // Автоинструментация исходящих запросов
+        .AddSource("checkout-service") // Подписка на кастомные спаны из ActivitySource
+        .AddOtlpExporter(opts => { opts.Endpoint = new Uri("http://otel-collector:4317"); }))
+    .WithMetrics(meterProviderBuilder => meterProviderBuilder
+        .SetResourceBuilder(resourceBuilder)
+        .AddAspNetCoreInstrumentation()
+        .AddRuntimeInstrumentation() // Системные метрики (.NET GC, ThreadPool, память)
+        .AddMeter("checkout-service") // Подписка на кастомные метрики из Meter
+        .AddOtlpExporter(opts => { opts.Endpoint = new Uri("http://otel-collector:4317"); }));
+
+// В бизнес-логике ручное создание спана:
+// static readonly ActivitySource activitySource = new ActivitySource("checkout-service");
+// using var activity = activitySource.StartActivity("process_checkout");
+// activity?.SetTag("order.id", orderId);
+```
+
 ## Дополнительная информация
 
 ### Типичные ошибки

@@ -104,9 +104,12 @@ ps -o uid,user,pid,cmd -p $(sudo podman inspect rootful --format '{{.State.Pid}}
 
 ### 3. Настройка security-профилей
 
+Podman использует [Seccomp](../Linux/Security/Mechanisms/Seccomp.md) и SELinux для ограничения возможностей контейнера на уровне ядра.
+
 ```bash
 # Просмотреть seccomp-профиль по умолчанию
 podman info | grep -A5 seccomp
+...
 
 # Запустить с кастомным seccomp-профилем
 podman run --security-opt seccomp=/path/to/profile.json nginx

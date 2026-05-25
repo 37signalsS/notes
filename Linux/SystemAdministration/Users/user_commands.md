@@ -52,7 +52,8 @@ sudo useradd -m -g test-group test-user
 # Создание с дополнительными группами
 sudo useradd -m -G wheel,sudo test-user
 
-# Создание системного пользователя (без домашней директории)
+# Создание системного пользователя (без домашней директории и права входа)
+# -r — системный, -s — установка shell (nologin запрещает вход)
 sudo useradd -r -s /usr/sbin/nologin app-user
 
 # Создание с конкретным UID

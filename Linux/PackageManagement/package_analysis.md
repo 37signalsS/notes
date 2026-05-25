@@ -102,22 +102,19 @@ dpkg --contents <package_name.deb>
 dpkg-deb --contents <package_name.deb>
 
 # Метаданные установленного пакета
-dpkg -s <package_name>
+dpkg -s httpd
 
-# Статус и подробная информация
-dpkg-query -W -f='${Package}: ${Version}\n' <package_name>
+# Версия и статус установленного пакета
+dpkg -l httpd
 
 # Список файлов установленного пакета
-dpkg -L <package_name>
+dpkg -L httpd
 
 # Конфигурационные файлы пакета
-dpkg -L <package_name> | grep /etc/
+dpkg -L httpd | grep /etc/
 
 # Зависимости установленного пакета
-dpkg -s <package_name> | grep Depends
-
-# Версия установленного пакета
-dpkg -l <package_name>
+dpkg -s httpd | grep Depends
 ```
 
 #### RPM-based системы
@@ -130,13 +127,16 @@ rpm -qip <package_name.rpm>
 rpm -qlp <package_name.rpm>
 
 # Метаданные установленного пакета
-rpm -qi <package_name>
+rpm -qi httpd
 
 # Список файлов установленного пакета
-rpm -ql <package_name>
+rpm -ql httpd
+
+# Проверка, установлен ли пакет (кратко)
+rpm -q httpd
 
 # Показать скрипты внутри пакета
-rpm -qp --scripts <package_name.rpm>
+rpm -q --scripts httpd
 
 # Показать все установленные пакеты
 rpm -qa
@@ -255,6 +255,12 @@ rpm -V <package_name>
 ### Сравнение высокоуровневых и низкоуровневых операций
 
 | Операция | DEB (высокий уровень) | DEB (низкий уровень) | RPM (высокий уровень) | RPM (низкий уровень) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Установка из файла** | `apt install ./pkg.deb` | `dpkg -i pkg.deb` | `dnf install ./pkg.rpm` | `rpm -i pkg.rpm` |
+| **Разрешение зависимостей** | Автоматически | `apt-get install -f` | Автоматически | Вручную |
+| **Удаление** | `apt remove pkg` | `dpkg -r pkg` | `dnf remove pkg` | `rpm -e pkg` |
+| **Обновление базы** | Автоматически | — | Автоматически | `rpm --rebuilddb` |
+рация | DEB (высокий уровень) | DEB (низкий уровень) | RPM (высокий уровень) | RPM (низкий уровень) |
 | :--- | :--- | :--- | :--- | :--- |
 | **Установка из файла** | `apt install ./pkg.deb` | `dpkg -i pkg.deb` | `dnf install ./pkg.rpm` | `rpm -i pkg.rpm` |
 | **Разрешение зависимостей** | Автоматически | `apt-get install -f` | Автоматически | Вручную |

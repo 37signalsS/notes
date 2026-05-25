@@ -30,6 +30,7 @@
 | `PermitRootLogin` | `no` | Запретить вход root |
 | `MaxAuthTries` | `3` | Ограничить попытки |
 | `PermitEmptyPasswords` | `no` | Запретить пустые пароли |
+| `AllowUsers` | `user1 user2` | Белый список разрешенных пользователей |
 | `ChallengeResponseAuthentication` | `no` | Отключить challenge-response |
 | `AuthenticationMethods` | `publickey` | Требовать только pubkey |
 | `PubkeyAcceptedAlgorithms` | `ssh-ed25519,rsa-sha2-512` | Ограничить алгоритмы |

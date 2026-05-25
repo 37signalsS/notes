@@ -157,7 +157,7 @@ sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-
 
 **Описание параметров**:
 
-- `net.ipv4.ip_forward = 1` — включение маршрутизации между подами
+- `net.ipv4.ip_forward = 1` — включение маршрутизации между подами (подробнее в [sysctl](../../../Linux/Core/kernel/sysctl.md))
 - `bridge-nf-call-iptables = 1` — передача трафика bridge через iptables (требуется для NetworkPolicy)
 - `nf_conntrack_max` — максимальное количество отслеживаемых соединений
 

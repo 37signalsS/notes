@@ -101,3 +101,4 @@ Docker активно управляет `iptables` для сетевой изо
 - **[iptables основы](./iptables_basics.md)** — полезные команды iptables
 - **[nftables](../tools/nftables/practical_scenarios.md)** — сохранение правил nftables
 - **[firewalld](./firewalld.md)** — управление зонами и сервисами
+- **[ufw](./ufw.md)** — упрощенный интерфейс для Ubuntu/Debian

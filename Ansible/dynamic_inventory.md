@@ -103,4 +103,27 @@ cache_connection = .cache/inventory
 
 ### Примеры конфигурации
 
+#### Настройка Yandex Cloud Dynamic Inventory
+
+Для работы необходимо установить коллекцию: `ansible-galaxy collection install yandex.cloud`.
+
+Создайте файл инвентаря с расширением `.yc.yml` (например, `hosts.yc.yml`):
+
+```yaml
+plugin: yandex.cloud.yandex_cloud
+folder_id: "b1g..." # ID каталога в Yandex Cloud
+service_account_key_file: "./key.json" # Путь к JSON-ключу сервисного аккаунта
+# Группировка хостов по метке 'role'
+hostnames:
+  - "{{ labels.role }}-{{ name }}"
+keyed_groups:
+  - key: labels.role
+    prefix: role
+# Настройка IP для подключения
+compose:
+  ansible_host: network_interfaces[0].primary_v4_address.one_to_one_nat.address
+```
+
+После настройки проверьте работу инвентаря: `ansible-inventory -i hosts.yc.yml --graph`.
+
 Базовые концепции статического инвентаря описаны в [Установке и настройке Ansible](ansible_setup_and_config.md). Для работы с облачными провайдерами используйте inventory-плагины: [`aws_ec2`](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html), [`yandex.cloud.yandex_cloud`](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html), [`community.vmware.vmware_vm_inventory`](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html). Использование тегов для группировки ресурсов рассмотрено в [кроссплатформенных концепциях](./CrossPlatform/concepts.md).

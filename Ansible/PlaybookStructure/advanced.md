@@ -78,6 +78,6 @@
 
 ## Дополнительная информация
 
-По вопросам параллелизма (`forks`, `async`, `throttle`) см. [оптимизацию производительности](../ansible_performance_tuning.md). Рекомендации по организации плейбуков в проекте — в [примере структуры проекта](../examples/example_project_layout.md). Тестирование плейбуков описано в документе [тестирование с Molecule](../ansible_testing_with_molecule.md). Частые ошибки и антипаттерны рассмотрены в [ansible_bad_practices.md](../ansible_bad_practices.md).
+По вопросам параллелизма (`forks`, `async`, `throttle`) и стратегий выполнения (`strategy: linear`, `free`) см. [оптимизацию производительности](../ansible_performance_tuning.md). Рекомендации по организации плейбуков в проекте — в [примере структуры проекта](../examples/example_project_layout.md). Тестирование плейбуков описано в документе [тестирование с Molecule](../ansible_testing_with_molecule.md). Частые ошибки и антипаттерны рассмотрены в [ansible_bad_practices.md](../ansible_bad_practices.md).
 
 Более детальное описание `import_tasks`/`include_tasks` в контексте ролей — в [ansible_advanced_role_structure.md](../ansible_advanced_role_structure.md). Кроссплатформенные сценарии с `include_tasks` — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md).

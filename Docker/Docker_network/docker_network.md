@@ -241,7 +241,7 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 
 **Выход контейнеров в Интернет:**
 
-1. Включает IP-форвардинг: `net.ipv4.ip_forward=1`
+1. Включает IP-форвардинг: `net.ipv4.ip_forward=1` (подробнее в [sysctl](../../Linux/Core/kernel/sysctl.md))
 2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
 
 ### Режимы Docker и реализация в Linux

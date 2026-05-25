@@ -69,5 +69,6 @@ LXC не является "легкой виртуальной машиной", 
 
 - [Обзор виртуализации и изоляции в Linux](./virtualization_overview.md)
 - [Обзор Docker](../../Docker/docker_overview.md)
+- [Обзор Proxmox VE](../../Proxmox/proxmox_overview.md)
 - [Namespaces ядра Linux](../Core/namespaces.md)
 - [Cgroups](../Core/cgroups.md)

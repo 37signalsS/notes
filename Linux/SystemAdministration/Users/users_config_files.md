@@ -59,6 +59,36 @@ awk -F: '$3 >= 1000 {print $1, $7}' /etc/passwd
 grep -v nologin /etc/passwd | grep -v false
 ```
 
+### Добавление пользователя вручную (без useradd/adduser)
+
+В экстренных ситуациях или при глубокой отладке пользователя можно добавить, редактируя файлы конфигурации напрямую.
+
+**Шаги для добавления пользователя:**
+
+1.  **Определить UID и GID:** Выбрать свободные ID (обычно >= 1000).
+2.  **Добавить запись в `/etc/passwd`:**
+    ```bash
+    echo "newuser:x:1001:1001:New User:/home/newuser:/bin/bash" | sudo tee -a /etc/passwd
+    ```
+3.  **Добавить запись в `/etc/group`:**
+    ```bash
+    echo "newuser:x:1001:" | sudo tee -a /etc/group
+    ```
+4.  **Добавить запись в `/etc/shadow`:**
+    Хэш можно сгенерировать через `openssl passwd -6`.
+    ```bash
+    echo "newuser:*:19000:0:99999:7:::" | sudo tee -a /etc/shadow
+    ```
+    (Символ `*` заблокирует вход до установки пароля через `passwd`).
+5.  **Создать домашнюю директорию и установить права:**
+    ```bash
+    sudo mkdir /home/newuser
+    sudo cp -r /etc/skel/. /home/newuser/
+    sudo chown -R 1001:1001 /home/newuser
+    sudo chmod -R 700 /home/newuser
+    ```
+6.  **Установить пароль:** `sudo passwd newuser`.
+
 ### /etc/shadow
 
 Хранит хэши паролей и информацию о сроке их действия. **Доступен только root**.
