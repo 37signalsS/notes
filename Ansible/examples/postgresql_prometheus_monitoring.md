@@ -1,29 +1,31 @@
-# Ansible: Мониторинг PostgreSQL с Prometheus
+# Ansible: Мониторинг PostgreSQL с использованием Prometheus
 
 ## Определения
 
-**Мониторинг PostgreSQL с Prometheus и Ansible** — автоматизированное развертывание стека мониторинга для PostgreSQL: Ansible управляет конфигурацией, `postgres_exporter` собирает метрики, Prometheus агрегирует и хранит данные временных рядов.
+**Мониторинг PostgreSQL с Prometheus и Ansible** — процесс автоматизированного развертывания инструментов для наблюдения за состоянием базы данных. Ansible управляет конфигурацией, `postgres_exporter` осуществляет сбор метрик, а Prometheus агрегирует и хранит данные временных рядов (TSDB).
+
+**`postgres_exporter`** — специализированный компонент, преобразующий внутренние показатели PostgreSQL в формат, понятный Prometheus.
 
 ## Базовые концепции
 
-### Компоненты стека мониторинга
+### Архитектура стека мониторинга
 
-| Компонент | Назначение | Ссылка |
+Для полноценного наблюдения за СУБД (система управления базами данных) используются следующие компоненты:
+
+| Компонент | Назначение | Ссылка на описание |
 |---|---|---|
-| **PostgreSQL** | Объект мониторинга, реляционная СУБД | [Databases/PostgreSQL/overview.md](../../Databases/PostgreSQL/overview.md) |
-| **Postgres Exporter** | Сбор метрик PostgreSQL и предоставление в формате Prometheus | [prometheus-community/postgres_exporter](https://github.com/prometheus-community/postgres_exporter) |
-| **Prometheus** | Сбор, агрегация и хранение метрик временных рядов | [Prometheus/overview.md](../../Prometheus/overview.md) |
+| **PostgreSQL** | Объект мониторинга (СУБД) | [PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md) |
+| **Postgres Exporter** | Агент сбора метрик | [Экспортеры Prometheus](../../Prometheus/Exporters/overview.md) |
+| **Prometheus** | Система хранения и обработки метрик | [Prometheus: Обзор](../../Prometheus/overview.md) |
 
-### Ansible Galaxy роли
+### Используемые роли Ansible Galaxy
 
-| Роль | Назначение |
-|---|---|
-| `community.postgresql` | Установка и настройка PostgreSQL |
-| `prometheus-community.postgres_exporter` | Установка и конфигурация экспортера |
-| `cloudalchemy.prometheus` | Развертывание Prometheus Server |
+Для ускорения развертывания рекомендуется использовать проверенные роли:
+- **`community.postgresql`**: Установка и базовая настройка базы данных.
+- **`prometheus-community.postgres_exporter`**: Установка и конфигурация экспортера.
+- **`cloudalchemy.prometheus`**: Развертывание и настройка сервера Prometheus.
 
-Установка зависимостей на управляющем узле:
-
+Установка необходимых зависимостей на контрольном узле:
 ```bash
 ansible-galaxy install community.postgresql
 ansible-galaxy collection install prometheus-community.postgres_exporter
@@ -32,7 +34,7 @@ ansible-galaxy collection install cloudalchemy.prometheus
 
 ### Безопасность и секреты
 
-Чувствительные данные (пароли, строки подключения) должны храниться в зашифрованном виде через [Ansible Vault](../Vault/basics.md).
+Строки подключения к базе данных и пароли являются конфиденциальной информацией. В Ansible их необходимо защищать с помощью **[Ansible Vault](../Vault/basics.md)**.
 
 ---
 
@@ -40,10 +42,11 @@ ansible-galaxy collection install cloudalchemy.prometheus
 
 ### Сценарий: Развертывание полного стека мониторинга
 
-#### Шаг 1: Инвентарь и переменные
+Данный пример демонстрирует настройку двух серверов: одного с базой данных и экспортером, второго — с сервером мониторинга.
+
+#### 1. Подготовка инвентаря и переменных
 
 **Файл `hosts.ini`:**
-
 ```ini
 [postgres_servers]
 pg01 ansible_host=192.168.55.10
@@ -52,8 +55,7 @@ pg01 ansible_host=192.168.55.10
 mon01 ansible_host=192.168.55.20
 ```
 
-**Файл `group_vars/postgres_servers.yml`:**
-
+**Переменные группы (`group_vars/postgres_servers.yml`):**
 ```yaml
 postgresql_databases:
   - name: myapp_db
@@ -63,17 +65,12 @@ postgresql_users:
     pass: "{{ db_password }}"
 ```
 
-**Файл `group_vars/all.yml` (шифруется через Vault):**
-
-```bash
-ansible-vault encrypt group_vars/all.yml
-```
-
+**Секреты (зашифрованы через Vault):**
 ```yaml
 db_password: "MySuperSecretPassword"
 ```
 
-#### Шаг 2: Плейбук для PostgreSQL и Exporter
+#### 2. Плейбук для настройки базы данных и экспортера
 
 ```yaml
 ---
@@ -81,6 +78,7 @@ db_password: "MySuperSecretPassword"
   hosts: postgres_servers
   become: true
   vars:
+    # Формирование DSN (Data Source Name) для подключения экспортера
     postgres_exporter_dsn: "postgresql://{{ postgresql_users[0].name }}:{{ db_password }}@localhost:5432/{{ postgresql_databases[0].name }}?sslmode=disable"
 
   roles:
@@ -98,7 +96,7 @@ db_password: "MySuperSecretPassword"
           DATA_SOURCE_NAME: "{{ postgres_exporter_dsn }}"
 
   post_tasks:
-    - name: Healthcheck postgres_exporter
+    - name: Проверка доступности метрик экспортера
       ansible.builtin.uri:
         url: "http://localhost:9187/metrics"
         return_content: yes
@@ -108,11 +106,11 @@ db_password: "MySuperSecretPassword"
       delay: 10
 ```
 
-#### Шаг 3: Плейбук для Prometheus
+#### 3. Плейбук для сервера Prometheus
 
 ```yaml
 ---
-- name: Setup Prometheus
+- name: Setup Prometheus Server
   hosts: monitoring_servers
   become: true
 
@@ -131,28 +129,24 @@ db_password: "MySuperSecretPassword"
 
 ## Дополнительная информация
 
-### Проверка статуса в Prometheus
+### Верификация в интерфейсе Prometheus
 
-После выполнения плейбуков:
+После успешного выполнения плейбуков:
+1. Перейдите по адресу: `http://<monitoring_server_ip>:9090`.
+2. Откройте меню **Status → Targets**.
+3. Убедитесь, что эндпоинт `postgres_exporter` (порт 9187) находится в статусе **UP**.
 
-1. Откройте веб-интерфейс Prometheus: `http://<monitoring_server_ip>:9090`
-2. Перейдите в **Status → Targets**
-3. Найдите эндпоинт `postgres_exporter` (например, `192.168.55.10:9187`) со статусом **UP**
-
-### Ключевые метрики PostgreSQL
+### Ключевые метрики для анализа
 
 | Метрика | Описание |
 |---|---|
-| `pg_up` | Статус подключения к PostgreSQL (1 = успешно) |
-| `pg_stat_activity_count` | Количество активных соединений |
-| `pg_stat_database_tps` | Транзакций в секунду |
-| `pg_stat_database_blks_hit` | Попаданий в кэш буферов |
-| `pg_locks_count` | Количество блокировок |
+| `pg_up` | Наличие успешного подключения к БД (1 = OK). |
+| `pg_stat_activity_count` | Количество активных сессий. |
+| `pg_stat_database_tps` | Производительность: транзакций в секунду. |
+| `pg_stat_database_blks_hit` | Эффективность кэширования (Buffer Cache Hit Ratio). |
 
-### Установка PostgreSQL
+### Связанные документы
 
-Подробное руководство по установке и настройке PostgreSQL — в [example_postgresql_setup.md](example_postgresql_setup.md).
-
-### Экспортеры Prometheus
-
-Обзор всех доступных экспортеров — в [Prometheus/Exporters/overview.md](../../Prometheus/Exporters/overview.md).
+- **[Примеры установки PostgreSQL](./example_postgresql_setup.md)** — базовые сценарии развертывания БД.
+- **[Full-Stack Observability для PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)** — концепция комплексной наблюдаемости.
+- **[Экспортеры Prometheus](../../Prometheus/Exporters/overview.md)** — общий обзор механизмов сбора метрик.

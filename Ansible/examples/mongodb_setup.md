@@ -2,22 +2,17 @@
 
 ## Определения
 
-**MongoDB Replica Set** — группа процессов MongoDB, поддерживающих одинаковый набор данных для обеспечения избыточности и высокой доступности.
+**MongoDB Replica Set** — группа процессов MongoDB, поддерживающих идентичный набор данных для обеспечения избыточности и высокой доступности. Подробное описание компонентов и механизмов работы приведено в разделе **[Репликация в MongoDB](../../Databases/MongoDB/mongodb.md#репликация-replica-set)**.
 
-**Автоматизация развертывания с Ansible** — воспроизводимая настройка кластера MongoDB с использованием готовых ролей Ansible Galaxy и модулей `community.mongodb`.
+**Автоматизация развертывания с Ansible** — воспроизводимая настройка кластера MongoDB с использованием ролей Ansible Galaxy и специализированных модулей коллекции `community.mongodb`.
 
 ## Базовые концепции
 
-### Компоненты Replica Set
+### Инструментарий для MongoDB
 
-- **Primary**: Основной узел, который принимает все операции записи. В реплика-сете может быть только один primary.
-- **Secondary**: Вторичный узел, который реплицирует данные с primary. Он может обрабатывать операции чтения и берет на себя роль primary в случае его отказа.
-- **Arbiter**: "Арбитр", который не хранит данные, но участвует в голосовании при выборе нового primary. Он нужен для обеспечения кворума в архитектурах с четным количеством узлов данных.
-
-### Ansible Galaxy для MongoDB
-
-- **Роль `undergreen.mongodb`** — установка и базовая настройка MongoDB
-- **Коллекция `community.mongodb`** — модули для управления кластером (`mongodb_replicaset`)
+Для автоматизации обычно используются два компонента:
+- **Роль `undergreen.mongodb`**: Отвечает за установку пакетов, настройку конфигурационных файлов и управление операционной системой (ОС).
+- **Коллекция `community.mongodb`**: Содержит модули для логической настройки кластера (например, `mongodb_replicaset`).
 
 Установка зависимостей на управляющем узле:
 
@@ -28,13 +23,15 @@ ansible-galaxy collection install community.mongodb
 
 ### Инициализация кластера
 
-Модуль `community.mongodb.mongodb_replicaset` подключается к одному из узлов и передает конфигурацию replica set. Задача выполняется один раз (`run_once: true`) на узле primary.
+Модуль `community.mongodb.mongodb_replicaset` подключается к одному из узлов и передает конфигурацию Replica Set. Ключевые особенности:
+- Задача выполняется один раз (`run_once: true`) на будущем узле `primary`.
+- Модуль управляет списком участников (`members`) и их приоритетами.
 
-### Структура инвентаря и переменных
+### Структура инвентаря
 
-- **Инвентарь (`hosts.ini`)** — группы хостов по ролям: `mongo_primary`, `mongo_secondary`, `mongo_arbiter`
-- **`group_vars/mongo_cluster.yml`** — общие переменные для всех узлов
-- **`host_vars/<hostname>.yml`** — специфичные переменные для каждого узла
+Для управления кластером рекомендуется разделять хосты на группы в инвентаре:
+- **Группы по ролям**: `mongo_primary`, `mongo_secondary`, `mongo_arbiter`.
+- **Переменные**: Общие параметры (имя реплика-сета, bind_ip) выносятся в `group_vars/mongo_cluster.yml`, а специфичные (роль узла) — в `host_vars/`.
 
 ---
 
@@ -42,7 +39,7 @@ ansible-galaxy collection install community.mongodb
 
 ### Сценарий: Развертывание MongoDB Replica Set
 
-#### Шаг 1: Инвентарь и переменные
+#### 1. Подготовка инвентаря и переменных
 
 **Файл `hosts.ini`:**
 
@@ -69,29 +66,13 @@ mongodb_replication_replset: rs0
 mongodb_bind_ip: 0.0.0.0
 ```
 
-**Файлы `host_vars/`:**
+**Пример `host_vars/server_mongo_primary.yml`:**
 
-- `server_mongo_primary.yml`:
+```yaml
+mongodb_replication_role: primary
+```
 
-  ```yaml
-  mongodb_replication_role: primary
-  ```
-
-- `server_mongo_secondary.yml`:
-
-  ```yaml
-  mongodb_replication_role: secondary
-  mongodb_master_host: 192.168.52.2
-  ```
-
-- `server_mongo_arbiter.yml`:
-
-  ```yaml
-  mongodb_replication_role: arbiter
-  mongodb_master_host: 192.168.52.2
-  ```
-
-#### Шаг 2: Плейбук развертывания
+#### 2. Плейбук развертывания
 
 ```yaml
 ---
@@ -99,14 +80,14 @@ mongodb_bind_ip: 0.0.0.0
   hosts: mongo_cluster
   become: true
   roles:
-    # Роль сама подхватит переменные из group_vars/host_vars
+    # Роль устанавливает MongoDB и настраивает конфиг
     - undergreen.mongodb
 
 - name: Initiate Replica Set
   hosts: mongo_primary
   become: true
   tasks:
-    - name: Initiate replica set
+    - name: Initiate replica set configuration
       community.mongodb.mongodb_replicaset:
         login_host: localhost
         replica_set: "{{ mongodb_replication_replset }}"
@@ -126,16 +107,13 @@ mongodb_bind_ip: 0.0.0.0
 
 ### Безопасность
 
-В производственной среде необходимо включить аутентификацию и передавать `login_user`/`login_password` в модуль `mongodb_replicaset`. Пароли хранить в [Ansible Vault](../Vault/basics.md).
+В производственных средах обязательна настройка аутентификации. Параметры `login_user` и `login_password` должны передаваться в модуль `mongodb_replicaset`. Конфиденциальные данные следует хранить в **[Ansible Vault](../Vault/basics.md)**.
 
 ### Идемпотентность
 
-Модуль `community.mongodb.mongodb_replicaset` идемпотентен: при повторном запуске проверяет конфигурацию и не вносит изменений, если состояние соответствует заданному.
+Модуль `community.mongodb.mongodb_replicaset` является идемпотентным. При повторных запусках он сверяет текущую конфигурацию кластера с описанной в задаче и вносит изменения только при обнаружении расхождений (например, при добавлении нового узла).
 
-### Динамический инвентарь
+### Масштабирование
 
-В облачных средах с динамическими IP-адресами используйте [динамический инвентарь](../dynamic_inventory.md) для автоматического обнаружения хостов вместо статического `hosts.ini`.
-
-### Роли Ansible
-
-Подробнее о ролях и Ansible Galaxy — в [ansible_roles.md](../ansible_roles.md).
+- **Динамический инвентарь**: В облачных инфраструктурах используйте **[динамический инвентарь](../dynamic_inventory.md)** для автоматического обнаружения узлов кластера.
+- **Роли**: Подробная информация об использовании и создании ролей доступна в **[ansible_roles.md](../ansible_roles.md)**.

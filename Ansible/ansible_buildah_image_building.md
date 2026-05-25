@@ -1,8 +1,8 @@
-# Ansible Buildah Image Building
+# Сборка образов: Buildah и Ansible-bender
 
 ## Определения
 
-**Buildah** — инструмент для создания OCI-совместимых образов контейнеров без Docker-демона. Позволяет собирать образы через shell-скрипты или `Dockerfile`.
+**Buildah** — инструмент для создания OCI-совместимых (Open Container Initiative) образов контейнеров без Docker-демона. Позволяет собирать образы через shell-скрипты или `Dockerfile`.
 
 **Ansible-bender** — утилита-мост между Ansible и Buildah. Позволяет описывать сборку образа с помощью [плейбуков Ansible](PlaybookStructure/basics.md).
 
@@ -28,6 +28,7 @@ buildah run "$ctrl" -- dnf update -y && dnf install -y lighttpd
 buildah config --cmd "/usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf" "$ctrl"
 buildah config --port 80 "$ctrl"
 buildah commit "$ctrl" my-lighttpd-image
+# → Образ my-lighttpd-image успешно сохранен в локальном хранилище
 ```
 
 ## Практические сценарии
@@ -39,9 +40,11 @@ buildah commit "$ctrl" my-lighttpd-image
 ```bash
 # Установка ansible-bender
 sudo pip3 install ansible-bender
+# → Successfully installed ansible-bender...
 
 # Установка buildah и podman
 sudo yum -y install buildah podman
+# → Complete!
 ```
 
 ### 2. Пример плейбука для сборки
@@ -80,12 +83,17 @@ sudo yum -y install buildah podman
 ```bash
 # Запуск сборки
 ansible-bender build playbook.yml
+# → PLAY [Демонстрация функциональности ansible-bender] ... 
+# → Image my-nice-app was built successfully.
 
 # Просмотр списка сборок
 ansible-bender list-builds
+# → BUILD ID   IMAGE NAME    STATUS     CREATED
+# → 1          my-nice-app   done       2 minutes ago
 
 # Получение логов сборки
-ansible-bender get-logs <BUILD_ID>
+ansible-bender get-logs 1
+# → Logs for build 1...
 ```
 
 ## Дополнительная информация
@@ -94,4 +102,8 @@ ansible-bender get-logs <BUILD_ID>
 
 **Проблемы:** на CentOS 7 Ansible из стандартных репозиториев может использовать Python 2, с которым `ansible-bender` не работает. Установите Ansible через `pip3`.
 
-См. также [тестирование с Molecule](ansible_testing_with_molecule.md), [оптимизация производительности](ansible_performance_tuning.md), [пользовательские модули](ansible_custom_modules.md).
+**Смотрите также:**
+
+- [Альтернативные среды выполнения (Buildah)](../Docker/alternative_runtimes_and_tools.md)
+- [Тестирование ролей с Molecule](ansible_testing_with_molecule.md)
+- [Оптимизация производительности Ansible](ansible_performance_tuning.md)

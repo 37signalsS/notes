@@ -48,7 +48,7 @@
 
 ### Установка и развертывание
 
-Для локальной разработки используйте **[PostgreSQL в Docker](./Operations/docker_deployment.md)**, для production-окружений — **[PostgreSQL в Kubernetes с оператором CloudNativePG](./Operations/kubernetes_deployment.md)**.
+Для локальной разработки используйте **[PostgreSQL в Docker](./Operations/docker_deployment.md)**, для production-окружений — **[PostgreSQL в Kubernetes с оператором CloudNativePG](./Operations/kubernetes_deployment.md)**. Примеры автоматизации установки и настройки через Ansible приведены в **[этом руководстве](../../Ansible/examples/example_postgresql_setup.md)**.
 
 ### Администрирование и эксплуатация
 

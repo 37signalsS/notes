@@ -48,3 +48,4 @@
 
 - **Write Concern:** Уровень подтверждения записи (например, `w: "majority"`).
 - **Установка:** **[Установка MongoDB на Ubuntu](./installation_ubuntu.md)**.
+- **Автоматизация:** **[Развертывание MongoDB Replica Set через Ansible](../../Ansible/examples/mongodb_setup.md)**.

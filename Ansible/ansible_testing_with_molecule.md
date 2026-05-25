@@ -172,4 +172,4 @@ molecule test -s centos
 
 ### Интеграция с CI/CD
 
-Molecule является стандартным инструментом для [интеграции тестов в CI/CD пайплайны](../../Testing/testing_cicd_integration.md) и выступает частью [Quality Gates](../../Testing/testing_cicd_integration.md#quality-gates-лучшие-практики-20252026). Тестирование ролей — ключевой компонент автоматизации Ansible, который также упоминается в документации по [ролям](ansible_roles.md) и [Ansible Lint](ansible_core_concepts.md#качество-кода-ansible-lint). Для организации файлов проекта см. [структуру проекта](examples/example_project_layout.md).
+Molecule является стандартным инструментом для [интеграции тестов в CI/CD пайплайны](../Testing/testing_cicd_integration.md) и выступает частью [Quality Gates](../Testing/testing_cicd_integration.md#quality-gates-лучшие-практики-20252026). Тестирование ролей — ключевой компонент автоматизации Ansible, который также упоминается в документации по [ролям](ansible_roles.md) и [Ansible Lint](ansible_core_concepts.md). Для организации файлов проекта см. [структуру проекта](examples/example_project_layout.md).

@@ -301,6 +301,7 @@ docker image prune
 
 **См. также:**
 
+- [Управление Docker через Ansible](../Ansible/examples/docker_management.md)
 - [Управление сетями (CLI)](./Docker_network/cli.md)
 - [Тома и хранение данных](./Docker_fs/docker_volumes.md)
 - [Оптимизация Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)

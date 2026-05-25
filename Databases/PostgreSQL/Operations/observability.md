@@ -98,3 +98,4 @@ Alloy — агент-коллектор для сбора всех сигнал�
 - **Оптимизация:** **[Performance Tuning](./performance_tuning.md)**
 - **Docker:** **[PostgreSQL в Docker](./docker_deployment.md)**
 - **Kubernetes:** **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)**
+- **Автоматизация:** **[Развертывание мониторинга через Ansible](../../../Ansible/examples/postgresql_prometheus_monitoring.md)**

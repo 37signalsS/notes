@@ -74,4 +74,4 @@ Ansible для выполнения большинства задач (уста�
 
 ## Дополнительная информация
 
-Управление секретами через Ansible Vault — в [Vault/basics.md](Vault/basics.md) и [Vault/best_practices.md](Vault/best_practices.md). Настройка SSH-подключения — в [ansible_setup_and_config.md](ansible_setup_and_config.md). Веб-интерфейс для управления — [Semaphore](ansible_semaphore.md).
+Управление секретами через Ansible Vault — в [Vault/basics.md](Vault/basics.md) и [Vault/best_practices.md](Vault/best_practices.md). Настройка SSH-подключения — в [ansible_setup_and_config.md](ansible_setup_and_config.md). Типовые проблемы и их решение при переходе на выделенного пользователя — в руководстве **[Отладка миграции на выделенного пользователя](examples/user_migration_debugging.md)**. Веб-интерфейс для управления — [Semaphore](ansible_semaphore.md).

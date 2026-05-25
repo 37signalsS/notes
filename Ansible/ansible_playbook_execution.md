@@ -10,7 +10,7 @@
 
 **PLAY RECAP** — итоговая сводка выполнения плейбука, отображающая статус задач по каждому хосту (ok, changed, unreachable, failed).
 
-## Основные концепции
+## Базовые концепции
 
 ### Запуск плейбука
 
@@ -18,6 +18,7 @@
 
 ```bash
 ansible-playbook -i inventory.ini --ask-pass playbook.yml
+# → Выполнение задач из playbook.yml на серверах из inventory.ini...
 ```
 
 **Ключевые элементы команды:**
@@ -31,7 +32,7 @@ ansible-playbook -i inventory.ini --ask-pass playbook.yml
 
 **PLAY**
 
-```
+```text
 PLAY [Install and start nginx] ********************************************
 ```
 
@@ -39,7 +40,7 @@ PLAY [Install and start nginx] ********************************************
 
 **TASK**
 
-```
+```text
 TASK [Gathering Facts] ******************************************************
 ok: [ws01]
 
@@ -53,7 +54,7 @@ changed: [ws01]
 
 **PLAY RECAP**
 
-```
+```text
 PLAY RECAP *****************************************************************
 ws01                       : ok=5    changed=4    unreachable=0    failed=0
 ```
@@ -73,6 +74,7 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
 
     ```bash
     ansible-playbook -i /path/to/inventory.ini playbook.yml
+    # → Выполнение плейбука с указанным инвентарем...
     ```
 
 * `--limit`: Ограничивает выполнение плейбука только указанными хостами или группами. Пример:
@@ -80,24 +82,32 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
     ```bash
     # Выполнить только на хосте web1
     ansible-playbook -i inventory.ini --limit web1 playbook.yml
+    # → Выполнение только для хоста web1...
     ```
 
 * `--list-hosts`: Выводит список хостов, на которых будет выполнен плейбук, без фактического запуска. Полезно для проверки правильности инвентаря и фильтров.
 
     ```bash
     ansible-playbook -i inventory.ini site.yml --list-hosts
+    # →   hosts (2):
+    # →     web1
+    # →     web2
     ```
 
 * `--list-tasks`: Выводит список всех задач, которые будут выполнены, без фактического запуска. Полезно для анализа порядка выполнения и проверки тегов.
 
     ```bash
     ansible-playbook -i inventory.ini site.yml --list-tasks
+    # →   play #1 (webservers): webservers  TAGS: []
+    # →     tasks:
+    # →       install nginx TAGS: [nginx]
     ```
 
 * `--check` (dry-run): Запускает плейбук в режиме «сухого запуска» — задачи выполняются, но реальные изменения на хостах не вносятся. Модули сообщают, что *изменилось бы*, но не применяют изменения.
 
     ```bash
     ansible-playbook -i inventory.ini site.yml --check --diff
+    # → Отображение ожидаемых изменений без их фактического применения...
     ```
 
 * `--diff`: Показывает изменения, которые будут внесены в файлы, в стиле Git `diff`. Комбинируется с `--check` для контроля перед применением изменений.
@@ -106,15 +116,17 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
 
     ```bash
     ansible-playbook -i inventory.ini site.yml --skip-tags optional
+    # → Пропуск задач с тегом 'optional'...
     ```
 
 * `--tags`: Выполняет только задачи с указанными тегами.
 
     ```bash
     ansible-playbook -i inventory.ini site.yml --tags nginx
+    # → Выполнение только задач с тегом 'nginx'...
     ```
 
-* `--force-handlers`: Заставляет выполнять [обработчики (`handlers`)](PlaybookStructure/basics.md#обработчики-handlers-и-уведомления-notify) даже если плейбук завершился с ошибкой. Рекомендуется для CI/CD-пайплайнов, чтобы гарантировать выполнение очистки или перезапуска сервисов.
+* `--force-handlers`: Заставляет выполнять [обработчики (`handlers`)](PlaybookStructure/basics.md#обработчики-handlers-и-идемпотентность) даже если плейбук завершился с ошибкой. Рекомендуется для CI/CD-пайплайнов, чтобы гарантировать выполнение очистки или перезапуска сервисов.
 * `--become`: Указывает на необходимость [повышения привилегий (`sudo`)](ansible_security_best_practices.md) для выполнения задач на удаленном хосте.
 * `--ask-pass` (`-k`): Запрашивает пароль для SSH-подключения.
 * `--ask-become-pass` (`-K`): Запрашивает пароль для повышения привилегий (`sudo`).
@@ -146,4 +158,6 @@ ws01                       : ok=5    changed=4    unreachable=0    failed=0
 
 ## Дополнительная информация
 
-Инструменты качества кода: `ansible-lint` (статический анализ), `ansible-doc` (документация по модулям). Альтернативный pull-режим описан в [Ansible Pull](ansible_pull.md). Детали структуры плейбуков — в [PlaybookStructure/basics.md](PlaybookStructure/basics.md), переменных — в [PlaybookStructure/variables.md](PlaybookStructure/variables.md), управление потоком — в [PlaybookStructure/flow_control.md](PlaybookStructure/flow_control.md). Стратегии выполнения и оптимизация производительности — в [ansible_performance_tuning.md](ansible_performance_tuning.md). Настройка инвентаря — в [ansible_setup_and_config.md](ansible_setup_and_config.md), безопасность — в [ansible_security_best_practices.md](ansible_security_best_practices.md).
+* [Оптимизация производительности](ansible_performance_tuning.md) — стратегии ускорения выполнения плейбуков.
+* [Управление потоком (Flow Control)](PlaybookStructure/flow_control.md) — работа с тегами, условиями и циклами при выполнении.
+* [Ansible Pull](ansible_pull.md) — альтернативный pull-режим применения конфигураций.

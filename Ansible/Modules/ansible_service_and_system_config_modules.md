@@ -1,57 +1,94 @@
-# Ansible: Модули для управления службами и системной конфигурацией
+# Ansible: Модули управления службами и системной конфигурацией
 
 ## Определения
 
-**Модули управления службами и системной конфигурацией** — это инструменты Ansible для управления системными сервисами (демонами), настройки времени, имени хоста и других системных параметров.
+**Модули управления службами и системной конфигурацией** — это инструменты Ansible для управления жизненным циклом сервисов и настройки параметров операционной системы (время, имя хоста, параметры ядра, задачи по расписанию).
 
 ## Основные концепции
 
-- **`systemd`**: Современный модуль для управления сервисами в системах с `systemd`. Поддерживает перезагрузку демонов (`daemon_reload`).
-- **`service`**: Универсальный модуль для управления сервисами в различных системах инициализации (SysVinit, systemd).
-- **`hostname`**: Управление именем хоста системы.
-- **`timezone`**: Управление системным часовым поясом.
+### Управление сервисами
+*   **`service`**: Универсальный модуль, работающий с различными системами инициализации (SysVinit, OpenRC, systemd). Рекомендуется для обеспечения переносимости.
+*   **`systemd`**: Специализированный модуль для систем с `systemd`. Позволяет выполнять `daemon-reload` и управлять сложными параметрами юнитов.
+
+### Настройка параметров системы
+*   **`hostname`**: Управление именем хоста.
+*   **`timezone`**: Настройка часового пояса.
+*   **`sysctl`**: Управление параметрами ядра Linux в реальном времени и в файлах конфигурации.
+*   **`cron`**: Управление заданиями в планировщике `crontab`.
+*   **`reboot`**: Безопасная перезагрузка хоста с ожиданием его возвращения в строй.
+
+### Управление брандмауэром
+*   **`firewalld`**: Для систем на базе RHEL (CentOS, Fedora).
+*   **`ufw`**: Для систем на базе Debian/Ubuntu.
 
 ## Практические сценарии
 
-### Модуль `ansible.builtin.systemd`
+### Управление службами через `ansible.builtin.systemd`
 
-Более современный и предпочтительный модуль для систем, использующих `systemd`. Предоставляет дополнительные возможности, которых нет в `service`. Ключевое преимущество — опция `daemon_reload: yes`, которая выполняет команду `systemctl daemon-reload`. Это необходимо после создания или изменения `unit`-файлов сервисов, чтобы `systemd` узнал о них. Модуль `service` этого делать не умеет.
+Используйте `daemon_reload`, если вы изменили файл конфигурации юнита.
 
 ```yaml
-- name: Reload systemd to apply new unit files
+- name: Перезагрузка конфигурации systemd и запуск сервиса
   ansible.builtin.systemd:
-    daemon_reload: yes
-
-- name: Restart service httpd, and sleep for 5 seconds
-  ansible.builtin.systemd:
-    name: httpd
+    name: nginx
     state: restarted
+    enabled: yes
+    daemon_reload: yes
 ```
 
-### Модуль `ansible.builtin.timezone`
-
-Управляет системным часовым поясом.
+### Настройка ядра через `ansible.builtin.sysctl`
 
 ```yaml
-- name: Set timezone to Europe/Moscow
-  ansible.builtin.timezone:
-    name: Europe/Moscow
+- name: Включение IP forwarding
+  ansible.builtin.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes # применить немедленно
 ```
 
-### Модуль `ansible.builtin.hostname`
-
-Управляет именем хоста (hostname) системы.
+### Планирование задач через `ansible.builtin.cron`
 
 ```yaml
-- name: Set hostname to 'webserver01'
-  ansible.builtin.hostname:
-    name: webserver01
+- name: Ежедневный бэкап базы данных в 2 часа ночи
+  ansible.builtin.cron:
+    name: "db backup"
+    minute: "0"
+    hour: "2"
+    job: "/usr/local/bin/backup.sh"
+```
 
-- name: Set hostname based on inventory name
-  ansible.builtin.hostname:
-    name: "{{ inventory_hostname }}"
+### Безопасная перезагрузка через `ansible.builtin.reboot`
+
+```yaml
+- name: Перезагрузка сервера после обновления ядра
+  ansible.builtin.reboot:
+    reboot_timeout: 600 # ждать до 10 минут
+```
+
+### Настройка брандмауэра (UFW)
+
+```yaml
+- name: Разрешить HTTP трафик в UFW
+  community.general.ufw:
+    rule: allow
+    port: '80'
+    proto: tcp
+```
+
+### Установка часового пояса и имени хоста
+
+```yaml
+- name: Настройка базовых параметров системы
+  block:
+    - ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+    - ansible.builtin.timezone:
+        name: Europe/Moscow
 ```
 
 ## Дополнительная информация
 
-Официальная документация: [systemd](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html), [hostname](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/hostname_module.html), [timezone](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/timezone_module.html). Перезапуск сервисов через обработчики — в [Обработчики](../../PlaybookStructure/basics.md).
+*   [Официальная документация: модули управления сервисами](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html)
+*   [Обработчики (Handlers) и уведомления](../ansible_core_concepts.md#обработчики-handlers-и-уведомления-notify) — для перезапуска сервисов при изменении конфигов.
+*   [Кроссплатформенные плейбуки](../CrossPlatform/concepts.md) — выбор между `ufw` и `firewalld`.

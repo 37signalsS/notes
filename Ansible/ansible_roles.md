@@ -16,7 +16,7 @@
 
 1. **Задачи (Tasks)** — атомарные шаги, каждый из которых вызывает один из [модулей Ansible](Modules/ansible_modules_overview.md) (`apt`, `copy`, `service` и т.д.).
 2. **Переменные (Variables)** — позволяют параметризовать роли и плейбуки.
-3. **Шаблоны (Templates)** — файлы `.j2` с использованием шаблонизатора [Jinja2](ansible_jinja2_templating.md) для создания динамических конфигураций.
+3. **Шаблоны (Templates)** — файлы `.j2` с использованием шаблонизатора [Jinja2](ansible_jinja_templating.md) для создания динамических конфигураций.
 4. **Обработчики (Handlers)** — специальные задачи для перезапуска сервисов, которые выполняются только один раз при получении [уведомления (`notify`)](PlaybookStructure/basics.md#обработчики-handlers-и-уведомления-notify).
 
 ### Стандартная структура каталогов
@@ -35,7 +35,7 @@
 
 ### Управление ролями
 
-**Создание и использование:** Каркас роли создается через `ansible-galaxy init`, наполняется задачами и подключается в плейбуках. Практическое руководство — в [Roles/usage.md](Roles/usage.md).
+**Создание и использование:** Каркас роли создается через `ansible-galaxy role init`, наполняется задачами и подключается в плейбуках. Практическое руководство — в [Roles/usage.md](Roles/usage.md).
 
 **Ansible Galaxy:** Официальный репозиторий для поиска и установки готовых ролей и коллекций. Управление зависимостями через `requirements.yml` описано в [Roles/galaxy.md](Roles/galaxy.md).
 
@@ -43,49 +43,7 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Базовое подключение роли
-
-```yaml
----
-- name: Configure servers
-  hosts: webservers
-  become: true
-  roles:
-    - set_time
-```
-
-### Сценарий 2: Подключение с параметрами
-
-```yaml
-- name: Configure Nginx
-  hosts: webservers
-  roles:
-    - role: nginx
-      nginx_port: 8080
-      nginx_worker_processes: 8
-```
-
-### Сценарий 3: Условное подключение
-
-```yaml
-- name: Deploy database
-  hosts: all
-  roles:
-    - role: postgresql
-      when: db_type == "postgresql"
-```
-
-### Сценарий 4: Использование внешних ролей из Galaxy
-
-```yaml
-- name: Setup web server
-  hosts: webservers
-  roles:
-    - geerlingguy.nginx
-    - geerlingguy.php
-```
-
-Предварительная установка: `ansible-galaxy install geerlingguy.nginx geerlingguy.php`
+Развернутые практические сценарии, включая базовое подключение, параметризацию, использование тегов и условное применение ролей, вынесены в **[Практическое руководство: Использование ролей](Roles/usage.md#практические-сценарии)**.
 
 ## Дополнительная информация
 

@@ -30,7 +30,7 @@ ansible-playbook my_playbook.yml --ask-vault-pass
 ansible-playbook site.yml --vault-id dev@prompt
 ```
 
-### Сценарий 2: Файл с паролем (для CI/CD и проектов)
+### Сценарий 2: Файл с паролем (для CI/CD (Continuous Integration / Continuous Deployment) и проектов)
 
 Пароль хранится в текстовом файле, путь к которому передается Ansible. Это предпочтительный способ для автоматизации и командной работы.
 
@@ -52,7 +52,7 @@ vault_password_file = .vault_pass
 
 ### Сценарий 3: Исполняемый скрипт (для внешних хранилищ)
 
-В качестве файла с паролем можно указать исполняемый скрипт. Ansible выполнит его и будет использовать стандартный вывод (STDOUT) в качестве пароля. Это позволяет интегрироваться с внешними системами (HashiCorp Vault, AWS Secrets Manager).
+В качестве файла с паролем можно указать исполняемый скрипт. Ansible выполнит его и будет использовать стандартный вывод STDOUT (Standard Output) в качестве пароля. Это позволяет интегрироваться с внешними системами (HashiCorp Vault, AWS (Amazon Web Services) Secrets Manager).
 
 **Пример `vault.sh`:**
 
@@ -70,4 +70,6 @@ ansible-playbook my_playbook.yml --vault-password-file ./vault.sh
 
 ## Дополнительная информация
 
-Общие сведения о Vault, включая создание и редактирование файлов, описаны в [basics.md](./basics.md), работа с несколькими хранилищами — в [multi_vault.md](./multi_vault.md), рекомендации по безопасности — в [best_practices.md](./best_practices.md).
+- [Ansible Vault: Основы](./basics.md)
+- [Использование нескольких хранилищ](./multi_vault.md)
+- [Рекомендации по безопасности](./best_practices.md)

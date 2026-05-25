@@ -65,4 +65,5 @@ ansible server1 -m setup
 
 Ad-hoc команды подходят для простых задач, для сложной оркестрации используются [плейбуки](PlaybookStructure/basics.md).
 
-Рекомендуемый маршрут изучения: [основные концепции](ansible_core_concepts.md), [настройка и установка](ansible_setup_and_config.md), [структура плейбуков](PlaybookStructure/basics.md), [роли](ansible_roles.md).
+Рекомендуемый маршрут изучения: [основные концепции](ansible_core_concepts.md) и [настройка и установка](ansible_setup_and_config.md).
+md), [структура плейбуков](PlaybookStructure/basics.md), [роли](ansible_roles.md).

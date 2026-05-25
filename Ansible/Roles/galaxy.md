@@ -24,7 +24,7 @@ ansible-galaxy role init my_new_role
 
 ```bash
 # Установить роль
-ansible-galaxy install geerlingguy.postgresql
+ansible-galaxy role install geerlingguy.postgresql
 
 # Установить коллекцию
 ansible-galaxy collection install community.postgresql
@@ -83,11 +83,7 @@ ansible-galaxy collection install -r requirements.yml
 
 ```bash
 # Установка роли PostgreSQL от сообщества
-ansible-galaxy install geerlingguy.postgresql
-
-# Использование в плейбуке
-# roles:
-#   - geerlingguy.postgresql
+ansible-galaxy role install geerlingguy.postgresql
 ```
 
 ### Сценарий 2: Версионирование зависимостей

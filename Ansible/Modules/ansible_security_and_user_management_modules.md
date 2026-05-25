@@ -1,104 +1,109 @@
-# Ansible: Модули для управления пользователями и безопасностью
+# Ansible: Модули управления пользователями и безопасностью
 
 ## Определения
 
-**Модули управления пользователями и безопасностью** — это инструменты Ansible для создания, изменения и удаления учетных записей пользователей, генерации паролей и управления доступом к системе.
+**Модули управления пользователями и безопасностью** — это инструменты Ansible для управления учетными записями, правами доступа и секретами на управляемых хостах. Они позволяют декларативно описывать состав групп, пользователей и их SSH-ключи, гарантируя идентичность настроек безопасности на всем парке серверов.
 
 ## Основные концепции
 
-- **`user`**: Управление учетными записями пользователей (создание, удаление, настройка параметров, управление группами).
-- **`password`**: Генерация безопасных паролей с поддержкой различных алгоритмов хеширования.
-- **Идемпотентность**: Оба модуля идемпотентны — повторный запуск не приведет к изменениям, если система уже в нужном состоянии.
-- **Безопасность**: При работе с паролями используйте хеши и избегайте хранения в открытом виде. Для задач с чувствительными данными добавляйте `no_log: true` — подробности в [Лучшие практики Vault](../Vault/best_practices.md#сценарий-1-предотвращение-утечек-в-логах-no_log-true).
+### Группы модулей
+
+1.  **Управление учетными записями:**
+    *   `user`: Создание, модификация и удаление пользователей, управление их домашними директориями, оболочками (shell) и паролями.
+    *   `group`: Создание и удаление системных групп, управление GID.
+2.  **Управление SSH-доступом:**
+    *   `authorized_key`: Добавление или удаление публичных ключей в файл `authorized_keys` пользователя.
+    *   `known_hosts`: Управление записями в файле `known_hosts` для предотвращения ошибок проверки ключей хоста при SSH-соединениях.
+3.  **Безопасность и секреты:**
+    *   `password`: Генерация случайных паролей или хешей для использования в задачах.
+    *   `no_log`: Параметр задачи (а не модуль), скрывающий чувствительные данные (пароли, токены) из логов выполнения.
+
+### Идемпотентность и безопасность
+
+Все перечисленные модули являются идемпотентными. При управлении паролями крайне важно использовать хешированные значения, так как Ansible не должен передавать или хранить пароли в открытом виде. Рекомендуется использовать [Ansible Vault](../Vault/basics.md) для защиты всех секретов.
 
 ## Практические сценарии
 
-### Модуль `ansible.builtin.password`
+### Управление пользователями (`ansible.builtin.user`)
 
-**Назначение**: Генерация паролей для учетных записей пользователей, баз данных, а также для создания ключей.
-
-- **Идемпотентность**: Модуль идемпотентен. Если пароль уже был сгенерирован и сохранен (например, в файле, указанном в `path`), он не будет генерироваться повторно при следующих запусках, если это не будет принудительно указано.
+Модуль позволяет гибко настраивать параметры учетной записи.
 
 ```yaml
-- name: Generate a random password for a database user
-  ansible.builtin.password:
-    length: 20
-    chars: ascii_letters,digits,punctuation
-    # path: /path/to/vaulted_password_file # Укажите путь к файлу, который будет зашифрован Vault
-    # Чтобы сгенерировать хеш пароля (для хранения в БД, например):
-    # algorithm: sha512crypt # Алгоритм хеширования (например, 'sha512crypt', 'bcrypt')
-    # Эти параметры (`path`, `algorithm`) являются взаимоисключающими и необязательными,
-    # их использование зависит от способа хранения и применения пароля.
-  register: db_password_result # Результат генерации пароля будет доступен в этой переменной
-
-- name: Create database user with generated password
-  community.mysql.mysql_user:
-    name: my_app_user
-    password: "{{ db_password_result.password }}"
-    host: localhost
-    priv: '*.*:ALL'
-    state: present
-  no_log: true # Важно скрывать пароли в логах!
-```
-
-### Модуль `ansible.builtin.user`
-
-**Назначение**: Создание, изменение, удаление учетных записей пользователей. Управление группами пользователей.
-
-- **Идемпотентность**: Модуль идемпотентен. Он создаст пользователя, только если его нет, и изменит параметры, только если они отличаются от заданных.
-
-**Пример 1: Создание нового пользователя**
-
-```yaml
-- name: Create a new user 'peter_parker'
+- name: Создание пользователя Peter Parker
   ansible.builtin.user:
     name: peter_parker
     comment: "Peter Parker, Web Developer"
     shell: /bin/bash
-    home: /home/peter_parker
+    groups: sudo,docker # Добавление в группы
+    append: yes # Важно: не удалять из групп, не указанных в списке
     state: present
 ```
 
-**Ad-hoc команда для создания пользователя:**
-
-```bash
-ansible <hostname> -m user -a "name=ansible_user shell=/bin/bash state=present" --become
-```
-
-**Пример 2: Добавление пользователя в группу sudo**
-
-Для добавления пользователя в группу `sudo` (или `wheel` в RHEL-подобных системах) используйте параметр `groups` и `append: yes`.
-
+**Установка хешированного пароля:**
 ```yaml
-- name: Add 'peter_parker' to the sudo group
+- name: Установка пароля для пользователя
   ansible.builtin.user:
     name: peter_parker
-    groups: sudo
-    append: yes
-    state: present
+    password: "$6$rounds=656000$..." # Хеш SHA-512 (используйте Vault)
+    update_password: on_create # Обновлять только при создании (или always)
+  no_log: true
 ```
 
-**Пример 3: Установка пароля для пользователя**
-
-Для установки пароля используется параметр `password`. **Важно**: Пароль должен быть в виде хеша. Ansible не принимает пароли в открытом виде. Вы можете сгенерировать хеш пароля с помощью утилиты `mkpasswd` (в Linux) или Python.
-
-```bash
-# Пример генерации хеша пароля (для Linux, нужен пакет `whois` или `passwd`)
-# python -c 'import crypt; print(crypt.crypt("MySecretPassword", crypt.METHOD_SHA512))'
-```
+### Управление группами (`ansible.builtin.group`)
 
 ```yaml
-- name: Set password for 'peter_parker'
-  ansible.builtin.user:
-    name: peter_parker
-    password: "$6$rounds=656000$q1w2e3r4t5y6u7i8$aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789./ABCDEFGHIJKLMNOPQRSTUVW" # Замените на сгенерированный хеш
-    update_password: always # Всегда обновлять пароль, если хеш изменился
+- name: Создание группы разработчиков с конкретным GID
+  ansible.builtin.group:
+    name: developers
+    gid: 2000
     state: present
-  no_log: true # Скрывать пароль в логах
 ```
 
-> **Лучшая практика**: Всегда используйте [Ansible Vault](../Vault/basics.md) для хранения хешей паролей и других чувствительных данных.
+### Управление SSH-ключами (`ansible.posix.authorized_key`)
+
+Позволяет безопасно распространять публичные ключи для доступа по SSH.
+
+```yaml
+- name: Добавление публичного ключа администратора
+  ansible.posix.authorized_key:
+    user: ansible_user
+    state: present
+    key: "{{ lookup('file', '/path/to/id_rsa.pub') }}"
+```
+
+### Управление доверенными хостами (`ansible.builtin.known_hosts`)
+
+Помогает избежать интерактивных запросов "Are you sure you want to continue connecting?" при автоматизации SSH-соединений между хостами.
+
+```yaml
+- name: Добавление GitHub в known_hosts
+  ansible.builtin.known_hosts:
+    name: github.com
+    key: "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    state: present
+```
+
+### Генерация паролей (`ansible.builtin.password`)
+
+Используется для создания уникальных секретов "на лету" и их сохранения на контрольном узле.
+
+```yaml
+- name: Генерация случайного пароля для базы данных
+  ansible.builtin.password:
+    length: 24
+    chars: ascii_letters,digits
+    path: "/tmp/db_pass_{{ inventory_hostname }}"
+  register: generated_pass
+
+- name: Использование сгенерированного пароля
+  ansible.builtin.debug:
+    msg: "Сгенерирован пароль: {{ generated_pass.password }}"
+  no_log: true
+```
 
 ## Дополнительная информация
 
-Официальная документация: [user](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/user_module.html), [password](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/password_module.html). Шифрование чувствительных данных — в [Ansible Vault](../Vault/basics.md).
+*   [Официальная документация по модулю user](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/user_module.html)
+*   [Рекомендации по безопасности Ansible](../ansible_security_best_practices.md)
+*   [Работа с Ansible Vault](../Vault/basics.md)
+*   [Обзор часто используемых модулей](ansible_modules_overview.md)

@@ -16,7 +16,7 @@
 
 ```bash
 # Создает директорию my_new_role со всеми стандартными каталогами
-ansible-galaxy init my_new_role
+ansible-galaxy role init my_new_role
 ```
 
 Подробнее о структуре каталогов — в [structure.md](structure.md).
@@ -30,7 +30,7 @@ ansible-galaxy init my_new_role
 1. **Создаем роль:**
 
     ```bash
-    ansible-galaxy init set_time
+    ansible-galaxy role init set_time
     ```
 
 2. **Добавляем задачу в `roles/set_time/tasks/main.yml`:**
@@ -152,7 +152,7 @@ ansible-playbook deploy.yml --tags "cache"
 Предварительная установка:
 
 ```bash
-ansible-galaxy install geerlingguy.nginx geerlingguy.php
+ansible-galaxy role install geerlingguy.nginx geerlingguy.php
 ```
 
 Подробнее — в [galaxy.md](galaxy.md).

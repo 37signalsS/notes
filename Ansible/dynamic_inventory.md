@@ -1,23 +1,23 @@
-# Dynamic inventory в Ansible
+# Динамический инвентарь в Ansible (Dynamic Inventory)
 
 ## Определения
 
-- **Dynamic inventory (Динамический инвентарь)**: Механизм Ansible, который формирует список хостов и их переменные "на лету", обращаясь к внешнему источнику правды (облачная платформа, CMDB, API). В отличие от статического файла, он всегда отражает актуальное состояние инфраструктуры.
+- **Динамический инвентарь (Dynamic Inventory)**: Механизм Ansible, который формирует список хостов и их переменные «на лету», обращаясь к внешнему источнику правды (облачная платформа, **CMDB (Configuration Management Database)**, **API (Application Programming Interface)**). В отличие от статического файла, он всегда отражает актуальное состояние инфраструктуры.
 
 ## Основные концепции
 
 ### Когда это необходимо
 
-- **Эфемерные среды и автоскейлинг**: Облачные экземпляры создаются и удаляются слишком часто, статический список моментально устаревает.
+- **Эфемерные среды и автоскейлинг**: Облачные экземпляры создаются и удаляются автоматически, статический список моментально устаревает.
 - **Мультиоблако и мультиаккаунты**: Необходимо объединять ресурсы из нескольких провайдеров и учетных записей.
-- **Теги/метки как источник групп**: Возможность формировать группы по метаданным (`Role`, `Environment`, `Stage`, `Owner`) без правок инвентаря.
+- **Теги и метки как источник групп**: Возможность формировать группы по метаданным (`Role`, `Environment`, `Stage`, `Owner`) без ручной правки инвентаря.
 - **Контейнерные платформы**: Получение актуального списка узлов и сервисов через API кластеров (Kubernetes, Nomad).
-- **CMDB**: Синхронизация с корпоративными каталогами и системами учета.
+- **Синхронизация с CMDB**: Автоматическое получение данных из корпоративных систем учета.
 
 ### Способы реализации
 
 1. **Inventory plugins**: Предпочтительный, нативный способ. Ansible предоставляет плагины для большинства облаков и сервисов (например, `yandex.cloud.yandex_cloud`, `community.vmware.vmware_vm_inventory`, `kubernetes.core.k8s`).
-2. **Исполняемые скрипты**: Любой исполняемый файл (`.py`, `.sh`, etc.), который при запуске с флагом `--list` возвращает JSON в специальном формате. Этот способ считается устаревающим, но все еще поддерживается.
+2. **Исполняемые скрипты**: Любой исполняемый файл (на Python, Bash и др.), который при запуске с флагом `--list` возвращает **JSON (JavaScript Object Notation)** в специальном формате. Этот способ считается устаревающим.
 3. **Комбинированный подход**: Директория `inventories/` может содержать несколько источников (статические и динамические файлы), которые Ansible объединяет в один инвентарь.
 
 ### Производительность и кэширование
@@ -26,8 +26,8 @@
 
 - **Включать кэширование** на уровне инвентарного плагина или глобально в `ansible.cfg`.
 - **Использовать фильтры** в конфигурации плагина, чтобы ограничивать область поиска.
-- **Использовать `compose`** для hostvars только для действительно необходимых переменных.
-- **"Прогревать" кэш** в CI/CD пайплайнах, запуская `ansible-inventory` перед основным плейбуком.
+- **Использовать `compose`** для hostvars только для необходимых переменных.
+- **«Прогревать» кэш** в пайплайнах **CI/CD (Continuous Integration / Continuous Deployment)**, запуская `ansible-inventory` перед основным плейбуком.
 
 **Пример настройки кэширования в `ansible.cfg`:**
 
@@ -54,11 +54,11 @@ cache_connection = .cache/inventory
 
 ### Генерация инвентаря из вывода Terraform
 
-Помимо использования inventory-плагинов, распространенным паттерном является генерация инвентаря на основе вывода Terraform. Этот подход особенно полезен, когда для провайдера отсутствует качественный inventory-плагин или требуется сложная логика формирования групп.
+Распространенным паттерном является генерация инвентаря на основе вывода Terraform. Это полезно, когда для провайдера отсутствует качественный плагин или требуется сложная логика групп.
 
 **Процесс:**
 
-1. **Terraform создает ресурсы** и описывает необходимые данные (IP-адреса, имена хостов) в блоках `output`.
+1. Terraform создает ресурсы и описывает данные (**IP-адреса**, имена хостов) в блоках `output` языка **HCL (HashiCorp Configuration Language)**.
 
     ```hcl
     output "instance_ips" {
@@ -69,45 +69,19 @@ cache_connection = .cache/inventory
     }
     ```
 
-2. **Вывод сохраняется в JSON-файл** после применения (`terraform apply`).
+2. Вывод сохраняется в JSON-файл после применения (`terraform apply`).
 
     ```bash
     terraform output -json > tf_output.json
     ```
 
-3. **Кастомный скрипт** (например, на Python) парсит этот JSON и генерирует инвентарь в формате, понятном Ansible (INI или YAML).
+3. Кастомный скрипт парсит этот JSON и генерирует инвентарь (INI или **YAML (YAML Ain't Markup Language)**).
 
-    ```python
-    # pseudo-code
-    import json
+4. Ansible использует сгенерированный файл.
 
-    with open('tf_output.json') as f:
-        data = json.load(f)
+### Настройка Yandex Cloud Dynamic Inventory
 
-    ips = data['instance_ips']['value']
-
-    inventory_file = open('generated_inventory.ini', 'w')
-    inventory_file.write('[my_vms]\n')
-    for name, ip in ips.items():
-        inventory_file.write(f'{name} ansible_host={ip}\n')
-    inventory_file.close()
-    ```
-
-4. **Ansible использует сгенерированный файл** для дальнейшей настройки.
-
-    ```bash
-    ansible-playbook -i generated_inventory.ini my_playbook.yml
-    ```
-
-Этот метод обеспечивает тесную интеграцию между этапами предоставления (Terraform) и конфигурации (Ansible) в рамках одного CI/CD-пайплайна.
-
-### Примеры конфигурации
-
-#### Настройка Yandex Cloud Dynamic Inventory
-
-Для работы необходимо установить коллекцию: `ansible-galaxy collection install yandex.cloud`.
-
-Создайте файл инвентаря с расширением `.yc.yml` (например, `hosts.yc.yml`):
+Для работы необходимо установить коллекцию: `ansible-galaxy collection install yandex.cloud`. Создайте файл инвентаря с расширением `.yc.yml` (например, `hosts.yc.yml`):
 
 ```yaml
 plugin: yandex.cloud.yandex_cloud
@@ -119,11 +93,16 @@ hostnames:
 keyed_groups:
   - key: labels.role
     prefix: role
-# Настройка IP для подключения
+# Настройка IP (Internet Protocol) для подключения
 compose:
   ansible_host: network_interfaces[0].primary_v4_address.one_to_one_nat.address
 ```
 
-После настройки проверьте работу инвентаря: `ansible-inventory -i hosts.yc.yml --graph`.
+Проверка работы: `ansible-inventory -i hosts.yc.yml --graph`.
 
-Базовые концепции статического инвентаря описаны в [Установке и настройке Ansible](ansible_setup_and_config.md). Для работы с облачными провайдерами используйте inventory-плагины: [`aws_ec2`](https://docs.ansible.com/ansible/latest/collections/amazon/aws/aws_ec2_inventory.html), [`yandex.cloud.yandex_cloud`](https://docs.ansible.com/ansible/latest/collections/yandex/cloud/yandex_cloud_inventory.html), [`community.vmware.vmware_vm_inventory`](https://docs.ansible.com/ansible/latest/collections/community/vmware/vmware_vm_inventory.html). Использование тегов для группировки ресурсов рассмотрено в [кроссплатформенных концепциях](./CrossPlatform/concepts.md).
+## Дополнительная информация
+
+- [Установка и настройка Ansible](ansible_setup_and_config.md) — базовые концепции инвентаря.
+- [Официальная документация по плагинам инвентаря](https://docs.ansible.com/ansible/latest/plugins/inventory.html)
+- [Использование тегов в Ansible](./CrossPlatform/concepts.md)
+

@@ -1,47 +1,48 @@
-# Ansible: Кроссплатформенный пример установки LAMP
+# Кроссплатформенный пример установки LAMP/LEMP в Ansible
 
 ## Определения
 
-- **LAMP** — стек веб-приложений: Linux (ОС), Apache/Nginx (веб-сервер), MySQL/MariaDB (СУБД), PHP (язык программирования).
-- **Кроссплатформенный плейбук** — плейбук Ansible, адаптирующийся к различным семействам ОС (Debian/RedHat) через условную логику и переменные.
+- **LAMP/LEMP** — стеки программного обеспечения для веб-приложений. 
+  - **L**inux — Операционная Система (ОС).
+  - **A**pache / **E**Nginx — веб-сервер.
+  - **M**ySQL / MariaDB — Система Управления Базами Данных (СУБД).
+  - **P**HP — язык программирования.
+- **Кроссплатформенный плейбук** — сценарий Ansible, адаптирующийся к различным семействам ОС (Debian/RedHat) через условную логику и абстракцию переменных.
 
-> Базовые концепции кроссплатформенности описаны в [`concepts.md`](./concepts.md).
+> Глубокое описание механизмов адаптации приведено в руководстве [Кроссплатформенные концепции](./concepts.md).
 
 ## Базовые концепции
 
-### Структура проекта
+### Структура кроссплатформенного проекта
 
-**`ansible.cfg`** — централизованная конфигурация для единообразия:
+Для обеспечения переносимости кода рекомендуется использовать следующую структуру:
+
+**`ansible.cfg`** — настройка окружения для всех участников разработки:
 
 ```ini
 [defaults]
 inventory = inventory
 roles_path = roles
 host_key_checking = False
-deprecation_warnings = False
 ```
 
-**`inventory`** — инвентарь с группами серверов:
+**Инвентарь (`inventory`)** — группировка хостов по назначению или ОС:
 
 ```ini
-[ubuntu_servers]
-server1 ansible_host=YOUR_UBUNTU_IP ansible_user=vagrant ansible_ssh_pass=vagrant
-
-[centos_servers]
-server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagrant
+[web_servers]
+srv-ubuntu ansible_host=192.168.1.10
+srv-centos ansible_host=192.168.1.20
 ```
 
-**Плейбук** — оркестрация ролей:
+**Основной плейбук** — оркестрация ролей без привязки к конкретной ОС:
 
 ```yaml
 ---
-- name: Установка LAMP на Ubuntu и CentOS
-  hosts: ubuntu_servers, centos_servers
+- name: Развертывание стека LAMP/LEMP
+  hosts: web_servers
   become: true
-
   vars:
     php_version: "8.4"
-
   roles:
     - common
     - nginx
@@ -49,23 +50,23 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
     - php
 ```
 
-> **Примечание:** Переменные уровня плейбука (`php_version`) удобны для наглядности, но по стандартам должны находиться в `defaults/` роли.
+### Ключевые методы адаптации
 
-### Принципы кроссплатформенности
-
-1. **`ansible_os_family`** — базовая переменная для условной логики (`Debian` vs `RedHat`).
-2. **`include_tasks`** — динамическое подключение OS-специфичных задач.
-3. **Абстракция путей и имен** — вынос в `defaults/` или `vars/`.
-4. **Нативные модули** — `apt`/`yum` предпочтительнее универсального `package` для специфичных задач.
+В данном примере используются:
+1. **Динамическое включение задач**: модуль `include_tasks` с фильтром по `ansible_facts['os_family']`.
+2. **Абстракция путей**: вынос специфичных для ОС путей в переменные (например, `web_root`).
+3. **Нативные менеджеры пакетов**: использование `apt` для Debian и `yum`/`dnf` для RedHat в случаях, когда требуется тонкая настройка репозиториев.
 
 ## Практические сценарии
 
-### Установка Nginx
+### Установка и настройка веб-сервера Nginx
 
-**Ubuntu (Debian):** модуль [`ansible.builtin.apt`](../Modules/ansible_package_management_modules.md).
+Различия между ОС проявляются уже на этапе установки (необходимость EPEL репозитория для CentOS) и путей к контенту.
+
+**Реализация для Debian/Ubuntu:**
 
 ```yaml
-# roles/nginx/tasks/ubuntu.yml
+# roles/nginx/tasks/debian.yml
 - name: Установка Nginx через apt
   ansible.builtin.apt:
     name: nginx
@@ -73,10 +74,10 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
     update_cache: yes
 ```
 
-**CentOS (Red Hat):** модуль [`ansible.builtin.yum`](../Modules/ansible_package_management_modules.md) + репозиторий EPEL:
+**Реализация для RedHat/CentOS:**
 
 ```yaml
-# roles/nginx/tasks/centos.yml
+# roles/nginx/tasks/redhat.yml
 - name: Установка EPEL release
   ansible.builtin.yum:
     name: epel-release
@@ -88,186 +89,72 @@ server2 ansible_host=YOUR_CENTOS_IP ansible_user=vagrant ansible_ssh_pass=vagran
     state: present
 ```
 
-> **Важно:** Модуль [`ansible.builtin.package`](../Modules/ansible_package_management_modules.md) универсален, но `apt`/`yum` дают больше контроля для специфичных задач (EPEL).
+**Различия в путях к данным:**
 
-### Управление файлами и шаблонами Nginx
-
-**Различия в путях:**
-
-| ОС | Путь к document root |
+| Семейство ОС | Путь по умолчанию (`web_root`) |
 | :--- | :--- |
-| Ubuntu | `/var/www/html` |
-| CentOS | `/usr/share/nginx/html` |
+| **Debian** | `/var/www/html` |
+| **RedHat** | `/usr/share/nginx/html` |
 
-**Копирование файлов** — модуль [`ansible.builtin.copy`](../Modules/ansible_file_management_modules.md):
+### Установка СУБД MySQL/MariaDB
 
-```yaml
-# Пример для CentOS
-- name: Копирование лендинга
-  ansible.builtin.copy:
-    src: files/html
-    dest: /usr/share/nginx/html/
-    owner: vagrant
-    group: vagrant
-    mode: '0755'
-```
+Реализация идемпотентной и безопасной установки базы данных для различных семейств ОС вынесена в специализированное SSoT-руководство: **[Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md)**. 
 
-**Шаблоны конфигураций** — модуль [`ansible.builtin.template`](../Modules/ansible_file_management_modules.md) + Jinja2 (`.j2`):
+### Управление версиями PHP через сторонние репозитории
+
+Для установки актуальных версий PHP (например, 8.4) на стабильные дистрибутивы требуются внешние источники.
+
+**Ubuntu (использование PPA ondrej/php):**
 
 ```yaml
-- name: Применение шаблона nginx.conf
-  ansible.builtin.template:
-    src: nginx.conf.j2
-    dest: /etc/nginx/nginx.conf
-```
-
-> **Совет:** Суффикс `.j2` обязателен. Модуль `template` ищет шаблоны в `roles/<role>/templates/`.
-
-### Установка MySQL/MariaDB
-
-**Ubuntu (MySQL):**
-
-```yaml
-# roles/mysql/tasks/ubuntu.yml
-- name: Установка MySQL и python3-pymysql
-  ansible.builtin.apt:
-    name:
-      - mysql-server
-      - python3-pymysql
-    state: present
-
-- name: Установка пароля root MySQL (через socket)
-  community.mysql.mysql_user:
-    login_unix_socket: /var/run/mysqld/mysqld.sock
-    name: root
-    host: localhost
-    password: "{{ mysql_root_password }}"
-    plugin: mysql_native_password
-    state: present
-```
-
-> **Важно:** На Ubuntu первичное подключение через `login_unix_socket`.
-
-**CentOS (MariaDB):**
-
-```yaml
-# roles/mysql/tasks/centos.yml
-- name: Установка MariaDB и python3-pymysql
-  ansible.builtin.yum:
-    name:
-      - mariadb-server
-      - python3-pymysql
-    state: present
-
-- name: Запуск и включение MariaDB
-  ansible.builtin.service:
-    name: mariadb
-    state: started
-    enabled: yes
-
-- name: Установка пароля root MariaDB
-  community.mysql.mysql_user:
-    name: root
-    host: localhost
-    password: "{{ mysql_root_password }}"
-    plugin: mysql_native_password
-    state: present
-```
-
-> **Примечание:** Требуется коллекция `community.mysql` (`ansible-galaxy collection install community.mysql`).
-
-### Управление версиями PHP
-
-**Ubuntu (PPA ondrej/php):**
-
-```yaml
-# roles/php/tasks/ubuntu.yml
-- name: Проверка версии PHP
-  ansible.builtin.fail:
-    msg: "Неподдерживаемая версия PHP: {{ php_version }}"
-  when: php_version not in ['8.2', '8.3', '8.4', '8.5']
-
-- name: Добавление PPA репозитория
+# roles/php/tasks/debian.yml
+- name: Добавление PPA репозитория PHP
   ansible.builtin.apt_repository:
     repo: "ppa:ondrej/php"
     state: present
 
-- name: Установка PHP и модулей
+- name: Установка PHP-FPM
   ansible.builtin.apt:
-    name:
-      - "php{{ php_version }}-fpm"
-      - "php{{ php_version }}-mysql"
+    name: "php{{ php_version }}-fpm"
     state: present
 ```
 
-**CentOS (REMI):**
+**CentOS (использование репозитория REMI):**
 
 ```yaml
-# roles/php/tasks/centos.yml
+# roles/php/tasks/redhat.yml
 - name: Установка REMI release
   ansible.builtin.yum:
-    name: "https://rpms.remirepo.net/enterprise/remi-release-{{ ansible_distribution_major_version }}.rpm"
+    name: "https://rpms.remirepo.net/enterprise/remi-release-{{ ansible_facts['distribution_major_version'] }}.rpm"
     state: present
 
-- name: Включение REMI PHP репозитория
+- name: Включение PHP репозитория REMI
   ansible.builtin.command:
     cmd: "yum-config-manager --enable remi-php{{ php_version | replace('.', '') }}"
   args:
     creates: /etc/yum.repos.d/remi-php.repo
-
-- name: Установка PHP и модулей
-  ansible.builtin.yum:
-    name:
-      - "php{{ php_version }}-php-fpm"
-      - "php{{ php_version }}-php-mysqlnd"
-    state: present
 ```
 
-> **Примечание:** Фильтр `replace('.', '')` преобразует `8.4` → `84` для имени репозитория.
+### Работа с Python-зависимостями (pip и venv)
 
-### Работа с Python-окружениями
-
-**Управление интерпретатором:**
-
-На CentOS 7 системный Python — версия 2. Для использования Python 3 укажите `ansible_python_interpreter`:
+Кроссплатформенность в Python-проектах требует внимания к версии системного интерпретатора и изоляции окружений.
 
 ```yaml
-- name: Deploy Python 3 app on CentOS
-  hosts: centos_servers
-  become: true
-  vars:
-    ansible_python_interpreter: /usr/bin/python3
-  tasks:
-    - name: Install Python 3
-      ansible.builtin.yum:
-        name: python3
-        state: present
-```
-
-**Установка зависимостей с `pip` и `virtualenv`:**
-
-Модуль [`ansible.builtin.pip`](../Modules/ansible_package_management_modules.md) изолирует зависимости в виртуальном окружении:
-
-```yaml
-- name: OS-specific dependencies
-  ansible.builtin.yum:
-    name: libselinux-python3
+- name: Установка системных зависимостей для MySQL
+  ansible.builtin.package:
+    name: "{{ 'python3-pymysql' if ansible_facts['os_family'] == 'Debian' else 'python3-mysql' }}"
     state: present
-  when: ansible_os_family == "RedHat"
 
-- name: Python dependencies in virtualenv
+- name: Установка зависимостей в виртуальное окружение
   ansible.builtin.pip:
-    requirements: "{{ app_path }}/requirements.txt"
-    virtualenv: "{{ app_path }}/venv"
+    requirements: "/var/www/app/requirements.txt"
+    virtualenv: "/var/www/app/venv"
     virtualenv_command: /usr/bin/python3 -m venv
 ```
 
-> **Совет:** `virtualenv_command` явно указывает команду создания venv, избегая проблем с версиями.
-
 ## Дополнительная информация
 
-- [Кроссплатформенные концепции](./concepts.md) — базовые принципы и паттерны
-- [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — `apt`, `yum`, `dnf`, `pip`
-- [Модули управления файлами](../Modules/ansible_file_management_modules.md) — `copy`, `template`, `file`
-- [Шаблонизация Jinja2](../ansible_jinja2_templating.md) — создание динамических конфигураций
-- [Роли Ansible](../ansible_roles.md) — организация кроссплатформенного кода
+- [Кроссплатформенные концепции](./concepts.md) — базовые паттерны и принципы.
+- [Установка и настройка MySQL](../examples/mysql_setup.md) — детальный пример для баз данных.
+- [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — особенности `apt`, `yum`, `pip`.
+- [Роли Ansible](../ansible_roles.md) — организация структуры кроссплатформенного проекта.

@@ -211,3 +211,4 @@ kubelet ←[CRI API/gRPC]→ containerd/CRI-O ←[OCI]→ runc/crun → конт
 - [Оптимизация Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)
 - [Сети в Docker](./Docker_network/docker_network.md)
 - [Безопасность контейнеров](./Docker_security/container_hardening.md)
+- [Управление Docker через Ansible](../Ansible/examples/docker_management.md)

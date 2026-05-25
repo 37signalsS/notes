@@ -2,27 +2,27 @@
 
 ## Определения
 
-**Миграция на выделенного пользователя** — процесс перехода от выполнения плейбуков Ansible от имени `root` к использованию отдельного пользователя с ограниченными привилегиями и `sudo`. Это фундаментальная мера безопасности, требующая корректной настройки SSH-подключения и прав доступа.
+**Миграция на выделенного пользователя** — процесс перехода от выполнения плейбуков Ansible от имени суперпользователя `root` к использованию отдельной учетной записи с ограниченными привилегиями и механизмом `sudo` (substitute user do). Это критическая мера безопасности, требующая согласованной настройки SSH (Secure Shell) подключения и прав доступа.
 
 ## Базовые концепции
 
-### Ключевые требования
+### Ключевые требования для миграции
 
-Для успешной миграции необходимо обеспечить:
+Для успешного перехода необходимо обеспечить выполнение трех условий:
 
-1. **SSH-подключение** — Ansible должен подключаться к хосту от имени нового пользователя
-2. **Права sudo** — пользователь должен иметь беспарольный доступ к `sudo`
-3. **Конфигурация Ansible** — параметры `remote_user` или `ansible_user` должны быть обновлены
+1. **Доступ по SSH**: Ansible должен иметь возможность подключиться к узлу от имени нового пользователя (обычно по SSH-ключу).
+2. **Привилегии sudo**: пользователь должен иметь права на выполнение команд от имени суперпользователя, желательно через беспарольный доступ (NOPASSWD) для обеспечения автоматизации.
+3. **Конфигурация Ansible**: параметры `remote_user` или `ansible_user` должны быть обновлены в конфигурационных файлах или инвентаре.
 
-### Типовые ошибки миграции
+### Типовые ошибки и причины
 
-| Ошибка | Причина | Решение |
-|--------|---------|---------|
-| `UNREACHABLE: Permission denied (publickey,password)` | Ansible подключается как `root`, но SSH-доступ для root запрещен | Указать `ansible_user` в инвентаре или `remote_user` в `ansible.cfg` |
-| `Permission denied` при выполнении задач | Задачи требуют привилегий, но `become: true` не указан | Добавить `become: true` на уровень плея или задачи |
-| `sudo: no password provided` | Пользователь не настроен на беспарольный `sudo` | Настроить `/etc/sudoers.d/<user>` или использовать `-K` |
+| Ошибка | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `UNREACHABLE: Permission denied` | Ansible пытается войти как `root`, но удаленный доступ для него закрыт | Указать корректного пользователя в `ansible_user` или `remote_user` |
+| `Permission denied` (в задачах) | Задача требует прав суперпользователя, но параметр `become: true` не задан | Добавить `become: true` на уровне сценария (play) или конкретной задачи |
+| `sudo: no password provided` | Для пользователя не настроен беспарольный доступ к `sudo` | Настроить `/etc/sudoers.d/` или использовать флаг `-K` для ввода пароля |
 
-Подробное руководство по созданию выделенного пользователя с беспарольным `sudo` — в [ansible_security_best_practices.md](../ansible_security_best_practices.md#настройка-выделенного-пользователя-через-плейбук).
+Подробное руководство по созданию и настройке такого пользователя приведено в разделе **[Настройка выделенного пользователя через плейбук](../ansible_security_best_practices.md#настройка-выделенного-пользователя-через-плейбук)**.
 
 ---
 
@@ -30,118 +30,87 @@
 
 ### Сценарий: Миграция с root на выделенного пользователя
 
-#### Шаг 1: Исходное состояние
+#### 1. Исходное состояние (до миграции)
 
-Плейбук выполняется от `root`:
+Плейбук настроен на работу от имени `root`:
 
+**Файл инвентаря `inventory.ini`:**
 ```ini
-# inventory.ini
 [production]
 server1 ansible_host=192.168.1.10 ansible_user=root
 ```
 
+**Файл плейбука `test_playbook.yml`:**
 ```yaml
-# test_playbook.yml
 ---
-- name: Test basic setup
+- name: Проверка базовой настройки
   hosts: production
   tasks:
-    - name: Update apt cache
+    - name: Обновление кэша пакетов (apt)
       ansible.builtin.apt:
         update_cache: yes
 ```
 
-#### Шаг 2: Подготовка хоста
+#### 2. Подготовка и отключение доступа root
 
-Выполните следующие действия на целевом хосте:
+После того как выделенный пользователь создан (см. **[рекомендации по безопасности](../ansible_security_best_practices.md)**), необходимо запретить удаленный вход для `root` в конфигурации SSH-сервера (`/etc/ssh/sshd_config`).
 
-1. **Создайте пользователя** с беспарольным `sudo` — используйте плейбук из [ansible_security_best_practices.md](../ansible_security_best_practices.md)
-2. **Отключите `PermitRootLogin`** в `/etc/ssh/sshd_config`:
-
+Пример задачи для отключения доступа:
 ```yaml
-# disable_root_login.yml
----
-- name: Disable root login via SSH
-  hosts: all
-  become: true
-  tasks:
-    - name: Disallow root login over SSH
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PermitRootLogin'
-        line: 'PermitRootLogin no'
-        state: present
-        validate: 'sshd -t -f %s'
-      notify: restart ssh
-
-  handlers:
-    - name: restart ssh
-      ansible.builtin.service:
-        name: sshd
-        state: restarted
+- name: Отключить вход для root по SSH
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin no'
+    state: present
+    validate: 'sshd -t -f %s'
+  notify: restart ssh
 ```
 
-#### Шаг 3: Диагностика ошибки подключения
+#### 3. Диагностика ошибки после изменений
 
-После отключения root-доступа запуск плейбука завершится ошибкой:
-
+При попытке запустить плейбук со старыми настройками возникнет ошибка:
 ```bash
 ansible-playbook -i inventory.ini test_playbook.yml
+# → fatal: [server1]: UNREACHABLE! msg: Permission denied...
 ```
 
-```
-fatal: [server1]: UNREACHABLE! => {
-    "changed": false,
-    "msg": "Failed to connect to the host via ssh: Permission denied (publickey,password).",
-    "unreachable": true
-}
-```
+**Диагноз:** SSH-сервер отвергает подключение, так как Ansible всё ещё пытается авторизоваться как `root`.
 
-**Диагноз:** Ansible продолжает подключаться как `root`, но доступ запрещен.
+#### 4. Исправление конфигурации подключения
 
-#### Шаг 4: Настройка подключения
+Необходимо обновить имя пользователя одним из способов:
 
-**Вариант А: Изменение инвентаря**
+- **Вариант А (Инвентарь)**:
+  ```ini
+  server1 ansible_host=192.168.1.10 ansible_user=my_ansible_user
+  ```
+- **Вариант Б (ansible.cfg)**:
+  ```ini
+  [defaults]
+  remote_user = my_ansible_user
+  ```
 
-```ini
-[production]
-server1 ansible_host=192.168.1.10 ansible_user=ansible_user
-```
+#### 5. Применение механизмов повышения привилегий
 
-**Вариант Б: Изменение `ansible.cfg` (рекомендуется)**
-
-```ini
-[defaults]
-remote_user = ansible_user
-```
-
-После изменения плейбук подключится успешно, но задачи могут падать с `Permission denied`.
-
-#### Шаг 5: Настройка привилегий
-
-Добавьте `become: true` для выполнения задач с повышенными привилегиями:
+Чтобы задачи, требующие прав суперпользователя (например, установка пакетов), продолжали работать, необходимо активировать `become`:
 
 ```yaml
 ---
-- name: Test basic setup
+- name: Проверка базовой настройки
   hosts: production
-  become: true
+  become: true # Использование sudo для всех задач в этом сценарии
   tasks:
-    - name: Update apt cache
+    - name: Обновление кэша пакетов (apt)
       ansible.builtin.apt:
         update_cache: yes
 ```
-
-**Порядок выполнения:**
-
-1. `ansible_user` подключается по SSH
-2. Выполняется `sudo apt update` через беспарольный `sudo`
 
 ---
 
 ## Дополнительная информация
 
-- **Флаг `-K` (`--ask-become-pass`)** — запрашивает пароль `sudo`, если беспарольный доступ не настроен
-- **Vault** — хранение паролей и секретов в [Vault/basics.md](../Vault/basics.md)
-- **Тестирование** — автоматическая проверка с [Molecule](../ansible_testing_with_molecule.md)
-- **Идемпотентность** — принцип повторного запуска без побочных эффектов в [ansible_core_concepts.md](../ansible_core_concepts.md#идемпотентность)
+- **Флаг `-K` (`--ask-become-pass`)**: используется для интерактивного ввода пароля `sudo`, если не настроен беспарольный доступ.
+- **Безопасность переменных**: хранение паролей и конфиденциальных данных должно осуществляться через **[Ansible Vault](../Vault/basics.md)**.
+- **Автоматизированное тестирование**: для проверки корректности настройки прав доступа на различных операционных системах (ОС) используйте **[Molecule](../ansible_testing_with_molecule.md)**.
+- **Идемпотентность**: описание фундаментального принципа работы Ansible доступно в **[ansible_core_concepts.md](../ansible_core_concepts.md#идемпотентность)**.

@@ -261,4 +261,4 @@ check_service:
 - **Executor'ы:** `shell` прост для начала, но не обеспечивает изоляции. Для продуктивных сред — `docker` или `kubernetes`. Подробнее — [Исполнители GitLab CI Runners](../Advanced/gitlab_ci_runners_executors.md).
 - **Управление секретами:** [Переменные и секреты GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), [Ansible Vault](../../../Ansible/Vault/basics.md).
 - **Основы GitLab CI/CD:** [Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md).
-- **Пример реального CI/CD с Ansible:** [Wrapper-скрипт + GitLab Runner](../../../Ansible/examples/example_real_world_ci_cd.md) — безопасный запуск через sudoers.
+- **Пример безопасной архитектуры CI/CD с Ansible:** [Wrapper-скрипт + GitLab Runner](../../../Ansible/examples/example_real_world_ci_cd.md) — промышленный подход с изоляцией SSH-ключей.

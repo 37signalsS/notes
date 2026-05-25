@@ -10,17 +10,19 @@
 
 | Роль хоста | Назначение |
 |---|---|
-| `build-host` | Сборка Docker-образов из Dockerfile (требуется Docker SDK) |
+| `build-host` | Сборка Docker-образов из Dockerfile (требуется Docker Software Development Kit (SDK)) |
 | `run-host` | Запуск контейнеров на основе готовых образов |
 | `control-node` | Узел Ansible: координация, хранение артефактов |
 
 ### Жизненный цикл Build-Ship-Run
 
-1. **Build** — сборка образа из Dockerfile на `build-host`
-2. **Ship** — архивация образа в `.tar` и передача на `run-host` через контрольный узел
-3. **Run** — загрузка образа в Docker и запуск контейнера на `run-host`
+1. **Build** (Сборка) — сборка образа из Dockerfile на `build-host`
+2. **Ship** (Доставка) — архивация образа в `.tar` и передача на `run-host` через контрольный узел
+3. **Run** (Запуск) — загрузка образа в Docker и запуск контейнера на `run-host`
 
 ### Ключевые модули
+
+Для управления Docker в Ansible используется коллекция `community.docker`.
 
 | Модуль | Назначение | Параметры |
 |---|---|---|
@@ -195,7 +197,9 @@
 
 ## Дополнительная информация
 
-- **Коллекция Docker:** Модули `community.docker.*` требуют установки коллекции — [ansible-galaxy collection install community.docker](https://docs.ansible.com/ansible/latest/collections/community/docker/)
-- **Docker Compose:** Управление compose-файлами через [`community.docker.docker_compose`](https://docs.ansible.com/ansible/latest/collections/community/docker/docker_compose_module.html)
+- **Коллекция Docker:** Модули `community.docker.*` требуют установки коллекции — `ansible-galaxy collection install community.docker`
+- **Docker Compose:** Управление compose-файлами через модуль [`community.docker.docker_compose`](https://docs.ansible.com/ansible/latest/collections/community/docker/docker_compose_module.html)
 - **Безопасность:** Рекомендации по изоляции контейнеров — [Docker/Docker_security/overview.md](../../Docker/Docker_security/overview.md)
 - **Реестры образов:** Работа с Docker Registry — [Docker/docker_registries.md](../../Docker/docker_registries.md)
+- **Альтернативы:** [Сборка образов с Buildah и Ansible](../ansible_buildah_image_building.md)
+

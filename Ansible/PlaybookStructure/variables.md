@@ -72,7 +72,7 @@
   ansible.builtin.yum:
     name: httpd
     state: present
-  when: ansible_facts.os_family == "RedHat" # Используем факт для условного выполнения
+  when: ansible_facts['os_family'] == "RedHat" # Используем факт для условного выполнения
 ```
 
 ## Лучшие практики ("Дзен Ansible")

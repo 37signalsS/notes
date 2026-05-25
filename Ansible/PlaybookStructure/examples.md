@@ -71,6 +71,6 @@ WantedBy=multi-user.target
 
 ## Дополнительная информация
 
-Основы структуры плейбуков и компоненты описаны в [basics.md](basics.md). Подробнее о структуре и компонентах ролей — в [ansible_roles.md](../ansible_roles.md). Создание динамических конфигураций с Jinja2 — в [ansible_jinja2_templating.md](../ansible_jinja2_templating.md).
+Основы структуры плейбуков и компоненты описаны в [basics.md](basics.md). Подробнее о структуре и компонентах ролей — в [ansible_roles.md](../ansible_roles.md). Создание динамических конфигураций с Jinja2 — в [ansible_jinja_templating.md](../ansible_jinja_templating.md).
 
 Полная информация о приоритетах переменных (`defaults` vs `group_vars`) — в [PlaybookStructure/variables.md](variables.md). Управление переменными в ролях — в [Roles/structure.md](../Roles/structure.md). Более полный пример управления Docker с использованием специализированных модулей — в [examples/example_docker_management.md](../examples/example_docker_management.md).

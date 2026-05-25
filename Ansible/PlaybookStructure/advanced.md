@@ -30,11 +30,11 @@
 ```yaml
 - name: Включить задачи для Debian-подобных систем
   ansible.builtin.include_tasks: debian_specific.yml
-  when: ansible_os_family == "Debian"
+  when: ansible_facts['os_family'] == "Debian"
 
 - name: Включить задачи для RedHat-подобных систем
   ansible.builtin.include_tasks: redhat_specific.yml
-  when: ansible_os_family == "RedHat"
+  when: ansible_facts['os_family'] == "RedHat"
 ```
 
 ### Сценарий 2: Выполнение задачи на `localhost`
@@ -76,8 +76,10 @@
     debugger: on_failed # Войти в отладчик, если задача провалилась
   ```
 
+Более детальные примеры решения типовых ошибок (синтаксис, SSH, типы данных) приведены в руководстве **[Примеры отладки типовых проблем](../examples/debugging_examples.md)**.
+
 ## Дополнительная информация
 
 По вопросам параллелизма (`forks`, `async`, `throttle`) и стратегий выполнения (`strategy: linear`, `free`) см. [оптимизацию производительности](../ansible_performance_tuning.md). Рекомендации по организации плейбуков в проекте — в [примере структуры проекта](../examples/example_project_layout.md). Тестирование плейбуков описано в документе [тестирование с Molecule](../ansible_testing_with_molecule.md). Частые ошибки и антипаттерны рассмотрены в [ansible_bad_practices.md](../ansible_bad_practices.md).
 
-Более детальное описание `import_tasks`/`include_tasks` в контексте ролей — в [ansible_advanced_role_structure.md](../ansible_advanced_role_structure.md). Кроссплатформенные сценарии с `include_tasks` — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md).
+Более детальное описание `import_tasks`/`include_tasks` в контексте ролей — в [Паттерн Utility Role](../Roles/utility_role_pattern.md). Кроссплатформенные сценарии с `include_tasks` — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md).
