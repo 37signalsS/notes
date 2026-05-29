@@ -308,6 +308,7 @@ sed -i "s#ghcr.io/dexidp/dex:$DEX_VERSION#$HARBOR/$PROJECT/dex:$DEX_VERSION#g" i
 Для работы в изолированном кластере часто требуется `imagePullSecrets` для всех компонентов.
 
 **Структура каталогов:**
+
 ```text
 argocd/
 ├── base/
@@ -319,6 +320,7 @@ argocd/
 ```
 
 **base/kustomization.yaml:**
+
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -327,6 +329,7 @@ resources:
 ```
 
 **overlays/sa-patch.yaml (Патч для ServiceAccounts/Deployments):**
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -344,6 +347,7 @@ spec:
 ```
 
 **overlays/kustomization.yaml:**
+
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

@@ -2,232 +2,154 @@
 
 ## Определения
 
-**Spilo** — Docker-образ от Zalando с готовой сборкой PostgreSQL и инструментами высокой доступности.
+**Spilo** — Docker-образ от Zalando, объединяющий PostgreSQL, Patroni для обеспечения высокой доступности и инструменты для резервного копирования (WAL-E/WAL-G).
 
-**Patroni** — open-source решение для создания отказоустойчивых кластеров PostgreSQL. Автоматизирует failover и управление жизненным циклом кластера.
+**Patroni** — шаблонное решение для создания отказоустойчивых кластеров PostgreSQL. Автоматизирует управление ролями (Primary/Replica) и процесс переключения при сбоях (failover). Подробнее — **[High Availability](../Concepts/high_availability.md#patroni-стандарт-де-факто)**.
+
+**DCS (Distributed Configuration Store)** — распределенное хранилище конфигурации (etcd, Consul, ZooKeeper) или API Kubernetes, используемое Patroni для хранения состояния кластера и выбора лидера.
 
 ## Основные концепции
 
-### Подход к развёртыванию
+### Подход к развертыванию
 
-Развёртывание через "голые" манифесты Kubernetes на основе шаблона от Zalando. Более гибкий, но сложный способ по сравнению с [Zalando Postgres Operator](./zalando_postgres_operator.md).
+Развертывание через прямые манифесты Kubernetes (StatefulSet, Service, RBAC) обеспечивает максимальный контроль над конфигурацией, но требует более глубокого понимания внутренних механизмов Spilo по сравнению с использованием **[Zalando Postgres Operator](./zalando_postgres_operator.md)**.
 
-### Динамическое управление Endpoint'ами
+### Динамическое управление точками доступа (Endpoints)
 
-**Проблема:** Стандартный `ClusterIP` сервис использует `round-robin` для всех подов. Для БД это неприемлемо — запись должна идти только на мастер.
+Для корректной маршрутизации трафика только на мастер-узел (Primary) Spilo использует механизм прямого манипулирования ресурсами `Endpoints`:
 
-**Решение Spilo:**
+1. Создается `Service` без селектора (selector-less service).
+2. Создается объект `Endpoints` с тем же именем, что и сервис.
+3. Инстанс Patroni, выбранный лидером (Primary), отправляет запрос к Kubernetes API для обновления этого `Endpoints`, вписывая свой IP-адрес.
+4. Клиентские приложения подключаются к сервису, который всегда указывает на актуальный мастер.
 
-1. Создаётся сервис **без селектора**
-2. Создаётся `Endpoint` с тем же именем и **пустым списком адресов**
-3. Patroni внутри пода-мастера **редактирует `Endpoint`**, прописывая свой IP
-4. Сервис всегда указывает только на актуальный мастер
-
-**Требования:** RBAC с правами `patch`, `update` для ресурсов `endpoints`.
+**Требование:** ServiceAccount подов PostgreSQL должен иметь RBAC-права на `patch` и `update` ресурсов `endpoints` и `configmaps`.
 
 ### Управление конфигурацией
 
-Конфигурация Spilo и Patroni осуществляется через переменные окружения в манифесте `StatefulSet`.
+Настройка Spilo и Patroni выполняется через переменные окружения в спецификации контейнера. Основные параметры включают настройки подключения к DCS, параметры аутентификации и правила архивирования логов.
 
 ## Практические сценарии
 
-### Подготовка манифеста
+### Подготовка манифестов
 
-За основу берётся [манифест из репозитория Zalando](https://github.com/zalando/spilo/blob/master/manifests/postgres-spilo.yaml).
+Ниже приведены ключевые фрагменты манифестов для развертывания кластера из 3 узлов.
 
-#### StatefulSet
+#### Спецификация StatefulSet
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: zalando-demo-01
-  namespace: spilo
+  name: pg-cluster
+  namespace: database
 spec:
   replicas: 3
+  serviceName: "pg-cluster-config"
   selector:
     matchLabels:
       application: spilo
-      cluster-name: zalando-demo-01
-  podManagementPolicy: Parallel
-  serviceName: "zalando-demo-01-config"
   template:
     metadata:
       labels:
         application: spilo
-        cluster-name: zalando-demo-01
-        spilo-cluster: zalando-demo-01
+        spilo-cluster: pg-prod
     spec:
-      serviceAccountName: spilo-operator
-      # ... affinity, containers ...
+      serviceAccountName: spilo-sa
+      containers:
+      - name: postgres
+        image: "registry.opensource.zalan.do/acid/spilo-15:3.2-p1"
+        env:
+          - name: SCOPE
+            value: "pg-prod"
+          - name: KUBERNETES_SCOPE_LABEL
+            value: "spilo-cluster"
+          # Настройка DCS через Kubernetes API
+          - name: DCS_ENABLE_KUBERNETES_API
+            value: "true"
+          - name: KUBERNETES_LABELS
+            value: '{"application": "spilo"}'
+          # Переменные для WAL-G (бэкап в S3)
+          - name: WALG_S3_PREFIX
+            value: "s3://backups/pg-prod"
 ```
 
-#### Affinity: Привязка подов к нодам
+#### Настройка Affinity (Отказоустойчивость)
+
+Для защиты от выхода из строя целой ноды необходимо распределить поды кластера по разным узлам:
 
 ```yaml
 affinity:
-  nodeAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      nodeSelectorTerms:
-      - matchExpressions:
-        - key: "db"
-          operator: In
-          values: ["spilo"]
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
     - labelSelector:
         matchExpressions:
         - key: spilo-cluster
           operator: In
-          values: ["zalando-demo-01"]
+          values: ["pg-prod"]
       topologyKey: "kubernetes.io/hostname"
 ```
 
-**Требование:** Пометить ноды: `kubectl label node <node-name> db=spilo`
-
-#### Контейнер Spilo и переменные окружения
+#### Настройка сервисов для доступа
 
 ```yaml
-containers:
-- name: postgres
-  image: "registry.opensource.zalan.do/acid/spilo-15:3.2-p1"
-  imagePullPolicy: IfNotPresent
-  env:
-    # Бэкап на локальный диск (NFS)
-    - name: WALG_FILE_PREFIX
-      value: "file:///var/lib/postgresql/wal-g/zalando-demo-01"
-    - name: CRON_SCHEDULE
-      value: "00 01 * * * /scripts/postgres_backup.sh"
-
-    # Доступ к паролям из Secret
-    - name: PGUSER_SUPERUSER
-      valueFrom:
-        secretKeyRef:
-          name: postgres.zalando-demo-01.credentials
-          key: superuser-username
-    - name: PGPASSWORD_SUPERUSER
-      valueFrom:
-        secretKeyRef:
-          name: postgres.zalando-demo-01.credentials
-          key: superuser-password
-
-    # Связь с Kubernetes API
-    - name: KUBERNETES_SCOPE_LABEL
-      value: "spilo-cluster"
-    - name: KUBERNETES_LABELS
-      value: '{"application": "spilo", "cluster-name": "zalando-demo-01"}'
-```
-
-#### Volume'ы и бэкапы
-
-```yaml
-# Данные PostgreSQL (локальные диски)
-volumeClaimTemplates:
-- metadata:
-    name: pgdata
-  spec:
-    accessModes: ["ReadWriteOnce"]
-    storageClassName: local-path
-    resources:
-      requests:
-        storage: 20Gi
-
-# Бэкапы (NFS, ReadWriteMany)
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zalando-demo-01-backup
-  namespace: spilo
-spec:
-  accessModes: ["ReadWriteMany"]
-  storageClassName: nfs-storage
-  resources:
-    requests:
-      storage: 10Gi
-```
-
-### Доступ к кластеру
-
-#### Внутренний доступ (через Endpoint, управляемый Spilo)
-
-```yaml
+# Сервис для мастера (управляется Patroni через Endpoints)
 apiVersion: v1
 kind: Service
 metadata:
-  name: zalando-demo-01
-  namespace: spilo
-  labels:
-    spilo-cluster: zalando-demo-01
+  name: pg-prod
 spec:
   ports:
   - port: 5432
     targetPort: 5432
 ---
+# Пустой объект Endpoints, который будет обновлять Patroni
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: zalando-demo-01
-  namespace: spilo
-  labels:
-    spilo-cluster: zalando-demo-01
+  name: pg-prod
 subsets: []
 ```
 
-#### Внешний доступ (через NodePort)
+### Операции и обслуживание
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: zalando-demo-01-nodeport
-  namespace: spilo
-spec:
-  type: NodePort
-  ports:
-  - name: postgresql
-    port: 5432
-    targetPort: 5432
-  selector:
-    role: master
-    spilo-cluster: zalando-demo-01
-```
+**Проверка состояния кластера:**
 
-### Инструменты и операции
-
-**Подключение к поду:**
+Выполняется изнутри любого пода PostgreSQL с помощью утилиты `patroni_ctl`.
 
 ```bash
-kubectl exec -it <pod-name> -n spilo -- bash
+kubectl exec -it pg-cluster-0 -n database -- patroni_ctl list
 ```
 
-**Просмотр состояния кластера:**
+**Ожидаемый вывод:**
+
+```text
++---------+--------------+--------------+--------+---------+----+-----------+
+| Cluster | Member       | Host         | Role   | State   | TL | Lag in MB |
++---------+--------------+--------------+--------+---------+----+-----------+
+| pg-prod | pg-cluster-0 | 10.244.1.25  | Leader | running |  1 |           |
+| pg-prod | pg-cluster-1 | 10.244.2.29  |        | running |  1 |         0 |
+| pg-prod | pg-cluster-2 | 10.244.3.26  |        | running |  1 |         0 |
++---------+--------------+--------------+--------+---------+----+-----------+
+```
+
+**Плановое переключение ролей (Switchover):**
+
+Используется для обслуживания узла-лидера без аварийного завершения транзакций.
 
 ```bash
-patroni_ctl list
-# +------------------+--------------------+-------------+--------+---------+----+-----------+
-# | Cluster          | Member             | Host        | Role   | State   | TL | Lag in MB |
-# +------------------+--------------------+-------------+--------+---------+----+-----------+
-# | zalando-demo-01  | zalando-demo-01-0  | 10.244.1.25 | Leader | running |  1 |         0 |
-# | zalando-demo-01  | zalando-demo-01-1  | 10.244.2.29 |        | running |  1 |         0 |
-# | zalando-demo-01  | zalando-demo-01-2  | 10.244.3.26 |        | running |  1 |         0 |
-# +------------------+--------------------+-------------+--------+---------+----+-----------+
+kubectl exec -it pg-cluster-0 -n database -- patroni_ctl switchover
 ```
-
-**Ручное переключение мастера (Switchover):**
-
-```bash
-patroni_ctl switchover zalando-demo-01
-# Выбрать кандидата и подтвердить
-# Success: switchover complete
-```
-
-После переключения сервисы автоматически переключатся на новый мастер.
 
 ## Дополнительная информация
 
+### Сравнение с оператором
+
+Развертывание через манифесты рекомендуется только в случаях, когда требуются специфические настройки Spilo, не поддерживаемые **[Zalando Postgres Operator](./zalando_postgres_operator.md)** (например, кастомные sidecar-контейнеры или сложные схемы монтирования томов).
+
 ### Связанные документы
 
-- **Бэкапы:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
-- **Высокая доступность:** **[High Availability](../Concepts/high_availability.md)**
-- **Zalando Operator:** **[Zalando Postgres Operator](./zalando_postgres_operator.md)**
+- **Теория высокой доступности:** **[High Availability](../Concepts/high_availability.md)**
+- **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
+- **Управление через оператор:** **[Zalando Postgres Operator](./zalando_postgres_operator.md)**
+- **PostgreSQL в Kubernetes:** **[Kubernetes Deployment](./kubernetes_deployment.md)**

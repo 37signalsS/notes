@@ -32,13 +32,14 @@
 
 См. также: [сети Docker](../../Docker/Docker_network/docker_network.md), [драйвер host](../../Docker/Docker_network/drivers/host.md).
 
-### Практические сценарии
+## Практические сценарии
 
-#### 1. Базовый запуск с именованным томом
+### 1. Базовый запуск с именованным томом
 
 ```bash
 # 1. Создаем именованный том для данных
 docker volume create mysql-data
+# -> mysql-data
 
 # 2. Запускаем контейнер MySQL, монтируя том
 docker run -d --name mysql-db \
@@ -46,9 +47,10 @@ docker run -d --name mysql-db \
   -e MYSQL_ROOT_PASSWORD=my-secret-pw \
   -v mysql-data:/var/lib/mysql \
   mysql:8.4
+# -> <container_id>
 ```
 
-#### 2. Запуск с кастомной конфигурацией
+### 2. Запуск с кастомной конфигурацией
 
 ```bash
 # Пробрасываем свой my.cnf в контейнер
@@ -58,9 +60,10 @@ docker run -d --name mysql-db-custom-config \
   -v mysql-data:/var/lib/mysql \
   -v ./my.cnf:/etc/mysql/conf.d/custom.cnf \
   mysql:8.4
+# -> <container_id>
 ```
 
-#### 3. Запуск со скриптами инициализации
+### 3. Запуск со скриптами инициализации
 
 ```bash
 # Монтируем директорию со скриптами для первоначальной настройки
@@ -70,9 +73,10 @@ docker run -d --name mysql-db-initialized \
   -v mysql-data:/var/lib/mysql \
   -v ./init-scripts:/docker-entrypoint-initdb.d \
   mysql:8.4
+# -> <container_id>
 ```
 
-#### 4. Запуск для максимальной производительности
+### 4. Запуск для максимальной производительности
 
 ```bash
 # Используем сетевой режим 'host' для минимизации задержек
@@ -81,10 +85,44 @@ docker run -d --name mysql-db-high-perf \
   -e MYSQL_ROOT_PASSWORD=my-secret-pw \
   -v mysql-data:/var/lib/mysql \
   mysql:8.4
+# -> <container_id>
 ```
 
 > **Примечание:** В режиме `--network host` проброс портов (`-p`) не работает. MySQL доступен напрямую по порту 3306 на IP-адресе хоста.
 
+### 5. Запуск через Docker Compose
+
+Для управления многоконтейнерными приложениями предпочтительнее использовать `docker-compose.yml`. Данный пример также настроен на использование именованных томов.
+
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: mysql:8.4
+    container_name: mysql-compose-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: my-secret-pw
+      MYSQL_DATABASE: my_database
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+volumes:
+  mysql-data:
+```
+
+Запуск сервисов:
+
+```bash
+docker compose up -d
+# -> [+] Running 2/2
+# ->  ✔ Network my_network        Created
+# ->  ✔ Container mysql-compose-db Started
+```
+
 ## Дополнительная информация
 
-Подробности по управлению томами — в [документе о Docker volumes](../../Docker/Docker_fs/docker_volumes.md), обзор сетевых моделей — в [Docker networking](../../Docker/Docker_network/docker_network.md).
+- [Docker: Тома и персистентное хранение](../../Docker/Docker_fs/docker_volumes.md)
+- [Docker: Справочник по сетям](../../Docker/Docker_network/docker_network.md)

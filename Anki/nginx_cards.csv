@@ -273,7 +273,9 @@ proxy_hide_header;proxy_hide_header Server; - скрывает заголово�
 273: Какие инструменты для нагрузочного тестирования сжатия?;ab (Apache Benchmark), wrk, wrkx, h2load - позволяют оценить влияние сжатия на RPS и время ответа (см. WebServers/webserver_benchmarking.md);nginx::compression
 274: Пример тестирования сжатия ab;ab -n 1000 -c 100 -H "Accept-Encoding: gzip" https://domain.com/style.css - 1000 запросов, 100 одновременных;nginx::compression
 275: Почему gzip_types важно настраивать?;По умолчанию сжимается только text/html. Для CSS, JS, JSON нужно добавить явно;nginx::compression
-276: Почему не стоит использовать gzip_static глобально?;Будет искать сжатые версии для всех файлов, включая изображения - неэффективно. Использовать внутри location для CSS/JS;nginx::compression
+L277: 277: Почему не стоит использовать gzip_static глобально?;Будет искать сжатые версии для всех файлов, включая изображения - неэффективно. Использовать внутри location для CSS/JS;nginx::compression
+L278: 278: Как скорость сети клиента влияет на выбор уровня сжатия (Total Time)?;Для быстрого интернета (100 Мбит+) выгодны минимальные уровни (CPU дороже трафика). Для медленного (8 Мбит-) выгодны высокие уровни (трафик дороже CPU);nginx::compression
+
 277: Почему gzip_disable "msie6"?;Отключает сжатие для старых браузеров IE, которые могут некорректно обрабатывать сжатый контент;nginx::compression
 278: Что делает gzip_buffers?;Буферы для сжатия. По умолчанию 4 8k. Пример: gzip_buffers 16 8k;nginx::compression
 279: Что делает gzip_http_version?;Минимальная версия HTTP для сжатия. gzip_http_version 1.1 - сжимать только для HTTP/1.1 и выше;nginx::compression

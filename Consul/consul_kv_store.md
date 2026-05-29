@@ -30,18 +30,23 @@ Consul KV поддерживает механизм **сессий**, котор
 ```bash
 # Запись значения
 consul kv put config/prod/db/url "postgres://db.prod:5432/app"
+# -> Success! Data written to: config/prod/db/url
 
 # Чтение значения
 consul kv get config/prod/db/url
+# -> postgres://db.prod:5432/app
 
 # Рекурсивное чтение всех ключей с префиксом
 consul kv get -recurse config/prod/
+# -> config/prod/db/url:postgres://db.prod:5432/app
 
 # Удаление ключа
 consul kv delete app/prod/db/url
+# -> Success! Deleted key: app/prod/db/url
 
 # Рекурсивное удаление
 consul kv delete -recurse app/prod/
+# -> Success! Deleted keys with prefix: app/prod/
 ```
 
 ## Операции через HTTP API
@@ -49,12 +54,15 @@ consul kv delete -recurse app/prod/
 ```bash
 # Запись значения
 curl --request PUT --data 'enabled=true' http://127.0.0.1:8500/v1/kv/app/prod/featureA
+# -> true
 
 # Чтение (значение в формате base64)
 curl http://127.0.0.1:8500/v1/kv/app/prod/featureA
+# -> [{"LockIndex":0,"Key":"app/prod/featureA","Flags":0,"Value":"ZW5hYmxlZD10cnVl","CreateIndex":12,"ModifyIndex":12}]
 
 # Чтение "сырого" значения
 curl http://127.0.0.1:8500/v1/kv/app/prod/featureA?raw
+# -> enabled=true
 ```
 
 ## Отслеживание изменений (Blocking Queries)
@@ -64,9 +72,13 @@ curl http://127.0.0.1:8500/v1/kv/app/prod/featureA?raw
 ```bash
 # 1. Выполнить первый запрос и сохранить значение заголовка X-Consul-Index
 curl -i http://127.0.0.1:8500/v1/kv/app/prod/featureA
+# -> HTTP/1.1 200 OK
+# -> X-Consul-Index: 12
+# -> ...
 
 # 2. Выполнить блокирующий запрос с полученным index, ожидая до 10 минут
 curl "http://127.0.0.1:8500/v1/kv/app/prod/featureA?index=<prev_index>&wait=10m"
+# -> (ответ поступит при изменении ключа или по истечении 10 минут)
 ```
 
 Сервер вернет ответ, как только значение изменится или по истечении таймаута.
@@ -83,17 +95,19 @@ Consul поддерживает атомарные транзакции, кот�
 
 ```bash
 # Пример транзакции с операцией CAS
+# Значение "Value" (MQ==) — это строка "1" в кодировке base64
 curl --request PUT http://127.0.0.1:8500/v1/txn -d '
 [
   {
     "KV": {
       "Verb": "cas",
       "Key": "app/prod/version",
-      "Value": "MQ==", # "1" в base64
+      "Value": "MQ==",
       "Index": 42
     }
   }
 ]'
+# -> {"Results":[{"KV":{"Key":"app/prod/version","CreateIndex":1,"ModifyIndex":43,"LockIndex":0,"Flags":0,"Value":"MQ=="}}],"Errors":null}
 ```
 
 # Дополнительная информация

@@ -35,12 +35,14 @@
 Плейбук настроен на работу от имени `root`:
 
 **Файл инвентаря `inventory.ini`:**
+
 ```ini
 [production]
 server1 ansible_host=192.168.1.10 ansible_user=root
 ```
 
 **Файл плейбука `test_playbook.yml`:**
+
 ```yaml
 ---
 - name: Проверка базовой настройки
@@ -56,6 +58,7 @@ server1 ansible_host=192.168.1.10 ansible_user=root
 После того как выделенный пользователь создан (см. **[рекомендации по безопасности](../ansible_security_best_practices.md)**), необходимо запретить удаленный вход для `root` в конфигурации SSH-сервера (`/etc/ssh/sshd_config`).
 
 Пример задачи для отключения доступа:
+
 ```yaml
 - name: Отключить вход для root по SSH
   ansible.builtin.lineinfile:
@@ -70,6 +73,7 @@ server1 ansible_host=192.168.1.10 ansible_user=root
 #### 3. Диагностика ошибки после изменений
 
 При попытке запустить плейбук со старыми настройками возникнет ошибка:
+
 ```bash
 ansible-playbook -i inventory.ini test_playbook.yml
 # → fatal: [server1]: UNREACHABLE! msg: Permission denied...
@@ -82,10 +86,13 @@ ansible-playbook -i inventory.ini test_playbook.yml
 Необходимо обновить имя пользователя одним из способов:
 
 - **Вариант А (Инвентарь)**:
+
   ```ini
   server1 ansible_host=192.168.1.10 ansible_user=my_ansible_user
   ```
+
 - **Вариант Б (ansible.cfg)**:
+
   ```ini
   [defaults]
   remote_user = my_ansible_user

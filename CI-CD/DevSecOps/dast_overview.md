@@ -2,7 +2,7 @@
 
 ## Определения
 
-**DAST (Dynamic Application Security Testing)** — это метод анализа безопасности работающего приложения с точки зрения внешнего пользователя, также известный как «тестирование черного ящика». Инструменты DAST не требуют доступа к исходному коду или сборке и взаимодействуют с приложением через его внешние интерфейсы (HTTP, API), имитируя поведение злоумышленника.
+**DAST (Dynamic Application Security Testing — динамическое тестирование безопасности приложений)** — это метод анализа безопасности работающего приложения с точки зрения внешнего пользователя, также известный как «тестирование черного ящика». Инструменты DAST не требуют доступа к исходному коду или сборке и взаимодействуют с приложением через его внешние интерфейсы (HTTP, API), имитируя поведение злоумышленника.
 
 Цель DAST — выявить уязвимости, которые проявляются только на этапе выполнения (runtime) и зависят от конфигурации сервера, интеграций и реального окружения.
 
@@ -10,7 +10,14 @@
 
 ### Типы обнаруживаемых уязвимостей
 
-DAST-сканеры эффективно обнаруживают уязвимости рантайма: инъекции (SQLi, NoSQLi, Command), XSS (отражённый и хранимый), ошибки аутентификации и сессий, IDOR, SSRF, открытые редиректы, небезопасные конфигурации (заголовки, CORS), утечки информации.
+DAST-сканеры ориентированы на обнаружение уязвимостей времени выполнения, которые сложно или невозможно выявить статическим анализом. Основные категории включают:
+
+- Инъекции (SQL, NoSQL, Command)
+- Межсайтовый скриптинг (XSS — Cross-Site Scripting)
+- Ошибки аутентификации и управления сессиями
+- Недостатки контроля доступа (IDOR — Insecure Direct Object Reference)
+- Подделка запросов на стороне сервера (SSRF — Server-Side Request Forgery)
+- Небезопасные конфигурации (заголовки безопасности, CORS — Cross-Origin Resource Sharing)
 
 Полный список уязвимостей с сопоставлением по инструментам — в [обзоре уязвимостей SAST/DAST](./sast_dast_vulnerabilities.md).
 
@@ -25,21 +32,20 @@ DAST-сканеры эффективно обнаруживают уязвимо
 
 ### Ограничения
 
-- **Покрытие:** Зависит от качества краулера, который может не обнаружить все маршруты, особенно в SPA-приложениях.
-- **Ложные срабатывания:** Возможны, хотя и реже, чем в [SAST](./sast_overview.md).
+- **Покрытие:** Зависит от качества краулера, который может не обнаружить все маршруты, особенно в SPA (Single Page Application).
+- **Ложные срабатывания:** Возможны, хотя и реже, чем в [SAST (Static Application Security Testing)](./sast_overview.md).
 - **Производительность:** Активные сканы могут быть длительными и создавать нагрузку на тестовую среду.
 - **Требования к среде:** Необходимы тестовые данные (фикстуры) и изолированные учетные записи.
 
 ## Практические сценарии
 
-### Интеграция в CI/CD
+### Внедрение в CI/CD
 
-- **Разделение сканов:** Быстрый `baseline` скан в merge request и полный `full scan` по расписанию (например, ночью).
-- **Изоляция:** Запуск DAST на отдельном, изолированном стенде с тестовыми данными.
-- **Аутентификация:** Передача токена сессии или cookie сканеру для проверки защищенных разделов.
-- **Артефакты:** Сохранение отчетов в форматах HTML/XML/JSON для анализа.
+Автоматизация DAST требует подготовки стабильного тестового окружения (staging или review-apps). Основные стратегии включают разделение сканов на быстрые проверки при каждом изменении и глубокий анализ по расписанию.
 
-### Пример: Baseline-скан OWASP ZAP в GitLab CI
+Подробные рекомендации и примеры конвейерных конфигураций описаны в [руководстве по интеграции безопасности в CI/CD](./sast_dast_cicd_integration.md).
+
+### Пример: Baseline-скан OWASP (Open Web Application Security Project) ZAP в GitLab CI
 
 ```yaml
 dast_baseline:
@@ -48,7 +54,9 @@ dast_baseline:
   variables:
     TARGET: "http://app:8080"
   script:
+    # Запуск базового сканирования (пассивный анализ + ограниченный активный)
     - zap-baseline.py -t $TARGET -r zap-baseline.html -x zap-baseline.xml -m 5 -z "-config api.disablekey=true"
+    # → Результат: отчеты zap-baseline.html и zap-baseline.xml с найденными проблемами
   artifacts:
     when: always
     paths:
@@ -60,23 +68,27 @@ dast_baseline:
 ### Пример: Full-скан с аутентификацией
 
 ```bash
-docker run --rm --network host 
-  -v $PWD/reports:/zap/wrk 
-  -e ZAP_COOKIE="session=abc123" 
-  owasp/zap2docker-stable zap-full-scan.py 
-  -t http://app:8080 
-  -r full.html -x full.xml 
-  -z "-config api.disablekey=true -config spider.maxDuration=10" 
-  -z "-config selenium.firefoxDriver=/usr/bin/geckodriver" 
+# Запуск полного сканирования с использованием сессионной cookie
+docker run --rm --network host \
+  -v $PWD/reports:/zap/wrk \
+  -e ZAP_COOKIE="session=abc123" \
+  owasp/zap2docker-stable zap-full-scan.py \
+  -t http://app:8080 \
+  -r full.html -x full.xml \
+  -z "-config api.disablekey=true -config spider.maxDuration=10" \
+  -z "-config selenium.firefoxDriver=/usr/bin/geckodriver" \
   -z "-config httpsessions.tokens.param.name=session -config httpsessions.tokens.param.value=$ZAP_COOKIE"
+# → Результат: глубокий отчет full.html, включая защищенные разделы приложения
 ```
 
 ### Пример: API-скан по спецификации OpenAPI
 
 ```bash
-docker run --rm -v $PWD/reports:/zap/wrk owasp/zap2docker-stable 
-  zap-api-scan.py -t http://app:8080/openapi.yaml -f openapi 
+# Тестирование API на основе файла спецификации
+docker run --rm -v $PWD/reports:/zap/wrk owasp/zap2docker-stable \
+  zap-api-scan.py -t http://app:8080/openapi.yaml -f openapi \
   -r api.html -x api.xml -z "-config api.disablekey=true"
+# → Результат: проверка всех эндпоинтов, описанных в openapi.yaml
 ```
 
 ## Дополнительная информация
@@ -88,4 +100,8 @@ docker run --rm -v $PWD/reports:/zap/wrk owasp/zap2docker-stable
 - **Используйте стабильные данные:** Обеспечьте сброс базы данных между полными сканами для воспроизводимости результатов.
 - **Отслеживайте метрики:** Собирайте данные о времени сканирования, количестве найденных URL и распределении уязвимостей по уровням риска.
 
-DAST дополняет [SAST](./sast_overview.md) и является частью комплексной стратегии [интеграции безопасности в CI/CD](./sast_dast_cicd_integration.md). Подробнее о сравнении подходов — в [обзоре SAST vs DAST](./sast_vs_dast.md).
+### См. также
+
+- [Обзор SAST (Static Application Security Testing)](./sast_overview.md)
+- [Сравнение подходов SAST vs DAST](./sast_vs_dast.md)
+- [Интеграция безопасности в CI/CD](./sast_dast_cicd_integration.md)

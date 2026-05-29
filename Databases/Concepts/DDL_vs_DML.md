@@ -45,5 +45,9 @@
 ## Дополнительная информация
 
 - **Транзакционный DDL:** В некоторых СУБД (например, PostgreSQL, MySQL 8.0+ для InnoDB) операции DDL являются транзакционными и могут быть откачены. Подробности: [MySQL/overview.md](../MySQL/overview.md).
-- **Влияние на репликацию:** DDL-операции требуют особого внимания при репликации — могут вызывать блокировки и рассинхронизацию. См. [replication.md](./replication.md).
-- **Связанные концепции:** [ACID](./acid.md), [WAL](./write_ahead_log.md), [блокировки](./database_performance_concepts.md).
+- **Связанные концепции:**
+  - [ACID (Atomicity, Consistency, Isolation, Durability)](./acid.md) — требования к транзакционной системе.
+  - [WAL (Write-Ahead Logging)](./write_ahead_log.md) — журнал предзаписи для обеспечения отказоустойчивости.
+  - [Блокировки](./database_performance_concepts.md) в базах данных.
+
+См. также: [Репликация и DDL](./replication.md).

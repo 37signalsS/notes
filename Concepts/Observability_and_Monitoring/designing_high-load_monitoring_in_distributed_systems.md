@@ -1,15 +1,15 @@
-# High-Load Monitoring in Distributed Systems
+# Проектирование высоконагруженного мониторинга в распределённых системах
 
 ## Определения
 
-**Высоконагруженный мониторинг в распределенных системах** — архитектура системы наблюдаемости, способная собирать, обрабатывать, хранить и анализировать большие объемы телеметрии (метрики, логи, трассировки) от множества распределенных компонентов с обеспечением отказоустойчивости и масштабируемости самого стека мониторинга.
+**Высоконагруженный мониторинг в распределённых системах** — архитектура системы наблюдаемости, способная собирать, обрабатывать, хранить и анализировать большие объёмы телеметрии (метрики, логи, трассировки) от множества распределённых компонентов с обеспечением отказоустойчивости и масштабируемости самого стека мониторинга.
 
 **Ключевая цель:** предотвращение превращения системы мониторинга в единую точку отказа (SPOF).
 
 **См. также:**
 
-- [Определения Observability](./observability_definitions.md) — базовые понятия (метрики, логи, трассировки, профилирование)
-- [Четыре столпа Observability](./four_pillars_of_observability.md) — фундаментальные принципы
+- **[Определения Observability](./observability_definitions.md)** — базовые понятия мониторинга и наблюдаемости.
+- **[Четыре столпа Observability](./four_pillars_of_observability.md)** — фундаментальные принципы телеметрии.
 
 ## Базовые концепции
 
@@ -27,27 +27,27 @@
 
 **Рекомендации:**
 
-- Использовать **[Kafka с KRaft](../../../Kafka/kafka_for_monitoring.md#kraft-vs-zookeeper-современный-стандарт-для-kafka)** (без ZooKeeper)
+- Использовать **[Kafka с KRaft](../../Kafka/kafka_for_monitoring.md#kraft-vs-zookeeper-современный-стандарт-для-kafka)** (без ZooKeeper)
 - Заранее планировать количество партиций (нельзя изменить без пересоздания топика)
-- Легковесные агенты для доставки: **[Vector](../../../Vector/vector_overview.md)**, **[Fluent Bit](../../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)**
+- Легковесные агенты для доставки: **[Vector](../../Vector/vector_overview.md)**, **[Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)**
 
 ### Сбор метрик: Prometheus
 
-**[Prometheus](../../../Prometheus/overview.md)** — промышленный стандарт для Cloud Native сред.
+**[Prometheus](../../Prometheus/overview.md)** — промышленный стандарт для Cloud Native сред.
 
 **Модель сбора:**
 
 - **Pull-модель** (основная) — Prometheus опрашивает цели (экспортеры); источники независимы от доступности мониторинга
-- **Push-модель** — для batch jobs через **[Pushgateway](../../../Prometheus/pushgateway.md)**
+- **Push-модель** — для batch jobs через **[Pushgateway](../../Prometheus/pushgateway.md)**
 
 **Компоненты:**
 
 - Сервер Prometheus (сбор, хранение, обработка)
-- **[Экспортеры](../../../Prometheus/Exporters/overview.md)** (преобразование метрик)
-- **[Service Discovery](../../../Prometheus/service_discovery_and_relabeling.md)** (обнаружение целей)
-- **[Alertmanager](../../../Prometheus/alertmanager.md)** (оповещения)
+- **[Экспортеры](../../Prometheus/Exporters/overview.md)** (преобразование метрик)
+- **[Service Discovery](../../Prometheus/service_discovery_and_relabeling.md)** (обнаружение целей)
+- **[Alertmanager](../../Prometheus/alertmanager.md)** (оповещения)
 
-**Масштабирование:** **[Федерация Prometheus](../../../Prometheus/scaling/federation.md)** — иерархическая агрегация данных из разных контуров.
+**Масштабирование:** **[Федерация Prometheus](../../Prometheus/scaling/federation.md)** — иерархическая агрегация данных из разных контуров.
 
 ### Долгосрочное хранение метрик: Remote Storage
 
@@ -57,25 +57,27 @@
 
 | Решение | Описание |
 | :--- | :--- |
-| **[Mimir](../../../Mimir/mimir_overview.md)** | Горизонтально масштабируемое, мульти-тенантное решение (Grafana Labs). Предпочтительный выбор для глобальных систем |
-| **[VictoriaMetrics](../../../VictoriaMetrics/overview.md)** | Высокопроизводительная альтернатива с эффективностью по ресурсам |
+| **[Mimir](../../Mimir/mimir_overview.md)** | Горизонтально масштабируемое, мульти-тенантное решение (Grafana Labs). Предпочтительный выбор для глобальных систем |
+| **[VictoriaMetrics](../../VictoriaMetrics/overview.md)** | Высокопроизводительная альтернатива с эффективностью по ресурсам |
 | **Thanos** | Расширение Prometheus с использованием S3-совместимых хранилищ (Ceph, MinIO) |
 
 **Принцип работы:** локальные Prometheus хранят данные 2–6 часов и отправляют метрики через `remote_write` в централизованное хранилище.
 
 ### Визуализация и оповещения
 
-**[Grafana](../../../Grafana/grafana_overview.md)** — визуализация данных из Prometheus, Mimir, Loki и др.
+**[Grafana](../../Grafana/grafana_overview.md)** — визуализация данных из Prometheus, Mimir, Loki и др.
 
-**Высокая доступность:** кластер Grafana за балансировщиком с конфигурацией во внешней БД (PostgreSQL). См. **[Grafana High Availability](../../../Grafana/high_availability.md)**.
+**Высокая доступность:** кластер Grafana за балансировщиком с конфигурацией во внешней БД (PostgreSQL). См. **[Grafana High Availability](../../Grafana/high_availability.md)**.
 
-**[Alertmanager](../../../Prometheus/alertmanager.md)** — управление оповещениями (группировка, дедупликация, подавление, маршрутизация).
+**[Alertmanager](../../Prometheus/alertmanager.md)** — управление оповещениями (группировка, дедупликация, подавление, маршрутизация).
 
 **Высокая доступность:** кластер Alertmanager с gossip-протоколом для синхронизации состояния.
 
-## Практический сценарий: Архитектура
+## Практические сценарии
 
-### Принципы проектирования
+### Архитектура распределенного мониторинга
+
+**Принципы проектирования:**
 
 | Принцип | Описание |
 | :--- | :--- |
@@ -89,14 +91,14 @@
 | Уровень | Компоненты | Назначение |
 | :--- | :--- | :--- |
 | **1. Источники** | Приложения, инфраструктура, облака | Генерация телеметрии |
-| **2. Сбор логов** | **[Vector](../../../Vector/vector_overview.md)**, **[Fluent Bit](../../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)** | Легковесный сбор на хостах и в Kubernetes |
-| **3. Транспорт логов** | **[Kafka](../../../Kafka/kafka_for_monitoring.md)** (KRaft) | Надежный буфер для сглаживания пиковых нагрузок |
+| **2. Сбор логов** | **[Vector](../../Vector/vector_overview.md)**, **[Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)** | Легковесный сбор на хостах и в Kubernetes |
+| **3. Транспорт логов** | **[Kafka](../../Kafka/kafka_for_monitoring.md)** (KRaft) | Надежный буфер для сглаживания пиковых нагрузок |
 | **4. Обработка логов** | Vector | Парсинг, трансформация, обогащение, маршрутизация |
-| **5. Хранение логов** | **[OpenSearch](../../../ELK_Stack/OpenSearch/opensearch_overview.md)**, **[Loki](../../../Loki/loki_overview.md)**, ClickHouse | Долгосрочное хранение и поиск |
+| **5. Хранение логов** | **[OpenSearch](../../ELK_Stack/OpenSearch/opensearch_overview.md)**, **[Loki](../../Loki/loki_overview.md)**, ClickHouse | Долгосрочное хранение и поиск |
 | **6. Сбор метрик** | Prometheus (HA-пары) | Сбор метрик с экспортеров, краткосрочное хранение (2 часа) |
-| **7. Хранение метрик** | **[Mimir](../../../Mimir/mimir_overview.md)** | Глобальная агрегация, мульти-тенатность, масштабирование |
-| **8. Оповещения** | **[Alertmanager](../../../Prometheus/alertmanager.md)** (кластер) | Группировка и маршрутизация алертов |
-| **9. Визуализация** | **[Grafana](../../../Grafana/grafana_overview.md)** (кластер, PostgreSQL) | Единый интерфейс для всех источников данных |
+| **7. Хранение метрик** | **[Mimir](../../Mimir/mimir_overview.md)** | Глобальная агрегация, мульти-тенатность, масштабирование |
+| **8. Оповещения** | **[Alertmanager](../../Prometheus/alertmanager.md)** (кластер) | Группировка и маршрутизация алертов |
+| **9. Визуализация** | **[Grafana](../../Grafana/grafana_overview.md)** (кластер, PostgreSQL) | Единый интерфейс для всех источников данных |
 | **10. Экспортеры** | node-exporter, cAdvisor, kube-state-metrics | Предоставление метрик для Prometheus |
 
 ### Особенности эксплуатации
@@ -118,33 +120,16 @@
 - **[Стратегии сбора метрик](./metrics_collection_strategies.md)** — pull vs push модели
 - **[Рекомендации по оповещениям](./monitoring_alerting_recommendations.md)** — настройка алертинга
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-| Тема | Описание |
-| :--- | :--- |
-| **[Observability в контейнерах](./observability_in_containers.md)** | Мониторинг контейнеризированных приложений |
-| **[Метрики: детали](./metrics_deep_dive.md)** | Глубокое погружение в метрики |
-| **[Логи: детали](./logs_deep_dive.md)** | Стратегии сбора и анализа логов |
-| **[Трассировки: детали](./traces_deep_dive.md)** | Распределенная трассировка |
-| **[Профилирование: детали](./profiling_deep_dive.md)** | Анализ производительности |
+- **[Наблюдаемость в контейнерах](./observability_in_containers.md)** — особенности мониторинга Kubernetes.
+- **[Метрики: детали](./metrics_deep_dive.md)** — концепции временных рядов.
+- **[Логи: детали](./logs_deep_dive.md)** — стратегии сбора логов.
 
-### Инструменты и технологии
+### Ресурсы
 
-| Категория | Инструменты |
-| :--- | :--- |
-| **Сбор логов** | Vector, Fluent Bit, Fluentd, Logstash |
-| **Транспорт** | Kafka (KRaft), RabbitMQ, NATS Streaming |
-| **Хранение логов** | Loki, OpenSearch/Elasticsearch, ClickHouse |
-| **Сбор метрик** | Prometheus, vmagent, Telegraf |
-| **Хранение метрик** | Mimir, VictoriaMetrics, Thanos, Cortex |
-| **Визуализация** | Grafana, Kibana |
-| **Оповещения** | Alertmanager, Grafana Alerting, PagerDuty |
-
-### Дополнительные ресурсы
-
-- **[Kafka для мониторинга](../../../Kafka/kafka_for_monitoring.md)** — детальное описание использования Kafka
-- **[Prometheus: масштабирование](../../../Prometheus/scaling/overview.md)** — федерация и remote storage
-- **[Mimir: архитектура](../../../Mimir/mimir_overview.md)** — современное решение для долгосрочного хранения
-- **[Grafana HA](../../../Grafana/high_availability.md)** — отказоустойчивая визуализация
+- **[Kafka для мониторинга](../../Kafka/kafka_for_monitoring.md)** — использование Kafka как транспорта телеметрии.
+- **[Prometheus: масштабирование](../../Prometheus/scaling/overview.md)** — федерация и удалённые хранилища.
+- **[Mimir: архитектура](../../Mimir/mimir_overview.md)** — решение для глобального хранения метрик.

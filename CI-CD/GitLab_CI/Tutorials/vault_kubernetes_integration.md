@@ -1,14 +1,12 @@
-# GitLab CI и Vault интеграция через JWT
+# GitLab CI и Vault: интеграция через JWT
 
-## Definitions
+## Определения
 
-**Аутентификация по JWT (JWT Auth Method)** — метод аутентификации в [HashiCorp Vault](../../../Vault/overview.md), позволяющий внешним системам (GitLab) проходить аутентификацию через JSON Web Token (JWT).
+- **Аутентификация по JWT (JWT Auth Method)** — метод аутентификации в [HashiCorp Vault](../../../Vault/overview.md), позволяющий внешним системам (GitLab) проходить аутентификацию через JSON Web Token (JWT).
+- **OpenID Connect (OIDC)** — протокол идентификации на базе OAuth 2.0 ([подробнее](../../../Security/Concepts/authentication_vs_authorization.md#стандарты-и-протоколы)). GitLab выступает OIDC-провайдером.
+- **`CI_JOB_JWT_V2_TOKEN`** — предопределенная переменная GitLab CI с короткоживущим OIDC-совместимым JWT-токеном. Уникален для каждой задачи, содержит claims (project_id, ветка, тип ссылки).
 
-**OpenID Connect (OIDC)** — протокол идентификации на базе OAuth 2.0 ([подробнее](../../../Security/Concepts/authentication_vs_authorization.md#протоколы-и-стандарты)). GitLab выступает OIDC-провайдером.
-
-**`CI_JOB_JWT_V2_TOKEN`** — предопределенная переменная GitLab CI с короткоживущим OIDC-совместимым JWT-токеном. Уникален для каждой задачи, содержит claims (project_id, ветка, тип ссылки).
-
-## Basic Concepts
+## Основные концепции
 
 1. **Генерация токена**: GitLab генерирует уникальный JWT для каждой CI/CD-задачи → переменная `CI_JOB_JWT_V2_TOKEN`.
 2. **Аутентификация в Vault**: CI-задача отправляет токен в Vault через JWT auth method.
@@ -17,9 +15,9 @@
 5. **Выдача токена Vault**: При соответствии claims роли → Vault выдает короткоживущий токен.
 6. **Получение секрета**: Задача использует токен Vault для чтения секретов в рамках политик.
 
-## Practical Scenarios
+## Практические сценарии
 
-### Vault развертывание в Kubernetes
+### Развертывание Vault в Kubernetes
 
 Развертывание через [**Helm**](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md) и [**Bank-Vaults Operator**](https://bank-vaults.dev/).
 
@@ -155,7 +153,7 @@
     vault kv put secret/my-project/production db_password="!production_secret_@#$"
     ```
 
-### GitLab CI настройка для получения секретов
+### Настройка GitLab CI для получения секретов
 
 ```yaml
 stages:
@@ -193,11 +191,15 @@ get-production-secrets:
 
 После запуска этого пайплайна на ветке `main` в логах вы увидите, что пароль для `production` был успешно получен, а попытка получить пароль для `staging` завершилась ошибкой **permission denied**, что подтверждает корректную работу модели безопасности.
 
-## Additional Information
+## Дополнительная информация
 
 - **Безопасность `bound_claims`**: Поле `bound_claims` является ключевым для безопасности. Всегда указывайте как минимум `project_id`, чтобы гарантировать, что токен не будет использован из другого проекта. Дополнительные `claims` (`ref`, `ref_type`, `ref_protected`) усиливают гранулярность доступа.
 - **Аудит с `user_claim`**: Поле `user_claim="user_email"` указывает Vault использовать email пользователя, инициировавшего пайплайн, в качестве идентификатора для логов аудита. Это упрощает отслеживание, кто именно получил доступ к секрету.
 - **Helm-чарты Vault**: В данном руководстве используется оператор от Banzai Cloud. Существует также официальный Helm-чарт от HashiCorp (`hashicorp/vault`), который является более предпочтительным для новых установок, так как поддерживается непосредственно разработчиками Vault.
 - **Self-Hosted GitLab**: При использовании собственного экземпляра GitLab замените `https://gitlab.com` на ваш домен в параметрах `jwks_url` и `bound_issuer`.
 
-**См. также:** [Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), [Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md), [Окружения и развертывания](../Concepts/environments_and_deployments.md).
+### Смотрите также
+
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)**
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)**
+- **[Окружения и развертывания](../Concepts/environments_and_deployments.md)**

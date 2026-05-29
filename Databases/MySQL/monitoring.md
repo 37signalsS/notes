@@ -2,122 +2,121 @@
 
 ## Определения
 
-**Мониторинг MySQL** — сбор, анализ и визуализация метрик производительности и состояния сервера БД для обеспечения стабильности, доступности и быстродействия.
+**Мониторинг MySQL** — процесс сбора, анализа и визуализации метрик производительности и состояния сервера БД (Базы Данных) для обеспечения стабильности, доступности и быстродействия системы.
 
-**Zabbix Agent** — сервис на наблюдаемом хосте для сбора локальных данных и отправки на Zabbix Server.
+**Zabbix Agent** — программное обеспечение (агент), устанавливаемое на наблюдаемом хосте для сбора локальных данных и их отправки на Zabbix Server.
 
-**UserParameter** — директива в конфигурации Zabbix Agent для определения пользовательских метрик. Позволяет агенту выполнять команды/скрипты и возвращать их вывод как значение метрики.
+**UserParameter** — директива в конфигурационном файле Zabbix Agent, предназначенная для определения пользовательских метрик. Позволяет агенту выполнять произвольные команды или скрипты операционной системы и возвращать результат их выполнения как значение метрики.
 
-## Базовые концепции
+## Основные концепции
 
 ### Принцип работы
 
-1. **Zabbix Server** запрашивает у **Zabbix Agent** значение элемента данных (item), например `mysql.ping`.
-2. **Zabbix Agent** находит соответствующий `UserParameter` в конфигурации.
-3. Агент выполняет команду из `UserParameter` (например `mysqladmin ping`).
-4. Результат возвращается на **Zabbix Server** как значение элемента данных.
+1. **Zabbix Server** запрашивает у **Zabbix Agent** значение конкретного элемента данных (item), например `mysql.ping`.
+2. **Zabbix Agent** сопоставляет запрос с соответствующей директивой `UserParameter` в своей конфигурации.
+3. Агент выполняет команду, указанную в `UserParameter` (например, `mysqladmin ping`).
+4. Результат выполнения команды возвращается на **Zabbix Server** и сохраняется в базе данных мониторинга.
 
 ### Аутентификация и безопасность
 
-Для получения метрик Zabbix Agent подключается к MySQL. Чтобы избежать хранения паролей в скриптах или `UserParameter`, используется безопасный подход:
+Для получения метрик Zabbix Agent должен подключаться к MySQL. Для обеспечения безопасности и исключения хранения паролей в открытом виде в конфигурационных файлах или скриптах применяется следующий подход:
 
-1. **Выделенный пользователь MySQL**: Пользователь с минимальными привилегиями только для чтения статусов (например `zabbix_monitor`).
-2. **Файл `~/.my.cnf`**: В домашней директории пользователя `zabbix` создается файл с учетными данными в секции `[client]`.
-3. **Безопасные права**: На файл устанавливаются права `chmod 600` — доступ только владельцу.
+1. **Выделенный пользователь MySQL**: Создается учетная запись с минимально необходимым набором привилегий только для чтения системных статусов.
+2. **Файл конфигурации клиента (`.my.cnf`)**: В домашней директории системного пользователя, от имени которого запущен Zabbix Agent (обычно `zabbix`), создается файл с учетными данными в секции `[client]`.
+3. **Разграничение прав доступа**: На файл `.my.cnf` устанавливаются строгие права доступа (`chmod 600`), разрешающие чтение только владельцу файла.
 
-Утилиты `mysql` и `mysqladmin` автоматически используют учетные данные из файла без явного указания в команде.
+Утилиты `mysql` и `mysqladmin` при запуске автоматически считывают учетные данные из этого файла, что позволяет не указывать пароль в строке команды.
 
 ## Практические сценарии
 
-### Пошаговая настройка мониторинга MySQL с помощью Zabbix Agent
+### Настройка мониторинга MySQL через Zabbix Agent
 
-#### 1. Настройка Zabbix Agent (`UserParameter`)
+#### 1. Конфигурация Zabbix Agent
 
-Создайте файл конфигурации `/etc/zabbix/zabbix_agentd.d/mysql.conf`:
+Создайте файл `/etc/zabbix/zabbix_agentd.d/mysql.conf` со следующим содержимым:
 
 ```conf
-# UserParameter без учетных данных (используется ~/.my.cnf)
-
-# Пинг MySQL
+# Проверка доступности MySQL
 UserParameter=mysql.ping,mysqladmin ping | grep -c alive
 
-# Статусная переменная
+# Сбор глобальных статусных переменных
 UserParameter=mysql.status[*],echo "show global status where Variable_name='$1';" | mysql -N | awk '{print $2}'
 
-# Размер базы данных
+# Получение размера конкретной базы данных
 UserParameter=mysql.size[*],echo "SELECT sum(data_length+index_length) FROM information_schema.tables WHERE table_schema='$1';" | mysql -N
 ```
 
-Перезапустите Zabbix Agent:
+После внесения изменений перезапустите агент:
 
 ```bash
 sudo systemctl restart zabbix-agent
+# -> (команда не возвращает вывод при успехе)
 ```
 
-#### 2. Создание пользователя MySQL для мониторинга
+#### 2. Подготовка пользователя в MySQL
+
+Выполните следующие команды в консоли MySQL для создания пользователя мониторинга:
 
 ```sql
 CREATE USER 'zabbix_monitor'@'localhost' IDENTIFIED BY 'your_secure_password';
 GRANT REPLICATION CLIENT, PROCESS, SHOW DATABASES ON *.* TO 'zabbix_monitor'@'localhost';
 GRANT SELECT ON performance_schema.* TO 'zabbix_monitor'@'localhost';
 FLUSH PRIVILEGES;
+-- -> Query OK, 0 rows affected
 ```
 
-> Замените `your_secure_password` на надежный пароль.
+#### 3. Настройка файла аутентификации (.my.cnf)
 
-#### 3. Настройка аутентификации агента (`.my.cnf`)
+Определите домашнюю директорию пользователя `zabbix` и создайте там файл конфигурации:
 
-1. **Найти домашнюю директорию:**
+```bash
+grep zabbix /etc/passwd
+# -> zabbix:x:111:115::/var/lib/zabbix:/usr/sbin/nologin
 
-    ```bash
-    grep zabbix /etc/passwd
-    ```
+# Создание файла (путь /var/lib/zabbix/.my.cnf)
+cat <<EOF | sudo tee /var/lib/zabbix/.my.cnf
+[client]
+user=zabbix_monitor
+password=your_secure_password
+EOF
 
-    Обычно `/var/lib/zabbix`.
+# Установка прав доступа
+sudo chown zabbix:zabbix /var/lib/zabbix/.my.cnf
+sudo chmod 600 /var/lib/zabbix/.my.cnf
+```
 
-2. **Создать файл `/var/lib/zabbix/.my.cnf`:**
+#### 4. Проверка работоспособности
 
-    ```ini
-    [client]
-    user=zabbix_monitor
-    password=your_secure_password
-    ```
+Проверьте возможность подключения к MySQL от имени пользователя `zabbix`:
 
-3. **Установить безопасные права:**
+```bash
+sudo -u zabbix mysqladmin ping
+# -> mysqld is alive
+```
 
-    ```bash
-    sudo chown zabbix:zabbix /var/lib/zabbix/.my.cnf
-    sudo chmod 600 /var/lib/zabbix/.my.cnf
-    ```
+Если получен ответ `mysqld is alive`, конфигурация выполнена верно.
 
-#### 4. Настройка в веб-интерфейсе Zabbix
+#### 5. Подключение шаблона в Zabbix
 
-1. Перейдите в `Configuration` → `Hosts`, создайте хост.
-2. Укажите `Hostname`, соответствующий значению в `zabbix_agentd.conf`.
-3. На вкладке `Templates` привяжите шаблон `MySQL by Zabbix agent`.
-
-#### 5. Проверка и отладка
-
-- **Latest Data**: `Monitoring` → `Latest data` — проверьте поступление метрик.
-- **Логи**: При проблемах изучите `/var/log/zabbix/zabbix_agentd.log`.
-- **Ручная проверка**:
-
-    ```bash
-    # Проверка от имени пользователя zabbix
-    sudo -u zabbix mysqladmin ping
-    # Если успешно — .my.cnf настроен верно
-    ```
-
-#### 6. Настройка оповещений
-
-Шаблон содержит триггеры. Проверьте их в `Configuration` → `Hosts` → `Triggers`, адаптируйте пороги. Настройте `Actions` для отправки уведомлений.
+1. В веб-интерфейсе Zabbix перейдите в раздел **Configuration** (Конфигурация) → **Hosts** (Узлы сети).
+2. Выберите нужный хост или создайте новый.
+3. На вкладке **Templates** (Шаблоны) добавьте стандартный шаблон `MySQL by Zabbix agent`.
+4. Сохраните изменения и проверьте поступление данных в разделе **Monitoring** (Мониторинг) → **Latest data** (Последние данные).
 
 ## Дополнительная информация
 
-**Ключевые метрики:**
+**Ключевые метрики для мониторинга:**
 
-- **Доступность**: `mysql.ping`
-- **Производительность**: `mysql.status[Slow_queries]`, `mysql.status[Threads_connected]`, соотношение `Innodb_buffer_pool_read_requests` / `Innodb_buffer_pool_reads` (hit rate).
-- **Репликация**: `mysql.status[Slave_running]` (ON/OFF), `mysql.status[Seconds_behind_master]`.
+- **Доступность**: `mysql.ping` (состояние сервиса).
+- **Производительность**:
+  - `Slow_queries` (количество медленных запросов).
+  - `Threads_connected` (количество активных соединений).
+  - **Innodb Buffer Pool Hit Rate**: эффективность использования оперативной памяти для кэширования данных.
+- **Репликация**:
+  - `Slave_running` (статус потоков репликации).
+  - `Seconds_behind_master` (отставание от мастера в секундах).
 
-**Альтернативные системы:** Prometheus + [mysqld_exporter](../../Prometheus/Exporters/other_exporters.md), [Percona Monitoring and Management (PMM)](../../Databases/MySQL/overview.md).
+**Альтернативные методы:**
+
+- [Использование Prometheus mysqld_exporter](../../Prometheus/Exporters/other_exporters.md).
+- [Percona Monitoring and Management (PMM)](./overview.md) — специализированное решение для глубокого анализа производительности.

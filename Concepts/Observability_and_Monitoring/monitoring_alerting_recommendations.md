@@ -1,4 +1,4 @@
-# Monitoring Alerting Recommendations
+# Рекомендации по мониторингу и алертингу
 
 ## Определения
 
@@ -24,9 +24,9 @@
 
 | Инструмент | Назначение |
 | :--- | :--- |
-| **[Grafana Alerting](../../../Grafana/alerting/concepts.md)** | Визуальное создание правил, multi-dimension алерты, снимки графиков |
-| **[Prometheus Alertmanager](../../../Prometheus/alertmanager.md)** | Дедупликация, группировка, подавление, маршрутизация алертов |
-| **[Recording Rules](../../../Prometheus/rules.md)** | Предварительная агрегация метрик для упрощения правил алертинга |
+| **[Grafana Alerting](../../Grafana/alerting/concepts.md)** | Визуальное создание правил, multi-dimension алерты, снимки графиков |
+| **[Prometheus Alertmanager](../../Prometheus/alertmanager.md)** | Дедупликация, группировка, подавление, маршрутизация алертов |
+| **[Recording Rules](../../Prometheus/rules.md)** | Предварительная агрегация метрик для упрощения правил алертинга |
 
 > **См. также:** [Методологии мониторинга](./monitoring_methodologies.md) — Four Golden Signals, RED, USE
 
@@ -59,23 +59,16 @@
 
 ### Первые алерты для Kubernetes-приложений
 
-Для контейнеризированных приложений в Kubernetes рекомендуется настроить алерты на:
+Детальные примеры PromQL запросов, пороговых значений и конфигурации алертов для перезапусков, OOM Killed, потребления CPU и памяти приведены в SSoT-файле:
+> **[Алерты для Kubernetes в Grafana](../../Grafana/alerting/kubernetes_alerts.md)**
 
-| Метрика | Выражение (PromQL) | Порог |
-| :--- | :--- | :--- |
-| **Перезапуск контейнера** | `increase(kube_pod_container_status_restarts_total[5m]) > 0` | Любой рестарт |
-| **OOM Killed** | `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1` | Любое событие |
-| **Недоступность реплик** | `<90%` реплик доступны | В течение `5m` |
-| **Высокое потребление CPU** | `>80%` от limits | В течение `10m` |
-| **Высокое потребление памяти** | `>85%` от limits | В течение `10m` |
-
-> **Примеры алертов для разных типов метрик:** [Prometheus Alerts](../../../Prometheus/concepts/metric_types/alerts.md)  
-> **Подробнее:** [Алерты для Kubernetes в Grafana](../../../Grafana/alerting/kubernetes_alerts.md)
+Также см. примеры алертов для базовых типов метрик:
+> **[Prometheus Alerts](../../Prometheus/concepts/metric_types/alerts.md)**
 
 ## Дополнительная информация
 
-**Связанные темы:**
+### Связанные темы
 
-- [Observability в контейнерах](./observability_in_containers.md) — мониторинг контейнеризированных приложений
-- [Дизайн мониторинга для high-load систем](./designing_high-load_monitoring_in_distributed_systems.md) — архитектура распределённого мониторинга
-- [Best Practices: Grafana Alerting](../../../Grafana/alerting/best_practices.md) — сравнение Grafana Alerting и Alertmanager
+- **[Observability в контейнерах](./observability_in_containers.md)** — особенности мониторинга контейнеров
+- **[Проектирование высоконагруженного мониторинга](./designing_high-load_monitoring_in_distributed_systems.md)** — архитектура систем
+- **[Лучшие практики алертинга в Grafana](../../Grafana/alerting/best_practices.md)** — рекомендации по настройке Grafana

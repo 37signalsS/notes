@@ -34,7 +34,7 @@
 | 2 | **Redundancy (Резервирование)** | Резервирование критичных компонентов — запасной вариант для важных узлов. Без резервирования единичный отказ способен остановить всю систему. | [Active-Passive модели](./ha_failover_mechanisms.md), [N+1/N+M](./ha_clustering_and_load_balancing.md) |
 | 3 | **Load Balancing (Балансировка нагрузки)** | Распределение трафика между несколькими серверами. Предотвращает перегрузку отдельных узлов и снижает вероятность отказа из-за всплесков трафика. | [Кластеризация и балансировка](./ha_clustering_and_load_balancing.md), [Nginx/Haproxy](../../WebServers/Nginx/Proxy/Load_Balancing/algorithms.md) |
 | 4 | **Failover (Автоматическое переключение)** | Автоматический переход на резервный компонент при сбое основного без ручного вмешательства. | [Механизмы failover](./ha_failover_mechanisms.md), [Keepalived/VRRP](./ha_failover_mechanisms.md#ip-failover-с-keepalived-vrrp) |
-| 5 | **Graceful Degradation (Элегантная деградация)** | Сохранение основных функций системы при частичном отказе. Сервис не отключается полностью, а временно ограничивает второстепенные возможности. | [Circuit Breaker](../../Service_Mesh/circuit_breaker.md), [SRE бюджет ошибок](../sre_concepts_main.md) |
+| 5 | **Graceful Degradation (Элегантная деградация)** | Сохранение основных функций системы при частичном отказе. Сервис не отключается полностью, а временно ограничивает второстепенные возможности. | [Circuit Breaker](./tail_latency_mitigation.md#1-circuit-breaker-предохранитель) ([Istio](../../Service_Mesh/traffic_management.md#сценарий-7-circuit-breaking-istio-destinationrule)), [SRE бюджет ошибок](../sre_concepts_main.md) |
 | 6 | **Monitoring & Alerting (Мониторинг и оповещения)** | Непрерывный контроль состояния системы и уведомления о проблемах. Позволяет обнаруживать сбои, перегрузки и деградацию до перерастания в серьёзный инцидент. | [Alerting рекомендации](../Observability_and_Monitoring/monitoring_alerting_recommendations.md), [Методологии мониторинга](../Observability_and_Monitoring/monitoring_methodologies.md) |
 
 ### Модели построения HA
@@ -68,4 +68,4 @@
 
 Построение HA-архитектуры начинается с определения бизнес-требований и формализации их как **Service Level Objectives (SLO)**. Выбранный уровень доступности влияет на архитектурные решения, технологии и эксплуатационные затраты.
 
-SLO, SLA, бюджет ошибок и управление надежностью описаны в [SRE концепциях](../sre_concepts_main.md).
+Общие концепции управления надежностью описаны в [SRE концепциях](../sre_concepts_main.md).

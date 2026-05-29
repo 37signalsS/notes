@@ -1,4 +1,4 @@
-# Four Pillars of Observability
+# Четыре столпа Observability
 
 ## Определения
 
@@ -33,7 +33,7 @@
 
 **Подход:** «Пишем всё, потом думаем» — ценой трафика получаем полную детализацию.
 
-**Инструменты:** **[Loki](../../../Loki/loki_overview.md)**, **Elasticsearch**, **[Vector](../../../Vector/vector_overview.md)**, **Fluent Bit**.
+**Инструменты:** **[Loki](../../Loki/loki_overview.md)**, **Elasticsearch**, **[Vector](../../Vector/vector_overview.md)**, **Fluent Bit**.
 
 **Важно:** логи должны быть структурированными (JSON) и содержать `trace_id` для корреляции с трассировками. Подробнее: **[Логи: детали](./logs_deep_dive.md)**.
 
@@ -64,7 +64,7 @@
 
 **Подход:** «Думаем и пишем только что надо» — ценой потери деталей получаем эффективность.
 
-**Инструменты:** **[Prometheus](../../../Prometheus/overview.md)**, **[VictoriaMetrics](../../../VictoriaMetrics/overview.md)**, **Grafana Mimir**, **Thanos**. Подробнее: **[Метрики: детали](./metrics_deep_dive.md)**.
+**Инструменты:** **[Prometheus](../../Prometheus/overview.md)**, **[VictoriaMetrics](../../VictoriaMetrics/overview.md)**, **Grafana Mimir**, **Thanos**. Подробнее: **[Метрики: детали](./metrics_deep_dive.md)**.
 
 ### 3. Трассировки (Traces)
 
@@ -82,7 +82,7 @@
 
 **Сэмплирование (Sampling):** сбор данных для доли запросов (например, 1% или только ошибки) для снижения нагрузки.
 
-**Инструменты:** **Jaeger**, **Zipkin**, **[Grafana Tempo](../../../Tempo/index.md)**, **[OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md)**. Подробнее: **[Трассировки: детали](./traces_deep_dive.md)**.
+**Инструменты:** **Jaeger**, **Zipkin**, **[Grafana Tempo](../../Tempo/index.md)**, **[OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md)**. Подробнее: **[Трассировки: детали](./traces_deep_dive.md)**.
 
 **Важно:** корреляция трассировок с логами через `trace_id` — краеугольный камень observability-платформы.
 
@@ -105,7 +105,7 @@
 
 **Инструменты:** **Pyroscope**, **Periscope** (на базе Grafana).
 
-**eBPF (extended Berkeley Packet Filter):** технология для глубокого анализа на уровне ядра без изменения кода приложения. Позволяет строить Flame Graphs на основе системных вызовов. Подробнее: **[Непрерывное профилирование](../../../continuous_profiling.md)**.
+**eBPF (extended Berkeley Packet Filter):** технология для глубокого анализа на уровне ядра без изменения кода приложения. Позволяет строить Flame Graphs на основе системных вызовов. Подробнее: **[Непрерывное профилирование](../continuous_profiling.md)**.
 
 ## Практический сценарий: Корреляция данных
 
@@ -128,7 +128,7 @@
 2. **Двусторонний переход:** от метрик → к логам/трассировкам и обратно
 3. **Автоматическая корреляция:** дашборды Grafana показывают связанные данные из разных источников
 
-## Additional Information
+## Дополнительная информация
 
 ### Сравнительная таблица столпов
 
@@ -145,11 +145,9 @@
 - **[Методологии мониторинга](./monitoring_methodologies.md)** — Golden Signals, RED, USE
 - **[Стратегии сбора метрик](./metrics_collection_strategies.md)** — pull vs push модели
 - **[Observability в контейнерах](./observability_in_containers.md)** — мониторинг контейнеризированных приложений
-- **[Высоконагруженный мониторинг](./designing_high-load_monitoring_in_distributed_systems.md)** — архитектура распределённых систем
 
 ### Дополнительные ресурсы
 
 - **[Логи: детали](./logs_deep_dive.md)** — глубокое погружение в логи
 - **[Метрики: детали](./metrics_deep_dive.md)** — типы метрик и характеристики
 - **[Трассировки: детали](./traces_deep_dive.md)** — распределённая трассировка
-- **[Профилирование: детали](./profiling_deep_dive.md)** — анализ производительности

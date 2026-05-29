@@ -171,29 +171,15 @@ check_service:
 
 ### Настройка и запуск Runner'а
 
-#### Установка и регистрация GitLab Runner
+Для выполнения CI/CD-задач необходим GitLab Runner. Runner — это агент, который устанавливается на отдельный сервер и выполняет шаги, описанные в `.gitlab-ci.yml`. Для запуска плейбуков Ansible обычно используется Runner с `shell` или `docker` executor.
 
-1. **Установите GitLab Runner** на машину, где будет выполняться Ansible, следуя [официальной инструкции](https://docs.gitlab.com/runner/install/). Пример для Debian/Ubuntu:
-
-    ```bash
-    curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
-    sudo apt-get install gitlab-runner
-    ```
-
-2. **Зарегистрируйте Runner:**
-    - В проекте GitLab перейдите в `Settings -> CI/CD -> Runners` и скопируйте URL и токен.
-    - Выполните на машине с Runner'ом: `sudo gitlab-runner register`.
-    - В процессе регистрации укажите:
-        - **URL и токен** вашего GitLab.
-        - **Description:** Понятное имя для Runner'а.
-        - **Tags:** Теги для направления задач (например, `ansible, linux`).
-        - **Executor:** `shell`. Это самый простой executor для начала работы.
+Подробное пошаговое руководство по установке и регистрации Runner'а, включая рекомендованный `docker` executor, находится в основном документе: **[Регистрация GitLab Runner](./runner_registration.md)**.
 
 #### Запуск Ansible Playbook из GitLab CI
 
 **Пример структуры проекта:**
 
-```
+```text
 .
 ├── ansible.cfg
 ├── hosts.ini
@@ -253,12 +239,12 @@ check_service:
 
 ## Дополнительная информация
 
-- **CI-образ с Ansible:** Вместо установки Ansible на каждом запуске (`pip install ansible`) рекомендуется собрать Docker-образ с нужной версией Ansible и использовать его как `image:` в задачах. Это ускоряет пайплайн.
-- **Notify/Handlers:** При изменении конфигурационных файлов через модуль `template` используйте `notify` для перезапуска сервиса через handler. Handler выполняется только при фактическом изменении файла (статус `changed`), что исключает лишние перезапуски. Подробнее — [Ansible: Роли](../../../Ansible/ansible_roles.md#компоненты-роли).
-- **Версионирование ролей:** При использовании внешних репозиториев для ролей указывайте конкретный Git-тег при клонировании (`git clone --branch v1.2 ...`). Это гарантирует воспроизводимость деплоя. Подробнее — [Git-менеджмент ролей](../../../Ansible/Roles/git_management.md).
-- **Разделение inventory:** Храните inventory для staging и production в отдельных файлах (`inventory/staging`, `inventory/production`). Это упрощает управление средами и снижает риск accidental-деплоя на прод.
-- **Откат изменений:** При сбое деплоя — создайте revert-коммит в `main` и запустите пайплайн заново. Git хранит историю, и откат — это такое же изменение кода, как и любое другое.
-- **Executor'ы:** `shell` прост для начала, но не обеспечивает изоляции. Для продуктивных сред — `docker` или `kubernetes`. Подробнее — [Исполнители GitLab CI Runners](../Advanced/gitlab_ci_runners_executors.md).
-- **Управление секретами:** [Переменные и секреты GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), [Ansible Vault](../../../Ansible/Vault/basics.md).
-- **Основы GitLab CI/CD:** [Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md).
-- **Пример безопасной архитектуры CI/CD с Ansible:** [Wrapper-скрипт + GitLab Runner](../../../Ansible/examples/example_real_world_ci_cd.md) — промышленный подход с изоляцией SSH-ключей.
+Для ускорения пайплайнов рекомендуется предварительно собирать Docker-образ с установленным Ansible, а не устанавливать его на каждом запуске. При работе с конфигурационными файлами используйте `notify` и `handlers` для условного перезапуска сервисов. Это позволяет избежать ненужных перезапусков, если файл не изменился.
+
+Безопасность и управление средами являются ключевыми аспектами. Храните inventory для `staging` и `production` в отдельных файлах, чтобы снизить риск случайного развертывания. Для отката изменений достаточно сделать `revert` коммита в `main` и запустить пайплайн заново.
+
+### Смотрите также
+
+- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — для понимания базовых концепций пайплайнов.
+- **[Управление секретами](../Concepts/gitlab_ci_variables_secrets.md)** и **[Ansible Vault](../../../Ansible/Vault/basics.md)** — для безопасной работы с учетными данными.
+- **[Пример безопасной архитектуры CI/CD с Ansible](../../../Ansible/examples/example_real_world_ci_cd.md)** — для реализации промышленного подхода с изоляцией SSH-ключей.

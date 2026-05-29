@@ -36,6 +36,6 @@ ansible-doc -l
 
 ## Дополнительная информация
 
-Официальная документация: [все модули Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules). 
-Рекомендации по безопасности: [Лучшие практики Ansible](../ansible_security_best_practices.md). 
+Официальная документация: [все модули Ansible](https://docs.ansible.com/ansible/latest/collections/all_plugins.html#modules).
+Рекомендации по безопасности: [Лучшие практики Ansible](../ansible_security_best_practices.md).
 Создание пользовательских модулей: [Пользовательские модули](../ansible_custom_modules.md).

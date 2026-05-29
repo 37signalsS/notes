@@ -53,7 +53,7 @@
 2. **Обновление манифеста:** CI-пайплайн обновляет тег образа в Git-репозитории с манифестами.
 3. **CD-этап:** GitOps-оператор обнаруживает изменения и синхронизирует кластер.
 
-**Подробнее:** [GitOps Pipeline Example](../CI-CD/Core_Concepts/gitops_pipeline_example.md), [Образы контейнеров](./Concepts/containerization_and_image_storage.md).
+**Подробнее:** [Пример GitOps-пайплайна](./gitops_pipeline_example.md), [Образы контейнеров](./Concepts/containerization_and_image_storage.md).
 
 ### Сценарий 3: Управление секретами
 

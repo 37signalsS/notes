@@ -1,8 +1,8 @@
-# GitOps Pipeline Example
+# Пример GitOps-пайплайна
 
 ## Определения
 
-**GitOps Pipeline** — это конвейер доставки ПО, реализующий [GitOps-подход](../../GitOps/GitOps_overview.md), где CI-система отвечает за сборку артефактов, а CD-система декларативно управляет состоянием кластера на основе манифестов в Git.
+**GitOps-пайплайн** — это конвейер доставки ПО, реализующий [GitOps-подход](./GitOps_overview.md), где CI-система отвечает за сборку артефактов, а CD-система декларативно управляет состоянием кластера на основе манифестов в Git.
 
 ## Основные концепции
 
@@ -11,7 +11,7 @@
 Пайплайн разделен на две независимые части:
 
 1. **CI (Continuous Integration):** Проверка кода, сборка и публикация артефактов (Docker-образ и Helm-чарт).
-2. **CD (Continuous Delivery):** Синхронизация состояния кластера через GitOps-агент (например, [ArgoCD](../../GitOps/ArgoCD/argocd_overview.md)).
+2. **CD (Continuous Delivery):** Синхронизация состояния кластера через GitOps-агент (например, [ArgoCD](./ArgoCD/argocd_overview.md)).
 
 ### Инструменты
 
@@ -22,7 +22,7 @@
 
 ### Поток выполнения
 
-#### 1. Работа в фича-ветке (`feature-branch`)
+#### 1. Работа в фича-ветке (feature-branch)
 
 - **Триггер:** `git push` в фича-ветку или создание Pull Request в `main`.
 - **Действия (GitHub Actions):**
@@ -30,13 +30,13 @@
   - Unit-тесты.
   - (Опционально) Сборка образа для preview-окружений (артефакт не публикуется в основной реестр).
 
-#### 2. Слияние в `main` (CI-часть)
+#### 2. Слияние в main (CI-часть)
 
 - **Триггер:** Merge Pull Request в ветку `main`.
 - **Действия (GitHub Actions):**
   1. Интеграционные тесты.
   2. Сборка Docker-образа с тегом версии (например, `v1.2.3` или `main-<short-sha>`).
-  3. Публикация Docker-образа в OCI-реестр (Docker Hub, Harbor, GHCR).
+  3. Публикация Docker-образа в OCI (Open Container Initiative) реестр (Docker Hub, Harbor, GHCR).
   4. Сборка и публикация Helm-чарта:
      - Версия `appVersion` в `Chart.yaml` обновляется до версии Docker-образа.
      - Версия чарта (`version`) инкрементируется.
@@ -64,4 +64,4 @@
 
 ## Дополнительная информация
 
-Методология GitOps подробно описана в [GitOps Overview](../../GitOps/GitOps_overview.md). Инструмент ArgoCD рассмотрен в [ArgoCD Overview](../../GitOps/ArgoCD/argocd_overview.md). Базовый workflow CI/CD — в [Типичный поток пайплайна](./pipeline_workflow.md). Хранение и версионирование артефактов — в [Управление артефактами](../artifact_management.md).
+Методология GitOps подробно описана в [Обзор GitOps](./GitOps_overview.md). Инструмент ArgoCD рассмотрен в [ArgoCD Overview](./ArgoCD/argocd_overview.md). Базовый workflow CI/CD — в [Типичный поток пайплайна](../CI-CD/Core_Concepts/pipeline_workflow.md). Хранение и версионирование артефактов — в [Управление артефактами](../CI-CD/artifact_management.md).

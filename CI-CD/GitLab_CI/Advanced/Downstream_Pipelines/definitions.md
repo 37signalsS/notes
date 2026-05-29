@@ -1,4 +1,4 @@
-# Downstream Pipelines — Определения
+# Определения Downstream-пайплайнов
 
 ## Определения
 

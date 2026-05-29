@@ -1,21 +1,21 @@
 # SAST vs DAST: сравнение подходов
 
-## Definitions
+## Определения
 
-**SAST (Static Application Security Testing)** и **DAST (Dynamic Application Security Testing)** — взаимодополняющие подходы к тестированию безопасности приложений.
+**SAST (Static Application Security Testing — статическое тестирование безопасности приложений)** и **DAST (Dynamic Application Security Testing — динамическое тестирование безопасности приложений)** — взаимодополняющие подходы к тестированию безопасности приложений.
 
 - **SAST** — «белый ящик»: анализ исходного/байт-кода до запуска приложения.
 - **DAST** — «черный ящик»: тестирование работающего приложения через внешние интерфейсы.
 
 Детальные обзоры: [SAST](./sast_overview.md), [DAST](./dast_overview.md).
 
-## Basic Concepts
+## Базовые концепции
 
 ### Сравнение по ключевым критериям
 
 | Критерий | SAST | DAST |
 | :--- | :--- | :--- |
-| **Этап** | Коммит/PR, сборка | Тест/стейджинг после деплоя |
+| **Этап** | PR (Pull Request) / MR (Merge Request), сборка | Тест/стейджинг после деплоя |
 | **Контекст** | Статический анализ кода | Рантайм, реальная конфигурация |
 | **Скорость** | Быстро (инкрементально), долго (полный скан) | Средне/долго (зависит от сложности) |
 | **False positives** | Часты без настройки | Реже (зависят от среды/аутентификации) |
@@ -26,7 +26,7 @@
 ### Типы обнаруживаемых уязвимостей
 
 - **SAST:** инъекции (SQL, Command, LDAP), небезопасная десериализация, ошибки логики авторизации, слабые криптоалгоритмы, секреты в коде.
-- **DAST:** XSS, ошибки заголовков (HSTS, CSP), уязвимости сессий, CSRF, SSRF, открытые редиректы.
+- **DAST:** XSS (Cross-Site Scripting), ошибки заголовков (HSTS — HTTP Strict Transport Security, CSP — Content Security Policy), уязвимости сессий, CSRF (Cross-Site Request Forgery), SSRF (Server-Side Request Forgery), открытые редиректы.
 
 Полное сопоставление — в [обзоре уязвимостей SAST/DAST](./sast_dast_vulnerabilities.md).
 
@@ -35,7 +35,7 @@
 - **SAST:** зависит от качества правил; пропускает уязвимости из генерации кода; требует настройки для снижения шума.
 - **DAST:** чувствителен к качеству среды; не покрывает скрытые эндпоинты; может создавать нагрузку на тестовое окружение.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Порядок интеграции в CI/CD
 
@@ -53,6 +53,7 @@ sast:
   stage: security
   image: registry.example.com/tools/sast:latest
   script:
+    # Анализ в формате SARIF (Static Analysis Results Interchange Format)
     - ./sast --path . --format sarif --out sast.sarif
     - ./severity-gate sast.sarif --fail-on high
   artifacts:
@@ -79,11 +80,11 @@ dast:
 
 Детали интеграции — в [SAST/DAST в CI/CD](./sast_dast_cicd_integration.md).
 
-## Additional Information
+## Дополнительная информация
 
 ### Комбинированная стратегия
 
-- **Shift Left:** SAST в IDE + pre-commit хуки для ранней обратной связи.
+- **Shift Left:** SAST в IDE (Integrated Development Environment) + pre-commit хуки для ранней обратной связи.
 - **Shift Right:** DAST в ночных сборках с полной аутентификацией.
 - **Корреляция:** связывание отчётов SAST/DAST для приоритизации эксплуатируемых уязвимостей.
 
@@ -94,4 +95,8 @@ dast:
 - DAST: исключайте деструктивные маршруты, настраивайте профили аутентификации.
 - Исключения храните в репозитории (`.sast-ignore`, `dast-exceptions.json`).
 
-Методология DevSecOps — в [обзоре DevSecOps](./devsecops_overview.md).
+### См. также
+
+- [Обзор методологии DevSecOps](./devsecops_overview.md)
+- [Интеграция SAST/DAST в CI/CD](./sast_dast_cicd_integration.md)
+- [Типичные уязвимости SAST и DAST](./sast_dast_vulnerabilities.md)

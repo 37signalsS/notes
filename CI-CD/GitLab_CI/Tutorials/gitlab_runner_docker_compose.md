@@ -1,12 +1,11 @@
-# Установка GitLab + Runner через Docker Compose
+# Установка GitLab и Runner через Docker Compose
 
 ## Определения
 
-**Docker Compose** — инструмент для декларативного описания и управления многоконтейнерными приложениями через единый YAML-файл.
-
-**GitLab Runner** — агент, выполняющий CI/CD-задачи (jobs) из пайплайнов GitLab.
-
-**Container Registry** — встроенный в GitLab реестр Docker-образов для хранения и распространения артефактов сборки.
+- **Docker Compose**: Инструмент для декларативного описания и управления многоконтейнерными приложениями через единый YAML-файл.
+- **GitLab Runner**: Агент, выполняющий CI/CD-задачи (jobs) из пайплайнов GitLab.
+- **Container Registry**: Встроенный в GitLab реестр Docker-образов для хранения и распространения артефактов сборки.
+- **Docker-in-Docker (DinD)**: Технология, позволяющая запускать Docker внутри Docker-контейнера. В контексте Runner часто реализуется через проброс Docker Socket (`/var/run/docker.sock`).
 
 ## Основные концепции
 
@@ -14,29 +13,29 @@
 
 Docker Compose позволяет описать GitLab Server и GitLab Runner в одном файле, обеспечивая:
 
-- Совместный запуск и остановку всех компонентов
-- Единую сеть для взаимодействия между сервером и Runner
-- Централизованное управление ресурсами
+- Совместный запуск и остановку всех компонентов.
+- Единую сеть для взаимодействия между сервером и Runner.
+- Централизованное управление ресурсами и томами данных.
 
-### Docker-in-Docker (DinD)
+### Изоляция и безопасность
 
-Проброс Docker Socket (`/var/run/docker.sock`) в контейнер Runner позволяет ему запускать контейнеры непосредственно на хост-машине. Это упрощённый подход, подходящий для тестовых и учебных сред.
+Проброс Docker Socket в контейнер Runner позволяет ему запускать контейнеры непосредственно на хост-машине. Это упрощённый подход, подходящий для тестовых и учебных сред, но имеющий риски безопасности, так как Runner получает полный доступ к Docker-демону хоста.
 
 ### Встроенный Container Registry
 
-GitLab предоставляет встроенный Docker Registry для хранения образов, собранных в CI/CD-пайплайнах. Включается через параметр `registry_enabled` в конфигурации.
+GitLab предоставляет встроенный Docker Registry. В конфигурации Docker Compose он включается через параметры Omnibus, что позволяет пайплайнам публиковать собранные образы без настройки внешних хранилищ.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-- Docker и Docker Compose v2+ установлены
-- Минимум 4 ядра CPU и 8 ГБ RAM
+- Установленные Docker и Docker Compose v2+.
+- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ).
 - Для локального доступа — запись в `/etc/hosts`:
 
-```bash
-127.0.0.1 gitlab.devops
-```
+  ```bash
+  127.0.0.1 gitlab.devops
+  ```
 
 ### Шаг 1: Подготовка директорий
 
@@ -45,6 +44,8 @@ mkdir -p /srv/gitlab-runner/config
 ```
 
 ### Шаг 2: Создание docker-compose.yml
+
+Создайте файл `docker-compose.yml` со следующим содержимым:
 
 ```yaml
 services:
@@ -56,6 +57,7 @@ services:
     ports:
       - '80:80'
       - '443:443'
+      - '5050:5050'
     volumes:
       - /srv/gitlab/config:/etc/gitlab
       - /srv/gitlab/logs:/var/log/gitlab
@@ -77,90 +79,78 @@ services:
       - gitlab
 ```
 
-**Ключевые моменты:**
+**Ключевые параметры конфигурации:**
 
 | Параметр | Описание |
 | :--- | :--- |
-| `registry_enabled` | Включает встроенный Container Registry для хранения Docker-образов |
-| `/var/run/docker.sock` | Проброс Docker Socket позволяет Runner'у запускать контейнеры (Docker-in-Docker) |
-| `/srv/gitlab-runner/config` | Постоянное хранение `config.toml` — конфигурации зарегистрированных Runner'ов |
+| `registry_enabled` | Включает встроенный Container Registry. |
+| `/var/run/docker.sock` | Проброс Docker Socket для работы Runner в режиме Docker-in-Docker. |
+| `/srv/gitlab-runner/config` | Место хранения `config.toml` — конфигурации зарегистрированных Runner'ов. |
 
-### Шаг 3: Запуск сервисов
+### Шаг 3: Запуск и проверка готовности
+
+Запустите сервисы:
 
 ```bash
 docker compose up -d
 ```
 
-Первый запуск GitLab занимает **5-15 минут**. Проверить готовность можно командой:
+Первый запуск GitLab занимает **5–15 минут**. Следить за процессом можно через логи:
 
 ```bash
 docker logs -f gitlab
 ```
 
-### Шаг 4: Регистрация Runner
-
-После инициализации GitLab необходимо зарегистрировать Runner:
-
-1. Получите регистрационный токен в UI: **Settings → CI/CD → Runners** (или через API)
-2. Зарегистрируйте Runner:
+Пароль администратора (`root`) можно получить командой:
 
 ```bash
-docker run --rm -it -v /srv/gitlab-runner/config:/etc/gitlab-runner \
-  gitlab/gitlab-runner:alpine register
+docker exec gitlab cat /etc/gitlab/initial_root_password
 ```
 
-Интерактивный запрос:
+### Шаг 4: Регистрация Runner
 
-- GitLab URL: `http://gitlab.devops`
-- Registration token: (из UI)
-- Executor: `docker`
-- Default Docker image: `alpine:latest`
+После полной инициализации GitLab необходимо зарегистрировать агент:
 
-### Шаг 5: Проверка
+1. Откройте `http://gitlab.devops` и войдите под учетной записью `root`.
+2. Перейдите в **Settings → CI/CD → Runners** и скопируйте **Registration Token**.
+3. Выполните регистрацию (подробности см. в [Регистрация GitLab Runner](./runner_registration.md)):
 
-1. Откройте `http://gitlab.devops` в браузере
-2. Логин: `root`, пароль — из `/etc/gitlab/initial_root_password`
-3. Убедитесь, что Runner появился в **Settings → CI/CD → Runners** с зеленым индикатором
+   ```bash
+   docker run --rm -it -v /srv/gitlab-runner/config:/etc/gitlab-runner \
+     gitlab/gitlab-runner:alpine register
+   ```
 
-### Альтернатива: автоматическая регистрация
+   - URL: `http://gitlab.devops`
+   - Token: (из UI)
+   - Executor: `docker`
+   - Default image: `alpine:latest`
 
-Для полностью автоматизированного развертывания можно использовать скрипт, который:
+### Автоматизация регистрации (опционально)
 
-1. Запускает Docker Compose
-2. Ожидает инициализации GitLab (цикл с проверкой API)
-3. Получает регистрационный токен через GitLab API
-4. Регистрирует Runner автоматически
-
-Пример логики такого скрипта:
+Для полностью автоматизированного развертывания можно использовать скрипт, ожидающий готовности API перед регистрацией. Пример логики:
 
 ```bash
 #!/bin/bash
-# 1. Запуск сервисов
 docker compose up -d
 
-# 2. Ожидание инициализации GitLab
 until curl -s http://gitlab.devops | grep -q "GitLab"; do
   echo "Ожидание инициализации GitLab..."
   sleep 30
 done
 
-# 3. Получение токена и регистрация Runner
-# (через GitLab API или UI)
-
-echo "Установка завершена"
+echo "GitLab готов. Выполните регистрацию Runner вручную или через API."
 ```
 
 ## Дополнительная информация
 
-### Область применения
+### Ограничения и рекомендации
 
-Данный сценарий предназначен для **тестовых и учебных сред**. Для production используйте раздельное размещение компонентов с фиксированными версиями образов.
-
-### Рекомендуемая версия
-
-Текущая стабильная версия: **GitLab 18.10.3** (апрель 2026). Фиксируйте версию в Docker Compose для предсказуемости обновлений.
+- **Область применения**: Данный сценарий предназначен исключительно для **тестовых и учебных сред**.
+- **Production**: Для продуктивных сред рекомендуется раздельное размещение компонентов и использование нативной установки (Omnibus) или Kubernetes. Подробнее см. в [Установка Self-Hosted GitLab CE](./self_hosted_installation.md).
+- **Версионность**: Используйте фиксированные теги образов (например, `18.10.3-ce.0`) вместо `latest` для стабильности пайплайнов.
 
 ### Смежные руководства
 
-- [Установка GitLab CE через Docker](./self_hosted_installation.md) — production-ориентированный сценарий
-- [Регистрация GitLab Runner](./runner_registration.md) — альтернативные методы регистрации
+- [Установка Self-Hosted GitLab CE с помощью Docker](./self_hosted_installation.md) — подробный разбор параметров GitLab.
+- [Регистрация GitLab Runner](./runner_registration.md) — SSoT по вопросам регистрации агентов.
+- [Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md) — архитектура и выбор исполнителя.

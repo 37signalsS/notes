@@ -105,4 +105,3 @@ compose:
 - [Установка и настройка Ansible](ansible_setup_and_config.md) — базовые концепции инвентаря.
 - [Официальная документация по плагинам инвентаря](https://docs.ansible.com/ansible/latest/plugins/inventory.html)
 - [Использование тегов в Ansible](./CrossPlatform/concepts.md)
-

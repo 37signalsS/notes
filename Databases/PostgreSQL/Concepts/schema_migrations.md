@@ -1,105 +1,91 @@
-# PostgreSQL Schema Migrations
+# Миграции схем в PostgreSQL
 
-## Definitions
+## Определения
 
-* **Миграция схемы:** Упорядоченный, версионируемый процесс изменения структуры базы данных (например, добавление таблиц или колонок).
-* **Откат миграции (Rollback):** Процесс отмены примененных изменений для возврата схемы к предыдущему состоянию.
+- **Транзакционный DDL**: Возможность PostgreSQL выполнять команды изменения схемы (DDL) внутри транзакций, обеспечивая атомарность: либо все изменения применяются, либо ни одно.
+- **Блокировка таблицы (Table Lock)**: Состояние, при котором DDL-операция (например, `ALTER TABLE`) захватывает эксклюзивный доступ к таблице, блокируя запросы на чтение и запись.
+- **Расширение (Extension)**: Модуль, расширяющий функциональность PostgreSQL (например, `pg_stat_statements`, `postgis`), требующий отдельного управления версиями.
 
-## Basic Concepts
+## Базовые концепции
 
-Общие концепции управления миграциями (императивный vs декларативный подход, стратегии отката, expand-contract) описаны в **[Миграции баз данных: Основы](../../../Concepts/migrations/migration_basics.md)**.
+Общие принципы управления миграциями (типы, идемпотентность, транзакционность) описаны в **[Миграции баз данных: Основы](../../Concepts/migrations/migration_basics.md)**.
 
-### PostgreSQL-Specific Considerations
+### Особенности PostgreSQL
 
-* **Транзакционность DDL:** PostgreSQL поддерживает транзакции для DDL-операций. Миграции можно оборачивать в `BEGIN ... COMMIT`, что обеспечивает атомарность изменений.
-* **Блокировки при миграциях:** DDL-операции (например, `ALTER TABLE`) могут блокировать таблицу на время выполнения. Для больших таблиц это критично.
-* **Расширения (Extensions):** PostgreSQL поддерживает расширения (`CREATE EXTENSION`), которые также требуют версионирования и миграции.
+1. **Безопасность изменений**: Благодаря транзакционному DDL, при сбое миграции PostgreSQL автоматически откатывает все изменения структуры, не оставляя базу в промежуточном состоянии.
+2. **Управление блокировками**: Многие операции `ALTER TABLE` требуют блокировки `ACCESS EXCLUSIVE`, что может привести к простою высоконагруженных систем.
+   - *Пример:* Добавление колонки с значением по умолчанию (`DEFAULT`) в версиях до 11 вызывало полную перезапись таблицы.
+3. **Конкурентные индексы**: Команда `CREATE INDEX CONCURRENTLY` позволяет создавать индексы без блокировки таблицы на запись, но она **не может** выполняться внутри транзакции.
+4. **Управление расширениями**: Версионирование схемы должно учитывать установленные расширения через `CREATE EXTENSION IF NOT EXISTS`.
 
-### Safe Rollback Strategies
+### Стратегии безопасного обновления
 
-1. **Reversible Migrations:** Для каждой миграции (`up`) пишется обратная (`down`). Подробно в **[Rollback Strategies](../../../Concepts/migrations/rollback_strategies.md)**.
+Для минимизации простоев в PostgreSQL рекомендуется:
 
-2. **Expand-Migrate-Contract:** Стратегия для сложных изменений в production. Подробно в **[Expand-Contract Pattern](../../../Concepts/migrations/expand_contract.md)**.
+- Использование **[Принципа Expand-Contract](../../Concepts/migrations/expand_contract.md)** для обратно-совместимых изменений.
+- Применение **[Стратегий отката](../../Concepts/migrations/rollback_strategies.md)**, включая использование **PITR (Point-in-Time Recovery)** для критических обновлений.
 
-3. **Snapshots и PITR:**
-    * **Volume Snapshots:** Создание снимка диска (PVC) перед миграцией в тестовой среде.
-    * **Point-in-Time Recovery (PITR):** Восстановление базы на момент времени до начала миграции с помощью [архивирования WAL-журналов](./backup_and_recovery.md).
+## Практические сценарии
 
-## Practical Scenarios
+### Инструменты миграций для PostgreSQL
 
-### Migration Tools for PostgreSQL
-
-| Инструмент | Тип | Особенности |
+| Инструмент | Тип | Особенности в контексте PostgreSQL |
 | :--- | :--- | :--- |
-| **Flyway** | Императивный | Популярен в Java-экосистеме, SQL-скрипты |
-| **Liquibase** | Императивный | Поддерживает SQL, XML, YAML, JSON |
-| **Atlas** | Декларативный/Императивный | Современный, Schema-as-Code, GitOps |
-| **Bytebase** | Декларативный | Веб-интерфейс, "Git для БД" |
-| **SchemaHero** | Декларативный | Kubernetes-оператор |
+| **Flyway** | Императивный | SQL-ориентированный, надежная поддержка транзакционного DDL. |
+| **Liquibase** | Императивный | Гибкость форматов (XML/YAML/SQL), поддержка управления расширениями. |
+| **Atlas** | Декларативный | Поддержка **Schema-as-Code**, автоматическая генерация безопасных SQL-диффов. |
+| **Bytebase** | Декларативный | Платформа для совместной работы с GUI и аудитом SQL. |
 
-### Atlas Workflow for PostgreSQL
+### Рабочий процесс с Atlas (Modern PostgreSQL Stack)
 
-**Atlas** — современный инструмент для автоматизации управления миграциями с поддержкой PostgreSQL.
+Atlas позволяет управлять схемой PostgreSQL в GitOps-стиле.
 
-#### Declarative Mode (Schema-as-Code)
+**Декларативный режим (Schema Apply):**
+Сравнение текущего состояния БД с целевым файлом конфигурации (`schema.hcl`) и автоматическое применение изменений.
 
-1. **Инспекция схемы:**
+```bash
+atlas schema apply \
+  -u "postgres://user:pass@localhost:5432/dbname?sslmode=disable" \
+  --to "file://schema.hcl" \
+  --dev-url "docker://postgres/15/dev"
+```
 
-    ```bash
-    # Сохранить схему текущей базы в файл schema.hcl
-    atlas schema inspect -u "postgres://user:pass@host:5432/dbname?sslmode=disable" > schema.hcl
-    ```
+**Версионированный режим (Migration Diff):**
+Генерация SQL-файлов миграций на основе разницы между двумя состояниями схемы.
 
-2. **Применение изменений:**
+```bash
+atlas migrate diff name_of_migration \
+  --dir "file://migrations" \
+  --to "file://schema.hcl" \
+  --dev-url "docker://postgres/15/dev"
+```
 
-    ```bash
-    atlas schema apply -u "postgres://..." --to "file://schema.hcl" --dev-url "docker://postgres/15"
-    ```
+### Специфические SQL-паттерны
 
-#### Versioned Mode (Migration Files)
+**Конкурентное создание индекса (Zero Downtime):**
 
-1. **Генерация файла миграции:**
+```sql
+-- Выполняется ВНЕ транзакционного блока миграции
+CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
+```
 
-    ```bash
-    # Создать SQL-файл для новой миграции
-    atlas migrate diff add_title_column --dir "file://migrations" --dev-url "docker://postgres/15" --to "file://schema.hcl"
-    ```
+**Безопасное добавление внешнего ключа:**
+Разбиение процесса на два этапа для минимизации времени блокировки `EXCLUSIVE`.
 
-2. **Применение миграции:**
+```sql
+-- 1. Добавление ключа без проверки существующих данных (быстро)
+ALTER TABLE orders ADD CONSTRAINT orders_user_fk 
+FOREIGN KEY (user_id) REFERENCES users(id) NOT VALID;
 
-    ```bash
-    atlas migrate apply -u "postgres://..." --dir "file://migrations"
-    ```
+-- 2. Проверка валидности (не блокирует запись)
+ALTER TABLE orders VALIDATE CONSTRAINT orders_user_fk;
+```
 
-3. **Автоматический откат:**
+## Дополнительная информация
 
-    ```bash
-    # Откатить последнюю примененную миграцию
-    atlas migrate apply -u "postgres://..." --dir "file://migrations" --revert 1
-    ```
+### Обслуживание и мониторинг
 
-#### Kubernetes Operator
-
-Atlas предоставляет оператор для Kubernetes, реализующий GitOps-подход: схема БД (`schema.hcl`) хранится в Git, оператор автоматически применяет изменения при обновлении Custom Resource `AtlasSchema`.
-
-### CI/CD Integration
-
-Инструменты миграции интегрируются в CI/CD пайплайны:
-
-1. **CI (на Pull Request):** Автоматическая проверка (`--dry-run`) и генерация миграции.
-2. **CD (при мерже в main):** Применение миграций к `staging` и `production`.
-
-Подробнее в **[CI/CD Integration](../../../Concepts/migrations/cicd_integration.md)**.
-
-### PostgreSQL-Specific Migration Scenarios
-
-* **Миграции с `pg_partman`:** Партиционирование требует особых миграций для создания новых партиций.
-* **Миграции расширений:** `CREATE EXTENSION IF NOT EXISTS` с указанием версии.
-* **Конкурентное создание индексов:** `CREATE INDEX CONCURRENTLY` для избежания блокировок.
-
-## Additional Information
-
-* **Резервное копирование:** PITR и архивирование WAL для восстановления перед миграцией — **[Backup and Recovery](./backup_and_recovery.md)**.
-* **Масштабирование:** Переход от партиционирования к шардированию — **[Scaling PostgreSQL](./scaling.md)**.
-* **Мониторинг миграций:** Метрики и алерты — **[Migration Monitoring](../../../Concepts/migrations/monitoring.md)**.
-* **Лучшие практики:** Именование, идемпотентность — **[Migration Practices](../../../Concepts/migrations/migration_practices.md)**.
+- **Бэкапы и восстановление**: Использование PITR для отката сложных миграций данных — **[Backup and Recovery](./backup_and_recovery.md)**.
+- **Масштабирование**: Миграции при использовании партиционирования — **[Масштабирование PostgreSQL](./scaling.md)**.
+- **Лучшие практики**: Общие рекомендации по идемпотентности — **[Migration Practices](../../Concepts/migrations/migration_practices.md)**.
+- **Интеграция в пайплайны**: Автоматизация через **[CI/CD Integration](../../Concepts/migrations/cicd_integration.md)**.

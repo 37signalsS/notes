@@ -74,6 +74,7 @@ sudo apt-get install -y nfs-kernel-server
 ```
 
 **rsync для односторонней синхронизации:**
+Подробное описание утилиты rsync см. в [rsync — синхронизация файлов](../Linux/SystemAdministration/rsync.md).
 
 ```ruby
 config.vm.synced_folder "src/", "/srv/website",

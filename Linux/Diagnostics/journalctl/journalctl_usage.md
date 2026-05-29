@@ -74,8 +74,11 @@ journalctl -u sshd.service -u httpd.service
 # За последний час
 journalctl --since "1 hour ago"
 
+# С начала текущего дня
+journalctl --since today
+
 # С определенной даты и времени
-journalctl --since "2023-10-26 18:00:00"
+journalctl --since "2024-01-15 10:00:00" --until "2024-01-15 11:00:00"
 
 # Между двумя датами
 journalctl --since "2023-10-26 18:00:00" --until "2023-10-26 18:10:00"
@@ -99,12 +102,29 @@ journalctl EXE=/usr/sbin/nginx
 
 ### Фильтрация по уровню приоритета
 
+Уровни: `0 emerg`, `1 alert`, `2 crit`, `3 err`, `4 warning`, `5 notice`, `6 info`, `7 debug`.
+
 ```bash
-# Только ошибки и более критичные сообщения
+# Только ошибки и более критичные сообщения (по имени уровня)
 journalctl -p err
+
+# Диапазон уровней (цифровой формат)
+journalctl -p 0..3
 
 # Диапазон уровней (предупреждения и ошибки)
 journalctl -p warning..err
+```
+
+### Вывод последних N строк
+
+Быстрый взгляд на последние события без скролла:
+
+```bash
+# Последние 50 строк
+journalctl -n 50
+
+# Последние 100 строк для конкретного сервиса
+journalctl -u nginx -n 100
 ```
 
 ### Поиск по содержимому логов
@@ -113,8 +133,26 @@ journalctl -p warning..err
 # Встроенный поиск journalctl (быстрее, использует индексы)
 journalctl -u nginx.service -g "error"
 
-# Традиционный grep (регистронезависимый)
-journalctl -u nginx.service --no-pager | grep -i "error"
+# Традиционный grep (без пейджера для конвейеров)
+journalctl -u nginx --no-pager | grep "error"
+
+# Перенаправление вывода в файл без пейджера
+journalctl --since today --no-pager > /tmp/today.log
+```
+
+### Комбинирование фильтров (Сложные сценарии)
+
+`journalctl` позволяет комбинировать любые фильтры для сужения области поиска.
+
+```bash
+# Ошибки конкретного сервиса за последний час без пейджера
+journalctl -u nginx -p err --since "1 hour ago" --no-pager
+
+# Логи ядра за последние 30 минут
+journalctl -k --since "30 min ago"
+
+# Логи конкретного сервиса за последние 30 минут в реальном времени
+journalctl -u nginx --since "30 min ago" -f
 ```
 
 ### Экспорт в различные форматы

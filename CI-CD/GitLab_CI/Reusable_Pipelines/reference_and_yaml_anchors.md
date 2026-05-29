@@ -1,282 +1,197 @@
-# GitLab CI: `!reference` и YAML Anchors
+# GitLab CI: !reference и YAML Anchors
 
 ## Определения
 
-| Термин | Описание |
-| :--- | :--- |
-| **`!reference`** | Специальный тег GitLab CI для явной ссылки на другие элементы конфигурации с валидацией через CI Lint |
-| **YAML Anchor (`&`)** | Стандартный механизм YAML для определения именованного фрагмента конфигурации |
-| **YAML Alias (`*`)** | Стандартный механизм YAML для вставки содержимого, определённого через Anchor |
-| **Скрытое задание** | Задание, имя которого начинается с точки (`.`) — не выполняется напрямую, используется как шаблон |
+**`!reference`** — специальный тег GitLab CI для явной ссылки на фрагменты конфигурации других заданий. Позволяет извлекать и вставлять части настроек (скрипты, правила, переменные) с полной поддержкой валидации через CI Lint.
 
-## Основные концепции
+**YAML Anchor (Якорь, `&`)** — стандартный механизм языка YAML для маркировки блока конфигурации с целью его последующего повторного использования.
 
-### `!reference` vs. YAML Anchors
+**YAML Alias (Ссылка, `*`)** — механизм YAML для вставки содержимого, помеченного якорем.
 
-Оба механизма используются для переиспользования фрагментов конфигурации, но имеют ключевые различия.
+**Скрытое задание (Hidden Job)** — задание, имя которого начинается с точки (`.`). Оно не запускается как часть пайплайна, а служит шаблоном или контейнером для фрагментов конфигурации.
 
-#### Сравнительная таблица
+## Базовые концепции
+
+### Сравнение !reference и YAML Anchors
+
+Хотя оба механизма служат для минимизации дублирования кода (DRY — Don't Repeat Yourself), GitLab рекомендует отдавать приоритет `!reference` из-за лучшей интеграции с инструментами проверки.
 
 | Критерий | `!reference` | YAML Anchors (`&`) / Aliases (`*`) |
 | :--- | :--- | :--- |
-| **Тип** | Специальный тег GitLab CI | Стандартный механизм YAML |
-| **Валидация Lint** | ✅ Полная | ⚠️ Ограниченная |
-| **Читаемость** | ✅ Высокая (явная ссылка) | Средняя (требует понимания YAML) |
-| **Гибкость** | ✅ Ссылка на любые элементы, включая конкретные элементы списков/словарей | ⚠️ Только полная подстановка фрагмента |
-| **Область видимости** | Один документ YAML (файл) | Один документ YAML (файл) |
-| **Рекомендация GitLab** | ✅ **Предпочтительно** | ⚠️ Для простых случаев |
+| **Тип** | Тег GitLab CI | Стандарт YAML |
+| **Валидация Lint** | Полная поддержка | Ограниченная поддержка |
+| **Читаемость** | Высокая (явный синтаксис) | Средняя (требует знания спецификации YAML) |
+| **Гибкость** | Доступ к любым элементам (списки, вложенные ключи) | Только полная вставка помеченного блока |
+| **Область видимости** | Текущий файл (включая собранный из `include`) | Текущий файл (не работает между `include`) |
+| **Рекомендация** | Предпочтительно | Для простых локальных случаев |
 
-> **Best Practice:** Используйте `!reference` в новых проектах для лучшей валидации и читаемости. Избегайте YAML Anchors в сложных конфигурациях ([GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)).
+### Синтаксис !reference
 
-### Синтаксис `!reference`
-
-```yaml
-# Базовый синтаксис
-script:
-  - !reference [.hidden_job, script]
-
-# Ссылка на конкретный элемент списка
-tags:
-  - !reference [.default_tags, tags, 0]
-
-# Ссылка на вложенный ключ
-variables:
-  !reference [.config, variables, DB_HOST]
-```
+Тег позволяет ссылаться на задание и путь к конкретному ключу внутри него.
 
 **Формат:**
+`!reference [<имя_задания>, <ключ_1>, <ключ_2>, ...]`
 
-```
-!reference [<путь_к_заданию>, <ключ1>, <ключ2>, ..., <индекс_или_ключ>]
-```
+**Примеры использования:**
+
+- Ссылка на скрипт: `script: !reference [.base, script]`
+- Ссылка на элемент списка: `tags: [ !reference [.config, tags, 0] ]`
+- Ссылка на вложенную переменную: `variables: !reference [.env, variables, DB_HOST]`
 
 ### Синтаксис YAML Anchors
 
-```yaml
-# Определение якоря
-.default_script: &default_script_definition
-  - echo "Step 1"
-  - echo "Step 2"
+Механизм работает на уровне парсера YAML до того, как GitLab начнёт обрабатывать логику CI.
 
-# Использование alias
-job1:
-  script: *default_script_definition
-```
-
-**Формат:**
-
-- `&anchor_name` — определение якоря
-- `*anchor_name` — использование (alias)
-- `<<: *anchor_name` — merge key для слияния словарей
-
-## Практические сценарии
-
-### Сценарий 1: Переиспользование скриптов через `!reference`
-
-**Определение общего скрипта:**
+**Пример:**
 
 ```yaml
-.common_setup:
-  - echo "Setting up environment..."
-  - bundle install
-  - npm ci
+.setup: &setup_anchor
+  - apt-get update
+  - apt-get install -y git
 
-build_job:
-  stage: build
+test:
   script:
-    - !reference [.common_setup]
-    - echo "Building application..."
-    - npm run build
-
-test_job:
-  stage: test
-  script:
-    - !reference [.common_setup]
-    - echo "Running tests..."
+    - *setup_anchor
     - npm test
 ```
 
-**Преимущества:**
+## Практические сценарии
 
-- Изменения в `.common_setup` автоматически применяются ко всем jobs
-- Полная валидация через CI Lint
-- Читаемая структура
+### Сценарий 1: Переиспользование скриптов через !reference
 
-### Сценарий 2: Ссылка на конкретные элементы списка
+Наиболее частое применение — создание библиотеки общих скриптов настройки окружения.
 
 ```yaml
-.default_tags: &default_runner_tags
-  tags:
-    - linux
-    - docker
-    - medium
+.common_setup:
+  script:
+    - echo "Инициализация окружения..."
+    - npm ci
 
-build_job:
+build:
   stage: build
-  tags:
-    - !reference [.default_tags, tags, 0]  # Ссылка на первый элемент: "linux"
   script:
-    - echo "Building on linux runner"
+    - !reference [.common_setup, script]
+    - npm run build
 
-test_job:
+test:
   stage: test
-  tags:
-    - !reference [.default_tags, tags, 1]  # Ссылка на второй элемент: "docker"
   script:
-    - echo "Testing with docker"
+    - !reference [.common_setup, script]
+    - npm test
+```
+
+### Сценарий 2: Использование конкретных элементов списков
+
+`!reference` позволяет выбрать один элемент из массива, что невозможно сделать с помощью YAML Anchors.
+
+```yaml
+.runner_configs:
+  tags:
+    - docker
+    - high-cpu
+
+heavy_job:
+  tags:
+    - !reference [.runner_configs, tags, 1] # Выберет только "high-cpu"
+  script:
+    - build_project.sh
 ```
 
 ### Сценарий 3: Переиспользование правил (rules)
 
+Позволяет централизованно управлять условиями запуска заданий.
+
 ```yaml
-.mr_rules:
+.mr_only:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - when: manual
 
-deploy_job:
-  stage: deploy
+lint:
+  stage: test
   rules:
-    - !reference [.mr_rules, rules]
+    - !reference [.mr_only, rules]
   script:
-    - echo "Deploying..."
+    - npm run lint
 ```
 
-### Сценарий 4: Комбинация `!reference` и `extends`
+### Сценарий 4: Комбинация !reference и extends
+
+Сочетание двух механизмов обеспечивает максимальную гибкость: `extends` для общей структуры и `!reference` для вставки специфичных фрагментов.
 
 ```yaml
-.base_template:
+.base_node:
   image: node:20-alpine
   before_script:
     - npm ci
 
-.common_scripts:
-  - echo "Common step 1"
-  - echo "Common step 2"
+.notify_script:
+  - echo "Отправка уведомления о статусе..."
 
-build_job:
-  extends: .base_template
+deploy:
+  extends: .base_node
   script:
-    - !reference [.common_scripts]
-    - npm run build
-
-test_job:
-  extends: .base_template
-  script:
-    - !reference [.common_scripts]
-    - npm test
+    - npm run deploy
+  after_script:
+    - !reference [.notify_script]
 ```
 
-### Сценарий 5: YAML Anchors для простых случаев
+### Сценарий 5: Слияние словарей (Merge Key) в YAML
+
+YAML Anchors остаются полезными при необходимости слияния объектов (например, словарей переменных) с переопределением части значений.
 
 ```yaml
-# Простое переиспользование через YAML Anchors
-.after_script_template: &after_script_cleanup
-  - echo "Cleaning up..."
-  - rm -rf tmp/
+.db_config: &db_defaults
+  variables:
+    DB_PORT: "5432"
+    DB_USER: "admin"
 
-job1:
-  script:
-    - echo "Running job 1"
-  after_script:
-    - *after_script_cleanup
+staging:
+  variables:
+    <<: *db_defaults
+    DB_HOST: "staging.db"
 
-job2:
-  script:
-    - echo "Running job 2"
-  after_script:
-    - *after_script_cleanup
+production:
+  variables:
+    <<: *db_defaults
+    DB_HOST: "prod.db"
+    DB_USER: "root" # Переопределение admin
 ```
-
-> **Примечание:** Для этого случая предпочтительнее использовать `!reference`:
->
-> ```yaml
-> after_script:
->   - !reference [.after_script_cleanup]
-> ```
-
-### Сценарий 6: Merge Key для словарей
-
-```yaml
-.default_cache: &default_cache_config
-  key: ${CI_COMMIT_REF_SLUG}
-  paths:
-    - node_modules/
-    - .npm/
-
-build_job:
-  stage: build
-  cache:
-    <<: *default_cache_config
-    policy: pull-push
-  script:
-    - npm install
-
-test_job:
-  stage: test
-  cache:
-    <<: *default_cache_config
-    policy: pull
-  script:
-    - npm test
-```
-
-**Результат:**
-
-- `build_job`: кэш с `policy: pull-push` (запись и чтение)
-- `test_job`: кэш с `policy: pull` (только чтение)
-
-## Ограничения
-
-| Ограничение | `!reference` | YAML Anchors |
-| :--- | :--- | :--- |
-| **Межфайловые ссылки** | ❌ Нет (только в пределах одного документа) | ❌ Нет (только в пределах одного документа) |
-| **Ссылка на внешний проект** | ❌ Нет | ❌ Нет |
-| **Вложенность** | ✅ До 11 уровней | ✅ Без ограничений |
-| **Валидация существования** | ✅ Да (CI Lint обнаруживает битые ссылки) | ⚠️ Нет (ошибка только при выполнении) |
-
-### Важные замечания
-
-1. **`!reference` не работает между файлами** — для межфайлового переиспользования используйте `include` + `extends`
-2. **YAML Anchors не работают с `include`** — каждый файл `include` имеет независимое пространство имён YAML
-3. **`!reference` требует GitLab 14.0+** — в старых версиях используйте YAML Anchors
-
-## Валидация
-
-```bash
-# Проверка конфигурации с !reference
-gitlab-ci lint --project=my-group/my-project
-
-# Отладка с подстановкой ссылок
-gitlab-ci lint --include-debug
-```
-
-## Распространённые ошибки
-
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `!reference: unknown anchor` | Ссылка на несуществующий элемент | Проверьте имя и порядок объявления |
-| `circular reference` | Циклическая ссылка | Убедитесь, что нет замкнутой цепочки |
-| `YAML alias unknown` | Alias используется до определения | Определите anchor до первого использования |
 
 ## Дополнительная информация
 
-### Когда использовать каждый подход
+### Ограничения механизмов
 
-| Сценарий | Рекомендуемый механизм |
-| :--- | :--- |
-| Переиспользование скриптов внутри файла | `!reference` |
-| Переиспользование правил (rules) | `!reference` |
-| Переиспользование переменных | `!reference` |
-| Простое переиспользование (1-2 jobs) | YAML Anchors |
-| Слияние словарей с переопределением | YAML Anchors + Merge Key (`<<:`) |
-| Наследование конфигурации задания | `extends` |
-| Межфайловое переиспользование | `include` + `extends` |
+| Ограничение | `!reference` | YAML Anchors |
+| :--- | :--- | :--- |
+| **Межфайловые ссылки** | Нет (только в пределах одного документа) | Нет (область видимости ограничена файлом) |
+| **Глубина вложенности** | До 11 уровней | Без жёстких ограничений |
+| **Проверка (Lint)** | Выявляет битые ссылки | Не выявляет отсутствие якоря до исполнения |
+
+### Распространённые ошибки
+
+- **Битые ссылки:** `!reference: unknown anchor` — задание или ключ не найдены. Всегда проверяйте через CI Lint.
+- **Циклическая зависимость:** задание А ссылается на Б, которое ссылается на А.
+- **Порядок в YAML:** Alias (`*`) не может быть использован до того, как определён Anchor (`&`).
+
+### Валидация
+
+Для проверки иерархии и развёрнутого вида конфигурации используйте:
+
+```bash
+# Проверка синтаксиса
+gitlab-ci lint --project=my-group/my-project
+
+# Просмотр финального YAML со всеми подстановками
+gitlab-ci lint --include-debug
+```
 
 ### Связанные документы
 
-[Обзор переиспользуемых пайплайнов](./overview.md) — сравнение всех подходов, [Механизм `extends`](./extends_keyword.md) — наследование конфигураций, [Механизм `include`](./include_keyword.md) — подключение внешних файлов.
+- [Обзор переиспользуемых пайплайнов](./overview.md) — сравнение подходов и рекомендации.
+- [Механизм extends](./extends_keyword.md) — подробности наследования заданий.
+- [Механизм include](./include_keyword.md) — подключение внешних файлов.
 
 ### Внешние ресурсы
 
-[Официальная документация: `!reference`](https://docs.gitlab.com/ci/yaml/#reference), [YAML Specification: Anchors and Aliases](https://yaml.org/spec/1.2.2/#anchors-and-aliases), [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5).
+- [Официальная документация: !reference](https://docs.gitlab.com/ci/yaml/#reference)
+- [Спецификация YAML: Якоря и Ссылки](https://yaml.org/spec/1.2.2/#anchors-and-aliases)

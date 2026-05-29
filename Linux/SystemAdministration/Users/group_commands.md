@@ -69,6 +69,7 @@ sudo groupdel group-name
 ### Управление членством в группах
 
 #### Как добавить пользователя в группу
+
 ```bash
 # Добавить пользователя в группу (рекомендуемый способ, -a — append)
 sudo usermod -aG groupname username
@@ -78,12 +79,14 @@ sudo gpasswd -a username groupname
 ```
 
 #### Как удалить пользователя из группы
+
 ```bash
 # Удалить пользователя из группы
 sudo gpasswd -d username groupname
 ```
 
 #### Другие операции с членством
+
 ```bash
 # Добавить пользователя в несколько групп одновременно
 sudo usermod -aG group1,group2,group3 username

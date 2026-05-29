@@ -25,6 +25,8 @@
 
 ```bash
 sudo mysql_secure_installation
+# -> Securing the MySQL server deployment.
+# -> Enter current password for root (enter for none):
 ```
 
 **Последовательность действий:**
@@ -47,13 +49,21 @@ PostgreSQL использует другую модель безопасност
 ```bash
 # Подключение к PostgreSQL
 sudo -u postgres psql
+# -> psql (14.x)
+# -> Type "help" for help.
+```
 
-# Создание нового пользователя с правами суперпользователя
+```sql
+-- Создание нового пользователя с правами суперпользователя
 CREATE USER admin WITH PASSWORD 'secure_password';
-ALTER USER admin WITH SUPERUSER;
+-- -> CREATE ROLE
 
-# Удаление публичного доступа к схеме
+ALTER USER admin WITH SUPERUSER;
+-- -> ALTER ROLE
+
+-- Удаление публичного доступа к схеме
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+-- -> REVOKE
 ```
 
 **Настройка `pg_hba.conf`:**
@@ -98,10 +108,8 @@ password_encryption = scram-sha-256
 | **Secrets Management** | Хранение паролей в Vault/AWS Secrets Manager | Средний |
 | **Регулярный аудит привилегий** | Проверка и отзыв избыточных прав | Средний |
 
-### Смежные темы
+### Смотрите также
 
-- Установка и настройка MySQL — **[MySQL Installation](./MySQL/installation.md)**
-- Установка и настройка MariaDB — **[MariaDB Installation](./MariaDB/installation_and_setup.md)**
-- Установка и настройка PostgreSQL — **[PostgreSQL Overview](./PostgreSQL/overview.md)**
-- Шифрование бэкапов — **[Backup Security](./Concepts/backup_security.md)**
-- Стратегии резервного копирования — **[Backups](./Concepts/backups.md)**
+- [Установка и настройка MySQL](./MySQL/installation.md)
+- [Установка и настройка PostgreSQL](./PostgreSQL/overview.md)
+- [Шифрование бэкапов](./Concepts/backup_security.md)

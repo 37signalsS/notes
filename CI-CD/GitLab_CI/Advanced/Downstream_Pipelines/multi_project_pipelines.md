@@ -1,4 +1,4 @@
-# Multi-project Pipelines
+# Multi-project пайплайны
 
 ## Определения
 
@@ -22,14 +22,9 @@
 
 ### Наследование переменных
 
-Наследование переменных в multi-project pipelines отличается от [parent-child](./parent_child_pipelines.md):
+Наследование переменных в multi-project pipelines имеет важные отличия от parent-child pipelines, особенно в части project/group и masked variables, которые не передаются автоматически.
 
-- **Predefined (CI_\*)** — наследуют только относящиеся к downstream проекту
-- **Project/Group variables** — **НЕ наследуются**
-- **Variables из задачи** — **только явно указанные** в `trigger:variables`
-- **Masked variables** — **НЕ наследуются** (риск unmask!)
-
-Подробно: [Наследование переменных](./variable_inheritance.md).
+Подробное описание механизма и всех правил находится в специальном документе: [Наследование переменных](./variable_inheritance.md).
 
 ## Практические сценарии
 
@@ -71,8 +66,12 @@ trigger_downstream:
 - Централизованные пайплайны для инфраструктуры
 - CI/CD для монорепозиториев с несколькими проектами
 
-### Ограничения
+---
 
-- Нельзя передать masked variables
-- Project/Group variables не наследуются
-- Требуются права на запуск в downstream проекте
+**Связанные документы:**
+
+- [Определения](./definitions.md)
+- [Parent-child Pipelines](./parent_child_pipelines.md)
+- [Рекомендации](./best_practices.md)
+- [Стратегии выполнения](./strategies.md)
+- [Наследование переменных](./variable_inheritance.md)

@@ -303,4 +303,4 @@ $$ LANGUAGE SQL;
 
 - **[PostgreSQL: Обзор](./overview.md)** — основной обзор PostgreSQL, OLTP, архитектура
 - **[ClickHouse](../clickhouse.md)** — OLAP-система для больших объёмов данных
-- **[GitHub: pgvector/pgvector](https://github.com/pgvector/pgvector)** — официальный репозиторий расширения
+- **[Репозиторий pgvector на GitHub](https://github.com/pgvector/pgvector)** — официальный репозиторий расширения

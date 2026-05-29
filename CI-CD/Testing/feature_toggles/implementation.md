@@ -1,12 +1,12 @@
 # Реализация Feature Toggles в коде
 
-### Определения
+## Определения
 
 - **Реализация Feature Toggles** — это практическое встраивание логики проверки флагов в исходный код приложения. Как правило, это сводится к вызову метода `is_enabled()` из специализированного клиента или SDK.
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Ключевые решения: Свой код или готовый сервис?
 
@@ -23,11 +23,11 @@
   - Нужны встроенные инструменты для A/B-тестирования, аудита и мониторинга.
   - Важна высокая производительность и отказоустойчивость, обеспечиваемая провайдером.
 
-Архитектурные компоненты описаны в документе [Архитектура систем Feature Toggles](./architecture.md).
+Архитектурные компоненты описаны в документе **[Архитектура систем Feature Toggles](./architecture.md)**.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Простая реализация на Python
 
@@ -75,13 +75,14 @@ class FeatureFlagManager:
 Использование готового SDK значительно упрощает работу, так как вся сложная логика (кэширование, стратегии, A/B-тесты) реализована внутри клиента.
 
 ```python
+import os
 from UnleashClient import UnleashClient
 
 # Инициализация клиента
 client = UnleashClient(
     url="https://unleash.mycompany.com/api",
     app_name="my-app",
-    custom_headers={'Authorization': 'API_TOKEN'}
+    custom_headers={'Authorization': os.getenv('UNLEASH_API_TOKEN', '')}
 )
 client.initialize_client()
 
@@ -95,6 +96,6 @@ else:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-См. также: [Обзор Feature Toggles](./overview.md), [Сценарии использования](./scenarios.md), [Лучшие практики](./best_practices.md).
+**Связанные документы:** [Сценарии использования](./scenarios.md), [Лучшие практики](./best_practices.md), [Архитектура систем Feature Toggles](./architecture.md).

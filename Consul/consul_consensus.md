@@ -2,7 +2,7 @@
 
 **Механизм консенсуса** в Consul отвечает за поддержание согласованного (consistent) и отказоустойчивого состояния между серверами кластера. Для этой цели Consul использует протокол **Raft**. Это фундаментальный механизм для обеспечения [высокой доступности (High Availability)](../Concepts/High_Availability/ha_overview.md) в распределенных системах.
 
-Все критичные данные — [каталог сервисов](./consul_service_catalog.md), [KV-хранилище](./consul_kv_store.md), ACL, конфигурация Connect — проходят через реплицируемый лог Raft, что гарантирует их целостность при сбоях отдельных серверов.
+Все критичные данные — [каталог сервисов](./consul_service_catalog.md), [KV (Key-Value) хранилище](./consul_kv_store.md), ACL (Access Control List), конфигурация Connect — проходят через реплицируемый лог Raft, что гарантирует их целостность при сбоях отдельных серверов. Общие принципы работы алгоритма описаны в [Алгоритме Raft в etcd](../etcd/raft_consensus.md).
 
 # Основные концепции
 
@@ -16,7 +16,7 @@
 
 1. Запрос на изменение (например, `consul kv put`) поступает на лидера.
 2. Лидер добавляет операцию в свой локальный лог.
-3. Лидер рассылает запись (`AppendEntries` RPC) всем последователям.
+3. Лидер рассылает запись (`AppendEntries` RPC — Remote Procedure Call) всем последователям.
 4. Последователи подтверждают получение и запись в свой лог.
 5. Когда лидер получает подтверждение от большинства (кворума), запись считается **закоммиченной** (`committed`).
 6. Лидер применяет изменение к своей конечной машине состояний (state machine) и уведомляет клиента об успехе.
@@ -46,6 +46,7 @@ Consul предоставляет несколько режимов для чт�
 ```bash
 # Чтение с гарантированной согласованностью
 consul kv get -consistent my-key
+# -> my-value
 ```
 
 ## Управление кластером
@@ -55,9 +56,14 @@ consul kv get -consistent my-key
 ```bash
 # Посмотреть список участников кворума и текущего лидера
 consul operator raft list-peers
+# -> Node     ID                                    Address         State     Voter  RaftProtocol
+# -> server1  789d2e1b-3f4a-4e1d-8f1b-3f4a4e1d8f1b  10.0.1.1:8300   leader    true   3
+# -> server2  a1b2c3d4-e5f6-4a1b-b2c3-d4e5f64a1b2c  10.0.1.2:8300   follower  true   3
+# -> server3  f1e2d3c4-b5a6-4f1e-2d3c-4b5a6f1e2d3c  10.0.1.3:8300   follower  true   3
 
 # Удалить "мертвый" узел из кворума (если Autopilot не справился)
-consul operator raft remove-peer <NodeID>
+consul operator raft remove-peer -id <NodeID>
+# -> Removed peer with ID <NodeID>
 ```
 
 ## Конфигурация сервера
@@ -77,4 +83,8 @@ consul operator raft remove-peer <NodeID>
 
 Современные версии Consul включают механизм **Autopilot**, который автоматизирует многие задачи по управлению кластером, такие как очистка неработающих серверов и управление обновлениями.
 
-Подробнее о том, как консенсус вписывается в общую архитектуру Consul, см. в [обзоре архитектуры](./consul_architecture.md). Детали реализации от HashiCorp доступны в [официальной документации](https://developer.hashicorp.com/consul/docs/architecture/consensus), а визуализация алгоритма Raft — на [raft.github.io](https://raft.github.io/).
+# Дополнительная информация
+
+- **[Обзор архитектуры Consul](./consul_architecture.md)**: как консенсус вписывается в общую структуру системы.
+- **[Официальная документация HashiCorp](https://developer.hashicorp.com/consul/docs/architecture/consensus)**: детали реализации протокола.
+- **[Визуализация Raft](https://raft.github.io/)**: интерактивный гид по алгоритму.

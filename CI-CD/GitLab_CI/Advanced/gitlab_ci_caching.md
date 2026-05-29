@@ -21,8 +21,6 @@
 
 **Важно:** Для критически важных файлов используйте артефакты. Кэш может быть удалён в любой момент.
 
-Подробные определения: [Концепции кэширования](./gitlab_ci_caching/cache_concepts.md).
-
 ## Основные концепции
 
 ### Архитектура кэширования
@@ -67,8 +65,6 @@
 - Максимум 4 кэша на задачу
 - Размер кэша ограничен настройками сервера (по умолчанию 100 МБ)
 - Кэш не гарантируется — может быть удалён в любой момент
-
-Подробнее: [Ключи кэша и политики](./gitlab_ci_caching/cache_keys.md), [Артефакты GitLab CI](./gitlab_ci_caching/gitlab_ci_artifacts.md).
 
 ## Практические сценарии
 
@@ -190,8 +186,6 @@ test:
     expire_in: 1 week
 ```
 
-Больше примеров: [Сценарии кэширования](./gitlab_ci_caching/cache_scenarios.md), [Артефакты GitLab CI](./gitlab_ci_caching/gitlab_ci_artifacts.md).
-
 ## Дополнительная информация
 
 ### Настройка распределённого кэша
@@ -242,4 +236,5 @@ curl --request DELETE --header "PRIVATE-TOKEN: <your_token>" \
 
 ### Связанные документы
 
-[Концепции кэширования](./gitlab_ci_caching/cache_concepts.md) — полные определения и архитектура, [ключи кэша](./gitlab_ci_caching/cache_keys.md) — типы ключей и политики, [сценарии кэширования](./gitlab_ci_caching/cache_scenarios.md) — практические примеры, [лучшие практики](./gitlab_ci_caching/cache_best_practices.md) — рекомендации и troubleshooting, [артефакты GitLab CI](./gitlab_ci_caching/gitlab_ci_artifacts.md) — конфигурация артефактов и отчётов, [основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md) — базовые концепции, [продвинутые рабочие процессы](./gitlab_ci_advanced_workflow.md) — оптимизация пайплайнов с `needs`.
+- [Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md) — базовые концепции.
+- [Продвинутые рабочие процессы](./gitlab_ci_advanced_workflow.md) — оптимизация пайплайнов с `needs`.

@@ -1,60 +1,93 @@
-# CI/CD интеграция миграций
+# Интеграция миграций в CI/CD
 
-## Пайплайн миграций
+## Определения
+
+**Интеграция миграций в CI/CD** — это процесс автоматизации проверки, тестирования и применения изменений схемы базы данных в рамках общего конвейера поставки программного обеспечения (CI/CD pipeline).
+
+## Основные концепции
+
+Автоматизация миграций направлена на минимизацию человеческого фактора и обеспечение консистентности данных между различными окружениями (dev, staging, prod).
+
+### Этапы пайплайна миграций
+
+1. **Валидация (Validation):** проверка синтаксиса миграций и их соответствия принятым стандартам (например, наличие `down`-миграции или комментариев).
+2. **Проверка на совместимость (Dry-run/Compatibility check):** запуск миграций на копии базы данных или использование инструментов анализа SQL для обнаружения разрушающих изменений (destructive changes).
+3. **Применение (Deployment):** выполнение миграций на целевом окружении. Обычно выполняется до развертывания новой версии кода приложения.
+
+### Принципы безопасности в CI/CD
+
+- **Никогда не удалять данные автоматически:** блокировка `DROP COLUMN` или `DROP TABLE` в автоматических сценариях.
+- **Использование транзакций:** автоматический откат при сбое миграции (если поддерживается СУБД).
+- **Идемпотентность:** возможность повторного запуска пайплайна без негативных последствий.
+
+## Практические сценарии
+
+### Сценарий 1: Пайплайн в GitLab CI
+
+Пример конфигурации для автоматического применения миграций с использованием Flyway.
 
 ```yaml
 # .gitlab-ci.yml
 stages:
+  - validate
   - migrate
-  - test
   - deploy
 
-db_migrate:
+# Валидация миграций на этапе Merge Request
+migrate_validate:
+  stage: validate
+  image: flyway/flyway:latest
+  script:
+    - flyway -url=$STAGING_DB_URL -user=$DB_USER -password=$DB_PASSWORD validate
+  only:
+    - merge_requests
+
+# Применение миграций при мерже в main
+db_migrate_prod:
   stage: migrate
   image: flyway/flyway:latest
   script:
-    - flyway -url=$DB_URL -user=$DB_USER -password=$DB_PASSWORD migrate
+    - flyway -url=$PROD_DB_URL -user=$DB_USER -password=$DB_PASSWORD migrate
   only:
     - main
   environment:
     name: production
-    url: https://api.production.com
-
-# Проверка перед merge
-migrate_dry_run:
-  stage: test
-  image: flyway/flyway:latest
-  script:
-    - flyway -url=$STAGING_DB_URL info
-    - flyway -url=$STAGING_DB_URL validate
-  only:
-    - merge_requests
 ```
 
-## Проверка backward compatibility
+### Сценарий 2: Скрипт проверки на обратную совместимость
+
+Использование статического анализа SQL-файлов для предотвращения Breaking Changes. Подробнее о паттерне см. **[Принцип Expand-Contract](expand_contract.md)**.
 
 ```bash
 #!/bin/bash
 # check_migration_compatibility.sh
 
-# 1. Проверяем, что нет DROP COLUMN
+# 1. Поиск команд удаления колонок
 grep -r "DROP COLUMN" db/migrations/ && {
-    echo "ERROR: DROP COLUMN detected. Use Expand-Contract pattern."
+    echo "ОШИБКА: Обнаружена команда DROP COLUMN. Используйте паттерн Expand-Contract."
     exit 1
 }
 
-# 2. Проверяем, что ALTER TABLE не удаляет данные
+# 2. Поиск потенциально опасных ALTER TABLE
 grep -ri "ALTER TABLE.*DROP" db/migrations/ && {
-    echo "ERROR: Destructive ALTER detected."
+    echo "ОШИБКА: Обнаружены разрушающие изменения (DROP)."
     exit 1
 }
 
-# 3. Проверяем, что новые колонки nullable или имеют DEFAULT
-echo "Migration compatibility check passed!"
+# 3. Успешное завершение, если опасных команд не найдено
+echo "Проверка совместимости миграций пройдена успешно."
 ```
 
----
+## Дополнительная информация
 
-### Дополнительная информация
+### Рекомендации
 
-- См. основной документ: **[Миграции баз данных: Основы](migration_basics.md)**
+- **Бэкап перед миграцией:** в пайплайне перед этапом `migrate` рекомендуется добавить шаг создания моментального снимка (snapshot) или бэкапа базы данных.
+- **Feature Flags:** используйте флаги функций для переключения логики приложения после успешного применения миграций.
+- **Мониторинг:** настройте алертинг на неудачные этапы миграции в CI/CD — **[Мониторинг миграций](monitoring.md)**.
+
+### Смежные темы
+
+- **[Миграции баз данных: Основы](migration_basics.md)** — базовые понятия и инструменты.
+- **[Лучшие практики миграций](migration_practices.md)** — именование, идемпотентность и транзакции.
+- **[Обратно-совместимые миграции (Expand-Contract)](expand_contract.md)** — стратегия внесения изменений без простоя.

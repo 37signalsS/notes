@@ -6,19 +6,17 @@
 
 **Контекст:** Документ описывает практический путь команды от boilerplate-кода к CI/CD Components через 5 этапов зрелости.
 
----
-
 ## Основные концепции
 
 ### Этапы эволюции
 
 | Этап | Подход | Описание |
 | :--- | :--- | :--- |
-| **1** | [Дублирование кода](./evolution/stage1_boilerplate.md) | Проблема — копирование одинаковой конфигурации в каждый проект |
-| **2** | [Централизация с `include`](./evolution/stage2_include.md) | Вынос общего кода в центральный репозиторий шаблонов |
-| **3** | [Гибкость с `extends`](./evolution/stage3_extends.md) | Наследование и кастомизация шаблонов |
-| **4** | [Абстрагирование (Kaniko)](./evolution/stage4_kaniko.md) | Прозрачное обновление без изменения проектов |
-| **5** | [CI/CD Components](./evolution/stage5_components.md) | Типизация, валидация, каталог |
+| **1** | [Дублирование кода](./evolution/evolution_boilerplate.md) | Проблема — копирование одинаковой конфигурации в каждый проект |
+| **2** | [Централизация с `include`](./evolution/evolution_include.md) | Вынос общего кода в центральный репозиторий шаблонов |
+| **3** | [Гибкость с `extends`](./evolution/evolution_extends.md) | Наследование и кастомизация шаблонов |
+| **4** | [Абстрагирование (Kaniko)](./evolution/evolution_kaniko.md) | Прозрачное обновление без изменения проектов |
+| **5** | [CI/CD Components](./evolution/evolution_components.md) | Типизация, валидация, каталог |
 
 ### Сводная таблица эволюции
 
@@ -29,8 +27,6 @@
 | **3** | `include` + `extends` | Централизация + гибкость | Нет типизации, безопасности |
 | **4** | Абстракция (Kaniko) | Безопасность, прозрачность | Нет явного интерфейса |
 | **5** | CI/CD Components | Типизация, валидация, каталог | Высокая сложность настройки |
-
----
 
 ## Практические сценарии
 
@@ -64,10 +60,8 @@
 
 **Рекомендация:** Начните с этапа 2 и двигайтесь постепенно по мере роста команды и проектов.
 
----
-
 ## Дополнительная информация
 
-**Связанные документы:** [Обзор переиспользуемых пайплайнов](./overview.md), [Механизм `extends`](./extends_keyword.md), [Механизм `include`](./include_keyword.md), [CI/CD Catalog](./ci_cd_catalog_components.md).
-
-**Внешние ресурсы:** [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/), [GitLab CI Best Practices](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5).
+- [Обзор переиспользуемых пайплайнов](./overview.md)
+- [CI/CD Catalog (компоненты)](./ci_cd_catalog_components.md)
+- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)

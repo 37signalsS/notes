@@ -2,14 +2,14 @@
 
 ## Определения
 
-**MongoDB Community Edition** — бесплатная версия MongoDB с открытым исходным кодом. Текущая стабильная версия — 8.0.
+**MongoDB Community Edition** — бесплатная версия MongoDB с открытым исходным кодом. Актуальная стабильная версия на май 2026 года — 8.3.
 
-## Основные концепции
+## Базовые концепции
 
 ### Компоненты
 
 - **mongod** — серверный процесс MongoDB.
-- **mongosh** — командная оболочка для взаимодействия с БД.
+- **mongosh** — командная оболочка для взаимодействия с БД (заменила `mongo` shell).
 
 ## Практические сценарии
 
@@ -23,24 +23,24 @@ curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | \
 
 ### 2. Настройка репозитория
 
-Создайте файл `/etc/apt/sources.list.d/mongodb-org-8.0.list`:
+Создайте файл конфигурации репозитория для вашей версии Ubuntu:
+
+**Ubuntu 26.04 (Resolute):**
+
+```bash
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu resolute/mongodb-org/8.3 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.3.list
+```
 
 **Ubuntu 24.04 (Noble):**
 
 ```bash
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.3 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.3.list
 ```
 
 **Ubuntu 22.04 (Jammy):**
 
 ```bash
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
-```
-
-**Ubuntu 20.04 (Focal):**
-
-```bash
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.3 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.3.list
 ```
 
 ### 3. Установка пакетов
@@ -73,5 +73,5 @@ mongosh
 
 ## Дополнительная информация
 
-- **Основная документация:** **[Основы MongoDB](./mongodb.md)**.
-- **Версии Ubuntu:** Кодовые имена: `noble` (24.04), `jammy` (22.04), `focal` (20.04).
+- **Основы:** **[Обзор MongoDB](./mongodb.md)**.
+- **Версии Ubuntu:** Кодовые имена: `resolute` (26.04), `noble` (24.04), `jammy` (22.04).

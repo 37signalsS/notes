@@ -3,7 +3,7 @@
 ## Определения
 
 - **Container Registry**: Встроенное в GitLab хранилище для Docker-образов. В данном руководстве мы публикуем образ приложения в этот реестр. Подробнее: [GitLab Container Registry](https://docs.gitlab.com/user/packages/container_registry/).
-- **Deploy Token**: Специальный токен для аутентификации в Container Registry без использования учетных данных пользователя. Безопаснее, чем использование личных паролей в CI-скриптах. Подробнее: [Deploy Tokens](../Concepts/gitlab_ci_variables_secrets.md).
+- **Deploy Token**: Специальный токен для аутентификации в Container Registry без использования учетных данных пользователя. Безопаснее, чем использование личных паролей в CI-скриптах. Подробнее: [GitLab Deploy Tokens](https://docs.gitlab.com/ee/user/project/deploy_tokens/).
 - **GitLab Runner**: Исполнитель, который получает и выполняет задачи из пайплайна. Типы исполнителей: [GitLab CI Runners и Executors](../Advanced/gitlab_ci_runners_executors.md).
 - **`.gitlab-ci.yml`**: Файл конфигурации в корне репозитория, описывающий стадии и шаги пайплайна. Основы: [GitLab CI Basics](../Concepts/gitlab_ci_basics.md).
 
@@ -61,19 +61,13 @@
 
 ### Шаг 2: Регистрация GitLab Runner
 
-Для выполнения пайплайна нужен исполнитель (Runner). Подробное руководство по регистрации доступно в [Регистрация GitLab Runner](./runner_registration.md).
+Для выполнения пайплайна нужен исполнитель (Runner). В данном примере используется `shell` executor.
 
 > **Важно:** `shell` executor выполняет команды прямо на хост-машине. Это небезопасно и подходит только для обучения. В реальных проектах используйте **[Docker Executor](../Advanced/gitlab_ci_runners_executors.md)**.
 
-1. **Установите Runner** на ваш сервер.
-2. **Получите токен для регистрации**: В проекте GitLab перейдите в **Settings -> CI/CD -> Runners** и скопируйте токен.
-3. **Зарегистрируйте Runner**, выполнив `sudo gitlab-runner register` и указав:
-    - URL вашего GitLab.
-    - Регистрационный токен.
-    - Описание (например, `my-shell-runner`).
-    - Тег (например, `shell-runner`). **Запомните этот тег**, он понадобится в `.gitlab-ci.yml`.
-    - Executor: `shell`.
-4. Убедитесь, что Runner запущен (`sudo gitlab-runner status`) и виден с зеленым индикатором в UI GitLab.
+Зарегистрируйте Runner, следуя основной инструкции: **[Регистрация с Shell Executor](./runner_registration.md#альтернативный-сценарий-регистрация-с-shell-executor)**.
+
+При регистрации обязательно укажите тег `shell-runner` (он понадобится в `.gitlab-ci.yml`), а также выберите `shell` в качестве executor. После регистрации убедитесь, что Runner виден с зеленым индикатором в UI GitLab (раздел **Settings -> CI/CD -> Runners**).
 
 ### Шаг 3: Создание Deploy Token для доступа к Registry
 

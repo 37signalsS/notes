@@ -1,4 +1,4 @@
-# Traces Deep Dive
+# Трассировки: детали
 
 ## Определения
 
@@ -234,15 +234,11 @@ storage:
 ### Связанные темы
 
 - **[Четыре столпа Observability](./four_pillars_of_observability.md)** — место трассировок в общей архитектуре наблюдаемости
-- **[Логи: детали](./logs_deep_dive.md)** — корреляция трассировок с логами через `trace_id`
-- **[Метрики: детали](./metrics_deep_dive.md)** — генерация метрик из трассировок, exemplars
-- **[OpenTelemetry](../../../OpenTelemetry/opentelemetry_overview.md)** — стандарт инструментирования для трассировок
-- **[Grafana Tempo](../../../Tempo/index.md)** — хранилище трассировок с поддержкой TraceQL
-- **[Профилирование: детали](./profiling_deep_dive.md)** — связь трассировок и профилирования для анализа производительности
+- **[OpenTelemetry](../../OpenTelemetry/opentelemetry_overview.md)** — стандарт инструментирования для трассировок
+- **[Grafana Tempo](../../Tempo/index.md)** — хранилище трассировок с поддержкой TraceQL
 
 ### Ресурсы
 
 - **[OpenTelemetry Specification](https://opentelemetry.io/docs/specs/)** — спецификация OTel, включая Trace Context
 - **[W3C Trace Context](https://www.w3.org/TR/trace-context/)** — стандарт передачи контекста
 - **[TraceQL Documentation](https://grafana.com/docs/tempo/latest/traceql/)** — полный справочник по языку TraceQL
-- **[Grafana Tempo](https://grafana.com/docs/tempo/latest/)** — документация Tempo

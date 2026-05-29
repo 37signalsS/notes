@@ -38,23 +38,14 @@
 | Шаринг шаблонов между проектами | [`include:project`](./include_keyword.md) с тегами | Централизованное управление |
 | Публичная/внутренняя библиотека компонентов | [CI/CD Catalog](./ci_cd_catalog_components.md) | Версионирование, типизация, каталог |
 
-> **Best Practice:** Избегайте YAML Anchors в новых проектах — используйте `!reference` для лучшей валидации и читаемости [^1](
+> **Best Practice:** Избегайте YAML Anchors в новых проектах — используйте `!reference` для лучшей валидации и читаемости [^1]
 
 [^1]: [GitLab CI Best Practices — Avoid YAML Anchors](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
 
 ### Принципы слияния конфигураций
 
-При использовании `extends` и `include` применяется **обратное глубокое слияние (reverse deep merge)**:
-
-| Ключ | Поведение при `extends` |
-| :--- | :--- |
-| `script`, `before_script`, `after_script` | **Перезаписывается** (не конкатенируется) |
-| `variables` | Глубокое слияние: дочерние значения переопределяют родительские |
-| `rules` | **Перезаписывается** полностью |
-| `cache`, `dependencies` | **Перезаписывается** |
-| `tags`, `image`, `stage` | **Перезаписывается** |
-
-> **Важно:** При наследовании от нескольких заданий (`extends: [.a, .b]`) слияние происходит **справа налево** — последнее задание имеет приоритет.
+При использовании `extends` и `include` применяется **обратное глубокое слияние (reverse deep merge)**.
+Подробное описание поведения при слиянии для различных ключей (`script`, `variables`, `rules` и т.д.) содержится в статье **[Механизм `extends`](./extends_keyword.md)**.
 
 ## Практические сценарии
 
@@ -94,22 +85,6 @@ gitlab-ci lint --include-debug
 
 ## Дополнительная информация
 
-### Связанные документы
-
-- **Детали `extends`**: [Механизм `extends`](./extends_keyword.md) — слияние, множественное наследование
-- **Сравнение `!reference` и YAML Anchors**: [`!reference` и YAML Anchors](./reference_and_yaml_anchors.md)
-- **Модульность с `include`**: [Механизм `include`](./include_keyword.md) — все типы, версионирование
-- **Компоненты**: [CI/CD Catalog](./ci_cd_catalog_components.md) — `spec:inputs`, публикация
-- **Пример эволюции**: [Эволюция пайплайнов](./evolution_example.md)
-
-### Внешние ресурсы
-
 - [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
-- [Официальная документация: YAML Syntax](https://docs.gitlab.com/ci/yaml/)
-- [Best Practices: 10+ антипаттернов GitLab CI](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
-
-### Смежные темы
-
-- **[GitLab Flow](../Tutorials/gitlab_flow.md)** — стратегия ветвления
-- **[Кэширование в GitLab CI](../Advanced/gitlab_ci_caching.md)** — ускорение сборок
-- **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление конфигурацией
+- [Кэширование в GitLab CI](../Advanced/gitlab_ci_caching.md)
+- [Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)

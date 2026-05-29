@@ -23,15 +23,15 @@
 
 ### Файл конфигурации `gitlab.rb`
 
-Единый источник истины для настройки GitLab. Расположен по пути `/etc/gitlab/gitlab.rb` внутри контейнера. Все изменения применяются через этот файл с последующей реконфигурацией командой `gitlab-ctl reconfigure`.
+Основной файл для настройки GitLab. Расположен по пути `/etc/gitlab/gitlab.rb` внутри контейнера. Все изменения применяются через этот файл с последующей реконфигурацией командой `gitlab-ctl reconfigure`.
 
-### Внешний URL (`external_url`)
+### Внешний URL (Uniform Resource Locator — единый указатель ресурса) (`external_url`)
 
 Критически важный параметр в `gitlab.rb`, определяющий основной адрес GitLab. Используется для:
 
 - Генерации ссылок в уведомлениях и письмах
-- Настройки интеграций и OAuth
-- Автоматического выпуска SSL-сертификатов от Let's Encrypt (при внешнем доступе)
+- Настройки интеграций и протокола OAuth (Open Authorization)
+- Автоматического выпуска SSL (Secure Sockets Layer) сертификатов от Let's Encrypt (при внешнем доступе)
 
 ### Сохранение данных (Data Volumes)
 
@@ -50,15 +50,15 @@
 **Сервер:**
 
 - Linux (Ubuntu 22.04+, Debian 12+, RHEL 9+) с `sudo` доступом
-- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ для production)
+- Минимум 4 ядра CPU (Central Processing Unit) и 8 ГБ RAM (Random Access Memory) (рекомендуется 16 ГБ для production)
 - Установленный Docker Engine 24.0+
 - Свободное место на диске: минимум 50 ГБ
 
 **Домен и сеть:**
 
 - Доменное имя (например, `gitlab.example.com`)
-- DNS `A`-запись, указывающая на публичный IP-адрес сервера
-- Открытые порты в брандмауэре: `80` (HTTP/Let's Encrypt) и `443` (HTTPS)
+- DNS (Domain Name System) `A`-запись, указывающая на публичный IP (Internet Protocol) адрес сервера
+- Открытые порты в брандмауэре: `80` (HTTP — HyperText Transfer Protocol/Let's Encrypt) и `443` (HTTPS — HyperText Transfer Protocol Secure)
 
 ### Шаг 1: Подготовка директорий на хосте
 

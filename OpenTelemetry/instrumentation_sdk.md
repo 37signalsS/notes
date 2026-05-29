@@ -101,6 +101,7 @@ def process_payment(order_id: str):
 В платформе .NET базовые абстракции (API) для генерации телеметрии встроены непосредственно в фреймворк (в `System.Diagnostics`), что делает интеграцию с OpenTelemetry максимально нативной.
 
 **Основные классы API:**
+
 - **`ActivitySource`** и **`Activity`**: Выступают в роли Tracer и Span соответственно.
 - **`Meter`**: Фабрика для метрик (Counter, Gauge, Histogram).
 

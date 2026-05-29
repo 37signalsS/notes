@@ -1,4 +1,4 @@
-# Best Practices — Downstream Pipelines (2025-2026)
+# Рекомендации по использованию Downstream-пайплайнов
 
 ## Определения
 

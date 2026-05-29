@@ -1,191 +1,127 @@
-# GitLab CI: Каталог Компонентов — Справочная информация
+# GitLab CI: Каталог компонентов — справочная информация
 
 ## Определения
 
-**Справочная информация** — технические детали, API, CLI-команды и дополнительные материалы по CI/CD Components, не вошедшие в основные концепции.
+**Справочная информация** — технические подробности, параметры API, команды CLI и история изменений CI/CD Components, дополняющие основные концептуальные документы.
 
----
+**Валидация компонента** — процесс проверки синтаксиса и структуры компонента на соответствие спецификации GitLab CI перед публикацией или использованием.
 
-## Основные концепции
+**Публикация** — процесс регистрации версии компонента в общем каталоге GitLab для обеспечения его доступности другим проектам.
 
-### Форматы версий для компонентов
+## Базовые концепции
 
-| Формат | Пример | Рекомендация | Когда использовать |
-| :--- | :--- | :--- | :--- |
-| **SemVer (полный)** | `@1.2.0` | ✅ Для релизов | Продакшен, стабильные версии |
-| **SemVer (частичный)** | `@1.2` или `@1` | ✅ Для автообновлений | Dev/staging, автоматические обновления |
-| **Commit SHA** | `@e3262fd...` | ✅ Для максимальной стабильности | Критичные системы, audit trail |
-| **~latest** | `@~latest` | ⚠️ Только если доверяете автору | Быстрое прототипирование |
-| **Ветка** | `@main` | ❌ Не рекомендуется | Локальная разработка (не в production) |
+### Форматы версий компонентов
 
-**Правила разрешения версий:**
+Для подключения компонентов через директиву `include:component` используются различные способы указания версии.
 
-- При совпадении имени тега и SHA — приоритет у SHA
-- При совпадении имени тега и ветки — приоритет у тега
-- `~latest` не включает pre-release версии (`1.0.1-rc`, `1.0.0-beta`)
-- Частичные версии (`@1.2`) автоматически обновляются до последнего patch
+| Формат | Пример | Назначение |
+| :--- | :--- | :--- |
+| **SemVer (полный)** | `@1.2.0` | Стабильные релизы в продакшене |
+| **SemVer (частичный)** | `@1.2` или `@1` | Автоматическое получение patch/minor обновлений |
+| **Commit SHA** | `@e3262fd...` | Максимальная фиксация состояния (audit trail) |
+| **~latest** | `@~latest` | Последняя стабильная версия (требует наличия релиза) |
+| **Ветка** | `@main` | Исключительно для разработки и тестирования |
 
----
+### Правила разрешения версий
+
+При возникновении конфликтов или неоднозначности GitLab следует приоритетам:
+
+1. При совпадении имени тега и SHA — приоритет отдаётся **SHA**.
+2. При совпадении имени тега и ветки — приоритет отдаётся **тегу**.
+3. Указатель `~latest` игнорирует pre-release версии (например, `1.0.1-rc`).
+4. Частичные версии (например, `@1.2`) автоматически разрешаются до последнего доступного patch-релиза в этой ветке.
 
 ## Практические сценарии
 
 ### Сценарий 1: Валидация компонента
 
-**Проверка через CLI:**
+**Использование CLI (GitLab CLI):**
 
 ```bash
-# Проверка конфигурации компонента
-gitlab-ci lint --project=group/ci-components/build-docker
+# Проверка самого компонента
+glab ci lint --project group/ci-components/my-component
 
-# Проверка использования в проекте
-gitlab-ci lint --project=my-group/my-project
-
-# Развёрнутый вывод с количеством include
-gitlab-ci lint --project=my-group/my-project --show-expanded
+# Проверка пайплайна, использующего компонент
+glab ci lint --project my-group/my-project --show-expanded
 ```
 
-**Проверка через API:**
+**Использование API:**
 
 ```bash
-# Валидация .gitlab-ci.yml
 curl --request POST --header "PRIVATE-TOKEN: <token>" \
-  "https://gitlab.example.com/api/v4/projects/<project_id>/ci/lint" \
-  --data '{"content": "include:\n  - component: ..."}'
+  "https://gitlab.example.com/api/v4/projects/<id>/ci/lint" \
+  --data '{"content": "include:\n  - component: $CI_SERVER_FQDN/group/comp@1.0.0"}'
 ```
 
-### Сценарий 2: Публикация компонента в каталог
+### Сценарий 2: Публикация компонента
 
-**Требования для публикации:**
+Для появления компонента в каталоге необходимо выполнение условий:
 
-1. Семантическое версионирование (SemVer)
-2. Файл `.gitlab-ci.yml` с `spec:inputs` (или пустым `spec:`)
-3. Созданный GitLab Release с тегом
-4. Проект должен быть видим для потребителей компонента
+1. Наличие файла `.gitlab-ci.yml` (с блоком `spec:`).
+2. Наличие тега в формате SemVer.
+3. Созданный GitLab Release, привязанный к этому тегу.
 
-**Процесс публикации:**
+**Пример задания для автоматизации релиза:**
 
 ```yaml
-# .gitlab-ci.yml в репозитории компонента
 release:
   stage: deploy
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   rules:
-    - if: $CI_COMMIT_TAG  # Запуск только при создании тега
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Publishing component version $CI_COMMIT_TAG"
   release:
     tag_name: $CI_COMMIT_TAG
     name: "Release $CI_COMMIT_TAG"
-    description: "Component release $CI_COMMIT_TAG"
-    milestones:
-      - "v$CI_COMMIT_TAG"
-  script:
-    - echo "Component published to catalog"
+    description: "Component release version $CI_COMMIT_TAG"
 ```
 
-**Создание релиза через CLI:**
-
-```bash
-# Создание тега
-git tag -a v1.0.0 -m "Initial release"
-git push origin v1.0.0
-
-# Создание релиза через API
-curl --request POST --header "PRIVATE-TOKEN: <token>" \
-  "https://gitlab.example.com/api/v4/projects/<project_id>/releases" \
-  --data "tag_name=v1.0.0&name=Release 1.0.0&description=Initial release"
-```
-
-### Сценарий 3: Отладка распространённых ошибок
+### Сценарий 3: Устранение типичных ошибок
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `Spec must be a valid json schema` | Пустой `spec:inputs` | Используйте пустой `spec:` без `inputs` |
-| `content not found` | Использование `~latest` без релиза | Создайте новый релиз с тегом |
-| `invalid input type` | Несоответствие типа в inputs | Проверьте тип значения (string/boolean/number) |
-| `regex validation failed` | Значение не соответствует regex | Исправьте значение или regex |
-| `Component not found` | Неправильный путь или нет доступа | Проверьте путь и права доступа к проекту |
-| `Version does not follow SemVer` | Тег не соответствует SemVer | Используйте формат `vX.Y.Z` или `X.Y.Z` |
+| `Spec must be a valid json schema` | Ошибка в блоке `spec:inputs` | Проверьте отступы и наличие двоеточия после `spec:` |
+| `content not found` | Версия не существует или нет доступа | Проверьте тег/ветку и права доступа к репозиторию |
+| `invalid input type` | Тип значения не совпадает с `type` | Убедитесь, что передаёте string, boolean или number |
+| `regex validation failed` | Значение не прошло проверку regex | Скорректируйте передаваемое значение согласно регулярному выражению |
 
-### Сценарий 4: Поиск компонентов в каталоге
-
-**Через UI GitLab:**
-
-1. Перейдите в `CI/CD > Components`
-2. Используйте поиск по имени или описанию
-3. Фильтруйте по группе или проекту
+### Сценарий 4: Поиск компонентов
 
 **Через API:**
 
 ```bash
-# Получение списка компонентов проекта
+# Список всех доступных компонентов проекта
 curl --header "PRIVATE-TOKEN: <token>" \
-  "https://gitlab.example.com/api/v4/projects/<project_id>/ci/components"
+  "https://gitlab.example.com/api/v4/projects/<id>/ci/components"
 
-# Получение конкретного компонента
+# Детальная информация о конкретной версии
 curl --header "PRIVATE-TOKEN: <token>" \
-  "https://gitlab.example.com/api/v4/projects/<project_id>/ci/components/<component_name>"
+  "https://gitlab.example.com/api/v4/projects/<id>/ci/components/<name>/versions/1.0.0"
 ```
 
----
+## Дополнительная информация
 
-## Справочная информация
+### Сводная таблица API и CLI
 
-### API-эндпоинты для компонентов
-
-| Метод | Эндпоинт | Описание |
+| Инструмент | Команда / Эндпоинт | Назначение |
 | :--- | :--- | :--- |
-| `GET` | `/projects/:id/ci/components` | Список всех компонентов |
-| `GET` | `/projects/:id/ci/components/:name` | Информация о компоненте |
-| `GET` | `/projects/:id/ci/components/:name/versions` | Версии компонента |
-| `POST` | `/projects/:id/ci/lint` | Валидация конфигурации |
-| `POST` | `/projects/:id/releases` | Создание релиза |
+| **API** | `GET /projects/:id/ci/components` | Список компонентов |
+| **API** | `POST /projects/:id/ci/lint` | Валидация пайплайна |
+| **CLI** | `glab ci lint` | Проверка синтаксиса |
+| **Git** | `git tag -a v1.0.0` | Создание версии |
 
-### CLI-команды
+### История изменений (Changelog)
 
-| Команда | Описание |
+| Версия GitLab | Статус / Изменение |
 | :--- | :--- |
-| `gitlab-ci lint --project=<path>` | Валидация конфигурации |
-| `gitlab-ci lint --show-expanded` | Показать развёрнутый пайплайн |
-| `git tag -a vX.Y.Z -m "message"` | Создание тега версии |
-| `git push origin vX.Y.Z` | Публикация тега |
+| **16.0** | Представлен механизм Components (экспериментально) |
+| **16.10** | SemVer стал обязательным для публикации в каталоге |
+| **17.0** | Статус General Availability (GA) |
+| **18.5** | Лимит компонентов на проект увеличен до 100 |
 
-### Changelog версий GitLab
+### Смотрите также
 
-| Версия | Изменение |
-| :--- | :--- |
-| **16.0** | Components как экспериментальная функция |
-| **16.2** | Включено по умолчанию (GitLab.com, Self-Managed) |
-| **16.9** | Лимит компонентов увеличен с 10 до 30 |
-| **16.10** | SemVer обязателен для компонентов каталога |
-| **17.0** | General Availability (GA) |
-| **17.6** | Component context (experimental) |
-| **18.5** | Лимит компонентов увеличен до 100 |
-| **18.7** | Component context (GA) |
-
-### Технические ограничения
-
-| Параметр | Значение | Примечание |
-| :--- | :--- | :--- |
-| Максимум компонентов на проект | 100 | С GitLab 18.5 |
-| Лимит вложенности include | 150 | Все типы include суммируются |
-| Максимальный размер `.gitlab-ci.yml` | 1 MB | Включая все include |
-| Timeout валидации | 30 сек | Для `gitlab-ci lint` |
-
-### Внешние ресурсы
-
-- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
-- [Официальная документация: `spec:inputs`](https://docs.gitlab.com/ci/components/#specinputs)
-- [GitLab Components Catalog](https://gitlab.com/explore/catalog)
-- [GitLab API: Components](https://docs.gitlab.com/api/components/)
-- [GitLab CLI: ci/lint](https://docs.gitlab.com/cli/ci/lint/)
-
----
-
-## Связанные документы
-
-- **SSoT:** [GitLab CI: Каталог Компонентов](./ci_cd_catalog_components.md)
-- [Определения](./ci_cd_catalog_definitions.md)
-- [Концепции](./ci_cd_catalog_concepts.md)
-- [Базовые сценарии](./ci_cd_catalog_scenarios.md)
-- [Продвинутые сценарии](./ci_cd_catalog_advanced_scenarios.md)
-- [Ограничения](./ci_cd_catalog_limits.md)
-- [Механизм include](./include_keyword.md)
+- [GitLab CI: Каталог компонентов (SSoT)](./ci_cd_catalog_components.md)
+- [Ограничения каталога компонентов](./ci_cd_catalog_limits.md)
+- [Официальная документация GitLab API](https://docs.gitlab.com/api/components/)

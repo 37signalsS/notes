@@ -29,11 +29,10 @@
     ```
 
 2. **Получите токен доступа:**
-    Этот токен будет использоваться для аутентификации оператора в Kubernetes.
+    Этот токен будет использоваться для аутентификации оператора в Kubernetes. Начиная с Kubernetes 1.24, токены не создаются автоматически для ServiceAccounts. Используйте следующую команду для генерации временного токена:
 
     ```bash
-    SECRET_NAME=$(kubectl get sa deploy-admin -n users -o jsonpath='{.secrets[0](name}')
-    KUBE_TOKEN=$(kubectl get secret ${SECRET_NAME} -n users -o jsonpath='{.data.token}' | base64 --decode)
+    KUBE_TOKEN=$(kubectl create token deploy-admin -n users)
     echo $KUBE_TOKEN
     ```
 
@@ -107,4 +106,8 @@ stop_review_app:
 
 ## Дополнительная информация
 
-**См. также:** **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)** (концепции), **[Интеграция GitLab CI с HashiCorp Vault](vault_kubernetes_integration.md)** (секреты), **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** (переменные).
+### Смотрите также
+
+- **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)** — общие концепции динамических окружений.
+- **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — основы работы с переменными.
+- **[Интеграция GitLab CI с HashiCorp Vault](vault_kubernetes_integration.md)** — продвинутое управление секретами.

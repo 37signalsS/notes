@@ -55,6 +55,7 @@
 
 - **`site.yml`**: основной файл, который обычно импортирует другие плейбуки через `import_playbook`.
 - **`ansible.cfg`**: здесь важно указать пути для поиска ролей, чтобы Ansible «видел» как локальные, так и загруженные роли:
+
   ```ini
   [defaults]
   roles_path = ./roles:~/.ansible/roles:/usr/share/ansible/roles

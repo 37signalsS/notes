@@ -178,7 +178,11 @@ docker port <container>
 docker run -d -e FOO=bar alpine env
 
 # Несколько переменных — каждый через отдельный флаг
-docker run -d -e POSTGRES_PASSWORD=secret -e POSTGRES_USER=admin postgres:14
+docker run -d -e POSTGRES_PASSWORD=secret -e POSTGRES_USER=admin postgres:16-alpine
+```
+
+Подробнее о переменных окружения PostgreSQL см. **[Развертывание PostgreSQL в Docker](../Databases/PostgreSQL/Operations/docker_deployment.md)**.
+
 ```
 
 **Флаг `--env-file`** — загружает переменные из файла. Удобно, когда переменных много и команда становится громоздкой.
@@ -206,12 +210,12 @@ docker run -d --env-file my.env myapp:latest
 ```bash
 # Ограничение: 512 МБ RAM, 0.5 CPU
 docker run -d \
-  --name python-app \
+  --name pg-prod \
   --memory 512m \
   --cpus 0.5 \
   -e POSTGRES_PASSWORD=secret \
-  -p 5432:5432 \
-  postgres:14
+  -p 127.0.0.1:5432:5432 \
+  postgres:16-alpine
 ```
 
 **Поведение при превышении лимитов:**
@@ -238,7 +242,7 @@ docker stats
 docker run -it nginx:latest /bin/bash
 
 # Переопределение с флагами
-docker run -d postgres:14 postgres -c listen_addresses='0.0.0.0'
+docker run -d postgres:16-alpine postgres -c listen_addresses='0.0.0.0'
 ```
 
 **Переопределение ENTRYPOINT** — флаг `--entrypoint` указывается **до** имени образа:
@@ -254,17 +258,17 @@ docker inspect --format='{{.Config.Cmd}}' <image>
 
 > **Порядок важен:** `--entrypoint` ставится до образа, а команда (CMD) — после образа.
 
-**Запуск нескольких инстансов одного сервиса:**
+# Запуск нескольких инстансов одного сервиса
 
 ```bash
 # Первый инстанс PostgreSQL
-docker run -d --name pg1 -e POSTGRES_PASSWORD=secret -p 5432:5432 postgres:14
+docker run -d --name pg1 -e POSTGRES_PASSWORD=secret -p 5432:5432 postgres:16-alpine
 
 # Второй инстанс — другой порт хоста, чтобы избежать конфликта
-docker run -d --name pg2 -e POSTGRES_PASSWORD=secret -p 5433:5432 postgres:14
+docker run -d --name pg2 -e POSTGRES_PASSWORD=secret -p 5433:5432 postgres:16-alpine
 
 # Третий — ещё один порт
-docker run -d --name pg3 -e POSTGRES_PASSWORD=secret -p 5434:5432 postgres:14
+docker run -d --name pg3 -e POSTGRES_PASSWORD=secret -p 5434:5432 postgres:16-alpine
 ```
 
 ### Получение IP-адреса контейнера

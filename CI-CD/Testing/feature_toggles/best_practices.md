@@ -1,12 +1,12 @@
 # Лучшие практики Feature Toggles
 
-### Определения
+## Определения
 
 **Лучшие практики (Best Practices)** — набор проверенных подходов и правил для эффективного управления feature toggles, минимизации технического долга и избегания распространенных ошибок.
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Категории лучших практик
 
@@ -26,15 +26,15 @@
 **Правило:** Имя отражает суть фичи, а не техническую реализацию.
 
 ```
-❌ Плохо: flag1, new_feature, fix_bug_123
-✅ Хорошо: checkout-redesign-v2, payment-stripe-integration
+Плохо: flag1, new_feature, fix_bug_123
+Хорошо: checkout-redesign-v2, payment-stripe-integration
 ```
 
 **Рекомендации:**
 
-- Использовать kebab-case для имен флагов
-- Избегать общих префиксов типа `feature-`, `flag-`
-- Включать версию для крупных изменений (`checkout-v2`)
+- Использовать kebab-case для имен флагов.
+- Избегать общих префиксов типа `feature-`, `flag-`.
+- Включать версию для крупных изменений (`checkout-v2`).
 
 ---
 
@@ -44,17 +44,19 @@
 
 **Правило:** Всегда указывать безопасное значение по умолчанию (обычно `False`).
 
+**Пример (Python):**
+
 ```python
-# ✅ Хорошо: явный default
+# Хорошо: явный default
 if feature_flags.is_enabled('critical-fix', default=False):
     apply_new_logic()
 ```
 
 **Рекомендации:**
 
-- Для критичных функций — `default=False`
-- Для аварийных выключателей (kill switches) — `default=True`
-- Логировать случаи использования fallback-значений
+- Для критичных функций — `default=False`.
+- Для аварийных выключателей (kill switches) — `default=True`.
+- Логировать случаи использования fallback-значений.
 
 ---
 
@@ -66,19 +68,19 @@ if feature_flags.is_enabled('critical-fix', default=False):
 
 **Варианты хранения:**
 
-- Файл конфигурации (YAML/JSON) — для простых случаев
-- База данных — для динамического управления
-- Специализированный сервис (LaunchDarkly, Unleash) — для production
+- Файл конфигурации YAML (YAML Ain't Markup Language) / JSON (JavaScript Object Notation) — для простых случаев.
+- База данных — для динамического управления.
+- Специализированный сервис (LaunchDarkly, Unleash) — для production.
 
-**Связь:** Архитектурные решения описаны в [архитектуре систем Feature Toggles](./architecture.md).
+**Связь:** Архитектурные решения описаны в документе **[Архитектура систем Feature Toggles](./architecture.md)**.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Процесс удаления устаревших флагов
 
-**Цель:** Избежать накопления "мертвых" флагов и технического долга.
+**Цель:** Избежать накопления «мертвых» флагов и технического долга.
 
 **Применимость:** В первую очередь для **[релизных флагов](./types.md#1-релизные-флаги-release-toggles)** — они временные по природе.
 
@@ -93,9 +95,9 @@ if feature_flags.is_enabled('critical-fix', default=False):
 
 **Автоматизация:**
 
-- Добавить метку `created_at` к каждому флагу
-- Настроить алерт для флагов старше 30 дней
-- Включить проверку на "мертвые" флаги в CI
+- Добавить метку `created_at` к каждому флагу.
+- Настроить алерт для флагов старше 30 дней.
+- Включить проверку на «мертвые» флаги в CI (Continuous Integration).
 
 ---
 
@@ -103,7 +105,7 @@ if feature_flags.is_enabled('critical-fix', default=False):
 
 **Цель:** Понимать, как и когда проверяются флаги, отслеживать влияние.
 
-**Реализация:** Встроить отправку метрик и логов в SDK клиента.
+**Реализация:** Встроить отправку метрик и логов в SDK (Software Development Kit) клиента.
 
 ```python
 # Отправка метрики при каждой проверке флага
@@ -113,11 +115,11 @@ statsd.increment('feature_flag.check',
 
 **Ключевые метрики:**
 
-- `feature_flag.check{flag, result}` — количество проверок
-- `feature_flag.latency` — время получения состояния
-- `feature_flag.fallback_used` — случаи использования default
+- `feature_flag.check{flag, result}` — количество проверок.
+- `feature_flag.latency` — время получения состояния.
+- `feature_flag.fallback_used` — случаи использования default.
 
-**Связь:** Принципы мониторинга — в [Обзор Observability](../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
+**Связь:** Принципы мониторинга — в документе **[Обзор Observability](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)**.
 
 ---
 
@@ -125,7 +127,7 @@ statsd.increment('feature_flag.check',
 
 **Цель:** Гарантировать корректную работу с включенным и выключенным флагом.
 
-**Реализация:** Юнит-тесты и E2E-тесты должны принудительно устанавливать состояние флага.
+**Реализация:** Юнит-тесты и E2E (End-to-End) тесты должны принудительно устанавливать состояние флага.
 
 ```python
 def test_with_new_flow_enabled():
@@ -141,12 +143,16 @@ def test_with_new_flow_disabled():
 
 **Рекомендации:**
 
-- Тестировать оба состояния для каждого флага
-- Использовать контекстные менеджеры для временного переключения
-- Включать тесты в CI/CD пайплайн
+- Тестировать оба состояния для каждого флага.
+- Использовать контекстные менеджеры для временного переключения.
+- Включать тесты в CI/CD (Continuous Integration / Continuous Deployment) пайплайн.
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-**Связанные документы:** [Обзор Feature Toggles](./overview.md), [Анти-паттерны](./antipatterns.md), [Типы Feature Toggles](./types.md), [Архитектура систем Feature Toggles](./architecture.md), [Обзор Observability](../../../Concepts/Observability_and_Monitoring/observability_definitions.md).
+**Связанные документы:**
+
+- [Обзор Feature Toggles](./overview.md)
+- [Анти-паттерны](./antipatterns.md)
+- [Архитектура систем Feature Toggles](./architecture.md)

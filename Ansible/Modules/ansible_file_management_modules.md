@@ -10,18 +10,18 @@
 
 ### Группы модулей
 
-1.  **Управление объектами и атрибутами:**
-    *   `file`: Создание директорий, симлинков, управление правами (`owner`, `group`, `mode`).
-    *   `stat`: Получение детальной информации о файле (существование, контрольная сумма, права).
-    *   `find`: Поиск файлов по заданным критериям (паттерн, возраст, размер).
-2.  **Перенос данных:**
-    *   `copy`: Копирование файлов с контрольного узла на хосты или создание файлов из текста (`content`).
-    *   `template`: Создание файлов на основе [шаблонов Jinja2](../ansible_jinja_templating.md).
-    *   `fetch`: Копирование файлов с управляемых хостов на контрольный узел.
-3.  **Редактирование содержимого:**
-    *   `lineinfile`: Управление конкретными строками (добавление, замена по RegExp, удаление).
-    *   `blockinfile`: Вставка или обновление многострочных блоков текста с использованием маркеров.
-    *   `replace`: Массовая замена строк во всем файле по регулярному выражению.
+1. **Управление объектами и атрибутами:**
+    * `file`: Создание директорий, симлинков, управление правами (`owner`, `group`, `mode`).
+    * `stat`: Получение детальной информации о файле (существование, контрольная сумма, права).
+    * `find`: Поиск файлов по заданным критериям (паттерн, возраст, размер).
+2. **Перенос данных:**
+    * `copy`: Копирование файлов с контрольного узла на хосты или создание файлов из текста (`content`).
+    * `template`: Создание файлов на основе [шаблонов Jinja2](../ansible_jinja_templating.md).
+    * `fetch`: Копирование файлов с управляемых хостов на контрольный узел.
+3. **Редактирование содержимого:**
+    * `lineinfile`: Управление конкретными строками (добавление, замена по RegExp, удаление).
+    * `blockinfile`: Вставка или обновление многострочных блоков текста с использованием маркеров.
+    * `replace`: Массовая замена строк во всем файле по регулярному выражению.
 
 ## Практические сценарии
 
@@ -42,6 +42,7 @@
 ```
 
 **Ad-hoc команда для создания директории:**
+
 ```bash
 ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
 ```
@@ -70,6 +71,7 @@ ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
     dest: /etc/nginx/nginx.conf
     validate: /usr/sbin/nginx -t # проверка синтаксиса перед сохранением
 ```
+
 Подробнее см. в [Шаблонизация Jinja2](../ansible_jinja_templating.md).
 
 ### Модуль `ansible.builtin.lineinfile`
@@ -148,7 +150,7 @@ ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
 
 ## Дополнительная информация
 
-*   [Официальная документация по файловым модулям](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html#plugins-in-ansible-builtin)
-*   [Шаблонизация Jinja2](../ansible_jinja_templating.md)
-*   [Синхронизация файлов через rsync](ansible_file_synchronization_modules.md)
-*   [Переменные в Ansible](../PlaybookStructure/variables.md)
+* [Официальная документация по файловым модулям](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html#plugins-in-ansible-builtin)
+* [Шаблонизация Jinja2](../ansible_jinja_templating.md)
+* [Синхронизация файлов через rsync](ansible_file_synchronization_modules.md)
+* [Переменные в Ansible](../PlaybookStructure/variables.md)

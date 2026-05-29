@@ -56,11 +56,13 @@ docker run -d --name app myapp:latest
 
 ```bash
 docker network create myapp-net
-docker run -d --name postgres --network myapp-net postgres:14
+docker run -d --name postgres --network myapp-net postgres:16-alpine
 docker run -d --name app --network myapp-net myapp:latest
 
 # Теперь app может подключиться к postgres по имени "postgres"
 ```
+
+Подробнее о настройке сети для БД см. **[Развертывание PostgreSQL в Docker](../../Databases/PostgreSQL/Operations/docker_deployment.md)**.
 
 ## Практические сценарии
 
@@ -131,9 +133,9 @@ docker network create my-network
 docker run -d \
   --name pg-isolated \
   -e POSTGRES_PASSWORD=secret \
-  -p 5434:5432 \
+  -p 127.0.0.1:5434:5432 \
   --network my-network \
-  postgres:14
+  postgres:16-alpine
 
 # 3. Проверка подключения
 docker network inspect my-network
@@ -179,30 +181,33 @@ docker run -it --rm --network my-network alpine sh
 
    ```bash
    # Доступно только с хоста (127.0.0.1)
-   docker run -d -p 127.0.0.1:5432:5432 postgres:14
+   docker run -d -p 127.0.0.1:5432:5432 postgres:16-alpine
    ```
 
-3. **Используйте firewall хоста:**
+   1. **Используйте firewall хоста:**
    - Настройте `iptables` или `ufw` для ограничения доступа к опубликованным портам
    - Разрешайте доступ только с доверенных IP-адресов
 
-4. **Пример безопасной конфигурации:**
+   1. **Пример безопасной конфигурации:**
 
    ```bash
    # Создаем сеть для приложения
    docker network create myapp-net
-   
+
    # Запускаем БД без публикации порта (только внутри сети)
    docker run -d --name postgres \
      --network myapp-net \
      -e POSTGRES_PASSWORD=secret \
-     postgres:14
-   
+     postgres:16-alpine
+   ```
+
    # Запускаем приложение с доступом к БД
+
    docker run -d --name app \
      --network myapp-net \
      -p 8080:8080 \
      myapp:latest
+
    ```
 
 В этом примере:

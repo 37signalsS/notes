@@ -126,6 +126,11 @@ fi
 | Откат схемы БД до отката приложения | Потеря данных |
 | Игнорирование сезонности трафика при оценке Canary | Ложные срабатывания алертов |
 
----
+### Связанные документы
 
-**См. также:** [Probes in Kubernetes](../../Kubernetes/Base/probes.md), [Blue-Green Deployment](./blue_green_deployment.md), [Canary Deployments](./canary_deployment.md), [Rolling Update](./rolling_update.md), [Canary Monitoring and Gating](./canary_monitoring_and_gating.md), [Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md).
+- [Probes in Kubernetes](../../Kubernetes/Base/probes.md)
+- [Blue-Green Deployment](./blue_green_deployment.md)
+- [Canary Deployments](./canary_deployment.md)
+- [Rolling Update](./rolling_update.md)
+- [Canary Monitoring and Gating](./canary_monitoring_and_gating.md)
+- [Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md)

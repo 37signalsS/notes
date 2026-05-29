@@ -1,246 +1,165 @@
-# Управление и отладка репликации
+# Управление и отладка репликации в MySQL
 
-## Definitions
+## Определения
 
-**Диагностика репликации** — процесс мониторинга состояния потоков репликации, выявления ошибок и отставания (lag) между master и slave.
+**Диагностика репликации** — процесс мониторинга состояния потоков репликации, выявления ошибок и анализа задержек между основным сервером и его копиями.
 
-**Отставание репликации (Replication Lag)** — задержка между выполнением транзакции на master и её применением на slave. Измеряется в секундах (`Seconds_Behind_Master`).
+**Отставание репликации (Replication Lag)** — временная задержка между моментом фиксации транзакции на основном сервере и моментом её применения на реплике. В MySQL измеряется параметром `Seconds_Behind_Master`.
 
-## Basic Concepts
+**Relay Log (Журнал ретрансляции)** — промежуточный лог на стороне реплики, куда записываются события, полученные от основного сервера, перед их непосредственным применением.
+
+## Основные концепции
 
 ### Потоки репликации
 
-Для работы репликации используются три потока:
+Для обеспечения процесса репликации MySQL использует три ключевых потока:
 
 | Поток | Сервер | Описание |
 | :--- | :--- | :--- |
-| I/O-поток | Slave | Подключается к master, читает binlog и записывает в relay log |
-| SQL-поток | Slave | Читает relay log и применяет транзакции к данным |
-| Binlog dump | Master | Отправляет события binlog подключенным slave |
+| **I/O-поток (Ввод-вывод)** | Реплика (Replica) | Подключается к источнику, считывает бинарный лог (Binary Log) и записывает его в локальный Relay Log. |
+| **SQL-поток** | Реплика (Replica) | Считывает данные из Relay Log и последовательно применяет транзакции к базе данных. |
+| **Binlog dump** | Источник (Source) | Ожидает запросов от реплик и отправляет им события из бинарного лога. |
 
-### Ключевые метрики
+### Ключевые показатели состояния
 
-- **`Slave_IO_Running`** — статус I/O-потока (`Yes`/`No`)
-- **`Slave_SQL_Running`** — статус SQL-потока (`Yes`/`No`)
-- **`Seconds_Behind_Master`** — отставание в секундах (NULL при ошибках)
-- **`Last_Error`** — последняя ошибка, остановившая репликацию
-- **`Last_IO_Error`**, **`Last_SQL_Error`** — детализация по потокам
+Для оценки здоровья репликации используются следующие метрики из вывода команды `SHOW REPLICA STATUS` (в старых версиях `SHOW SLAVE STATUS`):
 
-## Practical Scenarios
+- **`Replica_IO_Running`** — статус потока чтения данных (должен быть `Yes`).
+- **`Replica_SQL_Running`** — статус потока применения данных (должен быть `Yes`).
+- **`Seconds_Behind_Master`** — отставание реплики от источника в секундах. Значение `0` означает синхронное состояние, `NULL` указывает на ошибку.
+- **`Last_IO_Error` / `Last_SQL_Error`** — содержат текстовое описание последних возникших ошибок.
 
-### Базовые команды управления
+## Практические сценарии
 
-```sql
--- Запуск репликации
-START SLAVE;
+### 1. Управление состоянием репликации
 
--- Остановка репликации
-STOP SLAVE;
-
--- Остановка и сброс всех настроек репликации
-RESET SLAVE ALL;
-
--- Проверка статуса (вертикальный вывод для удобства)
-SHOW SLAVE STATUS\G
-
--- Проверка статуса на master (текущая позиция binlog)
-SHOW MASTER STATUS\G
-```
-
-### Диагностика состояния репликации
+Команды управления в MySQL 8.0+ используют терминологию `REPLICA`. Старые команды `SLAVE` сохранены для обратной совместимости.
 
 ```sql
--- Полная информация о репликации
-SHOW SLAVE STATUS\G
+-- Запуск всех потоков репликации
+START REPLICA;
+-- -> Query OK, 0 rows affected
 
--- Ключевые поля для проверки:
---   Slave_IO_Running: Yes
---   Slave_SQL_Running: Yes
---   Seconds_Behind_Master: 0
---   Last_IO_Error: (пусто)
---   Last_SQL_Error: (пусто)
---   Auto_Position: Yes (для GTID)
+-- Остановка всех потоков
+STOP REPLICA;
+-- -> Query OK, 0 rows affected
+
+-- Просмотр детального статуса
+SHOW REPLICA STATUS\G
+/* 
+*************************** 1. row ***************************
+             Replica_IO_Running: Yes
+            Replica_SQL_Running: Yes
+          Seconds_Behind_Master: 0
+...
+*/
 ```
 
-### Таблица полей SHOW SLAVE STATUS
+### 2. Пропуск ошибочной транзакции
+
+Если репликация остановилась из-за ошибки, которую допустимо пропустить (например, дубликат первичного ключа при ручном вмешательстве на реплике):
+
+**Для классической репликации (по позициям лога):**
+
+```sql
+STOP REPLICA;
+-- Пропуск одного события
+SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;
+START REPLICA;
+-- -> Query OK, 0 rows affected
+```
+
+**Для репликации на основе GTID (Global Transaction Identifier):**
+
+```sql
+STOP REPLICA;
+-- "Проигрываем" пустую транзакцию с проблемным идентификатором
+SET GTID_NEXT='3E11FA47-71CA-11E1-9E33-C80AA9429562:542';
+BEGIN; COMMIT;
+-- Возвращаем автоматический режим
+SET GTID_NEXT='AUTOMATIC';
+START REPLICA;
+-- -> Query OK, 0 rows affected
+```
+
+Подробнее о работе с идентификаторами — в **[GTID-репликация](./gtid.md)**.
+
+### 3. Диагностика частых ошибок
+
+**Ошибка: `Replica_IO_Running: No` (ошибка подключения)**
+
+1. Проверьте сетевую доступность: `telnet <source_host> 3306`.
+2. Убедитесь, что пользователь для репликации имеет права доступа.
+3. Проверьте корректность учетных данных в `CHANGE REPLICATION SOURCE TO`.
+
+**Ошибка: `Replica_SQL_Running: No` (ошибка применения данных)**
+
+1. Изучите поле `Last_SQL_Error` в `SHOW REPLICA STATUS`.
+2. Проверьте консистентность данных между серверами.
+3. В случае конфликта (Duplicate entry) решите вопрос с данными или пропустите транзакцию.
+
+## Дополнительная информация
+
+### Справочник полей SHOW REPLICA STATUS
 
 | Поле | Описание |
 | :--- | :--- |
-| `Slave_IO_Running` | Статус I/O-потока (чтение binlog master) |
-| `Slave_SQL_Running` | Статус SQL-потока (применение транзакций) |
-| `Seconds_Behind_Master` | Отставание в секундах (NULL = неизвестно) |
-| `Master_Host`, `Master_User` | Параметры подключения к master |
-| `Master_Log_File` | Текущий файл binlog на master |
-| `Read_Master_Log_Pos` | Позиция, до которой slave прочитал master |
-| `Relay_Master_Log_File` | Файл master, соответствующий текущей позиции relay log |
-| `Exec_Master_Log_Pos` | Позиция выполнения SQL-потока |
-| `Last_IO_Error` | Последняя ошибка I/O-потока |
-| `Last_SQL_Error` | Последняя ошибка SQL-потока |
-| `Retrieved_Gtid_Set` | GTID, полученные от master |
-| `Executed_Gtid_Set` | GTID, выполненные на slave |
-| `Auto_Position` | Режим GTID (`Yes`/`No`) |
+| `Replica_IO_Running` | Статус I/O-потока (чтение Binary Log источника). |
+| `Replica_SQL_Running` | Статус SQL-потока (применение транзакций к данным). |
+| `Seconds_Behind_Master` | Отставание в секундах. `NULL` означает, что поток остановлен. |
+| `Source_Host`, `Source_User` | Параметры подключения к источнику данных. |
+| `Source_Log_File` | Текущий файл бинарного лога на источнике, который читает I/O-поток. |
+| `Read_Source_Log_Pos` | Позиция, до которой I/O-поток дочитал лог источника. |
+| `Relay_Source_Log_File` | Файл источника, соответствующий текущей позиции выполнения в Relay Log. |
+| `Exec_Source_Log_Pos` | Позиция выполнения SQL-потока в логах источника. |
+| `Last_IO_Error` | Последняя ошибка потока ввода-вывода. |
+| `Last_SQL_Error` | Последняя ошибка потока применения SQL. |
+| `Retrieved_Gtid_Set` | Набор GTID, полученных от источника. |
+| `Executed_Gtid_Set` | Набор GTID, фактически выполненных на этой реплике. |
+| `Auto_Position` | Индикатор использования GTID-репликации (`1` — вкл, `0` — выкл). |
 
-### Пропуск ошибочной транзакции
+### Мониторинг отставания в реальном времени
 
-Если репликация остановилась из-за ошибки (дубликат ключа, отсутствие таблицы):
-
-```sql
--- Остановить репликацию
-STOP SLAVE;
-
--- Пропустить одну транзакцию
-SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;
-
--- Запустить репликацию
-START SLAVE;
-
--- Проверить статус
-SHOW SLAVE STATUS\G
-```
-
-> **Предупреждение:** Пропуск транзакций может привести к рассинхронизации данных. Используйте только при понимании последствий.
-
-### Пропуск транзакции в режиме GTID
+Для автоматизированного мониторинга можно использовать системную таблицу `performance_schema`:
 
 ```sql
-STOP SLAVE;
-
--- Пропустить конкретный GTID
-SET GTID_NEXT='3E11FA47-71CA-11E1-9E33-C80AA9429562:542';
-BEGIN; COMMIT;
-SET GTID_NEXT='AUTOMATIC';
-
-START SLAVE;
-```
-
-Подробно о GTID — в [gtid.md](./gtid.md).
-
-### Сброс и перенастройка репликации
-
-```sql
--- Полная остановка и сброс
-STOP SLAVE;
-RESET SLAVE ALL;
-
--- Повторная настройка (классический режим)
-CHANGE MASTER TO
-  MASTER_HOST='master_host',
-  MASTER_USER='repl_user',
-  MASTER_PASSWORD='password',
-  MASTER_LOG_FILE='mysql-bin.000001',
-  MASTER_LOG_POS=154;
-
--- Или с GTID
-CHANGE MASTER TO
-  MASTER_HOST='master_host',
-  MASTER_USER='repl_user',
-  MASTER_PASSWORD='password',
-  MASTER_AUTO_POSITION=1;
-
-START SLAVE;
-```
-
-### Troubleshooting: частые ошибки
-
-**Ошибка:** `Last_IO_Error: error connecting to master`
-
-**Решение:**
-
-- Проверить сеть между slave и master
-- Убедиться, что master доступен (`ping`, `telnet master_host 3306`)
-- Проверить пользователя репликации на master
-- Проверить `MASTER_HOST`, `MASTER_USER`, `MASTER_PASSWORD`
-
-**Ошибка:** `Last_SQL_Error: Duplicate entry for key 'PRIMARY'`
-
-**Решение:**
-
-- Пропустить транзакцию (см. выше)
-- Или найти причину конфликта данных
-
-**Ошибка:** `Seconds_Behind_Master: NULL`
-
-**Решение:**
-
-- Проверить, работает ли SQL-поток
-- Проверить `Last_SQL_Error`
-- NULL может означать, что slave не может определить отставание
-
-### Мониторинг отставания
-
-```sql
--- Быстрая проверка отставания
-SHOW SLAVE STATUS\G | grep Seconds_Behind_Master
-
--- В скриптах (возвращает числовое значение)
 SELECT 
-  CASE 
-    WHEN Slave_SQL_Running = 'Yes' AND Slave_IO_Running = 'Yes' 
-    THEN Seconds_Behind_Master 
-    ELSE NULL 
-  END AS replication_lag
-FROM information_schema.PROCESSLIST
-WHERE USER = 'system user';
+    LAST_ERROR_NUMBER, 
+    LAST_ERROR_MESSAGE, 
+    SERVICE_STATE as IO_STATE 
+FROM performance_schema.replication_connection_status;
+-- -> Результат выполнения запроса со статусом подключения
 ```
 
-## Additional Information
+### Параллельная репликация
 
-### Особенности MySQL 8
-
-#### Плагин аутентификации
-
-По умолчанию используется `caching_sha2_password` вместо `mysql_native_password`, что может вызвать проблемы совместимости со старыми клиентами.
-
-**Варианты решения:**
-
-1. **Создать пользователя со старым плагином:**
-
-    ```sql
-    CREATE USER 'slave_user'@'%'
-    IDENTIFIED WITH mysql_native_password BY '${REPLICATION_PASSWORD}';
-    ```
-
-2. **Использовать безопасную передачу пароля по RSA:**
-
-    ```sql
-    CHANGE MASTER TO GET_MASTER_PUBLIC_KEY = 1;
-    ```
-
-3. **Вернуть старый плагин по умолчанию (менее безопасно):**
-
-    ```ini
-    [mysqld]
-    default-authentication-plugin=mysql_native_password
-    ```
-
-> **Важно:** Начиная с MySQL 8.0.27, `mysql_native_password` считается устаревшим. Рекомендуется использовать `caching_sha2_password` с SSL/TLS или `GET_MASTER_PUBLIC_KEY = 1`.
-
-#### Цепочечная репликация
-
-Опция `log_slave_updates` (в старых версиях `log-slave-updates`) включена по умолчанию. Это значит, что slave записывает полученные от мастера изменения в свой бинарный лог, позволяя ему выступать мастером для других slave (M → S1 → S2).
-
-### Параллельная репликация (MySQL 5.7+)
-
-Для ускорения применения транзакций на slave можно включить параллельное выполнение:
+Для ускорения работы SQL-потока в высоконагруженных системах (MySQL 5.7+ / 8.0) используйте многопоточное применение транзакций:
 
 ```ini
+# В файле my.cnf
 [mysqld]
-slave_parallel_workers = 4
-slave_parallel_type = LOGICAL_CLOCK
+# Количество потоков (workers)
+replica_parallel_workers = 4
+# Тип параллелизма (LOGICAL_CLOCK рекомендуется для 8.0)
+replica_parallel_type = LOGICAL_CLOCK
 ```
 
-### SSL/TLS для репликации
+### Безопасность и SSL/TLS
 
-Для безопасной передачи данных между master и slave:
+Для защиты трафика репликации при передаче через публичные сети:
 
 ```sql
-CHANGE MASTER TO
-  MASTER_SSL = 1,
-  MASTER_SSL_CA = '/path/to/ca.pem',
-  MASTER_SSL_CERT = '/path/to/client-cert.pem',
-  MASTER_SSL_KEY = '/path/to/client-key.pem';
+CHANGE REPLICATION SOURCE TO
+  SOURCE_SSL = 1,
+  SOURCE_SSL_CA = '/etc/mysql/certs/ca.pem',
+  SOURCE_SSL_CERT = '/etc/mysql/certs/client-cert.pem',
+  SOURCE_SSL_KEY = '/etc/mysql/certs/client-key.pem';
+-- -> Query OK, 0 rows affected
 ```
 
----
+**См. также:**
 
-**См. также:** [Настройка репликации](./setup_guide.md), [GTID](./gtid.md), [Бинарный лог](./binlog_formats.md), [Multi-Source репликация](../multi-source-replication.md).
+- **[Пошаговая настройка репликации](./setup_guide.md)**
+- **[GTID-репликация](./gtid.md)**
+- **[Форматы бинарного лога](./binlog_formats.md)**
+- **[Multi-Source репликация](../multi-source-replication.md)**

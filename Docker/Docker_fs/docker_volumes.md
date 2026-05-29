@@ -79,30 +79,22 @@ docker volume prune
 
 ### Сценарий 2: Хранение данных PostgreSQL (Volume)
 
-**Первичный запуск с инициализацией:**
+Для баз данных использование томов является критически важным не только для сохранения данных, но и для обеспечения производительности I/O.
+
+**Пример запуска:**
 
 ```bash
 docker run -d --name my-postgres \
   -e POSTGRES_PASSWORD=mysecretpassword \
   --mount type=volume,source=postgres-db-data,target=/var/lib/postgresql/data \
-  postgres:14
+  postgres:16-alpine
 ```
 
-*В этом примере Docker автоматически создаст именованный том `postgres-db-data`, если он не существует. PostgreSQL при первом запуске выполнит инициализацию: создаст структуру БД и установит пароль из переменной `POSTGRES_PASSWORD`.*
+*В этом примере Docker автоматически создаст именованный том `postgres-db-data`, если он не существует. PostgreSQL при первом запуске выполнит инициализацию в указанной директории.*
 
-**Повторный запуск с существующего Volume:**
+Подробные инструкции по развертыванию, настройке безопасности и инициализации БД в Docker приведены в **[Развертывание PostgreSQL в Docker](../../Databases/PostgreSQL/Operations/docker_deployment.md)**.
 
-```bash
-# Удаляем контейнер, данные сохраняются в volume
-docker rm -f my-postgres
-
-# Запускаем новый контейнер с тем же volume
-docker run -d --name new-postgres \
-  --mount type=volume,source=postgres-db-data,target=/var/lib/postgresql/data \
-  postgres:14
-```
-
-> **Важно:** Переменная `POSTGRES_PASSWORD` требуется **только при первичной инициализации** новой базы данных. При повторном запуске контейнера с существующего volume (где данные уже есть) эта переменная не нужна — пароль и все данные уже хранятся в `/var/lib/postgresql/data` внутри тома.
+> **Важно:** Переменная `POSTGRES_PASSWORD` требуется **только при первичной инициализации** новой базы данных. При повторном запуске контейнера с существующего volume (где данные уже есть) эта переменная не нужна.
 
 ### Сценарий 3: Разработка с "живой" перезагрузкой (Bind Mount)
 

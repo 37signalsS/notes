@@ -202,4 +202,3 @@
 - **Безопасность:** Рекомендации по изоляции контейнеров — [Docker/Docker_security/overview.md](../../Docker/Docker_security/overview.md)
 - **Реестры образов:** Работа с Docker Registry — [Docker/docker_registries.md](../../Docker/docker_registries.md)
 - **Альтернативы:** [Сборка образов с Buildah и Ansible](../ansible_buildah_image_building.md)
-

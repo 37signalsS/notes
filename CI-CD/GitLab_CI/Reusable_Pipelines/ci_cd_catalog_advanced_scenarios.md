@@ -293,9 +293,6 @@ semantic-release:
 ## Связанные документы
 
 - **SSoT:** [GitLab CI: Каталог Компонентов](./ci_cd_catalog_components.md)
-- [Базовые сценарии](./ci_cd_catalog_scenarios.md)
-- [Определения](./ci_cd_catalog_definitions.md)
-- [Концепции](./ci_cd_catalog_concepts.md)
 - [Ограничения](./ci_cd_catalog_limits.md)
 - [Справочная информация](./ci_cd_catalog_reference.md)
 - [Механизм include](./include_keyword.md)

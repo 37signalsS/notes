@@ -12,9 +12,9 @@
 
 Проблемы с истечением сертификатов в Kubernetes обычно делятся на три уровня:
 
-1.  **Инфраструктурный уровень (Control Plane):** сертификаты API Server, etcd, scheduler. По умолчанию действуют 1 год.
-2.  **Уровень узлов (Kubelet):** клиентские сертификаты для подключения к API и серверные сертификаты для метрик/логов.
-3.  **Уровень приложений (Ingress/Services):** сертификаты для внешних пользователей, управляемые через Ingress-контроллеры или Service Mesh.
+1. **Инфраструктурный уровень (Control Plane):** сертификаты API Server, etcd, scheduler. По умолчанию действуют 1 год.
+2. **Уровень узлов (Kubelet):** клиентские сертификаты для подключения к API и серверные сертификаты для метрик/логов.
+3. **Уровень приложений (Ingress/Services):** сертификаты для внешних пользователей, управляемые через Ingress-контроллеры или Service Mesh.
 
 **Основная стратегия предотвращения проблем:** переход от ручного управления к автоматизации (Cert-manager, Kubelet Bootstrap) и внедрение проактивного мониторинга.
 
@@ -25,8 +25,9 @@
 Если кластер развернут через `kubeadm`, сертификаты обновляются автоматически при обновлении версии Kubernetes (`kubeadm upgrade`).
 
 **Ручная проверка и обновление:**
-*   **Проверка:** `sudo kubeadm certs check-expiration`
-*   **Обновление:** `sudo kubeadm certs renew all`
+
+* **Проверка:** `sudo kubeadm certs check-expiration`
+* **Обновление:** `sudo kubeadm certs renew all`
 
 Подробные инструкции по ротации инфраструктурных сертификатов см. в [Управление сертификатами через kubeadm](./certificate_management.md).
 
@@ -35,11 +36,13 @@
 По умолчанию Kubelet генерирует самоподписанные серверные сертификаты. Для автоматической ротации сертификатов, подписанных Cluster CA, необходимо включить `serverTLSBootstrap`.
 
 **Настройка в KubeletConfiguration:**
+
 ```yaml
 serverTLSBootstrap: true
 ```
 
 **Процесс:**
+
 1. Kubelet создает запрос на подпись (CSR) при запуске.
 2. Администратор (или контроллер) должен одобрить CSR: `kubectl certificate approve <csr-name>`.
 3. После одобрения Kubelet автоматически обновляет сертификат до истечения срока.
@@ -49,8 +52,9 @@ serverTLSBootstrap: true
 Для приложений (Ingress, Gateway API) стандартом является использование **cert-manager**.
 
 **Ключевые настройки для надежности:**
-*   **Issuer/ClusterIssuer:** настройте несколько способов проверки (HTTP-01 для внешних, DNS-01 для внутренних/wildcard).
-*   **RenewBefore:** параметр в ресурсе `Certificate`, определяющий, за сколько времени до истечения начинать продление (по умолчанию 30 дней).
+
+* **Issuer/ClusterIssuer:** настройте несколько способов проверки (HTTP-01 для внешних, DNS-01 для внутренних/wildcard).
+* **RenewBefore:** параметр в ресурсе `Certificate`, определяющий, за сколько времени до истечения начинать продление (по умолчанию 30 дней).
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -104,7 +108,7 @@ spec:
 
 ## Дополнительная информация
 
-*   [Управление сертификатами через kubeadm](./certificate_management.md) — SSoT для инфраструктуры.
-*   [Операции Cert-manager](../ToolsUtilities/cert_manager/Administration/operations.md) — мониторинг и алерты для cert-manager.
-*   [Диагностика Cert-manager](../ToolsUtilities/cert_manager/Administration/troubleshooting.md) — что делать, если автопродление не сработало.
-*   [TLS и mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md) — теоретические основы.
+* [Управление сертификатами через kubeadm](./certificate_management.md) — SSoT для инфраструктуры.
+* [Операции Cert-manager](../ToolsUtilities/cert_manager/Administration/operations.md) — мониторинг и алерты для cert-manager.
+* [Диагностика Cert-manager](../ToolsUtilities/cert_manager/Administration/troubleshooting.md) — что делать, если автопродление не сработало.
+* [TLS и mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md) — теоретические основы.

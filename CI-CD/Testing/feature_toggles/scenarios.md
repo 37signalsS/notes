@@ -1,12 +1,12 @@
 # Сценарии использования Feature Toggles
 
-### Определения
+## Определения
 
 - **Сценарии использования** — это типовые задачи и проблемы, которые эффективно решаются с помощью техники Feature Toggles.
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Критерии выбора сценария
 
@@ -23,21 +23,23 @@
 
 Все сценарии требуют:
 
-- **Контекстная проверка** — передача атрибутов пользователя (ID, роль, регион) для принятия решений
-- **Безопасные fallback-значения** — предсказуемое поведение при недоступности хранилища флагов
-- **Мониторинг** — логирование проверок и отправка метрик использования
+- **Контекстная проверка** — передача атрибутов пользователя (идентификатор (ID), роль, регион) для принятия решений.
+- **Безопасные fallback-значения** — предсказуемое поведение при недоступности хранилища флагов.
+- **Мониторинг** — логирование проверок и отправка метрик использования.
 
-Детали архитектуры — в **[Архитектура систем Feature Toggles](./architecture.md)**, реализация в коде — в **[Реализация Feature Toggles](./implementation.md)**.
+Детали архитектуры — в документе **[Архитектура систем Feature Toggles](./architecture.md)**, реализация в коде — в документе **[Реализация Feature Toggles](./implementation.md)**.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-#### Сценарий 1: Canary Deployment
+### Сценарий 1: Canary Deployment
 
 Постепенный и контролируемый запуск новой функциональности на определенный процент пользователей.
 
 - **Тип флага:** [Экспериментальный (Experiment Toggle)](./types.md#2-экспериментальные-флаги-experiment-toggles) или [Релизный (Release Toggle)](./types.md#1-релизные-флаги-release-toggles).
+
+**Пример реализации (Python):**
 
 ```python
 # Постепенный rollout новой версии
@@ -56,28 +58,33 @@ else:
 # Если ошибок < 0.1%, увеличиваем rollout_percentage
 ```
 
-Подробнее о стратегии канареечного развертывания — в **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)**.
+Подробнее о стратегии канареечного развертывания — в документе **[Canary Deployment](../../Deployment_Strategies/canary_deployment.md)**.
 
-#### Сценарий 2: Аварийный выключатель (Kill Switch)
+### Сценарий 2: Аварийный выключатель (Kill Switch)
 
 Мгновенное отключение проблемной или нестабильной функции в production без отката всего релиза.
 
 - **Тип флага:** [Операционный (Ops Toggle)](./types.md#3-операционные-флаги-ops-toggles).
 
+**Пример реализации (Python):**
+
 ```python
 @app.route('/api/recommendations')
 def get_recommendations():
+    # Программный интерфейс (API) рекомендаций
     if not feature_flags.is_enabled('recommendations-api', default=True):
         return get_popular_items() # Fallback-логика
 
     # ... основная логика ...
 ```
 
-#### Сценарий 3: Бета-тестирование
+### Сценарий 3: Бета-тестирование
 
 Предоставление доступа к новым функциям ограниченному кругу пользователей (например, внутренним сотрудникам или участникам бета-программы).
 
 - **Тип флага:** [Доступный (Permission Toggle)](./types.md#4-флаги-доступов-permission-toggles) или [Релизный (Release Toggle)](./types.md#1-релизные-флаги-release-toggles).
+
+**Пример реализации (Python):**
 
 ```python
 @app.route('/beta/new-dashboard')
@@ -91,11 +98,13 @@ def beta_dashboard():
     return render_template('beta/dashboard.html')
 ```
 
-#### Сценарий 4: A/B тестирование
+### Сценарий 4: A/B тестирование
 
 Сравнение двух или более версий одной и той же функциональности для определения, какая из них лучше достигает бизнес-целей (например, конверсии, кликабельности).
 
-- **Тип флага:** [Экспериментальный (Experiment Toggle)](./types.md#2-экспериментальные-флаги-experiment-toggles)
+- **Тип флага:** [Экспериментальный (Experiment Toggle)](./types.md#2-экспериментальные-флаги-experiment-toggles).
+
+**Пример реализации (Python):**
 
 ```python
 # Флаг может вернуть вариант 'A', 'B', или 'C'
@@ -117,10 +126,17 @@ statsd.increment(f'checkout.button.shown.{button_variant}')
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Базовые концепции Feature Toggles описаны в **[Обзор Feature Toggles](./overview.md)**.
+**Связанные документы:**
 
-Классификация флагов по назначению и жизненному циклу — в **[Типы Feature Toggles](./types.md)**.
+- **[Обзор Feature Toggles](./overview.md)** — базовые концепции и преимущества.
+- **[Типы Feature Toggles](./types.md)** — классификация по назначению и жизненному циклу.
+- **[Архитектура систем Feature Toggles](./architecture.md)** — описание компонентов.
+- **[Реализация Feature Toggles](./implementation.md)** — примеры встраивания в код.
 
-Рекомендации по внешним источникам: статья [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html), документация [LaunchDarkly](https://docs.launchdarkly.com/) и [Unleash](https://docs.getunleash.io/).
+**Внешние ресурсы:**
+
+- Статья [Feature Toggles by Martin Fowler](https://martinfowler.com/articles/feature-toggles.html).
+- Документация [LaunchDarkly](https://docs.launchdarkly.com/).
+- Документация [Unleash](https://docs.getunleash.io/).

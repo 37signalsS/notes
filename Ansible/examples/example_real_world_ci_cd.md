@@ -36,6 +36,7 @@
 Для эффективного разделения ответственности используются два типа репозиториев:
 
 **Центральный репозиторий ролей (`ansible-roles-repo`):**
+
 ```text
 ansible-roles-repo/
 └── roles/
@@ -45,6 +46,7 @@ ansible-roles-repo/
 ```
 
 **Репозиторий проекта (`project-A-inventory`):**
+
 ```text
 project-A-inventory/
 ├── group_vars/
@@ -60,9 +62,11 @@ project-A-inventory/
 2. GitLab CI инициирует выполнение пайплайна.
 3. GitLab Runner, установленный на контрольном узле, клонирует необходимые репозитории.
 4. Runner вызывает скрипт-обертку:
+
    ```bash
    sudo /usr/local/bin/ansible_runner_script.sh --playbook site.yml --inventory ./inventory.ini --limit ${ANSIBLE_LIMIT:-all}
    ```
+
 5. Скрипт выполняет **[запуск плейбука](../ansible_playbook_execution.md)** и возвращает результат в CI/CD систему.
 
 #### 3. Пример скрипта-обертки (`ansible_runner_script.sh`)

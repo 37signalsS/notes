@@ -86,5 +86,5 @@ GitLab Server предоставляет очередь задач, которы
 ### См. также
 
 * [Установка GitLab в Docker (Testing)](../Tutorials/self_hosted_installation.md)
-* [Интеграция с Kubernetes](../../Advanced/gitlab_kubernetes_integration_guide.md)
+* [Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)
 * [Официальные Reference Architectures](https://docs.gitlab.com/ee/administration/reference_architectures/)

@@ -34,11 +34,13 @@
 **Причина:** выражения Jinja2 (`{{ ... }}`) в YAML-файлах должны быть обязательно заключены в кавычки, если они стоят в начале значения. Без кавычек парсер воспринимает фигурные скобки как начало словаря.
 
 **Неправильно:**
+
 ```yaml
 my_variable: {{ some_other_variable }}
 ```
 
 **Решение:**
+
 ```yaml
 my_variable: "{{ some_other_variable }}"
 ```
@@ -58,6 +60,7 @@ my_variable: "{{ some_other_variable }}"
 **Причина:** параметр `host_key_checking = false` в `ansible.cfg` не всегда распространяется на дочерние процессы SSH при использовании `ProxyCommand`.
 
 **Решение:** явно отключить проверку ключей в параметрах SSH:
+
 ```ini
 [ssh_connection]
 ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
@@ -70,6 +73,7 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=
 **Причина:** операция (например, `union` или `join`) получила пустое значение (`None`) вместо списка. Часто возникает при комментировании всех элементов списка в YAML.
 
 **Неправильно (создает None):**
+
 ```yaml
 my_list:
 # - item1
@@ -77,6 +81,7 @@ my_list:
 ```
 
 **Решение:** явно инициализировать пустой список:
+
 ```yaml
 my_list: []
 ```
@@ -88,6 +93,7 @@ my_list: []
 **Причина:** YAML-парсер автоматически преобразует слова `yes`, `no`, `on`, `off`, `true`, `false` в булевы значения.
 
 **Решение:** заключать строковые значения в кавычки или использовать явную логику в шаблоне:
+
 ```yaml
 # В переменных
 sshd_permit_root_login: "yes"
@@ -111,6 +117,7 @@ PermitRootLogin {{ sshd_permit_root_login | ternary('yes', 'no') }}
 **Причина:** Ansible по умолчанию пытается подключиться как `root`, если не указан другой пользователь.
 
 **Решение:**
+
 1. Указать пользователя в `ansible.cfg` (`remote_user`) или в инвентаре (`ansible_user`).
 2. Использовать механизм `become: true` для задач, требующих привилегий суперпользователя.
 

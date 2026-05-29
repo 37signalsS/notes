@@ -82,7 +82,7 @@ deploy:
     - echo "Deploying..."
 ```
 
-Для сериализации развертываний и защиты от гонок состояний используется `resource_group` ([practical_scenarios.md](./practical_scenarios.md)).
+Для сериализации развертываний и защиты от гонок состояний используется `resource_group` ([matrix_builds_and_serialization.md](./matrix_builds_and_serialization.md)).
 
 ### Complex DAG с несколькими зависимостями
 
@@ -120,4 +120,4 @@ test:unit ──┘
 
 ## Дополнительная информация
 
-См. также: [определения директив](./directives_definitions.md), [основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md).
+См. также: [определения директив](./directives_definitions.md), [основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md).

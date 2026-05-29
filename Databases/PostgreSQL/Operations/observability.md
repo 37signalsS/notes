@@ -25,27 +25,27 @@
 4. **Блокировки:** Длительные блокировки таблиц — деградация всей системы.
 5. **Резервные копии:** Возраст последнего успешного бэкапа.
 
-## Практический сценарий: Архитектура стека
+## Практические сценарии
 
-### Компоненты
+### Архитектура стека
 
 1. **Приложение:** Инструментируется **OpenTelemetry SDK**. Добавляет SQL-комментарий `sqlcommenter` с `trace_id` к запросам.
 
 2. **PostgreSQL:**
-   - `trace_id` попадает в логи через `sqlcommenter`
-   - Расширение **`pg_tracing`** создаёт спаны для фаз выполнения SQL
-   - **`postgres_exporter`** собирает метрики из `pg_stat_*`
+   - `trace_id` попадает в логи через `sqlcommenter`.
+   - Расширение **`pg_tracing`** создаёт спаны для фаз выполнения SQL.
+   - **`postgres_exporter`** собирает метрики из `pg_stat_*`.
 
 3. **Grafana Alloy (агент-коллектор):**
-   - Принимает трейсы от приложения и `pg_tracing`
-   - Собирает метрики с `postgres_exporter`
-   - Читает логи, извлекает `trace_id`
-   - Отправляет данные в бэкенды Grafana
+   - Принимает трейсы от приложения и `pg_tracing`.
+   - Собирает метрики с `postgres_exporter`.
+   - Читает логи, извлекает `trace_id`.
+   - Отправляет данные в бэкенды Grafana.
 
 4. **Бэкенд (Grafana Stack):**
-   - **[Tempo](../../../Tempo/index.md)** — хранение трейсов
-   - **[Loki](../../../Loki/loki_overview.md)** — хранение логов
-   - **[Mimir](../../../Mimir/mimir_overview.md)** или Prometheus — хранение метрик
+   - **[Tempo](../../../Tempo/index.md)** — хранение трейсов.
+   - **[Loki](../../../Loki/loki_overview.md)** — хранение логов.
+   - **[Mimir](../../../Mimir/mimir_overview.md)** или Prometheus — хранение метрик.
 
 5. **Grafana:** Визуализация и корреляция сигналов.
 
@@ -61,7 +61,7 @@ SELECT * FROM users WHERE id = 1;
 SELECT * FROM users WHERE id = 1 /*application='backend',traceparent='00-traceid-spanid-01'*/;
 ```
 
-**Библиотеки:** SQLAlchemy, GORM и другие ORM поддерживают автоматическое добавление комментариев. Примеры — **[OpenTelemetry Overview](../../../OpenTelemetry/opentelemetry_overview.md#практический-пример-инструментация-запросов-к-postgresql)**.
+**Библиотеки:** SQLAlchemy, GORM и другие ORM поддерживают автоматическое добавление комментариев. Примеры — **[OpenTelemetry Overview](../../../OpenTelemetry/opentelemetry_overview.md#корреляция-запросов-к-базе-данных)**.
 
 ### Расширения для мониторинга
 
@@ -72,15 +72,15 @@ SELECT * FROM users WHERE id = 1 /*application='backend',traceparent='00-traceid
 | `auto_explain` | Логирование планов медленных запросов |
 | `pg_tracing` | Создание спанов для трассировки (экспериментальное) |
 
-Подробнее об использовании — **[Оптимизация производительности](./performance_tuning.md#мониторинг-и-диагностика)**.
+Подробнее об использовании — **[Оптимизация производительности](./performance_tuning.md#сценарий-3-проактивный-мониторинг)**.
 
 ### pg_tracing (экспериментальное)
 
 **Функционал:**
 
-- Создаёт спаны для фаз выполнения (parsing, planning, execution)
-- Читает `traceparent` из `sqlcommenter`
-- Экспортирует спаны по протоколу OTLP
+- Создаёт спаны для фаз выполнения (parsing, planning, execution).
+- Читает `traceparent` из `sqlcommenter`.
+- Экспортирует спаны по протоколу OTLP.
 
 **Статус:** Экспериментальное, может требовать сборки PostgreSQL из исходников.
 

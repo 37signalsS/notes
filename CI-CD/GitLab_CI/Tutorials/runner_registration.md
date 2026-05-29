@@ -2,7 +2,7 @@
 
 ## Определения
 
-Базовые понятия (GitLab Runner, Executor, типы Runner'ов) описаны в SSoT: **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
+Базовые понятия (GitLab Runner, Executor, типы Runner'ов) описаны в основной статье: **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
 
 **Регистрационный токен** — уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
 
@@ -31,7 +31,7 @@
 docker run --rm -it \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  gitlab/gitlab-runner:alpine-v18.10.0 \
+  gitlab/gitlab-runner:alpine-v17.0.0 \
   register
 ```
 
@@ -40,7 +40,7 @@ docker run --rm -it \
 - `--rm -it`: Запускает контейнер в интерактивном режиме и автоматически удаляет его после завершения.
 - `-v /srv/gitlab-runner/config:/etc/gitlab-runner`: **Критически важный шаг.** Мы монтируем директорию с хоста (`/srv/gitlab-runner/config`) внутрь контейнера. В этой директории Runner создаст файл `config.toml`, который будет сохранен на хосте и использован для постоянной работы.
 - `-v /var/run/docker.sock:/var/run/docker.sock`: Позволяет Runner'у внутри контейнера управлять Docker-демоном на хост-машине для запуска CI/CD-задач.
-- `gitlab/gitlab-runner:alpine-v18.10.0`: Используем образ Runner'а с **зафиксированной версией**, а не `latest`, для предсказуемости.
+- `gitlab/gitlab-runner:alpine-v17.0.0`: Используем образ Runner'а с **зафиксированной версией**, а не `latest`, для предсказуемости.
 - `register`: Команда, инициирующая процесс регистрации.
 
 ### Шаг 3: Ответы на вопросы
@@ -64,7 +64,7 @@ docker run --rm -it \
 docker run -d --name gitlab-runner --restart always \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  gitlab/gitlab-runner:alpine-v18.10.0
+  gitlab/gitlab-runner:alpine-v17.0.0
 ```
 
 - `-d`: Запуск в фоновом режиме (detached).
@@ -83,8 +83,9 @@ docker run -d --name gitlab-runner --restart always \
 
 Для задач управления инфраструктурой (запуск Ansible, Terraform) рекомендуется использовать выделенные Runner'ы.
 
-*   **Изоляция секретов:** Выделенный Runner может иметь доступ к SSH-ключам или API-токенам облака. Ограничение доступа к этому Runner'у через `tags` и защищенные ветки (`protected runners`) минимизирует риски.
-*   **Использование тегов:** Присвойте такому Runner'у тег (например, `infra` или `ansible`). В `.gitlab-ci.yml` указывайте этот тег для соответствующих задач.
+- **Изоляция секретов:** Выделенный Runner может иметь доступ к SSH-ключам или API-токенам облака. Ограничение доступа к этому Runner'у через `tags` и защищенные ветки (`protected runners`) минимизирует риски.
+- **Использование тегов:** Присвойте такому Runner'у тег (например, `infra` или `ansible`). В `.gitlab-ci.yml` указывайте этот тег для соответствующих задач.
+
     ```yaml
     deploy:
       stage: deploy
@@ -93,7 +94,8 @@ docker run -d --name gitlab-runner --restart always \
       script:
         - ansible-playbook site.yml
     ```
-*   **Локальный Runner:** Для отладки или специфических задач можно зарегистрировать GitLab Runner на собственном ноутбуке. Это позволит GitLab направлять задачи напрямую на вашу машину.
+
+- **Локальный Runner:** Для отладки или специфических задач можно зарегистрировать GitLab Runner на собственном ноутбуке. Это позволит GitLab направлять задачи напрямую на вашу машину.
 
 ## Дополнительная информация
 

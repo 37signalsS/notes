@@ -1,4 +1,6 @@
-# Обзор CI/CD пайплайна в GitLab
+# Практические примеры CI/CD пайплайна в GitLab
+
+> Этот документ предоставляет практические сценарии и примеры конфигурации `.gitlab-ci.yml` для различных этапов CI/CD в GitLab. Он дополняет общий обзор концепций CI/CD, описанный в **[CI/CD: Обзор](../../ci_cd_overview.md)**, фокусируясь на конкретных реализациях.
 
 ## Определения
 
@@ -63,15 +65,15 @@ variables:
 
 build_job:
   stage: build
-  image: docker:20.10
-  services: [docker:20.10-dind]
+  image: docker:24.0 # Обновлено до актуальной версии
+  services: [docker:24.0-dind] # Обновлено до актуальной версии
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - docker build -t $FULL_IMAGE_NAME .
 
 test_job:
   stage: test
-  image: docker/compose:latest
+  image: docker/compose:v2.24.6 # Обновлено до актуальной версии
   services: [docker:dind]
   script:
     - export FULL_IMAGE_NAME
@@ -81,8 +83,8 @@ test_job:
 
 push_job:
   stage: push
-  image: docker:20.10
-  services: [docker:20.10-dind]
+  image: docker:24.0 # Обновлено до актуальной версии
+  services: [docker:24.0-dind] # Обновлено до актуальной версии
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - docker push "$FULL_IMAGE_NAME"

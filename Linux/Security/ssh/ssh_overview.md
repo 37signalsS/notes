@@ -58,13 +58,13 @@ sshd (демон, порт 22)
 
 Тема SSH в этом проекте разделена на специализированные файлы:
 
-- **Аутентификация:** типы ключей, генерация, `authorized_keys`, права доступа — [SSH Authentication](./server/ssh_authentication.md).
-- **Инструменты CLI:** `scp`, `rsync`, `sftp`, `sshfs`, `mosh` — [Инструменты командной строки SSH](./ssh_cli_tools.md).
-- **Конфигурация клиента:** `~/.ssh/config`, ProxyJump, мультиплексирование, `ssh-agent` — [Конфигурация клиента SSH](./ssh_client_config.md).
-- **Защита сервера:** `sshd_config`, firewall, fail2ban, SELinux — [Защита сервера SSH](./server/ssh_server_security_overview.md).
-- **Hardening:** best practices, аудит, минимальная конфигурация — [SSH Hardening](./server/ssh_hardening_best_practices.md).
-- **Управление сессиями:** `screen`, `tmux`, keep-alive — [Управление сессиями SSH](./ssh_session_management.md).
-- **Траблшутинг:** систематический подход, типичные ошибки — [SSH Troubleshooting](./ssh_troubleshooting.md).
+* **Аутентификация:** типы ключей, генерация, `authorized_keys`, права доступа — [SSH Authentication](./server/ssh_authentication.md).
+* **Инструменты CLI:** `scp`, `rsync`, `sftp`, `sshfs`, `mosh` — [Инструменты командной строки SSH](./ssh_cli_tools.md).
+* **Конфигурация клиента:** `~/.ssh/config`, ProxyJump, мультиплексирование, `ssh-agent` — [Конфигурация клиента SSH](./ssh_client_config.md).
+* **Защита сервера:** `sshd_config`, firewall, fail2ban, SELinux — [Защита сервера SSH](./server/ssh_server_security_overview.md).
+* **Hardening:** best practices, аудит, минимальная конфигурация — [SSH Hardening](./server/ssh_hardening_best_practices.md).
+* **Управление сессиями:** `screen`, `tmux`, keep-alive — [Управление сессиями SSH](./ssh_session_management.md).
+* **Траблшутинг:** систематический подход, типичные ошибки — [SSH Troubleshooting](./ssh_troubleshooting.md).
 
 ## Additional Information
 

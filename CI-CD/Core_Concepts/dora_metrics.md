@@ -14,7 +14,7 @@
 
 ## Основные концепции
 
-Метрики DORA делятся на две категории:
+Метрики DORA делятся на две категории, отражающие баланс между скоростью доставки и надежностью системы:
 
 | Категория | Метрики | Что измеряет |
 | :--- | :--- | :--- |
@@ -23,9 +23,9 @@
 
 > **Важно:** Целевые уровни (`Элитный`, `Высокий`, `Средний`, `Низкий`) ежегодно обновляются в отчете **State of DevOps Report**. Приведенные значения актуальны на 2024–2025 гг.
 
-### Детальное описание метрик
+### Детальное описание метрик DORA
 
-**1. Lead Time for Changes (Время выполнения изменений)**
+**1. Время выполнения изменений (Lead Time for Changes)**
 
 - **Что измеряет:** Эффективность всего процесса доставки — от идеи до реализации в production.
 - **Целевые уровни:**
@@ -34,7 +34,7 @@
   - *Средний:* 1 неделя – 1 месяц
   - *Низкий:* 1 – 6 месяцев
 
-**2. Deployment Frequency (Частота развертывания)**
+**2. Частота развертывания (Deployment Frequency)**
 
 - **Что измеряет:** Насколько автоматизирован и отлажен процесс релиза.
 - **Целевые уровни:**
@@ -43,7 +43,7 @@
   - *Средний:* Раз в неделю – раз в месяц
   - *Низкий:* Раз в месяц – раз в 6 месяцев
 
-**3. Change Failure Rate (CFR, Процент сбоев)**
+**3. Процент сбоев (Change Failure Rate, CFR)**
 
 - **Что измеряет:** Качество и надежность процесса тестирования и развертывания.
 - **Формула:** `(Количество неудачных развертываний / Общее количество развертываний) × 100%`
@@ -53,7 +53,7 @@
   - *Средний:* 16–30%
   - *Низкий:* 46–60%
 
-**4. Mean Time to Recovery (MTTR, Среднее время восстановления)**
+**4. Среднее время восстановления (Mean Time to Recovery, MTTR)**
 
 - **Что измеряет:** Отказоустойчивость системы и эффективность реагирования на инциденты.
 - **Контекст:** MTTR является фундаментальной метрикой не только в CI/CD, но и в **[SRE (Site Reliability Engineering)](../../Concepts/sre_concepts_main.md#процесс-восстановления-декомпозиция-mttr)** и **[High Availability](../../Concepts/High_Availability/ha_overview.md)**.
@@ -76,20 +76,23 @@
 | **Система развертывания** | [ArgoCD](../../GitOps/ArgoCD/argocd_overview.md), [Flux](../../GitOps/flux.md) | Частота и статус развертываний |
 | **Система мониторинга** | [Grafana](../../Grafana/grafana_overview.md), Prometheus | Сбои и время восстановления (MTTR, CFR) |
 
-**Пример: ArgoCD + Prometheus + Grafana**
+**Пример реализации: ArgoCD + Prometheus + Grafana**
 
 Для отслеживания метрик в Kubernetes используются дашборды в [Grafana](../../Grafana/grafana_overview.md), собирающие данные из:
 
-- ArgoCD Events — для частоты развертываний
-- Prometheus метрик — для CFR и MTTR
+- События ArgoCD — для частоты развертываний.
+- Prometheus метрик — для CFR и MTTR.
 
 Подробное описание сбора метрик через ArgoCD: **[Мониторинг ArgoCD](../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md#сценарий-6-метрики-dora-через-argocd)**.
 
 ## Дополнительная информация
 
-Декомпозиция MTTR рассмотрена в [SRE: Процесс восстановления](../../Concepts/sre_concepts_main.md#процесс-восстановления-декомпозиция-mttr), формула доступности через MTBF/MTTR — в [High Availability](../../Concepts/High_Availability/ha_overview.md). Практическая реализация сбора DORA-метрик через ArgoCD — в [ArgoCD Monitoring](../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md).
+- **Паттерны CI/CD:** [Улучшение метрик](../ci_cd_patterns.md) через внедрение эффективных практик.
+- **Анти-паттерны CI/CD:** [Избегание проблем](../ci_cd_antipatterns.md), снижающих показатели.
+- **Метрики наблюдаемости:** [Observability](../../Concepts/Observability_and_Monitoring/observability_definitions.md) — контекст метрик в общей стратегии мониторинга.
 
 ### Источники
 
-- **State of DevOps Report 2024–2025** — ежегодный отчет DORA с актуальными бенчмарками
-- **Global IT Research** — [DORA Accelerate State of DevOps Report](https://globalitresearch.com/whitepaper/get-the-dora-accelerate-state-of-devops-report-7/)
+- **State of DevOps Report 2024–2025** — ежегодный отчет DORA с актуальными бенчмарками.
+- **DORA Capabilities** — официальная документация по метрикам и практикам.
+- **Global IT Research** — [DORA Accelerate State of DevOps Report](https://globalitresearch.com/whitepaper/get-the-dora-accelerate-state-of-devops-report-7/).

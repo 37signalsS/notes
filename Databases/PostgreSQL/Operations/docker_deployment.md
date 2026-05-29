@@ -6,164 +6,139 @@
 
 **Именованный том (Named Volume)** — управляемый Docker ресурс хранения данных, сохраняющийся после удаления контейнера.
 
-**docker-entrypoint-initdb.d** — специальная директория в образе, где размещаются скрипты инициализации (`.sh`, `.sql`, `.sql.gz`), выполняемые при первом запуске.
+**docker-entrypoint-initdb.d** — специальная директория в образе, где размещаются скрипты инициализации (`.sh`, `.sql`, `.sql.gz`), выполняемые при первом запуске на пустом томе.
 
 ## Основные концепции
 
 ### Сохранение данных
 
-Данные в контейнере эфемерны и теряются при удалении контейнера (`docker rm`). Для персистентного хранения данных PostgreSQL необходимо монтировать том в директорию `/var/lib/postgresql/data`.
+Данные в контейнере эфемерны. Для персистентного хранения необходимо монтировать том в директорию, указанную в переменной `PGDATA` (по умолчанию `/var/lib/postgresql/data`).
 
-Подробнее о типах томов и их сравнении — **[Docker: Тома и персистентное хранение данных](../../../Docker/Docker_fs/docker_volumes.md)**.
+- **Рекомендация:** Использовать поддиректорию внутри тома для избежания конфликтов с системными файлами (например, `PGDATA=/var/lib/postgresql/data/pgdata`).
+- **Тома:** Сравнение типов томов приведено в **[Docker: Тома и персистентное хранение данных](../../../Docker/Docker_fs/docker_volumes.md)**.
 
 ### Сеть и доступ
 
-Для изоляции рекомендуется создавать пользовательские сети Docker. Контейнеры в одной сети обращаются друг к другу по именам сервисов. Порт `5432` пробрасывается на хост только при необходимости внешнего доступа.
+Для изоляции рекомендуется создавать пользовательские сети Docker (User-defined bridge networks).
 
-### Инициализация
+- Контейнеры в одной сети обращаются друг к другу по именам сервисов.
+- Порт `5432` следует пробрасывать на хост (`-p`) только при необходимости внешнего доступа (например, для GUI-клиентов).
+- В production рекомендуется ограничить доступ через `127.0.0.1:5432:5432`.
 
-Официальный образ автоматически выполняет скрипты из `/docker-entrypoint-initdb.d` при первом запуске на пустом томе. Скрипты выполняются в алфавитном порядке.
+### Инициализация (Init Scripts)
+
+Официальный образ автоматически выполняет скрипты из `/docker-entrypoint-initdb.d` при **первом** запуске.
+
+- Скрипты выполняются в алфавитном порядке.
+- Поддерживаются форматы: `.sh`, `.sql`, `.sql.gz`.
+- Если директория данных (`PGDATA`) уже содержит базу, скрипты проигнорируются.
 
 ### Безопасность
 
-- **Закрепление версии:** Всегда указывайте конкретную версию образа (например, `postgres:16.3`), избегая тега `latest`.
-- **Ограничение доступа:** Не публикуйте порт БД напрямую в интернет. Используйте внутренние сети Docker, VPN или SSH-туннели.
-- **Аутентификация:** По умолчанию образ использует метод `trust`. Для production монтируйте `pg_hba.conf` с `scram-sha-256` или `md5`.
-- **Непривилегированный запуск:** Образ запускается от пользователя `postgres` (не root).
-- **Секреты:** Используйте Docker Secrets или переменные окружения через `.env`-файлы, а не хардкод в `docker-compose.yml`.
-
-Подробнее о безопасности образов — **[Безопасность в Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md)**.
+- **Закрепление версии:** Всегда указывайте конкретный тег (например, `postgres:16.3-alpine`), избегая `latest`.
+- **Секреты:** Используйте `POSTGRES_PASSWORD_FILE` вместо `POSTGRES_PASSWORD` для передачи пароля через Docker Secrets или примонтированные файлы.
+- **Аутентификация:** По умолчанию используется метод `trust` (для локальных подключений). Для сетевых подключений настройте `scram-sha-256` в `pg_hba.conf`.
+- **Hardening:** Общие принципы защиты СУБД описаны в **[Безопасная установка СУБД](../../installation_security.md)**.
+- **Docker Security:** Практики защиты контейнеров — **[Безопасность в Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md)**.
 
 ## Практические сценарии
 
-### Сценарий 1: Запуск standalone-сервера
+### Сценарий 1: Запуск standalone-сервера (CLI)
 
 ```bash
-# 1. (Опционально) Создаем выделенную сеть
+# 1. Создаем выделенную сеть
 docker network create pg-net
 
-# 2. Запускаем контейнер
+# 2. Запускаем контейнер с примонтированным конфигом и инициализацией
 docker run --name pg-server \
   --network pg-net \
   -e POSTGRES_PASSWORD=mysecretpassword \
+  -e PGDATA=/var/lib/postgresql/data/pgdata \
   -p 127.0.0.1:5432:5432 \
   -v pg-data:/var/lib/postgresql/data \
-  -v ./my_pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf \
+  -v ./my_pg_hba.conf:/var/lib/postgresql/data/pgdata/pg_hba.conf \
   -v ./init-scripts:/docker-entrypoint-initdb.d \
-  -d postgres:16.3
+  -d postgres:16.3-alpine
 ```
 
-- `--name pg-server`: Задает имя контейнера для удобства обращения.
-- `--network pg-net`: Подключает контейнер к созданной сети.
-- `-e POSTGRES_PASSWORD=...`: Устанавливает пароль суперпользователя.
-- `-p 127.0.0.1:5432:5432`: Пробрасывает порт контейнера только на `localhost` хоста для безопасности.
-- `-v pg-data:/...`: Монтирует именованный том для хранения данных.
-- `-v ./my_pg_hba.conf:/...`: Монтирует кастомный файл конфигурации безопасности.
-- `-v ./init-scripts:/...`: Монтирует директорию со скриптами инициализации.
-- `-d`: Запускает контейнер в фоновом режиме.
+### Сценарий 2: Развертывание через Docker Compose (Best Practice)
 
-### Сценарий 2: Подключение и администрирование
-
-- **Через `docker exec`:**
-
-    ```bash
-    docker exec -it pg-server psql -U postgres
-    ```
-
-- **С помощью временного клиент-контейнера (рекомендуемый паттерн):**
-
-    ```bash
-    docker run --rm -it --network=pg-net postgres:16.3 psql -h pg-server -U postgres
-    ```
-
-- **Инспекция контейнера:**
-
-    ```bash
-    docker inspect pg-server
-    ```
-
-### Сценарий 3: Развертывание стека с Docker Compose
-
-**Пример `docker-compose.yml` для приложения (`app`) и базы данных (`db`):**
+Пример конфигурации с проверкой здоровья (`healthcheck`) и ограничением ресурсов:
 
 ```yaml
-version: '3.8'
-
 services:
   db:
-    image: postgres:16.3
+    image: postgres:16.3-alpine
+    container_name: postgres_prod
     restart: always
-    networks:
-      - app-net
     environment:
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=mysecretpassword
-      - POSTGRES_DB=myapp
+      - POSTGRES_USER=app_user
+      - POSTGRES_DB=app_db
+      # Использование файла для секрета
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
-      - db-data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - db_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    secrets:
+      - db_password
+    deploy:
+      resources:
+        limits:
+          memory: 1gb
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U myuser -d myapp"]
+      test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  app:
-    build: .
     networks:
-      - app-net
-    ports:
-      - "8080:80"
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql://myuser:mysecretpassword@db:5432/myapp
+      - backend
+
+secrets:
+  db_password:
+    file: ./db_password.txt
 
 volumes:
-  db-data:
+  db_data:
 
 networks:
-  app-net:
+  backend:
     driver: bridge
 ```
 
-- **Взаимодействие:** Сервис `app` обращается к базе данных по имени сервиса `db` и внутреннему порту `5432`.
-- **`healthcheck` и `depends_on`:** `depends_on` с условием `service_healthy` гарантирует, что сервис `app` запустится только после готовности PostgreSQL.
+### Сценарий 3: Администрирование в Docker
+
+- **Выполнение команд в контейнере:**
+
+  ```bash
+  docker exec -it pg-server psql -U postgres
+  ```
+
+- **Создание бэкапа (Logical Dump):**
+
+  ```bash
+  docker exec pg-server pg_dumpall -U postgres > full_backup.sql
+  ```
+
+- **Восстановление из дампа:**
+
+  ```bash
+  cat backup.sql | docker exec -i pg-server psql -U postgres
+  ```
 
 ## Дополнительная информация
 
-### Расширение стека инструментами мониторинга
+### Расширение стека (Sidecars)
 
-Для полноценного мониторинга можно добавить сервисы `postgres-exporter` и `pgbouncer`:
+Для полноценной эксплуатации часто добавляются дополнительные компоненты:
 
-```yaml
-  pg_exporter:
-    image: prometheuscommunity/postgres-exporter:v0.15.0
-    restart: always
-    environment:
-      DATA_SOURCE_NAME: "postgresql://myuser:mysecretpassword@db:5432/myapp?sslmode=disable"
-    networks:
-      - app-net
-    depends_on:
-      - db
-
-  pgbouncer:
-    image: edoburu/pgbouncer:1.22.1
-    restart: always
-    environment:
-      DB_HOST: db
-      # ... другие переменные для настройки pgbouncer
-    ports: ["6432:6432"]
-    depends_on:
-      - db
-```
+- **[Full-Stack Observability](./observability.md)** — использование `postgres-exporter` для сбора метрик.
+- **PgBouncer** — пул соединений для высоконагруженных систем.
+- **Adminer / pgAdmin** — веб-интерфейсы для управления.
 
 ### Связанные документы
 
-- **Мониторинг:** **[Full-Stack Observability для PostgreSQL](./observability.md)**
 - **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
 - **Производительность:** **[Performance Tuning](./performance_tuning.md)**
 - **Kubernetes:** **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)**
-- **Безопасность Docker:** **[Безопасность в Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md)**
 - **Тома Docker:** **[Docker: Тома и персистентное хранение](../../../Docker/Docker_fs/docker_volumes.md)**

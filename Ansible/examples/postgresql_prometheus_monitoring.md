@@ -21,11 +21,13 @@
 ### Используемые роли Ansible Galaxy
 
 Для ускорения развертывания рекомендуется использовать проверенные роли:
+
 - **`community.postgresql`**: Установка и базовая настройка базы данных.
 - **`prometheus-community.postgres_exporter`**: Установка и конфигурация экспортера.
 - **`cloudalchemy.prometheus`**: Развертывание и настройка сервера Prometheus.
 
 Установка необходимых зависимостей на контрольном узле:
+
 ```bash
 ansible-galaxy install community.postgresql
 ansible-galaxy collection install prometheus-community.postgres_exporter
@@ -47,6 +49,7 @@ ansible-galaxy collection install cloudalchemy.prometheus
 #### 1. Подготовка инвентаря и переменных
 
 **Файл `hosts.ini`:**
+
 ```ini
 [postgres_servers]
 pg01 ansible_host=192.168.55.10
@@ -56,6 +59,7 @@ mon01 ansible_host=192.168.55.20
 ```
 
 **Переменные группы (`group_vars/postgres_servers.yml`):**
+
 ```yaml
 postgresql_databases:
   - name: myapp_db
@@ -66,6 +70,7 @@ postgresql_users:
 ```
 
 **Секреты (зашифрованы через Vault):**
+
 ```yaml
 db_password: "MySuperSecretPassword"
 ```
@@ -132,6 +137,7 @@ db_password: "MySuperSecretPassword"
 ### Верификация в интерфейсе Prometheus
 
 После успешного выполнения плейбуков:
+
 1. Перейдите по адресу: `http://<monitoring_server_ip>:9090`.
 2. Откройте меню **Status → Targets**.
 3. Убедитесь, что эндпоинт `postgres_exporter` (порт 9187) находится в статусе **UP**.

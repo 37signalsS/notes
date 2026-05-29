@@ -89,7 +89,62 @@ nightly_tests:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
 ```
 
-**Ключевые условия:**
+### Динамический запуск задач по событиям
+
+Распространённый паттерн — запуск разных задач по сборке артефактов (например, Docker-образов) для разных окружений (dev, test, prod) в зависимости от события. Это позволяет избежать избыточных сборок.
+
+**Решение:** привязать запуск каждой задачи к определённому событию через `rules`:
+
+```yaml
+# Сборка для dev — запуск при любом событии с Merge Request
+build_dev:
+  stage: build
+  script:
+    - docker build -t myapp:dev .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# Сборка для test — запуск при новом коммите в main
+build_test:
+  stage: build
+  script:
+    - docker build -t myapp:test .
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Сборка для prod — запуск при создании нового тега
+build_prod:
+  stage: build
+  script:
+    - docker build -t myapp:$CI_COMMIT_TAG .
+  rules:
+    - if: '$CI_COMMIT_TAG'
+```
+
+При таком подходе:
+
+- Push в feature-ветку с открытым MR → запускается `build_dev`.
+- Push в `main` → запускается `build_test`.
+- Создание тега → запускается `build_prod`.
+
+**Валидация тега по регулярному выражению:**
+
+Можно усилить правило для тегов, чтобы оно срабатывало только для версий, соответствующих семантическому версионированию:
+
+```yaml
+build_prod:
+  stage: build
+  script:
+    - docker build -t myapp:$CI_COMMIT_TAG .
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+```
+
+Эта задача запустится только для тегов вида `v1.2.3`, но не для `release-candidate` или `v1.0`.
+
+## Дополнительная информация
+
+### Ключевые условия
 
 | Условие | Описание | Пример |
 | :--- | :--- | :--- |
@@ -97,7 +152,7 @@ nightly_tests:
 | `changes` | Изменения файлов | `changes: - "src/**/*"` |
 | `exists` | Существование файлов | `exists: - "docker-compose.yml"` |
 
-**Режимы `when`:**
+### Режимы `when`
 
 | Режим | Описание |
 | :--- | :--- |
