@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Telegram-интеграция** — нативный контак-пойнт Grafana для отправки уведомлений об алертах в Telegram-чаты и каналы.
+**Telegram-интеграция** — нативный контакт-пойнт Grafana для отправки уведомлений об оповещениях в чаты и каналы мессенджера Telegram.
 
-**Текущая версия (февраль 2026):** Grafana 12.x (требуется 9.0+)
+**Текущая версия (февраль 2026):** Grafana 12.x (требуется версия 9.0 или выше)
 
 ## Базовые концепции
 
@@ -12,49 +12,49 @@
 
 | Преимущество | Описание |
 | :--- | :--- |
-| **Мобильность** | Push-уведомления на смартфоне |
-| **Форматирование** | Поддержка Markdown, эмодзи, ссылок |
-| **Группировка** | Чаты по командам/проектам |
-| **Надёжность** | Высокая доступность сервиса |
-| **Простота** | Быстрая настройка через бота |
+| **Мобильность** | Push-уведомления на мобильных устройствах |
+| **Форматирование** | Поддержка Markdown, ссылок и текстового выделения |
+| **Группировка** | Возможность создания отдельных чатов для разных команд или проектов |
+| **Надежность** | Высокая доступность сервиса обмена сообщениями |
+| **Простота** | Быстрая настройка через бота без необходимости сложной инфраструктуры |
 
 ### Требования
 
 | Компонент | Требование |
 | :--- | :--- |
-| **Grafana** | Версия 9.0+ (нативная поддержка) |
-| **Telegram Bot** | Токен от @BotFather |
-| **Chat ID** | ID чата/канала (получается через бота) |
-| **Доступность API** | `api.telegram.org` должен быть доступен из сети Grafana |
+| **Grafana** | Версия 9.0 или выше (нативная поддержка) |
+| **Telegram Bot** | Токен, полученный от @BotFather |
+| **Chat ID** | Идентификатор чата или канала |
+| **Доступность API** | API (Application Programming Interface) `api.telegram.org` должен быть доступен со стороны Grafana |
 
-> **Важно:** В версиях Grafana < 9.0 используйте webhook с Telegram Bot API.
+> **Важно:** В версиях Grafana ниже 9.0 следует использовать механизм Webhook для взаимодействия с Telegram Bot API.
 
 ### Получение реквизитов
 
 **Шаг 1: Создание бота**
 
-1. В Telegram найдите `@BotFather`
+1. В Telegram найдите официальный аккаунт `@BotFather`
 2. Отправьте команду `/newbot`
-3. Укажите имя и username бота
+3. Укажите имя (display name) и уникальное имя пользователя (username) для бота
 4. Скопируйте полученный **токен** (формат: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
 **Шаг 2: Получение Chat ID**
 
-1. Добавьте бота в чат/канал
-2. Для канала: сделайте бота администратором
-3. Отправьте сообщение в чат
-4. Выполните запрос к API:
+1. Добавьте созданного бота в целевой чат или канал
+2. Для каналов: обязательно назначьте бота администратором
+3. Отправьте любое сообщение в этот чат
+4. Выполните запрос к API для получения истории обновлений:
 
 ```bash
 curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
 ```
 
-1. Найдите в ответе `"chat":{"id":<CHAT_ID>}`
-2. Для каналов ID отрицательный (например, `-1001234567890`)
+1. Найдите в JSON-ответе объект `"chat":{"id":<CHAT_ID>}`
+2. Обратите внимание: для каналов ID обычно начинается с префикса `-100` (например, `-1001234567890`)
 
 ## Практические сценарии
 
-### Базовая конфигурация контак-пойнта
+### Базовая конфигурация контакт-пойнта
 
 ```yaml
 # provisioning/alerting/contactpoints/telegram.yaml
@@ -71,14 +71,14 @@ contactPoints:
           chatId: "<YOUR_CHAT_ID>"
           message: |
             {{ define "telegram.default.message" }}
-            🚨 *{{ .CommonAnnotations.summary }}*
+            *{{ .CommonAnnotations.summary }}*
 
             {{ if .CommonAnnotations.description }}
             {{ .CommonAnnotations.description }}
             {{ end }}
 
             *Детали:*
-            - Алерт: {{ .CommonLabels.alertname }}
+            - Оповещение: {{ .CommonLabels.alertname }}
             - Сервис: {{ .CommonLabels.service }}
             - Критичность: {{ .CommonLabels.severity }}
             - Время: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
@@ -107,7 +107,7 @@ contactPoints:
           chatId: "<CHAT_ID>"
           message: |
             {{ define "telegram.critical.message" }}
-            🔴 *CRITICAL ALERT*
+            *КРИТИЧЕСКОЕ ОПОВЕЩЕНИЕ*
 
             *{{ .CommonAnnotations.summary }}*
 
@@ -115,33 +115,33 @@ contactPoints:
             _{{ .CommonAnnotations.description }}_
             {{ end }}
 
-            ━━━━━━━━━━━━━━
+            ------------------------------
             *Информация:*
-            • Алерт: `{{ .CommonLabels.alertname }}`
-            • Сервис: `{{ .CommonLabels.service }}`
-            • Окружение: `{{ .CommonLabels.environment }}`
-            • Инстанс: `{{ .CommonLabels.instance }}`
-            • Критичность: `{{ .CommonLabels.severity }}`
+            - Название: `{{ .CommonLabels.alertname }}`
+            - Сервис: `{{ .CommonLabels.service }}`
+            - Окружение: `{{ .CommonLabels.environment }}`
+            - Инстанс: `{{ .CommonLabels.instance }}`
+            - Критичность: `{{ .CommonLabels.severity }}`
 
             *Время:*
-            • Начало: {{ .StartsAt.Format "02.01.2006 15:04 MSK" }}
-            • Длительность: {{ .Duration }}
+            - Начало: {{ .StartsAt.Format "02.01.2006 15:04 MSK" }}
+            - Длительность: {{ .Duration }}
 
             {{ if .CommonAnnotations.runbook }}
-            *📖 Runbook:* {{ .CommonAnnotations.runbook }}
+            *Инструкция (Runbook):* {{ .CommonAnnotations.runbook }}
             {{ end }}
 
             {{ if .CommonAnnotations.dashboard }}
-            *📊 Dashboard:* {{ .CommonAnnotations.dashboard }}
+            *Дашборд:* {{ .CommonAnnotations.dashboard }}
             {{ end }}
 
-            [🔗 Открыть в Grafana]({{ .ExternalURL }})
+            [Открыть в Grafana]({{ .ExternalURL }})
             {{ end }}
 ```
 
 ---
 
-### Шаблон для warning-алертов
+### Шаблон для предупреждающих оповещений (Warning)
 
 ```yaml
 contactPoints:
@@ -155,14 +155,14 @@ contactPoints:
           chatId: "<CHAT_ID>"
           message: |
             {{ define "telegram.warning.message" }}
-            🟡 *WARNING*
+            *ПРЕДУПРЕЖДЕНИЕ*
 
             {{ .CommonAnnotations.summary }}
 
-            *Значение:* {{ $value }}
+            *Текущее значение:* {{ $value }}
             *Время:* {{ .StartsAt.Format "15:04 02.01" }}
 
-            [Grafana]({{ .ExternalURL }})
+            [Открыть в Grafana]({{ .ExternalURL }})
             {{ end }}
 ```
 
@@ -182,21 +182,21 @@ policies:
     group_interval: 5m
     repeat_interval: 4h
     routes:
-      # Критичные алерты — немедленно
+      # Критические оповещения — немедленно
       - receiver: telegram-critical
         object_matchers:
           - ['severity', '=', 'critical']
         group_wait: 10s
         group_interval: 1m
         repeat_interval: 1h
-      # Warning — с задержкой
+      # Предупреждения (Warning) — с задержкой
       - receiver: telegram-warning
         object_matchers:
           - ['severity', '=', 'warning']
         group_wait: 1m
         group_interval: 10m
         repeat_interval: 4h
-      # Info — только днём
+      # Информационные сообщения — только в рабочее время
       - receiver: telegram-info
         object_matchers:
           - ['severity', '=', 'info']
@@ -206,80 +206,30 @@ policies:
           - business-hours
 ```
 
-**Параметры маршрутизации:**
+**Основные параметры маршрутизации:**
 
-- **`group_wait`:** Задержка перед первой отправкой (критичные — 10s, warning — 1m)
-- **`group_interval`:** Интервал между группами уведомлений
-- **`repeat_interval`:** Интервал повторных уведомлений
-- **`object_matchers`:** Селекторы маршрутизации по меткам
-
----
-
-### Несколько получателей (команды)
-
-```yaml
-contactPoints:
-  # Команда Backend
-  - orgId: 1
-    name: telegram-backend
-    receivers:
-      - uid: telegram-backend-receiver
-        type: telegram
-        settings:
-          botToken: "<BACKEND_BOT_TOKEN>"
-          chatId: "<BACKEND_CHAT_ID>"
-
-  # Команда Frontend
-  - orgId: 1
-    name: telegram-frontend
-    receivers:
-      - uid: telegram-frontend-receiver
-        type: telegram
-        settings:
-          botToken: "<FRONTEND_BOT_TOKEN>"
-          chatId: "<FRONTEND_CHAT_ID>"
-
-  # Дежурные
-  - orgId: 1
-    name: telegram-oncall
-    receivers:
-      - uid: telegram-oncall-receiver
-        type: telegram
-        settings:
-          botToken: "<ONCALL_BOT_TOKEN>"
-          chatId: "<ONCALL_CHAT_ID>"
-
-policies:
-  - orgId: 1
-    receiver: telegram-oncall
-    group_by: ['alertname', 'service']
-    routes:
-      - receiver: telegram-backend
-        object_matchers:
-          - ['team', '=', 'backend']
-      - receiver: telegram-frontend
-        object_matchers:
-          - ['team', '=', 'frontend']
-```
+- **`group_wait`**: Начальная задержка перед отправкой первого уведомления в группе
+- **`group_interval`**: Интервал ожидания перед отправкой уведомлений о новых оповещениях для уже существующей группы
+- **`repeat_interval`**: Интервал повторной отправки уведомления, если проблема не была устранена
+- **`object_matchers`**: Правила сопоставления меток для выбора маршрута
 
 ---
 
-### Troubleshooting
+### Диагностика и решение проблем
 
-| Проблема | Причина | Решение |
+| Проблема | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| Уведомления не приходят | Неверный токен | Проверьте токен в @BotFather |
-| Уведомления не приходят | Бот не в чате | Добавьте бота в чат/канал |
-| Уведомления не приходят | Бот не администратор | Для каналов сделайте бота администратором |
-| Ошибка API | `api.telegram.org` недоступен | Проверьте сетевую связность |
-| Пустые сообщения | Ошибка в шаблоне | Проверьте синтаксис Go-шаблонов |
-| Неверный Chat ID | ID найден неправильно | Используйте `getUpdates` для проверки |
+| Уведомления не доставляются | Некорректный токен бота | Проверьте точность токена в @BotFather |
+| Бот не отправляет сообщения | Бот не добавлен в чат или канал | Добавьте бота в целевой чат или канал |
+| Бот не пишет в канал | Отсутствуют права администратора | Назначьте бота администратором канала с правом публикации сообщений |
+| Ошибка соединения с API | Ограничение доступа к `api.telegram.org` | Проверьте сетевые настройки и доступность внешних ресурсов |
+| Сообщения приходят пустыми | Ошибка в синтаксисе шаблона Go | Проверьте корректность использования переменных и функций в шаблоне |
+| Неверный Chat ID | Ошибка при получении идентификатора | Используйте метод `getUpdates` для подтверждения ID чата |
 
 ## Дополнительная информация
 
-**Связанные темы:**
+**См. также:**
 
-- [Provisioning алертов](./provisioning.md) — структура контакт-пойнтов и политик
-- [Основные концепции Grafana Alerting](./concepts.md) — дерево маршрутизации, `group_by`, `group_wait`
-- [Интеграция с системами эскалации](./escalation_integrations.md) — PagerDuty, Opsgenie
-- [Best practices](./best_practices.md) — рекомендации по настройке алертинга
+- [Provisioning алертов](./provisioning.md) — декларативная настройка ресурсов алертинга
+- [Основные концепции Grafana Alerting](./concepts.md) — базовые принципы работы системы оповещений
+- [Интеграция с системами эскалации](./escalation_integrations.md) — подключение внешних инструментов эскалации инцидентов

@@ -110,7 +110,7 @@ Service Mesh состоит из двух независимых плоскос�
 | Инструмент | Интеграция с Service Mesh |
 | :--- | :--- |
 | **Prometheus** | Сбор метрик из прокси (scrape-конфигурация через ServiceMonitor или `annotations`). |
-| **Grafana** | Визуализация метрик (дашборды через sidecar или provisioning). Подробнее: [концепции дашбордов](../Grafana/dashboards/definitions_and_concepts.md). |
+| **Grafana** | Визуализация метрик (дашборды через sidecar или provisioning). Подробнее: [концепции дашбордов](../Grafana/grafana-dashboards.md). |
 | **Jaeger/Tempo** | Распределенная трассировка через прокси (Envoy поддерживает Zipkin, Jaeger, OpenTelemetry). |
 | **Kiali** | Визуализация топологии, политик, телеметрии для Istio (требует Prometheus). Подробнее: [Kiali и Dex](./istio_observability_and_tools.md). |
 | **Vault** | Доставка секретов через sidecar (Vault Agent), интеграция с mTLS (CA). |

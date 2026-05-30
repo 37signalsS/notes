@@ -15,7 +15,7 @@
 | Компонент | Обязательность | Назначение |
 | :--- | :--- | :--- |
 | **Prometheus** (или VictoriaMetrics) | **Обязателен** | Сбор и хранение метрик для графиков и состояния сервисов. Подробнее: [Prometheus Service Discovery](../Prometheus/service_discovery_and_relabeling.md). |
-| **Grafana** | Рекомендуется | Расширенные дашборды ([концепции дашбордов](../Grafana/dashboards/definitions_and_concepts.md), [установка через Helm](../Grafana/Installation/grafana_helm_installation.md)). |
+| **Grafana** | Рекомендуется | Расширенные дашборды ([концепции дашбордов](../Grafana/grafana-dashboards.md), [установка через Helm](../Grafana/Installation/grafana_helm_installation.md)). |
 | **Трейсинг-система** (Jaeger, Tempo) | Опциональна | Визуализация трейсов запросов. |
 | **Istio** | **Обязателен** | Kiali работает только с Istio Service Mesh. |
 

@@ -13,7 +13,7 @@
 
 1. **Сбор**: Node Exporter собирает метрики с хоста и отдаёт их через HTTP-эндпоинт `/metrics`.
 2. **Хранение**: Prometheus Server периодически опрашивает (scrape) цели и сохраняет данные в TSDB.
-3. **Визуализация**: Grafana подключается к Prometheus как datasource для построения дашбордов. Подробнее: [Grafana overview](../../Grafana/grafana_overview.md), [Grafana dashboards](../../Grafana/dashboards/definitions_and_concepts.md).
+3. **Визуализация**: Grafana подключается к Prometheus как datasource для построения дашбордов. Подробнее: [Grafana overview](../../Grafana/grafana_overview.md), [Grafana dashboards](../../Grafana/grafana-dashboards.md).
 
 ### Преимущества установки через APT
 
@@ -101,7 +101,7 @@
 2. Добавление datasource: **Configuration → Data Sources → Prometheus** → URL: `http://localhost:9090`.
 3. Импорт дашборда Node Exporter Full (ID `1860`): **Dashboards → Import**.
 
-> См. также: [Grafana dashboards](../../Grafana/dashboards/definitions_and_concepts.md), [Docker Compose setup](./docker_stack/overview.md) для автоматизированного развёртывания.
+> См. также: [Grafana dashboards](../../Grafana/grafana-dashboards.md), [Docker Compose setup](./docker_stack/overview.md) для автоматизированного развёртывания.
 
 ### Настройка Nginx как обратного прокси
 

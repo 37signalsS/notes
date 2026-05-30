@@ -1,12 +1,12 @@
-# Алерты для Kubernetes-приложений
+# Алерты для Kubernetes-приложений (Grafana)
 
 ## Определения
 
-**Kubernetes Alerts** — набор правил оповещений для мониторинга здоровья приложений и инфраструктуры Kubernetes.
+**Kubernetes Alerts** — набор правил оповещений для мониторинга состояния приложений и инфраструктуры Kubernetes (K8s).
 
-**kube-state-metrics** — источник метрик о состоянии объектов Kubernetes (поды, деплойменты, ноды).
+**kube-state-metrics (KSM)** — сервис, генерирующий метрики о состоянии объектов Kubernetes (поды, деплойменты, ноды) на основе данных из API-сервера (Application Programming Interface).
 
-**cAdvisor** — источник метрик об использовании ресурсов контейнерами (CPU, память).
+**cAdvisor (Container Advisor)** — агент, встроенный в Kubelet, который собирает и экспортирует метрики ресурсов (процессор, память, сеть, диск) для всех работающих контейнеров на узле.
 
 **Текущая версия (февраль 2026):** Grafana 12.x, kube-state-metrics 2.x
 
@@ -14,35 +14,35 @@
 
 ### Категории алертов
 
-| Категория | Метрики | Источник |
+| Категория | Метрики | Источник данных |
 | :--- | :--- | :--- |
-| **Контейнеры** | Рестарты, OOM, CPU, память | kube-state-metrics, cAdvisor |
-| **Поды** | Статус, готовость, перезапуски | kube-state-metrics |
-| **Деплойменты** | Реплики, доступность | kube-state-metrics |
-| **Ноды** | Давление ресурсов, недоступность | kube-state-metrics, node-exporter |
+| **Контейнеры** | Рестарты, OOM (Out Of Memory), CPU, память | kube-state-metrics, cAdvisor |
+| **Поды** | Статус фазы, готовность (Readiness), перезапуски | kube-state-metrics |
+| **Деплойменты** | Доступные реплики, желаемое состояние | kube-state-metrics |
+| **Узлы (Nodes)** | Давление ресурсов, статус доступности | kube-state-metrics, node-exporter |
 
 ### Рекомендации по настройке
 
 | Параметр | Рекомендация | Обоснование |
 | :--- | :--- | :--- |
-| **Интервал оценки** | 30s–1m для критичных, 5m для warning | Баланс между скоростью и нагрузкой |
-| **`for`** | 0m для OOM, 1–5m для рестартов, 10m для ресурсов | Фильтрация кратковременных аномалий |
-| **`NoData`** | NoData (не Alerting) | Метрики могут быть непостоянны |
-| **`Error`** | Error | Ошибка оценки = проблема |
+| **Интервал оценки** | 30s–1m для критичных, 5m для предупреждений | Баланс между скоростью реакции и нагрузкой на систему |
+| **`for`** | 0m для OOM, 1–5m для рестартов, 10m для ресурсов | Фильтрация кратковременных пиков и ложных срабатываний |
+| **`NoData`** | `NoData` (или `OK`) | Метрики динамических объектов могут исчезать при удалении подов |
+| **`Error`** | `Error` (или `Alerting`) | Ошибка оценки правила требует расследования |
 
 ### Уровни критичности
 
-| Уровень | Сценарии | Реакция |
+| Уровень | Сценарии | Способ уведомления |
 | :--- | :--- | :--- |
-| **Critical** | OOM Killed, CrashLoopBackOff, недоступность ноды | Немедленная (PagerDuty, звонок) |
-| **Warning** | Высокое потребление CPU/памяти, частичная недоступность | В рабочее время (Email, Slack) |
-| **Info** | Плановые рестарты, масштабирование | Только дашборды |
+| **Critical** | OOM Killed, CrashLoopBackOff, недоступность узла | Немедленно (PagerDuty, звонок, Telegram) |
+| **Warning** | Высокое потребление CPU/памяти (RAM — Random Access Memory), нехватка реплик | В рабочее время (Slack, Email) |
+| **Info** | Плановые работы, автоматическое масштабирование | Только дашборды и журналы |
 
 ## Практические сценарии
 
-### Алерт на перезапуск контейнера
+### Алерт: Перезапуск контейнера
 
-**Назначение:** Обнаружение нестабильности контейнеров.
+Обнаружение цикличных перезапусков (CrashLoopBackOff) или случайных падений.
 
 ```yaml
 # provisioning/alerting/kubernetes-container-alerts.yaml
@@ -64,8 +64,8 @@ groups:
           severity: critical
         annotations:
           summary: "Контейнер {{ $labels.container }} в поде {{ $labels.pod }} перезапустился"
-          description: "Причина: {{ $labels.reason }}, Exit code: {{ $labels.exit_code }}"
-          runbook: "Проверьте логи: kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }}"
+          description: "Зафиксирован рост счетчика рестартов в namespace {{ $labels.namespace }}. Причина: {{ $labels.reason }}"
+          runbook: "Проверьте логи: kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous"
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -75,17 +75,9 @@ groups:
               format: table
 ```
 
-**Параметры:**
+### Алерт: Завершение по нехватке памяти (OOM Killed)
 
-- **Выражение:** `increase(kube_pod_container_status_restarts_total[5m]) > 0`
-- **Порог:** Любой рестарт за 5 минут
-- **`for`:** 1m (подтверждение)
-
----
-
-### Алерт на OOM Killed
-
-**Назначение:** Обнаружение нехватки памяти.
+Срабатывает немедленно при убийстве процесса ядром из-за превышения лимитов памяти.
 
 ```yaml
       - uid: container_oom_killed
@@ -99,8 +91,8 @@ groups:
           severity: critical
         annotations:
           summary: "Контейнер {{ $labels.container }} убит по OOM в поде {{ $labels.pod }}"
-          description: "Namespace: {{ $labels.namespace }}, Причина: OOMKilled"
-          runbook: "Увеличьте memory limits или оптимизируйте потребление памяти"
+          description: "Процесс в контейнере превысил лимит памяти (Memory Limit) в namespace {{ $labels.namespace }}"
+          runbook: "Увеличьте лимиты памяти (resources.limits.memory) или проверьте приложение на утечки"
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -110,17 +102,9 @@ groups:
               format: table
 ```
 
-**Параметры:**
+### Алерт: Недоступность реплик приложения
 
-- **Выражение:** `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1`
-- **Порог:** Любое событие
-- **`for`:** 0m (немедленное срабатывание)
-
----
-
-### Алерт на недоступность реплик
-
-**Назначение:** Контроль доступности деплоймента.
+Контроль соответствия текущего количества подов желаемому в Deployment или StatefulSet.
 
 ```yaml
       - uid: deployment_replicas_unavailable
@@ -133,9 +117,9 @@ groups:
           service: kubernetes
           severity: warning
         annotations:
-          summary: "Недоступны реплики в deployment {{ $labels.deployment }}"
-          description: "Доступно: {{ $value }}%, Ожидалось: 100%"
-          runbook: "Проверьте события: kubectl describe deployment -n {{ $labels.namespace }} {{ $labels.deployment }}"
+          summary: "Недоступны реплики в Deployment {{ $labels.deployment }}"
+          description: "Доступно: {{ $value }}%, ожидалось: 100%. Namespace: {{ $labels.namespace }}"
+          runbook: "Проверьте статус подов: kubectl get pods -n {{ $labels.namespace }} -l app={{ $labels.deployment }}"
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -152,17 +136,9 @@ groups:
                   query: { params: [A] }
 ```
 
-**Параметры:**
+### Алерт: Высокое потребление ресурсов (CPU/Memory)
 
-- **Выражение:** `kube_deployment_status_replicas_available / kube_deployment_status_replicas * 100`
-- **Порог:** < 90%
-- **`for`:** 5m
-
----
-
-### Алерт на высокое потребление CPU
-
-**Назначение:** Обнаружение перегрузки контейнеров.
+Мониторинг утилизации ресурсов относительно установленных лимитов.
 
 ```yaml
       - uid: container_cpu_high
@@ -176,8 +152,8 @@ groups:
           severity: warning
         annotations:
           summary: "Высокое потребление CPU контейнером {{ $labels.container }}"
-          description: "Потребление: {{ $value }}% от limits"
-          runbook: "Проанализируйте нагрузку на приложение"
+          description: "Среднее потребление за 5 минут: {{ $value }}% от лимита (Limit)"
+          runbook: "Проверьте распределение нагрузки или увеличьте CPU Requests/Limits"
         data:
           - refId: A
             datasourceUid: prometheus_ds_uid
@@ -187,8 +163,6 @@ groups:
                 /
                 kube_pod_container_resource_limits{resource="cpu", namespace=~".+"}
                 * 100
-              instant: false
-              format: time_series
           - refId: B
             datasourceUid: __expr__
             model:
@@ -198,76 +172,22 @@ groups:
                   query: { params: [A] }
 ```
 
-**Параметры:**
+### Сводная таблица правил
 
-- **Выражение:** `rate(container_cpu_usage_seconds_total[5m]) / kube_pod_container_resource_limits{resource="cpu"} * 100`
-- **Порог:** > 80% от limits
-- **`for`:** 10m
-
----
-
-### Алерт на высокое потребление памяти
-
-**Назначение:** Обнаружение утечек памяти.
-
-```yaml
-      - uid: container_memory_high
-        title: Container Memory usage high
-        condition: B
-        for: 10m
-        noDataState: NoData
-        execErrState: Error
-        labels:
-          service: kubernetes
-          severity: warning
-        annotations:
-          summary: "Высокое потребление памяти контейнером {{ $labels.container }}"
-          description: "Потребление: {{ $value }}% от limits"
-          runbook: "Проверьте на наличие утечек памяти"
-        data:
-          - refId: A
-            datasourceUid: prometheus_ds_uid
-            model:
-              expr: |
-                container_memory_usage_bytes{namespace=~".+", container!=""}
-                /
-                kube_pod_container_resource_limits{resource="memory", namespace=~".+"}
-                * 100
-              instant: false
-              format: time_series
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              conditions:
-                - evaluator: { type: gt, params: [85] }
-                  query: { params: [A] }
-```
-
-**Параметры:**
-
-- **Выражение:** `container_memory_usage_bytes / kube_pod_container_resource_limits{resource="memory"} * 100`
-- **Порог:** > 85% от limits
-- **`for`:** 10m
-
----
-
-### Сводная таблица алертов
-
-| Алерт | Метрика | Порог | `for` | Критичность |
+| Алерт | Метрика | Условие (Порог) | Задержка (`for`) | Критичность |
 | :--- | :--- | :--- | :--- | :--- |
-| Перезапуск контейнера | `kube_pod_container_status_restarts_total` | > 0 за 5m | 1m | Critical |
-| OOM Killed | `kube_pod_container_status_last_terminated_reason` | == 1 | 0m | Critical |
-| Недоступность реплик | `kube_deployment_status_replicas_available` | < 90% | 5m | Warning |
-| Высокое CPU | `container_cpu_usage_seconds_total` | > 80% limits | 10m | Warning |
-| Высокая память | `container_memory_usage_bytes` | > 85% limits | 10m | Warning |
+| **Рестарт контейнера** | `kube_pod_container_status_restarts_total` | `increase > 0` (5m) | 1m | Critical |
+| **OOM Killed** | `kube_pod_container_status_last_terminated_reason` | `== 1` | 0m | Critical |
+| **Недоступность реплик** | `kube_deployment_status_replicas_available` | `< 90%` | 5m | Warning |
+| **Высокое CPU** | `container_cpu_usage_seconds_total` | `> 80% limit` | 10m | Warning |
+| **Высокая память** | `container_memory_usage_bytes` | `> 85% limit` | 10m | Warning |
 
 ## Дополнительная информация
 
-**Связанные темы:**
+**См. также:**
 
-- [Provisioning алертов](./provisioning.md) — структура правил алертинга
-- [Основные концепции Grafana Alerting](./concepts.md) — состояния правил, NoData, Error
-- [Best practices](./best_practices.md) — рекомендации по настройке `for` и интервалов
-- [Общие принципы алертинга](../../Concepts/Observability_and_Monitoring/monitoring_alerting_recommendations.md) — методологии и рекомендации
-- [Observability в контейнерах](../../Concepts/Observability_and_Monitoring/observability_in_containers.md) — мониторинг контейнеризированных приложений
+- [Provisioning алертов](./provisioning.md) — декларативное управление правилами через YAML (YAML Ain't Markup Language)
+- [Основные концепции алертинга](./concepts.md) — жизненный цикл и состояния оповещений
+- [Best Practices: Алертинг](./best_practices.md) — общие рекомендации по настройке порогов
+- [Общие рекомендации по мониторингу](../../Concepts/Observability_and_Monitoring/monitoring_alerting_recommendations.md) — методологии RED и Golden Signals
+- [Мониторинг контейнеров](../../Concepts/Observability_and_Monitoring/observability_in_containers.md) — особенности сбора метрик в K8s

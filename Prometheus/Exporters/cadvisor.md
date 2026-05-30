@@ -210,25 +210,9 @@ scrape_configs:
 
 ### Алертинг
 
-Базовые PromQL-выражения для алертов (полные правила — [Kubernetes Alerts в Grafana](../../Grafana/alerting/kubernetes_alerts.md)):
+Для мониторинга контейнеров на основе метрик cAdvisor рекомендуется использовать стандартные правила оповещений. Полный перечень правил, пороговых значений и YAML-конфигураций для Grafana представлен в SSoT-файле:
 
-**High CPU:**
-
-```promql
-rate(container_cpu_usage_seconds_total{container_name="myapp"}[5m]) > 0.8
-```
-
-**High Memory (от лимита):**
-
-```promql
-container_memory_working_set_bytes{container_name="myapp"} / container_spec_memory_limit_bytes{container_name="myapp"} > 0.9
-```
-
-**Container Restarted:**
-
-```promql
-increase(container_start_time_seconds{container_name="myapp"}[1h]) > 0
-```
+> **[Алерты для Kubernetes в Grafana](../../Grafana/alerting/kubernetes_alerts.md)**
 
 ## Дополнительная информация
 

@@ -2,57 +2,58 @@
 
 ## Определения
 
-**Источник данных (Datasource)** — подключение к системе хранения данных (Prometheus, MySQL, Loki и др.). Grafana **не хранит данные**, а выполняет запросы к источникам и визуализирует результаты.
+**Источник данных (Data Source)** — это подключение к внешней системе хранения данных, такой как Prometheus, MySQL, Loki или Elasticsearch. Grafana **не хранит данные** самостоятельно; она выполняет запросы к настроенным источникам, получает результаты и визуализирует их на панелях дашбордов.
 
-**Текущая версия (март 2026):** Grafana 12.x поддерживает 50+ источников данных
+**Текущая версия (март 2026):** Grafana 12.x поддерживает более 50 официальных источников данных и сотни плагинов от сообщества.
 
 **Связанные темы:**
 
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Провиженинг](./grafana_provisioning.md) — автоматизация настройки
-- [Дашборды](./dashboards/definitions_and_concepts.md) — визуализация данных
-- [Алертинг](./alerting/concepts.md) — настройка оповещений
+- [Провиженинг](./grafana_provisioning.md) — автоматизация настройки через конфигурационные файлы
+- [Дашборды](./grafana-dashboards.md) — создание визуализаций на основе данных
 
 ### Атрибуты источника
 
 | Атрибут | Описание |
 | :--- | :--- |
-| **Name** | Уникальное имя в интерфейсе Grafana |
-| **Default** | Флаг источника по умолчанию |
-| **Type** | Тип коннектора (Prometheus, MySQL, Loki...) |
-| **URL** | Адрес системы (<http://prometheus:9090>) |
-| **Auth** | Параметры аутентификации |
+| **Name** | Уникальное имя источника в интерфейсе Grafana |
+| **Default** | Флаг, указывающий на использование источника по умолчанию в новых панелях |
+| **Type** | Тип коннектора (Prometheus, MySQL, Loki, InfluxDB и др.) |
+| **URL** | Адрес подключения к системе (например, `http://prometheus:9090`) |
+| **Auth** | Параметры аутентификации (Basic Auth, API-ключи, TLS-сертификаты) |
 
-## Основные концепции
+## Базовые концепции
 
 ### Языки запросов
 
-Grafana **не имеет собственного языка запросов** — используется нативный язык каждого источника:
+Grafana использует нативные языки запросов каждой системы. Это позволяет использовать всю мощь конкретной БД:
 
-| Источник | Язык запросов |
+| Источник данных | Язык запросов |
 | :--- | :--- |
-| **Prometheus** | PromQL |
-| **Loki** | LogQL |
-| **Tempo** | TraceQL |
-| **MySQL/PostgreSQL** | SQL |
+| **Prometheus** | PromQL (Prometheus Query Language) |
+| **Loki** | LogQL (Log Query Language) |
+| **Tempo** | TraceQL (Trace Query Language) |
+| **MySQL / PostgreSQL** | SQL (Structured Query Language) |
 | **Elasticsearch** | Lucene Query DSL |
 
-### Встроенные источники данных
+### Встроенные системные источники
 
 | Источник | Назначение |
 | :--- | :--- |
-| **TestData** | Генерация случайных данных для тестирования визуализаций |
-| **Mixed** | Объединение данных из нескольких источников на одной панели |
-| **Dashboard** | Использование результатов запросов с других дашбордов |
+| **TestData** | Генерация случайных или фиксированных данных для тестирования визуализаций без реальной БД |
+| **Mixed** | Специальный режим, позволяющий объединять данные из разных источников на одной панели |
+| **Dashboard** | Позволяет использовать результаты запросов из других панелей того же дашборда для оптимизации нагрузки |
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка Prometheus
+### Сценарий 1: Настройка источника Prometheus
 
-**Docker Compose:**
+Для настройки Prometheus можно использовать автоматизированный подход (провиженинг) или ручную настройку через интерфейс.
+
+**Конфигурация для Docker Compose:**
 
 ```yaml
-# grafana/provisioning/datasources/datasources.yaml
+# provisioning/datasources/prometheus.yaml
 apiVersion: 1
 datasources:
   - name: Prometheus
@@ -61,9 +62,11 @@ datasources:
     access: proxy
     isDefault: true
     editable: true
+    jsonData:
+      timeInterval: "15s"
 ```
 
-**Kubernetes (Helm):**
+**Конфигурация для Kubernetes (Helm `values.yaml`):**
 
 ```yaml
 # values.yaml
@@ -79,65 +82,64 @@ grafana:
           isDefault: true
 ```
 
-**Ручная настройка (UI):**
+**Ручная настройка через веб-интерфейс:**
 
-1. **Connections → Data Sources → Add new data source → Prometheus**
-2. **URL:** `http://prometheus:9090` (Docker) или `http://prometheus-server.monitoring.svc.cluster.local` (K8s)
-3. **Access:** `Server (proxy)`
-4. **Save & Test**
-
-> **Примечание:** См. также [Провиженинг](./grafana_provisioning.md) для автоматизации.
+1. Перейдите в **Connections → Data Sources → Add new data source**.
+2. Выберите **Prometheus**.
+3. В поле **URL** укажите адрес сервера (например, `http://localhost:9090`).
+4. В разделе **Access** выберите `Server (proxy)` (рекомендуется для большинства случаев).
+5. Нажмите **Save & Test**.
 
 ### Сценарий 2: Интеграция Loki и Tempo (Derived Fields)
 
-**Настройка связи логов с трассировками:**
+Этот сценарий позволяет реализовать сквозную навигацию от логов к распределённым трассировкам.
 
-1. **Добавьте Loki:**
-   - **Connections → Data Sources → Loki**
-   - **URL:** `http://loki:3100`
-   - **Save & test**
+1. **Настройка Tempo:**
+   - В настройках источника Tempo укажите связь с Loki в разделе **Trace to logs**.
 
-2. **Добавьте Tempo:**
-   - **Connections → Data Sources → Tempo**
-   - **URL:** `http://tempo:3200`
-   - **Trace to logs:** Выберите источник Loki
-   - **Save & test**
-
-3. **Настройте Derived Fields в Loki:**
-   - Откройте настройки источника **Loki**
-   - **Derived Fields → Add:**
+2. **Настройка Loki (Derived Fields):**
+   - Откройте настройки источника **Loki**.
+   - В разделе **Derived Fields** нажмите **Add**:
      - **Name:** `TraceID`
-     - **Regex:** `traceID=([a-zA-Z0-9]+)`
-     - **URL:** `${__value.raw}`
-     - **Internal Link:** ✓
-     - **Data source:** Tempo
-   - **Save & test**
+     - **Regex:** `traceID=([a-zA-Z0-9]+)` (регулярное выражение для извлечения ID из строки лога)
+     - **Internal Link:** Включите этот флаг.
+     - **Data source:** Выберите ваш источник Tempo.
+   - Нажмите **Save & test**.
 
-**Результат:** Кликабельные `TraceID` в логах Loki открывают трассировки в Tempo.
+**Результат:** В интерфейсе просмотра логов (`Explore`) значения TraceID станут кликабельными ссылками, открывающими соответствующую трассировку в Tempo.
 
-### Сценарий 3: Настройка Loki
+### Сценарий 3: Настройка InfluxDB (Provisioning)
 
-**URL для различных окружений:**
+Пример конфигурации для InfluxDB v1.x:
 
-| Окружение | URL |
-| :--- | :--- |
-| **Docker Compose** | `http://loki:3100` |
-| **Kubernetes** | `http://loki-distributed-gateway.loki.svc.cluster.local` |
-| **Standalone** | `http://localhost:3100` |
+```yaml
+# provisioning/datasources/influxdb.yaml
+apiVersion: 1
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    url: http://influxdb:8086
+    database: telegraf
+    user: telegraf
+    password: "${INFLUXDB_PASSWORD}" # Рекомендуется использовать переменные окружения
+    access: proxy
+    isDefault: false
+```
 
 ## Дополнительная информация
 
 ### Популярные источники данных
 
-| Источник | Тип | Назначение |
+| Источник | Тип данных | Область применения |
 | :--- | :--- | :--- |
-| **Prometheus** | Метрики | Мониторинг инфраструктуры и приложений |
-| **Loki** | Логи | Агрегация и анализ логов |
-| **Tempo** | Трассировки | Распределённые трассировки |
-| **Mimir** | Метрики | Долгосрочное хранение метрик Prometheus |
-| **MySQL/PostgreSQL** | SQL | Бизнес-метрики из БД |
-| **Elasticsearch** | Логи/Поиск | Поиск и анализ логов |
-| **CloudWatch** | Метрики AWS | Мониторинг AWS-ресурсов |
-| **Azure Monitor** | Метрики Azure | Мониторинг Azure-ресурсов |
+| **Prometheus** | Метрики | Оперативный мониторинг инфраструктуры и приложений |
+| **Loki** | Логи | Сбор, хранение и анализ логов с использованием лейблов |
+| **Tempo** | Трассировки | Анализ производительности распределённых систем |
+| **Mimir** | Метрики | Долгосрочное и масштабируемое хранение метрик Prometheus |
+| **PostgreSQL** | SQL | Визуализация бизнес-данных и аналитики из реляционных БД |
+| **CloudWatch** | Облачные данные | Мониторинг ресурсов в инфраструктуре AWS |
 
-Подробная [документация по источникам](https://grafana.com/docs/grafana/latest/datasources/) доступна на сайте Grafana Labs.
+**См. также:**
+
+- [Официальная документация Grafana Labs](https://grafana.com/docs/grafana/latest/datasources/)
+- [Маркетплейс плагинов источников данных](https://grafana.com/grafana/plugins/?type=datasource)

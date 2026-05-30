@@ -1,4 +1,4 @@
-# Grafana Alerting: Основные концепции
+# Обзор Grafana Alerting
 
 ## Определения
 
@@ -47,13 +47,13 @@ Normal → Pending → Alerting → Normal
 5. **Группировка** — агрегация по меткам для уменьшения шума.
 6. **Доставка** — уведомления доставляются по маршрутам.
 
-### Image Renderer
+### Рендеринг изображений (Image Renderer)
 
 **Image Renderer** — компонент для создания снимков графиков в уведомлениях.
 
 - **Назначение:** Показывает тренд и контекст метрики в момент алерта.
-- **Установка:** [Установка через Helm](../Installation/grafana_helm_installation.md#image-renderer) или отдельный контейнер `grafana-image-renderer`.
-- **Требования:** Headless-браузер (Chromium), 512MB+ RAM.
+- **Установка:** [Установка через Helm](../Installation/grafana_helm_installation.md) или отдельный контейнер `grafana-image-renderer`.
+- **Требования:** Headless-браузер (Chromium), 512MB+ RAM (Random Access Memory).
 
 ## Практические сценарии
 
@@ -89,12 +89,12 @@ labels:
 
 ```yaml
 annotations:
-  summary: "Высокая доля ошибок API: {{ $value | humanizePercentage }}"
+  summary: "Высокая доля ошибок API (Application Programming Interface): {{ $value | humanizePercentage }}"
   description: "Доля 5xx ошибок превышает 5% в течение 5 минут"
   runbook: "https://wiki.example.com/runbooks/api-error-rate"
 ```
 
-### Пример: Настройка контак-пойнта
+### Пример: Настройка контакт-пойнта
 
 **Email:**
 
@@ -151,10 +151,8 @@ silences:
 
 ## Дополнительная информация
 
-**Связанные темы:**
+**См. также:**
 
 - [Provisioning алертов](./provisioning.md) — настройка правил и политик через YAML
-- [Алерты для Kubernetes](./kubernetes_alerts.md) — практические примеры правил
-- [Интеграция с Telegram](./telegram_integration.md) — настройка Telegram-уведомлений
-- [Best practices](./best_practices.md) — практические нюансы и сравнение с Alertmanager
-- [Установка Grafana](../Installation/grafana_helm_installation.md) — включая Image Renderer
+- [Best practices](./best_practices.md) — рекомендации и сравнение с Alertmanager
+- [Установка Grafana](../Installation/grafana_helm_installation.md) — базовое развёртывание системы

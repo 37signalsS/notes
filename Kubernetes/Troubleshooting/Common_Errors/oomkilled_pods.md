@@ -185,17 +185,9 @@ livenessProbe:
 
 #### 1. Настройка мониторинга и алертов
 
-```yaml
-# Пример Prometheus alert для OOMKilled
-- alert: PodOOMKilled
-  expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Pod {{ $labels.pod }} OOMKilled"
-    description: "Container {{ $labels.container }} в namespace {{ $labels.namespace }} был завершен из-за нехватки памяти"
-```
+Для своевременного обнаружения `OOMKilled` необходимо настроить правила алертинга. Полный перечень правил, YAML-конфигураций и инструкций для Grafana представлен в SSoT-файле:
+
+> **[Алерты для Kubernetes в Grafana](../../../Grafana/alerting/kubernetes_alerts.md)**
 
 #### 2. Использование Vertical Pod Autoscaler (VPA)
 

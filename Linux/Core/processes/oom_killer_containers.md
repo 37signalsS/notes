@@ -89,7 +89,7 @@ spec:
 1. Установите `requests` и `limits` для всех контейнеров
 2. `limits.memory` должен быть выше пикового потребления (мониторинг через Prometheus/Grafana)
 3. Для Java-приложений учитывайте JVM heap + non-heap память (установите `-XX:MaxRAMPercentage`)
-4. Настройте алерты на `kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1`
+4. Настройте алерты для своевременного обнаружения инцидентов. Полный перечень правил и YAML-конфигураций для Grafana представлен в SSoT-файле: [**Алерты для Kubernetes в Grafana**](../../../Grafana/alerting/kubernetes_alerts.md).
 
 ### Диагностика утечки памяти
 

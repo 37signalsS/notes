@@ -6,20 +6,13 @@
 
 **River** — язык конфигурации на базе HCL (HashiCorp Configuration Language) для описания потоков данных в виде графа компонентов.
 
-**Связанные темы:**
-
-- [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Источники данных](./grafana_datasources.md) — настройка подключения к бэкендам
-- [Провижининг](./grafana_provisioning.md) — автоматизация конфигурации Grafana
-- [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md) — стандарт телеметрии
-
 ### Миграция с устаревших агентов
 
 | Агент | Статус | Конец поддержки |
 | :--- | :--- | :--- |
-| **Grafana Agent (static mode)** | ⚠️ Deprecated | — |
-| **Promtail** | ⚠️ Deprecated | — |
-| **Grafana Alloy** | ✅ Активно развивается | — |
+| **Grafana Agent (static mode)** | Устарело (Deprecated) | — |
+| **Promtail** | Устарело (Deprecated) | — |
+| **Grafana Alloy** | Активно развивается | — |
 
 ## Основные концепции
 
@@ -195,3 +188,5 @@ prometheus.remote_write "metrics_writer" {
 - **Grafana Alloy** — активно развивается
 
 Подробная [документация Alloy](https://grafana.com/docs/alloy/latest/) и [сравнение с OTel Collector](https://grafana.com/docs/alloy/latest/concepts/compare/) доступны на сайте Grafana Labs.
+
+**См. также:** [Обзор Grafana](./grafana_overview.md), [Источники данных](./grafana_datasources.md), [OpenTelemetry](../OpenTelemetry/opentelemetry_overview.md).

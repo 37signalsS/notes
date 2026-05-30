@@ -26,7 +26,7 @@
 
 | Возможность | Описание | Файл |
 | :--- | :--- | :--- |
-| **Визуализация** | Интерактивные дашборды, графики, таблицы | [Дашборды](./dashboards/definitions_and_concepts.md) |
+| **Визуализация** | Интерактивные дашборды, графики, таблицы | [Дашборды](./grafana-dashboards.md) |
 | **Источники данных** | Prometheus, Loki, PostgreSQL, MySQL и др. | [Источники данных](./grafana_datasources.md) |
 | **Алертинг** | Unified Alerting с уведомлениями | [Алертинг](./alerting/concepts.md) |
 | **Провиженинг** | Управление конфигурацией как код | [Провиженинг](./grafana_provisioning.md) |
@@ -69,6 +69,6 @@ Prometheus имеет собственный UI для отладки, но Graf
 | **OpenTelemetry** | **Телеметрия** | Стандарт сбора и экспорта телеметрии (CNCF) |
 | **k6** | **Нагрузочное тестирование** | Тестирование на JavaScript |
 | **Faro** | **Real User Monitoring** | Телеметрия фронтенда |
-| **OnCall** | **Управление инцидентами** | Дежурства и эскалации (⚠️ self-hosted не обновляется с весны 2026) |
+| **OnCall** | **Управление инцидентами** | Дежурства и эскалации (Внимание: self-hosted не обновляется с весны 2026) |
 
-**См. также:** [Mimir overview](../Mimir/mimir_overview.md), [Loki overview](../Loki/loki_overview.md), [Tempo overview](../Tempo/index.md), [Grafana Alloy](./grafana_alloy_overview.md).
+**См. также:** [Mimir overview](../Mimir/mimir_overview.md), [Loki overview](../Loki/loki_overview.md), [Tempo overview](../Tempo/index.md).

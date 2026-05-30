@@ -30,7 +30,7 @@ Grafana (автоматическая загрузка дашбордов и dat
 
 | Компонент | Назначение | SSoT |
 |---|---|---|
-| ConfigMap + лейблы | Хранение JSON-дашбордов и datasource-конфигураций | [Provisioning через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md) |
+| ConfigMap + лейблы | Хранение JSON-дашбордов и datasource-конфигураций | [Provisioning через ConfigMap](../../../Grafana/grafana_provisioning.md) |
 | Grafana Sidecar | Обнаружение и загрузка ConfigMap в Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
 | Helm values.yaml | Общая конфигурация Grafana | [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md) |
 | Файловый provisioning | Провиженинг через YAML/JSON в `/etc/grafana/provisioning` | [Grafana Provisioning](../../../Grafana/grafana_provisioning.md) |
@@ -39,7 +39,7 @@ Grafana (автоматическая загрузка дашбордов и dat
 
 Сценарии использования описаны в SSoT-файлах:
 
-- **Создание ConfigMap с дашбордом** → [Provisioning через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md)
+- **Создание ConfigMap с дашбордом** → [Provisioning через ConfigMap](../../../Grafana/grafana_provisioning.md)
 - **Настройка sidecar (label, searchNamespace)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
 - **Провиженинг datasource (Prometheus, Loki)** → [Источники данных Grafana](../../../Grafana/grafana_datasources.md)
 - **Полная конфигурация Grafana (PV, Ingress, HA)** → [Конфигурация Grafana](../Kube_Prometheus_Stack_Helm/grafana_config.md)
@@ -64,6 +64,6 @@ Helm-чарт kube-prometheus-stack включает предустановле�
 - **[Концепции Prometheus Operator](./concepts.md)** — CRD и архитектура
 - **[Установка Prometheus Operator](./installation.md)** — установка и настройка
 - **[Grafana Provisioning](../../../Grafana/grafana_provisioning.md)** — общий провижининг Grafana
-- **[Provisioning дашбордов через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md)** — sidecar-механизм
+- **[Provisioning дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md)** — sidecar-механизм
 - **[Конфигурация Grafana в kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/grafana_config.md)** — Helm-параметры
 - **[Источники данных Grafana](../../../Grafana/grafana_datasources.md)** — Prometheus, Loki, и др.

@@ -177,7 +177,7 @@ data:
     }
 ```
 
-> **См. также:** [Провиженинг дашбордов через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md).
+> **См. также:** [Провиженинг дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md).
 
 ### Установка дополнительных плагинов
 
@@ -250,6 +250,6 @@ grafana:
 * [Обзор Grafana](../../../Grafana/grafana_overview.md) — общая информация о платформе
 * [Установка Grafana через Helm](../../../Grafana/Installation/grafana_helm_installation.md) — standalone установка
 * [Провиженинг](../../../Grafana/grafana_provisioning.md) — управление конфигурацией как код
-* [Провиженинг дашбордов через ConfigMap](../../../Grafana/dashboards/provisioning_configmap.md) — sidecar-механизм
+* [Провиженинг дашбордов через ConfigMap](../../../Grafana/grafana_provisioning.md) — sidecar-механизм
 * [Источники данных](../../../Grafana/grafana_datasources.md) — подключение Prometheus, Loki и др.
 * [Плагины](../../../Grafana/grafana_plugins.md) — расширение функциональности

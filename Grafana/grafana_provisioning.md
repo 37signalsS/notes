@@ -87,36 +87,7 @@ Grafana сканирует `/etc/grafana/provisioning` при старте и п
 
 #### Провиженинг источников данных
 
-В `datasources/datasources.yaml` определяются источники данных.
-
-**Пример для InfluxDB:**
-
-```yaml
-apiVersion: 1
-datasources:
-- name: InfluxDB
-  type: influxdb
-  url: http://influxdb:8086
-  database: telegraf
-  user: telegraf
-  password: your_password # Используйте переменные окружения или секреты
-  access: proxy
-  isDefault: true
-```
-
-**Пример для Prometheus:**
-
-```yaml
-apiVersion: 1
-datasources:
-- name: Prometheus
-  type: prometheus
-  url: http://prometheus:9090
-  access: proxy
-  isDefault: false
-  jsonData:
-    timeInterval: "15s"
-```
+Конфигурационные файлы в директории `datasources/` позволяют автоматически подключать внешние системы. Подробные примеры YAML-конфигураций для различных баз данных (Prometheus, InfluxDB и др.) приведены в разделе **[Практические сценарии — Настройка источников данных](./grafana_datasources.md#практические-сценарии)**.
 
 #### Провиженинг дашбордов
 
@@ -211,17 +182,45 @@ grafana:
 
 #### Плагины (Plugins)
 
-```yaml
-# values.yaml
-grafana:
-  plugins:
-    - grafana-piechart-panel
-    - volkov-echarts-panel
-```
+Автоматизация установки плагинов (включая примеры конфигурации Helm и Docker Compose) подробно описана в разделе [Практические сценарии — Управление плагинами](./grafana_plugins.md#управление-плагинами).
 
-Grafana установит указанные плагины при запуске.
+### 3. Механизм Grafana Sidecar и ConfigMap в Kubernetes
 
-### 3. Автоматизация через API с помощью Ansible
+В контексте `kube-prometheus-stack` (особенно при развертывании через Rancher) используется механизм **Grafana Sidecar** для автоматического обнаружения и загрузки дашбордов.
+
+#### Назначение и принцип работы
+
+Вместо хранения дашбордов в файловой системе Grafana (которая может быть эфемерной), `sidecar`-контейнер, запущенный в том же поде, что и Grafana, сканирует указанные Kubernetes `ConfigMap` или `Secret` ресурсы.
+
+`Sidecar` постоянно отслеживает изменения в `ConfigMap` с определенными метками и при обнаружении новых или измененных дашбордов автоматически импортирует их в Grafana. Это позволяет версионировать дашборды в Git и централизованно развертывать, не требуя ручных действий по импорту через UI.
+
+#### Провижионинг пользовательских дашбордов через ConfigMap
+
+1. **Экспортируйте JSON**: Используйте локальный экземпляр Grafana для создания дашборда и экспортируйте его в формате JSON.
+2. **Создайте `ConfigMap`**: Оберните экспортированный JSON дашборда в `ConfigMap`. **Ключевым моментом является добавление метки `grafana-dashboard: "1"`** (или другой, указанной в конфигурации `sidecar`), которая будет использоваться для обнаружения.
+
+   ```yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: my-app-dashboard
+     namespace: test-app # Разверните в namespace вашего приложения
+     labels:
+       grafana-dashboard: "1" # Обязательная метка для обнаружения Grafana Sidecar
+   data:
+     my-app-dashboard.json: |-
+       {
+         "title": "Test Application Dashboard",
+         "type": "dashboard",
+         "uid": "test-app-dashboard",
+         ...
+       }
+   ```
+
+3. **Разверните `ConfigMap`**: Примените этот ресурс в вашем кластере. Дашборд появится в Grafana автоматически.
+   *Примечание: для обнаружения в других `namespaces`, убедитесь, что соответствующая настройка включена в `values.yaml` Helm-чарта (например, `sidecar.dashboards.searchNamespace: ALL`).*
+
+### 4. Автоматизация через API с помощью Ansible
 
 Ansible позволяет управлять ресурсами Grafana через её API, используя динамическую генерацию конфигураций.
 

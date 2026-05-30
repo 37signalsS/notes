@@ -1,50 +1,50 @@
 # Интеграция Grafana с Graphite и Collectd
 
-> **LEGACY STACK (2026)**
+> **УСТАРЕВШИЙ СТЕК (2026)**
 >
-> Graphite и Collectd — устаревшие компоненты. Для новых проектов рекомендуется:
+> Graphite и Collectd считаются устаревшими компонентами. Для новых проектов рекомендуется использовать современный стек:
 >
 > - **Метрики:** [Prometheus](../Prometheus/overview.md) + [Grafana Alloy](./grafana_alloy_overview.md)
 > - **Логи:** [Loki](../Loki/loki_overview.md) + Alloy
 > - **Трассировки:** [Tempo](../Tempo/index.md)
 >
-> Данная документация сохранена для поддержки legacy-систем.
+> Данная документация сохранена для поддержки и миграции существующих систем.
 
 ## Определения
 
-**Grafana** — платформа для аналитики, интерактивной визуализации данных, создания дашбордов, графиков и алертов.
+**Grafana** — универсальная платформа для визуализации данных и построения дашбордов.
 
-**Graphite** — система хранения и обработки временных рядов, состоящая из:
+**Graphite** — система для сбора и хранения временных рядов (time-series data). Состоит из трех основных компонентов:
 
-- **Carbon** — демон, принимающий метрики по сети (например, от Collectd) и записывающий их в базу данных Whisper
-- **Whisper** — файловая база данных фиксированного размера для хранения временных рядов
-- **Graphite-web** — веб-интерфейс для визуализации данных и API, с которым взаимодействует Grafana
+- **Carbon** — сервис (демон), принимающий метрики по сети и записывающий их в базу данных.
+- **Whisper** — специализированная файловая база данных фиксированного размера для хранения метрик.
+- **Graphite-web** — веб-интерфейс и API для извлечения данных, с которым взаимодействует Grafana.
 
-**Collectd** — системный демон для сбора метрик (CPU, память, сеть, диск) и их отправки в Graphite или другие системы мониторинга.
+**Collectd** — системная служба для периодического сбора метрик производительности (процессор, память, диски, сеть) и их отправки в хранилища.
 
 **Связанные темы:**
 
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Источники данных](./grafana_datasources.md) — настройка Graphite как источника
-- [Docker Compose установка](./Installation/docker_compose_setup.md) — развёртывание Grafana
+- [Источники данных](./grafana_datasources.md) — общие принципы настройки источников
+- [Установка через Docker](./Installation/docker_compose_setup.md) — базовые принципы развёртывания
 
-## Основные концепции
+## Базовые концепции
 
-1. **Сбор метрик:** `Collectd`, запущенный на хост-машине, собирает системные метрики.
-2. **Передача метрик:** `Collectd` отправляет метрики на `Carbon` (компонент Graphite) по протоколу TCP на порт `2003`.
-3. **Хранение метрик:** `Carbon` записывает полученные метрики в базу данных `Whisper`.
-4. **Визуализация:** `Grafana` подключается к `Graphite-web` как к источнику данных.
-5. **Отображение:** `Grafana` запрашивает данные у `Graphite-web` API, который извлекает их из `Whisper`, и строит на их основе графики.
+Процесс мониторинга в данном стеке строится по следующей схеме:
+
+1. **Сбор:** Служба `Collectd` на целевом хосте собирает показатели системы.
+2. **Передача:** `Collectd` отправляет данные на входной порт `Carbon` (обычно TCP `2003`).
+3. **Хранение:** `Carbon` сохраняет данные в файлы `Whisper`.
+4. **Запрос:** `Grafana` через свой источник данных обращается к API `Graphite-web`.
+5. **Визуализация:** `Graphite-web` считывает данные из `Whisper`, а `Grafana` отрисовывает их на графиках.
 
 ## Практические сценарии
 
-### Развертывание стека мониторинга с Docker Compose
+### Развертывание стека через Docker Compose
 
-Для быстрого развертывания Grafana и Graphite используется `docker-compose`. Создайте директорию проекта (например, `~/monitoring`) и файл `docker-compose.yml`:
+Для локального тестирования или небольших инсталляций удобно использовать Docker. Создайте файл `docker-compose.yml`:
 
 ```yaml
-version: '3.8'
-
 services:
   graphite:
     image: graphiteapp/graphite-statsd:1.1.10-1
@@ -52,15 +52,15 @@ services:
     restart: always
     ports:
       - "8080:80"       # Graphite Web UI
-      - "2003:2003"       # Carbon Line Receiver (для Collectd)
-      - "2004:2004"       # Carbon Pickle Receiver
-      - "8125:8125/udp"   # StatsD UDP
+      - "2003:2003"     # Carbon Line Receiver (вход для Collectd)
+      - "2004:2004"     # Carbon Pickle Receiver
+      - "8125:8125/udp" # StatsD UDP
     volumes:
       - graphite_data:/opt/graphite/storage
       - graphite_conf:/opt/graphite/conf
 
   grafana:
-    image: grafana/grafana:10.4.2
+    image: grafana/grafana:12.x
     container_name: grafana
     restart: always
     ports:
@@ -69,7 +69,7 @@ services:
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin # В производственной среде используйте надежный пароль
+      - GF_SECURITY_ADMIN_PASSWORD=admin # Измените при первом входе
       - GF_USERS_ALLOW_SIGN_UP=false
     depends_on:
       - graphite
@@ -80,31 +80,26 @@ volumes:
   grafana_data:
 ```
 
-Запуск стека:
+Запуск осуществляется командой:
+`docker compose up -d`
 
+### Настройка Collectd на целевом хосте
+
+#### Установка
+
+В большинстве Linux-дистрибутивов пакет доступен в стандартных репозиториях:
 ```bash
-docker-compose up -d
+sudo apt update && sudo apt install collectd -y
 ```
 
-### Настройка Collectd на хосте
+#### Настройка отправки данных
 
-Установите и настройте `collectd` на хост-машине для отправки метрик в Graphite-контейнер.
-
-#### Установка Collectd
-
-```bash
-sudo apt update
-sudo apt install collectd -y
-```
-
-#### Настройка плагина `write_graphite`
-
-Отредактируйте конфигурационный файл `/etc/collectd/collectd.conf`, чтобы `collectd` отправлял метрики на порт `2003` Docker-хоста:
+Отредактируйте `/etc/collectd/collectd.conf`, включив плагин `write_graphite`:
 
 ```conf
 <Plugin write_graphite>
-  <Node "graphite">
-    Host "localhost" # 'localhost' относится к IP-адресу Docker-хоста, а не к контейнеру
+  <Node "graphite_server">
+    Host "127.0.0.1" # IP-адрес сервера с Graphite
     Port "2003"
     Protocol "tcp"
     LogSendErrors true
@@ -116,50 +111,40 @@ sudo apt install collectd -y
 </Plugin>
 ```
 
-После сохранения изменений перезапустите `collectd`:
+После редактирования перезапустите службу:
+`sudo systemctl restart collectd`
 
-```bash
-sudo systemctl restart collectd
-```
+### Настройка источника данных в Grafana
 
-### Настройка Grafana
+1. Войдите в интерфейс Grafana (`http://localhost:3000`).
+2. Перейдите в **Connections → Data sources**.
+3. Нажмите **Add new data source** и выберите **Graphite**.
+4. Укажите URL: `http://graphite:80` (внутри сети Docker).
+5. Нажмите **Save & test**.
 
-#### Вход в Grafana
-
-Откройте в браузере `http://localhost:3000`. Используйте логин `admin` и пароль `admin` (измените их после первого входа).
-
-#### Добавление Graphite как источника данных
-
-1. Перейдите в **Connections -> Data sources**.
-2. Нажмите **Add new data source** и выберите **Graphite**.
-3. В поле **URL** укажите `http://graphite:80` (используя имя сервиса из `docker-compose.yml`).
-4. Нажмите **Save & test** для проверки подключения.
-
-#### Создание дашборда
-
-После успешного подключения можно создавать дашборды, используя Graphite как источник данных. В режиме запроса будут доступны метрики от `collectd` (например, `collectd.имя_хоста.cpu-0.cpu-idle`).
+Теперь при создании панелей вы сможете выбирать метрики, начинающиеся с префикса `collectd.*`.
 
 ## Дополнительная информация
 
-### Troubleshooting
+### Устранение неполадок
 
 | Проблема | Решение |
 | :--- | :--- |
-| **Collectd не отправляет метрики** | Проверьте `journalctl -u collectd` на наличие ошибок |
-| **Graphite не принимает метрики** | Убедитесь, что порт `2003` открыт: `netstat -tlnp \| grep 2003` |
-| **Пустые графики в Grafana** | Проверьте путь к метрикам в Graphite Composer (`Browse` → `collectd`) |
+| **Нет данных от Collectd** | Проверьте логи: `journalctl -u collectd`. Убедитесь, что плагин `write_graphite` раскомментирован в начале конфига. |
+| **Порт 2003 недоступен** | Проверьте доступность порта на сервере: `ss -tlnp | grep 2003`. |
+| **Пустые списки метрик** | Проверьте содержимое директории `/opt/graphite/storage/whisper` внутри контейнера graphite. |
 
 ### Миграция на современный стек
 
-Для перехода с Graphite/Collectd на Prometheus/Alloy:
+Для перехода на Prometheus/Alloy рекомендуется следующий план:
 
-1. Установите [Grafana Alloy](./grafana_alloy_overview.md) на хосты вместо Collectd.
-2. Настройте скрейпинг метрик через `prometheus.scrape` в Alloy.
-3. Перенесите дашборды с Graphite-запросами на PromQL.
-4. Отключите Collectd после проверки работы нового стека.
+1. Установить [Grafana Alloy](./grafana_alloy_overview.md) на хосты параллельно с Collectd.
+2. Настроить сбор метрик через `prometheus.exporter.unix` (аналог node_exporter) в Alloy.
+3. Постепенно пересоздать дашборды, заменяя Graphite-запросы на PromQL.
+4. После верификации данных отключить старый стек.
 
 ### Безопасность
 
-- **Изоляция сети:** Не открывайте порт Carbon (`2003`) наружу — только для доверенных хостов.
-- **Пароли:** Используйте надёжные пароли для Grafana и храните их в secrets-менеджере.
-- **TLS:** Для production-окружений настройте TLS между Collectd и Carbon.
+- **Сетевой доступ:** Протокол Carbon не поддерживает аутентификацию по умолчанию. Ограничивайте доступ к порту `2003` на уровне файрвола.
+- **Пароли:** Не используйте стандартные учетные данные `admin/admin` в продуктивной среде.
+- **Хранение:** Учитывайте, что Whisper занимает фиксированное место на диске. Настройте политики ротации (retention) в `storage-schemas.conf` Graphite перед массовым добавлением метрик.
