@@ -1,323 +1,170 @@
-# Docker Swarm: Advanced Volumes
+# Docker Swarm: Продвинутые решения для хранения данных
 
-## Storage Plugins
+## Определения
 
-### Portworx
+**Storage Plugin (Плагин хранения)** — программный модуль, расширяющий возможности Docker по управлению томами (Volumes). Позволяет подключать внешние системы хранения данных и облачные диски напрямую к контейнерам.
 
-Portworx — распределенное хранилище для контейнеров с поддержкой репликации и снимков.
+**RexRay** — универсальный драйвер хранения с открытым исходным кодом, обеспечивающий интеграцию Docker с различными облачными провайдерами (AWS, Azure, Google Cloud) и локальными системами хранения.
 
-#### Настройка Portworx
+**Portworx** — распределенная платформа хранения данных, разработанная специально для контейнерных сред. Обеспечивает высокую доступность, репликацию на уровне блоков и управление снимками (snapshots) данных.
 
-```sh
-# Установить Portworx на все узлы
-# (требует предварительной настройки дисков)
+**CSI (Container Storage Interface, интерфейс хранения контейнеров)** — стандарт для обеспечения взаимодействия между оркестраторами контейнеров и плагинами хранения. В Docker Swarm чаще используются нативные плагины Docker Volume Plugins, предшествующие CSI.
 
-# Создать том через Portworx
+**Snapshot (Снимок)** — моментальный снимок состояния данных тома на определенный момент времени, используемый для резервного копирования и восстановления.
+
+## Базовые концепции
+
+### Проблема распределенного хранения
+
+В кластере Docker Swarm стандартные локальные тома привязаны к конкретному узлу. Если задача (Task) сервиса перемещается на другой узел вследствие сбоя или масштабирования, данные становятся недоступны.
+
+Продвинутые решения решают эту проблему через:
+1. **Сетевые системы хранения (Network Attached Storage):** Монтирование общих ресурсов (например, NFS) на все узлы.
+2. **Облачные блочные устройства:** Динамическое переподключение облачных дисков (AWS EBS, Azure Disk) к узлу, на котором запущена задача.
+3. **Распределенные программные хранилища (Software-Defined Storage):** Создание виртуального пула хранения из локальных дисков всех узлов кластера (например, Portworx).
+
+### Высокая доступность (High Availability, HA)
+
+Использование плагинов хранения позволяет реализовать стратегии высокой доступности для stateful-приложений. При отказе узла оркестратор перезапускает задачу на другом узле, а плагин обеспечивает автоматическое монтирование того же тома с сохранением всех данных.
+
+### Ограничения облачных дисков
+
+При использовании облачных решений (AWS EBS, Azure Disk) важно учитывать топологию кластера. Большинство облачных дисков привязаны к конкретной AZ (Availability Zone, зона доступности). Если узел Swarm находится в другой зоне, монтирование диска будет невозможно.
+
+## Практические сценарии
+
+### Использование Portworx
+
+Portworx обеспечивает репликацию данных между узлами кластера, что позволяет мгновенно переключать задачи без ожидания переподключения сетевых дисков.
+
+#### Создание тома с репликацией
+
+```bash
+# Создание тома с тройной репликацией
 docker volume create \
   --driver pxd \
   --opt size=20 \
   --opt repl=3 \
-  postgres-data
+  --opt io_profile=db \
+  postgres_data
 ```
 
 **Параметры:**
+- `repl=3` — данные хранятся на трех разных узлах.
+- `io_profile=db` — оптимизация под профиль нагрузки баз данных (Input/Output).
 
-- `size` — размер тома в GB
-- `repl` — количество реплик (1–3)
-- `io_profile` — профиль I/O (`db`, `cms`, `default`)
-
-#### Использование в сервисе
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:15
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    deploy:
-      placement:
-        constraints:
-          - node.labels.db == true
-
-volumes:
-  postgres-data:
-    external: true
-```
-
-**Преимущества:**
-
-- Репликация данных (repl=3)
-- Автоматическое восстановление
-- Снимки (snapshots)
-- Миграция между узлами
-
-### RexRay
-
-RexRay — универсальный драйвер для облачных провайдеров и локальных хранилищ.
-
-#### Настройка RexRay
-
-```sh
-# Установить RexRay на все узлы
-curl -sSL https://rexray.io/install | sh
-
-# Настроить /etc/rexray/config.yml
-storageDrivers:
-  - ebs
-EBS:
-  region: us-east-1
-```
-
-#### Создание тома
-
-```sh
-docker volume create \
-  --driver rexray/ebs \
-  --name ebs-volume \
-  --opt size=50
-```
-
-#### Использование в стеке
-
-```yaml
-version: '3.8'
-
-services:
-  database:
-    image: postgres:15
-    volumes:
-      - ebs-volume:/var/lib/postgresql/data
-    deploy:
-      placement:
-        constraints:
-          - node.labels.region == us-east-1
-
-volumes:
-  ebs-volume:
-    external: true
-```
-
-**Важно:** EBS-томы привязаны к AZ (Availability Zone). Ограничьте placement узлами в той же зоне.
-
-## Cloud Storage Solutions
-
-### AWS EBS
-
-#### Требования
-
-- EC2-инстансы с IAM-ролью для доступа к EBS
-- RexRay или Docker Volume Plugin для EBS
-- Все узлы в одном регионе (или одном AZ для томов)
-
-#### Конфигурация
+#### Описание в стеке (Stack)
 
 ```yaml
 version: '3.8'
 
 services:
   db:
-    image: postgres:15
+    image: postgres:16-alpine
     volumes:
-      - ebs-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     deploy:
       placement:
         constraints:
-          - node.labels.az == us-east-1a
+          - node.labels.storage == portworx
 
 volumes:
-  ebs-data:
-    driver: rexray/ebs
-    driver_opts:
-      size: 100
-      type: gp3
-      fsType: ext4
+  postgres_data:
+    external: true
 ```
 
-**Ограничения:**
+### Интеграция с AWS EBS через RexRay
 
-- EBS-том может быть подключен только к одному узлу одновременно
-- Для multi-attach используйте EFS (NFS-like)
+RexRay позволяет использовать облачные диски AWS (Amazon Web Services) EBS (Elastic Block Store) как обычные Docker-тома.
 
-### Azure Disk
+#### Настройка RexRay
 
-#### Настройка
-
-```sh
-# Установить RexRay с Azure драйвером
-curl -sSL https://rexray.io/install | sh -s -- --driver azure
-
-# Настроить Azure credentials
-export AZURE_TENANT_ID=<tenant>
-export AZURE_CLIENT_ID=<client>
-export AZURE_CLIENT_SECRET=<secret>
-export AZURE_SUBSCRIPTION_ID=<subscription>
-```
-
-#### Использование
+На каждом узле создается конфигурация `/etc/rexray/config.yml`:
 
 ```yaml
-volumes:
-  azure-disk:
-    driver: rexray/azure
-    driver_opts:
-      size: 50
-      storageaccounttype: Premium_LRS
+rexray:
+  storageDrivers:
+    - ebs
+ebs:
+  accessKey: <YOUR_ACCESS_KEY>
+  secretKey: <YOUR_SECRET_KEY>
+  region: us-east-1
 ```
 
-### Google Persistent Disk
-
-```sh
-# Установить RexRay с GCP драйвером
-curl -sSL https://rexray.io/install | sh -s -- --driver gce
-
-# Требуется service account с правами на Compute Engine
-```
-
-```yaml
-volumes:
-  gcp-disk:
-    driver: rexray/gce
-    driver_opts:
-      size: 100
-      type: pd-ssd
-```
-
-## Backup и восстановление
-
-### Создание бэкапа
-
-#### Через временный контейнер
-
-```sh
-# Бэкап NFS-тома
-docker run --rm \
-  -v nfs-content:/source:ro \
-  -v /backup:/backup \
-  alpine tar czf /backup/content-backup.tar.gz /source
-```
-
-#### Снимок Portworx
-
-```sh
-# Создать снимок
-pxctl volume snapshot <volume-id> --name backup-$(date +%Y%m%d)
-
-# Список снимков
-pxctl volume snapshot list <volume-id>
-```
-
-### Восстановление из бэкапа
-
-#### Из tar-архива
-
-```sh
-# Восстановить данные
-docker run --rm \
-  -v nfs-content:/target \
-  -v /backup:/backup \
-  alpine tar xzf /backup/content-backup.tar.gz -C /target
-```
-
-#### Из снимка Portworx
-
-```sh
-# Создать новый том из снимка
-pxctl volume create --snapshot <snapshot-id> restored-volume
-```
-
-### Автоматизация бэкапов
+#### Развертывание сервиса с EBS
 
 ```yaml
 version: '3.8'
 
 services:
-  backup:
-    image: alpine
+  app:
+    image: my_app:latest
     volumes:
-      - db-data:/source:ro
-      - backup-storage:/backup
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        tar czf /backup/db-backup-$(date +%Y%m%d).tar.gz /source
-        find /backup -name "*.tar.gz" -mtime +7 -delete
+      - ebs_volume:/data
     deploy:
-      schedule: "0 2 * * *"  # Ежедневно в 02:00
+      placement:
+        constraints:
+          - node.labels.zone == us-east-1a
+
+volumes:
+  ebs_volume:
+    driver: rexray/ebs
+    driver_opts:
+      size: 50
+      type: gp3
 ```
 
-## Troubleshooting
+**Важно:** Для AWS EBS необходимо использовать Placement Constraints, чтобы гарантировать запуск задачи в той же зоне доступности, где создан диск.
 
-### Portworx проблемы
+### Резервное копирование и восстановление
 
-**Проверка статуса:**
+#### Резервное копирование через временный контейнер
 
-```sh
-# Статус кластера Portworx
-pxctl status
+Метод подходит для любых томов, включая NFS (Network File System) и облачные диски.
 
-# Информация о томе
-pxctl volume inspect <volume-id>
-
-# Логи Portworx
-journalctl -u portworx
+```bash
+# Создание архива данных тома
+docker run --rm \
+  -v app_data:/source:ro \
+  -v $(pwd)/backups:/backup \
+  alpine tar czf /backup/app_data_$(date +%Y%m%d).tar.gz -C /source .
 ```
 
-**Частые проблемы:**
+#### Восстановление из архива
 
-| Проблема | Решение |
-|---|---|
-| Том не создается | Проверить доступные диски |
-| Репликация не работает | Проверить сеть между узлами |
-| Том не монтируется | Перезапустить Portworx |
-
-### RexRay проблемы
-
-**Проверка:**
-
-```sh
-# Проверить конфигурацию
-rexray config view
-
-# Проверить драйвер
-docker volume ls --driver rexray/ebs
-
-# Логи RexRay
-journalctl -u rexray
+```bash
+# Распаковка данных в новый том
+docker run --rm \
+  -v app_data_restored:/target \
+  -v $(pwd)/backups:/backup \
+  alpine sh -c "tar xzf /backup/app_data_backup.tar.gz -C /target"
 ```
 
-### Cloud-specific issues
+## Дополнительная информация
 
-#### AWS EBS
+### Сравнение решений для Swarm
 
-| Проблема | Решение |
-|---|---|
-| Volume in use | EBS не поддерживает multi-attach (кроме io1/io2) |
-| AZ mismatch | Том и узел должны быть в одном AZ |
-| Permission denied | Проверить IAM-роль |
+| Характеристика | Portworx | RexRay (Cloud) | NFS (Сетевая папка) |
+| :--- | :--- | :--- | :--- |
+| **Репликация** | Нативная (блоки) | На уровне облака | Зависит от сервера |
+| **Производительность** | Высокая | Средняя | Низкая (I/O latency) |
+| **Сложность** | Высокая | Средняя | Низкая |
+| **Отказоустойчивость** | Очень высокая | Высокая | Зависит от сервера |
+| **Стоимость** | Лицензия + диски | Стоимость облака | Низкая |
 
-#### Azure Disk
+### Устранение неполадок (Troubleshooting)
 
-| Проблема | Решение |
-|---|---|
-| Authentication failed | Проверить service account |
-| Disk already attached | Azure Disk не поддерживает multi-attach |
+#### Ошибка монтирования (Volume in use)
+Облачные диски часто не поддерживают multi-attach (одновременное подключение к нескольким узлам).
+**Решение:** Убедитесь, что старая задача полностью остановлена перед запуском новой, или используйте решения с поддержкой RWX (ReadWriteMany), такие как Amazon EFS или Portworx Shared Volumes.
 
-## Сравнение решений
+#### Проблемы с RexRay
+Если тома не отображаются в `docker volume ls`:
+1. Проверьте статус службы: `systemctl status rexray`.
+2. Изучите логи: `journalctl -u rexray`.
+3. Убедитесь, что у узла есть необходимые IAM (Identity and Access Management) права для управления дисками.
 
-| Решение | Персистентность | HA | Сложность | Стоимость |
-|---|---|---|---|---|
-| **Portworx** | Да | Да | Высокая | Средняя |
-| **RexRay EBS** | Да | Нет* | Средняя | Высокая |
-| **RexRay Azure** | Да | Нет* | Средняя | Высокая |
-| **NFS** | Да | Нет** | Низкая | Низкая |
-
-*Требуется дополнительная настройка для HA
-**Требуется HA-NFS кластер
-
-## Связанные документы
-
-- **Базовое управление томами** — **[swarm_volumes.md](./swarm_volumes.md)**
-- **Docker Volumes** — **[../Docker/Docker_fs/docker_volumes.md](../Docker/Docker_fs/docker_volumes.md)**
-- **Stack Deployment** — **[swarm_stack_deployment.md](./swarm_stack_deployment.md)**
+### Смотрите также
+- **[Базовое управление томами в Swarm](./swarm_volumes.md)**
+- **[Обзор томов Docker](../Docker/Docker_fs/docker_volumes.md)**
+- **[Развертывание стеков (Stack Deployment)](./swarm_stack_deployment.md)**

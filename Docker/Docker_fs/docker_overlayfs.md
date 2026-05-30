@@ -11,7 +11,7 @@
 
 **Важно:** `upperdir` (writable layer) **сохраняется между перезапусками контейнера**, но **удаляется вместе с контейнером** при `docker rm`. Это означает:
 
-- `docker stop` → `docker start`: данные в `upperdir` сохраняются
+- `docker stop` -> `docker start`: данные в `upperdir` сохраняются
 - `docker restart`: данные в `upperdir` сохраняются  
 - `docker rm`: все данные в `upperdir` безвозвратно теряются
 
@@ -118,17 +118,17 @@ OverlayFS используется **на каждом шаге `docker build`**
 
 ```
 Dockerfile:
-  FROM ubuntu:22.04        ← Шаг 1: берём базовый образ (слои RO)
-  RUN apt-get update        ← Шаг 2: выполняем команду
-  COPY app.py /app/         ← Шаг 3: копируем файлы
-  RUN pip install flask     ← Шаг 4: устанавливаем зависимости
+  FROM ubuntu:22.04        # Шаг 1: берём базовый образ (слои RO)
+  RUN apt-get update       # Шаг 2: выполняем команду
+  COPY app.py /app/        # Шаг 3: копируем файлы
+  RUN pip install flask    # Шаг 4: устанавливаем зависимости
 ```
 
 **Что происходит под капотом на каждом шаге:**
 
 1. Docker берёт все предыдущие слои (commit-ы) как `lowerdir[]` (только чтение).
 2. Создаёт **новый пустой `upperdir`** — временный записываемый слой.
-3. Монтирует OverlayFS: `lowerdir[] + upperdir → merged`.
+3. Монтирует OverlayFS: `lowerdir[] + upperdir -> merged`.
 4. Запускает команду (`RUN apt-get update`) **внутри этого merged-представления**.
 5. После выполнения команды Docker **фиксирует (commit)** `upperdir` как **новый неизменяемый слой** (слой образа).
 6. Повторяет процесс для следующей инструкции — новый `upperdir`, новые `lowerdir[]` (включая только что закоммиченный слой).
@@ -138,11 +138,11 @@ Dockerfile:
 ┌─────────────────────────────────────────┐
 │  Merged (временный, для выполнения RUN)  │
 ├─────────────────────────────────────────┤
-│  Upperdir (временный R/W)               │ ← сюда пишется результат RUN
+│  Upperdir (временный R/W)               │ # сюда пишется результат RUN
 ├─────────────────────────────────────────┤
-│  Lowerdir[0]: слой FROM ubuntu          │ ← RO, уже закоммичен
-│  Lowerdir[1]: слой RUN apt-get update   │ ← RO, уже закоммичен
-│  Lowerdir[2]: слой COPY app.py /app/    │ ← RO, уже закоммичен
+│  Lowerdir[0]: слой FROM ubuntu          │ # RO, уже закоммичен
+│  Lowerdir[1]: слой RUN apt-get update   │ # RO, уже закоммичен
+│  Lowerdir[2]: слой COPY app.py /app/    │ # RO, уже закоммичен
 └─────────────────────────────────────────┘
 ```
 
@@ -155,7 +155,7 @@ Dockerfile:
 3. Временный `upperdir` и `workdir` **удаляются**.
 4. Новый слой добавляется в стек `lowerdir[]` для следующей инструкции.
 
-**Ключевой момент:** Каждый `RUN` = один OverlayFS mount → один commit → один слой. Поэтому:
+**Ключевой момент:** Каждый `RUN` = один OverlayFS mount -> один commit -> один слой. Поэтому:
 
 ```dockerfile
 # ПЛОХО: 3 слоя, 3 раза mount overlay, 3 commit
@@ -175,7 +175,7 @@ RUN apt-get update && \
 
 1. Все слои образа становятся `lowerdir[]` (неизменяемые).
 2. Создаётся **один новый `upperdir`** — записываемый слой контейнера.
-3. Монтируется финальный OverlayFS: `lowerdir[] + upperdir → merged`.
+3. Монтируется финальный OverlayFS: `lowerdir[] + upperdir -> merged`.
 4. Процесс внутри контейнера работает с `merged`.
 
 #### Итого: где именно OverlayFS участвует
@@ -183,7 +183,7 @@ RUN apt-get update && \
 | Фаза | OverlayFS роль | Сколько раз |
 | :--- | :--- | :--- |
 | **`docker build` (каждый `RUN`/`COPY`/`ADD`)** | Временный merged для выполнения команды | N раз (по числу инструкций) |
-| **`docker commit`** | Фиксация `upperdir` как нового слоя | N раз (после каждой инструкции) |
+| **[`docker commit`](./docker_commit.md)** | Фиксация `upperdir` как нового слоя | N раз (после каждой инструкции) |
 | **`docker pull`** | Распаковка слоёв на диск (без overlay) | 1 раз (слои скачиваются, overlay не монтируется) |
 | **`docker run`** | Финальный merged: слои образа + writable layer | 1 раз на контейнер |
 | **Жизнь контейнера** | CoW: запись в upperdir, whiteout при удалении | Постоянно |
@@ -213,5 +213,4 @@ RUN apt-get update && \
 
 - **[Основы Docker-образов](./images/docker_images_basics.md)** — концепция слоев в образах
 - **[Тома (Volumes) в Docker](./docker_volumes.md)** — рекомендуемый способ для персистентных и write-heavy данных
-- **[Обзор Docker](../docker_overview.md)** — общая архитектура и компоненты Docker
 - **[Copy-on-Write в Linux](../../Linux/Core/processes/basic_concepts.md#copy-on-write-cow)** — базовый принцип работы CoW в ядре

@@ -29,25 +29,14 @@
 
 ### Сценарий 1: Multi-Process контейнер (рекомендуется)
 
-Для запуска нескольких процессов используйте супервизоры вместо `systemd`:
-
-```dockerfile
-FROM ubuntu:22.04
-
-RUN apt-get update && apt-get install -y supervisor
-
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
-# supervisord становится PID 1
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
-```
+Для запуска нескольких процессов используйте специализированные супервизоры вместо `systemd`. Подробные примеры конфигурации `supervisord` и настройки агрегации логов приведены в документе **[Паттерн "Multi-Process" в Docker](./Docker_logs/docker_multi_process_logging.md)**.
 
 **Преимущества:**
 
 - Не требует `--privileged`
 - Агрегация логов через `docker logs`
 - Корректная обработка сигналов (`SIGTERM`)
-- Сбор zombi-процессов
+- Сбор zombi-процессов (зомби-процессов) — см. [Проблема PID 1 и zombi-процессы](./Dockerfile/Docker_best_practices/container_execution.md)
 
 ### Сценарий 2: Принудительный запуск systemd (не рекомендуется)
 

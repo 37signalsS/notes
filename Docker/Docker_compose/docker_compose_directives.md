@@ -56,10 +56,9 @@
 
 ### Пример: Веб-приложение с PostgreSQL (Современный подход)
 
-Пример файла `compose.yml`, демонстрирующий правильное использование директив, включая `depends_on` с `condition`.
+Пример файла `compose.yml`, демонстрирующий правильное использование директив, включая `depends_on` с `condition`. См. также расширенный [пример compose.yml](./docker_compose_file_example.md).
 
 ```yaml
-version: '3.8'
 name: my-web-app
 
 services:
@@ -112,8 +111,6 @@ secrets:
 
 ## Дополнительная информация
 
-- **Версии формата:** Информация об эволюции формата Compose и возвращении `condition` — в [**сравнении версий Docker Compose**](./docker_compose_versions_comparison.md).
-- **Продвинутые техники:** Интерполяция переменных, `extends`, `deploy` — в [**продвинутых возможностях Docker Compose**](./docker_compose_advanced_topics.md).
-- **Примеры файлов:** Дополнительные практические примеры — в [**примерах compose.yml**](./docker_compose_file_example.md).
-- **Безопасность:** Детальное руководство по управлению секретами — в [**безопасном управлении секретами в Docker**](../Docker_security/secrets_management.md).
-- **Хранение данных:** Подробная информация о томах — в [**Docker Volumes**](../../Docker/Docker_fs/docker_volumes.md).
+- **[Сравнение версий Docker Compose](./docker_compose_versions_comparison.md)** — эволюция формата от v2/v3 к Compose Spec
+- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных, профили и масштабирование
+- **[Пример compose.yml](./docker_compose_file_example.md)** — практические примеры конфигураций стеков

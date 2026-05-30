@@ -4,7 +4,7 @@
 
 - **Продвижение образа (Image Promotion)**: Процесс, при котором один и тот же, единожды собранный и неизменяемый Docker-образ квалифицируется для использования в последующих, более критичных окружениях (например, из `Testing` в `Staging`, а затем в `Production`).
 
-- **Ключевой принцип: "Собирай один раз, развертывай везде" (Build Once, Deploy Anywhere)**. Этот принцип гласит, что артефакт (Docker-образ) должен быть собран **только один раз** в начале CI/CD конвейера. Дальнейшее его продвижение по окружениям должно осуществляться исключительно путем **смены тегов (re-tagging)**, а не пересборки.
+- **Ключевой принцип: "Собирай один раз, развертывай везде" (Build Once, Deploy Anywhere)**. Этот принцип гласит, что артефакт (Docker-образ) должен быть собран **только один раз** в начале конвейера CI/CD (Continuous Integration/Continuous Deployment — непрерывная интеграция и доставка). Дальнейшее его продвижение по окружениям должно осуществляться исключительно путем **смены тегов (re-tagging)**, а не пересборки.
 
 ## Основные концепции
 
@@ -20,7 +20,7 @@
 
 ### Роль тегов в продвижении
 
-Теги в Docker — это изменяемые указатели. В процессе продвижения они используются как маркеры зрелоosti и готовности образа.
+Теги в Docker — это изменяемые указатели. В процессе продвижения они используются как маркеры зрелости и готовности образа.
 
 - **Исходный тег**: Часто содержит хеш коммита (`1.2.3-a9c8e7f`), однозначно идентифицируя сборку.
 - **Промежуточные теги**: Могут обозначать окружение, в котором образ был протестирован (`my-app:staging`).
@@ -35,58 +35,70 @@
 **Шаг 1: Сборка и развертывание в Dev**
 
 - **Триггер**: Пуш в ветку `main`.
-- **Действие**: CI-система собирает образ и тегирует его хешем коммита.
+- **Действие**: Система CI собирает образ и тегирует его хешем коммита.
 
 ```bash
 # 1. Собираем образ
 export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker build -t my-registry/my-app:$GIT_COMMIT .
+# → Успешная сборка образа с тегом a9c8e7f
 
 # 2. Пушим в реестр с уникальным тегом
 docker push my-registry/my-app:$GIT_COMMIT
+# → Образ my-registry/my-app:a9c8e7f загружен в реестр
 
 # 3. Развертываем в Dev-окружение для прогона автоматических тестов
-deploy_to_dev.sh my-registry/my-app:$GIT_COMMIT
+./deploy_to_dev.sh my-registry/my-app:$GIT_COMMIT
+# → Развертывание в Dev успешно завершено
 ```
 
 **Шаг 2: Продвижение в Staging**
 
 - **Триггер**: Успешное завершение всех тестов в Dev.
-- **Действие**: CI-система **не пересобирает образ**, а лишь добавляет ему новый тег `staging`.
+- **Действие**: Система CI **не пересобирает образ**, а лишь добавляет ему новый тег `staging`.
 
 ```bash
 # 1. Скачиваем уже существующий образ (если на другом агенте)
 docker pull my-registry/my-app:$GIT_COMMIT
+# → Образ загружен из реестра
 
 # 2. Присваиваем ему новый тег
 docker tag my-registry/my-app:$GIT_COMMIT my-registry/my-app:staging
+# → Образу добавлен тег staging
 
 # 3. Пушим новый тег в реестр
 docker push my-registry/my-app:staging
+# → Тег staging синхронизирован с реестром
 
-# 4. Развертываем в Staging для ручного QA и нагрузочного тестирования
-deploy_to_staging.sh my-registry/my-app:staging
+# 4. Развертываем в Staging для ручного тестирования и проверок
+./deploy_to_staging.sh my-registry/my-app:staging
+# → Развертывание в Staging успешно завершено
 ```
 
 **Шаг 3: Продвижение в Production**
 
-- **Триггер**: Ручное подтверждение от QA-инженера или менеджера релиза.
+- **Триггер**: Ручное подтверждение от инженера QA (Quality Assurance — обеспечение качества) или менеджера релиза.
 - **Действие**: Образ, успешно проверенный в Staging, получает финальные, "чистые" теги.
 
 ```bash
 # 1. Скачиваем образ с тегом staging
 docker pull my-registry/my-app:staging
+# → Образ staging загружен из реестра
 
-# 2. Присваиваем ему релизный тег и, опционально, latest
+# 2. Присваиваем ему релизный тег и latest
 docker tag my-registry/my-app:staging my-registry/my-app:1.2.3
 docker tag my-registry/my-app:staging my-registry/my-app:latest
+# → Образу добавлены теги 1.2.3 и latest
 
 # 3. Пушим финальные теги в реестр
 docker push my-registry/my-app:1.2.3
+# → Тег 1.2.3 загружен в реестр
 docker push my-registry/my-app:latest
+# → Тег latest загружен в реестр
 
 # 4. Развертываем в Production
-deploy_to_production.sh my-registry/my-app:1.2.3
+./deploy_to_production.sh my-registry/my-app:1.2.3
+# → Развертывание в Production успешно завершено
 ```
 
 Этот процесс гарантирует, что один и тот же неизменяемый артефакт прошел все стадии контроля качества.
@@ -97,15 +109,18 @@ deploy_to_production.sh my-registry/my-app:1.2.3
 
 - **Проверка идентичности образов**: Если вам нужно убедиться, что два тега указывают на один и тот же образ, сравните их **дайджесты (Digests)**.
 
-  ```bash
-  docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:1.2.3
-  docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:staging
-  # Если дайджесты совпадают, это один и тот же образ.
-  ```
+```bash
+docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:1.2.3
+# → my-registry/my-app@sha256:1a2b3c...
+docker inspect --format='{{index .RepoDigests 0}}' my-registry/my-app:staging
+# → my-registry/my-app@sha256:1a2b3c...
+# Если дайджесты совпадают, это один и тот же образ.
+```
 
 - **Реверс-инжиниринг Dockerfile**: В крайнем случае, если `Dockerfile` утерян, существуют утилиты, которые пытаются восстановить его из существующего образа, например, `laniksj/dfimage` или `dduvnjak/dockerfile-from-image`.
 
-- **Дополнительно**:
-  - Неизменяемость артефактов — в **[Идентичности и неизменяемости артефактов](./branch_artifacts.md)**
-  - Стратегии тегирования — в **[Стратегиях версионирования и тегирования](../../Docker_registries/image_versioning_and_tagging.md)**
-  - Целостность образов — в **[Подписании образов](../../Docker_security/image_signature_and_verification.md)**
+### Смотрите также
+
+- [Идентичность и неизменяемость артефактов](./branch_artifacts.md)
+- [Стратегии версионирования и тегирования](../../Docker_registries/image_versioning_and_tagging.md)
+- [Подписание образов](../../Docker_security/image_signature_and_verification.md)

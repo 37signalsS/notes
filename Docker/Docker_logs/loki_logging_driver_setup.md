@@ -31,7 +31,12 @@ docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all
 - **`--alias loki`**: Задает короткое и удобное имя (`loki`) для драйвера, которое будет использоваться в конфигурациях.
 - **`--grant-all-permissions`**: Предоставляет плагину необходимые права для работы (например, доступ к сети и логам).
 
-Проверить установку можно командой `docker plugin ls`.
+Проверить установку можно командой:
+
+```bash
+docker plugin ls
+# → выводит список установленных плагинов, включая loki
+```
 
 ### Шаг 2: Конфигурация логирования
 
@@ -80,6 +85,7 @@ docker run \
   --log-driver=loki \
   --log-opt loki-url="http://<IP_АДРЕС_LOKI>:3100/loki/api/v1/push" \
   my-app-image:latest
+# → Запуск контейнера с отправкой логов в Loki
 ```
 
 ### Шаг 3: Проверка в Grafana

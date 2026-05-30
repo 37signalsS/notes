@@ -1,93 +1,96 @@
-# Инструкции Dockerfile: Выполнение Команд При Сборке
+# Инструкция Dockerfile: RUN
 
 ## Определения
 
-**Инструкция `RUN`** — команда, выполняемая во время сборки образа, создающая новый слой в образе.
+**Инструкция `RUN`** — директива Dockerfile, которая выполняет команды в новом слое поверх текущего образа и фиксирует (commit) результаты. Полученный образ используется для следующего шага в Dockerfile.
 
 ## Основные концепции
 
-### `RUN`
+### Формы записи: Shell и Exec
 
-Определяет команду, которая будет выполнена во время сборки образа, создавая новый слой.
+Инструкция `RUN` поддерживает две формы записи:
 
-#### Надёжные скрипты с `set -ex`
+| Характеристика | Shell-форма | Exec-форма |
+| :--- | :--- | :--- |
+| **Синтаксис** | `RUN команда аргумент` | `RUN ["команда", "аргумент"]` |
+| **Оболочка** | `/bin/sh -c` (Linux) или `cmd /S /C` (Win) | Выполняется напрямую (execve) |
+| **Переменные** | Поддерживает подстановку `$VAR` | Не поддерживает подстановку |
+| **Пример** | `RUN apt-get update` | `RUN ["apt-get", "update"]` |
+
+### Объединение команд и слои
+
+Каждая инструкция `RUN` создает новый слой. Для минимизации размера образа и количества слоев рекомендуется объединять логически связанные команды с помощью символа `&&`.
+
+**Надежные скрипты с `set -ex`:**
+При написании длинных цепочек команд в shell-форме используйте `set -e` для немедленной остановки при ошибке и `set -x` для вывода выполняемых команд в лог.
 
 ```dockerfile
 RUN set -ex && \
     apt-get update && \
-    apt-get install -y curl && \
-    rm -rf /var/lib/apt/lists/*
-```
-
-- `set -e`: **Exit Immediately.** Если команда завершается с ошибкой, выполнение всей инструкции прекращается.
-- `set -x`: **Print Commands.** Каждая команда выводится в лог сборки для отладки.
-
-#### Кэширование зависимостей (BuildKit)
-
-`--mount=type=cache` позволяет монтировать кэш в процессе выполнения `RUN`. Кэш не попадает в финальный образ.
-
-> Подробнее о кэшировании и оптимизации сборки см. **[Оптимизация сборки](../../Dockerfile/Docker_best_practices/build_optimization.md)**
-
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
-```
-
-#### Bind mounts при сборке (BuildKit)
-
-`--mount=type=bind` монтирует директорию с хоста в контейнер во время сборки. Данные не копируются в образ.
-
-```dockerfile
-RUN --mount=type=bind,source=./src,target=/app/src \
-    go build -o app ./src
-```
-
-#### Работа с секретами (BuildKit)
-
-`--mount=type=secret` временно монтирует секрет и не хранит его в финальном образе.
-
-> Подробнее о безопасном управлении секретами см. **[Управление секретами](../../Docker_security/secrets_management.md)**
-
-```dockerfile
-RUN --mount=type=secret,id=ssh,target=/root/.ssh/id_rsa \
-    git clone git@github.com:user/repo.git .
-
-RUN --mount=type=secret,id=api_key,target=/run/secrets/api_key \
-    export API_KEY=$(cat /run/secrets/api_key) && \
-    pip install --extra-index-url "$API_KEY"@private-repo.com/packages some-package
-```
-
-> **Примечание:** Для использования директив `--mount` требуется BuildKit. В современных версиях Docker (18.09+) BuildKit включён по умолчанию. Подробнее о BuildKit см. **[Dockerfile BuildKit](../dockerfile_buildkit.md)**
-
-## Практические сценарии
-
-### Установка пакетов с очисткой кэша
-
-```dockerfile
-RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 ```
 
-### Использование BuildKit secrets для приватных npm-пакетов
+Подробнее о сокращении количества слоев см. в разделе **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**.
+
+### Расширенные возможности (BuildKit)
+
+Современный движок сборки BuildKit предоставляет флаг `--mount`, который значительно расширяет возможности инструкции `RUN`.
+
+| Тип монтирования | Назначение |
+| :--- | :--- |
+| **`type=cache`** | Позволяет сохранять кэш пакетных менеджеров (pip, npm, apt) между сборками. Кэш не попадает в финальный образ. |
+| **`type=secret`** | Безопасно монтирует секреты (ключи API, SSH-ключи) на время выполнения команды. Секреты не сохраняются в слоях образа. |
+| **`type=bind`** | Монтирует файлы из контекста или других стадий без их копирования в образ. |
+
+> **Примечание:** Для использования монтирований требуется включенный BuildKit. Подробнее см. **[Dockerfile BuildKit](../dockerfile_buildkit.md)**.
+
+## Практические сценарии
+
+### Сценарий 1: Установка пакетов с очисткой
+
+Это классический пример использования `RUN` для подготовки окружения. Важно удалять временные файлы в том же слое, где они были созданы.
+
+```dockerfile
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+### Сценарий 2: Использование кэша для ускорения сборки (Python)
+
+Монтирование кэша `pip` позволяет не скачивать пакеты заново при изменении `requirements.txt`.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:20-alpine
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
-    npm install express
-```
-
-### Кэширование pip-пакетов между сборками
-
-```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
+COPY . .
+```
+
+### Сценарий 3: Сборка с использованием секретов (SSH)
+
+Использование секретов BuildKit позволяет клонировать приватные репозитории, не оставляя ключей в истории слоев.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM alpine:latest
+RUN apk add --no-cache git openssh-client
+RUN --mount=type=secret,id=ssh_key,target=/root/.ssh/id_rsa \
+    git clone git@github.com:myuser/private-repo.git /app
 ```
 
 ## Дополнительная информация
 
-- Инструкция `RUN` должна использоваться только для команд, выполняемых при сборке
-- Для запуска команд при старте контейнера используйте [`CMD`](./runtime_execution.md) или [`ENTRYPOINT`](./runtime_execution.md)
-- Каждая инструкция `RUN` создаёт новый слой — объединяйте команды для уменьшения количества слоёв
-- Обзор всех инструкций Dockerfile см. **[Инструкции Dockerfile: Обзор](./overview_definitions.md)**
+- **Кэширование:** Если команда в `RUN` не изменилась, Docker использует кэшированный слой. Изменение файлов, скопированных ранее через `COPY` или `ADD`, может привести к инвалидации кэша последующих инструкций `RUN`.
+- **RUN vs CMD:** Инструкция `RUN` выполняется **в процессе сборки**. Для команд, которые должны выполняться **при запуске контейнера**, используйте **[CMD](./runtime_execution.md)** или **[ENTRYPOINT](./runtime_execution.md)**.
+- **Инструменты анализа:** Для проверки того, как `RUN` влияет на размер слоев, используйте инструменты вроде `dive`. См. **[Инструменты оптимизации](../dockerfile_optimization_tools.md)**.
+
+**См. также:**
+- **[Инструкции Dockerfile: Обзор](./overview_definitions.md)** — сводная таблица всех инструкций.
+- **[Управление секретами](../../Docker_security/secrets_management.md)** — подробнее о безопасности при сборке.

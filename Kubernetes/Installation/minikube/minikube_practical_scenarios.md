@@ -39,57 +39,12 @@ Minikube поддерживает последнюю версию Kubernetes + 6
 
 ## Практические сценарии
 
-### Установка Docker Engine (Linux — Ubuntu/Debian)
+### Предварительные требования
 
-> **Важно:** Minikube не работает со **snap-пакетом** Docker на Debian и производных. Используйте **deb-пакеты** из официального репозитория.
+Для работы Minikube на Linux (Ubuntu/Debian) в качестве драйвера рекомендуется использовать Docker.
 
-**1. Обновление репозиториев и установка зависимостей:**
-
-```bash
-sudo apt update && sudo apt install -y ca-certificates curl gnupg
-```
-
-**2. Добавление GPG-ключа и репозитория Docker:**
-
-```bash
-# Создание директории для ключей
-sudo install -m 0755 -d /etc/apt/keyrings
-
-# Скачивание официального GPG-ключа Docker
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Добавление репозитория Docker
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-```
-
-**3. Установка Docker Engine:**
-
-```bash
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-**4. Добавление пользователя в группу docker (без sudo):**
-
-```bash
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-> **Важно:** Без добавления в группу `docker` Minikube не сможет запустить контейнеры с нужными привилегиями.
-
-**5. Проверка статуса Docker:**
-
-```bash
-systemctl status docker
-# → Active: active (running)
-```
-
-> **Ресурсы ВМ:** Для стабильной работы Minikube рекомендуется виртуальная машина с **4 ГБ RAM** минимум. При 2 ГБ возможны ошибки при запуске кластера.
+1.  **Установка Docker:** Следуйте инструкциям в SSoT-файле: **[Установка Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
+2.  **Ресурсы ВМ:** Для стабильной работы Minikube рекомендуется виртуальная машина с **4 ГБ RAM** минимум. При 2 ГБ возможны ошибки при запуске кластера.
 
 ### Установка Minikube
 

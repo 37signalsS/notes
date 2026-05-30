@@ -29,98 +29,115 @@
 
 ### 1. Подготовка баз на машине с доступом в интернет
 
-Установите Docker (если не установлен):
+Установите Docker (если не установлен), следуя **[инструкции](../../docker_install_ubuntu.md)**.
 
-```bash
-apt update
-apt install -y docker.io
-systemctl enable --now docker
-usermod -aG docker $USER
-```
-
-Загрузите образы баз уязвимостей:
+Загрузите актуальные образы баз уязвимостей из GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/aquasecurity/trivy-db:2
 docker pull ghcr.io/aquasecurity/trivy-java-db:1
+# → 2: Pulling from aquasecurity/trivy-db
+# → Digest: sha256:...
+# → Status: Downloaded newer image for ghcr.io/aquasecurity/trivy-db:2
 ```
 
-Извлеките файлы баз из образов:
+Извлеките файлы баз из временных контейнеров:
 
 ```bash
-# Trivy DB
+# Trivy DB (основная база)
 cid=$(docker create ghcr.io/aquasecurity/trivy-db:2)
 docker cp $cid:/db db
 docker rm $cid
+# → db/trivy.db, db/metadata.json
 
-# Java DB
+# Java DB (база для Java-зависимостей)
 cid=$(docker create ghcr.io/aquasecurity/trivy-java-db:1)
 docker cp $cid:/java-db java-db
 docker rm $cid
+# → java-db/trivy-java.db, java-db/metadata.json
 ```
 
-Упакуйте базы для переноса:
+Упакуйте базы для переноса в закрытый контур:
 
 ```bash
 tar czf trivy-db.tgz db
 tar czf trivy-java-db.tgz java-db
+# → trivy-db.tgz, trivy-java-db.tgz
 ```
 
 ### 2. Перенос и установка баз на Harbor-хост
 
-Перенесите файлы `trivy-db.tgz` и `trivy-java-db.tgz` на хост Harbor (через USB или SCP).
+Перенесите архивы на хост Harbor любым доступным способом (USB, SCP, WinSCP).
 
-Распакуйте базы в директорию Trivy-адаптера:
+Распакуйте базы в директорию данных Trivy-адаптера (путь по умолчанию для Harbor):
 
 ```bash
+# Создание структуры директорий (если отсутствуют)
 sudo mkdir -p /data/trivy-adapter/trivy/db
 sudo mkdir -p /data/trivy-adapter/trivy/java-db
 
-sudo tar -xzf trivy-db.tgz -C /data/trivy-adapter/trivy/db
-sudo tar -xzf trivy-java-db.tgz -C /data/trivy-adapter/trivy/java-db
+# Распаковка с заменой старых файлов
+sudo tar -xzf trivy-db.tgz -C /data/trivy-adapter/trivy/db --strip-components=1
+sudo tar -xzf trivy-java-db.tgz -C /data/trivy-adapter/trivy/java-db --strip-components=1
 
-# Установите правильные права (владелец trivy-adapter)
+# Установка прав доступа (ID 10000 соответствует пользователю trivy в контейнере)
 sudo chown -R 10000:10000 /data/trivy-adapter/trivy
+# → (no output)
 ```
 
-Перезапустите Trivy-адаптер:
+Перезапустите компонент `trivy-adapter` для применения изменений:
 
 ```bash
 docker restart trivy-adapter
+# → trivy-adapter
 ```
 
-Проверьте логи на наличие ошибок:
+Проверьте логи на предмет успешной инициализации баз:
 
 ```bash
 docker logs trivy-adapter --tail 50
+# → ... "msg":"Sever-side update of Trivy database is skipped"
+# → ... "msg":"Trivy database is up to date"
 ```
 
 ## Дополнительная информация
 
 ### Конфигурация Harbor для оффлайн-режима
 
-В `harbor.yml` должны быть установлены следующие параметры Trivy:
+В файле `harbor.yml` должны быть жестко заданы параметры, запрещающие Trivy попытки выхода в интернет:
 
 ```yaml
 trivy:
-  skip_update: true
-  skip_java_db_update: true
-  offline_scan: true
-  insecure: false
+  skip_update: true           # Пропускать обновление основной базы
+  skip_java_db_update: true    # Пропускать обновление Java базы
+  offline_scan: true          # Режим сканирования без интернета
 ```
+
+После правки `harbor.yml` необходимо применить конфигурацию:
+`sudo ./prepare && docker compose up -d`
 
 Подробности см. в [установке Harbor](./installation.md).
 
-### Автоматизация обновления
+### Проверка статуса в UI
 
-Для регулярного обновления создайте скрипт и планируйте его запуск через cron:
+После обновления баз статус сканера в веб-интерфейсе Harbor должен измениться:
+1. Перейдите в **Administration → Interrogation Services**.
+2. В секции **Vulnerability Scanning** проверьте дату **Last Update** для Trivy.
+
+### Автоматизация
+
+Для регулярного обновления в условиях "периодического" доступа к сети (например, через jump-host) рекомендуется использовать скрипт:
 
 ```bash
-# /etc/cron.weekly/trivy-update
 #!/bin/bash
-# Скрипт загрузки и переноса баз Trivy
+# Пример: /usr/local/bin/update-trivy-offline.sh
+# 1. Pull images
+# 2. Extract to /tmp/trivy-update
+# 3. Rsync to harbor-host:/data/trivy-adapter/trivy/
 ```
 
 ### Связанные документы
 
-[Установка Harbor](./installation.md) описывает настройку Trivy для оффлайн-режима. [Обзор Harbor](./overview.md) содержит информацию о возможностях сканирования уязвимостей. [Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md) рассматривает общие принципы и инструменты.
+- **[Установка Harbor](./installation.md)** — общая настройка компонентов.
+- **[Обзор Harbor](./overview.md)** — возможности и архитектура реестра.
+- **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — общие принципы SCA и CVE.

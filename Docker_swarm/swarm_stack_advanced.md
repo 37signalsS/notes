@@ -1,8 +1,30 @@
-# Docker Swarm: Stack Advanced Strategies
+# Docker Swarm: Продвинутые стратегии развертывания стеков
 
-## Rolling Update
+## Определения
 
-Rolling Update — стратегия постепенного обновления реплик сервиса без простоя.
+**Rolling Update (Поэтапное обновление)** — стратегия постепенного обновления реплик сервиса, при которой старые версии заменяются новыми без полной остановки обслуживания.
+
+**Canary Deployment (Канареечное развертывание)** — метод выпуска, при котором новая версия приложения направляется на небольшую группу пользователей или экземпляров для тестирования в реальных условиях перед полным развертыванием.
+
+**Blue-Green Deployment (Сине-зеленое развертывание)** — стратегия, предполагающая наличие двух идентичных сред (Blue и Green). Новая версия развертывается в пассивной среде, после чего трафик мгновенно переключается на нее.
+
+## Базовые концепции
+
+### Управление процессом обновления
+
+Docker Swarm позволяет декларативно описывать поведение сервисов при обновлении через секции `update_config` и `rollback_config` в файле `docker-compose.yml`. Это обеспечивает автоматизацию процесса и минимизирует риски при деплое.
+
+Общие концепции стратегий развертывания подробно описаны в разделе **[Стратегии развертывания](../../CI-CD/Core_Concepts/deployment_strategies.md)**.
+
+### Наблюдаемость и отладка
+
+При использовании продвинутых стратегий критически важен мониторинг метрик. Swarm предоставляет встроенные механизмы проверки здоровья (health checks), которые интегрируются с процессом Rolling Update для автоматической остановки или отката изменений при обнаружении проблем.
+
+## Практические сценарии
+
+### Настройка стратегии Rolling Update
+
+Конфигурация поэтапного обновления в `docker-compose.yml`:
 
 ```yaml
 services:
@@ -11,12 +33,12 @@ services:
     deploy:
       replicas: 5
       update_config:
-        parallelism: 2        # Обновлять по 2 реплики одновременно
-        delay: 30s            # Задержка между обновлениями
-        failure_action: pause # Пауза при ошибке (continue, pause, rollback)
-        monitor: 60s          # Время мониторинга после обновления
-        max_failure_ratio: 0.3 # Допустимый процент сбоев
-        order: start-first    # Сначала запустить новую реплику
+        parallelism: 2        # Количество реплик для одновременного обновления
+        delay: 30s            # Задержка между группами обновлений
+        failure_action: pause # Действие при ошибке (continue, pause, rollback)
+        monitor: 60s          # Время мониторинга здоровья после обновления
+        max_failure_ratio: 0.3 # Допустимая доля сбоев перед паузой
+        order: start-first    # Сначала запустить новую реплику (stop-first — сначала остановить)
       rollback_config:
         parallelism: 1
         delay: 10s
@@ -24,32 +46,17 @@ services:
         order: stop-first
 ```
 
-**Параметры `update_config`:**
+Подробнее о деталях стратегии — в **[Rolling Update](../../CI-CD/Deployment_Strategies/rolling_update.md)**.
 
-| Параметр | Описание | Значения |
-|---|---|---|
-| `parallelism` | Количество реплик для одновременного обновления | Число |
-| `delay` | Задержка между группами обновлений | `10s`, `1m` |
-| `failure_action` | Действие при ошибке | `continue`, `pause`, `rollback` |
-| `monitor` | Время ожидания здоровья после обновления | `60s`, `5m` |
-| `max_failure_ratio` | Макс. доля сбоев перед паузой | `0.0`–`1.0` |
-| `order` | Порядок обновления | `start-first`, `stop-first` |
+### Реализация Canary-развертывания
 
-**CLI-обновление:**
-
-```sh
-docker service update --image nginx:1.27 web
-```
-
-## Canary-развертывание
-
-Canary — развертывание новой версии для небольшой части трафика.
+В Docker Swarm канареечное развертывание часто реализуется путем запуска отдельного сервиса для новой версии и использования Ingress-контроллера (например, Traefik) для распределения весов трафика.
 
 ```yaml
 version: '3.8'
 
 services:
-  # Основная версия (90% трафика)
+  # Основная версия (Stable)
   web-stable:
     image: myapp:v1.0
     deploy:
@@ -59,187 +66,72 @@ services:
         - "traefik.http.routers.web.rule=Host(`app.example.com`)"
         - "traefik.http.services.web.loadbalancer.server.port=80"
   
-  # Canary версия (10% трафика)
+  # Canary версия
   web-canary:
     image: myapp:v1.1
     deploy:
       replicas: 1
       labels:
         - "traefik.enable=true"
-```
-
-**Принцип работы:**
-
-1. Развернуть обе версии одновременно
-2. Traefik распределяет трафик пропорционально репликам
-3. При успехе — увеличить количество canary-реплик
-4. При ошибке — удалить canary-сервис
-
-**Масштабирование canary:**
-
-```sh
-docker service scale web-canary=3 web-stable=7
-```
-
-Подробнее о Traefik — в **[swarm_ingress_traefik.md](./swarm_ingress_traefik.md)**.
-
-## Blue-Green развертывание
-
-Blue-Green — развертывание новой версии параллельно со старой с мгновенным переключением.
-
-### Файл `blue.yml`
-
-```yaml
-version: '3.8'
-services:
-  web:
-    image: myapp:v1.0
-    deploy:
-      replicas: 5
-      labels:
         - "traefik.http.routers.web.rule=Host(`app.example.com`)"
 ```
 
-### Файл `green.yml`
+Подробнее о настройке Traefik — в **[swarm_ingress_traefik.md](./swarm_ingress_traefik.md)**. Общая концепция — в **[Canary Deployment](../../CI-CD/Deployment_Strategies/canary_deployment.md)**.
 
-```yaml
-version: '3.8'
-services:
-  web:
-    image: myapp:v2.0
-    deploy:
-      replicas: 5
-      labels:
-        - "traefik.http.routers.web.rule=Host(`app.example.com`)"
-```
+### Реализация Blue-Green развертывания
 
-### Переключение
+Для Blue-Green в Swarm обычно используются два отдельных стека или сервиса с переключением трафика на уровне внешнего балансировщика.
 
 ```sh
-# Развернуть green-версию
-docker stack deploy -c green.yml myapp
+# 1. Развертывание новой (Green) версии рядом со старой (Blue)
+docker stack deploy -c green.yml myapp-green
 
-# Проверить работу
-curl https://app.example.com
+# 2. Проверка работы новой версии через отдельный URL или прямой запрос к узлу
 
-# Удалить blue-стек
+# 3. Переключение трафика на уровне DNS или Ingress-контроллера
+
+# 4. Удаление старой версии после подтверждения стабильности
 docker stack rm myapp-blue
 ```
 
-**Преимущества:**
+Общая концепция — в **[Blue-Green Deployment](../../CI-CD/Deployment_Strategies/blue_green_deployment.md)**.
 
-- Мгновенное переключение
-- Быстрый откат (развернуть blue заново)
-- Тестирование перед переключением
+### Устранение неисправностей (Troubleshooting)
 
-**Недостатки:**
-
-- Требует двойных ресурсов
-- Ручное переключение трафика
-
-## Troubleshooting
-
-### Стек не развертывается
-
-**Проверка:**
-
-```sh
-# Проверить синтаксис YAML
-docker compose config
-
-# Проверить логи сервиса
-docker service logs myapp_<service>
-
-# Проверить задачи
-docker stack ps myapp --no-trunc
-```
-
-**Возможные причины:**
+#### Стек (Stack) не развертывается
 
 | Проблема | Причина | Решение |
 |---|---|---|
-| `invalid YAML` | Ошибки синтаксиса | `docker compose config` |
-| `image not found` | Образ недоступен | Проверить registry, auth |
-| `no suitable node` | Недостаточно ресурсов | `docker node ls`, `docker service ps` |
-| `network not found` | Сеть не существует | Создать external-сеть |
+| `invalid YAML` | Ошибки синтаксиса в файле | Проверить через `docker compose config` |
+| `image not found` | Образ недоступен в Registry | Проверить доступность и авторизацию |
+| `no suitable node` | Недостаточно ресурсов на узлах | Проверить `docker node ls` и лимиты |
+| `network not found` | Сеть не создана заранее | Создать внешнюю (external) сеть |
 
-### Сервис не запускается
+#### Сервис не запускается или постоянно перезапускается
 
-**Проверка:**
-
-```sh
-# Детали задачи
-docker service ps <service> --no-trunc
-
-# Журналы
-docker service logs <service> --follow
-
-# Проверить ограничения
-docker node ls
-docker node inspect <node>
-```
+**Инструменты диагностики:**
+- `docker stack ps <stack_name> --no-trunc` — просмотр подробных ошибок задач.
+- `docker service logs <service_name> --follow` — анализ логов приложения.
+- `docker node inspect <node_id>` — проверка состояния узла (диск, память).
 
 **Частые ошибки:**
+- `OOMKilled`: Превышен лимит оперативной памяти (увеличить `resources.limits.memory`).
+- `exit code 1`: Внутренняя ошибка приложения (проверить переменные окружения).
+- `unhealthy`: Не проходит проверка здоровья (проверить `healthcheck` в YAML).
 
-| Ошибка | Причина | Решение |
-|---|---|---|
-| `exit code 1` | Ошибка приложения | Проверить логи |
-| `OOMKilled` | Недостаточно RAM | Увеличить `resources.limits.memory` |
-| `unhealthy` | Health check failed | Проверить `healthcheck` |
+## Дополнительная информация
 
-### Проблемы с сетью
-
-**Проверка:**
-
-```sh
-# Список сетей
-docker network ls
-
-# Инспекция сети
-docker network inspect myapp_default
-
-# Проверка DNS
-docker exec <container> nslookup <service>
-```
-
-**Возможные проблемы:**
-
-| Проблема | Решение |
-|---|---|
-| DNS не разрешает имя | Проверить overlay-сеть |
-| Контейнеры не видят друг друга | Убедиться, что в одной сети |
-| Нет внешнего доступа | Проверить `docker_gwbridge` |
-
-### Диагностика ресурсов
-
-```sh
-# Статистика узлов
-docker node ls
-
-# Детали узла
-docker node inspect <node>
-
-# Задачи на узле
-docker node ps <node>
-
-# Статистика сервиса
-docker service stats <service>
-```
-
-## Сравнение с Kubernetes
+### Сравнение с Kubernetes
 
 | Параметр | Docker Stack | Kubernetes |
 |---|---|---|
-| **Масштабирование** | До ~1000 узлов | До ~5000 узлов |
-| **Сложность** | Низкая | Высокая |
-| **Service Discovery** | Встроенный DNS | CoreDNS |
-| **Config Management** | Secrets/Configs | ConfigMaps/Secrets |
-| **Rolling Update** | Встроенный | Deployment |
-| **Canary** | Ручное (Traefik) | Istio/Flagger |
-| **Blue-Green** | Ручное | Argo Rollouts |
+| **Масштабируемость** | До ~1000 узлов | До ~5000 узлов |
+| **Сложность** | Низкая (native Docker) | Высокая |
+| **Service Discovery** | Встроенный DNS (Domain Name System) | CoreDNS |
+| **Управление конфигами** | Secrets / Configs | ConfigMaps / Secrets |
+| **Rolling Update** | Встроенная поддержка в YAML (Yet Another Markup Language) | Объект Deployment |
 
-## Связанные документы
-
-- **Базовое развертывание** — **[swarm_stack_deployment.md](./swarm_stack_deployment.md)**
-- **Traefik Ingress** — **[swarm_ingress_traefik.md](./swarm_ingress_traefik.md)**
-- **Secrets and Configs** — **[swarm_secrets_configs.md](./swarm_secrets_configs.md)**
+### Смотрите также
+- **[Базовое развертывание стеков](./swarm_stack_deployment.md)**
+- **[Секреты и конфигурации в Swarm](./swarm_secrets_configs.md)**
+- **[Справочник CLI для Swarm](./swarm_management_cli.md)**

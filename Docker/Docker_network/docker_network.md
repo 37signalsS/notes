@@ -68,19 +68,8 @@ docker run -d --name app --network myapp-net myapp:latest
 
 ### Сценарий 1: Управление сетями (CLI)
 
-```bash
-# Показать список сетей
-docker network ls
-
-# Создать новую bridge-сеть
-docker network create my-app-net
-
-# Посмотреть детальную информацию о сети и подключенных контейнерах
-docker network inspect my-app-net
-
-# Удалить сеть
-docker network rm my-app-net
-```
+Все основные команды управления сетями (создание, инспекция, удаление, подключение контейнеров на лету) и их параметры вынесены в отдельный справочник:
+**[Управление сетями Docker: CLI-справочник](./cli.md)**.
 
 ### Сценарий 2: Преимущество DNS в пользовательской сети
 
@@ -110,16 +99,12 @@ docker network rm my-app-net
 
     Это демонстрирует, что **встроенное сервис-дискавери через DNS работает только в пользовательских сетях**.
 
-### Сценарий 3: Использование сети `host`
+### Сценарий 3: Использование сети host
 
-Запустим веб-сервер, который будет слушать порт 80, напрямую на сетевом интерфейсе хоста.
+Режим `host` отключает сетевую изоляцию контейнера, позволяя ему использовать сетевой стек хоста напрямую. Это обеспечивает максимальную производительность, но снижает безопасность.
 
-```bash
-# --net=host указывает использовать сетевой стек хоста
-docker run -d --name my-host-nginx --net=host nginx:alpine
-```
-
-Теперь Nginx доступен по адресу `http://<IP-адрес_хоста>:80` без необходимости пробрасывать порты (`-p 8080:80`).
+Подробное описание режима, практические примеры и ограничения платформы см. в специализированном разделе:
+**[Сетевой драйвер host](./drivers/host.md)**.
 
 ### Сценарий 4: PostgreSQL в кастомной сети с изоляцией
 
@@ -184,11 +169,11 @@ docker run -it --rm --network my-network alpine sh
    docker run -d -p 127.0.0.1:5432:5432 postgres:16-alpine
    ```
 
-   1. **Используйте firewall хоста:**
+3. **Используйте firewall хоста:**
    - Настройте `iptables` или `ufw` для ограничения доступа к опубликованным портам
    - Разрешайте доступ только с доверенных IP-адресов
 
-   1. **Пример безопасной конфигурации:**
+4. **Пример безопасной конфигурации:**
 
    ```bash
    # Создаем сеть для приложения
@@ -199,15 +184,12 @@ docker run -it --rm --network my-network alpine sh
      --network myapp-net \
      -e POSTGRES_PASSWORD=secret \
      postgres:16-alpine
-   ```
 
    # Запускаем приложение с доступом к БД
-
    docker run -d --name app \
      --network myapp-net \
      -p 8080:8080 \
      myapp:latest
-
    ```
 
 В этом примере:
@@ -256,6 +238,6 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 | `bridge` (по умолчанию) | network namespace + veth + bridge | Изолированная сеть с NAT |
 | `host` | Без network namespace | Стек хоста напрямую |
 | `none` | network namespace без интерфейсов | Только loopback |
-| `container:<name>` | Разделение namespace с другим контейнером | Общий IP и localhost |
+| **[`container:<name>`](./container_network.md)** | Разделение namespace с другим контейнером | Общий IP и localhost |
 
 См. также: [Управление сетями (CLI)](./cli.md), [DNS и Service Discovery](./dns_and_service_discovery.md), [NAT](../../Networking/Concepts/nat/overview.md).

@@ -2,94 +2,75 @@
 
 ## Определения
 
-**Docker Registry** — сервис для хранения и распространения Docker-образов. Централизованное хранилище для скачивания (pull) и загрузки (push) образов.
+**Docker Registry (Реестр)** — сервис для хранения и распространения Docker-образов. Централизованное хранилище для скачивания (`pull`) и загрузки (`push`) образов. Реестры контейнеров являются частным случаем [репозиториев артефактов](../CI-CD/artifact_management.md).
 
 **Ключевые понятия:**
 
 | Понятие | Описание |
 | :--- | :--- |
-| **Реестр (Registry)** | Хранилище образов (Docker Hub, Harbor, GHCR, GitLab Registry) |
-| **Репозиторий** | Коллекция образов с одним именем, разными тегами (`ubuntu`) |
-| **Тег (Tag)** | Метка версии образа внутри репозитория (`ubuntu:22.04`) |
-| **Частный реестр** | Реестр с ограниченным доступом (on-premise, VPN) |
-
-**Типы реестров:**
-
-- **Публичные:** Docker Hub (бесплатно с ограничениями)
-- **Частные:** Harbor, GitLab Registry, Nexus, GHCR (GitHub Container Registry)
-
-Реестры контейнеров — частный случай [репозиториев артефактов](../CI-CD/artifact_management.md).
+| **Репозиторий** | Коллекция образов с одним именем, но разными тегами (например, `ubuntu`) |
+| **Тег (Tag)** | Метка версии образа внутри репозитория (например, `ubuntu:22.04`) |
+| **Дайджест (Digest)** | Неизменяемый идентификатор содержимого образа (SHA-256). Гарантирует целостность. |
+| **Публичный реестр** | Реестр, доступный всем пользователям интернета (например, Docker Hub) |
+| **Частный реестр** | Реестр с ограниченным доступом для организации (on-premise или облачный) |
 
 ## Основные концепции
 
 ### Разделение сред (Dev / Prod)
 
-Лучшей практикой безопасности является использование **разных реестров для разных сред** (например, отдельный реестр для Development/Testing и отдельный для Pre-Prod/Production).
+Использование раздельных реестров для разных стадий разработки является важной практикой безопасности и стабильности.
 
-- **Разделение нагрузок:** В Dev-реестре разработчики создают множество образов, которые сканируются на уязвимости по запросу. В Prod-реестре образы хранятся дольше и сканируются регулярно (так как появляются новые уязвимости).
-- **Безопасность (Supply Chain):** Образы попадают в Prod-реестр только после прохождения полного CI/CD пайплайна, сканирования и **криптографической подписи**. Доступ на push в Prod-реестр должен быть только у автоматизированных пайплайнов (ручной push запрещен). Это также исключает возможность использования единого реестра как скрытого канала передачи данных между изолированными контурами.
+- **Разделение нагрузок:** В Dev-реестре хранятся промежуточные сборки, которые часто перезаписываются. В Prod-реестре находятся только проверенные образы с длительным сроком хранения.
+- **Безопасность (Supply Chain):** Образы попадают в Prod-реестр только через автоматизированные CI/CD пайплайны после успешного прохождения тестов и [сканирования на уязвимости](./Docker_security/vulnerability_scanning.md). Прямой `push` в Prod-реестр для разработчиков должен быть запрещен. Это исключает использование реестра как скрытого канала передачи данных между изолированными контурами.
+- **Криптографическая подпись:** В Prod-реестрах рекомендуется использовать [подпись образов](../Docker_security/image_signature_and_verification.md) для гарантии их подлинности.
 
-### Рабочий процесс
+### Рабочий процесс взаимодействия
 
 ```
-1. docker login → аутентификация
-2. docker tag → присвоение имени реестра
-3. docker push → отправка в реестр
-4. docker pull → получение из реестра
+1. docker login → аутентификация пользователя
+2. docker tag → присвоение образу имени целевого реестра
+3. docker push → отправка слоев образа в хранилище
+4. docker pull → получение слоев образа из хранилища
 ```
 
-### Аутентификация
+### Аутентификация и авторизация
+
+Аутентификация выполняется через команду `docker login`. Успешный токен доступа сохраняется в файле конфигурации `~/.docker/config.json`.
 
 ```bash
 # Вход в реестр
-docker login my-registry.example.com
+docker login registry.example.com
 
-# Выход
-docker logout my-registry.example.com
+# Выход из реестра
+docker logout registry.example.com
 ```
 
-Токен сохраняется в `~/.docker/config.json`.
+### Тегирование и именование
 
-### Тегирование
+Для отправки образа в конкретный реестр его имя должно соответствовать формату: `<адрес_реестра>/<проект>/<образ>:<тег>`.
 
 ```bash
 # Формат: <реестр>/<проект>/<образ>:<тег>
 docker tag my-app:latest registry.example.com/my-project/my-app:1.0.0
 ```
 
-### Отправка и получение
-
-```bash
-# Push (отправляются только новые слои)
-docker push registry.example.com/my-project/my-app:1.0.0
-
-# Pull (по умолчанию Docker Hub)
-docker pull registry.example.com/my-project/my-app:1.0.0
-docker pull ubuntu:22.04  # эквивалент docker.io/library/ubuntu:22.04
-```
-
-Подробнее: [Команды Docker CLI](./docker_commands.md)
+Подробные стратегии именования описаны в разделе **[Версионирование и тегирование образов](./Docker_registries/image_versioning_and_tagging.md)**.
 
 ## Практические сценарии
 
 ### Сценарий 1: GitHub Container Registry (GHCR)
 
-**GHCR** — OCI-совместимый реестр с интеграцией в GitHub. Аутентификация через Personal Access Tokens.
-
-**Настройка:**
+**GHCR** — облачный реестр от GitHub, поддерживающий OCI-стандарты. Использует Personal Access Tokens (PAT) для доступа.
 
 ```bash
-# 1. Создать токен: Profile → Settings → Developer settings → Personal access tokens
-# Scope: write:packages (push), read:packages (pull)
+# 1. Аутентификация через токен (scope: write:packages, read:packages)
+echo $GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin
 
-# 2. Аутентификация
-docker login ghcr.io -u <username> -p <token>
-
-# 3. Тегирование и публикация
+# 2. Тегирование и публикация
 docker tag my-app:latest ghcr.io/<username>/<repo>:v1.0.0
 docker push ghcr.io/<username>/<repo>:v1.0.0
 
-# 4. Kubernetes Secret для imagePullSecrets
+# 3. Kubernetes Secret для imagePullSecrets
 kubectl create secret docker-registry registry-secret \
   --docker-server=ghcr.io \
   --docker-username=<username> \
@@ -97,86 +78,54 @@ kubectl create secret docker-registry registry-secret \
   -n <namespace>
 ```
 
-**Использование в werf:** [Werf: Автоматизация сборки и развёртывания](../CI-CD/Tools/werf_overview.md)
+Подробнее об использовании в CI/CD: [Werf: Автоматизация сборки и развёртывания](../CI-CD/Tools/werf_overview.md).
 
-### Сценарий 2: Harbor (корпоративный реестр)
+### Сценарий 2: Harbor (Enterprise Registry)
 
-**Harbor** — open-source реестр с расширенными возможностями для enterprise:
+**Harbor** — корпоративный реестр с открытым исходным кодом, предоставляющий расширенные функции безопасности и управления.
 
-- Сканирование уязвимостей (Trivy/Clair)
-- Подпись образов (Notary/Cosign)
-- Репликация между инстансами
-- Робот-аккаунты для CI/CD
+Ключевые возможности:
+- Ролевая модель доступа (RBAC).
+- Встроенное сканирование уязвимостей (Trivy/Clair).
+- Подпись образов (Notary/Cosign).
+- Репликация образов между дата-центрами.
+- Прокси-кэширование для ускорения загрузки из внешних реестров.
 
-**Базовое использование:**
+Подробная документация Harbor: **[Обзор Harbor](./Docker_registries/Harbor/overview.md)**, **[Установка](./Docker_registries/Harbor/installation.md)**.
 
-```bash
-# Аутентификация
-docker login harbor.example.com
+### Сценарий 3: Docker Hub — реестр по умолчанию
 
-# Тегирование
-docker tag my-app:latest harbor.example.com/library/my-app:v1
-
-# Push/Pull
-docker push harbor.example.com/library/my-app:v1
-docker pull harbor.example.com/library/my-app:v1
-```
-
-**Документация Harbor:** подробное описание см. в [обзоре Harbor](./Docker_registries/Harbor/overview.md), [установке](./Docker_registries/Harbor/installation.md), [настройке TLS](./Docker_registries/Harbor/certificates.md) и [работе с реестром](./Docker_registries/Harbor/usage.md).
-
-### Docker Hub — реестр по умолчанию
-
-**Docker Hub** (hub.docker.com) — официальный публичный реестр, который Docker использует по умолчанию при отсутствии явного указания другого registry.
-
-**Ключевые особенности:**
-
-- При выполнении `docker pull nginx` образ загружается из Docker Hub (`docker.io/library/nginx:latest`)
-- Содержит каталог **официальных образов** (Docker Official Images) — образы, прошедшие проверку качества и безопасности (Ubuntu, Node, MySQL, Nginx, PostgreSQL и др.)
-- Официальные образы отмечены бейджем «Official Image» и имеют высокий рейтинг (звёзды) и количество загрузок
-- Поддерживает публичные и приватные репозитории (бесплатно — 1 приватный)
-- Авторизация через `docker login` или OAuth (GitHub)
-
-**Полный путь к образу:**
+Если адрес реестра не указан явно, Docker использует `docker.io` (Docker Hub). Содержит каталог **официальных образов** (Docker Official Images), прошедших проверку качества и безопасности.
 
 ```bash
-# Короткая запись (по умолчанию Docker Hub)
+# Короткая запись (автоматически загружает с docker.io/library/ubuntu:22.04)
 docker pull ubuntu:22.04
 
-# Полный путь (docker.io — адрес Docker Hub, library — пространство официальных образов)
+# Полная запись
 docker pull docker.io/library/ubuntu:22.04
 
-# Образ пользователя/организации
-docker pull evsq/getting-started-todo-app:latest
-```
-
-> **Рекомендация:** в production используйте частные реестры (Harbor, GHCR, GitLab Registry). Публичные образы из Docker Hub следует проверять: смотреть рейтинг, количество загрузок, дату последнего обновления.
-
-**Авторизация для push:**
-
-```bash
-# Вход в Docker Hub
+# Публикация в свой аккаунт на Docker Hub
 docker login
-
-# После входа можно отправлять образы в свой репозиторий
-docker tag my-app:latest evsq/my-app:v1
-docker push evsq/my-app:v1
+docker tag my-app:latest <user_id>/my-app:v1
+docker push <user_id>/my-app:v1
 ```
 
-При сборке образа с целью последующей отправки в реестр необходимо указывать имя пользователя в теге. Без этого Docker не сможет определить целевой реестр.
+Важные аспекты безопасности при использовании публичных реестров описаны в разделе **[Безопасность публичных реестров](./Docker_registries/public_registry_security.md)**.
 
 ## Дополнительная информация
 
-**Сравнение реестров:**
+### Сравнение популярных реестров
 
 | Реестр | Тип | Сканирование | Подпись | Репликация |
 | :--- | :--- | :--- | :--- | :--- |
-| **Docker Hub** | Public/Private | Базовый (Premium) | — | — |
-| **GHCR** | Public/Private | Зависит от интеграции | — | — |
-| **Harbor** | Private | Trivy/Clair | Notary/Cosign | ✓ |
-| **GitLab Registry** | Private | Зависит от интеграции | — | — |
+| **Docker Hub** | Публичный/Частный | Базовое (платное) | Нет | Нет |
+| **GHCR** | Публичный/Частный | Интеграция с GitHub | Нет | Нет |
+| **Harbor** | Частный (On-premise) | Встроено (Trivy) | Поддерживается | Да |
+| **GitLab Registry** | Частный | Интеграция с GitLab | Нет | Нет |
 
-**См. также:**
+### См. также
 
-- [Безопасность публичных реестров](./Docker_registries/public_registry_security.md)
-- [Версионирование и тегирование образов](./Docker_registries/image_versioning_and_tagging.md)
-- [Команды Docker CLI](./docker_commands.md)
+- **[Безопасность публичных реестров](./Docker_registries/public_registry_security.md)** — риски и меры защиты
+- **[Версионирование и тегирование образов](./Docker_registries/image_versioning_and_tagging.md)** — лучшие практики
+- **[Команды Docker CLI](./docker_commands.md)** — полный справочник команд
+- **[Управление артефактами](../CI-CD/artifact_management.md)** — концепции хранения бинарных данных

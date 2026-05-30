@@ -2,238 +2,117 @@
 
 ## Определения
 
-- **Docker Context** — механизм Docker для управления несколькими удаленными окружениями через профили подключения. Каждый контекст содержит информацию о хосте, сертификатах и параметрах подключения.
-- **Docker Endpoint** — точка подключения к Docker Engine (локальный сокет или удаленный TCP-хост с TLS).
-- **Context Switching** — процесс переключения между контекстами для управления разными кластерами без изменения переменных окружения.
+- **Docker Context:** Механизм Docker для управления профилями подключения к различным окружениям. Позволяет инкапсулировать адрес хоста, сертификаты и параметры безопасности в именованный контекст.
+- **Docker Endpoint:** Точка входа для взаимодействия с Docker Engine (локальный Unix-сокет или удаленный TCP-порт с TLS).
+- **Context Switching:** Процесс переключения активного профиля в Docker CLI для управления конкретным кластером без изменения глобальных переменных окружения.
 
 ## Базовые концепции
 
-### Зачем нужен Docker Context в CI/CD
+### Преимущества использования Docker Context
 
-При работе с несколькими окружениями (development, staging, production) Docker Context позволяет:
+Использование контекстов в инфраструктуре CI/CD обеспечивает:
+- **Абстракцию параметров:** Команды `docker stack` и `docker service` работают одинаково вне зависимости от целевого хоста.
+- **Изоляцию окружений:** Каждый контекст (Development, Production) имеет собственные наборы сертификатов mTLS.
+- **Безопасность:** Минимизация использования переменных окружения `DOCKER_HOST` и `DOCKER_CERT_PATH`, которые могут быть перехвачены или некорректно переопределены.
+- **Упрощение отладки:** Возможность локального подключения к удаленному Swarm-кластеру через тот же механизм, что используется в пайплайнах.
 
-- **Быстрое переключение:** Одна команда для смены целевого кластера
-- **Изоляция окружений:** Отдельные сертификаты и настройки для каждого контекста
-- **Упрощение пайплайнов:** Не нужно управлять `DOCKER_HOST`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH` вручную
-- **Безопасность:** Сертификаты хранятся в защищенных переменных GitLab CI
+### Схема взаимодействия
 
-### Архитектура подключения
+Взаимодействие GitLab Runner с кластером Swarm через контексты:
 
-```
-[GitLab Runner] → [Docker Context] → [mTLS:2376] → [Swarm Manager]
-       ↓
-  (ca.pem, cert.pem, key.pem)
-```
+1. Runner получает сертификаты из защищенных переменных GitLab CI.
+2. Создается временный именованный контекст.
+3. CLI переключается на этот контекст для выполнения команд развертывания.
+4. Весь трафик шифруется по протоколу **[mTLS](../../Networking/Protocols/tls.md#сценарий-2-взаимная-аутентификация-mtls)**.
 
-**Компоненты контекста:**
+### Требования к инфраструктуре
 
-- `host` — TCP-адрес Docker Daemon (`tcp://manager.example.com:2376`)
-- `ca` — путь к корневому сертификату
-- `cert` — путь к клиентскому сертификату
-- `key` — путь к клиентскому ключу
-
-### Требования
-
-- Настроенный mTLS на Docker Daemon (см. **[swarm_setup.md](./swarm_setup.md)**)
-- Клиентские сертификаты (`ca.pem`, `cert.pem`, `key.pem`)
-- Доступ к порту 2376 с машины GitLab Runner
+- **Настроенный mTLS:** Наличие CA, серверных и клиентских сертификатов (см. **[swarm_setup.md](./swarm_setup.md)**).
+- **Сетевой доступ:** Открытый порт 2376/TCP на стороне Swarm Manager для входящих подключений.
+- **Версия CLI:** Docker v19.03 или выше на стороне GitLab Runner.
 
 ## Практические сценарии
 
-### Сценарий 1: Локальная настройка контекста
+### Сценарий 1: Локальная настройка и управление кластером
 
-**Шаг 1: Подготовка сертификатов**
+Для управления удаленным кластером с рабочей станции администратора:
 
-Скопируйте клиентские сертификаты с менеджера Swarm на локальную машину:
+1. Подготовьте клиентские сертификаты (`ca.pem`, `cert.pem`, `key.pem`).
+2. Создайте новый контекст:
+   ```bash
+   docker context create prod-swarm \
+     --docker "host=tcp://prod-manager.example.com:2376,ca=~/.docker/ca.pem,cert=~/.docker/cert.pem,key=~/.docker/key.pem"
+   ```
+3. Активируйте контекст:
+   ```bash
+   docker context use prod-swarm
+   ```
+4. Выполните проверку:
+   ```bash
+   docker node ls
+   ```
 
-- `ca.pem` — корневой сертификат
-- `cert.pem` — клиентский сертификат
-- `key.pem` — клиентский ключ
+### Сценарий 2: Динамическое создание контекста в GitLab CI
 
-**Шаг 2: Создание контекста**
+В пайплайне контекст создается на лету для обеспечения воспроизводимости среды деплоя.
 
-```bash
-docker context create prod-swarm \
-  --docker "host=tcp://prod.example.com:2376,ca=/path/to/ca.pem,cert=/path/to/cert.pem,key=/path/to/key.pem"
-```
-
-**Шаг 3: Переключение на контекст**
-
-```bash
-docker context use prod-swarm
-```
-
-**Шаг 4: Проверка подключения**
-
-```bash
-docker node ls
-docker service ls
-```
-
-**Шаг 5: Возврат к локальному окружению**
-
-```bash
-docker context use default
-```
-
-### Сценарий 2: Использование в GitLab CI
-
-В пайплайне GitLab CI контекст создается динамически через переменные окружения.
-
-**Настройка переменных в GitLab (**Settings → CI/CD → Variables**):**
-
-| Переменная | Тип | Описание |
-|---|---|---|
-| `DOCKER_HOST` | Variable | `tcp://manager.example.com:2376` |
-| `CA_PEM` | File | Содержимое `ca.pem` |
-| `CERT_PEM` | File | Содержимое `cert.pem` |
-| `KEY_PEM` | File | Содержимое `key.pem` |
+**Настройка переменных (Settings → CI/CD → Variables):**
+Используйте **[Environment Scope](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** для разделения сертификатов между окружениями.
 
 **Пример `.gitlab-ci.yml`:**
-
 ```yaml
-deploy:
+deploy_app:
   stage: deploy
   image: docker:24
   before_script:
     - mkdir -p ~/.docker
-    - echo "$CA_PEM" > ~/.docker/ca.pem
-    - echo "$CERT_PEM" > ~/.docker/cert.pem
-    - echo "$KEY_PEM" > ~/.docker/key.pem
+    - cp "$CA_PEM" ~/.docker/ca.pem
+    - cp "$CERT_PEM" ~/.docker/cert.pem
+    - cp "$KEY_PEM" ~/.docker/key.pem
     - chmod 600 ~/.docker/*.pem
-    - docker context create swarm \
+    - docker context create swarm-ctx \
       --docker "host=$DOCKER_HOST,ca=$HOME/.docker/ca.pem,cert=$HOME/.docker/cert.pem,key=$HOME/.docker/key.pem"
-    - docker context use swarm
+    - docker context use swarm-ctx
   script:
-    - docker node ls
-    - docker stack deploy -c docker-compose.yml myapp
+    - docker stack deploy -c docker-compose.yml myapp --with-registry-auth
 ```
 
-**Использование Environment Scope:**
+### Сценарий 3: Диагностика и инспекция
 
-Для развертывания на разные кластеры используйте **[Environment Scope](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**:
-
-1. Создайте переменные `DOCKER_HOST`, `CA_PEM`, `CERT_PEM`, `KEY_PEM` дважды:
-   - Один раз со скоупом `production` (для prod-кластера)
-   - Второй раз со скоупом `development` (для dev-кластера)
-
-2. GitLab автоматически подставит правильные значения в зависимости от окружения.
-
-### Сценарий 3: Управление несколькими контекстами
-
-**Просмотр доступных контекстов:**
+Проверка текущего состояния контекстов:
 
 ```bash
+# Список всех доступных профилей
 docker context ls
-```
 
-**Вывод:**
-
-```
-NAME          DESCRIPTION                               DOCKER ENDPOINT
-default       Current DOCKER_HOST based configuration   unix:///var/run/docker.sock
-prod-swarm    Production Swarm Cluster                  tcp://prod.example.com:2376
-dev-swarm     Development Swarm Cluster                 tcp://dev.example.com:2376
-```
-
-**Переключение между окружениями:**
-
-```bash
-# Production
-docker context use prod-swarm
-docker service ls
-
-# Development
-docker context use dev-swarm
-docker service ls
-```
-
-**Удаление контекста:**
-
-```bash
-docker context rm dev-swarm
-```
-
-### Сценарий 4: Отладка и диагностика
-
-**Проверка текущего контекста:**
-
-```bash
-docker context show
-```
-
-**Инспекция контекста:**
-
-```bash
+# Просмотр детальной конфигурации конкретного контекста
 docker context inspect prod-swarm
-```
 
-**Проверка подключения:**
-
-```bash
-# Переключение на контекст
-docker context use prod-swarm
-
-# Проверка списка узлов
-docker node ls
-
-# Проверка сервисов
-docker service ls
-
-# Проверка журналов
-docker service logs myapp
-```
-
-**Диагностика проблем:**
-
-```bash
-# Проверка журналов Docker на менеджере
-sudo journalctl -u docker -f
-
-# Проверка доступности порта
-telnet manager.example.com 2376
-
-# Проверка сертификатов
-openssl x509 -in ~/.docker/ca.pem -text -noout
+# Проверка текущего активного контекста
+docker context show
 ```
 
 ## Дополнительная информация
 
 ### Безопасность
 
-**Рекомендации для продакшена:**
+- **Права доступа:** Файлы сертификатов в директории `~/.docker/` должны иметь права доступа `400` или `600`.
+- **Очистка данных:** При использовании Shared Runners убедитесь, что временные файлы сертификатов удаляются после завершения Job.
+- **Ротация:** Клиентские сертификаты, используемые в контекстах, подлежат регулярной ротации (рекомендуется раз в 12 месяцев).
 
-- **Хранение секретов:** Используйте GitLab CI Variables типа File для сертификатов
-- **Маскирование:** Включите опцию "Masked" для чувствительных переменных
-- **Environment Scope:** Разделяйте доступ к разным окружениям через скоупы
-- **Ротация ключей:** Регулярно обновляйте клиентские сертификаты
+### Устранение типичных ошибок
 
-**Аудит безопасности:**
-
-```bash
-# Проверка прав на файлы сертификатов
-ls -la ~/.docker/*.pem
-
-# Проверка активных контекстов
-docker context ls
-
-# Проверка текущего подключения
-docker info | grep "Docker Root Dir"
-```
-
-### Распространенные проблемы
-
-| Проблема | Причина | Решение |
-|---|---|---|
-| `context not found` | Контекст не создан | Выполнить `docker context create` |
-| `Cannot connect to the Docker daemon` | Неправильный DOCKER_HOST | Проверить адрес и порт |
-| `certificate has expired` | Истек срок сертификата | Перегенерировать сертификаты |
-| `permission denied` | Неправильные права на ключи | `chmod 600 ~/.docker/*.pem` |
+| Ошибка | Причина | Способ решения |
+|:---|:---|:---|
+| `context not found` | Попытка активации несуществующего профиля | Проверить имя в `docker context create` |
+| `TLS: unknown authority` | Ошибка в `ca.pem` | Убедиться, что CA совпадает с тем, что на сервере |
+| `permission denied` | Ошибка в `key.pem` или `cert.pem` | Проверить соответствие пары ключей и сертификата |
+| `connection refused` | Порт 2376 закрыт Firewall | Проверить доступность порта на менеджере |
 
 ### Связанные документы
 
-- **Настройка кластера (mTLS)** — **[swarm_setup.md](./swarm_setup.md)**
-- **Управление через CLI** — **[../swarm_management_cli.md](../swarm_management_cli.md)**
-- **Переменные GitLab CI** — **[../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**
-- **Развертывание инфраструктуры** — **[infra_deployment.md](./infra_deployment.md)**
-- **Развертывание приложения** — **[app_deployment.md](./app_deployment.md)**
+- **[Подготовка кластера (mTLS)](./swarm_setup.md)** — генерация сертификатов.
+- **[Справочник CLI Swarm](../swarm_management_cli.md)** — команды управления сервисами.
+- **[Переменные и секреты GitLab CI](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — настройка Environment Scope.
+- **[Развертывание инфраструктуры](./infra_deployment.md)** — примеры деплоя Traefik.
+- **[Развертывание приложения](./app_deployment.md)** — жизненный цикл пайплайнов.

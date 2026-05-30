@@ -11,7 +11,7 @@
 При использовании лог-драйверов Docker daemon перехватывает вывод запущенного приложения и напрямую отправляет его по сети или в локальную системную службу (например, `journald` или `syslog`).
 
 **Схема работы:**
-`Приложение → STDOUT/STDERR → Docker Engine (log driver) → Система назначения (Syslog, GELF, Fluentd)`
+`Приложение → STDOUT/STDERR (Standard Output / Standard Error) → Docker Engine (log driver) → Система назначения (Syslog, GELF — Graylog Extended Log Format, Fluentd)`
 
 ### Преимущества и недостатки
 
@@ -48,7 +48,7 @@
 > RateLimitBurst=50000
 > ```
 >
-> После этого перезапустите службу: `sudo systemctl restart systemd-journald`.
+> После этого перезапустите службу: `sudo systemctl restart systemd-journald` # → OK.
 
 ### Драйвер `syslog`
 
@@ -58,6 +58,7 @@
 
 ```bash
 docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_image
+# → запуск контейнера с отправкой логов по UDP (User Datagram Protocol)
 ```
 
 ### Драйвер `gelf`
@@ -68,6 +69,7 @@ docker run --log-driver=syslog --log-opt syslog-address=udp://1.2.3.4:514 my_ima
 
 ```bash
 docker run --log-driver=gelf --log-opt gelf-address=udp://1.2.3.4:12201 my_image
+# → запуск контейнера с отправкой логов в формате GELF
 ```
 
 ### Драйвер `fluentd`
@@ -82,6 +84,7 @@ docker run \
   --log-opt fluentd-address=localhost:24224 \
   --log-opt tag="docker.my_app.{{.Name}}" \
   your/application_image
+# → запуск контейнера с отправкой логов во Fluentd
 ```
 
 **Пример конфигурации Fluentd (`fluent.conf`):**

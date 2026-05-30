@@ -204,6 +204,8 @@ Exclude: *-dbg,*-dev
     sudo apt-get install docker-ce docker-ce-cli containerd.io
     ```
 
+    > **Полная инструкция:** см. SSoT-файл **[Установка Docker на Ubuntu](../../Docker/docker_install_ubuntu.md)**.
+
 ### Пример 4: Google Chrome
 
 ```bash

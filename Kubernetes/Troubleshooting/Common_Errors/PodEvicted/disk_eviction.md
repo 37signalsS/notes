@@ -149,16 +149,7 @@ systemctl restart containerd
 
 #### Настройка log rotation для Docker
 
-```json
-# /etc/docker/daemon.json
-{
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "100m",
-    "max-file": "5"
-  }
-}
-```
+См. [Управление ротацией логов Docker](../../../../Docker/Docker_logs/docker_log_rotation.md).
 
 ## Additional Information
 

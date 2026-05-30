@@ -1,209 +1,123 @@
-# Инструкции Dockerfile: Переменные Окружения и Аргументы
+# Инструкции Dockerfile: Переменные (ENV и ARG)
 
 ## Определения
 
-**`ARG` (Argument)** — переменная времени сборки, доступная только в процессе `docker build`. Не сохраняется в конечном образе.
+**`ARG` (Build Argument)** — переменная, предназначенная для передачи данных в процесс сборки образа (`docker build`). Она доступна только во время сборки и не сохраняется в итоговом образе или его метаданных.
 
-**`ENV` (Environment)** — переменная окружения, доступная как при сборке, так и во время выполнения контейнера. Сохраняется в образе.
+**`ENV` (Environment Variable)** — переменная окружения, которая доступна как на этапе сборки, так и во время работы контейнера (runtime). Эти переменные сохраняются в конфигурации образа и наследуются всеми последующими слоями.
 
 ## Основные концепции
 
-### Синтаксис
+### Инструкция ENV: Настройка окружения
 
-**ENV:**
+Используется для определения параметров работы приложения и системных настроек внутри контейнера.
 
-```dockerfile
-# Форма 1: несколько переменных в одной инструкции (рекомендуется)
-ENV <key>=<value> [<key>=<value>...]
-
-# Форма 2: альтернативный синтаксис (не рекомендуется)
-ENV <key> <value>
-```
-
-**Примеры:**
+**Синтаксис:**
 
 ```dockerfile
-ENV MY_NAME="John Doe"
-ENV MY_DOG=Rex\ The\ Dog
-ENV DB_HOST=localhost DB_PORT=5432
+# Рекомендуемая форма (несколько переменных, уменьшает количество слоев)
+ENV KEY1=VALUE1 KEY2=VALUE2
+
+# Устаревшая форма (не рекомендуется)
+ENV KEY VALUE
 ```
 
-**ARG:**
+**Особенности:**
+- **Персистентность:** Значения сохраняются в образе и видны через `docker inspect`.
+- **Наследование:** Переменные доступны во всех инструкциях `RUN` после их объявления.
+- **Переопределение:** Значения можно заменить при запуске через `docker run -e` или в `docker-compose.yml`.
+- **Кэширование:** Изменение значения `ENV` приводит к инвалидации кэша для всех последующих инструкций в Dockerfile.
+
+### Инструкция ARG: Параметризация сборки
+
+Позволяет делать Dockerfile гибким, передавая значения извне без изменения самого файла.
+
+**Синтаксис:**
 
 ```dockerfile
-ARG <name>[=<default value>] [<name>[=<default value>]...]
+# С указанием значения по умолчанию
+ARG NAME=DEFAULT_VALUE
+
+# Без значения по умолчанию (значение должно быть передано через --build-arg)
+ARG NAME
 ```
 
-**Примеры:**
+**Особенности:**
+- **Область видимости:** Действует только внутри той стадии сборки (`FROM`), в которой объявлена.
+- **Безопасность:** Значения видны в истории слоев (`docker history`), поэтому **запрещено** использовать `ARG` для передачи секретов (паролей, ключей).
+- **Взаимодействие:** `ARG` может быть использован как значение по умолчанию для `ENV`.
 
-```dockerfile
-ARG APP_VERSION=1.0
-ARG user1
-ARG buildno=1
-```
+### Сравнение характеристик
 
-### Сравнение ENV и ARG
-
-| Характеристика | ENV | ARG |
+| Характеристика | ARG | ENV |
 | :--- | :--- | :--- |
-| **Сохранение в образе** | Да | Нет |
-| **Доступность в контейнере** | Да | Нет |
-| **Видимость в `docker history`** | Да | Нет (кроме predefined) |
-| **Передача через CLI** | `docker run --env` | `docker build --build-arg` |
-| **Область действия** | От объявления до конца Dockerfile | От объявления до конца стадии |
+| **Этап сборки** | Доступна | Доступна |
+| **Этап выполнения** | Недоступна | Доступна |
+| **Сохранение в образе** | Нет | Да |
+| **Способ передачи** | `docker build --build-arg` | `docker run -e` |
 
-### Переопределение значений
+### Предопределенные переменные (Predefined ARG)
 
-**ARG при сборке:**
+Docker автоматически поддерживает ряд переменных без их явного объявления в Dockerfile:
+- Прокси: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`.
+- Платформа (при использовании BuildKit): `TARGETPLATFORM`, `TARGETOS`, `TARGETARCH`.
 
-```bash
-docker build --build-arg APP_VERSION=2.1 .
+## Практические сценарии
+
+### Сценарий 1: Динамическое управление версиями
+
+Использование `ARG` для выбора версии базового образа.
+
+```dockerfile
+ARG NODE_VERSION=20
+FROM node:${NODE_VERSION}-alpine
+WORKDIR /app
+COPY . .
 ```
 
-**ENV при запуске:**
+Сборка другой версии: `docker build --build-arg NODE_VERSION=22 .`
 
-```bash
-docker run -e DB_HOST=db.example.com my-image
+### Сценарий 2: Оптимизация Python для контейнеров
+
+Использование `ENV` для правильной настройки среды выполнения Python.
+
+```dockerfile
+FROM python:3.11-slim
+# Отключение буферизации логов и генерации .pyc файлов
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
 ```
 
-### Совместное использование ARG и ENV
+### Сценарий 3: Передача конфигурации через связку ARG и ENV
 
-Часто `ARG` используют для установки значения `ENV` по умолчанию:
+Паттерн, позволяющий задавать настройки при сборке, которые можно переопределить при запуске.
 
 ```dockerfile
 ARG APP_PORT=8080
+# ARG используется для инициализации ENV
 ENV PORT=${APP_PORT}
 EXPOSE ${PORT}
 ```
 
-> **Важно:** ENV всегда переопределяет ARG с тем же именем после точки объявления ENV.
+### Сценарий 4: Безопасная работа с секретами (BuildKit)
 
-### Область видимости ARG по стадиям
-
-```dockerfile
-FROM busybox
-USER ${username:-some_user}  # some_user (ARG ещё не объявлен)
-ARG username
-USER $username               # значение из --build-arg
-
-FROM ubuntu
-# ARG username здесь недоступен — нужно объявить заново
-ARG username
-USER $username
-```
-
-**Правило:** ARG действует только с строки объявления. Для использования в нескольких стадиях объявляйте в каждой стадии.
-
-### Предопределённые ARG
-
-Docker предоставляет встроенные переменные (не требуют объявления `ARG`):
-
-| Переменная | Описание |
-| :--- | :--- |
-| `HTTP_PROXY` / `http_proxy` | Прокси для HTTP-запросов |
-| `HTTPS_PROXY` / `https_proxy` | Прокси для HTTPS-запросов |
-| `FTP_PROXY` / `ftp_proxy` | Прокси для FTP-запросов |
-| `NO_PROXY` / `no_proxy` | Исключения для прокси |
-| `ALL_PROXY` / `all_proxy` | Универсальный прокси |
-
-**Примечание:** По умолчанию исключены из `docker history` для безопасности.
-
-### Автоматические платформенные ARG (BuildKit)
-
-| Переменная | Описание |
-| :--- | :--- |
-| `TARGETPLATFORM` | Платформа результата сборки (например, `linux/amd64`) |
-| `BUILDPLATFORM` | Платформа узла сборки |
-| `TARGETOS` | ОС целевой платформы |
-| `TARGETARCH` | Архитектура целевой платформы |
-| `TARGETVARIANT` | Вариант архитектуры (например, `v7`) |
+Вместо `ARG` для чувствительных данных следует использовать временные монтирования.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
 FROM alpine
-ARG TARGETPLATFORM
-RUN echo "Building for ${TARGETPLATFORM}"
-```
-
-### Полезные ENV для Python
-
-| Переменная | Описание |
-| :--- | :--- |
-| `PYTHONUNBUFFERED=1` | Отключает буферизацию вывода (логи сразу в STDOUT) |
-| `PYTHONDONTWRITEBYTECODE=1` | Не создаёт `.pyc` файлы |
-| `PIP_NO_CACHE_DIR=1` | Не кэширует пакеты pip (уменьшает размер образа) |
-
-## Практические сценарии
-
-### Сценарий 1: Параметризация версии приложения
-
-```dockerfile
-ARG NODE_VERSION=20-alpine
-FROM node:${NODE_VERSION}
-ARG APP_VERSION=1.0.0
-ENV APP_VERSION=${APP_VERSION}
-LABEL version="${APP_VERSION}"
-```
-
-### Сценарий 2: Безопасная передача секретов на этапе сборки
-
-> ⚠️ **Не используйте `ARG` для секретов** — значения видны в `docker history` и provenance-аттестациях.
-
-Используйте `--mount=type=secret` (BuildKit):
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM alpine
-RUN --mount=type=secret,id=npm_token \
-    NPM_TOKEN=$(cat /run/secrets/npm_token) && \
-    echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-```
-
-**Сборка:**
-
-```bash
-docker buildx build --secret id=npm_token,src=$HOME/.npmrc .
-```
-
-### Сценарий 3: Монтаж секрета как переменной окружения
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM alpine
-RUN --mount=type=secret,id=API_KEY,env=API_KEY \
-    some-command --token-from-env $API_KEY
-```
-
-**Сборка:**
-
-```bash
-docker buildx build --secret id=API_KEY .
-```
-
-### Сценарий 4: Конфигурация приложения через ENV
-
-```dockerfile
-FROM python:3.11-slim
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-CMD ["python", "app.py"]
-```
-
-### Сценарий 5: Временные переменные для apt-get
-
-```dockerfile
-# Вариант 1: inline в RUN
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y curl
-
-# Вариант 2: ARG (не сохраняется в образе)
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y curl
+# Секрет монтируется только на время выполнения RUN и не попадает в слои
+RUN --mount=type=secret,id=api_key \
+    API_KEY=$(cat /run/secrets/api_key) && ./install.sh --token=$API_KEY
 ```
 
 ## Дополнительная информация
 
-Для секретов в runtime используйте **[Docker Secrets](../../Docker_security/secrets_management.md)** или внешние хранилища (Vault). Переменные окружения можно переопределить при запуске через `docker run -e VAR=value`. Подробнее о многоэтапной сборке см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**.
+- **Приоритеты:** Если переменные `ARG` и `ENV` имеют одинаковое имя, `ENV` всегда имеет приоритет после точки своего объявления.
+- **Multi-stage:** Если `ARG` объявлен до первой инструкции `FROM`, он доступен только в `FROM`, но не внутри стадий. Для использования внутри стадии его нужно объявить там повторно.
+
+**См. также:**
+- **[Инструкции Dockerfile: Обзор](./overview_definitions.md)** — классификация всех команд сборки.
+- **[Управление секретами в Docker](../../Docker_security/secrets_management.md)** — безопасные методы передачи данных.
+- **[Практические сценарии переопределения](./practical_scenarios.md)** — примеры смены параметров при запуске.

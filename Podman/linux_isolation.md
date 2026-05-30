@@ -4,7 +4,7 @@
 
 **Изоляция Podman** — комбинация механизмов ядра Linux (namespaces, cgroups) и дополнительных средств безопасности (capabilities, seccomp, SELinux), используемых Podman для создания изолированной среды выполнения контейнеров без привилегированного демона.
 
-Основная информация о базовых механизмах ядра собрана в SSoT: [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md).
+Основная информация о базовых механизмах ядра собрана в обзоре: [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md).
 
 Данный документ фокусируется на **Podman-специфичных особенностях** применения этих механизмов.
 
@@ -145,7 +145,7 @@ podman run --cap-drop=all --cap-add=NET_BIND_SERVICE nginx
 
 ### Связанные темы
 
-- **SSoT:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md) — базовые механизмы ядра
+- **Базовые механизмы:** [Изоляция в Linux: Namespaces и Cgroups](../Docker/Concepts/linux_isolation.md) — обзор механизмов ядра
 - **Namespaces:** [Namespaces](../Linux/Core/namespaces.md) — детальное описание namespaces
 - **Cgroups:** [Control Groups](../Linux/Core/cgroups.md) — детальное описание cgroups
 - **Архитектура:** [Daemonless архитектура](./podman_daemonless_architecture.md) — модель без демона

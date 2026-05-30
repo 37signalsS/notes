@@ -6,7 +6,7 @@
 * **SBOM (Software Bill of Materials):** Детальный машиночитаемый перечень всех компонентов, библиотек и зависимостей в приложении: прямых и транзитивных, с версиями, лицензиями, хешами и идентификаторами (PURL, CPE).
 * **Lock-файл:** Файл фиксации точных версий и хешей зависимостей (`package-lock.json`, `go.sum`, `Cargo.lock`). Основа воспроизводимости сборок и SCA-сканирования.
 
-## Basic Concepts
+## Базовые концепции
 
 Отслеживание зависимостей — ключевая часть [безопасности цепочки поставок](./overview.md). Большинство уязвимостей попадает в продукт через сторонние библиотеки, которые разработчики не подключали напрямую.
 
@@ -44,7 +44,7 @@ SCA-инструменты сопоставляют компоненты с ба
 * **OSV (Open Source Vulnerabilities)** — открытый формат, покрывает Go, Rust, Python, npm.
 * **GitHub Advisory Database** — advisories для экосистем GitHub.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Аудит зависимостей в коде
 
@@ -62,18 +62,11 @@ govulncheck ./...
 cargo audit
 ```
 
-### Генерация SBOM и сканирование образа
+### Генерация и анализ SBOM
 
-```bash
-# 1. Генерация SBOM в формате CycloneDX
-syft my-image:latest -o cyclonedx-json > sbom.json
+Генерация и сканирование SBOM для контейнерных образов (Docker/OCI) является наиболее распространенным сценарием. Подробные инструкции, примеры использования Syft, Grype и интеграция в `docker buildx` описаны в специализированном документе: **[SBOM для Docker](../../Docker/Docker_security/docker_sbom.md)**.
 
-# 2. Сканирование SBOM на уязвимости
-grype sbom:sbom.json --fail-on high
-
-# Альтернатива: Trivy сканирует образ напрямую
-trivy image --ignore-unfixed --severity HIGH,CRITICAL my-image:latest
-```
+Для сканирования образов напрямую без генерации промежуточного SBOM см. **[Сканирование уязвимостей](../../Docker/Docker_security/vulnerability_scanning.md)**.
 
 ### Интеграция SCA в CI/CD (GitLab CI)
 
@@ -133,7 +126,7 @@ updates:
       interval: "weekly"
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Рекомендации по внедрению
 

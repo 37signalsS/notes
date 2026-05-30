@@ -38,23 +38,9 @@
 
 ### Сценарий 1: Анализ слоев с dive
 
-```bash
-# Установка dive
-# macOS
-brew install dive
+Инструмент `dive` предназначен для интерактивного исследования структуры слоев Docker-образа и поиска возможностей для уменьшения его размера.
 
-# Linux
-curl -L https://github.com/wagoodman/dive/releases/download/v0.12.0/dive_0.12.0_linux_amd64.tar.gz | tar xz && sudo mv dive /usr/local/bin/
-
-# Анализ образа
-dive my-app:latest
-```
-
-**Возможности dive:**
-
-- Просмотр содержимого каждого слоя
-- Обнаружение файлов, удаленных в последующих слоях ( wasted space)
-- Оценка эффективности слоев (image efficiency)
+Подробные инструкции по установке и использованию `dive` для оптимизации образов см. в разделе **[Анализ и управление слоями образа](../Docker_fs/images/layer_management.md)**.
 
 ### Сценарий 2: Линтинг Dockerfile с hadolint
 

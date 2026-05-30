@@ -2,7 +2,7 @@
 
 ## Определения
 
-**SBOM (Software Bill of Materials) для Docker** — это машиночитаемый перечень всех компонентов Docker-образа: прямых и транзитивных зависимостей, их версий, лицензий и идентификаторов (PURL, CPE). SBOM является частью процесса **[анализа зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**, адаптированного для контейнерных образов.
+**SBOM (Software Bill of Materials) для Docker** — это машиночитаемый перечень всех компонентов Docker-образа: прямых и транзитивных зависимостей, их версий, лицензий и идентификаторов — **PURL (Package URL)**, **CPE (Common Platform Enumeration)**. SBOM является частью процесса **SCA (Software Composition Analysis — анализ состава ПО)**, адаптированного для контейнерных образов. См. подробнее: **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
 
 ## Базовые концепции
 
@@ -16,7 +16,7 @@
 ### Место в экосистеме безопасности Docker
 
 1. **Генерация**: `Syft`, `docker buildx --sbom` создают SBOM.
-2. **Анализ**: SBOM используется **[сканерами уязвимостей](./vulnerability_scanning.md)** (Grype, Trivy) для поиска CVE.
+2. **Анализ**: SBOM используется **[сканерами уязвимостей](./vulnerability_scanning.md)** (Grype, Trivy) для поиска **CVE (Common Vulnerabilities and Exposures)**.
 3. **Подтверждение**: SBOM подписывается как аттестация в процессе **[подписания образов](./image_signature_and_verification.md)**.
 
 ## Практические сценарии

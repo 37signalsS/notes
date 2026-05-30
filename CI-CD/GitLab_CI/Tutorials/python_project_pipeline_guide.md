@@ -158,7 +158,7 @@ container_scanning:
   <<: *main_rules
 ```
 
-> **Примечание:** Сборка с Kaniko описана в **[Dockerfile для Python](../../../Docker/Dockerfile/Docker_best_practices/python.md)**.
+> **Примечание:** Сборка с Kaniko описана в **[Kaniko: Сборка без демона](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 
 #### Шаг 3: Развертывание через Helm
 

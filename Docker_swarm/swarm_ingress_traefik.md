@@ -1,58 +1,53 @@
-# Docker Swarm: Ingress-трафик с Traefik
+# Docker Swarm: Входящий трафик (Ingress) с Traefik
 
-> **Миграция с v2 → v3:** Конфигурация обновлена для Traefik v3.6.8. Ключевое изменение: `--providers.docker.swarmMode=true` заменен на `--providers.swarm=true`.
+Миграция с версии v2 на v3: конфигурация обновлена для Traefik v3.6.8. Основное изменение заключается в замене флага `--providers.docker.swarmMode=true` на `--providers.swarm=true`.
 
-При работе с несколькими веб-сервисами в кластере **[Docker Swarm](./docker_swarm_overview.md)** стандартный механизм **[Routing Mesh](./swarm_core_concepts.md)** направляет трафик на опубликованные порты, но не умеет различать запросы по доменным именам. Для маршрутизации по хостам используется **[Traefik](../WebServers/Traefik/traefik_overview.md)** — динамический обратный прокси с автоматическим обнаружением сервисов.
+При работе с несколькими веб-сервисами в кластере Docker Swarm стандартный механизм Routing Mesh (сетчатая маршрутизация) направляет трафик на опубликованные порты, но не поддерживает разграничение запросов по доменным именам на уровне L7 (Layer 7). Для маршрутизации на основе хостов используется Traefik — динамический обратный прокси-сервер с автоматическим обнаружением сервисов.
 
 ## Определения
 
-**Ingress-трафик** — входящий сетевой трафик, поступающий извне в кластер (обычно на порты 80/443).
+**Ingress-трафик (входящий трафик)** — сетевой трафик, поступающий в кластер из внешних сетей (обычно по протоколам HTTP (HyperText Transfer Protocol) / HTTPS (HyperText Transfer Protocol Secure) на порты 80/443).
 
-**Динамический обратный прокси** — прокси-сервер, который автоматически обнаруживает изменения в бэкенд-сервисах и перенастраивает правила маршрутизации без перезапуска.
+**Динамический обратный прокси (Dynamic Reverse Proxy)** — прокси-сервер, который автоматически обнаруживает изменения в составе сервисов через API (Application Programming Interface) оркестратора и обновляет правила маршрутизации без перезагрузки.
 
-**Entrypoint** — точка входа Traefik (сетевой порт), принимающая входящий трафик (например, `web` для HTTP, `websecure` для HTTPS).
+**Entrypoint (точка входа)** — сетевой порт Traefik, принимающий входящие соединения (например, порт 80 для HTTP или 443 для HTTPS).
 
-**Router** — компонент Traefik, анализирующий входящие запросы (хост, путь, заголовки) и определяющий целевой сервис.
+**Router (маршрутизатор)** — компонент Traefik, который анализирует параметры запроса (доменное имя, путь, заголовки) и определяет целевой сервис.
 
-**Middleware** — компонент для модификации запроса перед отправкой сервису (аутентификация, редиректы, заголовки).
+**Middleware (промежуточное ПО)** — компоненты для модификации запроса или выполнения дополнительных действий (аутентификация, перенаправления, добавление заголовков) перед отправкой трафика в сервис.
 
 ## Базовые концепции
 
 ### Принцип работы
 
-1. **Docker Socket:** Traefik запускается как сервис в Swarm с доступом к `/var/run/docker.sock`.
-2. **Service Discovery:** Traefik слушает события Docker API (создание, удаление, обновление сервисов).
-3. **Labels-driven конфигурация:** Сервисы с метками `traefik.*` автоматически получают правила маршрутизации.
-4. **Маршрутизация:** Трафик на порты 80/443 принимается Traefik и перенаправляется согласно правилам.
-5. **SSL-автоматизация:** Traefik автоматически запрашивает и обновляет SSL-сертификаты от Let's Encrypt.
+1. **Docker Socket:** Traefik запускается как сервис в Docker Swarm и получает доступ к файлу `/var/run/docker.sock` для взаимодействия с API демона Docker.
+2. **Service Discovery (обнаружение сервисов):** Traefik отслеживает события Docker API, такие как создание, удаление или масштабирование сервисов.
+3. **Конфигурация через метки (Labels):** Параметры маршрутизации задаются непосредственно в описании сервисов Swarm с помощью меток `traefik.*`.
+4. **Маршрутизация трафика:** Traefik принимает пакеты на внешних портах и пересылает их в оверлейную сеть (Overlay network) кластера к нужным контейнерам.
+5. **Автоматизация SSL/TLS:** Traefik поддерживает протокол ACME (Automatic Certificate Management Environment) для автоматического получения и продления SSL (Secure Sockets Layer) / TLS (Transport Layer Security) сертификатов от Let's Encrypt.
 
 ### Архитектура развертывания
 
-```
-[Клиент] → [Traefik:80/443] → [overlay-сеть] → [App-сервисы]
-                    ↓
-              (Docker Socket)
-                    ↓
-              (Service Discovery)
-```
+Входящий запрос от клиента поступает на порты 80/443 узла кластера, где Traefik перехватывает его и направляет во внутреннюю сеть кластера.
 
-**Требования:**
-
-- Общая `overlay`-сеть для Traefik и приложений
-- Docker Socket volume (только для manager-узлов)
-- Внешний доступ на порты 80, 443, 8080 (dashboard)
+**Основные требования:**
+- Наличие общей оверлейной сети для Traefik и целевых приложений.
+- Монтирование Docker Socket (только на узлах с ролью `manager`).
+- Доступность внешних портов 80, 443 и 8080 (для панели управления Dashboard).
 
 ## Практические сценарии
 
 ### Развертывание Traefik
 
-#### 1. Создание overlay-сети
+#### 1. Создание оверлейной сети (Overlay network)
 
-```sh
+```bash
 docker network create --driver=overlay traefik-public
 ```
 
-#### 2. Стек Traefik (`docker-compose.traefik.yml`)
+#### 2. Стек Traefik
+
+Конфигурация для файла `docker-compose.traefik.yml`:
 
 ```yaml
 version: '3.8'
@@ -65,20 +60,20 @@ services:
       - "443:443"
       - "8080:8080"
     command:
-      # Docker Swarm provider (v3)
+      # Включение провайдера Docker Swarm для v3
       - "--providers.swarm=true"
       - "--providers.docker.exposedByDefault=false"
-      # Entrypoints
+      # Точки входа (Entrypoints)
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      # HTTP → HTTPS redirect
+      # Перенаправление HTTP → HTTPS
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      # Let's Encrypt ACME
+      # Настройка Let's Encrypt (ACME)
       - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.email=your-email@example.com"
+      - "--certificatesresolvers.myresolver.acme.email=admin@example.com"
       - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-      # Dashboard (в проде защитить!)
+      # Панель управления (Dashboard)
       - "--api.insecure=true"
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
@@ -98,19 +93,15 @@ networks:
     external: true
 ```
 
-**Развертывание:**
+#### 3. Развертывание приложения
 
-```sh
-docker stack deploy -c docker-compose.traefik.yml traefik-stack
-```
-
-#### 3. Развертывание приложения (`docker-compose.app.yml`)
+Пример описания сервиса в файле `docker-compose.app.yml`:
 
 ```yaml
 version: '3.8'
 
 services:
-  nginx-app:
+  web-app:
     image: nginx:1.26.3
     networks:
       - traefik-public
@@ -118,142 +109,81 @@ services:
       replicas: 2
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.nginx-router.rule=Host(`nginx.your-domain.com`)"
-        - "traefik.http.routers.nginx-router.entrypoints=websecure"
-        - "traefik.http.routers.nginx-router.tls.certresolver=myresolver"
-        - "traefik.http.services.nginx-service.loadbalancer.server.port=80"
+        - "traefik.http.routers.app-router.rule=Host(`app.example.com`)"
+        - "traefik.http.routers.app-router.entrypoints=websecure"
+        - "traefik.http.routers.app-router.tls.certresolver=myresolver"
+        - "traefik.http.services.app-service.loadbalancer.server.port=80"
 
 networks:
   traefik-public:
     external: true
 ```
 
-**Развертывание:**
+### Использование компонентов Middleware
 
-```sh
-docker stack deploy -c docker-compose.app.yml my-app
-```
+#### Аутентификация BasicAuth
 
-### Использование Middleware
-
-#### BasicAuth аутентификация
+Для защиты сервиса паролем используются следующие метки:
 
 ```yaml
 labels:
   - "traefik.enable=true"
-  - "traefik.http.routers.secure-router.rule=Host(`secure.example.com`)"
-  - "traefik.http.routers.secure-router.entrypoints=websecure"
-  - "traefik.http.routers.secure-router.tls.certresolver=myresolver"
-  # Middleware
-  - "traefik.http.routers.secure-router.middlewares=auth-middleware"
-  - "traefik.http.middlewares.auth-middleware.basicauth.users=admin:$$apr1$$xyz$$abc123"
-  - "traefik.http.services.secure-service.loadbalancer.server.port=8080"
+  - "traefik.http.routers.secure-app.rule=Host(`secure.example.com`)"
+  - "traefik.http.routers.secure-app.middlewares=auth-mw"
+  - "traefik.http.middlewares.auth-mw.basicauth.users=user:$$apr1$$hashed_password"
 ```
 
-**Генерация пароля:**
+#### Маршрутизация по префиксу пути (Path Prefix)
 
-```sh
-docker run --rm httpd:2.4 htpasswd -nb admin password
-```
-
-#### Path Prefix маршрутизация
+Удаление префикса перед передачей запроса приложению:
 
 ```yaml
 labels:
-  - "traefik.enable=true"
-  - "traefik.http.routers.api-router.rule=Host(`api.example.com`)"
-  - "traefik.http.routers.api-router.middlewares=strip-prefix"
-  - "traefik.http.middlewares.strip-prefix.stripprefix.prefixes=/api"
-  - "traefik.http.services.api-service.loadbalancer.server.port=3000"
-```
-
-#### Rate Limiting
-
-```yaml
-labels:
-  - "traefik.http.middlewares.rate-limit.ratelimit.average=100"
-  - "traefik.http.middlewares.rate-limit.ratelimit.burst=50"
+  - "traefik.http.routers.api.rule=Host(`example.com`) && PathPrefix(`/api`)"
+  - "traefik.http.routers.api.middlewares=strip-api"
+  - "traefik.http.middlewares.strip-api.stripprefix.prefixes=/api"
 ```
 
 ### Отладка и диагностика
 
 #### Проверка состояния Traefik
 
-```sh
-# Журналы Traefik
+Для анализа работы сервиса используются стандартные команды CLI (Command Line Interface) Docker:
+
+```bash
+# Просмотр журналов (логов)
 docker service logs traefik-stack_traefik --follow
 
-# Проверка маршрутов через Dashboard
-# http://<manager-ip>:8080/api/http/routers
-
-# Проверка сервисов
-docker service ls
+# Проверка списка запущенных задач
 docker service ps traefik-stack_traefik
 ```
 
-#### Тестирование маршрутизации
+#### Распространенные проблемы
 
-```sh
-# Проверка HTTP → HTTPS редиректа
-curl -I http://nginx.your-domain.com
-
-# Проверка SSL-сертификата
-curl -vI https://nginx.your-domain.com
-
-# Проверка разрешения DNS
-nslookup nginx.your-domain.com
-```
-
-#### Частые проблемы
-
-| Проблема | Причина | Решение |
-|---|---|---|
-| 404 Not Found | Сервис не имеет label `traefik.enable=true` | Добавить метку |
-| 502 Bad Gateway | Неправильный порт в `loadbalancer.server.port` | Проверить порт контейнера |
-| SSL не работает | ACME storage недоступен или email не указан | Проверить volume и email |
-| Сервис не обнаруживается | Traefik и сервис в разных сетях | Подключить к `traefik-public` |
+| Проблема | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| Ошибка 404 | Отсутствует метка `traefik.enable=true` | Добавить метку в секцию `deploy` |
+| Ошибка 502 | Неверно указан порт в `loadbalancer.server.port` | Указать внутренний порт контейнера |
+| Ошибка SSL | Проблемы с записью в `acme.json` | Проверить права доступа к тому (volume) |
 
 ## Дополнительная информация
 
-### Справочник меток
+### Справочник меток (Labels)
 
-**Основные метки:**
+- `traefik.enable=true` — обязательная метка для активации маршрутизации.
+- `traefik.http.routers.<имя>.rule` — правило отбора трафика (например, `Host(\`domain.com\`)`).
+- `traefik.http.services.<имя>.loadbalancer.server.port` — порт, на котором приложение слушает трафик внутри контейнера.
 
-- `traefik.enable=true` — активировать Traefik для сервиса
-- `traefik.http.routers.<name>.rule=Host(\`...\`)` — правило маршрутизации по хосту
-- `traefik.http.routers.<name>.entrypoints=<entrypoint>` — точка входа (`web` или `websecure`)
-- `traefik.http.routers.<name>.tls.certresolver=<resolver>` — ACME resolver для SSL
-- `traefik.http.services.<name>.loadbalancer.server.port=<port>` — порт внутри контейнера
+### Сравнение с альтернативными решениями
 
-**Middleware:**
+| Решение | Сложность настройки | Автоматизация SSL | Динамическое обновление |
+| :--- | :--- | :--- | :--- |
+| **Traefik** | Низкая | Встроена (ACME) | Да (Native) |
+| **Nginx** | Средняя | Требует Certbot | Требует сторонних модулей |
+| **HAProxy** | Высокая | Сложная настройка | Да (через API) |
 
-- `traefik.http.routers.<name>.middlewares=<middleware>` — применение middleware
-- `traefik.http.middlewares.<name>.basicauth.users=...` — BasicAuth пользователи
-- `traefik.http.middlewares.<name>.stripprefix.prefixes=...` — удаление префикса пути
-- `traefik.http.middlewares.<name>.ratelimit.average=...` — средняя скорость запросов
+### Смотрите также
 
-### Безопасность
-
-**Рекомендации для продакшена:**
-
-- Отключить `--api.insecure=true`, использовать BasicAuth для dashboard
-- Настроить firewall для ограничения доступа к портам
-- Использовать production ACME server (`https://acme-v02.api.letsencrypt.org/directory`)
-- Регулярно обновлять образ Traefik
-
-### Сравнение с альтернативами
-
-| Решение | Сложность | Функциональность | Экосистема |
-|---|---|---|---|
-| **Traefik** | Низкая | Автоматическое обнаружение, SSL | Растущая |
-| **Nginx** | Средняя | Полный контроль, кэширование | Огромная |
-| **HAProxy** | Высокая | Продвинутая балансировка | Большая |
-
-Для Kubernetes рассмотрите **[Ingress-контроллеры](../Kubernetes/Networking/Ingress/overview.md)** (Nginx, Traefik, Istio).
-
-### Связанные документы
-
-- **Обзор Traefik** — **[../WebServers/Traefik/traefik_overview.md](../WebServers/Traefik/traefik_overview.md)**
-- **Traefik с Docker Compose** — **[../WebServers/Traefik/traefik_with_docker_compose.md](../WebServers/Traefik/traefik_with_docker_compose.md)**
-- **Docker Swarm сети** — **[swarm_networking.md](./swarm_networking.md)**
-- **CI/CD с Traefik** — **[CI_CD/overview.md](./CI_CD/overview.md)**
+- **[Обзор Traefik](../../WebServers/Traefik/traefik_overview.md)** — теоретические основы и компоненты.
+- **[Сетевое взаимодействие в Docker Swarm](./swarm_networking.md)** — детали оверлейных сетей.
+- **[CI/CD с использованием Traefik](./CI_CD/overview.md)** — автоматизация развертывания.

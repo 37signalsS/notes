@@ -2,241 +2,116 @@
 
 ## Определения
 
-- **Best Practices (Лучшие практики)** — проверенные методы и подходы, обеспечивающие безопасность, надежность и эффективность CI/CD пайплайнов в Docker Swarm.
-- **Immutable Infrastructure** — подход, при котором инфраструктура не изменяется после развертывания, а заменяется новой версией. Образы контейнеров неизменяемы (immutable).
-- **GitOps** — методология, при которой конфигурация инфраструктуры и приложений хранится в Git, а изменения применяются автоматически через CI/CD пайплайны.
-- **Least Privilege** — принцип минимальных привилегий: предоставление только необходимых прав доступа для выполнения задач.
+- **Лучшие практики (Best Practices):** Проверенные методы и подходы, обеспечивающие безопасность, надежность и эффективность CI/CD пайплайнов в Docker Swarm.
+- **Неизменяемая инфраструктура (Immutable Infrastructure):** Подход, при котором компоненты инфраструктуры заменяются новыми версиями вместо внесения изменений в работающие системы.
+- **[GitOps](../../GitOps/GitOps_overview.md):** Методология управления инфраструктурой и приложениями, при которой Git является единственным источником истины.
+- **[Принцип минимальных привилегий (Least Privilege)](../../CI-CD/DevSecOps/secrets_management.md#1-принцип-минимальных-привилегий-least-privilege):** Стратегия безопасности, ограничивающая права доступа только необходимым минимумом для выполнения конкретной задачи.
 
 ## Базовые концепции
 
 ### Принципы безопасного CI/CD
 
-1. **Без Docker-in-Docker:** Сборка образов через Kaniko без доступа к Docker Daemon
-2. **Разделение секретов:** Хранение сертификатов и токенов в GitLab CI Variables (File type)
-3. **Environment Scope:** Изоляция окружений через привязку переменных к веткам
-4. **Manual Trigger для продакшена:** Ручное подтверждение для критических изменений
+1. **Отказ от Docker-in-Docker:** Использование инструментов типа Kaniko для сборки образов без доступа к привилегированному Docker Daemon.
+2. **Безопасное управление секретами:** Хранение сертификатов и токенов в GitLab CI Variables с использованием типа `File`.
+3. **Изоляция окружений (Environment Scope):** Разграничение доступа к кластерам через привязку переменных к конкретным веткам или окружениям.
+4. **Контролируемое развертывание:** Использование ручного подтверждения (Manual Trigger) для деплоя в продуктивную среду.
 
 ### Архитектура безопасного пайплайна
 
-```
-[Git Commit] → [GitLab CI] → [Kaniko (build)] → [Registry]
-                                      ↓
-                              [Docker Context]
-                                      ↓
-                            [Swarm Cluster (deploy)]
-```
-
-**Ключевые компоненты:**
-
-- **Kaniko:** Сборка без привилегий, в userspace
-- **GitLab Registry:** Приватный реестр с токеном `CI_JOB_TOKEN`
-- **Docker Context:** Безопасное подключение через mTLS
-- **Swarm:** Развертывание с `--with-registry-auth`
+Рекомендуемая схема доставки:
+1. Сборка образа в изолированной среде (Kaniko).
+2. Публикация в приватный реестр (GitLab Container Registry).
+3. Аутентификация в Swarm через **[mTLS](../CI_CD/swarm_setup.md)**.
+4. Развертывание с использованием защищенного контекста Docker.
 
 ## Практические сценарии
 
-### Сценарий 1: Сборка образов через Kaniko
+### Сценарий 1: Безопасная сборка через Kaniko
 
-**Почему Kaniko, а не Docker-in-Docker:**
+Использование Kaniko позволяет избежать рисков, связанных с привилегированным режимом сборки.
 
-| Критерий | Kaniko | Docker-in-Docker |
-|---|---|---|
-| Привилегии | Непривилегированный | Требует `privileged: true` |
-| Безопасность | Изоляция userspace | Доступ к Docker Daemon |
-| Kubernetes | Нативная поддержка | Сложная настройка |
-| Кэширование | Слой образа | Кэш демона |
+| Характеристика | Kaniko | Docker-in-Docker (DinD) |
+|:---|:---|:---|
+| Безопасность | Изоляция в userspace | Требует `--privileged` |
+| Доступ к хосту | Не требуется | Доступ к Docker socket |
+| Кэширование | На уровне слоев Registry | На уровне локального демона |
 
-**Пример задачи в `.gitlab-ci.yml`:**
+Пример конфигурации и детали настройки — в **[Сборка образов с Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 
-```yaml
-build:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.24.0-debug
-    entrypoint: [""]
-  script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor \
-        --context $CI_PROJECT_DIR \
-        --dockerfile $CI_PROJECT_DIR/Dockerfile \
-        --destination ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
-```
+### Сценарий 2: Аутентификация в Registry через `--with-registry-auth`
 
-**Подробнее:** **[dockerfile_kaniko.md](../../Docker/Dockerfile/dockerfile_kaniko.md)**
+Для корректной загрузки образов на всех узлах кластера Swarm необходимо передавать данные авторизации от менеджера к рабочим узлам.
 
-### Сценарий 2: Использование `--with-registry-auth`
-
-**Проблема:** При развертывании сервисов с приватными образами узлы Swarm не могут скачать образ без учетных данных registry.
-
-**Решение:** Флаг `--with-registry-auth` передает учетные данные от менеджера к рабочим узлам.
-
-```yaml
+```bash
 deploy:
   script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker stack deploy -c docker-compose.yml my-app --with-registry-auth
 ```
 
-**Важно:**
+**Важно:** Использование конвейера (pipe) для передачи пароля в `stdin` предотвращает его попадание в историю команд и логи.
 
-- `docker login` должен выполняться перед `docker stack deploy`
-- Учетные данные передаются только менеджеру, который распространяет их на узлы
-- Токены автоматически обновляются при каждом запуске пайплайна
+### Сценарий 3: Управление секретами и окружениями
 
-### Сценарий 3: Управление секретами через Environment Scope
+Разделение конфигураций для `development` и `production` реализуется через **[Environment Scope](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**.
 
-**Настройка переменных для разных окружений:**
+Пример структуры переменных:
+- `DOCKER_HOST` (scope: `production`) → `tcp://prod-manager:2376`
+- `DOCKER_HOST` (scope: `development`) → `tcp://dev-manager:2376`
 
-1. В GitLab: **Settings → CI/CD → Variables**
-2. Создайте переменные с одинаковыми именами, но разными значениями
-3. Укажите **Environment scope** для каждой
+Это гарантирует, что пайплайн ветки `main` не сможет случайно повлиять на тестовый кластер и наоборот.
 
-| Переменная | Scope | Значение |
-|---|---|---|
-| `DOCKER_HOST` | `production` | `tcp://prod-manager:2376` |
-| `DOCKER_HOST` | `development` | `tcp://dev-manager:2376` |
-| `CA_PEM` | `production` | (сертификат prod) |
-| `CA_PEM` | `development` | (сертификат dev) |
+### Сценарий 4: Настройка Rolling Updates и Health Checks
 
-**Автоматическое применение:**
+Безопасное обновление без простоя требует корректной настройки стратегии обновления и проверок здоровья приложения.
 
 ```yaml
-deploy_prod:
-  environment:
-    name: production
-  variables:
-    COMPOSE_FILE: docker-compose.prod.yml
-  # GitLab автоматически подставит DOCKER_HOST и сертификаты для production
-
-deploy_dev:
-  environment:
-    name: development
-  variables:
-    COMPOSE_FILE: docker-compose.dev.yml
-  # GitLab автоматически подставит DOCKER_HOST и сертификаты для development
+deploy:
+  update_config:
+    parallelism: 1
+    failure_action: rollback
+    order: start-first
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+  interval: 30s
+  retries: 3
 ```
 
-**Подробнее:** **[gitlab_ci_variables_secrets.md](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**
+Подробные рекомендации по настройке — в **[Жизненный цикл приложения в Swarm](./app_lifecycle.md)**.
 
-### Сценарий 4: Автоматическое развертывание по веткам
+### Сценарий 5: Логирование и мониторинг
 
-**Стратегия ветвления:**
+Для предотвращения переполнения дискового пространства необходимо настроить ротацию логов.
 
-| Ветка | Окружение | Автоматически |
-|---|---|---|
-| `dev` | Development | ✓ |
-| `main` | Production | ✓ |
-| `feature/*` | Review (опционально) | ✗ |
-
-**Пример `.gitlab-ci.yml`:**
-
-```yaml
-deploy_dev:
-  stage: deploy
-  environment:
-    name: development
-    url: http://dev.app.example.com
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "dev"'
-
-deploy_prod:
-  stage: deploy
-  environment:
-    name: production
-    url: https://app.example.com
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-  when: manual  # Ручное подтверждение для production
-```
-
-### Сценарий 5: Health Checks и Rolling Updates
-
-**Настройка безопасного обновления:**
-
-```yaml
-services:
-  app:
-    deploy:
-      replicas: 3
-      update_config:
-        parallelism: 1      # Обновлять по одной реплике
-        delay: 10s          # Задержка между обновлениями
-        failure_action: rollback  # Откат при ошибке
-        order: start-first  # Запуск новой перед остановкой старой
-      rollback_config:
-        parallelism: 1
-        delay: 10s
-      restart_policy:
-        condition: on-failure
-        max_attempts: 3
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-```
-
-**Подробнее:** **[app_lifecycle.md](./app_lifecycle.md)**
-
-### Сценарий 6: Мониторинг и логирование
-
-**Централизованное логирование:**
-
-```yaml
-services:
-  app:
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-```
-
-**Мониторинг через Docker CLI:**
-
-```bash
-# Статус сервисов
-docker service ls
-
-# Задачи сервиса
-docker service ps my-app_app
-
-# Журналы
-docker service logs my-app_app --tail 100 --follow
-
-# Статистика ресурсов
-docker stats
-```
+**Действия:**
+1. Настройте `logging` драйвер в `docker-compose.yml`.
+2. Используйте централизованные системы сбора логов (ELK/Loki).
+3. Руководство по настройке — **[Ротация логов Docker](../../Docker/Docker_logs/docker_log_rotation.md)**.
 
 ## Дополнительная информация
 
-### Чек-лист безопасности
+### Контрольный список безопасности (Check-list)
 
-- [ ] Kaniko используется вместо Docker-in-Docker
-- [ ] Сертификаты хранятся в GitLab CI Variables (File type)
-- [ ] Environment scope настроен для изоляции окружений
-- [ ] `--with-registry-auth` используется для приватных образов
-- [ ] Health checks настроены для всех сервисов
-- [ ] Rolling update с `failure_action: rollback`
-- [ ] Логирование с ограничением размера
-- [ ] Ручное подтверждение для production-деплоя
+- [ ] Используется Kaniko для минимизации привилегий при сборке.
+- [ ] Секреты хранятся в переменных GitLab с ограничением по окружениям.
+- [ ] Использован флаг `--with-registry-auth` для деплоя.
+- [ ] Настроены Health Checks для всех критичных сервисов.
+- [ ] Включен автоматический откат (`rollback`) при сбое обновления.
+- [ ] Настроена ротация логов для всех контейнеров.
 
-### Распространенные ошибки
+### Типовые ошибки
 
-| Ошибка | Причина | Решение |
-|---|---|---|
-| `denied: requested access to the resource is denied` | Нет `docker login` или `--with-registry-auth` | Добавить аутентификацию |
-| `certificate signed by unknown authority` | Неправильный CA в переменной | Проверить `CA_PEM` для окружения |
-| Rolling update застрял | Health check не проходит | Увеличить `start_period` |
-| Образ не обновляется | Кэш Kaniko | Использовать `--cache=false` или новый тег |
+| Ошибка | Причина | Способ исправления |
+|:---|:---|:---|
+| `access denied` | Отсутствует `docker login` или флаг `--with-registry-auth` | Выполнить логин и добавить флаг при деплое |
+| `unknown authority` | Ошибка в CA сертификате для Docker Context | Проверить корректность переменной `CA_PEM` |
+| Обновление зависло | Некорректный Health Check или малый `start_period` | Проверить эндпоинт и увеличить время ожидания |
 
 ### Связанные документы
 
-- **Настройка кластера** — **[swarm_setup.md](./swarm_setup.md)**
-- **Docker Context** — **[docker_context_setup.md](./docker_context_setup.md)**
-- **Развертывание приложения** — **[app_deployment.md](./app_deployment.md)**
-- **Жизненный цикл приложения** — **[app_lifecycle.md](./app_lifecycle.md)**
-- **Kaniko (SSoT)** — **[../../Docker/Dockerfile/dockerfile_kaniko.md](../../Docker/Dockerfile/dockerfile_kaniko.md)**
-- **GitLab CI переменные (SSoT)** — **[../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**
+- **[Подготовка кластера](./swarm_setup.md)** — инициализация и mTLS.
+- **[Настройка Docker Context](./docker_context_setup.md)** — управление подключениями.
+- **[Развертывание приложения](./app_deployment.md)** — структура пайплайнов.
+- **[Жизненный цикл приложения](./app_lifecycle.md)** — Rolling Update и Health Checks.
+- **[Сборка образов с Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md)** — подробное руководство.
+- **[Переменные и секреты GitLab CI](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — управление окружениями.

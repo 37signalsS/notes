@@ -6,11 +6,11 @@
 
 Официальный репозиторий: **[github.com/GoogleContainerTools/kaniko](https://github.com/GoogleContainerTools/kaniko)**.
 
-## Основные концепции
+## Базовые концепции
 
 ### Проблема: Зависимость от Docker-демона
 
-В CI/CD-пайплайнах (GitLab CI, Jenkins) и Kubernetes-подах доступ к `/var/run/docker.sock` ограничен или отсутствует. Подходы DinD и DooD требуют привилегированного режима или монтирования сокета, что создаёт риски безопасности. Подробнее: **[Docker-in-Docker: Запуск Docker внутри контейнера](../docker-in-docker.md)**.
+В CI/CD-пайплайнах (GitLab CI, Jenkins) и Kubernetes-подах доступ к `/var/run/docker.sock` ограничен или отсутствует. Подходы DinD (Docker-in-Docker) и DooD (Docker-out-of-Docker) требуют привилегированного режима или монтирования сокета, что создаёт риски безопасности. Подробнее: **[Docker-in-Docker: Запуск Docker внутри контейнера](../docker-in-docker.md)**.
 
 ### Решение: Kaniko
 
@@ -19,6 +19,17 @@
 3. Выполняет команды `Dockerfile`, создавая слои в userspace.
 4. Формирует слои на основе разницы снапшотов.
 5. Отправляет образ в указанный реестр.
+
+### Сравнение методов сборки
+
+| Критерий | DinD (`docker:dind`) | DooD (socket mount) | Kaniko |
+| :--- | :--- | :--- | :--- |
+| **Изоляция** | Полная | Отсутствует | Полная |
+| **Привилегии** | `--privileged` | Нет | Нет |
+| **Безопасность** | Низкая | Низкая | Высокая |
+| **Производительность** | Средняя (-10–30%) | Высокая | Высокая |
+| **Кэширование образов** | Внутреннее | На хосте | В реестре |
+| **Запуск контейнеров** | Да | Да | Нет (только сборка) |
 
 ### Преимущества
 
@@ -107,6 +118,6 @@ build-image-with-cache:
 
 ## Дополнительная информация
 
-- **[GitLab CI Tutorials](../../CI-CD/GitLab_CI/Tutorials/)** — руководства по GitLab CI
-- **[Docker Swarm CI/CD](../../Docker_swarm/CI_CD/overview.md)** — развертывание в Swarm
-- **[Security Overview](../Docker_security/overview.md)** — безопасность сборки
+- **[GitLab CI Tutorials](../../CI-CD/GitLab_CI/Tutorials/)** — руководства по GitLab CI.
+- **[Docker Swarm CI/CD](../../Docker_swarm/CI_CD/overview.md)** — развертывание в Swarm.
+- **[Security Overview](../Docker_security/overview.md)** — безопасность сборки.

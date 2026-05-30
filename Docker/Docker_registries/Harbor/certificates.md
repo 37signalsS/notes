@@ -2,149 +2,148 @@
 
 ## Определения
 
-* **Центр сертификации (CA, Certificate Authority)**: Доверенный источник, который выпускает и подписывает цифровые сертификаты. Все клиенты, доверяющие CA, автоматически доверяют его подписанным сертификатам.
-* **Сертификат сервера**: Цифровой сертификат, который удостоверяет подлинность сервера Harbor и обеспечивает шифрование трафика по HTTPS/TLS.
-* **CSR (Certificate Signing Request)**: Запрос на подпись сертификата, содержащий информацию о сервере и его публичный ключ.
-* **SAN (Subject Alternative Name)**: Расширение сертификата, позволяющее указать несколько доменных имён и IP-адресов, для которых действителен сертификат.
+* **Центр сертификации (CA, Certificate Authority)**: Доверенный источник (якорь доверия), выпускающий цифровые сертификаты. Клиенты, доверяющие корневому CA, автоматически доверяют всем им подписанным сертификатам.
+* **Сертификат сервера (CRT)**: Публичный документ, удостоверяющий подлинность сервера Harbor и обеспечивающий шифрование трафика по протоколу HTTPS/TLS.
+* **Приватный ключ (Key)**: Секретный файл, используемый сервером для расшифровки трафика и установки защищенного соединения. Требует максимальной защиты.
+* **Запрос на подпись (CSR, Certificate Signing Request)**: Файл-заявка, содержащий открытый ключ и данные организации, передаваемый в CA для выпуска итогового сертификата.
+* **SAN (Subject Alternative Name)**: Расширение сертификата X.509, позволяющее защитить несколько доменных имен или IP-адресов одним сертификатом. Современные браузеры и Docker требуют наличия SAN.
 
 ## Основные концепции
 
-Для обеспечения доверия хостов к репозиторию Harbor необходимо создать собственный центр сертификации (CA) и выпустить подписанные им серверные сертификаты. Этот подход применяется в закрытых контурах (без доступа к публичным CA) или для внутренних сервисов компании.
+Для работы Harbor по HTTPS в закрытых контурах (без доступа к публичным центрам сертификации вроде Let's Encrypt) необходимо создать собственный частный CA.
 
-**Процесс включает:**
+### Методы выпуска
 
-1. Создание корневого CA (ключ и сертификат).
-2. Генерация серверного ключа и CSR для Harbor.
-3. Подпись серверного сертификата корневым CA.
-4. Распространение корневого CA на все клиентские хосты.
+| Метод | Описание | Применение |
+| :--- | :--- | :--- |
+| **Быстрый** | Прямая подпись через `openssl x509`. Не требует базы данных. | Тестовые среды, быстрая настройка. |
+| **Формальный** | Использование структуры директорий, базы `index.txt` и серийных номеров. | Production, необходимость отзыва (CRL). |
 
-**Требования к сертификату Harbor:**
+Подробное сравнение методов и теорию PKI см. в **[Обзоре одноуровневого CA](../../../Security/Tools/openssl_ca/single_tier/overview.md)**.
 
-* **CN (Common Name)**: Должен совпадать с доменным именем Harbor (`hostname` из `harbor.yml`).
-* **SAN**: Должен включать как доменное имя (DNS), так и IP-адрес сервера.
-* **Срок действия**: Рекомендуется 2–3 года (730–1095 дней) для серверного сертификата, 5–10 лет для корневого CA.
+### Требования к сертификату Harbor
+
+1. **Соответствие Hostname**: Поле `CN` (Common Name) или `DNS` в SAN должно в точности совпадать с параметром `hostname` из `harbor.yml`.
+2. **Наличие SAN**: Обязательно укажите как доменное имя, так и IP-адрес сервера в расширении SAN, иначе Docker может выдать ошибку `x509: certificate relies on legacy Common Name field`.
+3. **Цепочка доверия**: Для корректной работы `docker push/pull` корневой сертификат CA (`root-ca.crt`) должен быть установлен в системное хранилище всех клиентских хостов.
 
 ## Практические сценарии
 
-### 1. Создание корневого CA
+Ниже приведен «Быстрый метод» создания сертификатов, адаптированный для Harbor.
 
-Создаём директорию для хранения сертификатов:
+### 1. Подготовка и создание корневого CA
 
-```bash
-sudo mkdir -p ~/harbor/certs
-cd ~/harbor/certs
-```
-
-Генерируем ключ и сертификат корневого CA:
+Создайте рабочую директорию и сгенерируйте корневой ключ и сертификат, которыми будут подписываться все остальные сертификаты.
 
 ```bash
-# Root CA key (4096 бит)
+mkdir -p ~/harbor/certs && cd ~/harbor/certs
+
+# Генерируем ключ корневого CA (4096 бит)
 openssl genrsa -out root-ca.key 4096
 
-# Root CA cert (срок 10 лет)
+# Генерируем самоподписанный сертификат CA (срок 10 лет)
 openssl req -x509 -new -nodes -sha256 -days 3650 \
   -key root-ca.key -out root-ca.crt \
-  -subj "/C=RU/ST=Moscow/L=Moscow/O=HomeLab/OU=ITZM/CN=My-Root-CA"
+  -subj "/C=RU/ST=Moscow/L=Moscow/O=HomeLab/CN=My-Internal-Root-CA"
+
+# → root-ca.crt, root-ca.key
 ```
 
-### 2. Создание серверного сертификата Harbor
+### 2. Генерация серверного сертификата для Harbor
 
-Задаём переменные (измените под вашу инфраструктуру):
+Задайте переменные окружения для автоматизации процесса (замените значения на актуальные для вашей сети).
 
 ```bash
 export HARBOR_HOST=harbor.example.local
-export MyIP=2.2.2.2
+export HARBOR_IP=192.168.1.50
 ```
 
-Генерируем серверный ключ и CSR с SAN:
+Создайте конфигурационный файл для CSR, включающий расширения SAN:
 
 ```bash
-# Server key
+# Генерация серверного ключа
 openssl genrsa -out ${HARBOR_HOST}.key 4096
 
-# CSR config с SAN
-cat > ${HARBOR_HOST}.csr.cnf <<EOF
+# Создание конфигурации SAN
+cat > ${HARBOR_HOST}.cnf <<EOF
 [req]
-default_bits       = 4096
-prompt             = no
-default_md         = sha256
+prompt = no
 distinguished_name = dn
-req_extensions     = req_ext
+req_extensions = v3_req
 
 [dn]
-C=RU
-ST=Moscow
-L=Moscow
-O=HomeLab
-OU=ITZM
-CN=${HARBOR_HOST}
+C = RU
+ST = Moscow
+L = Moscow
+O = HomeLab
+CN = ${HARBOR_HOST}
 
-[req_ext]
+[v3_req]
 subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = ${HARBOR_HOST}
-IP.1  = ${MyIP}
+IP.1  = ${HARBOR_IP}
 EOF
 
-# Create CSR
-openssl req -new -key ${HARBOR_HOST}.key -out ${HARBOR_HOST}.csr -config ${HARBOR_HOST}.csr.cnf
+# Создание запроса (CSR)
+openssl req -new -key ${HARBOR_HOST}.key -out ${HARBOR_HOST}.csr -config ${HARBOR_HOST}.cnf
 
-# Sign server cert by our CA (срок 2.25 года / 825 дней)
+# Подпись серверного сертификата вашим CA (срок 2 года)
 openssl x509 -req -in ${HARBOR_HOST}.csr -CA root-ca.crt -CAkey root-ca.key -CAcreateserial \
-  -out ${HARBOR_HOST}.crt -days 825 -sha256 \
-  -extensions req_ext -extfile ${HARBOR_HOST}.csr.cnf
+  -out ${HARBOR_HOST}.crt -days 730 -sha256 \
+  -extensions v3_req -extfile ${HARBOR_HOST}.cnf
+
+# → harbor.example.local.crt, harbor.example.local.key
 ```
 
-**Результат:**
+Подробнее о параметрах подписи см. в **[Быстром методе выпуска](../../../Security/Tools/openssl_ca/single_tier/quick_method.md)**.
 
-* `root-ca.crt` — корневой сертификат для распространения на клиентские хосты.
-* `${HARBOR_HOST}.crt` и `${HARBOR_HOST}.key` — серверные сертификаты для Harbor.
+### 3. Установка доверия на клиентских хостах
 
-### 3. Распространение корневого CA на клиентские хосты
+Чтобы Docker-демон доверял вашему Harbor, скопируйте `root-ca.crt` на все узлы и обновите системное хранилище.
 
-Скопируйте `root-ca.crt` на все хосты, которые будут взаимодействовать с Harbor.
-
-**Ubuntu/Debian:**
-
+**Ubuntu / Debian:**
 ```bash
-sudo cp root-ca.crt /usr/local/share/ca-certificates/
+sudo cp root-ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
 sudo update-ca-certificates
+# → Updating certificates in /etc/ssl/certs... 1 added, 0 removed; done.
 ```
 
-**CentOS/RHEL:**
-
+**RHEL / CentOS / Fedora:**
 ```bash
-sudo cp root-ca.crt /etc/pki/ca-trust/source/anchors/
+sudo cp root-ca.crt /etc/pki/ca-trust/source/anchors/harbor-ca.crt
 sudo update-ca-trust extract
 ```
 
-**После установки:** Перезапустите Docker на хостах:
-
+**ВАЖНО:** После обновления хранилища необходимо перезапустить Docker:
 ```bash
-systemctl restart docker.service
+sudo systemctl restart docker
 ```
 
 ## Дополнительная информация
 
-### Размещение сертификатов
+### Использование в Harbor
 
-Для установки Harbor скопируйте серверные сертификаты в директорию, указанную в `harbor.yml`:
+При установке укажите пути к сгенерированным файлам в `harbor.yml`:
 
 ```yaml
 https:
-  certificate: /opt/harbor/harbor.example.local.crt
-  private_key: /opt/harbor/harbor.example.local.key
+  port: 443
+  certificate: /opt/harbor/certs/harbor.example.local.crt
+  private_key: /opt/harbor/certs/harbor.example.local.key
 ```
 
-Подробности настройки Harbor см. в [установке Harbor](./installation.md).
+Инструкции по редактированию конфигурации см. в **[Установке Harbor](./installation.md)**.
 
-### Безопасность ключей
+### Безопасность
 
-* **Ключ корневого CA (`root-ca.key`)**: Храните в безопасном месте, используйте только для подписи новых сертификатов.
-* **Серверный ключ**: Защищайте правами доступа `chmod 600`.
+* **Защита ключей**: Приватный ключ сервера должен иметь права доступа `600` (`chmod 600 *.key`).
+* **Хранение Root CA**: Никогда не передавайте `root-ca.key` по сети и не храните его на сервере Harbor без крайней необходимости. Он нужен только в момент подписи.
 
-### Альтернативные подходы
+### Связанные документы
 
-* **cert-manager в Kubernetes**: Для кластеров Kubernetes рекомендуется использовать [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) для автоматического выпуска TLS-сертификатов.
-* **Публичные CA**: Для публично доступных сервисов используйте доверенные публичные CA (Let's Encrypt, DigiCert).
+* **[Установка Harbor](./installation.md)** — применение сертификатов в конфигурации.
+* **[Работа с Harbor](./usage.md)** — аутентификация и работа с образами.
+* **[Настройка одноуровневого CA](../../../Security/Tools/openssl_ca/single_tier/ca_setup.md)** — формальный метод с базой данных.
+* **[Диагностика SSL](../../../Security/Tools/ssl_certificate_diagnostics.md)** — проверка цепочек и поиск ошибок TLS.

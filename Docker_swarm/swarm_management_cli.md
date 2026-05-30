@@ -1,126 +1,110 @@
-# Docker Swarm: CLI Reference
+# Docker Swarm: Справочник CLI
 
 ## Определения
 
-**CLI (Command Line Interface)** — интерфейс командной строки Docker для управления Swarm-кластером. Все команды выполняются через `docker <subcommand>`.
+**CLI (Command Line Interface, интерфейс командной строки)** — основной инструмент Docker для управления Swarm-кластером. Все операции выполняются через подкоманды `docker`.
 
-**Manager CLI context** — контекст выполнения команд: большинство команд управления кластером доступны только с узлов-менеджеров.
+**Контекст выполнения (Manager CLI context)** — область действия команд; большинство операций по управлению кластером (node, service, stack) доступны только на узлах с ролью менеджера.
 
 ## Базовые концепции
 
-### Иерархия команд
+### Иерахия команд
 
-Команды управления Swarm организованы по уровням:
+Команды управления Swarm организованы логически по уровням абстракции:
 
-| Уровень | Команда | Описание |
+| Уровень | Команда | Назначение |
 |---|---|---|
-| Кластер | `docker swarm` | Инициализация, присоединение, покидание кластера |
-| Узлы | `docker node` | Управление узлами (роли, статус, удаление) |
-| Сервисы | `docker service` | Создание, масштабирование, обновление сервисов |
-| Стек | `docker stack` | Развертывание многоконтейнерных приложений |
-| Сети | `docker network` | Управление overlay-сетями |
-| Секреты | `docker secret` | Управление секретами |
-| Конфигурации | `docker config` | Управление конфигурациями |
+| Кластер | `docker swarm` | Инициализация, присоединение и настройка параметров кластера |
+| Узлы | `docker node` | Управление жизненным циклом узлов (роли, статусы, удаление) |
+| Сервисы | `docker service` | Создание, масштабирование и обновление отдельных сервисов |
+| Стеки | `docker stack` | Развертывание многоконтейнерных приложений (stacks) |
+| Сети | `docker network` | Управление оверлейными сетями (overlay networks) |
+| Секреты | `docker secret` | Управление чувствительными данными |
+| Конфигурации | `docker config` | Управление файлами конфигураций |
 
-### Требования к выполнению
+### Требования к правам доступа
 
-- **Менеджер:** Команды `swarm`, `node`, `secret`, `config` требуют роли менеджера
-- **Любой узел:** Команды `service ps`, `network inspect` доступны на всех узлах
-- **CLI context:** Для удаленного управления используйте `docker context` (см. **[CI_CD/swarm_setup.md](./CI_CD/swarm_setup.md)**)
+- **Роль менеджера:** Команды `swarm`, `node`, `secret`, `config` и `stack` требуют выполнения на узле-менеджере.
+- **Любой узел:** Команды `service ps` или `network inspect` доступны для чтения на всех узлах (при наличии прав на Docker socket).
+- **Дистанционное управление:** Для управления кластером с локальной машины рекомендуется использовать `docker context` (проброс SSH на менеджер).
 
 ## Практические сценарии
 
-### Инициализация кластера
+### Инициализация и расширение кластера
 
 #### Создание Swarm-кластера
-
-```sh
-# Инициализация на менеджере
+```bash
+# Инициализация первого менеджера
 docker swarm init --advertise-addr <MANAGER-IP>
 ```
-
-**Параметры:**
-
-- `--advertise-addr` — IP-адрес для связи с другими узлами (обязательно для многохостовых конфигураций)
-- `--listen-addr` — адрес прослушивания (по умолчанию `:2377`)
+**Ключевые параметры:**
+- `--advertise-addr` — IP-адрес, который будет анонсирован другим узлам для связи (обязателен, если у хоста несколько интерфейсов).
+- `--listen-addr` — адрес и порт, которые слушает демон Swarm (по умолчанию `:2377`).
 
 #### Присоединение узлов
-
-```sh
-# Получить токен для worker
+```bash
+# Получение команды с токеном для рабочих узлов (workers)
 docker swarm join-token worker
 
-# Получить токен для manager
+# Получение команды с токеном для менеджеров
 docker swarm join-token manager
 
-# Присоединиться к кластеру (на рабочем узле)
+# Выполнение на целевом узле
 docker swarm join --token <TOKEN> <MANAGER-IP>:2377
 ```
 
-#### Вывод из кластера
-
-```sh
-# Покинуть кластер (рабочий узел)
+#### Вывод узлов из кластера
+```bash
+# На рабочем узле (добровольный выход)
 docker swarm leave
 
-# Покинуть кластер (менеджер, требует --force)
+# На менеджере (требует принудительного подтверждения)
 docker swarm leave --force
 
-# Принудительно удалить узел (с менеджера)
+# Удаление записи об узле из списка кластера (на менеджере)
 docker node rm <NODE-ID>
 ```
 
-### Управление узлами
+### Управление узлами кластера
 
-#### Просмотр информации
-
-```sh
-# Список узлов
+#### Информация об узлах
+```bash
+# Список всех узлов в кластере
 docker node ls
 
-# Детальная информация об узле
+# Детальные данные об узле в читаемом формате
 docker node inspect --pretty <NODE-ID>
 
-# Задачи на узле
+# Список задач (контейнеров), запущенных на конкретном узле
 docker node ps <NODE-ID>
 ```
 
-#### Изменение ролей
-
-```sh
-# Повысить worker до manager
+#### Изменение ролей и статусов
+```bash
+# Повышение рабочего узла до менеджера
 docker node promote <NODE-ID>
 
-# Понизить manager до worker
+# Понижение менеджера до рабочего узла
 docker node demote <NODE-ID>
-```
 
-**Важно:** Изменение ролей менеджеров может временно повлиять на кворум.
-
-#### Дренаж узла (обслуживание)
-
-```sh
-# Пометить узел как недоступный
+# Перевод узла в режим обслуживания (задачи будут перенесены)
 docker node update --availability drain <NODE-ID>
 
-# Вернуть узел в строй
+# Возврат узла в активное состояние
 docker node update --availability active <NODE-ID>
 ```
 
-Задачи с drained-узла автоматически перемещаются на другие узлы.
+### Управление сервисами Swarm
 
-### Управление сервисами
-
-#### Создание сервиса
-
-```sh
-# Базовый сервис
+#### Создание и конфигурация
+```bash
+# Базовый запуск сервиса
 docker service create --name web --replicas 3 nginx:1.26.3
 
-# С публикацией портов
+# Запуск с публикацией портов (Routing Mesh)
 docker service create --name web --publish 80:80 --replicas 3 nginx:1.26.3
 
-# С ограничениями ресурсов
+# Ограничение ресурсов
 docker service create --name app \
   --reserve-memory 512m \
   --limit-memory 1g \
@@ -128,196 +112,94 @@ docker service create --name app \
   --limit-cpu 1.0 \
   myapp:latest
 
-# С placement constraints
+# Установка ограничений размещения (placement constraints)
 docker service create --name db \
   --constraint 'node.labels.type == database' \
   postgres:15
 ```
 
-#### Мониторинг сервисов
-
-```sh
-# Список сервисов
+#### Мониторинг и масштабирование
+```bash
+# Список активных сервисов
 docker service ls
 
-# Задачи сервиса (распределение по узлам)
+# Проверка распределения реплик по узлам
 docker service ps <SERVICE_NAME>
 
-# Журналы сервиса
-docker service logs <SERVICE_NAME>
+# Просмотр логов сервиса (агрегированных со всех реплик)
+docker service logs -f <SERVICE_NAME>
 
-# Журналы с деталями
-docker service logs --follow --details <SERVICE_NAME>
-```
-
-#### Масштабирование
-
-```sh
-# Изменить количество реплик
+# Масштабирование (изменение количества реплик)
 docker service scale web=10
-
-# Масштабирование нескольких сервисов
-docker service scale web=10 api=5 db=3
 ```
 
-#### Обновление (Rolling Update)
-
-```sh
-# Обновить образ
+#### Обновление и откат (Rolling Update)
+```bash
+# Обновить образ сервиса
 docker service update --image nginx:1.27 web
 
-# С параметрами обновления
+# Обновление с контролем процесса
 docker service update \
   --image myapp:v2 \
   --update-parallelism 2 \
-  --update-delay 30s \
+  --update-delay 10s \
   --update-failure-action rollback \
   my-service
 
-# Откат к предыдущей версии
+# Быстрый откат к предыдущей конфигурации
 docker service rollback my-service
 ```
 
-**Параметры обновления:**
+### Работа со стеками (Stacks)
 
-- `--update-parallelism` — количество реплик, обновляемых одновременно
-- `--update-delay` — задержка между группами обновлений
-- `--update-failure-action` — действие при ошибке (`continue`, `pause`, `rollback`)
+Стеки позволяют развертывать приложения на основе файлов `docker-compose.yml`.
 
-#### Удаление сервиса
-
-```sh
-docker service rm <SERVICE_NAME>
-```
-
-### Развертывание стеков
-
-#### Деплой стека
-
-```sh
-# Развернуть стек из docker-compose.yml
+```bash
+# Развертывание или обновление стека
 docker stack deploy -c docker-compose.yml myapp
 
-# Проверить стек
+# Просмотр состояния стека
 docker stack ls
-docker stack ps myapp
 docker stack services myapp
-```
 
-#### Удаление стека
-
-```sh
+# Удаление всего стека (сервисов и сетей)
 docker stack rm myapp
 ```
 
-**Важно:** `docker stack rm` не удаляет сети и volumes, созданные стеком.
+### Сетевое взаимодействие
+Подробности реализации оверлейных сетей в **[swarm_networking.md](./swarm_networking.md)**.
 
-### Управление сетями
-
-```sh
-# Создать overlay-сеть
+```bash
+# Создание сети для межхостового взаимодействия
 docker network create --driver=overlay my-network
 
-# Создать сеть с шифрованием
-docker network create --driver=overlay --opt encrypted my-network
-
-# Список сетей
-docker network ls
-
-# Инспекция сети
-docker network inspect my-network
+# Создание зашифрованной сети (IPsec)
+docker network create --driver=overlay --opt encrypted secure-net
 ```
 
-### Секреты и конфигурации
-
-#### Секреты
-
-```sh
-# Создать секрет из файла
-echo "password123" | docker secret create db_password -
-
-# Создать секрет из файла
-docker secret create api_key ./api_key.txt
-
-# Список секретов
-docker secret ls
-
-# Удалить секрет
-docker secret rm db_password
-```
-
-#### Конфигурации
-
-```sh
-# Создать конфигурацию
-docker config create app_config ./config.yaml
-
-# Список конфигураций
-docker config ls
-
-# Удалить конфигурацию
-docker config rm app_config
-```
-
+### Управление секретами и конфигурациями
 Подробное руководство — в **[swarm_secrets_configs.md](./swarm_secrets_configs.md)**.
 
-### Отладка и диагностика
+```bash
+# Создание секрета
+echo "password123" | docker secret create db_password -
 
-#### Информация о кластере
-
-```sh
-# Информация о Swarm
-docker info | grep -A 10 "Swarm"
-
-# Версия Docker
-docker version
-
-# Статус кластера
-docker node ls
-```
-
-#### Проверка связности
-
-```sh
-# Проверка DNS (из контейнера)
-docker run --rm alpine nslookup <SERVICE_NAME>
-
-# Проверка сети
-docker run --rm alpine ping <SERVICE_NAME>
-```
-
-#### Журналы
-
-```sh
-# Журналы сервиса
-docker service logs --follow <SERVICE>
-
-# Журналы с timestamp
-docker service logs --timestamps <SERVICE>
-
-# Последние N строк
-docker service logs --tail 100 <SERVICE>
+# Создание конфигурации из файла
+docker config create app_conf ./config.yaml
 ```
 
 ## Дополнительная информация
 
-### Сводная таблица команд
+### Диагностика кластера
 
 | Задача | Команда |
 |---|---|
-| Инициализация | `docker swarm init` |
-| Присоединение | `docker swarm join --token <TOKEN> <IP>:2377` |
-| Список узлов | `docker node ls` |
-| Список сервисов | `docker service ls` |
-| Масштабирование | `docker service scale <svc>=<N>` |
-| Обновление | `docker service update --image <img> <svc>` |
-| Деплой стека | `docker stack deploy -c <file> <name>` |
-| Журналы | `docker service logs <svc>` |
+| Статус Swarm на текущем узле | `docker info \| grep Swarm` |
+| Поиск ошибок планировщика | `docker service ps --no-trunc <svc>` |
+| Проверка событий кластера | `docker events --filter type=node` |
+| Просмотр версии и API | `docker version` |
 
-### Связанные документы
-
-- **Обзор Docker Swarm** — **[docker_swarm_overview.md](./docker_swarm_overview.md)**
-- **Основные концепции** — **[swarm_core_concepts.md](./swarm_core_concepts.md)**
-- **Секреты и конфигурации** — **[swarm_secrets_configs.md](./swarm_secrets_configs.md)**
-- **Продвинутые темы** — **[swarm_advanced_topics.md](./swarm_advanced_topics.md)**
-- **Настройка CI/CD** — **[CI_CD/swarm_setup.md](./CI_CD/swarm_setup.md)**
+### Смотрите также
+- **[Основные концепции Docker Swarm](./swarm_core_concepts.md)**
+- **[Секреты и конфигурации в Swarm](./swarm_secrets_configs.md)**
+- **[Сетевое взаимодействие в Swarm](./swarm_networking.md)**

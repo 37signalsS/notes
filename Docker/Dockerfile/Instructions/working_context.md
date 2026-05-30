@@ -1,16 +1,16 @@
-# Инструкции Dockerfile: Рабочий Контекст
+# Инструкции Dockerfile: WORKDIR и SHELL
 
 ## Определения
 
-**`WORKDIR`** — инструкция Dockerfile, устанавливающая текущий рабочий каталог для всех последующих инструкций `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`.
+**`WORKDIR`** — инструкция Dockerfile, устанавливающая текущий рабочий каталог для всех последующих инструкций `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`. Она действует аналогично команде `cd` в командной строке, но сохраняется для всех последующих этапов сборки.
 
-**`SHELL`** — инструкция Dockerfile, определяющая оболочку по умолчанию для выполнения команд в инструкциях `RUN`, `CMD` и `ENTRYPOINT` в формате shell.
+**`SHELL`** — инструкция Dockerfile, позволяющая переопределить оболочку (shell) по умолчанию, которая используется для выполнения команд в инструкциях `RUN`, `CMD` и `ENTRYPOINT` (в формате shell).
 
 ## Основные концепции
 
-### `WORKDIR`
+### Рабочая директория: WORKDIR
 
-Устанавливает текущий рабочий каталог. Если каталог не существует, он будет создан автоматически.
+Инструкция устанавливает контекст выполнения для команд. Если указанная директория не существует, Docker создаст ее автоматически (даже если она не используется в последующих командах).
 
 **Синтаксис:**
 
@@ -18,146 +18,134 @@
 WORKDIR /path/to/directory
 ```
 
-**Поведение:**
+**Особенности поведения:**
 
-| Характеристика | Описание |
-| :--- | :--- |
-| **Создание директории** | Автоматически создаёт, если не существует |
-| **Количество использований** | Может использоваться несколько раз в Dockerfile |
-| **Типы путей** | Поддерживает абсолютные и относительные пути |
-| **Разрешение относительных путей** | Относительно предыдущего `WORKDIR` |
-| **Переменные окружения** | Поддерживает подстановку `$VAR` и `${VAR}` |
+- **Абсолютные и относительные пути:** Если путь относительный, он будет разрешен относительно пути предыдущей инструкции `WORKDIR`.
+- **Множественное использование:** Можно использовать несколько раз. Пути будут накапливаться, если они относительные.
+- **Переменные окружения:** Поддерживает подстановку переменных, определенных через `ENV`.
 
-**Пример с последовательными `WORKDIR`:**
+**Пример накопления путей:**
 
 ```dockerfile
 WORKDIR /a
 WORKDIR b
 WORKDIR c
-RUN pwd  # Вывод: /a/b/c
+RUN pwd
+# Результат: /a/b/c
 ```
 
 **Пример с переменными окружения:**
 
 ```dockerfile
-ENV DIRPATH=/path
-ENV DIRNAME=app
-WORKDIR $DIRPATH/$DIRNAME
-RUN pwd  # Вывод: /path/app
+ENV APP_DIR=/usr/src/app
+WORKDIR $APP_DIR
+RUN pwd
+# Результат: /usr/src/app
 ```
 
-> **Важно:** По умолчанию рабочая директория — `/`. Всегда явно устанавливайте `WORKDIR` для предсказуемости сборки.
+> **Важно:** По умолчанию рабочей директорией в образе является корень (`/`). Рекомендуется всегда явно устанавливать `WORKDIR` для обеспечения предсказуемости путей и чистоты файловой системы.
 
-### `SHELL`
+### Оболочка выполнения: SHELL
 
-Позволяет переопределить оболочку по умолчанию (`/bin/sh -c` для Linux).
+Инструкция полезна, когда в образе установлено несколько оболочек (например, `sh`, `bash`, `zsh`) или когда требуется изменить параметры выполнения команд.
 
 **Синтаксис:**
 
 ```dockerfile
-SHELL ["/bin/bash", "-c"]
+SHELL ["executable", "parameters"]
 ```
 
-**Поведение:**
+**Особенности поведения:**
 
-| Характеристика | Описание |
-| :--- | :--- |
-| **Формат** | Требует JSON array (exec form) |
-| **Применение** | К последующим инструкциям в shell form |
-| **Не влияет на** | Инструкции в exec form (`CMD ["..."]`, `ENTRYPOINT ["..."]`) |
-| **По умолчанию** | `/bin/sh -c` (Linux), `cmd /S /C` (Windows) |
+- **Формат:** Инструкция должна быть написана в формате JSON-массива (exec form).
+- **Область действия:** Влияет на все последующие инструкции `RUN`, `CMD` и `ENTRYPOINT`, которые написаны в формате строки (shell form).
+- **Платформенные значения по умолчанию:** 
+    - Linux: `["/bin/sh", "-c"]`
+    - Windows: `["cmd", "/S", "/C"]`
 
-**Пример PowerShell на Windows:**
+**Пример переключения на bash:**
+
+```dockerfile
+SHELL ["/bin/bash", "-c"]
+# Теперь RUN будет использовать специфичные для bash конструкции (например, [[ ... ]])
+RUN if [[ -d /app ]]; then echo "exists"; fi
+```
+
+**Пример для Windows (PowerShell):**
 
 ```dockerfile
 SHELL ["powershell", "-Command"]
-RUN Write-Host 'Hello, World!'
+RUN New-Item -ItemType Directory -Path C:\Data
 ```
-
-**Пример с bash-специфичными конструкциями:**
-
-```dockerfile
-SHELL ["/bin/bash", "-c"]
-RUN if [[ -f /etc/os-release ]]; then \
-      cat /etc/os-release; \
-    fi
-```
-
-> **Важно:** `SHELL` влияет только на shell form инструкций. Exec form (`["command", "arg"]`) выполняется напрямую без оболочки.
 
 ## Практические сценарии
 
-### Сценарий 1: Node.js приложение
+### Сценарий 1: Стандартное приложение Node.js
+
+Типовой паттерн организации кода внутри контейнера.
 
 ```dockerfile
 FROM node:20-alpine
+# Создаем рабочую директорию и переходим в нее
 WORKDIR /app
+# Копируем файлы зависимостей в текущую директорию (.)
 COPY package*.json ./
 RUN npm install
+# Копируем остальной код
 COPY . .
 CMD ["node", "index.js"]
 ```
 
 ### Сценарий 2: Многоэтапная сборка Go
 
-```dockerfile
-FROM golang:1.22 AS builder
-WORKDIR /app
-COPY . .
-RUN CGO_ENABLED=0 go build -o main .
+Использование `WORKDIR` для изоляции процессов сборки и финального запуска.
 
+```dockerfile
+# Этап сборки
+FROM golang:1.22 AS builder
+WORKDIR /build
+COPY . .
+RUN CGO_ENABLED=0 go build -o app .
+
+# Финальный образ
 FROM scratch
 WORKDIR /
-COPY --from=builder /app/main .
-ENTRYPOINT ["/main"]
+COPY --from=builder /build/app .
+ENTRYPOINT ["/app"]
 ```
 
-### Сценарий 3: Использование SHELL для сложных команд
+### Сценарий 3: Использование SHELL для обработки ошибок (Linux)
+
+Установка флага `pipefail` через `SHELL` позволяет сборке упасть, если любая часть конвейера команд (pipeline) завершилась с ошибкой.
 
 ```dockerfile
-SHELL ["/bin/bash", "-c"]
-RUN echo "Hello" >> /file.txt && \
-    cat /file.txt
+FROM ubuntu:24.04
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Если wget упадет, сборка прервется, несмотря на наличие пайпа в grep
+RUN wget -O - http://example.com | grep "Success"
 ```
 
-### Сценарий 4: Python-приложение с виртуальным окружением
+### Сценарий 4: Сложная структура Python-проекта
 
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install -r requirements.txt
-ENV PATH="/opt/venv/bin:$PATH"
-COPY . .
-CMD ["python", "app.py"]
-```
-
-### Сценарий 5: Windows-контейнер с PowerShell
-
-```dockerfile
-FROM mcr.microsoft.com/windows/nanoserver:ltsc2022
-SHELL ["powershell", "-Command"]
-RUN New-Item -Path C:\app -ItemType Directory -Force
-WORKDIR C:\app
-COPY . .
-CMD ["pwsh", "-File", "app.ps1"]
-```
-
-### Сценарий 6: Организация структуры проекта
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
+RUN pip install --no-cache-dir -r requirements.txt
+# Переключаемся в подкаталог для запуска тестов или специфичных модулей
 WORKDIR /app/src
-COPY src/ ./src
-WORKDIR /app/tests
-COPY tests/ ./tests
-CMD ["npm", "test"]
+COPY src/ .
+CMD ["python", "main.py"]
 ```
 
 ## Дополнительная информация
 
-Рекомендуется всегда использовать `WORKDIR` вместо абсолютных путей в `COPY` или `RUN` — это делает Dockerfile более читаемым и переносимым. `WORKDIR` автоматически создаёт директорию, если она не существует. Подробнее об оптимизации см. **[Оптимизация сборки](../Docker_best_practices/build_optimization.md)**.
+- **Избегайте `cd`:** Использование `RUN cd /path && command` не меняет рабочую директорию для следующей инструкции `RUN`. Всегда используйте `WORKDIR`.
+- **Идемпотентность:** `WORKDIR` гарантирует создание директории, что избавляет от необходимости писать `RUN mkdir -p`.
+- **Multi-stage:** При переходе между стадиями сборки (`FROM`) значение `WORKDIR` сбрасывается к значению по умолчанию (`/`).
+
+**Связанные разделы:**
+
+- **[Оптимизация сборки Docker-образов](../Docker_best_practices/build_optimization.md)** — общие принципы эффективного написания Dockerfile.
+- **[Инструкции выполнения: CMD и ENTRYPOINT](./runtime_execution.md)** — подробнее о формах записи команд (shell vs exec).
+- **[Контекст сборки и .dockerignore](../dockerfile_build_context.md)** — как `WORKDIR` взаимодействует с путями копирования.

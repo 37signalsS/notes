@@ -80,6 +80,6 @@ kompose convert -o -
 
 ## Дополнительная информация
 
-- **[Docker Compose](../Docker_compose/docker_compose_file_example.md)** — примеры файлов Compose
-- **[Kubernetes Overview](../../Kubernetes/kubernetes_overview.md)** — основы Kubernetes
-- **[Kustomize](../../Kubernetes/ToolsUtilities/kustomize/)** — альтернативный инструмент управления манифестами
+- **[Docker Compose](../../Docker/Docker_compose/docker_compose_file_example.md)** — примеры файлов Compose
+- **[Kubernetes — обзор](../kubernetes_overview.md)** — основы Kubernetes
+- **[Kustomize](./kustomize/)** — альтернативный инструмент управления манифестами

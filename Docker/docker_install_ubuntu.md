@@ -57,7 +57,7 @@ sudo systemctl stop docker
 sudo systemctl restart docker
 ```
 
-> **Примечание:** на production-серверах рекомендуется настраивать Docker через daemon.json, а не через флаги запуска systemd-юнита. Подробнее: [Конфигурация Docker через systemd](../docker_systemd.md).
+> **Примечание:** на production-серверах рекомендуется настраивать Docker через `daemon.json`, а не через параметры `dockerd` в systemd-юните. Подробнее о конфигурации демона: [Безопасная конфигурация демона](./Docker_security/host_daemon_hardening.md).
 
 ## Практические сценарии
 
@@ -70,7 +70,7 @@ sudo usermod -aG docker $USER
 # Перезайдите в сессию для применения
 ```
 
-> **Важно:** членство в группе `docker` эквивалентно root-доступу. В production-средах используйте [Rootless-режим](../docker-in-docker.md#rootless-docker).
+> **Важно:** членство в группе `docker` эквивалентно root-доступу. В production-средах используйте [Rootless-режим](./Docker_security/host_daemon_hardening.md#2-установка-и-запуск-rootless-docker).
 
 ### Установка конкретной версии
 
@@ -94,5 +94,4 @@ sudo apt-mark hold docker-ce docker-ce-cli containerd.io
 
 - [Команды Docker CLI](./docker_commands.md)
 - [Архитектура Docker](./docker_overview.md)
-- [Конфигурация через systemd](./docker_systemd.md)
-- [Docker Compose плагин](./Docker_compose/docker_compose_cli_commands.md)
+- [Безопасность хоста и демона](./Docker_security/host_daemon_hardening.md)

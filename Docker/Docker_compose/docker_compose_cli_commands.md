@@ -31,7 +31,12 @@
 ### Мониторинг и отладка
 
 - **`docker compose ps`**: Показывает статус контейнеров в текущем проекте.
-- **`docker compose ls`**: Отображает список всех Compose-проектов (стеков) на хосте, их статус и путь к файлам конфигурации.
+    ```bash
+    docker compose ps
+    # → NAME                IMAGE      COMMAND                  SERVICE   CREATED         STATUS         PORTS
+    # → project-web-1       web:latest "python app.py"          web       2 minutes ago   Up 2 minutes   0.0.0.0:80->80/tcp
+    ```
+- **`docker compose ls`**: Отображает список всех Compose-проектов (стеков) на хосте.
 - **`docker compose logs`**: Выводит логи сервисов.
   - `-f` / `--follow`: Вывод логов в реальном времени.
   - `--tail="50"`: Показ последних 50 строк.
@@ -52,18 +57,15 @@
   - `--rm`: Автоматически удаляет контейнер после выполнения.
   - `--no-deps`: Не запускать зависимые сервисы.
 
-> **`exec` vs `run`:** `exec` работает с **существующим**, запущенным контейнером; `run` создает **новый** контейнер для одноразовой задачи.
+> **`exec` vs `run`:** `exec` работает с **существующим** контейнером; `run` создает **новый** для разовой задачи.
 
 ### Управление образами и конфигурацией
 
 - **`docker compose build`**: Собирает или пересобирает образы для сервисов.
-  - `--no-cache`: Запрещает использование кэша сборки.
-  - `--pull`: Пытаться скачать более новые версии базовых образов.
-
 - **`docker compose pull`**: Скачивает образы для сервисов.
 - **`docker compose push`**: Отправляет (push) образы сервисов в удаленный registry.
 
-- **`docker compose config`**: Проверяет, объединяет и отображает итоговую конфигурацию проекта. Полезно для отладки переменных окружения и override-файлов.
+- **`docker compose config`**: Проверяет и отображает итоговую конфигурацию проекта. Полезно для отладки.
 
 ## Практические сценарии
 
@@ -73,14 +75,18 @@
 
 ```bash
 docker compose up -d --scale worker=3
+# → Creating project-worker-2 ... done
+# → Creating project-worker-3 ... done
 ```
 
-Подробнее о масштабировании и других продвинутых возможностях см. в [продвинутых возможностях Docker Compose](./docker_compose_advanced_topics.md).
+Детальное описание механизмов масштабирования — в [продвинутых возможностях Docker Compose](./docker_compose_advanced_topics.md).
 
 ### Тестирование в CI/CD
 
-Для интеграции с конвейерами CI/CD используйте флаги `--exit-code-from` и `--abort-on-container-exit`. Подробнее в руководстве [Использование Docker Compose для тестирования в CI/CD](./docker_compose_ci_cd_testing.md).
+Для интеграции с конвейерами CI/CD используйте флаги `--exit-code-from` и `--abort-on-container-exit`. Подробнее в руководстве [Docker Compose CI/CD Testing](./docker_compose_ci_cd_testing.md).
 
 ## Дополнительная информация
 
-Подробнее о работе с томами (`volumes`) читайте в [документации по Docker Volumes](../../Docker/Docker_fs/docker_volumes.md).
+- **[Обзор Docker Compose](./docker_compose_overview.md)** — концепции и архитектура
+- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция, профили и масштабирование
+- **[Docker Volumes](../Docker_fs/docker_volumes.md)** — глубокое погружение в работу с томами

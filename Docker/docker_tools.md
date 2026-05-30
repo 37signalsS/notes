@@ -21,8 +21,8 @@ TUI-инструменты работают через Docker API (Unix-соке
 
 **Альтернативы для анализа образов:**
 
-- **[dive](../Dockerfile/dockerfile_optimization_tools.md)** — исследование слоев образа
-- **[dockle](../Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности
+- **[dive](./Dockerfile/dockerfile_optimization_tools.md)** — исследование слоев образа
+- **[dockle](./Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности
 
 ## Практические сценарии
 

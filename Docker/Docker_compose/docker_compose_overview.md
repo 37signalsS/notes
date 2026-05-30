@@ -146,11 +146,12 @@ docker compose down
 
 > **Примечание:** данный пример упрощён для демонстрации концепции. Production-конфигурация с healthcheck, volumes, секретами и масштабированием представлена в [Примере файла compose.yml](./docker_compose_file_example.md).
 
+### Использование в CI/CD
+
+Docker Compose применяется в пайплайнах сборки для развёртывания эфемерных тестовых окружений. Он позволяет поднять необходимые зависимости (базы данных, брокеры сообщений) перед запуском интеграционных тестов. Детальный разбор: [Docker Compose CI/CD Testing](./docker_compose_ci_cd_testing.md).
+
 ## Дополнительная информация
 
-- **Команды CLI:** полный справочник команд — [Справочник команд Docker Compose](./docker_compose_cli_commands.md)
-- **Директивы:** описание всех директив `compose.yml` — [Справочник по директивам](./docker_compose_directives.md)
-- **Примеры файлов:** практические примеры стеков — [Пример файла compose.yml](./docker_compose_file_example.md)
-- **Продвинутые возможности:** интерполяция переменных, `extends`, `deploy`, масштабирование — [Продвинутые возможности Docker Compose](./docker_compose_advanced_topics.md)
-- **История версий:** эволюция формата от `docker-compose` v2/v3 к Compose Spec — [Версии Compose](./docker_compose_versions_comparison.md)
-- **Тестирование в CI/CD:** использование Compose для интеграционного тестирования — [Docker Compose CI/CD Testing](./docker_compose_ci_cd_testing.md)
+- **[Справочник команд CLI](./docker_compose_cli_commands.md)** — управление жизненным циклом стека
+- **[Справочник по директивам](./docker_compose_directives.md)** — описание структуры и синтаксиса файла `compose.yml`
+- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных, профили и масштабирование

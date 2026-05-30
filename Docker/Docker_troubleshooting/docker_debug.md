@@ -159,7 +159,7 @@ docker debug --shell zsh my-container
 # 1. Внести изменения через docker debug
 docker debug my-container
 
-# 2. Закоммитить в новый образ
+# 2. Закоммитить в новый образ (см. [docker commit](../Docker_fs/docker_commit.md))
 docker commit my-container my-container:edited
 
 # 3. (Рекомендуется) Перенести в Dockerfile

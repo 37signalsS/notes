@@ -1,217 +1,130 @@
-# Инструкции Dockerfile: Практические Сценарии
+# Инструкции Dockerfile: Практические сценарии переопределения
 
 ## Определения
 
-**Приоритет команд при запуске контейнера** — порядок, в котором `docker run` и `docker-compose.yml` переопределяют инструкции из `Dockerfile`.
+**Переопределение инструкций (Instruction Overriding)** — процесс замещения параметров, определенных в `Dockerfile` (таких как `CMD`, `ENTRYPOINT`, `USER`, `WORKDIR`, `ENV`), во время запуска контейнера с помощью аргументов командной строки или директив в файлах конфигурации.
+
+**Приоритет выполнения** — иерархия источников конфигурации, где параметры запуска (Runtime) всегда имеют преимущество над параметрами сборки (Build time).
 
 ## Основные концепции
 
-### Золотое правило переопределения
+### Золотое правило приоритетов
 
-`docker-compose.yml` (или `docker run`) всегда имеет приоритет над `Dockerfile`:
+Инструменты запуска всегда имеют приоритет над инструкциями образа:
+1. Аргументы `docker run` или параметры в `docker-compose.yml`.
+2. Инструкции в `Dockerfile`.
 
-1. `command:` в `compose.yml` (или аргументы в `docker run`) **заменяет** `CMD` из `Dockerfile`
-2. `entrypoint:` в `compose.yml` (или `--entrypoint` в `docker run`) **заменяет** `ENTRYPOINT` из `Dockerfile`
+### Таблица взаимодействия ENTRYPOINT и CMD
 
-### Таблица переопределения
+При переопределении одной из инструкций итоговая команда формируется следующим образом:
 
-| Источник | ENTRYPOINT | CMD |
-| :--- | :--- | :--- |
-| Dockerfile | `ENTRYPOINT ["/app/run"]` | `CMD ["--default"]` |
-| docker-compose.yml / docker run | `entrypoint: /app/debug` | `command: --prod` |
-| **Результат** | Переопределяется | Переопределяется |
+| Ситуация | ENTRYPOINT (Dockerfile) | CMD (Dockerfile) | Переопределение (Runtime) | Итоговая команда |
+| :--- | :--- | :--- | :--- | :--- |
+| Без переопределения | `["entry"]` | `["cmd"]` | — | `entry cmd` |
+| Переопределение CMD | `["entry"]` | `["cmd"]` | `command: ["new"]` | `entry new` |
+| Переопределение ENTRYPOINT | `["entry"]` | `["cmd"]` | `entrypoint: ["new"]` | `new` |
+| Переопределение обоих | `["entry"]` | `["cmd"]` | `EP: ["e"], CMD: ["c"]` | `e c` |
 
-### Базовое взаимодействие ENTRYPOINT и CMD
-
-| В Dockerfile | В docker-compose / docker run | Итоговая команда |
-| :--- | :--- | :--- |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | (ничего) | `/app/run --default` |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `command: --prod` | `/app/run --prod` |
-| `ENTRYPOINT ["/app/run"]` | `entrypoint: /app/debug` | `/app/debug` |
-| `ENTRYPOINT ["/app/run"]`<br>`CMD ["--default"]` | `entrypoint: /app/debug`<br>`command: --verbose` | `/app/debug --verbose` |
+> **Важно:** Переопределение `ENTRYPOINT` через флаг `--entrypoint` или директиву `entrypoint:` приводит к полной потере параметров, указанных в оригинальной инструкции `CMD` образа.
 
 ## Практические сценарии
 
-### Сценарий 1: Переопределение CMD для ping
+### Сценарий 1: Изменение цели выполнения (ping)
+
+Если образ настроен на выполнение конкретной утилиты через `ENTRYPOINT`, аргументы запуска заменяют дефолтный `CMD`.
 
 **Dockerfile:**
-
 ```dockerfile
-FROM alpine:3.20.0
+FROM alpine:3.20
 ENTRYPOINT ["ping", "-c", "3"]
 CMD ["localhost"]
 ```
 
-По умолчанию: `ping -c 3 localhost`
-
-**docker-compose.yml:**
-
-```yaml
-services:
-  pinger:
-    build: .
-    command: google.com
+**Запуск с переопределением:**
+```bash
+# Вместо localhost будет пинговаться google.com
+docker run my-ping google.com
 ```
 
-**Результат:** `ping -c 3 google.com`
+### Сценарий 2: Отладка через смену ENTRYPOINT
 
-### Сценарий 2: Отладка с переопределением ENTRYPOINT
+Для входа в контейнер, где `ENTRYPOINT` настроен на запуск приложения, используется флаг `--entrypoint`.
 
-**docker-compose.yml:**
+**Команда CLI:**
+```bash
+docker run -it --entrypoint /bin/sh my-app-image
+```
 
+**Docker Compose:**
 ```yaml
 services:
   app:
-    build: .
+    image: my-app-image
     entrypoint: /bin/sh
-    command: -c "echo debug && tail -f /dev/null"
+    command: -c "ls -la /app && sleep 3600"
 ```
 
-**docker run эквивалент:**
+### Сценарий 3: Переопределение пользователя (USER)
+
+Полезно для выполнения административных действий в контейнере, который по умолчанию запускается от непривилегированного пользователя.
 
 ```bash
-docker run --entrypoint /bin/sh my-image -c "echo debug && tail -f /dev/null"
+# Запуск от root вместо пользователя, указанного в Dockerfile
+docker run -u root my-secure-image id
 ```
 
-### Сценарий 3: Запуск тестов с переопределением CMD
+### Сценарий 4: Изменение рабочей директории (WORKDIR)
 
-**Dockerfile:**
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY . .
-RUN npm install
-CMD ["node", "server.js"]
-```
-
-**Запуск тестов:**
+Позволяет запустить команду в другом каталоге без изменения самого образа.
 
 ```bash
-docker run my-image npm test
+docker run -w /var/log my-app ls -lh
 ```
 
-**Результат:** Вместо `node server.js` выполнится `npm test`
+### Сценарий 5: Подмена переменных окружения (ENV)
 
-### Сценарий 4: Переопределение ENV переменных
-
-**Dockerfile:**
-
-```dockerfile
-FROM python:3.11-slim
-ENV APP_ENV=production
-ENV LOG_LEVEL=info
-CMD ["python", "app.py"]
-```
+Директивы запуска полностью заменяют значения переменных из `Dockerfile`.
 
 **docker-compose.yml:**
-
 ```yaml
 services:
-  app:
-    build: .
+  db:
+    image: postgres:16-alpine
     environment:
-      - APP_ENV=development
-      - LOG_LEVEL=debug
+      - POSTGRES_PASSWORD=new_secret_password # Переопределяет значение из образа
 ```
 
-**Результат:** Приложение запустится с `APP_ENV=development` и `LOG_LEVEL=debug`
+### Сценарий 6: Комбинированное переопределение в CI/CD
 
-### Сценарий 5: Переопределение WORKDIR
-
-**Dockerfile:**
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY . .
-CMD ["node", "index.js"]
-```
-
-**docker run с переопределением:**
-
-```bash
-docker run -w /app/scripts my-image node script.js
-```
-
-**Результат:** Контейнер запустится из `/app/scripts` с командой `node script.js`
-
-### Сценарий 6: Переопределение USER
-
-**Dockerfile:**
-
-```dockerfile
-FROM ubuntu
-RUN useradd -m appuser
-USER appuser
-CMD ["/bin/bash"]
-```
-
-**docker run от root:**
-
-```bash
-docker run -u root my-image
-```
-
-**Результат:** Контейнер запустится от `root`, а не от `appuser`
-
-### Сценарий 7: Комбинированное переопределение в CI/CD
-
-**Dockerfile:**
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-COPY . .
-RUN pip install -r requirements.txt
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-```
+Использование отдельного Compose-файла для запуска тестов в том же окружении, что и приложение.
 
 **compose.test.yml:**
-
 ```yaml
 services:
-  test:
-    build: .
+  sut: # System Under Test
+    image: my-app:latest
     entrypoint: pytest
-    command: tests/
+    command: tests/integration/
     environment:
-      - DJANGO_SETTINGS_MODULE=config.test
-    volumes:
-      - ./tests:/app/tests
+      - DB_HOST=test-db
 ```
 
-**Результат:** Запуск тестов вместо development-сервера
+### Сценарий 7: Использование Override-файлов
 
-### Сценарий 8: Override-файл для локальной разработки
+В Docker Compose файлы `docker-compose.override.yml` автоматически объединяются с основным файлом, переопределяя его параметры для локальной разработки.
 
-**compose.yml:**
-
+**docker-compose.override.yml:**
 ```yaml
 services:
   web:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DEBUG=false
-```
-
-**compose.override.yml:**
-
-```yaml
-services:
-  web:
-    environment:
-      - DEBUG=true
-    volumes:
-      - .:/app
     command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app # Монтирование кода для hot-reload
 ```
-
-**Результат:** При запуске `docker compose up` автоматически применится override-файл с настройками для разработки.
 
 ## Дополнительная информация
 
-Подробнее о формах записи (shell vs exec) см. **[Выполнение при запуске](./runtime_execution.md)**. О конфигурации Docker Compose читайте в **[Docker Compose file example](../../Docker_compose/docker_compose_file_example.md)** и **[Docker Compose directives](../../Docker_compose/docker_compose_directives.md)**.
+- **[Инструкции выполнения: CMD, ENTRYPOINT и USER](./runtime_execution.md)** — детальное описание механики работы инструкций внутри образа.
+- **[Директивы Docker Compose](../../Docker_compose/docker_compose_directives.md)** — справочник по переопределению параметров в YAML.
+- **[Команды Docker CLI](../../docker_commands.md)** — подробнее о флагах `-u`, `-w`, `-e` и `--entrypoint`.
+- **[Переменные окружения](./environment_variables.md)** — работа с `ENV` и `ARG`.

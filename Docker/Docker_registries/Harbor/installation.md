@@ -27,14 +27,11 @@ Harbor поддерживает два основных способа разв�
 
 ### Сценарий 1: Установка Harbor с Docker Compose
 
-#### 1. Установка Docker
+#### 1. Установка Docker и Docker Compose
 
-```bash
-apt update
-apt install -y containerd docker.io docker-compose
-systemctl enable --now docker
-usermod -aG docker $USER
-```
+Для работы Harbor требуется установленный Docker Engine и плагин Docker Compose.
+
+> **Полная инструкция:** см. SSoT-файл **[Установка Docker на Ubuntu](../../docker_install_ubuntu.md)**.
 
 #### 2. Загрузка Harbor
 
@@ -45,14 +42,21 @@ LATEST=$(curl -s https://api.github.com/repos/goharbor/harbor/releases/latest \
 
 FILE=$(basename "$LATEST")
 wget "$LATEST"
+# → Saving to: ‘harbor-offline-installer-v2.x.x.tgz’
+
 tar xvzf "$FILE"
+# → harbor/
+# → harbor/harbor.yml.tmpl
+# → harbor/install.sh
+# → ...
+
 rm "$FILE"
 cd harbor
 ```
 
 #### 3. Настройка переменных окружения
 
-Создайте файл `.env` с паролями:
+Создайте файл `.env` с паролями для подстановки в конфигурацию:
 
 ```bash
 sudo nano .env
@@ -63,22 +67,23 @@ HARBOR_ADMIN_PASSWORD=<надёжный_пароль_администратор�
 DB_PASSWORD=<надёжный_пароль_БД>
 ```
 
-Установите права доступа:
+Установите права доступа (только для текущего пользователя):
 
 ```bash
 sudo chmod 600 .env
+# → (no output)
 ```
 
 #### 4. Настройка harbor.yml
 
-Создайте резервную копию и отредактируйте конфигурацию:
+Создайте рабочий файл конфигурации из шаблона:
 
 ```bash
-cp harbor.yml harbor.yml.bak
+cp harbor.yml.tmpl harbor.yml
 sudo nano harbor.yml
 ```
 
-Минимальная конфигурация:
+**Пример минимальной конфигурации (версия 2.14.x):**
 
 ```yaml
 hostname: harbor.example.local
@@ -88,71 +93,41 @@ https:
   port: 443
   certificate: /opt/harbor/harbor.example.local.crt
   private_key: /opt/harbor/harbor.example.local.key
-harbor_admin_password: ${HARBOR_ADMIN_PASSWORD}
+# Использование переменных из .env в harbor.yml не поддерживается напрямую скриптом install.sh,
+# поэтому укажите значения явно или используйте envsubst перед запуском.
+harbor_admin_password: "admin_password_here"
 database:
-  password: ${DB_PASSWORD}
-  max_idle_conns: 200
-  max_open_conns: 100
-  conn_max_lifetime: 5m
-  conn_max_idle_time: 5m
+  password: "db_password_here"
 data_volume: /data
 trivy:
-  ignore_unfixed: false
   skip_update: true
-  skip_java_db_update: true
   offline_scan: true
-  security_check: vuln
-  insecure: false
-  timeout: 5m0s
-jobservice:
-  max_job_workers: 10
-  max_job_duration_hours: 24
-  job_loggers:
-    - STD_OUTPUT
-    - FILE
-  logger_sweeper_duration: 1
-notification:
-  webhook_job_max_retry: 3
-  webhook_job_http_client_timeout: 3
-log:
-  level: info
-  local:
-    rotate_count: 50
-    rotate_size: 200M
-    location: /var/log/harbor
-_version: 2.14.0
-proxy:
-  http_proxy:
-  https_proxy:
-  no_proxy:
-  components:
-    - core
-    - jobservice
-    - trivy
-upload_purging:
-  enabled: true
-  age: 168h
-  interval: 24h
-  dryrun: false
-cache:
-  enabled: false
-  expire_hours: 24
+# ... остальные параметры ...
 ```
 
 **Важно:** Перед запуском убедитесь, что сертификаты созданы и размещены в директории, указанной в `https.certificate` и `https.private_key` (см. [создание сертификатов](./certificates.md)).
 
 #### 5. Запуск установки
 
+Скрипт выполнит проверку системы, загрузит образы и запустит контейнеры.
+
 ```bash
 sudo ./install.sh --with-trivy
+# → [Step 0]: checking if docker is installed ...
+# → [Step 1]: checking docker-compose is installed ...
+# → ...
+# → [Step 5]: starting Harbor ...
+# → Creating harbor-log ... done
+# → ...
+# → ✔ ----Harbor has been installed and started successfully.----
 ```
 
 #### 6. Вход в веб-интерфейс
 
-Откройте `https://harbor.example.local` и войдите под учётной записью:
+Откройте `https://harbor.example.local` в браузере.
 
 * **Логин:** `admin`
-* **Пароль:** значение из `HARBOR_ADMIN_PASSWORD`
+* **Пароль:** значение, указанное в `harbor_admin_password`
 
 ---
 
@@ -160,39 +135,36 @@ sudo ./install.sh --with-trivy
 
 #### Предварительные требования
 
-* Kubernetes-кластер (например, k3s)
-* Установленный [Helm](https://helm.sh/)
-* Установленный [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) (опционально, для автоматических TLS-сертификатов)
-* Внешние PostgreSQL и Redis (рекомендуется для продакшена)
+* Kubernetes-кластер (v1.25+)
+* Установленный [Helm](https://helm.sh/) (v3.10+)
+* Установленный [cert-manager](../../../Kubernetes/ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) (опционально)
+* Внешние PostgreSQL и Redis (рекомендуется для высокодоступных сред)
 
 #### 1. Подготовка базы данных
 
-Создайте базу данных для Harbor в PostgreSQL:
+Если используется внешний PostgreSQL, создайте базу данных для Harbor:
 
 ```sql
 CREATE DATABASE harbor;
+# → CREATE DATABASE
 ```
 
-#### 2. Выбор Helm-чарта
+#### 2. Добавление репозитория Helm
 
-Рекомендуется использовать чарты от [Bitnami](https://bitnami.com/stack/harbor/helm):
+Рекомендуется использовать чарты от **Bitnami**:
 
-* Хорошо поддерживаются
-* Запуск контейнеров от non-root пользователя (безопасность)
-* Образы доступны на альтернативных реестрах (Quay.io)
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+# → "bitnami" has been added to your repositories
 
-#### 3. Конфигурация values.yaml
+helm repo update
+# → Hang tight while we grab the latest from your chart repositories...
+# → ...Successfully got an update from the "bitnami" chart repository
+```
 
-Ключевые параметры:
+#### 3. Конфигурация и развертывание через ArgoCD
 
-* **`expose.ingress`**: Ingress-ресурс для доступа к веб-интерфейсу
-* **`externalDatabase` / `externalRedis`**: Подключение к внешним сервисам
-* **`persistence`**: Persistent Volumes для хранения данных
-* **`image`**: Переопределение реестра и тегов образов
-
-#### 4. Развертывание через ArgoCD
-
-Пример манифеста `Application`:
+Пример манифеста `Application` для GitOps-подхода:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -205,7 +177,7 @@ spec:
   source:
     repoURL: 'https://charts.bitnami.com/bitnami'
     chart: harbor
-    targetRevision: 19.3.5
+    targetRevision: 19.3.x # Используйте актуальную версию чарта
     helm:
       values: |
         harborAdminPassword: "<смените_после_установки>"
@@ -215,45 +187,21 @@ spec:
             enabled: true
             secretName: harbor-tls
           ingress:
-            hostname: registry.krukov.local
+            hostname: registry.example.com
             annotations:
-              cert-manager.io/cluster-issuer: "letsencrypt-staging"
-              cert-manager.io/renew-before: "360h"
+              cert-manager.io/cluster-issuer: "letsencrypt-prod"
         persistence:
           enabled: true
           registry:
-            size: 30Gi
-          jobservice:
-            size: 1Gi
-          database:
-            size: 1Gi
-          redis:
-            size: 1Gi
-          trivy:
-            size: 5Gi
+            size: 50Gi
         postgresql:
           enabled: false
         externalDatabase:
-          host: "postgresql.database.svc.cluster.local"
-          port: 5432
-          user: "postgres"
-          password: "<пароль>"
-          database: "harbor"
-        redis:
-          enabled: false
-        externalRedis:
-          host: "redis-master.database.svc.cluster.local"
-          port: 6379
-          password: "<пароль>"
-          database: 0
+          host: "postgres-host"
+          # ...
 ```
 
-**Ключевые моменты:**
-
-* **`expose.ingress.annotations`**: cert-manager автоматически выпустит сертификат для `registry.krukov.local`
-* **`persistence`**: Том реестра увеличен до 30Gi
-* **`postgresql.enabled: false`**: Отключает встроенную БД, используется внешняя
-* **`externalDatabase`**: Параметры подключения к существующему PostgreSQL
+**Результат:** После синхронизации ArgoCD развернет Harbor в кластере. Статус приложения изменится на `Synced`.
 
 ## Дополнительная информация
 
