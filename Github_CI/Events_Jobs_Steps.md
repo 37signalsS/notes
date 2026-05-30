@@ -1,133 +1,102 @@
-# GitHub Actions: События, Задачи и Шаги (Events, Jobs, Steps)
+# GitHub Actions: События, Задачи и Шаги
 
-Автоматизация в GitHub Actions строится на трёх иерархических компонентах: **Событие** → **Workflow** → **Jobs** → **Steps**. Они определяют, *когда*, *где* и *что* должно выполняться.
+Иерархия автоматизации в GitHub Actions строится на трёх основных компонентах: **Событие (Event)** → **Рабочий процесс (Workflow)** → **Задачи (Jobs)** → **Шаги (Steps)**. Вместе они определяют условия запуска, среду исполнения и конкретный набор команд.
 
 ## Определения
 
-- **Event (Событие)**: Триггер, инициирующий запуск workflow. Определяет условие «когда».
-- **Job (Задача)**: Изолированная среда выполнения (`runner`), выполняющая набор шагов. Определяет «где» и обеспечивает параллелизм.
-- **Step (Шаг)**: Отдельная команда или `action` внутри задачи. Определяет «что» конкретно нужно сделать.
+- **Событие (Event)**: Внешний или внутренний триггер, инициирующий запуск рабочего процесса. Определяет условие «когда».
+- **Задача (Job)**: Изолированная единица выполнения, работающая на конкретном исполнителе (runner). Задачи в рамках одного процесса по умолчанию выполняются параллельно. Определяет «где».
+- **Шаг (Step)**: Минимальная единица работы внутри задачи: запуск скрипта или готового действия (action). Шаги внутри задачи выполняются строго последовательно. Определяет «что».
 
 ## Основные концепции
 
-### Events: Условия Запуска
+### События: Условия запуска
 
-События объявляются в секции `on` и служат триггерами для воркфлоу.
+События описываются в секции `on`. Они могут быть инициированы активностью в Git, расписанием или внешними системами.
 
-**Основные типы событий:**
+**Основные типы триггеров:**
 
-| Событие | Описание | Default Branch Required |
+| Событие | Описание | Обязательность ветки по умолчанию |
 | :--- | :--- | :--- |
-| `push` | Коммит, тег, создание репозитория из шаблона | Нет |
-| `pull_request` | Активность PR (открыт, обновлён, закрыт, merged) | Нет |
-| `workflow_dispatch` | Ручной запуск через UI/API/CLI | Да |
-| `schedule` | Запуск по расписанию (cron) | Да |
-| `repository_dispatch` | Webhook API для внешних событий | Да |
+| `push` | Отправка коммитов или тегов в репозиторий | Нет |
+| `pull_request` | Активность в запросах на слияние (открытие, обновление) | Нет |
+| `workflow_dispatch` | Ручной запуск через интерфейс пользователя (UI) или API | Да |
+| `schedule` | Запуск по расписанию с использованием синтаксиса `cron` | Да |
+| `repository_dispatch` | Запуск через внешний вебхук (Webhook) | Да |
 
-**Workflow dispatch (2025–2026):**
+**Фильтрация событий:**
+Для уточнения условий запуска используются фильтры:
+- `branches` / `branches-ignore`: ограничение по веткам.
+- `paths` / `paths-ignore`: запуск только при изменении конкретных файлов.
+- `types`: уточнение типа активности (например, `opened` или `reopened` для PR).
 
-- Максимум **25 входных параметров** (с декабря 2025, ранее 10)
-- Типы inputs: `string`, `choice`, `boolean`, `environment`
-- Использование: деплои, миграции, ручные подтверждения
+Подробный разбор триггеров приведен в **[Синтаксисе Workflow](./Workflow_Syntax.md)**.
 
-**Фильтры событий:**
+### Задачи: Организация выполнения
 
-- `branches` / `branches-ignore`: фильтрация по веткам
-- `tags` / `tags-ignore`: фильтрация по тегам
-- `paths` / `paths-ignore`: фильтрация по изменённым файлам
-- `types`: типы активности (для `pull_request`, `issues` и др.)
+Задачи позволяют структурировать процесс и обеспечивать распараллеливание или зависимость этапов.
 
-Подробный синтаксис — в **[Синтаксис Workflow](./Workflow_Syntax.md)**.
+- **`runs-on`**: Определение типа [исполнителя (runner)](./Environment_Limitations.md) (например, `ubuntu-latest`).
+- **`needs`**: Определение зависимостей между задачами для построения направленного ациклического графа (DAG — Directed Acyclic Graph).
+- **`strategy.matrix`**: Механизм **[матричных сборок](./Matrix_Builds.md)** для мультиплатформенного тестирования.
+- **`services`**: Запуск дополнительных контейнеров (базы данных, кэш-серверы), доступных для шагов задачи.
+- **`outputs`**: Механизм передачи данных из одной задачи в другую.
 
-### Jobs: Единицы Выполнения
+### Шаги: Операционная логика
 
-Задачи — основные блоки параллелизма. Каждая задача выполняется в свежем изолированном окружении.
-
-- **`runs-on`**: Тип [runner'а](./Environment_Limitations.md) (`ubuntu-latest`, `self-hosted`, `macos-latest`).
-- **`needs`**: Зависимости — выстраивает задачи в граф для последовательного выполнения.
-- **`strategy.matrix`**: **[Матричные сборки](./Matrix_Builds.md)** — запуск одной задачи с разными параметрами.
-- **`services`**: Побочные контейнеры (БД, кэш), доступные всем шагам задачи.
-- **`outputs`**: Выходные данные job для передачи в зависимые задачи.
-- **`if`**: Условное выполнение всей задачи.
-
-### Steps: Последовательные Действия
-
-Шаги выполняются строго последовательно в рамках одной задачи.
+Шаги — это конкретные действия, выполняемые внутри задачи. Если один шаг завершается ошибкой, выполнение задачи по умолчанию прекращается (если не настроено иное).
 
 **Типы шагов:**
+- **Действия (`uses`)**: Запуск переиспользуемых модулей из **[GitHub Marketplace](./Marketplace_Actions.md)**.
+- **Команды (`run`)**: Выполнение произвольных shell-команд.
 
-- `uses`: Готовая **[action](./Marketplace_Actions.md)** (например, `actions/checkout@v4`).
-- `run`: Команды оболочки (`shell`).
+**Управление логикой:**
+- **`if`**: Условное выполнение шага на основе **[контекстов и выражений](./Workflow_Syntax.md)**.
+- **Обмен данными**: Использование системного файла `GITHUB_OUTPUT` для передачи значений между шагами через контекст `steps.<id>.outputs`.
 
-**Условное выполнение (`if`):**
+## Практические сценарии
 
-- Пропуск шага при невыполненном условии
-- Условия строятся на **[контекстах и выражениях](./Workflow_Syntax.md)**
-- Пример: `if: ${{ github.event.inputs.run_tests != false }}`
+### Пайплайн с зависимыми задачами
 
-**Обмен данными:**
-
-- `id` шага + `GITHUB_OUTPUT`: передача данных между шагами
-- `outputs` job: передача данных между задачами через `needs.<job>.outputs`
-- Контекст `steps.<id>.outputs`: доступ к данным предыдущих шагов
-
-## Практический сценарий: CI с тестами и сборкой
-
-Этот workflow демонстрирует все три компонента:
-
-- **Event**: Запускается на `push` в `main` или по ручному триггеру с фильтрами по путям.
-- **Jobs**: Содержит две задачи, `test` зависит от `build` (`needs: build`). `build` использует матрицу.
-- **Steps**: Включают `uses` для настройки среды, `run` для команд и `if` для условного выполнения.
+Данный пример демонстрирует запуск тестов только после успешной сборки приложения:
 
 ```yaml
-name: CI with dependent jobs
+name: CI with dependency
 
 on:
   push:
     branches: [ main ]
-    paths: [ 'app/**', '!.github/**' ]
-  workflow_dispatch:
-    inputs:
-      run_tests:
-        type: boolean
-        default: true
+    paths: [ 'src/**', 'package*.json' ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [ '3.10', '3.11' ]
     outputs:
-      version: ${{ steps.meta.outputs.version }}
+      artifact_id: ${{ steps.upload.outputs.id }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - id: meta
-        run: echo "version=$(python scripts/version.py)" >> $GITHUB_OUTPUT
-      - run: python -m build
+      - name: Build project
+        run: npm ci && npm run build
+      - id: upload
+        run: echo "id=build-archive-42" >> $GITHUB_OUTPUT
 
   test:
     runs-on: ubuntu-latest
-    needs: build
-    if: ${{ github.event.inputs.run_tests != false }}
-    services:
-      redis:
-        image: redis:7
+    needs: build # Задача начнется только после успеха build
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements-test.txt
       - name: Run tests
         env:
-          APP_VERSION: ${{ needs.build.outputs.version }}
-        run: pytest
+          BUILD_ID: ${{ needs.build.outputs.artifact_id }}
+        run: npm test
 ```
 
 ## Дополнительная информация
 
-Общее описание платформы в **[Ключевые концепции GitHub Actions](./Core_Concept.md)**, полный справочник по синтаксису и контекстам в **[Синтаксис Workflow](./Workflow_Syntax.md)**, матричные сборки в **[Матричные сборки](./Matrix_Builds.md)**. Официальная документация: [Events that trigger workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows).
+- **[Ключевые концепции GitHub Actions](./Core_Concept.md)** — архитектурный обзор платформы.
+- **[Синтаксис Workflow](./Workflow_Syntax.md)** — справочник по всем директивам YAML и контекстам.
+- **[Матричные сборки](./Matrix_Builds.md)** — подробное руководство по параллелизации.
+- **[Marketplace Actions](./Marketplace_Actions.md)** — поиск и использование готовых решений.
+- **[Environment Limitations](./Environment_Limitations.md)** — спецификации и ограничения исполнителей.
+
+Официальная документация: [Events that trigger workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows).

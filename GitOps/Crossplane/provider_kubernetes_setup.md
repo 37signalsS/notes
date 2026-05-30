@@ -2,16 +2,16 @@
 
 ## Определения
 
-**provider-kubernetes** — кроссплатформенный Crossplane-провайдер для управления нативными ресурсами Kubernetes в любом кластере. Позволяет использовать Crossplane Composition API для создания абстракций над Kubernetes-ресурсами.
+**provider-kubernetes** — кроссплатформенный Crossplane-провайдер для управления нативными ресурсами Kubernetes в любом кластере. Позволяет использовать Crossplane **Composition API (Application Programming Interface)** для создания абстракций над Kubernetes-ресурсами.
 
 ## Базовые концепции
 
 ### Сценарии использования
 
-- **Декларативное управление компонентами кластера**: Namespace, ConfigMap, Secret, RBAC
-- **Расширение GitOps**: Управление ресурсами, которые не поддерживаются ArgoCD/Flux напрямую
-- **Мультикластерное управление**: Централизованное управление несколькими кластерами через Crossplane
-- **Создание платформенных абстракций**: Composition API для сложных Kubernetes-ресурсов
+- **Декларативное управление компонентами кластера**: Namespace, ConfigMap, Secret, **RBAC (Role-Based Access Control)**.
+- **Расширение GitOps**: Управление ресурсами, которые не поддерживаются ArgoCD/Flux напрямую.
+- **Мультикластерное управление**: Централизованное управление несколькими кластерами через Crossplane.
+- **Создание платформенных абстракций**: Использование **Composition API** для объединения нескольких Kubernetes-ресурсов в одну логическую единицу.
 
 ## Практические сценарии
 
@@ -51,10 +51,13 @@ kubectl get provider
 
 #### Шаг 2: Настройка ProviderConfig
 
-`provider-kubernetes` необходимо предоставить разрешения для управления ресурсами. Создайте привязку роли кластера для ServiceAccount провайдера:
+Для управления ресурсами провайдеру требуются права администратора кластера. Создайте **ClusterRoleBinding** для **ServiceAccount (SA)** провайдера:
 
 ```bash
+# Получение имени ServiceAccount провайдера
 SA=$(kubectl -n crossplane-system get sa -o name | grep provider-kubernetes | sed -e 's|serviceaccount\/|crossplane-system:|g')
+
+# Создание привязки роли
 kubectl create clusterrolebinding provider-kubernetes-admin-binding --clusterrole cluster-admin --serviceaccount="${SA}"
 ```
 
@@ -66,7 +69,9 @@ kind: ProviderConfig
 metadata:
   name: in-cluster-config
 spec:
-  inCluster: {} # Использует учетные данные ServiceAccount провайдера
+  # Использует учетные данные ServiceAccount, под которым запущен провайдер
+  credentials:
+    source: InjectedIdentity
 ```
 
 Примените манифест:
@@ -75,7 +80,7 @@ spec:
 kubectl apply -f config-in-cluster.yaml
 ```
 
-Проверьте создание ProviderConfig:
+Проверьте создание:
 
 ```bash
 kubectl get providerconfig
@@ -86,6 +91,8 @@ kubectl get providerconfig
 ### Развертывание ресурсов Kubernetes
 
 #### Сценарий 1: Создание Namespace
+
+Для создания нативных ресурсов Kubernetes через Crossplane используется тип `Object`.
 
 Создайте файл `nginx-namespace.yaml`:
 
@@ -111,10 +118,10 @@ spec:
 
 ```bash
 kubectl apply -f nginx-namespace.yaml
-kubectl get ns crossplane-nginx-example
+kubectl get ns crossplane-nginx-example # → статус Active
 ```
 
-#### Сценарий 2: Создание Deployment с Nginx
+#### Сценарий 2: Создание Deployment
 
 Создайте файл `nginx-deployment.yaml`:
 
@@ -168,12 +175,12 @@ kubectl get pods -n crossplane-nginx-example
 kubectl get object nginx-deployment -o yaml
 ```
 
-Обратите внимание на поле `status`:
+Основные поля в `status`:
 
-- `Ready: True` — ресурс успешно создан
-- `Ready: False` — проверьте `status.conditions` для деталей
+- `Ready: True` — ресурс успешно синхронизирован с кластером.
+- `Ready: False` — возникла ошибка. Проверьте `status.conditions` для диагностики.
 
-Логи провайдера:
+Просмотр логов провайдера:
 
 ```bash
 kubectl -n crossplane-system logs -l app=crossplane-provider-kubernetes

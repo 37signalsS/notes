@@ -1,44 +1,40 @@
-# ArgoCD + HashiCorp Vault: Интеграция через ArgoCD Vault Plugin
+# ArgoCD и HashiCorp Vault: Интеграция через ArgoCD Vault Plugin
 
 > **Актуальная версия плагина:** v1.18.x (2025). Совместимость: ArgoCD v1.8.x, v2.x. Для ArgoCD v3 требуется тестирование.
 
-См. также: [Управление секретами в ArgoCD](./argocd_overview.md#управление-секретами), [GitOps: Управление секретами](../secrets_encryption.md).
-
 ## Определения
 
-**ArgoCD Vault Plugin (AVP)** — плагин для ArgoCD, который позволяет подставлять секретные данные из HashiCorp Vault (и других секрет-менеджеров) в Kubernetes-манифесты непосредственно в момент синхронизации.
+**ArgoCD Vault Plugin (AVP)** — плагин для ArgoCD, который позволяет подставлять секретные данные из HashiCorp Vault (и других менеджеров секретов) в Kubernetes-манифесты непосредственно в момент синхронизации.
 
 ## Базовые концепции
 
 ### Проблема хранения секретов в Git
 
-Секреты Kubernetes хранятся в base64-кодировке, что не является шифрованием. Хранение секретов в Git считается анти-паттерном.
+Секреты Kubernetes по умолчанию хранятся в base64-кодировке, что не обеспечивает криптографической защиты. Хранение незашифрованных секретов в Git является критическим анти-паттерном безопасности.
 
-Подробное сравнение инструментов управления секретами (Sealed Secrets, SOPS, Vault, External Secrets) доступно в заметке **[GitOps: Управление секретами](../secrets_encryption.md)**.
-
-**ArgoCD Vault Plugin** — решение для интеграции с существующим HashiCorp Vault. Плагин подставляет секреты из Vault при синхронизации, не храня их в Git.
+**ArgoCD Vault Plugin** решает эту проблему за счет интеграции с HashiCorp Vault. Плагин динамически подставляет секреты из Vault в манифесты во время синхронизации, исключая их попадание в Git-репозиторий.
 
 ### Архитектура AVP
 
-Плагин работает как sidecar-контейнер в `argocd-repo-server`:
+Плагин функционирует как sidecar-контейнер в поде `argocd-repo-server`:
 
-1. ArgoCD получает манифесты из Git
-2. AVP обнаруживает специальные теги/аннотации
-3. AVP обращается к Vault для получения секретов
-4. AVP подставляет значения вместо тегов
-5. ArgoCD применяет готовые манифесты в кластер
+1. ArgoCD получает исходные манифесты из Git.
+2. AVP сканирует манифесты на наличие специфических тегов или аннотаций.
+3. При обнаружении тегов AVP аутентифицируется и запрашивает соответствующие значения из Vault.
+4. AVP подставляет полученные значения вместо тегов в манифесты.
+5. ArgoCD применяет итоговые манифесты в кластер Kubernetes.
 
 ### Типы поддерживаемых манифестов
 
-- **Plain YAML:** Обычные манифесты с аннотациями
-- **Helm Charts:** Чарты с использованием специального синтаксиса в values
-- **Kustomize:** Использование с Kustomize
+- **Plain YAML:** Стандартные манифесты с использованием аннотаций.
+- **Helm Charts:** Чарты с использованием специального синтаксиса в файлах конфигурации (`values`).
+- **Kustomize:** Интеграция с манифестами Kustomize.
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка Vault
+### Сценарий 1: Подготовка Vault
 
-**1. Создание KV store:**
+**1. Активация KV store:**
 
 ```bash
 # Включение KV v2
@@ -48,7 +44,7 @@ vault secrets enable -path=secret kv-v2
 vault kv put secret/test user="myuser" password="mypassword"
 ```
 
-**2. Политика доступа:**
+**2. Настройка политики доступа:**
 
 ```hcl
 # test-policy.hcl
@@ -57,7 +53,7 @@ path "secret/data/test" {
 }
 ```
 
-**3. Kubernetes аутентификация:**
+**3. Настройка аутентификации Kubernetes:**
 
 ```bash
 # Включение метода аутентификации
@@ -76,16 +72,15 @@ vault write auth/kubernetes/role/argocd \
     ttl=1h
 ```
 
-### Сценарий 2: Конфигурация ArgoCD с плагином
+### Сценарий 2: Конфигурация ArgoCD с плагином AVP
 
-**Установка через Helm:**
+**Пример конфигурации через Helm (values.yaml):**
 
 ```yaml
-# values.yaml для argo-cd Helm chart
 repoServer:
   replicas: 1
   
-  # Init-container для загрузки плагина
+  # Init-container для скачивания бинарного файла плагина
   initContainers:
   - name: download-tools
     image: alpine:latest
@@ -104,7 +99,7 @@ repoServer:
   - name: cmp-plugins
     emptyDir: {}
   
-  # Sidecar для плагина
+  # Sidecar-контейнер для запуска плагина
   extraContainers:
   - name: avp
     command: [/var/run/argocd/argocd-cmp-server]
@@ -118,12 +113,12 @@ repoServer:
     - name: cmp-plugins
       mountPath: /home/argocd-cmp-server/plugins
   
-  # Конфигурация Config Management Plugins
+  # Включение Config Management Plugins (CMP)
   config:
     cmp:
       create: true
 
-# Плагин
+# Определение плагина
 plugins:
 - name: avp
   generate:
@@ -131,9 +126,9 @@ plugins:
     args: ["generate", "-s", "avp-config"]
 ```
 
-### Сценарий 3: Использование в манифестах
+### Сценарий 3: Использование AVP в манифестах
 
-**Plain YAML (с аннотациями):**
+**Plain YAML (через аннотации):**
 
 ```yaml
 apiVersion: v1
@@ -148,7 +143,7 @@ stringData:
   password: <password>
 ```
 
-**Helm Charts (values.yaml):**
+**Helm Charts (в values.yaml):**
 
 ```yaml
 secret:
@@ -156,12 +151,13 @@ secret:
   password: <password>
 ```
 
-**Синтаксис тегов:**
-
-- `<path#key>` — полный путь (например, `secret/data/test#username`)
-- `<key>` — только ключ (путь берётся из аннотации)
+**Синтаксис тегов подстановки:**
+- `<path#key>` — полный путь (например, `secret/data/test#username`).
+- `<key>` — только ключ (путь извлекается из аннотации манифеста).
 
 ### Сценарий 4: Настройка Application в ArgoCD
+
+Для активации плагина на уровне конкретного приложения необходимо передать параметры окружения:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -187,7 +183,7 @@ spec:
       - name: VAULT_ADDR
         value: http://vault.vault.svc:8200
       - name: VAULT_NAMESPACE
-        value: my-namespace  # Для Vault Enterprise
+        value: my-namespace  # Используется для Vault Enterprise
   destination:
     server: https://kubernetes.default.svc
     namespace: default
@@ -199,12 +195,11 @@ spec:
 
 ## Дополнительная информация
 
-### Конфигурация discovery в плагине
+### Конфигурация обнаружения (Discovery)
 
-Плагин использует две секции для определения файлов для обработки:
+Плагин использует механизм `discovery` для определения файлов, требующих обработки:
 
 ```yaml
-# Пример конфигурации discovery
 discover:
   fileName: ".*\\.yaml$"
   annotation: "avp.kubernetes.io/path"
@@ -212,44 +207,48 @@ generate:
   command: ["argocd-vault-plugin", "generate", "-s", "avp-config"]
 ```
 
-### Варианты установки бинарника
+### Варианты установки бинарного файла AVP
 
-| Способ | Описание | Когда использовать |
+| Метод | Описание | Применение |
 | :--- | :--- | :--- |
-| **Init-container** | Скачивание при старте пода | Быстрое развёртывание, тестирование |
-| **Custom image** | Свой образ с предустановленным плагином | Production, контроль версий |
-| **Helm hook** | Установка через post-install hook | Автоматизация установки |
+| **Init-container** | Скачивание бинарного файла при старте пода | Быстрое развёртывание, тестирование |
+| **Custom image** | Создание собственного образа с предустановленным плагином | Production, строгий контроль версий |
+| **Helm hook** | Установка через `post-install` хуки Helm | Автоматизация развертывания |
 
 ### Переменные окружения AVP
 
 | Переменная | Описание | Значение по умолчанию |
 | :--- | :--- | :--- |
-| `AVP_TYPE` | Тип бэкенда (vault, aws, gcp) | vault |
-| `AVP_AUTH_TYPE` | Метод аутентификации | kubernetes |
-| `VAULT_ADDR` | Адрес Vault | <http://localhost:8200> |
-| `AVP_K8S_ROLE` | Kubernetes роль для Vault | - |
-| `VAULT_NAMESPACE` | Vault namespace (Enterprise) | - |
-| `AVP_PATH_VERSION` | Версия KV secret | latest |
+| `AVP_TYPE` | Тип бэкенда секретов (vault, aws, gcp) | `vault` |
+| `AVP_AUTH_TYPE` | Метод аутентификации | `kubernetes` |
+| `VAULT_ADDR` | Сетевой адрес Vault | `http://localhost:8200` |
+| `AVP_K8S_ROLE` | Имя Kubernetes-роли для аутентификации в Vault | — |
+| `VAULT_NAMESPACE` | Пространство имен Vault (для Vault Enterprise) | — |
+| `AVP_PATH_VERSION` | Версия хранилища KV-секретов | `latest` |
 
-### Ограничения
+### Ограничения и особенности
 
-- Плагин работает только с `repo-server`
-- Для каждой конфигурации (Helm, Kustomize, Plain) создаётся отдельный sidecar
-- Требуется сетевой доступ из `repo-server` в Vault
-- При использовании Helm логика работает через специальный синтаксис в values
+- Плагин функционирует исключительно в контексте компонента `repo-server`.
+- Для различных типов конфигурации (Helm, Kustomize, Plain YAML) требуется создание отдельных sidecar-контейнеров.
+- Обязательно наличие сетевого доступа от подов `repo-server` к API Vault.
+- Использование с Helm требует применения специфического синтаксиса подстановки в файлах `values`.
 
-### Troubleshooting
+### Диагностика (Troubleshooting)
 
-**Проверка логов:**
+**Проверка логов плагина:**
 
 ```bash
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c avp
 ```
 
-**Частые проблемы:**
+**Распространенные ошибки:**
+- `permission denied` — ошибка доступа; проверьте политики Vault и привязку ролей.
+- `connection refused` — сетевая ошибка; проверьте доступность Vault по указанному `VAULT_ADDR`.
+- `secret not found` — секрет не найден; проверьте правильность пути в Vault и версию секрета.
 
-- `permission denied` — проверка политики Vault
-- `connection refused` — проверка сетевого доступа к Vault
-- `secret not found` — проверка пути и версии секрета
+### См. также
 
-[Официальная документация AVP](https://argocd-vault-plugin.readthedocs.io/) и [GitHub репозиторий](https://github.com/argoproj-labs/argocd-vault-plugin).
+- [ArgoCD Overview: Управление секретами](./argocd_overview.md#управление-секретами)
+- [GitOps: Управление секретами](../secrets_encryption.md)
+- [Официальная документация ArgoCD Vault Plugin](https://argocd-vault-plugin.readthedocs.io/)
+- [GitHub репозиторий AVP](https://github.com/argoproj-labs/argocd-vault-plugin)

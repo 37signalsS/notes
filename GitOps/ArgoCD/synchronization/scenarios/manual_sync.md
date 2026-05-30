@@ -1,57 +1,63 @@
-# ArgoCD: Ручная синхронизация (Manual Sync)
-
-См. также: [Синхронизация](../synchronization.md), [Концепции синхронизации](../concepts.md), [Автоматическая синхронизация](./auto_sync.md).
+# ArgoCD — ручная синхронизация
 
 ## Определения
 
-**Manual Sync** — режим синхронизации, при котором ArgoCD обнаруживает расхождение, но не применяет изменения автоматически.
+**Manual Sync (ручная синхронизация)** — режим работы ArgoCD Application, при котором автоматическое применение изменений (Auto-Sync) отключено. ArgoCD отслеживает расхождения (drift) между Git и кластером, но требует явного подтверждения пользователя для их устранения.
 
 ## Базовые концепции
 
-**Поведение по умолчанию.** ArgoCD обнаруживает расхождение и показывает статус `OutOfSync`, но не применяет изменения автоматически.
+По умолчанию ArgoCD работает в режиме ручной синхронизации. Если секция `syncPolicy` в манифесте `Application` отсутствует, изменения в Git приведут к изменению статуса приложения на `OutOfSync`, но ресурсы в кластере затронуты не будут.
 
 ### Когда использовать
 
-- Production-окружения с требованием ручного подтверждения
-- Критичные изменения, требующие проверки
-- Окружения с compliance-требованиями
+- **Production-окружения:** для предотвращения случайных или неконтролируемых изменений.
+- **Сложные миграции:** когда требуется ручной контроль на каждом этапе развёртывания.
+- **Compliance:** если регламенты требуют обязательного ручного одобрения (approval) перед внесением изменений в инфраструктуру.
 
 ## Практические сценарии
 
-### Пример конфигурации
+### Пример конфигурации Application
+
+Для активации ручного режима достаточно не указывать `automated` в `syncPolicy` или полностью опустить эту секцию.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: my-app
+  name: manual-app
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://git.example.com/repo.git
-    path: my-app
+    repoURL: https://github.com/argoproj/argocd-example-apps.git
+    path: guestbook
     targetRevision: HEAD
   destination:
     server: https://kubernetes.default.svc
-    namespace: my-app
-  # syncPolicy не указан — Manual по умолчанию
+    namespace: default
+  # syncPolicy не указан — по умолчанию Manual
 ```
 
-### Команды CLI
+### Управление через CLI
+
+Основные команды для работы с ручной синхронизацией:
 
 ```bash
-# Просмотр различий
-argocd app diff my-app
+# Проверка наличия расхождений (diff)
+argocd app diff manual-app
 
-# Запуск синхронизации
-argocd app sync my-app
+# Запуск процесса синхронизации всех ресурсов
+argocd app sync manual-app
 
-# Синхронизация с конкретной ревизией
-argocd app sync my-app --revision abc123
+# Синхронизация с конкретным коммитом или тегом
+argocd app sync manual-app --revision v1.2.0
 
-# Ожидание завершения
-argocd app wait my-app --sync --health
+# Ожидание завершения синхронизации и перехода в Healthy
+argocd app wait manual-app --sync --health
 ```
 
-Подробнее: [Sync Waves и Hooks](./sync_waves_hooks.md), [Окна синхронизации](./sync_windows.md).
+## Дополнительная информация
+
+- **[Синхронизация ArgoCD](../../synchronization.md)** — общий обзор механизмов синхронизации.
+- **[Автоматическая синхронизация](./auto_sync.md)** — настройка и параметры Auto-Sync.
+- **[Sync Waves и Hooks](./sync_waves_hooks.md)** — управление порядком развёртывания ресурсов.

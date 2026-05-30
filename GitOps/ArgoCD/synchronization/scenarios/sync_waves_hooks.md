@@ -1,75 +1,70 @@
-# ArgoCD: Sync Waves и Hooks
-
-См. также: [Синхронизация](../synchronization.md), [Концепции синхронизации](../concepts.md), [Ручная синхронизация](./manual_sync.md).
+# ArgoCD — Sync Waves и Hooks
 
 ## Определения
 
-**Sync Waves** — механизм группировки ресурсов и применения в определённом порядке.
+**Sync Waves (волны синхронизации)** — механизм ArgoCD, позволяющий группировать ресурсы и определять строгий порядок их применения в кластере.
 
-**Hooks** — ресурсы для выполнения действий до/во время/после синхронизации.
+**Hooks (хуки)** — специальные аннотации ресурсов, которые позволяют выполнять определенные действия на разных этапах жизненного цикла синхронизации (до, во время или после применения манифестов).
 
 ## Базовые концепции
 
-### Sync Waves
+### Порядок применения (Sync Waves)
 
-**Sync Waves** — аннотация для группировки ресурсов и применения в определённом порядке.
+ArgoCD использует аннотацию `argocd.argoproj.io/sync-wave` для управления последовательностью деплоя:
+- Значение волны может быть любым целым числом (включая отрицательные).
+- Ресурсы с меньшим значением волны применяются первыми.
+- Контроллер переходит к следующей волне только после того, как все ресурсы текущей волны перешли в статус `Healthy`.
+- По умолчанию все ресурсы относятся к волне `0`.
 
-Отрицательные волны применяются первыми, положительные — последними. По умолчанию все ресурсы в волне 0.
+### Жизненный цикл (Hooks)
 
-### Hooks
-
-Типы Hooks:
-
-- `PreSync` — выполняется перед синхронизацией (миграции БД, тесты)
-- `Sync` — выполняется во время синхронизации
-- `PostSync` — выполняется после синхронизации (уведомления, smoke-тесты)
-- `Skip` — пропускается при синхронизации
+Хуки реализуются через аннотацию `argocd.argoproj.io/hook`. Основные типы:
+- **PreSync:** запуск перед применением манифестов (например, подготовка схемы БД).
+- **Sync:** запуск одновременно с основными ресурсами.
+- **PostSync:** запуск после успешного завершения синхронизации (например, отправка уведомлений или smoke-тесты).
+- **SyncFail:** запуск только в случае ошибки при синхронизации.
+- **Skip:** ресурс будет пропущен при синхронизации.
 
 ## Практические сценарии
 
-### Sync Waves — пример применения
+### Настройка Sync Waves
+
+Пример разделения ресурсов на этапы подготовки и деплоя:
 
 ```yaml
-# 1. CRD (wave -2)
+# 1. Подготовка CRD (wave -2)
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: mycrds.example.com
+  name: examples.custom.com
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
 
-# 2. Namespace (wave -1)
+# 2. Создание Namespace (wave -1)
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: my-app
+  name: app-namespace
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 
-# 3. Deployment и Service (wave 0)
+# 3. Основные ресурсы (wave 0 - по умолчанию)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
-
-# 4. Ingress (wave 1)
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app-ingress
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
+  name: app-deployment
+  namespace: app-namespace
 ```
 
-### PreSync Hook — пример миграции БД
+### Использование Hooks для миграций
+
+Пример запуска Job для миграции базы данных перед обновлением приложения:
 
 ```yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: db-migration
+  name: database-migration
   annotations:
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
@@ -77,17 +72,21 @@ spec:
   template:
     spec:
       containers:
-      - name: migration
-        image: my-app:migration
-        command: ["rails", "db:migrate"]
+      - name: migrate
+        image: backend:latest
+        command: ["/app/migrate.sh"]
       restartPolicy: Never
-  backoffLimit: 1
 ```
 
-### Политики удаления Hooks
+### Политики удаления хуков
 
-- `HookSucceeded` — удалить после успешного выполнения
-- `HookFailed` — удалить после неудачи
-- `BeforeHookCreation` — удалить старый hook перед созданием нового
+Аннотация `argocd.argoproj.io/hook-delete-policy` определяет, когда ArgoCD должен удалить ресурс хука:
+- **HookSucceeded:** после успешного завершения.
+- **HookFailed:** в случае ошибки выполнения.
+- **BeforeHookCreation:** удаляет старый хук непосредственно перед созданием нового.
 
-Подробнее: [Автоматическая синхронизация](./auto_sync.md), [Окна синхронизации](./sync_windows.md).
+## Дополнительная информация
+
+- **[Синхронизация ArgoCD](../../synchronization.md)** — общие принципы и политики синхронизации.
+- **[Автоматическая синхронизация](./auto_sync.md)** — настройка Auto-Sync.
+- **[Окна синхронизации](./sync_windows.md)** — временные ограничения на внесение изменений.

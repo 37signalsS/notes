@@ -2,7 +2,7 @@
 
 > Эта заметка является частью обзора [ELK стека](../elk_stack_overview.md) и углубленно раскрывает темы управления индексами, схемами данных (mapping) и их жизненным циклом (ILM) в Elasticsearch. Для ознакомления с базовыми понятиями, обратитесь к [общему обзору Elasticsearch](./elasticsearch_overview.md).
 
-## Определения
+## Термины и определения
 
 * **Маппинг (Mapping)**: Схема данных для индекса, определяющая поля, их типы (`text`, `keyword`, `date` и т.д.) и способ индексации. Аналог `CREATE TABLE` в SQL.
 * **Поток данных (Data Stream)**: Абстракция для управления данными временных рядов (логи, метрики), которая автоматически работает с ILM для ротации и управления служебными индексами.
@@ -10,7 +10,7 @@
 * **Компонентный шаблон (Component Template)**: Переиспользуемый блок конфигурации (маппинги, настройки, алиасы), который можно включать в несколько шаблонов индексов.
 * **ILM (Index Lifecycle Management)**: Политика управления жизненным циклом индекса, которая автоматизирует операции ротации (`rollover`), перемещения данных между стадиями хранения (hot/warm/cold) и удаления.
 
-## Основные концепции
+## Базовые концепции
 
 ### Динамический и явный маппинг
 
@@ -60,7 +60,7 @@ curl -X PUT "localhost:9200/_ilm/policy/logs-policy" -H 'Content-Type: applicati
       }
     }
   }
-}'
+}' # → {"acknowledged": true}
 ```
 
 **Шаг 2: Создание компонентного шаблона для маппингов**
@@ -85,7 +85,7 @@ curl -X PUT "localhost:9200/_component_template/logs-mappings" -H 'Content-Type:
       }
     }
   }
-}'
+}' # → {"acknowledged": true}
 ```
 
 **Шаг 3: Создание главного шаблона индекса для потока данных**
@@ -104,7 +104,7 @@ curl -X PUT "localhost:9200/_index_template/logs-template" -H 'Content-Type: app
     }
   },
   "priority": 200
-}'
+}' # → {"acknowledged": true}
 ```
 
 **Шаг 4: Индексация данных**
@@ -115,7 +115,7 @@ curl -X PUT "localhost:9200/_index_template/logs-template" -H 'Content-Type: app
 curl -X POST "localhost:9200/logs-my-service/_bulk" -H 'Content-Type: application/json' -d'
 { "create": {} }
 { "@timestamp": "2024-01-01T12:00:00Z", "level": "info", "message": "User logged in", "user": { "id": "user123" } }
-'
+' # → {"took": 15, "errors": false, "items": [...]}
 ```
 
 ### Изменение существующего маппинга

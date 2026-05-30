@@ -47,9 +47,9 @@ filebeat.inputs:
 
 output.elasticsearch:
   hosts: ["https://es01:9200", "https://es02:9200"]
-  api_key: "id:api_key"
-  # username: "elastic"
-  # password: "password"
+  api_key: "<id>:<api_key>"
+  # username: "<username>"
+  # password: "<password>"
   ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
 ```
 
@@ -100,4 +100,8 @@ filebeat.inputs:
 
 ## Дополнительная информация
 
-Полный цикл настройки стека — в **[Практическое руководство по настройке ELK](./Tutorials/practical_setup_with_docker.md)**. Официальный список модулей доступен в [документации Elastic](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html).
+* **Сбор логов Docker:** примеры использования Filebeat как агента для сбора логов контейнеров — в **[Агентный сбор логов в Docker](../Docker/Docker_logs/docker_agent_based_logging.md)**.
+* **Практика настройки:** полный цикл развертывания стека с Docker Compose — в **[Практическое руководство по настройке ELK](./Tutorials/practical_setup_with_docker.md)**.
+* **Документация:** список поддерживаемых модулей доступен в [официальной документации Elastic](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html).
+
+> **Примечание о версиях:** Для совместимости компонентов ELK стека рекомендуется использовать одинаковые версии Elasticsearch, Logstash, Kibana и Filebeat. Актуальные мажорные версии — 8.x и 9.x (по состоянию на март 2026 года).

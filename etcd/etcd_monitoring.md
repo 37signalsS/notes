@@ -12,7 +12,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 Ключевые аспекты мониторинга etcd:
 
@@ -21,13 +21,13 @@
     * **Метрики**: `etcd_server_has_leader`, `etcd_server_health_success`, `etcd_server_leader_changes_seen_total`.
 
 2. **Производительность (Performance)**:
-    * **Задержки**: Мониторинг задержек фиксации записей в WAL (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`).
+    * **Задержки**: Мониторинг задержек фиксации записей в WAL (Write-Ahead Log) (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`).
         * **Пороговые значения**: Норма — до **10 мс**. Для нагруженных систем — до **2 мс**. Постоянное превышение 10 мс ведет к деградации производительности кластера.
-    * **RPC**: Задержки междоузлового общения (`etcd_network_peer_round_trip_time_seconds`) важны для оценки здоровья сети.
+    * **RPC**: Задержки междоузлового общения RPC (Remote Procedure Call) (`etcd_network_peer_round_trip_time_seconds`) важны для оценки здоровья сети.
     * **Транзакции**: Количество медленных запросов (`etcd_server_slow_apply_total`) и общая частота запросов (`etcd_server_proposals_applied_total`).
 
 3. **Использование ресурсов (Resource Utilization)**:
-    * **CPU/Память**: Мониторинг использования CPU (`process_cpu_seconds_total`) и памяти (`process_resident_memory_bytes`) для выявления утечек или неэффективной работы.
+    * **CPU/Память**: Мониторинг использования CPU (Central Processing Unit) (`process_cpu_seconds_total`) и памяти (`process_resident_memory_bytes`) для выявления утечек или неэффективной работы.
     * **Размер базы данных**: Контроль размера БД (`etcd_mvcc_db_total_size_in_bytes`). Постоянный рост может привести к исчерпанию дискового пространства и деградации производительности. Это напрямую связано с необходимостью [настройки компакции](./mvcc_versioning_and_compaction.md).
 
 4. **Ошибки и сбои**:
@@ -36,7 +36,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Проверка здоровья кластера
 
@@ -50,16 +50,16 @@ etcdctl endpoint health --cluster
 
 ### Вызовы при настройке мониторинга
 
-* **TLS-аутентификация**: Большинство продакшен-кластеров etcd используют TLS. Инструменты мониторинга (например, Prometheus) должны быть настроены на использование клиентских сертификатов для доступа к конечной точке `/metrics`.
-* **Динамические IP-адреса**: Если etcd работает в Kubernetes, его IP-адреса могут меняться. Для надежного сбора метрик следует использовать механизмы Service Discovery (например, через Kubernetes Service и Endpoints).
+* **TLS-аутентификация**: Большинство продакшен-кластеров etcd используют TLS (Transport Layer Security). Инструменты мониторинга (например, Prometheus) должны быть настроены на использование клиентских сертификатов для доступа к конечной точке `/metrics`.
+* **Динамические IP-адреса**: Если etcd работает в Kubernetes, его IP-адреса (Internet Protocol) могут меняться. Для надежного сбора метрик следует использовать механизмы Service Discovery (например, через Kubernetes Service и Endpoints).
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Мониторинг etcd в Kubernetes
 
-Практические аспекты настройки мониторинга etcd с использованием `kube-prometheus-stack` в Kubernetes подробно описаны в [документации по настройке Prometheus](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/prometheus_config.md#мониторинг-etcd-с-помощью-kube-prometheus-stack).
+Практические аспекты настройки мониторинга etcd с использованием `kube-prometheus-stack` в Kubernetes подробно описаны в [документации по настройке etcd-monitoring](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/etcd-monitoring.md).
 
 ### Связанные документы
 

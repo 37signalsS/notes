@@ -1,150 +1,78 @@
-# ArgoCD: Устранение неполадок и мониторинг
-
-См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка](./argocd_installation_and_setup.md), [Синхронизация](./synchronization.md).
+# ArgoCD: Диагностика и мониторинг
 
 ## Определения
 
-**Troubleshooting ArgoCD** — процесс диагностики и устранения проблем с синхронизацией, развёртыванием и мониторингом приложений в ArgoCD.
+**Диагностика (Troubleshooting) ArgoCD** — процесс выявления и устранения проблем, связанных с синхронизацией манифестов, доступом к репозиториям и состоянием компонентов системы.
+
+**Мониторинг ArgoCD** — непрерывный сбор метрик производительности и состояния приложений для обеспечения надежности доставки и оценки эффективности процессов (метрики DORA).
 
 ## Базовые концепции
 
-### Типы проблем в ArgoCD
+### Категории типовых проблем
 
-| Категория | Примеры |
+| Категория | Типичные проявления |
 | :--- | :--- |
-| **Синхронизация** | Ошибки применения манифестов, конфликты ресурсов |
-| **Доступ к репозиторию** | Неверные учётные данные, SSH-ключи |
-| **Health статус** | Приложения в статусе `Degraded`, `Missing` |
-| **Производительность** | Медленная синхронизация, таймауты API |
-| **Безопасность** | Ошибки аутентификации, RBAC |
+| **Синхронизация** | Статус `OutOfSync`, ошибки рендеринга манифестов, конфликты ресурсов. |
+| **Доступ к данным** | Ошибки аутентификации в Git (SSH/HTTPS), таймауты подключения. |
+| **Состояние ресурсов** | Статусы приложений `Degraded`, `Missing`, `Unknown`. |
+| **Производительность** | Медленная обработка репозиториев, высокая нагрузка на `application-controller`. |
+| **Инфраструктура** | Проблемы с Redis (кеширование), ошибки RBAC. |
+
+### Метрики и мониторинг
+
+ArgoCD предоставляет встроенный экспортер метрик в формате Prometheus. Основные эндпоинты:
+- `/metrics`: Общие метрики системы и контроллера.
+- `/metrics/applications`: Детальные метрики по каждому приложению.
 
 ## Практические сценарии
 
-### Сценарий 1: Диагностика ошибок синхронизации
+### Сценарий 1: Диагностика компонентов через логи
 
-**Проверка логов компонентов:**
+При возникновении системных ошибок первым шагом является анализ логов основных компонентов в неймспейсе `argocd`:
 
 ```bash
-# Application Controller
+# Логи основного контроллера приложений
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 
-# Repo Server
+# Логи сервера репозиториев (ошибки Helm/Kustomize)
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server
 
-# Server
+# Логи API-сервера
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
 ```
 
-**Просмотр различий между Git и кластером:**
+### Сценарий 2: Проблемы с доступом к репозиторию
+
+Если приложение не может получить манифесты, необходимо проверить статус репозитория:
+
+```bash
+# Список всех репозиториев и их статус
+argocd repo list
+
+# Детальная проверка конкретного URL
+argocd repo get <repo-url>
+```
+
+**Распространенные причины:**
+- Истечение срока действия SSH-ключа или Personal Access Token (PAT).
+- Некорректный формат приватного ключа (требуется OpenSSH формат без passphrase).
+- Сетевые ограничения (Firewall/Proxy) между кластером и Git-сервером.
+
+### Сценарий 3: Анализ расхождений (Diff)
+
+Когда приложение находится в статусе `OutOfSync`, используйте CLI для визуализации различий:
 
 ```bash
 argocd app diff <app-name>
 ```
 
-**Проверка статуса приложения:**
+Это поможет понять, какие поля в кластере отличаются от описанных в Git (например, из-за внешних контроллеров или ручных правок).
 
-```bash
-argocd app get <app-name>
-argocd app list
-```
+### Сценарий 4: Интеграция с Prometheus
 
-### Сценарий 2: Проблемы с доступом к репозиторию
-
-**Проверка подключенных репозиториев:**
-
-```bash
-argocd repo list
-```
-
-**Тестирование подключения:**
-
-```bash
-argocd repo get <repo-url>
-```
-
-**Частые причины:**
-
-- Истёк SSH-ключ или токен доступа
-- Изменился URL репозитория
-- Блокировка сетевым экраном
-- Неправильный формат ключа (должен быть без passphrase)
-
-**Решение:**
-
-```bash
-# Обновление репозитория
-argocd repo rm <repo-url>
-argocd repo add <repo-url> --ssh-private-key-path ~/.ssh/id_rsa
-```
-
-### Сценарий 3: Проблемы с образами контейнеров
-
-**ImagePullBackOff / ErrImagePull:**
-
-```bash
-# Проверка событий в namespace
-kubectl get events -n <namespace> --sort-by='.lastTimestamp'
-
-# Проверка secret для registry
-kubectl get secret <registry-secret> -n <namespace> -o yaml
-```
-
-**Для локальных кластеров (Minikube/Kind):**
-
-```bash
-# Загрузка образа в кластер
-minikube image load <image>:<tag>
-kind load docker-image <image>:<tag>
-```
-
-### Сценарий 4: Self-Healing и Prune
-
-**Параметры политики синхронизации:**
-
-| Параметр | Описание |
-| :--- | :--- |
-| `selfHeal: true` | Автоматически восстанавливает ресурсы, удалённые вручную из кластера |
-| `prune: true` | Удаляет ресурсы из кластера, которые отсутствуют в Git |
-
-**Проверка политики:**
-
-```bash
-argocd app get <app-name> -o yaml | grep -A 10 syncPolicy
-```
-
-**Удаление приложения и всех его ресурсов:**
-
-```bash
-# Через CLI
-argocd app delete <app-name> --cascade=true
-
-# Через kubectl
-kubectl delete -f my-application.yaml
-```
-
-### Сценарий 5: Мониторинг и метрики
-
-ArgoCD предоставляет встроенный экспортер метрик для Prometheus.
-
-**Эндпоинты метрик:**
-
-- `/metrics` — основные метрики
-- `/metrics/applications` — метрики приложений
-
-**Ключевые метрики:**
-
-| Метрика | Описание |
-| :--- | :--- |
-| `argocd_app_info` | Информация о приложениях |
-| `argocd_app_sync_status` | Статус синхронизации |
-| `argocd_app_health_status` | Статус здоровья |
-| `argocd_repo_server_queue_size` | Размер очереди Repo Server |
-| `argocd_cluster_api_requests` | Запросы к Kubernetes API |
-
-**Интеграция с Prometheus:**
+Для автоматического сбора метрик в среде с Prometheus Operator используйте `ServiceMonitor`:
 
 ```yaml
-# ServiceMonitor для Prometheus Operator
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -158,66 +86,38 @@ spec:
   - port: metrics
 ```
 
-### Сценарий 6: Метрики DORA через ArgoCD
+### Сценарий 5: Расчет метрик DORA через ArgoCD
 
-ArgoCD позволяет отслеживать ключевые метрики DORA через Prometheus. Подробное описание: **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)**.
+ArgoCD является идеальным источником данных для двух из четырех метрик DORA:
 
-| Метрика DORA | Источник в ArgoCD |
+| Метрика DORA | Запрос Prometheus (пример) |
 | :--- | :--- |
-| **Deployment Frequency** | Количество успешных синхронизаций (`argocd_app_sync_status{phase="Succeeded"}`) |
-| **Change Fail Rate** | Процент синхронизаций со статусом `Failed` |
-| **MTTR** | Время между неудачной и последующей успешной синхронизацией |
-| **Lead Time** | Время от коммита до успешной синхронизации (требует интеграции с Git) |
+| **Deployment Frequency** | `increase(argocd_app_sync_status{phase="Succeeded"}[24h])` |
+| **Change Failure Rate** | `sum(rate(argocd_app_sync_status{phase="Failed"}[24h])) / sum(rate(argocd_app_sync_status[24h]))` |
 
-**Пример запроса Prometheus для Deployment Frequency:**
-
-```promql
-# Количество успешных развёртываний за 24 часа
-increase(argocd_app_sync_status{phase="Succeeded"}[24h])
-```
-
-**Пример для Change Fail Rate:**
-
-```promql
-# Процент неудачных синхронизаций
-sum(increase(argocd_app_sync_status{phase="Failed"}[24h])) 
-/ 
-sum(increase(argocd_app_sync_status[24h])) * 100
-```
-
-### Сценарий 7: Ограничения мониторинга с ArgoCD
-
-- **Неполное покрытие:** Не все части пайплайна отслеживаются
-- **Изолированная аналитика:** Данные из разных источников слабо связаны
-- **Сложность корреляции:** Трудности с связью метрик, логов и трассировок
-
-**Решение:** Дополнение ArgoCD инструментами наблюдаемости:
-
-- **Keptn:** Quality Gates, пре/пост-деплой проверки
-- **Backstage:** Developer Portal для единой точки входа
-- **Grafana:** Визуализация метрик из нескольких источников
-
-Подробнее о метриках DORA — [Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md).
+Подробное описание методологии DORA приведено в разделе **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)**.
 
 ## Дополнительная информация
 
-### Полезные команды CLI
+### Полезные команды CLI для диагностики
 
 ```bash
-# История синхронизаций
+# История синхронизаций приложения
 argocd app history <app-name>
 
-# Журналы подов приложения
+# Журналы подов конкретного приложения
 argocd app logs <app-name>
 
-# Перезапуск синхронизации
+# Перезапуск процесса синхронизации
 argocd app sync <app-name> --retry
 
-# Откат к предыдущей ревизии
-argocd app rollback <app-name> [revision]
-
-# Ожидание завершения синхронизации
-argocd app wait <app-name> --sync --health
+# Принудительное удаление с очисткой ресурсов
+argocd app delete <app-name> --cascade=true
 ```
 
-[Официальная документация по troubleshooting](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/).
+### См. также
+
+- [ArgoCD: Обзор системы](./argocd_overview.md)
+- [ArgoCD: Установка и настройка](./argocd_installation_and_setup.md)
+- [ArgoCD: Синхронизация и её политики](./synchronization.md)
+- [Официальная документация: Troubleshooting](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/)

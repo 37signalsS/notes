@@ -1,16 +1,22 @@
 # Интеграция ArgoCD с Helm
 
-См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка ArgoCD](./argocd_installation_and_setup.md), [Синхронизация](./synchronization.md).
-
 ## Определения
 
-**Helm** — пакетный менеджер для Kubernetes, который использует формат чартов для описания приложений. ArgoCD предоставляет три подхода к интеграции с Helm.
+**Helm** — пакетный менеджер для Kubernetes, использующий формат чартов для описания приложений.
+
+**Helm-чарт (Chart)** — набор файлов, описывающих связанные ресурсы Kubernetes.
+
+**Values** — параметры конфигурации чарта, которые позволяют настраивать приложение под конкретное окружение.
+
+**ArgoCD Helm Integration** — набор механизмов, позволяющих ArgoCD использовать Helm-чарты в качестве источника для манифестов приложений.
 
 ## Базовые концепции
 
+ArgoCD поддерживает три основных подхода к интеграции с Helm.
+
 ### Подход 1: Нативная поддержка Helm-чартов
 
-ArgoCD напрямую ссылается на Helm-репозиторий и рендерит чарт во время синхронизации.
+ArgoCD напрямую обращается к Helm-репозиторию и выполняет рендеринг чарта (команду `helm template`) «на лету» во время синхронизации.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -37,86 +43,47 @@ spec:
 ```
 
 **Преимущества:**
-
-- Простота начала работы
-- Не требуется CI для генерации манифестов
-- Автоматическое обновление при выходе новых версий чарта
+- Низкий порог вхождения.
+- Не требуется сторонний CI для генерации манифестов.
+- Автоматическое уведомление об обновлении чарта (при использовании версионных диапазонов).
 
 **Недостатки:**
-
-- Нарушение GitOps-модели: изменения в `values` требуют редактирования `Application`
-- Нет истории изменений параметров в Git
-- Затруднено добавление ресурсов вне чарта
-- Один `Application` = один чарт
+- Нарушение "чистой" GitOps-модели: изменения параметров требуют редактирования ресурса `Application`.
+- Сложность аудита конкретных изменений в YAML-манифестах перед их применением.
+- Трудности при необходимости добавить кастомные ресурсы, отсутствующие в чарте.
 
 **Когда использовать:**
+- Быстрое развёртывание инфраструктурных компонентов.
+- Development-окружения.
 
-- Быстрое тестирование чартов
-- Простые приложения без кастомизации
-- Development-окружения
+### Подход 2: Генерация манифестов (`helm template` + Git)
 
-### Подход 2: `helm template` + Git (Рекомендуемый)
+Наиболее рекомендуемый подход для крупных проектов. Манифесты генерируются заранее (обычно в CI) и сохраняются в Git.
 
-Генерация манифестов в CI и хранение их в Git.
-
-**Процесс работы:**
-
-1. Разработчики изменяют `values.yaml` в Git-репозитории
-2. CI-пайплайн выполняет `helm template` и генерирует YAML-манифесты
-3. Сгенерированные манифесты коммитятся в Git
-4. ArgoCD синхронизирует изменения из Git
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: my-app
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: 'https://github.com/my-org/app-manifests.git'
-    path: 'staging/my-app'
-    targetRevision: HEAD
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: my-app
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-```
+**Процесс:**
+1. Разработчик меняет `values.yaml` в Git.
+2. CI-пайплайн запускает `helm template` и записывает результат (плоские YAML) в отдельную директорию или репозиторий.
+3. ArgoCD отслеживает только директорию со сгенерированными манифестами.
 
 **Преимущества:**
-
-- Чистый GitOps: вся история в Git
-- Возможность добавления любых ресурсов в ту же директорию
-- Комбинирование нескольких чартов в одном приложении
-- Аудит и ревью всех изменений
+- Полная прозрачность: в Git виден конечный результат, который будет применён.
+- Максимальная гибкость: можно добавить любые дополнительные ресурсы рядом со сгенерированными.
+- Совместимость со всеми инструментами анализа безопасности (например, Trivy, Checkov).
 
 **Недостатки:**
-
-- Требуется CI-пайплайн для генерации
-- Дублирование манифестов (чарт + сгенерированные YAML)
+- Требуется настройка CI-процесса.
+- Избыточность данных в Git.
 
 **Когда использовать:**
+- Production-окружения.
+- Сложные многокомпонентные приложения.
 
-- Production-окружения
-- Сложные приложения с кастомизацией
-- Команды с строгими требованиями к аудиту
+### Подход 3: Гибридный метод (Multiple Value Files)
 
-### Подход 3: Helm с параметрами (Hybrid)
-
-Использование нативной поддержки Helm с хранением `values.yaml` в Git.
+Использование нативной поддержки ArgoCD, но с хранением всех конфигураций (`values.yaml`) в Git-репозитории.
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: my-app
-  namespace: argocd
 spec:
-  project: default
   source:
     repoURL: 'https://github.com/my-org/helm-charts.git'
     path: 'charts/my-app'
@@ -125,27 +92,20 @@ spec:
       valueFiles:
       - values.yaml
       - values-production.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: my-app
 ```
 
 **Преимущества:**
-
-- Баланс между простотой и GitOps
-- `values.yaml` версионируются в Git
-- Не требуется генерация манифестов
+- Параметры версионируются в Git.
+- Сохраняется простота использования Helm.
 
 **Недостатки:**
-
-- Ограниченная гибкость по сравнению с `helm template`
+- Ограниченная гибкость по сравнению с подходом `helm template`.
 
 ## Практические сценарии
 
-### Сценарий 1: Развёртывание чарта из Helm-репозитория
+### Сценарий 1: Развёртывание из Helm-репозитория через CLI
 
 ```bash
-# Создание приложения через CLI
 argocd app create redis \
   --helm-chart redis \
   --repo https://charts.bitnami.com/bitnami \
@@ -156,104 +116,44 @@ argocd app create redis \
   --sync-policy automated
 ```
 
-### Сценарий 2: Использование локального Helm-чарта
+### Сценарий 2: Применение разных values для разных окружений
 
-```bash
-# Генерация манифестов
-helm template my-app ./charts/my-app \
-  -f values-production.yaml \
-  --output-dir ./manifests
-
-# Коммит в Git
-git add manifests/
-git commit -m "Update manifests for my-app v1.2.0"
-git push
-```
-
-### Сценарий 3: Комбинирование нескольких чартов
-
-Создайте директорию с манифестами из разных чартов:
-
-```
-app-manifests/
-├── redis/          # Манифесты из helm template redis
-├── postgresql/     # Манифесты из helm template postgresql
-└── app/            # Кастомные манифесты приложения
-```
+В Git-репозитории создаются файлы `values-dev.yaml`, `values-prod.yaml`. В манифестах `Application` для соответствующих окружений указывается нужный файл:
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: full-stack-app
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: 'https://github.com/my-org/app-manifests.git'
-    path: '.'
-    targetRevision: HEAD
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: production
-```
-
-### Сценарий 4: Parameter Overrides для разных окружений
-
-```yaml
-# values-dev.yaml
-replica:
-  replicaCount: 1
-resources:
-  limits:
-    cpu: 100m
-    memory: 128Mi
-
-# values-prod.yaml
-replica:
-  replicaCount: 3
-resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
-```
-
-```yaml
-# Application для dev
+# Application для production
 spec:
   source:
     helm:
       valueFiles:
-      - values-dev.yaml
-
-# Application для prod
-spec:
-  source:
-    helm:
-      valueFiles:
+      - values.yaml
       - values-prod.yaml
 ```
 
+### Сценарий 3: Комбинирование чартов (App of Apps)
+
+Использование паттерна «Application of Applications» для развёртывания группы чартов как единого целого. Один головной `Application` указывает на директорию с другими `Application`, каждый из которых может использовать свой Helm-чарт.
+
 ## Дополнительная информация
-
-### Best Practices
-
-| Практика | Описание |
-| :--- | :--- |
-| **Версионирование чартов** | Фиксируйте версию чарта (`targetRevision: 16.8.9`, не `latest`) |
-| **Хранение values в Git** | Все `values.yaml` файлы должны быть в Git |
-| **Использование valueFiles** | Разделяйте общие и окруженческие значения |
-| **Тестирование чартов** | Запускайте `helm lint` и `helm template` в CI |
-| **Документирование** | Ведите CHANGELOG для изменений в чартах |
 
 ### Сравнение подходов
 
-| Критерий | Нативный Helm | `helm template` + Git | Hybrid |
+| Критерий | Нативный Helm | `helm template` + Git | Гибридный метод |
 | :--- | :--- | :--- | :--- |
-| **Простота** | Высокая | Средняя | Высокая |
-| **GitOps-совместимость** | Низкая | Полная | Частичная |
-| **Гибкость** | Низкая | Высокая | Средняя |
-| **Аудит** | Низкий | Полный | Частичный |
-| **Рекомендация** | Dev/Test | Production | Баланс |
+| **Сложность настройки** | Низкая | Средняя | Низкая |
+| **GitOps-чистота** | Низкая | Высокая | Средняя |
+| **Прозрачность аудита** | Низкая | Максимальная | Средняя |
+| **Рекомендация** | Dev / Быстрый старт | Production / Большие команды | Баланс |
 
-[Официальная документация ArgoCD Helm](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/) и [Helm](https://helm.sh/docs/).
+### Рекомендации (Best Practices)
+
+- **Фиксация версий:** Всегда указывайте конкретную версию чарта в `targetRevision`, избегайте использования `latest`.
+- **Проверка в CI:** Запускайте `helm lint` и `helm template` перед коммитом изменений в репозиторий, чтобы предотвратить ошибки рендеринга.
+- **Безопасность секретов:** Не храните пароли в `values.yaml`. Используйте внешние решения (например, [Vault Integration](./argocd_vault_integration.md)).
+
+### См. также
+
+- [ArgoCD Overview](./argocd_overview.md)
+- [Синхронизация и её политики](./synchronization.md)
+- [Установка и настройка ArgoCD](./argocd_installation_and_setup.md)
+- [Официальная документация ArgoCD Helm](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/)

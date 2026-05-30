@@ -1,6 +1,4 @@
-# ArgoCD: Синхронизация и её политики
-
-См. также: [ArgoCD Overview](./argocd_overview.md), [Установка и настройка](./argocd_installation_and_setup.md), [Troubleshooting](./argocd_troubleshooting_and_monitoring.md).
+# ArgoCD — синхронизация и политики
 
 ## Определения
 
@@ -22,42 +20,40 @@
 
 ArgoCD Application Controller с заданной периодичностью (по умолчанию 3 минуты) или по триггеру (webhook, manual refresh):
 
-1. Клонирует Git-репозиторий
-2. Рендерит манифесты (Helm-шаблон, Kustomize, plain YAML)
-3. Сравнивает результат с `Live State` в кластере
-4. При расхождении присваивает статус `OutOfSync`
+1. Клонирует Git-репозиторий.
+2. Рендерит манифесты (Helm-шаблон, Kustomize, plain YAML).
+3. Сравнивает результат с `Live State` в кластере.
+4. При расхождении присваивает статус `OutOfSync`.
+
+### Двунаправленная синхронизация
+
+Основное отличие ArgoCD от многих других инструментов CI/CD — его способность отслеживать изменения в обоих направлениях:
+
+1. **Git → Кластер:** ArgoCD отслеживает изменения в Git-репозитории и применяет их к кластеру.
+2. **Кластер → Git:** ArgoCD отслеживает состояние развернутых приложений в самом кластере. Если в кластер внесены изменения вручную (например, через `kubectl edit`), ArgoCD обнаруживает это расхождение. В зависимости от настроек (`selfHeal`), он может автоматически откатить эти изменения, возвращая состояние к описанному в Git.
+
+Это гарантирует, что Git остается единственным источником достоверных данных, предотвращая "дрейф конфигурации" (configuration drift).
 
 ### Политики синхронизации
 
-Определяются в секции `syncPolicy` манифеста `Application`:
+Определяются в секции `syncPolicy` манифеста `Application`. Основные режимы:
 
-```yaml
-spec:
-  syncPolicy:
-    automated:
-      prune: true      # Удалять ресурсы, отсутствующие в Git
-      selfHeal: true   # Исправлять дрейф конфигурации
-    syncOptions:
-    - CreateNamespace=true
-    - ServerSideApply=true
-    - PrunePropagationPolicy=foreground
-    - PruneLast=true
-```
+- **Автоматическая синхронизация** — ArgoCD сам применяет изменения при обнаружении расхождений. Подробное описание и параметры см. в **[Auto-Sync](./synchronization/scenarios/auto_sync.md)**.
+- **Ручная синхронизация** — изменения применяются только после явного действия пользователя. См. **[Manual Sync](./synchronization/scenarios/manual_sync.md)**.
 
 ## Практические сценарии
 
 Подробные руководства по сценариям синхронизации:
 
-- **[Ручная синхронизация](./synchronization/scenarios/manual_sync.md)** — изменения применяются только после явного триггера
-- **[Автоматическая синхронизация](./synchronization/scenarios/auto_sync.md)** — ArgoCD применяет изменения при обнаружении расхождений
-- **[Sync Waves и Hooks](./synchronization/scenarios/sync_waves_hooks.md)** — управление порядком синхронизации ресурсов
-- **[Окна синхронизации](./synchronization/scenarios/sync_windows.md)** — ограничение синхронизации по расписанию
-- **[Прогрессивная синхронизация](./synchronization/scenarios/progressive_sync.md)** — постепенное развёртывание с валидацией (v3.x)
+- **[Ручная синхронизация](./synchronization/scenarios/manual_sync.md)** — изменения применяются только после явного триггера.
+- **[Автоматическая синхронизация](./synchronization/scenarios/auto_sync.md)** — ArgoCD применяет изменения при обнаружении расхождений.
+- **[Sync Waves и Hooks](./synchronization/scenarios/sync_waves_hooks.md)** — управление порядком синхронизации ресурсов.
+- **[Окна синхронизации](./synchronization/scenarios/sync_windows.md)** — ограничение синхронизации по расписанию.
+- **[Прогрессивная синхронизация](./synchronization/scenarios/progressive_sync.md)** — постепенное развёртывание с валидацией (v3.x).
 
 ## Дополнительная информация
 
-### Расширенные возможности
-
-**[Игнорирование различий](./synchronization/ignore_differences.md)** — игнорирование дрейфа и принудительная синхронизация.
-
-[Официальная документация по sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/).
+- **[Игнорирование различий](./synchronization/ignore_differences.md)** — настройка игнорирования дрейфа для специфических полей.
+- **[ArgoCD Overview](./argocd_overview.md)** — общий обзор возможностей платформы.
+- **[Установка и настройка ArgoCD](./argocd_installation_and_setup.md)** — базовое развёртывание контроллера.
+- [Официальная документация по sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/).

@@ -46,8 +46,8 @@ Crossplane идеально вписывается в методологию Git
 1. **Создание манифеста Crossplane в Git:**
 
    ```yaml
-   apiVersion: yandexcloud.crossplane.io/v1alpha1
-   kind: ObjectStorageBucket
+   apiVersion: storage.yandex-cloud.jet.crossplane.io/v1alpha1
+   kind: Bucket
    metadata:
      name: my-artifacts
    spec:
@@ -56,7 +56,7 @@ Crossplane идеально вписывается в методологию Git
        location:
          region: ru-central1
      providerConfigRef:
-       name: yandexcloud-provider
+       name: yandex-cloud-provider
    ```
 
 2. **ArgoCD Application для синхронизации:**
@@ -91,7 +91,7 @@ Crossplane идеально вписывается в методологию Git
    argocd app get crossplane-infra
    
    # Статус ресурса Crossplane
-   kubectl get rdsinstance my-postgres-db -o yaml
+   kubectl get bucket my-artifacts -o yaml
    ```
 
 ### Сценарий 2: Мультикластерная синхронизация с ArgoCD
@@ -132,7 +132,7 @@ spec:
 
 ## Дополнительная информация
 
-Обзор ArgoCD и его возможностей см. в [ArgoCD Overview](../ArgoCD/argocd_overview.md), политики синхронизации — в [Synchronization](../ArgoCD/synchronization.md), использование Helm — в [Helm Integration](../ArgoCD/helm_integration.md). Альтернативный GitOps-инструмент описан в [Flux](../flux.md).
+Обзор ArgoCD и его возможностей см. в [ArgoCD Overview](../ArgoCD/argocd_overview.md), политики синхронизации — в [Synchronization](../ArgoCD/synchronization.md). Альтернативный GitOps-инструмент описан в [Flux](../flux.md).
 
 Внешние ресурсы:
 

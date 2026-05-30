@@ -48,7 +48,7 @@
 * Интеграция с GitOps-инструментами: [Интеграция с GitOps](./gitops_integration.md)
 * Сравнение с альтернативами: [Сравнение с Terraform](./terraform_comparison.md)
 
-Навигатор по сервисам Yandex Cloud: [Yandex Cloud — навигатор](../../Yandex/index.md).
+Управление ресурсами Yandex Cloud: [Yandex Resource Manager](../../Yandex/Resource_Manager/overview.md).
 
 ## Дополнительная информация
 

@@ -11,9 +11,11 @@
 Поток данных: `Beats -> Logstash -> Elasticsearch -> Kibana`
 
 * **Beats**: Легковесные агенты для сбора данных (логи, метрики, трафик) и отправки в Logstash или Elasticsearch. Основной агент для логов — **[Filebeat](./filebeat_overview.md)**.
-* **Logstash**: Серверный конвейер обработки данных: прием, парсинг, обогащение, фильтрация, трансформация перед отправкой в Elasticsearch.
-* **Elasticsearch**: Распределенный поисковый и аналитический движок. Хранит и индексирует данные, обеспечивает быстрый поиск и агрегацию.
-* **Kibana**: Веб-интерфейс для интерактивного поиска, анализа и визуализации данных из Elasticsearch через дашборды и графики.
+* **[Logstash](./Logstash/logstash_overview.md)**: Серверный конвейер обработки данных: прием, парсинг, обогащение, фильтрация, трансформация перед отправкой в Elasticsearch.
+* **[Elasticsearch](./Elasticsearch/elasticsearch_overview.md)**: Распределенный поисковый и аналитический движок. Хранит и индексирует данные, обеспечивает быстрый поиск и агрегацию.
+* **[Kibana](./Kibana/kibana_overview.md)**: Веб-интерфейс для интерактивного поиска, анализа и визуализации данных из Elasticsearch через дашборды и графики.
+
+> **Примечание о версиях:** Для совместимости компонентов рекомендуется использовать одинаковые версии Elasticsearch, Logstash, Kibana и Beats. Актуальные мажорные версии — 8.x и 9.x.
 
 ### Дополнительные компоненты
 
@@ -32,4 +34,5 @@
 
 ## Дополнительная информация
 
-Подробные обзоры компонентов: **[Filebeat](./filebeat_overview.md)**, **[Elasticsearch](./Elasticsearch/elasticsearch_overview.md)**, **[Logstash](./Logstash/logstash_overview.md)**, **[Kibana](./Kibana/kibana_overview.md)**. Практические руководства по развертыванию — в директории **[Tutorials](./Tutorials/)**.
+* **[Настройка ELK с Docker Compose](./Tutorials/practical_setup_with_docker.md)** — руководство по локальному развертыванию.
+* **[Настройка кластера Elasticsearch](./Tutorials/cluster_setup.md)** — развертывание мультинодового кластера.
