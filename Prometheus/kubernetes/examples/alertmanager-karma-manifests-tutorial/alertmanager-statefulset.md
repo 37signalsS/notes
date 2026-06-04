@@ -1,12 +1,12 @@
 # Alertmanager StatefulSet (манифест)
 
-## Definitions
+## Определения
 
 **Alertmanager StatefulSet** — Kubernetes StatefulSet для развёртывания Alertmanager с инициализацией конфигурации через init-container. Паттерн обеспечивает безопасную подстановку секретов (токены, пароли) из Kubernetes Secret в шаблон `alertmanager.yml` во время запуска пода.
 
-> **См. также:** [Паттерн безопасного управления конфигурацией](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты) (SSoT)
+> **См. также:** материал [Развёртывание Alertmanager в Kubernetes](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты)
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура подов
 
@@ -32,7 +32,7 @@
 | `--storage.path` | `/alertmanager` | Путь к PVC для данных |
 | `containerPort` | `9093` | Порт веб-интерфейса и API |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Манифест StatefulSet
 
@@ -129,7 +129,7 @@ spec:
 
 **Основной контейнер:**
 
-- `prom/alertmanager:v0.26.0` — проверяйте актуальность версии в [Alertmanager Installation](../../installation/alertmanager_installation.md#актуальная-версия)
+- `prom/alertmanager:v0.26.0` — проверяйте актуальность версии в разделе [Актуальная версия](../../installation/alertmanager_installation.md#актуальная-версия)
 - Монтирует готовый конфиг из `emptyDir` (путь `/etc/alertmanager`)
 - Данные хранятся на PVC (`alertmanager-data`, 1Gi) — silences и состояние сохраняются при перезапусках
 
@@ -138,9 +138,9 @@ spec:
 - StatefulSet выбран для стабильного сетевого идентификатора (`alertmanager-0`) и возможности масштабирования в HA-кластер с gossip-протоколем
 - `serviceName: alertmanager` — требуется для DNS-разрешения пода
 
-## Additional Information
+## Дополнительная информация
 
-- [Секреты](./secrets.md) — Kubernetes Secret с токенами SMTP и Telegram
+- [Секреты Kubernetes](./secrets.md) — Kubernetes Secret с токенами SMTP и Telegram
 - [ConfigMap-шаблон](./alertmanager-config.md) — шаблон `alertmanager.yml.tpl` с плейсхолдерами
 - [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования уведомлений
 - [Сервисы](./services.md) — публикация Alertmanager и Karma наружу

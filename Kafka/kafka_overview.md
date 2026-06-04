@@ -1,8 +1,8 @@
 # Обзор Apache Kafka
 
-**Apache Kafka** — распределённая стриминговая платформа для создания высокопроизводительных конвейеров данных, потоковой аналитики и интеграции систем. В отличие от традиционных систем обмена сообщениями, Kafka работает как отказоустойчивый неизменяемый журнал (лог), обеспечивая надёжность и возможность повторного чтения данных.
+**Apache Kafka** — распределённая стриминговая платформа для создания высокопроизводительных pipeline данных, потоковой аналитики и интеграции систем. В отличие от традиционных систем обмена сообщениями, Kafka работает как отказоустойчивый неизменяемый журнал (лог), обеспечивая надёжность и возможность повторного чтения данных.
 
-**SSoT для смежных тем:**
+**Основные источники:**
 
 - **[Гарантии доставки](./delivery_guarantees.md)** — at-most-once, at-least-once, exactly-once
 - **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — стратегии партиционирования, ребалансировка
@@ -127,28 +127,10 @@ Kafka достигает высокой пропускной способнос�
 
 **См. также:** **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — стратегии partitioner (key-based, round-robin, sticky).
 
-## Additional Information
+## Дополнительная информация
 
-### Связанные темы
+### См. также
 
-| Тема | Описание |
-| :--- | :--- |
-| **[Kafka для мониторинга](./kafka_for_monitoring.md)** | Паттерн использования Kafka как буфера для логов, метрик, трассировок |
-| **[Гарантии доставки](./delivery_guarantees.md)** | Семантика at-most-once, at-least-once, exactly-once с примерами кода |
-| **[Партиционирование и балансировка](./partitioning_and_balancing.md)** | Стратегии партиционирования, ребалансировка, административные операции |
-| **[Принципы очередей сообщений](./message_queues_principles.md)** | Общие концепции: продюсер, брокер, консьюмер, push vs pull |
-| **[RabbitMQ vs Kafka](./rabbitmq_vs_kafka.md)** | Сравнение архитектур и сценариев применения |
-
-### Интеграции
-
-| Инструмент | Использование Kafka |
-| :--- | :--- |
-| **[Vector](../Vector/vector_overview.md)** | Продюсер/консьюмер для сбора и обработки логов |
-| **[Fluent Bit](../Kubernetes/MonitoringLogging/EFK/fluentbit/fluent_comparison.md)** | Продюсер для отправки логов в Kafka |
-| **[Jaeger](../Jaeger/jaeger_architecture.md)** | Буфер между Collector и Ingester для трассировок |
-| **[Mimir](../Mimir/mimir_overview.md)** | Приём метрик через Kafka (после версии 3.0) |
-
-### Ресурсы
-
-- **[High-Load Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md)** — архитектура с Kafka как транспорт для логов
-- **[Logs Deep Dive](../Concepts/Observability_and_Monitoring/logs_deep_dive.md)** — стратегии сбора логов с использованием Kafka
+- **[Kafka для мониторинга](./kafka_for_monitoring.md)** — использование Kafka как буфера для логов, метрик и трассировок.
+- **[Гарантии доставки](./delivery_guarantees.md)** — семантика at-most-once, at-least-once, exactly-once.
+- **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — стратегии партиционирования и ребалансировка.

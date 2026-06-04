@@ -1,12 +1,12 @@
 # VRL (Vector Remap Language)
 
-## Definitions
+## Определения
 
 **VRL (Vector Remap Language)** — предметно-ориентированный язык (DSL) для трансформации данных в Vector. Компилируется в нативный код Rust — высокая производительность, безопасность, отсутствие GC.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Возможности
 
@@ -73,17 +73,23 @@ del(@timestamp)
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 Практические примеры использования VRL в конфигурациях Vector описаны в **[Practical Scenarios](./practical_scenarios.md)**:
 
 - Парсинг JSON из Kafka и замена точек в K8s-метаданных ([подробнее](./practical_scenarios.md#практический-сценарий-роутер-логов-из-kafka-в-opensearch))
-- Обогащение логов GeoIP через `parse_groks!` ([подробнее](./practical_scenarios.md#практический-сценарий-обогащение-логов-geoip))
+- Обогащение логов GeoIP через enrichment tables ([подробнее](./practical_scenarios.md#практический-сценарий-обогащение-логов-geoip))
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-**Инструменты:** [VRL Playground](https://vrl.dev) — онлайн-песочница; [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl) — подсветка синтаксиса и автодополнение.
+**Инструменты:**
 
-**Связанные заметки:** [Vector Overview](./vector_overview.md) — общий обзор Vector; [Practical Scenarios](./practical_scenarios.md) — практические сценарии с конфигурациями.
+- [VRL Playground](https://vrl.dev) — онлайн-песочница для тестирования скриптов
+- [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl) — подсветка синтаксиса и автодополнение
+
+**Связанные заметки:**
+
+- [Vector Overview](./vector_overview.md) — общий обзор Vector
+- [Practical Scenarios](./practical_scenarios.md) — практические сценарии с конфигурациями

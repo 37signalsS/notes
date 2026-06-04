@@ -2,261 +2,146 @@
 
 ## Определения
 
-**Podman (Pod Manager)** — инструмент управления OCI-совместимыми контейнерами с архитектурой без демона (daemonless). Полная замена Docker CLI с поддержкой rootless-режима по умолчанию. Работает как часть экосистемы специализированных утилит: **[Buildah](../Docker/alternative_runtimes_and_tools.md)** (сборка образов), **[Skopeo](../Docker/alternative_runtimes_and_tools.md)** (копирование между реестрами), **[CRI-O](../Docker/alternative_runtimes_and_tools.md)** (CRI для Kubernetes).
+**Podman (Pod Manager)** — инструмент с открытым исходным кодом для управления контейнерами и образами, поддерживающий стандарты **OCI (Open Container Initiative)**. Главными особенностями являются отсутствие центрального демона (**daemonless**) и поддержка запуска контейнеров от обычного пользователя (**rootless**) по умолчанию.
 
-**Daemonless-архитектура** — модель без центрального привилегированного демона. Каждая команда запускает отдельный процесс, который выполняет задачу и завершается. Жизненным циклом контейнеров управляют легковесные процессы-мониторы `conmon`. Подробнее: [Daemonless архитектура Podman](./podman_daemonless_architecture.md).
+**Daemonless-архитектура** — модель управления, при которой отсутствует постоянно запущенный фоновый процесс с правами root. Каждая команда запускает отдельный процесс, а жизненным циклом контейнеров управляют легковесные мониторы `conmon`. Подробнее: **[Daemonless архитектура Podman](./podman_daemonless_architecture.md)**.
+
+**Rootless** — режим работы, позволяющий запускать контейнеры без привилегий суперпользователя, что значительно повышает безопасность системы. Подробнее: **[Rootless режим](./podman_rootless.md)**.
 
 ## Основные концепции
 
-### Установка
+### Установка и проверка
 
-**RHEL и совместимые (AlmaLinux, Rocky Linux):**
-
-```bash
-dnf module enable container-tools
-dnf module install container-tools
-```
-
-**Fedora:**
+Для установки в большинстве дистрибутивов Linux используется пакетный менеджер.
 
 ```bash
-dnf install podman
-```
+# RHEL/CentOS/Fedora
+sudo dnf install podman
 
-**Ubuntu/Debian:**
-
-```bash
-echo "deb https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_$(lsb_release -rs)/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
-wget -qO - "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_$(lsb_release -rs)/Release.key" | sudo apt-key add -
+# Ubuntu/Debian
 sudo apt update && sudo apt install podman
-```
 
-**macOS/Windows (через Podman Desktop):**
-
-```bash
-brew install podman
-podman machine init && podman machine start
-```
-
-**Проверка установки:**
-
-```bash
+# Проверка версии и информации о системе
 podman --version
 podman info
 ```
 
-### Работа с образами
+### Управление образами
 
 | Операция | Команда | Описание |
 | :--- | :--- | :--- |
-| Поиск | `podman search <образ>` | Поиск образов в реестрах |
-| Скачивание | `podman pull <образ>` | Скачать образ из реестра |
-| Список | `podman images` | Показать локальные образы |
-| Тегирование | `podman tag <образ> <новое_имя>` | Добавить тег для пуша в реестр |
-| Инспекция | `podman inspect <образ>` | Показать метаданные (порты, переменные, пользователь) |
-| Удаление | `podman rmi <образ>` | Удалить локальный образ |
+| Поиск | `podman search <термин>` | Поиск в настроенных реестрах |
+| Загрузка | `podman pull <образ>` | Скачивание образа |
+| Список | `podman images` | Локально доступные образы |
+| Тегирование | `podman tag <образ> <новый_тег>` | Назначение имени/тега |
+| Инспекция | `podman inspect <образ>` | Подробные метаданные |
+| Удаление | `podman rmi <образ>` | Удаление локального образа |
 
-### Работа с контейнерами
+### Управление контейнерами
 
 | Операция | Команда | Описание |
 | :--- | :--- | :--- |
-| Запуск | `podman run -d --name <имя> -p <хост>:<контейнер> <образ>` | Создать и запустить контейнер |
-| Список (запущенные) | `podman ps` | Показать запущенные контейнеры |
-| Список (все) | `podman ps -a` | Показать все контейнеры |
-| Логи | `podman logs <контейнер>` | Показать логи (`-f` — follow, `--tail N`) |
-| Выполнить команду | `podman exec -it <контейнер> <команда>` | Выполнить команду в работающем контейнере |
-| Остановка | `podman stop <контейнер>` | Остановить контейнер |
-| Запуск | `podman start <контейнер>` | Запустить остановленный контейнер |
-| Удаление | `podman rm <контейнер>` | Удалить контейнер |
+| Запуск | `podman run [options] <образ>` | Создание и запуск нового контейнера |
+| Список | `podman ps` | Запущенные контейнеры (`-a` для всех) |
+| Логи | `podman logs <имя/ID>` | Вывод логов приложения |
+| Исполнение | `podman exec -it <имя/ID> <команда>` | Выполнение команды внутри контейнера |
+| Остановка | `podman stop <имя/ID>` | Корректное завершение работы |
+| Удаление | `podman rm <имя/ID>` | Удаление контейнера (`-f` для принудительного) |
 
 ### Политики перезапуска (`--restart`)
 
 | Политика | Поведение |
 | :--- | :--- |
-| `no` (по умолчанию) | Никогда не перезапускать |
-| `on-failure[:max-retries]` | Только при ошибке (exit code ≠ 0) |
-| `always` | Всегда перезапускать, даже после `stop` |
-| `unless-stopped` | Всегда, кроме случаев явной остановки (рекомендуется для production) |
+| `no` | По умолчанию. Никогда не перезапускать. |
+| `on-failure[:max]` | Перезапуск только при ненулевом коде возврата. |
+| `always` | Всегда перезапускать при падении или перезагрузке. |
+| `unless-stopped` | Перезапуск до явной ручной остановки. |
 
-### Ключевые особенности Podman
-
-- **Поддержка Compose** — запуск многоконтейнерных приложений через **[Podman Compose](./podman-compose.md)** или нативную утилиту `podman-compose`.
-- **Rootless по умолчанию** — контейнеры запускаются от непривилегированного пользователя. Подробнее: [Rootless режим](./podman_rootless.md)
-- **Совместимость с Docker CLI** — `alias docker=podman` для прозрачной миграции
-- **Нативная поддержка подов** — группировка контейнеров по аналогии с Kubernetes
-- **Интеграция с systemd** — генерация unit-файлов для автозапуска ([Daemonless архитектура](./podman_daemonless_architecture.md))
-- **Автообновление** — встроенный механизм updates/rollback через `podman auto-update`. Подробнее: [Автообновление и откат](./podman_auto_update.md)
-- **Конфигурация и секреты** — гибкое управление через [Переменные окружения](./podman_environment_variables.md) и безопасные [Секреты](./podman_secrets.md)
-- **Экономия ресурсов** — 0 МБ памяти в режиме простоя (нет демона)
-
-### Очистка системы (Prune)
+### Очистка системы
 
 | Команда | Описание |
 | :--- | :--- |
-| `podman system prune` | Удаление остановленных контейнеров, dangling образов, сетей |
-| `podman container prune` | Удаление остановленных контейнеров |
-| `podman image prune` | Удаление dangling образов (`-a` — все неиспользуемые) |
+| `podman system prune` | Удаление всех остановленных контейнеров и неиспользуемых сетей/образов |
+| `podman image prune` | Удаление образов без тегов (dangling) |
 | `podman volume prune` | Удаление неиспользуемых томов |
-
-**Dangling images** — образы без тега (`<none>`), появляются при пересборке с тем же тегом.
 
 ## Практические сценарии
 
-### Запуск веб-сервера Nginx
+### Запуск веб-сервера (Nginx)
+
+Простой пример запуска контейнера с пробросом портов в фоновом режиме:
 
 ```bash
-# Запуск в фоновом режиме с пробросом портов
-podman run -d --name nginx -p 8080:80 nginx
+podman run -d --name web-server -p 8080:80 nginx
+# → a1b2c3d4... (ID контейнера)
 
-# Проверка работы
+# Проверка доступности
 curl http://localhost:8080
-
-# Просмотр логов
-podman logs nginx
-
-# Вход в контейнер
-podman exec -it nginx /bin/sh
 ```
 
-### Использование Volume
+### Работа с хранилищем (Volumes)
 
-Подробная документация: [Хранилище и работа с файловой системой](./podman_volumes_and_storage.md).
+Для сохранения данных между перезапусками контейнеров используются тома или монтирование директорий.
 
 ```bash
-# Bind mount — монтирование директории хоста
-podman run -d --name myapp -v /home/user/data:/data myimage
+# Создание тома
+podman volume create app_data
 
-# Named volume — управление через Podman
-podman volume create mydata
-podman run -d --name myapp -v mydata:/data myimage
-
-# SELinux relabel (RHEL/Fedora)
-podman run -d --name myapp -v /home/user/data:/data:Z myimage
-
-# Дополнительные флаги Podman
-# :U — автоматический chown (rootless)
-# :O — временный overlay (не меняет хост)
-podman run -d -v ./data:/data:U myimage
-podman run -it -v ./data:/data:O alpine sh
+# Запуск с использованием тома
+podman run -d -v app_data:/data my_app
 ```
 
-### Работа с подами
+Подробнее о правах доступа и SELinux: **[Хранилище и файловая система](./podman_volumes_and_storage.md)**.
+
+### Группировка контейнеров в поды
+
+Podman позволяет объединять контейнеры в поды (Pods), которые делят сетевое пространство.
 
 ```bash
 # Создание пода
-podman pod create --name mypod -p 8080:80
+podman pod create --name my-stack -p 8080:80
 
-# Запуск контейнера в поде
-podman run -d --pod mypod --name web nginx
-
-# Список подов
-podman pod ps
-
-# Остановка/удаление пода
-podman pod stop mypod
-podman pod rm mypod
+# Добавление контейнера в под
+podman run -d --pod my-stack --name web nginx
 ```
 
-### Генерация Kubernetes-манифестов
+Подробнее: **[Поды в Podman](./podman_pods.md)**.
+
+### Интеграция с Kubernetes
+
+Экспорт текущей конфигурации в формат манифеста Kubernetes:
 
 ```bash
-# Экспорт пода/контейнера в Kubernetes YAML
-podman generate kube mypod > mypod.yaml
-
-# Запуск Kubernetes-манифеста локально
-podman play kube mypod.yaml
+podman kube generate <имя_пода> > pod-spec.yaml
 ```
+
+Подробнее: **[Интеграция с Kubernetes](./podman_pods.md#3-интеграция-с-kubernetes)**.
 
 ### Миграция с Docker
 
+Для прозрачного перехода можно настроить алиас:
+
 ```bash
-# Алиас для совместимости
 alias docker=podman
-
-# Импорт Docker-образов
-podman load < docker-save-output.tar
-
-# Экспорт образов для Docker
-podman save -o output.tar image:tag
 ```
 
-### Работа с локальным реестром
-
-```bash
-# Запуск реестра
-mkdir -p ~/registry
-podman run -d --name registry \
-  -p 5000:5000 \
-  -v ~/registry:/var/lib/registry:z \
-  registry
-```
-
-**Настройка доверия (без HTTPS) в `/etc/containers/registries.conf`:**
-
-```toml
-[[registry]]
-location = "localhost:5000"
-insecure = true
-```
-
-**Загрузка образа в локальный реестр:**
-
-```bash
-podman pull docker.io/library/nginx
-podman tag docker.io/library/nginx localhost:5000/nginx
-podman push localhost:5000/nginx
-```
-
-**Копирование через Skopeo:**
-
-```bash
-skopeo copy docker://docker.io/library/httpd docker://localhost:5000/httpd
-```
-
-### Cockpit интеграция
-
-После установки `container-tools` в Cockpit (`https://<сервер>:9090`) появляется вкладка **Podman Containers** для управления контейнерами через веб-интерфейс.
-
-```bash
-systemctl enable --now cockpit.socket
-```
-
-### Получение IP-адреса контейнера
-
-```bash
-podman inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' my-container
-```
-
-### Логирование Nginx в STDOUT/STDERR
-
-Приложения должны писать логи в стандартные потоки для сбора через `podman logs`:
-
-```dockerfile
-RUN ln -sf /dev/stdout /var/log/nginx/access.log && \
-    ln -sf /dev/stderr /var/log/nginx/error.log
-```
+Полное руководство: **[Миграция с Docker на Podman](./migration-from-docker.md)**.
 
 ## Дополнительная информация
 
-### Бенчмарки производительности
+### Производительность
 
-Полная таблица сравнения: [Podman vs Docker](./podman_vs_docker.md).
+- **Потребление ресурсов**: Podman потребляет значительно меньше памяти в режиме ожидания (0 МБ), так как нет постоянно запущенного демона.
+- **Изоляция**: Использование меток SELinux и MCS обеспечивает строгую изоляцию между контейнерами на уровне ядра.
 
-Кратко: Docker быстрее для отдельных операций (запуск контейнера на 15%, pull образов на 10%), Podman эффективнее для масштабирования (экономия памяти 65%, на 30% меньше потребление RAM при 100 контейнерах).
+### Сетевые подсистемы
 
-### Сетевые драйверы
+- **Netavark**: Современный сетевой стек (Podman 4+).
+- **pasta / slirp4netns**: Инструменты для реализации сети в rootless-режиме без привилегий root.
 
-| Драйвер | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| **Netavark** | Сетевой бэкенд по умолчанию (Podman 4+) | Rootful режим |
-| **pasta** | Современная замена slirp4netns | Rootless (рекомендуется) |
-| **slirp4netns** | Виртуальный сетевой стек с NAT | Rootless (legacy) |
-| **Aardvark-dns** | DNS для контейнеров | Замена dnsmasq (Podman 4+) |
+### См. также
 
-Подробнее: [Rootless режим](./podman_rootless.md).
-
-### Интеграция с SELinux и MCS
-
-При старте контейнера с SELinux ему присваивается уникальная метка MCS (Multi-Category Security): `system_u:system_r:container_t:s0:c123,c456`. Это обеспечивает строгую изоляцию между контейнерами на уровне ядра. Флаги `:z` и `:Z` управляют relabel для общего и приватного доступа соответственно.
-
-Подробнее: [Хранилище и работа с файловой системой](./podman_volumes_and_storage.md).
+- **[Podman vs Docker](./podman_vs_docker.md)** — детальное сравнение архитектур.
+- **[Автообновление и откат](./podman_auto_update.md)** — механизмы `auto-update`.
+- **[Переменные окружения](./podman_environment_variables.md)** — настройка контейнеров.
+- **[Секреты Podman](./podman_secrets.md)** — безопасное управление паролями и ключами.

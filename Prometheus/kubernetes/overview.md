@@ -93,7 +93,7 @@ Prometheus использует Kubernetes API для автоматическо
 
 Интеграция внешних серверов с экспортерами через `additionalScrapeConfigs` + `static_configs`:
 
-> **См. также:** [External Monitoring via static_configs (SSoT)](./Kube_Prometheus_Stack_Helm/practical_scenarios/external_monitoring.md).
+> **См. также:** [Внешний мониторинг через static_configs](./Kube_Prometheus_Stack_Helm/practical_scenarios/external_monitoring.md).
 
 ## Дополнительная информация
 

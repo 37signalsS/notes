@@ -45,6 +45,7 @@ Flux позволяет управлять Helm-релизами полност�
 ### Безопасность и секреты
 
 Flux нативно поддерживает работу с зашифрованными секретами через **Mozilla SOPS**. Это позволяет безопасно хранить секреты прямо в Git-репозитории.
+
 - Поддерживаемые провайдеры: AWS KMS, Azure Key Vault, Google Cloud KMS, HashiCorp Vault, PGP, age.
 - Секреты расшифровываются непосредственно `kustomize-controller` перед применением в кластер.
 
@@ -143,11 +144,13 @@ spec:
 ## Дополнительная информация
 
 **Связанные документы:**
+
 - [Сравнение с ArgoCD](./argo_vs_flux_manifests.md) — детальное сравнение архитектур и манифестов.
 - [Уведомления в GitOps](./gitops_notifications.md) — настройка оповещений в Slack/Teams.
 - [Управление секретами](./secrets_encryption.md) — подробнее о SOPS, Sealed Secrets и Vault.
 
 **Официальные ресурсы:**
+
 - [Документация Flux](https://fluxcd.io/)
 - [GitHub проекта](https://github.com/fluxcd/flux2)
 - [Список изменений (Changelog)](https://github.com/fluxcd/flux2/releases)

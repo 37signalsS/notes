@@ -1,20 +1,40 @@
 # Архитектура и операции Tempo
 
-## Definitions
+## Определения
 
-**Архитектура Tempo** — компоненты системы (Distributor, Ingester, Querier, Compactor, Query Frontend, Metric Generator), форматы хранения vParquet, режимы развёртывания (монолит/распределённый).
+**Tempo** — высокомасштабируемое распределённое хранилище трассировок. В данном файле рассматриваются технические аспекты архитектуры, режимы деплоя и эксплуатационные характеристики.
 
-**Операции Tempo** — конфигурация хранилищ, breaking changes, рекомендации по эксплуатации.
+**Архитектура Tempo** — совокупность компонентов (Distributor, Ingester, Querier и др.), обеспечивающих прием, хранение и поиск трассировок в объектном хранилище.
 
-Навигация: [Главная Tempo](./index.md). Компоненты описаны в [разделе архитектуры index.md](./index.md#архитектура).
+**vParquet** — специализированный формат хранения Tempo на базе Apache Parquet, оптимизированный для TraceQL и эффективного сжатия данных трассировок.
+
+Навигация: [Главная Tempo](./index.md).
 
 ---
 
-## Basic Concepts
+## Основные концепции
+
+### Архитектура и компоненты
+
+Tempo построен на микросервисной архитектуре, аналогичной [Loki](../Loki/loki_overview.md) и [Mimir](../Mimir/mimir_overview.md).
+
+| Компонент | Функции |
+| :--- | :--- |
+| **Distributor** | Принимает трассировки (OTLP, Jaeger, Zipkin), валидирует их и распределяет между Ingesters с помощью consistent hashing. |
+| **Ingester** | Нарезает входящие трассировки на блоки (batches), буферизует их в оперативной памяти и записывает в долгосрочное хранилище (S3/GCS/Azure). |
+| **Querier** | Отвечает за поиск трассировок по `trace_id` или выполнение запросов TraceQL. Запрашивает данные из Ingesters (свежие данные) и из объектного хранилища. |
+| **Query Frontend** | Опциональный компонент для шардирования и кэширования запросов, обеспечивающий параллелизацию выполнения TraceQL. |
+| **Compactor** | Фоновый процесс, который объединяет небольшие блоки в объектном хранилище в более крупные для оптимизации производительности чтения и стоимости хранения. |
+| **Metric Generator** | Генерирует метрики (Service Graphs, Span Metrics) на основе проходящих трассировок и отправляет их в Prometheus/Mimir. |
+
+### Режимы деплоя
+
+1. **Монолит (Monolithic mode)** — все компоненты запускаются в одном процессе. Идеально для небольших инсталляций, тестирования или локальной разработки.
+2. **Микросервисы (Microservices mode)** — каждый компонент запускается как отдельный сервис. Позволяет независимо масштабировать Ingesters (для записи) и Queriers (для чтения).
 
 ### Форматы хранения (vParquet)
 
-Tempo использует собственный формат хранения на базе Apache Parquet. По умолчанию — vParquet4 (с Tempo 2.0). В Tempo 2.10 добавлен vParquet5.
+Tempo использует собственный формат хранения на базе Apache Parquet. По умолчанию — vParquet4 (с Tempo 2.0).
 
 | Версия | Tempo | Статус |
 | :--- | :--- | :--- |
@@ -27,7 +47,7 @@ Tempo использует собственный формат хранения 
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Breaking changes (v2.6+)
 
@@ -38,7 +58,7 @@ Tempo использует собственный формат хранения 
 | **tempo-query** | Отдельный сервер (не gRPC plugin) | Обновление конфигурации на `0.0.0.0:7777` |
 | **Удалённые параметры** | `storage.azure.use_v2_sdk`, `autocomplete_filtering_enabled` | Проверка конфигурации |
 
-### Конфигурация
+### Примеры конфигурации
 
 #### Минимальная конфигурация (монолит)
 
@@ -68,21 +88,6 @@ storage:
       path: /tmp/tempo/blocks
 ```
 
-#### Конфигурация для локального хранилища (production)
-
-```yaml
-storage:
-  trace:
-    backend: local
-    local:
-      path: /var/tempo/blocks
-    wal:
-      path: /var/tempo/wal
-    pool:
-      max_workers: 100
-      queue_depth: 10000
-```
-
 #### Конфигурация для S3-совместимого хранилища (Yandex Object Storage / MinIO)
 
 ```yaml
@@ -103,7 +108,9 @@ storage:
       queue_depth: 10000
 ```
 
-### TraceQL Metrics configuration
+### Конфигурация TraceQL Metrics
+
+Для работы агрегаций и генерации метрик необходимо настроить `metrics_generator`:
 
 ```yaml
 overrides:
@@ -120,12 +127,18 @@ metrics_generator:
       flush_to_storage: true
 ```
 
-### Интеграции и рекомендации
-
-Интеграции с [Grafana](../Grafana/grafana_overview.md), [OpenTelemetry Collector](../OpenTelemetry/otlp_protocol.md), [Loki](../Loki/loki_overview.md) и рекомендации по эксплуатации описаны в [index.md](./index.md#интеграции).
-
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Документация: [официальная документация](https://grafana.com/docs/tempo/latest/), [формат vParquet](https://grafana.com/docs/tempo/latest/configuration/parquet/), [release notes v2.10](https://grafana.com/docs/tempo/latest/release-notes/v2-10/), [Tempo в Grafana Cloud](https://grafana.com/products/cloud/tempo/).
+### Рекомендации по эксплуатации
+
+- **Retention:** Настраивается в секции `compactor`. По умолчанию данные хранятся вечно (если не настроены политики в облаке).
+- **Object Storage:** Рекомендуется использовать облачные хранилища (S3, GCS) для обеспечения отказоустойчивости и неограниченного масштабирования.
+- **Resource Limits:** Ingesters требуют значительного объема оперативной памяти для буферизации блоков перед записью.
+
+### См. также
+
+- [Официальная документация](https://grafana.com/docs/tempo/latest/)
+- [Формат vParquet](https://grafana.com/docs/tempo/latest/configuration/parquet/)
+- [Release notes v2.10](https://grafana.com/docs/tempo/latest/release-notes/v2-10/)

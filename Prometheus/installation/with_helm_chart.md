@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация, подавление. Полное руководство — [Alertmanager (SSoT)](../alertmanager.md).
+**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, маршрутизация, подавление. Полное руководство — [Alertmanager](../alertmanager.md).
 
 **Helm** — менеджер пакетов для Kubernetes. Обзор — [Helm overview](../../../Kubernetes/ToolsUtilities/Helm/helm_overview.md).
 
@@ -90,7 +90,7 @@ persistence:
   size: 2Gi
 ```
 
-> Структура `config` идентична [alertmanager.yml (SSoT)](../alertmanager.md#конфигурация-alertmanageryml).
+> Структура `config` идентична [alertmanager.yml](../alertmanager.md#конфигурация-alertmanageryml).
 
 **3. Установка:**
 
@@ -190,4 +190,4 @@ helm uninstall alertmanager -n monitoring
 
 ### Related topics
 
-Архитектура и конвейер обработки оповещений — [Alertmanager (SSoT)](../alertmanager.md). Бинарная установка и Docker — [Alertmanager installation — manual](./alertmanager_installation.md). Конфигурация Alertmanager в umbrella-чарте — [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md). Обзор всех способов установки — [Installation overview](./overview.md).
+Архитектура и конвейер обработки оповещений — [Alertmanager](../alertmanager.md). Бинарная установка и Docker — [Alertmanager installation — manual](./alertmanager_installation.md). Конфигурация Alertmanager в umbrella-чарте — [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md). Обзор всех способов установки — [Installation overview](./overview.md).

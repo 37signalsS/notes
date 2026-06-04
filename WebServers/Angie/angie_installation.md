@@ -2,175 +2,152 @@
 
 ## Определения
 
-Angie — форк Nginx с расширенной функциональностью, включая динамические модули, улучшенную балансировку нагрузки и встроенную поддержку TLS (Transport Layer Security) 1.3.
+**Angie** — эффективный и масштабируемый веб-сервер, форк Nginx, созданный для расширения функциональности при сохранении полной обратной совместимости. Основные отличия включают встроенный HTTP/3, динамические модули и расширенный мониторинг.
 
-## Базовые понятия
+## Основные концепции
 
-Существует несколько основных способов развертывания Angie:
+Существует три основных способа развертывания Angie, выбор которых зависит от целевой среды и требований к поддержке:
 
-1. **Установка из пакетов:** Наиболее распространенный метод для серверных ОС, использующий официальные репозитории для `dnf` (RHEL-based) или `apt` (Debian-based).
-2. **Использование Docker-контейнеров:** Гибкий и изолированный способ развертывания, рекомендованный для сред контейнеризации.
-3. **Установка коммерческой версии (Angie Pro):** Требует наличия лицензии и использует отдельный, защищенный репозиторий.
-
-После установки вы можете перейти к более сложным сценариям, таким как настройка [обратного HTTP-прокси](./angie_reverse_proxy.md), [балансировка нагрузки](./angie_http_load_balancing.md) или [настройка TLS](./angie_tls_setup.md).
+1. **Установка из официальных репозиториев:** Рекомендуемый метод для серверных ОС (ALMA-Linux, Ubuntu, Debian), обеспечивающий простую установку и обновление через системные пакетные менеджеры (`dnf`, `apt`).
+2. **Контейнеризация (Docker):** Использование официальных образов для изоляции веб-сервера от хостовой системы. Подходит для микросервисных архитектур и сред оркестрации.
+3. **Коммерческая версия (Angie Pro):** Требует лицензии и предоставляет дополнительные функции (Active Health Checks, Feedback Balancing). Использует защищенные репозитории.
 
 ## Практические сценарии
 
-### Сценарий 1: Установка на ALMA-Linux (RHEL-based)
+### Сценарий 1: Установка на AlmaLinux (RHEL-based)
 
-1. **Создание файла репозитория:**
-    Создайте файл `/etc/yum.repos.d/angie.repo`.
+1. **Подключите репозиторий:**
+   Создайте файл `/etc/yum.repos.d/angie.repo`:
 
-    ```ini
-    [angie]
-    name=angie
-    baseurl=https://download.angie.software/rhel/$releasever/$basearch/
-    gpgcheck=1
-    gpgkey=https://download.angie.software/keys/angie-signing-key.gpg
-    enabled=1
-    ```
+   ```ini
+   [angie]
+   name=angie
+   baseurl=https://download.angie.software/rhel/$releasever/$basearch/
+   gpgcheck=1
+   gpgkey=https://download.angie.software/keys/angie-signing-key.gpg
+   enabled=1
+   ```
 
-2. **Установка Angie:**
+2. **Выполните установку:**
 
-    ```bash
-    sudo dnf install -y angie
-    ```
+   ```bash
+   sudo dnf install -y angie
+   ```
 
-3. **Запуск и проверка:**
+3. **Проверьте корректность установки:**
 
-    ```bash
-    sudo angie -t
-    # → angie: the configuration file /etc/angie/angie.conf syntax is ok
-    # → angie: configuration file /etc/angie/angie.conf test is successful
+   ```bash
+   sudo angie -t
+   # → angie: the configuration file /etc/angie/angie.conf syntax is ok
+   # → angie: configuration file /etc/angie/angie.conf test is successful
 
-    sudo systemctl enable --now angie
-    sudo systemctl status angie
-    # → active (running)
-    ```
+   sudo systemctl enable --now angie
+   sudo systemctl status angie
+   # → active (running)
+   ```
 
-### Сценарий 2: Установка на Ubuntu/Debian
+### Сценарий 2: Установка на Ubuntu / Debian
 
-1. **Добавление ключа и репозитория:**
+1. **Добавьте ключи и репозиторий:**
 
-    ```bash
-    sudo apt update
-    sudo apt install -y curl gpg
-    curl -o /etc/apt/trusted.gpg.d/angie-signing-key.gpg https://download.angie.software/keys/angie-signing-key.gpg
-    echo "deb https://download.angie.software/ubuntu/ `lsb_release -cs` main" | sudo tee /etc/apt/sources.list.d/angie.list >/dev/null
-    ```
+   ```bash
+   sudo apt update
+   sudo apt install -y curl gpg
+   curl -o /etc/apt/trusted.gpg.d/angie-signing-key.gpg https://download.angie.software/keys/angie-signing-key.gpg
+   echo "deb https://download.angie.software/ubuntu/ `lsb_release -cs` main" | sudo tee /etc/apt/sources.list.d/angie.list >/dev/null
+   ```
 
-2. **Установка Angie:**
+2. **Выполните установку:**
 
-    ```bash
-    sudo apt update
-    sudo apt install -y angie
-    ```
+   ```bash
+   sudo apt update
+   sudo apt install -y angie
+   ```
 
-3. **Проверка:**
+3. **Запустите сервис и проверьте статус:**
 
-    ```bash
-    sudo angie -t
-    # → angie: the configuration file /etc/angie/angie.conf syntax is ok
-    # → angie: configuration file /etc/angie/angie.conf test is successful
+   ```bash
+   sudo systemctl status angie
+   # → active (running)
+   ```
 
-    sudo systemctl status angie
-    # → active (running)
-    ```
+### Сценарий 3: Запуск в Docker-контейнере
 
-### Сценарий 3: Использование в Docker-контейнерах
+1. **Установите Docker:**
+   Для установки Docker Engine следуйте руководству: **[Установка Docker на Ubuntu](../../Docker/docker_install_ubuntu.md)**.
 
-1. **Установка Docker:**
+2. **Запустите контейнер Angie:**
+   Для сохранения конфигурации и данных рекомендуется использовать **[тома Docker (Volumes)](../../Docker/Docker_fs/docker_volumes.md)**.
 
-    ```bash
-    sudo apt install docker.io
-    ```
+   ```bash
+   # Создание директорий на хосте
+   mkdir -p ~/angie_config ~/angie_html
+   
+   # Копирование дефолтной конфигурации из временного контейнера
+   docker run --rm --entrypoint cat docker.ngsoftware/angie:latest /etc/angie/angie.conf > ~/angie_config/angie.conf
 
-2. **Запуск контейнера:**
-    Для управления конфигурацией рекомендуется монтировать ее с хост-машины.
+   # Запуск постоянного контейнера
+   docker run -d --name angie \
+     -p 80:80 \
+     -v ~/angie_html:/usr/share/nginx/html:ro \
+     -v ~/angie_config/angie.conf:/etc/angie/angie.conf:ro \
+     --restart always \
+     docker.ngsoftware/angie:latest
+   ```
 
-    ```bash
-    # Создаем директории на хосте
-    mkdir -p ~/angie_config ~/angie_html
-    
-    # Запускаем временный контейнер, чтобы скопировать дефолтную конфигурацию
-    docker run -d --name temp-angie docker.ngsoftware/angie:latest
-    docker cp temp-angie:/etc/angie ~/angie_config/
-    docker rm -f temp-angie
+3. **Применение изменений конфигурации:**
+   При изменении `angie.conf` на хосте, отправьте сигнал `HUP` процессу в контейнере:
 
-    # Запускаем постоянный контейнер с монтированными томами
-    docker run -d --name angie \
-      -p 8800:80 \
-      -v ~/angie_html:/usr/share/nginx/html:ro \
-      -v ~/angie_config/angie:/etc/angie:ro \
-      --restart always \
-      docker.ngsoftware/angie:latest
-    ```
-
-3. **Перезагрузка конфигурации:**
-    После изменения файлов в `~/angie_config/angie` на хосте, примените их, отправив сигнал `HUP` контейнеру:
-
-    ```bash
-    docker kill -s HUP angie
-    ```
+   ```bash
+   docker exec -it angie angie -s reload
+   ```
 
 ### Сценарий 4: Установка Angie Pro
 
-Установка коммерческой версии Angie Pro требует наличия лицензии.
+Установка коммерческой версии требует наличия файлов лицензии (`angie-repo.crt`, `angie-repo.key`).
 
-1. **Подготовка (пример для Debian/Ubuntu):**
-    * Удалите Open Source версию, если она установлена.
-    * Поместите файлы лицензии репозитория (`angie-repo.crt`, `angie-repo.key`) в `/etc/ssl/angie/`, выставив права `600`.
-    * Создайте файл `/etc/apt/apt.conf.d/90angie-pro` для аутентификации в репозитории:
+1. **Настройка аутентификации (Debian/Ubuntu):**
+   Разместите ключи в `/etc/ssl/angie/` (права `600`) и настройте `apt`:
 
-        ```nginx
-        Acquire::https::download.angie.software {
-            Verify-Peer "true";
-            Verify-Host "true";
-            Ssl-Certificate "/etc/ssl/angie/angie-repo.crt";
-            Ssl-Key "/etc/ssl/angie/angie-repo.key";
-        };
-        ```
+   ```bash
+   # /etc/apt/apt.conf.d/90angie-pro
+   Acquire::https::download.angie.software {
+       Verify-Peer "true";
+       Verify-Host "true";
+       Ssl-Certificate "/etc/ssl/angie/angie-repo.crt";
+       Ssl-Key "/etc/ssl/angie/angie-repo.key";
+   };
+   ```
 
-2. **Установка Angie Pro:**
+2. **Установка пакета:**
 
-    ```bash
-    sudo apt update
-    sudo apt install -y angie-pro
-    ```
+   ```bash
+   sudo apt update
+   sudo apt install -y angie-pro
+   ```
 
-3. **Установка лицензии Angie Pro:**
-    * Поместите файл `license.pem` в `/etc/angie/`.
-    * Перезагрузите сервис: `sudo systemctl reload angie`. Если лицензия корректна, запустятся все worker-процессы.
-
-Для пользователей, переходящих с Nginx, рекомендуется ознакомиться с [руководством по миграции](./migration_from_nginx.md).
+3. **Активация лицензии:**
+   Разместите файл `license.pem` в `/etc/angie/` и выполните `sudo systemctl reload angie`.
 
 ## Дополнительная информация
 
-### Сторонние динамические модули
+### Динамические модули
 
-Одним из ключевых преимуществ Angie является наличие большого количества популярных модулей, доступных для установки в виде пакетов из официального репозитория. Это избавляет от необходимости ручной компиляции. Подробнее о преимуществах см. в [общем обзоре](./angie_overview.md).
+Angie поддерживает установку популярных модулей (Brotli, ModSecurity) в виде готовых пакетов, что исключает необходимость компиляции. Пакеты имеют префикс `angie-module-`.
 
-**Установка:**
-Пакеты модулей имеют префикс `angie-module-`.
+**Пример установки и подключения:**
 
 ```bash
-# Пример для Ubuntu/Debian
-sudo apt install angie-module-brotli angie-module-modsecurity
-```
+# Установка модуля Brotli
+sudo apt install angie-module-brotli
 
-**Подключение:**
-После установки не забудьте подключить модуль в `angie.conf` с помощью директивы `load_module`.
-
-```nginx
-# /etc/angie/angie.conf
+# Подключение в /etc/angie/angie.conf
 load_module modules/ngx_http_brotli_filter_module.so;
-load_module modules/ngx_http_brotli_static_module.so;
 ```
 
-Полный список модулей доступен в [официальной документации Angie](https://angie.software/ru/modules/).
+**Связанные темы:**
 
-## См. также
-
-* [Обзор Angie](./angie_overview.md)
-* [Настройка обратного прокси](./angie_reverse_proxy.md)
-* [Настройка TLS](./angie_tls_setup.md)
+- [Обзор возможностей Angie](./angie_overview.md)
+- [Миграция с Nginx на Angie](./migration_from_nginx.md)
+- [Настройка TLS в Angie](./angie_tls_setup.md)
+- [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md)

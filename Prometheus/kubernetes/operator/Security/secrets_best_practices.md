@@ -2,103 +2,118 @@
 
 ## Определения
 
-**Secrets Management** — безопасное хранение и использование чувствительных данных в Prometheus Operator: webhook-URL, routing keys, пароли, TLS-сертификаты.
+**Управление секретами** — комплекс мер по безопасному хранению и использованию чувствительных данных в экосистеме Prometheus Operator: токенов webhook, ключей маршрутизации (routing keys), паролей и TLS-сертификатов.
 
 > **Навигация:** [Главная Security](./index.md) | [Контроль доступа](./access_control.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Типы секретов в Prometheus Operator
 
 | Тип | Примеры | Где используются |
 |---|---|---|
-| **Receiver credentials** | Slack webhook, PagerDuty key, SMTP password | AlertmanagerConfig receivers |
-| **TLS-сертификаты** | CA, client cert/key | ServiceMonitor tlsConfig, Ingress TLS |
-| **Admin credentials** | Grafana admin user/password | Grafana Deployment |
-| **Basic Auth** | htpasswd file, username/password | Prometheus/Alertmanager Ingress auth |
+| **Учётные данные получателей** | Slack webhook, PagerDuty key, SMTP password | `AlertmanagerConfig` (receivers) |
+| **TLS-сертификаты** | CA, клиентские cert/key | `ServiceMonitor` (tlsConfig), Ingress TLS |
+| **Учётные данные администратора** | Grafana admin user/password | Grafana Deployment |
+| **Basic Auth** | Файл htpasswd, пары логин/пароль | Ingress (Prometheus / Alertmanager) |
 
-### Механизмы хранения
+### Механизмы хранения и безопасность
 
-| Механизм | Описание | Когда использовать |
-|---|---|---|
-| **Kubernetes Secret (Opaque)** | Base64-encoded, хранится в etcd | Базовый вариант, внутренний контур |
-| **External Secrets (Vault, SOPS)** | Секреты во внешнем хранилище, синхронизация в кластер | Production, compliance-требования |
-| **Sealed Secrets** | Зашифрованные Secret-манифесты, хранятся в Git | GitOps без внешнего хранилища |
+Безопасность секретов в Prometheus Operator базируется на стандартных механизмах Kubernetes, дополненных инструментами автоматизации.
 
-### Безопасность Kubernetes Secrets
+- **Kubernetes Secret:** Базовый объект хранения. По умолчанию данные кодируются в base64.
+- **Внешние менеджеры:** Для production рекомендуется использование внешних хранилищ (HashiCorp Vault, AWS Secrets Manager) с интеграцией через **External Secrets Operator**.
+- **Шифрование и аудит:** Безопасность на уровне кластера обеспечивается шифрованием etcd и контролем доступа через RBAC.
 
-- Secrets хранится в etcd в **base64** (не шифруется по умолчанию)
-- Для шифрования требуется `EncryptionConfiguration` на API-сервере
-- Доступ контролируется через **RBAC** (Role/RoleBinding к `secrets`)
-- Секреты монтируются в Pod как **tmpfs** (не записываются на диск)
-
-> **Подробно:** [Kubernetes Secret для Alertmanager](../../examples/alertmanager-karma-manifests-tutorial/secrets.md) — tutorial по созданию Secret для Alertmanager.
+> **Подробно:** [Безопасность Secret в Kubernetes](../../../Kubernetes/Base/secrets/security.md) — SSoT по защите и использованию секретов в кластере.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Secrets Management
+### Создание секретов для алертинга
 
-#### Хранение чувствительных данных
+Секреты должны создаваться в том же неймспейсе, где находится ресурс `AlertmanagerConfig` (или в неймспейсе оператора, в зависимости от настроек прав).
 
 ```bash
-# Slack webhook
+# Создание секрета для Slack Webhook
 kubectl create secret generic slack-webhook \
-  --from-literal=url='https://hooks.slack.com/services/xxx/yyy/zzz' \
+  --from-literal=url='https://hooks.slack.com/services/T000/B000/XXXX' \
   -n monitoring
-
-# PagerDuty routing key
-kubectl create secret generic pagerduty-secret \
-  --from-literal=routing-key='your-routing-key' \
-  -n monitoring
-
-# SMTP password
-kubectl create secret generic smtp-secret \
-  --from-literal=password='your-smtp-password' \
-  -n monitoring
+# → secret/slack-webhook created
 ```
 
----
+### Использование секретов в AlertmanagerConfig
 
-#### Использование в AlertmanagerConfig
+Prometheus Operator позволяет ссылаться на секреты через `secretKeyRef`, что исключает попадание паролей в конфигурационные файлы.
 
 ```yaml
-receivers:
-  - name: 'slack'
-    slackConfigs:
-      - channel: '#monitoring'
-        apiURL:
-          name: slack-webhook
-          key: url
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slack-config
+  namespace: monitoring
+spec:
+  receivers:
+    - name: 'slack-notifications'
+      slackConfigs:
+        - channel: '#alerts'
+          apiURL:
+            name: slack-webhook
+            key: url
+```
+
+### Настройка TLS для ServiceMonitor
+
+Для сбора метрик с защищённых эндпоинтов сертификаты монтируются в под Prometheus через секреты.
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: secure-app
+spec:
+  endpoints:
+    - port: https
+      scheme: https
+      tlsConfig:
+        ca:
+          secret:
+            name: app-tls-ca
+            key: ca.crt
+        cert:
+          secret:
+            name: app-tls-client
+            key: tls.crt
+        keySecret:
+          name: app-tls-client
+          key: tls.key
 ```
 
 ---
 
-## Security Best Practices
+## Рекомендации по безопасности
 
-### Хранение секретов
+### Хранение и передача
 
-1. **Не храните секреты в plain text в манифестах** — используйте `kubectl create secret` или External Secrets Operator.
-2. **Включите EncryptionConfiguration** для шифрования Secrets в etcd (AES-CBC или aescbc).
-3. **Ограничьте доступ к Secrets через RBAC** — отдельные Role/RoleBinding только для namespace `monitoring`.
+1. **Запрет Plain Text:** Никогда не храните пароли в YAML-манифестах. Используйте `kubectl create secret` или GitOps-инструменты с шифрованием (Sealed Secrets, SOPS).
+2. **Разделение секретов:** Создавайте отдельные секреты для каждого типа интеграции (Slack, PagerDuty, SMTP). Это упрощает ротацию и минимизирует радиус поражения при компрометации.
+3. **RBAC:** Ограничивайте доступ к секретам в неймспейсе `monitoring`. Только оператор и администраторы должны иметь право на чтение.
 
-### Использование в конфигурации
+### Эксплуатация
 
-1. **Используйте `secretKeyRef` вместо hardcode** — монтируйте секреты через environment variables или volume mounts.
-2. **Отдельный Secret на каждый тип** — не объединяйте Slack, PagerDuty, SMTP в одном Secret.
-3. **Не логируйте значения секретов** — убедитесь, что лог-уровень не выводит содержимое env-переменных.
-
-### Ротация и мониторинг
-
-1. **Ротируйте секреты минимум раз в 90 дней** — автоматизируйте через External Secrets Operator + Vault.
-2. **Мониторьте доступ к Secrets** — audit-лог Kubernetes API (`watch`/`get` на `secrets`).
-3. **Исключите секреты из Git** — `.gitignore` для файлов с реальными значениями; используйте SOPS или Sealed Secrets для GitOps.
+1. **Ротация:** Установите график ротации секретов (например, раз в 90 дней). Автоматизируйте процесс через Vault или внешние менеджеры.
+2. **Мониторинг доступа:** Включите аудит-логирование Kubernetes API для отслеживания обращений к объектам `secrets`.
+3. **Использование `secretKeyRef`:** В CRD Prometheus Operator всегда предпочитайте ссылки на секреты прямому указанию значений.
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-> **См. также:** [Kubernetes Secret для Alertmanager](../../examples/alertmanager-karma-manifests-tutorial/secrets.md) — tutorial по созданию Secret; [High Availability](../high_availability.md) — HA конфигурация; [Prometheus CRD](../crd/prometheus.md) — описание Prometheus CRD.
+> **См. также:**
+>
+> - [Безопасность Secret в Kubernetes](../../../Kubernetes/Base/secrets/security.md) — общие принципы защиты
+> - [Внешние менеджеры секретов](../../../Kubernetes/Base/secrets/external_managers.md) — Vault, External Secrets
+> - [Network Policies](./access_control.md) — ограничение сетевого доступа к компонентам

@@ -1,57 +1,53 @@
-# Zabbix: Установка и настройка
+# Zabbix — установка и настройка
 
-> **Примечание:** В примерах ниже используется Zabbix 7.0 LTS. Для актуальных версий проверьте официальные репозитории на [zabbix.com](https://www.zabbix.com/download).
->
-> Архитектура и концепции Zabbix: **[Определения и основные концепции](./definitions_and_concepts.md)**.
+> **Примечание:** В примерах ниже используется Zabbix 7.0 LTS. Для получения актуальной информации о версиях и загрузки дистрибутивов рекомендуется обращаться к [официальному сайту Zabbix](https://www.zabbix.com/download).
 
 ---
 
 ## Определения
 
-* **Zabbix Server** — центральное ядро системы мониторинга, собирающее, хранящее и анализирующее данные.
-* **Zabbix Agent** — программа, устанавливаемая на хосты для сбора метрик (classic на C, Agent 2 на Go).
-* **Zabbix Trapper** — тип элемента данных, принимающий push-данные через утилиту `zabbix_sender` (подробнее: [дополнительная информация](./additional_info.md#практические-сценарии)).
+Основные архитектурные компоненты и терминология (Server, Proxy, Agent, Trapper, SNMP) подробно описаны в разделе **[Определения и основные концепции](./definitions_and_concepts.md)**.
 
 ---
 
 ## Основные концепции
 
-### Компоненты стека Zabbix Server
+### Компоненты серверного стека
 
-Для работы Zabbix Server требуются:
+Для функционирования Zabbix Server необходимы следующие программные компоненты:
 
-* **Веб-сервер:** Apache или Nginx
-* **СУБД:** MySQL/MariaDB или PostgreSQL
-* **PHP:** с расширениями `php-cgi`, `php-mbstring`, `php-gd`, `php-xml`, `php-mysql`, `php-bcmath`, `php-ldap`, `php-json`
-* **Zabbix Frontend:** веб-интерфейс управления
+* **Веб-сервер:** Apache или Nginx (используется для работы веб-интерфейса).
+* **СУБД:** MySQL, MariaDB или PostgreSQL (хранение истории, трендов и конфигурации).
+* **PHP:** серверный язык программирования с набором расширений (`php-cgi`, `php-mbstring`, `php-gd`, `php-xml`, `php-mysql` или `php-pgsql`, `php-bcmath`, `php-ldap`, `php-json`).
+* **Zabbix Frontend:** графический интерфейс управления.
 
-### Компоненты Zabbix Agent
+### Состав Zabbix Agent
 
-Агент состоит из:
+Агент включает в себя:
 
-* Демона `zabbix-agent` (classic) или `zabbix-agent2` (Go)
-* Конфигурационного файла `/etc/zabbix/zabbix_agentd.conf`
-* Каталогов дополнительных конфигураций `/etc/zabbix/zabbix_agentd.conf.d/`
+* Бинарный файл демона (`zabbix_agentd` или `zabbix_agent2`).
+* Основной файл конфигурации: `/etc/zabbix/zabbix_agentd.conf`.
+* Директорию для подключаемых пользовательских конфигураций: `/etc/zabbix/zabbix_agentd.conf.d/`.
 
-Режимы работы описаны в разделе [модели сбора данных](./definitions_and_concepts.md#модель-pull-vs-push).
+Сравнение режимов работы агента доступно в разделе **[Модели сбора данных](./definitions_and_concepts.md#модель-pull-vs-push)**.
 
 ---
 
 ## Практические сценарии
 
-### Установка Zabbix Server на Ubuntu
+### Установка Zabbix Server на Ubuntu (MySQL/MariaDB)
 
-#### 1. Установка зависимостей (Apache, MariaDB, PHP)
+#### 1. Установка зависимостей
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y apache2 mariadb-server mariadb-client php php-cgi php-mbstring php-gd php-xml php-mysql php-bcmath php-ldap php-json
 ```
 
-#### 2. Добавление репозитория Zabbix
+#### 2. Добавление официального репозитория
 
 ```bash
-# Для Zabbix 7.0 LTS
+# Пример для Zabbix 7.0 LTS на Ubuntu 22.04
 wget https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-4+ubuntu22.04_all.deb
 sudo dpkg -i zabbix-release_7.0-4+ubuntu22.04_all.deb
 sudo apt update
@@ -63,79 +59,63 @@ sudo apt update
 sudo apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
 ```
 
-#### 4. Создание и настройка базы данных
+#### 4. Настройка базы данных
 
 ```sql
--- Вход в консоль MariaDB: sudo mysql -uroot -p
+-- Вход: sudo mysql -uroot -p
 CREATE DATABASE zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
 CREATE USER 'zabbix'@'localhost' IDENTIFIED BY 'your_password';
 GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
 FLUSH PRIVILEGES;
-quit;
+EXIT;
 ```
 
-#### 5. Импорт начальной схемы данных
+#### 5. Импорт начальной схемы
 
 ```bash
 zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | sudo mysql -uzabbix -p zabbix
 ```
 
-#### 6. Конфигурация Zabbix Server и PHP
+#### 6. Конфигурация сервера и PHP
 
-* В `/etc/zabbix/zabbix_server.conf` указать `DBPassword=your_password`
-* В `/etc/php/8.1/apache2/php.ini` задать `date.timezone = Europe/Moscow`
+* В `/etc/zabbix/zabbix_server.conf` установите: `DBPassword=your_password`.
+* В `/etc/php/8.1/apache2/php.ini` укажите часовой пояс: `date.timezone = Europe/Moscow`.
 
-#### 7. Запуск служб
+#### 7. Запуск сервисов
 
 ```bash
 sudo systemctl restart zabbix-server zabbix-agent apache2
 sudo systemctl enable zabbix-server zabbix-agent apache2
 ```
 
-#### 8. Завершение установки через веб-интерфейс
+Завершите установку через веб-интерфейс: `http://<IP_сервера>/zabbix` (учетные данные по умолчанию: `Admin` / `zabbix`).
 
-1. Открыть `http://<IP-адрес_сервера>/zabbix`
-2. Следовать шагам мастера, указав пароль от БД
-3. Стандартные учётные данные: `Admin` / `zabbix`
+---
 
-### Установка Zabbix Server с PostgreSQL и TimescaleDB (Оптимально)
+### Установка Zabbix Server с PostgreSQL и TimescaleDB
 
-TimescaleDB оптимизирует работу с временными рядами (time-series) в PostgreSQL, превращая обычные таблицы истории Zabbix в партицированные гипертаблицы. Это значительно снижает деградацию производительности СУБД с ростом объема данных. Подробное описание технологии см. в **[Обзор TimescaleDB](../Databases/timescaledb.md)**.
+Данная конфигурация рекомендуется для высоконагруженных инсталляций. Подробности технологии: **[Обзор TimescaleDB](../Databases/timescaledb.md)**.
 
 #### 1. Установка PostgreSQL и TimescaleDB
-
-(Пример для Ubuntu 24.04 и Zabbix 7.0/7.4)
-Установите пакеты PostgreSQL и расширение TimescaleDB, затем настройте предзагрузку библиотеки:
 
 ```bash
 sudo apt install postgresql postgresql-contrib timescaledb-2-postgresql-16
 ```
 
-Отредактируйте `/etc/postgresql/16/main/postgresql.conf`:
+В файле `/etc/postgresql/16/main/postgresql.conf` необходимо добавить:
+`shared_preload_libraries = 'timescaledb'`
 
-```ini
-shared_preload_libraries = 'timescaledb'
-```
-
-Перезапустите PostgreSQL:
-
-```bash
-sudo systemctl restart postgresql
-```
-
-#### 2. Установка пакетов Zabbix Server
+#### 2. Установка пакетов Zabbix
 
 ```bash
 sudo apt install zabbix-server-pgsql zabbix-frontend-php php8.1-pgsql zabbix-apache-conf zabbix-sql-scripts zabbix-agent
 ```
 
-#### 3. Настройка базы данных и TimescaleDB
+#### 3. Инициализация БД и расширения
 
 ```bash
 sudo -u postgres psql
 ```
-
-В консоли PostgreSQL:
 
 ```sql
 CREATE USER zabbix WITH PASSWORD 'zabbix';
@@ -145,60 +125,32 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 \q
 ```
 
-#### 4. Импорт начальной схемы данных
-
-Сначала импортируем основную схему Zabbix:
+#### 4. Импорт данных и активация гипертаблиц
 
 ```bash
 zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | sudo -u zabbix psql zabbix
-```
-
-Затем применяем скрипт активации гипертаблиц для TimescaleDB:
-
-```bash
 cat /usr/share/zabbix-sql-scripts/postgresql/timescaledb.sql | sudo -u zabbix psql zabbix
 ```
 
-#### 5. Конфигурация Zabbix Server
-
-В файле `/etc/zabbix/zabbix_server.conf` укажите параметры:
-
-```ini
-DBHost=localhost
-DBName=zabbix
-DBUser=zabbix
-DBPassword=zabbix
-```
-
-Запустите `zabbix-server` и перейдите в веб-интерфейс для завершения установки.
-
 ---
 
-### Установка Zabbix Agent на Ubuntu
+### Установка и настройка Zabbix Agent
 
-#### 1. Установка агента
+#### 1. Установка
 
 ```bash
-sudo apt update
-sudo apt install zabbix-agent
+sudo apt update && sudo apt install zabbix-agent
 ```
 
-#### 2. Настройка агента
-
-Отредактировать `/etc/zabbix/zabbix_agentd.conf`:
+#### 2. Настройка (`/etc/zabbix/zabbix_agentd.conf`)
 
 ```ini
-# IP-адрес Zabbix-сервера (пассивные проверки)
-Server=192.168.1.100
-
-# IP-адрес для активных проверок
-ServerActive=192.168.1.100
-
-# Имя хоста (должно совпадать с именем в веб-интерфейсе Zabbix)
-Hostname=MyUbuntuServer
+Server=192.168.1.100       # Адрес сервера для пассивных проверок
+ServerActive=192.168.1.100 # Адрес сервера для активных проверок
+Hostname=TargetServer      # Имя хоста, должно совпадать с именем в веб-интерфейсе
 ```
 
-#### 3. Запуск службы и настройка файрвола
+#### 3. Запуск и настройка сетевого доступа
 
 ```bash
 sudo systemctl restart zabbix-agent
@@ -206,59 +158,61 @@ sudo systemctl enable zabbix-agent
 sudo ufw allow from 192.168.1.100 to any port 10050 proto tcp
 ```
 
-После установки агента хост добавляется в веб-интерфейсе Zabbix вручную или автоматически через [обнаружение хостов](./definitions_and_concepts.md#обнаружение-хостов-network-discovery).
-
 ---
 
 ### Отправка данных через zabbix_sender
 
-Утилита `zabbix_sender` используется для push-отправки метрик на Zabbix Server (trapper-элементы):
+Используется для передачи метрик в trapper-элементы:
 
 ```bash
-zabbix_sender -z <zabbix_server_ip> -p 10051 -s <hostname> -k <item_key> -o <value>
+zabbix_sender -z <server_ip> -p 10051 -s <hostname> -k <item_key> -o <value>
 ```
 
 | Параметр | Описание |
-|----------|----------|
-| `-z` | IP-адрес Zabbix-сервера |
-| `-s` | Имя хоста (должно точно совпадать с именем в Zabbix) |
-| `-k` | Ключ trapper-элемента |
-| `-o` | Отправляемое значение |
-
-Практический пример batch-отправки: [LLD с zabbix_sender](./additional_info.md#пример-настройки-lld-с-zabbix_sender).
+| :--- | :--- |
+| `-z` | IP-адрес или DNS-имя Zabbix Server. |
+| `-s` | Имя хоста в системе мониторинга. |
+| `-k` | Ключ элемента данных типа Zabbix trapper. |
+| `-o` | Значение метрики. |
 
 ---
 
 ### Настройка SNMP-мониторинга
 
-При создании хоста в Zabbix добавляется интерфейс типа **SNMP** с параметрами:
+Для мониторинга сетевых устройств без агента:
 
-* **SNMP version:** `2` (наиболее распространён)
-* **SNMP community:** строка-пароль (например, `public`), совпадающая с настроенной на устройстве
+1. На устройстве настраивается SNMP-агент (community string, версия).
+2. В Zabbix создается хост с интерфейсом типа **SNMP**.
+3. Указываются параметры:
+    * **SNMP version:** 2 (рекомендуется для большинства случаев).
+    * **SNMP community:** пароль доступа (например, `public`).
 
-Подробнее: [SNMP](./definitions_and_concepts.md).
+Подробнее о протоколе: **[SNMP в Zabbix](./definitions_and_concepts.md#определения)**.
 
 ---
 
-### Автоматическое добавление хостов
+### Автоматическое обнаружение хостов (Network Discovery)
 
-Пример: настроив [правило обнаружения](./definitions_and_concepts.md#обнаружение-хостов-network-discovery) для сети `192.168.1.0/24` и [действие](./definitions_and_concepts.md#обнаружение-хостов-network-discovery), реагирующее на значение `Linux` от проверки `system.uname`, новые Linux-серверы с установленным агентом автоматически добавляются в группу `Linux servers` с шаблоном `Linux by Zabbix agent`.
+Пример настройки автоматического добавления Linux-серверов:
+
+1. **Discovery rule:** задается диапазон сети (например, `192.168.1.0/24`) и проверка (например, `system.uname` через Zabbix Agent).
+2. **Action:** настраивается реакция. Если результат проверки содержит `Linux`, хост добавляется в группу `Linux servers` и к нему привязывается шаблон `Linux by Zabbix agent`.
+
+Концептуальное описание механизма: **[Обнаружение хостов](./definitions_and_concepts.md#обнаружение-хостов-network-discovery)**.
 
 ---
 
 ## Дополнительная информация
 
-### Версии и поддержка
+### Жизненный цикл версий
 
-| Версия | Тип | Дата выхода | Поддержка до |
-|--------|-----|-------------|--------------|
-| Zabbix 7.0 | LTS | Июнь 2024 | Июнь 2029 |
-| Zabbix 7.4 | Stable | Октябрь 2025 | Октябрь 2026 |
-| Zabbix 8.0 | LTS (план) | 2026 | — |
+| Версия | Тип | Поддержка |
+| :--- | :--- | :--- |
+| Zabbix 7.0 | LTS | до июня 2029 года |
+| Zabbix 7.4 | Stable | до октября 2026 года |
 
-### Связанные документы
+### См. также
 
-* **[Мониторинг MySQL](../Databases/MySQL/monitoring.md)** — настройка UserParameter для MySQL
-* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — мониторинг через Zabbix Agent 2
-* **[Мониторинг БД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу СУБД
-* **[Лучшие практики](./zabbix_best_practices.md)** — рекомендации по настройке триггеров и оповещений
+* **[Мониторинг СУБД](./zabbix_database_monitoring.md)** — общие подходы к мониторингу баз данных.
+* **[Мониторинг PostgreSQL](./zabbix_postgresql_monitoring.md)** — настройка мониторинга через Zabbix Agent 2.
+* **[Лучшие практики](./zabbix_best_practices.md)** — рекомендации по настройке триггеров и оптимизации.

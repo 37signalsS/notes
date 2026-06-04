@@ -119,6 +119,7 @@ networks:
 ```
 
 **Особенности конфигурации:**
+
 - Переменные `${PROJECT_NAME}` и `${GRAFANA_ADMIN_PASSWORD}` позволяют гибко настраивать окружение через `.env`.
 - Health checks гарантируют, что Grafana начнет запуск только после того, как Prometheus станет доступен.
 - Изолированная сеть `monitoring` предотвращает нежелательный доступ к сервисам извне.
@@ -189,6 +190,7 @@ docker volume prune
 ```
 
 **См. также:**
+
 - [Высокая доступность Grafana](../high_availability.md)
 - [Алертинг в Grafana](../alerting/concepts.md)
 - [Loki в Docker Compose](../../Loki/Docker_Compose/index.md)

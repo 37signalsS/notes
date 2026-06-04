@@ -1,14 +1,12 @@
-# HashiCorp Nomad: Дополнительная информация
+# Nomad — продвинутые темы
 
-## Definitions
+## Определения
 
 **LTS (Long-Term Support)** — версия с расширенным периодом поддержки (обычно 12+ месяцев), рекомендуется для production.
 
 **Enterprise-версия** — коммерческая версия HashiCorp с дополнительными функциями (Sentinel, SSO, приоритизация workload'ов) и изменённой моделью лицензирования.
 
----
-
-## Basic Concepts
+## Основные концепции
 
 ### Версии и поддержка
 
@@ -21,11 +19,11 @@
 
 **Ключевые нововведения v1.11.x:**
 
-- **Client Identity** — автоматическая генерация и ротация идентичностей клиентов
-- **Deployments for system jobs** — поддержка развёртываний для системных задач
-- **Secrets Block** — новый блок `secret` для получения секретов из Vault
-- **GPU Fingerprinting** — улучшенное обнаружение GPU, FPGA, TPU
-- **Sentinel** — новый `nomad_var` built-in для переменных
+- **Client Identity** — автоматическая генерация и ротация идентичностей клиентов.
+- **Deployments for system jobs** — поддержка развёртываний для системных задач.
+- **Secrets Block** — новый блок `secret` для получения секретов из Vault.
+- **GPU Fingerprinting** — улучшенное обнаружение GPU, FPGA, TPU.
+- **Sentinel** — новый `nomad_var` built-in для переменных.
 
 **Лицензирование:** с апреля 2026 HashiCorp изменила модель выпуска enterprise-версий — [подробности](https://support.hashicorp.com/hc/en-us/articles/48015293517203).
 
@@ -33,9 +31,7 @@
 
 **Компании в production:** PagerDuty, Target, Citadel, Trivago, SAP, Pandora, Roblox, eBay, Deluxe Entertainment.
 
----
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Выбор между Nomad и Kubernetes
 
@@ -52,11 +48,17 @@
 
 **Тренд 2025–2026:** сосуществование обоих оркестраторов в крупных предприятиях (Intel, Autodesk, GitHub).
 
----
+## Дополнительная информация
 
-## Additional Information
+Полезные ресурсы:
 
-Полезные ресурсы: [официальная документация](https://developer.hashicorp.com/nomad/docs), [сравнение Nomad/Kubernetes](https://developer.hashicorp.com/nomad/docs/nomad-vs-kubernetes), [руководство для K8s-пользователей](https://developer.hashicorp.com/nomad/tutorials/enterprise/kubernetes-to-nomad), [cheat sheet](https://developer.hashicorp.com/nomad/tutorials/enterprise/kubernetes-to-nomad-cheat-sheet), [GitHub Releases](https://github.com/hashicorp/nomad/releases).
+- [Официальная документация](https://developer.hashicorp.com/nomad/docs)
+- [Сравнение Nomad/Kubernetes](https://developer.hashicorp.com/nomad/docs/nomad-vs-kubernetes)
+- [Руководство для K8s-пользователей](https://developer.hashicorp.com/nomad/tutorials/enterprise/kubernetes-to-nomad)
+- [Cheat sheet](https://developer.hashicorp.com/nomad/tutorials/enterprise/kubernetes-to-nomad-cheat-sheet)
+- [GitHub Releases](https://github.com/hashicorp/nomad/releases)
 
-Базовые определения: [definitions_and_concepts.md](./definitions_and_concepts.md).
-Практические сценарии: [practical_scenarios.md](./practical_scenarios.md).
+См. также:
+
+- [Определения и базовые концепции](./definitions_and_concepts.md)
+- [Практические сценарии](./practical_scenarios.md)

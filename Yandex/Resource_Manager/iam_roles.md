@@ -1,6 +1,6 @@
 # Yandex Resource Manager: IAM Роли и права доступа
 
-## Definitions
+## 1. Определения
 
 **IAM Roles (Роли и права)** — механизм управления доступом к ресурсам Yandex Cloud через привязку ролей к субъектам (пользователям, сервисным аккаунтам, группам).
 
@@ -10,31 +10,31 @@
 
 ---
 
-## Basic Concepts
+## 2. Базовые концепции
 
 ### Системные роли
 
-- **admin** — полное управление ресурсом
-- **editor** — создание и изменение ресурсов
-- **viewer** — только просмотр
-- **usage** — использование ресурсов
+- **admin** — полное управление ресурсом.
+- **editor** — создание и изменение ресурсов.
+- **viewer** — только просмотр.
+- **usage** — использование ресурсов.
 
 ### Сервисные роли
 
-- `compute.admin` — управление Compute Cloud
-- `vpc.admin` — управление сетями
-- `mdb.admin` — управление Managed Databases
-- `storage.admin` — управление Object Storage
+- `compute.admin` — управление Compute Cloud.
+- `vpc.admin` — управление сетями.
+- `mdb.admin` — управление Managed Databases.
+- `storage.admin` — управление Object Storage.
 
 ### Принцип минимальных прав
 
-- Назначайте роли на уровне каталога, а не облака
-- Используйте узкие сервисные роли вместо `editor`
-- Разделяйте права для dev/stage/prod
+- Назначайте роли на уровне каталога, а не облака.
+- Используйте узкие сервисные роли вместо `editor`.
+- Разделяйте права для dev/stage/prod окружений.
 
 ---
 
-## Practical Scenarios
+## 3. Практические сценарии
 
 ### Создание каталога и базовых прав через yc CLI
 
@@ -43,7 +43,7 @@
 # yc init
 
 # Получить ID облака
-CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0](id')
+CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0].id')
 echo "Cloud ID: $CLOUD_ID"
 
 # Создать каталог с метками
@@ -111,52 +111,13 @@ yc iam service-account list --folder-id <FOLDER_ID>
 
 # Проверка привязок прав
 yc resource-manager folder list-access-bindings --id <FOLDER_ID>
-
-# Экспорт для аудита
-yc resource-manager folder list --format json > folders-audit-$(date +%Y%m%d).json
-```
-
-### Очистка неиспользуемых ресурсов
-
-```bash
-#!/bin/bash
-# cleanup-unused.sh
-
-FOLDER_ID=$1
-
-if [ -z "$FOLDER_ID" ]; then
-  echo "Usage: $0 <folder-id>"
-  exit 1
-fi
-
-echo "Scanning folder: $FOLDER_ID"
-
-# Остановленные ВМ
-echo "Stopped VMs:"
-yc compute instance list --folder-id "$FOLDER_ID" --format json |
-  jq -r '.[] | select(.status == "STOPPED") | "  \(.name) (\(.id))"'
-
-# Несвязанные диски
-echo "Unattached disks:"
-yc compute disk list --folder-id "$FOLDER_ID" --format json |
-  jq -r '.[] | select(.instance_ids == [] or .instance_ids == null) | "  \(.name) (\(.id))"'
-
-# Старые снапшоты (>30 дней)
-echo "Old snapshots:"
-yc compute snapshot list --folder-id "$FOLDER_ID" --format json |
-  jq -r '.[] | select(.created_at < "'$(date -d '30 days ago' -Iseconds)'") | "  \(.name) (\(.id))"'
-
-# Удаление (раскомментировать для включения)
-# yc compute instance delete --instance-name <name>
-# yc compute disk delete --disk-name <name>
-# yc compute snapshot delete --snapshot-name <name>
 ```
 
 ---
 
-## Additional Information
+## 4. Дополнительная информация
 
 ### Связанные документы
 
-- **[Overview](./overview.md)** — базовые концепции Resource Manager
-- **[Terraform Automation](./terraform_automation.md)** — декларативное управление
+- **[Overview](./overview.md)** — базовые концепции Resource Manager.
+- **[Terraform Automation](./terraform_automation.md)** — декларативное управление.

@@ -2,227 +2,162 @@
 
 ## Определения
 
-1. **Общая папка (Synced Folder)** — механизм синхронизации директории хоста с директорией ВМ в реальном времени. Основной способ работы с кодом проекта.
+**Общая папка (Synced Folder)** — программный механизм синхронизации директорий между хост-системой и гостевой операционной системой виртуальной машины (ВМ). Позволяет работать с исходным кодом проекта на хосте, выполняя его в изолированном окружении.
 
-2. **Виртуальный диск (Virtual Disk)** — блочное устройство внутри ВМ для размещения файловой системы. Vagrant управляет основным и дополнительными дисками.
+**Виртуальный диск (Virtual Disk)** — логическое блочное устройство, представленное в виде файла-образа или раздела, используемое ВМ для хранения данных (ОС, базы данных, логи).
+
+**Точка монтирования (Mount Point)** — директория в файловой системе гостевой ОС, через которую осуществляется доступ к содержимому общей папки или виртуального диска.
 
 ## Базовые концепции
 
-### Два подхода к работе с файлами
+### Подходы к хранению данных
 
-| Подход | Описание | Сценарий |
-| --- | --- | --- |
-| **Общие папки** | Синхронизация хост ↔ ВМ | Редактирование кода, конфигураций |
-| **Виртуальные диски** | Данные только внутри ВМ | Базы данных, логи, кэш |
+| Подход | Описание | Основные сценарии |
+| :--- | :--- | :--- |
+| **Общие папки** | Синхронизация файлов хост ↔ ВМ | Редактирование кода, конфигурационные файлы |
+| **Виртуальные диски** | Изолированное хранилище внутри ВМ | Базы данных, кэш, постоянные данные ОС |
 
-**По умолчанию:** Vagrant синхронизирует папку проекта (где `Vagrantfile`) в `/vagrant` внутри ВМ.
+По умолчанию Vagrant синхронизирует корневую директорию проекта (где расположен `Vagrantfile`) в путь `/vagrant` внутри виртуальной машины.
 
 ### Типы общих папок
 
-| Тип | Производительность | Зависимости | Платформа |
-| --- | --- | --- | --- |
-| **Default (VirtualBox)** | Средняя | Guest Additions | VirtualBox |
-| **Default (VMware)** | Средняя | VMware Tools | VMware |
-| **NFS** | Высокая | nfs-kernel-server | Linux/macOS |
-| **rsync** | Односторонняя | rsync | Кроссплатформенный |
-| **SMB** | Высокая | Встроен в Windows | Windows/macOS |
+| Тип | Производительность | Платформа | Особенности |
+| :--- | :--- | :--- | :--- |
+| **Default (VirtualBox)** | Средняя | VirtualBox | Требует Guest Additions |
+| **Default (VMware)** | Средняя | VMware | Требует VMware Tools |
+| **NFS** | Высокая | Linux / macOS | Быстрый доступ для больших проектов |
+| **rsync** | Высокая | Кроссплатформенный | Односторонняя синхронизация (хост → ВМ) |
+| **SMB** | Высокая | Windows / macOS | Встроено в ОС Windows |
 
 ## Практические сценарии
 
 ### Сценарий 1: Настройка общих папок
 
-**Отключение стандартной папки:**
+**Базовая конфигурация и управление доступом:**
 
 ```ruby
 Vagrant.configure("2") do |config|
-  # Отключить /vagrant
+  # Отключение стандартной синхронизации /vagrant
   config.vm.synced_folder ".", "/vagrant", disabled: true
-end
-```
-
-**Добавление новой папки:**
-
-```ruby
-Vagrant.configure("2") do |config|
-  # Базовая синхронизация
-  config.vm.synced_folder "src/", "/srv/website"
   
-  # С указанием владельца
-  config.vm.synced_folder "src/", "/srv/website",
+  # Добавление новой папки с указанием прав доступа
+  config.vm.synced_folder "src/", "/var/www/project",
     owner: "www-data",
     group: "www-data",
     mount_options: ["dmode=775,fmode=664"]
 end
 ```
 
-**NFS для производительности (Linux/macOS):**
+**Использование NFS для высокой производительности (Linux/macOS):**
 
 ```ruby
-config.vm.synced_folder "src/", "/srv/website", type: "nfs"
-
-# С дополнительными опциями
-config.vm.synced_folder "src/", "/srv/website",
-  type: "nfs",
-  nfs_udp: false,
-  mount_options: ["rw,vers=3,tcp,actimeo=1"]
-```
-
-**Установка NFS на хосте (Ubuntu/Debian):**
-
-```bash
-sudo apt-get install -y nfs-kernel-server
-```
-
-**rsync для односторонней синхронизации:**
-Подробное описание утилиты rsync см. в [rsync — синхронизация файлов](../Linux/SystemAdministration/rsync.md).
-
-```ruby
-config.vm.synced_folder "src/", "/srv/website",
-  type: "rsync",
-  rsync__exclude: [".git/", "node_modules/", ".vagrant/"],
-  rsync__args: ["--verbose", "--archive", "--delete", "-z"]
-```
-
-**Ручная синхронизация rsync:**
-
-```bash
-vagrant rsync
-vagrant rsync-auto  # Автоматическая синхронизация при изменениях
-```
-
-### Сценарий 2: Управление дисками (Libvirt)
-
-**Увеличение основного диска:**
-
-```ruby
-config.vm.provider "libvirt" do |libvirt|
-  # Увеличить корневой диск до 15GB (если текущий меньше)
-  libvirt.machine_virtual_size = 15
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder "src/", "/app", type: "nfs"
+  
+  # Опциональная настройка параметров монтирования
+  config.vm.synced_folder "data/", "/mnt/data",
+    type: "nfs",
+    nfs_udp: false,
+    mount_options: ["rw", "vers=3", "tcp", "actimeo=1"]
 end
 ```
 
-> `machine_virtual_size` только увеличивает диск, но не уменьшает.
-
-**Добавление дополнительного диска:**
+**Настройка rsync для исключения лишних файлов:**
 
 ```ruby
-config.vm.provider "libvirt" do |libvirt|
-  libvirt.storage_pool_name = "default"
-  
-  libvirt.storage :file,
-    size: "30G",
-    type: "qcow2",      # Формат диска
-    bus: "virtio",      # Контроллер для производительности
-    name: "data-disk.qcow2",
-    cache: "none"       # Режим кэширования
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant",
+    type: "rsync",
+    rsync__exclude: [".git/", "node_modules/", "*.log"],
+    rsync__args: ["--verbose", "--archive", "--delete", "-z"]
 end
 ```
 
-**Несколько дополнительных дисков:**
+### Сценарий 2: Управление дисками (провайдер Libvirt)
+
+**Изменение размера основного диска:**
 
 ```ruby
-config.vm.provider "libvirt" do |libvirt|
-  # Основной дополнительный диск
-  libvirt.storage :file, size: "50G", type: "qcow2"
-  
-  # Диск для данных
-  libvirt.storage :file, size: "100G", type: "qcow2"
-  
-  # Быстрый диск для кэша
-  libvirt.storage :file, size: "10G", type: "raw"
+Vagrant.configure("2") do |config|
+  config.vm.provider "libvirt" do |libvirt|
+    # Увеличение корневого раздела до 20GB
+    libvirt.machine_virtual_size = 20
+  end
 end
 ```
 
-**Форматирование и монтирование диска внутри ВМ:**
+**Добавление дополнительных дисков:**
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.provider "libvirt" do |libvirt|
+    libvirt.storage_pool_name = "default"
+    
+    # Создание дополнительного диска для данных
+    libvirt.storage :file,
+      size: "40G",
+      type: "qcow2",
+      bus: "virtio",
+      name: "extra-storage.qcow2"
+  end
+end
+```
+
+### Сценарий 3: Настройка для VirtualBox
+
+**Включение поддержки символических ссылок:**
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.provider "virtualbox" do |v|
+    v.customize ["setextradata", :id, "VBoxInternal2/SharedFolders/EnableSymlinks", "1"]
+  end
+end
+```
+
+### Сценарий 4: Подготовка диска внутри ВМ
+
+После добавления нового виртуального диска его необходимо инициализировать в гостевой ОС:
 
 ```bash
-# После запуска ВМ
-sudo fdisk -l                    # Найти новый диск (например, /dev/vdb)
-sudo mkfs.ext4 /dev/vdb          # Форматировать
-sudo mkdir /data                 # Создать точку монтирования
-sudo mount /dev/vdb /data        # Смонтировать
+# Поиск нового устройства (например, /dev/vdb)
+vagrant ssh -c "lsblk"
 
-# Для автоматического монтирования добавить в /etc/fstab
+# Форматирование и монтирование (пример для ext4)
+vagrant ssh -c "sudo mkfs.ext4 /dev/vdb && sudo mkdir -p /data && sudo mount /dev/vdb /data"
+
+# Добавление в /etc/fstab для автозагрузки
 echo "/dev/vdb /data ext4 defaults 0 0" | sudo tee -a /etc/fstab
-```
-
-### Сценарий 3: Временные файлы и исключения
-
-**Исключение директорий из синхронизации:**
-
-```ruby
-config.vm.synced_folder ".", "/vagrant",
-  rsync__exclude: [
-    ".git/",
-    "node_modules/",
-    "vendor/",
-    "*.log",
-    ".vagrant/"
-  ]
-```
-
-**Отключение синхронизации для больших директорий:**
-
-```ruby
-# Отключить для директории с бинарниками
-config.vm.synced_folder "binaries/", "/tmp/binaries", disabled: true
-```
-
-### Сценарий 4: Настройка для VirtualBox
-
-**Включение поддержки общих папок:**
-
-```ruby
-config.vm.provider "virtualbox" do |v|
-  v.name = "my-vm"
-  v.memory = 2048
-  
-  # Включение поддержки общих папок
-  v.customize ["setextradata", :id, "VBoxInternal2/SharedFolders/EnableSymlinks", "1"]
-end
-```
-
-**Настройка размера видеопамяти для GUI:**
-
-```ruby
-config.vm.provider "virtualbox" do |v|
-  v.gui = true
-  v.vram = 128
-end
 ```
 
 ## Дополнительная информация
 
-### Проблемы и решения
+### Диагностика состояния
 
-| Проблема | Решение |
-| --- | --- |
-| Медленная синхронизация | Использовать `type: "nfs"` или `type: "rsync"` |
-| Ошибки прав доступа | Указать `owner` и `group` явно |
-| NFS не работает | Проверить firewall, установить `nfs-kernel-server` |
-| Disk full | Увеличить `machine_virtual_size` или добавить диск |
+| Команда | Описание |
+| :--- | :--- |
+| `df -h` | Проверка использования дискового пространства и точек монтирования |
+| `lsblk` | Просмотр списка блочных устройств |
+| `mount | grep vagrant` | Проверка активных общих папок |
+| `vagrant rsync-auto` | Запуск автоматической синхронизации rsync при изменениях |
 
 ### Лучшие практики
 
-1. **Исключайте лишнее:** Добавляйте в `rsync__exclude` директории `node_modules/`, `.git/`, `vendor/`.
+1. **Разделение контента:** Храните исходный код в общих папках, а "тяжелые" данные (БД, артефакты) — на виртуальных дисках.
+2. **Исключение метаданных:** Всегда добавляйте `.git/`, `.vagrant/` и директории зависимостей (`node_modules/`, `vendor/`) в исключения rsync.
+3. **Производительность:** Для разработки на Linux/macOS отдавайте предпочтение NFS перед стандартными методами VirtualBox.
+4. **Безопасность:** Явно указывайте `owner` и `group` для общих папок, чтобы избежать проблем с правами доступа к веб-приложениям.
 
-2. **Используйте NFS для разработки:** На Linux/macOS NFS даёт лучшую производительность для больших проектов.
+### Решение типичных проблем
 
-3. **Разделяйте данные и код:** Код — в общих папках, данные (БД, логи) — на виртуальных дисках.
+- **Низкая скорость записи:** Переключитесь на NFS или rsync.
+- **Ошибки монтирования:** Проверьте наличие Guest Additions (для VirtualBox) или установленный пакет `nfs-kernel-server` на хосте (для NFS).
+- **Диск не увеличивается:** Убедитесь, что `machine_virtual_size` больше текущего размера диска; уменьшение диска через этот параметр невозможно.
 
-4. **Монтируйте диски правильно:** Используйте `virtio` контроллер для лучшей производительности в Libvirt.
+Подробные сценарии устранения ошибок доступны в разделе [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md).
 
-### Диагностика
+### См. также
 
-```bash
-# Проверить смонтированные файловые системы
-vagrant ssh -c "df -h"
-
-# Проверить доступные диски
-vagrant ssh -c "lsblk"
-
-# Проверить общие папки
-vagrant ssh -c "mount | grep vagrant"
-```
-
-Решение проблем с синхронизацией описано в [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md), полный синтаксис конфигурации — в [Vagrantfile Reference](./vagrantfile.md).
+- [Vagrantfile Reference](./vagrantfile.md) — справочник параметров конфигурации
+- [Продвинутое использование Vagrant](./vagrant_advanced_usage.md) — триггеры и мульти-машинные окружения
+- [rsync в Linux](../Linux/SystemAdministration/rsync.md) — детальное описание работы утилиты rsync

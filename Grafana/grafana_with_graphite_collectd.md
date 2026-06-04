@@ -88,6 +88,7 @@ volumes:
 #### Установка
 
 В большинстве Linux-дистрибутивов пакет доступен в стандартных репозиториях:
+
 ```bash
 sudo apt update && sudo apt install collectd -y
 ```

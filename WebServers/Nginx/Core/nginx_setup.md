@@ -4,7 +4,7 @@
 
 **Nginx** — это веб-сервер и обратный прокси-сервер, используемый для обслуживания веб-контента, **[балансировки нагрузки](../Proxy/Load_Balancing/overview_concepts.md)**, кэширования и многого другого. Для тех, кто интересуется альтернативами, существует заметка о **[миграции с Nginx на Angie](../../Angie/migration_from_nginx.md)**, его отечественном форке.
 
-**Виртуальный хост (Server Block)** — блок конфигурации, описывающий отдельный сайт (домен). Позволяет одному серверу Nginx обслуживать множество сайтов.
+**Виртуальный хост (Server Block)** — блок конфигурации, описывающий отдельный сайт (домен). Позволяет одному серверу Nginx обслуживать множество сайтов на одном IP (Internet Protocol) адресе, различая их по заголовку `Host` в запросе.
 
 > Для более глубокого обзора архитектуры и ключевых концепций обратитесь к файлу **[Обзор Nginx](./nginx_overview.md)**.
 
@@ -25,7 +25,7 @@
 
 ### Важность правильной структуры: Блок `http` и его вложенность
 
-Блок `http { ... }` в Nginx является глобальным контекстом, в котором определяются все HTTP-серверы (`server { ... }`), а также глобальные настройки HTTP-протокола, такие как кэширование, MIME-типы, сжатие и т.д. Он должен быть определен только один раз на верхнем уровне конфигурации Nginx (обычно в `/etc/nginx/nginx.conf`).
+Блок `http { ... }` в Nginx является глобальным контекстом, в котором определяются все HTTP (HyperText Transfer Protocol) серверы (`server { ... }`), а также глобальные настройки HTTP-протокола, такие как кэширование, MIME (Multipurpose Internet Mail Extensions) типы, сжатие и т.д. Он должен быть определен только один раз на верхнем уровне конфигурации Nginx (обычно в `/etc/nginx/nginx.conf`).
 
 **Распространенная ошибка:** Попытка вложить блок `http { ... }` внутрь конфигурации отдельного сайта или другого блока.
 
@@ -64,7 +64,7 @@ http {
         keys_zone=api_cache:10m
         max_size=1g
         inactive=10m
-        use_temp_path=off; # Директива use_temp_path=off рекомендуется для избежания I/O на диске.
+        use_temp_path=off; # Директива use_temp_path=off рекомендуется для избежания I/O (Input/Output) на диске.
 
     # include /etc/nginx/conf.d/global_cache_config.conf;
     # ...
@@ -114,7 +114,7 @@ sudo dnf install epel-release && sudo dnf install nginx
 
 После установки Nginx обычно не запускается автоматически (особенно в CentOS/RHEL). Управление сервисом осуществляется с помощью стандартных команд `systemctl`. Подробнее о них можно прочесть в руководстве по **[управлению службами Systemd](../../../Linux/Core/systemd/service_management.md)**.
 
-* **Проверить статус:** `sudo systemctl status nginx`
+* **Проверить статус:** `sudo systemctl status nginx`  # → active (running)
 * **Запустить сервис:** `sudo systemctl start nginx`
 * **Добавить в автозагрузку:** `sudo systemctl enable nginx`
 * **Остановить сервис:** `sudo systemctl stop nginx`
@@ -135,10 +135,11 @@ sudo dnf install epel-release && sudo dnf install nginx
         listen 80;
         listen [::]:80;
 
-        # Это базовая конфигурация для HTTP. Для включения HTTPS (TLS/SSL)
+        # Это базовая конфигурация для HTTP. Для включения HTTPS (HyperText Transfer Protocol Secure)
         # и повышения безопасности, обратитесь к руководствам
         # [Настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md) и
         # [Nginx с Let's Encrypt](../Scenarios/nginx_with_letsencrypt.md).
+        # TLS (Transport Layer Security) / SSL (Secure Sockets Layer).
 
         server_name example.com www.example.com;
 
@@ -151,7 +152,7 @@ sudo dnf install epel-release && sudo dnf install nginx
     }
     ```
 
-    Директива `try_files` в этом примере пытается найти файл, соответствующий URI запроса. Это базовый способ маршрутизации, более сложные сценарии рассматриваются в заметке о **[правилах rewrite, redirect и директиве try_files](./nginx_rewrite_rules_and_try_files.md)**.
+    Директива `try_files` в этом примере пытается найти файл, соответствующий URI (Uniform Resource Identifier) запроса. Это базовый способ маршрутизации, более сложные сценарии рассматриваются в заметке о **[правилах rewrite, redirect и директиве try_files](./nginx_rewrite_rules_and_try_files.md)**.
 
 3. **Разберите ключевые директивы:**
 
@@ -161,7 +162,8 @@ sudo dnf install epel-release && sudo dnf install nginx
 
     * `index index.html;`: Сообщает Nginx, какой файл следует отдавать, если пользователь запрашивает целую директорию. Например, при запросе `http://example.com/` будет отдан файл `index.html` из директории, указанной в `root`.
 
-    * `server_name example.com www.example.com;`: Определяет, что данный блок `server` должен обрабатывать запросы, которые приходят на домены `example.com` и `www.example.com`. Такая запись `server_name site2.com www.site2.com;` используется, когда вы хотите, чтобы один и тот же блок `server` отвечал на запросы, приходящие на несколько доменных имён (например, с префиксом `www` и без него).
+    * `server_name example.com www.example.com;`: Определяет, что данный блок `server` должен обрабатывать запросы, которые приходят на домены `example.com` и `www.example.com`. Такая запись используется, когда вы хотите, чтобы один и тот же блок `server` отвечал на запросы, приходящие на несколько доменных имён (например, с префиксом `www` и без него).
+      Пример: `server_name repo.com 127.0.0.1 192.168.77.11;` означает: "Если запрос пришёл на `repo.com` ИЛИ на `127.0.0.1` ИЛИ на `192.168.77.11` — используй эту конфигурацию".
 
 4. **Создайте корневую директорию и тестовый файл:**
 
@@ -180,10 +182,13 @@ sudo dnf install epel-release && sudo dnf install nginx
 
     ```bash
     sudo nginx -t
+    # → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    # → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
     sudo systemctl reload nginx
     ```
 
-    Теперь при обращении к `http://example.com` (если DNS настроен) вы должны увидеть "Hello from Nginx!".
+    Теперь при обращении к `http://example.com` (если DNS (Domain Name System) настроен) вы должны увидеть "Hello from Nginx!".
 
 ### Применение изменений: `reload` vs `restart`
 
@@ -196,6 +201,8 @@ Nginx считывает конфигурацию только при запус
 
     ```bash
     sudo nginx -t
+    # → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    # → nginx: configuration file /etc/nginx/nginx.conf test is successful
     ```
 
     Если все в порядке, вы увидите `syntax is ok` и `test is successful`. В случае ошибки Nginx укажет на проблемный файл и строку, что является первым шагом в **[диагностике неисправностей](../Operations/nginx_troubleshooting.md)**.

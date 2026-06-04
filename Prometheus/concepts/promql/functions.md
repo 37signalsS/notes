@@ -1,10 +1,10 @@
 # Функции PromQL
 
-## Definitions
+## Определения
 
 **Функции PromQL** — встроенные операции для обработки временных рядов в Prometheus. В отличие от [операторов агрегации](./aggregation.md), которые работают с instant vector, большинство функций принимают **range vector** и возвращают **instant vector**. Функции классифицируются по типу метрик, для которых они предназначены ([Counter](../metric_types/counter.md), [Gauge](../metric_types/gauge.md), [Histogram](../metric_types/histogram.md), [Summary](../metric_types/summary.md)).
 
-## Basic Concepts
+## Базовые концепции
 
 ### Функции для счётчиков (Counters)
 
@@ -108,7 +108,7 @@ http_duration_summary{quantile="0.95"}
 | `clamp(v, min, max)` | Ограничение значения в диапазоне | `clamp(node_load1, 0, 100)` |
 | `clamp_max(v, max)` / `clamp_min(v, min)` | Ограничение максимумом/минимумом | `clamp_max(node_load1, 100)` |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Расчёт доли ошибок HTTP 5xx
 
@@ -154,17 +154,23 @@ resets(process_start_time_seconds[1h]) > 3
 clamp(node_load1, 0, 100)
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Предостережения
 
 - **`rate()` vs `irate()`** — `rate()` предпочтительнее для алертинга и дашбордов, `irate()` — для отладки резких скачков ([Реальное поведение метрик](./real_world_behavior.md))
 - **`deriv()` при рестартах** — не учитывает сбросы в 0, может дать некорректный результат после перезапуска приложения
 - **`histogram_quantile()` без `sum by (le)`** — посчитает перцентиль для каждого инстанса отдельно, а не агрегированный
-- **Summary квантили + агрегация** — нельзя использовать `avg()` или `sum()`, применяйте `max()` или агрегируйте `_sum`/`_count ([Summary](../metric_types/summary.md))`
+- **Summary квантили + агрегация** — нельзя использовать `avg()` или `sum()`, применяйте `max()` или агрегируйте `_sum`/`_count` ([Summary](../metric_types/summary.md))
 
 ### Взаимосвязь с типами данных
 
 - Функции для Counter/Gauge/Histogram принимают **range vector**, возвращают **instant vector** ([Типы данных](./data_types.md))
 - Subqueries позволяют применять `..._over_time` к функциям instant vector: `avg_over_time(rate(http_requests_total[5m])[1h:5m])`
 - Операторы агрегации (`sum()`, `avg()`) комбинируются с функциями: `sum(rate(http_requests_total[5m]))`
+
+> **См. также:**
+>
+> - [Операторы агрегации](./aggregation.md) — совместное использование с функциями.
+> - [Типы данных](./data_types.md) — различие между instant и range векторами.
+> - [Реальное поведение метрик](./real_world_behavior.md) — нюансы `rate` и `irate`.

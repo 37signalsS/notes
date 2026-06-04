@@ -19,6 +19,7 @@
 ### Архитектура безопасного пайплайна
 
 Рекомендуемая схема доставки:
+
 1. Сборка образа в изолированной среде (Kaniko).
 2. Публикация в приватный реестр (GitLab Container Registry).
 3. Аутентификация в Swarm через **[mTLS](../CI_CD/swarm_setup.md)**.
@@ -56,6 +57,7 @@ deploy:
 Разделение конфигураций для `development` и `production` реализуется через **[Environment Scope](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)**.
 
 Пример структуры переменных:
+
 - `DOCKER_HOST` (scope: `production`) → `tcp://prod-manager:2376`
 - `DOCKER_HOST` (scope: `development`) → `tcp://dev-manager:2376`
 
@@ -84,6 +86,7 @@ healthcheck:
 Для предотвращения переполнения дискового пространства необходимо настроить ротацию логов.
 
 **Действия:**
+
 1. Настройте `logging` драйвер в `docker-compose.yml`.
 2. Используйте централизованные системы сбора логов (ELK/Loki).
 3. Руководство по настройке — **[Ротация логов Docker](../../Docker/Docker_logs/docker_log_rotation.md)**.

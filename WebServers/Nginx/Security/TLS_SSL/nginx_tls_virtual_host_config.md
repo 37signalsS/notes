@@ -14,13 +14,12 @@
 
 ```nginx
 server {
-    # listen 443 ssl — указывает Nginx слушать стандартный HTTPS-порт.
-    # Параметр `ssl` активирует обработку TLS-трафика на этом порту.
-    # `http2` включает поддержку HTTP/2 (см. раздел ниже).
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    # listen 443 ssl — активирует обработку TLS-трафика на стандартном порту
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name your_domain.com;
 
+    # Пути к сертификату и ключу
     ssl_certificate /path/to/fullchain.pem;
     ssl_certificate_key /path/to/privkey.pem;
 
@@ -28,22 +27,22 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
 
     location / {
-        # ... остальная конфигурация сайта
+        # Конфигурация приложения
     }
 }
 ```
 
 **Ключевые директивы:**
 
-- `listen 443 ssl http2` — прослушивание порта 443 с TLS и HTTP/2.
+- `listen 443 ssl` — прослушивание порта 443 с активацией TLS.
 - `ssl_certificate` — путь к файлу цепочки сертификатов (`fullchain.pem`: серверный + промежуточные сертификаты).
-- `ssl_certificate_key` — путь к приватному ключу сервера. Должен быть защищён от несанкционированного доступа.
+- `ssl_certificate_key` — путь к приватному ключу сервера.
 
 ## Практические сценарии
 
 ### Перенаправление с HTTP на HTTPS
 
-Для обеспечения безопасности и SEO все HTTP-запросы должны перенаправляться на HTTPS с кодом `301 Moved Permanently`.
+Для обеспечения безопасности все HTTP-запросы должны перенаправляться на HTTPS с кодом `301 Moved Permanently`.
 
 ```nginx
 server {
@@ -53,7 +52,7 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
     server_name your_domain.com;
 
     ssl_certificate /path/to/fullchain.pem;
@@ -63,66 +62,35 @@ server {
 }
 ```
 
-> **Примечание:** При отладке используйте `302` (временный редирект), так как `301` агрессивно кэшируется браузерами.
+### Поддержка HTTP/2 и HTTP/3
 
-### Включение HTTP/2
+Nginx поддерживает современные версии протокола HTTP, которые значительно повышают производительность за счет мультиплексирования и использования QUIC.
 
-Достаточно добавить параметр `http2` к директиве `listen`:
+- **HTTP/2:** Активируется параметром `http2` в директиве `listen`.
+- **HTTP/3 (QUIC):** Требует прослушивания UDP-порта и анонсирования поддержки через заголовок `Alt-Svc`.
 
-```nginx
-server {
-    listen 443 ssl http2;
-    # ...
-}
-```
-
-### Включение HTTP/3 (QUIC)
-
-HTTP/3 требует UDP-порт и анонсирование поддержки через заголовок `Alt-Svc`:
-
-```nginx
-server {
-    listen 443 ssl http2;
-    listen 443 quic reuseport;
-
-    http3 on;
-    add_header Alt-Svc 'h3=":443"; ma=86400';
-
-    # ...
-}
-```
-
-Подробная документация по HTTP/2 и HTTP/3: [Конфигурация HTTP/2 и HTTP/3 в Nginx](../../Performance/nginx_http_versions.md).
-
-#### DNS-запись типа HTTPS
-
-Для информирования клиентов о поддержке HTTP/2 и HTTP/3 можно использовать DNS-запись:
-
-```dns
-your_domain.com. IN HTTPS 1 . alpn="h2,h3"
-```
-
-**Важно:** Запись типа `HTTPS` несовместима с `CNAME`. Требуется `A` или `AAAA` запись. Подробнее: [DNS-записи HTTPS/SVCB](../../../../Networking/Protocols/DNS/dns_records.md).
+Подробные инструкции по настройке и требования к версиям ПО находятся в основном разделе: [Конфигурация HTTP/2 и HTTP/3 в Nginx](../../Performance/nginx_http_versions.md).
 
 ### Использование EC и RSA сертификатов одновременно
 
-Nginx позволяет настроить оба типа сертификатов для максимальной совместимости с клиентами:
+Nginx позволяет настроить оба типа сертификатов для максимальной совместимости. Клиенты, поддерживающие современные алгоритмы, получат EC-сертификат (Elliptic Curve), остальные — классический RSA.
 
 ```nginx
 server {
-    # ...
+    listen 443 ssl;
+    server_name your_domain.com;
+
     # EC-сертификат (ECDSA, предпочтительный)
     ssl_certificate /path/to/ec_cert.pem;
     ssl_certificate_key /path/to/ec_key.pem;
 
-    # RSA-сертификат (для совместимости со старыми клиентами)
+    # RSA-сертификат (для старых клиентов)
     ssl_certificate /path/to/rsa_cert.pem;
     ssl_certificate_key /path/to/rsa_key.pem;
-    # ...
+
+    # Nginx автоматически выберет сертификат на основе возможностей клиента
 }
 ```
-
-Nginx автоматически выберет подходящий сертификат в зависимости от возможностей клиента.
 
 ## Дополнительная информация
 
@@ -130,4 +98,4 @@ Nginx автоматически выберет подходящий серти�
 
 - [Глобальные параметры TLS](./nginx_tls_global_parameters.md) — протоколы, шифры, кэш сессий, OCSP
 - [Обзор TLS/SSL в Nginx](./nginx_tls_ssl_overview.md) — теория и концепции
-- [Конфигурация HTTP/2 и HTTP/3](../../Performance/nginx_http_versions.md) — подробности о протоколах
+- [Диагностика TLS/SSL](./nginx_tls_troubleshooting_and_compatibility.md) — решение проблем с сертификатами

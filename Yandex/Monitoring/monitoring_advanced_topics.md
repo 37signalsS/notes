@@ -4,9 +4,7 @@
 
 **Managed Service for Prometheus** — управляемый сервис Prometheus в Yandex Cloud. Совместим с open-source Prometheus, обеспечивает сбор метрик через ServiceMonitors и PodMonitors в Kubernetes.
 
-**RED-методология** — подход к мониторингу микросервисов: **R**ate (запросов в секунду), **E**rrors (ошибок в секунду), **D**uration (длительность запросов).
-
-**USE-методология** — подход к мониторингу инфраструктуры: **U**tilization (загрузка ресурса), **S**aturation (очередь/ожидание), **E**rrors (ошибки ресурса).
+Методологии мониторинга (RED, USE) являются фундаментальными подходами к выбору метрик. Их подробное описание приведено в файле **[Методологии мониторинга](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)**.
 
 ## 2. Базовые концепции
 
@@ -14,21 +12,21 @@
 
 **Вариант 1: Yandex Monitoring как источник данных**
 
-1. Установите плагин Yandex Monitoring в Grafana
-2. Добавьте datasource с IAM-аутентификацией (сервисный аккаунт YC)
-3. Используйте Query Editor для построения запросов к метрикам YC
+1. Установите плагин Yandex Monitoring в Grafana.
+2. Добавьте datasource с IAM-аутентификацией (сервисный аккаунт YC).
+3. Используйте Query Editor для построения запросов к метрикам YC.
 
 **Вариант 2: Managed Service for Prometheus**
 
-1. Разверните MSP в Yandex Cloud
-2. Настройте скрейпинг метрик через ServiceMonitor/PodMonitor
-3. Подключите Prometheus как datasource в Grafana (PromQL)
+1. Разверните MSP в Yandex Cloud.
+2. Настройте скрейпинг метрик через ServiceMonitor/PodMonitor.
+3. Подключите Prometheus как datasource в Grafana (PromQL).
 
 **Вариант 3: Комбинированный**
 
-- Yandex Monitoring для метрик облачных сервисов (CPU, память, диск ВМ)
-- Prometheus для кастомных метрик приложений
-- Единый дашборд в Grafana с несколькими datasource
+- Yandex Monitoring для метрик облачных сервисов (CPU, память, диск ВМ).
+- Prometheus для кастомных метрик приложений.
+- Единый дашборд в Grafana с несколькими datasource.
 
 ### Хранение метрик
 
@@ -40,10 +38,10 @@
 
 ### Безопасность
 
-- **IAM-аутентификация** — через сервисные аккаунты YC
-- **Folder-level доступ** — метрики изолированы по каталогам
-- **Audit logging** — все операции записываются в Cloud Logging
-- **Шифрование** — данные шифруются at rest (KMS)
+- **IAM-аутентификация** — через сервисные аккаунты YC.
+- **Folder-level доступ** — метрики изолированы по каталогам.
+- **Audit logging** — все операции записываются в Cloud Logging.
+- **Шифрование** — данные шифруются at rest (KMS).
 
 ## 3. Практические сценарии
 
@@ -65,48 +63,39 @@ yc iam key create --service-account-name grafana-reader \
 
 ### Миграция с Prometheus на Yandex Monitoring
 
-- Custom метрики → API timeseries:write
-- ServiceMonitors → Managed Service for Prometheus
-- Alertmanager → встроенный алертинг Monitoring
-- Grafana datasource: Prometheus → Yandex Monitoring plugin
+- Пользовательские метрики → API timeseries:write.
+- ServiceMonitors → Managed Service for Prometheus.
+- Alertmanager → встроенный алертинг Monitoring.
+- Grafana datasource: Prometheus → Yandex Monitoring plugin.
 
 ## 4. Дополнительная информация
 
-### Best Practices
+### Рекомендации (Best Practices)
 
 **Метрики:**
 
-- Следуйте методологии **RED** (Rate, Errors, Duration) для сервисов
-- Используйте **USE** (Utilization, Saturation, Errors) для инфраструктуры
-- Избегайте высокой кардинальности меток (< 1000 уникальных значений на метку)
+- Используйте методологию RED для сервисов и USE для инфраструктуры.
+- Избегайте высокой кардинальности меток (< 1000 уникальных значений на метку).
 
 **Алерты:**
 
-- Настраивайте многоуровневую эскалацию (warning → critical → page)
-- Добавляйте контекст в уведомления (сервис, окружение, ссылка на дашборд)
-- Регулярно пересматривайте пороги и окна
-- Используйте `for` для избежания ложных срабатываний
+- Настраивайте многоуровневую эскалацию (warning → critical).
+- Добавляйте контекст в уведомления (сервис, окружение, ссылка на дашборд).
+- Регулярно пересматривайте пороги и используйте `for` для фильтрации шума.
 
 **Дашборды:**
 
-- Создавайте иерархию: общий → сервис → хост
-- Используйте переменные для фильтрации
-- Документируйте метрики и пороги
+- Создавайте иерархию: общий вид → конкретный сервис → хост.
+- Используйте переменные для динамической фильтрации.
 
 ### Актуальная информация (2025–2026)
 
-- **Q4 2025:** Добавлена вкладка Alerts для Managed Service for Prometheus
-- **Q4 2025:** Детальные метрики диска для Managed Databases
-- **Мониторинг по умолчанию:** все сервисы YC публикуют метрики автоматически
+- Добавлена вкладка Alerts для Managed Service for Prometheus (Q4 2025).
+- Детальные метрики диска для Managed Databases (Q4 2025).
+- Все сервисы YC публикуют метрики автоматически (мониторинг по умолчанию).
 
 ## Связанные документы
 
 - **[Основные концепции](./monitoring_concepts.md)** — определения и модель данных
 - **[Практические сценарии](./monitoring_practical_scenarios.md)** — отправка метрик, алертинг, дашборды
-- **[Compute Cloud](../Compute-Cloud.md)** — метрики ВМ
-- **[Managed Databases](../Managed-Databases.md)** — метрики БД
-- **[VPC](../VPC.md)** — сетевые метрики
 - **[Prometheus](../../Prometheus/overview.md)** — альтернативная система мониторинга
-- **[Grafana](../../Grafana/grafana_overview.md)** — визуализация и дашборды
-- **[Alertmanager](../../Prometheus/alertmanager.md)** — управление оповещениями
-- **[Kubernetes](../../Kubernetes/kubernetes_overview.md)** — метрики кластеров и подов

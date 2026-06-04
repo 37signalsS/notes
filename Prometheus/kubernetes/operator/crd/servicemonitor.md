@@ -1,42 +1,46 @@
-# CRD ServiceMonitor
+# ServiceMonitor — Концепции (CRD)
 
-## Definitions
+## Определения
 
-**`kind: ServiceMonitor`** — Custom Resource Definition в Prometheus Operator для описания целей скрейпинга через Kubernetes Service. Operator использует Service для обнаружения Endpoints и генерации scrape-конфигурации.
+**`kind: ServiceMonitor`** — Custom Resource Definition в Prometheus Operator для описания целей скрейпинга (scraping targets) через Kubernetes Service. Operator использует Service для обнаружения эндпоинтов (Endpoints) и автоматической генерации конфигурации скрейпинга для Prometheus.
 
 **API version:** `monitoring.coreos.com/v1`
 
-## Basic Concepts
+## Базовые концепции
 
 ### Принцип работы
 
-1. Prometheus Operator находит ServiceMonitor по label selector
-2. Запрашивает Kubernetes API для получения Endpoints сервиса
-3. Генерирует `scrape_config` для Prometheus
-4. Обновляет конфигурацию через Secret
-5. `prometheus-config-reloader` перезагружает Prometheus
+Prometheus Operator функционирует как контроллер, выполняющий следующие шаги:
+
+1. **Discovery:** находит объекты `ServiceMonitor` по селектору лейблов (label selector), указанному в ресурсе `Prometheus`.
+2. **Endpoint Lookup:** запрашивает Kubernetes API для получения списка эндпоинтов (Endpoints/EndpointSlices) сервиса, указанного в `ServiceMonitor`.
+3. **Config Generation:** генерирует блок `scrape_config` для Prometheus на основе параметров `ServiceMonitor`.
+4. **Secret Update:** сохраняет обновлённую конфигурацию в Kubernetes Secret.
+5. **Reload:** sidecar-контейнер `prometheus-config-reloader` отслеживает изменения в Secret и перезагружает конфигурацию Prometheus.
 
 ### Когда использовать ServiceMonitor
 
-- **Stateless-приложения** — стандартный подход для веб-сервисов
-- **Service уже существует** — не требуется дополнительная настройка
-- **Стабильные endpoints** — Service абстрагирует изменения pod'ов
-- **Балансировка нагрузки** — Service распределяет запросы между endpoints
+- **Stateless-приложения:** стандартный и рекомендуемый подход для большинства веб-сервисов.
+- **Наличие Service:** когда приложение уже экспонировано через Kubernetes Service.
+- **Абстракция эндпоинтов:** Service автоматически отслеживает жизненный цикл подов, предоставляя стабильный интерфейс для обнаружения целей.
+- **Балансировка:** позволяет собирать метрики со всех реплик, стоящих за сервисом.
 
 ### Отличие от PodMonitor
 
 | Характеристика | ServiceMonitor | PodMonitor |
-|---|---|---|
-| **Объект** | Service | Pod |
-| **Требует Service** | Да | Нет |
-| **Meta-лейблы** | `__meta_kubernetes_endpoint_*`, `__meta_kubernetes_service_*` | `__meta_kubernetes_pod_*` |
-| **Рекомендация** | Stateless-приложения | Stateful-приложения |
+|:---|:---|:---|
+| **Объект обнаружения** | Service | Pod |
+| **Требование Service** | Обязательно | Не требуется |
+| **Мета-лейблы** | `__meta_kubernetes_endpoint_*`, `__meta_kubernetes_service_*` | `__meta_kubernetes_pod_*` |
+| **Основной сценарий** | Stateless-сервисы, стандартные приложения | StatefulSet, инфраструктурные компоненты без Service |
 
-> **См. также:** [PodMonitor](./podmonitor.md) — мониторинг pod'ов напрямую (без Service).
+> **См. также:** [PodMonitor CRD](./podmonitor.md) — мониторинг подов напрямую (без использования Service).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовая конфигурация
+
+Сбор метрик с приложения в пространстве имён `production` с интервалом 15 секунд.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -59,7 +63,9 @@ spec:
       path: /metrics
 ```
 
-### С namespaceSelector для всех namespace
+### Обнаружение во всех пространствах имён
+
+Конфигурация для сбора метрик со всех сервисов с определённым лейблом во всём кластере.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -79,7 +85,9 @@ spec:
       path: /metrics
 ```
 
-### С аутентификацией и TLS
+### Настройка TLS и аутентификации
+
+Сбор метрик по защищённому протоколу HTTPS с использованием клиентского сертификата.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -104,92 +112,69 @@ spec:
         key: token
 ```
 
-### Relabelings (цели)
+### Релейблинг (Relabelings) целей и метрик
 
 ```yaml
 endpoints:
   - port: web
+    # Изменение лейблов цели до скрейпинга
     relabelings:
       - sourceLabels: [__meta_kubernetes_namespace]
         targetLabel: namespace
-      - sourceLabels: [__meta_kubernetes_pod_name]
-        targetLabel: pod
       - sourceLabels: [__meta_kubernetes_service_name]
         targetLabel: service
-```
-
-### Metric Relabelings (метрики)
-
-```yaml
-endpoints:
-  - port: web
+    # Изменение лейблов метрик после скрейпинга
     metricRelabelings:
       - sourceLabels: [__name__]
         regex: "go_.*"
         action: drop
-      - sourceLabels: [instance]
-        targetLabel: instance
-        replacement: "static-value"
 ```
 
-### Ограничения (limits)
+## Дополнительная информация
 
-```yaml
-spec:
-  sampleLimit: 10000    # Лимит сэмплов на ServiceMonitor
-  targetLimit: 100      # Лимит целей на ServiceMonitor
-```
-
-### Основные параметры spec
+### Основные параметры спецификации (spec)
 
 | Параметр | Описание | Пример |
-|---|---|---|
-| **`selector`** | Label selector Service | `matchLabels: {app: my-app}` |
-| **`namespaceSelector`** | Селектор namespace | `matchNames: [production]` или `any: true` |
-| **`endpoints`** | Список endpoints для скрейпинга | См. примеры выше |
-| **`jobLabel`** | Лейбл Service для имени задачи | `app.kubernetes.io/name` |
-| **`targetLabels`** | Лейблы Service для добавления к метрикам | `[environment, team]` |
-| **`podTargetLabels`** | Лейблы Pod для добавления к метрикам | `[pod, container]` |
-| **`sampleLimit`** | Лимит сэмплов | `10000` |
-| **`targetLimit`** | Лимит целей | `100` |
+|:---|:---|:---|
+| **`selector`** | Селектор для поиска Kubernetes Service | `matchLabels: {app: my-app}` |
+| **`namespaceSelector`** | Пространства имён для поиска сервисов | `matchNames: [prod]` или `any: true` |
+| **`endpoints`** | Список эндпоинтов и параметров скрейпинга | См. таблицу параметров эндпоинтов |
+| **`jobLabel`** | Лейбл сервиса, используемый как имя job | `app.kubernetes.io/name` |
+| **`targetLabels`** | Лейблы сервиса, переносимые в метрики | `[environment, team]` |
+| **`sampleLimit`** | Максимальное число сэмплов за один скрейп | `10000` |
+| **`targetLimit`** | Максимальное число целей для мониторинга | `100` |
 
-### Параметры endpoints
+### Параметры эндпоинтов (endpoints)
 
 | Параметр | Описание | Пример |
-|---|---|---|
-| **`port`** | Имя порта Service | `web`, `metrics` |
-| **`path`** | Путь к метрикам | `/metrics` |
-| **`interval`** | Интервал скрейпинга | `15s`, `30s` |
-| **`scheme`** | Протокол | `http`, `https` |
-| **`tlsConfig`** | TLS конфигурация | `caFile`, `certFile`, `keyFile` |
-| **`bearerTokenSecret`** | Bearer token из Secret | `name: token-secret, key: token` |
-| **`basicAuth`** | Basic аутентификация | `username`, `password` из Secret |
-| **`honorLabels`** | Сохранять лейблы из метрик | `true`, `false` |
-| **`honorTimestamps`** | Сохранять timestamps | `true`, `false` |
-| **`scrapeTimeout`** | Тайм-аут скрейпинга | `10s` |
-| **`followRedirects`** | Следовать редиректам | `true`, `false` |
-| **`params`** | Query параметры | `{module: ['http_2xx']}` |
-| **`metricRelabelings`** | Релейблинг метрик | См. выше |
-| **`relabelings`** | Релейблинг целей | См. выше |
+|:---|:---|:---|
+| **`port`** | Имя порта в Kubernetes Service | `web`, `metrics` |
+| **`path`** | Путь к эндпоинту метрик | `/metrics` |
+| **`interval`** | Частота сбора метрик | `15s`, `1m` |
+| **`scheme`** | Протокол (http/https) | `https` |
+| **`tlsConfig`** | Настройки TLS (пути к сертификатам) | `caFile`, `certFile` |
+| **`bearerTokenSecret`** | Токен авторизации из Kubernetes Secret | `name: token-secret, key: token` |
+| **`basicAuth`** | Данные Basic Auth из Secret | `username`, `password` |
+| **`scrapeTimeout`** | Таймаут ожидания ответа | `10s` |
+| **`relabelings`** | Правила переопределения лейблов целей | См. раздел "Релейблинг" |
+| **`metricRelabelings`** | Правила фильтрации и изменения метрик | См. раздел "Релейблинг" |
 
-## Additional Information
+### Доступные мета-лейблы для ServiceMonitor
 
-### Связанные CRD
+Данные лейблы доступны для использования в блоке `relabelings`:
 
-- [PodMonitor](./podmonitor.md) — мониторинг pod'ов напрямую (без Service)
-- [Prometheus CRD](./prometheus.md) — описание экземпляра Prometheus
-- [Probe](./probe.md) — blackbox-мониторинг
+| Лейбл | Описание |
+|:---|:---|
+| `__meta_kubernetes_namespace` | Пространство имён сервиса |
+| `__meta_kubernetes_service_name` | Имя сервиса |
+| `__meta_kubernetes_service_label_<name>` | Лейблы сервиса |
+| `__meta_kubernetes_service_annotation_<name>` | Аннотации сервиса |
+| `__meta_kubernetes_endpoint_node_name` | Узел, на котором запущен эндпоинт |
+| `__meta_kubernetes_pod_name` | Имя пода |
+| `__meta_kubernetes_pod_label_<name>` | Лейблы пода |
 
-### Доступные meta-лейблы для ServiceMonitor
+### Связанные ресурсы
 
-| Meta-лейбл | Описание |
-|---|---|
-| `__meta_kubernetes_namespace` | Namespace Service |
-| `__meta_kubernetes_service_name` | Имя Service |
-| `__meta_kubernetes_service_label_<labelname>` | Лейблы Service |
-| `__meta_kubernetes_service_annotation_<annotationname>` | Аннотации Service |
-| `__meta_kubernetes_endpoint_node_name` | Имя узла endpoint'а |
-| `__meta_kubernetes_pod_name` | Имя pod'а endpoint'а |
-| `__meta_kubernetes_pod_container_name` | Имя контейнера |
-| `__meta_kubernetes_pod_label_<labelname>` | Лейблы pod'а |
-| `__meta_kubernetes_pod_node_name` | Имя узла pod'а |
+- [PodMonitor CRD](./podmonitor.md) — сбор метрик напрямую с подов.
+- [Prometheus CRD](./prometheus.md) — конфигурация экземпляра Prometheus.
+- [Probe CRD](./probe.md) — Blackbox-мониторинг внешних целей.

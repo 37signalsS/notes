@@ -92,5 +92,6 @@ RUN --mount=type=secret,id=ssh_key,target=/root/.ssh/id_rsa \
 - **Инструменты анализа:** Для проверки того, как `RUN` влияет на размер слоев, используйте инструменты вроде `dive`. См. **[Инструменты оптимизации](../dockerfile_optimization_tools.md)**.
 
 **См. также:**
+
 - **[Инструкции Dockerfile: Обзор](./overview_definitions.md)** — сводная таблица всех инструкций.
 - **[Управление секретами](../../Docker_security/secrets_management.md)** — подробнее о безопасности при сборке.

@@ -1,8 +1,8 @@
 # Типы данных PromQL
 
-## Definitions
+## Определения
 
-**PromQL (Prometheus Query Language)** — функциональный язык запросов для работы с многомерными временными рядами в [Prometheus](../../overview.md). Оптимизирован для вычислений и агрегаций над временными рядами в реальном времени. Результаты отображаются в [Grafana](../../../Grafana/grafana_overview.md), таблицах или передааются через [HTTP API](../../prometheus_api.md).
+**PromQL (Prometheus Query Language)** — функциональный язык запросов для работы с многомерными временными рядами в [Prometheus](../../overview.md). Оптимизирован для вычислений и агрегаций над временными рядами в реальном времени. Результаты отображаются в [Grafana](../../../Grafana/grafana_overview.md), таблицах или передаются через [HTTP API](../../prometheus_api.md).
 
 **Типы данных в PromQL** — четыре основных типа, с которыми оперирует язык:
 
@@ -13,7 +13,7 @@
 | **Scalar** | Простое числовое значение (floating point) | Нет (одна точка) |
 | **String** | Строковое значение (не используется напрямую в PromQL) | Нет |
 
-## Basic Concepts
+## Базовые концепции
 
 ### Instant vector
 
@@ -61,7 +61,7 @@ http_requests_total + 100
 
 Строковый тип данных. На данный момент не используется напрямую в PromQL-запросах, присутствует в спецификации API.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Запрос instant vector через API
 
@@ -88,7 +88,7 @@ curl 'http://localhost:9090/api/v1/query_range?query=up&start=2023-01-01T00:00:0
 node_memory_MemTotal_bytes / 1024 / 1024 / 1024
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Результат API: vector vs matrix
 
@@ -106,3 +106,9 @@ node_memory_MemTotal_bytes / 1024 / 1024 / 1024
 - Функции для counter (`rate()`, `increase()`) принимают **range vector**, возвращают **instant vector** ([Функции PromQL](./functions.md))
 - Операторы агрегации (`sum()`, `avg()`) принимают **instant vector**, возвращают **instant vector** с уменьшенным числом рядов ([Агрегация](./aggregation.md))
 - Логические операторы (`and`, `or`, `unless`) работают только с **instant vector** ([Селекторы и операторы](./selectors_operators.md))
+
+> **См. также:**
+>
+> - [Селекторы и операторы](./selectors_operators.md) — использование типов данных в выражениях.
+> - [Функции PromQL](./functions.md) — обработка векторов.
+> - [Prometheus API](../../prometheus_api.md) — форматы данных в ответах API.

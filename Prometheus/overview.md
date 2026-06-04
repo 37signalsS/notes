@@ -1,6 +1,6 @@
 # Prometheus
 
-## Definitions
+## Определение
 
 **Prometheus** — система мониторинга и оповещения с открытым исходным кодом, стандарт де-факто в Cloud Native экосистеме. Разработан в SoundCloud (вдохновлён Borgmon от Google), передан в CNCF — второй по значимости проект после [Kubernetes](../Kubernetes/kubernetes_overview.md).
 
@@ -10,7 +10,7 @@
 - Язык запросов [PromQL](./concepts/promql/functions.md)
 - Ограничения в долгосрочном хранении и масштабировании решаются через [Mimir](../Mimir/mimir_overview.md), Thanos, [VictoriaMetrics](../VictoriaMetrics/overview.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Философия
 
@@ -31,7 +31,7 @@
 |---|---|
 | 1 | Приложение отдаёт метрики по HTTP (`/metrics`) в [определённом формате](./concepts/metric_types/alerts.md) |
 | 2 | Prometheus делает `GET /metrics` (интервал: 15–30с) |
-| 3 | Ответ сохраняется в [TSDB](./concepts/tsdb.md) с timestamp |
+| 3 | Ответ сохраняется в [TSDB](./concepts/tsdb.md) с временной меткой (timestamp) |
 | 4 | Метрики остаются в памяти приложения — дополняются и агрегируются |
 
 Prometheus собирает **срез во времени**, изменения вычисляются через PromQL (`rate()`, `increase()`).
@@ -40,7 +40,7 @@ Prometheus собирает **срез во времени**, изменения
 
 | Правильно | Неправильно |
 |---|---|
-| Монотонно инкрементить | Сбрасывать после scrape |
+| Монотонно увеличивать (increment) | Сбрасывать после scrape |
 
 Сброс — только при рестарте приложения.
 
@@ -50,8 +50,8 @@ Prometheus собирает **срез во времени**, изменения
 |---|---|
 | HTTP-сервер | Накладные расходы приемлемы для долгоживущих процессов |
 | [Pushgateway](./pushgateway.md) | Промежуточное приложение для batch/cron задач |
-| Telegraf | Универсальный конвертер/агрегатор метрик |
-| StatsD Exporter | Приём метрик в формате statsd → экспорт для Prometheus |
+| Telegraf | Универсальный конвертер и агрегатор метрик |
+| StatsD Exporter | Приём метрик в формате StatsD и экспорт для Prometheus |
 
 ### Архитектура
 
@@ -71,7 +71,7 @@ Prometheus собирает **срез во времени**, изменения
 | Этап | Описание |
 |---|---|
 | **Запись** | WAL (write-ahead log) → память |
-| **Блоки** | Каждые 2ч — сброс из памяти на диск в виде блока |
+| **Блоки** | Каждые 2 часа — сброс из памяти на диск в виде блока |
 | **Компакция** | Фоновое объединение старых блоков для оптимизации |
 | **Retention** | Флаги `--storage.tsdb.retention.time` и `--storage.tsdb.retention.size` |
 
@@ -85,18 +85,18 @@ Prometheus собирает **срез во времени**, изменения
 2. **Экспорт**: приложение запускает HTTP-сервер, отдающий метрики по `/metrics` в текстовом формате.
 3. **Сбор (Scraping)**: Prometheus периодически опрашивает `/metrics` согласно [конфигурации](./configuration.md), сохраняет данные в TSDB.
 4. **Анализ и визуализация**: запросы [PromQL](./concepts/promql/functions.md) в веб-интерфейсе Prometheus или [Grafana](../Grafana/grafana_overview.md).
-5. **Оповещение**: Prometheus выполняет [правила](./rules.md). При срабатывании алерт отправляется в [Alertmanager](./alertmanager.md).
+5. **Оповещение**: Prometheus выполняет [правила алертинга](./rules.md). При срабатывании алерт отправляется в [Alertmanager](./alertmanager.md).
 
 > **Whitebox vs Blackbox Monitoring** — описано в [Exporters Overview](./Exporters/overview.md#whitebox-vs-blackbox-мониторинг).
 
 ## Дополнительная информация
 
-### Масштабирование и Федерация
+### Масштабирование и федерация
 
 Изначально Prometheus спроектирован как автономный сервер. Для масштабирования используются два основных подхода:
 
-- **Федерация ([Federation](./scaling/federation.md))**: Иерархическая модель, где один сервер Prometheus опрашивает другие, агрегируя их данные. Используется для объединения данных из разных дата-центров или команд.
-- **Удаленное хранилище ([Remote Read/Write](./scaling/remote_read_write.md))**: Локальные серверы Prometheus отправляют все собираемые метрики в единое, глобальное, долгосрочное хранилище (например, Mimir, Thanos, VictoriaMetrics). Это предпочтительный современный подход.
+- **Федерация ([Federation](./scaling/federation.md))**: иерархическая модель, где один сервер Prometheus опрашивает другие, агрегируя их данные. Используется для объединения данных из разных дата-центров или команд.
+- **Удаленное хранилище ([Remote Read/Write](./scaling/remote_read_write.md))**: локальные серверы Prometheus отправляют все собираемые метрики в единое, глобальное, долгосрочное хранилище (например, Mimir, Thanos, VictoriaMetrics). Это предпочтительный современный подход.
 
 ### Сравнение с Zabbix
 
@@ -110,4 +110,4 @@ Prometheus собирает **срез во времени**, изменения
 | Целевая среда | Динамичные облачные среды, микросервисы, Kubernetes | Относительно статичные инфраструктуры, серверы, сетевое оборудование |
 | Настройка графиков | Через внешнюю систему (Grafana) на основе PromQL-запросов | Встроенная веб-панель (Dashboard, Maps) с привязкой к конкретным Items |
 
-Подробно: [Observability & Monitoring](../Concepts/Observability_and_Monitoring/observability_definitions.md)
+Подробно: [Определения Observability и мониторинга](../Concepts/Observability_and_Monitoring/observability_definitions.md)

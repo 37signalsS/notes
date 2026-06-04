@@ -209,7 +209,6 @@ prometheus.remote_write "mimir" {
 
 - **[Официальная документация](https://grafana.com/docs/mimir/latest/)** — полное руководство по установке, конфигурации и эксплуатации
 - **[GitHub-репозиторий](https://github.com/grafana/mimir)** — исходный код, release notes, issues
-- **[Grafana Cloud](https://grafana.com/products/cloud/mimir/)** — управляемая версия Mimir от Grafana Labs
 - **[Helm-чарт](https://github.com/grafana/helm-charts/tree/main/charts/mimir)** — официальные чарты для Kubernetes
 
 ### Рекомендации по эксплуатации
@@ -231,3 +230,5 @@ prometheus.remote_write "mimir" {
 - Включить TLS для всех внутренних коммуникаций
 - Использовать аутентификацию между компонентами
 - Ограничить доступ к объектному хранилищу через IAM-политики
+ацию между компонентами
+- Ограничить доступ к объектному хранилищу через IAM (Identity and Access Management) политики

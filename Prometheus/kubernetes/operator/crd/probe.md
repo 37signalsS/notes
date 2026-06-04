@@ -1,6 +1,6 @@
-# CRD Probe
+# Probe — Концепции (CRD)
 
-## Definitions
+## Определения
 
 **`kind: Probe`** — Custom Resource Definition в Prometheus Operator для описания blackbox-мониторинга внешних эндпоинтов через Blackbox Exporter. Позволяет декларативно управлять проверками доступности HTTP/TCP/ICMP/DNS из кластера Kubernetes.
 
@@ -8,7 +8,7 @@
 
 > **См. также:** [Blackbox Exporter — обзор](../../../Exporters/blackbox/blackbox_exporter_overview.md), [Конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
 
-## Basic Concepts
+## Базовые концепции
 
 ### Принцип работы
 
@@ -16,7 +16,7 @@
 2. Генерирует `scrape_config` с target-параметрами для Blackbox Exporter
 3. Prometheus опрашивает Blackbox Exporter на эндпоинте `/probe`
 4. Exporter выполняет проверку целевого эндпоинта и возвращает метрики (`probe_success`, `probe_duration_seconds` и др.)
-5. `prometheus-config-reloader` перезагружает конфигурацию при изменениях
+5. `prometheus-config-reloader` перезагружает конфигурацию при изменениях через sidecar
 
 **Поток запросов:**
 
@@ -56,7 +56,7 @@ Blackbox Exporter → возвращает метрики: probe_success, probe_
 | `__meta_kubernetes_namespace` | Namespace Probe CRD |
 | `__meta_kubernetes_probe_name` | Имя Probe CRD |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовая проверка HTTPS
 
@@ -191,7 +191,7 @@ spec:
       replacement: blackbox-exporter.monitoring.svc.cluster.local:9115
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Основные параметры spec
 
@@ -219,11 +219,11 @@ spec:
 | **ICMP** | `icmp` | Ping-проверка |
 | **DNS** | `dns_tcp_query`, `dns_udp_query` | DNS query over TCP/UDP |
 
-> **Конфигурация модулей** описана в SSoT: [Blackbox Exporter — конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
+> **Конфигурация модулей:** [Blackbox Exporter — конфигурация модулей](../../../Exporters/blackbox/blackbox_exporter_modules_configuration.md).
 
 ### Метрики и алертинг
 
-> Метрики Blackbox Exporter и примеры правил оповещения описаны в SSoT: [Метрики и алертинг](../../../Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md).
+> Метрики Blackbox Exporter и примеры правил оповещения: [Метрики и алертинг](../../../Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md).
 
 ### Связанные CRD
 

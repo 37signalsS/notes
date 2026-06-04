@@ -2,44 +2,50 @@
 
 ## Определения
 
-**Клиентская библиотека Prometheus** — программная библиотека для конкретного языка программирования, предоставляющая API для создания метрик (Counter, Gauge, Histogram, Summary) и реализации HTTP-эндпоинта `/metrics` в формате, совместимом с Prometheus.
+**Клиентская библиотека Prometheus** — это программный интерфейс (API) для конкретного языка программирования, предназначенный для создания, управления и экспозиции метрик в формате, совместимом с Prometheus.
 
-Используются для:
+Библиотеки решают две основные задачи:
 
-- **Прямой инструментации** — встраивания метрик непосредственно в код приложения
-- **Создания кастомных экспортеров** — написания отдельных программ, собирающих и отдающих метрики ([Создание собственных экспортеров](./custom_exporters.md))
+1. **Прямая инструментация:** встраивание сбора метрик непосредственно в исходный код приложения (бизнес-логика, время ответа API).
+2. **Создание кастомных экспортеров:** разработка отдельных сервисов для мониторинга внешних систем, которые не поддерживают формат Prometheus "из коробки" ([Создание собственных экспортеров](./custom_exporters.md)).
 
-## Основные понятия
+## Основные концепции
 
 ### Поддерживаемые языки
 
-| Язык | Репозиторий | Документация |
+Официальные и поддерживаемые сообществом библиотеки обеспечивают реализацию стандарта экспозиции метрик для большинства современных стеков.
+
+| Язык | Репозиторий | Особенности |
 | :--- | :--- | :--- |
-| **Go** | [prometheus/client_golang](https://github.com/prometheus/client_golang) | [pkg.go.dev](https://pkg.go.dev/github.com/prometheus/client_golang) |
-| **Python** | [prometheus/client_python](https://github.com/prometheus/client_python) | [pypi.org](https://pypi.org/project/prometheus-client/) |
-| **Java** | [prometheus/client_java](https://github.com/prometheus/client_java) | [github.com](https://github.com/prometheus/client_java) |
-| **JavaScript** | [siimon/prom-client](https://github.com/siimon/prom-client) | [npmjs.com](https://www.npmjs.com/package/prom-client) |
-| **Ruby** | [prometheus/client_ruby](https://github.com/prometheus/client_ruby) | [rubygems.org](https://rubygems.org/gems/prometheus-client) |
-| **.NET** | [prometheus-net](https://github.com/prometheus-net/prometheus-net) | [nuget.org](https://www.nuget.org/packages/prometheus-net) |
+| **Go** | [prometheus/client_golang](https://github.com/prometheus/client_golang) | Самая функциональная библиотека; нативная поддержка конкурентности. |
+| **Python** | [prometheus/client_python](https://github.com/prometheus/client_python) | Поддерживает различные режимы (multiprocess) и декораторы. |
+| **Java** | [prometheus/client_java](https://github.com/prometheus/client_java) | Интеграция с JMX, Spring Boot, Micrometer. |
+| **JavaScript** | [siimon/prom-client](https://github.com/siimon/prom-client) | Стандарт для Node.js приложений. |
+| **Ruby** | [prometheus/client_ruby](https://github.com/prometheus/client_ruby) | Поддержка Rack-интеграции. |
+| **.NET** | [prometheus-net](https://github.com/prometheus-net/prometheus-net) | Полная интеграция с ASP.NET Core. |
 
-### Типы метрик
+### Поддержка типов метрик
 
-Все клиентские библиотеки поддерживают четыре основных типа:
+Все библиотеки реализуют четыре базовых [типа метрик](../../concepts/metric_types/overview.md):
 
-- **Counter** — монотонно возрастающий счётчик (например, количество запросов). Суффикс `_total` обязателен.
-- **Gauge** — метрика, которая может увеличиваться и уменьшаться (например, использование памяти).
-- **Histogram** — распределение значений по бакетам, автоматически выдаёт `_count`, `_sum` и `_bucket`. Подходит для измерения длительности операций.
-- **Summary** — квантили распределения, вычисляются на стороне клиента. Подходит когда нужны точные квантили без аппроксимации.
+* **Counter:** накопительные счетчики (запросы, ошибки).
+* **Gauge:** мгновенные значения (память, температура).
+* **Histogram:** распределение значений по корзинам (латентность).
+* **Summary:** расчет квантилей на стороне клиента.
 
-**Подробнее о типах:** [Типы метрик](../../concepts/metric_types/overview.md)
+### Автоматическая экспозиция
 
-Правила именования, работы с лейблами и рекомендации по коду — в [Расширяемость экспортеров — Концепции](./concepts.md).
+Библиотеки включают встроенные HTTP-обработчики для эндпоинта `/metrics`. При скрапинге (HTTP GET запрос) библиотека на лету генерирует текстовое представление всех зарегистрированных метрик.
 
 ## Практические сценарии
 
-### Инструментация Go-приложения
+### Прямая инструментация в Go
+
+Использование пакета `promauto` позволяет автоматически регистрировать метрики в глобальном реестре (`DefaultRegisterer`).
 
 ```go
+package main
+
 import (
     "net/http"
     "github.com/prometheus/client_golang/prometheus"
@@ -48,55 +54,62 @@ import (
 )
 
 var (
-    requests = promauto.NewCounter(prometheus.CounterOpts{
-        Name: "http_requests_total",
-        Help: "Total number of HTTP requests",
-    })
-
-    memory = promauto.NewGauge(prometheus.GaugeOpts{
-        Name: "app_memory_usage_bytes",
-        Help: "Memory usage in bytes",
+    // Определение метрики с автоматической регистрацией
+    opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "myapp_processed_ops_total",
+        Help: "The total number of processed events",
     })
 )
 
 func main() {
     // Регистрация обработчика /metrics
     http.Handle("/metrics", promhttp.Handler())
+    
+    // Имитация работы приложения
+    go func() {
+        for {
+            opsProcessed.Inc()
+        }
+    }()
+
     http.ListenAndServe(":8080", nil)
 }
 ```
 
-### Инструментация Python-приложения
+### Инструментация в Python
+
+Библиотека предоставляет декораторы и контекстные менеджеры для удобного сбора метрик времени выполнения.
 
 ```python
-from prometheus_client import start_http_server, Counter, Gauge
+from prometheus_client import start_http_server, Summary, Counter
+import time
+import random
 
 # Создание метрик
-requests = Counter('http_requests_total', 'Total number of HTTP requests')
-memory = Gauge('app_memory_usage_bytes', 'Memory usage in bytes')
+REQUEST_TIME = Summary('request_processing_seconds', 'Time spent processing request')
+ERRORS = Counter('app_errors_total', 'Total application errors')
 
-# Инкремент счётчика
-requests.inc()
+@REQUEST_TIME.time()
+def process_request():
+    """Функция с автоматическим замером времени выполнения"""
+    if random.random() < 0.1:
+        ERRORS.inc()
+    time.sleep(random.random())
 
-# Установка значения gauge
-memory.set(524288000)
-
-# Запуск HTTP-сервера на порту 8000
-start_http_server(8000)
+if __name__ == '__main__':
+    # Запуск HTTP-сервера для экспозиции метрик
+    start_http_server(8000)
+    while True:
+        process_request()
 ```
 
-### Выбор порта для кастомного экспортера
+### Когда использовать библиотеки вместо скриптов
 
-При создании собственного экспортера выбирайте порт с учётом [официального списка](https://github.com/prometheus/prometheus/wiki/Default-port-allocations).
-
-**Рекомендуемый диапазон:** 9100–9200
+* **Textfile Collector** предпочтителен для cron-задач или простых системных скриптов, где время жизни процесса меньше интервала скрапинга.
+* **Клиентские библиотеки** необходимы для долгоживущих сервисов, высоконагруженных систем и когда требуется сложная агрегация данных (Histogram/Summary).
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- [Расширяемость экспортеров](./concepts.md) — правила именования метрик, labels, рекомендации по коду
-- [Создание собственных экспортеров](./custom_exporters.md) — полные примеры экспортеров на Go и Python
-- [Textfile Collector](./textfile_collector.md) — альтернативный способ добавления метрик без написания кода
-- [Лейблы и кардинальность](../../concepts/labels_and_cardinality.md) — правила работы с лейблами
-- [Формат экспозиции](../../concepts/metric_types/exposition_format.md) — текстовый формат метрик Prometheus
+* [Расширяемость экспортеров — Концепции](./concepts.md) — правила именования, работа с лейблами и кардинальностью.
+* [Создание собственных экспортеров](./custom_exporters.md) — архитектурные паттерны и полные примеры реализации.
+* [Default Port Allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations) — список зарезервированных портов для экспортеров.

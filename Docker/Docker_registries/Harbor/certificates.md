@@ -104,6 +104,7 @@ openssl x509 -req -in ${HARBOR_HOST}.csr -CA root-ca.crt -CAkey root-ca.key -CAc
 Чтобы Docker-демон доверял вашему Harbor, скопируйте `root-ca.crt` на все узлы и обновите системное хранилище.
 
 **Ubuntu / Debian:**
+
 ```bash
 sudo cp root-ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
 sudo update-ca-certificates
@@ -111,12 +112,14 @@ sudo update-ca-certificates
 ```
 
 **RHEL / CentOS / Fedora:**
+
 ```bash
 sudo cp root-ca.crt /etc/pki/ca-trust/source/anchors/harbor-ca.crt
 sudo update-ca-trust extract
 ```
 
 **ВАЖНО:** После обновления хранилища необходимо перезапустить Docker:
+
 ```bash
 sudo systemctl restart docker
 ```

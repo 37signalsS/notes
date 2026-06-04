@@ -8,21 +8,21 @@
 
 > **См. также:** [Концепции Prometheus Operator](./concepts.md), [Online Installation через Helm](../Kube_Prometheus_Stack_Helm/practical_scenarios/online_installation.md).
 
-## Основные концепции
+## Базовые концепции
 
-### Что устанавливается вручную
+### Состав ручной установки
 
-В отличие от Helm-чарта, ручная установка включает только Prometheus Operator (контроллер). Остальные компоненты (Prometheus, Alertmanager, Grafana, экспортеры) создаются отдельно через CRD.
+В отличие от Helm-чарта, ручная установка включает только Prometheus Operator (контроллер). Остальные компоненты (Prometheus, Alertmanager, Grafana, экспортеры) создаются отдельно через CRD или стандартные Kubernetes-манифесты.
 
 | Компонент | Helm (kube-prometheus-stack) | Ручная установка |
 |---|---|---|
-| CRD | Автоматически | Вручную (`kubectl apply`) |
-| Prometheus Operator | Автоматически | Вручную (`bundle.yaml`) |
-| Prometheus Server | Через `prometheus.prometheusSpec` | Через CRD `Prometheus` |
-| Alertmanager | Через `alertmanager.alertmanagerSpec` | Через CRD `Alertmanager` |
-| Grafana | Через subchart `grafana.*` | Отдельно (Deployment + Sidecar) |
-| Node Exporter | Через `nodeExporter.*` | Отдельно (DaemonSet) |
-| Kube-State-Metrics | Через subchart | Отдельно (Deployment) |
+| **CRD** | Автоматически | Вручную (`kubectl apply`) |
+| **Prometheus Operator** | Автоматически | Вручную (`bundle.yaml`) |
+| **Prometheus Server** | Через `prometheus.prometheusSpec` | Через [CRD Prometheus](./crd/prometheus.md) |
+| **Alertmanager** | Через `alertmanager.alertmanagerSpec` | Через [CRD Alertmanager](./crd/alertmanager.md) |
+| **Grafana** | Через subchart `grafana` | Отдельно (Deployment + Sidecar) |
+| **Node Exporter** | Через `nodeExporter` | Отдельно (DaemonSet) |
+| **Kube-State-Metrics** | Через subchart | Отдельно (Deployment) |
 
 ### Источники манифестов
 
@@ -31,60 +31,54 @@
 - **CRD** — `example/prometheus-operator-crd/`
 - **Bundle (Operator + RBAC + Deployment)** — `bundle.yaml`
 
-### Версии
+### Актуальные версии
 
 | Параметр | Значение |
 |---|---|
-| **Версия Operator** | `0.89.0` (в манифестах) |
-| **Минимальный Kubernetes** | `1.16+` |
+| **Версия Operator** | `0.90.1` |
+| **Минимальный Kubernetes** | `1.27+` |
 
-> **Важно:** Версии в примерах ниже могут быть устаревшими. Проверяйте актуальную версию в [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) и в [Концепциях Prometheus Operator](./concepts.md).
+> **Важно:** Проверяйте актуальную версию в [GitHub Releases](https://github.com/prometheus-operator/prometheus-operator/releases) и в [Концепциях Prometheus Operator](./concepts.md).
 
 ## Практические сценарии
 
 ### Сценарий 1: Установка CRD
 
-**Отдельная установка каждого CRD:**
+Перед запуском Operator необходимо установить Custom Resource Definitions.
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_podmonitors.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_probes.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagers.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/monitoring.coreos.com_alertmanagerconfigs.yaml
+# Установка всех CRD из официального репозитория
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.90.1/example/prometheus-operator-crd/
 ```
 
-**Установка всех CRD сразу:**
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/
-```
+Если требуется выборочная установка, можно указать конкретные файлы:
+`monitoring.coreos.com_servicemonitors.yaml`, `monitoring.coreos.com_prometheuses.yaml` и др.
 
 ### Сценарий 2: Установка Operator
+
+Установка контроллера, ролей RBAC и необходимых прав доступа.
 
 ```bash
 # Создание namespace
 kubectl create namespace monitoring
 
 # Установка bundle (Operator + RBAC + Deployment)
-kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/bundle.yaml
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.90.1/bundle.yaml
 ```
 
-### Сценарий 3: Проверка установки
+### Сценарий 3: Проверка состояния
 
 ```bash
-# Проверка CRD
+# Проверка регистрации CRD
 kubectl get crd | grep monitoring.coreos.com
 
-# Проверка Pod Operator
+# Проверка работоспособности Operator
 kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-operator
 ```
 
-### Сценарий 4: Создание Prometheus через CRD
+### Сценарий 4: Создание экземпляра Prometheus
 
-После установки Operator создайте экземпляр Prometheus:
+После установки Operator необходимо создать ресурс `Prometheus`, на основе которого будет запущен StatefulSet.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -99,17 +93,13 @@ spec:
   serviceMonitorSelector:
     matchLabels:
       release: monitoring
-  resources:
-    requests:
-      memory: 400Mi
-      cpu: 200m
 ```
 
-```bash
-kubectl apply -f prometheus-instance.yaml
-```
+> **Детали конфигурации:** Полный список параметров и примеры доступны в [CRD Prometheus — Практические сценарии](./crd/prometheus.md#практические-сценарии).
 
 ### Сценарий 5: Создание ServiceMonitor
+
+Для автоматического обнаружения целей (Service Discovery) используется ресурс `ServiceMonitor`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -123,30 +113,22 @@ spec:
   selector:
     matchLabels:
       app: my-app
-  namespaceSelector:
-    matchNames:
-      - default
   endpoints:
     - port: web
       interval: 15s
-      path: /metrics
 ```
+
+> **Детали конфигурации:** [CRD ServiceMonitor — Практические сценарии](./crd/servicemonitor.md#практические-сценарии).
+
+### Сценарий 6: Удаление всех компонентов
 
 ```bash
-kubectl apply -f servicemonitor.yaml
+# Удаление Operator и связанных RBAC
+kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.90.1/bundle.yaml
+
+# Удаление CRD (ВНИМАНИЕ: удалит все ресурсы Prometheus, ServiceMonitor и др.)
+kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.90.1/example/prometheus-operator-crd/
 ```
-
-### Сценарий 6: Удаление
-
-```bash
-# Удаление Operator
-kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/bundle.yaml
-
-# Удаление CRD
-kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.89.0/example/prometheus-operator-crd/
-```
-
-> **Важно:** Удаление CRD приведёт к потере всех Custom Resources — Prometheus, Alertmanager, ServiceMonitor, PrometheusRule и др.
 
 ## Дополнительная информация
 
@@ -154,22 +136,17 @@ kubectl delete -f https://raw.githubusercontent.com/prometheus-operator/promethe
 
 | Критерий | Ручная установка | Helm (kube-prometheus-stack) |
 |---|---|---|
-| Сложность | Высокая | Низкая |
-| CRD | Вручную | Автоматически |
-| Grafana | Отдельно | Включена (subchart) |
-| Экспортеры | Отдельно | Включены (Node Exporter, KSM) |
-| Дашборды | Вручную | Встроенные |
-| Обновление | Вручную | `helm upgrade` |
-| Откат | Вручную | `helm rollback` |
-| Версионирование | Git + манифесты | Helm release + `values.yaml` |
+| **Сложность** | Высокая | Низкая |
+| **Управление CRD** | Вручную | Автоматически |
+| **Grafana** | Отдельно | Включена |
+| **Экспортеры** | Отдельно | Включены (Node Exporter, KSM) |
+| **Дашборды** | Вручную | Встроенные |
+| **Обновление** | Вручную (`kubectl apply`) | `helm upgrade` |
+| **Откат** | Вручную | `helm rollback` |
 
-> **Подробности Helm-установки:** [Online Installation](../Kube_Prometheus_Stack_Helm/practical_scenarios/online_installation.md), [Обзор kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md).
+### Связанные компоненты
 
-### Связанные темы
-
-- **[Концепции Prometheus Operator](./concepts.md)** — CRD и архитектура
-- **[Prometheus CRD](./crd/prometheus.md)** — описание CRD Prometheus
-- **[ServiceMonitor CRD](./crd/servicemonitor.md)** — описание CRD ServiceMonitor
-- **[High Availability](./high_availability.md)** — HA конфигурация
-- **[Troubleshooting](./troubleshooting.md)** — диагностика проблем
-- **[Grafana Integration](./grafana_integration.md)** — интеграция с Grafana
+- **[Концепции Prometheus Operator](./concepts.md)** — архитектура и принцип работы
+- **[Troubleshooting](./troubleshooting.md)** — диагностика проблем установки и работы
+- **[High Availability](./high_availability.md)** — настройка отказоустойчивости
+- **[Grafana Integration](./grafana_integration.md)** — подключение Grafana к стеку

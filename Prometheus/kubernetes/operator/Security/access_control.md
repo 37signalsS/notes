@@ -2,53 +2,42 @@
 
 ## Определения
 
-**Контроль доступа** — ограничение доступа к компонентам Prometheus через Network Policies (L3/L4 фильтрация) и RBAC (авторизация Kubernetes API).
+**Контроль доступа** — комплекс мер по ограничению доступа к компонентам Prometheus Operator с использованием сетевой фильтрации (Network Policies) и механизмов авторизации Kubernetes API (RBAC).
 
 > **Навигация:** [Главная Security](./index.md) | [Секреты](./secrets_best_practices.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
-### Network Policies
+### Сетевые политики (Network Policies)
 
-**NetworkPolicy** — ресурс Kubernetes для декларативного управления правилами доступа к сети на уровне L3/L4. Работает только при поддержке CNI-плагином (Calico, Cilium, Weave Net). Flannel **не поддерживает** NetworkPolicy.
+**NetworkPolicy** используется для изоляции компонентов мониторинга на сетевом уровне (L3/L4). Это критически важно для защиты Prometheus и Alertmanager от несанкционированного доступа из других неймспейсов.
 
-**Принцип работы:**
+- **Принцип работы:** По умолчанию в Kubernetes разрешён весь трафик. Применение политики включает режим "запрещено по умолчанию" (default-deny) для выбранных подов.
+- **Требования:** Необходим CNI-плагин с поддержкой политик (Calico, Cilium). Flannel не поддерживает этот механизм.
 
-- Если для пода **не создано ни одной** NetworkPolicy — весь трафик разрешён
-- При применении **хотя бы одной** NetworkPolicy — включается режим default-deny для указанного типа трафика (Ingress/Egress)
-- Правила обрабатываются аддитивно: если трафик разрешён хотя бы одним правилом — он проходит
-
-**Основные компоненты spec:**
-
-- `podSelector` — выборка подов, к которым применяется политика
-- `policyTypes` — тип трафика (`Ingress`, `Egress`)
-- `ingress`/`egress` — правила разрешения входящего/исходящего трафика
-
-> **Подробно:** [NetworkPolicy Definitions](../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)
+> **Подробно:** [Определения и принципы NetworkPolicy](../../../Kubernetes/Networking/Network/NetworkPolicy/definitions.md)
 
 ### RBAC (Role-Based Access Control)
 
-**RBAC** — встроенный механизм авторизации Kubernetes, контролирующий доступ к API-ресурсам через роли и привязки.
+**RBAC** управляет правами доступа Prometheus к Kubernetes API для обнаружения целей (Service Discovery) и сбора метрик.
 
-**Основные объекты:**
+- **ServiceAccount:** Идентифицирует под Prometheus в кластере.
+- **ClusterRole:** Определяет права на чтение ресурсов (`nodes`, `pods`, `services`) во всём кластере.
+- **Принцип наименьших привилегий:** Prometheus требует только права на чтение (`get`, `list`, `watch`). Права на запись или изменение ресурсов не требуются.
 
-- **ServiceAccount** — идентификатор для процессов в Pod
-- **Role/ClusterRole** — набор правил (ресурсы + глаголы)
-- **RoleBinding/ClusterRoleBinding** — привязка субъекта к роли
-
-**Принцип наименьших привилегий:** Prometheus требует только `get`, `list`, `watch` для чтения метрик из Kubernetes API. Запись не требуется.
-
-> **Подробно:** [RBAC Overview](../../../Kubernetes/Security/rbac/rbac_overview.md)
+> **Подробно:** [Обзор RBAC в Kubernetes](../../../Kubernetes/Security/rbac/rbac_overview.md)
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Network Policies
+### Сетевые политики (Network Policies)
 
 #### Ограничение доступа к Prometheus
+
+Разрешает доступ к порту 9090 только для Grafana и компонентов внутри неймспейса `monitoring`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -75,9 +64,9 @@ spec:
           protocol: TCP
 ```
 
----
-
 #### Ограничение доступа к Alertmanager
+
+Разрешает входящий трафик на порт 9093 только от Prometheus.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -115,9 +104,9 @@ metadata:
   namespace: monitoring
 ```
 
----
-
 #### ClusterRole для доступа к Kubernetes API
+
+Необходим для работы Service Discovery.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -141,9 +130,9 @@ rules:
     verbs: ["get"]
 ```
 
----
-
 #### ClusterRoleBinding
+
+Связывает ServiceAccount с созданной ролью.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -162,6 +151,10 @@ subjects:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-> **См. также:** [High Availability](../high_availability.md) — HA конфигурация; [Prometheus CRD](../crd/prometheus.md) — описание Prometheus CRD.
+> **См. также:**
+>
+> - [High Availability](../high_availability.md) — конфигурация отказоустойчивости
+> - [Prometheus CRD](../crd/prometheus.md) — описание ресурсов Prometheus
+> - [NetworkPolicy Best Practices](../../../Kubernetes/Networking/Network/NetworkPolicy/best_practices.md)

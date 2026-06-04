@@ -1,129 +1,63 @@
 # Безопасность Prometheus
 
-## Definitions
+## Определения
 
-**Безопасность Prometheus** — практики и механизмы защиты метрик и сервера Prometheus от несанкционированного доступа. По умолчанию Prometheus собирает метрики **без аутентификации**, что создаёт риски утечки при доступе из интернета.
+**Безопасность Prometheus** — совокупность практик и технических средств, направленных на защиту собираемых метрик и самого сервера Prometheus от несанкционированного доступа, модификации данных и атак типа "отказ в обслуживании" (DoS).
 
-> **См. также:** [DevSecOps](../CI-CD/DevSecOps/devsecops_overview.md) — интеграция безопасности в CI/CD; [Prometheus Operator Security](./kubernetes/operator/Security/index.md) — безопасность в Kubernetes через Operator.
+По умолчанию Prometheus спроектирован для работы в доверенных сетях: он собирает метрики без аутентификации и не предоставляет встроенных механизмов разграничения прав доступа к своим эндпоинтам. Это делает настройку внешней защиты критически важной при эксплуатации в промышленной среде.
 
-## Basic Concepts
+> **См. также:** [DevSecOps](../CI-CD/DevSecOps/devsecops_overview.md) — общие принципы безопасности в CI/CD; [Безопасность Prometheus Operator](./kubernetes/operator/Security/index.md) — специфика защиты в средах Kubernetes.
 
-### Проблемы безопасности по умолчанию
+## Основные концепции
 
-| Проблема | Риск |
+### Анализ рисков при настройках по умолчанию
+
+| Фактор риска | Описание |
 | :--- | :--- |
-| **Отсутствие аутентификации** | Любой с доступом к порту читает метрики |
-| **Отсутствие шифрования** | Данные передаются по HTTP без TLS |
-| **Открытый API** | [HTTP API](./prometheus_api.md) доступен без ограничений |
-| **Чувствительные данные в метриках** | Имена хостов, пути, версии ПО могут раскрыть инфраструктуру |
+| **Отсутствие аутентификации** | Любой пользователь, имеющий сетевой доступ к порту 9090, может читать все метрики и выполнять тяжелые запросы. |
+| **Отсутствие шифрования** | По умолчанию трафик передается по протоколу HTTP, что позволяет перехватывать данные в открытом виде. |
+| **Открытый HTTP API** | Доступ к [HTTP API](./prometheus_api.md) без ограничений позволяет злоумышленникам анализировать структуру инфраструктуры. |
+| **Утечка чувствительных данных** | В значения метрик могут случайно попасть имена путей, версии ПО, идентификаторы пользователей или токены. |
 
-### Способы защиты
+### Многоуровневая стратегия защиты
 
-| Способ | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| **Аутентификация (scrape)** | Basic Auth / Bearer Token в запросах к `/metrics` | Для сервисов с поддержкой аутентификации |
-| **Отдельный порт для `/metrics`** | Эндпоинт метрик на порту, не доступном извне | Для всех приложений |
-| **Файерволл** | Ограничение доступа к порту Prometheus (9090) на уровне сети | Обязательно для продакшена |
-| **IP Whitelist на уровне приложения** | Приём запросов к `/metrics` только с IP Prometheus | Для критичных сервисов |
-| **TLS/HTTPS** | Шифрование трафика между Prometheus и целями | При передаче через ненадёжные сети |
-| **Network Policies (Kubernetes)** | Ограничение сетевого доступа между подами | В Kubernetes |
+Для обеспечения безопасности применяются следующие подходы:
 
-## Practical Scenarios
+1. **Защита на уровне сбора (Scrape):** Использование Basic Auth, Bearer Token или взаимного TLS (mTLS) при опросе целей.
+2. **Сетевая изоляция:** Ограничение доступа к портам Prometheus (9090), Alertmanager (9093) и экспортеров (91xx) на уровне файерволов или облачных групп безопасности.
+3. **Безопасная экспозиция:** Выделение метрик на отдельный сетевой интерфейс или порт (например, `localhost`), не доступный из публичных сетей.
+4. **Обратный прокси (Reverse Proxy):** Использование Nginx, Apache или специальных Auth-прокси для добавления функций TLS и аутентификации к веб-интерфейсу Prometheus.
 
-### Аутентификация в scrape-конфигурации
+## Практические сценарии
 
-Prometheus отправляет запросы с заголовками аутентификации к целевым сервисам.
+### Аутентификация scrape-запросов
 
-**`prometheus.yml` — Bearer Token:**
+Настройка Prometheus для передачи учетных данных при опросе защищенных сервисов.
+
+**Использование Bearer Token в `prometheus.yml`:**
 
 ```yaml
 scrape_configs:
-  - job_name: 'secure-app'
+  - job_name: 'secure-service'
     scheme: https
     authorization:
       type: Bearer
-      credentials: my-secret-token
+      credentials: "YOUR_SECRET_TOKEN"
 ```
 
-**`prometheus.yml` — Basic Auth:**
+**Использование Basic Auth в `prometheus.yml`:**
 
 ```yaml
 scrape_configs:
-  - job_name: 'secure-app'
+  - job_name: 'secure-service'
     basic_auth:
-      username: prometheus
-      password: secret
+      username: "prometheus_user"
+      password: "YOUR_PASSWORD"
 ```
 
-> **Важно:** Токены и пароли хранить в защищённом месте (Vault, secrets manager).
+> **Рекомендация:** Никогда не храните пароли и токены в открытом виде в Git. Используйте механизмы подстановки секретов (Vault, Kubernetes Secrets, Ansible Vault).
 
-### Отдельный порт для метрик
-
-Эндпоинт `/metrics` на отдельном порту, не выставленном наружу.
-
-**Node.js:**
-
-```javascript
-// Основной сервер — порт 3000 (публичный)
-app.listen(3000);
-
-// Метрики — порт 9090 (только localhost)
-const metricsServer = express();
-metricsServer.get('/metrics', (req, res) => {
-  res.send(register.metrics());
-});
-metricsServer.listen(9090, '127.0.0.1');
-```
-
-**Go:**
-
-```go
-// Основной сервер
-go http.ListenAndServe(":8080", mainMux)
-
-// Метрики — только localhost
-metricsMux := http.NewServeMux()
-metricsMux.Handle("/metrics", promhttp.Handler())
-go http.ListenAndServe("127.0.0.1:9091", metricsMux)
-```
-
-### Ограничение доступа файерволлом
-
-**`ufw` (Ubuntu):**
-
-```bash
-ufw allow from 10.0.0.0/8 to any port 9090
-ufw allow from 192.168.1.100 to any port 9090
-ufw deny 9090/tcp
-```
-
-**`iptables`:**
-
-```bash
-iptables -A INPUT -p tcp --dport 9090 -s 10.0.0.0/8 -j ACCEPT
-iptables -A INPUT -p tcp --dport 9090 -j DROP
-```
-
-### IP Whitelist на уровне приложения
-
-**Python (Flask):**
-
-```python
-from flask import Flask, request, abort
-
-app = Flask(__name__)
-ALLOWED_METRICS_IPS = ['10.0.0.5', '10.0.0.6']  # IP Prometheus
-
-@app.route('/metrics')
-def metrics():
-    if request.remote_addr not in ALLOWED_METRICS_IPS:
-        abort(403)
-    return generate_metrics()
-```
-
-### TLS для scrape-целей
-
-**`prometheus.yml` — клиентские сертификаты:**
+### Настройка TLS для взаимодействия с целями
 
 ```yaml
 scrape_configs:
@@ -136,71 +70,68 @@ scrape_configs:
       insecure_skip_verify: false
 ```
 
-### Security в Kubernetes
+### Ограничение доступа на уровне ОС
 
-**NetworkPolicy — ограничение доступа к Prometheus:**
+Использование системных утилит для фильтрации трафика к серверу мониторинга.
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: prometheus-access
-spec:
-  podSelector:
-    matchLabels:
-      app: prometheus
-  policyTypes: [Ingress]
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: monitoring
-    - podSelector:
-        matchLabels:
-          app: grafana
-    ports:
-    - protocol: TCP
-      port: 9090
-```
-
-**PodSecurityContext для Prometheus:**
-
-```yaml
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 65534
-  runAsGroup: 65534
-  fsGroup: 65534
-  readOnlyRootFilesystem: true
-```
-
-> **См. также:** [Prometheus Operator Security](./kubernetes/operator/Security/index.md) — полная настройка безопасности через Operator (аутентификация, TLS, RBAC, Secrets).
-
-## Additional Information
-
-### Best Practices
-
-1. **Не выставляйте Prometheus в интернет** без прокси с аутентификацией.
-2. **Используйте отдельные сервис-аккаунты** для scrape в Kubernetes.
-3. **Регулярно обновляйте Prometheus** — следите за security advisory.
-4. **Минимизируйте данные в метриках** — не включайте PII, секреты, чувствительные пути.
-5. **Включите audit logging** — логируйте доступ к API Prometheus.
-6. **Используйте RBAC** — ограничьте права доступа к API Prometheus.
-
-### Проверка безопасности
-
-**Сканирование уязвимостей образа:**
+**Пример для `ufw` (Ubuntu/Debian):**
 
 ```bash
-trivy image prom/prometheus:latest
+# Разрешить доступ только из внутренней подсети
+ufw allow from 10.0.0.0/8 to any port 9090
+# Разрешить доступ с конкретного IP администратора
+ufw allow from 192.168.1.100 to any port 9090
+# Запретить остальной трафик на порт Prometheus
+ufw deny 9090/tcp
 ```
 
-**Аудит доступа к API:**
+### Защита на уровне кода приложения
+
+Рекомендуется запускать эндпоинт `/metrics` на локальном интерфейсе или выделенном порту.
+
+**Пример на Python (Flask):**
+
+```python
+from flask import Flask, request, abort
+
+app = Flask(__name__)
+# Список разрешенных IP-адресов серверов Prometheus
+ALLOWED_PROMETHEUS_IPS = ['10.0.0.5', '10.0.0.6']
+
+@app.route('/metrics')
+def metrics():
+    if request.remote_addr not in ALLOWED_PROMETHEUS_IPS:
+        abort(403) # Доступ запрещен
+    return generate_prometheus_metrics()
+```
+
+### Безопасность в средах Kubernetes
+
+В облачных средах защита реализуется через нативные механизмы Kubernetes. Детальные инструкции и примеры конфигурации вынесены в специализированные разделы:
+
+* **[Сетевые политики (Network Policies)](./kubernetes/operator/Security/access_control.md#сетевые-политики-network-policies):** Изоляция подов Prometheus и Alertmanager на сетевом уровне.
+* **[RBAC (Role-Based Access Control)](./kubernetes/operator/Security/access_control.md#rbac-role-based-access-control):** Ограничение прав доступа Prometheus к Kubernetes API.
+* **[Контекст безопасности (PodSecurityContext)](./kubernetes/operator/Security/index.md):** Запуск компонентов мониторинга от непривилегированных пользователей и использование Read-Only файловой системы.
+
+## Дополнительная информация
+
+### Лучшие практики (Best Practices)
+
+1. **Принцип минимальных привилегий:** Предоставляйте Prometheus только права на чтение (`GET`, `LIST`) ресурсов.
+2. **Аудит доступа:** Включите логирование запросов (Audit Log) к HTTP API для отслеживания потенциально опасных PromQL-выражений.
+3. **Регулярное сканирование:** Проверяйте образы Prometheus и экспортеров на наличие известных уязвимостей (CVE).
+
+   ```bash
+   trivy image prom/prometheus:v3.11.1
+   ```
+
+4. **Минимизация данных:** Избегайте включения в лейблы персональных данных (PII) или технической информации, которая может облегчить разведку злоумышленнику.
+
+### Мониторинг попыток несанкционированного доступа
+
+Используйте встроенные метрики Prometheus для отслеживания ошибок аутентификации:
 
 ```promql
-# Запросы к API Prometheus по эндпоинтам
-sum(rate(prometheus_http_requests_total[5m])) by (handler)
-
-# Ошибки аутентификации (401)
-sum(rate(prometheus_http_requests_total{code="401"}[5m]))
+# Скорость ошибок 401 (Unauthorized) по эндпоинтам
+sum(rate(prometheus_http_requests_total{code="401"}[5m])) by (handler)
 ```

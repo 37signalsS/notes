@@ -1,84 +1,71 @@
-# CRD PrometheusRule
+# PrometheusRule — Концепции (CRD)
 
-## Definitions
+## Определения
 
-**`kind: PrometheusRule`** — Custom Resource Definition в Prometheus Operator для декларативного описания alerting rules и recording rules. Operator преобразует PrometheusRule в ConfigMap, который монтируется в Prometheus Server.
+**`kind: PrometheusRule`** — Custom Resource Definition в Prometheus Operator для декларативного описания правил оповещения (alerting rules) и правил записи (recording rules). Operator преобразует ресурсы `PrometheusRule` в Kubernetes ConfigMap, которые автоматически монтируются в экземпляры Prometheus Server.
 
 **API version:** `monitoring.coreos.com/v1`
 
-> **См. также:** [Правила Recording и Alerting](../../../rules.md) — общие концепции, синтаксис, состояния алертов.
+> **См. также:** [Правила Recording и Alerting](../../../rules.md) — общие концепции, синтаксис PromQL и состояния алертов.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Принцип работы
 
-1. Пользователь создаёт PrometheusRule CRD с группами правил
-2. Prometheus Operator преобразует CRD в ConfigMap в том же namespace
-3. Operator обновляет `ruleFiles` в конфигурации Prometheus через Secret
-4. `prometheus-config-reloader` перезагружает Prometheus
-5. Prometheus вычисляет правила с заданным интервалом
+1. Пользователь создаёт объект `PrometheusRule` с описанием групп правил.
+2. Prometheus Operator обнаруживает новый ресурс и создаёт (или обновляет) ConfigMap в том же пространстве имён (namespace).
+3. Operator обновляет список файлов правил в конфигурации Prometheus (через Kubernetes Secret).
+4. Sidecar-контейнер `prometheus-config-reloader` инициирует перезагрузку конфигурации Prometheus.
+5. Prometheus начинает вычислять правила с заданным в группе интервалом.
 
 ### Связь с Prometheus CRD
 
-Prometheus выбирает PrometheusRule CRD через селекторы:
+Экземпляр Prometheus выбирает правила для загрузки с помощью селекторов в своей спецификации:
 
 ```yaml
-# В Prometheus CRD
+# В спецификации ресурса Prometheus
 spec:
   ruleSelector:
     matchLabels:
-      release: monitoring        # Выборка по labelSelector
+      release: monitoring        # Выборка правил по меткам (labelSelector)
   ruleNamespaceSelector:
     matchNames:
-      - monitoring               # Из каких namespace брать правила
+      - monitoring               # Список namespace для поиска правил
 ```
 
-Если `ruleSelector` не указан — Prometheus загружает все PrometheusRule из разрешённых namespace.
+Если `ruleSelector` не указан, Prometheus загрузит все объекты `PrometheusRule` из разрешённых пространств имён.
 
-### Когда использовать PrometheusRule
+### Структура ресурса
 
-| Сценарий | Решение |
-|---|---|
-| **Alerting rules** | Определение условий для алертов (CPU, memory, errors, latency) |
-| **Recording rules** | Предварительное вычисление тяжёлых PromQL-запросов |
-| **Мультикластерные правила** | Единый источник правил через GitOps |
-| **Динамическое обновление** | Без перезагрузки Prometheus — Operator обновляет ConfigMap |
+Каждый объект `PrometheusRule` содержит одну или несколько групп (`groups`). Группа — это логический набор правил, выполняемых последовательно.
 
-### Структура правил
+**Иерархия объектов:**
 
-Каждый PrometheusRule содержит одну или несколько групп (`groups`). Группа — это набор правил, выполняемых последовательно с общим интервалом.
+- `PrometheusRule`
+  - `groups[]`
+    - `name`: Уникальное имя группы.
+    - `interval`: Интервал вычисления правил в группе (например, `30s`).
+    - `rules[]`: Список определений правил.
 
-```
-PrometheusRule
-  └── groups[]
-        ├── name: "группа"
-        ├── interval: "30s" (опционально)
-        └── rules[]
-              ├── alert: "имя" / record: "метрика"
-              ├── expr: "PromQL"
-              ├── for: "duration"  (только alerting)
-              ├── labels: {}       (alerting + recording)
-              └── annotations: {}  (только alerting)
-```
+> **Синтаксис:** Полное описание параметров `alert`, `expr`, `for`, `labels` и `annotations` приведено в SSoT-файле [Правила Recording и Alerting](../../../rules.md).
 
-> **Синтаксис правил** и состояния алертов (`Pending` → `Firing`) описаны в SSoT: [Правила Recording и Alerting](../../../rules.md).
+## Практические сценарии
 
-## Practical Scenarios
+### Настройка правил оповещения (Alerting Rules)
 
-### Базовый PrometheusRule с алертом
+Пример алертов для мониторинга ошибок приложения и доступности узлов:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: my-app-rules
+  name: app-alerts
   namespace: monitoring
   labels:
     release: monitoring
 spec:
   groups:
-    - name: my-app-alerts
-      interval: 30s
+    - name: application-health
       rules:
         - alert: HighErrorRate
           expr: rate(http_requests_total{status="500"}[5m]) > 0.1
@@ -86,154 +73,81 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: "High error rate detected"
-            description: "Error rate is {{ $value }} errors/sec"
-```
-
-### Алерт на высокую загрузку CPU
-
-```yaml
-- alert: HighCPUUsage
-  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "High CPU usage on {{ $labels.instance }}"
-    description: "CPU usage is above 80% for more than 10 minutes"
-```
-
-### Алерт на недоступность пода
-
-```yaml
-- alert: PodDown
-  expr: up{job="kubernetes-pods"} == 0
-  for: 5m
-  labels:
-    severity: critical
-  annotations:
-    summary: "Pod {{ $labels.pod }} is down"
-    description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has been down for more than 5 minutes"
-```
-
-### Алерт на нехватку памяти
-
-```yaml
-- alert: HighMemoryUsage
-  expr: (1 - (sum(container_memory_usage_bytes{container!=""}) by (pod) / sum(container_spec_memory_limit_bytes{container!=""}) by (pod))) * 100 > 90
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "High memory usage on pod {{ $labels.pod }}"
-    description: "Memory usage is above 90% of limit"
-```
-
-### Алерт на перезапуск контейнера
-
-```yaml
-- alert: ContainerRestarted
-  expr: increase(kube_pod_container_status_restarts_total[1h]) > 3
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Container {{ $labels.container }} restarted {{ $value }} times"
-    description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted more than 3 times in the last hour"
-```
-
-### Recording rule для агрегации
-
-```yaml
-- record: job:http_requests_total:rate5m
-  expr: sum(rate(http_requests_total[5m])) by (job)
-```
-
-### Несколько групп правил в одном CRD
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: platform-rules
-  namespace: monitoring
-  labels:
-    release: monitoring
-spec:
-  groups:
-    - name: application-alerts
-      interval: 30s
-      rules:
-        - alert: HighErrorRate
-          expr: rate(http_requests_total{status="500"}[5m]) > 0.1
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: "High error rate detected"
-    - name: infrastructure-alerts
-      interval: 1m
-      rules:
-        - alert: HighCPUUsage
-          expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+            summary: "Высокий уровень ошибок в приложении"
+            description: "Доля 500-х ошибок составляет {{ $value }} запросов в секунду"
+        - alert: PodRestarts
+          expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
           for: 10m
           labels:
-            severity: warning
+            severity: info
           annotations:
-            summary: "High CPU usage on {{ $labels.instance }}"
-    - name: recording-rules
+            summary: "Частые перезапуски подов"
+```
+
+### Настройка правил записи (Recording Rules)
+
+Пример предварительного вычисления (агрегации) метрик для оптимизации дашбордов:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aggregation-rules
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: metrics-aggregation
       rules:
         - record: job:http_requests_total:rate5m
           expr: sum(rate(http_requests_total[5m])) by (job)
 ```
 
-## Additional Information
+### Мониторинг ресурсов Kubernetes
 
-### Основные параметры spec
-
-| Параметр | Описание | Пример |
-|---|---|---|
-| **`groups`** | Список групп правил | См. ниже |
-| **`groups[].name`** | Имя группы | `my-app-alerts` |
-| **`groups[].interval`** | Интервал вычисления | `30s`, `1m` (опционально) |
-| **`groups[].rules`** | Список правил в группе | См. ниже |
-
-### Параметры alerting rules
-
-| Параметр | Описание | Пример |
-|---|---|---|
-| **`alert`** | Имя алерта | `HighErrorRate` |
-| **`expr`** | PromQL выражение | `rate(http_requests_total[5m]) > 0.1` |
-| **`for`** | Время срабатывания | `5m`, `1h` |
-| **`labels`** | Лейблы алерта | `severity: warning` |
-| **`annotations`** | Аннотации алерта | `summary`, `description` |
-
-### Параметры recording rules
-
-| Параметр | Описание | Пример |
-|---|---|---|
-| **`record`** | Имя записываемой метрики | `job:http_requests_total:rate5m` |
-| **`expr`** | PromQL выражение | `sum(rate(http_requests_total[5m])) by (job)` |
-| **`labels`** | Лейблы для метрики | `{aggregation: "rate5m"}` |
-
-### Валидация правил
-
-```bash
-# Проверка синтаксиса
-promtool check rules prometheusrule.yaml
-
-# Просмотр загруженных правил
-kubectl get prometheusrule -n monitoring
-
-# Проверка в Prometheus UI
-# Status → Rules
+```yaml
+- alert: HighMemoryUsage
+  expr: (sum(container_memory_usage_bytes) by (pod) / sum(container_spec_memory_limit_bytes) by (pod)) * 100 > 90
+  for: 10m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Высокое потребление памяти подом {{ $labels.pod }}"
 ```
 
-> **См. также:** [promtool и лучшие практики](../../../promtool_and_best_practices.md).
+## Дополнительная информация
 
-### Связанные CRD и компоненты
+### Основные параметры спецификации (spec)
 
-- [Prometheus CRD](./prometheus.md) — описание экземпляра Prometheus, `ruleSelector`
-- [Alertmanager CRD](./alertmanager.md) — маршрутизация алертов
-- [AlertmanagerConfig](./alertmanagerconfig.md) — конфигурация получателей
-- [Alerting rules — примеры](../../../concepts/metric_types/alerts.md) — алерты для Counter, Gauge, Histogram
+| Параметр | Описание | Пример |
+|---|---|---|
+| **`groups`** | Массив групп правил | См. примеры выше |
+| **`groups[].name`** | Имя группы (обязательно) | `node-alerts` |
+| **`groups[].interval`** | Частота вычисления правил | `30s`, `1m` |
+| **`groups[].rules`** | Список Alerting или Recording правил | — |
+
+### Параметры правил (rules)
+
+| Параметр | Применимость | Описание |
+|---|---|---|
+| **`alert`** | Alerting | Имя оповещения |
+| **`record`** | Recording | Имя новой (вычисленной) метрики |
+| **`expr`** | Оба типа | PromQL выражение для вычисления |
+| **`for`** | Alerting | Время удержания условия до срабатывания |
+| **`labels`** | Оба типа | Набор меток для алерта или новой метрики |
+| **`annotations`** | Alerting | Метаданные (summary, description, etc.) |
+
+### Инструменты и отладка
+
+- **Валидация:** Используйте утилиту `promtool` для проверки синтаксиса перед деплоем.
+- **Проверка в UI:** Загруженные правила можно увидеть в веб-интерфейсе Prometheus в разделе **Status -> Rules**.
+- **Статус Operator:** Если правила не появились, проверьте логи Prometheus Operator на наличие ошибок при создании ConfigMap.
+
+> **Лучшие практики:** [promtool и правила проектирования](../../../promtool_and_best_practices.md).
+
+### Связанные ресурсы
+
+- [Prometheus CRD](./prometheus.md) — настройка селекторов для загрузки правил.
+- [Alertmanager CRD](./alertmanager.md) — управление доставкой алертов.
+- [Примеры алертов](../../../concepts/metric_types/alerts.md) — типовые алерты для различных видов метрик.

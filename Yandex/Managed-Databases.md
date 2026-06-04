@@ -1,4 +1,4 @@
-# Yandex Managed Databases
+# Yandex Cloud — Managed Databases
 
 ## Определения
 
@@ -28,49 +28,49 @@
 
 **Автоматизация:**
 
-- Автоматические бэкапы с хранением до 30 дней
-- Point-in-Time Recovery (PITR) для PostgreSQL, MySQL, MariaDB
-- Автоматические обновления с окнами обслуживания
-- Автоматический failover мастера (PostgreSQL, MySQL)
+- Автоматические бэкапы с хранением до 30 дней.
+- Point-in-Time Recovery (PITR) для PostgreSQL, MySQL, MariaDB.
+- Автоматические обновления с окнами обслуживания.
+- Автоматический failover мастера (PostgreSQL, MySQL).
 
 **Безопасность:**
 
-- Шифрование трафика (TLS)
-- Аутентификация через IAM (PostgreSQL)
-- Security Groups для сегментации доступа
-- Аудит событий (по запросу)
+- Шифрование трафика (TLS).
+- Аутентификация через IAM (PostgreSQL).
+- Security Groups для сегментации доступа.
+- Аудит событий (по запросу).
 
 **Масштабирование:**
 
-- Вертикальное: изменение класса ресурсов хостов
-- Горизонтальное: реплики чтения, шардирование (ClickHouse, MongoDB)
-- Мульти-АЗ: размещение по зонам доступности
+- Вертикальное: изменение класса ресурсов хостов.
+- Горизонтальное: реплики чтения, шардирование (ClickHouse, MongoDB).
+- Мульти-АЗ: размещение по зонам доступности.
 
 **Мониторинг:**
 
-- Встроенные дашборды в консоли YC
-- Интеграция с Yandex Monitoring
-- Экспорт метрик в Prometheus
+- Встроенные дашборды в консоли YC.
+- Интеграция с Yandex Monitoring.
+- Экспорт метрик в Prometheus.
 
 ### Архитектура кластеров
 
 **Single-node:**
 
-- Один хост
-- Для разработки и тестирования
-- Минимальная стоимость
+- Один хост.
+- Для разработки и тестирования.
+- Минимальная стоимость.
 
 **High-availability (HA):**
 
-- Мастер + реплика(и)
-- Автоматический failover
-- Для продакшена
+- Мастер + реплика(и).
+- Автоматический failover.
+- Для продакшена.
 
 **Read replicas:**
 
-- Мастер + реплики только для чтения
-- Масштабирование read-нагрузки
-- Для аналитики и отчётности
+- Мастер + реплики только для чтения.
+- Масштабирование read-нагрузки.
+- Для аналитики и отчётности.
 
 ---
 
@@ -98,16 +98,9 @@ yc managed-postgresql cluster create \
 yc managed-postgresql cluster get --name pg-main
 ```
 
-### PostgreSQL: Terraform
+### PostgreSQL: автоматизация через Terraform
 
 ```hcl
-provider "yandex" {
-  token     = var.yc_token
-  cloud_id  = var.cloud_id
-  folder_id = var.folder_id
-  zone      = "ru-central1-b"
-}
-
 resource "yandex_mdb_postgresql_cluster" "pg" {
   name        = "pg-main"
   environment = "PRODUCTION"
@@ -119,11 +112,6 @@ resource "yandex_mdb_postgresql_cluster" "pg" {
       resource_preset_id = "b2.medium"
       disk_type_id       = "network-ssd"
       disk_size          = 20
-    }
-    
-    postgresql_config {
-      max_connections = 100
-      shared_buffers  = "256MB"
     }
   }
 
@@ -218,30 +206,6 @@ yc managed-postgresql cluster restore \
 yc managed-postgresql backup create --cluster-name pg-main
 ```
 
-### Мониторинг и алертинг
-
-```bash
-# Получить метрики кластера
-yc monitoring metric read \
-  --folder-id <folder_id> \
-  --query 'resource.type="managed-postgresql" AND resource.cluster_id="<cluster_id>"' \
-  --interval 1h
-```
-
-Пример алерта на высокую загрузку CPU:
-
-```yaml
-# alertmanager config
-alert: "PostgreSQL High CPU"
-expr: |
-  yandex_mdb_postgresql_cpu_usage{cluster="pg-main"} > 80
-for: 10m
-labels:
-  severity: warning
-annotations:
-  summary: "High CPU on PostgreSQL cluster {{ $labels.cluster }}"
-```
-
 ### Выбор класса ресурсов
 
 | Класс | vCPU | RAM | Сценарии |
@@ -259,16 +223,16 @@ annotations:
 
 Сети и security groups для кластеров — [VPC](./VPC.md), альтернатива: БД на ВМ — [Compute Cloud](./Compute-Cloud.md), интеграция метрик БД — [Monitoring](./Monitoring/index.md), хранение бэкапов — [Storage](./Storage/index.md).
 
-Подробные концепции СУБД: [PostgreSQL](../Databases/PostgreSQL/overview.md), [ClickHouse](../Databases/clickhouse.md), [Redis](../Databases/redis_overview.md). Подключение приложений из [Kubernetes](../Kubernetes/).
+Подробные концепции СУБД: [PostgreSQL](../Databases/PostgreSQL/overview.md), [ClickHouse](../Databases/clickhouse.md), [Redis](../Databases/redis_overview.md). Подключение приложений из [Kubernetes](../Kubernetes/kubernetes_overview.md).
 
-Безопасность: [Security Groups](./VPC.md#security-groups) для изоляции трафика, TLS для шифрования соединений, IAM-аутентификация для PostgreSQL, приватные подсети — без публичного доступа.
+Безопасность: [Security Groups](./VPC.md#security-groups-группы-безопасности) для изоляции трафика, TLS для шифрования соединений, IAM-аутентификация для PostgreSQL, приватные подсети — без публичного доступа.
 
-### Актуальные версии
+### Актуальные версии движков
 
-- **PostgreSQL:** 14 (EOL ноябрь 2026), 15, 16, 17, 18. Версии 10–13 прекращены (EOL: 10 — ноябрь 2022, 11 — ноябрь 2023, 12 — ноябрь 2024, 13 — ноябрь 2025).
-- **MySQL:** 8.0, 8.4
-- **Redis:** 6.2, 7.0, 7.2
-- **ClickHouse:** 23.8+, 24.8+
-- **MongoDB:** 5.0, 6.0, 7.0
-- **MariaDB:** 10.6, 10.11, 11.2
-- **MSSQL:** 2017, 2019, 2022
+- **PostgreSQL:** 14 (EOL ноябрь 2026), 15, 16, 17, 18. Версии 10–13 прекращены.
+- **MySQL:** 8.0, 8.4.
+- **Redis:** 6.2, 7.0, 7.2.
+- **ClickHouse:** 23.8+, 24.8+.
+- **MongoDB:** 5.0, 6.0, 7.0.
+- **MariaDB:** 10.6, 10.11, 11.2.
+- **MSSQL:** 2017, 2019, 2022.

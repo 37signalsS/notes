@@ -11,6 +11,7 @@
 ### Преимущества использования Docker Context
 
 Использование контекстов в инфраструктуре CI/CD обеспечивает:
+
 - **Абстракцию параметров:** Команды `docker stack` и `docker service` работают одинаково вне зависимости от целевого хоста.
 - **Изоляцию окружений:** Каждый контекст (Development, Production) имеет собственные наборы сертификатов mTLS.
 - **Безопасность:** Минимизация использования переменных окружения `DOCKER_HOST` и `DOCKER_CERT_PATH`, которые могут быть перехвачены или некорректно переопределены.
@@ -39,15 +40,20 @@
 
 1. Подготовьте клиентские сертификаты (`ca.pem`, `cert.pem`, `key.pem`).
 2. Создайте новый контекст:
+
    ```bash
    docker context create prod-swarm \
      --docker "host=tcp://prod-manager.example.com:2376,ca=~/.docker/ca.pem,cert=~/.docker/cert.pem,key=~/.docker/key.pem"
    ```
+
 3. Активируйте контекст:
+
    ```bash
    docker context use prod-swarm
    ```
+
 4. Выполните проверку:
+
    ```bash
    docker node ls
    ```
@@ -60,6 +66,7 @@
 Используйте **[Environment Scope](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** для разделения сертификатов между окружениями.
 
 **Пример `.gitlab-ci.yml`:**
+
 ```yaml
 deploy_app:
   stage: deploy

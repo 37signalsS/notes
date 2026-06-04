@@ -27,6 +27,7 @@
 
 1. **Проверка `resolv.conf` внутри контейнера:**
    Убедитесь, что контейнер использует встроенный DNS.
+
    ```bash
    docker exec -it my_container cat /etc/resolv.conf
    # nameserver 127.0.0.11 <-- указывает на использование встроенного DNS
@@ -34,6 +35,7 @@
 
 2. **Проверка разрешения имени:**
    Выполните запрос через `nslookup` или `dig` (утилиты из пакета `dnsutils` или `bind9-host`).
+
    ```bash
    docker exec -it my_container dig ya.ru
    # Ответ SERVFAIL или таймаут свидетельствует о проблеме
@@ -56,6 +58,7 @@
 Параметр `dns` принимает список **IP (Internet Protocol)** адресов стабильных серверов.
 
 После изменения конфигурации перезапустите Docker-демон:
+
 ```bash
 sudo systemctl restart docker
 ```

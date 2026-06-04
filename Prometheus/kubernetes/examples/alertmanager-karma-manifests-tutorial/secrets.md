@@ -1,12 +1,12 @@
-# Kubernetes Secret для Alertmanager
+# Секреты Kubernetes для Alertmanager
 
-## Definitions
+## Определения
 
-**Kubernetes Secret (Opaque)** — объект Kubernetes для хранения чувствительных данных (токены, пароли, ключи) в закодированном виде (base64). В данном tutorial используется тип `Opaque` (произвольные данные) и поле `stringData` (автоматическое кодирование из plain text).
+**Kubernetes Secret (Opaque)** — объект Kubernetes для хранения чувствительных данных (токены, пароли, ключи) в закодированном виде (base64). В данном руководстве используется тип `Opaque` (произвольные данные) и поле `stringData` (автоматическое кодирование из обычного текста).
 
-> **См. также:** [Secrets Best Practices](../../operator/Security/secrets_best_practices.md) (SSoT) — управление секретами в Prometheus Operator
+> **См. также:** материал [Лучшие практики по управлению секретами](../../operator/Security/secrets_best_practices.md) — управление секретами в Prometheus Operator
 
-## Basic Concepts
+## Основные концепции
 
 ### Типы данных в Secret
 
@@ -21,7 +21,7 @@
 
 | Поле | Формат ввода | Кодирование | Когда использовать |
 |---|---|---|---|
-| `stringData` | Plain text | Автоматическое (base64) | Удобно для манифестов — Kubernetes сам закодирует |
+| `stringData` | Простой текст | Автоматическое (base64) | Удобно для манифестов — Kubernetes сам закодирует |
 | `data` | Base64 | Ручное | Когда данные уже закодированы или генерируются скриптом |
 
 ### Безопасность
@@ -33,7 +33,7 @@
 | **RBAC** | Ограничьте доступ к Secret через Role/RoleBinding в namespace `monitoring` |
 | **Git** | Файл с реальными секретами **не должен** попадать в Git — используйте `.gitignore` или внешние хранилища (Vault, SOPS) |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Манифест Secret
 
@@ -102,8 +102,8 @@ env:
 
 Полный манифест: [alertmanager-statefulset.md](./alertmanager-statefulset.md)
 
-## Additional Information
+## Дополнительная информация
 
 - [ConfigMap-шаблон](./alertmanager-config.md) — шаблон `alertmanager.yml` с плейсхолдерами для секретов
 - [Alertmanager StatefulSet](./alertmanager-statefulset.md) — подстановка секретов через init-container
-- [Secrets Best Practices](../../operator/Security/secrets_best_practices.md) — управление секретами в Prometheus Operator
+- [Лучшие практики по секретам](../../operator/Security/secrets_best_practices.md) — управление секретами в инфраструктуре

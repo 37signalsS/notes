@@ -1,4 +1,4 @@
-# vmalert
+# Обзор vmalert
 
 ## 1. Определения
 
@@ -11,7 +11,7 @@
 ### Ключевые функции
 
 - **Выполнение правил алертинга** — `vmalert` запрашивает данные из источника (например, VictoriaMetrics), выполняет выражения из правил и, если условие выполняется, генерирует алерты и отправляет их в один или несколько настроенных Alertmanager'ов.
-- **Выполнение правил записи (Recording Rules)** — позволяет предварительно вычислять и сохранять результаты ресурсоемких или часто используемых запросов в виде новых метрик. Это ускоряет загрузку дашбордов и снижает нагрузку на основное хранилище метрик.
+- **Выполнение правил записи (recording rules)** — позволяет предварительно вычислять и сохранять результаты ресурсоемких или часто используемых запросов в виде новых метрик. Это ускоряет загрузку дашбордов и снижает нагрузку на основное хранилище метрик.
 - **Поддержка множества источников данных** — может работать с любым хранилищем, совместимым с Prometheus Querying API, включая VictoriaMetrics, Prometheus, Thanos и другие.
 - **Поддержка множества Alertmanager'ов** — может отправлять алерты в несколько инстансов Alertmanager для обеспечения высокой доступности.
 - **Гибкое управление правилами** — правила могут быть загружены из локальных файлов, а также автоматически обнаружены через HTTP discovery или из `ConfigMap`/`Secret` в Kubernetes.
@@ -68,7 +68,7 @@ groups:
           description: "Disk space is below 10% on {{ $labels.instance }}. Current value: {{ $value }}%"
 ```
 
-### Пример конфигурации recording rules
+### Пример конфигурации правил записи (recording rules)
 
 Recording rules полезны для предварительного вычисления сложных запросов:
 
@@ -88,7 +88,7 @@ groups:
 
 ### Пример запуска vmalert
 
-#### Single-node (локально)
+#### Локальный запуск (Single-node)
 
 ```bash
 vmalert \
@@ -98,7 +98,7 @@ vmalert \
   -httpListenAddr=:8080
 ```
 
-#### Kubernetes (Deployment fragment)
+#### Kubernetes (фрагмент Deployment)
 
 ```yaml
 apiVersion: apps/v1
@@ -141,9 +141,9 @@ spec:
 - `/targets` — список всех правил и их текущее состояние
 - `/alerts` — активные алерты
 - `/metrics` — метрики самого `vmalert` для мониторинга
-- `/-/reload` — hot reload конфигурации (при включенном флаге `-httpAuth.*`)
+- `/-/reload` — горячая перезагрузка конфигурации (hot reload)
 
-### Troubleshooting
+### Поиск и устранение неисправностей (Troubleshooting)
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
@@ -156,4 +156,4 @@ spec:
 
 Официальная документация: [vmalert](https://docs.victoriametrics.com/vmalert/), [шаблоны правил алертинга](https://docs.victoriametrics.com/vmalert/#alerting-template-rules), [recording rules best practices](https://docs.victoriametrics.com/vmalert/#recording-rules).
 
-Связанные компоненты: [vmalertmanager](../Prometheus/alertmanager.md) (маршрутизация алертов), [VictoriaMetrics](./overview.md) (хранилище данных), [Grafana](../Grafana/grafana_overview.md) (визуализация).
+Связанные компоненты: [Alertmanager](../Prometheus/alertmanager.md) (маршрутизация алертов), [VictoriaMetrics](./overview.md) (хранилище данных), [Grafana](../Grafana/grafana_overview.md) (визуализация).

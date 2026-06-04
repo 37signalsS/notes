@@ -31,11 +31,13 @@
 ### Мониторинг и отладка
 
 - **`docker compose ps`**: Показывает статус контейнеров в текущем проекте.
+
     ```bash
     docker compose ps
     # → NAME                IMAGE      COMMAND                  SERVICE   CREATED         STATUS         PORTS
     # → project-web-1       web:latest "python app.py"          web       2 minutes ago   Up 2 minutes   0.0.0.0:80->80/tcp
     ```
+
 - **`docker compose ls`**: Отображает список всех Compose-проектов (стеков) на хосте.
 - **`docker compose logs`**: Выводит логи сервисов.
   - `-f` / `--follow`: Вывод логов в реальном времени.

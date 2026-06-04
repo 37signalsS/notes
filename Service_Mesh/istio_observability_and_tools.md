@@ -1,84 +1,62 @@
-# Kiali и Dex: визуализация и аутентификация в Istio
+# Наблюдаемость в Istio: Kiali и федерация идентификации
 
 ## Определения
 
-**Kiali** — веб-интерфейс для [Service Mesh](./service_mesh_concepts.md) Istio, предоставляющий визуализацию топологии сервисов, мониторинг трафика и частичное управление конфигурациями Istio. Установка не обязательна, но полезна для наглядного представления работы mesh-сети.
+**Наблюдаемость (Observability)** в контексте Istio обеспечивается набором инструментов для визуализации топологии, мониторинга трафика и анализа состояния mesh-сети.
 
-**Dex** — легковесный провайдер Identity и OpenID Connect (OIDC) для федерации аутентификации из различных источников (LDAP, SAML, GitHub и др.) и предоставления OIDC-совместимого интерфейса. В контексте Istio Dex применяется для организации безопасного доступа к Kiali вместо анонимного режима. Альтернативы — [Keycloak](../Security/Tools/keycloak_overview.md), oauth2-proxy, Authelia.
+**Kiali** — консоль управления и веб-интерфейс для Istio. Позволяет визуализировать структуру сервисов, отслеживать потоки трафика в реальном времени и выявлять ошибки конфигурации.
+
+**Dex** — федеративный провайдер идентификации с поддержкой OIDC (OpenID Connect). Используется для организации безопасного доступа к Kiali через внешние источники (LDAP, GitHub, SAML), заменяя небезопасный анонимный режим.
 
 ---
 
 ## Основные концепции
 
-### Зависимости Kiali
+### Зависимости и интеграции
 
-| Компонент | Обязательность | Назначение |
+Для полноценной работы Kiali требуется наличие следующих компонентов в кластере:
+
+| Компонент | Статус | Назначение |
 | :--- | :--- | :--- |
-| **Prometheus** (или VictoriaMetrics) | **Обязателен** | Сбор и хранение метрик для графиков и состояния сервисов. Подробнее: [Prometheus Service Discovery](../Prometheus/service_discovery_and_relabeling.md). |
-| **Grafana** | Рекомендуется | Расширенные дашборды ([концепции дашбордов](../Grafana/grafana-dashboards.md), [установка через Helm](../Grafana/Installation/grafana_helm_installation.md)). |
-| **Трейсинг-система** (Jaeger, Tempo) | Опциональна | Визуализация трейсов запросов. |
-| **Istio** | **Обязателен** | Kiali работает только с Istio Service Mesh. |
+| **Prometheus** | **Обязателен** | Источник метрик для построения графиков и индикации состояния. |
+| **Istio** | **Обязателен** | Целевая Mesh-система для анализа. |
+| **Grafana** | Рекомендуется | Переход к детальным дашбордам для глубокого анализа. |
+| **Jaeger / Tempo** | Опционально | Просмотр распределенных трассировок (Distributed Tracing). |
 
-### Возможности визуализации
+### Визуальные индикаторы Kiali
 
-Kiali предоставляет карту (`traffic graph`) взаимодействия сервисов с визуальными индикаторами:
+Интерфейс Kiali использует цветовую и символьную кодировку для отображения состояния сети:
 
-| Индикатор | Описание | Пример |
+- **Цвета линий:** отражают здоровье трафика (зеленый — успех, красный — ошибки > 5%, оранжевый — предупреждения).
+- **Иконки замков:** подтверждают наличие активного mTLS (Mutual TLS — взаимная проверка подлинности TLS) соединения.
+- **Типы трафика:** в режиме Ambient Mesh синие линии обозначают L4-трафик (Ztunnel), а зеленые — L7 (Waypoint Proxy).
+- **Аналитика:** встроенный движок валидации подсвечивает некорректные или конфликтующие ресурсы Istio (например, дублирующиеся VirtualService).
+
+### Стратегии аутентификации
+
+| Стратегия | Применение | Безопасность |
 | :--- | :--- | :--- |
-| **Тип трафика** | Соединения отображаются разными цветами. | В Ambient-режиме: синие стрелки — L4-трафик (Ztunnel), зелёные — L7-трафик (Waypoint Proxy). |
-| **Безопасность (mTLS)** | Зашифрованные mTLS-соединения помечаются иконкой замка. | Быстрая оценка защищённого трафика. |
-| **Идентификаторы (Principals)** | При выборе соединения Kiali показывает `principal` (ServiceAccount источника и назначения). | Отладка [AuthorizationPolicy](./istio_architecture.md). |
-| **Ошибки и задержки** | Проблемные соединения подсвечиваются красным или оранжевым. | Высокий процент ошибок или увеличение задержек. |
-| **Gateway API** | Визуализация `HTTPRoute`, `Gateway`, `BackendRef`. | Отображение правил маршрутизации ([управление трафиком](./traffic_management.md)). |
-
-### Модели доступа к Kiali
-
-| Стратегия | Описание | Рекомендация |
-| :--- | :--- | :--- |
-| **`anonymous`** | Анонимный доступ по умолчанию. | ❌ Не рекомендуется для production и test. |
-| **`openid`** | Интеграция с OIDC-провайдером (Dex, Keycloak). | ✅ Рекомендуется для безопасного доступа. |
-| **`header`** | Аутентификация через внешний прокси (oauth2-proxy). | Для сложных сценариев SSO. |
-| **`token`** | Доступ через Kubernetes ServiceAccount tokens. | Для администраторов. |
+| **`anonymous`** | Локальная разработка. | Низкая (доступ без пароля). |
+| **`openid`** | Интеграция с Dex / Keycloak (OIDC). | **Высокая** (Enterprise стандарт). |
+| **`token`** | Использование токенов ServiceAccount Kubernetes. | Средняя (для администраторов). |
 
 ---
 
 ## Практические сценарии
 
-### Установка Kiali с аутентификацией через Dex
+### Организация безопасного доступа к Kiali через Dex
 
-Развёртывание полного стека observability для Istio с использованием [Gateway API](../Kubernetes/Networking/gateway_api/practical_basic.md) и безопасным доступом к Kiali.
+Сценарий включает настройку TLS-сертификатов, публикацию через Gateway API и интеграцию Kiali с Dex по протоколу OIDC.
 
-#### Шаг 1: подготовка (сертификаты и Gateway)
+#### 1. Подготовка сетевой инфраструктуры
 
-Предполагается установленный `cert-manager` (см. [Ingress overview](../Kubernetes/Networking/Ingress/overview.md)).
-
-1. **TLS-сертификат** для всех веб-интерфейсов (Kiali, Grafana, Prometheus, Dex):
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: kiali-gateway-tls
-  namespace: istio-system
-spec:
-  secretName: kiali-gateway-tls
-  dnsNames:
-  - kiali.local
-  - prometheus.local
-  - grafana.local
-  - dex.local
-  issuerRef:
-    name: your-cluster-issuer
-    kind: ClusterIssuer
-```
-
-1. **Gateway** для инструментов мониторинга (HTTPS, порт 443):
+Создание TLS-сертификата (через `cert-manager`) и шлюза:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: kiali-support-gateway
+  name: observability-gateway
   namespace: istio-system
 spec:
   gatewayClassName: istio
@@ -89,86 +67,27 @@ spec:
     tls:
       mode: Terminate
       certificateRefs:
-      - name: kiali-gateway-tls
-    allowedRoutes:
-      namespaces:
-        from: All
+      - name: kiali-tls-secret
 ```
 
-#### Шаг 2: установка зависимостей (Prometheus и Grafana)
+#### 2. Настройка Dex (Identity Provider)
 
-1. **Prometheus**: установка через Helm с `scrape_configs` для компонентов Istio (istiod, envoy, ztunnel, waypoint). Доступ через `HTTPRoute`:
+Конфигурация Dex для работы с Kiali (статические пользователи для примера):
 
 ```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: prometheus-route
-  namespace: monitoring
-spec:
-  parentRefs:
-  - name: kiali-support-gateway
-    namespace: istio-system
-  hostnames: ["prometheus.local"]
-  rules:
-  - backendRefs:
-    - name: prometheus-server-service
-      port: 80
+# Фрагмент конфигурации dex-config.yaml
+issuer: https://dex.local
+staticClients:
+- id: kiali
+  redirectURIs:
+  - 'https://kiali.local/api/auth/login/oidc/callback'
+  name: 'Kiali Console'
+  secret: "secret-value"
 ```
 
-1. **Grafana**: установка через Helm, создание `HTTPRoute` «из коробки», определение `dataSource` в `values.yaml`.
+#### 3. Конфигурация Kiali для работы с OIDC
 
-#### Шаг 3: установка и настройка Dex
-
-Dex разворачивается как отдельное приложение в кластере.
-
-**Конфигурация Dex (`ConfigMap`):**
-
-- **Storage**: Kubernetes (CRD) как бэкенд.
-- **Static Users**: для тестового сценария — статические пользователи. Пароль хранится как bcrypt-хэш.
-- **Static Clients**: клиент `kiali` с `redirectURIs` и секретом.
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: dex
-  namespace: auth
-data:
-  config.yaml: |
-    issuer: https://dex.local
-    storage:
-      type: kubernetes
-      config:
-        inCluster: true
-    web:
-      http: 0.0.0.0:5556
-    staticPasswords:
-    - email: "user@example.com"
-      hash: "$2a$10$..." # bcrypt-хэш пароля
-      username: "artur"
-      userID: "08a8684b-db2e-4246-a3b1-1d44a839a89c"
-    staticClients:
-    - id: kiali
-      redirectURIs:
-      - 'https://kiali.local/api/auth/login/oidc/callback'
-      name: 'Kiali'
-      secret: "$CLIENT_SECRET_FROM_K8S_SECRET"
-```
-
-Доступ к Dex публикуется через `HTTPRoute`, привязанный к `kiali-support-gateway`.
-
-#### Шаг 4: установка и настройка Kiali
-
-1. **Секрет для OIDC-клиента:**
-
-```bash
-kubectl create secret generic kiali-oidc-secret \
-  --from-literal=client_secret='your-client-secret' \
-  -n istio-system
-```
-
-1. **Конфигурация Kiali (`values.yaml` для Helm):**
+Настройка стратегии доступа в Helm values:
 
 ```yaml
 auth:
@@ -176,64 +95,40 @@ auth:
   openid:
     client_id: kiali
     issuer_uri: https://dex.local
-    insecure_skip_verify_tls: true  # для самоподписанных сертификатов Dex
-    disable_rbac: true              # отключение RBAC на основе токенов Dex
     username_claim: email
-
 external_services:
   prometheus:
     url: "http://prometheus-server.monitoring.svc.cluster.local:80"
-  grafana:
-    enabled: true
-    url: "http://grafana.monitoring.svc.cluster.local:3000"
-    in_cluster_url: "http://grafana.monitoring.svc.cluster.local:3000"
-  tracing:
-    enabled: true
-    url: "http://jaeger-query.istio-system.svc.cluster.local:16686"
-
-kiali_feature_flags:
-  clustering:
-    enabled: true
-  validation:
-    enabled: true
 ```
 
-1. **Публикация Kiali через `HTTPRoute`:**
+Применение настроек:
 
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: kiali-route
-  namespace: istio-system
-spec:
-  parentRefs:
-  - name: kiali-support-gateway
-  hostnames: ["kiali.local"]
-  rules:
-  - backendRefs:
-    - name: kiali
-      port: 20001
+```bash
+helm upgrade --install kiali-server kiali/kiali-server -f values.yaml -n istio-system
+# → Release "kiali-server" has been upgraded. Happy Helming!
 ```
-
-После применения конфигураций доступ к `https://kiali.local` перенаправляет на страницу логина Dex. После аутентификации пользователь возвращается в Kiali.
 
 ---
 
 ## Дополнительная информация
 
-### Kiali v2.x: возможности
+### Возможности Kiali v2.x
 
-- **Ambient Mesh Visualization**: поддержка Ztunnel и Waypoint Proxy, разделение L4/L7 трафика.
-- **Gateway API Support**: визуализация `HTTPRoute`, `Gateway`, `BackendRef`.
-- **External Kiali**: централизованное управление observability для мультикластерных развёртываний.
-- **Производительность**: pre-compute и кэширование health status (по умолчанию с v2.22).
-- **Валидация**: автоматическое обнаружение ошибок в конфигурациях Istio.
+- **Поддержка Ambient Mesh:** полное отображение архитектуры без sidecar-контейнеров.
+- **Gateway API:** визуализация цепочек `Gateway` -> `HTTPRoute` -> `Service`.
+- **Health Validation:** автоматическая проверка конфигураций на соответствие лучшим практикам безопасности.
+- **Multi-cluster:** возможность агрегации данных из нескольких кластеров Kubernetes в единой панели.
 
 ### Рекомендации по эксплуатации
 
-1. Helm-чарты для автоматизации установки.
-2. Тестирование на non-production перед production.
-3. Документирование всех кастомных конфигураций.
-4. Мониторинг Kiali и его зависимостей (Prometheus, Dex).
-5. Интеграция компонентов — нетривиальная задача; требуется понимание каждого: [cert-manager](../Kubernetes/Networking/Ingress/overview.md), [Gateway API](../Kubernetes/Networking/gateway_api/practical_basic.md), Prometheus, Grafana, Dex, Kiali.
+1. **Безопасность:** никогда не используйте стратегию `anonymous` вне локальных окружений.
+2. **Метрики:** убедитесь, что в Prometheus настроен сбор данных (scrape) с портов Envoy (обычно 15020).
+3. **Ресурсы:** Kiali требует ресурсов пропорционально размеру mesh-сети (количеству подов и сервисов). Для больших кластеров рекомендуется увеличивать лимиты памяти.
+
+### См. также
+
+- [Основные концепции Service Mesh](./service_mesh_concepts.md)
+- [Архитектура Istio и режим Ambient](./istio_architecture.md)
+- [Централизованная аутентификация в Keycloak](../Security/Tools/keycloak_overview.md)
+
+Документация: [Kiali Docs](https://kiali.io/docs/), [Dex Documentation](https://dexidp.io/docs/).

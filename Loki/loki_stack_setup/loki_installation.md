@@ -202,14 +202,14 @@ kubectl describe statefulset -n logging -l app.kubernetes.io/name=loki
 kubectl logs -n logging -l app.kubernetes.io/name=loki -f
 ```
 
-### Troubleshooting
+### Устранение неполадок
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в Pending** | Нет PV/нет доступа к S3 | Проверьте `kubectl get pvc -n logging` и credentials S3 |
-| **CrashLoopBackOff** | Ошибка схемы/хранилища | Логи: `kubectl logs -n logging -l app.kubernetes.io/name=loki` |
-| **Gateway 502** | Backend не готов | Подождите инициализации всех компонент |
-| **Schema mismatch** | Неправильная `from` дата | Убедитесь, что `from` >= даты первого запуска |
+| **Pod в статусе Pending** | Отсутствуют PV или нет доступа к S3 | Проверьте состояние PVC: `kubectl get pvc -n logging` и учетные данные S3 |
+| **CrashLoopBackOff** | Ошибка конфигурации схемы или хранилища | Изучите логи: `kubectl logs -n logging -l app.kubernetes.io/name=loki` |
+| **Ошибка Gateway 502** | Компоненты backend еще не готовы | Дождитесь завершения инициализации всех сервисов |
+| **Schema mismatch** | Некорректная дата в параметре `from` | Убедитесь, что `from` не позже даты первого запуска кластера |
 
 ### Полезные команды
 

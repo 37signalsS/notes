@@ -21,11 +21,11 @@
 
 В современных дистрибутивах (Ubuntu 17.10+, RHEL 7+, Debian 10+) за разрешение имён отвечает `systemd-resolved` — локальный кэширующий резолвер.
 
-**Особенности:**
+**Ключевые особенности:**
 
-- `/etc/resolv.conf` → symlink на `/run/systemd/resolve/stub-resolv.conf`
-- `nameserver 127.0.0.53` — локальный stub-резолвер
-- Получает DNS-серверы от DHCP, NetworkManager или статической конфигурации
+- Использует stub-резолвер на `127.0.0.53`.
+- `/etc/resolv.conf` обычно является symlink на `/run/systemd/resolve/stub-resolv.conf`.
+- Подробное описание принципов работы и преимуществ — в [Настройка DNS-клиента](../../../Linux/Networking/Concepts/dns_client.md#systemd-resolved).
 
 ## Практические сценарии
 

@@ -1,14 +1,18 @@
 # Blackbox Exporter — Конфигурация модулей
 
-## Definitions
+## Определения
 
-Конфигурационный файл `blackbox.yml` содержит секцию `modules`. Каждый модуль описывает тип проверки (`prober`) и её параметры.
+**Конфигурационный файл** `blackbox.yml` — основной файл настроек Blackbox Exporter, содержащий секцию `modules`.
 
-> **См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md).
+**Модуль** — именованный набор параметров, описывающий конкретный тип проверки (**prober**) и её ожидаемое поведение.
 
-## Basic Concepts
+**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md).
+
+## Основные концепции
 
 ### Общая структура модуля
+
+Каждый модуль определяет используемый пробер и таймаут операции.
 
 ```yaml
 modules:
@@ -20,13 +24,19 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-**Типы проберов:** `http`, `tcp`, `icmp`, `dns`, `grpc`
+**Доступные типы проверок (probers):**
 
-## Practical Scenarios
+- **http** — проверка доступности эндпоинтов по протоколу HTTP/HTTPS (HyperText Transfer Protocol).
+- **tcp** — проверка доступности портов и обмен данными по TCP (Transmission Control Protocol).
+- **icmp** — сетевая проверка доступности (ping) через ICMP (Internet Control Message Protocol).
+- **dns** — проверка разрешения имен через DNS (Domain Name System).
+- **grpc** — проверка работоспособности сервисов gRPC (gRPC Remote Procedure Calls).
 
-### HTTP-проверки
+## Практические сценарии
 
-**Базовая проверка на 200 OK:**
+### Проверки HTTP/HTTPS
+
+**Базовая проверка на статус-код 200 OK:**
 
 ```yaml
 modules:
@@ -69,7 +79,9 @@ modules:
         - "Time Series Database"
 ```
 
-**Проверка SSL-сертификата:**
+**Проверка SSL/TLS сертификата:**
+
+**SSL (Secure Sockets Layer)** и **TLS (Transport Layer Security)** — протоколы защищенного соединения.
 
 ```yaml
 modules:
@@ -84,7 +96,7 @@ modules:
       fail_if_not_ssl: true
 ```
 
-**Проверка срока действия SSL-сертификата:**
+**Проверка срока действия сертификата:**
 
 ```yaml
 modules:
@@ -97,7 +109,7 @@ modules:
       fail_if_cert_not_expiry_after: 2592000s  # 30 дней
 ```
 
-**Проверка redirect:**
+**Проверка перенаправлений (redirect):**
 
 ```yaml
 modules:
@@ -111,6 +123,8 @@ modules:
 
 **HTTP/3 (QUIC) — v0.28.0+:**
 
+**QUIC (Quick UDP Internet Connections)** — современный протокол на базе UDP.
+
 ```yaml
 modules:
   http3_check:
@@ -121,9 +135,9 @@ modules:
       http3: true
 ```
 
-### TCP-проверки
+### Проверки TCP
 
-**Базовая проверка порта:**
+**Базовая проверка доступности порта:**
 
 ```yaml
 modules:
@@ -134,7 +148,9 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-**Проверка SSH-баннера:**
+**Проверка SSH баннера:**
+
+**SSH (Secure Shell)** — протокол защищенного удаленного доступа.
 
 ```yaml
 modules:
@@ -149,6 +165,8 @@ modules:
 
 **Проверка SMTP:**
 
+**SMTP (Simple Mail Transfer Protocol)** — протокол передачи почты.
+
 ```yaml
 modules:
   tcp_smtp:
@@ -161,7 +179,7 @@ modules:
         - expect: "^250"
 ```
 
-**Проверка через Unix Socket:**
+**Проверка через Unix Domain Sockets:**
 
 ```yaml
 modules:
@@ -172,9 +190,7 @@ modules:
       address: /var/run/docker.sock
 ```
 
-### ICMP-проверки (ping)
-
-**Базовый ping:**
+### Проверки ICMP (ping)
 
 ```yaml
 modules:
@@ -185,11 +201,11 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-> **Важно:** Для ICMP-проверок требуется запуск от `root` или с capability `CAP_NET_RAW`.
+**Важно:** Для выполнения ICMP-проверок экспортеру требуются права `root` или наличие capability `CAP_NET_RAW`.
 
-### DNS-проверки
+### Проверки DNS
 
-**Базовая проверка DNS:**
+**Базовая проверка разрешения имени:**
 
 ```yaml
 modules:
@@ -202,7 +218,7 @@ modules:
       preferred_ip_protocol: "ip4"
 ```
 
-**Проверка DNS-сервера:**
+**Проверка конкретного DNS-сервера:**
 
 ```yaml
 modules:
@@ -218,7 +234,9 @@ modules:
         fail_if_matches_regexp: [".*NXDOMAIN.*"]
 ```
 
-**Проверка MX-записей:**
+**Проверка почтовых записей (MX):**
+
+**MX (Mail Exchanger)** — тип DNS-записи для почтовых серверов.
 
 ```yaml
 modules:
@@ -230,7 +248,7 @@ modules:
       query_type: "MX"
 ```
 
-### gRPC-проверки (v0.28.0+)
+### Проверки gRPC (v0.28.0+)
 
 ```yaml
 modules:
@@ -244,13 +262,11 @@ modules:
         insecure_skip_verify: false
 ```
 
-## Additional Information
+## Дополнительная информация
 
-**Связанные темы:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md).
+### Сводная таблица параметров проверок
 
-### Таблица параметров по типам проберов
-
-#### HTTP-пробер
+#### Параметры HTTP
 
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
@@ -258,64 +274,63 @@ modules:
 | `headers` | map | Пользовательские заголовки запроса |
 | `valid_status_codes` | list[int] | Допустимые статус-коды (по умолчанию `[200]`) |
 | `valid_http_versions` | list[string] | Допустимые версии HTTP |
-| `follow_redirects` | bool | Следовать редиректам (по умолчанию `true`) |
-| `fail_if_ssl` | bool | Считать ошибкой наличие SSL |
-| `fail_if_not_ssl` | bool | Считать ошибкой отсутствие SSL |
-| `fail_if_body_matches_regexp` | list[string] | Ошибка если тело совпало с regex |
-| `fail_if_body_not_matches_regexp` | list[string] | Ошибка если тело не совпало с regex |
-| `fail_if_header_matches_regexp` | map | Ошибка если заголовок совпал с regex |
+| `follow_redirects` | bool | Следовать перенаправлениям (по умолчанию `true`) |
+| `fail_if_ssl` | bool | Ошибка, если используется SSL |
+| `fail_if_not_ssl` | bool | Ошибка, если SSL не используется |
+| `fail_if_body_matches_regexp` | list[string] | Ошибка при совпадении тела ответа с регулярным выражением |
+| `fail_if_body_not_matches_regexp` | list[string] | Ошибка при отсутствии совпадения тела ответа с регулярным выражением |
+| `fail_if_header_matches_regexp` | map | Ошибка при совпадении заголовка с регулярным выражением |
 | `tls_config` | object | Настройки TLS (`insecure_skip_verify`, `ca_file`, `cert_file`, `key_file`) |
-| `preferred_ip_protocol` | string | `ip4` или `ip6` |
-| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
-| `http3` | bool | Включить HTTP/3 (QUIC), v0.28.0+ |
-| `body` | string | Тело запроса (для POST/PUT) |
-| `compression` | string | Тип сжатия (`gzip`, `deflate`, `br`, `identity`) |
-| `skip_resolve_phase_with_old_dns` | bool | Пропустить DNS-resolve при HTTP/3 |
+| `preferred_ip_protocol` | string | Предпочтительный протокол IP (`ip4` или `ip6`) |
+| `ip_protocol_fallback` | bool | Использовать альтернативный протокол при неудаче |
+| `http3` | bool | Использовать протокол HTTP/3 (QUIC) |
+| `body` | string | Тело запроса (для методов POST/PUT) |
+| `compression` | string | Алгоритм сжатия (`gzip`, `deflate`, `br`, `identity`) |
 
-#### TCP-пробер
+#### Параметры TCP
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `tls` | bool | Использовать защищенное соединение TLS |
+| `tls_config` | object | Настройки TLS |
+| `preferred_ip_protocol` | string | Предпочтительный протокол IP |
+| `source_ip_address` | string | Локальный IP-адрес источника |
+| `query_response` | list[object] | Сценарий обмена данными (ожидание/отправка) |
+| `query_response[].expect` | string | Регулярное выражение ожидаемого ответа |
+| `query_response[].send` | string | Строка данных для отправки |
+| `query_response[].starttls` | bool | Инициировать процедуру STARTTLS |
+
+#### Параметры ICMP
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `preferred_ip_protocol` | string | Предпочтительный протокол IP |
+| `payload_size` | int | Размер передаваемых данных (по умолчанию `56` байт) |
+| `ttl` | int | Время жизни пакета (Time-To-Live) |
+| `source_ip_address` | string | Локальный IP-адрес источника |
+
+#### Параметры DNS
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `query_name` | string | Доменное имя для проверки (обязательно) |
+| `query_type` | string | Тип DNS-записи (`A`, `AAAA`, `CNAME`, `MX`, `NS`, `SOA`, `TXT`, `SRV`) |
+| `transport_protocol` | string | Протокол передачи (`udp` или `tcp`) |
+| `preferred_ip_protocol` | string | Предпочтительный протокол IP |
+| `validate_answer_rrs` | object | Правила валидации записей в ответе |
+| `valid_rcodes` | list[string] | Допустимые коды ответа (по умолчанию `[NOERROR]`) |
+
+#### Параметры gRPC
 
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
 | `tls` | bool | Использовать TLS |
 | `tls_config` | object | Настройки TLS |
-| `preferred_ip_protocol` | string | `ip4` или `ip6` |
-| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
-| `source_ip_address` | string | IP источника |
-| `query_response` | list[object] | Сценарий ожидания/отправки данных |
-| `query_response[].expect` | string | Regex ожидаемого ответа |
-| `query_response[].send` | string | Отправляемые данные |
-| `query_response[].starttls` | bool | Инициировать STARTTLS |
+| `preferred_ip_protocol` | string | Предпочтительный протокол IP |
+| `service` | string | Имя сервиса для проверки (обычно `grpc.health.v1`) |
+| `metadata` | map | Дополнительные метаданные запроса |
 
-#### ICMP-пробер
+**См. также:**
 
-| Параметр | Тип | Описание |
-| :--- | :--- | :--- |
-| `preferred_ip_protocol` | string | `ip4` или `ip6` |
-| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
-| `payload_size` | int | Размер payload (по умолчанию `56`) |
-| `ttl` | int | Time-to-live |
-| `source_ip_address` | string | IP источника |
-
-#### DNS-пробер
-
-| Параметр | Тип | Описание |
-| :--- | :--- | :--- |
-| `query_name` | string | Имя для запроса (обязательный) |
-| `query_type` | string | Тип записи (`A`, `AAAA`, `CNAME`, `MX`, `NS`, `SOA`, `TXT`, `SRV`) |
-| `transport_protocol` | string | `udp` (по умолчанию) или `tcp` |
-| `preferred_ip_protocol` | string | `ip4` или `ip6` |
-| `validate_answer_rrs` | object | Валидация ответов |
-| `validate_answer_rrs.fail_if_matches_regexp` | list[string] | Ошибка при совпадении |
-| `validate_answer_rrs.fail_if_all_match_regexp` | list[string] | Ошибка если все совпали |
-| `valid_rcodes` | list[string] | Допустимые RCODE (по умолчанию `[NOERROR]`) |
-
-#### gRPC-пробер
-
-| Параметр | Тип | Описание |
-| :--- | :--- | :--- |
-| `tls` | bool | Использовать TLS |
-| `tls_config` | object | Настройки TLS |
-| `preferred_ip_protocol` | string | `ip4` или `ip6` |
-| `ip_protocol_fallback` | bool | Fallback на альтернативный протокол |
-| `service` | string | Имя сервиса для health check (grpc.health.v1) |
-| `metadata` | map | Пользовательские метаданные запроса |
+- [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
+- [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)

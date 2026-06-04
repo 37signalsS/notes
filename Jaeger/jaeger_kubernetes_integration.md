@@ -1,8 +1,8 @@
 # Интеграция Jaeger с Kubernetes
 
-> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг EOL.
+> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг **EOL (End of Life)**.
 
-Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через Custom Resources (CRD). В v2 Operator использует OpenTelemetry Operator под капотом.
+Развертывание Jaeger в Kubernetes упрощается с помощью **Jaeger Operator**, который автоматизирует установку, управление и конфигурацию компонентов Jaeger через **CRD (Custom Resource Definition)**. В версии v2 Operator использует OpenTelemetry Operator под капотом.
 
 ---
 
@@ -10,8 +10,9 @@
 
 | Термин | Описание |
 | :--- | :--- |
-| **Jaeger Operator** | Контроллер Kubernetes, который отслеживает ресурсы `Jaeger` (CRD) и управляет соответствующими объектами (Deployments, Services, DaemonSets) |
+| **Jaeger Operator** | Контроллер Kubernetes, который отслеживает ресурсы **CR (Custom Resource)** и управляет соответствующими объектами (Deployments, Services, DaemonSets) |
 | **Custom Resource (CR)** | Объект `kind: Jaeger`, описывающий желаемое состояние инсталляции (например, стратегия `allInOne` или `production`) |
+| **Sidecar** | Паттерн развертывания, при котором дополнительный контейнер запускается в том же поде, что и основное приложение |
 
 ---
 
@@ -23,7 +24,7 @@
 
 | Паттерн | Описание | Плюсы | Минусы |
 | :--- | :--- | :--- | :--- |
-| **Sidecar** | OTel Collector развертывается как дополнительный контейнер в каждом поде приложения | Простота конфигурации (отправка на `localhost`). Изоляция ресурсов | Высокое потребление ресурсов в масштабе кластера |
+| **Sidecar** | Collector развертывается как дополнительный контейнер в каждом поде приложения | Простота конфигурации (отправка на `localhost`). Изоляция ресурсов | Высокое потребление ресурсов в масштабе кластера |
 | **DaemonSet** | Один экземпляр Collector развертывается на каждом узле кластера | Эффективное использование ресурсов. Упрощение сетевого пути | Приложению нужно знать `hostIP`. Требует `hostPort` и `hostNetwork: true` |
 
 **Реализация:**
@@ -33,10 +34,10 @@
 
 ### Подключение приложений
 
-Приложение должно быть сконфигурировано для отправки трассировок в OTel Collector.
+Приложение должно быть сконфигурировано для отправки трассировок в Collector.
 
 **При использовании Sidecar:**
-SDK настраивается на отправку данных на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
+**SDK (Software Development Kit)** настраивается на отправку данных на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
 
 **При использовании DaemonSet:**
 SDK должен использовать `hostIP` пода в качестве адреса. Этого можно достичь, передав `hostIP` в приложение как переменную окружения через **Downward API**:
@@ -66,11 +67,21 @@ spec:
 
 ### Сценарий 1: Развертывание через Jaeger Operator
 
-#### 1. Установка Operator
+#### Установка Operator
 
 Jaeger Operator можно установить с помощью Helm или из OperatorHub.
 
-#### 2. Создание Jaeger Instance
+#### Альтернативный подход: Helm-чарты
+
+В некоторых сценариях использование Helm-чартов для установки самих компонентов Jaeger может быть предпочтительнее Operator.
+
+**Преимущества и особенности Helm:**
+
+- **Прозрачность конфигурации:** Прямое управление манифестами без "магии" контроллеров, что упрощает отладку в сложных сетевых конфигурациях или на специфических версиях Kubernetes (например, версии 1.25+).
+- **Контроль версий:** Легкое управление обновлениями через стандартный механизм Helm.
+- **Ограничения:** Официальные или сторонние чарты (например, от Bitnami) могут иметь жесткие ограничения по типам поддерживаемых хранилищ, что требует их адаптации.
+
+#### Создание экземпляра Jaeger
 
 Создайте YAML-файл, описывающий нужную конфигурацию.
 
@@ -89,7 +100,7 @@ spec:
     enabled: true # Автоматически создать Ingress для доступа к UI
 ```
 
-**Для production:**
+**Для промышленной эксплуатации (production):**
 
 ```yaml
 apiVersion: jaegertracing.io/v1
@@ -102,7 +113,7 @@ spec:
     replicas: 3
     options:
       otlp:
-        enabled: true # Включить прием OTLP данных
+        enabled: true # Включить прием данных в формате **OTLP (OpenTelemetry Protocol)**
   storage:
     type: elasticsearch
     options:
@@ -110,9 +121,9 @@ spec:
         server-urls: http://elasticsearch-client:9200
 ```
 
-#### 3. Автоматическое внедрение Collector (Sidecar Injection)
+#### Автоматическое внедрение Collector (Sidecar Injection)
 
-Чтобы Operator автоматически добавил sidecar-контейнер с OTel Collector в под вашего приложения, добавьте аннотацию в `metadata` вашего Deployment:
+Чтобы Operator автоматически добавил sidecar-контейнер с Collector в под вашего приложения, добавьте аннотацию в `metadata` вашего Deployment:
 
 ```yaml
 apiVersion: apps/v1
@@ -145,7 +156,7 @@ NGINX Ingress Controller может автоматически создават�
 | Параметр | Значение | Описание |
 | :--- | :--- | :--- |
 | `enable-opentracing` | `"true"` | Глобально включает модуль трассировки |
-| `jaeger-collector-host` | `opentelemetry-collector.<namespace>.svc.cluster.local` | Адрес OTel Collector (v2) |
+| `jaeger-collector-host` | `opentelemetry-collector.<namespace>.svc.cluster.local` | Адрес Collector (v2) |
 | `jaeger-propagation-format` | `"w3c"` | Формат заголовков для передачи контекста. `w3c` использует заголовок `traceparent` |
 
 Также трассировку можно включить для конкретного Ingress-ресурса с помощью аннотации:
@@ -160,13 +171,13 @@ metadata:
 
 ### Сценарий 3: Конфигурация Java TrustStore для подключения к OpenSearch
 
-Если ваш OpenSearch использует TLS с сертификатами, подписанными собственным CA, Java-приложениям (таким как `jaeger-spark-dependencies`) для подключения потребуется `TrustStore`.
+Если ваш OpenSearch использует **TLS (Transport Layer Security)** с сертификатами, подписанными собственным **CA (Certificate Authority)**, Java-приложениям (таким как `jaeger-spark-dependencies`) для подключения потребуется `TrustStore`.
 
 **Процесс создания и использования TrustStore в Kubernetes:**
 
 1. **Получить CA сертификат OpenSearch.**
 
-2. **Создать TrustStore:** Используется утилита `keytool` из JDK. Это можно сделать внутри временного контейнера:
+2. **Создать TrustStore:** Используется утилита `keytool` из **JDK (Java Development Kit)**. Это можно сделать внутри временного контейнера:
 
     ```bash
     # Запускаем контейнер с JDK, пробрасывая в него CA сертификат
@@ -176,7 +187,7 @@ metadata:
     keytool -import -alias opensearch-ca -file /path/to/ca.pem -keystore truststore.jks -storepass password -noprompt
     ```
 
-3. **Сохранить TrustStore в `ConfigMap`:**
+3. **Сохранить TrustStore в ConfigMap:**
     Так как `TrustStore` является бинарным файлом, его необходимо закодировать в Base64:
 
     ```bash
@@ -187,19 +198,19 @@ metadata:
     kubectl create configmap jaeger-truststore --from-file=truststore.jks.b64=$(base64 -w 0 truststore.jks)
     ```
 
-4. **Смонтировать `ConfigMap` в под:**
+4. **Смонтировать ConfigMap в под:**
     Далее этот `ConfigMap` монтируется в под с приложением (например, `CronJob` для `jaeger-spark-dependencies`), где init-контейнер декодирует его из Base64 обратно в бинарный файл.
 
 ### Сценарий 4: Интеграция с OpenTelemetry Collector
 
-Вместо Jaeger Agent можно использовать OpenTelemetry Collector. Приложение отправляет данные в OTel Collector, который, в свою очередь, экспортирует их в Jaeger Collector.
+Вместо Jaeger Agent можно использовать OpenTelemetry Collector. Приложение отправляет данные в Collector, который, в свою очередь, экспортирует их в Jaeger.
 
 **Конфигурация приложения:**
 
 ```yaml
 env:
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: "http://otel-collector-service:4318" # Адрес сервиса OTel Collector
+  value: "http://otel-collector-service:4318" # Адрес сервиса Collector
 - name: OTEL_TRACES_EXPORTER
   value: "otlp"
 ```
@@ -212,5 +223,5 @@ env:
 
 **Смежные темы:**
 
-- Варианты развертывания: **[Jaeger Deployment Options](./jaeger_deployment_options.md)**
-- Архитектура компонентов: **[Jaeger Architecture](./jaeger_architecture.md)**
+- Варианты развертывания: **[Варианты развертывания](./jaeger_deployment_options.md)**
+- Архитектура компонентов: **[Архитектура Jaeger](./jaeger_architecture.md)**

@@ -1,10 +1,10 @@
 # Шаблоны сообщений Alertmanager (Go Templates)
 
-## Definitions
+## Определения
 
 **Go-шаблоны Alertmanager** — файлы с расширением `.tmpl`, содержащие шаблоны на языке Go template для форматирования уведомлений перед отправкой в каналы (Telegram, Email, Slack, PagerDuty). Подключаются в `alertmanager.yml` через блок `templates` и вызываются через `{{ template "имя.шаблона" . }}`.
 
-## Basic Concepts
+## Основные концепции
 
 ### Как работают шаблоны в Alertmanager
 
@@ -30,7 +30,7 @@
 - Для HTML-режима: используйте теги `<b>`, `<i>`, `<code>`, `<a href="...">`
 - Для MarkdownV2: экранируйте спецсимволы (`_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`)
 
-## Practical Scenarios
+## Практические сценарии
 
 ### ConfigMap с шаблоном для Telegram/HTML
 
@@ -90,7 +90,7 @@ telegram_configs:
 
 ```go
 {{ define "telegram.default.html" }}
-<b>{{ .Status | toUpper }}: {{ .GroupLabels.alertname }}</b>
+<b>{{ .Status | toUpper }: {{ .GroupLabels.alertname }}</b>
 {{ range .Alerts }}
 <b>Alert:</b> {{ .Annotations.summary }}
 <b>Instance:</b> {{ .Labels.instance }}
@@ -111,8 +111,8 @@ volumeMounts:
     readOnly: true
 ```
 
-## Additional Information
+## Дополнительная информация
 
 - [ConfigMap-шаблон](./alertmanager-config.md) — блок `templates` в конфигурации Alertmanager
 - [Alertmanager StatefulSet](./alertmanager-statefulset.md) — монтирование ConfigMap с шаблонами в под
-- [Секреты](./secrets.md) — токены и пароли для получателей уведомлений
+- [Секреты Kubernetes](./secrets.md) — токены и пароли для получателей уведомлений

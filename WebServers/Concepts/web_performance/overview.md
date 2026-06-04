@@ -1,48 +1,48 @@
 # Оптимизация производительности веб-приложений: Обзор
 
-## Definitions
+## Определения
 
 **Производительность веб-приложений (Web Performance)** — совокупность метрик и практик, направленных на минимизацию времени загрузки, повышение интерактивности и улучшение пользовательского опыта. Охватывает клиентскую, серверную и сетевую оптимизацию.
 
-**Web Vitals** — набор ключевых метрик пользовательского опыта от Google: [LCP](./web_vitals.md), [INP](./web_vitals.md), [CLS](./web_vitals.md), FCP, TTI, TBT. Подробное описание — в [ключевых метриках](./web_vitals.md).
+**Web Vitals** — набор ключевых метрик пользовательского опыта от Google: [LCP (Largest Contentful Paint)](./web_vitals.md), [INP (Interaction to Next Paint)](./web_vitals.md), [CLS (Cumulative Layout Shift)](./web_vitals.md), FCP, TTI, TBT. Подробное описание — в [ключевых метриках](./web_vitals.md).
 
-## Basic Concepts
+## Основные концепции
 
 Производительность веб-приложений определяется тремя взаимосвязанными аспектами.
 
-### Клиентская производительность (Client-Side)
+### Клиентская производительность
 
 | Компонент | Описание |
 | :--- | :--- |
 | **Загрузка ресурсов** | HTML, CSS, JS, изображения, шрифты, медиа |
-| **Исполнение JS** | Парсинг, компиляция, выполнение — блокирует основной поток |
-| **Рендеринг** | Построение DOM → CSSOM → Render Tree → Layout → Paint |
+| **Исполнение JavaScript** | Парсинг, компиляция, выполнение — блокирует основной поток |
+| **Рендеринг** | Построение DOM (Document Object Model) → CSSOM (CSS Object Model) → Render Tree → Layout → Paint |
 | **Метрики** | LCP, INP, CLS, FCP, TTI, TBT |
 
 **Ключевые проблемы:**
 
-- Большой объём JS — долгое время до интерактивности.
+- Большой объём JavaScript — долгое время до интерактивности.
 - Блокирующие рендеринг ресурсы в `<head>` — отложенный FCP/LCP.
 - Неоптимизированные изображения — избыточный трафик.
 
 **Оптимизация:** code splitting, lazy loading, минификация, критический CSS, приоритизация через `<link rel="preload">`.
 
-### Серверная производительность (Server-Side)
+### Серверная производительность
 
 | Компонент | Задачи |
 | :--- | :--- |
-| **Фронт-сервер (Nginx, Angie)** | Терминирование TLS, компрессия, кэширование, балансировка |
-| **Бэкенд** | Обработка бизнес-логики, работа с БД, внешние API |
+| **Фронтенд-сервер (Nginx, Angie)** | Терминирование TLS (Transport Layer Security), компрессия, кэширование, балансировка |
+| **Бэкенд** | Обработка бизнес-логики, работа с БД, внешние API (Application Programming Interface) |
 
 **Ключевые практики:**
 
 - [Компрессия контента](./server_compression.md) — Gzip, Brotli, ZSTD.
 - [Кэширование](./caching.md) — клиентское (Cache-Control, ETag) и серверное (proxy cache).
-- [HTTP/2 и HTTP/3](./http2_http3.md) — мультиплексирование, снижение RTT.
+- [HTTP/2 и HTTP/3](./http2_http3.md) — мультиплексирование, снижение RTT (Round Trip Time).
 - [Оптимизация TLS](./tls_optimization.md) — TLS 1.3, session resumption, OCSP stapling.
 - Тюнинг ОС и веб-сервера: worker processes, keepalive, sendfile, buffer sizes.
 
-### Сетевые ограничения (Network)
+### Сетевые ограничения
 
 | Параметр | Влияние |
 | :--- | :--- |
@@ -52,16 +52,16 @@
 
 **Оптимизация:**
 
-- CDN — размещение контента ближе к пользователю (снижение RTT).
+- CDN (Content Delivery Network) — размещение контента ближе к пользователю (снижение RTT).
 - Выбор протокола: HTTP/3 (QUIC) устойчивее к потерям, чем TCP.
 - Early hints (103) — сервер может начать отправку ресурсов до готовности ответа.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовый аудит производительности
 
 1. **Замер метрик:** [Chrome DevTools](./chrome_devtools.md) → вкладка Performance → запись при загрузке страницы.
-2. **Синтетический тест:** [PageSpeed Insights](./pagespeed_insights.md) — оценка Core Web Vitals для mobile/desktop.
+2. **Синтетический тест:** [PageSpeed Insights](./pagespeed_insights.md) — оценка Core Web Vitals для мобильных и настольных устройств.
 3. **Глубокий анализ:** [WebPageTest](./webpagetest.md) — waterfall view, filmstrip, сравнение с разных локаций.
 
 Подробнее: [принципы тестирования](./testing_principles.md) — обеспечение воспроизводимости результатов.
@@ -82,7 +82,7 @@
 2. **Клиент:** code splitting, lazy load изображений, preload критических ресурсов.
 3. **Сеть:** CDN, минимизация DNS-lookup (уменьшение числа доменов), preconnect к внешним API.
 
-## Additional Information
+## Дополнительная информация
 
 ### Взаимосвязь аспектов
 
@@ -94,6 +94,8 @@
 Web Vitals         RPS, Latency
 ```
 
-Оптимизация одного слоя не компенсирует проблемы другого: быстрый сервер с плохим JS-бандлом даст высокий LCP, а оптимизированный клиент с медленным TLS handshake — низкий FCP.
+Оптимизация одного слоя не компенсирует проблемы другого: быстрый сервер с плохим бандлом JavaScript даст высокий LCP, а оптимизированный клиент с медленным TLS handshake — низкий FCP.
 
-Для детального изучения инструментов анализа — [Chrome DevTools](./chrome_devtools.md), [PageSpeed Insights](./pagespeed_insights.md), [WebPageTest](./webpagetest.md). Серверные аспекты оптимизации: [сжатие](./server_compression.md), [TLS](./tls_optimization.md), [HTTP/2 и HTTP/3](./http2_http3.md), [кэширование](./caching.md). Метрики: [Web Vitals](./web_vitals.md). Практики: [лучшие рекомендации](./best_practices.md).
+**RPS (Requests Per Second)** — количество запросов в секунду, ключевая метрика производительности сервера.
+
+Для детального изучения инструментов анализа: [Chrome DevTools](./chrome_devtools.md), [PageSpeed Insights](./pagespeed_insights.md), [WebPageTest](./webpagetest.md). Серверные аспекты оптимизации: [сжатие](./server_compression.md), [TLS](./tls_optimization.md), [HTTP/2 и HTTP/3](./http2_http3.md), [кэширование](./caching.md). Метрики: [Web Vitals](./web_vitals.md). Практики: [лучшие рекомендации](./best_practices.md).

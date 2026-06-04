@@ -122,6 +122,7 @@ build:
 ```
 
 Параметры:
+
 - `DOCKER_TLS_CERTDIR` — включает TLS-аутентификацию между контейнером и DinD.
 - `services` — GitLab CI запускает DinD как sidecar-контейнер.
 

@@ -1,8 +1,10 @@
 # Директива location: Основы и приоритеты
 
+> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июнь 2026)
+
 ## Определения
 
-**Директива `location`** является одним из ключевых элементов [конфигурации](../nginx_setup.md) [Nginx](../nginx_overview.md). Она позволяет гибко управлять [обработкой запросов](../nginx_rewrite_rules_and_try_files.md) в зависимости от [URI (Uniform Resource Identifier)](../../../../Networking/Protocols/HTTP/http_basics.md).
+**Директива `location`** является одним из ключевых элементов [конфигурации](../nginx_setup.md) [Nginx](../nginx_overview.md). Она позволяет гибко управлять [обработкой запросов](../nginx_rewrite_rules_and_try_files.md) в рамках протокола HTTP (Hypertext Transfer Protocol) в зависимости от [URI (Uniform Resource Identifier)](../../../../Networking/Protocols/HTTP/http_basics.md). С её помощью можно настраивать отдачу статического контента: HTML (HyperText Markup Language), CSS (Cascading Style Sheets), изображений и других ресурсов.
 
 ## Базовые концепции
 
@@ -70,7 +72,7 @@ location = /exact.html { ... }
 # Перехватит запросы к изображениям, без учета регистра расширения
 location ~* \.(gif|jpg|jpeg|png)$ { ... }
 
-# Перехватит запросы к XML-файлам, с учетом регистра
+# Перехватит запросы к XML (Extensible Markup Language) файлам, с учетом регистра
 location ~ \.xml$ { ... }
 ```
 
@@ -89,7 +91,7 @@ location ^~ /uploads/ { ... }
 
 - **Принцип работы:** Совпадение по префиксу.
 - **Правило выбора:** Если этот `location` оказывается самым длинным совпавшим префиксом, Nginx **не будет проверять регулярные выражения**. Он немедленно использует этот `location`.
-- **Назначение:** Используется, чтобы "запретить" проверку регулярных выражений для определенного пути. Например, если у вас есть `location ~* \.php$` для обработки PHP, но вы хотите, чтобы запросы к `/uploads/` отдавались как [статика](../../Performance/Caching/client_caching.md), даже если они заканчиваются на `.php`.
+- **Назначение:** Используется, чтобы "запретить" проверку регулярных выражений для определенного пути. Например, если у вас есть `location ~* \.php$` для обработки PHP (Hypertext Preprocessor), но вы хотите, чтобы запросы к `/uploads/` отдавались как [статика](../../Performance/Caching/client_caching.md), даже если они заканчиваются на `.php`.
 
 ## Практические сценарии
 
@@ -111,7 +113,7 @@ location ^~ /assets/ {
 # Регулярное выражение для PHP-файлов
 location ~ \.php$ {
     include fastcgi_params;
-    fastcgi_pass unix:/var/run/php/php-fpm.sock;
+    fastcgi_pass unix:/var/run/php/php-fpm.sock; # Соединение с PHP-FPM (PHP FastCGI Process Manager) через FastCGI (Fast Common Gateway Interface)
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 }
 
@@ -129,7 +131,7 @@ location / {
 - `/index.php` → `location ~ \.php$` (регулярное выражение, шаг 4)
 - `/about.html` → `location /` (префикс по умолчанию, шаг 5)
 
-### Сценарий 2: API с версионированием
+### Сценарий 2: API (Application Programming Interface) с версионированием
 
 ```nginx
 # Точный редирект для устаревшего endpoint

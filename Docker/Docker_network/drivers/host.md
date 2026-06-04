@@ -52,6 +52,7 @@ docker run --rm --name another-nginx --network host nginx:alpine
 - **Связь с другими контейнерами:** Контейнеры в режиме `host` не могут использовать встроенный DNS (Domain Name System) сервер Docker для обращения к контейнерам в других сетях по имени.
 
 **Смотрите также:**
+
 - [Обзор сетевых моделей Docker](../docker_network.md)
 - [Сетевой драйвер bridge](./bridge.md)
 - [Безопасность Docker](../../Docker_security/host_daemon_hardening.md)

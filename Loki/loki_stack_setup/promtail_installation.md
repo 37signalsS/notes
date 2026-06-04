@@ -4,7 +4,7 @@
 
 **Promtail** — специализированный агент для сбора логов и отправки в Loki. Работает как DaemonSet на каждой ноде кластера.
 
-> **⚠️ Deprecated (весна 2026):** Поддержка Promtail прекращена. Для новых развертываний используйте [Grafana Alloy](alloy_installation.md). Данный файл сохранён для поддержки legacy-систем.
+> **Примечание (весна 2026):** Поддержка Promtail прекращена. Для новых развертываний используйте [Grafana Alloy](alloy_installation.md). Данный файл сохранён для поддержки legacy-систем.
 
 **Статус:** Helm-чарт `grafana/promtail` более не обновляется. Новые версии не выпускаются.
 
@@ -39,7 +39,7 @@
 | :--- | :--- | :--- |
 | **Тип данных** | Только логи | Логи + метрики + трассировки |
 | **Язык конфигурации** | YAML | River (HCL) |
-| **Статус** | ⚠️ Deprecated | ✅ Активно развивается |
+| **Статус** | Устарело (Deprecated) | Активно развивается |
 | **Миграция** | — | Встроенный конвертер Promtail → Alloy |
 
 ## Практические сценарии
@@ -119,14 +119,14 @@ kubectl describe daemonset -n logging -l app.kubernetes.io/name=promtail
 kubectl logs -n logging -l app.kubernetes.io/name=promtail -f
 ```
 
-### Troubleshooting
+### Устранение неполадок
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Pod не запускается** | Нет tolerations для master-нод | Добавьте `tolerations: - operator: "Exists"` |
-| **Логи не отправляются** | Неправильный URL Loki | Проверьте `kubectl exec` и curl до Loki |
-| **Дубликаты логов** | Сбой positions-файла | Удалите positions.yaml и перезапустите под |
-| **413 Request Too Large** | Превышен размер батча | Уменьшите `clients.batch_wait` или увеличьте лимит Loki |
+| **Pod не запускается** | Отсутствуют толерации для master-нод | Добавьте `tolerations: - operator: "Exists"` |
+| **Логи не отправляются** | Некорректный URL Loki | Проверьте сетевую доступность и URL через curl из пода |
+| **Дубликаты логов** | Сбой в файле позиций (positions) | Удалите `positions.yaml` и перезапустите под |
+| **413 Request Too Large** | Превышен допустимый размер батча | Уменьшите `clients.batch_wait` или увеличьте лимит в Loki |
 
 ### Сценарий 3: Миграция на Grafana Alloy
 

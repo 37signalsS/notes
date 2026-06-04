@@ -1,67 +1,57 @@
-# Vault Agent Sidecar: Динамическое Обновление Конфигурации
+# Vault Agent Sidecar — динамическое обновление конфигурации
 
-## Definitions
+## Определения
 
-**Vault Agent Sidecar** — паттерн использования `vault-agent` в качестве постоянно работающего sidecar-контейнера в Kubernetes-поде. Агент отслеживает изменения секретов в Vault, перерендеривает конфигурационные файлы и отправляет сигнал `SIGHUP` основному процессу приложения для перечитывания конфигурации без перезапуска пода.
+**Vault Agent Sidecar** — паттерн использования `vault-agent` в качестве постоянно работающего sidecar-контейнера в Kubernetes-поде. Агент отслеживает изменения секретов в Vault, обновляет конфигурационные файлы и отправляет сигнал `SIGHUP` основному процессу приложения для перечитывания конфигурации без перезапуска пода.
 
-**Проблема:** стандартные Kubernetes-механизмы (`Reloader`, `ConfigMap`/`Secret` watches) не реагируют на изменения секретов, доставляемых напрямую из Vault (например, через CSI-драйвер или ручной sidecar), так как Kubernetes-ресурсы не меняются.
+Этот подход решает проблему статических конфигураций: стандартные механизмы Kubernetes не реагируют на изменения данных, доставляемых напрямую из Vault, так как сами ресурсы Kubernetes (Secret/ConfigMap) при этом не меняются.
 
-**Решение:** sidecar-контейнер `vault-agent` с блоком `command` в шаблоне, выполняющий `pkill -HUP <process>` при каждом обновлении файла.
-
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура пода
 
-Под состоит из трёх контейнеров:
+Для реализации паттерна под обычно включает три компонента:
 
-1. **`initContainer` (`vault-agent`)** — однократно генерирует первоначальную версию конфигурационного файла из шаблона и секретов, завершает работу.
-2. **Основной контейнер приложения** (например, `nginx`) — использует сгенерированный файл конфигурации.
-3. **`sidecar`-контейнер (`vault-agent`)** — работает постоянно, периодически проверяет изменения секретов, перерендеривает файл и отправляет `SIGHUP` процессу в основном контейнере.
+1. **Init-контейнер Vault Agent:** выполняет первичную аутентификацию и генерирует начальную версию конфигурации, после чего завершается.
+2. **Основной контейнер приложения:** использует сгенерированные файлы конфигурации.
+3. **Sidecar-контейнер Vault Agent:** работает постоянно, отслеживает изменения секретов и уведомляет приложение об обновлениях.
 
-### Ослабление изоляции контейнеров
+### Межконтейнерное взаимодействие и безопасность
 
-Для отправки сигналов между контейнерами требуется компромисс в безопасности:
+Для отправки сигналов (например, `SIGHUP`) между контейнерами требуется ослабить стандартную изоляцию Kubernetes.
+
+**1. Использование `shareProcessNamespace: true`**
+Объединяет PID-пространство всех контейнеров в поде. Это позволяет процессам в разных контейнерах видеть друг друга и отправлять сигналы.
+
+* **Риски:** процессы одного контейнера могут видеть переменные окружения и файловые системы других контейнеров через `/proc`.
+
+**2. Добавление Capability `SYS_PTRACE`**
+Разрешает процессу отправлять сигналы процессам, которые ему не принадлежат.
 
 ```yaml
-# Фрагмент Deployment.yaml
+# Фрагмент спецификации пода
 spec:
-  template:
-    spec:
-      shareProcessNamespace: true
-      containers:
-        - name: application
-          image: nginx:latest
-        - name: vault-agent-sidecar
-          image: vault:latest
-          securityContext:
-            capabilities:
-              add: ["SYS_PTRACE"]
+  shareProcessNamespace: true
+  containers:
+  - name: app
+    # ...
+  - name: vault-agent-sidecar
+    securityContext:
+      capabilities:
+        add: ["SYS_PTRACE"]
 ```
 
-#### `shareProcessNamespace: true`
+**3. Единый идентификатор пользователя (UID)**
+Для отправки сигналов без прав root все контейнеры должны работать под одним UID (параметр `runAsUser`).
 
-Объединяет PID-namespace для всех контейнеров в поде.
+## Практические сценарии
 
-**Последствия для безопасности:**
+### Настройка Vault Agent для Sidecar
 
-- **Нет PID 1** — основной процесс в контейнере не имеет PID 1, что может нарушить работу приложений, ожидающих роль `init`-процесса.
-- **Видимость процессов** — процессы из одного контейнера видны другим (через `ps` или `/proc`).
-- **Доступ к файловой системе** — через `/proc/{pid}/root` один контейнер может получить доступ к файловой системе другого.
-
-#### `capabilities.add: ["SYS_PTRACE"]`
-
-Linux capability, разрешающая процессу отправлять сигналы процессам, которые ему не принадлежат.
-
-#### Единый пользователь (`runAsUser`)
-
-Для отправки сигналов без `root` все контейнеры должны работать под одним UID. Если приложение работает от `nginx` (UID 101), `vault-agent` должен использовать `runAsUser: 101`.
-
-## Practical Scenarios
-
-### Конфигурация Vault Agent для Sidecar
+В конфигурации агента блок `template` должен содержать параметр `command` для отправки сигнала.
 
 ```hcl
-# vault-agent-sidecar-config.hcl
+# agent-config.hcl
 
 vault {
   address = "http://vault.vault.svc:8200"
@@ -76,102 +66,73 @@ auto_auth {
   }
 }
 
-# exit_after_auth = false (по умолчанию) — агент продолжает работать
-
 template {
-  source      = "/vault/configs/nginx.ctmpl"
-  destination = "/usr/share/nginx/html/index.html"
-
-  # Команда для поиска PID nginx и отправки SIGHUP
+  source      = "/vault/configs/app.ctmpl"
+  destination = "/etc/app/config.json"
+  
+  # Отправка сигнала SIGHUP процессу nginx
   command = "pkill -HUP nginx"
 }
 ```
 
-**Ключевые параметры:**
+### Пример манифеста Deployment
 
-- **`exit_after_auth: false`** — агент не завершает работу, продолжает отслеживать секреты.
-- **`command = "pkill -HUP nginx"`** — после каждого обновления файла `vault-agent` находит все процессы с именем `nginx` в общем PID-namespace и отправляет `SIGHUP` для перечитывания конфигурации.
-
-### Полный пример манифеста
+Пример пода с Nginx, который перечитывает конфигурацию при обновлении секретов в Vault.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-with-vault-sidecar
+  name: nginx-vault-sidecar
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: nginx
   template:
-    metadata:
-      labels:
-        app: nginx
     spec:
       shareProcessNamespace: true
       serviceAccountName: vault-auth
       volumes:
-        - name: config-volume
-          emptyDir:
-            medium: Memory
-      initContainers:
-        - name: vault-agent-init
-          image: vault:latest
-          volumeMounts:
-            - name: config-volume
-              mountPath: /vault/configs
-          env:
-            - name: VAULT_ADDR
-              value: "http://vault.vault.svc:8200"
+      - name: config-shared
+        emptyDir: { medium: Memory }
       containers:
-        - name: nginx
-          image: nginx:latest
-          volumeMounts:
-            - name: config-volume
-              mountPath: /usr/share/nginx/html
-        - name: vault-agent-sidecar
-          image: vault:latest
-          runAsUser: 101
-          securityContext:
-            capabilities:
-              add: ["SYS_PTRACE"]
-          volumeMounts:
-            - name: config-volume
-              mountPath: /vault/configs
-          env:
-            - name: VAULT_ADDR
-              value: "http://vault.vault.svc:8200"
+      - name: nginx
+        image: nginx:alpine
+        volumeMounts:
+        - name: config-shared
+          mountPath: /etc/nginx/conf.d
+      - name: vault-agent-sidecar
+        image: hashicorp/vault:1.16
+        runAsUser: 101 # UID пользователя nginx
+        securityContext:
+          capabilities:
+            add: ["SYS_PTRACE"]
+        volumeMounts:
+        - name: config-shared
+          mountPath: /vault/configs
+        env:
+        - name: VAULT_ADDR
+          value: "http://vault.vault.svc:8200"
+        args: ["agent", "-config=/etc/vault/agent-config.hcl"]
 ```
 
-## Additional Information
+## Дополнительная информация
 
-### Сравнение подходов доставки секретов
+### Сравнение методов доставки секретов
 
-| Критерий | Ручной Sidecar | Vault Injector | Secrets Store CSI |
+| Критерий | Vault Sidecar | Vault Injector | Secrets Store CSI |
 | :--- | :--- | :--- | :--- |
-| Гибкость | Полный контроль | Ограничено аннотациями | Стандартный CSI |
-| Динамическая ротация | Да (`command` + `SIGHUP`) | Да (через аннотации) | Да (`rotation: true`) |
-| Модификация манифестов | Ручная | Автоматическая | Ручная |
-| Ослабление изоляции | Требуется | Не требуется | Не требуется |
-| Сложность | Высокая | Низкая | Средняя |
+| **Сложность** | Высокая (ручной YAML) | Низкая (аннотации) | Средняя (CRD) |
+| **Гибкость** | Максимальная | Ограничена аннотациями | Стандартная для K8s |
+| **Динамическая ротация** | Да (SIGHUP) | Да (SIGHUP) | Да (CSI Sync) |
+| **Изоляция** | Ослаблена | Сохранена | Сохранена |
 
 ### Когда использовать ручной Sidecar
 
-- **Сложная логика:** кастомные шаблоны, несколько источников секретов.
-- **Тонкая настройка:** контроль `securityContext`, `resources`, `command`.
-- **Air-gapped среды:** установка дополнительных компонентов нежелательна.
-- **Приложения с горячей перезагрузкой:** поддержка `SIGHUP` (Nginx, HAProxy, Prometheus).
-
-### Безопасность
-
-Паттерн требует тщательной оценки рисков из-за ослабления изоляции контейнеров. Альтернативы без ослабления изоляции:
-
-- **[Vault Injector](./injector.md)** — автоинъекция через Mutating Admission Webhook.
-- **[Secrets Store CSI Driver](../vault_kubernetes_integration.md)** — монтирование секретов как томов.
+* **Сложная логика шаблонов:** когда требуются вложенные шаблоны или специфические команды обработки.
+* **Тонкая настройка ресурсов:** контроль лимитов и прав `securityContext` для контейнера агента.
+* **Отсутствие Injector:** если установка дополнительных компонентов в кластер запрещена.
 
 ### Связанные документы
 
-- Основы Vault Agent: [Vault Agent: основы](./basics.md)
-- Автоматическая инъекция: [Vault Injector](./injector.md)
-- Обзор интеграции с Kubernetes: [Интеграция Vault с Kubernetes](../vault_kubernetes_integration.md)
+* [Vault Agent: основы](./basics.md) — базовые концепции и синтаксис шаблонов.
+* [Vault Injector](./injector.md) — автоматизация внедрения sidecar через аннотации.
+* [Интеграция Vault с Kubernetes](../vault_kubernetes_integration.md) — общий обзор стратегий.

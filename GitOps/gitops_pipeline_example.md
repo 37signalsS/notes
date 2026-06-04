@@ -68,6 +68,7 @@
 ## Дополнительная информация
 
 **Связанные документы:**
+
 - [Обзор методологии GitOps](./GitOps_overview.md) — фундаментальные принципы.
 - [Обзор ArgoCD](./ArgoCD/argocd_overview.md) — архитектура и возможности CD-агента.
 - [Жизненный цикл образов](./Concepts/containerization_and_image_storage.md) — тегирование и хранение.

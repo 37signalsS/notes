@@ -54,34 +54,43 @@ Docker использует механизмы ядра для принудит�
 ### 1. Настройка User Namespaces (`daemon.json`)
 
 1. Выделите диапазоны идентификаторов для пользователя `dockremap`:
+
     ```bash
     sudo usermod --add-subuids 100000-165536 --add-subgids 100000-165536 dockremap
     ```
+
 2. Включите режим в `/etc/docker/daemon.json`:
+
     ```json
     {
       "userns-remap": "default"
     }
     ```
+
 3. Перезапустите демон. Помните, что для подмонтированных томов (bind mounts) может потребоваться коррекция прав (`chown`).
 
 ### 2. Установка и запуск Rootless Docker
 
 1. Установите зависимости (`uidmap`, `slirp4netns`).
 2. Запустите скрипт установки от имени пользователя:
+
     ```bash
     dockerd-rootless-setuptool.sh install
     ```
+
 3. Настройте переменные окружения:
+
     ```bash
     export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
     ```
+
 4. Убедитесь, что режим активен: `docker info | grep Rootless`.
 
 ### 3. Работа с SELinux и AppArmor
 
 - **Проверка статуса в Docker**: `docker info | grep -i security`
 - **Монтирование томов с SELinux**: Используйте суффиксы `:z` (общий доступ) или `:Z` (эксклюзивный доступ) для автоматической настройки контекстов файлов:
+
     ```bash
     docker run -v /data:/data:Z nginx
     ```
@@ -97,6 +106,7 @@ Docker использует механизмы ядра для принудит�
   "live-restore": true
 }
 ```
+
 - **`icc: false` (Inter-Container Communication)**: отключает прямое сетевое взаимодействие между контейнерами в стандартной сети, защищая от бокового перемещения злоумышленника.
 - **`no-new-privileges: true`**: запрещает процессам в контейнерах получать новые привилегии через SUID-бинарники.
 - **Ротация логов**: параметры вынесены в **[Управление ротацией логов Docker](../Docker_logs/docker_log_rotation.md)**.
@@ -104,6 +114,7 @@ Docker использует механизмы ядра для принудит�
 ## Дополнительная информация
 
 **Связанные документы:**
+
 - **[Укрепление безопасности контейнеров](./container_hardening.md)** — настройки внутри контейнера.
 - **[Podman vs Docker](../../Podman/podman_vs_docker.md)** — сравнение архитектур безопасности.
 - **[Механизмы изоляции Linux](../../Docker/Concepts/linux_isolation.md)** — подробнее о namespaces и cgroups.

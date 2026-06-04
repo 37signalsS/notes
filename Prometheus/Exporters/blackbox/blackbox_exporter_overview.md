@@ -1,6 +1,6 @@
 # Blackbox Exporter — Обзор и основные концепции
 
-## Definitions
+## Определения
 
 **Blackbox Exporter** — экспортер Prometheus для blackbox-мониторинга (проверка доступности эндпоинтов снаружи). Проверяет доступность и работоспособность сервисов по сети с использованием протоколов: HTTP(S), TCP, ICMP, DNS, gRPC.
 
@@ -8,7 +8,7 @@
 - **Репозиторий:** [prometheus/blackbox_exporter](https://github.com/prometheus/blackbox_exporter)
 - **Установка и настройка:** [blackbox_exporter_installation_and_setup.md](./blackbox_exporter_installation_and_setup.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Whitebox vs Blackbox мониторинг
 
@@ -30,7 +30,7 @@
 
 **Схема работы:**
 
-```
+```text
 Prometheus → http://blackbox-exporter:9115/probe?target=google.com&module=http_2xx
                                                       ↓
 blackbox_exporter выполняет проверку google.com
@@ -38,9 +38,9 @@ blackbox_exporter выполняет проверку google.com
 blackbox_exporter возвращает метрики: probe_success, probe_duration_seconds, ...
 ```
 
-> **Важно:** По пути `/metrics` `blackbox_exporter` отдаёт метрики о своей работе, а не результаты проверок. Результаты проверок доступны только по пути `/probe`.
+**Важно:** По пути `/metrics` `blackbox_exporter` отдаёт метрики о своей работе, а не результаты проверок. Результаты проверок доступны только по пути `/probe`.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Когда использовать Blackbox Exporter
 
@@ -69,7 +69,7 @@ relabel_configs:
     replacement: blackbox:9115      # адрес exporter
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Новые возможности v0.28.0
 
@@ -85,4 +85,8 @@ relabel_configs:
 - [Official Documentation](https://prometheus.io/docs/guides/blackbox-exporter/)
 - [Default Port Allocations](https://github.com/prometheus/prometheus/wiki/Default-port-allocations)
 
-**Связанные темы:** [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md), [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md), [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md), [Alertmanager](../../alertmanager.md), [Правила оповещений](../../rules.md).
+**См. также:**
+
+- [Установка и настройка](./blackbox_exporter_installation_and_setup.md)
+- [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+- [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)

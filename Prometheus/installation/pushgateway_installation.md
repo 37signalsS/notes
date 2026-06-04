@@ -1,12 +1,12 @@
-# Pushgateway Installation
+# Установка Pushgateway
 
-## Definitions
+## Определение
 
-**Pushgateway** — компонент Prometheus для приёма метрик от ephemeral и batch-задач. Принимает метрики по HTTP, хранит до скрейпинга Prometheus. Не является решением для долгосрочного хранения.
+**Pushgateway** — компонент экосистемы Prometheus, предназначенный для приёма метрик от кратковременных (ephemeral) и пакетных (batch) задач. Он принимает данные по HTTP и хранит их до момента сбора сервером мониторинга.
 
-> **Общее руководство:** [Pushgateway](../pushgateway.md).
+> **Общее руководство по использованию:** [Pushgateway](../pushgateway.md).
 
-## Basic Concepts
+## Основные концепции
 
 ### Актуальная версия
 
@@ -15,23 +15,9 @@
 | **Последняя стабильная версия** | `1.11.2` (2025-10-30) |
 | **Репозиторий** | [prometheus/pushgateway](https://github.com/prometheus/pushgateway) |
 
-### Когда использовать
+> **Когда использовать:** подробный разбор сценариев и антипаттернов приведен в разделе [Pushgateway — когда использовать](../pushgateway.md#когда-использовать).
 
-**Рекомендуемые сценарии:**
-
-* Batch-задачи (cron jobs), выполняющиеся реже интервала скрейпинга
-* Эфемерные задачи, недоступные для scrape
-* Сервисы за firewall
-
-**Не рекомендуется:**
-
-* Долгосрочное хранение метрик
-* Замена pull-модели Prometheus
-* Мониторинг долгоживущих сервисов
-
-> **Анти-паттеры и подробности:** [Pushgateway — когда использовать](../pushgateway.md#когда-использовать).
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка из бинарных файлов (Linux)
 
@@ -52,26 +38,24 @@ cd pushgateway-${PUSHGATEWAY_VERSION}.linux-amd64
 mv pushgateway /usr/local/bin/
 ```
 
-**3. Создание файла с опциями запуска** (`/etc/sysconfig/pushgateway`):
+**3. Настройка параметров запуска** (`/etc/sysconfig/pushgateway`):
 
 ```bash
 cat <<EOF > /etc/sysconfig/pushgateway
 OPTIONS="--web.listen-address=:9091 \
---web.telemetry-path=/metrics \
 --persistence.file=/var/lib/pushgateway/metrics.store \
---persistence.interval=5m \
---log.level=info"
+--persistence.interval=5m"
 EOF
 ```
 
-**4. Создание каталога для персистентности:**
+**4. Подготовка каталогов:**
 
 ```bash
 mkdir -p /var/lib/pushgateway
 chown pushgateway:pushgateway /var/lib/pushgateway
 ```
 
-**5. Создание systemd-юнита** (`/etc/systemd/system/pushgateway.service`):
+**5. Создание systemd-сервиса** (`/etc/systemd/system/pushgateway.service`):
 
 ```bash
 cat <<EOF > /etc/systemd/system/pushgateway.service
@@ -88,29 +72,24 @@ Restart=always
 ExecStart=/usr/local/bin/pushgateway \$OPTIONS
 ExecReload=/bin/kill -HUP \$MAINPID
 TimeoutStopSec=20s
-SendSIGKILL=no
 
 [Install]
 WantedBy=multi-user.target
 EOF
 ```
 
-**6. Запуск и проверка:**
+**6. Запуск сервиса:**
 
 ```bash
 systemctl daemon-reload
 systemctl start pushgateway
 systemctl enable pushgateway
 
-# Проверка доступности
+# Проверка работоспособности
 curl -s -o /dev/null -w "%{http_code}" http://localhost:9091/-/healthy
-# Ожидаемый ответ: 200
-
-# Проверка статуса
-systemctl status pushgateway
 ```
 
-### Установка через Docker
+### Развёртывание через Docker
 
 ```bash
 docker run -d \
@@ -122,58 +101,30 @@ docker run -d \
   --persistence.interval=5m
 ```
 
-### Отправка метрик от batch-задачи
+### Настройка сбора в Prometheus
 
-```bash
-#!/bin/bash
-START=$(date +%s)
-
-# ... выполнение задачи ...
-
-END=$(date +%s)
-DURATION=$((END - START))
-
-cat <<EOF | curl --data-binary @- http://localhost:9091/metrics/job/backup/instance/db-server
-# HELP backup_duration_seconds Duration of backup job
-# TYPE backup_duration_seconds gauge
-backup_duration_seconds $DURATION
-# HELP backup_status Status of backup (1=success, 0=failure)
-# TYPE backup_status gauge
-backup_status 1
-EOF
-```
-
-> **Принцип работы и группировка метрик:** [Pushgateway — Basic Concepts](../pushgateway.md#basic-concepts).
-
-### Скрейпинг из Prometheus
+Добавьте следующее задание в `scrape_configs`:
 
 ```yaml
 scrape_configs:
   - job_name: 'pushgateway'
-    honor_labels: true  # Сохраняет лейблы job/instance из URL
+    honor_labels: true
     static_configs:
       - targets: ['localhost:9091']
 ```
 
-> **Подробности настройки:** [Pushgateway — настройка Prometheus](../pushgateway.md#настройка-prometheus).
+## Дополнительная информация
 
-## Additional Information
-
-### Рекомендации по безопасности
-
-**Непривилегированный пользователь:**
-
-```bash
-useradd --no-create-home --shell /bin/false pushgateway
-```
+### Безопасность и защита доступа
 
 **Ограничение сетевого доступа:**
+Рекомендуется разрешать доступ к порту 9091 только с доверенных IP-адресов.
 
 ```bash
 ufw allow from 10.0.0.0/8 to any port 9091
 ```
 
-**TLS через обратный прокси (Nginx):**
+**Настройка TLS (Nginx Reverse Proxy):**
 
 ```nginx
 server {
@@ -191,58 +142,20 @@ server {
 }
 ```
 
-### Параметры запуска
+### Краткая справка по API
 
-| Параметр | По умолчанию | Описание |
-|---|---|---|
-| `--web.listen-address` | `:9091` | Адрес для веб-интерфейса |
-| `--web.telemetry-path` | `/metrics` | Путь для метрик |
-| `--web.enable-admin-api` | `false` | Включить admin API |
-| `--web.enable-lifecycle` | `false` | Включить reload/shutdown API |
-| `--persistence.file` | `` | Файл для персистентности |
-| `--persistence.interval` | `5m` | Интервал сохранения |
-| `--log.level` | `info` | Уровень логирования |
+Для полноценного управления используйте [Pushgateway HTTP API](../pushgateway.md#http-api).
 
-> **Полный список флагов:** [Pushgateway — параметры запуска](../pushgateway.md#параметры-запуска).
-
-### API
-
-**Отправка метрик (POST — добавление/обновление):**
-
-```bash
-curl -T metrics.txt http://localhost:9091/metrics/job/myjob/instance/instance1
-```
-
-**Замена метрик (PUT — полная замена группы):**
-
-```bash
-curl -X PUT -T metrics.txt http://localhost:9091/metrics/job/myjob/instance/instance1
-```
-
-**Удаление группы метрик:**
-
-```bash
-curl -X DELETE http://localhost:9091/metrics/job/myjob/instance/instance1
-```
-
-> **Подробное описание API и управление жизненным циклом:** [Pushgateway — HTTP API](../pushgateway.md#http-api).
+- **Отправка:** `curl --data-binary @- http://localhost:9091/metrics/job/my_job`
+- **Удаление:** `curl -X DELETE http://localhost:9091/metrics/job/my_job`
 
 ### Устранение неполадок
 
-**Pushgateway не запускается:**
+| Проблема | Решение |
+|---|---|
+| Сервис не запускается | Проверьте логи: `journalctl -u pushgateway -f` |
+| Ошибки записи данных | Проверьте права на директорию `/var/lib/pushgateway` |
+| Порт занят | Проверьте активность порта: `ss -tnlp | grep 9091` |
+| Метрики исчезают после рестарта | Убедитесь, что настроен флаг `--persistence.file` |
 
-```bash
-journalctl -u pushgateway -f
-ss -tnlp | grep 9091
-ls -la /var/lib/pushgateway/
-```
-
-**Метрики не сохраняются:**
-
-* Проверьте путь `--persistence.file` и права на запись
-* Убедитесь, что `--persistence.interval` не слишком большой
-
-**Метрики дублируются:**
-
-* Pushgateway не удаляет метрики автоматически — используйте `DELETE` API перед завершением задачи
-* Настройте TTL, если версия поддерживает
+> **См. также:** [Устранение неполадок в Prometheus](../overview.md#устранение-неполадок).

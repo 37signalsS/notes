@@ -2,138 +2,125 @@
 
 ## Определения
 
-**Собственный экспортер Prometheus** — отдельная программа, написанная с использованием [клиентских библиотек](./client_libraries.md), которая собирает данные из внешней системы и отдаёт их в формате Prometheus через HTTP-эндпоинт `/metrics`.
+**Собственный экспортер Prometheus** — специализированное приложение, предназначенное для сбора метрик из внешних систем (базы данных, аппаратное обеспечение, проприетарные API) и их трансляции в формат, понятный Prometheus.
 
-Применяется, когда готового экспортера нет в [каталоге](https://prometheus.io/docs/instrumenting/exporters/) или требуется специфическая логика сбора.
+Экспортер выступает в роли прокси-сервера: он принимает HTTP-запросы от сервера Prometheus на эндпоинт `/metrics`, опрашивает целевую систему и возвращает актуальные данные.
 
-## Основные понятия
+## Основные концепции
 
-### Когда писать свой экспортер
+### Архитектурные паттерны
 
-| Сценарий | Подход |
+При создании экспортера следует придерживаться одного из двух подходов:
+
+1. **Collector Pattern (рекомендуемый):** экспортер запрашивает данные из целевой системы только тогда, когда Prometheus обращается к нему. Это гарантирует актуальность данных ("свежесть") и отсутствие лишней нагрузки на систему при отсутствии скрапинга.
+2. **Background Polling:** экспортер периодически опрашивает систему в фоновом режиме и кэширует результат. Применяется, если опрос целевой системы занимает слишком много времени (дольше стандартного таймаута скрапинга в 10–30 секунд).
+
+### Когда необходимо писать свой экспортер
+
+| Ситуация | Решение |
 | :--- | :--- |
-| Готовый экспортер существует | Использовать готовый ([Обзор экспортеров](../overview.md)) |
-| Нужны произвольные скриптовые метрики | [Textfile Collector](./textfile_collector.md) — без написания кода |
-| Нужна интеграция с внешней системой | Собственный экспортер (этот документ) |
-| Метрики генерируются внутри приложения | Прямая инструментация ([Клиентские библиотеки](./client_libraries.md)) |
+| Готовый экспортер доступен в комьюнити | Использовать готовое решение ([Обзор экспортеров](../overview.md)) |
+| Требуются метрики из простых shell-скриптов | Использовать [Textfile Collector](./textfile_collector.md) |
+| Система не поддерживает Prometheus "из коробки" | Разработать собственный экспортер (этот документ) |
+| Метрики генерируются внутри вашего кода | Использовать [клиентские библиотеки](./client_libraries.md) |
 
-### Правила создания метрик
+### Технические требования
 
-Все правила именования, работы с лейблами и рекомендации по коду собраны в [Расширяемость экспортеров — Концепции](./concepts.md).
-
-**Ключевые принципы:**
-
-- Данные собираются только в момент скрапинга Prometheus'ом
-- Timestamp не выставляется — это задача Prometheus
-- Порт выбирается по [официальному списку](https://github.com/prometheus/prometheus/wiki/Default-port-allocations), диапазон 9100–9200
+* **Порты:** при выборе порта следует руководствоваться [официальным списком](https://github.com/prometheus/prometheus/wiki/Default-port-allocations). Для частных разработок обычно используется диапазон `9100–9200`.
+* **Формат данных:** экспортер должен поддерживать текстовый формат экспозиции Prometheus.
+* **Именование:** правила формирования имен метрик и лейблов описаны в [Расширяемость экспортеров — Концепции](./concepts.md).
 
 ## Практические сценарии
 
-### Экспортер на Go
+### Реализация экспортера на Go
 
-**Полный пример — счётчик событий с HTTP-эндпоинтом `/metrics`:**
+Для разработки на Go используется официальная библиотека `client_golang`.
+
+**Пример минимального экспортера:**
 
 ```go
 package main
 
 import (
-        "net/http"
-        "time"
-        log "github.com/sirupsen/logrus"
-
-        "github.com/prometheus/client_golang/prometheus"
-        "github.com/prometheus/client_golang/prometheus/promhttp"
-        "github.com/prometheus/client_golang/prometheus/promauto"
+    "net/http"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+    "log"
 )
 
-func recordMetrics() {
-        go func() {
-                for {
-                        opsProcessed.Inc()
-                        time.Sleep(2 * time.Second)
-                }
-        }()
-}
-
 var (
-        opsProcessed = promauto.NewCounter(prometheus.CounterOpts{
-                Name: "example_exporter_processed_ops_total",
-                Help: "The total number of processed events",
-        })
+    // Пример метрики: счетчик обработанных событий
+    eventsProcessed = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "custom_exporter_events_total",
+        Help: "Total number of events processed by this exporter",
+    })
 )
 
 func main() {
-        recordMetrics()
-
-        http.Handle("/metrics", promhttp.Handler())
-        log.Info("Beginning to serve on port :2112")
-        log.Fatal(http.ListenAndServe(":2112", nil))
+    // Регистрация стандартного обработчика метрик
+    http.Handle("/metrics", promhttp.Handler())
+    
+    log.Println("Starting exporter on :2112")
+    // Запуск HTTP-сервера
+    if err := http.ListenAndServe(":2112", nil); err != nil {
+        log.Fatal(err)
+    }
 }
 ```
 
-**Инициализация, установка зависимостей и запуск:**
+**Запуск и проверка:**
 
 ```bash
-go mod init example_exporter
+# Инициализация проекта и запуск
+go mod init custom_exporter
 go get github.com/prometheus/client_golang/prometheus
-go get github.com/prometheus/client_golang/prometheus/promhttp
-go get github.com/prometheus/client_golang/prometheus/promauto
-go get github.com/sirupsen/logrus
-go run example_exporter.go
+go run main.go
+
+# В другом терминале проверка вывода
+curl http://localhost:2112/metrics | grep custom_exporter
+# → custom_exporter_events_total 0
+```
+
+### Реализация экспортера на Python
+
+Библиотека `prometheus_client` позволяет быстро развернуть HTTP-сервер для отдачи метрик.
+
+**Пример с использованием Gauge для мониторинга внешнего ресурса:**
+
+```python
+from prometheus_client import start_http_server, Gauge
+import random
+import time
+
+# Определение метрики: уровень "заполненности" ресурса
+RESOURCE_USAGE = Gauge('external_resource_usage_percent', 'Usage percentage of external resource')
+
+def update_metrics():
+    """Имитация опроса внешней системы"""
+    while True:
+        # В реальности здесь был бы вызов API или запрос к БД
+        usage = random.uniform(0, 100)
+        RESOURCE_USAGE.set(usage)
+        time.sleep(10)
+
+if __name__ == '__main__':
+    # Запуск HTTP-сервера на порту 8000
+    start_http_server(8000)
+    print("Exporter started on port 8000")
+    update_metrics()
 ```
 
 **Проверка:**
 
 ```bash
-curl http://localhost:2112/metrics
-```
-
-### Экспортер на Python
-
-**Полный пример — счётчик и gauge с labels:**
-
-```python
-#!/usr/bin/env python3
-
-from prometheus_client import start_http_server, Counter, Gauge
-import time
-import random
-
-# Создаем метрики
-REQUESTS = Counter('http_requests_total', 'Total HTTP requests', ['method'])
-MEMORY = Gauge('app_memory_usage_bytes', 'Memory usage in bytes')
-
-def collect_metrics():
-    """Сбор метрик"""
-    while True:
-        MEMORY.set(random.randint(100000000, 500000000))
-        time.sleep(5)
-
-if __name__ == '__main__':
-    start_http_server(8000)
-
-    import threading
-    threading.Thread(target=collect_metrics, daemon=True).start()
-
-    while True:
-        method = random.choice(['GET', 'POST', 'PUT', 'DELETE'])
-        REQUESTS.labels(method=method).inc()
-        time.sleep(1)
-```
-
-**Установка и запуск:**
-
-```bash
-pip install prometheus_client
-python example_exporter.py
+curl http://localhost:8000/metrics
+# → external_resource_usage_percent 45.23
 ```
 
 ## Дополнительная информация
 
-### Связанные темы
-
-- [Расширяемость экспортеров](./concepts.md) — правила именования метрик, labels, рекомендации по коду
-- [Клиентские библиотеки](./client_libraries.md) — список библиотек, типы метрик, примеры инструментации
-- [Textfile Collector](./textfile_collector.md) — сбор метрик через внешние скрипты без написания экспортера
-- [Node Exporter](../node_exporter.md) — основной экспортер для Linux
-- [Обзор экспортеров](../overview.md) — каталог готовых экспортеров
+* [Расширяемость экспортеров — Концепции](./concepts.md) — правила именования, работа с лейблами и кардинальностью.
+* [Клиентские библиотеки](./client_libraries.md) — подробный список библиотек для различных языков программирования.
+* [Textfile Collector](./textfile_collector.md) — сбор метрик через текстовые файлы без написания кода.
+* [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md) — как Prometheus находит новые экспортеры.

@@ -1,12 +1,12 @@
-# Alertmanager + Karma в Kubernetes (руководство по манифестам)
+# Alertmanager + Karma в Kubernetes: Введение
 
-## Definitions
+## Определения
 
 **Alertmanager + Karma в Kubernetes** — практическое руководство по развёртыванию стека оповещений (Alertmanager + Karma) в Kubernetes через стандартные манифесты (StatefulSet, Deployment, ConfigMap, Secret, Service, Ingress). В отличие от Helm-чартов, подход предоставляет полный контроль над каждым ресурсом и демонстрирует паттерны безопасного управления секретами.
 
-> **См. также:** [Alertmanager](../../alertmanager.md) (SSoT), [Karma Dashboard](../../karma_dashboard.md) (SSoT)
+> **См. также:** [Alertmanager](../../alertmanager.md), [Karma Dashboard](../../karma_dashboard.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Ключевые особенности подхода
 
@@ -50,7 +50,7 @@
 | Alertmanager | 0.24+ | Нативная поддержка `telegram_configs` |
 | kubectl | актуальная | Доступ к кластеру с правами создания ресурсов в namespace `monitoring` |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Порядок применения манифестов
 
@@ -74,10 +74,10 @@
 2. **Karma UI:** `http://karma.example.com` — агрегированный view алертов
 3. **Проверка:** отправьте тестовый алерт через Prometheus UI → убедитесь, что уведомление пришло в Telegram/Email
 
-## Additional Information
+## Дополнительная информация
 
-Детальные разделы руководства описаны выше в таблице порядка применения. Cross-ссылки на смежные материалы:
+Детальные разделы руководства описаны выше в таблице порядка применения. Взаимосвязанные материалы:
 
-- [Alertmanager Installation](../../installation/alertmanager_installation.md) — установка Alertmanager (бинарники, Docker, кластеризация)
-- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma, Helm-установка
-- [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md) — альтернативный подход через Helm-чарт
+- [Установка Alertmanager](../../installation/alertmanager_installation.md) — установка через бинарные файлы и Docker
+- [Karma Dashboard](../../karma_dashboard.md) — общее описание и возможности
+- [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md) — развёртывание через Helm

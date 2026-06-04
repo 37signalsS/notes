@@ -140,4 +140,3 @@ output.logstash:
 
 Для детального примера конфигурации Logstash для приема логов от Filebeat см. **[Logstash: Обзор и ключевые концепции](../../ELK_Stack/Logstash/logstash_overview.md)**.
 erview.md)**.
-

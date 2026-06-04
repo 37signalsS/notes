@@ -11,6 +11,7 @@
 ### Золотое правило приоритетов
 
 Инструменты запуска всегда имеют приоритет над инструкциями образа:
+
 1. Аргументы `docker run` или параметры в `docker-compose.yml`.
 2. Инструкции в `Dockerfile`.
 
@@ -34,6 +35,7 @@
 Если образ настроен на выполнение конкретной утилиты через `ENTRYPOINT`, аргументы запуска заменяют дефолтный `CMD`.
 
 **Dockerfile:**
+
 ```dockerfile
 FROM alpine:3.20
 ENTRYPOINT ["ping", "-c", "3"]
@@ -41,6 +43,7 @@ CMD ["localhost"]
 ```
 
 **Запуск с переопределением:**
+
 ```bash
 # Вместо localhost будет пинговаться google.com
 docker run my-ping google.com
@@ -51,11 +54,13 @@ docker run my-ping google.com
 Для входа в контейнер, где `ENTRYPOINT` настроен на запуск приложения, используется флаг `--entrypoint`.
 
 **Команда CLI:**
+
 ```bash
 docker run -it --entrypoint /bin/sh my-app-image
 ```
 
 **Docker Compose:**
+
 ```yaml
 services:
   app:
@@ -86,6 +91,7 @@ docker run -w /var/log my-app ls -lh
 Директивы запуска полностью заменяют значения переменных из `Dockerfile`.
 
 **docker-compose.yml:**
+
 ```yaml
 services:
   db:
@@ -99,6 +105,7 @@ services:
 Использование отдельного Compose-файла для запуска тестов в том же окружении, что и приложение.
 
 **compose.test.yml:**
+
 ```yaml
 services:
   sut: # System Under Test
@@ -114,6 +121,7 @@ services:
 В Docker Compose файлы `docker-compose.override.yml` автоматически объединяются с основным файлом, переопределяя его параметры для локальной разработки.
 
 **docker-compose.override.yml:**
+
 ```yaml
 services:
   web:

@@ -1,18 +1,18 @@
 # Blackbox Exporter — Установка и настройка
 
-## Definitions
+## Определения
 
 **Blackbox Exporter** — экспортер Prometheus для blackbox-мониторинга (проверка доступности эндпоинтов снаружи). Порт по умолчанию: `9115`. Текущая стабильная версия: `0.28.0`.
 
-> **См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
+**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
 
-## Basic Concepts
+## Основные концепции
 
 ### Способы установки
 
 | Способ | Когда использовать |
 | :--- | :--- |
-| **Binary + systemd** | Bare-metal, VM, контроль версий |
+| **Binary + systemd** | Bare-metal, VM, полный контроль над процессом |
 | **Docker** | Контейнеризация, быстрое развёртывание |
 
 ### Структура конфигурации
@@ -23,12 +23,12 @@
 
 | Параметр | По умолчанию | Описание |
 | :--- | :--- | :--- |
-| `--config.file` | `blackbox.yml` | Путь к конфигурации |
-| `--web.listen-address` | `:9115` | Адрес для scraping |
-| `--log.level` | `info` | Уровень логирования |
+| `--config.file` | `blackbox.yml` | Путь к конфигурационному файлу |
+| `--web.listen-address` | `:9115` | Адрес и порт для прослушивания |
+| `--log.level` | `info` | Уровень детализации логов |
 | `--config.enable-auto-reload` | `false` | Автоматическая перезагрузка при изменении конфига (v0.28.0+) |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Установка из бинарных файлов (systemd)
 
@@ -82,7 +82,7 @@ systemctl daemon-reload
 systemctl start blackbox_exporter
 systemctl enable blackbox_exporter
 
-# Проверка
+# Проверка доступности
 curl -s -o /dev/null -w "%{http_code}" http://localhost:9115
 # Ожидаемый ответ: 200
 ```
@@ -194,7 +194,7 @@ scrape_configs:
 
 Подробнее о relabeling: [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md).
 
-### 4. Проверка работы
+### 4. Проверка работы (Ad-hoc)
 
 | Проверка | Команда |
 | :--- | :--- |
@@ -204,13 +204,14 @@ scrape_configs:
 | **TCP SSH** | `curl "http://localhost:9115/probe?target=127.0.0.1:22&module=tcp_ssh"` |
 | **gRPC (v0.28.0+)** | `curl "http://localhost:9115/probe?target=grpc.example.com:443&module=grpc_health"` |
 
-## Additional Information
+## Дополнительная информация
 
 ### Рекомендации по безопасности
 
 **Ограничение доступа через firewall:**
 
 ```bash
+# Разрешить доступ только с доверенных IP (например, сервера Prometheus)
 ufw allow from 10.0.0.0/8 to any port 9115
 ```
 
@@ -237,25 +238,25 @@ server {
 **Blackbox Exporter не запускается:**
 
 ```bash
-# Проверка логов
+# Проверка логов через journald
 journalctl -u blackbox_exporter -f
 
-# Проверка портов
+# Проверка прослушиваемых портов
 ss -tnlp | grep 9115
 
-# Валидация конфигурации (если доступна опция)
+# Валидация конфигурации без запуска
 blackbox_exporter --config.file=/etc/blackbox_exporter/blackbox.yml --dry-run
 ```
 
 **Проверка не выполняется:**
 
-- Убедиться в доступности цели из сети blackbox_exporter
-- Проверить достаточность таймаута
-- Проверить логи на ошибки
+- Убедиться в сетевой доступности цели со стороны Blackbox Exporter.
+- Проверить таймауты в конфигурации модуля и в Prometheus.
+- Изучить логи exporter для выявления ошибок протокола.
 
-### Связанные документы
+**См. также:**
 
-- **[Обзор и концепции](./blackbox_exporter_overview.md)** — базовые определения, принцип работы
-- **[Конфигурация модулей](./blackbox_exporter_modules_configuration.md)** — HTTP, TCP, ICMP, DNS, gRPC модули
-- **[Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)** — метрики и правила оповещений
-- **[Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)** — relabeling в Prometheus
+- [Обзор и концепции](./blackbox_exporter_overview.md)
+- [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+- [Метрики и алертинг](./blackbox_exporter_metrics_and_alerting.md)
+- [Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)

@@ -145,4 +145,3 @@ etcdutl snapshot restore /backups/etcd-snapshot.db \
 - **[Архитектура и основные концепции etcd](./architecture-and-concepts.md)** — обзор высокоуровневых возможностей
 - **[Алгоритм Raft](./raft_consensus.md)** — консенсус, выборы лидера, кворум, топология кластера
 - **[Мониторинг etcd](./etcd_monitoring.md)** — метрики, алертинг
-

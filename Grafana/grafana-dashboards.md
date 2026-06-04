@@ -323,5 +323,6 @@ count(kube_secret_info{namespace="<namespace>"} == 0)
 - Переключения фич: включение/выключение
 
 > **Ссылки:**
+>
 > - [Provisioning](../grafana_provisioning.md) — управление дашбордами как код.
 > - [Kubernetes Monitoring](../../Kubernetes/MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — мониторинг Kubernetes.

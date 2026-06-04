@@ -1,16 +1,16 @@
 # Prometheus Operator Troubleshooting
 
-## Definitions
+## Определения
 
 **Troubleshooting Prometheus Operator** — процесс диагностики и устранения проблем в цикле reconciliation Operator'а, скрейпинге целей, отправке алертов и работе хранилища. Основные источники диагностической информации: логи Operator'а, статус Targets в Prometheus UI, события Kubernetes-объектов, метрики самого Operator'а.
 
-> **SSoT по концепции Operator:** [Concepts](./concepts.md) — архитектура, CRD, принцип работы reconciliation.
+> **Концепции Operator:** [Concepts](./concepts.md) — архитектура, CRD, принцип работы reconciliation.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Цикл reconciliation и точки отказа
 
-Prometheus Operator работает по принципу контроллера Kubernetes: **Watch → Generate → Apply → Reload**. Сбой на любом этапе приводит к неработоспособности мониторинга.
+Сбой на любом этапе цикла reconciliation (Watch → Generate → Apply → Reload) приводит к неработоспособности мониторинга.
 
 | Этап | Симптом | Диагностика |
 | :--- | :--- | :--- |
@@ -23,15 +23,11 @@ Prometheus Operator работает по принципу контроллер�
 
 ### Основные метрики Operator
 
-| Метрика | Описание |
-| :--- | :--- |
-| `prometheus_operator_reconcile_duration_seconds` | Длительность reconciliation |
-| `prometheus_operator_reconcile_errors_total` | Ошибки reconciliation |
-| `prometheus_operator_spec_replicas` | Количество реплик из spec |
+Проблемы в работе контроллера можно обнаружить, отслеживая метрики ошибок reconciliation и длительности синхронизации.
 
 > **См. также:** [Concepts — Метрики для мониторинга](./concepts.md#метрики-для-мониторинга-operator), [High Availability](./high_availability.md).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### ServiceMonitor не работает
 
@@ -147,7 +143,7 @@ kubectl get alertmanagerconfig -n monitoring
 kubectl get alertmanager main -n monitoring -o yaml | grep -A5 configSelector
 ```
 
-> **Детали:** [AlertmanagerConfig CRD — селекторы](./crd/alertmanagerconfig.md#селектор-alertmanager).
+> **Детали:** [AlertmanagerConfig CRD — селекторы](./crd/alertmanagerconfig.md#взаимосвязь-с-alertmanager-crd).
 
 ### Ошибки reconciliation
 
@@ -228,7 +224,7 @@ rate(prometheus_operator_reconcile_errors_total[5m])
 alertmanager_cluster_members
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные компоненты
 

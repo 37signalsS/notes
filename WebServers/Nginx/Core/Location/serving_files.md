@@ -1,20 +1,27 @@
 # Nginx: Отдача статических файлов
 
-## Definitions
+> **Надежность: 10** (Подтверждено актуальной документацией Nginx на июнь 2026)
 
-Директивы `root` и `alias` определяют, как Nginx сопоставляет URI запроса с файлами на диске. Это основа конфигурирования отдачи статики (изображения, CSS, JavaScript, документы).
+## Определения
 
-Концепции `try_files` и редиректов описаны в SSoT: [Nginx: Rewrite, Redirect и try_files](../nginx_rewrite_rules_and_try_files.md).
+**Отдача статики** — процесс передачи неизменяемых ресурсов (HTML-страницы, изображения, стили, скрипты) клиенту напрямую веб-сервером Nginx без участия бэкенд-приложений.
+
+**Директива `root`** — задаёт базовый каталог, в котором Nginx ищет файлы. Полный путь к файлу на диске формируется путём добавления всего URI (Uniform Resource Identifier — унифицированный идентификатор ресурса) запроса к значению, указанному в `root`.
+
+**Директива `alias`** — определяет замену части URI, совпавшей с блоком `location`, на указанный путь в файловой системе. В отличие от `root`, `alias` отбрасывает часть URI, указанную в `location`.
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Директива `root`
 
-`root` задаёт корневой каталог для запросов. Nginx добавляет полный URI запроса к пути `root` для формирования абсолютного пути к файлу.
+`root` является наиболее часто используемой директивой для отдачи статического контента. Она может быть определена в контекстах `http`, `server` или `location`.
 
 **Синтаксис:** `root /path/to/directory;`
+
+**Принцип формирования пути:**
+`Путь на диске = значение root + полный URI запроса`
 
 **Пример:**
 
@@ -23,146 +30,117 @@ server {
     root /var/www/html;
 
     location /images/ {
-        # Запрос /images/pic.jpg → /var/www/html/images/pic.jpg
-    }
-
-    location = /test.html {
-        root /var/www/special_tests;
-        # Запрос /test.html → /var/www/special_tests/test.html
-        # Переопределение root на уровне location для специфических файлов
+        # Запрос /images/photo.jpg -> /var/www/html/images/photo.jpg
     }
 }
 ```
 
-**Уровни наследования:** `root` может быть определён на уровне `http`, `server` или `location`. Если `root` не указан в `location`, он наследуется от родительского блока.
-
 ### Директива `alias`
 
-`alias` заменяет часть URI, совпавшую с `location`, на указанный путь. Может использоваться только внутри `location`.
+`alias` используется, когда URI запроса не соответствует иерархии папок на диске. Она может быть определена только внутри контекста `location`.
 
 **Синтаксис:** `alias /path/to/directory/;`
+
+**Принцип формирования пути:**
+`Путь на диске = значение alias + (URI запроса - значение location)`
 
 **Пример:**
 
 ```nginx
-location /static/ {
-    alias /opt/data/static_files/;
-    # Запрос /static/css/style.css → /opt/data/static_files/css/style.css
-    # Префикс "/static/" заменяется на "/opt/data/static_files/"
-}
-
-location /documents/ {
-    alias /var/www/shared/docs/;
-    # Запрос /documents/report.pdf → /var/www/shared/docs/report.pdf
-    # Важно: если location заканчивается слэшем, alias тоже должен
+location /static-data/ {
+    alias /opt/media/files/;
+    # Запрос /static-data/doc.pdf -> /opt/media/files/doc.pdf
+    # Префикс "/static-data/" заменяется на "/opt/media/files/"
 }
 ```
 
-### Ключевое отличие `root` vs `alias`
+> **Важно:** если `location` заканчивается слэшем, путь в `alias` также **обязательно** должен заканчиваться слэшем. В противном случае Nginx может некорректно сформировать путь к файлу.
 
-| Директива | Как формируется путь |
-|:----------|:---------------------|
-| `root` | `root` + **полный URI** (`/var/www/html` + `/images/pic.jpg`) |
-| `alias` | `alias` + **остаток URI после location** (`/opt/data/static_files/` + `css/style.css`) |
+### Сравнение root и alias
 
-**Правило:** если `location` заканчивается слэшем, `alias` тоже должен заканчиваться слэшем — иначе путь сформируется некорректно.
+| Характеристика | `root` | `alias` |
+| :--- | :--- | :--- |
+| **Формирование пути** | Добавляет URI целиком к пути | Заменяет префикс `location` на путь |
+| **Контекст использования** | `http`, `server`, `location` | Только `location` |
+| **Наследование** | Наследуется дочерними блоками | Не наследуется |
+| **Регулярные выражения** | Полная поддержка | Ограниченная поддержка (требует именованных захватов) |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Отдача статики с `root`
+### Сценарий 1: Стандартный веб-сайт
 
-Стандартный сценарий — статические файлы лежат в подкаталогах корневого каталога сайта:
+Использование `root` на уровне `server` позволяет задать единую директорию для всего сайта.
 
 ```nginx
 server {
+    server_name example.com;
     root /var/www/mysite;
 
-    location /images/ {
-        # /images/logo.png → /var/www/mysite/images/logo.png
+    location / {
+        index index.html;
     }
 
-    location ~* \.(css|js|woff2)$ {
-        # Регулярный location для кэширования (см. ниже)
+    location /assets/ {
+        # Использует основной root: /var/www/mysite/assets/
         expires 30d;
-        add_header Cache-Control "public, immutable";
     }
 }
 ```
 
-### Разделение контента через `alias`
+### Сценарий 2: Маппинг произвольной директории
 
-Когда статика хранится вне корня сайта (например, на отдельном томе или в общей директории):
+Когда нужно отдать файлы из папки, имя которой не совпадает с URL (Uniform Resource Locator — унифицированный определитель местонахождения ресурса).
 
 ```nginx
-server {
-    root /var/www/mysite;
-
-    location /uploads/ {
-        alias /mnt/storage/user-uploads/;
-        # /uploads/avatar.jpg → /mnt/storage/user-uploads/avatar.jpg
-    }
-
-    location /shared-assets/ {
-        alias /opt/shared-assets/;
-        # /shared-assets/logo.svg → /opt/shared-assets/logo.svg
-    }
+location /downloads/ {
+    alias /mnt/storage/public_files/;
+    # Файл на диске: /mnt/storage/public_files/manual.zip
+    # URL для доступа: http://example.com/downloads/manual.zip
 }
 ```
 
-### Редирект конкретного URL через точное совпадение
+### Сценарий 3: Проверка существования файлов (try_files)
 
-Точный `location =` эффективен для перенаправления устаревших страниц:
-
-```nginx
-location = /old-contacts {
-    return 301 /contacts;
-}
-```
-
-- Срабатывает **только** для `/old-contacts`
-- `return 301` отправляет браузер и поисковые системы на `/contacts`
-- Подробности о редиректах: [Rewrite, Redirect и try_files](../nginx_rewrite_rules_and_try_files.md#редирект-на-https--новый-url)
-
-### try_files для fallback-маршрутизации
-
-Проверка существования файлов с fallback на фронт-контроллер:
+Директива `try_files` часто используется вместе с `root` для организации fallback-механизмов.
 
 ```nginx
 location / {
     root /var/www/html;
     try_files $uri $uri/ /index.html =404;
-    # 1. Ищет файл по URI
-    # 2. Если нет — ищет директорию
-    # 3. Если нет — внутреннее перенаправление на /index.html
-    # 4. Если /index.html не найден — возвращает 404
 }
 ```
 
-Полное описание `try_files`, включая работу с переменными и сложные сценарии: [Rewrite, Redirect и try_files](../nginx_rewrite_rules_and_try_files.md#директива-try_files).
+Подробное описание работы и сложных случаев `try_files` приведено в основном документе: **[Перенаправления и перезапись URI в Nginx](../nginx_rewrite_rules_and_try_files.md#директива-try_files)**.
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Рекомендации по выбору директивы
+### Рекомендации по выбору
 
-| Сценарий | Директива |
-|:---------|:----------|
-| Статика в подкаталогах корня сайта | `root` |
-| Статика вне корня сайта (отдельный том, общий ресурс) | `alias` |
-| Переопределение корня для специфических запросов | `root` внутри `location` |
-| Fallback на фронт-контроллер | `try_files` |
-| Редирект конкретного URL | `location =` + `return` |
+- **Используйте `root` всегда**, когда это возможно. Это проще, надёжнее и предсказуемее.
+- **Используйте `alias` только тогда**, когда путь к файлам на диске принципиально отличается от структуры URI (например, при монтировании внешних хранилищ в специфические URL).
 
-### Ограничения
+### Оптимизация производительности
 
-- `alias` не поддерживается внутри `location` с регулярным выражением (`location ~`) — используйте `root` или `rewrite`
-- При использовании переменных в пути (`alias /data/$variable/`) требуется осторожность — см. документацию Nginx
+Для эффективной отдачи статических файлов рекомендуется настроить следующие директивы в блоке `http` или `server`:
+
+- **`sendfile on;`** — позволяет Nginx использовать системный вызов `sendfile()`, который копирует данные напрямую из одного файлового дескриптора в другой (с диска в сокет), минуя копирование в пространство пользователя.
+- **`tcp_nopush on;`** — используется вместе с `sendfile`. Позволяет Nginx отправлять заголовки HTTP (Hypertext Transfer Protocol) ответа и начало файла в одном пакете, оптимизируя сетевой трафик.
+- **`tcp_nodelay on;`** — отключает алгоритм Нагла, что полезно для быстрой отправки небольших объемов данных.
+
+### Ограничения `alias`
+
+1. **Регулярные выражения:** внутри `location ~` использование `alias` требует осторожности и явного захвата переменных.
+2. **Производительность:** `root` обрабатывается чуть эффективнее, так как не требует операций замены строк в URI.
+3. **Безопасность:** при неправильной настройке `alias` (особенно при отсутствии завершающего слэша) возможны уязвимости типа Directory Traversal (обход директорий).
 
 ### См. также
 
-- [Nginx: Rewrite, Redirect и try_files](../nginx_rewrite_rules_and_try_files.md) — SSoT по `try_files`, `rewrite`, `return`
-- [Директива `location`: основы](./basics.md) — типы matching, приоритет
-- [Кэширование статических файлов](../../Performance/nginx_static_file_caching.md) — заголовки `Cache-Control`, `expires`
+- **[Директива location: основы и приоритеты](./basics.md)** — описание синтаксиса и порядка выбора блоков.
+- **[Перенаправления и перезапись URI в Nginx](../nginx_rewrite_rules_and_try_files.md)** — подробный разбор `try_files` и `rewrite`.
+- **[Кэширование статических файлов](../../Performance/Caching/client_caching.md)** — управление заголовками `Cache-Control` и `expires`.
+- **[Тюнинг производительности Nginx](../../Performance/nginx_performance_tuning.md)** — глубокая настройка `sendfile`, `tcp_nopush` и буферов.
+- **[Сжатие контента в Nginx](../../Performance/nginx_compression.md)** — настройка `gzip_static` для отдачи предварительно сжатых файлов.

@@ -1,12 +1,12 @@
-# Vector: Practical Scenarios
+# Vector: Практические сценарии
 
-## Definitions
+## Определения
 
 **Конфигурация Vector** — TOML/YAML-файл с тремя секциями: `[sources]`, `[transforms]`, `[sinks]`. Компоненты связываются через параметр `inputs`.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Базовая конфигурация
 
@@ -37,9 +37,9 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий: Роутер логов из Kafka в OpenSearch
+### Практический сценарий: Роутер логов из Kafka в OpenSearch
 
 **Архитектура:** `Fluent Bit → Kafka → Vector → OpenSearch`
 
@@ -88,7 +88,7 @@ customConfig:
 
 Полное руководство с развёртыванием: **[Fluent Bit → Kafka → Vector → OpenSearch Tutorial](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md)**.
 
-### Сценарий: Сбор метрик с Prometheus endpoints
+### Практический сценарий: Сбор метрик с Prometheus endpoints
 
 ```toml
 [sources.prometheus]
@@ -109,7 +109,7 @@ customConfig:
   labels = {job = "metrics"}
 ```
 
-### Сценарий: Обогащение логов GeoIP
+### Практический сценарий: Обогащение логов GeoIP
 
 GeoIP в VRL выполняется через **enrichment tables**, а не через отдельную функцию:
 
@@ -144,6 +144,6 @@ GeoIP в VRL выполняется через **enrichment tables**, а не ч
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 **Связанные заметки:** [Vector Overview](./vector_overview.md) — общий обзор; [VRL Language](./vrl_language.md) — язык трансформации; полный туториал пайплайна — [Fluent Bit → Kafka → Vector → OpenSearch](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md).

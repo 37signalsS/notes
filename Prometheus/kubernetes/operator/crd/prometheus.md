@@ -1,35 +1,37 @@
-# CRD Prometheus
+# Prometheus — Концепции (CRD)
 
-## Definitions
+## Определения
 
 **`kind: Prometheus`** — Custom Resource Definition в Prometheus Operator для декларативного описания экземпляра Prometheus Server. Operator создаёт StatefulSet, Service, Secret и другие Kubernetes-объекты на основе этого CRD.
 
 **API version:** `monitoring.coreos.com/v1`
 
-## Basic Concepts
+## Базовые концепции
 
 ### Принцип работы
 
-1. Пользователь создаёт CR `Prometheus` с желаемым состоянием
-2. Prometheus Operator обнаруживает изменение через watch
-3. Operator генерирует scrape-конфигурацию на основе селекторов (ServiceMonitor, PodMonitor, PrometheusRule)
-4. Конфигурация сохраняется в Kubernetes Secret
-5. Создаётся/обновляется StatefulSet с Prometheus pod'ами
-6. Sidecar `prometheus-config-reloader` автоматически перезагружает Prometheus при изменении Secret
+1. Пользователь создаёт Custom Resource (CR) `Prometheus` с желаемым состоянием.
+2. Prometheus Operator обнаруживает изменение через механизм watch в Kubernetes API.
+3. Operator генерирует scrape-конфигурацию на основе селекторов (ServiceMonitor, PodMonitor, PrometheusRule).
+4. Сгенерированная конфигурация сохраняется в Kubernetes Secret.
+5. Создаётся или обновляется StatefulSet с pod'ами Prometheus.
+6. Sidecar-контейнер `prometheus-config-reloader` автоматически перезагружает Prometheus при изменении конфигурационного Secret.
 
 ### Селекторы целей
 
-Prometheus CRD использует селекторы для определения какие ресурсы скрейпить:
+Ресурс `Prometheus` использует селекторы для определения того, какие ресурсы будут включены в мониторинг:
 
-| Селектор | Выбирает | Описание |
+| Селектор | Тип ресурса | Назначение |
 |---|---|---|
-| `serviceMonitorSelector` | ServiceMonitor | Цели для скрейпинга через Service |
-| `podMonitorSelector` | PodMonitor | Цели для скрейпинга напрямую из Pod |
-| `probeSelector` | Probe | Blackbox-мониторинг |
-| `scrapeConfigSelector` | ScrapeConfig | Кастомные scrape-конфигурации |
-| `ruleSelector` | PrometheusRule | Recording и alerting rules |
+| **`serviceMonitorSelector`** | ServiceMonitor | Обнаружение целей через Kubernetes Service |
+| **`podMonitorSelector`** | PodMonitor | Обнаружение целей напрямую из Pod |
+| **`probeSelector`** | Probe | Blackbox-мониторинг внешних целей |
+| **`scrapeConfigSelector`** | ScrapeConfig | Кастомные конфигурации скрейпинга |
+| **`ruleSelector`** | PrometheusRule | Правила алертинга и записи (recording rules) |
 
 ### Связь с Alertmanager
+
+Конфигурация Alertmanager в `spec` позволяет Prometheus знать, куда отправлять уведомления:
 
 ```yaml
 spec:
@@ -40,11 +42,11 @@ spec:
         port: web
 ```
 
-> **См. также:** [Alertmanager CRD](./alertmanager.md) — описание Alertmanager CRD.
+> **Подробнее:** [Alertmanager CRD](./alertmanager.md) — описание ресурса управления Alertmanager.
 
-## Practical Scenarios
+## Практические сценарии
 
-### Базовая конфигурация
+### Базовая конфигурация экземпляра
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -53,7 +55,7 @@ metadata:
   name: main
   namespace: monitoring
 spec:
-  replicas: 2
+  replicas: 1
   version: v3.10.0
   serviceAccountName: prometheus
   serviceMonitorSelector:
@@ -83,7 +85,7 @@ spec:
             storage: 50Gi
 ```
 
-### С Alertmanager
+### Настройка внешних лейблов и дополнительных конфигураций
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -92,48 +94,19 @@ metadata:
   name: main
   namespace: monitoring
 spec:
-  replicas: 1
-  version: v3.10.0
-  serviceAccountName: prometheus
-  serviceMonitorSelector:
-    matchLabels:
-      release: monitoring
-  alerting:
-    alertmanagers:
-      - namespace: monitoring
-        name: alertmanager-main
-        port: web
-        pathPrefix: /
-        apiVersion: v2
-  ruleSelector:
-    matchLabels:
-      role: alert-rules
-```
-
-### С external labels и additional scrape configs
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Prometheus
-metadata:
-  name: main
-  namespace: monitoring
-spec:
-  replicas: 1
   externalLabels:
     cluster: production
-    region: eu-west-1
     environment: prod
   additionalScrapeConfigs:
-    name: additional-scrape-configs
+    name: additional-configs-secret
     key: prometheus-additional.yaml
   scrapeInterval: 30s
   evaluationInterval: 30s
-  retention: 15d
-  retentionSize: 50GB
 ```
 
-### Хранилище: VolumeClaimTemplate
+### Настройка хранилища
+
+**Персистентное хранилище (рекомендуется):**
 
 ```yaml
 storage:
@@ -146,14 +119,16 @@ storage:
           storage: 50Gi
 ```
 
-### Хранилище: Ephemeral (без персистентности)
+**Эфемерное хранилище (данные удаляются при перезапуске):**
 
 ```yaml
 storage:
   emptyDir: {}
 ```
 
-### Thanos Sidecar
+### Интеграция с Thanos
+
+Использование Thanos Sidecar для долгосрочного хранения и глобальных запросов:
 
 ```yaml
 spec:
@@ -169,51 +144,38 @@ spec:
       name: thanos-objstore-config
 ```
 
-> **См. также:** [High Availability](../high_availability.md) — HA и шардирование; [Thanos Overview](../../scaling/thanos_overview.md).
+## Дополнительная информация
 
-### Основные параметры spec
+### Основные параметры спецификации (spec)
 
 | Параметр | Описание | Пример |
 |---|---|---|
-| **`replicas`** | Количество реплик | `2` (для HA) |
-| **`shards`** | Количество шардов | `2` (горизонтальное масштабирование) |
-| **`version`** | Версия Prometheus | `v3.10.0` |
-| **`image`** | Custom образ | `myregistry/prometheus:v3.10.0` |
-| **`serviceAccountName`** | ServiceAccount | `prometheus` |
-| **`serviceMonitorSelector`** | Селектор ServiceMonitor | `matchLabels: {release: monitoring}` |
-| **`serviceMonitorNamespaceSelector`** | Namespace для ServiceMonitor | `matchNames: [default]` |
-| **`podMonitorSelector`** | Селектор PodMonitor | `matchLabels: {release: monitoring}` |
-| **`podMonitorNamespaceSelector`** | Namespace для PodMonitor | `matchNames: [default]` |
-| **`probeSelector`** | Селектор Probe | `matchLabels: {release: monitoring}` |
-| **`ruleSelector`** | Селектор PrometheusRule | `matchLabels: {release: monitoring}` |
-| **`alerting`** | Конфигурация Alertmanager | См. выше |
-| **`resources`** | Ресурсы CPU/memory | `requests/limits` |
-| **`retention`** | Время хранения данных | `15d` |
-| **`retentionSize`** | Макс. размер TSDB | `50GB` |
-| **`storage`** | Конфигурация хранилища | `volumeClaimTemplate`, `emptyDir` |
-| **`externalLabels`** | Глобальные лейблы | `{cluster: production}` |
-| **`scrapeInterval`** | Интервал скрейпинга по умолчанию | `30s` |
-| **`evaluationInterval`** | Интервал вычисления правил | `30s` |
-| **`enableFeatures`** | Экспериментальные функции | `[exemplar-storage, auto-reload]` |
-| **`additionalScrapeConfigs`** | Доп. scrape-конфигурации | Secret с YAML |
-| **`thanos`** | Thanos Sidecar конфигурация | См. выше |
-| **`secrets`** | Secret'ы для монтирования | `['tls-cert', 'bearer-token']` |
-| **`securityContext`** | Security context pod'а | `runAsNonRoot: true` |
+| **`replicas`** | Количество реплик для HA | `2` |
+| **`shards`** | Количество шардов для масштабирования | `1` |
+| **`version`** | Версия образа Prometheus | `v3.10.0` |
+| **`serviceAccountName`** | Имя ServiceAccount с правами RBAC | `prometheus` |
+| **`serviceMonitorSelector`** | Селектор для ServiceMonitor | `{matchLabels: {release: monitoring}}` |
+| **`ruleSelector`** | Селектор для PrometheusRule | `{matchLabels: {role: alert-rules}}` |
+| **`resources`** | Лимиты и запросы ресурсов CPU/RAM | См. пример выше |
+| **`retention`** | Время хранения данных (time-based) | `15d` |
+| **`retentionSize`** | Лимит размера данных (size-based) | `50GB` |
+| **`storage`** | Настройка PVC или emptyDir | См. раздел Хранилище |
+| **`externalLabels`** | Глобальные метки экземпляра | `{cluster: production}` |
+| **`additionalScrapeConfigs`** | Ссылка на Secret с доп. конфигами | `{name: secret-name, key: key-name}` |
+| **`thanos`** | Конфигурация Thanos Sidecar | См. раздел Thanos |
 
-## Additional Information
+### Связанные ресурсы
 
-### Связанные CRD
+- [ServiceMonitor](./servicemonitor.md) — мониторинг сервисов.
+- [PodMonitor](./podmonitor.md) — мониторинг подов напрямую.
+- [PrometheusRule](./prometheusrule.md) — управление правилами.
+- [Alertmanager](./alertmanager.md) — конфигурация Alertmanager.
+- [Probe](./probe.md) — blackbox-мониторинг.
 
-- [ServiceMonitor](./servicemonitor.md) — цели для скрейпинга через Service
-- [PodMonitor](./podmonitor.md) — цели для скрейпинга напрямую из Pod
-- [PrometheusRule](./prometheusrule.md) — alerting и recording rules
-- [Alertmanager](./alertmanager.md) — описание Alertmanager
-- [Probe](./probe.md) — blackbox-мониторинг
+### Масштабирование и отказоустойчивость
 
-### High Availability и шардирование
+Подробная информация о настройке репликации (`replicas`), шардирования (`shards`) и обеспечении высокой доступности стека приведена в файле: [High Availability](../high_availability.md).
 
-HA-конфигурация Prometheus (реплики, шарды, Thanos Sidecar) описана в отдельном файле: [High Availability](../high_availability.md).
+### Установка без Operator
 
-### Установка Prometheus Server
-
-Базовая установка Prometheus без Operator: [Prometheus Server](../../../installation/prometheus_server_installation.md).
+Инструкции по ручной установке стандартного Prometheus Server доступны в разделе: [Prometheus Server](../../../installation/prometheus_server_installation.md).

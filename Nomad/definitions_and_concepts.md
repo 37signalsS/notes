@@ -1,16 +1,20 @@
-# HashiCorp Nomad: Определения и базовые концепции
+# Nomad — определения и базовые концепции
 
-## Definitions
+## Определения
 
 **Nomad** — легковесный оркестратор от HashiCorp для планирования (scheduling) и запуска приложений (workloads). В отличие от Kubernetes — комплексной платформы «всё в одном» — Nomad придерживается философии UNIX: одна задача, но выполненная хорошо.
 
 **Ключевая особенность:** единый бинарный файл без внешних зависимостей; поддерживает контейнеры, бинарные приложения, Java, QEMU/VM и иные типы workload'ов.
 
-**Актуальная версия:** v1.11.3 (март 2026) — [официальная документация](https://developer.hashicorp.com/nomad/docs)
+**Job** — основная единица развёртывания в Nomad, описываемая в HCL-файле. Определяет тип (service/batch/system), группы задач, ресурсы, ограничения и политики развёртывания.
 
----
+**Task Group** — логическая группа задач, размещаемых на одном узле. Параметр `count` задаёт количество реплик.
 
-## Basic Concepts
+**Task** — минимальная единица работы с конкретным driver (docker, exec, qemu, java, raw_exec).
+
+Актуальная информация о версиях: [Nomad — версии и поддержка](./advanced_topics.md#версии-и-поддержка).
+
+## Основные концепции
 
 ### Архитектура
 
@@ -26,6 +30,27 @@
 - **Standalone** — один сервер (dev/test)
 - **High Availability** — 3–5 серверов (production, консенсус Raft)
 
+### Типы jobs
+
+| Тип | Назначение | Примеры |
+| :--- | :--- | :--- |
+| **service** | Долгоживущие процессы (daemon) | Веб-серверы, API, микросервисы |
+| **batch** | Одноразовые/периодические задачи | ETL, бэкапы, cron |
+| **system** | Запуск по одной копии на каждом узле | Мониторинг, логи, security agents |
+
+### Ключевые блоки job-файла
+
+- `job` — корневой блок: имя, датацентры, тип.
+- `group` — группа задач, `count` реплик.
+- `network` — порты, режимы (static/dynamic).
+- `service` — регистрация в Consul, health checks.
+- `task` — driver, image/command, resources, vault/consul интеграция.
+- `periodic` — cron-расписание для batch jobs.
+- `constraint` — ограничения на размещение узлов.
+- `resources` — CPU, memory, GPU.
+- `vault` — политики для секретов.
+- `consul` — параметры Consul Connect (sidecar).
+
 ### Ключевые характеристики
 
 | Характеристика | Описание |
@@ -39,10 +64,10 @@
 
 ### Интеграция с экосистемой HashiCorp
 
-- **[Consul](../Consul/consul_overview.md):** service discovery, health checking, service mesh
-- **[Vault](../Vault/overview.md):** управление секретами, динамические credentials
-- **[Terraform](https://developer.hashicorp.com/terraform):** provisioning инфраструктуры
-- **Boundary:** безопасный доступ к workload'ам (через Consul)
+- **[Consul](../Consul/consul_overview.md):** service discovery, health checking, service mesh.
+- **[Vault](../Vault/overview.md):** управление секретами, динамические credentials.
+- **[Terraform](https://developer.hashicorp.com/terraform):** provisioning инфраструктуры.
+- **Boundary:** безопасный доступ к workload'ам (через Consul).
 
 ### Сравнение с другими оркестраторами
 
@@ -58,29 +83,31 @@
 | **GPU / AI / ML** | Встроенная поддержка | Через Device Plugins | Ограниченная |
 | **Сообщество** | Нишевое, растущее | Доминирующее, enterprise-стандарт | Угасающее |
 
-### Преимущества
+### Преимущества и недостатки
 
-- Простота установки и эксплуатации
-- Фокус на оркестрации — эффективное планирование и запуск нагрузок
-- Гибридные workload'ы: микс контейнеров и legacy-приложений в одном кластере
-- Малые команды: меньше ресурсов на поддержку vs Kubernetes
-- Edge computing: легковесность для периферийных устройств
+**Преимущества:**
 
-### Недостатки
+- Простота установки и эксплуатации.
+- Фокус на оркестрации — эффективное планирование и запуск нагрузок.
+- Гибридные workload'ы: микс контейнеров и legacy-приложений в одном кластере.
+- Малые команды: меньше ресурсов на поддержку vs Kubernetes.
+- Edge computing: легковесность для периферийных устройств.
 
-- Требует Consul (service discovery) и Vault (secrets) для полноценной работы
-- Меньшая экосистема и community tools vs Kubernetes
-- Нишевое решение: сложнее найти специалистов
-- Не оптимален для cloud-native greenfield (предпочтителен Kubernetes)
+**Недостатки:**
 
----
+- Требует Consul (service discovery) и Vault (secrets) для полноценной работы.
+- Меньшая экосистема и community tools vs Kubernetes.
+- Нишевое решение: сложнее найти специалистов.
+- Не оптимален для cloud-native greenfield (предпочтителен Kubernetes).
 
-## Practical Scenarios
+## Практические сценарии
 
-Практические сценарии развёртывания: [practical_scenarios.md](./practical_scenarios.md) — микросервисы, batch jobs, QEMU/VM, GPU/AI, edge computing, мульти-регион федерация.
+Примеры развёртывания различных типов нагрузок (микросервисы, batch, VM, GPU, Edge) и настройка федерации: [practical_scenarios.md](./practical_scenarios.md).
 
----
+## Дополнительная информация
 
-## Additional Information
+См. также:
 
-Версии, production adoption, выбор между Nomad и Kubernetes: [advanced_topics.md](./advanced_topics.md).
+- [Продвинутые темы и версии](./advanced_topics.md)
+- [Практические сценарии](./practical_scenarios.md)
+- [Официальная документация Nomad](https://developer.hashicorp.com/nomad/docs)

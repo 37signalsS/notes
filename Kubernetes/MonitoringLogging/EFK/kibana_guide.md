@@ -17,6 +17,7 @@
 ### Создание индекс-паттерна для Kubernetes
 
 Для логов, собираемых Fluent Bit в Kubernetes:
+
 1. Следуйте [стандартной инструкции по созданию Data View (Index Pattern)](../../../ELK_Stack/Kibana/kibana_overview.md#создание-data-view-index-pattern).
 2. В качестве шаблона индексов используйте префикс, заданный в Fluent Bit (например, `my-cluster-*` при использовании `Logstash_Prefix`).
 

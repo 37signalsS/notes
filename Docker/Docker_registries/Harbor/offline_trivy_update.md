@@ -121,6 +121,7 @@ trivy:
 ### Проверка статуса в UI
 
 После обновления баз статус сканера в веб-интерфейсе Harbor должен измениться:
+
 1. Перейдите в **Administration → Interrogation Services**.
 2. В секции **Vulnerability Scanning** проверьте дату **Last Update** для Trivy.
 
@@ -138,6 +139,6 @@ trivy:
 
 ### Связанные документы
 
-- **[Установка Harbor](./installation.md)** — общая настройка компонентов.
-- **[Обзор Harbor](./overview.md)** — возможности и архитектура реестра.
-- **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — общие принципы SCA и CVE.
+* **[Установка Harbor](./installation.md)** — общая настройка компонентов.
+* **[Обзор Harbor](./overview.md)** — возможности и архитектура реестра.
+* **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — общие принципы SCA и CVE.

@@ -88,6 +88,7 @@ helm repo update
 ### Сценарий 2: Production-конфигурация
 
 Для стабильной работы в продуктивной среде рекомендуется:
+
 - Запуск от непривилегированного пользователя.
 - Настройка лимитов ресурсов.
 - Использование внешних секретов для паролей.
@@ -120,12 +121,14 @@ networkPolicy:
 ### Сценарий 3: Проверка и обновление
 
 **Проверка статуса:**
+
 ```bash
 kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana
 helm status grafana -n monitoring
 ```
 
 **Обновление конфигурации:**
+
 ```bash
 helm upgrade grafana grafana-community/grafana -f grafana-values.yaml -n monitoring
 ```
@@ -157,6 +160,7 @@ helm rollback grafana <revision_number> -n monitoring
 ```
 
 **См. также:**
+
 - [Провиженинг Grafana](../grafana_provisioning.md)
 - [Высокая доступность Grafana](../high_availability.md)
 - [Конфигурация Grafana в kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/grafana_config.md)

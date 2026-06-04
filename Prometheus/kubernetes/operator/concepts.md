@@ -1,12 +1,12 @@
 # Prometheus Operator — Концепции
 
-## Definitions
+## Определения
 
 **Prometheus Operator** — контроллер Kubernetes для автоматизации управления стеком мониторинга (Prometheus, Alertmanager, Grafana). Использует Custom Resource Definitions (CRD) для декларативного управления конфигурацией. Развертывается как Deployment в кластере.
 
 > **См. также:** [Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md), [kube-prometheus-stack](../Kube_Prometheus_Stack_Helm/overview.md), [Ручная установка](./installation.md).
 
-## Basic Concepts
+## Базовые концепции
 
 ### Архитектура и принцип работы
 
@@ -17,11 +17,11 @@ Prometheus Operator работает как контроллер Kubernetes с �
 3. **Apply** — создает/обновляет Kubernetes-объекты (StatefulSet, ConfigMap, Secret, Service)
 4. **Reload** — автоматически перезагружает конфигурацию при изменениях через sidecar `prometheus-config-reloader`
 
-### Custom Resource Definitions (CRD)
+### Пользовательские ресурсы (CRD)
 
 Prometheus Operator расширяет Kubernetes API следующими CRD:
 
-| CRD | Назначение | SSoT |
+| CRD | Назначение | Подробнее |
 | :--- | :--- | :--- |
 | **Prometheus** | Описание экземпляра Prometheus Server | [Prometheus CRD](./crd/prometheus.md) |
 | **Alertmanager** | Описание экземпляра Alertmanager | [Alertmanager CRD](./crd/alertmanager.md) |
@@ -49,7 +49,7 @@ Prometheus Operator требует следующие права:
 
 > **См. также:** [Access Control](./Security/access_control.md), [Secrets Best Practices](./Security/secrets_best_practices.md).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Когда использовать Prometheus Operator
 
@@ -91,7 +91,7 @@ kubectl get prometheus -n monitoring
 kubectl get servicemonitor -n monitoring
 ```
 
-### Troubleshooting базовые команды
+### Базовые команды диагностики (Troubleshooting)
 
 ```bash
 # Логи Operator
@@ -104,7 +104,7 @@ prometheus_operator_reconcile_errors_total
 
 > **Детали:** [Troubleshooting](./troubleshooting.md).
 
-## Additional Information
+## Дополнительная информация
 
 ### Актуальные версии
 

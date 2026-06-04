@@ -1,12 +1,12 @@
-# Alertmanager Installation
+# Установка Alertmanager
 
-## Definitions
+## Определение
 
-**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, подавление и маршрутизация. Полное руководство — [Alertmanager](../alertmanager.md).
+**Alertmanager** — компонент экосистемы Prometheus для обработки оповещений: дедупликация, группировка, подавление и маршрутизация. Полное руководство по архитектуре и логике — [Alertmanager](../alertmanager.md).
 
-> **См. также:** [Alertmanager](../alertmanager.md), [Rules](../rules.md), [Prometheus Server installation](./prometheus_server_installation.md).
+> **См. также:** [Alertmanager](../alertmanager.md), [Правила алертинга](../rules.md), [Установка Prometheus Server](./prometheus_server_installation.md).
 
-## Basic Concepts
+## Основные концепции
 
 ### Актуальная версия
 
@@ -20,7 +20,7 @@
 ### Ключевые изменения в версии 0.32.0
 
 * Улучшенная обработка дедупликации алертов
-* Поддержка новых receiver-типов
+* Поддержка новых типов получателей (receiver types)
 * Исправления безопасности и производительности
 
 ### Параметры запуска
@@ -30,13 +30,13 @@
 | `--config.file` | `alertmanager.yml` | Путь к файлу конфигурации |
 | `--storage.path` | `data/` | Путь к хранилищу данных |
 | `--web.listen-address` | `:9093` | Адрес для веб-интерфейса |
-| `--web.external-url` | `` | Внешний URL для ссылок |
+| `--web.external-url` | — | Внешний URL для ссылок |
 | `--web.route-prefix` | `/` | Префикс маршрута |
 | `--cluster.listen-address` | `:9094` | Адрес для кластеризации |
-| `--cluster.peers` | `` | Список пиров для кластера |
+| `--cluster.peers` | — | Список пиров для кластера |
 | `--log.level` | `info` | Уровень логирования |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка из бинарных файлов (Linux)
 
@@ -175,9 +175,9 @@ docker run -d \
 
 > **См. также:** [Docker Stack](./docker_stack/overview.md).
 
-## Additional Information
+## Дополнительная информация
 
-### Security Recommendations
+### Рекомендации по безопасности
 
 **1. Запуск от непривилегированного пользователя:**
 
@@ -210,23 +210,23 @@ server {
 }
 ```
 
-### Alertmanager Clustering
+### Кластеризация Alertmanager
 
 Для высокой доступности разверните несколько инстансов в режиме кластера:
 
 ```bash
-# Инстанс 1
+# Экземпляр 1
 --cluster.listen-address=:9094 \
 --cluster.peers=alertmanager-1:9094,alertmanager-2:9094
 
-# Инстанс 2
+# Экземпляр 2
 --cluster.listen-address=:9094 \
 --cluster.peers=alertmanager-1:9094,alertmanager-2:9094
 ```
 
-> **См. также:** [Alertmanager HA](../alertmanager.md#кластеризация).
+> **См. также:** [Alertmanager HA](../alertmanager.md#высокая-доступность-ha).
 
-### Prometheus Integration
+### Интеграция с Prometheus
 
 **Добавьте в `prometheus.yml`:**
 
@@ -238,7 +238,7 @@ alerting:
             - 'localhost:9093'
 ```
 
-### Troubleshooting
+### Устранение неполадок
 
 **Alertmanager не запускается:**
 
@@ -256,7 +256,7 @@ amtool check-config /etc/alertmanager/alertmanager.yml
 **Алерты не отправляются:**
 
 * Проверьте маршрут в конфигурации
-* Убедитесь, что receiver настроен правильно
+* Убедитесь, что получатель (receiver) настроен правильно
 * Проверьте логи на ошибки отправки
 
-> **См. также:** [Rules и алертинг](../rules.md).
+> **См. также:** [Правила и алертинг](../rules.md).

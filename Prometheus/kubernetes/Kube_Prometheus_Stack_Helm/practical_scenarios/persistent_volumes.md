@@ -2,7 +2,7 @@
 
 > [Назад к оглавлению](../overview.md)
 
-> **SSoT для темы:** настройка постоянного хранилища для Prometheus, Alertmanager и Grafana в kube-prometheus-stack.  
+> **Основная тема:** настройка постоянного хранилища для Prometheus, Alertmanager и Grafana в kube-prometheus-stack.  
 > **Смежные темы:** [PV и PVC в Kubernetes](../../../../Kubernetes/Storage/pv_and_pvc.md) — определения, типы провижининга, reclaim-политики; [TSDB](../../../concepts/tsdb.md) — как Prometheus использует диск (retention, метрики); [Local Path Provisioner](../../../../Kubernetes/Storage/local-path-provisioner.md) — динамическое создание локальных PV.
 
 ## Definitions

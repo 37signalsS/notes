@@ -158,3 +158,9 @@ builder.Services.AddOpenTelemetry()
 - В разработке
 
 **Рекомендация:** Комбинируйте eBPF для инфраструктурного уровня с SDK-инструментацией для бизнес-логики.
+
+## Смотрите также
+
+- [OpenTelemetry: Обзор](./opentelemetry_overview.md)
+- [Архитектура и сигналы](./architecture_signals.md)
+- [Протокол OTLP](./otlp_protocol.md)

@@ -97,6 +97,7 @@
 ## Дополнительная информация
 
 **Связанные документы:**
+
 - [Sealed Secrets: подробный обзор](../../Kubernetes/Security/sealed_secrets_overview.md)
 - [SOPS: установка и настройка](../../Security/Tools/sops_overview.md)
 - [Vault: архитектура и возможности](../../Vault/overview.md)

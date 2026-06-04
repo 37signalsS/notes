@@ -12,6 +12,8 @@
 * **Сжатие (Compaction):** Процесс, в ходе которого несколько блоков объединяются в один более крупный блок для оптимизации хранения и ускорения запросов.
 * **Индекс (Index):** Файл внутри каждого блока, содержащий структуры для быстрого поиска временных рядов по их лейблам.
 
+## Базовые концепции
+
 ### Зачем нужны TSDB
 
 Метрики нужно куда-то складывать и потом делать выборки. Эту задачу решают специализированные БД — Time Series Database.
@@ -33,8 +35,6 @@
 **Языки запросов:** Поскольку TSDB не используют SQL, они применяют собственные метрико-ориентированные языки запросов, оптимизированные для работы с временными рядами. Например, InfluxDB изначально имел SQL-подобные запросы, но на больших объёмах возникли проблемы с high availability.
 
 > **См. также:** [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние кардинальности на производительность TSDB.
-
-## Основные понятия
 
 ### Логика и архитектура хранения
 
@@ -233,13 +233,8 @@ prometheus \
 5. **Мониторьте churn rate:** Высокий churn rate опаснее статической кардинальности.
 6. **Рассмотрите внешнее хранилище:** Для долгосрочного хранения используйте [VictoriaMetrics](../../VictoriaMetrics/overview.md), [Thanos](../scaling/thanos_overview.md) или [Mimir](../../Mimir/mimir_overview.md).
 
-### Связанные темы
-
-* [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние на TSDB
-* [Типы метрик](./metric_types/overview.md) — хранение разных типов метрик
-* [PromQL](./promql/functions.md) — запросы к TSDB
-* [Configuration](../configuration.md) — настройки хранения
-* [promtool](../promtool_and_best_practices.md) — анализ TSDB
-* [Remote Read/Write](../scaling/remote_read_write.md) — внешние хранилища
-* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — альтернативная TSDB
-* [Thanos](../scaling/thanos_overview.md) — долгосрочное хранение
+> **См. также:**
+>
+> * [Лейблы и кардинальность](./labels_and_cardinality.md) — влияние на TSDB.
+> * [Remote Read/Write](../scaling/remote_read_write.md) — внешние хранилища.
+> * [promtool](../promtool_and_best_practices.md) — анализ TSDB.

@@ -13,6 +13,7 @@
 ### Принципы работы времени в Linux
 
 В Linux разделяют системное время (ядро) и время пользователя (приложения):
+
 1. **Ядро:** всегда отсчитывает время в формате Unix Timestamp (количество секунд с 01.01.1970 UTC).
 2. **Библиотеки (glibc, musl):** преобразуют системное время в человекочитаемый формат, используя:
    - Переменную окружения **`TZ`** (имеет наивысший приоритет).
@@ -32,11 +33,13 @@
 Самый чистый и переносимый способ. Требует наличия пакета `tzdata` в образе.
 
 #### Docker CLI
+
 ```bash
 docker run -d --name app -e TZ=Europe/Moscow nginx
 ```
 
 #### Docker Compose
+
 ```yaml
 services:
   web:
@@ -46,6 +49,7 @@ services:
 ```
 
 #### Kubernetes
+
 ```yaml
 spec:
   containers:
@@ -66,14 +70,16 @@ docker run -d \
   -v /etc/timezone:/etc/timezone:ro \
   nginx
 ```
-*   **Плюс:** полная синхронизация с хостом без изменения переменных.
-*   **Минус:** нарушает портативность (на другом хосте может быть другой пояс); требует наличия файлов на хосте.
+
+- **Плюс:** полная синхронизация с хостом без изменения переменных.
+- **Минус:** нарушает портативность (на другом хосте может быть другой пояс); требует наличия файлов на хосте.
 
 ### 3. Подготовка Dockerfile
 
 Если базовый образ (например, Alpine) не содержит базу часовых поясов, её нужно установить.
 
 #### Alpine Linux
+
 ```dockerfile
 FROM alpine:latest
 RUN apk add --no-cache tzdata
@@ -81,6 +87,7 @@ ENV TZ=Europe/Moscow
 ```
 
 #### Debian / Ubuntu
+
 ```dockerfile
 FROM ubuntu:latest
 RUN apt-get update && apt-get install -y tzdata && rm -rf /var/lib/apt/lists/*
@@ -99,6 +106,7 @@ ENV TZ=Europe/Moscow
 ## Дополнительная информация
 
 ### См. также
+
 - [Настройка времени в systemd](../../Linux/Core/systemd/time_synchronization.md) — управление временем на хосте.
 - [Инструкции Dockerfile](../Dockerfile/Instructions/runtime_execution.md) — работа с переменными окружения.
 - [Драйверы логирования Docker](../Docker_logs/docker_logging_drivers_overview.md) — обзор механизмов сбора логов.

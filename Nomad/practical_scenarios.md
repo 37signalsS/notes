@@ -1,41 +1,18 @@
-# HashiCorp Nomad: Практические сценарии
+# Nomad — практические сценарии
 
-## Definitions
+## Определения
 
-**Job** — основная единица развёртывания в Nomad, описываемая в HCL-файле. Определяет тип (service/batch/system), группы задач, ресурсы, ограничения и политики развёртывания.
+Основные единицы работы в Nomad (Job, Group, Task) и их описание вынесены в основной файл определений.
 
-**Task Group** — логическая группа задач, размещаемых на одном узле. Параметр `count` задаёт количество реплик.
+Подробности: [Nomad — определения](./definitions_and_concepts.md#определения).
 
-**Task** — минимальная единица работы с конкретным driver (docker, exec, qemu, java, raw_exec).
+## Основные концепции
 
----
+Концептуальная информация о типах задач и структуре job-файлов доступна в разделе базовых концепций.
 
-## Basic Concepts
+Подробности: [Nomad — типы jobs и структура файла](./definitions_and_concepts.md#типы-jobs).
 
-### Типы jobs
-
-| Тип | Назначение | Примеры |
-| :--- | :--- | :--- |
-| **service** | Долгоживущие процессы (daemon) | Веб-серверы, API, микросервисы |
-| **batch** | Одноразовые/периодические задачи | ETL, бэкапы, cron |
-| **system** | Запуск по одной копии на каждом узле | Мониторинг, логи, security agents |
-
-### Ключевые блоки job-файла
-
-- `job` — корневой блок: имя, датацентры, тип
-- `group` — группа задач, `count` реплик
-- `network` — порты, режимы (static/dynamic)
-- `service` — регистрация в Consul, health checks
-- `task` — driver, image/command, resources, vault/consul интеграция
-- `periodic` — cron-расписание для batch jobs
-- `constraint` — ограничения на размещение узлов
-- `resources` — CPU, memory, GPU
-- `vault` — политики для секретов
-- `consul` — параметры Consul Connect (sidecar)
-
----
-
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Развёртывание микросервисов
 
@@ -253,9 +230,9 @@ nomad system federation join dc1 \
   -address "https://nomad-dc1.example.com:4646"
 ```
 
----
+## Дополнительная информация
 
-## Additional Information
+См. также:
 
-Базовые определения и архитектура: [definitions_and_concepts.md](./definitions_and_concepts.md).
-Версии, production adoption, выбор Nomad vs Kubernetes: [advanced_topics.md](./advanced_topics.md).
+- [Определения и базовые концепции](./definitions_and_concepts.md)
+- [Продвинутые темы и версии](./advanced_topics.md)

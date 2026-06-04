@@ -2,7 +2,7 @@
 
 ## Определения
 
-В Angie, как и в его прародителе [Nginx](../Nginx/Core/nginx_overview.md), существует два основных типа логов, критически важных для отладки, [мониторинга](./angie_monitoring.md) и анализа безопасности:
+В Angie, как и в его прародителе [Nginx](../Nginx/Core/nginx_overview.md), существует два основных типа логов, критически важных для отладки, [мониторинга](./angie_monitoring/angie_monitoring_concepts.md) и анализа безопасности по протоколу **HTTP (HyperText Transfer Protocol)**:
 
 * **Лог доступа (`access_log`)**: Записывает информацию о каждом обработанном запросе клиента.
 * **Лог ошибок (`error_log`)**: Предназначен для записи информации о проблемах, возникших в процессе работы сервера.
@@ -32,7 +32,23 @@ location /static/ {
 error_log /var/log/angie/error.log warn;
 ```
 
-**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. Для обычной работы рекомендуется `warn` или `error`. Уровень `notice` полезен для отладки модулей (например, ACME), а `debug` — для глубокой диагностики.
+**Уровни детализации** (от самого критичного к самому подробному): `emerg`, `alert`, `crit`, `error`, `warn`, `notice`, `info`, `debug`. Для обычной работы рекомендуется `warn` или `error`. Уровень `notice` полезен для отладки модулей (например, **ACME (Automated Certificate Management Environment)**), а `debug` — для глубокой диагностики.
+
+### Логирование в модуле Stream (L4)
+
+Для проксирования трафика на уровне **L4 (Layer 4)** (**TCP (Transmission Control Protocol)** / **UDP (User Datagram Protocol)**) логирование настраивается в блоке `stream`. В отличие от HTTP, здесь фиксируются параметры сессии, а не отдельных запросов.
+
+```nginx
+stream {
+    log_format basic '$remote_addr [$time_local] '
+                     '$protocol $status $bytes_sent $bytes_received '
+                     '$session_time';
+
+    access_log /var/log/angie/stream-access.log basic;
+}
+```
+
+Подробнее см. в [L4 балансировка и проксирование](./l4_balancing_and_proxying.md).
 
 ## Практические сценарии
 
@@ -65,7 +81,7 @@ http {
 
 ### Логирование в формате JSON
 
-Для упрощения парсинга логов в автоматизированных системах ([ELK](../../ELK_Stack/elk_stack_overview.md), [Loki](../../Loki/loki_overview.md)) удобно использовать формат JSON.
+Для упрощения парсинга логов в автоматизированных системах (**ELK (Elasticsearch, Logstash, Kibana)**, [Loki](../../Loki/loki_overview.md)) удобно использовать формат **JSON (JavaScript Object Notation)**.
 
 ```nginx
 http {
@@ -127,7 +143,7 @@ access_log /var/log/angie/access.log extended buffer=32k flush=5s;
 
 #### Сжатие (`gzip`)
 
-Angie может сжимать логи "на лету" перед записью, экономя дисковое пространство ценой небольшой нагрузки на CPU.
+Angie может сжимать логи "на лету" перед записью, экономя дисковое пространство ценой небольшой нагрузки на **CPU (Central Processing Unit — центральный процессор)**.
 
 ```nginx
 # Сжатие автоматически включает буферизацию
@@ -146,6 +162,6 @@ open_log_file_cache max=1000 inactive=20s min_uses=2 valid=1m;
 
 ## См. также
 
-* [Мониторинг Angie](./angie_monitoring.md)
+* [Мониторинг Angie](./angie_monitoring/angie_monitoring_concepts.md)
 * [Руководство по безопасности Nginx — настройка логирования](../Nginx/Security/nginx_security_guide.md)
 * [Оптимизация производительности Nginx — буферизация логов](../Nginx/Performance/nginx_performance_tuning.md)

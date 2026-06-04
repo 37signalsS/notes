@@ -28,13 +28,22 @@
 
 ### systemd-resolved
 
-В современных дистрибутивах (Ubuntu 17.10+, RHEL 7+, Debian 10+) за разрешение имён отвечает `systemd-resolved` — локальный кэширующий резолвер. `/etc/resolv.conf` обычно является symlink на `/run/systemd/resolve/stub-resolv.conf` с `nameserver 127.0.0.53`. Базовые команды диагностики:
+В современных дистрибутивах (Ubuntu 17.10+, RHEL 7+, Debian 10+) за разрешение имён отвечает `systemd-resolved` — локальный кэширующий резолвер. Основная утилита управления — `resolvectl`.
+
+**Базовые команды:**
 
 ```bash
-resolvectl status           # Текущие DNS-серверы и домены
-resolvectl statistics       # Статистика кэша и запросов
-resolvectl flush-caches     # Очистка кэша
-resolvectl query example.com # Тестовый запрос через службу
+# Полный статус с DNS-серверами по каждому интерфейсу
+resolvectl status
+
+# Резолвинг имени через службу (показывает link и время)
+resolvectl query example.com
+
+# Сброс DNS-кэша
+resolvectl flush-caches
+
+# Статистика кэша и запросов
+resolvectl statistics
 ```
 
 Полная конфигурация — в [Конфигурация DNS-клиента](./configuration.md), теория разрешения имён — в [Порядок разрешения имён](./name_resolution.md).

@@ -1,12 +1,12 @@
 # Karma Deployment (манифест)
 
-## Definitions
+## Определения
 
 **Karma Deployment** — Kubernetes Deployment для развёртывания Karma (дашборд Alertmanager). Stateless-приложение, не требует постоянного хранилища (PVC), конфигурация монтируется из ConfigMap.
 
-> **См. также:** [Karma Dashboard](../../karma_dashboard.md) (SSoT) — общие возможности и архитектура
+> **См. также:** материал [Karma Dashboard](../../karma_dashboard.md) — общие возможности и архитектура
 
-## Basic Concepts
+## Основные концепции
 
 ### Характеристики пода Karma
 
@@ -30,7 +30,7 @@
 |---|---|---|
 | `--config.file` | `/etc/karma/config.yaml` | Путь к файлу конфигурации Karma |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Манифест Deployment
 
@@ -102,8 +102,8 @@ kubectl run test --rm -it --image=curlimages/curl --restart=Never \
 # Ожидаемый ответ: 200
 ```
 
-## Additional Information
+## Дополнительная информация
 
 - [Karma ConfigMap](./karma-config.md) — конфигурация Karma (URL Alertmanager, фильтрация меток)
 - [Сервисы](./services.md) — публикация Karma наружу через Service и Ingress
-- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma, Helm-установка
+- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma

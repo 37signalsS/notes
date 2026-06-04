@@ -12,7 +12,9 @@
 
 ### Потоковая репликация (Streaming Replication)
 
-Основной тип физической репликации в PostgreSQL. Записи **[журнала предзаписи (WAL)](../../Concepts/write_ahead_log.md)** передаются с основного сервера (Master) на ведомый (Standby) в реальном времени.
+Основной тип физической репликации в PostgreSQL. Записи **[журнала предзаписи (WAL)](../../Concepts/write_ahead_log.md)** передаются с основного сервера (Master/Primary) на ведомый (Standby/Replica) в реальном времени.
+
+Если реплика отстает от мастера (Replication Lag), пользователи могут читать устаревшие данные, а в случае аварийного переключения (Failover) возможна потеря транзакций, которые еще не были применены на реплике.
 
 #### Режимы работы Standby-сервера
 
@@ -51,35 +53,76 @@
 | `local` | Мастер подтверждает запись только в свой локальный WAL | Низкий (репликация фактически асинхронная) |
 | `off` | Полностью асинхронная фиксация | Минимальный (риск потери данных при сбое мастера) |
 
+---
+
 ## Практические сценарии
 
 ### Настройка потоковой репликации (Physical)
 
-**Шаг 1: Настройка основного сервера (Master)**
+**Шаг 1: Настройка основного сервера (Primary)**
 
-1. Создать пользователя с правами репликации:
-
-   ```sql
-   CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'password';
-   ```
-
-2. Разрешить подключение в `pg_hba.conf`:
+1. В `postgresql.conf` установить параметры для поддержки репликации:
 
    ```conf
-   host replication replicator <ip_реплики>/32 md5
+   wal_level = replica       # Базовый уровень для стриминговой репликации
+   max_wal_senders = 5       # Максимальное количество одновременных подключений реплик
+   wal_keep_size = 256MB     # Объем старых WAL, которые мастер хранит для реплик (PostgreSQL 13+)
    ```
 
-3. Установить в `postgresql.conf`: `wal_level = replica`.
+2. Создать пользователя с правами репликации:
 
-**Шаг 2: Настройка реплики (Standby)**
+   ```sql
+   CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'strongpassword';
+   ```
 
-1. Снять базовую копию данных (Base Backup):
+3. Разрешить подключение в `pg_hba.conf`:
+
+   ```conf
+   host replication replicator <replica_ip>/32 md5
+   ```
+
+**Шаг 2: Настройка реплики (Replica)**
+
+1. Удалить текущие данные (если есть) и снять базовую копию с мастера:
 
    ```bash
-   pg_basebackup -h <ip_мастера> -U replicator -D /var/lib/postgresql/data -Fp -Xs -R
+   pg_basebackup -h <primary_ip> -U replicator -D /var/lib/postgresql/data -P -Xs -R
    ```
 
-   Флаг `-R` автоматически создаст файл `standby.signal` и настроит параметры подключения.
+   - `-R` — автоматически создает файл `standby.signal` и прописывает параметры подключения (`primary_conninfo`) в `postgresql.auto.conf`.
+
+2. Запустить PostgreSQL на реплике. Она автоматически перейдет в режим Standby и начнет получать WAL от мастера.
+
+### Мониторинг состояния и отставания (Lag)
+
+**На основном сервере (Primary):**
+Проверка активных подключений реплик и расчет отставания в байтах.
+
+```sql
+SELECT 
+    client_addr, 
+    state, 
+    sent_lsn, 
+    write_lsn, 
+    flush_lsn, 
+    replay_lsn,
+    (sent_lsn - replay_lsn) AS replication_lag_bytes
+FROM pg_stat_replication;
+```
+
+**На реплике (Replica):**
+
+1. Проверка режима работы (должно быть `t` для реплики):
+
+   ```sql
+   SELECT pg_is_in_recovery();
+   ```
+
+2. Проверка задержки применения последней транзакции в секундах:
+
+   ```sql
+   SELECT now() - pg_last_xact_replay_timestamp() AS replication_delay;
+   ```
 
 ### Настройка логической репликации
 

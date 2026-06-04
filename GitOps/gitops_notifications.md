@@ -40,6 +40,7 @@
 Подробное руководство по конфигурации ArgoCD Notifications, включая примеры для Telegram, доступно в специализированном документе: **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
 
 Основные компоненты:
+
 - Использование контроллера `argocd-notifications-controller`.
 - Хранение конфигурации в ресурсах `ConfigMap` и `Secret`.
 - Подписка приложений на уведомления через аннотации в манифестах.
@@ -98,9 +99,11 @@ Flux использует `notification-controller` и ресурсы типов
 ## Дополнительная информация
 
 **Связанные документы:**
+
 - [ArgoCD Notifications: детальное руководство](./ArgoCD/argocd_notifications.md)
 - [Обзор Flux: архитектура и возможности](./flux.md)
 
 **Официальные ресурсы:**
+
 - [Документация ArgoCD Notifications](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
 - [Flux Notification Controller Documentation](https://fluxcd.io/flux/components/notification/)

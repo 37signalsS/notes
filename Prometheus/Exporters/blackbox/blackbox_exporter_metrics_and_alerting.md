@@ -1,12 +1,16 @@
 # Blackbox Exporter — Метрики и алертинг
 
-## Definitions
+## Определения
 
-**Метрики Blackbox Exporter** — временные ряды, генерируемые exporter при выполнении проверок (probes) целевых эндпоинтов. Результаты проверок доступны по пути `/probe`, метрики работы самого exporter — по `/metrics`.
+**Метрики Blackbox Exporter** — временные ряды, генерируемые экспортером при выполнении проверок (probes) целевых эндпоинтов. Результаты проверок доступны по пути `/probe`, метрики работы самого экспортера — по `/metrics`.
 
-> **См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
+**HTTP (HyperText Transfer Protocol)** — протокол передачи гипертекста.
+**SSL (Secure Sockets Layer)** — протокол защищенных сокетов.
+**TLS (Transport Layer Security)** — протокол защиты транспортного уровня.
 
-## Basic Concepts
+**См. также:** [Обзор и концепции](./blackbox_exporter_overview.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
+
+## Основные концепции
 
 ### Основные метрики
 
@@ -14,7 +18,7 @@
 | :--- | :--- | :--- |
 | `probe_success` | gauge | `1` если проверка успешна, `0` если нет |
 | `probe_duration_seconds` | gauge | Общее время выполнения проверки |
-| `probe_dns_lookup_time_seconds` | gauge | Время DNS-запроса |
+| `probe_dns_lookup_time_seconds` | gauge | Время DNS (Domain Name System) запроса |
 | `probe_connect_duration_seconds` | gauge | Время установления соединения (TCP/TLS) |
 | `probe_tls_version_info{version="TLSv1.3"}` | info | Информация о версии TLS |
 | `probe_ssl_earliest_cert_expiry` | gauge | Время истечения SSL-сертификата (epoch seconds) |
@@ -23,22 +27,22 @@
 | `probe_http_duration_seconds` | gauge | Время HTTP-запроса (по фазам: connect, tls, processing, transfer) |
 | `probe_http_content_length` | gauge | Размер тела ответа (Content-Length) |
 | `probe_http_redirects` | gauge | Количество редиректов |
-| `probe_ip_protocol` | gauge | Протокол IP (`4`/`6`) |
-| `probe_icmp_round_trip_seconds` | gauge | Время ICMP ping (RTT) |
-| `probe_tcp_connect_duration_seconds` | gauge | Время TCP-соединения |
-| `probe_icmp_duration_seconds` | gauge | Время ICMP-проверки (phase: resolve, rtt, etc.) |
-| `up` | gauge | `1` если Prometheus успешно скрейпил exporter, `0` если нет |
+| `probe_ip_protocol` | gauge | Протокол IP (Internet Protocol) (`4`/`6`) |
+| `probe_icmp_round_trip_seconds` | gauge | Время ICMP (Internet Control Message Protocol) ping (RTT — Round Trip Time) |
+| `probe_tcp_connect_duration_seconds` | gauge | Время TCP (Transmission Control Protocol) соединения |
+| `probe_icmp_duration_seconds` | gauge | Время ICMP-проверки (фазы: resolve, rtt и др.) |
+| `up` | gauge | `1` если Prometheus успешно скрейпил экспортер, `0` если нет |
 
 ### Лейблы метрик
 
 | Лейбл | Описание | Пример |
 | :--- | :--- | :--- |
 | `instance` | Адрес Blackbox Exporter | `blackbox:9115` |
-| `job` | Имя job в Prometheus | `blackbox-http` |
+| `job` | Имя задания (job) в Prometheus | `blackbox-http` |
 | `target` | Целевой эндпоинт (после relabeling → `instance`) | `https://example.com` |
 | `module` | Использованный модуль | `http_2xx`, `tcp_connect`, `icmp` |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Алерт: эндпоинт недоступен
 
@@ -105,7 +109,7 @@
     description: "Получен HTTP статус-код {{ $value }}"
 ```
 
-### Алерт: недоступность самого exporter
+### Алерт: недоступность самого экспортера
 
 ```yaml
 - alert: BlackboxExporterDown
@@ -134,6 +138,10 @@ groups:
         expr: histogram_quantile(0.95, sum(rate(probe_duration_seconds_bucket[5m])) by (le, job))
 ```
 
-## Additional Information
+## Дополнительная информация
 
-**Связанные темы:** [Обзор и концепции](./blackbox_exporter_overview.md), [Установка и настройка](./blackbox_exporter_installation_and_setup.md), [Конфигурация модулей](./blackbox_exporter_modules_configuration.md), [Alertmanager](../../alertmanager.md), [Правила оповещений](../../rules.md), [CRD Probe](../../kubernetes/operator/crd/probe.md).
+**См. также:**
+
+- [Конфигурация модулей](./blackbox_exporter_modules_configuration.md)
+- [Alertmanager](../../alertmanager.md)
+- [Правила оповещений](../../rules.md)

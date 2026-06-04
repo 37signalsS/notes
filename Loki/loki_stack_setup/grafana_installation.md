@@ -1,64 +1,33 @@
-# Установка Grafana для визуализации логов Loki
+# Настройка Grafana для визуализации логов Loki
 
 ## Определения
 
-**Grafana** — платформа визуализации и анализа данных из Loki, Prometheus, Mimir и других источников. Grafana не хранит данные, только запрашивает и отображает их.
+**Grafana** — платформа визуализации и анализа данных, используемая в стеке Loki для выполнения запросов LogQL и отображения логов. Она выступает интерфейсом для взаимодействия с [Loki](../loki_overview.md).
 
-> **⚠️ Важно:** Для полного руководства по установке Grafana в Kubernetes см. [Установка Grafana через Helm](../../Grafana/Installation/grafana_helm_installation.md). Данный файл описывает специфику интеграции с Loki.
-
-**Текущая версия (апрель 2026):** Grafana 12.4.2 (LTS — 11.6.x)
+> **Первоисточник:** Полное руководство по развертыванию Grafana в Kubernetes см. в файле **[Установка Grafana через Helm](../../Grafana/Installation/grafana_helm_installation.md)**. Данный документ описывает только специфику интеграции с Loki.
 
 ## Основные концепции
 
-### Миграция Helm-репозитория (январь 2026)
-
-Официальный репозиторий `grafana https://grafana.github.io/helm-charts` **более не обновляется**.
-
-**Новый репозиторий:**
-
-```bash
-helm repo add grafana-community https://grafana-community.github.io/helm-charts
-helm repo update
-```
-
 ### Архитектура интеграции Grafana + Loki
 
-| Компонент | Назначение | URL |
+| Компонент | Назначение | URL в кластере |
 | :--- | :--- | :--- |
-| **Loki Gateway** | HTTP-шлюз для запросов к Loki | `http://loki-gateway.logging.svc.cluster.local:80` |
-| **Loki Querier** | Выполнение запросов LogQL | Внутренний сервис кластера |
-| **Grafana** | Визуализация через плагин Loki | Подключается к Loki Gateway |
+| **Loki Gateway** | Точка входа для запросов (Nginx/Gateway) | `http://loki-gateway.logging.svc.cluster.local:80` |
+| **Pluggable Datasource** | Плагин Grafana для работы с LogQL | Настраивается через `values.yaml` или UI |
+| **Explore Mode** | Интерфейс для оперативного поиска по логам | Встроен в Grafana |
 
-**Поток данных:** `Grafana (Explore/Dashboard)` → `LogQL запрос` → `Loki Gateway` → `Querier/Ingester` → `Результат`
+**Поток данных:**
+`Grafana UI` → `LogQL запрос` → `Loki Gateway` → `Loki Querier` → `Результат визуализации`
 
 ## Практические сценарии
 
-### Сценарий 1: Установка Grafana с преднастроенным datasource Loki
+### Сценарий 1: Автоматическая настройка (Provisioning)
 
-**Файл `grafana-values.yaml` для Loki-стека:**
+Рекомендуемый способ — конфигурация источника данных через `values.yaml` при установке Grafana.
+
+**Пример `values.yaml` с поддержкой Loki и корреляцией с Tempo:**
 
 ```yaml
-# grafana-values.yaml
-ingress:
-  enabled: true
-  ingressClassName: nginx
-  hosts:
-    - host: grafana.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - hosts:
-        - grafana.example.com
-      secretName: grafana-tls
-
-# Учетные данные через Kubernetes Secret
-admin:
-  existingSecret: grafana-admin-secret
-  userKey: admin-user
-  passwordKey: admin-password
-
-# Автоматическая настройка datasource Loki
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -71,107 +40,61 @@ datasources:
         editable: false
         jsonData:
           maxLines: 1000
+          # Настройка Derived Fields для перехода к трейсам
           derivedFields:
             - name: TraceID
               matcherRegex: 'trace_id=(\w+)'
               url: '$${__value.raw}'
               datasourceUid: tempo
-
-# Персистентность
-persistence:
-  enabled: true
-  size: 10Gi
-  storageClassName: standard
-
-# Загрузка дашбордов через sidecar
-sidecar:
-  dashboards:
-    enabled: true
-    label: grafana_dashboard
-    labelValue: "1"
-  datasources:
-    enabled: true
-    label: grafana_datasource
-```
-
-**Создание секрета:**
-
-```bash
-kubectl create secret generic grafana-admin-secret \
-  --from-literal=admin-user="admin" \
-  --from-literal=admin-password="$(openssl rand -base64 20)" \
-  -n logging
-```
-
-**Установка:**
-
-```bash
-helm upgrade --install grafana grafana-community/grafana \
-  --namespace logging \
-  --create-namespace \
-  -f grafana-values.yaml \
-  --wait --atomic
-```
-
-### Сценарий 2: Ручное добавление datasource Loki
-
-Если datasource не настроен через `values.yaml`:
-
-1. Перейдите в **Connections** → **Data sources** → **Add data source** → **Loki**
-2. Укажите URL:
-   - Один namespace: `http://loki-gateway.logging.svc.cluster.local:80`
-   - Разные namespaces: `http://loki.loki.svc.cluster.local:3100`
-3. Нажмите **Save & Test**
-
-### Сценарий 3: Настройка Derived Fields для корреляции с Tempo
-
-Для перехода от логов к трассировкам извлеките `trace_id` из логов:
-
-```yaml
-datasources:
-  datasources.yaml:
-    apiVersion: 1
-    datasources:
-      - name: Loki
-        type: loki
-        access: proxy
-        url: http://loki-gateway.logging.svc.cluster.local:80
-        jsonData:
-          derivedFields:
-            - name: TraceID
-              matcherRegex: 'trace_id=([a-f0-9]{32})'
-              url: '$${__value.raw}'
-              datasourceUid: tempo
               matcherType: Label
 ```
 
-### Проверка установки
+**Установка с использованием актуального репозитория:**
 
 ```bash
-# Проверка пода
-kubectl get pods -n logging -l app.kubernetes.io/name=grafana
+# Добавление репозитория (если не добавлен)
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
 
-# Проверка Ingress
-kubectl get ingress -n logging -l app.kubernetes.io/name=grafana
-
-# Логи Grafana
-kubectl logs -n logging -l app.kubernetes.io/name=grafana -f
+# Установка
+helm upgrade --install grafana grafana-community/grafana \
+  --namespace logging \
+  -f grafana-values.yaml
 ```
 
-### Troubleshooting
+### Сценарий 2: Ручное добавление источника данных
 
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **Datasource не подключается** | Неправильный URL | Проверьте `kubectl get svc -n logging \| grep loki-gateway` |
-| **404 при доступе** | Неправильный `root_url` | Добавьте `grafana.ini.server.root_url` в `values.yaml` |
-| **Дашборды не загружаются** | Sidecar не находит ConfigMap | Проверьте метки: `kubectl get configmap -l grafana_dashboard=1` |
+Если Grafana уже установлена:
+
+1. Перейдите в **Connections** → **Data sources**.
+2. Нажмите **Add data source** и выберите **Loki**.
+3. В поле **URL** укажите адрес шлюза: `http://loki-gateway.logging.svc.cluster.local:80`.
+4. Нажмите **Save & Test**. Если статус «Data source is working», настройка завершена.
+
+### Сценарий 3: Настройка корреляции логов и трассировок (Derived Fields)
+
+Для перехода из строки лога к соответствующей трассировке в Tempo необходимо настроить извлечение `trace_id`.
+
+**Параметры регулярного выражения:**
+
+- Для стандартных JSON-логов: `trace_id=([a-f0-9]{32})`
+- Для logfmt: `trace_id=(\w+)`
+
+После настройки в интерфейсе Grafana (Explore) при нажатии на `trace_id` появится ссылка для перехода в datasource Tempo.
 
 ## Дополнительная информация
 
-| Ресурс | Описание |
-| :--- | :--- |
-| [Полное руководство по установке](../../Grafana/Installation/grafana_helm_installation.md) | Production checklist, troubleshooting, HA |
-| [Обзор Loki](../loki_overview.md) | Архитектура, LogQL |
-| [Примеры LogQL](logql_examples.md) | Запросы для анализа логов |
-| [Провиженинг Grafana](../../Grafana/grafana_provisioning.md) | Автоматическая настройка дашбордов |
-| [Установка Loki](loki_installation.md) | Установка бэкенда Loki |
+### Устранение неполадок
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Data source connected, but no logs** | Ошибки в лейблах или отсутствие логов | Проверьте наличие данных в Loki через `logcli` |
+| **Connection refused** | Неверный URL или порт шлюза | Проверьте сервис: `kubectl get svc -n logging` |
+| **Derived field link not visible** | Регулярное выражение не совпадает | Проверьте формат логов и `matcherRegex` |
+
+### См. также
+
+- **[Примеры LogQL](logql_examples.md)** — составление запросов для дашбордов
+- **[Установка Loki](loki_installation.md)** — развертывание бэкенда
+- **[Провиженинг Grafana](../../Grafana/grafana_provisioning.md)** — детали автоматизации дашбордов
+- **[Установка Grafana через Helm](../../Grafana/Installation/grafana_helm_installation.md)** — базовый SSoT по установке

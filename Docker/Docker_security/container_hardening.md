@@ -14,9 +14,9 @@
 
 Безопасность и изоляция контейнеров в Linux строятся на трех фундаментальных механизмах ядра:
 
-1.  **Namespaces (Пространства имен)** — обеспечивают логическую изоляцию (сеть, процессы, монтирования). См. подробнее: **[Изоляция контейнеров: Namespaces и Cgroups](../../Docker/Concepts/linux_isolation.md)**.
-2.  **Cgroups (Контрольные группы)** — ограничивают потребление ресурсов (CPU, RAM, I/O).
-3.  **Capabilities (Привилегии)** — разделяют полномочия `root` на мелкие части. См. подробнее: **[Linux Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)**.
+1. **Namespaces (Пространства имен)** — обеспечивают логическую изоляцию (сеть, процессы, монтирования). См. подробнее: **[Изоляция контейнеров: Namespaces и Cgroups](../../Docker/Concepts/linux_isolation.md)**.
+2. **Cgroups (Контрольные группы)** — ограничивают потребление ресурсов (CPU, RAM, I/O).
+3. **Capabilities (Привилегии)** — разделяют полномочия `root` на мелкие части. См. подробнее: **[Linux Capabilities](../../Linux/Security/Mechanisms/Capabilities.md)**.
 
 ### Риски общего ядра хоста
 
@@ -28,8 +28,9 @@
 
 По умолчанию процессы в контейнере работают от `root`. Это создает риск: при побеге злоумышленник получает root-права на хосте.
 
-*   **Решение:** Используйте инструкцию `USER` в `Dockerfile` (см. **[Безопасность в Dockerfile](../Dockerfile/Docker_best_practices/security.md)**).
-*   **Runtime-флаг:** Можно принудительно указать UID при запуске:
+* **Решение:** Используйте инструкцию `USER` в `Dockerfile` (см. **[Безопасность в Dockerfile](../Dockerfile/Docker_best_practices/security.md)**).
+* **Runtime-флаг:** Можно принудительно указать UID при запуске:
+
     ```bash
     docker run -u 1001 my-image
     ```
@@ -38,12 +39,14 @@
 
 Docker по умолчанию отключает опасные привилегии, но оставляет некоторые (например, `NET_RAW`).
 
-*   **Лучшая практика:** Отключите все возможности и добавьте только необходимые.
+* **Лучшая практика:** Отключите все возможности и добавьте только необходимые.
+
     ```bash
     # Отключить всё, разрешить только биндинг портов ниже 1024
     docker run --cap-drop=ALL --cap-add=NET_BIND_SERVICE my-image
     ```
-*   **Запрет `--privileged`:** Этот флаг отключает почти всю изоляцию (Namespaces, Seccomp, Capabilities), предоставляя контейнеру полный доступ к устройствам хоста. **Никогда не используйте его в production.**
+
+* **Запрет `--privileged`:** Этот флаг отключает почти всю изоляцию (Namespaces, Seccomp, Capabilities), предоставляя контейнеру полный доступ к устройствам хоста. **Никогда не используйте его в production.**
 
 ### 3. Запрет повышения привилегий
 
@@ -65,8 +68,9 @@ docker run \
   --pids-limit 100 \
   my-image
 ```
-*   `pids-limit` — защита от fork-бомб.
-*   `ulimit nofile` — ограничение количества открытых файлов.
+
+* `pids-limit` — защита от fork-бомб.
+* `ulimit nofile` — ограничение количества открытых файлов.
 
 ### 5. Файловая система только для чтения
 
@@ -75,15 +79,17 @@ docker run \
 ```bash
 docker run --read-only --tmpfs /tmp:rw,noexec,nosuid my-image
 ```
-*   `--tmpfs` позволяет приложению писать во временную память, не затрагивая образ.
-*   `noexec` запрещает выполнение файлов из `/tmp`.
+
+* `--tmpfs` позволяет приложению писать во временную память, не затрагивая образ.
+* `noexec` запрещает выполнение файлов из `/tmp`.
 
 ### 6. Управление доступом к томам
 
 При использовании **bind mounts** файлы, созданные root-контейнером, принадлежат root-хосту.
 
-*   **Рекомендация:** Используйте **Docker Volumes** вместо bind mounts там, где это возможно. Docker сам управляет правами доступа в своей директории.
-*   Если bind mount необходим, монтируйте его в режиме `ro` (read-only):
+* **Рекомендация:** Используйте **Docker Volumes** вместо bind mounts там, где это возможно. Docker сам управляет правами доступа в своей директории.
+* Если bind mount необходим, монтируйте его в режиме `ro` (read-only):
+
     ```bash
     docker run -v /host/data:/app/data:ro my-image
     ```
@@ -97,17 +103,20 @@ docker run --read-only --tmpfs /tmp:rw,noexec,nosuid my-image
 ### Аудит и проверка конфигурации
 
 Для проверки текущих настроек безопасности запущенного контейнера используйте:
+
 ```bash
 docker inspect <container_id> --format='{{json .HostConfig.SecurityOpt}}'
 ```
 
 ### Связанные документы
-*   **[Защита хоста и демона](./host_daemon_hardening.md)** — Rootless режим и userns-remap.
-*   **[Обзор безопасности Docker](./overview.md)** — общая архитектура угроз.
-*   **[Мониторинг в Runtime](./runtime_monitoring.md)** — обнаружение атак через Falco и eBPF.
-*   **[Механизмы безопасности Linux](../../Linux/Security/Linux_Security_Mechanisms_Overview.md)** — Seccomp, AppArmor, SELinux.
+
+* **[Защита хоста и демона](./host_daemon_hardening.md)** — Rootless режим и userns-remap.
+* **[Обзор безопасности Docker](./overview.md)** — общая архитектура угроз.
+* **[Мониторинг в Runtime](./runtime_monitoring.md)** — обнаружение атак через Falco и eBPF.
+* **[Механизмы безопасности Linux](../../Linux/Security/Linux_Security_Mechanisms_Overview.md)** — Seccomp, AppArmor, SELinux.
 
 ### Стандарты и инструменты
-*   **CIS Docker Benchmark** — отраслевой стандарт безопасности Docker.
-*   **[Docker Bench for Security](https://github.com/docker/docker-bench-security)** — скрипт автоматической проверки по CIS Benchmark.
-*   **[Trivy](./vulnerability_scanning.md)** — сканирование образов на уязвимости (CVE).
+
+* **CIS Docker Benchmark** — отраслевой стандарт безопасности Docker.
+* **[Docker Bench for Security](https://github.com/docker/docker-bench-security)** — скрипт автоматической проверки по CIS Benchmark.
+* **[Trivy](./vulnerability_scanning.md)** — сканирование образов на уязвимости (CVE).

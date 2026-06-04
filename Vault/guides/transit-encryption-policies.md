@@ -1,10 +1,10 @@
-# Transit Encryption Policies
+# Политики Transit Encryption в Vault
 
 ## Определения
 
 **Политика доступа к ключам шифрования** — набор правил в Vault, определяющий, кто (пользователь, приложение) и какие криптографические операции может выполнять с помощью движка секретов [`transit`](../concepts.md#движки-секретов-secret-engines).
 
-Цель — реализовать принцип наименьших привилегий и разделение обязанностей для "шифрования как сервиса" (encryption-as-a-service).
+Цель — реализовать принцип наименьших привилегий и разделение обязанностей для модели "шифрование как сервис" (encryption-as-a-service).
 
 ## Основные концепции
 
@@ -17,7 +17,7 @@
 * **Невозможность извлечения ключей:** ключи по умолчанию создаются как неизвлекаемые (`exportable=false`).
 * **Аудит:** все криптографические операции протоколируются через [устройства аудита](../concepts.md#аудит-audit-devices).
 
-### Пути и операции
+### Пути и операции API (Application Programming Interface)
 
 Политики строятся вокруг путей API движка `transit`:
 
@@ -31,7 +31,7 @@
 | `transit/verify/<name>` | Проверка подписи | `update` |
 | `transit/keys/<name>/rotate` | Ротация ключа | `update` |
 
-Принципы Zero Trust, реализуемые Transit engine, описаны в [подходе Zero Trust к управлению секретами](../zero_trust.md).
+Принципы Zero Trust (нулевое доверие), реализуемые Transit engine, описаны в [подходе Zero Trust к управлению секретами](../zero_trust.md).
 
 ## Практические сценарии
 
@@ -43,11 +43,11 @@
 **Задача:** шифровать и расшифровывать данные.
 
 ```hcl
-# Политика 'app-payments-policy.hcl'
+# Политика в формате HCL (HashiCorp Configuration Language)
 
 # Разрешить шифрование с использованием ключа 'payments'
 path "transit/encrypt/payments" {
-  capabilities = ["update"] # 'update' для POST-запросов
+  capabilities = ["update"] # 'update' для POST-запросов (отправка данных)
 }
 
 # Разрешить расшифровку с использованием ключа 'payments'
@@ -87,4 +87,10 @@ path "transit/decrypt/payments" {
 
 ## Дополнительная информация
 
-Для безопасной передачи зашифрованного значения используется механизм [Response Wrapping](../concepts.md#response-wrapping) — Vault помещает ответ в одноразовый токен, передаваемый получателю. Настройка доступа для приложений выполняется через [аутентификацию AppRole](./vault_auth_approle.md). Полное руководство по возможностям Transit engine доступно в [официальной документации HashiCorp](https://developer.hashicorp.com/vault/docs/secrets/transit).
+Для безопасной передачи зашифрованного значения используется механизм [Response Wrapping](../concepts.md#response-wrapping) — Vault помещает ответ в одноразовый токен, передаваемый получателю. Настройка доступа для приложений выполняется через [аутентификацию AppRole](./vault_auth_approle.md).
+
+**См. также:**
+
+* [Концепции Vault](../concepts.md)
+* [Подход Zero Trust в Vault](../zero_trust.md)
+* [Аутентификация AppRole](./vault_auth_approle.md)

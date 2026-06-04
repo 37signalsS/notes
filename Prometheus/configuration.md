@@ -1,17 +1,17 @@
-# Prometheus Configuration
+# Конфигурация Prometheus
 
-## Definitions
+## Определения
 
-**Конфигурация Prometheus** — набор параметров, определяющих сбор, хранение и обработку метрик, а также управление оповещениями. Состоит из:
+**Конфигурация Prometheus** — совокупность параметров, определяющих поведение сервера при сборе, хранении и обработке метрик, а также при взаимодействии с внешними системами. Настройка осуществляется двумя способами:
 
-1. **`prometheus.yml`** — основной YAML-файл: цели сбора (scrape targets), правила (rules), интеграция с Alertmanager и LTS.
-2. **CLI-флаги** — параметры запуска процесса: путь к TSDB, retention, веб-интерфейс, лимиты запросов.
+1. **`prometheus.yml`** — основной конфигурационный файл в формате YAML. Определяет задания сбора (scrape jobs), правила (rules), интеграцию с Alertmanager и удалёнными хранилищами (LTS).
+2. **CLI-флаги** — параметры командной строки при запуске исполняемого файла. Определяют настройки TSDB (путь, время хранения), параметры веб-интерфейса, ограничения ресурсов и уровни логирования.
 
-> **См. также:** [Prometheus overview](./overview.md), [TSDB](./concepts/tsdb.md), [Alertmanager](./alertmanager.md)
+> **См. также:** [Обзор Prometheus](./overview.md), [TSDB](./concepts/tsdb.md), [Alertmanager](./alertmanager.md)
 
-## Basic Concepts
+## Основные концепции
 
-### Структура `prometheus.yml`
+### Структура файла prometheus.yml
 
 ```yaml
 global:
@@ -42,28 +42,34 @@ remote_read:
 
 | Блок | Назначение |
 |---|---|
-| `global` | Параметры по умолчанию: `scrape_interval`, `evaluation_interval`, `external_labels` |
-| `rule_files` | Пути к [правилам записи и алертинга](./rules.md) (поддержка glob) |
-| `scrape_configs` | Задания (jobs) сбора метрик, включая [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
-| `alerting` | Настройки отправки алертов в [Alertmanager](./alertmanager.md) |
-| `remote_write` / `remote_read` | Интеграция с LTS ([Mimir](../Mimir/mimir_overview.md), [VictoriaMetrics](../VictoriaMetrics/overview.md)). Подробнее: [Remote Read/Write](./scaling/remote_read_write.md) |
+| `global` | Глобальные параметры по умолчанию: `scrape_interval` (интервал опроса), `evaluation_interval` (интервал вычисления правил), `external_labels` (метки для внешних систем) |
+| `rule_files` | Пути к файлам с [правилами записи и алертинга](./rules.md). Поддерживаются glob-шаблоны |
+| `scrape_configs` | Конфигурация заданий (jobs) для сбора метрик. Включает статические цели и механизмы [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
+| `alerting` | Настройки взаимодействия с [Alertmanager](./alertmanager.md) для отправки оповещений |
+| `remote_write` / `remote_read` | Интеграция с системами долгосрочного хранения (LTS), такими как [Mimir](../Mimir/mimir_overview.md) или [VictoriaMetrics](../VictoriaMetrics/overview.md). Подробнее: [Remote Read/Write](./scaling/remote_read_write.md) |
 
-### Флаги запуска
+### Флаги запуска (CLI-флаги)
 
-| Флаг | Default | Описание |
+Параметры запуска процесса Prometheus. Изменения требуют перезапуска сервиса.
+
+| Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--config.file` | `prometheus.yml` | Путь к конфигурационному файлу |
-| `--web.listen-address` | `0.0.0.0:9090` | Адрес UI и [API](./prometheus_api.md) |
-| `--storage.tsdb.path` | `data/` | Путь к [TSDB](./concepts/tsdb.md) |
-| `--storage.tsdb.retention.time` | `15d` | Срок хранения данных (`30d`, `2y`) |
-| `--storage.tsdb.retention.size` | `0B` | Макс. размер хранилища (`50GB`) |
-| `--query.timeout` | `2m` | Таймаут PromQL-запроса |
-| `--query.max-concurrency` | `20` | Макс. количество одновременных запросов |
-| `--log.level` | `info` | Уровень логирования (`debug`, `info`, `warn`, `error`) |
+| `--config.file` | `prometheus.yml` | Путь к основному файлу конфигурации |
+| `--web.listen-address` | `0.0.0.0:9090` | Адрес и порт веб-интерфейса и [API](./prometheus_api.md) |
+| `--storage.tsdb.path` | `data/` | Директория для хранения данных [TSDB](./concepts/tsdb.md) |
+| `--storage.tsdb.retention.time` | `15d` | Срок хранения данных в TSDB (например, `30d`, `2y`) |
+| `--storage.tsdb.retention.size` | `0B` | Максимальный размер хранилища (например, `50GB`). 0B — без ограничений |
+| `--query.timeout` | `2m` | Максимальное время выполнения PromQL-запроса |
+| `--query.max-concurrency` | `20` | Максимальное количество одновременно выполняемых запросов |
+| `--log.level` | `info` | Уровень детализации логов (`debug`, `info`, `warn`, `error`) |
 
-## Practical Scenarios
+> **Примечание:** Расширенные параметры настройки блоков и WAL см. в разделе [Внутреннее устройство TSDB](./concepts/tsdb.md#настройка-retention-period).
 
-### Базовая конфигурация
+## Практические сценарии
+
+### Базовая настройка сбора метрик
+
+Пример конфигурации для сбора метрик с самого Prometheus и системного экспортера:
 
 ```yaml
 global:
@@ -79,61 +85,74 @@ scrape_configs:
       - targets: ["localhost:9100"]
 ```
 
-**См. также:** [Автоматизация мониторинга 100+ ВМ в день](./service_discovery_and_relabeling.md#автоматизация-мониторинга-большого-количества-вм-100-в-день).
+> **См. также:** [Автоматизация мониторинга большого количества ВМ](./service_discovery_and_relabeling.md#автоматизация-мониторинга-большого-количества-вм-100-в-день) через Service Discovery.
 
-### Retention (хранение данных)
+### Управление хранением данных (Retention)
 
-| Параметр | Default | Описание |
+Параметры Retention определяют, как долго и в каком объеме хранятся данные на диске.
+
+| Параметр | По умолчанию | Описание |
 |---|---|---|
-| `--storage.tsdb.retention.time` | `15d` | Срок хранения данных |
-| `--storage.tsdb.retention.size` | `0B` | Макс. размер (0 = без ограничений) |
+| `--storage.tsdb.retention.time` | `15d` | Удаление данных старше указанного срока |
+| `--storage.tsdb.retention.size` | `0B` | Удаление старых данных при достижении указанного объема TSDB |
 
-**Способы настройки:**
+**Примеры настройки:**
 
 | Метод | Пример |
 |---|---|
-| CLI | `prometheus --storage.tsdb.retention.time=30d` |
+| Командная строка | `prometheus --storage.tsdb.retention.time=30d` |
 | Docker Compose | `command: ['--storage.tsdb.retention.time=7d', '--storage.tsdb.retention.size=10GB']` |
-| CI/CD | Короткий retention (`12h`–`24h`) — актуальность важнее долгосрочного хранения |
+| Среды разработки/CI | Короткий retention (`12h`–`24h`) для экономии ресурсов |
 
-**Проверка:** Status → Command-Line Flags → `storage.tsdb.retention.time`
+**Проверка текущих настроек:** в веб-интерфейсе **Status → Command-Line Flags**.
 
-**Зачем настраивать:**
+### Параметры блока scrape_configs
 
-- Оптимизация дискового пространства
-- Производительность запросов (длительное хранение замедляет PromQL)
-
-### Параметры `scrape_configs`
+Индивидуальная настройка заданий сбора:
 
 | Параметр | Назначение |
 |---|---|
-| `scrape_interval` | Частота опроса (переопределяет global) |
-| `scrape_timeout` | Таймаут HTTP-запроса (< `scrape_interval`) |
-| `metrics_path` | Путь к метрикам (default: `/metrics`) |
-| `scheme` | `http` или `https` |
-| `honor_labels` | `true` — сохранять метки цели при конфликте с внешними |
-| `relabel_configs` | Модификация меток **до** сбора. См. [Service Discovery и Relabeling](./service_discovery_and_relabeling.md) |
-| `metric_relabel_configs` | Модификация меток **после** сбора |
+| `scrape_interval` | Интервал опроса целей этого задания (переопределяет `global.scrape_interval`) |
+| `scrape_timeout` | Таймаут ожидания ответа (должен быть меньше `scrape_interval`) |
+| `metrics_path` | Путь к эндпоинту с метриками (по умолчанию `/metrics`) |
+| `scheme` | Протокол взаимодействия (`http` или `https`) |
+| `honor_labels` | `true` — сохранять метки из приложения при конфликте с метками Prometheus |
+| `relabel_configs` | Модификация меток **до** выполнения сбора. См. [Relabeling](./service_discovery_and_relabeling.md) |
+| `metric_relabel_configs` | Модификация меток **после** выполнения сбора (перед записью в TSDB) |
 
-## Additional Information
+## Дополнительная информация
 
-### Проверка конфигурации
+### Валидация конфигурации
+
+Используйте утилиту `promtool` для проверки синтаксиса перед применением настроек:
 
 ```bash
-promtool check config /path/to/prometheus.yml
-promtool check rules /path/to/rules.yml
+# Проверка основного файла
+promtool check config /etc/prometheus/prometheus.yml
+
+# Проверка файлов правил
+promtool check rules /etc/prometheus/rules.yml
 ```
 
 Подробнее: [promtool и лучшие практики](./promtool_and_best_practices.md)
 
-### Перезагрузка конфигурации
+### Перезагрузка без остановки (Hot Reload)
 
-```bash
-# systemd
-sudo systemctl reload prometheus
+Prometheus поддерживает обновление конфигурации (кроме CLI-флагов) без перезапуска процесса.
 
-# HTTP
-curl -X POST http://localhost:9090/-/reload
-```
+**Способы перезагрузки:**
 
-«Горячая» перезагрузка без прерывания сбора метрик.
+1. **Сигналы ОС (systemd):**
+
+   ```bash
+   sudo systemctl reload prometheus
+   ```
+
+2. **HTTP API:**
+   Требуется запуск с флагом `--web.enable-lifecycle`.
+
+   ```bash
+   curl -X POST http://localhost:9090/-/reload
+   ```
+
+«Горячая» перезагрузка позволяет избежать пропусков в сборе метрик (scrape gaps) при изменении конфигурации.

@@ -4,7 +4,7 @@
 
 **Alertmanager в Docker Stack** — компонент стека мониторинга, развёртываемый как Docker-контейнер. Конфигурация монтируется через bind mount из хостовой директории `./alertmanager/` в контейнер.
 
-> **См. также:** [Alertmanager — полная конфигурация](../../alertmanager.md) (SSoT), [Docker Compose](./docker-compose_config.md).
+> **См. также:** [Alertmanager — полная конфигурация](../../alertmanager.md), [Docker Compose](./docker-compose_config.md).
 
 ## Basic Concepts
 
@@ -74,7 +74,7 @@ receivers:
         send_resolved: true
 ```
 
-> **Структура конфига:** `global` → `route` → `receivers` — описана в [Alertmanager SSoT](../../alertmanager.md#конфигурация-alertmanageryml).
+> **Структура конфига:** `global` → `route` → `receivers` — описана в [Конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml).
 
 ### Docker Compose-секция Alertmanager
 
@@ -184,7 +184,7 @@ alertmanager:
 
 ### Связанные темы
 
-* [Alertmanager SSoT](../../alertmanager.md) — полная документация: маршрутизация, inhibit_rules, silencing
+* [Alertmanager](../../alertmanager.md) — полная документация: маршрутизация, inhibit_rules, silencing
 * [Docker Compose конфигурация](./docker-compose_config.md) — полный стек мониторинга
 * [Prometheus для Docker](./prometheus_config.md) — настройка scrape-целей
 * [Установка Alertmanager](../alertmanager_installation.md) — бинарная установка, systemd

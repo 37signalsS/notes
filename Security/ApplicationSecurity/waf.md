@@ -1,18 +1,18 @@
 # Web Application Firewall (WAF)
 
-## Definitions
+## Определения
 
-**WAF (Web Application Firewall)** — межсетевой экран прикладного уровня (L7), который фильтрует, мониторит и блокирует HTTP/HTTPS-трафик на основе набора правил, защищая веб-приложения от уязвимостей. Работает на уровне приложения модели OSI, анализируя содержимое запросов и ответов.
+**WAF (Web Application Firewall)** — межсетевой экран прикладного уровня (L7), который фильтрует, мониторит и блокирует HTTP/HTTPS-трафик на основе набора правил, защищая веб-приложения от уязвимостей. Работает на уровне приложения модели OSI (Open Systems Interconnection), анализируя содержимое запросов и ответов.
 
 См. также обзор [DDoS-атак и многоуровневой защиты](./ddos_overview.md), где WAF выступает одним из слоёв обороны.
 
-## Basic Concepts
+## Основные концепции
 
 ### Функции WAF
 
-- **Защита от OWASP Top 10** — SQL Injection ([подробнее](./sql_injection.md)), XSS ([подробнее](./xss_and_csp.md)), CSRF, LFI/RFI, Command Injection.
-- **Фильтрация трафика** — проверка HTTP-заголовков, валидация параметров запроса, блокировка вредоносных payloads.
-- **Virtual Patching** — быстрая защита от известных уязвимостей без изменения кода приложения. WAF не устраняет уязвимость, но обеспечивает временную защиту до исправления кода.
+- **Защита от OWASP (Open Web Application Security Project) Top 10** — SQL Injection ([подробнее](./sql_injection.md)), XSS (Cross-Site Scripting) ([подробнее](./xss_and_csp.md)), CSRF (Cross-Site Request Forgery), LFI (Local File Inclusion) / RFI (Remote File Inclusion), Command Injection.
+- **Фильтрация трафика** — проверка HTTP-заголовков, валидация параметров запроса, блокировка вредоносных payloads (полезной нагрузки).
+- **Virtual Patching (Виртуальный патчинг)** — быстрая защита от известных уязвимостей без изменения кода приложения. WAF не устраняет уязвимость, но обеспечивает временную защиту до исправления кода.
 - **Защита от L7 DDoS** — фильтрация HTTP-флуда, Slowloris и других атак на уровне приложения.
 
 ### Типы WAF
@@ -21,7 +21,7 @@
 |---|---|---|---|
 | **Network-based (Hardware)** | Физические устройства в ЦОД | Высокая производительность | Высокая стоимость, сложность обслуживания |
 | **Host-based (Software)** | Модуль на веб-сервере (ModSecurity для Apache/Nginx/Angie) | Гибкость, контроль, низкая стоимость | Нагрузка на сервер, требует настройки |
-| **Cloud WAF** | SaaS-решения (CloudFlare WAF, Yandex Cloud WAF, AWS WAF) | Быстрое развёртывание, глобальная защита | Зависимость от провайдера, стоимость |
+| **Cloud WAF** | SaaS (Software as a Service) решения (CloudFlare WAF, Yandex Cloud WAF, AWS WAF) | Быстрое развёртывание, глобальная защита | Зависимость от провайдера, стоимость |
 
 ### Режимы работы
 
@@ -31,7 +31,7 @@
 
 ### Архитектура правил ModSecurity (CRS)
 
-Правила CRS организованы по фазам обработки запроса и имеют структуру:
+Правила CRS (Core Rule Set) организованы по фазам обработки запроса и имеют структуру:
 
 ```
 SecRule <TARGET> "<OPERATOR> <PATTERN>" "id:<ID>,phase:<PHASE>,<ACTION>,msg:'<MESSAGE>'"
@@ -41,7 +41,7 @@ SecRule <TARGET> "<OPERATOR> <PATTERN>" "id:<ID>,phase:<PHASE>,<ACTION>,msg:'<ME
 - **PHASE** — 1 (request headers), 2 (request body), 3 (response headers), 4 (response body), 5 (logging).
 - **ACTION** — `deny`, `pass`, `drop`, `allow`, `redirect`.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Kubernetes Ingress с ModSecurity
 
@@ -116,7 +116,7 @@ SecRule REQUEST_COOKIES|ARGS|XML:/* \
 WAF используется как временная мера до исправления кода:
 
 ```apache
-# Блокировка эксплуатации CVE-202X-XXXX в конкретном endpoint
+# Блокировка эксплуатации CVE (Common Vulnerabilities and Exposures) 202X-XXXX в конкретном endpoint
 SecRule REQUEST_URI "@streq /api/vulnerable-endpoint" \
     "id:1000001,phase:1,pass,nolog"
 SecRule ARGS "@rx exploit_pattern|cmd_exec" \
@@ -125,7 +125,7 @@ SecRule ARGS "@rx exploit_pattern|cmd_exec" \
 
 Подробные примеры применения WAF как виртуального патча: [SQL Injection](./sql_injection.md#waf-как-виртуальный-патч), [XSS](./xss_and_csp.md#waf-как-виртуальный-патч).
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные файлы
 

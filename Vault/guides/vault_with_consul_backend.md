@@ -1,4 +1,4 @@
-# Использование Consul в качестве бэкенда для Vault
+# Consul как бэкенд для Vault
 
 ## Определения
 
@@ -24,20 +24,20 @@ Vault **шифрует** все данные перед записью в Consul
 | :--- | :--- | :--- |
 | **Raft (встроенный)** | Без внешних зависимостей, проще в настройке | Большинство production-сценариев |
 | **Consul** | Интеграция с существующей инфраструктурой | При уже развернутом кластере Consul |
-| **PostgreSQL** | Использование существующей БД-инфраструктуры | При наличии HA-кластера PostgreSQL |
+| **PostgreSQL** | Использование существующей БД-инфраструктуры | При наличии HA (High Availability) кластера PostgreSQL |
 
 ## Практические сценарии
 
-### Конфигурация `vault.hcl`
+### Конфигурация HashiCorp Configuration Language (HCL)
 
 Блок `storage` в конфигурационном файле `/etc/vault.d/vault.hcl`:
 
 ```hcl
-ui = true
+ui = true # UI (User Interface)
 
 listener "tcp" {
   address     = "0.0.0.0:8200"
-  tls_disable = 1  // В production — терминировать TLS на балансировщике
+  tls_disable = 1  // В production — терминировать TLS (Transport Layer Security) на балансировщике
 }
 
 storage "consul" {
@@ -53,7 +53,7 @@ cluster_addr = "https://<private_ip_vault_node>:8201"
 Параметры:
 
 - `address` — адрес агента Consul или балансировщика (например, [Nginx reverse proxy](../../WebServers/Nginx/Scenarios/nginx_as_reverse_proxy_for_consul.md)).
-- `path` — префикс в K/V-хранилище Consul для данных Vault.
+- `path` — префикс в K/V (Key/Value) хранилище Consul для данных Vault.
 - `scheme` — протокол подключения (`http` или `https`).
 - `api_addr` — адрес для перенаправления запросов других узлов Vault.
 - `cluster_addr` — адрес внутренней коммуникации между узлами кластера.
@@ -70,4 +70,8 @@ sudo systemctl restart vault
 
 При первом запуске Vault создаст структуру в K/V-хранилище Consul по указанному пути. Если хранилище уже содержит данные от другого кластера Vault, запуск завершится ошибкой для предотвращения повреждения данных.
 
-Обзор технологии — в [HashiCorp Vault Overview](../overview.md). Обзор Consul — [Consul Overview](../../Consul/consul_overview.md). Пошаговая установка — [Vault Installation](./vault_installation.md). Сравнение всех бэкендов — [официальная документация: Storage Backends](https://developer.hashicorp.com/vault/docs/storage).
+**См. также:**
+
+- [Обзор HashiCorp Vault](../overview.md)
+- [Обзор Consul](../../Consul/consul_overview.md)
+- [Пошаговая установка Vault](./vault_installation.md)

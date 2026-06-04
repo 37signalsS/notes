@@ -4,7 +4,7 @@
 
 **Node Exporter** — экспортер для сбора метрик с аппаратного и программного обеспечения хостовой системы на базе Linux.
 
-> **Полное руководство:** [Node Exporter](../Exporters/node_exporter.md) — основное описание, метрики, коллекторы, алерты, безопасность.
+> **Основное руководство:** [Node Exporter](../Exporters/node_exporter.md) — описания метрик, коллекторов, алертов и настройки безопасности.
 
 ## Основные концепции
 
@@ -16,14 +16,14 @@
 | **Репозиторий** | [prometheus/node_exporter](https://github.com/prometheus/node_exporter) |
 | **Порт по умолчанию** | `9100` |
 
-### Архитектура
+### Архитектура сбора
 
-Node Exporter работает по pull-модели:
+Node Exporter работает по pull-модели (сбор данных сервером):
 
-1. Экспортер собирает метрики с хоста через `/proc` и `/sys`
-2. Предоставляет их по HTTP на порту 9100
-3. Prometheus опрашивает эндпоинт `/metrics`
-4. Метрики сохраняются в TSDB
+1. Экспортер собирает метрики через виртуальные файловые системы `/proc` и `/sys`.
+2. Предоставляет данные по протоколу HTTP (HyperText Transfer Protocol) на порту 9100.
+3. Prometheus опрашивает эндпоинт `/metrics`.
+4. Данные сохраняются в TSDB (Time Series Database).
 
 > **См. также:** [TSDB](../concepts/tsdb.md), [Источник данных](../Exporters/node_exporter.md#источник-данных).
 
@@ -31,7 +31,7 @@ Node Exporter работает по pull-модели:
 
 ### Установка из бинарных файлов (Linux)
 
-**1. Загрузка и установка:**
+**1. Загрузка и размещение:**
 
 ```bash
 NODE_EXPORTER_VERSION="1.11.0"
@@ -63,22 +63,24 @@ WantedBy=multi-user.target
 EOF
 ```
 
-**3. Запуск и проверка:**
+**3. Управление службой:**
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl start node_exporter
 sudo systemctl enable node_exporter
 
-# Проверка доступности
+# Проверка доступности метрик
 curl -s -o /dev/null -w "%{http_code}" http://localhost:9100/metrics
 # Ожидаемый ответ: 200
 
-# Проверка статуса
+# Текущий статус
 sudo systemctl status node_exporter
 ```
 
 ### Установка через Docker
+
+Для полноценного мониторинга хоста из контейнера необходимо пробросить системные директории:
 
 ```yaml
 services:
@@ -95,13 +97,12 @@ services:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
-      - '--web.listen-address=:9100'
     restart: unless-stopped
 ```
 
-> **Примечание:** Требуются `--pid=host` и `--net=host` для полного доступа к хост-метрикам. Подробности — [Запуск node_exporter](../Exporters/node_exporter.md#запуск-node_exporter).
+> **Примечание:** В некоторых случаях для корректного сбора метрик сети и процессов могут потребоваться флаги `--pid=host` и `--net=host`.
 
-### Установка через APT (Debian/Ubuntu)
+### Установка через менеджер пакетов (APT)
 
 ```bash
 sudo apt update
@@ -110,69 +111,23 @@ sudo systemctl start prometheus-node-exporter
 sudo systemctl enable prometheus-node-exporter
 ```
 
-> **Примечание:** Версия в репозиториях может отставать от актуальной. Проверьте: `prometheus-node-exporter --version`.
+*Примечание:* Версия в официальных репозиториях часто отстаёт от актуальной в GitHub.
 
-## Интеграция с Prometheus
+## Дополнительная информация
 
-**Добавьте в `prometheus.yml`:**
+### Настройка Prometheus
+
+Добавьте цель для сбора в секцию `scrape_configs` файла `prometheus.yml`:
 
 ```yaml
 scrape_configs:
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['localhost:9100']
-        labels:
-          instance: 'my-server'
-          environment: 'production'
 ```
-
-**Для нескольких хостов:**
-
-```yaml
-scrape_configs:
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets:
-          - 'server1.example.com:9100'
-          - 'server2.example.com:9100'
-          - 'server3.example.com:9100'
-```
-
-> **См. также:** [Configuration](../configuration.md), [Интеграция с Prometheus](../Exporters/node_exporter.md#интеграция-с-prometheus).
-
-## Дополнительная информация
-
-### Коллекторы
-
-Node Exporter использует коллекторы для сбора метрик по категориям.
-
-**Включённые по умолчанию:** `cpu`, `diskstats`, `filesystem`, `loadavg`, `meminfo`, `netdev`, `stat`, `time`
-
-**Полный список:**
-
-```bash
-node_exporter --help | grep collector
-```
-
-**Пример включения опциональных:**
-
-```bash
---collector.systemd --collector.processes --collector.logind
-```
-
-> **Полное описание:** [Коллекторы и метрики](../Exporters/node_exporter.md#архитектура-коллекторов).
-
-### Безопасность
-
-- Для сбора всех метрик рекомендуется запускать от `root`
-- Ограничивайте доступ к порту 9100 на уровне файрвола
-- Используйте TLS через reverse proxy для незащищённых сетей
-
-> **Подробности:** [Безопасность](../Exporters/node_exporter.md#безопасность).
 
 ### Связанные темы
 
-- [Node Exporter (SSoT)](../Exporters/node_exporter.md) — полное руководство
-- [Exporters overview](../Exporters/overview.md) — обзор экспортёров
-- [Prometheus Server installation](./prometheus_server_installation.md)
-- [Configuration](../configuration.md) — настройка Prometheus
+- [Node Exporter (SSoT)](../Exporters/node_exporter.md) — полное руководство по метрикам и алертам.
+- [Exporters overview](../Exporters/overview.md) — обзор других экспортеров.
+- [Configuration](../configuration.md) — настройка сбора данных в Prometheus.

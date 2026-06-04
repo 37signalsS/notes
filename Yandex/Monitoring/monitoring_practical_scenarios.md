@@ -6,7 +6,7 @@
 
 **Query Language** — встроенный язык запросов Yandex Monitoring для фильтрации, агрегации и визуализации метрик. Синтаксис: цепочка операторов через `|`.
 
-**Log Router** — компонент Cloud Logging для маршрутизации логов в целевые системы (Cloud Functions, Data Streams, другие log groups).
+**Log Router** — компонент Cloud Logging для маршрутизации логов в целевые системы (Cloud Functions, Data Streams).
 
 ## 2. Базовые концепции
 
@@ -18,7 +18,7 @@
 # Получение токена
 TOKEN=$(yc iam create-token)
 
-# Folder ID — обязательный параметр для всех операций
+# Folder ID — обязательный параметр
 FOLDER_ID=$(yc config get folder-id)
 ```
 
@@ -34,9 +34,8 @@ FOLDER_ID=$(yc config get folder-id)
 | `avg()`, `sum()`, `min()`, `max()` | Агрегация за окно | `avg(5m)` |
 | `percentile()` | Оценка перцентиля | `percentile(0.99, 5m)` |
 | `group_by()` | Группировка по меткам | `group_by(["status"])` |
-| `gt()`, `lt()`, `gte()`, `lte()` | Пороговые сравнения | `gt(0.5)` |
 
-> **Концепции метрик и агрегаций:** [Модель данных](./monitoring_concepts.md#2-базовые-концепции)
+Подробное описание модели данных и агрегаций приведено в файле **[Основные концепции](./monitoring_concepts.md)**.
 
 ### Виджеты дашбордов
 
@@ -54,11 +53,7 @@ FOLDER_ID=$(yc config get folder-id)
 ```bash
 # Получение IAM-токена
 TOKEN=$(yc iam create-token)
-
-# Folder ID
-FOLDER_ID=<your_folder_id>
-
-# Endpoint
+FOLDER_ID=<folder_id>
 ENDPOINT=https://monitoring.api.cloud.yandex.net/monitoring/v2/timeseries:write
 
 # Отправка метрики
@@ -85,47 +80,22 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
   }'
 ```
 
-> **Рекомендации по меткам:** [Кардинальность меток](./monitoring_concepts.md#кардинальность-меток)
+### 3.2. Метрики на основе логов (Log-based Metrics)
 
-### 3.2. Логи → Метрики (Log-based Metrics)
+Сценарий: подсчёт количества 5xx ошибок из логов Nginx через Cloud Functions.
 
-Сценарий: подсчёт количества 5xx ошибок из логов Nginx.
-
-**Шаг 1:** Cloud Logging собирает логи
-
-```yaml
-# logging.yaml
-log_group: nginx-access
-retention_days: 7
-```
-
-**Шаг 2:** Log Router направляет в функцию
-
-```bash
-# Создание триггера
-yc logging log-group create \
-  --name nginx-errors \
-  --folder-id <folder_id>
-
-yc functions trigger create \
-  --name nginx-5xx-trigger \
-  --logging-log-group-ids <log_group_id> \
-  --container-name nginx-metrics-aggregator
-```
-
-**Шаг 3:** Функция агрегирует и публикует метрику
+1. Cloud Logging собирает логи.
+2. Log Router направляет события в Cloud Function.
+3. Функция агрегирует данные и публикует метрику в Monitoring.
 
 ```python
-# aggregator.py
-import json
+# Пример функции для агрегации
 import requests
 
 def handler(event, context):
-    # Подсчёт 5xx за окно
-    error_count = sum(1 for log in event['messages']
+    error_count = sum(1 for log in event['messages'] 
                       if log['json'].get('status', 0) >= 500)
-
-    # Публикация в Monitoring
+    
     requests.post(
         'https://monitoring.api.cloud.yandex.net/monitoring/v2/timeseries:write',
         headers={'Authorization': f'Bearer {context.token}'},
@@ -139,7 +109,7 @@ def handler(event, context):
     )
 ```
 
-### 3.3. Запросы к метрикам
+### 3.3. Примеры запросов
 
 **RPS по сервисам:**
 
@@ -158,114 +128,29 @@ metric("custom.http_request_duration_seconds")
 | percentile(0.99, 5m)
 ```
 
-**Использование CPU ВМ:**
+### 3.4. Настройка алертов
 
-```
-metric("yandex_compute_cpu_usage")
-| filter(cluster="prod", host=~"app-.*")
-| avg(5m)
-| max()
-```
-
-### 3.4. Дашборды
-
-**Переменные дашборда:**
-
-| Переменная | Значения | Назначение |
-| :--- | :--- | :--- |
-| `env` | `dev`, `stage`, `prod` | Фильтрация по окружению |
-| `service` | `checkout`, `payment`, `delivery` | Фильтрация по сервису |
-| `host` | произвольное | Конкретный хост |
-
-**Пример структуры дашборда:**
+Пример конфигурации алерта для критического уровня ошибок:
 
 ```yaml
-dashboard: "Checkout Service"
-variables:
-  - name: env
-    values: [dev, stage, prod]
-    default: prod
-  - name: service
-    values: [checkout, payment, delivery]
-    default: checkout
-
-panels:
-  - title: "RPS by Status"
-    type: graph
-    query: |
-      metric("custom.http_requests_total")
-      | filter(service="${service}", env="${env}")
-      | rate(1m)
-      | group_by(["status"])
-
-  - title: "P99 Latency"
-    type: graph
-    query: |
-      metric("custom.http_request_duration_seconds")
-      | filter(service="${service}", env="${env}")
-      | percentile(0.99, 5m)
-
-  - title: "Error Rate"
-    type: number
-    query: |
-      metric("custom.http_requests_total")
-      | filter(service="${service}", env="${env}", status=~"5..")
-      | rate(5m)
-      | sum()
-```
-
-> **Best practices дашбордов:** [Best Practices](./monitoring_advanced_topics.md#best-practices)
-
-### 3.5. Алертинг
-
-**Структура алерта:**
-
-```yaml
-alert: "High 99p Latency"
-description: "P99 latency exceeds 500ms for 10 minutes"
-
+alert: "High Error Rate"
 expr: |
-  metric("custom.http_request_duration_seconds")
-  | filter(service="checkout", env="prod")
-  | percentile(0.99, 5m)
-  | gt(0.5)
-
-for: 10m              # Окно устойчивости
+  metric("custom.http_requests_total")
+  | filter(service="checkout", env="prod", status=~"5..")
+  | rate(5m)
+  | sum()
+  | gt(10)
+for: 5m
 labels:
   severity: critical
-  team: checkout
-
 annotations:
-  summary: "High latency on checkout service"
-  runbook: "https://wiki.company/runbooks/checkout-latency"
-
-notifications:
-  - channel: email
-    recipients: [oncall@company.com]
-  - channel: webhook
-    url: https://slack.webhook/xxx
-  - channel: pagerduty
-    service_key: xxx
-
-silence:
-  schedule: night-maintenance
-  days: [saturday, sunday]
-  hours: [2, 3, 4]
+  summary: "Too many 5xx errors on checkout service"
 ```
-
-> **Рекомендации по алертингу:** [Best Practices](./monitoring_advanced_topics.md#best-practices)
 
 ## 4. Дополнительная информация
 
-### Интеграция с другими сервисами
+### Связанные темы
 
-- **[Compute Cloud](../Compute-Cloud.md)** — мониторинг ВМ через автоматические метрики `yandex_compute_*`
-- **[Managed Databases](../Managed-Databases.md)** — метрики БД (`yandex_mdb_*`), детальные метрики диска (Q4 2025)
-- **[VPC](../VPC.md)** — сетевые метрики трафика и security groups
-- **[Cloud Logging](https://yandex.cloud/ru/services/logging)** — источник для log-based метрик
-
-### Связанные концепции
-
-- Модель данных и типы метрик — [Основные концепции](./monitoring_concepts.md#2-базовые-концепции)
-- Интеграция с Grafana — [Дополнительные темы](./monitoring_advanced_topics.md#интеграция-с-grafana)
-- Методологии RED/USE — [Методологии мониторинга](./monitoring_concepts.md#методологии-мониторинга)
+- **[Основные концепции](./monitoring_concepts.md)** — модель данных и типы метрик.
+- **[Дополнительные темы](./monitoring_advanced_topics.md)** — Grafana и Best Practices.
+- **[Методологии мониторинга](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md)** — RED, USE и Four Golden Signals.

@@ -1,18 +1,18 @@
 # Alertmanager
 
-## Definitions
+## Определение
 
 **Alertmanager** — компонент стека Prometheus, отвечающий за обработку оповещений: дедупликация, группировка, подавление (silencing/inhibition) и маршрутизация в каналы уведомлений (Email, Slack, PagerDuty, Webhook).
 
-> **См. также:** [Prometheus overview](./overview.md), [Alerting rules](./rules.md)
+> **См. также:** [Обзор Prometheus](./overview.md), [Правила алертинга](./rules.md)
 
-## Basic Concepts
+## Основные концепции
 
-### Архитектура: Prometheus → Alertmanager
+### Архитектура: Prometheus — Alertmanager
 
 | Компонент | Роль |
 |---|---|
-| **Prometheus** | Вычисляет [alerting rules](./rules.md), при срабатывании отправляет webhook в Alertmanager |
+| **Prometheus** | Вычисляет [правила алертинга](./rules.md), при срабатывании отправляет webhook в Alertmanager |
 | **Alertmanager** | Получает алерты, обрабатывает (группировка, подавление, маршрутизация), отправляет уведомления получателям |
 
 Один Alertmanager может обслуживать несколько экземпляров Prometheus.
@@ -26,22 +26,22 @@
 5. **Троттлинг** — задержка первой отправки (`group_wait`) и повторные уведомления (`repeat_interval`).
 6. **Отправка (Notification)** — доставка в Email, Slack, PagerDuty, Webhook.
 
-### Конфигурация (`alertmanager.yml`)
+### Конфигурация — alertmanager.yml
 
-#### Блок `global`
+#### Блок global
 
 Глобальные параметры по умолчанию:
 
-| Параметр | Default | Описание |
+| Параметр | По умолчанию | Описание |
 |---|---|---|
 | `resolve_timeout` | `5m` | Время до пометки алерта как resolved |
 | `smtp_*` | — | Настройки SMTP для email-уведомлений |
 
-#### Блок `route`
+#### Блок route
 
 Древовидная маршрутизация оповещений:
 
-| Параметр | Default | Описание |
+| Параметр | По умолчанию | Описание |
 |---|---|---|
 | `receiver` | — | Получатель по умолчанию |
 | `group_by` | `['...']` | Метки для группировки алертов |
@@ -65,11 +65,11 @@ route:
       team: frontend
 ```
 
-#### Блок `receivers`
+#### Блок receivers
 
-Именованные получатели (email, Slack, PagerDuty, webhook и др.).
+Именованные получатели (Email, Slack, PagerDuty, Webhook и другие).
 
-#### Блок `inhibit_rules`
+#### Блок inhibit_rules
 
 Подавление алертов по условиям:
 
@@ -79,37 +79,37 @@ route:
 | `target_match` / `target_match_re` | Метки подавляемого алерта |
 | `equal` | Метки, которые должны совпадать в обоих алертах |
 
-### Высокая доступность (HA)
+### Высокая доступность — HA
 
-#### Архитектура
+#### Архитектура HA
 
-Alertmanager использует **gossip-протокол** для кластеризации. Экземпляры обмениваются данными об алертах, silences и уведомлениях.
+Alertmanager использует **gossip-протокол** для кластеризации. Экземпляры обмениваются данными об алертах, замалчиваниях (silences) и уведомлениях.
 
-**Ключевое свойство:** дедупликация — при получении одинакового алерта от нескольких Prometheus, уведомление отправляется **один раз**.
+**Ключевое свойство:** дедупликация — при получении одинакового алерта от нескольких экземпляров Prometheus уведомление отправляется один раз.
 
 #### Настройка кластера
 
 | Метод | Описание |
 |---|---|
-| **Вручную** | Запуск 2+ экземпляров с `--cluster.peer=<peer_IP>:9094` (порт gossip — `9094`) |
-| **Kubernetes** | Helm-чарт `kube-prometheus-stack` с `replicaCount: 3` — peer discovery автоматический |
+| **Вручную** | Запуск двух и более экземпляров с `--cluster.peer=<peer_IP>:9094` (порт gossip — `9094`) |
+| **Kubernetes** | Helm-чарт `kube-prometheus-stack` с `replicaCount: 3` — автоматическое обнаружение пиров (peer discovery) |
 
 ### Веб-интерфейс и ключи запуска
 
 **Веб-интерфейс:** порт `9093` — разделы Alerts, Groups, Silences, Status (включая состояние кластера).
 
-| Ключ | Default | Описание |
+| Ключ | По умолчанию | Описание |
 |---|---|---|
 | `--config.file` | `alertmanager.yml` | Путь к конфигурации |
-| `--storage.path` | `data/` | Путь хранения данных (silences и др.) |
-| `--data.retention` | `120h` | Срок хранения данных |
+| `--storage.path` | `data/` | Путь хранения данных (silences и другие) |
+| `--data.retention" | `120h` | Срок хранения данных |
 | `--web.listen-address` | `:9093` | Адрес UI и API |
 | `--cluster.listen-address` | `0.0.0.0:9094` | Адрес gossip (пустое значение отключает HA) |
 | `--cluster.peer` | — | Адреса пиров HA-кластера |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Пример конфигурации (`alertmanager.yml`)
+### Пример конфигурации — alertmanager.yml
 
 ```yaml
 global:
@@ -170,9 +170,9 @@ systemctl reload alertmanager.service
 
 | Действие | Ожидаемый результат |
 |---|---|
-| Сломать конфиг [Prometheus](./configuration.md) | Алерт об ошибке конфигурации |
+| Сломать конфигурацию [Prometheus](./configuration.md) | Алерт об ошибке конфигурации |
 | Остановить `node_exporter` на нескольких хостах | Уведомление подавлено `inhibit_rules`, пока активен алерт конфигурации |
-| Исправить конфиг Prometheus | Уведомление о решении + алерты экспортеров |
+| Исправить конфигурацию Prometheus | Уведомление о решении и алерты экспортеров |
 
 ### Развёртывание в Kubernetes через манифесты
 
@@ -182,11 +182,11 @@ systemctl reload alertmanager.service
 |---|---|
 | 1. Шаблон ConfigMap | `alertmanager.yml` с плейсхолдерами для секретов (хранится в Git) |
 | 2. Kubernetes Secret | Секреты (токены, пароли) в отдельном объекте `Secret` |
-| 3. Init Container | `busybox` через `sed`/`envsubst` подставляет секреты → записывает в `emptyDir` |
+| 3. Init Container | `busybox` через `sed` или `envsubst` подставляет секреты и записывает в `emptyDir` |
 | 4. Основной контейнер | Монтирует готовый `alertmanager.yml` из `emptyDir` |
 
 > Подробное руководство с манифестами (включая Telegram): [Alertmanager + Karma в Kubernetes](./kubernetes/examples/alertmanager-karma-manifests-tutorial/intro.md)
 
 ## Дополнительная информация
 
-- **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [Alertmanager installation](./installation/alertmanager_installation.md).
+- **Руководство по установке**: Инструкции по ручной установке Alertmanager находятся в заметке [Установка Alertmanager](./installation/alertmanager_installation.md).

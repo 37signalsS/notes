@@ -171,6 +171,6 @@ docker compose watch
 
 ## Дополнительная информация
 
-- **[Обзор Docker Compose](./docker_compose_overview.md)** — базовые концепции и архитектура Compose
-- **[Справочник команд CLI](./docker_compose_cli_commands.md)** — управление жизненным циклом стека, включая команду `watch`
-- **[Справочник по директивам](./docker_compose_directives.md)** — описание структуры и синтаксиса файла `compose.yml`
+* **[Обзор Docker Compose](./docker_compose_overview.md)** — базовые концепции и архитектура Compose
+* **[Справочник команд CLI](./docker_compose_cli_commands.md)** — управление жизненным циклом стека, включая команду `watch`
+* **[Справочник по директивам](./docker_compose_directives.md)** — описание структуры и синтаксиса файла `compose.yml`

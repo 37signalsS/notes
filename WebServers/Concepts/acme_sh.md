@@ -1,15 +1,15 @@
-# acme.sh — ACME-клиент для TLS-сертификатов
+# acme.sh — ACME-клиент (Automated Certificate Management Environment) для TLS-сертификатов
 
-## Definitions
+## Определения
 
-**acme.sh** — легковесный ACME-клиент, написанный на shell (bash). Предназначен для автоматического получения и обновления SSL/TLS сертификатов от центров сертификации, поддерживающих протокол ACME (Let's Encrypt, ZeroSSL, и др.).
+**acme.sh** — легковесный ACME-клиент, написанный на shell (bash). Предназначен для автоматического получения и обновления SSL/TLS сертификатов от центров сертификации (CA, Certificate Authority), поддерживающих протокол ACME (Let's Encrypt, ZeroSSL, и др.).
 
 **Ключевые особенности:**
 
 - Написан на bash (зависимости: curl, openssl)
 - Поддерживает 100+ DNS API провайдеров
 - Автоматическая поддержка wildcard-сертификатов
-- Встроенная поддержка ECDSA и RSA ключей
+- Встроенная поддержка ECDSA (Elliptic Curve Digital Signature Algorithm) и RSA (Rivest–Shamir–Adleman) ключей
 - Автоматическое обновление через cron
 
 **Преимущества перед Certbot:**
@@ -19,7 +19,7 @@
 - Гибкая настройка hook-скриптов
 - Параллельная поддержка нескольких типов ключей
 
-## Basic Concepts
+## Основные концепции
 
 ### Методы авторизации
 
@@ -66,7 +66,7 @@ acme.sh --issue -d example.com --keylength 2048
 
 > **Важно:** Файлы в `~/.acme.sh/` предназначены для внутреннего использования. Для установки в веб-сервер используйте команду `--install-cert`.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Установка acme.sh
 
@@ -227,7 +227,7 @@ acme.sh --issue -d example.com --dns dns_cf --debug
 
 > **Важно:** При ошибке не повторяйте команду сразу — это приведёт к rate limit.
 
-## Additional Information
+## Дополнительная информация
 
 **Сравнение с Certbot:** acme.sh требует только bash/curl/openssl (против Python у Certbot), поддерживает 100+ DNS API (против ~50), занимает ~200 KB (против ~10 MB). Подробности о Certbot: [Настройка HTTPS с Certbot](./https_with_certbot.md).
 

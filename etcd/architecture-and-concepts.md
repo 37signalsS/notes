@@ -129,4 +129,3 @@ etcdctl watch /configs/api/ --prefix
 * **[Алгоритм Raft](./raft_consensus.md)** — консенсус и отказоустойчивость
 * **[MVCC и компакция](./mvcc_versioning_and_compaction.md)** — версионирование данных
 * **[etcd в Kubernetes](../Kubernetes/Concepts/etcd_overview.md)** — роль в Control Plane
-

@@ -121,3 +121,9 @@ service:
 - Упрощённая структура без избыточных вложенностей
 - Явное указание версий компонентов для воспроизводимости
 - Поддержка нескольких конфигураций через include
+
+## Смотрите также
+
+- [OpenTelemetry: Обзор](./opentelemetry_overview.md)
+- [Архитектура и сигналы](./architecture_signals.md)
+- [Обзор gRPC](../Networking/ServicesAndTools/grpc_overview.md)

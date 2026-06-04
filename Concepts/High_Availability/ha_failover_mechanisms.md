@@ -104,6 +104,7 @@ pcs constraint order vip then web_server
 
 **Связанные документы:**
 
+- [Кластеризация в Proxmox](../../Proxmox/proxmox_cluster.md) — пример реализации HA и Fencing на базе Corosync.
 - [Обзор High Availability](./ha_overview.md) — базовые метрики и принципы.
 - [Кластеризация и балансировка](./ha_clustering_and_load_balancing.md) — архитектурные модели Active-Passive и Active-Active.
 - [Репликация БД](../../Databases/Concepts/replication.md) — детализация Split-Brain в контексте данных.

@@ -129,6 +129,7 @@ Vault генерирует временные credentials по запросу (�
 
 ### Связанные концепции
 
+- **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)** — подробный разбор распространенных ошибок.
 - [CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md) — секреты в пайплайнах
 - [Docker Secrets Management](../../Docker/Docker_security/secrets_management.md) — секреты в контейнерах
 - [GitOps Secrets Encryption](../../GitOps/secrets_encryption.md) — SOPS, Sealed Secrets, Vault, External Secrets

@@ -14,6 +14,7 @@
 Для автоматизации развертывания требуется организовать безопасное взаимодействие GitLab Runner с менеджером кластера. Рекомендуется использовать удаленное управление по TCP (порт 2376) с mTLS-авторизацией.
 
 Преимущества удаленного управления:
+
 - Изоляция среды сборки от продуктивной инфраструктуры.
 - Возможность управления несколькими кластерами из одного пайплайна.
 - Отсутствие необходимости установки Runner на узлы Swarm.
@@ -38,15 +39,20 @@
 ### Сценарий 1: Создание Swarm-кластера
 
 1. Инициализация первого менеджера:
+
    ```bash
    docker swarm init --advertise-addr <MANAGER-IP>
    ```
+
 2. Получение токенов для подключения дополнительных узлов:
+
    ```bash
    docker swarm join-token worker
    docker swarm join-token manager
    ```
+
 3. Проверка состояния узлов:
+
    ```bash
    docker node ls
    ```
@@ -56,11 +62,14 @@
 Процесс создания PKI-инфраструктуры для безопасного доступа:
 
 1. Создание CA (корневого сертификата):
+
    ```bash
    openssl genrsa -aes256 -out ca-key.pem 4096
    openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -out ca.pem
    ```
+
 2. Подготовка сертификата сервера (Swarm Manager):
+
    ```bash
    openssl genrsa -out server-key.pem 4096
    openssl req -subj "/CN=$(hostname -f)" -sha256 -new -key server-key.pem -out server.csr
@@ -68,7 +77,9 @@
    openssl x509 -req -days 3650 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
      -CAcreateserial -out server-cert.pem -extfile extfile.cnf
    ```
+
 3. Подготовка сертификата клиента (GitLab Runner):
+
    ```bash
    openssl genrsa -out key.pem 4096
    openssl req -subj "/CN=client" -new -key key.pem -out client.csr
@@ -82,6 +93,7 @@
 Для активации TLS-доступа необходимо настроить параметры запуска демона.
 
 **Вариант 1: Файл daemon.json**
+
 ```json
 {
   "tls": true,
@@ -94,6 +106,7 @@
 
 **Вариант 2: Systemd override (рекомендуется)**
 Создайте файл `/etc/systemd/system/docker.service.d/override.conf`:
+
 ```ini
 [Service]
 ExecStart=
@@ -104,6 +117,7 @@ ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2376 --tlsverify \
 ```
 
 После внесения изменений выполните:
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart docker
@@ -112,6 +126,7 @@ sudo systemctl restart docker
 ### Сценарий 4: Верификация подключения
 
 Проверка корректности настройки TLS:
+
 ```bash
 # Проверка конфигурации демона
 docker info | grep -i tls

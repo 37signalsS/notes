@@ -2,7 +2,7 @@
 
 > [Назад к оглавлению](../overview.md)
 
-> **SSoT для темы:** аутентификация веб-интерфейсов Prometheus, Alertmanager и Grafana в kube-prometheus-stack.  
+> **Источник темы:** аутентификация веб-интерфейсов Prometheus, Alertmanager и Grafana в kube-prometheus-stack.  
 > **Смежные темы:** [Prometheus Operator Security](../../operator/Security/index.md) — YAML-примеры встроенной auth, Ingress Basic Auth, TLS; [Access Control](../../operator/Security/access_control.md) — NetworkPolicies, RBAC; [HTTP Authentication](../../../../Networking/Protocols/HTTP/http_authentication.md) — теория Basic/Digest/Bearer auth.
 
 ## Definitions

@@ -84,12 +84,14 @@ spec:
 
 #### Внешний мониторинг
 
-Используйте специализированные экспортеры для проверки внешних эндпоинтов (например, **Blackbox Exporter**):
+Используйте специализированные экспортеры для проверки внешних эндпоинтов (например, **Blackbox Exporter**).
+
+Подробный список метрик и правил оповещений см. в [Метрики и алертинг Blackbox Exporter](../../Prometheus/Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md).
 
 ```yaml
 - alert: SSLCertExpiringSoon
   expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 14
-  for: 10m
+```,old_string:
   labels:
     severity: warning
   annotations:

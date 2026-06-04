@@ -37,105 +37,105 @@
 ### Базовые запросы
 
 ```logql
-# Все логи из namespace
+// Все логи из namespace
 {namespace="ingress-nginx"}
 
-# Логи конкретного пода
+// Логи конкретного пода
 {pod="my-app-pod-12345"}
 
-# Логи контейнера в поде
+// Логи контейнера в поде
 {pod="my-app-pod", container="app"}
 
-# Логи по лейблу приложения
+// Логи по лейблу приложения
 {app="my-app"}
 ```
 
 ### Фильтрация по содержимому
 
 ```logql
-# Поиск ошибок в Java-приложении
+// Поиск ошибок в Java-приложении
 {app="my-java-app"} |= "Exception"
 
-# Логи с уровнем ERROR (case-insensitive)
+// Логи с уровнем ERROR (case-insensitive)
 {app="my-app"} |~ "(?i)error"
 
-# Исключение строк с debug
+// Исключение строк с debug
 {app="my-app"} |= "error" !=~ "debug"
 
-# Несколько паттернов (error/exception/fatal)
+// Несколько паттернов (error/exception/fatal)
 {app="my-app"} |~ "(error|exception|fatal)"
 ```
 
 ### Парсинг JSON-логов
 
 ```logql
-# Базовый парсинг
+// Базовый парсинг
 {app="my-app"} | json
 
-# Фильтр по полю JSON (HTTP 5xx)
+// Фильтр по полю JSON (HTTP 5xx)
 {app="my-app"} | json | status_code >= 500
 
-# Фильтр по текстовому полю
+// Фильтр по текстовому полю
 {app="my-app"} | json | msg="request completed"
 
-# Несколько условий (POST-запросы с ошибками)
+// Несколько условий (POST-запросы с ошибками)
 {app="my-app"} | json | method="POST", status_code >= 400
 ```
 
 ### Парсинг logfmt
 
 ```logql
-# Фильтр по уровню лога
+// Фильтр по уровню лога
 {app="my-app"} | logfmt | level="error"
 
-# Фильтр по нескольким полям
+// Фильтр по нескольким полям
 {app="my-app"} | logfmt | level="warn", service="auth"
 ```
 
 ### Агрегация и метрики
 
 ```logql
-# Количество строк за час
+// Количество строк за час
 count_over_time({app="my-app"}[1h])
 
-# Rate ошибок за 5 минут
+// Rate ошибок за 5 минут
 sum(rate({app="my-app"} |~ "error"[5m]))
 
-# Топ-5 контейнеров по объему логов
+// Топ-5 контейнеров по объему логов
 topk(5, count_over_time({namespace="default"}[1h]))
 
-# Ошибки по уровням (logfmt)
+// Ошибки по уровням (logfmt)
 sum by (level) (rate({app="my-app"} | logfmt | level=~"error|warn"[5m]))
 
-# Количество уникальных пользователей
+// Количество уникальных пользователей
 count by (user_id) ({app="my-app"} | json)
 
-# Процент ошибок от общего трафика
+// Процент ошибок от общего трафика
 sum(rate({app="my-app"} |= "error"[5m])) / sum(rate({app="my-app"}[5m]))
 ```
 
 ### Production-сценарии
 
 ```logql
-# Медленные запросы (>1 сек)
+// Медленные запросы (>1 сек)
 {app="api"} | json | duration_ms > 1000
 
-# HTTP 5xx ошибки
+// HTTP 5xx ошибки
 {app="api"} | json | status_code >= 500
 
-# Ошибки аутентификации
+// Ошибки аутентификации
 {app="auth"} |= "authentication failed"
 
-# Restarts контейнеров в kube-system
+// Restarts контейнеров в kube-system
 {kubernetes_namespace="kube-system"} |= "container restarted"
 
-# OutOfMemoryError в Java
+// OutOfMemoryError в Java
 {app="java-app"} |= "OutOfMemoryError"
 
-# Долгие запросы с группировкой по статусу
+// Долгие запросы с группировкой по статусу
 sum by (status_code) (rate({app="api"} | json | duration_ms > 500[5m]))
 
-# Ошибки с извлечением trace_id для корреляции
+// Ошибки с извлечением trace_id для корреляции
 {app="api"} | json | level="error" | line_format "trace_id={{.trace_id}} msg={{.message}}"
 ```
 

@@ -1,16 +1,16 @@
-# CRD AlertmanagerConfig
+# AlertmanagerConfig — Концепции
 
-## Definitions
+## Определения
 
-**`kind: AlertmanagerConfig`** — Custom Resource Definition в Prometheus Operator для декларативного описания маршрутизации и получателей алертов. Позволяет управлять подмножествами конфигурации Alertmanager (receivers, routes, inhibit rules, time intervals) через отдельные Kubernetes-объекты, без редактирования основного `alertmanager.yml`.
+**`kind: AlertmanagerConfig`** — Custom Resource Definition в Prometheus Operator для декларативного описания маршрутизации и получателей алертов. Позволяет управлять подмножествами конфигурации Alertmanager (receivers, routes, inhibit rules, time intervals) через отдельные Kubernetes-объекты, без редактирования основного файла `alertmanager.yml`.
 
-> **SSoT по концепции Alertmanager:** [Alertmanager](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска.
+> **Концепции Alertmanager:** [Alertmanager](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Назначение
 
-AlertmanagerConfig решает задачу **разделенного управления** конфигурацией: разные команды могут создавать свои маршруты и получатели в своих namespace, не затрагивая глобальный конфиг Alertmanager. Prometheus Operator автоматически агрегирует все AlertmanagerConfig, отобранные селекторами в [Alertmanager CRD](./alertmanager.md).
+AlertmanagerConfig решает задачу **разделенного управления** конфигурацией: разные команды могут создавать свои маршруты и получатели в своих namespace, не затрагивая глобальную конфигурацию Alertmanager. Prometheus Operator автоматически агрегирует все AlertmanagerConfig, отобранные селекторами в [Alertmanager CRD](./alertmanager.md).
 
 ### API версии
 
@@ -57,10 +57,10 @@ spec:
 | **`route`** | Дерево маршрутов (обязательный) — определяет группировку и направление алертов |
 | **`receivers`** | Именованные получатели (Slack, Email, PagerDuty, Webhook, Telegram и др.) |
 | **`inhibitRules`** | Правила подавления алертов (на уровне CRD) |
-| **`timeIntervals`** | Временные интервалы для mute-периодов (ранее `muteTimeIntervals`) |
+| **`timeIntervals`** | Временные интервалы для периодов заглушения (ранее `muteTimeIntervals`) |
 | **`muteTimeIntervals`** | Устарело (v1alpha1) — используйте `timeIntervals` |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовая конфигурация (v1beta1)
 
@@ -113,7 +113,7 @@ spec:
 
 ### Matchers (v1beta1)
 
-В `v1beta1` поле `regex` удалено. Вместо него используется семантика по типу значения:
+В версии `v1beta1` поле `regex` удалено. Вместо него используется семантика по типу значения:
 
 ```yaml
 matchers:
@@ -290,7 +290,7 @@ spec:
 
 ### Временные интервалы (timeIntervals)
 
-Определение периодов, в которые уведомления заглушены (maintenance-окна):
+Определение периодов, в которые уведомления заглушены (окна обслуживания):
 
 ```yaml
 spec:
@@ -324,7 +324,7 @@ route:
 
 ### Секреты для получателей
 
-Все чувствительные данные хранятся в Kubernetes Secrets:
+Все чувствительные данные должны храниться в Kubernetes Secrets:
 
 ```bash
 # Создание секрета для Slack
@@ -346,7 +346,7 @@ apiURL:
   key: url               # ключ в Secret
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Диагностика
 
@@ -358,14 +358,14 @@ apiURL:
 
 ### Ограничения и особенности
 
-- AlertmanagerConfig **агрегируется** Prometheus Operator — при конфликтах имён receivers поведение не определено
-- Каждый AlertmanagerConfig должен иметь **уникальные имена receivers** в рамках одного Alertmanager
-- Имя AlertmanagerConfig должно быть **уникальным в namespace**
-- Изменения в AlertmanagerConfig применяются автоматически (рекозилиация ~5-10с)
+- AlertmanagerConfig **агрегируется** Prometheus Operator — при конфликтах имён receivers поведение не определено.
+- Каждый AlertmanagerConfig должен иметь **уникальные имена receivers** в рамках одного Alertmanager.
+- Имя AlertmanagerConfig должно быть **уникальным в namespace**.
+- Изменения в AlertmanagerConfig применяются автоматически (реконсиляция ~5-10с).
 
 ### Связанные темы
 
-- [Alertmanager CRD](./alertmanager.md) — описание развёртывания Alertmanager
-- [Alertmanager — общая концепция](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска
-- [PrometheusRule CRD](./prometheusrule.md) — правила генерации алертов
-- [Secrets best practices](../Security/secrets_best_practices.md) — управление секретами
+- [Alertmanager CRD](./alertmanager.md) — описание развёртывания Alertmanager.
+- [Alertmanager — общая концепция](../../../alertmanager.md) — архитектура, конвейер обработки, ключи запуска.
+- [PrometheusRule CRD](./prometheusrule.md) — правила генерации алертов.
+- [Secrets best practices](../Security/secrets_best_practices.md) — управление секретами.

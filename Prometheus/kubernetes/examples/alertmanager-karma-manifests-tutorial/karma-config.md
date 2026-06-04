@@ -1,12 +1,12 @@
 # Конфигурация Karma (ConfigMap)
 
-## Definitions
+## Определения
 
 **ConfigMap Karma** — Kubernetes ConfigMap, содержащий файл `config.yaml` с настройками Karma: адреса серверов Alertmanager, параметры фильтрации меток и отображения. Монтируется в под Karma как `--config.file`.
 
-> **См. также:** [Karma Dashboard](../../karma_dashboard.md) (SSoT) — общие возможности и Helm-установка
+> **См. также:** материал [Karma Dashboard](../../karma_dashboard.md) — общие возможности и Helm-установка
 
-## Basic Concepts
+## Основные концепции
 
 ### Структура конфигурационного файла Karma
 
@@ -26,7 +26,7 @@
 | **С внешним доступом (Ingress)** | `https://<hostname>` | `https://alertmanager.example.com` |
 | **Несколько серверов** | Массив в `servers: []` | См. раздел «Несколько Alertmanager» ниже |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Манифест ConfigMap
 
@@ -107,8 +107,8 @@ volumeMounts:
 
 И передаётся аргументом: `--config.file=/etc/karma/config.yaml`
 
-## Additional Information
+## Дополнительная информация
 
 - [Karma Deployment](./karma-deployment.md) — манифест Deployment с монтированием данного ConfigMap
 - [Alertmanager StatefulSet](./alertmanager-statefulset.md) — источник алертов для Karma
-- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma, Helm-установка
+- [Karma Dashboard](../../karma_dashboard.md) — общее описание Karma

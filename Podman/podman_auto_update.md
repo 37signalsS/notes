@@ -1,74 +1,56 @@
-# Podman: Автообновление и откат контейнеров
+# Подман: Автообновление и откат контейнеров
 
 ## Определения
 
-**Podman Auto-Update** — встроенный механизм автоматического обновления контейнеров при появлении новых образов в реестре. Реализован через команду `podman auto-update` и systemd-таймеры, не требует внешних демонов-мониторов.
+**Podman Auto-Update** — встроенный механизм автоматического обновления контейнеров при появлении новых образов в реестре. Реализован через команду `podman auto-update` и таймеры **systemd**, не требует внешних демонов-мониторов.
 
-**Auto-Update Labels** — специальные лейблы, определяющие политику обновления для контейнера:
+**Auto-Update Labels** — специальные метки (лейблы), определяющие политику обновления для контейнера:
 
-- `registry` — сравнение дайджестов с удалённым реестром
-- `local` — проверка локально собранных образов
+- `registry` — сравнение дайджестов с удалённым реестром.
+- `local` — проверка локально собранных образов.
 
-**Rollback** — автоматический откат к предыдущей версии образа при неудачном запуске контейнера после обновления.
+**Rollback (Откат)** — автоматический возврат к предыдущей версии образа при неудачном запуске контейнера после обновления.
+
+**sdnotify (systemd notification)** — протокол уведомления **systemd** о готовности или состоянии приложения.
+
+**OCI (Open Container Initiative)** — открытый стандарт форматов образов и сред выполнения контейнеров.
 
 ## Основные концепции
 
 ### Архитектура механизма
 
-В отличие от Docker, требующего внешних инструментов (Watchtower), Podman реализует автообновление нативно:
+В отличие от Docker, требующего внешних инструментов (например, Watchtower), Podman реализует автообновление нативно:
 
 | Компонент | Назначение |
 | :--- | :--- |
-| **podman auto-update** | Проверка и применение обновлений |
-| **systemd-таймер** | Планирование периодического запуска |
-| **io.containers.autoupdate** | Лейбл для активации автообновления |
-| **systemd-юниты** | Управление жизненным циклом и откатом |
+| **podman auto-update** | Команда для проверки и применения обновлений |
+| **systemd-таймер** | Планировщик для периодического запуска процесса обновления |
+| **io.containers.autoupdate** | Лейбл для активации механизма автообновления |
+| **systemd-юниты** | Управление жизненным циклом процесса и его откатом |
 
 ### Принцип работы
 
-1. **Проверка**: systemd-таймер запускает `podman auto-update`
-2. **Сравнение**: Podman сравнивает дайджесты локальных образов с реестром
-3. **Обновление**: При несовпадении — скачивает новый образ
-4. **Перезапуск**: Останавливает старый контейнер, запускает новый
-5. **Верификация**: Проверяет успешность запуска через systemd
-6. **Откат**: При сбое — возвращает предыдущий образ
+1. **Проверка**: systemd-таймер запускает службу, которая выполняет `podman auto-update`.
+2. **Сравнение**: Podman сравнивает дайджесты локальных образов с данными в реестре.
+3. **Обновление**: При обнаружении новой версии — скачивается новый образ.
+4. **Перезапуск**: Текущий контейнер останавливается, и запускается новый на базе свежего образа.
+5. **Верификация**: Проверка успешности запуска через механизмы **systemd** (Health check или sdnotify).
+6. **Откат**: Если новый контейнер не прошел проверку — система возвращает предыдущую рабочую версию образа.
 
 ### Требования для работы
 
-1. **systemd-управление**: Контейнер должен быть запущен через systemd-юнит
-2. **Лейбл autoupdate**: При создании контейнера указан `--label "io.containers.autoupdate=registry"`
-3. **Флаг rollback**: В systemd-юните включён `--rollback`
-4. **Health check**: Контейнер сигнализирует о готовности через sdnotify
+1. **Управление через systemd**: Контейнер должен быть запущен как служба **systemd**.
+2. **Метка autoupdate**: При создании контейнера необходимо указать `--label "io.containers.autoupdate=registry"`.
+3. **Механизм отката**: В конфигурации юнита (особенно Quadlet) должны быть настроены параметры проверки состояния.
+4. **Health check**: Приложение должно сообщать о своей готовности (через `HealthCmd` или `sdnotify`).
 
 ## Практические сценарии
 
-### 1. Базовая настройка автообновления
+### 1. Настройка через Quadlet (Рекомендуемый способ)
 
-**Создание контейнера с лейблом:**
+**Quadlet** — декларативный способ управления контейнерами Podman через нативные файлы конфигурации **systemd**.
 
-```bash
-podman run -d --name my-service \
-  --label "io.containers.autoupdate=registry" \
-  docker.io/library/nginx:latest
-```
-
-**Генерация systemd-юнита:**
-
-```bash
-podman generate systemd --name my-service --files --new
-```
-
-**Включение таймера автообновления:**
-
-```bash
-systemctl --user enable --now podman-auto-update.timer
-```
-
-### 2. Настройка Quadlet для автообновления
-
-Quadlet — декларативный способ управления контейнерами через systemd-файлы.
-
-**Файл `/etc/containers/systemd/my-service.container`:**
+**Файл:** `/etc/containers/systemd/my-service.container`
 
 ```ini
 [Unit]
@@ -79,6 +61,11 @@ Image=docker.io/library/nginx:latest
 ContainerName=my-service
 AutoUpdate=registry
 PublishPort=8080:80
+# Настройка проверки для реализации отката
+HealthCmd=curl -f http://localhost/ || exit 1
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
 
 [Service]
 Restart=on-failure
@@ -87,20 +74,41 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-Ключ `AutoUpdate=registry` автоматически добавляет необходимый лейбл.
+Ключ `AutoUpdate=registry` автоматически добавляет необходимый лейбл в конфигурацию контейнера.
+
+### 2. Устаревший способ (через podman generate systemd)
+
+> **Внимание:** Данный метод считается устаревшим (legacy). Рекомендуется использовать **Quadlet**.
+
+```bash
+# 1. Создание контейнера с меткой
+podman run -d --name my-service \
+  --label "io.containers.autoupdate=registry" \
+  docker.io/library/nginx:latest
+# → a1b2c3d4... (ID контейнера)
+
+# 2. Генерация юнита systemd
+podman generate systemd --name my-service --files --new
+# → my-service.service
+
+# 3. Включение таймера автообновления
+systemctl --user enable --now podman-auto-update.timer
+# → Created symlink ...
+```
 
 ### 3. Настройка расписания обновлений
 
-**Проверка выражения OnCalendar:**
+По умолчанию таймер срабатывает раз в сутки. Для изменения расписания используется переопределение таймера.
+
+**Проверка синтаксиса OnCalendar:**
 
 ```bash
 systemd-analyze calendar "Mon *-*-* 03:30:00"
+# → Normalized form: Mon *-*-* 03:30:00
+# → Next elapse: Mon 2026-06-01 03:30:00 MSK
 ```
 
-Команда покажет следующее время срабатывания и проверит синтаксис.
-
-**Создание кастомного таймера:**
-
+**Кастомное расписание:**
 Файл `/etc/systemd/user/podman-auto-update.timer.d/custom-schedule.conf`:
 
 ```ini
@@ -110,186 +118,73 @@ RandomizedDelaySec=30m
 Persistent=true
 ```
 
-**Параметры:**
+### 4. Механизм автоматического отката (Rollback)
 
-- `OnCalendar` — выражение в формате systemd.time(7)
-- `RandomizedDelaySec` — случайная задержка для избежания одновременных обновлений
-- `Persistent=true` — пропущенные обновления применяются при следующем запуске
+Откат активируется автоматически, если контейнер управляется **systemd** и имеет настроенный `HealthCheck`.
 
-**Примеры выражений OnCalendar:**
+**Последовательность действий:**
 
-| Выражение | Описание |
-| :--- | :--- |
-| `*-*-* 04:00:00` | Ежедневно в 04:00 |
-| `Mon *-*-* 03:30:00` | Каждый понедельник в 03:30 |
-| `*-*-1,15 02:00:00` | 1-го и 15-го числа в 02:00 |
-| `hourly` | Каждый час |
-| `daily` | Ежедневно в 00:00 |
-| `weekly` | Еженедельно по понедельникам |
+1. `podman auto-update` скачивает новый образ.
+2. **systemd** останавливает старый и запускает новый контейнер.
+3. Выполняются проверки здоровья (`HealthCmd`).
+4. Если проверки провалены (превышено число попыток `HealthRetries`):
+   - Podman фиксирует сбой.
+   - Система автоматически перезапускает контейнер, используя предыдущий дайджест образа.
 
-### 4. Настройка отката (Rollback)
-
-**Как работает rollback:**
-
-Rollback — встроенное поведение `podman auto-update`. При обновлении Podman сохраняет дайджест предыдущего образа. Если новый контейнер не проходит health check, Podman автоматически откатывается к предыдущей версии.
-
-**Требования для отката:**
-
-1. Контейнер управляется через systemd
-2. Установлен лейбл `io.containers.autoupdate=registry`
-3. Настроен health check (`--health-cmd` или `HealthCmd` в Quadlet)
-4. systemd-юнит имеет `Restart=always` или `Restart=on-failure`
-
-**Настройка через Quadlet (рекомендуемый способ):**
-
-Файл `/etc/containers/systemd/my-service.container`:
-
-```ini
-[Unit]
-Description=My Service Container
-
-[Container]
-Image=docker.io/library/nginx:latest
-ContainerName=my-service
-AutoUpdate=registry
-PublishPort=8080:80
-HealthCmd=curl -f http://localhost/ || exit 1
-HealthInterval=30s
-HealthTimeout=5s
-HealthRetries=3
-HealthStartPeriod=10s
-
-[Service]
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Настройка через `podman generate systemd`:**
+### 5. Проверка статуса и отладка
 
 ```bash
-# Создание контейнера с health check
-podman run -d --name my-service \
-  --label "io.containers.autoupdate=registry" \
-  --health-cmd="curl -f http://localhost/ || exit 1" \
-  --health-interval=30s \
-  --health-timeout=5s \
-  --health-retries=3 \
-  --health-start-period=10s \
-  docker.io/library/nginx:latest
-
-# Генерация systemd-юнита
-podman generate systemd --name my-service --files --new
-```
-
-> **Важно:** Флаг `--rollback` не существует как отдельный параметр `podman run`. Rollback — это автоматическое поведение `podman auto-update`, активируемое при наличии health check.
-
-### 5. Механизм отката: последовательность
-
-```
-1. podman auto-update скачивает новый образ
-   ↓
-2. systemd останавливает текущий контейнер
-   ↓
-3. Запускается контейнер с новым образом
-   ↓
-4. Начинают выполняться health check'и
-   ↓
-5a. Health OK (в течение HealthRetries × HealthInterval)
-    → Контейнер работает, обновление завершено
-   ↓
-5b. Health FAIL (превышены HealthRetries)
-    → Podman фиксирует неработоспособность
-   ↓
-6. Podman откатывается к предыдущему дайджесту образа
-   ↓
-7. Контейнер перезапускается со старой версией
-```
-
-> **Примечание:** Для Quadlet-контейнеров настройка health check и rollback полностью декларативна — достаточно указать `HealthCmd` и связанные параметры в секции `[Container]`.
-
-### 6. Проверка статуса обновлений
-
-**Просмотр последних обновлений:**
-
-```bash
-# Статус таймера
+# Проверка состояния таймера
 systemctl --user status podman-auto-update.timer
+# → Active: active (waiting) since ...
 
-# Журнал обновлений
+# Просмотр логов процесса обновления
 journalctl --user -u podman-auto-update.service
 
-# Проверка контейнеров с autoupdate
+# Список контейнеров с активным автообновлением
 podman ps --format "table {{.Names}}\t{{.Labels}}" | grep autoupdate
-```
+# → my-service    ...io.containers.autoupdate=registry...
 
-**Принудительное обновление:**
-
-```bash
-podman auto-update --dry-run    # Проверка без применения
-podman auto-update --verbose    # Подробный вывод
+# Тестовый запуск без внесения изменений
+podman auto-update --dry-run
+# → UNIT                     CONTAINER           IMAGE               POLICY      UPDATED
+# → my-service.service       my-service          nginx:latest        registry    pending
 ```
 
 ## Дополнительная информация
 
-### Сравнение с Watchtower
+### Сравнение с Watchtower (Docker)
 
 | Характеристика | Watchtower (Docker) | Podman Auto-Update |
 | :--- | :--- | :--- |
-| **Архитектура** | Внешний демон-монитор | Встроенная команда |
-| **Требования** | Отдельный контейнер | Только systemd |
-| **Откат** | Через сторонние скрипты | Нативный rollback |
-| **Планировщик** | Встроенный интервал | systemd-таймеры |
-| **Rootless** | Ограниченная поддержка | Полная поддержка |
-| **Зависимости** | Docker API | Нет внешних зависимостей |
+| **Архитектура** | Внешний контейнер-монитор | Встроенная команда системы |
+| **Требования** | Доступ к сокету Docker | Интеграция с **systemd** |
+| **Откат** | Ограничен, часто через внешние скрипты | Нативный механизм через дайджесты |
+| **Планировщик** | Встроенный в приложение | Стандартные **systemd-таймеры** |
+| **Безопасность** | Требует привилегий (Docker socket) | Полная поддержка **Rootless** режима |
 
-### Health check с sdnotify
+### Уведомления через sdnotify
 
-**Почему sdnotify надёжнее health check:**
+Использование `sdnotify` считается более надежным способом, так как приложение само сообщает системе о своей готовности.
 
-| Health check | sdnotify |
-| :--- | :--- |
-| Периодическая проверка | Мгновенный сигнал готовности |
-| Задержка обнаружения | Немедленная реакция |
-| Не знает о внутренних процессах | Приложение само знает о готовности |
-| Может пропустить сбой | Гарантированный сигнал |
-
-**Пример приложения с sdnotify (Python):**
+**Пример на Python:**
 
 ```python
 import sdnotify
 import time
 
 n = sdnotify.SdNotify()
+# Сообщаем systemd, что приложение готово принимать трафик
 n.notify("READY=1")
 
-# Приложение работает
 while True:
-    if not health_check_passed():
-        n.notify("STATUS=Health check failed")
-        n.notify("ERRNO=1")
+    # Цикл работы приложения
     time.sleep(30)
-```
-
-### Troubleshooting
-
-**Лейбл не распознаётся:**
-
-```bash
-# Проверка лейбла
-podman inspect my-service --format '{{.Config.Labels}}'
-
-# Пересоздание контейнера с лейблом
-podman rm -f my-service
-podman run -d --name my-service \
-  --label "io.containers.autoupdate=registry" \
-  nginx:latest
 ```
 
 ### Связанные темы
 
-- **systemd-интеграция:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
-- **Rootless режим:** [Rootless режим в Podman](./podman_rootless.md)
-- **Основные команды:** [Podman: Основные команды](./podman_basic_commands.md)
-- **Health check:** [HEALTHCHECK в Dockerfile](../Docker/Dockerfile/Instructions/health_signals.md) — встраивание проверок здоровья в образ
+- **Интеграция с systemd:** [Daemonless архитектура Podman](./podman_daemonless_architecture.md)
+- **Безрутовый режим:** [Rootless режим в Podman](./podman_rootless.md)
+- **Основные операции:** [Podman: Основные команды](./podman_basic_commands.md)
+- **Сигналы готовности:** [HEALTHCHECK в Dockerfile](../Docker/Dockerfile/Instructions/health_signals.md) — настройка проверок на уровне образа **OCI**.

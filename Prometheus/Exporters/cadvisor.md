@@ -52,6 +52,16 @@ services:
     restart: unless-stopped
 ```
 
+**Описание томов (volumes):**
+
+| Том | Режим | Назначение |
+| :--- | :--- | :--- |
+| `/` | `ro` | Доступ к корневой файловой системе хоста |
+| `/var/run` | `rw` | Доступ к Docker socket для получения данных о контейнерах |
+| `/sys` | `ro` | Сбор данных из cgroups (CPU, память) |
+| `/var/lib/docker/` | `ro` | Статистика использования диска Docker-контейнерами |
+| `/dev/disk/` | `ro` | Информация о дисковых устройствах |
+
 **Docker CLI:**
 
 ```bash
@@ -204,13 +214,18 @@ scrape_configs:
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
+    metric_relabel_configs:
+      # Исключаем метрики с пустым именем контейнера (метрики хоста)
+      - source_labels: [container_label_io_kubernetes_container_name]
+        regex: '^$'
+        action: drop
 ```
 
-Полная конфигурация с `metric_relabel_configs` — [Prometheus config для Docker Stack](../../Prometheus/installation/docker_stack/prometheus_config.md). Для удалённых хостов — [Remote hosts monitoring](../../Prometheus/installation/docker_stack/remote_hosts_monitoring.md).
+Полная конфигурация — [Prometheus config для Docker Stack](../../Prometheus/installation/docker_stack/prometheus_config.md). Для удалённых хостов — [Remote hosts monitoring](../../Prometheus/installation/docker_stack/remote_hosts_monitoring.md).
 
 ### Алертинг
 
-Для мониторинга контейнеров на основе метрик cAdvisor рекомендуется использовать стандартные правила оповещений. Полный перечень правил, пороговых значений и YAML-конфигураций для Grafana представлен в SSoT-файле:
+Для мониторинга контейнеров на основе метрик cAdvisor рекомендуется использовать стандартные правила оповещений. Полный перечень правил, пороговых значений и YAML-конфигураций для Grafana представлен в основном файле:
 
 > **[Алерты для Kubernetes в Grafana](../../Grafana/alerting/kubernetes_alerts.md)**
 
@@ -233,6 +248,6 @@ scrape_configs:
 
 * [Интеграция Docker с Prometheus](../../Docker/Docker_metrics/docker_prometheus_integration.md)
 * [Нативные метрики Docker](../../Docker/Docker_metrics/docker_native_metrics.md)
-* [Мониторинг Kubernetes](../../Databases/Concepts/migrations/monitoring.md)
+* [Мониторинг Kubernetes](../../Prometheus/kubernetes/overview.md)
 * [Алертинг контейнеров в Grafana](../../Grafana/alerting/kubernetes_alerts.md)
 * [Docker Stack мониторинга](../../Prometheus/installation/docker_stack/overview.md)

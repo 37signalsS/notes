@@ -135,19 +135,16 @@ docker run -d \
 
 ### Параметры запуска
 
+Ниже приведены основные флаги, используемые при установке. Полный список параметров и их детальное описание см. в разделе [Конфигурация Prometheus](../configuration.md).
+
 | Параметр | По умолчанию | Описание |
 |---|---|---|
-| `--config.file` | `prometheus.yml` | Путь к файлу конфигурации |
-| `--storage.tsdb.path` | `data/` | Путь к хранилищу данных |
-| `--storage.tsdb.retention.time` | `15d` | Срок хранения данных |
-| `--storage.tsdb.retention.size` | `0` | Макс. размер хранилища (0 = без ограничений) |
-| `--web.listen-address` | `:9090` | Адрес для веб-интерфейса |
-| `--web.console.templates` | `consoles/` | Путь к шаблонам консолей |
-| `--web.console.libraries` | `console_libraries/` | Путь к библиотекам консолей |
-| `--query.timeout` | `2m` | Таймаут выполнения запросов |
-| `--log.level` | `info` | Уровень логирования |
+| `--config.file` | `prometheus.yml` | Путь к основному файлу конфигурации |
+| `--storage.tsdb.path` | `data/` | Директория для хранения базы данных [TSDB](../concepts/tsdb.md) |
+| `--storage.tsdb.retention.time` | `15d` | Срок хранения метрик (например, `30d`, `1y`) |
+| `--web.listen-address` | `:9090` | Сетевой адрес и порт для веб-интерфейса и API |
 
-> **См. также:** [Configuration](../configuration.md).
+> **Подробная справка по всем флагам:** [Конфигурация Prometheus](../configuration.md).
 
 ## Additional Information
 

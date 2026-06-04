@@ -1,63 +1,61 @@
-# Сценарий: Nginx в качестве обратного прокси для Consul с SSL
+# Настройка Nginx как обратного прокси для Consul
 
 ## 1. Определения
 
-**Nginx в качестве обратного прокси для Consul с SSL:** Обеспечение безопасного доступа к UI [Consul](../../../Consul/consul_overview.md) через стандартный порт 443, скрытие узлов кластера из публичного доступа и централизованное управление TLS-терминацией с помощью [Nginx](../Core/nginx_overview.md).
+**Nginx в качестве обратного прокси для Consul** — сценарий развёртывания, при котором Nginx выступает единой точкой входа для доступа к веб-интерфейсу (UI) и API (Application Programming Interface) [Consul](../../../Consul/consul_overview.md), обеспечивая SSL/TLS-терминацию и ограничение прямого доступа к узлам кластера.
 
----
+* **Обратный прокси (Reverse Proxy)** — сервер, принимающий запросы извне и перенаправляющий их на внутренние ресурсы. Подробнее: **[Прокси-серверы](../../../Networking/Concepts/proxy.md)**.
+* **[Consul](../../../Consul/consul_overview.md)** — инструмент для Service Discovery и Service Mesh.
 
 ## 2. Базовые концепции
 
-**Обратный прокси (Reverse Proxy):** Концепция, при которой сервер-посредник принимает запросы клиентов и направляет их на внутренние серверы. Это централизует управление, безопасность и балансировку. Детальное описание см. в заметке [о прокси-серверах](../../../Networking/Concepts/proxy.md).
+Сценарий направлен на решение следующих задач:
 
----
+1. **Централизованная безопасность**: использование единого SSL/TLS-сертификата на уровне Nginx.
+2. **Скрытие инфраструктуры**: узлы Consul могут находиться в приватной подсети без публичных IP-адресов.
+3. **Балансировка нагрузки**: распределение запросов между несколькими серверами Consul для обеспечения отказоустойчивости.
+4. **Фильтрация трафика**: возможность блокировки доступа к административным путям API (например, `/v1/agent`).
 
 ## 3. Практический сценарий
 
 ### 3.1. Подготовка
 
-Перед настройкой Nginx убедитесь, что:
-
-1. Есть сетевая связность между сервером Nginx и всеми узлами кластера Consul по их внутренним (серым) IP-адресам.
-2. Порт Consul (по умолчанию `8500`) доступен с сервера Nginx.
-3. На ваше доменное имя (например, `consul.your-domain.com`) настроена A-запись, указывающая на публичный IP-адрес сервера Nginx.
+* Наличие сетевой связности между Nginx и узлами Consul по внутренним IP-адресам.
+* Доступность порта `8500` на узлах Consul со стороны сервера Nginx.
+* Настроенная A-запись DNS (Domain Name System) для домена (например, `consul.example.com`).
 
 ### 3.2. Конфигурация Nginx
 
-#### Определение upstream-группы
+#### Настройка Upstream
 
-Сначала определим группу `upstream`, в которую включим все серверы Consul. Этот подход также является основой для [балансировки нагрузки](../Proxy/Load_Balancing/overview_concepts.md).
+Определение группы серверов для балансировки нагрузки.
 
 ```nginx
-# /etc/nginx/conf.d/upstream-consul.conf
+# /etc/nginx/conf.d/upstream_consul.conf
 upstream consul_backend {
-    server consul-1_private_ip:8500;
-    server consul-2_private_ip:8500;
-    server consul-3_private_ip:8500;
+    server 10.0.0.11:8500; # IP первого узла
+    server 10.0.0.12:8500; # IP второго узла
+    server 10.0.0.13:8500; # IP третьего узла
 }
 ```
 
-#### Основной блок server (HTTPS)
+> См. также: **[Балансировка нагрузки в Nginx](../Proxy/Load_Balancing/overview_concepts.md)**.
 
-Этот блок будет обрабатывать HTTPS-трафик.
+#### Настройка виртуального хоста (HTTPS)
 
 ```nginx
-# /etc/nginx/sites-available/consul.your-domain.com.conf
+# /etc/nginx/sites-available/consul.example.com.conf
 server {
     listen 443 ssl http2;
-    server_name consul.your-domain.com;
+    server_name consul.example.com;
 
-    # Пути к SSL-сертификатам
-    ssl_certificate /etc/nginx/ssl/consul/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/consul/privkey.pem;
+    # SSL-сертификаты
+    ssl_certificate     /etc/letsencrypt/live/consul.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/consul.example.com/privkey.pem;
 
-    # Подключение общих параметров TLS/SSL
-    # Рекомендуется вынести общие настройки в отдельный файл.
-    # > Подробное руководство: [Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)
+    # Оптимальные параметры TLS
+    # Подробнее: [Настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)
     include /etc/nginx/snippets/ssl-params.conf;
-
-    # Заголовок HSTS для безопасности
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     location / {
         proxy_pass http://consul_backend;
@@ -67,73 +65,47 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Опционально: можно закрыть доступ к определённым путям API
+    # Ограничение доступа к API агента
     location /v1/agent {
         deny all;
         return 403;
     }
 }
-```
 
-#### Общие параметры TLS/SSL (пример `ssl-params.conf`)
-
-Пример файла с общими настройками безопасности. Детальные рекомендации смотрите в [соответствующем руководстве](../Security/TLS_SSL/nginx_tls_ssl_overview.md).
-
-```nginx
-# /etc/nginx/snippets/ssl-params.conf
-
-ssl_protocols TLSv1.2 TLSv1.3;
-ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
-ssl_prefer_server_ciphers off;
-
-ssl_session_cache shared:SSL:10m;
-ssl_session_timeout 1d;
-ssl_session_tickets off;
-```
-
-#### Перенаправление с HTTP на HTTPS
-
-Добавьте блок `server` для перенаправления всего HTTP-трафика на HTTPS.
-
-```nginx
+# Редирект HTTP -> HTTPS
 server {
     listen 80;
-    server_name consul.your-domain.com;
+    server_name consul.example.com;
     return 301 https://$host$request_uri;
 }
 ```
 
-### 3.3. Получение SSL-сертификата и запуск
+### 3.3. Применение настроек
 
-Для получения сертификата можно использовать `certbot`.
+1. **Проверка конфигурации**:
 
-> **Подробное руководство:** [Использование Let's Encrypt с Nginx](./nginx_with_letsencrypt.md)
+    ```bash
+    nginx -t
+    # → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    # → nginx: configuration file /etc/nginx/nginx.conf test is successful
+    ```
 
-1. **Проверьте синтаксис конфигурации Nginx:** `sudo nginx -t`.
-2. **Запустите или перезагрузите Nginx:** `sudo systemctl reload nginx`.
+2. **Перезагрузка сервиса**:
 
-После этого UI Consul должен быть доступен по адресу `https://consul.your-domain.com`.
-
----
+    ```bash
+    systemctl reload nginx
+    ```
 
 ## 4. Дополнительная информация
 
-### 4.1. Проверка сетевой связности
+### Рекомендации по безопасности
 
-Перед настройкой убедитесь, что ваш Nginx-сервер "видит" узлы Consul.
+* **Отключение публичных IP**: После настройки прокси рекомендуется убрать публичные IP-адреса с узлов Consul, оставив их доступными только через Nginx или VPN (Virtual Private Network).
+* **HSTS (HTTP Strict Transport Security)**: Рекомендуется добавить заголовок `Strict-Transport-Security "max-age=31536000; includeSubDomains" always;` для принудительного использования HTTPS.
+* **Аутентификация в Consul**: Проксирование через Nginx не заменяет встроенную систему **Consul ACL (Access Control List)**. Всегда используйте токены доступа для защиты API.
 
-```bash
-# Проверяем доступность порта 8500
-telnet consul-1_private_ip 8500
-# → Connection successful (или аналогичный вывод)
-```
+### См. также
 
-### 4.2. Безопасность: отключение публичных IP
-
-После того как вы убедились, что доступ к Consul через Nginx работает, **отключите публичные IP-адреса** у виртуальных машин самого кластера Consul. Это значительно сокращает поверхность атаки, так как прямой доступ к узлам Consul извне становится невозможен.
-
-### 4.3. См. также
-
-- [Использование Let's Encrypt с Nginx](./nginx_with_letsencrypt.md)
-- [Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)
-- [Обзор балансировки нагрузки в Nginx](../Proxy/Load_Balancing/overview_concepts.md)
+* **[Использование Let's Encrypt с Nginx](./nginx_with_letsencrypt.md)**
+* **[Оптимальная настройка TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**
+* **[Обзор Consul](../../../Consul/consul_overview.md)**

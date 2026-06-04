@@ -33,15 +33,19 @@
 ### Инициализация и расширение кластера
 
 #### Создание Swarm-кластера
+
 ```bash
 # Инициализация первого менеджера
 docker swarm init --advertise-addr <MANAGER-IP>
 ```
+
 **Ключевые параметры:**
+
 - `--advertise-addr` — IP-адрес, который будет анонсирован другим узлам для связи (обязателен, если у хоста несколько интерфейсов).
 - `--listen-addr` — адрес и порт, которые слушает демон Swarm (по умолчанию `:2377`).
 
 #### Присоединение узлов
+
 ```bash
 # Получение команды с токеном для рабочих узлов (workers)
 docker swarm join-token worker
@@ -54,6 +58,7 @@ docker swarm join --token <TOKEN> <MANAGER-IP>:2377
 ```
 
 #### Вывод узлов из кластера
+
 ```bash
 # На рабочем узле (добровольный выход)
 docker swarm leave
@@ -68,6 +73,7 @@ docker node rm <NODE-ID>
 ### Управление узлами кластера
 
 #### Информация об узлах
+
 ```bash
 # Список всех узлов в кластере
 docker node ls
@@ -80,6 +86,7 @@ docker node ps <NODE-ID>
 ```
 
 #### Изменение ролей и статусов
+
 ```bash
 # Повышение рабочего узла до менеджера
 docker node promote <NODE-ID>
@@ -97,6 +104,7 @@ docker node update --availability active <NODE-ID>
 ### Управление сервисами Swarm
 
 #### Создание и конфигурация
+
 ```bash
 # Базовый запуск сервиса
 docker service create --name web --replicas 3 nginx:1.26.3
@@ -119,6 +127,7 @@ docker service create --name db \
 ```
 
 #### Мониторинг и масштабирование
+
 ```bash
 # Список активных сервисов
 docker service ls
@@ -134,6 +143,7 @@ docker service scale web=10
 ```
 
 #### Обновление и откат (Rolling Update)
+
 ```bash
 # Обновить образ сервиса
 docker service update --image nginx:1.27 web
@@ -167,6 +177,7 @@ docker stack rm myapp
 ```
 
 ### Сетевое взаимодействие
+
 Подробности реализации оверлейных сетей в **[swarm_networking.md](./swarm_networking.md)**.
 
 ```bash
@@ -178,6 +189,7 @@ docker network create --driver=overlay --opt encrypted secure-net
 ```
 
 ### Управление секретами и конфигурациями
+
 Подробное руководство — в **[swarm_secrets_configs.md](./swarm_secrets_configs.md)**.
 
 ```bash
@@ -200,6 +212,7 @@ docker config create app_conf ./config.yaml
 | Просмотр версии и API | `docker version` |
 
 ### Смотрите также
+
 - **[Основные концепции Docker Swarm](./swarm_core_concepts.md)**
 - **[Секреты и конфигурации в Swarm](./swarm_secrets_configs.md)**
 - **[Сетевое взаимодействие в Swarm](./swarm_networking.md)**

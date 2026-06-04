@@ -1,14 +1,14 @@
 # Сервисы и Ingress для Alertmanager + Karma
 
-## Definitions
+## Определения
 
 **Service (ClusterIP)** — внутренний Kubernetes Service типа ClusterIP, обеспечивающий стабильный DNS-доступ к подам Alertmanager (порт 9093) и Karma (порт 8080) внутри кластера.
 
-**Ingress** — объект Kubernetes для маршрутизации внешнего HTTP/HTTPS трафика к сервисам кластера на основе host-имён. В данном tutorial Ingress публикует Alertmanager и Karma по отдельным доменам (`alertmanager.k8s.local`, `karma.k8s.local`).
+**Ingress** — объект Kubernetes для маршрутизации внешнего HTTP/HTTPS трафика к сервисам кластера на основе host-имён. В данном руководстве Ingress публикует Alertmanager и Karma по отдельным доменам (`alertmanager.k8s.local`, `karma.k8s.local`).
 
-> **См. также:** [Service Overview](../../../Kubernetes/Networking/Service/service_overview.md) (SSoT), [Ingress Overview](../../../Kubernetes/Networking/Ingress/overview.md) (SSoT)
+> **См. также:** материалы [Обзор Service](../../../Kubernetes/Networking/Service/service_overview.md) и [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура сетевого доступа
 
@@ -54,7 +54,7 @@ alertmanager.k8s.local   karma.k8s.local
 | `alertmanager.k8s.local` | `alertmanager` | `9093` | `/` |
 | `karma.k8s.local` | `karma` | `8080` | `/` |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Service: Alertmanager
 
@@ -143,7 +143,7 @@ spec:
 
 - `pathType: Prefix` — маршрутизация по префиксу пути (в данном случае `/` — все пути)
 - `port.number` — явное указание номера порта (альтернатива `port.name`)
-- Требуется работающий Ingress Controller (NGINX, Traefik, HAProxy и т.д.) — см. [Ingress Overview](../../../Kubernetes/Networking/Ingress/overview.md)
+- Требуется работающий Ingress Controller (NGINX, Traefik, HAProxy и т.д.) — см. [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md)
 
 ### Проверка после применения
 
@@ -171,9 +171,9 @@ kubectl run dns-test --rm -it --image=busybox --restart=Never -- \
 | Alertmanager | `alertmanager.monitoring.svc.cluster.local:9093` | Karma подключается для сбора алертов |
 | Karma | `karma.monitoring.svc.cluster.local:8080` | Внутренний доступ из других подов |
 
-## Additional Information
+## Дополнительная информация
 
 - [Alertmanager StatefulSet](./alertmanager-statefulset.md) — поды, которые обслуживает Service `alertmanager`
 - [Karma Deployment](./karma-deployment.md) — поды, которые обслуживает Service `karma`
-- [Service Overview](../../../Kubernetes/Networking/Service/service_overview.md) — общая теория Service в Kubernetes
-- [Ingress Overview](../../../Kubernetes/Networking/Ingress/overview.md) — общая теория Ingress в Kubernetes
+- [Обзор Service](../../../Kubernetes/Networking/Service/service_overview.md) — общая теория Service в Kubernetes
+- [Обзор Ingress](../../../Kubernetes/Networking/Ingress/overview.md) — общая теория Ingress в Kubernetes

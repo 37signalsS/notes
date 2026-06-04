@@ -41,7 +41,12 @@ KEY=/etc/kubernetes/pki/etcd/healthcheck-client.key
 etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY endpoint health
 # https://10.0.0.11:2379: healthy
 
+# Статус конкретных эндпоинтов
 etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY endpoint status -w=table
+
+# Состояние всего кластера
+etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
+  endpoint status --cluster -w=table
 ```
 
 ### Просмотр данных Kubernetes в etcd
@@ -64,7 +69,7 @@ etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
 
 ```bash
 etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  snapshot save /backup/etcd-snapshot.db
+  snapshot save /backup/etcd-$(date +%F).db
 ```
 
 > **Важно (etcd 3.6+):** Команда `snapshot restore` перемещена в утилиту `etcdutl`. Используйте `etcdutl snapshot restore` для восстановления.

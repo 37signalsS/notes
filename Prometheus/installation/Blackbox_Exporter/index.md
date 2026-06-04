@@ -1,18 +1,18 @@
 # Blackbox Exporter
 
-Индекс документов по установке и настройке Blackbox Exporter.
+Индекс документов по Blackbox Exporter.
 
 ## Документы
 
 | Документ | Описание |
 | :--- | :--- |
-| **[Основные концепции](./blackbox_exporter_concepts.md)** | Определения, возможности, актуальная версия (v0.28.0) |
-| **[Установка и настройка](./blackbox_exporter_installation.md)** — установка, конфигурация модулей, интеграция с Prometheus |
-| **[Дополнительные темы](./blackbox_exporter_advanced.md)** | Безопасность, Docker, параметры запуска, troubleshooting |
+| **[Основные концепции](../../Exporters/blackbox/blackbox_exporter_overview.md)** | Определения, возможности, принцип работы |
+| **[Установка и настройка](../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)** | Установка, Docker, интеграция с Prometheus |
+| **[Конфигурация модулей](../../Exporters/blackbox/blackbox_exporter_modules_configuration.md)** | Настройка HTTP, TCP, ICMP, DNS модулей |
+| **[Метрики и алертинг](../../Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md)** | Метрики и правила оповещений |
 
 ## Связанные документы
 
-- **[Blackbox Exporter](../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md)** — полное руководство
-- **[Prometheus Server](../prometheus_server_installation.md)** — интеграция
-- **[Configuration](../../../Databases/MariaDB/configuration.md)** — настройка Prometheus
+- **[Prometheus Server](../prometheus_server_installation.md)** — общая установка
+- **[Service Discovery и Relabeling](../../service_discovery_and_relabeling.md)** — настройка параметров probe
 - **[Docker Stack](../docker_stack/remote_hosts_monitoring.md)** — мониторинг удалённых хостов

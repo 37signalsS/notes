@@ -110,11 +110,13 @@ docker stack rm myapp-blue
 #### Сервис не запускается или постоянно перезапускается
 
 **Инструменты диагностики:**
+
 - `docker stack ps <stack_name> --no-trunc` — просмотр подробных ошибок задач.
 - `docker service logs <service_name> --follow` — анализ логов приложения.
 - `docker node inspect <node_id>` — проверка состояния узла (диск, память).
 
 **Частые ошибки:**
+
 - `OOMKilled`: Превышен лимит оперативной памяти (увеличить `resources.limits.memory`).
 - `exit code 1`: Внутренняя ошибка приложения (проверить переменные окружения).
 - `unhealthy`: Не проходит проверка здоровья (проверить `healthcheck` в YAML).
@@ -132,6 +134,7 @@ docker stack rm myapp-blue
 | **Rolling Update** | Встроенная поддержка в YAML (Yet Another Markup Language) | Объект Deployment |
 
 ### Смотрите также
+
 - **[Базовое развертывание стеков](./swarm_stack_deployment.md)**
 - **[Секреты и конфигурации в Swarm](./swarm_secrets_configs.md)**
 - **[Справочник CLI для Swarm](./swarm_management_cli.md)**

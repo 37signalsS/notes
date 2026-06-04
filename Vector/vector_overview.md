@@ -1,6 +1,6 @@
 # Vector: Обзор
 
-## Definitions
+## Определения
 
 **Vector** — высокопроизводительный конвейер для сбора, обработки и отправки логов, метрик и событий. Написан на Rust — высокая производительность, безопасность памяти, низкое потребление ресурсов.
 
@@ -11,7 +11,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура
 
@@ -77,9 +77,9 @@ Vector на каждом хосте — DaemonSet (Kubernetes) или systemd-с
 | Характеристика | Vector | Logstash | Fluentd/Fluent Bit | file.d |
 | :--- | :--- | :--- | :--- | :--- |
 | **Язык** | Rust | Java/JRuby | Ruby/C | Go |
-| **Производительность** | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Производительность** | 5/5 | 2/5 | 3/5 | 4/5 |
 | **Потребление памяти** | Низкое | Высокое | Среднее | Низкое |
-| **Экосистема плагинов** | Средняя | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Малая |
+| **Экосистема плагинов** | Средняя | 5/5 | 4/5 | Малая |
 | **Конфигурация** | TOML/YAML | DSL (Ruby-like) | DSL | YAML |
 | **Язык трансформации** | VRL | Filter-плагины | Record-modifier | Lua/Go |
 | **Гарантия доставки** | At-least-once | At-least-once | At-least-once | At-least-once |
@@ -106,7 +106,7 @@ Vector на каждом хосте — DaemonSet (Kubernetes) или systemd-с
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 Практические сценарии вынесены в отдельный файл: **[Practical Scenarios](./practical_scenarios.md)**.
 
@@ -118,10 +118,10 @@ Vector на каждом хосте — DaemonSet (Kubernetes) или systemd-с
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-**Инструменты:** [VRL Playground](https://vrl.dev) — онлайн-песочница для тестирования скриптов; [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=oryanp.vscode-vrl) — подсветка синтаксиса.
+**Инструменты:** описание доступных инструментов для разработки на VRL приведено в разделе **[Дополнительная информация](./vrl_language.md#дополнительная-информация)**.
 
 **Ресурсы:** [Официальная документация](https://vector.dev/docs/), [GitHub Repository](https://github.com/vectordotdev/vector), [Vector Discord](https://discord.gg/vectordotdev).
 
-**Связанные заметки:** Observability — [Four Pillars](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md); проектирование высоконагруженного мониторинга — [Designing High-Load Monitoring](../Concepts/Observability_and_Monitoring/designing_high-load_monitoring_in_distributed_systems.md); язык трансформации — [VRL Language](./vrl_language.md); практические сценарии — [Practical Scenarios](./practical_scenarios.md).
+**Связанные заметки:** Observability — [Four Pillars](../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md); язык трансформации — [VRL Language](./vrl_language.md); практические сценарии — [Practical Scenarios](./practical_scenarios.md).

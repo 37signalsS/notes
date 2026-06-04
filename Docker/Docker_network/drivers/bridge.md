@@ -109,6 +109,7 @@
 - Производительность ниже по сравнению с режимом `host` из-за использования NAT и `docker-proxy`.
 
 **Смотрите также:**
+
 - [Обзор сетевых моделей Docker](../docker_network.md)
 - [DNS и Service Discovery](../dns_and_service_discovery.md)
 - [Сетевой драйвер host](./host.md)

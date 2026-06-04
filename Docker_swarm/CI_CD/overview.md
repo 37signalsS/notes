@@ -89,4 +89,3 @@ deploy:
 - **[../docker_swarm_overview.md](../docker_swarm_overview.md)** — основы оркестрации Docker Swarm.
 - **[../swarm_ingress_traefik.md](../swarm_ingress_traefik.md)** — детальная настройка Traefik.
 - **[../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)** — основы GitLab CI.
-

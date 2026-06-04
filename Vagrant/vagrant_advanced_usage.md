@@ -12,7 +12,29 @@
 
 ### Multi-Machine архитектура
 
-Каждая машина определяется через `config.vm.define` и имеет индивидуальную конфигурацию. Подробный синтаксис: [Vagrantfile Reference](./vagrantfile.md#сценарий-2-мульти-машинная-конфигурация).
+Каждая машина определяется через `config.vm.define` и имеет индивидуальную конфигурацию.
+
+**Пример структуры:**
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  
+  # Веб-сервер
+  config.vm.define "web" do |web|
+    web.vm.hostname = "web-server"
+    web.vm.network "private_network", ip: "192.168.77.10"
+    web.vm.provision "shell", path: "scripts/web.sh"
+  end
+  
+  # База данных
+  config.vm.define "db" do |db|
+    db.vm.hostname = "db-server"
+    db.vm.network "private_network", ip: "192.168.77.11"
+    db.vm.provision "shell", path: "scripts/db.sh"
+  end
+end
+```
 
 **Команды для конкретных машин:**
 
@@ -26,7 +48,27 @@ vagrant status              # Статус всех машин
 
 ### Триггеры
 
-Триггеры выполняются локально (`run_local`) или удалённо (`run_remote`) на ВМ. Пример конфигурации: [Vagrantfile Reference](./vagrantfile.md#сценарий-4-полная-конфигурация-для-разработки).
+Триггеры выполняются локально (`run_local`) или удалённо (`run_remote`) на ВМ.
+
+**Пример конфигурации:**
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+
+  # Уведомление после запуска
+  config.trigger.after :up do |trigger|
+    trigger.name = "Ready notification"
+    trigger.run_local = { inline: "echo 'VM is ready!'" }
+  end
+
+  # Очистка при уничтожении
+  config.trigger.before :destroy do |trigger|
+    trigger.name = "Cleanup"
+    trigger.run_remote = { inline: "rm -rf /tmp/cache" }
+  end
+end
+```
 
 **Ключевые возможности:**
 
@@ -37,14 +79,37 @@ vagrant status              # Статус всех машин
 
 ### Динамическая конфигурация через ENV
 
-Использование `ENV.fetch` для параметров с значениями по умолчанию:
+Использование переменных окружения позволяет изменять параметры окружения (образ, ресурсы, флаги) без редактирования `Vagrantfile`.
+
+**Пример реализации:**
 
 ```ruby
-libvirt.memory = ENV.fetch('VAGRANT_MEMORY', 2048).to_i
-libvirt.cpus = ENV.fetch('VAGRANT_CPUS', 2).to_i
+Vagrant.configure("2") do |config|
+  # Образ из переменной окружения или по умолчанию
+  config.vm.box = ENV['VAGRANT_BOX'] || "bento/ubuntu-24.04"
+  
+  # Ресурсы из переменных
+  config.vm.provider "libvirt" do |libvirt|
+    libvirt.memory = ENV.fetch('VAGRANT_MEMORY', 2048).to_i
+    libvirt.cpus = ENV.fetch('VAGRANT_CPUS', 2).to_i
+  end
+  
+  # Включение provisioning только при необходимости
+  if ENV['PROVISION'] == 'true'
+    config.vm.provision "shell", path: "scripts/provision.sh"
+  end
+end
 ```
 
-Подробности: [Vagrantfile Reference](./vagrantfile.md#сценарий-3-динамическая-конфигурация-через-env).
+**Запуск:**
+
+```bash
+# С кастомными параметрами
+VAGRANT_MEMORY=4096 VAGRANT_CPUS=4 vagrant up
+
+# С provisioning
+PROVISION=true vagrant up
+```
 
 ### Плагины для работы с переменными окружения
 

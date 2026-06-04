@@ -76,6 +76,7 @@ docker network create -d ipvlan -o parent=eth0.100 --subnet=10.100.0.0/24 my_vla
 ```
 
 **Смотрите также:**
+
 - [Обзор сетевых моделей Docker](../docker_network.md)
 - [Сетевой драйвер macvlan](./macvlan.md)
 - [Управление сетями (CLI)](../cli.md)

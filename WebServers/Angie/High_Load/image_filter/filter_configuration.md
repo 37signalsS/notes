@@ -1,99 +1,49 @@
-# Конфигурация Image Filter в Angie
+# Модуль image_filter в Angie: конфигурация внутреннего сервера
 
 ## Определения
 
-**Image Filter** — внутренний сервер на порту 8081, обрабатывает изображения: конвертация форматов, resize, оптимизация качества.
+**Image Filter Server** — внутренний экземпляр Angie (обычно работающий на порту 8081), предназначенный исключительно для выполнения ресурсоёмких операций обработки изображений.
+
+**Динамическая обработка** — процесс трансформации (изменение размера, конвертация) исходного изображения «на лету» при поступлении запроса.
 
 ## Базовые концепции
 
-### Принцип работы
+### Роль внутреннего сервера
 
-Внутренний сервер принимает запросы от Image Front (проксирующего сервера), обрабатывает изображения и возвращает результат клиенту. Такая архитектура позволяет отделить логику обработки изображений от основной конфигурации сайта.
+Использование выделенного внутреннего сервера для обработки изображений позволяет:
+
+- Изолировать нагрузку на CPU от основного фронтенда.
+- Упростить логику кэширования (фронтенд кэширует результат запроса к фильтру).
+- Централизованно управлять параметрами качества и оптимизации.
 
 ### Основные директивы
 
-- `image_filter` — тип обработки (`resize`, `webp`, `avif`)
-- `image_filter_jpeg_quality` / `image_filter_webp_quality` / `image_filter_avif_quality` — качество выходного изображения (1–100)
-- `image_filter_interlaced` — прогрессивная развертка для JPEG
-- `image_filter_sharpen` — повышение резкости (0–100)
-- `error_page 415 = @empty` — обработка неподдерживаемых форматов
+| Директива | Описание |
+|:----------|:---------|
+| `image_filter` | Основная операция: `resize`, `crop`, `rotate` или `convert` (WebP/AVIF). |
+| `image_filter_jpeg_quality` | Уровень сжатия JPEG (1–100). |
+| `image_filter_webp_quality` | Уровень сжатия WebP (1–100). |
+| `image_filter_avif_quality` | Уровень сжатия AVIF (1–100). |
+| `image_filter_sharpen` | Коэффициент повышения резкости (0–100). См. детали в [resize.md](./resize.md). |
+| `image_filter_buffer_size` | Максимальный размер исходного изображения в памяти. |
+
+Подробное описание операции изменения размера приведено в [разделе resize](./resize.md).
 
 ## Практические сценарии
 
-### JPEG с resize
-
-Конвертация и изменение размера JPEG-изображений с прогрессивной разверткой и повышением резкости:
-
-```nginx
-location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.jpe?g)$ {
-    image_filter resize $2 $3;
-    image_filter_jpeg_quality 80;
-    image_filter_interlaced on;
-    image_filter_sharpen 1;
-
-    error_page 415 = @empty;
-}
-```
-
-### PNG/GIF без resize
-
-Конвертация PNG/GIF без изменения размеров, только повышение резкости:
-
-```nginx
-location ~* ^/vp(/img/.+\.(png|gif))$ {
-    image_filter_sharpen 1;
-    error_page 415 = @empty;
-}
-```
-
-### Конвертация в WebP с resize
-
-Изменение размера и конвертация в формат WebP (в Angie рекомендуется использовать `convert webp`):
-
-```nginx
-location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.(jpe?g|png|gif))$ {
-    image_filter convert webp;
-    image_filter resize $2 $3;
-    image_filter_webp_quality 80;
-    image_filter_sharpen 1;
-    error_page 415 = @empty;
-}
-```
-
-### Конвертация в WebP без resize
-
-Только конвертация в WebP без изменения размеров:
-
-```nginx
-location ~* ^/vp(/img/.+\.(jpe?g|png|gif))$ {
-    image_filter convert webp;
-    image_filter_webp_quality 80;
-    error_page 415 = @empty;
-}
-```
-
-### Конвертация в AVIF
-
-Конвертация в формат AVIF (требует наличие библиотеки `libavif` и поддержки в Angie):
-
-```nginx
-location ~* ^/avif(/img/.+\.(jpe?g|png|gif))$ {
-    image_filter convert avif;
-    image_filter_avif_quality 80;
-    error_page 415 = @empty;
-}
-```
-
 ### Полная конфигурация внутреннего сервера
+
+Данный пример демонстрирует настройку сервера, принимающего запросы от Image Front и выполняющего различные типы трансформаций.
 
 ```nginx
 server {
     listen 127.0.0.1:8081;
     server_name localhost;
 
+    # Путь к оригинальным изображениям
     root /var/www/images;
 
-    # Обработка JPEG с resize
+    # Обработка JPEG с изменением размера
     location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.jpe?g)$ {
         image_filter resize $2 $3;
         image_filter_jpeg_quality 80;
@@ -103,25 +53,12 @@ server {
         error_page 415 = @empty;
     }
 
-    # Конвертация PNG/GIF без resize
-    location ~* ^/vp(/img/.+\.(png|gif))$ {
-        image_filter_sharpen 1;
-        error_page 415 = @empty;
-    }
-
-    # Конвертация в WebP с resize
-    location ~* ^/vp(/img/)(\d+)x(\d+)(.+\.(jpe?g|png|gif))$ {
-        image_filter convert webp;
-        image_filter resize $2 $3;
-        image_filter_webp_quality 80;
-        image_filter_sharpen 1;
-        error_page 415 = @empty;
-    }
-
-    # Конвертация в WebP без resize
+    # Конвертация в WebP (рекомендуемый метод в Angie)
     location ~* ^/vp(/img/.+\.(jpe?g|png|gif))$ {
         image_filter convert webp;
         image_filter_webp_quality 80;
+        image_filter_sharpen 1;
+        
         error_page 415 = @empty;
     }
 
@@ -129,10 +66,11 @@ server {
     location ~* ^/avif(/img/.+\.(jpe?g|png|gif))$ {
         image_filter convert avif;
         image_filter_avif_quality 80;
+        
         error_page 415 = @empty;
     }
 
-    # Пустой GIF для неподдерживаемых форматов
+    # Заглушка для некорректных форматов (пустой GIF)
     location @empty {
         default_type image/gif;
         return 200 "\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
@@ -140,10 +78,22 @@ server {
 }
 ```
 
+## Дополнительная информация
+
+### Обработка ошибок
+
+Директива `error_page 415` используется для обработки ситуаций, когда модуль не может распознать формат исходного файла или выполнить трансформацию. Использование именованного location (`@empty`) позволяет возвращать клиенту прозрачный пиксель или стандартную заглушку вместо ошибки сервера.
+
+### Рекомендации
+
+- **Изоляция:** Всегда настраивайте внутренний сервер на `127.0.0.1`, чтобы исключить прямой доступ извне.
+- **Буфер:** Если вы работаете с изображениями высокого разрешения, увеличьте `image_filter_buffer_size` (по умолчанию 1M).
+
 ---
 
 **См. также:**
 
-- [Обзор модуля](./overview.md)
-- [Установка и базовая настройка](./installation.md)
-- [Конфигурация сайта](./site_configuration.md)
+- [Обзор модуля image_filter](./overview.md)
+- [Изменение размеров (Resize)](./resize.md)
+- [Конфигурация фронтенда (Image Front)](./site_configuration.md)
+- [Безопасность и защита от DoS](./security.md)

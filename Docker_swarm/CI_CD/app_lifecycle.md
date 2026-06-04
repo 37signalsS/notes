@@ -93,9 +93,11 @@ docker service logs -f my-stack_app
 ### Сценарий 3: Управление откатами
 
 #### Автоматический откат
+
 Происходит, если новая реплика не проходит Health Check в течение периода `monitor` или завершается с ошибкой. Причина будет видна в `docker service inspect`.
 
 #### Ручной откат
+
 Если обновление завершилось, но обнаружены логические ошибки:
 
 ```bash
@@ -113,10 +115,12 @@ docker service rollback my-stack_app
 1. Развертывание новой версии (`green`) с `traefik.enable=false`.
 2. Проверка работоспособности `green` стека вручную.
 3. Переключение меток:
+
    ```bash
    docker service update --label-rm traefik.enable stack-blue_app
    docker service update --label-add traefik.enable=true stack-green_app
    ```
+
 4. Удаление старого (`blue`) стека после успешной проверки.
 
 Подробнее о работе с Ingress — в **[Traefik в Swarm](../swarm_ingress_traefik.md)**.

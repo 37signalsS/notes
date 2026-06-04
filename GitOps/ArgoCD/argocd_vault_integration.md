@@ -152,6 +152,7 @@ secret:
 ```
 
 **Синтаксис тегов подстановки:**
+
 - `<path#key>` — полный путь (например, `secret/data/test#username`).
 - `<key>` — только ключ (путь извлекается из аннотации манифеста).
 
@@ -242,6 +243,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c avp
 ```
 
 **Распространенные ошибки:**
+
 - `permission denied` — ошибка доступа; проверьте политики Vault и привязку ролей.
 - `connection refused` — сетевая ошибка; проверьте доступность Vault по указанному `VAULT_ADDR`.
 - `secret not found` — секрет не найден; проверьте правильность пути в Vault и версию секрета.

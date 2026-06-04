@@ -1,36 +1,36 @@
 # Yandex Storage: Практические сценарии
 
-## Определения
+## 1. Определения
 
-**Практические сценарии** — пошаговые команды и конфигурации для работы с [Object Storage](./storage_concepts.md#object-storage), [Block Storage](./storage_concepts.md#block-storage-диски) и [File Storage](./storage_concepts.md#file-storage) через aws-cli и yc CLI.
+**Практические сценарии** — пошаговые команды и конфигурации для работы с [Object Storage](./storage_concepts.md#1-определения), [Block Storage](./storage_concepts.md#1-определения) и [File Storage](./storage_concepts.md#1-определения) через aws-cli и yc CLI.
 
 Инструменты: [aws-cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) (S3-совместимый API), [yc CLI](https://yandex.cloud/ru/docs/cli/quickstart) (нативный CLI Yandex Cloud).
 
 ---
 
-## Основные концепции
+## 2. Базовые концепции
 
 ### Группировка по типу хранилища
 
 Сценарии разделены по типу хранилища и задаче:
 
-- **Object Storage** — создание бакетов, загрузка объектов, версионирование, lifecycle, статические сайты
-- **Block Storage** — создание дисков, подключение к ВМ, снапшоты, восстановление
-- **File Storage** — создание NFS-хранилищ, монтирование
-- **Кросс-сервисные** — бэкапы Managed DB в Object Storage, интеграция с CI/CD
+- **Объектное хранилище (Object Storage)** — создание бакетов, загрузка объектов, версионирование, жизненные циклы (lifecycle), статические сайты.
+- **Блочное хранилище (Block Storage)** — создание дисков, подключение к ВМ, снимки, восстановление.
+- **Файловое хранилище (File Storage)** — создание NFS-хранилищ, монтирование.
+- **Кросс-сервисные сценарии** — бэкапы Managed DB в Object Storage, интеграция с CI/CD.
 
 ### Общие требования
 
-- Для aws-cli: `--endpoint-url https://storage.yandexcloud.net` обязателен
-- Для yc CLI: требуется авторизация через `yc init`
-- IAM-роли и сервисные аккаунты — [Storage advanced topics](./storage_advanced_topics.md#практические-сценарии)
-- Определения и характеристики хранилищ — [Storage concepts](./storage_concepts.md)
+- Для aws-cli: параметр `--endpoint-url https://storage.yandexcloud.net` обязателен.
+- Для yc CLI: требуется предварительная авторизация через `yc init`.
+- IAM-роли и сервисные аккаунты — см. [Дополнительные темы](./storage_advanced_topics.md).
+- Определения и характеристики хранилищ — [Основные концепции](./storage_concepts.md).
 
 ---
 
-## Практические сценарии
+## 3. Практические сценарии
 
-### Object Storage: создание бакета и загрузка
+### Объектное хранилище: создание бакета и загрузка
 
 ```bash
 # Создание бакета
@@ -53,7 +53,7 @@ aws s3 sync ./dist s3://my-artifacts/www/ \
   --endpoint-url https://storage.yandexcloud.net
 ```
 
-### Object Storage: версионирование и lifecycle
+### Объектное хранилище: версионирование и жизненные циклы
 
 ```bash
 # Включение версионирования
@@ -82,7 +82,7 @@ aws s3api put-bucket-lifecycle-configuration \
   --endpoint-url https://storage.yandexcloud.net
 ```
 
-### Object Storage: статический сайт
+### Объектное хранилище: статический сайт
 
 ```bash
 # Настройка website hosting
@@ -108,11 +108,9 @@ aws s3api put-bucket-policy \
     }]
   }' \
   --endpoint-url https://storage.yandexcloud.net
-
-# URL сайта: https://my-artifacts.storage.yandexcloud.net
 ```
 
-### Block Storage: создание и подключение диска
+### Блочное хранилище: создание и подключение диска
 
 ```bash
 # Создание диска
@@ -136,7 +134,7 @@ sudo mount /dev/vdb /data
 echo '/dev/vdb /data ext4 defaults 0 2' | sudo tee -a /etc/fstab
 ```
 
-### Block Storage: снимки дисков
+### Блочное хранилище: снимки дисков
 
 ```bash
 # Создание снапшота
@@ -158,7 +156,7 @@ yc compute disk create \
 yc compute snapshot delete --name data-snapshot-20260301
 ```
 
-### File Storage: создание и монтирование
+### Файловое хранилище: создание и монтирование
 
 ```bash
 # Создание файлового хранилища
@@ -166,7 +164,7 @@ yc vpc filesystem create \
   --name shared-fs \
   --type nfs \
   --size 100 \
-  --zone ru-central1a
+  --zone ru-central1-a
 
 # Монтирование на ВМ
 sudo mkdir /shared
@@ -177,54 +175,19 @@ sudo mount -t nfs4 \
 echo '<filesystem_endpoint>:/ /shared nfs4 defaults 0 0' | sudo tee -a /etc/fstab
 ```
 
-### Бэкапы Managed DB в Object Storage
+### Бэкапы баз данных в объектное хранилище
 
 ```bash
 # Экспорт бэкапа PostgreSQL в S3
 pg_dump -h <db_host> -U app app | \
   aws s3 cp - s3://my-artifacts/backups/pg-$(date +%Y%m%d).sql.gz \
   --endpoint-url https://storage.yandexcloud.net
-
-# Автоматизация через cron
-cat <<EOF | sudo tee /etc/cron.daily/db-backup
-#!/bin/bash
-BACKUP_FILE="pg-backup-$(date +%Y%m%d-%H%M).sql.gz"
-pg_dump -h <db_host> -U app app | gzip | \
-  aws s3 cp - s3://my-artifacts/backups/$BACKUP_FILE \
-  --endpoint-url https://storage.yandexcloud.net
-EOF
-
-sudo chmod +x /etc/cron.daily/db-backup
-```
-
-### Интеграция с CI/CD
-
-**GitLab CI пример:**
-
-```yaml
-stages:
-  - build
-  - deploy
-
-build:
-  stage: build
-  script:
-    - docker build -t app:$CI_COMMIT_SHA .
-    - docker push registry.example.com/app:$CI_COMMIT_SHA
-    - aws s3 cp build.tar.gz s3://my-artifacts/releases/$CI_COMMIT_SHA.tar.gz \
-      --endpoint-url https://storage.yandexcloud.net
-
-deploy:
-  stage: deploy
-  script:
-    - aws s3 cp s3://my-artifacts/releases/$CI_COMMIT_SHA.tar.gz . \
-      --endpoint-url https://storage.yandexcloud.net
-    - tar xzf $CI_COMMIT_SHA.tar.gz
-    - ./deploy.sh
 ```
 
 ---
 
-## Дополнительная информация
+## 4. Дополнительная информация
 
-Определения и характеристики хранилищ — [Storage concepts](./storage_concepts.md). IAM-политики, шифрование SSE-KMS, best practices — [Storage advanced topics](./storage_advanced_topics.md). Управление артефактами CI/CD — [CI/CD artifact management](../../CI-CD/artifact_management.md). Сценарии управления дисками в контексте ВМ — [Compute Cloud](../Compute-Cloud.md#снимки-дисков), бэкапы БД — [Managed Databases](../Managed-Databases.md#бэкапы-и-восстановление).
+- **[Основные концепции](./storage_concepts.md)** — характеристики и лимиты хранилищ.
+- **[Дополнительные темы](./storage_advanced_topics.md)** — безопасность и шифрование.
+- **[Compute Cloud](../Compute-Cloud.md)** — управление дисками виртуальных машин.

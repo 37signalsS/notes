@@ -1,40 +1,40 @@
-# CRD PodMonitor
+# PodMonitor — Концепции (CRD)
 
-## Definitions
+## Определения
 
-**`kind: PodMonitor`** — Custom Resource Definition в Prometheus Operator для описания целей скрейпинга напрямую из Pod, без промежуточного Kubernetes Service. Альтернатива [ServiceMonitor](./servicemonitor.md), когда создание Service избыточно.
+**`kind: PodMonitor`** — Custom Resource Definition в Prometheus Operator для описания целей скрейпинга напрямую из Pod, без промежуточного Kubernetes Service. Альтернатива [ServiceMonitor](./servicemonitor.md), используемая в случаях, когда создание Service является избыточным или невозможным.
 
 **API version:** `monitoring.coreos.com/v1`
 
-## Basic Concepts
+## Базовые концепции
 
 ### Принцип работы
 
-1. Prometheus Operator находит PodMonitor по label selector
-2. Запрашивает Kubernetes API для получения Pod, соответствующих селектору
-3. Генерирует `scrape_config` для Prometheus
-4. Обновляет конфигурацию через Secret
-5. `prometheus-config-reloader` перезагружает Prometheus
+1. Prometheus Operator находит PodMonitor по label selector.
+2. Запрашивает Kubernetes API для получения списка Pod, соответствующих селектору.
+3. Генерирует `scrape_config` для Prometheus на основе обнаруженных IP-адресов подов.
+4. Обновляет конфигурацию через Kubernetes Secret.
+5. Sidecar-контейнер `prometheus-config-reloader` инициирует перезагрузку конфигурации Prometheus.
 
 ### Когда использовать PodMonitor
 
-- **Stateful-приложения** (базы данных, очереди) — прямой доступ к подам
-- **Приложения без Service** — не требуется создавать Service только для мониторинга
-- **Специфические порты контейнеров** — скрейпинг напрямую с конкретного порта
-- **Высокая гибкость** — полный контроль над подами
+- **Stateful-приложения** (базы данных, очереди сообщений) — когда требуется прямой доступ к метрикам каждого пода.
+- **Приложения без Service** — когда не требуется балансировка трафика или абстракция Service для работы мониторинга.
+- **Специфические порты контейнеров** — скрейпинг напрямую с конкретного порта контейнера, который может не быть экспонирован через Service.
+- **Динамические топологии** — когда количество и состав подов меняются часто, и прямое обнаружение эффективнее.
 
 ### Отличие от ServiceMonitor
 
 | Характеристика | PodMonitor | ServiceMonitor |
 | :--- | :--- | :--- |
-| **Объект** | Pod | Service |
-| **Требует Service** | Нет | Да |
+| **Объект обнаружения** | Pod | Service |
+| **Зависимость от Service** | Нет | Да |
 | **Meta-лейблы** | `__meta_kubernetes_pod_*` | `__meta_kubernetes_endpoint_*`, `__meta_kubernetes_service_*` |
 | **Рекомендация** | Stateful-приложения | Stateless-приложения |
 
 > **См. также:** [ServiceMonitor CRD](./servicemonitor.md) — мониторинг через Service.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовая конфигурация
 
@@ -59,7 +59,7 @@ spec:
       path: /metrics
 ```
 
-### Несколько портов
+### Мониторинг нескольких портов
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -80,7 +80,7 @@ spec:
       interval: 30s
 ```
 
-### С аутентификацией и TLS
+### Конфигурация с TLS и аутентификацией
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -92,11 +92,8 @@ spec:
   selector:
     matchLabels:
       app: secure-app
-  namespaceSelector:
-    matchNames:
-      - production
   podMetricsEndpoints:
-    - port: metrics
+    - port: https
       path: /metrics
       scheme: https
       interval: 15s
@@ -109,7 +106,7 @@ spec:
         key: token
 ```
 
-### Relabelings (цели)
+### Настройка релейблинга (Relabelings)
 
 ```yaml
 podMetricsEndpoints:
@@ -123,73 +120,55 @@ podMetricsEndpoints:
         targetLabel: container
 ```
 
-### Metric Relabelings (метрики)
-
-```yaml
-podMetricsEndpoints:
-  - port: metrics
-    metricRelabelings:
-      - sourceLabels: [__name__]
-        regex: "go_.*"
-        action: drop
-```
-
-### Ограничения (limits)
+### Лимиты и ограничения
 
 ```yaml
 spec:
-  sampleLimit: 10000    # Лимит сэмплов на PodMonitor
-  targetLimit: 100      # Лимит целей на PodMonitor
+  sampleLimit: 10000    # Максимальное количество сэмплов на PodMonitor
+  targetLimit: 100      # Максимальное количество целей на PodMonitor
 ```
+
+## Дополнительная информация
 
 ### Основные параметры spec
 
 | Параметр | Описание | Пример |
 | :--- | :--- | :--- |
-| **`selector`** | Label selector Pod | `matchLabels: {app: my-app}` |
-| **`namespaceSelector`** | Селектор namespace | `matchNames: [production]` |
-| **`podMetricsEndpoints`** | Список endpoints для скрейпинга | См. примеры выше |
-| **`jobLabel`** | Лейбл Pod для имени задачи | `app` |
-| **`podTargetLabels`** | Лейблы Pod для добавления к метрикам | `[pod, container]` |
-| **`sampleLimit`** | Лимит сэмплов | `10000` |
-| **`targetLimit`** | Лимит целей | `100` |
+| **`selector`** | Label selector для поиска подов | `matchLabels: {app: my-app}` |
+| **`namespaceSelector`** | Список namespace для поиска | `matchNames: [production]` или `any: true` |
+| **`podMetricsEndpoints`** | Описание эндпоинтов скрейпинга | Список объектов (см. ниже) |
+| **`jobLabel`** | Лейбл пода, используемый как имя job | `app` |
+| **`podTargetLabels`** | Лейблы пода, переносимые в метрики | `[pod, container]` |
+| **`sampleLimit`** | Глобальный лимит сэмплов | `10000` |
+| **`targetLimit`** | Глобальный лимит целей | `100` |
 
 ### Параметры podMetricsEndpoints
 
 | Параметр | Описание | Пример |
 | :--- | :--- | :--- |
-| **`port`** | Имя порта контейнера | `metrics`, `web` |
-| **`path`** | Путь к метрикам | `/metrics` |
+| **`port`** | Имя порта в контейнере | `metrics`, `web` |
+| **`path`** | Путь к эндпоинту метрик | `/metrics` |
 | **`interval`** | Интервал скрейпинга | `15s`, `30s` |
-| **`scheme`** | Протокол | `http`, `https` |
-| **`tlsConfig`** | TLS конфигурация | `caFile`, `certFile`, `keyFile` |
-| **`bearerTokenSecret`** | Bearer token из Secret | `name: token-secret, key: token` |
-| **`basicAuth`** | Basic аутентификация | `username`, `password` из Secret |
-| **`honorLabels`** | Сохранять лейблы из метрик | `true`, `false` |
-| **`scrapeTimeout`** | Тайм-аут скрейпинга | `10s` |
-| **`metricRelabelings`** | Релейблинг метрик | См. выше |
-| **`relabelings`** | Релейблинг целей | См. выше |
-
-## Additional Information
-
-### Связанные CRD
-
-- [ServiceMonitor](./servicemonitor.md) — мониторинг через Service
-- [Prometheus CRD](./prometheus.md) — описание экземпляра Prometheus
-- [Probe](./probe.md) — blackbox-мониторинг
+| **`scheme`** | Протокол (http/https) | `http` |
+| **`tlsConfig`** | Настройки TLS | См. пример с TLS выше |
+| **`bearerTokenSecret`** | Токен из Kubernetes Secret | `name: my-secret, key: token` |
+| **`scrapeTimeout`** | Таймаут скрейпинга | `10s` |
+| **`metricRelabelings`** | Релейблинг самих метрик | См. раздел Relabelings |
 
 ### Доступные meta-лейблы для PodMonitor
 
 | Meta-лейбл | Описание |
 | :--- | :--- |
-| `__meta_kubernetes_namespace` | Namespace пода |
+| `__meta_kubernetes_namespace` | Пространство имен пода |
 | `__meta_kubernetes_pod_name` | Имя пода |
 | `__meta_kubernetes_pod_container_name` | Имя контейнера |
-| `__meta_kubernetes_pod_container_image` | Image контейнера |
-| `__meta_kubernetes_pod_container_port_name` | Имя порта |
-| `__meta_kubernetes_pod_container_port_number` | Номер порта |
-| `__meta_kubernetes_pod_node_name` | Имя узла |
+| `__meta_kubernetes_pod_container_port_name` | Имя порта контейнера |
+| `__meta_kubernetes_pod_node_name` | Имя узла, на котором запущен под |
 | `__meta_kubernetes_pod_label_<labelname>` | Лейблы пода |
 | `__meta_kubernetes_pod_annotation_<annotationname>` | Аннотации пода |
 
-> **Примечание:** Для Node Exporter через PodMonitor доступен `__meta_kubernetes_pod_node_name` как ключ связывания с узлом.
+### Связанные ресурсы
+
+- [ServiceMonitor](./servicemonitor.md) — мониторинг через Kubernetes Service.
+- [Prometheus CRD](./prometheus.md) — конфигурация экземпляра Prometheus Server.
+- [Probe](./probe.md) — Blackbox-мониторинг внешних целей.

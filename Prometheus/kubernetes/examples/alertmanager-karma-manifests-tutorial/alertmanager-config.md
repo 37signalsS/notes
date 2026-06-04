@@ -1,12 +1,12 @@
 # Конфигурация Alertmanager (ConfigMap-шаблон)
 
-## Definitions
+## Определения
 
 **ConfigMap-шаблон Alertmanager** — Kubernetes ConfigMap, содержащий шаблон `alertmanager.yml` с переменными-плейсхолдерами (`##SMTP_USER##`, `##TELEGRAM_TOKEN##`) вместо реальных секретов. Финальный конфиг генерируется init-container'ом, который подставляет значения из Kubernetes Secret.
 
-> **См. также:** [Полная конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml) (SSoT)
+> **См. также:** [Полная конфигурация Alertmanager](../../alertmanager.md#конфигурация-alertmanageryml)
 
-## Basic Concepts
+## Основные концепции
 
 ### Паттерн безопасного управления конфигурацией
 
@@ -17,7 +17,7 @@
 | **Init Container** | Читает шаблон + Secret → генерирует финальный `alertmanager.yml` в `emptyDir` |
 | **Основной контейнер** | Монтирует готовый конфиг из `emptyDir` |
 
-> Паттерн описан в [Alertmanager SSoT](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты)
+> Паттерн описан в материале [Развёртывание Alertmanager в Kubernetes](../../alertmanager.md#развёртывание-в-kubernetes-через-манифесты)
 
 ### Структура шаблона alertmanager.yml.tpl
 
@@ -28,7 +28,7 @@
 | `receivers` | Получатели: email, Telegram, blackhole (для алертов без маршрута) |
 | `templates` | Путь к Go-шаблонам сообщений (`/etc/alertmanager/templates/*.tmpl`) |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Манифест ConfigMap
 
@@ -93,8 +93,8 @@ data:
 - **`severity =~ "critical|warning"`** → алерты идут в `telegram-receiver` **и** `email-receiver` (благодаря `continue: true` в первом маршруте)
 - **Алерты без matching-меток** → попадают в `default-receiver` (blackhole, уведомления не отправляются)
 
-## Additional Information
+## Дополнительная информация
 
 - [Шаблоны сообщений](./alertmanager-templates.md) — Go-шаблоны для форматирования Telegram/email уведомлений
 - [Alertmanager StatefulSet](./alertmanager-statefulset.md) — манифест StatefulSet с init-container для генерации конфига
-- [Kubernetes Secrets](./secrets.md) — хранение токенов и паролей для подстановки в шаблон
+- [Секреты Kubernetes](./secrets.md) — хранение токенов и паролей для подстановки в шаблон

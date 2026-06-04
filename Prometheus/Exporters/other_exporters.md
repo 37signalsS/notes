@@ -2,13 +2,13 @@
 
 ## Определения
 
-**Другие экспортеры** — каталог дополнительных экспортеров для мониторинга баз данных, веб-серверов, брокеров сообщений, облачных платформ, систем хранения, сетевых устройств, контейнеров и приложений. Полный список доступен в [official exporters](https://prometheus.io/docs/instrumenting/exporters/) и [community exporters](https://prometheus.io/docs/instrumenting/exporters/#community-exporters).
+**Другие экспортеры** — каталог дополнительных экспортеров для мониторинга баз данных, веб-серверов, брокеров сообщений, облачных платформ, систем хранения, сетевых устройств, контейнеров и приложений. Полный список доступен в официальной документации: [official exporters](https://prometheus.io/docs/instrumenting/exporters/) и [community exporters](https://prometheus.io/docs/instrumenting/exporters/#community-exporters).
 
-## Базовые концепции
+## Основные концепции
 
 ### Категоризация экспортеров
 
-Экспортеры сгруппированы по категориям в зависимости от типа monitored системы. Каждый экспортер собирает метрики целевой системы и преобразует их в формат Prometheus.
+Экспортеры сгруппированы по категориям в зависимости от типа наблюдаемой системы. Каждый экспортер собирает метрики целевой системы и преобразует их в формат Prometheus.
 
 **Связанные темы:** [Принцип работы экспортера](./overview.md#принцип-работы-экспортера), [Выбор экспортера](./overview.md#выбор-экспортера-для-задачи)
 
@@ -34,7 +34,7 @@
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
 | **nginx-prometheus-exporter** | Мониторинг Nginx | [GitHub](https://github.com/nginxinc/nginx-prometheus-exporter) | 9113 |
-| **nginx-vts-exporter** | Мониторинг Nginx VTS module | [GitHub](https://github.com/hnlq715/nginx-vts-exporter) | 9115 |
+| **nginx-vts-exporter** | Мониторинг Nginx VTS (Virtual Host Traffic Status) module | [GitHub](https://github.com/hnlq715/nginx-vts-exporter) | 9115 |
 | **apache_exporter** | Мониторинг Apache | [GitHub](https://github.com/Lusitaniae/apache_exporter) | 9117 |
 | **haproxy_exporter** | Мониторинг HAProxy | [GitHub](https://github.com/prometheus/haproxy_exporter) | 9101 |
 | **traefik_exporter** | Мониторинг Traefik | [GitHub](https://github.com/maxwo/traefik_exporter) | 9899 |
@@ -54,7 +54,7 @@
 
 ### Облачные платформы
 
-> Примечание: Для локальной аренды используйте openstack_exporter или прямые экспортеры систем хранения.
+> Примечание: Для локальной аренды используйте `openstack_exporter` или прямые экспортеры систем хранения.
 
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
@@ -74,16 +74,16 @@
 
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
-| **snmp_exporter** | Мониторинг через SNMP | [GitHub](https://github.com/prometheus/snmp_exporter) | 9116 |
-| **ipmi_exporter** | Мониторинг через IPMI | [GitHub](https://github.com/prometheus-community/ipmi_exporter) | 9290 |
-| **bind_exporter** | Мониторинг DNS (BIND) | [GitHub](https://github.com/prometheus-community/bind_exporter) | 9119 |
+| **snmp_exporter** | Мониторинг через SNMP (Simple Network Management Protocol) | [GitHub](https://github.com/prometheus/snmp_exporter) | 9116 |
+| **ipmi_exporter** | Мониторинг через IPMI (Intelligent Platform Management Interface) | [GitHub](https://github.com/prometheus-community/ipmi_exporter) | 9290 |
+| **bind_exporter** | Мониторинг DNS (Domain Name System, BIND) | [GitHub](https://github.com/prometheus-community/bind_exporter) | 9119 |
 
 ### Операционные системы
 
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
 | **node_exporter** | Мониторинг Linux | [node_exporter](./node_exporter.md) | 9100 |
-| **windows_exporter** | Мониторинг Windows (ex wmi_exporter) | [GitHub](https://github.com/prometheus-community/windows_exporter) | 9182 |
+| **windows_exporter** | Мониторинг Windows (ex WMI (Windows Management Instrumentation) exporter) | [GitHub](https://github.com/prometheus-community/windows_exporter) | 9182 |
 | **darwin_exporter** | Мониторинг macOS | [GitHub](https://github.com/prometheus-community/darwin_exporter) | 9100 |
 | **freebsd_exporter** | Мониторинг FreeBSD | [GitHub](https://github.com/prometheus/freebsd_exporter) | 9100 |
 
@@ -92,7 +92,7 @@
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
 | **cAdvisor** | Мониторинг Docker-контейнеров | [cadvisor](./cadvisor.md) | 8080 |
-| **kube-state-metrics** | Мониторинг Kubernetes objects | [GitHub](https://github.com/kubernetes/kube-state-metrics) | 8080 |
+| **kube-state-metrics** | Мониторинг Kubernetes объектов | [GitHub](https://github.com/kubernetes/kube-state-metrics) | 8080 |
 | **docker_exporter** | Мониторинг Docker Engine | [GitHub](https://github.com/prometheus/prometheus/tree/main/documentation/examples/docker-compose-alerts) | 9323 |
 
 **Связанные темы:** [Docker](../../Docker/docker_overview.md), [Kubernetes](../../Kubernetes/kubernetes_overview.md)
@@ -102,7 +102,7 @@
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
 | **gitlab_exporter** | Мониторинг GitLab | [GitHub](https://github.com/feiskyer/gitlab-exporter) | 9127 |
-| **github_exporter** | Мониторинг GitHub API | [GitHub](https://github.com/prometheus-community/github_exporter) | 9120 |
+| **github_exporter** | Мониторинг GitHub API (Application Programming Interface) | [GitHub](https://github.com/prometheus-community/github_exporter) | 9120 |
 | **jira_exporter** | Мониторинг Jira | [GitHub](https://github.com/prometheus-community/jira_exporter) | 9121 |
 | **sonarqube_exporter** | Мониторинг SonarQube | [GitHub](https://github.com/witekio/sonarqube-exporter) | 9119 |
 | **vault_exporter** | Мониторинг HashiCorp Vault | [GitHub](https://github.com/prometheus-community/vault_exporter) | 9102 |
@@ -112,21 +112,21 @@
 | Экспортер | Описание | Репозиторий | Порт |
 | :--- | :--- | :--- | :--- |
 | **1c_exporter** | Мониторинг 1С | [GitHub](https://github.com/1c-syntax/1c-exporter) | 9100 |
-| **php-fpm_exporter** | Мониторинг PHP-FPM | [GitHub](https://github.com/hipages/php-fpm_exporter) | 9253 |
+| **php-fpm_exporter** | Мониторинг PHP-FPM (FastCGI Process Manager) | [GitHub](https://github.com/hipages/php-fpm_exporter) | 9253 |
 | **process_exporter** | Мониторинг процессов | [GitHub](https://github.com/ncabatoff/process-exporter) | 9256 |
-| **json_exporter** | Мониторинг JSON API | [GitHub](https://github.com/prometheus-community/json_exporter) | 9117 |
-| **sql_exporter** | Мониторинг SQL баз данных | [GitHub](https://github.com/prometheus-community/sql_exporter) | 9116 |
+| **json_exporter** | Мониторинг JSON (JavaScript Object Notation) API | [GitHub](https://github.com/prometheus-community/json_exporter) | 9117 |
+| **sql_exporter** | Мониторинг SQL (Structured Query Language) баз данных | [GitHub](https://github.com/prometheus-community/sql_exporter) | 9116 |
 
 ## Дополнительная информация
 
 ### Поиск экспортеров
 
-Поиск подходящего экспортера следует начинать с [official exporters](https://prometheus.io/docs/instrumenting/exporters/) и [community exporters](https://github.com/search?q=prometheus+exporter). Также можно выполнить поиск по [GitHub](https://github.com/search?q=prometheus+exporter).
+Поиск подходящего экспортера следует начинать с официальных списков [official exporters](https://prometheus.io/docs/instrumenting/exporters/) и [community exporters](https://prometheus.io/docs/instrumenting/exporters/#community-exporters). Также можно выполнить поиск по [GitHub](https://github.com/search?q=prometheus+exporter).
 
 ### Написание своего экспортера
 
-Если подходящий экспортер не найден, его можно написать самостоятельно. Доступны [Textfile Collector](./extensibility/custom_exporters.md) для простых сценариев через внешние скрипты или [написание кастомных экспортеров](./extensibility/custom_exporters.md) на Go.
+Если подходящий экспортер не найден, его можно написать самостоятельно. Доступны [Textfile Collector](./extensibility/textfile_collector.md) для простых сценариев через внешние скрипты или [написание кастомных экспортеров](./extensibility/custom_exporters.md) на Go.
 
 ### Связанные темы
 
-[Exporters Overview](./overview.md), [Service Discovery и Relabeling](../service_discovery_and_relabeling.md), [Конфигурация Prometheus](../configuration.md)
+[Обзор экспортеров](./overview.md), [Service Discovery и Relabeling](../service_discovery_and_relabeling.md), [Конфигурация Prometheus](../configuration.md)

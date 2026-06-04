@@ -1,21 +1,21 @@
 # Yandex Resource Manager: Автоматизация через Terraform
 
-## Definitions
+## 1. Определения
 
 **Terraform Automation** — декларативное управление ресурсами Yandex Cloud через HashiCorp Terraform с версионированием и аудитом изменений.
 
 ---
 
-## Basic Concepts
+## 2. Базовые концепции
 
 ### Ресурсы Terraform для Resource Manager
 
 Основные ресурсы провайдера `yandex`:
 
-- `yandex_resourcemanager_folder` — создание и настройка каталогов
-- `yandex_iam_service_account` — сервисные аккаунты
-- `yandex_resourcemanager_folder_iam_binding` — привязка ролей к субъектам
-- `yandex_iam_service_account_key` — API-ключи сервисных аккаунтов
+- `yandex_resourcemanager_folder` — создание и настройка каталогов.
+- `yandex_iam_service_account` — сервисные аккаунты.
+- `yandex_resourcemanager_folder_iam_binding` — привязка ролей к субъектам.
+- `yandex_iam_service_account_key` — API-ключи сервисных аккаунтов.
 
 ### Структура конфигурации
 
@@ -27,9 +27,9 @@ Terraform запускается из CI/CD-пайплайна ([GitLab CI](../.
 
 ---
 
-## Practical Scenarios
+## 3. Практические сценарии
 
-### Terraform: декларативное описание
+### Terraform: декларативное описание структуры
 
 ```hcl
 # main.tf
@@ -56,8 +56,8 @@ resource "yandex_resourcemanager_folder" "ci" {
   name     = "ci"
 
   labels = {
-    env        = "ci"
-    owner      = "devops"
+    env         = "ci"
+    owner       = "devops"
     cost_center = "infra"
   }
 }
@@ -131,9 +131,6 @@ validate:
     - yc resource-manager folder get --id "$YC_FOLDER_ID" --format json |
       jq -e '.labels.env=="ci"'
 
-    # Проверка наличия сервисного аккаунта
-    - yc iam service-account get --name sa-deploy --folder-id "$YC_FOLDER_ID"
-
 deploy:
   stage: deploy
   image: hashicorp/terraform:latest
@@ -146,42 +143,12 @@ deploy:
     - main
 ```
 
-### Создание структуры каталогов для микросервисов
-
-```bash
-#!/bin/bash
-# setup-folders.sh
-
-CLOUD_ID=$(yc resource-manager cloud list --format json | jq -r '.[0](id')
-SERVICES=("checkout" "payment" "delivery" "notifications")
-ENVIRONMENTS=("dev" "stage" "prod")
-
-for service in "${SERVICES[@]}"; do
-  for env in "${ENVIRONMENTS[@]}"; do
-    FOLDER_NAME="${service}-${env}"
-
-    # Проверка существования
-    FOLDER_ID=$(yc resource-manager folder get --name "$FOLDER_NAME" --format json | jq -r '.id' 2>/dev/null)
-
-    if [ -z "$FOLDER_ID" ]; then
-      echo "Creating folder: $FOLDER_NAME"
-
-      FOLDER_ID=$(yc resource-manager folder create \
-        --name "$FOLDER_NAME" \
-        --cloud-id "$CLOUD_ID" \
-        --labels "service=$service,env=$env,owner=platform-team" \
-        --format json | jq -r '.id')
-
-      echo "  Folder ID: $FOLDER_ID"
-    else
-      echo "Folder exists: $FOLDER_NAME (ID: $FOLDER_ID)"
-    fi
-  done
-done
-```
-
 ---
 
-## Additional Information
+## 4. Дополнительная информация
 
-Концепции Infrastructure as Code — [IAC Overview](../../Concepts/iac_overview.md). Базовые концепции Resource Manager — [Overview](./overview.md), роли и права доступа — [IAM Roles](./iam_roles.md).
+### Связанные документы
+
+- **[Overview](./overview.md)** — базовые концепции Resource Manager.
+- **[IAM Роли и права доступа](./iam_roles.md)** — управление доступом.
+- **[IAC Overview](../../Concepts/iac_overview.md)** — концепции Infrastructure as Code.

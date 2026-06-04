@@ -18,8 +18,8 @@
 | **Тип** | Встроенная прослойка (wrapper) | Сторонний инструмент |
 | **Зависимости** | Требует установленный `docker-compose` | Требует Python и пакет `podman-compose` |
 | **Совместимость** | Высокая (использует оригинальный движок) | Средняя (реализация спецификации на Python) |
-| **Архитектура** | Проксирует команды в Docker Compose | Нативно вызывает команды Podman |
-| **Работа с Pods** | Обычно создает отдельные контейнеры в сети | По умолчанию может объединять сервисы в один **Pod** |
+| **Архитектура** | Проксирует команды в Docker Compose | Нативно вызывает команды Podman через API |
+| **Работа с Pods** | Обычно создает отдельные контейнеры в сети | По умолчанию может объединять сервисы в один **Pod** (группу контейнеров) |
 
 ### Почему Podman вместо Docker Compose
 
@@ -43,12 +43,10 @@ sudo dnf install podman-compose
 
 # Через pip (универсальный способ)
 pip install podman-compose
-```
 
-Проверка версии:
-
-```bash
+# Проверка версии
 podman-compose version
+# → podman-compose version 1.0.6
 ```
 
 ### 2. Запуск приложения
@@ -80,19 +78,28 @@ volumes:
 ```bash
 # Запуск в фоновом режиме
 podman-compose up -d
+# → podman-compose version 1.0.6, podman version 4.9.4
+# → podman pod create --name example_default ...
+# → podman run -d --pod example_default ...
 
 # Просмотр статуса
 podman-compose ps
+# → CONTAINER ID  IMAGE                           COMMAND               CREATED         STATUS             PORTS                 NAMES
+# → 8f2a1b3c4d5e  docker.io/library/postgres:16   postgres              1 minute ago    Up 1 minute ago                          example_db_1
+# → 1a2b3c4d5e6f  docker.io/library/nginx:alpine  nginx -g daemon o...  1 minute ago    Up 1 minute ago    0.0.0.0:8080->80/tcp  example_app_1
 
 # Остановка и удаление ресурсов
 podman-compose down
+# → podman stop -t 10 example_app_1 example_db_1
+# → podman rm -f example_app_1 example_db_1
+# → podman pod rm example_default
 ```
 
 ### 3. Нюансы сетевого взаимодействия
 
 В `podman-compose` есть критическое отличие в работе сети по сравнению с нативными подами Podman:
 
-- **В нативном поде** (`podman pod create`): Контейнеры делят один network namespace и loopback. Обращение между ними доступно через `localhost`.
+- **В нативном поде** (`podman pod create`): Контейнеры делят один network namespace и loopback. Обращение между ними доступно через `localhost`. Подробнее: **[Поды в Podman](./podman_pods.md)**.
 - **В podman-compose**: Создается bridge-сеть (аналогично Docker). Контейнеры объединяются в логический Pod, но имеют разные сетевые пространства.
 - **Правило**: Всегда используйте **имена сервисов** (`db`, `redis`) вместо `localhost` для связи между контейнерами внутри одного compose-файла.
 
@@ -119,15 +126,20 @@ podman-compose down
 
 ### Генерация Kubernetes-манифестов
 
-Одной из сильнейших сторон Podman является возможность миграции с Compose на Kubernetes. Если приложение запущено через `podman-compose`, оно создает группу контейнеров, которую можно экспортировать:
+Одной из сильнейших сторон Podman является возможность миграции с Compose на Kubernetes. Если приложение запущено через `podman-compose`, оно создает группу контейнеров (Pod), которую можно экспортировать.
 
 ```bash
 # Узнать ID созданного пода
 podman pod ps
 
-# Сгенерировать YAML для Kubernetes
-podman generate kube <POD_ID> > deployment.yaml
+# Сгенерировать YAML для Kubernetes (Podman 4.3+)
+podman kube generate <POD_ID> > deployment.yaml
+
+# Запуск из YAML
+podman kube play deployment.yaml
 ```
+
+Подробнее об интеграции: **[Поды в Podman: Интеграция с Kubernetes](./podman_pods.md#3-интеграция-с-kubernetes)**.
 
 *Примечание: сгенерированный файл содержит описания Pod и Service, но может потребовать ручной правки для добавления Deployment или StatefulSet.*
 
@@ -146,3 +158,4 @@ podman generate kube <POD_ID> > deployment.yaml
 - **[Podman vs Docker](./podman_vs_docker.md)** — архитектурные различия.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — как Podman работает без демона.
 - **[Rootless режим](./podman_rootless.md)** — особенности запуска без root.
+сти запуска без root.

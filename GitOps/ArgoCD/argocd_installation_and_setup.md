@@ -47,6 +47,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 # 4. Получение начального пароля admin
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 ```
+
 Вход: `https://localhost:8080` (логин: `admin`).
 
 ### Сценарий 2: Установка ArgoCD CLI
@@ -75,6 +76,7 @@ spec:
 ```
 
 Пример Ingress-ресурса (nginx):
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -122,12 +124,14 @@ argocd app create my-app \
 Конфигурация прав доступа выполняется через `ConfigMap` в неймспейсе `argocd`.
 
 **1. Создание пользователя (`argocd-cm`):**
+
 ```yaml
 data:
   accounts.myuser: apiKey,login
 ```
 
 **2. Назначение роли (`argocd-rbac-cm`):**
+
 ```yaml
 data:
   policy.csv: |
@@ -139,6 +143,7 @@ data:
 Процесс включает предварительное скачивание образов и манифестов во внешней сети с последующим переносом в приватный реестр (например, Harbor).
 
 1. **Загрузка образов в Harbor:**
+
    ```bash
    docker pull quay.io/argoproj/argocd:v3.3.0
    docker tag quay.io/argoproj/argocd:v3.3.0 harbor.local/platform/argocd:v3.3.0
