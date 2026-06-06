@@ -52,43 +52,29 @@ sudo ip route add 10.0.1.0/24 dev gre1
 
 ### IPIP (IP-in-IP)
 
-Инкапсуляция IPv4 в IPv4.
+Инкапсуляция IPv4 в IPv4. Подробное описание и примеры см. в статье **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)**.
 
 ```bash
 # Создать IPIP-туннель
 sudo ip tunnel add ipip1 mode ipip remote 203.0.113.2 local 198.51.100.1
-
-# Включить и настроить
-sudo ip link set ipip1 up
-sudo ip address add 10.0.0.1/30 dev ipip1
 ```
 
 ### SIT (IPv6-over-IPv4)
 
-Туннель для передачи IPv6 через IPv4-инфраструктуру.
+Туннель для передачи IPv6 через IPv4-инфраструктуру. Подробное описание см. в статье **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)**.
 
 ```bash
 # Создать SIT-туннель
 sudo ip tunnel add sit1 mode sit remote 203.0.113.2 local 198.51.100.1
-
-# Включить и назначить IPv6
-sudo ip link set sit1 up
-sudo ip -6 address add 2001:db8::1/64 dev sit1
 ```
 
 ### VXLAN (Virtual Extensible LAN)
 
-L2-оверлей поверх L3-сети.
+L2-оверлей поверх L3-сети. Подробное описание и практические сценарии см. в статье **[VXLAN](../../../../Networking/Tunnels/vxlan.md)**.
 
 ```bash
-# Unicast VXLAN (точка-точка)
+# Пример создания интерфейса (современный метод через ip link)
 sudo ip link add vxlan0 type vxlan id 100 remote 192.0.2.2 local 192.0.2.1 dev eth0 dstport 4789
-
-# Multicast VXLAN (многоточечный)
-sudo ip link add vxlan0 type vxlan id 100 group 239.1.1.1 dev eth0 dstport 4789
-
-# Включить интерфейс
-sudo ip link set vxlan0 up
 ```
 
 ### GRETAP (L2-туннель)

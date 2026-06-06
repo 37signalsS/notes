@@ -204,7 +204,7 @@ rtt min/avg/max/mdev = 18.234/20.567/25.891/2.345 ms
 
 ## Дополнительная информация
 
-Для глубокого изучения темы рекомендуется документация по [QoS](./qos.md), [эмуляции проблем сети через tc netem](../../Linux/Networking/Tools/tc_netem.md), [оптимизации задержек](../../Linux/Networking/Concepts/network_latency_optimization.md), а также руководства по [ping](../../Linux/Diagnostics/Networking/ping.md) и [tracert/mtr](../../Linux/Diagnostics/Networking/traceroute_mtr.md).
+Для глубокого изучения темы рекомендуется документация по [QoS](./qos.md), [эмуляции проблем сети через tc netem](../../Linux/Networking/Tools/tc_netem.md) и [оптимизации задержек](../../Linux/Networking/Concepts/network_latency_optimization.md).
 
 ### Рекомендации по настройке
 

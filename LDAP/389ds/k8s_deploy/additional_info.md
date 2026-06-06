@@ -22,7 +22,7 @@ kubectl exec 389ds-0 -n ldap -- \
 kubectl logs -f 389ds-0 -n ldap
 ```
 
-## Best Practices
+## Рекомендации (Best Practices)
 
 1. **Anti-affinity** — распределять поды по разным узлам
 2. **Resource limits** — ограничивать CPU/RAM для предсказуемости

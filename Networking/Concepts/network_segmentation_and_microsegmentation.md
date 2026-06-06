@@ -31,7 +31,7 @@
 | [VLAN](../OSI_TCP_IP_Model/data_link_layer.md)/подсети | Крупные домены | Сетевое | Простота, прогнозируемость | Грубо, мало контекста |
 | Security Groups/NACL | Подсети/инстансы | Облачное | Декларативность, интеграция | IP/порт-центрично |
 | DFW/eBPF/host-firewall | Хост/ворклоад | Распределённое | Точная изоляция, L3–L7 | Сложность согласования |
-| Service Mesh | Сервис/идентичность | Прикладное | L7-контроль, mTLS | Доп. сложность, оверхед |
+| [Service Mesh](../../Service_Mesh/service_mesh_concepts.md) | Сервис/идентичность | Прикладное | L7-контроль, mTLS (mutual Transport Layer Security) | Доп. сложность, оверхед |
 
 ## Практические сценарии
 
@@ -77,3 +77,4 @@ spec:
 - **Фаерволы:** [Firewall Concepts](./firewall_concepts.md), [Best Practices](./firewall_rules_best_practices.md)
 - **VLAN и L2:** [VLAN L2 Switching](./vlan_l2_switching/definitions_and_concepts.md)
 - **VPN vs Service Mesh:** [VPN vs Service Mesh](./vpn_vs_service_mesh.md)
+e_mesh.md)

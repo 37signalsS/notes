@@ -15,7 +15,7 @@
 | :--- | :--- | :--- |
 | **Уровень** | L3/L4 туннели ([IPsec](../Tunnels/ipsec/ipsec.md), [WireGuard](../../Vpn/wireguard.md)) | L7 прокси/sidecar (Envoy), eBPF |
 | **Идентичность** | IP-адреса, подсети, сертификаты | SPIFFE/SVID, сервисные аккаунты |
-| **Шифрование** | Весь трафик внутри туннеля | mTLS между конкретными сервисами |
+| **Шифрование** | Весь трафик внутри туннеля | mTLS (mutual Transport Layer Security) между конкретными сервисами |
 | **Политики доступа** | ACL на основе IP/портов | Правила L7 (методы, пути, заголовки) |
 | **Наблюдаемость** | Ограничена (счётчики трафика) | Детальная (трассировка, метрики запросов) |
 | **Гранулярность** | Макросегментация (сетевые сегменты) | Микросегментация (уровень сервисов) |
@@ -70,7 +70,9 @@ spec:
 
 ## Дополнительная информация
 
-- Туннелирование: [Tunneling Overview](../Tunnels/tunneling_overview.md)
-- WireGuard: [WireGuide Setup](../../Vpn/wireguard.md)
-- Service Mesh: [Service Mesh Concepts](../../Service_Mesh/service_mesh_concepts.md)
-- Сегментация: [Network Segmentation](./network_segmentation_and_microsegmentation.md)
+- WireGuard: [WireGuard Setup](../../Vpn/wireguard.md)
+- Service Mesh: [Основные концепции Service Mesh](../../Service_Mesh/service_mesh_concepts.md)
+- Сегментация сети: [Сетевая сегментация и микросегментация](./network_segmentation_and_microsegmentation.md)
+ion.md)
+/network_segmentation_and_microsegmentation.md)
+ion.md)

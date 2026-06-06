@@ -42,15 +42,25 @@
 
 Основной инструмент — `iproute2`:
 
-- [`ip tunnel`](../../Linux/Networking/Tools/iproute2/ip_tunnel.md) — устаревший синтаксис
-- `ip link add type <type>` — современный синтаксис
+- [`ip tunnel`](../../Linux/Networking/Tools/iproute2/ip_tunnel.md) — устаревший синтаксис (только для IPv4).
+- `ip link add type <type>` — современный синтаксис (рекомендуется).
 
 ```bash
-# Современный синтаксис (рекомендуется)
-ip link add <name> type <proto> remote <dst> local <src>
+# Современный синтаксис (пример создания GRE)
+ip link add name gre1 type gre remote 192.0.2.2 local 192.0.2.1
+# → Создает виртуальный интерфейс gre1
+
+ip link set gre1 up
+# → Переводит интерфейс в состояние UP
+
+# Проверка статуса
+ip -d link show gre1
+# → gre1@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1476 ...
+# → gre remote 192.0.2.2 local 192.0.2.1 dev eth0 ttl inherit
 
 # Устаревший синтаксис
-ip tunnel add <name> mode <proto> remote <dst> local <src>
+ip tunnel add tun1 mode ipip remote 192.0.2.2 local 192.0.2.1
+# → Добавляет туннель tun1 через старый стек ядра
 ```
 
 ## Практические сценарии
@@ -61,7 +71,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 **Технологии:**
 
-- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPSec](./ipsec/ipsec.md), OpenVPN
+- **С шифрованием:** [WireGuard](../../Vpn/wireguard.md), [IPsec](./ipsec/ipsec.md), OpenVPN
 - **Без шифрования (доверенные сети):** [GRE](./gre/gre.md), [IPIP](./ipip_and_sit.md)
 
 ### 2. Передача неподдерживаемого протокола
@@ -84,6 +94,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 - Виртуальные машины в одном L2-сегменте на разных физических серверах
 - Мультитенантные облачные платформы (IaaS)
 - Kubernetes CNI (Calico, Flannel, Cilium)
+- **Docker Swarm:** Использует [сетевой драйвер overlay](../../Docker/Docker_network/drivers/overlay.md).
 
 ### 4. Объединение двух приватных сетей
 
@@ -111,8 +122,8 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 
 | Тип | Протоколы | Описание |
 |-----|-----------|----------|
-| **С шифрованием** | WireGuard, OpenVPN, [IPSec](./ipsec/ipsec.md) | Защита «из коробки» |
-| **Без шифрования** | GRE, IPIP, SIT, VXLAN | Только инкапсуляция, шифрование опционально ([IPSec](./ipsec/ipsec.md)) |
+| **С шифрованием** | WireGuard, OpenVPN, [IPsec](./ipsec/ipsec.md) | Защита «из коробки» |
+| **Без шифрования** | GRE, IPIP, SIT, VXLAN | Только инкапсуляция, шифрование опционально ([IPsec](./ipsec/ipsec.md)) |
 
 #### По топологии
 
@@ -133,22 +144,22 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 | **VXLAN** | L2 | Нет | ~50 байт | Высокая (16M VNI) | Дата-центры |
 | **WireGuard** | L3 | Да (встроенное) | ~60 байт | Высокая | Современный VPN |
 | **OpenVPN** | L2/L3 | Да (встроенное) | ~60-80 байт | Средняя | Корпоративный VPN |
-| **[IPSec](./ipsec/ipsec.md)** | L3 | Да (ESP) | ~56-73 байта | Высокая | Site-to-site VPN, интеграция с партнёрами |
+| **[IPsec](./ipsec/ipsec.md)** | L3 | Да (ESP) | ~56-73 байта | Высокая | Site-to-site VPN, интеграция с партнёрами |
 | **L2TP** | L2 | Нет (требует IPsec) | ~40 байт | Средняя | VPN с аутентификацией |
 | **PPTP** | L2 | Слабое (устарел) | ~40 байт | Низкая | Устаревший VPN |
 
 #### Детали протоколов
 
-Подробные описания протоколов — в специализированных файлах:
+Подробные описания протоколов — в специализированных статьях:
 
-- **IPIP:** [Туннели IPIP и SIT](./ipip_and_sit.md)
-- **GRE/GRETAP:** [GRE (SSoT)](./gre/gre.md)
-- **VXLAN:** [VXLAN (SSoT)](./vxlan.md)
-- **WireGuard:** [WireGuard (SSoT)](../../Vpn/wireguard.md)
-- **OpenVPN:**
-- **IPsec:** [IPSec (SSoT)](./ipsec/ipsec.md)
-- **L2TP:** Протокол L2, требует IPsec для шифрования. Порт UDP 1701. Применяется в связке L2TP/IPsec.
-- **PPTP:** Устаревший протокол (TCP 1723 + GRE). Известные уязвимости. Не рекомендуется к использованию.
+- **IPIP и SIT:** [Туннели IPIP и SIT](./ipip_and_sit.md)
+- **GRE/GRETAP:** [Протокол GRE](./gre/gre.md)
+- **VXLAN:** [VXLAN](./vxlan.md)
+- **WireGuard:** [WireGuard VPN](../../Vpn/wireguard.md)
+- **IPsec:** [Протокол IPsec](./ipsec/ipsec.md)
+- **L2TP:** Протокол L2, часто используемый в связке с IPsec (L2TP/IPsec).
+- **PPTP:** Устаревший протокол (TCP 1723 + GRE) с известными уязвимостями.
+
 
 ### Выбор протокола
 
@@ -156,6 +167,7 @@ ip tunnel add <name> mode <proto> remote <dst> local <src>
 Требуется L2-оверлей?
 ├─ Да → VXLAN (масштабируемо) или GRETAP (просто)
 └─ Нет → Требуется шифрование?
-         ├─ Да → WireGuard (производительность), [IPSec](./ipsec/ipsec.md) (site-to-site) или OpenVPN (зрелость)
+         ├─ Да → WireGuard (производительность), [IPsec](./ipsec/ipsec.md) (site-to-site) или OpenVPN (зрелость)
          └─ Нет → GRE (универсально) или IPIP/SIT (транзит протокола)
 ```
+

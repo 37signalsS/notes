@@ -1,8 +1,8 @@
 # Tun vs Tap
 
-## Definitions
+## Определения
 
-**`tun` (network tunnel)** — виртуальный сетевой интерфейс L3 (сетевой уровень), эмулирующий IP-интерфейс точка-точка. Работает с IP-пакетами, не передаёт Ethernet-кадры.
+**`tun` (network tunnel)** — виртуальный сетевой интерфейс L3 (сетевой уровень), эмулирующий IP-интерфейс точка — точка. Работает с IP-пакетами, не передаёт Ethernet-кадры.
 
 **`tap` (network tap)** — виртуальный сетевой интерфейс L2 (канальный уровень), эмулирующий Ethernet-адаптер (NIC). Работает с полноценными Ethernet-кадрами, включая MAC-адреса.
 
@@ -15,7 +15,7 @@
 
 **Связанные темы:** [Сетевые туннели — обзор](./tunneling_overview.md), [Сетевые интерфейсы Linux](../../Linux/Networking/Concepts/linux_network_interfaces.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Сравнительная таблица
 
@@ -33,7 +33,7 @@
 
 ### Принцип работы
 
-**`tun` (L3):**
+**Интерфейс `tun` (L3):**
 
 ```
 [Приложение] → [IP-пакет] → [/dev/net/tun] → [tun0] → [IP-стек] → [Сеть]
@@ -41,7 +41,7 @@
 
 Приложение читает/пишет IP-пакеты напрямую. Ядро маршрутизирует трафик через `tun0` как обычный сетевой интерфейс.
 
-**`tap` (L2):**
+**Интерфейс `tap` (L2):**
 
 ```
 [Приложение] → [Ethernet-кадр] → [/dev/net/tap] → [tap0] → [bridge] → [eth0] → [Сеть]
@@ -49,15 +49,15 @@
 
 Приложение работает с Ethernet-кадрами. Для интеграции с физической сетью требуется bridge, объединяющий `tap0` и `eth0`.
 
-### Заголовки данных
+### Формат данных и заголовки
 
-**tun:**
+**Для `tun`:**
 
 - Инкапсулирует только IP-пакеты (IPv4/IPv6)
 - Нет MAC-адресов
 - Overhead: ~20 байт (IPv4) или ~40 байт (IPv6)
 
-**tap:**
+**Для `tap`:**
 
 - Полноценный Ethernet-кадр
 - MAC-адреса источника/назначения (12 байт)
@@ -82,10 +82,10 @@ ip link delete tap0
 
 # Проверка типа интерфейса
 ip -d link show tun0
-# tun: тип tun, tap: тип tap
+# → tun: тип tun, tap: тип tap
 ```
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. tun: VPN для маршрутизации (L3)
 
@@ -167,7 +167,7 @@ ip addr add 192.168.1.10/24 dev br0
 - Промышленные сети (PROFIBUS, Modbus TCP)
 - Требуется полный L2-доступ
 
-### 3. tun: Контейнеры и network namespace
+### 3. tun: Контейнеры и сетевые пространства имен (Namespace)
 
 **Сценарий:** Сетевая изоляция контейнеров.
 
@@ -208,26 +208,31 @@ qemu-system-x86_64 \
 </interface>
 ```
 
-### 5. Диагностика и мониторинг
+### 5. Проверка и диагностика
 
 ```bash
 # Статус интерфейса
 ip -d link show tun0
-ip -d link show tap0
+# → tun0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 ... tun
 
 # Мониторинг трафика
-tcpdump -i tun0 -n       # Только IP-пакеты
-tcpdump -i tap0 -e       # Ethernet-кадры + MAC
+tcpdump -i tun0 -n
+# → 10.8.0.2 > 10.8.0.1: ICMP echo request, id 1, seq 1, length 64
+
+tcpdump -i tap0 -e
+# → 00:11:22:33:44:55 > 66:77:88:99:aa:bb, ethertype IPv4 (0x0800), length 98: ...
 
 # Статистика по интерфейсу
 ip -s link show tun0
+# → RX: bytes  packets  errors  dropped overrun mcast
+# → 1234       10       0       0       0       0
 
 # Проверка драйвера
 ethtool -i tun0 | grep driver
-# driver: tun (для tun) или tap (для tap)
+# → driver: tun
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Производительность
 
@@ -240,13 +245,13 @@ ethtool -i tun0 | grep driver
 
 ### Ограничения
 
-**tun:**
+**Для `tun`:**
 
 - Только IP-трафик (IPv4/IPv6)
 - Нет broadcast/multicast на уровне L2
 - Не работает с DHCP (нужна статическая адресация или DHCP relay на L3)
 
-**tap:**
+**Для `tap`:**
 
 - Больший overhead на каждый пакет
 - Требует bridge для интеграции с физической сетью
@@ -269,9 +274,9 @@ ethtool -i tun0 | grep driver
 - **tap:** Полный L2-доступ, возможен sniffing трафика (как на физическом NIC)
 - Для VPN-сценариев предпочтителен `tun` (меньшая поверхность атаки)
 
-### Связанные темы
+### См. также
 
-- [Сетевые туннели — обзор](./tunneling_overview.md)
+- [Обзор туннелирования](./tunneling_overview.md)
 - [Сетевые интерфейсы Linux](../../Linux/Networking/Concepts/linux_network_interfaces.md)
 - [WireGuard](../../Vpn/wireguard.md)
 - [IPsec](./ipsec/ipsec.md)

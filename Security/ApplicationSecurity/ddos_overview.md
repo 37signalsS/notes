@@ -74,6 +74,13 @@
 | Облачный | CDN-based (CloudFlare, Akamai), Dedicated services | AWS Shield, Google Cloud Armor |
 | Уровень приложения | Challenge-Response (CAPTCHA, JS challenges), Behavioral analysis | WAF-правила |
 
+### Продвинутые методы защиты на сервере
+
+- **XDP (eXpress Data Path):** Обработка пакетов на раннем этапе с высокой производительностью через [eBPF/XDP](../../Linux/Core/kernel/ebpf.md).
+- **SYN Cookies:** Параметр `net.ipv4.tcp_syncookies=1` в Linux позволяет отвечать на SYN-запросы без выделения ресурсов до получения ответа от клиента.
+- **Rate Limiting:** Модуль `limit_req` в Nginx ограничивает частоту запросов с одного IP. Недостаток: возможна блокировка легитимных пользователей за одним NAT.
+- **Connection Limiting:** Модуль `limit_conn` в Nginx ограничивает число одновременных подключений с одного IP.
+
 ### Лучшие практики
 
 1. **Defense in depth (Эшелонированная оборона)** — многоуровневая защита.

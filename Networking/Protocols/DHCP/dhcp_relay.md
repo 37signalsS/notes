@@ -1,10 +1,10 @@
-# DHCP Relay (Ретранслятор DHCP)
+# DHCP Relay — Ретранслятор DHCP
 
 ## Определения
 
-**DHCP Relay** — механизм, позволяющий DHCP-клиентам и серверам находиться в разных подсетях. Ретранслятор (обычно на маршрутизаторе) перехватывает широковещательные DHCP-запросы и пересылает их серверу через unicast.
+**DHCP Relay (Dynamic Host Configuration Protocol Relay)** — механизм, позволяющий DHCP-клиентам и серверам находиться в разных подсетях. Ретранслятор (обычно на маршрутизаторе) перехватывает широковещательные DHCP-запросы и пересылает их серверу через unicast (направленная передача).
 
-**Проблема:** Маршрутизаторы не передают broadcast-сообщения между подсетями, поэтому DHCP-запросы клиентов не достигают сервера без ретранслятора.
+**Проблема:** Маршрутизаторы не передают broadcast-сообщения (широковещательные запросы) между подсетями, поэтому DHCP-запросы клиентов не достигают сервера без ретранслятора.
 
 ## Основные концепции
 
@@ -12,7 +12,7 @@
 
 #### 1. Клиент отправляет DHCPDISCOVER
 
-Хост без IP отправляет широковещательный `DHCPDISCOVER` в свой локальный сегмент. Сообщение не выходит за пределы broadcast-домена.
+Хост без IP (Internet Protocol) отправляет широковещательный `DHCPDISCOVER` в свой локальный сегмент. Сообщение не выходит за пределы broadcast-домена.
 
 #### 2. Relay Agent перехватывает запрос
 
@@ -42,9 +42,9 @@
 
 ### Ограничения
 
-- **Максимум ретрансляторов:** ограничено `hops` (16)
-- **Задержка:** каждый ретранслятор добавляет задержку к DORA
-- **Безопасность:** требуется доверие между ретранслятором и сервером
+- **Максимум ретрансляторов:** ограничено полем `hops` (максимум 16).
+- **Задержка:** каждый ретранслятор добавляет задержку к процессу DORA (Discover, Offer, Request, Acknowledge).
+- **Безопасность:** требуется доверие между ретранслятором и сервером.
 
 ## Практические сценарии
 
@@ -52,30 +52,23 @@
 
 Несколько офисов в разных IP-подсетях — вместо развёртывания DHCP-сервера в каждом офисе настраивается один центральный сервер, а на маршрутизаторах включается DHCP Relay.
 
-### Настройка Cisco (ip helper-address)
+### Настройка Cisco — ip helper-address
 
 ```cisco
 interface Vlan10
  ip helper-address 10.0.0.100
 ```
 
-### Настройка Linux (isc-dhcp-relay)
+### Настройка Linux — isc-dhcp-relay
 
-```bash
-# Установка пакета
-apt-get install isc-dhcp-relay
+Для настройки ретрансляции на Linux используется утилита `isc-dhcp-relay` от ISC (Internet Systems Consortium). Она позволяет пересылать запросы между интерфейсами.
 
-# Конфигурация /etc/default/isc-dhcp-relay
-SERVERS="10.0.0.100"
-INTERFACES="eth0 eth1"
-```
-
-Детальная настройка на различных дистрибутивах — [ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md).
+Детальная настройка и конфигурация — [ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md).
 
 ## Дополнительная информация
 
-- [DHCP Overview](./dhcp_overview.md) — процесс DORA, архитектура
-- [ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md) — практическая настройка на Linux
-- [Маршрутизация в Linux](../../../Linux/SystemAdministration/routing.md) — таблицы маршрутизации
-- [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131) — спецификация DHCP (раздел 4.1: Relay Agent)
-- [RFC 3046](https://datatracker.ietf.org/doc/html/rfc3046) — DHCP Relay Agent Information Option
+- [DHCP Overview](./dhcp_overview.md) — обзор протокола, процесс DORA, архитектура.
+- [ISC DHCP Relay](../../../Linux/Networking/Services/DHCP/isc_dhcp_server_relay.md) — практическая настройка на ОС Linux.
+- [Маршрутизация в Linux](../../../Linux/SystemAdministration/routing.md) — принципы работы таблиц маршрутизации.
+- [RFC 2131 (Request for Comments 2131)](https://datatracker.ietf.org/doc/html/rfc2131) — спецификация DHCP (раздел 4.1: Relay Agent).
+- [RFC 3046](https://datatracker.ietf.org/doc/html/rfc3046) — DHCP Relay Agent Information Option.

@@ -1,4 +1,4 @@
-# ACI (Access Control Instructions)
+# Управление доступом (ACI) в 389DS
 
 ## Определения
 
@@ -50,7 +50,7 @@ aci: (target=<target>)(targetattr=<attr>)(version 3.0; acl "<name>"; <permission
 
 ## Практические сценарии
 
-### Разрешить чтение всем (anonymous read)
+### Разрешение чтения всем (anonymous read)
 
 ```ldif
 dn: dc=example,dc=com
@@ -61,7 +61,7 @@ aci: (target="ldap:///dc=example,dc=com")(targetattr="*")
   allow (read,search,compare); userdn="ldap:///anyone";)
 ```
 
-### Разрешить доступ группе администраторов
+### Разрешение доступа группе администраторов
 
 ```ldif
 dn: dc=example,dc=com
@@ -72,7 +72,7 @@ aci: (target="ldap:///dc=example,dc=com")(targetattr="*")
   allow (all); groupdn="ldap:///cn=admins,ou=groups,dc=example,dc=com";)
 ```
 
-### Разрешить пользователю редактировать свой профиль
+### Разрешение пользователю редактировать свой профиль
 
 ```ldif
 dn: ou=users,dc=example,dc=com
@@ -83,7 +83,7 @@ aci: (target="ldap:///ou=users,dc=example,dc=com")(targetattr="*")
   allow (write,search); userdn="ldap:///self";)
 ```
 
-### Запретить чтение паролей (кроме админов)
+### Запрет чтения паролей (кроме админов)
 
 ```ldif
 dn: dc=example,dc=com
@@ -94,7 +94,7 @@ aci: (targetattr="userPassword")
   deny (read,search); userdn!="ldap:///cn=admins,ou=groups,dc=example,dc=com";)
 ```
 
-### Разрешить изменение пароля самому пользователю
+### Разрешение изменения пароля самому пользователю
 
 ```ldif
 dn: ou=users,dc=example,dc=com
@@ -127,19 +127,19 @@ docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
 
 ```bash
 # Просмотр всех ACI для записи
-docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
+docker exec 389ds ldapsearch -x -H ldap://localhost:389 \
   -D "cn=Directory Manager" -W \
   -b "dc=example,dc=com" -A aci
 
 # Проверка эффективных прав пользователя
-docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
+docker exec 389ds ldapsearch -x -H ldap://localhost:389 \
   -D "uid=user,ou=users,dc=example,dc=com" -W \
   -b "dc=example,dc=com" "(objectClass=*)"
 ```
 
 ## Дополнительная информация
 
-### Best Practices
+### Рекомендации (Best Practices)
 
 1. **Минимальные привилегии** — разрешать только необходимое
 2. **Именовать ACI** — понятные имена для аудита (`"Allow read access"`)
@@ -181,9 +181,8 @@ aci: (target="ldap:///cn=admins,ou=groups,dc=example,dc=com")
   deny (delete); userdn!="ldap:///cn=Directory Manager";)
 ```
 
-### Связанные документы
+### Связанные материалы
 
 - [Обзор 389DS](./overview.md) — общая информация
-- [Плагины](./plugins.md) — модули расширения
 - [Docker развёртывание](./docker.md) — запуск в контейнере
 - [Репликация](./replication.md) — multi-master настройка

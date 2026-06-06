@@ -168,7 +168,7 @@ docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
   "(objectClass=nsPlugin)" cn nsslapd-pluginEnabled
 ```
 
-### Best Practices
+### Рекомендации (Best Practices)
 
 1. **Retro Changelog** — включать в production для аудита
 2. **MemberOf** — необходим для интеграции с сервисами, требующими обратного поиска групп

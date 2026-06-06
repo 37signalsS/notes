@@ -2,11 +2,10 @@
 
 ## Определения
 
-**iproute2** — набор утилит Linux (`ip`, `ss`) для управления сетевыми интерфейсами, маршрутизацией и VLAN.
+*   **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
+*   **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
+*   **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
 
-**Linux Bridge** — программный мост в ядре Linux, объединяющий сетевые интерфейсы в один логический сегмент L2.
-
-**Open vSwitch (OVS)** — программный коммутатор с поддержкой VLAN, trunk, QoS и SDN.
 
 ## Базовые концепции
 

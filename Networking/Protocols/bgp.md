@@ -14,7 +14,7 @@
 
 | Тип | Описание | Особенности |
 |-----|----------|-------------|
-| **eBGP (external BGP)** | Между различными AS | TTL=1 по умолчанию, требует прямого соединения (обычно) |
+| **eBGP (external BGP)** | Между различными AS | **TTL (Time To Live)** = 1 по умолчанию, требует прямого соединения (обычно) |
 | **iBGP (internal BGP)** | Внутри одной AS | Требует full-mesh или route reflector, не меняет AS Path |
 
 ### Атрибуты BGP
@@ -25,7 +25,7 @@ BGP использует атрибуты для выбора наилучшег
 2. **Local Preference** — приоритет внутри AS. Чем выше, тем лучше (по умолчанию 100).
 3. **Locally Originated** — предпочтительны локально originated маршруты.
 4. **AS Path** — список AS, через которые проходит маршрут. Чем короче, тем лучше.
-5. **Origin Type** — источник маршрута: IGP (`i`) < EGP (`e`) < Incomplete (`?`).
+5. **Origin Type** — источник маршрута: **IGP (Interior Gateway Protocol)** (`i`) < EGP (`e`) < Incomplete (`?`).
 6. **MED (Multi-Exit Discriminator)** — подсказка для входящего трафика. Чем ниже, тем лучше.
 7. **eBGP over iBGP** — eBGP маршруты предпочтительнее iBGP.
 8. **IGP Metric** — до BGP next-hop. Чем ниже, тем лучше.
@@ -48,7 +48,7 @@ BGP использует атрибуты для выбора наилучшег
 
 **Актуальность (2025):**
 
-- Более **50%** IPv4 и IPv6 маршрутов покрыты RPKI ROA
+- Более **50%** **IPv4 (Internet Protocol version 4)** и **IPv6 (Internet Protocol version 6)** маршрутов покрыты RPKI ROA
 - Крупные провайдеры (Cloudflare, Google, Akamai) отклоняют `Invalid` маршруты
 - Рекомендуется включать RPKI validation на всех BGP-роутерах
 
@@ -76,10 +76,10 @@ router bgp 65001
 #### Программные решения (Soft-router)
 
 - **FRRouting (FRR)** — полноценный routing suite (BGP, OSPF, IS-IS)
-- **BIRD** — легковесный, популярен на IXP
+- **BIRD** — легковесный, популярен на **IXP (Internet Exchange Point)**
 - **GoBGP** — Go-implementation с API
 - **VyOS** — роутер на базе Linux
-- **MikroTik (RouterOS)** — SMB сегмент
+- **MikroTik (RouterOS)** — **SMB (Small and Medium Business)** сегмент
 
 ### Сценарий: Multi-homed подключение к интернету
 
@@ -97,7 +97,7 @@ router bgp 65001
 
 **Рекомендации:**
 
-1. Получите собственный ASN и префикс у LIR/RIR
+1. Получите собственный ASN и префикс у **LIR (Local Internet Registry)** / **RIR (Regional Internet Registry)**
 2. Настройте BGP с обоими провайдерами
 3. Используйте Local Preference для выбора основного провайдера
 4. Настройте RPKI validation для защиты от hijacking
@@ -120,10 +120,12 @@ router bgp 65001
 ### Порты и протоколы
 
 - **Порт:** 179/TCP
-- **Протокол:** TCP (гарантирует надёжную доставку обновлений)
+- **Протокол:** **TCP (Transmission Control Protocol)** — гарантирует надёжную доставку обновлений.
 
 ### Связанные документы и RFC
 
-Основы маршрутизации: [Сетевой уровень](../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md). Протоколы маршрутизации: [routing_protocols_equipment.md](../OSI_TCP_IP_Model/Network_layer/routing_protocols_equipment.md). Документация по развёртыванию RPKI: [rpki.readthedocs.io](https://rpki.readthedocs.io/).
+- [Сетевой уровень](../OSI_TCP_IP_Model/Network_layer/Concepts/network_layer_overview.md) — основы маршрутизации.
+- [Протоколы и оборудование](../OSI_TCP_IP_Model/Network_layer/routing_protocols_equipment.md) — обзор маршрутизации.
+- [RFC 4271](https://datatracker.ietf.org/doc/html/rfc4271) — спецификация BGP-4.
 
-**RFC:** [RFC 4271](https://datatracker.ietf.org/doc/html/rfc4271) — спецификация BGP-4; [RFC 6811](https://datatracker.ietf.org/doc/html/rfc6811) — BGP Prefix Origin Validation (ROV); [RFC 8416](https://datatracker.ietf.org/doc/html/rfc8416) — RPKI-Router Protocol.
+**Примечание:** Для изучения безопасности рекомендуется документация по [RPKI и ROV](https://rpki.readthedocs.io/).

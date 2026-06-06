@@ -4,7 +4,7 @@
 
 **Congestion Control** — механизм TCP для предотвращения перегрузки сети путём адаптации скорости передачи к доступной пропускной способности канала.
 
-**Ключевое отличие от [Flow Control](../../../../Ansible/PlaybookStructure/flow_control.md):**
+**Ключевое отличие от [Flow Control](../Flow_Control/index.md):**
 
 - **Congestion Control:** защита **сети** (network-centric), параметр `cwnd`
 - **Flow Control:** защита **получателя** (receiver-centric), параметр `rwnd`
@@ -209,4 +209,4 @@ Throughput = (cwnd × MSS) / RTT
 
 ### Связанные темы
 
-**Алгоритмы congestion control** ([tcp_congestion_algorithms.md](./tcp_congestion_algorithms.md)) — CUBIC, BBR, Reno. **Оптимизация initcwnd** ([tcp_initcwnd_and_optimization.md](./tcp_initcwnd_and_optimization.md)) — правило 14 КБ. **Диагностика congestion control** ([tcp_congestion_diagnostics.md](./tcp_congestion_diagnostics.md)) — практические сценарии. **Flow Control** ([flow_control.md](../../../../Ansible/PlaybookStructure/flow_control.md)) — управление потоком получателя. **Оптимизация TCP** ([tcp_tuning_overview.md](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)) — практическая настройка.
+**Алгоритмы congestion control** ([tcp_congestion_algorithms.md](./tcp_congestion_algorithms.md)) — CUBIC, BBR, Reno. **Оптимизация initcwnd** ([tcp_initcwnd_and_optimization.md](./tcp_initcwnd_and_optimization.md)) — правило 14 КБ. **Диагностика congestion control** ([tcp_congestion_diagnostics.md](./tcp_congestion_diagnostics.md)) — практические сценарии. **Flow Control** ([Flow Control](../Flow_Control/index.md)) — управление потоком получателя. **Оптимизация TCP** ([tcp_tuning_overview.md](../../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)) — практическая настройка.

@@ -1,6 +1,6 @@
 # VXLAN (Virtual Extensible LAN)
 
-## Definitions
+## Определения
 
 **VXLAN (Virtual Extensible LAN)** — протокол туннелирования для создания оверлейных сетей в крупных виртуализированных средах и облачных дата-центрах ([RFC 7348](https://datatracker.ietf.org/doc/html/rfc7348)).
 
@@ -13,9 +13,9 @@
 
 **VTEP (VXLAN Tunnel End Point)** — конечная точка, выполняющая инкапсуляцию/декапсуляцию VXLAN.
 
-## Basic Concepts
+## Основные концепции
 
-### VXLAN Header Format
+### Формат заголовка VXLAN
 
 ```
  0                   1                   2                   3
@@ -77,7 +77,7 @@
 
 ## Практические сценарии
 
-### 1. Unicast (точка-точка)
+### 1. Unicast (точка — точка)
 
 **Сценарий:** Простое соединение двух хостов.
 
@@ -166,12 +166,16 @@ bridge fdb append to 00:11:22:33:44:66 dev vxlan0 dst 192.0.2.3
 ```bash
 # Статус VXLAN
 ip -d link show vxlan0
+# → vxlan id 100 local 192.0.2.1 dev eth0 srcport 0 0 dstport 4789 ...
 
 # Таблица FDB (MAC-адреса)
 bridge fdb show dev vxlan0
+# → 00:11:22:33:44:55 dst 192.0.2.2 self permanent
+# → 00:11:22:33:44:66 dst 192.0.2.3 self permanent
 
 # Группы multicast
 bridge mdb show
+# → dev vxlan0 port vxlan0 group 239.0.0.10 permanent
 
 # Мониторинг трафика
 tcpdump -i eth0 udp port 4789 -n
@@ -196,12 +200,12 @@ tcpdump -i vxlan0 -n
 
 | Ограничение | Описание | Митигация |
 |-------------|----------|-----------|
-| **Нет шифрования** | Трафик открыт | [IPSec](./ipsec/ipsec.md), MACsec |
+| **Нет шифрования** | Трафик открыт | [IPsec](./ipsec/ipsec.md), MACsec |
 | **MTU** | Уменьшение на ~50 байт | Jumbo frames, PMTUD |
 | **Multicast** | Требует поддержки в сети | Unicast с FDB |
 | **CPU overhead** | Инкапсуляция в userspace | Offload на NIC |
 
-### VXLAN Offload
+### Аппаратное ускорение VXLAN (Offload)
 
 **Аппаратная поддержка:**
 
@@ -214,7 +218,7 @@ tcpdump -i vxlan0 -n
 ethtool -K eth0 vxlan-hw-offload on
 ```
 
-### MTU considerations
+### Особенности MTU
 
 **Расчёт MTU для VXLAN:**
 
@@ -231,3 +235,9 @@ ip link set eth0 mtu 9000
 # Для VXLAN-интерфейса
 ip link set vxlan0 mtu 1450
 ```
+
+## См. также
+
+- [Обзор туннелирования](./tunneling_overview.md)
+- [Драйвер overlay в Docker](../../Docker/Docker_network/drivers/overlay.md)
+- [Настройка сетей в Proxmox](../../Proxmox/proxmox_networking.md)

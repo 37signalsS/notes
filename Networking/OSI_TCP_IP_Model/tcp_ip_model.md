@@ -2,15 +2,15 @@
 
 ## Определения
 
-**Модель TCP/IP (Transmission Control Protocol/Internet Protocol)** — практическая многоуровневая модель сетевого взаимодействия, стандарт де-факто для современного Интернета. В отличие от теоретической [модели OSI](./osi_model.md), разработана на основе реально существующих протоколов.
+**Модель TCP/IP (Transmission Control Protocol/Internet Protocol)** — практическая многоуровневая модель сетевого взаимодействия, стандарт де-факто для современного Интернета. В отличие от теоретической [модели OSI](./osi_model.md) (Open Systems Interconnection), разработана на основе реально существующих протоколов.
 
-**Стек протоколов TCP/IP** — иерархический набор протоколов, реализующий модель TCP/IP. Название происходит от двух ключевых протоколов: TCP и IP.
+**Стек протоколов TCP/IP** — иерархический набор протоколов, реализующий модель TCP/IP. Название происходит от двух ключевых протоколов: TCP и IP (Internet Protocol).
 
 ### История и стандарты
 
 | Параметр | Значение |
 | :--- | :--- |
-| **Разработчик** | DARPA / IETF |
+| **Разработчик** | DARPA (Defense Advanced Research Projects Agency) / IETF (Internet Engineering Task Force) |
 | **Год появления** | 1970-е (TCP — 1974, разделение на TCP/IP — 1978) |
 | **Стандарты** | RFC (Request for Comments) |
 | **Ключевые RFC** | RFC 791 (IP, STD 5), RFC 9293 (TCP, **заменяет RFC 793**, август 2022, STD 7), RFC 768 (UDP) |
@@ -24,23 +24,23 @@
 
 | Уровень | Соответствие OSI | Функции | Протоколы |
 | :--- | :--- | :--- | :--- |
-| **4. Прикладной (Application)** | L7, L6, L5 | Взаимодействие с приложениями, представление данных, сеансы | [HTTP](../Protocols/http.md), [DNS](../Protocols/DNS/dns.md), SMTP, FTP, [TLS](../Protocols/tls.md) | [application_layer.md](./application_layer.md) |
-| **3. Транспортный (Transport)** | L4 | Доставка между процессами, надёжность, поток | [TCP](../Protocols/TCP/overview.md), [UDP](../Protocols/udp.md), SCTP | [transport_layer.md](./transport_layer.md) |
-| **2. Сетевой (Internet)** | L3 | Глобальная адресация, маршрутизация, фрагментация | [IP](../Protocols/IP_addressing/ip_overview.md), [ICMP](../Protocols/ICMP/icmp_overview.md), [ARP](../Protocols/arp.md), OSPF, [BGP](../Protocols/bgp.md) | [Network_layer/Concepts/network_layer_overview.md](./Network_layer/Concepts/network_layer_overview.md) |
-| **1. Канальный (Network Access)** | L2, L1 | Доставка в пределах ЛВС | [Ethernet](../Protocols/ethernet.md), Wi-Fi, PPP | [data_link_layer.md](./data_link_layer.md), [physical_layer.md](./physical_layer.md) |
+| **4. Прикладной (Application)** | L7, L6, L5 | Взаимодействие с приложениями, представление данных, сеансы | [HTTP](../Protocols/HTTP/http_basics.md) (HyperText Transfer Protocol), [DNS](../Protocols/DNS/dns.md) (Domain Name System), SMTP (Simple Mail Transfer Protocol), FTP (File Transfer Protocol), [TLS](../Protocols/tls.md) (Transport Layer Security) | [application_layer.md](./application_layer.md) |
+| **3. Транспортный (Transport)** | L4 | Доставка между процессами, надёжность, поток | [TCP](../Protocols/TCP/overview.md), [UDP](../Protocols/udp.md) (User Datagram Protocol), SCTP (Stream Control Transmission Protocol) | [transport_layer.md](./transport_layer.md) |
+| **2. Сетевой (Internet)** | L3 | Глобальная адресация, маршрутизация, фрагментация | [IP](../Protocols/IP_addressing/ip_overview.md), [ICMP](../Protocols/ICMP/icmp_overview.md) (Internet Control Message Protocol), [ARP](../Protocols/arp.md) (Address Resolution Protocol), OSPF (Open Shortest Path First), [BGP](../Protocols/bgp.md) (Border Gateway Protocol) | [Network_layer/Concepts/network_layer_overview.md](./Network_layer/Concepts/network_layer_overview.md) |
+| **1. Канальный (Network Access)** | L2, L1 | Доставка в пределах ЛВС | [Ethernet](../Protocols/ethernet.md), Wi-Fi, PPP (Point-to-Point Protocol) | [data_link_layer.md](./data_link_layer.md), [physical_layer.md](./physical_layer.md) |
 
 #### Краткое описание уровней
 
 **1. Канальный уровень (Network Access Layer)**
 
 - Физическая доставка в пределах локальной сети
-- Адресация: [MAC-адреса](../Concepts/mac_address.md)
+- Адресация: [MAC-адреса](../Concepts/mac_address.md) (Media Access Control)
 - Оборудование: коммутаторы, мосты, сетевые карты
 
 **2. Межсетевой уровень (Internet Layer)**
 
 - Маршрутизация между сетями (internetworking)
-- Адресация: [IP-адреса](../Protocols/ip.md) (IPv4/IPv6)
+- Адресация: [IP-адреса](../Protocols/IP_addressing/ip_overview.md) (IPv4/IPv6)
 - Оборудование: маршрутизаторы, L3-коммутаторы
 
 **3. Транспортный уровень (Transport Layer)**
@@ -52,7 +52,7 @@
 **4. Прикладной уровень (Application Layer)**
 
 - Протоколы пользовательских приложений
-- Оборудование: хосты, прокси-серверы, L7-балансировщики, WAF
+- Оборудование: хосты, прокси-серверы, L7-балансировщики, WAF (Web Application Firewall)
 
 ### Инкапсуляция и стек протоколов
 
@@ -73,7 +73,7 @@
 1. Данные L7 помещаются в транспортный сегмент (TCP/UDP)
 2. Сегмент инкапсулируется в межсетевой пакет (IP)
 3. Пакет заключается в канальный кадр (Ethernet)
-4. Кадр преобразуется в биты для передачи
+4. Кадр преобразуется в биты для передачи. Включает FCS (Frame Check Sequence) для проверки целостности.
 
 На принимающей стороне — обратный процесс (**декапсуляция**).
 
@@ -99,7 +99,7 @@
 | 3 | Канальный | Устройство отправляет DHCPREQUEST |
 | 4 | Канальный | Сервер финализирует DHCPACK (аренда адреса) |
 
-**Особенность:** Весь обмен происходит в пределах одного широковещательного домена (ЛВС).
+**Особенность:** Весь обмен происходит по протоколу DHCP (Dynamic Host Configuration Protocol) в пределах одного широковещательного домена (ЛВС).
 
 ## Дополнительная информация
 
@@ -112,8 +112,7 @@
 | L3 | **Сетевой (Internet)** | Уровень IP — центральный элемент модели |
 | L2 + L1 | **Канальный (Network Access)** | TCP/IP не детализирует, полагается на существующие технологии |
 
-Подробное сравнение подходов — в [Модель OSI](./osi_model.md#сравнение-osi-и-tcpip).
-
-Подробное описание гибридной модели — в [Модель OSI](./osi_model.md#гибридная-пятиуровневая-модель).
-
-См. [Модель OSI](./osi_model.md) для сопоставления с теоретической эталонной моделью.
+### См. также
+- [Модель OSI](./osi_model.md) — теоретическая эталонная модель
+- [Транспортный уровень](./transport_layer.md) — подробный разбор L4
+- [Сетевой уровень](./Network_layer/Concepts/network_layer_overview.md) — подробный разбор L3

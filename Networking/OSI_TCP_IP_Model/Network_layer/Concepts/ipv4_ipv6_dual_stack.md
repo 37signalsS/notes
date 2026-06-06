@@ -57,10 +57,13 @@
 
 ## Дополнительная информация
 
-См. [Структура IP-пакета](../Protocols/ip_packet_structure.md), [Фрагментация IP-пакетов](../Protocols/ip_fragmentation.md), [RFC 8305](https://datatracker.ietf.org/doc/html/rfc8305).
+### Статус Dual Stack (2025–2026)
 
-**Статус Dual Stack (2025–2026):**
+- **Основная стратегия:** Dual Stack остаётся ключевым подходом к миграции на IPv6. Около 40% трафика Google уже проходит по IPv6.
+- **Happy Eyeballs v3:** Новая версия алгоритма активно разрабатывается ([draft-ietf-happy-happyeyeballs-v3](https://datatracker.ietf.org/doc/draft-ietf-happy-happyeyeballs-v3/)), с последней версией -03 от марта 2026 г. Microsoft Edge уже внедрил поддержку политики `HappyEyeballsV3Enabled`.
 
-- Dual Stack остаётся основной стратегией миграции; ~40% трафика Google проходит по IPv6
-- Happy Eyeballs v3 в активной разработке ([draft-ietf-happy-happyeyeballs-v3](https://datatracker.ietf.org/doc/draft-ietf-happy-happyeyeballs-v3/)), последняя версия -03 от марта 2026 г.
-- Microsoft Edge уже поддерживает политику `HappyEyeballsV3Enabled`
+## См. также
+
+- [Структура IP-пакета](../Protocols/ip_packet_structure.md)
+- [Фрагментация IP-пакетов](../Protocols/ip_fragmentation.md)
+- [RFC 8305 (Happy Eyeballs v2)](https://datatracker.ietf.org/doc/html/rfc8305)

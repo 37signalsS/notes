@@ -108,7 +108,7 @@ Cache-Control: public, s-maxage=300
 
 ### Дополнительная информация
 
-#### Best Practices 2025
+#### Best Practices 2026
 
 - **TTL-стратегия**:
   - **Статика с хешем в URL** (`/app.a1b2c3.js`): `max-age=31536000, immutable` — кеширование на год.
@@ -131,4 +131,9 @@ Cache-Control: public, s-maxage=300
   - Alert на рост 5xx от origin.
   - Ключевые метрики: `Cache Hit Ratio`, `Origin Requests/sec`, `Bandwidth Savings`, `Invalidation Latency`.
 
-> Общее HTTP-кэширование описано в **[HTTP-кэширование](../Protocols/HTTP/http_caching.md)**. Обзор CDN — в **[Обзор CDN](cdn_overview.md)**.
+---
+
+### Смотрите также
+
+- [Обзор CDN](cdn_overview.md)
+- [HTTP-кэширование](../Protocols/HTTP/http_caching.md)

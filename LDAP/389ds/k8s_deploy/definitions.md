@@ -12,8 +12,8 @@
 
 ---
 
-## Связанные документы
+## Связанные материалы
 
-- **[Основные концепции](./basic_concepts.md)** — архитектура развёртывания, требования
-- **[Практические сценарии](./practical_scenarios.md)** — StatefulSet, сервисы, инициализация
-- **[Дополнительная информация](./additional_info.md)** — troubleshooting, мониторинг, best practices
+- [Основные концепции](./basic_concepts.md) — архитектура развёртывания, требования
+- [Практические сценарии](./practical_scenarios.md) — StatefulSet, сервисы, инициализация
+- [Дополнительная информация](./additional_info.md) — troubleshooting, мониторинг, best practices

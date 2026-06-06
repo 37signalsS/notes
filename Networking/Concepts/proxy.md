@@ -1,4 +1,4 @@
-# Proxy Server
+# Прокси-сервер
 
 ## Определения
 
@@ -25,7 +25,7 @@
 
 | Тип | Уровень | Особенности |
 | :--- | :--- | :--- |
-| HTTP-прокси | L7 | Кэширование, обработка HTTP-запросов ([HTTP](../Protocols/http.md)) |
+| HTTP-прокси | L7 | Кэширование, обработка HTTP-запросов ([HTTP](../Protocols/HTTP/http_basics.md)) |
 | HTTPS-прокси | L7 | Шифрование через [TLS](../Protocols/tls.md) |
 | SOCKS-прокси | L5 | Универсальный (HTTP, FTP, P2P), без кэширования |
 | TCP/UDP-прокси | L4 | Прозрачная переадресация без анализа протокола |
@@ -78,7 +78,6 @@
 
 ## Дополнительная информация
 
-- Протокол Proxy Protocol: [Proxy Protocol](../Protocols/proxy_protocol.md)
-- Балансировка нагрузки: [Nginx L7](../../WebServers/Nginx/Proxy/Load_Balancing/overview_concepts.md), [Nginx L4](../../WebServers/Nginx/Proxy/nginx_l4_proxying.md)
-- Кэширование: [Proxy Caching](../../WebServers/Nginx/Performance/Caching/proxy_caching.md)
-- Сегментация и микросегментация: [Network Segmentation](./network_segmentation_and_microsegmentation.md)
+- [Протокол Proxy Protocol](../Protocols/proxy_protocol.md)
+- [Балансировка нагрузки (Nginx)](../../WebServers/Nginx/Proxy/Load_Balancing/overview_concepts.md)
+- [Кэширование прокси (Nginx)](../../WebServers/Nginx/Performance/Caching/proxy_caching.md)

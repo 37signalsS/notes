@@ -81,7 +81,7 @@
 ### Выбор типа сети при проектировании
 
 * **Broadcast-сети** (Ethernet-коммутатор, Wi-Fi-точка доступа) — подходят для LAN, где устройства находятся в одном L2-домене.
-* **Point-to-Point** (оптоволоконные линки, PPP/GRE/IPsec-туннели) — для WAN-соединений, линков между маршрутизаторами. Маска `/31` экономит адресное пространство.
+* **Point-to-Point** (оптоволоконные линки, PPP (Point-to-Point Protocol)/GRE (Generic Routing Encapsulation)/IPsec (Internet Protocol Security)-туннели) — для WAN-соединений, линков между маршрутизаторами. Маска `/31` экономит адресное пространство.
 
 ### Диагностические ориентиры
 
@@ -95,3 +95,4 @@
 * Ethernet и CSMA/CD: [Ethernet](../Protocols/ethernet.md)
 * Маски подсетей /31: [Special Masks](../Protocols/IP_addressing/special_masks.md#маска-31-point-to-point-линки)
 * VLAN и сегментация: [VLAN L2 Switching](./vlan_l2_switching/definitions_and_concepts.md)
+ncepts.md)

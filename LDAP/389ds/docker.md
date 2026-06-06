@@ -91,7 +91,7 @@ ldapsearch -x -H ldap://localhost:3389 \
 
 ## Дополнительная информация
 
-### TLS/SSL конфигурация
+### Конфигурация TLS/SSL
 
 Для использования LDAPS требуется смонтировать сертификаты:
 
@@ -111,15 +111,14 @@ docker run -d \
 * Ключ: `/data/tls/server.key`
 * CA-сертификат: `/data/tls/ca.crt`
 
-### Ресурсы
+### Системные требования (Ресурсы)
 
 * **CPU:** 2 ядра минимум, 4+ для production
 * **RAM:** 2 ГБ минимум, 4–8 ГБ для production
 * **Диск:** 10 ГБ+, SSD рекомендуется
 
-### Связанные документы
+### Связанные материалы
 
 * [Обзор 389DS](./overview.md) — общая информация
 * [Настройка репликации](./replication.md) — multi-master конфигурация
-* [Развёртывание в Kubernetes](./k8s_deploy/basic_concepts.md) — StatefulSet deployment
 * [ACI](./aci.md) — управление доступом

@@ -1,6 +1,6 @@
 # 389DS в Kubernetes: Практические сценарии
 
-## StatefulSet конфигурация
+## Конфигурация StatefulSet
 
 ```yaml
 apiVersion: apps/v1
@@ -220,8 +220,8 @@ spec:
 
 ---
 
-## Связанные документы
+## Связанные материалы
 
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — архитектура развёртывания, требования
-- **[Дополнительная информация](./additional_info.md)** — troubleshooting, мониторинг, best practices
+- [Определения](./definitions.md) — базовые термины
+- [Основные концепции](./basic_concepts.md) — архитектура развёртывания, требования
+- [Дополнительная информация](./additional_info.md) — troubleshooting, мониторинг, best practices

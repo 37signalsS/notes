@@ -37,8 +37,8 @@
 
 ---
 
-## Связанные документы
+## Связанные материалы
 
-* **[Определения](./definitions.md)** — базовые термины
-* **[Практические сценарии](./practical_scenarios.md)** — StatefulSet, сервисы, инициализация
-* **[Дополнительная информация](./additional_info.md)** — troubleshooting, мониторинг, best practices
+* [Определения](./definitions.md) — базовые термины
+* [Практические сценарии](./practical_scenarios.md) — StatefulSet, сервисы, инициализация
+* [Дополнительная информация](./additional_info.md) — troubleshooting, мониторинг, best practices

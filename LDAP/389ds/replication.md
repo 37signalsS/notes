@@ -166,7 +166,7 @@ docker exec 389ds dsconf config set \
 docker exec 389ds tail -f /var/log/dirsrv/slapd-*/errors
 ```
 
-### Best Practices
+### Рекомендации (Best Practices)
 
 1. **Минимум 2 сервера** для HA
 2. **Replica ID** должны быть уникальны в топологии

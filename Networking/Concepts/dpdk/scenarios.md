@@ -99,4 +99,4 @@ vppctl> show hardware
 
 ### Дополнительная информация
 
-Пошаговые инструкции по активации SR-IOV см. в [Настройка SR-IOV](sriov_setup.md). Конфигурация OVS-DPDK описана в [официальной документации OVS](https://docs.openvswitch.org/en/latest/intro/install/dpdk/). Настройка VPP документирована на [fd.io](https://fd.io/docs/vpp/). Общие сведения о DPDK и его архитектуре — в [Обзор DPDK](dpdk_overview.md), технические детали — в [Технические детали DPDK](dpdk_technical.md).
+Пошаговые инструкции по активации SR-IOV см. в [Настройка SR-IOV](sriov_setup.md). Конфигурация OVS-DPDK описана в [официальной документации OVS](https://docs.openvswitch.org/en/latest/intro/install/dpdk/) и в обзоре **[Open vSwitch](../../ServicesAndTools/open_vswitch.md)**. Настройка VPP документирована на [fd.io](https://fd.io/docs/vpp/). Общие сведения о DPDK и его архитектуре — в [Обзор DPDK](dpdk_overview.md), технические детали — в [Технические детали DPDK](dpdk_technical.md).

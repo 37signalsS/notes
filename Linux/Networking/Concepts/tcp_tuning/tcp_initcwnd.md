@@ -1,6 +1,6 @@
-# Настройка initcwnd
+# Настройка initcwnd в Linux
 
-> **SSoT:** Полная документация по правилу 14 КБ, влиянию на загрузку веб-страниц, взаимодействию с TLS/HTTP — в [Networking/Protocols/TCP/congestion/tcp_initcwnd_and_optimization.md](../../../Networking/Protocols/TCP/congestion/tcp_initcwnd_and_optimization.md)
+> **SSoT:** Полная документация по правилу 14 КБ, влиянию на загрузку веб-страниц, взаимодействию с TLS/HTTP — в [Правило 14 КБ и оптимизация initcwnd](../../../../Networking/Protocols/TCP/congestion/tcp_initcwnd_and_optimization.md).
 
 ## Определения
 
@@ -8,7 +8,9 @@
 
 **initrwnd (initial receive window)** — начальное окно приёма, ограничивающее объём данных, которые получатель готов принять в первой волне.
 
-## Basic Concepts
+---
+
+## Основные концепции
 
 ### Значение по умолчанию
 
@@ -29,7 +31,9 @@ initcwnd = 10 × 1460 = 14 600 байт (~14.3 КБ)
 
 Современные веб-ресурсы (HTML + CSS + JS) часто превышают 14 КБ. Увеличение `initcwnd` до 20–40 MSS сокращает количество RTT до полной загрузки первых ресурсов без риска перегрузки — Slow Start продолжит работу с большего базового значения.
 
-## Practical Scenarios
+---
+
+## Практические сценарии
 
 ### Проверка текущего значения
 
@@ -56,7 +60,7 @@ sudo ip route change default via "$GATEWAY" dev "$DEVICE" initcwnd 30
 
 **Постоянно:**
 
-`ip route` не поддерживает сохранение параметров в конфигурационных файлах. Для постоянной настройки используйте один из методов:
+Для сохранения настройки после перезагрузки можно использовать несколько способов:
 
 **NetworkManager** (`/etc/NetworkManager/dispatcher.d/99-initcwnd`):
 
@@ -68,7 +72,7 @@ if [ "$2" = "up" ]; then
 fi
 ```
 
-**systemd-networkd** (через `[Route]` секцию в `.network` файле):
+**systemd-networkd** (через секцию `[Route]` в `.network` файле):
 
 ```ini
 [Route]
@@ -76,31 +80,22 @@ Gateway=192.168.1.1
 InitialCongestionWindow=30
 ```
 
-**Простой скрипт в rc.local или cron @reboot:**
-
-```bash
-#!/bin/bash
-sleep 5  # дождаться поднятия интерфейса
-ip route change default via "$(ip route | grep default | awk '{print $3}')" \
-    dev "$(ip route | grep default | awk '{print $5}')" initcwnd 30
-```
-
 ### initcwnd + BBR
 
-При использовании BBR `initcwnd` менее критичен — BBR самостоятельно оценивает пропускную способность и может отправлять данные агрессивнее, чем стандартный Slow Start. Однако увеличение `initcwnd` всё ещё полезно для первых RTT, до того как BBR соберёт достаточно метрик.
+При использовании BBR `initcwnd` менее критичен — BBR самостоятельно оценивает пропускную способность и может отправлять данные агрессивнее, чем стандартный Slow Start. Однако увеличение `initcwnd` всё ещё полезно для первых RTT.
 
-### Рекомендации по размерам
+### Рекомендации по выбору значений
 
 | Сценарий | initcwnd | initrwnd | Обоснование |
 | :--- | :--- | :--- | :--- |
 | **Веб-сервер (общий)** | 20–30 MSS | 20–30 MSS | Большинство ресурсов ≤ 30–40 КБ |
-| **API-сервер (JSON)** | 10 MSS (default) | 10 MSS | Ответы API обычно < 14 КБ |
+| **API-сервер (JSON)** | 10 MSS | 10 MSS | Ответы API обычно < 14 КБ |
 | **CDN/статика** | 30–40 MSS | 30 MSS | Крупные ресурсы, критична латентность |
 | **Прокси/балансировщик** | 20 MSS | 20 MSS | Умеренное увеличение без риска |
 
-> **Внимание:** `initcwnd > 10` может конфликтовать с политикой некоторых провайдеров (RFC-совместимое значение — 10 MSS). Перед изменением протестируйте влияние на вашу сеть.
+> **Внимание:** `initcwnd > 10` может конфликтовать с политикой некоторых провайдеров. Перед массовым изменением протестируйте влияние на вашу сеть.
 
-### Диагностика
+### Диагностика активных соединений
 
 ```bash
 # Проверить cwnd на активных соединениях
@@ -110,11 +105,13 @@ ss -ti | grep -o 'cwnd:[0-9]*'
 ss -tin state established
 ```
 
-## Additional Information
+---
+
+## Дополнительная информация
 
 ### Связанные темы
 
-- **SSoT:** [Правило 14 КБ и оптимизация initcwnd](../../../Networking/Protocols/TCP/congestion/tcp_initcwnd_and_optimization.md) — расчёт, влияние на TLS/HTTP, CDN-провайдеры
-- **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
-- **Алгоритмы перегрузки:** [Алгоритмы управления перегрузкой](./tcp_congestion_algorithms.md) — взаимодействие initcwnd с Slow Start
-- **ip route:** [Настройка маршрутов](../../Tools/iproute2/ip_route.md) — команда `ip route change` с параметрами маршрута
+- [Правило 14 КБ и оптимизация initcwnd (SSoT)](../../../../Networking/Protocols/TCP/congestion/tcp_initcwnd_and_optimization.md) — расчет, влияние на TLS/HTTP, практика CDN.
+- [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md) — общие настройки стека.
+- [Алгоритмы управления перегрузкой](./tcp_congestion_algorithms.md) — взаимодействие initcwnd с алгоритмами.
+- [Настройка маршрутов](../../Tools/iproute2/ip_route.md) — подробнее о команде `ip route`.

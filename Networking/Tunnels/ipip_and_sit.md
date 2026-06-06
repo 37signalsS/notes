@@ -109,60 +109,66 @@ ip address add fc00::2/64 dev sit1
 ```bash
 # Статус туннеля
 ip -d tunnel show
-ip -d link show <tun_if>
+# → ipip1: ip/ip remote 192.0.2.2 local 192.0.2.1 ttl inherit
+
+ip -d link show ipip1
+# → ipip1@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 ...
+# → ipip remote 192.0.2.2 local 192.0.2.1 dev eth0 ttl inherit
 
 # Проверка связности
-ping -I <tun_if> <remote_tunnel_ip>
+ping -I ipip1 10.0.0.2
+# → 64 bytes from 10.0.0.2: icmp_seq=1 ttl=64 time=1.23 ms
 
-# Трассировка
-traceroute -6 -I <tun_if> <ipv6_dst>  # для SIT
+# Трассировка (для SIT)
+traceroute -6 -I sit1 2001:db8::1
+# → 1  fc00::2  1.45 ms
 
-# Мониторинг трафика
-tcpdump -i <tun_if> -n
-tcpdump proto 4 -n    # IPIP
-tcpdump proto 41 -n   # SIT
+# Мониторинг трафика (на физическом интерфейсе)
+tcpdump -i eth0 proto 4 -n    # IPIP
+tcpdump -i eth0 proto 41 -n   # SIT
 ```
 
 ## Дополнительная информация
 
-### Недостатки
+### Ограничения и недостатки
 
 **Общие:**
 
-- **Нет шифрования:** Трафик передаётся открыто — требуется [IPSec](./ipsec/ipsec.md) для безопасности
-- **Point-to-Point:** Только две конечные точки на туннель
-- **Один протокол:** IPIP — только IPv4, SIT — только IPv6
+- **Отсутствие шифрования:** Трафик передаётся в открытом виде — для защиты данных требуется [IPsec](./ipsec/ipsec.md)
+- **Топология Point-to-Point:** Поддерживается только соединение «точка — точка»
+- **Ограничение по протоколам:** IPIP поддерживает только IPv4, SIT — только IPv6
 
-**SIT специфичные:**
+**Специфические для SIT:**
 
-- **6to4 устарел:** Автоматические 6to4-туннели не рекомендуются из-за проблем с надёжностью
-- **NAT traversal:** Проблемы при прохождении через NAT
+- **Устаревание 6to4:** Механизм автоматических туннелей 6to4 не рекомендуется к использованию ([RFC 7526](https://datatracker.ietf.org/doc/html/rfc7526))
+- **Прохождение через NAT:** Возможны проблемы при наличии NAT на пути следования пакетов
 
 ### Когда использовать
 
 | Сценарий | Рекомендуемый протокол |
 |----------|----------------------|
-| IPv4 через IPv4 (просто) | IPIP |
-| IPv6 через IPv4 | SIT |
-| Мультипротокол | [GRE](./gre/gre.md) |
-| L2-оверлей | [GRETAP](./gre/gre.md) / [VXLAN](./vxlan.md) |
-| Безопасный туннель | [WireGuard](../../Vpn/wireguard.md) / [IPSec](./ipsec/ipsec.md) |
+| IPv4 через IPv4 (минимальные накладные расходы) | IPIP |
+| IPv6 через IPv4 (6in4) | SIT |
+| Передача нескольких протоколов | [GRE](./gre/gre.md) |
+| L2-оверлей (Ethernet через IP) | [GRETAP](./gre/gre.md) или [VXLAN](./vxlan.md) |
+| Безопасное соединение | [WireGuard](../../Vpn/wireguard.md) или [IPsec](./ipsec/ipsec.md) |
 
-### MTU considerations
+### Особенности MTU
 
-**IPIP/SIT overhead:** 20 байт
+**Накладные расходы (Overhead) IPIP/SIT:** 20 байт (IPv4-заголовок).
 
-| Базовый MTU | Эффективный MTU туннеля |
-|-------------|------------------------|
+| Базовый MTU (физический) | Эффективный MTU туннеля |
+|--------------------------|-------------------------|
 | 1500 | 1480 |
+| 9000 (Jumbo Frames) | 8980 |
 
-**Настройка:**
+**Настройка MTU:**
 
 ```bash
-ip link set <tun_if> mtu 1480
+ip link set dev ipip1 mtu 1480
 ```
 
 **Рекомендации:**
 
-- Включить Path MTU Discovery: `sysctl -w net.ipv4.ip_no_pmtu_disc=0`
-- Для TCP: `tcp_mtu_probing=1`
+- Включите Path MTU Discovery: `sysctl -w net.ipv4.ip_no_pmtu_disc=0`
+- Для оптимизации TCP-трафика: `sysctl -w net.ipv4.tcp_mtu_probing=1`

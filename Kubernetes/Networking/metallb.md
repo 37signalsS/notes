@@ -4,7 +4,7 @@
 
 **MetalLB** — это решение для балансировки нагрузки в bare-metal Kubernetes-кластерах, которое позволяет использовать сервисы типа `LoadBalancer` без интеграции с облачными провайдерами. MetalLB назначает сервисам внешние IP-адреса из заранее определенных пулов и анонсирует их в локальной сети.
 
-**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде `DaemonSet`. Отвечает за анонсирование IP-адресов во внешней сети, используя протоколы L2 (Layer 2) — **ARP (Address Resolution Protocol)** / **NDP (Neighbor Discovery Protocol)** или **BGP (Border Gateway Protocol)**. В современных версиях используется **FRR (Free Range Routing)**.
+**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде `DaemonSet`. Отвечает за анонсирование IP-адресов во внешней сети, используя протоколы L2 (Layer 2) — **ARP (Address Resolution Protocol)** / **NDP (Neighbor Discovery Protocol)** или **[BGP (Border Gateway Protocol)](../../Networking/Protocols/bgp.md)**. В современных версиях используется **FRR (Free Range Routing)**.
 
 **Controller** — компонент MetalLB, работающий как `Deployment`. Отслеживает сервисы с типом `LoadBalancer` и назначает IP-адреса из пулов — **IPAddressPool**.
 
