@@ -38,10 +38,13 @@ alias k-etcdctl="etcdctl --endpoints=https://127.0.0.1:2379 \
 Все данные сериализуются в формат **Protobuf**, поэтому прямое чтение ключей через `etcdctl` вернёт бинарные данные. Для анализа объектов рекомендуется использовать `kubectl`.
 
 * **Список всех ключей (структура хранения):**
+
   ```bash
   k-etcdctl get /registry --prefix --keys-only
   ```
+
 * **Поиск подов в конкретном пространстве имён (namespace):**
+
   ```bash
   k-etcdctl get /registry/pods/default --prefix --keys-only
   ```
@@ -67,6 +70,6 @@ k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
 
 ## Дополнительная информация
 
-*   **[Шпаргалка по командам etcdctl](../../etcd/etcdctl_cheatsheet.md)** — общие операции с данными и кластером.
-*   **[Обзор etcd в Kubernetes](./etcd_overview.md)** — роль в архитектуре и требования к инфраструктуре.
-*   **[Мониторинг etcd](../../etcd/etcd_monitoring.md)** — ключевые метрики и алертинг.
+* **[Шпаргалка по командам etcdctl](../../etcd/etcdctl_cheatsheet.md)** — общие операции с данными и кластером.
+* **[Обзор etcd в Kubernetes](./etcd_overview.md)** — роль в архитектуре и требования к инфраструктуре.
+* **[Мониторинг etcd](../../etcd/etcd_monitoring.md)** — ключевые метрики и алертинг.

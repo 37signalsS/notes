@@ -63,6 +63,7 @@
 | **sessionAffinity** | Привязка сессии клиента к одному поду | [ClusterIP](./service_type_clusterip.md) |
 
 ### См. также
+
 - [Обзор Service](./service_overview.md)
 - [Практические сценарии публикации](./service_practical_scenarios.md)
 - [Ingress — обзор](../Ingress/overview.md)

@@ -24,12 +24,15 @@
 
 В кластерах, развернутых через `kubeadm`, сертификаты обновляются автоматически при выполнении планового обновления версии Kubernetes (`kubeadm upgrade`).
 
-*   **Проверка срока действия:**
+* **Проверка срока действия:**
+
     ```bash
     sudo kubeadm certs check-expiration
     # → CERTIFICATE   EXPIRES   RESIDUAL TIME   ...
     ```
-*   **Ручное продление:**
+
+* **Ручное продление:**
+
     ```bash
     sudo kubeadm certs renew all
     # → [certs] Certificate for 'apiserver' renewed
@@ -42,17 +45,21 @@
 По умолчанию `kubelet` генерирует самоподписанные серверные сертификаты. Для настройки автоматической ротации сертификатов, подписанных Cluster CA, необходимо включить поддержку в конфигурации.
 
 **Настройка в `KubeletConfiguration`:**
+
 ```yaml
 serverTLSBootstrap: true
 ```
 
 **Процесс одобрения:**
+
 1. Kubelet создает запрос на подпись (CSR).
 2. CSR должен быть одобрен администратором:
+
    ```bash
    kubectl certificate approve <csr-name>
    # → certificatesigningrequest.certificates.k8s.io/<name> approved
    ```
+
 3. После одобрения `kubelet` будет автоматически продлевать сертификат до его истечения.
 
 ### 3. Автоматизация для приложений (Cert-manager)
@@ -84,7 +91,9 @@ spec:
 Мониторинг является критическим слоем безопасности на случай сбоя автоматизации.
 
 #### Метрики Cert-manager
+
 При использовании Prometheus и cert-manager рекомендуется настроить алерт на время до истечения:
+
 ```yaml
 # Алерт за 21 день до истечения
 - alert: CertManagerCertExpiring
@@ -94,7 +103,9 @@ spec:
 ```
 
 #### Внешний мониторинг (Blackbox Exporter)
+
 Для проверки сертификатов на внешних эндпоинтах используется Blackbox Exporter.
+
 ```yaml
 # Алерт за 14 дней до истечения
 - alert: SSLCertExpiringSoon

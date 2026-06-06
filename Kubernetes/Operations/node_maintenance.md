@@ -150,21 +150,24 @@ kubectl drain node-source --ignore-daemonsets --delete-emptydir-data
 Когда корневой раздел `/` заполняется, можно перенести `/var/lib/kubelet` и `/var/lib/containerd` на другой раздел (например, `/storage`).
 
 1. **Остановка компонентов:**
+
    ```bash
    systemctl stop kubelet containerd
    ```
 
 2. **Копирование данных:**
+
    ```bash
    rsync -av /var/lib/kubelet/ /storage/kubelet/
    rsync -av /var/lib/containerd/ /storage/containerd/
    ```
 
 3. **Конфигурация:**
-   - `containerd`: в `/etc/containerd/config.toml` установить `root = "/storage/containerd"`.
-   - `kubelet`: в `/etc/default/kubelet` добавить `KUBELET_EXTRA_ARGS="--root-dir=/storage/kubelet"`.
+   * `containerd`: в `/etc/containerd/config.toml` установить `root = "/storage/containerd"`.
+   * `kubelet`: в `/etc/default/kubelet` добавить `KUBELET_EXTRA_ARGS="--root-dir=/storage/kubelet"`.
 
 4. **Запуск:**
+
    ```bash
    systemctl daemon-reload
    systemctl start containerd kubelet
@@ -175,14 +178,17 @@ kubectl drain node-source --ignore-daemonsets --delete-emptydir-data
 ### Диагностика и устранение проблем
 
 #### Drain завис из-за PDB
+
 **Проблема:** `error: cannot evict pod as it would violate the pod's disruption budget`.
 **Решение:** временно увеличить число реплик Deployment или изменить PDB.
 
 #### Поды застряли в состоянии Terminating
+
 **Проблема:** Поды не удаляются из-за наличия Finalizers.
 **Решение:** `kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":null}}'`.
 
 #### Проверка истории обслуживания
+
 ```bash
 kubectl get events --field-selector reason=SuccessfulDrain
 # → 5m  Normal  SuccessfulDrain  node/node-1  Node node-1 successfully drained

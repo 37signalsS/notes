@@ -193,6 +193,6 @@ kubectl get networkpolicy -n <namespace>
 kubectl delete networkpolicy --all -n <namespace>
 ```
 
-*   **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
-*   **Логика правил**: [NetworkPolicy: Логика правил](./rule_logic.md)
-*   **Реализация CNI**: [NetworkPolicy: Реализация CNI-плагинами](./cni_implementation.md)
+- **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
+- **Логика правил**: [NetworkPolicy: Логика правил](./rule_logic.md)
+- **Реализация CNI**: [NetworkPolicy: Реализация CNI-плагинами](./cni_implementation.md)

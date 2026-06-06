@@ -36,6 +36,7 @@
 ### Требования к инфраструктуре
 
 Для корректной работы `kubeadm certs`:
+
 * Кластер должен быть инициализирован через `kubeadm`.
 * Узел должен иметь доступ к файлам в `/etc/kubernetes/pki`.
 * Внешние центры сертификации (External CA) не поддерживаются командами `renew`.
@@ -60,7 +61,9 @@ caCertificateValidityPeriod: 87600h   # CA сертификаты (10 лет)
 ```bash
 sudo kubeadm certs check-expiration
 ```
+
 **Результат:**
+
 ```text
 CERTIFICATE                EXPIRES                  RESIDUAL TIME   CERTIFICATE AUTHORITY   EXTERNALLY MANAGED
 admin.conf                 Feb 27, 2027 10:00 UTC   364d            -                       no
@@ -72,6 +75,7 @@ apiserver-etcd-client      Feb 27, 2027 10:00 UTC   364d            etcd-ca     
 ### Ручное обновление сертификатов
 
 **Продление всех сертификатов:**
+
 ```bash
 sudo kubeadm certs renew all
 # → [certs] Certificate for 'admin.conf' renewed
@@ -80,6 +84,7 @@ sudo kubeadm certs renew all
 ```
 
 **Продление конкретного компонента:**
+
 ```bash
 # Обновление сертификата API Server
 sudo kubeadm certs renew apiserver
@@ -90,6 +95,7 @@ sudo kubeadm certs renew apiserver
 После обновления сертификатов необходимо перезапустить компоненты Control Plane, чтобы они начали использовать новые файлы.
 
 **Способ 1: Перезапуск через Kubelet (для статических подов)**
+
 ```bash
 sudo systemctl restart kubelet
 # → Kubelet перезапустит поды API Server, Scheduler и Controller Manager
@@ -97,6 +103,7 @@ sudo systemctl restart kubelet
 
 **Способ 2: Временное перемещение манифестов**
 Если Kubelet не подхватил изменения:
+
 ```bash
 sudo mv /etc/kubernetes/manifests/*.yaml /tmp/
 sleep 20
@@ -107,6 +114,7 @@ sudo mv /tmp/*.yaml /etc/kubernetes/manifests/
 ### Обновление Admin Kubeconfig
 
 После выполнения `kubeadm certs renew all` сертификат в `/etc/kubernetes/admin.conf` обновляется. Его необходимо скопировать пользователю:
+
 ```bash
 cp /etc/kubernetes/admin.conf $HOME/.kube/config
 chown $(id -u):$(id -g) $HOME/.kube/config

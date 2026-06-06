@@ -15,12 +15,15 @@
 ## Основные концепции
 
 ### Управление конфигурациями
+
 Lens основывает свою работу на анализе локальных и внешних файлов конфигурации. Основной механизм доступа — чтение контекстов из стандартных путей или вручную добавленных файлов.
 
 ### Расширяемость
+
 Функционал IDE дополняется через систему расширений (Extensions), которые позволяют интегрировать сторонние инструменты (ArgoCD, Flux, Trivy) непосредственно в интерфейс управления.
 
 ### Визуализация и инспекция
+
 Концепция Lens заключается в предоставлении "единого окна" для мониторинга ресурсов, просмотра логов и интерактивного взаимодействия с контейнерами через встроенный терминал.
 
 ---
@@ -30,6 +33,7 @@ Lens основывает свою работу на анализе локаль
 ### Установка
 
 **macOS (Homebrew):**
+
 ```bash
 # OpenLens (открытая версия)
 brew install --cask openlens
@@ -39,11 +43,13 @@ brew install --cask lens
 ```
 
 **Windows (Chocolatey):**
+
 ```bash
 choco install kubernetes-lens
 ```
 
 **Linux (Ubuntu/Debian):**
+
 ```bash
 # Добавление репозитория и установка
 curl -fsSL https://api.k8slens.dev/repos/deb/gpg.key | sudo apt-key add -
@@ -52,6 +58,7 @@ sudo apt update && sudo apt install lens
 ```
 
 **Linux (AppImage):**
+
 ```bash
 # Загрузка последней версии с официального сайта
 chmod +x Lens-*.AppImage
@@ -77,11 +84,13 @@ chmod +x Lens-*.AppImage
 **Вариант 2: Существующий Prometheus** — `Cluster Settings > Metrics` → **Custom Prometheus** → URL (Uniform Resource Locator): `http://prometheus-server.prometheus.svc.cluster.local:9090`.
 
 **Вариант 3: kube-prometheus-stack через Helm:**
+
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 ```
+
 URL в Lens: `http://prometheus-operated.monitoring.svc.cluster.local:9090`
 
 ### Управление расширениями (Extensions)
@@ -89,6 +98,7 @@ URL в Lens: `http://prometheus-operated.monitoring.svc.cluster.local:9090`
 Расширения позволяют добавить специфический функционал в IDE.
 
 **Популярные расширения:**
+
 - **Lens Metrics** — улучшенные метрики и дашборды
 - **Port Forwarder** — расширенное управление пробросом портов
 - **YAML Editor** — продвинутые функции редактирования
@@ -117,6 +127,7 @@ URL в Lens: `http://prometheus-operated.monitoring.svc.cluster.local:9090`
 **Подключение:** `Workloads > Pods` → кликнуть на под → **Shell** или **Connect**.
 
 **Примеры команд:**
+
 ```bash
 env                          # переменные окружения
 ls /etc/config               # файлы конфигурации
@@ -139,6 +150,7 @@ curl localhost:8080/health   # проверка состояния прилож�
 ### Интеграция с Kubespray
 
 При использовании [Kubespray](../../Installation/Kubespray/kubespray_install/basic_concepts.md):
+
 ```bash
 # Копирование конфига из директории артефактов
 cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
@@ -147,10 +159,12 @@ cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
 ### Hotbar и Command Palette
 
 **Hotbar** — панель быстрого доступа.
+
 - **Добавление:** ПКМ на элемент → **Add to Hotbar**
 - **Навигация:** `⌘/Ctrl + 1-9` для переключения
 
 **Command Palette** — универсальный поиск.
+
 - **Вызов:** `⌘/Ctrl + Shift + P`
 - **Действия:** `Restart`, `Delete`, `Edit`, `Scale`
 
@@ -165,6 +179,7 @@ cp inventory/my_cluster/artifacts/admin.conf ~/.kube/config
 **Настройка:** `Preferences > AI` → выбрать провайдера (OpenAI, Azure) → указать API (Application Programming Interface) ключ.
 
 **Возможности:**
+
 - Генерация манифестов по текстовому описанию.
 - Объяснение причин ошибок в логах.
 

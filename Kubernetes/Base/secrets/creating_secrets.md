@@ -145,4 +145,3 @@ spec:
 ### Связанные темы
 
 [Основы Secret](secrets_basics.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md).
-

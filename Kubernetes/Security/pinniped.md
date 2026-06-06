@@ -133,6 +133,7 @@ spec:
 - **Отзыв прав:** Блокировка пользователя в LDAP/AD приводит к автоматическому прекращению доступа в Kubernetes при следующей проверке токена.
 
 **Связанные темы:**
+
 - [Аутентификация в Kubernetes](./authentication.md)
 - [RBAC в Kubernetes](./rbac/rbac_overview.md)
 - [OpenLDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)

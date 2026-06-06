@@ -57,12 +57,14 @@ kubectl apply -f app-config.yaml
 Используется для быстрого создания объектов из существующих файлов или строковых литералов.
 
 **Из литералов (явное указание ключ-значение):**
+
 ```bash
 kubectl create configmap my-config-from-literals --from-literal=KEY1=VALUE1 --from-literal=KEY2=VALUE2
 # → configmap/my-config-from-literals created
 ```
 
 **Из одного или нескольких файлов:**
+
 ```bash
 # Ключ = имя файла, значение = содержимое файла
 kubectl create configmap my-config-from-file --from-file=path/to/config.json
@@ -73,6 +75,7 @@ kubectl create configmap my-config-from-files --from-file=config1.json --from-fi
 ```
 
 **Из директории:**
+
 ```bash
 # Создает ключи для всех файлов, находящихся в указанной директории
 kubectl create configmap my-config-dir --from-file=path/to/config-dir/
@@ -80,6 +83,7 @@ kubectl create configmap my-config-dir --from-file=path/to/config-dir/
 ```
 
 **Из env-файла:**
+
 ```bash
 # Считывает переменные из файла формата .env и создает соответствующие ключи в ConfigMap
 kubectl create configmap my-config-from-env --from-env-file=.env
@@ -123,6 +127,7 @@ kubectl get configmap app-config -o jsonpath='{.data.APP_COLOR}'
 * **Учитывайте лимит размера**: максимальный размер объекта ConfigMap в etcd составляет 1 MiB (Мегабайт).
 
 **См. также:**
+
 * [Лучшие практики ConfigMap](./best_practices.md)
 * [Использование ConfigMap в подах](./pod_usage.md)
 * [Неизменяемые ConfigMap](./immutable.md)

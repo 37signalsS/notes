@@ -76,5 +76,6 @@ spec:
 - **Headless Service:** Если требуется получить список IP-адресов внешнего ресурса (через ручное управление Endpoints).
 
 ### См. также
+
 - [Обзор Service](./service_overview.md)
 - [Сводка по типам Service](./service_types_summary.md)

@@ -200,4 +200,3 @@ spec:
 - **[Шаблонизация в Helm](./helm_templating.md)** — подробное руководство по функциям, объектам и именованным шаблонам в `_helpers.tpl`.
 - **[Зависимости и Library Charts](./helm_dependencies_and_library_charts.md)** — создание переиспользуемых библиотечных чартов.
 - **[Helm Skeleton Pattern](./helm_skeleton_pattern.md)** — паттерн для стандартизации и масштабирования множества однотипных сервисов.
-

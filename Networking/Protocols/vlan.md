@@ -41,6 +41,7 @@
 ### Меж-VLAN маршрутизация
 
 Поскольку VLAN изолированы на канальном уровне (L2), для связи между ними требуется устройство сетевого уровня (L3):
+
 - **Router-on-a-Stick:** маршрутизатор подключается через trunk-порт, на котором создаются виртуальные сабинтерфейсы.
 - **L3-коммутатор (Multilayer Switch):** выполняет маршрутизацию на аппаратном уровне через интерфейсы SVI (Switch Virtual Interface).
 
@@ -75,6 +76,7 @@ sudo ip link add link eth0 name eth0.10 type vlan id 10
 sudo ip link set eth0.10 up
 sudo ip addr add 192.168.10.1/24 dev eth0.10
 ```
+
 Подробнее: **[VLAN в Linux: настройка и диагностика](./VLAN/vlan_linux_diagnostics.md)**.
 
 ## Дополнительная информация

@@ -60,12 +60,12 @@ ESO позволяет приложениям использовать нати�
 
 ### Выбор инструмента
 
-- **Для GitOps (хранение в Git)**: Sealed Secrets (проще) или SOPS (гибче).
-- **Для максимальной безопасности**: Secrets Store CSI Driver (секреты не попадают в etcd).
-- **Для совместимости с приложениями**: External Secrets Operator (приложения работают с нативными Secrets).
+* **Для GitOps (хранение в Git)**: Sealed Secrets (проще) или SOPS (гибче).
+* **Для максимальной безопасности**: Secrets Store CSI Driver (секреты не попадают в etcd).
+* **Для совместимости с приложениями**: External Secrets Operator (приложения работают с нативными Secrets).
 
 ### Смотрите также
 
-- [Основы Secret](secrets_basics.md)
-- [Безопасность Secret](security.md)
-- [Интеграция Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md)
+* [Основы Secret](secrets_basics.md)
+* [Безопасность Secret](security.md)
+* [Интеграция Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md)

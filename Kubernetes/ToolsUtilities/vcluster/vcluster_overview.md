@@ -118,6 +118,7 @@
 ## Дополнительная информация
 
 ### Внутренние ссылки
+
 - [Установка и развертывание](./vcluster_installation.md)
 - [Подключение и доступ](./vcluster_connectivity.md)
 - [Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md)
@@ -126,5 +127,6 @@
 - [Установка через Helm](../Helm/helm_overview.md)
 
 ### Внешние ссылки
+
 - [Официальная документация vCluster](https://www.vcluster.com/docs)
 - [GitHub: loft-sh/vcluster](https://github.com/loft-sh/vcluster)

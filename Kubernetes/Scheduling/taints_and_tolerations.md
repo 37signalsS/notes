@@ -155,6 +155,7 @@ kubectl taint nodes worker-1 maintenance=true:NoSchedule-
 * **DaemonSet**: По умолчанию игнорирует `NoSchedule` для `node.kubernetes.io/unschedulable`.
 * **QoS классы**: Влияют на приоритет вытеснения при нехватке ресурсов. Подробнее в [QoS, Requests и Limits](./qos_limit_and_requests.md).
 * **Диагностика**:
+
     ```bash
     # Проверка taints на узле
     kubectl describe node <node-name> | grep Taints

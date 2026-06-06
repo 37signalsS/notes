@@ -37,8 +37,9 @@ Helm использует Go template engine с библиотекой Sprig д�
 
 ## Дополнительная информация
 
-См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Управление версиями](./helm_release_versioning.md). 
+См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Управление версиями](./helm_release_versioning.md).
 
 **Отладка:**
+
 - `helm template myrelease .`
 - `helm install --dry-run --debug myrelease .`

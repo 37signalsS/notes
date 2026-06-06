@@ -69,6 +69,7 @@ dig example.com HTTPS
 ### 2. Настройка CAA для защиты домена
 
 Разрешить выпуск сертификатов только для Let's Encrypt:
+
 ```dns
 example.com. IN CAA 0 issue "letsencrypt.org"
 ```
@@ -76,9 +77,11 @@ example.com. IN CAA 0 issue "letsencrypt.org"
 ### 3. Настройка HTTPS-записи для HTTP/3
 
 Информирование клиента о поддержке HTTP/3 до начала TLS-рукопожатия:
+
 ```dns
 example.com. IN HTTPS 1 . alpn="h3,h2"
 ```
+
 Это предотвращает «холодный старт» (первое соединение по HTTP/2) и позволяет сразу использовать QUIC.
 
 ## Дополнительная информация

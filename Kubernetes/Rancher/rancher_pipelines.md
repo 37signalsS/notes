@@ -21,9 +21,10 @@ Rancher Pipelines функционирует поверх Jenkins. При зап
 ### Поддерживаемые провайдеры Git
 
 Система поддерживает интеграцию с популярными хостингами репозиториев через протокол OAuth (Open Authorization):
-* GitHub
-* GitLab
-* Bitbucket
+
+- GitHub
+- GitLab
+- Bitbucket
 
 ## Практические сценарии
 
@@ -56,6 +57,7 @@ stages:
 Для минимизации размера образов и ускорения сборки рекомендуется использовать многоэтапную сборку (multi-stage build). Детальные принципы описаны в разделе [Оптимизация сборки Docker](../../Docker/Dockerfile/Docker_best_practices/build_optimization.md).
 
 **Пример Dockerfile:**
+
 ```dockerfile
 FROM golang:1.21-alpine AS builder
 WORKDIR /build
@@ -88,6 +90,7 @@ CMD ["./app"]
 - Учитывайте, что Rancher Pipelines требует выделения дополнительных ресурсов (CPU, RAM) в кластере для работы Jenkins-агентов.
 
 **Связанные темы:**
-* [Обзор GitOps](../../GitOps/GitOps_overview.md) — современная альтернатива встроенным пайплайнам.
-* [rancher_overview](./rancher_overview.md) — общая архитектура платформы Rancher.
-* [Секреты Kubernetes](../../Kubernetes/Base/secrets/creating_secrets.md) — управление учетными данными.
+
+- [Обзор GitOps](../../GitOps/GitOps_overview.md) — современная альтернатива встроенным пайплайнам.
+- [rancher_overview](./rancher_overview.md) — общая архитектура платформы Rancher.
+- [Секреты Kubernetes](../../Kubernetes/Base/secrets/creating_secrets.md) — управление учетными данными.

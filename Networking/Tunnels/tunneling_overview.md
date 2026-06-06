@@ -160,7 +160,6 @@ ip tunnel add tun1 mode ipip remote 192.0.2.2 local 192.0.2.1
 - **L2TP:** Протокол L2, часто используемый в связке с IPsec (L2TP/IPsec).
 - **PPTP:** Устаревший протокол (TCP 1723 + GRE) с известными уязвимостями.
 
-
 ### Выбор протокола
 
 ```
@@ -170,4 +169,3 @@ ip tunnel add tun1 mode ipip remote 192.0.2.2 local 192.0.2.1
          ├─ Да → WireGuard (производительность), [IPsec](./ipsec/ipsec.md) (site-to-site) или OpenVPN (зрелость)
          └─ Нет → GRE (универсально) или IPIP/SIT (транзит протокола)
 ```
-

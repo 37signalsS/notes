@@ -112,11 +112,13 @@ kubectl delete namespace my-namespace
 ## Дополнительная информация
 
 ### Внутренние ссылки
+
 - [vCluster — Обзор и архитектура](./vcluster_overview.md)
 - [vCluster — Подключение и доступ](./vcluster_connectivity.md)
 - [vCluster — Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md)
 - [Установка через Helm](../Helm/helm_overview.md)
 
 ### Внешние ссылки
+
 - [vCluster Installation Guide](https://www.vcluster.com/docs/getting-started/installation)
 - [vCluster CLI GitHub Releases](https://github.com/loft-sh/vcluster/releases)

@@ -101,12 +101,14 @@ sync:
 ## Дополнительная информация
 
 ### Лучшие практики
+
 - **Изоляция:** используйте один vCluster на команду или проект для минимизации радиуса поражения.
 - **Квотирование:** всегда устанавливайте ResourceQuota для предотвращения истощения ресурсов хост-кластера.
 - **Безопасность:** предпочитайте Rootless Mode для всех production-инсталляций.
 - **Мониторинг:** настройте сбор метрик с компонентов Control Plane и Syncer.
 
 ### Внутренние ссылки
+
 - [vCluster — Обзор и архитектура](./vcluster_overview.md)
 - [vCluster — Установка и развертывание](./vcluster_installation.md)
 - [vCluster — Подключение и доступ](./vcluster_connectivity.md)
@@ -114,5 +116,6 @@ sync:
 - [Управление доступом (RBAC)](../Security/rbac/rbac_overview.md)
 
 ### Внешние ссылки
+
 - [vCluster Security Documentation](https://www.vcluster.com/docs/architecture/security)
 - [Syncer Resource Syncing](https://www.vcluster.com/docs/architecture/syncer)

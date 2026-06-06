@@ -85,6 +85,7 @@
 | **Static Token** | Разработка и локальное тестирование | Низкая | Низкая |
 
 **Ссылки:**
+
 - [TLS и mTLS в Kubernetes](./tls_and_mtls_in_kubernetes.md)
 - [Pinniped: Интеграция с IdP](./pinniped.md)
 - [Sealed Secrets: Хранение секретов](./sealed_secrets_overview.md)

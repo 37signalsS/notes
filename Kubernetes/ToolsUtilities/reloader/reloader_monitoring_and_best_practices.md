@@ -32,6 +32,7 @@ Reloader предоставляет HTTP-эндпоинты (точки дост
 ### Метрики Prometheus
 
 Reloader экспортирует следующие ключевые метрики:
+
 - `reloader_success_reload_total` — общее количество успешных перезагрузок.
 - `reloader_failure_reload_total` — количество неудачных попыток перезагрузки.
 
@@ -71,24 +72,28 @@ time="2026-06-06T10:31:01Z" level=info msg="Triggering rolling upgrade for Deplo
 
 Если `ConfigMap`/`Secret` изменён, но поды не перезапускаются:
 
-1.  **Проверка аннотаций:** убедитесь, что аннотация добавлена в `metadata` самого `Deployment`/`StatefulSet`, а не во вложенный `template`.
+1. **Проверка аннотаций:** убедитесь, что аннотация добавлена в `metadata` самого `Deployment`/`StatefulSet`, а не во вложенный `template`.
+
     ```bash
     kubectl get deployment <имя> -o yaml | grep -A2 reloader.stakater.com
     ```
-2.  **Проверка RBAC (Role-Based Access Control):** убедитесь, что у ServiceAccount контроллера есть права на `watch` ресурсов в целевом пространстве имён (Namespace).
+
+2. **Проверка RBAC (Role-Based Access Control):** убедитесь, что у ServiceAccount контроллера есть права на `watch` ресурсов в целевом пространстве имён (Namespace).
+
     ```bash
     kubectl auth can-i watch configmaps --as=system:serviceaccount:monitoring:reloader
     ```
-3.  **Фильтры Namespace:** проверьте, не включены ли флаги `--namespaces-to-ignore` или `--namespaces-to-select`, ограничивающие область работы контроллера.
+
+3. **Фильтры Namespace:** проверьте, не включены ли флаги `--namespaces-to-ignore` или `--namespaces-to-select`, ограничивающие область работы контроллера.
 
 ### Сценарий 4: Применение лучших практик
 
 Для надёжной работы Reloader рекомендуется следовать этим правилам:
 
-1.  **Явные аннотации вместо `auto`:** используйте `configmap.reloader.stakater.com/reload`, чтобы избежать случайных перезагрузок при изменении не связанных с приложением ресурсов.
-2.  **Изоляция системных ресурсов:** всегда добавляйте системные пространства имён (`kube-system`, `kube-public`) в список исключений через флаг `--namespaces-to-ignore`.
-3.  **Ограничение ресурсов (Resource Quotas):** обязательно задавайте `limits` и `requests` для CPU (Central Processing Unit) и памяти контроллера, чтобы он не влиял на работу бизнес-приложений.
-4.  **Стратегия для GitOps:** при использовании ArgoCD или FluxCD применяйте стратегию обновления `annotations` вместо `env-vars`, чтобы избежать расхождений (drift) между желаемым и текущим состоянием манифестов.
+1. **Явные аннотации вместо `auto`:** используйте `configmap.reloader.stakater.com/reload`, чтобы избежать случайных перезагрузок при изменении не связанных с приложением ресурсов.
+2. **Изоляция системных ресурсов:** всегда добавляйте системные пространства имён (`kube-system`, `kube-public`) в список исключений через флаг `--namespaces-to-ignore`.
+3. **Ограничение ресурсов (Resource Quotas):** обязательно задавайте `limits` и `requests` для CPU (Central Processing Unit) и памяти контроллера, чтобы он не влиял на работу бизнес-приложений.
+4. **Стратегия для GitOps:** при использовании ArgoCD или FluxCD применяйте стратегию обновления `annotations` вместо `env-vars`, чтобы избежать расхождений (drift) между желаемым и текущим состоянием манифестов.
 
 ---
 

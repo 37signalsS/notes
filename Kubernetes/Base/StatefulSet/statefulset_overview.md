@@ -5,6 +5,7 @@
 ## Определения
 
 StatefulSet используется для приложений, которым необходимы:
+
 * **Стабильные сетевые идентификаторы:** имена подов сохраняются при перезапуске.
 * **Стабильное хранилище:** каждый под имеет собственный **[PersistentVolumeClaim (PVC)](../../Storage/pv_and_pvc.md)**, привязанный к его индексу.
 * **Упорядоченное развертывание и масштабирование:** поды создаются и удаляются последовательно.
@@ -105,7 +106,7 @@ kubectl delete statefulset web
 
 ### См. также
 
-- **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — подробное сравнение контроллеров.
-- **[Лучшие практики](./statefulset_best_practices.md)** — рекомендации по эксплуатации и отказоустойчивости.
-- **[Headless Service](../../Networking/Service/service_type_headless.md)** — работа DNS в StatefulSet.
-- **[PV и PVC](../../Storage/pv_and_pvc.md)** — управление хранилищем в Kubernetes.
+* **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — подробное сравнение контроллеров.
+* **[Лучшие практики](./statefulset_best_practices.md)** — рекомендации по эксплуатации и отказоустойчивости.
+* **[Headless Service](../../Networking/Service/service_type_headless.md)** — работа DNS в StatefulSet.
+* **[PV и PVC](../../Storage/pv_and_pvc.md)** — управление хранилищем в Kubernetes.

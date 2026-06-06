@@ -38,26 +38,31 @@ Freshness: 10 (Актуально для актуальных версий Kiban
 **Примеры запросов:**
 
 * **Логи конкретного пода (Pod):**
+
   ```kql
   kubernetes.pod_name: "my-app-v1-84fb6d-xyz"
   ```
 
 * **Все поды определенного приложения (по метке):**
+
   ```kql
   kubernetes.labels.app: "api-gateway"
   ```
 
 * **Ошибки в конкретном пространстве имен (Namespace):**
+
   ```kql
   kubernetes.namespace_name: "production" and log.level: (error or critical)
   ```
 
 * **Исключение успешных HTTP-ответов:**
+
   ```kql
   not http.response.status_code: [200 to 299]
   ```
 
 * **Поиск по тексту сообщения:**
+
   ```kql
   message: "connection refused"
   ```
@@ -80,6 +85,7 @@ Freshness: 10 (Актуально для актуальных версий Kiban
 **Причина:** Агент (Fluent Bit) не смог распознать JSON во входящем потоке и передал его как обычный текст.
 
 **Решение:**
+
 1. Проверьте конфигурацию фильтра `kubernetes` в Fluent Bit. Параметр `Merge_Log` должен быть установлен в `On`.
 2. Если приложение пишет логи в нестандартном формате, примените аннотацию к поду: `fluentbit.io/parser: "custom_json_parser"`.
 3. Подробности настройки парсинга приведены в [Парсинг логов во Fluent Bit](./fluentbit/parsing.md).

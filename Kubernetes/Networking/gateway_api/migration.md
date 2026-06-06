@@ -11,6 +11,7 @@
 ## Базовые концепции
 
 ### Причины необходимости миграции
+
 - **Окончание поддержки Ingress NGINX:** поддержка прекращена в марте 2026 года.
 - **Стандартизация:** Gateway API поддерживается всеми ведущими поставщиками облачных решений и сетевых контроллеров.
 - **Расширенные возможности:** нативная поддержка канареечных развертываний, gRPC, а также маршрутизации на уровнях L4 (TCP/UDP) и L7 (HTTP/HTTPS).
@@ -43,13 +44,16 @@
 ## Практические сценарии
 
 ### Шаг 1: Выбор реализации
+
 Для большинства стандартных задач рекомендуются решения на базе прокси-сервера **Envoy**:
+
 - **Envoy Gateway** — если требуется простой и надежный стандарт.
 - **KGateway** — если критична производительность и необходим расширенный функционал в рамках CNCF Sandbox.
 
 Подробности: [Envoy Gateway](./envoy_gateway.md), [Traefik](./traefik.md).
 
 ### Шаг 2: Параллельный запуск
+
 Разверните контроллер Gateway API рядом с существующим Ingress NGINX для обеспечения плавного перехода:
 
 ```yaml
@@ -89,9 +93,11 @@ spec:
 **Примечание:** новый контроллер получит отдельный внешний IP-адрес. Оба решения могут работать одновременно без конфликтов.
 
 ### Шаг 3: Автоматическая конвертация с ingress2gateway
+
 Инструмент позволяет преобразовать существующие Ingress-ресурсы в формат Gateway API.
 
 **Установка (v1.0.0):**
+
 ```bash
 # GitHub (Linux amd64)
 curl -Lo ingress2gateway https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/ingress2gateway-linux-amd64
@@ -100,6 +106,7 @@ sudo mv ingress2gateway /usr/local/bin/
 ```
 
 **Использование:**
+
 ```bash
 # Конвертация всех Ingress в пространстве имен
 ingress2gateway convert --namespace=my-app --output=yaml
@@ -111,6 +118,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 **Ограничения:** инструмент не всегда корректно обрабатывает сложные специфические аннотации Ingress NGINX, поэтому после конвертации обязательна ручная проверка манифестов.
 
 ### Шаг 4: Тестирование и перенос трафика
+
 1. **Проверка статусов (Status Conditions):** убедитесь, что ресурсы находятся в состояниях `Accepted: True` и `Programmed: True` (для Gateway) или `ResolvedRefs: True` (для Route).
 2. **Верификация маршрутизации:** выполните тестовые запросы к новому шлюзу.
 3. **Поэтапный перенос:** постепенно переключайте трафик на DNS-уровне или через внешний балансировщик (например, 5%, 25%, 100%).
@@ -118,6 +126,7 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 Подробности: [Тестирование и перенос трафика](./migration_testing.md).
 
 ### Шаг 5: Миграция TLS и сложной маршрутизации
+
 Для сценариев со сквозным шифрованием (Passthrough) или сложной логикой перезаписи URL используйте специализированные руководства.
 
 Подробности: [Миграция TLS и маршрутизации](./migration_tls_and_routing.md).
@@ -125,10 +134,12 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
 ## Дополнительная информация
 
 ### Решение проблем: cert-manager и Gateway API
+
 При миграции часто возникают сложности с получением сертификатов через шлюз.
 
 - **Проблема 1: поддержка не включена.** В cert-manager поддержка Gateway API часто отключена по умолчанию. При установке через Helm используйте флаг `config.controller.config.enableGatewayAPI: true`.
 - **Проблема 2: ACME solver.** Если в ClusterIssuer ранее использовался `ingressClassName: nginx`, cert-manager не сможет пройти проверку владения доменом. Необходимо обновить ClusterIssuer:
+
   ```yaml
   solvers:
   - http01:
@@ -138,14 +149,17 @@ ingress2gateway convert --namespace=my-app | kubectl apply -f -
           namespace: default
           kind: Gateway
   ```
+
 - **Проблема 3: отсутствие Secret.** Если Gateway ссылается на еще не созданный Secret, слушатель будет помечен как `Invalid`. Убедитесь, что cert-manager успешно создал Secret до активации шлюза.
 
 ### Полезные ссылки
+
 - [Официальное руководство по миграции](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
 - [Репозиторий ingress2gateway](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
 - [Соответствие реализаций спецификации](https://gateway-api.sigs.k8s.io/implementations/)
 
 **См. также:**
+
 - [Концепции Gateway API](./definitions.md) — основные понятия
 - [Ресурсы Gateway API](./resources.md) — обзор CRD
 - [Базовые сценарии](./practical_basic.md) — примеры настройки

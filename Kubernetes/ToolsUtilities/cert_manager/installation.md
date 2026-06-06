@@ -76,6 +76,7 @@ helm install cert-manager jetstack/cert-manager \
 ```
 
 Также поддерживается установка через OCI registry:
+
 ```bash
 helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
   --namespace cert-manager \

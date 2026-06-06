@@ -319,8 +319,8 @@ helm uninstall myapp --keep-history
 
 ## См. также
 
-- [Обзор Helm](./helm_overview.md)
-- [Управление версиями релизов](./helm_release_versioning.md)
-- [Хуки и тестирование в Helm](./helm_hooks_and_tests.md)
-- [Плагины Helm](./helm_plugins.md)
-- [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md)
+* [Обзор Helm](./helm_overview.md)
+* [Управление версиями релизов](./helm_release_versioning.md)
+* [Хуки и тестирование в Helm](./helm_hooks_and_tests.md)
+* [Плагины Helm](./helm_plugins.md)
+* [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md)

@@ -43,6 +43,7 @@
 
 **Механизм поиска образов:**
 Если указано короткое имя, Kubernetes пытается найти образ, используя следующие приоритеты:
+
 1. Секреты, указанные в `imagePullSecrets`.
 2. Настройки реестров по умолчанию в конфигурации Node (ноды).
 3. Общедоступный реестр Docker Hub (`docker.io`).
@@ -92,6 +93,7 @@ spec:
 ## Дополнительная информация
 
 **Связанные темы:**
+
 - [Taints and Tolerations в Kubernetes](../Scheduling/taints_and_tolerations.md)
 - [Обзор контроллера Deployment](../Deployment/index.md)
 - [Диагностика ошибок скачивания образов](../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md)

@@ -44,6 +44,7 @@ RBAC опирается на три вопроса:
 Kubernetes предоставляет стандартные роли (`cluster-admin`, `admin`, `edit`, `view`). Подробное описание приведено в разделе **[Встроенные роли](./roles.md#vstroennye-roli)**.
 
 Для агрегации прав используются специальные метки (labels):
+
 - `rbac.authorization.k8s.io/aggregate-to-admin`
 - `rbac.authorization.k8s.io/aggregate-to-edit`
 - `rbac.authorization.k8s.io/aggregate-to-view`
@@ -74,6 +75,7 @@ kubectl auth can-i --list
 ## Дополнительная информация
 
 <a name="preduprezhdeniya-bezopasnosti"></a>
+
 ### Предупреждения безопасности
 
 - **`system:masters`** — группа, которая обходит все проверки RBAC. Никогда не добавляйте в неё обычных пользователей.
@@ -83,6 +85,7 @@ kubectl auth can-i --list
 ### Ограничения RBAC
 
 Механизм RBAC имеет ряд [ограничений](./limitations_opa.md):
+
 - Отсутствие запрещающих правил (deny).
 - Отсутствие условий (проверка IP-адреса, времени суток).
 - Статичность набора правил.

@@ -227,6 +227,7 @@ HTTP работает на **прикладном уровне (Layer 7)** мо�
 - **Инфраструктура как код:** Terraform, Ansible взаимодействуют с API облачных провайдеров по HTTP.
 
 **Смотрите также:**
+
 - **[Методы HTTP](./http_methods.md)**
 - **[Коды ответа HTTP](./http_status_codes.md)**
 - **[Эволюция HTTP](./http_versions.md)**

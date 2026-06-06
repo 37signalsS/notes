@@ -8,6 +8,7 @@
 ## Основные концепции (кратко)
 
 При недоступности узла (`Ready=Unknown` или `Ready=False`) Kubernetes автоматически добавляет taints:
+
 * `node.kubernetes.io/unreachable:NoExecute`
 * `node.kubernetes.io/not-ready:NoExecute`
 
@@ -22,6 +23,7 @@
 **Симптомы**: Поды на узле удалены через ~5 минут после потери связи.
 
 **Диагностика**:
+
 ```bash
 # Проверка taints узла
 kubectl describe node <node-name> | grep -A 5 "Taints:"
@@ -35,6 +37,7 @@ kubectl get events --field-selector reason=TaintManagerEviction --sort-by='.last
 **Симптомы**: Узел недоступен, но поды не выселяются, так как PDB не позволяет удалить достаточно реплик.
 
 **Диагностика**:
+
 ```bash
 # Проверка разрешенных прерываний
 kubectl get pdb <pdb-name> -o jsonpath='{.status.disruptionsAllowed}'

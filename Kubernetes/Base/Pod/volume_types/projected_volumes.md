@@ -143,6 +143,7 @@ spec:
 ## Дополнительная информация
 
 **Связанные темы:**
+
 - [Базовые концепции Volume](./volumes_basics.md)
 - [Использование Downward API в Kubernetes](../downward_api.md)
 - [Использование ConfigMap в Pod](../../ConfigMap/pod_usage.md)

@@ -14,6 +14,7 @@ LoadBalancer является расширением типов [NodePort](./ser
 ### Принцип работы
 
 При развертывании сервиса типа LoadBalancer:
+
 1. Kubernetes отправляет запрос API облачного провайдера через компонент `cloud-controller-manager`.
 2. Провайдер создает физический или виртуальный балансировщик (например, AWS NLB/ALB, GCP LB).
 3. Балансировщику назначается внешний IP-адрес.
@@ -113,6 +114,7 @@ spec:
 3. **[Gateway API](../gateway_api/definitions.md):** Современный стандарт управления трафиком, объединяющий возможности LB и Ingress.
 
 ### См. также
+
 - [Обзор Service](./service_overview.md)
 - [Сводка по типам Service](./service_types_summary.md)
 - [Тип Service — NodePort](./service_type_nodeport.md)

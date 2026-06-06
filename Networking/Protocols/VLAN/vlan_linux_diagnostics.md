@@ -2,10 +2,9 @@
 
 ## Определения
 
-*   **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
-*   **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
-*   **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
-
+* **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
+* **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
+* **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
 
 ## Базовые концепции
 
@@ -23,15 +22,15 @@ VLAN-интерфейсы создаются как сабинтерфейсы �
 
 **MTU не требуется изменять** при включении VLAN tagging, потому что:
 
-- Современные коммутаторы и NIC поддерживают baby giant frames (1522 байта) по умолчанию
-- MTU относится к IP-уровню (L3) и не включает заголовок Ethernet (L2)
-- VLAN тег добавляется на L2 и не влияет на расчёт MTU для IP-пакетов
+* Современные коммутаторы и NIC поддерживают baby giant frames (1522 байта) по умолчанию
+* MTU относится к IP-уровню (L3) и не включает заголовок Ethernet (L2)
+* VLAN тег добавляется на L2 и не влияет на расчёт MTU для IP-пакетов
 
 **Исключения:**
 
-- Старое оборудование (15+ лет) может не поддерживать кадры >1518 байт
-- **Q-in-Q** (802.1ad, два тега) → кадр 1526 байт
-- Jumbo frames требуют согласования MTU по всей цепочке
+* Старое оборудование (15+ лет) может не поддерживать кадры >1518 байт
+* **Q-in-Q** (802.1ad, два тега) → кадр 1526 байт
+* Jumbo frames требуют согласования MTU по всей цепочке
 
 ## Практические сценарии
 
@@ -123,13 +122,13 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 
 **Стандарты:**
 
-- **IEEE 802.1Q** — стандарт тегирования VLAN
-- **IEEE 802.1ad** — Q-in-Q (stacked VLANs, двойное тегирование)
+* **IEEE 802.1Q** — стандарт тегирования VLAN
+* **IEEE 802.1ad** — Q-in-Q (stacked VLANs, двойное тегирование)
 
 **Смежные темы:**
 
-- **[Формат кадра 802.1Q](./vlan_8021q_frame.md)** — структура тега
-- **[Меж-VLAN маршрутизация](./vlan_inter_vlan_routing.md)** — Router-on-a-Stick, сабинтерфейсы
-- **[Trunk и Native VLAN](./vlan_trunk_native.md)** — trunk-порты
-- **[QoS](../../Concepts/qos.md)** — приоритезация трафика через PCP-биты
-- **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md)** — постоянная конфигурация сети
+* **[Формат кадра 802.1Q](./vlan_8021q_frame.md)** — структура тега
+* **[Меж-VLAN маршрутизация](./vlan_inter_vlan_routing.md)** — Router-on-a-Stick, сабинтерфейсы
+* **[Trunk и Native VLAN](./vlan_trunk_native.md)** — trunk-порты
+* **[QoS](../../Concepts/qos.md)** — приоритезация трафика через PCP-биты
+* **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md)** — постоянная конфигурация сети

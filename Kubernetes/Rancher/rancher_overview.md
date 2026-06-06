@@ -44,6 +44,7 @@ Rancher является активно развивающимся продук�
 | **Kubernetes** | v1.32–v1.34 | Актуально | См. матрицу поддержки SUSE |
 
 **Внешние ресурсы:**
+
 * [Официальная документация Rancher](https://rancher.com/docs/rancher/v2.x/en/)
 * [Матрица поддержки (Support Matrix)](https://www.suse.com/suse-rancher/support-matrix/)
 

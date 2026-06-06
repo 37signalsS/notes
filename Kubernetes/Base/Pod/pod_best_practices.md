@@ -42,8 +42,8 @@ image: nginx:1.28.0
 
 Для каждого container необходимо явно указывать запросы (`requests`) и лимиты (`limits`) ресурсов. Это критично для стабильности Node (узлов) и корректной работы планировщика.
 
-*   **Requests (запросы):** минимальный объем ресурсов, гарантируемый Kubernetes. Используется планировщиком для поиска подходящей Node.
-*   **Limits (лимиты):** максимальный объем ресурсов, который container может потребить.
+* **Requests (запросы):** минимальный объем ресурсов, гарантируемый Kubernetes. Используется планировщиком для поиска подходящей Node.
+* **Limits (лимиты):** максимальный объем ресурсов, который container может потребить.
 
 Подробное описание и влияние на классы обслуживания см. в [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md).
 
@@ -51,9 +51,9 @@ image: nginx:1.28.0
 
 Автоматизация контроля работоспособности приложения через пробы позволяет Kubernetes самостоятельно принимать решения о перезапуске или маршрутизации трафика.
 
-*   **livenessProbe:** проверяет, не зависло ли приложение.
-*   **readinessProbe:** определяет, готово ли приложение принимать трафик.
-*   **startupProbe:** используется для приложений с длительным временем запуска.
+* **livenessProbe:** проверяет, не зависло ли приложение.
+* **readinessProbe:** определяет, готово ли приложение принимать трафик.
+* **startupProbe:** используется для приложений с длительным временем запуска.
 
 Детальная настройка и параметры приведены в [Пробы в Kubernetes](../probes.md).
 
@@ -62,19 +62,21 @@ image: nginx:1.28.0
 Используйте стандартизированные метки (Labels) для идентификации и группировки объектов.
 
 **Рекомендуемые метки (согласно стандартам Kubernetes):**
-*   `app.kubernetes.io/name`: название приложения.
-*   `app.kubernetes.io/instance`: уникальное имя инстанса.
-*   `app.kubernetes.io/version`: версия приложения.
-*   `app.kubernetes.io/managed-by`: инструмент управления (например, `helm`).
+
+* `app.kubernetes.io/name`: название приложения.
+* `app.kubernetes.io/instance`: уникальное имя инстанса.
+* `app.kubernetes.io/version`: версия приложения.
+* `app.kubernetes.io/managed-by`: инструмент управления (например, `helm`).
 
 Полный перечень и правила именования см. в [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
 
 ### Безопасность
 
 Ограничивайте права container через `securityContext`. Принципы минимизации привилегий:
-*   Запрет запуска от пользователя `root`.
-*   Использование только необходимых capabilities.
-*   Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
+
+* Запрет запуска от пользователя `root`.
+* Использование только необходимых capabilities.
+* Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
 
 Подробнее в [Security Context в Kubernetes](../../Security/pod_security_context.md).
 
@@ -151,8 +153,9 @@ spec:
 ## Дополнительная информация
 
 **Связанные темы:**
-- [Пробы в Kubernetes](../probes.md)
-- [QoS и управление ресурсами в Kubernetes](../../Scheduling/qos_limit_and_requests.md)
-- [Security Context в Kubernetes](../../Security/pod_security_context.md)
-- [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md)
-- [Обзор объектов Deployment](../Deployment/index.md)
+
+* [Пробы в Kubernetes](../probes.md)
+* [QoS и управление ресурсами в Kubernetes](../../Scheduling/qos_limit_and_requests.md)
+* [Security Context в Kubernetes](../../Security/pod_security_context.md)
+* [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md)
+* [Обзор объектов Deployment](../Deployment/index.md)

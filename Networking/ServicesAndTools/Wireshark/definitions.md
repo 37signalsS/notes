@@ -75,9 +75,11 @@ Wireshark поддерживает детальную диссекцию сот�
 Приложения на базе Chromium (Slack, Discord, VS Code) позволяют расшифровывать TLS-трафик:
 
 1. Запустите приложение с переменной окружения `SSLKEYLOGFILE`:
+
    ```bash
    SSLKEYLOGFILE=~/tls-keys.log slack
    ```
+
 2. В Wireshark перейдите в `Edit → Preferences → Protocols → TLS` и укажите путь к файлу в поле `(Pre)-Master-Secret log filename`.
 3. После начала захвата Wireshark автоматически расшифрует HTTP/2 и WebSocket трафик.
 
@@ -96,6 +98,7 @@ Wireshark поддерживает детальную диссекцию сот�
 Полное руководство: **[Методы расшифровки TLS](./tls_decryption_methods.md)**.
 
 ### См. также
+
 - **[Основные концепции](./core_concepts.md)** — механизмы захвата, фильтры и инкапсуляция
 - **[Практические сценарии](./practical_scenarios.md)** — установка и базовое использование
 - **[Дополнительные возможности](./advanced_features.md)** — раскраска пакетов и построение графов

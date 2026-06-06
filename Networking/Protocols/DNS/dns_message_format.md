@@ -83,6 +83,7 @@ dig example.com
 ```
 
 **Интерпретация флагов:**
+
 - `qr`: это ответ (Response).
 - `rd`: клиент просил рекурсию (Recursion Desired).
 - `ra`: сервер поддерживает рекурсию (Recursion Available).

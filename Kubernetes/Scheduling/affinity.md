@@ -260,12 +260,13 @@ kubectl describe pod pending-pod | grep -A 5 "Events:"
 
 **Типичные сообщения об ошибках:**
 
-- `0/10 nodes are available: 10 node(s) didn't match Pod Anti-Affinity rules` — невозможно выполнить правила Anti-Affinity.
-- `0/10 nodes are available: 6 node(s) didn't match topology spread constraints` — нарушение ограничений Topology Spread.
+* `0/10 nodes are available: 10 node(s) didn't match Pod Anti-Affinity rules` — невозможно выполнить правила Anti-Affinity.
+* `0/10 nodes are available: 6 node(s) didn't match topology spread constraints` — нарушение ограничений Topology Spread.
 
 ---
 
 ## Дополнительная информация
+
 ### Интеграции
 
 Механизмы распределения подов тесно взаимодействуют с другими компонентами Kubernetes:

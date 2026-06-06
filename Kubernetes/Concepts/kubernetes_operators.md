@@ -65,10 +65,10 @@ spec:
 ## Дополнительная информация
 
 * **Инструменты разработки:**
-    * [Kubebuilder](https://book.kubebuilder.io/) — фреймворк для создания операторов на Go.
-    * [Operator SDK](https://sdk.operatorframework.io/) — поддержка Go, Ansible и Helm.
+  * [Kubebuilder](https://book.kubebuilder.io/) — фреймворк для создания операторов на Go.
+  * [Operator SDK](https://sdk.operatorframework.io/) — поддержка Go, Ansible и Helm.
 * **Популярные операторы:**
-    * **Prometheus Operator** — автоматизация мониторинга.
-    * **Cert Manager** — управление **SSL/TLS (Secure Sockets Layer / Transport Layer Security)** сертификатами.
-    * **Cloud Native PostgreSQL (CNPG)** — управление кластерами PostgreSQL.
+  * **Prometheus Operator** — автоматизация мониторинга.
+  * **Cert Manager** — управление **SSL/TLS (Secure Sockets Layer / Transport Layer Security)** сертификатами.
+  * **Cloud Native PostgreSQL (CNPG)** — управление кластерами PostgreSQL.
 * **[Архитектура Control Plane](./control_plane_architecture.md)** — основы работы контроллеров.

@@ -227,21 +227,25 @@ spec:
 ### Диагностика и мониторинг
 
 **Просмотр логов контроллера:**
+
 ```bash
 kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100
 ```
 
 **Список существующих NodePool:**
+
 ```bash
 kubectl get nodepool
 ```
 
 **Просмотр узлов, созданных Karpenter:**
+
 ```bash
 kubectl get nodes -l karpenter.sh/nodepool=default
 ```
 
 **События жизненного цикла узлов:**
+
 ```bash
 kubectl get events -n karpenter --sort-by='.lastTimestamp'
 ```

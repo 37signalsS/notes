@@ -26,15 +26,20 @@ etcdctl --endpoints=$ENDPOINTS --cacert=$CA --cert=$CERT --key=$KEY <command>
 ### Управление данными
 
 * **Запись и чтение:**
+
   ```bash
   etcdctl put mykey "myvalue"
   etcdctl get mykey
   ```
+
 * **Чтение по префиксу:**
+
   ```bash
   etcdctl get /configs --prefix
   ```
+
 * **Удаление:**
+
   ```bash
   etcdctl del mykey
   etcdctl del /configs --prefix
@@ -43,14 +48,19 @@ etcdctl --endpoints=$ENDPOINTS --cacert=$CA --cert=$CERT --key=$KEY <command>
 ### Состояние кластера
 
 * **Проверка здоровья:**
+
   ```bash
   etcdctl endpoint health --cluster -w table
   ```
+
 * **Статус и использование ресурсов:**
+
   ```bash
   etcdctl endpoint status --cluster -w table
   ```
+
 * **Список участников кластера:**
+
   ```bash
   etcdctl member list -w table
   ```
@@ -58,14 +68,19 @@ etcdctl --endpoints=$ENDPOINTS --cacert=$CA --cert=$CERT --key=$KEY <command>
 ### Резервное копирование
 
 * **Создание снапшота:**
+
   ```bash
   etcdctl snapshot save backup.db
   ```
+
 * **Проверка снапшота:**
+
   ```bash
   etcdctl snapshot status backup.db
   ```
+
 * **Восстановление (используется etcdutl в 3.6+):**
+
   ```bash
   etcdutl snapshot restore backup.db --data-dir /var/lib/etcd-new
   ```

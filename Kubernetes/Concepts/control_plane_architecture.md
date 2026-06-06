@@ -9,6 +9,7 @@
 ### Концепция «5 бинарных файлов»
 
 Архитектура Kubernetes базируется на пяти ключевых исполняемых файлах:
+
 1. **`kube-apiserver`** (Control Plane)
 2. **`kube-scheduler`** (Control Plane)
 3. **`kube-controller-manager`** (Control Plane)

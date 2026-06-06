@@ -163,6 +163,7 @@ helmCharts:
 ```
 
 Для сборки необходимо использовать флаг:
+
 ```bash
 kustomize build --enable-helm
 # → Вывод: манифесты Helm-чарта с примененными патчами Kustomize

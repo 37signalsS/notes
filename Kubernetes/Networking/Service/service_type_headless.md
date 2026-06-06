@@ -88,6 +88,7 @@ kubectl run -it --rm --image=busybox:latest dns-test -- /bin/sh
 ```
 
 **Проверка записей:**
+
 ```bash
 # Получение списка IP всех подов сервиса
 nslookup nginx-headless
@@ -113,6 +114,7 @@ nslookup web-0.nginx-headless
 - **Клиентская ответственность:** Приложение должно уметь корректно обрабатывать список из нескольких IP-адресов или обращаться по конкретным именам.
 
 ### См. также
+
 - [Обзор StatefulSet](../../Base/StatefulSet/statefulset_overview.md)
 - [Сводка по типам Service](./service_types_summary.md)
 - [Тип Service — ExternalName](./service_type_externalname.md)

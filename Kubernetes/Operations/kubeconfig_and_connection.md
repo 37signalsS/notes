@@ -44,13 +44,16 @@
 ### Получение kubeconfig
 
 #### Для кластеров Bare Metal (kubeadm/Kubespray)
+
 После инициализации через `kubeadm` файл администратора создается по пути `/etc/kubernetes/admin.conf`.
+
 ```bash
 # Копирование конфига на локальную машину
 scp root@master-node:/etc/kubernetes/admin.conf ~/.kube/config
 ```
 
 #### Для облачных кластеров
+
 ```bash
 # Google Kubernetes Engine (GKE)
 gcloud container clusters get-credentials cluster-name --zone europe-west1-b
@@ -63,8 +66,9 @@ aws eks update-kubeconfig --name cluster-name --region eu-central-1
 ```
 
 #### Для локальных кластеров
-*   **Minikube:** `minikube start` автоматически добавляет контекст `minikube`.
-*   **Kind:** `kind export kubeconfig --name my-cluster`.
+
+* **Minikube:** `minikube start` автоматически добавляет контекст `minikube`.
+* **Kind:** `kind export kubeconfig --name my-cluster`.
 
 ### Управление контекстами
 
@@ -106,9 +110,9 @@ kubectl config view --flatten
 
 Файл `kubeconfig` содержит чувствительные данные (приватные ключи, токены), дающие полный доступ к кластеру.
 
-*   **Права доступа:** Устанавливайте права `600` на файлы конфигурации (`chmod 600 ~/.kube/config`).
-*   **Разделение привилегий:** Не передавайте `admin.conf` обычным пользователям. Создавайте для них отдельные `ServiceAccount` с ограниченным RBAC.
-*   **Ротация:** Регулярно обновляйте сертификаты. Подробнее: [Управление сертификатами](certificate_management.md).
+* **Права доступа:** Устанавливайте права `600` на файлы конфигурации (`chmod 600 ~/.kube/config`).
+* **Разделение привилегий:** Не передавайте `admin.conf` обычным пользователям. Создавайте для них отдельные `ServiceAccount` с ограниченным RBAC.
+* **Ротация:** Регулярно обновляйте сертификаты. Подробнее: [Управление сертификатами](certificate_management.md).
 
 ### Инструменты для работы с контекстами
 
@@ -129,7 +133,7 @@ kubectl config view --flatten
 
 ### Связанные темы
 
-*   [Управление сертификатами](certificate_management.md) — обновление данных в конфиге.
-*   [Аутентификация в Kubernetes](../Security/authentication.md) — глубокое погружение в методы проверки.
-*   [RBAC: Контроль доступа](../Security/rbac/rbac_overview.md) — управление правами пользователя из конфига.
-*   [Инсталляция кластера: kubeadm](../Installation/kubeadm/cluster_initialization.md).
+* [Управление сертификатами](certificate_management.md) — обновление данных в конфиге.
+* [Аутентификация в Kubernetes](../Security/authentication.md) — глубокое погружение в методы проверки.
+* [RBAC: Контроль доступа](../Security/rbac/rbac_overview.md) — управление правами пользователя из конфига.
+* [Инсталляция кластера: kubeadm](../Installation/kubeadm/cluster_initialization.md).

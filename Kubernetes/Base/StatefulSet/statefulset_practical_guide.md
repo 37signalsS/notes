@@ -10,9 +10,9 @@
 
 Для успешного выполнения практических заданий необходимо понимать роль следующих компонентов:
 
-*   **Headless Service:** Сервис без **IP (Internet Protocol)** кластера, отвечающий за создание индивидуальных записей в **DNS (Domain Name System)** для каждого пода.
-*   **PersistentVolumeClaim (PVC):** Декларативный запрос на выделение диска. В StatefulSet PVC генерируются автоматически для каждого индекса пода через шаблон `volumeClaimTemplates`.
-*   **Идентификация:** Каждый под получает стабильное имя формата `имя-sts-индекс` и **FQDN (Fully Qualified Domain Name)** формата `имя-пода.имя-сервиса.namespace.svc.cluster.local`.
+* **Headless Service:** Сервис без **IP (Internet Protocol)** кластера, отвечающий за создание индивидуальных записей в **DNS (Domain Name System)** для каждого пода.
+* **PersistentVolumeClaim (PVC):** Декларативный запрос на выделение диска. В StatefulSet PVC генерируются автоматически для каждого индекса пода через шаблон `volumeClaimTemplates`.
+* **Идентификация:** Каждый под получает стабильное имя формата `имя-sts-индекс` и **FQDN (Fully Qualified Domain Name)** формата `имя-пода.имя-сервиса.namespace.svc.cluster.local`.
 
 Подробнее о сетевом взаимодействии: **[Headless Service](../../Networking/Service/service_type_headless.md)**.
 
@@ -74,11 +74,11 @@ spec:
 
 #### Шаг 3: Проверка персистентности данных
 
-1.  Запишите данные в первый под:
+1. Запишите данные в первый под:
     `kubectl exec web-app-0 -- sh -c 'echo "Pod 0 Data" > /usr/share/nginx/html/index.html'`
-2.  Удалите под:
+2. Удалите под:
     `kubectl delete pod web-app-0`
-3.  Проверьте данные после автоматического восстановления пода:
+3. Проверьте данные после автоматического восстановления пода:
     `kubectl exec web-app-0 -- cat /usr/share/nginx/html/index.html`
     *Результат: Сообщение "Pod 0 Data" сохранено на диске.*
 
@@ -86,7 +86,8 @@ spec:
 
 В распределенных системах часто требуется обращение к конкретному узлу (например, для доступа к панели управления конкретной реплики).
 
-1.  **Создайте целевой сервис** для конкретного пода, используя метку `statefulset.kubernetes.io/pod-name`:
+1. **Создайте целевой сервис** для конкретного пода, используя метку `statefulset.kubernetes.io/pod-name`:
+
     ```yaml
     apiVersion: v1
     kind: Service
@@ -98,34 +99,35 @@ spec:
       ports:
       - port: 80
     ```
-2.  **Настройте Ingress**, указав созданный сервис в качестве бэкенда. Это позволит обращаться к `web-app-0` по внешнему доменному имени.
+
+2. **Настройте Ingress**, указав созданный сервис в качестве бэкенда. Это позволит обращаться к `web-app-0` по внешнему доменному имени.
 
 ### Сценарий 3: Масштабирование и проверка порядка операций
 
 Наблюдайте за строгим порядком создания и удаления подов при изменении количества реплик:
 
-*   **Увеличение (Scale Up):** `kubectl scale statefulset web-app --replicas=5`
+* **Увеличение (Scale Up):** `kubectl scale statefulset web-app --replicas=5`
     *Поды создаются по одному: сначала 3, затем 4.*
-*   **Уменьшение (Scale Down):** `kubectl scale statefulset web-app --replicas=2`
+* **Уменьшение (Scale Down):** `kubectl scale statefulset web-app --replicas=2`
     *Поды удаляются в обратном порядке: сначала 4, затем 3, затем 2.*
 
 ### Сценарий 4: Диагностика и устранение неполадок
 
 Основные команды для поиска проблем в работе StatefulSet:
 
-*   **Проверка событий контроллера:** `kubectl describe statefulset web-app`. Помогает выявить ошибки квот или проблемы с созданием PVC.
-*   **Проверка статуса дисков:** `kubectl get pvc -l app=nginx-stateful`. Если PVC в статусе `Pending`, проверьте наличие доступных **PV (PersistentVolume)**.
-*   **Проверка сетевой доступности:** Запустите временный под и выполните `nslookup web-app-0.nginx-headless` для проверки работы DNS.
+* **Проверка событий контроллера:** `kubectl describe statefulset web-app`. Помогает выявить ошибки квот или проблемы с созданием PVC.
+* **Проверка статуса дисков:** `kubectl get pvc -l app=nginx-stateful`. Если PVC в статусе `Pending`, проверьте наличие доступных **PV (PersistentVolume)**.
+* **Проверка сетевой доступности:** Запустите временный под и выполните `nslookup web-app-0.nginx-headless` для проверки работы DNS.
 
 ## Дополнительная информация
 
 ### Рекомендации по эксплуатации
 
-*   Никогда не удаляйте PVC вручную, если планируете восстанавливать под с теми же данными.
-*   Используйте **[Лучшие практики](./statefulset_best_practices.md)** для настройки отказоустойчивости (PDB, Anti-Affinity).
+* Никогда не удаляйте PVC вручную, если планируете восстанавливать под с теми же данными.
+* Используйте **[Лучшие практики](./statefulset_best_practices.md)** для настройки отказоустойчивости (PDB, Anti-Affinity).
 
 ### См. также
 
-- **[Обзор StatefulSet](./statefulset_overview.md)** — основы и архитектура.
-- **[Ключевые концепции](./statefulset_core_concepts.md)** — детальное описание механизмов.
-- **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — выбор подходящего контроллера.
+* **[Обзор StatefulSet](./statefulset_overview.md)** — основы и архитектура.
+* **[Ключевые концепции](./statefulset_core_concepts.md)** — детальное описание механизмов.
+* **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — выбор подходящего контроллера.

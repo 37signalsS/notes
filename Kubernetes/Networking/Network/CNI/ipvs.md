@@ -78,6 +78,7 @@ mode: "ipvs"
 ipvs:
   strictARP: true
 ```
+
 > **Примечание:** `strictARP: true` критически важен при использовании MetalLB.
 
 ### Диагностика и мониторинг

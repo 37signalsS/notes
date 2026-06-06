@@ -115,4 +115,3 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 | Prometheus-метрики | **10** | Встроены в cert-manager с версии 0.11 |
 | Troubleshooting | **9** | Основано на официальной документации и опыте |
 | Backup/Restore | **9** | Стандартная практика Kubernetes |
-

@@ -146,6 +146,7 @@ Downward API может использоваться в составе [Projecte
 ## Дополнительная информация
 
 **Связанные темы:**
+
 - [Базовые концепции Volume](./volume_types/volumes_basics.md)
 - [Projected Volumes](./volume_types/projected_volumes.md)
 - [ConfigMap в Kubernetes](../configmap.md)

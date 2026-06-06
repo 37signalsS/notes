@@ -94,5 +94,6 @@ security-scan:
 * [Falco](../../Security/Tools/falco.md) — мониторинг безопасности в runtime (после деплоя).
 
 **Ссылки:**
+
 * [Официальный репозиторий Kubesec](https://github.com/controlplaneio/kubesec)
 * [Документация правил сканирования](https://kubesec.io)

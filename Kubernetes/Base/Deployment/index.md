@@ -76,10 +76,12 @@ kubectl rollout undo deployment/my-app
 ## 4. Дополнительная информация
 
 ### Детальные руководства
+
 - **[Манифест и лучшие практики](./deployment_manifest.md)** — ресурсы, пробы, Sidecar-паттерны.
 - **[Управление жизненным циклом](./lifecycle_management.md)** — подробно об обновлении, откате и ревизиях.
 
 ### Навигация по связанным темам
+
 - Базовые объекты: [`Pod`](../Pod/pod_overview.md), [`ReplicaSet`](../replicaset.md), [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md).
 - Stateful-приложения: [`StatefulSet`](../StatefulSet/statefulset_overview.md).
 - Отказоустойчивость: [`Высокая доступность`](../high_availability.md).

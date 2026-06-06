@@ -113,6 +113,7 @@ kubectl get clusterpolicyreports -o jsonpath='{range .items[*]}{.metadata.name}{
 ### Визуализация и мониторинг
 
 Для удобной работы с отчетами рекомендуется использовать **Policy Reporter** ([подробнее](./reporter.md)). Он предоставляет:
+
 - **UI** (User Interface, пользовательский интерфейс) для поиска и фильтрации.
 - **REST API** (Representational State Transfer Application Programming Interface) для интеграции.
 - Отправку уведомлений в Slack, Telegram или Discord.

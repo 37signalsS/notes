@@ -57,6 +57,7 @@ spec:
 ```
 
 Использование `include` гарантирует, что:
+
 - `podSelector` совпадает с метками mail-relay Deployment.
 - `from[].podSelector` совпадает с метками основного приложения.
 

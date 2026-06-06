@@ -19,6 +19,7 @@
 ### Синхронизация ресурсов
 
 vCluster использует Syncer для обмена ресурсами с host-кластером. Основные направления:
+
 - **fromHost**: импорт инфраструктуры host-кластера (StorageClasses, IngressClasses).
 - **toHost**: публикация сервисов vCluster во внешнюю сеть через ресурсы host-кластера (Ingress, Service).
 
@@ -149,11 +150,13 @@ controlPlane:
 ## Дополнительная информация
 
 ### Внутренние ссылки
+
 - [vCluster — Обзор и архитектура](./vcluster_overview.md)
 - [vCluster — Установка и развертывание](./vcluster_installation.md)
 - [vCluster — Безопасность и синхронизация](./vcluster_security_and_sync.md)
 - [Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)
 
 ### Внешние ссылки
+
 - [vCluster Connectivity Documentation](https://www.vcluster.com/docs/architecture/connectivity)
 - [Loft-sh vCluster GitHub](https://github.com/loft-sh/vcluster)

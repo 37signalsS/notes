@@ -106,4 +106,3 @@ sudo systemctl reload nginx
 - [Обзор MetalLB](../metallb.md) — причины ограничения L2 режима.
 - [NodePort в сервисах](../Service/service_type_nodeport.md) — детальное описание механизма NodePort.
 - [Ingress: обзор и концепции](./overview.md) — использование Ingress в качестве бэкенда.
-

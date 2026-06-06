@@ -45,6 +45,7 @@ kubectl rollout status deployment/nginx-deployment
 Если обновление зависло (например, из-за ошибки `ImagePullBackOff` или неудачных проб), Kubernetes не выполняет откат автоматически. Старые поды продолжают работать, пока новые не станут `Ready`.
 
 **Алгоритм диагностики:**
+
 1. Проверить события Deployment: `kubectl describe deployment <name>`.
 2. Проверить состояние подов: `kubectl get pods -l app=<label>`.
 3. Проверить ошибки конкретного пода: `kubectl describe pod <pod-name>`.
@@ -72,13 +73,17 @@ kubectl rollout undo deployment/nginx-deployment --to-revision=1
 Для понимания причин изменений в истории ревизий используется аннотация `kubernetes.io/change-cause`.
 
 **Способы установки:**
+
 - Через аннотацию в манифесте (рекомендуется):
+
   ```yaml
   metadata:
     annotations:
       kubernetes.io/change-cause: "Обновление образа до v1.29.0"
   ```
+
 - Через CLI после обновления:
+
   ```bash
   kubectl annotate deployment/nginx-deployment kubernetes.io/change-cause="Исправление переменных окружения"
   ```
@@ -86,12 +91,15 @@ kubectl rollout undo deployment/nginx-deployment --to-revision=1
 ### Оперативное управление
 
 - **Пауза и возобновление:** позволяет внести серию изменений в конфигурацию, не запуская обновление после каждой правки.
+
   ```bash
   kubectl rollout pause deployment/my-app
   # ... внесение правок (set image, set resources) ...
   kubectl rollout resume deployment/my-app
   ```
+
 - **Принудительный перезапуск:** используется для пересоздания подов без изменения манифеста (например, для подтягивания обновленных данных из `Secret` или `ConfigMap`).
+
   ```bash
   kubectl rollout restart deployment/my-app
   ```
@@ -103,6 +111,7 @@ kubectl rollout undo deployment/nginx-deployment --to-revision=1
 ```bash
 kubectl get deployment <name> -o yaml > deployment.yaml
 ```
+
 **Важно:** Перед повторным использованием удалите из файла блоки `status`, а также поля `uid`, `resourceVersion` и `creationTimestamp` в `metadata`.
 
 ## 4. Дополнительная информация

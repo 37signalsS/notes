@@ -30,6 +30,7 @@
 ### 1. Работа с секретами
 
 **Рекомендации:**
+
 - **Никогда** не храните пароли и ключи в `values.yaml` в открытом виде.
 - Используйте плагин **[helm-secrets](https://github.com/jkroepke/helm-secrets)** совместно с SOPS для шифрования данных в Git.
 - Внедряйте **External Secrets Operator** для автоматической синхронизации секретов из внешних систем (Vault, AWS Secrets Manager).
@@ -54,9 +55,11 @@ helm template my-release ./my-chart | conftest test -
 
 - **Namespace-изоляция**: всегда используйте флаг `--namespace` для логического разделения приложений и ограничения области влияния ошибок.
 - **Ограничение истории**: для предотвращения раздувания хранилища конфигураций (Secrets/ConfigMaps в `kube-system` или рабочих пространствах) ограничивайте количество хранимых ревизий:
+
   ```bash
   helm upgrade --install my-app ./my-chart --history-max 10
   ```
+
 - **RBAC**: создавайте выделенные ServiceAccount для процессов деплоя с минимально необходимым набором прав (Least Privilege).
 
 ### 4. Стандартизация структуры (Best Practices)

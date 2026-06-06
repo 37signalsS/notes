@@ -34,6 +34,7 @@ data:
 ```
 
 **Применение манифеста:**
+
 ```bash
 kubectl apply -f configmap-v1.yaml
 # → configmap/app-config-v1 created
@@ -48,6 +49,7 @@ kubectl patch configmap app-config-v1 -p '{"data":{"LOG_LEVEL":"debug"}}'
 ```
 
 **Ожидаемый результат:**
+
 ```text
 Error from server (BadRequest): error when patching "configmap/app-config-v1": cannot modify fields other than 'metadata' for immutable configmap
 ```
@@ -60,10 +62,12 @@ Error from server (BadRequest): error when patching "configmap/app-config-v1": c
 
 1. **Создание нового ресурса (рекомендуемый подход):** создаётся ConfigMap с новым именем (например, на основе хэша содержимого или версии `app-config-v2`), и ссылка на него обновляется в `Deployment` или `StatefulSet`. Это инициирует контролируемый перезапуск подов.
 2. **Принудительное пересоздание:**
+
    ```bash
    kubectl apply -f configmap-v1.yaml --force
    # → configmap/app-config-v1 configured
    ```
+
    *Примечание: флаг `--force` удаляет и заново создаёт объект.*
 
 ## Дополнительная информация
@@ -79,10 +83,11 @@ Error from server (BadRequest): error when patching "configmap/app-config-v1": c
 
 ### Рекомендации по использованию
 
-- **Используйте для:** версионированных конфигураций, статических файлов настроек, релизных циклов.
-- **Не используйте для:** динамических параметров, Feature Flags (флагов функций) или настроек, которые должны применяться мгновенно без перезапуска приложения.
+* **Используйте для:** версионированных конфигураций, статических файлов настроек, релизных циклов.
+* **Не используйте для:** динамических параметров, Feature Flags (флагов функций) или настроек, которые должны применяться мгновенно без перезапуска приложения.
 
 **См. также:**
+
 * [Создание ConfigMap](./creation.md)
 * [Лучшие практики ConfigMap](./best_practices.md)
 * [Безопасность Secret](../secrets/security.md)

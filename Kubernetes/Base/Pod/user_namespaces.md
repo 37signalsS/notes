@@ -130,6 +130,7 @@ sysctl kernel.overflowuid
 # Внутри container такие файлы будут видны как:
 # -rw-r--r-- 1 nobody nobody ...
 ```
+
 Модификация файлов, отображаемых как `nobody` из-за ограничений диапазона, обычно запрещена на уровне ядра для предотвращения утечек прав.
 
 ---
@@ -137,6 +138,7 @@ sysctl kernel.overflowuid
 ## Дополнительная информация
 
 **Связанные темы:**
+
 - [Security Context в Kubernetes](../../Security/pod_security_context.md)
 - [Механизмы изоляции в Linux (Namespaces и Cgroups)](../../../Docker/Concepts/linux_isolation.md)
 - [Rootless режим в Podman](../../../Podman/podman_rootless.md)

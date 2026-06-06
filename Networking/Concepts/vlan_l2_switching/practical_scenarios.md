@@ -2,11 +2,10 @@
 
 ## Определения
 
-*   **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
-*   **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
-*   **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
-*   **Меж-VLAN маршрутизация** — см. **[VLAN (протокол)](../../Protocols/vlan.md#меж-vlan-маршрутизация)**.
-
+* **iproute2** — см. **[iproute2: Обзор](../../../Linux/Networking/Tools/iproute2/overview.md)**.
+* **Linux Bridge** — см. **[Linux Bridge](../../../Linux/Networking/Concepts/linux_bridge.md)**.
+* **Open vSwitch (OVS)** — см. **[Open vSwitch (OVS)](../../ServicesAndTools/open_vswitch.md)**.
+* **Меж-VLAN маршрутизация** — см. **[VLAN (протокол)](../../Protocols/vlan.md#меж-vlan-маршрутизация)**.
 
 ## Базовые концепции
 
@@ -14,10 +13,10 @@
 
 Ключевые принципы настройки VLAN в Linux:
 
-- VLAN-интерфейсы создаются как сабинтерфейсы физического NIC с указанием `id`
-- Физический NIC должен быть подключён к trunk-порту коммутатора
-- Для постоянных настроек используйте NetworkManager или Netplan
-- Меж-VLAN маршрутизация требует включённого `ip_forward`
+* VLAN-интерфейсы создаются как сабинтерфейсы физического NIC с указанием `id`
+* Физический NIC должен быть подключён к trunk-порту коммутатора
+* Для постоянных настроек используйте NetworkManager или Netplan
+* Меж-VLAN маршрутизация требует включённого `ip_forward`
 
 Полное описание протокола 802.1Q и схемы Router-on-a-Stick — в **[VLAN (протокол)](../../Protocols/vlan.md)**.
 
@@ -226,9 +225,9 @@ ethtool -S eth0 | grep -i error
 
 **Стандарты маркировки:**
 
-- **Двусторонняя маркировка:** Оба конца кабеля маркируются идентично
-- **Формат:** `Откуда → Куда` (например, `SW1-P24 → SRV3-eth0`)
-- **VLAN информация:** На коммутаторе указать VLAN ID на порту
+* **Двусторонняя маркировка:** Оба конца кабеля маркируются идентично
+* **Формат:** `Откуда → Куда` (например, `SW1-P24 → SRV3-eth0`)
+* **VLAN информация:** На коммутаторе указать VLAN ID на порту
 
 **Пример маркировки:**
 

@@ -20,11 +20,11 @@ Rancher Logging следует стандартным принципам [арх
 Настройка системы выполняется через YAML (YAML Ain't Markup Language) манифесты двух типов:
 
 * **Output / ClusterOutput**: определяют "куда" отправлять логи. Поддерживают интеграции с Elasticsearch, OpenSearch, Kafka, S3 (Simple Storage Service) и другими.
-    * `Output`: ресурс уровня пространства имён (Namespace).
-    * `ClusterOutput`: общекластерный ресурс, доступный для использования всеми потоками.
+  * `Output`: ресурс уровня пространства имён (Namespace).
+  * `ClusterOutput`: общекластерный ресурс, доступный для использования всеми потоками.
 * **Flow / ClusterFlow**: определяют "какие" логи собирать и "как" их обрабатывать.
-    * `Flow`: собирает логи только в своем пространстве имён.
-    * `ClusterFlow`: может собирать логи со всего кластера.
+  * `Flow`: собирает логи только в своем пространстве имён.
+  * `ClusterFlow`: может собирать логи со всего кластера.
 
 ### Разграничение прав доступа (RBAC)
 
@@ -121,9 +121,11 @@ spec:
 
 1. **Проверка агентов (Fluent Bit)**: если логи не поступают в агрегатор, проверьте логи DaemonSet в пространстве имён `cattle-logging-system`.
 2. **Логи агрегатора (Fluentd)**: Fluentd по умолчанию пишет логи в файл внутри контейнера.
+
    ```bash
    kubectl exec -n cattle-logging-system <fluentd-pod-name> -- cat /var/log/fluentd/out
    ```
+
 3. **Ошибки Output**: если хранилище (Elasticsearch/OpenSearch) недоступно, Fluentd начнет заполнять буфер. Проверьте статус PVC (Persistent Volume Claim), если он используется для буферизации.
 
 ## Дополнительная информация
@@ -137,6 +139,7 @@ spec:
 | Fluentd | Стабильно | Используется как гибкий маршрутизатор |
 
 **Связанные темы:**
+
 * [Архитектура логирования Kubernetes](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — SSoT по общим принципам.
 * [Конфигурация Fluent Bit](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — детали настройки агентов.
 * [EFK Stack Setup](../MonitoringLogging/EFK/efk_stack_setup_guide.md) — развертывание Elasticsearch и Kibana.

@@ -44,9 +44,9 @@
 
 Внутри одного Pod разные container могут находиться в разных состояниях.
 
-*   **Waiting:** ожидание запуска (например, из-за `ImagePullBackOff` или отсутствия ConfigMap).
-*   **Running:** процесс выполняется. Если настроен `postStart` hook, он уже запущен.
-*   **Terminated:** выполнение завершено (успешно или с ошибкой). Содержит `Exit Code` (код выхода) для диагностики.
+* **Waiting:** ожидание запуска (например, из-за `ImagePullBackOff` или отсутствия ConfigMap).
+* **Running:** процесс выполняется. Если настроен `postStart` hook, он уже запущен.
+* **Terminated:** выполнение завершено (успешно или с ошибкой). Содержит `Exit Code` (код выхода) для диагностики.
 
 ### Политика перезапуска (Restart Policy)
 
@@ -64,17 +64,18 @@
 
 Позволяют выполнять команды в ключевые моменты работы container.
 
-1.  **postStart:** выполняется сразу после создания container. Не гарантирует запуск до `entrypoint` приложения. Блокирует переход Pod в состояние `Running` до завершения.
-2.  **preStop:** выполняется перед отправкой сигнала `SIGTERM`. Используется для подготовки к выключению (например, завершение транзакций).
+1. **postStart:** выполняется сразу после создания container. Не гарантирует запуск до `entrypoint` приложения. Блокирует переход Pod в состояние `Running` до завершения.
+2. **preStop:** выполняется перед отправкой сигнала `SIGTERM`. Используется для подготовки к выключению (например, завершение транзакций).
 
 ### Graceful Shutdown (Корректное завершение)
 
 Процесс удаления Pod включает следующие этапы:
-1.  Объект помечается на удаление (устанавливается `deletionTimestamp`).
-2.  Выполняется `preStop` hook (если настроен).
-3.  Отправляется сигнал `SIGTERM` процессам в container.
-4.  Pod исключается из Endpoints (точки доступа) сервисов.
-5.  По истечении `terminationGracePeriodSeconds` отправляется `SIGKILL`.
+
+1. Объект помечается на удаление (устанавливается `deletionTimestamp`).
+2. Выполняется `preStop` hook (если настроен).
+3. Отправляется сигнал `SIGTERM` процессам в container.
+4. Pod исключается из Endpoints (точки доступа) сервисов.
+5. По истечении `terminationGracePeriodSeconds` отправляется `SIGKILL`.
 
 Полное описание процесса приведено в [Pod Terminating: Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).
 
@@ -120,8 +121,9 @@ kubectl get pod <name> -o jsonpath='{.status.phase}'
 ## Дополнительная информация
 
 **Связанные темы:**
-- [Обзор Pod (подов)](./pod_overview.md)
-- [Перезапуск Pod в Kubernetes](./pod_restarts.md)
-- [Пробы (Probes) в Kubernetes](../probes.md)
-- [Graceful Shutdown (корректное завершение)](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)
-- [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md)
+
+* [Обзор Pod (подов)](./pod_overview.md)
+* [Перезапуск Pod в Kubernetes](./pod_restarts.md)
+* [Пробы (Probes) в Kubernetes](../probes.md)
+* [Graceful Shutdown (корректное завершение)](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)
+* [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md)

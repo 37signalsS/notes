@@ -33,10 +33,10 @@
 
 ### Совместимость версий (Version Skew Policy)
 
-*   **Kube-apiserver:** В HA-кластере версии разных экземпляров API-сервера могут отличаться максимум на 1 минорную версию.
-*   **Kubelet:** Не может быть новее API-сервера. Может быть максимум на 2 минорные версии старее (например, API 1.33 → Kubelet 1.31).
-*   **Kubectl:** Должен быть в пределах ±1 минорной версии от API-сервера.
-*   **Kube-proxy:** Должен соответствовать версии Kubelet на узле.
+* **Kube-apiserver:** В HA-кластере версии разных экземпляров API-сервера могут отличаться максимум на 1 минорную версию.
+* **Kubelet:** Не может быть новее API-сервера. Может быть максимум на 2 минорные версии старее (например, API 1.33 → Kubelet 1.31).
+* **Kubectl:** Должен быть в пределах ±1 минорной версии от API-сервера.
+* **Kube-proxy:** Должен соответствовать версии Kubelet на узле.
 
 ## Практические сценарии
 
@@ -44,14 +44,17 @@
 
 #### 1. Аудит и проверка готовности
 
-*   **Изучение Release Notes:** Проверка разделов "Urgent Upgrade Notes" для целевой версии.
-*   **Проверка API:**
+* **Изучение Release Notes:** Проверка разделов "Urgent Upgrade Notes" для целевой версии.
+* **Проверка API:**
+
     ```bash
     # Поиск устаревших API с помощью Kube No Trouble (kubent)
     kubent --helm3 --exit-error
     # → list of deprecated/deleted APIs found in the cluster
     ```
-*   **Проверка здоровья кластера:**
+
+* **Проверка здоровья кластера:**
+
     ```bash
     kubectl get nodes
     # → node-1  Ready  ...
@@ -70,6 +73,7 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
   --key=/etc/kubernetes/pki/etcd/server.key
 # → Snapshot saved at /path/to/backup.db
 ```
+
 Подробнее о восстановлении: **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)**.
 
 ### Процедура обновления узла (на примере kubeadm)
@@ -77,6 +81,7 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
 Для каждого узла (сначала Master, затем Worker) выполняется стандартный цикл:
 
 1. **Изоляция и Дренаж:**
+
    ```bash
    kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data
    # → node/node-1 cordoned
@@ -84,6 +89,7 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
    ```
 
 2. **Обновление kubeadm:**
+
    ```bash
    apt-mark unhold kubeadm && \
    apt-get update && apt-get install -y kubeadm=1.33.0-1.1 && \
@@ -91,6 +97,7 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
    ```
 
 3. **Применение обновления:**
+
    ```bash
    # На первом мастере
    sudo kubeadm upgrade apply v1.33.0
@@ -99,6 +106,7 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
    ```
 
 4. **Обновление kubelet и kubectl:**
+
    ```bash
    apt-mark unhold kubelet kubectl && \
    apt-get update && apt-get install -y kubelet=1.33.0-1.1 kubectl=1.33.0-1.1 && \
@@ -106,12 +114,14 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
    ```
 
 5. **Перезапуск агента:**
+
    ```bash
    systemctl daemon-reload
    systemctl restart kubelet
    ```
 
 6. **Возврат в работу:**
+
    ```bash
    kubectl uncordon node-1
    # → node/node-1 uncordoned
@@ -129,18 +139,18 @@ ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
 
 ## Рекомендации (Best Practices)
 
-*   **Один узел за раз:** В HA-кластерах обновляйте Control Plane по одному узлу, чтобы не потерять кворум etcd и доступность API.
-*   **Автоматизация:** Для больших кластеров используйте инструменты автоматизации (Kubespray, Cluster API, Ansible), но всегда понимайте ручной процесс.
-*   **Мониторинг метрик:** Следите за `apiserver_request_duration_seconds` и `etcd_disk_wal_fsync_duration_seconds` в процессе.
-*   **План отката:** Kubernetes не поддерживает официальный Downgrade. Откат возможен только через восстановление etcd из бэкапа и переустановку бинарных файлов.
+* **Один узел за раз:** В HA-кластерах обновляйте Control Plane по одному узлу, чтобы не потерять кворум etcd и доступность API.
+* **Автоматизация:** Для больших кластеров используйте инструменты автоматизации (Kubespray, Cluster API, Ansible), но всегда понимайте ручной процесс.
+* **Мониторинг метрик:** Следите за `apiserver_request_duration_seconds` и `etcd_disk_wal_fsync_duration_seconds` в процессе.
+* **План отката:** Kubernetes не поддерживает официальный Downgrade. Откат возможен только через восстановление etcd из бэкапа и переустановку бинарных файлов.
 
 ## Дополнительная информация
 
 ### Связанные темы
 
-*   [Управление сертификатами](certificate_management.md) — ротация сертификатов при обновлении.
-*   [Обслуживание узлов](node_maintenance.md) — детальное описание процессов Cordon и Drain.
-*   [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — защита доступности при обновлении.
-*   [Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md) — резервное копирование etcd.
-*   [Kubespray: Управление кластером](../Installation/Kubespray/cluster_management.md) — автоматизированное обновление.
-*   [RKE: Управление](../Installation/RKE/rke_management_scenarios.md) — специфика обновления RKE.
+* [Управление сертификатами](certificate_management.md) — ротация сертификатов при обновлении.
+* [Обслуживание узлов](node_maintenance.md) — детальное описание процессов Cordon и Drain.
+* [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — защита доступности при обновлении.
+* [Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md) — резервное копирование etcd.
+* [Kubespray: Управление кластером](../Installation/Kubespray/cluster_management.md) — автоматизированное обновление.
+* [RKE: Управление](../Installation/RKE/rke_management_scenarios.md) — специфика обновления RKE.

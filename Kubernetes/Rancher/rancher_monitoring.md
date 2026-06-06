@@ -29,6 +29,7 @@
 ### Особенности интеграции
 
 Rancher автоматизирует следующие аспекты:
+
 * Установка и обновление всего стека через графический интерфейс (UI).
 * Предварительная настройка дашбордов Grafana для ресурсов кластера.
 * Настройка механизмов обнаружения целей (Service Discovery) для системных компонентов кластера.
@@ -54,6 +55,7 @@ Rancher автоматизирует следующие аспекты:
 2. Создать ресурс `ServiceMonitor` с обязательной меткой `release: rancher-monitoring`. Эта метка позволяет Prometheus Operator обнаружить ресурс.
 
 Пример `ServiceMonitor`:
+
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -85,6 +87,7 @@ spec:
 | Grafana | Актуально | Рекомендуется версия 10+ |
 
 **Связанные темы:**
+
 * [Обзор kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — детали конфигурации Helm-чарта.
 * [Prometheus Operator Концепции](../Prometheus/kubernetes/operator/concepts.md) — принцип работы контроллера.
 * [VictoriaMetrics](../../VictoriaMetrics/overview.md) — альтернатива для высоконагруженных сред.

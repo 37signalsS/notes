@@ -79,7 +79,7 @@
 
 **Weave Net** использует оверлейную сеть на основе VXLAN и реализует базовую поддержку NetworkPolicy через iptables.
 
-* **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
-* **Базовые концепции**: [NetworkPolicy: Определения и концепции](./definitions.md)
-* **Роль CNI**: [Сетевые плагины: Определения](../CNI/definitions.md)
-* **Calico HostEndpoint и GlobalNetworkPolicy**: [../../Security/network_policies/Calico/index.md](../../Security/network_policies/Calico/index.md)
+- **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
+- **Базовые концепции**: [NetworkPolicy: Определения и концепции](./definitions.md)
+- **Роль CNI**: [Сетевые плагины: Определения](../CNI/definitions.md)
+- **Calico HostEndpoint и GlobalNetworkPolicy**: [../../Security/network_policies/Calico/index.md](../../Security/network_policies/Calico/index.md)
