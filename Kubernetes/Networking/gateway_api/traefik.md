@@ -1,28 +1,36 @@
-# Traefik как реализация Gateway API
+# Traefik — реализация Gateway API
 
-## Traefik как реализация Gateway API
+## Определения
 
-**Traefik** — один из популярных прокси-контроллеров, поддерживающий Gateway API. В отличие от Envoy Gateway, Traefik может работать как Ingress Controller или как Gateway API Controller.
+**Traefik** — современный обратный прокси-сервер и балансировщик нагрузки с открытым исходным кодом, который поддерживает спецификацию Gateway API для управления трафиком в Kubernetes.
 
-### Установка Traefik с поддержкой Gateway API
+**Kubernetes Gateway Provider** — провайдер Traefik, предназначенный для отслеживания ресурсов Gateway API (`GatewayClass`, `Gateway`, `HTTPRoute`, `TLSRoute` и др.) и динамической настройки правил маршрутизации на их основе.
 
-```bash
-# При установке через ArgoCD или Helm необходимо включить провайдер Gateway API:
-# values.yaml
+## Базовые концепции
+
+### Особенности реализации
+- **Двойной режим:** Traefik может одновременно работать как классический Ingress Controller и как Gateway API Controller.
+- **Direct Pod Targeting:** По умолчанию Traefik отправляет трафик напрямую на IP-адреса подов (endpoints), минуя стандартные Kubernetes Service. Это снижает задержки и накладные расходы на сетевую обработку.
+- **Автоматизация:** При установке контроллер может автоматически создавать `GatewayClass` с именем `traefik`.
+
+### Установка и активация
+Для использования функций Gateway API необходимо включить соответствующий провайдер в конфигурации Traefik (например, через Helm `values.yaml`):
+
+```yaml
 providers:
   kubernetesGateway:
-    enabled: true  # Включить поддержку Gateway API
+    enabled: true  # Активация поддержки Gateway API
   ingressClass:
-    enabled: false  # Отключить классический Ingress (опционально)
+    enabled: false  # Опциональное отключение классического Ingress
 gateway:
-  enabled: false  # Не создавать Gateway по умолчанию, создавать вручную
+  enabled: false  # Рекомендуется создавать ресурсы Gateway вручную для контроля
 ```
 
-### Конфигурация GatewayClass (Traefik)
+## Практические сценарии
 
-По умолчанию Traefik создает GatewayClass с именем `traefik`. При наличии нескольких контроллеров необходимо создавать отдельные GatewayClass для каждого.
+### Настройка шлюза (Gateway)
 
-### Конфигурация Gateway (Traefik)
+Ресурс `Gateway` определяет точки входа трафика (Listeners) и привязку к контроллеру через `GatewayClass`.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -46,18 +54,18 @@ spec:
       mode: Terminate
       certificateRefs:
       - name: sample-tls
-        namespace: sample  # Secret может быть в другом namespace!
+        namespace: sample  # Secret может находиться в другом namespace
 ```
 
-**Особенности:**
+**Особенности настройки:**
+- `hostname` в HTTP-слушателе (`listener`) не обязателен; маршрутизация может определяться на уровне `HTTPRoute`.
+- Для HTTPS-слушателя `hostname` является обязательным полем.
+- В режиме `Terminate` SSL-трафик расшифровывается на шлюзе и передается бэкенду по HTTP.
+- В отличие от Ingress, `Secret` с TLS-сертификатом может находиться в другом пространстве имен (при наличии соответствующих разрешений `ReferenceGrant`).
 
-- `hostname` в HTTP listener не обязателен, маршрутизация по hostname определяется в HTTPRoute
-- `hostname` в HTTPS listener обязателен
-- TLS mode `Terminate` — SSL-трафик терминируется на контроллере, далее передается по HTTP
-- TLS mode `Passthrough` (или `Translate`) — SSL-трафик не расшифровывается, используется TLSRoute далее
-- **Важно:** Secret с сертификатом может находиться в **другом namespace**, в отличие от Ingress, где Secret должен быть в том же namespace
+### Настройка маршрутизации (HTTPRoute)
 
-### Конфигурация HTTPRoute (Traefik)
+`HTTPRoute` связывает запросы по определенным критериям (хост, путь) с конкретными сервисами.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -68,32 +76,33 @@ metadata:
 spec:
   parentRefs:
   - name: traefik-gateway
-    sectionName: web  # Какой listener использовать
+    sectionName: web
   hostnames:
-  - sample.example.local
+  - app.example.com
   rules:
   - matches:
     - path:
         type: PathPrefix
-        value: /
+        value: /api
     backendRefs:
-    - name: qmi
+    - name: backend-service
       port: 80
 ```
 
-**Особенности:**
+**Ключевые моменты:**
+- `HTTPRoute` может располагаться в любом пространстве имен кластера.
+- Маршрут может ссылаться на сервисы (`backendRefs`), находящиеся в других пространствах имен.
 
-- HTTPRoute может находиться в **любом namespace**, не обязательно в namespace приложения
-- HTTPRoute может ссылаться на Service в **любом namespace**
-- Traefik по умолчанию отправляет трафик напрямую на pod endpoints, минуя Service (более эффективно)
+## Дополнительная информация
 
----
+**Преимущества использования Traefik с Gateway API:**
+- Унифицированное управление трафиком через стандартные ресурсы.
+- Встроенная поддержка Service Discovery и динамического обновления конфигурации.
+- Гибкая работа с TLS-сертификатами.
 
 **См. также:**
+- [Концепции Gateway API](./definitions.md) — базовые определения и преимущества стандарта
+- [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация Gateway API
+- [Интеграция с cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — автоматизация TLS
 
-- [Определения](./definitions.md) — концепции Gateway API
-- [Базовые сценарии](./practical_basic.md) — примеры
-- [Envoy Gateway](./envoy_gateway.md) — альтернативная реализация
-- [cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — интеграция с TLS
-
-**Parent:** [Gateway API](../gateway_api/definitions.md)
+**Родительская тема:** [Gateway API](./definitions.md)

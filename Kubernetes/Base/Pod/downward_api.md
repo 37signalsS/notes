@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Downward API** — механизм Kubernetes, позволяющий приложениям в контейнерах получать метаданные пода без обращения к Kubernetes API. Упрощает архитектуру и устраняет необходимость в RBAC для получения базовых метаданных.
+**Downward API** — механизм Kubernetes, позволяющий приложениям в container (контейнерах) получать метаданные Pod (пода) без обращения к Kubernetes API (Application Programming Interface). Это упрощает архитектуру и устраняет необходимость в RBAC (Role-Based Access Control) для получения базовых метаданных.
 
 ---
 
@@ -12,16 +12,16 @@
 
 | Параметр | Описание |
 | :--- | :--- |
-| `metadata.name` | Имя пода |
-| `metadata.namespace` | Имя неймспейса |
-| `metadata.uid` | UID пода |
+| `metadata.name` | Имя Pod |
+| `metadata.namespace` | Namespace (пространство имен) |
+| `metadata.uid` | UID (Unique Identifier) |
 | `metadata.annotations['<KEY>']` | Значение конкретной аннотации |
 | `metadata.labels['<KEY>']` | Значение конкретной метки |
-| `spec.nodeName` | Имя ноды, на которой работает под |
-| `spec.serviceAccountName` | Имя ServiceAccount пода |
-| `status.podIP` | IP-адрес пода |
-| `status.hostIP` | IP-адрес ноды |
-| `resources.limits['cpu']` | Лимит CPU |
+| `spec.nodeName` | Имя Node (ноды), на которой работает Pod |
+| `spec.serviceAccountName` | Имя ServiceAccount |
+| `status.podIP` | IP (Internet Protocol) адрес Pod |
+| `status.hostIP` | IP-адрес Node |
+| `resources.limits['cpu']` | Лимит CPU (Central Processing Unit) |
 | `resources.limits['memory']` | Лимит памяти |
 | `resources.requests['cpu']` | Запрос CPU |
 | `resources.requests['memory']` | Запрос памяти |
@@ -30,20 +30,20 @@
 
 Downward API предоставляет два способа доступа к метаданным:
 
-1. **Переменные окружения** (`env.valueFrom`) — значения доступны при старте контейнера
-2. **Тома** (`volumes.downwardAPI`) — данные доступны через файловую систему
+1. **Переменные окружения** (`env.valueFrom`) — значения доступны при старте container.
+2. **Тома** (`volumes.downwardAPI`) — данные доступны через файловую систему.
 
 ### Особенности реализации
 
-**Container vs Pod level:** Для `resourceFieldRef` (ресурсы контейнера) необходимо указывать `containerName`, так как в поде может быть несколько контейнеров.
+**Container vs Pod level:** Для `resourceFieldRef` (ресурсы container) необходимо указывать `containerName`, так как в Pod может быть несколько container.
 
-**Динамические обновления:** При использовании томов изменения в метках и аннотациях пода отражаются в файловой системе автоматически. При использовании переменных окружения — только при перезапуске пода. Реализация использует symlinks (аналогично ConfigMap): файл в `/etc/podinfo/labels` ссылается на файл в директории `..data`.
+**Динамические обновления:** При использовании томов изменения в метках и аннотациях Pod отражаются в файловой системе автоматически. При использовании переменных окружения — только при перезапуске Pod. Реализация использует символические ссылки (symlinks) (аналогично ConfigMap): файл в `/etc/podinfo/labels` ссылается на файл в директории `..data`.
 
-**Синтаксис fieldPath:** Записывается через точку (например, `metadata.name`), что соответствует JSONPath в Kubernetes API.
+**Синтаксис fieldPath:** Записывается через точку (например, `metadata.name`), что соответствует JSONPath (JavaScript Object Notation Path) в Kubernetes API.
 
-**Ограничения:** Через Downward API нельзя получить полный манифест пода или информацию о других ресурсах. Для этого потребуется обращение к Kubernetes API с соответствующими правами (RBAC).
+**Ограничения:** Через Downward API нельзя получить полный манифест Pod или информацию о других ресурсах. Для этого потребуется обращение к Kubernetes API с соответствующими правами (RBAC).
 
-**Аннотация `kubernetes.io/config.last-applied`:** При монтировании аннотаций пода в файл попадает служебная аннотация, содержащая полный JSON манифеста пода. Это объясняет ограничение на размер данных в ConfigMap: если ConfigMap монтируется в под, его содержимое сохраняется в эту аннотацию, а размер поля аннотации в Kubernetes ограничен.
+**Аннотация `kubernetes.io/config.last-applied`:** При монтировании аннотаций Pod в файл попадает служебная аннотация, содержащая полный JSON манифеста. Это объясняет ограничение на размер данных в ConfigMap: если ConfigMap монтируется в Pod, его содержимое сохраняется в эту аннотацию, а размер поля аннотации в Kubernetes ограничен.
 
 ---
 
@@ -51,7 +51,7 @@ Downward API предоставляет два способа доступа к 
 
 ### Пример 1: Переменные окружения
 
-Использование Downward API через переменные окружения для передачи метаданных в контейнер:
+Использование Downward API через переменные окружения для передачи метаданных в container:
 
 ```yaml
 apiVersion: v1
@@ -145,4 +145,7 @@ Downward API может использоваться в составе [Projecte
 
 ## Дополнительная информация
 
-**Связанные темы:** [Базовые концепции Volume](./volume_types/volumes_basics.md), [Projected Volumes](./volume_types/projected_volumes.md), [ConfigMap](../../ConfigMap/configmap.md).
+**Связанные темы:**
+- [Базовые концепции Volume](./volume_types/volumes_basics.md)
+- [Projected Volumes](./volume_types/projected_volumes.md)
+- [ConfigMap в Kubernetes](../configmap.md)

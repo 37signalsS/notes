@@ -2,174 +2,139 @@
 
 ## Определения
 
-**Projected Volume** — тип тома Kubernetes, позволяющий объединить несколько источников (`secret`, `configMap`, `downwardAPI`, `serviceAccountToken`) в один том, монтируемый как единая директория.
+**Projected Volume (проектируемый том)** — специализированный тип Volume (тома) в Kubernetes, который позволяет объединить несколько существующих источников данных (`Secret`, `ConfigMap`, `Downward API`, `ServiceAccountToken`) в один том, монтируемый как единая директория в файловую систему container (контейнера).
 
-**Основное преимущество:** Одна точка монтирования вместо нескольких отдельных томов.
+**Основное преимущество:** упрощение манифеста Pod (пода) за счёт использования одной точки монтирования вместо создания нескольких отдельных томов для разных источников.
 
 ---
 
 ## Базовые концепции
 
-### Источники данных
+### Поддерживаемые источники данных
 
-Projected volume поддерживает следующие источники:
+Проектируемые тома могут агрегировать информацию из следующих источников:
 
 | Источник | Описание | Статус |
 | :--- | :--- | :--- |
-| `secret` | Секреты из того же namespace | Stable |
-| `configMap` | ConfigMap из того же namespace | Stable |
-| `downwardAPI` | Метаданные пода через Downward API | Stable |
-| `serviceAccountToken` | Кастомизированный токен service account | Stable |
-| `clusterTrustBundle` | Объекты ClusterTrustBundle (сертификаты) | Beta v1.33 (требуется feature gate) |
-| `podCertificate` | X.509 сертификаты для Pod | Beta v1.35 (требуется feature gate) |
+| `secret` | Данные из объектов Secret в том же Namespace (пространстве имён). | Stable |
+| `configMap` | Данные из объектов ConfigMap в том же Namespace. | Stable |
+| `downwardAPI` | Метаданные Pod через механизм Downward API. | Stable |
+| `serviceAccountToken` | Кастомизированный токен ServiceAccount для аутентификации в API. | Stable |
+| `clusterTrustBundle` | Глобальные наборы доверенных сертификатов (trust anchors). | Beta (v1.33+) |
+| `podCertificate` | Автоматически выпускаемые X.509 сертификаты для Pod. | Beta (v1.35+) |
 
-### Механизм работы
+### Особенности реализации
 
-**Конфликты имён:** При конфликте имён файлов приоритет имеет последний источник в списке `sources`.
+**Разрешение конфликтов:** Если несколько источников содержат файлы с одинаковыми именами, приоритет имеет тот источник, который указан последним в списке `sources`.
 
-**Обновления:** Файлы в projected volume обновляются автоматически при изменении исходных объектов (Secret, ConfigMap).
+**Автоматические обновления:** Файлы в проектируемом томе обновляются автоматически при изменении исходных объектов (Secret или ConfigMap) в кластере.
 
-**Ограничение subPath:** Контейнеры, использующие projected volume source как `subPath` volume mount, **не будут получать обновления** для этих источников.
+**Ограничение subPath:** Если источник данных в проектируемом томе монтируется через `subPath`, автоматическое обновление данных для такого монтирования **не происходит**.
 
-### Сравнение с отдельными томами
+### Сравнение подходов
 
 | Характеристика | Отдельные тома | Projected Volume |
 | :--- | :--- | :--- |
-| Точки монтирования | Несколько (по одной на источник) | Одна |
-| Сложность манифеста | Выше (много `volumeMounts`) | Ниже (один `volumeMount`) |
-| Изоляция данных | Полная | Общая директория |
-| Конфликты имён | Невозможны | Возможны (последний источник выигрывает) |
+| **Точки монтирования** | Несколько (по одной на каждый ресурс) | Одна (общая директория) |
+| **Сложность манифеста** | Высокая (множество `volumeMounts`) | Низкая (один `volumeMount`) |
+| **Изоляция данных** | Изолированы на уровне томов | Находятся в одной общей структуре |
+| **Контроль имен** | Имена файлов не пересекаются | Последний источник в списке выигрывает |
 
 ---
 
 ## Практические сценарии
 
-### Пример 1: Базовый Projected Volume
+### Сценарий 1: Агрегация конфигурации и секретов
 
-Объединение данных из `Secret`, `ConfigMap` и `DownwardAPI` в одну директорию `/projected-volume`:
+Объединение настроек приложения, паролей и метаданных в одну рабочую директорию `/app/config`:
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: projected-volume-pod
+  name: all-in-one-pod
 spec:
   volumes:
-  - name: all-in-one
+  - name: config-all-in-one
     projected:
       sources:
       - secret:
-          name: user-password-secret
+          name: db-credentials
           items:
-            - key: username
-              path: app-credentials/user.txt
+            - key: password
+              path: secrets/db-pass.txt
       - configMap:
-          name: app-config
+          name: app-settings
           items:
-            - key: config.yaml
-              path: app-config/settings.yaml
+            - key: ui-config.yaml
+              path: settings/ui.yaml
       - downwardAPI:
           items:
-            - path: "pod-labels"
+            - path: "info/pod-name"
               fieldRef:
-                fieldPath: metadata.labels
-            - path: "container-cpu-limit"
-              resourceFieldRef:
-                containerName: test-container
-                resource: limits.cpu
+                fieldPath: metadata.name
   containers:
-  - name: test-container
-    image: busybox
-    command: ["sh", "-c", "sleep 3600"]
+  - name: app-container
+    image: busybox:1.36
+    command: ["sh", "-c", "ls -R /app/config && sleep infinity"]
     volumeMounts:
-    - name: all-in-one
-      mountPath: "/projected-volume"
+    - name: config-all-in-one
+      mountPath: "/app/config"
       readOnly: true
 ```
 
-**Результат в файловой системе:**
+### Сценарий 2: Кастомизация ServiceAccountToken
 
-- `/projected-volume/app-credentials/user.txt` — данные из Secret
-- `/projected-volume/app-config/settings.yaml` — данные из ConfigMap
-- `/projected-volume/pod-labels` — метаданные пода из DownwardAPI
-- `/projected-volume/container-cpu-limit` — лимиты ресурсов из DownwardAPI
-
-### Пример 2: Projected Volume с serviceAccountToken
-
-По умолчанию токен service account монтируется автоматически по пути `/var/run/secrets/kubernetes.io/serviceaccount/token`. Projected volume позволяет создать кастомизированный токен с изменёнными параметрами.
+Создание токена с ограниченным сроком действия и специфической аудиторией (Audience) для взаимодействия с внешним API Gateway.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: projected-sa-token-pod
+  name: secure-token-pod
 spec:
   volumes:
-  - name: custom-token
+  - name: vault-token
     projected:
       sources:
       - serviceAccountToken:
           path: token
-          audience: api-gateway
-          expirationSeconds: 3600
+          audience: vault-service
+          expirationSeconds: 7200 # 2 часа
   containers:
-  - name: app
+  - name: worker
     image: busybox
-    command: ["sh", "-c", "cat /etc/custom-token/token && sleep infinity"]
     volumeMounts:
-    - name: custom-token
-      mountPath: /etc/custom-token
+    - name: vault-token
+      mountPath: /var/run/secrets/tokens
       readOnly: true
   automountServiceAccountToken: false
 ```
 
-**Параметры serviceAccountToken:**
+### Сценарий 3: Использование ClusterTrustBundle (Beta)
 
-| Поле | Описание | Значение по умолчанию | Ограничения |
-| :--- | :--- | :--- | :--- |
-| `path` | Относительный путь к точке монтирования | — | **Обязательно** |
-| `audience` | Аудитория токена | Идентификатор API server | Опционально |
-| `expirationSeconds` | Продолжительность действия токена | 1 час (3600 секунд) | Минимум: 600 секунд, Максимум: зависит от `--service-account-max-token-expiration` |
-
-**Use case:** Токен с нестандартным сроком действия или специфической аудиторией (например, для доступа к внешнему API Gateway).
-
-### Пример 3: ClusterTrustBundle и PodCertificate (beta)
-
-> **Внимание:** Функции в статусе **beta** (v1.33 и v1.35) и требуют включения feature gates на API server.
-
-**Необходимые feature gates:**
-
-```bash
-# Для clusterTrustBundle (beta v1.33)
---feature-gates=ClusterTrustBundle=true,ClusterTrustBundleProjection=true
---runtime-config=certificates.k8s.io/v1beta1/clustertrustbundles=true
-
-# Для podCertificate (beta v1.35)
---feature-gates=PodCertificateRequest=true
---runtime-config=certificates.k8s.io/v1beta1/podcertificaterequests=true
-```
-
-**Пример использования clusterTrustBundle:**
+Монтирование общекластерных доверенных сертификатов для проверки соединений (требует активации Feature Gate `ClusterTrustBundleProjection`).
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: pod-with-trust-bundle
+  name: trusted-app
 spec:
   volumes:
-  - name: trust-bundle
+  - name: trusted-certs
     projected:
       sources:
       - clusterTrustBundle:
-          name: ca-bundle
-          path: ca-certificates.crt
+          name: company-ca
+          path: cluster-ca.crt
   containers:
-  - name: app
-    image: my-app
+  - name: main
+    image: alpine:latest
     volumeMounts:
-    - name: trust-bundle
-      mountPath: /etc/ssl/certs
+    - name: trusted-certs
+      mountPath: /etc/ssl/certs/cluster-ca.crt
+      subPath: cluster-ca.crt
       readOnly: true
 ```
 
@@ -177,4 +142,10 @@ spec:
 
 ## Дополнительная информация
 
-**Связанные темы:** [Базовые концепции Volume](./volumes_basics.md), [Downward API](../downward_api.md), [ConfigMap в подах](../../ConfigMap/pod_usage.md), [Использование Secret](../../secrets/using_secrets.md).
+**Связанные темы:**
+- [Базовые концепции Volume](./volumes_basics.md)
+- [Использование Downward API в Kubernetes](../downward_api.md)
+- [Использование ConfigMap в Pod](../../ConfigMap/pod_usage.md)
+- [Механизмы работы с Secret](../../secrets/using_secrets.md)
+
+**Официальная документация:** [Projected Volumes](https://kubernetes.io/docs/concepts/storage/projected-volumes/)

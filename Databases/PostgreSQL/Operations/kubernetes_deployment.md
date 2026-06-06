@@ -20,7 +20,7 @@
 - Упорядоченное развертывание и масштабирование.
 - Сохранение данных через PersistentVolumeClaims (PVC).
 
-Подробнее — **[StatefulSet](../../../Kubernetes/Base/statefulset.md)**.
+Подробнее — **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)**.
 
 ### Роль оператора в управлении БД
 
@@ -147,5 +147,5 @@ kubectl cnpg backup cluster-example
 - **Основы PostgreSQL:** **[PostgreSQL Overview](../overview.md)**
 - **Высокая доступность:** **[High Availability](../Concepts/high_availability.md)**
 - **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
-- **Архитектура StatefulSet:** **[StatefulSet](../../../Kubernetes/Base/statefulset.md)**
+- **Архитектура StatefulSet:** **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)**
 - **Концепция операторов:** **[Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md)**

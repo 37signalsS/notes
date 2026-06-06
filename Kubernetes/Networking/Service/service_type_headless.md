@@ -1,87 +1,67 @@
-# Headless Service
+# Тип Service — Headless
 
 ## Определения
 
-**Headless Service** — тип сервиса, который **не имеет `ClusterIP`**. Для создания в манифесте указывается `spec.clusterIP: None`. Вместо единой виртуальной IP-точки входа предоставляет доступ к IP-адресам всех Pod через DNS-записи.
+**Headless Service** — тип сервиса в Kubernetes, который не имеет виртуального IP-адреса кластера (`ClusterIP`). При создании такого ресурса в манифесте указывается `spec.clusterIP: None`.
 
-**Основная цель:** Обнаружение (`discovery`) отдельных Pod, а не проксирование трафика через единый IP.
+**Основная задача:** Обеспечение прямого обнаружения (discovery) сетевых адресов отдельных подов через DNS-записи, минуя механизмы проксирования и балансировки трафика.
 
 ## Основные концепции
 
-### Принцип работы: DNS Discovery
+### Механизм DNS Discovery
 
-При создании `Headless Service`, DNS-сервер кластера (CoreDNS) создаёт записи двух типов:
+При создании Headless Service DNS-сервер кластера (CoreDNS) автоматически формирует записи двух типов:
 
-| Тип записи | Формат | Результат |
+| Тип записи | Формат | Назначение |
 | :--- | :--- | :--- |
-| **A-запись сервиса** | `<service-name>.<namespace>.svc.cluster.local` | Список IP-адресов всех Pod |
-| **A-запись Pod** | `<pod-name>.<service-name>.<namespace>.svc.cluster.local` | IP конкретного Pod |
+| **A-запись сервиса** | `<name>.<ns>.svc.cluster.local` | Возвращает список IP всех готовых подов |
+| **A-запись пода** | `<pod>.<name>.<ns>.svc.cluster.local` | Возвращает IP конкретного пода |
 
-Это позволяет обращаться как ко всем Pod сразу (получив список IP), так и к каждому индивидуально по стабильному DNS-имени.
+Это позволяет клиенту обращаться напрямую к любому экземпляру приложения или получать полный список адресов всех реплик.
 
-### Ключевые особенности
+### Характеристики и особенности
 
-| Особенность | Описание |
-| :--- | :--- |
-| **Нет ClusterIP** | `clusterIP: None` — DNS возвращает IP Pod напрямую |
-| **Нет балансировки** | Трафик не балансируется, клиент выбирает Pod |
-| **Стабильные DNS-имена** | Каждый Pod получает предсказуемое DNS-имя |
-| **Селекторы** | Работает через `selector`, как обычный Service |
+- **Отсутствие ClusterIP:** Поле `clusterIP: None` указывает системе не выделять виртуальный IP.
+- **Отсутствие балансировки:** Трафик не распределяется на стороне Kubernetes; выбор конкретного пода ложится на плечи клиента.
+- **Стабильная сетевая идентификация:** Каждый под получает предсказуемое DNS-имя.
 
 ### Сценарии использования
 
-| Сценарий | Описание |
-| :--- | :--- |
-| **Stateful-приложения (StatefulSet)** | Основной сценарий: стабильные уникальные имена для Pod |
-| **Прямой доступ к Pod** | Соединение с конкретным экземпляром (репликация, администрирование) |
-| **Децентрализованные системы** | Peer-to-peer системы: MongoDB, Cassandra, брокеры сообщений |
-| **Собственная балансировка** | Клиент сам решает, к какому Pod подключиться (чтение/запись) |
-
-#### StatefulSet и Headless Service
-
-**StatefulSet** требует стабильных уникальных имён для Pod. Headless Service обеспечивает это через DNS.
-
-**Последствия без Headless Service:**
-
-- StatefulSet не получит стабильные DNS-имена
-- Кластерные протоколы (кворум БД, брокеры сообщений) не смогут работать
-- Нестабильность приложения
-
-> **Совет:** Для тонкой настройки DNS-имён используйте поля `subdomain` и `hostname` в `pod.spec` для создания кастомных FQDN.
+- **Stateful-приложения:** Основной механизм для [StatefulSet](../../Base/StatefulSet/statefulset_overview.md), требующих уникальных и постоянных имен подов.
+- **Децентрализованные системы:** Системы с собственными механизмами репликации и кворума (MongoDB, Cassandra, Kafka), где узлам нужно знать адреса друг друга.
+- **Специфическая балансировка:** Ситуации, когда клиентское приложение само реализует логику выбора узла (например, разделение read/write запросов).
 
 ## Практические сценарии
 
-### Пример: Headless Service для StatefulSet
+### Настройка Headless Service для StatefulSet
 
-**Шаг 1: Создание Headless Service**
+Для обеспечения стабильных DNS-имен подов в StatefulSet необходимо сначала создать Headless Service, имя которого указывается в поле `serviceName` контроллера.
+
+**Манифест Service:**
 
 ```yaml
-# nginx-headless-service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: nginx-headless
-  labels:
-    app: nginx
 spec:
-  clusterIP: None  # Делает сервис "headless"
+  clusterIP: None
   ports:
     - port: 80
       name: web
   selector:
-    app: nginx  # Должен соответствовать меткам StatefulSet
+    app: nginx
 ```
 
-**Шаг 2: Создание StatefulSet**
+**Манифест StatefulSet:**
 
 ```yaml
-# nginx-statefulset.yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: web
 spec:
-  serviceName: "nginx-headless"  # Должно совпадать с именем Headless Service
+  serviceName: "nginx-headless"
   replicas: 2
   selector:
     matchLabels:
@@ -93,65 +73,46 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: nginx:1.28.0
+          image: nginx:latest
           ports:
             - containerPort: 80
               name: web
 ```
 
-**Результат:** Созданы Pod `web-0` и `web-1` с уникальными DNS-записями:
+### Валидация работы
 
-- `web-0.nginx-headless.default.svc.cluster.local`
-- `web-1.nginx-headless.default.svc.cluster.local`
-
-### Проверка работы
-
-**1. Запуск временного пода для отладки:**
+Для проверки DNS-разрешения можно использовать временный диагностический под:
 
 ```bash
-kubectl run -it --rm --image=busybox:1.36.1 dns-test -- /bin/sh
+kubectl run -it --rm --image=busybox:latest dns-test -- /bin/sh
 ```
 
-**2. Проверка DNS из пода:**
-
+**Проверка записей:**
 ```bash
-# Запрос к сервису (получаем все IP)
+# Получение списка IP всех подов сервиса
 nslookup nginx-headless
-# Output:
-# Name:      nginx-headless.default.svc.cluster.local
-# Address 1: 10.244.1.5
-# Address 2: 10.244.2.4
 
-# Запрос к конкретному Pod (получаем один IP)
+# Обращение к конкретному поду по стабильному имени
 nslookup web-0.nginx-headless
-# Output:
-# Name:      web-0.nginx-headless.default.svc.cluster.local
-# Address 1: 10.244.1.5
 ```
-
-> **Подробно о StatefulSet:** [StatefulSet Overview](../../Base/StatefulSet/statefulset_overview.md), [StatefulSet Core Concepts](../../Base/StatefulSet/statefulset_core_concepts.md)
 
 ## Дополнительная информация
 
 ### Сравнение с ClusterIP
 
-| Характеристика | Headless | ClusterIP |
+| Параметр | Headless | ClusterIP |
 | :--- | :--- | :--- |
-| **ClusterIP** | Нет (`None`) | Да (виртуальный IP) |
-| **Балансировка** | Нет (клиентская) | Да (kube-proxy) |
-| **DNS** | Возвращает IP Pod | Возвращает ClusterIP |
-| **Use-case** | StatefulSet, direct access | Внутренние сервисы |
+| **Виртуальный IP** | Отсутствует | Выделяется |
+| **DNS-ответ** | Список IP-адресов подов | Виртуальный IP сервиса |
+| **Проксирование** | Нет | Через kube-proxy (iptables/IPVS) |
+| **Типовой use-case** | Базы данных, StatefulSet | Web-сервисы, stateless приложения |
 
 ### Ограничения
 
-| Ограничение | Описание |
-| :--- | :--- |
-| **Нет балансировки** | Клиент сам выбирает Pod |
-| **Только DNS** | Работает только через DNS-разрешение |
-| **Зависимость от CoreDNS** | Требует корректной DNS-инфраструктуры |
+- **Зависимость от DNS:** Механизм работает исключительно через систему имен кластера.
+- **Клиентская ответственность:** Приложение должно уметь корректно обрабатывать список из нескольких IP-адресов или обращаться по конкретным именам.
 
-### Связанные концепции
-
-- **[StatefulSet](../../Base/StatefulSet/statefulset_overview.md)** — контроллер для stateful-приложений
-- **[ExternalName](./service_type_externalname.md)** — доступ к внешним ресурсам через DNS
-- **[Сводка типов сервисов](./service_types_summary.md)** — полное сравнение всех типов
+### См. также
+- [Обзор StatefulSet](../../Base/StatefulSet/statefulset_overview.md)
+- [Сводка по типам Service](./service_types_summary.md)
+- [Тип Service — ExternalName](./service_type_externalname.md)

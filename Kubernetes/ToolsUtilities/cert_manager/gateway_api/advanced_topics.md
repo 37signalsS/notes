@@ -8,7 +8,7 @@
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
 ### Проблема hostname в Gateway
 
@@ -85,17 +85,8 @@ kubectl describe certificaterequest <cr-name> -n <namespace>
 | `CRD missing` | Gateway API CRD не установлены до cert-manager | Установить CRD: `kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml` |
 | `Challenge pending` | DNS-01 solver не настроен или HTTP-01 недоступен | Проверить конфигурацию solver, убедиться что домен доступен извне |
 
-### Надёжность информации
+### Смотрите также
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Gateway API интеграция | **9** | Подтверждено в cert-manager 1.13+ (см. [Определения cert-manager](../../definitions.md#интеграция-с-gateway-api)) |
-| Несколько слушателей | **9** | Работает в Traefik, Envoy Gateway |
-| TLS Passthrough | **8** | Зависит от реализации Gateway Controller, TLSRoute в статусе Alpha |
-| Wildcard сертификаты | **10** | Стандартный ACME DNS-01, подтверждён документацией Let's Encrypt |
-
-### Troubleshooting: дополнительные ресурсы
-
-- Миграция с Ingress на Gateway API: [Руководство по миграции](../../../Networking/gateway_api/migration.md#troubleshooting-cert-manager-gateway-api)
-- Установка cert-manager с Gateway API: [Установка cert-manager](../../installation.md#включение-gateway-api)
-- Базовые практические сценарии: [Практические сценарии](./practical_scenarios.md)
+- **[Миграция с Ingress на Gateway API](../../../Networking/gateway_api/migration.md)** — инструкции по переносу конфигураций
+- **[Cert-manager: Установка](../../installation.md)** — включение Gateway API интеграции
+- **[Практические сценарии](./practical_scenarios.md)** — использование сертификатов с Gateway

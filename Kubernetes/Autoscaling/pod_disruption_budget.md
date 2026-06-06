@@ -1,4 +1,4 @@
-# Pod Disruption Budget (PDB)
+# Бюджет прерывания подов (Pod Disruption Budget, PDB)
 
 ## Определения
 
@@ -11,7 +11,7 @@
 * Освобождение узла Cluster Autoscaler/Karpenter (scale-down, дефрагментация нод)
 * Обновление узлов кластера (обновление ПО, перезагрузка нод)
 * Вытеснение подов с низким приоритетом через PriorityClass (preemption)
-* Действия облачного провайдера (удаление ВМ, обслуживание инфраструктуры)
+* Действия облачного провайдера (удаление ВМ (Virtual Machine), обслуживание инфраструктуры)
 
 **Недобровольные прерывания (Involuntary Disruptions)** — непредвиденные события, от которых PDB **не защищает**:
 
@@ -20,11 +20,11 @@
 * Сетевые проблемы
 * Отключение питания
 
-**Eviction API** — механизм Kubernetes для безопасного выселения подов с учётом PDB.
+**Eviction API (Application Programming Interface)** — механизм Kubernetes для безопасного выселения подов с учётом PDB.
 
 **Важно:** PDB работает **только** с Eviction API — при использовании `kubectl delete pod <name>` запрос Eviction не формируется, PDB не сработает.
 
-**Supported Controllers** — PDB работает с нативными контроллерами (Deployment, StatefulSet, ReplicaSet, DaemonSet) и **кастомными контроллерами** (операторы на Go, написанные с помощью controller-runtime или client-go). Поддержка кастомных контроллеров добавлена в **Kubernetes 1.15**. PDB также можно применять к подам без контроллера, но с ограничениями (см. раздел «Ограничения для ad-hoc подов»).
+**Поддерживаемые контроллеры** — PDB работает с нативными контроллерами (Deployment, StatefulSet, ReplicaSet, DaemonSet) и **кастомными контроллерами** (операторы на Go, написанные с помощью controller-runtime или client-go). Поддержка кастомных контроллеров добавлена в **Kubernetes 1.15**. PDB также можно применять к подам без контроллера, но с ограничениями (см. раздел «Ограничения для ad-hoc подов»).
 
 **Примечание по контроллерам:**
 
@@ -118,12 +118,23 @@ PDB содержит поле `spec.unhealthyPodEvictionPolicy`, определ�
 ```bash
 # Список всех PDB
 kubectl get pdb -A
+# → 
+# NAMESPACE   NAME      MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# default     web-pdb   80%             N/A               1                     10m
 
 # Детальная информация
 kubectl describe pdb web-pdb -n default
+# → (фрагмент вывода)
+# Status:
+#   Allowed Disruptions:  1
+#   Current Healthy:      5
+#   Desired Healthy:      4
+#   Expected Pods:        5
 
 # Проверка ожидающих eviction
 kubectl get events --field-selector reason=Eviction
+# → LAST SEEN   TYPE     REASON     OBJECT           MESSAGE
+# → 1m          Normal   Eviction   pod/web-app-v1   Eviction API has been invoked
 ```
 
 #### Пример вывода `kubectl get pdb`
@@ -286,6 +297,10 @@ ngx-pdb   2               3         3         1                     5m
 ```bash
 # Drain узла с игнорированием DaemonSet
 kubectl drain node-01 --ignore-daemonsets --delete-emptydir-data
+# → node/node-01 cordoned
+# → evicting pod default/ngx-6799fc88d8-7j589
+# → pod/ngx-6799fc88d8-7j589 evicted
+# → node/node-01 drained
 ```
 
 **Что происходит:**
@@ -301,9 +316,14 @@ kubectl drain node-01 --ignore-daemonsets --delete-emptydir-data
 ```bash
 # Отслеживание статуса подов
 kubectl get pods -o wide -w
+# → ngx-6799fc88d8-7j589   1/1   Terminating   0   5m   10.244.1.5   node-01
+# → ngx-6799fc88d8-pk2z9   0/1   Pending       0   0s   <none>       node-02
+# → ngx-6799fc88d8-pk2z9   1/1   Running       0   5s   10.244.2.8   node-02
 
 # Проверка распределения по нодам
 kubectl get pods -o wide
+# → NAME                     READY   STATUS    IP           NODE
+# → ngx-6799fc88d8-pk2z9     1/1     Running   10.244.2.8   node-02
 ```
 
 **Важные наблюдения:**
@@ -327,7 +347,7 @@ kubectl get pods -o wide
 
 **Различие Deployment и StatefulSet при замене подов во время drain:**
 
-* **Deployment** — при терминации пода немедленно создаёт замену (с новым UID и именем, например `web-abc → web-def`). Replacement-под может быть запланирован на другой ноде параллельно с завершением старого.
+* **Deployment** — при терминации пода немедленно создаёт замену (с новым UID (Unique Identifier — уникальный идентификатор) и именем, например `web-abc → web-def`). Replacement-под может быть запланирован на другой ноде параллельно с завершением старого.
 * **StatefulSet** — дожидается полного завершения старого пода (освобождения имени, например `web-0`), и только затем создаёт новый под с тем же именем (`web-0`), но с новым UID. Это гарантирует стабильность имён, что критично для stateful-приложений (базы данных, где `web-0` — мастер, `web-1` — слейв). Для StatefulSet используйте `maxUnavailable: 1` для последовательного обновления.
 
 ## Дополнительная информация
@@ -347,7 +367,7 @@ kubectl get pods -o wide
 PDB взаимодействует с другими компонентами экосистемы Kubernetes:
 
 * **[Cluster Autoscaler](cluster_autoscaler_detailed.md)** — проверяет PDB перед удалением узла
-* **[Karpenter](Karpenter/installation.md)** — учитывает PDB при консолидации узлов
+* **[Karpenter](Karpenter/overview.md)** — учитывает PDB при консолидации узлов
 * **[Node Maintenance](../Operations/node_maintenance.md)** — drain использует Eviction API с учётом PDB
 
 ### Pod Disruption Conditions
@@ -422,13 +442,25 @@ PDB служит **интерфейсом** между ролями с разн�
 
 * Cluster Admin не знает требований доступности каждого приложения
 * Application Owner не управляет инфраструктурой
-* PDB гарантирует, что обслуживание узлов не нарушит SLA приложения
+* PDB гарантирует, что обслуживание узлов не нарушит SLA (Service Level Agreement — соглашение об уровне обслуживания) приложения
 
 > **Рекомендация:** Даже если роли совмещены (один инженер и администрирует, и деплоит), PDB полезен при сотнях приложений — он предотвращает ситуации, когда при массовом drain забыли про критичный сервис.
 
+### Сравнение механизмов выселения (Eviction)
+
+PDB защищает **только** от добровольных прерываний через Eviction API. Важно понимать отличия от других механизмов:
+
+| Характеристика | PDB-blocked | Taint-based Eviction | Node Pressure Eviction |
+|----------------|-------------|----------------------|-----------------------|
+| **Инициатор** | `kubectl drain` / rollout | Control Plane (автоматически) | Kubelet (локально) |
+| **Результат** | Eviction **блокируется** | Eviction **происходит** | Eviction **происходит** |
+| **Уважение PDB** | **Да** | Нет | Нет |
+| **Причина** | Плановое обслуживание | Узел NotReady/Unreachable | Нехватка ресурсов (Disk/RAM (Random Access Memory — оперативная память)) |
+| **Решение** | Подождать или изменить PDB | Исправить узел или toleration | Оптимизировать ресурсы |
+
 ### Стратегии обслуживания всех нод кластера
 
-Когда требуется обслуживание **всех** нод кластера (обновление ОС, замена железа), есть три подхода:
+Когда требуется обслуживание **всех** нод кластера (обновление ОС (Operating System — операционная система), замена железа), есть три подхода:
 
 | Стратегия | Описание | Downtime | Стоимость | Сложность |
 |-----------|----------|----------|-----------|-----------|

@@ -1,24 +1,24 @@
-# Kubernetes Monitoring and Logging Architecture
+# Архитектура мониторинга и логирования в Kubernetes
 
-## Definitions
+## Определения
 
-**Monitoring** — сбор и анализ метрик для оценки состояния системы. В Kubernetes охватывает все уровни: от бизнес-показателей до утилизации CPU на нодах.
+**Мониторинг** — сбор и анализ метрик для оценки состояния системы. В Kubernetes охватывает все уровни: от бизнес-показателей до утилизации CPU (Central Processing Unit) на нодах.
 
-**Logging** — запись событий системы в виде текстовых сообщений. В отличие от метрик, логи содержат детальную информацию о конкретных событиях.
+**Логирование** — запись событий системы в виде текстовых сообщений. В отличие от метрик, логи содержат детальную информацию о конкретных событиях.
 
-**Structured Logging** — практика записи логов в формате с чёткой структурой (JSON). Критически важно для эффективного парсинга и анализа в централизованных системах.
+**Structured Logging** — практика записи логов в формате с чёткой структурой (JSON (JavaScript Object Notation)). Критически важно для эффективного парсинга и анализа в централизованных системах.
 
 > **См. также:** [Observability Definitions](../../Concepts/Observability_and_Monitoring/observability_definitions.md) — различия мониторинга и наблюдаемости; [Four Pillars of Observability](../../Concepts/Observability_and_Monitoring/four_pillars_of_observability.md) — логи, метрики, трассировки, профилирование.
 
-## Basic Concepts
+## Основные концепции
 
 ### Уровни мониторинга в Kubernetes
 
 | Уровень | Объект | Примеры метрик |
 | :--- | :--- | :--- |
 | **Бизнес-уровень** | Пользовательские сценарии | Количество заказов, конверсия |
-| **Приложения** | Сервисы и микросервисы | RPS, error rate, latency |
-| **Кластер** | Компоненты K8s | etcd latency, API server requests |
+| **Приложения** | Сервисы и микросервисы | RPS (Requests Per Second), error rate, latency |
+| **Кластер** | Компоненты K8s | etcd latency, API (Application Programming Interface) server requests |
 | **Ноды** | Инфраструктура | CPU, память, диск, сеть |
 
 ### Методологии анализа метрик
@@ -27,7 +27,7 @@
 
 **RED Method** (Rate, Errors, Duration) — для сервисов и приложений. Детали: [Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md).
 
-**Four Golden Signals** (Latency, Traffic, Errors, Saturation) — от Google SRE. Детали: [Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md).
+**Four Golden Signals** (Latency, Traffic, Errors, Saturation) — от Google SRE (Site Reliability Engineering). Детали: [Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md).
 
 ### Алертинг
 
@@ -49,7 +49,7 @@
 **Расположение логов:**
 
 - **Docker:** `/var/lib/docker/containers/<container_id>/<container_id>-json.log`
-- **Kubernetes (симлинки):** `/var/log/pods/` и `/var/log/containers/` — символические ссылки для удобства поиска по имени пода и namespace.
+- **Kubernetes (симлинки):** `/var/log/pods/` и `/var/log/containers/` — символические ссылки для удобства поиска по имени пода и пространства имён (Namespace).
 
 **Логирование системных компонентов:**
 
@@ -60,7 +60,7 @@
 
 **Kubernetes Audit Logs:** Встроенный механизм `kube-apiserver`, который позволяет отслеживать все запросы к API кластера. Аудит логирует действия на уровне API, но "не видит", что происходит внутри подов. Через Audit Policy можно гибко настраивать (фильтровать) уровень логирования (например, фиксировать только изменения ресурсов).
 
-**Мониторинг на уровне ядра (eBPF):** Для отслеживания системных вызовов внутри контейнеров используются специализированные инструменты.
+**Мониторинг на уровне ядра (eBPF (Extended Berkeley Packet Filter)):** Для отслеживания системных вызовов внутри контейнеров используются специализированные инструменты.
 
 - **Falco:** Стандарт де-факто для мониторинга аномалий в рантайме (запуск подозрительных процессов, изменения системных файлов).
 - **Tetragon (от Cilium):** eBPF-инструмент нового поколения. В отличие от систем, основанных только на аудите, Tetragon умеет превентивно блокировать опасные системные вызовы до их выполнения на уровне ядра (enforcement).
@@ -71,10 +71,10 @@
 
 1. **Недолговечность логов** — при удалении пода логи теряются.
 2. **Распределённость** — логи одного приложения разбросаны по разным узлам.
-3. **Отсутствие метаданных** — стандартные логи не содержат информацию о поде/namespace.
+3. **Отсутствие метаданных** — стандартные логи не содержат информацию о поде/пространстве имён (Namespace).
 4. **Сложность анализа** — простой текст сложно фильтровать и агрегировать.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Инструменты для каждого уровня мониторинга
 
@@ -91,7 +91,7 @@
 | **etcd** | Доступность кластера, частота смены лидера |
 | **Control Plane** | [kube-apiserver](./kube_apiserver_monitoring.md), `kube-controller-manager`, `kube-scheduler`, `kubelet`, `kube-proxy` |
 | **Среда выполнения** | Работоспособность Docker/containerd демонов |
-| **DNS (CoreDNS)** | Количество запросов, ошибок, кэш-промахов |
+| **DNS (Domain Name System)** | Количество запросов, ошибок, кэш-промахов |
 | **Ingress Controller** | Доступность подов, потребление ресурсов, внутренние метрики |
 | **kube-state-metrics** | Состояние объектов K8s (деплойменты, поды) |
 
@@ -101,7 +101,7 @@
 
 1. Читает лог-файлы контейнеров из `/var/log/pods/` или `/var/log/containers/`.
 2. Собирает логи системных компонентов из `journald`.
-3. Обращается к Kubernetes API для обогащения логов метаданными (имя пода, namespace, лейблы).
+3. Обращается к Kubernetes API для обогащения логов метаданными (имя пода, пространство имён (Namespace), лейблы).
 4. Отправляет обработанные логи в центральное хранилище.
 
 **Популярные стеки:**
@@ -110,7 +110,7 @@
 
 - **Fluent Bit** — легковесный логирующий агент.
 - **Elasticsearch** — мощное хранилище для поиска и анализа.
-- **Kibana** — UI для визуализации.
+- **Kibana** — UI (User Interface) для визуализации.
 - Надёжный, но ресурсоёмкий стек. Детали: [EFK Stack Setup](./EFK/efk_stack_setup_guide.md).
 
 **Loki Stack (Promtail, Loki, Grafana):**
@@ -127,7 +127,7 @@
 | Компонент | Назначение |
 | :--- | :--- |
 | **vmagent** | Сбор метрик (scraping) с экспортеров, отправка в хранилище |
-| **VictoriaMetrics** | TSDB для долгосрочного хранения (замена Prometheus/Thanos) |
+| **VictoriaMetrics** | TSDB (Time Series Database) для долгосрочного хранения (замена Prometheus/Thanos) |
 | **Grafana** | Визуализация метрик |
 | **vmalert** | Выполнение правил алертинга по данным VictoriaMetrics |
 | **AlertManager** | Дедупликация, группировка, маршрутизация алертов |
@@ -140,8 +140,8 @@
 - **Kubernetes:** 1.23+ (важно из-за изменений в API).
 - **Сетевой плагин:** MetalLB или аналог для `LoadBalancer`.
 - **Ingress Controller:** Для доступа к Grafana, Karma.
-- **Cert Manager:** Автоматические TLS-сертификаты для Ingress.
-- **Хранилище:** NFS Client Provisioner или облачное решение для `PersistentVolumes`.
+- **Cert Manager:** Автоматические TLS (Transport Layer Security) сертификаты для Ingress.
+- **Хранилище:** NFS (Network File System) Client Provisioner или облачное решение для `PersistentVolumes` (Persistent Volume Claims).
 
 ### Анти-паттерны мониторинга
 
@@ -150,20 +150,15 @@
 3. **Изолированный специалист** — настройка требует знания инфраструктуры и приложений.
 4. **Один инструмент для всего** — не использовать систему мониторинга для логирования или трейсинга.
 
-## Additional Information
+## Дополнительная информация
 
 **Связанные темы:**
 
 - [Observability Definitions](../../Concepts/Observability_and_Monitoring/observability_definitions.md) — фундаментальные концепции
 - [Monitoring Methodologies](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md) — Golden Signals, RED, USE
-- [Metrics Deep Dive](../../Concepts/Observability_and_Monitoring/metrics_deep_dive.md) — типы метрик
-- [Logs Deep Dive](../../Concepts/Observability_and_Monitoring/logs_deep_dive.md) — стратегии сбора логов
-- [Kube API Server Monitoring](./kube_apiserver_monitoring.md) — мониторинг API-сервера
 
 **Инструменты:**
 
 - **[Prometheus](../../Prometheus/overview.md)** — сбор и хранение метрик
 - **[VictoriaMetrics](../../VictoriaMetrics/overview.md)** — масштабируемая TSDB
 - **[Loki](../../Loki/loki_overview.md)** — агрегация логов
-- **[Grafana](../../Grafana/grafana_overview.md)** — визуализация
-- **[Fluent Bit](./EFK/fluentbit/fluentbit_configuration.md)** — сбор и отправка логов

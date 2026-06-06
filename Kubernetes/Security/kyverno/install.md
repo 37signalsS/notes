@@ -2,13 +2,13 @@
 
 ## Определения
 
-**Kyverno** устанавливается в кластер Kubernetes через **Helm Chart** или YAML-манифесты. При установке разворачиваются 4 компонента для обработки политик, фоновых сканирований, отчетов и очистки ресурсов.
+**Kyverno** устанавливается в кластер Kubernetes через **Helm** (менеджер пакетов для Kubernetes) или YAML-манифесты. При установке разворачиваются 4 компонента для обработки политик, фоновых сканирований, отчетов и очистки ресурсов.
 
 > **Официальная документация**: <https://kyverno.io/docs/installation/>
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
 ### Компоненты Kyverno
 
@@ -17,15 +17,15 @@
 | **Admission Controller** | Обработка mutating и validating admission webhook-запросов | **Критичен** — без него политики не применяются |
 | **Background Controller** | Фоновое сканирование существующих ресурсов и генерация отчетов | Рекомендуется для аудита |
 | **Cleanup Controller** | Удаление ресурсов по расписанию или условию | Опционально |
-| **Reports Controller** | Генерация Policy Reports в формате Policy Report WG | Рекомендуется для интеграции с Policy Reporter |
+| **Reports Controller** | Генерация Policy Reports в формате Policy Report WG (Working Group) | Рекомендуется для интеграции с Policy Reporter |
 
 ### Требования
 
 | Требование | Минимальные | Рекомендуемые |
 |------------|-------------|---------------|
 | Kubernetes | 1.23+ | 1.27+ |
-| CPU | 2 cores | 4+ cores |
-| Memory | 2 GB | 4+ GB |
+| CPU (Central Processing Unit) | 2 ядра | 4+ ядер |
+| Memory (Оперативная память) | 2 GB | 4+ GB |
 | Helm | 3.9+ | 3.12+ |
 
 ---
@@ -37,7 +37,10 @@
 ```bash
 # Добавление репозитория
 helm repo add kyverno https://kyverno.github.io/kyverno/
+# → "kyverno" has been added to your repositories
+
 helm repo update
+# → Hang tight while we grab the latest from your chart repositories...
 
 # Установка в namespace kyverno
 helm install kyverno kyverno/kyverno \
@@ -48,6 +51,7 @@ helm install kyverno kyverno/kyverno \
   --set backgroundController.replicas=2 \
   --set cleanupController.replicas=1 \
   --set reportsController.replicas=1
+# → NAME: kyverno, STATUS: deployed
 ```
 
 > **Примечание**: Версия чарта 3.3.0 соответствует Kyverno ~1.15. Актуальную версию проверяйте на [Artifact Hub](https://artifacthub.io/packages/helm/kyverno/kyverno).
@@ -57,24 +61,22 @@ helm install kyverno kyverno/kyverno \
 ```bash
 # Проверка подов
 kubectl get pods -n kyverno
-
-# Ожидаемый вывод:
-# NAME                                            READY   STATUS    RESTARTS   AGE
-# kyverno-admission-controller-5f8c9d7b9c-abc12   1/1     Running   0          5m
-# kyverno-background-controller-6d9f8e7c8d-def34  1/1     Running   0          5m
-# kyverno-cleanup-controller-7e8f9a0b1c-ghi56     1/1     Running   0          5m
-# kyverno-reports-controller-8f9a0b1c2d-jkl78     1/1     Running   0          5m
+# → NAME                                            READY   STATUS    RESTARTS   AGE
+# → kyverno-admission-controller-5f8c9d7b9c-abc12   1/1     Running   0          5m
+# → ...
 
 # Проверка webhook-ов
 kubectl get validatingwebhookconfiguration
 kubectl get mutatingwebhookconfiguration
 
-# Проверка CRD
+# Проверка CRD (Custom Resource Definition)
 kubectl get clusterpolicy
 kubectl get policy
 ```
 
 ### Установка с Policy Reporter
+
+**Policy Reporter** предоставляет UI (User Interface, пользовательский интерфейс) для визуализации отчетов:
 
 ```bash
 # Установка Kyverno + Policy Reporter
@@ -89,7 +91,7 @@ helm install policy-reporter policy-reporter/policy-reporter \
 
 ### Установка через Argo CD
 
-При установке через Argo CD **обязательно** использовать server-side apply:
+При развертывании через Argo CD **обязательно** использовать `server-side apply` для корректной обработки больших CRD:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -100,8 +102,7 @@ metadata:
 spec:
   syncPolicy:
     automated:
-      applyServerSide: true  # Обязательно!
-      # replace: true  # НЕ использовать!
+      applyServerSide: true  # Обязательно для установки CRD
   source:
     repoURL: https://kyverno.github.io/kyverno
     chart: kyverno
@@ -113,43 +114,24 @@ spec:
           replicas: 2
 ```
 
-> **Важно**: Параметр `spec.syncPolicy.automated.replace: true` использовать **нельзя** — вызывает конфликты с webhook ([подробнее](./argo-cd.md)).
-
-### Настройка Argo CD для работы с Kyverno
-
-В `values.yaml` Argo CD указать:
-
-```yaml
-# resourceTrackingMethod: annotation — для избежания конфликта меток
-resourceTrackingMethod: annotation
-
-# controller.diff.serverSide: true — для корректного сравнения
-controller:
-  diff:
-    serverSide: true
-
-# ignoreAggregatedRoles: true — для игнорирования динамических ролей
-resource:
-  compare:
-    ignoreAggregatedRoles: true
-```
+> **Важно**: Глобальные настройки Argo CD для корректной работы с Kyverno (Server-side Diff, Resource Tracking) описаны в разделе **[Интеграция с Argo CD](./argo-cd.md)**.
 
 ---
 
 ## Дополнительная информация
 
-### Aggregated Cluster Roles
+### Управление правами
 
 По умолчанию Kyverno не имеет прав на создание некоторых ресурсов (например, `Secret`). Для расширения прав используются **Aggregated Cluster Roles** ([подробнее](./additional.md)).
 
-### Troubleshooting
+### Поиск и устранение неисправностей (Troubleshooting)
 
 | Проблема | Решение |
 |----------|---------|
-| Webhook timeout | Увеличить `timeoutSeconds` в webhook configuration |
-| Policies not applied | Проверить статус подов admission-controller |
-| Reports not generated | Проверить права reports-controller |
-| Argo CD infinite loop | Включить `server-side diff` и `IncludeMutationWebhook` |
+| Webhook timeout | Увеличить `timeoutSeconds` в конфигурации webhook |
+| Policies not applied | Проверить статус подов `admission-controller` и наличие лейбла `kyverno-skip-webhook` |
+| Reports not generated | Проверить права `reports-controller` в ClusterRole |
+| Argo CD infinite loop | Включить `server-side diff` ([подробнее в интеграции](./argo-cd.md)) |
 
 ### Удаление
 
@@ -160,17 +142,16 @@ helm uninstall kyverno -n kyverno
 # Удаление namespace
 kubectl delete namespace kyverno
 
-# Удаление CRD (осторожно!)
+# Удаление CRD (ВНИМАНИЕ: удалит все политики и отчеты)
 kubectl delete crd clusterpolicies.kyverno.io
 kubectl delete crd policies.kyverno.io
 kubectl delete crd policyreports.wgpolicyk8s.io
 kubectl delete crd clusterpolicyreports.wgpolicyk8s.io
 ```
 
-> **Внимание**: Удаление CRD приведет к потере всех политик и отчетов!
-
 ### Связанные темы
 
-- [Интеграция с Argo CD](./argo-cd.md) — настройка совместного использования
-- [Aggregated Cluster Roles](./additional.md) — права для генерации ресурсов
-- [Policy Reports](./reports.md) — отчеты о применении политик
+- [Интеграция с Argo CD](./argo-cd.md) — детальная настройка совместной работы
+- [Основные концепции](./concepts.md) — архитектура и принцип работы
+- [Aggregated Cluster Roles](./additional.md) — управление правами доступа
+- [Типы правил](./rules.md) — написание и применение политик

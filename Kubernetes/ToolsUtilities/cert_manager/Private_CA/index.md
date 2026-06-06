@@ -1,6 +1,6 @@
 # Приватный CA для внутренних сервисов
 
-## Definitions
+## Определения
 
 **Приватный CA** — собственный центр сертификации, созданный внутри кластера Kubernetes для выпуска сертификатов, доверенных только внутри периметра кластера. Отличается от CA кластера ([cluster_ca.md](../cluster_ca.md)) источником доверия: приватный CA использует self-signed корневой сертификат, тогда как CA кластера опирается на `/etc/kubernetes/pki/ca.crt`.
 
@@ -12,7 +12,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Поток создания приватного CA
 
@@ -40,7 +40,7 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 Практические сценарии создания приватного CA описаны в [scenarios.md](./scenarios.md):
 
@@ -52,7 +52,7 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Сравнение с CA кластера
 
@@ -63,12 +63,8 @@ SelfSigned Issuer → CA Certificate → CA Issuer → Сертификаты с
 | **Изоляция** | Полный контроль, отдельный namespace | Зависит от жизненного цикла кластера |
 | **Сложность** | Низкая | Средняя (требует доступа к master-узлам) |
 
-### Надёжность информации
+### Смотрите также
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Self-signed CA | **10** | Официальная документация cert-manager.io |
-| PKCS8 encoding | **10** | Требуется для Java (OpenSearch, Elasticsearch) |
-| ClusterIssuer | **10** | Стандартный паттерн cert-manager |
-
-См. также: [Administration](../Administration/), [LetsEncrypt](../LetsEncrypt/), [Installation](../installation.md).
+- **[Cert-manager: Администрирование](../Administration/index.md)** — управление жизненным циклом сертификатов
+- **[Cert-manager: Let's Encrypt](../LetsEncrypt/index.md)** — публичные сертификаты
+- **[Cert-manager: Установка](../installation.md)** — процесс установки в кластер

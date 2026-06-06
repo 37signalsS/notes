@@ -1,31 +1,31 @@
-# Policy Reports (Отчеты) Kyverno
+# Отчеты Kyverno (Policy Reports)
 
 ## Определения
 
-**Policy Report** — стандартизированный формат отчетов о применении политик, разработанный **Policy Report Working Group** (WG Policy K8s).
+**Policy Report** — стандартизированный формат отчетов о применении политик, разработанный **Policy Report Working Group (WG, рабочая группа по отчетам политик)** в рамках сообщества Kubernetes.
 
 **Типы отчетов**:
 
-- **PolicyReport** — namespace-scoped ресурс, создается для политик типа `Policy`
-- **ClusterPolicyReport** — cluster-scoped ресурс, создается для политик типа `ClusterPolicy`
-
-> **Основной файл:** Это основной файл по отчетам Kyverno. Другие источники ссылаются на эту документацию.
+- **PolicyReport** — ресурс в рамках пространства имен (namespace-scoped), создается для политик типа `Policy`.
+- **ClusterPolicyReport** — ресурс в масштабе кластера (cluster-scoped), создается для политик типа `ClusterPolicy`.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Как работают отчеты
 
 | Характеристика | Описание |
 |----------------|----------|
-| **Создание** | Автоматически при создании/обновлении ресурсов, к которым применяются политики |
-| **Хранение** | В **etcd** как обычные Kubernetes-ресурсы (отдельная БД не требуется) |
-| **Удаление** | При удалении ресурса соответствующая запись удаляется из отчета |
-| **Историчность** | Отчеты отражают **текущее состояние**, историческая информация не сохраняется |
-| **Формат** | Стандарт **Policy Report WG** — универсальный формат для policy-движков |
+| **Создание** | Автоматически при создании или обновлении ресурсов, к которым применяются политики. |
+| **Хранение** | В **etcd** (распределенное хранилище данных Kubernetes) как обычные ресурсы. |
+| **Удаление** | При удалении ресурса соответствующая запись автоматически удаляется из отчета. |
+| **Историчность** | Отчеты отражают **текущее состояние**; история изменений в них не сохраняется. |
+| **Формат** | Соответствует стандарту **Policy Report WG** — универсальному формату для различных инструментов безопасности. |
 
-### Структура отчета
+### Структура манифеста отчета
+
+Пример YAML (Yet Another Markup Language) манифеста:
 
 ```yaml
 apiVersion: wgpolicyk8s.io/v1alpha2
@@ -60,128 +60,95 @@ summary:
 
 | Поле | Описание | Пример |
 |------|----------|--------|
-| `category` | Категория политики | `security`, `best-practices`, `compliance` |
-| `message` | Сообщение о результате | "Container must run as non-root" |
-| `policy` | Имя примененной политики | `require-run-as-non-root` |
-| `result` | Статус результата | `pass`, `fail`, `warn`, `skip`, `error` |
-| `resource` | Ресурс, к которому применена политика | `pod/my-app` |
-| `rule` | Имя правила в политике | `run-as-non-root` |
-| `severity` | Критичность нарушения | `low`, `medium`, `high`, `critical` |
+| `category` | Категория политики | `security`, `best-practices` |
+| `message` | Описание результата проверки | "Container must run as non-root" |
+| `policy` | Название примененной политики | `require-run-as-non-root` |
+| `result` | Статус (результат) проверки | `pass`, `fail`, `warn`, `skip`, `error` |
+| `resource` | Ссылка на ресурс | `pod/my-app` |
+| `rule` | Название конкретного правила | `run-as-non-root` |
+| `severity` | Уровень критичности | `low`, `medium`, `high`, `critical` |
 
-### Статусы результатов (result)
+### Статусы результатов
 
-| Статус | Описание | Когда присваивается |
+| Статус | Описание | Условие присвоения |
 |--------|----------|---------------------|
-| **pass** | Ресурс прошел проверку | Политика выполнена успешно |
-| **fail** | Ресурс не прошел проверку | Политика запретила ресурс |
-| **warn** | Предупреждение | Режим `audit` или аннотация `warn` |
-| **skip** | Политика не выполнялась | Сработал `policy exception` или не подошел `match` |
-| **error** | Ошибка обработки | Внутренняя ошибка Kyverno |
+| **pass** | Пройдено | Ресурс полностью соответствует правилам политики. |
+| **fail** | Ошибка | Ресурс нарушает правила (в режиме `audit` или `enforce`). |
+| **warn** | Предупреждение | Используется при мягких проверках или переходных периодах. |
+| **skip** | Пропущено | Правило не применимо к ресурсу (например, из-за `exclude`). |
+| **error** | Системная ошибка | Произошел сбой при попытке обработать ресурс. |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Просмотр отчетов
+### Просмотр отчетов через kubectl
 
 ```bash
-# Список Policy Reports в namespace
+# Список отчетов в конкретном пространстве имен
 kubectl get policyreports -n <namespace>
+# → NAME           PASS   FAIL   WARN   ERROR   SKIP   AGE
+# → policyreport   15     3      1      0       0      10m
 
-# Список ClusterPolicyReports
+# Список отчетов масштаба кластера
 kubectl get clusterpolicyreports
 
-# Детальная информация
+# Детальный просмотр отчета
 kubectl describe policyreport <name> -n <namespace>
 
-# Отчеты с нарушениями
+# Поиск отчетов с нарушениями (fail > 0)
 kubectl get policyreports -n <namespace> -o jsonpath='{range .items[?(@.summary.fail>0)]}{"Namespace: "}{.metadata.namespace}{" - Fail: "}{.summary.fail}{"\n"}{end}'
-
-# Экспорт в YAML
-kubectl get policyreport <name> -n <namespace> -o yaml
 ```
 
-### Пример: Поиск всех нарушений
+### Анализ нарушений в кластере
 
 ```bash
-# Все fail-результаты в кластере
+# Вывод всех ресурсов, нарушающих политики
 kubectl get clusterpolicyreports -o jsonpath='{range .items[*].results[?(@.result=="fail")]}{"Policy: "}{.policy}{" Resource: "}{.resource}{" Message: "}{.message}{"\n"}{end}'
-```
 
-### Пример: Dashboard запросы
-
-```bash
-# Количество нарушений по политикам
+# Статистика нарушений по политикам
 kubectl get clusterpolicyreports -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.summary.fail}{"\n"}{end}' | sort -k2 -nr
-
-# Ресурсы с наибольшим количеством нарушений
-kubectl get policyreports --all-namespaces -o jsonpath='{range .items[*].results[?(@.result=="fail")]}{.resource}{"\n"}{end}' | sort | uniq -c | sort -nr | head -10
 ```
 
-### Интеграция с Policy Reporter
+### Визуализация и мониторинг
 
-Метрики Prometheus и визуализация отчетов реализованы через [Policy Reporter](./reporter.md) — отдельное приложение, предоставляющее Web UI, REST API и уведомления (Slack, Telegram, Discord).
+Для удобной работы с отчетами рекомендуется использовать **Policy Reporter** ([подробнее](./reporter.md)). Он предоставляет:
+- **UI** (User Interface, пользовательский интерфейс) для поиска и фильтрации.
+- **REST API** (Representational State Transfer Application Programming Interface) для интеграции.
+- Отправку уведомлений в Slack, Telegram или Discord.
 
-Основные метрики экспортируются в формате Prometheus:
+Метрики для Prometheus (система мониторинга):
 
 ```prometheus
-# Количество результатов по статусам
+# Общее количество результатов по статусам
 policy_report_result_total{result="fail", policy="require-run-as-non-root"}
-policy_report_result_total{result="pass", policy="require-run-as-non-root"}
 
-# Сводка по namespace
+# Сводная статистика по пространству имен
 policy_report_summary_fail{namespace="default"}
-policy_report_summary_pass{namespace="default"}
 ```
-
-Примеры запросов для Grafana и детальная настройка описаны в [Policy Reporter](./reporter.md).
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Аннотации для настройки поведения
+### Настройка метаданных через аннотации
 
-| Аннотация | Значение | Описание |
-|-----------|----------|----------|
-| `policies.kyverno.io/validation-failure-action` | `enforce`, `audit`, `warn` | Режим применения политики |
-| `policies.kyverno.io/title` | Заголовок | Отображаемое имя политики |
-| `policies.kyverno.io/category` | Категория | Группа политик (security, best-practices) |
-| `policies.kyverno.io/severity` | `low`, `medium`, `high`, `critical` | Критичность нарушения |
-| `policies.kyverno.io/description` | Описание | Подробное описание политики |
+Аннотации в политиках определяют, как информация будет отображаться в отчетах:
 
-### Пример политики с аннотациями
+| Аннотация | Пример значения | Назначение |
+|-----------|-----------------|------------|
+| `policies.kyverno.io/title` | "Require Non-Root User" | Человекочитаемое название. |
+| `policies.kyverno.io/category` | "Security" | Группировка в интерфейсе. |
+| `policies.kyverno.io/severity` | "high" | Определение приоритета исправления. |
 
-```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: require-run-as-non-root
-  annotations:
-    policies.kyverno.io/title: Require Non-Root User
-    policies.kyverno.io/category: Security
-    policies.kyverno.io/severity: high
-    policies.kyverno.io/description: >-
-      Containers must run as non-root user to reduce attack surface.
-spec:
-  validationFailureAction: Enforce
-  background: true
-  rules:
-    - name: run-as-non-root
-      match:
-        resources:
-          kinds:
-            - Pod
-      validate:
-        message: "Container must run as non-root user"
-        pattern:
-          spec:
-            securityContext:
-              runAsNonRoot: true
-```
+### Ограничения системы отчетов
 
-### Ограничения
+1. **Нагрузка на etcd**: При очень большом количестве ресурсов (десятки тысяч) объем отчетов может существенно увеличить нагрузку на хранилище данных Kubernetes.
+2. **Отсутствие истории**: Policy Reports показывают только срез на текущий момент. Для хранения истории необходимо настроить экспорт логов или использовать внешние инструменты.
+3. **Зависимость от контроллера**: Генерацией отчетов занимается `reports-controller`. Если он остановлен, информация в отчетах перестанет обновляться.
 
-- Отчеты хранятся в etcd — при большом количестве ресурсов возможен рост占用
-- Историческая информация не сохраняется — только текущее состояние
-- При удалении политики отчеты не удаляются автоматически
+### Связанные темы
+
+- [Policy Reporter](./reporter.md) — визуализация и алертинг.
+- [Фоновое сканирование](./background.md) — как Kyverno проверяет существующие ресурсы.
+- [Интеграция с Prometheus](./reporter.md#метрики) — мониторинг состояния безопасности.

@@ -2,78 +2,58 @@
 
 ## Определения
 
-**etcd** — распределённое key-value хранилище Kubernetes для всех объектов кластера.
+**etcd** — это высокодоступное распределенное хранилище типа «ключ-значение», используемое Kubernetes в качестве основного хранилища для всех данных кластера (конфигурации, состояния, секретов).
 
-**Структура хранения:**
+**Хранение секретов в etcd** — процесс сериализации и записи объектов `Secret` в базу данных etcd. По умолчанию данные в etcd записываются в виде обычного текста (сериализованный JSON/Protobuf), где поле `data` закодировано в Base64.
 
-```
-/registry/secrets/<namespace>/<secret-name>
-```
-
-**Формат:** Secret хранятся в etcd в сериализованном виде. Поле `data` закодировано в Base64 (не шифрование!).
-
-> Без Encryption at Rest любой, имеющий доступ к etcd, может прочитать секреты. Подробнее о безопасности см. [Безопасность Secret](security.md).
+> **Важно:** Base64 не является шифрованием. Любой пользователь, имеющий доступ к файлам etcd или API etcd, может легко декодировать секреты. Для защиты данных необходимо использовать механизм **Encryption at Rest**.
 
 ## Основные концепции
 
-### Принцип хранения
+### Структура и формат данных
 
-- **Путь в etcd:** `/registry/secrets/<namespace>/<name>`
-- **Кодировка:** Base64 (не шифрование) — данные легко декодировать
-- **Ограничение:** до 1 MiB на один Secret (ограничение etcd)
+Все секреты в etcd располагаются по определенному пути:
+`/registry/secrets/<namespace>/<name>`
 
-### Encryption at Rest
+*   **Формат:** Protobuf (по умолчанию для внутренних нужд K8s).
+*   **Кодировка:** Значения в поле `data` хранятся в Base64.
+*   **Ограничение размера:** Лимит etcd на один объект составляет **1 MiB**. Это включает в себя метаданные и само содержимое секрета.
 
-**Минимальная защита для production-кластеров.**
+### Шифрование при хранении (Encryption at Rest)
 
-**Провайдеры шифрования:**
+Для обеспечения безопасности данных на диске (в случае кражи бэкапов или доступа к узлам master) API-сервер Kubernetes поддерживает прозрачное шифрование. Шифрование происходит на стороне `kube-apiserver` перед записью в etcd.
 
-- **aescbc** — AES-CBC (256-bit), рекомендуется для большинства сценариев
-- **aesgcm** — AES-GCM (более современный, но требует больше CPU)
-- **secretbox** — XSalsa20-Poly1305 (альтернатива от Kubernetes)
-- **kms** — интеграция с внешними KMS (AWS KMS, GCP KMS, Azure Key Vault)
-- **identity** — без шифрования (только для чтения старых данных)
+**Основные провайдеры шифрования:**
 
-> **Подробнее:** [Шифрование etcd в etcd_alternatives_and_security.md](../../Concepts/etcd_alternatives_and_security.md#конфигурация-encryptionconfiguration)
+| Провайдер | Описание | Особенности |
+| :--- | :--- | :--- |
+| **identity** | Без шифрования | Используется по умолчанию. Необходим как fallback при миграции. |
+| **aescbc** | AES-CBC с PKCS7 padding | Рекомендуемый стандарт (256-битный ключ). |
+| **aesgcm** | AES-GCM | Более современный, обеспечивает проверку целостности, но требует больше ресурсов CPU. |
+| **kms** | Внешний KMS (Key Management Service) | Самый безопасный метод. Интеграция с AWS KMS, Google KMS, Vault. Ключи хранятся вне кластера. |
 
 ## Практические сценарии
 
-### Просмотр ресурсов в etcd
+### Просмотр данных напрямую в etcd (etcdctl)
 
-#### Через kubectl (рекомендуется)
-
-```bash
-kubectl get secret my-secret -o yaml
-
-echo "bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk" | base64 -d
-kubectl get secrets
-kubectl get secrets --all-namespaces
-```
-
-#### Через etcdctl
+Для отладки или аудита можно прочитать данные непосредственно из etcd, используя утилиту `etcdctl`. Для этого требуются сертификаты доступа.
 
 ```bash
-# Установка etcdctl
+# Настройка переменных окружения для etcdctl
 export ETCDCTL_API=3
+ENDPOINT="https://127.0.0.1:2379"
+CACERT="/etc/kubernetes/pki/etcd/ca.crt"
+CERT="/etc/kubernetes/pki/etcd/server.crt"
+KEY="/etc/kubernetes/pki/etcd/server.key"
 
-# Подключение к etcd (требуются сертификаты)
-etcdctl --endpoints=https://127.0.0.1:2379 \
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-  --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key \
+# Получение сырых данных секрета (будут видны как Base64 или зашифрованные данные)
+etcdctl --endpoints=$ENDPOINT --cacert=$CACERT --cert=$CERT --key=$KEY \
   get /registry/secrets/default/my-secret
-
-# Просмотр всех секретов
-etcdctl --endpoints=https://127.0.0.1:2379 \
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-  --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key \
-  get /registry/secrets --prefix --keys-only
 ```
 
-### Шифрование at-rest (Encryption at Rest)
+### Настройка EncryptionConfiguration
 
-**Это обязательный уровень защиты Secret в production.**
+Для включения шифрования создайте файл конфигурации и передайте его API-серверу через флаг `--encryption-provider-config`.
 
 ```yaml
 # /etc/kubernetes/encryption-config.yaml
@@ -81,46 +61,47 @@ apiVersion: apiserver.config.k8s.io/v1
 kind: EncryptionConfiguration
 resources:
   - resources:
-    - secrets
-    - configmaps
+      - secrets
+      - configmaps # Рекомендуется шифровать и ConfigMap, если там есть токены
     providers:
-    - aescbc:
-        keys:
-        - name: key1
-          secret: <base64-encoded-32-byte-key>
-    - identity: {} # fallback для нешифрованных данных
+      - aescbc:
+          keys:
+            - name: key1
+              secret: <base64-encoded-32-byte-key> # echo -n "your-32-byte-key-here" | base64
+      - identity: {} # Позволяет читать старые (незашифрованные) данные
 ```
+
+**Применение:** Добавьте флаг в манифест Static Pod API-сервера (`/etc/kubernetes/manifests/kube-apiserver.yaml`):
+`--encryption-provider-config=/etc/kubernetes/encryption-config.yaml`
 
 ### Ротация ключей шифрования
 
-```yaml
-# Добавляем новый ключ
-apiVersion: apiserver.config.k8s.io/v1
-kind: EncryptionConfiguration
-resources:
-  - resources:
-    - secrets
+Для смены ключа добавьте новый ключ **первым** в список провайдеров.
+
+1.  Обновите `EncryptionConfiguration`:
+    ```yaml
     providers:
-    - aescbc:
-        keys:
-        - name: key2 # Новый ключ первым
-          secret: <new-base64-encoded-key>
-        - name: key1
-          secret: <old-base64-encoded-key>
-```
-
-После перезапуска API-сервера перешифруйте старые секреты:
-
-```bash
-kubectl get secrets --all-namespaces -o json | kubectl replace -f -
-```
+      - aescbc:
+          keys:
+            - name: key2 # Новый основной ключ
+              secret: <new-base64-key>
+            - name: key1 # Старый ключ для расшифровки существующих данных
+              secret: <old-base64-key>
+    ```
+2.  Перезапустите API-сервер.
+3.  Перезапишите все секреты, чтобы они зашифровались новым ключом:
+    ```bash
+    kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+    ```
 
 ## Дополнительная информация
 
-### Ограничения
+### Ограничения и нюансы
 
-Подробнее об ограничениях размера Secret см. в [Основах Secret](secrets_basics.md#ограничения).
+*   **Производительность:** Шифрование добавляет небольшую задержку при операциях чтения/записи в API-сервер.
+*   **Безопасность конфигурации:** Сам файл `EncryptionConfiguration` содержит секретные ключи. Он должен быть защищен правами доступа (только для root) на уровне ОС.
+*   **Бэкапы:** При резервном копировании etcd убедитесь, что вы также сохраняете файл конфигурации шифрования, иначе восстановить данные будет невозможно.
 
 ### Связанные темы
 
-[Основы Secret](secrets_basics.md), [Создание Secret](creating_secrets.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [Шифрование etcd](../../Concepts/etcd_alternatives_and_security.md).
+[Основы Secret](secrets_basics.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [Шифрование etcd в Concepts](../../Concepts/etcd_alternatives_and_security.md).

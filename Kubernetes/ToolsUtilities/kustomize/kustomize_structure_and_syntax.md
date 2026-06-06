@@ -1,14 +1,14 @@
-# Kustomize — Project Structure and Syntax
+# Kustomize — Структура проекта и синтаксис
 
-## 1. Definitions
+## 1. Определения
 
-**Base** — директория с общими Kubernetes-манифестами и `kustomization.yaml`, не зависящими от окружения. Base не содержит overlay-специфичных изменений.
+**Base (Базовый слой)** — директория с общими Kubernetes-манифестами и файлом `kustomization.yaml`, которые не зависят от конкретного окружения. Базовый слой не должен содержать специфичных для окружения изменений.
 
-**Overlay** — директория, ссылающаяся на base (или другой overlay) через `resources` и применяющая трансформации через патчи, generators, метаданные.
+**Overlay (Слой наложения)** — директория, ссылающаяся на базовый слой (или другой overlay) через блок `resources` и применяющая трансформации посредством патчей, генераторов и метаданных.
 
-**kustomization.yaml** — единственный манифест, описывающий все ресурсы, трансформации, генераторы и патчи для данной директории. Без него Kustomize игнорирует директорию.
+**kustomization.yaml** — основной конфигурационный манифест, описывающий все ресурсы, трансформации, генераторы и патчи для данной директории. Если этот файл отсутствует, Kustomize игнорирует директорию.
 
-## 2. Basic Concepts
+## 2. Основные концепции
 
 ### Типичная структура проекта
 
@@ -41,8 +41,8 @@ resources:
   - deployment.yaml
   - service.yaml
   - configmap.yaml
-  - ../base                    # относительная ссылка на base
-  - https://example.com/k8s    # remote resource (Kustomize 4.0+)
+  - ../base                    # Относительная ссылка на базовый слой
+  - https://example.com/k8s    # Удаленный ресурс (Remote resource, Kustomize 4.0+)
 
 # --- Трансформации метаданных ---
 namespace: production
@@ -83,7 +83,7 @@ patches:
         path: /spec/replicas
         value: 3
 
-# --- Изображения ---
+# --- Образы (Images) ---
 images:
   - name: myregistry/myapp
     newTag: v1.2.0
@@ -99,7 +99,7 @@ generatorOptions:
     managed: "true"
 
 # --- Ресурсы для удаления ---
-# patchesJson6902:  # legacy, заменён на patches
+# patchesJson6902:  # Устарело (legacy), заменено на patches
 #   - target:
 #       group: apps
 #       version: v1
@@ -107,7 +107,7 @@ generatorOptions:
 #       name: myapp
 #     path: json-patch.yaml
 
-# --- Компоненты (alpha) ---
+# --- Компоненты (Alpha) ---
 # components:
 #   - ../components/monitoring
 #   - ../components/logging
@@ -116,7 +116,7 @@ generatorOptions:
 # configurations:
 #   - my-transformer-config.yaml
 
-# --- Реплейсы (legacy) ---
+# --- Реплейсы (Устарело, legacy) ---
 # replacements:
 #   - source:
 #       kind: ConfigMap
@@ -135,28 +135,28 @@ generatorOptions:
 | Поле | Назначение | Пример |
 | :--- | :--- | :--- |
 | `resources` | Список YAML-файлов или директорий | `deployment.yaml`, `../base` |
-| `namespace` | Namespace для всех ресурсов | `production` |
+| `namespace` | Пространство имен для всех ресурсов | `production` |
 | `namePrefix` | Префикс к именам ресурсов | `prod-` |
 | `nameSuffix` | Суффикс к именам ресурсов | `-v1` |
-| `commonLabels` | Labels для всех ресурсов + селекторы | `app: myapp` |
-| `commonAnnotations` | Annotations для всех ресурсов | `description: "Production"` |
-| `configMapGenerator` | Генерация ConfigMap | См. [Advanced Features](./kustomize_advanced_features.md) |
-| `secretGenerator` | Генерация Secret | См. [Advanced Features](./kustomize_advanced_features.md) |
-| `patches` | Патчи для ресурсов | См. [Overlays and Patches](./kustomize_overlays_and_patches.md) |
-| `images` | Override image name/tag/digest | `newTag: v1.2.0` |
+| `commonLabels` | Метки для всех ресурсов + селекторы | `app: myapp` |
+| `commonAnnotations` | Аннотации для всех ресурсов | `description: "Production"` |
+| `configMapGenerator` | Генерация ConfigMap | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
+| `secretGenerator` | Генерация Secret | См. [Продвинутые возможности](./kustomize_advanced_features.md) |
+| `patches` | Патчи для ресурсов | См. [Наложения и патчи](./kustomize_overlays_and_patches.md) |
+| `images` | Переопределение имени/тега/хеша образа | `newTag: v1.2.0` |
 | `generatorOptions` | Настройки генераторов | `disableNameSuffixHash: true` |
-| `components` | Переиспользуемые компоненты (alpha) | `../components/monitoring` |
+| `components` | Переиспользуемые компоненты (Alpha) | `../components/monitoring` |
 
-### Base ресурсы
+### Ресурсы базового слоя (Base)
 
-Поддерживаемые типы ресурсов в `resources`:
+Поддерживаемые типы ресурсов в блоке `resources`:
 
 | Тип | Пример | Примечание |
 | :--- | :--- | :--- |
-| Локальный файл | `deployment.yaml` | Относительно kustomization.yaml |
-| Относительный путь | `../base` | Ссылка на base/overlay |
-| Remote URL | `https://example.com/k8s/resource.yaml` | Kustomize 4.0+ |
-| Git URL | `github.com/org/repo//path?ref=v1.0` | Через `?ref=` для версии |
+| Локальный файл | `deployment.yaml` | Путь относительно `kustomization.yaml` |
+| Относительный путь | `../base` | Ссылка на локальную директорию |
+| Удаленный URL | `https://example.com/k8s/resource.yaml` | Поддерживается с Kustomize 4.0+ |
+| Git URL | `github.com/org/repo//path?ref=v1.0` | Версионирование через параметр `?ref=` |
 
 ### Практика: base/kustomization.yaml
 
@@ -174,11 +174,11 @@ commonLabels:
   managed-by: kustomize
 ```
 
-Base не должен содержать `namespace`, `namePrefix`, `nameSuffix` — эти трансформации применяются в overlays.
+Базовый слой не должен содержать директивы `namespace`, `namePrefix` и `nameSuffix` — эти трансформации должны применяться исключительно на уровне overlays.
 
-## 3. Practical Scenarios
+## 3. Практические сценарии
 
-### 3.1. Полный пример base
+### 3.1. Полный пример базового слоя
 
 **base/deployment.yaml:**
 
@@ -244,7 +244,7 @@ commonLabels:
 
 ### 3.2. Базовый overlay
 
-Минимальный overlay для наследования от base:
+Минимальный слой наложения (overlay) для наследования конфигурации от базового слоя:
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -260,7 +260,7 @@ commonLabels:
   environment: staging
 ```
 
-Полные примеры staging и production overlays с патчами, generators и images — в [Наложения и патчи](./kustomize_overlays_and_patches.md).
+Более сложные примеры для staging и production с использованием патчей, генераторов и переопределением образов описаны в разделе [Наложения и патчи](./kustomize_overlays_and_patches.md).
 
 ### 3.3. Remote base из Git
 
@@ -279,7 +279,9 @@ patches:
   - path: custom-patch.yaml
 ```
 
-### 3.4. Использование components (alpha)
+### 3.4. Использование components (Alpha)
+
+Компоненты позволяют создавать переиспользуемые блоки конфигурации.
 
 ```yaml
 # kustomization.yaml
@@ -294,50 +296,52 @@ components:
   - ../components/monitoring
 ```
 
-Каждый компонент — отдельная директория со своим `kustomization.yaml` типа `kind: Component`.
+Каждый компонент представляет собой отдельную директорию со своим собственным файлом `kustomization.yaml`, в котором указан тип `kind: Component`.
 
-## 4. Additional Information
+## 4. Дополнительная информация
 
-### Порядок применения трансформаций и сортировка
+### Порядок применения трансформаций и автоматическая сортировка
 
-Kustomize применяет изменения в следующем порядке:
+Kustomize применяет изменения в строго определенном порядке:
 
-1. **resources** — загрузка ресурсов.
-2. **namePrefix/nameSuffix** — модификация имён.
-3. **namespace** — установка namespace.
-4. **commonLabels/commonAnnotations** — добавление метаданных.
-5. **patches** — наложение патчей.
-6. **images** — override образов.
-7. **configMapGenerator/secretGenerator** — генерация ресурсов.
-8. **generatorOptions** — финальные настройки генераторов.
+1. **resources** — загрузка всех указанных ресурсов.
+2. **namePrefix/nameSuffix** — модификация имен ресурсов.
+3. **namespace** — установка пространства имен.
+4. **commonLabels/commonAnnotations** — добавление общих метаданных.
+5. **patches** — применение всех патчей.
+6. **images** — переопределение образов.
+7. **configMapGenerator/secretGenerator** — генерация ConfigMap и Secret.
+8. **generatorOptions** — применение финальных настроек к сгенерированным ресурсам.
 
 **Автоматическая сортировка ресурсов:**
-При сборке (`kustomize build`) Kustomize автоматически сортирует ресурсы в итоговом манифесте независимо от их порядка в `kustomization.yaml`.
+Во время сборки (`kustomize build`) Kustomize автоматически выстраивает ресурсы в итоговом манифесте в правильном порядке, независимо от того, в какой последовательности они были перечислены в `kustomization.yaml`.
 
-- **CRD (CustomResourceDefinition)** всегда выносятся в начало списка. Это гарантирует, что определения ресурсов будут применены раньше, чем сами кастомные ресурсы, предотвращая ошибки при деплое.
-- Последовательность обычно выглядит так: `Namespace` → `ResourceQuota` → `StorageClass` → `CustomResourceDefinition` → ... → `Deployment` → `Service`.
+- **CRD (CustomResourceDefinition)** всегда помещаются в начало итогового манифеста. Это гарантирует, что определения пользовательских ресурсов будут созданы в кластере до того, как будут применены сами пользовательские ресурсы, что предотвращает ошибки при развертывании.
+- Стандартная последовательность развертывания обычно выглядит так: `Namespace` → `ResourceQuota` → `StorageClass` → `CustomResourceDefinition` → ... → `Deployment` → `Service`.
 
-### Устаревшие поля
+### Устаревшие поля (Legacy/Deprecated)
 
 | Поле | Статус | Замена |
 | :--- | :--- | :--- |
-| `bases` | Удалено | `resources` |
-| `patchesJson6902` | Deprecated | `patches` с `target` |
-| `patchesStrategicMerge` | Deprecated | `patches` с `path` |
-| `var` | Удалено | `replacements` |
+| `bases` | Удалено | Блок `resources` |
+| `patchesJson6902` | Устарело (Deprecated) | Блок `patches` с использованием селектора `target` |
+| `patchesStrategicMerge` | Устарело (Deprecated) | Блок `patches` с указанием пути `path` |
+| `var` | Удалено | Механизм `replacements` |
 
 ### Валидация структуры
 
 ```bash
-# Проверка kustomization.yaml
+# Генерация манифестов (проверка синтаксиса kustomization.yaml)
 kustomize build .
+# → Вывод: полный объединенный YAML-файл
 
-# Валидация через kubeconform
+# Валидация сгенерированных манифестов через kubeconform
 kustomize build . | kubeconform -strict -summary -
+# → Вывод: Summary: 5 resources found, 0 errors
 ```
 
 ### Связь с другими разделами
 
-- [Overview and Core Concepts](./kustomize_overview.md) — базовые определения
-- [Наложения и патчи](./kustomize_overlays_and_patches.md) — типы патчей, полные staging/production примеры
-- [Продвинутые возможности](./kustomize_advanced_features.md) — генерация ConfigMap/Secret, интеграция с Helm
+- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения
+- [Наложения и патчи](./kustomize_overlays_and_patches.md) — типы патчей и примеры окружений
+- [Продвинутые возможности](./kustomize_advanced_features.md) — генерация ресурсов и интеграция с Helm

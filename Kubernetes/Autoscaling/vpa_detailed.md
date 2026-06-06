@@ -234,7 +234,7 @@ containerRecommendations:
 * **Переходите к `Initial`** — применяйте изменения постепенно к новым подам.
 * **Используйте `Auto` с Kubernetes 1.35+** — для применения без перезапуска.
 * **Настройте `minAllowed`/`maxAllowed`** — предотвратите недопустимые значения.
-* **PDB для критичных сервисов** — [PodDisruptionBudget](pod_disruption_budget.md) минимизирует прерывания.
+* **PDB (Pod Disruption Budget)** для критичных сервисов — [PodDisruptionBudget](pod_disruption_budget.md) минимизирует прерывания.
 * **Избегайте частых изменений** — VPA требует времени для стабилизации рекомендаций.
 
 ## Дополнительная информация
@@ -268,3 +268,4 @@ containerRecommendations:
 ### Интеграции
 
 VPA работает в связке с другими компонентами: в режиме `Auto` использует [In-Place Pod Resize](in_place_pod_resize.md) для применения без перезапуска (Kubernetes 1.35+), в режиме `Off` предоставляет рекомендации для [HPA](HPA/index.md), который масштабирует горизонтально, а [Pod Disruption Budget](pod_disruption_budget.md) минимизирует прерывания при eviction подов VPA.
+�пользует [In-Place Pod Resize](in_place_pod_resize.md) для применения без перезапуска (Kubernetes 1.35+), в режиме `Off` предоставляет рекомендации для [HPA](HPA/index.md), который масштабирует горизонтально, а [Pod Disruption Budget](pod_disruption_budget.md) минимизирует прерывания при eviction подов VPA.

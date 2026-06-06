@@ -2,233 +2,157 @@
 
 ## Определения
 
-**Декларативный манифест** — YAML-файл, описывающий желаемое состояние объекта Kubernetes. Хранится в системе контроля версий, обеспечивает воспроизводимость и отслеживаемость изменений.
+**YAML (YAML Ain't Markup Language)** — язык сериализации данных, используемый в Kubernetes для описания конфигурации объектов.
 
-**Immutable тег образа** — конкретный, неизменяемый тег версии контейнера (например, `nginx:1.28.0`), в отличие от плавающего тега `:latest`.
+**Манифест** — декларативный файл (обычно в формате YAML), описывающий желаемое состояние объекта Kubernetes. Манифесты являются основой подхода IaC (Infrastructure as Code — инфраструктура как код).
+
+**Immutable tag (неизменяемый тег)** — фиксированная версия образа container (контейнера) в реестре (например, `1.28.0`), которая гарантирует, что при каждом скачивании будет получено идентичное содержимое.
 
 ---
 
 ## Базовые концепции
 
-### Структура манифеста
+### Декларативный подход и контроль версий
 
-Любой манифест Pod состоит из четырёх полей верхнего уровня:
-
-| Поле | Описание | Пример |
-| :--- | :--- | :--- |
-| `apiVersion` | Версия Kubernetes API | `v1` для Pod |
-| `kind` | Тип объекта | `Pod` |
-| `metadata` | Метаданные объекта | `name`, `namespace`, `labels`, `annotations` |
-| `spec` | Спецификация желаемого состояния | Контейнеры, тома, сетевые настройки |
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-first-pod
-  namespace: work
-  labels:
-    app: my-app
-    version: "1.27.5"
-spec:
-  # Спецификация пода
-```
-
-### Декларативный подход
-
-Всегда используйте декларативные YAML-файлы вместо императивных команд (`kubectl run`).
+Всегда отдавайте предпочтение декларативным манифестам перед императивными командами (например, `kubectl run`).
 
 | Преимущество | Описание |
 | :--- | :--- |
-| Воспроизводимость | Манифесты хранятся в Git, можно отслеживать изменения и откатываться |
-| Наглядность | Сложную конфигурацию проще описать и прочитать в YAML |
-| Стабильность | API Kubernetes меняется реже, чем флаги `kubectl` |
+| **Воспроизводимость** | Файлы можно хранить в Git, что позволяет отслеживать историю изменений и быстро восстанавливать окружение. |
+| **Проверка (Linting)** | Манифесты можно проверять автоматизированными инструментами на ошибки безопасности и соответствие стандартам до деплоя. |
+| **Командная работа** | YAML-файлы служат документацией и позволяют проводить аудит изменений через Merge Requests. |
 
-### Избегайте тега `:latest`
+### Управление образами
 
-Никогда не используйте тег `:latest` для контейнеров в production.
+**Избегайте использования тега `:latest`.**
 
-| Проблема | Решение |
-| :--- | :--- |
-| Тег `:latest` плавающий — при обновлении образа в реестре под может скачать несовместимую версию | Всегда указывайте конкретный тег: `nginx:1.28.0` или `my-app:v1.2.3-commit-af85a7` |
+Тег `:latest` является "плавающим". Если в реестре будет опубликован новый образ с этим же тегом, Pod (поды) в кластере могут оказаться с разными версиями кода после перезапуска, что затрудняет отладку и нарушает стабильность.
+
+**Рекомендация:** используйте конкретные версии (семантическое версионирование) или хэш образа (SHA256).
 
 ```yaml
-# ПЛОХО
-image: nginx
+# Плохо: непредсказуемое поведение
 image: nginx:latest
 
-# ХОРОШО
+# Хорошо: гарантированная версия
 image: nginx:1.28.0
 ```
 
-### Requests и Limits
+### Управление ресурсами (Requests и Limits)
 
-Всегда указывайте `requests` и `limits` по CPU и памяти для каждого контейнера.
+Для каждого container необходимо явно указывать запросы (`requests`) и лимиты (`limits`) ресурсов. Это критично для стабильности Node (узлов) и корректной работы планировщика.
 
-| Параметр | Описание |
-| :--- | :--- |
-| `requests` | Гарантированное количество ресурсов, резервируемое для контейнера. Используется планировщиком для выбора узла |
-| `limits` | Максимальное количество ресурсов, которое контейнер может потреблять |
+*   **Requests (запросы):** минимальный объем ресурсов, гарантируемый Kubernetes. Используется планировщиком для поиска подходящей Node.
+*   **Limits (лимиты):** максимальный объем ресурсов, который container может потребить.
 
-**Последствия отсутствия лимитов:**
+Подробное описание и влияние на классы обслуживания см. в [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md).
 
-1. **Стабильность узла:** Контейнер может занять все ресурсы узла, вызвав сбои других подов и `kubelet`
-2. **Предсказуемое планирование:** `requests` позволяют планировщику эффективно распределять поды
-3. **QoS классы:** На основе `requests` и `limits` Kubernetes присваивает подам классы QoS ([Guaranteed](../../Scheduling/qos_limit_and_requests.md), [Burstable](../../Scheduling/qos_limit_and_requests.md), [BestEffort](../../Scheduling/qos_limit_and_requests.md)), влияющие на порядок вытеснения при нехватке ресурсов
+### Пробы состояния (Probes)
 
-```yaml
-resources:
-  requests:
-    memory: "64Mi"
-    cpu: "250m"
-  limits:
-    memory: "128Mi"
-    cpu: "500m"
-```
+Автоматизация контроля работоспособности приложения через пробы позволяет Kubernetes самостоятельно принимать решения о перезапуске или маршрутизации трафика.
 
-**При превышении:**
+*   **livenessProbe:** проверяет, не зависло ли приложение.
+*   **readinessProbe:** определяет, готово ли приложение принимать трафик.
+*   **startupProbe:** используется для приложений с длительным временем запуска.
 
-- `limits.memory` — контейнер будет завершен OOM-киллером
-- `limits.cpu` — потребление CPU будет ограничено (throttled)
+Детальная настройка и параметры приведены в [Пробы в Kubernetes](../probes.md).
 
-### Probes (Пробы)
+### Метаданные и маркировка
 
-Пробы — механизм автоматического контроля состояния приложения.
+Используйте стандартизированные метки (Labels) для идентификации и группировки объектов.
 
-| Тип пробы | Назначение | Реакция на сбой |
-| :--- | :--- | :--- |
-| [livenessProbe](../probes.md) | Проверка, "живо" ли приложение | Перезапуск контейнера |
-| [readinessProbe](../probes.md) | Проверка готовности принимать трафик | Исключение пода из Service |
-| [startupProbe](../probes.md) | Проверка запуска для медленно стартующих приложений | Отключение других проб до успешного завершения |
+**Рекомендуемые метки (согласно стандартам Kubernetes):**
+*   `app.kubernetes.io/name`: название приложения.
+*   `app.kubernetes.io/instance`: уникальное имя инстанса.
+*   `app.kubernetes.io/version`: версия приложения.
+*   `app.kubernetes.io/managed-by`: инструмент управления (например, `helm`).
 
-### Метки (Labels)
+Полный перечень и правила именования см. в [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
 
-Метки — основной способ организации и выборки объектов в Kubernetes.
+### Безопасность
 
-**Рекомендуемый минимум:**
+Ограничивайте права container через `securityContext`. Принципы минимизации привилегий:
+*   Запрет запуска от пользователя `root`.
+*   Использование только необходимых capabilities.
+*   Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
 
-| Метка | Описание | Пример |
-| :--- | :--- | :--- |
-| `app` или `app.kubernetes.io/name` | Название приложения | `frontend`, `api-gateway` |
-| `version` или `app.kubernetes.io/version` | Версия приложения | `v1.2.3` |
-
-```yaml
-metadata:
-  labels:
-    app: web-server
-    version: "1.27.5"
-```
-
-### Immutability (Неизменяемость)
-
-Многие поля спецификации пода неизменяемы после создания (например, `image` контейнера нельзя изменить через `kubectl apply`).
-
-**Правильный подход:** Для изменения неизменяемого поля удалите старый под и создайте новый с обновлённым манифестом. На практике этим управляют контроллеры (например, [Deployment](../Deployment/deployment.md)), реализующие стратегии обновления (`RollingUpdate`).
-
-### Security Context
-
-[Security Context](../../Security/pod_security_context.md) ограничивает привилегии контейнера.
-
-```yaml
-spec:
-  containers:
-  - name: my-container
-    image: ...
-    securityContext:
-      allowPrivilegeEscalation: false
-      runAsNonRoot: true
-      runAsUser: 1001
-```
+Подробнее в [Security Context в Kubernetes](../../Security/pod_security_context.md).
 
 ---
 
 ## Практические сценарии
 
-### Пример 1: Полный манифест пода с лучшими практиками
+### Пример 1: Манифест Pod с применением лучших практик
+
+Пример описания Pod, готового к использованию в production:
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: production-ready-pod
-  namespace: production
+  name: web-app-prod
   labels:
-    app: web-server
-    version: "1.28.0"
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/version: "1.2.3"
 spec:
   containers:
   - name: nginx
-    image: docker.io/library/nginx:1.28.0
+    image: nginx:1.28.0
     ports:
-    - containerPort: 8080
+    - containerPort: 80
     resources:
       requests:
-        memory: "64Mi"
-        cpu: "250m"
-      limits:
+        cpu: "100m"
         memory: "128Mi"
-        cpu: "500m"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 80
+      initialDelaySeconds: 15
+      periodSeconds: 20
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 80
+      initialDelaySeconds: 5
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 1000
+```
+
+### Пример 2: Настройка для приложений с долгим запуском
+
+Использование `startupProbe` позволяет избежать преждевременного убийства приложения пробой `livenessProbe` во время инициализации.
+
+```yaml
+spec:
+  containers:
+  - name: heavy-app
+    image: my-app:2.1.0
+    startupProbe:
+      httpGet:
+        path: /init
+        port: 8080
+      failureThreshold: 30 # Даем приложению до 5 минут на старт (30 * 10 сек)
+      periodSeconds: 10
     livenessProbe:
       httpGet:
         path: /healthz
         port: 8080
-      initialDelaySeconds: 10
       periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 8080
-      initialDelaySeconds: 5
-      periodSeconds: 5
-    securityContext:
-      allowPrivilegeEscalation: false
-      runAsNonRoot: true
-      runAsUser: 1001
-      readOnlyRootFilesystem: true
-```
-
-### Пример 2: Манифест для медленно стартующего приложения
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: slow-start-app
-  labels:
-    app: java-app
-    version: "2.0.0"
-spec:
-  containers:
-  - name: app
-    image: registry.example.com/java-app:2.0.0
-    resources:
-      requests:
-        memory: "512Mi"
-        cpu: "500m"
-      limits:
-        memory: "1Gi"
-        cpu: "1000m"
-    startupProbe:
-      httpGet:
-        path: /health
-        port: 8080
-      failureThreshold: 30
-      periodSeconds: 10
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 8080
-      initialDelaySeconds: 30
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 8080
-      periodSeconds: 5
 ```
 
 ---
 
 ## Дополнительная информация
 
-**Связанные темы:** [Probes](../probes.md), [QoS и управление ресурсами](../../Scheduling/qos_limit_and_requests.md), [Security Context](../../Security/pod_security_context.md), [Deployment](../Deployment/deployment.md).
+**Связанные темы:**
+- [Пробы в Kubernetes](../probes.md)
+- [QoS и управление ресурсами в Kubernetes](../../Scheduling/qos_limit_and_requests.md)
+- [Security Context в Kubernetes](../../Security/pod_security_context.md)
+- [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md)
+- [Обзор объектов Deployment](../Deployment/index.md)

@@ -2,48 +2,47 @@
 
 ## Определения
 
-**Переменные Kyverno** — механизм подстановки значений из контекста запроса в правила политики.
+**Переменные Kyverno** — механизм динамической подстановки значений из контекста Admission-запроса (запроса на допуск) или внешних источников данных в правила политики.
 
-**Foreach** — конструкция для итерации по массивам элементов (контейнеры, volumes, initContainers) в рамках одного правила.
-
-> **Основное руководство:** Операторы условий описаны в [Типы правил](../rules.md). Практические примеры политик — в [Практические сценарии](./practical_scenarios.md).
+**Foreach (Для каждого)** — логическая конструкция для итерации по массивам элементов (например, спискам контейнеров, томов или портов) в рамках одного правила для их индивидуальной проверки или изменения.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
-### Переменные в политиках
+### Контекстные переменные
 
-Kyverno поддерживает подстановку переменных из контекста запроса:
+Kyverno предоставляет доступ к метаданным и спецификации ресурсов через систему переменных:
 
-| Переменная | Описание |
-|------------|----------|
-| `{{request.object.metadata.name}}` | Имя ресурса |
-| `{{request.object.metadata.namespace}}` | Namespace ресурса |
-| `{{request.userInfo.username}}` | Имя пользователя |
-| `{{@}}` | Ссылка на текущий элемент в foreach |
-| `{{element}}` | Альтернативный синтаксис для текущего элемента |
+| Объект | Переменная | Описание |
+|--------|------------|----------|
+| **Ресурс** | `{{request.object.metadata.name}}` | Имя создаваемого или изменяемого ресурса. |
+| **Пространство имен** | `{{request.object.metadata.namespace}}` | Namespace (пространство имен), в котором находится ресурс. |
+| **Пользователь** | `{{request.userInfo.username}}` | Имя пользователя, инициировавшего запрос. |
+| **Текущий элемент** | `{{element}}` или `{{@}}` | Ссылка на текущий объект при итерации в `foreach`. |
 
-### Синтаксис переменных
+### Синтаксис и обработка данных
+
+Kyverno поддерживает **JMESPath** — язык запросов к JSON (JavaScript Object Notation) структурам, что позволяет фильтровать и преобразовывать данные:
 
 ```yaml
-# Прямая подстановка
-message: "Container {{ element.name }} must have limits"
+# Пример использования функций JMESPath
+# Подсчет количества контейнеров
+key: "{{ request.object.spec.containers[] | length(@) }}"
 
-# С фильтрацией
-key: "{{ request.object.spec.containers[0].image }}"
-
-# С оператором JMESPath
-key: "{{ request.object.spec.containers[].image | length(@) }}"
+# Проверка вхождения строки
+condition: "{{ contains(request.object.metadata.name, 'prod') }}"
 ```
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Пример с foreach
+### 1. Проверка всех контейнеров в Поде (foreach)
 
-Итерация по всем контейнерам в Pod:
+**Проблема**: В Kubernetes Pod (под) может содержать несколько контейнеров. Обычная валидация может пропустить проверку дополнительных контейнеров.
+
+**Решение**: Использование `foreach` для индивидуальной проверки каждого контейнера на наличие `readOnlyRootFilesystem`.
 
 ```yaml
 rules:
@@ -53,7 +52,7 @@ rules:
         kinds:
           - Pod
     validate:
-      message: "Root filesystem must be read-only"
+      message: "Корневая файловая система должна быть только для чтения"
       foreach:
         - list: "request.object.spec.containers"
           deny:
@@ -63,18 +62,23 @@ rules:
                 value: true
 ```
 
-### foreach с несколькими условиями
+---
+
+### 2. Валидация лимитов ресурсов
+
+**Проблема**: Необходимо гарантировать, что абсолютно все контейнеры (включая `initContainers`) имеют заданные лимиты CPU и памяти.
 
 ```yaml
 rules:
-  - name: require-limits-for-all-containers
+  - name: require-resource-limits
     match:
       resources:
         kinds:
           - Pod
     validate:
-      message: "All containers must have CPU and memory limits"
+      message: "Все контейнеры должны иметь лимиты ресурсов"
       foreach:
+        # Проверка основных контейнеров
         - list: "request.object.spec.containers"
           deny:
             conditions:
@@ -87,58 +91,28 @@ rules:
                   value: ""
 ```
 
-### Валидация initContainers и containers
-
-```yaml
-rules:
-  - name: no-privileged-containers
-    match:
-      resources:
-        kinds:
-          - Pod
-    validate:
-      message: "Privileged containers are forbidden"
-      foreach:
-        - list: "request.object.spec.containers"
-          deny:
-            conditions:
-              - key: "{{ element.securityContext.privileged }}"
-                operator: Equal
-                value: true
-        - list: "request.object.spec.initContainers"
-          deny:
-            conditions:
-              - key: "{{ element.securityContext.privileged }}"
-                operator: Equal
-                value: true
-```
-
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Важные замечания
+### Функции JMESPath
 
-1. **Background scan не применяет политики к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](../background.md))
-2. Политики с `validationFailureAction: Enforce` блокируют несоответствующие ресурсы
-3. Kyverno проверяет итоговый Pod, сгенерированный из Deployment/StatefulSet/DaemonSet
-4. Операторы условий подробно описаны в [Типы правил](../rules.md)
+| Функция | Описание | Пример применения |
+|---------|----------|-------------------|
+| `length()` | Возвращает длину массива или строки. | Проверка количества лейблов. |
+| `contains()` | Проверяет наличие подстроки или элемента. | Проверка разрешенных реестров образов. |
+| `join()` | Объединяет элементы массива в строку. | Формирование сообщений об ошибках. |
+| `to_number()` | Преобразование значения в число. | Сравнение лимитов ресурсов. |
 
-### JMESPath в переменных
+### Рекомендации по использованию расширенных функций
 
-Kyverno поддерживает функции JMESPath для обработки данных:
-
-| Функция | Описание | Пример |
-|---------|----------|--------|
-| `length(@)` | Количество элементов | `{{ request.object.spec.containers[] | length(@) }}` |
-| `contains()` | Проверка вхождения | `{{ contains(request.object.metadata.labels, 'app') }}` |
-| `join()` | Объединение массива | `{{ join(', ', request.object.spec.containers[].name) }}` |
-| `sort()` | Сортировка | `{{ sort(request.object.spec.containers[].name) }}` |
+1.  **Отладка переменных**: Используйте `message` с подстановкой переменных для отладки политик: `message: "User {{request.userInfo.username}} tried to create {{request.object.kind}}"`.
+2.  **Эффективность**: Массовое использование сложных JMESPath выражений может замедлить обработку запросов. Старайтесь делать запросы максимально специфичными.
+3.  **Инициализирующие контейнеры**: Не забывайте добавлять отдельные блоки `foreach` для `spec.initContainers` и `spec.ephemeralContainers`, если это требуется политикой безопасности.
+4.  **Ресурсы**: При проверке лимитов CPU (Central Processing Unit, центральный процессор) учитывайте, что значения могут быть в разном формате (например, `100m` и `0.1`). Используйте фильтры для нормализации.
 
 ### Связанные темы
 
-- [Типы правил](../rules.md) — операторы условий, типы правил
-- [Практические сценарии](./practical_scenarios.md) — примеры политик
-- [Определения и концепции](./definitions_and_concepts.md) — базовая структура политик
-- [Background Scans](../background.md) — фоновое сканирование
-- [Отчеты](../reports.md) — мониторинг применения политик
+- [Типы правил](../rules.md) — базовые операторы условий и якоря.
+- [Библиотека политик](./practical_scenarios.md) — комплексные примеры использования.
+- [Определения и структура](./definitions_and_concepts.md) — основы построения манифестов.

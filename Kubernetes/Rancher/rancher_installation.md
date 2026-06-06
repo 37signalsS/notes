@@ -2,107 +2,96 @@
 
 ## Определения
 
-**Rancher Server** — центральный компонент платформы Rancher, который управляет кластерами, предоставляет веб-интерфейс (UI) и API для взаимодействия.
+**Rancher Server** — центральный компонент платформы Rancher, предназначенный для управления кластерами Kubernetes. Он предоставляет графический интерфейс пользователя (UI — User Interface) и программный интерфейс приложения (API — Application Programming Interface) для взаимодействия с инфраструктурой.
+
+**Helm** — менеджер пакетов для Kubernetes, используемый для определения, установки и обновления сложных приложений.
 
 ## Базовые концепции
 
-### Методы установки
+### Методы развертывания
 
-1. **Установка Rancher Server в существующий кластер Kubernetes (Helm)** — наиболее рекомендуемый и отказоустойчивый способ.
-2. **Установка в Docker** — для тестирования/ознакомления.
+Существует два основных способа установки Rancher Server:
+1. **Установка в существующий кластер Kubernetes через Helm**: рекомендуемый метод для производственных (production) сред, обеспечивающий высокую доступность (HA — High Availability).
+2. **Установка в Docker-контейнер**: упрощенный метод, предназначенный исключительно для тестирования или ознакомления с платформой.
 
-### Предварительные требования для установки в Kubernetes
+### Системные требования
 
-Для стабильной работы Rancher Server в кластере Kubernetes необходимо наличие:
-
-* **Ingress Controller**: Для маршрутизации внешнего трафика к Rancher UI и API (например, Nginx Ingress Controller).
-* **Cert Manager**: Для автоматического управления TLS-сертификатами.
-* **Load Balancer (Балансировщик нагрузки)**: Для обеспечения внешнего доступа к Ingress Controller. На Bare Metal кластерах часто используется [MetalLB](../../Kubernetes/Networking/metallb.md).
+Для стабильной работы Rancher Server в кластере Kubernetes необходимы следующие компоненты:
+* **Контроллер Ingress (Ingress Controller)**: обеспечивает маршрутизацию внешнего трафика к интерфейсу и API Rancher (например, Nginx Ingress Controller).
+* **Cert Manager**: инструмент для автоматизации управления сертификатами безопасности (TLS — Transport Layer Security).
+* **Балансировщик нагрузки (Load Balancer)**: точка входа для внешнего трафика. В локальных (bare-metal) средах часто применяется [MetalLB](../../Kubernetes/Networking/metallb.md).
 
 ## Практические сценарии
 
-### 1. Установка Rancher Server в существующий кластер Kubernetes (Helm)
+### Развертывание в существующем кластере через Helm
 
-#### Процесс установки
+Процесс установки включает следующие этапы:
 
-1. **Добавление Helm репозитория Rancher:**
-
+1. **Добавление репозитория Rancher**:
     ```bash
     helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
     helm repo update
     ```
 
-2. **Создание Namespace для Rancher:**
-
+2. **Подготовка пространства имен (Namespace)**:
     ```bash
     kubectl create namespace cattle-system
     ```
 
-3. **Установка Rancher Server с помощью Helm:**
-
+3. **Установка через Helm**:
     ```bash
     helm upgrade --install rancher rancher-stable/rancher \
       --namespace cattle-system \
-      --set hostname=rancher.yourdomain.com \
-      --set bootstrapPassword=your_initial_admin_password \
+      --set hostname=rancher.example.com \
+      --set bootstrapPassword=your_initial_password \
       --set ingress.ingressClassName=nginx \
       --set ingress.tls.source=rancher \
-      --set replicaCount=3 # Рекомендуется для High Availability
+      --set replicaCount=3
     ```
 
-Параметры:
+**Описание ключевых параметров:**
+* `hostname`: доменное имя для доступа к панели управления.
+* `bootstrapPassword`: временный пароль для первой авторизации администратора.
+* `ingress.ingressClassName`: идентификатор используемого класса Ingress.
+* `ingress.tls.source=rancher`: использование встроенного механизма Rancher для генерации самоподписанных сертификатов.
+* `replicaCount`: количество экземпляров приложения. Значение `3` рекомендуется для обеспечения отказоустойчивости.
 
-* `hostname`: Доменное имя, по которому будет доступен Rancher UI.
-* `bootstrapPassword`: Начальный пароль администратора.
-* `ingress.ingressClassName`: Указывает класс Ingress Controller.
-* `ingress.tls.source=rancher`: Rancher автоматически генерирует самоподписанные TLS-сертификаты.
-* `replicaCount`: Количество реплик пода Rancher Server. Рекомендуется `3`.
+### Установка через Docker (для ознакомительных целей)
 
-#### Особенности развертывания
-
-* **Создание дополнительных Namespace:** Rancher Server при запуске создает множество служебных `namespaces` (например, `cattle-fleet`, `cattle-fleet-local-system`, `cattle-system`).
-* **Совместимость с Kubernetes:** Критически важно проверять совместимость версии Rancher с версией целевого кластера Kubernetes через [Rancher Support Matrix](https://www.suse.com/suse-rancher/support-matrix/). Rancher v2.13.x поддерживает Kubernetes v1.32–v1.34. Начиная с v2.7.2, вместо удалённых в Kubernetes 1.25 `PodSecurityPolicy` (PSP) используется [Pod Security Admission (PSA)](../Security/pod_security_context.md).
-
-### 2. Установка в Docker (для тестирования/ознакомления)
-
+Команда для быстрого запуска:
 ```bash
 docker run -d --name=rancher --restart=unless-stopped \
   -p 80:80 -p 443:443 \
   rancher/rancher:latest
 ```
 
-**Особенности и ограничения:**
+**Ограничения Docker-установки:**
+* **Архитектура**: внутри контейнера запускается встроенный легковесный дистрибутив Kubernetes (K3s).
+* **Надежность**: метод не обеспечивает отказоустойчивость и не рекомендуется для критических задач.
+* **Альтернатива**: для стабильной работы на одном узле рекомендуется установка на полноценный [K3s](../Installation/k3s_dev_environment/k3s_architecture.md).
 
-* **Внутренняя структура:** Rancher в Docker-контейнере запускается в многослойной архитектуре: внутри контейнера разворачивается легковесный Kubernetes (например, K3S).
-* **Нестабильность:** Не рекомендуется для production-сред.
-* **Альтернатива для Single-Node:** Более стабильным подходом является установка Rancher на [K3S](../Installation/k3s_dev_environment/k3s_architecture.md).
+### Совместимость и безопасность
 
-**Актуальная совместимость с Kubernetes:** Rancher v2.13.x поддерживает Kubernetes v1.32–v1.34 (RKE2, K3s, AKS, EKS, GKE). Начиная с Rancher v2.7.2, вместо удалённых в Kubernetes 1.25 `PodSecurityPolicy` (PSP) используется механизм [Pod Security Admission (PSA)](../Security/pod_security_context.md) с встроенными шаблонами `rancher-privileged` и `rancher-restricted`. Архивные версии Rancher (≤2.7) не поддерживают Kubernetes 1.25+.
+* **Версии**: необходимо сверяться с матрицей поддержки (Support Matrix). Rancher v2.13.x совместим с Kubernetes v1.32–v1.34.
+* **Безопасность**: в актуальных версиях Kubernetes вместо устаревших политик безопасности подов (PSP — Pod Security Policy) используется встроенный механизм контроля допуска (PSA — Pod Security Admission). Подробности в разделе [Контекст безопасности подов](../Security/pod_security_context.md).
 
-### 3. Удаление компонентов Rancher/K3S
+### Удаление компонентов
 
-* **Удаление K3S (полная очистка кластера):**
+**Полная очистка K3s**:
+```bash
+/usr/local/bin/k3s-uninstall.sh
+```
 
-    ```bash
-    /usr/local/bin/k3s-uninstall.sh
-    ```
+**Удаление агента Rancher (на управляемых узлах)**:
+```bash
+# Для агента в Docker:
+docker rm -f <container_name>
 
-* **Удаление агента K3S (Worker Node):**
-
-    ```bash
-    /usr/local/bin/k3s-agent-uninstall.sh
-    ```
-
-* **Удаление агента Rancher (на узлах, добавленных в RKE-кластер):**
-
-    ```bash
-    # Если агент запущен через docker run:
-    docker rm -f <container_id_или_имя_rancher_agent>
-
-    # Или, если установлен как сервис:
-    /usr/local/bin/rancher-system-agent-uninstall.sh
-    ```
+# Для системного агента:
+/usr/local/bin/rancher-system-agent-uninstall.sh
+```
 
 ## Дополнительная информация
 
-См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.
+* [Обзор Rancher](./rancher_overview.md) — общие принципы и возможности платформы.
+* [Официальная матрица поддержки](https://www.suse.com/suse-rancher/support-matrix/) — проверка совместимости версий.

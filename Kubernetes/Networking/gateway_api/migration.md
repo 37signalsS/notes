@@ -2,32 +2,31 @@
 
 ## Определения
 
-**ingress2gateway** — официальный инструмент CLI для автоматического преобразования манифестов Kubernetes Ingress в ресурсы Gateway API (Gateway и HTTPRoute). Версия 1.0 выпущена в марте 2026.
+**ingress2gateway** — официальный инструмент командной строки (CLI) для автоматизированного преобразования манифестов Kubernetes Ingress в ресурсы Gateway API (Gateway и HTTPRoute).
 
-**Параллельный запуск (Parallel Run)** — стратегия миграции, при которой Gateway API-контроллер разворачивается и работает параллельно с существующим Ingress-NGINX до полного переноса трафика.
+**Параллельный запуск (Parallel Run)** — стратегия миграции, при которой контроллер Gateway API разворачивается и функционирует параллельно с существующим Ingress-NGINX до завершения полного переноса трафика.
 
-**Контекст миграции:** Сообщество Kubernetes прекратило поддержку `kubernetes/ingress-nginx` в марте 2026. Gateway API является официальным преемником.
+**Контекст миграции:** сообщество Kubernetes прекратило поддержку проекта `kubernetes/ingress-nginx` в марте 2026 года. Gateway API признан официальным преемником для управления входящим трафиком.
 
 ## Базовые концепции
 
-### Почему миграция необходима
-
-- **Окончание поддержки Ingress NGINX** — март 2026
-- **Стандартизация** — Gateway API поддерживается всеми крупными вендорами
-- **Расширенные функции** — канареечные развертывания, gRPC, TCP/UDP-маршрутизация
-- **Ролевая модель** — разделение ответственности между инфраструктурой и разработчиками
+### Причины необходимости миграции
+- **Окончание поддержки Ingress NGINX:** поддержка прекращена в марте 2026 года.
+- **Стандартизация:** Gateway API поддерживается всеми ведущими поставщиками облачных решений и сетевых контроллеров.
+- **Расширенные возможности:** нативная поддержка канареечных развертываний, gRPC, а также маршрутизации на уровнях L4 (TCP/UDP) и L7 (HTTP/HTTPS).
+- **Ролевая модель:** четкое разделение ответственности между администраторами инфраструктуры и разработчиками приложений.
 
 ### Доступные реализации Gateway API
 
-| Реализация | Плюсы | Минусы / Когда выбирать |
+| Реализация | Преимущества | Особенности / Когда выбирать |
 | :--- | :--- | :--- |
-| **Envoy Gateway** | Нейтральный бейлайн, чистая связка Gateway API + Envoy | Минимум "продуктовой" обвязки |
-| **KGateway (Kitway)** | Наследник Gloo Gateway, CNCF Sandbox, высокая производительность | По дефолту генерирует много метрик в Prometheus (нужен тюнинг) |
-| **Cilium** | Интеграция с CNI, eBPF, высокая производительность | Выбирать, если Cilium уже используется как CNI |
-| **Traefik** | Зрелый, популярный, наличие Web UI | Архитектура (Control и Data plane в одном процессе) при высоких нагрузках |
-| **NGINX Gateway Fabric** | Официальный от F5, привычный стек | Небольшое коммьюнити, уступает решениям на базе Envoy при скейле |
-| **Istio** | Шикарная реализация на базе Envoy | Слишком тяжеловесен (Istiod), если не нужен Service Mesh |
-| **Kong** | Мощная платформа управления API | Слишком сложен для замены Ingress, лицензия BSL (не чистый Open Source) |
+| **Envoy Gateway** | Нейтральный базовый вариант, чистая связка Gateway API + Envoy | Минимальный набор дополнительных функций |
+| **KGateway** | Наследник Gloo Gateway, CNCF Sandbox, высокая производительность | Требуется настройка метрик Prometheus (высокое потребление) |
+| **Cilium** | Интеграция с CNI, использование eBPF, высокая скорость | Рекомендуется, если Cilium уже используется в качестве CNI |
+| **Traefik** | Зрелый продукт, наличие встроенного веб-интерфейса | Архитектура «все в одном» может быть узким местом при сверхнагрузках |
+| **NGINX Gateway Fabric** | Официальное решение от F5, привычный стек NGINX | Меньшее сообщество по сравнению с решениями на базе Envoy |
+| **Istio** | Полноценная реализация на базе Envoy | Избыточен, если не требуется функционал Service Mesh |
+| **Kong** | Мощная платформа управления API | Сложность настройки, лицензия BSL (не является полностью Open Source) |
 
 ### Таблица соответствия ресурсов
 
@@ -35,26 +34,23 @@
 | :--- | :--- |
 | `Ingress` + `IngressClass` | `GatewayClass` + `Gateway` |
 | Правила маршрутизации (`spec.rules`) | `HTTPRoute` |
-| Аннотации (`nginx.ingress.kubernetes.io/*`) | Нативные поля (`filters`, `backendRefs`) |
-| TLS с Secret (termination) | `Gateway.tls.mode: Terminate` + `certificateRefs` |
+| Аннотации (`nginx.ingress.kubernetes.io/*`) | Нативные фильтры (`filters`) и ссылки на бэкенды (`backendRefs`) |
+| TLS с Secret (терминация) | `Gateway.tls.mode: Terminate` + `certificateRefs` |
 | SSL Passthrough (аннотация) | `Gateway.tls.mode: Passthrough` + `TLSRoute` |
-| Redirect через аннотации | `HTTPRoute` с `RequestRedirect` filter |
-| Rewrite Target | `HTTPRoute` с `URLRewrite` filter |
+| Редирект через аннотации | `HTTPRoute` с фильтром `RequestRedirect` |
+| Rewrite Target | `HTTPRoute` с фильтром `URLRewrite` |
 
 ## Практические сценарии
 
 ### Шаг 1: Выбор реализации
+Для большинства стандартных задач рекомендуются решения на базе прокси-сервера **Envoy**:
+- **Envoy Gateway** — если требуется простой и надежный стандарт.
+- **KGateway** — если критична производительность и необходим расширенный функционал в рамках CNCF Sandbox.
 
-Для большинства сценариев рекомендуются решения на базе **Envoy**:
-
-- **Envoy Gateway** — если нужен простой и надежный стандарт.
-- **KGateway (ранее Kitway/Gloo)** — если важна производительность и функциональность "из коробки" (CNCF Sandbox).
-
-Подробнее: [Envoy Gateway](./envoy_gateway.md), [Traefik](./traefik.md).
+Подробности: [Envoy Gateway](./envoy_gateway.md), [Traefik](./traefik.md).
 
 ### Шаг 2: Параллельный запуск
-
-Разверните Gateway API-контроллер рядом с существующим Ingress NGINX:
+Разверните контроллер Gateway API рядом с существующим Ingress NGINX для обеспечения плавного перехода:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -90,136 +86,68 @@ spec:
       - name: tls-secret
 ```
 
-**Важно:** Gateway API получит новый внешний IP-адрес. Оба контроллера работают параллельно без конфликтов.
+**Примечание:** новый контроллер получит отдельный внешний IP-адрес. Оба решения могут работать одновременно без конфликтов.
 
 ### Шаг 3: Автоматическая конвертация с ingress2gateway
+Инструмент позволяет преобразовать существующие Ingress-ресурсы в формат Gateway API.
 
-**Установка (версия 1.0.0):**
-
+**Установка (v1.0.0):**
 ```bash
 # GitHub (Linux amd64)
 curl -Lo ingress2gateway https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/ingress2gateway-linux-amd64
 chmod +x ingress2gateway
 sudo mv ingress2gateway /usr/local/bin/
-
-# Homebrew (macOS/Linux)
-brew install ingress2gateway
-
-# Go
-go install github.com/kubernetes-sigs/ingress2gateway@v1.0.0
 ```
 
 **Использование:**
-
 ```bash
-# Конвертация всех Ingress в namespace
+# Конвертация всех Ingress в пространстве имен
 ingress2gateway convert --namespace=my-app --output=yaml
 
-# Конвертация с фильтрацией по имени
-ingress2gateway convert --ingress-names=my-ingress --output=yaml
-
-# Применение сразу после конвертации
+# Применение конфигурации напрямую
 ingress2gateway convert --namespace=my-app | kubectl apply -f -
 ```
 
-**Ограничения конвертации:**
-
-- Не все аннотации Ingress NGINX поддерживаются автоматически
-- Сложные кастомные правила требуют ручного перевода
-- Требуется ручная проверка после конвертации
+**Ограничения:** инструмент не всегда корректно обрабатывает сложные специфические аннотации Ingress NGINX, поэтому после конвертации обязательна ручная проверка манифестов.
 
 ### Шаг 4: Тестирование и перенос трафика
+1. **Проверка статусов (Status Conditions):** убедитесь, что ресурсы находятся в состояниях `Accepted: True` и `Programmed: True` (для Gateway) или `ResolvedRefs: True` (для Route).
+2. **Верификация маршрутизации:** выполните тестовые запросы к новому шлюзу.
+3. **Поэтапный перенос:** постепенно переключайте трафик на DNS-уровне или через внешний балансировщик (например, 5%, 25%, 100%).
 
-1. **Проверка статусов (Status Conditions):** В Gateway API статус ресурса — это первичный источник истины. Не нужно сразу слать запросы, сначала проверьте кондишены:
-   - `Accepted: True` — манифест принят контроллером.
-   - `Programmed: True` (для Gateway) или `ResolvedRefs: True` (для Route) — конфигурация успешно применена к прокси.
-   Если `False` — ищите ошибки в неймспейсах, портах или ссылках.
-2. **Проверка маршрутизации:** Убедитесь, что Gateway и HTTPRoute корректно работают через тестовые запросы.
-3. **Мониторинг:** Настройте метрики Gateway API-контроллера (запросы, ошибки, латентность).
-4. **Поэтапный перенос (Canary):** Переносите трафик постепенно (1%, 5%, 10%... 100%), используя внешний балансировщик или DNS.
-5. **Откат:** Сохраняйте Ingress NGINX до полного завершения миграции. В случае проблем просто верните трафик на старый контроллер.
-
-Подробнее: [Тестирование и перенос трафика](./migration_testing.md).
+Подробности: [Тестирование и перенос трафика](./migration_testing.md).
 
 ### Шаг 5: Миграция TLS и сложной маршрутизации
+Для сценариев со сквозным шифрованием (Passthrough) или сложной логикой перезаписи URL используйте специализированные руководства.
 
-Для сложных сценариев (TLS Passthrough, канареечные развертывания, A/B-тестирование) требуется ручная конвертация.
-
-Подробнее: [Миграция TLS и маршрутизации](./migration_tls_and_routing.md).
+Подробности: [Миграция TLS и маршрутизации](./migration_tls_and_routing.md).
 
 ## Дополнительная информация
 
-**Временная шкала:**
+### Решение проблем: cert-manager и Gateway API
+При миграции часто возникают сложности с получением сертификатов через шлюз.
 
-| Дата | Событие |
-| :--- | :--- |
-| **Март 2026** | Официальное прекращение поддержки Ingress NGINX |
-| **Q1 2026** | Рекомендуется завершить миграцию в production |
-| **2025** | Gateway API v1.0 GA |
+- **Проблема 1: поддержка не включена.** В cert-manager поддержка Gateway API часто отключена по умолчанию. При установке через Helm используйте флаг `config.controller.config.enableGatewayAPI: true`.
+- **Проблема 2: ACME solver.** Если в ClusterIssuer ранее использовался `ingressClassName: nginx`, cert-manager не сможет пройти проверку владения доменом. Необходимо обновить ClusterIssuer:
+  ```yaml
+  solvers:
+  - http01:
+      gatewayHTTPRoute:
+        parentRefs:
+        - name: my-gateway
+          namespace: default
+          kind: Gateway
+  ```
+- **Проблема 3: отсутствие Secret.** Если Gateway ссылается на еще не созданный Secret, слушатель будет помечен как `Invalid`. Убедитесь, что cert-manager успешно создал Secret до активации шлюза.
 
-**Рекомендации по планированию:**
+### Полезные ссылки
+- [Официальное руководство по миграции](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
+- [Репозиторий ingress2gateway](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
+- [Соответствие реализаций спецификации](https://gateway-api.sigs.k8s.io/implementations/)
 
-- Начните миграцию за 6 месяцев до окончания поддержки Ingress NGINX
-- Используйте ingress2gateway как отправную точку, но не как финальное решение
-- Тестируйте в staging перед переносом production-трафика
-- Документируйте кастомные правила для ручного перевода
-- Обучите команду ролевой модели Gateway API
+**См. также:**
+- [Концепции Gateway API](./definitions.md) — основные понятия
+- [Ресурсы Gateway API](./resources.md) — обзор CRD
+- [Базовые сценарии](./practical_basic.md) — примеры настройки
 
-**Официальные ресурсы:**
-
-- Документация: [Gateway API Migration Guide](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
-- Инструмент: [ingress2gateway GitHub](https://github.com/kubernetes-sigs/gateway-api/tree/main/ingress2gateway)
-- Conformance-отчёты: [Gateway API Implementations](https://gateway-api.sigs.k8s.io/implementations/)
-
-### Troubleshooting: cert-manager + Gateway API
-
-При миграции с Ingress NGINX на Gateway API распространённая проблема — cert-manager не видит Gateway-ресурсы и не получает сертификаты.
-
-**Проблема 1: cert-manager не видит Gateway API**
-
-При установке cert-manager через манифесты (не Helm) Gateway API support может быть отключён по умолчанию.
-
-**Решение:**
-
-- При установке через Helm указать `config.controller.config.enableGatewayAPI: true`
-- Или добавить `--enable-gateway-api` в аргументы контейнера контроллера
-- Начиная с Kubernetes 1.31+ Gateway API CRD включены в стандартный установочный пакет cert-manager
-
-**Проблема 2: ACME solver не проходит через Gateway**
-
-Если в ClusterIssuer указан `ingressClassName: nginx`, cert-manager пытается создать Ingress-ресурс для HTTP-01 challenge. При использовании Gateway API это не работает.
-
-**Решение:** В ClusterIssuer использовать `gatewayHTTPRoute` вместо `ingress`:
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    privateKeySecretRef:
-      name: letsencrypt-prod
-    solvers:
-    - http01:
-        gatewayHTTPRoute:
-          parentRefs:
-          - name: my-gateway
-            namespace: default
-            kind: Gateway
-```
-
-**Проблема 3: Listener помечен как Invalid — Secret не существует**
-
-При создании Gateway с TLS- listener и ссылкой на несуществующий Secret, listener переходит в статус `Invalid`.
-
-**Решение:** Убедиться, что cert-manager успел создать Secret до того, как Gateway начнёт обработку. Аннотация `cert-manager.io/cluster-issuer` на Gateway должна быть корректной. Проверить статус через `kubectl describe gateway <name>`.
-
-**Связанные документы:**
-
-- Концепции Gateway API: [Определения](./definitions.md)
-- Ресурсы (CRD): [Ресурсы](./resources.md)
-- Базовые примеры: [Базовые сценарии](./practical_basic.md)
-- Расширенная маршрутизация: [Расширенные функции](./routing_features.md)
-- Обзор Ingress: [Ingress: Обзор](../Ingress/overview.md)
+**Родительская тема:** [Gateway API](./definitions.md)

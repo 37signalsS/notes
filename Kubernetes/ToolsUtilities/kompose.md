@@ -23,7 +23,7 @@ Kompose анализирует сервисы, порты, тома и друг�
 
 ## Практические сценарии
 
-### Сценарий 1: Конвертация и развертывание
+### Конвертация и развертывание
 
 **Установка:**
 
@@ -65,7 +65,7 @@ kompose convert
 kubectl apply -f .
 ```
 
-### Сценарий 2: Конвертация с флагами
+### Конвертация с флагами
 
 ```bash
 # Генерация с указанием controller type
@@ -80,6 +80,8 @@ kompose convert -o -
 
 ## Дополнительная информация
 
-- **[Docker Compose](../../Docker/Docker_compose/docker_compose_file_example.md)** — примеры файлов Compose
-- **[Kubernetes — обзор](../kubernetes_overview.md)** — основы Kubernetes
-- **[Kustomize](./kustomize/)** — альтернативный инструмент управления манифестами
+### Смотрите также
+
+- [Docker Compose](../../Docker/Docker_compose/docker_compose_file_example.md) — примеры файлов Compose.
+- [Kubernetes — обзор](../kubernetes_overview.md) — основы Kubernetes.
+- [Kustomize](./kustomize/kustomize_overview.md) — альтернативный инструмент управления манифестами.

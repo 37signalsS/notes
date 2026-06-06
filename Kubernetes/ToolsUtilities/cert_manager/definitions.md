@@ -1,6 +1,6 @@
 # Cert-manager: Определения и основные понятия
 
-## Definitions
+## Определения
 
 **Cert-manager** — нативный Kubernetes-контроллер для автоматизации управления TLS-сертификатами. Получает, продлевает и отзывает сертификаты, минимизируя ручное вмешательство. Официальная документация: [cert-manager.io](https://cert-manager.io/).
 
@@ -25,7 +25,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### CRD cert-manager
 
@@ -127,69 +127,17 @@ spec:
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: Базовый сертификат через аннотацию Ingress
+Развернутые манифесты и типовые паттерны вынесены в специализированные документы (в соответствии со стратегией SSoT):
 
-**Цель:** Автоматически получить TLS-сертификат для Ingress.
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-ingress
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - example.com
-      secretName: example-com-tls
-  rules:
-    - host: example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-service
-                port:
-                  number: 80
-```
-
-> **Устаревшая аннотация:** `kubernetes.io/tls-acme: "true"` — не используйте.
-
-Подробные сценарии Ingress: [ingress/scenarios.md](./ingress/scenarios.md).
-
-### Сценарий 2: Прямое создание Certificate (без аннотаций)
-
-**Цель:** Полный контроль над жизненным циклом сертификата.
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: my-app-cert
-  namespace: production
-spec:
-  secretName: my-app-tls
-  duration: 8760h           # 1 год
-  renewBefore: 720h         # 30 дней
-  issuerRef:
-    name: my-ca-issuer
-    kind: Issuer
-  dnsNames:
-    - my-app.production.svc
-    - my-app.production.svc.cluster.local
-```
-
-Этот подход используется для внутренних сервисов, mTLS, Private CA. Подробности: [Private_CA/scenarios.md](./Private_CA/scenarios.md).
+- **[Сценарии интеграции с Ingress](./ingress/scenarios.md)** — автоматизация HTTP-01/DNS-01, временные сертификаты, SAN.
+- **[Прямое создание Certificate](./Private_CA/scenarios.md)** — полный контроль над параметрами, интеграция с Private CA, использование для mTLS.
+- **[Сценарии Gateway API](./gateway_api/practical_scenarios.md)** — маршрутизация и TLS Termination через Gateway.
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Интеграция с другими системами
 

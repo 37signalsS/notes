@@ -185,12 +185,8 @@ alias kt-app='kubetail -l app='
 3. **Диагностика CrashLoopBackOff:** трассировка падений across реплик
 4. **A/B тестирование:** сравнение логов версий `v1` и `v2`
 
-### Связанные документы
+### Смотрите также
 
-- [`kubectl logs`](../Troubleshooting/troubleshooting_overview.md#kubectl-logs-анализ-логов-контейнеров) — базовая команда для просмотра логов
-- [Централизованное логирование](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — архитектура сбора логов
-- [kubetail-org/kubetail](https://github.com/kubetail-org/kubetail) — альтернативный проект (дашборд + CLI, Go/TypeScript)
-
-### Репозиторий и документация
-
-- [GitHub: johanhaleby/kubetail](https://github.com/johanhaleby/kubetail)
+- [`kubectl logs`](../Troubleshooting/troubleshooting_overview.md#kubectl-logs-анализ-логов-контейнеров) — базовая команда для просмотра логов.
+- [Централизованное логирование](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — архитектура сбора логов.
+- [Официальный репозиторий GitHub: johanhaleby/kubetail](https://github.com/johanhaleby/kubetail) — исходный код и документация.

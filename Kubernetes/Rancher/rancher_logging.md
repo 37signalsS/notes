@@ -2,239 +2,143 @@
 
 ## Определения
 
-**Rancher Logging** — встроенное решение Rancher для централизованного сбора, хранения и анализа логов, основанное на Fluentd и Logging Operator.
+**Rancher Logging** — интегрированное решение для централизованного сбора, фильтрации и маршрутизации логов в кластерах под управлением Rancher. Решение базируется на Logging Operator (проект Banzai Cloud/SUSE), использующем Fluent Bit в качестве сборщика и Fluentd в качестве агрегатора.
+
+**Logging Operator** — Kubernetes-оператор, который управляет жизненным циклом компонентов логирования и предоставляет декларативный API (Application Programming Interface) для настройки потоков данных через пользовательские ресурсы (Custom Resources).
 
 ## Базовые концепции
 
-### Основные концепции логирования
+### Архитектура и компоненты
 
-* **12 Factor App: Логи как поток событий**: Современные приложения должны выводить логи на стандартные потоки (`stdout`/`stderr`). Обработка и хранение логов делегируется инфраструктуре.
-* **Хранение логов на узлах**: В Kubernetes логи контейнеров физически сохраняются на узлах в директории `/var/log/containers/`.
-* **Эфемерность логов**: Логи, хранящиеся на узлах, эфемерны: при удалении пода его логи также удаляются.
+Rancher Logging следует стандартным принципам [архитектуры логирования Kubernetes](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md), дополняя их специализированным уровнем управления:
 
-### Архитектура логирования Rancher (Logging Operator)
+1. **Fluent Bit (DaemonSet)**: разворачивается на каждом узле кластера. Собирает логи контейнеров из `/var/log/containers/`, обогащает их метаданными Kubernetes и пересылает в агрегатор.
+2. **Fluentd (StatefulSet)**: выступает центральным узлом маршрутизации. Принимает данные от Fluent Bit, применяет сложные фильтры и отправляет логи во внешние системы хранения.
 
-Rancher использует специализированный `Logging Operator` (основанный на проекте Banzai Cloud):
+### Управляющие ресурсы (Custom Resources)
 
-* `Logging Operator` развертывает `Fluent Bit` на каждом узле кластера. `Fluent Bit` собирает *все* логи контейнеров с узла и пересылает их в `Fluentd`.
-* `Fluentd` выступает в роли маршрутизатора логов: фильтрует, обогащает логи и отправляет их в различные системы хранения (Elasticsearch, OpenSearch, Kafka и т.д.).
+Настройка системы выполняется через YAML (YAML Ain't Markup Language) манифесты двух типов:
 
-**Критика архитектуры**: Подход, при котором `Fluent Bit` собирает *все* логи и пересылает их в централизованный `Fluentd`, может привести к значительному сетевому трафику и нагрузке.
+* **Output / ClusterOutput**: определяют "куда" отправлять логи. Поддерживают интеграции с Elasticsearch, OpenSearch, Kafka, S3 (Simple Storage Service) и другими.
+    * `Output`: ресурс уровня пространства имён (Namespace).
+    * `ClusterOutput`: общекластерный ресурс, доступный для использования всеми потоками.
+* **Flow / ClusterFlow**: определяют "какие" логи собирать и "как" их обрабатывать.
+    * `Flow`: собирает логи только в своем пространстве имён.
+    * `ClusterFlow`: может собирать логи со всего кластера.
 
-### Концепции Logging Operator: Output и Flow
+### Разграничение прав доступа (RBAC)
 
-Система логирования Rancher использует Custom Resources для декларативной настройки:
+Управление ресурсами логирования интегрировано в модель RBAC (Role-Based Access Control) Rancher:
 
-* **`Output` и `ClusterOutput` (Куда отправлять логи)**:
-  * Определяют место назначения для собранных логов (Elasticsearch, OpenSearch, Kafka, S3, файл).
-  * **`Output`**: Привязан к конкретному `namespace`.
-  * **`ClusterOutput`**: Кластерный ресурс. Может использоваться из любого `namespace`.
-
-* **`Flow` и `ClusterFlow` (Какие логи отбирать и как обрабатывать)**:
-  * Определяют правила отбора (matching), фильтрации и обогащения логов.
-  * **`Match`**: Секция для выбора логов на основе Pod Labels, Node Names, Container Names.
-  * **`Filters`**: Секция для модификации или обогащения логов.
-    * **`tag_normalizer`**: Для динамического формирования тегов логов.
-    * **`kube_events_timestamp`**: Для генерации поля `mtime` с временем события.
-  * **`Output`**: Секция, указывающая на `Output` или `ClusterOutput`.
-  * **`Flow`**: Привязан к конкретному `namespace`.
-  * **`ClusterFlow`**: Кластерный ресурс.
-
-### Ограничения RBAC
-
-* **`ClusterFlow` и `ClusterOutput`**: Только для администраторов Rancher.
-* **`Flow` и `Output`** (namespace-level):
-  * `Project Owner` — создание/изменение.
-  * `Project Member` — только чтение.
-
-| Роль | ClusterFlow/Output | Flow/Output |
+| Роль в Rancher | ClusterFlow / ClusterOutput | Flow / Output |
 | :--- | :--- | :--- |
-| **Admin** | ✅ Создание/чтение/удаление | ✅ Создание/чтение/удаление |
-| **Project Owner** | ❌ Нет доступа | ✅ Создание/чтение/удаление |
-| **Project Member** | ❌ Нет доступа | ⚠️ Только чтение |
+| **Admin** | Полный доступ | Полный доступ |
+| **Project Owner** | Нет доступа | Полный доступ |
+| **Project Member** | Нет доступа | Только чтение |
 
-**Практическое следствие:** `Project Member` не может самостоятельно настроить сбор логов своего приложения — требуется участие администратора или `Project Owner`.
+Для настройки сбора логов пользователям с ролью `Project Member` требуется помощь администратора или владельца проекта.
 
 ## Практические сценарии
 
-### Включение логирования через Web UI
+### Установка системы через Rancher UI
 
-1. **Создайте отдельный Rancher Project для логирования**: Рекомендуется.
-2. Перейдите в **Cluster Dashboard** -> **Tools** -> **Logging**.
-3. Нажмите **Install**. Всегда выбирайте опцию "Customize Helm Options for install".
-4. **Конфигурация `systemd` логов**: Укажите правильный путь к журналам `systemd` (например, `/run/log/journal` или `/var/log/journal`).
-5. **Настройка `Tolerations` для Control Plane узлов**:
-    * По умолчанию, узлы Control Plane имеют `taint` (`node-role.kubernetes.io/master:NoSchedule` или `node-role.kubernetes.io/control-plane:NoSchedule`).
-    * Система логирования по умолчанию не будет развернута на таких узлах.
-    * **Решение**: В `values.yaml` Helm-чарта необходимо добавить соответствующую `toleration`:
+1. Перейдите в **Cluster Dashboard** → **Apps** → **Charts**.
+2. Найдите и выберите **Logging**.
+3. При установке в разделе **Helm Options** обязательно проверьте настройки ресурсов (CPU, Memory) для Fluentd, так как при больших потоках логов стандартных лимитов может быть недостаточно.
+4. Для сбора логов с узлов Control Plane добавьте исключения (Tolerations) в конфигурацию Helm:
 
-    ```yaml
-    fluentbit:
-      tolerations:
-      - effect: NoSchedule
-        key: node-role.kubernetes.io/master
-        operator: Exists
-      - effect: NoSchedule
-        key: node-role.kubernetes.io/control-plane
-        operator: Exists
-    ```
+```yaml
+fluentbit:
+  tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/master
+    operator: Exists
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/control-plane
+    operator: Exists
+```
 
-    **Важно:** Проверьте актуальные taints на ваших control plane узлах через `kubectl describe node <node-name>`.
+### Настройка отправки в OpenSearch
 
-6. Выберите **Destination** (цель отправки логов):
-    * **Elasticsearch**
-    * **Splunk**
-    * **Kafka**
-    * **Syslog**
-    * **Fluentd**
+Поскольку интерфейс Rancher (UI) может не поддерживать все параметры последних версий OpenSearch, рекомендуется использовать "Edit YAML" для настройки `ClusterOutput`:
 
-### Конфигурация для Elasticsearch (пример)
+1. Создайте секрет с учетными данными в пространстве имён `cattle-logging-system`.
+2. Настройте `ClusterOutput` с параметром `suppress_type_name: true` (критично для совместимости с OpenSearch 2.x+):
 
-* **Endpoint**: Полный URL Elasticsearch (например, `http://<elasticsearch-ip>:9200`).
-* **Authentication**: Учетные данные пользователя Elasticsearch.
-* **Index Pattern**: Формат имени индекса (например, `mycluster-YYYY.MM.DD`).
-  * **Рекомендация**: Всегда используйте ежедневные индексы.
-* **Include System Log**: Включение/отключение сбора логов системных компонентов Kubernetes.
-* **Enable JSON Parsing**: Попытка парсить логи в формате JSON.
+```yaml
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: opensearch-output
+  namespace: cattle-logging-system
+spec:
+  opensearch:
+    host: opensearch.example.com
+    port: 9200
+    scheme: https
+    user:
+      username:
+        valueFrom:
+          secretKeyRef:
+            name: opensearch-auth
+            key: username
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: opensearch-auth
+          key: password
+    ssl_verify: false
+    suppress_type_name: true
+    buffer:
+      timekey: 1m
+      timekey_wait: 30s
+```
 
-### Расширенная конфигурация Fluentd
+### Фильтрация и обработка (Flow)
 
-Rancher предоставляет возможность тонкой настройки Fluentd через опцию **"Edit As File"**.
+Для динамического формирования индексов и добавления временных меток используйте фильтры во `Flow`:
 
-После настройки логирования в Kibana можно создавать [индекс-паттерны](../MonitoringLogging/EFK/kibana_guide.md).
+* **Tag Normalizer**: формирует тег на основе метаданных пода.
+* **Kube Events Timestamp**: добавляет поле с точным временем события для корректной сортировки.
 
-### Создание ClusterOutput для OpenSearch
+```yaml
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Flow
+metadata:
+  name: app-logs-flow
+  namespace: my-apps
+spec:
+  filters:
+  - tag_normalizer:
+      tag: ${namespace_name}.${pod_name}
+  - kube_events_timestamp:
+      time_field: event_time
+  globalOutputRefs:
+  - opensearch-output
+```
 
-1. **Подготовка Secret с учетными данными**: Создайте Kubernetes `Secret` в `namespace cattle-logging-system`.
+### Диагностика проблем (Troubleshooting)
 
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: opensearch-auth
-      namespace: cattle-logging-system
-    type: Opaque
-    stringData:
-      username: admin
-      password: your_opensearch_password
-    ```
-
-2. **Создание `ClusterOutput`**:
-    * Выберите тип "Elasticsearch" (даже если используется OpenSearch).
-    * Настройте Endpoint, Index Name, Authentication.
-    * **Ручное редактирование YAML**: Измените `type: elasticsearch` на `type: opensearch`, добавьте `suppress_type_name: true` и настройку буферизации.
-
-    **Пример конфигурации ClusterOutput для OpenSearch:**
-
-    ```yaml
-    apiVersion: logging.banzaicloud.io/v1beta1
-    kind: ClusterOutput
-    metadata:
-      name: opensearch-output
-    spec:
-      opensearch:
-        host: https://opensearch-cluster-master.es.svc.cluster.local:9200
-        index_name: control-plane-%Y%m%d
-        user:
-          username:
-            valueFrom:
-              secretKeyRef:
-                name: opensearch-auth
-                key: username
-          password:
-            valueFrom:
-              secretKeyRef:
-                name: opensearch-auth
-                key: password
-        ssl_verify: false
-        suppress_type_name: true
-        buffer:
-          timekey: 1m
-          timekey_wait: 30s
-          timekey_use_utc: true
-          chunk_limit_size: 8MB
-    ```
-
-    **Важно:** Веб-интерфейс Rancher не поддерживает OpenSearch напрямую — после создания через UI необходимо редактировать YAML вручную. Параметр `suppress_type_name: true` обязателен для современных версий OpenSearch/Elasticsearch. Индекс с `%Y%m%d` создаётся ежедневно.
-
-### Создание Flow для сбора логов Control Plane
-
-1. **Создание `Flow`**:
-    * Выберите `namespace` (например, `kube-system`).
-    * В секции **Outputs** выберите созданный `ClusterOutput`.
-    * В секции **Filters** добавьте `Tag Normalizer` и `Kube Events Timestamp`.
-
-2. **Настройка фильтров**:
-
-    * **Tag Normalizer** — формирует тег для динамического именования индексов на основе namespace, pod и container:
-
-        ```yaml
-        filters:
-        - tag_normalizer:
-            tag: ${namespace_name}.${pod_name}.${container_name}
-        ```
-
-    * **Kube Events Timestamp** — генерирует поле `mtime` с временной меткой события (критично для временной сортировки в OpenSearch/Elasticsearch):
-
-        ```yaml
-        filters:
-        - kube_events_timestamp:
-            time_field: mtime
-        ```
-
-    **Пример Flow для сбора логов из kube-system:**
-
-    ```yaml
-    apiVersion: logging.banzaicloud.io/v1beta1
-    kind: Flow
-    metadata:
-      name: control-plane-flow
-      namespace: kube-system
-    spec:
-      filters:
-      - tag_normalizer:
-          tag: ${namespace_name}.${pod_name}.${container_name}
-      - kube_events_timestamp:
-          time_field: mtime
-      globalOutputRefs:
-      - opensearch-output
-    ```
-
-### Troubleshooting
-
-**Логи Fluentd:** По умолчанию логи самого `Fluentd` не выводятся в `stdout/stderr`, а сохраняются внутри контейнера (`/var/log/fluentd/out`). Конфигурация хранится в `Secret` (например, `fluentd-app`), автоматически обновляется при изменении `Flow`/`Output`.
-
-1. **Проверка логов Fluent Bit** (сборщики на узлах):
-
-    ```bash
-    kubectl logs -n cattle-logging-system -l app.kubernetes.io/name=fluentbit
-    ```
-
-    Ошибки подключения к Fluentd могут указывать на проблемы с буферизацией или сетевые проблемы.
-
-2. **Проверка логов Fluentd** (маршрутизатор):
-
-    ```bash
-    kubectl exec -n cattle-logging-system <fluentd-pod> -- cat /var/log/fluentd/out
-    ```
-
-    Ищите ошибки `flush_unavailable` или ошибки подключения к output.
-
-3. **Буферизация:** Если логи не появляются в OpenSearch сразу, проверьте настройки буфера в `ClusterOutput`. По умолчанию Fluentd может отправлять логи пакетами раз в минуту.
+1. **Проверка агентов (Fluent Bit)**: если логи не поступают в агрегатор, проверьте логи DaemonSet в пространстве имён `cattle-logging-system`.
+2. **Логи агрегатора (Fluentd)**: Fluentd по умолчанию пишет логи в файл внутри контейнера.
+   ```bash
+   kubectl exec -n cattle-logging-system <fluentd-pod-name> -- cat /var/log/fluentd/out
+   ```
+3. **Ошибки Output**: если хранилище (Elasticsearch/OpenSearch) недоступно, Fluentd начнет заполнять буфер. Проверьте статус PVC (Persistent Volume Claim), если он используется для буферизации.
 
 ## Дополнительная информация
 
-### Актуальность версий
+### Статус и актуальность
 
-> **Внимание:** Rancher Logging базируется на Logging Operator (Banzai Cloud/SUSE) с Fluent Bit + Fluentd. Архитектура стабильна и не менялась с 2024 года. Перед развёртыванием проверьте актуальные версии:
+| Компонент | Состояние | Рекомендация |
+|-----------|-----------|--------------|
+| Logging Operator | Актуально | Основной механизм в Rancher 2.x |
+| Fluent Bit | Стабильно | Оптимален для сбора логов в K8s |
+| Fluentd | Стабильно | Используется как гибкий маршрутизатор |
 
-| Компонент | Указанная информация | Статус | Рекомендация |
-|-----------|---------------------|--------|--------------|
-| **Logging Operator** | Banzai Cloud (перенесён в SUSE) | ✅ Актуален | [Logging Operator Docs](https://kube-logging.dev/) |
-| **Fluent Bit** | DaemonSet на каждом узле | ✅ Evergreen | Обновляется через Rancher UI |
-| **Fluentd** | StatefulSet-маршрутизатор | ✅ Evergreen | Обновляется через Rancher UI |
-| **API version** | `logging.banzaicloud.io/v1beta1` | ✅ Актуален | Не менялся с 2024 |
-
-**Связанные темы:** [Fluent Bit Configuration](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md), [Kibana Guide](../MonitoringLogging/EFK/kibana_guide.md), [EFK Stack Setup](../MonitoringLogging/EFK/efk_stack_setup_guide.md).
+**Связанные темы:**
+* [Архитектура логирования Kubernetes](../MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — SSoT по общим принципам.
+* [Конфигурация Fluent Bit](../MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md) — детали настройки агентов.
+* [EFK Stack Setup](../MonitoringLogging/EFK/efk_stack_setup_guide.md) — развертывание Elasticsearch и Kibana.
 
 См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.

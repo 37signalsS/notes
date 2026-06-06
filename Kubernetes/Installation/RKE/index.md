@@ -101,19 +101,7 @@ export KUBECONFIG=~/.kube/config:~/.kube/rke-config
 
 ### Развертывание кластера через Rancher UI
 
-1. Перейти в `Global` → `Clusters` → `Add Cluster`
-2. Выбрать `Create a new Kubernetes cluster using Rancher Kubernetes Engine`
-3. Настроить кластер:
-   * Имя и описание
-   * Версия Kubernetes и тип дистрибутива (RKE2/K3s)
-   * Network Provider (Flannel/Calico/Cilium)
-   * Cloud Provider (`None` для bare-metal)
-4. Добавить узлы с ролями:
-   * **etcd** — 3 или 5 узлов для кворума
-   * **Control Plane** — 2 или 3 узла для HA
-   * **Worker** — рабочие узлы для подов приложений
-5. Запустить `rancher-agent` на каждом узле (команда из Rancher UI)
-6. Дождаться статуса `Active`
+Для визуального развертывания и управления RKE-кластерами рекомендуется использовать платформу Rancher. Подробная инструкция по настройке через веб-интерфейс, описание работы Cattle Agent и сценарии развертывания приложений доступны в разделе: [RKE в Rancher](../../Rancher/rancher_rke.md).
 
 ### Troubleshooting
 

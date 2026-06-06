@@ -137,7 +137,7 @@ openssl x509 -in cert.pem -noout -text | grep -A1 "Subject Alternative Name"
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### ACME-протокол: ключевые эндпоинты
 
@@ -153,14 +153,14 @@ openssl x509 -in cert.pem -noout -text | grep -A1 "Subject Alternative Name"
 
 **Полная спецификация:** [RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555)
 
-### Надёжность информации
+### Смотрите также
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| ACME Account lifecycle | **10** | RFC 8555, cert-manager docs |
-| Certificate Transparency | **10** | RFC 6962, crt.sh |
-| Срок 45 дней (2026) | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
+- **[Let's Encrypt: Обзор](./index.md)** — лимиты, solvers и окружения
+- **[Практические сценарии Let's Encrypt](./letsencrypt_scenarios.md)** — HTTP-01, DNS-01, Staging
+- **[Cert-manager: Troubleshooting](./letsencrypt_advanced.md)** — диагностика ошибок ACME
+its-45-day-certs) |
 | ARI поддержка | **9** | Draft IETF, cert-manager 1.15+ |
 | Сравнение CA | **8** | Документация CA, может меняться |
 
 **Связанные документы:** [базовые сведения](../index.md), [практические сценарии](./letsencrypt_scenarios.md), [cert_manager CRD](../definitions.md), [диагностика](./letsencrypt_advanced.md).
+nced.md).

@@ -1,153 +1,75 @@
-# NetworkPolicy: Навигатор
+# NetworkPolicy: Обзор и навигация
 
-**NetworkPolicy** — ресурс Kubernetes для декларативного управления правилами доступа к сети (L3/L4) между подами. Работает только при поддержке CNI-плагином (Calico, Cilium, Weave Net).
+## Определения и концепции
 
-Файл выполняет роль навигатора по документации NetworkPolicy с ссылками на специализированные разделы.
+**NetworkPolicy** — ресурс Kubernetes для декларативного управления сетевым доступом подов. Функционирует как распределенный файрвол, реализуемый на уровне сетевого плагина (CNI).
 
----
+* **Единый источник истины (Определения)**: [NetworkPolicy: Определения и концепции](./NetworkPolicy/definitions.md)
 
-## Определения
-
-**NetworkPolicy** — встроенный файрвол Kubernetes, позволяющий разрешать или запрещать трафик на уровне IP-адресов и портов. Функционирует как опция безопасности "opt-in": без политик весь трафик разрешён, при применении хотя бы одной политики включается режим "запрещено по умолчанию".
-
-* *Подробные определения и базовые концепции: [NetworkPolicy: определения](./NetworkPolicy/definitions.md)*
-
-### Терминология
+### Ключевые термины
 
 | Термин | Описание |
 |--------|----------|
-| **Target** | Поды, к которым применяется политика (`spec.podSelector`) |
-| **Source** | Источник трафика (`spec.ingress.from`) |
-| **Destination** | Назначение трафика (`spec.egress.to`) |
-| **Default Deny** | Режим запрета всего трафика при наличии хотя бы одной политики |
-| **Default Allow** | Режим разрешения всего трафика при отсутствии политик |
+| **Default Deny** | Режим блокировки всего трафика, который не разрешен явно. |
+| **Ingress / Egress** | Направления трафика: входящий и исходящий соответственно. |
+| **CNI** | Сетевой интерфейс контейнеров, отвечающий за реализацию правил. |
 
-* *Логика правил и операторы: [rule_logic.md](./NetworkPolicy/rule_logic.md)*
-
----
+*Подробный разбор терминологии и логики: [NetworkPolicy: Логика правил](./NetworkPolicy/rule_logic.md)*
 
 ## Основные концепции
 
-### Принцип работы
+### Принцип работы и изоляция
 
-* **Default Allow**: Без политик весь трафик разрешён (плоская сетевая модель Kubernetes)
-* **Default Deny**: При применении хотя бы одной политики весь трафик запрещается, кроме явно разрешённого
-* **Направления**: `Ingress` (входящий), `Egress` (исходящий) или оба (`policyTypes`)
+Сетевые политики работают по принципу разрешительных списков (allow-lists). Если политика выбрала под через `podSelector`, этот под становится изолированным.
 
-* *Структура NetworkPolicy и примеры YAML: [definitions.md](./NetworkPolicy/definitions.md#структура-networkpolicy)*
+* **Направления:** политики могут контролировать входящий (`Ingress`) и исходящий (`Egress`) трафик.
+* **Селекторы:** правила могут основываться на метках подов (`podSelector`), метках пространств имен (`namespaceSelector`) или диапазонах IP-адресов (`ipBlock`).
 
-### Требования к CNI
+### Логика объединения правил
 
-| Плагин | Поддержка | Особенности |
-|--------|-----------|-------------|
-| **Calico** | ✅ Полная | Расширения: HostEndpoint, GlobalNetworkPolicy, логирование |
-| **Cilium** | ✅ Полная | Реализация через eBPF, высокая производительность |
-| **Weave Net** | ✅ Базовая | Стандартная поддержка NetworkPolicy |
-| **Flannel** | ❌ Нет | Не поддерживает NetworkPolicy в стандартной конфигурации |
+Внутри одной политики правила могут комбинироваться:
+* Элементы в списках объединяются по логическому **ИЛИ**.
+* Условия внутри одного элемента (например, селектор пода и селектор неймспейса) объединяются по логическому **И**.
 
-* *Детали реализации в CNI: [cni_implementation.md](./NetworkPolicy/cni_implementation.md)*
+* Подробное описание логики: [Логика правил NetworkPolicy](./NetworkPolicy/rule_logic.md)
 
-### Логика правил
+### Реализация в CNI
 
-* **Логическое "ИЛИ"**: Элементы в списках `ingress`, `egress`, `from`, `to` объединяются по "ИЛИ"
-* **Логическое "И"**: Поля внутри одного элемента (`podSelector`, `namespaceSelector`, `ports`) объединяются по "И"
+NetworkPolicy — это только спецификация. Фактическую фильтрацию трафика выполняет CNI-плагин. Такие плагины как Calico, Cilium и Antrea обеспечивают полную поддержку политик, в то время как Flannel в стандартной поставке их не поддерживает.
 
-* *Примеры комбинаций правил: [rule_logic.md](./NetworkPolicy/rule_logic.md)*
-
-### Типовые политики
-
-**Deny-all (запрет всего входящего трафика):**
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deny-all
-spec:
-  podSelector: {}
-  policyTypes:
-  - Ingress
-```
-
-**Allow-all (разрешение всего трафика):**
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-all
-spec:
-  podSelector: {}
-  policyTypes:
-  - Ingress
-  ingress:
-  - {}
-```
-
-* *Подробнее о типовых политиках: [definitions.md](./NetworkPolicy/definitions.md#типовые-политики-allow-all-и-deny-all)*
-
----
+* Сравнение поддержки в разных CNI: [Реализация CNI-плагинами](./NetworkPolicy/cni_implementation.md)
 
 ## Практические сценарии
 
-| Сценарий | Описание | SSoT |
-|----------|----------|------|
-| **Default Deny** | Полная изоляция namespace | [practical_scenarios.md](./NetworkPolicy/practical_scenarios.md#шаг-1-полная-изоляция-неймспейса-default-deny) |
-| **Allow by Namespace** | Разрешение трафика из определённых namespace | [practical_scenarios.md](./NetworkPolicy/practical_scenarios.md#шаг-2-разрешение-трафика-от-конкретного-приложения) |
-| **Allow by IP** | Разрешение трафика из внешних IP-диапазонов | [definitions.md](./NetworkPolicy/definitions.md#источники-from-и-назначения-to) |
-| **DNS Access** | Разрешение доступа к DNS для работы подов | [practical_scenarios.md](./NetworkPolicy/practical_scenarios.md#шаг-5-разрешение-трафика-к-dns) |
-| **Egress-изоляция** | Контроль исходящего трафика | [practical_scenarios.md](./NetworkPolicy/practical_scenarios.md#шаг-4-egress-политика-и-проблема-с-dns) |
+Типовые задачи, решаемые с помощью сетевых политик:
 
-* *Пошаговые сценарии с примерами YAML: [practical_scenarios.md](./NetworkPolicy/practical_scenarios.md)*
-* *Лучшие практики внедрения: [best_practices.md](./NetworkPolicy/best_practices.md)*
+1. **Полная изоляция неймспейса:** запрет всего входящего трафика по умолчанию.
+2. **Межсервисное взаимодействие:** разрешение доступа только от фронтенда к бэкенду.
+3. **Доступ к инфраструктурным сервисам:** разрешение трафика к DNS (CoreDNS) для работы Service Discovery.
+4. **Ограничение внешнего доступа:** разрешение исходящего трафика только в определенные внешние подсети.
 
-### Диагностика
+* Пошаговые примеры и манифесты: [Практические сценарии NetworkPolicy](./NetworkPolicy/practical_scenarios.md)
 
-```bash
-# Проверка применённых политик
-kubectl get networkpolicy -n <namespace>
+## Дополнительная информация
 
-# Детальная информация о политике
-kubectl describe networkpolicy <name> -n <namespace>
+### Лучшие практики
 
-# Тестирование连通ности
-kubectl run test --rm -it --image=busybox -- nslookup <service>
+Для безопасной эксплуатации кластера рекомендуется:
+* Начинать внедрение с политики `default-deny` для каждого неймспейса.
+* Использовать автоматизированные средства визуализации политик.
+* Явно разрешать доступ к DNS, иначе работа сервисов будет нарушена.
 
-# Удаление всех политик в namespace
-kubectl delete networkpolicy --all -n <namespace>
-```
-
----
-
-## Дополнительные сведения
+* Руководство по внедрению: [NetworkPolicy: лучшие практики](./NetworkPolicy/best_practices.md)
 
 ### Важные нюансы
 
-**Трафик внутри пода:** NetworkPolicy не ограничивает трафик между контейнерами внутри одного пода — они общаются через `localhost`.
+* **Трафик внутри пода:** политики не ограничивают взаимодействие контейнеров через `localhost`.
+* **Проблема Source IP:** при использовании внешних балансировщиков может происходить подмена IP-адреса источника (NAT), что влияет на работу `ipBlock`.
+* **Расширения:** продвинутые CNI (например, Calico) поддерживают глобальные политики кластера (`GlobalNetworkPolicy`), которые действуют на все пространства имен.
 
-**Двусторонний трафик:** Для подключения от пода А к поду Б необходимо разрешить трафик и в `egress`-политике пода А, и в `ingress`-политике пода Б.
+* Подробнее о расширениях: [Calico — сетевые политики](../../Security/network_policies/Calico/index.md)
 
-**Проблема NAT:** При использовании `NodePort` или `LoadBalancer` без `externalTrafficPolicy: Local` исходный IP клиента подменяется на IP ноды. В `ipBlock` нужно указывать подсеть нод.
-
-* *Подробнее о нюансах: [definitions.md](./NetworkPolicy/definitions.md#важные-нюансы-реализации)*
-
-### Визуализация
-
-Для проверки и отладки политик рекомендуется использовать визуализаторы, например [Orca Turfin](https://orca-tufin.com/), которые преобразуют YAML в графическое представление правил.
-
-### Сетевая модель Kubernetes
-
-NetworkPolicy работает в контексте общей сетевой модели Kubernetes, основанной на принципе IP-per-Pod.
-
-* *Обзор сетевой модели: [network_overview.md](./network_overview.md)*
-* *CNI и kube-proxy: [cni_kube_proxy_roles.md](./cni_kube_proxy_roles.md)*
-
-### Calico-specific расширения
-
-Calico расширяет стандартные NetworkPolicy дополнительными возможностями:
-
-* **HostEndpoint**: Политики для узлов кластера
-* **GlobalNetworkPolicy**: Глобальные политики на уровне кластера
-* **Логирование**: Логирование заблокированного трафика
-
-* *Calico HostEndpoint и GlobalNetworkPolicy: [../../Security/network_policies/Calico/index.md](../../Security/network_policies/Calico/index.md)*
+**См. также:**
+* [Обзор сетевой модели Kubernetes](./network_overview.md) — базовые принципы сети
+* [CNI и kube-proxy: роли](./cni_kube_proxy_roles.md) — разделение ответственности компонентов
+* [DNS в Kubernetes](../dns_deep_dive.md) — детали работы Service Discovery

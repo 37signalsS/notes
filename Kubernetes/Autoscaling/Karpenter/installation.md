@@ -1,34 +1,34 @@
-# Karpenter: Установка и конфигурация
+# Установка и конфигурация Karpenter
 
 ## Определения
 
-**Karpenter Helm Chart** — официальный пакет для развёртывания Karpenter в Kubernetes кластере. Управляет установкой контроллера, webhook и необходимых RBAC-ресурсов.
+**Karpenter Helm Chart** — официальный пакет для развёртывания Karpenter в кластере Kubernetes. Управляет установкой контроллера, вебхуков (webhook) и необходимых ресурсов RBAC (Role-Based Access Control — управление доступом на основе ролей).
 
-**EC2NodeClass** — ресурс Karpenter для AWS, определяющий конфигурацию создаваемых узлов (AMI, IAM-роль, подсети, группы безопасности).
+**NodePool** — ресурс CRD (Custom Resource Definition), определяющий параметры масштабирования (типы инстансов, зоны, лимиты ресурсов). Подробное описание концепции см. в **[Обзор и основные концепции Karpenter](./overview.md)**.
 
-**NodePool** — ресурс Karpenter, определяющий параметры масштабирования (типы инстансов, зоны, лимиты ресурсов).
+**EC2NodeClass** — ресурс CRD для AWS (Amazon Web Services), определяющий инфраструктурную конфигурацию узлов: AMI (Amazon Machine Image — образ системы), IAM-роль, подсети и группы безопасности.
 
 ## Основные концепции
 
 ### Предварительные требования
 
-**Кластер EKS** — требуется Kubernetes 1.24+ и совместимость с Karpenter v1.x.
+**Кластер EKS (Elastic Kubernetes Service)** — требуется версия Kubernetes 1.24 или выше и совместимость с Karpenter v1.x.
 
-**IAM Roles** — необходимы две роли: для контроллера Karpenter и для создаваемых узлов.
+**IAM-роли (Identity and Access Management)** — необходимы две роли: для контроллера Karpenter (доступ к API облака) и для создаваемых узлов (права для работы компонентов Kubernetes на ноде).
 
-**Helm v3+** — требуется для установки Karpenter через Helm chart.
+**Helm v3+** — инструмент для управления пакетами Kubernetes, необходим для установки Karpenter.
 
-**Очередь SQS** — для обработки событий прерывания (interruption handling) в AWS.
+**Очередь SQS (Simple Queue Service)** — используется в AWS для обработки событий прерывания (interruption handling), таких как уведомления о вытеснении spot-инстансов.
 
 ### Архитектура развёртывания
 
-Karpenter устанавливается в отдельный namespace `karpenter`. Контроллер работает как Deployment, требует доступа к API AWS EC2, IAM, SQS, CloudFormation.
+Karpenter устанавливается в отдельное пространство имён (namespace) `karpenter`. Контроллер работает как Deployment и взаимодействует с API облачного провайдера (AWS EC2, IAM, SQS, CloudFormation).
 
 ## Практические сценарии
 
-### Установка Karpenter (AWS EKS)
+### Установка Karpenter в AWS EKS
 
-#### Шаг 1: Создание IAM ролей
+#### Шаг 1: Создание IAM-ролей
 
 ```bash
 # Роль для Karpenter Controller
@@ -60,7 +60,7 @@ helm upgrade --install karpenter karpenter/karpenter \
   --version 1.10.0
 ```
 
-#### Шаг 3: Создание Node Pool
+#### Шаг 3: Создание NodePool
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -73,7 +73,7 @@ spec:
     cpu: 1000
     memory: 1000Gi
 
-  # Требования к узлам
+  # Шаблон узла
   template:
     spec:
       # Типы инстансов (от дешёвых к дорогим)
@@ -83,29 +83,29 @@ spec:
         - m6i.large
         - m6i.xlarge
 
-      # Зоны доступности
+      # Ссылка на конфигурацию облачного уровня
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
         name: default
 
-      # Требования к топологии
+      # Требования к узлам
       requirements:
         - key: "topology.kubernetes.io/zone"
           operator: In
           values: ["us-west-2a", "us-west-2b"]
 
-        # Запрет spot-инстансов для критических нагрузок
+        # Использование только on-demand инстансов
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["on-demand"]
 
-  # Стратегия распределения
+  # Стратегия консолидации
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 1m
 
-  # Приоритет Node Pool
+  # Вес NodePool (для выбора между несколькими пулами)
   weight: 100
 ```
 
@@ -117,25 +117,25 @@ kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  # AMI (образ узла)
+  # Семейство AMI
   amiFamily: AL2023
   amiSelectorTerms:
     - alias: al2023@latest
 
-  # Роль IAM для узлов
+  # IAM-роль для узлов
   role: KarpenterNodeRole
 
-  # Подсеть
+  # Выбор подсетей по тегам
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: my-cluster
 
-  # Группа безопасности
+  # Выбор групп безопасности
   securityGroupSelectorTerms:
     - tags:
         aws:eks:cluster-name: my-cluster
 
-  # Конфигурация диска
+  # Настройка дисковой подсистемы EBS (Elastic Block Store)
   blockDeviceMappings:
     - deviceName: /dev/xvda
       ebs:
@@ -143,7 +143,7 @@ spec:
         volumeType: gp3
         encrypted: true
 
-  # Метаданные (IMDSv2)
+  # Настройки метаданных инстанса (IMDSv2 — Instance Metadata Service version 2)
   metadataOptions:
     httpEndpoint: enabled
     httpProtocolIPv6: disabled
@@ -151,7 +151,7 @@ spec:
     httpTokens: required
 ```
 
-### Сценарий 1: Масштабирование для пакетных задач
+### Сценарий: Экономия на пакетных задачах через spot-инстансы
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -164,7 +164,7 @@ spec:
 
   template:
     spec:
-      # Spot-инстансы для экономии
+      # Список подходящих типов инстансов
       instanceTypes:
         - c5.large
         - c5.xlarge
@@ -176,17 +176,17 @@ spec:
         name: default
 
       requirements:
-        # Только spot-инстансы
+        # Принудительное использование spot-инстансов
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["spot"]
 
   disruption:
     consolidationPolicy: WhenEmpty
-    expireAfter: 24h # Принудительное обновление через 24 часа
+    expireAfter: 24h # Ротация узлов каждые 24 часа
 ```
 
-### Сценарий 2: GPU-ноды для ML
+### Сценарий: Масштабирование GPU-узлов
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -200,7 +200,7 @@ spec:
 
   template:
     spec:
-      # GPU-инстансы
+      # Специализированные GPU-инстансы
       instanceTypes:
         - g5.xlarge
         - g5.2xlarge
@@ -212,100 +212,61 @@ spec:
         name: gpu-node-class
 
       requirements:
-        # Требуется GPU
+        # Проверка наличия GPU (Graphics Processing Unit)
         - key: "nvidia.com/gpu"
           operator: Exists
 
-        # Только on-demand для стабильности
+        # Использование on-demand для стабильности обучения моделей
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["on-demand"]
-```
-
-### Сценарий 3: Мульти-зонный кластер
-
-```yaml
-apiVersion: karpenter.sh/v1
-kind: NodePool
-metadata:
-  name: multi-zone
-spec:
-  template:
-    spec:
-      # Распределение по зонам
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: DoNotSchedule
-          labelSelector:
-            matchLabels:
-              app: my-app
-
-      requirements:
-        # Все доступные зоны
-        - key: "topology.kubernetes.io/zone"
-          operator: Exists
 ```
 
 ## Дополнительная информация
 
 ### Диагностика и мониторинг
 
-**Проверка логов контроллера:**
-
+**Просмотр логов контроллера:**
 ```bash
 kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100
 ```
 
-**Проверка Node Pool:**
-
+**Список существующих NodePool:**
 ```bash
 kubectl get nodepool
 ```
 
-**Проверка созданных узлов:**
-
+**Просмотр узлов, созданных Karpenter:**
 ```bash
 kubectl get nodes -l karpenter.sh/nodepool=default
 ```
 
-**Просмотр событий Karpenter:**
-
+**События жизненного цикла узлов:**
 ```bash
 kubectl get events -n karpenter --sort-by='.lastTimestamp'
 ```
 
-### Метрики для мониторинга
+### Метрики мониторинга
 
 | Метрика | Описание |
 |---------|----------|
-| `karpenter_nodepool_usage_cpu` | Использовано CPU в Node Pool |
-| `karpenter_nodepool_usage_memory` | Использовано памяти в Node Pool |
-| `karpenter_pods_state` | Количество подов по состояниям |
-| `karpenter_nodes_total` | Общее количество узлов |
-| `karpenter_disruption_actions_total` | Количество операций консолидации |
-| `karpenter_provisioning_latency_seconds` | Задержка создания узла |
+| `karpenter_nodepool_usage_cpu` | Использование CPU в разрезе NodePool |
+| `karpenter_nodepool_usage_memory` | Использование памяти в разрезе NodePool |
+| `karpenter_pods_state` | Состояние подов, ожидающих назначения на узлы |
+| `karpenter_nodes_total` | Общее количество управляемых узлов |
+| `karpenter_disruption_actions_total` | Статистика операций консолидации и удаления |
+| `karpenter_provisioning_latency_seconds` | Время с момента Pending пода до готовности узла |
 
 ### Лучшие практики
 
-**Используйте несколько Node Pool** — разделяйте workloads по типам (критические, пакетные, GPU).
+- **Разделение нагрузок** — создавайте отдельные NodePool для критических сервисов, пакетных задач и GPU-нагрузок.
+- **Включение консолидации** — используйте `consolidationPolicy: WhenEmptyOrUnderutilized` для автоматической экономии средств.
+- **Контроль лимитов** — всегда задавайте `spec.limits` в NodePool, чтобы избежать неконтролируемого роста затрат при сбоях.
+- **Обновление AMI** — используйте алиасы (alias) в `amiSelectorTerms` для автоматического получения последних патчей безопасности.
+- **Мониторинг Pending** — настройте алерты на наличие подов в состоянии `Pending` более 5 минут, это может сигнализировать о проблемах с правами IAM или квотами облака.
 
-**Consolidation** — включите консолидацию для автоматической оптимизации затрат.
+### Ссылки
 
-**Spot + On-Demand** — комбинируйте spot для fault-tolerant и on-demand для критических нагрузок.
-
-**Limit Range** — устанавливайте лимиты на Node Pool для контроля затрат.
-
-**ExpireAfter** — настройте принудительное обновление узлов для безопасности.
-
-**Мониторинг Pending Pods** — алерты на поды в `Pending` более 2 минут.
-
-**Используйте latest AMI** — обновляйте образы узлов автоматически через `amiSelectorTerms: alias`.
-
-### Связанные ресурсы
-
-**[Обзор Karpenter](./overview.md)** — концепции, архитектура, отличия от Cluster Autoscaler.
-
-**[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — альтернативное решение для масштабирования узлов.
-
-**[KEDA](../keda/basic_concepts.md)** — интеграция для масштабирования по внешним метрикам.
+- **[Обзор и основные концепции Karpenter](./overview.md)** — архитектура и отличия от Cluster Autoscaler.
+- **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — альтернативный инструмент масштабирования.
+- **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита подов при операциях консолидации.

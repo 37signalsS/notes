@@ -260,16 +260,16 @@ spec:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Надёжность информации
+Данные о надёжности информации — в обзоре концепции.
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| HTTP-01 ClusterIssuer | **10** | cert-manager docs, стандартный паттерн |
-| DNS-01 Cloudflare | **10** | Подтверждено в cert-manager 1.13+ |
-| Yandex Cloud DNS webhook | **8** | Community webhook, может меняться |
-| Staging configuration | **10** | Официальное тестовое окружение LE |
-| 45-дневные duration | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
+### Смотрите также
+
+- **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — CT-логи, аккаунты, ARI
+- **[Cert-manager: Troubleshooting](./letsencrypt_advanced.md)** — отладка ошибок ACME
+- **[Cert-manager: Определения](../../definitions.md)** — базовая спецификация ресурсов
+45-дневные duration | **10** | [letsencrypt.org 2026-02-24](https://letsencrypt.org/2026/02/24/rate-limits-45-day-certs) |
 
 **Связанные документы:** [углублённые концепции](./letsencrypt_concepts.md), [диагностика](./letsencrypt_advanced.md), [cert_manager CRD](../../definitions.md).
+ions.md).

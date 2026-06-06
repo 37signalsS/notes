@@ -1,193 +1,135 @@
-# Pod: Практические сценарии и команды kubectl
+# Практические сценарии и команды управления Pod
 
 ## Определения
 
-**Императивная команда** — команда kubectl, создающая объект напрямую (например, `kubectl create`). Если объект существует, команда завершится ошибкой.
+**kubectl** — интерфейс командной строки для управления кластерами Kubernetes. Взаимодействует с API (Application Programming Interface) сервером для управления ресурсами.
 
-**Декларативная команда** — команда kubectl, применяющая конфигурацию из файла (например, `kubectl apply`). Создает объект или обновляет существующий.
+**Императивный подход** — способ управления, при котором команды отдаются напрямую (например, `kubectl run`). Каждая команда описывает конкретное действие ("создай этот объект").
 
-**Ephemeral Container** — временный отладочный контейнер, добавляемый в работающий Pod без его перезапуска.
+**Декларативный подход** — способ управления через файлы конфигурации (манифесты). Пользователь описывает желаемое состояние (например, через `kubectl apply`), а Kubernetes сам приводит систему к этому состоянию. Это основа методологии IaC (Infrastructure as Code — инфраструктура как код).
 
 ---
 
 ## Базовые концепции
 
-### kubectl apply vs kubectl create
+### kubectl apply против kubectl create
 
-| Команда | Описание | Когда использовать |
-| :--- | :--- | :--- |
-| `kubectl create` | Императивная команда. Создает объект с нуля. При наличии объекта вернет ошибку | Одноразовое создание, скрипты, dev-среда |
-| `kubectl apply` | Декларативная команда. Применяет конфигурацию из файла. Создает или обновляет объект | **Предпочтительный способ** для production, CI/CD, GitOps |
+Выбор между декларативным и императивным методами создания объектов.
 
-**Ключевое отличие:** `kubectl apply` хранит последнюю примененную конфигурацию в аннотации `kubectl.kubernetes.io/last-applied-configuration`. Это позволяет отслеживать изменения и применять только дельту при следующем вызове.
+| Команда | Характер | Поведение | Применение |
+| :--- | :--- | :--- | :--- |
+| `kubectl create` | Императивный | Создает объект. Если объект уже существует — возвращает ошибку. | Быстрое тестирование, создание ресурсов из CLI (Command Line Interface). |
+| `kubectl apply` | Декларативный | Создает или обновляет объект на основе файла. Хранит историю изменений. | **Рекомендуемый метод** для Production, CI/CD (Continuous Integration / Continuous Deployment). |
 
-### Диагностика проблем с Pod
+**Аннотация `last-applied-configuration`:** При использовании `kubectl apply` в метаданных объекта сохраняется JSON (JavaScript Object Notation) копия последней примененной конфигурации. Это позволяет Kubernetes вычислять разницу (diff) между текущим и новым состоянием.
 
-Две основные команды для отладки:
+### Цикл диагностики Pod
 
-| Команда | Назначение |
-| :--- | :--- |
-| `kubectl describe pod` | Подробная сводка состояния пода с событиями |
-| `kubectl logs` | Вывод stdout/stderr процессов в контейнере |
+При возникновении проблем с Pod (подом) рекомендуется следовать стандартному алгоритму:
+
+1.  **`kubectl get pods`**: Проверка общей фазы и статуса.
+2.  **`kubectl describe pod`**: Анализ событий (Events) и условий (Conditions) для поиска инфраструктурных ошибок.
+3.  **`kubectl logs`**: Просмотр вывода приложения (stdout/stderr) для поиска внутренних ошибок кода.
 
 ---
 
 ## Практические сценарии
 
-### Пример 1: Базовый манифест Pod
+### Сценарий 1: Базовое управление жизненным циклом
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-nginx-pod
-  labels:
-    app: web
-spec:
-  containers:
-    - name: nginx-container
-      image: nginx:1.28.0
-      ports:
-        - containerPort: 80
-```
-
-### Пример 2: Multi-container Pod с взаимодействием через localhost
-
-Два контейнера в одном поде используют общее сетевое пространство:
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: multi-container-demo
-spec:
-  containers:
-  - name: web-server
-    image: my-date-server:1.0
-    ports:
-      - containerPort: 5005
-  - name: client
-    image: busybox:1.36.1
-    command: ['sh', '-c', 'while true; do wget -q -O- http://localhost:5005/date; sleep 5; done']
-```
-
-**Как это работает:**
-
-- Контейнер `client` обращается к `web-server` через `http://localhost:5005`
-- Просмотр логов: `kubectl logs multi-container-demo -c client` и `kubectl logs multi-container-demo -c web-server`
-
-### Пример 3: Диагностика пода с проблемами
-
-Подробный разбор того, как отличить перезапуск контейнера от пересоздания пода с помощью UID, см. в **[Перезапуск подов в Kubernetes](./pod_restarts.md)**.
+Создание, просмотр и удаление ресурсов.
 
 ```bash
-# Получить подробную информацию о поде с событиями
-kubectl describe pod my-nginx-pod -n <namespace>
+# Создание или обновление Pod из манифеста
+kubectl apply -f my-pod.yaml
 
-# Что смотреть в выводе:
-# 1. Status — текущая фаза пода (Pending, Running, Failed)
-# 2. Conditions — детали состояния (PodScheduled, Initialized, Ready)
-# 3. Events — журнал событий (ошибки pull image, нехватка ресурсов, результаты проб)
-
-# Посмотреть логи контейнера
-kubectl logs my-pod-name
-
-# Следить за логами в реальном времени
-kubectl logs -f my-pod-name
-
-# Логи для multi-container Pod (указать контейнер)
-kubectl logs my-multi-container-pod -c main-app
-
-# Логи init-контейнера
-kubectl logs my-pod-with-init -c my-init-container
-
-# Логи предыдущего экземпляра контейнера (после перезапуска)
-kubectl logs my-pod-name --previous
-```
-
-Подробнее об init-контейнерах: [Init Containers](./pod_init_containers.md).
-Подробнее о sidecar-паттернах: [Sidecar Patterns](./pod_sidecar_patterns.md).
-
-### Пример 4: Отладка с помощью Ephemeral Containers
-
-**Проблема:** В контейнере отсутствуют инструменты диагностики (`tcpdump`, `netstat`, `ps`) или distroless-образ без shell.
-
-**Решение:** Добавить временный отладочный контейнер без перезапуска пода.
-
-Полное руководство: **[Ephemeral Containers](./ephemeral_containers.md)**.
-
-**Быстрый старт:**
-
-```bash
-# Базовая отладка — добавить ephemeral контейнер
-kubectl debug -it pod/my-pod \
-  --image=busybox:1.36.1 \
-  --target=app-container
-```
-
-### Пример 5: Graceful Shutdown
-
-Настройка корректного завершения работы пода. Полное описание процесса: **[Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)**.
-
-**Ключевые параметры:**
-
-- `terminationGracePeriodSeconds` — время на корректное завершение (по умолчанию 30с)
-- `preStop` hook — выполняется до отправки SIGTERM (уведомление приложения, дренаж трафика)
-- `readinessProbe` — при возврате 503 pod исключается из Service
-
-**Порядок завершения:**
-
-1. Kubernetes решает завершить pod
-2. `preStop` hook + SIGTERM отправляются одновременно
-3. `readinessProbe` возвращает ошибку → pod исключается из Service
-4. Приложение завершает текущие запросы
-5. По истечении grace period → SIGKILL
-
-**Связанные темы:** [Пробы](../probes.md), [Жизненный цикл пода](./pod_lifecycle_and_state.md).
-
-### Пример 6: Основные команды управления Pod
-
-```bash
-# Создать под из файла
-kubectl apply -f pod.yaml
-
-# Получить список подов
+# Просмотр списка Pod в текущем Namespace (пространстве имен)
 kubectl get pods
 
-# Поды в конкретном namespace
-kubectl -n <namespace> get pod
+# Просмотр Pod с расширенной информацией (IP, Node)
+kubectl get pods -o wide
 
-# Подробная информация о поде
-kubectl describe pod my-nginx-pod
-
-# Удалить под
-kubectl delete pod my-nginx-pod
-
-# Поды на конкретной ноде
-kubectl get pod --field-selector spec.nodeName=<node-name>
+# Удаление Pod
+kubectl delete pod my-pod-name
 ```
 
-### Пример 7: Использование меток (label selectors)
+### Сценарий 2: Многоконтейнерный Pod и взаимодействие через localhost
+
+Container (контейнеры) внутри одного Pod разделяют сетевое пространство (Network Namespace), что позволяет им взаимодействовать через `localhost`.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sidecar-demo
+spec:
+  containers:
+  - name: app
+    image: my-app:1.0
+    ports:
+    - containerPort: 8080
+  - name: sidecar-proxy
+    image: nginx:alpine
+    # Проксирование трафика на 127.0.0.1:8080
+```
+
+**Логирование в многоконтейнерных Pod:**
+При наличии нескольких container необходимо явно указывать имя через флаг `-c`.
+```bash
+kubectl logs sidecar-demo -c sidecar-proxy
+```
+
+### Сценарий 3: Глубокая диагностика и отладка
+
+Инструменты для анализа работающих приложений.
+
+| Действие | Команда |
+| :--- | :--- |
+| **События и ошибки** | `kubectl describe pod <name>` |
+| **Логи (Real-time)** | `kubectl logs -f <name>` |
+| **Логи после краша** | `kubectl logs <name> --previous` |
+| **Интерактивный shell** | `kubectl exec -it <name> -- /bin/sh` |
+| **Копирование файлов** | `kubectl cp <name>:/tmp/log.txt ./log.txt` |
+
+Подробности о фазах и условиях см. в [Жизненный цикл и состояния Pod](./pod_lifecycle_and_state.md).
+
+### Сценарий 4: Отладка через Ephemeral Containers
+
+Если в основном образе нет оболочки (например, Distroless-образы), используются временные отладочные контейнеры.
 
 ```bash
-# Получить поды по метке
+kubectl debug -it <pod-name> --image=busybox:1.36 --target=<container-name>
+```
+
+Полное руководство: [Эфемерные контейнеры](./ephemeral_containers.md).
+
+### Сценарий 5: Использование селекторов меток (Label Selectors)
+
+Метки позволяют группировать объекты и выполнять массовые операции.
+
+```bash
+# Получение Pod по конкретной метке
 kubectl get pods -l app=frontend
 
-# Получить все ресурсы в namespace по метке
-kubectl get all -l environment=production
+# Получение Pod по нескольким условиям (логическое И)
+kubectl get pods -l 'app=frontend,tier=backend'
 
-# Удалить ресурсы по метке
-kubectl delete all -l environment=test
+# Использование операторов (In, NotIn)
+kubectl get pods -l 'environment in (production, staging)'
 
-# Комбинированные селекторы
-kubectl get pods -l 'app=web,environment in (staging,production)'
-
-# Отрицание
-kubectl get pods -l 'app!=backend'
+# Массовое удаление по метке
+kubectl delete pods -l tier=testing
 ```
+
+Подробнее о метаданных см. в [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
 
 ---
 
 ## Дополнительная информация
 
-**См. также:** [Жизненный цикл пода](./pod_lifecycle_and_state.md), [Перезапуск подов](./pod_restarts.md), [Ephemeral Containers](./ephemeral_containers.md), [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md).
+**Связанные темы:**
+- [Жизненный цикл и состояния Pod](./pod_lifecycle_and_state.md) — детальный разбор фаз и условий.
+- [Перезапуск Pod в Kubernetes](./pod_restarts.md) — различие между перезапуском и пересозданием.
+- [Пробы в Kubernetes](../probes.md) — механизмы `liveness` и `readiness`.
+- [Graceful Shutdown (корректное завершение)](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md) — процедура остановки.
+- [Метки, аннотации и выбор узлов](./pod_labels_annotations_node_selection.md) — продвинутое управление метаданными.

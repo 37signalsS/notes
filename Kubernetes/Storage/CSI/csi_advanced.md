@@ -14,7 +14,7 @@
 
 ## Базовые концепции
 
-### Volume Snapshots API
+### API снапшотов томов (Volume Snapshots)
 
 **Volume Snapshot** — механизм создания "снимков" состояния `PersistentVolume`. Реализуется через CSI-драйвер и стандартный Kubernetes API.
 
@@ -37,7 +37,7 @@
 - **Клонирование данных:** Создание нового PVC из снапшота для тестирования или аналитики.
 - **Миграция данных:** Перенос данных между кластерами через экспорт снапшотов.
 
-### Volume Cloning
+### Клонирование томов (Volume Cloning)
 
 **Volume Cloning** — создание новой копии существующего `PersistentVolume` через PVC с использованием поля `dataSource`.
 
@@ -55,7 +55,7 @@
 - Размер клона ≥ размера исходного тома
 - Оба PVC в одном namespace (ограничение Kubernetes)
 
-### CSI Topology
+### Топология CSI (CSI Topology)
 
 **CSI Topology** — механизм учёта физического расположения томов при планировании подов. Критично для распределённых систем и облачных окружений с зонами доступности.
 
@@ -72,7 +72,7 @@
 
 > **Рекомендация:** Для stateful-приложений в многозонных кластерах всегда использовать `WaitForFirstConsumer`.
 
-### Volume Expansion
+### Расширение томов (Volume Expansion)
 
 **Volume Expansion** — увеличение размера `PersistentVolume` без потери данных.
 
@@ -87,7 +87,7 @@
 - CSI-драйвер должен поддерживать `EXPAND_VOLUME`
 - Для online expansion файловая система должна поддерживать resize (ext4, xfs)
 
-### CSI Migration
+### Миграция CSI (CSI Migration)
 
 **CSI Migration** — процесс перевода встроенных (in-tree) плагинов хранения на внешние (out-of-tree) CSI-драйверы.
 
@@ -183,7 +183,7 @@ spec:
     kind: PersistentVolumeClaim
 ```
 
-### Ceph RBD с Volume Snapshots для PostgreSQL
+### Ceph RBD с снапшотами (Volume Snapshots) для PostgreSQL
 
 ```yaml
 # StorageClass для RBD

@@ -1,42 +1,46 @@
 # vCluster — Безопасность и синхронизация
 
-## Definitions
+## Определения
 
-**ResourceQuota** — Kubernetes-ресурс, ограничивающий суммарное потребление ресурсов (CPU, память, количество объектов) внутри namespace vCluster.
+**ResourceQuota** — Kubernetes-ресурс, ограничивающий суммарное потребление ресурсов CPU (Central Processing Unit), памяти и количество объектов внутри namespace (пространства имен) vCluster в хост-кластере.
 
-**LimitRange** — Kubernetes-ресурс, задающий значения по умолчанию и ограничения для CPU/памяти отдельных подов и контейнеров.
+**LimitRange** — Kubernetes-ресурс, задающий значения ресурсов по умолчанию и ограничения для отдельных подов и контейнеров внутри vCluster.
 
-**Rootless Mode** — режим запуска контейнеров vCluster без привилегий root (не-root пользователь), повышающий безопасность.
+**Rootless Mode (Безрутовый режим)** — режим запуска компонентов vCluster от имени не-привилегированного пользователя, что исключает наличие прав root внутри контейнеров и повышает общую безопасность системы.
 
-**Syncer** — компонент vCluster, отвечающий за двустороннюю синхронизацию ресурсов между виртуальным и хостовым кластером.
+**Syncer (Синхронизатор)** — ключевой компонент vCluster, отвечающий за двустороннюю синхронизацию ресурсов (Pods, Services, PVC (PersistentVolumeClaim) и др.) между виртуальным и хостовым кластерами.
 
-## Basic Concepts
+## Основные концепции
 
 ### Направления синхронизации
 
-| Направление | Описание | Ресурсы |
+| Направление | Описание | Типы ресурсов |
 | :--- | :--- | :--- |
-| **toHost** (vCluster → Host) | Экспорт рабочих нагрузок в host-кластер | Pods, Services, Endpoints, Secrets, ConfigMaps, PVC, Ingresses |
-| **fromHost** (Host → vCluster) | Импорт инфраструктуры host-кластера | StorageClasses, IngressClasses, Nodes, PersistentVolumes |
+| **toHost** (vCluster → Host) | Экспорт рабочих нагрузок в хост-кластер для исполнения | Pods, Services, Endpoints, Secrets, ConfigMaps, PVC, Ingresses |
+| **fromHost** (Host → vCluster) | Импорт инфраструктурных объектов хост-кластера | StorageClasses, IngressClasses, Nodes, PersistentVolumes |
 
 ### Ресурсы, синхронизируемые по умолчанию
 
-Pods, Services, Endpoints, Secrets, ConfigMaps, PersistentVolumeClaims синхронизируются автоматически. Ingresses, StorageClasses, IngressClasses требуют явного включения в `values.yaml`.
+Базовые ресурсы Kubernetes (Pods, Services, Endpoints, Secrets, ConfigMaps, PersistentVolumeClaims) синхронизируются автоматически. Расширенные ресурсы (Ingresses, StorageClasses, IngressClasses) требуют явной активации в конфигурационном файле `values.yaml`.
 
 ### Потребление ресурсов Control Plane
 
-При настройке ResourceQuota необходимо учитывать ресурсы самого vCluster:
+При настройке **ResourceQuota** в хост-кластере необходимо учитывать ресурсы, потребляемые компонентами самого vCluster. Типовые запросы для дистрибутива Kubernetes (vanilla):
 
-| Компонент | CPU | Memory |
+| Компонент | CPU Request | Memory Request |
 | :--- | :--- | :--- |
-| etcd | 100m | 100–200Mi |
-| API Server | 200m | 200–300Mi |
-| CoreDNS | 50m | ~50Mi |
-| Syncer | 100m | ~100Mi |
+| **API Server** | 200m | 256Mi |
+| **etcd** | 100m | 128Mi |
+| **Syncer** | 100m | 128Mi |
+| **CoreDNS** | 50m | 32Mi |
 
-## Practical Scenarios
+Полная таблица ресурсов для различных дистрибутивов приведена в [vCluster — Обзор и архитектура](./vcluster_overview.md).
+
+## Практические сценарии
 
 ### Настройка ResourceQuota и LimitRange
+
+Пример ограничения ресурсов для namespace vCluster через `values.yaml`:
 
 ```yaml
 # values.yaml
@@ -60,6 +64,8 @@ policies:
 
 ### Запуск в Rootless Mode
 
+Настройка запуска от не-root пользователя (UID 10000) для повышения безопасности:
+
 ```yaml
 # values.yaml
 controlPlane:
@@ -71,7 +77,9 @@ controlPlane:
       runAsNonRoot: true
 ```
 
-### Синхронизация ресурсов из host-кластера
+### Синхронизация инфраструктурных ресурсов из host-кластера
+
+Включение импорта классов хранилищ и узлов для использования в виртуальном кластере:
 
 ```yaml
 # values.yaml
@@ -90,20 +98,21 @@ sync:
       enabled: true
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Лучшие практики
+- **Изоляция:** используйте один vCluster на команду или проект для минимизации радиуса поражения.
+- **Квотирование:** всегда устанавливайте ResourceQuota для предотвращения истощения ресурсов хост-кластера.
+- **Безопасность:** предпочитайте Rootless Mode для всех production-инсталляций.
+- **Мониторинг:** настройте сбор метрик с компонентов Control Plane и Syncer.
 
-1. Изолируйте по командам — один vCluster на команду.
-2. Настраивайте квоты — ResourceQuota для контроля ресурсов.
-3. Мониторьте Control Plane — метрики самого vCluster.
-4. Используйте Helm — для управления конфигурацией.
-5. Backup etcd — для production-кластеров.
+### Внутренние ссылки
+- [vCluster — Обзор и архитектура](./vcluster_overview.md)
+- [vCluster — Установка и развертывание](./vcluster_installation.md)
+- [vCluster — Подключение и доступ](./vcluster_connectivity.md)
+- [Основы namespace'ов](../Base/namespace.md)
+- [Управление доступом (RBAC)](../Security/rbac/rbac_overview.md)
 
-### Ограничения
-
-- **Ресурсы на кластер** — ~500MB–1GB RAM на каждый vCluster.
-- **Сетевая сложность** — требуется настройка Network Policies.
-- **Не все ресурсы синхронизируются** — некоторые CRD требуют Enterprise.
-
-Подробная документация: [официальная документация vCluster](https://www.vcluster.com/docs), [репозиторий GitHub](https://github.com/loft-sh/vcluster). Обзор и архитектура: [vcluster_overview.md](./vcluster_overview.md). Установка и развертывание: [vcluster_installation.md](./vcluster_installation.md). Подключение и доступ: [vcluster_connectivity.md](./vcluster_connectivity.md). Основы namespace'ов: [namespace.md](../Base/namespace.md). Управление доступом: [rbac_overview.md](../Security/rbac/rbac_overview.md).
+### Внешние ссылки
+- [vCluster Security Documentation](https://www.vcluster.com/docs/architecture/security)
+- [Syncer Resource Syncing](https://www.vcluster.com/docs/architecture/syncer)

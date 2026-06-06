@@ -1,111 +1,72 @@
-# Etcd: практические сценарии для Kubernetes
+# etcd: практические сценарии в Kubernetes
 
 ## Определения
 
-**etcdctl** — утилита командной строки для взаимодействия с etcd. Для Kubernetes используется API v3.
+**etcdctl** — утилита командной строки для взаимодействия с **etcd**. В Kubernetes используется исключительно **API (Application Programming Interface)** версии 3.
 
-**ETCDCTL_API=3** — переменная окружения, указывающая на использование API версии 3 (требуется для всех современных версий etcd).
+**Префикс `/registry`** — корневой путь в etcd, где Kubernetes хранит все свои объекты (Pods, Services, Secrets).
 
 ## Основные концепции
 
-### Подключение к etcd в Kubernetes
-
-Для прямого подключения к etcd требуются сертификаты клиента. Параметры подключения:
-
-```bash
-export ETCDCTL_API=3
-EP="https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379"
-CA=/etc/kubernetes/pki/etcd/ca.crt
-CERT=/etc/kubernetes/pki/etcd/healthcheck-client.crt
-KEY=/etc/kubernetes/pki/etcd/healthcheck-client.key
-```
-
 ### Интеграция с kube-apiserver
 
-`kube-apiserver` подключается к `etcd` через следующие флаги:
+`kube-apiserver` является единственным клиентом etcd в кластере. Параметры подключения задаются флагами при запуске (в манифестах статических подов `/etc/kubernetes/manifests/kube-apiserver.yaml`). Безопасность обеспечивается через **TLS (Transport Layer Security)**:
 
 ```bash
---etcd-servers=https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379
+--etcd-servers=https://127.0.0.1:2379
 --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
 --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
 --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
 ```
 
-Эти параметры настраиваются при инициализации кластера (kubeadm, kubespray) и не должны изменяться вручную.
+### Доступ для администратора
+
+Для выполнения команд `etcdctl` на узле с Control Plane необходимо использовать сертификаты из каталога `/etc/kubernetes/pki/etcd/`.
+
+```bash
+export ETCDCTL_API=3
+alias k-etcdctl="etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key"
+```
 
 ## Практические сценарии
 
-### Проверка состояния кластера
+### Просмотр ресурсов Kubernetes
+
+Все данные сериализуются в формат **Protobuf**, поэтому прямое чтение ключей через `etcdctl` вернёт бинарные данные. Для анализа объектов рекомендуется использовать `kubectl`.
+
+* **Список всех ключей (структура хранения):**
+  ```bash
+  k-etcdctl get /registry --prefix --keys-only
+  ```
+* **Поиск подов в конкретном пространстве имён (namespace):**
+  ```bash
+  k-etcdctl get /registry/pods/default --prefix --keys-only
+  ```
+
+### Создание резервной копии (Snapshot)
+
+Снапшот необходимо выполнять на одном из узлов etcd.
 
 ```bash
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY endpoint health
-# https://10.0.0.11:2379: healthy
-
-# Статус конкретных эндпоинтов
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY endpoint status -w=table
-
-# Состояние всего кластера
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  endpoint status --cluster -w=table
+k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
 ```
 
-### Просмотр данных Kubernetes в etcd
+### Восстановление при аварии
 
-**Префикс `/registry`:** Все объекты Kubernetes хранятся с этим префиксом.
+> **Важно:** Восстановление требует остановки `kube-apiserver` и использования утилиты `etcdutl`.
 
-```bash
-# Просмотр всех подов в namespace default
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  get /registry/pods/default --prefix --keys-only
+1. Остановить API Server (переместить манифест из `/etc/kubernetes/manifests/`).
+2. Выполнить восстановление в новый каталог данных.
+3. Обновить путь к данным в манифесте etcd.
+4. Вернуть манифесты на место.
 
-# Просмотр конкретного Secret
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  get /registry/secrets/default/my-secret
-```
-
-> **Важно:** Данные в etcd хранятся в бинарном формате (Protobuf). Прямое чтение показывает нечитаемые данные. Используйте `kubectl get` для просмотра в JSON/YAML.
-
-### Создание снапшота для резервного копирования
-
-```bash
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  snapshot save /backup/etcd-$(date +%F).db
-```
-
-> **Важно (etcd 3.6+):** Команда `snapshot restore` перемещена в утилиту `etcdutl`. Используйте `etcdutl snapshot restore` для восстановления.
-
-Подробнее о восстановлении: [Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md).
-
-### Чтение по ревизии (MVCC)
-
-Etcd поддерживает чтение данных на момент времени через ревизии:
-
-```bash
-# Получить значение на конкретной ревизии
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  get /registry/configmaps/default/app-config --rev=12345
-```
-
-Полезно для отката изменений или аудита. Подробнее: [MVCC и версионирование](../../etcd/mvcc_versioning_and_compaction.md).
-
-### Наблюдение за изменениями (Watch)
-
-Контроллеры Kubernetes используют `watch` для отслеживания изменений:
-
-```bash
-# Подписка на изменения подов в реальном времени
-etcdctl --endpoints=$EP --cacert=$CA --cert=$CERT --key=$KEY \
-  watch --prefix /registry/pods/
-```
-
-При создании/удалении пода в терминал будут поступать события.
+Детальная процедура: **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)**.
 
 ## Дополнительная информация
 
-**Эксплуатационные рекомендации:**
-
-* **Размер кластера:** 3–5 членов, избегать чётного числа
-* **Диск:** Быстрые SSD с низкой задержкой `fsync`, отключить swap
-* **Сеть:** TLS обязателен, задержка между узлами <10 мс
-* **Обслуживание:** Регулярная компакция и дефрагментация
-* **Бэкапы:** Периодические снапшоты вне кластера, тестирование восстановления
+*   **[Шпаргалка по командам etcdctl](../../etcd/etcdctl_cheatsheet.md)** — общие операции с данными и кластером.
+*   **[Обзор etcd в Kubernetes](./etcd_overview.md)** — роль в архитектуре и требования к инфраструктуре.
+*   **[Мониторинг etcd](../../etcd/etcd_monitoring.md)** — ключевые метрики и алертинг.

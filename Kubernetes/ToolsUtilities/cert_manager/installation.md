@@ -1,19 +1,19 @@
 # Установка Cert-manager
 
-## Definitions
+## Определения
 
 **Установка cert-manager** — процесс развёртывания Kubernetes-контроллера для автоматизации управления TLS-сертификатами. Официальная документация: [cert-manager.io/docs](https://cert-manager.io/docs/installation/).
 
 **Связанные темы:**
 
-- Определения и CRD: [definitions.md](./definitions.md)
+- Определения, архитектура и версии: [definitions.md](./definitions.md)
 - Обновление и мониторинг: [Administration/operations.md](./Administration/operations.md)
 - Troubleshooting: [Administration/troubleshooting.md](./Administration/troubleshooting.md)
 - Garbage collection: [Administration/index.md](./Administration/index.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Способы установки
 
@@ -32,6 +32,8 @@
 | **Helm** | 3+ | Проверить: `helm version` |
 | **Gateway API CRD** | Опционально | Установить **до** cert-manager, если требуется |
 
+Информацию о поддерживаемых версиях Kubernetes и актуальных релизах cert-manager смотрите в разделе [Версии и совместимость](./definitions.md#версии-и-совместимость).
+
 ### Ключевые компоненты cert-manager
 
 | Компонент | Назначение |
@@ -42,7 +44,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Установка через Helm (рекомендуемый)
 
@@ -63,12 +65,23 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 #### Шаг 3: Установка cert-manager
 
+Для установки актуальной стабильной версии (например, `v1.20.2`):
+
 ```bash
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --create-namespace \
-  --version v1.20.0 \
+  --version v1.20.2 \
   --set installCRDs=true
+```
+
+Также поддерживается установка через OCI registry:
+```bash
+helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.20.2 \
+  --set crds.enabled=true
 ```
 
 #### Шаг 4: Проверка установки
@@ -91,7 +104,7 @@ cert-manager-webhook      1/1     1            1           2m
 ### Сценарий 2: Установка через kubectl apply
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.0/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
 ```
 
 **Проверка готовности:**
@@ -153,7 +166,7 @@ helm search repo jetstack/cert-manager --versions
 # Обновление (без пропуска минорных версий)
 helm upgrade cert-manager jetstack/cert-manager \
   --namespace cert-manager \
-  --version v1.20.0 \
+  --version v1.20.2 \
   --reuse-values
 ```
 
@@ -178,38 +191,27 @@ kubectl delete crds \
 #### kubectl
 
 ```bash
-kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.0/cert-manager.yaml
+kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
 ```
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Параметры Helm
 
 | Параметр | Описание | По умолчанию |
 | :--- | :--- | :--- |
-| `installCRDs` | Устанавливать и управлять CRD | `false` |
+| `installCRDs` (или `crds.enabled` для OCI) | Устанавливать и управлять CRD | `false` |
 | `extraArgs` | Дополнительные флаги контроллера | `[]` |
 | `replicaCount` | Количество реплик | `1` |
 | `podDisruptionBudget.enabled` | PDB для high-availability | `false` |
-
-### Актуальные версии
-
-| Версия | Мин. K8s | Статус |
-| :--- | :--- | :--- |
-| **1.20.x** | 1.25 | **Текущая** |
-| 1.19.x | 1.25 | Поддерживается |
-| 1.18.x | 1.24 | Поддерживается |
-| <1.17 | <1.24 | **Устарели** |
-
-> **Проверка актуальности:** [endoflife.date/cert-manager](https://endoflife.date/cert-manager) · [GitHub Releases](https://github.com/cert-manager/cert-manager/releases)
 
 ### Надёжность информации
 
 | Аспект | Оценка | Обоснование |
 | :--- | :--- | :--- |
-| Helm-установка | **10** | Официальная документация cert-manager.io |
+| Helm-установка | **10** | Официальная документация cert-manager.io (обновлено до v1.20.2) |
 | kubectl apply | **10** | Стандартный способ из release notes |
-| Gateway API | **9** | Подтверждено в релизах 1.13+ |
+| Gateway API | **9** | Подтверждено в релизах |
 | HA-конфигурация | **9** | Best practices cert-manager |

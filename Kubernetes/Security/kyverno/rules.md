@@ -13,7 +13,7 @@
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
 ### Типы правил
 
@@ -22,7 +22,7 @@
 | **generate** | Создание или клонирование ресурсов | `clone` (копирование Secret/ConfigMap), `synchronize` (синхронизация с источником) |
 | **mutate** | Автоматическое добавление или изменение полей | `patchStrategicMerge`, `imagePullPolicy`, `imagePullSecrets` |
 | **validate** | Валидация ресурсов на соответствие правилам | `pattern` (шаблон), `deny` (запрет с условиями), `foreach` (итерация по массиву) |
-| **verifyImages** | Проверка подписей образов | Cosign, KMS, другие системы подписи |
+| **verifyImages** | Проверка подписей образов | Cosign, KMS (Key Management Service, сервис управления ключами), другие системы подписи |
 
 ### Match и Exclude
 
@@ -109,7 +109,7 @@ rules:
       message: "HostPath volumes are forbidden"
 ```
 
-Условия работают с **AdmissionReview** — JSON-объект, содержащим информацию о запросе.
+Условия работают с **AdmissionReview** — JSON (JavaScript Object Notation) объектом, содержащим информацию о запросе.
 
 ### Генерация ресурсов
 
@@ -177,7 +177,7 @@ rules:
 
 ### Важные замечания
 
-1. **Background scan не применяется к существующим ресурсам** — политика срабатывает только при CREATE/UPDATE ([подробнее](./background.md))
+1. **Background scan (фоновое сканирование)** не применяется к существующим ресурсам — политика срабатывает только при CREATE/UPDATE ([подробнее](./background.md))
 2. По умолчанию примеры политик в документации используют `failureAction: audit`
 3. Для полной защиты необходимо переключить на `failureAction: Enforce`
 4. Политики применяются к **Pod** — Kyverno проверяет итоговый Pod, сгенерированный из Deployment/StatefulSet/DaemonSet
@@ -190,4 +190,4 @@ rules:
 | `AllIn` / `AllNotIn` | Проверка всех элементов массива |
 | `Equal` / `NotEqual` | Равенство / неравенство |
 | `GreaterThanOrEquals` / `LessThanOrEquals` | Числовые сравнения |
-| `PatternMatch` | Проверка по regex-шаблону |
+| `PatternMatch` | Проверка по regex (Regular Expression, регулярное выражение) шаблону |

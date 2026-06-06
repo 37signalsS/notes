@@ -1,5 +1,10 @@
 # Парсинг логов в Fluent Bit
 
+<!--
+Reliability: 10 (Официальная документация Fluent Bit)
+Freshness: 10 (Базовый функционал, актуален для версий 2.x/3.x)
+-->
+
 ## Определения
 
 **Парсинг (Parsing)** — процесс преобразования неструктурированной строки лога в структурированную запись (набор пар ключ-значение).
@@ -17,23 +22,23 @@
 ### Типы парсеров
 
 | Формат | Тип парсера | Основное применение |
-|---|---|---|
-| **CRI** | `cri` или `regex` | **Стандарт для Kubernetes.** Логи от `containerd` и `CRI-O`. |
-| **JSON** | `json` | Любые структурированные логи в формате JSON. |
-| **Docker** | `docker` | Легаси. Логи от Docker Engine в формате JSON. |
-| Regex | `regex` | Произвольные текстовые форматы (nginx, syslog и т.д.). |
-| LTSV | `ltsv` | Labeled Tab-separated Values. |
-| Syslog | `syslog` | Системные логи (RFC3164/RFC5424). |
+|:---|:---|:---|
+| **CRI (Container Runtime Interface)** | `cri` или `regex` | Стандарт для Kubernetes. Логи от `containerd` и `CRI-O`. |
+| **JSON (JavaScript Object Notation)** | `json` | Любые структурированные логи в формате JSON. |
+| **Docker** | `docker` | Устаревший стандарт. Логи от Docker Engine в формате JSON. |
+| **Regex** | `regex` | Произвольные текстовые форматы (nginx, syslog и т.д.). |
+| **LTSV** | `ltsv` | Labeled Tab-separated Values. |
+| **Syslog** | `syslog` | Системные логи (RFC3164/RFC5424). |
 
-### Где применяется парсинг
+### Места применения парсинга
 
 1. **На входе (`[INPUT]`)**: с помощью параметра `Parser`. Самый распространенный способ.
 2. **В фильтре (`[FILTER]`)**: с помощью плагина `parser` для разбора поля внутри уже собранного лога.
 3. **Динамически (через аннотации)**: Kubernetes-фильтр может применять парсеры на основе аннотации пода (`fluentbit.io/parser: "my-parser"`).
 
-Детали конфигурации Fluent Bit описаны в [fluentbit_configuration.md](./fluentbit_configuration.md).
-
 ### Структура парсера
+
+Определения парсеров обычно выносятся в отдельный файл (например, `parsers.conf`).
 
 ```ini
 [PARSER]
@@ -48,7 +53,7 @@
 
 ### Многострочный парсинг
 
-Объединяет строки, принадлежащие одному событию, в единую запись. Используйте для приложений со стектрейсами (Java, Python), чтобы избежать разрозненных и нечитаемых ошибок.
+Объединяет строки, принадлежащие одному событию, в единую запись. Используется для приложений со стектрейсами (Java, Python).
 
 ```ini
 [MULTILINE_PARSER]
@@ -56,19 +61,17 @@
     Type          regex
     Flush_Timeout <мс_до_сброса>
     # Правило: "состояние" "регулярное выражение" "новое_состояние"
-    Rule          "start_state" "/^Начало нового лога/." "cont"
-    Rule          "cont"        "/^НЕ начало нового лога/."  "cont"
+    Rule          "start_state" "/^Начало нового лога/" "cont"
+    Rule          "cont"        "/^НЕ начало нового лога/"  "cont"
 ```
-
-Избегайте сложных и неэффективных регулярных выражений на высоконагруженных системах. Детали буферизации описаны в [buffering_routing.md](./buffering_routing.md).
 
 ## Практические сценарии
 
 ### Сценарий 1: Парсинг логов Kubernetes (CRI)
 
-**Задача:** Правильно разбирать логи в современном кластере Kubernetes, где средой выполнения является `containerd` или `CRI-O`.
+Разбор логов в современных кластерах (с `containerd` или `CRI-O`).
 
-```yaml
+```ini
 # parsers.conf
 [PARSER]
     Name        cri
@@ -85,42 +88,35 @@
     Parser cri
 ```
 
-Это **рекомендуемый** подход для большинства современных инсталляций Kubernetes.
-
 ### Сценарий 2: Парсинг JSON-логов
 
-**Задача:** Собирать логи от приложения, которое пишет их в формате JSON. Предпочитайте структурированные логи (JSON) везде, где это возможно — это упрощает парсинг и снижает нагрузку.
+Сбор логов от приложения в формате JSON.
 
-```yaml
+```ini
 # parsers.conf
 [PARSER]
     Name        app_json
     Format      json
-    Time_Key    timestamp # Поле в JSON, содержащее время
+    Time_Key    timestamp
     Time_Format %Y-%m-%dT%H:%M:%S.%L
 
-# fluent-bit.conf (с использованием аннотаций)
-# В самом поде приложения:
+# В поде приложения (аннотация):
 # metadata:
 #   annotations:
 #     fluentbit.io/parser: "app_json"
 ```
 
-Всегда указывайте `Time_Key` и `Time_Format`, чтобы время события корректно обрабатывалось в конечных системах.
-
 ### Сценарий 3: Многострочные Java-стектрейсы
 
-**Задача:** Объединять многострочные стектрейсы Java в одно событие.
+Объединение стектрейсов Java в одно событие.
 
-```yaml
+```ini
 # parsers.conf
 [MULTILINE_PARSER]
     Name          java_stack
     Type          regex
     Flush_Timeout 5000
-    # Начинаем новую запись, если строка начинается с даты
     Rule "start_state" "/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/" "cont"
-    # Продолжаем, если строка начинается с пробела (at, Caused by)
     Rule "cont" "/^\s+at\s+|^\s*Caused by:/" "cont"
 
 # fluent-bit.conf
@@ -128,29 +124,12 @@
     Name             tail
     Path             /var/log/containers/my-java-app*.log
     Tag              my-java-app.*
-    # Включаем многострочный режим и указываем парсер
     Multiline        On
     Multiline.Parser java_stack
 ```
 
-### Сценарий 4 (Легаси): Парсинг Docker-логов
+## Дополнительная информация
 
-**Задача:** Сбор логов в старых системах, использующих Docker Engine как среду выполнения Kubernetes.
-
-```yaml
-# parsers.conf
-[PARSER]
-    Name        docker
-    Format      json
-    Time_Key    time
-    Time_Format %Y-%m-%dT%H:%M:%S.%L
-
-# fluent-bit.conf
-[INPUT]
-    Name   tail
-    Path   /var/log/containers/*.log
-    Tag    kube.*
-    Parser docker
-```
-
-Полная конфигурация Fluent Bit описана в [fluentbit_configuration.md](./fluentbit_configuration.md). Сравнение с Fluentd для выбора архитектуры — в [fluent_comparison.md](./fluent_comparison.md).
+* [Конфигурация Fluent Bit](./fluentbit_configuration.md) — общая структура конфигурационных файлов.
+* [Буферизация и маршрутизация](./buffering_routing.md) — детали обработки данных после парсинга.
+* [Сравнение Fluent Bit и Fluentd](./fluent_comparison.md) — выбор инструмента для сбора логов.

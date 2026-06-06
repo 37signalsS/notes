@@ -158,13 +158,12 @@ rules:
 | **Rotation ключей** | Регулярная ротация ACME-ключей и CA |
 | **Audit логи** | Включить аудит Kubernetes API для cert-manager namespace |
 
-## Additional Information
+## Дополнительная информация
 
-### Надёжность информации
+Данные о надёжности информации — в обзоре администрирования.
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| Prometheus-метрики | **10** | Официальная документация cert-manager.io |
-| Backup/Restore | **9** | Стандартная практика Kubernetes |
-| Обновление | **9** | Release notes cert-manager |
-| RBAC | **9** | Kubernetes RBAC best practices |
+### Смотрите также
+
+- **[Cert-manager: Администрирование](./index.md)** — концепции и управление жизненным циклом
+- **[Cert-manager: Установка](../installation.md)** — параметры установки
+- **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов

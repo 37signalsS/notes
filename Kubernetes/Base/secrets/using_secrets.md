@@ -1,161 +1,134 @@
-# Использование Secret в Pod'ах
+# Использование Secret в Pod
 
 ## Определения
 
-Secret в подах может использоваться тремя способами: переменные окружения, монтирование как том, projected том.
+**Использование секретов** — процесс предоставления конфиденциальных данных (паролей, ключей, токенов) контейнерам внутри пода.
 
-> О создании Secret см. [Создание Secret](creating_secrets.md). О безопасности см. [Безопасность Secret](security.md).
+Kubernetes поддерживает три основных способа передачи секретов в приложение:
+1.  **Переменные окружения** — инъекция значений напрямую в процесс.
+2.  **Монтирование как Volume** — предоставление секретов в виде файлов в оперативной памяти (tmpfs).
+3.  **Projected Volume** — агрегация секретов вместе с другими источниками (ConfigMap, токенами) в одну директорию.
+
+> О создании секретов см. [Создание Secret](creating_secrets.md). О принципах безопасности см. [Безопасность Secret](security.md).
 
 ## Основные концепции
 
-### Механизмы использования
+### Сравнение методов передачи
 
-1. **Переменные окружения (`env`, `envFrom`)** — значения инжектируются в контейнер при старте
-2. **Том (`volume`)** — Secret монтируется как файлы в tmpfs (RAM)
-3. **Projected том** — объединение нескольких источников (Secret, ConfigMap, DownwardAPI, ServiceAccountToken)
-
-### Сравнение методов
-
-| Метод | Обновление | Безопасность | Использование |
+| Характеристика | Переменные окружения | Монтирование (Volume) | Projected Volume |
 | :--- | :--- | :--- | :--- |
-| **`env`** | **Не обновляется** (требует перезапуска пода) | Низкая (видны в `/proc` и логах) | Простые флаги, нечасто меняющиеся значения |
-| **`volume`** | **Обновляется автоматически** (с задержкой) | Высокая (монтируется в `tmpfs`) | **Рекомендуемый способ** для конфигураций и учетных данных |
-| **`projected`** | Обновляется автоматически | Высокая | Комбинирование нескольких источников в одну директорию |
+| **Автообновление** | **Нет** (нужен рестарт) | **Да** (с задержкой) | **Да** (с задержкой) |
+| **Безопасность** | Низкая (видны в логах, `/proc`) | Высокая (в RAM/tmpfs) | Высокая |
+| **Область применения** | Простые флаги, статичные данные | Файлы конфигурации, ключи | Комплексные конфигурации |
+| **Обновление в приложении** | Требует перезапуска пода | Требует перечитывания файлов | Требует перечитывания файлов |
 
-> **Важно:** Для динамического обновления Secret через volume приложение должно самостоятельно перечитывать файлы. kubelet обновляет тома с задержкой до 1 минуты.
+### Особенности обновления
+
+При обновлении объекта `Secret` в Kubernetes:
+*   **Переменные окружения:** Значение внутри контейнера **не меняется** до полного перезапуска пода.
+*   **Volumes:** `kubelet` обновляет файлы в томе автоматически. Время обновления зависит от интервала синхронизации `kubelet` (по умолчанию до 1 минуты) и TTL кэша секретов в API-сервере.
+*   **Важно:** Если приложение не умеет перечитывать файлы (например, через механизмы `inotify`), оно продолжит использовать старые данные даже после обновления файлов в томе.
 
 ## Практические сценарии
 
-### Как переменные окружения (`env`, `envFrom`)
+### Использование как переменные окружения
 
-Это удобный способ для передачи простых строковых значений, но он **менее безопасен** и **статичен**.
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app-pod
-spec:
-  containers:
-    - name: my-app
-      image: my-app-image
-      env:
-        # 1. Передать значение одного конкретного ключа
-        - name: DATABASE_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: db-cred      # Имя секрета
-              key: password     # Ключ в секрете
-              optional: false   # Под упадет, если секрет или ключ не найдены
-      envFrom:
-        # 2. Передать все ключи из секрета как переменные окружения
-        - secretRef:
-            name: db-cred
-            optional: true # Под не упадет, если секрета нет
-  automountServiceAccountToken: false
-```
-
-> **Важно:** Переменные окружения считываются **один раз при старте контейнера** и **никогда не обновляются автоматически**. Для применения изменений в `Secret` требуется перезапуск пода.
-
-### Как файлы в томе (`volume`)
-
-Это **рекомендуемый и более безопасный** способ. Секреты монтируются как файлы в `tmpfs` (файловую систему в оперативной памяти), что предотвращает их запись на диск узла.
+Поддерживается передача конкретных ключей (`secretKeyRef`) или всех ключей секрета разом (`envFrom`).
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: my-app-pod
-spec:
-  containers:
-    - name: my-app
-      image: my-app-image
-      volumeMounts:
-        - name: secret-volume
-          mountPath: "/etc/secrets"
-          readOnly: true
-  volumes:
-    - name: secret-volume
-      secret:
-        secretName: db-cred
-        defaultMode: 0400 # Права на файлы (только чтение для владельца)
-        items:
-          - key: username
-            path: db_user.txt # Ключ 'username' будет в файле 'db_user.txt'
-```
-
-* **Динамическое обновление:** Смонтированные файлы **обновляются автоматически** при изменении `Secret`. `kubelet` периодически проверяет секреты и обновляет содержимое тома. Этот процесс может занимать до минуты. Приложение должно уметь самостоятельно перечитывать эти файлы, чтобы подхватить изменения.
-* **Безопасность:** Предпочтительнее переменных окружения, так как секреты не "светятся" в переменных окружения процесса.
-* **Гибкость:** С помощью `items` можно монтировать только нужные ключи и давать им другие имена в файловой системе.
-* **Права доступа:** Параметр `defaultMode` задаёт права на файлы в восьмеричной системе (по умолчанию `0644`). Рекомендуется `0400` (только чтение владельцем) для максимальной безопасности.
-* **Скрытые файлы:** Если ключ в Secret начинается с точки (например, `.secret-file`), монтированный файл будет скрыт по умолчанию в Linux. Для его просмотра используйте `ls -la`.
-* **readOnly:** Флаг `readOnly: true` в `volumeMounts` предотвращает случайную запись в файлы секретов из приложения.
-
-### Projected том
-
-Объединяет несколько источников (Secrets, ConfigMaps, DownwardAPI) в одну директорию:
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: app-projected
+  name: env-secret-pod
 spec:
   containers:
   - name: app
     image: nginx
+    env:
+      # Передача конкретного ключа
+      - name: DB_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: db-credentials
+            key: password
+    envFrom:
+      # Инъекция всех ключей из секрета как переменных окружения
+      - secretRef:
+          name: api-keys
+```
+
+### Монтирование секретов как тома (Volume)
+
+Это **рекомендуемый способ** для обеспечения безопасности и поддержки динамического обновления.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-secret-pod
+spec:
+  containers:
+  - name: app
+    image: redis
+    volumeMounts:
+    - name: cert-vol
+      mountPath: "/etc/tls"
+      readOnly: true
+  volumes:
+  - name: cert-vol
+    secret:
+      secretName: tls-certs
+      defaultMode: 0400 # Ограничение прав доступа (только чтение владельцем)
+      items:
+      - key: tls.crt
+        path: server.crt # Ключ 'tls.crt' будет доступен как файл 'server.crt'
+```
+
+### Группировка через Projected Volume
+
+Используется для объединения данных из разных объектов (например, секретов и конфиг-карт) в одну директорию.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-pod
+spec:
+  containers:
+  - name: app
+    image: alpine
     volumeMounts:
     - name: all-in-one
-      mountPath: /etc/app
-      readOnly: true
+      mountPath: "/app/config"
   volumes:
   - name: all-in-one
     projected:
       sources:
       - secret:
-          name: db-cred
-          items:
-            - key: username
-              path: credentials/user
+          name: user-pass
       - configMap:
-          name: app-config
-          items:
-            - key: config.yaml
-              path: settings/app.conf
+          name: app-settings
 ```
 
-> **Подробнее:** [Projected Volume в Pod Volumes](../Pod/volume_types/projected_volumes.md) — полное описание всех источников, включая serviceAccountToken, clusterTrustBundle и podCertificate.
+Подробнее: [Projected Volume в Pod](../Pod/volume_types/projected_volumes.md).
 
-### Secret Data Mount (serviceAccount)
+### Секреты ServiceAccount
 
-Автоматическое монтирование токена и ca.crt из ServiceAccount:
+Kubernetes автоматически монтирует токен текущего ServiceAccount в каждый под, если это не отключено явно.
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app-pod
-spec:
-  serviceAccountName: my-sa
-  containers:
-  - name: my-app
-    image: my-app-image
-    volumeMounts:
-    - name: kube-api-access
-      mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-      readOnly: true
-```
+*   **Путь монтирования:** `/var/run/secrets/kubernetes.io/serviceaccount`
+*   **Содержимое:** `ca.crt`, `namespace`, `token`.
 
-При создании ServiceAccount автоматически создаётся:
-
-* `kubernetes.io/serviceaccount/namespace` — namespace
-* `kubernetes.io/serviceaccount/token` — JWT-токен
-* `kubernetes.io/serviceaccount/ca.crt` — CA сертификат для проверки API
-
-> **Кастомизация токена:** Для создания токена с измененными параметрами (срок действия, аудитория) используйте [Projected Volume с serviceAccountToken](../Pod/volume_types/projected_volumes.md).
+Для отключения автоматического монтирования используйте `automountServiceAccountToken: false`.
 
 ## Дополнительная информация
 
+### Использование initContainers для подготовки секретов
+
+В сложных сценариях, когда приложению требуется специфический формат файла или подстановка значений в шаблон, используется паттерн `initContainer` + `emptyDir`.
+
+Подробнее: [Управление секретами приложений (initContainers)](../../Security/application_secrets_management.md).
+
 ### Связанные темы
 
-[Создание Secret](creating_secrets.md), [Основы Secret](secrets_basics.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [Projected Volume](../Pod/volume_types/projected_volumes.md).
+[Основы Secret](secrets_basics.md), [Создание Secret](creating_secrets.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md), [Projected Volume](../Pod/volume_types/projected_volumes.md), [RBAC](../../Security/rbac/rbac_overview.md).

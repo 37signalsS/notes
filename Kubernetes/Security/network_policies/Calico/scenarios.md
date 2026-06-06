@@ -1,199 +1,123 @@
-# Calico Scenarios: Периметральный Файрвол
+# Сценарии Calico: Периметральный файрвол
 
-> Основная документация: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md)
+В данном разделе представлены практические примеры реализации сетевой защиты на уровне узлов кластера с использованием расширенных возможностей Calico.
 
-## Definitions
+> Основная документация и концепции: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md)
 
-**Calico Scenarios** — практические случаи использования HostEndpoint и GlobalNetworkPolicy для защиты кластера Kubernetes.
+## Определения
 
----
+**Calico Scenarios** — прикладные конфигурации ресурсов Calico (`HostEndpoint`, `GlobalNetworkPolicy`), предназначенные для решения конкретных задач безопасности, таких как создание внешнего периметра защиты или аудит трафика.
 
-## Basic Concepts
+## Основные концепции
 
-### Архитектура периметрального файрвола
+Для успешной реализации сценариев необходимо понимание следующих механизмов:
+- **HostEndpoint**: Привязка политик к физическим интерфейсам узлов.
+- **preDNAT**: Фильтрация трафика до трансляции адресов (критично для защиты NodePort).
+- **Order (Приоритет)**: Порядок обработки правил в цепочке политик.
 
-Периметральный файрвол Calico работает на уровне узлов (host-level), фильтруя трафик до достижения подов. Ключевые принципы:
+*Подробное описание концепций: [Calico HostEndpoint и GlobalNetworkPolicy — Основные концепции](./index.md#основные-концепции)*
 
-- **HostEndpoint** определяет интерфейсы узлов, к которым применяются политики
-- **GlobalNetworkPolicy** с `preDNAT: true` фильтрует входящий трафик до NAT (NodePort, LoadBalancer)
-- **Приоритеты (`order`)** определяют порядок применения: меньший `order` → раньше
-- **Failsafe Ports** всегда открыты (SSH 22, BGP 179, K8s API 6443, etcd 2379/2380) — защита от блокировки
+## Практические сценарии
 
-### Порядок применения политик
+### Сценарий 1: Базовая защита периметра кластера
 
-Стандартный паттерн: разрешающая политика (order 5–10) → запрещающая политика (order 20+) → явный Deny в конце цепочки.
+**Задача:** Создать защитный контур на уровне узлов, который разрешает только доверенный трафик и блокирует всё остальное.
 
----
+#### Шаг 1: Определение HostEndpoint для сетевых интерфейсов узлов
 
-## Practical Scenarios
-
-### Сценарий 1: Периметральный файрвол кластера
-
-**Задача:**
-
-1. Разрешить исходящий трафик полностью
-2. Разрешить входящий от подов и между узлами
-3. Разрешить доступ к LoadBalancer IP и Kubernetes API
-4. Запретить остальной входящий трафик
-
-#### Шаг 1: Создание HostEndpoint для узлов
+Необходимо создать `HostEndpoint` для каждого интерфейса на каждом узле, который вы хотите защитить.
 
 ```yaml
 # host-endpoints.yaml
 apiVersion: projectcalico.org/v3
 kind: HostEndpoint
 metadata:
-  name: control-node-1-ens160
+  name: node-1-eth0
   labels:
     node-role: control-plane
-    node-endpoint-type: home-cluster
+    endpoint-type: cluster-perimeter
 spec:
-  interfaceName: ens160
-  node: control-node-1.example.local
-  expectedIPs: ["192.168.218.171"]
----
-apiVersion: projectcalico.org/v3
-kind: HostEndpoint
-metadata:
-  name: worker-node-1-ens160
-  labels:
-    node-role: worker
-    node-endpoint-type: home-cluster
-spec:
-  interfaceName: ens160
-  node: worker-node-1.example.local
-  expectedIPs: ["192.168.218.175"]
+  interfaceName: eth0
+  node: node-1.example.com
+  expectedIPs: ["192.168.1.10"]
 ```
 
-Для получения имени узла: `kubectl get nodes -o wide`. Для IP интерфейса: `ip addr show ens160`.
+#### Шаг 2: Создание разрешающей политики (Высокий приоритет)
 
-#### Шаг 2: Разрешающая политика (order: 10)
+Эта политика разрешает легитимный внутренний трафик кластера.
 
 ```yaml
-# allow-traffic-policy.yaml
+# allow-cluster-internal.yaml
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
-  name: allow-cluster-traffic
+  name: allow-cluster-internal
 spec:
   order: 10
-  selector: "has(node-endpoint-type)"
-  preDNAT: true
-  applyOnForward: true
-  types:
-    - Ingress
-    - Egress
-  egress:
-    - action: Allow
-  ingress:
-    # Трафик от подов
-    - action: Allow
-      source:
-        nets: ["10.233.0.0/16"]  # Замените на ваш Pod CIDR
-    # Трафик между узлами
-    - action: Allow
-      source:
-        selector: "has(node-endpoint-type)"
-    # Доступ к Ingress
-    - action: Allow
-      destination:
-        nets: ["192.168.218.180/32"]
-        ports: [80, 443]
-    # Доступ к Kubernetes API
-    - action: Allow
-      destination:
-        nets: ["192.168.218.189/32"]
-        ports: [7443]
-```
-
-#### Шаг 3: Запрещающая политика (order: 20)
-
-```yaml
-# default-deny-policy.yaml
-apiVersion: projectcalico.org/v3
-kind: GlobalNetworkPolicy
-metadata:
-  name: default-deny
-spec:
-  order: 20
-  selector: "has(node-endpoint-type)"
-  preDNAT: true
-  applyOnForward: true
-  types:
-    - Ingress
-  ingress:
-    - action: Deny
-```
-
-#### Шаг 4: Применение
-
-```bash
-kubectl apply -f allow-traffic-policy.yaml
-kubectl apply -f default-deny-policy.yaml
-kubectl apply -f host-endpoints.yaml
-```
-
-### Сценарий 2: Разрешение только системного трафика
-
-Минимальная конфигурация для новых узлов:
-
-```yaml
-apiVersion: projectcalico.org/v3
-kind: GlobalNetworkPolicy
-metadata:
-  name: allow-system-traffic
-spec:
-  order: 5
-  selector: "has(node-endpoint-type)"
+  selector: "endpoint-type == 'cluster-perimeter'"
   preDNAT: true
   applyOnForward: true
   types: [Ingress, Egress]
   egress:
     - action: Allow
   ingress:
-    # BGP между узлами (для Calico)
+    # Разрешить трафик между узлами
     - action: Allow
-      protocol: TCP
-      destination:
-        ports: [179]
       source:
-        nets: ["10.0.0.0/8"]  # Внутренняя сеть
-    # Kubernetes API
+        selector: "endpoint-type == 'cluster-perimeter'"
+    # Разрешить трафик от Pod'ов (используйте ваш Pod CIDR)
     - action: Allow
-      protocol: TCP
-      destination:
-        ports: [6443, 7443]
+      source:
+        nets: ["10.244.0.0/16"]
 ```
 
-### Сценарий 3: Логирование заблокированного трафика
+#### Шаг 3: Создание запрещающей политики (Низкий приоритет)
 
-Для отладки политик включите логирование denied-трафика:
+Политика `Default Deny` для периметра, которая сработает, если трафик не подошел ни под одно разрешающее правило.
 
 ```yaml
+# default-deny-perimeter.yaml
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
-  name: log-denied-traffic
+  name: default-deny-perimeter
 spec:
-  order: 1000
-  selector: "has(node-endpoint-type)"
-  types: [Ingress, Egress]
+  order: 100
+  selector: "endpoint-type == 'cluster-perimeter'"
+  preDNAT: true
+  applyOnForward: true
+  types: [Ingress]
   ingress:
-    - action: Log
-      log:
-        logPrefix: "calico-denied-ingress:"
-    - action: Deny
-  egress:
-    - action: Log
-      log:
-        logPrefix: "calico-denied-egress:"
     - action: Deny
 ```
 
-Просмотр логов: `journalctl -u calico-node -f | grep "calico-denied"`.
+### Сценарий 2: Аудит и логирование заблокированного трафика
 
----
+Для анализа попыток вторжения или отладки политик можно использовать действие `Log`.
 
-## Additional Information
+```yaml
+# log-and-deny.yaml
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: log-security-events
+spec:
+  order: 90 # Приоритет выше, чем у default-deny
+  selector: "endpoint-type == 'cluster-perimeter'"
+  types: [Ingress]
+  ingress:
+    - action: Log
+      log:
+        logPrefix: "calico-drop:"
+    - action: Deny
+```
 
-Связанные ресурсы: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md), [Операции Calico](./operations.md), [NetworkPolicy](../../network_policies.md). Концепции: [Failsafe Ports](./index.md#failsafe-ports), [Приоритеты политик](./index.md#приоритеты-политик-order).
+Просмотр логов: `journalctl -u calico-node -f | grep "calico-drop"` или в системном логе `/var/log/syslog`.
+
+## Дополнительная информация
+
+### Связанные ресурсы
+
+* **Диагностика и команды**: [Операции Calico: Диагностика и обслуживание](./operations.md)
+* **Общая сетевая безопасность**: [NetworkPolicy: Сетевая безопасность](../../network_policies.md)
+* **Лучшие практики**: [NetworkPolicy: Лучшие практики](../../../Networking/Network/NetworkPolicy/best_practices.md)

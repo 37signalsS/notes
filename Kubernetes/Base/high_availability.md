@@ -112,9 +112,9 @@
 
 Подробнее: [Обзор etcd](../Concepts/etcd_overview.md).
 
-# Практические сценарии
+## Практические сценарии
 
-## Сценарий: Аварийный сбой рабочей ноды (Unplanned Failure)
+### Сценарий: Аварийный сбой рабочей ноды (Unplanned Failure)
 
 Это классический пример самовосстановления:
 
@@ -125,42 +125,12 @@
 5. **Восстановление**: `ReplicaSet` создает новые Поды для замены "потерянных".
 6. **Перенаправление трафика**: `Service` уже исключил Поды на отказавшей ноде и направляет трафик на новые, как только они проходят `Readiness Probe`.
 
-## Сценарий: Плановое обслуживание ноды (Planned Maintenance)
+### Сценарий: Плановое обслуживание ноды (Planned Maintenance)
 
 Для планового обслуживания узлов Kubernetes без простоя для приложений используются команды `kubectl cordon`, `kubectl drain` и `kubectl uncordon`. Эти команды позволяют безопасно вывести узел из эксплуатации, провести необходимые работы и вернуть его в кластер.
 
 Подробнее: [Обслуживание узлов кластера: Cordon и Drain](../Operations/node_maintenance.md).
 
-## Примеры PriorityClass
-
-### Создание `PriorityClass`
-
-```yaml
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
-  name: high-priority
-value: 1000000
-globalDefault: false
-description: "Этот PriorityClass используется для критически важных сервисов."
-```
-
-### Назначение подам
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-critical-app
-spec:
-  containers:
-    - name: main
-      image: nginx
-  priorityClassName: high-priority # <-- Назначаем приоритет
-```
-
-Теперь, если для `my-critical-app` не хватит ресурсов, планировщик попытается удалить поды с приоритетом ниже `1000000`, чтобы запустить его.
-
 ## Дополнительная информация
 
-См. также: [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Service](../Networking/Service/service_overview.md), [Пробы (Probes)](./probes.md), [Affinity и Anti-Affinity](../Scheduling/affinity.md), [PriorityClass](../Concepts/priorityclass.md), [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md), [Обслуживание узлов](../Operations/node_maintenance.md), [Архитектура Control Plane](../Concepts/control_plane_architecture.md), [Обзор etcd](../Concepts/etcd_overview.md).
+См. также: [Deployment](./Deployment/index.md), [StatefulSet](./StatefulSet/statefulset_overview.md), [Service](../Networking/Service/service_overview.md), [Пробы (Probes)](./probes.md), [Affinity и Anti-Affinity](../Scheduling/affinity.md), [PriorityClass](../Concepts/priorityclass.md), [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md), [Обслуживание узлов](../Operations/node_maintenance.md), [Архитектура Control Plane](../Concepts/control_plane_architecture.md), [Обзор etcd](../Concepts/etcd_overview.md).

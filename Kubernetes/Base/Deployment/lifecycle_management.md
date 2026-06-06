@@ -2,276 +2,125 @@
 
 ## 1. Определения
 
-**Lifecycle Management** — управление жизненным циклом Deployment: создание, обновление, откат, пауза/возобновление и перезапуск.
+**Lifecycle Management** — управление жизненным циклом Deployment, включающее процессы создания, обновления конфигурации, отката к стабильным версиям, а также оперативное управление (пауза, перезапуск).
 
-Kubernetes использует механизм `Rolling Update` для плавного обновления подов без простоя приложения.
+Общие концепции и стратегии обновления описаны в основном разделе: **[Kubernetes Deployment](./index.md)**.
 
 ## 2. Базовые концепции
 
-### 2.1. Иерархия объектов
+### Иерархия объектов
 
 `Deployment` → [`ReplicaSet`](../replicaset.md) → [`Pod`](../Pod/pod_overview.md)
 
-При создании `Deployment` автоматически создает `ReplicaSet`, который управляет подами.
+Deployment не управляет подами напрямую. Он управляет наборами реплик (`ReplicaSet`), которые, в свою очередь, обеспечивают работу нужного количества подов. При обновлении Deployment создаёт новый `ReplicaSet` и постепенно переносит нагрузку на него.
 
-### 2.2. Что триггерит обновление
+### Триггеры обновления
 
-**Триггерят обновление** (создание нового ReplicaSet):
+Обновление (rollout) запускается автоматически только при изменении шаблона пода (`spec.template`).
 
-- Изменение образа контейнера в `spec.template.spec.containers[].image`
-- Изменение переменных окружения в `spec.template`
-- Изменение монтированных томов в `spec.template`
-- Любые изменения в `spec.template` (шаблон пода)
-
-**НЕ триггерят обновление** (поды не пересоздаются):
-
-- Масштабирование (`spec.replicas`) — только добавляется или уменьшается количество подов
-- Изменение метаданных Deployment (лейблы, аннотации самого Deployment)
-
-### 2.3. Механизм обновления
-
-При обновлении образа или конфигурации:
-
-1. `Deployment` создает новый `ReplicaSet` с обновленным шаблоном.
-2. Количество реплик нового `ReplicaSet` постепенно увеличивается.
-3. Количество реплик старого `ReplicaSet` уменьшается.
-4. Старый `ReplicaSet` сохраняется для возможности отката.
+- **Что инициирует обновление:**
+  - Изменение образа контейнера (`image`).
+  - Обновление переменных окружения (`env`).
+  - Изменение конфигурации томов (`volumes`).
+  - Редактирование лимитов или запросов ресурсов (`resources`).
+- **Что НЕ инициирует обновление:**
+  - Масштабирование (`spec.replicas`) — изменяется только количество подов в текущем `ReplicaSet`.
+  - Изменение метаданных самого Deployment (лейблы или аннотации вне `spec.template`).
 
 ## 3. Практические сценарии
 
-### 3.1. Создание и проверка
+### Создание и проверка статуса
 
 ```bash
-# Создать Deployment
+# Применение манифеста
 kubectl apply -f nginx-deployment.yaml
-# deployment.apps/nginx-deployment created
 
-# Проверить иерархию объектов
-kubectl get all -l app=nginx
-# NAME                                    READY   STATUS    RESTARTS   AGE
-# pod/nginx-deployment-5d59d67564-7wqgt   1/1     Running   0          15s
-# pod/nginx-deployment-5d59d67564-8b9pw   1/1     Running   0          15s
-# pod/nginx-deployment-5d59d67564-m2xvb   1/1     Running   0          15s
-#
-# NAME                               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
-# deployment.apps/nginx-deployment   3         3         3            3           15s
-#
-# NAME                                          DESIRED   CURRENT   READY   AGE
-# replicaset.apps/nginx-deployment-5d59d67564   3         3         3       15s
-```
-
-### 3.2. Обновление (Rolling Update)
-
-```bash
-# Обновить образ контейнера
-kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
-# deployment.apps/nginx-deployment image updated
-
-# Отследить статус в реальном времени
+# Просмотр статуса развертывания
 kubectl rollout status deployment/nginx-deployment
-# Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
-# deployment "nginx-deployment" successfully rolled out
-
-# Проверить историю ReplicaSet
-kubectl get replicaset
-# NAME                                     DESIRED   CURRENT   READY   AGE
-# nginx-deployment-5d59d67564              0         0         0       5m
-# nginx-deployment-new-version-86f596b6c   3         3         3       3m
+# Waiting for deployment "nginx-deployment" rollout to finish: 0 of 3 updated replicas are available...
 ```
 
-### 3.3. Откат при неудачном обновлении
+### Диагностика при сбоях обновления
 
-При обновлении на несуществующую версию (`nginx:1.11.1`):
+Если обновление зависло (например, из-за ошибки `ImagePullBackOff` или неудачных проб), Kubernetes не выполняет откат автоматически. Старые поды продолжают работать, пока новые не станут `Ready`.
 
-```bash
-kubectl set image deployment/nginx-deployment nginx=nginx:1.11.1
-# deployment.apps/nginx-deployment image updated
+**Алгоритм диагностики:**
+1. Проверить события Deployment: `kubectl describe deployment <name>`.
+2. Проверить состояние подов: `kubectl get pods -l app=<label>`.
+3. Проверить ошибки конкретного пода: `kubectl describe pod <pod-name>`.
 
-# Проверить статус подов
-kubectl get pods -l app=nginx
-# NAME                                     READY   STATUS             RESTARTS   AGE
-# nginx-deployment-new-version-86f596b6c-abcde   1/1     Running            0          8m
-# nginx-deployment-new-version-86f596b6c-fghij   1/1     Running            0          8m
-# nginx-deployment-failed-update-12345678-klmno   0/1     ImagePullBackOff   0          1m
-```
+### Управление историей ревизий
 
-**Важно:** Kubernetes НЕ выполняет автоматический откат при неудачном обновлении. Старые поды продолжают работать, трафик на них поступает. Откат нужно выполнить вручную.
-
-При сбое обновления Kubernetes останавливает масштабирование новых подов. Поведение зависит от параметров стратегии (`maxUnavailable`, `maxSurge`). Если новый под не проходит `readinessProbe` или не может запуститься (`ImagePullBackOff`, `CrashLoopBackOff`), Deployment переходит в состояние `Progressing=False` с причиной `ProgressDeadlineExceeded` (по истечении `progressDeadlineSeconds`, по умолчанию 600 секунд).
-
-**Диагностика:**
+Каждое обновление шаблона создает новую ревизию. Количество хранимых ревизий определяется параметром `revisionHistoryLimit` (по умолчанию 10).
 
 ```bash
-kubectl describe pod nginx-deployment-failed-update-12345678-klmno
-
-# Events:
-#   Type     Reason     Age                From               Message
-#   ----     ------     ----               ----               -------
-#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Failed to pull image "nginx:1.11.1": manifest not found
-#   Warning  Failed     23s (x4 over 89s)  kubelet, node-1    Error: ErrImagePull
-#   Normal   BackOff    10s (x6 over 88s)  kubelet, node-1    Back-off pulling image "nginx:1.11.1"
-```
-
-Также полезна команда `kubectl describe deployment/<name>` — раздел Events показывает последовательность действий: масштабирование старых и новых ReplicaSet, ошибки, таймауты.
-
-Просмотр статуса обновления:
-
-```bash
-kubectl rollout status deployment/nginx-deployment
-# Ожидание завершения обновления...
-# Вечное ожидание при невалидном образе — требуется ручной откат
-```
-
-**Откат к предыдущей версии:**
-
-```bash
-kubectl rollout undo deployment/nginx-deployment
-# deployment.apps/nginx-deployment rolled back
-```
-
-> **Примечание:** При откате **не создаётся новый** `ReplicaSet` — Kubernetes масштабирует **старый** `ReplicaSet` с предыдущей рабочей версией. Старый ReplicaSet сохраняется и продолжает работать. Если удалить старый ReplicaSet вручную, возможность отката к этой версии теряется.
-
-> **Инкремент ревизий:** Каждая операция отката создаёт новую запись в истории ревизий с увеличенным номером. Если у вас были ревизии 1 и 2, после отката с ревизии 2 на 1 появится ревизия 3 (содержимое идентично ревизии 1).
-
-### 3.4. История ревизий и откат к конкретной версии
-
-**Что создаёт новую ревизию:**
-
-- Изменение образа контейнера (`spec.template.spec.containers[].image`)
-- Изменение переменных окружения в `spec.template`
-- Изменение монтированных томов в `spec.template`
-- Любые изменения в `spec.template` (шаблон пода)
-
-**НЕ создаёт новую ревизию:**
-
-- Масштабирование (`spec.replicas`) — изменение количества реплик не записывается в историю
-- Изменение метаданных самого Deployment (лейблы, аннотации вне шаблона)
-
-```bash
-# Посмотреть историю изменений
+# Просмотр списка ревизий
 kubectl rollout history deployment/nginx-deployment
-# REVISION  CHANGE-CAUSE
-# 1         kubectl apply --filename=nginx-deployment.yaml
-# 2         kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
-# 3         kubectl set image deployment/nginx-deployment nginx=nginx:1.999.9
 
-# Детальный просмотр конкретной ревизии
+# Просмотр деталей конкретной ревизии
 kubectl rollout history deployment/nginx-deployment --revision=2
-# Pod Template:
-#   Labels:       app=nginx
-#                 pod-template-hash=5d59d67564
-#   Annotations:  kubernetes.io/change-cause: kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
-#   Containers:
-#    nginx:
-#     Image:      nginx:1.29.0
-#     Port:       80/TCP
-#     Environment: <none>
-#     Mounts:      <none>
 
-# Откат к конкретной ревизии
+# Откат к предыдущей стабильной версии
+kubectl rollout undo deployment/nginx-deployment
+
+# Откат к конкретной ревизии из истории
 kubectl rollout undo deployment/nginx-deployment --to-revision=1
 ```
 
-**Откат к нерабочей версии:** По умолчанию `rollout undo` откатывает к предыдущей рабочей версии. Если требуется откатиться к конкретной (возможно нерабочей) ревизии, используйте флаг `--to-revision`:
+### Документирование изменений (change-cause)
+
+Для понимания причин изменений в истории ревизий используется аннотация `kubernetes.io/change-cause`.
+
+**Способы установки:**
+- Через аннотацию в манифесте (рекомендуется):
+  ```yaml
+  metadata:
+    annotations:
+      kubernetes.io/change-cause: "Обновление образа до v1.29.0"
+  ```
+- Через CLI после обновления:
+  ```bash
+  kubectl annotate deployment/nginx-deployment kubernetes.io/change-cause="Исправление переменных окружения"
+  ```
+
+### Оперативное управление
+
+- **Пауза и возобновление:** позволяет внести серию изменений в конфигурацию, не запуская обновление после каждой правки.
+  ```bash
+  kubectl rollout pause deployment/my-app
+  # ... внесение правок (set image, set resources) ...
+  kubectl rollout resume deployment/my-app
+  ```
+- **Принудительный перезапуск:** используется для пересоздания подов без изменения манифеста (например, для подтягивания обновленных данных из `Secret` или `ConfigMap`).
+  ```bash
+  kubectl rollout restart deployment/my-app
+  ```
+
+### Экспорт и очистка манифеста
+
+Для получения чистого манифеста текущего состояния без системных полей:
 
 ```bash
-# Откат к нерабочей ревизии 2 (с невалидным образом)
-kubectl rollout undo deployment/nginx-deployment --to-revision=2
-# deployment.apps/nginx-deployment rolled back
-
-# Результат: поды с невалидным образом начнут создаваться,
-# Deployment зависнет в состоянии обновления — требуется диагностика
+kubectl get deployment <name> -o yaml > deployment.yaml
 ```
-
-Это полезно для тестирования: можно намеренно откатиться к проблемной версии для воспроизведения и отладки issues.
-
-**Аннотация `change-cause`:** Для документирования изменений используется аннотация `kubernetes.io/change-cause`. Она отображается в колонке `CHANGE-CAUSE` вывода `rollout history`.
-
-Способы установки:
-
-```bash
-# 1. Флаг --record при выполнении команды (устаревший, но работающий)
-kubectl set image deployment/nginx-deployment nginx=nginx:1.29.0 --record
-
-# 2. Явная аннотация объекта
-kubectl annotate deployment/nginx-deployment kubernetes.io/change-cause="Обновление до nginx 1.29.0"
-
-# 3. Через манифест (рекомендуемый способ)
-# metadata:
-#   annotations:
-#     kubernetes.io/change-cause: "Обновление до nginx 1.29.0"
-```
-
-> **Примечание:** Флаг `--record` считается deprecated в новых версиях Kubernetes. Рекомендуется использовать `kubectl annotate` или указывать аннотацию в манифесте.
-
-### 3.5. Пауза и возобновление развертывания
-
-```bash
-# Приостановить развертывание
-kubectl rollout pause deployment/my-webapp
-
-# Внести несколько изменений в манифест
-kubectl edit deployment/my-webapp
-# ... изменения ...
-
-# Возобновить развертывание
-kubectl rollout resume deployment/my-webapp
-```
-
-Полезно для применения нескольких изменений одним батчем без запуска обновления после каждого изменения.
-
-### 3.6. Принудительный перезапуск
-
-```bash
-# Перезапустить все поды в Deployment
-kubectl rollout restart deployment/my-webapp
-```
-
-Инициирует стандартный `Rolling Update` без изменения манифеста. Используется для применения изменений из [`ConfigMap`](../configmap.md) или [`Secret`](../secrets/secrets_basics.md).
-
-Команда также работает для [`DaemonSet`](../daemonset.md) и [`StatefulSet`](../statefulset.md).
-
-### 3.7. Экспорт манифеста из кластера
-
-Для получения актуального манифеста Deployment из кластера:
-
-```bash
-# Вывести Deployment в YAML-файл
-kubectl get deployment <deployment-name> -o yaml > deployment.yaml
-```
-
-**Важно:** Перед повторным применением нужно удалить служебные поля:
-
-- `status` — текущее состояние (генерируется контроллером)
-- `metadata.uid`, `metadata.resourceVersion`, `metadata.creationTimestamp` — системные метаданные
-- `metadata.annotations` — аннотации контроллера (кроме тех, что заданы вручную)
-
-После очистки файл можно использовать для версионирования и повторного применения через `kubectl apply -f deployment.yaml`.
-
-### 3.8. Просмотр ReplicaSet
-
-Команда `kubectl get rs` отображает состояние ReplicaSet, управляемых Deployment:
-
-```bash
-kubectl get rs
-# NAME                              DESIRED   CURRENT   READY   AGE
-# nginx-deployment-5d59d67564       3         3         3       5m
-# nginx-deployment-7f8b9c6d5e       0         0         0       2m
-```
-
-| Поле | Описание |
-| :--- | :--- |
-| **DESIRED** | Желаемое количество реплик, указанное в spec Deployment |
-| **CURRENT** | Фактическое количество запущенных реплик на текущий момент |
-| **READY** | Количество реплик, прошедших readinessProbe и готовых принимать трафик |
-| **AGE** | Время жизни ReplicaSet |
-
-Имя каждого ReplicaSet содержит хэш (`5d59d67564`), обеспечивающий уникальность. При каждом обновлении Deployment создаётся новый ReplicaSet с уникальным хэшем.
+**Важно:** Перед повторным использованием удалите из файла блоки `status`, а также поля `uid`, `resourceVersion` и `creationTimestamp` в `metadata`.
 
 ## 4. Дополнительная информация
 
-### 4.1. См. также
+### Анализ ReplicaSet
 
-- Концепции Deployment: [deployment_concepts.md](./deployment_concepts.md)
+Команда `kubectl get rs` позволяет увидеть, как Deployment распределяет нагрузку между версиями:
+
+| Поле | Описание |
+| :--- | :--- |
+| **DESIRED** | Целевое количество подов для данной ревизии |
+| **CURRENT** | Фактическое количество созданных подов |
+| **READY** | Количество подов, готовых принимать трафик |
+
+Имя `ReplicaSet` содержит уникальный хэш шаблона пода. Если хэш совпадает с одной из старых ревизий, Deployment масштабирует существующий `ReplicaSet` вместо создания нового.
+
+### См. также
+
+- Основной раздел: [Kubernetes Deployment](./index.md)
 - Манифест и лучшие практики: [deployment_manifest.md](./deployment_manifest.md)
 - Стратегии развёртывания и откат: [Deployment Health Checks and Rollback](../../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)

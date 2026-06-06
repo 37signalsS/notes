@@ -126,13 +126,14 @@ openssl verify -CAfile ca.crt <cert.crt>
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Troubleshooting приватного CA (ротация, PKCS8, trust store) — в [Private_CA/operations.md](../Private_CA/operations.md). Диагностика проблем с установкой — в [installation.md](../installation.md). Алертинг и мониторинг — в [operations.md](./operations.md).
+### Смотрите также
 
-### Надёжность информации
-
-| Аспект | Оценка | Обоснование |
+- **[Приватный CA: Операции](../Private_CA/operations.md)** — ротация, PKCS8, trust store
+- **[Cert-manager: Установка](../installation.md)** — диагностика проблем при установке
+- **[Cert-manager: Операции](./operations.md)** — алертинг и мониторинг
+�пект | Оценка | Обоснование |
 | :--- | :--- | :--- |
 | Проверка ресурсов | **10** | Официальная документация cert-manager.io |
 | Логи компонентов | **10** | Стандартные kubectl-команды |

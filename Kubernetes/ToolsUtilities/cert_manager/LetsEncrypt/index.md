@@ -1,6 +1,6 @@
 # Let's Encrypt: Публичные сертификаты через ACME
 
-## Definitions
+## Определения
 
 **Let's Encrypt** — бесплатный, автоматизированный и открытый центр сертификации (CA), использующий протокол ACME (RFC 8555) для выдачи TLS-сертификатов.
 
@@ -10,7 +10,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Ограничения Let's Encrypt
 
@@ -48,7 +48,7 @@ Certificate → Order → Challenge(s) → CertificateRequest → Secret
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 | Сценарий | Документ | Описание |
 | :--- | :--- | :--- |
@@ -62,7 +62,7 @@ Certificate → Order → Challenge(s) → CertificateRequest → Secret
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Best Practices
 
@@ -71,13 +71,8 @@ Certificate → Order → Challenge(s) → CertificateRequest → Secret
 3. **Мониторьте статус** Certificate через Prometheus/Grafana
 4. **Избегайте лимитов** — кэшируйте заказы при разработке
 
-### Надёжность информации
+### Смотрите также
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| ACME протокол | **10** | RFC 8555, документация Let's Encrypt |
-| HTTP-01 solver | **10** | Стандартный паттерн cert-manager |
-| DNS-01 solver | **10** | Подтверждено для wildcard |
-| Staging окружение | **10** | Официальное тестовое окружение LE |
-
-**Связанные документы:** [cert_manager CRD](../definitions.md), [administration](../Administration/index.md), [private_ca](../Private_CA/index.md), [gateway_api](../gateway_api/practical_scenarios.md), [ingress](../ingress/scenarios.md).
+- **[Cert-manager: Определения](../definitions.md)** — базовая структура ресурсов
+- **[Cert-manager: Администрирование](../Administration/index.md)** — диагностика и мониторинг
+- **[Ingress: Сценарии интеграции](../ingress/scenarios.md)** — использование сертификатов в Ingress

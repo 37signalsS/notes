@@ -1,25 +1,25 @@
 # Reloader — Установка и настройка
 
-## Definitions
+## Определения
 
-**Установка Reloader** — процесс развёртывания контроллера Reloader в Kubernetes-кластере для автоматического отслеживания изменений в ConfigMap/Secret и инициирования rolling upgrade workload'ов.
+**Установка Reloader** — процесс развёртывания контроллера Reloader в Kubernetes-кластере для автоматического отслеживания изменений в ConfigMap/Secret и инициирования rolling upgrade (плавного обновления) рабочих нагрузок (workloads).
 
-**SSoT:** [Обзор и концепции Reloader](./reloader_overview.md)
+**Основной источник:** [Обзор и концепции Reloader](./reloader_overview.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Способы установки
 
 | Способ | Когда использовать | Преимущества |
 | :--- | :--- | :--- |
-| **Helm** | Production, GitOps | Управление версиями, параметризация |
-| **Манифесты** | Быстрое развёртывание, air-gapped | Не требует Helm |
+| **Helm** | Production, GitOps | Управление версиями, параметризация. |
+| **Манифесты** | Быстрое развёртывание, air-gapped | Не требует Helm (пакетный менеджер). |
 
 ### RBAC-требования
 
-Reloader требует доступ к:
+Reloader требует RBAC (Role-Based Access Control — управление доступом на основе ролей) для доступа к:
 
 - **secrets, configmaps** — `list`, `get`, `watch`
 - **deployments, daemonsets, statefulsets** — `list`, `get`, `watch`, `update`, `patch`
@@ -29,12 +29,12 @@ Reloader требует доступ к:
 
 | Ресурс | Request | Limit |
 | :--- | :--- | :--- |
-| CPU | 100m | 300m |
-| Memory | 128Mi | 256Mi |
+| CPU (Central Processing Unit) | 100m | 300m |
+| Память (Memory) | 128Mi | 256Mi |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Установка через Helm (рекомендуется)
 
@@ -55,6 +55,8 @@ reloader:
   replicas: 1
 
   deployment:
+    image:
+      tag: v1.4.17
     resources:
       requests:
         cpu: 100m
@@ -81,10 +83,10 @@ helm install reloader stakater/reloader \
 
 | Параметр | Значение по умолчанию | Описание |
 | :--- | :--- | :--- |
-| `reloader.watchGlobally` | `true` | Следить во всех namespace'ах |
-| `reloader.namespace` | `default` | Namespace для установки |
-| `reloader.replicas` | `1` | Количество реплик |
-| `reloader.resources` | `{}` | Ресурсы контроллера |
+| `reloader.watchGlobally` | `true` | Следить во всех пространствах имён (namespaces). |
+| `reloader.namespace` | `default` | Пространство имён для установки. |
+| `reloader.replicas` | `1` | Количество реплик. |
+| `reloader.resources` | `{}` | Ресурсы контроллера. |
 
 ---
 
@@ -161,7 +163,7 @@ spec:
       serviceAccountName: reloader
       containers:
         - name: reloader
-          image: ghcr.io/stakater/reloader:v1.0.118
+          image: ghcr.io/stakater/reloader:v1.4.17
           imagePullPolicy: IfNotPresent
           args:
             - --namespaces-to-ignore=kube-system,kube-public,kube-node-lease
@@ -223,7 +225,7 @@ kubectl apply -f reloader-setup.yaml
 
 ---
 
-### Сценарий 3: Исключение namespace'ов
+### Сценарий 3: Исключение пространств имён
 
 **Через Helm:**
 
@@ -263,25 +265,25 @@ kubectl logs -f deployment/reloader -n monitoring
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Требования
 
 | Компонент | Минимальная версия |
 | :--- | :--- |
-| Kubernetes | 1.19+ |
+| Kubernetes | 1.26+ |
 | Helm | 3.0+ |
 
 ### Безопасность
 
-Манифест установки включает securityContext:
+Манифест установки включает `securityContext`:
 
 - `runAsNonRoot: true`
 - `runAsUser: 65534` (nobody)
 - `allowPrivilegeEscalation: false`
 - `capabilities.drop: ALL`
 
-### Репозиторий и документация
+### Ресурсы
 
 - [GitHub: stakater/Reloader](https://github.com/stakater/Reloader)
-- [Helm Chart](https://github.com/stakater/stakater-charts/tree/master/charts/reloader)
+- [Helm Chart на ArtifactHub](https://artifacthub.io/packages/helm/stakater/reloader)

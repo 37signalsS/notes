@@ -2,87 +2,79 @@
 
 ## Определения
 
-**DaemonSet** — это контроллер Kubernetes, который обеспечивает запуск ровно одного экземпляра пода на **каждом узле кластера, который может его запустить**. Если в кластер добавляется новый узел (и он удовлетворяет правилам размещения пода), DaemonSet автоматически развернет на нем под. При удалении узла — под будет корректно удален.
+**DaemonSet** — это контроллер в Kubernetes, который обеспечивает запуск ровно одного экземпляра пода (**Pod**) на каждом узле кластера (или на определенном наборе узлов). При добавлении нового узла в кластер контроллер автоматически разворачивает на нем под, а при удалении узла — корректно удаляет соответствующий экземпляр.
 
-В отличие от `Deployment`, в манифесте `DaemonSet` **не указывается поле `replicas`**, так как количество подов определяется количеством узлов.
+В отличие от **Deployment**, в манифесте **DaemonSet** отсутствует поле `replicas`, так как количество копий напрямую зависит от количества доступных узлов.
 
 ## Основные концепции
 
 ### Ключевые сценарии использования
 
-DaemonSet идеально подходит для развертывания системных агентов, которые должны работать на каждом узле для предоставления базовой инфраструктурной функциональности.
+DaemonSet предназначен для развертывания системных сервисов и агентов, которые должны обеспечивать работу инфраструктуры на уровне каждого узла:
 
-* **Сборщики логов:** Fluentd, Logstash, Promtail.
-* **Агенты мониторинга:** Prometheus Node Exporter, Datadog Agent, New Relic.
-* **Сетевые плагины:** Calico, Flannel, Cilium.
-* **Системы хранения:** Ceph, GlusterFS.
+*   **Сбор данных и логов:** агенты **Fluentd**, **Logstash**, **Promtail**.
+*   **Мониторинг инфраструктуры:** **Prometheus Node Exporter**, агенты **Datadog** или **Zabbix**.
+*   **Сетевое взаимодействие:** плагины **CNI (Container Network Interface)**, такие как Calico, Cilium или Flannel.
+*   **Управление хранилищами:** драйверы для **Ceph** или **GlusterFS**.
 
-### Взаимодействие с сервисами (Services)
+### Взаимодействие с сервисами
 
-Как правило, для `DaemonSet` **не создают `Service`**. Приложения, развертываемые через `DaemonSet` (например, сборщики логов или метрик), обычно сами инициируют отправку данных в центральную систему и не принимают входящих соединений.
+Как правило, для **DaemonSet** не создают стандартный объект **Service** с типом **ClusterIP** или **LoadBalancer**. Системные агенты обычно сами инициируют отправку данных в центральную систему (например, в стек **Loki** или **Prometheus**) и не требуют входящих соединений от других подов.
 
-В отличие от `StatefulSet`, для `DaemonSet` также не предусмотрен механизм `headless service` для прямого обращения к конкретному поду.
+В отличие от **StatefulSet**, для **DaemonSet** не предусмотрен механизм **Headless Service** для обращения к конкретным экземплярам по именному шаблону.
 
 ### Стратегии обновления
 
-DaemonSet поддерживает две стратегии обновления, которые указываются в поле `spec.updateStrategy.type`:
+Управление процессом обновления подов осуществляется через поле `spec.updateStrategy.type`:
 
-1. **`RollingUpdate` (по умолчанию):** Поды на узлах обновляются поочередно. Старый под удаляется, а новый создается. Это обеспечивает плавное обновление без простоя сервиса на всех узлах одновременно. Параметр `maxUnavailable` контролирует, сколько подов может быть недоступно в один момент времени.
-2. **`OnDelete`:** Kubernetes не будет автоматически обновлять поды при изменении шаблона DaemonSet. Чтобы применить изменения, вам нужно **вручную удалить** старые поды. После этого DaemonSet создаст новые, уже с обновленной конфигурацией. Эта стратегия полезна для критически важных агентов, обновление которых нужно контролировать полностью вручную.
+1.  **`RollingUpdate` (по умолчанию):** постепенное обновление. Старый под удаляется, и только после этого создается новый на том же узле. Параметр `maxUnavailable` (по умолчанию 1) определяет, какое количество подов может быть недоступно одновременно в процессе обновления.
+2.  **`OnDelete`:** автоматическое обновление не происходит. После изменения манифеста администратор должен вручную удалить старые поды, чтобы контроллер создал новые с обновленной конфигурацией. Это полезно для критически важных агентов, где требуется полный контроль над процессом.
 
-### DaemonSet и Cordon
+### Поведение при обслуживании узлов (Cordon)
 
-Команда `kubectl cordon` помечает ноду как `unschedulable`, добавляя taint:
+Команда `kubectl cordon` помечает узел как недоступный для планирования новых задач, добавляя специальный **Taint** (ограничение): `node.kubernetes.io/unschedulable:NoSchedule`.
 
-```
-node.kubernetes.io/unschedulable:NoSchedule
-```
-
-Обычные поды не планируются на такую ноду, но **DaemonSet игнорирует этот taint**. Контроллер DaemonSet автоматически добавляет каждому поду встроенный toleration для `node.kubernetes.io/unschedulable:NoSchedule`.
-
-Это сделано намеренно: DaemonSet запускает критичные системные компоненты (CNI-плагины, сборщики логов, агенты мониторинга), которые должны работать на каждой ноде даже во время обслуживания. Их остановка приведёт к потере наблюдаемости и сетевой связности.
-
-**Вывод:** `cordon` предотвращает размещение *новых* подов приложений, но не останавлирует существующие DaemonSet-поды.
+**DaemonSet** игнорирует это ограничение по умолчанию. Контроллер автоматически добавляет подам встроенные **Tolerations** (допуски) для этого ограничения. Это гарантирует, что системные агенты (мониторинг, сеть) продолжат работу на узле даже во время его обслуживания или вывода из эксплуатации.
 
 ## Практические сценарии
 
-### Пример простого DaemonSet
+### Пример базового манифеста
 
-Манифест `DaemonSet` очень похож на манифест `Deployment`, за исключением отсутствия поля `replicas`.
+Манифест описывает запуск прокси-сервера на каждом узле.
 
 ```yaml
-# simple-daemonset.yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: test-ds
-  namespace: work
+  name: edge-proxy
+  namespace: infrastructure
 spec:
   selector:
     matchLabels:
-      app: simple-ds
+      app: edge-proxy
   template:
     metadata:
       labels:
-        app: simple-ds
+        app: edge-proxy
     spec:
       containers:
-      - name: traefik-proxy
+      - name: traefik
         image: traefik:v3.1
         ports:
-        - containerPort: 8000
+        - containerPort: 80
           name: http
 ```
 
-### Пример: Развертывание Fluentd для сбора логов
+### Развертывание агента сбора логов (Fluentd)
+
+В данном примере используются допуски для запуска на мастер-узлах и монтирование директорий хоста.
 
 ```yaml
-# fluentd-daemonset.yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: fluentd-daemonset
-  namespace: monitoring # Системные агенты лучше размещать в отдельном неймспейсе
+  name: fluentd-agent
+  namespace: logging
   labels:
     app: fluentd
 spec:
@@ -92,70 +84,58 @@ spec:
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
-      # Во время обновления может быть недоступен максимум 1 под
       maxUnavailable: 1
   template:
     metadata:
       labels:
         app: fluentd
     spec:
-      # Ограничиваем запуск только на узлах с ОС Linux
+      # Запуск только на узлах с определенной ОС (Operating System)
       nodeSelector:
         kubernetes.io/os: linux
-        log-node: "true"
-      # Позволяет поду запускаться на master-узлах, которые часто имеют taint NoSchedule
+      # Разрешение запуска на мастер-узлах (Control Plane)
       tolerations:
       - key: "node-role.kubernetes.io/master"
         operator: "Exists"
         effect: "NoSchedule"
-      securityContext:  
-        runAsNonRoot: true  
-        runAsUser: 1000  # UID пользователя, под которым запустятся контейнеры
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
       - name: fluentd
-        image: fluent/fluentd:v1.19.0-debian-1.0
-        env:
-        - name: FLUENT_ELASTICSEARCH_HOST
-          value: "elasticsearch.logging.svc.cluster.local"
-        - name: FLUENT_ELASTICSEARCH_PORT
-          value: "9200"
+        image: fluent/fluentd:v1.16
         resources:
           limits:
-            memory: 200Mi
+            memory: 512Mi
           requests:
-            cpu: 100m
-            memory: 200Mi
+            cpu: 100m # CPU (Central Processing Unit)
+            memory: 256Mi
         volumeMounts:
-        # Монтируем директории с логами и контейнерами с хост-машины внутрь пода
         - name: varlog
           mountPath: /var/log
         - name: varlibdockercontainers
           mountPath: /var/lib/docker/containers
           readOnly: true
       terminationGracePeriodSeconds: 30
-      # volumes определяет тома, которые будут использоваться в поде
       volumes:
       - name: varlog
-        hostPath: # hostPath монтирует директорию с хост-машины
+        hostPath:
           path: /var/log
       - name: varlibdockercontainers
         hostPath:
           path: /var/lib/docker/containers
 ```
 
-### Сценарий: Гарантированный запуск перед другими подами
+### Гарантированный запуск до подов приложений
 
-`Taints` и `Tolerations` являются ключевым механизмом для обеспечения того, чтобы `DaemonSet` (например, сетевой плагин CNI или агент мониторинга) был полностью запущен и готов на узле *до* того, как на него начнут размещаться обычные поды приложений.
-
-Паттерн выглядит следующим образом:
-
-1. На узел при добавлении в кластер вешается `taint` с эффектом `NoSchedule`.
-2. В манифест `DaemonSet` добавляется соответствующий `toleration`, что позволяет ему запуститься на этом узле.
-3. После успешного запуска пода `DaemonSet`, внешний контроллер (или логика самого демона) убирает `taint` с узла.
-4. Планировщик начинает размещать на узле обычные поды.
-
-Подробнее: [Taints and Tolerations](../Scheduling/taints_and_tolerations.md#отложенный-запуск-подов-до-готовности-daemonset).
+Для критических компонентов (например, CNI-плагинов) используется паттерн отложенного запуска:
+1. Узел помечается как `NotReady` или с кастомным `Taint`.
+2. **DaemonSet** имеет `Toleration` к этому ограничению и запускается первым.
+3. После готовности агента (например, настройки сети), ограничение снимается, и планировщик начинает размещать прикладные поды.
 
 ## Дополнительная информация
 
-См. также: [Security Context](../Security/pod_security_context.md), [Deployment](./Deployment/index.md), [StatefulSet](./statefulset.md), [Pod](./Pod/pod_overview.md), [NodeLocalDNS](../Networking/dns_deep_dive.md#принцип-работы-nodelocaldns), [MetalLB](../Networking/metallb.md), [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).
+*   **[Безопасность подов (Security Context)](../Security/pod_security_context.md)** — настройка прав доступа.
+*   **[Жизненный цикл пода (Pod Lifecycle)](./Pod/pod_lifecycle_and_state.md)** — стадии работы контейнеров.
+*   **[Taints and Tolerations](../Scheduling/taints_and_tolerations.md)** — детальное описание механизмов размещения.
+*   **[NodeLocalDNS](../Networking/dns_deep_dive.md#принцип-работы-nodelocaldns)** — пример реализации системного DaemonSet.

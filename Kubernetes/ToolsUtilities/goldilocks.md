@@ -1,10 +1,10 @@
 # Goldilocks
 
-## 1. Определения
+## Определения
 
 **Goldilocks** — это инструмент для Kubernetes от Fairwinds, который автоматически генерирует рекомендации по `resources.limits` и `resources.requests` для подов на основе их реального потребления ресурсов. Инструмент использует метрики Vertical Pod Autoscaler (VPA) для определения оптимальных значений, помогая достичь «золотой середины» между избыточным выделением и нехваткой ресурсов.
 
-## 2. Основные концепции
+## Основные концепции
 
 ### Принцип работы
 
@@ -38,9 +38,9 @@ Goldilocks использует VPA как источник рекомендац
 - **Labels** — выборочный анализ по лейблам (например, `app=frontend`)
 - **Workload type** — фильтрация по типу рабочей нагрузки
 
-## 3. Практические сценарии
+## Практические сценарии
 
-### 3.1. Установка через Helm
+### Установка через Helm
 
 ```bash
 # Добавление репозитория
@@ -54,7 +54,7 @@ helm install goldilocks fairwinds-stable/goldilocks \
   --set controller.rbac.clusterRoleName=goldilocks-clusterrole
 ```
 
-### 3.2. Включение анализа для namespace
+### Включение анализа для namespace
 
 Для активации сбора рекомендаций в конкретном namespace добавьте лейбл:
 
@@ -62,7 +62,7 @@ helm install goldilocks fairwinds-stable/goldilocks \
 kubectl label namespace my-namespace goldilocks.fairwinds.com/enabled=true
 ```
 
-### 3.3. Просмотр рекомендаций
+### Просмотр рекомендаций
 
 **Через веб-интерфейс:**
 
@@ -83,7 +83,7 @@ kubectl get vpa --all-namespaces -o wide
 kubectl describe vpa <vpa-name> -n <namespace>
 ```
 
-### 3.4. Применение рекомендаций
+### Применение рекомендаций
 
 **Автоматическое применение (для тестовых окружений):**
 
@@ -115,7 +115,7 @@ spec:
             memory: 512Mi  # из рекомендаций Goldilocks
 ```
 
-### 3.5. Исключение namespace'ов
+### Исключение namespace'ов
 
 Для исключения системных namespace'ов из анализа:
 
@@ -124,7 +124,7 @@ spec:
 kubectl label namespace kube-system goldilocks.fairwinds.com/enabled-
 ```
 
-## 4. Дополнительная информация
+## Дополнительная информация
 
 ### Требования
 
@@ -158,14 +158,8 @@ resources:
 - Требует установленного Metrics Server или Prometheus
 - Рекомендации основаны на исторических данных (24 часа по умолчанию)
 
-### Связанные документы
+### Смотрите также
 
-- **[VPA](../Autoscaling/vpa_detailed.md)** — подробная информация о Vertical Pod Autoscaler
-- **[HPA](../Autoscaling/HPA/index.md)** — горизонтальное масштабирование
-- **[Metrics Server](../MonitoringLogging/metrics-server.md)** — источник метрик для VPA/Goldilocks
-- **[Prometheus](../../Prometheus/prometheus_api.md)** — система мониторинга
-
-### Репозиторий и документация
-
-- [GitHub: FairwindsOps/goldilocks](https://github.com/FairwindsOps/goldilocks)
-- [Документация Fairwinds](https://goldilocks.docs.fairwinds.com/)
+- [VPA](../Autoscaling/vpa_detailed.md) — подробная информация о Vertical Pod Autoscaler.
+- [Metrics Server](../MonitoringLogging/metrics-server.md) — источник метрик для VPA/Goldilocks.
+- [Официальная документация Fairwinds](https://goldilocks.docs.fairwinds.com/) — полная документация и GitHub-репозиторий.

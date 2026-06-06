@@ -8,29 +8,29 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Источники конфликтов
 
 | Конфликт | Причина | Последствия |
 |----------|---------|-------------|
-| **Resource Tracking** | Оба используют labels для отслеживания ресурсов | Argo CD теряет контроль над ресурсами |
-| **Server-side Diff** | Kyverno мутирует манифесты после применения | Бесконечный цикл синхронизации |
-| **Mutation Webhooks** | Argo CD не учитывает изменения от webhook | Ложные различия в состоянии |
-| **Aggregated Roles** | Kyverno динамически изменяет роли | Argo CD показывает изменения |
+| **Resource Tracking (отслеживание ресурсов)** | Оба используют метки (`labels`) для отслеживания ресурсов | Argo CD теряет контроль над ресурсами |
+| **Server-side Diff (сравнение на стороне сервера)** | Kyverno мутирует манифесты после применения | Бесконечный цикл синхронизации |
+| **Mutation Webhooks (вебхуки мутации)** | Argo CD не учитывает изменения от вебхуков | Ложные различия в состоянии |
+| **Aggregated Roles (агрегированные роли)** | Kyverno динамически изменяет роли | Argo CD показывает изменения |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Конфликт меток (Resource Tracking)
 
 **Проблема**: Argo CD и Kyverno используют одинаковый механизм отслеживания ресурсов через метки (`labels`).
 
-**Решение**: Перевести Argo CD на использование **annotations** вместо labels.
+**Решение**: Перевести Argo CD на использование аннотаций (`annotations`) вместо меток.
 
 ```yaml
-# values.yaml Argo CD
+# values.yaml (конфигурационный файл YAML) Argo CD
 resourceTrackingMethod: annotation
 ```
 
@@ -49,7 +49,7 @@ metadata:
 
 **Проблема**: Argo CD по умолчанию сравнивает манифесты из Git с состоянием в кластере. При использовании Kyverno (который может мутировать манифесты) возникает бесконечный цикл синхронизации.
 
-**Решение**: Включить `server-side diff` в Argo CD.
+**Решение**: Включить `server-side diff` (сравнение на стороне сервера) в Argo CD.
 
 **Глобально** (в `values.yaml` Argo CD):
 
@@ -72,7 +72,7 @@ metadata:
 
 ### 3. Mutation Webhooks
 
-**Проблема**: Kyverno может изменять (мутировать) манифесты в процессе admission. Argo CD необходимо учитывать эти изменения при сравнении.
+**Проблема**: Kyverno может изменять (мутировать) манифесты в процессе admission (допуска). Argo CD необходимо учитывать эти изменения при сравнении.
 
 **Решение**: Добавить аннотацию к приложению в Argo CD.
 
@@ -89,7 +89,7 @@ metadata:
 
 ### 4. Aggregated Roles
 
-**Проблема**: Kyverno использует Aggregated Cluster Roles, что приводит к динамическому изменению ролей. Argo CD может некорректно обрабатывать эти изменения.
+**Проблема**: Kyverno использует Aggregated Cluster Roles ([подробнее](./additional.md)), что приводит к динамическому изменению ролей. Argo CD может некорректно обрабатывать эти изменения.
 
 **Решение**: В `values.yaml` Argo CD указать:
 
@@ -105,7 +105,7 @@ resource:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Сводная таблица настроек Argo CD
 
@@ -115,7 +115,7 @@ resource:
 | `controller.diff.serverSide` | `values.yaml` | `true` | Учет мутаций Kyverno |
 | `resource.compare.ignoreAggregatedRoles` | `values.yaml` | `true` | Игнорирование динамических ролей |
 | `argocd.argoproj.io/compare-options` | Annotation | `ServerSideDiff=true` | Server-side diff для приложения |
-| `argocd.argoproj.io/sync-options` | Annotation | `IncludeMutationWebhook=true` | Учет мутаций webhook |
+| `argocd.argoproj.io/sync-options` | Annotation | `IncludeMutationWebhook=true` | Учет мутаций вебхуков |
 | `applyServerSide` | Application | `true` | Server-side apply для установки |
 
 ### Проверка конфигурации
@@ -131,13 +131,13 @@ argocd app sync my-app --server-side
 argocd app diff my-app --server-side
 ```
 
-### Troubleshooting
+### Troubleshooting (Поиск и устранение неисправностей)
 
 | Проблема | Решение |
 |----------|---------|
 | Бесконечный цикл синхронизации | Включить `server-side diff` |
 | Argo CD теряет ресурсы | Переключить на `annotation` tracking |
-| Ошибки webhook при установке | Использовать `applyServerSide: true` |
+| Ошибки вебхуков при установке | Использовать `applyServerSide: true` |
 | Ложные изменения в ролях | Включить `ignoreAggregatedRoles: true` |
 
 ### Связанные темы

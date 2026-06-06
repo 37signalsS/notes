@@ -1,6 +1,6 @@
 # vCluster — Обзор и архитектура
 
-## Definitions
+## Определения
 
 **vCluster** — инструмент для создания легковесных виртуальных Kubernetes-кластеров, работающих внутри отдельных namespace'ов хостового кластера. Каждый vCluster имеет собственный Control Plane (API Server, Controller Manager, Scheduler, etcd) и полностью изолирован от других vCluster.
 
@@ -10,7 +10,7 @@
 
 **Backing Store** — хранилище состояния vCluster (встроенный etcd или внешняя БД).
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура
 
@@ -75,15 +75,15 @@
 
 | Характеристика | Namespace | vCluster |
 | :--- | :--- | :--- |
-| **Собственный API Server** | ❌ Нет | ✅ Да |
-| **Изоляция RBAC** | ⚠️ Ограниченная | ✅ Полная |
-| **Изоляция CRD** | ❌ Нет | ✅ Да |
-| **Изоляция etcd** | ❌ Нет | ✅ Да |
-| **Управление через kubectl** | ⚠️ Частично | ✅ Полностью |
+| **Собственный API Server** | Нет | Да |
+| **Изоляция RBAC (Role-Based Access Control)** | Ограниченная | Полная |
+| **Изоляция CRD (Custom Resource Definition)** | Нет | Да |
+| **Изоляция etcd** | Нет | Да |
+| **Управление через kubectl** | Частично | Полностью |
 | **Ресурсы** | Минимальные | ~500MB RAM на кластер |
 | **Время развёртывания** | Мгновенно | 30–60 секунд |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Варианты использования
 
@@ -93,7 +93,7 @@
 | **Изоляция окружений** | Dev/Stage/Prod в одном host-кластере |
 | **Multi-tenancy** | Полная изоляция между командами |
 | **Тестирование версий K8s** | Разные версии vCluster на одном host |
-| **CI/CD пайплайны** | Временные кластеры для тестов |
+| **CI/CD (Continuous Integration / Continuous Deployment) пайплайны** | Временные кластеры для тестов |
 
 ### Требования к окружению
 
@@ -115,6 +115,16 @@
 | **Syncer** | 100m | 128Mi | 200m | 256Mi |
 | **Итого** | ~550m | ~672Mi | ~1200m | ~1.3Gi |
 
-## Additional Information
+## Дополнительная информация
 
-Установка и развертывание: [vcluster_installation.md](./vcluster_installation.md). Подключение и доступ: [vcluster_connectivity.md](./vcluster_connectivity.md). Безопасность и синхронизация ресурсов: [vcluster_security_and_sync.md](./vcluster_security_and_sync.md). Основы namespace'ов: [namespace.md](../Base/namespace.md). Управление доступом: [rbac_overview.md](../Security/rbac/rbac_overview.md). Установка через Helm: [helm_overview.md](../Helm/helm_overview.md). Репозиторий и документация: [GitHub: loft-sh/vcluster](https://github.com/loft-sh/vcluster), [официальная документация](https://www.vcluster.com/docs), [Helm Chart](https://github.com/loft-sh/vcluster/tree/main/chart).
+### Внутренние ссылки
+- [Установка и развертывание](./vcluster_installation.md)
+- [Подключение и доступ](./vcluster_connectivity.md)
+- [Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md)
+- [Основы namespace'ов](../Base/namespace.md)
+- [Управление доступом (RBAC)](../Security/rbac/rbac_overview.md)
+- [Установка через Helm](../Helm/helm_overview.md)
+
+### Внешние ссылки
+- [Официальная документация vCluster](https://www.vcluster.com/docs)
+- [GitHub: loft-sh/vcluster](https://github.com/loft-sh/vcluster)

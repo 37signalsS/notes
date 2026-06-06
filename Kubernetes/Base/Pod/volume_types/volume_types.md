@@ -2,11 +2,11 @@
 
 ## Определения
 
-**Volume (том)** — абстракция файлового хранилища Kubernetes, предоставляющая контейнерам доступ к данным вне файловой системы контейнера.
+**Volume (том)** — абстракция хранилища в Kubernetes, позволяющая Pod (подам) сохранять данные за пределами жизненного цикла отдельных container (контейнеров) и обмениваться файлами между ними.
 
-**Эфемерное хранилище** — тома, жизненный цикл которых совпадает с жизненным циклом пода (emptyDir, hostPath, configMap, secret). Данные удаляются при удалении пода.
+**Эфемерное хранилище** — тома, жизненный цикл которых неразрывно связан с жизненным циклом Pod (например, `emptyDir`, `hostPath`, `ConfigMap`, `Secret`). Данные в таких томах уничтожаются при удалении объекта Pod из кластера.
 
-**Персистентное хранилище** — тома, жизненный цикл которых не зависит от пода (persistentVolumeClaim). Данные сохраняются после удаления пода.
+**Персистентное хранилище** — тома, данные в которых сохраняются независимо от состояния Pod (например, `PersistentVolumeClaim`). Позволяют приложениям сохранять состояние (state) при пересоздании или миграции Pod на другой Node (узел).
 
 ---
 
@@ -14,217 +14,127 @@
 
 ### Классификация типов томов
 
-| Тип | Категория | Назначение | Персистентность |
+| Тип | Категория | Основное назначение | Персистентность |
 | :--- | :--- | :--- | :--- |
-| `emptyDir` | Эфемерное | Временное хранилище, обмен данными между контейнерами | Нет |
-| `hostPath` | Эфемерное | Доступ к файловой системе узла | Нет (привязка к ноде) |
-| `configMap` | Эфемерное | Конфигурационные файлы | Нет |
-| `secret` | Эфемерное | Конфиденциальные данные (пароли, ключи) | Нет |
-| `projected` | Эфемерное | Комбинация нескольких источников | Нет |
-| `persistentVolumeClaim` | Персистентное | Постоянное хранилище (БД, файлы пользователей) | Да |
+| `emptyDir` | Эфемерное | Временные данные, кэш, обмен между container | Нет |
+| `hostPath` | Эфемерное | Доступ к файлам Node (для системных утилит) | Нет (привязка к Node) |
+| `ConfigMap` | Эфемерное | Инъекция файлов конфигурации | Нет |
+| `Secret` | Эфемерное | Передача конфиденциальных данных (пароли, ключи) | Нет |
+| `Projected` | Эфемерное | Агрегация нескольких источников в один путь | Нет |
+| `PersistentVolumeClaim` | Персистентное | Постоянное хранение данных (БД, медиа-файлы) | Да |
 
 ### emptyDir
 
-**Описание:** Пустой каталог, создаваемый вместе с подом на узле. Существует, пока под работает на этом узле.
+**Описание:** пустой каталог, создаваемый на Node в момент запуска Pod.
+**Жизненный цикл:** данные сохраняются при перезапуске container внутри Pod, но безвозвратно удаляются при удалении самого Pod.
 
-**Жизненный цикл:** Данные сохраняются при перезапуске контейнера, но удаляются при удалении пода.
-
-**Источник:** По умолчанию создаётся на диске узла (`/var/lib/kubelet/pods/...`). Можно использовать оперативную память.
-
-**Сценарии использования:**
-
-| Сценарий | Описание |
-| :--- | :--- |
-| Временное хранилище (кэш) | Для данных, которые не страшно потерять |
-| Обмен данными между контейнерами | Основной способ обмена файлами в multi-container Pod (sidecar-паттерн) |
-| Инициализация данных | `initContainer` подготавливает данные для основных контейнеров |
-
-**Параметры:**
-
-| Параметр | Описание | Предостережения |
-| :--- | :--- | :--- |
-| `medium: Memory` | Создание `emptyDir` в оперативной памяти (tmpfs) | Потребляемая память учитывается в `limits.memory` контейнера. Без лимитов возможно `OOMKill` |
-| `sizeLimit` | Ограничение размера тома (например, `1Gi`) | При превышении под будет выселен (`evicted`) с узла |
-
-**Важно:** Не используйте `emptyDir` для персистентных данных (базы данных). Это эфемерное хранилище.
+**Параметры и особенности:**
+- **medium: Memory**: создание тома в оперативной памяти (tmpfs). Скорость выше, но данные потребляют RAM (Random Access Memory) и учитываются в лимитах памяти container. Без установленных лимитов возможен `OOM (Out Of Memory)` на узле.
+- **sizeLimit**: ограничение максимального объема. При превышении Pod будет принудительно завершен (evicted).
 
 ### hostPath
 
-**Описание:** Монтирует файл или директорию с файловой системы узла внутрь пода.
+**Описание:** монтирование файла или директории напрямую с файловой системы Node в container.
 
-**Ключевое ограничение:** Данные физически находятся на конкретной ноде. При перемещении пода на другую ноду доступ к данным теряется. Непригоден для stateful-приложений в многоузловых кластерах.
+**Критические ограничения:**
+- **Отсутствие мобильности**: Pod жестко привязан к конкретной Node. Если Pod будет пересоздан на другом узле, он не увидит данных предыдущего.
+- **Безопасность**: предоставляет container доступ к ресурсам хоста. Неправильная настройка может привести к компрометации всего кластера.
 
-**Типы (`type`):**
+**Применение:** системные компоненты кластера, агенты мониторинга или CNI (Container Network Interface) плагины, которым требуется доступ к `/var/log`, `/proc` или `/sys`.
 
-| Тип | Описание |
-| :--- | :--- |
-| `Directory` | Путь должен существовать и быть директорией. Если нет — под не запустится |
-| `DirectoryOrCreate` | Если директория не существует, `kubelet` создаст её с правами `0755` и владельцем `root` |
-| `File`, `FileOrCreate`, `Socket`, `CharDevice`, `BlockDevice` | Другие типы для специфических сценариев |
+### ConfigMap и Secret
 
-**Проблема с правами доступа:** При использовании `DirectoryOrCreate` созданная директория принадлежит `root`. Контейнер, запущенный от непривилегированного пользователя (`runAsUser: 1000`), не сможет записывать данные.
+Позволяют монтировать данные, хранящиеся в одноименных объектах Kubernetes, как файлы.
+- [Использование ConfigMap в Pod](../../ConfigMap/configmap.md)
+- [Использование Secret в Pod](../../secrets/secrets_basics.md)
 
-**Решение:** Заранее создать директорию на узле и выставить права (`chown`). Для гарантированного попадания пода на подготовленный узел использовать `nodeAffinity`.
+### Projected Volume
 
-**Основное применение:** DaemonSet для агентов мониторинга (node-exporter), сборщиков логов (fluent-bit), плагинов CNI. Том монтируется в режиме `readOnly: true`.
+Объединяет несколько источников (Secret, ConfigMap, Downward API, ServiceAccountToken) в одну точку монтирования. Это упрощает структуру манифеста и организацию файлов в container.
+Подробнее: [Projected Volumes в Kubernetes](./projected_volumes.md).
 
-**Пример: Сборщик логов**
+### PersistentVolumeClaim (PVC)
 
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: log-collector
-spec:
-  template:
-    spec:
-      containers:
-      - name: fluent-bit
-        image: fluent/fluent-bit
-        volumeMounts:
-        - name: varlog
-          mountPath: /var/log
-          readOnly: true
-      volumes:
-      - name: varlog
-        hostPath:
-          path: /var/log
-          type: Directory
-```
-
-> **ВНИМАНИЕ: УГРОЗА БЕЗОПАСНОСТИ.** Использование `hostPath` нарушает изоляцию контейнера, предоставляет доступ к файловой системе хоста и может привести к компрометации узла. В кластерах с политиками безопасности (PSA, OPA) `hostPath` обычно запрещён для рабочих нагрузок.
-
-### configMap и secret
-
-**Описание:** Позволяют передать данные из [ConfigMap](../../ConfigMap/configmap.md) или [Secret](../../secrets/secrets_basics.md) в под в виде файлов.
-
-**Сценарии использования:**
-
-| Тип | Назначение |
-| :--- | :--- |
-| `configMap` | Конфигурационные файлы, настройки приложения |
-| `secret` | TLS-сертификаты, пароли, ключи API |
-
-### projected
-
-**Описание:** Объединяет несколько источников (`secret`, `configMap`, `downwardAPI`, `serviceAccountToken`) в один том, монтируемый как единая директория.
-
-**Основное преимущество:** Одна точка монтирования вместо нескольких отдельных томов.
-
-Подробнее: [Projected Volumes](./projected_volumes.md).
-
-### persistentVolumeClaim
-
-**Описание:** Способ смонтировать персистентное хранилище, жизненный цикл которого не зависит от пода.
-
-**Сценарии использования:** Хранение данных приложений, требующих сохранения (базы данных, файлы пользователей).
-
+Механизм запроса ресурсов хранения. Через PVC приложение абстрагируется от конкретных технологий (NFS, облачные диски, Ceph) и работает с абстрактным томом, который Kubernetes подключает к Pod через CSI (Container Storage Interface).
 Подробнее: [PV, PVC и StorageClass](../../../Storage/pv_and_pvc.md).
 
 ---
 
 ## Практические сценарии
 
-### Пример 1: emptyDir для обмена данными между контейнерами
+### Сценарий 1: emptyDir для совместной работы container
+
+Использование общего тома для передачи данных от `initContainer` к основному приложению.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: shared-volume-pod
+  name: sidecar-storage-demo
 spec:
   volumes:
   - name: shared-data
-    emptyDir:
-      sizeLimit: 500Mi
+    emptyDir: {}
   containers:
-  - name: producer
-    image: busybox
-    command: ["sh", "-c", "echo 'data' > /shared/data.txt"]
+  - name: app
+    image: nginx:1.25
     volumeMounts:
     - name: shared-data
-      mountPath: /shared
-  - name: consumer
+      mountPath: /usr/share/nginx/html
+  initContainers:
+  - name: fetcher
     image: busybox
-    command: ["sh", "-c", "cat /shared/data.txt"]
+    command: ["sh", "-c", "echo 'Hello from Init' > /data/index.html"]
     volumeMounts:
     - name: shared-data
-      mountPath: /shared
+      mountPath: /data
 ```
 
-### Пример 2: emptyDir в оперативной памяти
+### Сценарий 2: hostPath для агента сбора логов
+
+Монтирование логов хоста в режиме "только чтение" для безопасности.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: memory-backed-emptydir
+  name: log-agent
 spec:
-  volumes:
-  - name: cache
-    emptyDir:
-      medium: Memory
-      sizeLimit: 1Gi
   containers:
-  - name: app
-    image: my-app:1.0
+  - name: agent
+    image: fluent/fluent-bit
     volumeMounts:
-    - name: cache
-      mountPath: /cache
-    resources:
-      limits:
-        memory: 2Gi  # Обязательно при использовании medium: Memory
-```
-
-### Пример 3: hostPath для DaemonSet (сборщик логов)
-
-```yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: node-exporter
-spec:
-  template:
-    spec:
-      containers:
-      - name: node-exporter
-        image: prom/node-exporter
-        volumeMounts:
-        - name: proc
-          mountPath: /host/proc
-          readOnly: true
-        - name: sys
-          mountPath: /host/sys
-          readOnly: true
-      volumes:
-      - name: proc
-        hostPath:
-          path: /proc
-          type: Directory
-      - name: sys
-        hostPath:
-          path: /sys
-          type: Directory
+    - name: host-logs
+      mountPath: /var/log/host
+      readOnly: true
+  volumes:
+  - name: host-logs
+    hostPath:
+      path: /var/log
+      type: Directory
 ```
 
 ---
 
 ## Дополнительная информация
 
-**Связанные темы:** [Базовые концепции Volume](./volumes_basics.md), [Projected Volumes](./projected_volumes.md), [ConfigMap](../../ConfigMap/configmap.md), [Secret](../../secrets/secrets_basics.md), [PV и PVC](../../../Storage/pv_and_pvc.md).
+**Связанные темы:**
+- [Базовые концепции Volume](./volumes_basics.md)
+- [Projected Volumes](./projected_volumes.md)
+- [Downward API в Kubernetes](../downward_api.md)
+- [PV (PersistentVolume) и PVC](../../../Storage/pv_and_pvc.md)
 
-### Kubernetes Volumes vs Docker Volumes
+### Сравнение с Docker Volumes
 
-Тома Kubernetes и Docker volumes решают схожую задачу, но на разных уровнях:
+Хотя концепции похожи, Kubernetes предоставляет более высокий уровень абстракции:
 
 | Характеристика | Kubernetes Volume | Docker Volume |
 | :--- | :--- | :--- |
-| **Уровень абстракции** | Кластер (множество нод) | Один хост |
-| **Управление** | Kubernetes API, декларативно | Docker CLI / API, императивно |
-| **Персистентность** | Зависит от типа (`emptyDir` — нет, `PVC` — да) | Всегда персистентны |
-| **Бэкенды хранения** | Локальный диск, NFS, Ceph, облачные диски (через CSI) | Локальный диск, NFS (через volume drivers) |
-| **Совместное использование** | Между подами (ReadWriteMany PVC) | Между контейнерами на одном хосте |
+| **Управление** | Декларативное (YAML) | Императивное (CLI) |
+| **Масштабируемость** | Работает в рамках всего кластера | Ограничено одним хостом |
+| **Драйверы** | CSI (облачные диски, распределенные ФС) | Volume Drivers (в основном локальные) |
+| **Персистентность** | Гибкая настройка через PVC | Всегда персистентно |
 
-**Ключевое отличие:** В Docker volume — это конкретный ресурс на хосте (`/var/lib/docker/volumes/`). В Kubernetes volume — абстракция, которая через StorageClass и CSI динамически подключается к нужному бэкенду хранения без привязки к ноде.
+**Ключевое отличие:** в Kubernetes тома являются частью жизненного цикла Pod (за исключением PVC), что обеспечивает предсказуемую очистку ресурсов и безопасность в динамических средах.
 
-> **См. также:** [Docker Volumes](../../../../Docker/Docker_fs/docker_volumes.md)
+> **См. также:** [Тома в Docker (Docker Volumes)](../../../../Docker/Docker_fs/docker_volumes.md)

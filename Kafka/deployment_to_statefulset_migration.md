@@ -12,7 +12,7 @@
 
 Использование `Deployment` для управления stateful-приложениями, такими как Kafka, является анти-паттерном в Kubernetes. `Deployment` не обеспечивает стабильную сетевую идентичность и постоянное хранилище, что критически важно для Kafka и приводит к потере данных и нестабильной работе кластера.
 
-**StatefulSet** — единственно правильный объект Kubernetes для запуска подобных систем. Подробное объяснение проблем `Deployment` и преимуществ `StatefulSet` для приложений с состоянием описано в документе [StatefulSet в Kubernetes](../Kubernetes/Base/statefulset.md).
+**StatefulSet** — единственно правильный объект Kubernetes для запуска подобных систем. Подробное объяснение проблем `Deployment` и преимуществ `StatefulSet` для приложений с состоянием описано в документе [StatefulSet в Kubernetes](../Kubernetes/Base/StatefulSet/statefulset_overview.md).
 
 ## Практические сценарии
 

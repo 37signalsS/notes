@@ -131,6 +131,12 @@ kubectl delete issuer my-ca-issuer -n default
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Данные о надёжности информации — в [index.md](./index.md).
+Данные о надёжности информации — в обзоре концепции.
+
+### Смотрите также
+
+- **[Приватный CA: Обзор](./index.md)** — архитектура, сравнение с CA кластера
+- **[Приватный CA: Сценарии](./scenarios.md)** — примеры манифестов
+- **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — общая диагностика

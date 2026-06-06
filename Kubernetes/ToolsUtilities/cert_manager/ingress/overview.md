@@ -113,7 +113,7 @@ spec:
 ### Диагностика
 
 ```bash
-# Статус сертифик
+# Статус сертификата
 kubectl get certificate -n <namespace>
 
 # Детали Certificate (ошибки, события)

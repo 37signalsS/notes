@@ -1,38 +1,38 @@
-# Rolling Update on ConfigMap Change
+# Автоматический перезапуск подов (Restart on Change)
 
 ---
 
-## Definitions
+## Определения
 
-**Checksum-аннотации** — аннотации в `spec.template.metadata.annotations` Deployment/StatefulSet, содержащие SHA256-хеш содержимого ConfigMap или Secret. Изменение хеша вызывает rolling update подов.
+**Checksum-аннотации (аннотации контрольной суммы)** — метаданные в секции `spec.template.metadata.annotations` ресурсов Deployment или StatefulSet, содержащие хеш-сумму алгоритма SHA-256 (Secure Hash Algorithm 256-bit) от содержимого ConfigMap или Secret. Изменение хеша вызывает автоматическое плавное обновление (rolling update) подов.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Принцип работы
 
-1. В `spec.template.metadata.annotations` Deployment/StatefulSet добавляется аннотация с хешем.
-2. Значение аннотации — SHA256-хеш отрендеренного содержимого шаблона ConfigMap.
-3. При `helm upgrade` содержимое ConfigMap меняется → хеш меняется → Kubernetes видит изменение в `spec.template.metadata` → rolling update.
+1. В блок `spec.template.metadata.annotations` Deployment или StatefulSet добавляется аннотация с вычисленным хешем.
+2. Значением аннотации является SHA-256 хеш отрендеренного содержимого шаблона ConfigMap.
+3. При выполнении команды `helm upgrade` содержимое ConfigMap изменяется → хеш пересчитывается и меняется → Kubernetes обнаруживает изменение в `spec.template.metadata` → инициируется процесс rolling update.
 
 ### Почему это работает
 
-Kubernetes не отслеживает изменения ConfigMap/Secret автоматически. Поды используют смонтированные данные, но не перезапускаются при их изменении. Изменение аннотаций в `spec.template` — единственный стандартный способ вызвать rolling update без внешних контроллеров (stakater/reloader).
+Kubernetes не отслеживает изменения в ресурсах ConfigMap или Secret автоматически для уже запущенных подов. Поды используют смонтированные данные, но не перезапускаются при их обновлении. Изменение аннотаций в спецификации шаблона пода (`spec.template`) — это единственный стандартный нативный способ вызвать rolling update без использования внешних контроллеров (таких как stakater/Reloader).
 
 ### Какие функции используются
 
 | Функция | Назначение |
 |---------|------------|
-| `print` | Конкатенация строк для пути к файлу |
-| `include` | Чтение отрендеренного содержимого файла шаблона |
-| `sha256sum` | Вычисление SHA256-хеша строки |
+| `print` | Конкатенация строк для формирования пути к файлу |
+| `include` | Выполнение рендеринга и чтение содержимого файла шаблона |
+| `sha256sum` | Вычисление SHA-256 хеша от переданной строки |
 
-Подробнее о функциях: [Функции Helm](../functions.md).
+Подробнее о доступных функциях: [Функции Helm](../functions.md).
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Deployment с ConfigMap
 
@@ -100,11 +100,11 @@ spec:
             name: {{ include "myapp.fullname" . }}-config
 ```
 
-Механизм идентичен Deployment — аннотация в `spec.template.metadata.annotations`.
+Механизм полностью идентичен Deployment — аннотация размещается в `spec.template.metadata.annotations`.
 
 ### Secret вместо ConfigMap
 
-Для секретов принцип тот же:
+Для работы с секретами применяется тот же принцип:
 
 **templates/secret.yaml:**
 
@@ -143,7 +143,7 @@ spec:
 
 ### Несколько ConfigMap
 
-Если ConfigMap несколько, каждая аннотируется отдельно:
+Если приложение использует несколько конфигурационных файлов, каждый из них аннотируется отдельно:
 
 ```yaml
 apiVersion: apps/v1
@@ -158,35 +158,38 @@ spec:
         checksum/nginx-config: {{ include (print .Template.BasePath "/nginx-configmap.yaml") . | sha256sum }}
 ```
 
-Изменение любого из ConfigMap изменит соответствующий хеш и вызовет rolling update.
+Изменение любого из подключенных ConfigMap приведёт к изменению соответствующего хеша и вызовет rolling update.
 
 ---
 
-## Dissecting the Annotation
+## Разбор работы аннотации
 
-Разбор выра:
+Детальный разбор выражения шаблонизатора:
 
 ```yaml
 checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
 ```
 
-1. `.Template.BasePath` — путь к директории `templates/` (например, `./myapp/templates`)
-2. `print .Template.BasePath "/configmap.yaml"` — конкатенация: `./myapp/templates/configmap.yaml`
-3. `include ... .` — рендерит файл configmap.yaml с текущим контекстом (`.Values`, `.Release`, `.Chart`)
-4. `| sha256sum` — вычисляет SHA256-хеш отрендеренного содержимого
+1. `.Template.BasePath` — возвращает путь к директории `templates/` (например, `myapp/templates`).
+2. `print .Template.BasePath "/configmap.yaml"` — выполняет конкатенацию строк, формируя полный путь: `myapp/templates/configmap.yaml`.
+3. `include ... .` — рендерит указанный файл (в данном случае `configmap.yaml`) с передачей текущего контекста исполнения (`.Values`, `.Release`, `.Chart`).
+4. `| sha256sum` — вычисляет хеш SHA-256 от полученного на предыдущем шаге отрендеренного содержимого.
 
-Результат — строка вроде `a1b2c3d4e5f6...`, которая меняется при любом изменении в ConfigMap.
-
----
-
-## Limitations
-
-- **Только при `helm upgrade`** — хеш пересчитывается при рендеринге, не при изменении ConfigMap извне (`kubectl edit configmap`).
-- **Не работает при `helm template`** — функция `include` требует доступа к API кластера.
-- **Не отслеживает `kubectl edit`** — внешние изменения ConfigMap не влияют на хеш.
+Результат — уникальная строка (например, `a1b2c3d4e5f6...`), которая будет меняться при любом (даже минимальном) изменении внутри исходного ConfigMap.
 
 ---
 
-## Additional Information
+## Ограничения
 
-Функции `sha256sum`, `include` — в [Функции Helm](../functions.md). Условное добавление аннотаций — в [Условная логика](./conditionals.md). Альтернативный подход (внешний контроллер) — [stakater/reloader](https://github.com/stakater/Reloader).
+- **Работает только при `helm upgrade`** — хеш пересчитывается исключительно в момент рендеринга шаблонов через Helm. Это не работает при прямом редактировании ConfigMap через `kubectl edit configmap`.
+- **Не работает при `helm template`** — функция `include` для вычисления хеша требует полного контекста, что может вызывать предупреждения при локальном рендеринге без кластера.
+- **Внешние изменения игнорируются** — любые изменения ConfigMap, выполненные в обход Helm, не повлияют на хеш и не вызовут перезапуск.
+
+---
+
+## Дополнительная информация
+
+- [Функции Helm](../functions.md) — подробности о работе функций `sha256sum` и `include`.
+- [Условная логика](./conditionals.md) — применение условного добавления аннотаций.
+- [stakater/Reloader](../../../reloader/reloader_overview.md) — альтернативный подход к перезапуску с использованием внешнего Kubernetes-контроллера.
+- [Обновление и Rollout ConfigMap](../../../../Base/ConfigMap/update_and_rollout.md) — общие концепции обновления конфигураций в Kubernetes.

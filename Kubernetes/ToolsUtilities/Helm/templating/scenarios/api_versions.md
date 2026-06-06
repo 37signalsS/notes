@@ -1,31 +1,35 @@
-# API Version Checks in Helm
+# Проверка версий API в Helm
 
 ---
 
-## Definitions
+## Определения
+
+**API (Application Programming Interface)** — интерфейс программирования приложений, набор правил и протоколов для взаимодействия компонентов Kubernetes.
 
 **`.Capabilities`** — встроенный объект Helm для получения информации о версии Kubernetes и доступных API-ресурсах кластера. Подробнее: [Встроенные объекты Helm](../objects.md).
 
----
-
-## Basic Concepts
-
-Helm адаптирует манифесты под версию Kubernetes через `.Capabilities`:
-
-- `.Capabilities.KubeVersion.Version` — полная версия Kubernetes (например, `v1.28.3`)
-- `.Capabilities.KubeVersion.Major` — мажорная версия (`1`)
-- `.Capabilities.KubeVersion.Minor` — минорная версия (`28`)
-- `.Capabilities.APIVersions.Has "group/version/Kind"` — проверка доступности конкретного API
-
-Для сравнения версий используется функция `semverCompare`.
+**SemVer (Semantic Versioning)** — семантическое версионирование, формат версий `MAJOR.MINOR.PATCH`.
 
 ---
 
-## Practical Scenarios
+## Базовые концепции
+
+Helm адаптирует манифесты под версию Kubernetes через объект `.Capabilities`:
+
+- `.Capabilities.KubeVersion.Version` — полная версия Kubernetes (например, `v1.28.3`).
+- `.Capabilities.KubeVersion.Major` — мажорная версия (`1`).
+- `.Capabilities.KubeVersion.Minor` — минорная версия (`28`).
+- `.Capabilities.APIVersions.Has "group/version/Kind"` — проверка доступности конкретного ресурса API.
+
+Для сравнения версий используется функция `semverCompare`. Она позволяет выполнять логические проверки (например, `>=1.20-0`) для адаптации манифестов к различным версиям кластера.
+
+---
+
+## Практические сценарии
 
 ### Выбор API версии для Ingress
 
-Ingress API менялся несколько раз: `extensions/v1beta1` → `networking.k8s.io/v1beta1` → `networking.k8s.io/v1`. Шаблон выбирает корректную версию:
+Интерфейс Ingress API менялся несколько раз: `extensions/v1beta1` → `networking.k8s.io/v1beta1` → `networking.k8s.io/v1`. Шаблон ниже автоматически выбирает корректную версию:
 
 ```yaml
 {{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/Ingress" }}
@@ -40,7 +44,7 @@ kind: Ingress
 
 ### Сравнение версий Kubernetes
 
-Условная логика в зависимости от версии кластера:
+Применение условной логики в зависимости от версии кластера:
 
 ```yaml
 {{- if semverCompare ">=1.20-0" .Capabilities.KubeVersion.Version }}
@@ -63,7 +67,7 @@ kind: Ingress
 
 ### Адаптивный Ingress с `ingressClassName`
 
-До K8s 1.18 класс указывался через аннотацию, после — через поле `spec.ingressClassName`:
+До Kubernetes версии 1.18 класс Ingress указывался через аннотацию, начиная с 1.18 — через поле `spec.ingressClassName`:
 
 ```yaml
 metadata:
@@ -83,6 +87,8 @@ spec:
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Файл посвящён практическому применению `.Capabilities`. Определения и полный список встроенных объектов — в [Встроенные объекты Helm](../objects.md). Продвинутые примеры адаптивных шаблонов — в [Сценарии Helm](../../Advanced/scenarios.md).
+- [Встроенные объекты Helm](../objects.md) — полный список свойств `.Capabilities`
+- [Функции Helm](../functions.md) — справочник по функциям шаблонизации
+- [Сценарии Helm](../../Advanced/scenarios.md) — продвинутые примеры адаптивных манифестов

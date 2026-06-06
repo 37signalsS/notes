@@ -1,21 +1,25 @@
-# RoleBinding и ClusterRoleBinding
+# Привязки ролей (RoleBinding) и кластерные привязки (ClusterRoleBinding)
 
 ## Определения
 
-**RoleBinding** — объект Kubernetes, связывающий [Role](./roles.md) или [ClusterRole](./roles.md#clusterrole) с одним или несколькими субъектами в рамках одного namespace. Определяет **кому** и **где** разрешены действия.
+<a name="rolebinding"></a>
+**RoleBinding (Привязка роли)** — объект Kubernetes, связывающий [Role](./roles.md) или [ClusterRole](./roles.md) с одним или несколькими субъектами в рамках одного пространства имён (namespace). Определяет **кому** и **где** разрешены действия.
 
-**ClusterRoleBinding** — объект Kubernetes, связывающий [ClusterRole](./roles.md#clusterrole) с субъектами на уровне всего кластера. Обеспечивает глобальный доступ независимо от namespace.
+<a name="clusterrolebinding"></a>
+**ClusterRoleBinding (Кластерная привязка роли)** — объект Kubernetes, связывающий [ClusterRole](./roles.md) с субъектами на уровне всего кластера. Обеспечивает глобальный доступ ко всем ресурсам независимо от пространства имён.
+
+Общие принципы работы **RBAC (Role-Based Access Control — управление доступом на основе ролей)** описаны в файле **[Обзор RBAC](./rbac_overview.md)**.
 
 ### Важные ограничения
 
-- **`roleRef` неизменяем** — для изменения роли необходимо пересоздать binding
-- **Нельзя ссылаться на Role из другого namespace** — Role должна существовать в том же namespace, что и RoleBinding
+- **Неизменяемость `roleRef`**: для изменения ссылочной роли необходимо удалить и заново создать объект привязки.
+- **Локальность Role**: RoleBinding может ссылаться на Role только в том же пространстве имён, где находится сама привязка.
 
 ## Основные концепции
 
-### Субъекты (`subjects`)
+### Субъекты (Subjects)
 
-RoleBinding и ClusterRoleBinding используют поле `subjects` для указания, кому предоставляются права:
+Поле `subjects` определяет, кому предоставляются права доступа:
 
 | Тип | Описание | Пример |
 |-----|----------|--------|
@@ -23,11 +27,12 @@ RoleBinding и ClusterRoleBinding используют поле `subjects` дл�
 | `Group` | Группа пользователей | `name: "developers"` |
 | `ServiceAccount` | Сервисный аккаунт | `name: "ci-bot"`, `namespace: "dev"` |
 
-> **Важно:** `User` и `Group` не являются объектами Kubernetes. Они создаются и управляются внешними системами аутентификации (OIDC, certificates, webhook).
+> **Важно:** `User` и `Group` не являются объектами внутри Kubernetes. Они управляются внешними системами аутентификации (OIDC, сертификаты, webhook).
 
-### ServiceAccount
+### Сервисные аккаунты (ServiceAccount)
 
-**ServiceAccount** — объект Kubernetes для идентификации процессов в Pod'ах.
+<a name="serviceaccount"></a>
+**ServiceAccount** — объект Kubernetes, предназначенный для идентификации процессов (приложений), запущенных внутри подов.
 
 ```yaml
 apiVersion: v1
@@ -35,61 +40,56 @@ kind: ServiceAccount
 metadata:
   name: my-app-sa
   namespace: default
-automountServiceAccountToken: false  # Отключить автомонтирование токена
+automountServiceAccountToken: false  # Рекомендуется: отключить автоматическое монтирование токена
 ```
 
-> **Best Practice:** Устанавливайте `automountServiceAccountToken: false` по умолчанию и включайте только при необходимости.
+> **Лучшая практика:** Используйте `automountServiceAccountToken: false` и подключайте токен только тем подам, которым это явно необходимо для взаимодействия с API Kubernetes.
 
-### Формат имени ServiceAccount в subjects
+#### Формат записи ServiceAccount в привязках
+
+Для `ServiceAccount` поле `namespace` в блоке `subjects` является обязательным:
 
 ```yaml
 subjects:
 - kind: ServiceAccount
-  name: my-sa          # Имя ServiceAccount
-  namespace: default   # Namespace обязателен для ServiceAccount
+  name: my-sa
+  namespace: default
 ```
 
-### Специальные группы
+### Специальные системные группы
 
 | Группа | Описание |
 |--------|----------|
-| `system:authenticated` | Все аутентифицированные пользователи |
+| `system:authenticated` | Все успешно аутентифицированные субъекты |
 | `system:unauthenticated` | Все неаутентифицированные пользователи |
-| `system:masters` | Полный доступ (обходит RBAC) — **не добавляйте пользователей!** |
-| `system:serviceaccounts` | Все ServiceAccount в кластере |
-| `system:serviceaccounts:<ns>` | Все ServiceAccount в namespace |
+| `system:masters` | Группа суперпользователей, обходящая все проверки RBAC. См. **[Предупреждения безопасности](./rbac_overview.md#preduprezhdeniya-bezopasnosti)** |
+| `system:serviceaccounts` | Все сервисные аккаунты кластера |
+| `system:serviceaccounts:<ns>` | Все сервисные аккаунты в конкретном пространстве имён |
 
-### Поле `roleRef`
+### Поле roleRef
 
-`roleRef` указывает на роль, права которой предоставляются:
+Поле `roleRef` указывает на роль, права которой делегируются:
 
-- **RoleBinding**: может ссылаться на [Role](./roles.md) в том же namespace или на [ClusterRole](./roles.md#clusterrole) (права будут ограничены namespace привязки)
-- **ClusterRoleBinding**: ссылается только на [ClusterRole](./roles.md#clusterrole) с глобальной областью действия
+- **В RoleBinding**: может ссылаться на [Role](./roles.md) в том же namespace или на [ClusterRole](./roles.md) (в этом случае права ClusterRole ограничиваются пространством имён привязки).
+- **В ClusterRoleBinding**: может ссылаться только на [ClusterRole](./roles.md) для получения глобальных прав.
 
 ### Сравнение RoleBinding и ClusterRoleBinding
 
 | Характеристика | RoleBinding | ClusterRoleBinding |
 |----------------|-------------|-------------------|
-| **Область** | Один namespace | Весь кластер |
-| **`roleRef`** | [Role](./roles.md) или [ClusterRole](./roles.md#clusterrole) | Только [ClusterRole](./roles.md#clusterrole) |
+| **Область действия** | Конкретное пространство имён | Весь кластер |
+| **Допустимые роли (`roleRef`)** | [Role](./roles.md) или [ClusterRole](./roles.md) | Только [ClusterRole](./roles.md) |
 | **Субъекты** | User, Group, ServiceAccount | User, Group, ServiceAccount |
-| **Сценарии** | Команда/проект | Администраторы, системные сервисы |
+| **Типовые сценарии** | Права команды внутри проекта | Системные администраторы, мониторинг |
 
+<a name="prakticheskie-scenarii"></a>
 ## Практические сценарии
 
-### RoleBinding с Role
+### RoleBinding с локальной Role
+
+Предоставление прав на чтение подов пользователю и сервисному аккаунту в одном пространстве имён:
 
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader
-  namespace: default
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list"]
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -104,24 +104,16 @@ subjects:
   namespace: default
 roleRef:
   kind: Role
-  name: pod-reader
+  name: pod-reader # Ссылка на Role в namespace 'default'
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### RoleBinding с ClusterRole
+### RoleBinding с глобальной ClusterRole
+
+Привязка глобально определенной роли (например, для чтения секретов) только в одном пространстве имён:
 
 ```yaml
-# ClusterRole для чтения секретов (определена глобально)
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: secret-reader
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list"]
----
-# Привязка ClusterRole к группе только в namespace 'staging'
+# Привязка ClusterRole 'secret-reader' к группе только в namespace 'staging'
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -137,18 +129,11 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### ClusterRoleBinding
+### Глобальная привязка ClusterRoleBinding
+
+Предоставление административных прав на узлы кластера для группы администраторов:
 
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: node-admin
-rules:
-- apiGroups: [""]
-  resources: ["nodes"]
-  verbs: ["*"]
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -163,55 +148,26 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### ServiceAccount без автомонтирования токена
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: no-api-access-sa
-automountServiceAccountToken: false
-```
-
 ## Дополнительная информация
 
 ### Встроенные привязки
 
-Kubernetes создаёт встроенные ClusterRoleBinding:
-
-- `cluster-admin` → группа `system:masters`
+Kubernetes автоматически создает ряд системных привязок, например:
+- `cluster-admin` — связывает группу `system:masters` с ролью `cluster-admin`.
 
 ### Множественные привязки
 
-Один субъект может иметь несколько привязок к разным ролям. Права аддитивны.
+Один субъект может быть упомянут в нескольких привязках одновременно. В этом случае его права суммируются (**аддитивность RBAC**).
 
 ### Лучшие практики
 
-1. **Используйте RoleBinding вместо ClusterRoleBinding** — ограничивайте область действия namespace
-2. **Избегайте binding'и к `system:unauthenticated`** — проверяйте и удаляйте лишние
-3. **Не добавляйте в `system:masters`** — эта группа обходит RBAC
-4. **Аудит binding'ов** — регулярно проверяйте `kubectl get clusterrolebinding,rolebinding --all-namespaces`
-5. **ResourceQuota** — применяйте для предотвращения DoS через создание объектов
-
-### Аудит и мониторинг
-
-```bash
-# Список всех ClusterRoleBinding
-kubectl get clusterrolebinding
-
-# Список всех RoleBinding в namespace
-kubectl get rolebinding --namespace default
-
-# Кто имеет доступ к Secrets в namespace
-kubectl auth can-i get secrets --namespace default --as=jane
-
-# Проверка binding'и к system:unauthenticated
-kubectl get clusterrolebinding -o json | jq '.items[] | select(.subjects[]?.name == "system:unauthenticated")'
-```
+1. **Предпочитайте RoleBinding**: даже если используется ClusterRole, привязывайте её через RoleBinding для ограничения прав рамками проекта.
+2. **Минимизируйте использование `system:masters`**: не добавляйте пользователей в эту группу, используйте `cluster-admin` через ClusterRoleBinding.
+3. **Регулярный аудит**: проверяйте наличие привязок к `system:unauthenticated` и лишних прав у ServiceAccount.
+4. **Выделенные ServiceAccount**: создавайте отдельный аккаунт для каждого приложения вместо использования `default`.
 
 ### Связанные темы
 
-- Общий обзор RBAC: [RBAC Overview](./rbac_overview.md)
-- Определение ролей: [Role и ClusterRole](./roles.md)
-- Агрегация ролей: [Агрегируемые ClusterRole](./aggregation_scenarios.md)
-- Ограничения RBAC: [Недостатки RBAC и OPA](./limitations_opa.md)
+- **[Общий обзор RBAC](./rbac_overview.md)**
+- **[Определение ролей (Role и ClusterRole)](./roles.md)**
+- **[Агрегируемые ClusterRole](./aggregation_scenarios.md)**

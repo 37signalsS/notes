@@ -1,113 +1,100 @@
-# CSI-драйверы: сравнение и эксплуатация
+# Сравнение и эксплуатация CSI-драйверов
 
 ## Определения
 
-**CSI Driver** — реализация спецификации Container Storage Interface для конкретной системы хранения. Каждый драйвер предоставляет уникальный набор возможностей в зависимости от поддерживаемой СХД.
+**CSI Driver (Container Storage Interface Driver)** — программная реализация спецификации интерфейса хранения контейнеров для конкретной системы хранения данных. Каждый драйвер предоставляет уникальный набор возможностей (снапшоты, клонирование, расширение) в зависимости от поддерживаемой СХД (системы хранения данных).
 
-> **Базовая информация:** [Container Storage Interface (CSI)](./csi_overview.md), [Продвинутые возможности CSI](./csi_advanced.md)
+**Provisioner** — компонент CSI-драйвера, отвечающий за динамическое создание и удаление томов в системе хранения.
+
+**Attacher** — компонент, отвечающий за присоединение и отсоединение томов к узлам кластера.
+
+> **Базовая информация:** [Обзор CSI](./csi_overview.md), [Продвинутые возможности CSI](./csi_advanced.md)
 
 ---
 
 ## Базовые концепции
 
-### Сравнение CSI-драйверов
+### Сравнение возможностей драйверов
+
+Выбор драйвера зависит от инфраструктуры кластера (облако или локальные серверы) и требований приложения к производительности и отказоустойчивости.
 
 #### Облачные провайдеры
 
-> **Примечание:** Для локального аринта используйте on-premise решения (Ceph, NFS, [Longhorn](../longhorn.md)).
+| Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **Yandex Disk CSI** | Block | + | + | + | + | RWO, RWOP |
+| **vSphere CSI** | Block | + | + | + | + | RWO, RWOP |
+| **OpenStack Cinder CSI** | Block | + | + | + | + | RWO, RWOP |
+
+#### Локальные (On-premise) решения
 
 | Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Yandex Disk CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **vSphere CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **OpenStack Cinder CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
+| **Ceph RBD CSI** | Block | + | + | + | + | RWO, RWOP |
+| **CephFS CSI** | File | + | + | + | + | RWX |
+| **NFS Subdir** | File | - | - | - | - | RWX |
+| **Local Path** | Local | - | - | - | - | RWO, RWOP |
+| **Longhorn CSI** | Block | + | + | + | - | RWO, RWX |
+| **Portworx CSI** | Block | + | + | + | + | RWO, RWX |
 
-#### On-premise решения
-
-| Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
-| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Ceph RBD CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWOP |
-| **CephFS CSI** | File | ✅ | ✅ | ✅ | ✅ | RWX |
-| **NFS Subdir** | File | ❌ | ❌ | ❌ | ❌ | RWX |
-| **Local Path** | Local | ❌ | ❌ | ❌ | ❌ | RWO, RWOP |
-| **Longhorn CSI** | Block | ✅ | ✅ | ✅ | ❌ | RWO, RWX |
-| **Portworx CSI** | Block | ✅ | ✅ | ✅ | ✅ | RWO, RWX |
-
-> **Примечание:** Возможности зависят от версии драйвера и конфигурации СХД.
+> **Примечание:** Возможности зависят от версии драйвера и конфигурации СХД. Для баз данных рекомендуются блочные устройства (Block), для общих файлов — файловые системы (File).
 
 ---
 
 ## Практические сценарии
 
-### Диагностика и мониторинг CSI
+### Диагностика и мониторинг
 
-#### Проверка статуса CSI-драйвера
+#### Проверка состояния драйверов
 
 ```bash
-# Проверка установленных CSI-драйверов
+# Список установленных CSI-драйверов и их возможностей
 kubectl get csidrivers.storage.k8s.io
 
-# Проверка подов CSI-драйвера
+# Проверка работоспособности подов драйвера (обычно в kube-system)
 kubectl get pods -n kube-system -l app=csi-driver
 
-# Просмотр событий CSI
+# События, связанные с выделением ресурсов (provisioning)
 kubectl get events -n kube-system --field-selector reason=Provisioning
-
-# Детальная информация о драйвере (пример для Ceph RBD)
-kubectl describe csidriver rbd.csi.ceph.com
 ```
 
-#### Диагностика проблем с томами
+#### Отладка проблем с томами
+
+При возникновении проблем с монтированием томов следует проверять статус PVC (PersistentVolumeClaim) и PV (PersistentVolume):
 
 ```bash
-# Статус PVC и PV
-kubectl get pvc,pv
+# Просмотр описания PVC для поиска ошибок в событиях
+kubectl describe pvc <pvc-name>
 
-# Детальная информация о PVC
-kubectl describe pvc my-app-pvc
+# Проверка состояния снапшотов
+kubectl get volumesnapshot,volumesnapshotcontent
 
-# Проверка VolumeSnapshots
-kubectl get volumesnapshot,volumesnapshotcontent,volumesnapshotclass
-
-# Логи CSI-драйвера
-kubectl logs -n kube-system -l app=csi-driver --all-containers=true
+# Анализ логов конкретного контейнера в CSI-драйвере (например, attacher или provisioner)
+kubectl logs -n kube-system -l app=csi-driver -c csi-provisioner
 ```
 
-#### Распространённые проблемы
+#### Типовые неисправности
 
-| Проблема | Возможная причина | Решение |
+| Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| PVC в статусе `Pending` | Нет подходящего PV, quota превышен | Проверить `StorageClass`, лимиты ресурсов |
-| PV в статусе `Failed` | Ошибка аутентификации в СХД | Проверить secrets, права доступа |
-| Под не запускается | Том не монтируется | Проверить логи CSI Node Plugin, совместимость FS |
-| Snapshot не создаётся | Драйвер не поддерживает `CREATE_DELETE_SNAPSHOT` | Проверить возможности драйвера |
-| Timeout при монтировании | Сетевые проблемы, недоступность СХД | Проверить сеть, доступность СХД, firewall |
+| PVC в статусе `Pending` | Нет подходящего PV или исчерпаны квоты | Проверить `StorageClass` и лимиты ресурсов |
+| PV в статусе `Failed` | Ошибка аутентификации в СХД | Проверить Secrets (секреты) и права доступа |
+| Тайм-аут монтирования | Проблемы сетевой связности с СХД | Проверить сетевые доступы и Firewall (межсетевой экран) |
+| Snapshot не создаётся | Драйвер или версия СХД не поддерживают функцию | Сверить возможности в таблице выше |
 
-### Secrets Store CSI Driver
+### Драйвер Secrets Store CSI
 
-**Назначение:** Монтирование секретов из внешних хранилищ (HashiCorp Vault, Yandex Lockbox) напрямую в файловую систему пода.
+Используется для монтирования секретов из внешних хранилищ (например, HashiCorp Vault) напрямую в файловую систему пода без создания объектов `Secret` в Kubernetes.
 
-**Архитектура:**
+**Особенности эксплуатации:**
 
-- **CSI Driver:** Устанавливается как DaemonSet на каждом узле
-- **CSI Provider:** Плагин для конкретного хранилища (Vault Provider, Yandex Lockbox Provider)
-- **SecretProviderClass:** CRD, описывающий какие секреты и откуда монтировать
+- **Архитектура:** Устанавливается как DaemonSet (на каждый узел). Использует CRD (Custom Resource Definition) `SecretProviderClass`.
+- **Безопасность:** Секреты хранятся в памяти (`tmpfs`) и не попадают в `etcd`.
+- **Ограничение:** Секреты доступны приложению только как файлы.
 
-**Преимущества:**
-
-- Секреты не хранятся в etcd даже в зашифрованном виде
-- Автоматическая ротация секретов без перезапуска подов
-- Нативная интеграция через стандартный CSI-интерфейс
-
-**Недостатки:**
-
-- Секреты доступны только как файлы (не как environment variables напрямую)
-- Требует установки CSI-компонентов на каждый узел кластера
-
-#### Пример интеграции с HashiCorp Vault
+#### Пример настройки для Vault
 
 ```yaml
-# SecretProviderClass для Vault
 apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
@@ -116,82 +103,19 @@ spec:
   provider: vault
   parameters:
     vaultAddress: https://vault.example.com:8200
-    vaultRole: my-app-role
-    vaultKVMountName: secret
+    vaultRole: app-role
     objects: |
-      - objectName: "db-username"
-        secretPath: "data/myapp"
-        secretKey: "username"
       - objectName: "db-password"
-        secretPath: "data/myapp"
+        secretPath: "secret/data/myapp"
         secretKey: "password"
-
----
-# Pod с монтированием секретов
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app
-spec:
-  containers:
-    - name: app
-      image: my-app:latest
-      volumeMounts:
-        - name: secrets-store
-          mountPath: /mnt/secrets
-          readOnly: true
-      env:
-        - name: DB_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: my-app-secrets
-              key: db-username
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: my-app-secrets
-              key: db-password
-  volumes:
-    - name: secrets-store
-      csi:
-        driver: secrets-store.csi.k8s.io
-        readOnly: true
-        volumeAttributes:
-          secretProviderClass: "vault-db-credentials"
 ```
 
-> **Подробно:** [Интеграция Vault с Kubernetes](../../../CI-CD/GitLab_CI/Tutorials/vault_kubernetes_integration.md)
+### Лучшие практики эксплуатации
 
-### Лучшие практики
-
-#### Выбор StorageClass
-
-- Используйте `WaitForFirstConsumer` для stateful-приложений в многозонных кластерах
-- Устанавливайте `reclaimPolicy: Retain` для production-данных
-- Включайте `allowVolumeExpansion: true` для гибкости
-- Для баз данных используйте блочные хранилища (RWO)
-- Для общих данных — файловые хранилища (RWX)
-
-#### Безопасность
-
-- Ограничивайте доступ к `StorageClass` через RBAC
-- Используйте отдельные secrets для provisioner и node plugin
-- Шифруйте данные на уровне СХД (encryption at rest)
-- Регулярно тестируйте восстановление из snapshots
-
-#### Мониторинг
-
-- Отслеживайте использование дискового пространства (алерты на 80%, 90%)
-- Мониторьте latency и IOPS томов
-- Настройте алерты на ошибки provisioning
-- Собирайте метрики CSI-драйвера (если поддерживает)
-
-#### Бэкапы
-
-- Используйте VolumeSnapshots для быстрых локальных бэкапов
-- Не полагайтесь только на snapshots — экспортируйте данные во внешнее хранилище
-- Тестируйте восстановление регулярно
-- Автоматизируйте создание snapshots через CronJob или внешние инструменты
+1. **Режим привязки:** Используйте `WaitForFirstConsumer` в `StorageClass` для корректного планирования подов в многозонных кластерах (Topology Aware).
+2. **Безопасность:** Ограничивайте использование `StorageClass` через RBAC (Role-Based Access Control).
+3. **Производительность:** Мониторьте IOPS (Input/Output Operations Per Second) и задержки (latency) через метрики драйвера, если они доступны.
+4. **Резервное копирование:** Регулярно тестируйте восстановление из снапшотов, так как наличие снапшота не гарантирует целостность данных без учета специфики приложения.
 
 ---
 
@@ -199,7 +123,11 @@ spec:
 
 ### Связанные темы
 
-- **Базовая информация:** [Container Storage Interface (CSI)](./csi_overview.md)
-- **Продвинутые возможности:** [CSI Advanced Features](./csi_advanced.md)
-- **PV и PVC:** [Хранение данных: PV, PVC и StorageClass](../pv_and_pvc.md)
-- **Ceph CSI:** [Ceph Overview](../Ceph/ceph_overview.md)
+- [Обзор CSI](./csi_overview.md) — базовые понятия и архитектура.
+- [Продвинутые возможности CSI](./csi_advanced.md) — детали работы снапшотов и топологии.
+- [Хранение данных: PV и PVC](../pv_and_pvc.md) — основы управления дисками в Kubernetes.
+
+### Ссылки
+
+- [Kubernetes CSI Drivers](https://kubernetes-csi.github.io/docs/drivers.html) — официальный список поддерживаемых драйверов.
+- [Secrets Store CSI Documentation](https://secrets-store-csi-driver.sigs.k8s.io/) — документация по драйверу секретов.

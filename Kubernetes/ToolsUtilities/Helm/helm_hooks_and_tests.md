@@ -4,7 +4,7 @@
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
@@ -15,7 +15,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Жизненный цикл хуков
 
@@ -53,7 +53,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Тест соединения с сервисом
 
@@ -103,6 +103,8 @@ spec:
 
 ---
 
-## Additional Information
+## См. также
 
-О рабочем процессе разработки и валидации чартов см. [Helm Commands and Workflow](./helm_commands_and_workflow.md). О production-структуре чарта с директорией `tests/` — [Практические сценарии чартов](./helm_chart_practical_scenarios.md). О безопасности и лучших практиках — [Security Best Practices](./Advanced/security_best_practices.md).
+- [Основные команды и рабочий процесс Helm](./helm_commands_and_workflow.md)
+- [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md)
+- [Безопасность и лучшие практики Helm](./Advanced/security_best_practices.md)

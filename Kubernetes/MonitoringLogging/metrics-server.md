@@ -1,12 +1,12 @@
-# Metrics Server
+# Metrics Server: Агрегатор метрик ресурсов
 
-## Definitions
+## Определения
 
-**Metrics Server** — легковесный in-memory агрегатор данных об использовании ресурсов в кластере Kubernetes. Собирает метрики CPU и RAM с каждого узла через Summary API (`kubelet`), предоставляет через Metrics API (`metrics.k8s.io`).
+**Metrics Server** — легковесный in-memory (работающий в оперативной памяти) агрегатор данных об использовании ресурсов в кластере Kubernetes. Собирает метрики CPU (Central Processing Unit) и RAM (Random Access Memory) с каждого узла через Summary API (Application Programming Interface) (`kubelet`), предоставляет их через Metrics API (`metrics.k8s.io`).
 
 Не предназначен для долгосрочного хранения метрик и сложного анализа. Основная задача — предоставление актуальных данных о потреблении ресурсов для других компонентов Kubernetes.
 
-## Basic Concepts
+## Основные концепции
 
 ### Назначение
 
@@ -19,11 +19,11 @@
 
 ### Архитектура
 
-- **Deployment** — развертывается как `Deployment` в namespace `kube-system`.
+- **Deployment** — развертывается как `Deployment` в namespace (пространстве имен) `kube-system`.
 - **Сбор данных** — периодически опрашивает все `kubelet` в кластере.
 - **API** — регистрируется в `kube-aggregator` как `APIService` с `v1beta1.metrics.k8s.io`.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка
 
@@ -31,14 +31,24 @@
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# → serviceaccount/metrics-server created
+# → clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
+# → clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+# → rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+# → clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+# → clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+# → service/metrics-server created
+# → deployment.apps/metrics-server created
+# → apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
 ```
 
-> **Примечание:** В некоторых случаях (например, в Minikube или при использовании самоподписанных сертификатов в кластере) может потребоваться модифицировать `Deployment` Metrics Server, добавив флаг `--kubelet-insecure-tls`, чтобы разрешить подключение к kubelet'ам без проверки TLS-сертификата.
+> **Примечание:** В некоторых случаях (например, в Minikube или при использовании самоподписанных сертификатов в кластере) может потребоваться модифицировать `Deployment` Metrics Server, добавив флаг `--kubelet-insecure-tls`, чтобы разрешить подключение к kubelet'ам без проверки TLS (Transport Layer Security) сертификата.
 
 После установки убедитесь, что под `metrics-server` в `kube-system` namespace успешно запустился:
 
 ```bash
 kubectl get pods -n kube-system | grep metrics-server
+# → metrics-server-74c698c975-f86p9   1/1     Running   0          10s
 ```
 
 ### Использование `kubectl top`
@@ -49,15 +59,10 @@ kubectl get pods -n kube-system | grep metrics-server
 
 ```bash
 kubectl top nodes
-```
-
-**Вывод:**
-
-```
-NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
-control-1   150m         7%     1400Mi          36%
-worker-1    80m          4%     950Mi           24%
-worker-2    110m         5%     1100Mi          28%
+# → NAME        CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+# → control-1   150m         7%     1400Mi          36%
+# → worker-1    80m          4%     950Mi           24%
+# → worker-2    110m         5%     1100Mi          28%
 ```
 
 **Просмотр потребления ресурсов подами:**
@@ -65,20 +70,18 @@ worker-2    110m         5%     1100Mi          28%
 ```bash
 # Поды во всех namespace'ах
 kubectl top pods -A
+# → NAMESPACE     NAME                              CPU(cores)   MEMORY(bytes)
+# → kube-system   metrics-server-74c698c975-f86p9   2m           18Mi
+# → default       my-app-abcdef-12345               15m          128Mi
 
 # Поды в конкретном namespace
 kubectl top pods -n default
+# → NAME                      CPU(cores)   MEMORY(bytes)
+# → openresty-deployment-xyz  1m           15Mi
+# → my-app-abcdef-12345       15m          128Mi
 ```
 
-**Вывод:**
-
-```
-NAME                      CPU(cores)   MEMORY(bytes)
-openresty-deployment-xyz  1m           15Mi
-my-app-abcdef-12345       15m          128Mi
-```
-
-## Additional Information
+## Дополнительная информация
 
 **Отличие от Prometheus** — Metrics Server предоставляет только базовые метрики и не хранит историю. Для полноценного мониторинга, алертинга и визуализации исторических данных используется [Prometheus](../../Prometheus/overview.md). Оба компонента работают совместно.
 

@@ -1,6 +1,6 @@
 # Helmwave: декларативный оркестратор для Helm
 
-Helmwave — декларативный Go-инструмент для управления релизами Helm в парадигме Infrastructure as Code (IaC). Позиционируется как более гибкая альтернатива [Helmfile](./helmfile_overview.md).
+Helmwave — декларативный Go-инструмент для управления релизами Helm в парадигме [Infrastructure as Code (IaC)](../../Concepts/iac_overview.md). Позиционируется как более гибкая альтернатива [Helmfile](./helmfile_overview.md).
 
 > **Актуальная версия:** v0.42.3 (декабрь 2025). Проверяйте [github.com/helmwave/helmwave/releases](https://github.com/helmwave/helmwave/releases).
 

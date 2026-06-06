@@ -1,21 +1,21 @@
 # Kubernetes Dashboard
 
-## Definitions
+## Определение
 
 **Kubernetes Dashboard** — официальный веб-интерфейс для управления кластерами Kubernetes. Позволяет управлять приложениями, устранять неполадки и администрировать сам кластер через графический интерфейс.
 
-> **⚠️ Критическое предупреждение (статус на 2026 г.):**
-> Проект Kubernetes Dashboard **архивирован и больше не поддерживается** (репозиторий перемещён в `kubernetes-retired`). Для новых установок официально рекомендуется использовать **[Headlamp](https://headlamp.dev/)** — подпроект Kubernetes SIG UI. Существующие инсталляции Dashboard продолжают функционировать, но не получат обновлений безопасности.
+> **Критическое предупреждение (статус на 2026 г.):**
+> Проект Kubernetes Dashboard архивирован и больше не поддерживается (репозиторий перемещён в `kubernetes-retired`). Для новых установок официально рекомендуется использовать **[Headlamp](https://headlamp.dev/)** — подпроект Kubernetes SIG UI. Существующие инсталляции Dashboard продолжают функционировать, но не получат обновлений безопасности.
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура и компоненты
 
-Dashboard разворачивается как набор ресурсов Kubernetes в отдельном namespace `kubernetes-dashboard`:
+Dashboard разворачивается как набор ресурсов Kubernetes в отдельном namespace (пространстве имён) `kubernetes-dashboard`:
 
 - **Deployment** — поды с веб-интерфейсом
 - **Service** — внутренний сервис для доступа
-- **Role/RoleBinding** — RBAC-правила для функционирования дашборда
+- **Role / RoleBinding** — RBAC-правила для функционирования Dashboard
 - **Metrics Scraper** — компонент для сбора метрик (опционально)
 
 ### Аутентификация и авторизация
@@ -36,7 +36,7 @@ Dashboard не имеет собственной системы пользова
 | **Режимы** | Только веб-интерфейс | Веб-клиент + десктопное приложение |
 | **RBAC-адаптивность** | Базовая | Автоматическое скрытие недоступных элементов UI |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка Kubernetes Dashboard (для существующих инсталляций)
 
@@ -48,9 +48,7 @@ Dashboard не имеет собственной системы пользова
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
 ```
 
-> **Примечание:** Версия `v2.7.0` — последняя стабильная перед архивированием. Репозиторий больше не обновляется.
-
-Команда создаёт все ресурсы в namespace `kubernetes-dashboard`.
+Версия `v2.7.0` — последняя стабильная перед архивированием. Репозиторий больше не обновляется. Команда создаёт все ресурсы в namespace `kubernetes-dashboard`.
 
 ### Доступ к Dashboard
 
@@ -76,7 +74,7 @@ kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/a
 
 Создание отдельного пользователя с полными правами администратора:
 
-**1. Создание `ServiceAccount`:**
+**1. Создание ServiceAccount:**
 
 ```yaml
 # dashboard-admin-user.yaml
@@ -91,7 +89,7 @@ metadata:
 kubectl apply -f dashboard-admin-user.yaml
 ```
 
-**2. Создание `ClusterRoleBinding`:**
+**2. Создание ClusterRoleBinding:**
 
 ```yaml
 # dashboard-admin-rb.yaml
@@ -120,23 +118,23 @@ kubectl apply -f dashboard-admin-rb.yaml
 kubectl -n kubernetes-dashboard create token admin-user
 ```
 
-> **Kubernetes < v1.24:** Токен извлекался из автоматически созданного Secret:
->
-> ```bash
-> kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get sa/admin-user -o jsonpath="{.secrets[0].name}") -o go-template="{{.data.token | base64decode}}"
-> ```
+**Для Kubernetes < v1.24:** Токен извлекался из автоматически созданного Secret:
+
+```bash
+kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get sa/admin-user -o jsonpath="{.secrets[0].name}") -o go-template="{{.data.token | base64decode}}"
+```
 
 **4. Вход:** На странице выбора аутентификации выберите «Токен» и вставьте полученное значение.
 
-### Troubleshooting
+### Устранение неполадок
 
-#### Ошибка `Forbidden` для `system:anonymous`
+#### Ошибка Forbidden для system:anonymous
 
-**Симптом:** При доступе через Ingress/NodePort (без `kubectl proxy`) возвращается ошибка для анонимного пользователя.
+**Симптом:** При доступе через Ingress / NodePort (без `kubectl proxy`) возвращается ошибка для анонимного пользователя.
 
 **Причина:** По умолчанию `system:anonymous` не имеет прав на `services/proxy`.
 
-**Решение:** Создать `ClusterRole` и `ClusterRoleBinding` для проксирования только к сервису Dashboard:
+**Решение:** Создать ClusterRole и ClusterRoleBinding для проксирования только к сервису Dashboard:
 
 ```yaml
 # dashboard-anonymous-access.yaml
@@ -164,7 +162,7 @@ subjects:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-> **Внимание:** Манифест открывает страницу входа для всех анонимных пользователей. Сама аутентификация по токену остаётся обязательной.
+Внимание: Манифест открывает страницу входа для всех анонимных пользователей. Сама аутентификация по токену остаётся обязательной.
 
 #### Полная переустановка Dashboard
 
@@ -178,11 +176,11 @@ subjects:
 
     Простого `kubectl delete deployment` недостаточно — установка включает множество ресурсов (Service, Role, RoleBinding и др.).
 
-2. **Установка актуальной версии** — см. раздел «Установка Kubernetes Dashboard» выше.
+2. **Установка актуальной версии** — см. раздел выше.
 
-> **Рекомендация:** Вместо переустановки Dashboard рассмотрите миграцию на [Headlamp](https://headlamp.dev/docs/latest/installation/).
+Рекомендация: Вместо переустановки Dashboard рассмотрите миграцию на [Headlamp](https://headlamp.dev/docs/latest/installation/).
 
-## Additional Information
+## Дополнительная информация
 
 ### Ссылки
 
@@ -190,8 +188,8 @@ subjects:
 - [Headlamp — рекомендуемая замена](https://headlamp.dev/)
 - [Репозиторий kubernetes-retired/dashboard](https://github.com/kubernetes-retired/dashboard)
 
-### Связанные темы
+### См. также
 
-- Установка через Kubespray: [Kubespray examples](../Installation/Kubespray/examples.md)
-- Namespace `kubernetes-dashboard`: [namespace.md](./Base/namespace.md)
-- Dashboard в Minikube: [minikube_practical_scenarios.md](./Installation/minikube/minikube_practical_scenarios.md)
+- [Kubespray — примеры](../Installation/Kubespray/examples.md)
+- [Namespace — пространства имён](./Base/namespace.md)
+- [Minikube — практические сценарии](./Installation/minikube/minikube_practical_scenarios.md)

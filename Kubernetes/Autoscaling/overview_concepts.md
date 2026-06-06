@@ -16,42 +16,42 @@
 |---------|-----------|------------------|-------------|
 | **Поды** | [HPA](HPA/index.md) | Количество реплик | Горизонтально |
 | **Контейнеры** | [VPA](vpa_detailed.md) | Resources (CPU/RAM) | Вертикально |
-| **Узлы** | [Cluster Autoscaler](cluster_autoscaler_detailed.md) | Количество узлов | Горизонтально |
-| **Узлы (оптимизировано)** | [Karpenter](./Karpenter/installation.md) | Количество узлов | Горизонтально |
-| **События** | [KEDA](./keda/practical_scenarios.md) | Количество реплик по событиям | Горизонтально |
+| **Узлы** | [CA (Cluster Autoscaler)](cluster_autoscaler_detailed.md) | Количество узлов | Горизонтально |
+| **Узлы (оптимизировано)** | [Karpenter](./Karpenter/overview.md) | Количество узлов | Горизонтально |
+| **События** | [KEDA (Kubernetes Event-driven Autoscaling)](./keda/keda_concepts.md) | Количество реплик по событиям | Горизонтально |
 | **Ресурсы без перезапуска** | [In-Place Pod Resize](in_place_pod_resize.md) | Resources у запущенных подов | Вертикально |
 
 ### Краткое описание компонентов
 
 #### Horizontal Pod Autoscaler (HPA)
 
-Автоматически увеличивает или уменьшает количество реплик подов на основе метрик (CPU, memory, custom, external). Работает с Deployment, ReplicaSet, StatefulSet.
+Автоматически увеличивает или уменьшает количество реплик подов на основе метрик (CPU, memory, custom, external). Работает по принципу «петли управления» (Control Loop).
 
 **Подробнее:** [HPA Detailed](HPA/index.md)
 
 #### Vertical Pod Autoscaler (VPA)
 
-Автоматически настраивает `requests` и `limits` CPU/memory для контейнеров. Работает в режимах рекомендаций (`Off`) или автоматического применения (`Initial`, `Recreate`, `Auto`).
+Автоматически настраивает `requests` и `limits` (запросы и лимиты) CPU/memory для контейнеров. Работает в режимах рекомендаций (`Off`) или автоматического применения (`Initial`, `Recreate`, `Auto`).
 
 **Подробнее:** [VPA Detailed](vpa_detailed.md)
 
 #### Cluster Autoscaler (CA)
 
-Автоматически добавляет или удаляет узлы кластера при нехватке ресурсов или избытке. Работает с Node Groups в облачных средах.
+Автоматически добавляет или удаляет узлы кластера при нехватке ресурсов или их избытке. Работает с Node Groups (группами узлов) в облачных средах.
 
 **Подробнее:** [Cluster Autoscaler Detailed](cluster_autoscaler_detailed.md)
 
 #### Karpenter
 
-Высокопроизводительная альтернатива CA. Создаёт узлы оптимального размера «точно в срок» под требования ожидающих подов. Быстрее и эффективнее CA.
+Высокопроизводительная альтернатива CA. Создаёт узлы оптимального размера «точно в срок» (Just-in-Time) под требования ожидающих подов. Быстрее и эффективнее CA.
 
-**Подробнее:** [Karpenter Detailed](./Karpenter/installation.md)
+**Подробнее:** [Karpenter Overview](./Karpenter/overview.md)
 
 #### KEDA (Kubernetes Event-driven Autoscaling)
 
-Расширяет возможности HPA, позволяя масштабировать поды на основе событий из 60+ источников (очереди, метрики, расписание). Поддерживает масштабирование до нуля.
+Расширяет возможности HPA, позволяя масштабировать поды на основе событий из 60+ источников (очереди, метрики, расписание). Поддерживает масштабирование до нуля (Scale-to-Zero).
 
-**Подробнее:** [KEDA Detailed](./keda/practical_scenarios.md)
+**Подробнее:** [KEDA: Основные концепции](./keda/keda_concepts.md)
 
 #### In-Place Pod Resize
 
@@ -122,13 +122,13 @@
 
 ### Лучшие практики
 
-* **Используйте PodDisruptionBudget** — всегда создавайте [PDB](pod_disruption_budget.md) для критически важных приложений.
-* **Правильно настраивайте requests** — CA и HPA основывают решения на `requests`, а не на реальном потреблении.
+* **Используйте PodDisruptionBudget** — всегда создавайте [PDB (Pod Disruption Budget)](pod_disruption_budget.md) для критически важных приложений.
+* **Правильно настраивайте requests** — CA (Cluster Autoscaler) и HPA основывают решения на `requests`, а не на реальном потреблении.
 * **Несколько Node Groups** — разделяйте узлы по типам нагрузки (GPU, memory-optimized).
 * **Масштабирование до нуля** — установите `min-size: 0` для тестовых групп узлов.
 * **Аннотации для контроля CA** — `cluster-autoscaler.kubernetes.io/scale-down-disabled: "true"`.
-* **Behavior в HPA** — настройте `stabilizationWindowSeconds` для scale-down.
-* **Правильная метрика для HPA** — для I/O-bound приложений используйте кастомные метрики (RPS).
+* **Behavior в HPA** — настройте `stabilizationWindowSeconds` для scale-down (масштабирования вниз).
+* **Правильная метрика для HPA** — для I/O-bound (Input/Output bound) приложений используйте кастомные метрики, например RPS (Requests Per Second).
 * **Не используйте HPA и VPA вместе для одной метрики** — это вызывает конфликты и «гонку масштабирования».
 * **KEDA для событий** — используйте для очередей, расписаний, внешних метрик.
 * **Karpenter для облаков** — предпочтительнее CA в AWS, Azure, GCP.
@@ -146,8 +146,8 @@
 
 ### Интеграции между компонентами
 
-HPA учитывает [PDB](pod_disruption_budget.md) при масштабировании вниз, а созданные HPA поды распределяются согласно [правилам распределения](pod_distribution/basic_concepts.md). VPA использует In-Place Pod Resize для применения рекомендаций без перезапуска, KEDA создаёт и управляет нативным HPA, а CA/Karpenter реагируют на поды, созданные HPA/KEDA. Все компоненты учитывают PDB при удалении подов/узлов.
+HPA учитывает [PDB (Pod Disruption Budget)](pod_disruption_budget.md) при масштабировании вниз, а созданные HPA поды распределяются согласно [правилам распределения](pod_distribution.md). VPA использует In-Place Pod Resize для применения рекомендаций без перезапуска, KEDA создаёт и управляет нативным HPA, а CA/Karpenter реагируют на поды, созданные HPA/KEDA. Все компоненты учитывают PDB при удалении подов/узлов.
 
 ### Связанные темы
 
-См. также: [Pod Disruption Budget](pod_disruption_budget.md) для защиты от плановых выселений, [Pod Distribution](pod_distribution/basic_concepts.md) для распределения подов, [Metrics Server](../MonitoringLogging/metrics-server.md) как источник метрик для HPA/VPA и [High Availability](../Base/high_availability.md) для общей концепции высокой доступности.
+См. также: [Pod Disruption Budget](pod_disruption_budget.md) для защиты от плановых выселений, [Pod Distribution](pod_distribution.md) для распределения подов, [Шардирование](sharding.md) для изоляции и масштабирования нагрузки, [Metrics Server](../MonitoringLogging/metrics-server.md) как источник метрик для HPA/VPA и [High Availability](../Base/high_availability.md) для общей концепции высокой доступности.

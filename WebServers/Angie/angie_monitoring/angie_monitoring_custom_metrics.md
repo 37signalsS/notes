@@ -6,6 +6,12 @@
 
 **Зона метрик (metric_zone)** — именованная область в разделяемой памяти для агрегации метрик одного типа: счетчик (count), среднее значение (average) или гистограмма (histogram).
 
+### Параметры зоны метрик
+- **expire** — время жизни записи в зоне. Позволяет автоматически удалять устаревшие данные при переполнении памяти.
+- **average** — определяет способ расчета среднего (например, `mean`).
+    - **window** — временное окно для расчета среднего (например, 15 секунд).
+    - **count** — количество последних значений для расчета среднего (например, последние 20 запросов).
+
 **Комплексная зона метрик (metric_complex_zone)** — область памяти для одновременного сбора нескольких типов метрик (например, количество и средний размер) по одному ключу.
 
 ## Базовые концепции
@@ -116,6 +122,54 @@ server {
     }
 }
 ```
+
+### Сценарий 5: Комплексный мониторинг времени ответа (End-to-End)
+
+Этот сценарий описывает создание метрик для отслеживания среднего времени ответа (Response Time) в разрезе доменов и апстримов.
+
+#### 1. Определение зон в http-блоке
+```nginx
+http {
+    # Среднее время по доменам (окно 15с)
+    metric_zone Hist:1m average mean window=15s expire=30s;
+    
+    # Среднее время по апстримам (окно 15с или последние 20 запросов)
+    metric_zone upstream_time:1m average mean window=15s count=20;
+
+    # Сбор метрики по апстримам на уровне http
+    metric upstream_time $upstream_addr=$upstream_response_time on=end;
+}
+```
+
+#### 2. Сбор метрики для конкретного сайта
+```nginx
+server {
+    server_name example.com;
+    location / {
+        proxy_pass http://backend;
+        # Сбор метрики по имени сервера
+        metric Hist $server_name=$request_time on=end;
+    }
+}
+```
+
+#### 3. Настройка шаблона Prometheus
+Для экспорта кастомных метрик необходимо отредактировать файл конфигурации шаблонов (например, `prometheus_all.conf`). В блок `prometheus_template all` добавляются правила сопоставления путей API и метрик Prometheus.
+
+```nginx
+# Пример добавления в prometheus_template
+# Метрика времени ответа сервера
+angie_http_response_time_stats{server_name="$1"} $2 /http/metrics/zones/Hist/metrics/(.*) average_mean;
+
+# Метрика времени ответа апстрима
+angie_http_upstreams_response_time_stats{upstream_addr="$1"} $2 /http/metrics/zones/upstream_time/metrics/(.*) average_mean;
+```
+
+#### 4. Визуализация в Grafana
+1. Создайте копию существующего графика (например, "Upstream Requests").
+2. В поле запроса (Query) укажите название новой метрики: `angie_http_response_time_stats`.
+3. В настройках легенды (Legend) используйте метки: `{{server_name}}` или `{{upstream_addr}}`.
+4. Настройте формат отображения (Unit) как "Seconds (s)" или "Milliseconds (ms)".
 
 ## Дополнительная информация
 

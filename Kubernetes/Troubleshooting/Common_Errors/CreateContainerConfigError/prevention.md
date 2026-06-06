@@ -26,9 +26,9 @@ kubectl apply -f deployment.yaml --dry-run=client
 kubeconform -strict deployment.yaml
 ```
 
-kubeconform проверяет манифесты против JSON Schema API Kubernetes. Подробности: [kubeconform usage](../../../ToolsUtilities/kubeconform/usage.md).
+kubeconform проверяет манифесты против JSON Schema API Kubernetes. Подробности: [kubeconform overview](../../../ToolsUtilities/kubeconform/kubeconform_overview.md).
 
-> **Примечание:** `kubeval` — deprecated. Рекомендуется [kubeconform](../../../ToolsUtilities/kubeconform/index.md) (выше производительность, поддержка CRD, активная разработка).
+> **Примечание:** `kubeval` — deprecated. Рекомендуется [kubeconform](../../../ToolsUtilities/kubeconform/kubeconform_overview.md) (выше производительность, поддержка CRD, активная разработка).
 
 ## Practical Scenarios
 
@@ -141,7 +141,7 @@ spec:
 ### Связь с другими практиками
 
 - Валидация Helm-чартов: [Helm security best practices](../../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
-- Валидация Kustomize: [kustomize overlays and patches](../../../ToolsUtilities/kustomize/kustomize_overlays_and_patches.md)
+- Валидация Kustomize: [Наложения и патчи](../../../ToolsUtilities/kustomize/kustomize_overlays_and_patches.md)
 
 ### Связанные ресурсы
 

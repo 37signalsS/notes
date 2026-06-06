@@ -287,9 +287,8 @@ kubectl get certificate -n <namespace>
 kubectl get challenge -n <namespace>
 ```
 
-### Связанные документы
+### Смотрите также
 
 - **[Обзор интеграции](./overview.md)** — концепции, аннотации, диагностика, частые ошибки
 - **[Cert-manager: Определения](../definitions.md)** — CRD, Issuer, ACME Solvers
 - **[Let's Encrypt](../LetsEncrypt/index.md)** — публичные сертификаты через ACME
-- **[Private CA](../Private_CA/index.md)** — собственные центры сертификации

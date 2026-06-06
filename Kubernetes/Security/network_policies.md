@@ -1,103 +1,61 @@
-# NetworkPolicy: управление трафиком между Pod'ами
+# NetworkPolicy: Сетевая безопасность и изоляция Pod'ов
 
-> Полное руководство с пошаговыми сценариями находится в **[Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md)**.
+**NetworkPolicy** является ключевым инструментом обеспечения безопасности в Kubernetes, реализующим принцип микросегментации и Zero Trust на сетевом уровне.
 
-## Определения
+> Полное руководство с навигацией по всем аспектам находится в **[NetworkPolicy: Навигатор](../Networking/Network/network_policy.md)**.
 
-**NetworkPolicy** — объект Kubernetes API для декларативного управления сетевым доступом на уровне L3/L4 между Pod'ами и внешними адресами.
+## Определения и концепции
 
-**Селектор Pod'ов (`podSelector`)** — механизм выбора целевых Pod'ов по меткам для применения политик.
+В Kubernetes безопасность сетевых взаимодействий обеспечивается через микросегментацию.
 
-**Ingress** — правила входящего трафика к Pod'ам.
+* **Единый источник истины (Определения)**: [NetworkPolicy: Определения и концепции](../Networking/Network/NetworkPolicy/definitions.md)
 
-**Egress** — правила исходящего трафика от Pod'ов.
+Ключевые понятия безопасности:
+* **Default Deny**: Принцип «Запрещено по умолчанию», при котором разрешается только явно описанный трафик.
+* **CNI (Container Network Interface)**: Плагин, ответственный за физическую реализацию правил безопасности на узлах.
 
-**CNI (Container Network Interface)** — плагин сетевой подсистемы Kubernetes, обеспечивающий реализацию NetworkPolicy.
+*Подробный разбор логики: [NetworkPolicy: Логика правил](../Networking/Network/NetworkPolicy/rule_logic.md)*
 
 ## Основные концепции
 
-### Принцип работы
+### Принцип Zero Trust (Default Deny)
 
-NetworkPolicy действует по принципу **явного разрешения**:
+В стандартной сетевой модели Kubernetes все Pod'ы могут свободно общаться друг с другом. Безопасный подход подразумевает использование **Default Deny**:
+1. По умолчанию весь трафик разрешён.
+2. При применении хотя бы одной политики к Pod'у, он переходит в режим "изоляции" — разрешается только тот трафик, который явно указан в политиках.
+3. Рекомендуется начинать настройку каждого namespace с политики, запрещающей весь входящий и исходящий трафик.
 
-- По умолчанию (если нет политик, селектящих Pod) — весь трафик разрешён
-- При наличии политики с указанным направлением — только явно разрешённый трафик
-- Политики **аддитивны**: объединение всех правил из всех селектящих политик
-- Пустые списки правил = полный запрет (deny all) по данному направлению
+*Подробнее: [Принцип "Запрещено по умолчанию"](../Networking/Network/NetworkPolicy/definitions.md#принцип-запрещено-по-умолчанию-default-deny)*
 
-### Требования к CNI
+### Направления трафика
 
-NetworkPolicy работает только при условии поддержки со стороны CNI-плагина:
+* **Ingress**: Правила для входящего трафика к целевым Pod'ам.
+* **Egress**: Правила для исходящего трафика от целевых Pod'ов.
 
-- ✅ Calico, Cilium, Weave Net
-- ❌ Flannel (не поддерживает)
-
-Подробно о ролях CNI: [CNI и kube-proxy: навигатор](../Networking/Network/cni_kube_proxy_roles.md) и [определения](../Networking/Network/CNI/definitions.md).
+*Подробнее: [Логика правил и структура](../Networking/Network/NetworkPolicy/rule_logic.md)*
 
 ## Практические сценарии
 
-### Сценарий 1: Default Deny (полная изоляция)
+Типовые сценарии использования для обеспечения безопасности:
+* **Полная изоляция неймспейса**: Блокировка всего трафика как первый шаг настройки.
+* **Изоляция базы данных**: Разрешение доступа только со стороны конкретного backend-приложения.
+* **Ограничение внешнего доступа**: Запрет выхода в интернет для критичных сервисов.
+* **Разрешение DNS**: Обязательный шаг при использовании Egress-изоляции.
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: backend-default-deny
-  namespace: team-a
-spec:
-  podSelector:
-    matchLabels:
-      app: backend
-  policyTypes:
-  - Ingress
-  - Egress
-```
-
-### Сценарий 2: Разрешение конкретного трафика
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: backend-allow-specific
-  namespace: team-a
-spec:
-  podSelector:
-    matchLabels:
-      app: backend
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - podSelector:
-        matchLabels:
-          app: frontend
-    ports:
-    - port: 5432
-      protocol: TCP
-```
+*Все сценарии с готовыми YAML-примерами: [Практический сценарий NetworkPolicy](../Networking/Network/NetworkPolicy/practical_scenarios.md)*
 
 ## Дополнительная информация
 
-### Ограничения NetworkPolicy
+### Ограничения и альтернативы
 
-- **L3/L4 только**: нет фильтрации по FQDN/доменам
-- **IP-based**: доменные имена учитываются только через разрешённые IP
-- **Не отменяет Service**: политики работают на сетевом уровне
+Стандартные NetworkPolicy имеют ряд ограничений (отсутствие поддержки FQDN, работа только на L3/L4). Для расширенного контроля рекомендуется использовать возможности продвинутых CNI или Service Mesh.
 
-### Альтернативы для L7
-
-Для фильтрации по доменам (FQDN) используйте:
-
-- **Cilium** — встроенная поддержка DNS/FQDN
-- **Calico** — NetworkSets с доменами
-- **Service Mesh** (Istio, Linkerd) — L7-авторизация
+* **Ограничения и альтернативы для L7**: [Подробный разбор](../Networking/Network/NetworkPolicy/definitions.md#ограничения-networkpolicy)
+* **Лучшие практики безопасности**: [NetworkPolicy: Лучшие практики](../Networking/Network/NetworkPolicy/best_practices.md)
 
 ### Связанные темы
 
-- **NetworkPolicy:** [Сетевая Изоляция и NetworkPolicy](../Networking/Network/network_policy.md) (полное руководство)
-- **Calico HostEndpoint:** [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/Calico/index.md)
-- **CNI и kube-proxy:** [CNI и kube-proxy: навигатор](../Networking/Network/cni_kube_proxy_roles.md)
-- **Сетевая модель:** [Обзор сети Kubernetes](../Networking/Network/network_overview.md)
-- **Kyverno:** [Генерация NetworkPolicy](./kyverno/policies/practical_scenarios.md)
+* **Расширения Calico**: [Calico HostEndpoint и GlobalNetworkPolicy](./network_policies/Calico/index.md) — управление трафиком на уровне узлов и всего кластера.
+* **Автоматизация политик**: [Генерация NetworkPolicy через Kyverno](./kyverno/policies/practical_scenarios.md) — автоматическое создание политик при создании namespace.
+* **Сетевая модель**: [Обзор сетевой модели Kubernetes](../Networking/Network/network_overview.md) — фундаментальные принципы работы сети.
+* **Реализация в CNI**: [Сравнение поддержки CNI](../Networking/Network/NetworkPolicy/cni_implementation.md).

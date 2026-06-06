@@ -105,7 +105,7 @@ dig TXT _acme-challenge.<domain> +short
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Best Practices для Let's Encrypt
 
@@ -116,13 +116,12 @@ dig TXT _acme-challenge.<domain> +short
 5. **Кэширование при разработке** — использовать один Certificate для нескольких доменов вместо множественных запросов
 6. **Email для уведомлений** — указать `email` в ClusterIssuer для получения уведомлений об истечении
 
-### Надёжность информации
+### Смотрите также
 
-| Аспект | Оценка | Обоснование |
-| :--- | :--- | :--- |
-| ACME error codes | **10** | RFC 8555, документация Let's Encrypt |
-| Rate limits | **10** | [letsencrypt.org/docs/rate-limits](https://letsencrypt.org/docs/rate-limits) |
-| Diagnostic commands | **9** | Стандартные kubectl + cert-manager CRD |
-| Staging behavior | **10** | Подтверждено официальной документацией LE |
+- **[Углублённые концепции ACME](./letsencrypt_concepts.md)** — CT-логи, ARI, аккаунты
+- **[Практические сценарии Let's Encrypt](./letsencrypt_scenarios.md)** — HTTP-01, DNS-01, Staging
+- **[Cert-manager: Troubleshooting](../Administration/troubleshooting.md)** — общая диагностика контроллера
+**10** | Подтверждено официальной документацией LE |
 
 **Связанные документы:** [углублённые концепции](./letsencrypt_concepts.md), [практические сценарии](./letsencrypt_scenarios.md), [cert_manager CRD](../definitions.md), [Administration troubleshooting](../Administration/troubleshooting.md).
+ting.md).

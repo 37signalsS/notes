@@ -2,13 +2,13 @@
 
 ## 1. Определения
 
-**Deployment** — объект Kubernetes для декларативного управления stateless-приложениями. Этот документ описывает структуру манифеста и рекомендации по его составлению.
+**Deployment** — объект Kubernetes для декларативного управления stateless-приложениями.
 
-Полная информация о полях манифеста — в [Deployment Concepts](./deployment_concepts.md).
+Общее описание и концепции см. в основном разделе: **[Kubernetes Deployment](./index.md)**.
 
 ## 2. Базовые концепции
 
-### 2.1. Базовый манифест
+### Базовый манифест
 
 ```yaml
 apiVersion: apps/v1
@@ -54,43 +54,25 @@ spec:
           periodSeconds: 20
 ```
 
-### 2.2. Ключевые поля
+### Ключевые поля манифеста
 
 | Поле | Назначение | Рекомендация |
 | :--- | :--- | :--- |
-| `replicas` | Количество реплик | Минимум 2 для HA |
-| `revisionHistoryLimit` | История версий для отката | 3-5 для production |
+| `replicas` | Количество реплик | Минимум 2 для высокой доступности |
+| `revisionHistoryLimit` | История версий для отката | 3–5 для production |
 | `selector.matchLabels` | Селектор для поиска подов | Должен совпадать с `template.metadata.labels` |
 | `image` | Образ контейнера | Использовать конкретную версию (не `:latest`) |
-| `resources` | Запросы и лимиты ресурсов | Обязательно для production |
-| `readinessProbe` | Проверка готовности к трафику | Обязательно |
-| `livenessProbe` | Проверка жизнеспособности | Обязательно |
+| `resources` | Запросы и лимиты ресурсов | Обязательно для всех контейнеров |
+| `readinessProbe` | Проверка готовности к трафику | Обязательно. Подробнее: [Probes](../probes.md) |
+| `livenessProbe` | Проверка жизнеспособности | Обязательно. Подробнее: [Probes](../probes.md) |
 
-### 2.3. Поле containerPort
+### Поле containerPort
 
-Поле `containerPort` в спецификации контейнера — это **мета-информация**, а не инструкция для открытия порта.
-
-**Важно:**
-
-- `containerPort` не открывает порт в контейнере — приложение слушает тот порт, на котором оно было сконфигурировано при сборке образа (например, в Dockerfile или через аргументы запуска).
-- Если приложение работает на порту `8080`, а в манифесте указано `containerPort: 80`, процесс всё равно будет доступен на `8080`.
-- Значение `containerPort` используется для документации и может учитываться некоторыми инструментами мониторинга, но не влияет на сетевое поведение пода.
-- Реальное управление трафиком осуществляется через объект [`Service`](../../Networking/Service/service_type_nodeport.md), который направляет трафик на фактический порт приложения через `targetPort`.
-
-**Пример:**
-
-```yaml
-spec:
-  containers:
-  - name: myapp
-    image: myapp:1.0
-    ports:
-    - containerPort: 80  # Мета-информация: приложение фактически слушает порт, указанный в образе
-```
+Поле `containerPort` в спецификации контейнера — это **мета-информация**, а не инструкция для открытия порта. Оно служит для документации и не влияет на сетевое поведение пода. Реальное управление трафиком осуществляется через объект [`Service`](../../Networking/Service/service_type_nodeport.md), который направляет трафик на фактический порт приложения через `targetPort`.
 
 ## 3. Практические сценарии
 
-### 3.1. Настройка стратегии обновления
+### Настройка стратегии обновления
 
 ```yaml
 spec:
@@ -101,7 +83,7 @@ spec:
       maxSurge: 1        # Один дополнительный под при обновлении
 ```
 
-**Варианты настройки:**
+**Варианты настройки параметров:**
 
 | Конфигурация | Поведение | Когда использовать |
 | :--- | :--- | :--- |
@@ -109,102 +91,23 @@ spec:
 | `maxUnavailable: >0`, `maxSurge: 0` | Сначала удаляются старые поды, потом создаются новые | Ограниченные ресурсы, допустимы кратковременные деградации |
 | `maxUnavailable: >0`, `maxSurge: >0` | Гибкое управление (по умолчанию) | Стандартный вариант |
 
-Подробнее о стратегиях — в [Rolling Update](../../../CI-CD/Deployment_Strategies/rolling_update.md).
+### Многоконтейнерный Deployment (Sidecar-паттерн)
 
-### 3.2. Многоконтейнерный Deployment (Sidecar-паттерн)
+Sidecar используется для расширения функциональности основного контейнера (например, проксирование трафика через Envoy или сбор логов через Fluent Bit). Контейнеры в одном поде разделяют сетевое пространство (`localhost`) и тома.
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web-app-with-nginx
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: web-app
-  template:
-    metadata:
-      labels:
-        app: web-app
-    spec:
-      volumes:
-      - name: static-files
-        emptyDir: {}
-
-      containers:
-      # Основное приложение
-      - name: app
-        image: myapp:1.0
-        ports:
-        - containerPort: 8080
-        volumeMounts:
-        - name: static-files
-          mountPath: /app/static
-
-      # Nginx sidecar для раздачи статики и проксирования
-      - name: nginx
-        image: nginx:1.27.0
-        ports:
-        - containerPort: 80
-        volumeMounts:
-        - name: static-files
-          mountPath: /usr/share/nginx/html/static
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
-```
-
-**Ключевые моменты:**
-
-- Оба контейнера работают в одном поде и разделяют volume `static-files`
-- Nginx слушает порт `80`, приложение — порт `8080`
-- Service должен направлять трафик на порт Nginx (`targetPort: 80`)
-
-> **Подробно:** Паттерны многоконтейнерных подов описаны в [Sidecar Patterns](../Pod/pod_sidecar_patterns.md).
+Подробно паттерны описаны в [Sidecar Patterns](../Pod/pod_sidecar_patterns.md).
 
 ## 4. Дополнительная информация
 
-### 4.1. Лучшие практики
+### Лучшие практики
 
-**Образы контейнеров:**
+- **Образы:** используйте конкретные версии или хэши и `imagePullPolicy: IfNotPresent`.
+- **Проверки здоровья:** всегда настраивайте `readinessProbe` и `livenessProbe` для предотвращения направления трафика на неисправные поды.
+- **Ресурсы:** установка `requests` и `limits` критична для планировщика (scheduler) и предотвращения OOM (Out Of Memory).
+- **Безопасность:** запускайте процессы от непривилегированного пользователя. Подробнее: [Security Context](../../Security/pod_security_context.md).
 
-- Используйте конкретные версии образов (`nginx:1.28.0`) или digest (`sha256:...`)
-- Никогда не используйте `:latest` в production
-- Установите `imagePullPolicy: IfNotPresent` для версионированных образов
+### См. также
 
-**Проверки здоровья:**
-
-- `readinessProbe` — обязательно: без него Kubernetes не знает, готов ли под принимать трафик
-- `livenessProbe` — обязательно для автоматического восстановления при сбоях
-- Подробнее — в [Probes](../probes.md) и [Высокая доступность](../high_availability.md)
-
-**Ресурсы:**
-
-- Всегда указывайте `requests` и `limits` для CPU и memory
-- Используйте [Horizontal Pod Autoscaler](../../Autoscaling/overview_concepts.md) для автомасштабирования
-
-**Безопасность:**
-
-- Запускайте контейнеры от непривилегированного пользователя (`securityContext.runAsNonRoot: true`). Подробнее: [Security Context](../../Security/pod_security_context.md).
-- Избегайте `privileged: true`.
-
-### 4.2. Расширенные стратегии развертывания
-
-Для минимизации рисков при выкатке критичных изменений:
-
-- [Blue-Green Deployment](../../../CI-CD/Deployment_Strategies/blue_green_deployment.md)
-- [Canary Deployment](../../../CI-CD/Deployment_Strategies/canary_deployment.md)
-- [Deployment Health Checks and Rollback](../../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)
-
-### 4.3. Связанные темы
-
-- Концепции Deployment: [deployment_concepts.md](./deployment_concepts.md)
+- Основной раздел: [Kubernetes Deployment](./index.md)
 - Управление жизненным циклом: [lifecycle_management.md](./lifecycle_management.md)
-- Конфигурация: [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md)
-- Stateful-приложения: [`StatefulSet`](../statefulset.md)
-- Отказоустойчивость: [`Высокая доступность`](../high_availability.md)
+- Сравнение стратегий: [Comparison of Deployment Strategies](../../../CI-CD/Deployment_Strategies/comparison.md)

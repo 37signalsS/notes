@@ -1,37 +1,36 @@
 # vCluster — Подключение и доступ
 
-## Definitions
+## Определения
 
-**vCluster connectivity** — совокупность методов подключения к виртуальному кластеру и настройки доступа к ресурсам host-кластера (Storage, Ingress, API). Включает механизмы получения kubeconfig, синхронизацию ресурсов и организацию внешнего доступа.
+**vCluster connectivity** — совокупность методов подключения к виртуальному кластеру и настройки доступа к ресурсам host-кластера (Storage, Ingress, API (Application Programming Interface)). Включает механизмы получения kubeconfig, синхронизацию ресурсов и организацию внешнего доступа.
 
 **kubeconfig vCluster** — файл конфигурации для доступа к Kubernetes API виртуального кластера. Содержит учетные данные syncer-прокси, а не прямого API Server.
 
-## Basic Concepts
+## Основные концепции
 
 ### Способы получения kubeconfig
 
 | Метод | Описание | Когда использовать |
 | :--- | :--- | :--- |
 | `vcluster connect` | Автоматическое создание временной конфигурации | Быстрое подключение, разовые операции |
-| `--export-kubeconfig` | Экспорт в файл для повторного использования | CI/CD, долгосрочный доступ |
+| `--export-kubeconfig` | Экспорт в файл для повторного использования | CI/CD (Continuous Integration / Continuous Deployment), долгосрочный доступ |
 | Secret vCluster | Прямое получение из `Secret` в host-кластере | Автоматизация, восстановление доступа |
 
-### Синхронизация ресурсов host-кластера
+### Синхронизация ресурсов
 
-vCluster может синхронизировать ресурсы в двух направлениях:
+vCluster использует Syncer для обмена ресурсами с host-кластером. Основные направления:
+- **fromHost**: импорт инфраструктуры host-кластера (StorageClasses, IngressClasses).
+- **toHost**: публикация сервисов vCluster во внешнюю сеть через ресурсы host-кластера (Ingress, Service).
 
-| Направление | Ресурсы | Назначение |
-| :--- | :--- | :--- |
-| **fromHost** | StorageClass, IngressClass | Использование инфраструктуры host-кластера |
-| **toHost** | Ingress, Service, Endpoints | Публикация сервисов vCluster через host |
+Подробное описание механизмов синхронизации: [Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md).
 
 ### Доступ к API vCluster извне
 
-Для внешнего доступа к Kubernetes API vCluster используется Ingress controller host-кластера с поддержкой SSL passthrough, так как API Server требует TLS-соединения с клиентскими сертификатами.
+Для внешнего доступа к Kubernetes API vCluster используется Ingress controller host-кластера с поддержкой SSL (Secure Sockets Layer) passthrough, так как API Server требует TLS-соединения с клиентскими сертификатами.
 
-## Practical Scenarios
+## Практические сценарии
 
-### Подключение через vcluster CLI
+### Подключение через vCluster CLI (Command Line Interface)
 
 ```bash
 # Интерактивное подключение (временный kubeconfig)
@@ -74,7 +73,7 @@ sync:
 
 > Синхронизируются все StorageClasses хост-кластера.
 
-**Шаг 2: Создание PVC в vCluster**
+**Шаг 2: Создание PVC (PersistentVolumeClaim) в vCluster**
 
 ```yaml
 apiVersion: v1
@@ -140,13 +139,21 @@ controlPlane:
     annotations:
       nginx.ingress.kubernetes.io/ssl-passthrough: "true"
   proxy:
-    extraSANs:
+    extraSANs: # Subject Alternative Names
       - "vcluster1.example.com"
       - "192.168.1.100"
 ```
 
 Требования: Ingress Controller с поддержкой SSL passthrough, DNS-запись на `vcluster1.example.com`.
 
-## Additional Information
+## Дополнительная информация
 
-Подробное описание структуры kubeconfig: [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md). Обзор и архитектура vCluster: [vcluster_overview.md](./vcluster_overview.md). Установка и развертывание: [vcluster_installation.md](./vcluster_installation.md). Безопасность и синхронизация ресурсов: [vcluster_security_and_sync.md](./vcluster_security_and_sync.md).
+### Внутренние ссылки
+- [vCluster — Обзор и архитектура](./vcluster_overview.md)
+- [vCluster — Установка и развертывание](./vcluster_installation.md)
+- [vCluster — Безопасность и синхронизация](./vcluster_security_and_sync.md)
+- [Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)
+
+### Внешние ссылки
+- [vCluster Connectivity Documentation](https://www.vcluster.com/docs/architecture/connectivity)
+- [Loft-sh vCluster GitHub](https://github.com/loft-sh/vcluster)

@@ -4,7 +4,7 @@
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
@@ -16,7 +16,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Управление зависимостями
 
@@ -109,7 +109,7 @@ version: 0.1.0
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Создание общего чарта для микросервисов
 
@@ -149,6 +149,8 @@ version: 0.1.0
 
 ---
 
-## Additional Information
+## См. также
 
-Подробности о структуре чарта см. в [Структура Helm-чарта](./helm_chart_structure.md). О версионировании зависимостей — [Управление версиями релизов](./helm_release_versioning.md). Пример production-чарта — [Практические сценарии чартов](./helm_chart_practical_scenarios.md).
+- [Структура Helm-чарта](./helm_chart_structure.md)
+- [Управление версиями релизов](./helm_release_versioning.md)
+- [Практические сценарии Helm-чартов](./helm_chart_practical_scenarios.md)

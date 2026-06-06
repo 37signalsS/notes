@@ -2,37 +2,32 @@
 
 ## Определения
 
-**Policy Reporter** — отдельное приложение для просмотра и управления отчетами Kyverno. Предоставляет Web UI, метрики для Prometheus/Grafana, REST API и уведомления. Официальный репозиторий: <https://github.com/kyverno/policy-reporter>
+**Policy Reporter** — специализированное приложение для визуализации и мониторинга отчетов безопасности в Kubernetes. Оно предоставляет графический интерфейс, генерирует метрики для систем мониторинга и отправляет уведомления о нарушениях политик.
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
-### Возможности Policy Reporter
+### Возможности инструмента
 
 | Компонент | Назначение |
 |-----------|------------|
-| **Web UI** | Графический интерфейс для просмотра отчетов, группировка по категориям, фильтрация |
-| **Metrics** | Генерация метрик для Prometheus/Grafana |
-| **REST API** | Встроенный API для интеграции с внешними системами |
-| **Централизованный сбор** | Агрегация отчетов с нескольких namespace в одно место |
-| **Уведомления** | Отправка уведомлений в Discord, Slack, Telegram, Teams |
-| **Экспорт отчетов** | Выгрузка отчетов в различных форматах |
+| **Web UI** (User Interface, пользовательский интерфейс) | Панель управления для поиска, фильтрации и группировки отчетов по категориям. |
+| **Метрики** | Формирование данных для Prometheus и Grafana (система визуализации метрик). |
+| **REST API** (Representational State Transfer Application Programming Interface) | Программный интерфейс для извлечения данных внешними системами. |
+| **Централизация** | Сбор отчетов из всех пространств имен (namespaces) кластера в единую точку. |
+| **Уведомления** | Рассылка алертов в Slack, Telegram, Microsoft Teams, Discord. |
 
-### Архитектура
+### Архитектура взаимодействия
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Kyverno       │────▶│  Policy Reporter │────▶│   Prometheus    │
-│  (Reports)      │     │     (Core)       │     │   (Metrics)     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                               │
-                               ├────▶ Web UI (Dashboard)
-                               │
-                               ├────▶ REST API
-                               │
-                               └────▶ Notifications (Slack/Telegram)
-```
+Данные передаются по следующей цепочке:
+
+1. **Kyverno** генерирует отчеты в формате Custom Resources (пользовательские ресурсы) в кластере.
+2. **Policy Reporter** (Core компонент) считывает эти ресурсы через Kubernetes API.
+3. **Core компонент** распределяет данные:
+   - В **UI** для отображения пользователю.
+   - В **Prometheus** в виде числовых метрик.
+   - Во внешние системы через **Webhook** (вебхуки) или мессенджеры.
 
 ---
 
@@ -43,9 +38,12 @@
 ```bash
 # Добавление репозитория
 helm repo add policy-reporter https://kyverno.github.io/policy-reporter
-helm repo update
+# → "policy-reporter" has been added to your repositories
 
-# Установка с базовыми настройками
+helm repo update
+# → Hang tight while we grab the latest from your chart repositories...
+
+# Установка с базовыми настройками (UI и метрики включены)
 helm install policy-reporter policy-reporter/policy-reporter \
   --namespace policy-reporter \
   --create-namespace \
@@ -53,30 +51,14 @@ helm install policy-reporter policy-reporter/policy-reporter \
   --set ui.plugins.kyverno=true \
   --set metrics.enabled=true \
   --set prometheus.enabled=true
+# → NAME: policy-reporter, STATUS: deployed
 ```
 
-### Расширенная конфигурация
+### Настройка уведомлений
+
+Пример конфигурации `values.yaml` (Yet Another Markup Language манифест) для отправки алертов:
 
 ```yaml
-# values.yaml
-metrics:
-  enabled: true
-
-ui:
-  enabled: true
-  plugins:
-    kyverno: true
-    webhook: true
-
-api:
-  enabled: true
-  port: 8080
-
-# Интеграция с Prometheus
-prometheus:
-  enabled: true
-  port: 9080
-
 # Уведомления в Slack
 slack:
   enabled: true
@@ -86,139 +68,67 @@ slack:
 # Уведомления в Telegram
 telegram:
   enabled: true
-  token: "BOT_TOKEN"
-  chatID: "CHAT_ID"
+  token: "BOT_TOKEN" # Токен бота
+  chatID: "CHAT_ID"  # ID чата или канала
   minimumPriority: "critical"
 
-# Filter по namespace
+# Фильтрация по пространствам имен
 filter:
   namespaces:
-    include: ["default", "production", "staging"]
-    exclude: ["kube-system", "kube-public"]
+    include: ["production", "staging"]
+    exclude: ["kube-system"]
 ```
 
-### Проверка установки
+### Проверка работоспособности
 
 ```bash
-# Проверка подов
+# Проверка состояния компонентов
 kubectl get pods -n policy-reporter
+# → NAME                                READY   STATUS    RESTARTS   AGE
+# → policy-reporter-5f8c9d7b9c-abc12    1/1     Running   0          5m
+# → policy-reporter-ui-6d9f8e7c8d-def34 1/1     Running   0          5m
 
-# Ожидаемый вывод:
-# NAME                                READY   STATUS    RESTARTS   AGE
-# policy-reporter-5f8c9d7b9c-abc12    1/1     Running   0          5m
-# policy-reporter-ui-6d9f8e7c8d-def34 1/1     Running   0          5m
-
-# Проверка сервиса
-kubectl get svc -n policy-reporter
-
-# Доступ к Web UI (port-forward)
+# Доступ к интерфейсу (проброс портов)
 kubectl port-forward svc/policy-reporter-ui -n policy-reporter 8080:80
+# → Forwarding from 127.0.0.1:8080 -> 80
 ```
 
-### Доступные метрики
+После выполнения команды интерфейс будет доступен по адресу `http://localhost:8080`.
 
-Метрики экспортируются в формате Prometheus. Детальная структура метрик описана в [Policy Reports](./reports.md).
-
-Основные метрики:
-
-```prometheus
-# Общее количество результатов
-policy_report_result_total{result="fail", policy="require-run-as-non-root"}
-
-# Сводка по namespace
-policy_report_summary_fail{namespace="default"}
-policy_report_summary_pass{namespace="default"}
-policy_report_summary_warn{namespace="default"}
-policy_report_summary_error{namespace="default"}
-policy_report_summary_skip{namespace="default"}
-
-# Изменения во времени
-rate(policy_report_result_total{result="fail"}[5m])
-increase(policy_report_result_total{result="fail"}[1h])
-
-# По категориям
-policy_report_result_total{category="security", result="fail"}
-policy_report_result_total{category="best-practices", result="fail"}
-```
-
-### Настройка уведомлений
-
-#### Slack
-
-```yaml
-slack:
-  enabled: true
-  webhook: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
-  minimumPriority: "high"
-  channels:
-    - "#security-alerts"
-    - "#platform-team"
-```
-
-#### Telegram
-
-```yaml
-telegram:
-  enabled: true
-  token: "BOT_TOKEN"
-  chatID: "CHAT_ID"
-  minimumPriority: "critical"
-```
-
-#### Webhook (универсальный)
-
-```yaml
-webhook:
-  enabled: true
-  endpoint: "https://your-api.example.com/alerts"
-  minimumPriority: "high"
-  headers:
-    Authorization: "Bearer YOUR_TOKEN"
-```
-
-### REST API
+### Использование REST API
 
 ```bash
-# Получить все Policy Reports
+# Получение всех отчетов в формате JSON
 curl http://localhost:8080/api/v1/policy-reports
+# → [{"name":"pol-rep-1", "namespace":"default", "results": [...]}]
 
-# Получить отчеты с нарушениями
-curl http://localhost:8080/api/v1/policy-reports?result=fail
-
-# Получить отчеты по namespace
-curl http://localhost:8080/api/v1/policy-reports?namespace=default
-
-# Получить сводку
-curl http://localhost:8080/api/v1/summary
+# Получение только критических нарушений
+curl "http://localhost:8080/api/v1/policy-reports?result=fail"
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Производительность
+### Мониторинг ресурсов (Производительность)
 
-| Параметр | Рекомендация |
-|----------|--------------|
-| Количество namespace | До 100-200 без проблем |
-| Частота обновления | По умолчанию 15 минут |
-| Ресурсы | 100-200 MB RAM, 0.1-0.3 CPU |
+| Ресурс | Потребление (ориентировочно) |
+|--------|-----------------------------|
+| **RAM** (Random Access Memory, оперативная память) | 150–250 MB |
+| **CPU** (Central Processing Unit, центральный процессор) | 0.1–0.2 ядра |
 
-### Troubleshooting
+Инструмент эффективно работает в кластерах до 200–300 пространств имен. При большем масштабе рекомендуется увеличить интервал сканирования.
+
+### Поиск и устранение неисправностей (Troubleshooting)
 
 | Проблема | Решение |
 |----------|---------|
-| UI не доступен | Проверить `kubectl get pods -n policy-reporter` |
-| Метрики не собираются | Проверить `prometheus.enabled: true` |
-| Уведомления не приходят | Проверить webhook URL и права доступа |
-| Отчеты не обновляются | Проверить права на чтение Policy Reports |
+| Интерфейс не отображает данные | Проверьте права ClusterRole для Policy Reporter (нужен доступ к `policyreports`). |
+| Метрики отсутствуют в Prometheus | Убедитесь, что параметр `metrics.enabled` установлен в `true`. |
+| Уведомления не приходят | Проверьте валидность URL (Uniform Resource Locator) вебхука и сетевую доступность. |
 
-### Grafana Dashboard
+### Полезные ссылки
 
-Официальные dashboard доступны в [репозитории Policy Reporter](https://github.com/kyverno/policy-reporter/tree/main/charts/policy-reporter/files/grafana). Импорт через ConfigMap:
-
-```bash
-kubectl create configmap grafana-dashboard \
-  --from-file=kyverno-policy-reporter.json \
-  -n grafana
-```
+- [Отчеты Kyverno](./reports.md) — структура и типы генерируемых данных.
+- [Установка Kyverno](./install.md) — настройка основного движка политик.
+- [Официальный репозиторий](https://github.com/kyverno/policy-reporter) — документация и исходный код.

@@ -1,6 +1,6 @@
 # Kubernetes: Обзор и решаемые проблемы
 
-## Definitions
+## Определения
 
 **Kubernetes** (K8s) — открытая платформа для автоматизации развёртывания, масштабирования и управления контейнеризированными приложениями. Оркестрирует контейнеры на кластере хостов, абстрагируя приложения от нижележащей инфраструктуры.
 
@@ -14,24 +14,24 @@
 
 **Кластер Kubernetes** состоит из:
 
-- **Control Plane** — плоскость управления, принимающая глобальные решения (планирование, состояние). Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md).
-- **Worker Nodes** — рабочие узлы, на которых запускаются приложения пользователей.
+- **Control Plane** (панель управления) — принимает глобальные решения (планирование, состояние). Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md).
+- **Worker Nodes** (рабочие узлы) — узлы, на которых запускаются приложения пользователей.
 
 ### Основные решаемые задачи
 
-Главная цель Kubernetes — снять «головную боль» по ручному запуску и мониторингу сотен контейнеров на большом количестве узлов.
+Главная цель Kubernetes — автоматизация запуска и мониторинга контейнеров на большом количестве узлов.
 
 | # | Задача | Описание |
 | :--- | :--- | :--- |
 | 1 | **Масштабирование** | Горизонтальное/вертикальное масштабирование контейнеров на множестве хостов |
-| 2 | **Балансировка нагрузки** | Автоматическое распределение трафика между подами |
-| 3 | **Service Discovery** | Автоматическое обнаружение сервисов без жёсткого кодирования IP |
+| 2 | **Балансировка нагрузки** | Автоматическое распределение трафика между Pod |
+| 3 | **Service Discovery** | Автоматическое обнаружение сервисов без жёсткого кодирования IP (Internet Protocol) |
 | 4 | **Self-healing** | Автоматический перезапуск упавших контейнеров, перенос на исправные узлы |
 | 5 | **Удобство управления** | Единая точка входа для управления группой узлов как единым целым |
-| 6 | **Управление ресурсами** | Распределение CPU, памяти между приложениями (Requests/Limits) |
+| 6 | **Управление ресурсами** | Распределение CPU (Central Processing Unit), памяти между приложениями (Requests/Limits) |
 | 7 | **Отказоустойчивость** | Автоматическое поддержание желаемого количества реплик приложения |
 
-## Basic Concepts
+## Основные концепции
 
 ### Декларативный подход
 
@@ -42,14 +42,14 @@ Kubernetes ориентирован на **декларативную парад
 
 ### Архитектура кластера
 
-Кластер Kubernetes состоит из двух логических уровней:
+Кластер состоит из двух логических уровней:
 
 #### Control Plane
 
 «Мозг» кластера — принимает решения, хранит состояние, реагирует на события. Включает:
 
-- **`kube-apiserver`** — единая точка входа (REST API Gateway). Все взаимодействия идут через него. Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md).
-- **`etcd`** — согласованное KV-хранилище состояния. Единственный stateful-компонент. Подробнее: [Обзор etcd](./Concepts/etcd_overview.md).
+- **`kube-apiserver`** — единая точка входа (REST — Representational State Transfer API Gateway). Все взаимодействия идут через него. Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md).
+- **`etcd`** — согласованное KV (Key-Value) хранилище состояния. Единственный stateful-компонент. Подробнее: [Обзор etcd](./Concepts/etcd_overview.md).
 - **`kube-scheduler`** — определяет, на каком узле запустить конкретный Pod. Подробнее: [kube-scheduler](./Concepts/kube_scheduler.md).
 - **`kube-controller-manager`** — реализует логику приведения к желаемому состоянию через набор контроллеров.
 
@@ -57,84 +57,71 @@ Kubernetes ориентирован на **декларативную парад
 
 Узлы, на которых запускаются приложения:
 
-- **`kubelet`** — агент-резидент на каждом узле. Получает команды от API-сервера и взаимодействует с Container Runtime. Подробнее: [Kubelet](./Concepts/kubelet.md).
+- **`kubelet`** — агент-резидент на каждом узле. Получает команды от API (Application Programming Interface) сервера и взаимодействует с Container Runtime. Подробнее: [Kubelet](./Concepts/kubelet.md).
 - **`kube-proxy`** — сетевой агент, настраивающий правила маршрутизации на узле. Подробнее: [CNI и kube-proxy](./Networking/Network/CNI/definitions.md).
-- **Container Runtime (CRI)** — среда выполнения (`containerd`, `CRI-O`). С 2026 года (и ранее) **Docker** как рантайм внутри K8s полностью деприкейтирован в пользу специализированных решений.
-- **CNI** — сетевые плагины для обеспечения связности. Подробнее: [Сетевая модель](./Networking/Network/network_overview.md).
+- **Container Runtime (CRI)** — среда выполнения (`containerd`, `CRI-O`). CRI (Container Runtime Interface) — стандарт взаимодействия. Docker как рантайм деприкейтирован.
+- **CNI** (Container Network Interface) — сетевые плагины для обеспечения связности. Подробнее: [Сетевая модель](./Networking/Network/network_overview.md).
 
 ### Ключевые абстракции
 
-| Абстракция | Назначение | SSoT-файл |
+| Абстракция | Назначение | Основной источник |
 | :--- | :--- | :--- |
-| **Pod** | Минимальная единица развёртывания — группа контейнеров с общим сетевым пространством и хранилищем | [Pod overview](./Base/Pod/pod_overview.md) |
-| **Service** | Стабильная сетевая точка доступа к группе подов | [Сетевая модель](./Networking/Network/network_overview.md) |
-| **Deployment** | Управление желаемым состоянием ReplicaSet и Pod | [control_plane_architecture](./Concepts/control_plane_architecture.md) |
+| **Pod** | Минимальная единица развёртывания — группа контейнеров с общим сетевым пространством | [Pod overview](./Base/Pod/pod_overview.md) |
+| **Service** | Стабильная сетевая точка доступа к группе Pod | [Service overview](./Networking/Service/service_overview.md) |
+| **Deployment** | Управление желаемым состоянием ReplicaSet и Pod | [Deployment overview](./Base/Deployment/index.md) |
 | **Volume / PV / PVC** | Абстракция хранилища, CSI-плагины для внешних СХД | [CSI overview](./Storage/CSI/csi_overview.md) |
-| **ConfigMap / Secret** | Управление конфигурацией и секретами | — |
-| **Namespace** | Виртуальная изоляция групп ресурсов в кластере | [namespace](./Base/namespace.md) |
+| **ConfigMap / Secret** | Управление конфигурацией и секретами | [ConfigMap](./Base/configmap.md) |
+| **Namespace** | Виртуальная изоляция групп ресурсов в кластере | [Namespace](./Base/namespace.md) |
 
 ### Интерфейсы и стандарты
 
-| Интерфейс | Описание | SSoT-файл |
+| Интерфейс | Описание | Основной источник |
 | :--- | :--- | :--- |
-| **CRI** | Container Runtime Interface — стандартизирует взаимодействие `kubelet` со средой выполнения контейнеров | [Kubelet](./Concepts/kubelet.md) |
+| **CRI** | Container Runtime Interface — стандартизирует взаимодействие `kubelet` со средой выполнения | [Kubelet](./Concepts/kubelet.md) |
 | **CNI** | Container Network Interface — стандарт подключения сетевых плагинов | [CNI definitions](./Networking/Network/CNI/definitions.md) |
 | **CSI** | Container Storage Interface — стандарт подключения систем хранения | [CSI overview](./Storage/CSI/csi_overview.md) |
 
 ### Kubernetes и CNCF
 
-Kubernetes — флагманский проект [Cloud Native Computing Foundation (CNCF)](https://www.cncf.io/), некоммерческой организации под эгидой The Linux Foundation. Статус в CNCF гарантирует долгосрочную поддержку и открытое управление.
+Kubernetes — флагманский проект **CNCF** (Cloud Native Computing Foundation), некоммерческой организации под эгидой The Linux Foundation. Статус в CNCF гарантирует долгосрочную поддержку и открытое управление.
 
 Сопутствующие проекты CNCF: `etcd` (хранилище), `Prometheus` (мониторинг), `Helm` (пакетный менеджер), `containerd` (среда выполнения).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Жизненный цикл создания Pod
 
-Полный пошаговый сценарий создания пода: `kubectl` → `kube-apiserver` → `etcd` → `kube-scheduler` → `kubelet` → Container Runtime.
+Полный пошаговый сценарий создания: `kubectl` → `kube-apiserver` → `etcd` → `kube-scheduler` → `kubelet` → Container Runtime.
 
 Подробное описание: [Жизненный цикл Pod](./Concepts/control_plane_architecture.md#жизненный-цикл-создания-пода).
 
 ### Когда использовать Kubernetes
 
-| Сценарий | Обоснование |
-| :--- | :--- |
-| Микросервисная архитектура с десятками/сотнями сервисов | Автоматическое масштабирование, self-healing, service discovery |
-| Высокие требования к доступности (99.9%+) | Автоматический перезапуск, распределение по узлам, rolling updates |
-| Мультиоблачные / гибридные развёртывания | Абстракция от инфраструктуры, единый API |
-| Частые релизы (CI/CD) | Бесшовные обновления, откаты, Canary-развёртывание |
+- **Микросервисная архитектура:** автоматическое масштабирование, self-healing, service discovery.
+- **Высокая доступность:** автоматический перезапуск, rolling updates.
+- **Мультиоблачные развёртывания:** абстракция от инфраструктуры, единый API.
+- **Частые релизы (CI/CD — Continuous Integration / Continuous Deployment):** бесшовные обновления, откаты.
 
 ### Когда Kubernetes может быть избыточен
 
-| Сценарий | Альтернатива |
-| :--- | :--- |
-| Монолитное приложение без планов декомпозиции | Виртуальная машина, Docker Compose |
-| Небольшая команда, редкие релизы | PaaS (Heroku, Render), Docker Compose |
-| Stateless-приложение с простой балансировкой | Облачный Load Balancer + VM/контейнеры без оркестрации |
+- **Монолитное приложение:** без планов декомпозиции (Docker Compose достаточно).
+- **Небольшая команда:** редкие релизы, отсутствие экспертизы.
+- **Простые Stateless-приложения:** когда достаточно облачного балансировщика и VM (Virtual Machine).
 
-## Additional Information
+## Дополнительная информация
 
 ### Инструменты взаимодействия
 
-Все взаимодействия с кластером в конечном итоге сводятся к запросам к **kube-apiserver**.
+Все взаимодействия с кластером сводятся к запросам к **kube-apiserver**.
 
 | Инструмент | Тип | Назначение |
 | :--- | :--- | :--- |
-| **kubectl** | CLI | Основной инструмент (стандарт де-факто). Преобразует команды в API-запросы. |
-| **Lens (OpenLens)** | GUI | Графическая IDE для визуализации ресурсов, логов и метрик. Подробнее: [Обзор Lens](./ToolsUtilities/lens/definitions_and_concepts.md). |
-| **K9s** | TUI | Терминальный интерфейс для быстрого мониторинга и управления. |
-| **Dashboard** | Web | Веб-интерфейс (стандартный или от облачного провайдера). |
-| **curl / Postman** | API | Прямое взаимодействие с REST API для отладки и автоматизации. |
-
-### Полезные ресурсы
-
-Интерактивная карта экосистемы Cloud Native: [CNCF Landscape](https://landscape.cncf.io/) — поиск ПО по категориям.
-
-Анализ зрелости технологий на основе данных от конечных пользователей: [CNCF Radar](https://radar.cncf.io/).
+| **kubectl** | CLI (Command Line Interface) | Основной инструмент управления. |
+| **Lens** | GUI (Graphical User Interface) | Графическая IDE для визуализации ресурсов. Подробнее: [Lens](./ToolsUtilities/lens/definitions_and_concepts.md). |
+| **K9s** | TUI (Terminal User Interface) | Терминальный интерфейс для мониторинга. |
 
 ### Связанные темы
 
-- HA-кластер на Bare Metal: [k8s_ha_cluster_overview.md](./Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-- Установка через kubeadm: [kubeadm index](./Installation/kubeadm/index.md)
-- Minikube (локальный кластер): [minikube_practical_scenarios.md](./Installation/minikube/minikube_practical_scenarios.md)
-- OpenShift (дистрибутив Red Hat): [openshift_overview.md](./openshift_overview.md)
+- [HA-кластер на Bare Metal](./Installation/HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
+- [Установка через kubeadm](./Installation/kubeadm/index.md)
+- [Minikube (локальный кластер)](./Installation/minikube/minikube_practical_scenarios.md)

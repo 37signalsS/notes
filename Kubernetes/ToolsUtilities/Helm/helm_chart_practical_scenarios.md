@@ -4,7 +4,7 @@
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
@@ -15,7 +15,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Команды валидации
 
@@ -62,7 +62,7 @@ helm dependency build
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Создание нового чарта
 
@@ -163,6 +163,7 @@ helm upgrade app ./chart -f values.yaml -f values-production.yaml -n prod --atom
 
 ---
 
-## Additional Information
+## См. также
 
-Подробности о зависимостях см. в [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md). О командах и рабочем процессе — [Helm Commands and Workflow](./helm_commands_and_workflow.md).
+- [Зависимости и Library Charts в Helm](./helm_dependencies_and_library_charts.md)
+- [Основные команды и рабочий процесс Helm](./helm_commands_and_workflow.md)

@@ -1,6 +1,6 @@
-# Kustomize — Advanced Features
+# Kustomize — Продвинутые возможности
 
-## 1. Definitions
+## 1. Определения
 
 **ConfigMap/Secret Generator** — механизм Kustomize для автоматического создания ConfigMap и Secret из файлов или литералов с автоматическим добавлением хеша содержимого к имени ресурса (immutable pattern).
 
@@ -8,9 +8,9 @@
 
 **Helm-Kustomize Hybrid** — подход генерации базовых манифестов через `helm template` с последующим управлением окружениями через Kustomize overlays.
 
-## 2. Basic Concepts
+## 2. Основные концепции
 
-### Hash-суффиксы для ConfigMap/Secret
+### Hash-суффиксы для ConfigMap и Secret
 
 Kustomize автоматически добавляет хеш содержимого к имени ресурса:
 
@@ -22,23 +22,23 @@ configMapGenerator:
       - DATABASE_URL=postgres://localhost:5432/db
 ```
 
-Результат: `app-config-<hash>` — это гарантирует обновление Pods при изменении данных (immutable ConfigMap pattern).
+Результат: `app-config-<hash>`. Это гарантирует обновление Pod при изменении данных, так как изменение имени ConfigMap вызывает рестарт контейнеров (шаблон Immutable ConfigMap).
 
-### Behavior при наследовании
+### Поведение (Behavior) при наследовании
 
-| Значение | Поведение |
+| Значение | Описание |
 | :--- | :--- |
-| `create` | Создание нового ресурса (default) |
-| `merge` | Объединение с базовым генератором |
-| `replace` | Полная замена базового генератора |
+| **create** | Создание нового ресурса (по умолчанию) |
+| **merge** | Объединение с генератором из базового слоя (base) |
+| **replace** | Полная замена генератора из базового слоя |
 
 ### Ограничения генераторов
 
-- **Нет условной логики** — нельзя генерировать разные ConfigMap для разных окружений в одном файле
-- **Нет циклов** — каждая запись создаёт один ресурс
-- **Хеширование нельзя отключить** — для статических имён используйте `generatorOptions.disableNameSuffixHash: true`
+- **Отсутствие условной логики** — нельзя генерировать разные ресурсы для разных окружений в рамках одного файла.
+- **Отсутствие циклов** — каждая запись в манифесте создает ровно один ресурс.
+- **Хеширование** — по умолчанию включено для всех генерируемых ресурсов. Для использования статических имен необходимо установить `generatorOptions.disableNameSuffixHash: true`.
 
-## 3. Practical Scenarios
+## 3. Практические сценарии
 
 ### 3.1. Генерация ConfigMap из литералов
 
@@ -61,7 +61,7 @@ configMapGenerator:
       - nginx.conf
 ```
 
-Файл `nginx.conf` должен существовать в той же директории, что и `kustomization.yaml`.
+Файл `nginx.conf` должен находиться в той же директории, что и `kustomization.yaml`.
 
 ### 3.3. Генерация Secret из литералов
 
@@ -72,7 +72,7 @@ secretGenerator:
     literals:
       - username=admin
       - password=S3cr3t
-    type: Opaque  # default
+    type: Opaque  # Тип по умолчанию
 ```
 
 ### 3.4. Генерация TLS Secret из файлов
@@ -87,35 +87,35 @@ secretGenerator:
     type: kubernetes.io/tls
 ```
 
-Файлы `tls.crt` и `tls.key` должны существовать в директории overlay.
+Файлы сертификата и ключа должны находиться в директории overlay.
 
-### 3.5. Behavior: merge для наследования
+### 3.5. Использование Behavior: merge
 
 ```yaml
 # overlays/production/kustomization.yaml
 configMapGenerator:
   - name: app-config
-    behavior: merge  # объединение с base
+    behavior: merge  # Объединение с базовой конфигурацией
     literals:
       - LOG_LEVEL=info
       - ENV=production
 ```
 
-Базовые ключи из `base/` сохраняются, новые — добавляются. При конфликте побеждает значение из overlay.
+Ключи из базового слоя сохраняются, новые добавляются. При совпадении имен ключей приоритет имеет значение из overlay.
 
-### 3.6. Behavior: replace для полной замены
+### 3.6. Использование Behavior: replace
 
 ```yaml
 # overlays/production/kustomization.yaml
 configMapGenerator:
   - name: app-config
-    behavior: replace  # игнорирование base
+    behavior: replace  # Игнорирование базовой конфигурации
     literals:
       - DATABASE_URL=postgres://prod-db:5432/prod
       - CACHE_TTL=7200
 ```
 
-### 3.7. Отключение hash-суффикса
+### 3.7. Отключение хеш-суффикса
 
 ```yaml
 # kustomization.yaml
@@ -128,29 +128,28 @@ configMapGenerator:
       - KEY=value
 ```
 
-Результат: `static-config` (без хеша).
+Результат выполнения `kustomize build`: ресурс будет иметь имя `static-config` без суффикса.
 
-### 3.8. Интеграция Helm + Kustomize
+### 3.8. Интеграция Helm и Kustomize
 
-Существует два основных способа совместного использования Helm и Kustomize.
+Существует два основных способа совместного использования инструментов.
 
-#### Вариант А: Гибридный подход (ручной)
+#### Гибридный подход (ручной)
 
-Генерация базовых манифестов из Helm с последующим использованием их в качестве `resources` в Kustomize:
+Генерация манифестов через Helm с последующим использованием их как базовых ресурсов:
 
 ```bash
-# Шаг 1: Генерация манифестов
+# 1. Генерация манифестов
 helm template my-chart ./chart > base/manifests.yaml
 
-# Шаг 2: Использование в Kustomize
-# base/kustomization.yaml
+# 2. Использование в Kustomize (base/kustomization.yaml)
 resources:
   - manifests.yaml
 ```
 
-#### Вариант Б: Нативная интеграция (helmCharts)
+#### Нативная интеграция (helmCharts)
 
-Kustomize (начиная с v4.1.0) поддерживает декларативное описание Helm-чартов непосредственно в `kustomization.yaml`. Это позволяет Kustomize автоматически скачивать и рендерить чарты при сборке.
+Kustomize (4.1.0+) поддерживает декларативное описание чартов.
 
 ```yaml
 # kustomization.yaml
@@ -160,40 +159,32 @@ helmCharts:
     version: 6.3.5
     releaseName: my-podinfo
     namespace: my-namespace
-    valuesFile: values.yaml  # внешние значения
-    # valuesInline:          # или встроенные значения
-    #   replicaCount: 2
+    valuesFile: values.yaml
 ```
 
-**Преимущества нативной интеграции:**
+Для сборки необходимо использовать флаг:
+```bash
+kustomize build --enable-helm
+# → Вывод: манифесты Helm-чарта с примененными патчами Kustomize
+```
 
-- **Автоматизация**: Kustomize сам управляет скачиванием и рендерингом (требуется установленный бинарник `helm`).
-- **Патчинг**: Можно накладывать Kustomize патчи поверх ресурсов, сгенерированных Helm, даже если автор чарта не предусмотрел нужных параметров в `values.yaml`.
-- **Чистота**: Нет необходимости хранить огромные сгенерированные YAML-файлы в Git.
+### 3.9. Валидация результата
 
-**Особенности использования:**
-
-- Требуется запуск сборки с флагом `--enable-helm`: `kustomize build --enable-helm`.
-- Для `kubectl` эта функция может потребовать дополнительных настроек или использования отдельного CLI `kustomize`.
-
-### 3.9. Валидация результата kustomize
-
-Перед применением в кластер рекомендуется валидировать манифесты через [kubeconform](../kubeconform/index.md):
+Рекомендуется проверять корректность манифестов через [kubeconform](../kubeconform/kubeconform_overview.md):
 
 ```bash
 # Валидация с выводом сводки
 kubectl kustomize overlays/production | kubeconform -summary -
+# → Вывод: Summary: 5 resources found, 0 errors
 
-# Строгая валидация (отклонение неизвестных полей)
+# Строгая валидация
 kubectl kustomize overlays/production | kubeconform -strict -
 ```
 
-Интеграция в CI/CD: валидация должна выполняться автоматически при каждом изменении kustomization файлов.
+## 4. Дополнительная информация
 
-## 4. Additional Information
+### Связь с другими разделами
 
-### Связь с базовыми концепциями
-
-- [Overview and Core Concepts](./kustomize_overview.md) — базовые определения
+- [Обзор и основные концепции](./kustomize_overview.md) — базовые определения
 - [Структура и синтаксис](./kustomize_structure_and_syntax.md) — структура проекта
-- [Наложения и патчи](./kustomize_overlays_and_patches.md) — типы патчей
+- [Наложения и патчи](./kustomize_overlays_and_patches.md) — типы патчей и примеры

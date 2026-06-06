@@ -4,18 +4,18 @@ Helm — пакетный менеджер для Kubernetes, автоматиз
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
 | **Chart (Чарт)** | Пакет с преднастроенными ресурсами Kubernetes. См. [Структура Helm-чарта](./helm_chart_structure.md) для деталей организации файлов |
 | **Release (Релиз)** | Экземпляр чарта, развёрнутый в кластере с уникальным именем в пределах namespace. Подробнее о версионировании см. [Управление версиями релизов](./helm_release_versioning.md) |
-| **Repository (Репозиторий)** | HTTP-сервер или OCI-реестр для хранения и распространения чартов |
+| **Repository (Репозиторий)** | HTTP-сервер или OCI-реестр (Open Container Initiative) для хранения и распространения чартов |
 | **Values (Значения)** | Параметры конфигурации, передаваемые в шаблоны через `values.yaml` или `--set`. См. [Шаблонизация в Helm](./helm_templating.md) |
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Пакетный подход и шаблонизация
 
@@ -59,9 +59,9 @@ Helm 3 работает по клиент-only модели без сервер�
 
 **Особенности архитектуры:**
 
-- Клиент напрямую взаимодействует с Kubernetes API через kubeconfig пользователя
+- Клиент напрямую взаимодействует с Kubernetes API (Application Programming Interface) через kubeconfig пользователя
 - Хранение истории релизов в Secrets в namespace релиза (не ConfigMaps в kube-system как в v2)
-- Нативная интеграция с RBAC Kubernetes
+- Нативная интеграция с RBAC (Role-Based Access Control) Kubernetes
 - Трёхстороннее слияние (three-way merge) при обновлениях
 
 ### Шаблонизация манифестов
@@ -81,7 +81,7 @@ Helm использует Go template engine с библиотекой Sprig д�
 | Helm | Минимальная версия Kubernetes |
 |------|------------------------------|
 | v3.x | >= 1.13 |
-| v2.x | EOL — не рекомендуется к использованию |
+| v2.x | EOL (End of Life) — не рекомендуется к использованию |
 
 > Helm v3 совместим с Kubernetes 1.13 и выше. На практике рекомендуется использовать кластеры версии 1.24+. Подробности о различиях версий — в [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md).
 
@@ -90,7 +90,7 @@ Helm использует Go template engine с библиотекой Sprig д�
 **Artifact Hub** — центральная площадка для поиска и публикации Helm-чартов (ранее чарты размещались на GitHub в репозитории `helm/charts`). Содержит 13 800+ пакетов с 250 000+ релизами от различных авторов. Каждый чарт на Artifact Hub содержит ссылку на исходный репозиторий с манифестами.
 
 - Поиск: [artifacthub.io](https://artifacthub.io)
-- CLI-поиск: `helm search hub <keyword>` — глобальный поиск по всем зарегистрированным репозиториям
+- CLI-поиск (Command Line Interface): `helm search hub <keyword>` — глобальный поиск по всем зарегистрированным репозиториям
 - CLI-поиск: `helm search repo <keyword>` — поиск только в добавленных локальных репозиториях
 
 **Важно:** Helm 3 не содержит репозиториев по умолчанию. После установки необходимо вручную добавить нужные репозитории через `helm repo add`.
@@ -118,54 +118,13 @@ helm version
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
-### Жизненный цикл релиза
-
-```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-helm search repo nginx
-helm install myapp bitnami/nginx -n production
-helm status myapp -n production
-helm upgrade myapp bitnami/nginx -n production
-helm history myapp -n production
-helm rollback myapp 1 -n production
-helm uninstall myapp -n production
-```
-
-### Многоокружная стратегия
-
-```bash
-# chart/
-#   values.yaml         # базовые значения
-#   values-dev.yaml     # переопределения для dev
-#   values-staging.yaml # переопределения для staging
-#   values-prod.yaml    # переопределения для prod
-
-helm install app ./chart -f values-dev.yaml -n dev
-helm install app ./chart -f values-staging.yaml -n staging
-helm install app ./chart -f values-prod.yaml -n prod --atomic --wait --timeout 10m
-```
-
-### Установка конкретной версии
-
-```bash
-helm install myapp bitnami/nginx --version 13.2.0 -n prod
-helm install myapp ./mychart --atomic --history-max 20 -n prod
-```
-
-### Отладка и тестирование
-
-```bash
-helm template myapp ./chart -f values.yaml
-helm install --dry-run --debug myapp ./chart -f values.yaml
-helm lint ./chart
-```
+*Примечание: Детальные сценарии жизненного цикла релиза, отладки, многоокружной стратегии и установки конкретных версий см. в [Команды и рабочий процесс](./helm_commands_and_workflow.md) и [Практические сценарии чартов](./helm_chart_practical_scenarios.md).*
 
 ### Работа с OCI-реестрами
 
-Современный стандарт публикации чартов — OCI-реестры (Docker Registry, GHCR, Harbor).
+Современный стандарт публикации чартов — OCI-реестры (Docker Registry, GHCR (GitHub Container Registry), Harbor).
 
 ```bash
 helm package ./mychart
@@ -179,7 +138,7 @@ helm registry login registry.example.com -u username -p password
 - Единый интерфейс для контейнеров и чартов
 - Встроенная аутентификация и авторизация
 - Поддержка подписей и верификации
-- Интеграция с CI/CD через docker login
+- Интеграция с CI/CD (Continuous Integration / Continuous Deployment) через docker login
 
 ### Notes — примечания разработчиков чарта
 
@@ -194,6 +153,8 @@ helm registry login registry.example.com -u username -p password
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Детали: [структура чарта](./helm_chart_structure.md), [шаблонизация](./helm_templating.md), [управление версиями](./helm_release_versioning.md), [сравнение v2/v3](./helm_v2_vs_v3.md), [команды и рабочий процесс](./helm_commands_and_workflow.md), [зависимости](./helm_dependencies_and_library_charts.md), [хуки и тесты](./helm_hooks_and_tests.md).
+- [Структура Helm-чарта](./helm_chart_structure.md) — детали организации файлов и каталогов.
+- [Команды и рабочий процесс](./helm_commands_and_workflow.md) — управление релизами, отладка и деплой.
+- [Шаблонизация в Helm](./helm_templating.md) — руководство по функциям и синтаксису.

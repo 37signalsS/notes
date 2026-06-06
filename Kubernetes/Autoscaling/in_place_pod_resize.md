@@ -1,10 +1,10 @@
-# In-Place Pod Resize
+# Изменение ресурсов подов без перезапуска (In-Place Pod Resize)
 
 ## Определения
 
-**In-Place Pod Resize** — функция Kubernetes, позволяющая изменять ресурсы (`requests` и `limits` CPU/memory) у запущенных подов без их пересоздания.
+**In-Place Pod Resize** — функция Kubernetes, позволяющая изменять ресурсы (`requests` и `limits` CPU/memory — запросы и лимиты центрального процессора и оперативной памяти) у запущенных подов без их пересоздания.
 
-**GA (General Availability)** — статус стабильной функции, доступной для production-использования. Стабилизирована в Kubernetes 1.35.
+**GA (General Availability)** — статус стабильной функции, доступной для промышленного (production) использования. Стабилизирована в Kubernetes 1.35.
 
 ## Основные концепции
 
@@ -13,8 +13,8 @@
 **До Kubernetes 1.35:**
 
 * Изменение ресурсов пода требовало перезапуска всех контейнеров.
-* Приводило к простоям, потере состояния и дополнительной нагрузке на кластер.
-* VPA мог только рекомендовать изменения или перезапускать поды.
+* Приводило к простоям, потере состояния и дополнительной нагруке на кластер.
+* VPA (Vertical Pod Autoscaler) мог только рекомендовать изменения или перезапускать поды.
 
 **С Kubernetes 1.35:**
 
@@ -62,6 +62,7 @@ kubectl patch pod my-app-pod --type='merge' -p '{
     }]
   }
 }'
+# → pod/my-app-pod patched
 ```
 
 ### Сценарий 2: Обновление ресурсов через Deployment
@@ -98,12 +99,15 @@ spec:
 ```bash
 # Обновление Deployment
 kubectl apply -f deployment.yaml
+# → deployment.apps/my-app configured
 
 # Проверка статуса обновления
 kubectl rollout status deployment/my-app
+# → deployment "my-app" successfully rolled out
 
 # Проверка ресурсов подов
 kubectl get pod my-app-xyz -o jsonpath='{.spec.containers[0].resources}'
+# → {"limits":{"cpu":"200m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"256Mi"}}
 ```
 
 ### Сценарий 3: Использование с VPA (рекомендуемый подход)
@@ -210,12 +214,17 @@ spec:
 ```bash
 # Проверка версии Kubernetes
 kubectl version --short
+# → Client Version: v1.35.0
+# → Server Version: v1.35.0
 
 # Проверка функции в кластере
 kubectl get apiservice v1.apps -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+# → True
 
 # Проверка kubelet на узлах
 kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}: {.status.nodeInfo.kubeletVersion}{"\n"}{end}'
+# → node-1: v1.35.0
+# → node-2: v1.35.0
 ```
 
 #### Мониторинг изменений ресурсов
@@ -223,21 +232,31 @@ kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}: {.status.nodeI
 ```bash
 # Отслеживание событий обновления ресурсов
 kubectl get events --field-selector reason=UpdatedResources
+# → LAST SEEN   TYPE     REASON             OBJECT           MESSAGE
+# → 2m          Normal   UpdatedResources   pod/my-app-pod   Container resources updated in-place
 
 # Проверка применённых ресурсов
 kubectl top pods --containers
+# → POD          CONTAINER   CPU(cores)   MEMORY(bytes)
+# → my-app-pod   app         150m         300Mi
 
 # Детальная информация о поде
 kubectl describe pod my-app-pod | grep -A 10 "Limits/Requests"
+# → Limits:
+# →   cpu:     500m
+# →   memory:  1Gi
+# → Requests:
+# →   cpu:     250m
+# →   memory:  512Mi
 ```
 
 ### Лучшие практики
 
 * **Тестируйте в staging** — проверяйте поведение приложения перед production.
-* **Мониторьте OOMKilled** — при уменьшении memory limits следите за OOM.
+* **Мониторьте OOMKilled** — при уменьшении memory limits следите за OOM (Out Of Memory — нехватка памяти).
 * **Используйте с VPA** — автоматизируйте подбор ресурсов через VPA + In-Place Resize.
 * **Избегайте частых изменений** — слишком частые обновления могут вызвать нестабильность.
-* **Проверяйте совместимость** — убедитесь, что runtime поддерживает функцию.
+* **Проверяйте совместимость** — убедитесь, что runtime (среда выполнения) поддерживает функцию.
 * **Настройте алерты** — на поды с OOMKilled после изменения лимитов.
 
 ## Дополнительная информация
@@ -249,7 +268,7 @@ In-Place Pod Resize работает в связке с другими комп�
 ### Ограничения
 
 * **Требуется Kubernetes 1.35+** — функция GA только с этой версии.
-* **Поддержка runtime** — containerd и CRI-O поддерживают, Docker требует проверки.
+* **Поддержка runtime** — containerd и CRI-O (CRI — Container Runtime Interface) поддерживают, Docker требует проверки.
 * **Не для всех ресурсов** — только CPU и memory, не работает с ephemeral storage.
 * **Существующие процессы** — могут продолжать использовать старые лимиты до перезапуска.
 
@@ -261,4 +280,4 @@ In-Place Pod Resize работает в связке с другими комп�
 | Stateful (базы данных) | Среднее | Требуется тестирование |
 | Batch-обработка | Низкое | Рекомендуется |
 | Real-time (стриминг) | Среднее | Проверить потерю соединений |
-| Java (JVM) | Высокое | JVM может не увидеть изменения |
+| Java (JVM) | Высокое | JVM (Java Virtual Machine) может не увидеть изменения |

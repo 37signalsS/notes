@@ -1,95 +1,69 @@
-# Calico Operations: Troubleshooting и Обслуживание
+# Операции Calico: Диагностика и обслуживание
+
+В данном разделе описаны процедуры проверки состояния, отладки и технического обслуживания специфичных ресурсов Calico, таких как HostEndpoint и GlobalNetworkPolicy.
 
 > Основная документация: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md)
 
-## Definitions
+## Определения
 
-**Calico Operations** — процедуры проверки состояния, отладки и устранения проблем при использовании HostEndpoint и GlobalNetworkPolicy.
+**Calico Operations** — регламентированные процедуры мониторинга, отладки и устранения неисправностей в сетевой подсистеме Calico, выходящие за рамки стандартных объектов Kubernetes.
 
----
+**calicoctl** — специализированная CLI-утилита для управления ресурсами Calico (HostEndpoint, GlobalNetworkPolicy, FelixConfiguration). Она может работать как через прямое подключение к etcd, так и через Kubernetes API.
 
-## Basic Concepts
+**Felix** — агент Calico, работающий на каждом узле. Felix считывает информацию из базы данных Calico и формирует правила в сетевом стеке узла.
+
+## Основные концепции
 
 ### Инструменты диагностики
 
-**calicoctl** — CLI-утилита для управления ресурсами Calico (HostEndpoint, GlobalNetworkPolicy, FelixConfiguration). Требует доступ к Kubernetes API.
+Для эффективного обслуживания кластера с Calico используются:
+1. **calicoctl**: Основной инструмент для работы с объектами `projectcalico.org/v3`.
+2. ** Felix status**: Позволяет проверить состояние агента на конкретной ноде, включая статус BGP-соседства и применённые политики.
+3. **Логи Felix**: Основной источник информации при поиске причин блокировки трафика или ошибок применения политик.
 
-**Felix status** — статус агента Felix на узле, проверяется через `calicoctl node status`. Показывает состояние BGP-пиров, применённых политик и маршрутов.
+## Практические сценарии
 
----
+### Проверка состояния компонентов
 
-## Practical Scenarios
-
-### Проверка состояния
+Основные команды для аудита текущей конфигурации Calico:
 
 ```bash
-# Список HostEndpoint
+# Просмотр всех HostEndpoint в кластере
 calicoctl get hostendpoints -o wide
 
-# Детали конкретного HostEndpoint
-calicoctl get hostendpoint <name> -o yaml
-
-# Применённые политики
+# Просмотр всех глобальных сетевых политик
 calicoctl get globalnetworkpolicy -o wide
 
-# Статус Felix (на узле)
+# Проверка статуса узла (BGP, Felix)
 calicoctl node status
 ```
 
-### Troubleshooting
+### Устранение типовых проблем (Troubleshooting)
 
-| Проблема | Возможная причина | Решение |
-|----------|-------------------|---------|
-| Блокировка SSH после применения | Отсутствует `node-endpoint-type` метка | Добавить метку, применить политику до HostEndpoint |
-| NodePort не фильтруется | `preDNAT: false` | Установить `preDNAT: true` |
-| BGP не работает | Блокировка порта 179 | Разрешить BGP в политике |
-| DNS не работает | Блокировка outbound 53 | Добавить egress правило для DNS |
+| Проблема | Причина | Решение |
+|----------|---------|---------|
+| Потеря доступа по SSH после создания HostEndpoint | Не применены разрешающие политики или отсутствует метка на интерфейсе | Проверить наличие метки на HostEndpoint и существование политики с `action: Allow` для порта 22 |
+| Политики не влияют на NodePort | Не включен режим `preDNAT` | Убедиться, что в GlobalNetworkPolicy установлено `preDNAT: true` |
+| Ошибки BGP-соседства | Трафик на порт 179/TCP заблокирован внешним или внутренним файрволом | Разрешить порт 179 между всеми узлами кластера |
+| Не работают DNS-запросы из Pod'ов | Исходящий трафик на порт 53 заблокирован Egress-политикой | Добавить разрешающее Egress-правило для UDP/TCP порта 53 |
 
-### NodePort фильтрация
+### Особенности фильтрации NodePort
 
-Трафик на `NodePort` может обходить политики из-за особенностей реализации в `iptables` и порядка применения правил до/после DNAT.
+Трафик на порты `NodePort` часто требует особого внимания из-за трансляции адресов (DNAT). Для его корректной фильтрации на уровне узла необходимо использовать политики с флагом `preDNAT: true`.
 
-**Решение:**
+*Подробнее о настройке: [Сценарии Calico — Периметральный файрвол](./scenarios.md)*
 
-- Использовать `preDNAT: true` + явные правила для портов NodePort
-- Рассмотреть `LoadBalancer` вместо `NodePort`
-- Использовать `eBPF` режим Calico (более предсказуемое поведение)
+### Режим eBPF в Calico
 
-### Изменение IP узлов
+Calico поддерживает современный режим обработки трафика через **eBPF**, который заменяет использование `iptables`. Это обеспечивает более высокую производительность и упрощает работу с NodePort и сохранением Source IP.
 
-При изменении IP узла требуется обновить `expectedIPs` в `HostEndpoint`:
+**Активация и детальная настройка:** Процедура включения eBPF и его преимущества подробно описаны в разделе **[eBPF в Kubernetes: Замена kube-proxy](../../../Networking/Network/CNI/ebpf.md)**.
 
-```bash
-calicoctl get hostendpoint <name> -o yaml | \
-  sed 's/old-ip/new-ip/' | \
-  calicoctl apply -f -
-```
+## Дополнительная информация
 
-### eBPF режим
+### Связанные ресурсы
 
-Calico поддерживает режим `eBPF` для замены `iptables`. Преимущества: выше производительность, предсказуемое поведение с NodePort, встроенная замена `kube-proxy`.
-
-**Включение:**
-
-```yaml
-# В calico-config ConfigMap
-- name: FELIX_BPFENABLED
-  value: "true"
-```
-
-> **Подробнее:** [eBPF в Calico](../../../Networking/Network/CNI/ebpf.md)
-
-### Совместимость версий
-
-| Calico | Kubernetes | Статус |
-|--------|------------|--------|
-| v3.28.x | 1.28–1.31 | ⚠️ Проверить |
-| v3.31.x | 1.28–1.32 | ✅ Рекомендуется |
-
-Всегда проверяйте [официальную матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases).
-
----
-
-## Additional Information
-
-Связанные ресурсы: [Calico HostEndpoint и GlobalNetworkPolicy](./index.md), [Сценарии Calico](./scenarios.md), [NetworkPolicy](../../network_policies.md), [Сетевая модель](../../../Networking/Network/network_overview.md), [eBPF в Calico](../../../Networking/Network/CNI/ebpf.md).
+* **Концепции**: [Calico HostEndpoint и GlobalNetworkPolicy — Определения](./index.md).
+* **Практика**: [Практические сценарии Calico](./scenarios.md).
+* **Сетевая модель**: [Обзор сетевой модели Kubernetes](../../../Networking/Network/network_overview.md).
+* **Базовый стандарт**: [NetworkPolicy: Определения](../../../Networking/Network/NetworkPolicy/definitions.md).

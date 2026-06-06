@@ -1,41 +1,41 @@
-# NOTES.txt Post-Install Instructions
+# Инструкции NOTES.txt после установки
 
 ---
 
-## Definitions
+## Определения
 
-**NOTES.txt** — специальный шаблон в `templates/NOTES.txt`, содержимое которого рендерится и выводится в консоль после `helm install` или `helm upgrade`. Не создаёт Kubernetes-ресурсов.
+**NOTES.txt** — специальный шаблон в директории `templates/NOTES.txt`, содержимое которого рендерится и выводится в CLI (Command Line Interface) после выполнения команд `helm install` или `helm upgrade`. Не создаёт ресурсов в Kubernetes.
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
-NOTES.txt — единственный файл в директории `templates/`, который **не рендерится в YAML-манифест**. Его вывод отображается пользователю как информационное сообщение.
+`NOTES.txt` — единственный файл в директории `templates/`, который **не рендерится в YAML (YAML Ain't Markup Language) манифест**. Его вывод отображается пользователю как информационное сообщение.
 
 ### Особенности
 
-- **Не создаёт ресурсы** — содержимое выводится в stdout, а не отправляется в Kubernetes API.
+- **Не создаёт ресурсы** — содержимое выводится в стандартный поток вывода (stdout), а не отправляется в API (Application Programming Interface) Kubernetes.
 - **Полноценный шаблон** — поддерживает все конструкции Helm: `if/else`, `range`, `include`, функции.
-- **Один файл** — Helm ожидает ровно один `templates/NOTES.txt`.
-- **Подавление вывода** — пустой файл или `--no-hooks` не влияют; для подавления используется `helm install --render-subchart-notes` или удаление содержимого.
+- **Один файл** — Helm ожидает ровно один файл `templates/NOTES.txt`.
+- **Подавление вывода** — пустой файл или флаг `--no-hooks` не влияют на вывод заметок; для управления отображением в субчартах используется флаг `helm install --render-subchart-notes`.
 
 ### Когда применять
 
 | Сценарий | Содержание NOTES.txt |
 |----------|---------------------|
-| LoadBalancer | Команда `kubectl get svc -w` для ожидания IP |
-| NodePort | URL с `kubectl port-forward` |
-| ClusterIP | Инструкция по port-forward |
-| Ingress | Список хостов и URL |
-| Многокомпонентный чарт | Предупреждения о дополнительных шагах (миграции, секреты) |
+| LoadBalancer | Команда `kubectl get svc -w` для ожидания IP (Internet Protocol) адреса |
+| NodePort | URL (Uniform Resource Locator) с использованием `kubectl port-forward` |
+| ClusterIP | Инструкция по настройке port-forward |
+| Ingress | Список хостов и внешних URL |
+| Многокомпонентный чарт | Предупреждения о дополнительных шагах (миграции баз данных, секреты) |
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовый NOTES.txt с условной логикой
 
-```
+```text
 Thank you for installing {{ .Chart.Name }}.
 
 Your release is named {{ .Release.Name }}.
@@ -68,11 +68,11 @@ To learn more about the release, try:
 {{- end }}
 ```
 
-### NOTES.txt с извлечением IP из Service
+### NOTES.txt с извлечением IP из Service через lookup
 
-Получение реального IP LoadBalancer после деплоя:
+Функция `lookup` позволяет прочитать текущее состояние кластера во время рендеринга. Работает только при `helm install`/`upgrade`, не работает при `helm template`.
 
-```
+```text
 {{- $svc := lookup "v1" "Service" .Release.Namespace (include "myapp.fullname" .) }}
 {{- if and $svc (eq $svc.spec.type "LoadBalancer") }}
 {{- $ip := index $svc.status.loadBalancer.ingress 0 }}
@@ -83,11 +83,11 @@ To learn more about the release, try:
 {{- end }}
 ```
 
-Функция `lookup` позволяет прочитать текущее состояние кластера во время рендеринга. Работает только при `helm install`/`upgrade`, не работает при `helm template`.
-
 ### NOTES.txt для многокомпонентного чарта
 
-```
+Вывод информации о компонентах и способах получения паролей из секретов:
+
+```text
 {{- $fullName := include "myapp.fullname" . -}}
 
 Components installed:
@@ -125,14 +125,17 @@ Run `kubectl port-forward svc/{{ include "myapp.fullname" . }} 8080:{{ .Values.s
 {{- end }}
 ```
 
-Использование в `NOTES.txt`:
+Использование в файле `NOTES.txt`:
 
-```
+```text
 {{ include "myapp.notes" . }}
 ```
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-Синтаксис шаблонов — в [Синтаксис Helm-шаблонов](../syntax.md). Именованные шаблоны — в [Именованные шаблоны и хелперы](../_helpers.md). Функция `lookup` — в [Функции Helm](../functions.md).
+- [Синтаксис Helm-шаблонов](../syntax.md) — базовые конструкции `if/else` и `range`
+- [Именованные шаблоны и хелперы](../_helpers.md) — работа с `define` и `include`
+- [Функции Helm](../functions.md) — подробнее о функции `lookup`
+- [Обзор сценариев шаблонизации](./overview.md) — оглавление практических примеров

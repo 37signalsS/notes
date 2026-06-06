@@ -1,19 +1,22 @@
-# Role и ClusterRole
+# Роли (Role) и кластерные роли (ClusterRole)
 
 ## Определения
 
-**Role** — объект Kubernetes, определяющий набор разрешений в рамках одного [namespace](./rbac_overview.md). Может предоставлять доступ только к namespaced-ресурсам (pods, services, configmaps и т.д.).
+<a name="role"></a>
+- **Role** — объект, определяющий набор разрешений в рамках одного [пространства имён (namespace)](./rbac_overview.md). Предоставляет доступ только к ресурсам, ограниченным пространством имён (pods, services, configmaps).
+<a name="clusterrole"></a>
+- **ClusterRole** — объект, определяющий набор разрешений на уровне всего кластера. Предоставляет доступ к кластерным ресурсам (nodes, persistentvolumes), нересурсным URL или ко всем пространствам имён одновременно.
 
-**ClusterRole** — объект Kubernetes, определяющий набор разрешений на уровне всего кластера. Может предоставлять доступ к кластерным ресурсам ([nodes](#nodes), persistentvolumes), нересурсным URL (/healthz) или ко всем namespace.
+Подробное описание архитектуры **RBAC (Role-Based Access Control — управление доступом на основе ролей)** приведено в файле **[Обзор RBAC](./rbac_overview.md)**.
 
 ### Предупреждения
 
-- **CVE-2021-25740 (v1.22+):** В новых кластерах доступ на запись к EndpointSlices удалён из агрегируемых ролей `admin`/`edit`
-- **Префикс `system:`** — зарезервирован для системных компонентов. Не создавайте роли с этим префиксом
+- **Безопасность объектов:** использование префикса `system:` зарезервировано для системных компонентов. См. раздел **[Предупреждения безопасности](./rbac_overview.md#preduprezhdeniya-bezopasnosti)**.
+- **CVE (Common Vulnerabilities and Exposures — общеизвестные уязвимости и экспозиции) 2021-25740 (v1.22+):** В новых кластерах доступ на запись к `EndpointSlices` удалён из агрегируемых ролей `admin`/`edit`. Подробности и способы восстановления описаны в разделе **[Агрегируемые ClusterRole](./aggregation_scenarios.md#cve-2021-25740)**.
 
 ## Основные концепции
 
-### Структура правил (`rules`)
+### Структура правил (rules)
 
 Каждая роль содержит список правил, определяющих разрешённые действия:
 
@@ -21,14 +24,14 @@
 |------|----------|--------|
 | `apiGroups` | API-группы ресурсов | `""` (core), `"apps"`, `"rbac.authorization.k8s.io"` |
 | `resources` | Типы ресурсов | `pods`, `deployments`, `configmaps` |
-| `verbs` | Действия | `get`, `list`, `watch`, `create`, `update`, `delete` |
+| `verbs` | Действия (глаголы) | `get`, `list`, `watch`, `create`, `update`, `delete` |
 | `resourceNames` | Ограничение по именам | `["my-config"]` — доступ только к конкретному ресурсу |
 | `nonResourceURLs` | Нересурсные пути | `/healthz`, `/metrics` |
 
-### Verbs (глаголы)
+### Глаголы (Verbs)
 
-| Verb | Описание | Когда использовать |
-|------|----------|-------------------|
+| Глагол (Verb) | Описание | Когда использовать |
+|---------------|----------|-------------------|
 | `get` | Получение одного ресурса по имени | Чтение конкретного объекта |
 | `list` | Получение списка ресурсов | Перечисление объектов |
 | `watch` | Отслеживание изменений ресурсов | Для контроллеров и операторов |
@@ -45,39 +48,26 @@
 
 | Критерий | Role | ClusterRole |
 |----------|------|-------------|
-| **Область** | Один namespace | Весь кластер или все namespace |
-| **Ресурсы** | Только namespaced | Кластерные + namespaced |
-| **Привязка** | [RoleBinding](./bindings.md#rolebinding) | [ClusterRoleBinding](./bindings.md#clusterrolebinding) или [RoleBinding](./bindings.md#rolebinding) |
+| **Область действия** | Один namespace | Весь кластер или все namespace |
+| **Ресурсы** | Только ресурсы в namespace | Кластерные + ресурсы в namespace |
+| **Привязка** | [RoleBinding](./bindings.md) | [ClusterRoleBinding](./bindings.md) или [RoleBinding](./bindings.md) |
 | **Агрегация** | Нет | Да ([aggregationRule](./aggregation_scenarios.md)) |
 | **resourceNames** | Поддерживается | Поддерживается |
 | **nonResourceURLs** | Нет | Да (`/healthz`, `/metrics`) |
 
-### Лучшие практики выбора
+### Рекомендации по выбору
 
 | Сценарий | Рекомендуемый объект | Обоснование |
 |----------|---------------------|-------------|
 | Доступ к ресурсам в одном namespace | Role | Изоляция, минимальные привилегии |
 | Мониторинг всех namespace (Prometheus) | ClusterRole + RoleBinding | Глобальное чтение с ограниченной привязкой |
 | Административные операции | ClusterRole + ClusterRoleBinding | Глобальный доступ для админов |
-| Кросс-namespace доступ к Secrets | ClusterRole + RoleBinding per namespace | Контролируемый доступ |
+| Кросс-namespace доступ к Secrets | ClusterRole + RoleBinding в каждом NS | Контролируемый доступ |
 | Доступ к нересурсным URL | ClusterRole | Только ClusterRole поддерживает `nonResourceURLs` |
-
-### Где использовать Role
-
-- Доступ к ресурсам в конкретном namespace
-- Изоляция команд/проектов
-- Делегирование прав без глобального доступа
-
-### Где использовать ClusterRole
-
-- Доступ к кластерным ресурсам (nodes, persistentvolumes)
-- Мониторинг всех namespace (Prometheus)
-- Административные операции
-- [Агрегируемые роли](./aggregation_scenarios.md)
 
 ## Практические сценарии
 
-### Примеры Role
+### Примеры манифестов Role
 
 ```yaml
 # Чтение pods и services в namespace
@@ -105,7 +95,7 @@ rules:
   verbs: ["get", "list", "watch", "create", "update", "delete"]
 ```
 
-### Примеры ClusterRole
+### Примеры манифестов ClusterRole
 
 ```yaml
 # Глобальное чтение нод
@@ -120,20 +110,6 @@ rules:
 ```
 
 ```yaml
-# Чтение секретов во всех namespace (ОПАСНО!)
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: cross-namespace-secret-reader
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list"]
-```
-
-> **Предупреждение:** Предоставление прав на `list`/`watch` Secrets раскрывает содержимое всех секретов. Используйте с осторожностью.
-
-```yaml
 # Доступ к нересурсным URL
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -144,10 +120,12 @@ rules:
   verbs: ["get"]
 ```
 
-### Привязка ClusterRole к namespace
+### Привязка ClusterRole к конкретному namespace
+
+Для предоставления разрешений, определенных в ClusterRole, только в рамках одного namespace, используется RoleBinding.
 
 ```yaml
-# ClusterRole для чтения секретов
+# 1. ClusterRole для чтения секретов (создается один раз)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -157,7 +135,7 @@ rules:
   resources: ["secrets"]
   verbs: ["get", "list", "watch"]
 ---
-# Даем группе 'devs' права на просмотр секретов только в namespace 'staging'
+# 2. RoleBinding в конкретном namespace
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -175,29 +153,25 @@ roleRef:
 
 ## Дополнительная информация
 
-### Агрегируемые ClusterRole
-
-ClusterRole поддерживают [динамическую агрегацию](./aggregation_scenarios.md) через `aggregationRule`.
-
+<a name="vstroennye-roli"></a>
 ### Встроенные роли
 
-Kubernetes предоставляет встроенные ClusterRole:
+Kubernetes предоставляет стандартные ClusterRole для типичных задач:
 
-- `cluster-admin` — полный доступ
-- `admin` — админ в рамках namespace
-- `edit` — чтение и запись
-- `view` — только чтение
+- `cluster-admin` — полный доступ к кластеру.
+- `admin` — административные права в рамках namespace (за исключением квот).
+- `edit` — чтение и запись объектов в namespace.
+- `view` — доступ только на чтение (исключая Secrets).
 
 ### Лучшие практики
 
-1. **Избегайте wildcard:** Не используйте `resources: ["*"]` и `verbs: ["*"]`
-2. **Используйте resourceNames:** Ограничивайте доступ конкретными ресурсами
-3. **Принцип наименьших привилегий:** Начинайте с минимальных прав и добавляйте по необходимости
-4. **Аудит:** Регулярно проверяйте роли с помощью `kubectl auth can-i --list`
+1. **Избегайте использования подстановочных знаков (`*`):** Не используйте неограниченные права для ресурсов и глаголов.
+2. **Используйте `resourceNames`:** Ограничивайте доступ конкретными экземплярами ресурсов.
+3. **Принцип наименьших привилегий:** Предоставляйте только тот минимум прав, который необходим для работы.
+4. **Агрегация:** Для расширения стандартных ролей используйте [aggregationRule](./aggregation_scenarios.md).
 
 ### Связанные темы
 
-- Общий обзор RBAC: [RBAC Overview](./rbac_overview.md)
-- Привязки ролей: [RoleBinding и ClusterRoleBinding](./bindings.md)
-- Практические сценарии: [Агрегируемые ClusterRole](./aggregation_scenarios.md)
-- Ограничения RBAC: [Недостатки RBAC и OPA](./limitations_opa.md)
+- **[Общий обзор RBAC](./rbac_overview.md)**
+- **[Привязки ролей (RoleBinding)](./bindings.md)**
+- **[Агрегируемые ClusterRole](./aggregation_scenarios.md)**

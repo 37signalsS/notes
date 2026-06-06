@@ -10,13 +10,13 @@
 
 ---
 
-## Основные концепции
+## Базовые концепции
 
-### Pipeline
+### Пайплайны (Pipelines)
 
-Функции комбинируются через пайплайн (`|`) — результат одной передаётся в следующую. Подробнее о синтаксисе пайплайна и whitespace control — [syntax.md](./syntax.md).
+Функции комбинируются через пайплайн (`|`) — результат одной передаётся в следующую. Подробнее о синтаксисе пайплайна и управлении пробелами (whitespace control) — [syntax.md](./syntax.md).
 
-### Scope (контекст)
+### Область видимости (Scope)
 
 Точка (`.`) — текущий контекст. Внутри `range` точка меняется на текущий элемент. Для доступа к корневому контексту используют `$`:
 
@@ -27,7 +27,7 @@ release: {{ $.Release.Name }}
 {{- end }}
 ```
 
-### Sprig в Helm
+### Библиотека Sprig в Helm
 
 Sprig подключён автоматически — не требует импорта. Документация: [sprig-docs](https://masterminds.github.io/sprig/).
 
@@ -48,15 +48,15 @@ Sprig подключён автоматически — не требует им
 | `printf` | Форматированная строка | `{{ printf "%s-%s" .Chart.Name .Release.Name }}` |
 | `ternary` | Условное выражение (ternary operator) | `{{ .Values.debug \| ternary "debug" "info" }}` |
 
-### Коллекции и YAML
+### Коллекции и YAML / JSON
 
 | Функция | Назначение | Пример |
 |---------|------------|--------|
-| `toYaml` | Сериализация объекта в YAML | `{{ toYaml .Values.nodeSelector }}` |
+| `toYaml` | Сериализация объекта в YAML (YAML Ain't Markup Language) | `{{ toYaml .Values.nodeSelector }}` |
 | `nindent` | Отступ для YAML-блока с переносом строки | `{{ toYaml .Values.tolerations \| nindent 8 }}` |
 | `indent` | Только отступ (без переноса первой строки) | `{{ .Values.config \| indent 4 }}` |
-| `toJson` / `fromJson` | Сериализация/парсинг JSON | `{{ .Values.data \| toJson }}` |
-| `toToml` | Сериализация в TOML | `{{ .Values.config \| toToml }}` |
+| `toJson` / `fromJson` | Сериализация/парсинг JSON (JavaScript Object Notation) | `{{ .Values.data \| toJson }}` |
+| `toToml` | Сериализация в TOML (Tom's Obvious, Minimal Language) | `{{ .Values.config \| toToml }}` |
 | `merge` | Слияние словарей | `{{ merge $base $override }}` |
 | `mergeOverwrite` | Слияние с перезаписью существующих ключей | `{{ mergeOverwrite $base $override }}` |
 | `omit` | Удаление ключей из словаря | `{{ omit $dict "key1" "key2" }}` |
@@ -78,7 +78,7 @@ Sprig подключён автоматически — не требует им
 
 | Функция | Назначение | Пример |
 |---------|------------|--------|
-| `sha256sum` | Вычисление SHA256-хеша | `{{ .Values.data \| sha256sum }}` |
+| `sha256sum` | Вычисление SHA256 (Secure Hash Algorithm 256-bit) хеша | `{{ .Values.data \| sha256sum }}` |
 | `b64enc` | Base64 кодирование | `{{ .Values.data \| b64enc }}` |
 | `b64dec` | Base64 декодирование | `{{ .Values.data \| b64dec }}` |
 
@@ -86,11 +86,11 @@ Sprig подключён автоматически — не требует им
 
 | Функция | Назначение | Пример |
 |---------|------------|--------|
-| `semverCompare` | Сравнение semver-версий | `{{ if semverCompare ">=1.23-0" .Capabilities.KubeVersion.Version }}` |
+| `semverCompare` | Сравнение semver (Semantic Versioning) версий | `{{ if semverCompare ">=1.23-0" .Capabilities.KubeVersion.Version }}` |
 
 ---
 
-## Примеры использования
+## Практические сценарии
 
 ### toYaml и nindent
 
@@ -114,16 +114,16 @@ spec:
 image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
 ```
 
-### required — обязательные параметры
+### Использование required для обязательных параметров
 
 ```yaml
 {{- $image := required "Values.image.repository обязателен" .Values.image.repository }}
 image: "{{ $image }}"
 ```
 
-### tpl — рендер строки как шаблона
+### Динамический рендер через tpl
 
-Позволяет динамически генерировать конфигурацию:
+Позволяет генерировать конфигурацию на основе строк из `values.yaml`:
 
 ```yaml
 {{- $context := . }}
@@ -144,9 +144,9 @@ image: "{{ $image }}"
 `lower`, `upper`, `title`, `quote`, `squote`, `trim`, `trimSuffix`, `trimPrefix`, `replace`, `repeat`, `substr`:
 
 ```go
-{{ "hello" | upper }}              → "HELLO"
-{{ "my-app-v1" | trimPrefix "my-" }} → "app-v1"
-{{ "text" | repeat 3 }}            → "texttexttext"
+{{ "hello" | upper }}              # → "HELLO"
+{{ "my-app-v1" | trimPrefix "my-" }} # → "app-v1"
+{{ "text" | repeat 3 }}            # → "texttexttext"
 ```
 
 ### Коллекции
@@ -154,9 +154,9 @@ image: "{{ $image }}"
 `first`, `last`, `rest`, `append`, `prepend`, `reverse`, `uniq`, `without`, `concat`:
 
 ```go
-{{ list "a" "b" "c" | first }}     → "a"
-{{ list "a" "b" | append "c" }}    → [a b c]
-{{ list "a" "a" "b" | uniq }}      → [a b]
+{{ list "a" "b" "c" | first }}     # → "a"
+{{ list "a" "b" | append "c" }}    # → [a b c]
+{{ list "a" "a" "b" | uniq }}      # → [a b]
 ```
 
 ### Математика
@@ -164,9 +164,9 @@ image: "{{ $image }}"
 `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `ceil`, `floor`:
 
 ```go
-{{ add 2 3 }}                      → 5
-{{ div 10 3 }}                     → 3
-{{ mul 1024 1024 }}                → 1048576
+{{ add 2 3 }}                      # → 5
+{{ div 10 3 }}                     # → 3
+{{ mul 1024 1024 }}                # → 1048576
 ```
 
 ### Даты
@@ -174,8 +174,8 @@ image: "{{ $image }}"
 `now`, `date`, `dateModify`, `htmlDate`:
 
 ```go
-{{ now | date "2006-01-02" }}      → "2026-04-03"
-{{ now | dateModify "+24h" }}      → время через 24 часа
+{{ now | date "2006-01-02" }}      # → "2026-04-03"
+{{ now | dateModify "+24h" }}      # → время через 24 часа
 ```
 
 ### Криптография
@@ -183,15 +183,15 @@ image: "{{ $image }}"
 `sha256sum`, `sha512sum`, `b64enc`, `b64dec`, `derivePassword`:
 
 ```go
-{{ "secret" | sha256sum }}         → 256-битный хеш
-{{ "secret" | b64enc }}            → "c2VjcmV0"
+{{ "secret" | sha256sum }}         # → 256-битный хеш
+{{ "secret" | b64enc }}            # → "c2VjcmV0"
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Best practices
+### Лучшие практики
 
 - **`nindent` вместо `indent`** — `nindent` добавляет перенос строки перед отступом, что корректно для YAML-блоков.
 - **`include` вместо `template`** — `include` возвращает строку, которую можно пайпить в другие функции.
@@ -199,7 +199,7 @@ image: "{{ $image }}"
 - **`required` для критичных значений** — предотвращает деплой без обязательных параметров.
 - **`lookup` требует `--dry-run=false`** — не работает при обычном `helm template`.
 
-### Troubleshooting
+### Устранение неисправностей
 
 | Ошибка | Причина | Решение |
 |--------|---------|---------|
@@ -208,4 +208,4 @@ image: "{{ $image }}"
 | `fail` при рендере | Сработал `required` или `fail` | Убедитесь, что все обязательные значения переданы |
 | `lookup` возвращает nil | Ресурс не найден или `--dry-run` | Проверяйте `{{ if $result }}` перед использованием |
 
-[Синтаксис шаблонов](./syntax.md) · [Встроенные объекты](./objects.md) · [Именованные шаблоны](./_helpers.md) · [Обзор шаблонизации](../helm_templating.md)
+[Синтаксис шаблонов](./syntax.md) · [Встроенные объекты](./objects.md) · [Обзор шаблонизации](../helm_templating.md)

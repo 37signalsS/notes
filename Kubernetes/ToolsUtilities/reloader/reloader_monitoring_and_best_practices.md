@@ -1,117 +1,119 @@
-# Reloader — Мониторинг и отладка
+# Reloader — Мониторинг, отладка и лучшие практики
 
-## Definitions
+## Определения
 
-**Мониторинг Reloader** — набор практик и инструментов для отслеживания состояния контроллера Reloader, диагностики проблем и верификации корректности обработки изменений ConfigMap/Secret.
+**Мониторинг Reloader** — набор практик и инструментов для отслеживания состояния контроллера Reloader, диагностики проблем и верификации корректности обработки изменений объектов `ConfigMap` и `Secret`.
 
-**SSoT:** [Обзор и концепции Reloader](./reloader_overview.md)
+**Лучшие практики (Best Practices)** — проверенные методы настройки и эксплуатации Reloader для обеспечения стабильности Kubernetes-кластера и предсказуемости обновлений.
+
+**Основной источник:** [Обзор и концепции Reloader](./reloader_overview.md)
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
-### Эндпоинты Reloader
+### Эндпоинты контроллера
+
+Reloader предоставляет HTTP-эндпоинты (точки доступа) для проверки состояния и сбора метрик:
 
 | Эндпоинт | Назначение | Порт |
 | :--- | :--- | :--- |
-| `/healthz` | Liveness probe | 9090 |
-| `/readyz` | Readiness probe | 9090 |
+| `/healthz` | Liveness probe (проверка живучести) | 9090 |
+| `/readyz` | Readiness probe (проверка готовности) | 9090 |
+| `/metrics` | Метрики в формате Prometheus | 9090 |
 
 ### Уровни логирования
 
-| Уровень | Когда использовать |
-| :--- | :--- |
-| `info` | Production (по умолчанию) |
-| `debug` | Отладка проблем |
+Настройка уровня детализации логов выполняется через флаг `--log-level`:
+
+- **`info`** — основные события: запуск, обнаружение изменений, инициирование перезагрузки.
+- **`debug`** — детальная информация о процессе сканирования ресурсов и сопоставления зависимостей. Рекомендуется только для отладки.
+
+### Метрики Prometheus
+
+Reloader экспортирует следующие ключевые метрики:
+- `reloader_success_reload_total` — общее количество успешных перезагрузок.
+- `reloader_failure_reload_total` — количество неудачных попыток перезагрузки.
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Проверка состояния контроллера
 
 ```bash
-# Статус deployment
+# Проверка статуса развёртывания (Deployment)
 kubectl get deployment reloader -n monitoring
 
-# Статус подов
+# Проверка состояния подов (Pods)
 kubectl get pods -n monitoring -l app=reloader
 
-# Детали
+# Получение детальной информации
 kubectl describe deployment reloader -n monitoring
 ```
 
-### Сценарий 2: Просмотр логов
+### Сценарий 2: Анализ логов
 
 ```bash
 kubectl logs -f deployment/reloader -n monitoring
 ```
 
-**Типичный вывод при срабатывании:**
+**Пример вывода при успешном срабатывании (июнь 2026):**
 
-```
-time="2025-01-15T10:30:45Z" level=info msg="Reloader started"
-time="2025-01-15T10:30:46Z" level=info msg="Watching for changes in namespace: default"
-time="2025-01-15T10:31:00Z" level=info msg="ConfigMap 'openresty-index-html' updated in namespace 'default'"
-time="2025-01-15T10:31:01Z" level=info msg="Triggering rolling upgrade for Deployment 'openresty-deployment'"
-```
-
-### Сценарий 3: Отладка проблем
-
-**Проверка, что Reloader видит изменения:**
-
-```bash
-# Логи с отладочным уровнем (если включён --log-level=debug)
-kubectl logs -f deployment/reloader -n monitoring --tail=100
+```text
+time="2026-06-06T10:30:45Z" level=info msg="Reloader started"
+time="2026-06-06T10:30:46Z" level=info msg="Watching for changes in namespace: default"
+time="2026-06-06T10:31:00Z" level=info msg="ConfigMap 'app-config' updated in namespace 'default'"
+time="2026-06-06T10:31:01Z" level=info msg="Triggering rolling upgrade for Deployment 'myapp'"
 ```
 
-**Проверка, что rollout произошёл:**
+### Сценарий 3: Диагностика отсутствия реакции
 
-```bash
-# История rollout для deployment
-kubectl rollout history deployment/<имя-deployment> -n <namespace>
+Если `ConfigMap`/`Secret` изменён, но поды не перезапускаются:
 
-# Статус последнего rollout
-kubectl rollout status deployment/<имя-deployment> -n <namespace>
-```
+1.  **Проверка аннотаций:** убедитесь, что аннотация добавлена в `metadata` самого `Deployment`/`StatefulSet`, а не во вложенный `template`.
+    ```bash
+    kubectl get deployment <имя> -o yaml | grep -A2 reloader.stakater.com
+    ```
+2.  **Проверка RBAC (Role-Based Access Control):** убедитесь, что у ServiceAccount контроллера есть права на `watch` ресурсов в целевом пространстве имён (Namespace).
+    ```bash
+    kubectl auth can-i watch configmaps --as=system:serviceaccount:monitoring:reloader
+    ```
+3.  **Фильтры Namespace:** проверьте, не включены ли флаги `--namespaces-to-ignore` или `--namespaces-to-select`, ограничивающие область работы контроллера.
 
-**Проверка, что поды перезапустились:**
+### Сценарий 4: Применение лучших практик
 
-```bash
-# AGE подов должен быть небольшим
-kubectl get pods -n <namespace> -l app=<имя-приложения>
-```
+Для надёжной работы Reloader рекомендуется следовать этим правилам:
 
-### Сценарий 4: Диагностика отсутствия реакции
-
-Если ConfigMap/Secret изменён, а Reloader не реагирует:
-
-1. **Проверить аннотации** на workload'е:
-
-   ```bash
-   kubectl get deployment <имя> -n <namespace> -o yaml | grep -A2 reloader
-   ```
-
-2. **Проверить логи Reloader** — нет ли ошибок:
-
-   ```bash
-   kubectl logs deployment/reloader -n monitoring | grep -i error
-   ```
-
-3. **Проверить RBAC** — есть ли доступ к secrets/configmaps:
-
-   ```bash
-   kubectl auth can-i get configmaps --as=system:serviceaccount:monitoring:reloader
-   ```
+1.  **Явные аннотации вместо `auto`:** используйте `configmap.reloader.stakater.com/reload`, чтобы избежать случайных перезагрузок при изменении не связанных с приложением ресурсов.
+2.  **Изоляция системных ресурсов:** всегда добавляйте системные пространства имён (`kube-system`, `kube-public`) в список исключений через флаг `--namespaces-to-ignore`.
+3.  **Ограничение ресурсов (Resource Quotas):** обязательно задавайте `limits` и `requests` для CPU (Central Processing Unit) и памяти контроллера, чтобы он не влиял на работу бизнес-приложений.
+4.  **Стратегия для GitOps:** при использовании ArgoCD или FluxCD применяйте стратегию обновления `annotations` вместо `env-vars`, чтобы избежать расхождений (drift) между желаемым и текущим состоянием манифестов.
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Интеграция с Prometheus
+### Мониторинг в кластере
 
-Service Reloader экспортирует метрики на порту 9090. Можно настроить ServiceMonitor для Prometheus.
+Для автоматического сбора метрик рекомендуется создать объект `ServiceMonitor` (если используется Prometheus Operator):
 
-### Полезные ссылки
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: reloader
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: reloader
+  endpoints:
+    - port: http
+      path: /metrics
+```
+
+### Ресурсы
 
 - [GitHub: stakater/Reloader](https://github.com/stakater/Reloader)
+- [Практические сценарии использования](./reloader_usage_scenarios.md)

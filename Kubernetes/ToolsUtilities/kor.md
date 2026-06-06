@@ -230,12 +230,8 @@ echo "=== Kor cleanup finished at $(date) ===" >> $LOG_FILE
 4. Запускать регулярно по расписанию для поддержания чистоты
 5. Интегрировать с уведомлениями (Slack, email) для отчётов
 
-### Связанные документы
+### Смотрите также
 
-- **[ConfigMap](../Base/ConfigMap/pod_usage.md)** — использование ConfigMap в подах
-- **[Secrets](../Security/application_secrets_management.md)** — управление секретами
-- **[RBAC](../Security/rbac/rbac_overview.md)** — роли и привязки
-
-### Репозиторий и документация
-
-- [GitHub: yonahd/kor](https://github.com/yonahd/kor)
+- [ConfigMap](../Base/ConfigMap/pod_usage.md) — использование ConfigMap в подах.
+- [Secrets](../Security/application_secrets_management.md) — управление секретами.
+- [Официальный репозиторий GitHub: yonahd/kor](https://github.com/yonahd/kor) — исходный код и документация.

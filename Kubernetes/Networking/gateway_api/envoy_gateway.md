@@ -1,68 +1,57 @@
-# Envoy Gateway
+# Envoy Gateway — реализация Gateway API
 
 ## Определения
 
-**Envoy Gateway** — официальная реализация Gateway API от проекта Envoy Proxy. Работает по модели контроллера: отслеживает манифесты Gateway API и управляет отдельными подами Envoy Proxy. На каждый `Gateway` создаётся отдельный экземпляр Envoy Proxy.
+**Envoy Gateway** — официальная реализация спецификации Gateway API от сообщества Envoy Proxy. Контроллер управляет жизненным циклом инфраструктуры прокси-серверов, преобразуя высокоуровневые манифесты Kubernetes в низкоуровневую конфигурацию xDS.
+
+**Envoy Gateway Controller** — компонент управляющего слоя (Control Plane), который отслеживает ресурсы Gateway API в кластере и динамически управляет подами прокси-серверов.
+
+**Envoy Proxy** — компонент слоя передачи данных (Data Plane). Для каждого ресурса `Gateway` контроллер развертывает отдельный экземпляр (Deployment) Envoy Proxy, который принимает и маршрутизирует трафик.
 
 ## Базовые концепции
 
-### Архитектура
+### Архитектура разделения слоев
+Envoy Gateway строго следует принципу разделения Control Plane и Data Plane:
+- **Control Plane (Управляющий слой):** Центральный контроллер. Читает `GatewayClass`, `Gateway`, `HTTPRoute` и формирует конфигурацию. Отвечает за масштабирование и обновление прокси-подов.
+- **Data Plane (Слой данных):** Легковесные бинарные прокси Envoy. Они не имеют прямого доступа к API Kubernetes и получают настройки от контроллера по протоколу xDS.
 
-**Envoy Gateway Controller** — под в кластере, который отслеживает манифесты Gateway API, создаёт и управляет отдельными подами Envoy Proxy.
+### Agent Gateway (AI/LLM-ориентированный Data Plane)
+**Agent Gateway** — это специализированная реализация Data Plane на языке Rust, оптимизированная для работы с искусственным интеллектом (AI) и большими языковыми моделями (LLM).
 
-**Envoy Proxy** — отдельные поды, обслуживающие конкретный Gateway. По умолчанию создаётся Service типа LoadBalancer. Автоматически получает Endpoints из Service приложения, может работать напрямую с подами или через Service.
+**Ключевые возможности:**
+- **AI Proxying:** Интеллектуальное проксирование запросов к провайдерам моделей (OpenAI, Anthropic, локальные инференс-серверы).
+- **Token Management:** Подсчет токенов в реальном времени и ограничение скорости (Rate Limiting) на основе потребления токенов.
+- **Кэширование:** Эффективное кэширование ответов моделей для снижения затрат и задержек.
+- **Протоколы:** Нативная поддержка Model Context Protocol (MCP) и взаимодействия Agent-to-Agent (A2A).
 
-### Control Plane / Data Plane
+Для активации Agent Gateway достаточно создать `GatewayClass` с указанием соответствующего контроллера.
 
-Envoy Gateway следует архитектуре разделения управляющей и передающей плоскостей:
-
-- **Control Plane** — Envoy Gateway Controller. Читает манифесты Gateway API (GatewayClass, Gateway, HTTPRoute и т.д.), формирует конфигурацию и передаёт её в Data Plane.
-- **Data Plane** — Envoy Proxy. Бинарный прокси, который принимает и маршрутизирует трафик согласно полученной конфигурации.
-
-Эта архитектура отличается от монолитных решений типа ingress-nginx, где один бинарник одновременно читает манифесты и обрабатывает трафик.
-
-### Agent Gateway
-
-**Agent Gateway** — альтернативный Data Plane, написанный на Rust. Специализирован для AI/LLM-нагрузок:
-
-- Кэширование запросов к моделям
-- Проксирование запросов к внешним и внутренним моделям
-- Подсчёт токенов, rate limiting
-- Поддержка протоколов Agent-to-Agent (A2A) и Model Context Protocol (MCP)
-
-Agent Gateway может использоваться как самостоятельный контроллер Gateway API или как Data Plane под управлением других Control Plane (например, Kgateway). При создании GatewayClass с именем `agent-gateway` трафик обрабатывается через Agent Gateway вместо Envoy Proxy.
-
-### Интеграция с MetalLB
-
-Для работы LoadBalancer-сервисов необходим MetalLB в кластере. Требуется создать `IPAddressPool` с диапазоном адресов для выделения внешних IP.
+### Инфраструктурная интеграция
+По умолчанию для каждого шлюза Envoy Gateway создает `Service` типа `LoadBalancer`. В средах bare-metal для назначения IP-адресов требуется наличие установленного **[MetalLB](../metallb.md)**.
 
 ## Практические сценарии
 
-### Установка Envoy Gateway
-
-Актуальная стабильная версия: v1.7.1 (март 2026).
+### Установка через Helm
+Актуальная стабильная версия на середину 2026 года — v1.7.1.
 
 ```bash
-helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.7.1 -n envoy-gateway-system --create-namespace
+helm install eg oci://docker.io/envoyproxy/gateway-helm \
+  --version v1.7.1 \
+  -n envoy-gateway-system \
+  --create-namespace
 ```
 
-### Конфигурация EnvoyProxy
+### Тонкая настройка через EnvoyProxy (CRD)
+Ресурс `EnvoyProxy` позволяет расширять стандартные возможности Gateway API для конкретной реализации.
 
-CRD `EnvoyProxy` позволяет настраивать логирование, телеметрию, провайдеров динамически.
-
-Пример конфигурации логирования:
-
+**Пример настройки уровня логирования:**
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
-  name: my-proxy-config
+  name: custom-proxy-config
   namespace: gateway-infra
 spec:
-  provider:
-    type: Kubernetes
-    kubernetes:
-      kind: Service
   logging:
     level:
       default: warning
@@ -70,56 +59,32 @@ spec:
         upstream: info
 ```
 
-Привязка конфигурации ко всем Gateway через `GatewayClass`:
+### Привязка конфигурации к шлюзу
+Конфигурация `EnvoyProxy` привязывается через `GatewayClass`, что позволяет применять настройки ко всем шлюзам данного типа:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
-  name: ig
+  name: eg-class
 spec:
   controllerName: gateway.envoyproxy.io/gateway-class-controller
   parametersRef:
     group: gateway.envoyproxy.io
     kind: EnvoyProxy
-    name: my-proxy-config
+    name: custom-proxy-config
     namespace: gateway-infra
-```
-
-Привязка к конкретному Gateway:
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: example-gateway
-spec:
-  gatewayClassName: ig
-```
-
-Пример конфигурации MetalLB:
-
-```yaml
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: default-pool
-  namespace: metallb-system
-spec:
-  addresses:
-  - 192.168.218.180-192.168.218.185
 ```
 
 ## Дополнительная информация
 
-Концепции Gateway API: [Определения](./definitions.md).
+**Специфические настройки:**
+Для настройки таймаутов, лимитов запросов (Rate Limit) и авторизации (JWT) Envoy Gateway использует механизм Policy Attachment. Подробные примеры конфигураций см. в разделе **[Provider-Specific Configuration](./provider_specific_config.md)**.
 
-Базовые примеры: [Базовые сценарии](./practical_basic.md).
+**См. также:**
+- [Концепции Gateway API](./definitions.md) — базовые определения и преимущества стандарта
+- [Базовые сценарии](./practical_basic.md) — примеры настройки маршрутов
+- [Traefik](./traefik.md) — альтернативная реализация Gateway API
+- [cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — автоматизация TLS
 
-Альтернативная реализация: [Traefik](./traefik.md).
-
-Интеграция с TLS: [cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md).
-
-Официальная документация: [Envoy Gateway](https://gateway.envoyproxy.io/).
-
-Репозиторий Helm chart: [Artifact Hub](https://artifacthub.io/packages/helm/envoyproxy/gateway).
+**Родительская тема:** [Gateway API](./definitions.md)

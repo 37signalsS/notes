@@ -2,11 +2,7 @@
 
 ## Определения
 
-**MetalLB** — балансировщик нагрузки для bare-metal кластеров Kubernetes, назначающий внешние IP-адреса сервисам типа `LoadBalancer`.
-
-**IPAddressPool** — ресурс MetalLB, определяющий пул IP-адресов для назначения сервисам `LoadBalancer`.
-
-**L2Advertisement** — ресурс MetalLB, анонсирующий IP-адреса через L2-протокол (ARP/NDP) в локальной сети.
+Базовые определения и концепции MetalLB (Speaker, Controller, IPAddressPool, L2Advertisement) подробно описаны в разделе **[MetalLB — балансировщик для Bare-metal](../../../Networking/metallb.md)**.
 
 **Ingress** — ресурс Kubernetes для маршрутизации внешнего HTTP/HTTPS-трафика к сервисам внутри кластера.
 

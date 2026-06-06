@@ -1,14 +1,14 @@
-# vCluster — Установка и развертывание
+# vCluster — Установка и развёртывание
 
-## Definitions
+## Определения
 
-**vCluster CLI** — утилита командной строки для управления виртуальными Kubernetes-кластерами (создание, удаление, подключение, настройка).
+**vCluster CLI (Command Line Interface)** — утилита командной строки для управления виртуальными Kubernetes-кластерами (создание, удаление, подключение, настройка).
 
-**Distro** — вариант реализации Control Plane vCluster: Kubernetes (vanilla), K3s, K0s. Влияет на потребление ресурсов и доступные функции.
+**Distro (Дистрибутив)** — вариант реализации Control Plane vCluster: Kubernetes (vanilla), K3s, K0s. Выбор дистрибутива влияет на потребление ресурсов и доступный функционал.
 
-**values.yaml** — YAML-файл конфигурации Helm chart vCluster, определяющий параметры Control Plane, syncer и синхронизации ресурсов.
+**values.yaml (Yet Another Markup Language)** — основной файл конфигурации Helm chart vCluster, определяющий параметры Control Plane, syncer и правила синхронизации ресурсов.
 
-## Basic Concepts
+## Основные концепции
 
 ### Варианты установки CLI
 
@@ -23,21 +23,21 @@
 | Флаг | Описание | Пример |
 | :--- | :--- | :--- |
 | `-n` / `--namespace` | Namespace в host-кластере | `my-namespace` |
-| `--kubernetes-version` | Версия K8s для vCluster | `1.31.0` |
+| `--kubernetes-version` | Версия Kubernetes для vCluster | `1.32.0` |
 | `--distro` | Вариант дистрибутива | `k3s`, `k0s`, `kubernetes` |
-| `-f` / `--values` | Файл values.yaml | `values.yaml` |
+| `-f` / `--values` | Путь к файлу values.yaml | `values.yaml` |
 
-### Структура values.yaml
+### Структура конфигурации values.yaml
 
 Основные секции конфигурации:
 
 | Секция | Назначение |
 | :--- | :--- |
-| `controlPlane` | Ресурсы, планирование, политика StatefulSet |
-| `syncer` | Аргументы, service account, настройки синхронизации |
-| `sync` | Синхронизация ресурсов (fromHost/toHost) |
+| `controlPlane` | Настройка ресурсов CPU (Central Processing Unit) / RAM, планирование и параметры StatefulSet |
+| `syncer` | Аргументы запуска, ServiceAccount, глобальные настройки синхронизатора |
+| `sync` | Детальная настройка синхронизации ресурсов (fromHost/toHost) |
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка vCluster CLI
 
@@ -52,30 +52,30 @@ sudo install -c -m 0755 vcluster /usr/local/bin
 # Windows (Chocolatey)
 choco install vcluster
 
-# Проверка установки
+# Проверка версии
 vcluster --version
 ```
 
 ### Создание vCluster
 
 ```bash
-# Базовое создание
+# Базовое создание кластера
 vcluster create my-vcluster -n my-namespace
 
-# С указанием версии Kubernetes
+# Создание с указанием конкретной версии Kubernetes
 vcluster create my-vcluster -n my-namespace \
-  --kubernetes-version 1.31.0
+  --kubernetes-version 1.32.0
 
-# С использованием K3s
+# Использование облегченного дистрибутива K3s
 vcluster create my-vcluster -n my-namespace \
   --distro k3s
 
-# С кастомными values
+# Создание с применением кастомной конфигурации
 vcluster create my-vcluster -n my-namespace \
   -f values.yaml
 ```
 
-### Пример values.yaml
+### Пример конфигурации values.yaml
 
 ```yaml
 # values.yaml
@@ -99,16 +99,24 @@ syncer:
 ### Удаление vCluster
 
 ```bash
-# Через vCluster CLI
+# Удаление через vCluster CLI
 vcluster delete my-vcluster -n my-namespace
 
-# Вручную: удаление Helm релиза
+# Удаление только Helm-релиза (вручную)
 helm uninstall my-vcluster -n my-namespace
 
-# Вручную: удаление namespace
+# Полное удаление namespace (вручную)
 kubectl delete namespace my-namespace
 ```
 
-## Additional Information
+## Дополнительная информация
 
-Подробное описание архитектуры и компонентов: [vcluster_overview.md](./vcluster_overview.md). Подключение и доступ к vCluster: [vcluster_connectivity.md](./vcluster_connectivity.md). Безопасность и синхронизация ресурсов: [vcluster_security_and_sync.md](./vcluster_security_and_sync.md). Общая документация Helm: [helm_overview.md](../Helm/helm_overview.md).
+### Внутренние ссылки
+- [vCluster — Обзор и архитектура](./vcluster_overview.md)
+- [vCluster — Подключение и доступ](./vcluster_connectivity.md)
+- [vCluster — Безопасность и синхронизация ресурсов](./vcluster_security_and_sync.md)
+- [Установка через Helm](../Helm/helm_overview.md)
+
+### Внешние ссылки
+- [vCluster Installation Guide](https://www.vcluster.com/docs/getting-started/installation)
+- [vCluster CLI GitHub Releases](https://github.com/loft-sh/vcluster/releases)

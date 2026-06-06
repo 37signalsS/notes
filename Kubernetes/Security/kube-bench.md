@@ -1,81 +1,75 @@
-# kube-bench: Аудит безопасности Kubernetes
+# kube-bench: Аудит безопасности инфраструктуры Kubernetes
 
 ## Определения
 
-* **kube-bench**: Утилита от Aqua Security (<https://github.com/aquasecurity/kube-bench>), предназначенная для проверки конфигурации Kubernetes на соответствие рекомендациям **CIS Kubernetes Benchmark**.
-* **CIS Kubernetes Benchmark**: Общепринятый стандарт от Center for Internet Security (CIS), содержащий набор лучших практик по обеспечению безопасности кластеров Kubernetes.
+**kube-bench** — это инструмент с открытым исходным кодом для автоматизированной проверки конфигурации кластера Kubernetes на соответствие рекомендациям по безопасности.
 
-**Важно:** kube-bench проверяет **инфраструктуру кластера**, а не манифесты приложений. Для проверки манифестов используйте [kubesec](./kubesec.md) или [Kyverno](./kyverno/policies/practical_scenarios.md).
+**CIS (Center for Internet Security) Kubernetes Benchmark** — отраслевой стандарт, содержащий набор проверок и рекомендаций для обеспечения безопасности компонентов Kubernetes.
+
+**Важно:** kube-bench проверяет параметры запуска и конфигурационные файлы инфраструктуры (API-сервер, Kubelet, etcd). Для статического анализа манифестов приложений используйте [kubesec](./kubesec.md).
 
 ## Основные концепции
 
-`kube-bench` запускается непосредственно на узлах кластера и выполняет аудит конфигурации ключевых компонентов Kubernetes на соответствие стандарту CIS.
+### Принцип работы
 
-**Что проверяет:**
+Инструмент запускается на узлах кластера (Control Plane и Worker) и проверяет настройки запущенных процессов и права доступа к файлам конфигурации. По результатам проверки формируется отчет со статусами и рекомендациями по исправлению выявленных несоответствий.
 
-* **Компоненты Control Plane**: Настройки `kube-apiserver`, `kube-scheduler`, `kube-controller-manager`, `etcd`.
-* **Конфигурацию узлов**: Настройки `kubelet`.
-* **Политики безопасности** и другие аспекты конфигурации кластера.
+### Области проверки
 
-**Ключевой функционал:**
+* **Control Plane:** Аудит `kube-apiserver`, `kube-scheduler`, `kube-controller-manager` и `etcd`.
+* **Worker Nodes:** Аудит конфигурации `kubelet` и параметров безопасности среды выполнения контейнеров.
+* **RBAC и политики:** Проверка базовых настроек управления доступом и политик безопасности.
 
-* Поддержка различных версий Kubernetes и облачных сред (GKE, EKS, AKS, OpenShift).
-* Автоматическое определение роли узла (master или worker) для применения релевантных тестов.
-* Генерация отчётов в текстовом или JSON-формате, классифицирующих проверки как пройденные (PASS), проваленные (FAIL) или требующие внимания (WARN).
+### Поддержка окружений
 
-**Место в экосистеме безопасности:**
-
-kube-bench и [kubesec](./kubesec.md) дополняют друг друга, охватывая разные аспекты:
-
-* **kube-bench** — аудит работающей инфраструктуры кластера (конфигурация компонентов, безопасность узлов).
-* **kubesec** — статический анализ манифестов приложений до деплоя.
-* [Kyverno](./kyverno/policies/practical_scenarios.md) — проверка манифестов во время деплоя (admission controller).
-* [Falco](../../Security/Tools/falco.md) — мониторинг runtime-поведения после деплоя.
+* Релизные версии Kubernetes (от 1.15 до текущих).
+* Облачные управляемые сервисы: GKE (Google Kubernetes Engine), EKS (Amazon Elastic Kubernetes Service), AKS (Azure Kubernetes Service).
+* Дистрибутивы: OpenShift, RKE2, K3s.
 
 ## Практические сценарии
 
-### Запуск kube-bench
+### 1. Запуск через Kubernetes Job
 
-**Способ 1: Job в Kubernetes** (рекомендуется):
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-master.yaml
-kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/main/job-node.yaml
-```
-
-**Способ 2: Docker**:
+Это рекомендуемый способ для регулярного аудита всех узлов кластера.
 
 ```bash
-docker run --rm \
-  -v $(pwd):/host \
-  aquasec/kube-bench:latest \
-  kube-bench --config-dir /host/config --config /host/config/<version>/master.yaml
+# Запуск проверки для Control Plane
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/v0.15.0/job-master.yaml
+
+# Запуск проверки для Worker нод
+kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/v0.15.0/job-node.yaml
 ```
 
-**Способ 3: Бинарный файл**:
+### 2. Запуск через Docker
+
+Удобно для разовой проверки узла без установки дополнительных компонентов в кластер.
 
 ```bash
-# Скачать актуальную версию: https://github.com/aquasecurity/kube-bench/releases
-kube-bench master  # или node
+docker run --pid=host --rm -v /etc:/etc:ro -v /var:/var:ro \
+  aquasec/kube-bench:v0.15.0 master
 ```
 
-### Интерпретация результатов
+### 3. Интерпретация результатов
 
-kube-bench классифицирует проверки:
+Результаты классифицируются по четырем статусам:
 
-* **PASS** — проверка пройдена
-* **FAIL** — проверка провалена (требует исправления)
-* **WARN** — предупреждение (рекомендация, не требующая обязательного выполнения)
-* **INFO** — информационная проверка
+* **PASS:** Конфигурация соответствует рекомендациям CIS.
+* **FAIL:** Обнаружено несоответствие, требующее исправления. Обычно сопровождается текстом рекомендации.
+* **WARN:** Рекомендация, требующая ручной проверки (например, если параметр нельзя проверить автоматически).
+* **INFO:** Справочная информация о параметре.
 
 ## Дополнительная информация
 
-Сравнение с другими инструментами безопасности Kubernetes:
+### Сравнение с другими инструментами
 
-* **kube-bench** — аудит инфраструктуры на соответствие CIS Kubernetes Benchmark.
-* **kubescape** — комплексный инструмент для сканирования кластера на наличие проблем безопасности, misconfigurations (включая манифесты) и уязвимостей, часто используется для проверки соответствия политикам (например, NSA, MITRE).
-* **kube-hunter** — инструмент для пентеста (penetration testing) кластера. Выполняет активное сканирование для выявления уязвимостей с точки зрения атакующего. Потенциально может нарушить работу кластера, поэтому требует осторожности при использовании.
-* **kubesec** — статический анализ рисков в манифестах до деплоя.
-* [Kyverno](./kyverno/policies/practical_scenarios.md) — политики безопасности при деплое.
-* [Pod Security Context](./pod_security_context.md) — безопасность подов.
-* Официальный стандарт CIS — [CIS Kubernetes Benchmark](https://www.cisecurity.org/benchmark/kubernetes).
+* [kubesec](./kubesec.md) — статический анализ YAML-манифестов до деплоя.
+* [Kyverno](./kyverno/policies/practical_scenarios.md) — контроль соответствия политикам при деплое (Admission Control).
+* [Falco](../../Security/Tools/falco.md) — обнаружение угроз во время выполнения (Runtime Security).
+* **kubescape** — комплексный аудит безопасности, включая уязвимости и misconfigurations.
+* **kube-hunter** — поиск уязвимостей в кластере с позиции внешнего или внутреннего атакующего (пентест).
+
+### Полезные ссылки
+
+* [Официальный репозиторий kube-bench](https://github.com/aquasecurity/kube-bench)
+* [Официальный сайт CIS Benchmarks](https://www.cisecurity.org/benchmark/kubernetes)
+* [Pod Security Context](./pod_security_context.md) — настройка безопасности на уровне подов.

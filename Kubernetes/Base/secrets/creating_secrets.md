@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Secret** — объект Kubernetes для хранения конфиденциальных данных. Значения кодируются в Base64 (не шифрование!).
+**Secret** — объект Kubernetes для хранения конфиденциальных данных (пароли, токены, ключи). Значения кодируются в Base64 (не является шифрованием).
 
 > Подробнее о безопасности см. [Безопасность Secret](security.md) и [Хранение в etcd](etcd_storage.md).
 
@@ -10,28 +10,28 @@
 
 ### Методы создания
 
-1. **Декларативно** — через YAML-манифесты (рекомендуется для GitOps)
-   - `stringData` — значения в открытом виде (автоматическое кодирование в Base64)
-   - `data` — значения вручную кодируются в Base64
+1. **Декларативно** — через YAML-манифесты. Рекомендуется для GitOps-процессов.
+   - `stringData` — значения в открытом виде (автоматическое кодирование в Base64 при сохранении)
+   - `data` — значения, предварительно закодированные в Base64 вручную
 
-2. **Императивно** — через `kubectl create secret`
-   - `--from-literal` — из отдельных значений
-   - `--from-file` — из файлов
+2. **Императивно** — через интерфейс командной строки `kubectl create secret`.
+   - `--from-literal` — из отдельных пар ключ-значение
+   - `--from-file` — из содержимого файлов
    - `--from-env-file` — из файла с переменными окружения
 
-3. **Автоматически** — Kubernetes создаёт ServiceAccount-токены
+3. **Автоматически** — Kubernetes самостоятельно создаёт некоторые секреты (например, ServiceAccount-токены).
 
 ### Типы Secret
 
-По умолчанию используется тип `Opaque` (произвольные данные). Другие типы: `kubernetes.io/tls`, `kubernetes.io/dockerconfigjson`, `kubernetes.io/basic-auth`, `kubernetes.io/ssh-auth`.
+Kubernetes поддерживает несколько встроенных типов секретов для различных сценариев (TLS, Docker Registry, Auth).
 
-> **Подробнее:** [Типы Secret в secrets_basics.md](secrets_basics.md#типы-secret)
+> Подробное описание типов см. в **[Основы Secret: Типы](secrets_basics.md#типы-secret)**.
 
 ## Практические сценарии
 
-### Декларативно с `stringData` (рекомендуемый)
+### Декларативно с использованием stringData
 
-Это наиболее удобный и безопасный для GitOps способ. Kubernetes автоматически кодирует значения в Base64, а вы работаете с обычным текстом.
+Это наиболее удобный способ для GitOps. Kubernetes автоматически преобразует текст в Base64.
 
 ```yaml
 apiVersion: v1
@@ -45,16 +45,16 @@ stringData:
   password: "my-super-secret-password"
 ```
 
-> **Примечание:** Поле `stringData` является "write-only". При чтении секрета через `kubectl get secret -o yaml` вы всегда будете видеть только поле `data` с Base64-кодированными значениями. `stringData` существует для удобства написания манифестов.
+> **Примечание:** Поле `stringData` является "write-only". При чтении секрета через `kubectl get secret -o yaml` вы увидите только поле `data` с Base64.
 
-### Декларативно с `data`
+### Декларативно с использованием data
 
-Значения необходимо предварительно закодировать в Base64 вручную:
+Значения необходимо закодировать в Base64 вручную перед вставкой в манифест:
 
 ```bash
 # Кодирование пароля в Base64
- echo -n 'my-super-secret-password' | base64
-# Вывод: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
+echo -n 'my-super-secret-password' | base64
+# → bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
 ```
 
 ```yaml
@@ -64,54 +64,30 @@ metadata:
   name: my-database-secret
 type: Opaque
 data:
-  # ключ: значение (в base64)
   password: bXktc3VwZXItc2VjcmV0LXBhc3N3b3Jk
 ```
 
-### Императивно через kubectl
+### Императивное создание через kubectl
 
-`kubectl` автоматически кодирует значения в Base64:
+Команда `kubectl` самостоятельно выполняет кодирование в Base64.
 
 ```bash
-# Из литералов
+# Создание из литералов
 kubectl create secret generic db-cred \
   --from-literal=username=app \
   --from-literal=password='S3cUr3!'
 
-# Из файлов (приватный ключ, сертификат)
-kubectl create secret tls my-tls-secret \
-  --cert=path/to/tls.crt \
-  --key=path/to/tls.key
-
-# Из директории с файлами
-kubectl create secret generic my-secret \
-  --from-file=path/to/directory/
+# Создание из файлов
+kubectl create secret generic my-file-secret \
+  --from-file=path/to/config.txt
 ```
 
-### Приоритет `stringData` над `data`
+### Создание TLS Secret
 
-При указании одинакового ключа в обоих полях, `stringData` имеет приоритет:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: combined-secret
-type: Opaque
-data:
-  username: YWRtaW4=     # "admin" в base64
-stringData:
-  username: administrator  # Приоритетнее, результат: "administrator"
-```
-
-### Типы Secret
-
-#### TLS Secret
-
-Для TLS сертификатов используется тип `kubernetes.io/tls`:
+Для TLS (Transport Layer Security) сертификатов используется специальный тип `kubernetes.io/tls`.
 
 ```bash
-# Генерация приватного ключа и самоподписанного сертификата
+# Генерация ключа и сертификата
 openssl genrsa -out tls.key 2048
 openssl req -new -x509 -key tls.key -out tls.crt -days=365
 
@@ -121,22 +97,17 @@ kubectl create secret tls my-tls-secret \
   --key=tls.key
 ```
 
-#### Docker Registry Secret
+### Создание Docker Registry Secret
 
-Для доступа к приватным Docker registry:
+Используется для предоставления доступа к приватным репозиториям образов.
 
 ```bash
-# Из существующего docker config
-kubectl create secret generic regcred \
-  --from-file=.dockerconfigjson=<path/to/config.json> \
-  --type=kubernetes.io/dockerconfigjson
-
-# Явно указать параметры
-kubectl create secret docker-registry myregistry-secret \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username=user \
-  --docker-password=password \
-  --docker-email=email@example.com
+# Явное указание параметров
+kubectl create secret docker-registry registry-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<username> \
+  --docker-password=<token> \
+  --docker-email=admin@example.com
 ```
 
 **Использование в Deployment:**
@@ -153,42 +124,25 @@ spec:
         - name: app
           image: ghcr.io/username/myapp:v1.0.0
       imagePullSecrets:
-        - name: myregistry-secret
+        - name: registry-secret
 ```
 
-**Сценарий: GitHub Container Registry (GHCR)**
-
-```bash
-# Создание токена: Профиль → Settings → Developer settings → Personal access tokens
-# Scope: read:packages (pull), write:packages (push)
-
-# Создание Secret
-kubectl create secret docker-registry registry-secret \
-  --docker-server=ghcr.io \
-  --docker-username=<username> \
-  --docker-password=<token> \
-  -n <namespace>
-```
-
-**Автоматизация через ServiceAccount:**
-
-Чтобы не указывать `imagePullSecrets` в каждом Deployment, можно привязать Secret к ServiceAccount:
-
-```bash
-kubectl patch serviceaccount default \
-  -p '{"imagePullSecrets": [{"name": "registry-secret"}]}' \
-  -n <namespace>
-```
-
-Подробнее о работе с GHCR в контексте werf: [Werf: Настройка доступа к GitHub Container Registry](../../../CI-CD/Tools/werf_overview.md#сценарий-1-настройка-доступа-к-github-container-registry).
+Подробнее об интеграции с CI/CD: [Werf: Настройка доступа к GitHub Container Registry](../../../CI-CD/Tools/werf_overview.md#сценарий-1-настройка-доступа-к-github-container-registry).
 
 ## Дополнительная информация
 
+### Приоритеты полей
+
+Если в одном манифесте указан один и тот же ключ в `data` и `stringData`, значение из `stringData` имеет приоритет.
+
 ### Использование созданных Secret
 
-- [Монтирование как том](using_secrets.md#как-файлы-в-томе-volume)
-- [Переменные окружения](using_secrets.md#как-переменные-окружения-env-envfrom)
+После создания секреты можно подключить к поду:
+
+- **[Монтирование как тома](using_secrets.md#монтирование-секретов-как-тома-volume)**
+- **[Переменные окружения](using_secrets.md#использование-как-переменные-окружения)**
 
 ### Связанные темы
 
-[Основы Secret](secrets_basics.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Безопасность](security.md), [Внешние менеджеры](external_managers.md).
+[Основы Secret](secrets_basics.md), [Использование Secret](using_secrets.md), [Хранение в etcd](etcd_storage.md), [Безопасность Secret](security.md), [Внешние менеджеры](external_managers.md).
+

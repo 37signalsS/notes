@@ -2,13 +2,13 @@
 
 ## Определения
 
-**DNS в Kubernetes** — встроенный механизм обнаружения сервисов (Service Discovery), позволяющий обращаться к подам и сервисам по стабильным DNS-именам вместо изменяющихся IP-адресов.
+**DNS (Domain Name System)** в Kubernetes — встроенный механизм обнаружения сервисов (Service Discovery), позволяющий обращаться к подам и сервисам по стабильным именам вместо изменяющихся **IP (Internet Protocol)** адресов.
 
 **CoreDNS** — DNS-сервер по умолчанию в Kubernetes, запускается как `Deployment` и `Service` в пространстве имён `kube-system`. Автоматически создаёт DNS-записи для всех сервисов кластера.
 
 **NodeLocalDNS** — опциональный кеширующий DNS-сервер, запускается как `DaemonSet` на всех узлах. Кэширует запросы локально, снижая нагрузку на CoreDNS и уменьшая задержку.
 
-**Headless Service** — сервис без ClusterIP (`clusterIP: None`), используемый для прямого DNS-discovery подов StatefulSet. Каждый под получает отдельную DNS-запись.
+**Headless Service** — сервис без ClusterIP (`clusterIP: None`), используемый для прямого обнаружения (discovery) подов StatefulSet. Каждый под получает отдельную DNS-запись.
 
 ## Основные концепции
 
@@ -18,11 +18,11 @@
 
 CoreDNS следит за API-сервером Kubernetes и автоматически создаёт DNS-записи для сервисов:
 
-- При создании `Service` → CoreDNS создаёт A-запись (или SRV, если необходимо)
-- При запросе имени сервиса → возвращает его ClusterIP
-- Для StatefulSet → создаёт записи для каждого пода (через Headless Service)
+- При создании `Service` → CoreDNS создаёт A-запись (или SRV, если необходимо).
+- При запросе имени сервиса → возвращает его ClusterIP.
+- Для StatefulSet → создаёт записи для каждого пода (через Headless Service).
 
-> **Важно:** Настройки DNS на уровне Docker (`--dns`, `/etc/docker/daemon.json`) **игнорируются** для подов Kubernetes. `Kubelet` самостоятельно генерирует `/etc/resolv.conf` с указанием на CoreDNS.
+> **Важно:** Настройки DNS на уровне Docker (`--dns`, `/etc/docker/daemon.json`) игнорируются для подов Kubernetes. `Kubelet` самостоятельно генерирует `/etc/resolv.conf` с указанием на CoreDNS.
 
 ### Проблема масштабирования CoreDNS
 
@@ -32,15 +32,15 @@ CoreDNS следит за API-сервером Kubernetes и автоматич�
 
 **Принцип работы:**
 
-1. **Запуск в режиме hostNetwork:** `DaemonSet` на всех узлах кластера
-2. **Перехват трафика через iptables:** Запросы к `kube-dns` перехватываются локальным агентом
-3. **Локальное кеширование:** Агент слушает адрес `169.254.20.10` или `169.254.25.10`
+1. **Запуск в режиме hostNetwork:** `DaemonSet` на всех узлах кластера.
+2. **Перехват трафика через iptables:** Запросы к `kube-dns` перехватываются локальным агентом.
+3. **Локальное кеширование:** Агент слушает адрес `169.254.20.10` или `169.254.25.10`.
 
 **Преимущества:**
 
-- Снижение нагрузки на CoreDNS
-- Уменьшение задержки разрешения имён
-- Повышение надёжности (UDP → TCP конвертация)
+- Снижение нагрузки на CoreDNS.
+- Уменьшение задержки разрешения имён.
+- Повышение надёжности (**UDP (User Datagram Protocol)** → **TCP (Transmission Control Protocol)** конвертация).
 
 **Схема работы:**
 
@@ -73,11 +73,11 @@ kubectl get all -n kube-system | grep dns
 
 | Тип | Формат | Пример | Использование |
 | :--- | :--- | :--- | :--- |
-| FQDN | `<service>.<namespace>.svc.cluster.local` | `redis-cash.stage.svc.cluster.local` | Из другого namespace |
+| **FQDN (Fully Qualified Domain Name)** | `<service>.<namespace>.svc.cluster.local` | `redis-cash.stage.svc.cluster.local` | Из другого namespace |
 | Короткое | `<service>` | `redis-cash` | Из того же namespace |
 | С namespace | `<service>.<namespace>` | `redis-cash.stage` | Из другого namespace (сокращённо) |
 
-### Конфигурация `/etc/resolv.conf` в подах
+### Конфигурация /etc/resolv.conf в подах
 
 `Kubelet` автоматически настраивает файл для использования внутрикластерного DNS:
 
@@ -89,17 +89,17 @@ options ndots:5
 
 **Параметры:**
 
-- `nameserver` — IP NodeLocalDNS или CoreDNS
-- `search` — домены поиска (автоматически дополняют короткие имена)
-- `ndots:5` — количество точек, после которого имя считается полным FQDN
+- `nameserver` — IP-адрес NodeLocalDNS или CoreDNS.
+- `search` — домены поиска (автоматически дополняют короткие имена).
+- `ndots:5` — количество точек, после которого имя считается полным FQDN.
 
 ## Практические сценарии
 
-### Проблема с `search` доменами и `ndots`
+### Проблема с search доменами и ndots
 
 При `ndots:5` внешние запросы (например, `yandex.ru`) сначала прогоняются через все домены поиска, что создаёт задержки и избыточный трафик.
 
-**Пример с `tcpdump`:**
+**Пример с tcpdump:**
 
 ```bash
 tcpdump -n -p -i eth0 port 53
@@ -112,7 +112,7 @@ tcpdump -n -p -i eth0 port 53
 3. `yandex.ru.example.com`
 4. `yandex.ru`
 
-> **См. также:** [Диагностика DNS-блокировок](../../../Linux/Diagnostics/Networking/dns/overview.md) — общие принципы диагностики задержек.
+> **См. также:** [Диагностика DNS в Linux](../../Linux/Diagnostics/Networking/dns/overview.md) — общие принципы диагностики задержек.
 
 ### Оптимизация через ConfigMap CoreDNS
 
@@ -171,16 +171,14 @@ nslookup <service>.<namespace>.svc.cluster.local
 tcpdump -n -p -i eth0 port 53
 ```
 
-> **См. также:** [Диагностика DNS в Linux](../../../Linux/Diagnostics/Networking/dns/overview.md)
-
 ### Взаимодействие с CoreDNS через IPtables
 
-Запросы к CoreDNS идут через `Service` с `ClusterIP`. При реализации через `IPtables` возможны потери UDP-пакетов.
+Запросы к CoreDNS идут через `Service` с `ClusterIP`. При реализации через **iptables** возможны потери UDP-пакетов.
 
 **Решения:**
 
-- **NodeLocalDNS** — кеширование локально, уменьшение трафика через Service
-- **TCP для CoreDNS** — NodeLocalDNS конвертирует UDP → TCP
+- **NodeLocalDNS** — кеширование локально, уменьшение трафика через Service.
+- **TCP для CoreDNS** — NodeLocalDNS конвертирует UDP → TCP.
 
 ### Настройки Kubelet
 
@@ -190,5 +188,5 @@ tcpdump -n -p -i eth0 port 53
 --cluster-dns=169.254.25.10 --cluster-domain=example.com
 ```
 
-- `cluster-dns` — IP DNS-сервера (NodeLocalDNS или CoreDNS)
-- `cluster-domain` — домен кластера
+- `cluster-dns` — IP-адрес DNS-сервера (NodeLocalDNS или CoreDNS).
+- `cluster-domain` — домен кластера.

@@ -20,6 +20,15 @@
 | `kubectl drain <node>` | Выселение всех подов с узла | Поды пересоздаются на других узлах |
 | `kubectl uncordon <node>` | Возврат узла в работу | Новые поды могут быть размещены |
 
+### Отличие обслуживания от автоматического выселения (Eviction)
+
+| Характеристика | Maintenance Eviction (Drain) | Node Pressure Eviction |
+| :--- | :--- | :--- |
+| **Инициатор** | Пользователь (`kubectl drain`) | Eviction Manager (kubelet) |
+| **Причина** | Плановое обслуживание | Нехватка ресурсов (Memory/Disk) |
+| **Уважение PDB** | Да (drain остановится) | Нет (kubelet игнорирует PDB) |
+| **Порядок выселения** | Все поды одновременно | По приоритету QoS |
+
 ### Процесс безопасного обслуживания
 
 ```
@@ -29,12 +38,12 @@
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
-1. **Cordon:** Изоляция узла от новых размещений
-2. **Drain:** Безопасное выселение существующих подов
-3. **Проведение работ:** Обслуживание самого узла
-4. **Uncordon:** Возврат узла в кластер
+1. **Cordon:** Изоляция узла от новых размещений.
+2. **Drain:** Безопасное выселение существующих подов через Eviction API.
+3. **Проведение работ:** Обслуживание самого узла (Update, Reboot).
+4. **Uncordon:** Возврат узла в кластер.
 
-### Нюансы команды `drain`
+### Нюансы команды drain
 
 `kubectl drain` останавливается при обнаружении определённых условий. Требуются флаги:
 
@@ -46,14 +55,37 @@
 | `--grace-period=<sec>` | Таймаут завершения подов | Контроль времени shutdown |
 | `--timeout=<duration>` | Максимальное время drain | Ограничение общей длительности |
 
-**Ограничения `drain`:**
+**Ограничения drain:**
 
-* **DaemonSet:** Поды не переносятся (должны работать на всех узлах)
-* **Static Pods:** Управляются kubelet, не через API
-* **PodDisruptionBudget:** Drain уважает PDB и не нарушит доступность
-* **Голые поды:** Без контроллера не будут пересозданы (требуется `--force`)
+* **DaemonSet:** Поды не переносятся (должны работать на всех узлах).
+* **Static Pods:** Управляются kubelet, не через API.
+* **PodDisruptionBudget:** Drain уважает PDB и не нарушит доступность.
+* **Голые поды:** Без контроллера (ReplicaSet/Deployment) не будут пересозданы.
 
-> **Важно:** Процесс `drain` уважает [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — если выселение нарушит минимальную доступность, команда остановится.
+### Мониторинг и алертинг
+
+Пример Prometheus алертов для отслеживания состояния узлов:
+
+```yaml
+# Prometheus alerts
+- alert: NodeNotReady
+  expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+  for: 5m
+  labels:
+    severity: critical
+
+- alert: NodeSchedulingDisabled
+  expr: kube_node_spec_unschedulable == 1
+  for: 30m
+  labels:
+    severity: warning
+
+- alert: NodeMemoryPressure
+  expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+  for: 5m
+  labels:
+    severity: warning
+```
 
 ## Практические сценарии
 
@@ -62,211 +94,119 @@
 **Шаг 1: Cordon**
 
 ```bash
-kubectl cordon <node-name>
-# node/<node-name> cordoned
+kubectl cordon node-1
+# → node/node-1 cordoned
 ```
 
 **Шаг 2: Drain**
 
 ```bash
-kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data
+# → node/node-1 cordoned
+# → evicting pod default/app-1
+# → pod/app-1 evicted
+# → node/node-1 drained
 ```
 
-**Шаг 3: Проверка**
+**Шаг 3: Uncordon**
 
 ```bash
-kubectl get nodes
-# NAME           STATUS                     AGE
-# node-1         Ready,SchedulingDisabled   10d
-# node-2         Ready                      10d
+kubectl uncordon node-1
+# → node/node-1 uncordoned
 ```
 
-**Шаг 4: Проведение работ**
+### Замена узла (Hardware Failure)
+
+Если узел требует полной замены:
 
 ```bash
-# Подключение к узлу
-ssh <node-name>
+# 1. Выселение подов (если узел ещё доступен по сети)
+kubectl drain node-old --ignore-daemonsets --delete-emptydir-data --force
 
-# Обновление системы
-sudo apt update && sudo apt upgrade -y
+# 2. Удаление объекта узла из API
+kubectl delete node node-old
+# → node "node-old" deleted
 
-# Перезагрузка
-sudo reboot
-```
-
-**Шаг 5: Uncordon**
-
-```bash
-kubectl uncordon <node-name>
-# node/<node-name> uncordoned
+# 3. Добавление нового узла в кластер (kubeadm join или облачный autoscaler)
 ```
 
 ### Перенос подов на конкретный узел
 
-`kubectl drain` не позволяет указать целевой узел напрямую. Решения:
-
-#### Способ 1: Временное ограничение планирования
-
-```bash
-# 1. Запретить планирование на всех узлах, кроме целевого
-kubectl cordon node-1
-kubectl cordon node-2
-# node-3 остаётся доступным
-
-# 2. Выполнить drain исходного узла
-kubectl drain node-source --ignore-daemonsets --delete-emptydir-data
-
-# 3. Вернуть узлы в работу
-kubectl uncordon node-1
-kubectl uncordon node-2
-```
-
-> **Предупреждение:** Не рекомендуется для production — создаёт риск простоя при ошибках.
-
-#### Способ 2: Node Affinity (рекомендуемый)
+`kubectl drain` не позволяет указать целевой узел напрямую. Рекомендуемый способ — использование Node Affinity:
 
 ```bash
 # 1. Добавить метку на целевой узел
-kubectl label node <target-node> my-target-node=true
+kubectl label node node-target target=true
 
-# 2. Обновить Deployment с nodeAffinity
-kubectl patch deployment <app> --type='json' -p='[
-  {"op": "add", "path": "/spec/template/spec/affinity",
-   "value": {
-     "nodeAffinity": {
-       "requiredDuringSchedulingIgnoredDuringExecution": {
-         "nodeSelectorTerms": [{
-           "matchExpressions": [{
-             "key": "my-target-node",
-             "operator": "In",
-             "values": ["true"]
-           }]
-         }]
-       }
-     }
-   }
-  }
-]'
+# 2. Обновить Deployment, добавив nodeAffinity к узлу с меткой target=true
+kubectl patch deployment app-1 --patch-file affinity-patch.yaml
 
-# 3. Перезапустить поды
-kubectl rollout restart deployment <app>
-
-# 4. Выполнить drain
-kubectl drain <source-node> --ignore-daemonsets --delete-emptydir-data
+# 3. Выполнить drain исходного узла
+kubectl drain node-source --ignore-daemonsets --delete-emptydir-data
 ```
 
 ### Перенос данных рантайма на другой раздел
 
-Когда корневой раздел `/` на узлах заполняется данными подов и образов, рекомендуется перенести `/var/lib/kubelet` и `/var/lib/containerd` на отдельный большой раздел (например, `/storage`).
-
-**Важно:**
-
-* Для **master-нод** рекомендуется оставить пути по умолчанию, чтобы избежать рисков для etcd.
-* Если на узле запущены старые **Docker Compose** сервисы (`/var/lib/docker`), их обычно оставляют на месте для сохранения стабильности.
-
-#### Процесс переноса (для worker-ноды)
+Когда корневой раздел `/` заполняется, можно перенести `/var/lib/kubelet` и `/var/lib/containerd` на другой раздел (например, `/storage`).
 
 1. **Остановка компонентов:**
-   Приведет к кратковременной остановке контейнеров на узле.
-
    ```bash
    systemctl stop kubelet containerd
    ```
 
-2. **Подготовка директорий и копирование данных:**
-   Использование `rsync` позволяет сохранить права доступа и структуру.
-
+2. **Копирование данных:**
    ```bash
-   mkdir -p /storage/kubelet /storage/containerd
    rsync -av /var/lib/kubelet/ /storage/kubelet/
    rsync -av /var/lib/containerd/ /storage/containerd/
    ```
 
-3. **Изменение конфигурации containerd:**
-   Отредактируйте `/etc/containerd/config.toml`:
+3. **Конфигурация:**
+   - `containerd`: в `/etc/containerd/config.toml` установить `root = "/storage/containerd"`.
+   - `kubelet`: в `/etc/default/kubelet` добавить `KUBELET_EXTRA_ARGS="--root-dir=/storage/kubelet"`.
 
-   ```toml
-   # Укажите новый путь к корню рантайма
-   root = "/storage/containerd"
-   ```
-
-4. **Изменение конфигурации kubelet:**
-   Для Debian/Ubuntu добавьте параметр в `/etc/default/kubelet`:
-
-   ```bash
-   KUBELET_EXTRA_ARGS="--root-dir=/storage/kubelet"
-   ```
-
-5. **Применение изменений и запуск:**
-
+4. **Запуск:**
    ```bash
    systemctl daemon-reload
    systemctl start containerd kubelet
    ```
 
-#### Верификация
-
-```bash
-# Проверка аргументов запуска kubelet
-ps aux | grep kubelet | grep root-dir
-
-# Проверка записи данных в новое место (появление UID подов)
-ls -la /storage/kubelet/pods/ | tail -5
-```
-
-**Откат:** В случае проблем верните старые пути в конфигурационных файлах и перезапустите сервисы. Исходные данные в `/var/lib/` сохраняются до момента их ручного удаления.
-
-### Проверка статуса узла
-
-```bash
-# Статус всех узлов
-kubectl get nodes -o wide
-
-# Детальная информация
-kubectl describe node <node-name>
-
-# Проверка тентов
-kubectl get node <node-name> -o jsonpath='{.spec.taints}'
-
-# Поды на узле
-kubectl get pods --all-namespaces -o wide --field-selector spec.nodeName=<node-name>
-```
-
 ## Дополнительная информация
 
-### Автоматизация обслуживания
+### Диагностика и устранение проблем
 
-| Инструмент | Назначение |
-| :--- | :--- |
-| **Cluster Autoscaler** | Автоматическое масштабирование node groups в облаках |
-| **Kured** | Автоматическая перезагрузка узлов при kernel updates |
-| **Draino** | Автоматический drain узлов по условиям (taints, labels) |
-| **Lens** | GUI для мониторинга состояния узлов и подов |
+#### Drain завис из-за PDB
+**Проблема:** `error: cannot evict pod as it would violate the pod's disruption budget`.
+**Решение:** временно увеличить число реплик Deployment или изменить PDB.
 
-### Troubleshooting
+#### Поды застряли в состоянии Terminating
+**Проблема:** Поды не удаляются из-за наличия Finalizers.
+**Решение:** `kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":null}}'`.
 
-| Проблема | Диагностика | Решение |
-| :--- | :--- | :--- |
-| **Drain завис** | `kubectl get pods -A \| grep Terminating` | Проверить PDB, finalizers |
-| **PDB violation** | `kubectl get pdb` | Увеличить `minAvailable` или подождать |
-| **DaemonSet блокирует** | `kubectl drain` выводит ошибку | Добавить `--ignore-daemonsets` |
-| **EmptyDir data loss** | Предупреждение о потере данных | Добавить `--delete-emptydir-data` |
-| **Голые поды** | `unable to drain with unmanaged pods` | Проверить поды, добавить `--force` |
+#### Проверка истории обслуживания
+```bash
+kubectl get events --field-selector reason=SuccessfulDrain
+# → 5m  Normal  SuccessfulDrain  node/node-1  Node node-1 successfully drained
+```
 
-### Best Practices
+### Лучшие практики
 
 | Практика | Описание |
 | :--- | :--- |
-| **Проверка PDB** | Убедиться, что PDB настроены корректно перед drain |
-| **Очередь обслуживания** | Выводить узлы по очереди с ожиданием миграции подов |
-| **Мониторинг** | Отслеживать метрики кластера во время обслуживания |
-| **Backup** | Резервное копирование критических данных перед работами |
-| **Тестирование** | Отработать процедуру на staging-кластере |
+| **Проверка PDB** | Всегда проверяйте `kubectl get pdb` перед началом drain. |
+| **Таймауты** | Используйте `--timeout=5m`, чтобы избежать бесконечного ожидания. |
+| **Очередность** | Выводите узлы по одному. |
+| **Graceful Shutdown** | Настраивайте `terminationGracePeriodSeconds`. |
+
+### Автоматизация обслуживания
+
+* **Kured (Kubernetes Reboot Daemon):** Автоматизирует reboot узлов после обновления ядра.
+* **Draino:** Автоматически выполняет drain узлов на основе Taints или условий.
+* **Cluster Autoscaler:** Выполняет drain перед удалением неиспользуемых узлов в облаке.
 
 ### Связанные темы
 
-* [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — защита доступности при выселении
-* [Обновление кластера](upgrading_clusters.md) — обслуживание узлов при обновлении
-* [Высокая доступность](../Base/high_availability.md) — отказоустойчивость при потере узла
-* [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов
-* [Troubleshooting: Node Unavailability](../Troubleshooting/Common_Errors/NodeUnavailability/maintenance.md) — диагностика проблем
+* [PodDisruptionBudget](../Autoscaling/pod_disruption_budget.md) — защита доступности при выселении.
+* [Обновление кластера](upgrading_clusters.md) — использование drain при обновлении компонентов.
+* [Высокая доступность](../Base/high_availability.md) — планирование мощностей с учетом обслуживания.
+* [Affinity и Anti-Affinity](../Scheduling/affinity.md) — управление размещением подов.
+* [Troubleshooting: Node Unavailability](../Troubleshooting/Common_Errors/NodeUnavailability/maintenance.md) — диагностика проблем узлов.

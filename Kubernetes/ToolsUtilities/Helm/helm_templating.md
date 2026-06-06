@@ -16,25 +16,29 @@ Helm использует Go template engine с библиотекой Sprig д�
 
 ---
 
-## Навигация по документации
+## Базовые концепции
 
-### Основы
+### Навигация по документации
 
 - [Синтаксис шаблонов](./templating/syntax.md) — базовый синтаксис, управляющие конструкции (if/else, with, range), управление пробелами
 - [Встроенные объекты](./templating/objects.md) — .Values, .Release, .Chart, .Capabilities, .Files, .Template
 - [Функции](./templating/functions.md) — quote, default, required, toYaml, nindent, tpl, include, trunc, trimSuffix и другие
 - [Именованные шаблоны и хелперы](./templating/_helpers.md) — создание переиспользуемых блоков в _helpers.tpl
 
-### Практические сценарии
+---
 
-- [Обзор сценариев](./templating/scenarios/overview.md) — оглавление всех примеров
-- [Условная логика](./templating/scenarios/conditionals.md) — if/else, условное создание ресурсов, условные аннотации
-- [Работа с ConfigMap и файлами](./templating/scenarios/configmap_files.md) — вставка данных, чтение файлов, экранирование
-- [Автоматический перезапуск](./templating/scenarios/restart_on_change.md) — rolling update при изменении ConfigMap
-- [Проверка API версий](./templating/scenarios/api_versions.md) — адаптация под версию Kubernetes
-- [NOTES.txt](./templating/scenarios/notes_txt.md) — инструкции после установки
-- [NetworkPolicy](./templating/scenarios/networkpolicy.md) — шаблонизация сетевых политик
+## Практические сценарии
 
-См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Управление версиями](./helm_release_versioning.md). Отладка: `helm template myrelease .` и `helm install --dry-run --debug myrelease .`.
+Подробный разбор практических случаев использования шаблонов Helm представлен в разделе **[Обзор сценариев](./templating/scenarios/overview.md)**. Он включает примеры параметризации, условной логики, работы с файлами, сетевых политик и адаптации под возможности кластера.
 
 - **Использование в werf:** [Шаблонизация манифеста Kubernetes](../../../CI-CD/Tools/werf_overview.md#сценарий-3-шаблонизация-манифеста-kubernetes) — Go template для динамической подстановки имён образов
+
+---
+
+## Дополнительная информация
+
+См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Управление версиями](./helm_release_versioning.md). 
+
+**Отладка:**
+- `helm template myrelease .`
+- `helm install --dry-run --debug myrelease .`

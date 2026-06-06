@@ -93,5 +93,6 @@ scrape_configs:
 **См. также:**
 
 - [Основные концепции мониторинга](./angie_monitoring_concepts.md)
+- [Пользовательские метрики и их экспорт](./angie_monitoring_custom_metrics.md)
 - [Настройка Console Lite и API](./angie_monitoring_console.md)
 - [Возможности Angie Pro](./angie_monitoring_pro.md)

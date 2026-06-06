@@ -1,82 +1,72 @@
 # Horizontal Pod Autoscaler (HPA): Практические сценарии
 
-## 1. Определения
+В данном документе представлены типовые конфигурации горизонтального масштабирования подов (Horizontal Pod Autoscaler, HPA) для различных типов нагрузки в Kubernetes.
 
-**Resource Metrics** — базовые метрики ресурсов (CPU, memory), предоставляемые Metrics Server через API `metrics.k8s.io`.
+## Определения
 
-**Custom Metrics** — пользовательские метрики приложений (RPS, latency), предоставляемые через Prometheus Adapter API `custom.metrics.k8s.io`.
+Для получения базовой информации см. основной раздел **[HPA (index.md)](./index.md)**.
 
-**External Metrics** — внешние метрики (очереди, бизнес-показатели), предоставляемые через External Metrics API (KEDA, Prometheus Adapter).
+**HPA v2 API** — текущая версия интерфейса программирования приложений (Application Programming Interface, API), поддерживающая кастомные и внешние метрики, а также настройку поведения.
 
-## 2. Базовые концепции
+**Metrics-driven Scaling** — подход к масштабированию, при котором количество реплик определяется внешними или внутренними показателями производительности, а не только потреблением ресурсов.
 
-### 2.1. Предварительные требования
+## Базовые концепции
 
-#### Установка Metrics Server
+### Предварительные требования
 
-Для работы с базовыми метриками (`cpu`, `memory`) в кластере должен быть развернут **Metrics Server**:
+Для успешного применения любого из сценариев ниже необходимо выполнение двух условий:
 
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-```
+1. **Metrics Server:** должен быть развернут в кластере для сбора данных о потреблении ресурсов (ЦПУ/Память).
+   [Инструкция по установке в разделе Metrics Server](../../MonitoringLogging/metrics-server.md)
 
-[Подробнее](../../MonitoringLogging/metrics-server.md)
+2. **Resource Requests:** HPA использует запросы ресурсов (`requests`) в качестве базовой линии для расчета процента утилизации. Без них расчет в процентах невозможен.
+   ```yaml
+   resources:
+     requests:
+       cpu: "200m"  # Центральный процессор (Central Processing Unit, CPU)
+       memory: "256Mi" # Оперативная память (Random Access Memory, RAM)
+   ```
 
-#### Задать requests для контейнеров
+### Матрица выбора сценария
 
-Чтобы HPA мог корректно рассчитывать утилизацию CPU в процентах, у контейнеров должны быть установлены `requests`:
-
-```yaml
-resources:
-  requests:
-    cpu: "200m"  # 200 милли-ядер
-    memory: "256Mi"
-```
-
-### 2.2. Типы сценариев масштабирования
-
-| Тип | Метрика | Когда использовать |
+| Сценарий | Метрика | Основной случай использования |
 | :--- | :--- | :--- |
-| Базовый | CPU | Stateless-приложения с переменной вычислительной нагрузкой |
-| Мультиметрика | CPU + Memory | Приложения с разными профилями потребления ресурсов |
-| Внешние метрики | Очереди (Kafka, SQS) | Workers, обрабатывающие сообщения из очередей |
-| Продвинутый | CPU с behavior | Приложения с резкими скачками нагрузки |
-| Кастомные метрики | RPS, latency | Веб-сервисы, API, где важна скорость ответа |
+| **Базовый** | CPU | Типичные веб-сервисы с вычислительной нагрузкой |
+| **Мультиметрика** | CPU + RAM | Приложения с риском утечки памяти или Java-стек |
+| **Внешние метрики** | Kafka/SQS lag | Обработка очередей, фоновые задачи |
+| **Настройка поведения** | CPU + Behavior | Критичные API с резкими всплесками трафика |
+| **Кастомные метрики** | RPS / Latency | API, где процессор не является узким местом |
 
-## 3. Практические сценарии
+## Практические сценарии
 
-### 3.1. Сценарий 1: Базовый HPA по CPU
+### Сценарий 1: Базовый HPA по процессору (CPU)
+
+Используется для большинства веб-приложений (Stateless), где нагрузка напрямую коррелирует с использованием процессора.
 
 ```yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: my-app-hpa
-  namespace: default
 spec:
-  # Ссылка на масштабируемый ресурс
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: my-app
-
-  # Границы масштабирования
   minReplicas: 3
   maxReplicas: 20
-
-  # Метрики для принятия решений
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 60  # Целевая утилизация 60%
+          averageUtilization: 60
 ```
 
-**Когда использовать:** Stateless-приложения с переменной вычислительной нагрузкой.
+### Сценарий 2: Мультиметрика (CPU и Память)
 
-### 3.2. Сценарий 2: HPA по CPU и памяти
+HPA вычисляет необходимое количество реплик для каждой метрики отдельно и выбирает **наибольшее** значение из полученных результатов.
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -87,34 +77,19 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
-
-  minReplicas: 3
-  maxReplicas: 20
-
+    name: memory-heavy-app
+  minReplicas: 2
+  maxReplicas: 10
   metrics:
-    # CPU метрика
     - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
-
-    # Memory метрика
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 50 } }
     - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 70
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 80 } }
 ```
 
-> **Примечание:** HPA выбирает метрику, требующую наибольшего количества реплик.
+### Сценарий 3: Масштабирование по длине очереди (Внешние метрики)
 
-**Когда использовать:** Приложения с разными профилями потребления ресурсов (например, Java-приложения с высоким потреблением памяти).
-
-### 3.3. Сценарий 3: HPA с внешними метриками (очередь)
+Для использования внешних метрик требуется специальный адаптер, например **[KEDA](../keda/keda_concepts.md)**. Подробнее об архитектуре работы с очередями см. в разделе **[Паттерн Workers + Queue](../workers_queue_pattern.md)**.
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -122,122 +97,44 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: queue-based-hpa
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: workers
-
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: worker }
   minReplicas: 1
   maxReplicas: 50
-
   metrics:
-    # Внешняя метрика из очереди сообщений
     - type: External
       external:
-        metric:
-          name: queue_messages_ready
-        target:
-          type: AverageValue
-          averageValue: "200"  # 200 сообщений на под
+        metric: { name: queue_messages_ready }
+        target: { type: AverageValue, averageValue: "200" }
 ```
 
-> **Примечание:** Для внешних метрик требуется Prometheus Adapter или [KEDA](../keda/basic_concepts.md).
+### Сценарий 4: Тонкая настройка поведения (Behavior)
 
-**Когда использовать:** Workers, обрабатывающие сообщения из очередей (Kafka, RabbitMQ, SQS).
-
-### 3.4. Сценарий 4: HPA с продвинутым поведением
+Данный сценарий позволяет настроить «агрессивность» масштабирования. Например, быстро расти при пиках и медленно сокращаться для обеспечения стабильности (предотвращение дребезга).
 
 ```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: advanced-hpa
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: web-api
-
-  minReplicas: 5
-  maxReplicas: 100
-
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-
-  # Продвинутое поведение
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 0  # Мгновенное масштабирование вверх
+      stabilizationWindowSeconds: 0 # Мгновенная реакция на рост
       policies:
         - type: Percent
-          value: 100  # Увеличение на 100%
+          value: 100
           periodSeconds: 15
-        - type: Pods
-          value: 10  # Или на 10 подов
-          periodSeconds: 15
-      selectPolicy: Max  # Выбрать максимальное значение
-
     scaleDown:
-      stabilizationWindowSeconds: 300  # 5 минут для стабильности
+      stabilizationWindowSeconds: 300 # Ожидание 5 минут перед сжатием
       policies:
         - type: Percent
-          value: 50  # Уменьшение на 50%
+          value: 10
           periodSeconds: 60
-        - type: Pods
-          value: 5  # Или на 5 подов
-          periodSeconds: 60
-      selectPolicy: Min  # Выбрать минимальное значение
 ```
 
-**Когда использовать:** Приложения с резкими скачками нагрузки и требованием к стабильности при спадах.
+## Дополнительная информация
 
-### 3.5. Сценарий 5: HPA с кастомными метриками Prometheus
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: prometheus-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: api-server
-
-  minReplicas: 2
-  maxReplicas: 30
-
-  metrics:
-    # Кастомная метрика RPS из Prometheus
-    - type: Pods
-      pods:
-        metric:
-          name: http_requests_per_second
-        target:
-          type: AverageValue
-          averageValue: "100"  # 100 RPS на под
-```
-
-> **Примечание:** Требуется Prometheus Adapter с настроенными правилами.
-
-**Когда использовать:** Веб-сервисы, API, где важны RPS или latency, а не утилизация CPU.
-
-## 4. Дополнительная информация
-
-### 4.1. Интеграции
-
-- **[KEDA](../keda/basic_concepts.md)** — событийное масштабирование на основе внешних метрик (очереди, расписания).
-- **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик для HPA.
-- **[Prometheus Adapter](https://github.com/kubernetes-sigs/prometheus-adapter)** — адаптер для кастомных метрик Prometheus.
+Для диагностики и решения проблем со сценариями (например, ошибка `FailedGetResourceMetric`) обратитесь к разделу **[Диагностика и ограничения (hpa_advanced.md)](./hpa_advanced.md)**.
 
 ---
 
 **Связанные документы:**
-
-- **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
-- **[Дополнительные темы](./hpa_advanced.md)** — диагностика, проблемы, best practices
+- **[HPA: Главная](./index.md)** — обзор и ключевые определения
+- **[Основные концепции](./hpa_concepts.md)** — алгоритм и типы метрик
+- **[Паттерн Workers + Queue](../workers_queue_pattern.md)** — архитектура асинхронной обработки

@@ -18,8 +18,8 @@
 
 Установка через официальный Helm-чарт разворачивает Netdata по модели Parent/Child:
 
-- **Parent `Deployment`** — один главный под агрегирует данные от дочерних агентов, предоставляет централизованный UI, хранит историю в `PersistentVolume`.
-- **Child `DaemonSet`** — под-агент на каждом узле собирает метрики хоста (CPU, память, диски, сеть) и из `cgroups` контейнеров.
+- **Parent `Deployment`** — один главный под агрегирует данные от дочерних агентов, предоставляет централизованный UI (User Interface), хранит историю в `PersistentVolume`.
+- **Child `DaemonSet`** — под-агент на каждом узле собирает метрики хоста (CPU (Central Processing Unit), память, диски, сеть) и из `cgroups` (Control Groups) контейнеров.
 - **Service Discovery** — дочерние агенты автоматически обнаруживают родительский под и отправляют метрики.
 
 ### Преимущества и недостатки
@@ -50,7 +50,10 @@ Netdata рекомендуется устанавливать через офи�
 
 ```bash
 helm repo add netdata https://netdata.github.io/helmchart/
+# → "netdata" has been added to your repositories
 helm repo update
+# → Hang tight while we grab the latest from your chart repositories...
+# → ...Successfully got an update from the "netdata" chart repository
 ```
 
 **Шаг 2: Отладка конфигурации (`--dry-run`)**
@@ -66,6 +69,7 @@ helm install netdata netdata/netdata \
   --set parent.resources.limits.memory=1Gi \
   --set ingress.enabled=false \
   --dry-run --debug
+# → [YAML (Yet Another Markup Language) manifests output for all Netdata resources]
 ```
 
 Параметры:
@@ -74,7 +78,7 @@ helm install netdata netdata/netdata \
 - `parent.database.storageClass` — `StorageClass` для `PersistentVolume` с историческими данными
 - `child.resources.requests.cpu` — запросы CPU для child-агента
 - `parent.resources.limits.memory` — лимиты памяти для parent-пода
-- `ingress.enabled=false` — отключение Ingress для ручной настройки с TLS
+- `ingress.enabled=false` — отключение Ingress для ручной настройки с TLS (Transport Layer Security)
 
 **Шаг 3: Установка релиза**
 
@@ -87,6 +91,11 @@ helm install netdata netdata/netdata \
   --set child.resources.requests.cpu=100m \
   --set parent.resources.limits.memory=1Gi \
   --set ingress.enabled=false
+# → NAME: netdata
+# → LAST DEPLOYED: Sat Jun  6 15:30:00 2026
+# → NAMESPACE: monitoring
+# → STATUS: deployed
+# → REVISION: 1
 ```
 
 **Шаг 4: Доступ через Ingress**
@@ -121,15 +130,16 @@ spec:
               name: http
 ```
 
-Настройка cert-manager: **[CA кластера для внутренних сертификатов](../ToolsUtilities/cert_manager/cluster_ca.md)**.
+Настройка cert-manager: **[CA (Certificate Authority) кластера для внутренних сертификатов](../ToolsUtilities/cert_manager/cluster_ca.md)**.
 
 ### Удаление Netdata
 
 ```bash
 helm uninstall netdata -n monitoring
+# → release "netdata" uninstalled
 ```
 
-Helm удаляет все связанные ресурсы (`Deployment`, `DaemonSet`, `Service`, `PVC`).
+Helm удаляет все связанные ресурсы (`Deployment`, `DaemonSet`, `Service`, `PVC` (PersistentVolumeClaim)).
 
 > **Примечание:** `PersistentVolume` может сохраниться при `reclaimPolicy: Retain`.
 

@@ -2,58 +2,39 @@
 
 ## Определения
 
-**Rancher Pipelines** — встроенный в Rancher механизм CI/CD на базе Jenkins, позволяющий автоматизировать сборку, тестирование и развёртывание приложений в Kubernetes-кластерах. Интегрирован в Rancher UI, не требует отдельного развёртывания Jenkins.
+**Rancher Pipelines** — интегрированный в платформу Rancher механизм CI/CD (Continuous Integration / Continuous Delivery — непрерывная интеграция и непрерывная доставка), построенный на базе Jenkins. Он предназначен для автоматизации процессов сборки, тестирования и развёртывания приложений непосредственно в кластерах Kubernetes через веб-интерфейс Rancher.
 
-> **Важно:** Rancher Pipelines **деприкейтрован** начиная с Rancher v2.5. Рекомендуемая замена — Fleet (GitOps-подход, см. [GitOps Overview](../../../GitOps/GitOps_overview.md)) или внешние CI/CD-системы (GitLab CI, ArgoCD). Функциональность может быть удалена в будущих версиях Rancher.
+> **Важная информация:** данный инструмент является **устаревшим (deprecated)** начиная с версии Rancher v2.5. Для новых проектов настоятельно рекомендуется использовать Fleet (решение для GitOps-доставки) или внешние системы (GitLab CI, GitHub Actions, ArgoCD). Функциональность может быть полностью удалена в будущих версиях платформы.
 
 ## Базовые концепции
 
-### Архитектура
+### Архитектура решения
 
-Rancher Pipelines использует Jenkins. При запуске Pipeline Rancher разворачивает Jenkins Agent (slave pod) в кластере, который выполняет этапы сборки и удаляется после завершения.
+Rancher Pipelines функционирует поверх Jenkins. При запуске конвейера платформа динамически разворачивает Jenkins Agent (вспомогательный под) внутри кластера. Этот агент выполняет заданные шаги и автоматически удаляется после завершения работы, что позволяет эффективно использовать ресурсы кластера.
 
-### Компоненты Pipeline
+### Структура конвейера (Pipeline)
 
-- **Stage**: Логическая группа шагов (Build, Test, Deploy).
-- **Step**: Конкретное действие внутри этапа (Clone, Build Image, Deploy YAML).
-- **Trigger**: Событие запуска — push в Git или ручной запуск.
+- **Stage (Этап)** — логическая группа действий, например, "Сборка" (Build), "Тестирование" (Test) или "Развёртывание" (Deploy).
+- **Step (Шаг)** — конкретная операция внутри этапа, такая как клонирование репозитория, сборка Docker-образа или применение манифестов Kubernetes.
+- **Trigger (Триггер)** — событие, инициирующее запуск конвейера (например, выполнение команды `push` в Git-репозиторий или запуск вручную через UI (User Interface — пользовательский интерфейс)).
 
-### Поддерживаемые провайдеры
+### Поддерживаемые провайдеры Git
 
-- **GitHub** — наиболее распространённый вариант.
-- **GitLab** — поддерживается.
-- **Bitbucket** — менее распространён.
+Система поддерживает интеграцию с популярными хостингами репозиториев через протокол OAuth (Open Authorization):
+* GitHub
+* GitLab
+* Bitbucket
 
 ## Практические сценарии
 
-### Настройка Rancher Pipelines
+### Настройка конвейера доставки
 
-#### 1. Подготовка проекта и namespace
+1. **Подготовка окружения**: создайте проект в Rancher и пространство имён (Namespace) для приложения. Рекомендуется задавать имена пространств имён вручную для обеспечения читаемости инфраструктуры.
+2. **Настройка учетных данных**: для публикации образов в Docker Hub необходимо создать секрет типа `Registry Credentials` в ресурсах проекта.
+3. **Подключение репозитория**: в настройках проекта перейдите в `Tools` → `Pipelines`, выберите провайдера и пройдите авторизацию через OAuth.
+4. **Конфигурация через YAML**: описание конвейера хранится в файле `.rancher-pipeline.yml` в корне репозитория.
 
-Создайте проект в Rancher и namespace для приложения. Рекомендуется создать namespace вручную с осмысленным именем, чтобы избежать автоматически сгенерированных Rancher имен.
-
-#### 2. Настройка Docker Hub credentials
-
-Для публикации образов в Docker Hub необходимо создать Registry Credential:
-
-1. Перейдите в проект → Resources → Secrets → Registry Credentials
-2. Добавьте новый registry
-3. Выберите тип "Docker Hub"
-4. Укажите username и password
-
-#### 3. Подключение GitHub репозитория
-
-1. Перейдите в проект → Tools → Pipelines
-2. Выберите GitHub в качестве провайдера
-3. Зарегистрируйте OAuth приложение в GitHub
-4. Введите Client ID и Client Secret
-5. Выберите репозитории для Pipeline
-
-#### 4. Конфигурация Pipeline
-
-Pipeline может быть настроен через визуальный интерфейс Rancher или через файл `.rancher-pipeline.yml` в репозитории.
-
-**Пример файла `.rancher-pipeline.yml`:**
+**Пример конфигурации `.rancher-pipeline.yml`:**
 
 ```yaml
 stages:
@@ -61,27 +42,20 @@ stages:
     steps:
       - publishImageConfig:
           dockerfilePath: ./Dockerfile
-          imageName: username/repo:tag
+          imageName: myuser/myapp:v1.0.0
           pushRemote: true
-          registry: dockerhub
+          registry: index.docker.io
   - name: Deploy
     steps:
       - applyYamlConfig:
           path: ./deployment.yaml
-      - applyYamlConfig:
-          path: ./service.yaml
 ```
 
-#### 5. Основные шаги Pipeline
+### Рекомендации по сборке (Dockerfile)
 
-- **Build and Publish Image**: Сборка Docker-образа из Dockerfile и пуш в registry.
-- **Deploy YAML**: Применение Kubernetes-манифестов (Deployment, Service и др.).
-- **Run Script**: Выполнение произвольных команд в pipeline.
+Для минимизации размера образов и ускорения сборки рекомендуется использовать многоэтапную сборку (multi-stage build). Детальные принципы описаны в разделе [Оптимизация сборки Docker](../../Docker/Dockerfile/Docker_best_practices/build_optimization.md).
 
-### Пример Dockerfile для приложения Go
-
-Пример multi-stage сборки (подробнее: [Build Optimization](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md)):
-
+**Пример Dockerfile:**
 ```dockerfile
 FROM golang:1.21-alpine AS builder
 WORKDIR /build
@@ -95,56 +69,25 @@ EXPOSE 9000
 CMD ["./app"]
 ```
 
-### Пример Deployment
-
-Для доступа к приватному registry используется [imagePullSecrets](../../../Kubernetes/Base/secrets/creating_secrets.md#docker-registry-secret):
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: myapp
-  namespace: mynamespace
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: myapp
-  template:
-    metadata:
-      labels:
-        app: myapp
-    spec:
-      containers:
-      - name: myapp
-        image: username/myapp:001
-        imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 9000
-```
-
-### Особенности работы
-
-1. **Ограничения**: При изменении только манифестов (без изменения кода) выполняется полная пересборка образа.
-2. **Ресурсы**: Pipeline требует дополнительных ресурсов кластера для Jenkins Agent.
-3. **Webhooks**: Автоматическая активация Pipeline при push в репозиторий (требует внешнего доступа к кластеру).
-
 ## Дополнительная информация
 
-### Актуальность версий
+### Статус и альтернативы
 
-> **Внимание:** Rancher Pipelines (Jenkins-based) **деприкейтрован** с Rancher v2.5. Рекомендуемая замена — Fleet (GitOps, см. [GitOps Overview](../../../GitOps/GitOps_overview.md)) или внешние CI/CD-системы (GitLab CI, GitHub Actions, Jenkins).
+В современной экосистеме Rancher фокус смещен в сторону подхода GitOps (Git Operations).
 
-| Компонент | Указанная информация | Статус | Рекомендация |
-|-----------|---------------------|--------|--------------|
-| **Rancher Pipelines** | Jenkins-based | ⚠️ Deprecated (v2.5+) | Мигрировать на Fleet/GitOps |
-| **Fleet** | GitOps-преемник | ✅ Актуален | [GitOps Overview](../../../GitOps/GitOps_overview.md) |
-| **Jenkins Agent** | Динамические pods | ✅ Работает | Legacy-развёртывания |
+| Компонент | Текущий статус | Рекомендация |
+|-----------|----------------|--------------|
+| Rancher Pipelines | Устарело (Deprecated) | Миграция на Fleet или внешние CI/CD |
+| Fleet | Актуально | Основной инструмент для GitOps в Rancher |
+| Jenkins Agent | Ограниченно | Использование в рамках legacy-проектов |
 
-### Best Practices
+### Рекомендации по эксплуатации
 
-- Для доступа к приватным образам используйте [imagePullSecrets](../../../Kubernetes/Base/secrets/creating_secrets.md#docker-registry-secret).
-- Указывайте конкретные теги образов (не `latest`) для воспроизводимости сборок (подробнее: [Build Optimization](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md)).
-- `imagePullPolicy: IfNotPresent` предотвращает автоматическое обновление образа без изменения тега.
+- Для безопасного доступа к приватным образам используйте [imagePullSecrets](../../Kubernetes/Base/secrets/creating_secrets.md#docker-registry-secret).
+- Избегайте использования тега `latest`; фиксируйте версии образов для обеспечения воспроизводимости развёртываний.
+- Учитывайте, что Rancher Pipelines требует выделения дополнительных ресурсов (CPU, RAM) в кластере для работы Jenkins-агентов.
 
-См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.
+**Связанные темы:**
+* [Обзор GitOps](../../GitOps/GitOps_overview.md) — современная альтернатива встроенным пайплайнам.
+* [rancher_overview](./rancher_overview.md) — общая архитектура платформы Rancher.
+* [Секреты Kubernetes](../../Kubernetes/Base/secrets/creating_secrets.md) — управление учетными данными.

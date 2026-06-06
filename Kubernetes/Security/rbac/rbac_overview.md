@@ -1,20 +1,14 @@
-# Role-Based Access Control (RBAC) в Kubernetes
+# Обзор управления доступом на основе ролей (RBAC)
 
 ## Определения
 
-**RBAC (Role-Based Access Control)** — механизм авторизации Kubernetes для гранулярного управления доступом субъектов (пользователей, групп, [ServiceAccount](./roles.md#serviceaccount)) к ресурсам кластера через декларативные правила.
+**RBAC (Role-Based Access Control — управление доступом на основе ролей)** — основной механизм авторизации в Kubernetes для гранулярного управления доступом субъектов (пользователей, групп, [ServiceAccount](./bindings.md#serviceaccount)) к ресурсам кластера через декларативные правила.
 
 Ключевые сущности:
 
-- **Субъект** — кто запрашивает доступ: `User`, `Group`, [ServiceAccount](./roles.md#serviceaccount)
-- **Роль** — набор разрешений: [Role](./roles.md#role), [ClusterRole](./roles.md#clusterrole)
-- **Привязка** — связь субъекта с ролью: [RoleBinding](./bindings.md), [ClusterRoleBinding](./bindings.md)
-
-### Предупреждения безопасности
-
-- **`system:masters`** — группа обходит все проверки RBAC и вебхуки авторизации. Никогда не добавляйте пользователей в эту группу
-- **Префикс `system:`** — зарезервирован для системных компонентов. Модификация system-ролей может нарушить работу кластера
-- **`roleRef` неизменяем** — для изменения роли необходимо пересоздать binding
+- **Субъект** — кто запрашивает доступ: `User`, `Group`, [ServiceAccount](./bindings.md#serviceaccount).
+- **Роль** — набор разрешений: [Role](./roles.md#role) и [ClusterRole](./roles.md#clusterrole).
+- **Привязка** — связь субъекта с ролью: [RoleBinding](./bindings.md#rolebinding) и [ClusterRoleBinding](./bindings.md#clusterrolebinding).
 
 ## Основные концепции
 
@@ -22,66 +16,41 @@
 
 RBAC опирается на три вопроса:
 
-- **Что разрешено?** — определяется в [Role](./roles.md) и [ClusterRole](./roles.md#clusterrole)
-- **Кому разрешено?** — определяется в поле `subjects` [привязок](./bindings.md)
-- **Где разрешено?** — определяется уровнем привязки ([RoleBinding](./bindings.md#rolebinding) или [ClusterRoleBinding](./bindings.md#clusterrolebinding))
+- **Что разрешено?** — определяется в [Role](./roles.md#role) и [ClusterRole](./roles.md#clusterrole).
+- **Кому разрешено?** — определяется в поле `subjects` [привязок](./bindings.md).
+- **Где разрешено?** — определяется уровнем привязки ([RoleBinding](./bindings.md#rolebinding) или [ClusterRoleBinding](./bindings.md#clusterrolebinding)).
 
 ### Основные объекты RBAC
 
 | Объект | Уровень | Назначение |
 |--------|---------|------------|
-| [Role](./roles.md#role) | Namespace | Права на namespaced-ресурсы в одном namespace |
-| [ClusterRole](./roles.md#clusterrole) | Кластер | Права на кластерные ресурсы или все namespace |
-| [RoleBinding](./bindings.md#rolebinding) | Namespace | Привязка роли к субъекту в одном namespace |
-| [ClusterRoleBinding](./bindings.md#clusterrolebinding) | Кластер | Глобальная привязка ClusterRole к субъекту |
+| [Role](./roles.md#role) | Пространство имён | Права на ресурсы в рамках одного namespace. |
+| [ClusterRole](./roles.md#clusterrole) | Кластер | Права на кластерные ресурсы или все namespace одновременно. |
+| [RoleBinding](./bindings.md#rolebinding) | Пространство имён | Привязка роли к субъекту в конкретном namespace. |
+| [ClusterRoleBinding](./bindings.md#clusterrolebinding) | Кластер | Глобальная привязка ClusterRole к субъекту. |
 
 #### Субресурсы (Subresources)
 
-Некоторые ресурсы имеют "субресурсы", которые позволяют выполнять специальные действия, отличные от стандартных CRUD-операций над основным объектом.
+Некоторые ресурсы имеют субресурсы для выполнения специальных действий:
 
 - **`pods/log`** — чтение логов контейнеров.
-- **`pods/exec`** — выполнение команд внутри контейнера (требует глаголов `create` или `get` в зависимости от реализации).
-- **`pods/status`**, **`nodes/status`** — чтение/обновление только статуса объекта.
+- **`pods/exec`** — выполнение команд внутри контейнера.
 - **`pods/portforward`** — проброс портов.
 
-В манифесте RBAC субресурсы указываются через слеш: `resources: ["pods/exec"]`. Ошибочно полагать, что права на `pods` автоматически дают права на `pods/exec`.
+В манифесте субресурсы указываются через косую черту: `resources: ["pods/exec"]`.
 
-### Встроенные ClusterRole
+### Встроенные роли
 
-Kubernetes предоставляет встроенные роли с префиксом `system:`:
+Kubernetes предоставляет стандартные роли (`cluster-admin`, `admin`, `edit`, `view`). Подробное описание приведено в разделе **[Встроенные роли](./roles.md#vstroennye-roli)**.
 
-| Роль | Описание |
-|------|----------|
-| `cluster-admin` | Полный доступ (суперпользователь). Привязка: `system:masters` |
-| `admin` | Административный доступ в namespace (без управления resource quota и namespace) |
-| `edit` | Чтение и запись большинства объектов в namespace |
-| `view` | Только чтение (без Secrets и ролей) |
-| `system:public-info-viewer` | Чтение несекретной информации о кластере (с v1.14) |
-| `system:discovery` | Чтение endpoints обнаружения API |
-
-> **Важно:** Для агрегации прав во встроенные роли используйте лейблы:
->
-> - `rbac.authorization.k8s.io/aggregate-to-admin`
-> - `rbac.authorization.k8s.io/aggregate-to-edit`
-> - `rbac.authorization.k8s.io/aggregate-to-view`
+Для агрегации прав используются специальные метки (labels):
+- `rbac.authorization.k8s.io/aggregate-to-admin`
+- `rbac.authorization.k8s.io/aggregate-to-edit`
+- `rbac.authorization.k8s.io/aggregate-to-view`
 
 ### Принцип аддитивности
 
-Права в RBAC **аддитивны**: итоговые возможности субъекта — это объединение всех разрешений из всех привязок. Отсутствие права означает запрет.
-
-### Риски эскалации привилегий
-
-| Вектор атаки | Описание | Митигация |
-|--------------|----------|-----------|
-| **Listing Secrets** | `list`/`watch` на Secrets раскрывает содержимое | Ограничивайте доступ к Secrets |
-| **Workload Creation** | Создание Pod даёт доступ к Secrets, ConfigMaps, PV namespace'а | Используйте Pod Security Admission (Baseline/Restricted) |
-| **Nodes/proxy** | Доступ к `nodes/proxy` = выполнение команд в Pod через Kubelet API | Запретить доступ |
-| **escalate verb** | Позволяет создавать ClusterRole с большими правами | Запретить verb |
-| **bind verb** | Позволяет создавать binding'и к ролям с недоступными правами | Запретить verb |
-| **impersonate verb** | Позволяет действовать от имени других пользователей | Ограничить |
-| **Token Request** | `create` на `serviceaccounts/token` выдаёт токены | Ограничить |
-
-> **CVE-2021-25740 (v1.22+):** В новых кластерах удалён доступ на запись к EndpointSlices из ролей `admin`/`edit`.
+Права в RBAC являются аддитивными: итоговые возможности субъекта — это объединение всех разрешений из всех привязок. Отсутствие явного разрешения означает запрет (принцип закрытого мира).
 
 ## Практические сценарии
 
@@ -94,141 +63,43 @@ kubectl auth can-i create deployments --namespace default
 # Проверка от имени другого пользователя
 kubectl auth can-i list secrets --namespace dev --as jane
 
-# Проверка от имени ServiceAccount
-kubectl auth can-i list nodes --as=system:serviceaccount:observability:prometheus
-
 # Список всех разрешений текущего пользователя
 kubectl auth can-i --list
-
-# Синхронизация RBAC-объектов из манифеста
-kubectl auth reconcile -f my-rbac-rules.yaml --remove-extra-subjects --remove-extra-permissions
 ```
 
-#### Инструменты аудита RBAC (krew плагины)
+### Изоляция ресурсов по пространствам имён
 
-- **`kubectl who-can`** — позволяет узнать, какие субъекты (пользователи, SA) имеют права на выполнение конкретного действия над ресурсом (например, `kubectl who-can delete secrets`).
-- **`rakkess`** — удобный инструмент для просмотра матрицы прав доступа (Access Matrix), быстро показывает, к каким ресурсам и с какими глаголами у субъекта есть доступ.
-
-### Лучшие практики
-
-#### 1. Принцип наименьших привилегий
-
-```yaml
-# ❌ ПЛОХО: избыточные права
-rules:
-- apiGroups: ["*"]
-  resources: ["*"]
-  verbs: ["*"]
-
-# ✅ ХОРОШО: минимально необходимые права
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader
-  namespace: default
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
-```
-
-#### 2. Управление ServiceAccount (по убыванию безопасности)
-
-| Уровень | Подход | Рекомендация |
-|---------|--------|--------------|
-| 1 | Роль для конкретного ServiceAccount приложения | ✅ Best Practice |
-| 2 | Роль для `default` ServiceAccount в namespace | ⚠️ Permissions доступны всем pod |
-| 3 | Роль для всех SA в namespace | ⚠️ Менее безопасно |
-| 4 | Ограниченная роль для всех SA кластера | ❌ Не рекомендуется |
-| 5 | cluster-admin для всех SA | ❌ Критическая уязвимость |
-
-#### 3. Отключение автомонтирования токенов
-
-```yaml
-# Глобально для namespace
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: default
-  namespace: default
-automountServiceAccountToken: false
-
-# Индивидуально для Pod
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-pod
-spec:
-  automountServiceAccountToken: false
-  serviceAccountName: my-sa
-```
-
-### Изоляция по namespace
-
-```yaml
-# Доступ только к deployments в namespace 'development'
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: development
-  name: deployment-manager
-rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "list", "watch", "create", "update", "delete"]
----
-# Привязка роли к группе разработчиков
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: devs-deployment-access
-  namespace: development
-subjects:
-- kind: Group
-  name: developers
-  apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: Role
-  name: deployment-manager
-  apiGroup: rbac.authorization.k8s.io
-```
+Пример предоставления доступа группе разработчиков только в одном пространстве имён приведен в разделе **[Практические сценарии — RoleBinding](./bindings.md#prakticheskie-scenarii)**.
 
 ## Дополнительная информация
 
+<a name="preduprezhdeniya-bezopasnosti"></a>
+### Предупреждения безопасности
+
+- **`system:masters`** — группа, которая обходит все проверки RBAC. Никогда не добавляйте в неё обычных пользователей.
+- **Префикс `system:`** — зарезервирован для системных компонентов Kubernetes. Не создавайте собственные объекты с этим префиксом.
+- **Неизменяемость `roleRef`** — для смены роли в существующей привязке необходимо её пересоздать (удалить и создать новую).
+
 ### Ограничения RBAC
 
-RBAC имеет принципиальные [ограничения](./limitations_opa.md):
+Механизм RBAC имеет ряд [ограничений](./limitations_opa.md):
+- Отсутствие запрещающих правил (deny).
+- Отсутствие условий (проверка IP-адреса, времени суток).
+- Статичность набора правил.
 
-- Нет запрещающих правил (deny)
-- Нет условий (time, IP)
-- Статичность правил
-- Нет валидации содержимого ресурсов
+Для реализации сложных сценариев рекомендуется использовать внешние инструменты (OPA, Kyverno).
 
-Для расширенных сценариев используйте [OPA/Kyverno](./limitations_opa.md).
+### Риски эскалации привилегий
 
-### Агрегация ролей
+| Вектор атаки | Описание |
+|--------------|----------|
+| **Listing Secrets** | Возможность получения конфиденциальных данных через глаголы `list`/`watch`. |
+| **Workload Creation** | Создание Pod позволяет получить доступ к ресурсам всего namespace (через ServiceAccount). |
+| **Глаголы escalate/bind** | Позволяют субъекту повышать собственные привилегии или изменять роли. |
+| **Глагол impersonate** | Позволяет субъекту действовать от имени других пользователей или сервисных аккаунтов. |
 
-Для динамического объединения прав используйте [агрегируемые ClusterRole](./aggregation_scenarios.md).
+### Связанные темы
 
-### Аудит и мониторинг
-
-- Регулярно проверяйте binding'и для группы `system:unauthenticated` и удаляйте лишние
-- Удаляемые пользователи могут быть воссозданы злоумышленником с наследованием всех прав
-- Используйте `kubectl auth reconcile` для синхронизации с декларативными манифестами
-- Применяйте ResourceQuota для предотвращения DoS через создание объектов
-
-### Предотвращение эскалации привилегий
-
-API Kubernetes автоматически ограничивает создание/обновление ролей:
-
-- Создание Role возможно только если у вас уже есть все разрешения из этой роли **ИЛИ** есть `escalate` verb
-- Создание RoleBinding возможно только если у вас есть все разрешения из роли **ИЛИ** есть `bind` verb
-
-### Ссылки
-
-- Подробнее о ролях: [Role и ClusterRole](./roles.md)
-- Подробнее о привязках: [RoleBinding и ClusterRoleBinding](./bindings.md)
-- Практические сценарии агрегации: [Агрегируемые ClusterRole](./aggregation_scenarios.md)
-- Ограничения и альтернативы: [Недостатки RBAC и OPA](./limitations_opa.md)
-- [Kubernetes RBAC Documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
-- [Kubernetes RBAC Good Practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/)
+- **[Определение ролей (Role и ClusterRole)](./roles.md)**
+- **[Привязки ролей (RoleBinding)](./bindings.md)**
+- **[Агрегируемые ClusterRole](./aggregation_scenarios.md)**

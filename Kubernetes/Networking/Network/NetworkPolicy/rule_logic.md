@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Логика правил NetworkPolicy** — набор правил объединения условий в политиках безопасности Kubernetes, определяющий, какой трафик разрешается или запрещается.
+**Логика правил NetworkPolicy** — набор правил объединения условий в политиках безопасности Kubernetes, определяющий, какой трафик разрешается или запрещается на уровнях IP (Internet Protocol) и портов TCP (Transmission Control Protocol) / UDP (User Datagram Protocol).
 
 ## Базовые Концепции
 
@@ -98,11 +98,11 @@ ingress:
 
 **Результат:**
 
-* **Вариант А (И):** Поды `opadmin` из namespace `default`
-* **Вариант Б (ИЛИ):** Любые поды из namespace `default` **ИЛИ** любые поды с меткой `opadmin` из текущего namespace
+* **Вариант А (И):** Поды с меткой `role: opadmin` из namespace с меткой `env: default`
+* **Вариант Б (ИЛИ):** Любые поды из namespace с меткой `env: default` **ИЛИ** любые поды с меткой `role: opadmin` из текущего namespace
 
 ## Дополнительные Сведения
 
-*Подробнее о лучших практиках: [best_practices.md](./best_practices.md)*  
-*Подробнее о базовых концепциях: [definitions.md](./definitions.md)*  
-*Подробнее о практических сценариях: [practical_scenarios.md](./practical_scenarios.md)*
+* **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
+* **Базовые концепции**: [NetworkPolicy: Определения и концепции](./definitions.md)
+* **Примеры использования**: [NetworkPolicy: Практические сценарии](./practical_scenarios.md)

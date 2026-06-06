@@ -17,8 +17,6 @@ Helm управляет версиями на трёх уровнях: верс�
 - Helm 3: Secrets с именем `sh.helm.release.v1.<release-name>.v<revision>` в namespace релиза
 - Helm 2: ConfigMaps в namespace `kube-system`
 
-См. [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) для деталей различий хранения.
-
 ---
 
 ## Основные концепции
@@ -98,8 +96,6 @@ helm dependency update
 helm dependency build
 ```
 
-См. [Структура Helm-чарта](./helm_chart_structure.md) для подробностей о файловой структуре.
-
 ---
 
 ## Практические сценарии
@@ -149,24 +145,24 @@ helm uninstall myapp -n prod --keep-history
 
 ```bash
 # Установка конкретной версии в Dev
-helm upgrade --install app app-chart \
-  -f values/dev.yaml \
-  --version 2.3.1 \
+helm upgrade --install app app-chart 
+  -f values/dev.yaml 
+  --version 2.3.1 
   -n dev
 
 # Продвижение той же версии в Staging
-helm upgrade --install app app-chart \
-  -f values/staging.yaml \
-  --version 2.3.1 \
+helm upgrade --install app app-chart 
+  -f values/staging.yaml 
+  --version 2.3.1 
   -n stage
 
 # Продвижение в Production с дополнительными проверками
-helm upgrade --install app app-chart \
-  -f values/prod.yaml \
-  --version 2.3.1 \
-  --wait \
-  --timeout 10m \
-  --atomic \
+helm upgrade --install app app-chart 
+  -f values/prod.yaml 
+  --version 2.3.1 
+  --wait 
+  --timeout 10m 
+  --atomic 
   -n prod
 ```
 
@@ -190,4 +186,12 @@ diff rev5.yaml rev6.yaml
 - **Хранение values**: Держите `values` файлы под версионным контролем
 - **Тестирование**: Проверяйте обновления в staging перед production
 
-См. также: [Обзор Helm](./helm_overview.md), [Структура Helm-чарта](./helm_chart_structure.md), [Сравнение v2/v3](./helm_v2_vs_v3.md).
+---
+
+## Дополнительная информация
+
+### См. также
+
+- [Обзор Helm](./helm_overview.md) — для понимания базовых принципов и архитектуры Helm.
+- [Структура Helm-чарта](./helm_chart_structure.md) — для изучения организации файлов и `Chart.yaml`.
+- [Сравнение Helm v2 и v3](./helm_v2_vs_v3.md) — для понимания ключевых различий в архитектуре и хранении истории.

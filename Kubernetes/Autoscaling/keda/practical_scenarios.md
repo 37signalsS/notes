@@ -1,30 +1,51 @@
 # KEDA: Практические сценарии
 
-## Предварительные требования
+## Определения
 
-- Кластер Kubernetes 1.23+
-- Helm 3.x
-- Доступ к внешним источникам событий (RabbitMQ, Kafka, Prometheus)
-- Установленный Metrics Server для базовых метрик
+Для получения полных определений компонентов KEDA (Kubernetes Event-driven Autoscaling) обратитесь к основному файлу:
+*   **[KEDA: Основные концепции](./keda_concepts.md)**
 
-## Установка KEDA
+## Основные концепции
+
+KEDA расширяет возможности HPA (Horizontal Pod Autoscaler), позволяя масштабировать приложения на основе данных из внешних источников. Подробное описание архитектуры и принципов работы приведено в SSoT-файле:
+*   **[KEDA: Основные концепции](./keda_concepts.md)**
+
+## Практические сценарии
+
+### Предварительные требования
+
+*   Кластер Kubernetes 1.23+
+*   Helm 3.x
+*   Metrics Server для базовых метрик кластера
+*   Доступ к источникам событий (RabbitMQ, Kafka, Prometheus)
+
+### Установка KEDA
+
+Установка выполняется через Helm — менеджер пакетов для Kubernetes.
 
 ```bash
-# Установка через Helm (рекомендуется)
+# Добавление репозитория
 helm repo add kedacore https://kedacore.github.io/charts
 helm repo update
 
+# Установка оператора в отдельный namespace
 helm install keda kedacore/keda \
   --namespace keda \
   --create-namespace \
   --version 2.19.0
 
-# Проверка установки
+# Проверка статуса компонентов
 kubectl get pods -n keda
+# → keda-operator-..., keda-metrics-apiserver-..., keda-admission-webhooks-...
+
+# Проверка регистрации API
 kubectl get apiservice v1beta1.external.metrics.k8s.io
+# → v1beta1.external.metrics.k8s.io   keda/keda-metrics-apiserver   True   ...
 ```
 
-## Сценарий 1: Масштабирование по очереди RabbitMQ
+### Сценарий 1: Масштабирование по очереди RabbitMQ
+
+Масштабирование воркеров на основе количества готовых к обработке сообщений в очереди.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -33,30 +54,26 @@ metadata:
   name: rabbitmq-consumer-scaledobject
   namespace: default
 spec:
-  # Целевой Deployment
   scaleTargetRef:
-    name: rabbitmq-consumer
+    name: rabbitmq-consumer # Целевой Deployment
 
-  # Границы масштабирования
-  minReplicaCount: 0
+  minReplicaCount: 0 # Масштабирование до нуля при пустой очереди
   maxReplicaCount: 30
 
-  # Период опроса метрик (секунды)
-  pollingInterval: 15
+  pollingInterval: 15 # Интервал опроса очереди (секунды)
+  cooldownPeriod: 300 # Период стабилизации после снижения нагрузки
 
-  # Период стабилизации после масштабирования вниз
-  cooldownPeriod: 300
-
-  # Триггеры масштабирования
   triggers:
     - type: rabbitmq
       metadata:
         queueName: orders
         host: amqp://rabbitmq:5672
-        queueLength: "10"  # Целевое значение: 10 сообщений на под
+        queueLength: "10" # Цель: 1 под на каждые 10 сообщений
 ```
 
-## Сценарий 2: Масштабирование по очереди Kafka
+### Сценарий 2: Масштабирование по очереди Kafka с аутентификацией
+
+Использование `TriggerAuthentication` для безопасного хранения учетных данных.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -78,7 +95,7 @@ spec:
         bootstrapServers: kafka-broker:9092
         consumerGroup: my-consumer-group
         topic: orders
-        lagThreshold: "100"  # Масштабирование при отставании >100 сообщений
+        lagThreshold: "100" # Масштабирование при отставании (lag) > 100 сообщений
       authenticationRef:
         name: kafka-trigger-auth
 ---
@@ -88,7 +105,7 @@ metadata:
   name: kafka-trigger-auth
 spec:
   secretTargetRef:
-    - parameter: sasl
+    - parameter: sasl # Simple Authentication and Security Layer
       name: kafka-secret
       key: sasl
     - parameter: username
@@ -99,7 +116,9 @@ spec:
       key: password
 ```
 
-## Сценарий 3: Масштабирование по метрикам Prometheus
+### Сценарий 3: Масштабирование по метрикам Prometheus
+
+Использование PromQL (Prometheus Query Language) запросов для принятия решений о масштабировании.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -125,7 +144,9 @@ spec:
           sum(rate(http_requests_total{service="web-api"}[1m]))
 ```
 
-## Сценарий 4: Масштабирование по расписанию (Cron)
+### Сценарий 4: Масштабирование по расписанию (Cron)
+
+Позволяет заранее подготовить ресурсы к прогнозируемым скачкам нагрузки.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -140,7 +161,7 @@ spec:
   maxReplicaCount: 10
 
   triggers:
-    # Активно в рабочие часы (9:00-18:00, пн-пт)
+    # Рабочие часы (9:00-18:00, пн-пт) — минимум 5 реплик
     - type: cron
       metadata:
         timezone: Europe/Moscow
@@ -148,7 +169,7 @@ spec:
         end: 0 18 * * mon-fri
         desiredReplicas: "5"
 
-    # Ночью и в выходные — 0 реплик
+    # Остальное время — 0 реплик
     - type: cron
       metadata:
         timezone: Europe/Moscow
@@ -157,7 +178,9 @@ spec:
         desiredReplicas: "0"
 ```
 
-## Сценарий 5: Несколько триггеров (логика ИЛИ)
+### Сценарий 5: Несколько триггеров (логика ИЛИ)
+
+KEDA вычисляет целевое количество реплик для каждого триггера и выбирает максимальное значение.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -171,20 +194,19 @@ spec:
   minReplicaCount: 0
   maxReplicaCount: 50
 
-  # Логика триггеров: ИЛИ (масштабирование при срабатывании любого)
-  fallback:
+  fallback: # Резервное количество реплик при сбое источников метрик
     failureThreshold: 3
     replicas: 5
 
   triggers:
-    # Триггер 1: очередь RabbitMQ
+    # Триггер 1: Очередь RabbitMQ
     - type: rabbitmq
       metadata:
         queueName: orders
         host: amqp://rabbitmq:5672
         queueLength: "20"
 
-    # Триггер 2: метрика CPU от Prometheus
+    # Триггер 2: CPU (Central Processing Unit) через Prometheus
     - type: prometheus
       metadata:
         serverAddress: http://prometheus:9090
@@ -194,7 +216,9 @@ spec:
           avg(rate(container_cpu_usage_seconds_total{pod=~"order-processor.*"}[1m])) * 100
 ```
 
-## Сценарий 6: Продвинутое поведение масштабирования
+### Сценарий 6: Тонкая настройка поведения (Behavior)
+
+Настройка скорости масштабирования для предотвращения резких колебаний (дребезга).
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -211,12 +235,11 @@ spec:
   pollingInterval: 10
   cooldownPeriod: 300
 
-  # Продвинутое поведение
   advanced:
     horizontalPodAutoscalerConfig:
       behavior:
         scaleUp:
-          stabilizationWindowSeconds: 0
+          stabilizationWindowSeconds: 0 # Мгновенный рост
           policies:
             - type: Percent
               value: 100
@@ -226,7 +249,7 @@ spec:
               periodSeconds: 15
           selectPolicy: Max
         scaleDown:
-          stabilizationWindowSeconds: 600  # 10 минут для стабильности
+          stabilizationWindowSeconds: 600 # Плавное снижение (10 минут)
           policies:
             - type: Percent
               value: 50
@@ -234,49 +257,46 @@ spec:
           selectPolicy: Min
 ```
 
-## Диагностика и мониторинг
+## Дополнительная информация
 
-### Проверка статуса KEDA
+### Диагностика и мониторинг
+
+Для проверки состояния ресурсов KEDA и отладки используйте следующие команды:
 
 ```bash
-# Просмотр ScaledObject
-kubectl get scaledobject -n default
+# Список ScaledObject в текущем namespace
+kubectl get scaledobject
+# → NAME                             SCALETARGETKIND      SCALETARGETNAME    READY   ACTIVE   AGE
 
-# Детальная информация
-kubectl describe scaledobject rabbitmq-consumer-scaledobject -n default
+# Просмотр событий и статуса конкретного ресурса
+kubectl describe scaledobject rabbitmq-consumer-scaledobject
 
-# Проверка HPA, созданного KEDA
-kubectl get hpa -n default
+# Проверка HPA, созданного оператором KEDA
+kubectl get hpa
+# → keda-hpa-rabbitmq-consumer-scaledobject   Deployment/rabbitmq-consumer   ...
 
-# Метрики KEDA
+# Проверка доступности External Metrics API
 kubectl get --raw /apis/external.metrics.k8s.io/v1beta1
-
-# Логи KEDA Operator
-kubectl logs -n keda -l app=keda-operator --tail=100
 ```
 
-### Метрики для мониторинга
+### Ключевые метрики оператора
 
 | Метрика | Описание |
-|---------|----------|
-| `keda_scaledobject_status` | Статус ScaledObject (0=error, 1=ready) |
-| `keda_scaledobject_ready` | Готовность к масштабированию |
-| `keda_external_metrics` | Количество внешних метрик |
-| `keda_scaler_active` | Активность scaler'ов |
-| `keda_scaling_operations_total` | Количество операций масштабирования |
+| :--- | :--- |
+| `keda_scaledobject_status` | Текущий статус ScaledObject (1 = Ready, 0 = Error) |
+| `keda_scaledobject_ready` | Индикатор готовности объекта к работе |
+| `keda_scaler_active` | Состояние активности конкретного scaler'а |
+| `keda_scaling_operations_total` | Общее количество выполненных операций масштабирования |
 
-## Лучшие практики
+### Лучшие практики
 
-**Начните с minReplicaCount > 0** — для production избегайте масштабирования до нуля, если не требуется. Холодный старт при scale from zero добавляет задержку на запуск подов.
+*   **Избегайте Scale-to-Zero в Production:** Для критических сервисов рекомендуется `minReplicaCount: 1`, чтобы исключить задержку "холодного старта".
+*   **Используйте Fallback:** Всегда настраивайте блок `fallback` для сохранения работоспособности приложения при недоступности внешних систем мониторинга.
+*   **Безопасность данных:** Используйте `TriggerAuthentication` совместно с Kubernetes Secret для хранения паролей и токенов.
+*   **Период стабилизации:** Настраивайте `cooldownPeriod` (по умолчанию 300 секунд), чтобы предотвратить "флаппинг" (частые изменения количества реплик при пограничных значениях метрик).
+*   **Мониторинг задержек:** Учитывайте, что `pollingInterval` напрямую влияет на скорость реакции. Не устанавливайте его слишком низким (< 5с), чтобы не перегружать источники метрик.
 
-**Настройте cooldownPeriod** — предотвратите «флаппинг» при частых изменениях нагрузки около порогового значения. Типичное значение: 300 секунд.
-
-**Используйте fallback** — для обработки ошибок подключения к источнику метрик. Fallback сохраняет работоспособность масштабирования при недоступности внешних систем.
-
-**Мониторьте External Metrics** — проверяйте доступность метрик через `kubectl get --raw /apis/external.metrics.k8s.io/v1beta1`. Недоступность метрик блокирует масштабирование.
-
-**Тестируйте сценарии** — проверяйте масштабирование вверх/вниз перед production. Убедитесь, что scaler получает корректные значения метрик.
-
-**Оптимизируйте pollingInterval** — баланс между реактивностью и нагрузкой на источник метрик. Минимум: 5 секунд, по умолчанию: 30 секунд.
-
-**Используйте TriggerAuthentication** — храните учётные данные в Secret, не в ScaledObject. Это разделяет конфигурацию и чувствительные данные.
+## См. также
+*   **[KEDA: Основные концепции](./keda_concepts.md)** — SSoT по архитектуре и компонентам
+*   **[HPA: Практические сценарии](../HPA/hpa_scenarios.md)** — примеры нативного масштабирования
+*   **[Паттерн Workers + Queue](../workers_queue_pattern.md)** — архитектурные подходы к очередям

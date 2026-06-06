@@ -2,13 +2,54 @@
 
 Декларативное управление жизненным циклом подов в Kubernetes.
 
-## Структура раздела
+## 1. Определения
 
-- **[deployment_concepts.md](./deployment_concepts.md)** — Определения, анатомия манифеста, стратегии обновления
-- **[deployment_manifest.md](./deployment_manifest.md)** — Пример манифеста, лучшие практики
-- **[lifecycle_management.md](./lifecycle_management.md)** — Создание, обновление, откат, управление ревизиями
+**Deployment** — объект Kubernetes для декларативного управления жизненным циклом подов. Основная задача — поддержание заданного количества работающих экземпляров приложения (`replicas`) и обеспечение предсказуемого, контролируемого обновления.
 
-## Быстрый старт
+**Схема управления:** `Deployment` → [`ReplicaSet`](../replicaset.md) → [`Pod`](../Pod/pod_overview.md)
+
+При создании или обновлении `Deployment` создает новый `ReplicaSet`, который запускает поды согласно шаблону (`template`). Старый `ReplicaSet` сохраняется для возможности отката.
+
+### Владелец ресурса (Owner References)
+
+Каждый ресурс содержит поле `ownerReferences` в `metadata`, определяющее связь «родитель-потомок»:
+
+- `Pod` → принадлежит `ReplicaSet`
+- `ReplicaSet` → принадлежит `Deployment`
+
+Это используется для каскадного удаления: при удалении `Deployment` автоматически удаляются связанные `ReplicaSet` и `Pod`.
+
+## 2. Базовые концепции
+
+### Анатомия манифеста
+
+- **`replicas`** — желаемое количество реплик (подов), которое `Deployment` должен поддерживать.
+- **`selector`** — определяет, как `Deployment` находит управляемые поды. Метки в `spec.selector.matchLabels` должны точно совпадать с метками в `spec.template.metadata.labels`.
+- **`template`** — шаблон для создания подов. Содержит `metadata` и `spec` с описанием контейнеров.
+- **`strategy`** — стратегия обновления подов (`RollingUpdate` или `Recreate`).
+- **`revisionHistoryLimit`** — количество старых `ReplicaSet` для истории и отката. По умолчанию: 10.
+- **`progressDeadlineSeconds`** — таймаут развертывания. Если новый `ReplicaSet` не станет доступным за это время, `Deployment` перейдет в состояние ошибки.
+
+### Стратегии обновления
+
+| Стратегия | Описание | Когда использовать |
+| :--- | :--- | :--- |
+| **`RollingUpdate`** (по умолчанию) | Постепенное обновление под за подом без простоя | Веб-сервисы, stateless-приложения |
+| **`Recreate`** | Остановка всех старых подов → запуск новых | Несовместимые версии, миграции БД, монолиты |
+
+Подробное описание стратегий см. в [Rolling Update](../../../CI-CD/Deployment_Strategies/rolling_update.md) и [Deployment Strategies](../../../CI-CD/Core_Concepts/deployment_strategies.md).
+
+### Перекрывающиеся обновления (Rollover)
+
+Если обновление запускается во время уже идущего процесса, `Deployment` не ждёт завершения. Предыдущий (незавершённый) `ReplicaSet` немедленно масштабируется вниз, и начинается создание подов по самому последнему шаблону.
+
+### Обновление Label Selector
+
+Поле `spec.selector` является **immutable** (неизменяемым). Изменение селектора требует пересоздания объекта.
+
+## 3. Практические сценарии
+
+### Быстрый старт
 
 ```bash
 # Создать Deployment
@@ -20,14 +61,26 @@ kubectl set image deployment/my-app my-container=my-image:v2
 # Отследить статус
 kubectl rollout status deployment/my-app
 
-# Откатить
+# Откатить к предыдущей версии
 kubectl rollout undo deployment/my-app
 ```
 
-## Навигация по связанным темам
+### Анализ состояния
 
-Базовые объекты: [`Pod`](../Pod/pod_overview.md), [`ReplicaSet`](../replicaset.md), [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md).
+Команда `kubectl get deploy` отображает ключевые поля:
 
-Stateful-приложения: [`StatefulSet`](../statefulset.md).
+- **READY** — количество готовых подов (прошли `readinessProbe`).
+- **UP-TO-DATE** — количество реплик актуальной версии.
+- **AVAILABLE** — общее количество работающих и доступных подов.
 
-Отказоустойчивость: [`Высокая доступность`](../high_availability.md).
+## 4. Дополнительная информация
+
+### Детальные руководства
+- **[Манифест и лучшие практики](./deployment_manifest.md)** — ресурсы, пробы, Sidecar-паттерны.
+- **[Управление жизненным циклом](./lifecycle_management.md)** — подробно об обновлении, откате и ревизиях.
+
+### Навигация по связанным темам
+- Базовые объекты: [`Pod`](../Pod/pod_overview.md), [`ReplicaSet`](../replicaset.md), [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md).
+- Stateful-приложения: [`StatefulSet`](../StatefulSet/statefulset_overview.md).
+- Отказоустойчивость: [`Высокая доступность`](../high_availability.md).
+- Сравнение стратегий: [Comparison of Deployment Strategies](../../../CI-CD/Deployment_Strategies/comparison.md).

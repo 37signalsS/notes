@@ -154,5 +154,6 @@ curl -k -H "Authorization: Bearer $TOKEN" \
 - Определения 401/403: [definitions.md](definitions.md)
 - Пошаговая диагностика: [diagnostics.md](diagnostics.md)
 - SSoT — методы аутентификации: [../../../Security/authentication.md](../../../Security/authentication.md)
+- Управление kubeconfig: [../../../Operations/kubeconfig_and_connection.md](../../../Operations/kubeconfig_and_connection.md)
 - RBAC объекты: [rbac_objects.md](rbac_objects.md)
 - Лучшие практики: [best_practices.md](best_practices.md)

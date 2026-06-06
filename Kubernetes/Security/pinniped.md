@@ -1,14 +1,14 @@
-# Pinniped — сервис аутентификации для Kubernetes
+# Pinniped: Сервис аутентификации для Kubernetes
 
 ## Определения
 
-**Pinniped** — это сервис аутентификации с открытым исходным кодом для Kubernetes, который позволяет администраторам подключать кластеры к внешним провайдерам идентификации (Identity Providers, IdP) без необходимости сложной настройки API-сервера.
+**Pinniped** — это сервис аутентификации с открытым исходным кодом для Kubernetes, позволяющий подключать кластеры к внешним провайдерам идентификации (Identity Providers, IdP) без сложной ручной настройки API-сервера.
 
-**Supervisor** — центральный компонент Pinniped, который выступает в роли агрегатора IdP. Он аутентифицирует пользователей через внешние системы (OIDC, LDAP, AD) и выдает токены, понятные для Concierge. Один Supervisor может обслуживать множество кластеров.
+**Supervisor** — центральный компонент Pinniped, выступающий агрегатором IdP. Он аутентифицирует пользователей через внешние системы (OIDC, LDAP, AD) и выдает токены, понятные для Concierge. Один Supervisor может обслуживать множество кластеров.
 
-**Concierge** — легковесный агент, устанавливаемый в каждый кластер Kubernetes. Он проверяет токены, выпущенные Supervisor (или другими OIDC-провайдерами), и интегрируется с механизмом Aggregated API Kubernetes для идентификации пользователей.
+**Concierge** — легковесный агент, устанавливаемый в каждый кластер Kubernetes. Он проверяет токены, выпущенные Supervisor (или другими провайдерами OpenID Connect, OIDC), и интегрируется с механизмом Aggregated API Kubernetes для идентификации пользователей.
 
-**Pinniped CLI / kubectl plugin** — клиентская утилита, которая расширяет возможности `kubectl`. Она автоматически инициирует процесс логина (например, открывает браузер или запрашивает учетные данные в терминале) и обновляет токены в `kubeconfig`.
+**Pinniped CLI (Command Line Interface)** — клиентская утилита (плагин для `kubectl`), которая расширяет возможности стандартного интерфейса командной строки. Она автоматически инициирует процесс логина (например, через браузер) и обновляет токены в `kubeconfig`.
 
 ## Основные концепции
 
@@ -17,44 +17,44 @@
 Pinniped реализует многоуровневую схему аутентификации:
 
 1. **Клиентская сторона:** Пользователь запускает команду `kubectl`. Плагин Pinniped проверяет наличие валидного токена.
-2. **Аутентификация:** Если токен отсутствует или просрочен, плагин обращается к **Supervisor**.
-3. **Внешний IdP:** Supervisor перенаправляет запрос к внешнему провайдеру (LDAP, OIDC). Пользователь вводит свои учетные данные.
-4. **Выдача токена:** После успешной проверки IdP, Supervisor выдает пользователю свой JWT-токен.
+2. **Аутентификация:** Если токен отсутствует, плагин обращается к **Supervisor**.
+3. **Внешний IdP:** Supervisor перенаправляет запрос к внешнему провайдеру (LDAP, OIDC, Active Directory). Пользователь вводит учетные данные.
+4. **Выдача токена:** После успешной проверки Supervisor выдает пользователю JWT (JSON Web Token).
 5. **Доступ к кластеру:** Плагин передает этот токен в API-сервер кластера.
-6. **Валидация:** API-сервер перенаправляет токен в **Concierge**, который подтверждает его подлинность у Supervisor и возвращает информацию о пользователе и его группах.
-7. **Авторизация:** Далее Kubernetes использует стандартный [RBAC](./rbac/rbac_overview.md) для проверки прав пользователя.
+6. **Валидация:** API-сервер перенаправляет токен в **Concierge**, который подтверждает его подлинность и возвращает информацию о пользователе и группах.
+7. **Авторизация:** Kubernetes использует стандартный [RBAC (Role-Based Access Control)](./rbac/rbac_overview.md) для проверки прав.
 
 ### Поддерживаемые провайдеры
 
-- **OIDC:** Okta, Dex, Google, Azure AD и др.
-- **LDAP:** OpenLDAP, 389 Directory Server (389 DS).
-- **Active Directory:** Полная интеграция с пользователями и группами AD.
+- **OIDC (OpenID Connect):** Okta, Dex, Google, Azure AD.
+- **LDAP (Lightweight Directory Access Protocol):** OpenLDAP, 389 Directory Server.
+- **Active Directory (AD):** Полная интеграция с пользователями и группами Windows-доменов.
 
 ## Практические сценарии
 
 ### 1. Установка Supervisor
 
-Supervisor обычно устанавливается в выделенный кластер (или в тот же, где и приложения). Для установки используются официальные манифесты (или Helm-чарты, если доступны):
+Для установки используются официальные манифесты (версия v0.46.0):
 
 ```bash
-# Установка компонентов Supervisor (версия 0.43.0 для примера)
-kubectl apply -f https://get.pinniped.dev/v0.43.0/install-pinniped-supervisor.yaml
+# Установка компонентов Supervisor
+kubectl apply -f https://get.pinniped.dev/v0.46.0/install-pinniped-supervisor.yaml
 ```
 
-Для доступа извне потребуется сервис типа `LoadBalancer` и валидный TLS-сертификат (можно выпустить через [cert-manager](../ToolsUtilities/cert_manager/definitions.md)).
+Для доступа извне требуется сервис типа `LoadBalancer` и TLS-сертификат (Transport Layer Security), который можно выпустить через [cert-manager](../ToolsUtilities/cert_manager/definitions.md).
 
-### 2. Настройка LDAP IdP (на примере 389 DS)
+### 2. Настройка LDAP IdP
 
-Создание ресурса `LDAPIdentityProvider` для связи с LDAP-сервером.
+Пример ресурса `LDAPIdentityProvider` для интеграции с LDAP-сервером:
 
 ```yaml
 apiVersion: idp.supervisor.pinniped.dev/v1alpha1
 kind: LDAPIdentityProvider
 metadata:
-  name: 389ds-provider
+  name: openldap-provider
   namespace: pinniped-supervisor
 spec:
-  host: "389ds-service.ds.svc.cluster.local:3636"
+  host: "openldap.ldap.svc.cluster.local:3636"
   tls:
     certificateAuthorityDataSource:
       kind: Secret
@@ -63,30 +63,28 @@ spec:
   bind:
     secretName: ldap-bind-account
   userSearch:
-    base: "ou=People,dc=test,dc=local"
-    filter: "(uid={}) engine=identity"
+    base: "ou=People,dc=example,dc=local"
+    filter: "(uid={})"
     attributes:
       username: uid
       uid: uidNumber
   groupSearch:
-    base: "ou=Groups,dc=test,dc=local"
+    base: "ou=Groups,dc=example,dc=local"
     filter: "(uniqueMember={})"
     userAttributeForFilter: "dn"
     attributes:
       groupName: cn
 ```
 
-*Важно: При использовании LDAPS обязательно наличие CA-сертификата в секрете.*
-
 ### 3. Настройка Federation Domain
 
-Federation Domain связывает Supervisor с конкретным URL и IdP.
+Federation Domain связывает Supervisor с конкретным URL и провайдером.
 
 ```yaml
 apiVersion: config.supervisor.pinniped.dev/v1alpha1
 kind: FederationDomain
 metadata:
-  name: my-federation-domain
+  name: main-federation-domain
   namespace: pinniped-supervisor
 spec:
   issuer: "https://pinniped.example.com"
@@ -94,15 +92,16 @@ spec:
     secretName: pinniped-tls-cert
 ```
 
-### 4. Установка Concierge в кластер
+### 4. Установка Concierge
 
-Concierge устанавливается в каждый кластер, к которому нужен доступ.
+Concierge устанавливается в целевой кластер:
 
 ```bash
-kubectl apply -f https://get.pinniped.dev/v0.43.0/install-pinniped-concierge.yaml
+kubectl apply -f https://get.pinniped.dev/v0.46.0/install-pinniped-concierge-crds.yaml
+kubectl apply -f https://get.pinniped.dev/v0.46.0/install-pinniped-concierge-resources.yaml
 ```
 
-Для настройки связи с Supervisor создается `JWTAuthenticator`:
+Настройка связи через `JWTAuthenticator`:
 
 ```yaml
 apiVersion: authentication.concierge.pinniped.dev/v1alpha1
@@ -111,7 +110,7 @@ metadata:
   name: supervisor-authenticator
 spec:
   issuer: "https://pinniped.example.com"
-  audience: "my-cluster-unique-id"
+  audience: "cluster-alpha"
   tls:
     certificateAuthorityDataSource:
       kind: Secret
@@ -119,32 +118,22 @@ spec:
       key: ca.crt
 ```
 
-### 5. Настройка клиентского доступа
-
-Администратор генерирует шаблон `kubeconfig` с помощью команды:
-
-```bash
-pinniped get kubeconfig --static > user-kubeconfig.yaml
-```
-
-Этот файл передается пользователю. При первом использовании `kubectl` плагин Pinniped предложит ввести логин/пароль.
-
 ## Дополнительная информация
 
 ### Сравнение с альтернативами
 
-- **Rancher:** Предоставляет собственный механизм управления пользователями, но требует полной установки Rancher. Pinniped более легковесен.
-- **ArgoCD:** Позволяет управлять правами внутри своего интерфейса, но не решает вопрос аутентификации напрямую в `kubectl` для всего кластера.
-- **Dex:** Часто используется как бэкенд, Pinniped может работать поверх Dex или заменять его, предоставляя более глубокую интеграцию с `kubectl`.
+- **Dex:** Pinniped предоставляет более глубокую интеграцию с `kubectl` и нативную поддержку LDAP/AD без необходимости использования Dex как прослойки, хотя может работать поверх него.
+- **Rancher:** Rancher имеет встроенную аутентификацию, но Pinniped более модульный и подходит для "чистых" кластеров Kubernetes.
+- **Static OIDC:** Pinniped избавляет от необходимости перезапускать API-сервер при изменении настроек IdP.
 
-### Безопасность и отказоустойчивость
+### Безопасность
 
-- **Группы из LDAP:** Pinniped автоматически пробрасывает группы пользователя из LDAP/AD. Это позволяет настраивать доступ через стандартные `RoleBinding` для групп.
-- **Отказ Pinniped:** В случае недоступности Supervisor или Concierge пользователи не смогут войти. Администраторы всегда должны иметь "аварийный" доступ через статический X.509 сертификат администратора.
-- **Отзыв доступа:** При удалении или блокировке пользователя во внешнем IdP (LDAP/AD), доступ к Kubernetes прекращается автоматически при следующей проверке токена.
+- **Автоматизация групп:** Pinniped передает группы напрямую в Kubernetes, что позволяет использовать стандартные `RoleBinding`.
+- **Отказоустойчивость:** При недоступности Pinniped вход новых пользователей невозможен. Рекомендуется сохранять административный доступ через X.509 сертификаты (CA кластера).
+- **Отзыв прав:** Блокировка пользователя в LDAP/AD приводит к автоматическому прекращению доступа в Kubernetes при следующей проверке токена.
 
-Связанные темы:
-
+**Связанные темы:**
 - [Аутентификация в Kubernetes](./authentication.md)
 - [RBAC в Kubernetes](./rbac/rbac_overview.md)
-- [LDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)
+- [OpenLDAP в Kubernetes](../../LDAP/openldap_kubernetes.md)
+- [PKI Overview](../../Security/Concepts/pki_overview.md) (Public Key Infrastructure)

@@ -1,134 +1,77 @@
-# Horizontal Pod Autoscaler (HPA): Дополнительные темы
+# HPA — дополнительные темы
 
 ## 1. Определения
 
-**Диагностика HPA** — процесс анализа состояния и метрик Horizontal Pod Autoscaler для выявления проблем масштабирования.
+Для получения базовой информации см. основной раздел **[HPA (index.md)](./index.md)**.
 
-**Flapping (дребезг)** — частое циклическое масштабирование вверх/вниз из-за нестабильных метрик или неправильной настройки `stabilizationWindowSeconds`.
+**Flapping (дребезг)** — ситуация, при которой количество реплик постоянно колеблется (увеличивается и тут же уменьшается) из-за нестабильных метрик или слишком короткого окна стабилизации.
 
-**kube-state-metrics** — источник метрик о состоянии объектов Kubernetes, включая HPA, для мониторинга в Prometheus.
+**Cooldown Period** — неофициальный термин для `stabilizationWindowSeconds`, периода ожидания перед следующим изменением количества реплик для обеспечения стабильности системы.
+
+**kube-state-metrics** — сервис, который генерирует метрики о состоянии объектов Kubernetes (включая HPA) из API-сервера для последующего сбора системой Prometheus.
 
 ## 2. Базовые концепции
 
-### 2.1. Диагностика и мониторинг
+### 2.1. Диагностика и отладка
 
-#### Проверка статуса HPA
+Для глубокого анализа работы HPA используются следующие инструменты:
 
-```bash
-# Список всех HPA в кластере
-kubectl get hpa -A
+- **Статус условий (Conditions):** HPA сообщает о своем состоянии через условия `AbleToScale` (возможность масштабирования), `ScalingActive` (активность сбора метрик) и `ScalingLimited` (достижение границ min/max). Проверить их можно через `kubectl describe hpa`.
+- **События (Events):** При каждом изменении количества реплик или ошибке сбора метрик контроллер генерирует событие в неймспейсе объекта.
+- **Логи контроллера:** Находятся в `kube-controller-manager`. Полезны при системных ошибках связи с API метрик или проблемах с правами доступа RBAC.
 
-# Детальная информация по конкретному HPA
-kubectl describe hpa my-app-hpa -n default
+### 2.2. Ограничения HPA
 
-# Текущие метрики подов
-kubectl get --raw /apis/metrics.k8s.io/v1beta1/namespaces/default/pods
-
-# Проверка Metrics Server
-kubectl top pods -n default
-kubectl top nodes
-```
-
-#### Распространённые проблемы
-
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| `Waiting for metrics` | Metrics Server не работает | Проверить статус: `kubectl get pods -n kube-system \| grep metrics-server` |
-| `unable to get metrics` | Отсутствуют `requests` у контейнеров | Добавить `resources.requests` в Deployment |
-| `scaling inactive` | Достигнут `minReplicas`/`maxReplicas` | Проверить границы масштабирования |
-| `flapping` | Частое масштабирование | Увеличить `stabilizationWindowSeconds` |
-
-#### Метрики для мониторинга (kube-state-metrics)
-
-| Метрика | Описание |
-| :--- | :--- |
-| `kube_horizontalpodautoscaler_status_current_replicas` | Текущее количество реплик |
-| `kube_horizontalpodautoscaler_status_desired_replicas` | Желаемое количество реплик |
-| `kube_horizontalpodautoscaler_status_condition` | Статус условий HPA |
-| `kube_horizontalpodautoscaler_spec_min_replicas` | Минимальные реплики |
-| `kube_horizontalpodautoscaler_spec_max_replicas` | Максимальные реплики |
-
-### 2.2. Лучшие практики
-
-- **Readiness Probe** — критически важна для исключения «холодных» подов из балансировки.
-- **minReadySeconds** — уменьшает «флаппинг» подов, гарантирует стабильность перед включением в балансировку.
-- **Корректные requests** — адекватные запросы позволяют планировщику резервировать ресурсы.
-- **Behavior для scale-down** — настройте `stabilizationWindowSeconds: 300` для предотвращения частого уменьшения.
-- **Выбор метрики** — для I/O-bound приложений используйте кастомные метрики (RPS), а не CPU.
-- **PDB** — всегда создавайте [PodDisruptionBudget](../pod_disruption_budget.md) для критических приложений.
-- **Тестирование** — проверяйте масштабирование в staging перед production.
-
-### 2.3. Ограничения
-
-- **Не масштабирует ниже minReplicas** — даже при нулевой нагрузке; для масштабирования до нуля используйте KEDA.
-- **Интервал метрик** — метрики собираются с интервалом 15 секунд (настройка Metrics Server).
-- **Конфликт с VPA** — не используйте HPA по CPU/memory одновременно с [VPA](../vpa_detailed.md) в активных режимах (`Initial`, `Recreate`, `Auto`).
-- **Только Deployment/StatefulSet/ReplicaSet** — не работает с DaemonSet, Job, CronJob.
-- **Требует Metrics Server** — без Metrics Server работают только кастомные/внешние метрики.
+- **Минимальное количество реплик:** Стандартный HPA не умеет масштабировать «в ноль» (scale to zero). Минимальное значение `minReplicas` — 1. Для масштабирования в ноль используйте **[KEDA](../keda/keda_concepts.md)**.
+- **Типы ресурсов:** Работает только с масштабируемыми ресурсами, поддерживающими подресурс `/scale` (Deployment, StatefulSet, ReplicaSet). Не работает с DaemonSet и Job.
+- **Конфликты с VPA:** Совместное использование HPA и VPA по одним и тем же метрикам (CPU/Memory) запрещено. Подробнее см. **[VPA: Совместное использование](../vpa_detailed.md#совместное-использование-с-hpa)**.
+- **Зависимость от Metrics Server:** Если Metrics Server недоступен или не настроен, HPA перестает изменять количество реплик и остается в текущем состоянии.
+- **База для расчета:** HPA всегда использует `requests` в качестве 100% значения. Если `requests` не заданы, расчет в процентах невозможен.
 
 ## 3. Практические сценарии
 
-### 3.1. Диагностика проблем масштабирования
+### 3.1. Алгоритм диагностики проблем масштабирования
 
-1. **Проверка статуса HPA:**
-
+1. **Проверка доступности метрик:**
    ```bash
-   kubectl describe hpa <hpa-name> -n <namespace>
+   kubectl top pods
    ```
+   Если команда возвращает ошибку, проблема в Metrics Server или отсутствии `requests` в спецификации пода.
 
-2. **Анализ событий:**
-
+2. **Анализ описания HPA:**
    ```bash
-   kubectl get events -n <namespace> --field-selector involvedObject.kind=HorizontalPodAutoscaler
+   kubectl describe hpa <name>
    ```
+   Изучите секцию `Conditions` для понимания, почему масштабирование неактивно, и секцию `Events` для поиска ошибок `FailedGetResourceMetric`.
 
-3. **Проверка Metrics Server:**
-
+3. **Проверка сырых метрик API:**
    ```bash
-   kubectl logs -n kube-system deployment/metrics-server
+   kubectl get --raw /apis/metrics.k8s.io/v1beta1/namespaces/<ns>/pods
    ```
+   Помогает убедиться, что API метрик действительно отдает данные.
 
-4. **Валидация requests:**
+### 3.2. Настройка мониторинга через Prometheus
 
-   ```bash
-   kubectl get deployment <deployment-name> -o jsonpath='{.spec.template.spec.containers[*].resources.requests}'
-   ```
+Для эффективного мониторинга используйте данные из **kube-state-metrics**.
 
-### 3.2. Настройка мониторинга HPA
-
-Интеграция с Prometheus через kube-state-metrics:
-
-```yaml
-# Пример alert для Prometheus
-- alert: HPAScalingInactive
-  expr: kube_horizontalpodautoscaler_status_condition{condition="ScalingActive",status="false"} == 1
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "HPA не активен"
-```
+Ключевые метрики для алертинга:
+- `kube_horizontalpodautoscaler_status_current_replicas` — текущие реплики.
+- `kube_horizontalpodautoscaler_status_desired_replicas` — желаемые реплики.
+- `kube_horizontalpodautoscaler_status_condition{condition="ScalingActive",status="false"}` — критический алерт, означающий, что HPA не может собирать метрики.
+- `kube_horizontalpodautoscaler_status_condition{condition="ScalingLimited",status="true"}` — предупреждение о том, что HPA уперся в лимиты `maxReplicas`.
 
 ## 4. Дополнительная информация
 
-### 4.1. Интеграции
-
-- **[Pod Disruption Budget](../pod_disruption_budget.md)** — HPA учитывает PDB при масштабировании вниз.
-- **[VPA](../vpa_detailed.md)** — используйте VPA в режиме `Off` для получения рекомендаций, HPA — для горизонтального масштабирования.
-- **[KEDA](../keda/basic_concepts.md)** — KEDA создаёт HPA для событийного масштабирования (очереди, расписания).
-- **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник ресурсных метрик для HPA.
-
-### 4.2. Ресурсы
-
-- [Официальная документация Kubernetes: HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
-- [Kubernetes Autoscaling SIG](https://github.com/kubernetes/autoscaler)
-- [Prometheus Adapter](https://github.com/kubernetes-sigs/prometheus-adapter)
+### Лучшие практики
+- **Readiness Probe:** Всегда настраивайте пробы готовности. HPA не должен учитывать в расчетах поды, которые еще не готовы принимать трафик, иначе это исказит среднюю утилизацию.
+- **Pod Disruption Budget (PDB):** Используйте PDB совместно с HPA, чтобы защититься от слишком агрессивного удаления подов при масштабировании вниз.
+- **Окно стабилизации:** Для минимизации «дребезга» устанавливайте `stabilizationWindowSeconds` для `scaleDown` не менее 300 секунд (5 минут).
+- **Корректные Requests:** Тщательно подбирайте `requests` CPU/Memory. Ошибка в `requests` напрямую ведет к неверному решению HPA о масштабировании.
 
 ---
 
 **Связанные документы:**
-
-- **[Основные концепции](./hpa_concepts.md)** — определения, алгоритм, типы метрик
-- **[Практические сценарии](./hpa_scenarios.md)** — предварительные требования, сценарии использования
-- **[VPA](../vpa_detailed.md)** — вертикальное масштабирование
-- **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита от недоступности
+- **[HPA: Главная](./index.md)** — обзор и ключевые определения
+- **[Основные концепции](./hpa_concepts.md)** — алгоритм и типы метрик
+- **[Практические сценарии](./hpa_scenarios.md)** — примеры YAML
+- **[Metrics Server](../../MonitoringLogging/metrics-server.md)** — источник данных для HPA
