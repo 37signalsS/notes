@@ -1,193 +1,102 @@
-# systemd Time Synchronization
+# Синхронизация времени в systemd
 
 ## Определения
 
-**`systemd-timesyncd`** — легковесный SNTP-клиент, встроенный в `systemd`. Синхронизирует системные часы с NTP-серверами. Не является полноценным NTP-демоном — не поддерживает серверный режим, работает только как клиент.
+* **`systemd-timesyncd`** — встроенный в `systemd` легковесный клиент протокола SNTP (Simple Network Time Protocol), предназначенный для синхронизации системных часов с удаленными серверами времени. Работает исключительно в режиме клиента и не может выступать в роли сервера времени для других узлов сети.
+* **`timedatectl`** — утилита командной строки CLI (Command Line Interface) для управления системным временем, датой, часовыми поясами и состоянием службы синхронизации.
 
-**`timedatectl`** — утилита управления системным временем, датой, часовым поясом и статусом NTP-синхронизации.
+## Основные концепции
 
-> Продвинутая NTP-синхронизация (Chrony, ntpd) выходит за рамки systemd. Подробности: [chrony_ntp.md](../../../Linux/Networking/Services/chrony_ntp.md).
+### Иерархия источников (Stratum)
 
-## Базовые концепции
+Точность времени в протоколе NTP (Network Time Protocol) определяется понятием Stratum (слой):
 
-### Компоненты управления временем
+* **Stratum 0**: первичные эталонные часы (атомные, GPS (Global Positioning System)).
+* **Stratum 1**: серверы, подключенные напрямую к Stratum 0.
+* **Stratum 2**: серверы, синхронизирующиеся со Stratum 1 (публичные пулы времени).
+* ... и так далее до Stratum 15. Значение 16 означает отсутствие синхронизации.
 
-| Компонент | Назначение | Серверный режим |
-| :--- | :--- | :--- |
-| `timedatectl` | Настройка часового пояса, RTC, статуса NTP | Нет (утилита) |
-| `systemd-timesyncd` | Клиент SNTP для базовой синхронизации | Нет (только клиент) |
-| `hwclock` | Синхронизация с аппаратными часами (RTC) | Нет |
-| `date` | Просмотр/установка системного времени | Нет |
+### Системные и аппаратные часы
 
-### NTP и Stratum
+В ОС (Операционная Система) Linux различают:
 
-| Stratum | Описание | Пример |
-| :--- | :--- | :--- |
-| 0 | Атомные часы, GPS, радиосигналы | Цезиевые часы |
-| 1 | Синхронизируются напрямую со Stratum 0 | NTP-серверы провайдеров |
-| 2 | Синхронизируются со Stratum 1 | Публичные пулы (`pool.ntp.org`) |
-| 2–15 | Иерархия NTP-серверов | Корпоративные NTP-серверы |
-| 16 | Несинхронизировано | — |
+1. **Системные часы (System Clock)**: время, поддерживаемое ядром. Именно его используют все приложения.
+2. **Аппаратные часы (Real Time Clock, RTC)**: часы на материнской плате, питающиеся от батарейки. Используются для сохранения времени при выключении питания.
 
-> Максимальный рабочий stratum — 15. Stratum 16 означает отсутствие синхронизации.
-
-### RTC (Real Time Clock) и часовой пояс
-
-Linux по умолчанию считает, что RTC хранит время в **UTC**. Для dual-boot с Windows (которая использует локальное время в RTC):
-
-```bash
-sudo timedatectl set-local-rtc 1
-```
-
-> **Рекомендация:** Не используйте `set-local-rtc 1` без необходимости. Хранение RTC в UTC — более надёжный вариант (избегание проблем с DST).
+По стандарту Linux аппаратные часы рекомендуется хранить в формате UTC (Coordinated Universal Time).
 
 ## Практические сценарии
 
-### Просмотр статуса времени
+### Просмотр текущего статуса времени
 
 ```bash
 timedatectl status
+# →                Local time: Сб 2026-04-04 15:30:00 MSK
+# →            Universal time: Сб 2026-04-04 12:30:00 UTC
+# →                  RTC time: Сб 2026-04-04 12:30:00
+# →                 Time zone: Europe/Moscow (MSK, +0300)
+# → System clock synchronized: yes
+# →               NTP service: active
 ```
 
-Пример вывода:
+# → `System clock synchronized: yes` подтверждает успешную работу синхронизации
 
-```
-               Local time: Сб 2026-04-04 15:30:00 MSK
-           Universal time: Сб 2026-04-04 12:30:00 UTC
-                 RTC time: Сб 2026-04-04 12:30:00
-                Time zone: Europe/Moscow (MSK, +0300)
-System clock synchronized: yes
-              NTP service: active
-          RTC in local TZ: no
-```
-
-**Ключевые поля:** `System clock synchronized: yes` означает успешную NTP-синхронизацию. `NTP service: active` — timesyncd запущен.
-
-### Включение/выключение NTP-синхронизации
+### Управление синхронизацией
 
 ```bash
-# Включить (запустит systemd-timesyncd)
+# Включить автоматическую синхронизацию (запускает timesyncd)
 sudo timedatectl set-ntp true
 
-# Выключить
+# Отключить синхронизацию
 sudo timedatectl set-ntp false
 ```
 
-### Настройка NTP-серверов
+### Настройка часового пояса
+
+```bash
+# Поиск нужного пояса в списке
+timedatectl list-timezones | grep Moscow
+
+# Установка нового часового пояса
+sudo timedatectl set-timezone Europe/Moscow
+# → обновление системного времени и симлинка /etc/localtime
+```
+
+### Тонкая настройка timesyncd
 
 Конфигурационный файл: `/etc/systemd/timesyncd.conf`.
 
 ```ini
 [Time]
-# NTP-серверы (через пробел, fallback по порядку)
+# Основные серверы через пробел
 NTP=0.pool.ntp.org 1.pool.ntp.org
-# Fallback-серверы (используются, если основные недоступны)
-FallbackNTP=2.pool.ntp.org 3.pool.ntp.org
-# Максимальное расхождение времени до коррекции
-RootDistanceMaxSec=5
-# Интервал опроса (по умолчанию 32s–2048s)
-PollIntervalMinSec=64
-PollIntervalMaxSec=128
+# Резервные серверы
+FallbackNTP=ntp.ubuntu.com
 ```
 
-После изменения:
+# → После внесения правок: sudo systemctl restart systemd-timesyncd
+
+### Диагностика процесса синхронизации
 
 ```bash
-sudo systemctl restart systemd-timesyncd
-```
-
-### Установка часового пояса
-
-```bash
-# Список доступных часовых поясов
-timedatectl list-timezones
-
-# Установка
-sudo timedatectl set-timezone Europe/Moscow
-
-# Проверка
-timedatectl | grep "Time zone"
-```
-
-### Диагностика timesyncd
-
-```bash
-# Статус сервиса
-systemctl status systemd-timesyncd
-
-# Логи синхронизации
-journalctl -u systemd-timesyncd -e
-
-# Подробный статус (включая текущий NTP-сервер)
+# Детальный отчет о текущем сервере и задержках
 timedatectl timesync-status
-```
+# → Server: 185.209.136.132 (0.pool.ntp.org)
+# → Poll interval: 1min 4s
+# → Stratum: 2
 
-Пример `timesync-status`:
-
-```
-Server: 185.209.136.132 (0.pool.ntp.org)
-Poll interval: 1min 4s (min: 32s; max 34min 8s)
-Leap: 0
-Stratum: 2
-Reference: 58C44B70
-Frequency: +12.345ms
-```
-
-### Ручная установка времени (при отключённом NTP)
-
-```bash
-# Отключить NTP
-sudo timedatectl set-ntp false
-
-# Установить время
-sudo date -s "2026-04-04 15:30:00"
-
-# Синхронизировать RTC
-sudo hwclock --systohc
-
-# Вернуть NTP (опционально)
-sudo timedatectl set-ntp true
-```
-
-> Ручная установка при активном NTP будет перезаписана timesyncd при следующей синхронизации.
-
-### Проверка и синхронизация RTC
-
-```bash
-# Просмотр времени RTC
-sudo hwclock --show
-
-# Системное → RTC
-sudo hwclock --systohc
-
-# RTC → системное
-sudo hwclock --hctosys
+# Просмотр логов службы
+journalctl -u systemd-timesyncd -e
 ```
 
 ## Дополнительная информация
 
-### Конфликт с другими NTP-демонами
+### Совместимость с Chrony и NTPd
 
-`systemd-timesyncd` автоматически отключается при обнаружении работающих `chronyd` или `ntpd`. Проверка:
+Если в системе установлен более мощный сервер времени (например, `chrony` или `ntpd`), служба `systemd-timesyncd` автоматически переходит в состояние ожидания или отключается, чтобы избежать конфликтов.
 
-```bash
-systemctl is-active systemd-timesyncd
-```
+### См. также
 
-Если `inactive` — возможно, активен другой NTP-демон:
-
-```bash
-systemctl is-active chronyd
-systemctl is-active ntpd
-```
-
-Для принудительного возврата к timesyncd:
-
-```bash
-sudo systemctl stop chronyd && sudo systemctl disable chronyd
-sudo systemctl enable --now systemd-timesyncd
-```
-
-### Связанные файлы
-
-Управление службами: [service_management.md](./service_management.md). Логи journald: [journald.md](../../SystemAdministration/Logging/journald.md). Обзор systemd: [overview.md](./overview.md). Таймеры и расписание: [timers.md](./timers.md). NTP на уровне сети: раздел сетевых сервисов.
+* [Chrony: расширенная настройка NTP](../../Linux/Networking/Services/chrony_ntp.md)
+* [Управление службами (systemctl)](./service_management.md)
+* [Journald: системные логи](../../SystemAdministration/Logging/journald.md)

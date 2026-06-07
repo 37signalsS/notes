@@ -1,4 +1,4 @@
-# Namespaces (Пространства имён)
+# Пространства имён (namespaces)
 
 ## Определения
 
@@ -7,7 +7,7 @@
 **Ключевое отличие от cgroups:**
 
 - **Namespaces** отвечают за **изоляцию видимости** (что процесс *может видеть*)
-- **[Cgroups](./cgroups.md)** отвечают за **ограничение потребления** (что процесс *может использовать*)
+- **[Контрольные группы (cgroups)](./cgroups.md)** отвечают за **ограничение потребления** (что процесс *может использовать*)
 
 Вместе эти технологии образуют основу контейнеризации (Docker, Podman, Kubernetes).
 
@@ -38,7 +38,7 @@
 - Приватные точки монтирования (`/tmp`, `/sys`, `/proc`)
 - **Propagation:** управление распространением событий монтирования между namespaces
 
-> **Подробно:** [Mount Namespaces](../Virtualization/mount_namespaces.md)
+> **Подробно:** [Пространства имён монтирования (mount namespaces)](../Virtualization/mount_namespaces.md)
 
 #### PID (Process ID)
 
@@ -57,7 +57,7 @@
 - Отдельная таблица маршрутизации и правила `iptables`/`nftables`
 - Несколько контейнеров могут использовать один network namespace (поды Kubernetes)
 
-> **Подробно:** [ip netns](../Networking/Tools/iproute2/ip_netns.md)
+> **Подробно:** [Утилита ip netns](../Networking/Tools/iproute2/ip_netns.md)
 
 #### User
 
@@ -171,14 +171,14 @@ ls -l /proc/$$/ns
 
 ### Связанные темы
 
-- **[cgroups](./cgroups.md)** — механизм ограничения ресурсов
-- **[Mount Namespaces](../Virtualization/mount_namespaces.md)** — propagation и монтирования
-- **[ip netns](../Networking/Tools/iproute2/ip_netns.md)** — управление network namespaces
+- **[Контрольные группы (cgroups)](./cgroups.md)** — механизм ограничения ресурсов
+- **[Пространства имён монтирования (mount namespaces)](../Virtualization/mount_namespaces.md)** — propagation и монтирования
+- **[Утилита ip netns](../Networking/Tools/iproute2/ip_netns.md)** — управление network namespaces
 - **[systemd-nspawn](./systemd/nspawn.md)** — легковесная контейнеризация
-- **[seccomp](../Security/Mechanisms/Seccomp.md)** — фильтрация системных вызовов
-- **[Docker Isolation](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
+- **[Механизм seccomp](../Security/Mechanisms/Seccomp.md)** — фильтрация системных вызовов
+- **[Изоляция в Docker](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
 
-### Troubleshooting
+### Поиск и устранение неисправностей
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |

@@ -8,7 +8,7 @@
 
 **tshark** — консольная версия Wireshark. Поддерживает фильтры захвата и отображения, экспорт данных в форматы CSV и JSON, а также сбор статистики. См. **[Использование tshark](./tshark_usage.md)**.
 
-**termshark** — TUI (Text-based User Interface — текстовый пользовательский интерфейс) для `tshark`, предоставляющий возможности Wireshark в терминале. Идеален для анализа на удалённых серверах по SSH. См. **[Сетевые инструменты CLI и TUI](../../../Linux/Diagnostics/Networking/network_cli_tools.md#1-termshark-tui--wireshark-в-терминале)**.
+**termshark** — TUI (Text-based User Interface — текстовый пользовательский интерфейс) для `tshark`, предоставляющий возможности Wireshark в терминале. Идеален для анализа на удалённых серверах по SSH. См. **[Сетевые инструменты CLI и TUI](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark)**.
 
 **dumpcap** — низкоуровневая утилита, которую Wireshark и `tshark` используют непосредственно для захвата пакетов с сетевого интерфейса.
 

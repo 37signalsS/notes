@@ -27,7 +27,7 @@
 | Системные вызовы | Взаимодействие приложения с ядром | `strace` |
 | Библиотечные вызовы | Обращения к `.so`-библиотекам | `ltrace` |
 | Открытые файлы/сокеты | Ресурсы, используемые процессом | `lsof` |
-| Давление на ресурсы | Потери производительности (CPU/Memory/I/O) | PSI (`/proc/pressure/`) |
+| Давление на ресурсы | Потери производительности (CPU/Memory/I/O) | [**PSI**](../../Core/kernel/psi.md) |
 | Интерактивная отладка | Пошаговое выполнение, переменные, стек | `gdb` |
 
 ### Когда применять
@@ -227,21 +227,14 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 kernel.yama.ptrace_scope = 0
 ```
 
-### PSI (Pressure Stall Information)
+### Pressure Stall Information (PSI)
 
-Доступен в ядре ≥4.20. Более точная метрика «давления» на систему, чем Load Average.
+Механизм ядра для точной оценки давления на систему. Позволяет разделять задержки по типам ресурсов (CPU, Memory, I/O).
 
-```bash
-# Чтение метрик PSI
-cat /proc/pressure/cpu
-cat /proc/pressure/memory
-cat /proc/pressure/io
-```
-
-Подробно: [PSI](../../Core/kernel/psi.md).
+Подробно: [**PSI — статистика давления на ресурсы**](../../Core/kernel/psi.md).
 
 ### Связанные темы
 
 - [`lsof`](../Processes/lsof.md)
-- [PSI](../../Core/kernel/psi.md)
+- [**PSI — статистика давления на ресурсы**](../../Core/kernel/psi.md)
 - [Диагностика производительности](./linux_performance_diagnostics_case.md)

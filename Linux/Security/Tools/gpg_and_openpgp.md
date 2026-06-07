@@ -1,14 +1,12 @@
 # gpg and openpgp
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **OpenPGP** — протокол и спецификация шифрования на основе асимметричных алгоритмов для шифрования, подписи и дешифрования сообщений.
 
 **GnuPG (GPG)** — CLI-утилита, реализующая спецификацию OpenPGP.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Типы шифрования
 
@@ -52,7 +50,7 @@
   - Генерируются из мастер-ключа для повседневных задач: шифрование (Encrypt), подпись (Sign), аутентификация (Authenticate)
   - Могут быть отозваны мастер-ключом без отзыва всей связки
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Настройка клиента
 
@@ -180,7 +178,7 @@ git config --global commit.gpgsign true
 git commit -S -m "Подписанный коммит"
 ```
 
-Подробнее: [git configuration](../../../../Git/git_configuration.md)
+Подробнее: [git configuration](../../../Git/git_configuration.md)
 
 ### Аутентификация по SSH через GPG-Agent
 
@@ -207,18 +205,18 @@ GPG-Agent заменяет ssh-agent:
    gpg --export-ssh-key <AuthKeyID>!
    ```
 
-Подробнее: [SSH key management](../../../../Linux/Security/ssh/keys/ssh_key_management.md)
+Подробнее: [SSH key management](../ssh/keys/ssh_key_management.md)
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-- [backup security](../../../../Databases/Concepts/backup_security.md) — шифрование бэкапов через GPG
-- [artifact signing](../../../../Security/Supply_Chain_Security/artifact_signing.md) — подпись артефактов (GPG/Minisign)
-- [sops overview](../../../../Security/Tools/sops_overview.md) — шифрование секретов (PGP/GPG как один из бэкендов)
-- [Linux security mechanisms](../../Linux_Security_Mechanisms_Overview.md) — GPG в экосистеме безопасности Linux
+- [backup security](../../../Databases/Concepts/backup_security.md) — шифрование бэкапов через GPG
+- [artifact signing](../../../Security/Supply_Chain_Security/artifact_signing.md) — подпись артефактов (GPG/Minisign)
+- [sops overview](../../../Security/Tools/sops_overview.md) — шифрование секретов (PGP/GPG как один из бэкендов)
+- [Linux security mechanisms](../Linux_Security_Mechanisms_Overview.md) — GPG в экосистеме безопасности Linux
 
-### Best Practices
+### Лучшие практики
 
 1. Мастер-ключ хранить **офлайн**, использовать только подключи
 2. Устанавливать срок действия ключей (можно продлить)
@@ -226,4 +224,4 @@ GPG-Agent заменяет ssh-agent:
 4. Использовать ECC (Curve 25519) вместо RSA — быстрее, меньше размер ключа
 5. Не передавать приватные ключи по незащищенным каналам
 6. Регулярно обновлять ключи с сервера (`--refresh-keys`)
-7. Для бэкапов бэкапов использовать зашифрованные носители
+7. Для бэкапов использовать зашифрованные носители

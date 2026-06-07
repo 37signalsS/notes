@@ -124,17 +124,7 @@ sysctl -w net.ipv4.tcp_syncookies=1
 
 ### Использование fail2ban для динамической блокировки
 
-```bash
-# /etc/fail2ban/jail.local
-[nginx-limit-req]
-enabled = true
-filter = nginx-limit-req
-action = iptables-multiport[name=ReqLimit, port="http,https", protocol=tcp]
-logpath = /var/log/nginx/error.log
-findtime = 600
-bantime = 7200
-maxretry = 10
-```
+Для автоматической блокировки нарушителей, превышающих лимиты, используйте интеграцию fail2ban с Nginx. Подробная инструкция и конфигурация (включая оптимизацию через `ipset`) описаны в SSoT-файле: [fail2ban — Интеграция с Nginx Rate Limiting](../../Linux/Security/Tools/fail2ban.md#интеграция-с-nginx-rate-limiting).
 
 ### Защита Origin-сервера (источника) за CloudFlare
 

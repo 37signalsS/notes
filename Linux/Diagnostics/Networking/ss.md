@@ -1,10 +1,10 @@
 # ss (Socket Statistics)
 
-## Definitions
+## Определения
 
 **`ss`** (Socket Statistics) — современная консольная утилита в Linux для просмотра информации о сетевых сокетах. Является частью пакета `iproute2` и получает данные напрямую из ядра через интерфейс `netlink`, что обеспечивает высокую производительность даже на системах с десятками тысяч соединений.
 
-## Basic Concepts
+## Основные концепции
 
 ### Преимущества перед netstat
 
@@ -24,9 +24,9 @@
 
 - **LISTEN:** Сервер ожидает входящих подключений на порту
 - **SYN-SENT:** Клиент отправил SYN для установки соединения
-- **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен SYN-flood, см. [Security overview](../../../Security/security_practice_platforms.md))
+- **SYN-RECV:** Сервер получил SYN и отправил SYN-ACK (возможен SYN-flood)
 - **ESTABLISHED:** Соединение установлено, данные передаются
-- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует [TCP-tuning](../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md))
+- **FIN-WAIT-1/2, CLOSE-WAIT, TIME-WAIT:** Стадии закрытия соединения (большое количество `TIME-WAIT` требует тюнинга)
 - **CLOSED:** Соединение закрыто
 
 ### Основные флаги
@@ -43,7 +43,7 @@
 - `-m`: Статистика памяти сокетов
 - `-Z`: Контекст безопасности (SELinux)
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Просмотр слушающих портов
 
@@ -52,14 +52,8 @@
 ```bash
 # Показать все слушающие TCP и UDP порты с PID процессов
 sudo ss -tulpn
-```
-
-**Пример вывода:**
-
-```
-tcp   LISTEN  0  128  0.0.0.0:22   0.0.0.0:*  users:(("sshd",pid=1234))
-tcp   LISTEN  0  511  0.0.0.0:80   0.0.0.0:*  users:(("nginx",pid=5678))
-udp   UNCONN  0  0     0.0.0.0:53   0.0.0.0:*  users:(("dnsmasq",pid=9012))
+# → tcp   LISTEN  0  128  0.0.0.0:22   0.0.0.0:*  users:(("sshd",pid=1234))
+# → tcp   LISTEN  0  511  0.0.0.0:80   0.0.0.0:*  users:(("nginx",pid=5678))
 ```
 
 **Интерпретация:**
@@ -88,9 +82,6 @@ ss -t src 192.168.1.50
 # Только слушающие порты (быстрая проверка)
 ss -tlnp
 
-# Все соединения кроме localhost
-ss -tlnp | grep -v 127.0.0.1
-
 # Соединения в диапазоне портов
 ss -t '( dport >= :8000 and dport <= :9000 )'
 ```
@@ -102,16 +93,9 @@ ss -t '( dport >= :8000 and dport <= :9000 )'
 ```bash
 # Все установленные SSH-соединения
 ss -tn state established '( sport = :22 or dport = :22 )'
-
-# Пример вывода:
-# State    Recv-Q  Send-Q  Local:Port        Peer:Port
-# ESTAB    0       0       192.168.1.10:22   192.168.1.50:38456
+# → State    Recv-Q  Send-Q  Local:Port        Peer:Port
+# → ESTAB    0       0       192.168.1.10:22   192.168.1.50:38456
 ```
-
-**Поля:**
-
-- `Local:Port` — IP сервера и порт SSH (22)
-- `Peer:Port` — IP клиента и эфемерный порт (32768–60999)
 
 ### Диагностика производительности TCP (`ss -ti`)
 
@@ -123,9 +107,6 @@ ss -ti
 
 # Фильтрация по порту
 ss -ti dst :443
-
-# Только установленные соединения с деталями
-ss -ti state established
 ```
 
 **Ключевые метрики:**
@@ -133,24 +114,15 @@ ss -ti state established
 - **`rtt:<время>/<отклонение>`** — Round-Trip Time и вариация задержки
 - **`retrans:<текущее>/<всего>`** — Повторные передачи (признак потерь)
 - **`cwnd:<значение>`** — Congestion Window (окно перегрузки)
-- **`bytes_sent/acked`** — Эффективность передачи
-- **`ssthresh`** — Порог медленного старта
 - **`pacing_rate`** — Скорость передачи данных
 
 **Диагностика проблем:**
 
 | Проблема | Признак в `ss -ti` | Причина |
 | :--- | :--- | :--- |
-| **Потери пакетов** | Много `retrans` | Перегрузка сети, faulty оборудование |
+| **Потери пакетов** | Много `retrans` | Перегрузка сети, неисправное оборудование |
 | **Низкая пропускная способность** | Маленький `cwnd` | TCP "задушен" после потерь |
 | **Высокая задержка** | Большой `rtt` без нагрузки | Firewall, VPN, география |
-| **Нестабильность** | Большое отклонение `rtt` | Jitter, перегрузка канала |
-
-**Пример вывода:**
-
-```
-cubic wscale:7,7 rtt:20.5/2.1 mss:1460 cwnd:10 ssthresh:42 send 100.5Mbps pacing_rate 200.5Mbps retrans:0/1 rcv_space:65495 rcv_ssthresh:120000
-```
 
 ### Сводная статистика сокетов
 
@@ -158,73 +130,8 @@ cubic wscale:7,7 rtt:20.5/2.1 mss:1460 cwnd:10 ssthresh:42 send 100.5Mbps pacing
 
 ```bash
 ss -s
-```
-
-**Пример вывода:**
-
-```
-Total: 256 (kernel 304)
-TCP:   10 (estab 3, closed 0, orphaned 0, syn-recv 0, time-wait 0/0), ports 0
-
-Transport Total     IP        IPv6
-RAW     1         0         1
-UDP     8         5         3
-TCP     10        7         3
-INET    19        12        7
-FRAG    0         0         0
-```
-
-**Интерпретация:**
-
-- `orphaned` — сокеты без владельца (процесс умер), могут указывать на утечки
-- `time-wait 0/0` — количество в TIME-WAIT / максимальное
-- `ports 0` — количество используемых портов
-
-### Поиск процессов по порту
-
-```bash
-# Найти процесс на порту 8080
-ss -tlnp 'sport = :8080'
-
-# Найти все процессы на диапазоне портов
-ss -tlnp 'sport >= :8000 and sport <= :9000'
-```
-
-### Диагностика TIME-WAIT
-
-Большое количество соединений в TIME-WAIT может указывать на необходимость тюнинга:
-
-```bash
-# Подсчитать TIME-WAIT соединения
-ss -tan state time-wait | wc -l
-
-# Показать детали TIME-WAIT сессий
-ss -tai state time-wait
-```
-
-> **Решение:** См. [TCP tuning](../../../Networking/Concepts/tcp_tuning/tcp_time_wait_management.md) — параметры `tcp_tw_reuse`, `tcp_fin_timeout`
-
-### Мониторинг в реальном времени
-
-```bash
-# Обновлять вывод каждую секунду
-watch -n1 'ss -tlnp'
-
-# Следить за конкретным портом
-watch -n1 "ss -tlnp 'sport = :443'"
-
-# Считать новые соединения
-watch -n1 'ss -tan | grep ESTAB | wc -l'
-```
-
-### Экспорт для мониторинга
-
-```bash
-# JSON-вывод для парсинга
-ss -tulpn --json
-
-# Статистика для Prometheus/Grafana
-ss -s | awk '/TCP:/ {print $2}'
+# → Total: 256 (kernel 304)
+# → TCP:   10 (estab 3, closed 0, orphaned 0, syn-recv 0, time-wait 0/0), ports 0
 ```
 
 ### Сравнение команд: netstat → ss
@@ -235,12 +142,19 @@ ss -s | awk '/TCP:/ {print $2}'
 | TCP соединения | `netstat -tn` | `ss -tn` |
 | Статистика TCP | `netstat -st` | `ss -s` |
 | Процесс на порту | `netstat -tulpn \| grep :80` | `ss -tlnp 'sport = :80'` |
-| Состояния TCP | `netstat -tan` | `ss -tan` |
 | Маршруты | `netstat -rn` | `ip route show` |
 | Интерфейсы | `netstat -i` | `ip -s link` |
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные инструменты
 
-Для анализа устаревших скриптов см. [`netstat`](./netstat.md) (только для совместимости), TUI-мониторинг — [`network_cli_tools`](./network_cli_tools.md), анализ трафика — [`tcpdump`](./tcpdump.md), оптимизация TCP — [`tcp_tuning`](../../Networking/Concepts/tcp_tuning/tcp_tuning_overview.md), современный инструментарий — [`iproute2`](../../Networking/Tools/iproute2/overview.md).
+- **[tcpdump](./tcpdump.md)** — анализ трафика в реальном времени.
+- **[iproute2](../../Networking/Tools/iproute2/overview.md)** — современный инструментарий управления сетью.
+- **[Оптимизация TCP](../../Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — тюнинг параметров для высоконагруженных систем.
+- **[Диагностика сокетов TCP](../../Networking/Concepts/tcp_tuning/tcp_socket_diagnostics.md)** — детальный анализ состояний и метрик.
+
+### См. также
+
+- **[netstat](./netstat.md)** — описание устаревшей утилиты для совместимости.
+- **[lsof](../Processes/lsof.md)** — просмотр открытых файлов и сокетов процессами.

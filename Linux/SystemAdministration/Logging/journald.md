@@ -152,16 +152,8 @@ sudo systemctl restart systemd-journald
 
 **Ручная очистка через `journalctl`:**
 
-```bash
-# Оставить только последние 500 МБ
-sudo journalctl --vacuum-size=500M
-
-# Оставить логи только за последние 2 дня
-sudo journalctl --vacuum-time=2d
-
-# Оставить только 5 последних файлов журнала
-sudo journalctl --vacuum-files=5
-```
+Подробные инструкции по ручной очистке журнала (vacuum) с использованием `journalctl` описаны в документе:
+**[Управление хранением и очистка journalctl](../../Diagnostics/journalctl/journalctl_management.md)**
 
 **Автоматическая очистка через `systemd-tmpfiles`:**
 

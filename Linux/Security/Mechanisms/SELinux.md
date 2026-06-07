@@ -1,6 +1,6 @@
 # SELinux
 
-## Definitions
+## Определения
 
 **SELinux (Security-Enhanced Linux)** — механизм принудительного контроля доступа (Mandatory Access Control, MAC) в ядре Linux. Применяет централизованные политики безопасности, которые нельзя обойти пользователям или процессам, включая `root`.
 
@@ -45,7 +45,7 @@
 | **Правила доступа** | Политика определяет разрешённые операции между типами | `httpd_t` читает `httpd_sys_content_t`, но не `shadow_t` |
 | **Блокировка ядром** | Нарушения блокируются на уровне ядра | Даже процесс от `root` будет заблокирован |
 
-## Basic Concepts
+## Основные концепции
 
 ### Схема работы
 
@@ -72,14 +72,14 @@
 - **Протоколирование** — все действия записываются в журнал
 - **Пользователь `root`** с контекстом `unconfined_t` не ограничен SELinux
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Проверка статуса и управление режимами
 
 ```bash
 # Проверка текущего статуса
-sestatus
-getenforce
+sestatus # → SELinux status: enabled
+getenforce # → Enforcing
 
 # Временное переключение (до перезагрузки)
 sudo setenforce 0  # Permissive
@@ -93,10 +93,10 @@ SELINUX=enforcing  # или permissive, disabled
 
 ```bash
 # Файлы и каталоги
-ls -Z /var/www/html
+ls -Z /var/www/html # → unconfined_u:object_r:httpd_sys_content_t:s0 index.html
 
 # Процессы
-ps -Z aux | grep nginx
+ps -Z aux | grep nginx # → system_u:system_r:httpd_t:s0 nginx
 ```
 
 Подробнее о `ps`: [`ps`](../../Diagnostics/Processes/ps.md).
@@ -105,19 +105,19 @@ ps -Z aux | grep nginx
 
 ```bash
 # Просмотр соответствия системных пользователей пользователям SELinux
-semanage login -l
+semanage login -l # → Login Name  SELinux User  MLS/MCS Range  Service
 
 # Привязка пользователя к SELinux-пользователю
 sudo semanage login -a -s staff_u user1
 
 # Просмотр пользователей SELinux
-semanage user -l
+semanage user -l # → SELinux User    Prefix    MCS Level  MCS Range
 
 # Просмотр ролей
-semanage role -l
+semanage role -l # → Role            Types
 
 # Просмотр типов
-seinfo -t
+seinfo -t # → Types: 4899
 ```
 
 ### 4. Переходы доменов (Domain Transitions)
@@ -126,14 +126,14 @@ seinfo -t
 
 ```bash
 # Просмотр разрешённых переходов доменов
-sesearch -T -s httpd_t
+sesearch -T -s httpd_t # → type_transition httpd_t ...
 ```
 
 ### 5. Управление портами
 
 ```bash
 # Разрешенные порты для типа http_port_t
-semanage port -l | grep http_port_t
+semanage port -l | grep http_port_t # → http_port_t  tcp  80, 81, 443 ...
 
 # Добавление нового порта
 sudo semanage port -a -t http_port_t -p tcp 5080
@@ -146,7 +146,7 @@ sudo semanage port -d -t http_port_t -p tcp 5080
 
 ```bash
 # Просмотр правил
-semanage fcontext -l | grep '/var/www'
+semanage fcontext -l | grep '/var/www' # → /var/www(/.*)?  all files  system_u:object_r:httpd_sys_content_t:s0
 
 # Добавление правила для нового каталога (постоянное изменение политики)
 sudo semanage fcontext -a -t httpd_sys_content_t "/srv/my_app(/.*)?"
@@ -155,7 +155,7 @@ sudo semanage fcontext -a -t httpd_sys_content_t "/srv/my_app(/.*)?"
 sudo chcon -t httpd_sys_content_t /srv/my_app/index.html
 
 # Восстановление контекста по умолчанию
-sudo restorecon -Rv /srv/my_app
+sudo restorecon -Rv /srv/my_app # → Relabeled /srv/my_app from ... to ...
 ```
 
 > **Примечание:** `chcon` — временное изменение, которое сбрасывается при `restorecon`. Рекомендуется использовать `semanage fcontext` для постоянных изменений.
@@ -166,7 +166,7 @@ sudo restorecon -Rv /srv/my_app
 
 ```bash
 # Просмотр всех значений
-getsebool -a
+getsebool -a # → abrt_anon_write --> off ...
 
 # Временное включение/отключение
 sudo setsebool httpd_can_network_connect on
@@ -179,7 +179,7 @@ sudo setsebool -P httpd_can_network_connect on
 
 ```bash
 # Логи аудита (отказы SELinux)
-sudo tail -f /var/log/audit/audit.log | grep AVC
+sudo tail -f /var/log/audit/audit.log | grep AVC # → type=AVC msg=audit(...): denied { read } ...
 
 # Принудительная перемаркировка файлов при загрузке
 sudo touch /.autorelabel
@@ -200,7 +200,7 @@ sudo semanage import -f selinux_settings.mod
 
 ```bash
 # Генерация модуля из логов
-sudo grep "AVC" /var/log/audit/audit.log | audit2allow -M my_custom_policy
+sudo grep "AVC" /var/log/audit/audit.log | audit2allow -M my_custom_policy # → ...
 
 # Установка модуля
 sudo semodule -i my_custom_policy.pp
@@ -222,7 +222,7 @@ sudo semanage port -a -t ssh_port_t -p tcp 5022
 ```bash
 # Для каталога /srv/mysql
 sudo semanage fcontext -a -t mysqld_db_t "/srv/mysql(/.*)?"
-sudo restorecon -Rv /srv/mysql
+sudo restorecon -Rv /srv/mysql # → Relabeled /srv/mysql ...
 ```
 
 ### 10. SELinux и Docker/containers
@@ -231,10 +231,10 @@ sudo restorecon -Rv /srv/mysql
 # Монтирование тома с автоматической сменой контекста
 # z — приватный контекст
 # Z — общий контекст
-docker run -v /host/path:/container/path:z my_image
+docker run -v /host/path:/container/path:z my_image # → ...
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### История
 

@@ -31,25 +31,7 @@ mount -o noatime,nodiratime,discard /dev/rbd0 /mnt/rbd
 
 ### Бенчмаркинг RBD-устройств
 
-Используйте `fio` для тестирования производительности:
-
-```bash
-# Тест последовательной записи
-fio --name=write --ioengine=libaio --rw=write --bs=4k \
-  --direct=1 --numjobs=1 --size=1G --runtime=60 \
-  --filename=/dev/rbd0
-
-# Тест последовательного чтения
-fio --name=read --ioengine=libaio --rw=read --bs=4k \
-  --direct=1 --numjobs=1 --size=1G --runtime=60 \
-  --filename=/dev/rbd0
-```
-
-**Параметры `fio`:**
-
-- `--ioengine=libaio` — асинхронный ввод-вывод
-- `--direct=1` — прямой доступ (без кэша страницы)
-- `--numjobs=1` — одно задание (увеличьте для параллельного теста)
+Для тестирования производительности RBD-устройств рекомендуется использовать утилиту `fio`. Подробные примеры команд и описание параметров доступны в разделе **[`Бенчмаркинг RBD в Ceph`](../../../../Linux/Diagnostics/Filesystem/fio.md#бенчмаркинг-rbd-rados-block-device-в-ceph)**.
 
 ### Операции бэкапа
 

@@ -1,53 +1,52 @@
-# OOM Killer Diagnostics
+# Диагностика OOM Killer в Linux
 
 ## Определения
 
-**Диагностика OOM Killer** — процесс выявления, анализа и расследования событий нехватки памяти (Out of Memory) в Linux. Включает просмотр логов ядра, анализ рейтингов процессов (`oom_score`), проверку лимитов cgroups и определение причин OOM.
+**Диагностика OOM Killer** — это процесс выявления, анализа и расследования инцидентов принудительного завершения процессов ядром из-за нехватки оперативной памяти (**OOM — Out of Memory**).
+
+Процедура включает в себя сбор данных из системных журналов, анализ рейтингов выживаемости процессов (**oom_score**) и проверку ограничений контрольных групп (**cgroups**).
 
 ## Основные концепции
 
-### Источники данных для диагностики
+### Источники данных для расследования
 
-| Источник | Команда | Что показывает |
+Для поиска причин срабатывания механизма используются следующие инструменты:
+
+| Источник | Команда | Назначение |
 | :--- | :--- | :--- |
-| **Кольцевой буфер ядра** | `dmesg -T` | Последние OOM события, детали убитых процессов |
-| **Журнал systemd** | `journalctl -k` | Долгосрочное хранение OOM логов |
-| **Рейтинг процессов** | `/proc/<PID>/oom_score` | Текущий рейтинг "кандидата на убийство" |
-| **Корректировка рейтинга** | `/proc/<PID>/oom_score_adj` | Влияние пользователя на рейтинг |
-| **Лимиты cgroups** | `/sys/fs/cgroup/.../memory.max` | Границы памяти для контейнеров |
-| **Статус процесса** | `/proc/<PID>/status` | VmRSS, VmSize, OOM статус |
+| **Буфер ядра** | `dmesg -T` | Просмотр последних событий в реальном времени с временными метками. |
+| **Журнал systemd** | `journalctl -k` | Анализ архивных записей о сбоях ядра (сохраняются после перезагрузки). |
+| **Рейтинг процесса** | `/proc/<PID>/oom_score` | Проверка текущей вероятности завершения конкретной задачи. |
+| **Статус памяти** | `/proc/<PID>/status` | Детальный разбор потребления (RSS, VmSize) живого процесса. |
+| **Лимиты cgroups** | `/sys/fs/cgroup/...` | Проверка жестких ограничений для контейнеров и сервисов. |
 
-### Формат записи OOM Killer в логе
+### Разбор структуры лога OOM Killer
 
-Типичная запись содержит:
+При срабатывании механизма в системный лог записывается блок данных. Пример типичной записи:
 
-```
-oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),
-cpuset=/,mems_allowed=0,global_oom,task_memcg=/system.slice/fail2ban.service,
-task=fail2ban-server,pid=131351,uid=0
-Out of memory: Killed process 131351 (fail2ban-server)
-total-vm:886820kB, anon-rss:19928kB, file-rss:30592kB, shmem-rss:0kB,
-UID:0 pgtables:628kB oom_score_adj:0
+```text
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,
+task_memcg=/system.slice/nginx.service,task=nginx,pid=1234,uid=0
+Out of memory: Killed process 1234 (nginx) total-vm:886820kB, anon-rss:19928kB, 
+file-rss:30592kB, shmem-rss:0kB, UID:0 pgtables:628kB oom_score_adj:0
 ```
 
-**Расшифровка полей:**
+**Ключевые поля для анализа:**
 
-- `constraint` — тип ограничения: `CONSTRAINT_NONE` (глобальный OOM), `CONSTRAINT_MEMCG` (cgroup лимит)
-- `task_memcg` — путь к cgroup процесса (например, `/system.slice/fail2ban.service`)
-- `task`, `pid` — имя и PID убитого процесса
-- `total-vm` — общий объем виртуальной памяти процесса
-- `anon-rss` — анонимная резидентная память (heap, stack)
-- `file-rss` — файловая резидентная память (mapped files)
-- `shmem-rss` — разделяемая память (tmpfs, shared memory)
-- `pgtables` — память, используемая таблицами страниц
-- `oom_score_adj` — корректировка рейтинга пользователем
+- **`constraint`**: тип ограничения. `CONSTRAINT_NONE` означает общую нехватку памяти в системе, `CONSTRAINT_MEMCG` — превышение лимита конкретной cgroup (контейнера).
+- **`task_memcg`**: путь к группе, вызвавшей ограничение.
+- **`task`, `pid`**: имя и идентификатор убитого процесса.
+- **`anon-rss`**: объем анонимной памяти (куча, стек), которая не может быть вытеснена на диск.
+- **`file-rss`**: память, занятая отображенными файлами (кэш).
+- **`oom_score_adj`**: значение пользовательской корректировки рейтинга на момент смерти.
 
 ## Практические сценарии
 
-### Просмотр рейтинга OOM для процессов
+### Анализ рейтингов текущих процессов
+
+Сценарий для поиска наиболее вероятных "кандидатов" на удаление (топ-20):
 
 ```bash
-# Все процессы, отсортированные по oom_score (топ-20)
 for p in /proc/[0-9]*; do
     pid=${p##*/}
     [ -r $p/oom_score ] && printf "%4s %5s %8s %s\n" \
@@ -58,123 +57,64 @@ for p in /proc/[0-9]*; do
 done | sort -nr | head -20
 ```
 
-Пример вывода:
-
-```
-700  0      131351  fail2ban-server
-693  0      1254    node
-692  0      131649  fwupd
-```
-
-Процесс `fail2ban-server` (PID 131351) имеет наивысший `oom_score` (700) и будет первым кандидатом на завершение при OOM.
-
-### Просмотр логов OOM Killer
+### Поиск событий OOM в журналах
 
 ```bash
-# Через dmesg (последние события)
-dmesg -T | grep -i "oom\|killed process"
-
-# Через journalctl (долгосрочное хранение)
-journalctl -k | grep -i "oom-kill"
-
-# Детальный просмотр последних OOM событий
+# Просмотр последних 50 событий нехватки памяти
 journalctl -k -g "Out of memory" -n 50
+
+# Быстрый поиск через dmesg с преобразованием времени
+dmesg -T | grep -iE "oom|killed process"
 ```
 
-### Анализ потребления памяти процессом
+### Глубокий анализ потребления памяти процессом
+
+Если процесс ещё жив, но подозревается в утечке:
 
 ```bash
-# Детальная информация о памяти процесса
-cat /proc/<PID>/status | grep -i "vm\|rss"
+# Просмотр резидентной (физической) памяти
+grep -iE "vmsize|vmrss|vmswap" /proc/<PID>/status
 
-# Карта памяти процесса (какие библиотеки/файлы mapped)
+# Карта распределения памяти (сводная)
 cat /proc/<PID>/smaps_rollup
 
-# Статистика cgroups (v2)
-cat /sys/fs/cgroup/system.slice/<service>.scope/memory.current
-cat /sys/fs/cgroup/system.slice/<service>.scope/memory.max
-
-# Проверка лимита для процесса
-grep "Max resident set size" /proc/<PID>/limits
+# Текущее потребление в рамках cgroup v2
+cat /sys/fs/cgroup/system.slice/<service_name>.service/memory.current
 ```
 
-### Диагностика OOM в контейнерах
+### Диагностика в Docker и Kubernetes
 
 ```bash
-# Проверить OOMKilled статус
-docker inspect <container> --format '{{.State.OOMKilled}}'
+# Docker: проверка флага OOMKilled для контейнера
+docker inspect <container_id> --format '{{.State.OOMKilled}}'
 
-# Проверить лимиты cgroups контейнера
-cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.max
-cat /sys/fs/cgroup/system.slice/docker-<id>.scope/memory.current
-
-# Проверить OOM события в Kubernetes
-kubectl describe pod <pod> | grep -A 5 "Last State"
-```
-
-### Мониторинг памяти в реальном времени
-
-```bash
-# Мониторинг памяти (обновление каждые 2 сек)
-watch -n 2 'free -h && echo "---" && ps aux --sort=-%mem | head -10'
-
-# Мониторинг cgroups памяти
-watch -n 2 'cat /sys/fs/cgroup/system.slice/<service>.scope/memory.current'
+# Kubernetes: просмотр причины завершения последнего инстанса пода
+kubectl describe pod <pod_name> | grep -A 5 "Last State"
 ```
 
 ## Дополнительная информация
 
-### Принудительный вызов OOM Killer
+### Имитация ситуации OOM (Тестирование)
 
-> **ПРЕДУПРЕЖДЕНИЕ:** Приведет к немедленному завершению одного или нескольких процессов! Используйте только в тестовых средах.
-
-```bash
-# Включить sysrq-trigger (если отключен)
-echo 1 > /proc/sys/kernel/sysrq
-
-# Принудительно вызвать OOM Killer
-echo f > /proc/sysrq-trigger
-
-# Проверить логи
-dmesg | tail -50
-```
-
-> **Примечание:** Символ `f` выбран как отсылка к триггеру `sysrq` для OOM Killer.
-
-### Автоматизация диагностики
-
-Скрипт для быстрого анализа OOM событий:
+> **ВНИМАНИЕ:** Выполнение этих команд приведет к немедленной гибели процессов. Используйте только в изолированных тестовых средах!
 
 ```bash
-#!/bin/bash
-echo "=== Последние 10 OOM событий ==="
-dmesg -T | grep -i "killed process" | tail -10
+# Разрешить использование SysRq
+echo 1 | sudo tee /proc/sys/kernel/sysrq
 
-echo ""
-echo "=== Топ-10 процессов по oom_score ==="
-for p in /proc/[0-9]*; do
-    pid=${p##*/}
-    [ -r $p/oom_score ] && printf "%4s %8s %s\n" \
-        "$(cat $p/oom_score 2>/dev/null)" \
-        "$pid" \
-        "$(cat $p/comm 2>/dev/null)"
-done 2>/dev/null | sort -nr | head -10
-
-echo ""
-echo "=== Последние процессы, убитые OOM Killer ==="
-journalctl -k -g "Out of memory" --no-pager -n 20
+# Принудительно вызвать алгоритм OOM Killer
+echo f | sudo tee /proc/sysrq-trigger
 ```
 
-### Частые причины OOM
+### Распространенные причины и решения
 
-| Причина | Признаки | Решение |
+| Причина | Характерные признаки | Способ устранения |
 | :--- | :--- | :--- |
-| **Утечка памяти** | Постепенный рост RSS, периодические OOM | Профилирование приложения, исправление утечки |
-| **Недостаточный лимит** | OOM сразу при запуске/нагрузке | Увеличить `memory.max` (cgroups) или `limits.memory` (K8s) |
-| **Пиковая нагрузка** | OOM при spikes нагрузки | Увеличить лимиты с запасом, настроить HPA |
-| **Глобальная нехватка RAM** | Много процессов-кандидатов, высокий `free` | Добавить RAM, настроить swap |
-| **JVM без лимитов** | Java-процесс с высоким `oom_score` | Установить `-XX:MaxRAMPercentage` |
+| **Утечка памяти (Leak)** | Постоянный рост RSS в течение долгого времени. | Профилирование кода, исправление ошибок управления памятью. |
+| **Недостаточный лимит** | OOM происходит сразу после старта или под нагрузкой. | Увеличение `memory.max` в cgroup или `limits.memory` в K8s. |
+| **Всплеск нагрузки** | Резкий скачок потребления при росте трафика. | Настройка горизонтального масштабирования (**HPA — Horizontal Pod Autoscaler**). |
+| **Неверная настройка JVM** | Java-процесс убивается при наличии свободной памяти на хосте. | Использование флага `-XX:MaxRAMPercentage` для учета лимитов контейнера. |
 
 ---
 
-Механизм работы OOM Killer описан в [**OOM Killer Mechanism**](./oom_killer_mechanism.md). Управление поведением — в [**OOM Killer Management**](./oom_killer_management.md).
+Теория алгоритма описана в [**Механизме OOM Killer**](./oom_killer_mechanism.md). Способы предотвращения и настройки — в [**Управлении OOM Killer**](./oom_killer_management.md). Специфика контейнеров — в [**OOM Killer в контейнерах**](./oom_killer_containers.md).

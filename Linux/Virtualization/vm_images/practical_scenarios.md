@@ -1,136 +1,126 @@
-# Образы ВМ: Практические сценарии
+# Образы ВМ — Практические сценарии
 
-> **Определения:** базовые термины — в [файле определений](./definitions.md). **Концепции:** способы организации хранилища, форматы — в [basic_concepts.md](./basic_concepts.md).
+В данном файле собраны практические инструкции по управлению образами виртуальных машин (ВМ) с использованием утилит семейства QEMU. Термины и форматы описаны в [Определениях](./definitions.md) и [Основных концепциях](./basic_concepts.md).
 
-## Управление образами с `qemu-img`
+## Определения
 
-### Создание образа
+**qemu-img** — основная утилита для создания, конвертации, изменения размера и получения информации об образах дисков.
+
+**qemu-nbd** — инструмент для экспорта образов QEMU через протокол NBD (Network Block Device), что позволяет монтировать их в операционной системе хоста.
+
+**nbd** — модуль ядра Linux, обеспечивающий поддержку сетевых блочных устройств.
+
+## Базовые концепции
+
+### Рабочий процесс расширения диска
+
+Процесс увеличения доступного пространства в ВМ состоит из трех уровней:
+
+1. **Уровень гипервизора:** Увеличение физического размера файла образа (`qemu-img resize`).
+2. **Уровень блочного устройства гостя:** Обнаружение нового объема ядром гостевой ОС.
+3. **Уровень файловой системы/LVM:** Расширение разделов и ФС внутри ВМ.
+
+### Логика монтирования через NBD
+
+Монтирование образа на хосте позволяет вносить изменения в файловую систему ВМ (например, сброс пароля) без её запуска. **Важно:** нельзя монтировать образ диска, который в данный момент используется запущенной ВМ, так как это приведет к повреждению ФС.
+
+## Практические сценарии
+
+### Сценарий 1: Работа с утилитой qemu-img
+
+#### Создание образов
 
 ```bash
-# raw (разреженный файл, 5 ГБ)
-dd if=/dev/zero of=test.raw bs=1 count=0 seek=5G
-# или
-qemu-img create -f raw test.raw 5G
-
-# qcow2 (10 ГБ, thin provisioning)
-qemu-img create -f qcow2 test.qcow2 10G
-
-# qcow2 с указанием размера кластера
-qemu-img create -f qcow2 -o cluster_size=2M test.qcow2 10G
+# Создание qcow2 образа объемом 20 ГБ (тонкое выделение)
+qemu-img create -f qcow2 server_disk.qcow2 20G
+# → Formatting 'server_disk.qcow2', fmt=qcow2 cluster_size=65536 extended_l2=off...
 ```
 
-### Конвертация
+#### Конвертация между форматами
 
 ```bash
-# Общий синтаксис
-qemu-img convert -f <from> -O <to> <src> <dst>
+# Конвертация из VMware (vmdk) в KVM (qcow2)
+qemu-img convert -f vmdk -O qcow2 disk.vmdk disk.qcow2
 
-# physical disk → qcow2
-qemu-img convert -f raw -O qcow2 /dev/sdb disk.qcow2
-
-# vmdk → qcow2
-qemu-img convert -f vmdk -O qcow2 source.vmdk target.qcow2
-
-# vdi → qcow2 (VirtualBox → KVM)
-qemu-img convert -f vdi -O qcow2 source.vdi target.qcow2
+# Конвертация из VirtualBox (vdi) в KVM (qcow2)
+qemu-img convert -f vdi -O qcow2 disk.vdi disk.qcow2
 ```
 
-### Снапшоты (qcow2)
+#### Управление снапшотами (внутренними)
 
 ```bash
-# Создать внутренний снапшот
-qemu-img snapshot -c snap_name image.qcow2
+# Создание снапшота
+qemu-img snapshot -c backup_point disk.qcow2
 
-# Список снапшотов
-qemu-img snapshot -l image.qcow2
+# Просмотр списка снапшотов
+qemu-img snapshot -l disk.qcow2
+# → ID        TAG               VM SIZE                DATE       VM CLOCK
+# → 1         backup_point          0 B 2024-06-07 12:00:00   00:00:00.000
 
 # Откат к снапшоту
-qemu-img snapshot -a snap_name image.qcow2
-
-# Удалить снапшот
-qemu-img snapshot -d snap_name image.qcow2
+qemu-img snapshot -a backup_point disk.qcow2
 ```
 
-**Внешние снапшоты (backing files):**
+### Сценарий 2: Расширение диска ВМ (полный цикл)
+
+#### Шаг 1: Изменение размера на стороне хоста
 
 ```bash
-# Создать delta-диск на основе базового образа
-qemu-img create -f qcow2 -b base_image.qcow2 -F qcow2 vm_delta.qcow2
-
-# Запуск ВМ с delta-диском (базовый образ read-only)
-```
-
-**Преимущества external snapshots:**
-
-- Один "золотой образ" → множество ВМ
-- Экономия места (общие блоки не дублируются)
-
-### Изменение размера
-
-**1. На хосте:**
-
-```bash
-# Увеличить на 10 ГБ
+# Увеличение файла на 10 ГБ
 qemu-img resize disk.qcow2 +10G
-
-# Установить размер 50 ГБ
-qemu-img resize disk.qcow2 50G
 ```
 
-**2. Внутри гостевой ОС (Linux):**
+#### Шаг 2: Обнаружение изменений в гостевой ОС (Linux)
 
 ```bash
-# Пересканирование диска (без перезагрузки)
-echo 1 > /sys/class/block/sda/device/rescan
+# Пересканирование диска sda без перезагрузки
+echo 1 | sudo tee /sys/class/block/sda/device/rescan
 
-# Расширение раздела (fdisk/parted/growpart)
-growpart /dev/sda 1  # раздел 1
-
-# Расширение ФС
-resize2fs /dev/sda1      # ext4
-xfs_growfs /mount/point  # XFS
-
-# Или LVM
-pvresize /dev/sda1
-lvextend -l +100%FREE -r /dev/vg/lv
+# Проверка нового размера
+lsblk /dev/sda
 ```
 
-## Восстановление доступа к ВМ
-
-**Сценарий:** Утерян SSH-доступ или пароль root.
-
-### 1. Монтирование образа
+#### Шаг 3: Расширение раздела и файловой системы
 
 ```bash
-# Загрузить модуль nbd
+# Для разделов без LVM (утилита cloud-guest-utils)
+sudo growpart /dev/sda 1
+sudo resize2fs /dev/sda1
+
+# Для LVM
+sudo pvresize /dev/sda1
+sudo lvextend -l +100%FREE -r /dev/vg_name/lv_name
+```
+
+### Сценарий 3: Восстановление доступа через qemu-nbd
+
+Метод используется для сброса забытого пароля или редактирования конфигурационных файлов.
+
+**1. Подключение образа:**
+
+```bash
 sudo modprobe nbd max_part=8
-
-# Подключить qcow2
 sudo qemu-nbd --connect=/dev/nbd0 disk.qcow2
+```
 
-# Просмотреть разделы
-fdisk -l /dev/nbd0
+**2. Монтирование раздела:**
 
-# Смонтировать раздел
+```bash
+# Поиск нужного раздела
+sudo fdisk -l /dev/nbd0
+# → /dev/nbd0p1 ... Linux filesystem
+
 sudo mount /dev/nbd0p1 /mnt
 ```
 
-### 2. Сброс пароля/ключа
+**3. Внесение изменений (например, сброс пароля root):**
 
 ```bash
-# SSH-ключ
-echo "ssh-rsa AAAA..." >> /mnt/root/.ssh/authorized_keys
-
-# Или смена пароля (chroot)
-mount --bind /dev /mnt/dev
-mount --bind /proc /mnt/proc
-mount --bind /sys /mnt/sys
-chroot /mnt passwd root
-
-# Или ручная правка /etc/shadow
+# Использование chroot для смены пароля
+sudo chroot /mnt passwd root
 ```
 
-### 3. Размонтирование
+**4. Безопасное отключение:**
 
 ```bash
 sudo umount /mnt
@@ -138,81 +128,16 @@ sudo qemu-nbd --disconnect /dev/nbd0
 sudo modprobe -r nbd
 ```
 
-## Расширение диска ВМ: полный процесс
+## Дополнительная информация
 
-**Алгоритм:**
+### Рекомендации по эксплуатации
 
-```
-Гипервизор → Диск ВМ → Раздел → PV (LVM) → VG → LV → ФС
-     ↓          ↓         ↓       ↓        ↓     ↓     ↓
-  Увеличить  Увидеть  Изменить  pvresize  auto  lvextend  resize2fs
-```
+- **Целостность:** Перед использованием критически важных образов проверяйте их на ошибки: `qemu-img check disk.qcow2`.
+- **Оптимизация:** Для уменьшения размера qcow2 после удаления файлов внутри ВМ используйте конвертацию в новый файл: `qemu-img convert -O qcow2 old.qcow2 new.qcow2`.
+- **Безопасность:** Используйте LUKS или встроенное шифрование qcow2 для защиты конфиденциальных данных.
 
-### 1. Гипервизор
+### См. также
 
-| Гипервизор | Команда |
-| :--- | :--- |
-| **KVM/QEMU** | `qemu-img resize disk.qcow2 +10G` |
-| **VirtualBox** | `VBoxManage modifymedium --resize <MB> disk.vdi` (ВМ выключена!) |
-| **VMware** | `vmware-vdiskmanager -x <size> disk.vmdk` |
-
-### 2. Гостевая ОС
-
-```bash
-# 1. Пересканирование (если ВМ не перезагружалась)
-echo 1 > /sys/class/block/sda/device/rescan
-# или
-partprobe
-
-# 2. Проверка видимости
-lsblk
-
-# 3. Расширение раздела
-fdisk /dev/sda  # d → удалить раздел, n → создать с тем же start
-# или
-growpart /dev/sda 1
-
-# 4. Расширение ФС/LVM
-# Без LVM:
-resize2fs /dev/sda1
-
-# С LVM:
-pvresize /dev/sda1
-lvextend -l +100%FREE -r /dev/vg/lv
-```
-
----
-
-## Автоматизация сборки образов
-
-| Инструмент | Назначение |
-| :--- | :--- |
-| **Packer** | Создание идентичных образов для разных платформ из одного конфига |
-| **Vagrant** | Управление ВМ для разработки, см. [Vagrant workflow](../../../Vagrant/vagrant_basic_workflow.md) |
-| **virt-builder** | Быстрая сборка образов для KVM (из репозиториев) |
-| **cloud-init** | Первоначальная настройка ВМ (пользователи, SSH, сеть) |
-
-## Best practices
-
-### Резервное копирование
-
-- Регулярные бэкапы образов
-- Проверка целостности (`qemu-img check`)
-
-### Оптимизация
-
-- Очистка от мусора перед созданием образа
-- Zero-fill свободного места (`dd if=/dev/zero of=/zero && rm /zero`)
-- Конвертация в qcow2 для экономии места
-
-### Безопасность
-
-- Шифрование образов (LUKS, qcow2 AES)
-- Ограничение прав доступа к файлам образов
-- Удаление чувствительных данных перед распространением
-
-### Мониторинг
-
-- Отслеживание свободного пространства
-- Проверка цепочки снапшотов
-- Своевременное удаление старых снапшотов
+- [Образы ВМ — Основные концепции](./basic_concepts.md)
+- [Управление KVM через virsh](../kvm/management.md)
+- [Поиск и устранение неисправностей KVM](../kvm/troubleshooting.md)

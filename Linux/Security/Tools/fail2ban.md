@@ -1,14 +1,12 @@
 # fail2ban
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **fail2ban** — демон предотвращения brute-force атак. Мониторит логи сервисов (`/var/log/auth.log`, логи веб-серверов) на наличие вредоносных IP-паттернов (многократные неудачные входы, сканирование эксплойтов). Автоматически блокирует IP через правила фаервола.
 
-Связано: [brute-force атаки](../../../../Security/Concepts/brute_force_attacks.md)
+Связано: [brute-force атаки](../../../Security/Concepts/brute_force_attacks.md)
 
-## Basic Concepts
+## Базовые концепции
 
 ### Архитектура
 
@@ -30,7 +28,7 @@
 ### Бэкенды фаервола
 
 - `iptables` (по умолчанию)
-- `nftables` — требуется `banaction = nftables-multiport` ([nftables практические сценарии](../../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md))
+- `nftables` — требует `banaction = nftables-multiport` (архитектурно создает таблицу `f2b-table` с цепочкой `f2b-chain`, блокирует IP через динамический set)
 - `firewalld`
 - `shorewall`
 
@@ -41,7 +39,7 @@
 - Интеграция с systemd journal (`backend = systemd`)
 - IPset для крупных блоклистов (хэшированные таблицы, быстрее отдельных правил iptables)
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка
 
@@ -53,7 +51,7 @@ sudo apt update && sudo apt install fail2ban ipset
 sudo dnf install fail2ban
 ```
 
-ipset рекомендован для крупных блоклистов (см. [firewall common](../../../../Linux/Networking/Settings/tools/firewall_common.md)).
+ipset рекомендован для крупных блоклистов (см. [firewall common](../../Networking/Settings/tools/firewall_common.md)).
 
 ### Конфигурация
 
@@ -66,10 +64,12 @@ sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
 #### Глобальные настройки (`[DEFAULT]` в `jail.local`)
 
 ```ini
+[DEFAULT]
 bantime = 3600
 findtime = 600
 maxretry = 3
-banaction = iptables-ipset-protoall  # ipset для производительности
+banaction = iptables-ipset-protoall  # ipset для производительности (для iptables)
+# banaction = nftables-multiport       # используйте это для nftables
 ```
 
 #### Активация jails
@@ -97,9 +97,25 @@ maxretry = 5
 findtime = 300
 ```
 
+#### Интеграция с nftables
+
+По умолчанию fail2ban настроен на `iptables`. Для работы с `nftables` необходимо явно изменить `banaction` в `/etc/fail2ban/jail.local`:
+
+```ini
+[DEFAULT]
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+```
+
+Архитектурно fail2ban создаст в nftables изолированную таблицу `f2b-table` с приоритетом, срабатывающим раньше пользовательских правил. Проверить статус блокировок:
+
+```bash
+nft list table inet f2b-table
+```
+
 #### Интеграция с Nginx Rate Limiting
 
-1. Настройка Nginx `limit_req` ([DDoS-защита](../../../../Security/ApplicationSecurity/ddos_overview.md#rate-limiting-nginx)):
+1. Настройка Nginx `limit_req` ([DDoS-защита](../../../Security/ApplicationSecurity/ddos_overview.md#использование-fail2ban-для-динамической-блокировки)):
 
 ```nginx
 http {
@@ -154,7 +170,7 @@ sudo fail2ban-client set <jail_name> unbanip <IP>
 sudo fail2ban-client set <jail_name> banip <IP>
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Оптимизация производительности
 
@@ -164,11 +180,11 @@ sudo fail2ban-client set <jail_name> banip <IP>
 ### Связанные темы
 
 - [SSH hardening](../../ssh/server/ssh_hardening_best_practices.md) — интеграция fail2ban для SSH
-- [nftables интеграция](../../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md) — специфичная настройка для nftables
-- [DDoS/WAF обзор](../../../../Security/ApplicationSecurity/ddos_overview.md) — rate limiting с fail2ban
-- [Linux security механизмы](../../Linux_Security_Mechanisms_Overview.md) — fail2ban в экосистеме безопасности
+- [nftables: практические сценарии](../../Networking/Settings/tools/nftables/practical_scenarios.md) — настройка и использование nftables
+- [DDoS/WAF обзор](../../../Security/ApplicationSecurity/ddos_overview.md) — rate limiting с fail2ban
+- [Linux security механизмы](../Linux_Security_Mechanisms_Overview.md) — fail2ban в экосистеме безопасности
 
-### Best Practices
+### Лучшие практики
 
 1. Всегда использовать `jail.local` — **не редактировать** `jail.conf`
 2. Мониторить статус: `fail2ban-client status`, `/var/log/fail2ban.log`

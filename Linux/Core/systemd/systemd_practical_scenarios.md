@@ -1,150 +1,154 @@
-# systemd Practical Scenarios
+# Практические сценарии systemd
 
 ## Определения
 
-**Практические сценарии systemd** — типовые конфигурации юнитов для решения распространённых задач: монтирование ФС, запуск скриптов, группировка сервисов. Каждый сценарий демонстрирует корректную комбинацию директив зависимостей, типов сервисов и секций.
+**Практические сценарии systemd** — это типовые наборы конфигураций для решения прикладных задач администрирования: от автоматического монтирования дисков до создания сложных цепочек зависимых сервисов. Каждый сценарий демонстрирует оптимальную комбинацию типов юнитов (units) и директив для обеспечения отказоустойчивости и корректного порядка запуска в Операционной Системе (ОС).
 
-> Справочник по зависимостям: [systemd_dependencies.md](./systemd_dependencies.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md).
+## Основные концепции
 
-## Базовые концепции
+### Правила именования юнитов монтирования
 
-### Именование юнитов
+Для юнитов типов `.mount` и `.automount` имя файла **обязано** точно соответствовать пути к точке монтирования в Файловой Системе (ФС).
 
-Имя файла юнита **обязано** соответствовать управляемому ресурсу. Для `.mount` и `.automount` путь монтирования преобразуется: `/` заменяется на `-`, убирается ведущий `/`.
+* Слэши (`/`) заменяются на дефисы (`-`).
+* Ведущий слэш игнорируется.
 
-| Путь монтирования | Имя юнита |
+| Точка монтирования | Имя юнит-файла |
 | :--- | :--- |
 | `/backup` | `backup.mount` |
 | `/mnt/data/share` | `mnt-data-share.mount` |
-| `/var/lib/app/data` | `var-lib-app-data.mount` |
+| `/var/lib/docker` | `var-lib-docker.mount` |
 
-> Нарушение правила приведёт к ошибке: systemd не сможет сопоставить юнит с ресурсом.
+> **Внимание**: Если имя файла не совпадает с путём монтирования, `systemd` не сможет активировать юнит.
 
-### Типичные паттерны зависимостей
+### Типовые паттерны зависимостей
 
-| Сценарий | Паттерн |
-| :--- | :--- |
-| Монтирование после подготовки диска | `Requires=` + `After=` (подготавливающий сервис) |
-| Скрипт после монтирования | `Requires=` + `After=` (`.mount` юнит) |
-| Группировка сервисов | `WantedBy=` в `[Install]`, `PartOf=` в сервисах |
+1. **Подготовка ресурса**: Сначала выполняется сервис (например, расшифровка раздела LUKS), затем монтируется диск.
+2. **Цепочка выполнения**: Сначала монтируется диск, затем запускается скрипт обработки данных.
+3. **Группировка**: Объединение нескольких микросервисов под единый `.target` для массового управления.
 
 ## Практические сценарии
 
-### 1. Mount-юнит (`.mount`)
+### 1. Монтирование файловой системы (.mount)
 
-Управление монтированием файловых систем. Подробное руководство с зависимостями — в [systemd_mount.md](../../../Linux/FileSystems/mounting/scenarios/systemd_mount.md).
+Используется для управления дисками через `systemd` вместо классического `/etc/fstab`.
 
 ```ini
-# /etc/systemd/system/backup.mount
+# /etc/systemd/system/mnt-storage.mount
 [Unit]
-Description=Mount Backup Disk
-# Запуск после сервиса подготовки диска (например, расшифровка LUKS)
-After=systemd-cryptsetup@backup.service
-Requires=systemd-cryptsetup@backup.service
-# Монтировать ДО локальных файловых систем
-Before=local-fs.target
+Description=Mount External Storage
+# Ждем расшифровки диска
+Requires=systemd-cryptsetup@storage.service
+After=systemd-cryptsetup@storage.service
 
 [Mount]
-Where=/backup
-What=/dev/mapper/backup
+What=/dev/mapper/storage
+Where=/mnt/storage
 Type=ext4
-Options=defaults
-```
-
-**Ключевые директивы:** `Where=` — точка монтирования, `What=` — устройство, `Type=` — ФС, `Options=` — опции (как в `/etc/fstab`).
-
-### 2. Automount-юнит (`.automount`)
-
-Монтирование **по обращению**, а не при загрузке. Полезно для сетевых ФС и зашифрованных дисков.
-
-```ini
-# /etc/systemd/system/backup.automount
-[Unit]
-Description=Automount Backup Disk
-# Зависимости должны совпадать с mount-юнитом
-After=systemd-cryptsetup@backup.service
-Requires=systemd-cryptsetup@backup.service
-
-[Automount]
-Where=/backup
-# Размонтирование после бездействия
-TimeoutIdleSec=60
-```
-
-```bash
-# Активация (enable --only автомонтирование, не mount)
-sudo systemctl enable --now backup.automount
-```
-
-> При обращении к `/backup` systemd автоматически смонтирует ФС. После `TimeoutIdleSec` секунд бездействия — размонтирует.
-
-### 3. Service-юнит для скриптов (`Type=oneshot`)
-
-Для одноразовых задач (бэкапы, миграции, инициализация).
-
-```ini
-# /etc/systemd/system/backup.service
-[Unit]
-Description=Backup Script Service
-Requires=backup.mount
-After=backup.mount
-
-[Service]
-Type=oneshot
-User=backup_user
-ExecStart=/usr/local/bin/backup.sh
-StandardOutput=journal
-StandardError=journal
-# Сервис остаётся «active» после завершения (для зависимостей)
-RemainAfterExit=yes
-```
-
-**Ключевые директивы:** `Type=oneshot` — процесс завершается после выполнения, `RemainAfterExit=yes` — статус остаётся active (полезно для зависимостей), `User=` — запуск от имени пользователя (безопасность).
-
-### 4. Target-юнит (`.target`)
-
-Группировка юнитов для совместного управления.
-
-```ini
-# /etc/systemd/system/my-app.target
-[Unit]
-Description=My Application Target
+Options=defaults,noatime
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Привязка сервисов к таргету — в их `[Install]`:
+Детальное руководство по всем параметрам монтирования: [Systemd mount units](../../FileSystems/mounting/scenarios/systemd_mount.md).
+
+### 2. Динамическое монтирование (.automount)
+
+Юнит активирует точку монтирования только в момент обращения к ней (например, при выполнении `cd /mnt/storage`).
 
 ```ini
+# /etc/systemd/system/mnt-storage.automount
+[Unit]
+Description=Automount Storage on Access
+
+[Automount]
+Where=/mnt/storage
+# Размонтировать через 5 минут бездействия
+TimeoutIdleSec=300
+
 [Install]
-WantedBy=my-app.target
+WantedBy=multi-user.target
 ```
 
 ```bash
-# Запустить все сервисы, привязанные к таргету
-sudo systemctl start my-app.target
+# Активация автомонтирования
+sudo systemctl enable --now mnt-storage.automount
+# → Created symlink /etc/systemd/system/multi-user.target.wants/mnt-storage.automount ...
+```
 
-# Остановить все сервисы с PartOf=my-app.target
-sudo systemctl stop my-app.target
+### 3. Резервное копирование по событию (Type=oneshot)
+
+Запуск скрипта, который должен завершиться перед тем, как система посчитает задачу выполненной.
+
+```ini
+# /etc/systemd/system/daily-backup.service
+[Unit]
+Description=Daily Backup Script
+# Запуск только после успешного монтирования хранилища
+Requires=mnt-storage.mount
+After=mnt-storage.mount
+
+[Service]
+Type=oneshot
+User=backup_user
+ExecStart=/usr/local/bin/backup.sh
+# Сохранять статус active после выхода, чтобы зависимые юниты видели успех
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 4. Создание пользовательского таргета (.target)
+
+Позволяет объединить группу сервисов проекта для одновременного запуска или остановки.
+
+```ini
+# /etc/systemd/system/my-project.target
+[Unit]
+Description=My Full Project Stack
+AllowIsolate=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Привязка сервиса к таргету**:
+В юнит-файле конкретной службы добавьте:
+
+```ini
+[Unit]
+PartOf=my-project.target
+
+[Install]
+WantedBy=my-project.target
 ```
 
 ## Дополнительная информация
 
-### Диагностика
+### Диагностика сложных связей
 
 ```bash
-# Дерево зависимостей юнита
-systemctl list-dependencies backup.mount
+# Проверить статус монтирования
+systemctl status mnt-storage.mount
+# → ● mnt-storage.mount - Mount External Storage
+# →    Active: active (mounted) ...
 
-# Почему юнит не запустился
-systemctl status backup.mount
-journalctl -u backup.mount -e
+# Посмотреть, какие юниты зависят от хранилища (реверсивные зависимости)
+systemctl list-dependencies --reverse mnt-storage.mount
+# → mnt-storage.mount
+# → └─daily-backup.service
 
-# Какие юниты ждут указанный (реверсивные зависимости)
-systemctl list-dependencies --reverse backup.mount
+# Анализ логов конкретной задачи
+journalctl -u daily-backup.service -e
+# → -- Logs begin at ... --
+# → Jun 07 10:00:01 host backup.sh[1234]: Backup completed successfully.
 ```
 
-### Связанные файлы
+### См. также
 
-Детальное руководство по mount/automount — в [systemd_mount.md](../../../Linux/FileSystems/mounting/scenarios/systemd_mount.md). Зависимости systemd — в [systemd_dependencies.md](./systemd_dependencies.md). Структура unit-файлов — в [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Типы сервисов — в [systemd_service_types.md](./systemd_service_types.md).
+* [Детальное руководство по монтированию](../../FileSystems/mounting/scenarios/systemd_mount.md)
+* [Управление зависимостями юнитов](./systemd_dependencies.md)
+* [Структура юнит-файла](./systemd_unit_file_structure.md)
+* [Типы сервисов systemd](./systemd_service_types.md)

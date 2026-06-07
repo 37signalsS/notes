@@ -1,6 +1,6 @@
 # Linux Capabilities
 
-## Definitions
+## Определения
 
 **Linux Capabilities** — механизм ядра Linux, разделяющий привилегии `root` (UID 0) на отдельные гранулярные права. Традиционная модель Unix делит процессы на две категории: непривилегированные и полностью привилегированные (`root`). Подход "всё или ничего" создаёт риски безопасности.
 
@@ -8,7 +8,7 @@ Capabilities позволяют процессу иметь только нео�
 
 **Принцип наименьших привилегий:** даже при компрометации процесса с ограниченным набором capabilities злоумышленник не получит полные права `root`.
 
-## Basic Concepts
+## Основные концепции
 
 Ядро отслеживает пять наборов capabilities для каждого процесса:
 
@@ -18,14 +18,14 @@ Capabilities позволяют процессу иметь только нео�
 * **`CapBnd` (Bounding):** Ограничивающий набор, определяющий максимальный набор capabilities, которые процесс может получить.
 * **`CapAmb` (Ambient):** Окружающий набор, сохраняющий привилегии для дочерних процессов.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Просмотр capabilities
 
 * **Для файла (с помощью `getcap`):** Проверяет capabilities, назначенные исполняемому файлу.
 
     ```bash
-    getcap /bin/ping
+    getcap /bin/ping # → /bin/ping cap_net_raw=ep
     ```
 
     *(В некоторых системах путь может быть `/usr/bin/ping`)*
@@ -33,7 +33,7 @@ Capabilities позволяют процессу иметь только нео�
 
     ```bash
     # Проверить capabilities текущей оболочки
-    cat /proc/$$/status | grep Cap
+    cat /proc/$$/status | grep Cap # → CapInh: 0000000000000000 ...
     ```
 
     Вывод покажет пять наборов в виде битовых масок.
@@ -47,14 +47,14 @@ Capabilities позволяют процессу иметь только нео�
     ```bash
     # Дать бинарному файлу право работать с сырыми сокетами (для ping)
     # '=' - точное присваивание, 'ep' - наборы Effective и Permitted
-    sudo setcap cap_net_raw=ep /bin/ping
+    sudo setcap cap_net_raw=ep /bin/ping # → (команда не возвращает вывод при успехе)
 
     # Дать бинарному файлу право слушать порты ниже 1024
     # '+' - добавление к существующим
-    sudo setcap cap_net_bind_service=+ep /path/to/binary
+    sudo setcap cap_net_bind_service=+ep /path/to/binary # → (команда не возвращает вывод при успехе)
 
     # Удалить все capabilities с файла
-    sudo setcap -r /path/to/binary
+    sudo setcap -r /path/to/binary # → (команда не возвращает вывод при успехе)
     ```
 
 * **Синтаксис операторов:** `+` (добавить), `-` (удалить), `=` (установить точно).
@@ -68,7 +68,7 @@ Capabilities позволяют процессу иметь только нео�
 
     ```bash
     # Пример атаки, если на python3 стоит cap_setuid+ep
-    python3 -c 'import os; os.setuid(0); os.system("/bin/sh")'
+    python3 -c 'import os; os.setuid(0); os.system("/bin/sh")' # → # (получен root shell)
     ```
 
 * **Другие опасные capabilities:** `cap_sys_admin` (максимальные права, аналог полного root), `cap_net_admin` (позволяет манипулировать сетью), `cap_dac_override` (обход проверок доступа к файлам), `cap_dac_read_search` (чтение любых файлов).
@@ -76,10 +76,10 @@ Capabilities позволяют процессу иметь только нео�
 Для поиска файлов с назначенными capabilities используйте команду:
 
 ```bash
-getcap -r / 2>/dev/null
+getcap -r / 2>/dev/null # → /usr/bin/ping cap_net_raw=ep ...
 ```
 
-## Additional Information
+## Дополнительная информация
 
 * **Capabilities в контейнерах:** Фундаментальная технология безопасности контейнеров. Docker и Kubernetes гранулярно управляют набором capabilities, по умолчанию отключая большинство из них. Подробнее: [Укрепление контейнеров](../../../Docker/Docker_security/container_hardening.md).
 * **Современный `ping`:** В некоторых дистрибутивах `ping` использует непривилегированные ICMP-сокеты вместо `cap_net_raw`, что повышает безопасность.

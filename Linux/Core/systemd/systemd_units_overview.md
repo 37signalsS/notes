@@ -1,149 +1,111 @@
-# systemd Units Overview
+# Обзор юнитов systemd (systemd Units Overview)
 
 ## Определения
 
-**Юниты (Units)** — основные объекты `systemd`, описывающие системные ресурсы, службы и действия. Каждый юнит представлен файлом конфигурации с расширением, определяющим тип.
+* **Юниты (Units)** — это базовые объекты управления в системе инициализации `systemd`. Каждый юнит описывает определенный системный ресурс, службу или действие. Юниты представляются текстовыми конфигурационными файлами с расширением, определяющим их тип (например, `.service`, `.timer`).
+* **Таргет (Target)** — специальный тип юнита, который служит точкой синхронизации и группировки других юнитов. Таргеты используются для определения состояния системы (целевого режима работы).
 
-**Таргет (Target)** — точка синхронизации, группирующая юниты. Замена уровней выполнения (runlevels) SysVinit.
+## Основные концепции
 
-> Зависимости: [systemd_dependencies.md](./systemd_dependencies.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Типы сервисов: [systemd_service_types.md](./systemd_service_types.md).
+### Типы юнитов
 
-## Базовые концепции
+`systemd` управляет различными типами ресурсов через специализированные юниты:
 
-### Таблица типов юнитов
-
-| Тип | Расширение | Описание | Ключевые директивы |
+| Тип юнита | Расширение | Назначение | Ключевые параметры |
 | :--- | :--- | :--- | :--- |
-| **Service** | `.service` | Системная служба (демон) | `ExecStart=`, `Type=`, `Restart=` |
-| **Socket** | `.socket` | Сокет для активации служб | `ListenStream=`, `Accept=` |
-| **Target** | `.target` | Группа юнитов (состояние системы) | `WantedBy=`, `Requires=` |
-| **Timer** | `.timer` | Планирование задач (замена cron) | `OnCalendar=`, `Persistent=` |
-| **Mount** | `.mount` | Точка монтирования ФС | `Where=`, `What=`, `Type=` |
-| **Automount** | `.automount` | Монтирование по обращению | `Where=`, `TimeoutIdleSec=` |
-| **Path** | `.path` | Активация при изменении ФС | `PathExists=`, `PathChanged=` |
-| **Slice** | `.slice` | Иерархия cgroups для ресурсов | `MemoryMax=`, `CPUQuota=` |
+| **Service** | `.service` | Управление системной службой (демоном). | `ExecStart`, `Restart` |
+| **Socket** | `.socket` | Активация служб при обращении к сетевому сокету или IPC (Inter-Process Communication). | `ListenStream` |
+| **Target** | `.target` | Группировка юнитов (аналог уровней выполнения). | `Requires`, `After` |
+| **Timer** | `.timer` | Планировщик задач (альтернатива cron). | `OnCalendar` |
+| **Mount** | `.mount` | Управление точкой монтирования файловой системы. | `What`, `Where` |
+| **Automount** | `.automount` | Динамическое монтирование при обращении к пути. | `TimeoutIdleSec` |
+| **Swap** | `.swap` | Управление файлом или разделом подкачки. | `What` |
+| **Device** | `.device` | Устройство, опознанное ядром (генерируется udev). | — |
+| **Path** | `.path` | Активация службы при изменении файлов или директорий. | `PathModified` |
+| **Slice** | `.slice` | Иерархическое управление ресурсами через cgroups (Control Groups). | `MemoryMax`, `CPUQuota` |
+| **Scope** | `.scope` | Внешние процессы, не запущенные через `systemd`. | — |
 
-### Таргеты как замена Runlevels
+### Таргеты и уровни выполнения (Runlevels)
 
-Концепция `systemd` использует **таргеты** для определения состояния системы, обеспечивая обратную совместимость с уровнями выполнения (runlevels) SysVinit.
+`systemd` заменяет устаревшую концепцию уровней выполнения (runlevels) из SysVinit на более гибкую систему таргетов.
 
-| Runlevel | Таргет | Описание |
+| Runlevel | Таргет systemd | Описание состояния |
 | :--- | :--- | :--- |
-| **0** | `poweroff.target` | Выключение системы. |
-| **1** | `rescue.target` | Однопользовательский режим (только root, сеть не поднята). Используется для восстановления. |
-| **2** | `runlevel2.target` | Многопользовательский режим (в Debian/Ubuntu — полноценный с сетью). |
-| **3** | `multi-user.target` | Стандартный многопользовательский режим с сетью, без GUI. Типично для серверов. |
-| **4** | `runlevel4.target` | Не используется стандартно, резерв. |
-| **5** | `graphical.target` | Многопользовательский режим с графическим интерфейсом (GUI). |
-| **6** | `reboot.target` | Перезагрузка системы. |
+| **0** | `poweroff.target` | Завершение работы и выключение питания. |
+| **1** | `rescue.target` | Режим восстановления (однопользовательский, сеть отключена). |
+| **3** | `multi-user.target` | Многопользовательский режим без графики (стандарт для серверов). |
+| **5** | `graphical.target` | Многопользовательский режим с GUI (Graphical User Interface). |
+| **6** | `reboot.target` | Перезагрузка ОС (Операционная Система). |
 
-`graphical.target` зависит от `multi-user.target`, добавляя display manager и графические сервисы.
+`graphical.target` является надстройкой над `multi-user.target`, добавляя графическую оболочку и соответствующие службы.
 
 ## Практические сценарии
 
-### Проверка уровня выполнения и таргета
+### Определение текущего состояния системы
 
-Для диагностики режима работы системы и проверки активного состояния используются следующие команды:
+Для диагностики активного режима работы и настроек по умолчанию используются следующие команды:
 
-1. **Узнать текущий уровень выполнения (runlevel):**
+1. **Проверка текущего таргета (и уровня выполнения):**
 
-   ```bash
-   runlevel
-   ```
+    ```bash
+    runlevel
+    ```
 
-   Вывод `N 3` означает: `N` — предыдущего уровня не было (система только загрузилась), `3` — текущий уровень выполнения.
-   * **Что такое уровень выполнения?** Это состояние системы, определяющее набор запущенных служб (0 — выключение, 1 — восстановление, 3 — сервер без GUI, 5 — GUI). В `systemd` заменены таргетами.
+   # → N 3 (предыдущего уровня нет, текущий — 3)
 
-2. **Узнать таргет по умолчанию:**
+2. **Просмотр таргета по умолчанию:**
 
-   ```bash
-   systemctl get-default
+    ```bash
+    systemctl get-default
+    ```
+
    # → multi-user.target
-   ```
 
-3. **Текущее активное состояние (активный таргет):**
+3. **Список всех активных таргетов:**
 
-   ```bash
-   systemctl list-units --type=target --state=active
-   ```
+    ```bash
+    systemctl list-units --type=target --state=active
+    ```
 
-### Управление таргетами
+   # → UNIT                LOAD   ACTIVE SUB    DESCRIPTION
 
-```bash
-# Установить таргет по умолчанию
-sudo systemctl set-default multi-user.target
+   # → multi-user.target   loaded active active Multi-User System
 
-# Переключиться в другой таргет (остановит невключённые юниты)
-sudo systemctl isolate multi-user.target
-```
+   # → network.target      loaded active active Network
 
-### Применение в диагностике
-
-Чаще всего runlevel проверяют при поиске причин, по которым сервис не запустился, или для проверки корректности загрузки сервера после перезагрузки. На современных системах `systemctl get-default` дает более точную информацию, но `runlevel` сохраняется для совместимости.
-
-### Диагностика юнитов
+### Управление юнитами и их типами
 
 ```bash
-# Статус всех юнитов (активные, failed, inactive)
-systemctl list-units --type=service --all
+# Список всех загруженных юнитов (служб)
+systemctl list-units --type=service
+# → UNIT            LOAD   ACTIVE SUB     DESCRIPTION
+# → nginx.service   loaded active running A high performance web server
 
-# Только failed-юниты
-systemctl --failed
-
-# Список всех загруженных юнитов по типам
-systemctl list-units --type=target
-
-# Показать все доступные типы юнитов в системе
+# Просмотр всех установленных юнит-файлов (включая неактивные)
 systemctl list-unit-files --type=service
+# → UNIT FILE                    STATE           VENDOR PRESET
+# → ssh.service                  enabled         enabled
+# → ufw.service                  disabled        enabled
 
-# Полная информация о юните
-systemctl show nginx.service
+# Установка графического режима по умолчанию
+sudo systemctl set-default graphical.target
+# → Removed /etc/systemd/system/default.target.
+# → Created symlink /etc/systemd/system/default.target -> /lib/systemd/system/graphical.target.
 
-# Файл юнита и drop-in override-файлы
-systemctl cat nginx.service
+# Мгновенное переключение режима работы (без перезагрузки)
+sudo systemctl isolate multi-user.target
+# → остановка графических служб и переход в текстовый режим
 ```
-
-### Активация юнита вручную
-
-```bash
-# Запустить и включить в автозагрузку
-sudo systemctl enable --now my-service.service
-
-# Запустить одноразово без enable
-sudo systemctl start my-service.service
-
-# Проверить, включён ли юнит
-systemctl is-enabled my-service.service
-```
-
-### Path-юнит: запуск при изменении файла
-
-```ini
-# /etc/systemd/system/config-watcher.path
-[Unit]
-Description=Watch for config changes
-
-[Path]
-PathChanged=/etc/myapp/config.yml
-
-[Install]
-WantedBy=multi-user.target
-```
-
-При изменении `config.yml` будет запущен `config-watcher.service` (с именем `.service` по имени `.path`).
 
 ## Дополнительная информация
 
-### Соотношение с SysVinit
+### Иерархия управления ресурсами
 
-| SysVinit | systemd | Примечание |
-| :--- | :--- | :--- |
-| `/etc/inittab` | Юниты в `/etc/systemd/system/` | Конфигурация загрузки |
-| `chkconfig` | `systemctl enable/disable` | Управление автозапуском |
-| `service start/stop` | `systemctl start/stop` | Управление службами |
-| `runlevel` | `systemctl get-default` | Текущий уровень |
-| `/etc/init.d/` | `.service` юниты | Скрипты запуска |
+Юниты типа `.slice` позволяют объединять службы в группы для совместного ограничения ресурсов CPU (Central Processing Unit) и RAM (Random Access Memory). Подробнее см. в разделе [Control Groups (cgroups)](../cgroups.md).
 
-### Связанные файлы
+### См. также
 
-Зависимости: [systemd_dependencies.md](./systemd_dependencies.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Типы сервисов: [systemd_service_types.md](./systemd_service_types.md). Таймеры: [timers.md](./timers.md). Практические сценарии: [systemd_practical_scenarios.md](./systemd_practical_scenarios.md). Обзор systemd: [overview.md](./overview.md).
+* [Структура юнит-файла](./systemd_unit_file_structure.md) — детальный разбор секций и параметров.
+* [Зависимости юнитов](./systemd_dependencies.md) — механизмы `Requires`, `Wants` и `After`.
+* [Таймеры systemd](./timers.md) — запуск юнитов по расписанию.
+* [Управление службами (systemctl)](./service_management.md) — команды для повседневной работы.

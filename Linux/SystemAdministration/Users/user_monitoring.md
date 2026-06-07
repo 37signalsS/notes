@@ -272,7 +272,9 @@ done
 ### Связанные темы
 
 - [Управление пользователями](./user_commands.md) — `useradd`, `usermod`
-- [Диагностика процессов](../../Diagnostics/Processes/w.md) — `ps`, `top`
+- [Утилита `ps`](../../Diagnostics/Processes/ps.md) — подробный обзор и практические сценарии
+- [Утилита `w`](../../Diagnostics/Processes/w.md) — информация о сессиях и процессах
+- [Утилита `witr`](../../Diagnostics/Processes/witr.md) — диагностика причин запуска процессов
 - [PAM](../../../Linux/Security/pam_overview.md) — аутентификация
 - [Аудит безопасности](../../../Security/audit_and_compliance_overview.md) — логирование
 - [Аудит действий через auditd](../../Logging/auditd.md) — системный аудит

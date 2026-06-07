@@ -8,7 +8,7 @@
 
 | Тип | Описание |
 | :--- | :--- |
-| **Kernel Panic** | Критический сбой ядра, система не может продолжать работу | [kernel_panic](../../Core/kernel/kernel_panic.md) |
+| **Kernel Panic** | Критический сбой ядра, система не может продолжать работу | [**Паника ядра**](../../Core/kernel/kernel_panic.md) |
 | **Coredump** | Дамп памяти процесса при аварийном завершении | [debugging.md#Анализ-сбоев-Coredump](../../Core/processes/Troubleshooting/debugging.md#анализ-сбоев-coredump) |
 | **OOM Killer** | Механизм завершения процессов при нехватке памяти | [oom_killer_mechanism](../../Core/processes/oom_killer_mechanism.md) |
 
@@ -24,7 +24,7 @@
 
 Затрагивают ядро ОС, часто приводят к `Kernel Panic` и перезагрузке. Для анализа требуется механизм сохранения памяти в момент краха (`kdump`).
 
-**Kernel Panic:** [анализ и отладка](../../Core/kernel/kernel_panic.md)
+**Kernel Panic:** [**Паника ядра**](../../Core/kernel/kernel_panic.md)
 
 ## Практические сценарии
 
@@ -89,7 +89,7 @@ journalctl -k | grep -i "oom\|killed process"
    ls -la /var/crash/
    ```
 
-Подробнее: [Kernel Panic: анализ и отладка](../../Core/kernel/kernel_panic.md)
+Подробнее: [**Паника ядра: анализ и отладка**](../../Core/kernel/kernel_panic.md)
 
 ## Дополнительная информация
 
@@ -98,7 +98,7 @@ journalctl -k | grep -i "oom\|killed process"
 | Инструмент / Тема | Назначение | SSoT-файл |
 | :--- | :--- | :--- |
 | `coredumpctl`, `gdb` | Управление и отладка дампов процессов | [debugging](../../Core/processes/Troubleshooting/debugging.md) |
-| `kdump`, `crash` | Сбор и анализ дампов ядра | [kernel_panic](../../Core/kernel/kernel_panic.md) |
+| `kdump`, `crash` | Сбор и анализ дампов ядра | [**Паника ядра**](../../Core/kernel/kernel_panic.md) |
 | `abrt` | Автоматические отчёты об ошибках (RHEL/Fedora) | — |
 | OOM Killer | Механизм завершения процессов при нехватке памяти | [oom_killer_mechanism](../../Core/processes/oom_killer_mechanism.md) |
 | dmesg | Просмотр сообщений ядра | [dmesg](../../Diagnostics/Kernel/dmesg/index.md) |

@@ -1,78 +1,77 @@
-# SSH Server Security Overview
+# SSH — обзор безопасности сервера
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **Безопасность SSH-сервера** — комплекс мер по защите `sshd` от несанкционированного доступа, brute-force атак и эксплуатации уязвимостей. `sshd` — критическая служба удалённого управления, требующая многоуровневой защиты.
 
-**Defense in Depth** — принцип многослойной безопасности: компрометация одного уровня не даёт полного контроля.
+**Defense in Depth** — принцип многослойной безопасности: компрометация одного уровня не даёт полного контроля над системой.
 
-## Basic Concepts
+## Основные концепции
 
-### Компоненты защиты SSH-сервера
+### Уровни защиты SSH-сервера
 
-Безопасность SSH строится на четырёх уровнях:
+Безопасность SSH строится на четырёх функциональных уровнях:
 
-1. **Аутентификация** — подтверждение личности пользователя. Методы: [SSH-ключи (pubkey)](./ssh_authentication.md) (рекомендуется), парольная (отключается), Kerberos/GSSAPI. Ключевые директивы: `PubkeyAuthentication`, `PasswordAuthentication`, `PermitRootLogin`.
+1. **Аутентификация** — подтверждение личности пользователя. Рекомендуется использовать [SSH-ключи (pubkey)](./ssh_authentication.md) и отключать вход по паролю.
+   - Ключевые директивы: `PubkeyAuthentication`, `PasswordAuthentication`, `PermitRootLogin`.
 
-2. **Контроль доступа** — ограничение круга допущенных субъектов. Механизмы: [AllowUsers/AllowGroups](./ssh_access_control.md) в `sshd_config`, фильтрация по IP через файрвол (iptables/nftables), [Port Knocking](./port_knocking.md) для скрытия порта.
+2. **Контроль доступа** — ограничение круга лиц и узлов, имеющих право на подключение.
+   - Механизмы: [AllowUsers/AllowGroups](./ssh_access_control.md) в `sshd_config`, фильтрация по IP через файрвол, [Port Knocking](./port_knocking.md) для скрытия службы.
 
-3. **Укрепление конфигурации (Hardening)** — отключение неиспользуемых функций, ограничение алгоритмов шифрования, настройка таймаутов и логирования. Полное руководство: [SSH Hardening Best Practices](./ssh_hardening_best_practices.md).
+3. **Укрепление конфигурации (Hardening)** — минимизация поверхности атаки через тонкую настройку демона.
+   - Направления: ограничение алгоритмов шифрования, настройка таймаутов, отключение неиспользуемых функций (X11, туннели). Полное руководство: [SSH Hardening Best Practices](./ssh_hardening_best_practices.md).
 
-4. **Мониторинг и реагирование** — анализ логов (`auth.log`, `btmp`, `wtmp`), обнаружение brute-force, автоматическая блокиция через [fail2ban](../../Tools/fail2ban.md), аудит через [ssh-audit](./ssh_hardening_best_practices.md#аудит-безопасности). Подробнее: [SSH Monitoring and Troubleshooting](./ssh_monitoring_and_troubleshooting.md).
+4. **Мониторинг и реагирование** — непрерывный аудит и автоматическая блокировка атакующих.
+   - Инструменты: анализ логов, [fail2ban](../../Tools/fail2ban.md), сканирование через `ssh-audit`. Подробнее: [SSH Monitoring and Troubleshooting](./ssh_monitoring_and_troubleshooting.md).
 
 ### Модель угроз SSH
 
-| Угроза | Описание | Метод защиты |
+| Угроза | Описание | Основной метод защиты |
 | :--- | :--- | :--- |
-| **Brute-force** | Перебор паролей | Отключение `PasswordAuthentication`, fail2ban |
-| **MITM** | Перехват и подмена трафика | Проверка host key (`known_hosts`), строгая проверка ключей |
-| **Утечка приватного ключа** | Компрометация клиента | Passphrase на ключе, отзыв через удаление из `authorized_keys` |
-| **Неавторизованный доступ** | Вход постороннего | `AllowUsers`/`AllowGroups`, файрвол, Port Knocking |
-| **Уязвимости алгоритмов** | Устаревшие шифры | Ограничение `KexAlgorithms`, `Ciphers`, `MACs` |
-| **Сканирование портов** | Обнаружение SSH-службы | Смена порта, Port Knocking, fail2ban |
+| **Brute-force** | Перебор паролей или имен пользователей | Отключение паролей, [fail2ban](../../Tools/fail2ban.md) |
+| **MITM** | Перехват трафика с подменой сервера | Проверка Host Key, ведение `known_hosts` |
+| **Компрометация ключа** | Кража приватного ключа клиента | Использование Passphrase, отзыв доступа |
+| **Неавторизованный доступ** | Вход легитимного пользователя не туда | [Контроль доступа (ACL)](./ssh_access_control.md) |
+| **Слабые шифры** | Дешифрация перехваченного трафика | [Hardening алгоритмов](./ssh_hardening_best_practices.md) |
+| **Сканирование** | Обнаружение службы ботами | Смена порта, [Port Knocking](./port_knocking.md) |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Быстрый чек-лист безопасности SSH
+### Быстрая проверка безопасности (Self-Audit)
+
+Для оперативной оценки состояния защиты сервера используйте следующие команды:
 
 ```bash
-# 1. Проверить текущую конфигурацию
+# 1. Проверка эффективных настроек аутентификации
 sudo sshd -T | grep -E "pubkeyauth|passwordauth|permitroot|loglevel"
 
-# 2. Убедиться, что вход по паролю отключён
-sudo sshd -T | grep "passwordauthentication"
-# Ожидается: passwordauthentication no
-
-# 3. Проверить разрешённых пользователей
+# 2. Поиск разрешенных пользователей и групп
 sudo sshd -T | grep -E "allowusers|allowgroups"
 
-# 4. Проверить уровень логирования
-sudo sshd -T | grep "loglevel"
-# Ожидается: loglevel VERBOSE или INFO
+# 3. Проверка таймаутов неактивности
+sudo sshd -T | grep -i clientalive
 
-# 5. Проверить наличие fail2ban
+# 4. Просмотр последних 10 неудачных попыток входа
+sudo lastb | head -10
+
+# 5. Проверка статуса службы защиты от brute-force
 systemctl status fail2ban
-
-# 6. Просканировать ssh-audit
-ssh-audit localhost
 ```
 
-## Additional Information
+## Дополнительная информация
 
-### Структура документации по SSH-серверу
+### Карта документации по защите SSH
 
-| Файл | Тема | Описание |
+| Раздел | Ссылка | Описание |
 | :--- | :--- | :--- |
-| [ssh_authentication.md](./ssh_authentication.md) | Аутентификация | Типы ключей, генерация, `authorized_keys`, права доступа |
-| [ssh_access_control.md](./ssh_access_control.md) | Контроль доступа | AllowUsers/AllowGroups, фильтрация по IP, смена порта |
-| [ssh_hardening_best_practices.md](./ssh_hardening_best_practices.md) | Hardening | Директивы sshd_config, алгоритмы шифрования, резервный SSH |
-| [ssh_monitoring_and_troubleshooting.md](./ssh_monitoring_and_troubleshooting.md) | Мониторинг | Логи, аудит входов, обнаружение атак, ssh-audit |
-| [port_knocking.md](./port_knocking.md) | Port Knocking | Настройка knockd, скрытие SSH от сканирования |
+| **Аутентификация** | [ssh_authentication.md](./ssh_authentication.md) | Ключи, форматы, права доступа |
+| **Контроль доступа** | [ssh_access_control.md](./ssh_access_control.md) | Списки доступа, IP-фильтры, смена порта |
+| **Hardening** | [ssh_hardening_best_practices.md](./ssh_hardening_best_practices.md) | Лучшие практики конфигурации и шифры |
+| **Мониторинг** | [ssh_monitoring_and_troubleshooting.md](./ssh_monitoring_and_troubleshooting.md) | Логи, аудит, траблшутинг |
+| **Port Knocking** | [port_knocking.md](./port_knocking.md) | Скрытие порта от сканеров |
 
-### Связанные темы (клиентская часть)
+### См. также
 
-- [SSH Overview](../ssh_overview.md) — обзор протокола и архитектуры
-- [SSH Client Config](../ssh_client_config.md) — настройка клиента
-- [SSH Troubleshooting](../ssh_troubleshooting.md) — диагностика проблем подключения
+- [SSH Overview](../ssh_overview.md) — общие сведения о протоколе
+- [SSH Client Config](../ssh_client_config.md) — безопасность на стороне клиента
+- [fail2ban](../../Tools/fail2ban.md) — детальная настройка защиты

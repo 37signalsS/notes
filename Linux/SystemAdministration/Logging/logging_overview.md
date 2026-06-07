@@ -246,7 +246,7 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 | Сервис не запускается | 1. `journalctl -u <сервис> -b`<br>2. `systemctl status <сервис>`<br>3. `/var/log/<app>/` |
 | Ошибки аутентификации | 1. `journalctl -p err -b`<br>2. `/var/log/auth.log` или `/var/log/secure`<br>3. `ausearch -m USER_LOGIN` |
 | Проблемы ядра/драйверов | 1. `journalctl -k -b`<br>2. [dmesg -T](../../Diagnostics/Kernel/dmesg/index.md)<br>3. `dmesg --level=err,warn` |
-| Дисковое пространство | 1. `journalctl --disk-usage`<br>2. `du -sh /var/log/*`<br>3. Проверка `logrotate` |
+| Дисковое пространство | 1. `journalctl --disk-usage`<br>2. [Очистка журнала](../../Diagnostics/journalctl/journalctl_management.md)<br>3. `du -sh /var/log/*`<br>4. Проверка `logrotate` |
 | Проблемы загрузки | 1. `journalctl --list-boots`<br>2. `journalctl -b -1`<br>3. [reboot_troubleshooting](../../Diagnostics/Troubleshooting/reboot_troubleshooting.md) |
 | Инцидент безопасности | 1. `ausearch -m SYSCALL`<br>2. `/var/log/audit/audit.log`<br>3. `journalctl _UID=0` |
 
@@ -296,5 +296,5 @@ sync  # Запись буферов на диск
 - **journald / journalctl:** [journald](./journald.md), [journalctl](../../Diagnostics/journalctl.md)
 - **rsyslog:** [rsyslog](./rsyslog.md)
 - **auditd:** [auditd](./auditd.md)
-- **Анализ сбоев и kernel panic:** [error_and_crash_analysis](./error_and_crash_analysis.md), [kernel_panic](../../Core/kernel/kernel_panic.md)
+- **Анализ сбоев и паники ядра:** [**Анализ ошибок и сбоев**](./error_and_crash_analysis.md), [**Паника ядра**](../../Core/kernel/kernel_panic.md)
 - **Централизованное логирование:** [observability_definitions](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)

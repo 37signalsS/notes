@@ -1,4 +1,4 @@
-# Udev
+# Udev — динамическое управление устройствами
 
 ## Определения
 
@@ -15,7 +15,7 @@
 
 ## Основные концепции
 
-### Правила udev
+### Правила Udev
 
 **Расположение правил:**
 
@@ -112,6 +112,10 @@ SUBSYSTEM=="block", ENV{ID_SERIAL_SHORT}=="1234567890", SYMLINK+="usb-backup"
 
 ### 3. Автоматическое монтирование при подключении
 
+Подробная реализация описана в сценарии [Автоматическое монтирование через udev](../FileSystems/mounting/scenarios/udev_mount.md).
+
+Краткий пример правила:
+
 ```bash
 # /etc/udev/rules.d/99-usb-mount.rules
 ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="ext4", RUN+="/usr/local/bin/auto-mount.sh %k"
@@ -129,13 +133,15 @@ mount $DEVICE /mnt/auto-$1
 
 ### 4. Изменение планировщика I/O для диска
 
+Подробно: [Планировщики ввода-вывода (I/O Schedulers)](./kernel/io_schedulers.md#управление-планировщиком).
+
+Пример правила:
+
 ```bash
 # /etc/udev/rules.d/60-scheduler.rules
 ACTION=="add|change", KERNEL=="sda", ATTR{queue/scheduler}="mq-deadline"
 ACTION=="add|change", KERNEL=="nvme*", ATTR{queue/scheduler}="none"
 ```
-
-Подробно: [I/O Schedulers](./kernel/io_schedulers.md#постоянное-изменение-планировщика-с-помощью-udev).
 
 ### 5. Права доступа для устройства
 
@@ -168,12 +174,12 @@ udevadm --version
 
 ### Связанные темы
 
-- **[/dev FS](../FileSystems/virtual_fs_dev.md)** — виртуальная файловая система устройств
-- **[Mounting](../FileSystems/mounting/index.md)** — монтирование файловых систем
-- **[Systemd](./systemd/overview.md)** — интеграция с systemd
-- **[I/O Schedulers](./kernel/io_schedulers.md)** — планировщики ввода-вывода
+- **[Виртуальная файловая система /dev](../FileSystems/virtual_fs_dev.md)** — управление устройствами
+- **[Монтирование файловых систем](../FileSystems/mounting/index.md)** — основы и методы
+- **[Systemd — обзор](./systemd/overview.md)** — интеграция и юниты
+- **[Планировщики ввода-вывода (I/O Schedulers)](./kernel/io_schedulers.md)** — оптимизация дисковых операций
 
-### Troubleshooting
+### Устранение неполадок
 
 | Проблема | Решение |
 | :--- | :--- |

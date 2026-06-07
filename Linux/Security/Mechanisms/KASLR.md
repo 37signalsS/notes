@@ -1,6 +1,6 @@
 # KASLR
 
-## Definitions
+## Определение
 
 **KASLR (Kernel Address Space Layout Randomization)** — механизм безопасности ядра Linux, размещающий код ядра, модули и ключевые структуры данных по случайным адресам виртуальной памяти при каждой загрузке системы.
 
@@ -8,7 +8,7 @@
 
 **Принцип наименьших привилегий:** KASLR не устраняет уязвимости, а повышает порог их эксплуатации. Злоумышленники могут обойти KASLR через уязвимости типа **information leak**, позволяющие вычислить базовое смещение.
 
-## Basic Concepts
+## Основные концепции
 
 ### Связь с ASLR
 
@@ -37,20 +37,20 @@ KASLR повышает сложность атаки, но не устраняе
 - **Brute-force:** перебор смещений (при недостаточной энтропии)
 - **Side-channel атаки:** анализ времени доступа к памяти
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Проверка статуса KASLR
 
 **Метод 1: Сравнение адресов после перезагрузки (надёжный)**
 
-1. Посмотреть адрес символа ядра: `sudo cat /proc/kallsyms | grep 'T _stext'`
+1. Посмотреть адрес символа ядра: `sudo cat /proc/kallsyms | grep 'T _stext'` `# → ffffffff81000000 T _stext`
 2. Перезагрузить систему
 3. Выполнить ту же команду снова. Если адрес изменился — KASLR работает
 
 **Метод 2: Проверка параметров загрузки**
 
 ```bash
-cat /proc/cmdline
+cat /proc/cmdline # → BOOT_IMAGE=/boot/vmlinuz-... root=UUID=... ro quiet splash
 ```
 
 - `nokaslr` присутствует — KASLR отключён
@@ -68,18 +68,18 @@ cat /proc/cmdline
 
     ```bash
     # Debian/Ubuntu
-    sudo update-grub
+    sudo update-grub # → Generating grub configuration file ...
 
     # RHEL/CentOS/Fedora
-    sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+    sudo grub2-mkconfig -o /boot/grub2/grub.cfg # → Generating grub configuration file ...
     ```
 
 4. Перезагрузить систему
 
 **Принудительное включение:** добавить параметр `kaslr` (требуется редко, включён по умолчанию с ядра ~3.14).
 
-## Additional Information
+## Дополнительная информация
 
 - **Статус по умолчанию:** включён в большинстве дистрибутивов (начиная с ядра ~3.14).
-- **Связанные механизмы:** [ASLR](../Linux_Security_Mechanisms_Overview.md) (пользовательский аналог), [Защита ядра и памяти](../Linux_Security_Mechanisms_Overview.md#basic-concepts).
+- **Связанные механизмы:** [ASLR](../Linux_Security_Mechanisms_Overview.md) (пользовательский аналог), [Защита ядра и памяти](../Linux_Security_Mechanisms_Overview.md#защита-ядра-и-памяти).
 - **Контекст:** KASLR — один из механизмов защиты от эксплуатации уязвимостей, описанных в [обзоре механизмов безопасности Linux](../Linux_Security_Mechanisms_Overview.md).

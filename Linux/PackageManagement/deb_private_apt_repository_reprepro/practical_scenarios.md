@@ -2,57 +2,65 @@
 
 ## Определения
 
-**Публикация пакета** — процесс добавления `.deb`-пакета в репозиторий, обновления метаданных и подписи репозитория GPG-ключом.
+Ниже приведены термины, непосредственно относящиеся к процессам развертывания и эксплуатации внутренних репозиториев программного обеспечения.
 
-**Клиентская настройка** — конфигурация APT на клиентской машине для работы с приватным репозиторием (доверенный ключ, sources.list).
+**Публикация пакета** — регламентированный процесс добавления файла формата `.deb` (Debian Package) в структуру репозитория, включающий автоматическое обновление индексных файлов и наложение цифровой подписи GPG (GNU Privacy Guard).
 
-Подробные определения и концепции: [Определения и концепции](./definitions_and_concepts.md).
+**Клиентская настройка** — комплекс мер по конфигурации менеджера пакетов APT (Advanced Package Tool) на целевых машинах, включающий установку доверенного ключа и добавление записи в список источников `sources.list`.
 
-## Основные понятия
+Подробное описание архитектуры и базовых терминов приведено в документе **[Определения и концепции](./definitions_and_concepts.md)**.
 
-### Рабочий процесс
+---
 
-1. **Создание GPG-ключа** → RSA 4096 бит, срок 2-3 года
-2. **Конфигурация `conf/distributions`** → определение дистрибутивов, архитектур, компонентов
-3. **Добавление пакетов** → `reprepro includedeb`, автоматическое обновление метаданных
-4. **Публикация** → веб-сервер (Nginx/Apache) со статическими файлами
-5. **Клиентская настройка** → установка ключа, добавление источника, `apt-get update`
+## Основные концепции
 
-### Требования к инфраструктуре
+### Типовой рабочий процесс
 
-- Веб-сервер (Nginx/Apache) или файловый доступ
-- GPG-ключ для подписи репозитория
-- CI/CD для автоматизации публикации
+Жизненный цикл управления репозиторием включает следующие этапы:
+
+1. **Подготовка безопасности** — генерация ключевой пары RSA (Rivest-Shamir-Adleman) разрядностью 4096 бит.
+2. **Конфигурация инфраструктуры** — описание дистрибутивов, архитектур процессоров и компонентов в файле `conf/distributions`.
+3. **Наполнение** — добавление пакетов через команду `reprepro includedeb`, что инициирует обновление метаданных.
+4. **Доставка** — публикация статического контента через веб-сервер (Nginx или Apache).
+5. **Валидация** — проверка доступности пакетов на клиентской стороне после обновления кэша.
+
+### Требования к среде
+
+- Наличие установленного веб-сервера для раздачи статических файлов.
+- Изолированное хранилище для секретного ключа GPG.
+- Настроенная система автоматизации (CI/CD — Continuous Integration / Continuous Deployment) для исключения ручных ошибок при публикации.
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка репозитория с нуля
+### Сценарий 1: Развертывание репозитория с нуля
 
-#### Установка и создание структуры
+#### 1. Установка и инициализация
 
 ```bash
 sudo apt-get update && sudo apt-get install reprepro
 mkdir -p ~/my-repo/conf && cd ~/my-repo
 ```
 
-#### Создание GPG-ключа
+#### 2. Управление ключами GPG
+
+Для подписи репозитория необходимо сгенерировать идентификатор (ID).
 
 ```bash
-# Генерация ключа (интерактивно)
+# Генерация ключа (рекомендуется RSA 4096 бит)
 gpg --gen-key
 
-# Определение ID ключа
+# Определение LONG ID ключа
 gpg --list-secret-keys --keyid-format LONG
 
-# Экспорт публичного ключа
-gpg --export -a "ABCDEF1234567890" > ~/my-repo/repo.key
+# Экспорт публичной части для клиентов
+gpg --export -a "ID_ВАШЕГО_КЛЮЧА" > ~/my-repo/repo.key
 ```
 
-Параметры ключа: RSA 4096 бит, срок 2-3 года, comment `APT Repository Key`.
+#### 3. Настройка дистрибутивов
 
-#### Конфигурация репозитория
-
-Файл `~/my-repo/conf/distributions`:
+Создайте конфигурацию в файле `~/my-repo/conf/distributions`:
 
 ```bash
 cat > ~/my-repo/conf/distributions << 'EOF'
@@ -62,40 +70,17 @@ Codename: focal
 Architectures: amd64 arm64
 Components: main
 Description: My private package repository for Ubuntu 20.04
-SignWith: ABCDEF1234567890
+SignWith: ID_ВАШЕГО_КЛЮЧА
 
-Codename: jammy
+Codename: noble
 Architectures: amd64 arm64
 Components: main
-Description: My private package repository for Ubuntu 22.04
-SignWith: ABCDEF1234567890
-
-Codename: bullseye
-Architectures: amd64
-Components: main
-Description: My private package repository for Debian 11
-SignWith: ABCDEF1234567890
+Description: My private package repository for Ubuntu 24.04
+SignWith: ID_ВАШЕГО_КЛЮЧА
 EOF
 ```
 
-#### Добавление пакетов
-
-```bash
-cd ~/my-repo
-
-# Добавить .deb пакет
-reprepro includedeb focal /path/to/package_1.0_amd64.deb
-
-# Добавить пакет с исходниками
-reprepro includesource focal /path/to/package_1.0.dsc
-
-# Удалить пакет
-reprepro removepackage focal package-name
-```
-
-`reprepro` автоматически создаёт `dists/` и `pool/`, обновляет `Packages.gz` и `Release`, подписывает репозиторий.
-
-#### Публикация (Nginx)
+#### 4. Публикация через веб-сервер Nginx
 
 ```bash
 sudo apt-get install nginx
@@ -109,9 +94,9 @@ server {
     location / {
         autoindex on;
         autoindex_format html;
-        autoindex_localtime on;
     }
 
+    # Запрет доступа к служебным данным reprepro
     location ~ /conf { deny all; }
     location ~ /dbs { deny all; }
 }
@@ -121,78 +106,45 @@ sudo ln -s /etc/nginx/sites-available/repo /etc/nginx/sites-enabled/repo
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Блокировка `/conf` и `/dbs` обязательна — там хранятся конфиденциальные данные.
+#### 5. Конфигурация клиента
 
-#### Публикация (Apache)
+На целевом сервере выполните:
 
-```bash
-sudo apt-get install apache2
+1. Импорт ключа в доверенное хранилище:
 
-sudo tee /etc/apache2/sites-available/repo.conf << 'EOF'
-<VirtualHost *:80>
-    ServerName repo.your.domain
-    DocumentRoot /home/user/my-repo
+   ```bash
+   sudo cp /tmp/repo.key /etc/apt/keyrings/my-repo.gpg
+   ```
 
-    <Directory /home/user/my-repo>
-        Options +Indexes
-        Require all granted
-    </Directory>
-</VirtualHost>
-EOF
+2. Добавление репозитория в `/etc/apt/sources.list.d/my-repo.list`:
 
-sudo a2ensite repo.conf
-sudo apache2ctl configtest && sudo systemctl reload apache2
-```
+   ```bash
+   echo "deb [signed-by=/etc/apt/keyrings/my-repo.gpg] http://repo.your.domain focal main" | \
+       sudo tee /etc/apt/sources.list.d/my-repo.list
+   ```
 
-#### Настройка клиента
+---
 
-1. Скопировать публичный ключ: `scp user@repo.server:~/my-repo/repo.key /tmp/`
-2. Добавить в доверенные: `sudo cp /tmp/repo.key /etc/apt/keyrings/my-repo.gpg`
-3. Создать `/etc/apt/sources.list.d/my-repo.list`:
-
-    ```bash
-    echo "deb [signed-by=/etc/apt/keyrings/my-repo.gpg] http://repo.your.domain focal main" | \
-        sudo tee /etc/apt/sources.list.d/my-repo.list
-    ```
-
-4. Обновить и установить: `sudo apt-get update && sudo apt-get install your-package`
-
-### Сценарий 2: Обновление репозитория
+### Сценарий 2: Регламентные операции с пакетами
 
 ```bash
 cd ~/my-repo
 
-# Добавить новую версию
-reprepro includedeb focal new-package_2.0_amd64.deb
+# Добавление нового пакета в дистрибутив
+reprepro includedeb focal /path/to/app_2.0_amd64.deb
 
-# Проверить целостность
+# Проверка целостности базы данных и файлов
 reprepro verify
 
-# Показать содержимое
+# Просмотр списка всех пакетов в конкретном релизе
 reprepro list focal
 ```
 
-### Сценарий 3: Автоматизация с CI/CD
+---
 
-Скрипт `publish-to-repo.sh`:
+### Сценарий 3: Интеграция с GitHub Actions (CI/CD)
 
-```bash
-#!/bin/bash
-set -e
-
-REPO_DIR="/home/user/my-repo"
-DISTRIBUTION="focal"
-PACKAGE_PATH="$1"
-
-[ -z "$PACKAGE_PATH" ] && { echo "Usage: $0 <package.deb>"; exit 1; }
-
-cd "$REPO_DIR"
-reprepro includedeb "$DISTRIBUTION" "$PACKAGE_PATH"
-chmod -R g+r "$REPO_DIR"
-echo "Package published successfully"
-```
-
-Интеграция с GitHub Actions:
+Пример автоматизации доставки через SSH (Secure Shell).
 
 ```yaml
 name: Publish to APT Repository
@@ -204,30 +156,30 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Download .deb package
+      - name: Download artifact
         uses: actions/download-release-artifact@v3
         with:
-          name: package-amd64.deb
-      - name: Publish to repository
+          name: app-amd64.deb
+      - name: Deploy via SSH
         run: |
-          echo "${{ secrets.SSH_KEY }}" > /tmp/key
-          chmod 600 /tmp/key
-          scp -i /tmp/key package-amd64.deb user@repo.server:/tmp/
-          ssh -i /tmp/key user@repo.server \
-              "reprepro includedeb focal /tmp/package-amd64.deb"
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/id_rsa
+          chmod 600 /tmp/id_rsa
+          scp -i /tmp/id_rsa app-amd64.deb user@repo.server:/tmp/
+          ssh -i /tmp/id_rsa user@repo.server \
+              "reprepro -b /home/user/my-repo includedeb focal /tmp/app-amd64.deb"
 ```
 
-### Сценарий 4: Синхронизация с официальным репозиторием
-
-```bash
-# Зеркало выбранных пакетов
-reprepro includepattern focal "nginx-*"
-
-# Импорт из другого репозитория
-reprepro pull focal other-repo focal main nginx
-```
+---
 
 ## Дополнительная информация
 
-Связанные файлы: [Определения и концепции](./definitions_and_concepts.md) (архитектура, конфигурация), [Дополнительная информация](./advanced_topics.md) (управление ключами, безопасность, альтернативы).
+### Диагностика и отладка
+
+При возникновении ошибок на стороне клиента («The following signatures were invalid») проверьте соответствие ID ключа в `conf/distributions` и фактически использованного при подписи.
+
+### Связанные документы
+
+- **[Определения и концепции](./definitions_and_concepts.md)** — архитектура и параметры `reprepro`.
+- **[Дополнительная информация](./advanced_topics.md)** — безопасность ключей и сравнение с `aptly`.
+- **[Apt Pinning](../deb_apt_pinning.md)** — управление приоритетами установленных пакетов.
+- **[Управление репозиториями DEB](../deb_repositories_sources_list.md)** — общие принципы настройки источников.

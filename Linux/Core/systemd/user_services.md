@@ -1,198 +1,141 @@
-# systemd User Services
+# Пользовательские службы systemd (systemd User Services)
 
 ## Определения
 
-**`systemd --user`** — пользовательский режим `systemd`, позволяющий запускать и управлять службами от имени обычного пользователя без прав `root`. Экземпляр `systemd` создаётся при первом входе пользователя и завершается после окончания последней сессии (если не включён linger).
+**`systemd --user`** — это режим работы менеджера системы и служб `systemd`, позволяющий запускать и управлять юнитами (units) от имени обычного пользователя без привилегий `root`.
 
-> Обзор типов юнитов: [systemd_units_overview.md](./systemd_units_overview.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Зависимости: [systemd_dependencies.md](./systemd_dependencies.md).
+Экземпляр пользовательского `systemd` создаётся автоматически при первом входе пользователя в систему и завершается после закрытия последней сессии, если не активирован режим **linger**.
 
-## Базовые концепции
+> Обзор типов юнитов: [systemd_units_overview.md](./systemd_units_overview.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Управление зависимостями: [systemd_dependencies.md](./systemd_dependencies.md).
 
-### Преимущества
+## Основные концепции
+
+### Преимущества использования
 
 | Характеристика | Описание |
 | :--- | :--- |
-| Безопасность | Службы работают с правами пользователя, а не root (принцип наименьших привилегий) |
-| Изоляция | Пользовательские юниты изолированы от системных и от служб других пользователей |
-| Без sudo | Управление без прав администратора |
-| Автозапуск | Простая настройка запуска при входе в систему |
+| **Безопасность** | Службы работают с правами пользователя, соблюдая принцип наименьших привилегий. |
+| **Изоляция** | Пользовательские юниты полностью отделены от системных и от служб других пользователей. |
+| **Автономность** | Управление не требует прав администратора или использования `sudo`. |
+| **Удобство** | Легкая настройка автозапуска приложений при входе пользователя в ОС (Операционная Система). |
 
-### Расположение юнит-файлов
+### Расположение конфигурационных файлов
 
-| Путь | Назначение | Приоритет |
-| :--- | :--- | :--- |
-| `~/.config/systemd/user/` | Пользовательские юниты | Высший |
-| `~/.local/share/systemd/user/` | Локально установленные (например, `pip install --user`) | Высокий |
-| `/etc/systemd/user/` | Системные юниты для всех пользователей | Средний |
-| `/usr/lib/systemd/user/` | Пакетные юниты | Низший |
+Менеджер ищет юнит-файлы в следующих директориях (в порядке убывания приоритета):
 
-### Управление пользовательскими службами
-
-| Команда | Описание |
+| Путь | Назначение |
 | :--- | :--- |
-| `systemctl --user start <service>` | Запустить службу |
-| `systemctl --user stop <service>` | Остановить службу |
-| `systemctl --user restart <service>` | Перезапустить службу |
-| `systemctl --user status <service>` | Проверить статус |
-| `systemctl --user enable <service>` | Включить автозапуск при входе |
-| `systemctl --user disable <service>` | Отключить автозапуск |
-| `systemctl --user daemon-reload` | Перечитать конфигурацию |
-| `systemctl --user list-units` | Показать все пользовательские юниты |
-| `systemctl --user failed` | Показать упавшие службы |
-| `journalctl --user -u <service>` | Логи пользовательской службы |
+| `~/.config/systemd/user/` | Основное место для пользовательских конфигураций. |
+| `~/.local/share/systemd/user/` | Юниты, установленные локальными менеджерами пакетов. |
+| `/etc/systemd/user/` | Системные настройки пользовательских служб для всех пользователей. |
+| `/usr/lib/systemd/user/` | Стандартные юниты, поставляемые с дистрибутивом. |
 
-> **Важно:** Все команды выполняются от имени пользователя, без `sudo`.
+### Управление через systemctl
 
-### Переменные и спецификаторы
+Все команды выполняются с флагом `--user` и не требуют `sudo`.
 
-| Спецификатор | Значение | Пример |
+```bash
+# Перечитать конфигурацию после изменения файлов
+systemctl --user daemon-reload
+
+# Запустить службу
+systemctl --user start my_app.service
+
+# Включить автозапуск при входе пользователя
+systemctl --user enable my_app.service
+# → Created symlink /home/user/.config/systemd/user/default.target.wants/my_app.service ...
+
+# Проверить текущий статус
+systemctl --user status my_app.service
+# → ● my_app.service - My App Description
+# →    Active: active (running) since Sat 2024-06-08 10:00:00 MSK; 1h ago
+
+# Показать список всех загруженных юнитов пользователя
+systemctl --user list-units --type=service
+# → UNIT             LOAD   ACTIVE SUB     DESCRIPTION
+# → my_app.service   loaded active running My App Description
+```
+
+### Спецификаторы путей и переменных
+
+В юнит-файлах можно использовать специальные символы для динамического определения путей:
+
+| Спецификатор | Описание | Пример значения |
 | :--- | :--- | :--- |
-| `%h` | Домашняя директория | `ExecStart=/usr/bin/python3 -m http.server 8000 --directory %h/public_html` |
-| `%u` | Имя пользователя | `Description=Service for user %u` |
-| `%U` | UID пользователя | `ExecStart=/usr/local/bin/app --uid %U` |
-| `%s` | Shell пользователя | `ExecStart=%s -c 'echo hello'` |
+| `%h` | Домашняя директория пользователя | `/home/username` |
+| `%u` | Имя пользователя | `username` |
+| `%U` | UID (User ID) пользователя | `1000` |
+| `%s` | Командная оболочка (shell) пользователя | `/bin/bash` |
 
 ## Практические сценарии
 
-### Веб-сервер пользователя
+### Запуск персонального веб-сервера
 
-1. Создайте файл `~/.config/systemd/user/my_web_server.service`:
-
-    ```ini
-    [Unit]
-    Description=My Personal Python Web Server
-
-    [Service]
-    ExecStart=/usr/bin/python3 -m http.server 8000 --directory %h/public_html
-    Restart=always
-
-    [Install]
-    WantedBy=default.target
-    ```
-
-2. Примените конфигурацию:
-
-    ```bash
-    systemctl --user daemon-reload
-    systemctl --user enable --now my_web_server.service
-    ```
-
-### Синхронизация файлов (Syncthing)
+Создайте файл `~/.config/systemd/user/web_server.service`:
 
 ```ini
-# ~/.config/systemd/user/syncthing.service
 [Unit]
-Description=Syncthing - Open Source Continuous File Synchronization
-Documentation=https://docs.syncthing.net/
-After=network-online.target
-Wants=network-online.target
+Description=Personal Python Web Server
 
 [Service]
-ExecStart=/usr/bin/syncthing serve --no-browser --logfile=default
-Restart=on-failure
-RestartSec=10
-# Папка для конфигурации Syncthing
-Environment=STNORESTART=yes
+ExecStart=/usr/bin/python3 -m http.server 8000 --directory %h/public_html
+Restart=always
 
 [Install]
 WantedBy=default.target
 ```
 
-```bash
-systemctl --user enable --now syncthing.service
-```
-
-### Пользовательский таймер для резервного копирования
-
-**Сервис** (`~/.config/systemd/user/backup.service`):
-
-```ini
-[Unit]
-Description=Personal Backup Script
-
-[Service]
-Type=oneshot
-ExecStart=%h/scripts/backup.sh
-RemainAfterExit=yes
-```
-
-**Таймер** (`~/.config/systemd/user/backup.timer`):
-
-```ini
-[Unit]
-Description=Run backup daily
-
-[Timer]
-OnCalendar=*-*-* 03:00:00
-Persistent=true
-
-[Install]
-WantedBy=default.target
-```
+Активация:
 
 ```bash
-systemctl --user enable --now backup.timer
-```
-
-### Режим linger (работа без сессии)
-
-По умолчанию пользовательский `systemd` завершается после выхода пользователя из системы. Для сервисов, которые должны работать постоянно (боты, веб-серверы):
-
-```bash
-# Включить linger для пользователя
-sudo loginctl enable-linger <username>
-
-# Отключить linger
-sudo loginctl disable-linger <username>
-
-# Проверить статус
-loginctl show-user <username> | grep Linger
-```
-
-### Диагностика
-
-```bash
-# Проверить статус пользовательского systemd
-systemctl --user status
-
-# Показать все юниты пользователя
-systemctl --user list-units --type=service
-
-# Проверить, запущен ли user-экземпляр
-pidof systemd
-
-# Логи пользовательских юнитов (без --user flag логи будут пустыми)
-journalctl --user -xe
-
-# Перезапустить пользовательский systemd (перечитать все юниты)
 systemctl --user daemon-reload
+systemctl --user enable --now web_server.service
+```
+
+### Режим linger: работа служб без активной сессии
+
+По умолчанию службы пользователя завершаются при логауте. Для работы фоновых задач (ботов, серверов) необходимо включить режим `linger`.
+
+```bash
+# Включить постоянную работу пользовательского экземпляра systemd
+sudo loginctl enable-linger username
+
+# Проверить текущий статус параметра Linger
+loginctl show-user username | grep Linger
+# → Linger=yes
+```
+
+### Просмотр журналов (logs)
+
+```bash
+# Просмотр логов конкретной службы пользователя
+journalctl --user -u web_server.service -f
+# → Jun 08 11:00:00 host python3[1234]: Serving HTTP on 0.0.0.0 port 8000 ...
 ```
 
 ## Дополнительная информация
 
-### Зависимости в пользовательских службах
+### Взаимодействие с системными юнитами
 
-Пользовательские юниты могут зависеть от системных, но не наоборот (по умолчанию). Для зависимости системного юнита от пользовательского используйте dbus-активацию или сокеты.
+Пользовательские службы могут зависеть от системных (например, требовать наличия сети), но системные службы не могут напрямую зависеть от пользовательских.
 
 ```ini
-# Пользовательский юнит зависит от сети
 [Unit]
+Description=Service with network dependency
 After=network-online.target
 Wants=network-online.target
 ```
 
-Подробности о зависимостях: [systemd_dependencies.md](./systemd_dependencies.md).
+### Типичные проблемы
 
-### Проблемы и решения
-
-| Проблема | Причина | Решение |
+| Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| «Failed to connect to bus» | Пользовательский systemd не запущен | Войти в систему, или включить linger |
-| Сервис останавливается после выхода | Linger не включён | `sudo loginctl enable-linger <username>` |
-| Таймер не срабатывает | Пользователь не в системе | Включить linger, или использовать системный таймер |
-| Permission denied на файл | Неправильный владелец | Проверить `User=` и права файла |
-| `journalctl --user` пустой | Нет сессии | Войти в систему, или включить linger |
+| **Failed to connect to bus** | Экземпляр systemd не запущен. | Убедитесь, что вы вошли в систему или включен linger. |
+| **Служба «умирает» при выходе** | Не включен режим linger. | Выполните `sudo loginctl enable-linger`. |
+| **Permission denied** | Юнит пытается писать в защищенные `/var/log` или `/etc`. | Используйте пути в `%h` или `/tmp`. |
 
-### Связанные файлы
+### См. также
 
-Зависимости юнитов: [systemd_dependencies.md](./systemd_dependencies.md). Структура unit-файлов: [systemd_unit_file_structure.md](./systemd_unit_file_structure.md). Таймеры: [timers.md](./timers.md). Типы сервисов: [systemd_service_types.md](./systemd_service_types.md). Обзор юнитов: [systemd_units_overview.md](./systemd_units_overview.md).
+* [Юниты, таргеты и зависимости systemd](./systemd_units_overview.md)
+* [Таймеры systemd (Timers)](./timers.md)
+* [Journald: централизованное логирование](../../SystemAdministration/Logging/journald.md)

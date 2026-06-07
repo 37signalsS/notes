@@ -74,62 +74,7 @@ EOF
 
 ## Fail2ban интеграция
 
-`fail2ban` — утилита для автоматической блокировки атакующих IP на основе анализа логов. При работе с nftables требует специальной настройки.
-
-### Установка и базовая настройка
-
-```bash
-apt install fail2ban
-```
-
-### Конфигурация для nftables (`/etc/fail2ban/jail.local`)
-
-```ini
-[DEFAULT]
-# Действия при блокировке для nftables
-banaction = nftables-multiport
-banaction_allports = nftables-allports
-
-# Глобальные настройки
-bantime = 1h
-findtime = 10m
-maxretry = 5
-
-[sshd]
-enabled = true
-port = ssh
-logpath = /var/log/auth.log
-```
-
-### Принцип работы
-
-1. fail2ban анализирует логи (например, `/var/log/auth.log` для SSH)
-2. При обнаружении большого числа неудачных попыток авторизации добавляет IP атакующего в set
-3. nftables блокирует трафик с этого IP
-
-### Архитектура интеграции
-
-- fail2ban создаёт таблицу `f2b-table` с цепочкой `f2b-chain`
-- Цепочка имеет более низкий приоритет и срабатывает раньше пользовательских правил
-- Единственное правило: блокировка TCP 22 для IP из `addr-set-sshd`
-
-### Проверка статуса
-
-```bash
-# Статус защиты SSH
-fail2ban-client status sshd
-
-# Просмотр таблицы fail2ban в nftables
-nft list table inet f2b-table
-```
-
-**Важно:** По умолчанию fail2ban настроен на iptables. Обязательно измените `banaction` на `nftables-multiport` в `/etc/fail2ban/jail.conf` или `/etc/fail2ban/jail.local`.
-
-### Перезапуск службы
-
-```bash
-systemctl restart fail2ban
-```
+Интеграция `fail2ban` с `nftables` подробно описана в едином источнике: [fail2ban: Интеграция с nftables](../../../../Security/Tools/fail2ban.md#интеграция-с-nftables).
 
 ---
 

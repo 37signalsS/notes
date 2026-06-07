@@ -1,188 +1,138 @@
-# SSH Monitoring and Troubleshooting
+# SSH — мониторинг и аудит сервера
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **SSH Monitoring** — процесс сбора, анализа и визуализации данных о работе SSH-сервера: логи аутентификации, активные сессии, попытки несанкционированного доступа.
 
-**SSH Forensics** — ретроспективный анализ логов для расследования инцидентов: кто, когда и откуда подключался, какие команды выполнялись.
+**SSH Auditing** — проверка конфигурации и состояния безопасности сервера на соответствие стандартам.
 
-## Basic Concepts
+**SSH Forensics** — ретроспективный анализ логов для расследования инцидентов: выявление источника атаки, времени входа и выполненных действий.
 
-### Журналы SSH
+## Основные концепции
 
-| Файл | Система | Содержание |
+### Журналы регистрации (Логи) SSH
+
+В современных Linux-системах события SSH фиксируются в текстовых логах и бинарных базах данных.
+
+| Файл / Источник | Система | Содержание |
 | :--- | :--- | :--- |
-| `/var/log/auth.log` | Debian/Ubuntu | События аутентификации (успешные/неудачные входы SSH, sudo) |
+| `/var/log/auth.log` | Debian/Ubuntu | События аутентификации (SSH, sudo, PAM) |
 | `/var/log/secure` | RHEL/CentOS | Аналог `auth.log` |
-| `/var/log/btmp` | Все | Неудачные попытки входа (двоичный формат) |
-| `/var/log/wtmp` | Все | История успешных входов/выходов (двоичный формат) |
+| `journalctl -u ssh` | systemd | Системный журнал демона SSH |
+| `/var/log/btmp` | Все | Неудачные попытки входа (просмотр через `lastb`) |
+| `/var/log/wtmp` | Все | История успешных входов/выходов (просмотр через `last`) |
 | `/var/log/lastlog` | Все | Время последнего входа каждого пользователя |
 
 ### Уровни логирования sshd
 
-| Уровень | Директива `LogLevel` | Содержание |
+Параметр `LogLevel` в `/etc/ssh/sshd_config` определяет степень детализации событий.
+
+| Уровень | Описание | Содержание |
 | :--- | :--- | :--- |
-| **Базовый** | `INFO` | Успешные/неудачные входы, закрытие сессий |
-| **Расширенный** | `VERBOSE` | Отпечатки SSH-ключей (fingerprint) |
-| **Детальный** | `DEBUG` | Пошаговая отладка SSH-протокола (только для диагностики) |
+| **INFO** | Стандартный | Успешные/неудачные входы, закрытие сессий |
+| **VERBOSE** | Рекомендуемый | Добавляет отпечатки (fingerprints) используемых ключей |
+| **DEBUG** | Отладочный | Пошаговая работа протокола (только для диагностики) |
 
-**Настройка:** `/etc/ssh/sshd_config`
+**Рекомендация:** Для полноценного аудита используйте `LogLevel VERBOSE`.
 
-```ini
-LogLevel VERBOSE
-```
+### Типичные паттерны в журналах
 
-### Типичные паттерны в логах
-
-| Паттерн | Значение |
+| Фрагмент лога | Значение |
 | :--- | :--- |
-| `Accepted publickey for user from 192.168.1.100` | Успешный вход по ключу |
-| `Failed password for user from 10.0.0.5` | Неудачная попытка входа (пароль) |
-| `Invalid user admin from 10.0.0.5` | Несуществующий пользователь |
-| `Connection closed by authenticating user` | Клиент прервал аутентификацию |
-| `Received disconnect from 192.168.1.100` | Нормальное завершение сессии |
-| `Bad ownership or modes for directory` | Нарушены права `~/.ssh` |
+| `Accepted publickey for user...` | Успешный вход по SSH-ключу |
+| `Failed password for user...` | Неудачная попытка входа (пароль) |
+| `Invalid user admin from...` | Попытка входа под несуществующим пользователем |
+| `Connection closed by authenticating user` | Обрыв соединения на этапе проверки |
+| `Bad ownership or modes for directory` | Ошибка прав доступа к `~/.ssh` (ключ будет проигнорирован) |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: Анализ неудачных попыток входа (brute-force detection)
+### Сценарий 1: Обнаружение попыток перебора (Brute-force)
 
-**Задача:** Выявить IP-адреса с множественными неудачными попытками.
+**Задача:** Выявить IP-адреса с аномальным количеством неудачных входов.
 
 ```bash
-# Неудачные входы (auth.log)
-grep "Failed" /var/log/auth.log | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
+# Топ-10 IP-адресов по неудачным входам (из auth.log)
+grep "Failed" /var/log/auth.log | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn | head -10
 
-# Неудачные входы (journalctl, последние 24 часа)
-journalctl -u sshd --since "24 hours ago" | grep "Failed" | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
+# Проверка через journalctl (за последние 24 часа)
+journalctl -u ssh --since "24 hours ago" | grep "Failed" | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
 
-# Просмотр btmp (неудачные попытки)
+# Просмотр бинарного журнала неудачных входов
 lastb | head -20
-lastb | awk '{print $3}' | sort | uniq -c | sort -rn | head
 ```
 
-### Сценарий 2: Аудит успешных входов
+### Сценарий 2: Аудит успешных подключений
 
-**Задача:** Получить список всех успешных подключений за период.
+**Задача:** Получить хронологию входов легитимных пользователей.
 
 ```bash
-# Успешные входы (auth.log)
-grep "Accepted" /var/log/auth.log | awk '{print $1, $2, $3, $9, $11}'
+# Список последних успешных входов
+last -n 20
 
-# История входов (wtmp)
-last | grep -E "pts|tty" | head -30
-
-# Последний вход каждого пользователя
-lastlog
-
-# Конкретный пользователь
+# История входов конкретного пользователя
 last username
-lastb username
+
+# Просмотр времени последнего входа всех пользователей системы
+lastlog
 ```
 
-### Сценарий 3: Расширенное логирование SFTP
+### Сценарий 3: Мониторинг активных сессий в реальном времени
 
-**Задача:** Логировать файловые операции через SFTP.
-
-```bash
-# 1. Изменить Subsystem в /etc/ssh/sshd_config
-sudo sed -i 's|^Subsystem sftp.*|Subsystem sftp /usr/lib/openssh/sftp-server -f AUTHPRIV -l INFO|' /etc/ssh/sshd_config
-
-# 2. Перезапустить SSH
-sudo systemctl restart sshd
-
-# 3. Просмотр логов SFTP
-grep sftp /var/log/auth.log
-```
-
-### Сценарий 4: Мониторинг активных SSH-сессий
-
-**Задача:** Получить список текущих подключений.
+**Задача:** Узнать, кто подключен к серверу в данный момент.
 
 ```bash
-# Активные сессии (who)
-who
-
-# Детальная информация (w)
+# Список пользователей и их процессов
 w
 
-# Сетевые подключения SSH
-ss -tnp | grep :22
+# Список только имен пользователей
+who
 
-# Процессы sshd
-ps aux | grep sshd | grep -v grep
+# Проверка сетевых соединений на порту SSH (по умолчанию 22)
+sudo ss -tnp | grep :22
 ```
 
-### Сценарий 5: Проверка конфигурации sshd
+### Сценарий 4: Расширенный аудит SFTP
 
-**Задача:** Убедиться в корректности конфигурации до перезапуска.
+**Задача:** Записывать в лог все операции с файлами (загрузка, удаление, переименование).
+
+```bash
+# 1. Изменить настройку подсистемы в /etc/ssh/sshd_config
+# Добавить флаги -f (facility) и -l (level)
+Subsystem sftp /usr/lib/openssh/sftp-server -f AUTHPRIV -l INFO
+
+# 2. Перезапустить службу
+sudo systemctl restart ssh
+```
+
+## Дополнительная информация
+
+### Инструменты автоматизированного аудита
+
+* **ssh-audit** — мощный инструмент для проверки безопасности конфигурации (алгоритмы, шифры, ключи).
+
+  ```bash
+  ssh-audit <hostname>
+  ```
+
+* **fail2ban** — стандарт де-факто для автоматической блокировки IP при обнаружении brute-force. См. [fail2ban: настройка и использование](../../Tools/fail2ban.md).
+* **Lynis** — системный сканер безопасности, включающий глубокий аудит настроек SSH.
+
+### Проверка конфигурации перед применением
+
+Всегда проверяйте синтаксис конфига перед перезапуском демона, чтобы не потерять доступ к серверу:
 
 ```bash
 # Проверка синтаксиса
 sudo sshd -t
 
-# Показать эффективную конфигурацию
-sudo sshd -T
-
-# Проверить конкретную директиву
-sudo sshd -T | grep -i loglevel
-sudo sshd -T | grep -i auth
+# Вывод итоговой конфигурации (с учетом всех include)
+sudo sshd -T | grep -i "permitroot\|passwordauth"
 ```
 
-### Сценарий 6: Отладка sshd в реальном времени
+### См. также
 
-**Задача:** Запустить sshd в режиме отладки для диагностики.
-
-```bash
-# Остановить sshd
-sudo systemctl stop sshd
-
-# Запустить в debug-режиме (foreground)
-sudo /usr/sbin/sshd -d -p 2222
-
-# Клиент подключается к порту 2222
-ssh -vvv -p 2222 user@host
-
-# После диагностики перезапустить штатно
-sudo systemctl start sshd
-```
-
-## Additional Information
-
-### Инструменты аудита
-
-**ssh-audit** — анализ алгоритмов, шифров и уязвимостей SSH-сервера.
-
-```bash
-# Установка
-pip install ssh-audit
-
-# Аудит
-ssh-audit <hostname>
-ssh-audit -p 2239 <hostname>  # Нестандартный порт
-```
-
-**fail2ban** — автоматическая блокировка brute-force. См. [fail2ban: настройка и использование](../../Tools/fail2ban.md).
-
-### Автоматизация мониторинга
-
-```bash
-# Скрипт: топ-10 IP с неудачными входами за 24 часа
-journalctl -u sshd --since "24 hours ago" \
-  | grep "Failed" \
-  | awk '{print $(NF-3)}' \
-  | sort | uniq -c | sort -rn | head -10
-
-# Скрипт: количество неудачных входов за последний час
-journalctl -u sshd --since "1 hour ago" | grep -c "Failed"
-```
-
-### Связанные темы
-
-- [SSH Troubleshooting](../ssh_troubleshooting.md) — диагностика проблем подключения
-- [SSH Hardening Best Practices](./ssh_hardening_best_practices.md) — укрепление безопасности
-- [SSH Authentication](./ssh_authentication.md) — методы аутентификации
-- [Logging Overview](../../../SystemAdministration/Logging/logging_overview.md) — общая система логов
-- [fail2ban](../../Tools/fail2ban.md) — защита от brute-force
+* [SSH Troubleshooting](../ssh_troubleshooting.md) — решение проблем с подключением
+* [SSH Hardening Best Practices](./ssh_hardening_best_practices.md) — укрепление безопасности
+* [SSH Server Security Overview](./ssh_server_security_overview.md) — общая стратегия защиты
+* [fail2ban](../../Tools/fail2ban.md) — автоматическая блокировка атак

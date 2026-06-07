@@ -1,8 +1,6 @@
-# SSH Authentication
+# SSH — методы аутентификации
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **SSH-аутентификация** — процесс подтверждения личности пользователя при подключении к SSH-серверу. Основные методы: по ключам (pubkey), по паролю (password), через Kerberos/GSSAPI, challenge-response.
 
@@ -13,7 +11,7 @@
 
 **Аутентификация по SSH-ключам** — метод, при котором сервер проверяет соответствие приватного ключа клиента публичному ключу на сервере через криптографический handshake.
 
-## Basic Concepts
+## Основные концепции
 
 ### Методы аутентификации
 
@@ -76,7 +74,7 @@ command="backup.sh",from="192.168.1.0/24" ssh-ed25519 AAAA... user@host
 Authentication refused: bad ownership or modes for directory /home/user/.ssh
 ```
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Генерация и установка SSH-ключа
 
@@ -137,7 +135,7 @@ ssh user@server "sed -i '/compromised-key-comment/d' ~/.ssh/authorized_keys"
 rm ~/.ssh/id_ed25519_compromised ~/.ssh/id_ed25519_compromised.pub
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Связь с директивами sshd_config
 
@@ -162,9 +160,10 @@ rm ~/.ssh/id_ed25519_compromised ~/.ssh/id_ed25519_compromised.pub
 4. **Запустить клиент с отладкой:** `ssh -vvv user@server`
 5. **Проверить known_hosts:** `ssh-keygen -F hostname`
 
-### Связанные темы
+### См. также
 
-- [SSH Access Control](./ssh_access_control.md) — управление доступом (AllowUsers, AllowGroups)
-- [SSH Hardening Best Practices](./ssh_hardening_best_practices.md) — укрепление безопасности
-- [SSH Client Config](../ssh_client_config.md) — настройка клиента и SSH-агент
-- [SSH Troubleshooting](../ssh_troubleshooting.md) — диагностика проблем
+- [SSH Server Security Overview](./ssh_server_security_overview.md)
+- [SSH Hardening Best Practices](./ssh_hardening_best_practices.md)
+- [SSH Access Control](./ssh_access_control.md)
+- [SSH Client Config](../ssh_client_config.md)
+- [SSH Troubleshooting](../ssh_troubleshooting.md)

@@ -1,4 +1,4 @@
-# Glibc vs Musl
+# Сравнение Glibc и Musl
 
 ## Определения
 
@@ -6,8 +6,8 @@
 
 **Доминирующие реализации в Linux:**
 
-- **Glibc (GNU C Library)** — стандарт де-факто для большинства дистрибутивов
-- **Musl libc** — легковесная альтернатива для контейнеров и встраиваемых систем
+- **Glibc (GNU C Library)** — стандарт де-факто для большинства дистрибутивов.
+- **Musl libc** — легковесная альтернатива для контейнеров и встраиваемых систем.
 
 ## Основные концепции
 
@@ -44,7 +44,7 @@ musl-gcc -static myapp.c -o myapp
 
 # Проверка типа бинарного файла
 file myapp
-# Вывод: "statically linked"
+# → статически слинкованный бинарник (statically linked)
 ```
 
 **Применение:** Alpine Linux образы, distroless-контейнеры, статически собранные приложения (Go, Rust с `CGO_ENABLED=0`).
@@ -53,9 +53,9 @@ file myapp
 
 **Glibc** — выбор по умолчанию:
 
-- Подавляющее ПО собирается и тестируется с glibc
-- Максимальная совместимость
-- Поддержка расширений GNU
+- Подавляющее ПО собирается и тестируется с glibc.
+- Максимальная совместимость.
+- Поддержка расширений GNU.
 
 **Дистрибутивы:** Debian, Ubuntu, Fedora, RHEL, CentOS.
 
@@ -63,7 +63,7 @@ file myapp
 
 **Musl** предпочтителен для устройств с ограниченной памятью, требованиями к быстрому старту и статической линковки без зависимостей.
 
-**Примеры:** OpenWrt, Void Linux (musl variant).
+**Примеры:** OpenWrt, Void Linux (вариант с musl).
 
 ### 4. Проблемы совместимости: Glibc → Alpine (musl)
 
@@ -107,7 +107,6 @@ error while loading shared libraries: libc.so.6: cannot open shared object file
 
 ### Связанные темы
 
-- **[Alpine Dockerfile](../../Docker/Dockerfile/dockerfile_alpine_linux.md)** — использование Alpine в Docker
-- **[Distroless Images](../../Docker/Dockerfile/Docker_best_practices/security.md)** — минималистичные образы
-- **[Glibc Compatibility](../../Docker/Docker_troubleshooting/alpine_glibc_compatibility.md)** — troubleshooting совместимости
-- **[Kernel Interfaces](./kernel/kernel_interfaces.md)** — роль glibc как обёртки над системными вызовами
+- **[Dockerfile для Alpine Linux](../../Docker/Dockerfile/dockerfile_alpine_linux.md)** — использование Alpine в Docker.
+- **[Совместимость с Glibc](../../Docker/Docker_troubleshooting/alpine_glibc_compatibility.md)** — решение проблем с запуском glibc-бинарников в Alpine.
+- **[Интерфейсы ядра Linux](../kernel/kernel_interfaces.md)** — роль glibc как обёртки над системными вызовами.

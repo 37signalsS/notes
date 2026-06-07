@@ -6,7 +6,7 @@
 
 **tshark** использует ту же кодовую базу и движок диссекции, что и графическая версия Wireshark, обеспечивая идентичный уровень детализации при анализе трафика.
 
-**TUI-альтернатива:** для интерактивного анализа в терминале (аналог GUI Wireshark) рекомендуется использовать **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark-tui)**.
+**TUI-альтернатива:** для интерактивного анализа в терминале (аналог GUI Wireshark) рекомендуется использовать **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark)**.
 
 ## Основные концепции
 
@@ -139,4 +139,4 @@ sudo tshark -i eth0 -b filesize:100000 -b files:10 -w /tmp/rotation.pcapng
 - **[Основные концепты захвата](./core_concepts.md)** — детали работы фильтров и интерфейсов.
 - **[Методы расшифровки TLS](./tls_decryption_methods.md)** — подробнее о работе с ключами.
 - **[tcpdump](../../../Linux/Diagnostics/Networking/tcpdump.md)** — инструмент для быстрого захвата.
-- **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark-tui)** — интерактивный TUI для tshark.
+- **[termshark](../../../Linux/Diagnostics/Networking/network_cli_tools.md#termshark)** — интерактивный TUI для tshark.

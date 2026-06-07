@@ -1,10 +1,10 @@
 # Seccomp
 
-## Definitions
+## Определения
 
 **Seccomp (Secure Computing Mode)** — механизм безопасности в ядре Linux, работающий как фильтр системных вызовов (syscalls), доступных процессу. Основная задача — ограничение поверхности атаки на ядро путём запрета процессу выполнять любые системные вызовы, кроме строго определённого набора. Ключевой инструмент для изоляции приложений, особенно в контейнерах.
 
-## Basic Concepts
+## Основные концепции
 
 ### Режимы работы
 
@@ -32,7 +32,7 @@ Seccomp — один из трёх фундаментальных строите
 
 Поскольку контейнеры используют общее ядро хоста, ограничение syscalls критично. Без seccomp процесс внутри контейнера может вызвать опасные функции (например, `ptrace()`, `keyctl()` или `perf_event_open()`), что может привести к компрометации хоста или других контейнеров.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Проверка режима Seccomp
 
@@ -40,7 +40,7 @@ Seccomp — один из трёх фундаментальных строите
 
 ```bash
 # Проверить статус seccomp для текущей оболочки
-grep Seccomp /proc/$$/status
+grep Seccomp /proc/$$/status # → Seccomp: 2
 ```
 
 Возможные значения:
@@ -63,20 +63,20 @@ Docker по умолчанию применяет seccomp-профиль, кот
 **Посмотреть активный профиль контейнера:**
 
 ```bash
-docker inspect <container_name_or_id> | grep -A5 seccomp
+docker inspect <container_name_or_id> | grep -A5 seccomp # → "SecurityOpt": [ "seccomp=unconfined" ]
 ```
 
 **Запуск с пользовательским профилем:**
 
 ```bash
 # custom_profile.json — правила seccomp в формате JSON
-docker run --security-opt seccomp=/path/to/custom_profile.json alpine
+docker run --security-opt seccomp=/path/to/custom_profile.json alpine # → ...
 ```
 
 **Полное отключение (например, для отладки):**
 
 ```bash
-docker run --rm -it --security-opt seccomp=unconfined alpine /bin/sh
+docker run --rm -it --security-opt seccomp=unconfined alpine /bin/sh # → / #
 ```
 
 ### 3. Применение в Kubernetes
@@ -110,7 +110,7 @@ spec:
 * `Unconfined`: Seccomp не применяется.
 * `Localhost`: Используется кастомный профиль, который должен находиться на узле в директории `<kubelet-root-dir>/seccomp/`.
 
-## Additional Information
+## Дополнительная информация
 
 ### Ограничения (Где seccomp не спасает)
 

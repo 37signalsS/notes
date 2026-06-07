@@ -53,10 +53,10 @@
 
 ```bash
 # Установка утилит управления
-sudo apt update && sudo apt install apparmor-utils
+sudo apt update && sudo apt install apparmor-utils # → ...
 
 # Просмотр текущего статуса и загруженных профилей
-sudo aa-status
+sudo aa-status # → apparmor module is loaded. 20 profiles are loaded.
 ```
 
 ### 2. Создание профиля с нуля
@@ -66,7 +66,7 @@ sudo aa-status
 1. **Запуск генерации:**
 
    ```bash
-   sudo aa-genprof /usr/bin/myapp
+   sudo aa-genprof /usr/bin/myapp # → Profiling: /usr/bin/myapp ...
    ```
 
 2. **Обучение:** В другом терминале запустите приложение и выполните все типичные сценарии работы (чтение конфигов, работа с сетью, запись логов).
@@ -79,22 +79,23 @@ sudo aa-status
 1. **Перевод в complain-режим:**
 
    ```bash
-   sudo aa-complain /usr/bin/myapp
+   sudo aa-complain /usr/bin/myapp # → Setting /usr/bin/myapp to complain mode.
    ```
 
 2. **Анализ логов:** Посмотрите нарушения, которые были бы заблокированы:
 
    ```bash
-   journalctl | grep apparmor
+   journalctl | grep apparmor # → audit: type=1400 ... apparmor="ALLOWED" ...
+   
    # Или интерактивно через aa-logprof
-   sudo aa-logprof
+   sudo aa-logprof # → Reading log entries from /var/log/syslog.
    ```
 
    `aa-logprof` прочитает лог и предложит добавить новые правила в профиль.
 3. **Возврат в enforce-режим:** Когда профиль готов, заблокируйте несанкционированную активность:
 
    ```bash
-   sudo aa-enforce /usr/bin/myapp
+   sudo aa-enforce /usr/bin/myapp # → Setting /usr/bin/myapp to enforce mode.
    ```
 
 ### 4. Управление существующими профилями
@@ -103,7 +104,7 @@ sudo aa-status
 
   ```bash
   sudo ln -s /etc/apparmor.d/profile.name /etc/apparmor.d/disabled/
-  sudo systemctl reload apparmor.service
+  sudo systemctl reload apparmor.service # → (перезагрузка профилей)
   ```
 
 ## Дополнительная информация

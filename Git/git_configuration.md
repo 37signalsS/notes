@@ -175,7 +175,7 @@ git update-index --no-assume-unchanged <файл>
 
 Для настройки подписи коммитов GPG-ключом:
 
-* [Верификация коммитов GPG](https://habr.com/ru/articles/754128/)
+* [Инструкция по GPG и OpenPGP](../Linux/Security/Tools/gpg_and_openpgp.md#подпись-коммитов-в-git)
 
 #### Шифрование файлов в репозитории (`git-crypt`)
 

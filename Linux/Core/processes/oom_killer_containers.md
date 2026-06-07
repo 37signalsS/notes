@@ -1,142 +1,96 @@
-# OOM Killer in Containers
+# OOM Killer в контейнерных средах
 
 ## Определения
 
-**OOM Killer в контейнерах** — поведение механизма OOM Killer при работе в изолированных средах (Docker, Kubernetes). Работает на двух уровнях: ядро хоста и cgroups контейнера.
+**OOM Killer в контейнерах** — это специфика работы механизма принудительного завершения процессов при нехватке памяти в условиях изоляции (Docker, Kubernetes). В контейнеризованных средах механизм работает на двух иерархических уровнях: ядро хоста и контрольные группы (**cgroups**) контейнера.
 
-**OOMKilled** — статус завершения контейнера, означающий что процесс был принудительно завершен OOM Killer из-за превышения лимита памяти.
+**OOMKilled** — индикатор состояния контейнера, указывающий на то, что один из его процессов был завершен OOM Killer из-за превышения установленного лимита памяти.
 
 ## Основные концепции
 
-### Уровни OOM Killer в контейнерах
+### Двухуровневая модель OOM
 
-| Уровень | Механизм | Результат |
+| Уровень | Механизм | Последствия |
 | :--- | :--- | :--- |
-| **Хост** | Ядро Linux | Убивает процесс контейнера как обычный процесс |
-| **Контейнер** | cgroups `memory.max` (v2) / `memory.limit_in_bytes` (v1) | OOM внутри контейнера, контейнер падает с `OOMKilled` |
+| **Хост (Host)** | Ядро Linux (общая память) | Убивает любой процесс в системе, включая процессы внутри контейнеров, согласно рейтингу `oom_score`. |
+| **Контейнер** | cgroups (`memory.max`) | Убивает процессы внутри конкретной контрольной группы при достижении её лимита, не затрагивая остальную систему. |
 
-### Взаимодействие cgroups и OOM Killer
+### Роль cgroups (Control Groups)
 
-- **cgroups v2** используют `memory.max` — жесткий лимит, при достижении которого вызывается OOM Killer внутри cgroup.
-- **cgroups v1** используют `memory.limit_in_bytes` — аналогичное поведение, но с иной иерархией.
-- OOM Killer в контейнере убивает **процессы внутри cgroup**, а не весь контейнер. Runtime (Docker, containerd) обнаруживает падение и перезапускает контейнер.
+Контрольные группы являются фундаментом изоляции ресурсов. Поведение OOM Killer зависит от версии cgroups:
 
-### Kubernetes QoS классы и OOM
+- **cgroups v1:** Использует `memory.limit_in_bytes`. При достижении лимита процесс убивается немедленно.
+- **cgroups v2:** Использует `memory.max` (жесткий лимит) и `memory.high` (мягкий лимит/дросселирование). В v2 ядро сначала пытается выполнить очистку (reclaim) памяти внутри группы перед вызовом OOM Killer.
 
-Kubernetes присваивает подам QoS классы на основе `requests` и `limits`, которые влияют на `oom_score_adj`:
+### Классы QoS в Kubernetes и OOM
 
-| QoS класс | `oom_score_adj` | Описание |
+**Kubernetes** использует классы **QoS (Quality of Service)** для управления приоритетом выживания процессов через настройку параметра `oom_score_adj`:
+
+| Класс QoS | Значение `oom_score_adj` | Уровень защиты |
 | :--- | :--- | :--- |
-| **Guaranteed** | -998 | Наивысшая защита (`requests` = `limits`) |
-| **Burstable** | 2–999 | Средняя защита (зависит от соотношения request/limit) |
-| **BestEffort** | 1000 | Первый кандидат на удаление (нет `requests`/`limits`) |
+| **Guaranteed** | -998 | Максимальная защита от OOM со стороны узла (хоста). |
+| **Burstable** | 2 – 999 | Средняя защита; значение зависит от доли зарезервированной памяти. |
+| **BestEffort** | 1000 | Первый кандидат на завершение при нехватке памяти на узле. |
 
-> **Важно:** QoS класс защищает от **Node Pressure Eviction**, но не от OOM Killer. Под с QoS `Guaranteed` будет убит OOM Killer при превышении собственного `limits.memory`.
+> **Важно:** Любой контейнер, даже с классом **Guaranteed**, будет немедленно завершен с признаком `OOMKilled`, если его потребление памяти превысит собственный параметр `limits.memory`.
 
 ## Практические сценарии
 
-### Docker: Проверка и настройка OOM
+### Настройка OOM в Docker
+
+При запуске контейнеров можно напрямую влиять на их приоритет в системе:
 
 ```bash
-# Проверить OOMKilled статус контейнера
-docker inspect <container> --format '{{.State.OOMKilled}}'
+# Запуск контейнера с защитой от OOM хоста (аналог Guaranteed)
+docker run --oom-score-adj=-500 nginx
 
-# Запустить с измененным oom_score_adj
-docker run --oom-score-adj=500 nginx
-
-# Запустить с отключенным OOM Killer (только с лимитом памяти)
+# Отключение OOM Killer для контейнера (требует обязательного лимита -m)
+# Без лимита контейнер может вызвать зависание всего хоста
 docker run -m 512m --oom-kill-disable=true nginx
+
+# Проверка статуса OOMKilled для упавшего контейнера
+docker inspect <container_id> --format '{{.State.OOMKilled}}'
 ```
 
-> **Важно:** `--oom-kill-disable` работает только вместе с `-m` (ограничение памяти). Без лимита контейнер может исчерпать всю память хоста.
+### Диагностика в Kubernetes
 
-### Kubernetes: Диагностика OOMKilled
+Для глубокого анализа инцидентов в кластере рекомендуется использовать специализированное руководство: [**Поды, убитые из-за нехватки памяти (OOMKilled)**](../../Kubernetes/Troubleshooting/Common_Errors/oomkilled_pods.md).
+
+Основные команды для быстрой проверки:
 
 ```bash
-# Проверить причину завершения контейнера
-kubectl describe pod <pod-name> | grep -A 5 "Last State"
-# Ищем: Reason: OOMKilled, Exit Code: 137
+# Поиск причины завершения контейнера
+kubectl describe pod <pod_name> | grep -A 3 "Last State"
 
-# Проверить QoS класс пода
-kubectl get pod <pod-name> -o jsonpath='{.status.qosClass}'
-
-# Найти все поды с OOMKilled в namespace
-kubectl get events --field-selector reason=OOMKilling -n <namespace>
+# Проверка событий ядра на узле (требуется SSH-доступ)
+dmesg -T | grep -i "oom"
 ```
 
-### Kubernetes: Предотвращение OOMKilled
+### Прямая проверка лимитов в cgroups v2
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app
-spec:
-  containers:
-  - name: app
-    image: my-app:latest
-    resources:
-      requests:
-        memory: "256Mi"
-        cpu: "250m"
-      limits:
-        memory: "512Mi"  # При превышении — OOMKilled
-        cpu: "500m"
-```
-
-**Рекомендации по лимитам:**
-
-1. Установите `requests` и `limits` для всех контейнеров
-2. `limits.memory` должен быть выше пикового потребления (мониторинг через Prometheus/Grafana)
-3. Для Java-приложений учитывайте JVM heap + non-heap память (установите `-XX:MaxRAMPercentage`)
-4. Настройте алерты для своевременного обнаружения инцидентов. Полный перечень правил и YAML-конфигураций для Grafana представлен в SSoT-файле: [**Алерты для Kubernetes в Grafana**](../../../Grafana/alerting/kubernetes_alerts.md).
-
-### Диагностика утечки памяти
+Если необходимо убедиться в применении лимитов на уровне операционной системы:
 
 ```bash
-# Проверить потребление памяти контейнером
-docker stats <container>
+# Получение ID контрольной группы процесса (внутри контейнера)
+cat /proc/self/cgroup
 
-# Проверить логи на предмет OOM
-dmesg | grep -i "out of memory"
-journalctl -k | grep -i "oom"
-
-# Проверить лимиты cgroups (v2)
-cat /sys/fs/cgroup/system.slice/docker-<container-id>.scope/memory.max
+# Просмотр жесткого лимита памяти на хосте (путь зависит от рантайма)
+cat /sys/fs/cgroup/system.slice/docker-<ID>.scope/memory.max
 ```
 
 ## Дополнительная информация
 
-### OOM Killer и exit code 137
+### Код завершения 137 (Exit Code)
 
-Контейнер, убитый OOM Killer, имеет exit code **137** (128 + 9 = SIGKILL). Это стандартный код завершения для процессов, принудительно завершенных ядром.
+Если процесс завершен сигналом **SIGKILL (9)** со стороны OOM Killer, контейнер вернет код выхода **137** (128 + 9). Это универсальный признак принудительного завершения ядром.
 
-```bash
-# Проверить код выхода
-docker inspect <container> --format '{{.State.ExitCode}}'
-# 137 = вероятный OOMKilled
-```
+### Групповое завершение (memory.oom.group)
 
-### Различия OOM Killer и Eviction
+В **cgroups v2** реализован параметр `memory.oom.group`. Если он установлен в `1`, то при срабатывании OOM Killer в контрольной группе будут убиты **все** процессы этой группы одновременно. Это полезно для сложных приложений (например, базы данных с множеством воркеров), где частичная потеря процессов ведет к некорректному состоянию системы.
 
-| Характеристика | OOMKilled | Eviction |
-| :--- | :--- | :--- |
-| **Причина** | Превышение `limits.memory` контейнера | Нехватка ресурсов на узле |
-| **Инициатор** | Ядро Linux (OOM Killer) | Kubelet |
-| **Статус пода** | `OOMKilled` (Reason в Last State) | `Evicted` |
-| **Код выхода** | 137 (SIGKILL) | 143 (SIGTERM) или другой |
-| **QoS влияние** | Убивает независимо от QoS | BestEffort → Burstable → Guaranteed |
+### Связанные темы
 
-Подробнее: [Eviction в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/PodEvicted/memory_eviction.md).
-
-### OOM Killer и cgroups v2
-
-В cgroups v2 OOM Killer работает иначе, чем в v1:
-
-- **v1:** При достижении `memory.limit_in_bytes` OOM Killer убивает процесс немедленно
-- **v2:** При достижении `memory.max` OOM Killer пытается освободить память внутри cgroup перед убийством процесса
-- **v2** поддерживает `memory.oom.group` — группировка процессов для совместного убийства (useful для контейнеров)
-
----
-
-Механизм работы OOM Killer описан в [**OOM Killer Mechanism**](./oom_killer_mechanism.md). Управление поведением OOM Killer — в [**OOM Killer Management**](./oom_killer_management.md).
+- [**Механизм OOM Killer**](./oom_killer_mechanism.md) — общая теория и алгоритм выбора жертвы.
+- [**Управление OOM Killer**](./oom_killer_management.md) — детальная настройка параметров в Linux.
+- [**Диагностика OOM Killer**](./oom_killer_diagnostics.md) — анализ системных логов и дампов памяти.
+- [**Алерты для Kubernetes в Grafana**](../../Grafana/alerting/kubernetes_alerts.md) — настройка уведомлений о событиях `OOMKilled`.

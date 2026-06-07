@@ -1,14 +1,12 @@
-# SSH Access Control
+# SSH — контроль доступа
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **SSH Access Control** — механизм ограничения доступа к SSH-серверу на основе пользователей, групп, IP-адресов или сетевых правил. Реализуется через директивы `sshd_config`, файрволы и дополнительные механизмы.
 
 **Whitelist (белый список)** — подход, при котором доступ разрешён только явно указанным субъектам, все остальные заблокированы по умолчанию.
 
-## Basic Concepts
+## Основные концепции
 
 ### Директивы контроля доступа в sshd_config
 
@@ -55,11 +53,12 @@ Port 2239
 
 **Требования:**
 
-- Открыть новый порт в файрволе до перезапуска SSH
-- Убедиться в отсутствии конфликтов с другими службами
-- После применения проверить подключение в новой сессии (не закрывая текущую)
+- Открыть новый порт в файрволе до перезапуска SSH.
+- Убедиться в отсутствии конфликтов с другими службами.
+- При наличии SELinux — разрешить использование нового порта в политиках безопасности.
+- После применения проверить подключение в новой сессии (не закрывая текущую).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Whitelist пользователей
 
@@ -104,20 +103,23 @@ sudo netfilter-persistent save
 # 1. Открыть новый порт в файрволе
 sudo iptables -A INPUT -p tcp --dport 2239 -j ACCEPT
 
-# 2. Изменить порт в sshd_config
+# 2. (Опционально) Добавить порт в SELinux
+# sudo semanage port -a -t ssh_port_t -p tcp 2239
+
+# 3. Изменить порт в sshd_config
 sudo sed -i 's/^#Port 22/Port 2239/' /etc/ssh/sshd_config
 
-# 3. Перезапустить SSH
+# 4. Перезапустить SSH
 sudo systemctl restart sshd
 
-# 4. Проверить подключение (НЕ закрывая текущую сессию!)
+# 5. Проверить подключение (НЕ закрывая текущую сессию!)
 ssh -p 2239 user@hostname
 
-# 5. Закрыть старый порт после подтверждения
+# 6. Закрыть старый порт после подтверждения
 sudo iptables -D INPUT -p tcp --dport 22 -j ACCEPT
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Связь с другими механизмами безопасности
 
@@ -144,3 +146,9 @@ sudo iptables -D INPUT -p tcp --dport 22 -j ACCEPT
 3. **Правила файрвола:** `sudo iptables -nvL INPUT`
 4. **Директивы доступа:** `grep -E "Allow|Deny" /etc/ssh/sshd_config`
 5. **Сетевую связность:** `nc -zv hostname 22` или `nc -zv hostname 2239`
+
+### См. также
+
+- [SSH Server Security Overview](./ssh_server_security_overview.md)
+- [SSH Hardening Best Practices](./ssh_hardening_best_practices.md)
+- [Port Knocking](./port_knocking.md)

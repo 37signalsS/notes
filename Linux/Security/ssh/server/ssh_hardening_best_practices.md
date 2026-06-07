@@ -1,14 +1,12 @@
-# SSH Hardening Best Practices
+# SSH — лучшие практики укрепления безопасности (Hardening)
 
-## Definitions → Basic Concepts → Practical Scenarios → Additional Information
-
-## Definitions
+## Определения
 
 **SSH Hardening** — комплекс мер по усилению безопасности SSH-сервера: отключение неиспользуемых функций, ограничение методов аутентификации, настройка файрвола, логирование и защита от автоматических атак.
 
 **Defense in Depth** — принцип многослойной защиты, при котором компрометация одного уровня не даёт полного доступа к системе.
 
-## Basic Concepts
+## Основные концепции
 
 ### Уровни защиты SSH
 
@@ -25,12 +23,12 @@
 
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
-| `PubkeyAuthentication` | `yes` | Разрешить вход по ключам |
-| `PasswordAuthentication` | `no` | Запретить вход по паролю |
+| `PubkeyAuthentication` | `yes` | [Вход по ключам](./ssh_authentication.md) |
+| `PasswordAuthentication` | `no` | [Отключение паролей](./ssh_authentication.md) |
 | `PermitRootLogin` | `no` | Запретить вход root |
 | `MaxAuthTries` | `3` | Ограничить попытки |
 | `PermitEmptyPasswords` | `no` | Запретить пустые пароли |
-| `AllowUsers` | `user1 user2` | Белый список разрешенных пользователей |
+| `AllowUsers` | `user1 user2` | [Белый список пользователей](./ssh_access_control.md) |
 | `ChallengeResponseAuthentication` | `no` | Отключить challenge-response |
 | `AuthenticationMethods` | `publickey` | Требовать только pubkey |
 | `PubkeyAcceptedAlgorithms` | `ssh-ed25519,rsa-sha2-512` | Ограничить алгоритмы |
@@ -39,7 +37,7 @@
 
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
-| `Port` | Нестандартный (например, `2239`) | Снизить шум от ботов |
+| `Port` | Нестандартный (например, `2239`) | [Смена порта](./ssh_access_control.md) |
 | `ListenAddress` | Конкретный IP | Слушать только на нужном интерфейсе |
 | `Protocol` | `2` | Только SSHv2 (по умолчанию) |
 | `LoginGraceTime` | `30` | Таймаут на аутентификацию (сек) |
@@ -85,7 +83,7 @@ ssh -Q cipher    # Доступные Ciphers
 ssh -Q mac       # Доступные MACs
 ```
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Базовое укрепление SSH
 
@@ -171,30 +169,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sshd-alt
 ```
 
-### Сценарий 3: Изменение порта SSH при включенном SELinux
-
-**Задача:** Перенести SSH на нестандартный порт без ошибок запуска.
-
-```bash
-# 1. Изменить порт в sshd_config
-sudo sed -i 's/^#*Port.*/Port 5022/' /etc/ssh/sshd_config
-
-# 2. Добавить порт в SELinux
-sudo semanage port -a -t ssh_port_t -p tcp 5022
-
-# 3. Открыть порт в файрволе
-sudo firewall-cmd --permanent --add-port=5022/tcp
-sudo firewall-cmd --reload
-
-# 4. Перезапустить SSH
-sudo systemctl restart sshd
-
-# 5. Проверить
-sudo semanage port -l | grep ssh
-ss -tlnp | grep 5022
-```
-
-### Сценарий 4: Ограничение алгоритмов шифрования
+### Сценарий 3: Ограничение алгоритмов шифрования
 
 **Задача:** Отключить устаревшие алгоритмы и оставить только современные.
 
@@ -215,13 +190,13 @@ sudo systemctl restart sshd
 ssh -oKexAlgorithms=curve25519-sha256 user@host
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Инструменты защиты от атак
 
 **fail2ban** — анализ логов и автоматическая блокировка IP при brute-force. См. [fail2ban: настройка и использование](../../Tools/fail2ban.md).
 
-**Endlessh** — SSH-tarpit, бесконечно отправляющий баннер ботам, замедляя сканирование. [GitHub](https://github.com/skeeto/endlessh).
+**Endlessh** — SSH-tarpit, бесконечно отправляющий баннер ботам, замедляя сканирование.
 
 **Port Knocking** — скрытие SSH от сканирования через последовательность "стуков". См. [Port Knocking](./port_knocking.md).
 
@@ -237,10 +212,10 @@ sudo sshd -T | grep -i cipher         # Только шифрование
 ssh-audit <hostname>                  # Анализ алгоритмов и настроек
 ```
 
-### Связанные темы
+### См. также
 
-- [SSH Authentication](./ssh_authentication.md) — методы аутентификации
-- [SSH Access Control](./ssh_access_control.md) — управление доступом
-- [SSH Server Security Overview](./ssh_server_security_overview.md) — общая структура безопасности
-- [Port Knocking](./port_knocking.md) — скрытие SSH
-- [fail2ban](../../Tools/fail2ban.md) — защита от brute-force
+- [SSH Server Security Overview](./ssh_server_security_overview.md)
+- [SSH Access Control](./ssh_access_control.md)
+- [SSH Authentication](./ssh_authentication.md)
+- [Port Knocking](./port_knocking.md)
+- [fail2ban](../../Tools/fail2ban.md)

@@ -1,6 +1,6 @@
 # Обзор механизмов безопасности в Linux
 
-## Definitions
+## Определения
 
 **Механизмы безопасности Linux** — совокупность встроенных в ОС функций, политик и инструментов для защиты от несанкционированного доступа, модификации, разрушения или раскрытия информации.
 
@@ -8,9 +8,9 @@
 
 **HCK (Harden Repeat)** — цикличный подход к безопасности: Исследование → Попытка взлома (Attack) → Укрепление (Harden) → Повтор. Позволяет эмпирически подтверждать эффективность защитных мер.
 
-Этот документ — SSoT для высокоуровневого обзора механизмов безопасности Linux. Детальные описания каждого механизма находятся в соответствующих заметках.
+Детальные описания каждого механизма находятся в соответствующих заметках.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Архитектура безопасности: уровни ядра и пользователя
 
@@ -77,7 +77,7 @@
 - **Пользователи и группы:** управление учётными записями, правами и привилегиями
 - **GPG/OpenPGP:** шифрование, цифровая подпись и проверка целостности данных
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Контроль доступа
 
@@ -141,32 +141,7 @@
 | Пользователи и группы | Управление учётными записями | [Управление пользователями](../SystemAdministration/users_management.md) |
 | GPG/OpenPGP | Шифрование и цифровая подпись | [gpg and openpgp](./Tools/gpg_and_openpgp.md) |
 
-## Additional Information
-
-### Связанные документы
-
-**Детальные описания механизмов:**
-
-- SELinux: [./Mechanisms/SELinux.md](./Mechanisms/SELinux.md)
-- AppArmor: [./Mechanisms/AppArmor.md](./Mechanisms/AppArmor.md)
-- Capabilities: [./Mechanisms/Capabilities.md](./Mechanisms/Capabilities.md)
-- Seccomp: [./Mechanisms/Seccomp.md](./Mechanisms/Seccomp.md)
-- KASLR: [./Mechanisms/KASLR.md](./Mechanisms/KASLR.md)
-
-**Концепции и основы:**
-
-- Права доступа (DAC): [./Concepts/File_Permissions/overview_definitions.md](./Concepts/File_Permissions/overview_definitions.md)
-- Проверка целостности файлов: [./Concepts/file-integrity-checking.md](./Concepts/file-integrity-checking.md)
-
-**Инструменты:**
-
-- fail2ban: [./Tools/fail2ban.md](./Tools/fail2ban.md)
-- GPG/OpenPGP: [./Tools/gpg_and_openpgp.md](./Tools/gpg_and_openpgp.md)
-
-**Смежные темы:**
-
-- Изоляция Linux (Namespaces, Cgroups): [../../Docker/Concepts/linux_isolation.md](../../Docker/Concepts/linux_isolation.md)
-- Управление пользователями: [../SystemAdministration/users_management.md](../SystemAdministration/users_management.md)
+## Дополнительная информация
 
 ### Требования ФСТЭК
 

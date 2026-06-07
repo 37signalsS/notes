@@ -4,7 +4,7 @@
 
 - **`fio` (Flexible I/O Tester):** Утилита для бенчмаркинга и стресс-тестирования систем хранения данных. Эмулирует различные типы дисковой нагрузки и измеряет ключевые метрики производительности.
 - **BW (Bandwidth):** Пропускная способность (МБ/с).
-- **IOPS:** Операций ввода-вывода в секунду.
+- **IOPS (Input/Output Operations Per Second):** Количество операций ввода-вывода в секунду.
 - **Latency (lat):** Задержка выполнения операций (мкс, мс).
 - **Паттерны нагрузки:** Типы доступа к данным (последовательный/случайный, чтение/запись/смешанный).
 - **Механизмы I/O (`ioengine`):** Интерфейсы взаимодействия с подсистемой I/O (`sync`, `libaio`, `io_uring`, `mmap`).
@@ -15,7 +15,7 @@
 
 | Сценарий | Паттерн | Размер блока | Пример |
 | :--- | :--- | :--- | :--- |
-| **База данных (OLTP)** | `randread`, `randwrite` | 4K–8K | PostgreSQL, MySQL |
+| **База данных (OLTP — Online Transaction Processing)** | `randread`, `randwrite` | 4K–8K | PostgreSQL, MySQL |
 | **Файловый сервер** | `read`, `write` | 64K–1M | NFS, Samba |
 | **Веб-сервер** | `randread` | 4K–16K | Статический контент |
 | **Логирование** | `write` (seq) | 16K–128K | Журналы, аудит |
@@ -74,22 +74,23 @@ fio --name=vm_workload --rw=randrw --rwmixread=50 --bs=8k --size=2G \
     --group_reporting --runtime=60 --time_based
 ```
 
-### Тест с временным ограничением
+### Тестирование для etcd
+
+Перед запуском кластера etcd необходимо проверить задержку `fdatasync`:
 
 ```bash
-# Запуск на 60 секунд вместо фиксированного размера
-fio --name=timed_test --rw=randrw --bs=4k --size=1G \
-    --numjobs=4 --iodepth=32 --ioengine=libaio --direct=1 \
-    --runtime=60 --time_based --group_reporting
+fio --rw=write --ioengine=sync --fdatasync=1 --directory=./etcd-data \
+    --size=22m --bs=2300 --name=etcd-test
+# → fdatasync задержка должна быть < 10ms (лучше < 2ms)
 ```
 
-### Тест на конкретном устройстве
+### Бенчмаркинг RBD (RADOS Block Device) в Ceph
 
 ```bash
-# Тест на блочном устройстве (требует root)
-sudo fio --name=block_test --rw=randrw --bs=4k --size=10G \
-    --filename=/dev/sdb --ioengine=libaio --direct=1 \
-    --numjobs=4 --iodepth=32 --group_reporting
+# Тест последовательной записи на RBD-устройство
+fio --name=write --ioengine=libaio --rw=write --bs=4k \
+    --direct=1 --numjobs=1 --size=1G --runtime=60 \
+    --filename=/dev/rbd0
 ```
 
 ### Использование job-файлов
@@ -136,10 +137,6 @@ fio --name=test --rw=randread --bs=4k --size=1G
 
 # JSON для парсинга
 fio --name=test --rw=randread --bs=4k --size=1G --output-format=json
-
-# JSON+ в файл
-fio --name=test --rw=randread --bs=4k --size=1G \
-    --output-format=json+ --output=results.json
 ```
 
 **Ключевые поля вывода:**
@@ -152,7 +149,7 @@ fio --name=test --rw=randread --bs=4k --size=1G \
 ### Рекомендации по тестированию
 
 1. **Тест на пустом диске:** Результаты на заполненном диске могут быть нерепрезентативными.
-2. **Прогрев:** SSD могут показывать разные результаты до и после заполнения SLC-кэша.
+2. **Прогрев:** SSD (Solid State Drive) могут показывать разные результаты до и после заполнения SLC-кэша (Single Level Cell).
 3. **Несколько прогонов:** Запускайте тест 3–5 раз для стабильных результатов.
 4. **Мониторинг:** Используйте `iostat -x 1` параллельно для контроля утилизации.
 5. **Прямой I/O:** `--direct=1` отключает кэширование ядра для честных результатов.
@@ -161,7 +158,7 @@ fio --name=test --rw=randread --bs=4k --size=1G \
 
 | Тип накопителя | Seq Read (MB/s) | Seq Write (MB/s) | Rand Read 4K (IOPS) |
 | :--- | :--- | :--- | :--- |
-| **HDD 7200 RPM** | 100–200 | 80–150 | 100–200 |
+| **HDD (Hard Disk Drive) 7200 RPM** | 100–200 | 80–150 | 100–200 |
 | **SATA SSD** | 500–550 | 450–500 | 50K–100K |
 | **NVMe PCIe 3.0** | 2000–3500 | 1500–3000 | 300K–600K |
 | **NVMe PCIe 4.0** | 5000–7500 | 4000–6500 | 600K–1M+ |
@@ -169,11 +166,11 @@ fio --name=test --rw=randread --bs=4k --size=1G \
 ### Ограничения и предостережения
 
 - **Деструктивный тест:** Тест на блочном устройстве (`/dev/sdX`) уничтожает данные!
-- **Тепловой троттлинг:** NVMe могут снижать производительность при перегреве.
-- **Фоновая нагрузка:** Закройте другие приложения для чистых результатов.
-- **RAID:** Результаты зависят от уровня RAID и контроллера.
+- **Тепловой троттлинг:** NVMe (Non-Volatile Memory Express) могут снижать производительность при перегреве.
+- **RAID (Redundant Array of Independent Disks):** Результаты зависят от уровня RAID и контроллера.
 
-### Дополнительная информация
+### Дополнительные ссылки
 
-- Документация: [официальный manual fio](https://fio.readthedocs.io/), [исходный код](https://github.com/axboe/fio)
-- Связанные темы: [Диагностика ФС и дискового пространства](./filesystem_and_disk_space_diagnostics.md), [Статистика I/O (iostat)](./iostat.md), [Планировщики I/O](../../Core/kernel/io_schedulers.md)
+- [Официальный manual fio](https://fio.readthedocs.io/)
+- [io_uring — асинхронный ввод-вывод](../../Core/kernel/io_uring.md)
+- [Статистика I/O (iostat)](./iostat.md)

@@ -1,10 +1,10 @@
-# Glibc Compatibility (Alpine)
+# Совместимость с Glibc в Alpine Linux
 
 ## Определения
 
 **Проблема несовместимости libc** — ситуация, когда бинарный файл, скомпилированный для одной реализации стандартной библиотеки C, не работает в системе с другой реализацией. Типичный случай — ошибка `file not found` или `error while loading shared libraries` при запуске в Alpine Linux приложения, собранного в Ubuntu/Debian.
 
-Подробное сравнение библиотек: **[Glibc vs Musl](../../Linux/Core/glibc_vs_musl.md)**.
+Подробное сравнение библиотек: **[Сравнение Glibc и Musl](../../Linux/Core/glibc_vs_musl.md)**.
 
 ## Основные концепции
 

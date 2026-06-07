@@ -1,4 +1,4 @@
-# Control Groups (cgroups)
+# Контрольные группы (cgroups)
 
 ## Определения
 
@@ -9,7 +9,7 @@
 - **`namespaces`** отвечают за **изоляцию видимости** (что процесс может *видеть*)
 - **`cgroups`** отвечают за **ограничение потребления** (что процесс может *использовать*)
 
-**Ключевая файловая система:** [cgroupfs](../FileSystems/virtual_filesystems.md#cgroupfs), монтируется в `/sys/fs/cgroup`.
+**Ключевая файловая система:** [cgroupfs](../FileSystems/virtual_filesystems.md#cgroupfs-управление-ресурсами), монтируется в `/sys/fs/cgroup`.
 
 **Основные возможности:**
 
@@ -38,7 +38,7 @@
 
 > **Примечание:** В cgroups v2 некоторые контроллеры могут быть недоступны или иметь отличия в именах параметров.
 
-### Cgroups v1 vs Cgroups v2
+### Сравнение cgroups v1 и cgroups v2
 
 **Cgroups v2** — современный стандарт, используемый по умолчанию в современных дистрибутивах (Fedora 31+, Ubuntu 20.04+, Debian 11+, RHEL 9+).
 
@@ -84,7 +84,7 @@
 
 ## Практические сценарии
 
-### Управление через Systemd
+### Управление через systemd
 
 `systemd` активно использует `cgroups` для управления службами, что является одним из его ключевых преимуществ перед старыми системами инициализации. Каждая служба, запущенная `systemd`, помещается в собственную контрольную группу.
 
@@ -230,15 +230,9 @@ echo <PID> > /sys/fs/cgroup/cpuset/isolated/cgroup.procs
 
 После этого процессы в группе `isolated` будут выполняться **только** на ядрах 2 и 3, используя память NUMA-узла 0. Планировщик Linux не сможет перемещать эти процессы на другие ядра.
 
-#### CPUSET vs CPU affinity (`taskset`)
+#### Сравнение cpuset и taskset
 
-| Характеристика | `cpuset` (cgroups) | `taskset` (CPU affinity) |
-| :--- | :--- | :--- |
-| **Уровень** | Kernel (cgroups) | User-space (`sched_setaffinity`) |
-| **Изоляция памяти NUMA** | ✅ Да | ❌ Нет |
-| **Управление группой процессов** | ✅ Через cgroup.procs | ❌ Только по одному PID |
-| **Наследование** | ✅ Дочерние процессы наследуют ограничения | ❌ Требуется явная установка для каждого процесса |
-| **Интеграция с контейнерами** | ✅ Docker (`--cpuset-cpus`), Kubernetes | ❌ Не используется напрямую |
+Детальное сравнение методов привязки процессов к ядрам (cpuset vs taskset) приведено в разделе [**Сравнение cpuset и taskset**](./cpu_pinning.md#сравнение-cpuset-и-taskset).
 
 #### Применение в контейнеризации
 
@@ -258,7 +252,7 @@ resources:
     cpu: "2"
 ```
 
-> **Связанные темы:** [CPU Pinning](./cpu_pinning.md) — подробное руководство по привязке процессов, [CPU Isolation](./kernel/cpu_isolation.md) — изоляция на уровне ядра (`isolcpus`, `nohz_full`).
+> **Связанные темы:** [CPU Pinning](./cpu_pinning.md) — подробное руководство по привязке процессов, [**Изоляция CPU**](./kernel/cpu_isolation.md) — изоляция на уровне ядра (`isolcpus`, `nohz_full`).
 
 ---
 
@@ -268,10 +262,10 @@ resources:
 
 - **[Namespaces](./namespaces.md)** — механизм изоляции видимости ресурсов
 - **[CPU Pinning](./cpu_pinning.md)** — привязка процессов к ядрам CPU
-- **[CPU Isolation](./kernel/cpu_isolation.md)** — kernel-level изоляция (`isolcpus`)
-- **[Systemd Overview](./systemd/overview.md)** — использование cgroups в systemd
-- **[Docker Isolation](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
-- **[Kernel Interfaces](./kernel/kernel_interfaces.md)** — файловые интерфейсы ядра
+- **[Изоляция CPU](./kernel/cpu_isolation.md)** — kernel-level изоляция (`isolcpus`)
+- **[Обзор systemd](./systemd/overview.md)** — использование cgroups в systemd
+- **[Изоляция Docker](../../Docker/Concepts/linux_isolation.md)** — применение в контейнеризации
+- **[Интерфейсы ядра Linux](./kernel/kernel_interfaces.md)** — файловые интерфейсы ядра
 
 ### Инструменты мониторинга
 
@@ -283,7 +277,7 @@ resources:
 | `crictl stats` | Статистика контейнеров (Kubernetes) | `crictl stats` |
 | `docker stats` | Статистика Docker-контейнеров | `docker stats` |
 
-### Troubleshooting
+### Поиск и устранение неисправностей
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
