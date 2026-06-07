@@ -177,22 +177,8 @@ kubectl drain node-source --ignore-daemonsets --delete-emptydir-data
 
 ### Диагностика и устранение проблем
 
-#### Drain завис из-за PDB
-
-**Проблема:** `error: cannot evict pod as it would violate the pod's disruption budget`.
-**Решение:** временно увеличить число реплик Deployment или изменить PDB.
-
-#### Поды застряли в состоянии Terminating
-
-**Проблема:** Поды не удаляются из-за наличия Finalizers.
-**Решение:** `kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":null}}'`.
-
-#### Проверка истории обслуживания
-
-```bash
-kubectl get events --field-selector reason=SuccessfulDrain
-# → 5m  Normal  SuccessfulDrain  node/node-1  Node node-1 successfully drained
-```
+Подробное руководство по диагностике и решению проблем, возникающих при выселении подов (ошибки PDB, зависшие поды, финализаторы), находится в разделе:
+**[Диагностика проблем обслуживания узла](../Troubleshooting/Common_Errors/NodeUnavailability/maintenance.md)**
 
 ### Лучшие практики
 

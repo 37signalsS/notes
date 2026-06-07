@@ -60,50 +60,9 @@ rotateCertificates: true
 
 ## Практические сценарии
 
-### Проверка статуса kubelet
-
-```bash
-# Проверка статуса сервиса
-systemctl status kubelet
-
-# Просмотр логов
-journalctl -u kubelet -n 100 --no-pager
-
-# Проверка конфигурации
-cat /var/lib/kubelet/config.yaml
-```
-
-### Диагностика проблем
-
-**Симптомы:**
-
-- Статус узла: `NotReady` или `Unknown`
-- Kubelet не отвечает или не запускается
-
-**Причины:**
-
-- Сбой процесса kubelet
-- Ошибка конфигурации
-- Нехватка ресурсов
-- Проблемы с сертификатами
-
-**Решение:**
-
-```bash
-# Перезапуск kubelet
-sudo systemctl restart kubelet
-
-# Проверка сертификатов
-openssl x509 -in /var/lib/kubelet/pki/kubelet.crt -text -noout | grep -A 2 "Validity"
-
-# Обновление сертификатов (kubeadm)
-sudo kubeadm certs renew all
-sudo systemctl restart kubelet
-```
-
 ### Статические поды
 
-Для запуска статических подов разместите манифест в `/etc/kubernetes/manifests/`:
+Для запуска статических подов разместите манифест в директории `/etc/kubernetes/manifests/` (путь настраивается параметром `staticPodPath` в конфиге):
 
 ```yaml
 # /etc/kubernetes/manifests/static-pod.yaml
@@ -117,17 +76,23 @@ spec:
     image: nginx:1.25
 ```
 
-Kubelet автоматически обнаружит манифест и запустит под. Такие поды **не управляются через API** — только через файловую систему.
+Kubelet автоматически обнаружит манифест и запустит под. Такие поды **не управляются через API** — только через файловую систему узла.
 
 **Ключевые особенности статических подов:**
 
-- **Зеркальный Pod в API:** Kubelet автоматически создаёт зеркальный объект Pod в API-сервере для каждого статического пода. Этот объект доступен только для чтения.
-- **Ограничения spec:** Спецификация статического пода не может ссылаться на другие объекты API (ServiceAccount, Secrets, ConfigMap и т.д.), так как kubelet не взаимодействует с API для их разрешения.
-- **Основное применение:** Запуск компонентов control plane (kube-apiserver, kube-controller-manager, kube-scheduler, etcd) в kubeadm-кластерах.
-- **Управление:** Изменения вносятся только через редактирование манифеста в файловой системе.
+- **Зеркальный Pod в API:** Kubelet автоматически создаёт зеркальный объект Pod в API-сервере. Этот объект доступен только для чтения и служит для отображения статуса в `kubectl get pods`.
+- **Ограничения:** Спецификация статического пода не может ссылаться на другие объекты API (Secret, ConfigMap), так как Kubelet работает с ними автономно.
+- **Применение:** Запуск критических компонентов кластера (kube-apiserver, etcd), которые должны работать до того, как Control Plane станет полностью доступен.
 
 ## Дополнительная информация
 
-- [TLS и mTLS в Kubernetes](../Security/tls_and_mtls_in_kubernetes.md)
+### Диагностика и устранение проблем
+
+Подробные инструкции по решению проблем со статусом `NotReady`, ошибок сертификатов и конфигурации агента приведены в разделе:
+**[Диагностика проблем Kubelet](../Troubleshooting/Common_Errors/NodeUnavailability/kubelet_issues.md)**
+
+### Смежные темы
+
 - [Управление сертификатами](../Operations/certificate_management.md)
-- [Диагностика проблем с узлами](../Troubleshooting/Common_Errors/NodeUnavailability/kubelet_issues.md)
+- [Пробы (Probes)](../Base/probes.md)
+- [Версионная совместимость](../Operations/upgrading_clusters.md)

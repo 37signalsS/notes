@@ -1,60 +1,103 @@
-# Pod в состоянии `CrashLoopBackOff`: Дополнительная информация
+# Состояние `CrashLoopBackOff`: Продвинутые темы и лучшие практики
 
-## Автоматизация диагностики
+## Определения
+
+**Продвинутая диагностика CrashLoopBackOff** — применение специализированных инструментов и методик для решения нетипичных проблем, таких как конфликты проб, проблемы с долгим запуском (Cold Start) и сложные взаимозависимости между различными состояниями Pod (например, когда одна ошибка маскирует другую).
+
+Базовые сведения и пошаговый алгоритм поиска неисправностей представлены в разделах:
+
+- **[Определения и концепции](./definitions_and_concepts.md)**
+- **[Диагностика и пошаговый чек-лист](./diagnostics.md)**
+
+## Основные концепции
+
+### Взаимосвязь с другими состояниями
+
+`CrashLoopBackOff` часто является финальной стадией цепочки ошибок. Понимание этой иерархии позволяет быстрее локализовать корень проблемы:
+
+| Состояние-предшественник | Тип связи с CrashLoopBackOff | Рекомендуемое действие |
+|:-------------------------|:-----------------------------|:-----------------------|
+| **ImagePullBackOff** | Предотвращает запуск. Если образ исправлен на нерабочую версию, перейдет в CrashLoopBackOff. | Проверить тег образа и права доступа к реестру. |
+| **CreateContainerConfigError** | Ошибка конфигурации. Исправление может выявить баги приложения (CrashLoopBackOff). | Проверить наличие ConfigMap и Secret. |
+| **OOMKilled** | Непосредственная причина. После убийства процессом OOM, kubelet перезапускает контейнер, что ведет к циклу. | Увеличить лимиты памяти (memory limits). |
+| **Error (Exit Code 1)** | Прямой индикатор падения приложения. | Анализировать логи приложения (`--previous`). |
+
+### Жизненный цикл и пробы (Probes)
+
+Некорректная настройка механизмов проверки здоровья может сама по себе стать причиной `CrashLoopBackOff`:
+
+1. **Конфликт Liveness Probe:** если приложение долго инициализируется, Liveness Probe может убить его до завершения старта.
+2. **Зацикливание из-за зависимостей:** если Liveness Probe проверяет доступность внешней БД, и БД недоступна — под будет бесконечно перезапускаться.
+
+## Практические сценарии
+
+### Сценарий 1: Решение проблемы долгого старта через Startup Probe
+
+Для приложений, которым требуется значительное время на загрузку кэша или миграции, рекомендуется использовать **Startup Probe**. Она блокирует выполнение Liveness и Readiness проб до тех пор, пока приложение не отрапортует о готовности к работе.
+
+```yaml
+spec:
+  containers:
+  - name: heavy-app
+    startupProbe:
+      httpGet:
+        path: /healthz/startup
+        port: 8080
+      failureThreshold: 30
+      periodSeconds: 10
+    # Liveness Probe начнет работать только после успеха Startup Probe
+    livenessProbe:
+      httpGet:
+        path: /healthz/live
+        port: 8080
+```
+
+*В данном примере приложению дается до 300 секунд (30 * 10) на успешный старт.*
+
+### Сценарий 2: Автоматизация сбора диагностических данных
+
+Для оперативного анализа группы подов можно использовать bash-скрипт, собирающий все необходимые данные в один отчет.
 
 ```bash
 #!/bin/bash
-# Скрипт быстрой диагностики CrashLoopBackOff
+# Скрипт быстрой диагностики CrashLoopBackOff для конкретного Pod
 
-POD=$1
+POD_NAME=$1
+NAMESPACE=${2:-default}
 
-echo "=== Статус пода ==="
-kubectl get pod $POD -o wide
+echo "=== [Отчет диагностики для $POD_NAME] ==="
 
-echo -e "\n=== Описание ==="
-kubectl describe pod $POD | grep -A 10 "State:\|Last State:"
+# 1. Проверка текущего состояния
+echo -e "\n1. Статус и коды завершения:"
+kubectl get pod $POD_NAME -n $NAMESPACE -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason} (Exit Code: {.status.containerStatuses[0].lastState.terminated.exitCode})'
 
-echo -e "\n=== Логи (предыдущие) ==="
-kubectl logs $POD --previous --tail=50
+# 2. Извлечение последних событий (Events)
+echo -e "\n2. Последние события:"
+kubectl get events -n $NAMESPACE --field-selector involvedObject.name=$POD_NAME --sort-by='.lastTimestamp' | tail -n 5
 
-echo -e "\n=== События ==="
-kubectl get events --field-selector involvedObject.name=$POD --sort-by='.lastTimestamp'
+# 3. Анализ логов предыдущего запуска
+echo -e "\n3. Фрагмент логов перед падением:"
+kubectl logs $POD_NAME -n $NAMESPACE --previous --tail=20
 ```
 
----
+## Дополнительная информация
 
-## Связь с другими ошибками
+### Свод лучших практик (Best Practices)
 
-| Ошибка | Связь с CrashLoopBackOff |
-|--------|--------------------------|
-| `OOMKilled` | Частая причина CrashLoopBackOff |
-| `ImagePullBackOff` | Предшествует CrashLoopBackOff (образ не скачан) |
-| `CreateContainerConfigError` | Предшествует CrashLoopBackOff (конфигурация) |
-| `Error` (Exit Code 1) | Непосредственная причина |
+1. **Логирование в stdout/stderr:** Kubernetes не собирает логи, записанные во внутренние файлы контейнера. Всегда направляйте потоки логов в стандартные выводы.
+2. **Использование корректных Exit Codes:** настраивайте приложение так, чтобы оно возвращало осмысленные коды ошибок (например, 1 для общих сбоев, специфичные коды для отсутствия БД).
+3. **Принцип "Fail Fast":** не пытайтесь бесконечно ловить исключения внутри приложения, если оно не может работать. Позвольте Kubernetes перезапустить контейнер, но обеспечьте информативные логи.
+4. **Graceful Shutdown:** обеспечьте обработку сигнала `SIGTERM` (Exit Code 143), чтобы приложение успевало закрыть соединения и сохранить состояние.
 
----
+### Ссылки
 
-## Best Practices
-
-| Практика | Описание |
-|----------|----------|
-| **Всегда смотрите `--previous` логи** | Основной источник информации |
-| **Проверяйте Exit Code** | Указывает на тип ошибки |
-| **Используйте startupProbe** | Для приложений с долгим стартом |
-| **Настраивайте livenessProbe корректно** | Избегайте ложных срабатываний |
-| **Логируйте в stdout/stderr** | Kubernetes собирает только эти потоки |
+- **[Жизненный цикл Pod (Pod Lifecycle)](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)** — официальная документация.
+- **[Настройка проб (Probes)](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)** — руководство по конфигурации проверок здоровья.
+- **[Отладка подов (Debug Pods)](https://kubernetes.io/docs/tasks/debug/debug-pod/)** — пошаговое руководство от сообщества Kubernetes.
 
 ---
 
-## Ссылки
+### Связанные файлы
 
-- [Kubernetes Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
-- [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
-- [Debug Pods](https://kubernetes.io/docs/tasks/debug/debug-pod/)
-
----
-
-## Ссылки на связанные файлы
-
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
-- [Практические сценарии](./practical_scenarios.md) — диагностика и решения
+- **[Распространенные случаи и решения](./common_cases_and_solutions.md)** — разбор типовых кейсов и их исправление.
+- **[Диагностика и чек-лист](./diagnostics.md)** — пошаговый алгоритм поиска неисправностей.

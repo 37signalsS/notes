@@ -1,13 +1,13 @@
-# Api Access Forbidden: Методы аутентификации и 401 Unauthorized
+# Api Access Forbidden: методы аутентификации и 401 Unauthorized
 
-## Definitions
+## Определения
 
-**401 Unauthorized** — Kubernetes не смог аутентифицировать запрос. Проблема возникает на этапе проверки личности, до передачи запроса на авторизацию (RBAC).
+**401 Unauthorized** — состояние, при котором Kubernetes не смог аутентифицировать запрос. Проблема возникает на этапе проверки личности (аутентификации), до передачи запроса на уровень авторизации (**RBAC**).
 
-> Различие 401 vs 403: [definitions.md](definitions.md)
-> Полное описание методов аутентификации: [../../../Security/authentication.md](../../../Security/authentication.md)
+> Различие 401 vs 403: [definitions.md](definitions.md).
+> Полное описание методов аутентификации: [../../../../Security/authentication.md](../../../../Security/authentication.md).
 
-## Basic Concepts
+## Основные концепции
 
 ### Путь запроса при 401
 
@@ -32,7 +32,7 @@
 
 > **Важно:** С Kubernetes 1.24+ токены ServiceAccount не сохраняются в Secrets по умолчанию. Используйте `kubectl create token`.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Истёкший токен ServiceAccount
 
@@ -44,30 +44,30 @@ The token provided has expired
 ```
 
 **Диагностика:**
-
-```bash
-# Проверка токена текущего сессии
-kubectl config view --minify -o jsonpath='{.users[0].name}'
-
-# Декодирование токена ServiceAccount (проверка срока)
-kubectl get secret <sa-token-secret> -o jsonpath='{.data.token}' | base64 -d | cut -d'.' -f2 | base64 -d 2>/dev/null | grep exp
-```
+Общий алгоритм проверки токена приведен в **[диагностике 401](diagnostics.md#шаг-2-диагностика-401-unauthorized)**.
 
 **Решение:**
 
 ```bash
 # Kubernetes 1.24+: создание нового токена
 kubectl create token <sa-name> -n <namespace>
+...
+```
 
 # Для долгосрочного токена (срок до 1 года)
+
 kubectl create token <sa-name> -n <namespace> --duration=8760h
 
 # Обновление kubeconfig новым токеном
+
 kubectl config set-credentials <user> --token=<new-token>
 
 # Если токен хранился в Secret — пересоздание
+
 kubectl delete secret <sa-token-secret> -n <namespace>
+
 # Kubernetes автоматически создаст новый токен
+
 ```
 
 ### Сценарий 2: Истёкший клиентский сертификат
@@ -75,7 +75,9 @@ kubectl delete secret <sa-token-secret> -n <namespace>
 **Сообщение:**
 
 ```
+
 Unable to connect to the server: x509: certificate has expired or is not yet valid
+
 ```
 
 **Диагностика:**
@@ -105,34 +107,29 @@ kubectl certificate approve <csr-name>
 ### Сценарий 3: Неверный kubeconfig после смены кластера
 
 **Диагностика:**
-
-```bash
-# Текущий контекст
-kubectl config current-context
-
-# Все доступные контексты
-kubectl config get-contexts
-
-# Проверка credentials
-kubectl config view --minify -o jsonpath='{.users[*].name}'
-```
+Проверьте текущий контекст и доступные учетные записи с помощью **[базовых команд диагностики](diagnostics.md#шаг-2-диагностика-401-unauthorized)**.
 
 **Решение:**
 
 ```bash
 # Переключение контекста
 kubectl config use-context <target-context>
+...
+```
 
 # Обновление токена в kubeconfig
+
 kubectl config set-credentials <user> --token=$(kubectl create token <sa-name> -n <namespace>)
 
 # Обновление сертификата
+
 kubectl config set-credentials <user> \
   --client-certificate=<path-to-cert> \
   --client-key=<path-to-key>
+
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Автоматизация проверки аутентификации
 
@@ -151,9 +148,9 @@ curl -k -H "Authorization: Bearer $TOKEN" \
 
 ### Связанные ресурсы
 
-- Определения 401/403: [definitions.md](definitions.md)
-- Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- SSoT — методы аутентификации: [../../../Security/authentication.md](../../../Security/authentication.md)
-- Управление kubeconfig: [../../../Operations/kubeconfig_and_connection.md](../../../Operations/kubeconfig_and_connection.md)
-- RBAC объекты: [rbac_objects.md](rbac_objects.md)
-- Лучшие практики: [best_practices.md](best_practices.md)
+- [Определения 401/403](definitions.md)
+- [Пошаговая диагностика](diagnostics.md)
+- [Методы аутентификации](../../../../Security/authentication.md)
+- [Управление kubeconfig](../../../../Operations/kubeconfig_and_connection.md)
+- [Объекты RBAC](rbac_objects.md)
+- [Лучшие практики](best_practices.md)

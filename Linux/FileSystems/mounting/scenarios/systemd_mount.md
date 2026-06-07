@@ -1,13 +1,13 @@
-# Definitions
+# Определения
 
-**Systemd mount units** — современный механизм управления монтированием файловых систем в Linux, альтернатива `/etc/fstab`. Позволяет гибко управлять точками монтирования через юниты `systemd`.
+**Systemd mount units** — современный механизм управления монтированием файловых систем в Linux, альтернатива `/etc/fstab` (file systems table). Позволяет гибко управлять точками монтирования через юниты `systemd`.
 
 Основные типы юнитов:
 
 * **`.mount`** — определяет, что и как монтировать; прямой аналог записи в `fstab`.
 * **`.automount`** — монтирование по требованию при первом обращении к каталогу.
 
-# Basic Concepts
+# Основные концепции
 
 ## Преимущества Systemd
 
@@ -36,7 +36,7 @@
 
 ### [Mount]
 
-* `What` — устройство или источник (например, `//server/share`, `UUID=...`)
+* `What` — устройство или источник (например, `//server/share`, `UUID` (Universally Unique Identifier))
 * `Where` — точка монтирования (должна совпадать с именем юнита)
 * `Type` — тип файловой системы
 * `Options` — опции монтирования (аналогично fstab)
@@ -52,15 +52,15 @@
 
 * `WantedBy` — целевая цель для активации (обычно `multi-user.target`)
 
-# Practical Scenarios
+# Практические сценарии
 
-## Scenario 1: Persistent mount with `.mount` unit
+## Сценарий 1: Постоянное монтирование через .mount юнит
 
 Этот сценарий — аналог записи в `fstab` и используется для монтирования ресурсов при загрузке системы.
 
-### Шаг 1: Создание `.mount` юнита
+### Шаг 1: Создание .mount юнита
 
-Создайте файл `/etc/systemd/system/mnt-share.mount` для монтирования сетевой CIFS-папки.
+Создайте файл `/etc/systemd/system/mnt-share.mount` для монтирования сетевой папки CIFS (Common Internet File System).
 
 ```ini
 # /etc/systemd/system/mnt-share.mount
@@ -85,6 +85,7 @@ WantedBy=multi-user.target
 * `After=network-online.target` — гарантирует, что сеть полностью поднята перед монтированием
 * `TimeoutSec=30` — таймаут ожидания монтирования
 * `_netdev` в `Options` — указывает на сетевое устройство
+* `credentials=/etc/smb.cred` — путь к файлу с учетными данными SMB (Server Message Block)
 
 ### Шаг 2: Активация юнита
 
@@ -105,17 +106,17 @@ sudo systemctl status mnt-share.mount
 journalctl -u mnt-share.mount -f
 ```
 
-## Scenario 2: On-demand mounting with `.automount` unit
+## Сценарий 2: Монтирование по требованию через .automount юнит
 
 Этот сценарий позволяет монтировать ресурс только при первом обращении к нему, ускоряя загрузку. Он является альтернативой `autofs`.
 
-> **Альтернатива через `/etc/fstab`:** Вместо создания отдельного `.automount` юнита можно использовать опцию `x-systemd.automount` в `/etc/fstab`. Подробнее см. в разделе [**Файл `/etc/fstab`**](../fstab.md#опции-systemd-x-systemd).
+> **Альтернатива через /etc/fstab:** Вместо создания отдельного `.automount` юнита можно использовать опцию `x-systemd.automount` в `/etc/fstab`. Подробнее см. в разделе [**Файл /etc/fstab**](../fstab.md#опции-systemd-x-systemd).
 
-### Шаг 1: Создание `.mount` юнита
+### Шаг 1: Создание .mount юнита
 
-Сначала создается `.mount` юнит, как в примере выше, но его **не нужно включать (`enable`)**. `systemd` найдет и использует его сам.
+Сначала создается `.mount` юнит, как в примере выше, но его **не нужно включать (enable)**. `systemd` найдет и использует его сам.
 
-### Шаг 2: Создание `.automount` юнита
+### Шаг 2: Создание .automount юнита
 
 Создайте файл `/etc/systemd/system/mnt-share.automount`.
 
@@ -137,7 +138,7 @@ WantedBy=multi-user.target
 
 ### Шаг 3: Активация юнита
 
-Включать и запускать нужно **только `.automount` юнит**.
+Включать и запускать нужно **только .automount юнит**.
 
 ```bash
 # 1. Создать точку монтирования
@@ -157,7 +158,7 @@ ls /mnt/share  # вызовет монтирование
 findmnt /mnt/share  # проверка
 ```
 
-## Scenario 3: Comparison — systemd mount vs fstab
+## Сценарий 3: Сравнение — юниты systemd и fstab
 
 | Критерий | systemd mount units | /etc/fstab |
 | :--- | :--- | :--- |
@@ -168,6 +169,6 @@ findmnt /mnt/share  # проверка
 | **Автомонтирование** | `.automount` юниты | `x-systemd.automount` |
 | **Best practice** | Для сложных сценариев | Для простых локальных ФС |
 
-# Additional Information
+# Дополнительная информация
 
 Традиционный способ монтирования описан в [fstab.md](../fstab.md). Другой механизм монтирования по требованию — [Autofs](./autofs_mount.md). Подробная документация: `man systemd.mount` и `man systemd.automount`. Общий обзор всех способов монтирования — в [главном файле раздела](../index.md).

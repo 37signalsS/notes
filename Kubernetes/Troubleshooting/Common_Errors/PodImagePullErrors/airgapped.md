@@ -1,4 +1,4 @@
-# Pod Image Pull Errors: Air-gapped кластеры
+# Ошибки загрузки образов (Image Pull Errors): Air-gapped кластеры
 
 ## Определения
 
@@ -12,9 +12,9 @@
 
 ## Основные концепции
 
-### Специфика Image Pull Errors в air-gapped средах
+### Специфика ошибок Image Pull в air-gapped средах
 
-В air-gapped кластерах стандартные image pull errors (`ErrImagePull`, `ImagePullBackOff`) возникают по следующим причинам:
+В air-gapped кластерах стандартные ошибки загрузки образов (`ErrImagePull`, `ImagePullBackOff`) возникают по следующим причинам:
 
 | Причина | Симптом | Решение |
 | :--- | :--- | :--- |
@@ -25,7 +25,7 @@
 
 ### Принцип работы с образами
 
-```
+```text
 Машина с интернетом          Закрытый контур
 ┌─────────────────┐         ┌──────────────────────────┐
 │ docker pull     │         │  docker load             │
@@ -38,7 +38,7 @@
                               (image: local-registry:5000/...)
 ```
 
-### imagePullPolicy для air-gapped
+### Политика imagePullPolicy для air-gapped
 
 | Политика | Применение |
 | :--- | :--- |
@@ -96,6 +96,7 @@ curl -k https://local-registry:5000/v2/_catalog
 
 # Проверить наличие образа в registry
 crane digest local-registry:5000/my-app:1.0
+# → sha256:abc123... (если образ доступен)
 
 # Проверить события pod
 kubectl describe pod my-app | grep -A5 Events
@@ -107,7 +108,8 @@ kubectl describe pod my-app | grep -A5 Events
 
 ### Связанные темы
 
-- Полное руководство по offline-развёртыванию: [Kubespray: Offline установка](../../../Installation/Kubespray/offline_installation/offline_definitions.md)
-- Определения image pull errors: [Pod Image Pull Errors: Определения](./definitions.md)
-- Настройка локального registry: [Harbor overview](../../../../Docker/Docker_registries/Harbor/overview.md)
-- Безопасность образов: [Common Errors](./common_errors.md)
+- [Kubespray: Offline установка](../../../Installation/Kubespray/offline_installation/offline_definitions.md) — полное руководство по offline-развёртыванию.
+- [Определения и терминология](./definitions.md) — базовые понятия ошибок загрузки.
+- [Harbor: Обзор](../../../../Docker/Docker_registries/Harbor/overview.md) — настройка локального реестра.
+- [Распространённые ошибки](./common_errors.md) — типовые проблемы и их решения.
+- [Пошаговая диагностика](./diagnostics.md) — алгоритм поиска неисправностей.

@@ -305,5 +305,5 @@ lsblk -J > block_devices.json
 - **`smartctl`**: Мониторинг здоровья дисков — [smartctl](./smartctl/index.md)
 - **`dmidecode`**: Низкоуровневая информация о CPU, памяти, BIOS — [cpu_info](./cpu_info.md)
 - **`fdisk`, `parted`**: Управление разделами — [partitions_and_filesystems](../../FileSystems/partitions_and_filesystems.md)
-- **`mdadm`**: Управление RAID — [raid_management](../../FileSystems/raid_management.md)
+- **`mdadm`**: Управление RAID — [Обзор RAID и mdadm](../../FileSystems/RAID/overview.md)
 - **`lvm2`**: Управление логическими томами — [lvm_disk_replacement](../../FileSystems/LVM/operations/lvm_disk_replacement.md)

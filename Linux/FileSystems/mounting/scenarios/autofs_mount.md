@@ -1,10 +1,10 @@
-# Definitions
+# Определения
 
 **Autofs** — сервис в Linux для монтирования файловых систем по требованию. Автоматически монтирует ресурс при первом обращении и отмонтирует после заданного периода бездействия.
 
-> **Статус:** Autofs 5.x активно поддерживается. Рекомендуется для сложных сценариев (NFS, гетерогенные среды, NIS/LDAP-интеграция). Для простых случаев предпочтительнее [systemd automount](../systemd_automount.md).
+> **Статус:** Autofs 5.x активно поддерживается. Рекомендуется для сложных сценариев: NFS (Network File System), гетерогенные среды, интеграция с NIS (Network Information Service) или LDAP (Lightweight Directory Access Protocol). Для простых случаев предпочтительнее [systemd automount](./systemd_mount.md).
 
-# Basic Concepts
+# Основные концепции
 
 ## Архитектура
 
@@ -17,7 +17,7 @@
 
 | Критерий | Autofs | Systemd automount |
 | :--- | :--- | :--- |
-| Сложность настройки | Выше (два файла конфига) | Ниже (юниты systemd) |
+| Сложность настройки | Выше (два файла конфигурации) | Ниже (юниты systemd) |
 | NFS-шары | Рекомендуется | Подходит |
 | Отладка | `automount -f -v` | `journalctl -u` |
 | Интеграция с systemd | Ограниченная | Нативная |
@@ -28,12 +28,12 @@
 
 | Проблема | Решение |
 | :--- | :--- |
-| Секции SSH через FUSE | Может не работать (disputed) |
+| Сессии SSH (Secure Shell) через FUSE (Filesystem in Userspace) | Может не работать |
 | FUSE + util-linux | Проблемы с размонтированием |
 | Пароли в открытом виде | Использовать credentials-файлы |
 | Блокировка при потере соединения | Использовать мягкие маунты (`soft`) |
 
-# Practical Scenarios
+# Практические сценарии
 
 ## Сценарий 1: Монтирование локального раздела
 
@@ -114,7 +114,7 @@ sudo systemctl restart autofs
 
 ## Сценарий 3: Интеграция с FreeIPA/LDAP
 
-В инфраструктурах с центральным сервером идентификации FreeIPA/LDAP + Kerberos обеспечивает аутентификацию, NFS хранит домашние директории, а autofs монтирует их при первом обращении.
+В инфраструктурах с центральным сервером идентификации FreeIPA (Identity, Policy, Audit) или LDAP в сочетании с Kerberos обеспечивается аутентификация, NFS хранит домашние директории, а autofs монтирует их при первом обращении.
 
 ### Настройка клиента FreeIPA
 
@@ -123,7 +123,7 @@ sudo yum install -y freeipa-client
 sudo ipa-client-install --enable-dns-updates
 ```
 
-После настройки клиент получает список пользователей с сервера, autofs обеспечивает монтирование их домашних директорий.
+Здесь DNS (Domain Name System) используется для автоматического поиска серверов. После настройки клиент получает список пользователей с сервера, autofs обеспечивает монтирование их домашних директорий.
 
 ## Отладка
 
@@ -134,10 +134,10 @@ automount -f --debug           # полная отладка
 journalctl -u autofs -f        # логи сервиса
 ```
 
-# Additional Information
+# Дополнительная информация
 
-**Альтернативы:** [systemd mount units](../systemd_mount.md) для простых сценариев, [udisks2](https://wiki.archlinux.org/title/Udisks2) для desktop-сред.
+### Связанные темы
 
-**Источники:** [ArchWiki: Autofs](https://wiki.archlinux.org/title/Autofs), [Ubuntu: Autofs](https://help.ubuntu.com/community/Autofs).
-
-**Смежные разделы:** [NFS](../../../Networking/Services/nfs/index.md), [/etc/fstab](../fstab.md), [обзор раздела монтирования](../index.md).
+* **[NFS (Network File System)](../../../Networking/Services/nfs/index.md)** — основной протокол для Autofs
+* **[Systemd mount units](./systemd_mount.md)** — современная альтернатива
+* **[Файл /etc/fstab](../fstab.md)** — статическое монтирование

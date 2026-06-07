@@ -1,12 +1,12 @@
-# Api Access Forbidden: RBAC объекты
+# Api Access Forbidden: объекты RBAC
 
-## Definitions
+## Определения
 
-**RBAC-объекты** — сущности Kubernetes, определяющие кто (`subjects`) и к чему (`rules`) имеет доступ. При ошибках 403 проблема всегда в одном из этих объектов или их связях.
+**Объекты RBAC (Role-Based Access Control — управление доступом на основе ролей)** — сущности Kubernetes, определяющие кто (`subjects`) и к чему (`rules`) имеет доступ. При ошибках 403 проблема всегда заключается в конфигурации одного из этих объектов или их связей.
 
 > Полное описание RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Связь объектов RBAC
 
@@ -39,25 +39,17 @@ Resources (к чему?)
 | ClusterRole привязан через RoleBinding без namespace | 403 — ограничение scope | Проверить `metadata.namespace` |
 | Неправильный `apiGroups` | 403 — ресурс не найден | Сравнить `apiGroups` с ресурсом |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Сценарий 1: Диагностика через проверку RBAC-объектов
+### Сценарий 1: Исследование связей RBAC
 
-**Проблема:** 403 на чтение pods.
+Для пошагового анализа цепочки `Subject -> RoleBinding -> Role` используйте **[руководство по проверке привязок](diagnostics.md#шаг-5-проверка-привязок-ролей)**.
 
-```bash
-# 1. SA пода
-kubectl get pod <pod> -o jsonpath='{.spec.serviceAccountName}'
+Основные шаги:
 
-# 2. RoleBinding для SA
-kubectl get rolebinding -n <ns> -o wide | grep <sa-name>
-
-# 3. Rules привязанной роли
-kubectl get rolebinding <binding-name> -n <ns> -o yaml
-
-# 4. Содержимое Role
-kubectl get role <role-name> -n <ns> -o yaml
-```
+1. Определение **SA (ServiceAccount)** пода.
+2. Поиск привязок (**RoleBinding**) для этого субъекта.
+3. Проверка правил (**rules**) в связанной роли.
 
 ### Сценарий 2: Использование встроенных ClusterRole
 
@@ -116,7 +108,7 @@ kubectl auth can-i get deployments \
   --as=system:serviceaccount:my-ns:my-sa -n my-ns
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Соответствие ресурсов и apiGroups
 
@@ -130,8 +122,8 @@ kubectl auth can-i get deployments \
 
 ### Связанные ресурсы
 
-- SSoT — RBAC обзор: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
-- SSoT — роли: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
-- SSoT — привязки: [../../../Security/rbac/bindings.md](../../../Security/rbac/bindings.md)
+- Обзор RBAC: [../../../../Security/rbac/rbac_overview.md](../../../../Security/rbac/rbac_overview.md)
+- Роли: [../../../../Security/rbac/roles.md](../../../../Security/rbac/roles.md)
+- Привязки: [../../../../Security/rbac/bindings.md](../../../../Security/rbac/bindings.md)
 - Распространённые 403: [common.md](common.md)
 - Диагностика: [diagnostics.md](diagnostics.md)

@@ -1,181 +1,151 @@
-# Pod Evicted: QoS и Eviction Manager
+# Выселение подов: Классы QoS и работа Менеджера выселения
 
-## Definitions
+## Определения
 
-**Eviction Manager** — компонент kubelet, который мониторит ресурсы узла и принимает решения о выселении подов при достижении eviction thresholds.
+**Менеджер выселения (Eviction Manager)** — компонент kubelet, который непрерывно отслеживает использование системных ресурсов на узле и принимает решение о принудительном завершении подов при достижении критических порогов (eviction thresholds).
 
-**QoS-класс** — категория пода, определяющая приоритет при выселении. Присваивается при создании пода на основе `requests` и `limits`.
+**Класс QoS (Quality of Service — качество обслуживания)** — категория приоритетности пода, определяющая его выживаемость при дефиците ресурсов. Класс присваивается автоматически на основе указанных запросов (`requests`) и лимитов (`limits`).
+Подробное описание классов приведено в файле: **[Управление ресурсами: QoS](../../../Scheduling/qos_limit_and_requests.md)**.
 
-**Working set memory** — RSS + unevictable cache, используемая Eviction Manager для принятия решений, а не общее потребление памяти.
+**Рабочий набор памяти (Working set memory)** — объем памяти (RSS + кэш, который нельзя освободить), используемый Менеджером выселения для оценки реального потребления.
+Подробнее: **[Выселение по памяти: Расчет доступной памяти](./memory_eviction.md#расчет-доступной-памяти-в-kubelet)**.
 
-## Basic Concepts
+## Основные концепции
 
-### QoS и порядок выселения
+### Очередность выселения по классам QoS
 
-При активации Eviction Manager поды выселяются в строгом порядке:
+При нехватке памяти (`MemoryPressure`) или диска (`DiskPressure`) Менеджер выселения удаляет поды в следующем порядке:
 
-```
-MemoryPressure / DiskPressure
-    ↓
-1. BestEffort — по working set (больше потребляет → первый)
-    ↓
-2. Burstable — по % превышения requests (больше超额 → первый)
-    ↓
-3. Guaranteed — только если 1 и 2 не освободили ресурсы
-```
+1. **`BestEffort`** — выселяются первыми.
+2. **`Burstable`** — выселяются вторыми, если превышают свои запросы (`requests`).
+3. **`Guaranteed`** — выселяются в последнюю очередь.
 
-| QoS Класс | Условия | Приоритет вытеснения | Ограничение OOM |
-|-----------|---------|---------------------|-----------------|
-| **`BestEffort`** | Нет `requests`/`limits` | **Первые** | Нет защиты |
-| **`Burstable`** | `requests` < `limits` | **Вторые** | OOMKill при `limits.memory` |
-| **`Guaranteed`** | `requests` == `limits` | **Последние** | OOMKill при `limits.memory` |
+| Класс QoS | Описание ресурсов | Очередность выселения | Защита от OOMKilled |
+|-----------|-------------------|-----------------------|---------------------|
+| **`BestEffort`** | `requests` и `limits` отсутствуют | Первая | Нет |
+| **`Burstable`** | `requests` < `limits` | Вторая | До уровня `limits` |
+| **`Guaranteed`** | `requests` == `limits` | Последняя | До уровня `limits` |
 
-> Полное описание QoS: [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md)
+### Ранжирование подов внутри одного класса
 
-### Как Eviction Manager ранжирует поды внутри QoS
+Если на узле много подов одного класса, kubelet использует следующие критерии для выбора цели:
 
-**BestEffort:**
+#### Класс BestEffort
 
-```
-Сортировка: working set memory (по убыванию)
-→ Под с наибольшим потреблением → первый на eviction
-```
+Поды сортируются по объему потребляемого рабочего набора памяти (`working set memory`).
 
-**Burstable:**
+* **Кандидат на выселение:** Под с наибольшим фактическим потреблением памяти.
 
-```
-Сортировка: (current_usage - requests) / (limits - requests)  (по убыванию)
-→ Под с наибольшим превышением requests → первый на eviction
-```
+#### Класс Burstable
 
-**Guaranteed:**
+Поды ранжируются на основе того, насколько их текущее потребление превышает заявленные запросы (`requests`).
 
-```
-Выселяются только если BestEffort + Burstable не освободили достаточно ресурсов
-→ Сортировка по working set (как BestEffort)
-```
+* **Кандидат на выселение:** Под с наибольшим относительным превышением `requests`. Поды, не превышающие свои запросы, не выселяются до удаления всех нарушителей.
 
-### Workflow Eviction Manager
+#### Класс Guaranteed
 
-```
-kubelet проверяет ресурсы каждые 10s
-    ↓
-Доступная память/disk < evictionHard threshold
-    ↓
-Eviction Manager активируется
-    ↓
-1. Сортировка подов по QoS + потреблению
-2. Graceful termination самого «дорогого» пода
-3. Ожидание освобождения ресурсов
-4. Повторная проверка
-    ↓
-Ресурсы освобождены → Stop
-Или
-Все поды класса выселены → следующий QoS класс
-```
+Выселяются редко. Ранжирование происходит по объему потребления (аналогично `BestEffort`), если системные процессы требуют освобождения ресурсов.
 
-### Grace period при eviction
+### Алгоритм работы Менеджера выселения
 
-| Параметр | Описание | Значение по умолчанию |
-|----------|----------|----------------------|
-| `evictionMaxPodGracePeriod` | Максимальный grace period для выселяемых подов | 120s |
-| `terminationGracePeriodSeconds` | Grace period пода (из spec) | 30s |
-| **Итоговый grace** | `min(pod.grace, evictionMaxPodGracePeriod)` | min(30s, 120s) = 30s |
+1. **Мониторинг:** Kubelet проверяет состояние ресурсов каждые 10 секунд (по умолчанию).
+2. **Триггер:** Ресурсы падают ниже жесткого порога (`evictionHard`).
+3. **Сортировка:** Создается список кандидатов на основе QoS и превышения запросов.
+4. **Удаление:** Выбирается наиболее затратный под, ему отправляется сигнал завершения.
+5. **Цикл:** Kubelet ожидает освобождения ресурсов и повторяет процесс при необходимости.
 
-## Practical Scenarios
+### Время на завершение при выселении
 
-### Диагностика QoS-класса пода
+При выселении kubelet игнорирует длительный период ожидания из спецификации пода для быстрого освобождения ресурсов:
 
-Команды диагностики и примеры использования: [Управление ресурсами: Requests, Limits, QoS](../../../Scheduling/qos_limit_and_requests.md#проверка-qos-класса-пода).
+| Параметр | Описание | Значение |
+|----------|----------|----------|
+| `evictionMaxPodGracePeriod` | Лимит времени на завершение при выселении | 0s для Hard, до 120s для Soft |
+| `terminationGracePeriodSeconds` | Период завершения из спецификации пода | Обычно 30s |
+| **Итоговое время** | Минимальное из двух значений | `min(pod_grace, eviction_max_grace)` |
 
-### Анализ: почему под был выселен
+## Практические сценарии
 
-**Шаг 1: Проверка QoS-класса**
+### Анализ причин выселения
 
-```bash
-kubectl describe pod <evicted-pod>
-# В разделе Events:
-# Reason: Evicted
-# Message: The node was low on resource: memory.
-```
+Для понимания, почему под был выбран первым, необходимо выполнить следующие действия:
 
-**Шаг 2: Проверка, был ли под BestEffort**
+1. **Проверка QoS-класса выселенного пода**
 
-```bash
-kubectl get pod <evicted-pod> -o jsonpath='{.spec.containers[*].resources}'
-# Пустой вывод → BestEffort → первый кандидат на eviction
-```
+   ```bash
+   kubectl describe pod <pod-name>
+   # Поиск строки: QoS Class: BestEffort
+   ```
 
-**Шаг 3: Проверка потребления памяти**
+2. **Анализ событий выселения**
 
-```bash
-# Метрика working set (если доступна через metrics-server)
-kubectl top pod --all-namespaces --sort-by=memory | head -20
-```
+   ```bash
+   kubectl get events --field-selector reason=Eviction
+   # Пример сообщения: The node was low on resource: memory.
+   ```
 
-### Предотвращение через Guaranteed QoS
+3. **Проверка текущего потребления**
+
+   ```bash
+   kubectl top pod -n <namespace> --sort-by=memory
+   ```
+
+### Использование Guaranteed QoS для защиты критических узлов
+
+Для баз данных и ключевых API рекомендуется класс `Guaranteed`.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: critical-app
+  name: critical-service
 spec:
   containers:
   - name: app
-    image: critical-app:latest
+    image: my-app:1.0
     resources:
       requests:
-        memory: "512Mi"
-        cpu: "500m"
+        memory: "1Gi"
+        cpu: "1"
       limits:
-        memory: "512Mi"   # == requests → Guaranteed
-        cpu: "500m"       # == requests → Guaranteed
+        memory: "1Gi"   # requests == limits -> Guaranteed
+        cpu: "1"
 ```
 
-> **Важно:** Guaranteed защищает только от Node Pressure Eviction. От OOMKilled не защищает — при превышении `limits.memory` контейнер будет убит OOM Killer.
+### Настройка мягкого выселения в kubelet
 
-### Настройка kubelet для мягкой eviction
+Мягкое выселение позволяет подам завершиться корректно до критического исчерпания ресурсов.
 
 ```yaml
 # /var/lib/kubelet/config.yaml
 evictionHard:
-  memory.available: "200Mi"      # Жёсткий порог
+  memory.available: "200Mi"      # Немедленное выселение
 evictionSoft:
-  memory.available: "500Mi"      # Мягкий порог — раньше предупреждаем
+  memory.available: "500Mi"      # Начало процесса выселения
 evictionSoftGracePeriod:
-  memory.available: 2m           # 2 минуты до начала eviction
-evictionMaxPodGracePeriod: 120   # Максимальный grace для подов
+  memory.available: 2m           # Время на удержание порога
+evictionMaxPodGracePeriod: 60    # Максимальное время на завершение
 ```
 
-> Soft thresholds дают подам время на graceful shutdown до начала принудительной eviction.
+## Дополнительная информация
 
-## Additional Information
-
-### Сравнение защиты QoS
+### Сравнение механизмов защиты
 
 | Угроза | BestEffort | Burstable | Guaranteed |
-|--------|-----------|-----------|------------|
-| **Node Pressure Eviction** | ❌ Первые на вылет | ⚠️ Вторые | ✅ Последние |
-| **OOMKilled** | ❌ Нет limits → реже | ⚠️ При превышении limits | ⚠️ При превышении limits |
-| **Taint-based Eviction** | ❌ Без toleration | ❌ Без toleration | ❌ Без toleration |
-| **Drain (Eviction API)** | ❌ Без PDB | ❌ Без PDB | ✅ С PDB |
+|--------|------------|-----------|------------|
+| **Node Pressure Eviction** | Выселяются первыми | Вторые (при превышении requests) | Последние |
+| **OOMKilled** | Минимальный приоритет | При превышении limits | При превышении limits |
+| **Taint-based Eviction** | Выселяются без tolerations | Выселяются без tolerations | Выселяются без tolerations |
 
-### Best Practices
+### Рекомендации
 
-| Практика | Описание |
-|----------|----------|
-| **Избегайте BestEffort в production** | Всегда указывайте requests/limits |
-| **Burstable для большинства приложений** | requests на минимуме, limits с запасом |
-| **Guaranteed для критичных сервисов** | Базы данных, очереди сообщений |
-| **Мониторьте распределение QoS** | Алерт на % BestEffort подов |
-| **Используйте LimitRange** | Автоматические defaults для namespace |
+* **Минимизация BestEffort:** В продуктивной среде всегда указывайте `requests`.
+* **Баланс Burstable:** Устанавливайте `requests` на уровне среднего потребления, а `limits` — на уровне пикового.
+* **Использование LimitRange:** Настройте лимиты по умолчанию для предотвращения появления подов без ресурсов.
 
-### Связанные файлы
+### Смотрите также
 
-- **Определения:** [definitions.md](./definitions.md) — типы eviction, thresholds
-- **Memory eviction:** [memory_eviction.md](./memory_eviction.md) — нехватка памяти
-- **Disk eviction:** [disk_eviction.md](./disk_eviction.md) — нехватка диска
-- **QoS SSoT:** [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md) — полное руководство по QoS
-- **Профилактика:** [prevention.md](./prevention.md) — monitoring, best practices
-- **Kubelet:** [kubelet.md](../../../Concepts/kubelet.md) — конфигурация kubelet
+* [Pod Evicted: Определения](./definitions.md) — базовые типы выселения.
+* [Выселение по памяти](./memory_eviction.md) — диагностика при MemoryPressure.
+* [Управление ресурсами: QoS](../../../Scheduling/qos_limit_and_requests.md) — полный обзор классов.
+* [OOMKilled](../oomkilled_pods.md) — отличие системного убийства процесса от выселения.

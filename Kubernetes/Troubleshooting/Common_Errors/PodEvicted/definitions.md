@@ -1,97 +1,56 @@
 # Pod Evicted: Определения
 
-## Definitions
+## Определения
 
-**`Evicted`** — статус пода, означающий, что Kubernetes принудительно выселил под с узла. Происходит при нехватке ресурсов на узле (память, диск, PID) или при выводе узла из эксплуатации.
+**`Evicted` (Выселен)** — статус пода, означающий, что Kubernetes принудительно завершил работу пода на узле. Это происходит при нехватке системных ресурсов (память, диск, PID) или при выполнении административных задач (например, обслуживание узла).
 
-**Eviction Manager** — компонент kubelet, который мониторит ресурсы узла и принимает решения о выселении подов при достижении eviction thresholds.
+**Менеджер выселения (Eviction Manager)** — компонент kubelet, который отслеживает использование ресурсов узла и инициирует процесс удаления подов при достижении критических пороговых значений (eviction thresholds).
 
-**QoS (Quality of Service)** — класс пода, определяющий приоритет при выселении: `BestEffort` → `Burstable` → `Guaranteed`.
+**QoS (Quality of Service — качество обслуживания)** — класс пода, определяющий его приоритет при распределении ресурсов и очередность выселения: `BestEffort` → `Burstable` → `Guaranteed`.
 
-## Basic Concepts
+## Основные концепции
 
-### Типы eviction
+### Типы выселения (eviction)
 
 | Тип | Инициатор | Описание |
 |-----|-----------|----------|
-| **Node Pressure Eviction** | kubelet (автоматически) | При нехватке ресурсов на узле |
-| **API-Initiated Eviction** | Пользователь/контроллер | Через Eviction API (drain, PDB) |
-| **Taint-Based Eviction** | Control Plane | При недоступности узла (`NoExecute`) |
+| **Node Pressure Eviction** | kubelet (автоматически) | Происходит при критической нехватке ресурсов на узле (давление на ресурсы) |
+| **API-Initiated Eviction** | Пользователь или контроллер | Через API выселения (Eviction API), например, при `kubectl drain` или работе PDB (Pod Disruption Budget — бюджет прерывания подов) |
+| **Taint-Based Eviction** | Control Plane (панель управления) | Выселение подов с узлов, имеющих taints (ограничения) с эффектом `NoExecute` |
 
-### Node Pressure Conditions
+### Состояния нехватки ресурсов (Node Pressure Conditions)
 
-| Condition | Описание | Threshold (по умолчанию) |
+| Состояние | Описание | Порог (по умолчанию) |
 |-----------|----------|-------------------------|
-| **`MemoryPressure`** | Нехватка памяти | `< 100Mi` или `< 5%` |
-| **`DiskPressure`** | Нехватка места на диске | `< 10%` или `< 1Gi` |
-| **`PIDPressure`** | Исчерпание PID | Зависит от ОС |
+| **`MemoryPressure`** | Нехватка оперативной памяти (RAM) | Свободно `< 100Mi` или `< 5%` |
+| **`DiskPressure`** | Нехватка места на диске | Свободно `< 10%` или `< 1Gi` |
+| **`PIDPressure`** | Исчерпание доступных идентификаторов процессов (PID) | Зависит от настроек ОС и kubelet |
 
-### Eviction Workflow
+### Процесс выселения (Eviction Workflow)
 
-```
-Ресурсы узла < eviction threshold
-    ↓
-Eviction Manager активируется
-    ↓
-Сортировка подов по QoS и потреблению
-    ↓
-Выселение подов (начиная с BestEffort)
-    ↓
-Ресурсы освобождены → Stop
-```
-
-### QoS и приоритет вытеснения
-
-| QoS Класс | Условия | Приоритет вытеснения |
-|-----------|---------|---------------------|
-| **`BestEffort`** | Нет `requests`/`limits` | **Первые** |
-| **`Burstable`** | `requests` < `limits` | **Вторые** |
-| **`Guaranteed`** | `requests` == `limits` | **Последние** |
+1. Ресурсы узла падают ниже установленного порога (eviction threshold).
+2. Активируется Менеджер выселения (Eviction Manager).
+3. Поды сортируются на основе их класса QoS и фактического потребления ресурсов.
+4. Происходит выселение подов (начиная с класса `BestEffort`).
+5. Процесс останавливается, как только ресурсы узла возвращаются в безопасные пределы.
 
 ### Сравнение Eviction и OOMKilled
 
-| Характеристика | Eviction | OOMKilled |
+| Характеристика | Eviction (Выселение) | OOMKilled (Убийство по памяти) |
 |----------------|----------|-----------|
-| **Инициатор** | Eviction Manager / kubelet | OOM Killer (ядро) |
-| **Причина** | Нехватка ресурсов на узле | Превышен `limits.memory` контейнера |
-| **Статус** | `Evicted` | `OOMKilled` (Reason в Last State) |
-| **QoS влияние** | Выселение по приоритету | Не зависит от QoS |
-| **Решение** | Освободить ресурсы узла | Увеличить limits или оптимизировать приложение |
+| **Инициатор** | Менеджер выселения / kubelet | OOM Killer (механизм ядра Linux) |
+| **Причина** | Общая нехватка ресурсов на всем узле | Превышен лимит памяти (`limits.memory`) конкретного контейнера |
+| **Статус** | `Evicted` | `OOMKilled` (в поле Reason состояния Last State) |
+| **Влияние QoS** | Выселение строго по приоритету классов | Зависит от лимитов, класс QoS вторичен |
+| **Решение** | Оптимизация ресурсов узла или масштабирование | Увеличение лимитов контейнера или устранение утечек памяти |
 
-## Practical Scenarios
+## Дополнительная информация
 
-### Диагностика
+### Конфигурация порогов выселения
 
-1. **Проверка статуса:** `kubectl describe pod <pod-name>` → `Reason: Evicted`
-2. **Проверка узла:** `kubectl describe node <node-name>` → Conditions
-3. **События eviction:** `kubectl get events --field-selector reason=Eviction`
-4. **Потребление ресурсов:** `kubectl top node`, `kubectl top pod`
-
-### Основные сценарии
-
-| Сценарий | Сообщение | Решение |
-|----------|-----------|---------|
-| **MemoryPressure** | `low on resource: memory` | Увеличить limits, добавить узлы, оптимизировать приложение |
-| **DiskPressure** | `low on resource: ephemeral-storage` | Очистка логов/образов, увеличить volume |
-| **Drain** | `evicted by user request` | Штатная процедура: cordon → drain → uncordon |
-| **Taint NoExecute** | `Marking for deletion Pod` | Добавить toleration или устранить причину taint |
-
-### Удаление выселенных подов
-
-```bash
-# Удаление всех выселенных подов в namespace
-kubectl delete pods --field-selector status.reason=Evicted -n <namespace>
-
-# Удаление всех выселенных подов в кластере
-kubectl delete pods --field-selector status.reason=Evicted --all-namespaces
-```
-
-## Additional Information
-
-### Eviction thresholds в kubelet
+Настройка порогов производится в файле конфигурации kubelet (обычно `/var/lib/kubelet/config.yaml`).
 
 ```yaml
-# /var/lib/kubelet/config.yaml
 evictionHard:
   memory.available: "200Mi"
   nodefs.available: "10%"
@@ -101,30 +60,8 @@ evictionSoftGracePeriod:
   memory.available: 2m
 ```
 
-### Best Practices
+### Смотрите также
 
-| Практика | Описание |
-|----------|----------|
-| **Всегда указывайте `requests` и `limits`** | Избегайте QoS `BestEffort` |
-| **Используйте `Guaranteed` для критичных подов** | Максимальная защита от eviction |
-| **Настройте PDB** | Защита от массового выселения при drain |
-| **Мониторьте ресурсы узлов** | Алерты на Memory/Disk Pressure |
-| **Используйте Cluster Autoscaler** | Автоматическое масштабирование |
-
-### Связанные файлы
-
-- **Диагностика:** [diagnostics.md](./diagnostics.md) — пошаговый чек-лист
-- **Memory eviction:** [memory_eviction.md](./memory_eviction.md) — нехватка памяти
-- **Disk eviction:** [disk_eviction.md](./disk_eviction.md) — нехватка диска
-- **QoS детали:** [qos_and_eviction.md](./qos_and_eviction.md) — QoS и Eviction Manager
-- **PDB и Taints:** [pdb_and_taint_eviction.md](./pdb_and_taint_eviction.md) — PDB и taint-based eviction
-- **Обслуживание:** [maintenance_eviction.md](./maintenance_eviction.md) — drain процедура
-- **Профилактика:** [prevention.md](./prevention.md) — monitoring, alerts, best practices
-- **QoS общий:** [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md)
-- **OOMKilled:** [oomkilled_pods.md](../oomkilled_pods.md) — отличие от eviction
-
-### External Links
-
-- [Node Pressure Eviction](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/)
-- [Pod Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)
-- [Pod QoS](https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/)
+- [Диагностика выселения](./diagnostics.md) — пошаговый алгоритм поиска причин.
+- [Профилактика выселения](./prevention.md) — лучшие практики и настройка оповещений.
+- [OOMKilled](../oomkilled_pods.md) — разбор ошибок нехватки памяти контейнера.

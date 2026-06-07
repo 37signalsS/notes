@@ -1,14 +1,14 @@
-# Pod Terminating: Finalizer и CSI проблемы
+# Pod Terminating — финализаторы и проблемы CSI
 
 ## Определения
 
-**Finalizer** — механизм защиты от удаления: API server не удаляет объект из etcd, пока массив `metadata.finalizers` не станет пустым. Каждый finalizer — это строка-идентификатор контроллера, ответственного за cleanup.
+**Финализатор (Finalizer)** — механизм защиты от удаления: API server не удаляет объект из `etcd`, пока массив `metadata.finalizers` не станет пустым. Каждый финализатор представляет собой строку-идентификатор контроллера, ответственного за очистку (cleanup).
 
-**VolumeAttachment** — объект Kubernetes, представляющий присоединение тома (PersistentVolume) к узлу. Управляется CSI external-attacher.
+**VolumeAttachment** — объект Kubernetes, представляющий операцию присоединения тома (PersistentVolume) к узлу. Управляется компонентом `external-attacher` CSI-драйвера.
 
-**CSI driver (Container Storage Interface)** — стандартный плагин для подключения внешних хранилищ к Pod. Состоит из controller-пода (attacher, provisioner) и node DaemonSet.
+**CSI-драйвер (Container Storage Interface driver)** — стандартный интерфейс для подключения внешних систем хранения к Kubernetes. Состоит из центральных контроллеров (attacher, provisioner) и агентов на узлах (node plugin в виде DaemonSet).
 
-**`external-attacher/<driver-name>`** — финализатор, добавляемый CSI external-attacher контроллером. Блокирует удаление пода до отсоединения тома.
+**`external-attacher/<driver-name>`** — стандартный финализатор, добавляемый контроллером `external-attacher`. Блокирует удаление объекта Pod до успешного подтверждения отсоединения тома (detach).
 
 ---
 
@@ -16,181 +16,134 @@
 
 ### Механизм блокировки удаления
 
-```
-kubectl delete pod
-    ↓
-deletionTimestamp установлен
-    ↓
-API server проверяет metadata.finalizers
-    ↓
-finalizers не пустые → pod в Terminating
-    ↓
-Контроллер finalizer выполняет cleanup
-    ↓
-Контроллер удаляет свой finalizer из массива
-    ↓
-finalizers пустые → объект удалён из etcd
-```
+Процесс удаления объекта с финализаторами:
 
-### Типичные finalizers блокирующие удаление
+1. Выполнение команды `kubectl delete`.
+2. API server устанавливает `deletionTimestamp`.
+3. API server проверяет наличие финализаторов в `metadata.finalizers`.
+4. Если список не пуст — объект переходит в состояние `Terminating`, но остается в `etcd`.
+5. Соответствующий контроллер (например, CSI) выполняет операции очистки.
+6. Контроллер удаляет свой идентификатор из списка финализаторов.
+7. Когда список становится пустым, API server окончательно удаляет объект.
 
-| Finalizer | Контроллер | Что блокирует |
-|-----------|------------|---------------|
-| `external-attacher/<csi-driver>` | CSI external-attacher | Volume detachment |
-| `kubernetes.io/pvc-protection` | PVC protector controller | Удаление PVC |
-| `foregroundDeletion` | Garbage collector | Удаление зависимостей |
-| `storageos.com` | StorageOS | StorageOS volume |
-| `rbd.csi.ceph.com` | Ceph RBD CSI | Ceph RBD image |
+### Типичные финализаторы, блокирующие удаление
 
-### Роль CSI driver в блокировке
+| Финализатор | Контроллер | Описание блокировки |
+| :--- | :--- | :--- |
+| `external-attacher/<csi-driver>` | CSI external-attacher | Ожидание отсоединения тома (Volume detachment). |
+| `kubernetes.io/pvc-protection` | PVC protection controller | Защита PVC от удаления, пока он используется подом. |
+| `foregroundDeletion` | Garbage Collector | Ожидание удаления дочерних объектов. |
+| `kubernetes.io/pod-protection` | Kubelet / API server | Общая защита жизненного цикла пода. |
 
-CSI driver состоит из компонентов, участвующих в lifecycle volumes:
+### Роль CSI-драйвера в блокировке
 
-- **external-attacher** — управление VolumeAttachment (attach/detach)
-- **external-provisioner** — создание/удаление PV
-- **node DaemonSet** — mount/unmount на узле
+CSI-драйвер управляет жизненным циклом томов через несколько компонентов:
 
-Проблема в любом компоненте → finalizer не удаляется → pod зависает в Terminating.
+- **external-attacher** — управляет объектами `VolumeAttachment` (операции attach/detach).
+- **external-provisioner** — создание и удаление физических томов.
+- **node plugin (DaemonSet)** — операции монтирования и размонтирования (mount/unmount) на файловой системе узла.
 
-Общая диагностика: [Diagnostics](./diagnostics.md). Определения: [Definitions](./definitions.md).
+Зависание пода в `Terminating` часто вызвано тем, что `external-attacher` не может завершить операцию `detach` и снять финализатор.
+
+Подробная диагностика: [Диагностика](./diagnostics.md). Базовые термины: [Определения](./definitions.md).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Finalizer не удаляется
+### Сценарий 1: Финализатор CSI не удаляется
 
 **Симптом:**
+Под находится в состоянии `Terminating`, в списке финализаторов присутствует запись `external-attacher/...`.
 
-```
-kubectl get pod <pod-name>
-NAME      STATUS       AGE
-my-pod    Terminating  45m
-
+```bash
 kubectl get pod <pod-name> -o jsonpath='{.metadata.finalizers}'
-[external-attacher/ebs-csi-aws-com]
+# → ["external-attacher/ebs.csi.aws.com"]
 ```
 
-**Причина:** CSI controller (external-attacher) не может завершить detachment — проблема с cloud provider API, таймауты, rate limiting.
+**Причина:** Контроллер `external-attacher` не может выполнить `detach` из-за ошибок Cloud Provider API, таймаутов или лимитов (rate limiting).
 
 **Диагностика:**
 
 ```bash
-# 1. Проверка CSI controller
-kubectl get pods -n kube-system -l app=csi-driver
+# 1. Проверка статуса компонентов CSI
+kubectl get pods -n kube-system -l app.kubernetes.io/instance=<driver-name>
 
-# 2. Проверка VolumeAttachment
+# 2. Поиск связанных VolumeAttachment
 kubectl get volumeattachment | grep <pod-uid>
 
-# 3. Детали VolumeAttachment
+# 3. Анализ ошибок в VolumeAttachment
 kubectl describe volumeattachment <attachment-name>
-# Искать: ошибки detachment, timeout, API errors
+# Искать: FailedDetachVolume, таймауты API
 
-# 4. Логи CSI controller
-kubectl logs -n kube-system -l app=csi-driver --tail=100
+# 4. Проверка логов контроллера
+kubectl logs -n kube-system -l app=csi-attacher -c csi-attacher --tail=100
 ```
 
-**Решение — Вариант A: Удаление VolumeAttachment:**
+**Решение А: Удаление зависшего VolumeAttachment**
+Если контроллер застрял на удалении объекта, можно попробовать удалить его вручную:
 
 ```bash
-# Найти зависший VolumeAttachment
-kubectl get volumeattachment \
-  -o custom-columns=NAME:.metadata.name,PV:.spec.source.persistentVolumeName,NODE:.spec.nodeName
-
-# Удалить
 kubectl delete volumeattachment <attachment-name>
 ```
 
-После удаления VolumeAttachment external-attacher удаляет свой finalizer → pod завершается.
+После удаления объекта контроллер обычно снимает финализатор с пода.
 
-**Решение — Вариант B: Принудительное удаление finalizer (крайняя мера):**
+**Решение Б: Принудительная очистка финализаторов (крайняя мера)**
+Используется только если инфраструктура (узел/хранилище) уничтожена и корректный `detach` невозможен.
 
 ```bash
-kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":[]}}'
+kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":null}}' --type=merge
 ```
 
-> **Warning:** Это не отсоединяет том от узла. Volume может остаться в состоянии "attached", данные — потеряны. Используйте только если узел уничтожен и данные не важны.
+**Внимание:** это действие не отсоединяет том физически. Том может остаться «примонтированным» к узлу на уровне облачного провайдера.
 
-### Сценарий 2: Проблемы с CSI driver
+### Сценарий 2: Ошибки внутреннего состояния CSI-драйвера
 
 **Симптом:**
+В логах или событиях видны ошибки `rpc error: code = Internal desc = volume detachment failed`.
 
-```
-Events:
-  Warning  FailedDetachVolume  Unable to detach volume: 
-  rpc error: code = Internal desc = volume detachment failed
-```
-
-**Причина:** CSI driver не может отсоединить volume — сбой driver, проблемы storage backend, network issues.
-
-**Диагностика:**
-
-```bash
-# 1. Статус CSI driver (CRD)
-kubectl get csidrivers
-
-# 2. Компоненты CSI driver
-kubectl get pods -n kube-system -l app=<csi-driver-name>
-kubectl get daemonset -n kube-system -l app=<csi-driver-name>
-
-# 3. Логи CSI controller
-kubectl logs -n kube-system -l app=<csi-driver-name> -c csi-attacher --tail=200
-
-# 4. Логи CSI node plugin
-kubectl logs -n kube-system -l app=<csi-driver-name> -c node-driver-registrar --tail=100
-
-# 5. VolumeAttachment детали
-kubectl describe volumeattachment <name>
-```
+**Причина:** Сбой в работе подов драйвера, рассинхронизация состояния между Kubernetes и storage backend.
 
 **Решение:**
 
-```bash
-# 1. Перезапуск CSI controller
-kubectl rollout restart deployment -n kube-system <csi-controller-deployment>
+1. Перезапуск контроллеров драйвера:
 
-# 2. Перезапуск node DaemonSet
-kubectl rollout restart daemonset -n kube-system <csi-node-ds>
+   ```bash
+   kubectl rollout restart deployment -n kube-system <csi-controller-deployment>
+   ```
 
-# 3. Удаление зависших VolumeAttachment
-kubectl delete volumeattachment -l <label-selector>
-```
+2. Перезапуск агентов на узлах:
 
-### Сценарий 3: PVC protection finalizer
+   ```bash
+   kubectl rollout restart daemonset -n kube-system <csi-node-daemonset>
+   ```
+
+### Сценарий 3: Блокировка финализатором PVC protection
 
 **Симптом:**
-
-```
-Finalizers: [kubernetes.io/pvc-protection]
-```
-
-**Причина:** PVC всё ещё используется другим pod или controller не завершил cleanup.
+Финализатор `kubernetes.io/pvc-protection` мешает удалению объекта.
 
 **Диагностика и решение:**
 
-```bash
-# 1. Проверка PVC
-kubectl get pvc <pvc-name>
-kubectl describe pvc <pvc-name>
-# Искать: используется ли ещё pod
+1. Проверьте, не используется ли PVC другими подами:
 
-# 2. Найти pod использующие этот PVC
-kubectl get pods --all-namespaces -o json | jq '.items[] | select(.spec.volumes[]?.persistentVolumeClaim?.claimName == "<pvc-name>")'
+   ```bash
+   kubectl describe pvc <pvc-name>
+   ```
 
-# 3. Если PVC не используется — удалить finalizer
-kubectl patch pvc <pvc-name> -p '{"metadata":{"finalizers":[]}}'
-```
+2. Если PVC свободен, но финализатор остался, его можно снять вручную:
+
+   ```bash
+   kubectl patch pvc <pvc-name> -p '{"metadata":{"finalizers":null}}'
+   ```
 
 ---
 
 ## Дополнительная информация
 
-**Связанные разделы:**
+**См. также:**
 
-- [Определения Pod Terminating](./definitions.md) — finalizers, причины зависания
-- [Diagnostics](./diagnostics.md) — общий чек-лист диагностики
-- [Volume Unmount проблемы](./volume_unmount_issues.md) — проблемы размонтирования на узле
-- [Node Unavailable](./node_unavailable_issues.md) — узел недоступен
-- [Graceful Shutdown](./graceful_shutdown.md) — terminationGracePeriodSeconds, preStop hooks
-- [PDB Blocking](./pdb_blocking.md) — PodDisruptionBudget блокирует удаление
-- [Обзор Troubleshooting](../overview.md) — классификация ошибок Kubernetes
+- [Ошибки размонтирования томов](./volume_unmount_issues.md) — проблемы на уровне узла (mount point).
+- [Диагностика Pod Terminating](./diagnostics.md) — общий алгоритм поиска причин зависания.
+- [Определения Pod Terminating](./definitions.md) — базовые термины и механизмы.

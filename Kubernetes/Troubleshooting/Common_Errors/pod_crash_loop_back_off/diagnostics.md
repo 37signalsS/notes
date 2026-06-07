@@ -1,89 +1,119 @@
-# Pod в состоянии `CrashLoopBackOff`: Диагностика
+# Поиск и устранение неисправностей: Диагностика `CrashLoopBackOff`
 
-## Пошаговый чек-лист
+## Определения
 
-### Шаг 1: Проверка статуса пода
+**Диагностика CrashLoopBackOff** — последовательный процесс выявления причин циклического перезапуска контейнеров. Основная задача диагностики — разделить проблемы инфраструктуры Kubernetes (права доступа, лимиты, сеть) и проблемы самого приложения (ошибки кода, конфигурации).
+
+Общие понятия и архитектура цикла перезапуска описаны в файле:
+> **[Определения и концепции CrashLoopBackOff](./definitions_and_concepts.md)**
+
+## Основные концепции диагностики
+
+Для эффективного поиска причин используются три уровня анализа:
+
+1. **Уровень событий (Events):** позволяет увидеть проблемы на этапе подготовки (монтирование томов, планирование, права доступа).
+2. **Уровень состояния (Status):** предоставляет коды завершения процесса и историю перезапусков.
+3. **Уровень приложения (Logs):** дает доступ к выводу самого приложения непосредственно перед падением.
+
+### Расшифровка ключевых терминов
+
+- **API (Application Programming Interface)** — программный интерфейс для взаимодействия с компонентами кластера.
+- **RBAC (Role-Based Access Control)** — модель управления доступом на основе ролей.
+- **DNS (Domain Name System)** — система получения IP-адресов по именам сервисов.
+- **SVC (Service)** — абстракция Kubernetes для обеспечения сетевой связности подов.
+
+## Практические сценарии
+
+### Пошаговый алгоритм диагностики
+
+#### Шаг 1: Анализ состояния и событий Pod
+
+Первым делом необходимо проверить статус и историю событий через `describe`.
 
 ```bash
 kubectl describe pod <pod-name>
 ```
 
-**Ищите в выводе:**
+**Ожидаемый вывод (фрагмент при ошибке):**
 
-```
+```text
 State:          Waiting
   Reason:       CrashLoopBackOff
 Last State:     Terminated
-  Reason:       Error (или OOMKilled)
-  Exit Code:    <код>
-Restart Count:  <число>
+  Reason:       Error
+  Exit Code:    1
+Restart Count:  5
+Events:
+  Type     Reason   Age                From               Message
+  ----     ------   ----               ----               -------
+  Normal   Created  10m (x5 over 12m)  kubelet            Created container
+  Warning  BackOff  10m (x5 over 12m)  kubelet            Back-off restarting failed container
 ```
 
----
+#### Шаг 2: Просмотр логов предыдущей итерации
 
-### Шаг 2: Просмотр логов
+Если контейнер падает сразу после старта, стандартная команда `logs` может быть пустой. Необходимо смотреть логи *предыдущего* запуска.
 
 ```bash
-# Логи предыдущего запуска (критично!)
+# Просмотр логов падения предыдущей инстанции (критически важно)
 kubectl logs <pod-name> --previous
 
-# Логи текущего запуска (если контейнер еще жив)
-kubectl logs <pod-name>
-
-# Для pod с несколькими контейнерами
+# Для подов с несколькими контейнерами
 kubectl logs <pod-name> -c <container-name> --previous
-
-# Стриминг в реальном времени
-kubectl logs <pod-name> -f --previous
 ```
 
----
+#### Шаг 3: Проверка конфигурации и окружения
 
-### Шаг 3: Проверка конфигурации
+Часто причиной является отсутствие необходимых ConfigMap, Secret или переменных окружения.
 
 ```bash
-# Проверка ConfigMap
+# Проверка наличия и содержимого ConfigMap
 kubectl get configmap <configmap-name> -o yaml
 
-# Проверка Secret
+# Проверка Secret (просмотр ключей без декодирования)
 kubectl get secret <secret-name> -o yaml
-
-# Проверка переменных окружения в поде
-kubectl exec <pod-name> -- env 2>/dev/null || kubectl run debug --image=busybox --rm -it --restart=Never -- env
 ```
 
----
+#### Шаг 4: Проверка сетевых зависимостей и DNS
 
-### Шаг 4: Проверка зависимостей
+Если приложение падает из-за недоступности базы данных или внешнего API, проверьте разрешение имен.
 
 ```bash
-# Проверка доступности сервисов
-kubectl get svc
-kubectl get endpoints <service-name>
+# Проверка DNS-имени внутри кластера через временный под
+kubectl run debug --rm -it --image=busybox --restart=Never -- nslookup <service-name>.<namespace>.svc.cluster.local
 
-# Проверка DNS
-kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup <service-name>.<namespace>.svc.cluster.local
-
-# Проверка Network Policies
-kubectl get networkpolicy -n <namespace>
+# → Ожидаемый ответ:
+# Server:    10.96.0.10
+# Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+# Name:      <service-name>...
+# Address 1: 10.101.5.111
 ```
 
----
+#### Шаг 5: Проверка прав доступа (RBAC)
 
-### Шаг 5: Проверка RBAC (если приложение обращается к API K8s)
+Если приложение обращается к Kubernetes API, оно должно использовать ServiceAccount (SA) с соответствующими правами.
 
 ```bash
-# Определение ServiceAccount пода
+# 1. Узнать имя ServiceAccount пода
 kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}'
 
-# Проверка прав
-kubectl auth can-i get pods --as=system:serviceaccount:<namespace>:<sa-name>
-kubectl auth can-i list secrets --as=system:serviceaccount:<namespace>:<sa-name>
+# 2. Проверить возможность выполнения действия (Self-Subject Access Review)
+kubectl auth can-i get secrets --as=system:serviceaccount:<namespace>:<sa-name>
+# → Result: yes / no
 ```
+
+## Дополнительная информация
+
+### Инструменты автоматизации
+
+Для массовой диагностики `CrashLoopBackOff` рекомендуется использовать инструменты:
+
+- **[Kubetail](../../ToolsUtilities/kubetail.md)** — одновременный просмотр логов нескольких подов.
+- **Stern** — продвинутый стриминг логов по регулярным выражениям.
 
 ---
 
-## Ссылки
+### Ссылки
 
-- **[Распространенные случаи и решения](./common_cases_and_solutions.md)** — решения для типичных проблем
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
+- **[Распространенные решения](./common_cases_and_solutions.md)** — разбор типовых кейсов и их исправление.
+- **[Обзор диагностики Kubernetes](../../troubleshooting_overview.md)** — общие принципы поиска неисправностей.

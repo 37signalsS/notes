@@ -38,7 +38,7 @@ Kubelet получает задачу
 |--------|-----------------|---------|
 | **CreateContainerConfigError** | До запуска, проблемы с зависимостями | Создать ConfigMap/Secret/PVC |
 | **ImagePullBackOff** | До запуска, проблемы с образом | Исправить образ/imagePullSecrets |
-| **CrashLoopBackOff** | После запуска, падение приложения | Исправить приложение/конфигурацию |
+| **CrashLoopBackOff** | После запуска, падение приложения | [Решение проблемы](../pod_crash_loop_back_off/definitions_and_concepts.md) |
 
 ## Practical Scenarios
 

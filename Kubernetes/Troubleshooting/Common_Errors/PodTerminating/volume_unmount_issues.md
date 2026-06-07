@@ -1,224 +1,163 @@
-# Pod Terminating: Volume Unmount проблемы
+# Pod Terminating — проблемы размонтирования томов (Volume Unmount)
 
 ## Определения
 
-**Volume Unmount** — процесс размонтирования тома с узла kubelet'ом при удалении пода. Выполняется после завершения контейнеров.
+**Размонтирование тома (Volume Unmount)** — процесс отсоединения файловой системы тома от узла (Node), выполняемый Kubelet после завершения работы контейнеров Pod.
 
-**Stale Mount** — состояние, при котором точка монтирования остаётся активной, хотя pod удалён. Volume не освобождается, kubelet не может завершить удаление.
+**Устаревшее монтирование (Stale Mount)** — состояние, при котором точка монтирования остается активной в операционной системе узла, несмотря на удаление объекта Pod. Это блокирует освобождение ресурсов и завершение жизненного цикла объекта.
 
-**Kubelet Volume Manager** — компонент kubelet, отвечающий за mount/unmount volumes. Отслеживает статус томов и выполняет cleanup.
+**Kubelet Volume Manager** — внутренний компонент Kubelet, отвечающий за управление жизненным циклом томов (mount/unmount). Он отслеживает состояние томов и инициирует очистку (cleanup) после удаления нагрузки.
 
-**`umount -l` (Lazy Unmount)** — отсоединение файловой системы с отложенным освобождением ресурсов. Монтирование исчезает из namespace, но процессы могут продолжать писать в файловую систему.
+**Lazy Unmount (`umount -l`)** — операция принудительного отсоединения файловой системы, при которой точка монтирования немедленно удаляется из иерархии файловой системы, а ресурсы освобождаются ядром позже, когда они перестают использоваться процессами.
 
 ---
 
 ## Базовые концепции
 
-### Процесс размонтирования volumes
+### Процесс размонтирования томов
 
-```
-Контейнеры завершены (SIGTERM / SIGKILL)
-    ↓
-Kubelet Volume Manager начинает cleanup
-    ↓
-Для каждого volume в spec.volumes:
-  1. Проверка, что все процессы остановлены
-  2. Unmount volume с узла
-  3. Для CSI: detach volume (через external-attacher)
-    ↓
-Удаление finalizers (kubernetes.io/pvc-protection)
-    ↓
-Pod удалён из etcd
-```
+После того как контейнеры Pod переходят в состояние завершения, Kubelet Volume Manager начинает процесс очистки:
 
-### Почему volume не размонтируется
+1. **Завершение процессов:** Kubelet проверяет, что все контейнеры остановлены и процессы не используют файлы на томе.
+2. **Unmount (на узле):** выполняется системный вызов для размонтирования тома из директории `/var/lib/kubelet/pods/<pod-uid>/volumes/`.
+3. **Detach (уровень API):** для томов CSI инициируется операция отсоединения через `VolumeAttachment` (выполняется внешним контроллером `external-attacher`).
+4. **Снятие финализаторов:** после успешного подтверждения размонтирования удаляются финализаторы (например, `kubernetes.io/pvc-protection`).
+5. **Удаление из etcd:** объект Pod окончательно удаляется из кластера.
 
-| Причина | Механизм |
-|---------|----------|
-| **Процесс держит файл** | Контейнер не остановился полностью, процесс открыл файл на томе |
-| **Stale mount** | Монтирование "зависло" — kubelet не может отмонтировать |
-| **CSI driver не отвечает** | external-attacher не подтверждает detach |
-| **kubelet завис** | Volume Manager не обрабатывает cleanup |
-| **Несколько pod используют volume** | Другой pod всё ещё монтирует этот же PVC |
+### Причины блокировки размонтирования
 
-### Отличие от CSI detachment (finalizer_issues.md)
+| Причина | Механизм блокировки |
+| :--- | :--- |
+| **Активный процесс** | Контейнер не завершился или процесс «зомби» продолжает удерживать открытые дескрипторы файлов на томе. |
+| **Stale Mount** | Ошибка файловой системы или сетевого хранилища (NFS, iSCSI), из-за которой ОС не может выполнить штатный `umount`. |
+| **CSI driver не отвечает** | Ошибки в работе контроллеров CSI, блокирующие подтверждение операции на уровне API. |
+| **Зависание Kubelet** | Volume Manager перестал обрабатывать очередь задач на очистку. |
 
-| Уровень | Проблема | Где диагностируется |
-|---------|----------|---------------------|
-| **Unmount** (этот файл) | Volume не размонтируется на узле | SSH → узел, `findmnt`, `lsof` |
-| **Detach** (finalizer_issues.md) | VolumeAttachment не удаляется | `kubectl get volumeattachment`, CSI logs |
+### Различия между Unmount и Detach
 
-Unmount — проблема на узле (mount point). Detach — проблема на уровне API (объект VolumeAttachment).
+Крайне важно разделять уровень проблемы для правильной диагностики:
 
-Общая диагностика: [Diagnostics](./diagnostics.md). Определения: [Definitions](./definitions.md).
+| Уровень | Описание | Инструменты диагностики | Источник |
+| :--- | :--- | :--- | :--- |
+| **Unmount** | Проблема на узле (Node). Файловая система физически не отмонтирована. | `findmnt`, `lsof`, `fuser` | Данный документ |
+| **Detach** | Проблема на уровне API/Storage. Не удаляется объект `VolumeAttachment`. | `kubectl get volumeattachment`, CSI logs | [Проблемы с финализаторами](./finalizer_issues.md) |
+
+Общая диагностика: [Диагностика](./diagnostics.md). Базовые термины: [Определения](./definitions.md).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Диагностика — процесс держит volume
+### Сценарий 1: Процесс удерживает файлы на томе
 
 **Симптом:**
-
-```
-Events:
-  Warning  FailedUnmountVolume  Unable to unmount volumes for pod "my-pod":
-  volume "data-vol" is still in use
-```
+В событиях (Events) Pod отображается ошибка: `Warning FailedUnmountVolume Unable to unmount volumes for pod ... volume is still in use`.
 
 **Диагностика:**
 
-```bash
-# 1. Получить UID пода
-POD_UID=$(kubectl get pod <pod-name> -o jsonpath='{.metadata.uid}')
+1. Получите UID пода:
 
-# 2. SSH на узел
-ssh <node-name>
+   ```bash
+   POD_UID=$(kubectl get pod <pod-name> -o jsonpath='{.metadata.uid}')
+   ```
 
-# 3. Найти точки монтирования пода
-findmnt | grep $POD_UID
+2. На узле проверьте процессы, использующие директорию томов:
 
-# 4. Найти процессы, использующие volume
-lsof +D /var/lib/kubelet/pods/$POD_UID/volumes
-fuser -vm /var/lib/kubelet/pods/$POD_UID
-
-# 5. Проверить, живы ли контейнеры
-crictl ps | grep $POD_UID
-```
+   ```bash
+   lsof +D /var/lib/kubelet/pods/$POD_UID/volumes
+   # ИЛИ
+   fuser -vm /var/lib/kubelet/pods/$POD_UID
+   ```
 
 **Решение:**
 
+1. Попробуйте принудительно остановить контейнеры через `crictl`:
+
+   ```bash
+   crictl ps | grep $POD_UID
+   crictl stop <container-id>
+   ```
+
+2. Если процесс не завершается, используйте `Lazy Unmount` (как крайнюю меру):
+
+   ```bash
+   umount -l /var/lib/kubelet/pods/$POD_UID/volumes/*/*
+   ```
+
+### Сценарий 2: Зависшее монтирование (Stale Mount)
+
+**Симптом:**
+Контейнеры Pod удалены, но в выводе `mount` на узле все еще видны записи для данного `POD_UID`.
+
+**Решение (перезапуск Kubelet):**
+Часто перезапуск агента заставляет Volume Manager переинициализировать состояние и повторить попытку очистки:
+
 ```bash
-# 1. Принудительно остановить контейнер
-crictl stop <container-id>
-crictl rm <container-id>
-
-# 2. Если не помогло — lazy unmount
-umount -l /var/lib/kubelet/pods/$POD_UID/volumes/*/mount
-
-# 3. Перезапуск kubelet (если stale mount)
 systemctl restart kubelet
+journalctl -u kubelet -f | grep -i "unmount"
 ```
 
-> **Warning:** `umount -l` отсоединяет файловую систему, но процессы могут продолжать писать. Данные могут быть потеряны.
-
-### Сценарий 2: Stale mount — kubelet не может unmount
-
-**Симптом:** Pod в Terminating, контейнеры завершены, volume не размонтируется.
-
-**Диагностика:**
+**Решение (ручная очистка):**
 
 ```bash
-# SSH на узел
-ssh <node-name>
-
-POD_UID=$(kubectl get pod <pod-name> -o jsonpath='{.metadata.uid}')
-
-# Проверить точки монтирования
-findmnt -t ext4,xfs | grep $POD_UID
-
-# Проверить, есть ли активные mount
-mount | grep $POD_UID
-```
-
-**Решение — Вариант A: Lazy unmount:**
-
-```bash
-# Найти все mount points
-mount | grep $POD_UID | awk '{print $3}'
-
-# Lazy unmount каждого
+# Поиск всех точек монтирования для пода
 for mp in $(mount | grep $POD_UID | awk '{print $3}'); do
   umount -l "$mp"
 done
 ```
 
-**Решение — Вариант B: Перезапуск kubelet:**
+### Сценарий 3: Том используется другим Pod на том же узле
 
-```bash
-# Проверить статус kubelet
-systemctl status kubelet
-
-# Перезапуск
-systemctl restart kubelet
-
-# Проверить логи
-journalctl -u kubelet -f --no-pager | grep -i "unmount\|volume"
-```
-
-После перезапуска kubelet Volume Manager повторит cleanup.
-
-### Сценарий 3: Volume используется другим pod
-
-**Симптом:** PVC смонтирован в нескольких подах, один pod не может unmount.
+**Симптом:**
+Один Pod завис в `Terminating`, так как тот же PVC используется другим Pod (актуально для `ReadWriteMany` или нескольких подов одного контроллера).
 
 **Диагностика:**
+Найдите все поды, использующие этот PVC:
 
 ```bash
-# Найти все pod, использующие этот PVC
 kubectl get pods --all-namespaces -o json \
   | jq '.items[] | select(.spec.volumes[]?.persistentVolumeClaim?.claimName == "<pvc-name>")'
-
-# Проверить статус pod
-kubectl get pods --all-namespaces -o wide | grep <pvc-name>
 ```
 
 **Решение:**
-
-- Удалить/остановить другие pod, использующие этот PVC
-- Дождаться, пока все pod завершатся
-- Volume размонтируется автоматически
+Убедитесь, что все зависимые поды корректно завершили работу. Размонтирование произойдет только после того, как последний процесс на узле освободит том.
 
 ### Сценарий 4: CSI driver не завершает detach
 
-Если volume не размонтируется из-за CSI проблемы — смотри [Finalizer и CSI проблемы](./finalizer_issues.md).
+Если volume не размонтируется из-за проблем CSI, обратитесь к разделу: [Финализаторы и проблемы CSI](./finalizer_issues.md).
 
-Краткая проверка:
+Краткая проверка состояния:
 
 ```bash
-# Проверить VolumeAttachment
+# Проверка объектов VolumeAttachment
 kubectl get volumeattachment | grep <pod-uid>
 
-# Проверить CSI driver
+# Проверка подов драйвера
 kubectl get pods -n kube-system -l app=<csi-driver-name>
-
-# Логи CSI
-kubectl logs -n kube-system -l app=<csi-driver-name> --tail=100
 ```
 
-### Сценарий 5: Предотвращение — graceful shutdown с volume
+### Сценарий 5: Предотвращение проблем через настройки Graceful Shutdown
+
+Чтобы минимизировать риск зависания томов, рекомендуется настраивать сброс буферов файловой системы перед остановкой приложения:
 
 ```yaml
 spec:
   terminationGracePeriodSeconds: 60
   containers:
   - name: app
-    image: my-app
     lifecycle:
       preStop:
         exec:
+          # Принудительная синхронизация данных перед SIGTERM
           command: ["/bin/sh", "-c", "sync; sleep 5"]
-    volumeMounts:
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: data
-    persistentVolumeClaim:
-      claimName: my-pvc
 ```
-
-`sync` — гарантирует запись данных на диск перед unmount.
 
 ---
 
 ## Дополнительная информация
 
-**Связанные разделы:**
+**См. также:**
 
-- [Определения Pod Terminating](./definitions.md) — причины зависания в Terminating
-- [Diagnostics](./diagnostics.md) — чек-лист диагностики terminating pods
-- [Finalizer и CSI проблемы](./finalizer_issues.md) — CSI detachment, VolumeAttachment
-- [Node Unavailable](./node_unavailable_issues.md) — узел недоступен
-- [Graceful Shutdown](./graceful_shutdown.md) — terminationGracePeriodSeconds, preStop hooks
-- [Volume Basics](../../../Base/Pod/volume_types/volumes_basics.md) — типы volumes, mount lifecycle
-- [Обзор Troubleshooting](../../troubleshooting_overview.md) — классификация ошибок Kubernetes
+- [Финализаторы и проблемы CSI](./finalizer_issues.md) — решение проблем на уровне Detach и VolumeAttachment.
+- [Диагностика Pod Terminating](./diagnostics.md) — общий алгоритм поиска первопричин.
+- [Определения Pod Terminating](./definitions.md) — базовые термины и системные механизмы.

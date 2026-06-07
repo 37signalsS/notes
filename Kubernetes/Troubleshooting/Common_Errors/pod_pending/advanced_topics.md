@@ -1,73 +1,93 @@
-# Pod в состоянии `Pending`: Дополнительная информация
+# Pod в состоянии `Pending`: Продвинутые темы
 
-## Взаимодействие механизмов планирования
+## Определения
 
-```
-Планировщик проверяет (в порядке):
-1. NodeSelector (простой)
-2. NodeAffinity (продвинутый)
-3. Taints/Tolerations (фильтр)
-4. PodAffinity/PodAntiAffinity (относительно других подов)
-5. ResourceRequests (CPU, Memory)
-6. TopologySpreadConstraints (распределение)
-```
+**Продвинутая диагностика Pending** — глубокий анализ взаимодействия механизмов планирования, мониторинг состояния очереди планировщика и исследование специфических ограничений, блокирующих запуск подов.
 
-> **Важно:** Все правила должны выполняться одновременно. Слишком сложные комбинации могут привести к вечному `Pending`.
+**Scheduling Gates (Шлюзы планирования)** — механизм, позволяющий удерживать под в состоянии `Pending` до тех пор, пока внешняя система не даст разрешение на планирование (путем удаления соответствующих шлюзов).
 
----
+> Базовые понятия: **[Определения и концепции](./definitions_and_concepts.md)**
 
-## Таблица решений
+## Основные концепции
 
-| Симптом | Первая команда | Вероятное решение |
-|---------|----------------|-------------------|
-| `Insufficient cpu/memory` | `kubectl top nodes` | Уменьшить requests / добавить узлы |
-| `didn't match node affinity` | `kubectl get nodes --show-labels` | Добавить метку / исправить affinity |
-| `had taint ... didn't tolerate` | `kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints` | Добавить toleration |
-| `unbound PersistentVolumeClaims` | `kubectl describe pvc` | Создать PV / исправить StorageClass |
-| `failed quota` | `kubectl describe resourcequota` | Увеличить квоту / уменьшить requests |
+### 1. Порядок применения фильтров планировщика
 
----
+Планировщик проверяет условия в строго определенном порядке. Если под застрял в `Pending`, важно понимать, на каком этапе происходит отказ:
 
-## Мониторинг Pending подов
+1. **Scheduling Gates**: Проверка наличия шлюзов в `spec.schedulingGates`.
+2. **NodeSelector**: Базовая проверка соответствия меток.
+3. **NodeAffinity**: Расширенная логика выбора узлов.
+4. **Taints/Tolerations**: Исключающий фильтр (эффекты `NoSchedule`, `PreferNoSchedule`).
+5. **ResourceRequests**: Наличие свободных CPU, памяти и портов.
+6. **PodAffinity/AntiAffinity**: Правила совместного размещения подов.
+7. **TopologySpreadConstraints**: Соблюдение равномерности распределения по зонам/узлам.
+
+### 2. Политика вытеснения (Preemption Policy)
+
+Наличие высокого приоритета (`PriorityClass`) не гарантирует вытеснение других подов, если в спецификации класса установлено:
+`preemptionPolicy: Never`
+
+В этом случае под будет находиться в состоянии `Pending` до тех пор, пока в кластере не освободятся ресурсы естественным путем, даже если в системе есть поды с меньшим приоритетом.
+
+### 3. Ограничения Cluster Autoscaler
+
+Если в кластере настроен автоскейлинг, под может оставаться в `Pending` даже при наличии свободных ресурсов для масштабирования, если:
+
+- **Unexpandable nodes**: Новые узлы не могут быть добавлены из-за ограничений облачного провайдера.
+- **Strict requirements**: Под требует ресурсов, которые не поддерживаются доступными типами инстансов (например, специфический тип GPU).
+- **Zonal mismatch**: Под требует PVC, который находится в зоне, где исчерпаны лимиты на масштабирование.
+
+## Практические сценарии
+
+### Диагностика Scheduling Gates
+
+Если в выводе `kubectl describe pod` нет явных ошибок планирования, проверьте наличие шлюзов:
 
 ```bash
-# Все Pending поды
-kubectl get pods --field-selector status.phase=Pending
-
-# Pending поды с сортировкой по времени
-kubectl get pods --field-selector status.phase=Pending --sort-by='.metadata.creationTimestamp'
-
-# Алерт Prometheus
-alert: PendingPodsHigh
-expr: count(kube_pod_status_phase{phase="Pending"}) > 5
-for: 5m
+kubectl get pod <pod-name> -o jsonpath='{.spec.schedulingGates}'
 ```
 
-> **См. также:** [`pod_distribution.md`](../../../Autoscaling/pod_distribution.md)
+**Решение:** Убедитесь, что контроллер, отвечающий за шлюзы (например, внешняя система безопасности или квотирования), работает корректно и удаляет их после завершения проверок.
 
----
+### Анализ Topology Spread Constraints
 
-## Best Practices
+При использовании `topologySpreadConstraints` под может зависнуть в `Pending`, если разница (skew) между зонами превышает допустимое значение `maxSkew` при строгой политике `whenUnsatisfiable: DoNotSchedule`.
+
+**Диагностика:**
+
+```bash
+# Проверка распределения подов по зонам
+kubectl get pods -o wide --show-labels | grep <app-label>
+```
+
+**Решение:** Ослабьте правила распределения или проверьте доступность узлов во всех целевых зонах (topology domains).
+
+### Мониторинг очереди планировщика
+
+Для оперативного обнаружения "зависших" подов используйте фильтры и сортировку:
+
+```bash
+# Поиск подов, ожидающих планирования более 10 минут
+kubectl get pods -A --field-selector status.phase=Pending | \
+  awk '$5 > "10m"'
+
+# Проверка событий вытеснения во всем кластере
+kubectl get events -A --field-selector reason=Preempted
+```
+
+## Дополнительная информация
+
+### Рекомендуемые практики
 
 | Практика | Описание |
 |----------|----------|
-| **Всегда указывайте `requests` и `limits`** | Предсказуемое планирование, QoS |
-| **Используйте `nodeAffinity` вместо `nodeSelector`** | Больше гибкости |
-| **Комбинируйте с `tolerations`** | Для системных подов |
-| **Настройте `topologySpreadConstraints`** | Высокая доступность |
-| **Мониторьте Pending поды** | Алерты на Pending > 5 минут |
+| **Отказ от Preemption** | Используйте `preemptionPolicy: Never` для фоновых задач, чтобы не нарушать работу критических сервисов. |
+| **Мягкие ограничения** | Предпочитайте `whenUnsatisfiable: ScheduleAnyway` для `TopologySpreadConstraints`, если доступность важнее идеального распределения. |
+| **Мониторинг CA** | Настройте алерты на события `FailedScaleUp` в ConfigMap `cluster-autoscaler-status`. |
 
----
+### Ссылки на связанные ресурсы
 
-## Ссылки
-
-- [Kubernetes Scheduler](https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/)
-- [Pod Priority and Preemption](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/)
-- [Configure Pod Assignment](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/)
-
----
-
-## Ссылки на связанные файлы
-
-- [Определения и концепции](./definitions_and_concepts.md) — базовая информация
-- [Практические сценарии](./practical_scenarios.md) — диагностика и решения
+- **[Диагностика](./diagnostics.md)** — пошаговый алгоритм поиска стандартных причин.
+- **[Распространенные случаи](./common_cases_and_solutions.md)** — решения типовых проблем с ресурсами и метками.
+- **[PriorityClass](../../../Concepts/priorityclass.md)** — подробнее о приоритетах и механизме вытеснения.
+- **[Kube-scheduler](../../../Concepts/kube_scheduler.md)** — архитектура и стадии планирования.

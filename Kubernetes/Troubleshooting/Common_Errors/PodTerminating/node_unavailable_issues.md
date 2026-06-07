@@ -2,51 +2,41 @@
 
 ## Определения
 
-**Node Unreachable** — состояние, при котором `kube-apiserver` не может связаться с `kubelet` на узле. Контроллер узла не получает heartbeat, статус узла переходит в `Unknown`.
+**Pod на недоступном узле в Terminating** — состояние, при котором объект Pod получил `deletionTimestamp`, но Kubelet на проблемном узле не может выполнить корректное завершение (SIGTERM, размонтирование томов, очистка), так как узел потерял связь с кластером.
 
-**Node NotReady** — `kubelet` работает, но сообщает, что узел не готов принимать поды (проблемы ресурсов, CNI, runtime).
-
-**Pod на недоступном узле в Terminating** — под получил `deletionTimestamp`, но kubelet на проблемном узле не может выполнить graceful shutdown (SIGTERM, unmount volumes, cleanup), так как узел недоступен.
+Базовые состояния узла (`Node Unreachable`, `Node NotReady`) и таймауты контроллера описаны в основном разделе: [Определения недоступности узла](../NodeUnavailability/definitions.md).
 
 ---
 
 ## Базовые концепции
 
-### Таймауты контроллера узлов
+### Последовательность событий при недоступности узла
 
-| Параметр | По умолчанию | Что происходит |
-|----------|--------------|----------------|
-| `--node-monitor-grace-period` | 40s | Время без heartbeat → статус `Unknown` |
-| `--pod-eviction-timeout` | 5m | Время до начала eviction подов с узла |
-
-### Sequence событий при недоступности узла
-
-```
+```text
 Узел перестаёт отвечать
     ↓
-40s без heartbeat → Node status = Unknown
+40s без heartbeat → Статус узла = Unknown
     ↓
-Node controller добавляет taint:
-  node.kubernetes.io/unreachable:NoExecute
+Node controller добавляет taint: node.kubernetes.io/unreachable:NoExecute
     ↓
-Pod без toleration → eviction (через pod-eviction-timeout)
+Pod без toleration → Выселение (через pod-eviction-timeout)
     ↓
-Pod уже в Terminating, но kubelet недоступен
+Pod переходит в Terminating, но Kubelet недоступен
     ↓
-SIGTERM не доходит, volumes не размонтируются
+SIGTERM не доходит, тома не размонтируются
     ↓
-Pod застревает в Terminating
+Pod застревает в состоянии Terminating
 ```
 
-### Почему pod застревает в Terminating
+### Причины блокировки завершения
 
-При недоступном узле kubelet не может:
+При недоступном узле Kubelet не может:
 
-1. Получить SIGTERM → приложение не завершается
-2. Размонтировать volumes → CSI driver ждёт
-3. Удалить finalizers → объект остаётся в etcd
+1. Отправить сигнал `SIGTERM` процессам в контейнере.
+2. Размонтировать файловые системы томов (CSI-драйвер ожидает подтверждения).
+3. Удалить финализаторы (finalizers), что блокирует удаление объекта из `etcd`.
 
-**Общая диагностика узлов:** [Node Unavailability Diagnostics](../NodeUnavailability/diagnostics.md). Определения: [Node Unavailability Definitions](../NodeUnavailability/definitions.md).
+Подробная диагностика узлов: [Диагностика недоступности узла](../NodeUnavailability/diagnostics.md).
 
 ---
 
@@ -58,119 +48,77 @@ Pod застревает в Terminating
 
 ```bash
 kubectl get nodes
-NAME       STATUS     AGE
-node-1     Ready      10d
-node-2     Unknown    5d   ← Проблема
-node-3     Ready      10d
+# node-1     Ready      10d
+# node-2     Unknown    5d   # Проблема: узел потерян
+# node-3     Ready      10d
 
 kubectl get pods -o wide
-NAME      STATUS       NODE     AGE
-my-pod    Terminating  node-2   2h   ← Застрял
+# my-pod    Terminating  node-2   2h   # Застрял в процессе удаления
 ```
 
 **Диагностика:**
 
-```bash
-# 1. Детали узла
-kubectl describe node <node-name>
-# Conditions: Ready=Unknown, Reason=NodeStatusUnknown
+1. Проверьте условия узла:
 
-# 2. Events узла
-kubectl get events --field-selector involvedObject.kind=Node,involvedObject.name=<node-name>
+   ```bash
+   kubectl describe node <node-name>
+   # Ищите Conditions: Ready=Unknown, Reason=NodeStatusUnknown
+   ```
 
-# 3. SSH на узел (если возможно)
-ssh <node-name>
-systemctl status kubelet
-journalctl -u kubelet --since "10 min ago"
-```
+2. Проверьте события:
 
-Если SSH не работает — узел полностью недоступен (сеть, hardware, cloud instance terminated).
+   ```bash
+   kubectl get events --field-selector involvedObject.kind=Node,involvedObject.name=<node-name>
+   ```
+
+3. Попробуйте подключиться к узлу:
+
+   ```bash
+   ssh <node-name>
+   systemctl status kubelet
+   ```
 
 ### Сценарий 2: Узел временно недоступен (ожидание восстановления)
 
-**Когда:** Плановый reboot, кратковременный network partition, kubelet restart.
+**Ситуация:** Плановая перезагрузка, кратковременный сетевой сбой.
 
-```bash
-# Мониторинг статуса узла
-kubectl get nodes -w
+Если узел восстановится самостоятельно, Kubelet возобновит работу и завершит процесс удаления:
 
-# Проверка, вернулся ли kubelet
-ssh <node-name>
-systemctl status kubelet
-```
+- Пошлет `SIGTERM` контейнерам.
+- Размонтирует тома.
+- Снимет финализаторы.
 
-После восстановления kubelet:
-
-- Pod получит SIGTERM и завершится
-- Volumes размонтируются
-- Запись удалится из etcd
+Мониторинг восстановления: `kubectl get nodes -w`
 
 ### Сценарий 3: Узел не восстановится (принудительное удаление)
 
-**Когда:** Cloud instance terminated, hardware failure, узел не вернётся.
+**Ситуация:** Узел удален физически, критическая авария оборудования.
+
+**Внимание:** Принудительное удаление (`force delete`) не выполняет физического размонтирования томов. Это может привести к проблемам при монтировании этого же тома к другому узлу (особенно для облачных дисков).
 
 ```bash
-# Принудительное удаление pod
+# Принудительное удаление Pod
 kubectl delete pod <pod-name> --force --grace-period=0
 
-# Если есть finalizers — удалить их
-kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":[]}}'
+# Если финализаторы блокируют удаление даже после force delete
+kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":[]}}' --type=merge
 ```
 
-> **Warning:** Force delete не отсоединяет volumes от узла. Для StatefulSet проверьте PVC перед удалением.
+### Сценарий 4: Исключение Pod из трафика
 
-**Для StatefulSet:**
-
-```bash
-# Проверить PVC
-kubectl get pvc -l app=<statefulset-name>
-
-# Удалить pod (force)
-kubectl delete pod <statefulset-pod> --force --grace-period=0
-
-# Если PVC нужно переместить — удалить и пересоздать
-kubectl delete pvc <pvc-name>  # Только если данные не важны!
-```
-
-### Сценарий 4: Исключение pod из Service перед удалением
-
-Чтобы traffic не шёл на pod на недоступном узле:
+Пока Pod находится в `Terminating` на недоступном узле, он может продолжать считаться `Ready` в некоторых контроллерах. Убедитесь, что трафик на него не идет:
 
 ```bash
-# Удалить Endpoint вручную
-kubectl delete endpoints <service-name> -p '{"subsets":[]}'
-
-# Или удалить pod endpoint из списка
+# Проверка и ручное удаление из Endpoint (если требуется)
 kubectl get endpoints <service-name>
-# Проверить, что IP проблемного pod удалён
 ```
-
-### Сценарий 5: Автоматическая очистка через node.kubernetes.io/unreachable taint
-
-Добавить toleration для graceful cleanup при недоступности узла:
-
-```yaml
-tolerations:
-- key: "node.kubernetes.io/unreachable"
-  operator: "Exists"
-  effect: "NoExecute"
-  tolerationSeconds: 60  # Удалить pod через 60s после unreachable
-```
-
-Подробнее: [Taints и Eviction](../NodeUnavailability/taints_and_eviction.md).
 
 ---
 
 ## Дополнительная информация
 
-**Связанные разделы:**
+**См. также:**
 
-- [Определения Pod Terminating](./definitions.md) — причины зависания в Terminating
-- [Diagnostics](./diagnostics.md) — чек-лист диагностики terminating pods
-- [Graceful Shutdown](./graceful_shutdown.md) — процесс завершения pod
-- [Node Unavailability: Definitions](../NodeUnavailability/definitions.md) — NodeNotReady, Unknown
-- [Node Unavailability: Diagnostics](../NodeUnavailability/diagnostics.md) — общая диагностика узлов
-- [Node Unavailability: Taints & Eviction](../NodeUnavailability/taints_and_eviction.md) — автоматические taints
-- [Node Unavailability: Network Issues](../NodeUnavailability/network_issues.md) — сетевые проблемы
-- [Обслуживание узлов](../../../Operations/node_maintenance.md) — cordon, drain, uncordon
-- [Обзор Troubleshooting](../overview.md) — классификация ошибок Kubernetes
+- [Определения Pod Terminating](./definitions.md) — общие причины зависания завершения.
+- [Диагностика Pod Terminating](./diagnostics.md) — пошаговый алгоритм поиска причин.
+- [Диагностика недоступности узла](../NodeUnavailability/diagnostics.md) — анализ проблем на уровне инфраструктуры.

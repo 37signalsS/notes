@@ -1,10 +1,8 @@
-# Pod Image Pull Errors: Диагностика
+# Диагностика ошибок загрузки образов (Image Pull Errors)
 
 ## Определения
 
-**Диагностика Image Pull Errors** — пошаговый процесс выявления и устранения причин, по которым `kubelet` не может загрузить образ контейнера из registry.
-
-**Events** — журнал событий pod'а, содержащий историю попыток pull, ошибки и статусы от `kubelet`. Основной источник информации для диагностики.
+Основные понятия и термины процесса загрузки образов (Image Pull) приведены в разделе [Определения](./definitions.md).
 
 ---
 
@@ -12,38 +10,38 @@
 
 ### Стратегия диагностики
 
-Диагностика движется от общего к частному:
+Диагностика выполняется по принципу «от простого к сложному»:
 
-```
-1. kubectl describe pod → анализ Events (тип ошибки)
-2. Проверка имени/тега образа → manifest существует?
-3. Проверка imagePullSecrets → аутентификация корректна?
-4. Проверка сети/DNS → registry доступен с узла?
-5. Проверка registry → rate limit, TLS, firewall
-```
+1. **kubectl describe pod** — анализ событий (Events) для определения типа ошибки.
+2. **Проверка имени и тега** — существует ли манифест в реестре.
+3. **Проверка imagePullSecrets** — корректна ли аутентификация.
+4. **Проверка сети и DNS** — доступен ли реестр с узлов кластера.
+5. **Проверка реестра** — логирование на стороне Registry, Rate Limit, настройки TLS.
 
 ### Ключевые поля в выводе kubectl describe
 
-| Раздел | Что искать | Значение |
+| Поле | Описание | Значение для анализа |
 | :--- | :--- | :--- |
-| `Events[].Reason` | `Failed`, `BackOff` | Причина ошибки |
-| `Events[].Message` | Текст ошибки | Конкретная причина (`manifest not found`, `unauthorized`) |
-| `Events[].Count` | Количество повторов | Частота ошибок |
-| `ContainerStatuses[].State.Waiting.Reason` | `ImagePullBackOff`, `ErrImagePull` | Текущий статус ожидания |
+| `Events[].Reason` | Причина события | `Failed`, `BackOff` |
+| `Events[].Message` | Детальное описание | Конкретная ошибка (`manifest not found`, `unauthorized`) |
+| `Events[].Count` | Количество повторов | Частота возникновения |
+| `ContainerStatuses[].State.Waiting.Reason` | Статус контейнера | `ImagePullBackOff`, `ErrImagePull` |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Проверка статуса пода и анализ Events
+### Сценарий 1: Анализ событий Pod
+
+Первым шагом всегда является проверка событий пода:
 
 ```bash
 kubectl describe pod <pod-name>
 ```
 
-**Ищите в разделе `Events`:**
+**Пример вывода в разделе `Events`:**
 
-```
+```text
 Type     Reason     Age                From               Message
 ----     ------     ----               ----               -------
 Warning  Failed     2m (x4 over 3m)    kubelet            Failed to pull image "my-app:1.1": rpc error: code = Unknown desc = Error response from daemon: manifest for my-app:1.1 not found
@@ -54,87 +52,73 @@ Warning  Failed     1m (x6 over 2m)    kubelet            Error: ImagePullBackOf
 
 **Интерпретация:**
 
-- `Failed to pull image` — kubelet попытался скачать образ, но получил ошибку от daemon (containerd/docker)
-- `ErrImagePull` — начальная ошибка pull
-- `Back-off pulling image` — kubelet повторяет попытку с увеличенной задержкой
-- `ImagePullBackOff` — pod перешёл в состояние ожидания с exponential backoff
+- `ErrImagePull` — разовая ошибка при попытке скачивания.
+- `ImagePullBackOff` — переход в режим ожидания с экспоненциальной задержкой после нескольких неудач.
 
-### Сценарий 2: Проверка имени образа
+### Сценарий 2: Проверка имени и доступности образа
+
+Если ошибка указывает на отсутствие манифеста (`manifest not found`), проверьте точное имя и наличие образа:
 
 ```bash
-# Извлечение имени образа из pod
+# Извлечение имени образа из спецификации пода
 kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].image}'
 
-# Проверка наличия образа в registry
+# Проверка скачивания через локальный docker/podman
 docker pull <image-name>
 
-# Или через crane (не требует docker daemon)
-crane pull <image-name> <local-file>
-```
-
-**Автоматизация — извлечение имени образа и проверка:**
-
-```bash
-IMAGE=$(kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].image}')
-echo "Проверка образа: $IMAGE"
-crane digest "$IMAGE" 2>&1 || echo "Образ недоступен"
+# Проверка без docker daemon (с использованием crane)
+crane digest <image-name>
+# → sha256:abc123... (если образ доступен)
 ```
 
 ### Сценарий 3: Проверка imagePullSecrets
 
+Если ошибка указывает на отсутствие авторизации (`unauthorized` или `access denied`), проверьте секреты:
+
 ```bash
-# Проверка secrets в pod
+# Проверка наличия secret в спецификации пода
 kubectl get pod <pod-name> -o jsonpath='{.spec.imagePullSecrets}'
 
-# Проверка существования secret
-kubectl get secret <secret-name> -n <namespace>
-
-# Проверка типа secret
+# Проверка существования и типа секрета
 kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.type}'
-# Ожидаемый результат: kubernetes.io/dockerconfigjson
+# → kubernetes.io/dockerconfigjson
 
-# Декодирование содержимого secret (для проверки)
+# Декодирование содержимого для проверки (внимательно!)
 kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
 ```
 
-**Проверка ServiceAccount:**
+### Сценарий 4: Проверка сети и DNS с узла
+
+Если возникают ошибки таймаута (`connection timed out`) или разрешения имен (`no such host`):
 
 ```bash
-# Проверка привязок SA
-kubectl get serviceaccount default -n <namespace> -o jsonpath='{.imagePullSecrets}'
-
-# Если пусто — secret не привязан, pod не сможет аутентифицироваться
-```
-
-### Сценарий 4: Проверка сети и DNS
-
-```bash
-# Проверка доступности registry с узла
-ssh <node-name> "curl -I https://registry.example.com"
-
-# Проверка DNS-разрешения
+# Проверка разрешения DNS
 ssh <node-name> "nslookup registry.example.com"
 
-# Проверка firewall правил (проверка порта 443)
+# Проверка доступности порта (443)
 ssh <node-name> "curl -v telnet://registry.example.com:443"
 
-# Проверка TLS-сертификатов
+# Проверка TLS-рукопожатия и сертификата
 ssh <node-name> "curl -v https://registry.example.com/v2/"
 ```
 
-**Проверка DNS изнутри pod:**
+**Проверка DNS изнутри кластера через временный под:**
 
 ```bash
 kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup registry.example.com
 ```
 
-### Сценарий 5: Проверка логов kubelet
+Для глубокой диагностики сетевых правил и прокси обратитесь к разделу [Сетевые проблемы](./network_issues.md).
+
+### Сценарий 5: Анализ логов kubelet и рантайма
+
+Если `kubectl describe` не дает детальной информации, проверьте логи системных служб на узле:
 
 ```bash
-# На проблемном узле
-journalctl -u kubelet | grep -i "image pull\|ErrImagePull\|ImagePullBackOff"
+# Проверка логов kubelet
+journalctl -u kubelet | grep -iE "image pull|ErrImagePull|ImagePullBackOff"
 
-# Для containerd
+# Проверка логов containerd (если используется)
 journalctl -u containerd | grep -i "pull"
 ```
 
@@ -144,8 +128,8 @@ journalctl -u containerd | grep -i "pull"
 
 ### Связанные темы
 
-- Определения и базовые концепции: [Definitions](./definitions.md)
-- Распространённые ошибки и решения: [Common Errors](./common_errors.md)
-- Диагностика по таблице решений: [Best Practices](./best_practices.md#сценарий-3-диагностика-по-таблице-решений)
-- Air-gapped кластеры: [Air-gapped](./airgapped.md)
-- Сетевые проблемы: [Network Issues](./network_issues.md)
+- [Определения и базовые концепции](./definitions.md) — терминология и жизненный цикл загрузки.
+- [Распространённые ошибки](./common_errors.md) — причины и способы решения типовых проблем.
+- [Лучшие практики](./best_practices.md) — мониторинг и предотвращение ошибок.
+- [Air-gapped кластеры](./airgapped.md) — специфика работы в изолированных средах.
+- [Сетевые проблемы](./network_issues.md) — настройка Proxy, TLS и NetworkPolicy.

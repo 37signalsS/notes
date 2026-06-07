@@ -1,85 +1,74 @@
-# Node Unavailability: Definitions
+# Недоступность узла: Определения
 
-## Definitions
+## Определения
 
 **`NodeNotReady`** — статус узла (`Node`), означающий, что `kubelet` на узле работает, но сообщает, что узел не готов принимать новые поды.
 
 **`Node Unreachable`** — состояние, при котором `kube-apiserver` не может связаться с `kubelet` на узле через контрольный канал (health check timeout).
 
-**Важно:** Это статусы узла, а не пода. Влияют на все поды, размещённые на проблемном узле.
+**Важно:** Это статусы узла, а не пода. Они влияют на все поды, размещённые на проблемном узле.
 
-## Basic Concepts
+## Основные концепции
 
-### Node Conditions
+### Состояния узла (Node Conditions)
 
 Kubernetes отслеживает следующие условия узла:
 
 | Condition | Описание | Нормальный статус |
 |-----------|----------|-------------------|
 | **`Ready`** | Узел готов принимать поды | `True` |
-| **`MemoryPressure`** | Нехватка памяти | `False` |
-| **`DiskPressure`** | Нехватка диска | `False` |
-| **`PIDPressure`** | Исчерпание PID | `False` |
-| **`NetworkUnavailable`** | Сеть недоступна | `False` |
+| **`MemoryPressure`** | Нехватка оперативной памяти | `False` |
+| **`DiskPressure`** | Нехватка места на диске | `False` |
+| **`PIDPressure`** | Исчерпание лимита процессов (PID) | `False` |
+| **`NetworkUnavailable`** | Сетевая связность отсутствует | `False` |
 
-### Node Statuses
+### Статусы узла
 
 | Статус | Condition | Описание |
 |--------|-----------|----------|
 | **`Ready`** | `Ready=True` | Узел работает нормально |
 | **`NotReady`** | `Ready=False` | Kubelet работает, но узел не готов |
 | **`Unknown`** | `Ready=Unknown` | Kubelet не отвечает (Unreachable) |
-| **`SchedulingDisabled`** | `unschedulable=true` | Узел в cordon (обслуживание) |
+| **`SchedulingDisabled`** | `unschedulable=true` | Узел выведен из планирования (Cordon) |
 
-### Impact on Pods
+### Тайм-ауты и выселение (Eviction)
+
+При изменении статуса узла Kubernetes применяет механизмы выселения. Контроль состояния и задержки перед выселением подов определяются параметрами `kube-controller-manager` (`--node-monitor-grace-period`, `--pod-eviction-timeout`).
+
+Подробное описание процесса и параметров доступно в основном разделе:
+**[Taints и Tolerations: Процесс выселения и параметры контроллера](../../../Scheduling/taints_and_tolerations.md#процесс-выселения-eviction-timeline)**.
 
 | Статус узла | Влияние на поды |
 |-------------|-----------------|
-| **`NotReady`** | Поды продолжают работать, новые не планируются |
+| **`NotReady`** | Существующие поды продолжают работать, новые не планируются |
 | **`Unknown`** (>40s) | Добавляется taint `unreachable:NoExecute` |
-| **`Unknown`** (>5m) | Поды без toleration выселяются |
+| **`Unknown`** (>5m) | Поды без соответствующих tolerations выселяются |
 
-### Node Controller Timeouts
+## Практические сценарии
 
-| Параметр | По умолчанию | Описание |
-|----------|--------------|----------|
-| `--node-monitor-grace-period` | 40s | Время до присвоения статуса `Unknown` |
-| `--pod-eviction-timeout` | 5m | Время до начала eviction подов |
+### Когда использовать этот диагностический путь
 
-## Practical Scenarios
+- `kubectl get nodes` показывает статус `NotReady` или `Unknown`.
+- Поды на узле перестали обновляться или теряют связность.
+- Сработал алерт `NodeNotReady` или `NodeUnreachable` в системе мониторинга.
+- После перезагрузки или обновления узел не возвращается в кластер.
 
-### When to use this diagnostic path
+### Основные причины (Root Causes)
 
-- `kubectl get nodes` показывает `NotReady` или `Unknown`
-- Поды на узле не обновляются или теряют связь
-- Alert `NodeNotReady` / `NodeUnreachable` в Prometheus
-- После reboot/обновления узел не возвращается в кластер
+| Причина | Типичный статус | Ссылка на решение |
+|---------|-----------------|-------------------|
+| Ошибка или падение Kubelet | `NotReady` | [Проблемы Kubelet](./kubelet_issues.md) |
+| Нехватка ресурсов (Resource Pressure) | `NotReady` + Pressure | [Давление ресурсов](./resource_pressure.md) |
+| Потеря сетевой связности | `Unknown` | [Проблемы с сетью](./network_issues.md) |
+| Сбой Container Runtime (Docker/containerd) | `NotReady` | [Проблемы рантайма](./runtime_issues.md) |
+| Плановые работы | `SchedulingDisabled` | [Обслуживание узлов](./maintenance.md) |
 
-### Common root causes
+### Точка входа в диагностику
 
-| Причина | Типичный статус | См. |
-|---------|-----------------|-----|
-| Kubelet упал/завис | `NotReady` | [kubelet_issues.md](./kubelet_issues.md) |
-| Нехватка CPU/RAM/Disk | `NotReady` + Pressure | [resource_pressure.md](./resource_pressure.md) |
-| Сетевая связность потеряна | `Unknown` | [network_issues.md](./network_issues.md) |
-| Container runtime недоступен | `NotReady` | [runtime_issues.md](./runtime_issues.md) |
-| Плановое обслуживание | `SchedulingDisabled` | [maintenance.md](./maintenance.md) |
+Для пошаговой проверки используйте [чек-лист диагностики](./diagnostics.md).
 
-### Diagnostic entry point
+## Дополнительная информация
 
-Начните с [diagnostics.md](./diagnostics.md) — пошаговый чек-лист проверки узла.
-
-## Additional Information
-
-### Taints при проблемах с узлом
-
-Kubernetes автоматически добавляет taints при проблемах. Детали: [taints_and_eviction.md](./taints_and_eviction.md).
-
-### Monitoring & Alerting
-
-Примеры Prometheus-алертов: [maintenance.md#monitoring-i-alerts](./maintenance.md).
-
-### Related topics
-
-- [Overview: Common Errors](../overview.md) — общие ошибки Kubernetes
-- [Node Maintenance](../../../Operations/node_maintenance.md) — плановое обслуживание узлов
+- [Taints и Eviction при недоступности](./taints_and_eviction.md) — детали выселения подов.
+- [Node Maintenance](../../../Operations/node_maintenance.md) — плановое обслуживание и вывод из эксплуатации.
+- [Troubleshooting Overview](../overview.md) — общие ошибки Kubernetes.

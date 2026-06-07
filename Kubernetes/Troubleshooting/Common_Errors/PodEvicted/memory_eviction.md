@@ -1,225 +1,126 @@
-# Pod Evicted: Нехватка памяти
+# Pod Evicted: Выселение по памяти
 
-## Definitions
+## Определения
 
-**MemoryPressure Eviction** — выселение подов kubelet'ом при нехватке доступной памяти на узле. Триггер — condition `MemoryPressure=True`.
+**Выселение при давлении на память (MemoryPressure Eviction)** — принудительное завершение и удаление подов компонентом kubelet при критической нехватке доступной оперативной памяти на узле. Процесс инициируется, когда состояние (condition) узла переходит в `MemoryPressure=True`.
 
-**Сообщение в Events:**
+**Сообщение в событиях (Events):** `The node was low on resource: memory`.
 
-```
-The node was low on resource: memory.
-```
+**Причина:** Суммарное потребление памяти подами и системными процессами превышает доступную память узла с учетом установленных порогов выселения (eviction thresholds).
 
-**Причина:** Суммарное потребление памяти подами + системными процессами превышает доступную память узла с учётом eviction thresholds.
+Общие определения и типы выселения: **[Pod Evicted: Определения](./definitions.md)**.
 
-## Basic Concepts
+## Основные концепции
 
-### Как kubelet определяет нехватку памяти
+### Расчет доступной памяти в kubelet
 
-```
-Доступная память = Total - (working set всех подов + система)
-    ↓
-Доступная < evictionHard.memory.available
-    ↓
-MemoryPressure = True
-    ↓
-Eviction Manager активируется
-```
+Kubelet рассчитывает доступную память следующим образом:
+`Доступная память = Общий объем - (working set всех подов + системные процессы)`
 
-**Working set memory** = RSS + cache (неподлежащий reclaim) — используется для принятия решения об eviction, а не просто RSS.
+Если `Доступная память < evictionHard.memory.available`, активируется **Менеджер выселения (Eviction Manager)**.
 
-### Eviction thresholds для памяти
+**Рабочий набор памяти (Working set memory)** — объем памяти, включающий RSS (Resident Set Size — размер резидентной памяти) и кэш, который не может быть немедленно освобожден (non-reclaimable). Именно этот показатель используется для принятия решения о выселении.
 
-```yaml
-# /var/lib/kubelet/config.yaml
-evictionHard:
-  memory.available: "200Mi"       # Hard threshold — немедленная eviction
-evictionSoft:
-  memory.available: "500Mi"       # Soft threshold — с grace period
-evictionSoftGracePeriod:
-  memory.available: 2m            # Время до начала eviction после soft threshold
-evictionMaxPodGracePeriod: 120    # Максимальный grace period для подов
-```
+### Пороги выселения для памяти
 
-| Threshold | Тип | Действие |
-|-----------|-----|----------|
-| **evictionHard** | Жёсткий | Немедленная eviction при достижении |
-| **evictionSoft** | Мягкий | Отсроченная eviction после grace period |
+Настройки хранятся в файле конфигурации kubelet (обычно `/var/lib/kubelet/config.yaml`):
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `evictionHard.memory.available` | Жесткий | Немедленное выселение при достижении порога (например, `200Mi`) |
+| `evictionSoft.memory.available` | Мягкий | Выселение после периода ожидания (grace period), если ситуация не улучшилась |
+| `evictionSoftGracePeriod` | Период | Время (например, `2m`), которое узел может находиться в состоянии превышения мягкого порога |
 
 ### Порядок выселения подов
 
-```
-MemoryPressure detected
-    ↓
-Сортировка по QoS (приоритет выселения):
-  1. BestEffort — по текущему потреблению (больше → первый)
-  2. Burstable — по % превышения requests (больше → первый)
-  3. Guaranteed — только если 1 и 2 не помогли
-    ↓
-Graceful termination (SIGTERM → wait → SIGKILL)
-    ↓
-Page cache reclaim → проверка доступной памяти
-    ↓
-Если всё ещё Pressure → следующий под
-```
+1. **Обнаружение:** Ресурсы падают ниже порога `evictionHard`.
+2. **Сортировка:** Поды ранжируются по классу QoS (Quality of Service — качество обслуживания) и фактическому потреблению:
+   - **BestEffort:** Выселяются первыми, начиная с самых крупных потребителей.
+   - **Burstable:** Выселяются, если их потребление превышает запросы (`requests`).
+   - **Guaranteed:** Выселяются в последнюю очередь, только если выселение других подов не решило проблему.
+3. **Завершение:** Kubelet отправляет сигнал SIGTERM (Signal Termination), ожидает завершения (grace period) и, при необходимости, отправляет SIGKILL (Signal Kill).
+4. **Проверка:** Если давление на память сохраняется, процесс повторяется для следующего пода.
 
-### MemoryPressure vs OOMKilled
+### Сравнение MemoryPressure и OOMKilled
 
 | Характеристика | MemoryPressure Eviction | OOMKilled |
-|----------------|------------------------|-----------|
-| **Инициатор** | Eviction Manager (kubelet) | OOM Killer (ядро Linux) |
-| **Уровень** | Узел (node-level) | Контейнер (container-level) |
-| **Причина** | Вся память узла исчерпана | Контейнер превысил `limits.memory` |
-| **Сообщение** | `low on resource: memory` | `OOMKilled` (exit code 137) |
-| **QoS влияние** | Выселение по приоритету | Не зависит от QoS |
-| **Сообщение в Events** | `Evicted` | `Reason: OOMKilled` в `lastState` |
+|----------------|-------------------------|-----------|
+| **Инициатор** | Менеджер выселения (kubelet) | OOM (Out of Memory) Killer (ядро Linux) |
+| **Уровень** | Узел (Node-level) | Контейнер (Container-level) |
+| **Причина** | Исчерпана вся память узла | Контейнер превысил свой лимит (`limits.memory`) |
+| **Статус пода** | `Evicted` | `OOMKilled` (в поле Last State) |
+| **Влияние QoS** | Определяет порядок выселения | Вторично, ядро убивает процесс по внутренним метрикам (`oom_score_adj`) |
 
-> **Ключевое отличие:** Eviction — узел спасает себя, OOMKilled — ядро убивает конкретный контейнер.
-
-## Practical Scenarios
+## Практические сценарии
 
 ### Диагностика
 
-**Шаг 1: Подтверждение MemoryPressure**
+#### Шаг 1: Подтверждение состояния узла
 
 ```bash
-# Conditions узла
-kubectl describe node <node-name> | grep -A 5 "MemoryPressure"
+# Проверка условий (conditions) узла
+kubectl describe node <node_name> | grep -A 5 "MemoryPressure"
 
 # Быстрая проверка всех узлов
 kubectl get nodes -o custom-columns=NAME:.metadata.name,MEMORY_PRESSURE:.status.conditions[?(@.type=="MemoryPressure")].status
 ```
 
-**Вывод при Pressure:**
+#### Шаг 2: Анализ потребления ресурсов на узле
 
-```
-  MemoryPressure   True    ...   KubeletHasInsufficientMemory   kubelet has insufficient memory available
-```
-
-**Шаг 2: Анализ потребления**
+Для анализа требуется доступ по протоколу SSH (Secure Shell):
 
 ```bash
-# Доступная память на узле (SSH)
-ssh <node-name> "free -h"
+# Общая свободная память (RAM — Random Access Memory)
+free -h
 
-# Топ подов по памяти
-kubectl top pod --all-namespaces --sort-by=memory | head -20
+# Топ-20 процессов по использованию памяти
+ps aux --sort=-%mem | head -20
 
-# Детализация по контейнерам (CRI)
-ssh <node-name> "crictl stats --sort-by=memory --descending | head -20"
+# Статистика контейнеров через CRI (Container Runtime Interface)
+crictl stats --sort-by=memory --descending | head -20
 
-# OOM-события в ядре
-ssh <node-name> "dmesg -T | grep -i 'oom\|killed process' | tail -20"
+# Поиск событий нехватки памяти (OOM) в системном журнале
+dmesg -T | grep -i "out of memory" | tail -10
 ```
 
-**Шаг 3: Определение пода-виновника**
+#### Шаг 3: Выявление проблемных подов
 
 ```bash
-# Подробная статика потребления
-kubectl describe node <node-name> | grep -A 30 "Allocated resources:"
+# Просмотр использования памяти через Metrics Server
+kubectl top pod --all-namespaces --sort-by=memory | head -10
 
-# Pods с высоким потреблением памяти
-kubectl get pods --all-namespaces -o custom-columns=NAME:.metadata.name,NS:.metadata.namespace,MEMORY_REQ:.spec.containers[*].resources.requests.memory,MEMORY_LIM:.spec.containers[*].resources.limits.memory | sort
+# Сравнение текущего потребления с установленными запросами (requests) и лимитами (limits)
+kubectl get pods --all-namespaces -o custom-columns=NAME:.metadata.name,NS:.metadata.namespace,MEM_REQ:.spec.containers[*].resources.requests.memory,MEM_LIM:.spec.containers[*].resources.limits.memory
 ```
 
-### Решение
+### Решение проблемы
 
-#### Быстрые меры
+#### 1. Оперативные меры
 
-| Действие | Команда | Эффект |
-|----------|---------|--------|
-| Удалить выселенные поды | `kubectl delete pods --field-selector status.reason=Evicted -A` | Освобождение записей etcd |
-| Рестарт проблемного пода | `kubectl delete pod <name>` | Пересоздание на другом узле |
-| Drain узла | `kubectl drain <node> --ignore-daemonsets` | Миграция всех подов |
+- **Очистка дискового кэша (временная мера):** `sync && echo 3 > /proc/sys/vm/drop_caches`
+- **Удаление неиспользуемых образов контейнеров:** `crictl rmi --prune`
+- **Удаление завершенных выселенных подов:** `kubectl delete pods --field-selector status.reason=Evicted -A`
 
-#### Долгосрочные меры
+#### 2. Долгосрочные меры
 
-| Мера | Описание |
-|------|----------|
-| **Увеличить `limits.memory`** | Для подов, которые легитимно потребляют больше |
-| **Добавить узлы** | Горизонтальное масштабирование кластера |
-| **Оптимизировать приложение** | Найти и устранить утечки памяти |
-| **Настроить QoS** | `Guaranteed` для критичных подов (requests == limits) |
-| **Настроить `kubeReserved`** | Резерв памяти для системных процессов |
+- **Настройка `kubeReserved` и `systemReserved`:** Резервирование памяти для системных компонентов в конфигурации kubelet.
+- **Оптимизация ресурсов:** Приведение `requests` и `limits` в соответствие с реальным потреблением.
+- **Вертикальное масштабирование:** Использование VPA (Vertical Pod Autoscaler — вертикальный автоскейлер подов).
+- **Горизонтальное масштабирование:** Добавление новых узлов в кластер или использование HPA (Horizontal Pod Autoscaler).
 
-#### Настройка kubeReserved
+## Дополнительная информация
 
-```yaml
-# /var/lib/kubelet/config.yaml
-kubeReserved:
-  cpu: "200m"
-  memory: "512Mi"        # Резерв для kubelet + container runtime
-  ephemeral-storage: "1Gi"
-kubeReservedCgroup: "/kubelet"
-systemReserved:
-  memory: "256Mi"        # Резерв для ОС
-systemReservedCgroup: "/system"
-enforceNodeAllocatable:
-  - pods
-  - kubeReserved
-  - systemReserved
-```
-
-> После изменения требуется restart kubelet: `systemctl restart kubelet`
-
-## Additional Information
-
-### Мониторинг и алерты
-
-```yaml
-# Prometheus alerts
-- alert: NodeMemoryPressure
-  expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "MemoryPressure на узле {{ $labels.node }}"
-
-- alert: NodeMemoryHigh
-  expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 85
-  for: 10m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Память узла {{ $labels.instance }} > 85%"
-
-- alert: PodEvictedMemory
-  expr: kube_pod_status_reason{reason="Evicted"} == 1
-    and on(pod, namespace) (kube_pod_status_phase{phase="Failed"} == 1)
-  for: 1m
-  labels:
-    severity: critical
-```
-
-### Типичные значения memory limits
-
-| Приложение | Requests | Limits | Примечание |
-|------------|----------|--------|------------|
-| Nginx | 64Mi | 128Mi | Статический контент |
-| Node.js API | 128Mi | 256Mi | Зависит от нагрузки |
-| Java Spring Boot | 512Mi | 1Gi | Требуется `-XX:MaxRAMPercentage` |
-| Python Flask | 128Mi | 256Mi | GIL, однопоточность |
-| PostgreSQL | 256Mi | 512Mi | Зависит от `shared_buffers` |
-
-> Значения зависят от конкретной нагрузки и требуют эмпирической настройки.
-
-### Предотвращение
+### Рекомендации по настройке ресурсов
 
 | Практика | Описание |
 |----------|----------|
-| **Всегда указывайте requests и limits** | Избегайте QoS `BestEffort` |
-| **Используйте `Guaranteed` для критичных подов** | Максимальная защита от eviction |
-| **Настройте `kubeReserved`** | Защита системных процессов |
-| **Используйте VPA** | Автоматическая подстройка ресурсов |
-| **Настройте PDB** | Защита от массового выселения |
+| **QoS Guaranteed** | Установка `requests == limits` для критически важных приложений минимизирует риск их выселения. |
+| **PDB (Pod Disruption Budget)** | Бюджет прерываний защищает от одновременного выселения слишком большого количества реплик. |
+| **Мониторинг** | Настройка оповещений (alerts) в Prometheus при заполнении памяти узла > 85%. |
 
-### Связанные файлы
+### Смотрите также
 
-- **Определения:** [definitions.md](./definitions.md) — типы eviction, QoS, thresholds
-- **Диагностика:** [diagnostics.md](./diagnostics.md) — общий чек-лист
-- **Disk eviction:** [disk_eviction.md](./disk_eviction.md) — нехватка диска
-- **QoS и Eviction Manager:** [qos_and_eviction.md](./qos_and_eviction.md)
-- **OOMKilled:** [oomkilled_pods.md](../oomkilled_pods.md) — отличие от memory eviction
-- **QoS общий:** [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md)
-- **Kubelet:** [kubelet.md](../../../Concepts/kubelet.md) — конфигурация kubelet
+- [Pod Evicted: Определения](./definitions.md) — классификация выселений и общая терминология.
+- [Диагностика выселения](./diagnostics.md) — общий алгоритм поиска причин.
+- [Node Resource Pressure](../NodeUnavailability/resource_pressure.md) — диагностика со стороны инфраструктуры узла.
+- [OOMKilled](../oomkilled_pods.md) — детальный разбор ошибок нехватки памяти внутри контейнера.

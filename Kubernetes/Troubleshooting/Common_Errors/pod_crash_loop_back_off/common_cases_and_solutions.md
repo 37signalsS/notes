@@ -1,247 +1,164 @@
-# Pod в состоянии `CrashLoopBackOff`: Распространенные случаи и решения
+# Состояние `CrashLoopBackOff`: Распространенные случаи и решения
 
-## 1. Ошибка в приложении (баг, исключение)
+## Определения
+
+**Распространенные случаи (Common Cases)** — типовые сценарии возникновения циклической перезагрузки, классифицированные по первопричине.
+
+**Решения (Solutions)** — конкретные действия и изменения конфигурации, направленные на устранение выявленных неисправностей и восстановление работоспособности Pod.
+
+Базовые концепции и алгоритм поиска причин представлены в разделах:
+
+- **[Определения и концепции](./definitions_and_concepts.md)**
+- **[Диагностика и пошаговый чек-лист](./diagnostics.md)**
+
+## Основные концепции
+
+Эффективное решение проблемы `CrashLoopBackOff` требует сопоставления технических симптомов (коды завершения, события Kubernetes, логи приложения) с архитектурными особенностями развертывания. Большинство случаев сводится к ошибкам конфигурации среды или зависимостей приложения.
+
+### Расшифровка аббревиатур
+
+- **API (Application Programming Interface)** — программный интерфейс приложения.
+- **RBAC (Role-Based Access Control)** — управление доступом на основе ролей.
+- **DNS (Domain Name System)** — система доменных имен.
+- **OOM (Out of Memory)** — нехватка оперативной памяти.
+
+## Практические сценарии
+
+### Сценарий 1: Ошибки конфигурации среды (ConfigMap и Secret)
 
 **Симптомы:**
 
-- В логах stack trace, exception
-- Exit Code: 1 или другой ненулевой
+- Код завершения (Exit Code): 1.
+- В логах приложения сообщения: "config not found", "missing environment variable", "failed to load secret".
 
 **Решение:**
 
-- Исправить код приложения
-- Добавить обработку исключений
-- Проверить зависимости (библиотеки, модули)
+1. Проверьте наличие ресурсов, на которые ссылается `deployment`.
+2. Если ресурсы отсутствуют, создайте их или исправьте ссылки в манифесте:
 
----
+   ```bash
+   # Создание недостающего ConfigMap
+   kubectl create configmap app-config --from-literal=DB_PORT=5432
+   ```
 
-## 2. Неверная конфигурация
+3. Пример ошибочного манифеста:
+
+   ```yaml
+   envFrom:
+   - configMapRef:
+       name: missing-config # Если этого ConfigMap нет, контейнер упадет
+   ```
+
+### Сценарий 2: Проблемы сетевых зависимостей (БД, кэш)
 
 **Симптомы:**
 
-- Ошибка в логах: "config not found", "missing environment variable"
-- Exit Code: 1
-
-**Примеры:**
-
-```yaml
-# ❌ Ошибка: ConfigMap не существует
-envFrom:
-- configMapRef:
-    name: missing-config
-
-# ❌ Ошибка: Secret не найден
-env:
-- name: DB_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: missing-secret
-      key: password
-```
+- В логах: "connection refused", "timeout", "cannot connect to database".
+- Приложение падает при попытке установить соединение на этапе старта.
 
 **Решение:**
+
+1. Используйте `initContainers` для проверки доступности зависимости перед запуском основного приложения:
+
+   ```yaml
+   initContainers:
+   - name: wait-for-db
+     image: busybox
+     command: ['sh', '-c', 'until nc -z db-service 5432; do sleep 2; done']
+   ```
+
+2. Настройте `startupProbe` для отсрочки проверок работоспособности (Liveness Probes), если приложению нужно время на инициализацию соединений.
+
+### Сценарий 3: Некорректная настройка Liveness Probe
+
+**Симптомы:**
+
+- В `kubectl describe pod`: `Warning Unhealthy ... Liveness probe failed: HTTP probe failed with statuscode: 404`.
+- Приложение работает корректно при локальной проверке, но перезапускается через равные промежутки времени.
+
+**Решение:**
+
+1. Убедитесь, что `path` и `port` в настройках пробы соответствуют реальному эндпоинту приложения.
+2. Увеличьте `initialDelaySeconds`, если приложение долго прогревается.
+
+   ```yaml
+   livenessProbe:
+     httpGet:
+       path: /healthz
+       port: 8080
+     initialDelaySeconds: 30
+     periodSeconds: 10
+   ```
+
+### Сценарий 4: Ошибки прав доступа (RBAC)
+
+**Симптомы:**
+
+- В логах: "Forbidden", "permission denied", "unauthorized to access api".
+- Приложение пытается взаимодействовать с Kubernetes API (например, для чтения логов или листинга секретов).
+
+**Решение:**
+
+1. Проверьте права текущего ServiceAccount:
+
+   ```bash
+   kubectl auth can-i get secrets --as=system:serviceaccount:<namespace>:<sa-name>
+   # → Result: yes / no
+   ```
+
+2. Примените соответствующие `Role` и `RoleBinding` для предоставления необходимых прав.
+
+### Сценарий 5: Специфические статусы (`Init` и `Completed`)
+
+#### Ошибка в Init-контейнере (`Init:CrashLoopBackOff`)
+
+Если инициализирующий контейнер падает, основной контейнер не будет запущен.
+**Действие:** Проверьте логи конкретного init-контейнера:
 
 ```bash
-# Создать недостающий ConfigMap
-kubectl create configmap app-config --from-literal=key=value
-
-# Или исправить ссылку в манифесте
-```
-
----
-
-## 3. Проблемы с зависимостями (БД, кэш, API)
-
-**Симптомы:**
-
-- В логах: "connection refused", "timeout", "cannot connect"
-- Приложение падает при старте при проверке подключения
-
-**Решение:**
-
-```yaml
-# Добавить проверку доступности зависимости перед стартом
-initContainers:
-- name: wait-for-db
-  image: busybox
-  command: ['sh', '-c', 'until nc -z db-service 5432; do sleep 2; done']
-
-# Или использовать startupProbe для отсрочки проверки liveness
-startupProbe:
-  tcpSocket:
-    port: 5432
-  failureThreshold: 30
-  periodSeconds: 10
-```
-
----
-
-## 4. Недостаточно прав RBAC
-
-**Симптомы:**
-
-- В логах: "Forbidden", "permission denied", "unauthorized"
-- Приложение обращается к Kubernetes API
-
-**Пример из практики:** Log shipper пытается читать логи других подов.
-
-**Диагностика:**
-
-```bash
-# Проверка прав ServiceAccount
-kubectl auth can-i get pods/log --as=system:serviceaccount:my-ns:my-sa
-```
-
-**Решение:**
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-log-reader
-  namespace: my-ns
-rules:
-- apiGroups: [""]
-  resources: ["pods/log"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: my-sa-pod-log-reader
-  namespace: my-ns
-subjects:
-- kind: ServiceAccount
-  name: my-sa
-  namespace: my-ns
-roleRef:
-  kind: Role
-  name: pod-log-reader
-  apiGroup: rbac.authorization.k8s.io
-```
-
-> **См. также:** [`rbac_overview.md`](../../../Security/rbac/rbac_overview.md)
-
----
-
-## 5. Неудачная livenessProbe
-
-**Симптомы:**
-
-- В `kubectl describe`: `Killing container ... Liveness probe failed`
-- В логах приложения могут отсутствовать ошибки, так как оно работает корректно, но проба настроена неверно.
-
-**Диагностика и решение:**
-
-Частая причина — несоответствие порта, пути или схемы (HTTP/HTTPS) в `livenessProbe` и реального эндпоинта приложения.
-
-1. **Стабилизируйте под**, временно отключив пробу через `kubectl edit deployment <name>` или используя паттерн "заморозки" (см. ниже).
-2. **Подключитесь к поду** с помощью `kubectl debug`.
-3. **Найдите реальный порт и путь** внутри контейнера:
-
-    ```bash
-    # Внутри debug-контейнера
-    # Узнаем, какой порт слушает приложение
-    netstat -tuln
-
-    # Проверяем, отвечает ли эндпоинт
-    wget -q -O - http://localhost:3333/health
-    ```
-
-4. **Исправьте `livenessProbe`** в манифесте, указав корректный порт и путь, и увеличьте `initialDelaySeconds`, если приложение стартует медленно.
-
-    ```yaml
-    livenessProbe:
-      httpGet:
-        path: /health # Убедитесь, что этот путь верен
-        port: 3333      # Укажите порт, который слушает приложение
-      initialDelaySeconds: 60
-      periodSeconds: 10
-    ```
-
-5. **Для медленно стартующих приложений** используйте `startupProbe`, чтобы отложить проверку liveness:
-
-    ```yaml
-    # Используйте startupProbe для отсрочки проверки liveness
-    startupProbe:
-      httpGet:
-        path: /health
-        port: 3333
-      failureThreshold: 30 # Дает приложению 300с (30*10) на старт
-      periodSeconds: 10
-    ```
-
----
-
-## 6. OOMKilled
-
-**Симптомы:**
-
-- Exit Code: 137
-- Reason: OOMKilled
-
-**Решение:** См. [`oomkilled_pods.md`](../oomkilled_pods.md)
-
----
-
-## Частные случаи
-
-### `Init:CrashLoopBackOff`
-
-Если в CrashLoopBackOff уходит `initContainer`:
-
-```bash
-# Логи init-контейнера
 kubectl logs <pod-name> -c <init-container-name> --previous
-
-# Описание пода
-kubectl describe pod <pod-name>
 ```
 
-**Частые причины:**
+#### Завершение штатного процесса (`Completed` → `CrashLoopBackOff`)
 
-- Скрипт инициализации падает с ошибкой
-- Недоступна зависимость (БД, миграции)
-- Неверный syntax в shell-скрипте
+Контейнер успешно выполнил задачу (Exit Code 0) и завершился, но `Deployment` или `StatefulSet` ожидают долгоживущего процесса.
+**Действие:** Проверьте, не является ли приложение разовой задачей. В таком случае используйте `Job` вместо `Deployment`.
 
-> **Пример:** В оригинальном видео отсутствовало слово `then` после условия `if`, что приводило к `CrashLoopBackOff` у initContainer.
+### Сценарий 6: Метод "Заморозки" для глубокой отладки
+
+Если контейнер падает слишком быстро, не позволяя подключиться через `exec`, можно временно переопределить его команду запуска.
+
+**Действие:**
+
+1. Примените паттерн (patch) для замены команды на бесконечный сон:
+
+   ```bash
+   kubectl patch deployment <deployment-name> -p '{"spec":{"template":{"spec":{"containers":[{"name":"<container-name>","command":["sleep","3600"]}]}}}}'
+   ```
+
+2. Подключитесь к стабилизированному контейнеру:
+
+   ```bash
+   kubectl exec -it <pod-name> -- /bin/sh
+   ```
+
+3. После отладки откатите изменения:
+
+   ```bash
+   kubectl rollout undo deployment/<deployment-name>
+   ```
+
+## Дополнительная информация
+
+### Связанные концепции
+
+- **[Диагностика OOMKilled](../oomkilled_pods.md)** — если причиной является нехватка памяти.
+- **[Продвинутые темы CrashLoopBackOff](./advanced_topics.md)** — автоматизация и лучшие практики.
+- **[Обзор RBAC](../../../Security/rbac/rbac_overview.md)** — управление доступом в кластере.
 
 ---
 
-### `Completed` → `CrashLoopBackOff`
+### Ссылки
 
-Если контейнер завершается с кодом 0, но Deployment ожидает долгоживущий процесс:
-
-**Причина:** Контейнер предназначен для одноразовых задач (Jobs), а не для Deployments.
-
-**Решение:** Изменить приложение на долгоживущий процесс или использовать `Job`/`CronJob`.
-
----
-
-## Временная "заморозка" пода для отладки
-
-При постоянных рестартах (`CrashLoopBackOff`) невозможно использовать `kubectl exec` или `kubectl debug`, так как для подключения требуется запущенный контейнер. Чтобы это обойти, можно "заморозить" под, временно переопределив его команду на `sleep`. Это стабилизирует контейнер в состоянии `Running`, позволяя провести диагностику.
-
-**Команда для "заморозки":**
-
-```bash
-kubectl patch deployment <deployment-name> \
-  -p '{"spec":{"template":{"spec":{"containers":[{"name":"<container-name>","command":["sleep","3600"]}]}}}}'
-```
-
-После этого можно безопасно подключаться к поду для исследования файловой системы, переменных окружения и сетевых настроек.
-
-**После отладки:**
-
-```bash
-kubectl rollout undo deployment/<deployment-name>
-```
-
-> **См. также:** [`troubleshooting_overview.md`](../../troubleshooting_overview.md)
-
----
-
-## Ссылки
-
-- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
+- **[Пошаговая диагностика](./diagnostics.md)** — что делать, если причина не очевидна.
+- **[Обзор Troubleshooting](../../troubleshooting_overview.md)** — общая стратегия решения проблем в Kubernetes.

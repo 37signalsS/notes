@@ -1,157 +1,151 @@
-# Pod Terminating: Диагностика
+# Pod Terminating — диагностика
 
 ## Определения
 
-**Диагностическое дерево Pod Terminating** — последовательность проверок, определяющая корневую причину зависания пода в статусе `Terminating`: volumes → finalizers → node → PDB.
+**Диагностическое дерево Pod Terminating** — логическая последовательность проверок для выявления первопричины зависания Pod в состоянии `Terminating`. Включает анализ томов (volumes), финализаторов (finalizers), состояния узлов (nodes) и бюджетов прерываний (PDB).
 
-**UID пода** — уникальный идентификатор объекта, используемый для поиска точек монтирования на узле и связи с VolumeAttachment объектами.
+**UID (Unique Identifier)** — уникальный идентификатор объекта Pod, необходимый для точного поиска точек монтирования на файловой системе узла и связи с объектами `VolumeAttachment`.
 
-**Deletion Timestamp** — метка времени удаления. "Старая" (более `terminationGracePeriodSeconds`) указывает на аномалию завершения.
+**Метка удаления (Deletion Timestamp)** — временной маркер в метаданных объекта. В диагностике критично сравнение этой метки с текущим временем: если разница превышает `terminationGracePeriodSeconds`, это подтверждает наличие блокировки завершения.
 
 ---
 
 ## Базовые концепции
 
-### Принцип диагностики
+### Алгоритм диагностики
 
-Диагностика идёт от общего к частному:
+Процесс анализа строится от общего состояния к специфичным компонентам:
 
-1. **Общий статус** → `kubectl describe` (Events, Finalizers, Conditions)
-2. **Тип блокировки** → volume / finalizer / node / PDB
-3. **Детализация** → специфичные команды для каждой причины
-4. **Решение** → переход в специализированный файл
+1. **Общий аудит** → анализ `kubectl describe` (события, финализаторы, условия).
+2. **Классификация блокировки** → отнесение проблемы к одной из категорий: тома, финализаторы, узел или PDB.
+3. **Глубокий анализ** → использование специализированных инструментов для подтвержденной категории.
+4. **Устранение** → применение инструкций из профильных разделов.
 
-### Ключевые поля в выводе kubectl describe
+### Ключевые маркеры в выводе describe
 
+```yaml
+Status:             Terminating
+Deletion Timestamp:  2026-03-05T10:00:00Z    # Сравнить с текущим временем
+Finalizers:         [kubernetes.io/pod-protection external-attacher/csi-driver] # Причина блокировки
 ```
-Status:       Terminating
-Deletion Timestamp:  2026-03-05T10:00:00Z    ← Если старая → проблема
-Finalizers:    [kubernetes.io/pod-protection external-attacher/csi-driver]  ← Если есть → блокировка
-```
 
-### Инструменты диагностики
+### Инструменты анализа
 
-| Инструмент | Назначение | Что искать |
-|------------|------------|-------------|
-| `kubectl describe pod` | Общая информация + Events | Finalizers, Status, Events |
-| `kubectl get pod -o json` | Полная спецификация | deletionTimestamp, finalizers, conditions |
-| `kubectl get pod -o jsonpath` | Извлечение конкретных полей | UID, finalizers, volumes |
-| `findmnt` / `lsof` (на узле) | Поиск активных mount/process | Процессы, держащие volume |
-| `kubectl get volumeattachment` | Проверка CSI attachments | Зависшие volume attachments |
+| Инструмент | Сфера применения | Искомые данные |
+| :--- | :--- | :--- |
+| `kubectl describe pod` | Общий аудит и события (Events) | Ошибки монтирования, таймауты узла, финализаторы. |
+| `kubectl get pod -o json` | Полная спецификация объекта | `deletionTimestamp`, полные списки условий и финализаторов. |
+| `findmnt` / `lsof` | Локальная диагностика на узле | Процессы, блокирующие размонтирование томов. |
+| `kubectl get volumeattachment` | Проверка связей томов | Зависшие объекты в CSI (Container Storage Interface). |
 
 ---
 
 ## Практические сценарии
 
-### Пошаговый чек-лист
+### Пошаговый алгоритм проверки
 
-#### Шаг 1: Общая проверка
+#### Этап 1: Первичный сбор данных
 
 ```bash
-# Статус пода + узел
+# Проверка распределения по узлам
 kubectl get pod <pod-name> -o wide
 
-# Детальная информация (Events + Finalizers)
+# Анализ событий и конфигурации
 kubectl describe pod <pod-name>
 ```
 
-**Анализ:**
+**Анализ результатов:**
 
-- `DeletionTimestamp` старый (минуты/часы) → аномалия
-- `Finalizers` не пустые → блокировка finalizer'ом
-- Events показывают ошибки volumes / node → переход к шагу 2
+- `DeletionTimestamp` значительно старше ожидаемого времени завершения → переход к классификации.
+- В списке `Finalizers` присутствуют записи → блокировка логикой контроллеров.
+- В `Events` видны ошибки CSI или тайм-ауты узла → переход к этапу 2.
 
-#### Шаг 2: Определение типа блокировки
+#### Этап 2: Классификация причины блокировки
 
-| Признак | Причина | Действие |
-|---------|---------|----------|
-| Finalizers: `[external-attacher/...]` | CSI volume | → [Volume Unmount](./volume_unmount_issues.md) |
-| Finalizers: `[kubernetes.io/pvc-protection]` | PVC защита | → [Finalizer Issues](./finalizer_issues.md) |
-| Node: `NotReady` / `Unknown` | Узел недоступен | → [Node Unavailable](./node_unavailable_issues.md) |
-| Events: `violate disruption budget` | PDB блокирует | → [PDB Blocking](./pdb_blocking.md) |
+| Признак | Категория | Ссылка на решение |
+| :--- | :--- | :--- |
+| Финализатор: `external-attacher/...` | Проблемы томов CSI | [Ошибки размонтирования томов](./volume_unmount_issues.md) |
+| Финализатор: `kubernetes.io/pvc-protection` | Защита ресурсов | [Проблемы финализаторов](./finalizer_issues.md) |
+| Статус узла: `NotReady` или `Unknown` | Недоступность узла | [Недоступность узла](./node_unavailable_issues.md) |
+| Событие: `violate disruption budget` | Блокировка через PDB | [Блокировка PDB](./pdb_blocking.md) |
 
-#### Шаг 3: Проверка volumes
+#### Этап 3: Диагностика подсистемы хранения
 
 ```bash
-# Volumes пода
+# Список описанных томов
 kubectl get pod <pod-name> -o jsonpath='{.spec.volumes}'
 
-# UID пода (для поиска на узле)
+# Получение UID для поиска на узле
 kubectl get pod <pod-name> -o jsonpath='{.metadata.uid}'
 
-# Mounts на узле (требуется SSH)
+# Проверка точек монтирования на узле (через SSH)
 findmnt | grep <pod-uid>
 lsof +D /var/lib/kubelet/pods/<pod-uid>/volumes
 ```
 
-Подробная диагностика: [Volume Unmount проблемы](./volume_unmount_issues.md).
+Детальное руководство: [Ошибки размонтирования томов](./volume_unmount_issues.md).
 
-#### Шаг 4: Проверка finalizers
+#### Этап 4: Анализ финализаторов и CSI-объектов
 
 ```bash
-# Список finalizers
-kubectl get pod <pod-name> -o jsonpath='{.metadata.finalizers}'
-
-# VolumeAttachment (для CSI)
+# Проверка связи тома с узлом
 kubectl get volumeattachment | grep <pod-uid>
 
-# CSI driver статус
+# Статус контроллеров CSI
 kubectl get pods -n kube-system -l app=csi-driver
 ```
 
-Подробная диагностика: [Finalizer и CSI проблемы](./finalizer_issues.md).
+Детальное руководство: [Проблемы финализаторов](./finalizer_issues.md).
 
-#### Шаг 5: Проверка узла
+#### Этап 5: Проверка состояния инфраструктуры
 
 ```bash
-# Статус узла
+# Общий статус узла
 kubectl get node <node-name>
 
-# Events узла
+# События, относящиеся к узлу
 kubectl get events --field-selector involvedObject.kind=Node,involvedObject.name=<node-name>
 ```
 
-Подробная диагностика: [Узел недоступен](./node_unavailable_issues.md).
+Детальное руководство: [Недоступность узла](./node_unavailable_issues.md).
 
-### Скрипт автоматической диагностики
+### Сценарий автоматизированной диагностики
+
+Скрипт для экспресс-анализа зависшего Pod:
 
 ```bash
 #!/bin/bash
-# Быстрая диагностика terminating pod
-
 POD=$1
 NS=${2:-default}
 
-echo "=== Статус пода ==="
+echo "=== Статус и локация ==="
 kubectl get pod $POD -n $NS -o wide
 
-echo -e "\n=== Finalizers ==="
+echo -e "\n=== Активные финализаторы ==="
 kubectl get pod $POD -n $NS -o jsonpath='{.metadata.finalizers}'
 echo
 
-echo -e "\n=== Volumes ==="
+echo -e "\n=== Конфигурация томов ==="
 kubectl get pod $POD -n $NS -o jsonpath='{.spec.volumes}'
 echo
 
-echo -e "\n=== Описание (Status/Finalizers/Conditions) ==="
+echo -e "\n=== Ключевые метрики состояния ==="
 kubectl describe pod $POD -n $NS | grep -A 10 "Status:\|Finalizers:\|Conditions:"
 
-echo -e "\n=== События ==="
+echo -e "\n=== История событий ==="
 kubectl get events -n $NS --field-selector involvedObject.name=$POD --sort-by='.lastTimestamp'
 ```
-
-**Использование:** `./diagnose_terminating_pod.sh <pod-name> [namespace]`
 
 ---
 
 ## Дополнительная информация
 
-**Связанные разделы:**
+**См. также:**
 
-- [Определения Pod Terminating](./definitions.md) — базовые понятия, finalizers, причины
-- [Volume Unmount проблемы](./volume_unmount_issues.md) — размонтирование volumes, lsof, umount
-- [Finalizer и CSI проблемы](./finalizer_issues.md) — удаление finalizers, VolumeAttachment, CSI driver
-- [Узел недоступен](./node_unavailable_issues.md) — node NotReady, принудительное удаление
-- [PDB блокирует удаление](./pdb_blocking.md) — PodDisruptionBudget, eviction
-- [Graceful Shutdown](./graceful_shutdown.md) — terminationGracePeriodSeconds, preStop hooks
-- [Общий troubleshooting overview](../overview.md) — классификация ошибок Kubernetes
+- [Определения Pod Terminating](./definitions.md) — базовые термины и системные механизмы.
+- [Ошибки размонтирования томов](./volume_unmount_issues.md) — детальный анализ проблем хранилищ.
+- [Проблемы финализаторов](./finalizer_issues.md) — ручная очистка и CSI-специфика.
+- [Недоступность узла](./node_unavailable_issues.md) — действия при отказе инфраструктуры.
+- [Блокировка PDB](./pdb_blocking.md) — анализ бюджетов прерываний (Pod Disruption Budget).
+- [Graceful Shutdown (корректное завершение)](./graceful_shutdown.md) — настройки периодов завершения.
+- [Обзор Troubleshooting](../../troubleshooting_overview.md) — общая классификация ошибок Kubernetes.

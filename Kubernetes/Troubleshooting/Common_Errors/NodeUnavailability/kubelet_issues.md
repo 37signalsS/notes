@@ -1,139 +1,117 @@
-# Node Unavailability: Kubelet Issues
+# Недоступность узла: Проблемы Kubelet
 
-## Definitions
+## Определения
 
-**Kubelet Issue** — ситуация, при которой агент kubelet на узле не может нормально функционировать (упал, не отвечает, не может подключиться к API server), что приводит к статусу узла `NotReady` или `Unknown`.
+**Сбой Kubelet** (Kubelet Issue) — ситуация, при которой агент Kubelet на узле не может нормально функционировать (процесс остановлен, не отвечает на запросы, не может подключиться к API-серверу), что приводит к переходу узла в статус `NotReady` или `Unknown`.
 
-**Kubelet** — основной агент на каждом узле, регистрирующий узел в API server и управляющий подами. Подробнее: [kubelet.md](../../../Concepts/kubelet.md).
+**Kubelet** — основной агент на каждом рабочем узле, отвечающий за регистрацию узла в кластере и управление жизненным циклом подов. Подробнее: [Kubelet](../../../Concepts/kubelet.md).
 
-## Basic Concepts
+## Основные концепции
 
-### Kubelet Architecture (кратко)
+### Архитектура Kubelet (кратко)
 
 | Компонент | Назначение |
-|-----------|-----------|
-| **API Server Client** | Подключение к control plane, получение PodSpec |
-| **Container Runtime Interface (CRI)** | Взаимодействие с containerd/CRI-O |
-| **Health Checks** | Liveness/readiness probes для подов |
-| **Node Status Reporter** | Отправка conditions (Ready, MemoryPressure, DiskPressure) |
-| **Certificate Manager** | Управление TLS-сертификатами kubelet |
+|:----------|:-----------|
+| **API Server Client** | Взаимодействие с Control Plane, получение PodSpec |
+| **CRI (Container Runtime Interface)** | Интерфейс взаимодействия со средой выполнения (containerd/CRI-O) |
+| **Health Checks** | Выполнение liveness и readiness проб для контейнеров |
+| **Node Status Reporter** | Сбор и отправка условий узла (Ready, MemoryPressure и др.) |
+| **Certificate Manager** | Управление TLS-сертификатами агента |
 
-### Common Failure Modes
+### Типичные режимы сбоев
 
-| Тип сбоя | Статус узла | Типичная причина |
-|----------|-------------|------------------|
-| Kubelet остановлен | `NotReady` / `Unknown` | Crash, OOM kill, systemctl stop |
-| Ошибка конфигурации | `NotReady` | Некорректный `config.yaml` |
-| Сертификаты истекли | `NotReady` | Истёк `kubelet-client-current.pem` |
-| CRI недоступен | `NotReady` | containerd/CRI-O упал |
+| Режим сбоя | Статус узла | Вероятная причина |
+|:-----------|:------------|:------------------|
+| Процесс остановлен | `NotReady` / `Unknown` | Краш приложения, OOM kill, ручная остановка |
+| Ошибка конфигурации | `NotReady` | Опечатки или несовместимые параметры в `config.yaml` |
+| Истечение сертификатов | `NotReady` | Ошибка ротации сертификатов `kubelet-client` |
+| CRI недоступен | `NotReady` | Сбой в работе containerd или CRI-O |
 
-### Kubelet Configuration
+### Конфигурация и журналы
 
-| Параметр | Файл | Описание |
-|----------|------|----------|
-| Config | `/var/lib/kubelet/config.yaml` | Основная конфигурация |
-| Flags | `/etc/sysconfig/kubelet` или `/etc/default/kubelet` | Дополнительные флаги запуска |
-| Certs | `/var/lib/kubelet/pki/` | TLS-сертификаты |
-| Logs | `journalctl -u kubelet` | Системный журнал |
+| Объект | Путь | Описание |
+|:-------|:-----|:---------|
+| **Основной конфиг** | `/var/lib/kubelet/config.yaml` | Параметры KubeletConfiguration |
+| **Флаги запуска** | `/etc/default/kubelet` | Аргументы командной строки |
+| **Сертификаты** | `/var/lib/kubelet/pki/` | Файлы для TLS-аутентификации |
+| **Логи (systemd)** | `journalctl -u kubelet` | Основной инструмент диагностики |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Scenario 1: Kubelet остановлен или не отвечает
+### Сценарий 1: Kubelet остановлен или не отвечает
 
 **Симптомы:**
 
-- Статус узла: `NotReady` или `Unknown`
-- `systemctl status kubelet` → `inactive` или `failed`
+- Статус узла: `NotReady` или `Unknown`.
+- Поды на узле перестают обновлять статус.
 
 **Диагностика:**
 
 ```bash
-# Статус службы
+# Проверка статуса системного сервиса
 systemctl status kubelet
 
-# Логи kubelet
-journalctl -u kubelet -n 100 --no-pager
-
-# Проверка конфигурации
-cat /var/lib/kubelet/config.yaml
+# Анализ последних записей в журнале
+journalctl -u kubelet -n 50 --no-pager
 ```
 
 **Решение:**
 
-```bash
-# Перезапуск kubelet
-sudo systemctl restart kubelet
+1. Если сервис в статусе `inactive`, попробуйте запустить его: `sudo systemctl start kubelet`.
+2. Если сервис падает при запуске, изучите логи на предмет ошибок в `config.yaml` или нехватки ресурсов на узле.
 
-# После перезапуска проверить статус узла
-kubectl get nodes
-```
-
-**Типичные причины в логах:**
-
-| Сообщение | Причина |
-|-----------|---------|
-| `failed to run Kubelet` | Ошибка конфигурации |
-| `unable to register node` | Проблема с авторизацией |
-| `container runtime is down` | CRI (containerd) недоступен |
-
-### Scenario 2: Проблемы с сертификатами kubelet
+### Сценарий 2: Проблемы с TLS-сертификатами
 
 **Симптомы:**
 
-- Kubelet не подключается к API server
-- В логах: `x509: certificate has expired` или `TLS handshake timeout`
+- Kubelet работает, но в логах видны ошибки: `x509: certificate has expired`.
+- Узел не может авторизоваться в API-сервере.
 
 **Диагностика:**
 
 ```bash
 # Проверка срока действия сертификата
-openssl x509 -in /var/lib/kubelet/pki/kubelet.crt -text -noout | grep -A 2 "Validity"
+openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -text -noout | grep -A 2 "Validity"
 
-# Проверка сроков всех сертификатов (kubeadm)
+# Проверка статуса всех сертификатов (для кластеров kubeadm)
 kubeadm certs check-expiration
 ```
 
 **Решение:**
-
-> ⚠️ Детальное управление сертификатами: [certificate_management.md](../../../Operations/certificate_management.md).
+Подробные инструкции по ротации приведены в разделе [Управление сертификатами](../../../Operations/certificate_management.md).
 
 ```bash
-# Обновление сертификатов через kubeadm
+# Принудительное обновление через kubeadm
 sudo kubeadm certs renew all
 sudo systemctl restart kubelet
 ```
 
-### Scenario 3: Kubelet не регистрирует узел
+### Сценарий 3: Kubelet не регистрирует узел
 
 **Симптомы:**
 
-- Kubelet работает (`systemctl status kubelet` → `active`)
-- Узел не появляется в `kubectl get nodes`
+- Процесс Kubelet активен, но узел отсутствует в выводе `kubectl get nodes`.
+- В логах ошибки: `unable to register node ... forbidden`.
 
 **Диагностика:**
 
-```bash
-# Проверка авторизации
-journalctl -u kubelet | grep -i "forbidden\|unauthorized"
+1. Проверьте права доступа в логах: `journalctl -u kubelet | grep -i "forbidden"`.
+2. Проверьте наличие файла `bootstrap-kubeconfig` (если это новый узел).
+3. Проверьте сетевую доступность API-сервера с узла.
 
-# Проверка bootstrap kubeconfig
-ls -la /var/lib/kubelet/bootstrap-kubeconfig
+**Решение:**
+Убедитесь, что токен присоединения (bootstrap token) актуален и Kubelet имеет права на создание CSR (Certificate Signing Request).
 
-# Проверка токена
-kubectl -n kube-system get secrets | grep bootstrap
-```
+## Дополнительная информация
 
-## Additional Information
+### Смежные концепции
 
-### Related Concepts
+- Обзор архитектуры: [Kubelet](../../../Concepts/kubelet.md)
+- Управление сертификатами: [Operations: Certificate Management](../../../Operations/certificate_management.md)
 
-- Kubelet overview: [kubelet.md](../../../Concepts/kubelet.md)
-- Certificate management: [certificate_management.md](../../../Operations/certificate_management.md)
-- Node diagnostics entry point: [diagnostics.md](./diagnostics.md)
+### Другие причины недоступности
 
-### Related Node Unavailability Paths
-
-- Resource pressure: [resource_pressure.md](./resource_pressure.md)
-- Container runtime issues: [runtime_issues.md](./runtime_issues.md)
-- Network issues: [network_issues.md](./network_issues.md)
-- Node maintenance: [maintenance.md](./maintenance.md)
+- Проблемы среды выполнения: [Container Runtime Issues](./runtime_issues.md)
+- Сетевые проблемы узла: [Network Issues](./network_issues.md)
+- Нехватка ресурсов (Pressure): [Resource Pressure](./resource_pressure.md)
+- Плановое обслуживание: [Node Maintenance](./maintenance.md)

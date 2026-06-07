@@ -1,90 +1,82 @@
 # Pod в состоянии `Pending`: Распространенные случаи и решения
 
-## 1. Нехватка ресурсов (`Insufficient cpu/memory`)
+## Определения
 
-**Сообщение:**
+**Сценарии Pending-статуса** — типичные ситуации, при которых планировщик (kube-scheduler) не может назначить Pod на узел из-за ограничений конфигурации или нехватки мощностей кластера.
 
+**Вытеснение (Preemption)** — механизм освобождения ресурсов узла путём удаления низкоприоритетных подов для запуска высокоприоритетного объекта.
+
+> Базовая теория: **[Определения и концепции](./definitions_and_concepts.md)**
+
+## Основные концепции
+
+Для устранения состояния `Pending` необходимо выявить, на какой стадии фильтрации планировщика происходит отказ. Информация об этом содержится в событиях объекта (`Events`).
+
+Типичный процесс исправления:
+
+1. Определение причины через `kubectl describe`.
+2. Сопоставление требований Pod (Requests, Affinity, PVC) с состоянием кластера.
+3. Корректировка манифеста или инфраструктуры.
+
+## Практические сценарии
+
+### 1. Нехватка ресурсов (`Insufficient cpu/memory`)
+
+**Симптом (Events):**
+
+```text
+Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 Insufficient cpu.
 ```
-0/3 nodes are available: 3 Insufficient cpu.
-0/5 nodes are available: 5 Insufficient memory.
-```
-
-**Причина:** Под запрашивает больше ресурсов (`requests`), чем доступно на любом узле.
 
 **Решение:**
 
-| Вариант | Команда / Действие |
-|---------|-------------------|
-| **Уменьшить `requests`** | Исправить манифест: `resources.requests.memory: "128Mi"` |
-| **Добавить узлы** | `kubectl apply -f new-node.yaml` или через Cluster Autoscaler |
-| **Освободить ресурсы** | Удалить/переместить другие поды |
-| **Вертикальное масштабирование** | Увеличить ресурсы существующих узлов |
-
-**Проверка:**
-
-```bash
-# Сколько ресурсов запрашивает под
-kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].resources.requests}'
-
-# Сколько доступно на узлах
-kubectl describe nodes | grep -A 10 "Allocated resources"
-```
-
-> **Best Practice:** Используйте `Burstable` QoS для гибкости. См. [`qos_limit_and_requests.md`](../../../Scheduling/qos_limit_and_requests.md)
+| Метод | Действие |
+|-------|----------|
+| **Оптимизация requests** | Уменьшить запрашиваемые ресурсы в `spec.containers[].resources.requests`. |
+| **Масштабирование** | Добавить узлы в кластер (вручную или через Cluster Autoscaler). |
+| **Очистка ресурсов** | Удалить неиспользуемые поды в кластере. |
+| **Вертикальный рост** | Увеличить параметры CPU/RAM на существующих инстансах узлов. |
 
 ---
 
-## 2. Несоответствие `nodeSelector` / `nodeAffinity`
+### 2. Несоответствие меток (`nodeSelector` / `nodeAffinity`)
 
-**Сообщение:**
+**Симптом (Events):**
 
+```text
+Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector.
 ```
-0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector.
-```
-
-**Причина:** Ни один узел не имеет требуемых меток.
 
 **Решение:**
 
-```bash
-# Проверить метки на узлах
-kubectl get nodes --show-labels
+1. Посмотреть текущие метки узлов:
 
-# Добавить метку на узел
-kubectl label node <node-name> disktype=ssd
+   ```bash
+   kubectl get nodes --show-labels
+   ```
 
-# Или исправить nodeSelector в манифесте
-```
+2. Если метка отсутствует, добавить её на узел:
 
-**Пример:**
+   ```bash
+   kubectl label node <node-name> disktype=ssd
+   ```
 
-```yaml
-# ❌ Ошибка: метка не существует
-nodeSelector:
-  disktype: ssd
-
-# ✅ Решение: добавить метку на узел
-kubectl label node worker-1 disktype=ssd
-```
-
-> **См. также:** [`affinity.md`](../../../Scheduling/affinity.md)
+3. Или привести `nodeSelector`/`affinity` в манифесте Pod в соответствие с существующими метками.
 
 ---
 
-## 3. Узел имеет `Taints`, у пода нет `Tolerations`
+### 3. Изоляция узлов (Taints) без разрешений (Tolerations)
 
-**Сообщение:**
+**Симптом (Events):**
 
+```text
+Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 node(s) had taint {dedicated: master}, that the pod didn't tolerate.
 ```
-0/3 nodes are available: 3 node(s) had taint {dedicated: master}, that the pod didn't tolerate.
-```
-
-**Причина:** Все узлы "отравлены" taints, которые под не "терпит".
 
 **Решение:**
+Добавить блок `tolerations` в спецификацию Pod:
 
 ```yaml
-# Добавить toleration в спецификацию пода
 spec:
   tolerations:
   - key: "dedicated"
@@ -93,131 +85,71 @@ spec:
     effect: "NoSchedule"
 ```
 
-**Проверка taints:**
-
-```bash
-kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
-```
-
-> **См. также:** [`taints_and_tolerations.md`](../../../Scheduling/taints_and_tolerations.md)
-
 ---
 
-## 4. `PersistentVolumeClaim` (PVC) в состоянии `Pending`
+### 4. Ожидание привязки хранилища (PVC)
 
-**Сообщение:**
+**Симптом (Events):**
 
-```
-0/3 nodes are available: 3 pod has unbound immediate PersistentVolumeClaims.
-```
-
-**Причина:** PVC не может быть удовлетворен — нет подходящего PV или StorageClass.
-
-**Диагностика:**
-
-```bash
-kubectl describe pvc <pvc-name>
-```
-
-**Возможные причины:**
-
-| Причина | Решение |
-|---------|---------|
-| **Нет PV** | Создать PV: `kubectl create -f pv.yaml` |
-| **Неверный StorageClass** | Проверить: `kubectl get storageclass` |
-| **Нехватка места** | Освободить место или увеличить PV |
-| **AccessMode несовместим** | Изменить accessMode или использовать другой PV |
-
-**Пример:**
-
-```yaml
-# Проверка StorageClass
-kubectl get storageclass
-
-# Создание PV
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: my-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: manual
-  hostPath:
-    path: "/mnt/data"
-```
-
-> **См. также:** [`pv_and_pvc.md`](../../Storage/pv_and_pvc.md), [`csi_drivers_comparison.md`](../../Storage/CSI/csi_drivers_comparison.md)
-
----
-
-## 5. Превышен `ResourceQuota`
-
-**Сообщение:**
-
-```
-failed quota: team-a-quota: must specify limits.cpu,limits.memory
-```
-
-**Причина:** Namespace имеет квоты, которые не позволяют создать под.
-
-**Диагностика:**
-
-```bash
-kubectl describe resourcequota -n <namespace>
+```text
+Warning  FailedScheduling  default-scheduler  0/3 nodes are available: 3 pod has unbound immediate PersistentVolumeClaims.
 ```
 
 **Решение:**
 
-- Увеличить квоту
-- Уменьшить `requests` пода
-- Удалить другие поды
+1. Проверить состояние PVC:
 
-```yaml
-# Увеличение квоты
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: team-a-quota
-  namespace: team-a
-spec:
-  hard:
-    requests.cpu: "20"      # Было 10
-    requests.memory: 100Gi  # Было 50Gi
-```
+   ```bash
+   kubectl describe pvc <pvc-name>
+   ```
 
-> **См. также:** [`qos_limit_and_requests.md`](../../Scheduling/qos_limit_and_requests.md)
+2. Убедиться, что существует подходящий `PersistentVolume` (PV) или работает динамический provisioner (CSI driver).
+
+> Подробная диагностика проблем с хранилищем: **[CreateContainerConfigError: Проблемы с PVC](../CreateContainerConfigError/pvc_issues.md)**.
 
 ---
 
-## 6. `PriorityClass` и вытеснение
+### 5. Превышение квот в Namespace (ResourceQuota)
 
-**Сценарий:** Под с высоким приоритетом остается в `Pending`, если не может вытеснить поды с низким приоритетом.
+**Симптом (Events):**
+
+```text
+Warning  FailedCreate  replicaset-controller  Error creating: pods "my-app-x" is forbidden: exceeded quota: team-a-quota, requested: requests.cpu=1, used: requests.cpu=10, limited: requests.cpu=10
+```
+
+**Решение:**
+
+1. Проверить текущее использование квот:
+
+   ```bash
+   kubectl describe resourcequota -n <namespace>
+   ```
+
+2. Увеличить лимиты в объекте `ResourceQuota` или уменьшить потребление ресурсов в данном пространстве имен.
+
+---
+
+### 6. Ожидание вытеснения (PriorityClass)
+
+**Сценарий:** Pod с высоким приоритетом остается в `Pending`, пока планировщик инициирует процедуру вытеснения для освобождения ресурсов.
 
 **Диагностика:**
 
 ```bash
 # Проверка PriorityClass пода
 kubectl get pod <pod-name> -o jsonpath='{.spec.priorityClassName}'
-
-# Список PriorityClass
-kubectl get priorityclass
 ```
 
 **Решение:**
 
-- Добавить ресурсы в кластер
-- Настроить Preemption
-- Уменьшить приоритет пода
+- Убедиться, что в кластере есть поды с более низким приоритетом, которые *могут* быть вытеснены.
+- Проверить, не установлена ли политика `preemptionPolicy: Never` в объекте `PriorityClass`.
 
-> **См. также:** [PriorityClass](../../../Concepts/priorityclass.md)
+## Дополнительная информация
 
----
+### Связанные ресурсы
 
-## Ссылки
-
-- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист
-- **[Определения и концепции](./definitions_and_concepts.md)** — базовая информация
+- **[Диагностика](./diagnostics.md)** — пошаговый чек-лист команд.
+- **[Advanced Topics](./advanced_topics.md)** — глубокий анализ планирования и мониторинг.
+- **[Управление ресурсами](../../Scheduling/qos_limit_and_requests.md)** — подробнее о лимитах, запросах и квотах.
+- **[Affinity и Anti-Affinity](../../Scheduling/affinity.md)** — механизмы привязки к узлам и подам.

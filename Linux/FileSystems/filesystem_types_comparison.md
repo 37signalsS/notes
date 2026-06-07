@@ -284,7 +284,7 @@ UUID=xxx / ext4 defaults,noatime,discard 0 1
 
 ### Связанные темы
 
-Механизмы журналирования описаны в [Журналирование ФС](./journaling.md). Внутреннее устройство ФС — в [Внутреннее устройство ФС](./fs_internals.md). Фундаментальные структуры (inode, dentry) — в [Inode и Dentry](./links_inodes_dentries.md). Снапшоты для ext4/XFS через LVM — в [LVM](./LVM/overview_concepts.md). Тюнинг I/O — в [Оптимизация производительности](./performance_tuning.md). Проверка и восстановление — в [Проверка и восстановление](./fsck.md). Программные RAID-массивы — в [RAID управление](./raid_management.md). Упрощённое управление хранилищем (XFS) — в [Stratis](./stratis.md). Дедупликация и компрессия на уровне блока — в [VDO](./vdo.md).
+Механизмы журналирования описаны в [Журналирование ФС](./journaling.md). Внутреннее устройство ФС — в [Внутреннее устройство ФС](./fs_internals.md). Фундаментальные структуры (inode, dentry) — в [Inode и Dentry](./links_inodes_dentries.md). Снапшоты для ext4/XFS через LVM — в [LVM](./LVM/overview_concepts.md). Тюнинг I/O — в [Оптимизация производительности](./performance_tuning.md). Проверка и восстановление — в [Проверка и восстановление](./fsck.md). Программные RAID-массивы — в [Обзор RAID](./RAID/overview.md). Упрощённое управление хранилищем (XFS) — в [Stratis](./stratis.md). Дедупликация и компрессия на уровне блока — в [VDO](./vdo.md).
 
 ### Документация
 

@@ -1,13 +1,13 @@
-# Api Access Forbidden: 403 Forbidden (распространённые случаи)
+# Ошибка 403 Forbidden (Api Access Forbidden): распространённые случаи
 
-## Definitions
+## Определения
 
-**403 Forbidden (namespaced resources)** — ошибка возникает, когда аутентифицированный субъект обращается к ресурсам в пределах namespace, но не имеет соответствующих прав RBAC.
+**403 Forbidden (namespaced resources)** — ошибка возникает, когда аутентифицированный субъект обращается к ресурсам в пределах пространства имён (namespace), но не имеет соответствующих прав RBAC.
 
 > Различие 401 vs 403: [definitions.md](definitions.md)
-> Общие лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+> Общие лучшие практики RBAC: [../../../../Security/rbac/rbac_overview.md](../../../../Security/rbac/rbac_overview.md)
 
-## Basic Concepts
+## Основные концепции
 
 ### Паттерн сообщения об ошибке
 
@@ -26,22 +26,17 @@ in API group "<group>" in the namespace "<namespace>"
 
 ### Диагностика
 
+Пошаговый процесс выявления причин ошибки 403 описан в разделе **[Диагностика 403 Forbidden](diagnostics.md#шаг-3-диагностика-403-forbidden)**.
+
+Для быстрой проверки прав используйте:
+
 ```bash
-# Проверка прав субъекта
-kubectl auth can-i <verb> <resource> \
-  --as=<subject> -n <namespace>
-
-# Пример
-kubectl auth can-i list pods \
-  --as=system:serviceaccount:my-ns:my-sa -n my-ns
-
-# Поиск существующих RoleBinding
-kubectl get rolebinding -n <namespace> -o wide | grep <sa-name>
+kubectl auth can-i <verb> <resource> --as=<subject> -n <namespace>
 ```
 
 > Пошаговая диагностика: [diagnostics.md](diagnostics.md)
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Чтение pods (отсутствует RoleBinding)
 
@@ -93,9 +88,9 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### Сценарий 2: Доступ к Secrets
+### Сценарий 2: Доступ к секретам (Secrets)
 
-**Контекст:** Приложению требуется прочитать Secrets (например, для rotation или cross-namespace sync).
+**Контекст:** Приложению требуется прочитать секреты (Secrets), например, для ротации или синхронизации между пространствами имён.
 
 **Сообщение:**
 
@@ -132,11 +127,11 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-> **Warning:** Предоставляйте доступ к Secrets только когда это абсолютно необходимо. По возможности используйте `resourceNames` для ограничения конкретными секретами.
+> **Warning:** Предоставляйте доступ к секретам только когда это абсолютно необходимо. По возможности используйте `resourceNames` для ограничения конкретными секретами.
 
-### Сценарий 3: Создание/удаление deployments
+### Сценарий 3: Создание/удаление Deployment
 
-**Контекст:** CI/CD pipeline или оператор пытается управлять deployments.
+**Контекст:** CI/CD конвейер (pipeline) или оператор пытается управлять Deployment.
 
 **Сообщение:**
 
@@ -175,7 +170,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Таблица apiGroups для распространённых ресурсов
 
@@ -189,8 +184,8 @@ roleRef:
 
 ### Связанные ресурсы
 
-- SSoT — Role и ClusterRole: [../../../Security/rbac/roles.md](../../../Security/rbac/roles.md)
-- SSoT — лучшие практики RBAC: [../../../Security/rbac/rbac_overview.md](../../../Security/rbac/rbac_overview.md)
+- Роли и кластерные роли (Role и ClusterRole): [../../../../Security/rbac/roles.md](../../../../Security/rbac/roles.md)
+- Лучшие практики RBAC: [../../../../Security/rbac/rbac_overview.md](../../../../Security/rbac/rbac_overview.md)
 - Определения 401/403: [definitions.md](definitions.md)
 - Пошаговая диагностика: [diagnostics.md](diagnostics.md)
-- Расширенные сценарии (ClusterRole): [advanced.md](advanced.md)
+- Расширенные сценарии: [advanced.md](advanced.md)

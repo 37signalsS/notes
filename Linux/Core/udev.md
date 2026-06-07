@@ -112,24 +112,9 @@ SUBSYSTEM=="block", ENV{ID_SERIAL_SHORT}=="1234567890", SYMLINK+="usb-backup"
 
 ### 3. Автоматическое монтирование при подключении
 
-Подробная реализация описана в сценарии [Автоматическое монтирование через udev](../FileSystems/mounting/scenarios/udev_mount.md).
+Полный сценарий автоматического монтирования съёмных носителей (USB, внешние диски) описан в специализированном материале: **[Автоматическое монтирование через udev](../FileSystems/mounting/scenarios/udev_mount.md)**.
 
-Краткий пример правила:
-
-```bash
-# /etc/udev/rules.d/99-usb-mount.rules
-ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="ext4", RUN+="/usr/local/bin/auto-mount.sh %k"
-```
-
-```bash
-#!/bin/bash
-# /usr/local/bin/auto-mount.sh
-DEVICE="/dev/$1"
-mkdir -p /mnt/auto-$1
-mount $DEVICE /mnt/auto-$1
-```
-
-> **Предупреждение:** Для простого автоматического монтирования предпочтительнее использовать [`/etc/fstab`](../FileSystems/mounting/fstab.md) или [systemd mount units](../FileSystems/mounting/scenarios/systemd_mount.md).
+> **Предупреждение:** Для стандартных задач монтирования рекомендуется использовать [`/etc/fstab`](../FileSystems/mounting/fstab.md) или [systemd mount units](../FileSystems/mounting/scenarios/systemd_mount.md). udev следует использовать только тогда, когда другие методы не подходят (например, динамическое монтирование по серийному номеру устройства).
 
 ### 4. Изменение планировщика I/O для диска
 

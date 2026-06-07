@@ -1,28 +1,30 @@
 # Pod Evicted: Профилактика
 
-## Definitions
+## Определения
 
-**Профилактика eviction** — комплекс мер по конфигурации ресурсов, мониторингу и планированию, направленный на минимизацию вероятности выселения подов.
+**Профилактика eviction (выселения)** — комплекс мер по конфигурации ресурсов, мониторингу и планированию, направленный на минимизацию вероятности выселения подов.
 
 **Цели профилактики:**
 
-1. Не допустить Node Pressure (MemoryPressure, DiskPressure)
-2. Гарантировать доступность критичных подов при drain
-3. Своевременно обнаруживать деградацию ресурсов
+1. Не допустить Node Pressure (давление на ресурсы узла: MemoryPressure, DiskPressure).
+2. Гарантировать доступность критичных подов при drain (выводе узла из эксплуатации).
+3. Своевременно обнаруживать деградацию ресурсов через мониторинг.
 
-## Basic Concepts
+## Основные концепции
 
 ### Уровни профилактики
 
-| Уровень | Мера | От какого eviction защищает |
+| Уровень | Мера | От какого выселения защищает |
 |---------|------|---------------------------|
 | **Под** | requests + limits = Guaranteed | Node Pressure (приоритет) |
-| **Приложение** | PodDisruptionBudget | Массовый drain |
-| **Узел** | kubeReserved + eviction thresholds | System starvation |
-| **Кластер** | Cluster Autoscaler | Capacity exhaustion |
+| **Приложение** | PDB (Pod Disruption Budget) | Массовый drain |
+| **Узел** | kubeReserved + eviction thresholds | System starvation (голодание системы) |
+| **Кластер** | Cluster Autoscaler | Capacity exhaustion (исчерпание емкости) |
 | **Мониторинг** | Prometheus alerts | Все типы (раннее обнаружение) |
 
 ### QoS как фундамент защиты
+
+QoS (Quality of Service — качество обслуживания) определяет приоритет пода при выселении:
 
 ```
 Guaranteed (requests == limits)
@@ -35,9 +37,11 @@ BestEffort (нет requests/limits)
 
 > Детали: [qos_and_eviction.md](./qos_and_eviction.md), [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md)
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Настройка Guaranteed QoS для критичных подов
+
+Для перевода пода в класс Guaranteed необходимо, чтобы лимиты (limits) были равны запросам (requests) для всех контейнеров.
 
 ```yaml
 apiVersion: v1
@@ -57,9 +61,9 @@ spec:
         cpu: "500m"        # == requests → Guaranteed
 ```
 
-> requests == limits — обязательное условие для Guaranteed QoS.
+### 2. Использование Pod Disruption Budget
 
-### 2. Pod Disruption Budget
+PDB (Pod Disruption Budget) ограничивает количество одновременно завершаемых подов приложения при добровольных прерываниях (например, drain узла).
 
 ```yaml
 apiVersion: policy/v1
@@ -78,9 +82,11 @@ spec:
 | `minAvailable: N` | Важно сохранить минимум N работающих подов |
 | `maxUnavailable: 1` | Допустимо потерять не более 1 пода при drain |
 
-> Защита действует **только** при drain / rolling update. Детали: [pod_disruption_budget.md](../../../Autoscaling/pod_disruption_budget.md)
+> Защита действует **только** при drain или rolling update. Детали: [pod_disruption_budget.md](../../../Autoscaling/pod_disruption_budget.md)
 
-### 3. Мониторинг и алерты
+### 3. Настройка мониторинга и алертов
+
+Использование Prometheus для раннего обнаружения признаков грядущего выселения.
 
 ```yaml
 # Prometheus alerts
@@ -117,18 +123,18 @@ spec:
 
 ### 4. Cluster Autoscaler
 
-Автоматическое добавление узлов при нехватке ресурсов:
+Автоматическое добавление узлов при невозможности запланировать поды из-за нехватки ресурсов.
 
 ```yaml
 # Cluster Autoscaler автоматически добавит узлы
 # при появлении Pending подов из-за нехватки CPU/memory
 ```
 
-Работает в облачных средах (AWS ASG, GCP MIG, Azure VMSS). Для bare metal — [Karpenter](https://karpenter.sh/).
+Работает в облачных средах: AWS ASG (Auto Scaling Group), GCP MIG (Managed Instance Group), Azure VMSS (Virtual Machine Scale Set). Для bare metal решений используется [Karpenter](https://karpenter.sh/).
 
-### 5. Удаление выселенных подов
+### 5. Очистка выселенных подов
 
-Выселенные поды остаются в кластере со статусом `Failed/Evicted` и не удаляются автоматически:
+Выселенные поды остаются в кластере со статусом `Failed/Evicted` и требуют ручного или автоматизированного удаления.
 
 ```bash
 # Удаление всех выселенных подов в namespace
@@ -138,24 +144,17 @@ kubectl delete pods --field-selector status.reason=Evicted -n <namespace>
 kubectl delete pods --field-selector status.reason=Evicted --all-namespaces
 ```
 
-> Deployment/ReplicaSet автоматически создаст новые поды взамен удалённых.
+## Дополнительная информация
 
-## Additional Information
+### Резюме лучших практик
 
-### Сводная таблица best practices
-
-| Практика | Описание | Детали |
+| Практика | Описание | Ссылка |
 |----------|----------|--------|
-| **Всегда указывайте requests и limits** | Избегайте QoS `BestEffort` | [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md) |
-| **Guaranteed для критичных подов** | Максимальная защита от eviction | См. [сценарий 1](#1-настройка-guaranteed-qos-для-критичных-подов) |
-| **PDB для stateful-сервисов** | Защита от массового выселения при drain | [pdb_and_taint_eviction.md](./pdb_and_taint_eviction.md) |
-| **kubeReserved на узлах** | Резерв для системных процессов | [memory_eviction.md](./memory_eviction.md) |
-| **log rotation** | Предотвращение DiskPressure | [disk_eviction.md](./disk_eviction.md) |
-| **Мониторинг узлов** | Алерты на Memory/Disk Pressure | См. [сценарий 3](#3-мониторинг-и-алерты) |
-| **Cluster Autoscaler** | Автоматическое масштабирование | См. [сценарий 4](#4-cluster-autoscaler) |
-| **tolerationSeconds** | Увеличение времени до taint-based eviction | [pdb_and_taint_eviction.md](./pdb_and_taint_eviction.md) |
+| **Всегда указывайте requests и limits** | Избегайте использования QoS `BestEffort` | [qos_limit_and_requests.md](../../../Scheduling/qos_limit_and_requests.md) |
+| **PDB для критичных сервисов** | Защита от массового выселения при обслуживании | [pod_disruption_budget.md](../../../Autoscaling/pod_disruption_budget.md) |
+| **kubeReserved на узлах** | Резервирование ресурсов для системных процессов | [memory_eviction.md](./memory_eviction.md) |
 
-### Внешние ресурсы
+### Смотрите также
 
 - [Node Pressure Eviction](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/)
 - [Pod Disruptions](https://kubernetes.io/docs/concepts/workloads/pods/disruptions/)

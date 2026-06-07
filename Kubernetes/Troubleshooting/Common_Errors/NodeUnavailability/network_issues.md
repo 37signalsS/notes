@@ -1,150 +1,142 @@
-# Node Unavailability: Network Issues
+# Недоступность узла: Сетевые проблемы
 
-## Definitions
+## Определения
 
-**NetworkUnavailable** — condition узла (`NetworkUnavailable=True`), означающая, что CNI-плагин не настроил сеть для подов. Новые поды не получают IP-адреса, существующие теряют связность.
+**`NetworkUnavailable`** — состояние узла (condition `NetworkUnavailable=True`), означающее, что CNI-плагин (Container Network Interface) не смог настроить сетевую связность для подов на данном узле. В этом состоянии новые поды не получают IP-адреса, а существующие могут терять связь с внешним миром и другими узлами.
 
-**Node Unreachable (Network)** — ситуация, при которой узел полностью недоступен по сети (нет SSH, ping, IPMI). В отличие от проблем kubelet, причина — аппаратная или сетевая.
+**Node Unreachable (Network)** — ситуация, при которой узел полностью теряет сетевую доступность для контрольной панели (Control Plane) и систем мониторинга (отсутствие ответа на ping, невозможность подключения по SSH или через IPMI). В отличие от проблем агента Kubelet, причиной здесь обычно является сбой на уровне сетевой инфраструктуры или аппаратного обеспечения.
 
-## Basic Concepts
+## Основные концепции
 
-### Network Failure Types
+### Типы сетевых сбоев
 
-| Тип сбоя | Condition | Статус узла | Причина |
-|----------|-----------|-------------|---------|
-| CNI не настроен | `NetworkUnavailable=True` | `NotReady` | Плагин не установлен, ошибка конфигурации |
-| Сетевая изоляция | — | `Unknown` | Файрвол, разрыв канала |
-| Аппаратный сбой | — | `Unknown` | Питание, железо, гипервизор |
+| Тип сбоя | Condition | Статус узла | Вероятная причина |
+|:---------|:----------|:------------|:------------------|
+| CNI не настроен | `NetworkUnavailable=True` | `NotReady` | Плагин не установлен, ошибка в конфигурации или сбой в работе подов CNI. |
+| Сетевая изоляция | — | `Unknown` | Ошибка в правилах файрвола, разрыв канала связи между сегментами сети. |
+| Аппаратный сбой | — | `Unknown` | Сбой питания, неисправность сетевой карты (NIC), проблемы на уровне гипервизора. |
 
-### CNI (Container Network Interface)
+### Роль CNI (Container Network Interface)
 
 | Компонент | Назначение |
-|-----------|-----------|
-| `/etc/cni/net.d/` | Конфигурация CNI на узле |
-| CNI DaemonSet | Поды плагина (Calico, Cilium, Flannel) в `kube-system` |
-| kube-proxy | Настройка iptables/ipvs для Service routing |
+|:----------|:-----------|
+| `/etc/cni/net.d/` | Директория с конфигурационными файлами сетевого плагина на узле. |
+| CNI DaemonSet | Системные поды плагина (Calico, Cilium, Flannel и др.), работающие в пространстве имен `kube-system`. |
+| kube-proxy | Агент, отвечающий за настройку правил фильтрации (iptables/IPVS) для маршрутизации трафика сервисов. |
 
-### CNI Diagnostic Commands
+### Диагностические команды
 
 | Команда | Назначение |
-|---------|-----------|
-| `kubectl get pods -n kube-system -l k8s-app=<cni>` | Проверка подов CNI |
-| `kubectl logs -n kube-system -l k8s-app=<cni>` | Логи CNI-плагина |
-| `ls -la /etc/cni/net.d/` | Конфигурация CNI на узле |
-| `iptables -L -n \| grep -E 'KUBE\|CNI'` | Правила маршрутизации |
+|:--------|:-----------|
+| `kubectl get pods -n kube-system -l k8s-app=<название-cni>` | Проверка состояния подов сетевого плагина. |
+| `kubectl logs -n kube-system -l k8s-app=<название-cni>` | Анализ журналов работы CNI-плагина. |
+| `ls -la /etc/cni/net.d/` | Проверка наличия и содержимого файлов конфигурации сети. |
+| `iptables -L -n \| grep -E 'KUBE\|CNI'` | Проверка корректности правил маршрутизации и фильтрации. |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Scenario 1: CNI не работает (NetworkUnavailable=True)
+### Сценарий 1: Состояние NetworkUnavailable=True
 
 **Симптомы:**
 
-- Condition `NetworkUnavailable=True`
-- Поды не получают IP-адреса (`Pending` или `ContainerCreating`)
-- CNI DaemonSet поды в `CrashLoopBackOff` или `Error`
+- Статус узла содержит `NetworkUnavailable=True`.
+- Поды на узле застревают в состоянии `Pending` или `ContainerCreating`.
+- Системные поды CNI находятся в статусе `CrashLoopBackOff` или `Error`.
 
 **Диагностика:**
 
-```bash
-# Проверка CNI подов
-kubectl get pods -n kube-system -l k8s-app=<cni-plugin>
+1. Проверьте состояние подов CNI:
 
-# Логи CNI
-kubectl logs -n kube-system -l k8s-app=<cni-plugin>
+   ```bash
+   kubectl get pods -n kube-system -l k8s-app=<cni-plugin-name>
+   ```
 
-# Проверка CNI конфигурации на узле
-ls -la /etc/cni/net.d/
-```
+2. Изучите логи проблемных подов:
+
+   ```bash
+   kubectl logs -n kube-system -l k8s-app=<cni-plugin-name>
+   ```
 
 **Решение:**
 
-```bash
-# Перезапуск CNI плагина
-kubectl rollout restart daemonset -n kube-system <cni-ds-name>
+1. Перезапустите DaemonSet сетевого плагина:
 
-# Проверка правил iptables
-iptables -L -n | grep -E 'KUBE|CNI'
+   ```bash
+   kubectl rollout restart daemonset -n kube-system <cni-daemonset-name>
+   ```
 
-# Пересоздание CNI конфигурации
-kubectl apply -f <cni-manifest.yaml>
-```
+2. Проверьте наличие и корректность конфигурации в `/etc/cni/net.d/`.
 
-### Scenario 2: Узел выключен или недоступен по сети
+### Сценарий 2: Узел полностью недоступен (статус Unknown)
 
 **Симптомы:**
 
-- Статус узла: `Unknown`
-- Нет связи по SSH
-- Сервер не отвечает на ping
+- Статус узла в кластере: `Unknown`.
+- Попытки подключения по SSH завершаются таймаутом.
+- Сервер не отвечает на ICMP-запросы (ping).
 
-**Причины:**
+**Вероятные причины:**
 
-- Аппаратный сбой
-- Проблемы с питанием
-- Сетевая изоляция
+- Аппаратный сбой или проблемы с электропитанием.
+- Критическая ошибка ядра (Kernel Panic).
+- Полная изоляция узла на уровне коммутатора или маршрутизатора.
 
 **Диагностика:**
 
-```bash
-# Проверка физического сервера (IPMI/iLO)
-ipmitool power status
+1. Проверьте состояние физического сервера через интерфейсы управления (IPMI, iLO, IDRAC):
 
-# Если VM — проверка гипервизора
-virsh list --all          # KVM
-Get-VM                    # Hyper-V
-```
+   ```bash
+   ipmitool -H <ip-адрес> -U <user> power status
+   ```
+
+2. Если узел является виртуальной машиной, проверьте его статус на стороне гипервизора.
 
 **Решение:**
 
-```bash
-# Если узел не восстановится — принудительное удаление
-kubectl delete node <node-name>
+1. Выполните принудительную перезагрузку сервера через интерфейс управления.
+2. Если узел не подлежит быстрому восстановлению, удалите его из кластера для пересоздания подов на других узлах:
 
-# Для StatefulSet подов — принудительное удаление
-kubectl delete pod <pod-name> --force --grace-period=0
-```
+   ```bash
+   kubectl delete node <node-name>
+   ```
 
-> ⚠️ **Важно:** При удалении узла поды будут пересозданы на других узлах (если есть controller). StatefulSet с `volumeClaimTemplates` требует внимания к PVC.
-
-### Scenario 3: Частичная потеря связности
+### Сценарий 3: Нестабильная сетевая связность (Flapping)
 
 **Симптомы:**
 
-- Узел периодически `NotReady` → `Ready`
-- Поды на узле теряют соединение с API server
-- Сетевые таймауты
+- Статус узла периодически меняется между `Ready` и `NotReady`.
+- Высокий процент потерь пакетов при обращении к подам на данном узле.
+- Ошибки тайм-аута при взаимодействии Kubelet с API-сервером.
 
 **Диагностика:**
 
-```bash
-# Проверка стабильности сети с узла
-ping -c 100 <control-plane-ip> | grep "packet loss"
+1. Проверьте стабильность канала с самого узла до Control Plane:
 
-# Проверка DNS
-nslookup kubernetes.default
+   ```bash
+   ping -c 100 <control-plane-ip>
+   ```
 
-# Проверка kube-proxy
-kubectl get pods -n kube-system -l k8s-app=kube-proxy
-kubectl logs -n kube-system -l k8s-app=kube-proxy
-```
+2. Проверьте корректность работы DNS внутри кластера:
+
+   ```bash
+   nslookup kubernetes.default
+   ```
 
 **Типичные причины:**
 
-| Причина | Диагностика |
-|---------|-------------|
-| Нестабильный канал | `packet loss > 0` в ping |
-| DNS проблемы | `nslookup` fails |
-| kube-proxy не работает | Поды kube-proxy в `Error` |
+- Перегрузка сетевого канала или коллизии на уровне L2.
+- Ошибки в работе `kube-proxy`, приводящие к некорректной настройке правил iptables.
+- Проблемы с MTU (Maximum Transmission Unit) в туннелях CNI (VXLAN/IPIP).
 
-## Additional Information
+## Дополнительная информация
 
-### Related Node Unavailability Paths
+### Смежные разделы по недоступности узлов
 
-- Diagnostics checklist: [diagnostics.md](./diagnostics.md)
-- Definitions: [definitions.md](./definitions.md)
-- Taints (network-unavailable): [taints_and_eviction.md](./taints_and_eviction.md)
+- [Чек-лист диагностики](./diagnostics.md) — общая процедура поиска неисправностей.
+- [Определения состояний](./definitions.md) — описание статусов и условий узла.
+- [Выселение подов и Taints](./taints_and_eviction.md) — влияние сетевых проблем на жизненный цикл подов.
 
-### External References
+### Полезные ссылки
 
-- [CNI Specification](https://github.com/containernetworking/cni)
-- [Kubernetes Networking](https://kubernetes.io/docs/concepts/cluster-administration/networking/)
+- [Документация Kubernetes по сетевой модели](https://kubernetes.io/docs/concepts/services-networking/)
+- [Спецификация CNI](https://github.com/containernetworking/cni)

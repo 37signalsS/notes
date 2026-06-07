@@ -1,160 +1,126 @@
-# Node Unavailability: Resource Pressure
+# Недоступность узла: Давление ресурсов
 
-## Definitions
+## Определения
 
-**Resource Pressure** — состояние узла, при котором нехватка системных ресурсов (память, диск, PID) приводит к установке conditions `MemoryPressure=True`, `DiskPressure=True` или `PIDPressure=True`. Kubelet перестаёт принимать новые поды и начинает eviction существующих.
+**Давление ресурсов (Resource Pressure)** — критическое состояние узла, при котором дефицит системных ресурсов (память, дисковое пространство, идентификаторы процессов) приводит к установке состояний (conditions) `MemoryPressure=True`, `DiskPressure=True` или `PIDPressure=True`. В этом режиме агент `kubelet` прекращает прием новых подов и инициирует процесс освобождения ресурсов.
 
-**Eviction** — процесс выселения подов с узла kubelet'ом при нехватке ресурсов. Отличается от административного drain ([maintenance.md](./maintenance.md)) — происходит автоматически.
+**Выселение (Eviction)** — автоматический процесс завершения работы и удаления подов компонентом `kubelet` для предотвращения отказа всего узла при нехватке ресурсов. В отличие от административного вывода из эксплуатации ([Обслуживание узлов](./maintenance.md)), выселение происходит принудительно на основе установленных порогов.
 
-## Basic Concepts
+## Основные концепции
 
-### Pressure Conditions
+### Состояния нехватки ресурсов (Pressure Conditions)
 
-| Condition | Resource | Trigger | Effect |
-|-----------|----------|---------|--------|
-| `MemoryPressure=True` | RAM | Использовано > доступного | Новые поды не планируются, eviction |
-| `DiskPressure=True` | Disk | Available < eviction threshold | Новые поды не планируются, eviction |
-| `PIDPressure=True` | PID | Количество процессов ≈ limit | Новые поды не планируются |
+| Состояние | Ресурс | Триггер | Последствия |
+|:----------|:-------|:--------|:------------|
+| **`MemoryPressure=True`** | RAM (Random Access Memory) | Потребление памяти превышает доступный объем с учетом порогов. | Запрет планирования новых подов, выселение существующих. |
+| **`DiskPressure=True`** | Диск | Свободное место на корневом разделе или разделе с образами ниже порога. | Запрет планирования новых подов, агрессивная очистка образов и выселение. |
+| **`PIDPressure=True`** | PID (Process ID) | Количество запущенных процессов приближается к системному лимиту. | Запрет на создание новых процессов и запуск новых подов. |
 
-### Eviction Thresholds (kubelet defaults)
+### Пороги выселения (Eviction Thresholds)
 
-| Resource | Soft Threshold | Hard Threshold |
-|----------|---------------|----------------|
-| **Memory** | `memory.available < 100Mi` | `memory.available < 100Mi` |
-| **Disk** | `nodefs.available < 10%` | `nodefs.available < 5%` |
-| **ImageFS** | `imagefs.available < 15%` | `imagefs.available < 5%` |
-| **PID** | `pid.available < 0` | — |
+Значения по умолчанию для `kubelet` (могут быть переопределены в `KubeletConfiguration` в файле `/var/lib/kubelet/config.yaml`):
 
-> **Примечание:** Точные значения зависят от конфигурации kubelet. См. `/var/lib/kubelet/config.yaml`.
+| Ресурс | Мягкий порог (Soft Threshold) | Жесткий порог (Hard Threshold) |
+|:-------|:-----------------------------|:-------------------------------|
+| **Память (Memory)** | `memory.available < 100Mi` | `memory.available < 100Mi` |
+| **Диск (NodeFS)** | `nodefs.available < 10%` | `nodefs.available < 5%` |
+| **Образы (ImageFS)** | `imagefs.available < 15%` | `imagefs.available < 5%` |
+| **Процессы (PID)** | `pid.available < 0` (отключено) | — |
 
-### Diagnostic Tools
+### Инструменты диагностики
 
-| Команда | Назначение |
-|---------|-----------|
-| `free -h` | Общая память (RAM + swap) |
-| `kubectl top node <node>` | Использование ресурсов узлом |
-| `df -h /var/lib/kubelet` | Свободное место |
-| `df -i` | Свободные inodes |
-| `ps aux \| wc -l` + `cat /proc/sys/kernel/pid_max` | Использование PID |
+| Инструмент / Команда | Назначение |
+|:---------------------|:-----------|
+| `free -h` | Проверка общего объема оперативной памяти и Swap. |
+| `kubectl top node <node>` | Просмотр текущего потребления ресурсов узлом. |
+| `df -h /var/lib/kubelet` | Проверка свободного места на разделе данных Kubernetes. |
+| `df -i` | Проверка доступных индексных дескрипторов (inodes). |
+| `ps aux \| wc -l` | Подсчет текущего количества процессов в системе. |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Scenario 1: MemoryPressure
-
-**Симптомы:**
-
-- Condition `MemoryPressure=True`
-- Поды в статусе `Evicted` с сообщением `The node was low on resource: memory`
-- OOM killer в системных логах
-
-**Диагностика:**
-
-```bash
-# Проверка памяти
-free -h
-kubectl top node <node-name>
-
-# Кто потребляет память?
-ps aux --sort=-%mem | head -20
-
-# OOM killer события
-dmesg | grep -i "out of memory" | tail -10
-```
-
-**Решение:**
-
-```bash
-# Очистка кэша (временная мера)
-sync && echo 3 > /proc/sys/vm/drop_caches
-
-# Удаление неиспользуемых образов
-crictl rmi --prune
-
-# Долгосрочное: добавить RAM или уменьшить requests/limits
-```
-
-### Scenario 2: DiskPressure
+### Сценарий 1: Нехватка памяти (MemoryPressure)
 
 **Симптомы:**
 
-- Condition `DiskPressure=True`
-- Поды не запускаются: `FailedScheduling` — `Insufficient storage`
-- `df -h` показывает >90% usage
+- Состояние узла `MemoryPressure=True`.
+- Поды переходят в статус `Evicted` с сообщением `The node was low on resource: memory`.
+- В системных логах фиксируются события OOM (Out of Memory).
 
-**Диагностика:**
+**Диагностика и решение:**
+Подробный алгоритм поиска виновных процессов и способы предотвращения выселения приведены в специализированном разделе:
+**[Выселение по памяти (Memory Eviction)](../PodEvicted/memory_eviction.md)**
 
-```bash
-# Дисковое пространство
-df -h /var/lib/kubelet
+---
 
-# Кто потребляет место?
-du -sh /var/lib/kubelet/pods/* | sort -rh | head -10
-du -sh /var/lib/containerd/* | sort -rh | head -10
-
-# Inodes
-df -i /var/lib/kubelet
-```
-
-**Решение:**
-
-```bash
-# Удаление остановленных контейнеров
-crictl rm $(crictl ps -a -q --state exited)
-
-# Удаление неиспользуемых образов
-crictl rmi --prune
-
-# Очистка логов
-journalctl --vacuum-time=1d
-
-# Очистка пустых томов
-find /var/lib/kubelet/pods -name "empty-dir" -type d -empty -delete
-```
-
-### Scenario 3: PIDPressure
+### Сценарий 2: Нехватка дискового пространства (DiskPressure)
 
 **Симптомы:**
 
-- Condition `PIDPressure=True`
-- Невозможно запустить новые процессы на узле
-- `fork: retry: Resource temporarily unavailable`
+- Состояние узла `DiskPressure=True`.
+- Новые поды не запускаются с ошибкой `FailedScheduling (Insufficient storage)`.
+- Команда `df -h` показывает заполнение разделов более чем на 90%.
+
+**Диагностика и решение:**
+Методы очистки диска, удаления неиспользуемых образов и логов описаны в разделе:
+**[Выселение по диску (Disk Eviction)](../PodEvicted/disk_eviction.md)**
+
+---
+
+### Сценарий 3: Исчерпание лимита процессов (PIDPressure)
+
+**Симптомы:**
+
+- Состояние узла `PIDPressure=True`.
+- Ошибки при попытке запустить любую команду: `fork: retry: Resource temporarily unavailable`.
+- Контейнеры не могут запустить дочерние процессы.
 
 **Диагностика:**
 
-```bash
-# Текущее количество процессов
-ps aux | wc -l
+1. Проверьте текущее количество процессов:
 
-# Лимит PID
-cat /proc/sys/kernel/pid_max
+   ```bash
+   ps aux | wc -l
+   ```
 
-# Кто создаёт процессы?
-ps -eo pid,ppid,cmd --sort=-pid | head -20
-```
+2. Проверьте системный лимит PID:
+
+   ```bash
+   cat /proc/sys/kernel/pid_max
+   ```
+
+3. Выявите процессы, создающие наибольшее количество потоков/подпроцессов:
+
+   ```bash
+   ps -eo pid,ppid,cmd --sort=-pid | head -n 20
+   ```
 
 **Решение:**
 
-```bash
-# Временное: увеличить лимит
-sudo sysctl kernel.pid_max=4194304
+1. **Временное:** Увеличьте системный лимит PID:
 
-# Постоянное: добавить в /etc/sysctl.d/99-pid.conf
-echo "kernel.pid_max=4194304" | sudo tee /etc/sysctl.d/99-pid.conf
+   ```bash
+   sudo sysctl kernel.pid_max=4194304
+   ```
 
-# Долгосрочное: уменьшить количество подов на узле
-# (через --max-pods в kubelet или node capacity)
-```
+2. **Постоянное:** Внесите изменения в конфигурацию ядра в `/etc/sysctl.d/99-pid.conf`:
 
-## Additional Information
+   ```bash
+   echo "kernel.pid_max=4194304" | sudo tee /etc/sysctl.d/99-pid.conf
+   ```
 
-### Related Node Unavailability Paths
+3. **Долгосрочное:** Проанализируйте приложение на наличие утечек процессов или ограничьте максимальное количество подов на узле через параметр `--max-pods` в `kubelet`.
 
-- Definitions: [definitions.md](./definitions.md)
-- Diagnostics checklist: [diagnostics.md](./diagnostics.md)
-- Taints and eviction: [taints_and_eviction.md](./taints_and_eviction.md)
-- Maintenance procedures: [maintenance.md](./maintenance.md)
+## Дополнительная информация
 
-### External References
+### Смежные разделы
 
-- [Node Pressure Eviction](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/)
-- [Kubelet Configuration](https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/)
+- [Определения состояний узла](./definitions.md) — базовые понятия и тайм-ауты.
+- [Чек-лист диагностики](./diagnostics.md) — пошаговый алгоритм проверки узла.
+- [Выселение подов и Taints](./taints_and_eviction.md) — влияние статусов на жизненный цикл подов.
+- [Обслуживание узлов](../../../Operations/node_maintenance.md) — плановый вывод из эксплуатации.
+
+### Ссылки
+
+- [Официальная документация по выселению ресурсов](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/)
+- [Справочник конфигурации Kubelet](https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/)

@@ -1,31 +1,41 @@
-# Pod Image Pull Errors: Определения
+# Ошибки загрузки образов (Image Pull Errors): Определения
 
 ## Определения
 
 **`ErrImagePull`** — начальная ошибка, означающая, что `kubelet` не может скачать образ контейнера из реестра. Возникает при первой попытке pull.
 
-**`ImagePullBackOff`** — состояние, в которое переходит под после нескольких неудачных попыток скачивания образа. `kubelet` увеличивает задержку между попытками (exponential backoff).
+**`ImagePullBackOff`** — состояние, в которое переходит под (Pod) после нескольких неудачных попыток скачивания образа. `kubelet` увеличивает задержку между попытками (exponential backoff).
 
-**Backoff задержки:** 10s → 20s → 40s → 80s → 160s → 300s (максимум)
+**Экспоненциальная задержка (Backoff):** 10s → 20s → 40s → 80s → 160s → 300s (максимум 5 минут).
 
 **`kubelet`** — агент Kubernetes на каждом узле, отвечающий за запуск и управление контейнерами, включая загрузку образов.
 
-**Container Registry** — сервис хранения и доставки контейнерных образов (Docker Hub, Harbor, ECR, GCR).
+**Container Registry** — сервис хранения и доставки контейнерных образов (Docker Hub, Harbor, GCR, ECR).
 
 **Image Pull** — процесс скачивания слоёв контейнерного образа из registry в локальное хранилище узла.
+
+**`imagePullSecret`** — Kubernetes Secret типа `kubernetes.io/dockerconfigjson`, содержащий учётные данные для аутентификации в приватном registry.
+
+**`Manifest unknown`** — ошибка реестра, означающая, что указанный образ с данным именем или тегом не найден.
+
+**`Unauthorized`** — ошибка аутентификации, означающая, что `kubelet` не имеет корректных учётных данных для доступа к приватному реестру.
+
+**Events** — журнал событий pod'а, содержащий историю попыток pull, ошибки и статусы от `kubelet`. Основной источник информации для диагностики.
+
+**SHA256 (Secure Hash Algorithm 256-bit)** — криптографический хеш, используемый для однозначной идентификации версии образа (digest).
 
 ---
 
 ## Основные концепции
 
-### Workflow загрузки образа
+### Жизненный цикл загрузки образа
 
 ```
 Pod создан
     ↓
 kubelet на узле получает задачу
     ↓
-Проверка локального кэша docker/containerd
+Проверка локального кэша (containerd/docker)
     ↓
 Образ не найден → Запрос в registry
     ↓
@@ -43,47 +53,45 @@ ErrImagePull (первая ошибка)
     ↓
 Повторная попытка через 10s
     ↓
-Повторная ошибка → backoff увеличивается
+Повторная ошибка → задержка увеличивается
     ↓
 ImagePullBackOff (после нескольких неудач)
     ↓
 Задержка растёт экспоненциально до 5 минут
 ```
 
-### ImagePullPolicy
+### Классификация ошибок
+
+| Ошибка | Категория | Причина |
+| :--- | :--- | :--- |
+| `manifest not found` | Образ/тег | Опечатка, тег не существует, образ удалён |
+| `unauthorized` | Аутентификация | Отсутствует или неверный `imagePullSecret` |
+| `pull access denied` | Авторизация | Нет прав на чтение в репозитории |
+| `404 Not Found` | Registry | Неверный путь к образу, Registry недоступен |
+
+### Политики загрузки образов (imagePullPolicy)
 
 | Политика | Поведение | Когда использовать |
 | :--- | :--- | :--- |
-| **`IfNotPresent`** | Использовать кэш, если есть; иначе скачать | Production (по умолчанию для `:tag`) |
+| **`IfNotPresent`** | Использовать кэш, если есть; иначе скачать | Production (по умолчанию для тегов) |
 | **`Always`** | Всегда скачивать свежий образ | Production (по умолчанию для `:latest`) |
-| **`Never`** | Использовать только локальный образ | Offline-кластеры, тестирование |
+| **`Never`** | Использовать только локальный образ | Offline-кластеры, разработка |
 
-**Правило по умолчанию:**
+**Правила по умолчанию:**
 
-| Тег образа | Default imagePullPolicy |
+| Тег образа | Значение imagePullPolicy |
 | :--- | :--- |
 | `:latest` | `Always` |
 | Конкретный тег (`:v1.2.3`) | `IfNotPresent` |
 
-> **Рекомендация:** Избегайте тега `:latest` в production. Используйте конкретные версии или SHA256 digest.
+### Ограничения Docker Hub (Rate limiting)
 
-### Типы репозиториев
+Docker Hub ограничивает количество pull-запросов для бесплатных пользователей:
 
-| Тип | Примеры | Аутентификация |
-| :--- | :--- | :--- |
-| **Публичные** | Docker Hub, GHCR | Не требуется (для публичных образов) |
-| **Приватные** | Docker Hub, GCR, ECR, Harbor | `imagePullSecrets` |
-| **Локальные** | Internal registry, air-gapped | Self-signed cert, offline tokens |
+- **Anonymous:** 100 pull-запросов за 6 часов.
+- **Free Account:** 200 pull-запросов за 6 часов.
 
-### Rate limiting Docker Hub
-
-Docker Hub ограничивает количество pull-запросов для анонимных пользователей:
-
-- **Anonymous:** 100 pull / 6 часов
-- **Authenticated (free):** 200 pull / 6 часов
-- **Pro/Team:** без ограничений
-
-При превышении лимита возникает ошибка `toomanyrequests`. Решение — аутентификация через `imagePullSecrets` или использование mirror registry.
+При превышении лимита возникает ошибка `toomanyrequests`. Решение — аутентификация или использование зеркала (mirror registry).
 
 ---
 
@@ -92,26 +100,21 @@ Docker Hub ограничивает количество pull-запросов �
 ### Сценарий 1: Диагностика по статусу пода
 
 ```bash
-# Проверка статуса pod
+# Проверка текущего состояния pod
 kubectl get pod <pod-name>
-
-# Возможные статусы:
-# ImagePullBackOff — pod не может скачать образ
-# ErrImagePull     — начальная ошибка pull
-# Running          — pod успешно запущен
 ```
 
-### Сценарий 2: Быстрая проверка типа ошибки
+**Интерпретация статусов:**
+
+- `ImagePullBackOff` — под не может скачать образ и находится в режиме ожидания.
+- `ErrImagePull` — произошла ошибка при попытке скачивания.
+- `Running` — образ успешно загружен и контейнер запущен.
+
+### Сценарий 2: Извлечение причины ошибки из статуса
 
 ```bash
-# Извлечение причины ожидания
+# Получение причины ожидания напрямую
 kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}'
-
-# Возможные значения:
-# ErrImagePull
-# ImagePullBackOff
-# RegistryUnavailable
-# ErrImageNeverPull
 ```
 
 ---
@@ -120,10 +123,10 @@ kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[0].state.wait
 
 ### Связанные темы
 
-- Распространённые ошибки и решения: [Common Errors](./common_errors.md)
-- Пошаговая диагностика: [Diagnostics](./diagnostics.md)
-- Рекомендации по предотвращению: [Best Practices](./best_practices.md)
-- Air-gapped кластеры: [Air-gapped](./airgapped.md)
-- Интеграция с CI/CD: [CI/CD Integration](./ci_cd_integration.md)
-- Сетевые проблемы: [Network Issues](./network_issues.md)
-- Документация Kubernetes — образы: [Kubernetes Images](https://kubernetes.io/docs/concepts/containers/images/)
+- [Распространённые ошибки и решения](./common_errors.md)
+- [Пошаговая диагностика](./diagnostics.md)
+- [Лучшие практики и предотвращение](./best_practices.md)
+- [Air-gapped кластеры](./airgapped.md)
+- [Интеграция с CI/CD](./ci_cd_integration.md)
+- [Сетевые проблемы](./network_issues.md)
+- [Документация Kubernetes — образы](https://kubernetes.io/docs/concepts/containers/images/)

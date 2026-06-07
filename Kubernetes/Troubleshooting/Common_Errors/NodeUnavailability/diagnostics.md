@@ -1,149 +1,113 @@
-# Node Unavailability: Diagnostics
+# Диагностика недоступности узла
 
-## Definitions
+## Определения
 
-**Node Diagnostics** — пошаговый процесс определения причины недоступности узла, начиная от проверки статуса через `kubectl` до анализа системных логов на самом узле.
+**Диагностика узла** — процесс выявления причин перехода узла в состояния `NotReady` или `Unknown`, включающий анализ через API-сервер и проверку системных компонентов непосредственно на сервере.
 
-**Цель:** Быстро локализовать проблему (сеть, kubelet, ресурсы, runtime) и выбрать путь решения.
+**Целевое состояние** — локализация сбоя (сеть, Kubelet, дефицит ресурсов или Container Runtime) для выбора соответствующего алгоритма восстановления.
 
-## Basic Concepts
+Подробные описания статусов и условий доступны в разделе: [Определения недоступности узла](./definitions.md).
 
-### Diagnostic Tools
+## Основные концепции
 
-| Инструмент | Назначение | Что показывает |
-|-----------|-----------|----------------|
-| `kubectl get nodes` | Быстрая проверка | Общий статус всех узлов |
-| `kubectl describe node` | Детальный анализ | Conditions, events, taints, allocated resources |
-| `journalctl -u kubelet` | Логи kubelet | Ошибки подключения к API server, проблемы с runtime |
-| `systemctl status kubelet` | Статус службы | Работает ли kubelet |
-| `ss -tlnp` / `netstat` | Проверка портов | Слушает ли kubelet (10250), containerd |
+### Инструменты диагностики
 
-### Node Conditions Diagnostic Output
+| Инструмент | Назначение |
+|:-----------|:-----------|
+| `kubectl` | Внешний осмотр состояния через Kubernetes API |
+| `ssh` | Доступ к узлу для локальной диагностики |
+| `systemctl` | Проверка статуса системных служб (Kubelet, Container Runtime) |
+| `journalctl` | Анализ системных журналов и логов компонентов |
+| `ss` / `netstat` | Анализ сетевых соединений и доступности портов |
 
-При `kubectl describe node` обратите внимание на секцию `Conditions`:
+### Индикаторы в Node Conditions
 
-```
-Conditions:
-  Type             Status  LastHeartbeatTime          Reason                       Message
-  ----             ------  -----------------          ------                       -------
-  MemoryPressure   False   Thu, 05 Mar 2026 ...       KubeletHasSufficientMemory   kubelet has sufficient memory available
-  DiskPressure     False   Thu, 05 Mar 2026 ...       KubeletHasNoDiskPressure     kubelet has no disk pressure
-  Ready            True    Thu, 05 Mar 2026 ...       KubeletReady                 kubelet is posting ready status
-```
+При анализе вывода `kubectl describe node <node-name>` ключевыми являются поле `Reason` и `Message` в секции `Conditions`:
 
-**Ключевые маркеры:**
+| Reason | Статус | Описание |
+|:-------|:-------|:---------|
+| `KubeletReady` | `True` | Kubelet работает исправно |
+| `KubeletNotReady` | `False` | Служба работает, но узел не готов (часто из-за проблем с CNI (Container Network Interface)) |
+| `KubeletStopped` | `False` | Служба Kubelet на узле остановлена |
+| `NodeStatusNeverUpdated` | `Unknown` | API-сервер ни разу не получал статус от этого узла |
 
-| Reason | Значение |
-|--------|----------|
-| `KubeletReady` | Kubelet работает и связан с API server |
-| `KubeletNotReady` | Kubelet работает, но не готов принимать поды |
-| `KubeletStopped` | Kubelet остановлен |
-| `NodeStatusNeverUpdated` | API server никогда не получил heartbeat |
+### Сетевые порты
 
-### Key Ports
+| Порт | Назначение |
+|:-----|:-----------|
+| `10250` | Kubelet API — используется для сбора метрик и логов |
+| `6443` | Kubernetes API-сервер — адрес для исходящего трафика от Kubelet к Control Plane |
 
-| Порт | Протокол | Назначение |
-|------|----------|------------|
-| `10250` | TCP | Kubelet API (healthz, logs, exec) |
-| `6443` | TCP | API server (kubelet → control plane) |
+## Практические сценарии
 
-## Practical Scenarios
+### Пошаговый алгоритм диагностики
 
-### Step-by-Step Diagnostic Checklist
+#### Шаг 1: Анализ через Kubernetes API
 
-#### Шаг 1: Проверка статуса узлов
+Начните с внешнего осмотра состояния узла:
 
 ```bash
-# Быстрая проверка
+# Проверка общего статуса
 kubectl get nodes
 
-# Детальная информация
+# Просмотр детальной информации и событий
 kubectl describe node <node-name>
-
-# Проверка conditions
-kubectl get nodes -o custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,STATUS:.status.conditions[?(@.type=="Ready")].reason
 ```
 
-#### Шаг 2: Проверка kubelet на узле
+#### Шаг 2: Проверка службы Kubelet
+
+Если узел находится в статусе `Unknown` или `NotReady`, подключитесь к нему по SSH:
 
 ```bash
-# SSH на узел
-ssh <node-name>
-
-# Статус kubelet
+# Проверка статуса системного юнита
 systemctl status kubelet
 
-# Логи kubelet
-journalctl -u kubelet -f --no-pager
+# Изучение последних логов службы
+journalctl -u kubelet -n 100 --no-pager
 
-# Проверка портов
-ss -tlnp | grep -E '10250|6443'
+# Проверка доступности порта Kubelet
+ss -tlnp | grep 10250
 ```
 
-#### Шаг 3: Проверка системных ресурсов
+#### Шаг 3: Проверка ресурсов и Container Runtime
+
+Дефицит ресурсов может привести к нестабильности Kubelet или рантайма:
 
 ```bash
-# CPU и память
-top
+# Проверка использования оперативной памяти (RAM) и CPU
 free -h
+top -bn1 | head -n 20
 
-# Дисковое пространство
+# Проверка дискового пространства и inode
 df -h
-df -i  # inodes
+df -i
 
-# Нагрузка на систему
-uptime
+# Проверка статуса рантайма (containerd/docker)
+systemctl status containerd
 ```
 
-#### Шаг 4: Проверка сети
+#### Шаг 4: Проверка сетевой связности
+
+Узел может быть `Unknown`, если он потерял связь с Control Plane:
 
 ```bash
-# Проверка связи с control plane
-ping <control-plane-ip>
+# Проверка доступности API-сервера
+curl -k https://<api-server-ip>:6443/healthz
 
-# Проверка порта API server
-curl -k https://<control-plane-ip>:6443/healthz
-
-# Проверка DNS
+# Проверка DNS в кластере
 nslookup kubernetes.default
-
-# Проверка CNI
-kubectl get pods -n kube-system | grep -E 'calico|flannel|weave'
 ```
 
-#### Шаг 5: Проверка событий узла
+### Сопоставление симптомов и причин
 
-```bash
-# События проблемного узла
-kubectl get events --field-selector involvedObject.kind=Node,involvedObject.name=<node-name> --sort-by='.lastTimestamp'
+| Симптом | Вероятная причина | Ссылка на руководство |
+|:--------|:------------------|:----------------------|
+| `Ready=False`, Kubelet активен | Дефицит ресурсов или CNI | [Давление ресурсов](./resource_pressure.md) |
+| `Ready=Unknown`, Kubelet не отвечает | Сетевой сбой или падение Kubelet | [Сеть](./network_issues.md), [Kubelet](./kubelet_issues.md) |
+| Ошибки рантайма в логах | Сбой Containerd / Docker | [Проблемы рантайма](./runtime_issues.md) |
 
-# Все события узла
-kubectl get events --field-selector involvedObject.kind=Node --sort-by='.lastTimestamp'
-```
+## Дополнительная информация
 
-### Symptom → Root Cause Mapping
-
-| Симптом | Вероятная причина | Следующий шаг |
-|---------|-------------------|---------------|
-| `Ready=False`, kubelet работает | Resource pressure, CNI | [resource_pressure.md](./resource_pressure.md) |
-| `Ready=Unknown`, kubelet не отвечает | Сеть, kubelet упал | [network_issues.md](./network_issues.md), [kubelet_issues.md](./kubelet_issues.md) |
-| `Ready=False`, runtime ошибка | Containerd/docker проблема | [runtime_issues.md](./runtime_issues.md) |
-| Узел в `SchedulingDisabled` | Плановое обслуживание | [maintenance.md](./maintenance.md) |
-
-## Additional Information
-
-### Definitions and Concepts
-
-Определения NodeNotReady/Unreachable: [definitions.md](./definitions.md).
-
-### Specialized Diagnostic Paths
-
-- Проблемы с kubelet: [kubelet_issues.md](./kubelet_issues.md)
-- Проблемы с сетью: [network_issues.md](./network_issues.md)
-- Нехватка ресурсов: [resource_pressure.md](./resource_pressure.md)
-- Проблемы с runtime: [runtime_issues.md](./runtime_issues.md)
-- Taints и eviction: [taints_and_eviction.md](./taints_and_eviction.md)
-
-### Maintenance Procedures
-
-Плановое обслуживание и best practices: [maintenance.md](./maintenance.md).
+- [Определения состояний](./definitions.md) — подробное описание статусов и тайм-аутов.
+- [Taints и выселение](./taints_and_eviction.md) — как недоступность влияет на поды.
+- [Обслуживание узлов](../../../Operations/node_maintenance.md) — плановый вывод из эксплуатации.

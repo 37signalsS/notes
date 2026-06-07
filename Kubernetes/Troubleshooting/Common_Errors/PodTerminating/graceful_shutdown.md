@@ -1,72 +1,64 @@
-# Pod Terminating: Graceful Shutdown
+# Pod Terminating — корректное завершение (Graceful Shutdown)
 
 ## Определения
 
-**Graceful Shutdown** — процесс корректного завершения пода: отправка SIGTERM → ожидание → preStop hook → SIGKILL. Даёт приложению время на завершение активных соединений и сохранение данных.
+**Graceful Shutdown (корректное завершение)** — процесс штатной остановки Pod, при котором приложению предоставляется время на завершение активных соединений, сохранение данных и очистку ресурсов перед окончательным удалением.
 
-**preStop hook** — хук, выполняемый *до* отправки SIGTERM. Используется для уведомления приложения о предстоящем завершении (исключение из load balancer, drain соединений).
+**preStop hook** — обработчик жизненного цикла, выполняемый непосредственно перед отправкой сигнала `SIGTERM`. Используется для подготовки приложения к завершению (например, уведомление внешних систем или выдержка паузы для обновления балансировщика).
 
-**SIGTERM** — сигнал корректного завершения (signal 15). Приложение должно перехватывать его для graceful shutdown.
+**SIGTERM (Signal Termination)** — стандартный сигнал для корректного завершения процесса (сигнал 15). Приложение должно перехватывать этот сигнал для выполнения процедур очистки.
 
-**SIGKILL** — сигнал принудительного завершения (signal 9). Не перехватывается, не обрабатывается — немедленная остановка процесса.
+**SIGKILL (Signal Kill)** — сигнал принудительного немедленного завершения процесса (сигнал 9). Этот сигнал не может быть перехвачен или проигнорирован приложением.
 
-**terminationGracePeriodSeconds** — общий таймаут (по умолчанию 30s) на весь graceful shutdown: preStop + обработка SIGTERM.
+**terminationGracePeriodSeconds** — параметр спецификации Pod, определяющий общий таймаут (по умолчанию 30 секунд) на весь процесс завершения, включая выполнение `preStop hook` и обработку `SIGTERM`.
 
 ---
 
 ## Базовые концепции
 
-### Порядок событий при удалении пода
+### Порядок событий при удалении Pod
 
-```
-kubectl delete pod / scaling down / eviction
-    ↓
-1. Pod получает deletionTimestamp
-    ↓
-2. Одновременно:
-   a. preStop hook (если определён)
-   b. Endpoints удаляются из Service (исключение из load balancer)
-    ↓
-3. SIGTERM отправляется PID 1 контейнера
-    ↓
-4. Ожидание: preStop завершается ИЛИ SIGTERM обрабатывается
-    ↓
-5. [ожидание terminationGracePeriodSeconds]
-    ↓
-6. timeout → SIGKILL (принудительное завершение)
-    ↓
-7. Остановка контейнеров → размонтирование volumes → удаление finalizers
-```
+Процесс инициируется командой `kubectl delete`, масштабированием (scaling down) или выселением (eviction):
 
-> **Важно:** preStop и SIGTERM отправляются *одновременно*, не последовательно. Если preStop выполняется дольше grace period → SIGKILL.
+1. **Установка метки удаления:** Pod получает `deletionTimestamp` и переходит в состояние `Terminating`.
+2. **Параллельные действия:**
+   - **Выполнение preStop hook:** если обработчик настроен, он запускается внутри контейнера.
+   - **Обновление инфраструктуры:** контроллер Endpoints удаляет IP-адрес пода из соответствующих объектов Service (исключение из балансировки).
+3. **Отправка SIGTERM:** после запуска `preStop hook` (или одновременно с ним) процесс с PID 1 в контейнере получает сигнал `SIGTERM`.
+4. **Ожидание завершения:** Kubelet ждет завершения работы `preStop hook` и основного процесса приложения.
+5. **Принудительное завершение:** если процессы не завершились в течение `terminationGracePeriodSeconds`, отправляется сигнал `SIGKILL`.
+6. **Очистка ресурсов:** остановка контейнеров, размонтирование томов (volumes) и удаление объекта из `etcd` (после снятия всех финализаторов).
+
+**Важно:** `preStop hook` и `SIGTERM` инициируются практически одновременно. Если выполнение `preStop` превышает `terminationGracePeriodSeconds`, процесс может быть убит по `SIGKILL` до завершения хука.
 
 ### Взаимодействие preStop и grace period
 
 | Конфигурация | Поведение |
-|--------------|-----------|
-| Без preStop | SIGTERM → ожидание grace period → SIGKILL |
-| preStop короткий | preStop → SIGTERM → ожидание → SIGKILL |
-| preStop длинный | preStop может быть убит SIGKILL, если > grace period |
-| grace period = 0 | SIGKILL немедленно (preStop не выполняется) |
-| preStop > grace period | Kubelet запрашивает **+2 секунды** дополнительно (emergency termination), затем SIGKILL |
+|:---|:---|
+| Без preStop | Отправка `SIGTERM` → ожидание grace period → `SIGKILL`. |
+| preStop короткий | Запуск `preStop` → `SIGTERM` → штатное завершение. |
+| preStop длинный | `preStop` может быть прерван по `SIGKILL`, если его длительность превышает grace period. |
+| grace period = 0 | Немедленная отправка `SIGKILL` (обработчики не выполняются). |
 
-> **Рекомендация:** preStop hook должен содержать быструю команду (например, уведомление о завершении), не требующую длительного ожидания. Если приложению нужно больше времени — увеличьте `terminationGracePeriodSeconds`, а не полагайтесь на автоматическое расширение.
+**Рекомендация:** если приложению требуется значительное время для завершения транзакций, необходимо увеличивать `terminationGracePeriodSeconds`, а не полагаться только на `preStop hook`.
 
-### Как приложение должно обрабатывать SIGTERM
+### Требования к приложению для обработки SIGTERM
 
-1. Перестать принимать новые запросы/соединения
-2. Завершить обработку текущих запросов
-3. Закрыть соединения с БД, очередями, внешними сервисами
-4. Сохранить состояние (если необходимо)
-5. Выйти с кодом 0
+Для корректной работы Graceful Shutdown приложение должно:
 
-Подробнее в [Жизненный цикл Pod — Graceful Shutdown](../../../Base/Pod/pod_lifecycle_and_state.md).
+1. Перехватывать сигнал `SIGTERM`.
+2. Прекращать прием новых входящих соединений.
+3. Дожидаться завершения обработки текущих запросов.
+4. Корректно закрывать соединения с базами данных и очередями сообщений.
+5. Завершать выполнение процесса с кодом выхода 0.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка graceful shutdown
+### Настройка корректного завершения
+
+Пример конфигурации Pod с увеличенным временем завершения и предварительной паузой:
 
 ```yaml
 apiVersion: v1
@@ -74,87 +66,53 @@ kind: Pod
 metadata:
   name: graceful-app
 spec:
-  terminationGracePeriodSeconds: 60  # Увеличенный grace period
+  terminationGracePeriodSeconds: 60  # Таймаут увеличен до 1 минуты
   containers:
   - name: app
     image: my-app:1.0
     lifecycle:
       preStop:
         exec:
-          # Исключение из Service перед SIGTERM
+          # Пауза 10 секунд для уверенного исключения из балансировщика
           command: ["/bin/sh", "-c", "sleep 10"]
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 8080
-      periodSeconds: 2
-      failureThreshold: 1
 ```
 
-**Порядок завершения:**
+### Методы удаления Pod
 
-1. preStop: `sleep 10` (ожидание удаления из Endpoints)
-2. readinessProbe → `/ready` → `503` (исключение из Service)
-3. SIGTERM → приложение завершает соединения
-4. Ожидание до 60s → SIGKILL если не завершилось
+| Метод | Команда | Применение | Риски |
+|:---|:---|:---|:---|
+| Стандартный | `kubectl delete pod <name>` | Плановое удаление. | Минимальны. |
+| С расширенным таймаутом | `kubectl delete pod <name> --grace-period=120` | Если нужно больше времени разово. | Нет. |
+| Принудительный | `kubectl delete pod <name> --force --grace-period=0` | Если Pod завис в `Terminating`. | Потеря данных, зависшие тома. |
 
-### Сценарий 2: Методы удаления пода
+**Внимание:** принудительное удаление (`--force --grace-period=0`) удаляет объект из `etcd` немедленно. Kubelet может не успеть очистить ресурсы на узле, что приведет к блокировке томов (volumes) или утечке ресурсов.
 
-| Метод | Команда | Когда использовать | Риск |
-|-------|---------|-------------------|------|
-| Стандартное | `kubectl delete pod` | Нормальный случай | Нет |
-| Увеличенный grace | `kubectl delete pod --grace-period=60` | Приложение требует больше времени | Нет |
-| Принудительное | `kubectl delete pod --force --grace-period=0` | Pod застрял в Terminating | Высокий: потеря данных, volume attached |
-| Удаление finalizers | `kubectl patch pod -p '{"metadata":{"finalizers":[]}}'` | Крайняя мера | Высокий: утечка ресурсов |
+### Диагностика проблем с завершением
 
-> **Warning:** `--force --grace-period=0` не решает проблему на узле. API-сервер удаляет объект Pod из etcd **немедленно**, не дожидаясь подтверждения от kubelet о фактической терминации контейнеров на узле. Ресурсы (процессы, volumes) могут продолжать работать. Volume может остаться в состоянии «attached». Данные могут быть потеряны. После force delete необходимо самостоятельно убедиться, что под полностью удалён с узла.
-
-### Сценарий 3: Диагностика проблем graceful shutdown
+Проверка текущих настроек Pod:
 
 ```bash
-# Проверить terminationGracePeriodSeconds
+# Получение настроенного таймаута
 kubectl get pod <pod-name> -o jsonpath='{.spec.terminationGracePeriodSeconds}'
 
-# Проверить preStop hook
+# Проверка наличия preStop hook
 kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].lifecycle.preStop}'
-
-# Проверить, как pod обрабатывает SIGTERM
-kubectl exec <pod-name> -- cat /proc/1/cmdline | tr '\0' ' '
-# PID 1 должен быть приложением, а не shell
 ```
 
-### Сценарий 4: Проблема — PID 1 не обрабатывает SIGTERM
+Если приложение не реагирует на `SIGTERM`, проверьте, является ли оно процессом с PID 1:
 
-**Симптом:** Контейнер не завершается по SIGTERM, требует SIGKILL.
-
-**Причина:** Entrypoint — shell (`/bin/sh -c`), который не forwards SIGTERM к дочернему процессу.
-
-**Решение:**
-
-```yaml
-# Вариант A: exec form entrypoint
-containers:
-- name: app
-  image: my-app
-  command: ["my-app-binary", "--flag"]  # exec form, не shell form
-
-# Вариант B: tini как init process
-containers:
-- name: app
-  image: my-app
-  args: ["/usr/bin/tini", "--", "my-app-binary"]
+```bash
+kubectl exec <pod-name> -- ps -ef
 ```
+
+Если PID 1 занят shell-оболочкой (`/bin/sh`), она может не пробрасывать сигналы дочерним процессам. Используйте `exec form` в Dockerfile (например, `CMD ["binary"]`).
 
 ---
 
 ## Дополнительная информация
 
-**Связанные разделы:**
+**См. также:**
 
-- [Определения Pod Terminating](./definitions.md) — базовые понятия, finalizers, Pod GC
-- [Diagnostics](./diagnostics.md) — чек-лист диагностики terminating pods
-- [Finalizer и CSI проблемы](./finalizer_issues.md) — удаление finalizers
-- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — SIGTERM обработка, фазы пода, sidecar termination
-- [Node Unavailable](./node_unavailable_issues.md) — узел недоступен
-- [PDB Blocking](./pdb_blocking.md) — PodDisruptionBudget
-- [Обзор Troubleshooting](../../troubleshooting_overview.md) — классификация ошибок Kubernetes
+- [Определения Pod Terminating](./definitions.md) — базовые термины и системные механизмы.
+- [Диагностика Pod Terminating](./diagnostics.md) — алгоритм поиска причин зависания.
+- [Жизненный цикл Pod](../../../Base/Pod/pod_lifecycle_and_state.md) — общие сведения о состояниях и фазах.

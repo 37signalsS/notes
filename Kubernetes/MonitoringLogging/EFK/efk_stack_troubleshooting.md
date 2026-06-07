@@ -9,7 +9,7 @@ Freshness: 10 (Актуально для Kubernetes 1.28+, Elasticsearch 8.x)
 
 ## Определения
 
-**`CrashLoopBackOff`** — статус пода в Kubernetes, означающий циклическую перезагрузку контейнера из-за ошибок конфигурации, нехватки ресурсов или сбоев приложения.
+**[CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/definitions_and_concepts.md)** — статус циклической перезагрузки контейнера. См. основной раздел диагностики для подробностей.
 
 **`mapper_parsing_exception`** — ошибка в Elasticsearch, возникающая при несоответствии типа данных поля в новом документе ранее определенному маппингу индекса.
 
