@@ -10,39 +10,83 @@
 
 ## Базовые концепции
 
-### Назначение .gitignore
+### Назначение
 
-Файл `.gitignore` указывает Git, какие файлы и директории следует игнорировать и не включать в систему контроля версий.
+Файл `.gitignore` указывает Git, какие файлы и директории следует игнорировать и не включать в систему контроля версий. Поддерживает чистоту репозитория, предотвращая случайное добавление временных файлов, логов, артефактов сборки или секретов.
 
 ### Синтаксис паттернов
 
 | Паттерн | Описание |
 | :--- | :--- |
-| `*.log` | Игнорировать все файлы с расширением `.log` |
-| `build/` | Игнорировать директорию `build` и всё её содержимое |
-| `/TODO` | Игнорировать файл `TODO` только в корневой директории |
-| `!important.log` | Не игнорировать `important.log` (исключение из правил) |
-| `docs/**/*.txt` | Игнорировать все `.txt` файлы в `docs` и поддиректориях |
-| `**/node_modules/` | Игнорировать `node_modules` на любом уровне вложенности |
+| `*.log` | Все файлы с расширением `.log` |
+| `build/` | Директория `build` и всё содержимое |
+| `/TODO` | Файл `TODO` только в корне репозитория |
+| `!important.log` | Исключение — не игнорировать `important.log` |
+| `docs/**/*.txt` | Все `.txt` в `docs` и поддиректориях |
+| `**/node_modules/` | `node_modules` на любом уровне вложенности |
 
-### Порядок проверки игнорирования
+### Порядок проверки
 
-Git проверяет ignore-файлы в следующем порядке:
+Git проверяет ignore-правила в следующем порядке (последующие переопределяют предыдущие):
 
 1. `.gitignore` в каждой директории (от корня к текущей папке)
 2. `.git/info/exclude` — локальные игноры, не коммитятся
-3. Глобальный файл (`~/.config/git/ignore` или путь из `core.excludesFile`)
-
-Глобальные игноры удобны для OS-специфичных файлов (`.DS_Store`, `Thumbs.db`), которые не должны загромождать каждый проект.
+3. Глобальный файл (`core.excludesFile`) — для всех репозиториев
 
 ### Важные особенности
 
-* **Только для неотслеживаемых файлов:** `.gitignore` влияет только на новые, не отслеживаемые Git файлы. Файлы, которые уже были закоммичены до добавления в `.gitignore`, остаются в репозитории.
-* **Удаление из трекинга:** Для удаления уже отслеживаемого файла из Git (но оставления на диске) используйте `git rm --cached <файл>`.
-* **Веб-интерфейсы форджей:** GitHub, GitLab, Forgejo и Gitea позволяют создать файл,_matching_ игнорируемый паттерн, через веб-редактор без предупреждений.
-* **Менеджеры пакетов:** Часто поставляются с собственными игнор-паттернами (`node_modules/`, `vendor/`, `target/`), которые ожидаются в `.gitignore`.
+* **Только для неотслеживаемых файлов:** `.gitignore` влияет только на новые файлы. Уже закоммиченные файлы остаются в репозитории — используйте `git rm --cached` для удаления из трекинга.
+* **Исключения не работают через игнорируемые директории:** Если родительская директория уже проигнорирована, правило `!` для вложенного файла не сработает.
+* **Веб-интерфейсы форджей:** GitHub, GitLab и другие платформы позволяют редактировать игнорируемые файлы через веб без предупреждений.
+* **Менеджеры пакетов:** `node_modules/`, `vendor/`, `target/` — стандартные паттерны, ожидаемые в `.gitignore` любого проекта.
 
-### Практические примеры
+---
+
+## Практические сценарии
+
+### Сценарий 1: Настройка для нового проекта
+
+```bash
+# Скачать готовый шаблон для вашего стека
+curl -o .gitignore https://raw.githubusercontent.com/github/gitignore/main/Global/Node.gitignore
+```
+
+### Сценарий 2: Удаление уже отслеживаемого файла из Git
+
+Если файл уже закоммичен, добавление в `.gitignore` не поможет:
+
+```bash
+# Удалить из репозитория, оставить на диске
+git rm --cached <файл>
+
+# Закоммитить изменения
+git commit -m "chore: remove file from tracking"
+```
+
+### Сценарий 3: Глобальный ignore для системных файлов
+
+```bash
+# Создать глобальный ignore-файл
+echo ".DS_Store" >> ~/.gitignore_global
+echo "Thumbs.db" >> ~/.gitignore_global
+
+# Настроить Git
+git config --global core.excludesFile ~/.gitignore_global
+```
+
+### Сценарий 4: Временное игнорирование изменений в отслеживаемом файле
+
+Для файлов, которые должны оставаться в репозитории, но локальные изменения которых не нужно фиксировать:
+
+```bash
+# Игнорировать локальные изменения
+git update-index --assume-unchanged <файл>
+
+# Возобновить отслеживание
+git update-index --no-assume-unchanged <файл>
+```
+
+### Сценарий 5: Типичный .gitignore для мультитекового проекта
 
 ```gitignore
 # Зависимости
@@ -50,9 +94,10 @@ node_modules/
 vendor/
 target/
 
-# Логи
+# Логи и кэш
 *.log
 logs/
+*.cache
 
 # Переменные окружения
 .env
@@ -70,63 +115,16 @@ build/
 *.swp
 *.swo
 
-# OS
+# Операционные системы
 .DS_Store
 Thumbs.db
 ```
 
-### Временное игнорирование изменений в отслеживаемом файле
+### Сценарий 6: .dockerignore для сборки образов
 
-```bash
-# Начать игнорировать изменения в файле, который уже в репозитории
-git update-index --assume-unchanged <файл>
-
-# Возобновить отслеживание изменений
-git update-index --no-assume-unchanged <файл>
-```
-
----
-
-## Практические сценарии
-
-### Сценарий 1: Настройка .gitignore для нового проекта
-
-Создайте файл в корне репозитория:
-
-```bash
-# Создать .gitignore с шаблоном для вашего стека
-curl -o .gitignore https://raw.githubusercontent.com/github/gitignore/main/Global/Node.gitignore
-```
-
-### Сценарий 2: Удаление уже отслеживаемого файла из Git
-
-Если файл уже закоммичен, простое добавление в `.gitignore` не поможет:
-
-```bash
-# Удалить файл из репозитория, но оставить на диске
-git rm --cached <файл>
-
-# Закоммитить изменения
-git commit -m "chore: remove file from tracking"
-```
-
-### Сценарий 3: Глобальный .gitignore для OS-файлов
-
-Для игнорирования системных файлов на всех проектах:
-
-```bash
-# Создать глобальный ignore-файл
-echo ".DS_Store" >> ~/.gitignore_global
-echo "Thumbs.db" >> ~/.gitignore_global
-
-# Настроить Git
-git config --global core.excludesFile ~/.gitignore_global
-```
-
-### Сценарий 4: .dockerignore для сборки образов
+Файл `.dockerignore` использует тот же синтаксис, что и `.gitignore`:
 
 ```dockerignore
-# Исключить из контекста сборки Docker
 .git
 node_modules
 *.log
@@ -137,9 +135,8 @@ docker-compose.yml
 
 **Преимущества:**
 
-* Ускоряет сборку (меньше файлов отправляется демону)
+* Ускоряет сборку — меньше данных передаётся Docker daemon
 * Предотвращает попадание секретов в образы
-* Синтаксис идентичен `.gitignore`: wildcards, negation, directory markers
 
 ---
 
@@ -147,10 +144,10 @@ docker-compose.yml
 
 ### Официальные ресурсы
 
-* **Документация Git по gitignore:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
-* **Шаблоны .gitignore:** [github.com/github/gitignore](https://github.com/github/gitignore)
-* **toptal gitignore generator:** [toptal.com/developers/gitignore](https://www.toptal.com/developers/gitignore)
+* **Документация Git:** [git-scm.com/docs/gitignore](https://git-scm.com/docs/gitignore)
+* **Шаблоны:** [github.com/github/gitignore](https://github.com/github/gitignore)
+* **Генератор:** [toptal.com/developers/gitignore](https://www.toptal.com/developers/gitignore)
 
 ### Связанные темы
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Обработка файлов через .gitattributes описана в [git_attributes.md](./git_attributes.md).
+Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Обработка файлов через `.gitattributes` в [git_attributes.md](./git_attributes.md). `.dockerignore` в контексте Docker — в [dockerfile_build_context.md](../Docker/Dockerfile/dockerfile_build_context.md).

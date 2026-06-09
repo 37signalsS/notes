@@ -11,408 +11,143 @@
 | **Air-gapped (Закрытый контур)** | Изолированная сетевая среда, не имеющая прямого доступа к публичному интернету. |
 | **OCI (Open Container Initiative)** | Стандарт для образов контейнеров и рантаймов. В контексте Helm позволяет хранить чарты в Docker-реестрах (например, Harbor). |
 | **Object Storage (S3)** | Протокол и тип хранилища для неструктурированных данных (артефакты, LFS, бэкапы). В данном руководстве используется MinIO. |
-| **Values-файл** | YAML-файл с конфигурацией параметров Helm-чарта. |
-
-**Навигация:** [Установка GitLab через Helm](./gitlab_kubernetes_helm_installation.md) | [Интеграция с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
+| **Values-файл** | YAML-файл для переопределения параметров чарта при установке. |
 
 ---
 
 ## Основные концепции
 
-Установка в закрытом контуре разделена на два этапа:
+### Двухэтапный процесс установки
 
-1. **Внешний контур (с доступом в интернет):** подготовка артефактов, скачивание Helm-чарта, сбор списка образов и их архивация.
-2. **Внутренний контур (без интернета):** загрузка образов в локальный реестр, пуш чарта и выполнение установки через Helm.
+Развертывание в изолированной среде состоит из двух фаз:
 
-### Требования
+1. **Внешний контур (Интернет)**: подготовка артефактов. Скачивание Helm-чарта, определение списка необходимых образов, их загрузка и упаковка в архивы.
+2. **Внутренний контур (Air-gapped)**: развертывание. Перенос архивов, импорт образов в локальный реестр (Harbor), публикация чарта и выполнение установки.
 
-**Внешний контур:**
+### Требования к инфраструктуре
 
-- Docker
-- Helm
+Для успешной работы GitLab в закрытом контуре должны быть развернуты:
 
-**Закрытый контур:**
-
-- Kubernetes кластер
-- Docker или Nerdctl
-- Helm
-- Локальный реестр (Harbor или Nexus)
-- Объектное хранилище (MinIO или Ceph)
-- Система хранения (Longhorn или NFS)
+- **Kubernetes кластер**: версия 1.24+.
+- **Локальный реестр**: Harbor (рекомендуется) или Nexus для хранения образов и Helm-чартов.
+- **Объектное хранилище**: MinIO или Ceph для хранения артефактов CI/CD, LFS и бэкапов.
+- **Persistent Storage**: StorageClass (NFS, Longhorn, Ceph) для базы данных и Git-репозиториев.
 
 ---
 
 ## Практические сценарии
 
-### 1. Подготовка артефактов (Внешний контур)
+### Подготовка артефактов (Внешний контур)
 
-Сначала необходимо добавить репозиторий и скачать чарт:
+На машине с доступом в интернет необходимо скачать чарт и подготовить список образов.
 
 ```bash
+# Добавление репозитория и скачивание чарта
 helm repo add gitlab https://charts.gitlab.io
-helm repo update
 helm pull gitlab/gitlab --untar
+
+# Генерация манифестов для извлечения имен образов
+helm template gitlab ./gitlab -f minimal-values.yaml > rendered.yaml
+
+# Получение уникального списка образов
+grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > gitlab-images.txt
 ```
 
-Создайте тестовый `values.yaml` для генерации списка необходимых образов:
+#### Загрузка и упаковка образов
 
-```yaml
-# values.yaml
-global:
-  edition: ce
-  hosts:
-    domain: k8s.domain.local
-    gitlab:
-      name: gitlab.k8s.domain.local
-  ingress:
-    enabled: true
-    configureCertmanager: false
-    provider: nginx
-    class: nginx
-    tls:
-      enabled: false
-  registry:
-    enabled: false
-  minio:
-    enabled: false
-gitlab-runner:
-  install: false
-prometheus:
-  install: false
-grafana:
-  enabled: false
-```
-
-Сгенерируйте список образов:
-
-```bash
-helm template gitlab ./gitlab -f values.yaml > rendered.yaml
-
-# Выгрузка уникальных имен образов в файл
-grep -oE 'image:\s*"?[^"]+' rendered.yaml | sed -E 's/^image:\s*"?//; s/"$//' | sort -u > git-images.txt
-```
-
-#### Загрузка и тегирование образов
-
-Настройте переменные для вашего локального реестра:
+Используйте скрипт для скачивания и тегирования образов для вашего Harbor:
 
 ```bash
 export HARBOR="harbor.domain.local"
 export PROJECT="gitlab"
-```
 
-Скрипт для скачивания и подготовки образов для Harbor:
-
-```bash
-cat git-images.txt | tr -d '\r' | while IFS= read -r img; do
-  img="$(echo "$img" | tr -d '"' | xargs)"
-  [ -z "$img" ] && continue
-
-  # Удаление префиксов публичных реестров
-  cleaned="$(echo "$img" | sed -E 's#^(docker\.io|registry\.gitlab\.com|quay\.io|gcr\.io|ghcr\.io|registry\.k8s\.io)/##')"
-  new="${HARBOR}/${PROJECT}/${cleaned}"
+cat gitlab-images.txt | while read img; do
+  # Очистка имени от префикса публичного реестра
+  cleaned=$(echo "$img" | sed -E 's#^(docker\.io|registry\.gitlab\.com|quay\.io|gcr\.io|ghcr\.io|registry\.k8s\.io)/##')
+  new_tag="${HARBOR}/${PROJECT}/${cleaned}"
   
-  echo "PULL  $img"
-  sudo docker pull "$img"
-  
-  echo "TAG   $img -> $new"
-  sudo docker tag "$img" "$new"
+  docker pull "$img"
+  docker tag "$img" "$new_tag"
+  echo "$new_tag" >> images-to-save.txt
 done
+
+# Сохранение в архив и упаковка чарта
+docker save -o gitlab-images.tar $(cat images-to-save.txt)
+tar -czvf gitlab-helm-chart.tar.gz gitlab/
 ```
 
-Сохраните образы в архив для переноса:
+### Развертывание в изолированной среде
+
+После переноса файлов во внутренний контур необходимо импортировать образы и опубликовать чарт.
+
+#### Импорт в Harbor
 
 ```bash
-# Формирование списка новых имен
-cat git-images.txt | tr -d '\r' | while IFS= read -r img; do
-  img="$(echo "$img" | tr -d '"' | xargs)"
-  [ -z "$img" ] && continue
-  cleaned="$(echo "$img" | sed -E 's#^(docker\.io|registry\.gitlab\.com|quay\.io|gcr\.io|ghcr\.io|registry\.k8s\.io)/##')"
-  echo "${HARBOR}/${PROJECT}/${cleaned}"
-done | sort -u > harbor-images.txt
+# Загрузка в локальный Docker/Podman
+docker load -i gitlab-images.tar
 
-# Сохранение в tar-архив
-sudo docker save -o gitlab-harbor-images.tar $(cat harbor-images.txt)
+# Пуш в локальный реестр
+docker login harbor.domain.local
+cat images-to-save.txt | xargs -L 1 docker push
 
-# Упаковка чарта
-tar -cvf gitlab-helm.tgz gitlab 
+# Пуш Helm-чарта в OCI-репозиторий Harbor
+helm push gitlab-helm-chart.tar.gz oci://harbor.domain.local/helm
 ```
 
-### 2. Развертывание в закрытом контуре
+### Конфигурация GitLab (values.yaml)
 
-Перенесите файлы `harbor-images.txt`, `gitlab-harbor-images.tar` и `gitlab-helm.tgz` на сервер в закрытом контуре.
+В закрытом контуре необходимо перенаправить все запросы образов на локальный реестр и настроить внешнее хранилище.
 
-#### Импорт образов в Harbor
-
-```bash
-# Загрузка образов в локальный Docker
-sudo docker load -i gitlab-harbor-images.tar
-
-# Логин и пуш в Harbor
-docker login ${HARBOR}
-
-cat harbor-images.txt | tr -d '\r' | while IFS= read -r img; do
-  img="$(echo "$img" | tr -d '"' | xargs)"
-  [ -z "$img" ] && continue
-  echo "PUSH $img"
-  sudo docker push "$img"
-done
-```
-
-#### Пуш Helm-чарта
-
-Для использования OCI-репозитория в Harbor создайте проект `helm` и выполните пуш:
-
-```bash
-helm push gitlab-helm.tgz oci://harbor.domain.local/helm
-```
-
-### 3. Конфигурация Helm (values.yaml)
-
-При установке необходимо переопределить пути к образам на локальный реестр и настроить интеграцию с внешними сервисами (S3, DB).
+**Ключевые параметры конфигурации:**
 
 ```yaml
-# production-values.yaml
-installCertmanager: false
-nginx-ingress:
-  enabled: false
-gitlab-runner:
-  install: false
-prometheus:
-  install: false
-grafana:
-  install: false
-
 global:
-  edition: ce
-  hosts:
-    domain: k8s.domain.local
-    https: false
-    gitlab:
-      name: gitlab.k8s.domain.local
   image:
-    registry: harbor.domain.local
+    registry: harbor.domain.local # Глобальный реестр для всех образов
+  hosts:
+    domain: gitlab.local
   ingress:
-    enabled: true
-    configureCertmanager: false
-    class: nginx
-    tls:
-      enabled: false
-    annotations:
-      kubernetes.io/ingress.class: nginx
-  certificates:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/certificates
-      tag: "v18.8.4"
-    customCAs:
-      - secret: gitlab-ca
-  kubectl:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/kubectl
-      tag: "v18.8.4"
-  gitlabBase:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-base
-      tag: "v18.8.4"
-  registry:
-    enabled: false
-  minio:
-    enabled: false
+    configureCertmanager: false # Cert-manager обычно не используется в оффлайне
   appConfig:
     object_store:
       enabled: true
       connection:
-        secret: gitlab-storage
-        key: config
-    artifacts:
-      enabled: true
-      bucket: gitlab-artifacts
-    lfs:
-      enabled: true
-      bucket: gitlab-lfs
-    uploads:
-      enabled: true
-      bucket: gitlab-uploads
-    packages:
-      enabled: true
-      bucket: gitlab-packages
-    backups:
-      bucket: gitlab-backups
-      tmpBucket: tmp
-
-gitlab:
-  toolbox:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-toolbox-ce
-      tag: "v18.8.4"
-    backups:
-      objectStorage:
-        config:
-          secret: s3-credentials
-          key: config
-  webservice:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-webservice-ce
-    workhorse:
-      image: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-workhorse-ce
-  migrations:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-toolbox-ce
-      tag: "v18.8.4"
-  gitaly:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitaly
-      tag: "v18.8.4"
-    persistence:
-      size: 20Gi
-      storageClass: longhorn
-  kas:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-kas
-      tag: "v18.8.4"
-  sidekiq:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-sidekiq-ce
-  gitlab-shell:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-shell
-  gitlab-exporter:
-    image:
-      repository: harbor.domain.local/gitlab/gitlab-org/build/cng/gitlab-exporter
-
-registry:
-  enabled: false
-
-redis:
-  image:
-    registry: harbor.domain.local
-    repository: gitlab/bitnamilegacy/redis
-  metrics:
-    image:
-      registry: harbor.domain.local
-      repository: gitlab/bitnamilegacy/redis-exporter
-
-postgresql:
-  image:
-    registry: harbor.domain.local
-    repository: gitlab/bitnamilegacy/postgresql
-  metrics:
-    image:
-      registry: harbor.domain.local
-      repository: gitlab/bitnamilegacy/postgresql-exporter
+        secret: gitlab-s3-secret # Секрет с параметрами подключения к MinIO
 ```
 
-> **Важно:** Для доверия к самоподписанным сертификатам (например, MinIO) необходимо добавить корневой CA в секрет:
-> `kubectl -n gitlab create secret generic gitlab-ca --from-file=root-ca.crt=/path/to/root-ca.crt`
+### Настройка объектного хранилища MinIO
 
-### 4. Настройка Object Storage (MinIO)
+GitLab требует наличия бакетов для артефактов, бэкапов, LFS и загрузок.
 
-GitLab требует наличия бакетов для различных типов данных. Создайте следующие бакеты в MinIO:
-
-- `gitlab-artifacts`
-- `gitlab-backups`
-- `gitlab-lfs`
-- `gitlab-registry` (если включен)
-- `gitlab-uploads`
-
-#### Политика доступа (IAM Policy)
-
-Создайте политику `gitlab` в MinIO:
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": ["s3:ListBucket"],
-            "Resource": [
-                "arn:aws:s3:::gitlab-artifacts",
-                "arn:aws:s3:::gitlab-backups",
-                "arn:aws:s3:::gitlab-lfs",
-                "arn:aws:s3:::gitlab-uploads"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"],
-            "Resource": [
-                "arn:aws:s3:::gitlab-artifacts/*",
-                "arn:aws:s3:::gitlab-backups/*",
-                "arn:aws:s3:::gitlab-lfs/*",
-                "arn:aws:s3:::gitlab-uploads/*"
-            ]
-        }
-    ]
-}
-```
-
-#### Создание секретов в Kubernetes
-
-Создайте секрет `gitlab-storage` для основного приложения:
+**Создание секрета подключения в Kubernetes:**
 
 ```yaml
-# minio-secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: gitlab-storage
+  name: gitlab-s3-secret
   namespace: gitlab
-type: Opaque
 stringData:
   config: |
     provider: AWS
     region: us-east-1
-    endpoint: "https://s3.minio.domain.local"
+    endpoint: "http://minio.local"
+    aws_access_key_id: "ACCESS_KEY"
+    aws_secret_access_key: "SECRET_KEY"
     path_style: true
-    aws_access_key_id: YOUR_ACCESS_KEY
-    aws_secret_access_key: "YOUR_SECRET_KEY"
-```
-
-И секрет `s3-credentials` для бэкапов:
-
-```yaml
-# s3-gitlab.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: s3-credentials
-  namespace: gitlab
-type: Opaque
-stringData:
-  config: |
-    s3:
-      bucket: gitlab-registry-storage
-      accesskey: YOUR_ACCESS_KEY
-      secretkey: "YOUR_SECRET_KEY"
-      region: us-east-1
-      regionendpoint: "https://s3.minio.domain.local"
-      v4auth: true
-```
-
-### 5. Запуск установки
-
-```bash
-kubectl create ns gitlab
-kubectl apply -f minio-secret.yaml -f s3-gitlab.yaml
-
-helm install gitlab oci://harbor.domain.local/helm/gitlab -n gitlab -f production-values.yaml
-```
-
-#### Проверка и получение пароля
-
-```bash
-# Проверка подов
-kubectl get pods -n gitlab
-
-# Получение начального пароля root
-kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath="{.data.password}" | base64 -d
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **[Установка GitLab через Helm](./gitlab_kubernetes_helm_installation.md)** — общие сведения о параметрах и траблшутинге.
-- **[Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)** — настройка внешнего реестра.
-- **[Harbor Overview](../../Docker/Docker_registries/Harbor/overview.md)** — обзор локального реестра образов.
+### Рекомендации по безопасности
+
+- **Доверенные сертификаты**: Если Harbor или MinIO используют самоподписанные сертификаты, их необходимо добавить в секрет `gitlab-custom-ca` и указать в `global.certificates.customCAs`.
+- **Обновление образов**: Процесс синхронизации образов должен быть регулярным для получения патчей безопасности.
+
+### См. также
+
+- [Установка GitLab через Helm](./gitlab_kubernetes_helm_installation.md)
+- [Интеграция GitLab с Harbor](./k3s_dev_environment/gitlab_harbor_integration.md)
+- [Обзор Harbor](../../Docker/Docker_registries/Harbor/overview.md)

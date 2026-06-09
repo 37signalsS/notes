@@ -1,6 +1,6 @@
 # Вспомогательный образ Kubeutils
 
-Руководство по созданию универсального образа с утилитами для работы с Kubernetes в CI/CD-пайплайнах. Образ используется для сборки, валидации и развертывания приложений в кластере K3s.
+Руководство по созданию универсального образа с утилитами для работы с Kubernetes в пайплайнах CI/CD (Continuous Integration / Continuous Deployment). Образ используется для сборки, валидации и развертывания приложений в кластере K3s.
 
 > **Контекст:** Часть серии по созданию dev-окружения в K3s. Образ используется в пайплайнах GitLab CI для взаимодействия с Harbor и Kubernetes. См. [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
 
@@ -10,7 +10,7 @@
 
 | Термин | Описание |
 |--------|----------|
-| **Kubeutils** | Вспомогательный образ с набором CLI-утилит: `kubectl`, `helm`, `regctl`, `kubeconform`. Используется в CI/CD для работы с Kubernetes |
+| **Kubeutils** | Вспомогательный образ с набором утилит CLI (Command Line Interface): `kubectl`, `helm`, `regctl`, `kubeconform`. Используется в CI/CD для работы с Kubernetes |
 | **Kaniko** | Инструмент сборки Docker-образов без демона Docker. Запускается в контейнере, идеален для Kubernetes. См. [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md) |
 | **Build Args** | Переменные, передаваемые в Dockerfile во время сборки. Позволяют кастомизировать версии утилит |
 
@@ -26,9 +26,9 @@
 
 | Утилита | Назначение |
 |---------|------------|
-| **`kubectl`** | Взаимодействие с Kubernetes API (развертывание, диагностика) |
+| **`kubectl`** | Взаимодействие с Kubernetes API (Application Programming Interface) (развертывание, диагностика) |
 | **`helm`** | Управление Helm-чартами (установка, обновление, откат) |
-| **`regctl`** | Работа с OCI-реестрами (тегирование, копирование образов) |
+| **`regctl`** | Работа с OCI (Open Container Initiative) реестрами (тегирование, копирование образов) |
 | **`kubeconform`** | Валидация манифестов Kubernetes против схем API |
 
 **Преимущества единого образа:**
@@ -39,13 +39,13 @@
 
 ### Почему Kaniko для сборки?
 
-В CI/CD-средах (GitLab CI, Kubernetes) доступ к Docker-демону ограничен или отсутствует.
+В средах CI/CD (GitLab CI, Kubernetes) доступ к Docker-демону ограничен или отсутствует.
 
 | Подход | Требования | Безопасность |
 |--------|------------|--------------|
-| **Docker-in-Docker (dind)** | Привилегированный режим | ⚠️ Низкая |
-| **Docker socket binding** | Доступ к `/var/run/docker.sock` | ⚠️ Низкая |
-| **Kaniko** | Непривилегированный контейнер | ✓ Высокая |
+| **Docker-in-Docker (dind)** | Привилегированный режим | Низкая |
+| **Docker-outside-of-Docker (DooD)** | Доступ к `/var/run/docker.sock` | Низкая |
+| **Kaniko** | Непривилегированный контейнер | Высокая |
 
 **Kaniko:**
 
@@ -147,7 +147,7 @@ build:
 |----------|----------|
 | `entrypoint: [""]` | Отменяет точку входа Kaniko для выполнения script |
 | `--destination` | Целевой реестр и тег образа |
-| `--registry-certificate` | CA-сертификат для доверия к Harbor (переменная `dev.se`) |
+| `--registry-certificate` | CA (Certificate Authority) сертификат для доверия к Harbor (переменная `dev.se`) |
 | `${CI_COMMIT_TAG:-$KUBE_VERSION}` | Тег по коммиту или версии kubectl |
 
 ### Использование в пайплайнах
@@ -180,11 +180,11 @@ deploy:
 
 | Компонент | Указанная версия | Статус | Рекомендация |
 |-----------|------------------|--------|--------------|
-| **Kubernetes (kubectl)** | v1.28.6 | ⚠️ Устарел | Рекомендуется v1.31+ |
-| **Helm** | v3.13.0 | ⚠️ Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
-| **regclient** | v0.5.6 | ⚠️ Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
-| **kubeconform** | v0.6.4 | ⚠️ Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
-| **Alpine** | 3.18 | ⚠️ Проверить | [Alpine Releases](https://alpinelinux.org/releases/) |
+| **Kubernetes (kubectl)** | v1.28.6 | Устарел | Рекомендуется v1.31+ |
+| **Helm** | v3.13.0 | Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
+| **regclient** | v0.5.6 | Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
+| **kubeconform** | v0.6.4 | Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
+| **Alpine** | 3.18 | Проверить | [Alpine Releases](https://alpinelinux.org/releases/) |
 
 **Проверка версий:**
 
@@ -202,6 +202,6 @@ deploy:
 
 | Аспект | Риск | Рекомендация |
 |--------|------|--------------|
-| **Устаревшие версии** | CVE в утилитах | Регулярно обновляйте версии |
-| **Alpine base** | Проблемы с glibc | Используйте статические бинарники |
+| **Устаревшие версии** | CVE (Common Vulnerabilities and Exposures) в утилитах | Регулярно обновляйте версии |
+| **Alpine base** | Проблемы с glibc (GNU C Library) | Используйте статические бинарники |
 | **Hardcoded версии** | Рассинхронизация | Выносите версии в variables пайплайна |

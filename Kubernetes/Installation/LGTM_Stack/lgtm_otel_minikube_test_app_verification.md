@@ -10,13 +10,11 @@
 
 ## Определения
 
-**Тестовое приложение** — Java-приложение с инструментацией OpenTelemetry для генерации телеметрии (логи, метрики, трассировки). Используется для верификации работы стека LGTM + OTel.
+**Автоматическая инструментация** — внедрение OpenTelemetry SDK в приложение без изменения кода (например, через Java Agent). Подробнее: **[Instrumentation SDK](../../../OpenTelemetry/instrumentation_sdk.md)**.
 
-**Автоматическая инструментация** — процесс внедрения OTel SDK в приложение без изменения кода через Java Agent. OTel Operator автоматически инжектирует агент в Pod при наличии аннотации `instrumentation.opentelemetry.io/inject-java`. Полная документация: **[Instrumentation SDK](../../../OpenTelemetry/instrumentation_sdk.md)**.
+**Ручная инструментация** — явная настройка SDK и экспортёров через код или переменные окружения. Подробнее: **[Instrumentation SDK](../../../OpenTelemetry/instrumentation_sdk.md)**.
 
-**Ручная инструментация** — явное указание Java Agent через переменную окружения `JAVA_TOOL_OPTIONS` и настройка OTel exporter через переменные `OTEL_*`.
-
-**Spanmetrics** — метрики, сгенерированные из трассировок (RED-метод: Rate, Errors, Duration) процессором spanmetrics в OTel Collector.
+**Spanmetrics** — метрики (RED-метод), генерируемые из трассировок процессором OpenTelemetry Collector.
 
 ---
 
@@ -53,23 +51,22 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Методы инструментации
+### Сравнение методов инструментации
 
-| Метод | Преимущества | Недостатки | Сценарий |
-| :--- | :--- | :--- | :--- |
-| **Автоматическая** | Не требует изменения кода, быстрое внедрение | Ограниченная гибкость | Разработка, тестирование |
-| **Ручная** | Полный контроль, кастомные атрибуты | Требует изменения кода/конфигурации | Production, специфичная бизнес-логика |
-
-### Переменные окружения OTel
-
-| Переменная | Описание | Пример |
+| Метод | Преимущества | Сценарий |
 | :--- | :--- | :--- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint OTel Collector | `http://default-collector.opentelemetry:4317` |
-| `OTEL_SERVICE_NAME` | Имя сервиса для телеметрии | `agent-example-app` |
-| `OTEL_LOGS_EXPORTER` | Экспортёр логов | `otlp` |
-| `OTEL_METRICS_EXPORTER` | Экспортёр метрик | `otlp` |
-| `OTEL_TRACES_EXPORTER` | Экспортёр трассировок | `otlp` |
-| `JAVA_TOOL_OPTIONS` | Опции JVM для Java Agent | `-javaagent:/path/to/opentelemetry-javaagent.jar` |
+| **Автоматическая** | Не требует изменения кода | Разработка, стандартные фреймворки |
+| **Ручная** | Полный контроль над данными | Production, кастомная логика |
+
+### Основные переменные окружения OpenTelemetry
+
+| Переменная | Назначение |
+| :--- | :--- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Адрес OpenTelemetry Collector |
+| `OTEL_SERVICE_NAME` | Имя сервиса для идентификации |
+| `OTEL_LOGS_EXPORTER` | Тип экспортёра логов |
+| `OTEL_METRICS_EXPORTER` | Тип экспортёра метрик |
+| `OTEL_TRACES_EXPORTER` | Тип экспортёра трассировок |
 
 ---
 
@@ -77,25 +74,20 @@
 
 ### Сценарий 1: Запуск приложения с автоматической инструментацией
 
-**Цель:** Развернуть тестовое приложение с автоматической инъекцией OTel Agent через Operator.
+**Цель:** Развернуть приложение с инъекцией агента через Operator.
 
-#### Шаг 1: Сборка Docker-образа
+#### Шаг 1: Подготовка образа
 
 ```bash
-# Переход в директорию с примером
-cd opentelemetry-java-examples/agent/agent-example-app
-
 # Сборка JAR
 ./gradlew clean bootJar
 
-# Сборка Docker-образа
+# Сборка и отправка образа
 docker build -t registry.test:30000/agent-example-app:latest .
-
-# Отправка в локальный Registry
 docker push registry.test:30000/agent-example-app:latest
 ```
 
-#### Шаг 2: Запуск Pod с аннотацией инструментации
+#### Шаг 2: Запуск в Kubernetes
 
 ```bash
 kubectl run agent-example-app \
@@ -106,151 +98,56 @@ kubectl run agent-example-app \
   --namespace=default
 ```
 
-**Аннотация:** `instrumentation.opentelemetry.io/inject-java: "true"` указывает OTel Operator внедрить Java Agent в Pod.
-
-#### Шаг 3: Проверка статуса Pod
-
-```bash
-# Проверка Pod
-kubectl get pods -l app=agent-example-app
-
-# Проверка инъекции агента
-kubectl describe pod -l app=agent-example-app | grep -A 5 "OTEL"
-```
-
-**Ожидаемый результат:** Pod в статусе `Running`, переменные окружения OTel установлены.
+**Аннотация:** `inject-java: "true"` инициирует внедрение агента OpenTelemetry Operator-ом.
 
 ---
 
-### Сценарий 2: Запуск приложения с ручной инструментацией
+### Сценарий 2: Верификация телеметрии в Grafana
 
-**Цель:** Развернуть приложение с явным указанием Java Agent (без Operator).
+**Цель:** Проверить корреляцию сигналов в интерфейсе Grafana.
 
-#### Шаг 1: Сборка образа без встроенного агента
-
-```bash
-cd opentelemetry-java-examples/agent/agent-example-app
-
-# Убедитесь, что Dockerfile не содержит opentelemetry-javaagent.jar
-docker build -t registry.test:30000/agent-example-app-no-agent:latest .
-docker push registry.test:30000/agent-example-app-no-agent:latest
-```
-
-#### Шаг 2: Запуск Pod с явным указанием агента
+#### Шаг 1: Генерация трафика
 
 ```bash
-kubectl run agent-example-app-manual \
-  --image=registry.test:30000/agent-example-app-no-agent:latest \
-  --port=8080 \
-  --labels="app=agent-example-app-manual" \
-  --env="JAVA_TOOL_OPTIONS=-javaagent:/path/to/opentelemetry-javaagent.jar" \
-  --env="OTEL_EXPORTER_OTLP_ENDPOINT=http://default-collector.opentelemetry:4317" \
-  --env="OTEL_LOGS_EXPORTER=otlp" \
-  --env="OTEL_SERVICE_NAME=agent-example-app-manual" \
-  --namespace=default
-```
+# Проброс порта
+kubectl port-forward svc/agent-example-app 8080:8080
 
-> **Примечание:** Этот метод требует, чтобы JAR-файл агента был доступен в контейнере (через `initContainer` или встраивание в образ).
-
----
-
-### Сценарий 3: Верификация телеметрии
-
-**Цель:** Проверить сбор логов, метрик и трассировок в Grafana.
-
-#### Шаг 1: Проброс порта к Pod
-
-```bash
-kubectl port-forward pod/$(kubectl get pods -l app=agent-example-app -o jsonpath='{.items[0].metadata.name}') \
-  8080:8080 \
-  --namespace=default
-```
-
-#### Шаг 2: Генерация нагрузки
-
-```bash
-# Генерация тестовых запросов
+# Отправка запросов
 curl localhost:8080/ping
-curl localhost:8080/endpoint1
-curl localhost:8080/endpoint2
 ```
 
-#### Шаг 3: Проверка в Grafana
+#### Шаг 2: Анализ данных
 
-Откройте Grafana (<http://grafana.test>) и перейдите в раздел **Explore**.
+Откройте Grafana (<http://grafana.test>) → **Explore**.
 
-**Логи (Loki):**
-
-1. Выберите Data Source `Loki`
-2. Используйте запрос: `{service_name="agent-example-app"}`
-3. Вы увидите логи приложения с метаданными
-
-**Трассировки (Tempo):**
-
-1. В логах найдите поле `traceID`
-2. Кликните по ссылке для перехода в Tempo
-3. Вы увидите полную трассировку запроса с деталями спанов
-
-**Метрики (Prometheus):**
-
-1. Выберите Data Source `Prometheus`
-2. Используйте запрос: `traces_spanmetrics_latency_bucket{service_name="agent-example-app"}`
-3. Вы увидите метрики задержек, сгенерированные из спанов
+1. **Логи (Loki):** Выберите запрос `{service_name="agent-example-app"}`. В логах должен присутствовать `traceID`.
+2. **Трассировки (Tempo):** Перейдите по `traceID` из лога для просмотра визуализации пути запроса.
+3. **Метрики (Prometheus):** Проверьте метрику `traces_spanmetrics_latency_bucket` для анализа задержек.
 
 ---
 
 ## Дополнительная информация
 
-### Troubleshooting
+### Поиск и устранение неисправностей
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в статусе Pending** | Недостаточно ресурсов | Проверить `kubectl describe pod`, увеличить ресурсы Minikube |
-| **Нет телеметрии в Grafana** | Collector не получает данные | Проверить логи Collector: `kubectl logs -n opentelemetry -l app.kubernetes.io/name=opentelemetry-collector` |
-| **Агент не инжектируется** | Operator не работает | Проверить `kubectl get pods -n opentelemetry-operator`, аннотацию Pod |
-| **Ошибка подключения к Collector** | Неправильный endpoint | Проверить сервис: `kubectl get svc -n opentelemetry` |
-| **404 в Grafana** | Data source не настроен | Проверить конфигурацию kube-prometheus-stack |
+| **Нет телеметрии** | Collector не получает данные | Проверить логи Collector и endpoint в приложении |
+| **Агент не инжектируется** | Ошибка Operator | Проверить статус OpenTelemetry Operator и аннотации |
+| **404 в Grafana** | Ошибка Data Source | Проверить URL источников данных в настройках Grafana |
 
 ### Диагностика
 
 ```bash
-# Проверка Pod и событий
-kubectl get pods -l app=agent-example-app
-kubectl describe pod -l app=agent-example-app
-
-# Логи приложения
-kubectl logs -l app=agent-example-app
-
-# Проверка Collector
-kubectl get otelcol -n opentelemetry
+# Логи Collector
 kubectl logs -n opentelemetry -l app.kubernetes.io/name=opentelemetry-collector
 
-# Проверка сервисов
-kubectl get svc -n opentelemetry
-kubectl get svc -n loki
-kubectl get svc -n tempo
-
-# Тестирование endpoints
-curl -k https://loki.test/loki/api/v1/labels
-curl http://tempo.tempo:3200/ready
+# Описание пода приложения
+kubectl describe pod -l app=agent-example-app
 ```
 
 ### Ссылки на SSoT
 
-- **[Instrumentation SDK](../../../OpenTelemetry/instrumentation_sdk.md)** — автоматическая и ручная инструментация
-- **[OTel Architecture](../../../OpenTelemetry/architecture_signals.md)** — сигналы и архитектура
-- **[Grafana overview](../../../Grafana/grafana_overview.md)** — визуализация телеметрии
-- **[Loki overview](../../../Loki/loki_overview.md)** — сбор логов
-- **[Tempo overview](../../../Tempo/index.md)** — хранение трассировок
-
-### Ресурсы
-
-- **[OpenTelemetry Java Examples](https://github.com/open-telemetry/opentelemetry-java-examples)**
-- **[OTel Operator Documentation](https://opentelemetry-operator.readthedocs.io/)**
-- **[Grafana Explore](https://grafana.com/docs/grafana/latest/explore/)**
-
----
-
-**Навигация по руководству:**
-
-- **[← Развертывание OpenTelemetry](./lgtm_otel_minikube_opentelemetry_deployment.md)**
+- **[Instrumentation SDK](../../../OpenTelemetry/instrumentation_sdk.md)**
+- **[Signals Architecture](../../../OpenTelemetry/architecture_signals.md)**
+- **[Grafana Overview](../../../Grafana/grafana_overview.md)**

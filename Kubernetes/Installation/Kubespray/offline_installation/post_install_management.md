@@ -1,149 +1,102 @@
-# Kubespray: Offline установка — Post-Install управление
+# Kubespray: Offline установка — Обслуживание кластера
 
 ## Определения
 
-**Post-Install управление** — операции по настройке, масштабированию и обслуживанию кластера Kubernetes после завершения установки через Kubespray в offline-режиме.
+**Обслуживание кластера (Post-Install Management)** — совокупность регулярных операций по сопровождению, масштабированию и диагностике кластера Kubernetes, работающего в изолированной среде.
 
-**CiliumNetworkPolicy** — ресурс Kubernetes для декларативного управления правилами сетевого доступа (L3/L4) между подами; часть CNI Cilium.
+**Жизненный цикл артефактов (Artifact Lifecycle)** — процесс обновления контейнерных образов и бинарных файлов в локальном реестре (Harbor) для обеспечения актуальности версий внутри закрытого контура.
+
+Общие определения инструментов управления кластером приведены в **[глоссарии Kubespray](../kubespray_install/definitions.md)**.
 
 ---
 
 ## Основные концепции
 
-### Операции управления
+### Специфика обслуживания в закрытом контуре
 
-| Задача | Команда | SSoT |
-| :--- | :--- | :--- |
-| **Добавить ноду** | `scale.yml` | [cluster_management.md](../cluster_management.md) |
-| **Обновить k8s** | `upgrade-cluster.yml` | [cluster_management.md](../cluster_management.md) |
-| **Изменить сеть** | `--tags cilium,network` | Ниже |
-| **Удалить ноду** | `remove-node.yml` | [cluster_management.md](../cluster_management.md) |
-| **Бэкап etcd** | `etcdctl snapshot save` | [cluster_management.md](../cluster_management.md) |
+В условиях отсутствия доступа к интернету любая операция по изменению кластера (добавление узла, обновление версии Kubernetes, установка аддонов) требует предварительной проверки наличия соответствующих артефактов в локальных хранилищах.
 
-### Файлы конфигурации offline-кластера
+**Ключевые аспекты контроля:**
 
-| Файл | Назначение |
+- **Конфигурация:** все изменения параметров фиксируются в `group_vars` и применяются через Ansible.
+- **Масштабирование (Scaling):** перед добавлением нового узла (Node) необходимо убедиться, что он прошел базовую подготовку и его IP внесен в инвентарь (Inventory).
+- **Обновление (Upgrade):** процесс требует повторения **[сбора артефактов](./step2_internet_env.md)** для новых версий компонентов перед запуском плейбуков.
+
+### Файлы конфигурации для offline-режима
+
+| Файл | Назначение в изолированной среде |
 | :--- | :--- |
-| `group_vars/all/offline.yml` | Offline настройки, registry |
-| `group_vars/all/containerd.yml` | Containerd конфигурация |
-| `group_vars/k8s_cluster/k8s-cluster.yml` | Основные параметры K8s |
-| `group_vars/k8s_cluster/k8s-net-cilium.yml` | Настройки Cilium |
-| `group_vars/k8s_cluster/addons.yml` | Аддоны (Helm, Ingress, MetalLB) |
+| `offline.yml` | Пути к локальному реестру (Registry), параметры кэширования |
+| `containerd.yml` | Настройки авторизации в Harbor для Container Runtime |
+| `k8s-net-cilium.yml` | Параметры eBPF-сети и Hubble в изоляции |
+| `addons.yml` | Список активных системных приложений (Helm, Ingress) |
 
 ---
 
 ## Практические сценарии
 
-### Изменение сетевых настроек Cilium
+### 1. Применение изменений конфигурации
 
-```yaml
-# group_vars/k8s_cluster/k8s-net-cilium.yml
-cilium_mtu: "1450"
-cilium_tunnel_mode: geneve
-cilium_kube_proxy_replacement: true
-```
+При изменении параметров в `group_vars` необходимо запустить основной плейбук. Для ускорения процесса в изолированной среде рекомендуется использовать теги (Tags).
 
-**Применение изменений:**
+**Обновление настроек сети Cilium:**
 
 ```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "cilium,network" -v
+ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
+  -b --tags "network,cilium" -v
+# → Ожидаемый результат: Ansible применит только задачи, связанные с сетевым плагином
 ```
 
-### Применение CiliumNetworkPolicy
-
-**Пример политики (frontend → backend):**
-
-```yaml
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
-  name: allow-frontend-to-backend
-  namespace: default
-spec:
-  endpointSelector:
-    matchLabels:
-      app: backend
-  ingress:
-  - fromEndpoints:
-    - matchLabels:
-        app: frontend
-    toPorts:
-    - ports:
-      - port: "8080"
-        protocol: TCP
-```
-
-**Применение:**
+**Обновление аддонов (Ingress, MetalLB):**
 
 ```bash
-kubectl apply -f policy.yaml
+ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
+  -b --tags "kubernetes-apps" -v
+# → Ожидаемый результат: обновление конфигурации Helm-чартов и системных приложений
 ```
 
-### Диагностика Cilium и Hubble
+### 2. Сетевая диагностика через Hubble
+
+Hubble является основным инструментом отладки сетевой связности в закрытом контуре.
+
+**Проверка статуса здоровья сети:**
 
 ```bash
-# Статус кластера
-kubectl -n kube-system exec -it ds/cilium -- cilium status
-
-# Проверка здоровья
 kubectl -n kube-system exec -it ds/cilium -- cilium health status
+# → Ожидаемый результат: Cluster health: reachable (все узлы доступны)
+```
 
-# Наблюдение за трафиком
+**Наблюдение за трафиком (Flows):**
+
+```bash
 kubectl -n kube-system exec -it ds/cilium -- hubble observe --follow
-
-# Статус BGP (если используется)
-kubectl -n kube-system exec -it ds/cilium -- cilium bgp summary
+# → Ожидаемый результат: поток событий о сетевых соединениях между подами
 ```
 
-### Мониторинг через Hubble UI
+### 3. Масштабирование кластера
+
+Добавление новых рабочих узлов (Worker Nodes) выполняется через `scale.yml`. Важно убедиться, что образы для новых узлов уже находятся в Harbor.
 
 ```bash
-kubectl port-forward -n kube-system svc/hubble-ui 8080:80
-# Открыть: http://localhost:8080
+ansible-playbook -i inventory/offline_cluster/inventory.ini scale.yml -b -v
+# → Ожидаемый результат: новые узлы перейдут в статус Ready
 ```
 
-**Команды Hubble:**
-
-```bash
-# Наблюдение за всеми событиями
-kubectl -n kube-system exec -it ds/cilium -- hubble observe
-
-# Только DNS события
-kubectl -n kube-system exec -it ds/cilium -- hubble observe --type dns
-
-# Только HTTP события
-kubectl -n kube-system exec -it ds/cilium -- hubble observe --type http
-
-# События для конкретного пода
-kubectl -n kube-system exec -it ds/cilium -- \
-  hubble observe --pod <pod-name>
-```
-
-### Применение изменений конфигурации
-
-```bash
-# После изменения group_vars
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin
-```
-
-**Или с тегами для ускорения:**
-
-```bash
-# Только сеть
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "network,cilium" -v
-
-# Только аддоны
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "kubernetes-apps" -v
-```
+Подробные команды управления составом узлов описаны в **[Управлении кластером Kubespray](../cluster_management.md)**.
 
 ---
 
 ## Дополнительная информация
 
+### Регулярные задачи обслуживания
+
+- **Резервное копирование etcd:** выполняйте Snapshot перед любыми изменениями инфраструктуры.
+- **Мониторинг Harbor:** контроль свободного места в реестре, особенно при хранении нескольких версий образов.
+- **Синхронизация времени:** в изолированных средах критически важна работа NTP для валидности TLS-сертификатов.
+
 ### Связанные темы
 
-Масштабирование и обновление кластера описано в [cluster_management.md](../cluster_management.md), валидация установки — в [проверке кластера](./cluster_verification.md), решение проблем — в [troubleshooting](./troubleshooting.md). Сетевые плагины — в [CNI definitions](../../../Networking/Network/CNI/definitions.md).
+- **[Проверка кластера](./cluster_verification.md)** — регламент тестирования после изменений.
+- **[Troubleshooting](./troubleshooting.md)** — решение проблем эксплуатации в offline-режиме.
+- **[Управление кластером](../cluster_management.md)** — основной источник истины по масштабированию и обновлению.
+- **[Базовые концепции Kubespray](../kubespray_install/basic_concepts.md)** — общие принципы работы инструмента.

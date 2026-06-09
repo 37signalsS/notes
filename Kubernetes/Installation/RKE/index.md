@@ -12,125 +12,27 @@
 
 ## Базовые концепции
 
-### Отличия RKE от kubeadm
-
-| Аспект | kubeadm | RKE |
-| :--- | :--- | :--- |
-| **Установка** | Команды `kubeadm init/join` на узлах | Через `cluster.yml` + `rke up` |
-| **Конфигурация** | Ручная на каждом узле | Декларативная (YAML) |
-| **Управление** | kubectl + kubeadm | Rancher UI + kubectl |
-| **kubectl на узлах** | Устанавливается автоматически | Не устанавливается (только через Rancher) |
-| **HA** | Ручная настройка | Встроенная поддержка |
-
-### Архитектура доступа
-
-```
-┌─────────────┐      ┌──────────────┐      ┌─────────────────┐
-│   kubectl   │ ───► │  kubeconfig  │ ───► │  RKE API Server │
-│  (локально) │      │ (~/.kube/)   │      │   (порт 6443)   │
-└─────────────┘      └──────────────┘      └─────────────────┘
-                                                    │
-                                  ┌─────────────────┼─────────────────┐
-                                  │                 │                 │
-                         ┌────────▼───────┐ ┌──────▼──────┐ ┌───────▼──────┐
-                         │  Control Plane │ │ Worker Node │ │ Worker Node  │
-                         │    (etcd+API)  │ │             │ │              │
-                         └────────────────┘ └─────────────┘ └──────────────┘
-```
-
-### Типы дистрибутивов Rancher
-
-* **RKE2** — современный дистрибутив с улучшенной безопасностью (FIPS, hardened компоненты). Подходит для production-сред с высокими требованиями к безопасности.
-* **K3s** — легковесный дистрибутив для edge, IoT и тестовых сред. Минимальное потребление ресурсов.
-
-### Сетевые плагины
-
-* **Flannel** — простой оверлейный CNI-плагин. Минимальная конфигурация, подходит для базовых сценариев.
-* **Calico** — мощный CNI с поддержкой `NetworkPolicy`. Рекомендован для production-сред.
-* **Cilium** — высокопроизводительный CNI на базе eBPF с расширенными функциями безопасности и обсервабилити.
-
-### Особенности узлов RKE-кластера
-
-* **Taints на системных узлах** — узлы с ролями `etcd` и `Control Plane` имеют taints (например, `node-role.kubernetes.io/control-plane:NoSchedule`), предотвращающие размещение обычных подов.
-* **Встроенный Ingress Controller** — RKE-кластеры поставляются с Nginx Ingress Controller (DaemonSet на Worker-узлах).
-* **Автоматическое обновление сертификатов** — ротация TLS-сертификатов через Rancher UI (`Cluster Management` → `Rotate Certificates`).
+Подробное описание архитектуры, отличий от других дистрибутивов, типов нод и сетевых плагинов вынесено в отдельный документ: **[RKE: Основные концепции](./rke_concepts.md)**.
 
 ## Практические сценарии
 
 ### Методы управления RKE
 
-| Метод | Преимущества | Недостатки |
-| :--- | :--- | :--- |
-| **Rancher UI** | Визуальный интерфейс, мониторинг, упрощенное развертывание | Требует ресурсов на Rancher Server |
-| **kubectl** | Стандартный инструмент, скрипты, CI/CD-интеграция | Только CLI, нет визуализации |
-| **RKE CLI** | Полная автоматизация, infrastructure as code | Меньше возможностей чем UI |
-| **Terraform RKE provider** | Infrastructure as Code, версионирование | Сложнее настройка |
+Выбор инструмента управления (Rancher UI, CLI, Terraform) зависит от конкретных задач и требований к автоматизации. Сравнение подходов приведено в разделе **[Методы управления и выбор подхода](./rke_concepts.md#методы-управления-и-выбор-подхода)**.
 
-### Установка kubectl и получение kubeconfig
+### Установка kubectl и настройка доступа
 
-**Установка kubectl:**
+Инструкции по установке `kubectl`, получению файла `kubeconfig` из Rancher UI и настройке контекстов вынесены в отдельный документ: **[RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)**.
 
-```bash
-# Linux
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
-kubectl version --client
-```
+### Развертывание и управление кластером
 
-**Получение kubeconfig из Rancher UI:**
+* **Rancher UI:** рекомендуется для визуального управления. Подробности в разделе [RKE в Rancher](../../Rancher/rancher_rke.md).
+* **RKE CLI:** альтернативный метод управления через YAML-конфигурацию. Инструкции по установке и работе: **[RKE: Управление и поиск неисправностей](./rke_management_scenarios.md#rke-через-cli)**.
+* **CI/CD:** примеры интеграции с GitLab CI и GitHub Actions доступны в разделе **[Интеграция с CI/CD](./rke_management_scenarios.md#интеграция-с-cicd)**.
 
-1. Открыть Rancher UI (`https://rancher.your-domain.com`)
-2. Выбрать кластер в `Cluster Management` или `Dashboard`
-3. Нажать кнопку `Kubeconfig File` (верхний правый угол)
-4. Сохранить содержимое в `~/.kube/config`
-5. Проверить доступ: `kubectl get nodes`
+### Поиск и устранение неисправностей
 
-**Работа с несколькими контекстами:**
-
-```bash
-# Просмотр контекстов
-kubectl config get-contexts
-
-# Переключение контекста
-kubectl config use-context c-m-xxxxxxxxx
-
-# Слияние конфигураций
-export KUBECONFIG=~/.kube/config:~/.kube/rke-config
-```
-
-### Развертывание кластера через Rancher UI
-
-Для визуального развертывания и управления RKE-кластерами рекомендуется использовать платформу Rancher. Подробная инструкция по настройке через веб-интерфейс, описание работы Cattle Agent и сценарии развертывания приложений доступны в разделе: [RKE в Rancher](../../Rancher/rancher_rke.md).
-
-### Troubleshooting
-
-**Certificate expired:**
-
-```bash
-# Проверка
-kubectl get nodes
-# Ошибка: x509: certificate has expired or is not yet valid
-
-# Решение: Cluster Management → ⋮ → Rotate Certificates
-```
-
-**Connection refused:**
-
-```bash
-# Проверка доступности API
-curl -k https://<rke-api-ip>:6443/healthz
-telnet <rke-api-ip> 6443
-```
-
-**Unauthorized:**
-
-```bash
-# Проверка токена
-kubectl config view --raw -o jsonpath='{.users[0].user.token}'
-
-# Перегенерация: Users & Authentication → API Keys → Create Key
-```
+Основные сценарии диагностики (проблемы с сертификатами, доступом к API) описаны в разделе: **[RKE: Поиск и устранение неисправностей](./rke_management_scenarios.md#поиск-и-устранение-неисправностей)**.
 
 ## Дополнительная информация
 
@@ -140,70 +42,6 @@ kubectl config view --raw -o jsonpath='{.users[0].user.token}'
 * Использовать ServiceAccount с минимальными правами
 * Избегать использования `admin.conf` в production
 * Ротация сертификатов: автоматическая (1 год) или через Rancher UI
-
-### Интеграция с CI/CD
-
-**GitLab CI:**
-
-```yaml
-deploy:
-  stage: deploy
-  image: bitnami/kubectl:latest
-  variables:
-    KUBE_CONFIG: $RKE_KUBECONFIG  # Base64 encoded
-  script:
-    - echo $KUBE_CONFIG | base64 -d > /tmp/kubeconfig
-    - export KUBECONFIG=/tmp/kubeconfig
-    - kubectl apply -f k8s/
-```
-
-**GitHub Actions:**
-
-```yaml
-- name: Set up kubeconfig
-  run: |
-    mkdir -p ~/.kube
-    echo "${{ secrets.RKE_KUBECONFIG }}" | base64 -d > ~/.kube/config
-    chmod 600 ~/.kube/config
-
-- name: Deploy to RKE
-  run: kubectl apply -f k8s/
-```
-
-### RKE CLI (альтернатива Rancher UI)
-
-**Установка:**
-
-```bash
-curl -L https://github.com/rancher/rke/releases/download/v1.6.0/rke_linux-amd64 -o rke
-chmod +x rke
-sudo mv rke /usr/local/bin/
-```
-
-**Развертывание через cluster.yml:**
-
-```yaml
-nodes:
-  - address: 192.168.1.10
-    user: root
-    role: [controlplane, worker, etcd]
-  - address: 192.168.1.11
-    user: root
-    role: [worker]
-
-services:
-  etcd:
-    snapshot: true
-    creation: 6h
-    retention: 24h
-
-ssh_key_path: ~/.ssh/id_rsa
-```
-
-```bash
-rke up --config cluster.yml
-export KUBECONFIG=$(pwd)/kube_config_cluster.yml
-```
 
 ---
 

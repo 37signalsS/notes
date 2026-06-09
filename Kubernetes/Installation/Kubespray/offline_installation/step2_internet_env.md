@@ -2,11 +2,11 @@
 
 ## Определения
 
-**pc-inet** — узел с доступом к интернету, используемый для предварительной загрузки артефактов Kubespray (образы, бинарные файлы, Helm-чарты).
+**pc-inet** — узел с доступом к интернету, используемый для предварительной загрузки артефактов Kubespray (образы, бинарные файлы, Helm-чарты) и подготовки архивов для переноса.
 
-**Артефакты Kubespray** — бинарные файлы Kubernetes, образы контейнеров, Helm-чарты и Python-зависимости, загружаемые через механизм кэширования Kubespray.
+**download_localhost** — переменная Kubespray, указывающая Ansible загружать артефакты на управляющую машину (в данном случае pc-inet) вместо целевых узлов кластера.
 
-**download_localhost** — переменная Kubespray для загрузки артефактов на локальную машину (pc-inet) вместо узлов кластера.
+**Артефакты Kubespray** — полный набор зависимостей (бинарные файлы, образы, чарты), необходимых для работы установщика. Общее определение приведено в **[определениях offline-установки](./offline_definitions.md)**.
 
 ---
 
@@ -14,279 +14,103 @@
 
 ### Цель этапа
 
-Загрузка всех необходимых артефактов на машину с интернетом для последующей передачи в закрытый контур:
+Создание полной копии всех необходимых ресурсов на машине с интернетом. Это критически важный этап, так как отсутствие даже одного образа в закрытом контуре может остановить процесс развертывания.
 
-- Python-зависимости Kubespray
-- Бинарные файлы (kubeadm, helm, nerdctl, crictl)
-- Образы контейнеров (Kubernetes, Cilium, системные)
-- Helm-чарты (Cilium)
+**Загружаемые компоненты:**
 
-### Версии компонентов
+- **Python-зависимости:** библиотеки, необходимые для работы Ansible и Kubespray.
+- **Бинарные файлы:** компоненты Kubernetes (kubeadm, kubectl), инструменты контейнеризации (nerdctl, crictl) и менеджер чартов (helm).
+- **Образы контейнеров:** системные компоненты K8s, сетевой плагин Cilium и дополнительные аддоны.
+- **Helm-чарты:** шаблоны развертывания для Cilium и других сервисов.
 
-| Компонент | Версия |
-| :--- | :--- |
-| Kubespray | v2.29.1 |
-| Kubernetes | v1.34.3 |
-| Cilium | v1.18.5 |
-| Helm | 3.18.4 |
+### Структура рабочих директорий
 
-### Структура директорий
+Для удобства упаковки и переноса используется следующая структура на pc-inet:
 
-```
+```text
 /opt/
-├── kuber_off/              # Рабочая директория
-│   └── kubespray/          # Kubespray репозиторий
-├── kubespray-cache/        # Кэш артефактов
-│   ├── images/             # Сохранённые образы (.tar)
-│   └── kubeadm-*           # Бинарные файлы k8s
-└── kubespray-releases/     # Бинарные файлы (helm, nerdctl)
+├── kuber_off/              # Основная рабочая директория
+│   └── kubespray/          # Клонированный репозиторий установщика
+├── kubespray-cache/        # Локальный кэш Kubespray
+│   ├── images/             # Сохранённые образы контейнеров в формате .tar
+│   └── kubeadm-*           # Бинарные файлы Kubernetes
+└── kubespray-releases/     # Дополнительные бинарные файлы (helm, nerdctl)
 ```
+
+Версии всех используемых компонентов зафиксированы в **[SSoT: Определения](./offline_definitions.md#версии-компонентов-базовый-гайд)**.
 
 ---
 
 ## Практические сценарии
 
-### Установка зависимостей
+### 1. Подготовка окружения и клонирование Kubespray
 
 ```bash
 mkdir /opt/kuber_off && cd /opt/kuber_off
-apt update -y
-apt install python3.12-venv -y
+
+# Установка виртуального окружения Python
+sudo apt update -y && sudo apt install python3.12-venv -y
 python3.12 -m venv venv
 source venv/bin/activate
-```
 
-### Клонирование Kubespray
-
-```bash
+# Клонирование стабильной версии (v2.29.1)
 git clone --branch v2.29.1 --single-branch https://github.com/kubernetes-sigs/kubespray.git
 cd kubespray
-
-# Проверка версии
-git describe --tags  # Должно быть: v2.29.1
 ```
 
-### Подготовка inventory для download
+### 2. Настройка конфигурации для загрузки (download)
+
+Для загрузки артефактов создается временный inventory, где pc-inet выступает во всех ролях.
+
+**Создание inventory:**
 
 ```bash
-cp -r /opt/kuber_off/kubespray/inventory/sample \
-      /opt/kuber_off/kubespray/inventory/offline_cluster
-
-nano /opt/kuber_off/kubespray/inventory/offline_cluster/inventory.ini
+cp -r inventory/sample inventory/offline_cluster
 ```
 
-**Содержимое `inventory.ini`:**
+**Редактирование inventory.ini:**
+Укажите IP-адрес pc-inet для всех групп узлов.
 
-```ini
-[all]
-pc-inet ansible_host=192.168.1.99 ip=192.168.1.99
+**Настройка переменных offline-режима:**
+В файле `inventory/offline_cluster/group_vars/all/offline.yml` необходимо установить параметры кэширования, описанные в **[основных концепциях](./offline_concepts.md#справочник-переменных-kubespray-для-offline-режима)**.
 
-[kube_control_plane]
-pc-inet
+### 3. Загрузка артефактов через Ansible
 
-[etcd]
-pc-inet
-
-[kube_node]
-pc-inet
-
-[k8s_cluster:children]
-kube_control_plane
-kube_node
-```
-
-### Настройка переменных
-
-#### Включение аддонов
-
-Файл: `group_vars/k8s_cluster/addons.yml`
-
-```yaml
-helm_enabled: true
-ingress_nginx_enabled: true
-metallb_enabled: true
-```
-
-#### Основные параметры
-
-Файл: `group_vars/k8s_cluster/k8s-cluster.yml`
-
-```yaml
-kube_owner: root
-kube_proxy_remove: true
-
-kube_network_plugin: cilium
-cilium_version: "1.18.5"
-kube_proxy_strict_arp: true
-
-cluster_name: k8s.domain.local
-container_manager: containerd
-```
-
-#### Настройка etcd
-
-Файл: `group_vars/all/etcd.yml`
-
-```yaml
-etcd_deployment_type: host
-```
-
-#### Настройка Cilium
-
-Файл: `group_vars/k8s_cluster/k8s-net-cilium.yml`
-
-```yaml
-cilium_mtu: "1450"
-cilium_kube_proxy_replacement: true
-cilium_tunnel_mode: geneve
-
-# Hubble
-cilium_enable_hubble: true
-cilium_enable_hubble_ui: "{{ cilium_enable_hubble }}"
-cilium_enable_hubble_metrics: true
-cilium_hubble_metrics:
-  - dns
-  - drop
-  - tcp
-  - flow
-  - icmp
-  - http
-```
-
-#### Offline-переменные
-
-Файл: `group_vars/all/offline.yml`
-
-```yaml
----
-download_run_once: true
-download_localhost: true
-download_keep_remote_cache: true
-download_force_cache: true
-download_cache_dir: /opt/kubespray-cache
-```
-
-#### Прокси (если требуется)
-
-Файл: `group_vars/all/all.yml`
-
-```yaml
-# http_proxy: ""
-# https_proxy: ""
-```
-
-### Загрузка артефактов
-
-#### Установка Python-зависимостей
+**Установка зависимостей:**
 
 ```bash
-cd /opt/kuber_off/kubespray
 pip install -r requirements.txt
 ```
 
-#### Создание директорий
+**Запуск процесса загрузки:**
 
 ```bash
-apt install containerd -y
-mkdir -p /opt/kubespray-cache/images/
-mkdir /opt/kubespray-releases/
-```
-
-#### Первый запуск (может завершиться ошибкой)
-
-```bash
-/opt/kuber_off/venv/bin/ansible-playbook \
-  -i inventory/offline_cluster/inventory.ini \
-  cluster.yml \
+ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
   -e local_release_dir=/opt/kubespray-releases \
   --tags download \
   --skip-tags upload,upgrade \
   -b -u admin
 ```
 
-#### Исправление ошибки с nerdctl
+### 4. Докачка недостающих образов и чартов
+
+Некоторые образы (например, специфичные для Cilium или текущей версии kubeadm) могут не скачаться автоматически.
+
+**Загрузка образов K8s через скрипт:**
+Используйте `kubeadm config images list` для получения списка и `nerdctl save` для сохранения их в `/opt/kubespray-cache/images/`.
+
+**Загрузка Helm-чарта Cilium:**
 
 ```bash
-cp /opt/kubespray-releases/nerdctl /opt/kubespray-releases/crictl /usr/local/bin
-sudo ln -sf /usr/bin/ctr /usr/local/bin/ctr
-/usr/local/bin/nerdctl --version
-```
-
-#### Повторный запуск
-
-```bash
-/opt/kuber_off/venv/bin/ansible-playbook \
-  -i inventory/offline_cluster/inventory.ini \
-  cluster.yml \
-  -e local_release_dir=/opt/kubespray-releases \
-  --tags download \
-  --skip-tags upload,upgrade \
-  -b -u admin
-```
-
-Должно завершиться успешно, без ошибок.
-
-### Загрузка дополнительных образов
-
-Некоторые образы не скачиваются автоматически. Создаём скрипт для докачки:
-
-```bash
-cd /opt/
-nano download_k8s_images.sh
-```
-
-**Содержимое скрипта:**
-
-```bash
-#!/bin/bash
-set -e
-
-KUBEADM_PATH="/opt/kubespray-cache/kubeadm-*-amd64"
-IMAGES=$($KUBEADM_PATH config images list 2>/dev/null | grep -v "WARN" || $KUBEADM_PATH config images list)
-
-DOWNLOAD_DIR="/opt/kubespray-cache/images"
-cd "$DOWNLOAD_DIR"
-
-for IMAGE in $IMAGES; do
-    echo "Pulling: $IMAGE"
-    nerdctl pull "$IMAGE"
-    FILENAME=$(echo "$IMAGE" | sed 's|/|_|g; s|:|_|g').tar
-    nerdctl save "$IMAGE" -o "$FILENAME"
-    nerdctl rmi "$IMAGE"
-    echo "Saved: $FILENAME"
-done
-```
-
-**Запуск скрипта:**
-
-```bash
-chmod +x /opt/kubespray-cache/kube*
-chmod +x download_k8s_images.sh
-./download_k8s_images.sh
-```
-
-**Дополнительные образы:**
-
-```bash
-nerdctl pull quay.io/cilium/operator-generic:v1.18.5
-nerdctl save -o /opt/kubespray-cache/images/quay.io_cilium_operator-generic_v1.18.5.tar \
-  quay.io/cilium/operator-generic:v1.18.5
-```
-
-### Загрузка Helm-чарта Cilium
-
-```bash
-cp /opt/kubespray-releases/helm-3.18.4/linux-amd64/helm /usr/local/bin/
-helm version
-
 helm repo add cilium https://helm.cilium.io
 helm repo update
 helm pull cilium/cilium --version 1.18.5
-# появится файл cilium-1.18.5.tgz
-mv cilium-1.18.5.tgz /opt/cilium-1.18.5.tgz
+mv cilium-1.18.5.tgz /opt/
 ```
 
-### Упаковка артефактов
+### 5. Упаковка для переноса
+
+После завершения загрузки все данные упаковываются в архивы для передачи в закрытый контур.
 
 ```bash
 tar -C /opt -czf kubespray-code.tar.gz kuber_off
@@ -294,32 +118,17 @@ tar -C /opt -czf kubespray-offline-bundle.tar.gz \
   kubespray-cache kubespray-releases cilium-1.18.5.tgz
 ```
 
-**Перенос файлов на master-1-k8s (закрытый контур):**
-
-```bash
-# Копирование архивов на закрытый контур
-scp kubespray-code.tar.gz kubespray-offline-bundle.tar.gz admin@192.168.1.101:/home/admin/
-```
-
-### Проверка после загрузки
-
-**Проверка кэша образов:**
-
-```bash
-ls -lh /opt/kubespray-cache/images/*.tar | wc -l  # Должно быть 20+ образов
-```
-
-**Проверка бинарных файлов:**
-
-```bash
-/opt/kubespray-releases/helm-3.18.4/linux-amd64/helm version
-/opt/kubespray-releases/nerdctl --version
-```
-
 ---
 
 ## Дополнительная информация
 
+### Типовые проблемы
+
+- **Ошибка nerdctl:** если бинарный файл не найден, убедитесь, что он скопирован в `/usr/local/bin` и создана символьная ссылка на `ctr`.
+- **Изменение Digest:** при переносе образов в локальный реестр SHA-хеш может измениться. Решение описано в **[Troubleshooting: Проблема Cilium digest](./troubleshooting.md#2-проблема-cilium-несовпадение-sha-digest)**.
+
 ### Связанные темы
 
-Подготовка VM описана в [шаге 1](./step1_vm_preparation.md), загрузка в закрытом контуре — в [шаге 3](./step3_offline_env.md), развёртывание кластера — в [шаге 4](./step4_cluster_deploy.md). Базовая установка Kubespray — в [kubespray_install/basic_concepts.md](../kubespray_install/basic_concepts.md).
+- **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)** — предыдущий этап.
+- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — следующий этап (развертывание Harbor).
+- **[Базовые концепции Kubespray](../kubespray_install/basic_concepts.md)** — общая логика работы инструмента.

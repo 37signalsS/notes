@@ -2,9 +2,11 @@
 
 ## Определения
 
-Базовые определения и концепции MetalLB (Speaker, Controller, IPAddressPool, L2Advertisement) подробно описаны в разделе **[MetalLB — балансировщик для Bare-metal](../../../Networking/metallb.md)**.
+**Ingress** — ресурс Kubernetes, управляющий внешним доступом к сервисам в кластере (обычно HTTP/HTTPS) и обеспечивающий балансировку нагрузки, терминацию SSL и маршрутизацию на основе путей.
 
-**Ingress** — ресурс Kubernetes для маршрутизации внешнего HTTP/HTTPS-трафика к сервисам внутри кластера.
+**MetalLB** — реализация балансировщика нагрузки для bare-metal кластеров Kubernetes, использующая стандартные сетевые протоколы (ARP/NDP или BGP).
+
+Базовые определения и детальные концепции MetalLB приведены в **[SSoT: MetalLB — балансировщик для Bare-metal](../../../Networking/metallb.md)**.
 
 ---
 
@@ -12,42 +14,33 @@
 
 ### Цель этапа
 
-Настройка внешнего доступа к сервисам кластера:
+Обеспечение внешнего доступа к веб-интерфейсам и API-сервисам кластера, развёрнутого в закрытом контуре. В условиях отсутствия облачного провайдера (Cloud Provider) MetalLB берет на себя роль поставщика внешних IP-адресов.
 
-- Развёртывание MetalLB для назначения внешних IP
-- Создание Ingress для доступа к Hubble UI
-- Настройка DNS для доменного имени Hubble
+**Ключевые задачи:**
 
-### Компоненты
-
-| Компонент | Назначение |
-| :--- | :--- |
-| **MetalLB** | Балансировщик нагрузки (LoadBalancer) |
-| **Ingress-nginx** | Ingress-контроллер для маршрутизации HTTP |
-| **Hubble UI** | Веб-интерфейс для визуализации сетевого трафика Cilium |
+- Настройка пула IP-адресов для MetalLB (в режиме L2).
+- Публикация Ingress-контроллера (Nginx) через сервис типа `LoadBalancer`.
+- Создание Ingress-ресурсов для системных аддонов (например, Hubble UI).
+- Обеспечение DNS-разрешения имен внутри изолированной сети.
 
 ### Архитектура доступа
 
-```
-Внешний пользователь → MetalLB VIP (192.168.1.200) → Ingress → Hubble UI Service → Pod
-```
+Типовая цепочка прохождения трафика в offline-инсталляции:
+
+1. **Пользователь** обращается по доменному имени (например, `hubble.k8s.domain.local`).
+2. **DNS** (локальный или `/etc/hosts`) направляет запрос на **MetalLB VIP** (например, `192.168.1.200`).
+3. **MetalLB Speaker** отвечает на ARP-запросы для этого VIP, направляя трафик на узел с **Ingress-контроллером**.
+4. **Ingress-nginx** маршрутизирует запрос к соответствующему **Service** и **Pod**.
 
 ---
 
 ## Практические сценарии
 
-### Создание манифестов
+### 1. Конфигурация MetalLB (L2 режим)
 
-```bash
-mkdir kube-manifests
-cd kube-manifests
-```
+Для активации балансировщика необходимо определить пул адресов и способ их анонсирования.
 
-### Настройка MetalLB
-
-#### Создание IPAddressPool и L2Advertisement
-
-Файл: `metallb.yml`
+**Манифест конфигурации (`metallb-config.yml`):**
 
 ```yaml
 apiVersion: metallb.io/v1beta1
@@ -57,7 +50,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-  - 192.168.1.200/32
+  - 192.168.1.200/32 # Свободный IP из вашей подсети
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -69,35 +62,17 @@ spec:
   - ingress-pool
 ```
 
-> **Важно:** Выберите свободный IP-адрес или пул из той же подсети, где находится кластер. В примере используется `192.168.1.200/32`.
-
-#### Применение конфигурации
+**Применение:**
 
 ```bash
-kubectl apply -f metallb.yml
+kubectl apply -f metallb-config.yml
 ```
 
-#### Проверка MetalLB
+### 2. Настройка доступа к Hubble UI через Ingress
 
-```bash
-# Статус контроллера
-kubectl get pods -n metallb-system
+Hubble UI позволяет визуализировать сетевые потоки Cilium. Для доступа к нему создается Ingress-ресурс.
 
-# Статус speaker
-kubectl get daemonset -n metallb-system
-
-# Проверка IPAddressPool
-kubectl get ipaddresspool -n metallb-system
-
-# Проверка L2Advertisement
-kubectl get l2advertisement -n metallb-system
-```
-
-### Настройка Ingress для Hubble UI
-
-#### Создание Ingress манифеста
-
-Файл: `ingress-hubble-ui.yml`
+**Манифест Ingress (`hubble-ingress.yml`):**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -120,95 +95,59 @@ spec:
               number: 80
 ```
 
-#### Применение Ingress
+**Применение:**
 
 ```bash
-kubectl apply -f ingress-hubble-ui.yml
+kubectl apply -f hubble-ingress.yml
 ```
 
-#### Проверка Ingress
+### 3. Настройка DNS-разрешения
 
-```bash
-# Статус Ingress
-kubectl get ingress -n kube-system hubble-ui
+Для работы через доменные имена в закрытом контуре необходимо добавить записи на локальный DNS-сервер или в файлы `hosts` клиентских машин.
 
-# Сервис Hubble UI
-kubectl get svc -n kube-system hubble-ui
+**Пример для `/etc/hosts`:**
 
-# Pod'ы ingress-nginx
-kubectl get pods -n ingress-nginx
-```
-
-### Настройка DNS
-
-#### Вариант 1: Локальный DNS сервер
-
-Добавить A-запись в DNS-сервер:
-
-```
-hubble.k8s.domain.local.  IN  A  192.168.1.200
-```
-
-#### Вариант 2: Файл hosts (временное решение)
-
-**Linux (`/etc/hosts`):**
-
-```
+```text
 192.168.1.200  hubble.k8s.domain.local
 ```
 
-**Windows (`C:\Windows\System32\drivers\etc\hosts`):**
+### 4. Проверка и тестирование
 
-```
-192.168.1.200  hubble.k8s.domain.local
-```
+Убедитесь, что компоненты работают корректно и IP-адрес назначен.
 
-### Проверка доступа к Hubble UI
-
-#### Через порт-форвардинг
+**Проверка MetalLB:**
 
 ```bash
-kubectl port-forward -n kube-system svc/hubble-ui 8080:80
+kubectl get ipaddresspool -n metallb-system
+kubectl get pods -n metallb-system
 ```
 
-Открыть в браузере: `http://localhost:8080`
-
-#### Через Ingress
-
-Открыть в браузере: `http://hubble.k8s.domain.local`
-
-**Ожидаемый результат:** Веб-интерфейс Hubble с визуализацией сетевого трафика.
-
-### Тестирование LoadBalancer
+**Проверка назначения внешнего IP:**
 
 ```bash
-# Создание тестового сервиса
-kubectl run nginx --image=nginx --port=80
-kubectl expose pod nginx --port=80 --type=LoadBalancer
-
-# Проверка внешнего IP
-kubectl get svc nginx
-
-# Должен появиться IP из пула MetalLB (192.168.1.200)
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+# В колонке EXTERNAL-IP должен появиться адрес 192.168.1.200
 ```
 
-### Диагностика проблем
+**Тестирование доступности:**
 
 ```bash
-# Логи контроллера MetalLB
-kubectl logs -n metallb-system -l app.kubernetes.io/component=controller
-
-# Логи speaker
-kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker
-
-# Статус IP allocation
-kubectl get ipaddresspool ingress-pool -n metallb-system -o yaml
+curl -I http://hubble.k8s.domain.local
 ```
 
 ---
 
 ## Дополнительная информация
 
+### Диагностика
+
+- **IP не назначается:** проверьте логи контроллера MetalLB (`kubectl logs -n metallb-system -l app.kubernetes.io/component=controller`).
+- **Сайт недоступен по имени:** проверьте DNS-разрешение командой `nslookup` или `dig`.
+- **Ошибка 404/503:** проверьте статус подов Ingress-контроллера и Hubble UI.
+
 ### Связанные темы
 
-Развёртывание кластера описано в [шаге 4](./step4_cluster_deploy.md), решение проблем — в [troubleshooting.md](./troubleshooting.md). Детальная документация по MetalLB — в [metallb.md](../../../Networking/metallb.md), сравнение Ingress-контроллеров — в [controllers_comparison.md](../../../Networking/Ingress/controllers_comparison.md).
+- **[Шаг 4: Развёртывание кластера](./step4_cluster_deploy.md)** — завершение базовой установки.
+- **[Проверка кластера](./cluster_verification.md)** — комплексное тестирование всех компонентов.
+- **[MetalLB — детальный обзор](../../../Networking/metallb.md)** — подробная документация по режимам работы.
+- **[Сравнение Ingress-контроллеров](../../../Networking/Ingress/controllers_comparison.md)** — выбор альтернативных решений.

@@ -2,11 +2,11 @@
 
 ## Определения
 
-**Harbor** — корпоративный реестр контейнерных образов с поддержкой Helm-чартов, используемый для локального хранения образов в закрытом контуре.
+**Локальный реестр (Registry)** — сервер внутри закрытого контура (в данном гайде — Harbor), обеспечивающий хранение и раздачу контейнерных образов и Helm-чартов без доступа к внешним ресурсам.
 
-**OCI Registry** — формат реестра контейнеров (Open Container Initiative), поддерживаемый Harbor для хранения Helm-чартов.
+**OCI-артефакты** — Helm-чарты, упакованные и хранящиеся в реестре контейнеров согласно спецификации Open Container Initiative.
 
-**containerd_registry_auth** — переменная Kubespray для настройки аутентификации containerd с приватным реестром.
+Определения Harbor, Kubespray и общих терминов приведены в **[определениях offline-установки](./offline_definitions.md)**.
 
 ---
 
@@ -14,257 +14,125 @@
 
 ### Цель этапа
 
-Развёртывание локальной инфраструктуры в закрытом контуре для размещения артефактов:
+Развёртывание и наполнение локальной инфраструктуры в закрытом контуре. На этом этапе выполняется переход от «доставки артефактов» к «обеспечению доступности ресурсов» для установщика.
 
-- Распаковка загруженных архивов на master-1
-- Развёртывание Harbor как локального реестра
-- Загрузка образов в Harbor (тегирование + push)
-- Загрузка Helm-чарта Cilium в Harbor
-- Настройка inventory для offline-кластера
+**Ключевые задачи:**
 
-### Требования к Harbor
+1. Подготовка среды исполнения (master-1) для запуска Ansible.
+2. Развёртывание локального реестра образов.
+3. Импорт, тегирование и загрузка образов K8s в локальный реестр.
+4. Публикация Helm-чарта сетевого плагина.
+5. Финальная настройка конфигурации кластера для работы в offline-режиме.
 
-| Проект | Видимость | Назначение |
+### Требования к структуре реестра
+
+Для корректной работы автоматизации Kubespray в Harbor должны быть созданы следующие проекты:
+
+| Проект | Доступ | Назначение |
 | :--- | :--- | :--- |
-| `k8s` | **Публичный** | Образы Kubernetes, Cilium, системные |
-| `helm` | Приватный | Helm-чарты (Cilium) |
+| **k8s** | **Публичный** | Системные образы K8s, Cilium, вспомогательные контейнеры |
+| **helm** | Приватный | OCI-репозиторий для Helm-чартов |
 
-> **Важно:** Проект `k8s` должен быть публичным, так как containerd не считывает логин/пароль из конфига автоматически.
-
-### Архитектура загрузки образов
-
-```
-Локальные .tar → Docker load → docker tag → docker push → Harbor
-```
+> **Важно:** Проект `k8s` должен быть публичным, так как containerd на узлах может не иметь настроенной авторизации на момент загрузки базовых образов.
 
 ---
 
 ## Практические сценарии
 
-### Распаковка артефактов
+### 1. Подготовка управляющего узла (master-1)
 
-**На master-1-k8s:**
+Распаковка перенесенных архивов и установка базовых инструментов.
 
 ```bash
-tar -xzf /home/admin/kubespray-code.tar.gz -C /opt/
-tar -xzf /home/admin/kubespray-offline-bundle.tar.gz -C /opt/
+# Распаковка кода и бандла
+tar -xzf ~/kubespray-code.tar.gz -C /opt/
+tar -xzf ~/kubespray-offline-bundle.tar.gz -C /opt/
 
+# Установка инструментов управления контейнерами
 cp /opt/kubespray-releases/crictl /opt/kubespray-releases/nerdctl /usr/local/bin
-/usr/local/bin/nerdctl --version
-/usr/local/bin/crictl --version
 ```
 
-### Загрузка образов в Harbor
+### 2. Развёртывание и настройка Harbor
 
-#### Установка Docker
+Установка Harbor выполняется согласно **[инструкции по установке Harbor](../../../../Docker/Docker_registries/Harbor/installation.md)**. После установки необходимо создать проекты `k8s` (public) и `helm` (private) через веб-интерфейс.
 
-```bash
-apt install docker.io -y
-systemctl enable docker --now
-```
+### 3. Загрузка образов в локальный реестр
 
-#### Настройка Harbor
+Процесс включает загрузку образов из архивов в локальный Docker, смену тегов на локальные и push в Harbor.
 
-1. Войти в веб-интерфейс Harbor
-2. Создать проект `k8s` (**публичный**)
-3. Создать проект `helm` (приватный)
-
-#### Переменные окружения
+**Авторизация и подготовка переменных:**
 
 ```bash
 export HARBOR="harbor.domain.local"
-export PROJECT="k8s"
-export IMG_DIR="/opt/kubespray-cache/images"
-```
-
-#### Авторизация в Harbor
-
-```bash
 docker login $HARBOR
-# Если x509 ошибка — проблема с сертификатами Harbor
 ```
 
-#### Загрузка образов в локальный Docker
+**Импорт образов:**
 
 ```bash
-cd $IMG_DIR
-
-for f in *.tar; do
-  echo "Loading $f"
-  docker load -i "$f"
-done
+cd /opt/kubespray-cache/images
+for f in *.tar; do docker load -i "$f"; done
 ```
 
-#### Тегирование и push образов
+**Тегирование и Push (скрипт):**
 
 ```bash
 docker images --format '{{.Repository}}:{{.Tag}}' \
   | grep -E '^(quay\.io|registry\.k8s\.io|docker\.io|gcr\.io)/|^nginx:' \
   | while read img; do
-      if [[ "$img" == nginx:* ]]; then
-        img="docker.io/library/${img}"
-      fi
-      new="${HARBOR}/${PROJECT}/${img}"
-      echo "TAG  $img -> $new"
-      docker tag "$img" "$new"
-      echo "PUSH $new"
-      docker push "$new"
+      # Корректировка пути для nginx
+      [[ "$img" == nginx:* ]] && src="docker.io/library/${img}" || src="${img}"
+      
+      target="${HARBOR}/k8s/${src}"
+      docker tag "$img" "$target"
+      docker push "$target"
     done
 ```
 
-#### Push всех образов в Harbor
+### 4. Публикация Helm-чарта
 
-```bash
-docker images --format '{{.Repository}}:{{.Tag}}' \
-  | grep -E "^${HARBOR}/${PROJECT}/(quay\.io|registry\.k8s\.io|docker\.io|gcr\.io)/" \
-  | while read img; do
-      echo "PUSH $img"
-      docker push "$img"
-    done
-```
-
-**Итог:** Должно получиться ~21 образ в Harbor.
-
-### Загрузка Helm-чарта в Harbor
-
-#### Установка Helm
+Загрузка чарта Cilium в OCI-репозиторий Harbor.
 
 ```bash
 cp /opt/kubespray-releases/helm-3.18.4/linux-amd64/helm /usr/local/bin/
-helm version
-```
-
-#### Авторизация и push
-
-```bash
 helm registry login $HARBOR
 helm push /opt/cilium-1.18.5.tgz oci://$HARBOR/helm
 ```
 
-### Настройка inventory для offline-кластера
+### 5. Конфигурация Offline-инвентаря
 
-#### Редактирование inventory.ini
+Настройка параметров Ansible для перенаправления запросов в локальный реестр.
 
-```bash
-nano /opt/kuber_off/kubespray/inventory/offline_cluster/inventory.ini
-```
+**Редактирование inventory.ini:**
+Укажите реальные IP-адреса всех узлов закрытого контура в файле `/opt/kuber_off/kubespray/inventory/offline_cluster/inventory.ini`.
 
-**Содержимое:**
-
-```ini
-[all]
-master-1-k8s    ansible_host=192.168.1.101
-master-2-k8s    ansible_host=192.168.1.102
-master-3-k8s    ansible_host=192.168.1.103
-node-1-k8s      ansible_host=192.168.1.104
-node-2-k8s      ansible_host=192.168.1.105
-
-[kube_control_plane]
-master-1-k8s
-master-2-k8s
-master-3-k8s
-
-[kube_node]
-node-1-k8s
-node-2-k8s
-
-[etcd]
-master-1-k8s
-
-[k8s_cluster:children]
-kube_control_plane
-kube_node
-```
-
-#### Настройка репозиториев
-
-Файл: `group_vars/all/offline.yml`
-
-```yaml
-registry_host: "harbor.domain.local"
-kube_image_repo: "{{ registry_host }}/k8s/registry.k8s.io"
-gcr_image_repo: "{{ registry_host }}/k8s/gcr.io"
-docker_image_repo: "{{ registry_host }}/k8s/docker.io"
-quay_image_repo: "{{ registry_host }}/k8s/quay.io"
-
-# Для Cilium через OCI
-cilium_install_extra_flags: "--repository oci://{{registry_host}}/helm/cilium"
-```
-
-#### Аутентификация containerd
-
-Файл: `group_vars/all/containerd.yml`
-
-```yaml
-containerd_registry_auth:
-  - registry: harbor.domain.local
-    prefix: harbor.domain.local
-    username: admin
-    password: password_ot_harbor
-```
-
-#### Отключение проверки digest
-
-Файл: `group_vars/k8s_cluster/k8s-net-cilium.yml`
-
-```yaml
-cilium_extra_values:
-  image:
-    useDigest: false
-    digest: ""
-  operator:
-    image:
-      useDigest: false
-      digest: ""
-  envoy:
-    image:
-      useDigest: false
-      digest: ""
-  hubble:
-    relay:
-      image:
-        useDigest: false
-        digest: ""
-    ui:
-      backend:
-        image:
-          useDigest: false
-          digest: ""
-      frontend:
-        image:
-          useDigest: false
-          digest: ""
-```
-
-### Проверка после настройки
-
-**Проверка Harbor:**
-
-```bash
-# Проверка доступности репозитория
-curl -k https://harbor.domain.local/api/v2.0/projects/k8s/repositories
-
-# Проверка количества образов
-docker images | grep harbor.domain.local/k8s | wc -l
-```
-
-**Проверка Helm-чарта:**
-
-```bash
-helm search repo cilium --versions | grep 1.18.5
-```
-
-**Проверка inventory:**
-
-```bash
-cd /opt/kuber_off/kubespray
-ansible-playbook -i inventory/offline_cluster/inventory.ini --list-hosts all
-```
+**Настройка переменных реестра и аутентификации:**
+Все необходимые переменные (repo-адреса, `containerd_registry_auth`, отключение digest) подробно описаны в **[основных концепциях offline-режима](./offline_concepts.md)**. Примените их в соответствующих файлах `group_vars`.
 
 ---
 
 ## Дополнительная информация
 
+### Проверка корректности настройки
+
+Перед запуском установки кластера выполните следующие проверки:
+
+1. **Доступность образов:** убедитесь, что в проекте `k8s` в Harbor отображается ~21 репозиторий.
+2. **Доступность чарта:**
+
+    ```bash
+    helm search repo cilium --versions | grep 1.18.5
+    ```
+
+3. **Связность Ansible:**
+
+    ```bash
+    cd /opt/kuber_off/kubespray
+    ansible -i inventory/offline_cluster/inventory.ini all -m ping
+    ```
+
 ### Связанные темы
 
-Загрузка артефактов на машине с интернетом описана в [шаге 2](./step2_internet_env.md), развёртывание кластера — в [шаге 4](./step4_cluster_deploy.md). Информация о Harbor — в [Harbor overview](../../../../Docker/Docker_registries/Harbor/overview.md). Переменные offline-режима — в [offline_concepts.md](./offline_concepts.md).
+- **[Шаг 2: Подготовка окружения с интернетом](./step2_internet_env.md)** — подготовка артефактов.
+- **[Шаг 4: Развёртывание кластера](./step4_cluster_deploy.md)** — запуск основной установки.
+- **[Принципы offline-развертывания](./offline_concepts.md)** — справочник переменных и логика работы.

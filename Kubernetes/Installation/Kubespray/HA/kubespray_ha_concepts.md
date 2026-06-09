@@ -1,6 +1,6 @@
 # Kubespray: Развертывание HA-кластера — Основные концепции
 
-## Definitions
+## Определения
 
 **HA-кластер (High Availability)** — кластер Kubernetes с несколькими узлами Control Plane для устранения единой точки отказа (SPoF).
 
@@ -8,7 +8,7 @@
 
 **Kubespray** — инструмент автоматизации развертывания Kubernetes на базе Ansible, поддерживающий встроенную настройку HA через Keepalived + HAProxy.
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура HA через Kubespray
 
@@ -107,12 +107,20 @@ Client
 | **Keepalived + HAProxy** | Production bare-metal | Да (VIP) | Средняя |
 | **Внешний балансировщик** | Cloud/managed инфраструктура | Да (VIP/LB) | Высокая |
 
-## Practical Scenarios
+## Практические сценарии
 
 Базовая установка Kubespray описана в [руководстве по установке](../kubespray_install/basic_concepts.md). Развертывание HA-кластера — в [практическом руководстве](./kubespray_ha_deployment.md).
 
-## Additional Information
+## Дополнительная информация
 
-**См. также:** [развертывание в закрытом контуре](../offline_installation/offline_definitions.md).
+**См. также:**
 
-**Внешние ресурсы:** [документация Kubespray](https://kubespray.io/), [GitHub](https://github.com/kubernetes-sigs/kubespray), [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798).
+- [Развертывание в закрытом контуре](../offline_installation/offline_definitions.md)
+- [Руководство по установке](../kubespray_install/basic_concepts.md)
+- [Практическое руководство HA](./kubespray_ha_deployment.md)
+
+**Внешние ресурсы:**
+
+- [Документация Kubespray](https://kubespray.io/)
+- [GitHub проекта](https://github.com/kubernetes-sigs/kubespray)
+- [VRRP RFC 5798](https://datatracker.ietf.org/doc/html/rfc5798)

@@ -1,63 +1,81 @@
 # Kubespray: Установка — Дополнительная информация
 
+## Определения
+
+**Артефакты установки (Artifacts)** — файлы конфигурации и ключи доступа, генерируемые или копируемые Kubespray в процессе развертывания кластера для обеспечения локального управления.
+
+**kubeconfig_localhost** — параметр Kubespray, который при значении `true` инициирует автоматическое копирование файла административного доступа (`admin.conf`) с мастер-узла на машину управления.
+
+**CRI (Container Runtime Interface)** — стандартный интерфейс взаимодействия Kubernetes со средой выполнения контейнеров. В Kubespray по умолчанию используется `containerd`.
+
+---
+
 ## Основные концепции
 
-После успешного завершения Ansible playbook `cluster.yml` кластер требует дополнительной проверки и настройки для начала эксплуатации.
+### Результаты установки
 
-### Проверка кластера
+После успешного выполнения плейбука `cluster.yml`:
 
-1. **Подключиться к узлу control plane:**
+1. **Кластер готов к работе:** все системные компоненты развернуты и запущены в контейнерах под управлением `containerd`.
+2. **Файлы доступа:** административный конфиг доступен на мастер-узлах и, опционально, на машине управления.
+3. **Отсутствие Docker:** Kubespray ориентирован на современные стандарты CRI, поэтому Docker-демон на узлах отсутствует.
 
-   ```bash
-   ssh user@control-plane-ip
-   ```
+### Методы управления
 
-2. **Проверить статус узлов:**
+- **Прямой доступ:** выполнение команд `kubectl` непосредственно на узлах Control Plane.
+- **Удаленный доступ:** использование скопированного `admin.conf` на машине управления или рабочей станции.
 
-   ```bash
-   kubectl get nodes -o wide
-   ```
+---
 
-   **Ожидаемый вывод:**
+## Практические сценарии
 
-   ```
-   NAME        STATUS   ROLES                  AGE   VERSION   INTERNAL-IP     OS-IMAGE         KERNEL-VERSION    CONTAINER-RUNTIME
-   control-1   Ready    control-plane,master   1h    v1.31.0   192.168.1.11    CentOS Linux 7   3.10.0-1160...    containerd://1.7.x
-   worker-1    Ready    <none>                 1h    v1.31.0   192.168.1.21    CentOS Linux 7   3.10.0-1160...    containerd://1.7.x
-   ```
+### Проверка работоспособности
 
-   Обратите внимание на `CONTAINER-RUNTIME` — должен быть `containerd://`.
+Сразу после установки необходимо убедиться, что узлы и системные поды находятся в рабочем состоянии. Подробный чек-лист и команды проверки доступны в **[SSoT: Проверка работоспособности кластера](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_verification.md)**.
 
-3. **Запустить тестовый под для проверки работоспособности:**
+Базовые команды для быстрой проверки с узла Control Plane:
 
-   ```bash
-   kubectl run test-busybox --image=busybox --restart=Never --command -- sleep 3600
-   kubectl get pods
-   ```
+```bash
+# Проверка статуса узлов (Ready)
+kubectl get nodes -o wide
 
-   Если под успешно создался и перешёл в статус `Running` — кластер функционирует. Для учебных целей можно удалить:
+# Проверка системных подов (Running)
+kubectl get pods -n kube-system
+```
 
-   ```bash
-   kubectl delete pod test-busybox
-   ```
+### Настройка удаленного доступа
 
-   > **Примечание:** Запуск пода без команд (`busybox` без `sleep`) приведёт к CrashLoopBackOff, так как контейнер завершает работу немедленно. Это нормальное поведение — главное, что под создаётся и запускается.
+Если в конфигурации был включен параметр `kubeconfig_localhost: true`, файл доступа будет скопирован в директорию инвентаря на машине управления:
 
-### Работа с containerd
+```bash
+# Путь к файлу на машине управления
+# inventory/<your_cluster_name>/artifacts/admin.conf
 
-Kubespray использует `containerd` как среду выполнения контейнеров. Docker не устанавливается. Для диагностики на уровне узлов применяется `crictl` — CLI для Container Runtime Interface.
+# Пример использования без копирования в ~/.kube/config
+kubectl --kubeconfig=inventory/my_cluster/artifacts/admin.conf get nodes
+```
 
-### kubeconfig
+Подробнее об управлении файлами конфигурации — в **[SSoT: Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)**.
 
-При настройке `kubeconfig_localhost: true` Kubespray копирует `admin.conf` на локальную машину в `inventory/<cluster>/artifacts/admin.conf`.
+### Диагностика на уровне узлов (crictl)
+
+Поскольку Kubespray не устанавливает Docker, для низкоуровневой диагностики контейнеров на узлах используется утилита `crictl`.
+
+| Задача | Команда |
+| :--- | :--- |
+| Список работающих контейнеров | `sudo crictl ps` |
+| Просмотр состояния подов (sandbox) | `sudo crictl pods` |
+| Чтение логов контейнера | `sudo crictl logs <ID>` |
+
+Более детальные примеры диагностики среды выполнения приведены в разделе **[Диагностика Runtime](../../Troubleshooting/Common_Errors/NodeUnavailability/runtime_issues.md)**.
 
 ---
 
 ## Дополнительная информация
 
-### Связанные темы
+### См. также
 
-- **[Определения](./definitions.md)** — базовые термины
-- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, требования, этапы установки
-- **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания, post-install проверка
-- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
+- **[Практические сценарии](./practical_scenarios.md)** — команды для развертывания и масштабирования.
+- **[Проверка работоспособности](../../HA_Cluster_Bare_Metal/k8s_ha_cluster_verification.md)** — SSoT по верификации кластера.
+- **[Kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md)** — SSoT по работе с файлами конфигурации.
+- **[Offline установка](../offline_installation/offline_definitions.md)** — специфика развертывания в закрытых сетях.

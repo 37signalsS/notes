@@ -1,19 +1,19 @@
 # Minikube: Определения и концепции
 
-## Definitions
+## Определения
 
-**Minikube** — инструмент для запуска локального однонодового кластера Kubernetes на рабочей машине. Предназначен для разработки, тестирования и обучения. Minikube разворачивает полноценный, но упрощённый кластер Kubernetes внутри виртуальной машины, Docker-контейнера или на bare metal.
+**Minikube** — инструмент для запуска локального однонодового кластера **K8s (Kubernetes)** на рабочей машине. Предназначен для разработки, тестирования и обучения. Minikube разворачивает полноценный, но упрощённый кластер Kubernetes внутри **VM (Virtual Machine — виртуальная машина)**, Docker-контейнера или на bare metal.
 
 **container runtime** — программа для запуска и управления контейнерами (Docker, containerd, CRI-O). Обязательный компонент для работы Minikube.
 
 > **Связанные определения:**
 >
 > - **[kubeconfig](../../Operations/kubeconfig_and_connection.md)** — файл конфигурации для подключения к Kubernetes
-> - **[kubectl](../../kubernetes_overview.md)** — CLI-утилита для управления кластером
+> - **[kubectl](../../kubernetes_overview.md)** — **CLI (Command Line Interface)** утилита для управления кластером
 
 ---
 
-## Basic Concepts
+## Базовые концепции
 
 ### Архитектура Minikube
 
@@ -23,6 +23,12 @@
 | **Виртуализация** | Запускается в VM, Docker-контейнере или на bare metal |
 | **Автоматическая настройка** | Minikube сам скачивает образы, настраивает kubeconfig |
 | **Интеграция с kubectl** | Команды выполняются через `minikube kubectl -- <command>` |
+
+### Поддержка версий
+
+Minikube поддерживает последнюю версию Kubernetes и 6 предыдущих минорных версий.
+
+> **Примечание:** Версии 1.30 и ниже достигли **EOL (End of Life)**. Проверяйте [release notes](https://github.com/kubernetes/minikube/releases) для выбора актуальных образов.
 
 ---
 
@@ -40,8 +46,8 @@
 
 | Ресурс | Минимум | Рекомендовано |
 | :--- | :--- | :--- |
-| **CPU** | 2 ядра | 4 ядра |
-| **Память** | 2 ГБ | 4-8 ГБ |
+| **CPU (Central Processing Unit)** | 2 ядра | 4 ядра |
+| **Память (RAM)** | 2 ГБ | 4–8 ГБ |
 | **Диск** | 20 ГБ | 40 ГБ |
 
 ---
@@ -69,21 +75,6 @@
 
 ---
 
-### Основные команды Minikube
-
-| Команда | Описание |
-| :--- | :--- |
-| `minikube start` | Запуск кластера |
-| `minikube stop` | Остановка кластера (без удаления) |
-| `minikube delete` | Удаление кластера и всех данных |
-| `minikube status` | Проверка состояния кластера |
-| `minikube kubectl -- <cmd>` | Выполнение команд kubectl |
-| `minikube dashboard` | Открытие Kubernetes Dashboard |
-| `minikube ip` | IP-адрес кластера |
-| `minikube ssh` | Подключение к узлу по SSH |
-
----
-
 ### kubeconfig и контексты
 
 Minikube автоматически управляет конфигурацией подключения:
@@ -96,7 +87,7 @@ Minikube автоматически управляет конфигурацие�
 
 ```bash
 kubectl config current-context
-# Вывод: minikube
+# → minikube
 
 kubectl config get-contexts
 # Список всех доступных контекстов
@@ -165,7 +156,7 @@ Minikube включает набор встроенных аддонов для 
 | **ingress** | Ingress-контроллер для маршрутизации |
 | **metrics-server** | Сбор метрик для `kubectl top` |
 | **registry** | Локальный Docker Registry |
-| **storage-provisioner** | Автоматическое создание PV |
+| **storage-provisioner** | Автоматическое создание **PV (Persistent Volume)** |
 | **helm** | Менеджер пакетов Helm |
 
 **Управление аддонами:**
@@ -183,7 +174,26 @@ minikube addons disable registry
 
 ---
 
-## Additional Information
+## Практические сценарии
+
+### Основные команды Minikube
+
+| Команда | Описание |
+| :--- | :--- |
+| `minikube start` | Запуск кластера |
+| `minikube stop` | Остановка кластера (без удаления) |
+| `minikube delete` | Удаление кластера и всех данных |
+| `minikube status` | Проверка состояния кластера |
+| `minikube kubectl -- <cmd>` | Выполнение команд kubectl |
+| `minikube dashboard` | Открытие Kubernetes Dashboard |
+| `minikube ip` | IP-адрес кластера |
+| `minikube ssh` | Подключение к узлу по SSH |
+
+Подробные примеры использования см. в файле **[Практические сценарии](./minikube_practical_scenarios.md)**.
+
+---
+
+## Дополнительная информация
 
 - **Официальная документация:** [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/)
 - **GitHub:** [kubernetes/minikube](https://github.com/kubernetes/minikube)

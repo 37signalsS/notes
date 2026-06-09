@@ -58,6 +58,47 @@ Git LFS решает эту проблему, заменяя большие фа
 
     В репозитории Git будет храниться только указатель на `my-large-image.psd`, а сам файл будет загружен на LFS-сервер.
 
+### Миграция существующих файлов в LFS
+
+Если большие файлы уже закоммичены в историю репозитория, их необходимо перенести в LFS с переписыванием истории:
+
+1. **Анализ больших файлов в истории:**
+
+    ```bash
+    git lfs migrate info --top=10
+    ```
+
+2. **Миграция файлов определённого типа:**
+
+    ```bash
+    git lfs migrate import --include="*.psd,*.zip,*.mp4" --everything
+    ```
+
+    Флаг `--everything` применяет миграцию ко всем веткам. После этого требуется принудительный push (`git push --force`) и обновление локальных копий у всех разработчиков.
+
+3. **Фиксация конфигурации:**
+
+    ```bash
+    git add .gitattributes
+    git commit -m "Migrate large files to LFS"
+    ```
+
+### Полезные команды
+
+```bash
+# Показать текущую LFS-конфигурацию
+git lfs env
+
+# Список отслеживаемых файлов в рабочей директории
+git lfs ls-files
+
+# Статус LFS-файлов
+git lfs status
+
+# Проверить занимаемое место LFS-файлами
+git lfs du
+```
+
 ## Дополнительная информация
 
 ### Официальные ресурсы
@@ -68,4 +109,4 @@ Git LFS решает эту проблему, заменяя большие фа
 
 ### Связанные темы
 
-Конфигурация `.lfsconfig` описана в [git_lfs_config.md](./git_lfs_config.md). Специальные файлы Git в [git_special_files_overview.md](./git_special_files_overview.md). Обработка бинарных файлов через `.gitattributes` в [git_attributes.md](./git_attributes.md).
+Конфигурация `.lfsconfig` описана в [git_lfs_config.md](./git_lfs_config.md). Специальные файлы Git в [git_special_files_overview.md](./git_special_files_overview.md). Обработка файлов через `.gitattributes` в [git_attributes.md](./git_attributes.md).

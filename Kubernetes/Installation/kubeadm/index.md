@@ -1,34 +1,69 @@
 # Установка Kubernetes через kubeadm
 
-Индекс документов по установке и настройке кластера Kubernetes с использованием утилиты `kubeadm`.
+Обзор методов и этапов развёртывания кластера Kubernetes с использованием официальной утилиты `kubeadm`.
 
-## Структура
+## Определения
 
-- **[kubeadm_installation_guide.md](./kubeadm_installation_guide.md)** — Полное руководство: требования, установка containerd, пакетов, инициализация, CNI, join нод, troubleshooting
-- **[cluster_initialization.md](./cluster_initialization.md)** — Инициализация кластера, флаги `kubeadm init`, HA-инициализация, отладка
-- **[ha_concepts.md](./ha_concepts.md)** — Архитектурные концепции HA Control Plane, компоненты, требования
-- **[keepalived_haproxy_setup.md](./keepalived_haproxy_setup.md)** — Установка и конфигурация Keepalived и HAProxy для HA
+**kubeadm** — стандартный инструмент для создания и управления жизненным циклом кластеров Kubernetes. Реализует этапы инициализации Control Plane и присоединения рабочих узлов.
 
-## Быстрый старт — Single-node кластер
+**Control Plane** — уровень управления кластером, включающий API-сервер, планировщик и контроллеры.
 
-1. Подготовить узлы: модули ядра, sysctl, отключить swap
-2. Установить containerd, kubelet, kubeadm, kubectl
-3. Инициализировать Control Plane: `kubeadm init --pod-network-cidr=10.244.0.0/16`
-4. Настроить kubeconfig
-5. Установить CNI-плагин (Calico/Flannel)
+**Worker Node** — рабочий узел кластера, на котором запускаются пользовательские контейнеры под управлением `kubelet`.
 
-## Быстрый старт — HA кластер
+**CNI (Container Network Interface)** — стандарт интерфейса для сетевых плагинов, обеспечивающих связность между подами в кластере.
 
-1. Установить Keepalived на все master-узлы
-2. Настроить MASTER и BACKUP узлы
-3. Установить HAProxy и настроить балансировку
-4. Инициализировать кластер через VIP
+---
 
-## Связанные темы
+## Основные концепции
+
+### Структура процесса развёртывания
+
+Развёртывание кластера через `kubeadm` состоит из следующих высокоуровневых этапов:
+
+1. **Подготовка инфраструктуры**: настройка модулей ядра, отключение swap, настройка параметров сети (`sysctl`).
+2. **Установка Runtime**: развёртывание среды выполнения контейнеров (рекомендуется `containerd`).
+3. **Установка утилит**: инсталляция пакетов `kubeadm`, `kubelet` и `kubectl`.
+4. **Инициализация**: выполнение `kubeadm init` на первом узле Control Plane.
+5. **Настройка сети**: установка CNI-плагина для обеспечения межподового взаимодействия.
+6. **Масштабирование**: использование `kubeadm join` для добавления дополнительных мастеров или воркеров.
+
+### Файловая структура раздела
+
+- **[Руководство по установке](./kubeadm_installation_guide.md)** — полное описание процесса от подготовки системы до проверки кластера.
+- **[Инициализация кластера](./cluster_initialization.md)** — детальный разбор команды `init`, флагов и процесса присоединения узлов.
+- **[Архитектура High Availability](./ha_concepts.md)** — теоретические основы и требования к отказоустойчивым конфигурациям.
+- **[Настройка балансировщика](./keepalived_haproxy_setup.md)** — практическое руководство по Keepalived и HAProxy для HA-кластеров.
+
+---
+
+## Практические сценарии
+
+### Развёртывание базового кластера (Single-node)
+
+Используется для разработки или тестирования, где все компоненты и нагрузки размещаются на одном узле.
+
+- Подробнее: [Руководство по установке — Single-node](./kubeadm_installation_guide.md#сценарии-развёртывания)
+
+### Развёртывание отказоустойчивого кластера (High Availability)
+
+Рекомендуемая конфигурация для продуктовых сред с использованием нескольких мастер-узлов и внешнего/внутреннего балансировщика.
+
+- Подробнее: [Инициализация HA кластера](./cluster_initialization.md#инициализация-первого-мастера-ha-подготовка)
+- Подробнее: [Настройка Keepalived и HAProxy](./keepalived_haproxy_setup.md)
+
+---
+
+## Дополнительная информация
+
+### Связанные темы
 
 - **HA кластер на bare metal**: [HA Overview](../HA_Cluster_Bare_Metal/k8s_ha_cluster_overview.md)
-- **Control Plane & CNI**: [Control Plane & CNI](../HA_Cluster_Bare_Metal/control_plane_initialization.md)
 - **Управление сертификатами**: [Certificate Management](../../Operations/certificate_management.md)
 - **Обновление кластеров**: [Upgrading Clusters](../../Operations/upgrading_clusters.md)
-- **Keepalived обзор**: [Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)
-- **HAProxy обзор**: [HAProxy](../../../WebServers/haproxy_overview.md)
+- **Обзор Keepalived**: [Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md)
+- **Обзор HAProxy**: [HAProxy](../../../WebServers/haproxy_overview.md)
+
+### Ссылки
+
+- [Официальная документация kubeadm](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/)
+- [Матрица совместимости CNI (Calico)](https://docs.tigera.io/calico/latest/about/supported-releases)

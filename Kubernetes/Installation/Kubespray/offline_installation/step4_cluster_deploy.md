@@ -1,12 +1,12 @@
-# Kubespray: Offline установка — Шаг 4: Развертывание кластера
+# Kubespray: Offline установка — Шаг 4: Развёртывание кластера
 
 ## Определения
 
-**cluster.yml** — основной Ansible-плейбук Kubespray для развёртывания кластера Kubernetes на всех узлах.
+**Развёртывание (Deployment)** — процесс автоматизированной установки и настройки всех компонентов Kubernetes на целевых узлах с использованием Ansible-плейбуков.
 
-**kubeconfig** — файл конфигурации для доступа к Kubernetes API; содержит данные о кластере, пользователе и контексте.
+**admin.conf** — основной файл `kubeconfig` с правами суперпользователя кластера, генерируемый в процессе установки.
 
-**admin.conf** — файл kubeconfig с правами администратора кластера, генерируемый kubeadm.
+Общие определения плейбуков и терминов управления кластером приведены в **[глоссарии Kubespray](../kubespray_install/definitions.md)**.
 
 ---
 
@@ -14,95 +14,92 @@
 
 ### Цель этапа
 
-Запуск Ansible-плейбука для развёртывания Kubernetes на подготовленных узлах:
+Финальная стадия создания кластера в изолированной среде. На этом этапе Ansible применяет подготовленные на предыдущих шагах переменные и артефакты из локального реестра (Harbor) ко всем узлам.
 
-- Установка компонентов Kubernetes (kubelet, kubeadm, kubectl)
-- Настройка containerd как runtime
-- Инициализация Control Plane и etcd
-- Развёртывание CNI (Cilium) и аддонов (CoreDNS, Hubble)
+**Основные операции:**
 
-### Время выполнения
+- Установка пакетов `kubelet`, `kubeadm`, `kubectl`.
+- Настройка `containerd` на использование локального реестра образов.
+- Инициализация Control Plane и кластера `etcd`.
+- Развёртывание сетевого плагина Cilium и системных аддонов (CoreDNS).
+- Генерация сертификатов и конфигурационных файлов доступа.
 
-15–30 минут в зависимости от количества узлов.
+### Параметры выполнения
 
-### Ожидаемый результат
-
-- Все узлы в статусе `Ready`
-- Все системные поды в статусе `Running`
-- Cilium показывает `Cluster health: N/N reachable`
-- Доступен kubeconfig для управления кластером
+- **Время выполнения:** обычно занимает от 15 до 40 минут в зависимости от количества узлов и производительности сети в закрытом контуре.
+- **Ожидаемое состояние:** все узлы должны перейти в статус `Ready`, а системные поды — в статус `Running`.
 
 ---
 
 ## Практические сценарии
 
-### Подготовка master-1-k8s
+### 1. Подготовка перед запуском
 
-#### Установка Docker
-
-```bash
-apt install docker.io -y
-```
-
-#### Проверка прокси (если указывался)
-
-Файл: `group_vars/all/all.yml`
-
-```yaml
-# Удалить или закомментировать:
-# http_proxy: ""
-# https_proxy: ""
-```
-
-### Запуск развёртывания
+Убедитесь, что вы находитесь в виртуальном окружении Python на управляющем узле (`master-1-k8s`).
 
 ```bash
 cd /opt/kuber_off/
 source venv/bin/activate
 cd kubespray/
-
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin
 ```
 
-### Проверка кластера
+### 2. Запуск основного плейбука
 
-Полная проверка кластера описана в [cluster_verification.md](./cluster_verification.md).
-
-#### Краткая проверка
+Для установки кластера в offline-режиме используется стандартный плейбук `cluster.yml`. Благодаря предварительной настройке переменных в `group_vars`, Ansible будет обращаться только к локальным ресурсам.
 
 ```bash
-# Статус узлов
-kubectl get nodes -o wide
-
-# Статус системных подов
-kubectl get pods -n kube-system
-
-# Статус Cilium
-kubectl -n kube-system exec -it ds/cilium -- cilium status
+ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
+  -b -v -u admin
 ```
 
-### Работа с kubeconfig
+*Флаг `-v` рекомендуется для отслеживания прогресса и быстрой диагностики в случае ошибок.*
 
-#### Копирование admin.conf
+### 3. Получение доступа к кластеру
+
+По завершении установки необходимо скопировать конфигурационный файл для работы с `kubectl`.
 
 ```bash
-# С master-1-k8s
+# Создание директории конфигурации
 mkdir -p ~/.kube
-cp /etc/kubernetes/admin.conf ~/.kube/config
+
+# Копирование файла с правами администратора
+sudo cp /etc/kubernetes/admin.conf ~/.kube/config
+sudo chown $(id -u):$(id -g) ~/.kube/config
+
+# Проверка доступа
+kubectl cluster-info
 ```
 
-#### Проверка доступа
+### 4. Первичная проверка состояния
+
+Сразу после установки необходимо убедиться, что базовые компоненты функционируют корректно.
+
+**Статус узлов:**
 
 ```bash
-kubectl cluster-info
-kubectl get namespaces
+kubectl get nodes -o wide
 ```
+
+**Статус системных подов (kube-system):**
+
+```bash
+kubectl get pods -n kube-system
+```
+
+Подробный регламент проверки кластера приведен в разделе **[Проверка кластера](./cluster_verification.md)**.
 
 ---
 
 ## Дополнительная информация
 
+### Типовые ошибки при развёртывании
+
+- **ImagePullBackOff:** проверьте доступность Harbor с целевых узлов и корректность путей в `group_vars/all/offline.yml`.
+- **SSH Timeout:** убедитесь, что между узлами разрешен SSH-трафик и ключи распространены корректно (см. **[Шаг 1: Подготовка VM](./step1_vm_preparation.md)**).
+
 ### Связанные темы
 
-Подготовка закрытого контура описана в [шаге 3](./step3_offline_env.md), настройка MetalLB и Ingress — в [шаге 5](./step5_metallb_ingress.md). Полная проверка кластера — в [cluster_verification.md](./cluster_verification.md), решение проблем — в [troubleshooting.md](./troubleshooting.md). Управление кластером — в [cluster_management.md](../cluster_management.md).
+- **[Шаг 3: Подготовка закрытого контура](./step3_offline_env.md)** — предыдущий этап (настройка Harbor).
+- **[Шаг 5: Настройка MetalLB и Ingress](./step5_metallb_ingress.md)** — следующий этап (публикация сервисов).
+- **[Troubleshooting](./troubleshooting.md)** — решение проблем при установке.
+- **[Управление кластером](../kubespray_install/basic_concepts.md)** — общие принципы эксплуатации после установки.

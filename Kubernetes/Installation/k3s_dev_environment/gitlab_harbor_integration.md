@@ -1,6 +1,6 @@
 # Интеграция GitLab с Harbor
 
-Руководство по настройке GitLab для работы с внешним OCI-реестром Harbor в dev-окружении K3s. Описывает отключение встроенного GitLab Registry и централизованное управление учетными данными для CI/CD.
+Руководство по настройке GitLab для работы с внешним реестром OCI (Open Container Initiative) Harbor в dev-окружении K3s. Описывает отключение встроенного GitLab Registry и централизованное управление учетными данными для CI/CD (Continuous Integration / Continuous Deployment).
 
 > **Контекст:** Часть серии по созданию dev-окружения в K3s. Harbor используется как единый реестр для Docker-образов и Helm-чартов. См. [Архитектура K3s](./k3s_architecture.md), [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md).
 
@@ -11,7 +11,7 @@
 | Термин | Описание |
 |--------|----------|
 | **GitLab Registry** | Встроенный Docker-реестр в GitLab. Может конфликтовать с внешними реестрами при неправильной настройке |
-| **Harbor** | Внешний OCI-реестр с расширенными возможностями: сканирование уязвимостей, репликация, управление доступом. См. [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md) |
+| **Harbor** | Внешний реестр OCI с расширенными возможностями: сканирование уязвимостей, репликация, управление доступом. См. [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md) |
 | **GitLab CI/CD Variables** | Переменные окружения, доступные в пайплайнах. Поддерживают типы `Var` (значение) и `File` (содержимое файла) |
 | **Group-level Variables** | Переменные, определенные на уровне группы GitLab. Наследуются всеми проектами группы |
 
@@ -26,11 +26,11 @@
 | Критерий | GitLab Registry | Harbor |
 |----------|-----------------|--------|
 | **Сканирование уязвимостей** | Зависит от интеграции | Встроенное (Trivy/Clair) |
-| **Управление доступом** | На уровне проектов | Детальная RBAC, робот-аккаунты |
+| **Управление доступом** | На уровне проектов | Детальная RBAC (Role-Based Access Control), робот-аккаунты |
 | **Репликация** | Ограниченная | Полная поддержка мульти-реестра |
 | **Helm-чарты** | Поддержка | Нативная поддержка OCI |
 | **Подпись образов** | — | Notary/Cosign |
-| **Веб-интерфейс** | Минимальный | Расширенный UI для управления образами |
+| **Веб-интерфейс** | Минимальный | Расширенный UI (User Interface) для управления образами |
 
 **Решение:** В данной архитектуре Harbor развернут как отдельный сервис в K3s, GitLab использует его как внешний реестр.
 
@@ -136,7 +136,7 @@ kubectl logs -n gitlab -l app=gitlab-rails --tail=50
 | `dev.registry` | `harbor.example.com` | `Var` | — | Адрес Harbor (без `https://`) |
 | `dev.registry-user` | `admin` или `robot$ci` | `Var` | `Masked` | Пользователь для push/pull |
 | `dev.registry-password` | `<токен или пароль>` | `Var` | `Masked`, `Protected` | Пароль или токен робот-аккаунта |
-| `dev.se` | (содержимое `root-ca.crt`) | `File` | — | Корневой CA для доверия к Harbor |
+| `dev.se` | (содержимое `root-ca.crt`) | `File` | — | Корневой CA (Certificate Authority) для доверия к Harbor |
 
 > **Примечание:** Переменная типа `File` сохраняется во временный файл на Runner. Путь к файлу доступен через переменную окружения `dev.se`. Используйте в пайплайнах для настройки доверия к CA.
 
@@ -210,5 +210,5 @@ cp /opt/harbor/certs/root-ca.crt ./root-ca.crt
 |--------|----------|-------------------|
 | **GitLab Registry** | Встроенный реестр GitLab | Простые сценарии, один реестр |
 | **Harbor** | Внешний реестр с расширенными функциями | Корпоративная среда, несколько реестров |
-| **GHCR** | GitHub Container Registry | Проекты на GitHub |
-| **Cloud Registry** | ECR, GCR, ACR | Облачные нативные решения |
+| **GHCR** | GitHub Container Registry (GHCR) | Проекты на GitHub |
+| **Cloud Registry** | ECR (Elastic Container Registry), GCR (Google Container Registry), ACR (Azure Container Registry) | Облачные нативные решения |

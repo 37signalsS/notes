@@ -108,22 +108,7 @@ variables:
 
 ### Сценарий 5: Работа с большими бинарными файлами
 
-Для репозиториев с графикой, видео, архивами используйте Git LFS:
-
-```bash
-# Установить LFS
-git lfs install
-
-# Отслеживать большие файлы
-git lfs track "*.psd"
-git lfs track "*.mp4"
-
-# Закоммитить конфигурацию
-git add .gitattributes
-git commit -m "Configure LFS tracking"
-```
-
-Подробное руководство в [git_lfs.md](./git_lfs.md).
+Для репозиториев с графикой, видео, архивами используйте Git LFS. Подробное руководство — в [git_lfs.md](./git_lfs.md).
 
 ---
 

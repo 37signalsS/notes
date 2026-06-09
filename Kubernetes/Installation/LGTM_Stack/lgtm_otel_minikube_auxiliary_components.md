@@ -10,13 +10,13 @@
 
 ## Определения
 
-**Cert-manager** — нативный для Kubernetes контроллер для автоматизации управления TLS-сертификатами. В данном руководстве используется для выпуска самоподписанных сертификатов для Ingress-ресурсов (Grafana, Loki, Tempo). Полная документация: **[Cert-manager](../../ToolsUtilities/cert_manager/definitions.md)**.
+**Cert-manager** — контроллер Kubernetes для автоматизации управления TLS-сертификатами. Подробнее: **[Cert-manager: Определения](../../ToolsUtilities/cert_manager/definitions.md)**.
 
-**Docker Registry** — сервис для хранения и распространения Docker-образов. В данном руководстве разворачивается локальный registry внутри кластера Minikube для публикации тестовых образов. Подробнее: **[Docker Registries](../../../Docker/docker_registries.md)**.
+**Docker Registry** — сервис хранения и распространения образов. В данном руководстве разворачивается локально. Подробнее: **[Docker Registries](../../../Docker/docker_registries.md)**.
 
-**ClusterIssuer** — общекластерный ресурс cert-manager, представляющий центр сертификации (CA). Доступен из любого namespace. См. **[CRD cert-manager](../../ToolsUtilities/cert_manager/definitions.md#Основные-концепции-CRD)**.
+**ClusterIssuer** — ресурс cert-manager, представляющий центр сертификации (CA) на уровне кластера.
 
-**Самоподписанный сертификат** — сертификат, подписанный собственным CA кластера, а не публичным центром сертификации (Let's Encrypt). Используется только для локальных/тестовых окружений.
+**Самоподписанный сертификат** — сертификат, подписанный собственным CA кластера. Используется для тестирования.
 
 ---
 
@@ -40,10 +40,10 @@
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │              Ingress Controller (nginx)             │   │
 │  │                                                     │   │
-│  │  grafana.test → Grafana (TLS: grafana-tls)         │   │
-│  │  loki.test    → Loki    (TLS: loki-tls)            │   │
-│  │  tempo.test   → Tempo   (TLS: tempo-tls)            │   │
-│  │  registry.test → Registry (TLS: registry-tls)      │   │
+│  │  grafana.test -> Grafana (TLS: grafana-tls)         │   │
+│  │  loki.test    -> Loki    (TLS: loki-tls)            │   │
+│  │  tempo.test   -> Tempo   (TLS: tempo-tls)            │   │
+│  │  registry.test -> Registry (TLS: registry-tls)      │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -51,11 +51,11 @@
 
 ### Поток выпуска сертификатов
 
-1. **Cert-manager** устанавливается в кластер
-2. Создаётся **ClusterIssuer** с self-signed CA
-3. Для каждого сервиса (Grafana, Loki, Tempo, Registry) создаётся **Certificate**
-4. Cert-manager генерирует TLS-сертификат и сохраняет в **Secret**
-5. **Ingress** использует Secret для HTTPS-терминации
+1. Установка **cert-manager**.
+2. Создание **ClusterIssuer** (self-signed CA).
+3. Создание ресурса **Certificate** для каждого сервиса.
+4. Выпуск TLS-сертификата и сохранение в **Secret**.
+5. Использование Secret в **Ingress** для HTTPS.
 
 ### Требования к ресурсам
 
@@ -70,44 +70,27 @@
 
 ### Сценарий 1: Установка Cert-manager и настройка CA
 
-**Цель:** Развернуть cert-manager и создать самоподписанный CA для внутренних сервисов.
+**Цель:** Развернуть cert-manager и создать самоподписанный CA.
 
 #### Шаг 1: Установка cert-manager
 
-Установите cert-manager через Helm (рекомендуемый способ). Полная инструкция: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
+Подробная инструкция: **[Установка cert-manager](../../ToolsUtilities/cert_manager/installation.md)**.
 
 ```bash
-# Добавление репозитория Jetstack
 helm repo add jetstack https://charts.jetstack.io
 helm repo update
 
-# Установка cert-manager с CRD
 helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --create-namespace \
   --set installCRDs=true \
   --version v1.15.0
-
-# Проверка установки
-kubectl get deployments -n cert-manager
-kubectl get pods -n cert-manager
 ```
 
-**Ожидаемый результат:**
-
-```
-NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
-cert-manager              1/1     1            1           2m
-cert-manager-cainjector   1/1     1            1           2m
-cert-manager-webhook      1/1     1            1           2m
-```
-
-#### Шаг 2: Создание ClusterIssuer для самоподписанных сертификатов
-
-Создайте корневой CA и Certificate для выпуска внутренних сертификатов:
+#### Шаг 2: Создание ClusterIssuer
 
 ```bash
-# Создание ClusterIssuer с self-signed CA
+# Создание ClusterIssuer
 kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -140,28 +123,15 @@ spec:
 EOF
 ```
 
-**Проверка:**
-
-```bash
-kubectl get clusterissuer minikube-ca
-kubectl get certificate -n cert-manager minikube-ca-secret
-```
-
-**Ожидаемый статус:** `Ready=True`
-
 ---
 
 ### Сценарий 2: Развёртывание локального Docker Registry
 
-**Цель:** Развернуть Docker Registry внутри кластера с TLS и доступом для pull/push образов.
+**Цель:** Развернуть реестр с TLS внутри кластера.
 
-#### Шаг 1: Установка Docker Registry через Helm
+#### Шаг 1: Установка Docker Registry
 
 ```bash
-# Создание namespace
-kubectl create namespace docker-registry
-
-# Установка Docker Registry
 helm upgrade --install docker-registry twuni/docker-registry \
   --namespace docker-registry \
   --create-namespace \
@@ -181,106 +151,60 @@ helm upgrade --install docker-registry twuni/docker-registry \
 # Добавление записи в /etc/hosts
 echo "$(minikube ip) registry.test" | sudo tee -a /etc/hosts
 
-# Настройка Docker Daemon для работы с insecure registry
+# Настройка insecure registry в Minikube
 minikube ssh "sudo tee /etc/docker/daemon.json <<< '{\"insecure-registries\": [\"registry.test:30000\"]}'"
 minikube ssh "sudo systemctl restart docker"
-
-# Перезапуск Minikube для применения настроек
-minikube stop && minikube start
 ```
 
-#### Шаг 3: Создание секрета для доступа к Registry
+#### Шаг 3: Настройка доступа (ImagePullSecrets)
 
 ```bash
-# Создание Docker registry secret
 kubectl create secret docker-registry regcred \
   --docker-server=registry.test:30000 \
   --docker-username=admin \
   --docker-password=admin \
   --namespace default
 
-# Привязка secret к service account
-kubectl patch serviceaccount default \
-  -p '{"imagePullSecrets": [{"name": "regcred"}]}'
-```
-
-#### Шаг 4: Верификация
-
-```bash
-# Проверка статуса Pod
-kubectl get pods -n docker-registry
-
-# Проверка Ingress
-kubectl get ingress -n docker-registry
-
-# Тестирование push/pull
-docker tag alpine:latest registry.test:30000/alpine:test
-docker push registry.test:30000/alpine:test
+kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "regcred"}]}'
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Troubleshooting
+### Поиск и устранение неисправностей
 
-| Проблема | Возможная причина | Решение |
+| Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Cert-manager Pod не запускается** | Недостаточно ресурсов | `kubectl describe pod -n cert-manager`, увеличить лимиты Minikube |
-| **Certificate в статусе Pending** | ClusterIssuer не найден | Проверить `kubectl get clusterissuer`, имя в `issuerRef` |
-| **Registry недоступен по HTTPS** | TLS Secret не создан | Проверить `kubectl get secret registry-tls -n docker-registry` |
-| **ImagePullBackOff** | Secret `regcred` не привязан | Проверить `kubectl get serviceaccount default -o yaml` |
-| **dial tcp: lookup registry.test** | Запись в `/etc/hosts` отсутствует | Добавить запись: `echo "$(minikube ip) registry.test" \| sudo tee -a /etc/hosts` |
+| **Pod в Pending** | Недостаточно ресурсов | Увеличить лимиты Minikube |
+| **Certificate в Pending** | Ошибка в ClusterIssuer | Проверить `kubectl describe certificate` |
+| **Registry недоступен** | Ошибка TLS Secret | Проверить наличие секрета `registry-tls` |
 
 ### Диагностика
 
 ```bash
-# Логи cert-manager
+# Логи
 kubectl logs -n cert-manager -l app=cert-manager --tail=100
 
-# Проверка Certificate
+# Статус сертификатов
 kubectl get certificate -A
-kubectl describe certificate <name> -n <namespace>
-
-# Проверка Registry
-kubectl get ingress docker-registry -n docker-registry
-kubectl get secret registry-tls -n docker-registry
-
-# Тестирование TLS
-curl -kv https://registry.test:30000/v2/
 ```
 
-### Ссылки на SSoT
+### Связанные темы
 
-- **Cert-manager:**
-  - **[Определения и концепции](../../ToolsUtilities/cert_manager/definitions.md)**
-  - **[Установка](../../ToolsUtilities/cert_manager/installation.md)**
-  - **[Cluster CA](../../ToolsUtilities/cert_manager/cluster_ca.md)**
-  - **[Troubleshooting](../../ToolsUtilities/cert_manager/Administration/troubleshooting.md)**
-- **Docker Registry:**
-  - **[Docker Registries overview](../../../Docker/docker_registries.md)**
-  - **[Minikube Registry](../../Installation/minikube/minikube_practical_scenarios.md)** — раздел "Использование локального Registry"
-- **Ingress:**
-  - **[Ingress Overview](../../Networking/Ingress/overview.md)**
+- **[Cert-manager: Администрирование](../../ToolsUtilities/cert_manager/Administration/index.md)**
+- **[Minikube: Практические сценарии](../../Installation/minikube/minikube_practical_scenarios.md)**
+- **[Docker Registry: Обзор](../../../Docker/docker_registries.md)**
 
 ### Безопасность
 
-> **Внимание:** Данная конфигурация предназначена **только для локальных/тестовых окружений**.
+> **Внимание:** Конфигурация только для тестовых окружений.
 
-| Аспект | Текущая конфигурация | Production-рекомендация |
+| Аспект | Текущая конфигурация | Production |
 | :--- | :--- | :--- |
-| **TLS** | Самоподписанные сертификаты | Публичные сертификаты (Let's Encrypt) или корпоративный CA |
-| **Аутентификация Registry** | Базовая (admin/admin) | OAuth2, робот-аккаунты (Harbor) |
-| **Сетевая изоляция** | Отсутствует | NetworkPolicies, отдельные namespace |
-| **Хранение секретов** | Kubernetes Secrets | HashiCorp Vault, External Secrets Operator |
-
-### Альтернативы
-
-| Компонент | Текущий вариант | Production-альтернатива |
-| :--- | :--- | :--- |
-| **Registry** | twuni/docker-registry (Helm) | Harbor, GitLab Registry, GHCR |
-| **CA** | Self-signed | Let's Encrypt, корпоративный PKI |
-| **Ingress** | Minikube Ingress (nginx) | Nginx Ingress Controller, Traefik, Gateway API |
+| **TLS** | Самоподписанные | Let's Encrypt / Корпоративный CA |
+| **Аутентификация** | Basic (admin/admin) | OIDC / Harbor |
+| **Изоляция** | Отсутствует | NetworkPolicies |
 
 ---
 

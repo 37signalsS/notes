@@ -145,4 +145,4 @@ glab mr approve <номер_MR>
 
 ### Связанные темы
 
-Feature Flags подробно описаны в [CI-CD/Testing/feature_toggles/overview.md](../CI-CD/Testing/feature_toggles/overview.md). Основы командной разработки в [git_basics.md](./git_basics.md). Ветвление в [git_branching.md](./git_branching.md).
+Feature Flags подробно описаны в [overview.md](../CI-CD/Testing/feature_toggles/overview.md). Основы командной разработки в [git_basics.md](./git_basics.md). Ветвление в [git_branching.md](./git_branching.md).

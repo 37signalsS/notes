@@ -2,42 +2,58 @@
 
 ## Определения
 
-**Kubespray** — инструмент для автоматизации развертывания кластеров Kubernetes на базе Ansible. Полное описание — в [обзоре Kubespray](../overview.md).
+**Kubespray** — инструмент для автоматизации развертывания и управления жизненным циклом кластеров Kubernetes на базе Ansible. Полное описание — в [обзоре Kubespray](../overview.md).
 
-**Inventory** — файл `inventory.ini`, определяющий хосты и их роли в кластере (control plane, worker, etcd).
+**Inventory (Инвентарь)** — конфигурационный файл (обычно `inventory.ini` или `hosts.yaml`), описывающий узлы кластера, их IP-адреса и распределение по ролям.
 
-**Group vars** — переменные для групп хостов в директории `group_vars/`. Основные файлы:
+**Group vars (Групповые переменные)** — иерархия YAML-файлов в директории `group_vars/`, определяющая параметры установки (версии компонентов, сетевые плагины, настройки облачных провайдеров).
 
-- `all/all.yml` — общие настройки кластера
-- `k8s-cluster/k8s-cluster.yml` — параметры компонентов Kubernetes
-- `etcd.yml` — настройки etcd
+**Плейбуки Kubespray** — набор Ansible-сценариев для управления кластером:
 
-**Control Plane** — узлы управления кластером (ранее назывались master-узлами). Запускают API server, scheduler, controller manager.
+- `cluster.yml` — полная установка кластера.
+- `scale.yml` — добавление новых узлов.
+- `upgrade-cluster.yml` — обновление версии Kubernetes.
+- `remove-node.yml` — вывод узла из эксплуатации.
 
-**Worker Node** — узлы для запуска рабочих нагрузок (подов). Запускают kubelet и kube-proxy.
+**Control Plane** — плоскость управления кластером. Подробное описание архитектуры — в [SSoT: Архитектура Control Plane](../../../Concepts/control_plane_architecture.md).
 
-**etcd** — распределённое key-value хранилище для данных кластера Kubernetes.
+**Worker Node** — узлы для запуска пользовательских нагрузок. Обзор компонентов узла — в [обзоре Kubernetes](../../../kubernetes_overview.md).
 
-**CNI (Container Network Interface)** — плагин для настройки сети между подами (Calico, Flannel, Cilium).
+**etcd** — распределенное хранилище состояния кластера. Подробности — в [SSoT: Обзор etcd](../../../Concepts/etcd_overview.md).
 
-**kubeconfig** — файл конфигурации для доступа к API кластера (обычно `admin.conf`).
+**CNI (Container Network Interface)** — стандарт интерфейса для настройки сети между подами. Реализация в Kubespray и взаимодействие с компонентами — в [SSoT: Роли CNI и kube-proxy](../../../Networking/Network/cni_kube_proxy_roles.md).
 
-**Плейбуки Kubespray** — Ansible playbooks для управления кластером:
+**kubeconfig** — файл с параметрами аутентификации для доступа к API Kubernetes (в Kubespray по умолчанию создается как `admin.conf`).
 
-- `cluster.yml` — развертывание кластера
-- `scale.yml` — добавление узлов
-- `upgrade-cluster.yml` — обновление Kubernetes
-- `remove-node.yml` — удаление узлов
+**crictl** — CLI-утилита для работы с контейнерами через интерфейс CRI (Container Runtime Interface), используемая в Kubespray для диагностики `containerd`.
 
-**crictl** — CLI-утилита для взаимодействия с containerd через Container Runtime Interface.
+---
+
+## Основные концепции
+
+Термины, описанные выше, формируют логическую модель установки Kubespray:
+
+1. **Inventory** связывает физические/виртуальные серверы с логическими ролями (Control Plane, Worker, etcd).
+2. **Group vars** определяют, как именно будут настроены эти роли и какие компоненты (CNI, Runtime) будут установлены.
+3. **Плейбуки** последовательно применяют конфигурацию к узлам, используя `kubeadm` под капотом.
+
+---
+
+## Практические сценарии
+
+Определения находят применение в следующих задачах:
+
+- **Подготовка инвентаря:** создание файла `inventory.ini` на основе шаблона `inventory/sample`.
+- **Кастомизация:** редактирование `group_vars/k8s_cluster/k8s-cluster.yml` для выбора сетевого плагина.
+- **Развертывание:** запуск `ansible-playbook -i inventory/my_cluster/inventory.ini cluster.yml`.
+- **Диагностика:** использование `crictl pods` на узлах после завершения установки.
 
 ---
 
 ## Дополнительная информация
 
-### Связанные темы
+### См. также
 
-- **[Основные концепции](./basic_concepts.md)** — компоненты конфигурации, требования, этапы установки
-- **[Практические сценарии](./practical_scenarios.md)** — настройка inventory, запуск развертывания
-- **[Дополнительная информация](./additional_info.md)** — действия после установки, проверка кластера
-- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание в закрытом контуре
+- **[Основные концепции](./basic_concepts.md)** — архитектура и этапы установки.
+- **[Практические сценарии](./practical_scenarios.md)** — пошаговое руководство по развертыванию.
+- **[Offline установка](../offline_installation/offline_definitions.md)** — развертывание без доступа к интернету.

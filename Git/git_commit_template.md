@@ -141,19 +141,7 @@ chmod +x .git/hooks/commit-msg
 
 ### Сценарий 4: Валидация через commit-msg hook
 
-Шаблон не гарантирует соблюдение формата. Для строгой валидации используйте хук:
-
-```bash
-#!/bin/bash
-# .git/hooks/commit-msg
-
-commit_msg=$(cat "$1")
-if ! echo "$commit_msg" | grep -qE '^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .+'; then
-    echo "ERROR: Сообщение коммита должно соответствовать Conventional Commits"
-    echo "Пример: feat(auth): добавить OAuth2 аутентификацию"
-    exit 1
-fi
-```
+Шаблон не гарантирует соблюдение формата. Для строгой валидации используйте хук `commit-msg` — пример в [git_hooks.md](./git_hooks.md#сценарий-2-commit-msg--валидация-conventional-commits).
 
 ### Сценарий 5: Интеграция с Husky (для JavaScript-проектов)
 

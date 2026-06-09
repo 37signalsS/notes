@@ -196,7 +196,7 @@ git update-index --no-assume-unchanged <файл>
 3. **Настройка шифрования файлов:**
     Создайте или отредактируйте файл `.gitattributes` в корне репозитория и укажите, какие файлы следует шифровать:
 
-    ```
+    ```text
     secret.json filter=git-crypt diff=git-crypt
     config/passwords.env filter=git-crypt diff=git-crypt
     ```

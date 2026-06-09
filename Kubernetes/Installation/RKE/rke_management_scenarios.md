@@ -1,143 +1,54 @@
-# RKE: Управление и troubleshooting
+# RKE: Управление и поиск неисправностей
 
 ## Определения
 
-**troubleshooting** — процесс диагностики и устранения проблем в работе Kubernetes-кластера.
+**поиск неисправностей (troubleshooting)** — процесс диагностики и устранения проблем в работе Kubernetes-кластера.
 
 **ротация сертификатов** — периодическая замена TLS-сертификатов компонентов кластера для поддержания безопасности.
 
-**ServiceAccount** — объект Kubernetes для аутентификации процессов в кластере (используется в CI/CD).
+**RKE CLI** — утилита командной строки для развертывания и управления кластерами RKE через YAML-конфигурацию.
 
 ## Базовые концепции
 
-### Компоненты RKE для управления
+### Компоненты управления RKE
 
-* **RKE CLI** — утилита для развертывания и управления кластером через YAML-конфигурацию
-* **kubectl** — стандартный инструмент управления Kubernetes
-* **Rancher UI** — веб-интерфейс для визуального управления
-* **Cattle Cluster Agent** — агент на узлах кластера, передающий информацию в Rancher Server
+* **Rancher UI** — графический интерфейс для визуального управления, мониторинга и ротации сертификатов.
+* **RKE CLI** — инструмент для управления жизненным циклом кластера (создание, обновление, удаление, бэкапы).
+* **kubectl** — стандартная утилита для взаимодействия с API Kubernetes (применяется после настройки доступа).
+* **Cattle Cluster Agent** — компонент на узлах, обеспечивающий связь между кластером и Rancher Server.
 
 ### Жизненный цикл сертификатов
 
-* Сертификаты RKE действительны 1 год
-* Автоматическая ротация через Rancher UI
-* Ручная ротация при истечении срока действия
+* Срок действия сертификатов RKE по умолчанию составляет 1 год.
+* Ротация возможна автоматически через Rancher UI или вручную через RKE CLI.
+* При истечении сертификатов доступ через `kubectl` блокируется.
 
 ## Практические сценарии
 
-### Базовые операции kubectl
-
-**Статус узлов:**
-
-```bash
-kubectl get nodes -o wide
-```
-
-**Описание узла:**
-
-```bash
-kubectl describe node worker-1
-```
-
-**Список подов:**
-
-```bash
-kubectl get pods --all-namespaces
-kubectl get pods -n kube-system  # Системные поды
-```
-
-**Создание deployment:**
-
-```bash
-kubectl create deployment nginx --image=nginx:1.27
-kubectl expose deployment nginx --port=80 --type=NodePort
-```
-
-**Просмотр логов:**
-
-```bash
-kubectl logs -f <pod-name> -n <namespace>
-kubectl logs -f <pod-name> -c <container-name>  # Многоконтейнерный под
-```
-
-**Масштабирование:**
-
-```bash
-kubectl scale deployment nginx --replicas=3
-```
-
-**Обновление приложений:**
-
-```bash
-kubectl set image deployment/nginx nginx=nginx:1.28
-kubectl rollout status deployment/nginx
-kubectl rollout history deployment/nginx
-```
-
-### RKE через CLI
+### Управление кластером через RKE CLI
 
 **Установка RKE CLI:**
 
 ```bash
-# Linux
+# Скачивание бинарного файла (Linux)
 curl -L https://github.com/rancher/rke/releases/download/v1.6.0/rke_linux-amd64 -o rke
 chmod +x rke
 sudo mv rke /usr/local/bin/
 
-# Проверка
+# Проверка версии
 rke --version
 ```
 
-**Создание cluster.yml:**
+**Развертывание и обновление:**
 
-```yaml
-nodes:
-  - address: 192.168.1.10
-    internal_address: 192.168.1.10
-    user: root
-    role: [controlplane, worker, etcd]
-  - address: 192.168.1.11
-    internal_address: 192.168.1.11
-    user: root
-    role: [worker]
-  - address: 192.168.1.12
-    internal_address: 192.168.1.12
-    user: root
-    role: [worker]
+1. Подготовка конфигурации `cluster.yml` (узлы, роли, настройки etcd).
+2. Запуск развертывания:
 
-services:
-  etcd:
-    snapshot: true
-    creation: 6h
-    retention: 24h
-    s3:
-      access_key: <S3_ACCESS_KEY>
-      secret_key: <S3_SECRET_KEY>
-      bucket_name: rke-backups
-      endpoint: s3.amazonaws.com
+   ```bash
+   rke up --config cluster.yml
+   ```
 
-ssh_key_path: ~/.ssh/id_rsa
-```
-
-**Развертывание кластера:**
-
-```bash
-rke up --config cluster.yml
-```
-
-**Получение kubeconfig:**
-
-```bash
-# После rke up создается файл kube_config_cluster.yml
-export KUBECONFIG=$(pwd)/kube_config_cluster.yml
-kubectl get nodes
-```
-
-**Обновление кластера:**
-
-```bash
-rke up --config cluster.yml --upgrade
-```
+3. После успешного завершения создается `kube_config_cluster.yml`.
 
 **Удаление кластера:**
 
@@ -145,154 +56,69 @@ rke up --config cluster.yml --upgrade
 rke remove --config cluster.yml
 ```
 
-### Troubleshooting
+### Поиск и устранение неисправностей (Специфика RKE)
 
-**Проблема: Certificate expired**
+Для общей диагностики подов и узлов используйте **[Обзор поиска неисправностей в Kubernetes](../../Troubleshooting/troubleshooting_overview.md)**. Ниже приведены специфические для RKE сценарии.
+
+**Проблема: Истечение срока действия сертификатов**
+
+Симптом: Ошибка `x509: certificate has expired` при выполнении команд `kubectl`.
+
+* **Решение через Rancher UI:** `Cluster Management` → Выбор кластера → `⋮` → `Rotate Certificates`.
+* **Решение через RKE CLI:**
+
+  ```bash
+  rke cert rotate --config cluster.yml
+  ```
+
+**Проблема: Доступ к API Server**
+
+Если кластер не отвечает, проверьте доступность порта API (6443) на узлах Control Plane:
 
 ```bash
-# Проверка
-kubectl get nodes
-# Ошибка: x509: certificate has expired or is not yet valid
-
-# Решение через Rancher UI:
-# Cluster Management → ⋮ → Rotate Certificates
-
-# Решение через RKE CLI:
-rke cert rotate --config cluster.yml
-```
-
-**Проблема: Connection refused**
-
-```bash
-# Проверка доступности API
-curl -k https://<rke-api-ip>:6443/healthz
-
-# Проверка firewall
-telnet <rke-api-ip> 6443
+# Проверка доступности порта
 nc -zv <rke-api-ip> 6443
 
-# Проверка сервиса kube-apiserver
-kubectl get pods -n kube-system | grep apiserver
+# Проверка статуса контейнеров на узле через Docker (RKE запускает компоненты в контейнерах)
+docker ps | grep kube-apiserver
 ```
 
-**Проблема: Unauthorized**
+**Проблема: Потеря кворума etcd**
 
-```bash
-# Проверка токена в kubeconfig
-kubectl config view --raw -o jsonpath='{.users[0].user.token}'
+Если более половины узлов `etcd` недоступны, кластер переходит в режим "только чтение" или становится недоступным.
 
-# Перегенерация токена через Rancher:
-# Users & Authentication → API Keys → Create Key
-```
+* **Восстановление из снимка (snapshot) через RKE CLI:**
 
-**Проблема: Node NotReady**
-
-```bash
-# Проверка статуса узла
-kubectl describe node <node-name>
-
-# Проверка kubelet
-systemctl status kubelet
-journalctl -u kubelet -f
-
-# Проверка сетегого плагина
-kubectl get pods -n kube-system | grep -E 'calico|cilium|flannel'
-```
-
-**Проблема: etcd кворум потерян**
-
-```bash
-# Проверка членов etcd
-kubectl get pods -n kube-system | grep etcd
-
-# Восстановление из snapshot (RKE CLI):
-rke etcd snapshot-restore --name <snapshot-name> --config cluster.yml
-```
-
-### Безопасность
-
-**Хранение kubeconfig:**
-
-```bash
-chmod 600 ~/.kube/config
-chown $USER:$USER ~/.kube/config
-```
-
-**Создание ServiceAccount для CI/CD:**
-
-```yaml
-# service-account.yml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ci-cd-deployer
-  namespace: default
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: ci-cd-deployer-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: edit
-subjects:
-  - kind: ServiceAccount
-    name: ci-cd-deployer
-    namespace: default
-```
-
-```bash
-kubectl apply -f service-account.yml
-
-# Получение токена
-kubectl create token ci-cd-deployer -n default
-```
+  ```bash
+  rke etcd snapshot-restore --name <snapshot-name> --config cluster.yml
+  ```
 
 ### Интеграция с CI/CD
 
-**GitLab CI:**
+При использовании RKE в пайплайнах рекомендуется использовать ServiceAccount с ограниченными правами.
+
+**Пример для GitLab CI:**
 
 ```yaml
 deploy:
   stage: deploy
   image: bitnami/kubectl:latest
   variables:
-    KUBE_CONFIG: $RKE_KUBECONFIG  # Base64 encoded
-    KUBECONFIG: /tmp/kubeconfig
+    KUBE_CONFIG: $RKE_KUBECONFIG  # Закодированный в Base64 файл конфига
   script:
-    - echo $KUBE_CONFIG | base64 -d > $KUBECONFIG
-    - chmod 600 $KUBECONFIG
+    - echo $KUBE_CONFIG | base64 -d > /tmp/kubeconfig
+    - export KUBECONFIG=/tmp/kubeconfig
     - kubectl apply -f k8s/
-```
-
-**GitHub Actions:**
-
-```yaml
-- name: Set up kubeconfig
-  run: |
-    mkdir -p ~/.kube
-    echo "${{ secrets.RKE_KUBECONFIG }}" | base64 -d > ~/.kube/config
-    chmod 600 ~/.kube/config
-
-- name: Deploy to RKE
-  run: kubectl apply -f k8s/
 ```
 
 ## Дополнительная информация
 
-**Полезные команды для диагностики:**
+**Резервное копирование etcd:**
 
-```bash
-# Проверка событий кластера
-kubectl get events --all-namespaces --sort-by='.lastTimestamp'
+Рекомендуется настроить автоматическое сохранение снимков `etcd` в S3-совместимое хранилище в секции `services.etcd` файла `cluster.yml`.
 
-# Проверка ресурсов узла
-kubectl top nodes
-kubectl top pods --all-namespaces
+**См. также:**
 
-# Проверка persistent volumes
-kubectl get pv,pvc --all-namespaces
-```
-
-**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md), [kubeadm: Быстрый старт](../kubeadm/index.md).
+* [RKE: Основные концепции](./rke_concepts.md)
+* [RKE: Установка kubectl и настройка доступа](./rke_kubectl_setup.md)
+* [Обзор поиска неисправностей в Kubernetes](../../Troubleshooting/troubleshooting_overview.md)

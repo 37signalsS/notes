@@ -19,6 +19,8 @@
 Kubernetes предъявляет специфические требования к ОС:
 
 - **Отключенный SWAP** — `kubelet` не работает с SWAP
+- **Отключенный Firewall** — предотвращение блокировки межподового и сервисного трафика
+- **SELinux в режиме Permissive/Disabled** — предотвращение блокировки доступа к файловой системе и сокетам
 - **cgroups v2** — требуется для управления ресурсами подов
 - **Сетевые модули** — `br_netfilter`, `overlay` для работы CNI
 - **Sysctl параметры** — включение IP forwarding, iptables для сетевой политики
@@ -110,7 +112,36 @@ sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 swapon --show | wc -l
 ```
 
-### Шаг 5: Настройка cgroups v2 в GRUB
+### Шаг 5: Отключение Firewall
+
+Для корректной работы сетевых плагинов (CNI) и маршрутизации трафика рекомендуется отключить встроенные службы фильтрации или настроить их согласно [официальным портам K8s](https://kubernetes.io/docs/reference/networking/ports-and-protocols/).
+
+#### Ubuntu (ufw)
+
+```bash
+sudo ufw disable
+```
+
+#### RHEL/CentOS/Rocky (firewalld)
+
+```bash
+sudo systemctl stop firewalld
+sudo systemctl disable firewalld
+```
+
+### Шаг 6: Настройка SELinux
+
+Для Kubernetes рекомендуется перевести SELinux в режим `permissive` (особенно на RHEL-based системах).
+
+```bash
+# Временное отключение
+sudo setenforce 0
+
+# Перманентное отключение (требуется перезагрузка для полной смены контекстов, но Permissive применяется сразу)
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+```
+
+### Шаг 7: Настройка cgroups v2 в GRUB
 
 ```bash
 # Добавить параметр ядра для включения cgroups v2
@@ -123,7 +154,7 @@ sudo update-grub
 grep GRUB_CMDLINE_LINUX /etc/default/grub
 ```
 
-### Шаг 6: Загрузка сетевых модулей
+### Шаг 8: Загрузка сетевых модулей
 
 ```bash
 # Загрузить модули немедленно
@@ -137,7 +168,7 @@ echo -e "br_netfilter\noverlay" | sudo tee /etc/modules-load.d/k8s.conf
 lsmod | grep -E "br_netfilter|overlay"
 ```
 
-### Шаг 7: Настройка sysctl параметров
+### Шаг 9: Настройка sysctl параметров
 
 ```bash
 # Создать конфигурационный файл
@@ -161,7 +192,7 @@ sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables net.bridge.bridge-
 - `bridge-nf-call-iptables = 1` — передача трафика bridge через iptables (требуется для NetworkPolicy)
 - `nf_conntrack_max` — максимальное количество отслеживаемых соединений
 
-### Шаг 8: Итоговая проверка готовности
+### Шаг 10: Итоговая проверка готовности
 
 ```bash
 echo "=== Проверка готовности узла ==="

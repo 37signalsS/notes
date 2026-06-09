@@ -30,7 +30,7 @@
 
 **Исходное состояние:**
 
-```
+```text
       D---E <-- feature
      /
 A---B---C <-- main
@@ -38,7 +38,7 @@ A---B---C <-- main
 
 **Результат после `git merge feature` в ветке `main`:**
 
-```
+```text
       D---E
      /     \
 A---B---C---F <-- main, feature
@@ -53,7 +53,7 @@ A---B---C---F <-- main, feature
 
 **Исходное состояние:**
 
-```
+```text
       D---E <-- feature
      /
 A---B---C <-- main
@@ -61,7 +61,7 @@ A---B---C <-- main
 
 **Результат после `git rebase main` в ветке `feature`:**
 
-```
+```text
 A---B---C---D'---E' <-- feature
 ```
 

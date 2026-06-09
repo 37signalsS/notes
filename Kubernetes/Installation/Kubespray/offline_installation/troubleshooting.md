@@ -1,75 +1,49 @@
-# Kubespray: Offline установка — Troubleshooting
+# Kubespray: Offline-установка — Устранение неполадок
 
 ## Определения
 
-**Troubleshooting** — процесс диагностики и устранения проблем, возникающих при развёртывании и эксплуатации offline-кластера Kubernetes.
+**Диагностика (Troubleshooting)** — процесс идентификации, анализа и устранения технических неисправностей, возникающих на различных этапах развёртывания и эксплуатации кластера в закрытом контуре.
 
-**ImagePullBackOff** — статус pod'а, указывающий на невозможность загрузки контейнерного образа (подробнее в [Определениях](../../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md)).
+**Конфликт Digest** — несовпадение контрольной суммы образа **SHA (Secure Hash Algorithm)** при его переносе между реестрами, что часто блокирует запуск подов в offline-режиме.
 
-**SHA Digest** — хэш-идентификатор образа контейнера, который может изменяться при загрузке в локальный реестр Harbor.
+Общие определения ошибок Kubernetes приведены в **[глоссарии ошибок подов](../../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md)**.
 
 ---
 
 ## Основные концепции
 
-### Категории проблем offline-установки
+### Специфика диагностики в закрытом контуре
 
-| Категория | Типичные симптомы | SSoT для решения |
-| :--- | :--- | :--- |
-| **Авторизация containerd** | `Failed to pull image` | Ниже |
-| **Cilium image** | `SHA digest not found` | Ниже |
-| **Сетевые проблемы** | `Cluster health: N/5 reachable` | Ниже |
-| **Hubble DNS** | `i/o timeout` при резолве | Ниже |
-| **Ansible ошибки** | Playbook завершается ошибкой | Ниже |
-| **Node NotReady** | Узлы не в статусе `Ready` | [cluster_verification.md](./cluster_verification.md) |
+Большинство проблем при offline-установке связано с недоступностью ресурсов. Если в online-режиме отсутствующий компонент просто скачивается, то в закрытом контуре это приводит к критической остановке процесса.
 
-### Общий подход к диагностике
+**Основные зоны риска:**
 
-1. **Идентификация симптома** — определить точную ошибку из логов
-2. **Локализация компонента** — определить затронутый компонент (Cilium, Harbor, Ansible)
-3. **Применение решения** — выполнить шаги из соответствующего раздела
-4. **Верификация** — проверить устранение проблемы
+- **Реестр образов (Harbor):** ошибки авторизации, неправильное тегирование, отсутствие проекта.
+- **Сетевая связность (Cilium):** блокировки трафика на уровне ядра или гипервизора (MTU, инкапсуляция).
+- **Разрешение имен DNS (Domain Name System):** попытки подов обратиться к внешним серверам вместо локальных.
+- **Инвентарь (Ansible):** несоответствие IP-адресов в конфигурации реальному состоянию сети.
 
 ---
 
 ## Практические сценарии
 
-### Проблемы с авторизацией containerd
+### 1. Ошибки ImagePullBackOff в изолированной среде
 
-#### Симптом
+Наиболее частая проблема, связанная с реестром.
 
-```
-Failed to pull image "harbor.domain.local/k8s/quay.io/cilium/cilium:v1.18.5"
-```
+**Симптом:** Поды не запускаются с ошибкой `Failed to pull image`.
+**Диагностика:** `kubectl describe pod <pod-name> -n kube-system`.
+**Решения:**
 
-#### Причина
+- **Публичный доступ:** Убедитесь, что проект `k8s` в Harbor помечен как **Public**. Containerd на начальных этапах может не использовать учетные данные из конфигов.
+- **Проверка тега:** Сверьте путь в ошибке с реальным путем в Harbor. По умолчанию Kubespray ожидает структуру `harbor.domain.local/k8s/registry.k8s.io/...`.
 
-Проект `k8s` в Harbor не является публичным. Containerd не считывает логин/пароль из файла конфигурации автоматически.
+### 2. Проблема Cilium: несовпадение SHA Digest
 
-#### Решение
+Cilium по умолчанию проверяет digest (хэш) образа. При импорте в Harbor хэш часто меняется, что блокирует запуск.
 
-Проверить в веб-интерфейсе Harbor:
-
-```
-Projects → k8s → Public → должен быть включен
-```
-
----
-
-### Проблемы с Cilium
-
-#### Cilium image с SHA digest
-
-**Симптом:**
-
-```
-Failed to pull image "harbor.domain.local/k8s/quay.io/cilium/cilium:v1.18.5@sha256:..."
-rpc error: code = NotFound desc = failed to pull and unpack image
-```
-
-**Причина:** При загрузке в Harbor SHA образов изменяется.
-
-**Решение:** Отключить проверку digest в файле `group_vars/k8s_cluster/k8s-net-cilium.yml`:
+**Симптом:** Ошибка `rpc error: code = NotFound desc = failed to pull and unpack image` при наличии образа в реестре.
+**Решение:** Отключите проверку digest в файле `group_vars/k8s_cluster/k8s-net-cilium.yml`:
 
 ```yaml
 cilium_extra_values:
@@ -77,220 +51,42 @@ cilium_extra_values:
     useDigest: false
     digest: ""
   operator:
-    image:
-      useDigest: false
-      digest: ""
-  envoy:
-    image:
-      useDigest: false
-      digest: ""
-  hubble:
-    relay:
-      image:
-        useDigest: false
-        digest: ""
-    ui:
-      backend:
-        image:
-          useDigest: false
-          digest: ""
-      frontend:
-        image:
-          useDigest: false
-          digest: ""
+    image: { useDigest: false, digest: "" }
+  # Примените аналогично для envoy, relay и hubble-ui
 ```
 
-**Применение изменений:**
+**Применение:** Запустите плейбук с тегом: `ansible-playbook -i ... cluster.yml --tags cilium`.
 
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "cilium,network" -v
-```
+### 3. Низкая сетевая связность в виртуальной среде (VMware)
 
-#### Cilium-operator image не найден
+Проблемы с инкапсуляцией трафика Cilium на виртуальных портах.
 
-**Симптом:**
-
-```
-Failed to pull image "harbor.domain.local/k8s/quay.io/cilium/operator-generic:v1.18.5"
-```
-
-**Причина:** Образ не загружается автоматически через Kubespray.
-
-**Решение:** Скачать и запушить вручную:
-
-```bash
-# На машине с интернетом
-docker pull quay.io/cilium/operator-generic:v1.18.5
-docker tag quay.io/cilium/operator-generic:v1.18.5 \
-  harbor.domain.local/k8s/quay.io/cilium/operator-generic:v1.18.5
-docker push harbor.domain.local/k8s/quay.io/cilium/operator-generic:v1.18.5
-
-# В закрытом контуре перезапустить pod
-kubectl delete po -n kube-system -l name=cilium-operator
-```
-
-#### Permission denied для cilium-mount
-
-**Симптом:**
-
-```
-cp: cannot create regular file '/hostbin/cilium-mount': Permission denied
-```
-
-**Решение:** В файле `group_vars/k8s_cluster/k8s-cluster.yml`:
-
-```yaml
-# This is the user that owns the cluster installation.
-# Note: cilium needs to set kube_owner to root
-kube_owner: root
-```
-
-#### Cilium не поднимается на VMware
-
-**Симптом:**
-
-```
-Cluster health: 1/5 reachable
-```
-
-**Причина:** VMware плохо дружит с Cilium на дефолтном порту.
-
-**Решение:** Изменить tunnel mode на geneve в файле `group_vars/k8s_cluster/k8s-net-cilium.yml`:
+**Симптом:** `Cluster health: 1/N reachable`.
+**Причина:** Некорректный **MTU (Maximum Transmission Unit)** или блокировка **VXLAN (Virtual Extensible LAN)** / Geneve трафика гипервизором.
+**Решение:** Переключитесь на протокол Geneve и уменьшите MTU в `group_vars/k8s_cluster/k8s-net-cilium.yml`:
 
 ```yaml
 cilium_tunnel_mode: geneve
 cilium_mtu: "1450"
 ```
 
-**Перезапуск:**
+### 4. Ошибки Ansible при установке
 
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "cilium,network" -v
-
-kubectl -n kube-system rollout restart ds/cilium
-kubectl -n kube-system rollout status ds/cilium
-```
-
-**Проверка:**
-
-```bash
-kubectl -n kube-system exec -it ds/cilium -- cilium status | \
-  egrep -i 'KubeProxyReplacement|Cluster health'
-```
-
-**Ожидаемый вывод:**
-
-```
-KubeProxyReplacement:    True   [ens33  192.168.1.104 (Direct Routing)]
-Cluster health:          5/5 reachable
-```
-
-#### ImagePullPolicy требует обновления
-
-**Симптом:** Pod не подтягивает обновленный образ.
-
-**Решение:**
-
-```bash
-# Проверить текущую политику
-kubectl -n kube-system get deploy cilium-operator \
-  -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}{"\n"}'
-
-# Временно изменить на Always
-kubectl -n kube-system patch deploy cilium-operator --type='json' \
-  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Always"}]'
-
-# Пересоздать pod
-kubectl delete po -n kube-system -l name=cilium-operator
-
-# Вернуть обратно на IfNotPresent
-kubectl -n kube-system patch deploy cilium-operator --type='json' \
-  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
-```
-
----
-
-### Проблемы с Hubble
-
-#### Hubble-relay не резолвит DNS
-
-**Симптом:**
-
-```
-A record lookup error: lookup hubble-peer.kube-system.svc.k8s.domain.local
-on 169.254.25.10:53: read udp 10.233.67.64:56328->169.254.25.10:53: i/o timeout
-```
-
-**Решение:** Добавить в файл `k8s-net-cilium.yml`:
-
-```yaml
-cilium_kube_proxy_replacement: true
-```
-
-**Перезапуск с тегами:**
-
-```bash
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b --tags "cilium,network,kubernetes-apps" -v
-
-kubectl delete po -l k8s-app=hubble-relay -n kube-system
-```
-
----
-
-### Общие проблемы
-
-#### Pod в статусе ImagePullBackOff
-
-**Диагностика:**
-
-```bash
-kubectl describe pod <pod-name> -n kube-system
-kubectl logs <pod-name> -n kube-system
-```
-
-**Возможные причины:**
-
-1. Образ не загружен в Harbor
-2. Неправильный тег образа
-3. Проблемы с авторизацией
-4. Проект Harbor не публичный
-
-#### Ansible playbook завершается ошибкой
-
-**Диагностика:**
-
-```bash
-# Запуск с подробным логом
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin -vvv
-
-# Запуск только для конкретного хоста
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin --limit master-1-k8s
-```
-
-#### Ноды не в статусе Ready
-
-Полная диагностика описана в [cluster_verification.md](./cluster_verification.md#Диагностика-проблем).
-
-**Краткая проверка:**
-
-```bash
-kubectl get nodes
-kubectl describe node <node-name>
-
-# Проверка kubelet
-systemctl status kubelet
-journalctl -u kubelet -f
-```
+**Диагностика:** Запустите плейбук с повышенной вербозностью (`-vvv`) для получения детального вывода ошибки.
+**Частая причина:** Несоответствие `kube_owner: root` в `group_vars/k8s_cluster/k8s-cluster.yml`, что приводит к ошибкам прав доступа при монтировании директорий Cilium.
 
 ---
 
 ## Дополнительная информация
 
+### Инструменты диагностики на узлах
+
+- **crictl:** используйте `sudo crictl images` и `sudo crictl pods` для проверки состояния на уровне runtime.
+- **journalctl:** логи `kubelet` (`journalctl -u kubelet -f`) — лучший источник информации о проблемах старта узла.
+- **hubble:** используйте **CLI (Command Line Interface)** внутри подов Cilium для анализа отброшенных пакетов (`hubble observe --type drop`).
+
 ### Связанные темы
 
-Базовые термины описаны в [определениях offline-установки](./offline_definitions.md), принципы — в [основных концепциях](./offline_concepts.md). Полная проверка кластера — в [cluster_verification.md](./cluster_verification.md), управление после установки — в [post_install_management.md](./post_install_management.md). Обзор этапов — в [offline_practical.md](./offline_practical.md).
+- **[Проверка кластера](./cluster_verification.md)** — регламент валидации систем.
+- **[План offline-установки](./offline_practical.md)** — дорожная карта проекта.
+- **[Общая диагностика Air-gapped](../../../Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)**.

@@ -232,4 +232,4 @@ unset GIT_SSH_COMMAND # Отключить отладку
 
 ### Связанные темы
 
-Основы Git в [git_basics.md](./git_basics.md). Ветвление и слияние в [git_branching.md](./git_branching.md). Манипуляции с историей в [git_history_manipulation.md](./git_history_manipulation.md). Настройка Git в [git_configuration.md](./git_configuration.md). Оптимизация производительности в [git_performance.md](./git_performance.md).
+Ветвление и слияние в [git_branching.md](./git_branching.md). Манипуляции с историей в [git_history_manipulation.md](./git_history_manipulation.md). Оптимизация производительности в [git_performance.md](./git_performance.md).

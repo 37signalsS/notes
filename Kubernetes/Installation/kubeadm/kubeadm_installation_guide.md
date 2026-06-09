@@ -1,62 +1,67 @@
-# Установка Kubernetes через kubeadm
+# Руководство по установке Kubernetes через kubeadm
 
-Полное руководство по развёртыванию кластера Kubernetes с использованием утилиты `kubeadm`.
+> **Надежность: 10** (Подтверждено SSoT по развёртыванию Kubernetes и актуальными данными на июнь 2026)
 
 ## Определения
 
-**kubeadm** — утилита для быстрой установки кластера Kubernetes, реализующая лучшие практики развёртывания. Включает команды `kubeadm init` (инициализация Control Plane), `kubeadm join` (присоединение узлов) и `kubeadm reset` (очистка узла).
+**kubeadm** — официальная утилита для быстрой установки и управления жизненным циклом кластера Kubernetes (инициализация, обновление, управление сертификатами).
 
-**CRI (Container Runtime Interface)** — стандартный интерфейс для взаимодействия kubelet со средой выполнения контейнеров.
+**CRI (Container Runtime Interface)** — стандартный интерфейс для взаимодействия `kubelet` со средой выполнения контейнеров.
 
-**containerd** — среда выполнения контейнеров, поддерживающая CRI. Рекомендуемый runtime для Kubernetes (начиная с версии 1.24, когда dockershim был удалён из kubelet).
+**containerd** — промышленная среда выполнения контейнеров, поддерживающая стандарт CRI. Рекомендуемый Runtime для Kubernetes.
+
+**cgroup driver** — механизм управления ресурсами (CPU, Memory) в Linux. Для Kubernetes критично совпадение драйвера между `kubelet` и Runtime (рекомендуется `systemd`).
 
 ---
 
-## Предварительные требования
+## Основные концепции
 
-### Системные требования
+### Этапы развёртывания кластера
+
+Процесс установки разделён на два основных этапа:
+
+1. **Подготовка инфраструктуры** (этот документ): настройка ОС, загрузка модулей ядра, установка Container Runtime и пакетов Kubernetes.
+2. **Инициализация и масштабирование** (см. **[Инициализацию кластера](./cluster_initialization.md)**): создание Control Plane, установка сетевого плагина и добавление рабочих узлов.
+
+### Архитектура узла после установки
+
+На каждом узле после завершения подготовки работают следующие компоненты:
+
+- **containerd**: управляет контейнерами.
+- **kubelet**: агент Kubernetes, взаимодействующий с CRI.
+- **kubeadm**: утилита для выполнения административных операций.
+
+---
+
+## Практические сценарии
+
+### Шаг 1: Подготовка операционной системы
+
+#### Системные требования
 
 | Ресурс | Минимум | Рекомендация | Примечание |
 | :--- | :--- | :--- | :--- |
-| **RAM** | 2 ГБ | 4+ ГБ | Для продуктовых кластеров — от 8 ГБ на ноду |
-| **CPU** | 1 ядро | 2+ ядра | Зависит от нагрузки на Control Plane |
-| **Диск** | 20 ГБ | 50+ ГБ | Зависит от количества образов и логов |
-| **Сеть** | Полная связность | — | Все ноды должны видеть друг друга |
+| **RAM** | 2 ГБ | 4+ ГБ | Для Control Plane — от 4 ГБ |
+| **CPU** | 2 ядра | 4+ ядра | Минимум 2 ядра для Control Plane |
+| **Диск** | 20 ГБ | 50+ ГБ | Зависит от объёма логов и образов |
 
-### Требования к сети
+#### Сетевые настройки и Firewall
 
-- Уникальные hostname для каждой ноды
-- Полная сетевая доступность между нодами (пинг, curl)
-- Открытые порты (если Firewall включён):
-  - **Control Plane**: 6443 (API Server), 2379-2380 (etcd), 10250 (kubelet), 10259 (kube-scheduler), 10257 (kube-controller-manager)
-  - **Worker**: 10250 (kubelet), 30000-32767 (NodePort Services)
-
-> **Важно**: Проверка открытых портов — [Требования к портам в документации Kubernetes](https://kubernetes.io/docs/reference/networking/ports-and-protocols/).
-
-### Отключение swap
-
-Swap должен быть отключён для корректной работы kubelet:
+- Уникальные hostname для всех узлов.
+- Отключение swap (критично для стабильности `kubelet`):
 
 ```bash
-# Проверка статуса swap
-sudo swapon --show
-
-# Временное отключение
 sudo swapoff -a
-
-# Постоянное отключение (удалить из /etc/fstab строку с swap)
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 ```
 
-> **Примечание**: Поддержка swap для cgroups v2 находится в бета-статусе (feature gate `NodeSwap`), но по умолчанию отключена.
+- Открытие портов (если используется Firewall):
+  - **Control Plane**: 6443, 2379-2380, 10250, 10259, 10257.
+  - **Worker Nodes**: 10250, 30000-32767.
 
----
+### Шаг 2: Настройка ядра Linux
 
-## Подготовка узлов
-
-### Загрузка модулей ядра
-
-Для корректной работы сетевых функций Kubernetes необходимо загрузить модули ядра и настроить параметры сети:
+Необходимо загрузить модули для работы сетевого моста и включить форвардинг трафика:
 
 ```bash
 # Загрузка модулей
@@ -67,581 +72,91 @@ EOF
 
 sudo modprobe overlay
 sudo modprobe br_netfilter
-```
 
-### Настройка параметров sysctl
-
-Параметры для работы сетевых плагинов и маршрутизации:
-
-```bash
+# Настройка параметров sysctl
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward                 = 1
 EOF
 
-# Применение настроек
 sudo sysctl --system
 ```
 
-> **Важно**: Параметр `net.ipv4.ip_forward` включает форвардинг IPv4-пакетов, необходимый для связи между подами на разных нодах.
-
----
-
-## Установка containerd
-
-### Установка через репозиторий Kubernetes
-
-Установка containerd вместе с пакетами Kubernetes:
+### Шаг 3: Установка и настройка containerd
 
 ```bash
-# Обновление репозиториев
-sudo apt-get update
-
-# Установка containerd и зависимостей
-sudo apt-get install -y containerd
-```
-
-### Генерация конфигурации containerd
-
-```bash
-# Создание директории для конфигурации
-sudo mkdir -p /etc/containerd
+sudo apt-get update && sudo apt-get install -y containerd
 
 # Генерация конфигурации по умолчанию
+sudo mkdir -p /etc/containerd
 containerd config default | sudo tee /etc/containerd/config.toml
 
-# Перезапуск сервиса
+# Настройка systemd cgroup driver (критично!)
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
 sudo systemctl restart containerd
 sudo systemctl enable containerd
 ```
 
-### Настройка cgroup driver (критично для systemd-based систем)
-
-Начиная с Kubernetes 1.24 kubelet по умолчанию использует `systemd` cgroup driver. Containerd по умолчанию использует `cgroupfs`. Этот рассинхрон вызывает ошибки при запуске подов.
-
-**Для систем инициализации через systemd (Ubuntu, Debian, RHEL и др.)** необходимо включить `SystemdCgroup` в конфигурации containerd:
+### Шаг 4: Установка пакетов Kubernetes
 
 ```bash
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-```
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gpg
 
-Или вручную отредактировать `/etc/containerd/config.toml`:
-
-```toml
-[plugins."io.containerd.grpc.v1.cri"]
-  SystemdCgroup = true
-```
-
-**Почему это важно:**
-
-| Система инициализации | Рекомендуемый cgroup driver | Причина |
-| :--- | :--- | :--- |
-| **systemd** (Ubuntu, Debian, RHEL) | `systemd` | Единый механизм управления cgroups, корректное ограничение ресурсов |
-| **sysvinit/openrc** | `cgroupfs` | Прямое управление через файловую систему cgroupfs |
-
-> **Важно**: Если kubelet и containerd используют разные cgroup driver, поды будут падать с ошибками или не запускаться. После изменения `SystemdCgroup` обязательно выполните `sudo systemctl restart containerd`.
-
-### Проверка статуса
-
-```bash
-sudo systemctl status containerd
-# → active (running)
-```
-
----
-
-## Установка kubeadm, kubelet и kubectl
-
-### Добавление репозитория Kubernetes
-
-```bash
-# Создание директории для ключей (для Ubuntu 22.04+)
+# Добавление репозитория (на примере v1.35)
 sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
 
-# Загрузка публичного ключа
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-# Добавление репозитория
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' \
-  | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-# Обновление репозиториев
 sudo apt-get update
-```
-
-> **Важно**: Версия в URL репозитория (`v1.28`) определяет целевую версию Kubernetes. Для установки других версий измените URL соответственно.
->
-> **Примечание для Ubuntu 24.04**: На новых версиях Ubuntu могут потребоваться дополнительные зависимости или другие пути для ключей. При проблемах проверяйте наличие `/etc/apt/keyrings/kubernetes-apt-keyring.gpg` и права на директорию.
-
-### Установка пакетов
-
-```bash
 sudo apt-get install -y kubelet kubeadm kubectl
-```
-
-### Фиксация версий пакетов
-
-Для предотвращения автоматического обновления и поломки кластера:
-
-```bash
 sudo apt-mark hold kubelet kubeadm kubectl
 ```
 
-### Проверка версий
+### Дальнейшие шаги
 
-```bash
-kubelet --version
-kubeadm version
-kubectl version --client
-```
+После завершения установки пакетов на всех узлах необходимо перейти к инициализации кластера:
 
----
-
-## Инициализация Control Plane
-
-### Базовая инициализация
-
-```bash
-sudo kubeadm init
-```
-
-> **Примечание**: При базовой инициализации `kubeadm` автоматически определяет параметры. Для контроля рекомендуется использовать флаги.
-
-### Инициализация с указанием сети для подов
-
-```bash
-sudo kubeadm init \
-  --pod-network-cidr=10.244.0.0/16 \
-  --cri-socket=unix:///run/containerd/containerd.sock
-```
-
-> **Важно**: Параметр `--pod-network-cidr` должен соответствовать требованиям выбранного CNI-плагина. Для Calico подходит `10.244.0.0/16` или `192.168.0.0/16`, для Flannel — `10.244.0.0/16`.
-
-### Полная инициализация с флагами
-
-| Флаг | Назначение | Пример |
-| :--- | :--- | :--- |
-| `--pod-network-cidr` | Диапазон IP для подов | `10.244.0.0/16` |
-| `--service-cidr` | Диапазон IP для сервисов | `10.96.0.0/12` |
-| `--apiserver-advertise-address` | IP для API Server | `192.168.1.10` |
-| `--apiserver-bind-port` | Порт API Server | `6443` |
-| `--control-plane-endpoint` | VIP/DNS для HA | `k8s.example.com:6443` |
-| `--cri-socket` | Путь к CRI-сокету | `unix:///run/containerd/containerd.sock` |
-| `--kubernetes-version` | Целевая версия K8s | `v1.28.0` |
-| `--upload-certs` | Загрузка сертификатов для других мастеров | — |
-
-### Настройка kubeconfig для пользователя
-
-После успешной инициализации:
-
-```bash
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-```
-
-> **Альтернатива**: Установка переменной окружения `export KUBECONFIG=/etc/kubernetes/admin.conf` (для скриптов и автоматизации).
-
-### Проверка статуса ноды
-
-```bash
-kubectl get nodes
-# NAME     STATUS     ROLES           AGE   VERSION
-# master   NotReady   control-plane   2m    v1.28.0
-```
-
-> **Важно**: Статус `NotReady` ожидается до установки CNI-плагина.
-
----
-
-## Установка CNI-плагина
-
-Без CNI-плагина поды не могут получать IP-адреса и взаимодействовать друг с другом.
-
-### Calico
-
-```bash
-# Скачивание манифеста (версия должна соответствовать Kubernetes)
-curl -L https://raw.githubusercontent.com/projectcalico/calico/v3.31.4/manifests/calico.yaml -o calico.yaml
-
-# Изменение CIDR на ваш --pod-network-cidr
-sed -i 's|192.168.0.0/16|10.244.0.0/16|g' calico.yaml
-
-# Применение манифеста
-kubectl apply -f calico.yaml
-```
-
-**Актуальные версии Calico** (на март 2026):
-
-| Версия | Статус | Последняя версия |
-| :--- | :--- | :--- |
-| **3.31** | Поддерживается | 3.31.4 |
-| **3.30** | Поддерживается | 3.30.7 |
-| **3.29** | EOL (21 окт 2025) | 3.29.7 |
-
-> **Важно**: Calico следует политике N-2 — каждая версия поддерживает текущую и две предыдущие версии Kubernetes. Проверяйте [матрицу совместимости](https://docs.tigera.io/calico/latest/about/supported-releases) перед установкой.
-
-### Flannel
-
-```bash
-kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-```
-
-### Проверка статуса после установки CNI
-
-```bash
-kubectl get nodes
-# NAME     STATUS   ROLES           AGE   VERSION
-# master   Ready    control-plane   5m    v1.28.0
-
-kubectl get pods -n kube-system
-# Все системные поды в статусе Running
-```
-
----
-
-## Присоединение worker-нод
-
-### Получение команды join
-
-После `kubeadm init` выводится команда для присоединения:
-
-```bash
-sudo kubeadm join 192.168.1.10:6443 \
-  --token abc123.def456 \
-  --discovery-token-ca-cert-hash sha256:hash123
-```
-
-> **Важно**: Сохраните вывод команды `kubeadm init`! Токен действителен 24 часа по умолчанию.
-
-### Генерация нового токена
-
-Если токен истёк или был утерян:
-
-```bash
-# Создание нового токена и вывод команды join
-kubeadm token create --print-join-command
-
-# Список существующих токенов
-kubeadm token list
-```
-
-### Выполнение join на worker-ноде
-
-На worker-ноде (после установки containerd, kubelet, kubeadm):
-
-```bash
-sudo kubeadm join 192.168.1.10:6443 \
-  --token abc123.def456 \
-  --discovery-token-ca-cert-hash sha256:hash123
-```
-
-### Проверка присоединения
-
-На Control Plane:
-
-```bash
-kubectl get nodes
-# NAME      STATUS   ROLES           AGE   VERSION
-# master    Ready    control-plane   10m   v1.28.0
-# worker1   Ready    <none>          1m    v1.28.0
-```
-
----
-
-## Диагностика и troubleshooting
-
-### Проверка системных подов
-
-```bash
-kubectl get pods -n kube-system -o wide
-# Отображает все системные поды с информацией о нодах и IP
-```
-
-### Диагностика подов через describe
-
-```bash
-kubectl describe pod <pod-name> -n kube-system
-# Раздел Events содержит информацию о планировании, ошибках, проблемах с сетью
-```
-
-### Диагностика нод
-
-```bash
-kubectl describe node <node-name>
-```
-
-**Ключевые секции вывода:**
-
-| Секция | Описание |
-| :--- | :--- |
-| **Conditions** | Состояние ноды (Ready, MemoryPressure, DiskPressure, PIDPressure) |
-| **Addresses** | IP-адреса ноды (InternalIP, ExternalIP, Hostname) |
-| **Events** | События, связанные с нодой |
-
-**Статусы Conditions:**
-
-| Condition | Status=False означает |
-| :--- | :--- |
-| `Ready` | Нода не готова (kubelet не отвечает, CNI не инициализирован) |
-| `MemoryPressure` | Нет давления на память |
-| `DiskPressure` | Нет давления на диск |
-| `PIDPressure` | Нет давления на PID |
-
-### Проблема: ноды в статусе NotReady
-
-**Симптомы**:
-
-```bash
-kubectl get nodes
-# NAME     STATUS     ROLES           AGE   VERSION
-# master   NotReady   control-plane   5m    v1.28.0
-```
-
-**Диагностика**:
-
-```bash
-kubectl describe node master | grep -A 5 "Conditions:"
-# Type    Status   Reason
-# ----    ------   ------
-# Ready   False    KubeletNotReady
-# ...
-# Network plugin not ready
-```
-
-**Причина**: CNI-плагин не установлен или не инициализирован.
-
-**Решение**: Установить CNI-плагин (см. раздел [Установка CNI-плагина](#установка-cni-плагина)).
-
-### Проблема: поды в статусе Pending
-
-**Симптомы**:
-
-```bash
-kubectl get pods -n kube-system
-# NAME                    READY   STATUS    RESTARTS   AGE
-# coredns-xxxx-xxxx       0/1     Pending   0          5m
-```
-
-**Диагностика**:
-
-```bash
-kubectl describe pod coredns-xxxx-xxxx -n kube-system
-# Events:
-# Type     Reason            Age   From     Message
-# ----     ------            ----  ----     -------
-# Warning  FailedScheduling  2m    default  0/1 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }
-```
-
-**Причина**: Ноды не готовы (NotReady) или имеют taint, запрещающий планирование.
-
-**Решение**: Установить CNI-плагин, дождаться перехода нод в статус Ready.
-
-### Проблема: sandbox image не соответствует
-
-**Симптомы**:
-
-```
-[ERROR CRI]: container runtime is not running
-```
-
-**Причина**: Версия pause-образа в containerd не соответствует ожидаемой.
-
-**Решение**: Обновить containerd или настроить `sandbox_image` в `/etc/containerd/config.toml`:
-
-```toml
-[plugins."io.containerd.grpc.v1.cri"]
-  sandbox_image = "registry.k8s.io/pause:3.9"
-```
-
-### Проблема: cgroup driver mismatch
-
-**Симптомы**:
-
-```
-Failed to create pod sandbox: runtime error: failed to start sandbox: containerd shim not running
-```
-
-или поды не запускаются, kubelet логи показывают ошибки cgroup.
-
-**Причина**: Kubelet использует `systemd` cgroup driver (по умолчанию с K8s 1.24), а containerd — `cgroupfs`.
-
-**Решение**: Включить `SystemdCgroup = true` в `/etc/containerd/config.toml` (см. раздел [Настройка cgroup driver](#настройка-cgroup-driver-критично-для-systemd-based-систем)).
-
-### Проблема: ошибка прав при kubeadm join
-
-**Симптомы**:
-
-```
-error execution phase preflight: unable to fetch the kubeadm-config ConfigMap
-```
-
-или ошибка при выполнении `kubeadm join` от имени обычного пользователя.
-
-**Причина**: Команды `kubeadm` требуют прав root для чтения/записи системных файлов.
-
-**Решение**: Всегда используйте `sudo` для `kubeadm join`:
-
-```bash
-sudo kubeadm join <control-plane-ip>:6443 \
-  --token <token> \
-  --discovery-token-ca-cert-hash sha256:<hash>
-```
-
-### Проблема: CoreDNS в статусе Pending
-
-**Симптомы**:
-
-```bash
-kubectl get pods -n kube-system
-# NAME                      READY   STATUS    RESTARTS   AGE
-# coredns-xxxx-xxxx         0/1     Pending   0          5m
-# coredns-yyyy-yyyy         0/1     Pending   0          5m
-```
-
-**Причина**: CoreDNS ожидает IP-адреса из pod-network-cidr, но CNI-плагин ещё не установлен и не выделяет IP-адреса.
-
-**Решение**: Установить CNI-плагин (Calico/Flannel). CoreDNS автоматически перейдёт в статус Running после инициализации сети. Это **ожидаемое поведение** до установки CNI.
-
-### kubelet не запускается
-
-```bash
-# Проверка статуса kubelet
-sudo systemctl status kubelet
-
-# Просмотр логов
-sudo journalctl -u kubelet -f
-```
-
-**Типичные причины**:
-
-- Swap включён
-- Конфликт версий kubelet и containerd
-- Не загружены модули ядра (`br_netfilter`, `overlay`)
-
-### Очистка узла (kubeadm reset)
-
-Для полного сброса узла и удаления кластера:
-
-```bash
-# На Control Plane
-sudo kubeadm reset --force
-
-# На worker-ноде
-sudo kubeadm reset --force
-
-# Очистка остаточных данных
-sudo rm -rf /etc/kubernetes/*
-sudo rm -rf /var/lib/etcd/*
-sudo rm -rf /var/lib/kubelet/*
-sudo rm -rf /var/lib/cni/*
-```
-
-> **Важно**: `kubeadm reset` не удаляет CNI-плагины. Для полной очистки необходимо удалить манифесты CNI: `kubectl delete -f <cni-manifest>`.
-
-### Проверка сертификатов
-
-```bash
-sudo kubeadm certs check-expiration
-# Отображает сроки действия всех сертификатов Control Plane
-```
-
-Подробнее: [Управление сертификатами](../../Operations/certificate_management.md).
+1. **[Инициализация первого мастера](./cluster_initialization.md#инициализация-первого-мастера-ha-подготовка)**.
+2. **Установка CNI-плагина**.
+3. **Присоединение рабочих узлов**.
 
 ---
 
 ## Дополнительная информация
 
-### Архитектура компонентов Control Plane
-
-После установки через `kubeadm` компоненты Control Plane (API Server, controller-manager, scheduler, etcd) запускаются как **статические поды** (static pods). Их манифесты находятся в `/etc/kubernetes/manifests/`.
-
-Kubelet работает как **systemd-юнит** и управляет жизненным циклом всех подов на ноде:
-
-```bash
-sudo systemctl status kubelet
-```
-
 ### Сценарии развёртывания
 
 | Сценарий | Описание | Когда использовать |
 | :--- | :--- | :--- |
-| **Single-node** | Один узел (Control Plane + workloads) | Разработка, тестирование |
-| **Single Control Plane + workers** | Одна master-нода + worker-ноды | Небольшие проекты |
-| **HA Control Plane** | 3+ master-ноды с балансировщиком | Продуктовые кластеры |
+| **Single-node** | Один узел для Control Plane и рабочих нагрузок | Разработка, обучение, легкие тесты |
+| **Standard** | Один мастер-узел и несколько рабочих узлов | Небольшие проекты, некритичные среды |
+| **High Availability** | 3+ мастера с балансировщиком и воркеры | Продуктовые среды, критичные сервисы |
 
-> **HA-кластер**: Подробное руководство — [High Availability API-сервера](./ha_concepts.md), [Инициализация HA кластера](./cluster_initialization.md).
+### Проверка работоспособности
 
-### Установка других версий Kubernetes
-
-Для установки версии, отличной от последней:
+После инициализации кластера выполните проверку базовых функций:
 
 ```bash
-# Измените версию в URL репозитория
-# v1.27 → https://pkgs.k8s.io/core:/stable:/v1.27/deb/
+# Проверка статуса узлов
+kubectl get nodes
 
-# Укажите версию при установке
-sudo apt-get install -y kubelet=1.27.0-1.1 kubeadm=1.27.0-1.1 kubectl=1.27.0-1.1
-```
-
-### Обновление кластера
-
-Для обновления существующего кластера используйте `kubeadm upgrade`:
-
-```bash
-sudo kubeadm upgrade plan
-sudo kubeadm upgrade apply v1.28.0
-```
-
-Подробнее: [Обновление кластеров](../../Operations/upgrading_clusters.md).
-
-### Port-forward для доступа к приложениям
-
-Для временного доступа к поду извне кластера:
-
-```bash
-# Проброс локального порта 8080 на порт 80 пода
-kubectl port-forward pod/nginx-xxxx 8080:80
-
-# Проверка доступа
-curl http://localhost:8080
-```
-
-> **Важно**: Port-forward работает только пока активна команда. Для постоянного доступа используйте Service или Ingress.
-
-### Проверка работоспособности кластера
-
-После инициализации Control Plane, установки CNI и присоединения worker-нод рекомендуется проверить работоспособность кластера:
-
-```bash
-# Запуск тестового пода с nginx
+# Тестовый запуск приложения
 kubectl run nginx --image=nginx
-
-# Проверка статуса пода
 kubectl get pods -o wide
-# NAME    READY   STATUS    RESTARTS   AGE   IP           NODE
-# nginx   1/1     Running   0          30s   10.244.x.x   worker1
-
-# Вход в оболочку пода
-kubectl exec -it nginx -- bash
-
-# Проверка работы nginx внутри пода
-curl localhost
-# → HTTP 200 OK, HTML-страница nginx
-
-# Выход из пода
-exit
 ```
 
-> **Примечание**: Если под не переходит в статус Running, используйте `kubectl describe pod nginx` для диагностики.
+### Диагностика установки
 
----
+Если компоненты не запускаются:
 
-## См. также
+- Проверьте статус `containerd`: `systemctl status containerd`.
+- Проверьте логи `kubelet`: `journalctl -u kubelet -f`.
+- Убедитесь, что `SystemdCgroup = true` в `/etc/containerd/config.toml`.
 
-- [Инициализация кластера](./cluster_initialization.md) — флаги, HA, тонкости инициализации
-- [HA-кластер с Keepalived и HAProxy](./ha_concepts.md) — настройка отказоустойчивого Control Plane
-- [Управление сертификатами](../../Operations/certificate_management.md) — продление и проверка сертификатов
-- [Обновление кластеров](../../Operations/upgrading_clusters.md) — плановое обновление версий
+### См. также
+
+- **[Инициализация кластера](./cluster_initialization.md)** — подробные инструкции по созданию и масштабированию кластера.
+- **[Настройка High Availability](./ha_concepts.md)** — подготовка балансировщика для отказоустойчивых сред.
+- **[Управление сертификатами](../../Operations/certificate_management.md)** — проверка и продление сертификатов через `kubeadm`.

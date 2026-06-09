@@ -2,58 +2,77 @@
 
 ## Определения
 
-Базовые термины (Offline-установка, Kubespray, Артефакты) описаны в [определениях offline-установки](./offline_definitions.md).
+**Дорожная карта (Roadmap)** — последовательность этапов от подготовки физической или виртуальной среды до получения полностью функционального кластера в закрытом контуре.
+
+**VM (Virtual Machine — виртуальная машина)** — программная или аппаратная система, имитирующая работу реального компьютера.
+
+**SSH (Secure Shell)** — протокол защищённого удалённого доступа к операционной системе.
+
+**IP (Internet Protocol — интернет-протокол)** — уникальный адрес узла в компьютерной сети.
+
+Базовые термины и архитектурная схема приведены в **[определениях offline-установки](./offline_definitions.md)**.
 
 ---
 
 ## Основные концепции
 
-### Этапы установки
+### Дорожная карта установки
 
-| Этап | Название | Файл |
-| :--- | :--- | :--- |
-| **Шаг 1** | Подготовка виртуальных серверов | [step1_vm_preparation.md](./step1_vm_preparation.md) |
-| **Шаг 2** | Подготовка окружения на машине с интернетом | [step2_internet_env.md](./step2_internet_env.md) |
-| **Шаг 3** | Подготовка закрытого контура | [step3_offline_env.md](./step3_offline_env.md) |
-| **Шаг 4** | Развертывание кластера | [step4_cluster_deploy.md](./step4_cluster_deploy.md) |
-| **Шаг 5** | Настройка MetalLB и Ingress | [step5_metallb_ingress.md](./step5_metallb_ingress.md) |
+Процесс развёртывания разделён на пять логических этапов, каждый из которых зафиксирован в отдельном руководстве.
 
-### Инфраструктура и требования
-
-Информация о ролях узлов (IP-адреса, назначение) и предварительных требованиях (SSH, Harbor, сеть, пользователь) приведена в [подготовке виртуальных серверов](./step1_vm_preparation.md).
+| Этап | Задача | Технический фокус | Руководство |
+| :--- | :--- | :--- | :--- |
+| **Шаг 1** | Подготовка VM | SSH, sudo, системные настройки ОС | **[VM Preparation](./step1_vm_preparation.md)** |
+| **Шаг 2** | Открытый контур | Загрузка артефактов, кэширование | **[Internet Env](./step2_internet_env.md)** |
+| **Шаг 3** | Закрытый контур | Harbor, импорт образов, инвентарь | **[Offline Env](./step3_offline_env.md)** |
+| **Шаг 4** | Развёртывание | Ansible-плейбук `cluster.yml` | **[Cluster Deploy](./step4_cluster_deploy.md)** |
+| **Шаг 5** | Публикация | MetalLB, Ingress, Hubble UI | **[LoadBalancer & Ingress](./step5_metallb_ingress.md)** |
 
 ---
 
 ## Практические сценарии
 
-### Быстрый старт
+### Инфраструктурный план кластера
 
-```bash
-# 1. Подготовка VM (Шаг 1)
-ansible-playbook -i inventory.ini play.yml -u admin
+Данная таблица является целевым состоянием инфраструктуры, используемым во всех примерах конфигурации (Inventory). Она является единственным источником истины для параметров ресурсов и сетевого плана данного проекта.
 
-# 2. Загрузка артефактов (Шаг 2)
-cd /opt/kuber_off/kubespray
-ansible-playbook -i inventory/offline_cluster/inventory.ini cluster.yml \
-  -e local_release_dir=/opt/kubespray-releases \
-  --tags download --skip-tags upload,upgrade -b -u admin
+| Узел | IP-адрес | Роль в кластере | Ресурсы (CPU/RAM/SSD) |
+| :--- | :--- | :--- | :--- |
+| **pc-inet** | 192.168.1.99 | Сбор артефактов (Gateway) | 2 CPU / 4 ГБ / 20 ГБ |
+| **harbor** | 192.168.1.100 | Реестр образов (Registry) | 2 CPU / 4 ГБ / 50 ГБ |
+| **master-1** | 192.168.1.101 | Control Plane 1 / Ansible Control | 2 CPU / 4 ГБ / 50 ГБ |
+| **master-2** | 192.168.1.102 | Control Plane 2 | 2 CPU / 4 ГБ / 50 ГБ |
+| **master-3** | 192.168.1.103 | Control Plane 3 | 2 CPU / 4 ГБ / 50 ГБ |
+| **node-1** | 192.168.1.104 | Worker Node 1 | 4 CPU / 8 ГБ / 100 ГБ |
+| **node-2** | 192.168.1.105 | Worker Node 2 | 4 CPU / 8 ГБ / 100 ГБ |
 
-# 3. Развертывание кластера (Шаг 4)
-ansible-playbook -i inventory/offline_cluster/inventory.ini \
-  cluster.yml -b -u admin
+*Сокращения в таблице:*
 
-# 4. Настройка LoadBalancer (Шаг 5)
-kubectl apply -f kube-manifests/
-```
+- **CPU (Central Processing Unit)** — количество ядер центрального процессора.
+- **RAM (Random Access Memory)** — объем оперативной памяти.
+- **SSD (Solid State Drive)** — объем дискового пространства на твердотельном накопителе.
+
+### Сводный алгоритм действий (Чек-лист)
+
+1. **На pc-inet:** подготовьте виртуальное окружение, клонируйте Kubespray и запустите загрузку образов через тег `download`.
+2. **На master-1:** распакуйте полученные архивы, настройте SSH-доступ ко всем узлам по ключам.
+3. **На harbor:** установите Harbor, создайте публичный проект `k8s` и загрузите в него образы согласно скрипту тегирования.
+4. **На master-1:** отредактируйте `group_vars` (переменные offline-режима) и запустите `cluster.yml`.
+5. **В кластере:** примените манифесты MetalLB и проверьте доступ к веб-панели Hubble.
 
 ---
 
 ## Дополнительная информация
 
-### Навигация по документации
+### Навигация и диагностика
 
-Базовые термины описаны в [определениях offline-установки](./offline_definitions.md), принципы — в [основных концепциях](./offline_concepts.md). Детальные инструкции по этапам: [подготовка VM](./step1_vm_preparation.md), [загрузка артефактов](./step2_internet_env.md), [подготовка закрытого контура](./step3_offline_env.md), [развёртывание кластера](./step4_cluster_deploy.md), [настройка MetalLB и Ingress](./step5_metallb_ingress.md).
+- **[Основные концепции](./offline_concepts.md)** — глубокое понимание переменных и выбора компонентов.
+- **[Проверка кластера](./cluster_verification.md)** — методы валидации после установки.
+- **[Устранение неполадок](./troubleshooting.md)** — справочник решений при возникновении ошибок.
+- **[Обслуживание кластера](./post_install_management.md)** — действия после успешного развёртывания.
 
-Валидация установки — в [проверке кластера](./cluster_verification.md), решение проблем — в [troubleshooting](./troubleshooting.md), управление после установки — в [post-install управлении](./post_install_management.md). Общее управление кластером Kubespray — в [cluster_management.md](../cluster_management.md), общий обзор — в [overview.md](../overview.md).
+### Смежные ресурсы
 
-Смежные темы: [Harbor](../../../../Docker/Docker_registries/Harbor/overview.md), [MetalLB](../../../Networking/metallb.md), [CNI](../../../Networking/Network/CNI/definitions.md), [air-gapped кластеры](../../../Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md).
+- **[Harbor: Установка и настройка](../../../../Docker/Docker_registries/Harbor/installation.md)**.
+- **[MetalLB: Справочник параметров](../../../Networking/metallb.md)**.
+- **[Cilium: Сетевые политики безопасности](../../../Networking/Network/CNI/definitions.md)**.

@@ -1,23 +1,18 @@
-# kind: Практические сценарии
+# kind — практические сценарии
 
-## Definitions
+## Определения
 
-**kind** — инструмент для запуска локальных Kubernetes-кластеров, где каждый узел работает как Docker-контейнер.
+Основные определения и архитектура инструмента представлены в файле **[kind — определения и концепции](./kind_concepts.md)**.
 
-**kind-кластер** — изолированная среда Kubernetes, управляемая через kind CLI.
+**kind-кластер** — изолированная среда Kubernetes, управляемая через CLI (Command Line Interface) `kind`.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Требования
 
-| Компонент | Версия | Примечание |
-| :--- | :--- | :--- |
-| Docker | 18.03+ | Обязательное требование |
-| Go | 1.16+ | Только для сборки из исходников |
-| kubectl | Любая | Для управления кластером |
-| ОС | Linux/macOS/Windows | Полная поддержка |
+Полный список системных требований и поддерживаемых ОС (Операционных Систем) представлен в разделе **[Требования](./kind_concepts.md#требования)**.
 
 ### Команды kind
 
@@ -31,11 +26,11 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка kind
 
-**Linux (amd64):**
+**Linux (amd64 — 64-разрядная архитектура x86):**
 
 ```bash
 curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
@@ -71,49 +66,19 @@ kind create cluster --name my-cluster
 kind create cluster --name my-cluster --config kind-config.yaml
 ```
 
-**Конфигурация (kind-config.yaml):**
-
-```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-- role: worker
-```
+Пример минимального конфигурационного файла доступен в разделе **[Минимальная конфигурация](./kind_configuration.md#минимальная-конфигурация)**.
 
 ---
 
-### HA-кластер (multi-node)
+### HA-кластер (High Availability — высокая доступность)
 
-```yaml
-# kind-config-ha.yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        node-labels: "ingress-ready=true"
-  extraPortMappings:
-  - containerPort: 6443
-    hostPort: 6443
-    protocol: TCP
-  - containerPort: 80
-    hostPort: 80
-    protocol: TCP
-  - containerPort: 443
-    hostPort: 443
-    protocol: TCP
-- role: worker
-- role: worker
-```
+Для тестирования отказоустойчивости рекомендуется использовать многоузловую конфигурацию.
 
 ```bash
 kind create cluster --name ha-cluster --config kind-config-ha.yaml
 ```
+
+Подробный пример конфигурации HA-кластера с пробросом портов доступен в разделе **[HA-кластер (multi-node)](./kind_configuration.md#ha-кластер-multi-node)**.
 
 ---
 
@@ -217,7 +182,7 @@ kind delete clusters --all
 
 ---
 
-### Интеграция с CI/CD
+### Интеграция с CI/CD (Continuous Integration / Continuous Deployment)
 
 **GitHub Actions:**
 
@@ -275,20 +240,14 @@ kind export kubeconfig --name my-cluster
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
-### Версии Kubernetes
+### Поддерживаемые версии
 
-| Kubernetes | Образ | Статус |
-| :--- | :--- | :--- |
-| 1.35 | `kindest/node:v1.35.0` | Активная |
-| 1.34 | `kindest/node:v1.34.0` | Активная |
-| 1.33 | `kindest/node:v1.33.0` | Активная |
-
-> **Примечание:** Версии 1.32 и ниже достигли EOL (февраль 2026).
+Список поддерживаемых версий Kubernetes и образов узлов доступен в разделе **[Версии Kubernetes](./kind_concepts.md#поддерживаемые-версии-kubernetes)**.
 
 ### Ссылки
 
-- [kind: Концепции](./kind_concepts.md)
-- [kind: Конфигурация](./kind_configuration.md)
+- [kind — определения и концепции](./kind_concepts.md)
+- [kind — конфигурация](./kind_configuration.md)
 - [Официальная документация](https://kind.sigs.k8s.io/)

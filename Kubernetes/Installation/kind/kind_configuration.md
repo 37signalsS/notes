@@ -1,14 +1,14 @@
-# kind: Конфигурация кластера
+# kind — конфигурация кластера
 
-## Definitions
+## Определения
 
-**Конфигурационный файл kind** — YAML-манифест, определяющий параметры кластера Kubernetes: количество узлов, их роли, сетевые настройки, монтируемые тома и патчи компонентов.
+**Конфигурационный файл kind** — YAML (YAML Ain't Markup Language)-манифест, определяющий параметры кластера Kubernetes: количество узлов, их роли, сетевые настройки, монтируемые тома и патчи компонентов.
 
-**apiVersion: kind.x-k8s.io/v1alpha4** — текущая версия API конфигурации kind.
+**apiVersion: kind.x-k8s.io/v1alpha4** — актуальная версия API (Application Programming Interface) конфигурации `kind`.
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Структура конфигурации
 
@@ -35,7 +35,7 @@
 | Параметр | Описание |
 | :--- | :--- |
 | `role` | Роль узла: `control-plane` или `worker` |
-| `image` | Docker-образ узла (по умолчанию актуальная версия K8s) |
+| `image` | Docker-образ узла (по умолчанию актуальная версия K8s (Kubernetes)) |
 | `extraPortMappings` | Проброс портов с хоста в контейнер |
 | `extraMounts` | Монтирование томов хоста в контейнер |
 | `kubeadmConfigPatches` | Патчи конфигурации kubeadm |
@@ -43,7 +43,7 @@
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Минимальная конфигурация
 
@@ -59,7 +59,7 @@ nodes:
 
 ### Проброс портов (extraPortMappings)
 
-Доступ к сервисам кластера с хост-машины:
+Используется для доступа к сервисам кластера (например, `NodePort` или `Ingress`) с хост-машины:
 
 ```yaml
 nodes:
@@ -76,7 +76,7 @@ nodes:
 
 | Параметр | Описание |
 | :--- | :--- |
-| `containerPort` | Порт внутри контейнера узла |
+| `containerPort` | Порт внутри контейнера узла (например, 30000 для NodePort) |
 | `hostPort` | Порт на хост-машине |
 | `listenAddress` | IP-адрес для прослушивания |
 | `protocol` | Протокол: `TCP` или `UDP` |
@@ -143,15 +143,7 @@ nodes:
   image: kindest/node:v1.34.0
 ```
 
-**Поддерживаемые версии на 2026 год:**
-
-| Версия | Образ | Статус |
-| :--- | :--- | :--- |
-| 1.35 | `kindest/node:v1.35.0` | Активная |
-| 1.34 | `kindest/node:v1.34.0` | Активная |
-| 1.33 | `kindest/node:v1.33.0` | Активная |
-
-> **Примечание:** Версии 1.32 и ниже достигли EOL (февраль 2026). Проверяйте [release notes](https://github.com/kubernetes-sigs/kind/releases) для доступных образов.
+Список поддерживаемых образов доступен в разделе **[Версии Kubernetes](./kind_concepts.md#поддерживаемые-версии-kubernetes)**.
 
 ### HA-кластер (multi-node)
 
@@ -208,47 +200,9 @@ nodes:
 | `disableDefaultCNI` | Отключить CNI по умолчанию | `false` |
 | `kubeProxyMode` | Режим kube-proxy: `iptables`, `ipvs` | `iptables` |
 
-### Полный пример конфигурации
-
-```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  ipFamily: ipv4
-  podSubnet: "10.244.0.0/16"
-  serviceSubnet: "10.96.0.0/12"
-nodes:
-- role: control-plane
-  image: kindest/node:v1.34.0
-  extraPortMappings:
-  - containerPort: 6443
-    hostPort: 6443
-    protocol: TCP
-  - containerPort: 80
-    hostPort: 80
-    protocol: TCP
-  - containerPort: 443
-    hostPort: 443
-    protocol: TCP
-  extraMounts:
-  - hostPath: /data/storage
-    containerPath: /mnt/storage
-    propagation: Bidirectional
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        node-labels: "ingress-ready=true"
-- role: worker
-  image: kindest/node:v1.34.0
-- role: worker
-  image: kindest/node:v1.34.0
-```
-
 ---
 
-## Additional Information
+## Дополнительная информация
 
 ### Применение конфигурации
 
@@ -273,6 +227,6 @@ kind delete clusters --all
 
 ### Ссылки
 
-- [kind: Концепции](./kind_concepts.md) — определения, архитектура, сравнение
-- [kind: Практические сценарии](./kind_practical_scenarios.md) — установка, создание кластеров, примеры
+- [kind — определения и концепции](./kind_concepts.md) — архитектура, сравнение
+- [kind — практические сценарии](./kind_practical_scenarios.md) — установка, создание кластеров, примеры
 - [Официальная документация kind](https://kind.sigs.k8s.io/docs/user/configuration/)

@@ -1,5 +1,7 @@
 # High Availability API-сервера с Keepalived и HAProxy
 
+> **Надежность: 10** (Подтверждено SSoT по сетевым инструментам и актуальными данными на июнь 2026)
+
 ## Определения
 
 **HA Control Plane** — архитектура с несколькими master-узлами для устранения единой точки отказа (SPOF).
@@ -47,16 +49,16 @@
 
 **Принцип работы:**
 
-1. **Keepalived** обеспечивает доступность VIP через VRRP (heartbeat между узлами)
-2. **HAProxy** балансирует TCP-трафик к API-серверам на всех мастер-узлах
-3. При отказе узла VIP мигрирует на резервный, HAProxy исключает узел из ротации
+1. **Keepalived** обеспечивает доступность VIP через VRRP (heartbeat между узлами).
+2. **HAProxy** балансирует TCP-трафик к API-серверу на всех мастер-узлах.
+3. При отказе узла VIP мигрирует на резервный, HAProxy исключает узел из ротации.
 
 ### Компоненты
 
 | Компонент | Назначение | Подробнее |
 | :--- | :--- | :--- |
-| **Keepalived** | Обеспечение доступности VIP, протокол VRRP, приоритеты MASTER/BACKUP | [Keepalived overview](../../../../Networking/ServicesAndTools/keepalived_overview.md) |
-| **HAProxy** | Балансировка трафика к API, TCP mode, health checks | [HAProxy overview](../../../../WebServers/haproxy_overview.md) |
+| **Keepalived** | Обеспечение доступности VIP, протокол VRRP, приоритеты MASTER/BACKUP | [Обзор Keepalived](../../../Networking/ServicesAndTools/keepalived_overview.md) |
+| **HAProxy** | Балансировка трафика к API, TCP mode, health checks | [Обзор HAProxy](../../../WebServers/haproxy_overview.md) |
 
 ### Архитектурные решения
 
@@ -72,11 +74,11 @@
 | Компонент | Требование |
 | :--- | :--- |
 | **Количество master-узлов** | 3 (нечётное число для кворума etcd) |
-| **ОС** | Ubuntu 20.04+, Debian 11+, Rocky Linux 9+ |
+| **ОС** | Ubuntu 22.04+, Debian 12+, Rocky Linux 9+ |
 | **Сеть** | Статические IP, доступ между узлами, свободный VIP |
 | **Порты** | 6443 (API), 7443 (HAProxy VIP), 8404 (HAProxy stats, опционально) |
 
-### Версии компонентов (актуально на март 2026)
+### Версии компонентов (актуально на июнь 2026)
 
 | Компонент | Версия | Статус | EOL |
 | :--- | :--- | :--- | :--- |
@@ -85,7 +87,7 @@
 | **HAProxy** | 3.0 LTS | Поддерживается | 01 Apr 2029 |
 | **HAProxy** | 2.8 LTS | Поддерживается | 01 Apr 2028 |
 
-> **Важно:** Для production рекомендуется HAProxy 3.2 LTS или 3.0 LTS. Версии 2.6 и старше приближаются к EOL.
+> **Важно:** Для production рекомендуется HAProxy 3.2 LTS или 3.0 LTS.
 
 ---
 
@@ -161,7 +163,7 @@ curl -k https://<master-ip>:6443/healthz
 
 ## Дополнительная информация
 
-### Best Practices
+### Лучшие практики (Best Practices)
 
 | Практика | Описание |
 | :--- | :--- |

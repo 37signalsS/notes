@@ -120,7 +120,7 @@ kubectl config use-context c-m-xxxxxxxxx
 kubectl config current-context
 ```
 
-### Настройка autocomplete
+### Настройка автодополнения (autocomplete)
 
 **Bash:**
 
@@ -151,4 +151,4 @@ echo "kubectl completion fish | source" >> ~/.config/fish/config.fish
 - Не передавать файл через незащищенные каналы
 - Использовать ServiceAccount с минимальными правами для CI/CD
 
-**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Управление и troubleshooting](./rke_management_scenarios.md), [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).
+**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Управление и поиск неисправностей](./rke_management_scenarios.md), [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).

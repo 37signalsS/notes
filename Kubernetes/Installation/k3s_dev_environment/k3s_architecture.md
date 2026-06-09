@@ -1,6 +1,6 @@
 # Архитектура Dev-окружения на K3s
 
-Обзор архитектуры самодостаточной лаборатории для изучения DevOps-практик на базе легковесного дистрибутива Kubernetes K3s. Все вспомогательные сервисы (CI/CD, реестр, GitOps) запускаются внутри кластера.
+Обзор архитектуры самодостаточной лаборатории для изучения практик DevOps (Development and Operations) на базе легковесного дистрибутива Kubernetes K3s. Все вспомогательные сервисы (CI/CD (Continuous Integration / Continuous Deployment), реестр, GitOps) запускаются внутри кластера.
 
 > **Контекст:** Этот файл описывает общую архитектуру. Детали реализации см. в [Создание Dev-контейнера с SSH](./dev_container_ssh.md), [Развертывание через Helm](./dev_container_helm_deployment.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
 
@@ -11,10 +11,10 @@
 | Термин | Описание |
 |--------|----------|
 | **K3s Dev Environment** | Самодостаточная лаборатория для изучения DevOps-практик на базе одного сервера с K3s. Все сервисы (GitLab, Harbor, ArgoCD) запускаются внутри кластера |
-| **Dev-контейнер** | Изолированное рабочее пространство в кластере с SSH-доступом и персистентной домашней директорией через `hostPath`. См. [Создание Dev-контейнера](./dev_container_ssh.md) |
-| **Local Path Provisioner** | Встроенный в K3s provisioner для динамического выделения хранилища. Поддерживает только `ReadWriteOnce` |
+| **Dev-контейнер** | Изолированное рабочее пространство в кластере с доступом по протоколу SSH (Secure Shell) и персистентной домашней директорией через `hostPath`. См. [Создание Dev-контейнера](./dev_container_ssh.md) |
+| **Local Path Provisioner** | Встроенный в K3s provisioner для динамического выделения хранилища. Поддерживает только режим доступа RWO (ReadWriteOnce) |
 
-**Навигация по K3s:** [Kubernetes Overview](../../kubernetes_overview.md) | [K3s Installation](../kubeadm/) | [Local Path Provisioner](../../Storage/local-path-provisioner.md)
+**Навигация по K3s:** [Kubernetes Overview](../../kubernetes_overview.md) | [Local Path Provisioner](../../Storage/local-path-provisioner.md)
 
 ---
 
@@ -30,12 +30,12 @@
 |-----------|------------|--------|
 | **Платформа** | K3s вместо "ванильного" Kubernetes для простоты на одном узле | [Kubernetes Overview](../../kubernetes_overview.md) |
 | **Ingress Controller** | NGINX вместо стандартного Traefik | [Ingress Overview](../../Networking/Ingress/overview.md) |
-| **Хранилище** | Local Path Provisioner (только `ReadWriteOnce`) | [Local Path Provisioner](../../Storage/local-path-provisioner.md) |
-| **CI/CD** | GitLab для хранения кода и автоматизации пайплайнов | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) |
+| **Хранилище** | Local Path Provisioner (только RWO) | [Local Path Provisioner](../../Storage/local-path-provisioner.md) |
+| **CI/CD** | GitLab для хранения кода (SCM — Source Code Management) и автоматизации пайплайнов | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md) |
 | **GitOps** | ArgoCD для декларативного развёртывания | [ArgoCD Overview](../../../GitOps/ArgoCD/argocd_overview.md) |
 | **Реестр** | Harbor для Docker-образов и Helm-чартов | [Harbor Overview](../../../Docker/Docker_registries/Harbor/overview.md) |
-| **S3** | Minio для объектного хранения артефактов | — |
-| **БД** | PostgreSQL как основная реляционная СУБД | [PostgreSQL Overview](../../../Databases/PostgreSQL/overview.md) |
+| **S3** | Minio для объектного хранения артефактов (S3 — Simple Storage Service) | — |
+| **БД** | PostgreSQL как основная реляционная СУБД (Система Управления Базами Данных) | [PostgreSQL Overview](../../../Databases/PostgreSQL/overview.md) |
 
 ### Почему K3s для dev-окружения?
 
@@ -44,12 +44,12 @@
 - **Легковесность:** ~70MB бинарный файл, минимальные требования к ресурсам
 - **Простота установки:** Один бинарник, автоматическая настройка
 - **Встроенные компоненты:** Local Path Provisioner, ServiceLB, Helm Controller
-- **Production-совместимость:** Полная совместимость с Kubernetes API
+- **Production-совместимость:** Полная совместимость с Kubernetes API (Application Programming Interface)
 
 **Ограничения:**
 
 - **Один узел:** Для multi-node требуется дополнительная настройка etcd
-- **Local Path Provisioner:** Только `ReadWriteOnce`, нет контроля ёмкости
+- **Local Path Provisioner:** Только RWO, нет контроля ёмкости
 
 ### Рабочий процесс "Dev-контейнер"
 
@@ -57,14 +57,14 @@
 
 **Процесс:**
 
-1. **Создание образа** — Docker-образ на базе Ubuntu с SSH-сервером и инструментами (Go, Python, Java, SDK). Детали в [Создание Dev-контейнера с SSH](./dev_container_ssh.md).
+1. **Создание образа** — Docker-образ на базе Ubuntu с SSH-сервером и инструментами (Go, Python, Java, SDK (Software Development Kit)). Детали в [Создание Dev-контейнера с SSH](./dev_container_ssh.md).
 2. **Развёртывание в K3s** — запуск как `Deployment` с `hostPath` Volume. Инструкция в [Развертывание через Helm](./dev_container_helm_deployment.md).
 3. **Персистентность** — домашняя директория (`/home/user`) монтируется с хоста, данные переживают перезапуски.
-4. **Удалённая разработка** — подключение через **VS Code Remote - SSH** (локальная машина как "тонкий клиент").
+4. **Удалённая разработка** — подключение через расширение **VS Code (Visual Studio Code) Remote - SSH** (локальная машина как "тонкий клиент").
 
 **Преимущества:**
 
-- Унифицированная среда независимо от ОС разработчика
+- Унифицированная среда независимо от ОС (Operating System) разработчика
 - Изоляция инструментов от хоста
 - Воспроизводимость окружения
 
@@ -92,10 +92,10 @@
 
 | Компонент | Указанная версия | Статус | Рекомендация |
 |-----------|------------------|--------|--------------|
-| **Kubernetes** | v1.28.6 | ⚠️ Устарел | Рекомендуется v1.31+ |
-| **Helm** | v3.13.0 | ⚠️ Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
-| **regclient** | v0.5.6 | ⚠️ Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
-| **kubeconform** | v0.6.4 | ⚠️ Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
+| **Kubernetes** | v1.28.6 | Устарел | Рекомендуется v1.31+ |
+| **Helm** | v3.13.0 | Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
+| **regclient** | v0.5.6 | Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
+| **kubeconform** | v0.6.4 | Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
 
 **Проверка версий:**
 
@@ -104,7 +104,7 @@
 
 ### Ограничения Local Path Provisioner
 
-- **Не поддерживает `ReadWriteMany`** — только для однонодовых кластеров или StatefulSet с одним репликом на узел
+- **Не поддерживает режим RWX (ReadWriteMany)** — только для однонодовых кластеров или StatefulSet с одним репликом на узел
 - **Данные привязаны к узлу** — при перемещении пода доступ к данным теряется
 - **Нет контроля ёмкости** — приложение использует всё доступное пространство
 
@@ -112,7 +112,7 @@
 
 ### Безопасность hostPath
 
-> **Внимание:** Использование `hostPath` небезопасно в production. Допустимо только для локальных dev-сред. См. [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md).
+> **Внимание:** Использование `hostPath` небезопасно в промышленной эксплуатации (production). Допустимо только для локальных dev-сред. См. [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md).
 
 **Риски:**
 
@@ -124,4 +124,4 @@
 
 - Ограничьте права доступа на уровне OS
 - Используйте отдельные директории для каждого пода
-- Применяйте `securityContext` с минимальными привилегиями
+- Применяйте `securityContext` с минимальными привилегиями, включая настройки UID/GID (User ID / Group ID)
