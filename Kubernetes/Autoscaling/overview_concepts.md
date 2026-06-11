@@ -140,6 +140,7 @@
 | Конфликт | Решение |
 |----------|---------|
 | HPA + VPA для CPU/memory | Использовать VPA в режиме `Off` для рекомендаций |
+| HPA + ArgoCD (SelfHeal) | Использовать `ignoreDifferences` для поля `replicas` в ArgoCD или удалить `replicas` из манифеста в Git |
 | CA + Karpenter одновременно | Выбрать один компонент (рекомендуется Karpenter) |
 | KEDA + HPA на одном Deployment | KEDA управляет HPA, не создавать отдельно |
 | PDB блокирует scale-down | Проверить конфигурацию PDB, увеличить `maxUnavailable` |

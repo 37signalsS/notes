@@ -194,6 +194,32 @@ spec:
       selfHeal: true
 ```
 
+### Сценарий 5: Автоматическое обновление подов (Rollout) при изменении секрета в Vault
+
+ArgoCD не отслеживает изменения данных *внутри* Vault автоматически. Если вы изменили пароль в Vault, ArgoCD не увидит изменений в Git и не перезапустит поды. Для решения этой проблемы в Helm-чартах используется техника хеширования секрета в аннотациях пода.
+
+**Реализация в Helm-чарте (`templates/deployment.yaml`):**
+
+```yaml
+kind: Deployment
+spec:
+  template:
+    metadata:
+      annotations:
+        # Хеширование содержимого секрета. При изменении секрета в Vault
+        # плагин ArgoCD Vault Plugin подставит новые данные, хеш изменится,
+        # что инициирует Rolling Update пода.
+        checksum/vault-secrets: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+```
+
+**Как это работает:**
+1. При синхронизации `argocd-repo-server` выполняет `helm template`.
+2. Плагин подставляет реальные значения из Vault.
+3. Функция `sha256sum` рассчитывает хеш от итогового манифеста секрета.
+4. Если хеш в аннотации `checksum/vault-secrets` изменился по сравнению с текущим в кластере, Kubernetes инициирует перезапуск подов (Rolling Update).
+
+> **Примечание:** Этот метод работает, если вы используете ArgoCD Vault Plugin для генерации объекта `Secret` внутри кластера. Если приложение ходит в Vault напрямую (через Sidecar или SDK), используйте **[Reloader](../../Kubernetes/ToolsUtilities/reloader/reloader_overview.md)**.
+
 ## Дополнительная информация
 
 ### Конфигурация обнаружения (Discovery)
