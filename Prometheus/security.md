@@ -85,6 +85,8 @@ ufw allow from 192.168.1.100 to any port 9090
 ufw deny 9090/tcp
 ```
 
+Подробнее об управлении файрволом см. в **[UFW — Uncomplicated Firewall](../Linux/Networking/Settings/tools/ufw.md)**.
+
 ### Защита на уровне кода приложения
 
 Рекомендуется запускать эндпоинт `/metrics` на локальном интерфейсе или выделенном порту.

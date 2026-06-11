@@ -1,10 +1,10 @@
 # UFW — Uncomplicated Firewall
 
-## Definitions
+## Определения
 
 **UFW (Uncomplicated Firewall)** — это интерфейс для управления `iptables` (или `nftables` в современных дистрибутивах), разработанный для упрощения процесса настройки файрвола. Является стандартом по умолчанию в Ubuntu.
 
-## Basic Concepts
+## Основные концепции
 
 ### Принципы работы
 
@@ -22,7 +22,7 @@ sudo ufw default deny incoming # Политика по умолчанию: за�
 sudo ufw default allow outgoing # Политика по умолчанию: разрешить исходящие
 ```
 
-## Practical Scenarios
+## Практические сценарии
 
 ### 1. Базовая настройка для веб-сервера
 
@@ -34,7 +34,7 @@ sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
 # 2. Разрешение необходимых портов
-sudo ufw allow 22/tcp          # SSH
+sudo ufw allow 22/tcp          # SSH (Secure Shell)
 sudo ufw allow 8080/tcp        # Приложение
 
 # 3. Включение файрвола
@@ -44,7 +44,7 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
-### 2. Ограничение доступа по IP
+### 2. Ограничение доступа по IP (Internet Protocol)
 
 ```bash
 # Разрешить SSH только с конкретного IP
@@ -59,7 +59,20 @@ sudo ufw status numbered
 sudo ufw delete 2
 ```
 
-## Additional Information
+## Дополнительная информация
+
+### Взаимодействие с Docker (UFW Bypass)
+
+**Внимание:** Docker добавляет правила напрямую в цепочку `PREROUTING` (**DNAT (Destination Network Address Translation)**), которые отрабатывают **раньше**, чем правила UFW в цепочках `INPUT` или `FORWARD`.
+Это означает, что опубликованный порт контейнера (например, `-p 80:80`) будет доступен извне, даже если в UFW установлен запрет.
+
+**Способы решения:**
+
+- Публиковать порты только на `127.0.0.1` (`-p 127.0.0.1:80:80`) и использовать обратный прокси.
+- Использовать цепочку `DOCKER-USER` в `iptables` для фильтрации трафика к контейнерам.
+- Настроить Docker для отказа от управления `iptables` (не рекомендуется, так как это нарушает сетевое взаимодействие контейнеров).
+
+Подробнее см. в разделе **[Docker — сеть](../../../../Docker/Docker_network/docker_network.md)**.
 
 ### Влияние на сканирование (Nmap)
 
@@ -69,4 +82,4 @@ sudo ufw delete 2
 
 - **[Обзор файрволов](./firewall_common.md)** — сравнение инструментов
 - **[iptables основы](./iptables_basics.md)** — низкоуровневая настройка
-- **[nftables](../tools/nftables/practical_scenarios.md)** — современная альтернатива
+- **[nftables](./nftables/practical_scenarios.md)** — современная альтернатива

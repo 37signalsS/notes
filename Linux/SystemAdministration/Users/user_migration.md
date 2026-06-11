@@ -2,8 +2,8 @@
 
 ## Определения
 
-- **Миграция пользователей** — процесс переноса учётных записей, домашних директорий и настроек между системами
-- **UID/GID конфликт** — ситуация, когда один идентификатор принадлежит разным пользователям на разных системах
+- **Миграция пользователей** — процесс переноса учётных записей, домашних директорий и системных настроек между Linux-системами.
+- **Конфликт UID/GID** — ситуация, когда один и тот же числовой идентификатор принадлежит разным пользователям на исходной и целевой системах.
 
 ## Базовые концепции
 
@@ -11,86 +11,67 @@
 
 | Тип | Описание | Сложность |
 | :--- | :--- | :--- |
-| **Ручная** | Пошаговый перенос файлов и записей | Низкая |
-| **Автоматизированная** | Скрипты и утилиты | Средняя |
-| **Централизованная** | LDAP/AD вместо локальных пользователей | Высокая |
+| **Ручная** | Пошаговый перенос записей из конфигурационных файлов и данных вручную. | Низкая |
+| **Автоматизированная** | Использование специализированных скриптов или инструментов автоматизации (Ansible). | Средняя |
+| **Централизованная** | Переход на сетевые службы каталогов (LDAP, Active Directory) вместо локальных файлов. | Высокая |
 
-### Риски
+### Ключевые риски
 
-- **Конфликты UID/GID** — разные пользователи с одинаковыми ID
-- **Потеря данных** — файлы могут остаться на старой системе
-- **Нарушение прав** — права доступа могут сбиться при копировании
-- **Блокировка входа** — ошибки в /etc/shadow могут заблокировать вход
+1. **Конфликты идентификаторов:** Если UID мигрируемого пользователя уже занят на целевой системе, потребуется переназначение ID (ID remapping) и обновление прав на все его файлы.
+2. **Нарушение целостности прав:** При копировании без специальных флагов (например, `rsync -p` или `-a`) владельцы файлов могут сброситься на `root` или другого пользователя.
+3. **Зависимости сервисов:** Некоторые приложения хранят пути к домашним директориям в своих конфигурациях — их также потребуется обновить.
 
 ## Практические сценарии
 
 ### Подготовка
 
-> **Перед миграцией:** выполните аудит исходной системы и создайте резервные копии. Подробные инструкции: [аудит пользователей](./users_config_files.md#аудит), [резервное копирование](./users_config_files.md#резервное-копирование).
+Перед началом миграции необходимо провести аудит целевой системы на наличие конфликтов.
 
-#### Шаг 1: Проверка конфликтов на целевой системе
+**Проверка конфликтов UID/GID:**
+Используйте команды аудита из раздела [Файлы конфигурации — Аудит](./users_config_files.md#аудит). Если UID или GID уже занят, переходите к [методу миграции с изменением UID](#метод-4-миграция-с-изменением-uid).
+
+### Метод 1: Ручной перенос (для 1–3 пользователей)
+
+#### Шаг 1: Экспорт записей
+
+Выполните на исходной системе:
 
 ```bash
-# Проверка на дублирующиеся UID
-cut -d: -f3 /etc/passwd | sort | uniq -d
-
-# Проверка на дублирующиеся GID
-cut -d: -f3 /etc/group | sort | uniq -d
+# Извлечение строк из системных файлов
+grep "^username:" /etc/passwd > user_passwd.txt
+grep "^username:" /etc/shadow > user_shadow.txt
+grep "^username:" /etc/group > user_group.txt
 ```
 
-### Метод 1: Ручной перенос (для нескольких пользователей)
+#### Шаг 2: Копирование данных
 
-#### Шаг 1: Экспорт данных с исходной системы
-
-```bash
-# Экспорт записей пользователей
-sudo grep username /etc/passwd > user_passwd.txt
-sudo grep username /etc/shadow > user_shadow.txt
-sudo grep username /etc/group > user_group.txt
-
-# Или для всех пользователей с UID >= 1000
-sudo awk -F: '$3 >= 1000' /etc/passwd > all_users_passwd.txt
-sudo awk -F: 'NR==FNR {a[$1]; next} $1 in a' \
-    <(cut -d: -f1 /etc/passwd) /etc/shadow > all_users_shadow.txt
-```
-
-#### Шаг 2: Копирование домашних директорий
+Рекомендуется использовать `rsync`, так как он сохраняет права доступа и атрибуты файлов.
 
 ```bash
-# Копирование с сохранением прав (rsync предпочтителен)
-rsync -avz --progress /home/ user@newserver:/home/
-
-# Или через tar для сохранения всех атрибутов
-sudo tar -czf /tmp/home_backup.tar.gz /home/
-scp /tmp/home_backup.tar.gz user@newserver:/tmp/
-# На целевой системе:
-sudo tar -xzf /tmp/home_backup.tar.gz -C /
-
-# Копирование одного пользователя
-rsync -avz /home/username/ user@newserver:/home/username/
+# Копирование домашней директории по SSH
+# Подробнее о флагах см. в [rsync — синхронизация файлов](../rsync.md)
+rsync -avz --progress /home/username/ user@newserver:/home/username/
 ```
 
 #### Шаг 3: Импорт на целевой системе
 
 ```bash
-# Проверка записей перед импортом
-cat user_passwd.txt
-
-# Добавление записей (убедитесь в отсутствии конфликтов UID!)
+# Добавление строк в конец системных файлов
 sudo cat user_passwd.txt >> /etc/passwd
 sudo cat user_shadow.txt >> /etc/shadow
 sudo cat user_group.txt >> /etc/group
 
-# Исправление прав
+# Восстановление прав на домашнюю директорию
 sudo chown -R username:username /home/username
-sudo chmod 755 /home/username
 ```
 
-### Метод 2: Автоматизированный перенос (скрипт)
+### Метод 2: Автоматизированный перенос (Bash-скрипт)
+
+Этот скрипт автоматизирует экспорт и импорт, включая проверку на существование UID.
 
 ```bash
 #!/bin/bash
-# migrate_user.sh - скрипт миграции пользователя
+# migrate_user.sh - автоматизация переноса одного пользователя
 
 SOURCE_HOST="$1"
 USERNAME="$2"
@@ -100,173 +81,83 @@ if [[ -z "$SOURCE_HOST" || -z "$USERNAME" ]]; then
     exit 1
 fi
 
-# Проверка существования пользователя на исходной системе
-if ! ssh root@$SOURCE_HOST "id $USERNAME" 2>/dev/null; then
-    echo "Пользователь $USERNAME не найден на $SOURCE_HOST"
-    exit 1
-fi
-
-# Проверка существования на целевой
-if id "$USERNAME" &>/dev/null; then
-    echo "Пользователь $USERNAME уже существует локально"
-    exit 1
-fi
-
-# Экспорт записей
+# Экспорт данных через SSH
 ssh root@$SOURCE_HOST "grep ^$USERNAME: /etc/passwd" > /tmp/passwd_entry
 ssh root@$SOURCE_HOST "grep ^$USERNAME: /etc/shadow" > /tmp/shadow_entry
 ssh root@$SOURCE_HOST "grep ^$USERNAME: /etc/group" > /tmp/group_entry
 
-# Проверка UID на конфликты
+# Проверка на конфликт UID
 UID_VAL=$(cut -d: -f3 /tmp/passwd_entry)
-if grep -q ":$UID_VAL:" /etc/passwd; then
-    echo "CONFLICT: UID $UID_VAL уже существует!"
+if getent passwd "$UID_VAL" >/dev/null; then
+    echo "ОШИБКА: UID $UID_VAL уже занят на этой системе!"
     exit 1
 fi
 
-# Импорт записей
+# Импорт и синхронизация данных
 sudo cat /tmp/passwd_entry >> /etc/passwd
 sudo cat /tmp/shadow_entry >> /etc/shadow
 sudo cat /tmp/group_entry >> /etc/group
-
-# Копирование домашней директории
 rsync -avz root@$SOURCE_HOST:/home/$USERNAME/ /home/$USERNAME/
-
-# Исправление прав
 sudo chown -R $USERNAME:$USERNAME /home/$USERNAME
 
-# Очистка
-rm -f /tmp/passwd_entry /tmp/shadow_entry /tmp/group_entry
-
-echo "Миграция пользователя $USERNAME завершена успешно"
+echo "Миграция пользователя $USERNAME успешно завершена."
 ```
 
-### Метод 3: Массовая миграция
+### Метод 3: Массовая миграция (всех обычных пользователей)
+
+Сценарий для переноса всех пользователей с UID выше определенного порога (обычно 1000).
 
 ```bash
-#!/bin/bash
-# migrate_all_users.sh - массовая миграция пользователей
+# 1. Экспорт всех 'обычных' пользователей на исходной системе
+ssh root@source "awk -F: '\$3 >= 1000' /etc/passwd" > passwd.export
+ssh root@source "awk -F: '\$3 >= 1000' /etc/shadow" > shadow.export
 
-SOURCE_HOST="$1"
-MIN_UID="${2:-1000}"
+# 2. Массовая синхронизация домашних директорий
+rsync -avz root@source:/home/ /home/
 
-# Создание временной директории
-WORKDIR=$(mktemp -d)
-cd "$WORKDIR"
-
-# Экспорт всех пользователей с UID >= MIN_UID
-ssh root@$SOURCE_HOST "awk -F: '\$3 >= $MIN_UID' /etc/passwd" > passwd.export
-ssh root@$SOURCE_HOST "awk -F: '\$3 >= $MIN_UID' /etc/shadow" > shadow.export
-
-# Проверка конфликтов
-echo "Проверка конфликтов UID..."
-while IFS=: read -r user pass uid rest; do
-    if grep -q ":$uid:" /etc/passwd; then
-        echo "CONFLICT: UID $uid (user: $user)"
-    fi
-done < passwd.export
-
-# Импорт (после ручной проверки конфликтов)
-read -p "Продолжить импорт? (y/n): " confirm
-if [[ "$confirm" == "y" ]]; then
-    cat passwd.export | sudo tee -a /etc/passwd
-    cat shadow.export | sudo tee -a /etc/shadow
-    
-    # Копирование домашних директорий
-    rsync -avz root@$SOURCE_HOST:/home/ /home/
-    
-    echo "Миграция завершена"
-fi
-
-# Очистка
-cd -
-rm -rf "$WORKDIR"
+# 3. Добавление записей на целевой системе (после проверки на конфликты!)
+cat passwd.export | sudo tee -a /etc/passwd
+cat shadow.export | sudo tee -a /etc/shadow
 ```
 
 ### Метод 4: Миграция с изменением UID
 
+Если UID на целевой системе уже занят другим пользователем, необходимо переназначить идентификатор при переносе.
+
 ```bash
-#!/bin/bash
-# migrate_user_remap.sh - миграция с переназначением UID
+# 1. Создание пользователя с новым свободным UID
+sudo useradd -m -u 2001 username
 
-USERNAME="$1"
-NEW_UID="$2"
+# 2. Синхронизация данных из старой директории (с другого сервера или диска)
+rsync -avz /old_home/username/ /home/username/
 
-if [[ -z "$USERNAME" || -z "$NEW_UID" ]]; then
-    echo "Использование: $0 <username> <new_uid>"
-    exit 1
-fi
-
-# Создание пользователя с новым UID
-sudo useradd -m -u "$NEW_UID" "$USERNAME"
-
-# Копирование домашней директории
-rsync -avz /source/home/$USERNAME/ /home/$USERNAME/
-
-# Исправление прав (на случай если файлы с старым UID)
-sudo chown -R $USERNAME:$USERNAME /home/$USERNAME
-
-# Копирование скрытых файлов настроек
-rsync -avz /source/home/$USERNAME/.[!.]* /home/$USERNAME/
-
-echo "Пользователь $USERNAME создан с UID $NEW_UID"
+# 3. Глобальное обновление прав (если остались файлы со старым UID)
+# Это важно, если данные копировались с сохранением старого числового UID
+sudo chown -R username:username /home/username
 ```
 
 ## Дополнительная информация
 
 ### Лучшие практики
 
-#### Перед миграцией
-
-1. **Проверьте конфликты UID/GID** — используйте `getent passwd` и `cut -d: -f3`
-2. **Создайте резервные копии** — всегда резервируйте /etc/* и /home
-3. **Тестируйте на тестовой системе** — не миграйте сразу на production
-4. **Запланируйте downtime** — пользователи не должны быть активны
-
-#### Во время миграции
-
-1. **Используйте rsync** — сохраняет права и атрибуты
-2. **Проверяйте права** — `ls -la /home/username`
-3. **Тестируйте вход** — сразу проверяйте возможность входа
-4. **Проверяйте sudo** — если пользователь должен иметь привилегии
-
-#### После миграции
-
-```bash
-# Проверка владельца домашней директории
-ls -la /home/ | grep username
-
-# Проверка UID/GID
-id username
-
-# Проверка возможности входа
-su - username
-
-# Проверка файлов пользователя
-find /home/username -not -user username
-
-# Исправление прав (если нужно)
-find /home/username -exec chown username:username {} \;
-```
-
-#### Альтернатива: Централизованное управление
-
-Вместо миграции рассмотрите LDAP/SSSD:
-
-```bash
-# Установка SSSD
-apt install sssd sssd-ldap
-```
-
-Подробная настройка: [LDAP/SSSD operations](./LDAP_SSSD/operations.md).
+1. **Использование `rsync`:** Всегда используйте `rsync -a` (archive mode), чтобы сохранить владельцев, группы, права доступа и временные метки.
+2. **Аудит привилегий:** После переноса проверьте, сохранены ли права на выполнение команд через `sudo` (проверьте файл `/etc/sudoers` и членство в группах `wheel` или `sudo`).
+3. **Тестовый вход:** Обязательно выполните `su - username` или вход по SSH, чтобы убедиться в корректности работы оболочки и прав доступа.
+4. **Централизация:** Для инфраструктур с более чем 5 серверами рекомендуется использовать [LDAP и SSSD](./LDAP_SSSD/operations.md) вместо ручной миграции локальных файлов.
 
 ### Распространённые проблемы
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| Пользователь не может войти | Неправильные права на /home | `chown -R user:user /home/user` |
-| Потеряны файлы | Неполное копирование | Используйте `rsync -avz` |
-| Конфликт UID | Одинаковые UID на системах | Измените UID через `usermod -u` |
-| Не работает sudo | Пользователь не в группе sudo | `usermod -aG sudo username` |
+| Ошибка «Permission denied» в `/home` | Файлы принадлежат старому UID | Выполните `chown -R` для текущего пользователя |
+| Не работает SSH по ключам | Неверные права на `.ssh/authorized_keys` | Установите 600 на файл и 700 на директорию `.ssh` |
+| Пропали группы пользователя | Не перенесена запись из `/etc/group` | Проверьте наличие записей в `/etc/group` и `/etc/gshadow` |
+| Не работает `sudo` | Пользователь не в группе `sudo`/`wheel` | Добавьте пользователя: `usermod -aG sudo username` |
 
-Смежные темы: [управление пользователями](./user_commands.md) (`useradd`, `usermod`), [файлы конфигурации](./users_config_files.md) (`/etc/passwd`, `/etc/shadow`), [LDAP/SSSD](./LDAP_SSSD/operations.md) — централизованное управление, [права доступа](../../Security/Concepts/File_Permissions/overview_definitions.md) (`chmod`, `chown`).
+### Смежные темы
+
+- [Управление пользователями](./user_commands.md) — базовые команды создания и модификации
+- [Файлы конфигурации пользователей](./users_config_files.md) — структура и аудит системных файлов
+- [LDAP и SSSD](./LDAP_SSSD/operations.md) — централизованное управление учетными записями
+- [rsync — синхронизация файлов](../rsync.md) — детальное описание инструмента переноса данных
+- [Управление привилегиями](../privilege_management.md) — настройка `sudo` и прав суперпользователя

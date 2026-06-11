@@ -21,7 +21,7 @@
 
 ### Управление брандмауэром
 
-* **`firewalld`**: Для систем на базе RHEL (CentOS, Fedora).
+* **`firewalld`**: Для систем на базе RHEL (CentOS, Fedora). Подробнее см. в **[Firewalld: динамический межсетевой экран](../../Linux/Networking/Settings/tools/firewalld.md)**.
 * **`ufw`**: Для систем на базе Debian/Ubuntu.
 
 ## Практические сценарии
@@ -78,6 +78,8 @@
     port: '80'
     proto: tcp
 ```
+
+Подробнее о синтаксисе и возможностях UFW см. в **[UFW — Uncomplicated Firewall](../../Linux/Networking/Settings/tools/ufw.md)**.
 
 ### Установка часового пояса и имени хоста
 

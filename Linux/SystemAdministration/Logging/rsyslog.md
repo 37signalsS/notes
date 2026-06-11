@@ -35,7 +35,7 @@
 **Специальные facility:**
 
 - `local0` – `local7` — для кастомных приложений
-- `auth`, `authpriv` — аутентификация (SSH, sudo)
+- `auth`, `authpriv` — аутентификация (SSH — Secure Shell, sudo)
 - `kern` — сообщения ядра
 - `cron` — задачи планировщика
 
@@ -55,10 +55,10 @@ mail.none;*.*           -/var/log/syslog
 **Модификаторы действия:**
 
 - `-` перед путём — асинхронная запись (буферизация)
-- `@` — отправка по UDP
-- `@@` — отправка по TCP
+- `@` — отправка по UDP (User Datagram Protocol)
+- `@@` — отправка по TCP (Transmission Control Protocol)
 
-### Уровни приоритета (syslog severities)
+### Уровни приоритета
 
 | Код | Уровень | Описание |
 | :--- | :--- | :--- |
@@ -80,11 +80,11 @@ mail.none;*.*           -/var/log/syslog
 1. **Включить прием логов** (`/etc/rsyslog.d/50-remote.conf`):
 
    ```conf
-   # Прием по TCP (надежно, с подтверждением)
+   # Прием по TCP (Transmission Control Protocol) — надежно, с подтверждением
    module(load="imtcp")
    input(type="imtcp" port="514")
    
-   # Прием по UDP (ненадежно, без подтверждения)
+   # Прием по UDP (User Datagram Protocol) — быстрее, без подтверждения
    # module(load="imudp")
    # input(type="imudp" port="514")
    ```
@@ -105,6 +105,7 @@ mail.none;*.*           -/var/log/syslog
    ```bash
    sudo systemctl restart rsyslog
    sudo firewall-cmd --add-port=514/tcp --permanent && sudo firewall-cmd --reload
+   # → success
    ```
 
 #### Клиент (отправитель логов)
@@ -128,7 +129,7 @@ mail.none;*.*           -/var/log/syslog
 sudo systemctl restart rsyslog
 ```
 
-### Интеграция с `systemd-journald`
+### Интеграция с systemd-journald
 
 **Модуль `imjournal`:** позволяет `rsyslog` забирать сообщения из `journald`.
 
@@ -151,12 +152,15 @@ sudo systemctl restart rsyslog
 ```bash
 # Проверка синтаксиса
 sudo rsyslogd -N1
+# → rsyslogd: version 8.2102.0, config validation run (N1), master config /etc/rsyslog.conf
+# → rsyslogd: End of config validation run.
 
 # Отправить тестовое сообщение
 logger -t test_script "Тестовое сообщение"
 
 # Проверить попадание в лог
 tail -f /var/log/syslog | grep test_script
+# → Jan 01 12:00:00 hostname test_script: Тестовое сообщение
 ```
 
 ### Отладка проблем
@@ -168,6 +172,7 @@ sudo rsyslogd -dn > /tmp/rsyslog_debug.log 2>&1
 
 # Проверить открытые порты
 ss -tlnp | grep rsyslog
+# → LISTEN 0 25 0.0.0.0:514 0.0.0.0:* users:(("rsyslogd",pid=123,fd=5))
 
 # Проверить статус службы
 systemctl status rsyslog
@@ -183,4 +188,4 @@ journalctl -u rsyslog -f
 | Логи не записываются | Неправильные права на файлы | `chown syslog:adm /var/log/*.log` |
 | Нет логов от systemd | Модуль `imjournal` не загружен | Проверить `module(load="imjournal")` |
 | Дублирование сообщений | `journald` + `rsyslog` пишут в один файл | Настроить `ForwardToSyslog=no` в `journald.conf` |
-| Высокое потребление CPU | Интенсивное логирование | Настроить фильтрацию, увеличить буферы |
+| Высокое потребление CPU | Интенсивное логирование | Настроить фильтрацию, увеличить буферы (CPU — Central Processing Unit) |

@@ -74,7 +74,7 @@ NC позволяет определить, блокирует ли файрво
 ### Сценарий 2: Измерение реальной пропускной способности канала
 
 **Задача:** Измерить максимальную скорость передачи данных между двумя серверами.
-**Инструменты:** **[iperf3](../Diagnostics/Networking/iperf3.md)** (SSoT), **[xfr](../Diagnostics/Networking/xfr.md)**.
+**Инструменты:** **[iperf3](../Diagnostics/Networking/iperf3.md)**, **[xfr](../Diagnostics/Networking/xfr.md)**.
 
 ```bash
 # На сервере (приём трафика)
@@ -134,7 +134,7 @@ ss -t '( dport = :443 or sport = :443 )'
 
 * **LISTEN:** Сервер ожидает входящих подключений
 * **SYN-SENT:** Клиент отправил SYN (возможна проблема с сетью/firewall)
-* **SYN-RECV:** Сервер получил SYN (возможен [SYN-flood](../../Security/Concepts/dos_protection.md))
+* **SYN-RECV:** Сервер получил SYN (возможен [SYN-flood](../../WebServers/Angie/High_Load/dos_protection.md))
 * **ESTABLISHED:** Соединение установлено
 * **TIME-WAIT:** Соединение закрывается (большое количество требует [TCP-tuning](./Concepts/tcp_tuning/tcp_time_wait_management.md))
 
@@ -198,21 +198,12 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 * **[ping](../Diagnostics/Networking/ping.md)** — базовая проверка доступности, ICMP
 * **[traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md)** — трассировка маршрута
 * **[iperf3](../Diagnostics/Networking/iperf3.md)** — измерение пропускной способности
-* **[xfr](../Diagnostics/Networking/xfr.md)** — современная альтернатива iperf3 (Rust, TUI)
-* **[tcpdump](../Diagnostics/Networking/tcpdump.md)** — анализ трафика
-* **[ss](../Diagnostics/Networking/ss.md)** — анализ сокетов
-* **[network_cli_tools.md](../Diagnostics/Networking/network_cli_tools.md)** — TUI-инструменты (iftop, nload, snitch)
-* **[dns/overview.md](../Diagnostics/Networking/dns/overview.md)** — диагностика DNS
-* **[curl_network_diagnostics.md](../Diagnostics/Networking/curl_network_diagnostics.md)** — диагностика HTTP/HTTPS
 
 **Протоколы и концепции:**
 
 * **[TCP/IP](../../Networking/Protocols/TCP/reliability_mechanisms/diagnostics.md)** — протокол TCP
 * **[ICMP](../../Networking/Protocols/ICMP/icmp_overview.md)** — протокол ICMP (ping)
-* **[DNS](./Concepts/dns_client.md)** — настройка DNS-клиента
 * **[TCP-tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md)** — оптимизация TCP
-* **[Policy-Based Routing](./Policy_Based_Routing/index.md)** — маршрутизация на основе политик
-* **[iSCSI](./iSCSI/index.md)** — блочный доступ по IP-сети
 
 **Практические руководства:**
 
@@ -223,5 +214,3 @@ sudo tcpdump -i eth0 -nn 'host example.com and port 443'
 * **[iproute2 overview](./Tools/iproute2/overview.md)** — обзор утилит
 * **[ip route](./Tools/iproute2/ip_route.md)** — управление маршрутами
 * **[tc](./Tools/iproute2/tc.md)** — управление трафиком (QoS)
-* **[tc netem](./Tools/tc_netem.md)** — эмуляция сетевых проблем
-* **[ethtool](./Tools/ethtool.md)** — настройка сетевых драйверов

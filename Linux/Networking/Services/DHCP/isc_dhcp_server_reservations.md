@@ -1,16 +1,16 @@
 # ISC DHCP — резервирование IP и передача маршрутов
 
-> **Важно:** ISC DHCP устарел. Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Синтаксис резервирования в Kea использует JSON.
+> **Важно:** ISC DHCP устарел. Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Синтаксис резервирования в Kea использует **JSON (JavaScript Object Notation)**.
 
-## Definitions
+## Определения
 
-**DHCP Reservation (Static Allocation)** — привязка конкретного IP-адреса к MAC-адресу устройства. Клиент всегда получает один и тот же IP из пула DHCP-сервера.
+**DHCP Reservation (Static Allocation)** — привязка конкретного **IP-адреса (Internet Protocol)** к **MAC-адресу (Media Access Control)** устройства. Клиент всегда получает один и тот же IP из пула **DHCP-сервера (Dynamic Host Configuration Protocol)**.
 
 **Classless Static Routes (RFC 3442)** — механизм передачи клиентам произвольных маршрутов через DHCP-опцию `rfc3442-classless-static-routes`. Позволяет клиентам узнавать пути к удалённым сетям без ручной настройки.
 
-> **Концепция:** [Статическое назначение DHCP](../../../../Networking/Protocols/DHCP/dhcp_lease_time.md#статическое-назначение-static-allocation--dhcp-reservation) — теория, сравнение с dynamic/automatic allocation.
+> **Концепция:** [Типы назначения DHCP](../../../../Networking/Protocols/DHCP/dhcp_lease_time.md#определения) — теория, сравнение с динамическим и автоматическим распределением.
 
-## Basic Concepts
+## Основные концепции
 
 ### Когда использовать резервирование
 
@@ -19,10 +19,10 @@
 
 ### Когда использовать передачу маршрутов
 
-- Клиенты в специфической подсети (DMZ, гостевой VLAN) должны иметь доступ к внутренним сетям через нестандартный шлюз.
+- Клиенты в специфической подсети (**DMZ — Demilitarized Zone**) или гостевом **VLAN (Virtual Local Area Network)** должны иметь доступ к внутренним сетям через нестандартный шлюз.
 - Исключение необходимости настраивать статические маршруты вручную на каждом клиенте.
 
-### Формат RFC 3442
+### Формат RFC 3442 (Request for Comments 3442)
 
 Опция `rfc3442-classless-static-routes` использует бинарный формат:
 
@@ -33,7 +33,7 @@
 - Маска `16` → сеть `/16`, за ней 2 байта сети.
 - Шлюз указывается полностью (4 байта для IPv4).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Резервирование IP-адреса
 
@@ -70,7 +70,7 @@ option rfc3442-classless-static-routes
     24, 192, 168, 0, 10, 0, 30, 253;
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Диагностика
 
@@ -82,11 +82,10 @@ option rfc3442-classless-static-routes
 
 - Опция RFC 3442 — это DHCP option **121** (classless static routes).
 - Устаревшая опция **33** (static routes) не поддерживает classless-формат и не рекомендуется.
-- Не все ОС поддерживают option 121 (Windows — да, Linux через dhclient — да, embedded-устройства — зависит от клиента).
+- Не все **ОС (Операционные Системы)** поддерживают option 121 (Windows — да, Linux через dhclient — да, embedded-устройства — зависит от клиента).
 
-### Связанные документы
+### См. также
 
-- Концепция: [Статическое назначение](../../../../Networking/Protocols/DHCP/dhcp_lease_time.md#статическое-назначение-static-allocation--dhcp-reservation)
-- Обзор ISC DHCP: [isc_dhcp_server_overview.md](./isc_dhcp_server_overview.md)
-- Базовая настройка: [isc_dhcp_server_basic_config.md](./isc_dhcp_server_basic_config.md)
-- DHCP Relay: [isc_dhcp_server_relay.md](./isc_dhcp_server_relay.md)
+- [Обзор ISC DHCP](./isc_dhcp_server_overview.md) — замена Kea и общая архитектура.
+- [Базовая настройка ISC DHCP](./isc_dhcp_server_basic_config.md) — параметры `dhcpd.conf` и интерфейсы.
+- [Время аренды и типы назначения](../../../../Networking/Protocols/DHCP/dhcp_lease_time.md) — теоретическая база.

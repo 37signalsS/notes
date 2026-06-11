@@ -1,6 +1,6 @@
 # Samba: Интеграция с Active Directory
 
-## Definitions
+## Определения
 
 **Samba AD Member** — режим работы Samba как члена домена Active Directory с использованием Kerberos для аутентификации и winbind для маппинга пользователей.
 
@@ -8,13 +8,13 @@
 
 **idmap** — подсистема Samba для маппинга идентификаторов безопасности Windows (SID) на Unix-идентификаторы (UID/GID). Централизованное управление UID/GID критично для корректной работы в домене.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Требования
 
-- Настроенный домен Active Directory
-- Синхронизация времени (Kerberos требует точного времени, расхождение ≤5 минут)
-- Пакет `winbind`
+- Настроенный домен Active Directory.
+- Синхронизация времени (Kerberos требует точного времени, расхождение ≤5 минут).
+- Пакет `winbind`.
 
 ### Уровни безопасности (`security`)
 
@@ -41,7 +41,7 @@
 - `EXAMPLE` (основной домен): 10000–999999
 - `TRUSTED` (доверенные домены): 2000000–2999999
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Установка пакетов
 
@@ -78,9 +78,11 @@ sudo yum install -y samba-winbind samba-winbind-clients
 ```bash
 # Присоединение к домену
 sudo net ads join -U Administrator
+# → Joined 'SERVER' to dns domain 'example.com'
 
 # Проверка подключения
 net ads testjoin
+# → Join is OK
 
 # Запуск служб
 sudo systemctl enable --now smb nmb winbind
@@ -107,26 +109,29 @@ sudo pam-auth-update
 ```bash
 # Информация о домене
 net ads info
+# → LDAP server: 192.168.1.10 ...
 
 # Список пользователей домена
 wbinfo -u
-getent passwd
+# → administrator, user1, user2...
 
 # Список групп домена
 wbinfo -g
-getent group
+# → domain users, domain admins...
 
 # Проверка маппинга UID/GID
-wbinfo --uid-to-sid 10000
-wbinfo --sid-to-uid S-1-5-21-...
+getent passwd "EXAMPLE\user1"
+# → user1:*:10001:10000:User One:/home/EXAMPLE/user1:/bin/bash
 
 # Проверка билета Kerberos
 klist
+# → Default principal: user1@EXAMPLE.COM
 ```
 
-## Additional Information
+## Дополнительная информация
 
-- [Обзор Samba (SSoT)](./index.md) — архитектура, версии SMB, режимы работы
-- [Настройка Samba](./samba_setup.md) — конфигурация шар и доступов
-- [Kerberos: централизованная аутентификация](../../../../Security/Concepts/kerberos.md) — протокол аутентификации AD
-- [Управление пользователями](../../../SystemAdministration/users_management.md) — NSS/PAM конфигурация
+- [Обзор Samba](./index.md) — архитектура и версии протокола
+- [Настройка сервера](./samba_setup.md) — базовые шаги конфигурации
+- [Интеграция через SSSD](../../../SystemAdministration/Users/LDAP_SSSD/index.md) — современная альтернатива Winbind
+- [Протокол Kerberos](../../../../Security/Concepts/kerberos.md) — основы сетевой аутентификации
+- [Управление пользователями](../../../SystemAdministration/users_management.md) — настройка NSS/PAM

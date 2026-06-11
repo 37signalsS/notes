@@ -38,7 +38,7 @@
 | Директива | Рекомендуемое значение | Описание |
 | :--- | :--- | :--- |
 | `Port` | Нестандартный (например, `2239`) | [Смена порта](./ssh_access_control.md) |
-| `ListenAddress` | Конкретный IP | Слушать только на нужном интерфейсе |
+| `ListenAddress` | Конкретный IP | Слушать только на нужном интерфейсе (включая IPv6 `::` для всех) |
 | `Protocol` | `2` | Только SSHv2 (по умолчанию) |
 | `LoginGraceTime` | `30` | Таймаут на аутентификацию (сек) |
 | `ClientAliveInterval` | `300` | Таймаут неактивности (сек) |
@@ -142,6 +142,7 @@ sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config_alt
 sudo tee /etc/ssh/sshd_config_alt << 'EOF'
 Port 2222
 ListenAddress 192.168.100.10
+ListenAddress 2001:db8::10
 PidFile /run/sshd-alt.pid
 PubkeyAuthentication yes
 PasswordAuthentication no

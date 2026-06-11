@@ -67,6 +67,8 @@ Netfilter организует правила в **таблицы** (по наз
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     ```
 
+    Подробнее: **[iptables: основы и практические сценарии](../../Linux/Networking/Settings/tools/iptables_basics.md)**.
+
 - **nftables** (современная замена iptables):
 
     ```bash
@@ -81,12 +83,16 @@ Netfilter организует правила в **таблицы** (по наз
     ufw allow 22/tcp
     ```
 
+    Подробнее: **[UFW — Uncomplicated Firewall](../../Linux/Networking/Settings/tools/ufw.md)**.
+
 - **firewalld** (динамический файрвол с концепцией зон):
 
     ```bash
     firewall-cmd --zone=public --add-service=ssh --permanent
     firewall-cmd --reload
     ```
+
+    Подробнее: **[Firewalld: динамический межсетевой экран](../../Linux/Networking/Settings/tools/firewalld.md)**.
 
 ---
 

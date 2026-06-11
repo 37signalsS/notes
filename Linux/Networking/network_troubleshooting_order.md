@@ -105,7 +105,7 @@ arping -I eth0 -D <gateway_ip>
 - Неожиданная смена MAC-адреса шлюза.
 - Несколько IP-адресов, указывающих на один и тот же MAC.
 
-**Подробно:** [ARP и ARP Spoofing](../../Networking/Protocols/arp.md#arp-spoofing-arp-cache-poisoning)
+**Подробно:** [ARP и ARP Spoofing](../../Networking/Protocols/arp.md#arp-spoofing-отравление-arp-кэша)
 
 ### Сценарий 3: Проверка связности (пинг)
 
@@ -273,17 +273,17 @@ iptables -L -n | grep 5432
 **Методология:**
 
 - [Инструменты диагностики сети](./network_diagnostics_tools.md) — комплексный обзор
-- [Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md — мониторинг в реальном времени
+- [Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md) — мониторинг в реальном времени
 
 **Инструменты:**
 
-- [ping](../Diagnostics/Networking/ping.md — базовая проверка доступности
-- [traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md — трассировка маршрута
-- [ss](../Diagnostics/Networking/ss.md — анализ сокетов
+- [ping](../Diagnostics/Networking/ping.md) — базовая проверка доступности
+- [traceroute и mtr](../Diagnostics/Networking/traceroute_mtr.md) — трассировка маршрута
+- [ss](../Diagnostics/Networking/ss.md) — анализ сокетов
 - [tcpdump](../Diagnostics/Networking/tcpdump.md) — анализ трафика
 
 **Настройка:**
 
-- [Конфигурация сетевых интерфейсов](./Settings/Persistent_Network/network_configuration_concepts.md)
+- [Конфигурация сетевых интерфейсов](./Settings/Persistent_Network/index.md)
 - [Policy-Based Routing](./Policy_Based_Routing/index.md) — маршрутизация на основе политик
 - [TCP tuning](./Concepts/tcp_tuning/tcp_tuning_overview.md) — оптимизация TCP

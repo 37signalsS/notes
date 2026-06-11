@@ -1,19 +1,65 @@
-# Постоянная настройка сети: практические сценарии
+# Постоянная настройка сети
 
-Навигация по методам настройки сети в различных дистрибутивах Linux.
+**Постоянная настройка сети** — конфигурация сетевых параметров (IP-адресов, шлюзов, DNS-серверов), сохраняющаяся после перезагрузки системы. В отличие от временных настроек, выполняемых через инструменты вроде [iproute2](../../Tools/iproute2/overview.md), персистентность достигается путем редактирования конфигурационных файлов системных менеджеров сети.
 
-## Навигация
+## Определения
 
-### Дистрибутивы
+- **Сетевой менеджер (Network Manager)** — системная служба, отвечающая за настройку и поддержание сетевых соединений.
+- **Императивная настройка** — прямое управление состоянием через команды или файлы конфигурации, которые описывают «как» достичь состояния.
+- **Декларативная настройка** — описание желаемого конечного состояния (обычно в формате YAML — Yet Another Markup Language), которое затем интерпретируется сетевым менеджером.
 
-- **[Debian/Ubuntu: /etc/network/interfaces](./debian_ubuntu_interfaces.md)** — классический способ с hook-скриптами
-- **[CentOS/RHEL: NetworkManager](./centos_rhel_networkmanager.md)** — nmcli, nmtui, файлы ifcfg-*
-- **[Ubuntu: Netplan](./ubuntu_netplan.md)** — декларативная настройка (YAML), bonding, VLAN
-- **[systemd-networkd](./systemd_networkd.md)** — встроенный менеджер для серверов
+## Базовые концепции
 
-### Связанные документы
+Для обеспечения постоянства настроек используются различные подходы в зависимости от дистрибутива и назначения системы:
 
-- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — DNS-резолвинг
-- **[Policy-Based Routing](./index.md)** — маршрутизация на основе политик
-- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теория bonding
-- **[VLAN](../../../../Networking/Protocols/VLAN/vlan_overview.md)** — теория VLAN
+| Система | Дистрибутивы | Тип конфигурации | Управление |
+| :--- | :--- | :--- | :--- |
+| **`/etc/network/interfaces`** | Debian, старые версии Ubuntu | Императивная | `ifupdown` |
+| **NetworkManager** | RHEL (Red Hat Enterprise Linux), CentOS, Fedora, Ubuntu Desktop | Императивная | `nmcli`, `nmtui` |
+| **Netplan** | Ubuntu 17.10+ | Декларативная | `netplan` |
+| **`systemd-networkd`** | Серверные сборки, Arch Linux, контейнеры | Декларативная | `networkctl` |
+
+### Выбор сетевого менеджера
+
+- **Серверы**: Рекомендуется `systemd-networkd` или `Netplan` (в Ubuntu) для предсказуемости и минимального потребления ресурсов.
+- **Рабочие станции**: `NetworkManager` является стандартом благодаря поддержке Wi-Fi, VPN (Virtual Private Network) и удобных графических интерфейсов (GUI — Graphical User Interface).
+- **Legacy-системы**: Могут продолжать использовать традиционный файл `interfaces`.
+
+## Практические сценарии
+
+Настройка конкретных менеджеров сети описана в следующих разделах:
+
+- **[Debian/Ubuntu: /etc/network/interfaces](./debian_ubuntu_interfaces.md)** — классический способ управления через `ifupdown`.
+- **[CentOS/RHEL: NetworkManager](./centos_rhel_networkmanager.md)** — использование `nmcli` и `nmtui` в экосистеме Red Hat.
+- **[Ubuntu: Netplan](./ubuntu_netplan.md)** — современный декларативный подход в Ubuntu Server.
+- **[systemd-networkd](./systemd_networkd.md)** — универсальный менеджер, интегрированный в systemd.
+
+## Дополнительная информация
+
+### Фиксация имен интерфейсов
+
+Для предотвращения изменения имен интерфейсов (например, `eth0` → `eth1`) при добавлении оборудования используется механизм `systemd.link`.
+
+**Пример конфигурации (`/etc/systemd/network/10-persistent-net.link`):**
+
+```ini
+[Match]
+MACAddress=52:54:00:ab:cd:ef
+
+[Link]
+Name=net0
+```
+
+### Диагностика
+
+| Команда | Описание |
+| :--- | :--- |
+| `networkctl status` | Общий статус интерфейсов в systemd-networkd |
+| `nmcli device status` | Состояние устройств в NetworkManager |
+| `journalctl -u systemd-networkd` | Логи сетевого демона systemd |
+
+### См. также
+
+- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — конфигурация резолвинга.
+- **[Policy-Based Routing (PBR)](../../Policy_Based_Routing/index.md)** — маршрутизация на основе политик.
+- **[VLAN](../../../../Networking/Protocols/vlan.md)** — настройка виртуальных сетей.

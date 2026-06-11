@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Views (Представления)** — механизм BIND, позволяющий отдавать разные ответы на DNS-запросы в зависимости от источника запроса (IP-адреса клиента).
+**Views (Представления)** — механизм в BIND, позволяющий серверу предоставлять разные наборы данных (зон или параметров) в зависимости от источника DNS-запроса (например, IP-адреса клиента).
 
-**ACL (Access Control List)** — именованный список IP-адресов или сетей для контроля доступа.
+**ACL (Access Control List — список контроля доступа)** — именованный список IP-адресов, сетей или ключей, используемый для разграничения доступа к функциям сервера (рекурсии, трансферу зон, обновлениям).
 
 ## Базовые концепции
 
@@ -12,28 +12,33 @@
 
 | Сценарий | Описание |
 |----------|----------|
-| **Split-horizon DNS** | Разные ответы для внутренней и внешней сети ([подробнее](../../../../Networking/Protocols/DNS/dns_advanced.md#split-horizon-dns-split-dns), [RFC 9704](https://datatracker.ietf.org/doc/rfc9704/)) |
-| **Геораспределение** | Разные IP для клиентов из разных регионов |
-| **Тестирование** | Отдельные зоны для staging/production |
+| **Split-horizon DNS** | Разделение сетевого пространства: внутренние клиенты получают локальные адреса, внешние — публичные ([подробнее](../../../../Networking/Protocols/DNS/dns_advanced.md#split-horizon-dns-split-dns)). |
+| **Геораспределение** | Направление клиентов на ближайшие серверы в зависимости от их географического положения (Geo-DNS). |
+| **Тестирование** | Изоляция сред разработки или тестирования внутри одного экземпляра BIND. |
 
-### Типы ACL
+### Стандартные ACL
 
-| ACL | Описание |
-|-----|----------|
-| `any` | Все адреса |
-| `none` | Никаких адресов |
-| `localhost` | Локальные интерфейсы сервера |
-| `localnets` | Сети, к которым подключён сервер |
-| Пользовательская | Список IP/сетей в формате `acl "name" { ... };` |
+BIND имеет несколько предопределённых списков доступа:
+
+* `any` — разрешает доступ всем.
+* `none` — запрещает доступ всем.
+* `localhost` — разрешает доступ только с IP-адресов локальных интерфейсов сервера.
+* `localnets` — разрешает доступ из всех сетей, к которым напрямую подключён сервер.
+
+### RFC 9704
+
+**RFC 9704 (Request for Comments 9704)** — документ, описывающий лучшие практики и архитектурные подходы к реализации Split-horizon DNS.
 
 ## Практические сценарии
 
-### 1. Split-horizon DNS (разделение внутреннего и внешнего DNS)
+### 1. Настройка Split-horizon DNS
+
+Механизм позволяет разделять ответы для внутренней сети организации и внешнего Интернета.
 
 **Конфигурация в `/etc/bind/named.conf`:**
 
 ```conf
-// ACL для внутренней сети
+// Определение ACL для внутренней сети
 acl "internal-net" {
     172.16.0.0/16;
     127.0.0.1;
@@ -42,41 +47,40 @@ acl "internal-net" {
 // Представление для внутренних клиентов
 view "internal" {
     match-clients { internal-net; };
-    recursion yes;  // Разрешаем рекурсию для своих
+    recursion yes;
 
-    // Внутренние зоны
+    // Внутренняя версия зоны
     zone "example.com" {
         type master;
         file "/etc/bind/zones/db.example.com.internal";
     };
 
-    // Подключение общих настроек
-    include "/etc/bind/named.conf.options";
+    include "/etc/bind/named.conf.default-zones";
 };
 
 // Представление для внешних клиентов
 view "external" {
     match-clients { any; };
-    recursion no;  // Запрещаем рекурсию для чужих
+    recursion no;
 
-    // Публичные зоны
+    // Публичная версия зоны
     zone "example.com" {
         type master;
         file "/etc/bind/zones/db.example.com.external";
-        allow-transfer { 172.16.0.6; };
     };
 };
 ```
 
-**Важно:**
+**Важные правила:**
 
-- Views обрабатываются по порядку — первый подходящий используется
-- Все зоны должны быть определены внутри views (не глобально)
-- `named.conf.default-zones` также нужно включить в каждый view
+* Views обрабатываются последовательно: запрос попадает в первое подходящее по `match-clients` представление.
+* Если используются Views, то все зоны (включая стандартные) должны быть описаны внутри блоков `view`.
 
-### 2. Настройка логирования
+### 2. Настройка расширенного логирования
 
-**Создание директории для логов:**
+Для детального анализа запросов и диагностики требуется создание отдельных файлов журналов.
+
+**Подготовка файловой системы:**
 
 ```bash
 sudo mkdir /var/log/named
@@ -84,128 +88,67 @@ sudo chown bind:bind /var/log/named
 sudo chmod 755 /var/log/named
 ```
 
-**Настройка AppArmor (если используется):**
+**Настройка AppArmor (в Debian/Ubuntu):**
+Добавьте разрешение на запись в `/etc/apparmor.d/local/usr.sbin.named`:
 
-```bash
-# /etc/apparmor.d/local/usr.sbin.named
+```text
 /var/log/named/** rw,
 ```
 
-**Конфигурация логирования в `/etc/bind/named.conf`:**
+**Конфигурация в блоке logging:**
 
 ```conf
 logging {
-    // Лог DNS-запросов
-    channel query.log {
+    channel query_log {
         file "/var/log/named/query.log" versions 5 size 10m;
         severity info;
         print-time yes;
         print-category yes;
-        print-severity yes;
     };
 
-    // Лог ошибок
-    channel default_log {
-        file "/var/log/named/default.log" versions 3 size 5m;
-        severity info;
-        print-time yes;
-    };
-
-    // Категории логов
-    category queries { query.log; };
-    category default { default_log; };
+    category queries { query_log; };
 };
 ```
 
-**Включение логирования запросов:**
+### 3. Управление через rndc (Remote Name Daemon Control)
 
-```conf
-options {
-    ...
-    querylog yes;  // Включить логирование запросов
-};
-```
-
-**Перезапуск и проверка:**
-
-```bash
-sudo systemctl restart bind9
-
-# Просмотр логов в реальном времени
-tail -f /var/log/named/query.log
-```
-
-### 3. Управление BIND с помощью rndc
-
-**Генерация ключа:**
-
-```bash
-sudo rndc-confgen -a -c /etc/bind/rndc.key
-sudo chown bind:bind /etc/bind/rndc.key
-sudo chmod 640 /etc/bind/rndc.key
-```
+**rndc (Remote Name Daemon Control — удалённое управление демоном имен)** — утилита для безопасного управления сервером BIND без его перезапуска.
 
 **Основные команды:**
 
-```bash
-# Перезагрузка конфигурации (без обрыва соединений)
-sudo rndc reload
+* `sudo rndc reload` — полная перезагрузка конфигурации и всех зон.
+* `sudo rndc flush` — полная очистка кэша DNS-сервера.
+* `sudo rndc status` — отображение текущего состояния и статистики сервера.
+* `sudo rndc querylog` — включение или выключение логирования запросов "на лету".
 
-# Перезагрузка конкретной зоны
-sudo rndc reload example.com
+### 4. Подпись зоны с помощью DNSSEC
 
-# Очистка кэша
-sudo rndc flush
+**DNSSEC (Domain Name System Security Extensions — расширения безопасности системы доменных имен)** — набор спецификаций для обеспечения аутентичности и целостности данных DNS.
 
-# Статус сервера
-sudo rndc status
+**Этапы ручной подписи:**
 
-# Включение/выключение логирования запросов
-sudo rndc querylog on
-sudo rndc querylog off
+1. **Генерация KSK (Key Signing Key — ключ для подписи ключей):**
 
-# Остановка сервера (грациозная)
-sudo rndc stop
-```
+   ```bash
+   sudo dnssec-keygen -a RSASHA256 -b 2048 -n ZONE example.com
+   ```
 
-Подробнее: [Диагностика BIND](./troubleshooting.md) — разделы логирования, отладки, управления кэшем.
+2. **Генерация ZSK (Zone Signing Key — ключ для подписи зоны):**
 
-### 4. DNSSEC-подпись зоны
+   ```bash
+   sudo dnssec-keygen -a RSASHA256 -b 1024 -n ZONE example.com
+   ```
 
-**Генерация ключей:**
+3. **Подпись файла зоны:**
 
-```bash
-cd /etc/bind
-sudo rndc-confgen -a  # если ещё не создан
-
-# Генерация KSK (Key Signing Key)
-sudo dnssec-keygen -a RSASHA256 -b 2048 -n ZONE example.com
-
-# Генерация ZSK (Zone Signing Key)
-sudo dnssec-keygen -a RSASHA256 -b 1024 -n ZONE example.com
-```
-
-**Подпись зоны:**
-
-```bash
-sudo dnssec-signzone -o example.com /etc/bind/zones/db.example.com
-```
-
-**Добавление в конфигурацию:**
-
-```conf
-zone "example.com" {
-    type master;
-    file "/etc/bind/zones/db.example.com.signed";
-    auto-dnssec maintain;
-    inline-signing yes;
-};
-```
-
-Подробнее: [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — DNSSEC, DoH, DoT; [Проверка DNSSEC](./troubleshooting.md#8-проверка-dnssec) — диагностика.
+   ```bash
+   sudo dnssec-signzone -o example.com /etc/bind/zones/db.example.com
+   ```
 
 ## Дополнительная информация
 
-- **QP-trie:** BIND 9.20+ использует QP-trie вместо RBTDB для хранения данных зон и кэша — улучшение масштабируемости и снижение нагрузки на CPU ([ISC 2025 BIND Report](https://www.isc.org/blogs/2025-bind-report/))
-- **Утилиты:** `named-checkconf` — проверка конфигурации, `named-checkzone` — проверка файла зоны, `dig`/`nslookup` — диагностика, `rndc` — удалённое управление
-- **Официальная документация:** [ISC BIND 9 ARM](https://bind9.readthedocs.io/)
+* **Производительность:** В современных версиях BIND используется структура данных **QP-trie (Quaternary Prefix Trie)** для ускорения поиска в кэше и снижения нагрузки на **CPU (Central Processing Unit — центральный процессор)**.
+* **ARM (Administrator Reference Manual):** Основной справочник администратора по BIND 9.
+* [Диагностика BIND](./troubleshooting.md) — детальный разбор ошибок и инструментов отладки.
+* [Безопасность DNS](../../../../Networking/Protocols/DNS/dns_security.md) — общие принципы защиты (DNSSEC, DoH, DoT).
+* [Официальная документация ISC BIND 9](https://bind9.readthedocs.io/)

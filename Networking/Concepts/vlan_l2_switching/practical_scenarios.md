@@ -64,7 +64,7 @@ nmcli connection up vlan10-users
 
 ### Вариант C: Netplan (Ubuntu 18.04+)
 
-**Подробная документация:** **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md#3-ubuntu-1710-netplan)** — полные примеры конфигураций (статические IP, bonding, VLAN, маршруты).
+**Подробная документация:** **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — полные примеры конфигураций (статические IP, bonding, VLAN, маршруты).
 
 ```yaml
 # /etc/netplan/01-netcfg.yaml
@@ -80,7 +80,9 @@ network:
       id: 10
       link: eth0
       addresses: [192.168.10.100/24]
-      gateway4: 192.168.10.1
+      routes:
+        - to: default
+          via: 192.168.10.1
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
     eth0.20:
@@ -217,7 +219,7 @@ ethtool -S eth0 | grep -i error
 
 ## Дополнительная информация
 
-Настройка Netplan (статические IP, bonding, VLAN, маршруты) — в **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md#3-ubuntu-1710-netplan)**.
+Настройка Netplan (статические IP, bonding, VLAN, маршруты) — в **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)**.
 
 ## Маркировка кабелей и портов
 

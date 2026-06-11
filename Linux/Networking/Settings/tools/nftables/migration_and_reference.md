@@ -1,143 +1,124 @@
-# nftables: миграция, инструменты и справочная информация
+# nftables — миграция и справочник синтаксиса
 
-## Сравнение синтаксиса iptables и nftables
+## Определения
 
-| iptables | nftables |
+**Миграция на nftables** — процесс перехода от использования классического набора утилит `iptables` к современной подсистеме `nftables`, включающий конвертацию правил и адаптацию скриптов управления.
+
+**Трансляция правил** — автоматизированное или ручное преобразование синтаксиса правил `iptables` в эквивалентные выражения `nftables`.
+
+**Payload expressions (Выражения содержимого)** — механизмы nftables для извлечения и проверки данных непосредственно из заголовков пакетов различных уровней (сетевого, транспортного и др.).
+
+**Meta expressions (Метавыражения)** — параметры правил, относящиеся к метаданным пакета, которые не содержатся в его заголовках (например, индекс входящего интерфейса, время получения пакета, идентификатор пользователя процесса).
+
+## Основные концепции
+
+### Сравнение синтаксиса iptables и nftables
+
+| Задача | iptables (устаревший) | nftables (современный) |
+| :--- | :--- | :--- |
+| Добавить правило | `iptables -A INPUT -p tcp --dport 22 -j ACCEPT` | `nft add rule inet filter input tcp dport 22 accept` |
+| Очистить все правила | `iptables -F` | `nft flush ruleset` |
+| Просмотреть правила | `iptables -L -n -v` | `nft list ruleset` |
+| Настройка NAT | `iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE` | `nft add rule nat postrouting oif eth0 masquerade` |
+
+### Инструменты управления (CLI — Command Line Interface)
+
+Утилита `nft` является единой точкой управления всеми семействами протоколов.
+
+| Команда | Описание |
 | :--- | :--- |
-| `iptables -A INPUT -p tcp --dport 22 -j ACCEPT` | `nft add rule inet filter input tcp dport 22 accept` |
-| `iptables -F` | `nft flush ruleset` |
-| `iptables -L -n -v` | `nft list ruleset` |
-| `iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE` | `nft add rule nat postrouting oif eth0 masquerade` |
+| `nft list ruleset` | Вывод всех текущих правил и таблиц |
+| `nft list ruleset -a` | Вывод с хэндлами (уникальными идентификаторами правил) |
+| `nft flush ruleset` | Полная очистка текущей конфигурации в памяти |
+| `nft -c -f <файл>` | Проверка синтаксиса конфигурационного файла без применения |
+| `nft -j list ruleset` | Экспорт конфигурации в формате **JSON (JavaScript Object Notation)** |
+| `nft describe <объект>` | Получение подробной справки о полях и типах данных объекта |
 
----
+## Практические сценарии
 
-## Миграция с iptables
+### 1. Миграция с iptables
 
-### Утилиты для конвертации (пакет `iptables`)
+В состав пакета `iptables` входят утилиты для автоматизации перехода.
 
-- `iptables-translate` — конвертация отдельных команд
-- `iptables-restore-translate` — конвертация файлов restore
-- `iptables-nft-restore` — прямое восстановление в nftables
+**Инструменты конвертации:**
 
-### Пример конвертации
+- `iptables-translate`: конвертирует одну команду `iptables` в формат `nft`.
+- `iptables-restore-translate`: принимает на вход файл в формате `iptables-save` и выводит готовый набор правил для `nftables`.
+
+**Пример использования `iptables-translate`:**
 
 ```bash
 # Исходная команда iptables
 iptables -A INPUT -i eth0 -p tcp --dport 80 -j DROP
 
-# После iptables-translate
+# Результат трансляции
 nft add rule ip filter INPUT iifname "eth0" tcp dport 80 counter drop
 ```
 
-**Важно:** Сконвертированные правила могут не работать, если не созданы соответствующие таблицы и цепочки. В nftables **нет предопределённых таблиц** — их нужно создавать явно.
+**Важно:** В nftables отсутствуют предопределенные таблицы (такие как `filter` или `nat`). Сгенерированные правила не будут работать, пока в системе не созданы соответствующие таблицы и цепочки. Подробнее об этом: **[nftables: архитектура и основные концепции](./architecture_and_concepts.md)**.
 
-### Порядок миграции
+**Алгоритм миграции:**
 
-1. Проверить поддержку: `nft list ruleset`
-2. Экспортировать правила: `iptables-save > iptables-rules.txt`
-3. Конвертировать: `iptables-restore-translate < iptables-rules.txt`
-4. Отредактировать, добавить таблицы и цепочки
-5. Протестировать перед применением
+1. Выполните экспорт старых правил: `iptables-save > rules.ipt`.
+2. Проведите трансляцию: `iptables-restore-translate -f rules.ipt > rules.nft`.
+3. Отредактируйте `rules.nft`, добавив определения таблиц и цепочек (Hooks).
+4. Проверьте синтаксис: `nft -c -f rules.nft`.
+5. Примените правила: `nft -f rules.nft`.
 
----
+### 2. Справочник выражений для заголовков пакетов
 
-## Инструменты управления
+nftables позволяет гибко фильтровать трафик по полям различных протоколов.
 
-| Инструмент | Описание |
-| :--- | :--- |
-| `nft` | Основная утилита управления |
-| `nft list ruleset` | Просмотр всех правил |
-| `nft list ruleset -a` | Просмотр с хэндлами (для удаления) |
-| `nft flush ruleset` | Очистка всех правил |
-| `nft -c -f <file>` | Проверка синтаксиса файла |
-| `nft -j list ruleset` | Экспорт в JSON |
-| `nft describe <object>` | Подробная информация об объекте |
+**Сетевые и транспортные протоколы:**
 
----
+- **Ethernet**: `ether { daddr | saddr | type }`
+- **VLAN (Virtual Local Area Network)**: `vlan { id | dei | pcp | type }`
+- **ARP (Address Resolution Protocol)**: `arp { htype | ptype | hlen | plen | operation | saddr { ip | ether } | daddr { ip | ether } }`
+- **IPv4 (Internet Protocol v4)**: `ip { version | hdrlength | dscp | ecn | length | id | frag-off | ttl | protocol | checksum | saddr | daddr }`
+- **IPv6**: `ip6 { version | dscp | ecn | flowlabel | length | nexthdr | hoplimit | saddr | daddr }`
+- **TCP (Transmission Control Protocol)**: `tcp { sport | dport | sequence | ackseq | flags | window | checksum }`
+- **UDP (User Datagram Protocol)**: `udp { sport | dport | length | checksum }`
+- **ICMP (Internet Control Message Protocol)**: `icmp { type | code | id | sequence }`
 
-## Payload expressions (отбор по содержимому пакетов)
-
-### Основные поля заголовков
-
-```
-# Ethernet
-ether { daddr | saddr | type }
-
-# VLAN
-vlan { id | dei | pcp | type }
-
-# ARP
-arp { htype | ptype | hlen | plen | operation | saddr { ip | ether } | daddr { ip | ether } }
-
-# IPv4
-ip { version | hdrlength | dscp | ecn | length | id | frag-off | ttl | protocol | checksum | saddr | daddr }
-
-# ICMP
-icmp { type | code | checksum | id | sequence | gateway | mtu }
-
-# IPv6
-ip6 { version | dscp | ecn | flowlabel | length | nexthdr | hoplimit | saddr | daddr }
-
-# ICMPv6
-icmpv6 { type | code | checksum | parameter-problem | packet-too-big | id | sequence | max-delay }
-
-# TCP
-tcp { sport | dport | sequence | ackseq | doff | reserved | flags | window | checksum | urgptr }
-
-# UDP
-udp { sport | dport | length | checksum }
-```
-
-### RAW payload expression (для протоколов без шаблона)
+**Пример RAW-выражения (для данных по смещению):**
 
 ```bash
-# Синтаксис: @base,offset,length
-# base: ll (link), nh (network), th (transport)
-
-# Выбрать TCP/UDP пакеты на порты 53, 80
-nft add rule filter input meta l4proto { tcp, udp } @th,16,16 { 53, 80 }
-
-# То же с готовым шаблоном (проще)
-nft add rule filter input meta l4proto { tcp, udp } th dport { 53, 80 } accept
+# Синтаксис: @base,offset,length (base: ll - link, nh - network, th - transport)
+# Проверка первых двух байтов транспортного заголовка (обычно sport)
+nft add rule filter input @th,0,16 53
 ```
 
----
+### 3. Использование метаданных (Meta expressions)
 
-## Метаусловия (meta expression)
+Метаданные позволяют строить правила на основе контекста прохождения пакета.
 
-### С обязательным `meta`
+**Часто используемые мета-поля:**
 
-```
-meta { length | nfproto | l4proto | protocol | priority }
-```
+- `iifname`, `oifname`: имена входящего и исходящего интерфейсов.
+- `skuid`, `skgid`: идентификаторы пользователя и группы владельца сокета (только для локального трафика).
+- `time`, `day`, `hour`: фильтрация по времени.
+- `protocol`: сетевой протокол (например, `ip`, `ip6`).
 
-### С опциональным `meta`
-
-```
-[meta] { mark | iif | iifname | iiftype | oif | oifname | oiftype |
-         skuid | skgid | nftrace | rtclassid | ibrname | obrname |
-         pkttype | cpu | iifgroup | oifgroup | cgroup | random |
-         ipsec | iifkind | oifkind | time | hour | day }
-```
-
-### Примеры
+**Пример: Ограничение доступа по времени:**
 
 ```bash
-# Фильтрация по времени
-nft add rule filter input meta hour "09:00-18:00" accept
-
-# По CPU
-nft add rule filter input meta cpu 0-3 accept
-
-# Случайное число (для балансировки)
-nft add rule nat prerouting numgen random mod 100 vmap { 0-69 : jump chain1 }
+# Разрешить входящий трафик только в рабочее время
+nft add rule inet filter input meta hour "09:00-18:00" accept
 ```
 
----
+**Пример: Балансировка на основе случайного числа:**
 
-## Ссылки по теме
+```bash
+# Перенаправлять 30% трафика в другую цепочку
+nft add rule nat prerouting numgen random mod 100 vmap { 0-29 : jump chain1, 30-99 : accept }
+```
 
-- **[Сохранение правил](../firewall_common.md#сохранение-правил-между-перезагрузками)** — общие вопросы
-- **[Лучшие практики правил](../../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования
-- **[Концепции сетевых файрволов](../../../../../Networking/Concepts/firewall_concepts.md)** — теория Netfilter
-- **[Docker интеграция](../../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — взаимодействие с Docker
+## Дополнительная информация
+
+### Ссылки по теме
+
+- **[nftables: архитектура и основные концепции](./architecture_and_concepts.md)** — основы иерархии (таблицы, цепочки).
+- **[nftables: практические сценарии](./practical_scenarios.md)** — готовые примеры настройки NAT и защиты от атак.
+- **[Сохранение правил файрвола](../firewall_common.md#сохранение-правил-между-перезагрузками)** — обеспечение персистентности конфигурации.
+- **[Рекомендации по проектированию правил](../../../../../Networking/Concepts/firewall_rules_best_practices.md)** — общие принципы безопасности.
+- **[Интеграция с Docker](../../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)** — особенности работы в контейнеризированных средах.

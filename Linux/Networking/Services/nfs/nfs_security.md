@@ -1,50 +1,52 @@
-# NFS: Безопасность и аутентификация
+# NFS (Network File System) — безопасность и аутентификация
 
-## Definitions
+## Определения
 
-**NFS-безопасность** — совокупность механизмов аутентификации, авторизации, шифрования и сетевого экранирования для защиты NFS-трафика и данных. Ключевые аспекты: методы аутентификации (sys/krb5), security-флаги (`sec=`), файрвол-правила, root_squash.
+**NFS-безопасность** — совокупность механизмов аутентификации, авторизации, шифрования и сетевого экранирования для защиты трафика и данных в **NFS (Network File System)**. Ключевые аспекты включают методы аутентификации (sys/krb5), флаги безопасности (`sec=`), правила межсетевого экрана и механизм `root_squash`.
 
-## Basic Concepts
+## Основные концепции
 
 ### Методы аутентификации
 
 | Метод | Описание | Безопасность | Применение |
 | :--- | :--- | :--- | :--- |
-| `sys` (AUTH_SYS/UNIX) | Аутентификация на основе UID/GID | Минимальная, UID подделывается | Доверенные изолированные сети |
+| `sys` (AUTH_SYS/UNIX) | Аутентификация на основе **UID/GID (User ID / Group ID)** | Минимальная, UID подделывается | Доверенные изолированные сети |
 | `krb5` (AUTH_GSSAPI) | Аутентификация через Kerberos | Средняя, проверка подлинности | Базовая защита в продакшене |
 | `krb5i` | Kerberos + проверка целостности | Высокая, защита от модификации | Чувствительные данные |
 | `krb5p` | Kerberos + шифрование трафика | Наивысшая, но ниже производительность | Конфиденциальные данные |
 
-### Security-флаги в `/etc/exports`
+### Флаги безопасности в `/etc/exports`
 
 ```ini
-# Стандартная UNIX-аутентификация (по умолчанию)
+# Стандартная аутентификация UNIX (по умолчанию)
 /srv/nfs/data 10.0.0.0/24(rw,sync,sec=sys)
 
-# Kerberos-аутентификация
+# Аутентификация Kerberos
 /srv/nfs/secure 10.0.0.0/24(rw,sync,sec=krb5)
 
-# Kerberos с проверкой целостности
+# Kerberos с проверкой целостности данных
 /srv/nfs/integrity 10.0.0.0/24(rw,sync,sec=krb5i)
 
-# Kerberos с шифрованием (максимальная безопасность)
+# Kerberos с шифрованием трафика (максимальная безопасность)
 /srv/nfs/encrypted 10.0.0.0/24(rw,sync,sec=krb5p)
 ```
 
 ### Файрвол для NFS
 
-**NFSv4 (рекомендуется):** использует только порт **2049/tcp**.
+**NFSv4 (рекомендуется):** использует только порт **2049/TCP (Transmission Control Protocol)**.
 
 ```bash
 # ufw
 sudo ufw allow from 10.0.0.0/24 to any port 2049 proto tcp
+# → Rule added
 
 # firewalld
 sudo firewall-cmd --permanent --add-service=nfs
 sudo firewall-cmd --reload
+# → success
 ```
 
-**NFSv3 (не рекомендуется):** требует порты `rpcbind` (111), `mountd`, `statd`, `lockd`. Фиксация портов в `/etc/default/nfs-kernel-server`:
+**NFSv3 (не рекомендуется):** требует порты **RPC (Remote Procedure Call)**: `rpcbind` (111), `mountd`, `statd`, `lockd`. Фиксация портов в `/etc/default/nfs-kernel-server`:
 
 ```bash
 RPCMOUNTDOPTS="--port 892"
@@ -54,7 +56,7 @@ STATDOPTS="--port 893 --outgoing-port 894"
 
 Подробные концепции файрволов: [firewall_concepts.md](../../../../Networking/Concepts/firewall_concepts.md), практические сценарии: [firewall_common.md](../../../../Linux/Networking/Settings/tools/firewall_common.md).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Монтирование с Kerberos
 
@@ -75,9 +77,12 @@ sudo mount -t nfs4 -o sec=krb5p 10.0.0.5:/srv/nfs/shared /mnt/nfs/shared
 ```bash
 # Проверка билета
 klist
+# → Ticket cache: FILE:/tmp/krb5cc_1000
+# → Default principal: user@EXAMPLE.COM
 
 # Получение нового билета
 kinit user@REALM
+# → Password for user@REALM:
 ```
 
 ### Настройка Kerberos для NFS
@@ -93,13 +98,17 @@ kinit user@REALM
 ### Рекомендации по безопасности
 
 1. **Используйте NFSv4 + Kerberos** (`sec=krb5p`) в продакшене.
-2. **Ограничивайте доступ по IP** в `/etc/exports` — избегайте wildcard `*`.
+2. **Ограничивайте доступ по IP (Internet Protocol)** в `/etc/exports` — избегайте wildcard `*`.
 3. **Используйте `root_squash`** (по умолчанию) — маппинг root клиента в `nobody`.
-4. **Выделенная сеть/VLAN** для NFS-трафика.
+4. **Выделенная сеть/VLAN (Virtual Local Area Network)** для NFS-трафика.
 5. **Файрвол** — разрешайте 2049/tcp только из доверенных подсетей.
 6. **Избегайте `no_root_squash`** — только при обоснованной необходимости.
 7. **Для NFSv3** зафиксируйте порты и ограничьте файрволом.
 
-## Additional Information
+## Дополнительная информация
 
-Смежные руководства: базовые концепции NFS ([nfs_basics.md](./nfs_basics.md)), настройка сервера/клиента ([nfs_setup.md](./nfs_setup.md)), производительность NFS ([nfs_performance.md](./nfs_performance.md)), устранение неполадок ([nfs_troubleshooting.md](./nfs_troubleshooting.md)), Kerberos ([kerberos.md](../../../../Security/Concepts/kerberos.md)), концепции файрволов ([firewall_concepts.md](../../../../Networking/Concepts/firewall_concepts.md)), настройка файрволов ([firewall_common.md](../../../../Linux/Networking/Settings/tools/firewall_common.md)).
+### См. также
+
+- [Kerberos: концепции и настройка](../../../../Security/Concepts/kerberos.md) — детальное руководство по аутентификации.
+- [Базовые концепции NFS](./index.md) — версии, архитектура, безопасность.
+- [Настройка файрволов](../../../../Linux/Networking/Settings/tools/firewall_common.md) — практические примеры использования **ufw** и **firewalld**.

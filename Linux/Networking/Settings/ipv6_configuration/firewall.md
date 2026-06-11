@@ -1,172 +1,120 @@
-# Настройка firewall для IPv6 в Linux
+# Настройка файрвола для IPv6 в Linux
 
-## Важное замечание
+## Определения
 
-Правила `iptables` для IPv4 **НЕ применяются** к IPv6. Необходимо настраивать `ip6tables` или `nftables` с поддержкой IPv6.
+**IPv6 Firewall** — механизм фильтрации трафика, работающий с адресами длиной 128 бит. В Linux фильтрация IPv6 реализована как часть фреймворка Netfilter, но управляется отдельно от IPv4 в классических утилитах.
 
-## Настройка через firewalld
+**ICMPv6 (Internet Control Message Protocol for IPv6)** — критически важный протокол для функционирования IPv6. В отличие от IPv4, где ICMP часто блокируют в целях безопасности, полное блокирование ICMPv6 нарушает работу сети (NDP, PMTUD).
 
-### Разрешение ICMPv6
+## Основные концепции
 
-ICMPv6 необходим для работы IPv6 (NDP, Path MTU Discovery):
+### Разделение стеков
 
-```bash
-# Разрешить ICMPv6
-firewall-cmd --permanent --add-protocol=icmpv6
+В классических инструментах фильтрации (iptables) правила для IPv4 и IPv6 хранятся в разных таблицах и управляются разными утилитами:
 
-# Перезагрузить правила
-firewall-cmd --reload
-```
+- `iptables` — только для IPv4.
+- `ip6tables` — только для IPv6.
 
-### Разрешение трафика на портах
+Современные инструменты (`nftables`, `firewalld`) позволяют управлять обоими протоколами в рамках единых правил или зон, но внутренне всё равно разделяют обработку пакетов.
 
-```bash
-# Разрешить трафик на конкретном порту для IPv6
-firewall-cmd --permanent --add-port=80/tcp --ipv6
-firewall-cmd --permanent --add-port=443/tcp --ipv6
+### Критическая важность ICMPv6
 
-# Перезагрузить правила
-firewall-cmd --reload
-```
+Для корректной работы IPv6 необходимо разрешать следующие типы ICMPv6 сообщений:
 
-### Проблема с drop target
+1. **Neighbor Discovery Protocol (NDP)**: сообщения `Neighbor Solicitation` и `Neighbor Advertisement` (аналог ARP). Без них хосты не найдут друг друга в локальном сегменте.
+2. **Path MTU Discovery (PMTUD)**: сообщения `Packet Too Big`. В IPv6 нет фрагментации на маршрутизаторах, поэтому хост должен знать реальный MTU на всем пути.
+3. **Multicast Listener Discovery (MLD)**: необходимо для работы групп рассылки.
 
-При использовании зоны с `target: drop` входящие пакеты IPv6 могут блокироваться, включая ответы на ping.
+## Практические сценарии
 
-**Решение:**
+### Настройка через firewalld (RHEL/CentOS/Fedora)
+
+`firewalld` поддерживает IPv6 "из коробки" через концепцию зон.
+
+**Разрешение ICMPv6 (обычно разрешено в стандартных зонах):**
 
 ```bash
-# Добавить протокол IPv6-ICMP
 firewall-cmd --permanent --add-protocol=icmpv6
 firewall-cmd --reload
 ```
 
-### Проверка статуса
+**Открытие портов для IPv6:**
+Команды без флага `--ipv6` применяются к обоим протоколам, если не указано иное.
 
 ```bash
-# Проверка активных зон
-firewall-cmd --get-active-zones
+# Разрешить HTTP/HTTPS для всех протоколов
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
 
-# Проверка правил для IPv6
-firewall-cmd --list-all --ipv6
+# Разрешить порт только для IPv6
+firewall-cmd --permanent --add-port=8080/tcp --ipv6
 ```
 
-## Настройка через ip6tables
+### Настройка через ip6tables (классический подход)
 
-### Базовые правила
+Базовый набор правил для защищенного узла:
 
 ```bash
-# Разрешить установленные соединения
+# 1. Разрешить установленные соединения
 sudo ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Разрешить loopback
+# 2. Разрешить loopback (важно для локальных сервисов)
 sudo ip6tables -A INPUT -i lo -j ACCEPT
 
-# Разрешить ICMPv6 (необходимо для работы IPv6)
+# 3. Разрешить ICMPv6 (обязательно!)
 sudo ip6tables -A INPUT -p icmpv6 -j ACCEPT
 
-# Разрешить SSH
+# 4. Разрешить входящий SSH
 sudo ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
 
-# Разрешить HTTP/HTTPS
-sudo ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
-sudo ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
-
-# Отклонить остальные
+# 5. Установить политику DROP по умолчанию
 sudo ip6tables -P INPUT DROP
+sudo ip6tables -P FORWARD DROP
 ```
 
-### Сохранение правил
+### Настройка через nftables (современный подход)
 
-**Debian/Ubuntu:**
+В `nftables` рекомендуется использовать семейство `inet` для общих правил или `ip6` для специфичных.
 
 ```bash
-# Установка пакета
-sudo apt-get install -y iptables-persistent
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
 
-# Сохранение правил
-sudo netfilter-persistent save
+        # Разрешить loopback и установленные соединения
+        iif lo accept
+        ct state established,related accept
+
+        # Разрешить ICMPv6
+        ip6 nexthdr icmpv6 accept
+
+        # Разрешить порты
+        tcp dport { 22, 80, 443 } accept
+    }
+}
 ```
 
-**RHEL/CentOS:**
+### Диагностика и проверка
+
+Проверка доступности порта по IPv6:
 
 ```bash
-# Установка пакета
-sudo yum install -y iptables-services
+# Использование netcat
+nc -6 -zv <ipv6_address> 80
 
-# Сохранение правил
-sudo service ip6tables save
-sudo systemctl enable ip6tables
+# Использование nmap
+nmap -6 -p 80,443 <ipv6_address>
 ```
 
-### Проверка правил
+## Дополнительная информация
 
-```bash
-# Просмотр правил
-sudo ip6tables -L -n -v
+### Типичные ошибки
 
-# Просмотр с номерами строк
-sudo ip6tables -L -n --line-numbers
-```
+- **Блокировка всех ICMPv6**: приводит к "зависанию" соединений из-за невозможности согласовать MTU.
+- **Отсутствие правил в ip6tables**: если настроен только `iptables`, IPv6 остается полностью открытым или полностью закрытым в зависимости от политики ядра по умолчанию.
 
-## Настройка через nftables
+### См. также
 
-### Базовая конфигурация
-
-```bash
-# Создание таблицы
-sudo nft add table ip6 filter
-
-# Создание цепочки
-sudo nft add chain ip6 filter input { type filter hook input priority 0 \; policy drop \; }
-
-# Разрешение установленных соединений
-sudo nft add rule ip6 filter input ct state established,related accept
-
-# Разрешение loopback
-sudo nft add rule ip6 filter input iif lo accept
-
-# Разрешение ICMPv6
-sudo nft add rule ip6 filter input ip6 nexthdr icmpv6 accept
-
-# Разрешение SSH
-sudo nft add rule ip6 filter input tcp dport 22 accept
-```
-
-### Сохранение конфигурации
-
-```bash
-# Сохранение правил
-sudo nft list ruleset > /etc/nftables.conf
-
-# Загрузка при загрузке
-sudo systemctl enable nftables
-```
-
-## Проверка firewall
-
-```bash
-# Проверка доступности порта
-nc -6 -zv example.com 80
-
-# Проверка через telnet
-telnet -6 example.com 80
-
-# Проверка через nmap
-nmap -6 -p 80,443 example.com
-```
-
-## Типичные проблемы
-
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **Не работает ping** | Блокировка ICMPv6 | Разрешить `icmpv6` в файрволе |
-| **Нет IPv6-соединения** | Блокировка исходящих | Проверить OUTPUT chain |
-| **Firewall не применяется** | Правила не сохранены | Использовать `netfilter-persistent save` |
-
-## Связанные темы
-
-* **[Настройка адресов](./address_configuration.md)** — конфигурация IPv6
-* **[iptables основы](../tools/iptables_basics.md)** — базовая настройка
-* **[nftables](./index.md)** — современный firewall
-* **[Диагностика](./diagnostics.md)** — решение проблем
+- **[Общие вопросы сохранения правил](../tools/firewall_common.md)** — персистентность конфигурации в разных дистрибутивах.
+- **[Настройка адресов IPv6](./address_configuration.md)** — подготовка сетевых интерфейсов.
+- **[Диагностика сети](./diagnostics.md)** — инструменты проверки связности.

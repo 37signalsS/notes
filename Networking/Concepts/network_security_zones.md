@@ -73,7 +73,7 @@ firewall-cmd --zone=trusted --change-interface=eth1
 firewall-cmd --zone=trusted --add-source=192.168.1.0/24
 ```
 
-Подробнее о настройке зон и политик в `firewalld` см. в заметке [Настройка firewalld](../../Linux/Networking/Settings/tools/firewalld.md).
+Подробнее о настройке зон и политик в `firewalld` см. в заметке **[Firewalld: динамический межсетевой экран](../../Linux/Networking/Settings/tools/firewalld.md)**.
 
 ### Настройка сети управления
 

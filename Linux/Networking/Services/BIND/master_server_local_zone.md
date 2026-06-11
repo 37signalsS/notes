@@ -2,11 +2,11 @@
 
 ## Определения
 
-**Master-сервер (Primary)** — авторитативный DNS-сервер, на котором хранятся редактируемые администратором файлы зоны.
+**DNS (Domain Name System — система доменных имен)** — распределенная система для получения информации о доменах.
 
-**Авторитативный ответ** — ответ от сервера, ответственного за зону (флаг `aa` в выводе `dig`).
+**Master-сервер (Primary — первичный)** — авторитативный DNS-сервер, на котором хранятся эталонные файлы зоны, доступные для редактирования администратором.
 
-> **Теория зон, SOA-записи и ролей серверов** — в [`dns_zones.md`](../../../../Networking/Protocols/DNS/dns_zones.md).
+**Авторитативный ответ** — ответ, полученный непосредственно от сервера, ответственного за данную зону (обозначается флагом `aa` в выводе утилиты `dig`).
 
 ## Базовые концепции
 
@@ -17,15 +17,11 @@
 | `/etc/bind/named.conf.local` | Объявление локальных зон |
 | `/etc/bind/zones/db.<zone>` | Файл данных зоны (zone file) |
 
-### Ключевые параметры SOA
+### Параметры записи SOA
 
-| Параметр | Описание | Значение по умолчанию |
-|----------|----------|----------------------|
-| **Serial** | Версия зоны (увеличивать при изменениях!) | `YYYYMMDDNN` |
-| **Refresh** | Интервал проверки Secondary | 604800 (7 дней) |
-| **Retry** | Повтор при ошибке | 86400 (1 день) |
-| **Expire** | Макс. время без связи с Master | 2419200 (28 дней) |
-| **Negative TTL** | Кэширование ошибок (NXDOMAIN) | 604800 (7 дней) |
+Параметры синхронизации и управления зоной определяются в записи **SOA (Start of Authority — начальная запись зоны)**.
+
+Основные поля (Serial, Refresh, Retry, Expire, Negative Cache TTL) и их назначение подробно описаны в разделе **[Зоны DNS и SOA-запись](../../../../Networking/Protocols/DNS/dns_zones.md)**.
 
 ## Практические сценарии
 
@@ -37,7 +33,7 @@
 zone "local.lan" {
     type master;
     file "/etc/bind/zones/db.local.lan";
-    allow-transfer { 172.16.0.6; };  // IP Secondary-сервера
+    allow-transfer { 172.16.0.6; };  // IP (Internet Protocol) адрес Secondary-сервера
 };
 ```
 
@@ -62,15 +58,15 @@ sudo cp /etc/bind/db.local /etc/bind/zones/db.local.lan
 ;
 ; BIND data file for local.lan
 ;
-$TTL    604800
+$TTL    604800  ; TTL (Time To Live — время жизни записи в кэше)
 @       IN      SOA     ns1.local.lan. root.local.lan. (
-                                  2         ; Serial (увеличивать при изменениях!)
+                                  2         ; Serial (номер версии, увеличивать при изменениях!)
                              604800         ; Refresh
                               86400         ; Retry
                             2419200         ; Expire
                              604800 )       ; Negative Cache TTL
 ;
-; NS и A-записи для зоны
+; NS (Name Server) и A (Address) записи для зоны
 @       IN      NS      ns1.local.lan.
 ns1     IN      A       192.168.52.149
 
@@ -84,18 +80,18 @@ server1     IN      A       192.168.52.150
 | Запись | Описание |
 |--------|----------|
 | `@` | Сама зона (`local.lan`) |
-| `SOA` | Start of Authority — основная запись зоны |
-| `NS` | Указание на DNS-сервер зоны |
+| `SOA` | Основная запись зоны, содержащая метаданные |
+| `NS` | Указание на авторитативный сервер имен для зоны |
 | `A` | Сопоставление имени хоста с IPv4-адресом |
 
-> **Важно:** В email администратора (`root.local.lan.`) точка заменяет символ `@`.
+> **Примечание:** В адресе электронной почты администратора (`root.local.lan.`) точка заменяет символ `@`.
 
 ### 3. Проверка и применение
 
 **Проверка синтаксиса:**
 
 ```bash
-# Проверка основных конфигов
+# Проверка основных файлов конфигурации
 sudo named-checkconf
 
 # Проверка синтаксиса файла зоны
@@ -113,7 +109,7 @@ OK
 
 ```bash
 sudo systemctl restart bind9
-systemctl status bind9  # проверка статуса
+systemctl status bind9  # Проверка статуса службы
 ```
 
 ### 4. Верификация
@@ -121,7 +117,8 @@ systemctl status bind9  # проверка статуса
 **Проверка с клиента:**
 
 ```bash
-dig @<IP-BIND-сервера> dnsserver.local.lan
+# Запрос A-записи у конкретного сервера
+dig @<IP-адрес-BIND-сервера> dnsserver.local.lan
 ```
 
 **Ожидаемый результат:**
@@ -136,9 +133,18 @@ dnsserver.local.lan.  604800  IN  A  192.168.52.149
 
 **Ключевые флаги:**
 
-- `aa` (Authoritative Answer) — ответ от авторитативного сервера
-- `status: NOERROR` — успешное разрешение
+- `aa` (Authoritative Answer) — ответ от авторитативного сервера.
+- `status: NOERROR` — запрос успешно разрешен.
 
 ## Дополнительная информация
 
-Актуально для BIND 9.18+ (LTS) и 9.20+ (ESV). Формат Serial: `YYYYMMDDNN`. Теория SOA и зон — в [dns_zones.md](../../../../Networking/Protocols/DNS/dns_zones.md). Подробнее: [Настройка Secondary](./slave_server_configuration.md), [Обратная зона](./reverse_zone_configuration.md), [Forwarding-сервер](./forwarding_server.md), [Диагностика](./troubleshooting.md), [DNS-записи](../../../../Networking/Protocols/DNS/dns_records.md).
+Актуально для BIND 9.18+ (LTS — Long Term Support, долгосрочная поддержка) и 9.20+ (ESV — Extended Support Version, версия с расширенной поддержкой). Формат Serial обычно следует шаблону `YYYYMMDDNN`.
+
+**Связанные разделы:**
+
+- [Зоны DNS и SOA-запись](../../../../Networking/Protocols/DNS/dns_zones.md) — теоретические основы.
+- [Настройка Secondary-сервера](./slave_server_configuration.md) — репликация зон.
+- [Обратная зона](./reverse_zone_configuration.md) — преобразование IP в имена.
+- [Перенаправляющий сервер](./forwarding_server.md) — настройка Forwarding.
+- [Диагностика BIND](./troubleshooting.md) — решение проблем.
+- [Типы DNS-записей](../../../../Networking/Protocols/DNS/dns_records.md) — подробный разбор A, NS, PTR и др.

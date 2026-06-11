@@ -1,203 +1,151 @@
-# Загрузчик GRUB
+# Загрузчик GRUB: Настройка и восстановление
 
 ## Определения
 
-### GRUB (Grand Unified Bootloader)
-
-**GRUB** — загрузчик операционной системы, работающий до загрузки ОС. Обладает собственными минимальными драйверами для работы с железом, обращаясь к BIOS или напрямую к оборудованию. Предоставляет интерфейс для выбора ОС, версии ядра и позволяет редактировать параметры загрузки (клавиша `E`).
-
-### Этапы загрузки GRUB (Legacy BIOS)
-
-1. **Stage 1**: Загрузка кода из MBR (446 байт). Из-за малого размера содержит только указатель на следующий этап.
-2. **Stage 1.5** (опционально): Загружается из первых 62 секторов диска. Содержит драйверы файловых систем для доступа к `/boot/grub/`. Требовался для старого железа с ограничением BIOS (первые 1024 цилиндра/~500 МБ).
-3. **Stage 2**: Основная часть GRUB загружается из `/boot/grub/`. Читает конфигурацию `grub.cfg` и предоставляет меню выбора ОС.
-
-### initrd vs initramfs
-
-Кратко: оба служат временной корневой ФС для загрузки модулей ядра до монтирования реального корня.
-
-- **initrd**: файл-образ блочного устройства с ФС внутри (устарел).
-- **initramfs**: архив cpio, распаковываемый в `tmpfs` (часть ядра) — современный стандарт.
-
-> **Подробное описание:** [initramfs и этапы загрузки ядра](../Core/kernel/boot_process.md#initramfs-initial-ram-file-system)
+- **GRUB (Grand Unified Bootloader):** Универсальный загрузчик, работающий до старта операционной системы. Обладает собственными драйверами для доступа к оборудованию и файловым системам, предоставляет меню выбора ОС и ядер.
+- **Stage 1 (Legacy BIOS):** Начальный код загрузчика в MBR (446 байт). Его единственная задача — указать на местоположение следующего этапа.
+- **Stage 2:** Основной код GRUB, загружаемый из `/boot/grub/`. Обрабатывает конфигурацию `grub.cfg` и предоставляет интерфейс пользователю.
+- **initramfs (Initial RAM File System):** Временная корневая файловая система (архив cpio), распаковываемая ядром в память для загрузки драйверов, необходимых для монтирования реального корня (LVM, RAID, шифрование). Подробнее: [Процесс загрузки ядра](../Core/kernel/boot_process.md).
+- **vmlinuz:** Сжатый, самораспаковывающийся образ ядра Linux.
 
 ## Базовые концепции
 
-### Путь загрузки: BIOS + MBR + GRUB
+### Структура конфигурации
 
-GRUB загружается после POST и чтения MBR BIOS. Краткий процесс:
+Конфигурация GRUB 2 распределена по нескольким компонентам, чтобы избежать ручного редактирования основного файла.
 
-1. BIOS → MBR (512 байт) → Stage 1 GRUB.
-2. Stage 1 → Stage 1.5 (опционально) → Stage 2 (`/boot/grub/`).
-3. GRUB читает `grub.cfg`, загружает `vmlinuz` + `initramfs`, передаёт управление ядру.
+| Файл / Директория | Назначение |
+| :--- | :--- |
+| `/etc/default/grub` | Основные настройки (тайм-аут, параметры ядра, тема). |
+| `/etc/grub.d/` | Скрипты генерации меню (00_header, 10_linux, 30_os-prober, 40_custom). |
+| `/boot/grub/grub.cfg` | Итоговый конфиг. **Не редактировать вручную**, перезаписывается. |
 
-> **Подробный путь BIOS/UEFI:** [BIOS + MBR путь загрузки](../Core/firmware_bios_uefi.md#путь-загрузки-bios--mbr)
+### Поддержка технологий хранения
 
-### Путь загрузки: UEFI + GPT + GRUB
+- **LVM и RAID:** GRUB 2 поддерживает загрузку с LVM и программных RAID-массивов. Отдельный раздел `/boot` без LVM/RAID рекомендуется для упрощения восстановления в критических ситуациях.
+- **BIOS и UEFI:** GRUB поддерживает оба режима. В UEFI-системах загрузка происходит через `.efi`-файл на разделе ESP. Подробнее о различиях: [BIOS и UEFI](../Core/firmware_bios_uefi.md).
 
-UEFI загружает `.efi`-файл GRUB (`grubx64.efi` или через `shim.efi`) с раздела ESP (FAT32). Далее процесс аналогичен BIOS-пути.
+### Командная строка ядра
 
-> **Подробный путь UEFI:** [UEFI + GPT путь загрузки](../Core/firmware_bios_uefi.md#путь-загрузки-uefi--gpt)
+Параметры передаются ядру через строку `linux` в конфигурации.
 
-### LVM и /boot
-
-- **GRUB Legacy**: Не поддерживал LVM. Требовался отдельный стандартный раздел для `/boot`.
-- **GRUB 2**: Поддерживает LVM напрямую, отдельный раздел для `/boot` не обязателен.
-- **Рекомендация RHEL**: Несмотря на поддержку LVM, RedHat рекомендует размещать `/boot` на стандартном разделе для возможности загрузки ядра и initramfs при проблемах с LVM (требуется LiveCD).
-
-### Параметры ядра в GRUB
-
-Строка `linux` в `grub.cfg` содержит:
-
-- Путь к ядру (`vmlinuz-...`)
-- Параметр `root=` (устройство корневой ФС)
-- Дополнительные флаги: `rhgb` (анимация загрузки), `quiet` (скрыть вывод), `nomodeset` и др.
+- `root=`: Указывает устройство с корневой ФС (рекомендуется UUID).
+- `ro/rw`: Режим монтирования корня при старте.
+- `quiet splash`: Скрытие технических логов и показ анимации.
 
 ## Практические сценарии
 
-### Просмотр параметров текущей загрузки
+### 1. Управление параметрами загрузки
+
+**Временное изменение (для одной загрузки):**
+В меню GRUB нажать `e` на нужной записи, отредактировать строку `linux`, нажать `Ctrl+X` для старта.
+
+**Постоянное изменение:**
+
+1. Отредактировать `/etc/default/grub`:
+
+   ```bash
+   GRUB_CMDLINE_LINUX_DEFAULT="quiet splash intel_iommu=on"
+   ```
+
+2. Обновить конфигурацию:
+
+   ```bash
+   # Debian / Ubuntu
+   sudo update-grub
+
+   # RHEL / CentOS / Fedora
+   sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+   # Для UEFI RHEL: /boot/efi/EFI/redhat/grub.cfg (зависит от версии)
+   ```
+
+### 2. Управление initramfs (dracut и mkinitramfs)
+
+При изменении конфигурации LVM/RAID или миграции ВМ необходимо пересобрать initramfs.
+
+**Debian / Ubuntu:**
 
 ```bash
-cat /proc/cmdline
-```
-
-### Редактирование параметров загрузки (временное)
-
-В меню GRUB нажать `E` на нужной записи, изменить параметры, нажать `Ctrl+X` для загрузки. Изменения действуют только для текущей загрузки.
-
-### Постоянное изменение параметров ядра
-
-Не редактировать `grub.cfg` напрямую — файл перезаписывается при обновлениях.
-
-1. Отредактировать `/etc/default/grub` (параметр `GRUB_CMDLINE_LINUX_DEFAULT`).
-2. Перегенерировать конфигурацию:
-
-```bash
-# RHEL/CentOS
-sudo grub2-mkconfig -o /boot/grub2/grub.cfg
-
-# Debian/Ubuntu
-sudo update-grub
-```
-
-### Добавление модулей в initramfs (dracut)
-
-При миграции ВМ между гипервизорами (например, с VMware ESXi на KVM) могут потребоваться дополнительные драйверы. Также это критично для систем с LVM или RAID.
-
-1. Просмотр содержимого initramfs:
-
-```bash
-lsinitrd /boot/initramfs-$(uname -r).img | less
-```
-
-1. Создание конфигурации добавления модулей:
-
-```bash
-# Создать файл в /etc/dracut.conf.d/
-# Пример: /etc/dracut.conf.d/vmware.conf
-add_drivers+=" mpt3sas vmw_balloon vmw_vmci vmd "
-```
-
-1. Пересоздание initramfs:
-
-```bash
-# RHEL/CentOS
-sudo dracut --force
-
-# Debian/Ubuntu
+# Добавить модуль
+echo "lvm2" >> /etc/initramfs-tools/modules
+# Обновить для текущего ядра
 sudo update-initramfs -u
 ```
 
-### Включение lvm2 в initramfs
-
-Если корневая ФС находится на LVM, модуль `lvm2` должен быть включён в initramfs для активации VG при загрузке.
-
-**Debian/Ubuntu:**
+**RHEL / CentOS / Fedora (dracut):**
 
 ```bash
-echo "lvm2" >> /etc/initramfs-tools/modules
-update-initramfs -u
-update-grub
+# Просмотр содержимого текущего образа
+lsinitrd /boot/initramfs-$(uname -r).img | less
+
+# Пересборка с принудительной перезаписью
+sudo dracut --force
 ```
 
-**RHEL/CentOS/Fedora:**
+### 3. Восстановление GRUB
 
-```bash
-echo 'add_dracutmodules+=" lvm "' >> /etc/dracut.conf.d/lvm.conf
-dracut --force
-grub2-mkconfig -o /boot/grub2/grub.cfg
-```
+При повреждении загрузчика используется LiveUSB.
 
-**Проверка:**
+**Для систем BIOS:**
 
-```bash
-# Убедиться, что lvm2 попал в initramfs
-lsinitrd /boot/initramfs-$(uname -r).img | grep lvm
-```
+1. Загрузиться с LiveUSB.
+2. Смонтировать корень: `mount /dev/sda1 /mnt`.
+3. Установить GRUB на диск: `grub-install /dev/sda`.
 
-**Troubleshooting:** **[Загрузка с LVM — Volume group not found](../FileSystems/LVM/advanced_topics/definitions_and_concepts.md#проблема-volume-group-not-found-после-рестарта)**
+**Для систем UEFI (chroot метод):**
 
-### Восстановление GRUB
+1. Смонтировать корень и ESP:
 
-При повреждении загрузчика (например, после ошибки в fstab) используется LiveCD/LiveUSB:
+   ```bash
+   mount /dev/sda2 /mnt
+   mount /dev/sda1 /mnt/boot/efi
+   ```
 
-1. Смонтировать корневую ФС и `/boot` (если он отдельно).
-2. `chroot` в систему.
-3. Переустановить GRUB:
+2. Смонтировать системные API:
 
-```bash
-# BIOS
-grub2-install /dev/sda
+   ```bash
+   for i in /dev /dev/pts /proc /sys /run; do mount -B $i /mnt$i; done
+   ```
 
-# UEFI
-grub2-install --target=x86_64-efi --efi-directory=/boot/efi
-```
+3. Перейти в систему и переустановить:
+
+   ```bash
+   chroot /mnt
+   grub-install --target=x86_64-efi --efi-directory=/boot/efi
+   update-grub
+   exit
+   ```
 
 ## Дополнительная информация
 
-### Диагностика проблем GRUB
+### Диагностика и режим Rescue
 
-| Проблема | Возможная причина | Решение |
+Если GRUB не находит конфигурацию, он переходит в `grub rescue>`.
+
+**Базовые команды rescue:**
+
+- `ls`: Список доступных дисков и разделов.
+- `set`: Показать текущие переменные (`root`, `prefix`).
+- `insmod normal`: Загрузка модуля обычного режима.
+
+| Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `error: no such partition` | Неправильный раздел /boot | Проверить `ls` в GRUB rescue |
-| `error: file not found` | Удалено ядро или grub.cfg | Переустановить GRUB |
-| `error: invalid signature` | Проблема с Secure Boot | Отключить Secure Boot или обновить shim |
-| `GRUB rescue>` | Поврежден загрузчик | Использовать GRUB rescue commands |
-| Двойная загрузка не видна | os-prober не включен | Включить `GRUB_DISABLE_OS_PROBER=false` |
+| `error: no such partition` | Неверный UUID или индекс раздела | Проверить `ls` в rescue, поправить `prefix` |
+| `error: file not found` | Удалено ядро или конфиг | Переустановка из chroot |
+| `error: invalid signature` | Secure Boot блокирует ядро | Проверить подпись или отключить Secure Boot |
 
-**GRUB rescue commands:**
+### Безопасность
 
-```
-ls                    # Показать разделы
-ls (hd0,1)/           # Просмотреть содержимое раздела
-set root=(hd0,1)      # Установить корневой раздел
-linux /vmlinuz ...    # Загрузить ядро вручную
-initrd /initrd.img    # Загрузить initrd
-boot                  # Загрузиться
-```
+**Пароль на редактирование меню:**
 
-### Безопасность GRUB
+1. Сгенерировать хэш: `grub-mkpasswd-pbkdf2`.
+2. Добавить в `/etc/grub.d/40_custom`:
 
-**Пароль на GRUB:**
-Защита от несанкционированного изменения параметров загрузки:
+   ```text
+   set superusers="admin"
+   password_pbkdf2 admin grub.pbkdf2.sha512.10000...
+   ```
 
-```bash
-# Создать хэш пароля
-grub-mkpasswd-pbkdf2
+3. Обновить конфиг. После этого для нажатия `e` потребуется пароль.
 
-# Добавить в /etc/grub.d/40_custom
-set superusers="admin"
-password_pbkdf2 admin grub.pbkdf2.sha512...
-
-# Обновить конфигурацию
-sudo update-grub  # Debian/Ubuntu
-sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # RHEL/CentOS
-```
-
-**Secure Boot:**
-
-- GRUB должен быть подписан для работы с Secure Boot
-- Используйте `shim.efi` для загрузки в системах с Secure Boot
-- Отключение Secure Boot может потребоваться для кастомных ядер
-
-**Связанные темы:** процесс загрузки — [Process загрузки ядра](../Core/kernel/boot_process.md), [BIOS и UEFI](../Core/firmware_bios_uefi.md); восстановление доступа — [Восстановление пароля](./linux_password_recovery.md); LVM — [LVM Overview](../FileSystems/LVM/overview_concepts.md); диагностика systemd — [Boot Troubleshooting](../Core/systemd/boot_troubleshooting.md).
+Связанные темы: [Этапы загрузки ядра](../Core/kernel/boot_process.md), [Микропрограммы BIOS/UEFI](../Core/firmware_bios_uefi.md), [Диагностика загрузки](../Core/systemd/boot_troubleshooting.md).

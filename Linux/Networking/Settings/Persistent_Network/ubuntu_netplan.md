@@ -1,14 +1,21 @@
-# Ubuntu Netplan: декларативная настройка сети
+# Ubuntu Netplan
 
-## Обзор
+**Netplan** — утилита для настройки сети в Ubuntu (начиная с версии 17.10), использующая декларативный подход на основе файлов в формате YAML (Yet Another Markup Language). Netplan не настраивает сеть напрямую, а генерирует конфигурационные файлы для бэкендов (renderers): `systemd-networkd` (используется на серверах) или `NetworkManager` (используется на десктопах).
 
-**Netplan** — утилита для настройки сети в Ubuntu (17.10+), использующая декларативный подход на основе YAML-файлов. Генерирует конфигурацию для `systemd-networkd` (серверы) или `NetworkManager` (десктопы).
+## Определения
 
-**Путь к конфигурации:** `/etc/netplan/*.yaml` (например, `01-netcfg.yaml`, `50-cloud-init.yaml`).
+- **Backend (Renderer)** — системная служба (`systemd-networkd` или `NetworkManager`), которая непосредственно управляет сетевыми интерфейсами на основе конфигурации, созданной Netplan.
+- **YAML (Yet Another Markup Language)** — человекочитаемый формат сериализации данных, используемый Netplan для описания конфигурации сети.
+- **Пути конфигурации:**
+  - `/etc/netplan/*.yaml` — основные настройки администратора.
+  - `/run/netplan/*.yaml` — временные настройки.
+  - `/lib/netplan/*.yaml` — настройки, поставляемые пакетами или облачными провайдерами.
 
----
+## Базовые концепции
 
-## Базовая структура
+Конфигурация Netplan строится на иерархической структуре YAML. Важно соблюдать отступы (пробелы), так как они определяют вложенность элементов.
+
+### Структура файла
 
 ```yaml
 network:
@@ -19,19 +26,14 @@ network:
       dhcp4: no
 ```
 
-| Параметр | Описание |
-| :--- | :--- |
-| `network:` | Корневой блок конфигурации |
-| `version: 2` | Версия схемы YAML (актуальная) |
-| `renderer:` | Бэкенд: `networkd` или `NetworkManager` |
-| `ethernets:` | Блок настройки физических интерфейсов |
-| `dhcp4: no` | Отключить DHCP для IPv4 (для IPv6 — `dhcp6`) |
+- **`network:`** — корневой блок конфигурации.
+- **`version: 2`** — актуальная версия схемы конфигурации.
+- **`renderer:`** — определяет бэкенд: `networkd` (по умолчанию для серверов) или `NetworkManager`.
+- **`ethernets:`**, **`bonds:`**, **`vlans:`**, **`bridges:`** — блоки для настройки соответствующих типов интерфейсов.
 
----
+## Практические сценарии
 
-## Примеры конфигурации
-
-### Статический IP-адрес
+### 1. Настройка статического IP-адреса
 
 ```yaml
 network:
@@ -40,8 +42,9 @@ network:
   ethernets:
     enp0s3:
       dhcp4: no
-      macaddress: bb:11:13:ab:ff:32
-      addresses: [10.10.10.2/24, 10.10.10.3/24]
+      addresses:
+        - 10.10.10.2/24
+        - 10.10.10.3/24
       routes:
         - to: default
           via: 10.10.10.1
@@ -49,12 +52,11 @@ network:
         addresses: [8.8.8.8, 1.1.1.1]
 ```
 
-- **Несколько IP:** указываются в квадратных скобках через запятую с пробелом
-- **`macaddress:`** — привязка к MAC-адресу
-- **`routes:`** — статические маршруты (заменяет `gateway4` в новых версиях). Поддерживает параметры `table` и `metric` для policy-based routing.
-- **`nameservers.addresses:`** — DNS-серверы (список)
+- **`addresses:`** — список IP-адресов в формате CIDR (Classless Inter-Domain Routing).
+- **`routes:`** — статические маршруты. Секция `to: default` со шлюзом `via` заменяет устаревшие параметры `gateway4` и `gateway6`.
+- **`nameservers:`** — список DNS-серверов (Domain Name System).
 
-### DHCP с переопределением параметров (dhcp4-overrides)
+### 2. Настройка DHCP с переопределением параметров
 
 ```yaml
 network:
@@ -65,37 +67,14 @@ network:
       dhcp4: yes
       dhcp4-overrides:
         use-dns: no
-        use-domains: no
+        route-metric: 100
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+        addresses: [8.8.8.8]
 ```
 
-#### Параметры dhcp4-overrides
+- **`dhcp4-overrides:`** — позволяет игнорировать определенные данные от DHCP-сервера (например, DNS) или задать приоритет маршрута (`route-metric`).
 
-| Параметр | Описание |
-| :--- | :--- |
-| `use-dns: no` | Игнорировать DNS-серверы от DHCP |
-| `use-domains: no` | Игнорировать домены поиска от DHCP |
-| `use-ntp: no` | Игнорировать NTP-серверы от DHCP |
-| `route-metric: <число>` | Установить метрику маршрута |
-
-#### Формат списков
-
-YAML допускает блочный и строчный формат:
-
-```yaml
-nameservers:
-  addresses: [8.8.8.8, 8.8.4.4]
-# или
-nameservers:
-  addresses:
-    - 8.8.8.8
-    - 8.8.4.4
-```
-
----
-
-## Bonding (агрегация каналов)
+### 3. Агрегация каналов (Bonding)
 
 ```yaml
 network:
@@ -108,37 +87,16 @@ network:
       dhcp4: no
   bonds:
     bond0:
-      dhcp4: no
       interfaces: [enp3s0f0, enp3s0f1]
       parameters:
         mode: 802.3ad
         mii-monitor-interval: 1
-      addresses: [10.10.10.2/24]
-      routes:
-        - to: default
-          via: 10.10.10.1
+      addresses: [10.10.10.5/24]
 ```
 
-| Параметр | Описание |
-| :--- | :--- |
-| `bonds:` | Блок настройки bonding-интерфейсов |
-| `bond0:` | Произвольное имя bond-интерфейса |
-| `interfaces:` | Физические интерфейсы для агрегации |
-| `parameters.mode:` | Режим bonding (`802.3ad`, `active-backup`, `balance-xor`, etc.) |
-| `parameters.mii-monitor-interval:` | Интервал мониторинга в секундах |
+- **`mode:`** — режим работы (например, `802.3ad` для LACP или `active-backup`).
 
-### Режимы bonding
-
-| Режим | Описание |
-| :--- | :--- |
-| `802.3ad` | LACP (требует поддержки на коммутаторе) |
-| `active-backup` | Активный/резервный (отказоустойчивость) |
-| `balance-xor` | Балансировка по XOR |
-| `round-robin` | Циклическая отправка пакетов |
-
----
-
-## VLAN
+### 4. Настройка VLAN (Virtual Local Area Network)
 
 ```yaml
 network:
@@ -148,105 +106,33 @@ network:
     vlan10:
       id: 10
       link: bond0
-      dhcp4: no
-      addresses: [10.10.10.2/24]
-      routes:
-        - to: 10.10.10.0/24
-          via: 10.10.10.1
-          on-link: true
-    vlan20:
-      id: 20
-      link: bond0
-      dhcp4: no
       addresses: [10.10.11.2/24]
-      gateway4: 10.10.11.1
-      nameservers:
-        addresses: [8.8.8.8]
 ```
 
-| Параметр | Описание |
-| :--- | :--- |
-| `vlans:` | Блок настройки VLAN-интерфейсов |
-| `id:` | VLAN ID (1-4094) |
-| `link:` | Базовый интерфейс (физический или bond) |
-| `on-link: true` | Маршрут считается доступным напрямую |
+### 5. Применение изменений
 
-**Устаревшие параметры:** `gateway4` и `gateway6` устарели, используйте `routes:` с `to: default`.
-
----
-
-## Полный пример (Ethernet + Bonding + VLAN)
-
-```yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    enp3s0f0:
-      dhcp4: no
-    enp3s0f1:
-      dhcp4: no
-  bonds:
-    bond0:
-      dhcp4: no
-      interfaces: [enp3s0f0, enp3s0f1]
-      parameters:
-        mode: 802.3ad
-        mii-monitor-interval: 1
-  vlans:
-    vlan10:
-      id: 10
-      link: bond0
-      dhcp4: no
-      addresses: [10.10.10.2/24]
-      routes:
-        - to: 10.10.10.0/24
-          via: 10.10.10.1
-          on-link: true
-    vlan20:
-      id: 20
-      link: bond0
-      dhcp4: no
-      addresses: [10.10.11.2/24]
-      routes:
-        - to: default
-          via: 10.10.11.1
-      nameservers:
-        addresses: [8.8.8.8]
-```
-
----
-
-## Применение конфигурации
+Для активации настроек используются следующие команды:
 
 ```bash
-# 1. Проверить синтаксис и сгенерировать конфиги
-sudo netplan generate
+# Проверка синтаксиса и применение с возможностью отката
+sudo netplan try
 
-# 2. Применить конфигурацию (с проверкой)
+# Прямое применение конфигурации
 sudo netplan apply
 
-# 3. Отладка (подробный вывод)
+# Отладка в случае проблем
 sudo netplan --debug apply
-
-# 4. Проверить статус
-networkctl status
 ```
 
-### Команды
+## Дополнительная информация
 
-| Команда | Описание |
-| :--- | :--- |
-| `netplan generate` | Проверка синтаксиса и генерация конфигов для бэкенда |
-| `netplan apply` | Применение конфигурации (автоматически вызывает `generate`) |
-| `netplan --debug` | Подробный вывод для отладки |
+### Типичные ошибки
 
-Конфигурация применяется автоматически при загрузке системы.
+- **Ошибки отступов:** YAML чувствителен к количеству пробелов. Не используйте табуляцию.
+- **Дублирование параметров:** несколько файлов в `/etc/netplan/` объединяются в алфавитном порядке; параметры в файлах с бОльшим лексикографическим именем переопределяют предыдущие.
 
----
+### См. также
 
-## Дополнительные ресурсы
-
-- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теория bonding
-- **[VLAN](../../../../Networking/Protocols/VLAN/vlan_overview.md)** — теория VLAN
-- **[VLAN: практические сценарии](../../../../Networking/Concepts/vlan_l2_switching/practical_scenarios.md)** — примеры настройки
+- **[Агрегация каналов](../../../../Networking/Concepts/link_aggregation.md)** — теоретические основы bonding.
+- **[VLAN](../../../../Networking/Protocols/vlan.md)** — общие сведения о виртуальных сетях.
+- **[systemd-networkd](./systemd_networkd.md)** — детальная настройка бэкенда networkd.

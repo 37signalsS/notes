@@ -1,253 +1,63 @@
 # Настройка сервисов для работы с IPv6
 
-## Обзор
+## Определения
 
-Большинство демонов требуют явной настройки для поддержки IPv6.
+**Сетевой сервис (демон)** — программное обеспечение, работающее в фоновом режиме и принимающее входящие сетевые подключения.
 
-## chrony (NTP)
+**IPv6-поддержка в сервисах** — возможность приложения прослушивать сокеты IPv6 и корректно обрабатывать трафик с адресов длиной 128 бит.
 
-### Настройка сервера
+## Основные концепции
 
-```bash
-# В /etc/chrony.conf
-# Разрешить доступ по IPv6
-allow fc00::/64
+Большинство современных сервисов поддерживают работу с IPv6 в одном из режимов:
 
-# Прослушивать все интерфейсы
-bindaddress ::
-```
+1. **Dual Stack**: сервис слушает на адресе `::` (IPv6), что в Linux часто автоматически включает и прослушивание IPv4 (через механизм IPv4-mapped IPv6 addresses).
+2. **Separate Sockets**: явное указание прослушивания конкретных адресов IPv4 и IPv6.
 
-### Перезапуск и проверка
+Для проверки того, какие адреса прослушивает сервис, используется утилита **[`ss`](../../../Diagnostics/Networking/ss.md)**.
 
-```bash
-# Перезапуск сервиса
-systemctl restart chronyd
+## Практические сценарии
 
-# Проверка прослушивания
-ss -6 -unap | grep chronyd
-```
+Ниже приведены ссылки на основные конфигурации популярных сервисов с примерами активации IPv6.
 
-## nginx
+### Системные сервисы и инфраструктура
 
-### Конфигурация server
+- **SSH (sshd)**: Настройка прослушивания через `ListenAddress`. Подробно: **[SSH — лучшие практики (Hardening)](../../../Security/ssh/server/ssh_hardening_best_practices.md)**.
+- **NTP (Chrony)**: Поддержка серверов и клиентов IPv6. Подробно: **[Chrony — NTP-сервер](../../Services/chrony_ntp.md#поддержка-ipv6)**.
+- **Docker**: Включение IPv6 для контейнеров и сетей. Подробно: **[Docker: Обзор сетевых моделей](../../../../Docker/Docker_network/docker_network.md#поддержка-ipv6-в-docker)**.
 
-```nginx
-# Прослушивать IPv4 и IPv6
-listen 80;
-listen [::]:80;
+### Веб-серверы
 
-# Или только IPv6
-listen [::]:80;
+- **Nginx**: Использование директивы `listen [::]:80`. Подробно: **[Базовая настройка Nginx](../../../../WebServers/Nginx/Core/nginx_setup.md#пример-базовой-конфигурации-сайта)**.
+- **Apache**: Настройка через `Listen` и `VirtualHost`. Подробно: **[Apache HTTP Server](../../../../WebServers/Apache/apache_overview.md#виртуальные-хосты)**.
 
-# С SSL
-listen [::]:443 ssl http2;
-```
+### Базы данных
 
-### Пример полной конфигурации
+- **PostgreSQL**: Настройка в `postgresql.conf` и `pg_hba.conf`. Подробно: **[PostgreSQL: Обзор](../../../../Databases/PostgreSQL/overview.md#конфигурация-и-доступ)**.
+- **MySQL / MariaDB**: Использование `bind-address`. Подробно: **[Конфигурация MySQL](../../../../Databases/MySQL/configuration.md#1-общие-настройки)**.
+- **Redis**: Настройка `bind` в конфигурационном файле. Подробно: **[Redis — Базовая настройка](../../../../Databases/redis_overview.md#установка-и-запуск)**.
 
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name example.com;
-    
-    location / {
-        root /var/www/html;
-    }
-}
+## Дополнительная информация
 
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name example.com;
-    
-    ssl_certificate /etc/ssl/certs/example.com.crt;
-    ssl_certificate_key /etc/ssl/private/example.com.key;
-    
-    location / {
-        root /var/www/html;
-    }
-}
-```
+### Проверка прослушивания сервисов
 
-### Проверка
+После внесения изменений в конфигурацию необходимо убедиться, что сервис действительно слушает IPv6-порт.
 
 ```bash
-# Проверка конфигурации
-nginx -t
+# Просмотр всех IPv6 TCP-портов в состоянии LISTEN
+ss -6 -lntp
 
-# Перезапуск
-systemctl restart nginx
+# Проверка конкретного порта (например, 80)
+ss -6 -lntp | grep :80
 
-# Проверка прослушивания
-ss -6 -tlnp | grep nginx
+# Просмотр UDP-портов
+ss -6 -lunp
 ```
 
-## SSH (sshd)
+Ожидаемый результат для Dual Stack (`*` или `::`):
+`LISTEN 0 128 [::]:80 [::]:*`
 
-### Конфигурация
+### См. также
 
-```bash
-# В /etc/ssh/sshd_config
-
-# Прослушивать все интерфейсы (IPv4 + IPv6)
-ListenAddress ::
-ListenAddress 0.0.0.0
-
-# Или только IPv6
-# ListenAddress ::
-
-# Или только IPv4
-# ListenAddress 0.0.0.0
-```
-
-### Перезапуск и проверка
-
-```bash
-# Проверка конфигурации
-sshd -t
-
-# Перезапуск
-systemctl restart sshd
-
-# Проверка прослушивания
-ss -6 -tlnp | grep sshd
-```
-
-## Apache HTTP Server
-
-### Конфигурация
-
-```apache
-# В /etc/apache2/ports.conf или httpd.conf
-
-# Прослушивать все интерфейсы
-Listen 80
-Listen [::]:80
-
-# С SSL
-Listen 443
-Listen [::]:443
-```
-
-### Виртуальные хосты
-
-```apache
-<VirtualHost *:80>
-    ServerName example.com
-    DocumentRoot /var/www/html
-</VirtualHost>
-
-<VirtualHost [::]:80>
-    ServerName example.com
-    DocumentRoot /var/www/html
-</VirtualHost>
-```
-
-## PostgreSQL
-
-### Конфигурация
-
-```bash
-# В /etc/postgresql/*/main/postgresql.conf
-listen_addresses = '*'  # Все интерфейсы
-
-# В /etc/postgresql/*/main/pg_hba.conf
-# Разрешить IPv6 подключения
-host    all             all             ::0/0                 md5
-host    all             all             fc00::/7              md5
-```
-
-### Перезапуск и проверка
-
-```bash
-# Перезапуск
-systemctl restart postgresql
-
-# Проверка прослушивания
-ss -6 -tlnp | grep postgres
-```
-
-## MySQL/MariaDB
-
-### Конфигурация
-
-```bash
-# В /etc/mysql/my.cnf или /etc/my.cnf
-[mysqld]
-bind-address = ::  # Все интерфейсы
-# bind-address = 0.0.0.0  # Только IPv4
-```
-
-### Перезапуск и проверка
-
-```bash
-# Перезапуск
-systemctl restart mysql
-
-# Проверка прослушивания
-ss -6 -tlnp | grep mysql
-```
-
-## Redis
-
-### Конфигурация
-
-```bash
-# В /etc/redis/redis.conf
-bind ::1  # Только IPv6 loopback
-# bind 0.0.0.0 ::  # Все интерфейсы
-```
-
-### Перезапуск и проверка
-
-```bash
-# Перезапуск
-systemctl restart redis
-
-# Проверка прослушивания
-ss -6 -tlnp | grep redis
-```
-
-## Docker
-
-### Настройка daemon.json
-
-```json
-{
-  "ipv6": true,
-  "fixed-cidr-v6": "fd00::/80"
-}
-```
-
-### Проверка
-
-```bash
-# Перезапуск
-systemctl restart docker
-
-# Проверка сети
-docker network inspect bridge | grep -A10 "IPv6"
-```
-
-## Проверка прослушивания сервисов
-
-```bash
-# Все IPv6 сокеты
-ss -6 -tlnp
-
-# Только TCP
-ss -6 -tln
-
-# Только UDP
-ss -6 -uln
-
-# С процессами
-ss -6 -tlnp | grep <сервис>
-```
-
-## Связанные темы
-
-* **[Настройка адресов](./address_configuration.md)** — конфигурация IPv6
-* **[Firewall](./firewall.md)** — настройка файрвола
-* **[Диагностика](./diagnostics.md)** — решение проблем
+- **[Диагностика IPv6](./diagnostics.md)** — команды для проверки связности.
+- **[Firewall для IPv6](./firewall.md)** — разрешение трафика к сервисам.
+- **[Настройка адресов](./address_configuration.md)** — подготовка интерфейсов хоста.

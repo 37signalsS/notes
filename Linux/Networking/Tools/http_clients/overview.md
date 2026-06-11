@@ -2,16 +2,16 @@
 
 ## Определения
 
-**HTTP-клиент командной строки** — утилита для отправки HTTP-запросов и получения ответов из терминала. Используется для тестирования API, автоматизации задач, скачивания файлов и отладки веб-сервисов.
+**HTTP-клиент командной строки** — утилита для отправки HTTP (HyperText Transfer Protocol) запросов и получения ответов из терминала. Используется для тестирования API (Application Programming Interface), автоматизации задач, скачивания файлов и отладки веб-сервисов.
 
-## Базовые концепции
+## Основные концепции
 
 ### 1. Основные клиенты
 
 | Клиент | Основное назначение | Протоколы |
 | :--- | :--- | :--- |
-| **[wget](./wget.md)** | Скачивание файлов, зеркалирование сайтов | HTTP, HTTPS, FTP |
-| **[curl](./curl.md)** | Универсальная передача данных, API, скрипты | HTTP, HTTPS, FTP, SCP, SFTP, SMB, LDAP и др. |
+| **[wget](./wget.md)** | Скачивание файлов, зеркалирование сайтов | HTTP, HTTPS (HyperText Transfer Protocol Secure), FTP (File Transfer Protocol) |
+| **[curl](./curl.md)** | Универсальная передача данных, API, скрипты | HTTP, HTTPS, FTP, SCP (Secure Copy Protocol), SFTP (SSH File Transfer Protocol), SMB (Server Message Block), LDAP (Lightweight Directory Access Protocol) и др. |
 | **[httpie](./httpie.md)** | Интерактивная работа с API, отладка | HTTP, HTTPS |
 
 ### 2. Сравнительная таблица
@@ -37,7 +37,7 @@
 
 **Использовать curl:**
 
-- Работа с API в скриптах (CI/CD, автоматизация)
+- Работа с API в скриптах (CI/CD (Continuous Integration / Continuous Deployment), автоматизация)
 - Отправка файлов через `multipart/form-data`
 - Работа с нестандартными протоколами (SCP, SFTP, LDAP)
 - Тонкая настройка таймаутов и диагностика
@@ -46,7 +46,7 @@
 
 - Интерактивная отладка API
 - Быстрое тестирование endpoints
-- Работа с JSON API (автоматическая сериализация)
+- Работа с JSON (JavaScript Object Notation) API (автоматическая сериализация)
 
 ---
 
@@ -57,12 +57,15 @@
 ```bash
 # curl с проверкой статуса ответа
 curl -f https://api.example.com/health
+# → (вывод при успехе отсутствует, код возврата 0)
 
 # httpie (автоматически покажет статус)
 http GET https://api.example.com/health
+# → HTTP/1.1 200 OK ...
 
 # wget (wget2 вернёт ошибку при 4xx/5xx)
 wget -q https://api.example.com/health
+# → (тихая загрузка в файл)
 ```
 
 ### Сценарий 2: Отправка JSON в API
@@ -72,9 +75,11 @@ wget -q https://api.example.com/health
 curl -X POST -H 'Content-Type: application/json' \
   -d '{"name":"John","age":30}' \
   https://api.example.com/users
+# → {"status": "success", "id": 123}
 
 # httpie (автоматически добавляет Content-Type: application/json)
 http POST https://api.example.com/users name=John age:=30
+# → {"status": "success", "id": 123}
 ```
 
 ### Сценарий 3: Скачивание файла с продолжением
@@ -82,12 +87,15 @@ http POST https://api.example.com/users name=John age:=30
 ```bash
 # wget
 wget -c https://example.com/large-file.zip
+# → 'large-file.zip' saved [1024/1024]
 
 # curl
 curl -C - -O https://example.com/large-file.zip
+# → ** Resuming transfer from byte offset 512
 
 # httpie
 http --download --continue https://example.com/large-file.zip
+# → [################################] 100%
 ```
 
 ### Сценарий 4: Зеркалирование сайта
@@ -119,13 +127,13 @@ http -A bearer -a <token> https://api.example.com/api/resource
 | :--- | :--- | :--- |
 | **BASIC** | Логин/пароль в Base64 | Только с HTTPS |
 | **DIGEST** | Хеш с challenge-ответом | Устарел, заменён на Bearer |
-| **BEARER** | Токен (JWT, OAuth) | Только с HTTPS |
+| **BEARER** | Токен (JWT (JSON Web Token), OAuth (Open Authorization)) | Только с HTTPS |
 | **Cookies** | Сессионные cookie | Только с HTTPS |
 
 ### 2. Инструменты для тестирования
 
 - **[httpbin.org](https://httpbin.org)** — тестовый API, "отражающий" запросы
-- **[badssl.com](https://badssl.com)** — сайты с некорректными SSL-сертификатами
+- **[badssl.com](https://badssl.com)** — сайты с некорректными SSL (Secure Sockets Layer) сертификатами
 - **Встроенный сервер Python:** `python3 -m http.server 8000`
 
 ### 3. Безопасность

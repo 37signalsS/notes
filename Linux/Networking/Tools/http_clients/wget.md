@@ -2,9 +2,9 @@
 
 ## Определения
 
-**GNU Wget** — утилита командной строки для надежного скачивания файлов и создания локальных зеркал веб-сайтов. Поддерживает протоколы HTTP, HTTPS, FTP. Отличается устойчивостью к разрывам соединения и возможностью работы в фоне.
+**GNU Wget** — утилита CLI (Command Line Interface) для надежного скачивания файлов и создания локальных зеркал веб-сайтов. Поддерживает протоколы HTTP (HyperText Transfer Protocol), HTTPS (HyperText Transfer Protocol Secure), FTP (File Transfer Protocol). Отличается устойчивостью к разрывам соединения и возможностью работы в фоне.
 
-## Базовые концепции
+## Основные концепции
 
 ### 1. Структура команды
 
@@ -39,6 +39,7 @@ wget [опции] [URL]
 ```bash
 # Простая загрузка
 wget https://example.com/file.zip
+# → 'file.zip' saved [1024/1024]
 
 # Загрузка с указанием имени файла
 wget -O myfile.zip https://example.com/file.zip
@@ -48,6 +49,7 @@ wget -c https://example.com/large-file.zip
 
 # Фоновая загрузка
 wget -b https://example.com/large-file.zip
+# → Output will be written to 'wget-log'.
 ```
 
 ### Сценарий 2: Зеркалирование сайта
@@ -82,7 +84,7 @@ wget -r -l inf -A.pdf https://example.com
 ### Сценарий 3: Массовая загрузка файлов
 
 ```bash
-# Загрузка из списка URL (каждый URL с новой строки)
+# Загрузка из списка URL (Uniform Resource Locator) (каждый URL с новой строки)
 wget -i urls.txt
 
 # Загрузка с продолжением прерванных файлов
@@ -109,7 +111,7 @@ wget --load-cookies cookies.txt https://example.com/profile
 wget --netrc https://example.com/protected
 ```
 
-### Сценарий 5: wget как простой API-клиент
+### Сценарий 5: wget как простой API (Application Programming Interface) клиент
 
 ```bash
 # GET-запрос с заголовками
@@ -120,7 +122,7 @@ wget --header='Accept: application/json' \
 wget --post-data='name=John&age=30' \
      https://api.example.com/users
 
-# POST с JSON (вручную указываем Content-Type)
+# POST с JSON (JavaScript Object Notation) (вручную указываем Content-Type)
 wget --header='Content-Type: application/json' \
      --post-data='{"name":"John","age":30}' \
      https://api.example.com/users
@@ -136,12 +138,14 @@ wget -q -O - https://api.example.com/users
 ```bash
 # Подробный вывод
 wget -v https://example.com
+# → Resolving example.com... 93.184.216.34 ... Connected.
 
 # Максимально подробный вывод (debug)
 wget --debug https://example.com
 
 # Только проверка доступности (без загрузки)
 wget --spider https://example.com/file.zip
+# → Remote file exists.
 
 # С таймаутом
 wget --timeout=10 https://example.com
@@ -153,7 +157,7 @@ wget --timeout=10 https://example.com
 # Подмена User-Agent
 wget --user-agent='Mozilla/5.0' https://example.com
 
-# Игнорирование SSL-сертификатов
+# Игнорирование SSL (Secure Sockets Layer) сертификатов
 wget --no-check-certificate https://self-signed.example.com
 
 # Принудительное использование IPv4

@@ -1,134 +1,97 @@
-# iSCSI: Настройка Initiator
+# iSCSI: Настройка инициатора
 
-## 1. Установка и основные команды
+Руководство по установке, подключению и эксплуатации iSCSI-инициатора (клиента) в Linux.
 
-### Установка (Debian/Ubuntu)
+## Определение
+
+**iSCSI Initiator (Инициатор)** — это клиентская часть протокола iSCSI, которая инициирует запросы к удаленным дискам (таргетам) и представляет их операционной системе как локальные блочные устройства. В Linux стандартной реализацией является пакет `open-iscsi`.
+
+## Основные концепции
+
+Базовые принципы работы инициатора, структура IQN и архитектура взаимодействия описаны в документе **[Основные концепции iSCSI](./iscsi_concepts.md)**. Ключевые моменты перед настройкой:
+
+- Инициатор должен иметь уникальный **IQN**.
+- Для подключения необходим IP-адрес **портала** (таргета) и доступ по порту **3260/tcp**.
+- Подключение может требовать аутентификации **CHAP**.
+
+## Практические сценарии
+
+### 1. Установка и базовая настройка
+
+#### Установка (Debian/Ubuntu)
 
 ```bash
-sudo apt install open-iscsi
-sudo systemctl enable open-iscsi
-sudo systemctl start open-iscsi
+sudo apt update && sudo apt install open-iscsi -y
+sudo systemctl enable --now open-iscsi
 ```
 
-### Основные команды
+#### Проверка имени инициатора
 
-| Команда | Описание |
-| :--- | :--- |
-| `iscsiadm -m discovery -t sendtargets -p <IP_таргета>` | Обнаружение таргетов |
-| `iscsiadm -m node -T <IQN> -p <IP> --login` | Подключение к таргету |
-| `iscsiadm -m session` | Просмотр активных сессий |
-| `iscsiadm -m node -T <IQN> -p <IP> --logout` | Отключение |
-| `iscsiadm -m node -T <IQN> -p <IP> -o delete` | Удаление записи о таргете (после logout) |
-| `iscsiadm -m node -T <IQN> -p <IP> -o update -n node.startup -v automatic` | Автоматический вход при загрузке |
+Имя хранится в файле `/etc/iscsi/initiatorname.iscsi`. Оно должно быть уникальным в сети.
 
-## 2. Использование iSCSI-устройства
+```bash
+cat /etc/iscsi/initiatorname.iscsi
+# → InitiatorName=iqn.2026-06.com.example:client01
+```
 
-После успешного подключения (`--login`) iSCSI-таска он становится доступным как блочное устройство.
+### 2. Подключение к таргету
 
-### 2.1. Определение нового устройства
+#### Обнаружение (Discovery)
+
+```bash
+sudo iscsiadm -m discovery -t sendtargets -p <IP_таргета>
+# → 192.168.1.10:3260,1 iqn.2026-06.com.example:storage.lun1
+```
+
+#### Вход в систему (Login)
+
+```bash
+sudo iscsiadm -m node -T <IQN_таргета> -p <IP_таргета> --login
+```
+
+#### Настройка автозагрузки
+
+Чтобы устройство подключалось автоматически при старте системы:
+
+```bash
+sudo iscsiadm -m node -T <IQN_таргета> -p <IP_таргета> -o update -n node.startup -v automatic
+```
+
+### 3. Работа с блочным устройством
+
+После логина новое устройство появится в системе (например, как `/dev/sdb`).
+
+#### Идентификация диска
 
 ```bash
 lsblk
-# или
-sudo fdisk -l
+# → sdb      8:16   0   10G  0 disk
 ```
 
-**Проверка сессий iSCSI:**
+#### Создание файловой системы и монтирование
 
 ```bash
-# Показать активные сессии с деталями
-sudo iscsiadm -m session -P 3
-```
-
-### 2.2. Создание раздела (опционально)
-
-```bash
-sudo fdisk /dev/sdb
-# N (новый раздел), P (основной), 1 (номер раздела), Enter (начальный сектор), Enter (конечный сектор), W (записать изменения)
-```
-
-### 2.3. Форматирование раздела
-
-```bash
-sudo mkfs.ext4 /dev/sdb1 # или /dev/sdb, если без разделов
-```
-
-### 2.4. Создание точки монтирования и монтирование
-
-```bash
+sudo mkfs.ext4 /dev/sdb
 sudo mkdir /mnt/iscsi_data
-sudo mount /dev/sdb1 /mnt/iscsi_data
+sudo mount /dev/sdb /mnt/iscsi_data
 ```
 
-### 2.5. Проверка монтирования
+#### Постоянное монтирование (/etc/fstab)
 
-```bash
-df -h /mnt/iscsi_data
-```
-
-### 2.6. Настройка постоянного монтирования (fstab)
-
-Получите UUID устройства для надежного монтирования:
-
-```bash
-sudo blkid /dev/sdb1
-```
-
-Добавьте строку в `/etc/fstab`. **Важно использовать опцию `_netdev`**, чтобы система монтировала раздел только после поднятия сети.
+**Критически важно** использовать опцию `_netdev`, чтобы система дождалась поднятия сети перед попыткой монтирования.
 
 ```ini
-UUID=<ваш_UUID> /mnt/iscsi_data ext4 _netdev,defaults 0 0
+# /etc/fstab
+UUID=<UUID_устройства> /mnt/iscsi_data ext4 _netdev,nofail 0 2
 ```
 
-Проверьте конфигурацию `/etc/fstab`:
+### 4. Настройка аутентификации CHAP
 
-```bash
-sudo mount -a
-```
+Если на таргете включена аутентификация, настройте её в `/etc/iscsi/iscsid.conf` или через `iscsiadm`.
 
-### Опции монтирования для iSCSI
+#### Через конфигурационный файл
 
-| Опция | Описание |
-| :--- | :--- |
-| `_netdev` | Устройство требует сети (обязательно для iSCSI) |
-| `nofail` | Не прерывать загрузку, если устройство недоступно |
-| `defaults` | Стандартные опции (rw, suid, dev, exec, auto, nouser, async) |
-| `noatime` | Не обновлять время доступа (для производительности) |
-
-**Пример полной строки fstab:**
-
-```ini
-UUID=abc123 /mnt/iscsi_data ext4 _netdev,nofail,noatime 0 2
-```
-
-## 3. CHAP (Challenge-Handshake Authentication Protocol)
-
-CHAP — протокол аутентификации, используемый для безопасного подключения iSCSI-инициаторов к таргетам. Обеспечивает взаимную аутентификацию (target-initiator и initiator-target) с использованием общего секрета.
-
-> **Важно:** CHAP защищает от несанкционированного доступа, но не шифрует трафик. Для шифрования используйте [IPsec](../../../Networking/Tunnels/ipsec/ipsec.md) или выделенную сеть. Для изоляции iSCSI-трафика в отдельной сети рассмотрите **[Policy-Based Routing](../Policy_Based_Routing/index.md)**.
-
-### 3.1. Настройка на iSCSI Target (tgt)
-
-Добавьте параметры `incominguser` и `outgoinguser` в секцию `<target>` файла `/etc/tgt/conf.d/iscsi-target.conf`:
-
-```ini
-<target iqn.2026-02.example:storage.lun1>
-    backing-store /dev/sdb
-    initiator-address 192.168.1.0/24
-    # Аутентификация инициатора на таргете
-    incominguser myuser mysecretpassword
-    # Аутентификация таргета на инициаторе (взаимная CHAP)
-    outgoinguser targetuser targetsecretpassword
-</target>
-```
-
-Перезапустите службу `tgt` после изменений.
-
-### 3.2. Настройка на iSCSI Initiator (open-iscsi)
-
-Отредактируйте файл `/etc/iscsi/iscsid.conf`. Установите `node.session.auth.authmethod = CHAP` и укажите данные для `CHAP` аутентификации.
-
-**Пример для односторонней аутентификации (инициатор -> таргет):**
+Отредактируйте `/etc/iscsi/iscsid.conf`:
 
 ```ini
 node.session.auth.authmethod = CHAP
@@ -136,67 +99,35 @@ node.session.auth.username = myuser
 node.session.auth.password = mysecretpassword
 ```
 
-**Пример для взаимной аутентификации (инициатор -> таргет И таргет -> инициатор):**
-
-```ini
-node.session.auth.authmethod = CHAP
-node.session.auth.username = myuser
-node.session.auth.password = mysecretpassword
-node.session.auth.username_in = targetuser
-node.session.auth.password_in = targetsecretpassword
-```
-
-После изменений необходимо обновить базу данных `open-iscsi` для конкретного таргета и переподключиться.
+#### Обновление параметров для конкретной ноды
 
 ```bash
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.auth.authmethod -v CHAP
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.auth.username -v myuser
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.auth.password -v mysecretpassword
-# Для взаимной CHAP:
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.auth.username_in -v targetuser
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> -o update -n node.session.auth.password_in -v targetsecretpassword
-
-sudo iscsiadm -m node -T <IQN> -p <IP_таргета> --login
+sudo iscsiadm -m node -T <IQN> -p <IP> -o update -n node.session.auth.authmethod -v CHAP
+sudo iscsiadm -m node -T <IQN> -p <IP> -o update -n node.session.auth.username -v myuser
+sudo iscsiadm -m node -T <IQN> -p <IP> -o update -n node.session.auth.password -v mysecretpassword
 ```
 
-### 3.3. Рекомендации по безопасности CHAP
+## Дополнительная информация
 
-| Требование | Описание |
+### Диагностика и отладка
+
+| Команда | Описание |
 | :--- | :--- |
-| **Длина пароля** | Минимум 12 символов |
-| **Сложность** | Буквы, цифры, специальные символы |
-| **Уникальность** | Разные пароли для разных таргетов |
-| **Хранение** | Файл `/etc/iscsi/iscsid.conf` должен быть доступен только root (`chmod 600`) |
+| `iscsiadm -m session -P 3` | Подробная информация об активных сессиях и LUN. |
+| `journalctl -u open-iscsi -f` | Просмотр логов службы в реальном времени. |
+| `iscsiadm -m node --logoutall=ALL` | Принудительное отключение всех сессий. |
 
-## 4. Диагностика проблем Initiator
+### Типичные ошибки
 
-```bash
-# Проверить статус службы open-iscsi
-systemctl status open-iscsi
+- **Connection refused**: Проверьте доступность порта 3260 на таргете и настройки Firewall.
+- **Authentication failed**: Проверьте логины/пароли CHAP в `iscsid.conf` и на стороне таргета.
+- **Device not appearing**: Проверьте `dmesg | grep -i iscsi`. Возможно, таргет не экспортировал LUN для данного IQN инициатора.
+- **Зависание при загрузке**: Убедитесь, что в `/etc/fstab` указана опция `_netdev`.
 
-# Просмотреть логи
-journalctl -u open-iscsi -f
+### См. также
 
-# Принудительное переподключение
-sudo iscsiadm -m node --logoutall=ALL
-sudo iscsiadm -m node --loginall=ALL
-```
-
-## 5. Типичные проблемы и решения
-
-| Проблема | Возможная причина | Решение |
-| :--- | :--- | :--- |
-| **Connection refused:3260** | Target не запущен или firewall блокирует | `systemctl status tgt`, проверить порт 3260 |
-| **Authentication failed** | Неверный CHAP пароль | Проверить `iscsid.conf` на обоих концах |
-| **No portals found** | Неправильный IP таргета | Проверить `iscsiadm -m discovery` |
-| **Device not appearing** | Драйверы или проблема с ядром | `dmesg | grep -i iscsi`,`lsblk` |
-| **Mount fails after reboot** | Нет опции `_netdev` в fstab | Добавить `_netdev,nofail` в fstab |
-| **Session timeout** | Проблемы с сетью | Проверить стабильность сети, MTU |
-
-## Связанные документы
-
-- **[Основные концепции](./iscsi_concepts.md)** — определения и архитектура
-- **[Настройка Target](./iscsi_target_setup.md)** — установка и конфигурация tgt/LIO
-- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — изоляция iSCSI-трафика
-- **[LVM](../../FileSystems/LVM/operations/lvm_disk_replacement.md** — управление логическими томами
-- **[Mount](../../FileSystems/mounting/scenarios/udev_mount.md)** — монтирование файловых систем
+- **[Основные концепции iSCSI](./iscsi_concepts.md)** — теория и терминология.
+- **[Настройка iSCSI Target](./iscsi_target_setup.md)** — конфигурация серверной части.
+- **[Управление томами LVM](../../FileSystems/LVM/operations/lvm_disk_replacement.md)** — создание VG/LV поверх iSCSI дисков.
+- **[Монтирование файловых систем](../../FileSystems/mounting/scenarios/udev_mount.md)** — подробнее об опциях монтирования и udev.
+- **[Policy-Based Routing](../Policy_Based_Routing/index.md)** — изоляция трафика iSCSI.

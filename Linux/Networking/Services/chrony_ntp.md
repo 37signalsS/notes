@@ -1,4 +1,4 @@
-# Chrony NTP Server
+# Chrony — NTP-сервер
 
 ## Определения
 
@@ -10,7 +10,7 @@
 
 ## Базовые концепции
 
-### Chrony vs systemd-timesyncd vs ntpd
+### Сравнение: Chrony vs systemd-timesyncd vs ntpd
 
 | Характеристика | systemd-timesyncd | Chrony | ntpd |
 | :--- | :--- | :--- | :--- |
@@ -72,7 +72,9 @@ sudo dnf install chrony
 
 ## Практические сценарии
 
-### Chrony в качестве клиента (базовая настройка)
+### Настройка Chrony в качестве клиента
+
+Базовая настройка для синхронизации с внешними серверами.
 
 ```ini
 # /etc/chrony/chrony.conf
@@ -102,7 +104,9 @@ log measurements statistics tracking
 sudo systemctl enable --now chrony
 ```
 
-### Chrony в качестве NTP-сервера для локальной сети
+### Настройка Chrony в качестве сервера
+
+Конфигурация для раздачи времени клиентам в локальной сети.
 
 ```ini
 # /etc/chrony/chrony.conf
@@ -122,18 +126,18 @@ rtcsync
 driftfile /var/lib/chrony/drift
 ```
 
-> `local stratum 10` — chrony продолжит раздавать время даже в изолированной сети. Клиенты получат stratum 10, что ниже приоритет, чем у внешних серверов.
+> `local stratum 10` — chrony продолжит раздавать время даже в изолированной сети. Клиенты получат stratum 11.
 
-### Chrony в виртуальной машине (гипервизор как источник)
+### Работа в виртуальной среде
 
-Для VM рекомендуется использовать гипервизор как локальный источник времени:
+В виртуальных машинах рекомендуется использовать гипервизор как источник времени (если поддерживается) или разрешить более агрессивную коррекцию.
 
 ```ini
-# Для KVM/QEMU
-chronyc addserver hypervisor.local iburst
+# Для KVM/QEMU (через PTP, если настроено)
+# refclock PHC /dev/ptp0 poll 2 dp4
 
-# Для VMware
-# VMware Tools синхронизируют время автоматически
+# Или использование гипервизора как NTP-сервера
+server hypervisor.local iburst
 ```
 
 Если сеть нестабильна, увеличьте порог коррекции:
@@ -143,17 +147,24 @@ chronyc addserver hypervisor.local iburst
 makestep 10.0 5
 ```
 
-### Диагностика и управление (`chronyc`)
+### Утилита управления chronyc
+
+Основные команды для диагностики и управления демоном.
 
 ```bash
 # Источники времени и их статус
 chronyc sources
+# → MS Name/IP address         Stratum Poll Reach LastRx Last sample
+# → ===============================================================================
+# → ^* ntp1.example.com              1  6   377    45  -1.2ms[ -2.1ms] +/-  15ms
 
 # Детальная информация о каждом источнике
 chronyc sources -v
 
 # Текущий статус синхронизации
 chronyc tracking
+# → Reference ID    : 185.209.136.132 (ntp1.example.com)
+# → Stratum         : 2
 
 # Статистика источников (за историю)
 chronyc sourcestats
@@ -171,24 +182,14 @@ chronyc addserver 10.0.0.1
 chronyc delete 10.0.0.1
 ```
 
-**Пример вывода `chronyc sources`:**
+### Конфигурация для изолированной сети
 
-```
-MS Name/IP address         Stratum Poll Reach LastRx Last sample
-===============================================================================
-^* ntp1.example.com              1  6   377    45  -1.2ms[ -2.1ms] +/-  15ms
-^+ ntp2.example.com              2  6   377    38  +0.5ms[ +0.5ms] +/-  22ms
-^- ntp3.example.com              2  6   377    42  +3.1ms[ +3.1ms] +/-  45ms
-```
-
-Колонки: `MS` (режим/символ), `Stratum`, `Poll` (интервал опроса), `Reach` (достижимость, 8-ричное), `LastRx` (время последнего ответа), `Last sample` (смещение).
-
-### Изолированная сеть (без интернета)
+Настройка сервера в среде без доступа к внешним NTP-источникам.
 
 ```ini
 # /etc/chrony/chrony.conf
 
-# Только локальный сервер
+# Только локальный сервер (объявляет себя источником)
 local stratum 5
 
 # Разрешить клиентам
@@ -197,11 +198,9 @@ allow 10.0.0.0/8
 driftfile /var/lib/chrony/drift
 ```
 
-> Все клиенты в сети получат stratum 6. Для повышения точности добавьте аппаратный источник (GPS/PPS — см. ниже).
+### Использование аппаратных источников (GPS/PPS)
 
-### Настройка Chrony с аппаратным источником (GPS/PPS)
-
-Для систем, требующих максимальной точности (финансовые транзакции, биллинг, Kerberos):
+Для систем, требующих максимальной точности.
 
 **Необходимое ПО:**
 
@@ -214,9 +213,6 @@ sudo apt install chrony gpsd gpsd-clients
 ```ini
 # /etc/chrony/chrony.conf
 
-# Закомментировать стандартные пулы
-# pool pool.ntp.org iburst
-
 # GPS через разделяемую память (SHM от gpsd)
 refclock SHM 0 refid GPS precision 1e-1
 
@@ -227,36 +223,10 @@ refclock SOCK /var/run/chrony.ttyS0.sock refid PPS lock GPS
 allow 192.168.0.0/16
 
 # Объявить себя сервером с низким stratum
-local stratum 10
+local stratum 1
 
 driftfile /var/lib/chrony/drift
 ```
-
-**Проверка:**
-
-```bash
-chronyc sources -v
-```
-
-Пример вывода:
-
-```
-MS Name/IP address         Stratum Poll Reach LastRx Last sample
-===============================================================================
-#* GPS                           0   4   377    11   -263ns[ -379ns] +/-  104ms
-#? PPS                           0   4   377    10   -501ns[ -617ns] +/- 1598ns
-```
-
-`*` у GPS означает активный источник. `PPS` с `?` может быть недоступен — это нормально для некоторых конфигураций.
-
-**Префиксы в `chronyc sources`:**
-
-| Префикс | Тип источника |
-| :--- | :--- |
-| `^` | NTP-сервер |
-| `#` | Аппаратный источник (GPS, PPS, DCF77) |
-| `=` | PPS-источник (альтернативное обозначение) |
-| `~` | Исходный источник (режим) |
 
 ## Дополнительная информация
 
@@ -265,13 +235,15 @@ MS Name/IP address         Stratum Poll Reach LastRx Last sample
 При установке Chrony автоматически отключает `systemd-timesyncd`. Проверка:
 
 ```bash
-systemctl is-active systemd-timesyncd  # должен быть inactive
-systemctl is-active chrony             # должен быть active
+systemctl is-active systemd-timesyncd  # → inactive
+systemctl is-active chrony             # → active
 ```
 
 Подробности управления временем через systemd: [time_synchronization.md](../../../Linux/Core/systemd/time_synchronization.md).
 
-### IPv6-поддержка
+### Поддержка IPv6
+
+Настройка прослушивания и доступа по протоколу IPv6.
 
 ```ini
 # /etc/chrony/chrony.conf
@@ -282,13 +254,18 @@ server 2001:db8::1 iburst
 # Разрешить IPv6-клиентам
 allow fc00::/64
 
-# Слушать все интерфейсы
+# Слушать все интерфейсы (IPv4 и IPv6)
 bindaddress ::
 ```
 
 ```bash
 sudo systemctl restart chrony
 ss -6 -unap | grep chrony
+# → udp  UNCONN  0  0  [::]:123  [::]:*  users:(("chronyd",pid=123,fd=5))
 ```
 
-Подробнее об IPv6-настройке сервисов: [services_configuration.md](../Settings/ipv6_configuration/services_configuration.md). Troubleshooting SAMBA (зависит от NTP): [samba_troubleshooting.md](../Services/samba/samba_troubleshooting.md).
+### См. также
+
+* [IPv6: настройка сервисов](../Settings/ipv6_configuration/services_configuration.md)
+* [Samba: решение проблем](./samba/samba_troubleshooting.md)
+* [Kerberos: основы и настройка](../../../Security/Concepts/kerberos.md)

@@ -2,9 +2,9 @@
 
 ## Определения
 
-**HTTPie** — утилита командной строки для работы с HTTP и API. Отличается интуитивным синтаксисом, автоматическим форматированием вывода (JSON, подсветка) и встроенной поддержкой сессий. Создана для интерактивной отладки API, а не для скриптов.
+**HTTPie** — утилита CLI (Command Line Interface) для работы с HTTP (HyperText Transfer Protocol) и API (Application Programming Interface). Отличается интуитивным синтаксисом, автоматическим форматированием вывода (JSON, подсветка) и встроенной поддержкой сессий. Создана для интерактивной отладки API, а не для скриптов.
 
-## Базовые концепции
+## Основные концепции
 
 ### 1. Структура команды
 
@@ -15,7 +15,7 @@ http [метод] [URL] [параметры]
 **Элементы команды:**
 
 - **Метод:** `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` (по умолчанию `GET`)
-- **URL:** Полный адрес или домен (автоматически добавляет `http://`)
+- **URL (Uniform Resource Locator):** Полный адрес или домен (автоматически добавляет `http://`)
 - **Параметры:**
   - `key=value` — данные тела запроса (JSON по умолчанию)
   - `key==value` — параметры URL (query string)
@@ -66,17 +66,19 @@ http GET https://api.example.com/users
 # С параметрами URL (автоматически кодируются)
 http GET https://api.example.com/users name==John age==30
 # Эквивалентно: https://api.example.com/users?name=John&age=30
+# → HTTP/1.1 200 OK ...
 
 # С заголовками
 http GET https://api.example.com/users Accept:application/json
 ```
 
-### Сценарий 2: POST с JSON (по умолчанию)
+### Сценарий 2: POST с JSON (JavaScript Object Notation)
 
 ```bash
 # Отправка JSON (автоматически добавляет Content-Type: application/json)
 http POST https://api.example.com/users name=John age:=30
 # Отправляет: {"name": "John", "age": 30}
+# → { "id": 1, "status": "created" }
 
 # Вложенные объекты (через := для сырого JSON)
 http POST https://api.example.com/users \
@@ -115,6 +117,7 @@ http --multipart POST https://api.example.com/upload \
 ```bash
 # Загрузка одного файла
 http --download POST https://api.example.com/upload file@document.pdf
+# → document.pdf [100.00%]
 
 # Загрузка с прогресс-баром
 http --download GET https://example.com/large-file.zip
@@ -145,6 +148,7 @@ cat ~/.httpie/sessions/admin.json
 ```bash
 # Basic auth (автоматически)
 http -a user:password https://api.example.com/protected
+# → HTTP/1.1 200 OK ...
 
 # Digest auth
 http --auth-type=digest -a user:password https://api.example.com/protected
@@ -161,6 +165,7 @@ http Authorization:'Bearer YOUR_TOKEN' https://api.example.com/api/resource
 ```bash
 # Показать запрос без отправки
 http --offline POST https://api.example.com/users name=John age=30
+# → POST /users HTTP/1.1 ...
 
 # Полезно для проверки синтаксиса перед отправкой
 ```
@@ -170,6 +175,7 @@ http --offline POST https://api.example.com/users name=John age=30
 ```bash
 # Подробный вывод заголовков
 http -v GET https://api.example.com/users
+# → GET /users HTTP/1.1 ... HTTP/1.1 200 OK ...
 
 # Только заголовки запроса
 http -h GET https://api.example.com/users
@@ -204,7 +210,7 @@ http --timeout=read:10,connect:5 GET https://api.example.com/users
 
 ```bash
 # HTTPie уже форматирует JSON, но можно добавить jq для фильтрации
-http GET https://api.example.com/users | jq '.[](name'
+http GET https://api.example.com/users | jq '.[].name'
 
 # Фильтрация по условию
 http GET https://api.example.com/users | jq '.[] | select(.age > 25)'
@@ -223,8 +229,8 @@ HTTPie поддерживает плагины для расширения фу�
 pip install httpie-plugin-name
 
 # Примеры плагинов:
-# - httpie-jwt-auth: аутентификация через JWT
-# - httpie-oauth1: OAuth 1.0a
+# - httpie-jwt-auth: аутентификация через JWT (JSON Web Token)
+# - httpie-oauth1: OAuth (Open Authorization) 1.0a
 # - httpie-edgegrid: EdgeGrid auth
 ```
 
@@ -255,8 +261,8 @@ pip install httpie-plugin-name
 
 ### 4. Ограничения
 
-- **Только HTTP/HTTPS:** Нет поддержки FTP, SCP, SFTP (в отличие от curl)
-- **Не для скриптов:** Интерактивный инструмент, не рекомендуется для CI/CD
+- **Только HTTP/HTTPS:** Нет поддержки FTP (File Transfer Protocol), SCP (Secure Copy Protocol), SFTP (SSH File Transfer Protocol) (в отличие от curl)
+- **Не для скриптов:** Интерактивный инструмент, не рекомендуется для CI/CD (Continuous Integration / Continuous Deployment)
 - **Меньше протоколов:** Специализирован на API, не универсальный инструмент
 
 ### 5. Связанные заметки

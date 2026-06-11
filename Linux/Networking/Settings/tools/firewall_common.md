@@ -1,90 +1,102 @@
-# Общие вопросы файрволов Linux
+# Общие вопросы настройки межсетевых экранов в Linux
 
 ## Определения
 
-Файл содержит общие вопросы настройки файрволов, не специфичные для конкретного инструмента (iptables/nftables/firewalld).
+В данном файле собраны практические аспекты настройки сетевой безопасности, применимые к различным инструментам управления (iptables, nftables, firewalld, ufw). Основной упор сделан на системные механизмы сохранения конфигурации и взаимодействие с инфраструктурными компонентами (Docker).
 
-**Важно:** В Debian 11+ и современных дистрибутивах по умолчанию используется **nftables**. Классический `iptables` может отсутствовать или быть слоем совместимости (`iptables-nft`).
+**Важно:** В современных дистрибутивах (Debian 11+, Ubuntu 22.04+, RHEL 8+) стандартной подсистемой фильтрации является **nftables**. Инструменты `iptables` и `ip6tables` часто работают как слой совместимости (`iptables-nft`).
 
 См. также:
 
-- **[Концепции сетевых файрволов](../../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, Stateful/Stateless)
-- **[Лучшие практики правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — принципы проектирования правил
-- **[iptables основы](./iptables_basics.md)** — синтаксис и команды iptables
-- **[nftables](../tools/nftables/practical_scenarios.md)** — современная подсистема (рекомендуется для Debian 11+)
-
----
+- **[Основы работы межсетевых экранов](../../../../Networking/Concepts/firewall_concepts.md)** — теоретические основы (Netfilter, таблицы, цепочки, Stateful vs Stateless).
+- **[Лучшие практики проектирования правил](../../../../Networking/Concepts/firewall_rules_best_practices.md)** — общие принципы построения безопасных наборов правил.
 
 ## Основные концепции
 
 ### Сохранение правил между перезагрузками
 
-Правила файрволов не сохраняются после перезагрузки по умолчанию — требуется явное сохранение.
+В Linux правила фильтрации пакетов, примененные через CLI (Command Line Interface), хранятся в оперативной памяти и сбрасываются после перезагрузки. Для обеспечения персистентности используются специфичные для дистрибутивов инструменты.
 
-| Дистрибутив | Инструмент | Команда сохранения | Примечание |
+| Дистрибутив | Основной инструмент | Пакет / Сервис сохранения | Команда сохранения |
 | :--- | :--- | :--- | :--- |
-| **Debian 10/Ubuntu 18.04** | `iptables-persistent` | `sudo netfilter-persistent save` | Классический iptables |
-| **Debian 11+/Ubuntu 22.04+** | `nftables` | `sudo nft list ruleset > /etc/nftables.conf` | **nftables по умолчанию** |
-| **RHEL/CentOS 7+** | `iptables-services` | `sudo service iptables save` | |
-| **RHEL/Fedora (новые)** | `nftables` / `firewalld` | `sudo nft list ruleset > /etc/nftables.conf` | |
+| **Debian 10 / Ubuntu 18.04** | `iptables` | `iptables-persistent` | `sudo netfilter-persistent save` |
+| **Debian 11+ / Ubuntu 22.04+** | `nftables` | `nftables.service` | `sudo nft list ruleset > /etc/nftables.conf` |
+| **RHEL / CentOS 7** | `iptables` | `iptables-services` | `sudo service iptables save` |
+| **RHEL 8+ / Fedora / Rocky** | `firewalld` | `firewalld.service` | Использует флаг `--permanent` |
 
-**Debian 11+ (nftables):**
+#### 1. Debian / Ubuntu (nftables)
+
+В современных версиях Debian/Ubuntu правила сохраняются в файле `/etc/nftables.conf`.
 
 ```bash
-# Сохранение правил
-sudo nft list ruleset > /etc/nftables.conf
+# Сохранение текущего состояния правил в файл конфигурации
+sudo nft list ruleset | sudo tee /etc/nftables.conf
 
-# Включение автозагрузки
+# Включение автозагрузки при старте системы
 sudo systemctl enable --now nftables
 ```
 
-**Подробнее:** **[nftables: современная подсистема фильтрации](../tools/nftables/practical_scenarios.md)** — архитектура, синтаксис, практические сценарии (fail2ban, сегментирование, тестирование).
+Подробнее о синтаксисе см. в **[nftables: архитектура и основные концепции](../tools/nftables/architecture_and_concepts.md)**.
 
-**Debian/Ubuntu (классический iptables):**
+#### 2. Debian / Ubuntu (классический iptables)
+
+Для систем, продолжающих использовать `iptables`, необходимо установить пакет `iptables-persistent`.
 
 ```bash
-sudo apt-get update && sudo apt-get install -y iptables-persistent
+# Установка (в процессе будет предложено сохранить текущие правила)
+sudo apt update && sudo apt install -y iptables-persistent
+
+# Ручное сохранение после внесения изменений
 sudo netfilter-persistent save
 ```
 
-**RHEL/CentOS:**
+#### 3. RHEL / CentOS / Rocky
+
+Если используется `firewalld` (рекомендуется), сохранение происходит автоматически при использовании флага `--permanent`. Подробнее: **[Firewalld: динамический межсетевой экран](./firewalld.md)**.
+
+Если используется голый `iptables`:
 
 ```bash
 sudo yum install -y iptables-services
-sudo systemctl enable --now iptables
+sudo systemctl enable iptables
 sudo service iptables save
 ```
 
----
-
 ## Практические сценарии
 
-### Взаимодействие Docker и файрвола
+### Выбор действия: DROP vs REJECT
 
-Docker активно управляет сетевым стеком через `iptables` для обеспечения изоляции и маршрутизации трафика контейнеров.
+При проектировании правил возникает выбор между "молчаливым" отбрасыванием пакета и явным отказом в соединении.
 
-Подробные сценарии решения конфликтов (политика `FORWARD DROP`, использование `iptables-legacy` vs `iptables-nft`) и описание цепочки `DOCKER-USER` доступны в специализированном документе:
+| Параметр | **DROP** | **REJECT** |
+| :--- | :--- | :--- |
+| **Механизм** | Пакет игнорируется, отправитель не получает ответа. | Пакет отклоняется, отправляется **ICMP (Internet Control Message Protocol)** сообщение об ошибке. |
+| **Безопасность** | Скрывает наличие хоста ("Stealth mode"), замедляет сканирование портов злоумышленником. | Раскрывает факт работы хоста и наличие на нем сетевого экрана. |
+| **Удобство (UX)** | Соединение "зависает" по таймауту на стороне клиента. | Клиент немедленно получает ошибку "Connection refused". |
+| **Отладка** | Затруднена: сложно отличить потерю пакета в сети от блокировки файрволом. | Упрощена: сразу видно ответ от сервера. |
 
+**Рекомендация:**
+
+- Используйте **DROP** для внешних (публичных) интерфейсов для минимизации информации о системе.
+- Используйте **REJECT** во внутренних (доверенных) сетях для ускорения отладки и корректной работы приложений.
+
+### Взаимодействие Docker и межсетевого экрана
+
+Docker вносит значительные изменения в правила `iptables` для обеспечения работы сетей контейнеров (NAT, Port Forwarding).
+
+**Ключевые особенности:**
+
+1. **Обход UFW/Firewalld:** Docker добавляет правила в цепочку `PREROUTING`, которая обрабатывается **раньше** стандартных цепочек `INPUT` этих инструментов.
+2. **Использование DOCKER-USER:** Для ручного ограничения доступа к портам контейнеров следует использовать специально созданную Docker'ом цепочку `DOCKER-USER`.
+
+Детальное описание механизмов и способов решения конфликтов доступно в документе:
 **[Интеграция Docker с iptables](../../../../Docker/Docker_network/troubleshooting/iptables_integration.md)**.
-
----
 
 ## Дополнительная информация
 
-### Сравнение `DROP` и `REJECT`
-
-| Параметр | `DROP` | `REJECT` |
-| :--- | :--- | :--- |
-| **Поведение** | Пакеты молча отбрасываются | Отправляется **ICMP (Internet Control Message Protocol)** сообщение об ошибке |
-| **Использование** | Внешние сети, интернет | Внутренние доверенные сети |
-| **Безопасность** | Скрывает наличие хоста, замедляет сканирование | Раскрывает информацию о хосте |
-| **Отладка** | Затруднена | Упрощена (видно "connection refused") |
-
-**Рекомендация:** Используйте `DROP` для внешних интерфейсов и `REJECT` для внутренних сетей.
-
 ### Ссылки по теме
 
-- **[iptables основы](./iptables_basics.md)** — полезные команды iptables
-- **[nftables](../tools/nftables/practical_scenarios.md)** — сохранение правил nftables
-- **[firewalld](./firewalld.md)** — управление зонами и сервисами
-- **[ufw](./ufw.md)** — упрощенный интерфейс для Ubuntu/Debian
+- **[UFW — Uncomplicated Firewall](./ufw.md)** — упрощенный интерфейс для Ubuntu/Debian.
+- **[Firewalld: динамический межсетевой экран](./firewalld.md)** — высокоуровневое управление в RHEL-based системах.
+- **[iptables: основы и практические сценарии](./iptables_basics.md)** — синтаксис классической утилиты.
+- **[nftables: практические сценарии](./nftables/practical_scenarios.md)** — примеры современной настройки (fail2ban, сегментация).

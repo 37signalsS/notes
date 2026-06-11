@@ -1,26 +1,47 @@
-# nftables: сегментирование сети
+# nftables — сегментирование сети
 
-## Маршрутизатор с файрволом
+## Определения
 
-### Сценарий
+**Сегментирование сети** — разделение сетевой инфраструктуры на изолированные сегменты для ограничения распространения атак (Lateral Movement) и упрощения контроля доступа.
 
-Разделение сети на пользовательский и серверный сегменты с разграничением доступа.
+**Маршрутизатор (Router)** — устройство, работающее на L3 (Network Layer — сетевой уровень) модели OSI (Open Systems Interconnection), обеспечивающее передачу пакетов между разными IP-подсетями.
 
-### Архитектура
+**Прозрачный межсетевой экран (Transparent Firewall)** — устройство, работающее на L2 (Data Link Layer — канальный уровень) модели OSI, фильтрующее трафик внутри одного сегмента (одной IP-подсети) без необходимости изменения маршрутизации узлов.
 
-- Пользовательский сегмент: `192.168.0.0/24`
-- Серверный сегмент: `172.30.0.0/24`
-- Файрвол-маршрутизатор: два интерфейса, по одному в каждом сегменте
+**ARP (Address Resolution Protocol — протокол разрешения адресов)** — протокол, используемый для определения MAC-адреса (Media Access Control) узла по его IP-адресу (Internet Protocol).
 
-### Матрица доступа (пример)
+## Основные концепции
 
-| Пользователь | Серверы | Протокол/Порт | Роль |
+Сегментирование в nftables может быть реализовано двумя основными способами в зависимости от сетевой топологии:
+
+1. **L3-сегментация (через маршрутизацию)**: Сеть делится на разные IP-подсети (например, `User` и `Server`). Межсетевой экран выступает шлюзом по умолчанию (Default Gateway) и фильтрует трафик в цепочке `forward` таблицы семейства `ip` или `inet`.
+2. **L2-сегментация (через мост)**: Узлы остаются в одной IP-подсети, но физически или логически разделяются мостом (Bridge). Фильтрация происходит в цепочке `forward` таблицы семейства `bridge`.
+
+Для управления доступом рекомендуется использовать **матрицу доступа**, которая затем транслируется в именованные наборы (sets) nftables. Это делает конфигурацию читаемой и упрощает её масштабирование.
+
+---
+
+## Практические сценарии
+
+### Сценарий 1. Сегментирование на уровне маршрутизатора (L3)
+
+**Задача**: Разделить сеть на пользовательский и серверный сегменты с жестким разграничением прав.
+
+#### Архитектура
+
+- **Пользовательский сегмент**: `192.168.0.0/24`
+- **Серверный сегмент**: `172.30.0.0/24`
+- **Файрвол-маршрутизатор**: имеет интерфейсы в обоих сегментах.
+
+#### Матрица доступа (пример)
+
+| Объект (Источник) | Субъект (Назначение) | Протокол / Порт | Описание роли |
 | :--- | :--- | :--- | :--- |
-| User1 (192.168.0.101) | Server1-2 (172.30.0.101-102) | TCP 80 | all_web |
-| User2 (192.168.0.102) | Server1-2 (172.30.0.101-102) | TCP 22 | all_ssh |
-| User1, User2 | DNS (172.30.0.2) | UDP 53 | DNS |
+| User1 (`192.168.0.101`) | Server1-2 (`172.30.0.101-102`) | TCP 80 | Доступ к Web-сервисам |
+| User2 (`192.168.0.102`) | Server1-2 (`172.30.0.101-102`) | TCP 22 | Доступ по SSH (Secure Shell) |
+| Все пользователи | DNS-сервер (`172.30.0.2`) | UDP 53 | Доступ к DNS (Domain Name System) |
 
-### Конфигурация nftables
+#### Конфигурация nftables
 
 ```bash
 #!/usr/sbin/nft -f
@@ -28,103 +49,83 @@
 flush ruleset
 
 table ip firewall {
-    # Роль: all_web
-    set all_web_users {
+    # Роль: Доступ к Web
+    set web_users {
         type ipv4_addr
-        flags interval
         elements = { 192.168.0.101 }
     }
-
-    set all_web_servers {
+    set web_servers {
         type ipv4_addr . inet_proto . inet_service
-        flags interval
-        elements = { 172.30.0.101-172.30.0.102 . tcp . 80 }
+        elements = { 172.30.0.101 . tcp . 80, 172.30.0.102 . tcp . 80 }
     }
 
-    # Роль: all_ssh
-    set all_ssh_users {
+    # Роль: Доступ по SSH
+    set ssh_users {
         type ipv4_addr
-        flags interval
         elements = { 192.168.0.102 }
     }
-
-    set all_ssh_servers {
+    set ssh_servers {
         type ipv4_addr . inet_proto . inet_service
-        flags interval
-        elements = { 172.30.0.101-172.30.0.102 . tcp . 22 }
+        elements = { 172.30.0.101 . tcp . 22, 172.30.0.102 . tcp . 22 }
     }
 
-    # Роль: DNS
-    set DNS_users {
+    # Роль: Доступ к DNS
+    set dns_users {
         type ipv4_addr
-        flags interval
-        elements = { 192.168.0.101, 192.168.0.102 }
+        elements = { 192.168.0.0/24 }
     }
-
-    set DNS_servers {
+    set dns_servers {
         type ipv4_addr . inet_proto . inet_service
-        flags interval
         elements = { 172.30.0.2 . udp . 53 }
     }
 
     chain fw_forward {
         type filter hook forward priority filter; policy drop;
 
-        # Разрешить установленные соединения
+        # Разрешить уже установленные соединения
         ct state established,related accept
 
-        # Применить роли
-        ip saddr @all_web_users ip daddr . meta l4proto . th dport @all_web_servers accept
-        ip saddr @all_ssh_users ip daddr . meta l4proto . th dport @all_ssh_servers accept
-        ip saddr @DNS_users ip daddr . meta l4proto . th dport @DNS_servers accept
+        # Применение политик на основе наборов
+        ip saddr @web_users ip daddr . meta l4proto . th dport @web_servers accept
+        ip saddr @ssh_users ip daddr . meta l4proto . th dport @ssh_servers accept
+        ip saddr @dns_users ip daddr . meta l4proto . th dport @dns_servers accept
     }
 }
 ```
 
-### Активация маршрутизации
+#### Активация маршрутизации в Linux
 
 ```bash
-# В /etc/sysctl.conf раскомментировать
-net.ipv4.ip_forward=1
-
-# Применить
-sysctl -p
+# Включить пересылку пакетов в ядре
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/95-ipv4-forward.conf
+sysctl -p /etc/sysctl.d/95-ipv4-forward.conf
 ```
 
 ---
 
-## Прозрачный файрвол (сегментирование коммутатором)
+### Сценарий 2. Прозрачный межсетевой экран (L2 Bridge)
 
-### Сценарий
+**Задача**: Внедрить фильтрацию трафика между группами узлов в одной подсети без изменения их настроек IP.
 
-Сегментирование сети без изменения IP-адресации (transparent/stealth firewall).
+#### Особенности
 
-### Особенности
+- Все узлы находятся в подсети `172.30.0.0/24`.
+- Межсетевой экран работает как "умный коммутатор" (Bridge).
+- Не требует настройки Default Gateway на узлах для фильтрации внутри сегмента.
 
-- Все узлы в одной IP-подсети
-- Файрвол работает на уровне L2 (bridge)
-- Не требует изменения маршрутизации
-- **Недостаток:** не ограничивает широковещательный трафик
-
-### Конфигурация bridge
+#### Конфигурация моста (Bridge)
 
 ```bash
-# Установка bridge-utils
-apt install bridge-utils
+# Установка необходимых утилит
+apt update && apt install bridge-utils -y
 
-# Конфигурация /etc/network/interfaces
-auto lo
-iface lo inet loopback
-
-iface ens33 inet manual
-iface ens36 inet manual
-
+# Пример настройки в /etc/network/interfaces
 auto br0
 iface br0 inet manual
-bridge_ports ens33 ens36
+    bridge_ports ens33 ens36
 ```
 
-### Конфигурация nftables (bridge family)
+#### Конфигурация nftables (семейство bridge)
 
 ```bash
 #!/usr/sbin/nft -f
@@ -132,61 +133,29 @@ bridge_ports ens33 ens36
 flush ruleset
 
 table bridge firewall {
-    set all_web_users {
-        type ipv4_addr
-        flags interval
-        elements = { 172.30.0.11 }
-    }
-
-    set all_web_servers {
-        type ipv4_addr . inet_proto . inet_service
-        flags interval
-        elements = { 172.30.0.101-172.30.0.102 . tcp . 80 }
-    }
-
-    set all_ssh_users {
-        type ipv4_addr
-        flags interval
-        elements = { 172.30.0.12 }
-    }
-
-    set all_ssh_servers {
-        type ipv4_addr . inet_proto . inet_service
-        flags interval
-        elements = { 172.30.0.101-172.30.0.102 . tcp . 22 }
-    }
-
-    set DNS_users {
-        type ipv4_addr
-        flags interval
-        elements = { 172.30.0.11, 172.30.0.12 }
-    }
-
-    set DNS_servers {
-        type ipv4_addr . inet_proto . inet_service
-        flags interval
-        elements = { 172.30.0.2 . udp . 53 }
-    }
-
     chain fw_forward {
-        type filter hook forward priority filter; policy drop
+        type filter hook forward priority filter; policy drop;
 
-        # Разрешить ARP трафик
+        # Критически важно для работы L2: разрешить ARP
         ether type arp accept
 
         # Разрешить установленные соединения
         ct state established,related accept
 
-        # Применить роли
-        ip saddr @all_web_users ip daddr . meta l4proto . th dport @all_web_servers accept
-        ip saddr @all_ssh_users ip daddr . meta l4proto . th dport @all_ssh_servers accept
-        ip saddr @DNS_users ip daddr . meta l4proto . th dport @DNS_servers accept
+        # Пример фильтрации по IP внутри моста
+        # (nftables в семействе bridge умеет заглядывать в IP-заголовки)
+        ip saddr 172.30.0.11 ip daddr 172.30.0.101 tcp dport 80 accept
     }
 }
 ```
 
-### Ключевые отличия от router-based
+> **Примечание**: Упрощенная реализация прозрачного файрвола, работающая по принципу "IP-диода", описана в заметке **[nftables — паттерн OneButtonFirewall](./one_button_firewall.md)**.
 
-- Тип таблицы: `bridge` вместо `ip`
-- Добавлено правило: `ether type arp accept`
-- IP-адреса в сетах обновляются (так как все узлы в одной подсети)
+## Дополнительная информация
+
+### См. также
+
+- **[Сетевая сегментация и микросегментация](../../../../../Networking/Concepts/network_segmentation_and_microsegmentation.md)** — теоретические основы.
+- **[nftables — архитектура и основные концепции](./architecture_and_concepts.md)** — устройство таблиц и цепочек.
+- **[nftables — практические сценарии](./practical_scenarios.md)** — базовые настройки и NAT (Network Address Translation).
+- **[nftables — моделирование угроз](./threat_modeling.md)** — алгоритм проектирования правил.

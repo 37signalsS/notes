@@ -1,33 +1,33 @@
-# ISC DHCP — проверка, мониторинг и troubleshooting
+# ISC DHCP — проверка, мониторинг и диагностика
 
-> **Важно:** ISC DHCP устарел. Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Мониторинг Kea — через JSON/CTRL-agent.
+> **Важно:** ISC (Internet Systems Consortium) DHCP устарел. Для новых развёртываний используйте **[Kea DHCP](./isc_dhcp_server_overview.md#kea-dhcp-современная-альтернатива)**. Мониторинг Kea осуществляется через **JSON (JavaScript Object Notation)** и специализированный агент управления.
 
-## Definitions
+## Определения
 
-**Config validation (`dhcpd -t`)** — проверка синтаксиса `dhcpd.conf` без запуска службы. Обязательный шаг перед каждым перезапуском.
+**Проверка конфигурации (dhcpd -t)** — процесс валидации синтаксиса основного файла конфигурации `dhcpd.conf` без фактического запуска службы. Является обязательным шагом перед каждым перезапуском сервера.
 
-**Lease file (`dhcpd.leases`)** — файл состояния, хранящий текущие и истёкшие аренды. Используется сервером для восстановления состояния после перезагрузки.
+**Файл аренды (dhcpd.leases)** — файл состояния, в котором **DHCP-сервер (Dynamic Host Configuration Protocol)** хранит информацию о текущих и истёкших арендах **IP-адресов (Internet Protocol)**. Используется сервером для восстановления состояния после перезагрузки.
 
-> **Смежные темы:** [Анализ DHCP-трафика и troubleshooting](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md) — Wireshark, освобождение/обновление аренды, authoritative-режим.
+> **Смежные темы:** [Анализ DHCP-трафика и диагностика](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md) — использование Wireshark, механизм продления аренды и авторитативный режим.
 
-## Basic Concepts
+## Основные концепции
 
 ### Ключевые артефакты
 
-| Артефакт | Debian/Ubuntu | RHEL/Rocky/Alma |
-|----------|---------------|-----------------|
-| Lease-файл | `/var/lib/dhcp/dhcpd.leases` | `/var/lib/dhcpd/dhcpd.leases` |
-| Имя службы | `isc-dhcp-server` | `dhcpd` |
-| Логи | `/var/log/syslog` | `/var/log/messages` |
+| Артефакт | Debian/Ubuntu | RHEL (Red Hat Enterprise Linux) |
+| :--- | :--- | :--- |
+| **Lease-файл** | `/var/lib/dhcp/dhcpd.leases` | `/var/lib/dhcpd/dhcpd.leases` |
+| **Имя службы** | `isc-dhcp-server` | `dhcpd` |
+| **Логи** | `/var/log/syslog` | `/var/log/messages` |
 
 ### Что искать в логах
 
-- **DORA-последовательность** — 4 сообщения на каждого клиента (Discover → Offer → Request → Ack).
-- **Failover-статус** — сообщения `balanced` или `normal` подтверждают синхронизацию пары.
-- **Ошибки парсинга** — `Bad keyword`, `unexpected end of file` — проблема в `dhcpd.conf`.
-- **IP-конфликты** — `DHCPDECLINE` от клиента, сервер помечает адрес как конфликтный.
+- **Последовательность DORA** — четыре сообщения на каждого клиента: **Discover** (обнаружение), **Offer** (предложение), **Request** (запрос), **Ack** (подтверждение).
+- **Статус Failover** — сообщения `balanced` или `normal` подтверждают корректную синхронизацию пары серверов.
+- **Ошибки парсинга** — сообщения `Bad keyword` или `unexpected end of file` указывают на синтаксические ошибки в `dhcpd.conf`.
+- **IP-конфликты** — получение сообщения `DHCPDECLINE` от клиента означает, что выданный адрес уже занят; сервер пометит его как конфликтный.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Проверка и запуск службы
 
@@ -37,30 +37,30 @@
     sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf
     ```
 
-    Флаг `-lf` позволяет указать lease-файл явно (полезно при отладке):
+    Использование флага `-lf` позволяет явно указать файл аренды (полезно при отладке):
 
     ```bash
     sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf -lf /var/lib/dhcp/dhcpd.leases 2>&1 | less
     ```
 
-2. **Перезапуск службы:**
+2. **Управление службой:**
 
     ```bash
     # Debian/Ubuntu
     sudo systemctl restart isc-dhcp-server
     sudo systemctl enable isc-dhcp-server
 
-    # RHEL/Rocky/Alma
+    # RHEL/Rocky Linux/AlmaLinux
     sudo systemctl restart dhcpd
     sudo systemctl enable dhcpd
     ```
 
-### Мониторинг
+### Мониторинг состояния
 
 **Статус службы:**
 
 ```bash
-systemctl status isc-dhcp-server   # или dhcpd
+systemctl status isc-dhcp-server   # или dhcpd для RHEL
 ```
 
 **Логи в реальном времени:**
@@ -72,13 +72,12 @@ sudo journalctl -u isc-dhcp-server -f   # или -u dhcpd
 **Просмотр текущих аренд:**
 
 ```bash
-cat /var/lib/dhcp/dhcpd.leases     # Debian
-cat /var/lib/dhcpd/dhcpd.leases    # RHEL
+cat /var/lib/dhcp/dhcpd.leases     # Для Debian/Ubuntu
 ```
 
-Формат записи:
+Пример записи в файле:
 
-```
+```text
 lease 10.0.10.5 {
   starts 1 2026/04/06 10:00:00;
   ends 2 2026/04/07 10:00:00;
@@ -87,61 +86,44 @@ lease 10.0.10.5 {
 }
 ```
 
-### Диагностика на клиенте (Linux)
+### Диагностика на стороне клиента (Linux)
+
+Для проверки полученных параметров используйте стандартные сетевые инструменты:
 
 ```bash
-# Полученный IP
+# Проверка полученного IP-адреса
 ip addr show eth0
 
-# Маршруты (шлюз, статические маршруты)
+# Проверка таблицы маршрутизации (шлюз по умолчанию)
 ip route
 
-# DNS-серверы
+# Проверка DNS-серверов
 cat /etc/resolv.conf
-
-# Детали через NetworkManager
-nmcli device show eth0 | grep IP4
 ```
 
-### Troubleshooting
+### Устранение неполадок (Troubleshooting)
 
-**Клиент не получает IP:**
+**Клиент не получает IP-адрес:**
 
-```bash
-# Проверка UDP 67 на сервере
-nc -uvz <dhcp-server> 67
+1. Проверьте доступность порта **UDP (User Datagram Protocol)** 67 на сервере:
 
-# Логи NetworkManager на клиенте
-sudo journalctl -u NetworkManager -f
+   ```bash
+   nc -uvz <dhcp-server-ip> 67
+   ```
 
-# Ручной запуск dhclient с отладкой
-sudo dhclient -v eth0
-```
+2. Убедитесь, что клиент и сервер находятся в одной подсети, либо настроен **[DHCP Relay](./isc_dhcp_server_relay.md)**.
+3. Проверьте наличие свободных адресов в пуле (диапазоне `range`) внутри `dhcpd.conf`.
 
-- Убедиться, что клиент и сервер в одной подсети, либо настроен [DHCP Relay](./isc_dhcp_server_relay.md).
+## Дополнительная информация
 
-**IP-конфликты:**
+### Примечания по эксплуатации
 
-```bash
-# Поиск активных аренд
-grep -A 5 "^lease" /var/lib/dhcp/dhcpd.leases
+- Перед каждым перезапуском службы **обязательно** запускайте `dhcpd -t`. Сервер может не запуститься, если в конфигурации допущена ошибка.
+- Не удаляйте файл аренды вручную. Это приведёт к потере сервером информации об активных клиентах и может вызвать конфликты IP-адресов при перевыдаче уже занятых адресов.
+- Опция `authoritative;` заставляет сервер активно «исправлять» клиентов с неверными адресами, отправляя им `DHCPNAK`. Подробнее см. в [диагностике DHCP](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md).
 
-# Поиск дубликатов MAC
-grep "hardware ethernet" /var/lib/dhcp/dhcpd.leases
-```
+### См. также
 
-## Additional Information
-
-### Примечания
-
-- Перед каждым перезапуском запускайте `dhcpd -t` — сервер откажется стартовать с невалидным конфигом.
-- Lease-файл не удаляйте вручную — сервер потеряет состояние активных арен. Для сброса используйте корректную процедуру: остановить службу → переименовать lease → запустить.
-- Опция `authoritative;` в `dhcpd.conf` заставляет сервер отправлять `DHCPNAK` клиентам с некорректными IP из чужих подсетей (подробнее — [dhcp_analysis_troubleshooting.md](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md#авторитативный-и-неавторитативный-dhcp-сервер)).
-
-### Связанные документы
-
-- Анализ и Wireshark: [dhcp_analysis_troubleshooting.md](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md)
-- Обзор ISC DHCP: [isc_dhcp_server_overview.md](./isc_dhcp_server_overview.md)
-- Базовая настройка: [isc_dhcp_server_basic_config.md](./isc_dhcp_server_basic_config.md)
-- Failover: [isc_dhcp_server_failover.md](./isc_dhcp_server_failover.md)
-- DHCP Relay: [isc_dhcp_server_relay.md](./isc_dhcp_server_relay.md)
+- [Обзор ISC DHCP](./isc_dhcp_server_overview.md) — архитектура и сравнение с Kea.
+- [Диагностика и анализ трафика DHCP](../../../../Networking/Protocols/DHCP/dhcp_analysis_troubleshooting.md) — общие методы и Wireshark.
+- [Базовая настройка ISC DHCP](./isc_dhcp_server_basic_config.md) — структура конфигурационных файлов.

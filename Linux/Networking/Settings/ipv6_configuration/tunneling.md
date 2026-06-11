@@ -1,141 +1,141 @@
 # Туннелирование IPv6 в Linux
 
-## Обзор
+## Определения
 
-Для передачи IPv6 через IPv4-сети используются туннели.
+**Туннелирование IPv6** — механизм передачи IPv6-пакетов через сетевую инфраструктуру, поддерживающую только IPv4 (или наоборот), путем инкапсуляции.
 
-## Типы туннелей
+**Основные протоколы:**
 
-| Технология | Описание | Протокол |
-| :--- | :--- | :--- |
-| **6to4** | Автоматические туннели | Proto 41 |
-| **Teredo** | Через NAT/UDP | UDP 3544 |
-| **ISATAP** | Внутри организации | Proto 41 |
-| **6rd** | Быстрый 6to4 (ISP) | Proto 41 |
-| **GRE** | Generic Routing Encapsulation | Proto 47 |
-| **IP-in-IP** | Инкапсуляция IP в IP | Proto 4 |
+- **SIT (Simple Internet Transition, 6in4)** — инкапсуляция IPv6 в IPv4 (протокол IP 41).
+- **GRE (Generic Routing Encapsulation)** — универсальный протокол инкапсуляции (протокол IP 47), поддерживающий IPv6.
+- **6to4** — механизм автоматического туннелирования (префикс `2002::/16`), использующий SIT. Считается устаревшим (RFC 7526).
 
-**См. также:** [Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md).
+Теоретические основы и сравнение протоколов см. в разделах: **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** и **[Обзор GRE](../../../../Networking/Tunnels/gre/gre.md)**.
 
-## Настройка туннелей
+## Основные концепции
 
-### 6to4 туннель
+### Особенности реализации в Linux
 
-**Требования:** публичный IPv4-адрес.
+В Linux управление туннелями осуществляется через пакет `iproute2` (команды `ip tunnel` или `ip link`) или через системные менеджеры конфигурации, такие как `systemd-networkd` и NetworkManager.
+
+**Ключевые аспекты:**
+
+- **MTU (Maximum Transmission Unit)**: инкапсуляция добавляет заголовок (20 байт для SIT, 24+ байта для GRE), что требует уменьшения MTU туннельного интерфейса (обычно до 1480 или 1476 байт).
+- **Протоколы IP**: для работы туннелей необходимо разрешить соответствующие протоколы в файрволе (41 для SIT, 47 для GRE).
+- **TTL (Time to Live)**: при настройке туннеля часто указывается `ttl 64` или `ttl inherit` для корректной трассировки.
+
+## Практические сценарии
+
+### Настройка через iproute2
+
+#### SIT-туннель (6in4)
+
+Классический способ соединения с IPv6-брокером (например, Hurricane Electric).
 
 ```bash
 # Создание туннеля
-ip tunnel add 6to4 mode sit remote any local <IPv4-адрес> ttl 64
-ip link set 6to4 up
-ip addr add 2002:<IPv4-адрес в hex>::1/16 dev 6to4
+sudo ip tunnel add sit1 mode sit remote <remote_ipv4> local <local_ipv4> ttl 64
+sudo ip link set sit1 up
 
-# Пример для IPv4 192.0.2.1 (c000:0201)
-# ip addr add 2002:c000:0201::1/16 dev 6to4
+# Назначение IPv6-адреса
+sudo ip addr add 2001:db8::1/64 dev sit1
 
-# Маршрут по умолчанию
-ip -6 route add 2000::/3 via ::192.0.2.1 dev 6to4
+# Настройка маршрутизации
+sudo ip -6 route add default dev sit1
 ```
 
-### GRE туннель
+#### GRE-туннель с поддержкой IPv6
+
+Используется для объединения сетей с поддержкой различных протоколов.
 
 ```bash
 # Создание GRE туннеля
-ip tunnel add gre6 mode gre remote <remote-IPv4> local <local-IPv4> ttl 64
-ip link set gre6 up
-ip addr add 2001:db8::1/64 dev gre6
+sudo ip tunnel add gre6 mode gre remote <remote_ipv4> local <local_ipv4> ttl 64
+sudo ip link set gre6 up
 
-# Маршрут
-ip -6 route add 2001:db8:1::/64 via 2001:db8::2 dev gre6
+# Назначение адреса
+sudo ip addr add 2001:db8:abc::1/64 dev gre6
 ```
 
-### SIT туннель (IPv6-in-IPv4)
+### Настройка через systemd-networkd
 
-```bash
-# Создание SIT туннеля
-ip tunnel add sit1 mode sit remote <remote-IPv4> local <local-IPv4> ttl 64
-ip link set sit1 up
-ip addr add 2001:db8::1/64 dev sit1
+Для персистентной настройки используются файлы `.netdev` (описание устройства) и `.network` (настройка интерфейса).
 
-# Маршрут
-ip -6 route add 2001:db8:1::/64 via 2001:db8::2 dev sit1
-```
-
-## Настройка через systemd-networkd
-
-### 6to4 туннель
+#### Конфигурация SIT-туннеля
 
 ```ini
-# /etc/systemd/network/10-6to4.netdev
+# /etc/systemd/network/10-sit1.netdev
 [NetDev]
-Name=6to4
+Name=sit1
 Kind=sit
-TunnelLocal=<IPv4-адрес>
-TunnelRemote=any
 
-# /etc/systemd/network/10-6to4.network
+[Tunnel]
+Local=<local_ipv4>
+Remote=<remote_ipv4>
+
+# /etc/systemd/network/10-sit1.network
 [Match]
-Name=6to4
+Name=sit1
 
 [Network]
-IPv6AcceptRA=no
-Address=2002:<IPv4-адрес в hex>::1/16
+Address=2001:db8::1/64
 ```
 
-### GRE туннель
+#### Конфигурация GRE-туннеля
 
 ```ini
 # /etc/systemd/network/10-gre6.netdev
 [NetDev]
 Name=gre6
 Kind=gre
-TunnelLocal=<local-IPv4>
-TunnelRemote=<remote-IPv4>
+
+[Tunnel]
+Local=<local_ipv4>
+Remote=<remote_ipv4>
 
 # /etc/systemd/network/10-gre6.network
 [Match]
 Name=gre6
 
 [Network]
-IPv6AcceptRA=no
-Address=2001:db8::1/64
+Address=2001:db8:abc::1/64
 ```
 
-## Проверка туннелей
+## Дополнительная информация
+
+### Диагностика
+
+Проверка состояния туннелей:
 
 ```bash
-# Показать туннели
+# Просмотр всех туннелей
 ip -6 tunnel show
 
-# Статистика туннеля
-ip -s -6 link show 6to4
+# Статистика интерфейса
+ip -s link show sit1
 
-# Проверка подключения
-ping6 -I 6to4 2001:db8::1
+# Проверка связности (обязательно указывать интерфейс для Link-Local)
+ping6 -I sit1 2001:db8::2
 ```
 
-## Проблемы и решения
+Подробнее см. в разделе **[Диагностика IPv6](./diagnostics.md)**.
 
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **Туннель не поднимается** | Блокировка протокола 41 | Разрешить в файрволе |
-| **Пакеты не проходят** | Неправильный маршрут | Проверить `ip -6 route` |
-| **Высокая задержка** | Дополнительная инкапсуляция | Использовать нативный IPv6 |
+### Настройка файрвола
 
-## Файрвол для туннелей
+Для работы туннелей необходимо разрешить прохождение пакетов инкапсуляции.
+
+**iptables:**
 
 ```bash
-# Разрешить протокол 41 (6to4, ISATAP)
-ip6tables -A INPUT -p 41 -j ACCEPT
+# Разрешить SIT (протокол 41)
+sudo iptables -A INPUT -p 41 -j ACCEPT
 
 # Разрешить GRE (протокол 47)
-ip6tables -A INPUT -p 47 -j ACCEPT
-
-# Разрешить SIT
-ip6tables -A INPUT -p ipv6 -j ACCEPT
+sudo iptables -A INPUT -p 47 -j ACCEPT
 ```
 
-## Связанные темы
+### См. также
 
-* **[Концепции](./concepts.md)** — типы IPv6-адресов
-* **[Диагностика](./diagnostics.md)** — решение проблем
-* **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — базовая настройка туннелей
+- **[Концепции IPv6 в Linux](./concepts.md)** — типы адресов и основы.
+- **[Настройка адресов](./address_configuration.md)** — управление интерфейсами через nmcli.
+- **[Туннели IPIP и SIT](../../../../Networking/Tunnels/ipip_and_sit.md)** — подробная теория и сравнение.

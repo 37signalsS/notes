@@ -1,19 +1,18 @@
-# Управление очередями соединений TCP
+# Управление очередями соединений TCP в Linux
 
 ## Определения
 
-**TCP Backlog** — очередь входящих TCP-подключений на сервере, состоящая из двух очередей:
+* **TCP Backlog** — очередь входящих TCP-подключений на сервере, состоящая из двух уровней:
+  * **SYN backlog** — очередь полуоткрытых соединений в состоянии `SYN_RECV`. Контролируется параметром `net.ipv4.tcp_max_syn_backlog`.
+  * **Accept backlog** — очередь установленных соединений в состоянии `ESTABLISHED`, ожидающих вызова `accept()` приложением. Размер определяется `net.core.somaxconn`.
+* **SYN Cookies** — механизм защиты от **SYN-flood**, позволяющий серверу отвечать на SYN-запросы без выделения памяти до завершения рукопожатия. Подробнее: [DDoS Overview](../../../Security/ApplicationSecurity/ddos_overview.md).
+* **netdev_max_backlog** — максимальное количество пакетов в очереди на обработку ядром, полученных от сетевого интерфейса (**NIC**), до того как они будут переданы в стек протоколов.
 
-- **SYN backlog** — очередь полуоткрытых соединений в состоянии `SYN_RECV`, контролируется параметром `net.ipv4.tcp_max_syn_backlog`.
-- **Accept backlog** — очередь установленных соединений в состоянии `ESTABLISHED`, ожидающих вызова `accept()` приложением, размер определяется `net.core.somaxconn`.
-
-**SYN Cookies** — механизм защиты от SYN-flood, позволяющий серверу отвечать на SYN-запросы без выделения памяти до завершения рукопожатия.
-
-## Basic Concepts
+## Основные концепции
 
 ### Жизненный цикл входящего соединения
 
-```
+```text
 Клиент → SYN → Сервер
          ↓
     [SYN backlog]  ← состояние SYN_RECV
@@ -27,7 +26,7 @@
 
 ### Параметры ядра
 
-| Параметр | Описание | Значение по умолчанию | Типичное для highload |
+| Параметр | Описание | Значение по умолчанию | Типичное для Highload |
 | :--- | :--- | :--- | :--- |
 | `net.core.somaxconn` | Максимальный размер Accept backlog | 128–4096 | 65535 |
 | `net.ipv4.tcp_max_syn_backlog` | Максимальный размер SYN backlog | 128–256 | 4096–8192 |
@@ -38,11 +37,11 @@
 
 ### Последствия переполнения
 
-- **SYN backlog:** отбрасывание SYN-пакетов (SYN drop) → задержки установления соединения, ретрансмиссии SYN.
-- **Accept backlog:** сброс соединений с отправкой `RST` → ошибки «Connection refused» на клиенте.
-- **netdev_max_backlog:** пакеты сбрасываются на уровне NIC → ретрансмиссии TCP, рост задержек.
+* **SYN backlog:** отбрасывание SYN-пакетов (**SYN drop**) → задержки установления соединения, ретрансмиссии SYN.
+* **Accept backlog:** сброс соединений с отправкой **RST** → ошибки «Connection refused» на клиенте.
+* **netdev_max_backlog:** пакеты сбрасываются на уровне NIC → ретрансмиссии TCP, рост задержек.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Проверка текущих значений
 
@@ -53,9 +52,9 @@ sysctl net.core.netdev_max_backlog
 sysctl net.ipv4.tcp_syncookies
 ```
 
-### Настройка очередей
+### Настройка очередей через sysctl
 
-**Временно:**
+**Временно (до перезагрузки):**
 
 ```bash
 sudo sysctl -w net.core.somaxconn=65535
@@ -64,7 +63,7 @@ sudo sysctl -w net.core.netdev_max_backlog=30000
 sudo sysctl -w net.ipv4.tcp_syncookies=1
 ```
 
-**Постоянно** (`/etc/sysctl.d/99-network.conf`):
+**Постоянно (`/etc/sysctl.d/99-network.conf`):**
 
 ```ini
 net.core.somaxconn = 65535
@@ -73,7 +72,7 @@ net.core.netdev_max_backlog = 30000
 net.ipv4.tcp_syncookies = 1
 ```
 
-Применение: `sudo sysctl -p /etc/sysctl.d/99-network.conf`
+Применение: `sudo sysctl --system`
 
 ### Диагностика переполнения backlog
 
@@ -86,58 +85,46 @@ nstat -az | grep -i syn
 # TcpExtTCPListenOverflow — срабатывание защиты от переполнения Accept backlog
 ```
 
-**Анализ состояния сокетов:**
+**Анализ состояния сокетов через `ss`:**
 
 ```bash
 # Количество SYN_RECV (полуоткрытые)
-ss -tan 'state syn-recv' | wc -l
+ss -tan state syn-recv | wc -l
 
 # Количество ESTABLISHED (активные соединения)
-ss -tan 'state established' | wc -l
+ss -tan state established | wc -l
 
 # Детальная информация по каждому сокету
 ss -tan state syn-recv
 ```
 
-**Мониторинг в реальном времени:**
+Подробнее об утилите: [Диагностика ss](../../../Linux/Diagnostics/Networking/ss.md).
+
+**Мониторинг ListenOverflow в реальном времени:**
 
 ```bash
-# Отслеживание RST-пакетов (симптом переполнения Accept backlog)
 watch -n1 'nstat -az | grep -i listenoverflow'
 ```
 
-### Рекомендации по размерам
+### Рекомендации по выбору значений
 
-| Сценарий | somaxconn | tcp_max_syn_backlog | netdev_max_backlog | Обоснование |
-| :--- | :--- | :--- | :--- | :--- |
-| **Веб-сервер (общий)** | 4096 | 2048 | 5000 | Умеренная нагрузка |
-| **Highload (тысячи conn/s)** | 65535 | 8192 | 30000 | Максимальная пропускная способность |
-| **Прокси/балансировщик** | 65535 | 4096 | 30000 | Множество одновременных соединений |
-| **Внутренний сервис** | 1024 | 512 | 3000 | Низкая нагрузка, стандартные значения |
+| Сценарий | somaxconn | tcp_max_syn_backlog | netdev_max_backlog |
+| :--- | :--- | :--- | :--- |
+| **Веб-сервер (общий)** | 4096 | 2048 | 5000 |
+| **Highload (тысячи conn/s)** | 65535 | 8192 | 30000 |
+| **Прокси/балансировщик** | 65535 | 4096 | 30000 |
 
-> **Важно:** `somaxconn` также ограничивается на уровне приложения (например, `listen(backlog)` в Nginx/Node.js). Значение в sysctl — верхний лимит, приложение может запросить меньше.
+> **Важно:** `somaxconn` также ограничивается на уровне приложения (например, директива `backlog` в конфигурации Nginx). Системное значение является верхним пределом.
 
-### Защита от SYN-flood
-
-SYN cookies включены по умолчанию (`tcp_syncookies=1`) в современных ядрах Linux. Они активируются автоматически при приближении SYN backlog к пределу.
-
-**Проверка работы:**
-
-```bash
-# Статистика SYN cookies
-nstat -az | grep -i syncookie
-# TcpExtSyncookiesSent — отправлено SYN cookies
-# TcpExtSyncookiesRecv — подтверждено SYN cookies
-# TcpExtSyncookiesFailed — отброены (невалидный ответ)
-```
-
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
-- **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
-- **Диагностика сокетов:** [Диагностика сокетов TCP](./tcp_socket_diagnostics.md)
-- **Состояния соединений:** [Состояния TCP-соединений](../../../Networking/Protocols/TCP/connection/tcp_connection_states.md)
-- **SYN-flood атаки:** [DDoS Overview](../../../Networking/Concepts/dos_ddos_overview.md)
-- **sysctl:** [Настройка sysctl](../../Core/kernel/sysctl.md)
-- **ss:** [Диагностика ss](../../../Diagnostics/Networking/ss.md)
+* [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
+* [Диагностика сокетов TCP](./tcp_socket_diagnostics.md)
+* [Состояния TCP-соединений](../../../Networking/Protocols/TCP/connection/tcp_connection_states.md)
+
+### См. также
+
+* [Настройка параметров ядра (sysctl)](../../Core/kernel/sysctl.md)
+* [DDoS (Distributed Denial of Service)](../../../Security/ApplicationSecurity/ddos_overview.md)

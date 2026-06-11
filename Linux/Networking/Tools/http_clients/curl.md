@@ -2,9 +2,9 @@
 
 ## Определения
 
-**cURL** (Client for URLs) — утилита командной строки для передачи данных по множеству протоколов (HTTP, HTTPS, FTP, SCP, SFTP, SMB, LDAP и др.). Стандарт де-факто для работы с API в скриптах и автоматизации.
+**cURL** (Client for URLs) — утилита командной строки для передачи данных по множеству протоколов (HTTP, HTTPS, FTP, SCP, SFTP, SMB, LDAP и др.). Стандарт де-факто для работы с API (Application Programming Interface) в скриптах и автоматизации.
 
-## Базовые концепции
+## Основные концепции
 
 ### 1. Структура команды
 
@@ -42,14 +42,15 @@ curl [опции] [URL]
 # -s (--silent): подавить индикатор прогресса
 # -S (--show-error): показать ошибку при использовании -s
 curl -fsS https://api.example.com/health
+# → (пустой вывод при успехе, ошибка при 4xx/5xx)
 
-# С таймаутами для CI/CD
+# С таймаутами для CI/CD (Continuous Integration / Continuous Deployment)
 curl -f --max-time 10 --connect-timeout 5 https://api.example.com/health
 ```
 
 > **Важно:** Без `-f` curl вернёт успех (код 0) даже при HTTP 500.
 
-### Сценарий 2: Работа с JSON API
+### Сценарий 2: Работа с JSON (JavaScript Object Notation) API
 
 ```bash
 # GET с заголовками
@@ -62,6 +63,7 @@ curl -X POST \
      -H 'Content-Type: application/json' \
      -d '{"name":"John","age":30}' \
      https://api.example.com/users
+# → { "id": 123, "status": "created" }
 
 # PUT/PATCH
 curl -X PUT \
@@ -71,6 +73,7 @@ curl -X PUT \
 
 # DELETE
 curl -X DELETE https://api.example.com/users/1
+# → HTTP/1.1 204 No Content
 ```
 
 ### Сценарий 3: Отправка файлов и форм
@@ -126,9 +129,11 @@ curl --netrc https://api.example.com/protected
 ```bash
 # Подробная информация о соединении
 curl -v https://example.com
+# → * Connected to example.com (93.184.216.34) port 443 ...
 
 # Только заголовки запроса и ответа
 curl -I https://example.com
+# → HTTP/1.1 200 OK ...
 
 # Полный дамп обмена данными (включая TLS)
 curl --trace trace.log https://example.com
@@ -141,6 +146,7 @@ curl -o /dev/null -s -w \
    Server: %{time_starttransfer}s\n\
    Total: %{time_total}s\n" \
   https://example.com
+# → DNS: 0.001s ... Total: 0.050s
 ```
 
 > Для детальной диагностики см. **[curl_network_diagnostics.md](../../../Diagnostics/Networking/curl_network_diagnostics.md)**.
@@ -149,6 +155,8 @@ curl -o /dev/null -s -w \
 
 ```bash
 curl -s ifconfig.me
+# → 93.184.216.34
+
 curl -s icanhazip.com
 curl -s ipinfo.io/ip
 curl 2ip.ru
@@ -184,7 +192,7 @@ curl -O https://example.com/file.zip &
 curl https://api.example.com/users | jq .
 
 # Выборка конкретных полей
-curl https://api.example.com/users | jq '.[](name'
+curl https://api.example.com/users | jq '.[].name'
 
 # Фильтрация
 curl https://api.example.com/users | jq '.[] | select(.age > 25)'
@@ -196,7 +204,7 @@ curl https://api.example.com/users | jq '.[] | select(.age > 25)'
 
 ### 1. Таймауты и зависания
 
-**Проблема:** curl может "зависнуть" без явных таймаутов, особенно в CI/CD и healthcheck'ах.
+**Проблема:** curl может "зависнуть" без явных таймаутов, особенно в CI/CD (Continuous Integration / Continuous Deployment) и healthcheck'ах.
 
 **Решение:**
 
@@ -223,7 +231,7 @@ curl --connect-timeout 5 \
 curl -k https://self-signed.example.com
 ```
 
-> **Предупреждение:** Используйте только в тестовой среде. В продакшене это создаёт уязвимость для MITM-атак.
+> **Предупреждение:** Используйте только в тестовой среде. В продакшене это создаёт уязвимость для MITM (Man-in-the-Middle)-атак.
 
 ### 3. Подмена User-Agent
 

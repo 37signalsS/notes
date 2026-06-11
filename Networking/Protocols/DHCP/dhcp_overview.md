@@ -49,7 +49,7 @@
 
 - **ICMP ping check:** перед отправкой предложения сервер может проверить доступность адреса через ICMP (Internet Control Message Protocol) Echo Request. Если адрес не отвечает, он включается в предложение.
 - **`yiaddr` (Your IP Address)** — предлагаемый клиенту IP-адрес.
-- **`siaddr` (Next Server IP Address)** — IP-адрес следующего сервера в цепочке загрузки (например, TFTP-сервер для загрузки по PXE — Preboot Execution Environment).
+- **`siaddr` (Next Server IP Address)** — IP-адрес следующего сервера в цепочке загрузки (например, TFTP-сервер для загрузки по [PXE](../../../Linux/Networking/Concepts/pxe_boot.md)).
 - **Bootp flags:** Unicast (по умолчанию) или Broadcast (если клиент не может принимать unicast без настроенного IP).
 - Клиент может получить несколько предложений от разных серверов.
 

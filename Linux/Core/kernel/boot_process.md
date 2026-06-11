@@ -75,27 +75,7 @@ journalctl -b 0 --priority=err
 
 ### Управление initramfs
 
-При изменении конфигурации дисков (добавление LVM/RAID) необходимо обновить временную ФС.
-
-**Debian/Ubuntu:**
-
-```bash
-sudo update-initramfs -u
-# → update-initramfs: Generating /boot/initrd.img-6.1.0-21-amd64
-```
-
-**RHEL/CentOS/Fedora:**
-
-```bash
-sudo dracut --force
-```
-
-**Просмотр содержимого:**
-
-```bash
-lsinitramfs /boot/initrd.img-$(uname -r) | grep lvm    # Debian
-lsinitrd /boot/initramfs-$(uname -r).img | grep lvm    # RHEL
-```
+При изменении конфигурации дисков (добавление LVM/RAID) необходимо обновить временную ФС. Практические команды для различных дистрибутивов (`dracut`, `update-initramfs`) приведены в разделе: [**Управление initramfs**](../../SystemAdministration/grub.md#2-управление-initramfs-dracut-и-mkinitramfs).
 
 ### Однопользовательский режим (Recovery)
 

@@ -7,11 +7,11 @@
 * **HTB (Hierarchical Token Bucket)** — дисциплина для приоритизации трафика с иерархической структурой классов.
 * **fq_codel** — дисциплина для борьбы с bufferbloat, снижающая латентность.
 
-> Основные концепции QoS, включая детальное сравнение **Policing** и **Shaping**, описаны в файле [QoS](../../../Networking/Concepts/qos.md).
+> Основные концепции QoS, включая детальное сравнение **Policing** и **Shaping**, описаны в файле [QoS](../../../../Networking/Concepts/qos.md).
 
 ## Основные концепции
 
-### Интеграция с TCP-стеком
+### Интеграция с сетевым стеком
 
 > Настройка дисциплин по умолчанию через `sysctl` описана в [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_queueing_disciplines.md).
 
@@ -49,12 +49,11 @@ sudo tc filter add dev eth0 parent ffff: protocol ip u32 match u32 0 0 police ra
 **Параметры:**
 
 * `filter add dev eth0 parent ffff:`: Добавляем фильтр к `ingress` qdisc на интерфейсе `eth0`.
-* `protocol ip`: Фильтр будет применяться к IP-трафику.
-* `u32 match u32 0 0`: Универсальный классификатор `u32`, который сопоставляет трафик с любым пакетом (`match u32 0 0` означает "сопоставить 32-битное значение 0 со смещением 0", что фактически означает "любой пакет"). Это простой и надежный способ "поймать" весь входящий трафик.
-* `police rate 100kbit burst 8k drop`: Основное действие.
-  * `rate 100kbit`: Устанавливает лимит скорости в 100 килобит в секунду.
-  * `burst 8k`: Разрешает кратковременные "всплески" трафика сверх лимита, используя буфер (token bucket) размером 8 килобайт.
-  * `drop`: Действие, которое нужно выполнить при превышении лимита — отбросить пакет.
+* `u32 match u32 0 0`: Универсальный классификатор `u32`, сопоставляет любой пакет.
+* `police rate 100kbit burst 8k drop`:
+  * `rate 100kbit`: Лимит скорости.
+  * `burst 8k`: Размер буфера (token bucket) для всплесков.
+  * `drop`: Отбрасывать пакеты при превышении лимита.
 
 ```bash
 # Проверка статистики (счетчик dropped)
@@ -67,7 +66,7 @@ sudo tc qdisc del dev eth0 ingress
 ### Приоритизация трафика с HTB и fq_codel
 
 ```bash
-# Создание HTB (Hierarchical Token Bucket) с классами приоритета
+# Создание HTB с классами приоритета
 tc qdisc replace dev eth0 root handle 1: htb default 20
 
 # Корневой класс с ограничением скорости
@@ -79,45 +78,24 @@ tc class add dev eth0 parent 1:1 classid 1:10 htb rate 200mbit prio 0
 # Класс приоритета 1 для фонового трафика (800 Мбит)
 tc class add dev eth0 parent 1:1 classid 1:20 htb rate 800mbit prio 1
 
-# Добавление fq_codel к каждому классу для борьбы с bufferbloat
+# Добавление fq_codel к каждому классу
 tc qdisc add dev eth0 parent 1:10 fq_codel
 tc qdisc add dev eth0 parent 1:20 fq_codel
 ```
 
-**Использование:**
-
-* Маркировка пакетов DSCP на стороне приложения/прокси.
-* Направление маркированного трафика в приоритетный класс (1:10).
-
 ### Эмуляция сетевых проблем (netem)
+
+Для тестирования сетевых задержек, потерь и повреждений пакетов используется модуль `netem`.
 
 ```bash
 # Добавление задержки 100ms
 sudo tc qdisc add dev eth0 root netem delay 100ms
 
-# Задержка с вариацией (200ms ± 40ms, 50% корреляция)
-sudo tc qdisc add dev eth0 root netem delay 200ms 40ms 50%
-
-# Потери пакетов (70%)
-sudo tc qdisc add dev eth0 root netem loss 70%
-
-# Повреждение пакетов (50%)
-sudo tc qdisc add dev eth0 root netem corrupt 50%
-
-# Дублирование пакетов (40%)
-sudo tc qdisc add dev eth0 root netem duplicate 40%
-
-# Комбинация эффектов
-sudo tc qdisc add dev eth0 root netem delay 200ms loss 10%
-```
-
-```bash
-# Просмотр настроенных qdisc
-tc qdisc show dev eth0
-
 # Удаление netem
 sudo tc qdisc del dev eth0 root netem
 ```
+
+Подробные сценарии (потери, дублирование, джиттер) описаны в разделе **[tc netem](./tc_netem.md)**.
 
 ## Дополнительная информация
 
@@ -133,13 +111,13 @@ sudo tc qdisc del dev eth0 root netem
 
 ### Интеграция с сетевым стеком
 
-* **Для initcwnd:** настройка через [`ip route`](../../Tools/iproute2/ip_route.md).
-* **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md) (см. [Оптимизация TCP](../../Concepts/tcp_tuning/tcp_buffer_tuning.md)).
+* **Для initcwnd:** настройка через [`ip route`](./ip_route.md).
+* **Для буферов TCP:** через [`sysctl`](../../../Core/kernel/sysctl.md).
 * **Для многопоточности:** [RSS, RPS, RFS](../../Concepts/rss_rps_rfs.md).
 
 ### Связанные темы
 
-* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка TCP-стека, алгоритмы congestion control
-* **[`ip route`](./ip_route.md)** — управление маршрутами и initcwnd
 * **[QoS](../../../../Networking/Concepts/qos.md)** — концепции качества обслуживания
 * **[tc netem](./tc_netem.md)** — детальное описание эмуляции сетевых проблем
+* **[Оптимизация TCP](../../Concepts/tcp_tuning/tcp_tuning_overview.md)** — настройка сетевого стека
+* **[`ip route`](./ip_route.md)** — управление маршрутами и initcwnd

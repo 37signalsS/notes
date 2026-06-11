@@ -1,220 +1,100 @@
-# Диагностика проблем IPv6 в Linux
+# Диагностика IPv6 в Linux
 
-## Проверка включения IPv6
+## Определения
+
+**Диагностика IPv6** — процесс выявления и устранения проблем сетевой связности по протоколу IPv6, включающий проверку состояния стека в ядре, корректности назначения адресов и работы механизмов обнаружения соседей (NDP).
+
+**NDP (Neighbor Discovery Protocol)** — протокол обнаружения соседей (RFC 4861), заменяющий ARP в сетях IPv6.
+**Link-Local Scope ID** — идентификатор интерфейса, необходимый для работы с локальными адресами (`fe80::/10`), так как они могут дублироваться на разных физических сегментах.
+
+## Основные концепции
+
+### Состояние стека IPv6 (sysctl)
+
+В Linux работа IPv6 может быть ограничена или полностью отключена через параметры ядра. Если IPv6 отключен, интерфейсы не будут получать адреса, а сетевые утилиты будут возвращать ошибку `Address family not supported`.
+
+**Ключевые параметры:**
+
+- `net.ipv6.conf.all.disable_ipv6`: глобальное управление стеком.
+- `net.ipv6.conf.<interface>.accept_ra`: управление приемом Router Advertisements (SLAAC).
+- `net.ipv6.conf.<interface>.autoconf`: управление автоматической генерацией адреса.
+
+### Особенности диагностики Link-Local
+
+При использовании Link-Local адресов (`fe80::`) в диагностических командах **обязательно** указывать интерфейс через символ `%`. Без этого операционная система не знает, через какой интерфейс отправлять пакет, так как префикс `fe80::/10` одинаков для всех линков.
+
+## Практические сценарии
+
+### 1. Базовая проверка конфигурации
 
 ```bash
-# Проверка, включен ли IPv6
+# Проверка активации IPv6 (0 — включен, 1 — отключен)
 sysctl net.ipv6.conf.all.disable_ipv6
-# 0 — включен, 1 — отключен
 
-# Включение IPv6
-sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
-sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
-
-# Постоянное включение (/etc/sysctl.d/60-ipv6.conf)
-net.ipv6.conf.all.disable_ipv6=0
-net.ipv6.conf.default.disable_ipv6=0
-```
-
-## Проверка адресов
-
-```bash
-# Показать все IPv6-адреса
+# Просмотр адресов (фильтрация по IPv6)
 ip -6 address show
 
-# Показать только глобальные адреса
-ip -6 addr show scope global
-
-# Показать Link-Local адреса
-ip -6 addr show scope link
-```
-
-## Проверка маршрутов
-
-```bash
-# Показать таблицу маршрутизации IPv6
-ip -6 route show
-
-# Маршрут по умолчанию
+# Проверка маршрута по умолчанию
 ip -6 route show default
-
-# Проверка конкретного маршрута
-ip -6 route get 2001:db8::1
 ```
 
-## Проверка файрвола
+### 2. Анализ соседей и NDP
+
+Если связь в локальной сети отсутствует, следует проверить таблицу соседей (аналог таблицы ARP).
 
 ```bash
-# ip6tables правила
-sudo ip6tables -L -n -v
-
-# firewalld статус
-firewall-cmd --list-all --ipv6
-
-# nftables правила
-sudo nft list ruleset | grep -A20 "ip6"
-```
-
-## Проверка NDP (аналог ARP)
-
-```bash
-# Просмотр соседей NDP
+# Просмотр кэша соседей
 ip -6 neigh show
 
-# Очистка кэша NDP
-ip -6 neigh flush all
+# Очистка кэша (для принудительного обновления)
+sudo ip -6 neigh flush all
 
-# Принудительное обновление
-ping6 -c1 ff02::1%eth0
+# Проверка доступности всех узлов в сегменте (multicast ping)
+ping6 -c 2 ff02::1%eth0
 ```
 
-## Проверка DNS
+### 3. Тестирование связности и портов
 
 ```bash
-# Проверка AAAA записей
-dig AAAA example.com
-host -t AAAA example.com
-nslookup -query=aaaa example.com
+# Проверка доступности Link-Local адреса (требует Scope ID)
+ping6 fe80::1%eth0
 
-# Проверка резолвера
-resolvectl query example.com
-cat /etc/resolv.conf
-```
+# Проверка MTU пути (критично для туннелей)
+tracepath6 google.com
 
-## Диагностика подключения
+# Проверка прослушивания IPv6 сокетов
+ss -6 -lntp
 
-### Ping
-
-```bash
-# Проверка доступности
-ping6 example.com
-ping -6 example.com
-
-# С указанием интерфейса
-ping6 -I eth0 fe80::1
-
-# Проверка loopback
-ping6 ::1
-```
-
-### Traceroute
-
-```bash
-# Трассировка IPv6
-traceroute6 example.com
-tracepath6 example.com
-
-# С указанием интерфейса
-traceroute6 -i eth0 example.com
-```
-
-### Проверка портов
-
-```bash
-# Проверка доступности порта
+# Проверка удаленного порта по IPv6
 nc -6 -zv example.com 80
-telnet -6 example.com 80
-
-# Сканирование портов
-nmap -6 -p 80,443 example.com
 ```
 
-## Типичные проблемы и решения
+### 4. Анализ трафика и дампы
 
-| Проблема | Причина | Решение |
+Для глубокой диагностики используется перехват пакетов с фильтрацией по протоколу.
+
+```bash
+# Перехват только трафика NDP и ICMPv6
+sudo tcpdump -i eth0 -n icmp6
+
+# Просмотр RA-пакетов (Router Advertisements) для отладки SLAAC
+sudo tcpdump -i eth0 -vvn icmp6 and 'icmp6[0] == 134'
+```
+
+### Таблица устранения неисправностей
+
+| Симптом | Вероятная причина | Действие |
 | :--- | :--- | :--- |
-| **Нет IPv6-адреса** | Отключен IPv6 | `sysctl -w net.ipv6.conf.all.disable_ipv6=0` |
-| **Нет маршрута по умолчанию** | Нет RA / не настроен gateway | Настроить статический маршрут |
-| **Не работает ping** | Блокировка ICMPv6 | Разрешить `icmpv6` в файрволе |
-| **DNS не резолвит** | Нет AAAA записей | Проверить DNS, добавить AAAA |
-| **Соединение таймаут** | Файрвол блокирует | Проверить ip6tables/firewalld |
-| **Link-Local не работает** | Не указан интерфейс | Использовать `ping6 fe80::1%eth0` |
+| `Network is unreachable` | Отсутствует шлюз по умолчанию | Проверить получение RA или статику |
+| `Permission denied` | Блокировка в ip6tables/nftables | Проверить правила `INPUT` и `OUTPUT` |
+| `Invalid argument` | Не указан Scope ID для Link-Local | Добавить `%<интерфейс>` к адресу |
+| Долгое ожидание (Timeout) | Проблема с Path MTU (PMTUD) | Проверить разрешение ICMPv6 в файрволе |
 
-## Мониторинг IPv6-трафика
+## Дополнительная информация
 
-### tcpdump
+### См. также
 
-```bash
-# Перехват IPv6-трафика
-tcpdump -i eth0 -nn 'ip6'
-
-# Только ICMPv6
-tcpdump -i eth0 -nn 'icmp6'
-
-# С подробной информацией
-tcpdump -i eth0 -nn 'ip6' -vvv
-```
-
-### ss (Socket Statistics)
-
-Рекомендуемый инструмент для анализа сокетов.
-
-```bash
-# Все IPv6 сокеты
-ss -6 -tlnp
-# → LISTEN 0 128 [::]:22 [::]:*
-
-# С детальной информацией (таймеры, метрики)
-ss -6 -tmo
-```
-
-### netstat (устарело)
-
-Используйте только при отсутствии `ss`.
-
-```bash
-# Статистика IPv6
-netstat -s -6
-
-# IPv6 подключения
-netstat -6 -tlnp
-```
-
-## Проверка конфигурации NetworkManager
-
-```bash
-# Показать соединения
-nmcli connection show
-
-# Детальная информация
-nmcli connection show <имя> | grep ipv6
-
-# Статус устройства
-nmcli device show eth0 | grep IPV6
-```
-
-## Проверка конфигурации systemd-networkd
-
-```bash
-# Статус сети
-networkctl status eth0
-
-# Журнал
-journalctl -u systemd-networkd -f
-
-# Проверка конфигурации
-cat /etc/systemd/network/10-eth0.network
-```
-
-## Полезные команды для диагностики
-
-```bash
-# Быстрая проверка IPv6
-ip -6 addr show && ip -6 route show && ping6 -c3 google.com
-
-# Проверка всех интерфейсов
-for iface in $(ip -6 addr show | grep -oP '^\d+: \K[^:]+'); do
-    echo "=== $iface ==="
-    ip -6 addr show dev $iface
-done
-
-# Проверка доступности шлюза
-ip -6 route show default | awk '{print $3}' | xargs -I {} ping6 -c3 {}
-```
-
-## Связанные темы
-
-* **[Концепции](./concepts.md)** — типы адресов, Privacy Extensions
-* **[Настройка адресов](./address_configuration.md)** — конфигурация IPv6
-* **[Firewall](./firewall.md)** — настройка файрвола
-* **[Туннелирование](./tunneling.md)** — IPv6 через IPv4
+- **[Настройка адресов IPv6](./address_configuration.md)** — команды конфигурации.
+- **[Firewall для IPv6](./firewall.md)** — правила безопасности ICMPv6.
+- **[Обзор IPv6](../../../../Networking/Protocols/ipv6_overview.md)** — архитектура протокола.
+- **[Инструменты диагностики Linux](../../../Diagnostics/Networking/network_cli_tools.md)** — общий обзор утилит.

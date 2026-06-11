@@ -132,27 +132,9 @@ efibootmgr -b 0003 -B
 | Secure Boot violation | Неподписанный загрузчик | Отключить Secure Boot или подписать загрузчик |
 | Звуковые сигналы POST | Аппаратная ошибка | Расшифровать коды сигналов (память, видео) |
 
-### 5. Восстановление GRUB (UEFI)
+### 5. Восстановление загрузчика
 
-```bash
-# С LiveUSB: смонтировать корневой раздел и ESP
-mount /dev/sda2 /mnt
-mount /dev/sda1 /mnt/boot/efi  # ESP раздел
-
-# Смонтировать псевдо-ФС
-mount --bind /dev /mnt/dev
-mount --bind /proc /mnt/proc
-mount --bind /sys /mnt/sys
-
-# Chroot и переустановить GRUB
-chroot /mnt
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
-update-grub  # или grub-mkconfig -o /boot/grub/grub.cfg
-exit
-
-# Перезагрузка
-reboot
-```
+Процедуры восстановления GRUB для систем BIOS и UEFI, включая работу в chroot, вынесены в специализированный раздел: [**Восстановление GRUB**](../SystemAdministration/grub.md#3-восстановление-grub).
 
 ## Дополнительная информация
 

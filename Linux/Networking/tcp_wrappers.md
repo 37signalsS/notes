@@ -8,7 +8,7 @@
 
 **libwrap** — библиотека, предоставляющая функции TCP Wrappers. Демон должен быть скомпилирован с поддержкой `libwrap` для работы с TCP Wrappers.
 
-## Принцип работы
+## Основные концепции
 
 Когда клиент пытается подключиться к службе, настроенной с использованием TCP Wrappers (например, `sshd`, `vsftpd`), демон службы сначала обращается к библиотеке `libwrap`. Эта библиотека проверяет конфигурационные файлы:
 
@@ -16,7 +16,9 @@
 2. **`/etc/hosts.deny`**: Если правило не найдено в `hosts.allow`, проверяется `hosts.deny`. Если найдено соответствующее правило, доступ запрещается.
 3. **Нет правил**: Если правила не найдены ни в одном из файлов, доступ по умолчанию разрешается.
 
-## Настройка
+## Практические сценарии
+
+### Сценарий 1: Настройка правил доступа
 
 Конфигурационные файлы `hosts.allow` и `hosts.deny` имеют простой формат:
 
@@ -64,9 +66,9 @@ in.telnetd: 192.168.1.0/24
 * В случае конфликта (например, правило разрешает в `hosts.allow`, но запрещает в `hosts.deny`), правило из `hosts.allow` имеет приоритет.
 * Не все службы поддерживают TCP Wrappers. Демон должен быть скомпилирован с поддержкой `libwrap`.
 
-## Диагностика и проверка
+### Сценарий 2: Диагностика и проверка
 
-### Проверка поддержки libwrap в демоне
+#### Проверка поддержки libwrap в демоне
 
 Перед настройкой убедитесь, что служба поддерживает TCP Wrappers:
 
@@ -80,7 +82,7 @@ ldd /usr/sbin/sshd | grep libwrap
 
 Если вывод пустой — служба не поддерживает TCP Wrappers.
 
-### Тестирование правил с tcpd_match
+#### Тестирование правил с tcpdmatch
 
 Утилита `tcpdmatch` позволяет проверить, какое правило будет применено к конкретному клиенту:
 
@@ -100,7 +102,7 @@ access: granted
 rule: /etc/hosts.allow line 1
 ```
 
-### Просмотр логов
+#### Просмотр логов
 
 TCP Wrappers может логировать запросы через syslog. Проверьте логи:
 
@@ -110,12 +112,14 @@ grep -i "tcpd\|libwrap" /var/log/syslog
 journalctl -u ssh | grep -i "wrap"
 ```
 
-## Связь с другими механизмами безопасности
+## Дополнительная информация
+
+### Сравнение механизмов контроля доступа
 
 | Механизм | Уровень | Преимущества | Недостатки |
 | :--- | :--- | :--- | :--- |
 | **TCP Wrappers** | Прикладной (L7) | Простая настройка, гибкие правила по доменам | Устарел, не все службы поддерживают |
-| **[iptables/nftables](../Development/build_tools.md)** | Сетевой (L3-L4) | Универсальность, производительность, stateful-фильтрация | Сложнее в настройке |
+| **[iptables](./Settings/tools/iptables_basics.md) / [nftables](./Settings/tools/nftables/architecture_and_concepts.md)** | Сетевой (L3-L4) | Универсальность, производительность, stateful-фильтрация | Сложнее в настройке |
 | **firewalld/ufw** | Сетевой (L3-L4) | Удобный интерфейс, динамическое управление | Надстройка над iptables/nftables |
 | **SSH AllowUsers/AllowGroups** | Прикладной (L7) | Встроенный механизм SSH | Только для SSH |
 
@@ -124,7 +128,7 @@ journalctl -u ssh | grep -i "wrap"
 Для современных систем рекомендуется:
 
 1. **Для SSH**: Используйте директивы `AllowUsers`, `AllowGroups`, `DenyUsers`, `DenyGroups` в `/etc/ssh/sshd_config`
-2. **Для других служб**: Настройте правила в [nftables](./Settings/nftables/index.md) или [iptables](./Settings/tools/iptables_basics.md)
+2. **Для других служб**: Настройте правила в [nftables](./Settings/tools/nftables/architecture_and_concepts.md) или [iptables](./Settings/tools/iptables_basics.md)
 3. **Для динамического управления**: Используйте `firewalld` или `ufw`
 
 **Пример миграции SSH с TCP Wrappers на sshd_config:**
@@ -141,3 +145,9 @@ AllowGroups sshusers
 ```
 
 После изменения `sshd_config` требуется перезапуск службы: `systemctl restart sshd`.
+
+### Связанные заметки
+
+* [SSH — управление доступом](../Security/ssh/server/ssh_access_control.md) — альтернативы TCP Wrappers для SSH
+* [iptables: основы](./Settings/tools/iptables_basics.md) — настройка сетевого экрана
+* [nftables: архитектура и концепции](./Settings/tools/nftables/architecture_and_concepts.md) — современный файрвол

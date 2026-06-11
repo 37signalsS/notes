@@ -1,222 +1,128 @@
-# systemd-networkd: настройка сети
+# systemd-networkd
 
-## Обзор
+**systemd-networkd** — системная служба, входящая в состав системного менеджера systemd, предназначенная для управления сетевыми интерфейсами. Она предоставляет декларативный способ настройки сети через конфигурационные файлы и идеально подходит для серверов, контейнеров и минималистичных систем благодаря отсутствию внешних зависимостей.
 
-`systemd-networkd` — встроенный менеджер сети в systemd. Работает без дополнительных зависимостей, идеален для серверов и минималистичных систем.
+## Определения
 
-**Конфигурационные файлы:** `/etc/systemd/network/*.network`
+- **systemd** — системный менеджер и менеджер служб в Linux.
+- **DHCP (Dynamic Host Configuration Protocol)** — протокол динамической настройки узла.
+- **DNS (Domain Name System)** — система доменных имен.
+- **PBR (Policy-Based Routing)** — маршрутизация на основе политик.
+- **MAC-адрес (Media Access Control)** — уникальный идентификатор сетевого интерфейса.
+- **MTU (Maximum Transmission Unit)** — максимальный размер полезного блока данных одного пакета.
+- **VIP (Virtual IP)** — виртуальный IP-адрес, назначаемый интерфейсу в дополнение к основному.
 
-### Типы файлов конфигурации
+## Базовые концепции
 
-| Тип | Назначение | Пример |
-| :--- | :--- | :--- |
-| `*.link` | Физические параметры интерфейсов (имя, MAC, MTU) | `/etc/systemd/network/90-nic1-port0.link` |
-| `*.network` | Сетевая конфигурация (IP, DHCP, маршруты, DNS) | `/etc/systemd/network/10-eth0.network` |
-| `*.netdev` | Виртуальные интерфейсы (VLAN, мосты, туннели, VPN) | `/etc/systemd/network/10-bond0.netdev` |
+Конфигурация `systemd-networkd` хранится в директории `/etc/systemd/network/` и состоит из файлов трех типов, обрабатываемых в лексикографическом порядке:
 
-**Важно:** Файлы `*.link` необязательны. Используются для изменения физических параметров, например, для переименования интерфейсов по MAC-адресу.
+| Расширение | Назначение |
+| :--- | :--- |
+| **`*.link`** | Настройка физических параметров (имена, MAC-адреса, MTU). |
+| **`*.netdev`** | Создание виртуальных устройств (VLAN, мосты, туннели). |
+| **`*.network`** | Сетевая настройка интерфейсов (IP, маршруты, DNS, DHCP). |
 
----
+### Принцип работы
 
-## Файл .link (переименование интерфейса)
+Служба сопоставляет интерфейсы с конфигурационными файлами с помощью секции `[Match]`. Как только найдено первое совпадение, файл применяется к интерфейсу, и дальнейший поиск прекращается.
+
+## Практические сценарии
+
+### 1. Фиксация имени интерфейса по MAC-адресу
+
+Для предотвращения изменения имен интерфейсов (например, при замене сетевой карты) используются файлы `.link`.
 
 ```ini
-# /etc/systemd/network/90-nic1-port0.link
+# /etc/systemd/network/10-eth-rename.link
 [Match]
 MACAddress=04:01:50:23:1f:02
 
 [Link]
-Name=nic1-port0
+Name=internal0
 ```
 
-После применения интерфейс с указанным MAC-адресом получит имя `nic1-port0`. Это имя затем используется в файлах `*.network`.
+### 2. Статическая настройка IP-адреса
 
----
-
-## Файл .network: статическая конфигурация
-
-### Базовый пример
+Наиболее распространенный сценарий для серверов.
 
 ```ini
-# /etc/systemd/network/10-eth0.network
+# /etc/systemd/network/20-wired.network
 [Match]
-Name=eth0
+Name=enp1s0
 
 [Network]
 Address=10.10.10.10/24
 Gateway=10.10.10.1
 DNS=8.8.8.8
 DNS=1.1.1.1
-```
 
-### Несколько адресов и маршрутов
-
-```ini
-# /etc/systemd/network/10-eth0.network
-[Match]
-Name=eth0
-
-[Network]
-# Основной адрес
-Address=10.10.10.10/24
-# Дополнительный адрес (VIP)
+# Дополнительный IP-адрес (VIP)
+[Address]
 Address=10.10.10.20/24
-Gateway=10.10.10.1
-DNS=8.8.8.8
-DNS=1.1.1.1
 
-# Статический маршрут
+# Дополнительный маршрут
 [Route]
 Destination=192.168.100.0/24
 Gateway=10.10.10.254
-
-# Маршрут по умолчанию с метрикой
-[Route]
-Gateway=10.10.10.1
-Metric=100
-
-# Маршрут для policy-based routing (отдельная таблица)
-[Route]
-Gateway=192.168.110.1
-Table=101
 ```
 
-### Параметры [Route]
-
-| Параметр | Описание |
-| :--- | :--- |
-| `Destination` | Сеть назначения (по умолчанию `0.0.0.0/0`) |
-| `Gateway` | Шлюз |
-| `Metric` | Приоритет маршрута (для резервирования каналов) |
-| `Table` | ID таблицы маршрутизации (для [policy-based routing](./policy-based_routing/index.md)) |
-
----
-
-## DHCP-клиент
+### 3. Настройка DHCP-клиента
 
 ```ini
-# /etc/systemd/network/10-eth0.network
+# /etc/systemd/network/20-wired-dhcp.network
 [Match]
-Name=eth0
-
-[Network]
-DHCP=yes
-
-[DHCP]
-# Использовать DNS от DHCP
-UseDNS=yes
-# Использовать NTP от DHCP
-UseNTP=yes
-```
-
----
-
-## Отключение IPv6
-
-```ini
-# /etc/systemd/network/80-lan0-dhcp.network
-[Match]
-Name=eth0
+Name=enp*
 
 [Network]
 DHCP=ipv4
-LinkLocalAddressing=no
+
+[DHCP]
+UseDNS=yes
+UseNTP=yes
+RouteMetric=100
 ```
 
-Опция `LinkLocalAddressing=no` предотвращает автоматическое назначение IPv6-адреса link-local.
+### 4. Маршрутизация на основе политик (PBR)
 
----
-
-## Управление и диагностика
-
-```bash
-# Включить службу
-sudo systemctl enable --now systemd-networkd
-
-# Перезапустить службу
-sudo systemctl restart systemd-networkd
-
-# Показать состояние интерфейсов
-networkctl status
-
-# Показать список интерфейсов
-networkctl list
-
-# Перечитать конфигурацию
-sudo networkctl reload
-
-# Журнал событий
-journalctl -u systemd-networkd -f
-```
-
----
-
-## Интеграция с systemd-resolved (DNS)
-
-`systemd-networkd` автоматически передает DNS-серверы в `systemd-resolved`. Проверка:
-
-```bash
-# Показать текущие DNS-серверы
-resolvectl status
-
-# Показать кэш DNS
-resolvectl statistics
-```
-
----
-
-## Преимущества systemd-networkd
-
-- Минимальные зависимости (часть systemd)
-- Декларативная конфигурация
-- Встроенная поддержка DHCP, DNS-over-TLS (через systemd-resolved)
-- Хорошая интеграция с другими компонентами systemd
-
-## Недостатки systemd-networkd
-
-- Меньше возможностей для сложных сценариев (по сравнению с NetworkManager)
-- Нет GUI-инструментов
-
----
-
-## Policy-Based Routing в systemd-networkd
-
-Для [policy-based routingindex.md используется директива `[RoutingPolicyRule]`:
+Используется для управления трафиком через несколько каналов или таблиц маршрутизации.
 
 ```ini
-# /etc/systemd/network/10-eth0.network
+# /etc/systemd/network/30-pbr.network
 [Match]
-Name=eth0
+Name=eth1
 
 [Network]
 Address=192.168.110.100/24
-DNS=8.8.8.8
 
-# Маршрут по умолчанию для основной таблицы
-[Route]
-Gateway=192.168.110.1
-Metric=100
-
-# Маршрут по умолчанию для отдельной таблицы PBR
 [Route]
 Gateway=192.168.110.1
 Table=101
 
-# Правило PBR: пакеты с IP 192.168.110.100 используют таблицу 101
 [RoutingPolicyRule]
 From=192.168.110.100
 Table=101
-Priority=32765
+Priority=1000
 ```
 
-### Параметры [RoutingPolicyRule]
+## Дополнительная информация
 
-| Параметр | Описание |
+### Управление и диагностика
+
+Для управления службой и проверки состояния сети используются стандартные инструменты systemd:
+
+| Команда | Описание |
 | :--- | :--- |
-| `From` | Исходный IP-адрес (селектор `from` в `ip rule`) |
-| `To` | Адрес назначения (селектор `to`) |
-| `Table` | ID таблицы маршрутизации |
-| `Priority` | Приоритет правила (чем меньше число, тем выше приоритет) |
-| `IngressInterface` | Входящий интерфейс (селектор `iif`) |
-| `OutgoingInterface` | Исходящий интерфейс (селектор `oif`) |
-| `FWMark` | Метка пакетов (селектор `fwmark`) |
+| `networkctl list` | Список всех интерфейсов и их состояние. |
+| `networkctl status <iface>` | Подробный статус конкретного интерфейса. |
+| `networkctl reload` | Перезагрузка конфигурационных файлов. |
+| `journalctl -u systemd-networkd` | Просмотр логов службы для поиска ошибок. |
+
+### Интеграция с systemd-resolved
+
+`systemd-networkd` тесно интегрирован с `systemd-resolved` для управления параметрами DNS. Если в файле `.network` указаны DNS-серверы, они будут автоматически переданы в резолвер. Проверить это можно командой `resolvectl status`.
+
+### См. также
+
+- **[Policy-Based Routing (PBR)](../../Policy_Based_Routing/index.md)** — общие принципы маршрутизации по политикам.
+- **[Настройка DNS-клиента](../../Concepts/dns_client.md)** — взаимодействие с `systemd-resolved`.
+- **[Постоянная настройка сети](./index.md)** — сравнение с другими менеджерами.

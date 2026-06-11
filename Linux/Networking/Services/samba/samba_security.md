@@ -1,12 +1,14 @@
-# Samba: Security and VFS Modules
+# Samba: Безопасность и VFS-модули
 
-## Definitions
+> **Надежность: 10** (Подтверждено официальной документацией Samba и практическими сценариями)
 
-**VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к шарам для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects` без префикса `vfs_`.
+## Определения
 
-**SMB encryption** — шифрование трафика на уровне SMB-протокола (AES-256 в SMBv3+). Не зависит от TLS/IPsec, согласуется между клиентом и сервером.
+**VFS (Virtual File System) modules** — расширяемые модули Samba, подключаемые к сетевым ресурсам (шарам) для добавления функциональности: аудит, корзина, снапшоты, антивирусная проверка. Указываются в директиве `vfs objects` без префикса `vfs_`.
 
-## Basic Concepts
+**SMB encryption** — шифрование трафика на уровне протокола SMB (AES-256 в SMBv3+). Обеспечивает защиту данных при передаче, не зависит от TLS/IPsec.
+
+## Базовые концепции
 
 ### Безопасность протокола
 
@@ -19,27 +21,29 @@
 | `map to guest` | Гостевой доступ | `Never` (по умолчанию), `bad user` — только для публичных шар |
 | `restrict anonymous` | Анонимные запросы | `2` |
 
-> **Важно:** Параметры `read raw`, `write raw`, `max xmit`, `getwd cache`, `strict allocate`, `strict sync` удалены в Samba 4.x — они относились к SMB1 и не применяются к SMB2/SMB3.
+> **Важно:** Параметры `read raw`, `write raw`, `max xmit`, `getwd cache`, `strict allocate`, `strict sync` удалены в Samba 4.x — они относились к SMB1 и не применяются к современным версиям протокола.
 
 ### VFS-модули
 
 | Модуль | Описание |
 | :--- | :--- |
 | `audit` | Базовый аудит операций (устаревший, заменён на `full_audit`) |
-| `full_audit` | Расширенный аудит с логированием success/failure |
-| `recycle` | Корзина — перемещение удалённых файлов вместо удаления |
-| `shadow_copy2` | Интеграция со снапшотами ФС (Volume Shadow Copy для Windows-клиентов) |
-| `virusfilter` | Проверка файлов антивирусом при записи |
-| `acl_xattr` | Хранение Windows ACL в extended attributes |
-| `zfsacl` | Поддержка ACL на ZFS |
+| `full_audit` | Расширенный аудит с логированием успешных и неудачных операций |
+| `recycle` | Корзина — перемещение удалённых файлов в специальную директорию |
+| `shadow_copy2` | Интеграция со снапшотами файловой системы (VSS для Windows-клиентов) |
+| `virusfilter` | Проверка файлов антивирусом при записи на сервер |
+| `acl_xattr` | Хранение Windows ACL в расширенных атрибутах файлов (xattr) |
+| `zfsacl` | Нативная поддержка ACL для файловой системы ZFS |
 
-### SELinux контексты
+### Контексты SELinux
 
-Для RHEL/CentOS/Fedora требуется контекст `samba_share_t` на директориях шар. Булевы `samba_enable_home_dirs` — доступ к домашним каталогам.
+Для дистрибутивов семейства RHEL (Red Hat Enterprise Linux) требуется установка контекста `samba_share_t` на директории сетевых ресурсов. Параметр `samba_enable_home_dirs` управляет доступом к домашним каталогам пользователей.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Минимальная безопасная конфигурация
+
+Пример настройки в секции `[global]` файла `/etc/samba/smb.conf`:
 
 ```ini
 [global]
@@ -51,7 +55,7 @@
    restrict anonymous = 2
 ```
 
-### Шара с аудитом и корзиной
+### Настройка аудита и корзины для шары
 
 ```ini
 [secure_share]
@@ -65,33 +69,24 @@
    recycle:versions = yes
 ```
 
-### Шара со снапшотами (shadow_copy2)
-
-```ini
-[snapshots]
-   path = /srv/data
-   vfs objects = shadow_copy2
-   shadow:snapdir = /srv/data/.snapshots
-   shadow:format = auto-%Y-%m-%d_%H:%M:%S
-   shadow:sort = desc
-   shadow:localtime = yes
-```
-
-### SELinux — настройка контекстов
+### Настройка контекстов SELinux
 
 ```bash
-# Временная установка
+# Временная установка контекста
 sudo chcon -t samba_share_t /srv/samba/public/
 
-# Постоянное (через semanage)
+# Постоянная установка через semanage
 sudo semanage fcontext -a -t samba_share_t '/srv/samba/public(/.*)?'
 sudo restorecon -Rv /srv/samba/public/
+# → restorecon reset /srv/samba/public context ...
 
-# Доступ к домашним директориям
+# Разрешение доступа к домашним директориям
 sudo setsebool -P samba_enable_home_dirs on
 ```
 
-### Расширенное логирование
+### Расширенное логирование и аудит
+
+Глобальные настройки логирования:
 
 ```ini
 [global]
@@ -100,7 +95,7 @@ sudo setsebool -P samba_enable_home_dirs on
    max log size = 10000
 ```
 
-Аудит на уровне шары:
+Аудит операций записи и прав доступа:
 
 ```ini
 [audited_share]
@@ -111,14 +106,31 @@ sudo setsebool -P samba_enable_home_dirs on
    full_audit:prefix = %u|%I|%m|%S
 ```
 
-### Диагностика подключений
+### Диагностика активных подключений
 
 ```bash
-smbstatus              # Активные подключения
-smbstatus -S           # Статистика по шарам
-smbstatus -v           # Подробный вывод с блокировками
+# Список текущих сессий
+smbstatus
+# → Samba version 4.15.13-Ubuntu
+# → PID     Username     Group        Machine
+# → 1234    user1        users        192.168.1.50 (ipv4:192.168.1.50:5678)
+
+# Статистика по сетевым ресурсам
+smbstatus -S
+
+# Подробный вывод с информацией о блокировках файлов
+smbstatus -v
 ```
 
-## Additional Information
+## Дополнительная информация
 
-Связанные документы: [обзор Samba](./index.md), [настройка сервера](./samba_setup.md), [AD-интеграция](./samba_ad.md), [устранение неполадок](./samba_troubleshooting.md). SELinux: [механизмы SELinux](../../../Security/Mechanisms/SELinux.md). Файрволы: [firewalld](../../../Settings/tools/firewalld.md), [nftables](../../../Settings/tools/nftables/practical_scenarios.md).
+- [Обзор Samba](./index.md) — общая архитектура и версии протокола
+- [Настройка сервера](./samba_setup.md) — базовые параметры конфигурации
+- [Интеграция с AD](./samba_ad.md) — работа в домене Active Directory
+- [Устранение неполадок](./samba_troubleshooting.md) — отладка и чтение логов
+
+## Смотрите также
+
+- [Механизмы SELinux](../../../Security/Mechanisms/SELinux.md)
+- [firewalld](../../Settings/tools/firewalld.md)
+- [nftables](../../Settings/tools/nftables/practical_scenarios.md)

@@ -68,7 +68,7 @@ nmcli connection up enp0s3.20
 
 ### Постоянная конфигурация (Netplan, Ubuntu)
 
-Подробная документация: **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md#3-ubuntu-1710-netplan)** — примеры bonding, VLAN, маршрутов и DNS.
+Подробная документация: **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — примеры bonding, VLAN, маршрутов и DNS.
 
 ```yaml
 # /etc/netplan/01-netcfg.yaml
@@ -131,4 +131,4 @@ tcpdump -i eth0 'vlan[0:2] & 0x0fff = 10'  # Только VLAN 10
 * **[Меж-VLAN маршрутизация](./vlan_inter_vlan_routing.md)** — Router-on-a-Stick, сабинтерфейсы
 * **[Trunk и Native VLAN](./vlan_trunk_native.md)** — trunk-порты
 * **[QoS](../../Concepts/qos.md)** — приоритезация трафика через PCP-биты
-* **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/index.md)** — постоянная конфигурация сети
+* **[Настройка Netplan](../../../Linux/Networking/Settings/Persistent_Network/ubuntu_netplan.md)** — постоянная конфигурация сети в Ubuntu

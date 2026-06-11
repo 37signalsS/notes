@@ -14,17 +14,17 @@
 
 ## Базовые концепции
 
-### Правила аудита (Audit Rules)
+### Правила аудита
 
 Правила определяют отслеживаемые события:
 
 | Тип правила | Описание | Пример |
 | :--- | :--- | :--- |
 | **Файловый мониторинг** | Отслеживание чтения, записи, изменения атрибутов файлов | `-w /etc/passwd -p wa` |
-| **Системные вызовы** | Отслеживание конкретных syscall | `-a exit,always -S open` |
+| **Системные вызовы** | Отслеживание конкретных системных вызовов (syscall) | `-a exit,always -S open` |
 | **События пользователей** | Аутентификация, запуск процессов | `-m USER_LOGIN` |
 
-### Ключи аудита (Audit Keys)
+### Ключи аудита
 
 **Ключ** (`-k key_name`) — текстовая метка для группировки событий. Упрощает поиск и фильтрацию в логах.
 
@@ -60,6 +60,7 @@
    ```bash
    # Поиск по ключу
    sudo ausearch -k passwd_changes
+   # → type=SYSCALL msg=audit(1675240...): arch=c000003e syscall=257 success=yes exit=3 ...
    
    # Поиск по файлу
    sudo ausearch -f /etc/passwd
@@ -70,6 +71,11 @@
    ```bash
    # Отчет о событиях аутентификации
    sudo aureport -au
+   # → Authentication Report
+   # → ============================================
+   # → # date time acct host term exe success event
+   # → ============================================
+   # → 1. 01/01/26 10:00:00 root localhost /dev/pts/0 /usr/sbin/sshd yes 123
    
    # Отчет по всем событиям
    sudo aureport
@@ -123,7 +129,7 @@ sudo auditctl -a exit,always -F uid=1000 -k user_1000_actions
 # Поиск по временному диапазону
 sudo ausearch -k passwd_changes --start today --end now
 
-# Поиск по PID
+# Поиск по PID (Process ID)
 sudo ausearch -p 1234
 
 # Поиск неудачных попыток доступа
@@ -151,6 +157,7 @@ sudo systemctl restart auditd
 
 ```bash
 sudo auditctl -l
+# → -w /etc/passwd -p wa -k passwd_changes
 ```
 
 ### Структура логов
@@ -171,5 +178,5 @@ sudo auditctl -l
 ### Интеграция с другими системами
 
 - **journald:** События auditd могут дублироваться в journal (настраивается в `auditd.conf`). Подробнее: [journald](./journald.md).
-- **SIEM-системы:** Логи `/var/log/audit/audit.log` отправляются в Splunk, ELK, QRadar. Общий обзор логирования: [logging_overview](./logging_overview.md).
+- **SIEM-системы:** Логи `/var/log/audit/audit.log` отправляются в SIEM (Security Information and Event Management), такие как Splunk, ELK (Elasticsearch, Logstash, Kibana), QRadar. Общий обзор логирования: [logging_overview](./logging_overview.md).
 - **Анализ сбоев:** см. [error_and_crash_analysis](./error_and_crash_analysis.md).

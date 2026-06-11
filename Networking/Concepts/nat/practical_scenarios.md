@@ -145,6 +145,6 @@ ssh user@сервер_A -p 2222 -i my_private_key
 
 - **[Теория NAT](./overview.md)** — определения, виды, SNAT vs Masquerade
 - **[Специальные IP-адреса](../../Protocols/IP_addressing/special_addresses.md)** — RFC 1918, Carrier-Grade NAT (RFC 6598)
-- **[Firewalld — NAT](../../../Linux/Networking/Settings/tools/firewalld.md)** — команды firewalld
+- **[Firewalld: динамический межсетевой экран](../../../Linux/Networking/Settings/tools/firewalld.md)** — практические команды NAT и Port Forwarding.
 - **[nftables — NAT](../../../Linux/Networking/Settings/tools/nftables/practical_scenarios.md)** — NAT в nftables
 - **[Docker Network — iptables](../../../Docker/Docker_network/docker_network.md)** — NAT в Docker

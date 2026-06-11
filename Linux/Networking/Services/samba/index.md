@@ -69,4 +69,15 @@
 - `pdbedit` / `smbpasswd` — управление пользователями
 - `net ads` — управление членством в домене
 
-Подробная документация: [настройка сервера](./samba_setup.md), [безопасность и VFS](./samba_security.md), [интеграция с AD](./samba_ad.md), [устранение неполадок](./samba_troubleshooting.md). Связанные темы: [NFS](../nfs/index.md), [Kerberos](../../../../Security/Concepts/kerberos.md), [SELinux](../../../Security/Mechanisms/SELinux.md), [монтирование CIFS](../../../FileSystems/mounting/fstab.md).
+### Документация по теме
+
+- [Настройка сервера](./samba_setup.md)
+- [Безопасность и VFS](./samba_security.md)
+- [Интеграция с AD](./samba_ad.md)
+- [Устранение неполадок](./samba_troubleshooting.md)
+
+## Смотрите также
+
+- [NFS](../nfs/index.md)
+- [Kerberos](../../../../Security/Concepts/kerberos.md)
+- [Монтирование CIFS](../../../FileSystems/mounting/fstab.md)

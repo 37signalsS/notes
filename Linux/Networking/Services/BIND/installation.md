@@ -1,25 +1,27 @@
-# Установка BIND
+# Установка DNS-сервера BIND
 
 ## Определения
 
-**BIND9** — текущая стабильная ветка программного обеспечения BIND (Berkeley Internet Name Domain).
+**BIND9 (Berkeley Internet Name Domain version 9)** — наиболее распространённая реализация DNS-сервера, обеспечивающая гибкость и поддержку современных стандартов безопасности.
 
-**dnsutils** — пакет утилит для диагностики DNS (`dig`, `nslookup`, `host`, `nsupdate`).
+**dnsutils** — пакет диагностических утилит (таких как `dig`, `nslookup`, `host`), необходимых для проверки работы DNS-серверов.
 
-## Базовые концепты
+## Базовые концепции
 
-### Пакеты BIND
+### Состав пакетов
+
+При установке BIND в различных дистрибутивах могут использоваться разные пакеты:
 
 | Пакет | Назначение |
 |-------|------------|
-| `bind9` | Основной демон DNS-сервера |
-| `bind9utils` | Дополнительные утилиты (`rndc`, `nsupdate`) |
-| `dnsutils` | Клиентские утилиты (`dig`, `nslookup`, `host`) |
-| `bind9-doc` | Документация (при наличии в репозитории) |
+| `bind9` / `bind` | Основной демон DNS-сервера (`named`). |
+| `bind9utils` / `bind-utils` | Утилиты для управления и проверки конфигурации (`rndc`, `named-checkconf`). |
+| `dnsutils` / `bind-utils` | Клиентские утилиты для диагностики (`dig`, `nslookup`). |
+| `bind9-doc` | Локальная справочная документация. |
 
 ## Практические сценарии
 
-### 1. Установка на Debian/Ubuntu
+### Установка в Debian / Ubuntu
 
 ```bash
 sudo apt-get update
@@ -27,29 +29,24 @@ sudo apt-get install -y bind9 dnsutils
 sudo systemctl enable --now bind9
 ```
 
-**Проверка установки:**
+#### Проверка статуса службы
 
 ```bash
-# Статус службы
 systemctl status bind9
-
-# Версия BIND
-named -v
-
-# Проверка конфигурации
-named-checkconf
 ```
 
-### 2. Установка на RHEL/CentOS/Rocky Linux
+### Установка в дистрибутивах семейства RHEL (Red Hat Enterprise Linux)
+
+К семейству RHEL относятся CentOS, Rocky Linux и AlmaLinux.
 
 ```bash
 sudo dnf install -y bind bind-utils
 sudo systemctl enable --now named
 ```
 
-> **Примечание:** В RHEL-семействе демон называется `named` (Name Daemon), а не `bind9`.
+> **Примечание:** В этих дистрибутивах демон всегда называется `named`.
 
-### 3. Установка на Alpine Linux
+### Установка в Alpine Linux
 
 ```bash
 apk add bind bind-utils
@@ -57,19 +54,42 @@ rc-update add named
 rc-service named start
 ```
 
-### 4. Проверка базовой работоспособности
+### Проверка работоспособности
 
-```bash
-# Проверка listening-портов (UDP/TCP 53)
-ss -tlnp | grep :53
+После установки рекомендуется выполнить базовую проверку:
 
-# Тест локального разрешения
-dig @127.0.0.1 localhost
+1. **Версия ПО:**
 
-# Проверка версии через dig
-dig @127.0.0.1 version.bind chaos txt
-```
+   ```bash
+   named -v
+   ```
+
+2. **Порты (UDP/TCP 53):**
+
+   ```bash
+   ss -tlnp | grep :53
+   ```
+
+3. **Локальный запрос:**
+
+   ```bash
+   dig @127.0.0.1 localhost
+   ```
+
+4. **Проверка синтаксиса:**
+
+   ```bash
+   sudo named-checkconf
+   ```
 
 ## Дополнительная информация
 
-Актуально для BIND 9.18+ (LTS) и 9.20+ (ESV). При проблемах с запуском проверьте логи AppArmor/SELinux, откройте в брандмауэре UDP/53 и TCP/53. Подробнее: [Troubleshooting](./troubleshooting.md), [Диагностика DNS](../../../Diagnostics/Networking/dns/overview.md), [Настройка master-сервера](./master_server_local_zone.md).
+- Актуально для версий BIND 9.18+ **LTS (Long Term Support)** и 9.20+ **ESV (Extended Support Version)**.
+- При возникновении ошибок запуска проверьте настройки AppArmor или SELinux.
+- Убедитесь, что брандмауэр разрешает входящий трафик на порты `53/udp` и `53/tcp`.
+
+**См. также:**
+
+- [Диагностика и решение проблем](./troubleshooting.md)
+- [Настройка Master-сервера](./master_server_local_zone.md)
+- [Средства диагностики DNS](../../../Diagnostics/Networking/dns/overview.md)

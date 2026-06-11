@@ -1,144 +1,119 @@
-# Диагностика сокетов TCP
+# Диагностика сокетов TCP в Linux
 
-> **SSoT:** Полная документация по `ss` (флаги, фильтрация, примеры) — в [Linux/Diagnostics/Networking/ss.md](../../../Diagnostics/Networking/ss.md)
+Для получения полной информации по утилите `ss` (флаги, фильтрация, примеры) используйте основной справочник: **[Диагностика ss](../../../Diagnostics/Networking/ss.md)**.
 
 ## Определения
 
-**Диагностика TCP-сокетов** — совокупность методов и инструментов для анализа состояния TCP-соединений, выявления проблем производительности и ошибок сетевого стека Linux.
+* **Диагностика TCP-сокетов** — совокупность методов и инструментов для анализа состояния TCP-соединений, выявления проблем производительности и ошибок сетевого стека Linux.
+* **TCP Metrics** — внутренние параметры протокола (RTT, cwnd, retrans), позволяющие оценить качество связи на конкретном соединении.
 
-## Basic Concepts
+## Основные концепции
 
-### Основные инструменты диагностики
+### Инструменты диагностики
 
 | Инструмент | Источник данных | Назначение |
 | :--- | :--- | :--- |
-| **`ss`** | `netlink` (ядро) | Состояния сокетов, TCP-метрики (RTT, cwnd, retrans) |
-| **`nstat`** | `/proc/net/netstat` | Счётчики TCP-подсистемы (TFO, SYN cookies, overflow) |
-| **`/proc/sys/net/ipv4/`** | sysctl-параметры | Текущие настройки TCP-стека |
-| **`tcpdump`** | `libpcap` (packet capture) | Анализ трафика, handshake, ретрансмиссии |
+| **`ss`** | `netlink` (интерфейс ядра) | Состояния сокетов, TCP-метрики (**RTT**, **cwnd**, **retrans**). |
+| **`nstat`** | `/proc/net/netstat` | Счётчики TCP-подсистемы (TFO, SYN cookies, overflow). |
+| **`sysctl`** | `/proc/sys/net/ipv4/` | Просмотр и изменение текущих настроек TCP-стека. |
+| **`tcpdump`** | `libpcap` | Захват и детальный анализ трафика, handshake, ретрансмиссий. |
 
-### Ключевые состояния TCP для диагностики
+### Ключевые состояния TCP для анализа
 
-- **ESTABLISHED** — активные соединения, основа анализа нагрузки
-- **SYN-RECV** — полуоткрытые, рост может указывать на SYN-flood
-- **CLOSE-WAIT** — приложение не закрыло сокет, утечка соединений
-- **TIME-WAIT** — нормальное состояние после закрытия, избыток требует тюнинга
-- **FIN-WAIT** — одна сторона закрыла, ожидание подтверждения
+* **ESTABLISHED** — активный обмен данными.
+* **SYN-RECV** — полуоткрытые соединения. Резкий рост может указывать на **SYN-flood**.
+* **CLOSE-WAIT** — приложение не закрыло сокет (возможна утечка соединений).
+* **TIME-WAIT** — соединение закрыто, ожидание очистки сети. Избыток требует оптимизации.
+* **FIN-WAIT** — одна сторона инициировала закрытие, ожидание подтверждения.
 
-## Practical Scenarios
+## Практические сценарии
 
-### Общая картина
+### Общий обзор соединений
 
 ```bash
-# Сводная статистика: сколько сокетов в каждом состоянии
+# Сводная статистика по типам сокетов
 ss -s
 
-# Все TCP-соединения с группировкой по состоянию
+# Группировка всех TCP-соединений по текущему состоянию
 ss -tan | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn
 
-# Соединения с деталями (RTT, cwnd, retrans)
+# Просмотр метрик (RTT, cwnd) для установленных соединений
 ss -ti state established
 ```
 
-### Диагностика TIME-WAIT
+### Анализ проблем производительности
+
+**Поиск потерь и задержек:**
 
 ```bash
-# Количество сокетов в TIME-WAIT
-ss -tan state time-wait | wc -l
+# Вывод соединений с зафиксированными ретрансмиссиями
+ss -ti state established | grep 'retrans'
 
-# Детали TIME-WAIT сессий (время ожидания)
-ss -tai state time-wait
+# Просмотр RTT (Round-Trip Time — время кругового обхода)
+ss -ti | grep -E 'rtt:|rcv_rtt:'
 ```
 
-> **Решение при избытке:** [Управление TIME_WAIT](./tcp_time_wait_management.md) — `tcp_tw_reuse`, `tcp_fin_timeout`.
-
-### Диагностика congestion control
+**Диагностика окна и буферов:**
 
 ```bash
-# Доступные алгоритмы
-cat /proc/sys/net/ipv4/tcp_available_congestion_control
-
-# Текущий алгоритм
-sysctl net.ipv4.tcp_congestion_control
-
-# Проверка BBR в действии
-ss -ti | grep -o 'cong:[[:space:]]*[a-z0-9]*'
-```
-
-> **Подробнее:** [Алгоритмы управления перегрузкой](./tcp_congestion_algorithms.md)
-
-### Диагностика буферов и window
-
-```bash
-# Поиск сокетов с нулевым окном (Zero Window)
+# Поиск сокетов с нулевым окном (Zero Window — приемник переполнен)
 ss -tmo | grep 'window:0'
 
-# Мониторинг в реальном времени
-watch -n1 'ss -tmo | grep -c "window:0"'
-
-# Проверка window scaling на соединениях
+# Проверка Window Scaling (масштабирование окна)
 ss -tno | grep wscale
 ```
 
-> **Подробнее:** [Оптимизация буферов TCP](./tcp_buffer_tuning.md)
+Подробнее: [Оптимизация буферов TCP](./tcp_buffer_tuning.md).
 
-### Диагностика TCP Fast Open
+### Диагностика механизмов оптимизации
+
+**Проверка алгоритма контроля перегрузки:**
 
 ```bash
-# Проверка поддержки TFO в ядре
-cat /proc/sys/net/ipv4/tcp_fastopen
+# Текущий глобальный алгоритм
+sysctl net.ipv4.tcp_congestion_control
 
-# Статистика TFO (ядро 4.10+)
+# Проверка используемого алгоритма для конкретных сессий (например, bbr)
+ss -ti | grep 'cong:'
+```
+
+Подробнее: [Алгоритмы управления перегрузкой](./tcp_congestion_algorithms.md).
+
+**Статистика TCP Fast Open (TFO):**
+
+```bash
+# Проверка счётчиков TFO
 nstat -az | grep -i tfo
-# TcpExtTCPFastOpenActive     — успешные TFO-соединения (клиент)
-# TcpExtTCPFastOpenPassive    — успешные TFO-соединения (сервер)
-# TcpExtTCPFastOpenBlackhole  — отброены middlebox
+# TcpExtTCPFastOpenActive — успешные TFO (клиент)
+# TcpExtTCPFastOpenBlackhole — блокировка TFO промежуточными устройствами (Middlebox)
 ```
 
-> **Подробнее:** [TCP Fast Open](./tcp_fast_open.md)
+Подробнее: [TCP Fast Open](./tcp_fast_open.md).
 
-### Диагностика очередей соединений (backlog)
+### Диагностика очередей и переполнений
 
 ```bash
-# Количество SYN_RECV (полуоткрытые)
-ss -tan state syn-recv | wc -l
-
-# Счётчики переполнения backlog
+# Счётчики сброса пакетов из-за переполнения backlog
 nstat -az | grep -i -E 'listenoverflow|reqqfulldrop'
-# TcpExtTCPListenOverflow  — переполнение Accept backlog
-# TcpExtTCPReqQFullDrop    — отброшены из-за переполнения SYN backlog
+# TcpExtTCPListenOverflow — переполнение Accept backlog
+# TcpExtTCPReqQFullDrop — отброшены из-за переполнения SYN backlog
 ```
 
-> **Подробнее:** [Управление очередями соединений](./tcp_connection_queues.md)
+Подробнее: [Управление очередями соединений](./tcp_connection_queues.md).
 
-### Сводная диагностика проблем
+## Дополнительная информация
 
-| Симптом | Команда | Возможная причина | Ссылка |
-| :--- | :--- | :--- | :--- |
-| Много TIME-WAIT | `ss -tan state time-wait \| wc -l` | Короткие соединения, нет reuse | [TIME_WAIT](./tcp_time_wait_management.md) |
-| Zero Window | `ss -tmo \| grep 'window:0'` | Приложение не читает, малый буфер | [Буферы](./tcp_buffer_tuning.md) |
-| Высокие retrans | `ss -ti \| grep 'retrans:[1-9]'` | Потери пакетов, перегрузка | [Congestion](./tcp_congestion_algorithms.md) |
-| SYN_RECV растёт | `ss -tan state syn-recv \| wc -l` | SYN-flood, малый backlog | [Backlog](./tcp_connection_queues.md) |
-| TFO Blackhole | `nstat -az \| grep Blackhole` | Файрвол отбрасывает SYN+data | [TFO](./tcp_fast_open.md) |
-| Низкий cwnd | `ss -ti \| grep 'cwnd:[1-5]'` | TCP после потерь, медленный рост | [Congestion](./tcp_congestion_algorithms.md) |
+### Сводная таблица симптомов
 
-### Мониторинг в реальном времени
+| Симптом | Инструмент | Возможная причина |
+| :--- | :--- | :--- |
+| Рост TIME-WAIT | `ss -s` | Множество коротких соединений без reuse. |
+| Zero Window | `ss -tmo` | Приложение не успевает читать данные из буфера. |
+| Высокий retrans | `ss -ti` | Потери пакетов в сети или перегрузка канала. |
+| TFO Blackhole | `nstat` | Файрволы отбрасывают SYN-пакеты с данными. |
 
-```bash
-# Все слушающие порты (обновление каждую секунду)
-watch -n1 'ss -tlnp'
+### См. также
 
-# Количество ESTABLISHED-соединений
-watch -n1 'ss -tan state established | wc -l'
-
-# Ретрансмиссии в реальном времени
-watch -n1 'ss -ti state established | grep -o "retrans:[0-9/]*" | head -5'
-```
-
-## Additional Information
-
-### Связанные темы
-
-- **SSoT:** [Диагностика ss](../../../Diagnostics/Networking/ss.md) — полная документация по `ss` (флаги, фильтрация, примеры)
-- **Обзор оптимизации TCP:** [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
-- **Дисциплины очередей:** [Дисциплины очередей TCP](./tcp_queueing_disciplines.md) — мониторинг qlen, bufferbloat
+* [Оптимизация TCP в Linux: Обзор](./tcp_tuning_overview.md)
+* [Диагностика ss](../../../Diagnostics/Networking/ss.md)
+* [Дисциплины очередей TCP](./tcp_queueing_disciplines.md)

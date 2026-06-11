@@ -145,6 +145,7 @@ kubectl cnpg backup cluster-example
 ### Связанные документы
 
 - **Основы PostgreSQL:** **[PostgreSQL Overview](../overview.md)**
+- **Сетевая связность:** **[Связность K8s и PostgreSQL в зонах](./kubernetes_connectivity.md)**
 - **Высокая доступность:** **[High Availability](../Concepts/high_availability.md)**
 - **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
 - **Архитектура StatefulSet:** **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)**
