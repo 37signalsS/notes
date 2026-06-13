@@ -64,7 +64,7 @@ kube-proxy управляет виртуальными IP-адресами се�
 | :--- | :--- | :--- | :--- |
 | **Flannel** | Overlay (VXLAN) | Нет | Простые кластеры, минимальные требования |
 | **Calico** | L3 (BGP/Overlay) | Да | Production, высокая безопасность |
-| **Cilium** | eBPF | Да | High-load, глубокая наблюдаемость, замена kube-proxy |
+| **Cilium** | eBPF | Да | [Cilium](./CNI/cilium.md) — High-load, замена kube-proxy |
 
 - Подробнее: [Выбор CNI и внешние типы доступа](./CNI/selection_and_external_access.md)
 

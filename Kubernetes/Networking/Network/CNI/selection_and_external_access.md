@@ -16,12 +16,13 @@
 
 Выбор CNI определяет не только связность подов, но и возможности безопасности, масштабируемости и интеграции с внешним миром.
 
-| Критерий | Flannel | Calico | Calico (eBPF) / Cilium |
+| Критерий | Flannel | Calico | Calico (eBPF) / [Cilium](./cilium.md) |
 | :--- | :--- | :--- | :--- |
 | **Сложность** | Простая | Средняя | Средняя/Высокая |
 | **NetworkPolicy** | Нет | Да | Да (на базе eBPF — эффективнее) |
 | **Производительность** | Средняя (Overlay) | Высокая (BGP/Direct) | Очень высокая |
-| **Замена kube-proxy** | Нет | Нет | Да (через eBPF) |
+| **Замена kube-proxy** | Нет | Нет | Да (через eBPF в [Cilium](./cilium.md)) |
+
 | **Режим работы** | Overlay (VXLAN) | Overlay/BGP/Direct | eBPF/Direct Routing |
 
 ### Внешние типы доступа в Kubernetes
