@@ -44,6 +44,8 @@
    docker swarm init --advertise-addr <MANAGER-IP>
    ```
 
+   В Ansible — модуль `community.docker.docker_swarm` (см. [пример](../../Ansible/examples/docker_management.md#сценарий-инициализация-и-управление-swarm-кластером)).
+
 2. Получение токенов для подключения дополнительных узлов:
 
    ```bash
@@ -51,7 +53,15 @@
    docker swarm join-token manager
    ```
 
-3. Проверка состояния узлов:
+3. Добавление worker-ноды:
+
+   ```bash
+   docker swarm join --token <токен> <MANAGER-IP>:2377
+   ```
+
+   В Ansible — `state: join` с `join_token` и `remote_addrs`.
+
+4. Проверка состояния узлов:
 
    ```bash
    docker node ls
@@ -155,6 +165,7 @@ telnet <MANAGER-IP> 2376
 
 - **[Docker Context в CI/CD](./docker_context_setup.md)** — настройка профилей подключения.
 - **[Обзор Docker Swarm](../docker_swarm_overview.md)** — базовые возможности оркестратора.
+- **[Ansible: управление Docker](../../Ansible/examples/docker_management.md)** — автоматизация Swarm через Ansible.
 - **[Продвинутые темы Swarm](../swarm_advanced_topics.md)** — детали работы Raft и токенов.
 - **[Развертывание Traefik](./infra_deployment.md)** — настройка Ingress-прокси.
 - **[Пайплайн приложения](./app_deployment.md)** — примеры автоматизации деплоя.

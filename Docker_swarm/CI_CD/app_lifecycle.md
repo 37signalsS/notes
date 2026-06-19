@@ -140,4 +140,5 @@ docker service rollback my-stack_app
 - **[app_deployment.md](./app_deployment.md)** — общая схема пайплайнов деплоя.
 - **[swarm_management_cli.md](../swarm_management_cli.md)** — справочник команд управления сервисами.
 - **[deployment_health_checks_and_rollback.md](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)** — общие концепции проверок здоровья в CI/CD.
+- **[mTLS + healthcheck: исключение /health из проверки](../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md#сценарий-4-исключение-healthcheck-из-mtls-docker-swarm)** — настройка nginx при mTLS и Swarm healthcheck.
 - **[swarm_ingress_traefik.md](../swarm_ingress_traefik.md)** — управление входящим трафиком.

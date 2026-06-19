@@ -74,6 +74,7 @@ tmpfs /mnt/tmp_ram tmpfs defaults,size=1G 0 0
 - **[Внутреннее устройство файловых систем](./fs_internals.md)** — архитектура VFS и суперблоков.
 - **[Кэширование и освобождение памяти](../Core/memory/caching_and_reclaiming.md)** — механизмы Page Cache в оперативной памяти.
 - **[Udev — управление устройствами](../Core/udev.md)** — взаимодействие с `devtmpfs`.
+- **[systemd-tmpfiles: управление временными файлами](../Core/systemd/tmpfiles.md)** — различие `/tmp` и `/var/tmp`, политики очистки.
 
 ### Детальные документы по интерфейсам ядра
 

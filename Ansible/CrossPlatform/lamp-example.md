@@ -105,13 +105,18 @@ srv-centos ansible_host=192.168.1.20
 
 Для установки актуальных версий PHP (например, 8.4) на стабильные дистрибутивы требуются внешние источники.
 
-**Ubuntu (использование PPA ondrej/php):**
+# Ubuntu (использование репозитория PHP):
 
 ```yaml
 # roles/php/tasks/debian.yml
-- name: Добавление PPA репозитория PHP
-  ansible.builtin.apt_repository:
-    repo: "ppa:ondrej/php"
+- name: Добавление репозитория PHP (формат DEB 822)
+  ansible.builtin.deb822_repository:
+    name: ondrej-php
+    types: deb
+    uris: https://ppa.launchpadcontent.net/ondrej/php/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4f4ea0aae5267a6c
     state: present
 
 - name: Установка PHP-FPM

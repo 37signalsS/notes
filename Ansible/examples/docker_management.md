@@ -28,8 +28,44 @@
 |---|---|---|
 | `community.docker.docker_image` | Работа с образами | `source: build` (сборка), `source: pull` (архивация), `source: load` (загрузка) |
 | `community.docker.docker_container` | Управление контейнерами | `state: started/stopped/absent`, `restart_policy`, `ports` |
+| `community.docker.docker_swarm` | Инициализация и управление Swarm-кластером | `state: present` (init), `state: join`, `advertise_addr`, `join_token`, `remote_addrs` |
+| `community.docker.docker_stack` | Развёртывание Docker Stack | `name`, `state: present/absent`, `compose_file` |
+| `community.docker.docker_config` | Управление Docker Config (create/update/remove) | `name`, `data` (содержимое конфига), `state: present/absent`, `force: yes` |
+| `community.docker.docker_secret` | Управление Docker Secret | `name`, `data`, `state: present/absent` |
 | `ansible.builtin.fetch` | Копирование файлов с удаленного хоста на контрольный узел | `src`, `dest`, `flat` |
 | `ansible.builtin.copy` | Копирование файлов с контрольного узла на удаленный хост | `src`, `dest` |
+
+### Зависимости на целевых хостах
+
+Модули `community.docker.docker_swarm` и `community.docker.docker_stack` выполняются на целевой машине (не на control node). Для работы через Docker SDK for Python на целевой машине должны быть установлены библиотеки через `pip`:
+
+| Пакет pip | Назначение |
+| :--- | :--- |
+| `docker>=5.0.0` | Docker SDK for Python |
+| `jsondiff` | Сравнение JSON-конфигов Swarm |
+| `pyyaml` | Парсинг YAML (Stack файлы) |
+
+Аpt-пакеты (`python3-docker`, `python3-jsondiff`, `python3-yaml`) устанавливаются для системной версии Python. Если Ansible использует другой интерпретатор (например, `/usr/bin/python3.14`), модули из apt недоступны — нужна установка через `pip`. `ansible.builtin.pip` устанавливает пакеты в интерпретатор, указанный в `ansible_python_interpreter`.
+
+На целевой машине может не быть `pip3` — перед установкой pip-пакетов нужно поставить `python3-pip` через `apt`:
+
+Установка перед инициализацией Swarm:
+
+```yaml
+- name: Установка pip
+  ansible.builtin.apt:
+    name: python3-pip
+    state: present
+
+- name: Установка Python-библиотек для работы Ansible с Docker
+  ansible.builtin.pip:
+    name:
+      - docker>=5.0.0
+      - jsondiff
+      - pyyaml
+    state: present
+    extra_args: --break-system-packages
+```
 
 ### Делегирование задач
 
@@ -42,6 +78,30 @@
 ---
 
 ## Практические сценарии
+
+### Сценарий: Инициализация и управление Swarm-кластером
+
+**Инициализация первого менеджера:**
+
+```yaml
+- name: Инициализация Docker Swarm на менеджере
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: "192.168.77.11"
+```
+
+**Добавление worker-ноды (отдельный play для второй машины):**
+
+```yaml
+- name: Присоединение к Swarm как worker
+  community.docker.docker_swarm:
+    state: join
+    advertise_addr: "192.168.77.12"
+    join_token: "{{ hostvars['machine1']['swarm_worker_token'] }}"
+    remote_addrs: ["192.168.77.11:2377"]
+```
+
+Токен получается на manager через `docker swarm join-token -q worker` (CLI) или модуль `community.docker.docker_swarm_info`.
 
 ### Сценарий: Полный цикл сборки и развертывания
 
@@ -199,6 +259,7 @@
 
 - **Коллекция Docker:** Модули `community.docker.*` требуют установки коллекции — `ansible-galaxy collection install community.docker`
 - **Docker Compose:** Управление compose-файлами через модуль [`community.docker.docker_compose`](https://docs.ansible.com/ansible/latest/collections/community/docker/docker_compose_module.html)
+- **Создание Docker Config:** Пример с `community.docker.docker_config` и Jinja2-шаблоном — [swarm_secrets_configs.md](../../Docker_swarm/swarm_secrets_configs.md)
 - **Безопасность:** Рекомендации по изоляции контейнеров — [Docker/Docker_security/overview.md](../../Docker/Docker_security/overview.md)
 - **Реестры образов:** Работа с Docker Registry — [Docker/docker_registries.md](../../Docker/docker_registries.md)
 - **Альтернативы:** [Сборка образов с Buildah и Ansible](../ansible_buildah_image_building.md)

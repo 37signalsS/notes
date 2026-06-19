@@ -12,7 +12,7 @@
 | `journalctl` | Просмотр и анализ логов journald | [journalctl](../../Diagnostics/journalctl/journalctl_overview.md) |
 | `rsyslog` | Фильтрация, обработка и пересылка логов | [rsyslog](./rsyslog.md) |
 | `auditd` | Аудит событий безопасности на уровне ядра | [auditd](./auditd.md) |
-| `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов-logrotate) |
+| `logrotate` | Ротация и архивация текстовых логов | [logrotate](#ротация-логов) |
 
 Компоненты работают совместно: `journald` собирает сообщения, `rsyslog` забирает их для фильтрации и пересылки, `logrotate` управляет размером файлов.
 
@@ -176,9 +176,10 @@ grep -i "failed\|invalid\|error" /var/log/auth.log
 
 ### Ротация логов
 
-Утилита **`logrotate`** архивирует, сжимает и удаляет старые логи для предотвращения переполнения диска.
+Утилита **`logrotate`** — автоматическая ротация, сжатие и удаление логов в Linux. Ограничивает рост файлов: переносит старые логи, сжимает их, удаляет устаревшие копии и при необходимости выполняет команды после ротации.
 
-- **Конфигурация:** `/etc/logrotate.conf`, `/etc/logrotate.d/`
+- **Запуск:** не работает постоянно в фоне. Запускается cron (`/etc/cron.daily/logrotate`) или systemd-таймер (`logrotate.timer`), обычно раз в сутки. При запуске читает конфиги, проверяет условия ротации и выполняет действия.
+- **Конфигурация:** `/etc/logrotate.conf` (глобальные настройки), `/etc/logrotate.d/` (конфиги для каждого сервиса)
 - **Пример:** См. [Пример конфигурации logrotate](#пример-конфигурации-logrotate)
 
 #### Стратегии ротации
@@ -243,6 +244,7 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 | Утилита | Назначение |
 | :--- | :--- |
 | `tail -f` | Просмотр в реальном времени |
+| `tac` | Вывод файла задом наперёд (свежие записи сверху) |
 | `less` | Поиск (`/`, `?`), фильтрация (`&`) |
 | `grep` | Поиск по шаблону |
 | `zcat` / `zgrep` | Работа со сжатыми логами (`.gz`) |
@@ -262,6 +264,8 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 
 ### Пример конфигурации `logrotate`
 
+**Пример для Nginx:**
+
 ```conf
 /var/log/nginx/*.log {
     daily
@@ -278,21 +282,51 @@ logger -n 192.168.1.100 -p local0.info "Удаленное сообщение"
 }
 ```
 
+**Пример для приложения (`/etc/logrotate.d/myapp`):**
+
+```conf
+/var/log/myapp/*.log {
+    daily
+    rotate 14
+    maxsize 100M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 myapp myapp
+    sharedscripts
+    postrotate
+        systemctl reload myapp >/dev/null 2>&1 || true
+    endscript
+}
+```
+
 **Директивы:**
 
-- `daily` — ротация ежедневно
-- `rotate 14` — хранить 14 архивов
-- `compress` — сжимать архивы
-- `postrotate...endscript` — команды после ротации
+| Директива | Описание |
+| :--- | :--- |
+| `daily` / `weekly` / `monthly` | Периодичность проверки ротации |
+| `rotate N` | Хранить N архивных копий |
+| `maxsize 100M` | Ротировать при проверке, если файл превысил 100 МБ |
+| `compress` | Сжимать старые логи (gzip) |
+| `delaycompress` | Сжимать файл на следующем цикле ротации |
+| `missingok` | Продолжать работу, если лог-файл отсутствует |
+| `notifempty` | Не ротировать пустой файл |
+| `create 0640 owner group` | Создать новый лог-файл с заданными правами и владельцем |
+| `sharedscripts` | Выполнить `postrotate` один раз для всей группы файлов |
+| `postrotate ... endscript` | Команды после ротации |
 
-**Проверка:**
+**Команды:**
 
 ```bash
-sudo logrotate -d /etc/logrotate.conf
-# → reading config file /etc/logrotate.conf
-# → ...
-# → considering log /var/log/nginx/access.log
-# →   log does not need rotating
+# Проверить конфиг без изменений (dry-run)
+logrotate -d /etc/logrotate.d/myapp
+
+# Принудительно запустить ротацию, игнорируя расписание
+sudo logrotate -f /etc/logrotate.conf
+
+# Подробный вывод того, что происходит
+sudo logrotate -v /etc/logrotate.conf
 ```
 
 ### Принудительная синхронизация: `sync`
@@ -308,5 +342,6 @@ sync  # Запись буферов на диск
 - **journald / journalctl:** [journald](./journald.md), [journalctl](../../Diagnostics/journalctl/journalctl_overview.md)
 - **rsyslog:** [rsyslog](./rsyslog.md)
 - **auditd:** [auditd](./auditd.md)
+- **Утилиты для работы с текстом:** [tac](../../Shell/tac.md) (вывод задом наперёд), [grep](../../Shell/grep.md)
 - **Анализ сбоев и паники ядра:** [**Анализ ошибок и сбоев**](./error_and_crash_analysis.md), [**Паника ядра**](../../Core/kernel/kernel_panic.md)
 - **Централизованное логирование:** [observability_definitions](../../../Concepts/Observability_and_Monitoring/observability_definitions.md)

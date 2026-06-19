@@ -56,18 +56,62 @@
   no_log: true
 ```
 
-### Сценарий 4: Контроль прав доступа
+### Сценарий 4: Шаблоны с секретами — явная уязвимость
 
-При создании файлов из шаблонов, содержащих секреты, всегда указывайте минимально необходимые права доступа.
+**Критическое предупреждение:** Когда `ansible.builtin.template` рендерит Jinja2-шаблон, содержащий `{{ vault_var }}`, итоговый файл на диске (`dest`) содержит расшифрованный секрет в открытом виде. Vault защищает данные только в репозитории; на целевой машине пароль лежит plaintext'ом.
 
 ```yaml
-- name: Создание конфигурационного файла
+- name: Создание конфигурационного файла с секретом # УЯЗВИМО
   ansible.builtin.template:
-    src: config.j2
-    dest: /etc/app/config.yml
-    mode: '0600' # Только владелец может читать и писать
+    src: docker-compose.j2   # содержит {{ db_password }}
+    dest: /opt/app/docker-compose.yml
+    mode: '0600'             # ограничивает доступ, но plaintext на диске остаётся
+  no_log: true               # скрывает вывод, но не защищает файл
+```
+
+`mode: '0600'` и `no_log: true` — необходимые, но недостаточные меры. Они ограничивают доступ к уже расшифрованному файлу и скрывают утечку из логов, но не устраняют корневую проблему: секрет записан на диск.
+
+### Сценарий 5: Docker Compose/Swarm — замена переменных на Docker Secrets
+
+Типичная ошибка — рендерить `docker-compose.yml` с подстановкой пароля из Vault напрямую в `environment`:
+
+```yaml
+# docker-compose.j2 — УЯЗВИМО: пароль попадёт в файл на диске
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: {{ app_db_users[0].password }}
+```
+
+Правильный подход: в шаблоне указывать `_FILE`-суффикс и внешний секрет, а сам секрет создавать через `community.docker.docker_secret`:
+
+```yaml
+# docker-compose.j2 — БЕЗОПАСНО: пароль только в RAM Swarm
+services:
+  db:
+    image: postgres:16-alpine
+    secrets:
+      - db_password
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+
+secrets:
+  db_password:
+    external: true
+```
+
+```yaml
+# Плейбук: создание секрета в Swarm перед deploy стека
+- name: Создание секрета Docker Swarm из Vault
+  community.docker.docker_secret:
+    name: db_password
+    data: "{{ app_db_users[0].password }}"
+    state: present
   no_log: true
 ```
+
+При таком подходе пароль из Vault попадает в память менеджера Swarm (шифруется в Raft) и монтируется в контейнер через tmpfs — на диск секрет не записывается никогда.
 
 ## Дополнительная информация
 

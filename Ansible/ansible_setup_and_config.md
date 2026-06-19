@@ -138,6 +138,9 @@ private_key_file = /path/to/your/private_key
 host_key_checking = false
 deprecation_warnings = False
 roles_path = ./roles
+
+# Явное указание интерпретатора Python для подавления предупреждений (Discovery Warning)
+interpreter_python = auto_silent
 ```
 
 Для настройки параметров производительности (`forks`, `pipelining` и др.) см. [Оптимизацию производительности Ansible](./ansible_performance_tuning.md).
@@ -152,6 +155,18 @@ server1 ansible_host=192.168.51.4
 #### Проверка подключения
 
 Проверка подключения и ad-hoc команды подробно описаны в [Введении в Ansible](./ansible_introduction.md#ad-hoc-команды).
+
+### Сбор фактов (Ansible Facts)
+
+Ansible автоматически собирает информацию об управляемых узлах (IP, ОС, диски и т.д.). 
+
+**Важное изменение в стандартах (ansible-core 2.21+):**
+В старых версиях факты были доступны как глобальные переменные (например, `{{ ansible_distribution }}`). В современных версиях это поведение считается устаревшим. **Всегда используйте словарь `ansible_facts`** для обращения к системным данным:
+
+- Правильно: `{{ ansible_facts['distribution'] }}` или `{{ ansible_facts['os_family'] }}`
+- Устаревающее: `{{ ansible_distribution }}`
+
+Подробнее о переменных и фактах — в [Переменные и факты Ansible](./PlaybookStructure/variables.md).
 
 ## Дополнительная информация
 

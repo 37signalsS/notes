@@ -83,6 +83,87 @@ services:
         condition: on-failure
 ```
 
+### Rolling update — стратегия обновления
+
+Секция `deploy` определяет, как Swarm обновляет сервис при смене образа или конфигурации (`docker stack deploy -c stack.yml` или `docker service update`).
+
+#### `replicas`
+
+Поддерживаемое количество одновременно работающих экземпляров сервиса. При падении одной реплики Swarm создаёт новую.
+
+#### `update_config`
+
+Управляет процессом rolling update — постепенного обновления реплик без полного останова сервиса.
+
+| Параметр | Описание | Пример |
+|---|---|---|
+| `parallelism` | Сколько реплик обновлять одновременно | `2` — по две за шаг |
+| `delay` | Пауза между шагами обновления | `30s` — 30 секунд ожидания |
+| `failure_action` | Действие при сбое обновления | `pause` / `continue` / `rollback` |
+| `monitor` | Время наблюдения за новой репликой после запуска | `60s` — проверка 60 секунд |
+| `max_failure_ratio` | Допустимая доля неудачных обновлений (0.0–1.0) | `0.3` — до 30% ошибок |
+| `order` | Порядок остановки и запуска | `start-first` / `stop-first` |
+
+**`parallelism`** — количество реплик, обновляемых за один шаг. `parallelism: 2` при 5 репликах: шаг 1 → 2 новые, шаг 2 → ещё 2, шаг 3 → последняя.
+
+**`delay`** — пауза между шагами. После обновления группы реплик Swarm ждёт указанное время перед следующей группой.
+
+**`failure_action`**:
+- `pause` — остановить обновление при ошибке. Оставшиеся реплики не трогаются.
+- `continue` — игнорировать ошибки, продолжать обновление.
+- `rollback` — автоматически вернуть предыдущую версию на всех репликах.
+
+**`monitor`** — время в секундах, в течение которого Swarm наблюдает за новой репликой. Если контейнер завершится, станет unhealthy или не сможет стартовать — обновление считается неудачным.
+
+**`max_failure_ratio`** — допустимая доля неудачных реплик (от 0.0 до 1.0). Например, 5 реплик и `max_failure_ratio: 0.3`: 30% от 5 = 1.5, значит 1 ошибка допустима, 2 — превышение порога.
+
+**`order`**:
+- `start-first` — сначала запускается новая реплика, потом удаляется старая. Требует временно больше ресурсов, но даёт zero downtime.
+- `stop-first` — сначала останавливается старая реплика, потом запускается новая. Экономит ресурсы, но возможен кратковременный простой.
+
+#### `rollback_config`
+
+Определяет стратегию отката, если `failure_action: rollback` или откат вызван вручную. Параметры аналогичны `update_config`:
+
+| Параметр | Описание |
+|---|---|
+| `parallelism` | Сколько реплик откатывать одновременно |
+| `delay` | Пауза между шагами отката |
+| `failure_action` | Действие при сбое отката |
+| `order` | Порядок остановки/запуска при откате |
+
+#### Полный пример rolling update
+
+```yaml
+services:
+  web:
+    image: nginx:1.26.3
+    deploy:
+      replicas: 5
+      update_config:
+        parallelism: 2
+        delay: 30s
+        failure_action: pause
+        monitor: 60s
+        max_failure_ratio: 0.3
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        order: stop-first
+```
+
+**Как это работает при появлении нового образа:**
+
+1. Swarm запускает 2 новые реплики, останавливает 2 старые (order: start-first → zero downtime).
+2. Ждёт 30 секунд (delay).
+3. Наблюдает 60 секунд за новыми репликами (monitor).
+4. Повторяет шаги для следующих 2 реплик.
+5. Обновляет последнюю реплику.
+6. Если за время обновления >30% реплик (более 1 из 5) завершились с ошибкой — обновление ставится на паузу (failure_action: pause).
+7. При ручном откате (`docker service rollback`) или failure_action: rollback откат идёт по одной реплике с паузой 10 секунд, в порядке stop-first.
+
 #### Основные команды CLI (Command Line Interface)
 
 ```bash
@@ -158,6 +239,32 @@ deploy:
       cpus: '0.25'
       memory: 256M
 ```
+
+### Миграция: С systemd на Swarm-сервис
+
+Переход от традиционного управления nginx (apt + systemd) к Swarm-сервису. Промежуточный этап — сервис всё ещё использует host volumes для certs и конфигов:
+
+```yaml
+nginx:
+  image: nginx:alpine
+  ports:
+    - target: 443
+      published: 443
+      protocol: tcp
+      mode: host
+  volumes:
+    - /etc/letsencrypt/live/{{ nginx_domain }}:/etc/nginx/ssl/certs:ro
+    - /etc/nginx/dhparam.pem:/etc/nginx/ssl/dhparam.pem:ro
+    - /etc/nginx/ca.crt:/etc/nginx/ssl/ca.crt:ro
+    - /opt/bookstack/nginx/conf.d:/etc/nginx/conf.d:ro
+```
+
+**Что изменилось:**
+- systemd → Swarm (`docker stack deploy`)
+- hostname-based networking → internal Swarm DNS (service discovery)
+- `systemctl restart nginx` → `docker service update` или `docker stack deploy`
+
+**Следующий шаг:** миграция host volumes на Docker Configs/Secrets для портируемости между нодами — подробнее в [swarm_secrets_configs.md](./swarm_secrets_configs.md).
 
 ## Дополнительная информация
 

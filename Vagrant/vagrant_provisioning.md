@@ -114,6 +114,32 @@ end
 
 Файл `.vault_password` должен быть в `.gitignore`. Подробнее: [Ansible Vault Examples](../Ansible/Vault/examples.md), [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md).
 
+**С несколькими машинами (multi-machine):**
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.define "machine1" do |machine1|
+    machine1.vm.box = "bento/ubuntu-24.04"
+    machine1.vm.provision "ansible" do |ansible|
+      ansible.playbook = "playbooks/site.yml"
+      ansible.limit = "all"
+      ansible.groups = {
+        "swarm_managers" => ["machine1"],
+        "swarm_workers"  => ["machine2"],
+      }
+    end
+  end
+
+  config.vm.define "machine2" do |machine2|
+    machine2.vm.box = "bento/ubuntu-24.04"
+  end
+end
+```
+
+> **Важно:** Когда `ansible` провижинер определён внутри блока конкретной VM (например, `machine1`), Vagrant по умолчанию добавляет `--limit=machine1`. Из-за этого плейбук для других хостов (например, `hosts: machine2`) будет пропущен. Явное указание `ansible.limit = "all"` отключает это поведение.
+>
+> Без `ansible.groups` Vagrant может сгенерировать inventory без других машин, т.к. провижинер привязан только к одной VM. Явная группировка гарантирует, что все машины попадут в inventory.
+
 ### Сценарий 3: Docker внутри ВМ
 
 **Запуск контейнеров:**

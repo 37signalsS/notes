@@ -87,7 +87,7 @@
 ```yaml
 - name: Set distribution-specific variables
   ansible.builtin.set_fact:
-    package_manager: "{{ 'apt' if ansible_os_family == 'Debian' else 'yum' }}"
+    package_manager: "{{ 'apt' if ansible_facts['os_family'] == 'Debian' else 'yum' }}"
     # ... другие переменные
 ```
 

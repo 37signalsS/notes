@@ -54,17 +54,30 @@
 
 ### Управление репозиториями
 
-Добавление стороннего источника (на примере Docker для Ubuntu).
+Добавление стороннего источника (на примере Docker для Ubuntu). Современный способ с использованием формата **DEB 822** (рекомендуется вместо устаревшего `apt_repository`):
 
 ```yaml
-- name: Добавление GPG-ключа Docker
-  ansible.builtin.apt_key:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    state: present
+- name: Создание директории для ключей
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
 
-- name: Добавление репозитория Docker
-  ansible.builtin.apt_repository:
-    repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+- name: Скачивание GPG-ключа Docker
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+
+- name: Добавление репозитория Docker (формат DEB 822)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: amd64
+    signed_by: /etc/apt/keyrings/docker.asc
     state: present
 ```
 

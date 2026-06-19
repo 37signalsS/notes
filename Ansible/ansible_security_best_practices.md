@@ -40,7 +40,7 @@ Ansible для выполнения большинства задач (уста�
   vars:
     ansible_user_name: ansible_user
     # Имя sudo-группы в зависимости от семейства ОС
-    sudo_group: "{{ 'wheel' if ansible_os_family == 'RedHat' else 'sudo' }}"
+    sudo_group: "{{ 'wheel' if ansible_facts['os_family'] == 'RedHat' else 'sudo' }}"
 
   tasks:
     - name: Ensure sudo group exists

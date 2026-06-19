@@ -73,7 +73,7 @@
 
 ### Диагностика проблем
 
-Для глубокого анализа состояния сокетов и параметров TCP используйте [диагностику сокетов](./tcp_socket_diagnostics.md).
+Для глубокого анализа состояния сокетов и параметров TCP используйте [диагностику сокетов](./tcp_socket_diagnostics.md) и **[диагностику потерь в стеке](../../network_stack_packet_loss.md)**.
 
 * **Переполнение backlog:** `nstat -az | grep -E 'ListenDrops|Syncookies'`
 * **Перегрузка congestion control:** `ss -ti | grep -E 'cwnd|rto|retrans'`

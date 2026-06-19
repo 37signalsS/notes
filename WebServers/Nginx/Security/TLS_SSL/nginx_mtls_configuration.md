@@ -106,15 +106,71 @@ location / {
 }
 ```
 
+### Сценарий 4: Исключение healthcheck из mTLS (Docker Swarm)
+
+При `ssl_verify_client on;` nginx разрывает соединения без клиентского сертификата. Swarm healthcheck (`CMD curl http://localhost/health`) не может предъявить сертификат — проверка будет всегда падать.
+
+**Решение:** добавить HTTP-сервер (порт 80) с `server_name localhost` и location `/health`, доступный без TLS и mTLS. HTTPS-сервер остаётся полностью защищённым.
+
+```nginx
+server {
+    listen 80;
+    server_name {{ nginx_domain }} localhost;
+
+    location /health {
+        return 200 "healthy\n";
+        access_log off;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ nginx_domain }};
+
+    ssl_certificate     /etc/nginx/ssl/server.crt;
+    ssl_certificate_key /etc/nginx/ssl/server.key;
+    ssl_client_certificate /etc/nginx/ssl/ca.crt;
+    ssl_verify_client      on;
+
+    location / {
+        proxy_pass http://app:8080;
+    }
+}
+```
+
+`healthcheck` в `docker-compose.yml` использует HTTP к localhost — сертификат не требуется:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost/health"]
+  interval: 10s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+```
+
+**Важно:** убедитесь, что контейнер curl доступен внутри образа (nginx:alpine его содержит; для дистрибутивов без curl замените на `wget -q -O /dev/null http://localhost/health`).
+
 ### Тестирование через curl
 
 Для проверки mTLS необходимо передать клиентский сертификат и ключ.
 
 ```bash
-# Успешное подключение
+# 1. Успешное подключение (стандартное)
 curl -v --cert client.crt --key client.key --cacert ca.crt https://api.example.com
 
-# Проверка без сертификата (ожидается 400 Bad Request или закрытие соединения)
+# 2. Отладка локального сервиса (без правки /etc/hosts)
+# Опция --resolve позволяет сопоставить домен с IP вручную
+curl -v -k --resolve bookstack.local:443:192.168.77.11 \
+    --cert my_browser.crt \
+    --key my_browser.key \
+    https://bookstack.local/
+
+# 3. Проверка без сертификата (ожидается 400 Bad Request или закрытие соединения)
 curl -v https://api.example.com
 ```
 

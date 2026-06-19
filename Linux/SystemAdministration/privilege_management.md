@@ -68,7 +68,28 @@ ADMINS ALL=(root) NET_TOOLS
 
 - **Ограничение su:** Разрешите использование `su` только определенным группам (например, `wheel`) через модули PAM (Pluggable Authentication Modules). Подробнее: [Обзор PAM](../Security/pam_overview.md).
 - **Запрет root в SSH:** Отключите прямой вход `PermitRootLogin no` в конфигурации SSH, заставляя использовать `sudo`.
-- **Использование sudoedit:** Для правки системных файлов используйте `sudoedit /etc/file`. Это безопаснее, чем запуск текстового редактора через `sudo`, так как редактор работает с правами обычного пользователя над временной копией файла.
+- **Использование sudoedit вместо sudo vim:** Запуск полноценного редактора через `sudo` (например `sudo vim /etc/file`) — антипаттерн. Редактор работает целиком от root, а из vim можно выйти в оболочку (`:shell`) или выполнить произвольную команду (`:!команда`), получив root-shell в обход ограничений sudoers. `sudoedit` (она же `sudo -e`) решает проблему:
+
+  1. Копирует файл во временную директорию
+  2. Открывает **копию** от имени текущего пользователя в его редакторе
+  3. После сохранения копирует результат обратно от root
+
+  Редактор выбирается из переменных окружения (порядок): `SUDO_EDITOR` → `VISUAL` → `EDITOR`.
+  
+  Примеры:
+  ```bash
+  sudoedit /etc/nginx/nginx.conf
+  sudo -e /etc/hosts                 # то же самое
+  export SUDO_EDITOR=nano && sudoedit /etc/fstab
+  ```
+
+  В sudoers можно разрешить `sudoedit` и запретить `sudo vim`:
+  ```
+  user ALL=(ALL) sudoedit /etc/nginx/nginx.conf
+  user ALL=(ALL) !sudo vim /etc/nginx/nginx.conf
+  ```
+
+  Проверка разрешённых команд: `sudo -l`
 
 ### 4. Опасные команды (GTFOBins)
 

@@ -58,8 +58,8 @@
 # roles/common/tasks/main.yml
 ---
 - name: Include OS-specific tasks
-  ansible.builtin.include_tasks: "{{ ansible_os_family | lower }}.yml"
-  when: ansible_os_family in ['Debian', 'RedHat']
+  ansible.builtin.include_tasks: "{{ ansible_facts['os_family'] | lower }}.yml"
+  when: ansible_facts['os_family'] in ['Debian', 'RedHat']
 ```
 
 Для реализации этого сценария необходимо создать файлы `debian.yml` и `redhat.yml` в директории `tasks/` роли. Подробнее о кроссплатформенности — в **[Кроссплатформенные концепции](../CrossPlatform/concepts.md)**.

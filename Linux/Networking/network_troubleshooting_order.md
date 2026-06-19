@@ -272,6 +272,7 @@ iptables -L -n | grep 5432
 
 **Методология:**
 
+- [Диагностика потерь в стеке](./network_stack_packet_loss.md) — если интерфейс чист, но пакеты теряются
 - [Инструменты диагностики сети](./network_diagnostics_tools.md) — комплексный обзор
 - [Сетевые инструменты CLI и TUI](../Diagnostics/Networking/network_cli_tools.md) — мониторинг в реальном времени
 

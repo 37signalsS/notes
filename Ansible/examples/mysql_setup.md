@@ -39,7 +39,7 @@ pip install PyMySQL
 
 ```yaml
 # Имя службы
-service_name: "{{ 'mysql' if ansible_os_family == 'Debian' else 'mariadb' }}"
+service_name: "{{ 'mysql' if ansible_facts['os_family'] == 'Debian' else 'mariadb' }}"
 
 # Пакеты для Debian
 debian_packages:
@@ -75,7 +75,7 @@ redhat_packages:
           - python3-pymysql
         state: present
         update_cache: yes
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     # --- RedHat/CentOS ---
     - name: RedHat | Install MariaDB and dependencies
@@ -84,12 +84,12 @@ redhat_packages:
           - mariadb-server
           - python3-PyMySQL
         state: present
-      when: ansible_os_family == "RedHat"
+      when: ansible_facts['os_family'] == "RedHat"
 
     # --- Общие задачи ---
     - name: Ensure MySQL/MariaDB service is started and enabled
       ansible.builtin.service:
-        name: "{{ 'mysql' if ansible_os_family == 'Debian' else 'mariadb' }}"
+        name: "{{ 'mysql' if ansible_facts['os_family'] == 'Debian' else 'mariadb' }}"
         state: started
         enabled: yes
 
@@ -103,7 +103,7 @@ redhat_packages:
             password: "{{ mysql_root_password }}"
             plugin: mysql_native_password
             state: present
-          when: ansible_os_family == "Debian"
+          when: ansible_facts['os_family'] == "Debian"
 
         - name: Set root password (RedHat)
           community.mysql.mysql_user:
@@ -112,7 +112,7 @@ redhat_packages:
             password: "{{ mysql_root_password }}"
             plugin: mysql_native_password
             state: present
-          when: ansible_os_family == "RedHat"
+          when: ansible_facts['os_family'] == "RedHat"
 
         - name: Remove anonymous MySQL users
           community.mysql.mysql_user:
