@@ -221,6 +221,17 @@
 
 ### Сценарий: Проверка состояния (Health Check)
 
+**Проверка, что Docker daemon работает:**
+
+Перед любыми операциями с Docker полезно убедиться, что демон активен и отвечает.
+
+```yaml
+- name: Проверка, что Docker daemon работает
+  ansible.builtin.command: docker info
+  register: docker_info
+  changed_when: false
+```
+
 **Проверка количества запущенных контейнеров:**
 
 ```yaml
@@ -237,6 +248,44 @@
       retries: 5
       delay: 10
 ```
+
+### Сценарий: Изменение конфигурации демона
+
+После изменения `daemon.json` требуется перезапуск Docker. Используйте `notify` + `flush_handlers`, чтобы перезапуск завершился до выполнения следующих задач.
+
+```yaml
+- name: Настройка Docker daemon
+  hosts: all
+  tasks:
+    - name: Настройка daemon.json
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            }
+          }
+      notify: Restart Docker
+
+    - name: Применить изменения Docker daemon
+      ansible.builtin.meta: flush_handlers
+
+    - name: Проверка, что Docker daemon работает
+      ansible.builtin.command: docker info
+      changed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+        daemon_reload: yes
+```
+
+Без `flush_handlers` Docker перезапустился бы только в конце плея, и проверка `docker info` упала бы с ошибкой.
 
 **Проверка доступности веб-сервиса:**
 

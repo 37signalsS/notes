@@ -15,7 +15,7 @@
 
 * **`hostname`**: Управление именем хоста.
 * **`timezone`**: Настройка часового пояса.
-* **`sysctl`**: Управление параметрами ядра Linux в реальном времени и в файлах конфигурации.
+* **`ansible.posix.sysctl`**: Управление параметрами ядра Linux в реальном времени и в файлах конфигурации. Относится к коллекции `ansible.posix`, а не к `ansible.builtin` (см. ниже).
 * **`cron`**: Управление заданиями в планировщике `crontab`.
 * **`reboot`**: Безопасная перезагрузка хоста с ожиданием его возвращения в строй.
 
@@ -39,11 +39,13 @@
     daemon_reload: yes
 ```
 
-### Настройка ядра через `ansible.builtin.sysctl`
+### Настройка ядра через `ansible.posix.sysctl`
+
+Модуль `sysctl` находится в коллекции `ansible.posix`, так как в Ansible 2.10+ модули разделили по коллекциям — в `ansible.builtin` входит только то, что поставляется с `ansible-core`. Коллекция `ansible.posix` обычно устанавливается вместе с пакетом `ansible`, но если её нет — требуется `ansible-galaxy collection install ansible.posix`.
 
 ```yaml
 - name: Включение IP forwarding
-  ansible.builtin.sysctl:
+  ansible.posix.sysctl:
     name: net.ipv4.ip_forward
     value: '1'
     state: present
