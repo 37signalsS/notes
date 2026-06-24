@@ -10,6 +10,7 @@
 
 * **`service`**: Универсальный модуль, работающий с различными системами инициализации (SysVinit, OpenRC, systemd). Рекомендуется для обеспечения переносимости.
 * **`systemd`**: Специализированный модуль для систем с `systemd`. Позволяет выполнять `daemon-reload` и управлять сложными параметрами юнитов.
+* **`service_facts`**: Сбор информации о состоянии всех сервисов на хосте. Возвращает `ansible_facts.services` — словарь, где ключ — имя юнита, значение — состояние (`state`, `status`). Используется для проверок и валидации перед/после изменений.
 
 ### Настройка параметров системы
 
@@ -38,6 +39,19 @@
     enabled: yes
     daemon_reload: yes
 ```
+
+### Сбор информации о сервисах
+
+```yaml
+- name: Получить список всех сервисов
+  ansible.builtin.service_facts:
+
+- name: Проверить, что Nginx запущен
+  ansible.builtin.debug:
+    msg: "Nginx {{ 'запущен' if 'nginx.service' in ansible_facts.services and ansible_facts.services['nginx.service'].state == 'running' else 'остановлен' }}"
+```
+
+Подробнее о проверках с `service_facts` и `assert` — в [сценарии проверки состояний](../PlaybookStructure/advanced.md#сценарий-7-проверка-состояний).
 
 ### Настройка ядра через `ansible.posix.sysctl`
 

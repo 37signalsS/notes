@@ -51,7 +51,7 @@ Kubernetes ориентирован на **декларативную парад
 - **`kube-apiserver`** — единая точка входа (REST — Representational State Transfer API Gateway). Все взаимодействия идут через него. Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md).
 - **`etcd`** — согласованное KV (Key-Value) хранилище состояния. Единственный stateful-компонент. Подробнее: [Обзор etcd](./Concepts/etcd_overview.md).
 - **`kube-scheduler`** — определяет, на каком узле запустить конкретный Pod. Подробнее: [kube-scheduler](./Concepts/kube_scheduler.md).
-- **`kube-controller-manager`** — реализует логику приведения к желаемому состоянию через набор контроллеров.
+- **`kube-controller-manager`** — реализует логику приведения к желаемому состоянию через набор контроллеров. Подробнее: [Архитектура Control Plane](./Concepts/control_plane_architecture.md#kube-controller-manager-цикл-согласования).
 
 #### Worker Nodes
 

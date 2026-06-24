@@ -14,6 +14,7 @@
 | Повторный запуск | `vagrant up` | Нет |
 | Принудительно | `vagrant provision` | Да |
 | Перезагрузка | `vagrant reload --provision` | Да |
+| Перезагрузка | `vagrant reload --no-provision` | Нет (явно) |
 | Перезагрузка | `vagrant reload` | Нет |
 
 > **Важно:** Провижининг выполняется только один раз при первом `vagrant up`. Для повторного применения используйте `vagrant provision` или `vagrant reload --provision`.

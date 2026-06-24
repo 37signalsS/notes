@@ -10,7 +10,7 @@
 
 **GPG (GNU Privacy Guard)** — программная реализация стандарта OpenPGP, используемая для создания цифровых подписей пакетов и метаданных репозиториев для обеспечения их подлинности.
 
-**EPEL (Extra Packages for Enterprise Linux)** — проект репозитория, предоставляющий дополнительные пакеты высокого качества для дистрибутивов корпоративного уровня (RHEL, AlmaLinux, Rocky Linux).
+**EPEL (Extra Packages for Enterprise Linux)** — репозиторий от сообщества Fedora, содержащий пакеты высокого качества, совместимые с RHEL, AlmaLinux, Rocky Linux. Включает множество пакетов, отсутствующих в стандартных репозиториях: `micro`, `htop`, `neovim` и др.
 
 ---
 
@@ -98,6 +98,8 @@ sudo dnf makecache
 ```bash
 # Подключение репозитория EPEL
 sudo dnf install epel-release
+# После подключения становятся доступны пакеты из EPEL:
+# sudo dnf install micro htop neovim
 
 # Подключение Docker-репозитория
 sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo

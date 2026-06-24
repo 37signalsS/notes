@@ -60,6 +60,14 @@ ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
     mode: '0644'
 ```
 
+**Ad-hoc команда для создания файла с содержимым:**
+
+```bash
+ansible all -m copy -a "dest=/tmp/ansible_test/test.txt content='Hello Ansible'"
+```
+
+**Резервное копирование:** флаг `backup: yes` создаёт копию существующего файла с суффиксом `.bak` (с меткой времени) перед записью нового. Используется для rollback в связке с `block/rescue` (см. [сценарий rollback](../PlaybookStructure/advanced.md#сценарий-8-block--rescue--always--rollback)).
+
 ### Модуль `ansible.builtin.template`
 
 Основной инструмент для управления динамическими конфигурациями.
@@ -71,6 +79,8 @@ ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
     dest: /etc/nginx/nginx.conf
     validate: /usr/sbin/nginx -t # проверка синтаксиса перед сохранением
 ```
+
+**Резервное копирование:** флаг `backup: yes` (аналогично copy) сохраняет оригинал с суффиксом `.bak` перед записью. Подробнее: [сценарий rollback](../PlaybookStructure/advanced.md#сценарий-8-block--rescue--always--rollback).
 
 Подробнее см. в [Шаблонизация Jinja2](../ansible_jinja_templating.md).
 

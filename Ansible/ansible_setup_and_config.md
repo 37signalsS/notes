@@ -109,14 +109,34 @@ all:
 
 ### Установка и проверка подключения
 
-#### Установка Ansible — через pip
+#### Установка Ansible
+
+**Через pip (рекомендуемый способ):**
 
 ```bash
-# Рекомендуемый способ установки в виртуальное окружение
 python3 -m venv ansible_env
 source ansible_env/bin/activate
 pip install ansible
 ```
+
+`pip install ansible` (полный пакет) включает ansible-core + популярные коллекции (community.docker, community.general и др.) — устанавливать их отдельно через `ansible-galaxy` не нужно. `pip install ansible-core` устанавливает только ядро без коллекций.
+
+**Через apt:**
+
+```bash
+sudo apt update
+sudo apt install ansible
+```
+
+Пакет из apt обычно содержит только ansible-core (или урезанную версию). Для коллекций потребуется дополнительная установка:
+
+```bash
+ansible-galaxy collection install community.docker
+```
+
+**Конфликт pip и apt:** если pip устанавливает пакеты в `/usr/lib/python3/dist-packages`, это может нарушить работу пакетов, управляемых apt — `apt-get upgrade` может отказаться обновлять Python-зависимости. Рекомендуется всегда использовать виртуальное окружение (venv).
+
+**PEP 668 (Externally Managed Environment):** на Ubuntu 23.04+ pip вне venv заблокирован политикой PEP 668. Подробнее — [PEP 668 и externally managed environment](../Linux/Development/python_management.md#pep-668-externally-managed-environment).
 
 #### Генерация конфигурационного файла
 

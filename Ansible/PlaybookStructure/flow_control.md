@@ -64,7 +64,7 @@
 ## Обработка ошибок
 
 - `ignore_errors: true`: Продолжить выполнение, даже если задача завершилась сбоем.
-- `block, rescue, always`: Аналог `try...catch...finally` для обработки ошибок на уровне задач.
+- `block, rescue, always`: Аналог `try...catch...finally` для обработки ошибок на уровне задач. Пример с rollback: [сценарий 8 в advanced.md](advanced.md#сценарий-8-block--rescue--always--rollback).
 - `failed_when`: Переопределить условия, при которых задача считается проваленной.
 - `changed_when: false`: Сделать команду идемпотентной в отчетах.
 

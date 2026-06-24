@@ -17,6 +17,40 @@
 
 Python является критическим компонентом большинства дистрибутивов Linux. Системные пакетные менеджеры (`yum`, `apt`, `dnf`) зависят от системного Python (`/usr/bin/python`). **Запрещено изменять или удалять системный Python**, так как это приведет к поломке ОС. `pyenv` решает эту проблему, устанавливая версии в домашний каталог пользователя (`~/.pyenv`), не затрагивая системные файлы.
 
+### PEP 668 (Externally Managed Environment)
+
+Начиная с Python 3.11 (Ubuntu 23.04+) дистрибутивы Linux блокируют `pip install` вне виртуального окружения для системного Python. Это политика PEP 668 (PEP — Python Enhancement Proposal).
+
+**Ошибка при попытке установки вне venv:**
+
+```
+error: externally-managed-environment
+× This environment is externally managed
+╰─> To install Python packages system-wide, try apt install
+    python3-xyz, where xyz is the package you are trying to
+    install.
+...
+```
+
+**Причина:** предотвращение конфликтов между pip-пакетами и пакетами системного менеджера (apt) — см. раздел о безопасности системного Python выше.
+
+**Решение:**
+
+1. Использовать виртуальное окружение (`python3 -m venv /path/to/venv`) — **рекомендуемый способ**.
+2. Установить с флагом `--break-system-packages` — только при понимании рисков конфликта с apt:
+
+   ```bash
+   pip install --break-system-packages <package>
+   ```
+
+   В Ansible это делается через параметр `extra_args`:
+   ```yaml
+   - name: Установка Python-библиотек
+     ansible.builtin.pip:
+       name: docker>=5.0.0
+       extra_args: --break-system-packages
+   ```
+
 ## Практические сценарии
 
 ### Установка `pyenv`
@@ -109,6 +143,32 @@ pip install numpy pandas
 pyenv virtualenv-delete my-project-env
 ```
 
+### Установка CLI-инструментов через `pipx`
+
+`pipx` автоматически создаёт изолированное venv для каждого приложения и добавляет символьную ссылку на его исполняемый файл в `~/.local/bin`.
+
+```bash
+# Установка
+pip install pipx
+
+# Установка CLI-утилиты
+pipx install ansible
+
+# Запуск без установки (ephemeral)
+pipx run black --check .
+
+# Установка из каталога или репозитория
+pipx install ./my-tool
+pipx install git+https://github.com/psf/black.git
+
+# Просмотр и управление
+pipx list                # список установленных приложений
+pipx upgrade-all         # обновить все приложения
+pipx uninstall ansible   # удалить приложение
+```
+
+`pipx` использует системный Python (или `pyenv`-версию, если она активна) для создания venv, что гарантирует изоляцию как от системных пакетов, так и от окружений проектов.
+
 ## Дополнительная информация
 
 ### Альтернативные инструменты
@@ -120,6 +180,7 @@ pyenv virtualenv-delete my-project-env
 | **`poetry`** | Менеджер зависимостей и сборок | Современные Python-проекты, требующие строгой фиксации зависимостей и пакетирования. |
 | **`uv`** | Менеджер пакетов на Rust | Когда критична максимальная скорость установки зависимостей (в CI/CD). |
 | **`asdf`** | Универсальный менеджер версий | При разработке на нескольких языках (Ruby, Node.js, Python) одновременно. |
+| **`pipx`** | Установка и запуск Python-приложений в изолированных окружениях | Установка CLI-утилит (ansible, poetry, black, ruff), когда нужно изолировать их от проектного окружения. |
 
 ### Диагностика проблем `pyenv`
 

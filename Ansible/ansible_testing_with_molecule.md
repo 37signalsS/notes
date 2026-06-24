@@ -76,6 +76,54 @@ verifier:
   name: ansible
 ```
 
+#### Драйвер Docker: `create.yml` и `destroy.yml`
+
+Для драйвера `docker` Molecule использует `create.yml` для создания контейнера и `destroy.yml` для его удаления. Эти файлы не создаются `molecule init role` по умолчанию — их нужно написать вручную, если требуется Docker-драйвер без SSH и systemd (как в образах `geerlingguy`).
+
+**`molecule/default/create.yml`:**
+
+```yaml
+---
+- name: Create
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    molecule_platforms: "{{ molecule_yml.platforms }}"
+  tasks:
+    - name: Create molecule instance(s)
+      community.docker.docker_container:
+        name: "{{ item.name }}"
+        hostname: "{{ item.name }}"
+        image: "{{ item.image }}"
+        state: started
+        privileged: "{{ item.privileged | default(false) }}"
+        volumes: "{{ item.volumes | default([]) }}"
+        command: "{{ item.command | default(omit) }}"
+        cgroupns_mode: "{{ item.cgroupns_mode | default(omit) }}"
+        detach: true
+      loop: "{{ molecule_platforms }}"
+```
+
+**`molecule/default/destroy.yml`:**
+
+```yaml
+---
+- name: Destroy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    molecule_platforms: "{{ molecule_yml.platforms }}"
+  tasks:
+    - name: Destroy molecule instance(s)
+      community.docker.docker_container:
+        name: "{{ item.name }}"
+        state: absent
+        force_kill: true
+      loop: "{{ molecule_platforms }}"
+```
+
 #### Шаг 3: Написание логики роли (`tasks/main.yml`)
 
 Добавим простые задачи по установке и запуску Nginx.
@@ -96,7 +144,22 @@ verifier:
     enabled: true
 ```
 
-#### Шаг 4: Написание тестов (`molecule/default/verify.yml`)
+#### Шаг 4: Основной плейбук (`molecule/default/converge.yml`)
+
+`converge.yml` — точка входа, которую Molecule выполняет для применения роли. Минимальный converge.yml просто подключает тестируемую роль. Если роль требует предварительных задач (например, запуск nginx через command), они добавляются до `include_role`.
+
+```yaml
+---
+- name: Converge
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Apply role nginx
+      ansible.builtin.include_role:
+        name: nginx
+```
+
+#### Шаг 5: Написание тестов (`molecule/default/verify.yml`)
 
 Это плейбук, который проверяет, что роль отработала корректно.
 
@@ -104,33 +167,25 @@ verifier:
 ---
 - name: Verify
   hosts: all
-  gather_facts: false
+  gather_facts: true
   tasks:
-    - name: Check that Nginx package is installed
-      ansible.builtin.package:
-        name: nginx
-        state: present
-      check_mode: true
-      register: nginx_pkg
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
 
-    - name: Assert that nginx package is present
+    - name: Check that nginx is installed
       ansible.builtin.assert:
         that:
-          - not nginx_pkg.changed
-        fail_msg: "Nginx package was not installed"
+          - "'nginx' in ansible_facts.packages"
 
-    - name: Check if nginx service is running
-      ansible.builtin.service_facts:
-      register: service_facts
-
-    - name: Assert that nginx service is running
-      ansible.builtin.assert:
-        that:
-          - service_facts.ansible_facts.services['nginx.service'].state == 'running'
-        fail_msg: "Nginx service is not running"
+    - name: Check that nginx is running
+      ansible.builtin.command: pidof nginx
+      changed_when: false
 ```
 
-#### Шаг 5: Запуск тестов
+> `service_facts` полагается на systemd и не работает в Docker-контейнерах без него (см. Типовые проблемы №7). Вместо него используется `package_facts` (проверка установки) + `pidof` (проверка работы). `gather_facts: true` требует увеличения `ansible_timeout` (см. Типовые проблемы №1).
+
+#### Шаг 6: Запуск тестов
 
 Команда `molecule test` запустит полный жизненный цикл.
 
@@ -147,6 +202,110 @@ molecule test
 * `molecule login` (для подключения к контейнеру и ручной проверки)
 * `molecule verify`
 * `molecule destroy`
+
+### Типовые проблемы и решения (Troubleshooting)
+
+#### 1. Verify timeout при `gather_facts: true`
+
+**Проявление:** `verify` падает по таймауту (60s по умолчанию).
+
+**Причина:** Cбор фактов на медленных хостах или в контейнерах через `community.docker` connection не укладывается в стандартный таймаут.
+
+**Решение:** Увеличить `ansible_timeout` в `provisioner` molecule.yml:
+
+```yaml
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      ansible_timeout: 600
+```
+
+#### 2. Неправильный `remote_user` в Docker connection
+
+**Проявление:** `Failed to create temporary directory` при `converge`.
+
+**Причина:** Docker connection выполняет `docker exec -u vagrant`, а пользователя `vagrant` нет в контейнере.
+
+**Решение:** Убедиться, что `ansible_user` явно не задан в инвентаре, либо установить в `molecule.yml`:
+
+```yaml
+provisioner:
+  inventory:
+    group_vars:
+      all:
+        ansible_user: root
+```
+
+#### 3. Отсутствие SSH в образах `geerlingguy`
+
+**Проявление:** Таймаут `Wait for SSH` в create.yml.
+
+**Причина:** Образы `geerlingguy` предназначены для Docker connection (не содержат SSH-сервер).
+
+**Решение:** Переписать create.yml без ожидания SSH, используя `community.docker.docker_container`.
+
+#### 4. Systemd не стартует (cgroup v2)
+
+**Проявление:** Контейнер падает сразу после создания — `Exited (255)`.
+
+**Причина:** Современные дистрибутивы (Ubuntu 24.04+/Rocky Linux 9+) используют cgroup v2. systemd в контейнере требует cgroup v1 или `--cgroupns host`.
+
+**Решение:** Заменить `command: /usr/lib/systemd/systemd` на `command: sleep infinity` в `molecule.yml`:
+
+```yaml
+platforms:
+  - name: ubuntu
+    image: geerlingguy/docker-rockylinux9-ansible:latest
+    pre_build_image: true
+    command: sleep infinity
+```
+
+#### 5. Handler Restart Nginx не работает
+
+**Проявление:** `Service is in unknown state` или non-zero return code при рестарте.
+
+**Причина:** Модули `service` и `systemd` не работают без systemd (см. проблему №4). `nginx -s reload` падает, если nginx не запущен (нет PID-файла).
+
+**Решение:** Добавить задачу запуска nginx перед изменением конфига; в handler использовать `command: nginx -s reload` (работает только после старта nginx).
+
+#### 6. Idempotence проваливается (Start nginx)
+
+**Проявление:** При повторном `converge` задача запуска nginx возвращает `changed`.
+
+**Причина:** `command: nginx` при уже запущенном экземпляре возвращает `rc=1`.
+
+**Решение:** Добавить `failed_when: false` — ошибка игнорируется, задача считается `ok`.
+
+```yaml
+- name: Start nginx
+  ansible.builtin.command: nginx
+  failed_when: false
+```
+
+#### 7. `service_facts` падает без systemd
+
+**Проявление:** `Failed to find any services` в verify.yml.
+
+**Причина:** `service_facts` полагается на systemd, который не запущен в контейнере (см. проблему №4).
+
+**Решение:** Заменить `service_facts` на `package_facts` (проверка установки) + `pidof` (проверка работы процесса).
+
+#### 8. Molecule не находит molecule.yml
+
+**Проявление:** `'molecule/default/molecule.yml' glob failed`.
+
+**Причина:** `molecule test` запущен не из директории роли.
+
+**Решение:** Перейти в корень роли: `cd ~/nginx && molecule test`.
+
+#### 9. Warnings о дублирующихся коллекциях
+
+**Проявление:** Warnings про `ansible.netcommon`, `ansible.posix` и др.
+
+**Причина:** Коллекции установлены одновременно в системной директории (`/usr/lib/python3/dist-packages/`) и в пользовательской (`~/.ansible/collections/`).
+
+**Решение:** Не влияет на работу, warnings не критичны.
 
 ## Дополнительная информация
 

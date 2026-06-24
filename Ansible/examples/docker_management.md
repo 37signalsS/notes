@@ -64,16 +64,12 @@
       - jsondiff
       - pyyaml
     state: present
-    extra_args: --break-system-packages
+    extra_args: --break-system-packages # PEP 668: bypass externally-managed-environment на Ubuntu 23.04+
 ```
 
 ### Делегирование задач
 
-`delegate_to: localhost` выполняет задачу на контрольном узле Ansible, а не на целевом хосте из `hosts`. Применяется для:
-
-- Поиска файлов локально (`find`)
-- Подготовки артефактов перед отправкой
-- Промежуточного хранения данных
+Подробно: [делегирование в Ansible](../PlaybookStructure/advanced.md#делегирование-задач). `delegate_to: localhost` переносит выполнение любого модуля на контрольный узел — используется для поиска файлов, подготовки артефактов и промежуточного хранения данных.
 
 ---
 
