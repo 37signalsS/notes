@@ -48,7 +48,7 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Создаем непривилегированного пользователя для повышения безопасности
-RUN adduser -D nonroot
+RUN adduser -D -S nonroot
 USER nonroot
 
 # Копируем package.json, чтобы установить ТОЛЬКО зависимости для работы (production)

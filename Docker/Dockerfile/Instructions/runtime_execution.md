@@ -99,7 +99,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "app.py"]
 ```
 
-**entrypoint.sh:**
+**entrypoint.sh (универсальный):**
 
 ```bash
 #!/bin/sh
@@ -109,6 +109,22 @@ echo "Инициализация..."
 exec "$@"
 ```
 
+В production-сценариях скрипт часто содержит явные шаги инициализации и запускает приложение напрямую, без делегирования в `CMD`:
+
+```bash
+#!/bin/sh
+python -c "from app import init_db; init_db()"
+exec gunicorn -w 4 -b 0.0.0.0:5000 app:app
+```
+
+```dockerfile
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+CMD ["/entrypoint.sh"]
+```
+
+Использование `exec` (**exec-форма**) заменяет процесс оболочки на Gunicorn, делая его процессом с PID 1. Это обеспечивает корректную передачу сигналов (SIGTERM) от Docker при остановке контейнера, что необходимо для надежной работы в production.
+
 ### Сценарий 3: Переопределение пользователя для Node.js
 
 ```dockerfile
@@ -116,7 +132,7 @@ FROM node:20-alpine
 WORKDIR /app
 COPY . .
 # Создаем пользователя (в Alpine используется adduser)
-RUN adduser -D appuser && chown -R appuser /app
+RUN adduser -D -S appuser && chown -R appuser /app
 USER appuser
 CMD ["node", "server.js"]
 ```

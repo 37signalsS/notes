@@ -64,7 +64,7 @@ USER appuser
 
 ```dockerfile
 # Создаем пользователя без пароля и домашней директории
-RUN adduser -D -H -s /bin/false appuser
+RUN adduser -D -S -H -s /bin/false appuser
 
 USER appuser
 ```

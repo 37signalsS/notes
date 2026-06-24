@@ -29,7 +29,7 @@ FROM golang:1.26-alpine AS builder
 # Устанавливаем git для скачивания приватных модулей, если нужно
 RUN apk update && apk add --no-cache git
 # Создаем непривилегированного пользователя
-RUN adduser -D -u 10001 appuser
+RUN adduser -D -S -u 10001 appuser
 WORKDIR /app
 COPY go.mod go.sum ./
 # Кешируем зависимости

@@ -27,6 +27,8 @@
 | Модуль | Назначение | Параметры |
 |---|---|---|
 | `community.docker.docker_image` | Работа с образами | `source: build` (сборка), `source: pull` (архивация), `source: load` (загрузка) |
+
+> **Параметры `archive_path` и `load_path`:** разные имена, потому что это разные операции Docker API. `archive_path` — куда сохранить образ (save → файл), `load_path` — откуда загрузить образ (файл → load).
 | `community.docker.docker_container` | Управление контейнерами | `state: started/stopped/absent`, `restart_policy`, `ports` |
 | `community.docker.docker_swarm` | Инициализация и управление Swarm-кластером | `state: present` (init), `state: join`, `advertise_addr`, `join_token`, `remote_addrs` |
 | `community.docker.docker_stack` | Развёртывание Docker Stack | `name`, `state: present/absent`, `compose_file` |
@@ -164,14 +166,12 @@
             name: "my-app/{{ dockerfile_dir.path | basename }}:1.0"
             archive_path: "/archives/{{ dockerfile_dir.path | basename }}.tar"
             source: pull
-          when: image_build_result.changed
 
         - name: Fetch archive to control node
           ansible.builtin.fetch:
             src: "/archives/{{ dockerfile_dir.path | basename }}.tar"
             dest: "{{ playbook_dir }}/artifacts/"
             flat: yes
-          when: image_build_result.changed
 
 - name: Deploy Docker containers
   hosts: run-host
@@ -211,6 +211,17 @@
             restart_policy: always
             ports:
               - "8080:80"
+```
+
+---
+
+### Сценарий: Удаление контейнера
+
+```yaml
+- name: Remove old container
+  community.docker.docker_container:
+    name: flask-app
+    state: absent
 ```
 
 ---
