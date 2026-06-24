@@ -48,6 +48,48 @@
 
 Подробнее: [tc — управление трафиком](../../Linux/Networking/Tools/iproute2/tc.md).
 
+### Реализация в MikroTik (RouterOS)
+
+MikroTik использует систему Queue для ограничения пропускной способности. Два основных типа: Simple Queue и Queue Tree.
+
+#### Simple Queue
+
+Простой способ ограничения для отдельных IP, подсетей или интерфейсов. Позволяет задать лимиты входящего (`target-upload`) и исходящего (`target-download`) трафика.
+
+```bash
+# Ограничение IP 192.168.88.50 до 10 Мбит/с
+/queue simple add name="Limit-10M" target=192.168.88.50/32 max-limit=10M/10M
+
+# Ограничение всего интерфейса ether1
+/queue simple add name="Interface-Limit" target=ether1 max-limit=100M/100M
+
+# Ограничение подсети
+/queue simple add name="Subnet-Limit" target=192.168.88.0/24 max-limit=50M/50M
+```
+
+#### PCQ (Per Connection Queue)
+
+PCQ автоматически создаёт виртуальные очереди для каждого клиента, справедливо распределяя пропускную способность. Администратору не нужно вручную создавать отдельные правила для каждого IP.
+
+```bash
+# Создание типов очередей PCQ
+/queue type add name=PCQ_download kind=pcq pcq-classifier=dst-address pcq-rate=5M pcq-limit=50
+/queue type add name=PCQ_upload kind=pcq pcq-classifier=src-address pcq-rate=2M pcq-limit=50
+
+# Привязка типа к подсети
+/queue simple add name="Office" target=192.168.1.0/24 max-limit=10M/10M queue=PCQ_download/PCQ_upload
+```
+
+В этом примере каждое устройство в подсети получает до 5 Мбит/с на загрузку и 2 Мбит/с на отдачу, при общем лимите 10 Мбит/с на всю подсеть.
+
+**Проверка очередей:**
+
+```bash
+/queue simple print
+/queue simple monitor 0
+/queue simple print stats
+```
+
 ## Дополнительная информация
 
 - Real-time трафик: [Real-Time Traffic Quality](./real_time_traffic_quality.md)
