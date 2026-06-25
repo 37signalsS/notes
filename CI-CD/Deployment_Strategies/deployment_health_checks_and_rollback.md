@@ -36,8 +36,9 @@ Kubernetes предоставляет три типа проб (probes) для �
 | :--- | :--- | :--- | :--- |
 | **Recreate** | Развертывание старой версии после остановки новой | Медленно | Гарантированный простой |
 | **Rolling Update** | `kubectl rollout undo deployment/<name>` | Средняя (поэтапный) | Нет |
+| **Helm (immutable tag)** | `helm upgrade --set image.tag=<предыдущий-sha>` | Средняя | Нет |
 | **Blue-Green** | Мгновенное переключение трафика на Blue | Мгновенно | Нет (требуется `drain` соединений) |
-| **Canary** | Возврат веса трафика к 100% на stable | Быстро | Нет |
+| **Canary (Argo Rollouts)** | `kubectl argo rollouts abort <rollout>` | Быстро | Нет |
 | **Feature Flags** | Отключение функции без переразвертывания | Мгновенно | Нет |
 
 ### Database Migration Rollback
@@ -112,6 +113,27 @@ if (( $(echo "$ERROR_RATE > 0.01 || $P95 > 0.3" | bc -l) )); then
   kubectl rollout undo deployment/myapp
   exit 1
 fi
+```
+
+### Scenario 3: Rollback via Immutable Tag
+
+Иммутабельный тег (`$CI_COMMIT_SHORT_SHA`) делает откат тривиальным — достаточно развернуть предыдущий SHA, без возни с ревизиями Helm.
+
+```bash
+# Helm — указать предыдущий SHA
+helm upgrade --set image.tag=<предыдущий-sha> ./app
+
+# kubectl — напрямую поменять образ
+kubectl set image deployment/my-app my-container=registry/app:<предыдущий-sha>
+```
+
+### Scenario 4: Argo Rollouts — Abort Canary
+
+При канарейке через Argo Rollouts откат — одна команда:
+
+```bash
+kubectl argo rollouts abort <rollout-name>
+# → 100% трафика возвращается на stable-версию
 ```
 
 ## Additional Information

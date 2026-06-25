@@ -23,7 +23,7 @@
 
 Добавьте в корень основного проекта:
 
-```
+```ini
 # .gitignore
 roles/
 ```
@@ -50,7 +50,7 @@ roles/
 
     - name: Clone or update roles repository
       ansible.builtin.git:
-        repo: 'git@gitlab.com:your_user/my-ansible-roles.git' # SSH URL репозитория
+        repo: 'git@gitlab.com:your_user/my-ansible-roles.git' # SSH (Secure Shell) URL (Uniform Resource Locator) репозитория
         dest: roles
         version: master # Можно указать ветку, тег или коммит
         force: true # Перезаписывать локальные изменения, чтобы всегда иметь актуальную версию
@@ -63,18 +63,18 @@ roles/
 ### Сценарий 1: Первоначальная загрузка ролей
 
 ```bash
-ansible-playbook init.yml
+ansible-playbook init.yml  # → роли клонированы в каталог roles/
 ```
 
 ### Сценарий 2: Обновление ролей до последней версии
 
 ```bash
 # Через плейбук
-ansible-playbook init.yml
+ansible-playbook init.yml  # → актуализация ролей в каталоге roles/
 
 # Или вручную через Git
 cd roles
-git pull
+git pull  # → получение последних изменений из репозитория
 ```
 
 ### Сценарий 3: Фиксация версии роли

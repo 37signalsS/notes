@@ -12,14 +12,14 @@
 
 Для автоматизации обычно используются два компонента:
 
-- **Роль `undergreen.mongodb`**: Отвечает за установку пакетов, настройку конфигурационных файлов и управление операционной системой (ОС).
+- **Роль `undergreen.mongodb`**: Отвечает за установку пакетов, настройку конфигурационных файлов и управление операционной системой (ОС — Операционная Система).
 - **Коллекция `community.mongodb`**: Содержит модули для логической настройки кластера (например, `mongodb_replicaset`).
 
 Установка зависимостей на управляющем узле:
 
 ```bash
-ansible-galaxy install undergreen.mongodb
-ansible-galaxy collection install community.mongodb
+ansible-galaxy install undergreen.mongodb  # → роль установлена
+ansible-galaxy collection install community.mongodb  # → коллекция установлена
 ```
 
 ### Инициализация кластера
@@ -110,7 +110,7 @@ mongodb_replication_role: primary
 
 ### Безопасность
 
-В производственных средах обязательна настройка аутентификации. Параметры `login_user` и `login_password` должны передаваться в модуль `mongodb_replicaset`. Конфиденциальные данные следует хранить в **[Ansible Vault](../Vault/basics.md)**.
+В производственных средах обязательна настройка аутентификации. Параметры `login_user` и `login_password` должны передаваться в модуль `mongodb_replicaset`. Конфиденциальные данные следует хранить в **[Ansible Vault (защищенное хранилище)](../Vault/basics.md)**.
 
 ### Идемпотентность
 

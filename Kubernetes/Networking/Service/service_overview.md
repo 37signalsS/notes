@@ -117,6 +117,7 @@ Service автоматически распределяет трафик меж�
 
 Для каждого Service с селектором Kubernetes создаёт объекты **Endpoints** или **EndpointSlices**:
 
+- **Endpoints controller** (внутри `kube-controller-manager`) следит за подами по селектору и поддерживает **EndpointSlice** с их IP и портами.
 - **EndpointSlice** содержит список актуальных IP-адресов и портов здоровых подов.
 - `kube-proxy` использует эти данные для настройки правил маршрутизации (iptables/IPVS) на узлах кластера.
 

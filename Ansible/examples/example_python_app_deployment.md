@@ -122,11 +122,7 @@ WantedBy=multi-user.target
         enabled: yes
 ```
 
----
-
-## Дополнительная информация
-
-### Верификация результата
+#### 4. Верификация результата
 
 После завершения работы плейбука проверьте состояние сервиса и доступность сокета на целевом хосте:
 
@@ -138,10 +134,12 @@ systemctl status mywebapp
 curl --unix-socket /apps/mywebapp/app/mywebapp.sock http://localhost
 ```
 
-### Связанные документы
+---
 
-- **[Кроссплатформенные плейбуки: Концепции](../CrossPlatform/concepts.md)** — базовые принципы переносимости кода.
-- **[Пример LAMP (Python-окружения)](../CrossPlatform/lamp-example.md#работа-с-python-зависимостями-pip-и-venv)** — детализация работы с `pip` и `venv`.
-- **[Шаблонизация Jinja2](../ansible_jinja_templating.md)** — руководство по созданию динамических конфигураций.
-- **[Модули управления файлами](../Modules/ansible_file_management_modules.md)** — описание модулей `copy`, `template`, `file`.
-- **[Модули управления пакетами](../Modules/ansible_package_management_modules.md)** — подробности работы модуля `pip`.
+## Дополнительная информация
+
+### Связанные руководства
+
+- **[Кроссплатформенность в Python](../CrossPlatform/lamp-example.md#работа-с-python-зависимостями-pip-и-venv)** — детализация работы с `pip` и `venv` в различных операционных системах.
+- **[Шаблонизация Jinja2](../ansible_jinja_templating.md)** — руководство по созданию динамических конфигураций (systemd-юнитов).
+- **[Модули управления пакетами](../Modules/ansible_package_management_modules.md)** — подробное описание работы модуля `ansible.builtin.pip`.

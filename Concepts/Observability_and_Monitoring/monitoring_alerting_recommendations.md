@@ -65,6 +65,27 @@
 Также см. примеры алертов для базовых типов метрик:
 > **[Prometheus Alerts](../../Prometheus/concepts/metric_types/alerts.md)**
 
+### Сценарий: Минимальный production-мониторинг за первый день
+
+**Задача:** стартап запустил первый production-сервис. Минимальный набор для настройки в первый день:
+
+| Компонент | Что мониторить | Инструмент |
+|---|---|---|
+| **RED метрики** | Rate (RPS), Errors (error rate %), Duration (p95 latency) | [RED Method](./monitoring_methodologies.md#3-red-method) |
+| **Инфраструктура** | CPU, RAM, disk usage | [node_exporter](../../Prometheus/Exporters/node_exporter.md) + простые алерты |
+| **Uptime** | `up{job="..."} == 0` → немедленная нотификация | [Alertmanager](../../Prometheus/alertmanager.md) |
+| **Логи** | Централизованный сбор, retention 7 дней минимум | Fluentbit → [Loki](../../Loki/loki_overview.md) / CloudWatch |
+| **Сэмплирование** | При >1000 RPS: DEBUG на 10%, ERROR на 100% | Fluentbit / Vector (см. [сценарий 3](./logs_deep_dive.md#сценарий-3-фильтрация-и-агрегация-логов)) |
+| **Dashboard** | Базовый: RPS, error%, p95 latency, CPU, RAM | [Grafana провижининг](../../Grafana/grafana_provisioning.md) |
+| **On-call дежурство** | Critical → PagerDuty (24/7), Warnings → Telegram (рабочее время) | [Alertmanager routing tree](../../Prometheus/alertmanager.md) |
+
+**Ключевые принципы с первого дня:**
+
+- **Алерты как код:** PrometheusRule, recording rules и alerting rules хранятся в Git вместе с манифестами приложения и проходят code review — никаких ручных правок в UI Grafana. См. [PrometheusRule CRD](../../Prometheus/kubernetes/operator/crd/prometheusrule.md).
+- **SLO через burn-rate:** вместо threshold-алертов (`error_rate > 5%`). Burn-rate точнее: алерт срабатывает при превышении бюджета ошибок за окно (multi-window, multi-burn-rate). Меньше шума, быстрее detection. Подробнее — [SRE: SLO, SLI](../sre_concepts_main.md).
+- **Recording rules:** предварительно агрегировать дорогие PromQL-запросы (например, rate за 5m для каждого сервиса) — ускоряет дашборды и снижает нагрузку на Prometheus. См. [Recording Rules](../../Prometheus/rules.md#правила-записи-recording-rules).
+- **Retention метрик:** локальный Prometheus хранит данные 15 дней по умолчанию. Для долгосрочного хранения — [VictoriaMetrics](../../VictoriaMetrics/overview.md) или [Thanos](../../Prometheus/scaling/thanos_overview.md) через `remote_write`. См. [Remote Read/Write](../../Prometheus/scaling/remote_read_write.md).
+
 ## Дополнительная информация
 
 ### Связанные темы

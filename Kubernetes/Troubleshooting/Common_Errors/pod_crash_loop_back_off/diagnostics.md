@@ -89,7 +89,33 @@ kubectl run debug --rm -it --image=busybox --restart=Never -- nslookup <service-
 # Address 1: 10.101.5.111
 ```
 
-#### Шаг 5: Проверка прав доступа (RBAC)
+#### Шаг 5: Проверка лимитов памяти и OOMKilled
+
+Если в `Events` указан `OOMKilled` (exit code 137), контейнеру не хватает памяти.
+
+```bash
+# Проверка лимитов пода
+kubectl get pod <pod-name> -o jsonpath='{range .spec.containers[*]}{.resources.limits.memory}{"\n"}{end}'
+```
+
+Решение: увеличить `resources.limits.memory` или исправить утечку памяти.
+
+#### Шаг 6: Отладка без перезапусков (restartPolicy: Never)
+
+Создайте под с тем же образом и `restartPolicy: Never` — он останется в состоянии `Error` после падения, не перезапускаясь, и можно будет войти через `kubectl exec`.
+
+```bash
+kubectl run debug --image=my-app:latest --restart=Never -- <command>
+kubectl exec -it debug -- sh
+```
+
+Альтернатива: изменить стратегию развертывания существующего пода, подменив entrypoint на `sleep 3600`:
+
+```bash
+kubectl patch deployment <name> --patch '{"spec":{"template":{"spec":{"containers":[{"name":"app","command":["sleep","3600"]}]}}}}'
+```
+
+#### Шаг 7: Проверка прав доступа (RBAC)
 
 Если приложение обращается к Kubernetes API, оно должно использовать ServiceAccount (SA) с соответствующими правами.
 

@@ -1,4 +1,4 @@
-# Ansible: Управление Docker
+# Ansible — управление Docker
 
 ## Определения
 
@@ -10,14 +10,14 @@
 
 | Роль хоста | Назначение |
 |---|---|
-| `build-host` | Сборка Docker-образов из Dockerfile (требуется Docker Software Development Kit (SDK)) |
+| `build-host` | Сборка Docker-образов из Dockerfile (требуется Docker Software Development Kit (SDK — комплект разработки программного обеспечения)) |
 | `run-host` | Запуск контейнеров на основе готовых образов |
 | `control-node` | Узел Ansible: координация, хранение артефактов |
 
-### Жизненный цикл Build-Ship-Run
+### Жизненный цикл сборки, доставки и запуска (Build-Ship-Run)
 
 1. **Build** (Сборка) — сборка образа из Dockerfile на `build-host`
-2. **Ship** (Доставка) — архивация образа в `.tar` и передача на `run-host` через контрольный узел
+2. **Ship** (Доставка) — архивация образа в `.tar (Tape Archive — архивный формат)` и передача на `run-host` через контрольный узел
 3. **Run** (Запуск) — загрузка образа в Docker и запуск контейнера на `run-host`
 
 ### Ключевые модули
@@ -28,7 +28,7 @@
 |---|---|---|
 | `community.docker.docker_image` | Работа с образами | `source: build` (сборка), `source: pull` (архивация), `source: load` (загрузка) |
 
-> **Параметры `archive_path` и `load_path`:** разные имена, потому что это разные операции Docker API. `archive_path` — куда сохранить образ (save → файл), `load_path` — откуда загрузить образ (файл → load).
+> **Параметры `archive_path` и `load_path`:** разные имена, потому что это разные операции Docker API (Application Programming Interface — программный интерфейс приложения). `archive_path` — куда сохранить образ (save → файл), `load_path` — откуда загрузить образ (файл → load).
 | `community.docker.docker_container` | Управление контейнерами | `state: started/stopped/absent`, `restart_policy`, `ports` |
 | `community.docker.docker_swarm` | Инициализация и управление Swarm-кластером | `state: present` (init), `state: join`, `advertise_addr`, `join_token`, `remote_addrs` |
 | `community.docker.docker_stack` | Развёртывание Docker Stack | `name`, `state: present/absent`, `compose_file` |
@@ -44,8 +44,8 @@
 | Пакет pip | Назначение |
 | :--- | :--- |
 | `docker>=5.0.0` | Docker SDK for Python |
-| `jsondiff` | Сравнение JSON-конфигов Swarm |
-| `pyyaml` | Парсинг YAML (Stack файлы) |
+| `jsondiff` | Сравнение JSON (JavaScript Object Notation)-конфигов Swarm |
+| `pyyaml` | Парсинг YAML (YAML Ain't Markup Language) (Stack файлы) |
 
 Аpt-пакеты (`python3-docker`, `python3-jsondiff`, `python3-yaml`) устанавливаются для системной версии Python. Если Ansible использует другой интерпретатор (например, `/usr/bin/python3.14`), модули из apt недоступны — нужна установка через `pip`. `ansible.builtin.pip` устанавливает пакеты в интерпретатор, указанный в `ansible_python_interpreter`.
 
@@ -66,7 +66,7 @@
       - jsondiff
       - pyyaml
     state: present
-    extra_args: --break-system-packages # PEP 668: bypass externally-managed-environment на Ubuntu 23.04+
+    extra_args: --break-system-packages # PEP (Python Enhancement Proposal) 668: bypass externally-managed-environment на Ubuntu 23.04+
 ```
 
 ### Делегирование задач
@@ -99,13 +99,13 @@
     remote_addrs: ["192.168.77.11:2377"]
 ```
 
-Токен получается на manager через `docker swarm join-token -q worker` (CLI) или модуль `community.docker.docker_swarm_info`.
+Токен получается на manager через `docker swarm join-token -q worker` (CLI — интерфейс командной строки) или модуль `community.docker.docker_swarm_info`.
 
 ### Сценарий: Полный цикл сборки и развертывания
 
 **Структура проекта:**
 
-```
+```text
 .
 ├── files/
 │   └── dockerfiles/
@@ -226,7 +226,7 @@
 
 ---
 
-### Сценарий: Проверка состояния (Health Check)
+### Сценарий: Проверка состояния (Health Check — проверка работоспособности)
 
 **Проверка, что Docker daemon работает:**
 
@@ -234,7 +234,7 @@
 
 ```yaml
 - name: Проверка, что Docker daemon работает
-  ansible.builtin.command: docker info
+  ansible.builtin.command: docker info  # → вывод информации о Docker-демоне
   register: docker_info
   changed_when: false
 ```
@@ -281,7 +281,7 @@
       ansible.builtin.meta: flush_handlers
 
     - name: Проверка, что Docker daemon работает
-      ansible.builtin.command: docker info
+      ansible.builtin.command: docker info  # → вывод информации о Docker-демоне
       changed_when: false
 
   handlers:
@@ -313,7 +313,6 @@
 
 ## Дополнительная информация
 
-- **Коллекция Docker:** Модули `community.docker.*` требуют установки коллекции — `ansible-galaxy collection install community.docker`
 - **Docker Compose:** Управление compose-файлами через модуль [`community.docker.docker_compose`](https://docs.ansible.com/ansible/latest/collections/community/docker/docker_compose_module.html)
 - **Создание Docker Config:** Пример с `community.docker.docker_config` и Jinja2-шаблоном — [swarm_secrets_configs.md](../../Docker_swarm/swarm_secrets_configs.md)
 - **Безопасность:** Рекомендации по изоляции контейнеров — [Docker/Docker_security/overview.md](../../Docker/Docker_security/overview.md)

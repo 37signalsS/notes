@@ -102,4 +102,6 @@
 
 ## Дополнительная информация
 
-Сравнение с push-моделью — в [ansible_core_concepts.md](ansible_core_concepts.md#определения). Настройка параллелизма — в [ansible_performance_tuning.md](ansible_performance_tuning.md). Примеры cron — в [Linux/SystemAdministration/cron.md](../Linux/SystemAdministration/cron.md).
+- [Модели доставки конфигурации: Push vs Pull](../Concepts/configuration_management_push_vs_pull.md) — теоретическое сравнение подходов.
+- [Основные концепции Ansible](ansible_core_concepts.md#определения) — определения push- и pull-моделей в Ansible.
+- [Планировщик задач cron](../Linux/SystemAdministration/cron.md) — настройка периодического запуска задач в Linux.

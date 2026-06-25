@@ -105,8 +105,6 @@ gitlab-runner ALL=(ALL) NOPASSWD: /usr/local/bin/ansible_runner_script.sh
 
 ### Смежные темы
 
-- **[Интеграция Ansible с GitLab CI/CD](../../CI-CD/GitLab_CI/Tutorials/ansible_integration.md)** — базовое руководство по настройке.
-- **[Переменные и секреты GitLab CI](../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — управление конфиденциальными данными.
-- **[Управление секретами в CI/CD](../../CI-CD/DevSecOps/secrets_management.md)** — стратегический подход к безопасности секретов.
-- **[Рекомендации по безопасности Ansible](../ansible_security_best_practices.md)** — настройка прав и изоляция пользователей.
-- **[Инвентарь Ansible](../ansible_setup_and_config.md#определение-хостов-inventory)** — принципы настройки управляемых узлов.
+- **[Интеграция Ansible с GitLab CI/CD](../../CI-CD/GitLab_CI/Tutorials/ansible_integration.md)** — базовое руководство по настройке пайплайнов.
+- **[Управление секретами в CI/CD](../../CI-CD/DevSecOps/secrets_management.md)** — стратегический подход к безопасности конфиденциальных данных.
+- **[Рекомендации по безопасности Ansible](../ansible_security_best_practices.md)** — глубокая настройка прав доступа и изоляция пользователей.

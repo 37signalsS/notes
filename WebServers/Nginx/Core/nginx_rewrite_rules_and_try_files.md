@@ -113,6 +113,8 @@ location = /old-contacts {
 }
 ```
 
+> **`return` vs `rewrite` для редиректов:** `return 301` работает на уровне FSM (Finite State Machine) Nginx без запуска regex engine. `rewrite` компилирует PCRE и проходит полный цикл обработки URI. При высоком RPS разница ощутима. Для HTTPS-редиректов всегда используйте `return 301`.
+
 **Решение (`rewrite` с флагами):**
 
 ```nginx

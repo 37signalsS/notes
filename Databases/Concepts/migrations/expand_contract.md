@@ -102,6 +102,71 @@ DROP FUNCTION sync_user_names();
 ALTER TABLE users DROP COLUMN name;
 ```
 
+### Сценарий: Rolling update с миграцией БД
+
+При обновлении сервиса через Rolling Update в Kubernetes старый и новый код работают параллельно. Миграция должна быть обратно-совместимой на всех этапах.
+
+**Процесс:**
+
+```yaml
+# 1. Сначала — миграция схемы (K8s Job)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: flyway/flyway:latest
+          command: ["flyway", "migrate"]
+```
+
+```yaml
+# 2. Затем — Rolling Update приложения с PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: my-app-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: my-app
+```
+
+Migration Job запускается **до** rolling update подов. PDB (`minAvailable: 1`) гарантирует, что при обновлении хотя бы один pod остаётся активным.
+
+**Пример для добавления колонки:**
+
+```sql
+-- Expand: nullable — старый код её не видит и не ломается
+ALTER TABLE orders ADD COLUMN discount NUMERIC(10,2);
+```
+
+```bash
+# Запуск миграции как K8s Job
+kubectl apply -f db-migrate-job.yaml
+kubectl wait --for=condition=complete job/db-migrate
+
+# Rolling update (старый код игнорирует колонку, новый — использует)
+kubectl set image deployment/my-app my-app=my-registry/my-app:v2
+```
+
+**Contract** (DROP/переименование) выносится в следующий релиз, когда старых подов гарантированно нет в кластере.
+
+### Инструменты версионированных миграций
+
+| Инструмент | Язык | Особенности |
+|:---|:---|:---|
+| **Flyway** | Java, SQL | Версионирование по имени файла (`V1__description.sql`), `flyway migrate`/`undo`, проверки (`validate`) |
+| **Liquibase** | Java, SQL, XML, YAML, JSON | Changeset с `id`+`author`, rollback per changeset, diff между БД |
+| **Goose** | Go | Переносимая бинарная сборка (один файл), миграции на Go + SQL |
+
+**Правило:** никаких `DROP COLUMN`, `RENAME COLUMN` или `ALTER COLUMN ... SET NOT NULL` без полного Expand-Contract цикла. Деструктивные изменения — только в фазе Contract, через один или несколько релизов после Expand.
+
 ## Дополнительная информация
 
 ### Рекомендации
@@ -115,3 +180,5 @@ ALTER TABLE users DROP COLUMN name;
 - **[Миграции баз данных: Основы](migration_basics.md)** — общие принципы и типы миграций.
 - **[Типовые сценарии](scenarios.md)** — примеры применения Expand-Contract для других задач.
 - **[Стратегии отката (Rollback)](rollback_strategies.md)** — особенности отмены изменений при использовании этого паттерна.
+- **[Rolling Update в Kubernetes](../../../CI-CD/Deployment_Strategies/rolling_update.md)** — стратегия поэтапного обновления подов.
+- **[PodDisruptionBudget](../../../Kubernetes/Autoscaling/pod_disruption_budget.md)** — защита сервиса от потери всех реплик.

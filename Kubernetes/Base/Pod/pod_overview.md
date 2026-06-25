@@ -29,6 +29,7 @@
 | **Сеть (Network Namespace)** | Единый IP-адрес на все container, общий `localhost`, общее пространство портов. Каждый container должен слушать уникальный порт. |
 | **Хранилище (Volumes)** | Pod назначается набор томов; каждый container монтирует их через `volumeMounts`. Все container могут читать и писать в общие тома. |
 | **IPC Namespace** | Container используют механизмы IPC (Inter-Process Communication), такие как семафоры и разделяемая память, для взаимодействия без сетевых вызовов. |
+| **PID Namespace** | По умолчанию — изолирован. Включается через `shareProcessNamespace: true` в spec Pod. Все container видят процессы друг друга. Позволяет debug-сайдкару отправлять сигналы (kill, reload) основному приложению и инспектировать его процессы. |
 
 ### Pod Template (шаблон пода)
 

@@ -151,7 +151,7 @@ db_password: "MySuperSecretPassword"
 | `pg_stat_database_tps` | Производительность: транзакций в секунду. |
 | `pg_stat_database_blks_hit` | Эффективность кэширования (Buffer Cache Hit Ratio). |
 
-### Связанные документы
+### Связанные руководства
 
 - **[Примеры установки PostgreSQL](./example_postgresql_setup.md)** — базовые сценарии развертывания БД.
 - **[Full-Stack Observability для PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)** — концепция комплексной наблюдаемости.

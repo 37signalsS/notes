@@ -152,7 +152,7 @@ kubectl taint nodes worker-1 maintenance=true:NoSchedule-
 
 ## Дополнительная информация
 
-* **DaemonSet**: По умолчанию игнорирует `NoSchedule` для `node.kubernetes.io/unschedulable`.
+* **DaemonSet**: По умолчанию игнорирует `NoSchedule` для `node.kubernetes.io/unschedulable`. Имеет встроенные tolerations для `node-role.kubernetes.io/master` и `node-role.kubernetes.io/control-plane` (эффект `NoSchedule`), поэтому работает на master-нодах без явной toleration в манифесте.
 * **QoS классы**: Влияют на приоритет вытеснения при нехватке ресурсов. Подробнее в [QoS, Requests и Limits](./qos_limit_and_requests.md).
 * **Диагностика**:
 

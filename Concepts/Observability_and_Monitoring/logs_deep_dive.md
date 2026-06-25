@@ -174,6 +174,17 @@ inputs = ["kubernetes_logs"]
 rate = 0.1
 ```
 
+**Production-рекомендации по сэмплированию и хранению:**
+
+| Аспект | Рекомендация |
+|---|---|
+| **Сэмплирование по уровню** | DEBUG/TRACE при >1000 RPS — не более 10%; ERROR/FATAL — всегда 100% (не сэмплировать) |
+| **Retention** | Hot (оперативный поиск) — 7 дней; Cold (аудит, compliance) — до 90 дней, выгрузка в S3 / object storage |
+| **Парсинг JSON** | Разбирать логи в структурированный формат на уровне агента (Fluentbit / Vector), а не в Logstash или системе хранения. Это снижает нагрузку на хранилище и упрощает дальнейшую обработку |
+| **Единый UI** | Grafana как единый интерфейс для метрик (Prometheus) и логов (Loki) — корреляция через `trace_id` без переключения систем |
+
+Retention настраивается: в Loki через `retention_period` и `retention_stream`; в Elasticsearch — ILM (Index Lifecycle Management) с политикой rollover → warm → cold → delete.
+
 ## Additional Information
 
 ### Инструменты экосистемы

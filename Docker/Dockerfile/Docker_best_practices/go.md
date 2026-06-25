@@ -94,6 +94,20 @@ RUN chmod +x /main
 ENTRYPOINT ["/main"]
 ```
 
+### Верификация статической сборки
+
+```bash
+# 1. ldd — если бинарь статический, ответит "not a dynamic executable"
+ldd ./main
+# → not a dynamic executable
+
+# 2. file — покажет "statically linked"
+file ./main
+# → ELF 64-bit LSB executable, x86-64, statically linked
+```
+
+Если `ldd` выводит список `.so`-зависимостей (libc.so.6, ld-linux-x86-64) — бинарь динамический и не запустится в Alpine/scratch.
+
 ## Дополнительная информация
 
 ### Смотрите также

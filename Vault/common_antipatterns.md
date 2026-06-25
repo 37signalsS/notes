@@ -42,6 +42,47 @@
 - **Риск:** Доступ любому процессу с тем же UID (User ID), утечка через системы мониторинга.
 - **Решение:** Монтирование секретов как файлов (через tmpfs), использование [Vault Agent](./guides/vault_agent/basics.md).
 
+#### Миграция с .env / переменных окружения на Vault (без даунтайма)
+
+Переход на централизованное хранилище без прерывания работы сервиса.
+
+**1. Выбор метода аутентификации**
+
+Приложение аутентифицируется в Vault без статического токена:
+
+- **Vault AppRole** — для VM / bare-metal. RoleID + SecretID с коротким TTL. Подробнее — [AppRole](./guides/vault_auth_approle.md).
+- **Kubernetes auth** — для подов. ServiceAccount JWT-токен проверяется через Kubernetes Token Review API. Подробнее — [K8s integration](./guides/vault_kubernetes_integration.md#аутентификация-vault-через-kubernetes).
+
+**2. Подготовка Vault**
+
+- Развернуть Vault в режиме HA (3 ноды) + auto-unseal через KMS (AWS KMS / GCP Cloud KMS / Azure Key Vault).
+- Включить KV-движок (`vault secrets enable -path=secret kv-v2`).
+- Создать политики (least privilege) и роли для каждого приложения.
+
+**3. Запись секретов в Vault**
+
+```bash
+vault kv put secret/app DB_PASSWORD=... DB_HOST=...
+```
+
+**4. Обновление приложения**
+
+- **Vault SDK** — приложение запрашивает секреты напрямую через Vault API (библиотеки: hvac, vault-ruby, утилита `curl`). Секреты кэшируются с обновлением по TTL.
+- **Vault Agent sidecar** — контейнер с Vault Agent в поде аутентифицируется, получает секреты и сохраняет в `emptyDir` или рендерит шаблоны. Подробнее — [Vault Agent](./guides/vault_agent/basics.md), [sidecar pattern](./guides/vault_agent/sidecar_pattern.md).
+- **External Secrets Operator** — синхронизирует секреты из Vault в нативные Kubernetes `Secret`. Приложение продолжает использовать стандартные переменные окружения или `volumeMounts`. Подробнее — [ESO](../../Kubernetes/Base/secrets/external_managers.md).
+- **Vault Agent Injector** — автоматическое внедрение sidecar через аннотации пода (`vault.hashicorp.com/agent-inject: true`). Подробнее — [Injector](./guides/vault_agent/injector.md).
+
+**5. Zero-downtime rollout**
+
+1. Записать секреты в Vault (шаг 3).
+2. Развернуть новую версию приложения с поддержкой Vault, сохранив чтение из `.env` как fallback.
+3. Rolling update — старые поды читают `.env`, новые получают секреты из Vault.
+4. После полного rollout удалить `.env`-файлы и отключить fallback-код в приложении.
+
+**6. Ротация**
+
+Для баз данных Vault поддерживает **динамические секреты** (PostgreSQL, MySQL, MongoDB) — генерация уникальных одноразовых credentials на каждый запрос с коротким TTL и автоматическим отзывом. Ручная ротация не требуется. Подробнее — [Zero Trust](./zero_trust.md).
+
 ### 4. Секреты в слоях контейнерных образов
 
 Файлы, удалённые в последующих инструкциях `RUN`, остаются в предыдущих слоях образа и могут быть извлечены.

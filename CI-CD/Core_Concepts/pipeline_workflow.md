@@ -14,114 +14,103 @@
 2. **Параллелизм:** Всё, что может выполняться одновременно, должно выполняться одновременно. Например, юнит-тесты, линтеры для разных частей проекта, E2E-тесты в разных браузерах. Это радикально сокращает общее время выполнения пайплайна.
 3. **Последовательность:** Зависимые этапы должны выполняться строго по порядку. Нельзя тестировать несобранный код или развертывать непротестированное приложение.
 
-### Структура пайплайна по типу языка
+### Каноническая структура пайплайна
 
-* **Интерпретируемые языки (Node.js, Python):**
-    `Lint` → `Unit Tests` → `Build` (сборка Docker-образа) → `Integration Tests` → `Deploy`.
-    *Особенность:* Юнит-тесты могут запускаться до сборки финального артефакта.
+Универсальная последовательность с воротами качества (quality gates):
 
-* **Компилируемые языки (Go, Java):**
-    `Lint` → `Compile` → `Unit Tests` → `Package` (сборка Docker-образа) → `Integration Tests` → `Deploy`.
-    *Особенность:* Компиляция является обязательным шагом перед запуском тестов.
+`Lint` → `Test` → `Build` (Docker-образ) → `Push` (registry, immutable-тег) → `Deploy`.
+
+Для компилируемых языков (Go, Java, Rust) компиляция происходит на этапах `Test` (языки со встроенной компиляцией, например `go test`) или на выделенном шаге перед тестами (`javac` → `mvn test`), но **Docker-образ собирается только после зелёных тестов** — нет смысла паковать то, что не работает.
 
 ### Типичный поток пайплайна
 
 Рассмотрим канонический пайплайн, обеспечивающий баланс скорости и качества:
 
-1. **Инициация:** Создание **MR/PR (Merge Request / Pull Request — запрос на слияние или изменение кода)** в основную ветку (`main`).
-2. **Валидация кода (1–2 мин):** Линтинг, форматирование, поиск утечек секретов (gitleaks, trufflehog).
-3. **Сборка и unit-тесты (3–5 мин):** Компиляция/установка зависимостей, юнит-тесты, проверка покрытия.
-4. **Сборка артефакта:** Сборка Docker-образа, проверка запускаемости (например, `docker compose up` с зависимостями).
-5. **Сканирование безопасности (5–10 мин):** **SAST (Static Application Security Testing — статическое тестирование безопасности приложений)**, **SCA (Software Composition Analysis — анализ состава программного обеспечения)**, сканирование Docker-образа (Trivy).
-6. **Push в registry:** Публикация иммутабельного артефакта с уникальным тегом (commit hash).
-7. **Deploy на Staging:** Развертывание в предпроизводственную среду, smoke-тесты, health-check'и.
-8. **Интеграционное и E2E-тестирование:** Запуск API-тестов и **E2E (End-to-End — сквозное тестирование)**.
-9. **QA-проверки и Code Review:** Ручное тестирование специалистами **QA (Quality Assurance — обеспечение качества)** и проверка кода коллегами.
-10. **Deploy на Production:** Ручное подтверждение (Continuous Delivery) или автоматическое (Continuous Deployment).
+Идеальный пайплайн — это конвейер с **gates**, а не просто «запустить скрипты»:
+
+1. **lint** — быстрая (1–2 мин) статическая проверка: golangci-lint, eslint, форматтер. Цель — поймать грубые ошибки до запуска тестов.
+2. **test** — unit-тесты + **coverage gate** (≥80%). Публикация отчёта через artifacts → JUnit — GitLab подсвечивает провалы прямо в MR.
+3. **build** — сборка Docker-образа (multi-stage). Build идёт **после** test — нет смысла собирать образ, если тесты не зелёные.
+4. **push** — публикация в registry с **иммутабельным тегом**: `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA`. Почему не `:latest`? `latest` — mutable, его можно перезаписать; по sha всегда можно воспроизвести, что именно запущено.
+5. **deploy** — в dev-окружение автоматически после merge в main; в production — `when: manual`. Это не паранойя, а аудит: кто, когда, что задеплоил.
+
+На зрелых командах между push и deploy добавляют: **scan** (Trivy CVE по образу), **validate** (migration lint), **review-окружение** на MR.
 
 ## Практические сценарии
 
 ### Пример на GitLab CI
 
-Этот декларативный пайплайн иллюстрирует описанный выше поток.
-
 ```yaml
-# Определение последовательности [Этапов (Stages)](./pipeline_glossary.md#этап-stage)
 stages:
-  - build
+  - lint
   - test
-  - package
+  - build
+  - push
   - deploy
 
 variables:
-  APP_VERSION: "${CI_COMMIT_SHORT_SHA}"
+  IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
 
-# [Задача (Job)](./pipeline_glossary.md#задача-job-step) на этапе 'build'
+# 1. Lint — быстрая статическая проверка
+lint:
+  stage: lint
+  script:
+    - golangci-lint run ./...
+
+# 2. Test — unit + coverage gate
+test:
+  stage: test
+  script:
+    - go test -coverprofile=coverage.out -covermin=80 ./...
+  artifacts:
+    reports:
+      junit: junit.xml
+
+# 3. Build — только если lint и test прошли
 build:
   stage: build
   script:
-    - make deps
-    - make build
-  # Создание [артефактов](./pipeline_glossary.md#артефакт-artifact) для передачи на следующие этапы
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 week
-
-# Задача на этапе 'test'
-test:
-  stage: test
-  needs: ["build"] # Зависимость от задачи 'build'
-  script:
-    - make lint
-    - make unit
-    - make integration
-  # Использование [кэширования](./pipeline_glossary.md#кэш-cache) для ускорения
-  cache:
-    paths:
-      - .cache/pip
-
-# Задача на этапе 'package'
-package:
-  stage: package
+    - docker build -t $CI_REGISTRY_IMAGE:$IMAGE_TAG .
   needs: ["test"]
-  script:
-    - docker build -t registry.example/app:$APP_VERSION .
-    - docker push registry.example/app:$APP_VERSION
-  artifacts:
-    reports:
-      dotenv: release.env
 
-# Задача развертывания в [среду](./pipeline_glossary.md#среда-environment) 'staging'
-deploy_stage:
-  stage: deploy
-  needs: ["package"]
+# 4. Push — immutable tag
+push:
+  stage: push
   script:
-    - ./scripts/deploy.sh stage $APP_VERSION
-  environment: "stage"
+    - docker push $CI_REGISTRY_IMAGE:$IMAGE_TAG
+  needs: ["build"]
 
-# Задача развертывания в [среду](./pipeline_glossary.md#среда-environment) 'production'
-deploy_prod:
+# 5. Deploy (dev — авто, prod — manual)
+deploy_dev:
   stage: deploy
-  needs: ["deploy_stage"]
-  when: manual # [Триггер](./pipeline_glossary.md#триггер-trigger): ручной запуск
+  script:
+    - ./deploy.sh dev $IMAGE_TAG
+  needs: ["push"]
   only:
     - main
+  environment: dev
+
+deploy_prod:
+  stage: deploy
+  when: manual
   script:
-    - ./scripts/deploy.sh prod $APP_VERSION
-  environment: "production"
+    - ./deploy.sh prod $IMAGE_TAG
+  needs: ["push"]
+  only:
+    - main
+  environment: production
 ```
 
 ### Пояснения к примеру
 
 | Компонент | Описание |
 | :--- | :--- |
-| `stages` | Последовательность этапов: `build` → `test` → `package` → `deploy` |
-| `needs` | Явное указание зависимостей между задачами |
-| `artifacts` | Передача результатов сборки между этапами |
-| `cache` | Сохранение зависимостей между запусками пайплайна |
-| `environment` | Декларативное описание среды развертывания |
-| `when: manual` | Требование ручного подтверждения для production |
+| `stages` | Последовательность этапов: `lint` → `test` → `build` → `push` → `deploy` |
+| `needs` | Явное указание зависимостей между задачами (DAG) |
+| `artifacts.reports.junit` | Публикация результатов тестов — GitLab показывает провалы в MR |
+| `IMAGE_TAG` | Иммутабельный тег (`$CI_COMMIT_SHORT_SHA`) — воспроизводимость и аудит |
+| `when: manual` | Ручное подтверждение деплоя в prod — аудит: кто, когда, что задеплоил |
+| `only: main` | Деплой только из основной ветки |
 
 ## Дополнительная информация
 

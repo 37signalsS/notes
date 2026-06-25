@@ -79,9 +79,13 @@ etcdctl --endpoints=$ENDPOINTS --cacert=$CA --cert=$CERT --key=$KEY <command>
   etcdctl snapshot status backup.db
   ```
 
-* **Восстановление (используется etcdutl в 3.6+):**
+* **Восстановление:**
 
   ```bash
+  # etcdctl (API v3)
+  etcdctl snapshot restore backup.db --data-dir /var/lib/etcd-new
+
+  # etcdutl (3.6+)
   etcdutl snapshot restore backup.db --data-dir /var/lib/etcd-new
   ```
 

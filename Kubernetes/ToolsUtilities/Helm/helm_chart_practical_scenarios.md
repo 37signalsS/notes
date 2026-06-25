@@ -163,7 +163,110 @@ helm upgrade app ./chart -f values.yaml -f values-production.yaml -n prod --atom
 
 ---
 
+### Организация деплоя 100 микросервисов через один shared-чарт
+
+Для однотипных микросервисов (единый стек, одинаковые шаблоны Deployment/Service/Ingress) создаётся один **shared-чарт** (не `type: library`, а обычный, с `templates/`). Он публикуется в OCI-регистри (Harbor, ECR, GitLab Container Registry). Каждый сервис поставляет только свой `values.yaml`.
+
+**Структура репозитория:**
+```
+infra/
+├── charts/shared/             # один чарт на все сервисы
+│   ├── Chart.yaml
+│   ├── templates/
+│   │   ├── deployment.yaml
+│   │   ├── service.yaml
+│   │   ├── ingress.yaml
+│   │   ├── configmap.yaml
+│   │   └── _helpers.tpl
+│   └── values.yaml            # default-значения
+└── services/
+    ├── svc-auth/values.yaml   # только overrides
+    ├── svc-payment/values.yaml
+    └── svc-notification/values.yaml
+```
+
+**values.yaml сервиса (только то, что отличается):**
+```yaml
+image:
+  repository: myapp/svc-auth
+  tag: v1.5.2
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+env:
+  LOG_LEVEL: info
+```
+
+**Развёртывание отдельного сервиса:**
+```bash
+helm upgrade --install svc-auth oci://harbor.example.com/charts/shared \
+  -f services/svc-auth/values.yaml \
+  -f values-prod.yaml --atomic
+```
+
+**Оркестрация через Helmfile:** каждый релиз — один микросервис с указанием shared-чарта и своего values:
+
+```yaml
+releases:
+  - name: svc-auth
+    chart: oci://harbor.example.com/charts/shared
+    version: "1.2.0"
+    values:
+      - services/svc-auth/values.yaml
+      - values-{{ .Environment.Name }}.yaml
+  - name: svc-payment
+    chart: oci://harbor.example.com/charts/shared
+    version: "1.2.0"
+    values:
+      - services/svc-payment/values.yaml
+      - values-{{ .Environment.Name }}.yaml
+```
+
+**Оркестрация через ArgoCD ApplicationSet (git-generator):** ArgoCD сам находит директории `services/*` и создаёт Application для каждой:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: microservices
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/my-org/infra.git
+        revision: HEAD
+        directories:
+          - path: services/*
+  template:
+    metadata:
+      name: '{{ path.basename }}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/my-org/infra.git
+        targetRevision: HEAD
+        path: charts/shared
+        helm:
+          valueFiles:
+            - services/{{ path.basename }}/values.yaml
+            - values-prod.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ path.basename }}'
+```
+
+| Вариант | Когда выбирать |
+|---------|---------------|
+| **Helmfile** | CI/CD-пайплайн, нет ArgoCD, нужен `diff`/`apply` из CLI |
+| **ApplicationSet** | GitOps-подход, ArgoCD уже в кластере, авто-синхронизация |
+
+**В чём отличие от library chart:** library chart (`type: library`) предоставляет только `define`-блоки для `include` из других чартов — он не устанавливается. Shared-чарт — полноценный чарт с `templates/`, который рендерит ресурсы под каждый сервис. См. [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md) для деталей library-подхода.
+
+---
+
 ## См. также
 
 - [Зависимости и Library Charts в Helm](./helm_dependencies_and_library_charts.md)
 - [Основные команды и рабочий процесс Helm](./helm_commands_and_workflow.md)
+- [Helmfile: декларативный оркестратор](./helmfile_overview.md)
+- [ArgoCD: Интеграция с Helm](../../../GitOps/ArgoCD/helm_integration.md)

@@ -150,6 +150,10 @@ receivers:
   email_configs:
     - to: 'monitoring-team@example.com'
       send_resolved: true
+- name: 'webhook'
+  webhook_configs:
+    - url: 'https://hooks.example.com/alert'
+      send_resolved: true
 ```
 
 **Логика маршрутизации:**

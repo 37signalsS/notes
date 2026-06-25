@@ -53,7 +53,7 @@ Ansible автоматически применит правильный пар�
 ansible-vault rekey group_vars/prod/secrets.yml --vault-id prod@old_pass.txt --new-vault-id prod@new_pass.txt
 ```
 
-Команда полезна при ротации паролей или миграции на новую версию Ansible. Детали алгоритмов шифрования описаны в [algorithms.md](./algorithms.md).
+Команда полезна при ротации паролей или миграции на новую версию Ansible. Детали алгоритмов шифрования описаны в [Алгоритмах шифрования](./algorithms.md).
 
 ## Дополнительная информация
 

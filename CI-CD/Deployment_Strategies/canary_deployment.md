@@ -28,7 +28,7 @@
 
 ### Требования к инфраструктуре
 
-- **Service Mesh или Ingress-контроллер** — для маршрутизации трафика (Istio, NGINX, Traefik).
+- **Service Mesh или Ingress-контроллер** — для маршрутизации трафика (Istio, NGINX, Traefik). NGINX Ingress поддерживает canary через аннотации (`nginx.ingress.kubernetes.io/canary`, `nginx.ingress.kubernetes.io/canary-weight`).
 - **Система мониторинга** — для сбора и анализа метрик (Prometheus, Grafana).
 - **CI/CD-пайплайн** — для автоматизации процесса выкатки.
 

@@ -3,7 +3,7 @@
 ## Определения
 
 - **Ansible Vault**: Встроенный в Ansible механизм для шифрования секретов, таких как пароли, ключи API (Application Programming Interface) и сертификаты SSL (Secure Sockets Layer). Он позволяет безопасно хранить чувствительные данные в системе контроля версий (Git) вместе с кодом автоматизации.
-- **Хранилище (Vault)**: Зашифрованный YAML-файл или отдельная зашифрованная строка, содержащие секреты.
+- **Хранилище (Vault)**: Зашифрованный YAML-файл (YAML Ain't Markup Language) или отдельная зашифрованная строка, содержащие секреты.
 
 ## Основные концепции
 
@@ -32,8 +32,7 @@ Ansible Vault может шифровать как YAML-файлы целико�
 1. **Создание файла**:
 
     ```bash
-    # Будет запрошен пароль для нового файла
-    ansible-vault create group_vars/all/vault.yml
+    ansible-vault create group_vars/all/vault.yml # → Vault password: (ввод пароля)
     ```
 
     В открывшемся редакторе можно определить переменные:
@@ -47,15 +46,14 @@ Ansible Vault может шифровать как YAML-файлы целико�
 2. **Редактирование файла**:
 
     ```bash
-    # Будет запрошен пароль для расшифровки
-    ansible-vault edit group_vars/all/vault.yml
+    ansible-vault edit group_vars/all/vault.yml # → Vault password: (ввод пароля)
     ```
 
 3. **Использование в плейбуке**:
     Ansible автоматически загрузит и расшифрует переменные. Вам нужно лишь предоставить пароль.
 
     ```bash
-    ansible-playbook deploy.yml --ask-vault-pass
+    ansible-playbook deploy.yml --ask-vault-pass # → Vault password: (ввод пароля)
     ```
 
 ### Сценарий 2: Шифрование отдельных переменных (`encrypt_string`)
@@ -65,16 +63,11 @@ Ansible Vault может шифровать как YAML-файлы целико�
 1. **Шифрование строки**:
 
     ```bash
-    ansible-vault encrypt_string --stdin-name 'db_password'
-    # Введите пароль и секретное значение (Ctrl+D для завершения)
-    ```
-
-    Результат будет выглядеть так:
-
-    ```yaml
-    db_password: !vault |
-      $ANSIBLE_VAULT;1.1;AES256
-      3534...
+    ansible-vault encrypt_string 'MySecretValue' --name 'db_password'
+    # → Vault password: (ввод пароля)
+    # → db_password: !vault |
+    # →   $ANSIBLE_VAULT;1.1;AES256
+    # →   3534...
     ```
 
 2. **Использование в файле**:

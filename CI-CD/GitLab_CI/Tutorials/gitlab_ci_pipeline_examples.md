@@ -138,6 +138,146 @@ deploy_ssh_job:
     - if: '$CI_COMMIT_BRANCH == "main"'
 ```
 
+### Сценарий 3: Автоматическое создание MR, тесты и комментарий
+
+Пайплайн, который при пуше в не-default ветку создаёт MR, гоняет тесты и постит результат комментарием.
+
+Ключевые механизмы:
+- `workflow:rules` — пайплайн запускается только на feature-ветках, не на `main`
+- `artifacts:reports:dotenv` — передача `MR_IID` между jobs
+- `needs` — явная цепочка зависимостей (DAG)
+- API `POST /merge_requests` / `POST .../notes` — создание MR и комментарий
+- `artifacts:reports:junit` — нативный отчёт в UI MR (без комментария)
+- `GL_ACCESS_TOKEN` — project access token (masked, protected) в CI/CD variables
+
+```yaml
+stages:
+  - create-mr
+  - test
+  - notify
+
+variables:
+  # Вместо кастомного URL можно использовать built-in $CI_API_V4_URL
+  GL_PROJECT_API: "$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+
+# Все job — только на не-default ветках
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
+
+create-mr:
+  stage: create-mr
+  script:
+    - |
+      MR_IID=$(curl -s --request POST "$GL_PROJECT_API/merge_requests" \
+        --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
+        --form "source_branch=$CI_COMMIT_BRANCH" \
+        --form "target_branch=$CI_DEFAULT_BRANCH" \
+        --form "title=Draft: $CI_COMMIT_TITLE" \
+        --form "remove_source_branch=true" \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('iid',''))")
+      echo "MR_IID=$MR_IID" > mr.env
+  artifacts:
+    reports:
+      dotenv: mr.env  # MR_IID станет переменной в downstream jobs
+
+run-tests:
+  stage: test
+  needs: [create-mr]
+  script:
+    - go test -v ./... 2>&1 | tee test-results.txt
+    - echo "EXIT_CODE=${PIPESTATUS[0]}" >> test-summary.env
+  artifacts:
+    paths: [test-results.txt]
+    reports:
+      dotenv: test-summary.env
+      junit: report.xml  # нативный отчёт в UI MR (если генерируется)
+
+post-comment:
+  stage: notify
+  needs: [create-mr, run-tests]
+  script:
+    - BODY=$(cat test-results.txt | tail -20)
+    - |
+      curl -s --request POST \
+        "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
+        --header "PRIVATE-TOKEN: $GL_ACCESS_TOKEN" \
+        --form "body=\`\`\`\n$BODY\n\`\`\`"
+```
+
+### Сценарий 4: MR-triggered pipeline (тесты + комментарий в MR)
+
+Пайплайн, который запускается только при создании или обновлении Merge Request, прогоняет тесты, публикует JUnit-отчёт (нативно в UI) и оставляет кастомный комментарий.
+
+**Ключевые отличия от Сценария 3:** MR уже существует — пайплайн не создаёт его, а реагирует на событие `merge_request_event`. `$CI_MERGE_REQUEST_IID` доступен как built-in переменная.
+
+```yaml
+stages:
+  - test
+  - notify
+
+workflow:
+  rules:
+    # Запускать только для событий Merge Request
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Для остальных триггеров — не запускать
+    - when: never
+
+variables:
+  # Built-in переменная GitLab API
+  GITLAB_API: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID"
+
+run-tests:
+  stage: test
+  script:
+    - pytest --junitxml=report.xml  # генерация JUnit XML
+  artifacts:
+    reports:
+      junit: report.xml  # GitLab рендерит в виджет MR
+  # failing tests блокируют merge
+  allow_failure: false
+
+post-comment:
+  stage: notify
+  needs: [run-tests]
+  script:
+    - |
+      curl -s --request POST "$GITLAB_API/notes" \
+        --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        --form "body=Tests passed: $(grep -c 'testsuite' report.xml 2>/dev/null || echo 0)"
+  rules:
+    # Комментарий — только после завершения тестов
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+```
+
+**JUnit-отчёт** — GitLab рендерит результаты тестов на вкладке `Tests` в MR без единой строчки API-кода. Кастомный комментарий через `POST .../notes` используется для дополнительной информации (статистика, ссылки, артефакты).
+
+`allow_failure: false` — если тесты падают, пайплайн завершается с ошибкой, и кнопка `Merge` блокируется до исправления.
+
+### Сценарий 5: Диагностика и ускорение медленного пайплайна
+
+Если пайплайн занимает 40+ минут, сначала профилировать — посмотреть, что именно долго.
+
+**Типичные виновники и их исправление:**
+
+**1. Зависимости каждый раз с нуля.**  
+Fix: `cache:` в GitLab CI по ключу `go.sum`/`package-lock.json`; в Dockerfile — `COPY go.mod go.sum && RUN go mod download` до `COPY . .`.
+
+**2. Линейные стадии, когда можно параллельно.**  
+Fix: `needs:` (DAG) — scan и validate могут идти одновременно с тестами, а не ждать своей очереди.
+
+**3. Тесты не распараллелены.**  
+Fix: `parallel: matrix:` для sharding тестов; разделить unit (быстрые) и integration (медленные) в разные stages с разным расписанием.
+
+**4. Docker build без layer-кэша.**  
+Fix: `--cache-from registry/image:cache + --cache-to type=registry,...` (BuildKit); или Kaniko с `--cache=true`.
+
+**5. Большой build context.**  
+Fix: `.dockerignore`.
+
+**6. Тяжёлый образ раннера.**  
+Fix: использовать pre-pulled образы, пинить версии.
+
 ## Дополнительная информация
 
 ### Поведение развертывания при сбое в Kubernetes (Helm)

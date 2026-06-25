@@ -6,8 +6,6 @@
 
 **Использование роли** — применение роли в плейбуке через директиву `roles:` для автоматизации настройки целевых хостов.
 
----
-
 ## Основные концепции
 
 ### Создание каркаса роли
@@ -16,7 +14,7 @@
 
 ```bash
 # Создает директорию my_new_role со всеми стандартными каталогами
-ansible-galaxy role init my_new_role
+ansible-galaxy role init my_new_role  # → роль успешно инициализирована
 ```
 
 Подробнее о структуре каталогов — в [structure.md](structure.md).
@@ -43,7 +41,7 @@ ansible-galaxy role init my_new_role
         name: Europe/Moscow
     ```
 
-    > **Важно:** Не удаляйте `---` в начале файла — это маркер начала YAML-документа.
+    > **Важно:** Не удаляйте `---` в начале файла — это маркер начала YAML (YAML Ain't Markup Language) документа.
 
 3. **Добавляем переменные по умолчанию в `defaults/main.yml`:**
 
@@ -74,8 +72,6 @@ ansible-galaxy role init my_new_role
   roles:
     - set_time
 ```
-
----
 
 ## Практические сценарии
 
@@ -121,7 +117,7 @@ ansible-galaxy role init my_new_role
 Запуск только кэширования:
 
 ```bash
-ansible-playbook deploy.yml --tags "cache"
+ansible-playbook deploy.yml --tags "cache"  # → выполнение задач с тегом cache
 ```
 
 ### Сценарий 4: Условное подключение роли
@@ -152,7 +148,7 @@ ansible-playbook deploy.yml --tags "cache"
 Предварительная установка:
 
 ```bash
-ansible-galaxy role install geerlingguy.nginx geerlingguy.php
+ansible-galaxy role install geerlingguy.nginx geerlingguy.php  # → роли установлены в ~/.ansible/roles
 ```
 
 Подробнее — в [galaxy.md](galaxy.md).
@@ -214,7 +210,5 @@ roles:
 ### Связанные документы
 
 - [Структура роли](structure.md) — стандартная структура каталогов
-- [Стратегии и паттерны](strategies.md) — рекомендации по разбиению ролей
-- [Управление через Ansible Galaxy](galaxy.md) — установка внешних ролей
-- [Компоненты роли](../ansible_roles.md) — базовые концепции (задачи, переменные, шаблоны, обработчики)
-- [Основы плейбуков](../PlaybookStructure/basics.md) — синтаксис и структура плейбуков
+- [Компоненты роли](../ansible_roles.md) — базовые концепции и определения
+- [Стратегии и паттерны](strategies.md) — рекомендации по проектированию ролей

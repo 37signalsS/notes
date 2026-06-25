@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Ansible Galaxy** — официальный репозиторий ([galaxy.ansible.com](https://galaxy.ansible.com)) и утилита командной строки для поиска, обмена и управления контентом Ansible (роли, коллекции).
+**Ansible Galaxy** — официальный репозиторий ([galaxy.ansible.com](https://galaxy.ansible.com)) и утилита CLI (Command Line Interface — интерфейс командной строки) для поиска, обмена и управления контентом Ansible (роли, коллекции).
 
 **Коллекция (Collection)** — структура, содержащая роли, модули, плагины и документацию для работы с экосистемой (например, `community.postgresql`).
 
@@ -17,24 +17,24 @@
 **Создание каркаса роли:**
 
 ```bash
-ansible-galaxy role init my_new_role
+ansible-galaxy role init my_new_role  # → роль успешно инициализирована
 ```
 
 **Установка ролей и коллекций:**
 
 ```bash
 # Установить роль
-ansible-galaxy role install geerlingguy.postgresql
+ansible-galaxy role install geerlingguy.postgresql  # → роль установлена в ~/.ansible/roles
 
 # Установить коллекцию
-ansible-galaxy collection install community.postgresql
+ansible-galaxy collection install community.postgresql  # → коллекция установлена в ~/.ansible/collections
 ```
 
 **Просмотр установленных компонентов:**
 
 ```bash
-ansible-galaxy role list
-ansible-galaxy collection list
+ansible-galaxy role list  # → список установленных ролей
+ansible-galaxy collection list  # → список установленных коллекций
 ```
 
 ### Управление зависимостями через `requirements.yml`
@@ -51,7 +51,7 @@ roles:
 
   # 2. Установка роли из Git-репозитория
   - src: https://github.com/geerlingguy/ansible-role-nginx.git
-    scm: git
+    scm: git  # SCM (Source Control Management — управление версиями исходного кода)
     name: nginx # Имя, которое будет у роли локально
 
 collections:
@@ -69,10 +69,10 @@ collections:
 
 ```bash
 # Установить роли
-ansible-galaxy role install -r requirements.yml
+ansible-galaxy role install -r requirements.yml  # → установка ролей по списку
 
 # Установить коллекции
-ansible-galaxy collection install -r requirements.yml
+ansible-galaxy collection install -r requirements.yml  # → установка коллекций по списку
 ```
 
 ---
@@ -83,7 +83,7 @@ ansible-galaxy collection install -r requirements.yml
 
 ```bash
 # Установка роли PostgreSQL от сообщества
-ansible-galaxy role install geerlingguy.postgresql
+ansible-galaxy role install geerlingguy.postgresql  # → роль установлена
 ```
 
 ### Сценарий 2: Версионирование зависимостей
@@ -134,4 +134,4 @@ url = https://galaxy.mycompany.com/
 
 - [Структура роли](structure.md) — стандартная структура каталогов роли
 - [Создание и использование ролей](usage.md) — практическое руководство
-- [Стратегии и паттерны](strategies.md) — рекомендации по разбиению ролей
+- [Стратегии и паттерны](strategies.md) — рекомендации по проектированию ролей

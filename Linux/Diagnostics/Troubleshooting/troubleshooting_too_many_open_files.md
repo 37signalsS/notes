@@ -24,7 +24,7 @@
 | Сессия | `ulimit -n` | `~/.bashrc`, `/etc/profile` |
 | Процесс | `/proc/<PID>/limits` | Наследуется от родителя |
 
-Подробно: [Иерархия лимитов процессов](../../Core/processes/limits_hierarchy.md).
+Подробно: [Иерархия лимитов процессов](../../Core/processes/resource_limits_concepts.md).
 
 ### Утечка файловых дескрипторов
 
@@ -70,10 +70,15 @@ Max open files            8192                 65535                files
 # Текущая сессия
 ulimit -n
 
-# Глобальный лимит системы
+# Глобальная статистика использования FD
+# Вывод: <allocated> <free> <max>
+cat /proc/sys/fs/file-nr
+# → 2944    0    1048576
+
+# Глобальный лимит системы (можно увеличить через sysctl)
 cat /proc/sys/fs/file-max
 
-# Лимиты пользователя
+# Лимиты пользователя (PAM)
 cat /etc/security/limits.conf
 
 # Лимит systemd-сервиса
@@ -82,7 +87,15 @@ systemctl show <service_name> -p LimitNOFILE
 
 ### Шаг 4: Увеличение лимита
 
-**systemd-сервис:**
+**Временно для текущей сессии (ulimit):**
+
+```bash
+ulimit -n 65536
+```
+
+Действует до закрытия терминала. Не может превысить hard limit. Удобно для быстрой проверки или запуска проблемного скрипта.
+
+**systemd-сервис (редактирование юнита):**
 
 ```ini
 [Service]
@@ -94,7 +107,15 @@ sudo systemctl daemon-reexec
 sudo systemctl restart <service_name>
 ```
 
-**Системный уровень:**
+**systemd-сервис (runtime, без редактирования файлов):**
+
+```bash
+sudo systemctl set-property service.service LimitNOFILE=65536
+```
+
+Изменение применяется немедленно (через cgroups), для вступления в силу требуется перезапуск сервиса. Эффект сохраняется после перезагрузки (запись в `/etc/systemd/system.control/`).
+
+**Системный уровень (`fs.file-max`):**
 
 ```bash
 # Временно
@@ -106,12 +127,35 @@ fs.file-max = 2097152
 
 **Пользовательский уровень (`/etc/security/limits.conf`):**
 
+Для конкретного пользователя:
+
+```
+appuser    soft    nofile    65536
+appuser    hard    nofile    65536
+```
+
+Для всех пользователей сразу:
+
 ```
 *    soft    nofile    65535
 *    hard    nofile    65535
 ```
 
 ## Additional Information
+
+### ulimit vs inode limit (вопрос на собеседовании)
+
+`ulimit -n` и `df -i` — два разных уровня ограничений:
+
+| | ulimit (nofile) | Inode limit (df -i) |
+|:---|:---|:---|
+| Что ограничивает | Количество открытых FD на процесс/пользователя | Общее количество файлов (inode) на файловой системе |
+| Уровень | Процесс / сессия / пользователь | Файловая система |
+| Типичное сообщение | `Too many open files` | `No space left on device` (даже если `df -h` свободен) |
+| Диагностика | `cat /proc/sys/fs/file-nr` | `df -ih` |
+| Утечка | Программная (FD не закрыты) | Переполнение fs (миллионы мелких файлов) |
+
+Если `df -h` и `df -ih` в норме, а сервис падает с `Too many open files` — проблема именно в лимитах FD, а не в дисковом пространстве.
 
 ### Динамическая трассировка с strace
 
@@ -126,5 +170,5 @@ sudo strace -e trace=openat,close -p <PID>
 ### Связанные темы
 
 - [Файловые дескрипторы](../../FileSystems/file_descriptors.md)
-- [Иерархия лимитов](../../Core/processes/limits_hierarchy.md)
+- [Иерархия лимитов](../../Core/processes/resource_limits_concepts.md)
 - [`lsof`](../Processes/lsof.md)

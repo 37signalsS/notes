@@ -15,6 +15,39 @@
 
 ## Практические сценарии
 
+### Параллелизация тестов с `parallel: N` (sharding)
+
+`parallel: N` запускает N идентичных копий job. Каждая копия получает переменные `$CI_NODE_INDEX` (1..N) и `$CI_NODE_TOTAL` (N) — можно делить тест-файлы по индексу.
+
+```yaml
+test:
+  stage: test
+  parallel: 4
+  script:
+    - pytest --shard=$CI_NODE_INDEX/$CI_NODE_TOTAL tests/
+```
+
+GitLab создаст 4 job: `test 1/4`, `test 2/4`, `test 3/4`, `test 4/4`.
+
+### Параметризация деплоя с `parallel: matrix`
+
+`parallel:matrix` запускает копии job с разными комбинациями переменных. Имена формируются автоматически: `deploy: [dev]`, `deploy: [stage]`, `deploy: [prod]`.
+
+```yaml
+deploy:
+  stage: deploy
+  script:
+    - helm upgrade --install app ./chart --namespace $ENV
+  parallel:
+    matrix:
+      - ENV: [dev, stage, prod]
+        REGION: [ru-1]
+      - ENV: [prod]
+        REGION: [ru-1, ru-2]
+```
+
+GitLab развернёт в конкретные job: `deploy: [dev, ru-1]`, `deploy: [stage, ru-1]`, `deploy: [prod, ru-1]`, `deploy: [prod, ru-2]`.
+
 ### Тестирование на разных версиях с `parallel:matrix`
 
 **Тестирование на разных версиях:**
@@ -30,6 +63,45 @@ test:
     - pip install -r requirements.txt
     - pytest -q
 ```
+
+**Go-сервис: тесты на 3 версиях + артефакты в следующую стадию:**
+
+```yaml
+stages:
+  - test
+  - coverage
+
+variables:
+  COVERAGE_FILE: "coverage-${GO_VERSION}.out"  # суффикс версии — без конфликтов имён
+
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  parallel:
+    matrix:
+      - GO_VERSION: ["1.21", "1.22", "1.23"]
+  script:
+    - go test -race -coverprofile="$COVERAGE_FILE" ./...
+  artifacts:
+    paths:
+      - "$COVERAGE_FILE"
+    expire_in: 1 hour
+
+merge-coverage:
+  stage: coverage
+  needs:
+    - job: test
+      parallel:
+        matrix:
+          - GO_VERSION: ["1.21", "1.22", "1.23"]
+  script:
+    - go tool cover -html=coverage-1.23.out -o coverage.html
+```
+
+- `$GO_VERSION` в имени файла — разные матрицы не перезаписывают артефакты друг друга
+- `expire_in: 1 hour` — артефакты не засоряют хранилище после сборки отчёта
+- `needs` с `parallel: {matrix: ...}` — следующая стадия ждёт ВСЕ матричные джобы
+- Артефакты каждой матричной джобы изолированы: `test: [1.21]`, `test: [1.22]`, `test: [1.23]`
 
 **Комбинированная матрица (OS × Version):**
 
@@ -85,6 +157,23 @@ deploy_prod:
 ```
 
 Если два пайплайна одновременно пытаются задеплоить в `production`, второй будет ждать завершения первого.
+
+## Альтернативы
+
+Для более сложной параметризации или когда нужна полноценная изоляция (отдельный pipeline per env) — используйте `trigger` + downstream pipeline:
+
+```yaml
+deploy:
+  stage: deploy
+  trigger:
+    include: .gitlab-ci-deploy.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - ENV: [dev, stage, prod]
+```
+
+Каждая job из матрицы запустит свой downstream-пайплайн с переменной `ENV`.
 
 ## См. также
 

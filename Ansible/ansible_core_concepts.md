@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Push-модель** — основной способ работы Ansible: центральный управляющий узел «проталкивает» конфигурации и команды на управляемые хосты по SSH.
+**Push-модель** — основной способ работы Ansible: центральный управляющий узел «проталкивает» конфигурации и команды на управляемые хосты по протоколу **SSH (Secure Shell)**.
 
 **Pull-модель** — управляемые хосты самостоятельно «подтягивают» конфигурации с центрального сервера с помощью утилиты [Ansible Pull](ansible_pull.md).
 
@@ -12,7 +12,7 @@
 
 ### Плейбуки — Playbooks
 
-Плейбук — YAML-файл, описывающий упорядоченный набор задач для выполнения на хостах. Основной инструмент оркестрации.
+Плейбук — **YAML (YAML Ain't Markup Language)** файл, описывающий упорядоченный набор задач для выполнения на хостах. Основной инструмент оркестрации.
 
 Подробная информация: [выполнение плейбуков](ansible_playbook_execution.md), [структура плейбуков](PlaybookStructure/basics.md).
 
@@ -148,7 +148,7 @@ Ansible обнаруживает дрейф через механизм **сра
 - name: Play 1 - Bootstrap Python
   hosts: no_python_hosts
   become: true
-  gather_facts: false # <-- Очень важно!
+  gather_facts: false
 
   tasks:
     - name: Install Python3 using raw command
@@ -166,6 +166,6 @@ Ansible обнаруживает дрейф через механизм **сра
 
 ## Дополнительная информация
 
-* **Ansible Galaxy** — центральный репозиторий для поиска контента. См. [управление ролями](Roles/galaxy.md).
-* **Безопасность** — рекомендации по защите данных в [ansible_security_best_practices.md](ansible_security_best_practices.md) и [Ansible: Vault](Vault/basics.md).
-* **Тестирование** — использование [Molecule](ansible_testing_with_molecule.md) для проверки ролей.
+- [Ansible Galaxy](Roles/galaxy.md) — поиск и управление внешними ролями и коллекциями.
+- [Безопасность в Ansible](ansible_security_best_practices.md) — лучшие практики защиты данных.
+- [Тестирование с Molecule](ansible_testing_with_molecule.md) — проверка ролей на различных дистрибутивах.

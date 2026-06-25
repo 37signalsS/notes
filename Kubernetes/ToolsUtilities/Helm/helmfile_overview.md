@@ -127,3 +127,5 @@ helmfile -l name=loki apply
 ## Additional Information
 
 Альтернатива Helmfile — [Helmwave](./helmwave_overview.md) (Go, Go-шаблоны для всей конфигурации). См. [Advanced index](./Advanced/index.md) для выбора инструментов декларативного управления.
+
+Для оркестрации сотни однотипных микросервисов с общим shared-чартом см. [Практические сценарии: shared-чарт для 100 микросервисов](./helm_chart_practical_scenarios.md).

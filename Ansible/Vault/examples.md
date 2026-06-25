@@ -20,77 +20,83 @@ Ansible Vault позволяет шифровать различные объе�
 
 Шифрование всего плейбука полезно для защиты логики автоматизации, содержащей секреты.
 
-**Шаг 1: Создание плейбука**
+1. **Создание плейбука**:
 
-```yaml
----
-- name: Test Encrypted Playbook
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Show secret message
-      ansible.builtin.debug:
-        msg: "This is a secret message!"
-```
+    ```yaml
+    ---
+    # playbook.yml
+    - name: Test Encrypted Playbook
+      hosts: localhost
+      connection: local
+      tasks:
+        - name: Show secret message
+          ansible.builtin.debug:
+            msg: "This is a secret message!"
+    ```
 
-**Шаг 2: Подготовка файла с паролем**
+2. **Подготовка файла с паролем**:
 
-```bash
-echo "MySuperSecretPassword" > vault_pass.txt
-chmod 600 vault_pass.txt
-```
+    ```bash
+    echo "MySuperSecretPassword" > vault_pass.txt # → (создание файла)
+    chmod 600 vault_pass.txt # → (ограничение прав доступа)
+    ```
 
-**Шаг 3: Шифрование с указанием Vault ID**
+3. **Шифрование с указанием Vault ID (Identifier)**:
 
-```bash
-ansible-vault encrypt playbook.yml --vault-id test_id@vault_pass.txt
-```
+    ```bash
+    ansible-vault encrypt playbook.yml --vault-id test_id@vault_pass.txt
+    # → Encryption successful
+    ```
 
-После шифрования файл будет содержать заголовок:
+    После шифрования файл будет содержать заголовок:
 
-```
-$ANSIBLE_VAULT;1.1;AES256;test_id
-616562366138653664323265323...
-```
+    ```text
+    $ANSIBLE_VAULT;1.1;AES256;test_id
+    616562366138653664323265323...
+    ```
 
-**Шаг 4: Запуск зашифрованного плейбука**
+4. **Запуск зашифрованного плейбука**:
 
-```bash
-ansible-playbook playbook.yml --vault-id test_id@vault_pass.txt
-```
+    ```bash
+    ansible-playbook playbook.yml --vault-id test_id@vault_pass.txt
+    # → PLAY [Test Encrypted Playbook] ...
+    # → TASK [Show secret message] ******************
+    # → ok: [localhost] => { "msg": "This is a secret message!" }
+    ```
 
 ### Сценарий 2: Интеграция с Vagrant
 
 Автоматизация расшифровки секретов при развёртывании через Vagrant. В примере используются адреса IP (Internet Protocol), а также протоколы HTTPS (HyperText Transfer Protocol Secure) и SSL (Secure Sockets Layer).
 
-**Шаг 1: Создание зашифрованного файла секретов**
+1. **Создание зашифрованного файла секретов**:
 
-```bash
-# Файл с паролем
-echo "your_vault_password" > .vault_password
-chmod 600 .vault_password
+    ```bash
+    # Файл с паролем
+    echo "your_vault_password" > .vault_password # → (создание файла)
+    chmod 600 .vault_password # → (ограничение прав доступа)
 
-# Зашифрованный файл переменных
-ansible-vault create vars/secrets.yml --vault-password-file .vault_password
-```
+    # Зашифрованный файл переменных
+    ansible-vault create vars/secrets.yml --vault-password-file .vault_password
+    # → Vault password: (пароль из файла будет использован автоматически)
+    ```
 
-Содержимое `vars/secrets.yml` после редактирования:
+    Содержимое `vars/secrets.yml` после редактирования:
 
-```yaml
-htpasswd_password: "MySecureWebPassword"
-admin_ip: "192.168.77.1"
-```
+    ```yaml
+    htpasswd_password: "MySecureWebPassword"
+    admin_ip: "192.168.77.1"
+    ```
 
-**Шаг 2: Настройка Vagrantfile**
+2. **Настройка Vagrantfile**:
 
-```ruby
-machine.vm.provision :ansible do |ansible|
-  ansible.playbook = "playbook.yml"
-  ansible.vault_password_file = ".vault_password"
-end
-```
+    ```ruby
+    machine.vm.provision :ansible do |ansible|
+      ansible.playbook = "playbook.yml"
+      ansible.vault_password_file = ".vault_password"
+    end
+    ```
 
-**Шаг 3: Использование секретов в плейбуке**
+3. **Использование секретов в плейбуке**:
 
 ```yaml
 - name: Generate htpasswd file from vault

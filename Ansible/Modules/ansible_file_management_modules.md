@@ -16,10 +16,10 @@
     * `find`: Поиск файлов по заданным критериям (паттерн, возраст, размер).
 2. **Перенос данных:**
     * `copy`: Копирование файлов с контрольного узла на хосты или создание файлов из текста (`content`).
-    * `template`: Создание файлов на основе [шаблонов Jinja2](../ansible_jinja_templating.md).
+    * `template`: Создание файлов на основе [шаблонов Jinja2 (шаблонизатор для Python)](../ansible_jinja_templating.md).
     * `fetch`: Копирование файлов с управляемых хостов на контрольный узел.
 3. **Редактирование содержимого:**
-    * `lineinfile`: Управление конкретными строками (добавление, замена по RegExp, удаление).
+    * `lineinfile`: Управление конкретными строками (добавление, замена по RegExp (Regular Expression — регулярное выражение), удаление).
     * `blockinfile`: Вставка или обновление многострочных блоков текста с использованием маркеров.
     * `replace`: Массовая замена строк во всем файле по регулярному выражению.
 
@@ -41,10 +41,11 @@
     - /var/www/site/images
 ```
 
-**Ad-hoc команда для создания директории:**
+**Ad-hoc (одноразовая команда без использования плейбука) команда для создания директории:**
 
 ```bash
 ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
+# → (создание директории с правами 0700)
 ```
 
 ### Модуль `ansible.builtin.copy`
@@ -64,6 +65,7 @@ ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
 
 ```bash
 ansible all -m copy -a "dest=/tmp/ansible_test/test.txt content='Hello Ansible'"
+# → (создание файла с указанным текстом)
 ```
 
 **Резервное копирование:** флаг `backup: yes` создаёт копию существующего файла с суффиксом `.bak` (с меткой времени) перед записью нового. Используется для rollback в связке с `block/rescue` (см. [сценарий rollback](../PlaybookStructure/advanced.md#сценарий-8-block--rescue--always--rollback)).
@@ -89,7 +91,7 @@ ansible all -m copy -a "dest=/tmp/ansible_test/test.txt content='Hello Ansible'"
 Идеален для изменения отдельных параметров в существующих конфигах.
 
 ```yaml
-- name: Отключение входа root по SSH
+- name: Отключение входа root по SSH (Secure Shell)
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
     regexp: '^#?PermitRootLogin'

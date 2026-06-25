@@ -42,7 +42,7 @@
 ```yaml
 ---
 - name: Import common handlers
-  ansible.builtin.import_tasks: ../../common_components/handlers/main.yml
+  ansible.builtin.import_tasks: ../../common_components/handlers/main.yml  # → общие обработчики импортированы
 ```
 
 Теперь `notify: restart firewalld` из любой роли будет вызывать централизованный обработчик.
@@ -55,10 +55,13 @@
 
 ```yaml
 ---
-- name: Add EPEL repository
+- name: Add EPEL (Extra Packages for Enterprise Linux) repository
   ansible.builtin.yum_repository:
     name: epel
-    # ...
+    description: EPEL YUM repo
+    baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
+    enabled: yes
+    gpgcheck: yes
 
 - name: Add custom company repository
   ansible.builtin.yum_repository:
@@ -73,7 +76,7 @@
 ```yaml
 # roles/nginx/tasks/main.yml
 - name: Setup common repositories
-  ansible.builtin.include_tasks: ../../common_components/tasks/setup_repos.yml
+  ansible.builtin.include_tasks: ../../common_components/tasks/setup_repos.yml  # → репозитории настроены
 
 # ... остальные задачи для Nginx
 ```
@@ -87,7 +90,7 @@
 ```yaml
 - name: Set distribution-specific variables
   ansible.builtin.set_fact:
-    package_manager: "{{ 'apt' if ansible_facts['os_family'] == 'Debian' else 'yum' }}"
+    package_manager: "{{ 'apt' if ansible_facts['os_family'] == 'Debian' else 'yum' }}"  # → факт package_manager установлен
     # ... другие переменные
 ```
 

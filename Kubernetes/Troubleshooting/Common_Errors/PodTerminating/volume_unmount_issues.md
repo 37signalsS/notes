@@ -78,7 +78,16 @@
    crictl stop <container-id>
    ```
 
-2. Если процесс не завершается, используйте `Lazy Unmount` (как крайнюю меру):
+2. Если после force-delete остались осиротевшие sandbox-ы, найдите и удалите их:
+
+   ```bash
+   # Поиск sandbox по имени пода
+   crictl pods --name <pod-name>
+   # Остановка и удаление sandbox
+   crictl stopp <sandbox-id> && crictl rmp <sandbox-id>
+   ```
+
+3. Если контейнер не завершается, используйте `Lazy Unmount` (как крайнюю меру):
 
    ```bash
    umount -l /var/lib/kubelet/pods/$POD_UID/volumes/*/*

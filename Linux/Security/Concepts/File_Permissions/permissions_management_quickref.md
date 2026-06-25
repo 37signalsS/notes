@@ -173,6 +173,11 @@ lsattr /etc/hosts
 | `ls -Z <file>` | Контекст безопасности SELinux |
 | `ausearch -m avc -ts recent` | Последние отказы в доступе от SELinux |
 | `aa-status` | Статус профилей AppArmor |
+| `mount \| grep noexec` | Файловая система примонтирована с опцией `noexec` |
+| `findmnt -T /path/to/file` | Опции монтирования для конкретного файла |
+| `exportfs -v` | Опция NFS `root_squash`, маппинг root в nobody |
+| `head -1 script.sh \| cat -A` | Наличие CRLF (`^M`) или неверный путь в shebang |
+| `strace ./script.sh 2>&1 \| tail -20` | Реальная ошибка при `execve` (ENOENT на интерпретатор) |
 | `ps aux \| grep <name>` | От какого пользователя запущен процесс |
 
 Подробный разбор причин отказа в доступе: **[почему chmod 777 не всегда решает проблему](./overview_definitions.md#диагностика-почему-chmod-777-не-всегда-решает-проблему)**.

@@ -47,13 +47,28 @@ sudo tail -f /var/log/auth.log
 
 ### Сценарий 1: Соединение не устанавливается
 
-**Симптомы:** `Connection timed out`, `Connection refused`, `No route to host`.
+**Симптомы:** `Connection timed out`, `Connection refused`, `No route to host`, `Unknown host`.
 
 ```bash
-# 1. Проверить DNS
+# 1. Разрешается ли имя?
 nslookup <hostname>
+dig +short <hostname>
+```
 
-# 2. Проверить доступность порта
+Если DNS не сработал:
+- **Проверить статическую запись** — `/etc/hosts` проверяется раньше DNS (через `nsswitch.conf`): `grep <hostname> /etc/hosts`.
+- **Проверить резолвер** — какой DNS-сервер используется: `cat /etc/resolv.conf` (строка `nameserver`).
+- **Проверить доступность резолвера:** `ping -c 3 <NS_IP>`.
+- Если `dig` сработал, а `ssh` нет — проблема в системном резолвере (libc, nsswitch), а не в DNS как таковом. Проверить: `getent hosts <hostname>`.
+
+```bash
+# 2. Проверить сетевой маршрут (если IP известен, но недоступен)
+traceroute -n <server_ip>
+# TTL-механизм: каждый роутер уменьшает TTL на 1,
+# при TTL=0 шлёт ICMP «Time Exceeded».
+# Потеря пакетов после конкретного хопа указывает на проблемный участок.
+
+# 3. Проверить доступность порта
 nc -zv <server_ip> 22
 # succeeded! — порт открыт, проблема в sshd
 # Connection refused — порт закрыт, sshd не запущен
@@ -61,13 +76,13 @@ nc -zv <server_ip> 22
 ```
 
 ```bash
-# 3. Проверить статус службы
+# 4. Проверить статус службы
 sudo systemctl status sshd
 
-# 4. Проверить порт прослушивания
+# 5. Проверить порт прослушивания
 sudo ss -tlpn | grep sshd
 
-# 5. Проверить файрвол
+# 6. Проверить файрвол
 sudo iptables -L -n
 sudo nft list ruleset
 ```
@@ -233,6 +248,9 @@ ssh user@host -p 2222 -vvv
 ```bash
 # 1. Разрешается ли имя?
 nslookup myserver.com
+dig +short myserver.com
+cat /etc/resolv.conf
+# /etc/hosts проверяется раньше DNS: grep myserver.com /etc/hosts
 
 # 2. Доступен ли порт?
 nc -zv myserver.com 22

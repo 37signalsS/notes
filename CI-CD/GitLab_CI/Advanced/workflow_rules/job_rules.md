@@ -14,6 +14,19 @@
 
 **Важно:** `job:rules` поддерживает `start_in`, `allow_failure`, `needs` в отличие от [`workflow:rules`](./directives_definitions.md).
 
+### Ограничение: `rules` не видят переменные из других job
+
+`rules` вычисляются в момент старта пайплайна — **до того как выполнилась любая job**. Переменные, которые job1 записала в `artifacts:reports:dotenv`, **недоступны в `rules:if`** job2.
+
+```yaml
+# ⛔ НЕ РАБОТАЕТ — MR_IID неизвестен на старте пайплайна
+job2:
+  rules:
+    - if: '$MR_IID == "123"'  # переменная ещё не существует
+```
+
+Данные между jobs передаются через `artifacts` (в том числе `dotenv`) или `trigger:variables` в downstream-пайплайн — но только в `script:`, а не в `rules:`.
+
 ## Практические сценарии
 
 **Запуск только для Merge Request:**

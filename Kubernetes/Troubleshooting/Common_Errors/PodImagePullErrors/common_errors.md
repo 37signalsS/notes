@@ -89,7 +89,38 @@ kubectl patch serviceaccount default \
 # → serviceaccount/default patched
 ```
 
-### Сценарий 3: Образ отсутствует в реестре
+### Сценарий 3: Истёк токен imagePullSecret
+
+**Сообщение:**
+
+```text
+unauthorized: authentication required
+```
+
+**Причина:** Токены ECR, GCR и других приватных registry имеют TTL. Secret в кластере не обновился автоматически.
+
+**Диагностика:**
+
+```bash
+# Дата создания секрета
+kubectl describe secret <regcred>
+# → CreationTimestamp: 2024-01-15 ...
+
+# Проверка событий на наличие ошибок аутентификации
+kubectl get events --sort-by='.lastTimestamp' | grep -i secret
+```
+
+**Решение:** обновить секрет с новым токеном:
+
+```bash
+kubectl delete secret regcred && \
+kubectl create secret docker-registry regcred \
+  --docker-server=<registry> \
+  --docker-username=<user> \
+  --docker-password=<new-token>
+```
+
+### Сценарий 4: Образ отсутствует в реестре
 
 **Сообщение:**
 

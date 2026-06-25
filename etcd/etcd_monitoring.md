@@ -17,13 +17,13 @@
 Ключевые аспекты мониторинга etcd:
 
 1. **Работоспособность и лидерство (Health & Leader Status)**:
-    * **Проверка**: Необходимо постоянно отслеживать, что все узлы кластера работоспособны (`healthy`) и что в кластере есть активный лидер. Отсутствие лидера или нездоровые узлы указывают на серьезные проблемы с кворумом и консенсусом.
-    * **Метрики**: `etcd_server_has_leader`, `etcd_server_health_success`, `etcd_server_leader_changes_seen_total`.
+     * **Проверка**: Необходимо постоянно отслеживать, что все узлы кластера работоспособны (`healthy`) и что в кластере есть активный лидер. Отсутствие лидера или нездоровые узлы указывают на серьезные проблемы с кворумом и консенсусом.
+     * **Метрики**: `etcd_server_has_leader` (alert если 0), `etcd_server_health_success`, `etcd_server_leader_changes_seen_total`.
 
 2. **Производительность (Performance)**:
-    * **Задержки**: Мониторинг задержек фиксации записей в WAL (Write-Ahead Log) (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`).
-        * **Пороговые значения**: Норма — до **10 мс**. Для нагруженных систем — до **2 мс**. Постоянное превышение 10 мс ведет к деградации производительности кластера.
-    * **RPC**: Задержки междоузлового общения RPC (Remote Procedure Call) (`etcd_network_peer_round_trip_time_seconds`) важны для оценки здоровья сети.
+     * **Задержки**: Мониторинг задержек фиксации записей в WAL (Write-Ahead Log) (`etcd_disk_wal_fsync_duration_seconds`) и коммита в бэкенд (`etcd_disk_backend_commit_duration_seconds`).
+         * **Пороговые значения**: Норма — до **10 мс**. Для нагруженных систем — до **2 мс**. Превышение 10 мс указывает на проблему с диском (SSD/NVMe) и может вызывать **leader re-election** (лидер не успевает отправлять heartbeats → follower инициирует выборы).
+     * **RPC**: Задержки междоузлового общения RPC (Remote Procedure Call) (`etcd_network_peer_round_trip_time_seconds`, `etcd_network_peer_roundtrip_time_seconds`) важны для оценки здоровья сети.
     * **Транзакции**: Количество медленных запросов (`etcd_server_slow_apply_total`) и общая частота запросов (`etcd_server_proposals_applied_total`).
 
 3. **Использование ресурсов (Resource Utilization)**:

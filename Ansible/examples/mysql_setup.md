@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Автоматизация установки MySQL/MariaDB** — воспроизводимое развертывание и настройка сервера баз данных на различных операционных системах (ОС) (Debian/Ubuntu, CentOS/RHEL) без ручного вмешательства.
+**Автоматизация установки MySQL/MariaDB** — воспроизводимое развертывание и настройка сервера баз данных на различных операционных системах (ОС — Операционная Система) (Debian/Ubuntu, CentOS/RHEL) без ручного вмешательства.
 
 **Идемпотентность** — возможность многократного безопасного запуска плейбука. Основная сложность при автоматизации MySQL — смена метода аутентификации `root` с `auth_socket` на парольный.
 
@@ -20,8 +20,8 @@
 Установка на управляющем узле:
 
 ```bash
-ansible-galaxy collection install community.mysql
-pip install PyMySQL
+ansible-galaxy collection install community.mysql  # → коллекция установлена
+pip install PyMySQL  # → библиотека установлена
 ```
 
 ### Аутентификация и идемпотентность
@@ -153,10 +153,10 @@ redhat_packages:
 
 ### Безопасность
 
-Пароль `root` необходимо хранить в [Ansible Vault](../Vault/basics.md):
+Пароль `root` необходимо хранить в [Ansible Vault (защищенное хранилище)](../Vault/basics.md):
 
 ```bash
-ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password'
+ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password'  # → зашифрованная строка сгенерирована
 ```
 
 ### Кроссплатформенные роли

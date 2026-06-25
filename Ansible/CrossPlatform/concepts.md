@@ -86,4 +86,3 @@ nginx_http_port: 80
 - [Управление потоком](../PlaybookStructure/flow_control.md) — условные конструкции `when`.
 - [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — особенности `apt`, `yum`, `dnf`.
 - [Роли](../ansible_roles.md) — организация кроссплатформенного кода внутри ролей.
-- [Тестирование](../ansible_testing_with_molecule.md) — проверка плейбуков на разных дистрибутивах с помощью Molecule.

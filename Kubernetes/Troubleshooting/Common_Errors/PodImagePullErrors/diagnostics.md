@@ -85,6 +85,12 @@ kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.type}'
 
 # Декодирование содержимого для проверки (внимательно!)
 kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
+
+# Проверка даты создания секрета (токены могут протухать)
+kubectl get secret <secret-name> -n <namespace> -o yaml | grep creationTimestamp
+
+# Проверка событий на ошибки аутентификации
+kubectl get events --sort-by='.lastTimestamp' | grep -i secret
 ```
 
 ### Сценарий 4: Проверка сети и DNS с узла
@@ -110,7 +116,38 @@ kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup r
 
 Для глубокой диагностики сетевых правил и прокси обратитесь к разделу [Сетевые проблемы](./network_issues.md).
 
-### Сценарий 5: Анализ логов kubelet и рантайма
+**Проверка с конкретной ноды:**
+Если ошибка возникает только на одной ноде, узнайте её имя из `kubectl describe pod`, затем проверьте доступность registry напрямую с неё:
+
+```bash
+# Узнать ноду, на которой запущен pod
+kubectl get pod <pod-name> -o wide
+
+# SSH на ноду и ручной pull
+ssh <node-name>
+crictl pull registry.example.com/my-app:1.0
+# или
+docker pull registry.example.com/my-app:1.0
+```
+
+### Сценарий 5: После ребута ноды — перезапись плавающего тега
+
+**Симптом:** После перезагрузки узла поды уходят в `ImagePullBackOff`, хотя до ребута работали и registry доступен.
+
+**Причина:** Используется плавающий тег (`:latest` или `:dev`). Локальный кэш образов сброшен после ребута, kubelet пытается скачать образ заново. Если тег уже перезаписан сломанным образом, pull завершается ошибкой (`manifest not found`).
+
+**Диагностика:**
+
+```bash
+kubectl describe pod <pod-name> | grep -A5 "Failed to pull image"
+# → manifest for my-app:latest not found
+```
+
+**Решение:**
+- Использовать immutable теги: версию (`:v1.2.3`) или SHA256 digest (`my-app@sha256:abc...`).
+- Убедиться, что образ с данным тегом существует в registry.
+
+### Сценарий 6: Анализ логов kubelet и рантайма
 
 Если `kubectl describe` не дает детальной информации, проверьте логи системных служб на узле:
 

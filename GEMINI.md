@@ -82,9 +82,9 @@ Priority — knowledge extraction and application, not archiving.
 
 ---
 
-## 3. Mandatory Tasks
+## 3. Core Tasks & Guidelines
 
-1. **Structuring:** format files as
+1. **Structuring:** aim for a logical flow; the following structure is **recommended** but can be adapted to the topic (e.g., for cheatsheets or brief notes):
    `Definitions → Basic Concepts → Practical Scenarios → Additional Information`
 
 2. **SSoT Integration:** all changes only after SSoT-analysis (§0)
@@ -107,7 +107,7 @@ Priority — knowledge extraction and application, not archiving.
 - **Terminology:**
   - Technology terms in English (Kubernetes, Docker, Prometheus, Kafka)
   - Explanations and descriptions in Russian
-  - Expand abbreviations on first use in a file: `EOL (End of Life)`
+  - Expand abbreviations on first use in a file ONLY if they are not industry-standard or common in DevOps (e.g., expand niche tools, but no need to expand CI/CD, K8s, API if context is clear)
   - Do NOT translate established terms: deploy, pipeline, container, orchestration
   - **Prohibited in knowledge-base files:** the phrase `SSoT (Single Source of Truth)` and its variants (`SSoT`, `Single Source of Truth`) — this is an internal meta-concept used only in this instruction file; when describing content hierarchy in knowledge-base files, use neutral terms
 - **Links:** inline only (`[text](url)`)

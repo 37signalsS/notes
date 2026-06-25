@@ -8,7 +8,7 @@
 
 ## Основные концепции
 
-### Статическое vs. Динамическое включение
+### Статическое и динамическое включение
 
 Выбор между `import` и `include` — это выбор между производительностью и гибкостью.
 
@@ -17,13 +17,13 @@
 
 ### Делегирование задач
 
-`delegate_to` — ключевой механизм для взаимодействия с системами, которые не являются целевыми хостами. Например, при развертывании приложения вам может понадобиться:
+`delegate_to` — ключевой механизм для взаимодействия с системами, которые не являются целевыми хостами. Например, при деплое приложения вам может понадобиться:
 
 1. Скачать артефакт на `localhost`.
 2. Добавить IP нового сервера в систему мониторинга, обратившись к ее API с `localhost`.
 3. Скопировать артефакт с `localhost` на целевой хост.
 
-`delegate_to: localhost` работает с **любым модулем** Ansible. Это не особенность отдельных модулей, а универсальный механизм: выполнение задачи просто переносится с целевого хоста из `hosts` на хост, указанный в `delegate_to`. Например, модуль `community.docker.docker_container`, обычно работающий на managed-хосте, при `delegate_to: localhost` выполнится на контрольном узле.
+`delegate_to: localhost` работает с **любым модулем** Ansible. Это не особенность отдельных модулей, а универсальный механизм: выполнение задачи просто переносится с целевого хоста из `hosts` на хост, указанный в `delegate_to`. Например, модуль `community.docker.docker_container`, обычно работающий на managed-node, при `delegate_to: localhost` выполнится на контрольном узле.
 
 ## Практические сценарии
 
@@ -80,10 +80,10 @@
 
 ### Сценарий 4: Скачивание и распространение файлов
 
-Вместо того чтобы каждый сервер скачивал файл из интернета, control node скачивает его один раз (`delegate_to: localhost`), а затем модули `copy` или `unarchive` распространяют файл по целевым хостам. Это экономит внешний трафик и ускоряет развертывание.
+Вместо того чтобы каждый сервер скачивал файл из интернета, control-node скачивает его один раз (`delegate_to: localhost`), а затем модули `copy` или `unarchive` распространяют файл по целевым хостам. Это экономит внешний трафик и ускоряет деплой.
 
 ```yaml
-- name: Скачать дистрибутив на control node (один раз)
+- name: Скачать дистрибутив на control-node (один раз)
   ansible.builtin.get_url:
     url: https://example.com/package.tar.gz
     dest: /tmp/package.tar.gz
@@ -102,23 +102,23 @@
 Операции, не имеющие отношения к целевым хостам — создание заявки в Jira, отправка уведомления в Slack, регистрация сервера в системе мониторинга — всегда выполняются с `delegate_to: localhost`.
 
 ```yaml
-- name: Отправить уведомление о начале развертывания
+- name: Отправить уведомление о начале деплоя
   ansible.builtin.uri:
     url: https://hooks.slack.com/services/...
     method: POST
     body_format: json
     body:
-      text: "Начато развертывание на {{ inventory_hostname }}"
+      text: "Начат деплой на {{ inventory_hostname }}"
   delegate_to: localhost
   run_once: true
 ```
 
-### Сценарий 6: Копирование с удалением исходника на control node
+### Сценарий 6: Копирование с удалением исходника на control-node
 
 Модуль `ansible.posix.synchronize` (обёртка над `rsync`) с параметром `delete_source: yes` копирует файл на managed-node и удаляет оригинал на control-node.
 
 ```yaml
-- name: Sync and delete source on control node
+- name: Sync and delete source on control-node
   ansible.posix.synchronize:
     src: /tmp/test_delegate.txt
     dest: /tmp/test_delegate.txt
@@ -154,7 +154,7 @@
 
 Подробнее о `package_facts` — в [модулях управления пакетами](../Modules/ansible_package_management_modules.md#получение-информации-об-установленных-пакетах), о `service_facts` — в [модулях управления службами](../Modules/ansible_service_and_system_config_modules.md#сбор-информации-о-сервисах).
 
-### Сценарий 8: `block` / `rescue` / `always` — rollback
+### Сценарий 8: Обработка ошибок и откат (rollback) через block, rescue, always
 
 Конструкция `block` / `rescue` / `always` — аналог `try` / `catch` / `finally`. `block` содержит основную логику, `rescue` выполняется при ошибке в блоке, `always` — в любом случае. В сочетании с `backup: yes` в модулях `copy` / `template` (см. [файловые модули](../Modules/ansible_file_management_modules.md)) позволяет реализовать автоматический rollback:
 
@@ -192,6 +192,7 @@
 
 ## Дополнительная информация
 
-По вопросам параллелизма (`forks`, `async`, `throttle`) и стратегий выполнения (`strategy: linear`, `free`) см. [оптимизацию производительности](../ansible_performance_tuning.md). Рекомендации по организации плейбуков в проекте — в [примере структуры проекта](../examples/example_project_layout.md). Тестирование плейбуков описано в документе [тестирование с Molecule](../ansible_testing_with_molecule.md). Частые ошибки и антипаттерны рассмотрены в [ansible_bad_practices.md](../ansible_bad_practices.md).
+- [Оптимизация производительности](../ansible_performance_tuning.md) — параллелизм (`forks`, `async`, `throttle`) и стратегии выполнения.
+- [Тестирование с Molecule](../ansible_testing_with_molecule.md) — проверка корректности плейбуков и ролей.
+- [Антипаттерны Ansible](../ansible_bad_practices.md) — разбор частых ошибок и плохих практик.
 
-Более детальное описание `import_tasks`/`include_tasks` в контексте ролей — в [Паттерн Utility Role](../Roles/utility_role_pattern.md). Кроссплатформенные сценарии с `include_tasks` — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md).

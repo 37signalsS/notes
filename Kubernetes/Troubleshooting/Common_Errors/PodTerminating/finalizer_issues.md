@@ -138,6 +138,29 @@ kubectl patch pod <pod-name> -p '{"metadata":{"finalizers":null}}' --type=merge
    kubectl patch pvc <pvc-name> -p '{"metadata":{"finalizers":null}}'
    ```
 
+### Сценарий 4: Pod завис из-за незавершённого resize PVC
+
+**Симптом:**
+Pod в `Terminating`, финализатор `kubernetes.io/pvc-protection` не снимается, хотя PVC не используется другими подами. Причина — storage provisioner не поддерживает online resize, и операция расширения тома зависла.
+
+**Диагностика:**
+
+```bash
+# Проверка статуса PVC
+kubectl get pvc <pvc-name> -o yaml | grep -A10 status.conditions
+# → FileSystemResizePending или похожий condition
+```
+
+**Решение:**
+
+1. Принудительно снять финализатор с PVC:
+
+   ```bash
+   kubectl patch pvc <pvc-name> -p '{"metadata":{"finalizers":null}}'
+   ```
+
+2. Force-delete пода (см. Сценарий 1, Решение Б).
+
 ---
 
 ## Дополнительная информация

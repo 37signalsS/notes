@@ -61,7 +61,7 @@ kubectl rollout history deployment/nginx-deployment
 # Просмотр деталей конкретной ревизии
 kubectl rollout history deployment/nginx-deployment --revision=2
 
-# Откат к предыдущей стабильной версии
+# Откат к предыдущей стабильной версии (активирует предыдущий ReplicaSet)
 kubectl rollout undo deployment/nginx-deployment
 
 # Откат к конкретной ревизии из истории
