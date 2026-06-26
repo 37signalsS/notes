@@ -8,6 +8,7 @@
     kubectl taint nodes <node-name> <key>=<value>:<effect>
     # Пример:
     kubectl taint nodes worker-1 dedicated=ml:NoSchedule
+    # → node/worker-1 tainted
     ```
 
 * **Tolerations (терпимость)**: Свойство, задаваемое в спецификации пода (`pod.spec`), которое позволяет ему «терпеть» `taint` на узле и быть размещённым на нём.
@@ -101,6 +102,7 @@ Kubernetes автоматически применяет следующие `tai
 
 ```bash
 kubectl taint nodes gpu-node-1 hardware=gpu:NoSchedule
+# → node/gpu-node-1 tainted
 ```
 
 Поды приложения, требующие GPU, должны иметь соответствующую терпимость:
@@ -143,9 +145,11 @@ tolerations:
 ```bash
 # Добавление временного запрета
 kubectl taint nodes worker-1 maintenance=true:NoSchedule
+# → node/worker-1 tainted
 
 # Удаление запрета (дефис в конце)
 kubectl taint nodes worker-1 maintenance=true:NoSchedule-
+# → node/worker-1 untainted
 ```
 
 ---
@@ -159,7 +163,9 @@ kubectl taint nodes worker-1 maintenance=true:NoSchedule-
     ```bash
     # Проверка taints на узле
     kubectl describe node <node-name> | grep Taints
-    
+    # → Taints:             dedicated=ml:NoSchedule
+
     # Проверка tolerations пода
     kubectl get pod <pod-name> -o jsonpath='{.spec.tolerations}'
+    # → [{"key":"key1","operator":"Equal","value":"value1","effect":"NoSchedule"}]
     ```

@@ -32,7 +32,7 @@
 
 Пока хотя бы один процесс удерживает открытый FD на удаленный файл, файл продолжает существовать в `/proc/<pid>/fd/` и занимать место на диске.
 
-```
+```text
 каталог          inode          блоки на диске
 /var/log/  --> app.log  -->  [блок1][блок2][блок3]
                ^
@@ -55,12 +55,15 @@
 ```bash
 # Поиск удаленных, но открытых файлов
 lsof | grep deleted
+# → nginx   1234  root    7w  REG  8,1  1048576  123456 /var/log/app.log (deleted)
 
 # Список всех открытых FD процесса
 ls -la /proc/<PID>/fd/
+# → lrwx------ 1 root root 64 Jan  1 12:00 7 -> /var/log/app.log (deleted)
 
 # Восстановление удаленного файла (если FD ещё жив)
 cp /proc/<PID>/fd/<FD> /etc/restored.conf
+# → (файл восстановлен)
 ```
 
 **Почему `rm + touch` не работает для ротации логов:**
@@ -74,6 +77,7 @@ cp /proc/<PID>/fd/<FD> /etc/restored.conf
 
 ```bash
 truncate -s 0 /path/to/log
+# → (размер файла обнулен, место освобождено)
 ```
 
 `truncate` обнуляет содержимое файла на месте — inode и FD остаются валидными. Процесс продолжает писать с нулевого смещения.
@@ -89,12 +93,18 @@ truncate -s 0 /path/to/log
 ```bash
 # Проверка использования индексных дескрипторов (IUse% = 100% — диагноз)
 df -i
+# → Filesystem      Inodes   IUsed   IFree IUse% Mounted on
+# → /dev/sda1      1048576 1048576       0  100% /
 
 # Проверка конкретной файловой системы
 df -ih /var
+# → Filesystem     Inodes IUsed IFree IUse% Mounted on
+# → /dev/sdb1        6.3M  5.1M  1.2M   81% /var
 
 # Поиск каталога с наибольшим числом файлов
 find /var -xdev -printf '%h\n' | sort | uniq -c | sort -rn | head -20
+# →  54321 /var/spool/postfix/maildrop
+# →  12345 /var/lib/php/sessions
 ```
 
 **Типичные причины исчерпания дескрипторов:**
@@ -109,12 +119,14 @@ find /var -xdev -printf '%h\n' | sort | uniq -c | sort -rn | head -20
 
    ```bash
    mkfs.ext4 -i 4096 /dev/sdX
+   # → (создание ФС с увеличенным количеством inode)
    ```
 
    Текущий ratio можно проверить через:
 
    ```bash
    tune2fs -l /dev/sdX | grep 'Inode ratio'
+   # → Inode ratio:              16384
    ```
 
 3. **Миграция** на XFS или Btrfs — эти ФС используют динамическое выделение индексных дескрипторов.
@@ -128,18 +140,27 @@ find /var -xdev -printf '%h\n' | sort | uniq -c | sort -rn | head -20
 ```bash
 # 1. Общее состояние дискового пространства (особенно /var/log, /tmp)
 df -h
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1        50G   48G  2.0G  96% /
 
 # 2. Проверка использования индексных дескрипторов
 df -i
+# → Filesystem     Inodes IUsed IFree IUse% Mounted on
+# → /dev/sda1        3.2M  1.5M  1.7M   47% /
 
 # 3. Поиск самых больших директорий (глубина 2 уровня)
 du -h --max-depth=2 / | sort -rh | head -20
+# → 12G     /var/log
+# → 8G      /var/lib/docker
 
 # 4. Поиск файлов размером более 1 ГБ (Гигабайта)
 find / -type f -size +1G -exec ls -lh {} \; 2>/dev/null
+# → -rw-r--r-- 1 root root 2.5G Jan 1 12:00 /var/log/huge.log
 
 # 5. Проверка удаленных, но открытых файлов
 lsof +L1 2>/dev/null
+# → COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NLINK      NODE NAME
+# → nginx    1234 root    7w   REG    8,1 10485760     0    123456 /var/log/app.log (deleted)
 ```
 
 > **Расхождение `df -h` vs `du -sh`:** `df` читает суперблок ФС — быстро, но не учитывает удалённые файлы, которые держит открытый дескриптор. `du` рекурсивно суммирует реальные файлы. Расхождение между ними — признак deleted-but-open файлов (см. `lsof +L1`).
@@ -151,6 +172,8 @@ lsof +L1 2>/dev/null
 ```bash
 # Просмотр всех точек монтирования в табличном виде
 mount | column -t
+# → sysfs       on  /sys                   type  sysfs       (rw,nosuid,nodev,noexec,relatime)
+# → /dev/sda1   on  /                      type  ext4        (rw,relatime)
 ```
 
 ### Анализ блочных устройств через `lsblk`
@@ -159,6 +182,9 @@ mount | column -t
 
 ```bash
 lsblk
+# → NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+# → sda      8:0    0   50G  0 disk 
+# → └─sda1   8:1    0   50G  0 part /
 ```
 
 ### Анализ свободного пространства через `df`
@@ -166,12 +192,17 @@ lsblk
 ```bash
 # Вывод в человекочитаемом формате
 df -h
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1        50G   25G   25G  50% /
 
 # Вывод типов файловых систем
 df -hT
+# → Filesystem     Type      Size  Used Avail Use% Mounted on
+# → /dev/sda1      ext4       50G   25G   25G  50% /
 
 # Исключение временных файловых систем (tmpfs)
 df -h -x tmpfs -x devtmpfs
+# → (покажет только физические накопители)
 ```
 
 ### Анализ занятого пространства через `du`
@@ -179,12 +210,16 @@ df -h -x tmpfs -x devtmpfs
 ```bash
 # Общий размер текущей директории
 du -sh .
+# → 1.5G    .
 
 # Поиск крупнейших директорий внутри /var
 sudo du -h --max-depth=1 /var | sort -rh
+# → 12G     /var
+# → 8G      /var/lib
 
 # Подсчет количества индексных дескрипторов по директориям
 du --inodes -S / | sort -rh | head -20
+# → 45000   /var/lib/docker/overlay2
 ```
 
 Для интерактивного анализа рекомендуется использовать утилиту `ncdu` (ncurses disk usage).
@@ -201,6 +236,7 @@ PID=$(pgrep -f "имя_бинаря")
 
 # 2. Список файлов, открытых процессом для записи
 sudo lsof -p $PID | grep -E ' (w|u) '
+# → app_bin 1234 root    7w   REG    8,1 10485760 123456 /var/log/app.log
 ```
 
 **2. Анализ занимаемого объема:**
@@ -208,6 +244,7 @@ sudo lsof -p $PID | grep -E ' (w|u) '
 ```bash
 # Показать размеры открытых файлов для конкретного процесса
 sudo lsof -p $PID -s | awk '$5 == "REG" {print $7, $9}' | sort -n
+# → 10485760 /var/log/app.log
 ```
 
 **3. Безопасная очистка без остановки сервиса:**
@@ -216,10 +253,12 @@ sudo lsof -p $PID -s | awk '$5 == "REG" {print $7, $9}' | sort -n
 ```bash
 # Обнуление через перенаправление (truncate)
 > /var/log/app.log
+# → (файл обнулен)
 
 # Если файл уже удален через rm, но место не освободилось
 # Используем номер файлового дескриптора (например, 7) из вывода lsof
 > /proc/$PID/fd/7
+# → (занятые блоки освобождены)
 ```
 
 Процесс обращения через дескриптор в `/proc` обходит файловую систему, где файл уже помечен как удаленный. Ядро обнуляет блоки, и свободное место на накопителе мгновенно увеличивается.

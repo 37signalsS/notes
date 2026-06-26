@@ -11,7 +11,7 @@
 | Термин | Описание |
 |--------|----------|
 | **Init Container** | Вспомогательный контейнер, запускаемый до основного. В данном сценарии используется для подготовки SSH-ключей и директории `.ssh` |
-| **HostPath Volume** | Тип тома, монтирующий файл или директорию с хост-узла в под. Используется для персистентности домашней директории пользователя. Подробнее см. [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md) |
+| **HostPath Volume** | Тип тома, монтирующий файл или директорию с хост-узла в под. Используется для персистентности домашней директории пользователя. Подробнее см. [Тома в Kubernetes](../../Base/Pod/volume_types/volume_types.md) |
 | **OCI-реестр** | Реестр OCI (Open Container Initiative) для хранения контейнеров и Helm-чартов. В данном сценарии используется [Harbor](../../../Docker/Docker_registries/Harbor/overview.md) |
 | **GitOps** | Подход к управлению инфраструктурой через Git. В сценарии применяется [ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md) для развертывания чарта |
 
@@ -230,7 +230,7 @@ ssh -p 32022 artur@<k3s-node-ip>
 - **CI/CD:** [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md)
 - **Helm:** [Обзор Helm](../../ToolsUtilities/Helm/helm_overview.md), [Структура чарта](../../ToolsUtilities/Helm/helm_chart_structure.md)
 - **Безопасность:** [Best practices Helm](../../ToolsUtilities/Helm/Advanced/security_best_practices.md)
-- **volumes:** [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md)
+- **volumes:** [Тома в Kubernetes](../../Base/Pod/volume_types/volume_types.md)
 
 ### Предупреждения
 

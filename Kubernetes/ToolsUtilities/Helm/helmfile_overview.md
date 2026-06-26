@@ -4,7 +4,7 @@
 
 ---
 
-## Definitions
+## Определения
 
 | Термин | Описание |
 |--------|----------|
@@ -14,7 +14,7 @@
 
 ---
 
-## Basic Concepts
+## Основные концепции
 
 ### Ключевые возможности
 
@@ -44,7 +44,7 @@ helmfile -l name=loki apply
 
 ---
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Пример helmfile.yaml
 
@@ -124,7 +124,7 @@ helmfile -l name=loki apply
 
 ---
 
-## Additional Information
+## Дополнительная информация
 
 Альтернатива Helmfile — [Helmwave](./helmwave_overview.md) (Go, Go-шаблоны для всей конфигурации). См. [Advanced index](./Advanced/index.md) для выбора инструментов декларативного управления.
 

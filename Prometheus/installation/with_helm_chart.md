@@ -36,7 +36,7 @@
 * **Версионирование:** Откат к предыдущим версиям
 * **Шаблоны:** Автоматизация сложных манифестов
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Базовая установка (standalone чарт)
 
@@ -168,7 +168,7 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=alertmanager
 helm status alertmanager -n monitoring
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Обновление чарта
 
@@ -188,6 +188,6 @@ helm rollback alertmanager -n monitoring
 helm uninstall alertmanager -n monitoring
 ```
 
-### Related topics
+### См. также
 
 Архитектура и конвейер обработки оповещений — [Alertmanager](../alertmanager.md). Бинарная установка и Docker — [Alertmanager installation — manual](./alertmanager_installation.md). Конфигурация Alertmanager в umbrella-чарте — [Alertmanager config in kube-prometheus-stack](../kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md). Обзор всех способов установки — [Installation overview](./overview.md).

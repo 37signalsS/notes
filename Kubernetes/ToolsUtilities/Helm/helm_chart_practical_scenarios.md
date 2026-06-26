@@ -9,8 +9,8 @@
 | Термин | Описание |
 |--------|----------|
 | **helm create** | Команда генерации стандартной структуры чарта. См. [Структура Helm-чарта](./helm_chart_structure.md) |
-| **helm lint** | Валидация синтаксиса и структуры чарта |
-| **helm template** | Локальный рендер шаблонов без кластера |
+| **helm lint** | Валидация синтаксиса и структуры чарта. См. [Основные команды](./helm_commands_and_workflow.md) |
+| **helm template** | Локальный рендер шаблонов без кластера. См. [Основные команды](./helm_commands_and_workflow.md) |
 | **helm dependency** | Управление зависимостями чарта. См. [Зависимости и Library Charts](./helm_dependencies_and_library_charts.md) |
 
 ---
@@ -19,46 +19,11 @@
 
 ### Команды валидации
 
-```bash
-# Проверка синтаксиса чарта
-helm lint .
-
-# Локальный рендер шаблонов без кластера
-helm template myrelease .
-
-# Рендер с values-файлом
-helm template myrelease . -f values-production.yaml
-
-# Проверка с подключением к кластеру (dry-run)
-helm install --dry-run --debug myrelease .
-```
-
-**Команда `helm template`:**
-
-Рендерит шаблоны на локальной машине без подключения к кластеру. Полезна для:
-
-- Визуальной проверки итоговых манифестов
-- Отладки шаблонов перед коммитом
-- Генерации манифестов для применения через `kubectl apply -f`
-
-**Флаг `--debug` при dry-run:**
-
-Позволяет проверять шаблоны с незакоммиченными изменениями без риска поломать развёртывание:
-
-```bash
-# Рендер с отладочной информацией
-helm install --dry-run --debug myrelease .
-```
+Перед развёртыванием выполняется стандартная валидация: `helm lint` проверяет синтаксис, `helm template` рендерит шаблоны локально, `helm install --dry-run --debug` выполняет проверку с имитацией установки. Подробное описание команд — в разделе [основных команд](./helm_commands_and_workflow.md).
 
 ### Команды работы с зависимостями
 
-```bash
-# Обновление зависимостей и создание Chart.lock
-helm dependency update
-
-# Построение зависимостей из Chart.lock
-helm dependency build
-```
+`helm dependency update` скачивает актуальные версии зависимостей в `charts/` и создаёт `Chart.lock`, `helm dependency build` собирает зависимости из зафиксированного `Chart.lock`. Детали — в разделе [зависимости](./helm_dependencies_and_library_charts.md).
 
 ---
 
@@ -68,6 +33,7 @@ helm dependency build
 
 ```bash
 helm create mychart
+# → Creating mychart
 cd mychart
 ```
 
@@ -156,9 +122,13 @@ production-chart/
 ```bash
 # Сначала загружается values.yaml, затем его значения перезаписываются из values-dev.yaml
 helm install app ./chart -f values.yaml -f values-dev.yaml -n dev
+# → NAME: app
+# → NAMESPACE: dev
+# → STATUS: deployed
 
 # Для production
 helm upgrade app ./chart -f values.yaml -f values-production.yaml -n prod --atomic
+# → Release "app" has been upgraded. Happy Helming!
 ```
 
 ---
@@ -203,6 +173,7 @@ env:
 helm upgrade --install svc-auth oci://harbor.example.com/charts/shared \
   -f services/svc-auth/values.yaml \
   -f values-prod.yaml --atomic
+# → Release "svc-auth" has been upgraded. Happy Helming!
 ```
 
 **Оркестрация через Helmfile:** каждый релиз — один микросервис с указанием shared-чарта и своего values:
@@ -264,9 +235,8 @@ spec:
 
 ---
 
-## См. также
+## Дополнительная информация
 
 - [Зависимости и Library Charts в Helm](./helm_dependencies_and_library_charts.md)
 - [Основные команды и рабочий процесс Helm](./helm_commands_and_workflow.md)
 - [Helmfile: декларативный оркестратор](./helmfile_overview.md)
-- [ArgoCD: Интеграция с Helm](../../../GitOps/ArgoCD/helm_integration.md)

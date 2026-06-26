@@ -56,7 +56,7 @@
 **4. Среднее время восстановления (Mean Time to Recovery, MTTR)**
 
 - **Что измеряет:** Отказоустойчивость системы и эффективность реагирования на инциденты.
-- **Контекст:** MTTR является фундаментальной метрикой не только в CI/CD, но и в **[SRE (Site Reliability Engineering)](../../Concepts/sre_concepts_main.md#процесс-восстановления-декомпозиция-mttr)** и **[High Availability](../../Concepts/High_Availability/ha_overview.md)**.
+- **Контекст:** MTTR является фундаментальной метрикой не только в CI/CD, но и в **[SRE (Site Reliability Engineering)](../../Concepts/sre_concepts_main.md#декомпозиция-mttr)** и **[High Availability](../../Concepts/High_Availability/ha_overview.md)**.
 - **Целевые уровни:**
   - *Элитный:* < 1 часа
   - *Высокий:* < 1 дня
@@ -83,16 +83,12 @@
 - События ArgoCD — для частоты развертываний.
 - Prometheus метрик — для CFR и MTTR.
 
-Подробное описание сбора метрик через ArgoCD: **[Мониторинг ArgoCD](../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md#сценарий-6-метрики-dora-через-argocd)**.
+Подробное описание сбора метрик через ArgoCD: **[Мониторинг ArgoCD](../../GitOps/ArgoCD/argocd_troubleshooting_and_monitoring.md#сценарий-5-расчет-метрик-dora-через-argocd)**.
 
 ## Дополнительная информация
 
-- **Паттерны CI/CD:** [Улучшение метрик](../ci_cd_patterns.md) через внедрение эффективных практик.
+- **Паттерны CI/CD:** [Улучшение метрик](../ci_cd_patterns.md) через внедрение практик.
 - **Анти-паттерны CI/CD:** [Избегание проблем](../ci_cd_antipatterns.md), снижающих показатели.
-- **Метрики наблюдаемости:** [Observability](../../Concepts/Observability_and_Monitoring/observability_definitions.md) — контекст метрик в общей стратегии мониторинга.
-
-### Источники
-
-- **State of DevOps Report 2024–2025** — ежегодный отчет DORA с актуальными бенчмарками.
-- **DORA Capabilities** — официальная документация по метрикам и практикам.
-- **Global IT Research** — [DORA Accelerate State of DevOps Report](https://globalitresearch.com/whitepaper/get-the-dora-accelerate-state-of-devops-report-7/).
+- **Наблюдаемость:** [Observability](../../Concepts/Observability_and_Monitoring/observability_definitions.md) — контекст в общей стратегии.
+- **State of DevOps Report** — ежегодные бенчмарки и отчеты DORA.
+- **DORA Capabilities** — официальная документация по практикам.

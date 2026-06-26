@@ -69,7 +69,7 @@ primary_conninfo = 'host=upstream-replica port=5432 user=replicator'
 
 ## Практические сценарии
 
-### Настройка потоковой репликации (Physical)
+### Сценарий 1: Настройка потоковой репликации (Physical)
 
 **Шаг 1: Настройка основного сервера (Primary)**
 
@@ -85,6 +85,7 @@ primary_conninfo = 'host=upstream-replica port=5432 user=replicator'
 
    ```sql
    CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'strongpassword';
+   # → CREATE ROLE
    ```
 
 3. Разрешить подключение в `pg_hba.conf`:
@@ -99,13 +100,30 @@ primary_conninfo = 'host=upstream-replica port=5432 user=replicator'
 
    ```bash
    pg_basebackup -h <primary_ip> -U replicator -D /var/lib/postgresql/data -P -Xs -R
+   # → 31234/31234 kB (100%), 1/1 tablespace
    ```
 
    - `-R` — автоматически создает файл `standby.signal` и прописывает параметры подключения (`primary_conninfo`) в `postgresql.auto.conf`.
 
 2. Запустить PostgreSQL на реплике. Она автоматически перейдет в режим Standby и начнет получать WAL от мастера.
 
-### Мониторинг состояния и отставания (Lag)
+### Сценарий 2: Настройка логической репликации
+
+1. **На стороне публикации (Publisher)**:
+
+   ```sql
+   CREATE PUBLICATION my_pub FOR TABLE users, orders;
+   # → CREATE PUBLICATION
+   ```
+
+2. **На стороне подписки (Subscriber)**:
+
+   ```sql
+   CREATE SUBSCRIPTION my_sub CONNECTION 'host=... user=... dbname=...' PUBLICATION my_pub;
+   # → CREATE SUBSCRIPTION
+   ```
+
+### Сценарий 3: Мониторинг состояния и отставания (Lag)
 
 **На основном сервере (Primary):**
 Проверка активных подключений реплик и расчет отставания в байтах.
@@ -120,6 +138,7 @@ SELECT
     replay_lsn,
     (sent_lsn - replay_lsn) AS replication_lag_bytes
 FROM pg_stat_replication;
+# → 192.168.1.10 | streaming | 0/3000060 | 0/3000060 | 0/3000060 | 0/3000060 | 0
 ```
 
 **На реплике (Replica):**
@@ -128,34 +147,23 @@ FROM pg_stat_replication;
 
    ```sql
    SELECT pg_is_in_recovery();
+   # → t
    ```
 
 2. Проверка задержки применения последней транзакции в секундах:
 
    ```sql
    SELECT now() - pg_last_xact_replay_timestamp() AS replication_delay;
+   # → 00:00:01.123
    ```
 
-### Настройка логической репликации
-
-1. **На стороне публикации (Publisher)**:
-
-   ```sql
-   CREATE PUBLICATION my_pub FOR TABLE users, orders;
-   ```
-
-2. **На стороне подписки (Subscriber)**:
-
-   ```sql
-   CREATE SUBSCRIPTION my_sub CONNECTION 'host=... user=... dbname=...' PUBLICATION my_pub;
-   ```
-
-### Ручное переключение (Manual Failover)
+### Сценарий 4: Ручное переключение (Manual Failover)
 
 Если основной сервер вышел из строя, реплику можно «повысить» до мастера командой:
 
 ```bash
 pg_ctl promote
+# → server promoting
 ```
 
 Для автоматизации этого процесса в production рекомендуется использовать **[Patroni](./high_availability.md#patroni)**.
@@ -165,4 +173,3 @@ pg_ctl promote
 - **Отказоустойчивость**: Автоматический failover и управление кластером — **[High Availability в PostgreSQL](./high_availability.md)**.
 - **Масштабирование**: Распределение нагрузки на чтение — **[Масштабирование PostgreSQL](./scaling.md)**.
 - **Бэкапы**: Отличие репликации от архивирования — **[Backup and Recovery](./backup_and_recovery.md)**.
-- **Основы WAL**: Как работает журнал предзаписи — **[Write-Ahead Log](../../Concepts/write_ahead_log.md)**.

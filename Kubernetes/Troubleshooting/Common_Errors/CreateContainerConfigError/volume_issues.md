@@ -1,10 +1,10 @@
 # CreateContainerConfigError: Проблемы с томами
 
-## Definitions
+## Определения
 
 **Volume-related CreateContainerConfigError** — ошибка, возникающая когда Pod не может создать конфигурацию контейнера из-за проблем с эфемерными томами (Projected Volume, emptyDir, hostPath), не связанными с PVC.
 
-## Basic Concepts
+## Базовые концепции
 
 ### Типы томов, вызывающие ошибку
 
@@ -15,7 +15,7 @@
 | **hostPath** | Файл/директория с хоста (dev/test) | `hostPath path not accessible` |
 | **configMap/Secret (отдельный том)** | Монтирование одного ресурса | `configmap/secret not found` |
 
-> Общие концепции volumes: [volume_types.md](../../../Base/Pod/volume_types/volume_types.md).
+> Общие концепции томов: [Тома в Kubernetes](../../../Base/Pod/volume_types/volume_types.md).
 > Projected volumes: [projected_volumes.md](../../../Base/Pod/volume_types/projected_volumes.md).
 
 ### Механизм ошибки
@@ -30,7 +30,7 @@ kubelet проверяет каждый источник тома
 CreateContainerConfigError
 ```
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Сценарий 1: Projected Volume — источник не найден
 
@@ -167,7 +167,7 @@ volumeMounts:
   mountPath: /etc/secrets
 ```
 
-## Additional Information
+## Дополнительная информация
 
 ### Отличие от PVC-проблем
 
@@ -182,7 +182,7 @@ volumeMounts:
 
 - Определения: [definitions.md](./definitions.md)
 - Диагностика: [diagnostics.md](./diagnostics.md)
-- Volume types SSoT: [volume_types.md](../../../Base/Pod/volume_types/volume_types.md)
+- Типы томов: [Тома в Kubernetes](../../../Base/Pod/volume_types/volume_types.md)
 - Projected volumes: [projected_volumes.md](../../../Base/Pod/volume_types/projected_volumes.md)
 - PVC issues: [pvc_issues.md](./pvc_issues.md)
 - Disk eviction: [disk_eviction.md](../../PodEvicted/disk_eviction.md)

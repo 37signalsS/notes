@@ -4,14 +4,6 @@
 
 > **См. также:** [Типы метрик](./concepts/metric_types/alerts.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql/functions.md).
 
----
-
-## Определение
-
-В [Prometheus](./overview.md) "правила" (rules) — это набор выражений на языке [PromQL](./concepts/promql/functions.md), которые периодически вычисляются на сервере. Они используются для создания новых временных рядов и для генерации оповещений.
-
-> **См. также:** [Типы метрик](./concepts/metric_types/alerts.md), [Лейблы и кардинальность](./concepts/labels_and_cardinality.md), [PromQL](./concepts/promql/functions.md).
-
 ## Основные концепции
 
 Существует два типа правил, которые настраиваются в конфигурационных файлах Prometheus:
@@ -48,9 +40,9 @@
   * `labels`: дополнительные метки для маршрутизации в [Alertmanager](./alertmanager.md) (например, `severity`).
   * `annotations`: дополнительная информация для уведомлений (описание, summary, ссылки), поддерживает шаблоны.
 
-### Управление правилами
+  ### Управление правилами
 
-1. **Конфигурация Prometheus**: пути к файлам с правилами указываются в `prometheus.yml`.
+  1. **Конфигурация Prometheus**: пути к файлам с правилами указываются в `prometheus.yml`.
 
     ```yaml
     rule_files:
@@ -58,20 +50,23 @@
       - "rules/*.yml"
     ```
 
-2. **Проверка синтаксиса**: для валидации используется утилита [promtool](./promtool_and_best_practices.md).
+  2. **Проверка синтаксиса**: для валидации используется утилита [promtool](./promtool_and_best_practices.md).
 
     ```bash
     promtool check rules /path/to/your/rules.yml
+    # → SUCCESS: number of rules found
     ```
 
-3. **Применение**: конфигурация перезагружается без перезапуска сервиса.
+  3. **Применение**: конфигурация перезагружается без перезапуска сервиса.
 
     ```bash
     # Для systemd
     systemctl reload prometheus.service
-    
+    # → (без вывода при успехе)
+
     # Для Docker
     docker-compose exec prometheus kill -HUP 1 
+    # → (без вывода при успехе)
     ```
 
 4. **Проверка в веб-интерфейсе**: загруженные правила и активные алерты отображаются в разделах **Status -> Rules** и **Alerts** веб-интерфейса Prometheus.

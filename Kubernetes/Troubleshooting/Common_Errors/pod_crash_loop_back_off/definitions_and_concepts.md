@@ -106,7 +106,6 @@
 - **[Liveness и Readiness Probes](../../../Base/probes.md)** — механизмы проверки работоспособности.
 - **[Лимиты ресурсов (Resources Limits)](../../../Scheduling/qos_limit_and_requests.md)** — управление потреблением CPU и RAM.
 - **[RBAC в Kubernetes](../../../Security/rbac/rbac_overview.md)** — модель управления доступом.
-- **[Jobs и CronJobs](../../../Base/job.md)** — контроллеры для задач, которые *должны* завершаться.
 
 ---
 

@@ -30,7 +30,7 @@
 
 ### Жизненный цикл загрузки образа
 
-```
+```text
 Pod создан
     ↓
 kubelet на узле получает задачу
@@ -48,7 +48,7 @@ kubelet на узле получает задачу
 
 ### Переход ErrImagePull → ImagePullBackOff
 
-```
+```text
 ErrImagePull (первая ошибка)
     ↓
 Повторная попытка через 10s
@@ -130,7 +130,3 @@ kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[0].state.wait
 - [Распространённые ошибки и решения](./common_errors.md)
 - [Пошаговая диагностика](./diagnostics.md)
 - [Лучшие практики и предотвращение](./best_practices.md)
-- [Air-gapped кластеры](./airgapped.md)
-- [Интеграция с CI/CD](./ci_cd_integration.md)
-- [Сетевые проблемы](./network_issues.md)
-- [Документация Kubernetes — образы](https://kubernetes.io/docs/concepts/containers/images/)

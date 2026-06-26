@@ -1,21 +1,21 @@
-# Наследование переменных в downstream pipelines
+# Наследование переменных в downstream-пайплайнах
 
 ## Определения
 
-**Наследование переменных** — механизм передачи переменных из upstream (родительского) pipeline в downstream (дочерний) pipeline. Различается для parent-child и multi-project pipelines.
+**Наследование переменных** — процесс передачи параметров и настроек из upstream (родительского) пайплайна в downstream (дочерний). Механизм и объем передаваемых данных зависят от типа связи: parent-child или multi-project.
 
 ## Основные концепции
 
-### Сравнение наследования
+### Сравнение механизмов наследования
 
-| Тип переменных | Child Pipelines | Multi-project Pipelines |
+| Тип переменных | Parent-child | Multi-project |
 | :--- | :--- | :--- |
-| **Predefined (CI_*)** | Наследуют все | Наследуют только относящиеся к downstream проекту |
-| **Project/Group variables** | Наследуют все | **НЕ наследуют** |
-| **Variables из задачи** | Наследуют | **Только явно указанные** в `trigger:variables` |
-| **Masked variables** | Наследуют | **НЕ наследуют** (риск unmask!) |
+| **Предопределённые (CI_*)** | Наследуются полностью | Только относящиеся к дочернему проекту |
+| **Переменные проекта/группы** | Наследуются полностью | **Не наследуются** |
+| **Переменные из задачи** | Наследуются автоматически | **Только явно указанные** в `trigger:variables` |
+| **Маскированные (Masked)** | Наследуются автоматически | **Не наследуются** (риск раскрытия) |
 
-### 1. Variables keyword (наследование)
+### Использование ключевого слова variables
 
 ```yaml
 variables:
@@ -30,15 +30,15 @@ staging:
       - local: path/to/child-pipeline.yml
 ```
 
-- `ENVIRONMENT` доступен во всех jobs downstream pipeline
-- `VERSION` наследуется как default variable
+- `ENVIRONMENT` доступен во всех задачах дочернего пайплайна
+- `VERSION` наследуется как глобальная переменная по умолчанию
 
-### 2. Блокировка наследования
+### Блокировка наследования
 
 ```yaml
 trigger-job:
   inherit:
-    variables: false  # Блокировать наследование default variables
+    variables: false  # Отключить наследование переменных по умолчанию
   variables:
     JOB_VAR: value
   trigger:
@@ -46,38 +46,36 @@ trigger-job:
       - local: path/to/child-pipeline.yml
 ```
 
-- `DEFAULT_VAR` не передаётся в triggered pipeline
-- `JOB_VAR` доступен
+- Глобальные переменные не передаются в дочерний пайплайн
+- Передаётся только `JOB_VAR`
 
-### 3. Predefined variables (интерполяция)
+### Интерполяция предопределённых переменных
 
 ```yaml
 trigger-job:
   variables:
-    PARENT_BRANCH: $CI_COMMIT_REF_NAME  # Сохраняет как job variable
+    PARENT_BRANCH: $CI_COMMIT_REF_NAME  # Сохранение контекста ветки
   trigger:
     include:
       - local: path/to/child-pipeline.yml
 ```
 
-⚠️ **Важно:** Не используйте для masked variables в multi-project pipelines (masking не передаётся).
+**Важно:** данный метод не следует использовать для маскированных переменных в multi-project пайплайнах, так как свойство маскирования при такой передаче теряется.
 
 ## Практические сценарии
 
-### 4. Inputs keyword (рекомендуется для GitLab 17+)
+### Использование ключевого слова inputs (GitLab 17+)
 
-**Преимущества перед `variables`:**
+**Преимущества перед традиционными переменными:**
 
-- Type checking
-- Validation через `options`
-- Descriptions
-- Default values
-- Безопасность (защита от инъекций)
+- Валидация типов данных
+- Ограничение значений через `options`
+- Наличие описаний и значений по умолчанию
+- Повышенная безопасность (защита от инъекций)
 
-**В target configuration:**
+**В дочернем пайплайне (`child-pipeline.yml`):**
 
 ```yaml
-# child-pipeline.yml
 spec:
   inputs:
     environment:
@@ -86,15 +84,10 @@ spec:
       default: staging
     version:
       type: string
-      description: "Версия приложения"
       default: "1.0.0"
-    enable_tests:
-      type: boolean
-      description: "Запускать ли тесты"
-      default: true
 ```
 
-**При запуске:**
+**Вызов из родительского пайплайна:**
 
 ```yaml
 staging:
@@ -103,41 +96,19 @@ staging:
       - local: path/to/child-pipeline.yml
     inputs:
       environment: staging
-      version: "1.0.0"
-      enable_tests: true
-
-production:
-  trigger:
-    include:
-      - local: path/to/child-pipeline.yml
-    inputs:
-      environment: production
-      version: "1.0.0"
-      enable_tests: false
+      version: "1.1.0"
 ```
 
-**Использование в triggered pipeline:**
+### Передача данных через dotenv-отчёты
 
-```yaml
-# В child-pipeline.yml
-deploy_job:
-  script:
-    - echo "Deploying version $[[ inputs.version ]] to $[[ inputs.environment ]]"
-    - |
-      if [[ "$[[ inputs.enable_tests ]]" == "true" ]]; then
-        echo "Running tests..."
-        npm test
-      fi
-```
-
-### 5. Dotenv variable inheritance (Premium/Ultimate)
+Метод позволяет передавать динамически созданные переменные между независимыми проектами.
 
 ```yaml
 # Upstream
 build_vars:
   stage: build
   script:
-    - echo "BUILD_VERSION=hello" >> build.env
+    - echo "BUILD_VERSION=1.2.3" >> build.env
   artifacts:
     reports:
       dotenv: build.env
@@ -146,7 +117,7 @@ deploy:
   stage: deploy
   trigger: my/downstream_project
 
-# Downstream
+# Downstream (требует Premium/Ultimate)
 test:
   stage: test
   script:
@@ -162,24 +133,17 @@ test:
 
 ### Миграция с variables на inputs
 
-| Variables | Inputs |
-| :--- | :--- |
-| `$VARIABLE_NAME` | `$[[ inputs.VARIABLE_NAME ]]` |
-| Нет валидации типов | Строгая типизация (string, boolean, number) |
-| Нет проверки значений | `options` для допустимых значений |
-| Может быть переопределена | Защищено от несанкционированного изменения |
+| Свойство | Variables | Inputs |
+| :--- | :--- | :--- |
+| Синтаксис | `$VARIABLE_NAME` | `$[[ inputs.VARIABLE_NAME ]]` |
+| Валидация | Отсутствует | Строгая типизация |
+| Ограничения | Невозможны | Список `options` |
+| Безопасность | Может быть переопределена | Защищено от изменений |
 
 ### Рекомендации
 
-- Используйте `inputs` для GitLab 17+
-- Избегайте передачи secret/masked variables в multi-project
-- Явно указывайте переменные в `trigger:variables` для multi-project
+Полный список советов по безопасной и эффективной передаче переменных доступен в разделе **[лучшие практики](./best_practices.md)**.
 
 ---
 
-**Связанные документы:**
-
-- [Определения](./definitions.md)
-- [Parent-child Pipelines](./parent_child_pipelines.md)
-- [Multi-project Pipelines](./multi_project_pipelines.md)
-- [Best Practices](./best_practices.md)
+**Связанные документы:** [Определения](./definitions.md), [Лучшие практики](./best_practices.md), [Стратегии выполнения](./strategies.md).

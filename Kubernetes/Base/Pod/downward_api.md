@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Downward API** — механизм Kubernetes, позволяющий приложениям в container (контейнерах) получать метаданные Pod (пода) без обращения к Kubernetes API (Application Programming Interface). Это упрощает архитектуру и устраняет необходимость в RBAC (Role-Based Access Control) для получения базовых метаданных.
+**Downward API** — механизм Kubernetes, позволяющий приложениям в container получать метаданные Pod без обращения к Kubernetes API. Это упрощает архитектуру и устраняет необходимость в RBAC для получения базовых метаданных.
 
 ---
 
@@ -13,15 +13,15 @@
 | Параметр | Описание |
 | :--- | :--- |
 | `metadata.name` | Имя Pod |
-| `metadata.namespace` | Namespace (пространство имен) |
-| `metadata.uid` | UID (Unique Identifier) |
+| `metadata.namespace` | Namespace |
+| `metadata.uid` | UID |
 | `metadata.annotations['<KEY>']` | Значение конкретной аннотации |
 | `metadata.labels['<KEY>']` | Значение конкретной метки |
-| `spec.nodeName` | Имя Node (ноды), на которой работает Pod |
+| `spec.nodeName` | Имя Node, на которой работает Pod |
 | `spec.serviceAccountName` | Имя ServiceAccount |
-| `status.podIP` | IP (Internet Protocol) адрес Pod |
+| `status.podIP` | IP адрес Pod |
 | `status.hostIP` | IP-адрес Node |
-| `resources.limits['cpu']` | Лимит CPU (Central Processing Unit) |
+| `resources.limits['cpu']` | Лимит CPU |
 | `resources.limits['memory']` | Лимит памяти |
 | `resources.requests['cpu']` | Запрос CPU |
 | `resources.requests['memory']` | Запрос памяти |
@@ -39,7 +39,7 @@ Downward API предоставляет два способа доступа к 
 
 **Динамические обновления:** При использовании томов изменения в метках и аннотациях Pod отражаются в файловой системе автоматически. При использовании переменных окружения — только при перезапуске Pod. Реализация использует символические ссылки (symlinks) (аналогично ConfigMap): файл в `/etc/podinfo/labels` ссылается на файл в директории `..data`.
 
-**Синтаксис fieldPath:** Записывается через точку (например, `metadata.name`), что соответствует JSONPath (JavaScript Object Notation Path) в Kubernetes API.
+**Синтаксис fieldPath:** Записывается через точку (например, `metadata.name`), что соответствует JSONPath в Kubernetes API.
 
 **Ограничения:** Через Downward API нельзя получить полный манифест Pod или информацию о других ресурсах. Для этого потребуется обращение к Kubernetes API с соответствующими правами (RBAC).
 
@@ -147,6 +147,6 @@ Downward API может использоваться в составе [Projecte
 
 **Связанные темы:**
 
-- [Базовые концепции Volume](./volume_types/volumes_basics.md)
+- [Тома в Kubernetes](./volume_types/volume_types.md)
 - [Projected Volumes](./volume_types/projected_volumes.md)
 - [ConfigMap в Kubernetes](../configmap.md)

@@ -112,7 +112,7 @@
 
 ### Безопасность hostPath
 
-> **Внимание:** Использование `hostPath` небезопасно в промышленной эксплуатации (production). Допустимо только для локальных dev-сред. См. [Pod Volumes](../../Base/Pod/volume_types/volumes_basics.md).
+> **Внимание:** Использование `hostPath` небезопасно в промышленной эксплуатации (production). Допустимо только для локальных dev-сред. См. [Тома в Kubernetes](../../Base/Pod/volume_types/volume_types.md).
 
 **Риски:**
 

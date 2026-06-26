@@ -103,6 +103,6 @@ ipvs:
 
 **См. также:**
 
-- Роли CNI и kube-proxy — [CNI и kube-proxy: определения](./definitions.md)
+- Роли CNI и kube-proxy — [CNI и kube-proxy: роли и взаимодействие](../cni_kube_proxy_roles.md)
 - Замена kube-proxy через eBPF — [Решения на базе eBPF](./ebpf.md)
 - Путь трафика в кластере — [Путь трафика: от Ingress до Pod](../traffic_path.md)

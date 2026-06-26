@@ -1,64 +1,61 @@
-# Deployment Health Checks and Rollback
+# Проверки здоровья и откат развертывания
 
-## Definitions
+## Определения
 
-**Health Check** — автоматизированный сигнал, сообщающий CI/CD-системе о состоянии новой версии приложения. На основе сигнала принимается решение о продолжении развертывания или откате.
+**Health Check (Проверка здоровья)** — автоматизированный сигнал, сообщающий CI/CD-системе о состоянии новой версии приложения. На основе этого сигнала принимается решение о продолжении развертывания или его остановке.
 
-**Rollback** — автоматизированный или ручной процесс возврата к предыдущей стабильной версии при обнаружении критической ошибки или деградации производительности.
+**Rollback (Откат)** — автоматизированный или ручной процесс возврата к предыдущей стабильной версии системы при обнаружении критических ошибок, деградации производительности или несоответствия требованиям после выпуска.
 
-## Basic Concepts
+## Основные концепции
 
-### Health Check Types in Kubernetes
+### Типы проверок в Kubernetes
 
-Kubernetes предоставляет три типа проб (probes) для управления развертыванием:
+Kubernetes использует механизмы проб (probes) для управления жизненным циклом подов во время и после развертывания:
 
-| Probe Type | Signal | Purpose | Reaction to Failure |
+| Тип пробы | Сигнал | Цель | Реакция на сбой |
 | :--- | :--- | :--- | :--- |
-| **`readinessProbe`** | "Готов ли под принимать трафик?" | Безопасный ввод в эксплуатацию | Под исключается из Service, не перезапускается |
-| **`livenessProbe`** | "Работает ли приложение или зависло?" | Обнаружение deadlock, зависаний | Контейнер перезапускается |
-| **`startupProbe`** | "Завершился ли долгий запуск?" | Защита от преждевременных рестартов | Перезапуск при превышении `failureThreshold` |
+| **`readinessProbe`** | Готов ли Pod принимать трафик? | Безопасный ввод в эксплуатацию | Исключение из Service, трафик не направляется |
+| **`livenessProbe`** | Работает ли приложение? | Обнаружение зависаний (deadlocks) | Перезапуск контейнера |
+| **`startupProbe`** | Завершился ли запуск? | Защита медленно стартующих сервисов | Перезапуск после превышения лимита попыток |
 
-Подробное описание проб — в [Probes](../../Kubernetes/Base/probes.md).
+Технические детали настройки параметров приведены в документе **[Probes в Kubernetes](../../Kubernetes/Base/probes.md)**.
 
-Дополнительный сигнал для CI/CD — **анализ метрик наблюдаемости** (ошибки, задержка) через [Canary Monitoring and Gating](./canary_monitoring_and_gating.md).
+Дополнительный уровень контроля обеспечивается через **[анализ метрик наблюдаемости](./canary_monitoring_and_gating.md)** (уровень ошибок, задержки).
 
-### Rollback Principles
+### Принципы эффективного отката
 
-| Principle | Description |
-| :--- | :--- |
-| **Automation** | Решение об откате принимается на основе метрик, а не человеком |
-| **Speed** | Процесс должен быть быстрым для минимизации влияния на пользователей |
-| **Data Safety** | Стратегия должна учитывать совместимость схемы БД |
+1. **Автоматизация** — решение об откате принимается на основе заранее определенных метрик (thresholds), а не субъективного мнения.
+2. **Скорость** — минимизация времени пребывания системы в нестабильном состоянии ("радиус поражения").
+3. **Безопасность данных** — сохранение целостности БД и учет обратной совместимости при откате кода.
 
-### Rollback Strategies by Deployment Type
+### Стратегии отката по типам развертывания
 
-| Strategy | Rollback Mechanism | Speed | Downtime |
+| Стратегия | Механизм отката | Скорость | Влияние (Downtime) |
 | :--- | :--- | :--- | :--- |
-| **Recreate** | Развертывание старой версии после остановки новой | Медленно | Гарантированный простой |
-| **Rolling Update** | `kubectl rollout undo deployment/<name>` | Средняя (поэтапный) | Нет |
-| **Helm (immutable tag)** | `helm upgrade --set image.tag=<предыдущий-sha>` | Средняя | Нет |
-| **Blue-Green** | Мгновенное переключение трафика на Blue | Мгновенно | Нет (требуется `drain` соединений) |
-| **Canary (Argo Rollouts)** | `kubectl argo rollouts abort <rollout>` | Быстро | Нет |
-| **Feature Flags** | Отключение функции без переразвертывания | Мгновенно | Нет |
+| **Recreate** | Переразвертывание старой версии | Низкая | Гарантированный простой |
+| **Rolling Update** | `kubectl rollout undo` | Средняя | Нет (поэтапно) |
+| **Helm (immutable tag)** | Передеплой предыдущего SHA | Средняя | Нет |
+| **Blue-Green** | Переключение трафика на Blue-среду | Мгновенно | Нет |
+| **Canary** | Остановка раскатки (abort) | Высокая | Нет |
+| **Feature Flags** | Отключение флага функции | Мгновенно | Нет |
 
-### Database Migration Rollback
+### Откат при миграциях базы данных
 
-Откат миграций БД — критически сложная операция.
+Откат схемы данных является наиболее рискованной операцией. Прямое удаление столбцов или таблиц может привести к безвозвратной потере информации.
 
-**Опасно:** Прямой откат DDL (`ALTER TABLE DROP COLUMN`) после применения новой версией кода может привести к **потере данных**.
+**Рекомендуемый порядок действий:**
 
-**Безопасный подход (код → данные):**
+1. **Откат приложения** — возврат к версии кода, которая умеет работать со старой или расширенной схемой.
+2. **Expand-Contract** — использование паттерна параллельного изменения для обеспечения совместимости.
+3. **Ручная корректировка** — выполнение `down`-миграций только после полной стабилизации приложения на старой версии.
 
-1. **Откат приложения** → возврат к версии, работающей со старой схемой
-2. **Совместимость через Expand-Contract** → старый код работает с расширенной схемой
-3. **Ручная корректировка данных** → при необходимости восстановления совместимости
-4. **Откат миграции** → только после стабилизации системы
+Подробные стратегии описаны в **[Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md)**.
 
-Подробнее — [Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md), [Migration Rollback](../../Databases/Concepts/migrations/rollback_strategies.md).
+## Практические сценарии
 
-## Practical Scenarios
+### Сценарий 1: Конфигурация проб в Kubernetes Deployment
 
-### Scenario 1: Kubernetes Probe Configuration
+Пример настройки для обеспечения безопасного обновления без прерывания обслуживания.
 
 ```yaml
 apiVersion: apps/v1
@@ -72,8 +69,6 @@ spec:
       containers:
         - name: app
           image: registry/myapp:2.3.1
-          ports:
-            - containerPort: 8080
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -87,72 +82,46 @@ spec:
               port: 8080
             initialDelaySeconds: 30
             periodSeconds: 10
-          startupProbe:
-            httpGet:
-              path: /health/startup
-              port: 8080
-            failureThreshold: 30
-            periodSeconds: 5
 ```
 
-### Scenario 2: Automatic Rollback Based on Metrics
+### Сценарий 2: Автоматический откат на основе метрик (Bash/Prometheus)
+
+Скрипт для CI/CD пайплайна, проверяющий уровень ошибок перед завершением деплоя.
 
 ```bash
 set -e
 
+# Запрос доли ошибок canary-версии
 ERROR_RATE=$(curl -s "$PROM_URL/api/v1/query" \
-  --data-urlencode "query=rate(http_requests_errors_total{app=\"myapp\",version=\"canary\"}[5m]) / rate(http_requests_total{app=\"myapp\",version=\"canary\"}[5m])" \
+  --data-urlencode "query=rate(http_requests_errors_total{version=\"canary\"}[5m]) / rate(http_requests_total{version=\"canary\"}[5m])" \
   | jq -r '.data.result[0].value[1]')
 
-P95=$(curl -s "$PROM_URL/api/v1/query" \
-  --data-urlencode "query=histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app=\"myapp\",version=\"canary\"}[5m])) by (le))" \
-  | jq -r '.data.result[0].value[1]')
-
-if (( $(echo "$ERROR_RATE > 0.01 || $P95 > 0.3" | bc -l) )); then
-  echo "Degradation detected. Rolling back..."
+if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+  echo "Degradation detected (Error rate > 1%). Rolling back..."
   kubectl rollout undo deployment/myapp
   exit 1
 fi
 ```
 
-### Scenario 3: Rollback via Immutable Tag
+### Сценарий 3: Откат через Argo Rollouts
 
-Иммутабельный тег (`$CI_COMMIT_SHORT_SHA`) делает откат тривиальным — достаточно развернуть предыдущий SHA, без возни с ревизиями Helm.
-
-```bash
-# Helm — указать предыдущий SHA
-helm upgrade --set image.tag=<предыдущий-sha> ./app
-
-# kubectl — напрямую поменять образ
-kubectl set image deployment/my-app my-container=registry/app:<предыдущий-sha>
-```
-
-### Scenario 4: Argo Rollouts — Abort Canary
-
-При канарейке через Argo Rollouts откат — одна команда:
+Для стратегии Canary откат выполняется одной командой, которая мгновенно возвращает 100% веса трафика на стабильную версию.
 
 ```bash
 kubectl argo rollouts abort <rollout-name>
-# → 100% трафика возвращается на stable-версию
 ```
 
-## Additional Information
+## Дополнительная информация
 
-### Common Mistakes
+### Типовые ошибки
 
-| Mistake | Consequence |
-| :--- | :--- |
-| `readinessProbe` проверяет только HTTP 200 без проверки зависимостей (БД, кэш) | Трафик идет на неготовые поды |
-| Слишком агрессивные пороги (`failureThreshold`, `periodSeconds`) | Каскадные перезапуски (`flip-flop`) |
-| Отсутствие прогрева кэша перед Blue-Green переключением | Ошибки пользователей после переключения |
-| Откат схемы БД до отката приложения | Потеря данных |
-| Игнорирование сезонности трафика при оценке Canary | Ложные срабатывания алертов |
+- **Проверка только HTTP 200** — `readinessProbe` должен проверять доступность критических зависимостей (БД, кэш).
+- **Агрессивные пороги** — слишком короткие интервалы (`periodSeconds`) могут вызвать каскадные перезапуски при временных сетевых морганиях.
+- **Откат схемы БД до отката кода** — приводит к падению приложения, которое еще пытается обратиться к удаленным полям.
+- **Отсутствие прогрева (warm-up)** — переключение трафика на пустые кэши может вызвать всплеск нагрузки на БД.
 
-### Связанные документы
+### Рекомендованные ссылки
 
-- [Probes in Kubernetes](../../Kubernetes/Base/probes.md)
-- [Blue-Green Deployment](./blue_green_deployment.md)
-- [Canary Deployments](./canary_deployment.md)
-- [Rolling Update](./rolling_update.md)
-- [Canary Monitoring and Gating](./canary_monitoring_and_gating.md)
-- [Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md)
+- **[Probes в Kubernetes](../../Kubernetes/Base/probes.md)** — глубокое погружение в механизмы проверок пода.
+- **[Мониторинг и оценка Canary](./canary_monitoring_and_gating.md)** — автоматизация принятия решений.
+- **[Database Rollback Strategies](../../Databases/Concepts/rollback_strategies.md)** — безопасность данных при откатах.

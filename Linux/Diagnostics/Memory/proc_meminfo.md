@@ -116,9 +116,9 @@ grep MemAvailable /proc/meminfo
 
 ```bash
 free -h
-#               total        used        free      shared  buff/cache   available
-# Mem:           15Gi       2.1Gi       6.8Gi       245Mi       6.4Gi        12Gi
-# Swap:         2.0Gi       0.0Ki       2.0Gi
+# →               total        used        free      shared  buff/cache   available
+# → Mem:           15Gi       2.1Gi       6.8Gi       245Mi       6.4Gi        12Gi
+# → Swap:         2.0Gi       0.0Ki       2.0Gi
 ```
 
 Колонка **available** — единственный надёжный показатель реально свободной памяти. В отличие от `free`, она учитывает память дискового кэша, которую ядро может немедленно отдать приложениям.
@@ -130,9 +130,11 @@ free -h
 ```bash
 # Проверка анонимной памяти (память процессов)
 grep "Active(anon)" /proc/meminfo
+# → Active(anon):     1524380 kB
 
 # Проверка Slab-кэша (память ядра)
 grep Slab /proc/meminfo
+# → Slab:              204800 kB
 ```
 
 ### Диагностика давления дискового кэша
@@ -159,4 +161,4 @@ grep -E "Dirty|Writeback" /proc/meminfo
 
 ### Связь с механизмами ядра
 
-Состояние параметров в `/proc/meminfo` напрямую зависит от работы механизмов кэширования и освобождения памяти, описанных в [Core/memory/caching_and_reclaiming.md](../../Core/memory/caching_and_reclaiming.md). Метрики Slab-аллокатора детализируются в [Core/memory/slab_allocator.md](../../Core/memory/slab_allocator.md).
+Состояние параметров в `/proc/meminfo` напрямую зависит от работы механизмов кэширования и освобождения памяти, описанных в [Механизмы кэширования и освобождения памяти](../../Core/memory/caching_and_reclaiming.md). Метрики Slab-аллокатора детализируются в [Slab Allocator](../../Core/memory/slab_allocator.md).

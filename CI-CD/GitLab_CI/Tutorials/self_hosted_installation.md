@@ -4,7 +4,7 @@
 
 **GitLab CE (Community Edition)** — бесплатная и открытая версия платформы GitLab для самостоятельного размещения (self-hosted).
 
-**Self-Hosted** — модель развертывания, при которой программное обеспечение устанавливается и обслуживается на собственной инфраструктуре организации.
+**Self-Hosted** — модель деплоя, при которой программное обеспечение устанавливается и обслуживается на собственной инфраструктуре организации.
 
 **Docker-образ GitLab** — официально поддерживаемый предварительно сконфигурированный пакет, содержащий все компоненты GitLab (Nginx, PostgreSQL, Redis, Sidekiq).
 
@@ -25,13 +25,13 @@
 
 Основной файл для настройки GitLab. Расположен по пути `/etc/gitlab/gitlab.rb` внутри контейнера. Все изменения применяются через этот файл с последующей реконфигурацией командой `gitlab-ctl reconfigure`.
 
-### Внешний URL (Uniform Resource Locator — единый указатель ресурса) (`external_url`)
+### Внешний URL (`external_url`)
 
 Критически важный параметр в `gitlab.rb`, определяющий основной адрес GitLab. Используется для:
 
 - Генерации ссылок в уведомлениях и письмах
-- Настройки интеграций и протокола OAuth (Open Authorization)
-- Автоматического выпуска SSL (Secure Sockets Layer) сертификатов от Let's Encrypt (при внешнем доступе)
+- Настройки интеграций и протокола OAuth
+- Автоматического выпуска SSL-сертификатов от Let's Encrypt (при внешнем доступе)
 
 ### Сохранение данных (Data Volumes)
 
@@ -50,15 +50,15 @@
 **Сервер:**
 
 - Linux (Ubuntu 22.04+, Debian 12+, RHEL 9+) с `sudo` доступом
-- Минимум 4 ядра CPU (Central Processing Unit) и 8 ГБ RAM (Random Access Memory) (рекомендуется 16 ГБ для production)
+- Минимум 4 ядра CPU и 8 ГБ RAM (рекомендуется 16 ГБ для production)
 - Установленный Docker Engine 24.0+
 - Свободное место на диске: минимум 50 ГБ
 
 **Домен и сеть:**
 
 - Доменное имя (например, `gitlab.example.com`)
-- DNS (Domain Name System) `A`-запись, указывающая на публичный IP (Internet Protocol) адрес сервера
-- Открытые порты в брандмауэре: `80` (HTTP — HyperText Transfer Protocol/Let's Encrypt) и `443` (HTTPS — HyperText Transfer Protocol Secure)
+- DNS `A`-запись, указывающая на публичный IP-адрес сервера
+- Открытые порты в брандмауэре: `80` (HTTP/Let's Encrypt) и `443` (HTTPS)
 
 ### Шаг 1: Подготовка директорий на хосте
 
@@ -81,6 +81,7 @@ sudo chown -R $(whoami) /srv/gitlab/
 
     ```bash
     echo "external_url 'https://gitlab.example.com'" | tee /srv/gitlab/config/gitlab.rb
+    # → external_url 'https://gitlab.example.com'
     ```
 
     > При доступности домена извне GitLab автоматически выпустит SSL-сертификат от Let's Encrypt при первом запуске.
@@ -97,6 +98,7 @@ sudo docker run --detach \
   --volume /srv/gitlab/logs:/var/log/gitlab \
   --volume /srv/gitlab/data:/var/opt/gitlab \
   gitlab/gitlab-ce:18.10.3-ce.0
+# → a1b2c3d4e5f6... (ID контейнера)
 ```
 
 **Параметры:**
@@ -117,6 +119,7 @@ sudo docker run --detach \
 
 ```bash
 sudo docker logs -f gitlab
+# → gitlab Reconfigured!
 ```
 
 Процесс инициализации завершен, когда в логах появится сообщение `gitlab Reconfigured!` и вывод прекратится.
@@ -127,6 +130,7 @@ sudo docker logs -f gitlab
 
 ```bash
 sudo docker exec gitlab cat /etc/gitlab/initial_root_password
+# → Password: abc123def456...
 ```
 
 > **Внимание:** файл автоматически удаляется через 24 часа после первой реконфигурации. Скопируйте пароль немедленно.
@@ -160,9 +164,11 @@ sudo docker exec gitlab cat /etc/gitlab/initial_root_password
 ```bash
 # Создание бэкапа
 sudo docker exec gitlab gitlab-backup create
+# → Creating backup archive: 123456789_2026_04_13_18.10.3_gitlab_backup.tar ... done
 
 # Восстановление из бэкапа
 sudo docker exec gitlab gitlab-backup restore BACKUP=123456789_2026_04_13_18.10.3
+# → Unpacking backup ... done
 ```
 
 > Бэкапы сохраняются в `/var/opt/gitlab/backups` внутри контейнера. Для автоматизации используйте `gitlab_rails['backup_schedule']`.
@@ -177,7 +183,7 @@ sudo docker exec gitlab gitlab-backup restore BACKUP=123456789_2026_04_13_18.10.
 
 Текущая стабильная версия: **GitLab 18.10.3** (апрель 2026). Фиксируйте версию в `docker run` или Docker Compose для предсказуемости обновлений.
 
-### Смежные руководства
+### Смотрите также
 
 - [Архитектура и масштабирование GitLab](../Concepts/gitlab_platform_architecture.md) — обзор компонентов и стратегий роста
 - [Регистрация GitLab Runner](./runner_registration.md) — настройка CI/CD исполнителей

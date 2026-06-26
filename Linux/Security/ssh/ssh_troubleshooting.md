@@ -33,13 +33,11 @@
 
 **Логи сервера:**
 
-```bash
-# systemd
-sudo journalctl -u sshd -f
-
-# syslog
-sudo tail -f /var/log/auth.log
-```
+| Дистрибутив | Команда / Путь |
+| :--- | :--- |
+| **systemd (все)** | `sudo journalctl -u ssh -f` (или `sshd`) |
+| **Debian/Ubuntu** | `sudo tail -f /var/log/auth.log` |
+| **RHEL/CentOS** | `sudo tail -f /var/log/secure` |
 
 Ключевые маркеры в логах: `Accepted` (успех), `Failed` (неудача), `Invalid User` (нет пользователя), `bad ownership or modes` (неверные права).
 
@@ -77,10 +75,13 @@ nc -zv <server_ip> 22
 
 ```bash
 # 4. Проверить статус службы
+# Debian/Ubuntu
+sudo systemctl status ssh
+# RHEL/CentOS
 sudo systemctl status sshd
 
 # 5. Проверить порт прослушивания
-sudo ss -tlpn | grep sshd
+sudo ss -tlpn | grep -E 'ssh|sshd'
 
 # 6. Проверить файрвол
 sudo iptables -L -n
@@ -91,7 +92,7 @@ sudo nft list ruleset
 
 **Симптом:** `Permission denied (publickey,password)`.
 
-#### Подсценарий: Ключ добавлен в authorized_keys, но всё равно запрашивает пароль
+#### Проблемы с authorized_keys (ключ добавлен, но запрашивает пароль)
 
 Это одна из самых частых проблем. Основные причины и способы их устранения:
 
@@ -114,8 +115,7 @@ sudo nft list ruleset
    - **Решение:** Проверьте файл через `cat -A ~/.ssh/authorized_keys`.
 
 4. **Логирование на сервере:**
-   Точный ответ всегда есть в логах сервера.
-   - **Команда:** `sudo tail -f /var/log/auth.log` (или `journalctl -u ssh -f`).
+   Точный ответ всегда есть в логах сервера (`/var/log/auth.log` или `/var/log/secure`).
    - **Что искать:** `Authentication refused: bad ownership or modes`.
 
 5. **Конфигурация сервера (`sshd_config`):**
@@ -163,7 +163,7 @@ Host *
 
 **Причина:** Проблемы фрагментации пакетов (MTU), особенно через VPN.
 
-**Диагностика:** `ping` с запретом фрагментации для определения корректного MTU. Подробнее: [ping](../../Linux/Diagnostics/Networking/ping.md).
+**Диагностика:** `ping` с запретом фрагментации для определения корректного MTU. Подробнее: [ping](../../Diagnostics/Networking/ping.md).
 
 ### Сценарий 5: Разрыв соединения при бездействии
 

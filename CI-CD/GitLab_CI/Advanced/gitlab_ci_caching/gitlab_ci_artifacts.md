@@ -6,7 +6,7 @@
 
 **Отчёт (Report)** — специальный тип артефакта, который GitLab автоматически обрабатывает и отображает в интерфейсе (JUnit, coverage, code quality).
 
-Подробные определения и сравнение с кэшем: [Концепции кэширования](./cache_concepts.md).
+Подробные определения и сравнение с кэшем: [Обзор кэширования](./caching_overview.md).
 
 ## Базовые концепции
 
@@ -259,45 +259,7 @@ test:
 
 ### Сценарий 3: Комбинация кэша и артефактов
 
-Кэш ускоряет установку зависимостей, артефакты передают результаты сборки:
-
-```yaml
-build:
-  stage: build
-  script:
-    - npm ci
-    - npm run build
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-    policy: pull-push
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 week
-
-test:
-  stage: test
-  script:
-    - npm test
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-    policy: pull
-  dependencies:
-    - build
-  artifacts:
-    reports:
-      junit: test-results.xml
-```
-
-Подробнее о кэшировании: [обзор кэширования и артефактов](./caching_overview.md), [ключи кэша](./cache_keys.md).
+Кэш ускоряет установку зависимостей, артефакты передают результаты сборки — подробный пример конфигурации приведён в разделе **[Комбинация кэша и артефактов](./cache_scenarios.md#сценарий-7--комбинация-кэша-и-артефактов)**.
 
 ### Сценарий 4: Отладка — сохранение логов приложения при падении задачи
 
@@ -345,6 +307,6 @@ curl --header "PRIVATE-TOKEN: <token>" \
 
 ### См. также
 
-- [Концепции кэширования и артефактов](./cache_concepts.md)
+- [Обзор кэширования и артефактов](./caching_overview.md)
 - [Лучшие практики кэширования](./cache_best_practices.md)
-- [Управление артефактами](../../../artifact_management.md)
+- [Управление артефактами](../../../CI-CD/artifact_management.md)

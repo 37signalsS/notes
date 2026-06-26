@@ -22,7 +22,18 @@
 
 - **`image` vs. `build`**:
   - `image`: Указывает готовый образ из registry (например, `postgres:16`). Подробнее о развертывании БД через Compose — **[Развертывание PostgreSQL в Docker](../../Databases/PostgreSQL/Operations/docker_deployment.md)**.
-  - `build`: Указывает путь к `Dockerfile` для сборки образа локально (`build: .`).
+  - `build`: Указывает параметры сборки образа локально.
+    - **Короткая форма**: `build: .` (сборка из `Dockerfile` в текущей директории).
+    - **Расширенная форма**:
+      - `context`: Путь к директории, содержащей Dockerfile (относительный или абсолютный).
+      - `dockerfile`: Имя альтернативного Dockerfile (если отличается от стандартного `Dockerfile`).
+    ```yaml
+    services:
+      webapp:
+        build:
+          context: ./dir
+          dockerfile: Dockerfile-alternate
+    ```
 
 - **`ports`**: Пробрасывает порты в формате `IP:ХОСТ_ПОРТ:КОНТЕЙНЕР_ПОРТ`.
 

@@ -86,6 +86,7 @@ spec:
 
 ```bash
 kubectl run -it --rm --image=busybox:latest dns-test -- /bin/sh
+# → / #
 ```
 
 **Проверка записей:**
@@ -93,9 +94,20 @@ kubectl run -it --rm --image=busybox:latest dns-test -- /bin/sh
 ```bash
 # Получение списка IP всех подов сервиса
 nslookup nginx-headless
+# → Server:    10.96.0.10
+# → Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+# →
+# → Name:      nginx-headless
+# → Address 1: 10.1.0.3 web-0.nginx-headless.default.svc.cluster.local
+# → Address 2: 10.1.0.4 web-1.nginx-headless.default.svc.cluster.local
 
 # Обращение к конкретному поду по стабильному имени
 nslookup web-0.nginx-headless
+# → Server:    10.96.0.10
+# → Address 1: 10.96.0.10 kube-dns.kube-system.svc.cluster.local
+# →
+# → Name:      web-0.nginx-headless
+# → Address 1: 10.1.0.3 web-0.nginx-headless.default.svc.cluster.local
 ```
 
 ## Дополнительная информация

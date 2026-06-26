@@ -9,13 +9,13 @@
 
 Использование оператора для управления Review Apps — надежный и масштабируемый подход. Оператор следит за состоянием Merge Requests в GitLab и автоматически создает/удаляет ресурсы в Kubernetes.
 
-Общие концепции динамических окружений описаны в **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)**.
+Общие концепции динамических окружений описаны в **[Окружения и деплой в GitLab CI](../Concepts/environments_and_deployments.md)**.
 
 ## Практический сценарий: Пошаговая настройка
 
 Это пошаговое руководство демонстрирует настройку динамических окружений с помощью оператора в Kubernetes.
 
-### Шаг 1: Подготовка кластера и развертывание Оператора
+### Шаг 1: Подготовка кластера и деплой Оператора
 
 Оператору, управляющему динамическими окружениями, нужен доступ к API Kubernetes.
 
@@ -24,8 +24,11 @@
 
     ```bash
     kubectl create namespace users
+    # → namespace/users created
     kubectl create serviceaccount deploy-admin -n users
+    # → serviceaccount/deploy-admin created
     kubectl create clusterrolebinding deploy-admin-binding --clusterrole=cluster-admin --serviceaccount=users:deploy-admin
+    # → clusterrolebinding.rbac.authorization.k8s.io/deploy-admin-binding created
     ```
 
 2. **Получите токен доступа:**
@@ -34,6 +37,7 @@
     ```bash
     KUBE_TOKEN=$(kubectl create token deploy-admin -n users)
     echo $KUBE_TOKEN
+    # → eyJhbGciOiJSUzI1NiIsImtpZCI6InV...
     ```
 
 3. **Настройте и запустите пайплайн Оператора:**
@@ -41,7 +45,7 @@
     - В `Settings > CI/CD > Variables` проекта оператора добавьте переменные:
         - `KUBE_URL`: URL API-сервера вашего Kubernetes кластера.
         - `KUBE_TOKEN`: Полученный на предыдущем шаге токен.
-    - Запустите пайплайн для ветки `main`, чтобы развернуть оператор в кластер.
+    - Запустите пайплайн для ветки `main`, чтобы задеплоить оператор в кластер.
 
 ### Шаг 2: Настройка основного приложения для работы с Review Apps
 
@@ -75,6 +79,7 @@ deploy_review:
   stage: deploy
   script:
     - ./deploy-review-app.sh # Скрипт, который обращается к оператору
+    # → Deploying Review App for MR-123...
   environment:
     name: review/$CI_COMMIT_REF_SLUG # Уникальное имя окружения
     url: https://$CI_COMMIT_REF_SLUG.example.com
@@ -87,6 +92,7 @@ stop_review_app:
   stage: cleanup
   script:
     - ./cleanup-review-app.sh # Скрипт, который обращается к оператору
+    # → Cleaning up Review App for MR-123...
   when: manual # Запускается по кнопке "Stop" или триггеру on_stop
   environment:
     name: review/$CI_COMMIT_REF_SLUG
@@ -101,13 +107,13 @@ stop_review_app:
 1. Создайте `feature-ветку` и **Merge Request (MR)** в `main`.
 2. Пайплайн автоматически запустит задачу `deploy_review`, которая через оператор создаст изолированное окружение в Kubernetes.
 3. В виджете MR появится ссылка **"View app"** для тестирования.
-4. Для ручного удаления окружения нажмите кнопку **Stop** (■) на странице **Deployments > Environments** или в виджете MR. Это запустит задачу `stop_review_app`.
+4. Для ручного удаления окружения нажмите кнопку **Stop** на странице **Deployments > Environments** или в виджете MR. Это запустит задачу `stop_review_app`.
 5. После слияния (merge) или закрытия MR, `auto_stop_in` автоматически инициирует удаление окружения.
 
 ## Дополнительная информация
 
 ### Смотрите также
 
-- **[Окружения и развертывания в GitLab CI](../Concepts/environments_and_deployments.md)** — общие концепции динамических окружений.
+- **[Окружения и деплой в GitLab CI](../Concepts/environments_and_deployments.md)** — общие концепции динамических окружений.
 - **[Переменные и секреты в GitLab CI](../Concepts/gitlab_ci_variables_secrets.md)** — основы работы с переменными.
 - **[Интеграция GitLab CI с HashiCorp Vault](vault_kubernetes_integration.md)** — продвинутое управление секретами.

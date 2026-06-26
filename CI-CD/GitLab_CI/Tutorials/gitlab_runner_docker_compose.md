@@ -93,18 +93,23 @@ services:
 
 ```bash
 docker compose up -d
+# → Network example_default Created
+# → Container gitlab  Started
+# → Container gitlab-runner  Started
 ```
 
 Первый запуск GitLab занимает **5–15 минут**. Следить за процессом можно через логи:
 
 ```bash
 docker logs -f gitlab
+# → gitlab Reconfigured!
 ```
 
 Пароль администратора (`root`) можно получить командой:
 
 ```bash
 docker exec gitlab cat /etc/gitlab/initial_root_password
+# → Password: abc123def456...
 ```
 
 ### Шаг 4: Регистрация Runner
@@ -118,6 +123,7 @@ docker exec gitlab cat /etc/gitlab/initial_root_password
    ```bash
    docker run --rm -it -v /srv/gitlab-runner/config:/etc/gitlab-runner \
      gitlab/gitlab-runner:alpine register
+   # → Runner registered successfully. Feel free to start it...
    ```
 
    - URL: `http://gitlab.devops`
@@ -127,7 +133,7 @@ docker exec gitlab cat /etc/gitlab/initial_root_password
 
 ### Автоматизация регистрации (опционально)
 
-Для полностью автоматизированного развертывания можно использовать скрипт, ожидающий готовности API перед регистрацией. Пример логики:
+Для полностью автоматизированного деплоя можно использовать скрипт, ожидающий готовности API перед регистрацией. Пример логики:
 
 ```bash
 #!/bin/bash
@@ -149,7 +155,7 @@ echo "GitLab готов. Выполните регистрацию Runner вру
 - **Production**: Для продуктивных сред рекомендуется раздельное размещение компонентов и использование нативной установки (Omnibus) или Kubernetes. Подробнее см. в [Установка Self-Hosted GitLab CE](./self_hosted_installation.md).
 - **Версионность**: Используйте фиксированные теги образов (например, `18.10.3-ce.0`) вместо `latest` для стабильности пайплайнов.
 
-### Смежные руководства
+### Смотрите также
 
 - [Установка Self-Hosted GitLab CE с помощью Docker](./self_hosted_installation.md) — подробный разбор параметров GitLab.
 - [Регистрация GitLab Runner](./runner_registration.md) — SSoT по вопросам регистрации агентов.

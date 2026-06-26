@@ -6,7 +6,7 @@
 
 ## Основные концепции
 
-### `strategy: mirror`
+### Стратегия mirror
 
 **Назначение:** Отображает статус downstream pipeline в trigger job.
 
@@ -29,7 +29,7 @@ trigger_job:
     strategy: mirror
 ```
 
-### `strategy: depend`
+### Стратегия depend
 
 **Назначение:** Отображает отчёты child pipeline в Merge Request виджетах.
 
@@ -103,3 +103,7 @@ deploy-critical:
 
 - `strategy: depend` замедляет общий pipeline (ожидает завершения child)
 - `strategy: mirror` требует внимания к order of execution
+
+---
+
+**Связанные документы:** [Определения](./definitions.md), [Лучшие практики](./best_practices.md), [Наследование переменных](./variable_inheritance.md).

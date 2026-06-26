@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Projected Volume (проектируемый том)** — специализированный тип Volume (тома) в Kubernetes, который позволяет объединить несколько существующих источников данных (`Secret`, `ConfigMap`, `Downward API`, `ServiceAccountToken`) в один том, монтируемый как единая директория в файловую систему container (контейнера).
+**Projected Volume (проектируемый том)** — тип Volume в Kubernetes, позволяющий объединить несколько источников данных (`Secret`, `ConfigMap`, `Downward API`, `ServiceAccountToken`) в один том, монтируемый как единая директория в файловую систему контейнера.
 
-**Основное преимущество:** упрощение манифеста Pod (пода) за счёт использования одной точки монтирования вместо создания нескольких отдельных томов для разных источников.
+**Основное преимущество:** упрощение манифеста Pod за счёт использования одной точки монтирования вместо создания нескольких отдельных томов для разных источников.
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Источник | Описание | Статус |
 | :--- | :--- | :--- |
-| `secret` | Данные из объектов Secret в том же Namespace (пространстве имён). | Stable |
+| `secret` | Данные из объектов Secret в том же Namespace. | Stable |
 | `configMap` | Данные из объектов ConfigMap в том же Namespace. | Stable |
 | `downwardAPI` | Метаданные Pod через механизм Downward API. | Stable |
 | `serviceAccountToken` | Кастомизированный токен ServiceAccount для аутентификации в API. | Stable |
@@ -144,8 +144,7 @@ spec:
 
 **Связанные темы:**
 
-- [Базовые концепции Volume](./volumes_basics.md)
-- [Использование Downward API в Kubernetes](../downward_api.md)
+- [Тома в Kubernetes](./volume_types.md)
 - [Использование ConfigMap в Pod](../../ConfigMap/pod_usage.md)
 - [Механизмы работы с Secret](../../secrets/using_secrets.md)
 

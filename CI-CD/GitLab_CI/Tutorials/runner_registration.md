@@ -2,116 +2,119 @@
 
 ## Определения
 
-Базовые понятия (GitLab Runner, Executor, типы Runner'ов) описаны в основной статье: **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
+**GitLab Runner** — это агент с открытым исходным кодом, который работает в GitLab CI/CD для выполнения заданий (jobs) из пайплайна.
 
-**Регистрационный токен** — уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
+**Executor** — компонент Runner'а, который определяет среду выполнения задания (например, Docker, Shell, VirtualBox).
 
-## Предварительные требования
+**Регистрационный токен (Registration Token)** — уникальный токен, связывающий Runner с конкретным проектом или группой в GitLab.
 
-1. **Проект в GitLab.**
-2. **Сервер** (Linux), на котором будет работать Runner.
-3. **Установленный Docker** на этом сервере.
+Базовые понятия подробно описаны в статье: **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**.
 
-## Практический сценарий: регистрация Runner с Docker Executor
+## Основные концепции
 
-### Шаг 1: получение регистрационного токена
+Для успешной регистрации и работы Runner'а необходимо соблюдение следующих условий:
 
-1. В вашем проекте GitLab перейдите в **Settings > CI/CD**.
+1. **Доступ к инстансу GitLab:** Runner должен иметь сетевой доступ к URL GitLab по протоколу HTTP/HTTPS.
+2. **Типы Runner'ов:**
+    - **Project runners:** Привязаны к конкретному проекту.
+    - **Group runners:** Доступны для всех проектов в группе.
+    - **Shared runners:** Доступны для всех проектов инстанса (предоставляются администратором).
+3. **Безопасность:** Регистрационный токен является конфиденциальной информацией. После регистрации Runner получает собственный `authentication token` для дальнейшей работы.
+
+## Практические сценарии
+
+### Сценарий 1: Регистрация Runner с Docker Executor (Рекомендуемый)
+
+Docker Executor обеспечивает изоляцию сред выполнения и повторяемость результатов.
+
+#### Шаг 1: Получение регистрационного токена
+
+1. В проекте GitLab перейдите в **Settings > CI/CD**.
 2. Найдите раздел **Runners** и нажмите **Expand**.
-3. В секции "Register a new project runner" вы увидите URL вашего инстанса GitLab и **регистрационный токен**. Скопируйте токен.
-4. **Рекомендация:** На этой же странице отключите опцию **Enable shared runners for this project**, чтобы гарантировать, что пайплайны будут использовать только ваш собственный Runner.
+3. В секции "Register a new project runner" скопируйте **URL** и **registration token**.
+4. Рекомендуется отключить опцию **Enable shared runners for this project**, если вы планируете использовать только собственные ресурсы.
 
-### Шаг 2: Запуск интерактивной регистрации
+#### Шаг 2: Запуск интерактивной регистрации
 
-1. Подключитесь к серверу по SSH.
-2. Выполните команду `docker run` для запуска процесса регистрации. Эта команда запустит временный контейнер, который задаст вам несколько вопросов и создаст конфигурационный файл.
+Подключитесь к серверу и выполните команду для запуска процесса регистрации через временный контейнер:
 
 ```bash
-# Эта команда запустит интерактивный процесс регистрации
 docker run --rm -it \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
   gitlab/gitlab-runner:alpine-v17.0.0 \
   register
+# → Runtime platform arch=amd64 os=linux pid=7 revision=... version=...
+# → Running in system-mode.
 ```
 
-**Разбор команды:**
+**Параметры команды:**
+- `-v /srv/gitlab-runner/config:/etc/gitlab-runner` — монтирование директории для сохранения `config.toml`.
+- `-v /var/run/docker.sock:/var/run/docker.sock` — доступ к Docker-демону хоста для запуска контейнеров заданий.
+- `register` — запуск встроенного мастера регистрации.
 
-- `--rm -it`: Запускает контейнер в интерактивном режиме и автоматически удаляет его после завершения.
-- `-v /srv/gitlab-runner/config:/etc/gitlab-runner`: **Критически важный шаг.** Мы монтируем директорию с хоста (`/srv/gitlab-runner/config`) внутрь контейнера. В этой директории Runner создаст файл `config.toml`, который будет сохранен на хосте и использован для постоянной работы.
-- `-v /var/run/docker.sock:/var/run/docker.sock`: Позволяет Runner'у внутри контейнера управлять Docker-демоном на хост-машине для запуска CI/CD-задач.
-- `gitlab/gitlab-runner:alpine-v17.0.0`: Используем образ Runner'а с **зафиксированной версией**, а не `latest`, для предсказуемости.
-- `register`: Команда, инициирующая процесс регистрации.
+#### Шаг 3: Ввод параметров конфигурации
 
-### Шаг 3: Ответы на вопросы
+Следуйте подсказкам мастера:
+1. **URL:** Введите адрес GitLab (например, `https://gitlab.com/`).
+2. **Token:** Вставьте скопированный регистрационный токен.
+3. **Description:** Имя Runner'а (например, `docker-runner-prod`).
+4. **Tags:** Список тегов через запятую (`docker, linux`).
+5. **Executor:** Выберите `docker`.
+6. **Default Image:** Образ по умолчанию (`alpine:latest`).
 
-В интерактивном режиме Runner задаст вам несколько вопросов:
+После завершения вы увидите:
+`# → Runner registered successfully. Feel free to start it, but if it's running already the config should be reloaded automatically!`
 
-1. **"Enter the GitLab instance URL..."**: Введите URL вашего GitLab (например, `https://gitlab.com/`).
-2. **"Enter the registration token..."**: Вставьте токен, скопированный на Шаге 1.
-3. **"Enter a description for the runner..."**: Введите понятное имя (например, `docker-runner-prod`).
-4. **"Enter tags for the runner..."**: Введите теги через запятую (например, `docker, linux`). Теги позволяют направлять задачи на конкретные Runner'ы).
-5. **"Enter the executor..."**: Введите `docker`.
-6. **"Enter the default Docker image..."**: Введите образ, который будет использоваться по умолчанию, если в `.gitlab-ci.yml` не указан другой (например, `alpine:latest`).
-
-После этого вы увидите сообщение "Runner registered successfully". Файл `config.toml` появится в директории `/srv/gitlab-runner/config` на вашем хосте.
-
-### Шаг 4: Запуск Runner'а как сервиса
-
-Теперь, когда конфигурация создана, запустим Runner как постоянный фоновый сервис.
+#### Шаг 4: Запуск Runner'а как постоянного сервиса
 
 ```bash
 docker run -d --name gitlab-runner --restart always \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
   gitlab/gitlab-runner:alpine-v17.0.0
+# → a1b2c3d4e5f6... (ID контейнера)
 ```
 
-- `-d`: Запуск в фоновом режиме (detached).
-- `--name gitlab-runner`: Присваиваем контейнеру постоянное имя для удобства управления.
-- `--restart always`: Гарантирует, что Runner будет автоматически перезапускаться вместе с сервером.
+Проверьте статус:
+```bash
+docker ps
+# → CONTAINER ID   IMAGE                         STATUS         NAMES
+# → a1b2c3d4e5f6   gitlab/gitlab-runner:alpine   Up 5 seconds   gitlab-runner
+```
 
-Проверить статус можно командой `docker ps`.
+### Сценарий 2: Регистрация с Shell Executor
 
-### Шаг 5: Проверка в GitLab
+Shell Executor выполняет задачи напрямую в ОС хоста. Используется для простых задач или когда деплой требует прямого доступа к инструментам сервера.
 
-Вернитесь в GitLab в раздел **Settings > CI/CD > Runners**. Ваш новый Runner должен появиться в списке "Project runners" с зеленым индикатором, означающим, что он на связи и готов к работе.
-
-## Практические рекомендации
-
-### Специфические Runner'ы для инфраструктуры (Ansible)
-
-Для задач управления инфраструктурой (запуск Ansible, Terraform) рекомендуется использовать выделенные Runner'ы.
-
-- **Изоляция секретов:** Выделенный Runner может иметь доступ к SSH-ключам или API-токенам облака. Ограничение доступа к этому Runner'у через `tags` и защищенные ветки (`protected runners`) минимизирует риски.
-- **Использование тегов:** Присвойте такому Runner'у тег (например, `infra` или `ansible`). В `.gitlab-ci.yml` указывайте этот тег для соответствующих задач.
-
-    ```yaml
-    deploy:
-      stage: deploy
-      tags:
-        - infra
-      script:
-        - ansible-playbook site.yml
+1. **Установка:**
+    ```bash
+    curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
+    # → Repository successfully installed
+    sudo apt-get install gitlab-runner
+    # → gitlab-runner is already the newest version
     ```
 
-- **Локальный Runner:** Для отладки или специфических задач можно зарегистрировать GitLab Runner на собственном ноутбуке. Это позволит GitLab направлять задачи напрямую на вашу машину.
+2. **Регистрация:**
+    ```bash
+    sudo gitlab-runner register
+    # → Enter the GitLab instance URL: https://gitlab.com/
+    # → Enter the registration token: [TOKEN]
+    # → Enter the executor: shell
+    # → Runner registered successfully.
+    ```
 
 ## Дополнительная информация
 
-### Альтернативный сценарий: Регистрация с Shell Executor
+### Специфические Runner'ы для инфраструктуры
 
-`shell` executor — самый простой способ начать работу, но он **не рекомендуется для production** из-за отсутствия изоляции и рисков для безопасности. Он выполняет CI/CD-задачи непосредственно на хост-машине.
+Для задач управления инфраструктурой (Ansible, Terraform) рекомендуется выделять отдельные Runner'ы:
 
-1. **Установка:** Установите GitLab Runner как бинарный файл, а не через Docker, следуя [официальной инструкции](https://docs.gitlab.com/runner/install/linux-repository.html).
+- **Изоляция:** Ограничение доступа через `tags` (например, `infra`) гарантирует, что только проверенные пайплайны получат доступ к критическим ключам.
+- **Protected Runners:** В настройках GitLab можно пометить Runner как "Protected", тогда он будет выполнять задания только из защищенных веток и тегов.
 
-    ```bash
-    # Для Debian/Ubuntu:
-    curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
-    sudo apt-get install gitlab-runner
-    ```
+### Смотрите также
 
-2. **Регистрация:** Запустите `sudo gitlab-runner register` и в качестве Executor'а выберите `shell`.
-3. **Статус:** Runner будет запущен как системный сервис. Проверить его можно командой `sudo gitlab-runner status`.
-
-Подробное сравнение типов executor'ов — в **[Обзоре GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)**. Настройка Kubernetes Executor описана в **[Интеграции GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)**.
+- **[Обзор GitLab Runners и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)** — сравнение типов исполнителей.
+- **[Интеграция GitLab CI с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — использование Kubernetes Executor.
+- **[Интеграция Ansible с GitLab CI/CD](./ansible_integration.md)** — пример использования тегов для деплоя.

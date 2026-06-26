@@ -54,16 +54,10 @@
 ```bash
 # Создать Deployment
 kubectl apply -f deployment.yaml
-
-# Обновить образ
-kubectl set image deployment/my-app my-container=my-image:v2
-
-# Отследить статус
-kubectl rollout status deployment/my-app
-
-# Откатить к предыдущей версии
-kubectl rollout undo deployment/my-app
+# → deployment.apps/my-app created
 ```
+
+Управление обновлениями, проверки статуса развертывания и откаты к предыдущим версиям описаны в **[Управление жизненным циклом](./lifecycle_management.md)**.
 
 ### Анализ состояния
 
@@ -75,14 +69,5 @@ kubectl rollout undo deployment/my-app
 
 ## 4. Дополнительная информация
 
-### Детальные руководства
-
-- **[Манифест и лучшие практики](./deployment_manifest.md)** — ресурсы, пробы, Sidecar-паттерны.
-- **[Управление жизненным циклом](./lifecycle_management.md)** — подробно об обновлении, откате и ревизиях.
-
-### Навигация по связанным темам
-
-- Базовые объекты: [`Pod`](../Pod/pod_overview.md), [`ReplicaSet`](../replicaset.md), [`ConfigMap`](../configmap.md), [`Secret`](../secrets/secrets_basics.md).
-- Stateful-приложения: [`StatefulSet`](../StatefulSet/statefulset_overview.md).
-- Отказоустойчивость: [`Высокая доступность`](../high_availability.md).
-- Сравнение стратегий: [Comparison of Deployment Strategies](../../../CI-CD/Deployment_Strategies/comparison.md).
+- [Манифест и лучшие практики](./deployment_manifest.md)
+- [Управление жизненным циклом](./lifecycle_management.md)

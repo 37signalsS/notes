@@ -73,6 +73,7 @@ spec:
 
 ```bash
 kubectl port-forward service/internal-app-service 8080:80
+# → Forwarding from 127.0.0.1:8080 -> 80
 ```
 
 После выполнения команды сервис будет доступен по адресу `http://localhost:8080`.

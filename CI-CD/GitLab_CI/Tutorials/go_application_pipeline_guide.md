@@ -1,41 +1,41 @@
-# Руководство по пайплайну для Go-приложения
+# Руководство по Pipeline для Go-приложения
 
 ## Определения
 
-**Пайплайн для Go-приложения** — многоэтапный CI/CD (Continuous Integration / Continuous Delivery — непрерывная интеграция и доставка) процесс для компиляции, тестирования, упаковки и развертывания приложений на языке Go. Характеризуется использованием артефактов сборки между этапами, E2E (End-to-End — сквозным) тестированием запущенного бинарного файла и стратегией развертывания на основе веток и тегов.
+**Pipeline для Go-приложения** — многоэтапный CI/CD (Continuous Integration / Continuous Delivery) процесс для компиляции, тестирования, упаковки и Deploy приложений на языке Go. Характеризуется использованием артефактов сборки между этапами, E2E (End-to-End) тестированием запущенного бинарного файла и стратегией Deploy на основе веток и тегов.
 
 **Ключевые компоненты:**
 
-- **Артефакты (`artifacts`)** — передача бинарного файла между этапами пайплайна.
+- **Артефакты (`artifacts`)** — передача бинарного файла между этапами Pipeline.
 - **E2E-тесты** — интеграционное тестирование запущенного приложения.
 - **Workflow rules** — условный запуск задач на основе веток и тегов.
-- **Kubernetes Executor** — безопасное выполнение задач развертывания в изолированных Pod.
+- **Kubernetes Executor** — безопасное выполнение задач Deploy в изолированных Pod.
 
 ## Основные концепции
 
-### Стратегия пайплайна
+### Стратегия Pipeline
 
-Пайплайн состоит из пяти этапов:
+Pipeline состоит из пяти этапов:
 
 | Этап | Задачи | Описание |
 | :--- | :--- | :--- |
 | `validate` | `lint-yaml`, `lint-go`, `unit-tests` | Параллельные быстрые проверки для ускорения обратной связи. |
 | `build` | `build-and-e2e` | Компиляция приложения и запуск E2E-тестов. |
 | `docker` | `build-docker` | Упаковка в Docker-образ с тегом `$CI_COMMIT_SHORT_SHA`. |
-| `deploy` | `deploy` | Развертывание в `dev` или `staging` в зависимости от ветки. |
+| `deploy` | `deploy` | Deploy в `dev` или `staging` в зависимости от ветки. |
 | `release` | `retag-for-release`, `release-to-prod` | Релиз в `production` по Git-тегу. |
 
-### Логика развертывания
+### Логика Deploy
 
 - **Feature-ветки** (`*`) → окружение `dev`.
 - **Ветка `main`** → окружение `staging`.
 - **Git-тег в `main`** → окружение `production` с версионированием по тегу.
 
-Эта логика реализуется через директиву [`rules`](../Advanced/gitlab_ci_advanced_workflow.md) с использованием YAML (Yet Another Markup Language — еще один язык разметки) якорей для переиспользования.
+Эта логика реализуется через директиву [`rules`](../Advanced/gitlab_ci_advanced_workflow.md) с использованием YAML якорей для переиспользования.
 
 ### Требования к инфраструктуре
 
-Пайплайн использует **Kubernetes Executor** — наиболее безопасный способ интеграции. Каждая задача выполняется в изолированном Pod с временными учетными данными.
+Pipeline использует **Kubernetes Executor** — наиболее безопасный способ интеграции. Каждая задача выполняется в изолированном Pod с временными учетными данными.
 
 **Необходимые компоненты:**
 
@@ -53,9 +53,9 @@
 **Создание namespaces:**
 
 ```bash
-kubectl create ns dev
-kubectl create ns staging
-kubectl create ns production
+kubectl create ns dev        # → namespace/dev created
+kubectl create ns staging    # → namespace/staging created
+kubectl create ns production # → namespace/production created
 ```
 
 **Создание секрета для доступа к Registry:**
@@ -68,6 +68,7 @@ kubectl create secret docker-registry gitlab-registry-secret \
   --docker-username=<deploy_token_user> \
   --docker-password=<deploy_token_password> \
   -n dev
+# → secret/gitlab-registry-secret created
 
 # Повторить для staging и production
 ```
@@ -95,7 +96,7 @@ kubectl create secret docker-registry gitlab-registry-secret \
 ```yaml
 build-and-e2e:
   stage: build
-  image: golang:1.21
+  image: golang:1.23
   script:
     - cd verybigdataapp
     - go build -o /tmp/verybigdataapp
@@ -116,9 +117,9 @@ build-and-e2e:
 ```yaml
 build-docker:
   stage: docker
-  image: docker:20.10
+  image: docker:24.0
   services:
-    - docker:20.10-dind
+    - docker:24.0-dind
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - cp /tmp/verybigdataapp ./app # Использование артефакта
@@ -129,12 +130,12 @@ build-docker:
   <<: *no_tags_rules
 ```
 
-**Этап `deploy` — развертывание по веткам:**
+**Этап `deploy` — Deploy по веткам:**
 
 ```yaml
 deploy:
   stage: deploy
-  image: bitnami/kubectl:1.21
+  image: bitnami/kubectl:1.28
   tags: [kubernetes] # Требуется Runner с Kubernetes Executor
   script:
     - |
@@ -158,9 +159,9 @@ deploy:
 ```yaml
 retag-for-release:
   stage: release
-  image: docker:20.10
+  image: docker:24.0
   services:
-    - docker:20.10-dind
+    - docker:24.0-dind
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
@@ -170,7 +171,7 @@ retag-for-release:
 
 release-to-prod:
   stage: release
-  image: bitnami/kubectl:1.21
+  image: bitnami/kubectl:1.28
   tags: [kubernetes]
   script:
     - export ENVIRONMENT=production
@@ -221,10 +222,10 @@ spec:
 
 **Оптимизация Docker-сборки:** для Go-приложений используйте multi-stage builds (многостадийные сборки) в Dockerfile. Это позволяет создать минимальный финальный образ без компилятора и исходного кода, что уменьшает размер и повышает безопасность. Для более безопасной сборки образов без использования привилегированного режима (Docker-in-Docker) рассмотрите использование **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 
-**GitOps-альтернатива:** данный пайплайн реализует Push-based CI/CD. Для более строгого следования методологии GitOps (Git Operations) рассмотрите интеграцию с **[ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)** — в этом случае CI отвечает только за сборку образов, а CD-агент синхронизирует состояние кластера с Git-репозиторием манифестов.
+**GitOps-альтернатива:** данный Pipeline реализует Push-based CI/CD. Для более строгого следования методологии GitOps (Git Operations) рассмотрите интеграцию с **[ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)** — в этом случае CI отвечает только за сборку образов, а CD-агент синхронизирует состояние кластера с Git-репозиторием манифестов.
 
 **Безопасность:** использование Kubernetes Executor обеспечивает изоляцию задач — каждая выполняется в отдельном Pod с временными учетными данными. Это безопаснее хранения долгоживущих токенов в CI-переменных.
 
-**Управление окружениями:** подробная информация о создании и управлении окружениями в GitLab — в **[Концепциях окружений и развертываний](../Concepts/environments_and_deployments.md)**.
+**Управление окружениями:** подробная информация о создании и управлении окружениями в GitLab — в **[Концепциях окружений и Deploy](../Concepts/environments_and_deployments.md)**.
 
 **Динамические окружения:** для создания временных окружений на каждый Merge Request (Review Apps) см. **[Настройку динамических окружений с Kubernetes](./kubernetes_review_apps.md)**.

@@ -46,7 +46,7 @@
 | **VRRPv2** | Наиболее распространённая версия. Не поддерживает IPv6. |
 | **VRRPv3** | Поддержка IPv4 и IPv6, точность таймеров в миллисекундах. |
 
-### Настройка сетевого экрана (Firewall)
+### Сетевой экран
 
 VRRP работает поверх IP (протокол **112**). Необходимо разрешить его прохождение.
 
@@ -54,7 +54,9 @@ VRRP работает поверх IP (протокол **112**). Необход
 
 ```bash
 sudo firewall-cmd --add-protocol=vrrp --permanent
+# → success
 sudo firewall-cmd --reload
+# → success
 ```
 
 **iptables:**
@@ -117,31 +119,34 @@ vrrp_instance VI_1 {
 
 ### Сценарии использования
 
-- **HA для API-сервера Kubernetes:** Обеспечение стабильного VIP для `kube-apiserver` в связке с HAProxy. Подробнее: [настройка HA API-сервера](../../Kubernetes/Installation/kubeadm/ha_concepts.md).
-- **HA для MySQL:** Использование плавающего IP для переключения между мастером и репликой. Подробнее: [отказоустойчивость MySQL](../../Databases/MySQL/multi-source-replication.md#3-отказоустойчивость-с-помощью-плавающего-ip-vip).
+- **HA для API-сервера Kubernetes:** Обеспечение стабильного VIP для `kube-apiserver` в связке с HAProxy. Подробнее: **[Настройка HA API-сервера](../../Kubernetes/Installation/kubeadm/ha_concepts.md)**.
+- **HA для MySQL:** Использование плавающего IP для переключения между мастером и репликой. Подробнее: **[Отказоустойчивость MySQL](../../Databases/MySQL/multi-source-replication.md#3-отказоустойчивость-с-помощью-плавающего-ip-vip)**.
 
 ### Диагностика
 
 ```bash
 # Проверка владения VIP
 ip addr show eth0
+# → inet 192.168.1.100/24 scope global secondary eth0
 
 # Мониторинг логов в реальном времени
 journalctl -u keepalived -f
+# → Keepalived_vrrp[123]: VRRP_Instance(VI_1) Entering MASTER STATE
 
 # Перехват VRRP-пакетов
 tcpdump -i eth0 -n vrrp
+# → IP 10.0.0.1 > 224.0.0.18: VRRPv2, Advertisement, vrid 51, prio 101
 ```
 
-Подробнее о диагностике сети — в [руководстве по tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md).
+Подробнее о диагностике сети — в **[Руководстве по tcpdump](../../Linux/Diagnostics/Networking/tcpdump.md)**.
 
-## Дополнительная информация
+## Дополнительные материалы
 
 ### Сравнение с Pacemaker
 
 Keepalived реализует **IP failover** на сетевом уровне. Для управления сложными зависимостями между сервисами, дисками и кворумом чаще используется связка **Pacemaker + Corosync**. Keepalived предпочтителен для простых сценариев управления виртуальным IP.
 
-Подробнее о механизмах переключения — в [механизмах failover](../../Concepts/High_Availability/ha_failover_mechanisms.md).
+Подробнее о механизмах переключения — в **[Механизмах failover](../../Concepts/High_Availability/ha_failover_mechanisms.md)**.
 
 ### Тайминги failover
 
@@ -159,7 +164,7 @@ failover_timeout = 3 × advert_int
 
 Чем меньше `advert_int`, тем выше частота VRRP-пакетов и нагрузка на процессор. Для failover < 1 с необходимо использовать VRRPv3 (поддержка миллисекундных таймеров).
 
-### L2-ограничение VRRP
+### Ограничение L2 для VRRP
 
 VIP **обязан** находиться в той же L2-подсети, что и реальные IP-адреса узлов. VRRP не маршрутизируется — ARP-запросы нового MASTER должны достигать коммутаторов в одном широковещательном домене.
 
@@ -171,6 +176,9 @@ VIP **обязан** находиться в той же L2-подсети, чт
 
 **Решение:** использовать **DNS-01 challenge** — токен записывается в DNS-запись `_acme-challenge.<domain>`. Оба узла имеют одинаковый доступ к DNS-API, поэтому сертификат можно выпускать на любой ноде, и он будет работать на обеих.
 
-Подробнее: [acme.sh](../../WebServers/Concepts/acme_sh.md), [встроенный ACME Angie](../../WebServers/Angie/angie_acme_module.md).
+Подробнее: **[acme.sh](../../WebServers/Concepts/acme_sh.md)**, **[Встроенный ACME Angie](../../WebServers/Angie/angie_acme_module.md)**.
 
-### Сравнение с Pacemaker
+### См. также
+
+- **[Обзор High Availability](../../Concepts/High_Availability/ha_overview.md)** — общие принципы проектирования систем высокой доступности.
+- **[Split-Brain и кворум](../../Databases/Concepts/replication.md#проблема-split-brain-и-решение-через-кворум)** — детальный разбор рисков рассинхронизации.

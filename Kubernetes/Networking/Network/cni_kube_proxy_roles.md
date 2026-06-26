@@ -61,16 +61,16 @@ kube-proxy создаёт **виртуальный сервер** в IPVS-таб
 
 **Поддерживаемые алгоритмы балансировки:**
 
-- `rr` (round-robin) — по кругу.
-- `lc` (least connections) — на pod с наименьшим числом соединений.
-- `dh` (destination hash) — по хешу IP-адреса назначения.
-- `sh` (source hash) — по хешу IP-адреса источника.
+Поддерживает несколько алгоритмов распределения трафика (включая Round Robin, Least Connection и хеширование).
 
-**Включение:** через ConfigMap `kube-proxy` (поле `mode: ipvs`) или флаг `--proxy-mode=ipvs`. Требует наличия `ipvsadm` и загруженных модулей ядра (`ip_vs`, `ip_vs_rr`, `ip_vs_wrr`, `ip_vs_sh`, `nf_conntrack`).
+**Включение:** 
+Осуществляется через ConfigMap `kube-proxy` (поле `mode: ipvs`). Для работы требует наличия утилиты `ipvsadm` и загрузки специфичных модулей ядра.
+
+> **Подробнее об архитектуре, алгоритмах и настройке:** См. специализированный раздел [IPVS в Kubernetes](./CNI/ipvs.md).
 
 **Ограничение (оба режима):** kube-proxy работает только на L4 (IP+порт) и не знает о состоянии приложения. Именно поэтому **gRPC** плохо балансируется через kube-proxy: HTTP/2 мультиплексирует все вызовы в одном TCP-соединении, и kube-proxy выбирает pod один раз при установке соединения.
 
-#### eBPF
+#### Технология eBPF
 
 Современная альтернатива (в Cilium/Calico), позволяющая полностью заменить kube-proxy программами на уровне ядра. Подробнее: [eBPF: Замена kube-proxy](./CNI/ebpf.md).
 
@@ -109,9 +109,9 @@ kube-proxy создаёт **виртуальный сервер** в IPVS-таб
 
 ### Дополнительные сетевые функции
 
-- **IPAM (IP Address Management):** Механизмы выделения IP-адресов (host-local, Calico IPAM). См. [IPAM в CNI](./CNI/ipam.md).
-- **Внешний доступ:** Использование NodePort, LoadBalancer и Ingress. См. [Обзор Ingress](../Ingress/overview.md).
-- **IP Advertisement:** Анонсирование ClusterIP внешним роутерам через BGP. См. [Внешние типы доступа](./CNI/selection_and_external_access.md).
+- **IPAM (IP Address Management):** механизмы выделения IP-адресов (host-local, Calico IPAM). См. [IPAM в CNI](./CNI/ipam.md).
+- **Внешний доступ:** использование NodePort, LoadBalancer и Ingress. См. [Обзор Ingress](../Ingress/overview.md).
+- **IP Advertisement:** анонсирование ClusterIP внешним роутерам через BGP. См. [Внешние типы доступа](./CNI/selection_and_external_access.md).
 
 ## Дополнительная информация
 
@@ -120,24 +120,32 @@ kube-proxy создаёт **виртуальный сервер** в IPVS-таб
 ```bash
 # Проверка режима работы kube-proxy
 kubectl -n kube-system get configmap kube-proxy -o yaml | grep mode
+# → mode: "ipvs" (или "iptables")
 
 # Проверка подов сетевого плагина (на примере Calico)
 kubectl get pods -n kube-system -l k8s-app=calico-node
+# → calico-node-xxxxx  1/1  Running  0  1d
 
 # Просмотр правил IPVS (если включен)
 ipvsadm -Ln
+# → Prot LocalAddress:Port Scheduler Flags
+# →   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+# → TCP  10.96.0.10:53 rr
+# →   -> 10.244.1.5:53                Masq    1      0          0
 
 # Проверка сетевой связности между подами
-kubectl run tester --rm -it --image=busybox -- ping <target-pod-ip>
+kubectl run tester --rm -it --image=busybox -- ping 10.244.1.5
+# → PING 10.244.1.5 (10.244.1.5): 56 data bytes
+# → 64 bytes from 10.244.1.5: seq=0 ttl=64 time=0.123 ms
 ```
 
 ### Влияние на производительность
 
-- **Инкапсуляция (VXLAN/IPIP):** Добавляет 50-100 байт накладных расходов на каждый пакет (MTU overhead) и нагружает CPU.
-- **Прямая маршрутизация (BGP):** Работает на скорости физической сети, но требует поддержки BGP инфраструктурой.
-- **eBPF-фильтрация:** Снижает задержки за счет обработки пакетов на ранних стадиях в ядре, минуя цепочки iptables.
+- **Инкапсуляция (VXLAN/IPIP):** добавляет 50-100 байт накладных расходов на каждый пакет (MTU overhead) и нагружает CPU.
+- **Прямая маршрутизация (BGP):** работает на скорости физической сети, но требует поддержки BGP инфраструктурой.
+- **eBPF-фильтрация:** снижает задержки за счет обработки пакетов на ранних стадиях в ядре, минуя цепочки iptables.
 
-**См. также:**
+### Смотрите также
 
 - [Обзор сетевой модели Kubernetes](./network_overview.md)
 - [Сетевые политики (NetworkPolicy)](./network_policy.md)

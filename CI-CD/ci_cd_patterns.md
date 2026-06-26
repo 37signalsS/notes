@@ -1,4 +1,4 @@
-# Паттерны CI/CD (Continuous Integration / Continuous Deployment)
+# Паттерны CI/CD
 
 ## Определения
 
@@ -52,5 +52,4 @@
 
 * **[CI/CD: Анти-паттерны](./ci_cd_antipatterns.md)** — типичные ошибки автоматизации.
 * **[Стратегии развертывания](./Deployment_Strategies/comparison.md)** — Blue/Green, Canary, Rolling Update.
-* **[SRE концепции](../Concepts/sre_concepts_main.md)** — SLI/SLO и управление надежностью.
 * **[Управление артефактами](./artifact_management.md)** — жизненный цикл и хранение сборок.

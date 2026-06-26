@@ -1,9 +1,9 @@
-# Развертывание Spring Boot в GitLab CI с использованием Docker
+# Деплой Spring Boot в GitLab CI с использованием Docker
 
 ## Определения
 
 - **Spring Boot** — фреймворк для создания standalone Java-приложений с минимальной конфигурацией. В контексте CI/CD требует сборки JAR-артефакта и последующей контейнеризации.
-- **GitLab CI/CD пайплайн** — автоматизированный конвейер для сборки, тестирования и развертывания кода. Базовые концепции (Pipeline, Stage, Job, Runner, Artifact) описаны в **[Основах GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**.
+- **GitLab CI/CD пайплайн** — автоматизированный конвейер для сборки, тестирования и деплоя кода. Базовые концепции (Pipeline, Stage, Job, Runner, Artifact) описаны в **[Основах GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**.
 - **Kaniko** — инструмент для сборки Docker-образов внутри контейнера без использования демона Docker. Подробное описание в **[Сборке образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 - **SSH-агент** — программа для хранения приватных ключей, используемая для аутентификации при SSH-подключениях без интерактивного ввода пароля.
 
@@ -21,10 +21,10 @@
                     GitLab Container Registry  Production Server
 ```
 
-### Этапы развертывания
+### Этапы деплоя
 
 1. **Сборка (Build)**: Компиляция приложения и сборка Docker-образа с помощью Kaniko. Образ публикуется во встроенном **[GitLab Container Registry](../../../Docker/docker_registries.md)**.
-2. **Развертывание (Deploy)**: Подключение к целевому серверу по SSH, загрузка (pull) новой версии образа и перезапуск контейнера через Docker Compose.
+2. **Деплой (Deploy)**: Подключение к целевому серверу по SSH, загрузка (pull) новой версии образа и перезапуск контейнера через Docker Compose.
 
 ### Требования к инфраструктуре
 
@@ -65,6 +65,7 @@ WORKDIR /home/app
 COPY pom.xml .
 COPY src ./src
 RUN mvn clean package -DskipTests
+# → Сборка JAR-файла завершена
 
 FROM openjdk:17-jdk-slim
 WORKDIR /app
@@ -104,6 +105,7 @@ build:
       --context "${CI_PROJECT_DIR}"
       --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
       --destination "${CI_REGISTRY_IMAGE}:latest"
+    # → Публикация образа в Registry завершена
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
@@ -116,14 +118,20 @@ deploy:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
     - eval $(ssh-agent -s)
+    # → Agent pid 123
     - echo "${SSH_PRIVATE_KEY}" | tr -d '\r' | ssh-add -
+    # → Identity added: (stdin)
     - '[[ -f /.dockerenv ]] && echo -e "Host *\n  StrictHostKeyChecking no\n\n" > ~/.ssh/config'
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    # → Login Succeeded
   script:
     - cp "$ENV_FILE" .env
     - docker compose pull
+    # → Pulling app ... done
     - docker compose up -d --remove-orphans
+    # → Container spring-boot-app Started
     - docker image prune -f
+    # → Total reclaimed space: 1.2GB
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: manual
@@ -133,7 +141,7 @@ deploy:
 
 1. **Этап Build**: Kaniko собирает образ и пушит его в Registry. Мы используем тег `latest` для упрощения деплоя, но в production рекомендуется использовать `$CI_COMMIT_SHORT_SHA` (см. **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)**).
 2. **Этап Deploy**:
-    - Переменная `DOCKER_HOST` указывает Docker CLI подключаться к удаленному серверу через SSH-туннель.
+    - Переменная `DOCKER_HOST` указывает Docker CLI подключаться к удаленному серверу через SSH-тунлель.
     - `ssh-agent` обеспечивает аутентификацию без пароля.
     - `docker compose pull` гарантирует, что на сервер будет загружена самая свежая версия образа из Registry.
     - `docker image prune -f` удаляет старые (dangling) образы, освобождая место на диске.
@@ -148,9 +156,9 @@ deploy:
 ### Альтернативные подходы
 
 - **Kubernetes**: Для крупных проектов рекомендуется переход на **[интеграцию с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** и использование Helm.
-- **GitOps**: Рассмотрите использование Push-модели через **[ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)** для более надежного развертывания.
+- **GitOps**: Рассмотрите использование Push-модели через **[ArgoCD](../../../GitOps/ArgoCD/argocd_overview.md)** для более надежного деплоя.
 
-### Ссылки
+### Смотрите также
 
 - **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)**
 - **[Сборка образов с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)**

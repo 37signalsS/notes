@@ -60,7 +60,7 @@ KEDA работает как посредник между источником 
 KEDA поддерживает широкий спектр источников, разделенных по категориям:
 
 * **Очереди сообщений:** Kafka, RabbitMQ, AWS SQS, Azure Service Bus.
-* **Мониторинг:** Prometheus, Datadog, Grafana Loki.
+* **Мониторинг:** Prometheus, Datadog, Grafana Loki. Позволяет масштабировать поды на основе метрик загрузки GPU (например, `dcgm_gpu_utilization`), что особенно актуально для AI/ML нагрузок.
 * **Базы данных:** MySQL, PostgreSQL, Redis, MongoDB.
 * **Расписание:** Cron (масштабирование в рабочие часы или пики).
 

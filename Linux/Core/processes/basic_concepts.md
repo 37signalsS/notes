@@ -70,15 +70,26 @@
 ```bash
 # Команда запуска процесса
 cat /proc/<PID>/cmdline
+# → /usr/sbin/nginx-gdaemon off;
 
 # Переменные окружения
 cat /proc/<PID>/environ
+# → PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/binHOME=/root...
 
 # Статус процесса (PID, PPID, UID — User Identifier, Memory)
 cat /proc/<PID>/status
+# → Name:   nginx
+# → Umask:  0000    0000    0000    0000
+# → State:  S (sleeping)
+# → Tgid:   1234
+# → Ngid:   0
+# → Pid:    1234
+# → PPid:   1
 
 # Список открытых файловых дескрипторов
 ls -l /proc/<PID>/fd/
+# → lrwx------ 1 root root 64 Jan  1 12:00 0 -> /dev/null
+# → lrwx------ 1 root root 64 Jan  1 12:00 1 -> /dev/null
 ```
 
 ## Дополнительная информация

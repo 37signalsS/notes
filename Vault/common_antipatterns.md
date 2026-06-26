@@ -26,7 +26,7 @@
 
 Самая частая ошибка — коммит файлов `.env`, `kubeconfig`, приватных ключей. Даже при удалении коммита секрет остаётся в истории Git.
 
-- **Инструменты обнаружения:** [Gitleaks](../CI-CD/DevSecOps/secrets_management.md#1-инструменты-для-сканирования-trufflehog-и-gitleaks), [TruffleHog](../CI-CD/DevSecOps/secrets_management.md#1-инструменты-для-сканирования-trufflehog-и-gitleaks).
+- **Инструменты обнаружения:** [Gitleaks](../CI-CD/DevSecOps/secrets_management.md#инструменты-для-работы-с-секретами-сканирование-и-очистка), [TruffleHog](../CI-CD/DevSecOps/secrets_management.md#инструменты-для-работы-с-секретами-сканирование-и-очистка).
 - **Решение:** Использование pre-commit хуков, сканирование репозиториев, немедленная ротация скомпрометированных секретов.
 
 ### 2. Кодирование Base64 как шифрование
@@ -69,7 +69,7 @@ vault kv put secret/app DB_PASSWORD=... DB_HOST=...
 
 - **Vault SDK** — приложение запрашивает секреты напрямую через Vault API (библиотеки: hvac, vault-ruby, утилита `curl`). Секреты кэшируются с обновлением по TTL.
 - **Vault Agent sidecar** — контейнер с Vault Agent в поде аутентифицируется, получает секреты и сохраняет в `emptyDir` или рендерит шаблоны. Подробнее — [Vault Agent](./guides/vault_agent/basics.md), [sidecar pattern](./guides/vault_agent/sidecar_pattern.md).
-- **External Secrets Operator** — синхронизирует секреты из Vault в нативные Kubernetes `Secret`. Приложение продолжает использовать стандартные переменные окружения или `volumeMounts`. Подробнее — [ESO](../../Kubernetes/Base/secrets/external_managers.md).
+- **External Secrets Operator** — синхронизирует секреты из Vault в нативные Kubernetes `Secret`. Приложение продолжает использовать стандартные переменные окружения или `volumeMounts`. Подробнее — [ESO](../Kubernetes/Base/secrets/external_managers.md).
 - **Vault Agent Injector** — автоматическое внедрение sidecar через аннотации пода (`vault.hashicorp.com/agent-inject: true`). Подробнее — [Injector](./guides/vault_agent/injector.md).
 
 **5. Zero-downtime rollout**
@@ -131,4 +131,3 @@ vault kv put secret/app DB_PASSWORD=... DB_HOST=...
 - **[Подход Zero Trust к управлению секретами](./zero_trust.md)**
 - **[Обзор HashiCorp Vault](./overview.md)**
 - **[Управление секретами в CI/CD](../CI-CD/DevSecOps/secrets_management.md)**
-- **[Управление секретами в Docker](../Docker/Docker_security/secrets_management.md)**

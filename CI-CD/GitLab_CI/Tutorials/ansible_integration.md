@@ -2,10 +2,10 @@
 
 ## Определения
 
-**Интеграция Ansible с GitLab CI/CD** — это процесс автоматизации выполнения плейбуков Ansible с помощью системы непрерывной интеграции и доставки GitLab. Код конфигурации (плейбуки, роли) хранится в Git-репозитории, а GitLab CI/CD реагирует на изменения в нем, запуская задачи по развертыванию или управлению инфраструктурой.
+**Интеграция Ansible с GitLab CI/CD** — это процесс автоматизации выполнения плейбуков Ansible с помощью системы непрерывной интеграции и доставки GitLab. Код конфигурации (плейбуки, роли) хранится в Git-репозитории, а GitLab CI/CD реагирует на изменения в нем, запуская задачи по деплою или управлению инфраструктурой.
 
-- **Ansible:** Система управления конфигурациями, которая автоматизирует развертывание приложений, настройку систем и выполнение IT-задач.
-- **GitLab CI/CD:** Встроенный в GitLab инструмент для создания конвейеров (пайплайнов) сборки, тестирования и развертывания ПО.
+- **Ansible:** Система управления конфигурациями, которая автоматизирует деплой приложений, настройку систем и выполнение IT-задач.
+- **GitLab CI/CD:** Встроенный в GitLab инструмент для создания конвейеров (пайплайнов) сборки, тестирования и деплоя ПО.
 - **GitLab Runner:** Агент, который выполняет задания (jobs) из пайплайна GitLab CI/CD. Он устанавливается на отдельный сервер и должен иметь доступ к целевым хостам и необходимым инструментам, таким как Ansible.
 - **`.gitlab-ci.yml`:** YAML-файл в корне репозитория, описывающий структуру и правила CI/CD пайплайна.
 
@@ -32,7 +32,7 @@
 1. **Инициализация** — коммит или merge request триггерит пайплайн.
 2. **Валидация** — `ansible-lint`, `ansible-playbook --syntax-check`.
 3. **Тестирование** — опциональный `dry-run` (`--check --diff`).
-4. **Развёртывание** — запуск playbook на целевых хостах.
+4. **Деплой** — запуск playbook на целевых хостах.
 5. **Проверка** — smoke-тесты (HTTP-запрос к сервису, проверка порта).
 6. **Откат при сбое** — revert-коммит в `main` и повторный запуск пайплайна на предыдущую версию.
 
@@ -61,6 +61,7 @@ deploy_job:
   script:
     - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.example.com/infra/ansible-roles.git roles/
     - ansible-playbook -i inventory/site.yml deploy.yml
+    # → PLAY [Deploy Application] ...
 ```
 
 Альтернатива — Git submodules или `requirements.yml` с установкой через `ansible-galaxy install -r requirements.yml`.
@@ -77,7 +78,9 @@ deploy_job:
 ```yaml
 before_script:
   - eval $(ssh-agent -s)
+  # → Agent pid 1234
   - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+  # → Identity added: (stdin) (RSA key)
   - mkdir -p ~/.ssh
   - chmod 700 ~/.ssh
   - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
@@ -85,9 +88,9 @@ before_script:
 
 > **Важно:** Для продакшн-сред предпочтительнее управлять `known_hosts` явно (добавлять отпечатки хостов в переменную), чтобы предотвратить MITM-атаки.
 
-### Тестирование и деплой: разделение jobs
+### Тестирование и деплой: разделение задач (jobs)
 
-Хорошая практика — разделять валидацию и деплой на отдельные jobs. Это позволяет быстро отлавливать синтаксические ошибки до подключения к хостам.
+Хорошая практика — разделять валидацию и деплой на отдельные задачи. Это позволяет быстро отлавливать синтаксические ошибки до подключения к хостам.
 
 ```yaml
 stages:
@@ -108,6 +111,7 @@ ansible_syntax_check:
   extends: .ansible_base
   script:
     - ansible-playbook site.yml --syntax-check
+    # → playbook: site.yml
   variables:
     ANSIBLE_HOST_KEY_CHECKING: "False"
 
@@ -116,18 +120,19 @@ ansible_deploy:
   extends: .ansible_base
   script:
     - ansible-playbook -i inventory/production site.yml --skip-tags github_runner
+    # → PLAY [site] ...
   environment:
     name: production
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual  # Продакшн-деploy только вручную
+      when: manual  # Продакшн-деплой только вручную
 ```
 
 **Ключевые приёмы:**
 
 - **`extends: .ansible_base`** — переиспользование общего блока (установка Ansible, настройка SSH). Механизм `extend` описан в [Reusable Pipelines](../Reusable_Pipelines/overview.md).
 - **`--skip-tags`** — исключение задач по тегам (например, установка GitHub Runner не нужна при каждом деплое).
-- **`when: manual`** — продакшн-деploy запускается вручную, stage деплоится автоматически.
+- **`when: manual`** — продакшн-деплой запускается вручную, stage деплоится автоматически.
 - **`--check --diff`** — dry-run режим для предпросмотра изменений без применения.
 
 ### Полный цикл: валидация → деплой → проверка
@@ -145,6 +150,7 @@ ansible_test:
     - pip install ansible
   script:
     - ansible-playbook site.yml --syntax-check
+    # → playbook: site.yml
 
 ansible_deploy:
   stage: deploy
@@ -156,6 +162,7 @@ ansible_deploy:
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
     - ansible-playbook -i inventory/staging site.yml
+    # → PLAY [site] ...
   environment:
     name: staging
 
@@ -164,6 +171,7 @@ check_service:
   image: curlimages/curl
   script:
     - curl -sf http://$TARGET_HOST:80/ || exit 1
+    # → <html><body><h1>Success</h1></body></html>
   needs: ["ansible_deploy"]
   environment:
     name: staging
@@ -225,10 +233,12 @@ check_service:
       - ansible # Указываем тег нашего Runner'а
     script:
       - ansible --version
+      # → ansible [core 2.16.x]
       # Создаем временный файл ключа из переменной GitLab CI/CD
       - echo "${SSH_PRIVATE_KEY}" > key.pem
       - chmod 600 key.pem
       - ansible-playbook playbook.yml -i hosts.ini --private-key key.pem
+      # → PLAY [Ping hosts] ...
   ```
 
 **Порядок действий:**
@@ -241,7 +251,7 @@ check_service:
 
 Для ускорения пайплайнов рекомендуется предварительно собирать Docker-образ с установленным Ansible, а не устанавливать его на каждом запуске. При работе с конфигурационными файлами используйте `notify` и `handlers` для условного перезапуска сервисов. Это позволяет избежать ненужных перезапусков, если файл не изменился.
 
-Безопасность и управление средами являются ключевыми аспектами. Храните inventory для `staging` и `production` в отдельных файлах, чтобы снизить риск случайного развертывания. Для отката изменений достаточно сделать `revert` коммита в `main` и запустить пайплайн заново.
+Безопасность и управление средами являются ключевыми аспектами. Храните inventory для `staging` и `production` в отдельных файлах, чтобы снизить риск случайного деплоя. Для отката изменений достаточно сделать `revert` коммита в `main` и запустить пайплайн заново.
 
 ### Смотрите также
 

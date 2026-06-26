@@ -19,7 +19,7 @@
 ### Предварительные требования
 
 1. **Проект в GitLab**: Пустой приватный проект с инициализированным `README`.
-2. **Сервер для развертывания**: Виртуальная или физическая машина с доступом в интернет, на которой установлены **[Docker](https://docs.docker.com/engine/install/)** и **[GitLab Runner](./runner_registration.md)**.
+2. **Сервер для деплоя**: Виртуальная или физическая машина с доступом в интернет, на которой установлены **[Docker](https://docs.docker.com/engine/install/)** и **[GitLab Runner](./runner_registration.md)**.
 
 ### Шаг 1: Подготовка проекта и кода
 
@@ -105,11 +105,14 @@ build_job:
   before_script:
     # Логинимся в GitLab Registry перед выполнением основных команд
     - docker login -u "$REGISTRY_USER" -p "$REGISTRY_PASSWORD" $CI_REGISTRY
+    # → Login Succeeded
   script:
     # Собираем Docker-образ и тегируем его
     - docker build -t $IMAGE_NAME .
+    # → Successfully built ...
     # Публикуем образ в Container Registry
     - docker push $IMAGE_NAME
+    # → The push refers to repository ...
 
 deploy_job:
   stage: deploy
@@ -118,11 +121,13 @@ deploy_job:
   script:
     # Скачиваем свежесобранный образ. Аутентификация не нужна, если токен не истек.
     - docker pull $IMAGE_NAME
+    # → Status: Downloaded newer image for ...
     # Идемпотентно останавливаем и удаляем предыдущий контейнер
     - docker stop my-app || true
     - docker rm my-app || true
     # Запускаем новый контейнер из свежего образа
     - docker run -d --name my-app -p 5000:5000 $IMAGE_NAME
+    # → [container_id]
 ```
 
 ### Шаг 5: Запуск и проверка
@@ -135,11 +140,11 @@ deploy_job:
 
 ## Дополнительная информация
 
-- **Идемпотентность развертывания**: Конструкция `docker ... || true` гарантирует, что пайплайн не упадет, если при первом развертывании контейнера с именем `my-app` еще не существует.
-- **Безопасность**: Данный пример использует `shell` executor и развертывание через `docker run`. Это просто для понимания, но **небезопасно для производственных сред**. Такой подход дает CI-задачам полный контроль над хост-машиной.
+- **Идемпотентность деплоя**: Конструкция `docker ... || true` гарантирует, что пайплайн не упадет, если при первом деплое контейнера с именем `my-app` еще не существует.
+- **Безопасность**: Данный пример использует `shell` executor и деплой через `docker run`. Это просто для понимания, но **небезопасно для производственных сред**. Такой подход дает CI-задачам полный контроль над хост-машиной.
 - **Рекомендации для production**:
   - Используйте **[Docker Executor](../Advanced/gitlab_ci_runners_executors.md)** для изоляции задач.
-  - Применяйте более надежные инструменты развертывания: **Docker Compose**, **Ansible** или **Kubernetes**.
+  - Применяйте более надежные инструменты деплоя: **Docker Compose**, **Ansible** или **Kubernetes**.
   - Храните секреты в [переменных GitLab CI](../Concepts/gitlab_ci_variables_secrets.md), а не в файлах.
 - **Смежные руководства**:
   - Комплексный пайплайн для Python-проекта: [Python Project Pipeline Guide](./python_project_pipeline_guide.md).

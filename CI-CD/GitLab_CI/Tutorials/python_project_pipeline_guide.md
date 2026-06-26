@@ -1,10 +1,10 @@
-# Комплексный CI/CD пайплайн для Python-проекта
+# Комплексный Pipeline для Python-проекта
 
 ## Определения
 
-- **Комплексный CI/CD (Continuous Integration / Continuous Delivery) пайплайн** — автоматизированный процесс, охватывающий полный жизненный цикл ПО: от статического анализа до развертывания в production, управляемый через `.gitlab-ci.yml`.
-- **Стратегия Multi-Environment** — подход, при котором приложение последовательно развертывается в несколько окружений (`development`, `staging`, `production`), каждое со своим набором тестов и правил доступа.
-- **"Ворота качества" (Quality Gates)** — набор автоматических проверок (линтинг, unit-тесты, сканирование безопасности), обязательных для прохождения перед слиянием кода или развертыванием.
+- **Комплексный CI/CD (Continuous Integration / Continuous Delivery) Pipeline** — автоматизированный процесс, охватывающий полный жизненный цикл ПО: от статического анализа до Deploy в production, управляемый через `.gitlab-ci.yml`.
+- **Стратегия Multi-Environment** — подход, при котором приложение последовательно проходит Deploy в несколько окружений (`development`, `staging`, `production`), каждое со своим набором тестов и правил доступа.
+- **"Ворота качества" (Quality Gates)** — набор автоматических проверок (линтинг, unit-тесты, сканирование безопасности), обязательных для прохождения перед слиянием кода или Deploy.
 - **Многостадийная сборка (Multi-stage build)** — техника создания Docker-образов, позволяющая разделить процесс сборки зависимостей и формирования финального минималистичного артефакта.
 
 > **Примечание:** Данный туториал описывает комплексный подход. Для базового ознакомления см. **[Начинающее руководство для Python-приложений](./beginner_guide_python_app.md)**.
@@ -15,29 +15,29 @@
 
 1. **Стратегия ветвления (модифицированный GitLab Flow):**
     - **`feature-*`**: Ветки для разработки функционала. Создаются от `develop`.
-    - **`develop`**: Основная ветка разработки. Автоматически развертывается в `dev`.
-    - **`main`**: Стабильная ветка. Развертывается в `staging`.
-    - **Теги (`v*.*.*`)**: Создаются из `main` для релизов. Развертываются в `production`.
+    - **`develop`**: Основная ветка разработки. Автоматический Deploy в `dev`.
+    - **`main`**: Стабильная ветка. Deploy в `staging`.
+    - **Теги (`v*.*.*`)**: Создаются из `main` для релизов. Deploy в `production`.
 
     > **Примечание:** Подробное описание стратегий см. в **[GitLab Flow](./gitlab_flow.md)** и **[Обзоре рабочих процессов Git](../../../Git/git_workflows.md)**.
 
 2. **Стратегия окружений:**
-    - **Development (`dev`)**: Для внутреннего тестирования. Развертывается из `develop`.
-    - **Staging**: Копия production для финальной проверки. Развертывается из `main`.
-    - **Production**: Окружение для пользователей. Развертывается из тегов.
+    - **Development (`dev`)**: Для внутреннего тестирования. Deploy из `develop`.
+    - **Staging**: Копия production для финальной проверки. Deploy из `main`.
+    - **Production**: Окружение для пользователей. Deploy из тегов.
 
 3. **Стратегия тестирования:**
     - **`feature` -> `develop`**: Линтеры, unit-тесты, SAST (Static Application Security Testing).
     - **`develop` -> `main`**: Интеграционные тесты.
-    - **После деплоя**: Smoke- или e2e-тесты (End-to-End).
+    - **После Deploy**: Smoke- или e2e-тесты (End-to-End).
 
     > **Примечание:** Интеграция тестов описана в **[Testing in CI/CD](../../Testing/testing_cicd_integration.md)**.
 
 ### Инструментарий
 
 - **CI/CD**: GitLab CI
-- **Контейнеризация**: Docker, Kaniko (безопасная сборка)
-- **Оркестрация**: Kubernetes, Helm
+- **Containerization**: Docker, Kaniko (безопасная сборка)
+- **Orchestration**: Kubernetes, Helm
 - **Тестирование**: Pytest, cURL
 - **Релизы**: `semantic-release`
 
@@ -46,10 +46,10 @@
 ### Полный рабочий цикл
 
 1. **Разработка**: MR (Merge Request) из `feature/*` в `develop`. Запуск линтеров, unit-тестов, SAST.
-2. **Слияние в `develop`**: Автоматический деплой в `dev` и smoke-тесты.
+2. **Слияние в `develop`**: Автоматический Deploy в `dev` и smoke-тесты.
 3. **Подготовка к релизу**: MR из `develop` в `main`. Интеграционные тесты и `helm diff`.
-4. **Слияние в `main`**: Автоматический деплой в `staging` и e2e-тесты.
-5. **Релиз**: Ручной запуск `create-release` (создание Git-тега). Пайплайн для тега предлагает ручной `deploy-production`.
+4. **Слияние в `main`**: Автоматический Deploy в `staging` и e2e-тесты.
+5. **Релиз**: Ручной запуск `create-release` (создание Git-тега). Pipeline для тега предлагает ручной `deploy-production`.
 
 ### Подготовка окружения
 
@@ -60,7 +60,7 @@
 
 ## Практические сценарии
 
-### Реализация пайплайна в `.gitlab-ci.yml`
+### Реализация Pipeline в `.gitlab-ci.yml`
 
 #### Шаг 1: Общая структура и правила
 
@@ -90,7 +90,7 @@ stages:
   - release
 
 default:
-  image: python:3.11
+  image: python:3.12
   cache:
     key: "$CI_COMMIT_REF_SLUG"
     paths:
@@ -131,7 +131,7 @@ pylint:
 build-docker:
   stage: building
   image:
-    name: gcr.io/kaniko-project/executor:v1.21.0-debug
+    name: gcr.io/kaniko-project/executor:v1.23.1-debug
     entrypoint: [""]
   script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
@@ -160,12 +160,12 @@ container_scanning:
 
 > **Примечание:** Сборка с Kaniko описана в **[Kaniko: Сборка без демона](../../../Docker/Dockerfile/dockerfile_kaniko.md)**.
 
-#### Шаг 3: Развертывание через Helm
+#### Шаг 3: Deploy через Helm
 
 ```yaml
 .deploy_template:
   stage: deployment
-  image: bitnami/kubectl:1.29.0
+  image: bitnami/kubectl:1.30.0
   before_script:
     - helm plugin install https://github.com/databus23/helm-diff
   script:
@@ -200,16 +200,17 @@ deploy-production:
       variables: { HELM_APPLY: "true" }
 ```
 
-> **Примечание:** Развертывание в K8s описано в **[GitLab CI Kubernetes Integration](../Advanced/gitlab_kubernetes_integration_guide.md)**. Откат — в **[Deployment Health Checks](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)**.
+> **Примечание:** Deploy в K8s описан в **[GitLab CI Kubernetes Integration](../Advanced/gitlab_kubernetes_integration_guide.md)**. Откат — в **[Deployment Health Checks](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)**.
 
 #### Шаг 4: Валидация и релиз
 
 ```yaml
 validate-dev-smoke:
   stage: validate_deployment
-  image: curlimages/curl:8.6.0
+  image: curlimages/curl:8.7.1
   script:
     - curl -s --head http://dev.example.com | grep "200 OK"
+    # → HTTP/1.1 200 OK
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
 
@@ -226,7 +227,7 @@ create-release:
 
 ## Дополнительная информация
 
-- **Безопасность**: Используйте маскированные переменные для секретов. SAST и сканирование контейнеров встроены в пайплайн.
+- **Безопасность**: Используйте маскированные переменные для секретов. SAST и сканирование контейнеров встроены в Pipeline.
 - **Оптимизация**: Использование Kaniko позволяет собирать образы без привилегированного режима Docker. Кэширование `.venv` ускоряет установку зависимостей.
 
 ### Смежные руководства

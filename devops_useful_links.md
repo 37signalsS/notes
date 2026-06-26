@@ -1,7 +1,4 @@
-## Игровые и обучающие платформы
-
-- **DevOps Games:** Игры для изучения DevOps практик.
-  - <https://devops.games/>
+## Обучающие платформы
 
 - **KodeKloud:** Платформа с практическими лабораторными работами по DevOps и облачным технологиям.
   - <https://kodekloud.com/pages/free-labs/>
@@ -10,10 +7,13 @@
   - <https://labex.io/ru>
 
 - **KillerCoda:** Интерактивные сценарии для изучения Linux.
-  - <https://killercoda.com/pawelpiwosz/course/linuxFundamentals>
-
-- **Keep-Alive.ru:** Командные траблшутинги.
-  - <https://keep-alive.ru>
+  - <https://killercoda.com/pawelpiwosz/>
 
 - **SREGA.me:** Индивидуальные тренировки в формате Capture the Flag.
   - <https://srega.me/>
+
+- **SadServers:** Симулятор для отработки навыков устранения неисправностей в Linux.
+  - <https://sadservers.com/>
+
+- **Linux Upskill Challenge:** Ежемесячный курс для улучшения навыков работы с Linux.
+  - <https://linuxupskillchallenge.org/#table-of-contents>

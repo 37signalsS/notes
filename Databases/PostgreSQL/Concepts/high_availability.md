@@ -70,8 +70,16 @@ Patroni использует **TTL-bound leader key** в DCS (etcd):
 1. Проверить состояние кластера:
    ```bash
    patronictl list
+   # →
+   # +------------+--------------+---------+---------+----+-----------+
+   # | Cluster    | Member       | Host    | Role    | TL | Lag in MB |
+   # +------------+--------------+---------+---------+----+-----------+
+   # | pg-cluster | pg-cluster-0 | 1.2.3.4 | Leader  |  2 |           |
+   # | pg-cluster | pg-cluster-1 | 1.2.3.5 | Replica |  2 |         0 |
+   # | pg-cluster | pg-cluster-2 | 1.2.3.6 | Replica |  2 |         0 |
+   # +------------+--------------+---------+---------+----+-----------+
    ```
-   Убедиться: один узел — `running` как `master`, остальные — `running` как `replica`.
+   Убедиться: один узел — `running` как `master` (Leader), остальные — `running` как `replica`.
 
 2. Дождаться возврата старого мастера. При подключении Patroni автоматически:
    - Определяет, что узел больше не leader.
@@ -125,6 +133,5 @@ maximum_lag_on_failover: 1048576  # 1 MB — реплика с лагом бол
 ## Дополнительная информация
 
 - **Репликация**: Основа передачи данных — **[Репликация в PostgreSQL](./replication.md)**.
-- **Масштабирование**: Горизонтальный рост кластера — **[Масштабирование PostgreSQL](./scaling.md)**.
 - **Резервное копирование**: Защита от логических ошибок — **[Backup and Recovery](./backup_and_recovery.md)**.
-- **L2 Failover**: Использование Keepalived и VRRP — **[Механизмы Failover](../../../Concepts/High_Availability/ha_failover_mechanisms.md#ip-failover-с-keepalived-vrrp)**.
+- **Failover**: Механизмы автоматического переключения — **[Механизмы Failover](../../../Concepts/High_Availability/ha_failover_mechanisms.md)**.

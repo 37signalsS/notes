@@ -16,7 +16,7 @@
 
 ## Практические сценарии
 
-### Сценарий: Разделение одного поля на два
+### Сценарий 1: Разделение одного поля на два
 
 Задача: разделить колонку `name` в таблице `users` на `first_name` и `last_name`.
 
@@ -60,7 +60,7 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
-#### Реализация в SQL (PostgreSQL)
+#### Реализация в PostgreSQL
 
 ```sql
 -- Фаза 1: Расширение (Expand)
@@ -102,7 +102,7 @@ DROP FUNCTION sync_user_names();
 ALTER TABLE users DROP COLUMN name;
 ```
 
-### Сценарий: Rolling update с миграцией БД
+### Сценарий 2: Rolling Update в Kubernetes
 
 При обновлении сервиса через Rolling Update в Kubernetes старый и новый код работают параллельно. Миграция должна быть обратно-совместимой на всех этапах.
 
@@ -179,6 +179,4 @@ kubectl set image deployment/my-app my-app=my-registry/my-app:v2
 
 - **[Миграции баз данных: Основы](migration_basics.md)** — общие принципы и типы миграций.
 - **[Типовые сценарии](scenarios.md)** — примеры применения Expand-Contract для других задач.
-- **[Стратегии отката (Rollback)](rollback_strategies.md)** — особенности отмены изменений при использовании этого паттерна.
 - **[Rolling Update в Kubernetes](../../../CI-CD/Deployment_Strategies/rolling_update.md)** — стратегия поэтапного обновления подов.
-- **[PodDisruptionBudget](../../../Kubernetes/Autoscaling/pod_disruption_budget.md)** — защита сервиса от потери всех реплик.

@@ -34,11 +34,11 @@ htop
 
 **Память (`free -h`):** Смотреть на колонку **available** — единственный надёжный показатель реально свободной памяти. Подробнее: [/proc/meminfo](../Memory/proc_meminfo.md).
 
-**Диск (`df -h`, `df -i`):** `/var/log` и `/tmp` — частые источники переполнения. `df -i` при 100% IUse% блокирует создание новых файлов. Расхождение `df` и `du` — признак deleted-but-open файлов (`lsof +L1`). Подробнее: [Диагностика ФС и дискового пространства](../../Filesystem/filesystem_and_disk_space_diagnostics.md).
+**Диск (`df -h`, `df -i`):** `/var/log` и `/tmp` — частые источники переполнения. `df -i` при 100% IUse% блокирует создание новых файлов. Расхождение `df` и `du` — признак deleted-but-open файлов (`lsof +L1`). Подробнее: [Диагностика ФС и дискового пространства](../Filesystem/filesystem_and_disk_space_diagnostics.md).
 
-**I/O (`iostat -xh 1 3`):** `%util` — насыщенность диска, `await` — латентность, `r/s`/`w/s` — IOPS. Подробнее: [iostat](../../Filesystem/iostat.md).
+**I/O (`iostat -xh 1 3`):** `%util` — насыщенность диска, `await` — латентность, `r/s`/`w/s` — IOPS. Подробнее: [iostat](../Filesystem/iostat.md).
 
-### High iowait + Low CPU util
+### Высокий iowait + низкий CPU util
 
 ```bash
 # Поиск D-state процессов
@@ -48,7 +48,7 @@ ps -eo pid,stat,comm | awk '$2~/D/'
 cat /proc/<PID>/wchan
 ```
 
-Подробнее: [iostat](../../Filesystem/iostat.md), [ps](../Processes/ps.md).
+Подробнее: [iostat](../Filesystem/iostat.md), [ps](../Processes/ps.md).
 
 ## Дополнительная информация
 
