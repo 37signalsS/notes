@@ -167,6 +167,14 @@ kubectl logs -n kube-system -l k8s-app=kube-dns
 # Проверка разрешения имени
 nslookup <service>.<namespace>.svc.cluster.local
 
+# Проверка через dig — короткое имя в своём namespace
+dig web +short
+# → <ClusterIP>
+
+# Проверка через dig — кросс-ns (FQDN)
+dig web.prod.svc.cluster.local +short
+# → <ClusterIP>
+
 # Анализ трафика
 tcpdump -n -p -i eth0 port 53
 ```

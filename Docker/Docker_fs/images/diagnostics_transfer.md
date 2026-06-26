@@ -60,7 +60,45 @@ Docker предоставляет два набора команд для раб
     # → nginx    latest    605c77e624dd    2 weeks ago    141MB
     ```
 
-### Сценарий 2: Создание образа из файловой системы контейнера (`export`/`import`)
+### Сценарий 2: Загрузка образа в кластер Kubernetes без registry (air-gapped)
+
+В Kubernetes на worker-нодах Docker обычно не используется — контейнеры запускаются через CRI-совместимые runtime (`containerd`, `CRI-O`). Если registry недоступен, образ можно загрузить напрямую.
+
+```bash
+# 1. Сохранить образ на машине с доступом к registry
+docker save -o my-app.tar my-app:latest
+
+# 2. Передать архив на worker-ноду (через scp)
+scp my-app.tar user@worker-node:~/
+
+# 3. Загрузить в runtime в зависимости от CRI:
+
+# Для CRI-O — используем podman
+podman load -i my-app.tar
+
+# Для containerd — используем ctr (часто требует sudo)
+sudo ctr -n k8s.io images import my-app.tar
+
+# Для Docker runtime — стандартный docker load
+docker load -i my-app.tar
+```
+
+После загрузки образ будет доступен kubelet'у и поды смогут стартовать без обращений к registry.
+
+**Проверка загруженных образов:**
+
+```bash
+# CRI-O
+podman images | grep my-app
+
+# containerd
+sudo ctr -n k8s.io images list | grep my-app
+
+# Docker
+docker images | grep my-app
+```
+
+### Сценарий 3: Создание образа из файловой системы контейнера (`export`/`import`)
 
 1. **Создание и модификация контейнера**:
 

@@ -255,6 +255,63 @@ iptables -t nat -A OUTPUT -d <IP_хоста> -p tcp --dport 5000 \
 1. Включает IP-форвардинг: `net.ipv4.ip_forward=1` (подробнее в [sysctl](../../Linux/Core/kernel/sysctl.md))
 2. Добавляет правило MASQUERADE: `iptables -t nat -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE`
 
+### Сценарий 5: Трассировка пути пакета между контейнерами через veth и bridge
+
+Полная цепочка прохождения пакета между двумя контейнерами в пользовательской bridge-сети.
+
+**Схема:**
+
+```
+контейнер A (eth0 @ if6) → vethA (if6 on host) → bridge → vethB (if35 on host) → контейнер B (eth0 @ if35)
+```
+
+**Пошаговая трассировка:**
+
+```bash
+# 1. Получить PID процесса контейнера
+PID_A=$(docker inspect --format '{{.State.Pid}}' container_a)
+
+# 2. Посмотреть сетевые интерфейсы внутри контейнера A
+nsenter -t $PID_A -n ip addr
+# → 1: lo: <LOOPBACK,UP,LOWER_UP> ...
+# → 2: eth0@if6: <BROADCAST,MULTICAST,UP,LOWER_UP> ...
+# eth0@if6 означает, что eth0 внутри контейнера соединён с интерфейсом номер 6 на хосте
+
+# 3. На хосте найти veth-интерфейс с индексом 6
+ip addr show | grep "^6:"
+# → 6: veth123@if2: <BROADCAST,MULTICAST,UP,LOWER_UP> ...
+# Это хостовая сторона виртуального кабеля
+
+# 4. Проверить подключение к bridge
+bridge link show | grep veth123
+# → 6: veth123 state UP @docker0
+
+# 5. Посмотреть MAC-адрес целевого контейнера
+docker exec container_b cat /sys/class/net/eth0/address
+# → 02:42:ac:11:00:03
+
+# 6. Узнать, за каким портом bridge закреплён этот MAC
+bridge fdb show | grep 02:42:ac:11:00:03
+# → 02:42:ac:11:00:03 dev veth456 master docker0
+# bridge направит кадр на интерфейс veth456
+
+# 7. Проверить, что veth456 ведёт в контейнер B
+PID_B=$(docker inspect --format '{{.State.Pid}}' container_b)
+nsenter -t $PID_B -n ip addr | grep "eth0@"
+# → eth0@if35 — интерфейс B внутри контейнера смотрит на if35 снаружи
+# veth456 как раз имеет индекс 35 — цепочка замкнута
+```
+
+**Ключевые проверочные команды:**
+
+| Команда | Назначение |
+| :--- | :--- |
+| `ip route get <IP>` | Показать, через какой интерфейс пойдёт пакет до указанного IP |
+| `ip neigh` | Показать ARP-таблицу (L3 → L2 маппинг) |
+| `bridge fdb show` | Показать FDB-таблицу bridge (на какой порт направлять кадр по MAC) |
+| `bridge link show` | Показать veth-интерфейсы, подключённые к bridge |
+| `ip -br addr` | Краткий вывод IP-адресов всех интерфейсов |
+
 ### Режимы Docker и реализация в Linux
 
 | Режим Docker | Реализация в Linux | Описание |

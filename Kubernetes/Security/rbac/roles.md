@@ -56,6 +56,8 @@
 | **resourceNames** | Поддерживается | Поддерживается |
 | **nonResourceURLs** | Нет | Да (`/healthz`, `/metrics`) |
 
+> **Ловушка:** путают область действия. Role + RoleBinding работают только в **одном namespace**. ClusterRole + ClusterRoleBinding — на **весь кластер** (nodes, PV, namespaces). ClusterRole, привязанная через RoleBinding, даёт права только в namespace этой привязки. Role, привязанная через ClusterRoleBinding, **невозможна** — ClusterRoleBinding требует ClusterRole.
+
 ### Рекомендации по выбору
 
 | Сценарий | Рекомендуемый объект | Обоснование |

@@ -49,6 +49,65 @@ Docker и Podman не являются "виртуальными машинам�
 
 Podman активно использует механизмы **User Namespace** и интеграцию с **systemd** для обеспечения безопасности без прав root. Подробный разбор механизмов изоляции, специфичных для Podman, доступен в разделе: **[Изоляция в Podman](../../Podman/linux_isolation.md)**.
 
+### Практическая инспекция namespace и cgroups
+
+Механизмы изоляции — не абстракция. Их можно увидеть напрямую через файловую систему `/proc` для любого запущенного контейнера.
+
+**1. Получить PID процесса контейнера:**
+
+```bash
+# Через docker inspect
+docker inspect --format '{{.State.Pid}}' <container_name>
+# → 47865
+
+# Или через ps + grep
+ps aux | grep <process_name>
+```
+
+**2. Просмотр namespace контейнера:**
+
+```bash
+# Прямой просмотр файлов namespace
+PID=47865
+ls -la /proc/$PID/ns/
+# → lrwxrwx... net -> net:[4026532920]
+# → lrwxrwx... pid -> pid:[4026532921]
+# → lrwxrwx... mnt -> mnt:[4026532922]
+
+# Человекочитаемый вывод через lsns
+lsns -p $PID
+# → 4026532920  net   47865 ... /usr/sbin/nginx
+# → 4026532921  pid   47865 ... /usr/sbin/nginx
+```
+
+Каждый namespace имеет уникальный inode-номер. Если у двух процессов совпадают номера для конкретного типа namespace — они находятся в одном пространстве имён.
+
+**3. Вход в namespace контейнера:**
+
+```bash
+# Выполнить команду в сетевом namespace контейнера
+nsenter -t $PID -n ip addr
+
+# Запустить shell внутри namespace контейнера
+nsenter -t $PID -n -p -m -- sh
+```
+
+`nsenter` позволяет зайти в namespace любого процесса, что полезно для отладки сети, процессов или ФС контейнера без `docker exec`.
+
+**4. Просмотр cgroups контейнера:**
+
+```bash
+# Сырые данные cgroups процесса
+cat /proc/$PID/cgroup
+
+# Использование ресурсов контейнера
+docker stats <container_name>
+# → CONTAINER  CPU%   MEM USAGE / LIMIT
+# → nginx     0.01%  3.2 MiB / 256 MiB
+```
+
+`docker stats` читает данные из cgroup (память, CPU, I/O), которые были созданы при запуске контейнера. Лимиты, заданные через `--memory` или `--cpus`, можно проверить в cgroup-файлах напрямую.
+
 ## Дополнительная информация
 
 ### См. также
