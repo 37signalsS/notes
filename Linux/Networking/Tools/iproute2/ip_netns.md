@@ -62,7 +62,9 @@ sudo ip netns exec my_namespace ping 8.8.8.8
 
 ### Связь между пространствами имён (veth-пары)
 
-Для соединения пространств имён используются `veth` (virtual ethernet) интерфейсы, работающие как виртуальный патч-корд.
+Существует два основных способа организации связи: **Host to Namespace** (простой) и **Namespace to Namespace** (полная изоляция).
+
+#### Вариант 1: Связь «Хост — Пространство имён»
 
 ```bash
 # 1. Создать veth-пару (veth-host и veth-ns)
@@ -83,6 +85,56 @@ sudo ip netns exec my_namespace ip link set lo up
 # 5. Проверка связности
 ping 10.0.0.2
 sudo ip netns exec my_namespace ping 10.0.0.1
+```
+
+#### Вариант 2: Связь «Пространство имён — Пространство имён»
+
+Этот сценарий имитирует работу двух изолированных хостов, соединенных виртуальным кабелем.
+
+**Шаг 1: Создание сетевых пространств имен**
+```bash
+sudo ip netns add ns1
+sudo ip netns add ns2
+# Каждое пространство имеет свои интерфейсы, таблицу маршрутизации и ARP.
+```
+
+**Шаг 2: Создание виртуальной пары Ethernet (veth)**
+```bash
+sudo ip link add veth1 type veth peer name veth2
+# Пара veth работает как кабель: всё, что поступает на один конец, выходит на другой.
+```
+
+**Шаг 3: Назначение интерфейсов пространствам имен**
+```bash
+sudo ip link set veth1 netns ns1
+sudo ip link set veth2 netns ns2
+# Теперь veth1 находится внутри ns1, а veth2 — внутри ns2.
+```
+
+**Шаг 4: Назначение IP-адресов**
+```bash
+sudo ip netns exec ns1 ip addr add 10.0.0.1/24 dev veth1
+sudo ip netns exec ns2 ip addr add 10.0.0.2/24 dev veth2
+# Оба конца находятся в одной подсети 10.0.0.0/24 для связи по L3 (IP).
+```
+
+**Шаг 5: Активация интерфейсов**
+```bash
+sudo ip netns exec ns1 ip link set lo up
+sudo ip netns exec ns1 ip link set veth1 up
+
+sudo ip netns exec ns2 ip link set lo up
+sudo ip netns exec ns2 ip link set veth2 up
+# По умолчанию интерфейсы выключены (DOWN). lo включается для работы системных утилит.
+```
+
+**Шаг 6: Проверка маршрутов и связности**
+```bash
+# Ядро автоматически создает маршрут для подсети при назначении IP
+sudo ip netns exec ns1 ip route
+
+# Проверка пингом: ns1 -> ns2
+sudo ip netns exec ns1 ping -c 3 10.0.0.2
 ```
 
 ### Мониторинг и отладка

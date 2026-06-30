@@ -150,6 +150,34 @@ CMD ["localhost"]
 - `docker run my-ping` → выполнит `ping -c 3 localhost`
 - `docker run my-ping google.com` → выполнит `ping -c 3 google.com`
 
+## Проверка и отладка
+
+Для верификации того, какие именно инструкции `ENTRYPOINT` и `CMD` прописаны в образе (или в запущенном контейнере), используется команда `docker inspect`.
+
+### Извлечение данных через jq
+
+Использование `jq` позволяет быстро получить значения в формате JSON-массива (Exec-форма):
+
+```bash
+# Проверка ENTRYPOINT
+docker inspect <image_name> | jq .[0].Config.Entrypoint
+
+# Проверка CMD
+docker inspect <image_name> | jq .[0].Config.Cmd
+```
+
+### Использование встроенных фильтров Go Templates
+
+Если `jq` не установлен, можно воспользоваться встроенным механизмом форматирования Docker:
+
+```bash
+# Вывод ENTRYPOINT
+docker inspect --format='{{json .Config.Entrypoint}}' <image_name>
+
+# Вывод CMD
+docker inspect --format='{{json .Config.Cmd}}' <image_name>
+```
+
 ## Дополнительная информация
 
 - **[Практические сценарии переопределения](./practical_scenarios.md)** — подробнее о том, как `docker run` и `docker-compose` изменяют поведение запуска.

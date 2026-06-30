@@ -77,25 +77,50 @@ sudo yum -y install buildah podman
         path: "{{ lookup('env', 'FILE_TO_PROCESS') }}"
 ```
 
-### 3. Управление процессом сборки
+### 3. Сборка напрямую через Ansible (без bender)
 
-```bash
-# Запуск сборки
-ansible-bender build playbook.yml
-# → Image my-nice-app was built successfully.
+Если `ansible-bender` избыточен или не подходит, можно управлять Buildah напрямую через стандартные модули `command` или `shell`, регистрируя результаты для передачи ID контейнера между задачами.
 
-# Просмотр списка сборок
-ansible-bender list-builds
-# → 1   my-nice-app   done   2 minutes ago
+```yaml
+- name: Сборка образа через прямые вызовы Buildah
+  hosts: localhost
+  tasks:
+    - name: Предварительно скачать базовый образ
+      ansible.builtin.command: buildah pull alpine
+      register: pull_out
 
-# Получение логов конкретной сборки
-ansible-bender get-logs 1
+    - name: Создать рабочий контейнер
+      ansible.builtin.command: buildah from alpine
+      register: from_out
+
+    - name: Установить пакет внутри контейнера
+      ansible.builtin.command: 
+        cmd: buildah run {{ from_out.stdout }} -- apk add nginx
+
+    - name: Настроить точку входа
+      ansible.builtin.command:
+        cmd: buildah config --entrypoint '["nginx", "-g", "daemon off;"]' {{ from_out.stdout }}
+
+    - name: Зафиксировать образ
+      ansible.builtin.command:
+        cmd: buildah commit {{ from_out.stdout }} my-custom-nginx
+      register: commit_out
+
+    - name: Удалить рабочий контейнер
+      ansible.builtin.command:
+        cmd: buildah rm {{ from_out.stdout }}
+
+    - name: Показать результат
+      ansible.builtin.debug:
+        msg: "Образ собран с ID: {{ commit_out.stdout }}"
 ```
+
+### 4. Управление процессом сборки (bender)
 
 ## Дополнительная информация
 
 Переход на `ansible-bender` целесообразен, если ваша инфраструктура уже плотно завязана на Ansible и вы хотите унифицировать процесс доставки. В CentOS 7 убедитесь, что Ansible установлен через `pip3`, так как системные пакеты могут использовать Python 2, который не поддерживается инструментом.
 
-- [Альтернативные среды выполнения (Buildah)](../Docker/alternative_runtimes_and_tools.md) — обзор инструментов сборки без демона.
+- [Buildah: Концепции и практика](../Podman/buildah_overview.md) — подробное руководство по инструменту.
 - [Тестирование ролей с Molecule](ansible_testing_with_molecule.md) — автоматизация проверок перед сборкой.
 - [Оптимизация производительности Ansible](ansible_performance_tuning.md) — ускорение выполнения плейбуков.

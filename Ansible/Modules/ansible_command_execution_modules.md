@@ -22,7 +22,10 @@
 
 - **`creates`**: Задача выполняется, только если указанный файл **отсутствует**.
 - **`removes`**: Задача выполняется, только если указанный файл **присутствует**.
-- **`changed_when`**: Позволяет вручную определить, когда команда действительно внесла изменения (например, на основе вывода или кода возврата).
+- **`changed_when`**: Позволяет вручную определить, когда команда действительно внесла изменения. 
+  - `changed_when: false` — для команд чтения (idempotency).
+  - `changed_when: true` — для принудительного вызова обработчиков (`notify`).
+  - Условная логика на основе вывода (`stdout`).
 
 ## Практические сценарии
 
@@ -89,4 +92,5 @@
 - **Приоритет выбора**: Всегда ищите специализированный модуль (например, `lineinfile` вместо `sed` через `shell`). См. [Ansible: Обзор часто используемых модулей](ansible_modules_overview.md).
 - **Безопасность**: При использовании `shell` с переменными применяйте фильтр `quote` для предотвращения инъекций: `cmd: "ls {{ dir_name | quote }}"`.
 - **Антипаттерны**: Подробнее о том, почему не стоит злоупотреблять `shell`, в [Антипаттерны Ansible](../ansible_bad_practices.md).
+- **Управление статусом**: Использование `changed_when` и `failed_when` на практике — в [Управление ходом выполнения](../PlaybookStructure/flow_control.md#обработка-ошибок-и-управление-статусом).
 - **Официальная документация**: [command](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/command_module.html), [shell](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/shell_module.html), [raw](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/raw_module.html).

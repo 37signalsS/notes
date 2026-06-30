@@ -70,20 +70,9 @@ systemctl enable --now container-app.service
 
 ### Сборка образов через Buildah
 
-Buildah предоставляет гранулярный контроль над слоями без необходимости запуска Docker.
+Buildah предоставляет гранулярный контроль над слоями без необходимости запуска Docker. Подробный разбор концепций и практических примеров см. в отдельном руководстве:
 
-```bash
-# Создание контейнера из образа
-new_container=$(buildah from fedora)
-
-# Выполнение команд внутри (создание слоя)
-buildah run "$new_container" -- dnf install -y httpd
-
-# Сохранение результата в образ
-buildah commit "$new_container" my-custom-fedora
-```
-
-Подробнее о связке с автоматизацией: **[Сборка образов с помощью Buildah и Ansible](../Ansible/ansible_buildah_image_building.md)**.
+**[Buildah: Концепции и практика](../Podman/buildah_overview.md)**
 
 ### Запуск Kata Containers
 

@@ -104,22 +104,66 @@ spec:
     secretName: argocd-tls
 ```
 
-### Сценарий 4: Добавление репозиториев и создание приложения
+### Сценарий 4: Подключение приватных репозиториев (GitLab и Harbor)
+
+Для реализации GitOps необходимо предоставить ArgoCD доступ к исходному коду (Git) и артефактам (Helm-чарты в Harbor).
+
+#### Шаг 1: Подготовка доступа в GitLab
+1. Создайте в GitLab пользователя `argocd` (или используйте существующего бота).
+2. Выдайте права `Developer` (или `Reporter` для чтения) на группу или проект.
+3. Сформируйте **Project Access Token** или **Group Access Token**:
+   - **Scopes**: `read_api`, `read_repository`.
+   - **Role**: `Developer`.
+
+#### Шаг 2: Подключение GitLab к ArgoCD
+
+**Вариант А: Через веб-интерфейс (HTTPS)**
+1. **Settings** → **Repositories** → **Connect Repo**.
+2. **Method**: `VIA HTTP/HTTPS`.
+3. **Type**: `git`.
+4. **Repo URL**: Адрес репозитория (внутренний адрес кластера предпочтительнее для ускорения трафика, например: `http://gitlab-webservice.gitlab.svc.cluster.local:8181/group/repo.git`).
+5. **Username/Password**: Имя пользователя и созданный Token.
+
+**Вариант Б: Через Kubernetes Secret (Declarative)**
+Используйте этот метод для автоматизации настройки самого ArgoCD.
 
 ```bash
-# Добавление приватного SSH репозитория
-argocd repo add git@github.com:my-org/my-repo.git --ssh-private-key-path ~/.ssh/id_rsa
+# 1. Создание секрета с учетными данными
+kubectl -n argocd create secret generic gitlab-repo-creds \
+  --from-literal=url=http://gitlab-webservice.gitlab.svc.cluster.local:8181/ \
+  --from-literal=username=<GITLAB_USER> \
+  --from-literal=password=<TOKEN>
 
-# Создание приложения через CLI
-argocd app create my-app \
-  --repo https://github.com/argoproj/argocd-example-apps.git \
-  --path guestbook \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace default \
-  --sync-policy automated --auto-prune --self-heal
+# 2. Добавление метки, чтобы ArgoCD распознал секрет как репозиторий
+kubectl -n argocd patch secret gitlab-repo-creds -p '{"metadata": {"labels": {"argocd.argoproj.io/secret-type": "repo-creds"}}}'
 ```
 
-### Сценарий 5: Настройка пользователей и RBAC
+#### Шаг 3: Подключение Harbor (OCI-репозиторий)
+ArgoCD поддерживает Helm-чарты, хранящиеся в Harbor как OCI-артефакты.
+
+1. **Settings** → **Repositories** → **Connect Repo**.
+2. **Method**: `VIA HTTP/HTTPS`.
+3. **Type**: `oci`.
+4. **Repo URL**: Адрес реестра (например, `harbor.example.com`).
+5. **Project**: Название проекта в Harbor (например, `library`).
+6. **Username/Password**: Учетные данные робот-аккаунта Harbor.
+
+### Сценарий 5: Настройка доверенных TLS-сертификатов
+
+Если GitLab или Harbor используют самоподписанные сертификаты (Internal CA), ArgoCD будет выдавать ошибку `x509: certificate signed by unknown authority`.
+
+Для решения необходимо добавить корневой сертификат (Root CA) в доверенные:
+
+```bash
+# Создание или обновление ConfigMap с сертификатами
+kubectl -n argocd create configmap argocd-tls-certs-cm \
+  --from-file=my-root.ca=/path/to/root-ca.crt \
+  -o yaml --dry-run=client | kubectl apply -f -
+```
+
+После применения `argocd-server` и `argocd-repo-server` автоматически подхватят изменения.
+
+### Сценарий 6: Настройка пользователей и RBAC
 
 Конфигурация прав доступа выполняется через `ConfigMap` в неймспейсе `argocd`.
 

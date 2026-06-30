@@ -98,6 +98,7 @@ Podman разделяет функционал на отдельные утил�
 
 ### См. также
 
+- **[Buildah: Концепции и практика](./buildah_overview.md)** — подробное руководство по сборке образов.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — глубокое погружение в работу без демона.
 - **[Миграция с Docker](./migration-from-docker.md)** — руководство по переходу.
 - **[Rootless режим](./podman_rootless.md)** — особенности работы без root.

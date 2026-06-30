@@ -87,8 +87,12 @@ ps -u www-data
 # Найти процесс по имени (через grep)
 ps aux | grep nginx
 
+# Трюк для исключения самого процесса grep из вывода (использование регулярного выражения)
+ps -ef | grep [n]ginx
+
 # Найти процессы по PID
 ps -p 1234,5678
+```
 
 # Найти все процессы, кроме указанного пользователя
 ps -U root -u root -N
@@ -104,6 +108,12 @@ ps auxf
 
 # Дерево с отображением PPID (System V)
 ps -ef --forest
+
+# Анализ Master/Worker структуры (на примере Nginx)
+ps -ef | grep [n]ginx
+# root      2430     1  0 13:09 ?  00:00:00 nginx: master process /usr/sbin/nginx
+# www-data  2918  2430  0 13:09 ?  00:00:00 nginx: worker process
+# В этом примере PID мастера (2430) является PPID (Parent PID) для воркера (2918).
 
 # Только дочерние процессы для конкретного PID
 ps --ppid 1234
