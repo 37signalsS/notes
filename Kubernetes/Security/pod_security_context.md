@@ -141,7 +141,51 @@ metadata:
 
 Для более сложных политик можно использовать: [Kyverno](./kyverno/policies/practical_scenarios.md) или OPA Gatekeeper.
 
-### 4. Верификация Security Context в работающем поде
+### 4. Комбинированный пример: capabilities + seccomp + AppArmor
+
+Максимальная защита достигается сочетанием всех трёх механизмов. Каждый закрывает свой класс атак:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-app
+  template:
+    metadata:
+      labels:
+        app: flask-app
+    spec:
+      containers:
+        - name: flask
+          image: sfmatt/flask-vuln-demo
+          ports:
+            - containerPort: 5000
+          securityContext:
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE]
+            seccompProfile:
+              type: RuntimeDefault
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: flask-deny-shadow
+```
+
+Назначение каждого уровня:
+
+| Уровень | Блокирует | Пример |
+|:--------|:----------|:-------|
+| `capabilities.drop` | Целые категории привилегий | Raw-сокеты, монтирование ФС |
+| `seccompProfile: RuntimeDefault` | Опасные системные вызовы | `unshare`, `mount`, `clone` с флагами |
+| `appArmorProfile` | Поведение, нарушающее политику | Чтение `/etc/shadow`, запись в `/etc/` |
+
+**Важно:** механизмы не взаимозаменяемы. Даже с `drop: [ALL]` процесс может читать файлы; даже с `RuntimeDefault` он может читать файлы в разрешённых seccomp путях. Только AppArmor/SELinux оценивает контекст: «должен ли именно этот процесс читать именно этот файл». Подробнее о модели: [Обзор механизмов безопасности Linux](../../Linux/Security/Linux_Security_Mechanisms_Overview.md).
 
 После создания пода с Security Context важно убедиться, что настройки применены корректно.
 

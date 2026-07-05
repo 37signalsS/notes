@@ -141,6 +141,65 @@ appuser    hard    nofile    65536
 *    hard    nofile    65535
 ```
 
+### Шаг 5: Диагностика в Kubernetes
+
+Если процесс работает в pod, ulimit наследуется от контейнерного рантайма (containerd / CRI-O), а не от хоста напрямую.
+
+```bash
+# Проверка изнутри пода
+kubectl exec -it $POD -- sh -c 'ulimit -n; ulimit -Hn'
+
+# Единственный достоверный источник — /proc/PID/limits
+PID=$(kubectl exec -it $POD -- pgrep -f myapp | head -1 | tr -d '\r')
+kubectl exec -it $POD -- cat /proc/$PID/limits | grep "Max open files"
+```
+
+### Шаг 6: Настройка лимита в Kubernetes
+
+Декларативного поля `resources.limits.openFiles` не существует. Используют три подхода:
+
+**Подход 1 — containerd (правильное решение):**
+
+```toml
+# /etc/containerd/config.toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+  Rlimits = [
+    { type = "RLIMIT_NOFILE", hard = 1048576, soft = 1048576 }
+  ]
+```
+
+**Подход 1 — CRI-O:**
+
+```ini
+# /etc/crio/crio.conf
+[crio.runtime]
+default_ulimits = [
+  "nofile=1048576:1048576",
+]
+```
+
+После перезапуска рантайма все новые контейнеры наследуют эти лимиты.
+
+**Подход 2 — securityContext.sysctls (ограниченно):**
+
+```yaml
+spec:
+  securityContext:
+    sysctls:
+      - name: fs.file-max
+        value: "1048576"
+```
+
+Задаёт общесистемный лимит в namespace контейнера, но не soft limit процесса. Типичную проблему EMFILE не решает.
+
+**Подход 3 — ulimit в entrypoint (костыль):**
+
+```dockerfile
+ENTRYPOINT ["/bin/sh", "-c", "ulimit -n 1048576 && exec /usr/local/bin/myapp"]
+```
+
+Важный нюанс: процесс может поднять soft limit только до hard limit. Если hard limit = 1024, команда `ulimit -n 1048576` завершится ошибкой. Для повышения hard limit контейнеру нужна capability `CAP_SYS_RESOURCE`, которой обычно нет у защищённых подов.
+
 ## Дополнительная информация
 
 ### ulimit vs inode limit (вопрос на собеседовании)
@@ -166,6 +225,42 @@ sudo strace -e trace=openat,close -p <PID>
 ```
 
 Подробнее: [Трассировка и отладка](./tracing_and_debugging.md).
+
+### Когда повышение лимита — правильное решение
+
+Не каждая ошибка EMFILE — утечка. Иногда лимит действительно слишком низок для рабочей нагрузки:
+
+- Реверс-прокси (NGINX, Envoy, HAProxy) с десятками тысяч соединений
+- WebSocket-сервер с постоянными соединениями
+- Сервер БД с большим количеством клиентских подключений
+- Пограничный CDN-узел
+
+Для таких сценариев выставляют default ulimit в рантайме на уровне 1 048 576 и выше, предварительно убедившись, что внутренние ограничения самого приложения (`worker_connections`, уровень параллелизма и т. д.) настроены соответствующим образом.
+
+### Мониторинг
+
+```promql
+# Доля использованных FD процесса (process_exporter или встроенные метрики языка)
+process_open_fds / process_max_fds > 0.8
+
+# Для pod через cAdvisor / kubelet
+container_file_descriptors / container_ulimits_soft{ulimit="open_files"} > 0.8
+
+# Детектор CLOSE_WAIT (требуется exporter состояний TCP)
+node_netstat_Tcp_CloseWait > 1000
+```
+
+Алерт на уровне 80% использования FD позволяет обнаружить утечку за несколько дней до падения продакшена.
+
+### Правильная ментальная модель
+
+`ulimit -n` — мягкое ограничение на уровне процесса, которое задаёт компонент, запускающий процесс: unit systemd, containerd, сессия shell и т. д. В Kubernetes цепочка: kubelet → runtime → контейнер → процесс.
+
+EMFILE в продакшене сводится к одной из двух причин:
+1. **Утечка на уровне приложения** — лимит нормальный, но код не закрывает FD.
+2. **Нагрузка превышает лимит рантайма** — нужно исправлять конфигурацию рантайма, а не городить костыли в pod.
+
+Последовательность диагностики всегда одинакова: проверить лимит → посчитать FD → определить типы → найти источник утечки. Повышение лимита без исправления кода только маскирует проблему.
 
 ### Связанные темы
 

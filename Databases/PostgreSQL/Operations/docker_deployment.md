@@ -70,7 +70,7 @@ services:
   db:
     image: postgres:16.3-alpine
     container_name: postgres_prod
-    restart: always
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=app_user
       - POSTGRES_DB=app_db
@@ -106,7 +106,52 @@ networks:
     driver: bridge
 ```
 
-### Сценарий 3: Администрирование в Docker
+**Настройка shared_buffers:** Внутри контейнера Postgres параметр `shared_buffers` выставляйте ~25% от лимита памяти. При лимите 1G это 256M. Если оставить дефолтные 128MB при лимите 1G, Postgres будет использовать RAM через файловый кеш ОС, что менее предсказуемо.
+
+### Сценарий 4: Автоматизированный бэкап в Compose
+
+Named volume хранит данные между перезапусками (`/var/lib/docker/volumes/`), но не защищает от отказа хоста или `docker compose down -v`. Минимальный бэкап — `pg_dump` в отдельном сервисе:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backup:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c "while true; do
+        PGPASSWORD=$$POSTGRES_PASSWORD pg_dump -h postgres -U postgres mydb |
+        gzip > /backups/backup_$$(date +%Y%m%d_%H%M%S).sql.gz;
+        find /backups -mtime +7 -delete;
+        sleep 86400;
+      done"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+```
+
+Каждые 24 часа: дамп, сжатие gzip, удаление дампов старше 7 дней. Папку `./backups` синхронизируйте на S3 или другой сервер — бэкап на том же хосте спасает от `docker compose down -v`, но не от отказа железа.
+
+### Сценарий 5: Администрирование в Docker
 
 - **Выполнение команд в контейнере:**
 

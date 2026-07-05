@@ -109,6 +109,13 @@ containerd config dump | head -n 50
 2. Убедитесь в наличии критических настроек для Kubernetes:
    - `SystemdCgroup = true` (обязательно для интеграции с cgroups v2).
    - Корректный путь к `sandbox_image` (например, `registry.k8s.io/pause:3.9`).
+   - При необходимости — `Rlimits` для лимита файловых дескрипторов всех контейнеров:
+     ```toml
+     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+       Rlimits = [
+         { type = "RLIMIT_NOFILE", hard = 1048576, soft = 1048576 }
+       ]
+     ```
 3. Перезапустите службу: `sudo systemctl restart containerd`.
 
 ### Сценарий 3: Проблемы с Sandbox (pause) контейнерами

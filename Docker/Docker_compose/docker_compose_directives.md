@@ -57,9 +57,41 @@
 - **`command` и `entrypoint`**: Переопределяют `CMD` и `ENTRYPOINT` из `Dockerfile` образа.
   - Подробнее: [Инструкции Dockerfile: ENTRYPOINT vs CMD](../Dockerfile/Instructions/practical_scenarios.md).
 
-- **`restart`**: Определяет политику перезапуска контейнера (`no`, `on-failure`, `always`, `unless-stopped`).
+- **`restart`**: Определяет политику перезапуска контейнера.
+  - `no` — не перезапускать (по умолчанию).
+  - `on-failure` — перезапуск только при ненулевом коде выхода (для одноразовых задач).
+  - `always` — всегда, включая ручную остановку.
+  - `unless-stopped` — перезапуск при любом падении, кроме ручной остановки. **Рекомендуется для production.**
 
-- **`healthcheck`**: Позволяет Docker проверять работоспособность приложения внутри контейнера. Крайне важен для `depends_on.condition: service_healthy`.
+- **`healthcheck`**: Позволяет Docker проверять работоспособность приложения. Крайне важен для `depends_on.condition: service_healthy`.
+  - `start_period` — время после старта, в течение которого неудачные проверки не считаются ошибкой (приложению нужно время на инициализацию).
+  - Если в образе нет `curl` (Alpine), используйте `wget`:
+    ```yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+    ```
+
+- **`deploy.resources`**: Ограничения ресурсов контейнера (память, CPU).
+  - `limits` — жёсткий потолок (при превышении памяти — OOMKilled).
+  - `reservations` — гарантированный минимум.
+  ```yaml
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+        cpus: "1.0"
+      reservations:
+        memory: 256M
+  ```
+
+- **`logging`**: Настройка драйвера и ротации логов. Без ротации JSON-файлы растут бесконтрольно.
+  ```yaml
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  ```
 
 - **`user`**: Запускает процесс от имени указанного пользователя (`user:group`).
 
@@ -121,6 +153,8 @@ secrets:
 **Пояснение:** Сервис `web_app` не запустит свою `command` до тех пор, пока `healthcheck` сервиса `database` не завершится успешно. Это надежный и декларативный способ управления зависимостями.
 
 ## Дополнительная информация
+
+### Связанные документы
 
 - **[Сравнение версий Docker Compose](./docker_compose_versions_comparison.md)** — эволюция формата от v2/v3 к Compose Spec
 - **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных, профили и масштабирование

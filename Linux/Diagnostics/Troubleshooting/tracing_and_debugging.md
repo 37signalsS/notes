@@ -132,6 +132,12 @@ sudo strace -f -ttT <команда>
 # Фильтрация по типу вызовов
 strace -e trace=network,open,openat <команда>
 
+# Фильтрация ТОЛЬКО по open — без грепа
+strace -e open uptime
+# → open("/proc/uptime", O_RDONLY) = 3
+# → open("/var/run/utmp", O_RDONLY|O_CLOEXEC) = 4
+# → open("/proc/loadavg", O_RDONLY) = 4
+
 # Сводка по системным вызовам (count)
 strace -c <команда>
 ```

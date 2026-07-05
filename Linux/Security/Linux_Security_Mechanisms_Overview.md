@@ -101,12 +101,58 @@
 | Namespaces + Cgroups | Изоляция процессов и ресурсов | [Namespaces и Cgroups](../../Docker/Concepts/linux_isolation.md) |
 | hidepid (`/proc`) | Скрытие процессов от других пользователей | — |
 
-**Сценарий изоляции контейнера:**
+**Сценарий изоляции контейнера (послойно):**
 
-1. Capabilities — минимальный набор привилегий (`setcap`)
-2. Seccomp — запрет опасных системных вызовов
-3. AppArmor/SELinux — профиль/политика для процесса
-4. Read-only rootfs — защита файловой системы
+Три механизма не взаимозаменяемы — каждый оценивает одно и то же действие по-своему:
+
+```
+Capabilities →  что процессу в принципе разрешено делать
+Seccomp     →  как процесс взаимодействует с ядром (syscall)
+LSM         →  какое поведение допустимо в контексте конкретной нагрузки
+```
+
+1. **Capabilities (ров с водой)** — убирают целые категории действий. Даже по умолчанию Docker/K8s отбрасывают много capabilities. Если злоумышленник получил RCE в контейнере, он всё ещё может читать файлы и выходить в сеть, но не может создать raw-сокет (без `CAP_NET_RAW`) или смонтировать ФС (без `CAP_SYS_ADMIN`). Подробнее: [Capabilities](./Mechanisms/Capabilities.md).
+2. **Seccomp (стена)** — ограничивает системные вызовы. `RuntimeDefault` блокирует `unshare`, `mount` и другие опасные syscall даже без явного запрета capability. Команда `unshare -r -n bash` завершится ошибкой, хотя capabilities её не блокировали. Подробнее: [Seccomp](./Mechanisms/Seccomp.md).
+3. **AppArmor / SELinux (охрана)** — политика, оценивающая поведение в контексте рабочей нагрузки. Даже если capability разрешает чтение файла и seccomp разрешает syscall `openat`, AppArmor может запретить чтение `/etc/shadow` для конкретного процесса. Подробнее: [AppArmor](./Mechanisms/AppArmor.md) / [SELinux](./Mechanisms/SELinux.md).
+
+**Иллюстрация в Kubernetes:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask-app
+  template:
+    metadata:
+      labels:
+        app: flask-app
+    spec:
+      containers:
+        - name: flask
+          image: sfmatt/flask-vuln-demo
+          ports:
+            - containerPort: 5000
+          securityContext:
+            capabilities:
+              drop: [NET_RAW]
+            seccompProfile:
+              type: RuntimeDefault
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: flask-deny-shadow
+```
+
+После применения:
+- `socket(AF_INET, SOCK_RAW)` → заблокирован capabilities (нет `CAP_NET_RAW`)
+- `unshare -r -n bash` → заблокирован seccomp (syscall не разрешён профилем)
+- `cat /etc/shadow` → заблокирован AppArmor (нарушает профиль)
+
+Ни один из механизмов не закрывает все три пути. Только вместе они формируют реальную границу для скомпрометированного процесса.
 
 ### 3. Защита ядра и памяти
 

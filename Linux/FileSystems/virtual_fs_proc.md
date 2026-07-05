@@ -85,6 +85,8 @@ echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward
 
 - **[/proc/cpuinfo](../Diagnostics/Hardware/cpu_info.md):** Детальные характеристики процессоров.
 - **[/proc/meminfo](../Diagnostics/Memory/proc_meminfo.md):** Подробная статистика использования оперативной памяти.
+- **`/proc/uptime`:** Время работы системы (секунды) и общее время бездействия (сумма по CPU). См. [Планирование процессов: Load Average](../Core/processes/scheduling.md#источники-данных-procuptime-и-procloadavg).
+- **`/proc/loadavg`:** Средняя загрузка системы (LA за 1, 5, 15 минут), активные/общее процессы, PID последнего процесса. См. [Планирование процессов: Load Average](../Core/processes/scheduling.md#источники-данных-procuptime-и-procloadavg).
 - **[/proc/devices](./virtual_fs_dev.md):** Список зарегистрированных символьных и блочных устройств.
 - **[/proc/pressure/](../Core/kernel/psi.md):** Статистика давления на ресурсы (**PSI**, Pressure Stall Information).
 - **`/proc/mounts`:** Список смонтированных файловых систем (ссылка на актуальную таблицу монтирования).
