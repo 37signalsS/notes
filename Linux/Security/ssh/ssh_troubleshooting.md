@@ -132,17 +132,63 @@ sudo nft list ruleset
 
 **Симптом:** `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
 
-**Причины:** переустановка ОС, замена сервера с тем же IP, MITM-атака (наиболее опасный).
+**Причины:** переустановка ОС, замена сервера с тем же IP, MITM-атака (наиболее опасный). Симптом одинаков для обоих случаев.
+
+**Проверка ключа без подключения — `ssh-keyscan`:**
 
 ```bash
-# Удалить старую запись
-ssh-keygen -R <hostname_or_ip>
+# Снять текущий ключ с сервера
+ssh-keyscan -t rsa,ed25519 target-host 2>/dev/null
 
-# Подключиться заново и подтвердить новый отпечаток
-ssh user@host
+# Сравнить с записью в known_hosts
+ssh-keygen -F target-host -f ~/.ssh/known_hosts
 ```
 
-В production — сверять отпечатки с администратором сервера перед удалением записей из `known_hosts`.
+Если ключи не совпадают — снять отпечаток обеих версий для визуального сравнения:
+
+```bash
+ssh-keygen -lf <(ssh-keyscan -t ed25519 target-host 2>/dev/null)
+```
+
+**Правильная практика — предварительное сохранение fingerprint:**
+
+Перед любой переустановкой сервера сохранять отпечаток через доверенный канал (телефон, закрытый чат, CMDB):
+
+```bash
+# До переустановки — на сервере
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub > /secure-storage/host-fingerprint-$(hostname).txt
+
+# После переустановки — сверяем
+diff <(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) /secure-storage/host-fingerprint-$(hostname).txt
+```
+
+**Массовый аудит host key всей инфраструктуры:**
+
+```bash
+while read host; do
+  current=$(ssh-keyscan -t ed25519 "$host" 2>/dev/null | awk '{print $3}')
+  expected=$(grep "$host" /secure-storage/known-hosts-baseline.txt | awk '{print $3}')
+  if [[ "$current" != "$expected" ]]; then
+    echo "MISMATCH: $host"
+  fi
+done < hosts.txt
+```
+
+**Автоматическое доверие через SSH CA:**
+
+Для инфраструктуры с частым пересозданием хостов (автоскейлинг-группы, контейнеры) статичный `known_hosts` неприменим. Вместо этого используется SSH CA — центральный центр сертификации, подписывающий ключи хостов:
+
+```ini
+# Настройка доверия к CA вместо конкретных ключей
+@cert-authority *.internal.company.com $(cat ca.pub)
+```
+
+При такой схеме пересоздание хоста не требует ручной сверки — новый инстанс получает сертификат от того же CA, и клиент доверяет ему автоматически.
+
+```bash
+# Вручную — удалить старую запись (только после сверки!)
+ssh-keygen -R <hostname_or_ip>
+```
 
 ### Сценарий 3: Медленное подключение
 
