@@ -87,12 +87,16 @@ curl localhost:8080  # → Connection Refused (контейнер останов
 | Команда | Описание |
 | :--- | :--- |
 | `docker images` | Список локальных образов |
-| `docker build -t <имя>:<тег> .` | Сборка образа из `Dockerfile` |
+| `docker build -t <имя>:<тег> .` | Сборка образа из `Dockerfile` (Legacy) |
+| `docker buildx build` | Современная мультиплатформенная сборка (**рекомендуется**) |
 | `docker pull <образ>:<тег>` | Скачивание из реестра |
 | `docker push <образ>:<тег>` | Загрузка в реестр |
 | `docker rmi <образ>` | Удаление образа |
 | `docker tag <source> <target>` | Добавление тега |
 | `docker history <образ>` | Показывает слои образа |
+
+**Рекомендация:** начиная с версии Docker 23.0, используйте `buildx` для кросс-платформенной сборки (например, AMD64 и ARM64 одновременно). Подробнее: **[BuildKit и Buildx](./Dockerfile/dockerfile_buildkit.md)**.
+
 
 ### Инспекция и мониторинг
 

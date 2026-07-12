@@ -63,6 +63,15 @@ ss -tmo | grep 'window:0'
 ss -tno | grep wscale
 ```
 
+**Диагностика алгоритма Нагла (Nagle Algorithm):**
+
+```bash
+# Проверка наличия флага 'nagle' (включен) или 'nodelay' (отключен)
+ss -tin | grep -i nagle
+```
+
+Подробнее: **[Алгоритм Нагла](../../../../Networking/Protocols/TCP/tcp_nagle_algorithm.md)**.
+
 Подробнее: [Оптимизация буферов TCP](./tcp_buffer_tuning.md).
 
 ### Диагностика механизмов оптимизации

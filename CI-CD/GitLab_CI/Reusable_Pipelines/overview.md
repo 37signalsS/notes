@@ -81,6 +81,24 @@ gitlab-ci lint --project=my-group/my-project
 gitlab-ci lint --include-debug
 ```
 
+### Сценарий 4: Централизованный репозиторий шаблонов (Enterprise)
+
+В организациях с большим количеством микросервисов используется подход **"CI-as-a-Service"**:
+
+1. **Репозиторий-источник (templates-repo):** Содержит эталонные YAML-файлы для сборки (Docker), тестирования (Pytest, Jest) и деплоя (Helm).
+2. **Проекты-клиенты:** В `.gitlab-ci.yml` проекта подключается основной шаблон. Проект описывает только свои переменные и специфичные шаги.
+   ```yaml
+   include:
+     - project: 'devops/shared-templates'
+       file: '/templates/standard-microservice.yml'
+       ref: 'v2.1.0'
+   
+   variables:
+     DOCKER_CONTEXT: "./src/app"
+     HELM_RELEASE_NAME: "my-service"
+   ```
+3. **Преимущества:** Унификация процессов, возможность массового внедрения новых стандартов (например, линтеров или сканеров) и упрощение онбординга новых сервисов.
+
 > **Примечание:** `!reference` и `include:component` проходят полную валидацию. YAML Anchors могут не выявлять ошибки.
 
 ## Дополнительная информация

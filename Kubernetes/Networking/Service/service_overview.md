@@ -125,9 +125,9 @@ Service автоматически распределяет трафик меж�
 
 | Тип | Доступность | Основной сценарий |
 | :--- | :--- | :--- |
-| **[ClusterIP](./service_type_clusterip.md)** | Только внутри кластера | Внутренние коммуникации (по умолчанию) |
-| **[NodePort](./service_type_nodeport.md)** | `IP_узла:NodePort` | Разработка, отладка, on-prem |
-| **[LoadBalancer](./service_type_loadbalancer.md)** | Внешний IP (облако) | Production в облачных провайдерах |
+| **[ClusterIP](./service_type_clusterip.md)** | Только **внутри** кластера | Стандартный тип для взаимодействия между микросервисами. Обеспечивает балансировку нагрузки между живыми подами по внутреннему IP сервиса. |
+| **[NodePort](./service_type_nodeport.md)** | `IP_узла:NodePort` | Открывает статический порт на **каждой** ноде кластера. Трафик, приходящий на этот порт, перенаправляется на сервис. Позволяет получить доступ извне без внешнего балансировщика. |
+| **[LoadBalancer](./service_type_loadbalancer.md)** | Внешний IP (облако) | Production в облачных провайдерах. Создает облачный балансировщик, который направляет трафик на NodePort/ClusterIP. |
 | **[ExternalName](./service_type_externalname.md)** | DNS CNAME | Доступ к внешним ресурсам |
 | **[Headless](./service_type_headless.md)** | Прямые IP подов | Stateful-приложения (StatefulSet) |
 

@@ -81,18 +81,56 @@
 1. **PostgreSQL:** Настраивается [логическая репликация](../Concepts/replication.md). Все изменения (`INSERT`, `UPDATE`, `DELETE`) записываются в WAL (Write-Ahead Log).
 2. **Debezium:** Коннектор для Kafka Connect, который читает WAL PostgreSQL, преобразует изменения в структурированные события и отправляет их в топик Apache Kafka.
 3. **[Apache Kafka](../../../Kafka/kafka_for_monitoring.md):** Выступает в роли надежного буфера для потока событий изменений.
-4. **ClickHouse:** В ClickHouse создается таблица с движком `Kafka`. Эта таблица подписывается на топик в Kafka, считывает из него события и вставляет данные в основную (материализованную) таблицу ClickHouse.
+4. **ClickHouse:** Подключается к Kafka через движок `Kafka`. Подробнее см. **[Интеграция ClickHouse и Kafka](../../ClickHouse/clickhouse_kafka_integration.md)**.
+
+### Нативные движки ClickHouse для PostgreSQL
+
+ClickHouse предоставляет встроенные механизмы для прямого взаимодействия с PostgreSQL без промежуточных звеньев (кроме сетевого соединения).
+
+#### Табличный движок `PostgreSQL`
+Позволяет создать таблицу в ClickHouse, которая является "прокси" к таблице в PostgreSQL.
+
+```sql
+CREATE TABLE ch_postgres_table (
+    id UInt64,
+    name String
+) ENGINE = PostgreSQL('host:port', 'database', 'table', 'user', 'password', 'schema');
+```
+
+#### Базовый движок `PostgreSQL`
+Позволяет подключить всю базу данных PostgreSQL целиком. Все таблицы будут видны в ClickHouse автоматически.
+
+```sql
+CREATE DATABASE postgres_db 
+ENGINE = PostgreSQL('host:port', 'database', 'user', 'password', 'schema');
+```
+
+#### Табличная функция `postgresql()`
+Удобна для разовых запросов или джойнов "на лету" без создания постоянных структур.
+
+```sql
+SELECT * FROM postgresql('host:port', 'database', 'table', 'user', 'password');
+```
+
+### Словари (Dictionaries) как источник данных
+
+Словари в ClickHouse — это структуры данных, которые хранятся в оперативной памяти и оптимизированы для быстрой подстановки (lookup). PostgreSQL часто используется как источник для таких справочников.
 
 **Преимущества:**
+- Данные "подогреты" в оперативной памяти.
+- Чрезвычайно высокая скорость доступа.
+- Автоматическое обновление данных по расписанию.
 
-- Минимальная задержка (секунды)
-- Надежность за счет буферизации в Kafka
-- Поддержка различных форматов: JSON (JavaScript Object Notation), CSV, Avro, Parquet, Protobuf
-
-**Недостатки:**
-
-- Сложность архитектуры (требует Kafka, Debezium)
-- Дополнительные операционные затраты
+```sql
+CREATE DICTIONARY users_dict (
+    id UInt64,
+    name String
+)
+PRIMARY KEY id
+SOURCE(POSTGRESQL(port 5432 host 'localhost' user 'user' password 'pass' db 'db' table 'users'))
+LAYOUT(HASHED())
+LIFETIME(MIN 300 MAX 600); -- Обновлять каждые 5-10 минут
+```
 
 ### Материализованные представления ClickHouse
 
@@ -106,35 +144,7 @@ ClickHouse предоставляет два типа материализова
 - Данные хранятся в отдельной таблице
 - Автоматически обновляются при вставке новых данных
 
-**Пример использования с Kafka:**
-
-```sql
--- Таблица для чтения из Kafka
-CREATE TABLE kafka_queue (
-    order_id UInt64,
-    customer_id UInt64,
-    amount Float64
-) ENGINE = Kafka('kafka_broker:9092', 'orders_topic', 'group_id', 'JSONEachRow');
-
--- Конечная таблица для хранения данных
-CREATE TABLE orders (
-    order_id UInt64,
-    customer_id UInt64,
-    amount Float64
-) ENGINE = MergeTree()
-ORDER BY order_id;
-
--- Материализованное представление для автоматической вставки
-CREATE MATERIALIZED VIEW orders_mv TO orders AS
-SELECT order_id, customer_id, amount
-FROM kafka_queue;
-```
-
-**Преимущества:**
-
-- Автоматическая обработка данных без внешних скриптов
-- Минимальная задержка
-- Обновление только при вставке данных (INSERT)
+**Пример использования с Kafka:** см. **[Интеграция ClickHouse и Kafka](../../ClickHouse/clickhouse_kafka_integration.md)**.
 
 #### Обновляемые материализованные представления
 
@@ -174,8 +184,10 @@ GROUP BY date;
 | Способ | Задержка | Сложность | Подходит для |
 | :--- | :--- | :--- | :--- |
 | **Пакетная загрузка** | Часы / дни | Низкая | Исторические данные, отчеты T-1 (предыдущий день) |
-| **Внешние таблицы (FDW)** | Мгновенно | Средняя | Смешанные запросы (OLTP + OLAP) |
+| **Внешние таблицы (FDW)** | Мгновенно | Средняя | Смешанные запросы (OLTP + OLAP) со стороны PostgreSQL |
+| **Нативные движки CH** | Мгновенно | Низкая | Смешанные запросы со стороны ClickHouse, ETL |
 | **CDC (Kafka)** | Секунды | Высокая | Аналитика реального времени, дашборды |
+| **Словари (CH)** | Минуты | Средняя | Быстрые Lookups справочников в ClickHouse |
 | **Materialized View** | Секунды / минуты | Средняя | Агрегации, предварительные расчеты |
 
 ### Смотрите также
@@ -183,4 +195,6 @@ GROUP BY date;
 - [Логическая репликация в PostgreSQL](../Concepts/replication.md)
 - [Масштабирование PostgreSQL](../Concepts/scaling.md)
 - [Обзор ClickHouse](../../clickhouse.md)
+- [Интеграция ClickHouse и Kafka](../../ClickHouse/clickhouse_kafka_integration.md)
+- [Интеграция ClickHouse и S3](../../ClickHouse/clickhouse_s3_integration.md)
 - [Foreign Data Wrappers (FDW)](./fdw.md)

@@ -125,11 +125,11 @@ Kubernetes — флагманский проект **CNCF** (Cloud Native Comput
 |:-----------|:-----------|:------------|
 | **[k3s](./Installation/k3s_dev_environment/k3s_architecture.md)** | Edge, IoT, слабые VPS | Один бинарник <100 МБ, ~512 МБ RAM |
 | **[kubeadm](./Installation/kubeadm/index.md)** | Bare-metal, облачные VM | Официальный инструмент инициализации |
-| **Managed Cloud (GKE, EKS, AKS, Yandex)** | Production в облаке | Control Plane управляется провайдером |
+| Managed Cloud (GKE, EKS, AKS, Yandex) | Production в облаке | Control Plane управляется провайдером |
 
 **Managed Kubernetes (облачные решения):**
 
-Управляемые кластеры делегируют обслуживание Control Plane провайдеру: мастер-узлы, etcd, сертификаты, бэкапы. Зона ответственности пользователя — worker-ноды и деплой приложений.
+Управляемые кластеры относятся к модели **PaaS** (см. [Обзор облачных вычислений](../Concepts/cloud_computing_overview.md)) и делегируют обслуживание Control Plane провайдеру: мастер-узлы, etcd, сертификаты, бэкапы. Зона ответственности пользователя — worker-ноды и деплой приложений.
 
 Ключевые возможности:
 - Автоматическое масштабирование worker-нод при росте нагрузки

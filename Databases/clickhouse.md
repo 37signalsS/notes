@@ -109,13 +109,24 @@ CREATE TABLE events_all AS events
 ENGINE = Distributed(cluster_name, default, events, rand());
 ```
 
-**Интеграция с Kafka (ETL-конвейер):**
+### Интеграция с Kafka (ETL-конвейер)
 
 Паттерн реализации:
 
 1. **Таблица Kafka:** интерфейс для чтения из топика (движок `Kafka`).
 2. **Целевая таблица:** физическое хранилище на диске (`MergeTree`).
 3. **Материализованное представление:** триггер, который перекладывает данные из Kafka в целевую таблицу в реальном времени.
+
+Детальное руководство: **[Интеграция ClickHouse и Kafka](./ClickHouse/clickhouse_kafka_integration.md)**.
+
+## Интеграция с BI-системами
+
+ClickHouse является стандартным бэкендом для многих современных систем визуализации данных благодаря сверхвысокой скорости выполнения аналитических запросов.
+
+- **Apache Superset:** нативная поддержка, рекомендуется использовать SQLAlchemy-коннектор.
+- **Grafana:** через официальный плагин ClickHouse Data Source. Идеально для построения дашбордов по логам и метрикам.
+- **Metabase / Redash:** поддержка через плагины сообщества.
+- **Tabix:** встроенный в ClickHouse легковесный open-source веб-интерфейс для SQL-запросов.
 
 ## Дополнительная информация
 
@@ -128,11 +139,14 @@ ENGINE = Distributed(cluster_name, default, events, rand());
 
 ### Интеграция и экосистема
 
-- **PostgreSQL:** использование `clickhouse_fdw` или движка `PostgreSQL` для прямого доступа к данным. Детально: **[Интеграция PostgreSQL и ClickHouse](./PostgreSQL/Integrations/clickhouse.md)**.
+- **PostgreSQL:** использование движков `PostgreSQL` или `clickhouse_fdw`. Детально: **[Интеграция PostgreSQL и ClickHouse](./PostgreSQL/Integrations/clickhouse.md)**.
+- **Kafka:** потоковая обработка данных в реальном времени. Детально: **[Интеграция ClickHouse и Kafka](./ClickHouse/clickhouse_kafka_integration.md)**.
+- **S3:** объектные хранилища и многоуровневое хранение. Детально: **[Интеграция ClickHouse и S3](./ClickHouse/clickhouse_s3_integration.md)**.
 - **Машинизированные представления (Materialized Views):** в ClickHouse работают как триггеры на вставку данных.
 - **ClickHouse Keeper:** замена ZooKeeper, написанная на C++ и интегрированная в ClickHouse.
 
 ### Требования к ресурсам
+
 
 | Ресурс | Минимум | Рекомендуется |
 | :--- | :--- | :--- |
@@ -151,3 +165,5 @@ ENGINE = Distributed(cluster_name, default, events, rand());
 - Общая теория шардирования — **[Шардирование](./Concepts/sharding.md)**.
 - Масштабирование PostgreSQL — **[PostgreSQL Scaling](./PostgreSQL/Concepts/scaling.md)**.
 - Работа с Foreign Data Wrappers — **[FDW в PostgreSQL](./PostgreSQL/Integrations/fdw.md)**.
+- Интеграция с Kafka — **[ClickHouse и Kafka](./ClickHouse/clickhouse_kafka_integration.md)**.
+- Интеграция с S3 — **[ClickHouse и S3](./ClickHouse/clickhouse_s3_integration.md)**.
