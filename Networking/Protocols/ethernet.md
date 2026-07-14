@@ -157,6 +157,7 @@ show interfaces Gi0/1 | include duplex,speed
 ### Связанные концепции
 
 - **[MAC-адрес (Media Access Control)](../Concepts/mac_address.md)** — подробное описание физической адресации.
+- **[Multicast и IGMP Snooping](./multicast.md)** — оптимизация групповой рассылки в Ethernet-сетях.
 - **[VLAN (Virtual Local Area Network)](./vlan.md)** — виртуальные локальные сети и тегирование кадров (802.1Q).
 - **[ARP (Address Resolution Protocol)](./arp.md)** — протокол разрешения IP-адресов в MAC-адреса.
 

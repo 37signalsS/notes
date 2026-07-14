@@ -178,6 +178,69 @@ backend https_backend
 
 > Подробное руководство: [Настройка High Availability API-сервера с Keepalived и HAProxy](../Kubernetes/Installation/kubeadm/ha_concepts.md).
 
+### Отказоустойчивая балансировка PostgreSQL (Patroni)
+
+Сценарий для высоконагруженного кластера БД, использующего **Patroni** для управления состоянием. HAProxy опрашивает API Patroni (порт 8008) для определения текущего лидера.
+
+#### 1. Конфигурация `haproxy.cfg`
+
+```haproxy
+global
+    maxconn 4096              # Максимальное количество одновременных соединений
+
+defaults
+    mode tcp                  # Для БД используем L4 проксирование
+    timeout connect 5s
+    timeout client 50s
+    timeout server 50s
+
+listen stats
+    bind *:8443
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+
+frontend postgres_frontend
+    bind *:5432
+    default_backend postgres_backend
+
+backend postgres_backend
+    option httpchk            # Используем HTTP-проверки для Patroni API
+    http-check expect status 200
+    balance roundrobin
+    
+    # inter 3s - интервал проверки
+    # fall 3 - узел считается мертвым после 3 провалов
+    # on-marked-down shutdown-sessions - принудительно закрыть активные сессии при падении узла
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    
+    # Проверка выполняется на порту 8008 (Patroni REST API)
+    server pg_node1 192.168.10.10:5432 maxconn 100 check port 8008
+    server pg_node2 192.168.10.11:5432 maxconn 100 check port 8008
+```
+
+#### 2. Развертывание через Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  haproxy:
+    image: haproxy:2.8-slim
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "8443:8443"           # Страница статистики
+      - "5432:5432"           # Порт PostgreSQL
+    restart: always
+```
+
+**Особенности настройки:**
+- **`option httpchk`**: Patroni возвращает HTTP 200 только на мастере, что позволяет HAProxy мгновенно переключать трафик при смене лидера.
+- **`on-marked-down shutdown-sessions`**: Критически важно для БД. Если мастер упал, HAProxy должен немедленно разорвать все текущие соединения клиентов, чтобы они могли переподключиться к новому лидеру.
+- **`maxconn`**: Регулируйте в зависимости от ресурсов сервера и настроек `max_connections` в PostgreSQL.
+
+> Подробнее об архитектуре кластера: **[Отказоустойчивость PostgreSQL](../../Databases/PostgreSQL/Concepts/high_availability.md)**.
+
 ## Дополнительная информация
 
 ### Ключевые особенности

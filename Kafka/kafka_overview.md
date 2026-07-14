@@ -139,6 +139,7 @@ Kafka часто используется как промежуточный сл
 
 ### См. также
 
+- **[Развертывание через Ansible](./kafka_ansible_deployment.md)** — установка кластера в режиме KRaft.
 - **[Kafka для мониторинга](./kafka_for_monitoring.md)** — использование Kafka как буфера для логов, метрик и трассировок.
 - **[Гарантии доставки](./delivery_guarantees.md)** — семантика at-most-once, at-least-once, exactly-once.
 - **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — стратегии партиционирования и ребалансировка.

@@ -302,6 +302,16 @@ docker images -f "dangling=true"
 docker image prune
 ```
 
+### Управление контекстами (Profiles)
+
+| Команда | Описание |
+| :--- | :--- |
+| `docker context ls` | Список всех профилей подключения |
+| `docker context use <NAME>` | Переключение на другой профиль (например, удаленный сервер) |
+| `docker context show` | Имя текущего профиля |
+
+Подробное руководство по настройке удаленного доступа через SSH и управлению профилями см. в **[Docker Context](./docker_context.md)**.
+
 ## Дополнительная информация
 
 **Различия `stop` vs `pause`:**
@@ -311,6 +321,7 @@ docker image prune
 
 **Смотрите также:**
 
+- [Docker Context — удаленное управление и профили](./docker_context.md)
 - [Управление Docker через Ansible](../Ansible/examples/docker_management.md)
 - [Управление сетями (CLI)](./Docker_network/cli.md)
 - [Тома и хранение данных](./Docker_fs/docker_volumes.md)

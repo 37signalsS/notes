@@ -80,12 +80,17 @@ temp/
 node_modules/
 vendor/
 __pycache__/
+pycache/
 .venv/
 
 # Конфигурации IDE и редакторов
 .idea/
 .vscode/
 *.swp
+
+# Файлы инфраструктуры Docker (не требуются внутри образа)
+Dockerfile
+.dockerignore
 
 # Тесты и отчеты о покрытии
 tests/

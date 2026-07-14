@@ -45,9 +45,45 @@
 
 ### Настройка маршрутизации в Fluent Bit
 
-Для обеспечения отказоустойчивости на стороне агента настраивается отправка в топики Kafka. Важно использовать теги для разделения потоков данных.
+Для обеспечения отказоустойчивости на стороне агента настраивается отправка в топики Kafka. Важно использовать теги для разделения потоков данных (например, по уровню логирования).
 
-> Пример настройки выходных плагинов и управления буферизацией приведен в заметке [Буферизация и маршрутизация в Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/buffering_routing.md).
+**Пример конфигурации (`fluent-bit.conf`):**
+
+```ini
+[INPUT]
+    Name              tail
+    Path              /var/log/syslog
+    Tag               server_logs
+    parser            json
+
+[FILTER]
+    Name              rewrite_tag
+    Match             server_logs
+    Rule              $log debug   debug-logs    false
+    Rule              $log info    info-logs     false
+    Rule              $log warning warning-logs  false
+    Emitter_Name      log_router
+
+[OUTPUT]
+    Name              kafka
+    Match             debug-logs
+    Brokers           kafka:9092
+    Topics            debug-logs
+
+[OUTPUT]
+    Name              kafka
+    Match             info-logs
+    Brokers           kafka:9092
+    Topics            info-logs
+
+[OUTPUT]
+    Name              kafka
+    Match             warning-logs
+    Brokers           kafka:9092
+    Topics            warning-logs
+```
+
+> Подробное описание выходных плагинов и управления буферизацией приведено в заметке [Буферизация и маршрутизация в Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/buffering_routing.md).
 
 ### Трансформация данных в Vector
 

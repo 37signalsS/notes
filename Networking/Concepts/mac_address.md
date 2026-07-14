@@ -76,7 +76,7 @@ MAC-адрес:  01:00:5E:01:01:01 (одинаковый для всех)
 
 Сетевой интерфейс настраивается на приём пакетов по этому MAC-адресу. Если пакет придёт для другого IP с таким же MAC, он будет принят сетевой картой, но отброшен выше по стеку (на уровне IP) из-за несовпадения IP-адресов.
 
-Подробнее: [Групповые IP-адреса](../Protocols/IP_addressing/special_addresses.md), [Multicast в UDP](../Protocols/udp.md#передача-группового-трафика-multicast).
+Подробнее: [Групповые IP-адреса](../Protocols/IP_addressing/special_addresses.md), [Multicast и IGMP Snooping](../Protocols/multicast.md), [Multicast в UDP](../Protocols/udp.md#передача-группового-трафика-multicast).
 
 ### Уникальность и назначение адресов
 

@@ -63,7 +63,87 @@ curl -k -u admin:new_password -XPUT "https://opensearch-host:9200/_plugins/_secu
 * **Кастомизация `readinessProbe`**: измените `readinessProbe` в `values.yaml` для `opensearch-dashboards`, чтобы он проверял реальный эндпоинт, который становится доступным только после полной загрузки (например, страницу логина).
 * **Увеличение таймаутов**: временно можно увеличить таймауты и количество повторных попыток в `readinessProbe`, чтобы дать сервису больше времени на запуск.
 
+## Оперативное управление и диагностика (Dev Tools)
+
+Для выполнения диагностических запросов и управления кластером используется вкладка **Dev Tools** в OpenSearch Dashboards. Большинство команд совместимы с Elasticsearch.
+
+### Состояние кластера и нод
+
+```http
+# Общий статус здоровья кластера (green, yellow, red)
+GET /_cluster/health?pretty
+
+# Список нод, их IP и роли
+GET /_cat/nodes?v
+
+# Детальное состояние нод: нагрузка, CPU, RAM, Heap и кто является мастером
+GET /_cat/nodes?v&h=name,ip,node.role,heap.percent,ram.percent,cpu,load_1m,master
+```
+
+### Управление индексами и шардами
+
+```http
+# Список всех индексов и их текущий статус
+GET /_cat/indices?v
+
+# Информация о заполнении дисков нодами
+GET /_cat/allocation?v
+
+# Просмотр шардов и причин их проблемного состояния (unassigned)
+GET /_cat/shards?v&h=index,shard,prirep,state,node,unassigned.reason&s=state
+```
+
+### Настройки кластера
+
+```http
+# Просмотр текущих настроек кластера (persistent и transient)
+GET /_cluster/settings
+
+# Пример изменения настроек (динамическое применение)
+PUT /_cluster/settings
+{
+  "persistent": {
+    "cluster.routing.allocation.enable": "all"
+  }
+}
+```
+
+### Решение проблем с аллокацией
+
+Если шарды не могут распределиться по нодам или зависли в состоянии `INITIALIZING`/`UNASSIGNED`:
+
+1.  **Принудительный повтор аллокации**:
+    ```http
+    POST _cluster/reroute?retry_failed
+    ```
+2.  **Объяснение причин проблемного шарда**:
+    ```http
+    GET /_cluster/allocation/explain
+    {
+      "index": "my-index-name",
+      "shard": 0,
+      "primary": false
+    }
+    ```
+3.  **Ручное перемещение шарда**:
+    ```http
+    POST /_cluster/reroute
+    {
+      "commands": [
+        {
+          "move": {
+            "index": "my-index-name",
+            "shard": 0,
+            "from_node": "node-source",
+            "to_node": "node-destination"
+          }
+        }
+      ]
+    }
+    ```
+
 ## Дополнительная информация
 
+* **[Управление жизненным циклом индексов (ISM)](./opensearch_ism_lifecycle.md)** — автоматизация ротации и удаления логов.
 * **[Развертывание в Kubernetes с помощью Helm](./opensearch_helm_deployment.md)** — подробности установки кластера.
 * **Мониторинг**: для наблюдения за состоянием кластера рекомендуется использовать встроенные API здоровья (`_cluster/health`, `_nodes/stats`) и интеграцию с внешними системами (Prometheus, Grafana).

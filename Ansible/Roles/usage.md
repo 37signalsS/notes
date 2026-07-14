@@ -151,7 +151,9 @@ ansible-playbook deploy.yml --tags "cache"  # → выполнение зада�
 ansible-galaxy role install geerlingguy.nginx geerlingguy.php  # → роли установлены в ~/.ansible/roles
 ```
 
-Подробнее — в [galaxy.md](galaxy.md).
+Подробнее — в [galaxy.md](galaxy.md). Примеры развертывания сложных официальных ролей с инвентарем и переменными: 
+- **[Развертывание OpenSearch через Ansible](../../ELK_Stack/OpenSearch/opensearch_ansible_deployment.md)**.
+- **[Развертывание Apache Kafka через Ansible](../../Kafka/kafka_ansible_deployment.md)**.
 
 ### Сценарий 6: Полная параметризация через group_vars
 
