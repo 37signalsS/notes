@@ -1,226 +1,179 @@
-# Docker Network Connectivity Troubleshooting
+# Устранение проблем сетевой связности Docker (Troubleshooting)
 
 ## Определения
 
-**Проблемы сетевой связности** — сбои, при которых контейнеры не могут взаимодействовать с хостом, другими контейнерами или внешними сетями. Причины чаще всего на уровне хостовой ОС (файрвол, маршрутизация), а не в Docker.
+**Проблемы сетевой связности** — сбои, при которых контейнеры не могут взаимодействовать с хостом, другими контейнерами или внешними сетями. Причины чаще всего лежат на уровне хостовой ОС (файрвол, маршрутизация, MTU), а не во внутреннем коде Docker.
 
 ## Основные концепции
 
-### Ключевые компоненты хоста
+### Ключевые компоненты системы
 
 | Компонент | Назначение | Типичная проблема |
 | :--- | :--- | :--- |
-| **`iptables` / `nftables`** | Фильтрация и NAT трафика | Конфликт правил с `firewalld`/`ufw` |
-| **`NetworkManager`** | Управление интерфейсами | Управление `docker0`, сброс маршрутов |
-| **`net.ipv4.ip_forward`** | Пересылка пакетов между интерфейсами | Отключена маршрутизация наружу |
-| **DNS-резолвер** | Разрешение имён | Рассинхронизация с хостом |
+| **`iptables` / `nftables`** | Фильтрация и NAT трафика | Правила `DOCKER` перекрываются `ufw` или `firewalld` |
+| **`net.ipv4.ip_forward`** | Маршрутизация пакетов | Значение `0` (отключено) блокирует выход в интернет |
+| **`MTU` (Maximum Transmission Unit)** | Макс. размер пакета | Пакеты отбрасываются в VPN или облачных сетях |
+| **`NetworkManager`** | Управление интерфейсами | Интерфейс `docker0` помечается как `unmanaged` или сбрасывается |
+| **Docker Embedded DNS** | Резолвер на `127.0.0.11` | Не может проксировать запросы к DNS-серверам хоста |
 
-### Быстрая диагностика по симптомам
+---
 
-| Симптом | Вероятная причина | Проверка |
+## Быстрая диагностика по симптомам
+
+| Симптом | Вероятная причина | Команда для проверки |
 | :--- | :--- | :--- |
-| **Нет доступа в интернет** | `ip_forward=0` | `sysctl net.ipv4.ip_forward` |
-| **Доступен IP, но не домен** | DNS | `ping 8.8.8.8` vs `ping google.com` |
-| **Доступ с хоста, но не извне** | Файрвол (`FORWARD DROP`) | `iptables -L FORWARD -n` |
-| **Пропадает связь после перезагрузки** | `NetworkManager` | `nmcli dev show \| grep docker` |
-| **Контейнеры не видят друг друга** | Docker DNS | `docker exec nslookup <container>` |
+| **Нет доступа в интернет** | `ip_forward=0` | `sysctl net.ipv4.ip_forward` # → 0 |
+| **Пинг по IP работает, по домену — нет** | DNS резолвер | `ping 1.1.1.1` (OK) vs `ping google.com` (Fail) |
+| **Доступ с хоста есть, извне — нет** | Firewall (`FORWARD DROP`) | `iptables -L FORWARD -n -v` |
+| **Связь пропадает при большой нагрузке** | Лимит `conntrack` | `dmesg | grep conntrack` # → table full |
+| **Медленная работа или "зависание" TCP** | Несоответствие `MTU` | `ping -s 1472 -M do 8.8.8.8` |
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Конфликт файрвола (`iptables` / `nftables`)
+### Сценарий 1: Отключена маршрутизация пакетов (IP Forwarding)
 
-**Симптомы:**
-
-- Контейнер доступен по `localhost`, но не из сети
-- Правила Docker перезаписываются после перезагрузки
+**Симптомы:** Контейнеры пингуют шлюз `docker0` (обычно `172.17.0.1`), но не могут выйти за пределы хоста.
 
 **Диагностика:**
-
-```bash
-# Проверка бэкенда Docker
-docker info | grep -i iptables
-
-# Проверка правил FORWARD
-iptables -L FORWARD -v -n | grep docker
-```
-
-**Решение:** Подробно в **[Интеграция с iptables](../Docker_network/troubleshooting/iptables_integration.md)**:
-
-- Используйте цепочку `DOCKER-USER` для пользовательских правил
-- При конфликте с `firewalld` переключите Docker на `iptables-legacy`
-
-### Сценарий 2: NetworkManager управляет `docker0`
-
-**Симптомы:**
-
-- Сеть работает до перезагрузки хоста
-- После перезагрузки контейнеры изолированы
-
-**Диагностика:**
-
-```bash
-# Проверка управления docker0
-nmcli dev show | grep docker0
-
-# Если вывод есть — интерфейс под управлением NetworkManager
-```
-
-**Решение:**
-
-```ini
-# /etc/NetworkManager/conf.d/docker.conf
-[keyfile]
-unmanaged-devices=interface-name:docker0
-```
-
-```bash
-# Перезапуск NetworkManager
-sudo systemctl restart NetworkManager
-
-# Проверка
-nmcli dev status | grep docker0
-```
-
-### Сценарий 3: Отключена пересылка пакетов
-
-**Симптомы:**
-
-- Контейнеры пингуют хост, но не интернет
-- `ping 8.8.8.8` не работает из контейнера
-
-**Диагностика:**
-
 ```bash
 sysctl net.ipv4.ip_forward
-# 0 — отключено, 1 — включено
+# → net.ipv4.ip_forward = 0
 ```
 
 **Решение:**
-
 ```bash
-# Включить немедленно
+# Включить временно
 sudo sysctl -w net.ipv4.ip_forward=1
 
-# Сохранить после перезагрузки
-echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
+# Включить постоянно
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
+# → net.ipv4.ip_forward = 1
 ```
 
-Подробно о `sysctl` в **[Kernel Sysctl](../../Linux/Core/kernel/sysctl.md)**.
+### Сценарий 2: Конфликт MTU в VPN или Облаке
 
-### Сценарий 4: Проблемы с DNS
-
-**Симптомы:**
-
-- `ping 8.8.8.8` работает, `ping google.com` — нет
-- Ошибки `SERVFAIL` или таймауты
+**Симптомы:** Небольшие пакеты (ping) проходят, но HTTP-запросы или SSH-сессии "зависают". Часто встречается при использовании Docker внутри туннелей (WireGuard, OpenVPN).
 
 **Диагностика:**
-
 ```bash
-# Проверка resolv.conf в контейнере
-docker exec <container> cat /etc/resolv.conf
-# nameserver 127.0.0.11 — встроенный DNS Docker
-
-# Проверка разрешения
-docker exec <container> dig ya.ru
+# Пинг с запретом фрагментации (стандартный MTU 1500)
+docker exec my_container ping -s 1472 -M do google.com
+# → ping: local error: message too long, mtu=1450
 ```
 
-**Решение:** Подробно в **[DNS Troubleshooting](../Docker_network/troubleshooting/dns_resolution_issues.md)**:
-
+**Решение:** Установите корректный MTU в `daemon.json` или для конкретной сети.
 ```json
 # /etc/docker/daemon.json
 {
-  "dns": ["1.1.1.1", "8.8.8.8"]
+  "mtu": 1450
 }
 ```
-
 ```bash
 sudo systemctl restart docker
 ```
 
-### Сценарий 5: Изоляция между контейнерами
+### Сценарий 3: Перехват интерфейса NetworkManager
 
-**Симптомы:**
+**Симптомы:** После перезагрузки хоста мост `docker0` пропадает или получает некорректный IP.
 
-- Контейнеры в одной сети не пингуют друг друга
-- DNS-разрешение имён не работает
+**Решение:** Исключите интерфейсы Docker из-под управления NetworkManager.
+```ini
+# /etc/NetworkManager/conf.d/docker.conf
+[keyfile]
+unmanaged-devices=interface-name:docker0;interface-name:br-*;interface-name:veth*
+```
+```bash
+sudo systemctl reload NetworkManager
+```
+
+### Сценарий 4: Проблемы с резолвом имен (DNS)
+
+**Симптомы:** Ошибки `Temporary failure in name resolution` внутри контейнера.
 
 **Диагностика:**
-
 ```bash
-# Проверка сети контейнера
-docker network inspect bridge
+# Проверка DNS-серверов в контейнере
+docker exec my_container cat /etc/resolv.conf
+# → nameserver 127.0.0.11
 
-# Проверка DNS
-docker exec container1 ping container2
+# Тест внешнего резолва
+docker exec my_container nslookup google.com
+# → ;; connection timed out; no servers could be reached
 ```
 
-**Решение:**
-
-```bash
-# Убедитесь, что контейнеры в одной сети
-docker network connect bridge container2
-
-# Перезапуск контейнера
-docker restart container1
+**Решение:** Принудительно укажите DNS-серверы, если резолвер хоста (например, `systemd-resolved`) недоступен для Docker.
+```json
+# /etc/docker/daemon.json
+{
+  "dns": ["8.8.8.8", "1.1.1.1"]
+}
 ```
+Подробно: **[Решение проблем с DNS](./dns_resolution_issues.md)**.
 
-### Сценарий 6: Проброс портов не работает
+### Сценарий 5: Блокировка в цепочке FORWARD (iptables)
 
-**Симптомы:**
-
-- `docker run -p 8080:80` — порт недоступен извне
-- С хоста доступен, из сети — нет
+**Симптомы:** Порт проброшен (`-p 80:80`), но из внешней сети сервис недоступен.
 
 **Диагностика:**
-
 ```bash
-# Проверка правил NAT
-iptables -t nat -L PREROUTING -n -v | grep 8080
-
-# Проверка FORWARD
-iptables -L FORWARD -n | grep docker
+sudo iptables -L FORWARD -n -v
+# → Chain FORWARD (policy DROP 150 packets, 9000 bytes)
 ```
 
-**Решение:**
-
+**Решение:** Добавьте разрешающее правило в цепочку `DOCKER-USER`.
 ```bash
-# Разрешить FORWARD для Docker
 sudo iptables -I DOCKER-USER -i eth0 -o docker0 -j ACCEPT
-sudo iptables-save | sudo tee /etc/iptables/rules.v4
 ```
+Подробно: **[Интеграция с iptables](./iptables_integration.md)**.
+
+### Сценарий 6: Конфликты IPv6
+
+**Симптомы:** Задержки при старте соединений (до 5-10 секунд), так как приложение пытается сначала использовать IPv6, который не настроен в Docker.
+
+**Решение:** Если IPv6 не используется, отключите его в контейнере или настройте корректно.
+```json
+# /etc/docker/daemon.json (для включения)
+{
+  "ipv6": true,
+  "fixed-cidr-v6": "2001:db8:1::/64"
+}
+```
+
+---
+
+## Инструменты диагностики (Toolbox)
+
+Для глубокого анализа сетевого трафика используйте эфемерные контейнеры:
+
+```bash
+# Использование netshoot (содержит tcpdump, tshark, nmap, mtr)
+docker run --rm -it --net container:<target_container_id> nicolaka/netshoot
+
+# Просмотр сетевых соединений внутри неймспейса
+docker exec -it my_container ss -tunlp
+```
+
+### Мониторинг событий сети
+```bash
+# Отслеживание сетевых событий Docker в реальном времени
+docker events --filter 'type=network'
+```
+
+---
 
 ## Дополнительная информация
 
-### Чеклист быстрой диагностики
-
-```bash
-# 1. Проверка пересылки пакетов
-sysctl net.ipv4.ip_forward
-
-# 2. Проверка файрвола
-iptables -L FORWARD -n | head -10
-
-# 3. Проверка NetworkManager
-nmcli dev status | grep docker
-
-# 4. Проверка DNS
-docker run --rm alpine ping -c 1 google.com
-
-# 5. Проверка маршрутов
-ip route show | grep docker
-```
+### Чеклист быстрой проверки
+1. `sysctl net.ipv4.ip_forward` должен быть `1`.
+2. `iptables -L FORWARD` не должен дропать пакеты Docker.
+3. Мост `docker0` должен иметь IP (обычно `172.17.0.1`).
+4. В `/etc/resolv.conf` контейнера должен быть `127.0.0.11`.
 
 ### Связанные темы
-
-- **[iptables Integration](../Docker_network/troubleshooting/iptables_integration.md)** — настройка файрвола
-- **[DNS Troubleshooting](../Docker_network/troubleshooting/dns_resolution_issues.md)** — разрешение имён
-- **[Docker Network Overview](../Docker_network/docker_network.md)** — обзор сетей
-- **[sysctl](../../Linux/Core/kernel/sysctl.md)** — параметры ядра
-
-### Примечания
-
-- При изменении `/etc/docker/daemon.json` требуется перезапуск Docker
-- Правила `iptables` не сохраняются после перезагрузки — используйте `iptables-save`
-- Для production настройте мониторинг сетевых метрик Docker
+- **[Интеграция с iptables](./iptables_integration.md)** — настройка файрвола.
+- **[Решение проблем с DNS](./dns_resolution_issues.md)** — глубокая диагностика резолва.
+- **[Обзор сетевых моделей Docker](../Docker_network/docker_network.md)** — архитектура сетей.
+- **[Kernel Sysctl](../../Linux/Core/kernel/sysctl.md)** — параметры ядра.

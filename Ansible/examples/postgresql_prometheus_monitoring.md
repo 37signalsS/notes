@@ -1,158 +1,141 @@
-# Ansible: Мониторинг PostgreSQL с использованием Prometheus
+# Мониторинг PostgreSQL с помощью Prometheus и Ansible
 
 ## Определения
 
-**Мониторинг PostgreSQL с Prometheus и Ansible** — процесс автоматизированного развертывания инструментов для наблюдения за состоянием базы данных. Ansible управляет конфигурацией, `postgres_exporter` осуществляет сбор метрик, а Prometheus агрегирует и хранит данные временных рядов (TSDB).
+**Мониторинг PostgreSQL** — комплексный процесс сбора, хранения и визуализации метрик производительности БД для обеспечения стабильности и быстродействия системы.
 
-**`postgres_exporter`** — специализированный компонент, преобразующий внутренние показатели PostgreSQL в формат, понятный Prometheus.
+**postgres_exporter** — специализированный сервис (экспортер), который опрашивает статистические представления PostgreSQL и предоставляет данные в формате, понятном для Prometheus.
+
+**Full-Stack Observability** — подход, при котором мониторинг БД является частью общей системы наблюдаемости инфраструктуры, включающей метрики ОС, сетевого уровня и приложения. Подробнее см. в разделе **[Наблюдаемость PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)**.
 
 ## Базовые концепции
 
 ### Архитектура стека мониторинга
 
-Для полноценного наблюдения за СУБД (система управления базами данных) используются следующие компоненты:
+Для полноценного наблюдения за базой данных используется классический стек:
 
-| Компонент | Назначение | Ссылка на описание |
+| Компонент | Назначение | SSoT-ссылка |
 |---|---|---|
-| **PostgreSQL** | Объект мониторинга (СУБД) | [PostgreSQL: Обзор](../../Databases/PostgreSQL/overview.md) |
-| **Postgres Exporter** | Агент сбора метрик | [Экспортеры Prometheus](../../Prometheus/Exporters/overview.md) |
-| **Prometheus** | Система хранения и обработки метрик | [Prometheus: Обзор](../../Prometheus/overview.md) |
+| **PostgreSQL** | Объект мониторинга (источник данных). | [PostgreSQL](../../Databases/PostgreSQL/overview.md) |
+| **Postgres Exporter** | Агент сбора метрик (9187/TCP). | [Экспортеры](../../Prometheus/Exporters/overview.md) |
+| **Prometheus** | Сбор (scrape) и хранение метрик. | [Prometheus](../../Prometheus/overview.md) |
+| **Grafana** | Визуализация данных (дашборды). | [Grafana](../../Grafana/grafana_alloy_overview.md) |
 
-### Используемые роли Ansible Galaxy
+### Используемые роли и коллекции
 
-Для ускорения развертывания рекомендуется использовать проверенные роли:
+Для автоматизации развертывания рекомендуются следующие ресурсы из Ansible Galaxy:
 
-- **`community.postgresql`**: Установка и базовая настройка базы данных.
-- **`prometheus-community.postgres_exporter`**: Установка и конфигурация экспортера.
-- **`cloudalchemy.prometheus`**: Развертывание и настройка сервера Prometheus.
+- **`community.postgresql`**: Настройка БД и создание пользователя для мониторинга.
+- **`prometheus.prometheus.postgres_exporter`**: Установка и запуск экспортера.
+- **`cloudalchemy.prometheus`**: Развертывание сервера Prometheus.
 
-Установка необходимых зависимостей на контрольном узле:
+Установка зависимостей на контрольном узле:
 
 ```bash
-ansible-galaxy install community.postgresql
-ansible-galaxy collection install prometheus-community.postgres_exporter
-ansible-galaxy collection install cloudalchemy.prometheus
+ansible-galaxy collection install community.postgresql # → модули БД установлены
+ansible-galaxy collection install prometheus.prometheus # → коллекция для экспортеров установлена
 ```
 
 ### Безопасность и секреты
 
-Строки подключения к базе данных и пароли являются конфиденциальной информацией. В Ansible их необходимо защищать с помощью **[Ansible Vault](../Vault/basics.md)**.
+Для подключения экспортера требуется специальный пользователь в PostgreSQL с правами `pg_monitor`. Пароли и строки подключения (DSN) необходимо шифровать с помощью **[Ansible Vault](../Vault/basics.md)**.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Развертывание полного стека мониторинга
+### Сценарий: Развертывание кластера мониторинга
 
-Данный пример демонстрирует настройку двух серверов: одного с базой данных и экспортером, второго — с сервером мониторинга.
+Данный сценарий настраивает мониторинг PostgreSQL на выделенном сервере.
 
-#### 1. Подготовка инвентаря и переменных
+#### 1. Подготовка инвентаря
 
 **Файл `hosts.ini`:**
 
 ```ini
-[postgres_servers]
-pg01 ansible_host=192.168.55.10
+[postgres_hosts]
+db-master ansible_host=192.168.55.10
 
-[monitoring_servers]
-mon01 ansible_host=192.168.55.20
+[prometheus_hosts]
+monitoring-01 ansible_host=192.168.55.20
 ```
 
-**Переменные группы (`group_vars/postgres_servers.yml`):**
+#### 2. Плейбук настройки экспортера
 
-```yaml
-postgresql_databases:
-  - name: myapp_db
-
-postgresql_users:
-  - name: myapp_user
-    pass: "{{ db_password }}"
-```
-
-**Секреты (зашифрованы через Vault):**
-
-```yaml
-db_password: "MySuperSecretPassword"
-```
-
-#### 2. Плейбук для настройки базы данных и экспортера
+Плейбук создает пользователя с ограниченными правами и запускает агент сбора метрик.
 
 ```yaml
 ---
-- name: Setup PostgreSQL and Exporter
-  hosts: postgres_servers
+- name: Configure PostgreSQL Exporter
+  hosts: postgres_hosts
   become: true
   vars:
-    # Формирование DSN (Data Source Name) для подключения экспортера
-    postgres_exporter_dsn: "postgresql://{{ postgresql_users[0].name }}:{{ db_password }}@localhost:5432/{{ postgresql_databases[0].name }}?sslmode=disable"
+    # Имя пользователя для мониторинга (системный стандарт PostgreSQL)
+    exporter_user: "postgres_exporter"
+    # DSN с безопасными параметрами
+    postgres_exporter_dsn: "postgresql://{{ exporter_user }}:{{ vault_db_pass }}@localhost:5432/postgres?sslmode=disable"
+
+  tasks:
+    - name: Ensure PostgreSQL monitoring user exists
+      community.postgresql.postgresql_user:
+        name: "{{ exporter_user }}"
+        password: "{{ vault_db_pass }}"
+        role_attr_flags: "LOGIN"
+        groups: "pg_monitor" # Встроенная роль в PostgreSQL 10+
+      become_user: postgres
 
   roles:
-    - role: community.postgresql
+    - role: prometheus.prometheus.postgres_exporter
       vars:
-        postgresql_conf:
-          - name: listen_addresses
-            value: '*'
-        postgresql_hba_entries:
-          - { type: host, database: all, user: all, address: '0.0.0.0/0', method: md5 }
-
-    - role: prometheus-community.postgres_exporter
-      vars:
-        postgres_exporter_environment_vars:
-          DATA_SOURCE_NAME: "{{ postgres_exporter_dsn }}"
+        postgres_exporter_dsn: "{{ postgres_exporter_dsn }}"
 
   post_tasks:
-    - name: Проверка доступности метрик экспортера
+    - name: Проверка статуса экспортера
       ansible.builtin.uri:
         url: "http://localhost:9187/metrics"
         return_content: yes
-      register: metrics_page
-      until: "'pg_up 1' in metrics_page.content"
+      register: result
+      until: "'pg_up' in result.content"
       retries: 5
-      delay: 10
+      delay: 5
+      # → результат: HTTP 200 OK, метрики доступны
 ```
 
-#### 3. Плейбук для сервера Prometheus
+#### 3. Настройка сбора данных в Prometheus
 
 ```yaml
 ---
-- name: Setup Prometheus Server
-  hosts: monitoring_servers
+- name: Configure Prometheus Targets
+  hosts: prometheus_hosts
   become: true
-
-  roles:
-    - role: cloudalchemy.prometheus
-      vars:
-        prometheus_scrape_configs:
-          - job_name: 'postgres'
+  tasks:
+    - name: Add PostgreSQL target to Prometheus config
+      ansible.builtin.set_fact:
+        prometheus_targets:
+          - job_name: 'postgresql_cluster'
             static_configs:
-              - targets:
-                  - "{{ hostvars[item]['ansible_host'] }}:9187"
-            loop: "{{ groups['postgres_servers'] }}"
+              - targets: "{{ groups['postgres_hosts'] | map('extract', hostvars, ['ansible_host']) | map('regex_replace', '$', ':9187') | list }}"
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Верификация в интерфейсе Prometheus
-
-После успешного выполнения плейбуков:
-
-1. Перейдите по адресу: `http://<monitoring_server_ip>:9090`.
-2. Откройте меню **Status → Targets**.
-3. Убедитесь, что эндпоинт `postgres_exporter` (порт 9187) находится в статусе **UP**.
-
 ### Ключевые метрики для анализа
 
-| Метрика | Описание |
-|---|---|
-| `pg_up` | Наличие успешного подключения к БД (1 = OK). |
-| `pg_stat_activity_count` | Количество активных сессий. |
-| `pg_stat_database_tps` | Производительность: транзакций в секунду. |
-| `pg_stat_database_blks_hit` | Эффективность кэширования (Buffer Cache Hit Ratio). |
+| Метрика | Назначение | Нормальное значение |
+|---|---|---|
+| `pg_up` | Доступность базы данных. | `1` (база доступна). |
+| `pg_stat_activity_count` | Количество текущих сессий. | Зависит от лимита `max_connections`. |
+| `pg_database_size_bytes` | Размер базы данных на диске. | Постепенный рост без резких скачков. |
+| `pg_stat_database_xact_commit` | Количество зафиксированных транзакций. | Должно быть значительно выше `xact_rollback`. |
 
-### Связанные руководства
+### Визуализация в Grafana
 
-- **[Примеры установки PostgreSQL](./example_postgresql_setup.md)** — базовые сценарии развертывания БД.
-- **[Full-Stack Observability для PostgreSQL](../../Databases/PostgreSQL/Operations/observability.md)** — концепция комплексной наблюдаемости.
-- **[Экспортеры Prometheus](../../Prometheus/Exporters/overview.md)** — общий обзор механизмов сбора метрик.
+Для быстрого старта рекомендуется использовать официальный дашборд PostgreSQL (ID: **9628**). Он включает графики для всех основных метрик, собираемых `postgres_exporter`.
+
+## Смотрите также
+
+- [Развертывание PostgreSQL через Ansible](./example_postgresql_setup.md)
+- [Основы мониторинга с Prometheus](../../Prometheus/overview.md)
+- [Использование Ansible Vault для секретов](../Vault/basics.md)

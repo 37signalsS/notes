@@ -1,8 +1,10 @@
-# Ansible — управление Docker
+# Управление Docker с помощью Ansible
 
 ## Определения
 
-**Управление Docker с помощью Ansible** — автоматизация жизненного цикла Docker-контейнеров: сборка образов, распространение и запуск на целевых хостах через плейбуки Ansible.
+**Управление Docker через Ansible** — процесс автоматизации жизненного цикла контейнеров, включающий сборку образов, их дистрибуцию и запуск на целевых хостах с использованием декларативных плейбуков.
+
+**Идемпотентность** — ключевое свойство модулей коллекции `community.docker`, позволяющее Ansible проверять текущее состояние контейнера или образа и вносить изменения только в случае отклонения от описанной конфигурации (например, при изменении параметров портов или версии образа).
 
 ## Базовые концепции
 
@@ -16,62 +18,52 @@
 
 ### Жизненный цикл сборки, доставки и запуска (Build-Ship-Run)
 
-1. **Build** (Сборка) — сборка образа из Dockerfile на `build-host`
-2. **Ship** (Доставка) — архивация образа в `.tar (Tape Archive — архивный формат)` и передача на `run-host` через контрольный узел
-3. **Run** (Запуск) — загрузка образа в Docker и запуск контейнера на `run-host`
+1. **Сборка (Build)** — создание образа из Dockerfile на специализированном хосте (`build-host`).
+2. **Доставка (Ship)** — сохранение образа в архив `.tar` (Tape Archive) и его передача на целевые узлы через контрольную ноду или реестр (Registry).
+3. **Запуск (Run)** — загрузка образа из архива и старт контейнера на конечном хосте (`run-host`).
 
 ### Ключевые модули
 
-Для управления Docker в Ansible используется коллекция `community.docker`.
+Основным инструментом является коллекция `community.docker`.
 
 | Модуль | Назначение | Параметры |
 |---|---|---|
-| `community.docker.docker_image` | Работа с образами | `source: build` (сборка), `source: pull` (архивация), `source: load` (загрузка) |
+| `community.docker.docker_image` | Управление образами | `source: build` (сборка), `source: load` (загрузка), `archive_path` (экспорт в tar) |
+| `community.docker.docker_container` | Управление контейнерами | `state: started/stopped/absent`, `restart_policy`, `ports`, `env` |
+| `community.docker.docker_compose_v2` | Работа с Docker Compose | `project_src`, `state: present/absent` |
+| `community.docker.docker_swarm` | Кластер Swarm | `state: present` (init), `state: join`, `advertise_addr` |
+| `community.docker.docker_stack` | Деплой стеков | `name`, `compose_file`, `state: present` |
 
-> **Параметры `archive_path` и `load_path`:** разные имена, потому что это разные операции Docker API (Application Programming Interface — программный интерфейс приложения). `archive_path` — куда сохранить образ (save → файл), `load_path` — откуда загрузить образ (файл → load).
-| `community.docker.docker_container` | Управление контейнерами | `state: started/stopped/absent`, `restart_policy`, `ports` |
-| `community.docker.docker_swarm` | Инициализация и управление Swarm-кластером | `state: present` (init), `state: join`, `advertise_addr`, `join_token`, `remote_addrs` |
-| `community.docker.docker_stack` | Развёртывание Docker Stack | `name`, `state: present/absent`, `compose_file` |
-| `community.docker.docker_config` | Управление Docker Config (create/update/remove) | `name`, `data` (содержимое конфига), `state: present/absent`, `force: yes` |
-| `community.docker.docker_secret` | Управление Docker Secret | `name`, `data`, `state: present/absent` |
-| `ansible.builtin.fetch` | Копирование файлов с удаленного хоста на контрольный узел | `src`, `dest`, `flat` |
-| `ansible.builtin.copy` | Копирование файлов с контрольного узла на удаленный хост | `src`, `dest` |
+> **Примечание по архивации:** Параметры `archive_path` и `load_path` используются для переноса образов без Registry. `archive_path` экспортирует образ в файл на целевом хосте, а `load_path` импортирует его из файла в локальное хранилище Docker.
 
 ### Зависимости на целевых хостах
 
-Модули `community.docker.docker_swarm` и `community.docker.docker_stack` выполняются на целевой машине (не на control node). Для работы через Docker SDK for Python на целевой машине должны быть установлены библиотеки через `pip`:
+Для работы модулей требуется наличие Docker SDK for Python на целевой машине.
 
-| Пакет pip | Назначение |
+| Пакет | Назначение |
 | :--- | :--- |
-| `docker>=5.0.0` | Docker SDK for Python |
-| `jsondiff` | Сравнение JSON (JavaScript Object Notation)-конфигов Swarm |
-| `pyyaml` | Парсинг YAML (YAML Ain't Markup Language) (Stack файлы) |
+| `docker` | Основная библиотека SDK (рекомендуется версия 6.x и выше) |
+| `jsondiff` | Сравнение конфигураций Swarm в формате JSON (JavaScript Object Notation) |
+| `pyyaml` | Работа с YAML-файлами (стеки и компоуз) |
 
-Аpt-пакеты (`python3-docker`, `python3-jsondiff`, `python3-yaml`) устанавливаются для системной версии Python. Если Ansible использует другой интерпретатор (например, `/usr/bin/python3.14`), модули из apt недоступны — нужна установка через `pip`. `ansible.builtin.pip` устанавливает пакеты в интерпретатор, указанный в `ansible_python_interpreter`.
+В современных дистрибутивах (Ubuntu 23.04+, Debian 12+) действует PEP 668. Установка через `pip` может потребовать флага `--break-system-packages`, если не используется виртуальное окружение.
 
-На целевой машине может не быть `pip3` — перед установкой pip-пакетов нужно поставить `python3-pip` через `apt`:
-
-Установка перед инициализацией Swarm:
+Пример подготовки хоста:
 
 ```yaml
-- name: Установка pip
-  ansible.builtin.apt:
-    name: python3-pip
-    state: present
-
-- name: Установка Python-библиотек для работы Ansible с Docker
+- name: Установка зависимостей Python для Docker
   ansible.builtin.pip:
     name:
-      - docker>=5.0.0
+      - docker
       - jsondiff
       - pyyaml
     state: present
-    extra_args: --break-system-packages # PEP (Python Enhancement Proposal) 668: bypass externally-managed-environment на Ubuntu 23.04+
+    extra_args: --break-system-packages # Для обхода ограничений на системный Python
 ```
 
 ### Делегирование задач
 
-Подробно: [делегирование в Ansible](../PlaybookStructure/advanced.md#делегирование-задач). `delegate_to: localhost` переносит выполнение любого модуля на контрольный узел — используется для поиска файлов, подготовки артефактов и промежуточного хранения данных.
+Подробности механизма описаны в разделе **[Делегирование задач](../PlaybookStructure/advanced.md#делегирование-задач)**. `delegate_to: localhost` часто применяется для сборки образов или подготовки конфигов на контрольном узле перед их отправкой на серверы.
 
 ---
 
@@ -88,233 +80,136 @@
     advertise_addr: "192.168.77.11"
 ```
 
-**Добавление worker-ноды (отдельный play для второй машины):**
+**Добавление worker-ноды:**
+
+Для этого требуется токен, который можно получить динамически через `hostvars` (если менеджер в том же плейбуке) или через модуль `community.docker.docker_swarm_info`.
 
 ```yaml
 - name: Присоединение к Swarm как worker
   community.docker.docker_swarm:
     state: join
     advertise_addr: "192.168.77.12"
-    join_token: "{{ hostvars['machine1']['swarm_worker_token'] }}"
+    join_token: "{{ hostvars['manager1']['swarm_worker_token'] }}"
     remote_addrs: ["192.168.77.11:2377"]
 ```
 
-Токен получается на manager через `docker swarm join-token -q worker` (CLI — интерфейс командной строки) или модуль `community.docker.docker_swarm_info`.
+### Сценарий: Полный цикл сборки и развертывания (Build-Ship-Run)
 
-### Сценарий: Полный цикл сборки и развертывания
-
-**Структура проекта:**
-
-```text
-.
-├── files/
-│   └── dockerfiles/
-│       ├── webapp/
-│       │   └── Dockerfile
-│       └── database/
-│           └── Dockerfile
-├── artifacts/
-└── docker-playbook.yml
-```
-
-**Плейбук `docker-playbook.yml`:**
+Плейбук демонстрирует перенос образов без использования внешнего Docker Registry.
 
 ```yaml
 ---
-- name: Build Docker images
+- name: Сборка и архивация образов
   hosts: build-host
-  gather_facts: false
-  tags: build
-
   tasks:
-    - name: Find Dockerfile directories on control node
-      ansible.builtin.find:
-        paths: "{{ playbook_dir }}/files/dockerfiles"
-        file_type: directory
-      register: dockerfile_dirs
-      delegate_to: localhost
+    - name: Создание образа из Dockerfile
+      community.docker.docker_image:
+        name: "my-app/web"
+        tag: "1.0"
+        build:
+          path: "./files/dockerfiles/webapp"
+        source: build
 
-    - name: Create build and archive directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-      loop:
-        - /build
-        - /archives
+    - name: Сохранение образа в .tar архив
+      community.docker.docker_image:
+        name: "my-app/web:1.0"
+        archive_path: "/tmp/webapp_1.0.tar"
+        source: local # Берем образ из локального демона
 
-    - name: Build and archive each image
-      loop: "{{ dockerfile_dirs.files }}"
-      loop_control:
-        loop_var: dockerfile_dir
-      block:
-        - name: Copy Dockerfile context to build-host
-          ansible.builtin.copy:
-            src: "{{ dockerfile_dir.path }}/"
-            dest: "/build/{{ dockerfile_dir.path | basename }}"
+    - name: Копирование архива на контрольный узел
+      ansible.builtin.fetch:
+        src: "/tmp/webapp_1.0.tar"
+        dest: "./artifacts/webapp_1.0.tar"
+        flat: yes
 
-        - name: Build Docker image
-          community.docker.docker_image:
-            name: "my-app/{{ dockerfile_dir.path | basename }}"
-            tag: "1.0"
-            build:
-              path: "/build/{{ dockerfile_dir.path | basename }}"
-            source: build
-          register: image_build_result
-
-        - name: Archive image to .tar file
-          community.docker.docker_image:
-            name: "my-app/{{ dockerfile_dir.path | basename }}:1.0"
-            archive_path: "/archives/{{ dockerfile_dir.path | basename }}.tar"
-            source: pull
-
-        - name: Fetch archive to control node
-          ansible.builtin.fetch:
-            src: "/archives/{{ dockerfile_dir.path | basename }}.tar"
-            dest: "{{ playbook_dir }}/artifacts/"
-            flat: yes
-
-- name: Deploy Docker containers
+- name: Развертывание контейнеров
   hosts: run-host
-  gather_facts: false
-  tags: deploy
-
   tasks:
-    - name: Find local .tar archives
-      ansible.builtin.find:
-        paths: "{{ playbook_dir }}/artifacts"
-        patterns: "*.tar"
-      register: tar_archives
-      delegate_to: localhost
+    - name: Копирование архива на целевой хост
+      ansible.builtin.copy:
+        src: "./artifacts/webapp_1.0.tar"
+        dest: "/tmp/webapp_1.0.tar"
 
-    - name: Load and run each container
-      loop: "{{ tar_archives.files }}"
-      loop_control:
-        loop_var: archive_file
-      block:
-        - name: Copy archive to run-host
-          ansible.builtin.copy:
-            src: "{{ archive_file.path }}"
-            dest: "/tmp/{{ archive_file.path | basename }}"
+    - name: Загрузка образа из архива
+      community.docker.docker_image:
+        name: "my-app/web"
+        tag: "1.0"
+        load_path: "/tmp/webapp_1.0.tar"
+        source: load
 
-        - name: Load image from archive
-          community.docker.docker_image:
-            name: "my-app/{{ (archive_file.path | basename).split('.')[0] }}"
-            tag: "1.0"
-            load_path: "/tmp/{{ archive_file.path | basename }}"
-            source: load
-
-        - name: Run container
-          community.docker.docker_container:
-            name: "{{ (archive_file.path | basename).split('.')[0] }}-app"
-            image: "my-app/{{ (archive_file.path | basename).split('.')[0] }}:1.0"
-            state: started
-            restart_policy: always
-            ports:
-              - "8080:80"
+    - name: Запуск контейнера
+      community.docker.docker_container:
+        name: "web-app"
+        image: "my-app/web:1.0"
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:80"
 ```
 
----
+### Сценарий: Проверка состояния (Health Check)
 
-### Сценарий: Удаление контейнера
-
-```yaml
-- name: Remove old container
-  community.docker.docker_container:
-    name: flask-app
-    state: absent
-```
-
----
-
-### Сценарий: Проверка состояния (Health Check — проверка работоспособности)
-
-**Проверка, что Docker daemon работает:**
-
-Перед любыми операциями с Docker полезно убедиться, что демон активен и отвечает.
+**Проверка работы Docker-демона:**
 
 ```yaml
-- name: Проверка, что Docker daemon работает
-  ansible.builtin.command: docker info  # → вывод информации о Docker-демоне
+- name: Проверка активности Docker
+  ansible.builtin.command: docker info
   register: docker_info
   changed_when: false
+  # → вывод детальной информации о демоне (Containers, Images, Storage Driver)
 ```
 
-**Проверка количества запущенных контейнеров:**
+**Проверка доступности веб-сервиса:**
 
 ```yaml
-- name: Health Check
-  hosts: run-host
-  gather_facts: false
-  tags: health_check
-
-  tasks:
-    - name: Check running containers
-      community.docker.docker_host_info:
-      register: docker_info
-      until: "docker_info.containers | length == 2"
-      retries: 5
-      delay: 10
+- name: Проверка эндпоинта приложения
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:8080"
+  register: result
+  until: result.status == 200
+  retries: 5
+  delay: 5
 ```
 
 ### Сценарий: Изменение конфигурации демона
 
-После изменения `daemon.json` требуется перезапуск Docker. Используйте `notify` + `flush_handlers`, чтобы перезапуск завершился до выполнения следующих задач.
+Использование `flush_handlers` гарантирует перезапуск Docker до того, как начнутся задачи, требующие его работы.
 
 ```yaml
 - name: Настройка Docker daemon
   hosts: all
   tasks:
-    - name: Настройка daemon.json
+    - name: Конфигурация /etc/docker/daemon.json
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
         content: |
           {
             "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "10m",
-              "max-file": "3"
-            }
+            "log-opts": { "max-size": "10m", "max-file": "3" }
           }
       notify: Restart Docker
 
-    - name: Применить изменения Docker daemon
+    - name: Немедленное применение изменений
       ansible.builtin.meta: flush_handlers
-
-    - name: Проверка, что Docker daemon работает
-      ansible.builtin.command: docker info  # → вывод информации о Docker-демоне
-      changed_when: false
 
   handlers:
     - name: Restart Docker
       ansible.builtin.systemd:
         name: docker
         state: restarted
-        daemon_reload: yes
-```
-
-Без `flush_handlers` Docker перезапустился бы только в конце плея, и проверка `docker info` упала бы с ошибкой.
-
-**Проверка доступности веб-сервиса:**
-
-```yaml
-- name: Healthcheck web server
-  hosts: run-host
-  tasks:
-    - name: Check web server endpoint
-      ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:8080"
-      register: result
-      until: result.status == 200
-      retries: 5
-      delay: 5
 ```
 
 ---
 
 ## Дополнительная информация
 
-- **Docker Compose:** Управление compose-файлами через модуль [`community.docker.docker_compose`](https://docs.ansible.com/ansible/latest/collections/community/docker/docker_compose_module.html)
-- **Создание Docker Config:** Пример с `community.docker.docker_config` и Jinja2-шаблоном — [swarm_secrets_configs.md](../../Docker_swarm/swarm_secrets_configs.md)
-- **Безопасность:** Рекомендации по изоляции контейнеров — [Docker/Docker_security/overview.md](../../Docker/Docker_security/overview.md)
-- **Реестры образов:** Работа с Docker Registry — [Docker/docker_registries.md](../../Docker/docker_registries.md)
-- **Альтернативы:** [Сборка образов с Buildah и Ansible](../ansible_buildah_image_building.md)
+### Типичные ошибки
+
+- **Библиотека docker не найдена:** Убедитесь, что `pip install docker` выполнен для того же интерпретатора Python, который использует Ansible (`ansible_python_interpreter`).
+- **Ошибка прав доступа:** Пользователь, под которым работает Ansible, должен входить в группу `docker` или задачи должны запускаться с `become: true`.
+
+## Смотрите также
+
+- [Настройка Docker Swarm: Конфиги и секреты](../../Docker_swarm/swarm_secrets_configs.md)
+- [Безопасность Docker-контейнеров](../../Docker/Docker_security/overview.md)
+- [Реестры образов (Registry)](../../Docker/docker_registries.md)

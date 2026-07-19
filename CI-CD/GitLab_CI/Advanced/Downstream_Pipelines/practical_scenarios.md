@@ -2,70 +2,120 @@
 
 ## Определения
 
-**Практические сценарии** — типовые примеры реализации механизмов parent-child и multi-project для решения прикладных задач автоматизации CI/CD.
+**Практические сценарии** — это типовые архитектурные паттерны реализации родительско-дочерних (parent-child) и межпроектных (multi-project) пайплайнов для решения задач автоматизации CI/CD в сложных инфраструктурах.
 
 ## Основные концепции
 
-Использование downstream-пайплайнов позволяет разделить сложную логику на независимые части. Выбор конкретного сценария зависит от структуры репозитория (монорепозиторий или мультирепозиторий) и необходимости динамического изменения состава задач. Ключевыми факторами являются изоляция окружений, управление зависимостями и оптимизация времени выполнения за счёт запуска только необходимых проверок.
+Выбор конкретного сценария зависит от структуры репозиториев и требований к изоляции:
+- **Parent-Child:** Идеально для монорепозиториев, декомпозиции сложных `.gitlab-ci.yml` и динамической генерации задач.
+- **Multi-project:** Используется для управления зависимостями между разными проектами (например, обновление библиотеки вызывает тесты в приложении) или разделения зон ответственности (код приложения отдельно от инфраструктуры деплоя).
+
+Ключевым преимуществом всех сценариев является использование **`strategy: mirror`** (GitLab 18.6+), которая обеспечивает полную синхронизацию статусов и видимость отчётов в Merge Request.
 
 ## Практические сценарии
 
-### Передача переменных в multi-project пайплайны
+### Селективный запуск в монорепозитории
 
-Для передачи контекста между проектами используются переменные в блоке `trigger:variables`. Это необходимо для информирования дочернего проекта о деталях сборки в родительском репозитории.
+Паттерн для запуска независимых дочерних пайплайнов только для изменённых модулей. Это сокращает время выполнения CI и экономит ресурсы раннеров.
 
 ```yaml
-trigger_downstream_build:
+# .gitlab-ci.yml (Родительский)
+trigger-auth-service:
+  stage: test
+  trigger:
+    include: services/auth/.gitlab-ci.yml
+    strategy: mirror
+  rules:
+    - changes:
+        - services/auth/**/*
+
+trigger-billing-service:
+  stage: test
+  trigger:
+    include: services/billing/.gitlab-ci.yml
+    strategy: mirror
+  rules:
+    - changes:
+        - services/billing/**/*
+```
+
+### Кросс-проектное тестирование зависимостей
+
+Сценарий, при котором публикация новой версии общей библиотеки инициирует проверку в проекте-потребителе.
+
+```yaml
+# Проект: shared-library (Upstream)
+publish-and-trigger:
+  stage: deploy
+  script:
+    - npm publish
+  trigger:
+    project: 'web-apps/main-application'
+    branch: main
+    strategy: mirror
+```
+
+В проекте-потребителе (`main-application`) можно использовать `needs:project` для получения артефактов (например, логов сборки или метаданных версии) из родительского проекта.
+
+### Безопасная передача параметров через Inputs
+
+Использование `inputs` (GitLab 17.7+) вместо переменных обеспечивает типизацию и валидацию данных на входе в дочерний пайплайн.
+
+```yaml
+# .gitlab-ci.yml (Родительский)
+deploy-to-env:
   stage: deploy
   trigger:
-    project: 'my-group/my-downstream-project'
-    branch: main
-    strategy: depend
-  variables:
-    UPSTREAM_PIPELINE_ID: $CI_PIPELINE_ID
-    CUSTOM_MESSAGE: "Привет из upstream-пайплайна"
+    include:
+      - local: ci/deploy-template.yml
+    inputs:
+      target_environment: "production"
+      force_deploy: true
+    strategy: mirror
 ```
 
-Подробные правила передачи данных описаны в разделе **[Наследование переменных](./variable_inheritance.md)**.
+### Динамическое развёртывание Review Apps
 
-### Оптимизация для монорепозиториев
-
-Паттерн для запуска задач только для изменённых компонентов. Использование `dotenv` артефактов позволяет передать список изменений между стадиями родительского пайплайна.
+Сценарий с генерацией конфигурации "на лету" для создания эфемерных окружений на основе метаданных ветки или внешних API.
 
 ```yaml
-detect-changes:
-  stage: .pre
+generate-deploy-config:
+  stage: build
   script:
-    - |
-      CHANGED=$(git diff --name-only $CI_MERGE_REQUEST_DIFF_BASE_SHA...$CI_COMMIT_SHA)
-      echo "CHANGED_FILES=$CHANGED" >> variables.env
+    - python3 scripts/generate_env_ci.py > deploy-config.yml
   artifacts:
-    reports:
-      dotenv: variables.env
+    paths: [deploy-config.yml]
 
-build-frontend:
-  stage: build
-  rules:
-    - if: $CHANGED_FILES =~ /frontend/
-  script:
-    - cd frontend && npm install && npm run build
-
-build-backend:
-  stage: build
-  rules:
-    - if: $CHANGED_FILES =~ /backend/
-  script:
-    - cd backend && make build
+trigger-review-app:
+  stage: deploy
+  trigger:
+    include:
+      - artifact: deploy-config.yml
+        job: generate-deploy-config
+    strategy: mirror
 ```
-
-### Динамическая генерация конфигураций
-
-Применяется в сценариях, где структура пайплайна заранее неизвестна и зависит от внешних условий или содержимого репозитория.
-
-Полный пример реализации с использованием Python и Jinja2 доступен в документе **[Динамическая генерация](./dynamic_generation.md)**.
 
 ## Дополнительная информация
 
+### Сравнительная таблица сценариев
+
+| Сценарий | Тип связи | Ключевая выгода | Рекомендуемая стратегия |
+| :--- | :--- | :--- | :--- |
+| **Монорепозиторий** | Parent-Child | Экономия времени и ресурсов | `mirror` + `rules:changes` |
+| **Микросервисы** | Multi-project | Контроль цепочки поставок | `mirror` |
+| **Сложные деплои** | Dynamic Child | Максимальная гибкость | `mirror` |
+| **Shared Templates** | Parent-Child | Стандартизация через `inputs` | `mirror` |
+
+### Рекомендации по отладке
+
+1. **Pipeline Graph:** Используйте визуализацию в интерфейсе GitLab для отслеживания связей между upstream и downstream.
+2. **Логирование:** В динамических пайплайнах всегда выводите содержимое сгенерированного YAML в лог джобы `generate`.
+3. **Interruptible:** Помечайте downstream-задачи как `interruptible: true`, чтобы они автоматически отменялись при поступлении нового коммита в ту же ветку.
+
 ---
 
-**Связанные документы:** [Определения](./definitions.md), [Лучшие практики](./best_practices.md), [Стратегии выполнения](./strategies.md).
+**Связанные документы:**
+- [Определения](./definitions.md) — терминология и типы связей.
+- [Лучшие практики](./best_practices.md) — безопасность и оптимизация.
+- [Стратегии выполнения](./strategies.md) — детально про `mirror` и `depend`.
+- [Динамическая генерация](./dynamic_generation.md) — подробный гайд по программному созданию пайплайнов.

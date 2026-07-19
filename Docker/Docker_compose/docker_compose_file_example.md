@@ -2,273 +2,180 @@
 
 ## Определения
 
-**Файл `compose.yml`** — центральный файл конфигурации для приложений Docker Compose. В нём декларативно описываются сервисы, сети, тома и другие ресурсы, необходимые для запуска многоконтейнерного приложения.
+**Файл `compose.yml`** — центральный файл декларативного описания ресурсов в Docker Compose. В нем определяются сервисы, сети, тома, секреты, конфигурации и AI-модели, составляющие единый стек приложения.
 
-Этот документ содержит полные примеры конфигураций для типовых сценариев. Технические подробности каждой директивы доступны в [справочнике по директивам](./docker_compose_directives.md).
+Этот документ содержит эталонные примеры конфигураций для различных сценариев разработки и эксплуатации. Техническое описание каждой директивы представлено в [справочнике по директивам](./docker_compose_directives.md).
 
 ## Базовые концепции
 
-### Структура файла
+### Современный стандарт (Compose v5+)
 
-Типовой файл `compose.yml` включает следующие секции:
-
-- **`name`**: имя проекта (префикс для ресурсов)
-- **`services`**: определение контейнеров (сервисов)
-- **`networks`**: настройка изолированных сетей
-- **`volumes`**: определение хранилищ данных
-- **`secrets`**: безопасное управление паролями и ключами
-- **`configs`**: передача конфигурационных файлов
+В современных конфигурациях (начиная с 2025 года) приняты следующие стандарты:
+- **Отсутствие версии:** поле `version: "3.x"` удалено и официально признано устаревшим.
+- **Модульность:** активное использование `include` для разделения ответственности.
+- **Инструменты разработки:** интеграция секции `develop` для автоматизации синхронизации кода.
+- **Безопасность по умолчанию:** использование `secrets` и `configs` вместо переменных окружения для чувствительных данных.
 
 ## Практические сценарии
 
-### Сценарий 1: Веб-приложение с базой данных PostgreSQL {#пример-1}
+### Сценарий 1: Веб-приложение с базой данных и кэшем
 
-Классический стек с использованием Healthcheck и Docker Secrets.
+Классический стек (Python/Node.js + PostgreSQL + Redis) с настроенным режимом разработки и проверками готовности.
 
 ```yaml
-name: my-app
+name: production-ready-stack
+
+include:
+  - path: ./infrastructure/networks.yml
+  - path: ./infrastructure/volumes.yml
 
 services:
-  web:
-    build:
-      context: .
-    image: my-app-web:latest
-    ports:
-      - "127.0.0.1:8000:8000"
-    networks:
-      - app-net
-    env_file:
-      - .env
-    depends_on:
-      db:
-        condition: service_healthy
-
-  db:
-    image: postgres:16-alpine
-    networks:
-      - app-net
-    volumes:
-      - db-data:/var/lib/postgresql/data
-    secrets:
-      - db_password
-    env_file:
-      - .env
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - POSTGRES_USER=app_user
+      - POSTGRES_DB=app_db
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
 
-volumes:
-  db-data:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    depends_on:
+      database:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+          initial_sync: true
+    environment:
+      - DB_HOST=database
+      - REDIS_URL=redis://cache:6379
+    networks:
+      - backend_net
+      - frontend_net
 
-networks:
-  app-net:
-    driver: bridge
+  cache:
+    image: redis:7.4-alpine
+    networks:
+      - backend_net
 
 secrets:
   db_password:
-    file: ./db_password.txt
+    file: ./secrets/db_prowd.txt
 ```
 
-### Разбор Сценария 1
-
-Конфигурация выше реализует лучшие практики:
-
-- **Управление зависимостями**: сервис `web` ожидает готовности базы данных (`service_healthy`), а не просто запуска контейнера.
-- **Безопасность**: пароль передаётся через `secrets`, что исключает его попадание в переменные окружения в открытом виде.
-- **Персистентность**: данные БД вынесены в именованный том `db-data`.
-
-### Сценарий 2: Балансировка нагрузки (Nginx + Node.js + Redis)
-
-Сценарий: веб-приложение на Node.js, которое подсчитывает визиты через Redis. Nginx выступает как reverse proxy и балансировщик нагрузки между двумя экземплярами бэкенда.
-
-**Структура проекта:**
-
-```
-nginx-nodejs-redis/
-├── compose.yml
-├── nginx/
-│   ├── Dockerfile
-│   └── nginx.conf
-└── web/
-    ├── Dockerfile
-    ├── package.json
-    └── server.js
+**Результат запуска:**
+```bash
+docker compose up -d
+# → [OK] Network production-ready-stack_backend_net created
+# → [OK] Volume production-ready-stack_postgres_data created
+# → [OK] Service database: healthy
+# → [OK] Service backend: started
 ```
 
-**Файл `compose.yml`:**
+### Сценарий 2: AI-сервис с использованием секции models
+
+Пример интеграции LLM-модели в локальную среду разработки.
 
 ```yaml
-name: nginx-nodejs-redis
+name: ai-assistant-project
 
 services:
-  redis:
-    image: redis:7-alpine
-    networks:
-      - app-network
-
-  web1:
-    build: ./web
-    hostname: web1
-    restart: unless-stopped
-    networks:
-      - app-network
-    depends_on:
-      redis:
-        condition: service_started
-
-  web2:
-    build: ./web
-    hostname: web2
-    restart: unless-stopped
-    networks:
-      - app-network
-    depends_on:
-      redis:
-        condition: service_started
-
-  nginx:
-    build: ./nginx
+  inference-api:
+    image: llama-cpp-python:latest
     ports:
-      - "80:8080"
+      - "8080:8000"
+    models:
+      - path: ./models/llama-3-8b-q4.gguf
+        target: /models/model.gguf
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
-      - app-network
-    depends_on:
-      - web1
-      - web2
+      - ai_net
 
 networks:
-  app-network:
+  ai_net:
     driver: bridge
 ```
 
-**Файл `nginx/nginx.conf`:**
+### Сценарий 3: Масштабируемый стек с Nginx (Load Balancing)
 
+Балансировка нагрузки между несколькими экземплярами бэкенда.
+
+```yaml
+name: scalable-web-app
+
+services:
+  web:
+    build: ./app
+    restart: always
+    deploy:
+      replicas: 3
+    networks:
+      - web_net
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - web
+    networks:
+      - web_net
+
+networks:
+  web_net:
+```
+
+**Конфигурация Nginx (`nginx.conf`):**
 ```nginx
-upstream backend {
-    server web1:5000;
-    server web2:5000;
+upstream myapp {
+    server web:5000; # Docker DNS автоматически распределит запросы между репликами
 }
 
 server {
-    listen 8080;
-
+    listen 80;
     location / {
-        proxy_pass http://backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_pass http://myapp;
     }
 }
 ```
 
-**Файл `nginx/Dockerfile`:**
-
-```dockerfile
-FROM nginx:1.25-alpine
-RUN rm /etc/nginx/conf.d/default.conf
-COPY nginx.conf /etc/nginx/conf.d/
-```
-
-**Файл `web/server.js`:**
-
-```javascript
-const http = require('http');
-const redis = require('redis');
-
-const client = redis.createClient({
-  host: 'redis',
-  port: 6379
-});
-
-const hostname = process.env.HOSTNAME || 'unknown';
-
-const server = http.createServer(async (req, res) => {
-  const count = await client.incr('visits');
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end(`Hostname: ${hostname}\nVisits: ${count}\n`);
-});
-
-server.listen(5000, () => {
-  console.log(`Server running at http://${hostname}:5000/`);
-});
-```
-
-**Файл `web/Dockerfile`:**
-
-```dockerfile
-FROM node:21-alpine
-WORKDIR /usr/src/app
-COPY package*.json ./
-RUN npm install
-COPY . .
-EXPOSE 5000
-CMD ["npm", "start"]
-```
-
-**Ключевые особенности данного примера:**
-
-- **Балансировка нагрузки:** Nginx распределяет запросы между `web1` и `web2` через директиву `upstream`. Каждый запрос может попасть на любой из бэкендов (round-robin)
-- **DNS-разрешение:** сервисы обращаются друг к другу по именам (`redis`, `web1`, `web2`), которые автоматически резолвятся внутри сети `app-network`
-- **Счётчик визитов:** Redis хранит общий счётчик, увеличивающийся при каждом запросе к любому из бэкендов
-- **Автоматическое масштабирование:** для добавления третьего экземпляра достаточно продублировать секцию `web3` и добавить его в `upstream` nginx-конфига
-
-**Запуск:**
-
-```bash
-docker compose up -d --build
-# → Собираются образы из ./web и ./nginx
-# → Создаётся сеть app-network
-# → Запускаются 4 контейнера
-```
-
-**Проверка работы:**
-
-```bash
-curl http://localhost
-# → Hostname: web1
-# → Visits: 1
-
-curl http://localhost
-# → Hostname: web2  (или web1, зависит от балансировки)
-# → Visits: 2
-```
-
-**Остановка и очистка:**
-
-```bash
-docker compose down
-# → Остановка и удаление всех контейнеров
-# → Удаление сети app-network
-```
-
-> **Примечание:** Данный пример упрощён для демонстрации концепции балансировки. Справочник по проксированию: [Nginx L4 Proxy](../../WebServers/Nginx/Proxy/nginx_l4_proxying.md).
-
 ## Дополнительная информация
 
-### Вспомогательные файлы
+### Рекомендации по безопасности
 
-#### Файл `.env` (неконфиденциальные данные)
-
-```ini
-# POSTGRES_USER=app_user
-# POSTGRES_DB=app_db
-```
-
-#### Файл `db_password.txt` (секрет)
-
-```
-# db_password.txt
-<your_secret_password_here>
-```
-
-> **ВАЖНО:** Файлы с секретами (например, `db_password.txt`) должны быть добавлены в `.gitignore`.
+1.  **Файлы секретов:** Никогда не фиксируйте файлы из секции `secrets` в Git. Добавьте их в `.gitignore`.
+2.  **Пользователи:** Всегда указывайте директиву `user: "1000:1000"` в сервисах, если образ поддерживает запуск не от root.
+3.  **Лимиты ресурсов:** В производственных конфигурациях всегда описывайте секцию `deploy.resources.limits` для предотвращения OOM (Out Of Memory) на хосте.
 
 ### См. также
 
-- **[Справочник по директивам](./docker_compose_directives.md)** — описание синтаксиса `compose.yml`
-- **[Безопасное управление секретами](../Docker_security/secrets_management.md)** — детальное руководство по Docker Secrets
-- **[Docker Volumes](../../Docker/Docker_fs/docker_volumes.md)** — подробности работы с хранилищами данных
+- **[Справочник по директивам](./docker_compose_directives.md)** — описание всех ключей YAML.
+- **[Продвинутые возможности](./docker_compose_advanced_topics.md)** — интерполяция переменных и YAML-якоря.
+- **[Режим watch](./docker_compose_watch_mode.md)** — детали настройки горячей перезагрузки кода.
+- **[Сравнение версий](./docker_compose_versions_comparison.md)** — почему мы больше не используем поле `version`.

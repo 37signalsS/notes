@@ -2,167 +2,121 @@
 
 ## Определения
 
-**Модули управления файлами** — это инструменты Ansible для работы с файловой системой на управляемых хостах. Они позволяют создавать, копировать, изменять атрибуты, редактировать содержимое и удалять файлы и директории. Эти модули являются основой для управления конфигурациями и развертывания приложений.
+**Модули управления файлами** — это инструменты Ansible для работы с файловой системой на управляемых хостах. Они позволяют создавать, копировать, изменять атрибуты, редактировать содержимое и удалять файлы и директории. Эти модули обеспечивают идемпотентность, проверяя текущее состояние объекта перед внесением изменений.
 
 ## Основные концепции
 
-Все файловые модули Ansible стремятся к идемпотентности: они проверяют текущее состояние файла перед выполнением действий.
+### Группы модулей по назначению
 
-### Группы модулей
+1.  **Управление структурой и атрибутами:**
+    *   `file`: Создание директорий, симлинков, управление правами и владельцами.
+    *   `stat`: Сбор фактов о файле (существование, контрольная сумма, права).
+    *   `find`: Рекурсивный поиск файлов по шаблонам, дате или размеру.
+    *   `tempfile`: Создание гарантированно уникальных временных файлов или директорий.
+2.  **Перенос и получение данных:**
+    *   `copy`: Копирование с контрольного узла или между директориями хоста (`remote_src`).
+    *   `template`: Генерация файлов из [шаблонов Jinja2](../ansible_jinja_templating.md).
+    *   `fetch`: Копирование файлов с хостов на контрольный узел (для логов, бэкапов).
+    *   `get_url`: Загрузка файлов по протоколам HTTP, HTTPS или FTP.
+    *   `unarchive`: Распаковка архивов (tar, zip) с локальной машины или уже имеющихся на хосте.
+3.  **Редактирование содержимого:**
+    *   `lineinfile`: Управление отдельными строками (добавление, замена, удаление).
+    *   `blockinfile`: Вставка блоков текста, защищенных маркерами.
+    *   `replace`: Массовая замена текста по регулярным выражениям.
+    *   `assemble`: Сборка одного файла из нескольких фрагментов, находящихся в директории.
 
-1. **Управление объектами и атрибутами:**
-    * `file`: Создание директорий, симлинков, управление правами (`owner`, `group`, `mode`).
-    * `stat`: Получение детальной информации о файле (существование, контрольная сумма, права).
-    * `find`: Поиск файлов по заданным критериям (паттерн, возраст, размер).
-2. **Перенос данных:**
-    * `copy`: Копирование файлов с контрольного узла на хосты или создание файлов из текста (`content`).
-    * `template`: Создание файлов на основе [шаблонов Jinja2 (шаблонизатор для Python)](../ansible_jinja_templating.md).
-    * `fetch`: Копирование файлов с управляемых хостов на контрольный узел.
-3. **Редактирование содержимого:**
-    * `lineinfile`: Управление конкретными строками (добавление, замена по RegExp (Regular Expression — регулярное выражение), удаление).
-    * `blockinfile`: Вставка или обновление многострочных блоков текста с использованием маркеров.
-    * `replace`: Массовая замена строк во всем файле по регулярному выражению.
+### Общие параметры безопасности и прав
+Большинство файловых модулей поддерживают стандартные аргументы:
+- `owner` / `group`: Владелец и группа.
+- `mode`: Права доступа (рекомендуется использовать восьмеричный формат в кавычках, например `'0644'`).
+- **SELinux**: Параметры `setype`, `seuser`, `serole`, `selevel` для управления контекстом безопасности.
+- `attributes`: Флаги файловой системы (например, `i` для immutable).
 
 ## Практические сценарии
 
-### Модуль `ansible.builtin.file`
-
-Используется для создания структуры каталогов и управления правами.
+### Создание директорий и управление правами (`file`)
+Модуль `file` является универсальным инструментом для управления метаданными.
 
 ```yaml
-- name: Создание структуры каталогов для сайта
+- name: Создание директории с поддержкой SELinux
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /var/www/my_app
     state: directory
-    mode: '0755'
     owner: www-data
-  loop:
-    - /var/www/site/html
-    - /var/www/site/images
-```
-
-**Ad-hoc (одноразовая команда без использования плейбука) команда для создания директории:**
-
-```bash
-ansible all -m file -a "path=/tmp/test_dir state=directory mode=0700"
-# → (создание директории с правами 0700)
-```
-
-### Модуль `ansible.builtin.copy`
-
-Копирование статических файлов или создание файлов "на лету".
-
-```yaml
-- name: Создание простого index.html
-  ansible.builtin.copy:
-    dest: /var/www/site/html/index.html
-    content: "<h1>Welcome to Ansible Managed Site</h1>"
-    owner: www-data
-    mode: '0644'
-```
-
-**Ad-hoc команда для создания файла с содержимым:**
-
-```bash
-ansible all -m copy -a "dest=/tmp/ansible_test/test.txt content='Hello Ansible'"
-# → (создание файла с указанным текстом)
-```
-
-**Резервное копирование:** флаг `backup: yes` создаёт копию существующего файла с суффиксом `.bak` (с меткой времени) перед записью нового. Используется для rollback в связке с `block/rescue` (см. [сценарий rollback](../PlaybookStructure/advanced.md#сценарий-8-block--rescue--always--rollback)).
-
-### Модуль `ansible.builtin.template`
-
-Основной инструмент для управления динамическими конфигурациями.
-
-```yaml
-- name: Развертывание конфига Nginx из шаблона
-  ansible.builtin.template:
-    src: nginx.conf.j2
-    dest: /etc/nginx/nginx.conf
-    validate: /usr/sbin/nginx -t # проверка синтаксиса перед сохранением
-```
-
-**Резервное копирование:** флаг `backup: yes` (аналогично copy) сохраняет оригинал с суффиксом `.bak` перед записью. Подробнее: [сценарий rollback](../PlaybookStructure/advanced.md#сценарий-8-block--rescue--always--rollback).
-
-Подробнее см. в [Шаблонизация Jinja2](../ansible_jinja_templating.md).
-
-### Модуль `ansible.builtin.lineinfile`
-
-Идеален для изменения отдельных параметров в существующих конфигах.
-
-```yaml
-- name: Отключение входа root по SSH (Secure Shell)
-  ansible.builtin.lineinfile:
-    path: /etc/ssh/sshd_config
-    regexp: '^#?PermitRootLogin'
-    line: 'PermitRootLogin no'
-    state: present
-    validate: '/usr/sbin/sshd -t -f %s'
-```
-
-### Модуль `ansible.builtin.blockinfile`
-
-Управляет блоками текста, выделяя их маркерами.
-
-```yaml
-- name: Добавление настроек прокси в .bashrc
-  ansible.builtin.blockinfile:
-    path: /home/user/.bashrc
-    block: |
-      export http_proxy=http://proxy.example.com:8080
-      export https_proxy=http://proxy.example.com:8080
-    marker: "# {mark} ANSIBLE MANAGED PROXY SETTINGS"
-```
-
-### Модуль `ansible.builtin.stat`
-
-Используется для проверки условий перед выполнением других задач.
-
-```yaml
-- name: Проверка наличия файла бэкапа
-  ansible.builtin.stat:
-    path: /backup/db.sql
-  register: backup_file
-
-- name: Сообщение об отсутствии бэкапа
-  ansible.builtin.debug:
-    msg: "Файл бэкапа не найден!"
-  when: not backup_file.stat.exists
-```
-
-### Модуль `ansible.builtin.fetch`
-
-Загрузка файлов с серверов на локальную машину (например, логов или сертификатов).
-
-```yaml
-- name: Получение лога ошибок с сервера
-  ansible.builtin.fetch:
-    src: /var/log/nginx/error.log
-    dest: ./logs/
-    flat: yes # загрузить файл прямо в директорию, не создавая структуру путей сервера
-```
-
-### Безопасное развертывание (Atomic operations)
-
-Для минимизации времени простоя сервисов рекомендуется сначала проверять наличие родительских директорий и использовать `validate` в модулях `template` и `copy`.
-
-```yaml
-- name: Гарантия наличия root директории
-  ansible.builtin.file:
-    path: /var/www/html
-    state: directory
+    group: www-data
     mode: '0755'
+    setype: httpd_sys_content_t
+    recurse: yes # Рекурсивное применение прав
+```
 
-- name: Копирование конфига с проверкой
+### Копирование и загрузка данных (`copy`, `get_url`)
+`copy` может работать как с локальными файлами, так и копировать файлы внутри удаленного хоста.
+
+```yaml
+- name: Копирование файла внутри удаленного хоста
   ansible.builtin.copy:
-    src: app.conf
+    src: /tmp/source.conf
     dest: /etc/app/app.conf
-    validate: '/usr/bin/app --check-config %s'
+    remote_src: yes # Файл берется с удаленного хоста, а не с контрольного узла
+    owner: root
+    mode: '0600'
+
+- name: Загрузка бинарного файла из интернета
+  ansible.builtin.get_url:
+    url: https://example.com/software-1.0.tar.gz
+    dest: /opt/software.tar.gz
+    checksum: sha256:e3b0c442... # Проверка целостности
+```
+
+### Работа с архивами (`unarchive`)
+Идеально подходит для развертывания приложений из релизных архивов.
+
+```yaml
+- name: Распаковка архива в указанную директорию
+  ansible.builtin.unarchive:
+    src: /opt/software.tar.gz
+    dest: /usr/local/bin
+    remote_src: yes # Архив уже находится на целевом хосте
+    creates: /usr/local/bin/software_binary # Пропустить, если файл уже существует
+```
+
+### Динамические конфигурации (`template`, `lineinfile`)
+Использование `validate` гарантирует, что сервис не перезапустится с битым конфигом.
+
+```yaml
+- name: Настройка параметров ядра через lineinfile
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.conf
+    regexp: '^net.ipv4.ip_forward'
+    line: 'net.ipv4.ip_forward=1'
+    validate: '/sbin/sysctl -p %s' # Проверка корректности синтаксиса
+```
+
+### Сбор данных и проверки (`stat`, `find`)
+Часто используются для принятия решений в последующих задачах через `register`.
+
+```yaml
+- name: Поиск и удаление старых логов
+  ansible.builtin.find:
+    paths: /var/log/myapp
+    age: 7d
+    recurse: yes
+  register: old_logs
+
+- name: Удаление найденных файлов
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ old_logs.files }}"
 ```
 
 ## Дополнительная информация
 
-* [Официальная документация по файловым модулям](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html#plugins-in-ansible-builtin)
-* [Шаблонизация Jinja2](../ansible_jinja_templating.md)
-* [Синхронизация файлов через rsync](ansible_file_synchronization_modules.md)
-* [Переменные в Ansible](../PlaybookStructure/variables.md)
+- [Официальная документация: Builtin коллекции](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html)
+- [Шаблонизация Jinja2](../ansible_jinja_templating.md)
+- [Синхронизация через rsync](ansible_file_synchronization_modules.md)
+
+---
+**См. также:**
+- [Переменные в Ansible](../PlaybookStructure/variables.md)
+- [Обработка ошибок и Rollback](../PlaybookStructure/advanced.md#сценарий-8-обработка-ошибок-и-откат-rollback-через-block-rescue-always)

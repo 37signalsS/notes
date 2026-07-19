@@ -41,6 +41,8 @@ vagrant box list
 
 **Для Libvirt (KVM/QEMU):**
 
+> **Примечание:** Для использования Libvirt необходимо установить плагин `vagrant-libvirt`. Инструкции см. в разделе **[Установка плагинов](./vagrant_installation.md#сценарий-3-управление-плагинами)**.
+
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
@@ -117,6 +119,7 @@ vagrant box remove ubuntu/jammy64
 | :--- | :--- | :--- | :--- |
 | **VirtualBox** | Кроссплатформенный | Средняя | Прост в установке, стандарт по умолчанию |
 | **Libvirt (KVM)** | Linux | Высокая | Нативная виртуализация, отличная производительность |
+| **QEMU (HVF)** | macOS (ARM64) | Высокая | Рекомендуется для **[Apple Silicon](./vagrant_macos_apple_silicon.md)** |
 | **Hyper-V** | Windows | Высокая | Встроен в систему, требует прав администратора |
 | **Docker** | Кроссплатформенный | Максимальная | Запуск контейнеров вместо полноценных ВМ |
 

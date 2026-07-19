@@ -43,11 +43,10 @@ sudo apt-get install -y vagrant
 
 ### Сценарий 2: Альтернативные методы установки
 
-| Платформа / Метод | Команда | Особенности |
-| :--- | :--- | :--- |
 | **Snap (Linux)** | `sudo snap install vagrant --classic` | Изолированное окружение, автообновление |
-| **Homebrew (macOS)** | `brew install vagrant` | Стандарт для разработки на macOS |
+| **Homebrew (macOS)** | `brew install vagrant` | Стандарт для macOS. Для M1/M2/M3 см. **[Vagrant на Apple Silicon](./vagrant_macos_apple_silicon.md)** |
 | **Windows** | `winget install HashiCorp.Vagrant` | Менеджер пакетов Windows |
+
 
 ### Сценарий 3: Управление плагинами
 

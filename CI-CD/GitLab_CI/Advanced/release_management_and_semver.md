@@ -2,38 +2,40 @@
 
 ## Определения
 
-- **Семантическое Версионирование (SemVer)**: Cтандарт версионирования ПО в формате `MAJOR.MINOR.PATCH`, где изменения отражают характер правок: `MAJOR` для обратно несовместимых изменений, `MINOR` для новой функциональности и `PATCH` для исправлений ошибок.
-- **Conventional Commits**: Соглашение о форматировании сообщений коммитов, которое придает им машиночитаемый смысл. Формат `type(scope): description` позволяет автоматически определять тип изменений (например, `feat:` для новой функции, `fix:` для исправления, `BREAKING CHANGE:` для ломающих изменений).
-- **Управление релизами в CI/CD**: Процесс автоматизации создания, тегирования и развертывания новых версий ПО на основе событий в системе контроля версий. В GitLab это реализуется с помощью `release-cli` и специальных ключевых слов в `.gitlab-ci.yml`.
+- **Семантическое версионирование (SemVer)** — стандарт версионирования программного обеспечения в формате `MAJOR.MINOR.PATCH`, где изменения отражают характер правок: `MAJOR` для обратно несовместимых изменений, `MINOR` для новой функциональности и `PATCH` для исправления ошибок.
+- **Conventional Commits** — соглашение о форматировании сообщений коммитов, которое придает им машиночитаемый смысл. Формат `type(scope): description` позволяет автоматически определять тип изменений (например, `feat:` для новой функции, `fix:` для исправления, `BREAKING CHANGE:` для критических изменений).
+- **Управление релизами в CI/CD** — процесс автоматизации создания, тегирования и развертывания новых версий ПО. В GitLab реализуется через декларативный блок `release:` в файле `.gitlab-ci.yml`.
 
 ## Основные концепции
 
-#### Философия автоматизированного релиза
+### Философия автоматизированного релиза
 
-В основе подхода лежит строгая дисциплина в именовании коммитов (Conventional Commits). Это позволяет CI/CD-пайплайну автоматически анализировать историю изменений и принимать решения о следующем номере версии по правилам SemVer.
+В основе подхода лежит дисциплина именования коммитов. Это позволяет пайплайну автоматически анализировать историю изменений и вычислять следующий номер версии по правилам **SemVer**.
 
-Весь процесс делится на четыре логических этапа:
+Процесс состоит из четырех этапов:
 
-1. **Анализ**: Пайплайн анализирует коммиты с момента последнего релиза (тега).
-2. **Версионирование**: На основе анализа определяется, какую часть версии (`MAJOR`, `MINOR` или `PATCH`) нужно увеличить, и генерируется новый тег.
-3. **Создание релиза**: В GitLab создается формальный релиз, к которому прикрепляются описание изменений (release notes) и другие артефакты.
-4. **Публикация и развертывание**: Собранные артефакты (например, Docker-образы) тегируются новой версией и развертываются в нужные окружения.
+1. **Анализ** — пайплайн сканирует коммиты с момента последнего тега.
+2. **Версионирование** — определяется уровень изменений (`MAJOR`, `MINOR` или `PATCH`) и генерируется новый тег.
+3. **Создание релиза** — в GitLab создается объект **Release**, к которому прикрепляются описание изменений (**Release Notes**) и артефакты.
+4. **Публикация** — собранные артефакты (например, Docker-образы) тегируются новой версией и отправляются в реестры.
 
-Ключевым инструментом в этом процессе является **`release-cli`** от GitLab (актуальная версия **0.24.0** на 2026 год), а для передачи данных между этапами используется механизм артефактов **`artifacts:reports:dotenv`**.
+### Инструментарий и современное состояние
 
-**Важно:** Начиная с GitLab 17, release-cli находится в режиме maintenance. Для новых проектов рассмотрите использование [GitLab Releases API](https://docs.gitlab.com/ee/api/releases/) напрямую или декларативный блок `release:` в `.gitlab-ci.yml`.
+С версии GitLab **16.0** основным инструментом является декларативное ключевое слово `release:`. Инструмент командной строки `release-cli` с версии **17.0** находится в режиме поддержки (**maintenance**). Для новых проектов рекомендуется использовать встроенные возможности GitLab или прямые вызовы **GitLab Releases API**.
+
+Для передачи версии между задачами используется механизм `artifacts:reports:dotenv`.
 
 ## Практические сценарии
 
-#### Сценарий: Полный цикл автоматизации релиза
+### Сценарий: Полный цикл автоматизации релиза
 
-Этот сценарий показывает, как настроить пайплайн, который автоматически определяет версию, создает релиз и публикует Docker-образ.
+Этот пример демонстрирует пайплайн, который автоматически вычисляет версию на основе коммитов, создает релиз и публикует Docker-образ.
 
-##### Шаг 1: Анализ коммитов и генерация версии
+#### Шаг 1: Анализ коммитов и генерация версии
 
-Первая задача анализирует историю Git, определяет тип изменений и генерирует новый тег версии, а также описание релиза.
+Задача анализирует историю Git и формирует переменные для следующего шага.
 
-**Пример (`templates/analyze_commit.yaml`):**
+**Файл `templates/analyze_commit.yaml`:**
 
 ```yaml
 variables:
@@ -49,20 +51,14 @@ analyze_commit:
   image: alpine/git
   stage: prepare_release
   script:
-    # 1. Получаем последний тег
-    - LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    # 1. Получение последнего тега
+    - LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
     
-    # 2. Определяем диапазон коммитов для анализа
-    - |
-      if [ -z "$LAST_TAG" ]; then
-        echo "No previous tag found, analyzing full history."
-        COMMITS=$(git log --oneline)
-      else
-        echo "Analyzing commits since $LAST_TAG..."
-        COMMITS=$(git log --oneline $LAST_TAG..$CI_COMMIT_SHA)
-      fi
+    # 2. Определение диапазона коммитов
+    - echo "Analyzing commits since $LAST_TAG..."
+    - COMMITS=$(git log --oneline $LAST_TAG..$CI_COMMIT_SHA)
     
-    # 3. Определяем уровень изменений (major, minor, patch)
+    # 3. Определение уровня изменений
     - VERSION_CHANGE=""
     - |
       if echo "$COMMITS" | grep -qE "$MAJOR_CHANGE_PATTERN"; then
@@ -72,19 +68,14 @@ analyze_commit:
       elif echo "$COMMITS" | grep -qE "$PATCH_CHANGE_PATTERN"; then
         VERSION_CHANGE="patch"
       else
-        echo "No version change detected. Stopping release."
+        echo "No version change detected."
         exit 0
       fi
 
-    # 4. Вычисляем новый тег версии
-    - |
-      if echo "$LAST_TAG" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" >/dev/null; then
-        MAJOR=$(echo "$LAST_TAG" | cut -d'v' -f2 | cut -d'.' -f1)
-        MINOR=$(echo "$LAST_TAG" | cut -d'.' -f2)
-        PATCH=$(echo "$LAST_TAG" | cut -d'.' -f3)
-      else
-        MAJOR=1; MINOR=0; PATCH=0
-      fi
+    # 4. Вычисление нового тега
+    - MAJOR=$(echo "$LAST_TAG" | cut -d'v' -f2 | cut -d'.' -f1)
+    - MINOR=$(echo "$LAST_TAG" | cut -d'.' -f2)
+    - PATCH=$(echo "$LAST_TAG" | cut -d'.' -f3)
     - |
       case "$VERSION_CHANGE" in
         major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
@@ -92,31 +83,25 @@ analyze_commit:
         patch) PATCH=$((PATCH + 1)) ;;
       esac
     - NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-    - echo "New tag determined: $NEW_TAG"
     - echo "NEW_TAG=$NEW_TAG" >> variables.env
 
-    # 5. Генерируем Release Notes из коммитов
-    - git log --pretty="* %s (%h) by %an" ${LAST_TAG}..HEAD > $RELEASE_NOTE_FILE
+    # 5. Генерация Release Notes
+    - git log --pretty="* %s (%h)" ${LAST_TAG}..HEAD > $RELEASE_NOTE_FILE
 
   artifacts:
     paths:
       - $RELEASE_NOTE_FILE
     reports:
-      dotenv: variables.env # Передаем NEW_TAG в следующие задачи
+      dotenv: variables.env
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-**Пояснения:**
+#### Шаг 2: Создание релиза через декларативный блок
 
-- Скрипт определяет последний тег, анализирует коммиты с тех пор и вычисляет новую SemVer-версию.
-- Переменная `NEW_TAG` и файл `RELEASE_NOTE.md` сохраняются как артефакты.
+Использование встроенного функционала GitLab для создания релиза.
 
-##### Шаг 2: Создание релиза в GitLab
-
-Следующая задача использует артефакты из предыдущей, чтобы создать формальный релиз в GitLab.
-
-**Пример (`.gitlab-ci.yml`):**
+**Файл `.gitlab-ci.yml`:**
 
 ```yaml
 include:
@@ -134,124 +119,72 @@ create_release:
       artifacts: true
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual # Создание релиза запускается вручную для контроля
+      when: manual
   release:
     name: 'Release $NEW_TAG'
-    description: './RELEASE_NOTE.md' # Ссылка на артефакт
+    description: './RELEASE_NOTE.md'
     tag_name: '$NEW_TAG'
     ref: '$CI_COMMIT_SHA'
     assets:
       links:
-        - name: "GitLab Registry Image"
+        - name: "Docker Image"
           url: "$CI_REGISTRY_IMAGE:$NEW_TAG"
 ```
 
-**Пояснения:**
+#### Шаг 3: Публикация и развертывание
 
-- **`needs`**: Гарантирует, что эта задача запустится после `analyze_commit` и получит доступ к ее артефактам.
-- **`image: release-cli`**: Используется официальный образ для создания релизов.
-- **`release:`**: Специальный блок, который декларативно описывает релиз, используя переменные и файлы из предыдущего шага.
-
-##### Шаг 3: Публикация Docker-образа с тегом релиза
-
-После создания релиза и соответствующего тега в Git, запускается пайплайн по этому тегу, который публикует Docker-образ.
-
-**Пример (часть `.gitlab-ci.yml`):**
+После создания тега запускается отдельный пайплайн для публикации артефактов.
 
 ```yaml
 publish_image:
   stage: publish
-  image: docker:20.10
+  image: docker:24.0
   services:
-    - docker:20.10-dind
+    - docker:24.0-dind
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
     - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
-    # Опционально: также тегируем как 'latest'
-    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG $CI_REGISTRY_IMAGE:latest
-    - docker push $CI_REGISTRY_IMAGE:latest
-  rules:
-    - if: $CI_COMMIT_TAG # Задача запускается только для тегов
-```
-
-**Пояснения:**
-
-- Эта задача выполняется только при создании нового тега (`if: $CI_COMMIT_TAG`).
-- Она собирает Docker-образ и тегирует его семантической версией из переменной `$CI_COMMIT_TAG`.
-
-##### Шаг 4: Развертывание релиза в Production
-
-Финальный шаг — безопасное развертывание образа с семантическим тегом.
-
-**Пример (часть `.gitlab-ci.yml`):**
-
-```yaml
-deploy_prod:
-  stage: deploy
-  # ... конфигурация для деплоя (kubectl, helm, etc.)
-  script:
-    - echo "Deploying version $CI_COMMIT_TAG to production"
-    - helm upgrade --install my-app ./charts --set image.tag=$CI_COMMIT_TAG
-  environment:
-    name: production
   rules:
     - if: $CI_COMMIT_TAG
-      when: manual # Деплой в прод только по тегу и вручную
 ```
-
-**Пояснения:**
-
-- Задача запускается только для тегов и требует ручного подтверждения.
-- Для развертывания используется переменная `$CI_COMMIT_TAG`, что гарантирует доставку именно релизной версии.
 
 ## Дополнительная информация
 
-### Лучшие практики (2025-2026)
+### Рекомендации по автоматизации (2025-2026)
 
-Современный подход к управлению релизами в GitLab предполагает использование декларативного блока `release:` (начиная с GitLab 16+), который является предпочтительной альтернативой `release-cli`. Для безопасности критически важных релизов всегда используйте `when: manual` для ручного подтверждения развертывания в production, а также защищенные теги, требующие одобрения от мейнтейнеров проекта.
+Для сложных проектов рекомендуется использовать специализированные инструменты, такие как **semantic-release**. Они полностью автоматизируют весь цикл: от анализа коммитов до публикации в реестры пакетов (npm, PyPI) и генерации **Changelog**.
 
-Автоматическая генерация changelog'ов (`Release Notes`) должна основываться на `git log` с фильтрацией по тегам, включая только значимые типы коммитов (`feat:`, `fix:`, `BREAKING CHANGE:`). Связывайте сгенерированные артефакты, такие как Docker-образы или бинарные файлы, с релизом через секцию `assets:links`. Для комплексного управления зависимостями интегрируйте процесс с GitLab Package Registry, публикуя пакеты и связывая их с соответствующими релизами.
+В GitLab 16+ доступна встроенная генерация описания изменений:
+```yaml
+release:
+  tag_name: $NEW_TAG
+  description: 'Release created by CI/CD'
+  changelog:
+    generate: true # Автоматическая генерация на основе истории коммитов
+```
 
-Подробные спецификации, лежащие в основе этих практик, можно найти на официальных ресурсах [Conventional Commits](https://www.conventionalcommits.org/ru/v1.0.0/) и [GitLab Releases API](https://docs.gitlab.com/ee/api/releases/).
+Для обеспечения безопасности всегда используйте **Protected Tags**, чтобы только доверенные участники команды могли инициировать процесс создания релиза в продуктивных ветках.
 
-### Альтернатива release-cli (GitLab 17+)
+### Альтернатива через API (GitLab 17+)
 
-Современный подход — использование GitLab Releases API напрямую вместо release-cli:
+Если использование `release-cli` невозможно (например, из-за ограничений безопасности образов), можно использовать прямой вызов API через `curl`:
 
 ```yaml
-create_release:
+create_release_api:
   stage: release
   image: alpine:3.21
-  needs:
-    - job: analyze_commit
-      artifacts: true
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-  before_script:
-    - apk add --no-cache curl jq
   script:
     - |
       curl --request POST \
-        --header "PRIVATE-TOKEN: ${GITLAB_ACCESS_TOKEN}" \
+        --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
         --header "Content-Type: application/json" \
-        --data "{
-          \"name\": \"Release $NEW_TAG\",
-          \"tag_name\": \"$NEW_TAG\",
-          \"description\": \"$(cat RELEASE_NOTE.md | jq -Rs .)\",
-          \"ref\": \"$CI_COMMIT_SHA\",
-          \"assets\": {
-            \"links\": [{
-              \"name\": \"Docker Image\",
-              \"url\": \"${CI_REGISTRY_IMAGE}:${NEW_TAG}\"
-            }]
-          }
-        }" \
+        --data "{\"name\": \"Release $NEW_TAG\", \"tag_name\": \"$NEW_TAG\", \"ref\": \"$CI_COMMIT_SHA\"}" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
 ```
 
-### Связанные концепции
+### См. также
 
-- **Версионирование артефактов:** Схемы версионирования (SemVer, CalVer) описаны в **[Управлении артефактами](../../artifact_management.md)**.
-- **CI/CD Catalog:** Публикация компонентов с SemVer — в **[CI/CD Catalog Reference](../Reusable_Pipelines/ci_cd_catalog_reference.md)**.
+- **[Управление артефактами](../../artifact_management.md)** — схемы версионирования (SemVer, CalVer).
+- **[CI/CD Catalog Reference](../Reusable_Pipelines/ci_cd_catalog_reference.md)** — требования SemVer для компонентов каталога.
+- **[Docker тегирование](../../../Docker/Docker_registries/image_versioning_and_tagging.md)** — стратегии именования образов.

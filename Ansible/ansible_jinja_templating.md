@@ -1,171 +1,144 @@
-# Шаблонизация Jinja2 в Ansible
+# Ansible — шаблонизация Jinja2
 
 ## Определения
 
-**Jinja2** — шаблонизатор для языка программирования Python, используемый Ansible для динамического создания файлов. Он позволяет вставлять переменные, выполнять циклы и условные конструкции внутри текстовых файлов. Шаблоны обрабатываются модулем `ansible.builtin.template`, а файлы шаблонов обычно имеют расширение `.j2`.
+**Jinja2** — это мощный шаблонизатор для Python, используемый в Ansible для динамической генерации текстовых файлов (конфигураций, скриптов, манифестов). Он позволяет использовать переменные, условную логику, циклы и фильтры непосредственно внутри файлов.
+
+**Шаблон (Template)** — текстовый файл (обычно с расширением `.j2`), содержащий статический текст и вставки Jinja2. В Ansible шаблоны обрабатываются модулем `ansible.builtin.template` на стороне контрольного узла перед отправкой результата на управляемый хост.
 
 ## Основные концепции
 
-### Переменные
+### Переменные и комментарии
 
-Вывод значения переменной осуществляется с помощью двойных фигурных скобок: `{{ my_variable }}`. Доступ к элементам словаря: `{{ my_dict.key }}` или `{{ my_dict['key'] }}`.
+Вывод значения переменной: `{{ variable_name }}`.
+Доступ к вложенным данным: `{{ my_dict.key }}` или `{{ my_list[0] }}`.
 
-Для обработки неопределенных переменных рекомендуется использовать фильтр `default`:
-
+Комментарии (не попадают в итоговый файл):
 ```jinja
-Hello, {{ user | default("guest") }}
+{# Это комментарий Jinja2 #}
 ```
 
-Определение локальной переменной непосредственно в шаблоне: `{% set my_variable = "value" %}`.
+### Управление пробелами
 
-### Цикл `for`
-
-Используется для итерации по элементам списка:
+Jinja2 сохраняет все переносы строк и пробелы по умолчанию. Чтобы убрать лишние отступы, используются символы `-`:
+- `{%-` — убирает пробелы перед блоком.
+- `-%}` — убирает пробелы после блока.
 
 ```jinja
-{% for item in inventory %}
-Сервер {{ loop.index }}: {{ item.name }} (IP: {{ item.ip }})
+{% if items -%}
+    Contains items
+{%- endif %}
+```
+
+### Циклы и условия
+
+**Цикл `for`:**
+```jinja
+{% for user in users %}
+user: {{ user.name }}
 {% endfor %}
 ```
+Внутри цикла доступен объект `loop` (например, `loop.last`, `loop.index0`).
 
-- `loop.index` — текущий индекс итерации (начинается с 1).
-- `loop.index0` — индекс итерации (начинается с 0).
-
-### Условия `if`
-
-Позволяют включать или исключать блоки текста в зависимости от условий:
-
+**Условие `if`:**
 ```jinja
-{% if enable_ssl %}
-server {
-    listen 443 ssl;
+{% if env == 'prod' %}
+debug: false
+{% elif env == 'dev' %}
+debug: true
 {% else %}
-server {
-    listen 80;
+debug: default
 {% endif %}
+```
+
+### Фильтры и тесты
+
+Фильтры изменяют данные (`|`), а тесты проверяют их состояние (`is`).
+
+**Популярные фильтры:**
+- `default('value')` — значение по умолчанию.
+- `combine(other_dict)` — слияние словарей.
+- `to_nice_json` / `to_nice_yaml` — форматирование данных.
+- `selectattr('status', 'equalto', 'active')` — фильтрация списка объектов по атрибуту.
+- `map('attribute', 'id')` — извлечение атрибута из списка объектов.
+
+**Популярные тесты:**
+- `is defined` / `is undefined` — проверка существования.
+- `is failed` / `is succeeded` — проверка статуса выполнения задачи.
+
+### Макросы и импорт
+
+Макросы позволяют создавать переиспользуемые блоки (аналог функций):
+
+```jinja
+{% macro render_vhost(port, domain) %}
+server {
+    listen {{ port }};
+    server_name {{ domain }};
 }
+{% endmacro %}
+
+{{ render_vhost(80, 'example.com') }}
 ```
-
-Основные проверки:
-
-- Проверка существования: `{% if my_var is defined %}`.
-- Вхождение в список: `{% if 'db' in server_roles %}`.
-- Комбинирование условий: операторы `and`, `or`, `not`.
-
-### Фильтры
-
-Фильтры позволяют преобразовывать значения переменных с помощью символа конвейера `|`.
-
-**`default`** — установка значения по умолчанию:
-
-```jinja
-{{ first_name | default("there") }}
-{# Если значение пустое или False, использовать default: #}
-{{ first_name | default("there", true) }}
-```
-
-**`replace`** — замена подстроки в строке:
-
-```jinja
-{{ department | replace("Personnel", "HR") }}
-```
-
-Фильтры можно объединять в цепочки: `{{ my_var | filter1 | filter2 }}`.
 
 ## Практические сценарии
 
-### Пример: Шаблон конфигурации Nginx
+### Динамическая конфигурация Nginx
 
-#### 1. Определение переменных в Ansible (например, в `group_vars/all.yml`)
-
+#### 1. Переменные в Ansible (`vars/main.yml`)
 ```yaml
-nginx_worker_processes: 4
-nginx_http_port: 80
-enable_nginx_status_page: true
-allowed_status_ips:
-  - 192.168.1.10
-  - 10.0.0.5
+vhosts:
+  - { name: "app1", port: 8080 }
+  - { name: "app2", port: 8081 }
+enable_compression: true
 ```
 
 #### 2. Шаблон `nginx.conf.j2`
-
 ```jinja
-# /etc/nginx/nginx.conf
-
-worker_processes {{ nginx_worker_processes | default(2) }};
-
-events {
-    worker_connections 1024;
-}
-
+# {{ ansible_managed }}
 http {
-    server {
-        listen {{ nginx_http_port }};
-        server_name _;
+    {% if enable_compression -%}
+    gzip on;
+    gzip_types text/plain application/json;
+    {%- endif %}
 
-        location / {
-            root /usr/share/nginx/html;
-            index index.html;
-        }
-        
-        {# Условие для добавления опционального блока статуса #}
-        {% if enable_nginx_status_page %}
-        location /nginx_status {
-            stub_status;
-            allow 127.0.0.1;
-            
-            {# Цикл для генерации списка разрешенных IP-адресов #}
-            {% for ip in allowed_status_ips %}
-            allow {{ ip }};
-            {% endfor %}
-            
-            deny all;
-        }
-        {% endif %}
+    {% for host in vhosts %}
+    server {
+        listen {{ host.port }};
+        server_name {{ host.name }}.local;
     }
+    {% endfor %}
 }
 ```
 
-#### 3. Задача в Playbook
-
-Для применения шаблона используется модуль `ansible.builtin.template`.
-
+#### 3. Использование в плейбуке
 ```yaml
-- name: Generate nginx configuration from template
+- name: Развертывание конфигурации
   ansible.builtin.template:
     src: nginx.conf.j2
     dest: /etc/nginx/nginx.conf
-    owner: root
-    group: root
-    mode: '0644'
-    # Проверка синтаксиса перед применением
     validate: /usr/sbin/nginx -t -c %s
-    # Создание резервной копии при изменении
-    backup: true
-  notify: Restart nginx
-```
-
-Применение Playbook:
-
-```bash
-ansible-playbook -i inventory.ini site.yml
-# → PLAY [all] ... ok=2 changed=1 unreachable=0 failed=0
 ```
 
 ## Дополнительная информация
 
+### Служебные переменные Ansible в шаблонах
+
+- `ansible_managed` — строка-заголовок, указывающая, что файл управляется Ansible (настраивается в `ansible.cfg`). Рекомендуется добавлять в начало каждого шаблона.
+- `template_host` — имя контрольного узла.
+- `template_path` — путь к исходному файлу шаблона.
+- `template_run_date` — дата рендеринга.
+
 ### Лучшие практики
 
-- **Расширение `.j2`**: Всегда используйте суффикс `.j2` для файлов шаблонов. Это позволяет четко отличить их от статических файлов конфигурации.
-- **Кавычки в YAML**: Обязательно заключайте выражения Jinja2 в кавычки, если они являются началом значения в YAML-файле.
-  - **Плохо:** `my_var: {{ some_value }}/path`
-  - **Хорошо:** `my_var: "{{ some_value }}/path"`
-- **Валидация**: Используйте параметр `validate` в модуле `template` для проверки корректности генерируемого конфига перед его сохранением на целевой хост.
-- **Резервное копирование**: Включайте `backup: true` для критически важных конфигурационных файлов.
-- **Минимизация логики**: Не перегружайте шаблоны сложной логикой. Если преобразования слишком объемные, лучше подготовить данные заранее в Playbook с помощью модуля `ansible.builtin.set_fact`.
+1.  **Кавычки в YAML:** Если значение в YAML начинается с `{{`, оно должно быть в кавычках: `msg: "{{ var }}"`.
+2.  **Экранирование (Raw):** Для вывода текста, похожего на Jinja2 (например, шаблоны для других систем), используйте `{% raw %} ... {% endraw %}`.
+3.  **Безопасность:** Используйте фильтр `quote` при подстановке переменных в shell-скрипты внутри шаблонов.
+4.  **Валидация:** Всегда используйте параметр `validate` в модуле `template` для проверки синтаксиса генерируемых конфигов.
+5.  **Логика:** Выносите сложную логику подготовки данных из шаблонов в плейбуки (`set_fact`) или фильтры на Python. Шаблон должен оставаться читаемым.
 
 ### Смотрите также
 
-- [Модули управления файлами](Modules/ansible_file_management_modules.md)
-- [Управление потоком выполнения](PlaybookStructure/flow_control.md)
-- [Структура ролей](Roles/structure.md)
+- [Модули управления файлами](./Modules/ansible_file_management_modules.md)
+- [Основные концепции Ansible](./ansible_core_concepts.md)
+- [Официальная документация Jinja2](https://jinja.palletsprojects.com/)

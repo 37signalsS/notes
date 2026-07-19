@@ -130,7 +130,7 @@ kubectl patch deployment <deploy-name> \
 
 ### Продвинутые методы отладки
 
-- **Сбор Core Dumps:** настройка `initContainer` для изменения `kernel.core_pattern` и сохранения дампов памяти в Persistent Volume для последующего анализа в GDB (GNU Debugger).
+- **Сбор Core Dumps:** настройка `initContainer` для изменения `kernel.core_pattern` и сохранения дампов памяти в Persistent Volume. Подробное описание методов анализа и настройки см. в разделе **[Отладка через Coredump в Linux](../../Linux/Diagnostics/Troubleshooting/coredump_debugging.md)**.
 - **Удаленная отладка (Remote Debugging):** использование инструментов вроде Delve (для Go) или JDWP (для Java) через `kubectl port-forward`.
 - **Трассировка системных вызовов:** использование `strace` через `kubectl debug` (требует профиля `sysadmin` или соответствующих capabilities).
 

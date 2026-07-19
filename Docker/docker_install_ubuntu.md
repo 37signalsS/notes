@@ -4,89 +4,115 @@
 
 **Docker Engine** — контейнерный движок, устанавливаемый на хостовую систему. Включает демон `dockerd`, REST API и CLI.
 
-## Основные концепции
+## Базовые концепции
 
-### Способ установки
+### 1. Удаление старых версий
 
-Рекомендуемый способ — установка из официального репозитория Docker (не из стандартных репозиториев дистрибутива), что гарантирует актуальные версии и поддержку:
+Перед установкой официальной версии необходимо удалить конфликтующие пакеты (неофициальные сборки и старые версии):
 
 ```bash
-# 1. Обновление репозиториев
-sudo apt-get update
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+  sudo apt-get remove $pkg
+done
+```
 
-# 2. Установка зависимостей
-sudo apt-get install -y ca-certificates curl gnupg
+### 2. Настройка репозитория
 
-# 3. Добавление GPG-ключа Docker
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
+Рекомендуемый способ — установка из официального репозитория Docker, что гарантирует получение актуальных обновлений безопасности и поддержку плагинов.
 
-# 4. Добавление репозитория Docker
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+1.  **Обновление индекса пакетов и установка зависимостей:**
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl
+    ```
 
-# 5. Обновление репозиториев и установка последней версии
-sudo apt-get update
+2.  **Добавление GPG-ключа Docker:**
+    ```bash
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    ```
+
+3.  **Добавление репозитория в список источников (sources.list):**
+    ```bash
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update
+    ```
+
+### 3. Установка Docker
+
+Установка движка, CLI и современных плагинов (Buildx и Compose V2):
+
+```bash
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 ```
 
-### Проверка установки
+### 4. Проверка и управление сервисом
 
 ```bash
-# Запуск тестового контейнера
+# Проверка запуска
 sudo docker run hello-world
-```
 
-Команда загружает образ `hello-world` из Docker Hub (если отсутствует локально) и запускает контейнер, который выводит приветственное сообщение.
-
-### Управление сервисом
-
-```bash
-# Docker запускается автоматически как systemd-юнит
+# Управление через systemd
 sudo systemctl status docker
-
-# Включение автозапуска
 sudo systemctl enable docker
-
-# Запуск/остановка/перезапуск
-sudo systemctl start docker
-sudo systemctl stop docker
 sudo systemctl restart docker
 ```
-
-> **Примечание:** на production-серверах рекомендуется настраивать Docker через `daemon.json`, а не через параметры `dockerd` в systemd-юните. Подробнее о конфигурации демона: [Безопасная конфигурация демона](./Docker_security/host_daemon_hardening.md).
 
 ## Практические сценарии
 
 ### Запуск без sudo
 
-По умолчанию Docker требует root-privileges. Для удобства работы можно добавить пользователя в группу `docker`:
+Для работы без прав root добавьте пользователя в группу `docker`:
 
 ```bash
 sudo usermod -aG docker $USER
-# Перезайдите в сессию для применения
+# Для применения изменений без перезагрузки:
+newgrp docker
 ```
 
-> **Важно:** членство в группе `docker` эквивалентно root-доступу. В production-средах используйте [Rootless-режим](./Docker_security/host_daemon_hardening.md#2-установка-и-запуск-rootless-docker).
+> **Важно:** членство в группе `docker` предоставляет права, эквивалентные root. Для повышения безопасности используйте [Rootless-режим](./Docker_security/host_daemon_hardening.md#3-установка-и-запуск-rootless-docker).
 
-### Установка конкретной версии
+### Фиксация версии (Hold)
+
+Для предотвращения случайного обновления Docker в production-средах:
 
 ```bash
-# Список доступных версий
-apt-cache madison docker-ce | head -10
+# Список версий
+apt-cache madison docker-ce | head -5
 
 # Установка конкретной версии
-sudo apt-get install -y docker-ce=<VERSION> docker-ce-cli=<VERSION> containerd.io docker-buildx-plugin docker-compose-plugin
-```
+sudo apt-get install -y docker-ce=<VERSION> docker-ce-cli=<VERSION>
 
-### Блокировка версии (hold)
-
-```bash
+# Блокировка обновлений
 sudo apt-mark hold docker-ce docker-ce-cli containerd.io
 ```
+
+### Настройка логирования (daemon.json)
+
+По умолчанию Docker не ограничивает размер логов контейнеров, что может привести к переполнению диска. Рекомендуется настроить ротацию в `/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+После изменения файла выполните `sudo systemctl restart docker`.
+
+### Устранение неполадок (Firewall и AppArmor)
+
+1.  **UFW (Firewall):** Docker обходит правила UFW по умолчанию. Если вы публикуете порт (`-p 80:80`), он будет открыт для всего мира. Рекомендуется использовать пакет `ufw-docker` или привязывать порты к локальному адресу (`-p 127.0.0.1:80:80`).
+2.  **AppArmor (Ubuntu 24.04+):** Если Rootless Docker выдает ошибку `operation not permitted` при создании namespaces, проверьте настройки AppArmor:
+    ```bash
+    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    ```
 
 ## Дополнительная информация
 

@@ -2,104 +2,95 @@
 
 ## Определения
 
-- **Реализация Feature Toggles** — это практическое встраивание логики проверки флагов в исходный код приложения. Как правило, это сводится к вызову метода `is_enabled()` из специализированного клиента или SDK.
+**Реализация Feature Toggles** — это процесс интеграции логики переключения функциональности непосредственно в исходный код приложения, обеспечивающий выполнение различных веток кода в зависимости от состояния внешнего или внутреннего флага.
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
-### Ключевые решения: Свой код или готовый сервис?
+### Выбор подхода: Свой код vs Готовый сервис
 
-Выбор между собственной реализацией и использованием готового сервиса (SaaS или self-hosted) — ключевое архитектурное решение.
+| Критерий | Собственная реализация | Специализированный сервис (Unleash, LaunchDarkly) |
+| :--- | :--- | :--- |
+| **Сложность внедрения** | Низкая (простые условия в коде). | Средняя (интеграция SDK/API). |
+| **Управление** | Через файлы конфигурации или БД вручную. | Удобный веб-интерфейс для всех участников. |
+| **Возможности** | Ограничены базовой логикой `if/else`. | Таргетинг, стратегии раскатки, аудит изменений. |
+| **Надежность** | Зависит от качества собственного кода. | Высокая отказоустойчивость, встроенное кэширование. |
 
-- **Собственная реализация** подходит для:
-  - Простых случаев с небольшим количеством флагов.
-  - Систем, где нет необходимости в сложном таргетинге и A/B-тестах.
-  - Когда нет возможности или желания зависеть от внешних сервисов.
-
-- **Готовый сервис** предпочтителен, когда:
-  - Требуется сложная логика таргетинга (по регионам, версиям приложения и т.д.).
-  - Необходим удобный UI для управления флагами не-разработчиками (менеджерами, QA).
-  - Нужны встроенные инструменты для A/B-тестирования, аудита и мониторинга.
-  - Важна высокая производительность и отказоустойчивость, обеспечиваемая провайдером.
-
-Архитектурные компоненты описаны в документе **[Архитектура систем Feature Toggles](./architecture.md)**.
+**Рекомендация:** Начинайте с конфигурационных файлов для простых задач. Переходите на внешние сервисы при росте команды (>5 человек) и усложнении сценариев тестирования (A/B, Canary).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Простая реализация на Python
+### Сценарий 1: Простая реализация на Python (Менеджер флагов)
 
-Базовый менеджер флагов, который читает конфигурацию из YAML и поддерживает стратегии по ID пользователя и проценту трафика.
+Пример базового класса, который читает состояние из YAML и поддерживает простую проверку по списку ID пользователей.
 
 ```python
 import yaml
 from typing import Dict, Any, Optional
-import hashlib
 
-class FeatureFlagManager:
+class FeatureFlagProvider:
     def __init__(self, config_path: str):
         with open(config_path) as f:
-            self.config = yaml.safe_load(f)
-        self.flags = self.config.get('features', {})
+            self._config = yaml.safe_load(f).get('features', {})
 
-    def is_enabled(self, flag_name: str,
-                   context: Optional[Dict[str, Any]] = None) -> bool:
-        """Проверяет, включен ли флаг для данного контекста."""
-        flag_config = self.flags.get(flag_name, {})
-
-        if not flag_config.get('enabled', False):
+    def is_enabled(self, flag_name: str, context: Optional[Dict] = None) -> bool:
+        flag = self._config.get(flag_name, {})
+        if not flag.get('enabled', False):
             return False
-
-        strategy = flag_config.get('strategy', 'default')
-
-        if strategy == 'userId':
-            user_id = context.get('user_id') if context else None
-            return user_id in flag_config.get('userIds', [])
-
-        elif strategy == 'percentage':
-            user_id = context.get('user_id', 'anonymous')
-            hash_val = int(hashlib.md5(f"{flag_name}:{user_id}".encode()).hexdigest(), 16)
-            return hash_val % 100 < flag_config.get('percentage', 0)
-
+            
+        # Проверка по стратегии (например, список разрешенных пользователей)
+        if flag.get('strategy') == 'user_list':
+            allowed_users = flag.get('users', [])
+            current_user = context.get('user_id') if context else None
+            return current_user in allowed_users
+            
         return True
 
-# --- Использование ---
-# if ff_manager.is_enabled('dark-mode', context={'user_id': user.id}):
-#    enable_dark_mode()
+# --- Пример использования ---
+# provider = FeatureFlagProvider('config.yaml')
+# if provider.is_enabled('new-feature', context={'user_id': 'admin'}):
+#     do_new_thing()
 ```
 
-### Сценарий 2: Интеграция с готовым решением (Unleash)
+### Сценарий 2: Использование промышленного SDK (Unleash)
 
-Использование готового SDK значительно упрощает работу, так как вся сложная логика (кэширование, стратегии, A/B-тесты) реализована внутри клиента.
+Профессиональный подход с использованием централизованного сервера управления флагами.
 
 ```python
 import os
 from UnleashClient import UnleashClient
 
-# Инициализация клиента
-client = UnleashClient(
-    url="https://unleash.mycompany.com/api",
-    app_name="my-app",
-    custom_headers={'Authorization': os.getenv('UNLEASH_API_TOKEN', '')}
+# Настройка клиента
+unleash = UnleashClient(
+    url="https://unleash-server.local/api",
+    app_name="order-service",
+    custom_headers={'Authorization': os.getenv('UNLEASH_TOKEN')}
 )
-client.initialize_client()
+unleash.initialize_client()
 
-# Проверка флага с передачей контекста
-context = {'userId': user.id, 'sessionId': session.id}
-if client.is_enabled("new-payment-flow", context=context):
-    process_new_payment()
-else:
-    process_legacy_payment()
+# Проверка с богатым контекстом
+context = {
+    'userId': '123',
+    'remoteAddress': '192.168.1.1',
+    'properties': {'region': 'EU', 'tier': 'premium'}
+}
+
+if unleash.is_enabled("premium-support-chat", context=context):
+    activate_chat()
 ```
 
 ---
 
 ## Дополнительная информация
 
-**Связанные документы:**
+### См. также
+- **[Архитектура систем](./architecture.md)** — описание взаимодействия компонентов.
+- **[Лучшие практики](./best_practices.md)** — правила чистоты кода при работе с флагами.
+- **[Сценарии использования](./scenarios.md)** — когда и зачем применять флаги.
 
-- **[Сценарии использования](./scenarios.md)** — описание типовых задач и бизнес-кейсов.
-- **[Лучшие практики](./best_practices.md)** — правила именования и управления жизненным циклом.
-- **[Архитектура систем Feature Toggles](./architecture.md)** — описание компонентов и способов хранения флагов.
+### Внешние ресурсы
+- [Unleash Python SDK Documentation](https://github.com/Unleash/unleash-client-python)
+- [Flagsmith: Open Source Feature Flagging](https://www.flagsmith.com/)

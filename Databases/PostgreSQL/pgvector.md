@@ -2,305 +2,155 @@
 
 ## Определения
 
-**pgvector** — открытое расширение для PostgreSQL, добавляющее поддержку высокоразмерных векторов (embeddings) и векторного поиска непосредственно в реляционной СУБД. Позволяет хранить, обрабатывать и анализировать векторные данные без необходимости использования специализированных векторных СУБД.
-
-**Векторный поиск** — метод поиска информации, который идентифицирует похожие элементы в наборе данных на основе их математических характеристик (векторов/embeddings). Векторы представляют собой высокоразмерные числовые представления исходных данных (текст, изображения, аудио).
-
-**Embedding (эмбеддинг)** — числовое векторное представление данных, полученное с помощью моделей глубокого обучения. Размерность вектора зависит от используемой модели:
-
-| Модель | Размерность вектора |
-| :--- | :--- |
-| all-MiniLM-L6-v2 | 384 |
-| OpenAI embedding-3-small | 1536 |
-
-**Полнотекстовый поиск** — встроенная возможность PostgreSQL для поиска документов на естественном языке с использованием типов данных `tsvector` и `tsquery`. Поддерживает сортировку по релевантности и лингвистическую обработку.
-
-**Гибридный поиск** — комбинированный подход, сочетающий полнотекстовый поиск (для точных терминов, чисел, имён собственных) и векторный поиск (для семантической схожести). Стратегия: сначала фильтрация по ключевым словам, затем ранжирование по векторам.
-
-**RAG (Retrieval-Augmented Generation)** — паттерн, при котором пользовательский запрос кодируется в вектор, PostgreSQL возвращает N релевантных фрагментов, которые вместе с запросом передаются в LLM для генерации ответа на основе контекста.
-
----
+*   **pgvector:** Расширение для PostgreSQL с открытым исходным кодом, добавляющее поддержку высокоразмерных векторов и поиска по сходству (ANN). Позволяет хранить эмбеддинги рядом с реляционными данными.
+*   **Векторный поиск:** Метод поиска, идентифицирующий похожие элементы на основе их математических характеристик. Векторы представляют собой числовые представления данных (текст, фото, аудио).
+*   **Эмбеддинг (Embedding):** Числовое представление объекта, полученное через ML-модели.
+    *   `all-MiniLM-L6-v2`: 384 измерения.
+    *   `OpenAI text-embedding-3-small`: 1536 измерений.
+*   **Гибридный поиск:** Сочетание полнотекстового поиска (точные термины) и векторного (семантика).
+*   **RAG (Retrieval-Augmented Generation):** Паттерн, где база данных предоставляет релевантный контекст для LLM (например, GPT-4) для генерации точного ответа.
 
 ## Основные концепции
 
-### Метрики сравнения векторов
+### Типы данных и оптимизация
 
-pgvector поддерживает три основные метрики:
-
-| Метрика | Оператор | Описание |
+| Тип | Описание | Применение |
 | :--- | :--- | :--- |
-| Евклидово расстояние (L2) | `<->` | Измеряет расстояние между точками, в которых заканчиваются векторы. Аналогия: как далеко экран находится от лица. |
-| Косинусное сходство | `<=>` | Измеряет угол между векторами. Показывает, насколько нужно «повернуться», чтобы совпасть с целевым вектором. Значения: 0–1. |
-| Внутреннее произведение (Inner Product) | `<#>` | Проекция одного вектора на другой. Измеряет и расстояние, и угол. Зависит от длины меньшего вектора. |
+| `vector` | 32-битные float | Стандарт для большинства моделей. |
+| `halfvec` | 16-битные float | Экономит 50% RAM. Идеально для моделей OpenAI (с версии 0.5.0). |
+| `bit` | Двоичные векторы | Максимальное сжатие для бинарных эмбеддингов. |
+| `sparsevec` | Разреженные векторы | Для векторов с большим количеством нулей (до 1000 ненулевых элементов). |
 
-Дополнительно поддерживается манхэттенское расстояние (L1).
+### Метрики сравнения (Операторы)
 
-### Тип данных vector
-
-Расширение pgvector добавляет тип данных `vector` с указанием размерности:
-
-```sql
--- Вектор размерности 384 (all-MiniLM-L6-v2)
-embedding vector(384)
-
--- Вектор размерности 1536 (OpenAI embedding-3-small)
-embedding vector(1536)
-```
-
-### Установка и развёртывание
-
-Установка pgvector из исходников на Ubuntu:
-
-```bash
-# Клонирование репозитория
-git clone https://github.com/pgvector/pgvector.git
-cd pgvector
-
-# Сборка и установка
-make
-sudo make install
-
-# Установка зависимостей для демо-скриптов
-# Активация виртуального окружения Python
-source venv/bin/activate
-```
-
-Активация расширения в конкретной базе данных (extension действует только в рамках одной БД):
-
-```sql
-CREATE EXTENSION vector;
-
--- Проверка установленных расширений
-SELECT * FROM pg_extension WHERE extname = 'vector';
-```
-
----
-
-## Практические сценарии
-
-### Когда использовать pgvector
-
-- **Небольшие и средние объёмы данных** — до сотен тысяч записей
-- **Проект уже на PostgreSQL** — нет необходимости в дополнительной СУБД
-- **Прототипирование RAG-систем** — быстрое развёртывание без сложной инфраструктуры
-- **Совмещение OLTP и векторного поиска** — транзакционные данные + embeddings в одной БД
-- **Локальные проекты** — можно развернуть даже на локальной машине или Android-устройстве
-
-### Когда рассматривать специализированные векторные СУБД
-
-- **Большие объёмы данных** — миллионы и более векторов
-- **Высокие требования к производительности** — когда pgvector не справляется
-- **Специфичные алгоритмы индексирования** — требуются продвинутые ANN-алгоритмы
-
-Рекомендация: сначала попробовать pgvector; если производительности не хватает — переходить на специализированные решения.
-
-### Векторный поиск: базовые запросы
-
-Поиск N наиболее похожих статей по косинусному сходству:
-
-```sql
-SELECT a.title, a.body,
-       1 - (a.embedding <=> query.embedding) AS similarity
-FROM articles a
-CROSS JOIN (SELECT embedding FROM articles WHERE id = 1) query
-ORDER BY a.embedding <=> query.embedding
-LIMIT 3;
-```
-
-Фильтрация по порогу косинусного сходства:
-
-```sql
-SELECT title, body
-FROM articles
-WHERE 1 - (embedding <=> (SELECT embedding FROM articles WHERE id = 1)) > 0.4;
-```
-
-Поиск по евклидову расстоянию:
-
-```sql
-SELECT title, body,
-       embedding <-> (SELECT embedding FROM articles WHERE id = 1) AS distance
-FROM articles
-ORDER BY distance
-LIMIT 5;
-```
-
-### Гибридный поиск: векторный + полнотекстовый
-
-Полнотекстовый поиск встроен в PostgreSQL по умолчанию:
-
-```sql
--- Полнотекстовый поиск
-SELECT title, body
-FROM articles
-WHERE to_tsvector('russian', body) @@ to_tsquery('russian', 'индекс & поиск');
-```
-
-Гибридный запрос с весами (альфа-параметр):
-
-```sql
-WITH vector_search AS (
-    SELECT id, title, body,
-           1 - (embedding <=> query_vec) AS vector_score
-    FROM articles
-    CROSS JOIN (SELECT embedding AS query_vec FROM articles WHERE id = 1) q
-),
-fulltext_search AS (
-    SELECT id, title, body,
-           ts_rank(to_tsvector('russian', body), query) AS ft_score
-    FROM articles,
-         to_tsquery('russian', 'индекс & поиск') query
-    WHERE to_tsvector('russian', body) @@ query
-),
-combined AS (
-    SELECT COALESCE(v.id, f.id) AS id,
-           COALESCE(v.title, f.title) AS title,
-           COALESCE(v.vector_score, 0) * 0.7 + COALESCE(f.ft_score, 0) * 0.3 AS hybrid_score
-    FROM vector_search v
-    FULL JOIN fulltext_search f ON v.id = f.id
-)
-SELECT id, title, hybrid_score
-FROM combined
-ORDER BY hybrid_score DESC
-LIMIT 5;
-```
-
-Гибридный поиск с обязательным полнотекстовым условием (сначала фильтрация по ключевым словам, затем ранжирование по векторам — эффективно на больших датасетах):
-
-```sql
-WITH user_query AS (
-    SELECT embedding AS query_vec FROM articles WHERE id = 1
-)
-SELECT id, title, body,
-       1 - (embedding <=> query_vec) AS relevance
-FROM articles, user_query
-WHERE to_tsvector('russian', body) @@ to_tsquery('russian', 'индекс')
-ORDER BY relevance
-LIMIT 5;
-```
-
-### RAG-система на PostgreSQL
-
-Базовый RAG-запрос — получение контекста из таблицы FAQ:
-
-```sql
-WITH user_query AS (
-    SELECT embedding AS query_vec FROM faq WHERE id = 2
-),
-relevant_docs AS (
-    SELECT question, answer, category,
-           1 - (embedding <=> query_vec) AS relevance
-    FROM faq, user_query
-    WHERE 1 - (embedding <=> query_vec) > 0.5
-    ORDER BY relevance DESC
-    LIMIT 3
-)
-SELECT string_agg(
-    'Вопрос: ' || question || E'\nОтвет: ' || answer || E'\n---\n',
-    ''
-) AS context
-FROM relevant_docs;
-```
-
-RAG с фильтрацией по метаданным (добавить условие `WHERE category = '...'`):
-
-```sql
-WITH user_query AS (
-    SELECT embedding AS query_vec FROM faq WHERE id = 2
-)
-SELECT question, answer, category,
-       1 - (embedding <=> query_vec) AS relevance
-FROM faq, user_query
-WHERE category = 'indexing'
-  AND 1 - (embedding <=> query_vec) > 0.5
-ORDER BY relevance DESC;
-```
+*   **Евклидово расстояние (L2) (`<->`):** Расстояние между точками концов векторов. Аналогия: физическое расстояние между объектами.
+*   **Косинусное сходство (`<=>`):** Измеряет угол между векторами. Показывает семантическую близость независимо от размера текста. Значения от 0 до 1.
+*   **Внутреннее произведение (`<#>`):** Проекция одного вектора на другой. Используется, если векторы нормализованы.
+*   **Расстояние Хэмминга (`<~>`):** Количество несовпадающих бит (только для типа `bit`).
 
 ### Векторные индексы
 
-Два основных типа индексов для векторного поиска:
+1.  **HNSW (Hierarchical Navigable Small World):**
+    *   Создает многослойный граф для быстрого поиска.
+    *   **Плюсы:** Высокая точность, очень быстрый поиск, поддерживает `INSERT/UPDATE`.
+    *   **Минусы:** Долгое построение, требует много оперативной памяти.
+2.  **IVFFlat (Inverted File):**
+    *   Разделяет векторы на кластеры (списки).
+    *   **Плюсы:** Быстрое построение, минимальное потребление памяти.
+    *   **Минусы:** Требует пересоздания при значительном изменении объема данных, ниже точность.
 
-#### IVFFlat (Inverted File with Flat Quantization)
+## Практические сценарии
 
-Быстрый, экономичный по памяти, менее точный. Подходит для больших наборов данных.
+### Установка и развертывание
 
-```sql
--- Создание индекса IVFFlat
-CREATE INDEX idx_articles_ivfflat ON articles
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
-
--- Параметр lists:
--- до 1 млн строк: sqrt(количество строк)
--- более 1 млн строк: количество строк / 1000
+**Вариант 1: Из пакетов (Debian/Ubuntu)**
+```bash
+apt-get install postgresql-16-pgvector
 ```
 
-Управление качеством поиска через `probes` (сколько кластеров просматривать):
-
-```sql
--- По умолчанию: 1 кластер
-SET ivfflat.probes = 10;  -- Больше кластеров = точнее, но медленнее
+**Вариант 2: Сборка из исходников (максимальная производительность)**
+```bash
+git clone --branch v0.7.0 https://github.com/pgvector/pgvector.git
+cd pgvector
+make
+make install # требуется sudo
 ```
 
-#### HNSW (Hierarchical Navigable Small World)
-
-Быстрее при запросах, точнее, но требует больше памяти.
-
+**Активация в базе данных:**
 ```sql
--- Создание индекса HNSW
-CREATE INDEX idx_articles_hnsw ON articles
-USING hnsw (embedding vector_cosine_ops)
+CREATE EXTENSION vector;
+```
+
+### Базовые операции и поиск
+
+Создание таблицы:
+```sql
+CREATE TABLE items (
+    id bigserial PRIMARY KEY,
+    content text,
+    embedding vector(1536) -- для OpenAI small
+);
+```
+
+Поиск N наиболее похожих по косинусному сходству:
+```sql
+SELECT title, 1 - (embedding <=> query_vec) AS similarity
+FROM items, (SELECT embedding AS query_vec FROM items WHERE id = 1) q
+ORDER BY embedding <=> query_vec
+LIMIT 5;
+```
+
+Фильтрация по порогу сходства:
+```sql
+SELECT * FROM items WHERE 1 - (embedding <=> '[0.1, 0.2, ...]') > 0.8;
+```
+
+### Гибридный поиск: Вектор + Полнотекст
+
+**Метод 1: Взвешенное среднее (Alpha)**
+```sql
+SELECT title,
+       (0.7 * (1 - (embedding <=> query_vec))) +
+       (0.3 * ts_rank(to_tsvector('russian', content), to_tsquery('поиск'))) AS score
+FROM items, (SELECT embedding AS query_vec FROM items WHERE id = 1) q
+WHERE to_tsvector('russian', content) @@ to_tsquery('поиск')
+ORDER BY score DESC LIMIT 10;
+```
+
+**Метод 2: Reciprocal Rank Fusion (RRF)**
+*Более надежный метод, не требующий настройки весов.*
+```sql
+WITH semantic AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> '[0.1, ...]') as rank
+    FROM items LIMIT 100
+),
+keyword AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector(content), query) DESC) as rank
+    FROM items, to_tsquery('запрос') query
+    WHERE to_tsvector(content) @@ query LIMIT 100
+)
+SELECT id, (1.0 / (60 + COALESCE(s.rank, 101))) + (1.0 / (60 + COALESCE(k.rank, 101))) AS rrf_score
+FROM semantic s FULL JOIN keyword k USING (id)
+ORDER BY rrf_score DESC LIMIT 10;
+```
+
+### Настройка индексов
+
+**Создание HNSW (рекомендуется):**
+```sql
+CREATE INDEX ON items USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
-
--- m — число связей каждого узла (по умолчанию 16)
--- ef_construction — размер очереди при построении (по умолчанию 64)
+-- m: связей на узел (больше = точнее, но больше памяти)
+-- ef_construction: размер очереди при построении (больше = точнее, но медленнее индекс)
 ```
 
-Большие значения параметров = точнее, но дольше строить индекс.
-
-**Важно:** два индекса разных типов на одном столбце могут конкурировать. Рекомендуется подбирать один тип и тестировать на конкретных данных.
-
-#### Индекс для полнотекстового поиска
-
+**Создание IVFFlat:**
 ```sql
-CREATE INDEX idx_articles_fts ON articles
-USING gin (to_tsvector('russian', body));
+CREATE INDEX ON items USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+-- lists: число кластеров (рекомендуется sqrt(rows) или rows/1000)
+
+-- Настройка точности поиска:
+SET ivfflat.probes = 10; -- Проверять 10 ближайших кластеров (по умолчанию 1)
 ```
 
-#### Проверка использования индексов
+### Мониторинг и обслуживание
 
+**Проверка использования индекса:**
 ```sql
--- Просмотр индексов таблицы
-SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'articles';
-
--- Размер индексов
-SELECT indexrelname, pg_size_pretty(pg_relation_size(indexrelid))
-FROM pg_stat_user_indexes
-WHERE relname = 'articles';
-
--- План выполнения (для тестирования: SET enable_seqscan = off;)
 EXPLAIN ANALYZE
-SELECT * FROM articles ORDER BY embedding <=> (SELECT embedding FROM articles WHERE id = 1) LIMIT 5;
+SELECT * FROM items ORDER BY embedding <=> '[0.1, ...]' LIMIT 5;
 ```
 
-### Вспомогательная функция для генерации случайных векторов
-
+**Размер индекса:**
 ```sql
-CREATE OR REPLACE FUNCTION random_vector(dim int)
-RETURNS vector AS $$
-SELECT array_to_string(
-    ARRAY(SELECT random() FROM generate_series(1, dim)),
-    ','
-)::vector;
-$$ LANGUAGE SQL;
+SELECT indexrelname, pg_size_pretty(pg_relation_size(indexrelid))
+FROM pg_stat_user_indexes WHERE relname = 'items';
 ```
-
----
 
 ## Дополнительная информация
 
 ### См. также
-
-- **[PostgreSQL: Обзор](./overview.md)** — основной обзор PostgreSQL, OLTP, архитектура
-- **[ClickHouse](../clickhouse.md)** — OLAP-система для больших объёмов данных
-- **[Репозиторий pgvector на GitHub](https://github.com/pgvector/pgvector)** — официальный репозиторий расширения
+*   **[Полнотекстовый поиск в PostgreSQL](./Concepts/full_text_search.md)**
+*   **[Обзор PostgreSQL](./overview.md)**
+*   **[Официальный репозиторий pgvector](https://github.com/pgvector/pgvector)**

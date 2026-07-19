@@ -1,144 +1,143 @@
-# Ansible: Установка и настройка PostgreSQL
+# Развертывание и настройка PostgreSQL через Ansible
 
 ## Определения
 
-**Автоматизация PostgreSQL с помощью Ansible** — использование плейбуков для управления жизненным циклом PostgreSQL: установка, настройка репликации, миграции схемы, обеспечение отказоустойчивости.
+**Автоматизация PostgreSQL с помощью Ansible** — процесс управления жизненным циклом базы данных (установка, конфигурация, репликация, миграции) с использованием декларативных плейбуков и специализированных модулей.
 
-**SQL (Structured Query Language)** — язык структурированных запросов, используемый для взаимодействия с базой данных.
+**community.postgresql** — основная коллекция Ansible, содержащая модули для управления всеми аспектами PostgreSQL (базы, пользователи, расширения, слоты репликации).
+
+**Идемпотентность** — свойство плейбука, гарантирующее, что повторные запуски не приведут к изменениям, если система уже находится в целевом состоянии. Для PostgreSQL это критично при создании баз данных и управлении привилегиями.
 
 ## Базовые концепции
 
-### Подходы к управлению PostgreSQL
+### Подходы к управлению
 
-В экосистеме Ansible выделяют два основных подхода:
+В экосистеме Ansible выделяют два основных метода:
 
-1. **Готовые роли из Ansible Galaxy** — использование проверенных сообществом решений для стандартизированных задач (например, `geerlingguy.postgresql`). Это значительно экономит время при развертывании типовых конфигураций.
-2. **Модули коллекции `community.postgresql`** — применение специализированных модулей (`postgresql_db`, `postgresql_user`, `postgresql_query`) для гранулярного контроля. В сочетании с конструкциями `block`/`rescue` это обеспечивает атомарность сложных операций.
+1.  **Готовые роли (Ansible Galaxy)**: Использование проверенных сообществом ролей (например, `geerlingguy.postgresql`) для быстрой установки и базовой настройки ОС и сервера.
+2.  **Модули коллекции `community.postgresql`**: Прямое использование модулей (`postgresql_db`, `postgresql_user`, `postgresql_query`) для тонкой настройки логики БД, особенно в рамках CI/CD пайплайнов.
 
-### Зависимости управляющего узла
+### Зависимости и инструментарий
 
-Для работы с PostgreSQL необходимо подготовить окружение на контрольной машине:
+Для работы модулей требуется Python-библиотека для взаимодействия с PostgreSQL (`psycopg2`).
+
+| Компонент | Где требуется | Назначение |
+|---|---|---|
+| `community.postgresql` | Управляющий узел | Коллекция модулей для управления PostgreSQL. |
+| `psycopg2-binary` | Управляющий узел | Python-драйвер для локальных задач (например, `delegate_to: localhost`). |
+| `python3-psycopg2` | Целевой хост | Системный пакет драйвера для выполнения модулей на сервере. |
+
+Установка зависимостей:
 
 ```bash
-# Роль для установки PostgreSQL
-ansible-galaxy install geerlingguy.postgresql
-
-# Коллекция модулей community.postgresql
-ansible-galaxy collection install community.postgresql
-
-# Python-библиотека для взаимодействия с PostgreSQL (psycopg2)
-pip install psycopg2-binary
+ansible-galaxy collection install community.postgresql # → коллекция установлена
+pip install psycopg2-binary # → драйвер на контроллере установлен
 ```
+
+На целевых хостах рекомендуется устанавливать драйвер через пакетный менеджер ОС (например, `apt install python3-psycopg2`) перед вызовом модулей PostgreSQL.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка Master-Replica с использованием роли
+### Сценарий 1: Настройка репликации Master-Replica
 
-Развертывание связки из основного узла (master) и реплики (replica) с использованием потоковой репликации.
+Развертывание связки из основного узла (Master) и реплики (Replica) с использованием потоковой репликации.
 
-**Теоретическая база:** Концептуальные основы и механизмы репликации подробно описаны в разделе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
+**Теоретическая база:** Концептуальные основы и механизмы описаны в разделе **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)**.
 
 #### Инвентарь `hosts.ini`
 
 ```ini
 [postgres_master]
-server_postgres_master ansible_host=192.168.51.2
+pg-master ansible_host=192.168.51.2
 
-[postgres_slave]
-server_postgres_slave ansible_host=192.168.51.3
+[postgres_replica]
+pg-replica-01 ansible_host=192.168.51.3
 
 [postgres:children]
 postgres_master
-postgres_slave
+postgres_replica
 ```
 
-#### Плейбук `postgres-playbook.yml`
+#### Плейбук `setup_replication.yml`
 
 ```yaml
 ---
-- name: Setup PostgreSQL Master
+- name: Настройка PostgreSQL Master
   hosts: postgres_master
   become: true
   vars:
     postgresql_replication_role: 'master'
-    postgresql_replication_slots:
-      - 'replica1_slot'
+    postgresql_replication_slots: ['replica_slot_01']
     postgresql_users:
       - name: repluser
-        pass: 'your_strong_password' # Обязательно используйте Ansible Vault!
+        password: "{{ vault_postgres_repl_password }}" # Из Ansible Vault
         replication: true
   roles:
     - geerlingguy.postgresql
 
-- name: Setup PostgreSQL Replica
-  hosts: postgres_slave
+- name: Настройка PostgreSQL Replica
+  hosts: postgres_replica
   become: true
   vars:
     postgresql_replication_role: 'replica'
-    postgresql_master_host: '192.168.51.2'
+    postgresql_master_host: "{{ groups['postgres_master'][0] }}"
     postgresql_replication_user:
       name: repluser
-      pass: 'your_strong_password' # Обязательно используйте Ansible Vault!
+      password: "{{ vault_postgres_repl_password }}"
   roles:
     - geerlingguy.postgresql
 ```
 
 ### Сценарий 2: Атомарная миграция схемы с откатом
 
-Выполнение миграции базы данных (БД) с использованием SQL-скриптов и механизмов обработки ошибок в Ansible.
+Выполнение изменений структуры базы данных (БД) с использованием SQL-скриптов и механизмов обработки ошибок (`block`/`rescue`).
 
-**Теоретическая база:** Стратегии и лучшие практики изменения структуры базы данных описаны в разделе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
+**Теоретическая база:** Стратегии управления структурой описаны в разделе **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)**.
 
 #### Плейбук миграции
 
 ```yaml
 ---
-- name: Manage PostgreSQL Database and Migrations
+- name: Управление базой данных и миграциями
   hosts: postgres_master
   become: true
   vars:
-    db_name: "namesdb"
-    db_user: "your_user"
-
-  pre_tasks:
-    - name: Ensure database exists
-      community.postgresql.postgresql_db:
-        name: "{{ db_name }}"
-        state: present
-      become_user: postgres
+    db_name: "prod_app_db"
+    db_user: "app_user"
 
   tasks:
-    - name: Run migrations within a block for error handling
+    - name: Выполнение миграции в блоке для обработки ошибок
       block:
-        - name: Create employees table
+        - name: Создание таблицы сотрудников
           community.postgresql.postgresql_query:
             db: "{{ db_name }}"
             query: |
-              CREATE TABLE employees (
-                  id serial NOT NULL PRIMARY KEY,
-                  name text,
-                  license_plate text
+              CREATE TABLE IF NOT EXISTS employees (
+                  id SERIAL PRIMARY KEY,
+                  full_name TEXT NOT NULL,
+                  position TEXT
               );
               ALTER TABLE employees OWNER TO "{{ db_user }}";
-              CREATE UNIQUE INDEX employees_id_uindex ON employees (id);
           become_user: postgres
 
-        - name: Insert initial data
+        - name: Добавление начальных данных
           community.postgresql.postgresql_query:
             db: "{{ db_name }}"
             query: |
-              INSERT INTO public.employees (name, license_plate) VALUES ('John B.', 'DB124GR');
-              INSERT INTO public.employees (name, license_plate) VALUES ('Jill O.', 'VG645PH');
+              INSERT INTO employees (full_name, position) VALUES ('Иван Иванов', 'DevOps');
+              INSERT INTO employees (full_name, position) VALUES ('Петр Петров', 'SRE');
           become_user: postgres
 
       rescue:
-        - name: Rollback changes on failure
+        - name: Откат изменений при сбое
           community.postgresql.postgresql_query:
             db: "{{ db_name }}"
             query: "DROP TABLE IF EXISTS employees;"
           become_user: postgres
+          # Примечание: PostgreSQL поддерживает транзакционный DDL. 
+          # Все команды внутри одного postgresql_query выполняются в транзакции.
 ```
 
 ---
@@ -147,18 +146,16 @@ postgres_slave
 
 ### Безопасность
 
-Для защиты конфиденциальной информации (пароли, ключи доступа) всегда применяйте механизмы шифрования:
+Для защиты конфиденциальных данных (пароли, TLS-ключи) всегда используйте шифрование:
+- **[Основы Ansible Vault](../Vault/basics.md)** — руководство по работе с секретами.
 
-- **[Основы Ansible Vault](../Vault/basics.md)** — руководство по работе с зашифрованными переменными.
+### Мониторинг
 
-### Мониторинг и наблюдаемость
+Для настройки сбора метрик PostgreSQL в Prometheus используйте специализированный экспортер:
+- **[Мониторинг PostgreSQL](./postgresql_prometheus_monitoring.md)**.
 
-Для настройки комплексного мониторинга базы данных с использованием Prometheus и специализированных экспортеров обратитесь к руководству:
+## Смотрите также
 
-- **[Мониторинг PostgreSQL с Prometheus](./postgresql_prometheus_monitoring.md)**.
-
-### Смежные документы
-
-- **[Репликация в PostgreSQL](../../Databases/PostgreSQL/Concepts/replication.md)** — теоретические основы репликации.
-- **[Миграция схем баз данных](../../Databases/PostgreSQL/Concepts/schema_migrations.md)** — стратегии управления изменениями в БД.
-- **[Роли Ansible Galaxy](../Roles/galaxy.md)** — управление внешними зависимостями проекта.
+- [Репликация в PostgreSQL: Теория](../../Databases/PostgreSQL/Concepts/replication.md)
+- [Установка и настройка MySQL через Ansible](mysql_setup.md)
+- [Работа с коллекциями в Ansible Galaxy](../Roles/galaxy.md)

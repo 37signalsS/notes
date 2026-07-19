@@ -2,9 +2,11 @@
 
 ## Определения
 
-**Автоматизация установки MySQL/MariaDB** — воспроизводимое развертывание и настройка сервера баз данных на различных операционных системах (ОС — Операционная Система) (Debian/Ubuntu, CentOS/RHEL) без ручного вмешательства.
+**Автоматизация установки MySQL/MariaDB** — воспроизводимое развертывание и настройка сервера баз данных на различных операционных системах (ОС — Операционная Система) (Debian/Ubuntu, CentOS/RHEL/Rocky) без ручного вмешательства.
 
-**Идемпотентность** — возможность многократного безопасного запуска плейбука. Основная сложность при автоматизации MySQL — смена метода аутентификации `root` с `auth_socket` на парольный.
+**Идемпотентность** — возможность многократного безопасного запуска плейбука без изменения состояния системы, если оно уже соответствует целевому. Основная сложность при автоматизации MySQL — смена метода аутентификации `root` с `auth_socket` на парольный.
+
+**community.mysql** — основная коллекция Ansible для управления MySQL/MariaDB, включающая модули для работы с пользователями, базами данных и репликацией.
 
 ## Базовые концепции
 
@@ -15,7 +17,7 @@
 | `community.mysql` | Управляющий узел | Коллекция модулей для управления MySQL |
 | `PyMySQL` | Управляющий узел | Python-библиотека для работы коллекции |
 | `python3-pymysql` | Целевой хост (Debian/Ubuntu) | Драйвер на управляемой машине |
-| `python3-PyMySQL` | Целевой хост (CentOS/RHEL) | Драйвер на управляемой машине |
+| `python3-PyMySQL` | Целевой хост (RHEL/CentOS/Rocky) | Драйвер на управляемой машине |
 
 Установка на управляющем узле:
 
@@ -26,14 +28,17 @@ pip install PyMySQL  # → библиотека установлена
 
 ### Аутентификация и идемпотентность
 
-| ОС | Метод по умолчанию | После настройки |
+| ОС | Метод по умолчанию | Современный стандарт |
 |---|---|---|
-| Debian/Ubuntu | `auth_socket` (без пароля, через сокет) | `mysql_native_password` (или `caching_sha2_password`) с паролем |
-| CentOS/RHEL | Без пароля (локальное подключение) | `mysql_native_password` (или `caching_sha2_password`) с паролем |
+| Debian/Ubuntu | `auth_socket` (через сокет) | `caching_sha2_password` (MySQL 8.0+) |
+| RHEL/Rocky | Без пароля (через сокет) | `mysql_native_password` (MariaDB) |
 
-> **Внимание к версиям (Freshness):** Начиная с MySQL 8.4 плагин `mysql_native_password` удален из конфигурации по умолчанию, а в версии 9.0 удален полностью. В современных версиях следует использовать плагин `caching_sha2_password` (именно он подразумевается по умолчанию, если параметр `plugin` не указан).
+**Важные изменения (Freshness):**
+- **MySQL 8.4+:** плагин `mysql_native_password` помечен как устаревший (deprecated).
+- **MySQL 9.0+:** плагин `mysql_native_password` полностью удален.
+- **Рекомендация:** используйте `caching_sha2_password` для MySQL 8.0+ и `mysql_native_password` для MariaDB.
 
-**Ключевой принцип:** после установки пароля все последующие задачи должны использовать `login_user` и `login_password` для аутентификации.
+**Ключевой принцип:** для обеспечения идемпотентности рекомендуется создавать файл `.my.cnf` для пользователя `root` на целевом хосте. Это позволяет модулям подключаться без явной передачи пароля в каждой задаче.
 
 ### Кроссплатформенные переменные
 
@@ -41,15 +46,14 @@ pip install PyMySQL  # → библиотека установлена
 # Имя службы
 service_name: "{{ 'mysql' if ansible_facts['os_family'] == 'Debian' else 'mariadb' }}"
 
-# Пакеты для Debian
-debian_packages:
-  - mysql-server
-  - python3-pymysql
-
-# Пакеты для RedHat
-redhat_packages:
-  - mariadb-server
-  - python3-PyMySQL
+# Пакеты и плагины в зависимости от ОС
+mysql_config:
+  Debian:
+    packages: ["mysql-server", "python3-pymysql"]
+    plugin: "caching_sha2_password"
+  RedHat:
+    packages: ["mariadb-server", "python3-PyMySQL"]
+    plugin: "mysql_native_password"
 ```
 
 ---
@@ -65,69 +69,58 @@ redhat_packages:
   become: true
   vars:
     mysql_root_password: "YourSecretPassword"  # Хранить в Ansible Vault!
+    config: "{{ mysql_config[ansible_facts['os_family']] }}"
 
   tasks:
-    # --- Debian/Ubuntu ---
-    - name: Debian | Install MySQL and dependencies
-      ansible.builtin.apt:
-        name:
-          - mysql-server
-          - python3-pymysql
+    - name: Install database server and dependencies
+      ansible.builtin.package:
+        name: "{{ config.packages }}"
         state: present
-        update_cache: yes
-      when: ansible_facts['os_family'] == "Debian"
+      register: db_install
 
-    # --- RedHat/CentOS ---
-    - name: RedHat | Install MariaDB and dependencies
-      ansible.builtin.yum:
-        name:
-          - mariadb-server
-          - python3-PyMySQL
-        state: present
-      when: ansible_facts['os_family'] == "RedHat"
-
-    # --- Общие задачи ---
-    - name: Ensure MySQL/MariaDB service is started and enabled
+    - name: Ensure service is started and enabled
       ansible.builtin.service:
-        name: "{{ 'mysql' if ansible_facts['os_family'] == 'Debian' else 'mariadb' }}"
+        name: "{{ service_name }}"
         state: started
         enabled: yes
 
-    - name: Set root password and secure installation
+    - name: Configure root password (initial setup)
       block:
-        - name: Set root password (Debian)
+        - name: Set root password
           community.mysql.mysql_user:
-            login_unix_socket: /var/run/mysqld/mysqld.sock
+            login_unix_socket: "{{ '/var/run/mysqld/mysqld.sock' if ansible_facts['os_family'] == 'Debian' else omit }}"
             name: root
             host: localhost
             password: "{{ mysql_root_password }}"
-            plugin: mysql_native_password
+            plugin: "{{ config.plugin }}"
             state: present
-          when: ansible_facts['os_family'] == "Debian"
+          register: root_pwd_setup
+      rescue:
+        - name: Password already set or socket unavailable
+          ansible.builtin.debug:
+            msg: "Initial root setup skipped, possibly already configured."
 
-        - name: Set root password (RedHat)
-          community.mysql.mysql_user:
-            name: root
-            host: localhost
-            password: "{{ mysql_root_password }}"
-            plugin: mysql_native_password
-            state: present
-          when: ansible_facts['os_family'] == "RedHat"
+    - name: Create .my.cnf for root idempotency
+      ansible.builtin.copy:
+        content: |
+          [client]
+          user=root
+          password={{ mysql_root_password }}
+        dest: /root/.my.cnf
+        owner: root
+        group: root
+        mode: '0400'
 
-        - name: Remove anonymous MySQL users
-          community.mysql.mysql_user:
-            login_user: root
-            login_password: "{{ mysql_root_password }}"
-            name: ''
-            host_all: yes
-            state: absent
+    - name: Secure installation | Remove anonymous users
+      community.mysql.mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
 
-        - name: Remove test database
-          community.mysql.mysql_db:
-            login_user: root
-            login_password: "{{ mysql_root_password }}"
-            name: test
-            state: absent
+    - name: Secure installation | Remove test database
+      community.mysql.mysql_db:
+        name: test
+        state: absent
 ```
 
 ---
@@ -137,28 +130,27 @@ redhat_packages:
 ### Типичные ошибки и решения
 
 **Ошибка: `couldn't resolve module/action 'community.mysql.mysql_user'`**
-
-- **Причина:** Коллекция `community.mysql` не установлена на управляющем узле
-- **Решение:** `ansible-galaxy collection install community.mysql`
+- **Причина:** Коллекция `community.mysql` не установлена на управляющем узле.
+- **Решение:** `ansible-galaxy collection install community.mysql` # → коллекция установлена
 
 **Ошибка: `Failed to import the required Python library (PyMySQL)`**
-
-- **Причина:** Отсутствует Python-драйвер на целевом хосте
-- **Решение:** Добавить установку `python3-pymysql` (Debian) или `python3-PyMySQL` (RedHat) в плейбук
+- **Причина:** Отсутствует Python-драйвер на целевом хосте.
+- **Решение:** Убедитесь, что пакет `python3-pymysql` (Debian) или `python3-PyMySQL` (RedHat) установлен до вызова модулей MySQL.
 
 **Ошибка: `unable to connect to database` при повторном запуске**
-
-- **Причина:** Нарушение идемпотентности — плейбук изменил метод аутентификации, но следующие задачи используют старый способ
-- **Решение:** Задачи после смены пароля должны использовать `login_user` и `login_password`
+- **Причина:** Плейбук изменил метод аутентификации, но пытается подключиться старым способом.
+- **Решение:** Используйте метод с созданием файла `/root/.my.cnf`, как показано в сценарии выше, для обеспечения полной идемпотентности.
 
 ### Безопасность
 
-Пароль `root` необходимо хранить в [Ansible Vault (защищенное хранилище)](../Vault/basics.md):
+Пароль `root` и другие чувствительные данные необходимо хранить в [Ansible Vault (защищенное хранилище)](../Vault/basics.md):
 
 ```bash
-ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password'  # → зашифрованная строка сгенерирована
+ansible-vault encrypt_string 'YourSecretPassword' --name 'mysql_root_password' # → зашифрованная строка сгенерирована
 ```
 
-### Кроссплатформенные роли
+## Смотрите также
 
-Примеры использования MySQL в составе LAMP/LEMP-стеков — в [CrossPlatform/concepts.md](../CrossPlatform/concepts.md) и [tutorial_lemp_stack.md](tutorial_lemp_stack.md).
+- [Ansible Vault: Базовая настройка](../Vault/basics.md)
+- [Развертывание LEMP-стека через Ansible](tutorial_lemp_stack.md)
+- [MySQL: Установка и базовая настройка (SSoT)](../../Databases/MySQL/installation.md)

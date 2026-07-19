@@ -12,107 +12,101 @@
 
 MySQL функционирует как фоновый процесс-сервер (`mysqld`), который принимает, обрабатывает и отвечает на запросы. Пользователи взаимодействуют с данными через клиентские приложения или утилиты, отправляя команды по протоколу TCP/IP или через локальные сокеты.
 
-### Безопасность после установки
+### Особенности версии 8.4 LTS
 
-Сразу после инсталляции MySQL имеет небезопасные настройки по умолчанию:
+На июль 2026 года основной стабильной версией является **MySQL 8.4 LTS**. Ключевые изменения:
+- **Аутентификация:** По умолчанию используется плагин `caching_sha2_password`. Старый плагин `mysql_native_password` отключен по умолчанию и требует ручной активации в `my.cnf` для легаси-приложений.
+- **Безопасность:** Рекомендуется использование `mysql_secure_installation` сразу после развертывания.
 
-- Пустой пароль для пользователя `root`.
-- Наличие анонимных пользователей.
-- Наличие тестовой базы данных (`test`), доступной любому пользователю.
-
-Для устранения этих уязвимостей используется встроенная утилита `mysql_secure_installation`. Подробный процесс описан в руководстве **[Безопасная установка СУБД](../installation_security.md)**.
+Подробный процесс укрепления защиты описан в руководстве **[Безопасная установка СУБД](../installation_security.md)**.
 
 ## Практические сценарии
 
-### 1. Установка на Debian/Ubuntu
+### 1. Установка на Debian/Ubuntu (24.04/26.04)
+
+В современных версиях Ubuntu пакеты MySQL 8.4 LTS доступны в официальных репозиториях.
 
 ```bash
 # Обновление индексов пакетов
 sudo apt update
-# -> Reading package lists... Done
 
 # Установка сервера
 sudo apt install -y mysql-server
-# -> ... Setting up mysql-server ...
 
-# Проверка статуса службы
+# Запуск и добавление в автозагрузку
+sudo systemctl enable --now mysql
+
+# Проверка статуса
 sudo systemctl status mysql
 # -> ● mysql.service - MySQL Community Server
 # ->    Active: active (running) ...
 ```
 
-> **Примечание:** В дистрибутивах семейства Red Hat (CentOS, Fedora, RHEL) служба может называться `mysqld`.
+### 2. Установка на Rocky Linux / RHEL / CentOS
 
-### 2. Начальная настройка безопасности
-
-Запустите интерактивный скрипт для защиты сервера:
+Для получения версии 8.4 LTS на RHEL-совместимых системах рекомендуется использовать официальный репозиторий MySQL.
 
 ```bash
-sudo mysql_secure_installation
-# -> Connecting to MySQL using a blank password...
-# -> ...
-# -> All done!
+# Установка конфигурации репозитория MySQL 8.4 LTS
+sudo dnf install -y https://dev.mysql.com/get/mysql84-community-release-el9-1.noarch.rpm
+
+# Отключение встроенного модуля mysql (если есть)
+sudo dnf -y module disable mysql
+
+# Установка сервера
+sudo dnf install -y mysql-community-server
+
+# Запуск и добавление в автозагрузку
+sudo systemctl enable --now mysqld
 ```
 
-Подробное описание каждого шага — в разделе **[Безопасная установка СУБД](../installation_security.md)**.
+### 3. Начальная настройка безопасности
 
-### 3. Базовые операции в клиенте mysql
+**Для Rocky Linux / RHEL:** Сначала найдите временный пароль root, сгенерированный при установке:
+```bash
+sudo grep 'temporary password' /var/log/mysqld.log
+```
+
+**Для всех систем:** Запустите скрипт защиты:
+```bash
+sudo mysql_secure_installation
+```
+Следуйте инструкциям: установите сложный пароль, удалите анонимных пользователей и тестовую БД.
+
+### 4. Базовые операции в клиенте mysql
 
 **Подключение к серверу:**
 
 ```bash
-# Локальное подключение под root (обычно через sudo на Ubuntu)
-sudo mysql
-# -> Welcome to the MySQL monitor.  Commands end with ; or \g.
+# Локальное подключение под root (через sudo или с паролем)
+sudo mysql -u root -p
 
-# Подключение под определенным пользователем с запросом пароля
+# Подключение под обычным пользователем
 mysql -u my_user -p
-# -> Enter password:
 ```
 
-**Работа с базами данных (БД) и таблицами:**
+**Работа с данными:**
 
 ```sql
--- Просмотр списка всех баз данных
+-- Просмотр списка баз данных
 SHOW DATABASES;
-/*
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mysql              |
-| performance_schema |
-| sys                |
-+--------------------+
-*/
 
--- Выбор конкретной базы данных для работы
-USE mysql;
--- -> Database changed
+-- Создание новой базы данных
+CREATE DATABASE project_db;
 
--- Просмотр таблиц в выбранной БД
-SHOW TABLES;
-/*
-+---------------------------+
-| Tables_in_mysql           |
-+---------------------------+
-| user                      |
-| db                        |
-...
-*/
-```
-
-**Выход из консольного клиента:**
-
-```sql
-EXIT;
--- или
-QUIT;
--- -> Bye
+-- Создание пользователя (MySQL 8.0+)
+CREATE USER 'dev_user'@'localhost' IDENTIFIED BY 'StrongPassword123!';
+GRANT ALL PRIVILEGES ON project_db.* TO 'dev_user'@'localhost';
+FLUSH PRIVILEGES;
 ```
 
 ## Дополнительная информация
 
 - **[MySQL в Docker](./docker.md)** — развертывание в изолированных контейнерах.
-- **[Настройка MariaDB](../MariaDB/installation_and_setup.md)** — установка альтернативного форка MySQL.
-- **[Автоматизация MySQL через Ansible](../../Ansible/examples/mysql_setup.md)** — примеры Playbook для развертывания.
+- **[Настройка MariaDB](../MariaDB/installation_and_setup.md)** — установка альтернативного форка.
+- **[Автоматизация через Ansible](../../Ansible/examples/mysql_setup.md)** — готовые роли для установки.
+
+### См. также
+- **[Обзор MySQL и форков](./overview.md)**
+- **[Конфигурация my.cnf](./configuration.md)**
+- **[Мониторинг MySQL](./monitoring.md)**

@@ -1,127 +1,120 @@
 # Интеграция ClickHouse и S3
 
-## Обзор
+## Определения
 
-Интеграция с **S3 (Simple Storage Service)** является одной из ключевых возможностей ClickHouse для построения современных архитектур данных (Data Lakehouse). Она позволяет использовать объектные хранилища (AWS S3, Яндекс Object Storage, MinIO, Ceph) как источник данных, так и как масштабируемое хранилище для "холодных" данных.
+**Интеграция с S3 (Simple Storage Service)** — совокупность механизмов ClickHouse для взаимодействия с объектными хранилищами (AWS S3, Яндекс Object Storage, MinIO, Google Cloud Storage). Позволяет использовать S3 как внешний источник данных, движок для таблиц или уровень хранения для "холодных" данных в рамках гибридной архитектуры.
 
-## Способы интеграции
+**Объектное хранилище** — в контексте ClickHouse выступает как бесконечно масштабируемое и дешевое хранилище, заменяющее или дополняющее локальные диски.
 
-### Табличная функция `s3()`
+## Основные концепции
 
-Позволяет выполнять запросы к данным в S3 напрямую, без создания постоянной таблицы в ClickHouse. Удобно для разовых выгрузок или проверки данных.
+### Способы взаимодействия
 
-**Синтаксис:**
+1.  **Табличная функция `s3()`:** позволяет выполнять запросы к файлам в S3 без создания таблиц. Поддерживает шаблоны в путях (wildcards) и автоматический вывод схемы (для форматов Parquet, Native).
+2.  **Движок таблицы `S3`:** постоянная таблица, данные которой физически расположены в S3. Подходит для обмена данными и хранения небольших архивов.
+3.  **Движок `S3Queue` (v23.11+):** аналог `Kafka` для объектного хранилища. Автоматически отслеживает появление новых файлов в бакете и загружает их в ClickHouse.
+4.  **Многоуровневое хранение (Tiered Storage):** использование S3 как "холодного" диска для `MergeTree` таблиц. Данные остаются доступными для SQL-запросов, но физически перемещаются в S3.
+
+### Репликация и отказоустойчивость
+
+**Zero-copy replication:** механизм, позволяющий репликам `ReplicatedMergeTree` использовать одни и те же данные в S3, не дублируя их физически. В объектном хранилище хранится одна копия данных, а реплики обмениваются только метаданными.
+- Координация осуществляется через **ClickHouse Keeper**.
+
+### Производительность и кэширование
+
+Для компенсации задержек сети используется **File Cache** (дисковый кэш). ClickHouse сохраняет часто используемые блоки данных из S3 на локальном SSD, обеспечивая скорость чтения, сопоставимую с локальными таблицами.
+
+## Практические сценарии
+
+### Прямые запросы и импорт данных
+
+Использование функции `s3` для анализа внешних данных:
+
 ```sql
-SELECT * FROM s3(
-    'https://bucket-name.s3.amazonaws.com/data.csv',
-    'access_key',
-    'secret_key',
-    'CSV'
+-- Чтение всех Parquet-файлов из папки
+SELECT count(), avg(fare_amount)
+FROM s3(
+    'https://storage.yandexcloud.net/my-bucket/taxi_data/*.parquet',
+    'ACCESS_KEY',
+    'SECRET_KEY',
+    'Parquet'
 );
-```
 
-**Пример импорта данных:**
-```sql
+-- Импорт данных в локальную таблицу
 INSERT INTO local_table
-SELECT * FROM s3('https://storage.yandexcloud.net/my-bucket/taxi_data/*.parquet', 'Parquet');
+SELECT * FROM s3('https://storage.yandexcloud.net/my-bucket/data.csv.gz', 'CSVWithNames');
 ```
 
-### Движок таблицы `S3`
+### Настройка многоуровневого хранения
 
-Используется для создания постоянной таблицы, которая физически хранит данные в S3.
+Конфигурация в `config.d/storage.xml`:
 
-```sql
-CREATE TABLE s3_table (
-    id UInt64,
-    name String
-) ENGINE = S3(
-    'https://storage.yandexcloud.net/my-bucket/data.csv',
-    'access_key',
-    'secret_key',
-    'CSV'
-);
-```
-
-## Многоуровневое хранение (Tiered Storage)
-
-ClickHouse позволяет автоматически перемещать старые или редко используемые данные на S3, освобождая дорогое место на SSD/NVMe.
-
-### Настройка политики хранения (Storage Policy)
-
-Конфигурация задается в XML-файлах ClickHouse (`config.xml` или в `conf.d/`).
-
-**1. Определение дисков:**
 ```xml
-<storage_configuration>
-    <disks>
-        <default></default> <!-- Локальный диск -->
-        <s3_disk>
-            <type>s3</type>
-            <endpoint>https://storage.yandexcloud.net/my-bucket/clickhouse/</endpoint>
-            <access_key_id>your_key</access_key_id>
-            <secret_access_key>your_secret</secret_access_key>
-        </s3_disk>
-    </disks>
-</storage_configuration>
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <s3_cold>
+                <type>s3</type>
+                <endpoint>https://storage.yandexcloud.net/my-bucket/data/</endpoint>
+                <access_key_id>your_key</access_key_id>
+                <secret_access_key>your_secret</secret_access_key>
+                <!-- Настройка кэширования -->
+                <metadata_path>/var/lib/clickhouse/disks/s3_cold/</metadata_path>
+                <cache_enabled>true</cache_enabled>
+                <cache_path>/var/lib/clickhouse/disks/s3_cold/cache/</cache_path>
+            </s3_cold>
+        </disks>
+        <policies>
+            <tiered_policy>
+                <volumes>
+                    <hot><disk>default</disk></hot>
+                    <cold><disk>s3_cold</disk></cold>
+                </volumes>
+            </tiered_policy>
+        </policies>
+    </storage_configuration>
+</clickhouse>
 ```
 
-**2. Определение политик:**
-```xml
-<policies>
-    <tiered_policy>
-        <volumes>
-            <hot>
-                <disk>default</disk>
-            </hot>
-            <cold>
-                <disk>s3_disk</disk>
-            </cold>
-        </volumes>
-        <move_factor>0.1</move_factor> <!-- Перемещать на cold, когда на hot осталось <10% места -->
-    </tiered_policy>
-</policies>
-```
-
-**3. Применение политики к таблице:**
+Применение политики:
 ```sql
-CREATE TABLE events (...)
-ENGINE = MergeTree()
-ORDER BY id
+CREATE TABLE events (...) 
+ENGINE = MergeTree() 
+ORDER BY event_time
 SETTINGS storage_policy = 'tiered_policy';
 ```
 
-## Резервное копирование в S3
+### Резервное копирование в S3
 
-ClickHouse поддерживает нативную команду `BACKUP` для выгрузки данных в S3.
+Использование нативных команд `BACKUP` и `RESTORE`:
 
-**Пример создания бэкапа:**
 ```sql
-BACKUP TABLE my_table TO S3(
-    'https://storage.yandexcloud.net/backups/my_table_backup.zip',
-    'access_key',
-    'secret_key'
+-- Создание бэкапа базы данных
+BACKUP DATABASE my_db TO S3(
+    'https://storage.yandexcloud.net/backups/my_db_full.zip',
+    'ACCESS_KEY',
+    'SECRET_KEY'
 );
 ```
-
-**Пример восстановления:**
-```sql
-RESTORE TABLE my_table FROM S3(
-    'https://storage.yandexcloud.net/backups/my_table_backup.zip',
-    'access_key',
-    'secret_key'
-);
-```
-
-## Преимущества и ограничения
-
-| Характеристика | Описание |
-| :--- | :--- |
-| **Масштабируемость** | Объектные хранилища практически безграничны. |
-| **Стоимость** | S3 значительно дешевле локальных SSD. |
-| **Производительность** | Чтение из S3 медленнее, чем с локальных дисков. Рекомендуется использовать кэширование. |
-| **Кэширование** | ClickHouse может кэшировать данные из S3 на локальном диске (`S3Cache`). |
 
 ## Дополнительная информация
 
-- [Обзор ClickHouse](../clickhouse.md)
-- [Интеграция с Kafka](./clickhouse_kafka_integration.md)
+### Сравнение подходов
+
+| Метод | Плюсы | Минусы |
+| :--- | :--- | :--- |
+| **Функция s3()** | Не требует настройки, гибкость | Нет индексов, медленно для частых запросов |
+| **Tiered Storage** | Прозрачно для приложений, индексы работают | Сложность настройки конфигурации |
+| **S3Queue** | Автоматизация ETL | Требует контроля за состоянием очереди |
+
+### Особенности работы с форматами
+
+ClickHouse нативно поддерживает сложные форматы данных в S3:
+- **Parquet / Avro / ORC:** высокая степень сжатия и колоночное чтение.
+- **Iceberg / Delta Lake / Hudi:** поддержка современных форматов Data Lake (чтение через функции `iceberg()`, `deltaLake()`).
+
+### Смежные темы
+
+- Общий обзор системы — **[ClickHouse](./clickhouse.md)**.
+- Интеграция с очередями сообщений — **[Интеграция ClickHouse и Kafka](./clickhouse_kafka_integration.md)**.
+- Управление метаданными — **[ClickHouse Keeper](./clickhouse.md#репликация-и-шардирование)**.

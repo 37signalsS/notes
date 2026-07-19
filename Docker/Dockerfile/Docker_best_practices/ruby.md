@@ -2,165 +2,165 @@
 
 ## Определения
 
-- **`Gem` (RubyGem):** Библиотека или пакет для Ruby.
-- **`Bundler`:** Менеджер зависимостей проекта. Читает `Gemfile`, устанавливает нужные версии библиотек и фиксирует их в `Gemfile.lock`. Команда вызова — `bundle`.
-- **`Gemfile`:** Список зависимостей проекта и требований к их версиям (обычно с использованием пессимистичного оператора `~>`, разрешающего минорные обновления).
-- **`Gemfile.lock`:** Файл, фиксирующий точные версии всех установленных зависимостей. Гарантирует идентичность окружения на разных машинах.
-- **`Runtime` (среда выполнения):** Окружение, необходимое для работы приложения (интерпретатор Ruby, системные библиотеки).
+- **RubyGem (Gem):** Формат пакета или библиотеки для языка Ruby.
+- **Bundler:** Инструмент для управления зависимостями Ruby-проекта. Использует `Gemfile` для описания необходимых библиотек.
+- **Gemfile / Gemfile.lock:** Манифест зависимостей и файл фиксации их точных версий.
+- **YJIT (Yet Another JIT):** Компилятор «на лету», встроенный в Ruby (начиная с 3.1+), существенно повышающий производительность веб-приложений.
+- **Asset Pipeline:** Система обработки фронтенд-ресурсов (CSS, JS, изображения) в Rails.
+- **Precompilation:** Процесс подготовки ассетов для продакшена (минификация, добавление хешей), выполняемый на этапе сборки образа.
 
-## Основные концепции
+## Базовые концепции
 
-### Воспроизводимость сборки
+### Особенности сборки Ruby (Интерпретируемый язык)
 
-Использование обоих файлов (`Gemfile` и `Gemfile.lock`) критически важно для Docker. Без `Gemfile.lock` команда `bundle install` при каждой сборке образа может устанавливать разные (более новые) версии библиотек, что приводит к:
-- Трудноуловимым багам из-за разницы версий в разработке и продакшене.
-- Нарушению детерминированности сборки.
+*   **Тип:** Интерпретируемый. Требует наличия Ruby Runtime (интерпретатора) в финальном образе.
+*   **Артефакт:** Исходный код и установленные библиотеки (gems) в папке `vendor/bundle` или системных директориях.
+*   **Multi-stage:** Критически важен. Сборочное окружение (gcc, make, заголовки библиотек `-dev`) необходимо только для установки гемов с нативными расширениями и должно быть удалено в финальном образе.
 
-### Работа с Git
+### Включение YJIT
 
-В репозиторий проекта **всегда** должны быть добавлены как `Gemfile`, так и `Gemfile.lock`. Не следует коммитить каталог с установленными библиотеками (обычно это `vendor/bundle` или системные пути Ruby).
+YJIT значительно ускоряет выполнение Ruby-кода (особенно в Rails). В Docker-контейнерах он включается через переменную окружения `RUBY_YJIT_ENABLE=1`. Рекомендуется для всех приложений на Ruby 3.2+.
 
-### Определение версии Ruby
+### Кэширование зависимостей (BuildKit)
 
-Перед выбором базового образа (`FROM ruby:...`) версию рантайма можно узнать из следующих источников:
+Использование монтирования кэша позволяет не скачивать и не пересобирать все гемы при изменении `Gemfile`.
+```dockerfile
+RUN --mount=type=cache,target=/usr/local/bundle/cache \
+    bundle install
+```
 
-1.  **`.ruby-version`**: Стандартный файл в корне проекта, содержащий номер версии (например, `3.2.2`).
-2.  **`Gemfile`**: Версия может быть явно указана в начале файла.
-    ```ruby
-    ruby "3.2.2"
-    ```
+### Обработка ассетов (Precompilation)
 
-3.  **Зависимости (gems)**: Если версия не указана явно, её можно вычислить, проверив минимальные требования ключевых гемов. Для этого можно запустить временный контейнер:
-    ```bash
-    docker run --rm ruby:3.4-slim gem spec <имя_гема> -v '<версия>' required_ruby_version
-    ```
-    Максимальная из полученных версий среди всех зависимостей и будет вашим нижним ограничением для выбора базового образа.
+В Rails ассеты должны быть скомпилированы **до** запуска контейнера в продакшене. Это делается на этапе сборки.
+**Важно:** Для `assets:precompile` часто требуются фиктивные значения `SECRET_KEY_BASE` и доступ к БД (или заглушка), если инициализаторы приложения зависят от них.
 
-### Подготовка Gemfile и Gemfile.lock
+### Решение проблемы PID 1 и server.pid
 
-Для корректной работы инструкции `COPY Gemfile Gemfile.lock ./` в Dockerfile необходимо, чтобы оба файла существовали в корне проекта.
-
-- **Установка Bundler:** если менеджер еще не установлен:
-  ```bash
-  gem install bundler
-  bundle --version
-  ```
-- **Генерация Gemfile.lock:** если есть только `Gemfile`, выполните установку зависимостей для создания lock-файла:
-  ```bash
-  bundle install
-  ```
-- **Только создание/обновление lock-файла:** если зависимости уже установлены, можно зафиксировать их версии без переустановки:
-  ```bash
-  bundle lock
-  # или
-  bundle install
-  ```
-
-### Многоэтапная сборка
-
-Для Ruby on Rails [многоэтапная сборка](./build_optimization.md) является критически важной практикой. Многие гемы (например, `pg` для PostgreSQL или `nokogiri` для парсинга XML — Extensible Markup Language) содержат C-расширения, которые требуют компиляции.
-
-- **Этап `builder`:** Использует полный образ с инструментами для сборки (`build-essential`, `libpq-dev` и т.д.) для компиляции "тяжелых" гемов.
-- **Этап `final`:** Использует легковесный образ, в который копируются уже скомпилированные гемы и только библиотеки среды выполнения (например, `libpq5`), необходимые для их работы.
-
-### Кеширование зависимостей и исключение групп
-
-- **Кеширование:** Установка гемов — долгий процесс. Для эффективного [кеширования слоев](./build_optimization.md) сначала копируются `Gemfile` и `Gemfile.lock`, выполняется `bundle install`, и только потом копируется остальной код приложения.
-- **Исключение групп:** В рабочей (production) среде не нужны гемы из групп `development` и `test`. Команда `bundle config set --local without 'development test'` исключает их из установки, уменьшая размер образа.
+Ruby-приложения (особенно Puma) должны корректно обрабатывать сигналы завершения.
+1.  **PID 1:** Всегда используйте `ENTRYPOINT` со скриптом-оберткой, вызывающим `exec`.
+2.  **server.pid:** Rails может отказаться запускаться, если файл `tmp/pids/server.pid` остался от предыдущего (неудачного) запуска. Скрипт-обертка должен удалять его.
 
 ## Практические сценарии
 
-### Сценарий 1: Многоэтапная сборка на базе Debian (slim)
+### Сценарий 1: Современная Rails-сборка (BuildKit + Multi-stage)
 
-Этот подход обеспечивает баланс между размером образа и простотой установки зависимостей.
+Оптимальный подход для Ruby 3.4+ и Rails 7/8.
 
 ```dockerfile
-# --- Этап 1: Сборка гемов (builder) ---
-FROM ruby:3.4.2-slim-bookworm AS builder
+# syntax=docker/dockerfile:1
+# --- Этап 1: Сборка зависимостей (builder) ---
+FROM ruby:3.4-slim AS builder
 
-# Устанавливаем build-essential для компиляции "нативных" гемов
+# Установка системных зависимостей для сборки нативных расширений
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential git libpq-dev
+    apt-get install --no-install-recommends -y \
+    build-essential \
+    git \
+    libpq-dev \
+    pkg-config \
+    node-js \
+    yarn
 
-WORKDIR /usr/src/app
+WORKDIR /rails
 
-# Устанавливаем bundler
-RUN gem install bundler
+# Установка переменных для сборки
+ENV RAILS_ENV="production" \
+    BUNDLE_DEPLOYMENT="1" \
+    BUNDLE_PATH="/usr/local/bundle" \
+    BUNDLE_WITHOUT="development test"
 
-# Копируем Gemfile и кешируем установку гемов
+# Копируем только файлы зависимостей для эффективного кэширования
 COPY Gemfile Gemfile.lock ./
+RUN --mount=type=cache,target=/usr/local/bundle/cache \
+    bundle install && \
+    rm -rf /usr/local/bundle/cache/*.gem && \
+    find /usr/local/bundle/gems/ -name "*.c" -delete && \
+    find /usr/local/bundle/gems/ -name "*.o" -delete
 
-# Исключаем development и test группы, устанавливаем гемы
-RUN bundle config set --local without 'development test' && \
-    bundle install --jobs $(nproc) --retry 3
-
-# --- Этап 2: Финальный образ ---
-FROM ruby:3.4.2-slim-bookworm
-
-# Устанавливаем ТОЛЬКО зависимости среды выполнения
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y curl libpq5 postgresql-client && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /usr/src/app
-
-# Копируем скомпилированные гемы из этапа builder
-COPY --from=builder /usr/local/bundle/ /usr/local/bundle/
-
-# Копируем код приложения
+# Копируем остальной код для прекомпиляции ассетов
 COPY . .
 
-# Создаем и переключаемся на непривилегированного пользователя
-RUN useradd -m --uid 1001 rails
-USER rails
+# Прекомпиляция ассетов (используем секретную заглушку)
+RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
+
+# --- Этап 2: Финальный образ ---
+FROM ruby:3.4-slim
+
+# Установка только необходимых рантайм-зависимостей
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+    curl \
+    libpq5 \
+    vips && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+WORKDIR /rails
+
+# Переменные окружения для рантайма
+ENV RAILS_ENV="production" \
+    BUNDLE_DEPLOYMENT="1" \
+    BUNDLE_PATH="/usr/local/bundle" \
+    BUNDLE_WITHOUT="development test" \
+    RUBY_YJIT_ENABLE="1"
+
+# Копируем только то, что нужно из builder
+COPY --from=builder /usr/local/bundle /usr/local/bundle
+COPY --from=builder /rails /rails
+
+# Настройка пользователя
+RUN useradd rails --create-home --shell /bin/bash && \
+    chown -R rails:rails db log storage tmp
+USER rails:rails
+
+# Используем скрипт-обертку
+ENTRYPOINT ["/rails/bin/docker-entrypoint"]
 
 EXPOSE 3000
-CMD ["bundle", "exec", "puma", "-C", "config/puma.rb"]
+CMD ["./bin/rails", "server"]
 ```
 
-### Сценарий 2: Оптимизированная сборка на базе Alpine
+### Сценарий 2: Правильный Entrypoint-скрипт (`bin/docker-entrypoint`)
 
-Этот подход позволяет создать образ минимального размера, но требует более тонкой работы с зависимостями. Ключевая техника — использование виртуальных пакетов (`.build-deps`), которые удаляются в том же слое после компиляции.
+Этот скрипт должен быть в проекте и иметь права на выполнение (`chmod +x`).
+
+```bash
+#!/bin/bash
+set -e
+
+# Удаление старого PID-файла, если он существует
+if [ -f /rails/tmp/pids/server.pid ]; then
+  rm /rails/tmp/pids/server.pid
+fi
+
+# Если передан аргумент "server", выполняем миграции (опционально)
+if [ "$1" = "./bin/rails" ] && [ "$2" = "server" ]; then
+  ./bin/rails db:prepare
+fi
+
+# Выполняем основную команду контейнера через exec (заменяет процесс bash на ruby)
+exec "$@"
+```
+
+### Сценарий 3: Оптимизация на базе Alpine
+
+Для случаев, когда критичен размер образа (например, простые API без тяжелых зависимостей).
 
 ```dockerfile
-FROM ruby:3.3-alpine
+FROM ruby:3.4-alpine AS builder
+RUN apk add --no-cache build-base postgresql-dev git
 
-# Устанавливаем только зависимости среды выполнения
-RUN set -ex && \
-    apk add --update --virtual .runtime-deps \
-        postgresql-client \
-        nodejs \
-        libffi-dev \
-        readline \
-        sqlite && \
-    rm -rf /var/cache/apk/*
-
-WORKDIR /tmp
+WORKDIR /app
 COPY Gemfile Gemfile.lock ./
+RUN bundle config set --local without 'development test' && \
+    bundle install --jobs $(nproc)
 
-# Устанавливаем временные build-зависимости в виртуальный пакет .build-deps
-RUN set -ex && \
-    apk add --virtual .build-deps \
-        build-base \
-        openssl-dev \
-        postgresql-dev \
-        libc-dev \
-        linux-headers \
-        libxml2-dev \
-        libxslt-dev \
-        readline-dev && \
-    # Устанавливаем гемы
-    bundle install --clean --no-cache --without development test --jobs=$(getconf _NPROCESSORS_ONLN) && \
-    rm -rf /var/cache/apk/* && \
-    # Удаляем ВЕСЬ виртуальный пакет .build-deps в том же слое RUN
-    apk del .build-deps
-
-ENV APP_HOME /app
-COPY . $APP_HOME
-WORKDIR $APP_HOME
-
-ENV RAILS_ENV=production RACK_ENV=production
-EXPOSE 3000
+FROM ruby:3.4-alpine
+RUN apk add --no-cache libpq tzdata
+WORKDIR /app
+COPY --from=builder /usr/local/bundle /usr/local/bundle
+COPY . .
+# Активация YJIT
+ENV RUBY_YJIT_ENABLE=1
 CMD ["bundle", "exec", "puma"]
 ```
 
@@ -170,4 +170,5 @@ CMD ["bundle", "exec", "puma"]
 
 - [Оптимизация сборки Docker-образов](./build_optimization.md)
 - [Безопасность в Dockerfile](./security.md)
-- [Выполнение приложений в контейнере](./container_execution.md)
+- [Выполнение приложений в контейнере](./container_execution.md) — подробнее про PID 1 и сигналы.
+- [Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md)

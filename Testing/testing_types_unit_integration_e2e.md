@@ -127,6 +127,6 @@ def test_user_login():
 
 - **[Метрики тестового покрытия](./testing_coverage_metrics.md)** — оценка полноты тестирования.
 - **[Инструменты отчётности](./testing_reporting_tools.md)** — визуализация результатов.
-- **[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)** — методологии разработки.
+- **[TDD, BDD и ATDD](../CI-CD/Testing/tdd_bdd_overview.md)** — методологии разработки.
 - **[Testcontainers](./testcontainers_overview.md)** — изоляция через Docker.
 - **[Docker Compose для тестирования](../Docker/Docker_compose/docker_compose_ci_cd_testing.md)** — оркестрация тестовых сред.

@@ -119,6 +119,27 @@ spec:
 * **Проверка статуса дисков:** `kubectl get pvc -l app=nginx-stateful`. Если PVC в статусе `Pending`, проверьте наличие доступных **PV (PersistentVolume)**.
 * **Проверка сетевой доступности:** Запустите временный под и выполните `nslookup web-app-0.nginx-headless` для проверки работы DNS.
 
+### Сценарий 5: Изменение размера диска (PVC) в StatefulSet
+
+**Проблема:** Поля в `volumeClaimTemplates` иммутабельны. Простое изменение `storage: 2Gi` в манифесте и `kubectl apply` приведет к ошибке.
+
+**Решение (Manual Resizing):**
+
+1. **Обновите PVC:** Измените размер напрямую в объектах PVC (если StorageClass поддерживает `allowVolumeExpansion`):
+   ```bash
+   kubectl patch pvc data-web-app-0 -p '{"spec":{"resources":{"requests":{"storage":"2Gi"}}}}'
+   ```
+2. **Удалите StatefulSet (без подов):** Используйте режим `orphan`, чтобы поды продолжали работать:
+   ```bash
+   kubectl delete statefulset web-app --cascade=orphan
+   ```
+3. **Обновите манифест:** Измените размер в `volumeClaimTemplates` в вашем YAML-файле.
+4. **Пересоздайте StatefulSet:**
+   ```bash
+   kubectl apply -f statefulset.yaml
+   ```
+   *Результат: StatefulSet подхватит работающие поды и PVC, а новые поды будут создаваться с увеличенным размером.*
+
 ## Дополнительная информация
 
 ### Рекомендации по эксплуатации

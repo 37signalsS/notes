@@ -1,152 +1,135 @@
-# PostgreSQL в Kubernetes с помощью оператора CloudNativePG
+# PostgreSQL в Kubernetes (CloudNativePG)
 
 ## Определения
 
-**CloudNativePG (CNPG)** — Kubernetes-оператор с открытым исходным кодом для автоматизации управления полным жизненным циклом кластеров PostgreSQL. Официальный проект CNCF (Cloud Native Computing Foundation).
+**CloudNativePG (CNPG)** — современный Kubernetes-оператор с открытым исходным кодом для автоматизации полного жизненного цикла кластеров PostgreSQL. Проект входит в CNCF Sandbox и ориентирован на "облачно-нативный" (Cloud Native) подход, используя внутренние механизмы Kubernetes вместо внешних инструментов управления кворумом (например, Patroni).
 
-**Kubernetes Operator** — программное расширение контроллера Kubernetes, которое использует Custom Resources для управления сложными приложениями. Инкапсулирует операционные знания администратора базы данных в программный код. Подробнее — **[Kubernetes-операторы](../../../Kubernetes/Concepts/kubernetes_operators.md)**.
-
-**Custom Resource Definition (CRD)** — механизм расширения API Kubernetes. CNPG определяет ресурс `Cluster` для декларативного описания желаемого состояния базы данных.
-
-**GitOps** — методология управления инфраструктурой и приложениями, при которой Git является единственным источником истины для декларативных описаний ресурсов. Подробнее — **[GitOps Overview](../../../GitOps/GitOps_overview.md)**.
+**Оператор (Operator)** — паттерн в Kubernetes, объединяющий Custom Resources и контроллеры для автоматизации задач администратора БД: развертывание, масштабирование, бэкапы и восстановление. Подробнее — [Kubernetes-операторы](../../../Kubernetes/Concepts/kubernetes_operators.md).
 
 ## Основные концепции
 
-### Stateful-приложения в Kubernetes
+### Почему CloudNativePG?
 
-Базы данных относятся к категории stateful-приложений, требующих сохранения состояния (данных) между перезапусками подов. В Kubernetes для таких задач используется контроллер **StatefulSet**, который обеспечивает:
+В отличие от классических решений, CNPG глубоко интегрирован в экосистему Kubernetes:
+- **Отсутствие внешних зависимостей:** не требует etcd или Consul для управления состоянием кластера.
+- **Декларативность:** всё управление (включая конфигурацию PostgreSQL и бэкапы) описывается через YAML.
+- **Безопасность:** по умолчанию работает в режиме non-privileged контейнеров.
+- **Observability:** нативная поддержка Prometheus и структурированное логирование в формате JSON.
 
-- Стабильные уникальные сетевые идентификаторы.
-- Упорядоченное развертывание и масштабирование.
-- Сохранение данных через PersistentVolumeClaims (PVC).
+### Архитектура высокой доступности (HA)
 
-Подробнее — **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)**.
+Для обеспечения надежности в production-средах CNPG использует:
+1. **Topology Spread Constraints:** распределение подов по разным зонам доступности (Availability Zones) или физическим нодам для защиты от сбоев оборудования.
+2. **Pod Disruption Budget (PDB):** гарантирует, что при плановом обслуживании нод (drain) в кластере останется минимально необходимое количество реплик.
+3. **Quorum-based Failover:** оператор сам управляет продвижением (promote) реплики до primary, минимизируя время простоя.
 
-### Роль оператора в управлении БД
+### Управление ресурсами и памятью
 
-Стандартный `StatefulSet` не обладает знаниями о внутреннем устройстве PostgreSQL. Оператор CloudNativePG дополняет возможности Kubernetes специфичной логикой:
-
-- Настройка и контроль репликации (Streaming Replication).
-- Автоматический failover при отказе основного узла.
-- Управление резервным копированием и восстановлением на момент времени (PITR).
-- Обновление версии PostgreSQL с минимальным простоем.
-
-### Сравнение платформ для размещения БД
-
-#### Преимущества Kubernetes
-
-- **Масштабируемость:** Быстрое создание сотен изолированных инстансов для микросервисной архитектуры.
-- **Динамические среды:** Автоматическое развертывание временных баз данных для CI/CD и тестирования.
-- **Унификация:** Использование единых инструментов мониторинга, безопасности и доставки (GitOps) для всех компонентов системы.
-
-#### Когда предпочесть виртуальные машины (ВМ)
-
-- **Критическая производительность:** Сверхвысокие требования к IOPS и минимальным задержкам дисковой подсистемы.
-- **Огромные объемы данных:** БД размером в десятки терабайт, требующие специфического тюнинга ядра ОС.
-- **Сложность:** Отсутствие у команды достаточной экспертизы в администрировании Kubernetes.
-
-### Ключевые возможности CloudNativePG
-
-- **Автоматический failover:** Обнаружение отказа primary-узла и продвижение наиболее актуальной реплики.
-- **Декларативное масштабирование:** Увеличение числа реплик или объема диска простым изменением YAML-манифеста.
-- **Резервное копирование:** Нативная интеграция с объектными хранилищами (S3, Azure Blob, GCS) через `barman`.
-- **Наблюдаемость:** Встроенный экспорт метрик в формате Prometheus и интеграция с Grafana.
-- **Connection Pooling:** Встроенная поддержка PgBouncer для эффективного управления соединениями.
-
-> **Примечание:** О сравнении с другими решениями читайте в разделе **[Zalando Postgres Operator](./zalando_postgres_operator.md)**.
+PostgreSQL в Kubernetes требует тщательной настройки лимитов:
+- **Requests vs Limits:** рекомендуется устанавливать `requests` равными `limits` для CPU и RAM, чтобы избежать вытеснения пода или непредсказуемой производительности.
+- **HugePages:** для высоконагруженных баз данных рекомендуется включение HugePages на уровне нод и проброс их в под через `resources.limits`.
+- **Shared Buffers:** CNPG автоматически рассчитывает `shared_buffers` (обычно 25% от лимита памяти), но параметр можно переопределить в `spec.postgresql.parameters`.
 
 ## Практические сценарии
 
-### Установка оператора
+### Установка оператора и плагина
 
-Оператор устанавливается как стандартное приложение Kubernetes. Рекомендуемый способ — использование Helm-чарта или прямая установка манифеста.
+Рекомендуемый способ установки — через Helm или прямые манифесты.
 
 ```bash
-# Установка через манифест (пример для версии 1.26.0)
-kubectl apply -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.26/releases/cnpg-1.26.0.yaml
+# Установка через Helm
+helm upgrade --install cnpg cloudnative-pg/cloudnative-pg --namespace cnpg-system --create-namespace
+
+# Установка плагина kubectl-cnpg (через Krew)
+kubectl krew install cnpg
 ```
 
-### Развертывание кластера
+### Развертывание production-кластера
 
-Конфигурация кластера описывается в ресурсе `Cluster`.
-
-**Пример манифеста `cluster-example.yaml`:**
+Пример конфигурации с учетом отказоустойчивости и ресурсов.
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: cluster-example
+  name: pg-prod
 spec:
   instances: 3
   
-  # Описание хранилища
+  # Ограничение ресурсов
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+  # Распределение по зонам/нодам
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: "topology.kubernetes.io/zone"
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          "cnpg.io/cluster": "pg-prod"
+
+  # Хранилище
   storage:
-    size: "1Gi"
-    storageClass: "standard"
+    size: "50Gi"
+    storageClass: "premium-rwo" # Пример для SSD в облаке
 
-  # Настройка мониторинга
-  monitoring:
-    enablePodMonitor: true
+  # Настройка PostgreSQL
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "1GB"
 
-  # Инициализация первой базы данных
-  bootstrap:
-    initdb:
-      database: app_db
-      owner: app_user
-
-  primaryUpdateStrategy: unsupervised
-```
-
-### Управление через плагин `kubectl cnpg`
-
-Для удобства эксплуатации рекомендуется установить плагин `cnpg` для `kubectl`.
-
-**Основные команды:**
-
-- `kubectl cnpg status cluster-example` — детальный статус кластера и репликации.
-- `kubectl cnpg psql cluster-example` — интерактивное подключение к primary-узлу.
-- `kubectl cnpg promote cluster-example <pod-name>` — ручное переключение на указанную реплику.
-- `kubectl cnpg hibernate cluster-example` — временная остановка кластера с сохранением данных.
-
-### Резервное копирование в S3
-
-CloudNativePG автоматизирует процесс выгрузки WAL-логов и создания базовых бэкапов.
-
-**Конфигурация бэкапа:**
-
-```yaml
-spec:
+  # Резервное копирование в S3
   backup:
     barmanObjectStore:
-      destinationPath: "s3://backups-bucket/pg-clusters/"
+      destinationPath: "s3://my-backups/pg-prod"
       endpointURL: "https://s3.amazonaws.com"
       s3Credentials:
         accessKeyId:
-          name: s3-secret
-          key: ACCESS_KEY_ID
+          name: s3-creds
+          key: ID
         secretAccessKey:
-          name: s3-secret
-          key: ACCESS_SECRET_KEY
+          name: s3-creds
+          key: SECRET
+      wal:
+        compression: gzip
 ```
 
-Запуск создания бэкапа вручную:
+### Операционные задачи
 
+**Проверка состояния кластера:**
 ```bash
-kubectl cnpg backup cluster-example
+kubectl cnpg status pg-prod
 ```
+
+**Интерактивное подключение:**
+```bash
+kubectl cnpg psql pg-prod
+```
+
+**Перезапуск (Rolling Update):**
+При изменении параметров в YAML оператор автоматически выполнит последовательный перезапуск подов (сначала реплики, затем переключение primary и перезапуск старого primary).
+
+**Масштабирование:**
+Для добавления или удаления реплик достаточно изменить значение `spec.instances` в манифесте.
 
 ## Дополнительная информация
 
-### Мониторинг и метрики
+### Выбор между CNPG и Zalando Operator
 
-При включении `monitoring.enablePodMonitor: true`, оператор автоматически создает ресурс `PodMonitor`, который обнаруживается Prometheus Operator. Метрики включают состояние репликации, размер данных на диске, количество транзакций и другие ключевые показатели. Подробнее — **[Full-Stack Observability для PostgreSQL](./observability.md)**.
+- **CloudNativePG:** если вам нужна нативная интеграция с K8s, отсутствие Patroni/etcd и современная кодовая база. Идеально для новых проектов.
+- **Zalando Operator:** если требуется совместимость с устоявшимися практиками Patroni или специфические возможности Spilo (например, интеграция с OAuth2). Подробнее — [Zalando Postgres Operator](./zalando_postgres_operator.md).
 
 ### Связанные документы
 
-- **Основы PostgreSQL:** **[PostgreSQL Overview](../overview.md)**
-- **Сетевая связность:** **[Связность K8s и PostgreSQL в зонах](./kubernetes_connectivity.md)**
-- **Высокая доступность:** **[High Availability](../Concepts/high_availability.md)**
-- **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
-- **Архитектура StatefulSet:** **[StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md)**
-- **Концепция операторов:** **[Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md)**
+- [PostgreSQL Overview](../overview.md) — основы СУБД.
+- [Наблюдаемость PostgreSQL](./observability.md) — интеграция с Prometheus и Grafana.
+- [Сетевая связность](./kubernetes_connectivity.md) — доступ к базе изнутри и снаружи K8s.
+- [Backup and Recovery](../Concepts/backup_and_recovery.md) — концепции PITR и WAL.
+- [StatefulSet](../../../Kubernetes/Base/StatefulSet/statefulset_overview.md) — как K8s управляет состоянием.

@@ -107,6 +107,7 @@ tcpdump -i eth0 -e 'vlan[0:2] & 0x0fff = 10'
 - **Не передавать пользовательский трафик** в Native VLAN
 - **Native VLAN должен совпадать** на обоих концах trunk-соединения
 - **Явно указывать разрешённые VLAN** на trunk-портах
+- **Отключать DTP (Dynamic Trunking Protocol)** с помощью `switchport nonegotiate` для повышения безопасности и стабильности. Подробнее см.: **[DTP и безопасность портов](./vlan_dtp_security.md)**.
 
 **Стандарты:**
 

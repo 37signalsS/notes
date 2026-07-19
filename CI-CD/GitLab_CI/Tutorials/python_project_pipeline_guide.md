@@ -116,7 +116,7 @@ include:
   - template: Security/Container-Scanning.yml
 ```
 
-> **Примечание:** Описание `rules` см. в **[Директивах workflow_rules](../Advanced/workflow_rules/directives_definitions.md)**.
+> **Примечание:** Описание `rules` см. в **[Продвинутых рабочих процессах](../Advanced/gitlab_ci_advanced_workflow.md)**.
 
 #### Шаг 2: Сборка и тестирование
 

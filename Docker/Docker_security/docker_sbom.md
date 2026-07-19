@@ -2,34 +2,38 @@
 
 ## Определения
 
-**SBOM (Software Bill of Materials) для Docker** — это машиночитаемый перечень всех компонентов Docker-образа: прямых и транзитивных зависимостей, их версий, лицензий и идентификаторов — **PURL (Package URL)**, **CPE (Common Platform Enumeration)**. SBOM является частью процесса **SCA (Software Composition Analysis — анализ состава ПО)**, адаптированного для контейнерных образов. См. подробнее: **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
+**SBOM (Software Bill of Materials) для Docker** — это машиночитаемый перечень всех компонентов Docker-образа: прямых и транзитивных зависимостей, их версий, лицензий и идентификаторов — **PURL (Package URL)**, **CPE (Common Platform Enumeration)**. SBOM является базой для процесса **SCA (Software Composition Analysis — анализ состава ПО)**.
+
+**VEX (Vulnerability Exploitability eXchange)** — формат метаданных, позволяющий уточнить статус уязвимости в конкретном продукте. VEX сообщает, является ли уязвимость эксплуатируемой или она не представляет угрозы (например, из-за того, что уязвимый код не вызывается), что радикально снижает "шум" при сканировании.
+
+См. подробнее: **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)**.
 
 ## Базовые концепции
 
 ### Стандартные форматы
 
-| Формат | Фокус | Разработчик |
-| :--- | :--- | :--- |
-| **SPDX** | Лицензии | Linux Foundation (ISO/IEC 5962:2021) |
-| **CycloneDX** | Безопасность, уязвимости | OWASP |
+| Формат | Фокус | Разработчик | Примечание |
+| :--- | :--- | :--- | :--- |
+| **SPDX** | Лицензии, соответствие | Linux Foundation | Стандарт ISO/IEC 5962:2021 |
+| **CycloneDX** | Безопасность, уязвимости | OWASP | Поддержка VEX, ML-компонентов |
 
-### Место в экосистеме безопасности Docker
+### Современные инструменты и процессы
 
-1. **Генерация**: `Syft`, `docker buildx --sbom` создают SBOM.
-2. **Анализ**: SBOM используется **[сканерами уязвимостей](./vulnerability_scanning.md)** (Grype, Trivy) для поиска **CVE (Common Vulnerabilities and Exposures)**.
-3. **Подтверждение**: SBOM подписывается как аттестация в процессе **[подписания образов](./image_signature_and_verification.md)**.
+1. **Генерация**: `Syft`, `Trivy`, `docker buildx --sbom` создают SBOM.
+2. **Анализ и фильтрация**: **Docker Scout** (встроенная платформа Docker) и сканеры (Grype, Trivy) сопоставляют SBOM с базами CVE и применяют VEX-фильтры.
+3. **Аттестация**: SBOM подписывается как аттестация. В 2025 году стандартом становится прикрепление **VSA (Verification Summary Attestation)** для подтверждения факта проверки.
 
 ## Практические сценарии
 
 ### 1. Генерация SBOM с помощью Syft
 
-**Syft** — популярный инструмент от Anchore для генерации SBOM из образов контейнеров.
+**Syft** — инструмент от Anchore для глубокого анализа слоев образа и создания SBOM.
 
 ```bash
-# Генерация SBOM в формате CycloneDX JSON (рекомендуется для безопасности)
+# Генерация SBOM в формате CycloneDX JSON (рекомендуется для анализа безопасности)
 syft python:3.9-slim -o cyclonedx-json > sbom.json
 
-# Генерация SBOM в формате SPDX JSON (для анализа лицензий)
+# Генерация SBOM в формате SPDX JSON (для юридического аудита лицензий)
 syft python:3.9-slim -o spdx-json > sbom.spdx.json
 ```
 
@@ -38,45 +42,65 @@ syft python:3.9-slim -o spdx-json > sbom.spdx.json
 Начиная с `docker buildx` v0.10+, SBOM можно генерировать как аттестацию прямо во время сборки и прикреплять к манифесту образа в реестре.
 
 ```bash
-# Собрать образ и прикрепить к нему SBOM-аттестацию
+# Сборка образа с прикрепленной SBOM-аттестацией
 docker buildx build \
   --tag my-registry/my-app:1.0.0 \
   --provenance=true \
   --sbom=true \
+  --push \
   .
 
-# Проверить наличие аттестации в реестре
+# Проверка наличия аттестации в реестре
 docker buildx imagetools inspect my-registry/my-app:1.0.0 --format '{{ json .SBOM }}'
 ```
 
-Этот метод является предпочтительным, так как упрощает CI/CD-пайплайны.
+### 3. Использование Docker Scout для анализа SBOM и VEX
 
-### 3. CI/CD-пайплайн: Генерация, сканирование и исправление
+**Docker Scout** — это современная замена базовым сканерам, интегрированная в экосистему Docker.
 
-Полный цикл управления уязвимостями может выглядеть так:
+```bash
+# Просмотр SBOM и анализ зависимостей
+docker scout sbom my-app:latest
+
+# Сканирование на уязвимости с учетом политик организации
+docker scout cves my-app:latest
+
+# Фильтрация только эксплуатируемых уязвимостей (на основе данных VEX)
+docker scout cves --filter "vulnerability exploitability=exploitable" my-app:latest
+```
+
+### 4. CI/CD-пайплайн: Генерация, сканирование и исправление
+
+Современный цикл управления уязвимостями (Shift Left):
 
 1. **Генерация SBOM (`Syft`):**
-
     ```bash
     syft my-app:1.2.3 -o cyclonedx-json > sbom.json
     ```
 
-2. **Сканирование SBOM на уязвимости (`Grype`):**
-
+2. **Сканирование с учетом VEX (`Grype`):**
     ```bash
-    grype sbom:sbom.json -o json > report.json
+    # Сканирование SBOM и применение VEX-файла для исключения ложных срабатываний
+    grype sbom:sbom.json --vex my-product-vex.yaml
     ```
 
 3. **Автоматическое исправление (`Copacetic`):**
-
     ```bash
+    # Патчинг образа без пересборки (прямое обновление уязвимых пакетов в слоях)
     copa patch -i my-app:1.2.3 -r report.json -t my-app:1.2.3-patched
     ```
 
 ## Дополнительная информация
 
-**Связанные документы:** **[анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)** (общая теория SCA/SBOM), **[сканирование уязвимостей](./vulnerability_scanning.md)**, **[подписание образов](./image_signature_and_verification.md)**, **[безопасность публичных реестров](../Docker_registries/public_registry_security.md)**.
+**Связанные документы:**
+- **[Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)** — общая теория SCA.
+- **[Сканирование уязвимостей](./vulnerability_scanning.md)** — практическое использование Trivy и Grype.
+- **[Подписание образов](./image_signature_and_verification.md)** — аттестации и Sigstore/Cosign.
+- **[Безопасность публичных реестров](../Docker_registries/public_registry_security.md)** — управление доверием.
 
-**CIS Docker Benchmark:** Требует генерации SBOM для всех образов (рекомендация 4.1).
+**Внешние ресурсы:**
+- **CIS Docker Benchmark:** Рекомендация 4.1 (Инвентаризация образов через SBOM).
+- **Docker Scout Documentation:** [docs.docker.com/scout/](https://docs.docker.com/scout/).
+- **CycloneDX VEX Guide:** [cyclonedx.org/capabilities/vex/](https://cyclonedx.org/capabilities/vex/).
 
-**Инструменты:** `Syft` (генерация), `Grype` (сканирование SBOM), `Trivy` (универсальный сканер), `Copacetic` (автоматическое исправление уязвимостей), `docker buildx` (встроенная генерация).
+**Инструменты:** `Syft` (генерация), `Grype` (сканирование), `Trivy` (универсальный комбайн), `Copacetic` (быстрое исправление), `Docker Scout` (платформа безопасности).

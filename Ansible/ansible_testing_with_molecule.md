@@ -32,29 +32,37 @@
 
 ### Установка
 
-Molecule является Python-пакетом и устанавливается через `pip`. Рекомендуется устанавливать его вместе с драйвером (например, Docker) и линтером.
+Molecule является Python-пакетом и устанавливается через `pip`. Современные версии (v5+) требуют отдельной установки драйверов через плагины.
 
 ```bash
 # Установка Molecule с поддержкой Docker и ansible-lint
-pip install "molecule[docker,lint]"
+pip install "molecule-plugins[docker]" ansible-lint
+
+# Проверка установки
+molecule --version
+# → molecule 24.x.x using python 3.x
 ```
 
-> **Примечание о версиях:** Molecule тесно связан с версией Ansible. При ошибках совместимости может потребоваться установка конкретной версии: `pip install molecule==X.Y.Z`.
+> **Примечание:** Molecule тесно связан с версией Ansible. Рекомендуется использовать виртуальные окружения Python для изоляции зависимостей.
 
 ## Практические сценарии
 
 ### Полный цикл тестирования роли
 
-#### Шаг 1: Инициализация роли
+#### Шаг 1: Создание роли и инициализация Molecule
 
-Команда `molecule init role` создает новую роль со стандартной структурой и тестовым сценарием `default`.
+Команда `molecule init role` была удалена в версии 6.0. Рекомендуемый подход — создание роли через `ansible-galaxy` с последующей инициализацией сценария Molecule.
 
 ```bash
-molecule init role nginx
+# Создание структуры роли
+ansible-galaxy role init nginx
 cd nginx
+
+# Инициализация сценария default
+molecule init scenario
 ```
 
-Это создаст директорию `nginx/` и поддиректорию `molecule/default/` со всеми необходимыми файлами.
+Это создаст поддиректорию `molecule/default/` с базовыми конфигурационными файлами.
 
 #### Шаг 2: Настройка сценария (`molecule/default/molecule.yml`)
 
@@ -76,53 +84,11 @@ verifier:
   name: ansible
 ```
 
-#### Драйвер Docker: `create.yml` и `destroy.yml`
+#### Драйвер Docker
 
-Для драйвера `docker` Molecule использует `create.yml` для создания контейнера и `destroy.yml` для его удаления. Эти файлы не создаются `molecule init role` по умолчанию — их нужно написать вручную, если требуется Docker-драйвер без SSH и systemd (как в образах `geerlingguy`).
+Для работы с Docker Molecule использует плагин `molecule-plugins[docker]`. Он автоматически управляет жизненным циклом контейнеров (создание, удаление, подключение), поэтому файлы `create.yml` и `destroy.yml` в большинстве случаев создавать вручную не требуется.
 
-**`molecule/default/create.yml`:**
-
-```yaml
----
-- name: Create
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  vars:
-    molecule_platforms: "{{ molecule_yml.platforms }}"
-  tasks:
-    - name: Create molecule instance(s)
-      community.docker.docker_container:
-        name: "{{ item.name }}"
-        hostname: "{{ item.name }}"
-        image: "{{ item.image }}"
-        state: started
-        privileged: "{{ item.privileged | default(false) }}"
-        volumes: "{{ item.volumes | default([]) }}"
-        command: "{{ item.command | default(omit) }}"
-        cgroupns_mode: "{{ item.cgroupns_mode | default(omit) }}"
-        detach: true
-      loop: "{{ molecule_platforms }}"
-```
-
-**`molecule/default/destroy.yml`:**
-
-```yaml
----
-- name: Destroy
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  vars:
-    molecule_platforms: "{{ molecule_yml.platforms }}"
-  tasks:
-    - name: Destroy molecule instance(s)
-      community.docker.docker_container:
-        name: "{{ item.name }}"
-        state: absent
-        force_kill: true
-      loop: "{{ molecule_platforms }}"
-```
+Основные настройки контейнера задаются в `molecule.yml` в секции `platforms`.
 
 #### Шаг 3: Написание логики роли (`tasks/main.yml`)
 
@@ -183,7 +149,7 @@ verifier:
       changed_when: false
 ```
 
-> `service_facts` полагается на systemd и не работает в Docker-контейнерах без него (см. Типовые проблемы №7). Вместо него используется `package_facts` (проверка установки) + `pidof` (проверка работы). `gather_facts: true` требует увеличения `ansible_timeout` (см. Типовые проблемы №1).
+> `service_facts` полагается на systemd и не работает в Docker-контейнерах без него (см. Типовые проблемы №4). Вместо него используется `package_facts` (проверка установки) + `pidof` (проверка работы). `gather_facts: true` требует увеличения `ansible_timeout` (см. Типовые проблемы №1).
 
 #### Шаг 6: Запуск тестов
 
@@ -203,9 +169,9 @@ molecule test
 * `molecule verify`
 * `molecule destroy`
 
-### Типовые проблемы и решения (Troubleshooting)
+## Типовые проблемы и решения
 
-#### 1. Verify timeout при `gather_facts: true`
+#### 1. Таймаут проверки (Verify timeout) при `gather_facts: true`
 
 **Проявление:** `verify` падает по таймауту (60s по умолчанию).
 
@@ -245,67 +211,33 @@ provisioner:
 
 **Решение:** Переписать create.yml без ожидания SSH, используя `community.docker.docker_container`.
 
-#### 4. Systemd не стартует (cgroup v2)
+#### 4. Отсутствие systemd и ошибки сервисов
 
-**Проявление:** Контейнер падает сразу после создания — `Exited (255)`.
+**Проявление:** `service_facts` не находит сервисы, или контейнер падает с ошибкой `Exited (255)`.
 
-**Причина:** Современные дистрибутивы (Ubuntu 24.04+/Rocky Linux 9+) используют cgroup v2. systemd в контейнере требует cgroup v1 или `--cgroupns host`.
+**Причина:** Большинство Docker-образов не запускают systemd по умолчанию. На хостах с cgroup v2 это также требует дополнительных настроек.
 
-**Решение:** Заменить `command: /usr/lib/systemd/systemd` на `command: sleep infinity` в `molecule.yml`:
+**Решение:** 
+1. Используйте `package_facts` для проверки установки пакета и `command: pidof <process>` для проверки работы.
+2. Если systemd необходим, используйте образы с его поддержкой (например, `geerlingguy/docker-<os>-ansible`) и настройте `command: /sbin/init` или `sleep infinity`.
 
-```yaml
-platforms:
-  - name: ubuntu
-    image: geerlingguy/docker-rockylinux9-ansible:latest
-    pre_build_image: true
-    command: sleep infinity
-```
+#### 5. Проблемы с Handlers и идемпотентностью
 
-#### 5. Handler Restart Nginx не работает
+**Проявление:** `Handler Restart` не срабатывает или шаг `idempotence` возвращает `changed`.
 
-**Проявление:** `Service is in unknown state` или non-zero return code при рестарте.
+**Причина:** Модули `service` не работают без systemd. Прямой запуск команды (например, `nginx`) при повторном прогоне возвращает ошибку, так как процесс уже запущен.
 
-**Причина:** Модули `service` и `systemd` не работают без systemd (см. проблему №4). `nginx -s reload` падает, если nginx не запущен (нет PID-файла).
+**Решение:** 
+1. Используйте `command: nginx -s reload` в хендлерах.
+2. Для задач запуска используйте `failed_when: false` или проверку через `creates`/`removes`, чтобы избежать повторных изменений.
 
-**Решение:** Добавить задачу запуска nginx перед изменением конфига; в handler использовать `command: nginx -s reload` (работает только после старта nginx).
+#### 6. Molecule не находит конфигурацию
 
-#### 6. Idempotence проваливается (Start nginx)
+**Проявление:** Ошибка `'molecule/default/molecule.yml' glob failed`.
 
-**Проявление:** При повторном `converge` задача запуска nginx возвращает `changed`.
+**Причина:** Команда запущена не из корня роли.
 
-**Причина:** `command: nginx` при уже запущенном экземпляре возвращает `rc=1`.
-
-**Решение:** Добавить `failed_when: false` — ошибка игнорируется, задача считается `ok`.
-
-```yaml
-- name: Start nginx
-  ansible.builtin.command: nginx
-  failed_when: false
-```
-
-#### 7. `service_facts` падает без systemd
-
-**Проявление:** `Failed to find any services` в verify.yml.
-
-**Причина:** `service_facts` полагается на systemd, который не запущен в контейнере (см. проблему №4).
-
-**Решение:** Заменить `service_facts` на `package_facts` (проверка установки) + `pidof` (проверка работы процесса).
-
-#### 8. Molecule не находит molecule.yml
-
-**Проявление:** `'molecule/default/molecule.yml' glob failed`.
-
-**Причина:** `molecule test` запущен не из директории роли.
-
-**Решение:** Перейти в корень роли: `cd ~/nginx && molecule test`.
-
-#### 9. Warnings о дублирующихся коллекциях
-
-**Проявление:** Warnings про `ansible.netcommon`, `ansible.posix` и др.
-
-**Причина:** Коллекции установлены одновременно в системной директории (`/usr/lib/python3/dist-packages/`) и в пользовательской (`~/.ansible/collections/`).
-
-**Решение:** Не влияет на работу, warnings не критичны.
+**Решение:** Убедитесь, что вы находитесь в директории, содержащей папку `molecule/`: `cd ~/my_role && molecule test`.
 
 ## Дополнительная информация
 

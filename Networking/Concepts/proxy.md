@@ -51,7 +51,7 @@
 
 ### Современные расширения
 
-- **API Gateway:** Reverse proxy для микросервисов с функциями аутентификации, rate limiting, маршрутизации по контенту, агрегации ответов.
+- **API Gateway:** специализированный шлюз для управления API и микросервисами. Подробнее: [Обзор API Gateway](../../Concepts/api_gateway_overview.md).
 - **Service Mesh:** Распределённый прокси-слой (Envoy/Istio) в виде sidecar-контейнеров. Обеспечивает mTLS, наблюдаемость, политики доступа на L7. Подробнее: [Service Mesh Concepts](../../Service_Mesh/service_mesh_concepts.md).
 
 ## Практические сценарии

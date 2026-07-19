@@ -1,37 +1,37 @@
-# Окружения и развертывания в GitLab CI
+# Окружения и развертывания в GitLab CI/CD
 
 ## Определения
 
-- **Окружение (Environment):** Логическое представление инфраструктуры, куда развертывается приложение (например, `development`, `staging`, `production`). Ключевое слово `environment` в `.gitlab-ci.yml` создает в GitLab соответствующий объект, который отслеживает историю развертываний.
-- **Развертывание (Deployment):** Процесс доставки и запуска определенной версии приложения в конкретном окружении. Каждое успешное выполнение задачи (`job`) с ключевым словом `environment` создает запись о развертывании.
-- **Откат (Rollback):** Возврат окружения к предыдущей стабильной версии приложения. В GitLab это, как правило, означает перезапуск пайплайна от более раннего коммита. Механизм отката описан в разделе [Deployment Health Checks and Rollback](../../Deployment_Strategies/deployment_health_checks_and_rollback.md).
-- **Статическое окружение (Static Environment):** Долгоживущее, постоянное окружение, такое как `staging` или `production`.
-- **Динамическое окружение (Dynamic Environment / Review App):** Временное окружение, автоматически создаваемое для тестирования изменений в изолированной среде (например, для каждой ветки или **Merge Request (MR)**). Оно существует ограниченное время и затем уничтожается. Подробное руководство по настройке — [Настройка динамических окружений (Review Apps) с Kubernetes](../Tutorials/kubernetes_review_apps.md).
+- **Окружение (Environment):** Логическое представление инфраструктуры (например, `development`, `staging`, `production`). Ключевое слово `environment` создает объект в GitLab для отслеживания истории деплоев.
+- **Развертывание (Deployment):** Запись о выполнении задания, связанного с окружением. Позволяет отслеживать, какая версия кода была развернута и кем.
+- **Защищенное окружение (Protected Environment):** Окружение с ограниченным доступом. Только пользователи с определенными ролями могут инициировать развертывание в такие среды.
+- **Динамическое окружение (Review App):** Временная среда, создаваемая для тестирования изменений в Merge Request (MR).
+- **Уровень (Tier):** Классификация окружения (`production`, `staging`, `testing`, `development`, `other`). Используется для группировки и корректного расчета DORA-метрик.
+- **Откат (Rollback):** Возврат окружения к предыдущему успешному состоянию путем перезапуска старого задания развертывания.
 
-## Основные концепции
+## Базовые концепции
 
 ### Создание и типы окружений
 
-Окружения объявляются в файле `.gitlab-ci.yml` с помощью ключевого слова `environment`.
+Окружения описываются в `.gitlab-ci.yml` и разделяются на две основные группы.
 
 #### Статические окружения
 
-Используются для постоянных стадий, таких как `staging` или `production`.
+Долгоживущие среды для стабильных этапов разработки.
 
 ```yaml
-deploy_production:
+deploy_prod:
   stage: deploy
   script:
-    - echo "Deploying to production..."
     - ./deploy.sh
   environment:
     name: production
-    url: https://my-app.com # Добавляет кнопку "Open" в пользовательский интерфейс (UI) для прямого доступа
+    url: https://app.example.com
 ```
 
-#### Динамические окружения (Review Apps)
+#### Динамические окружения
 
-Создаются на лету для каждой ветки, используя переменные GitLab CI для уникальности имени.
+Создаются автоматически для каждой ветки или MR, обеспечивая изоляцию при тестировании.
 
 ```yaml
 deploy_review:
@@ -39,137 +39,117 @@ deploy_review:
   script:
     - ./deploy-review.sh
   environment:
-    name: review/$CI_COMMIT_REF_SLUG # Имя уникально для ветки ($CI_COMMIT_REF_SLUG - безопасное для URL имя ветки)
+    name: review/$CI_COMMIT_REF_SLUG
     url: https://$CI_COMMIT_REF_SLUG.example.com
-    on_stop: stop_review_app # Указание задачи для очистки
-    auto_stop_in: 1 day      # Автоматическое уничтожение через 1 день
+    on_stop: stop_review
+    auto_stop_in: 1 week
   rules:
-    - if: $CI_MERGE_REQUEST_ID # Создавать окружение только для Merge Requests (MR)
+    - if: $CI_MERGE_REQUEST_ID
 ```
 
-### Уничтожение динамических окружений
+### Уровни окружений (Tiers)
 
-Для освобождения ресурсов временные окружения необходимо удалять. Это делается с помощью задачи, указанной в `on_stop`.
+Параметр `deployment_tier` (задается автоматически по имени или явно в `environment:action`) позволяет GitLab понимать роль окружения в жизненном цикле.
+
+- **Production:** Финальная среда для пользователей.
+- **Staging:** Предрелизная среда, максимально близкая к prod.
+- **Testing:** Среды для автоматизированных тестов и QA.
+- **Development:** Индивидуальные среды разработчиков.
+
+### Переменные и секреты окружений
+
+GitLab позволяет ограничивать область действия переменных (`Scope`) конкретными окружениями. Это критично для безопасности: секреты `production` не должны быть доступны в `development`. Подробнее см. в [GitLab CI Variables](../Concepts/gitlab_ci_variables_secrets.md).
+
+### Остановка и очистка
+
+Для динамических окружений обязательна настройка задачи остановки (`on_stop`), чтобы не перерасходовать ресурсы кластера.
 
 ```yaml
-stop_review_app:
+stop_review:
   stage: cleanup
   script:
-    - echo "Deleting review app for $CI_COMMIT_REF_SLUG..."
-    - ./cleanup-review-app.sh
-  when: manual # Запускается по кнопке "Stop" или триггеру on_stop
+    - ./cleanup.sh
   environment:
     name: review/$CI_COMMIT_REF_SLUG
-    action: stop # Явно указывает, что задача останавливает окружение
+    action: stop
+  when: manual
 ```
 
-- **Рульное удаление:** Кнопка "Stop" в **пользовательском интерфейсе (UI)** окружений запускает задачу `on_stop`.
-- **Автоматическое удаление:** Параметр `auto_stop_in` автоматически запускает задачу `on_stop` по истечении указанного времени.
+### Безопасность и контроль доступа
 
-### Масштабирование конфигурации с `extends`
+#### Защищенные окружения
 
-Для избежания дублирования кода при настройке нескольких окружений используются YAML-шаблоны и `extends`. Механизмы переиспользования подробно описаны в [Обзоре переиспользуемых пайплайнов](../Reusable_Pipelines/overview.md).
+Настраиваются в `Settings > CI/CD > Protected environments`. Позволяют:
+- Ограничить круг лиц, имеющих право деплоить в `production`.
+- Запретить деплой из неавторизованных веток.
 
-1. **Определите шаблон:**
+#### Подтверждение развертываний (Approvals)
 
-    ```yaml
-    # templates/deploy.yaml
-    .deploy_template:
-      stage: deploy
-      image: alpine:3.19
-      # ... общие скрипты и настройки ...
-    ```
+Функционал уровня Premium/Ultimate, позволяющий блокировать развертывание до получения одобрения.
 
-2. **Используйте шаблон в задачах:**
-
-    ```yaml
-    # .gitlab-ci.yml
-    include:
-      - local: templates/deploy.yaml
-
-    deploy_staging:
-      extends: .deploy_template
-      environment:
-        name: staging
-        url: https://staging.my-app.com
-
-    deploy_production:
-      extends: .deploy_template
-      environment:
-        name: production
-        url: https://my-app.com
-      rules:
-        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-          when: manual # Деплой в production только вручную
-    ```
+- **Запросы одобрения (Approval Requests):** Настраиваются для конкретного окружения. Можно указать конкретных пользователей или группы.
+- **Групповые политики (Deployment Approval Policies):** (версия 19.0+) Позволяют централизованно задавать правила одобрения для всех проектов в группе или подгруппе. Это упрощает комплаенс и исключает необходимость ручной настройки каждого репозитория.
 
 ## Практические сценарии
 
-### Сценарий 1: Ручная задача отката с Helm
+### Сценарий 1: Откат через Helm
 
-Для большего контроля над процессом отката можно создать явную задачу `rollback`, которая использует команды Helm.
+Ручной откат версии приложения в Kubernetes с использованием Helm.
 
 ```yaml
-stages:
-  - deploy
-  - rollback
-
-rollback_prod:
+rollback_production:
   stage: rollback
-  # Рекомендуемый образ, содержащий kubectl и helm. Версию следует закрепить.
-  image: alpine/k8s:1.29.0
+  image: alpine/k8s:1.30.0
   script:
-    - echo "Rolling back production environment..."
-    # $CI_PROJECT_PATH_SLUG - безопасное для URL имя проекта (group/project-name)
-    # $CI_ENVIRONMENT_NAME - имя окружения, 'production' в данном случае
-    - >
-      helm rollback ${CI_PROJECT_PATH_SLUG}
-      --namespace ${CI_PROJECT_PATH_SLUG}-${CI_ENVIRONMENT_NAME}
-      --wait --timeout 300s
+    - helm rollback my-release --wait --timeout 5m
   environment:
     name: production
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual # Запускается только вручную из UI пайплайна
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
 ```
 
-### Сценарий 2: Концепция Review Apps с Kubernetes
+### Сценарий 2: Динамические окружения в Kubernetes
 
-Настройка динамических окружений (Review Apps) в Kubernetes является мощной практикой, позволяющей тестировать изменения в изолированной среде для каждого Merge Request (MR).
+Использование уникальных пространств имен (Namespace) для каждой ветки.
 
-**Высокоуровневый процесс выглядит так:**
+1. **Deploy:** Создается namespace `review-$CI_COMMIT_REF_SLUG`.
+2. **URL:** Приложение доступно по адресу `https://$CI_COMMIT_REF_SLUG.kube.example.com`.
+3. **Cleanup:** После закрытия MR задача `on_stop` удаляет namespace со всеми ресурсами.
 
-1. Для каждого MR создается уникальное пространство имен (**namespace**) в Kubernetes.
-2. В этот namespace развертывается приложение с использованием Helm или Kustomize. Имя релиза и имя хоста (**hostname**) в Ingress также делаются уникальными на основе имени ветки или **идентификатора (ID)** мержа.
-3. После слияния или закрытия MR соответствующий namespace и все его ресурсы автоматически удаляются.
+Подробности настройки — в [руководстве по Review Apps](../Tutorials/kubernetes_review_apps.md).
 
-Этот процесс обычно автоматизируется с помощью оператора Kubernetes или набора скриптов, которые вызываются из задач `deploy_review` и `stop_review_app`.
+### Сценарий 3: Групповые политики одобрения
 
-> Подробное пошаговое руководство по настройке Review Apps с Kubernetes доступно в документе:
-> **[Настройка динамических окружений (Review Apps) с Kubernetes](../Tutorials/kubernetes_review_apps.md)**
+Использование политик для принудительного одобрения деплоев в `production` во всей организации.
 
-Общая информация по интеграции GitLab с Kubernetes — в [gitlab_kubernetes_integration_guide.md](../Advanced/gitlab_kubernetes_integration_guide.md).
+1. **Создание политики:** В `Secure > Policies` создается `Deployment approval policy`.
+2. **Условия:** Правило срабатывает для всех окружений с уровнем `production`.
+3. **Одобрители:** Группа `SRE-team` должна дать хотя бы 1 одобрение.
+4. **Результат:** Даже если в `.gitlab-ci.yml` проекта нет упоминания approvals, задание деплоя будет заблокировано до действия со стороны SRE.
 
 ## Дополнительная информация
 
-### Пользовательский интерфейс и откаты
+### Интерфейс и аналитика
 
-В разделе **Deployments > Environments** GitLab предоставляет:
+В разделе **Operate > Environments** доступны:
+- **Deployment history:** Список всех прошедших деплоев.
+- **Rollback:** Кнопка для быстрого возврата к предыдущей версии.
+- **Environments Dashboard:** Единая панель для отслеживания состояния окружений в нескольких проектах.
+- **Monitoring:** Ссылки на внешние дашборды (если настроено).
 
-- Визуальную историю развертываний для каждого окружения.
-- Кнопку **Re-deploy** для повторного запуска последней задачи.
-- Встроенный механизм отката.
+### Метрики DORA
 
-Нажатие кнопки **Rollback** не запускает специальную логику, а перезапускает задачу (`job`) от предыдущего успешного развертывания. Если развертывания идемпотентны и версионированы (например, через теги Docker-образов по хешу коммита), это действие безопасно вернет окружение к предыдущей стабильной версии.
+GitLab автоматически рассчитывает ключевые показатели эффективности (Deployment Frequency, Lead Time for Changes) на основе данных об окружениях. Для корректности данных крайне важно правильно настраивать `deployment_tier` (см. раздел [Уровни окружений](#уровни-окружений-tiers)).
 
 ### Смотрите также
 
-- **[Стратегии развертывания](../../Core_Concepts/deployment_strategies.md)** — теоретический обзор Rolling Update, Blue/Green, Canary.
-- **[Сравнение стратегий развертывания](../../Deployment_Strategies/comparison.md)** — детальное сравнение преимуществ и недостатков.
-- **[GitOps Overview](../../../GitOps/GitOps_overview.md)** — концепция Pull-модели развертывания.
+- **[Стратегии развертывания](../../Core_Concepts/deployment_strategies.md)** — обзор Rolling Update и Blue/Green.
+- **[Проверка здоровья и откаты](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)** — механизмы автоматизации.
+- **[GitOps и GitLab](../../../GitOps/GitOps_overview.md)** — использование агента GitLab для Kubernetes.
 
-> **Критичные изменения GitLab 18.x:**
+> **Критичные изменения последних версий:**
 >
-> - **18.4**: `environment:kubernetes:namespace` deprecated → используйте `environment:kubernetes:dashboard:namespace`
-> - **18.4**: `environment:kubernetes:flux_resource_path` deprecated → используйте `environment:kubernetes:dashboard:flux_resource_path`
-> - **18.4**: Новая структура `environment:kubernetes:dashboard` для интеграции с Kubernetes
+> - **18.4**: Ключи `environment:kubernetes:namespace` и `flux_resource_path` перенесены в новый блок `environment:kubernetes:dashboard`.
+> - **19.0**: Введен **Deployment Approval Policies** для централизованного управления правилами одобрения деплоев на уровне группы.
+> - **19.2**: Поддержка **External Deployment Approvals** (интеграция с ServiceNow, Jira и др.).

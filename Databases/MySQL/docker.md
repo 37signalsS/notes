@@ -21,6 +21,19 @@
 
 Официальные образы MySQL поддерживают автоматическую инициализацию при первом запуске на пустом томе. Скрипты (`.sh`, `.sql`, `.sql.gz`) из директории `/docker-entrypoint-initdb.d/` выполняются в алфавитном порядке.
 
+### Проверка состояния (Healthcheck)
+
+Для мониторинга готовности БД к приему соединений используется встроенная в Docker функция `healthcheck`. В качестве команды проверки рекомендуется использовать `mysqladmin ping`.
+
+- **Команда:** `mysqladmin ping -h localhost -u root -p$MYSQL_ROOT_PASSWORD`
+- **Значение:** Позволяет зависимым сервисам (например, API) ждать полной готовности базы перед запуском.
+
+### Безопасность
+
+- **Переменные окружения:** Использование `MYSQL_ROOT_PASSWORD` в открытом виде в `docker run` или `docker-compose.yml` небезопасно (пароль виден в истории команд и процессах).
+- **Рекомендация:** Использовать Docker Secrets (в Swarm/Stack) или файлы переменных окружения (`.env`) с ограниченными правами доступа.
+- **Минимальные привилегии:** Не рекомендуется запускать приложение под пользователем `root`. Используйте `MYSQL_USER` и `MYSQL_PASSWORD` для создания обычного пользователя.
+
 ### Производительность: Host vs Docker
 
 Производительность зависит от **дискового I/O** и **сетевого режима**.
@@ -92,7 +105,7 @@ docker run -d --name mysql-db-high-perf \
 
 ### 5. Запуск через Docker Compose
 
-Для управления многоконтейнерными приложениями предпочтительнее использовать `docker-compose.yml`. Данный пример также настроен на использование именованных томов.
+Для управления многоконтейнерными приложениями предпочтительнее использовать `docker-compose.yml`. Данный пример включает проверку состояния и лимиты ресурсов.
 
 ```yaml
 # docker-compose.yml
@@ -102,12 +115,25 @@ services:
     container_name: mysql-compose-db
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: my-secret-pw
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: my_database
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   mysql-data:
@@ -118,8 +144,20 @@ volumes:
 ```bash
 docker compose up -d
 # -> [+] Running 2/2
-# ->  ✔ Network my_network        Created
-# ->  ✔ Container mysql-compose-db Started
+# ->  Network my_network        Created
+# ->  Container mysql-compose-db Started
+```
+
+### 6. Создание бэкапа (mysqldump)
+
+Для создания дампа базы данных, запущенной в контейнере, используется выполнение команды `mysqldump` через `docker exec`.
+
+```bash
+# Создание бэкапа всех баз данных
+docker exec mysql-db mysqldump -u root -p"my-secret-pw" --all-databases > backup.sql
+
+# Восстановление из бэкапа
+cat backup.sql | docker exec -i mysql-db mysql -u root -p"my-secret-pw"
 ```
 
 ## Дополнительная информация

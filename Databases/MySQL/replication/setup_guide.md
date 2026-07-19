@@ -1,164 +1,142 @@
-# Пошаговая настройка Master-Slave репликации
+# Пошаговая настройка репликации MySQL
 
 ## Определения
 
-**Классическая репликация** — метод настройки тиражирования данных на основе точных координат бинарного лога (Binary Log). Включает в себя имя файла лога (`MASTER_LOG_FILE`) и позицию в нём (`MASTER_LOG_POS`).
+**Репликация MySQL** — процесс синхронизации данных между несколькими серверами, где один сервер (Источник) передает изменения другим серверам (Репликам).
 
-**GTID-репликация (Global Transaction Identifier)** — современный метод репликации, использующий глобальные уникальные идентификаторы транзакций. Обеспечивает автоматическое позиционирование (`MASTER_AUTO_POSITION = 1`), что упрощает управление кластером и процесс переключения мастера (failover).
+**Источник (Source)** — сервер, принимающий изменения и записывающий их в бинарный лог.
+**Реплика (Replica)** — сервер, который считывает бинарный лог источника и применяет изменения к своим данным.
+
+**Классическая репликация** — метод на основе точных координат бинарного лога (**Binary Log**). Требует ручного указания имени файла (`SOURCE_LOG_FILE`) и смещения (`SOURCE_LOG_POS`).
+
+**GTID-репликация (Global Transaction Identifier)** — современный стандарт, использующий уникальные ID транзакций. Позволяет автоматически находить позицию в логах (`SOURCE_AUTO_POSITION = 1`), что упрощает восстановление и Failover.
 
 ## Основные концепции
 
 ### Предварительные требования
 
-| Требование | Описание |
+| Параметр | Описание |
 | :--- | :--- |
-| Версия MySQL | 5.7+ (рекомендуется), 8.0+ (предпочтительно) |
-| Совместимость | Мажорные версии должны совпадать или Slave должен быть новее Master |
-| Сеть | Порт TCP 3306 открыт между серверами |
-| Ресурсы | Достаточно места для данных, бинарных логов и Relay Log |
+| **Сетевая связность** | Доступ к порту 3306. Проверка: `nc -zv <source_ip> 3306`. |
+| **server_id** | Уникальное число (1-4294967295) для каждого узла в топологии. |
+| **binlog_format** | Рекомендуется `ROW` (обязателен для GTID и Group Replication). |
+| **Версии** | Реплика должна быть той же версии или новее. Источник новее Реплики не поддерживается в LTS-релизах (например, 8.4). |
 
-### Методы настройки
+### Методы инициализации данных
 
-- **По координатам бинарного лога:** Традиционный подход, требующий ручной фиксации позиции при создании дампа данных.
-- **С использованием GTID:** Рекомендуемый подход для новых инсталляций, исключающий необходимость отслеживания позиций файлов лога.
-
-Подробности о работе идентификаторов — в документе **[GTID-репликация](./gtid.md)**.
-
-### Привилегии пользователя
-
-Для процесса репликации на Master-сервере должен быть создан технический пользователь с правами `REPLICATION SLAVE`.
-
-```sql
--- Создание пользователя (на Master)
-CREATE USER 'slave_user'@'192.168.1.2' IDENTIFIED BY 'secure_password';
-GRANT REPLICATION SLAVE ON *.* TO 'slave_user'@'192.168.1.2';
-FLUSH PRIVILEGES;
--- -> Query OK, 0 rows affected
-```
+1.  **Clone Plugin:** Прямое копирование физических данных (блоков InnoDB). Самый быстрый способ для MySQL 8.0.17+.
+2.  **MySQL Shell (`util.dumpInstance`):** Параллельный логический дамп. Значительно быстрее классического `mysqldump` для баз > 50 ГБ.
+3.  **mysqldump:** Классический инструмент. Использовать с флагами `--single-transaction --set-gtid-purged=ON`.
 
 ## Практические сценарии
 
-### Сценарий 1: Классическая настройка (по координатам)
+### 1. Подготовка пользователя (на Источнике)
 
-#### 1. Настройка Master-сервера
-
-В конфигурационном файле (`my.cnf` или `mysqld.cnf`) в секции `[mysqld]` установите:
-
-```ini
-[mysqld]
-server-id = 1
-log_bin = /var/log/mysql/mysql-bin.log
-binlog_expire_logs_seconds = 604800
-```
-
-Перезапустите сервис:
-
-```bash
-sudo systemctl restart mysql
-# -> (перезапуск выполнен успешно)
-```
-
-Зафиксируйте текущую позицию лога:
+Для MySQL 8.0+ рекомендуется использовать плагин аутентификации `caching_sha2_password`.
 
 ```sql
-SHOW MASTER STATUS;
-/*
-+------------------+----------+--------------+------------------+
-| File             | Position | Binlog_Do_DB | Binlog_Ignore_DB |
-+------------------+----------+--------------+------------------+
-| mysql-bin.000001 |      154 |              |                  |
-+------------------+----------+--------------+------------------+
-*/
+CREATE USER 'repl_user'@'%' IDENTIFIED BY 'StrongPassword123!';
+GRANT REPLICATION SLAVE ON *.* TO 'repl_user'@'%';
+
+-- Если планируется использовать Clone Plugin
+GRANT BACKUP_ADMIN ON *.* TO 'repl_user'@'%';
 ```
 
-#### 2. Создание и перенос дампа
+### 2. Настройка через Clone Plugin
 
-Создайте консистентный снимок данных:
+Позволяет создать реплику "с нуля" без ручного переноса дампов.
 
-```bash
-mysqldump -u root -p --all-databases --single-transaction --master-data=2 > master_dump.sql
-# -> (файл master_dump.sql создан)
-```
-
-#### 3. Настройка и запуск Slave-сервера
-
-Установите уникальный `server-id` в конфигурации Slave и перезапустите его. Затем загрузите дамп и настройте подключение:
-
-```bash
-mysql -u root -p < master_dump.sql
-# -> (данные импортированы)
-```
-
+**На Источнике и Реплике:**
 ```sql
-CHANGE MASTER TO
-  MASTER_HOST='192.168.1.1',
-  MASTER_USER='slave_user',
-  MASTER_PASSWORD='secure_password',
-  MASTER_LOG_FILE='mysql-bin.000001',
-  MASTER_LOG_POS=154;
--- -> Query OK, 0 rows affected
-
-START SLAVE;
--- -> Query OK, 0 rows affected
+INSTALL PLUGIN clone SONAME 'mysql_clone.so';
 ```
 
----
+**На Реплике:**
+```sql
+-- Разрешаем прием данных с конкретного хоста
+SET GLOBAL clone_valid_donor_list = '192.168.1.10:3306';
 
-### Сценарий 2: Настройка с использованием GTID
+-- Запуск клонирования (сервер перезагрузится автоматически)
+CLONE INSTANCE FROM 'repl_user'@'192.168.1.10':3306 IDENTIFIED BY 'StrongPassword123!';
+```
 
-#### 1. Подготовка конфигурации
+### 3. Настройка GTID-репликации (Конфигурация)
 
-На **всех** серверах добавьте в `my.cnf`:
+Рекомендуемый режим для всех новых инсталляций.
 
+**Параметры `my.cnf` (на всех узлах):**
 ```ini
 [mysqld]
+server_id = 101
 gtid_mode = ON
 enforce_gtid_consistency = ON
+
+# Настройки бинарного лога
 log_bin = /var/log/mysql/mysql-bin.log
-log_slave_updates = ON
+log_replica_updates = ON
+binlog_format = ROW
+
+# Время хранения логов (заменяет устаревший expire_logs_days)
+binlog_expire_logs_seconds = 604800 # 7 дней
 ```
 
-#### 2. Запуск репликации
-
-После переноса дампа на Slave выполните:
-
+**Запуск на Реплике:**
 ```sql
-CHANGE MASTER TO
-  MASTER_HOST='192.168.1.1',
-  MASTER_USER='slave_user',
-  MASTER_PASSWORD='secure_password',
-  MASTER_AUTO_POSITION = 1;
--- -> Query OK, 0 rows affected
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='192.168.1.10',
+  SOURCE_USER='repl_user',
+  SOURCE_PASSWORD='StrongPassword123!',
+  SOURCE_AUTO_POSITION = 1,
+  GET_SOURCE_PUBLIC_KEY = 1;
 
-START SLAVE;
--- -> Query OK, 0 rows affected
+START REPLICA;
 ```
+
+### 4. Использование фильтров репликации
+
+Если необходимо реплицировать только конкретные базы данных. Настраивается на **Реплике**.
+
+```ini
+[mysqld]
+# Реплицировать только указанную БД
+replicate-do-db = production_db
+# Игнорировать системные или временные БД
+replicate-ignore-db = test_db
+```
+*Внимание: При использовании GTID отфильтрованные транзакции всё равно фиксируются в `gtid_executed` как пустые.*
 
 ## Дополнительная информация
 
-### Проверка статуса
+### Мониторинг и производительность
 
-Основная команда для мониторинга на стороне Slave:
-
+**Основные команды:**
 ```sql
-SHOW SLAVE STATUS\G
-/*
-             Slave_IO_Running: Yes
-            Slave_SQL_Running: Yes
-        Seconds_Behind_Master: 0
-                Last_IO_Error: 
-               Last_SQL_Error: 
-*/
+-- Статус репликации
+SHOW REPLICA STATUS\G
+
+-- Мониторинг через Performance Schema (более детально)
+SELECT * FROM performance_schema.replication_connection_status;
+SELECT * FROM performance_schema.replication_applier_status_by_worker;
 ```
 
-### Частые ошибки
+**Ускорение репликации (Многопоточность):**
+Если `Seconds_Behind_Source` растет, включите параллельное применение транзакций:
+```sql
+STOP REPLICA;
+SET GLOBAL replica_parallel_type = 'LOGICAL_CLOCK';
+SET GLOBAL replica_parallel_workers = 4; -- По числу ядер CPU
+START REPLICA;
+```
 
-- **Смещение server-id:** Если идентификаторы серверов совпадают, репликация не запустится.
-- **Ошибки сети:** Проверьте доступность порта 3306 через `telnet` или `nc`.
-- **Дубликаты ключей:** Возникают при записи напрямую на Slave. Рекомендуется использовать режим `read_only = 1` на всех репликах.
+### Безопасность
 
-**См. также:**
+- **Read Only:** На репликах всегда устанавливайте `super_read_only = 1`.
+- **Защита данных:** Используйте `require_table_primary_key_check = ON` (8.0.21+), чтобы гарантировать наличие первичных ключей. Репликация таблиц без PK работает крайне медленно (Full Table Scan на каждое изменение).
+- **Шифрование:** Добавьте `SOURCE_SSL = 1` в `CHANGE REPLICATION SOURCE TO` для защиты трафика.
+
+### См. также
 
 - **[Обзор репликации MySQL](./overview.md)**
-- **[Механизм работы Master-Slave](./master_slave_mechanism.md)**
-- **[Диагностика и отладка репликации](./management_debug.md)**
+- **[GTID-репликация в деталях](./gtid.md)**
+- **[Управление и отладка](./management_debug.md)**
+- **[Multi-Source репликация](./multi-source.md)**

@@ -127,7 +127,7 @@ build:
     - echo "{\"auths\":{\"$dev.registry\":{\"username\":\"$dev.registry-user\",\"password\":\"$dev.registry-password\"}}}" > /kaniko/.docker/config.json
     # 2. Сборка и push образа
     - /kaniko/executor \
-        --context $CI_PROJECT_DIR \
+        --context "dir://$CI_PROJECT_DIR" \
         --dockerfile $CI_PROJECT_DIR/Dockerfile \
         --destination "$dev.registry/library/kube-utils:${CI_COMMIT_TAG:-$KUBE_VERSION}" \
         --build-arg KUBE_VERSION=${KUBE_VERSION} \

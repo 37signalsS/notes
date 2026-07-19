@@ -1,99 +1,119 @@
-# Паттерн "Utility Role"
+# Паттерн "Utility Role" в Ansible
 
 ## Определения
 
-**Паттерн "Utility Role"** — подход к организации [ролей Ansible](../ansible_roles.md), при котором создается служебная роль, не предназначенная для прямого применения на хостах. Её цель — быть центральной библиотекой общих компонентов (задач и обработчиков) для переиспользования в других ролях. Решает проблему дублирования кода.
+**Паттерн "Utility Role" (Служебная роль)** — подход к проектированию [ролей Ansible](../ansible_roles.md), при котором создается роль-библиотека, не предназначенная для прямого назначения хостам в плейбуке. Её единственная цель — хранение и предоставление общих компонентов (задач, обработчиков, переменных) для других ролей проекта.
+
+**Общие компоненты (Shared Components)** — повторяющиеся фрагменты кода (например, настройка репозиториев, создание пользователей, перезапуск стандартных сервисов), вынесенные в отдельную структуру для исключения дублирования (DRY — Don't Repeat Yourself).
+
+---
 
 ## Основные концепции
 
-Ключевая идея — вынос повторяющегося кода в одно место. Вместо определения одинаковых задач и обработчиков в нескольких ролях (`nginx`, `mysql`), они создаются один раз в служебной роли (например, `common_components`), затем импортируются из других ролей.
+### Зачем использовать Utility Role?
 
-Для включения компонентов используются модули `import_tasks` и `include_tasks`. Подробное описание различий между статическим (`import`) и динамическим (`include`) включением, а также рекомендации по их выбору находятся в [продвинутых возможностях плейбуков](../PlaybookStructure/advanced.md).
+1.  **Централизация логики:** Изменение в одном месте (например, URL корпоративного репозитория) автоматически применяется ко всем ролям, использующим этот компонент.
+2.  **Упрощение основных ролей:** Основные роли (Nginx, PostgreSQL) фокусируются на своей специфике, импортируя инфраструктурную обвязку из служебной роли.
+3.  **Снижение вероятности ошибок:** Протестированный один раз "Utility"-компонент гарантированно работает во всех зависимых ролях.
+
+### Механизмы подключения
+
+Для использования компонентов Utility Role применяются следующие модули:
+*   `ansible.builtin.import_tasks` / `ansible.builtin.import_role`: Статическое включение (на этапе парсинга).
+*   `ansible.builtin.include_tasks` / `ansible.builtin.include_role`: Динамическое включение (во время выполнения).
+
+Подробное сравнение методов включения приведено в [Продвинутых возможностях плейбуков](../PlaybookStructure/advanced.md).
+
+---
 
 ## Практические сценарии
 
-### 1. Централизация обработчиков (Handlers)
+### Сценарий 1: Централизованные обработчики (Shared Handlers)
 
-Все общие обработчики (`restart nginx`, `reload systemd` и т.д.) помещаются в `common_components/handlers/main.yml`.
+Вместо того чтобы в каждой роли описывать `restart nginx`, создайте общую роль `common`.
 
-**`roles/common_components/handlers/main.yml`:**
-
+**`roles/common/handlers/main.yml`:**
 ```yaml
 ---
 - name: restart nginx
   ansible.builtin.service:
     name: nginx
     state: restarted
-
-- name: restart firewalld
-  ansible.builtin.service:
-    name: firewalld
-    state: restarted
+  listen: "restart webserver"  # Использование ключевого слова listen для группировки
 
 - name: reload systemd
   ansible.builtin.systemd:
-    daemon_reload: yes
+    daemon_reload: true
 ```
 
-Другие роли, например `nginx`, импортируют их для использования.
-
-**`roles/nginx/handlers/main.yml`:**
-
+**Подключение в роли Nginx (`roles/nginx/handlers/main.yml`):**
 ```yaml
 ---
 - name: Import common handlers
-  ansible.builtin.import_tasks: ../../common_components/handlers/main.yml  # → общие обработчики импортированы
+  ansible.builtin.import_tasks:
+    file: "../../common/handlers/main.yml"
 ```
+Теперь в задачах роли Nginx можно использовать `notify: "restart webserver"`.
 
-Теперь `notify: restart firewalld` из любой роли будет вызывать централизованный обработчик.
+### Сценарий 2: Общие инфраструктурные задачи
 
-### 2. Централизация общих задач (Tasks)
+Настройка репозиториев или базовых пакетов, необходимых для большинства сервисов.
 
-Повторяющиеся задачи, такие как настройка репозиториев, выносятся в `common_components/tasks/`.
-
-**`roles/common_components/tasks/setup_repos.yml`:**
-
+**`roles/common/tasks/setup_repos.yml`:**
 ```yaml
 ---
-- name: Add EPEL (Extra Packages for Enterprise Linux) repository
+- name: Add corporate YUM repository
   ansible.builtin.yum_repository:
-    name: epel
-    description: EPEL YUM repo
-    baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
-    enabled: yes
-    gpgcheck: yes
-
-- name: Add custom company repository
-  ansible.builtin.yum_repository:
-    name: company-repo
-    # ...
+    name: corp-repo
+    description: Corporate repository
+    baseurl: "https://repo.example.com/yum/$releasever"
+    gpgcheck: true
+    enabled: true
 ```
 
-Затем они динамически включаются в нужных ролях.
-
-**`roles/nginx/tasks/main.yml`:**
-
+**Использование в прикладной роли (`roles/myapp/tasks/main.yml`):**
 ```yaml
-# roles/nginx/tasks/main.yml
-- name: Setup common repositories
-  ansible.builtin.include_tasks: ../../common_components/tasks/setup_repos.yml  # → репозитории настроены
+---
+- name: Setup repositories before installation
+  ansible.builtin.include_tasks:
+    file: "../../common/tasks/setup_repos.yml"
 
-# ... остальные задачи для Nginx
+- name: Install myapp
+  ansible.builtin.package:
+    name: myapp
+    state: present
 ```
 
-### 3. Роль для инициализации переменных
+### Сценарий 3: Роль-инициализатор (Bootstrap Role)
 
-Еще один вариант — создать роль, которая выполняется первой и задает глобальные переменные для всех последующих ролей.
+Служебная роль, которая выполняется первой для установки глобальных фактов или подготовки окружения.
 
-**`roles/init_variables/tasks/main.yml`:**
-
+**`roles/bootstrap/tasks/main.yml`:**
 ```yaml
-- name: Set distribution-specific variables
+---
+- name: Determine environment type
   ansible.builtin.set_fact:
-    package_manager: "{{ 'apt' if ansible_facts['os_family'] == 'Debian' else 'yum' }}"  # → факт package_manager установлен
-    # ... другие переменные
+    env_type: "{{ 'prod' if 'production' in group_names else 'dev' }}"
+    cacheable: true
 ```
+
+### Современный подход: Ansible Collections
+
+В современных проектах вместо Utility Roles рекомендуется использовать **Ansible Collections**. Это позволяет упаковать роли, модули и плагины в единый неймспейс. Общие задачи в коллекции доступны по пути `my_namespace.my_collection.my_shared_tasks`.
+
+---
 
 ## Дополнительная информация
 
-См. также [основы ролей](../ansible_roles.md), [кроссплатформенные плейбуки](../CrossPlatform/concepts.md), [антипаттерны](../ansible_bad_practices.md).
+### Рекомендации по именованию и путям
+
+1.  **Избегайте циклической зависимости:** Utility Role не должна зависеть от ролей, которые её импортируют.
+2.  **Пути к файлам:** При использовании `import_tasks` внутри ролей, пути разрешаются относительно текущего файла. Рекомендуется использовать относительные пути `../../` или полные пути через переменную `{{ playbook_dir }}/roles/...`.
+3.  **Валидация параметров:** Используйте `meta/argument_specs.yml` (см. [Структуру роли](structure.md)) для описания ожидаемых переменных в служебных задачах.
+
+### См. также
+
+*   [Основы ролей](../ansible_roles.md) — базовые понятия.
+*   [Структура роли](structure.md) — описание каталогов и meta-файлов.
+*   [Кроссплатформенность](../CrossPlatform/concepts.md) — использование Utility Role для разных ОС.
+*   [Антипаттерны](../ansible_bad_practices.md) — как не превратить Utility Role в "God Role".

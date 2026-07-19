@@ -4,11 +4,13 @@
 
 Базовые понятия (Проект, Робот-аккаунт и др.) описаны в [обзоре Harbor](./overview.md).
 
-* **Аутентификация**: Процесс проверки подлинности пользователя или системы перед предоставлением доступа к реестру.
+* **OCI-артефакт**: Универсальный формат хранения данных в реестре (образы, Helm-чарты, OPA-политики), соответствующий спецификации Open Container Initiative.
+* **CLI Secret**: Специальный токен для аутентификации через CLI, используемый вместо основного пароля (особенно актуально для OIDC/LDAP пользователей).
+* **Cosign**: Инструмент для создания и верификации цифровых подписей контейнерных образов, интегрированный с Harbor (начиная с версии 2.5).
 
 ## Основные концепции
 
-Работа с Harbor включает три основных операции: аутентификацию, отправку (push) и получение (pull) образов. Все образы в Harbor организованы по проектам.
+Работа с Harbor включает операции аутентификации, управления доступом и жизненным циклом артефактов. Harbor 2.0+ является полноценным OCI-реестром.
 
 ### Типы аутентификации
 
@@ -17,22 +19,20 @@
 | **Пользователь** | Интерактивный доступ | `username` / `password` (или CLI Secret) |
 | **Робот-аккаунт** | Автоматизация в CI/CD | `robot$<имя>` / `<токен>` |
 
-> **Примечание:** Для пользователей с OIDC/LDAP рекомендуется использовать **CLI Secret** (находится в профиле пользователя в UI Harbor) вместо основного пароля.
+### Структура имен артефактов
 
-### Структура имен образов
-
-Для взаимодействия с Harbor имя образа должно соответствовать формату:
+Для взаимодействия с Harbor имя образа или артефакта должно соответствовать формату:
 
 ```
-<hostname>/<project>/<image>:<tag>
+<hostname>/<project>/<repository>:<tag>
 ```
 
 Пример: `harbor.example.com/library/nginx:1.25`
 
-* **hostname**: Доменное имя Harbor (указывается в `harbor.yml` при установке).
+* **hostname**: Доменное имя Harbor.
 * **project**: Логическое пространство имен (проект `library` — по умолчанию для публичных образов).
-* **image**: Имя репозитория образов.
-* **tag**: Версия образа (рекомендуется использовать SemVer, см. [версионирование образов](../image_versioning_and_tagging.md)).
+* **repository**: Имя репозитория.
+* **tag**: Версия или идентификатор артефакта.
 
 ### Права доступа к проектам
 
@@ -55,22 +55,13 @@ docker login harbor.example.com
 # → Login Succeeded
 ```
 
-После успешного входа токен сохраняется в `~/.docker/config.json`.
-
-Для завершения сессии:
-
-```bash
-docker logout harbor.example.com
-# → Removing login credentials for harbor.example.com
-```
-
 ### Сценарий 2: Аутентификация робот-аккаунта для CI/CD
 
 Робот-аккаунты обеспечивают безопасность автоматизированных систем:
 
 1. Создайте робот-аккаунт в UI Harbor: **Project → Robot Accounts → New Robot Account**.
 2. Выберите необходимые права (push, pull, scan) и срок действия.
-3. Сохраните сгенерированный токен (показывается один раз).
+3. Сохраните токен.
 
 Использование в пайплайне:
 
@@ -79,69 +70,50 @@ docker login harbor.example.com -u 'robot$ci-bot' -p 'SECRET_TOKEN'
 # → Login Succeeded
 ```
 
-**Преимущества:**
-
-* Принцип наименьших привилегий (права только на конкретные проекты).
-* Возможность отзыва без смены пароля пользователя.
-* Аудит действий автоматики.
-
 ### Сценарий 3: Тегирование и публикация образа
 
-Подготовьте локальный образ и отправьте его в реестр Harbor:
+Подготовьте локальный образ и отправьте его в реестр:
 
 ```bash
 # 1. Сборка образа
 docker build -t my-app:latest .
 
-# 2. Присвоение тега в формате Harbor
+# 2. Присвоение тега
 docker tag my-app:latest harbor.example.com/library/my-app:v1.0.0
 
 # 3. Отправка в реестр
 docker push harbor.example.com/library/my-app:v1.0.0
-# → The push refers to repository [harbor.example.com/library/my-app]
 # → v1.0.0: digest: sha256:... size: ...
 ```
 
-Для публикации нескольких тегов (например, версии и `latest`):
+### Сценарий 4: Подпись образа с помощью Cosign
+
+Обеспечение доверия к источнику образа (Harbor 2.5+):
 
 ```bash
-docker tag my-app:latest harbor.example.com/library/my-app:v1
-docker tag my-app:latest harbor.example.com/library/my-app:latest
+# 1. Генерация ключей
+cosign generate-key-pair
+# → Private key written to cosign.key
+# → Public key written to cosign.pub
 
-docker push harbor.example.com/library/my-app --all-tags
+# 2. Подпись образа
+cosign sign --key cosign.key harbor.example.com/library/my-app:v1.0.0
+
+# 3. Проверка подписи
+cosign verify --key cosign.pub harbor.example.com/library/my-app:v1.0.0
 ```
 
-### Сценарий 4: Получение (скачивание) образа
+В интерфейсе Harbor у подписанного образа появится индикатор (зеленая галочка) в колонке **Signed**.
 
-Загрузка образов из различных типов проектов:
+### Сценарий 5: Работа с Helm-чартами и OCI-артефактами
 
-```bash
-# Из публичного проекта (без предварительного login)
-docker pull harbor.example.com/library/nginx:1.25
-# → 1.25: Pulling from library/nginx
-# → Digest: sha256:...
-# → Status: Downloaded newer image for harbor.example.com/library/nginx:1.25
-
-# Из приватного проекта
-docker login harbor.example.com
-docker pull harbor.example.com/my-project/my-app:v1.0.0
-```
-
-### Сценарий 5: Работа с Helm-чартами через OCI
-
-Harbor позволяет хранить Helm-чарты в том же реестре, что и Docker-образы:
+Harbor позволяет хранить любые OCI-совместимые данные:
 
 ```bash
-# 1. Аутентификация в Helm
-helm registry login harbor.example.com -u admin -p <password>
-# → Login Succeeded
-
-# 2. Публикация чарта (в формате OCI)
+# Публикация Helm-чарта (в формате OCI)
 helm push my-chart-1.0.0.tgz oci://harbor.example.com/my-project
-# → Pushed: harbor.example.com/my-project/my-chart:1.0.0
-# → Digest: sha256:...
 
-# 3. Установка чарта напрямую из Harbor
+# Установка чарта
 helm install my-release oci://harbor.example.com/my-project/my-chart --version 1.0.0
 ```
 
@@ -151,22 +123,22 @@ helm install my-release oci://harbor.example.com/my-project/my-chart --version 1
 
 | Ошибка | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| `unauthorized: authentication required` | Отсутствует или просрочена сессия | Выполните `docker login` |
-| `denied: requested access to the resource is denied` | Недостаточно прав в проекте | Проверьте роль пользователя или Robot Account |
-| `tls: failed to verify certificate` | Самоподписанный сертификат Harbor | Установите Root CA (см. [сертификаты](./certificates.md)) |
-| `manifest unknown` | Тег или образ не существует | Проверьте наличие образа в UI Harbor |
+| `unauthorized` | Отсутствует или просрочена сессия | Выполните `docker login` |
+| `denied` | Недостаточно прав в проекте | Проверьте роль пользователя или Robot Account |
+| `tls: failed to verify` | Самоподписанный сертификат | Установите Root CA (см. [сертификаты](./certificates.md)) |
+| `vulnerability policy` | Образ заблокирован сканером | Проверьте отчет об уязвимостях в UI Harbor |
 
 ### Лучшие практики
 
-* **Приоритет Robot Accounts**: Всегда используйте робот-аккаунты для CI/CD вместо личных учетных записей.
-* **Использование CLI Secret**: Для интеграции с LDAP/AD используйте CLI Secret для повышения безопасности.
-* **Версионирование по дайджестам**: В критических средах (Production) ссылайтесь на образ по `sha256` дайджесту для гарантии неизменности.
-* **Автоматическая очистка**: Настраивайте Retention Policies в настройках проекта для удаления старых или неиспользуемых тегов.
+* **Робот-аккаунты**: Всегда используйте их для CI/CD вместо личных учетных записей.
+* **Политики очистки (Retention)**: Настраивайте автоматическое удаление старых тегов в настройках проекта (**Project → Tag Retention**), чтобы экономить место на диске.
+* **Квоты проектов**: Устанавливайте лимиты на объем хранилища для проектов, чтобы избежать переполнения диска реестра.
+* **Запрет неподписанных образов**: Включите **Prevent images from being pulled if they are unsigned** в настройках проекта для повышения безопасности Production.
+* **Сканирование при Push**: Включите автоматическое сканирование (**Automatically scan images on push**) для немедленного обнаружения CVE.
 
 ### Связанные документы
 
-* **[Обзор Harbor](./overview.md)** — архитектура и возможности.
+* **[Обзор Harbor](./overview.md)** — архитектура и ключевые возможности.
 * **[Установка Harbor](./installation.md)** — развертывание через Docker Compose и Helm.
 * **[Создание сертификатов](./certificates.md)** — настройка TLS.
-* **[Версионирование образов](../image_versioning_and_tagging.md)** — стратегии тегирования.
-* **[Docker Registry](../docker_registries.md)** — общие принципы работы с реестрами.
+

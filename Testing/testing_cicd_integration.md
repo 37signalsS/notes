@@ -121,10 +121,11 @@ e2e_tests:
   - **Тестовое покрытие** — визуализация полноты проверок, описанная в **[Метриках покрытия](./testing_coverage_metrics.md)**.
   - **Длительность пайплайна** — критический фактор скорости доставки.
 - **Отчётность**: Генерация и хранение результатов описаны в **[Инструментах отчётности](./testing_reporting_tools.md)**.
-- **Методологии**: Взаимосвязь тестов с процессами разработки приведена в обзоре **[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)**.
+- **Методологии**: Взаимосвязь тестов с процессами разработки приведена в обзоре **[TDD, BDD и ATDD](../CI-CD/Testing/tdd_bdd_overview.md)**.
 - **Инфраструктурные тесты**: Проверка ролей Ansible с помощью Molecule описана в **[руководстве по Molecule](../Ansible/ansible_testing_with_molecule.md)**.
 
 ### См. также
 
 - **[Виды тестирования](./testing_types_unit_integration_e2e.md)** — подробный разбор Unit, Integration и E2E.
+- **[Интеграция SAST/DAST в CI/CD](../CI-CD/DevSecOps/sast_dast_cicd_integration.md)** — детальное руководство по встраиванию инструментов безопасности.
 - **[Артефакты GitLab CI](../CI-CD/GitLab_CI/Advanced/gitlab_ci_caching/gitlab_ci_artifacts.md)** — хранение результатов тестов.

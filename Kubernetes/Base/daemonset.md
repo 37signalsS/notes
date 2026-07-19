@@ -134,6 +134,26 @@ spec:
 2. **DaemonSet** имеет `Toleration` к этому ограничению и запускается первым.
 3. После готовности агента (например, настройки сети), ограничение снимается, и планировщик начинает размещать прикладные поды.
 
+### Альтернатива DaemonSet через Anti-Affinity
+
+В некоторых случаях (например, для обычных приложений, которым нужно гарантированное распределение по узлам) можно использовать **Deployment** с настройками **PodAntiAffinity** вместо DaemonSet.
+
+**Пример конфигурации:**
+```yaml
+spec:
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - my-app
+        topologyKey: "kubernetes.io/hostname"
+```
+Такой подход заставляет планировщик размещать не более одного пода с меткой `app: my-app` на каждом узле. Однако, в отличие от DaemonSet, Deployment не гарантирует запуск пода на *всех* новых узлах автоматически (ограничено количеством `replicas`).
+
 ## Дополнительная информация
 
 * **[Безопасность подов (Security Context)](../Security/pod_security_context.md)** — настройка прав доступа.

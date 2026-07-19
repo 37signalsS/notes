@@ -368,19 +368,14 @@ Ansible не принимает пароли в открытом виде по �
 Как использовать шаблон systemd для Docker?	Создать шаблон .j2 с переменными, использовать loop для генерации unit-файлов для каждого контейнера.	ansible::playbook::examples
 Зачем нужен Restart=always в systemd unit?	Чтобы контейнер автоматически перезапускался при падении или перезагрузке системы.	ansible::playbook::examples
 Что такое ExecStartPre=-/usr/bin/docker stop?	Команда, выполняемая перед стартом контейнера. Минус в начале означает, что ошибка не критична (контейнер может не существовать).	ansible::playbook::examples
-Что такое Ansible Pull?	Утилита для pull-режима управления конфигурацией. Управляемые узлы сами скачивают плейбуки из Git и применяют их локально.	ansible::pull::theory
-В чем разница между push и pull моделями Ansible?	Push: контрольный узел подключается к хостам и применяет конфигурацию. Pull: хосты сами скачивают и применяют конфигурацию из Git.	ansible::pull::theory
-Какие преимущества у Ansible Pull?	Масштабируемость (нет ограничения на количество хостов), децентрализация, легкая интеграция с cron.	ansible::pull::theory
-Какие недостатки у Ansible Pull?	"Зависимость от Git, сложность переконфигурации ""пуллеров"", необходимость установки Ansible на каждом узле."	ansible::pull::theory
-Что делает ansible-pull?	Объединяет git и ansible-playbook: клонирует репозиторий и запускает плейбук локально на хосте.	ansible::pull::theory
-Как запустить ansible-pull с публичным репозиторием?	ansible-pull -U https://github.com/user/repo.git -d ~/ansible-dir playbook.yml	ansible::pull::commands
-Что означает флаг -U в ansible-pull?	URL Git-репозитория, откуда скачивать плейбуки.	ansible::pull::commands
-Что означает флаг -d в ansible-pull?	Директория для клонирования репозитория. Важно указывать полный путь.	ansible::pull::commands
-Почему нужен SSH-ключ для приватных репозиториев?	Потому что интерактивный ввод пароля не подходит для автоматизации в cron.	ansible::pull::security
-Как настроить SSH-ключ для GitHub в ansible-pull?	Сгенерировать ключ, добавить в GitHub, настроить ~/.ssh/config с указанием IdentityFile для github.com.	ansible::pull::security
-Что происходит при первом запуске ansible-pull?	Клонирует репозиторий и выполняет плейбук.	ansible::pull::commands
-Что происходит при повторном запуске ansible-pull?	Делает git pull и выполняет плейбук только если были изменения.	ansible::pull::commands
-Зачем нужен cron с ansible-pull?	Для периодического автоматического обновления конфигурации по расписанию.	ansible::pull::practices
+Что такое Ansible Pull?	Утилита для pull-режима управления конфигурацией: хосты сами скачивают плейбуки из Git и применяют их локально через ansible-playbook.	ansible::pull::theory
+В чем разница между push и pull моделями в Ansible?	Push: контрольный узел проталкивает конфигурацию на хосты. Pull: хосты сами подтягивают конфигурацию из репозитория по расписанию.	ansible::pull::theory
+Какие основные преимущества Ansible Pull?	Масштабируемость (нет нагрузки на контрольный узел), автономность (работа за NAT), децентрализация.	ansible::pull::theory
+Какие основные недостатки Ansible Pull?	Сложность управления секретами (Vault), зависимость от Git, необходимость установки Ansible на каждом узле.	ansible::pull::theory
+Как запустить ansible-pull с плейбуком local.yml из Git?	ansible-pull -U <git_url> -d <dir> -i localhost, local.yml	ansible::pull::commands
+Что делает флаг -o в ansible-pull?	Выполняет запуск плейбука только в том случае, если в Git-репозитории появились изменения (only-if-changed).	ansible::pull::commands
+Какая автоматизация предпочтительнее для ansible-pull в современных ОС?	Systemd Timers — из-за лучшего логирования (journald), контроля зависимостей и гибкого расписания.	ansible::pull::automation
+Как безопасно передать пароль Vault при использовании ansible-pull?	Использовать --vault-password-file со скриптом, который получает пароль из менеджера секретов (Vault, AWS SM).	ansible::pull::security
 Что такое роль (Role) в Ansible?	Базовая единица переиспользования. Предопределенная структура файлов, инкапсулирующая задачи, переменные, шаблоны и обработчики.	ansible::roles::theory
 Что такое коллекция (Collection)?	Более крупная структура для распространения контента Ansible. Может включать роли, плагины, модули, документацию.	ansible::roles::theory
 Какие компоненты инкапсулирует роль?	Задачи (tasks), переменные (variables), шаблоны (templates), обработчики (handlers).	ansible::roles::theory

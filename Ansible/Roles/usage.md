@@ -2,215 +2,161 @@
 
 ## Определения
 
-**Создание роли** — процесс разработки новой роли Ansible: от инициализации структуры каталогов до наполнения задачами, переменными и шаблонами.
+**Роль (Role)** — основной механизм декомпозиции и переиспользования кода в Ansible. Она позволяет объединять задачи, переменные, файлы и шаблоны в логические блоки для настройки конкретных сервисов или компонентов системы.
 
-**Использование роли** — применение роли в плейбуке через директиву `roles:` для автоматизации настройки целевых хостов.
+**Использование роли** — процесс интеграции роли в плейбук одним из трех способов: через классическую директиву `roles`, статическое импортирование или динамическое включение.
 
 ## Основные концепции
 
-### Создание каркаса роли
+### Создание и структура роли
 
-Утилита `ansible-galaxy` автоматически создает полную структуру директорий для новой роли:
+Для инициализации новой роли используется утилита `ansible-galaxy`:
 
 ```bash
-# Создает директорию my_new_role со всеми стандартными каталогами
+# Создание каркаса роли со стандартной структурой каталогов
 ansible-galaxy role init my_new_role  # → роль успешно инициализирована
 ```
 
-Подробнее о структуре каталогов — в [structure.md](structure.md).
+Точка входа для логики роли — файл `tasks/main.yml`. Подробное описание всех каталогов приведено в **[Структуре роли](structure.md)**.
 
-### Наполнение роли логикой
+### Способы подключения ролей
 
-Основная работа происходит в файле `tasks/main.yml` — точке входа роли.
+Существует три способа использования ролей в плейбуке:
 
-**Пример: роль `set_time`**
-
-1. **Создаем роль:**
-
-    ```bash
-    ansible-galaxy role init set_time
-    ```
-
-2. **Добавляем задачу в `roles/set_time/tasks/main.yml`:**
-
-    ```yaml
-    ---
-    # tasks file for set_time
-    - name: Set timezone to Europe/Moscow
-      ansible.builtin.timezone:
-        name: Europe/Moscow
-    ```
-
-    > **Важно:** Не удаляйте `---` в начале файла — это маркер начала YAML (YAML Ain't Markup Language) документа.
-
-3. **Добавляем переменные по умолчанию в `defaults/main.yml`:**
-
-    ```yaml
-    ---
-    timezone: Europe/Moscow
-    ```
-
-4. **Модифицируем задачу для использования переменной:**
-
-    ```yaml
-    - name: Set timezone
-      ansible.builtin.timezone:
-        name: "{{ timezone }}"
-    ```
-
-### Подключение роли в плейбуке
-
-Роли применяются к хостам с помощью ключевого слова `roles` в плейбуке. Ansible автоматически ищет роли в директории `roles/` рядом с плейбуком.
-
-**Базовый пример:**
+#### 1. Классический способ (`roles:`)
+Роли выполняются в самом начале плейбука (после `pre_tasks`). Это самый распространенный и простой метод.
 
 ```yaml
----
-- name: Configure servers
-  hosts: webservers
-  become: true
+- hosts: webservers
   roles:
-    - set_time
+    - common
+    - role: nginx
+      nginx_port: 80
 ```
+
+#### 2. Статическое импортирование (`import_role`)
+Роль вставляется в плейбук на этапе парсинга. Работает как обычная задача внутри списка `tasks`.
+- **Плюсы:** Можно использовать в любом месте списка задач.
+- **Минусы:** Нельзя использовать циклы (`loop`) и переменные, которые определяются во время выполнения.
+
+```yaml
+tasks:
+  - name: Import monitoring role
+    ansible.builtin.import_role:
+      name: monitoring
+```
+
+#### 3. Динамическое включение (`include_role`)
+Роль подключается во время выполнения плейбука.
+- **Плюсы:** Поддерживает циклы (`loop`) и условные операторы (`when`), зависящие от данных, полученных в процессе работы.
+- **Особенности:** По умолчанию переменные роли недоступны в плейбуке после завершения выполнения роли (требуется `public: yes`).
+
+```yaml
+tasks:
+  - name: Include role for each app
+    ansible.builtin.include_role:
+      name: "{{ item.role_name }}"
+    loop: "{{ applications }}"
+```
+
+---
+
+## Порядок выполнения и зависимости
+
+### Очередность выполнения в плейбуке
+
+Если в плейбуке используются все типы задач, Ansible выполняет их в строгом порядке:
+1. `pre_tasks` — задачи, выполняемые до ролей.
+2. `roles` — роли, указанные в секции `roles:`.
+3. `tasks` — основные задачи плейбука (включая `import_role` и `include_role`).
+4. `post_tasks` — задачи, выполняемые после завершения всех основных действий.
+
+### Зависимости ролей
+
+Роли могут зависеть от других ролей. Это описывается в файле `meta/main.yml`. При вызове основной роли Ansible сначала выполнит все её зависимости. Подробнее — в **[разделе метаданных](structure.md#сценарий-2-настройка-зависимостей-в-metamainyml)**.
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Простое подключение роли
+### Сценарий 1: Условное выполнение роли
+
+Использование `when` для выбора роли в зависимости от операционной системы:
 
 ```yaml
-- name: Apply common role
-  hosts: all
-  roles:
-    - common
+tasks:
+  - name: Setup database
+    ansible.builtin.include_role:
+      name: postgresql
+    when: ansible_os_family == "Debian"
 ```
 
-### Сценарий 2: Подключение роли с параметрами
+### Сценарий 2: Использование тегов для фильтрации
 
-Передача переменных в роль для настройки:
+Теги позволяют запускать только определенные части автоматизации:
 
 ```yaml
-- name: Configure Nginx with custom settings
-  hosts: webservers
-  roles:
-    - role: nginx
-      nginx_port: 8080
-      nginx_worker_processes: 8
+roles:
+  - role: security
+    tags: ["hardening", "security"]
+  - role: webserver
+    tags: ["nginx", "web"]
 ```
 
-### Сценарий 3: Подключение с тегами
-
-Использование тегов для выборочного выполнения:
-
-```yaml
-- name: Deploy application stack
-  hosts: webservers
-  roles:
-    - role: my_app.memcached
-      port: 11211
-      tags: ["cache", "memcached"]
-    
-    - role: my_app.redis
-      port: 6379
-      tags: ["cache", "redis"]
-```
-
-Запуск только кэширования:
-
+Запуск только задач безопасности:
 ```bash
-ansible-playbook deploy.yml --tags "cache"  # → выполнение задач с тегом cache
+ansible-playbook site.yml --tags "security"  # → выполнение только роли security
 ```
 
-### Сценарий 4: Условное подключение роли
+### Сценарий 3: Передача переменных с экспортом (`public: true`)
 
-Использование `when:` для применения роли к определенным хостам:
+По умолчанию переменные из `vars/` и `defaults/` роли, подключенной через `include_role`, не видны в последующих задачах плейбука. Чтобы сделать их доступными, используйте `public: true`:
 
 ```yaml
-- name: Deploy database
-  hosts: all
-  roles:
-    - role: postgresql
-      when: db_type == "postgresql"
-    
-    - role: mysql
-      when: db_type == "mysql"
+tasks:
+  - name: Install and export vars
+    ansible.builtin.include_role:
+      name: my_app
+      public: true
+
+  - name: Use var from role
+    ansible.builtin.debug:
+      msg: "{{ my_app_version }}"
 ```
 
-### Сценарий 5: Подключение внешней роли из Galaxy
+### Сценарий 4: Полная параметризация через group_vars
+
+Рекомендуемый способ управления настройками для разных окружений без изменения кода ролей.
+
+**Структура:** `group_vars/production.yml` → `playbook.yml` → `roles/nginx/`.
 
 ```yaml
-- name: Setup web server
-  hosts: webservers
-  roles:
-    - geerlingguy.nginx       # Роль из Ansible Galaxy
-    - geerlingguy.php         # Ещё одна внешняя роль
-```
+# group_vars/production.yml
+nginx_port: 443
 
-Предварительная установка:
-
-```bash
-ansible-galaxy role install geerlingguy.nginx geerlingguy.php  # → роли установлены в ~/.ansible/roles
-```
-
-Подробнее — в [galaxy.md](galaxy.md). Примеры развертывания сложных официальных ролей с инвентарем и переменными: 
-- **[Развертывание OpenSearch через Ansible](../../ELK_Stack/OpenSearch/opensearch_ansible_deployment.md)**.
-- **[Развертывание Apache Kafka через Ansible](../../Kafka/kafka_ansible_deployment.md)**.
-
-### Сценарий 6: Полная параметризация через group_vars
-
-**Структура проекта:**
-
-```
-project/
-├── group_vars/
-│   └── webservers.yml
-├── roles/
-│   └── nginx/
-└── playbook.yml
-```
-
-**`group_vars/webservers.yml`:**
-
-```yaml
-nginx_port: 80
-nginx_worker_processes: auto
-nginx_server_name: example.com
-```
-
-**`playbook.yml`:**
-
-```yaml
-- name: Configure webservers
-  hosts: webservers
+# playbook.yml
+- hosts: production
   roles:
     - nginx
 ```
-
-Роль автоматически получит переменные из `group_vars`.
 
 ---
 
 ## Дополнительная информация
 
-### Приоритет переменных при использовании ролей
+### Приоритет переменных
 
-Переменные, переданные роли напрямую в плейбуке, имеют более высокий приоритет, чем значения из `defaults/main.yml` роли.
-
-```yaml
-roles:
-  - role: nginx
-    nginx_port: 8080  # Переопределит значение из defaults
-```
-
-Полная иерархия приоритетов — в [PlaybookStructure/variables.md](../PlaybookStructure/variables.md).
+Переменные, переданные при вызове роли, имеют приоритет над значениями в `defaults/main.yml`.
+Полная таблица приоритетов — в **[PlaybookStructure/variables.md](../PlaybookStructure/variables.md)**.
 
 ### Распространенные ошибки
 
-1. **Отсутствие `---` в начале файлов задач** — может привести к ошибкам парсинга YAML
-2. **Неправильный путь к роли** — Ansible ищет роли в `roles/` относительно плейбука или в путях из `ansible.cfg`
-3. **Жестко заданные значения в задачах** — используйте переменные из `defaults/main.yml`
+1. **Использование циклов с `import_role`** — приведет к ошибке, используйте `include_role`.
+2. **Путаница в путях** — Ansible ищет роли в папке `roles/` рядом с плейбуком или в путях, указанных в `ansible.cfg`.
+3. **Забытый `become: true`** — если роль выполняет системные задачи, убедитесь, что права повышены на уровне плейбука или вызова роли.
 
-### Связанные документы
+### См. также
 
-- [Структура роли](structure.md) — стандартная структура каталогов
-- [Компоненты роли](../ansible_roles.md) — базовые концепции и определения
-- [Стратегии и паттерны](strategies.md) — рекомендации по проектированию ролей
+- [Структура роли](structure.md) — назначение каталогов и файлов
+- [Компоненты роли](../ansible_roles.md) — базовые определения и концепции
+- [Стратегии и паттерны](strategies.md) — рекомендации по проектированию

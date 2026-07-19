@@ -110,4 +110,4 @@ Sidecar используется для расширения функциона�
 
 - Основной раздел: [Kubernetes Deployment](./index.md)
 - Управление жизненным циклом: [lifecycle_management.md](./lifecycle_management.md)
-- Сравнение стратегий: [Comparison of Deployment Strategies](../../../CI-CD/Deployment_Strategies/comparison.md)
+- Сравнение стратегий: [Сравнение стратегий развертывания](../../../CI-CD/Deployment_Strategies/comparison.md)

@@ -2,119 +2,107 @@
 
 ## Определения
 
-**Zalando Postgres Operator** — Kubernetes-оператор с открытым исходным кодом, предназначенный для автоматизации жизненного цикла кластеров PostgreSQL. Он использует Custom Resource Definitions (CRD) для декларативного описания желаемого состояния баз данных.
+* **Zalando Postgres Operator** — Kubernetes-оператор с открытым исходным кодом для автоматизации полного жизненного цикла кластеров PostgreSQL. Использует Custom Resource Definitions (CRD) для декларативного управления базами данных.
+* **Spilo** — базовый Docker-образ кластера, объединяющий PostgreSQL и Patroni. Обеспечивает консистентность среды и инструментов управления.
+* **Patroni** — шаблонное решение для обеспечения высокой доступности (HA), управляющее процессами выбора лидера и автоматического failover внутри подов Spilo.
+* **Postgres Operator UI** — опциональный веб-интерфейс для визуального управления кластерами и мониторинга их состояния.
 
-**Spilo** — Docker-образ от Zalando, объединяющий PostgreSQL и Patroni для обеспечения высокой доступности. Является базовым образом для кластеров, создаваемых оператором.
+## Базовые концепции
 
-**Оператор Kubernetes** — специализированный контроллер, расширяющий API Kubernetes для управления сложными stateful-приложениями. Подробнее — **[Kubernetes-операторы](../../../Kubernetes/Concepts/kubernetes_operators.md)**.
+### Архитектура и компоненты
 
-## Основные концепции
+Оператор работает как контроллер в кластере Kubernetes, отслеживая изменения объектов типа `postgresql`. Основные функции включают:
 
-### Подходы к развертыванию в Kubernetes
+1. **Высокая доступность (HA)**: Автоматическое развертывание топологии Master-Replica. Patroni внутри подов управляет состоянием, а оператор обеспечивает корректность ресурсов Kubernetes (Services, Endpoints).
+2. **Управление томами**: Поддержка динамического выделения PVC и автоматического расширения томов при изменении `size` в манифесте (если StorageClass поддерживает `allowVolumeExpansion`).
+3. **Резервное копирование и PITR**: Интеграция с WAL-E/WAL-G для выгрузки WAL-логов и базовых бэкапов в S3-совместимые хранилища.
+4. **Мониторинг**: Встроенная поддержка экспорта метрик в формате Prometheus через Sidecar-контейнеры или напрямую из Spilo.
 
-| Метод | Описание | Плюсы | Минусы |
-| :--- | :--- | :--- | :--- |
-| **Манифесты** | Прямое описание ресурсов (StatefulSet, Service) | Максимальный контроль | Трудоемкость при большом количестве инстансов |
-| **Helm Charts** | Шаблонизация через `values.yaml` | Простота установки | Статичность конфигурации после деплоя |
-| **Операторы** | Интеллектуальный контроллер внутри кластера | Автоматизация failover, бэкапов и обновлений | Зависимость от реализации оператора |
+### Сравнение с CloudNativePG (CNPG)
 
-Подробнее о ручном развертывании через манифесты — **[Zalando Spilo: Манифесты](./zalando_spilo_manifests.md)**.
-
-### Особенности и возможности
-
-Оператор разработан для управления более чем 1500 инстансами в инфраструктуре Zalando, что определяет его фокус на масштабируемость и унификацию.
-
-- **Высокая доступность**: Автоматическая настройка кластеров (Primary + Replicas) с использованием Patroni.
-- **Масштабирование**: Изменение количества узлов и объема хранилища "на лету" через правку CRD.
-- **Резервное копирование**: Интеграция с S3, GCS или Azure Blob Storage для физических бэкапов и архивации WAL.
-- **Управление доступом**: Поддержка командной модели (Teams) и автоматическое создание ролей и баз данных.
-- **Пулы соединений**: Встроенная интеграция с PgBouncer.
+| Характеристика | Zalando Operator | CloudNativePG |
+| :--- | :--- | :--- |
+| **Управление HA** | Patroni (внутри подов) | Native K8s API (через оператор) |
+| **Сложность** | Выше (требует понимания Patroni) | Ниже (нативный K8s подход) |
+| **История** | Проверен временем (1500+ инстансов) | Современный, активно развивающийся |
+| **Особенности** | Богатый UI, управление командами | Отсутствие внешних зависимостей (etcd) |
 
 ## Практические сценарии
 
 ### Установка оператора через Helm
 
-**Шаг 1: Подключение репозитория**
-
 ```bash
+# Подключение репозитория
 helm repo add postgres-operator https://opensource.zalando.com/postgres-operator/charts/postgres-operator
 helm repo update
-```
 
-**Шаг 2: Установка в выделенный namespace**
-
-```bash
+# Установка
 helm install postgres-operator postgres-operator/postgres-operator \
   --namespace postgres-operator \
   --create-namespace
 ```
 
-### Развертывание кластера PostgreSQL
+### Развертывание отказоустойчивого кластера
 
-Для создания кластера используется ресурс типа `postgresql`.
-
-**Пример манифеста `minimal-cluster.yaml`:**
+Пример манифеста для создания кластера с PostgreSQL 17 и базовыми настройками ресурсов.
 
 ```yaml
 apiVersion: "postgresql.zalando.com/v1"
 kind: postgresql
 metadata:
-  name: my-prod-db
+  name: pg-prod-cluster
   namespace: database
 spec:
   teamId: "infrastructure"
-  numberOfInstances: 2
+  numberOfInstances: 3
   postgresql:
-    version: "15"
+    version: "17"
+    parameters:
+      shared_buffers: "256MB"
+      max_connections: "100"
   volume:
-    size: "10Gi"
-    storageClass: "standard"
+    size: "20Gi"
+    storageClass: "gp3"
+  # Определение пользователей и их прав
   users:
-    app_admin: [superuser, createdb]
+    api_user: []
+    admin_user: [superuser, createdb]
   databases:
-    main_app: app_admin
+    production_db: api_user
   resources:
     requests:
-      cpu: 100m
-      memory: 512Mi
-    limits:
       cpu: 500m
       memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
 ```
 
-**Применение манифеста:**
+### Включение логических бэкапов
 
-```bash
-kubectl apply -f minimal-cluster.yaml
-```
+Оператор может создавать логические бэкапы (dump) по расписанию через CronJob. Для этого в конфигурации оператора (ConfigMap) или через Helm-values необходимо включить:
 
-### Установка веб-интерфейса (Postgres Operator UI)
-
-Zalando предоставляет удобный UI для визуального управления и мониторинга кластеров.
-
-```bash
-helm install postgres-operator-ui postgres-operator/postgres-operator-ui \
-  --namespace postgres-operator \
-  --set env.OPERATOR_API_URL=http://postgres-operator.postgres-operator.svc.cluster.local:8080
+```yaml
+logical_backup_schedule: "30 00 * * *"
+logical_backup_docker_image: "postgres:17"
+logical_backup_s3_bucket: "my-postgres-backups"
 ```
 
 ## Дополнительная информация
 
-### Управление пользователями и правами
+### Диагностика и отладка
 
-Оператор позволяет централизованно управлять правами доступа через секцию `users` в манифесте. При изменении списка пользователей оператор автоматически синхронизирует состояние в БД.
+При возникновении проблем со синхронизацией кластера проверяйте логи пода оператора:
+```bash
+kubectl logs -l app.kubernetes.io/name=postgres-operator -n postgres-operator
+```
+Состояние конкретного кластера можно увидеть в `status` объекта:
+```bash
+kubectl get postgresql pg-prod-cluster -o yaml
+```
 
-### Типовые проблемы
+### Смотрите также
 
-| Проблема | Решение |
-| :--- | :--- |
-| Ошибки при создании PVC | Проверить наличие и права `storageClass`, указанного в манифесте кластера. |
-| Недоступность UI | Убедиться, что `OPERATOR_API_URL` в конфигурации UI указывает на корректный Service оператора. |
-| Ограничения по хранилищу | Zalando Operator официально не поддерживает NFS для физических бэкапов, рекомендуется использовать S3-совместимые хранилища. |
-
-### Связанные документы
-
-- **Резервное копирование**: Методы и стратегии — **[Backup and Recovery](../Concepts/backup_and_recovery.md)**.
-- **Альтернативный оператор**: Решение от CloudNativePG — **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)**.
-- **Теория Patroni**: Основы работы кластера — **[High Availability](../Concepts/high_availability.md)**.
-- **Kubernetes**: Общие концепции контроллеров — **[Kubernetes Operators](../../../Kubernetes/Concepts/kubernetes_operators.md)**.
+* **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)** — обзор CloudNativePG.
+* **[Zalando Spilo: Манифесты](./zalando_spilo_manifests.md)** — ручное управление без оператора.
+* **[High Availability](../Concepts/high_availability.md)** — теория работы Patroni.

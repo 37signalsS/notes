@@ -169,6 +169,7 @@ sudo ip addr add 192.168.10.1/24 dev eth0.10
 
 - **[Формат кадра 802.1Q](./VLAN/vlan_8021q_frame.md)** — структура и поля тега.
 - **[Trunk и Native VLAN](./VLAN/vlan_trunk_native.md)** — работа магистральных портов.
+- **[DTP и безопасность портов](./VLAN/vlan_dtp_security.md)** — управление автоматическим согласованием (Cisco).
 - **[Меж-VLAN маршрутизация](./VLAN/vlan_inter_vlan_routing.md)** — Router-on-a-Stick и L3-коммутация.
 - **[L2 Switching](../../Concepts/vlan_l2_switching/definitions_and_concepts.md)** — принципы работы коммутаторов.
 - **[Spanning Tree Protocol (STP)](../stp.md)** — предотвращение петель в VLAN-среде.

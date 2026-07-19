@@ -74,7 +74,7 @@ RUN --network=none pip install --no-index --find-links=./wheels -r requirements.
 
 ### Генерация и подпись SLSA Provenance-аттестации
 
-BuildKit автоматически генерирует provenance-аттестации, соответствующие [SLSA](https://slsa.dev/):
+BuildKit автоматически генерирует provenance-аттестации и SBOM, соответствующие стандартам индустрии. Подробное описание механизмов и примеры использования см. в **[BuildKit: Целостность и аттестации](../../Docker/Dockerfile/dockerfile_buildkit.md#целостность-и-аттестации-supply-chain-security)**.
 
 ```bash
 # Сборка с provenance и SBOM

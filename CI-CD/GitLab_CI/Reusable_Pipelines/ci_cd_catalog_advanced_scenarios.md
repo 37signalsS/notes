@@ -1,14 +1,14 @@
-# GitLab CI: Каталог Компонентов — Продвинутые сценарии
+# GitLab CI: Каталог компонентов — продвинутые сценарии
 
 ## Определения
 
-**Продвинутый сценарий** — сложные паттерны использования CI/CD Components: миграция, монорепозитории, цепочки компонентов, troubleshooting.
+**Продвинутый сценарий** — сложные паттерны использования CI/CD Components: миграция, монорепозитории, вложенные компоненты, устранение неисправностей (troubleshooting).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 6: Миграция с `include:project` на компоненты
+### Сценарий 6: Миграция с include:project на компоненты
 
 **До (include:project):**
 
@@ -31,11 +31,11 @@ include:
 
 **Шаги миграции:**
 
-1. Создайте `.gitlab-ci.yml` с `spec:inputs` в репозитории шаблона
-2. Добавьте интерполяцию `$[[ inputs.* ]]` вместо переменных
-3. Создайте тег SemVer и релиз
-4. Обновите проекты-потребители на `include:component`
-5. Удалите старые файлы шаблонов
+1. Создайте `.gitlab-ci.yml` с `spec:inputs` в репозитории шаблона.
+2. Добавьте интерполяцию `$[[ inputs.* ]]` вместо переменных.
+3. Создайте тег SemVer и релиз.
+4. Обновите проекты-потребители на `include:component`.
+5. Удалите старые файлы шаблонов.
 
 ### Сценарий 7: Компонент для монорепозитория
 
@@ -79,14 +79,16 @@ include:
       build_command: npm run build
 ```
 
-### Сценарий 8: Компонент с условной логикой
+### Сценарий 8: Компонент с использованием валидации через options
+
+Использование `options` предпочтительнее `regex` для фиксированных списков значений, так как это обеспечивает лучшую валидацию в UI.
 
 ```yaml
 spec:
   inputs:
     deploy_environment:
       type: string
-      regex: '^(dev|staging|prod)$'
+      options: [dev, staging, prod]
     require_approval:
       type: boolean
       default: false
@@ -140,23 +142,23 @@ include:
       environment: $[[ inputs.environment ]]
 ```
 
-> **Важно:** каждый компонент в цепочке учитывается в лимите 150 include.
+> **Важно:** каждый компонент в цепочке учитывается в лимите 150 `include`.
 
-### Сценарий 10: A/B тестирование компонентов
+### Сценарий 10: Постепенное внедрение (Rollout) компонентов
 
 ```yaml
-# Постепенный переход на новую версию компонента
+# Постепенный переход на новую версию компонента через условия в правилах
 include:
   # 90% проектов используют стабильную версию
   - component: '$CI_SERVER_FQDN/group/ci-components/test-runner@1.0.0'
   
-  # 10% проектов тестируют новую версию (через переменную)
+  # 10% проектов тестируют новую версию
   - component: '$CI_SERVER_FQDN/group/ci-components/test-runner@2.0.0-beta'
     rules:
-      - if: '$CI_PROJECT_ID == "123" || $CI_PROJECT_ID == "456"'  # Только тестовые проекты
+      - if: '$CI_PROJECT_ID == "123" || $CI_PROJECT_ID == "456"'
 ```
 
-**Стратегия rollout:**
+**Стратегия внедрения:**
 
 | Этап | Охват | Версия | Действие |
 | :--- | :--- | :--- | :--- |
@@ -164,106 +166,92 @@ include:
 | 2 | 25% | `@2.0.0-rc` | Расширенное тестирование |
 | 3 | 100% | `@2.0.0` | Полный релиз |
 
-### Сценарий 11: Отладка и troubleshooting
+### Сценарий 11: Устранение неисправностей (Troubleshooting)
 
-**Проблема:** компонент не загружается
+**Проблема: компонент не загружается**
 
 ```bash
-# 1. Проверка доступности компонента
+# 1. Проверка доступности компонента через API
 curl --header "PRIVATE-TOKEN: <token>" \
   "https://gitlab.example.com/api/v4/projects/<project_id>/ci/components"
 
-# 2. Валидация конфигурации
-gitlab-ci lint --project=group/project --show-expanded
+# 2. Валидация конфигурации через GitLab CLI
+glab ci lint --show-expanded
 
-# 3. Проверка тега
+# 3. Проверка тега и содержимого в репозитории
 git tag -l | grep "v1.0"
 git show v1.0.0:.gitlab-ci.yml | head -20
 ```
 
-**Проблема:** validation failed для inputs
+**Проблема: ошибка валидации для inputs**
 
 ```bash
-# Проверка типов данных
-# Ошибка: expected string, got number
-# Решение: обернуть число в кавычки
+# Проверка типов данных. Ошибка: expected string, got number.
+# Решение: всегда оборачивайте числовые значения в кавычки в YAML, 
+# если тип в spec указан как string.
 inputs:
-  node_version: "20"  # Было: 20 (без кавычек)
+  node_version: "20"
 ```
 
-**Проблема:** превышен лимит include
+**Проблема: превышен лимит include**
 
 ```bash
-# Подсчёт количества include
-gitlab-ci lint --project=group/project --show-expanded 2>&1 | grep -c "include:"
+# Подсчёт количества include после раскрытия всех файлов
+glab ci lint --show-expanded 2>&1 | grep -c "include:"
 
-# Оптимизация: объединить компоненты
-# Было: 3 компонента по 5 jobs каждый = 15 include
-# Стало: 1 компонент с 15 jobs = 1 include
+# Оптимизация: объединение компонентов. 
+# Один компонент с несколькими заданиями считается за 1 include.
 ```
 
-### Сценарий 12: Best practices для production
+### Сценарий 12: Лучшие практики (Best practices)
 
-**1. Фиксируйте полные версии:**
+1. **Фиксация версий.** Используйте полные версии (SemVer) для production и минорные/latest только для разработки.
+   * Рекомендуется: `@1.2.3`
+   * Избегайте: `@latest`
+
+2. **Документирование.** Каждый input должен иметь `description`.
+
+3. **Валидация.** Используйте `options` для перечислений и `regex` для сложных строк.
+
+4. **Тестирование.** Проверяйте компоненты в изолированном проекте перед публикацией в основной каталог.
+
+### Сценарий 13: Вложенные компоненты (Nested components)
+
+Компоненты могут включать другие компоненты. Важно помнить, что входы (inputs) родительского компонента должны быть явно переданы дочернему.
 
 ```yaml
-# ✅ Хорошо
-- component: '$CI_SERVER_FQDN/group/component@1.2.3'
-
-# ⚠️ Допустимо только для dev
-- component: '$CI_SERVER_FQDN/group/component@1.2'
-
-# ❌ Избегайте в production
-- component: '$CI_SERVER_FQDN/group/component@~latest'
-```
-
-**2. Документируйте inputs:**
-
-```yaml
+# templates/parent.yml
 spec:
   inputs:
-    image:
-      type: string
-      default: "docker:24.0"
-      description: "Docker image для сборки (формат: image:tag)"
-      regex: '^[\w\-\.]+:\d+\.\d+$'  # Валидация формата
-    
-    enable_cache:
+    stage_name:
+      default: test
+---
+include:
+  - component: $CI_SERVER_FQDN/my-org/sub-component@1.0.0
+    inputs:
+      target_stage: $[[ inputs.stage_name ]] # Явная передача входа дочернему компоненту
+```
+
+### Сценарий 14: Глобальные входы пайплайна (Pipeline-wide inputs)
+
+Начиная с GitLab 17.11, можно определять `spec:inputs` прямо в основном файле `.gitlab-ci.yml`. Это позволяет создавать структурированный интерфейс запуска пайплайна (с выпадающими списками и чекбоксами) вместо обычных текстовых переменных.
+
+```yaml
+# .gitlab-ci.yml
+spec:
+  inputs:
+    deploy_target:
+      options: [staging, production]
+      default: staging
+    run_tests:
       type: boolean
       default: true
-      description: |
-        Включить кэширование зависимостей.
-        Отключите для чистой сборки.
-```
 
-**3. Тестируйте компонент перед релизом:**
-
-```yaml
-# .gitlab-ci.yml в репозитории компонента
-test-component:
-  stage: test
-  script:
-    - gitlab-ci lint --project=$CI_PROJECT_PATH
-    - echo "Component validation passed"
-
-release:
-  stage: deploy
-  needs: test-component  # Релиз только после успешного теста
-  rules:
-    - if: $CI_COMMIT_TAG
-```
-
-**4. Используйте semantic-release для автоматизации:**
-
-```yaml
-semantic-release:
-  stage: release
-  image: node:20
-  script:
-    - npm install -g semantic-release
-    - npx semantic-release
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+---
+include:
+  - component: $CI_SERVER_FQDN/org/deploy-comp@1.0.0
+    inputs:
+      env: $[[ inputs.deploy_target ]]
 ```
 
 ---
@@ -272,27 +260,24 @@ semantic-release:
 
 ### Чек-лист перед публикацией компонента
 
-- [ ] `spec:inputs` заполнен и валиден
-- [ ] Все inputs имеют `description`
-- [ ] Типы данных соответствуют использованию
-- [ ] `regex` валидация добавлена для строковых полей
-- [ ] Компонент проходит `gitlab-ci lint`
-- [ ] Создан тег SemVer (vX.Y.Z)
-- [ ] Создан GitLab Release
-- [ ] Проект видим для потребителей
-- [ ] Документация обновлена
+- [ ] Секция `spec:inputs` заполнена и валидна.
+- [ ] Все входы имеют осмысленное `description`.
+- [ ] Типы данных (`string`, `boolean`, `number`, `array`) соответствуют использованию.
+- [ ] Добавлена валидация через `regex` или `options`.
+- [ ] Компонент проходит проверку через `glab ci lint`.
+- [ ] Создан тег SemVer (vX.Y.Z) и GitLab Release.
+- [ ] Проект имеет корректный уровень видимости (Public/Internal).
 
 ### Внешние ресурсы
 
-- [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
-- [GitLab Components Catalog](https://gitlab.com/explore/catalog)
-- [Примеры компонентов GitLab](https://gitlab.com/gitlab-org/ci-cd/components)
+- [Документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
+- [Каталог компонентов GitLab](https://gitlab.com/explore/catalog)
 
 ---
 
 ## Связанные документы
 
-- **SSoT:** [GitLab CI: Каталог Компонентов](./ci_cd_catalog_components.md)
-- [Ограничения](./ci_cd_catalog_limits.md)
-- [Справочная информация](./ci_cd_catalog_reference.md)
-- [Механизм include](./include_keyword.md)
+- **Основной документ:** [GitLab CI: Каталог компонентов](./ci_cd_catalog_components.md)
+- [GitLab CI: Ограничения каталога](./ci_cd_catalog_limits.md)
+- [GitLab CI: Справочник по каталогу](./ci_cd_catalog_reference.md)
+

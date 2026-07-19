@@ -10,37 +10,40 @@
 | :--- | :--- | :--- |
 | **`extends`** | Наследование конфигурации от одного или нескольких "скрытых" заданий (начинающихся с `.`) | Один файл / include |
 | **`!reference`** | Вставка конкретных фрагментов (скриптов, правил, переменных) без полного наследования | Один файл / include |
-| **YAML Anchors (`&`) / Aliases (`*`)** | Стандартный механизм YAML для повторного использования фрагментов | Один файл |
 | **`include`** | Подключение внешних YAML-файлов: локально, из других проектов, по URL, шаблоны GitLab | Несколько файлов |
-| **CI/CD Catalog (Components)** | Версионируемые, типизированные компоненты с публикуемым интерфейсом (`spec:inputs`) | Каталог компонентов |
+| **`include` с `inputs`** | Передача параметров в подключаемые файлы для интерполяции (`$[[ inputs.key ]]`) | Несколько файлов |
+| **CI/CD Catalog** | Версионируемые, типизированные компоненты с публикуемым интерфейсом (`spec:inputs`) | Каталог компонентов |
+| **`trigger`** | Запуск дочерних (Downstream) пайплайнов для изоляции логики | Уровень пайплайна |
 
-> **Примечание:** `!reference` — специальный тег GitLab CI с полной валидацией через CI Lint. YAML Anchors — стандарт YAML с ограниченной поддержкой валидации GitLab.
+> **Примечание:** `!reference` — специальный тег GitLab CI с полной валидацией через CI Lint. YAML Anchors (`&` / `*`) — стандарт YAML, который в новых проектах рекомендуется заменять на `!reference` или `inputs`.
 
 ## Основные концепции
 
 ### Эволюция подходов к переиспользованию
 
-| Подход | Сложность | Версионирование | Изоляция | Валидация Lint |
+Подробный разбор уровней зрелости и процесса трансформации CI/CD в организации представлен в статье **[Эволюция переиспользуемых пайплайнов](./evolution_example.md)**.
+
+| Подход | Сложность | Параметризация | Изоляция | Валидация |
 | :--- | :--- | :--- | :--- | :--- |
-| **YAML Anchors (`&`)** | Низкая | Нет | Низкая | Ограниченная |
-| **`extends`** | Средняя | Нет | Средняя | Полная |
+| **YAML Anchors** | Низкая | Нет | Низкая | Ограниченная |
+| **`extends`** | Средняя | Через переменные | Средняя | Полная |
 | **`!reference`** | Средняя | Нет | Средняя | Полная |
-| **`include`** | Высокая | Теги (рекомендуется) | Высокая | Полная |
-| **CI/CD Catalog** | Высокая | **Semver** (полное) | **Полная** | Полная |
+| **`include` + `inputs`**| Высокая | **Строгая (inputs)** | Высокая | Полная |
+| **CI/CD Catalog** | Высокая | **Semver + inputs** | **Полная** | Полная |
 
 ### Рекомендации по выбору подхода
 
 | Сценарий | Рекомендуемый подход | Обоснование |
 | :--- | :--- | :--- |
-| Несколько jobs с одинаковой конфигурацией в одном файле | [`extends`](./extends_keyword.md) | Простое наследование, полная валидация |
-| Общие скрипты между jobs без полного наследования | [`!reference`](./reference_and_yaml_anchors.md) | Гибкая вставка фрагментов |
-| Вынос конфигурации в отдельные файлы одного проекта | [`include:local`](./include_keyword.md) | Модульность внутри проекта |
-| Шаринг шаблонов между проектами | [`include:project`](./include_keyword.md) с тегами | Централизованное управление |
-| Публичная/внутренняя библиотека компонентов | [CI/CD Catalog](./ci_cd_catalog_components.md) | Версионирование, типизация, каталог |
+| Одинаковая конфигурация в одном файле | [`extends`](./extends_keyword.md) | Простое наследование |
+| Общие скрипты без полного наследования | [`!reference`](./reference_and_yaml_anchors.md) | Гибкая вставка фрагментов |
+| Модульность внутри одного проекта | [`include:local`](./include_keyword.md) с `inputs` | Типизированные параметры, отсутствие коллизий переменных |
+| Шаринг между проектами (Internal) | `include:project` с `inputs` | Централизация с гибкой настройкой |
+| Публичная или корпоративная библиотека | [CI/CD Catalog](./ci_cd_catalog_components.md) | Версионирование, документация, реестр |
 
-> **Best Practice:** Избегайте YAML Anchors в новых проектах — используйте `!reference` для лучшей валидации и читаемости [^1]
+> **Best Practice:** Используйте `inputs` вместо глобальных переменных в `include` для предотвращения непреднамеренной перезаписи значений и улучшения читаемости [^1]
 
-[^1]: [GitLab CI Best Practices — Avoid YAML Anchors](https://dev.to/zenika/gitlab-ci-10-best-practices-to-avoid-widespread-anti-patterns-2mb5)
+[^1]: [GitLab Docs — CI/CD steps and inputs](https://docs.gitlab.com/ee/ci/components/#inputs)
 
 ### Принципы слияния конфигураций
 
@@ -49,60 +52,63 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Выбор подхода к переиспользованию
+### Сценарий 1: Передача параметров через `inputs` (GitLab 15.11+)
 
-| Потребность | Решение | Пример |
-| :--- | :--- | :--- |
-| Убрать дублирование `script` в 5 jobs | `extends` от скрытого задания | `.base_job:` → `job1: extends: .base_job` |
-| Вставить общий `before_script` | `!reference` | `before_script: !reference [.common_setup]` |
-| Разделить пайплайн на файлы | `include:local` | `include: .gitlab/ci/build.yml` |
-| Использовать шаблон из другого проекта | `include:project` с `ref: v1.0.0` | `include: {project: group/templates, file: docker.yml, ref: v1.0.0}` |
-| Публикация компонента в каталог | CI/CD Catalog с `spec:inputs` | `include: {component: $CI_SERVER_FQDN/group/comp@1.0}` |
+Вместо глобальных переменных используйте типизированные входные данные:
 
-### Сценарий 2: Эволюция от простого к сложному
-
-1. **Начальный этап** (1–3 проекта): `extends` для базовых job-шаблонов внутри `.gitlab-ci.yml`
-2. **Рост проекта** (5+ проектов): `include:local` — вынос шаблонов в отдельные файлы
-3. **Масштабирование** (10+ проектов): `include:project` с тегами — централизованный репозиторий шаблонов
-4. **Зрелость** (публичные компоненты): CI/CD Catalog — semver, `spec:inputs`, автоматическая документация
-
-Подробный пример эволюции: **[Эволюция переиспользуемых пайплайнов](./evolution_example.md)**.
-
-### Сценарий 3: Валидация через CI Lint
-
-Перед коммитом проверяйте конфигурацию:
-
-```bash
-# Через GitLab UI: CI/CD → Editor → Validate
-# Через CLI:
-gitlab-ci lint --project=my-group/my-project
-
-# Проверка с подстановкой include:
-gitlab-ci lint --include-debug
+```yaml
+# templates/docker-build.yml
+spec:
+  inputs:
+    image_name:
+      default: "my-app"
+    dockerfile:
+      default: "Dockerfile"
+---
+build_job:
+  script:
+    - docker build -t $[[ inputs.image_name ]] -f $[[ inputs.dockerfile ]] .
 ```
 
-### Сценарий 4: Централизованный репозиторий шаблонов (Enterprise)
+Подключение в основном пайплайне:
+```yaml
+include:
+  - local: 'templates/docker-build.yml'
+    inputs:
+      image_name: "custom-service"
+```
 
-В организациях с большим количеством микросервисов используется подход **"CI-as-a-Service"**:
+### Сценарий 2: Централизованный репозиторий (Enterprise CI/CD Catalog)
 
-1. **Репозиторий-источник (templates-repo):** Содержит эталонные YAML-файлы для сборки (Docker), тестирования (Pytest, Jest) и деплоя (Helm).
-2. **Проекты-клиенты:** В `.gitlab-ci.yml` проекта подключается основной шаблон. Проект описывает только свои переменные и специфичные шаги.
+В современных организациях вместо простых `include` используется **Internal CI/CD Catalog**:
+
+1. **Библиотека компонентов:** Репозитории, помеченные как "CI/CD Catalog Resources", содержат версионированные (SemVer) компоненты.
+2. **Публикация:** Автоматическая публикация через релизы GitLab.
+3. **Использование:** Разработчики находят нужные компоненты в UI каталога и подключают их с фиксированной версией.
    ```yaml
    include:
-     - project: 'devops/shared-templates'
-       file: '/templates/standard-microservice.yml'
-       ref: 'v2.1.0'
-   
-   variables:
-     DOCKER_CONTEXT: "./src/app"
-     HELM_RELEASE_NAME: "my-service"
+     - component: $CI_SERVER_FQDN/org/components/security-scanners@1.2.0
+       inputs:
+         severity: "high"
    ```
-3. **Преимущества:** Унификация процессов, возможность массового внедрения новых стандартов (например, линтеров или сканеров) и упрощение онбординга новых сервисов.
 
-> **Примечание:** `!reference` и `include:component` проходят полную валидацию. YAML Anchors могут не выявлять ошибки.
+### Сценарий 3: Валидация через CI Lint и CLI
+
+Проверяйте пайплайны до коммита, особенно при использовании сложных `include`:
+
+```bash
+# Через GitLab CLI (glab)
+glab ci lint --show-expanded
+
+# Через API (если нет glab)
+curl --header "Content-Type: application/json" \
+     --header "PRIVATE-TOKEN: <your_access_token>" \
+     --data '{"content": "$(cat .gitlab-ci.yml)"}' \
+     "https://gitlab.com/api/v4/projects/<id>/ci/lint"
+```
 
 ## Дополнительная информация
 
 - [Официальная документация: CI/CD Components](https://docs.gitlab.com/ci/components/)
-- [Кэширование в GitLab CI](../Advanced/gitlab_ci_caching.md)
+- [Кэширование в GitLab CI](../Advanced/gitlab_ci_caching/caching_overview.md)
 - [Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)

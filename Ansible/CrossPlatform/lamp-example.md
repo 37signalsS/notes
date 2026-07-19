@@ -1,165 +1,139 @@
-# Кроссплатформенный пример установки LAMP/LEMP в Ansible
+# Кроссплатформенный пример развертывания LAMP/LEMP
 
 ## Определения
 
-- **LAMP/LEMP** — стеки программного обеспечения для веб-приложений.
-  - **L**inux — Операционная Система (ОС).
-  - **A**pache / **E**Nginx — веб-сервер.
-  - **M**ySQL / MariaDB — Система Управления Базами Данных (СУБД).
-  - **P**HP — язык программирования.
-- **Кроссплатформенный плейбук** — сценарий Ansible, адаптирующийся к различным семействам ОС (Debian/RedHat) через условную логику и абстракцию переменных.
-
-> Глубокое описание механизмов адаптации приведено в руководстве [Кроссплатформенные концепции](./concepts.md).
+- **LAMP/LEMP** — стеки программного обеспечения для веб-приложений:
+  - **Linux** — операционная система.
+  - **Apache** (LAMP) или **Nginx** (LEMP) — веб-сервер.
+  - **MySQL** или **MariaDB** — реляционная СУБД.
+  - **PHP** — язык программирования.
+- **Кроссплатформенный плейбук** — сценарий Ansible, способный выполнять идентичные задачи на разных семействах ОС (Debian, RedHat) путем динамической адаптации под специфику дистрибутива.
 
 ## Базовые концепции
 
-### Структура кроссплатформенного проекта
+### Структура кроссплатформенной роли
 
-Общие рекомендации по организации файлов и каталогов приведены в руководстве **[Структура проекта Ansible](../examples/example_project_layout.md)**. Для обеспечения переносимости кода в кроссплатформенных проектах рекомендуется использовать следующую структуру:
+Для эффективного управления различиями между ОС рекомендуется разделять задачи и переменные. Подробно этот паттерн описан в руководстве **[Кроссплатформенные концепции](./concepts.md)**.
 
-#### ansible.cfg (настройка окружения)
-
-```ini
-[defaults]
-inventory = inventory
-roles_path = roles
-host_key_checking = False
+**Пример организации роли `nginx`:**
+```text
+roles/nginx/
+├── defaults/
+│   └── main.yml         # Общие параметры (порты, лимиты)
+├── vars/
+│   ├── Debian.yml       # Пути и пакеты для Ubuntu/Debian
+│   └── RedHat.yml       # Пути и пакеты для RHEL/Rocky/Alma
+└── tasks/
+    ├── main.yml         # Точка входа: include_vars + include_tasks
+    ├── debian.yml       # Специфичные задачи для Debian
+    └── redhat.yml       # Специфичные задачи для RedHat
 ```
 
-#### Инвентарь (inventory)
+### Динамическая загрузка конфигурации
 
-```ini
-[web_servers]
-srv-ubuntu ansible_host=192.168.1.10
-srv-centos ansible_host=192.168.1.20
-```
-
-#### Основной плейбук
+Вместо жесткого кодирования путей в задачах, используйте паттерн `include_vars` в `tasks/main.yml`:
 
 ```yaml
----
-- name: Развертывание стека LAMP/LEMP
-  hosts: web_servers
-  become: true
-  vars:
-    php_version: "8.4"
-  roles:
-    - common
-    - nginx
-    - mysql
-    - php
+- name: Загрузка переменных ОС
+  ansible.builtin.include_vars: "{{ ansible_facts['os_family'] }}.yml"
+
+- name: Выполнение задач ОС
+  ansible.builtin.include_tasks: "{{ ansible_facts['os_family'] | lower }}.yml"
 ```
-
-### Ключевые методы адаптации
-
-В данном примере используются:
-
-1. **Динамическое включение задач**: модуль `include_tasks` с фильтром по `ansible_facts['os_family']`.
-2. **Абстракция путей**: вынос специфичных для ОС путей в переменные (например, `web_root`).
-3. **Нативные менеджеры пакетов**: использование `apt` для Debian и `yum`/`dnf` для RedHat в случаях, когда требуется тонкая настройка репозиториев.
 
 ## Практические сценарии
 
-### Установка и настройка веб-сервера Nginx
+### Сценарий 1: Установка веб-сервера (Nginx)
 
-Различия между ОС проявляются уже на этапе установки (необходимость EPEL репозитория для CentOS) и путей к контенту.
+Различия заключаются в названиях пакетов и необходимости подключения EPEL для RHEL-систем.
 
-#### Реализация для Debian/Ubuntu
-
+#### Реализация для Debian (Ubuntu)
 ```yaml
-# roles/nginx/tasks/debian.yml
-- name: Установка Nginx через apt
+# tasks/debian.yml
+- name: Установка Nginx
   ansible.builtin.apt:
     name: nginx
     state: present
     update_cache: yes
 ```
 
-#### Реализация для RedHat/CentOS
-
+#### Реализация для RedHat (Rocky Linux, AlmaLinux)
 ```yaml
-# roles/nginx/tasks/redhat.yml
-- name: Установка EPEL release
-  ansible.builtin.yum:
+# tasks/redhat.yml
+- name: Установка EPEL
+  ansible.builtin.dnf:
     name: epel-release
     state: present
 
-- name: Установка Nginx через yum
-  ansible.builtin.yum:
+- name: Установка Nginx
+  ansible.builtin.dnf:
     name: nginx
     state: present
 ```
 
-**Различия в путях к данным:**
+### Сценарий 2: Настройка PHP через внешние репозитории
 
-| Семейство ОС | Путь по умолчанию (`web_root`) |
-| :--- | :--- |
-| **Debian** | `/var/www/html` |
-| **RedHat** | `/usr/share/nginx/html` |
+Для получения свежих версий PHP (8.3+) требуются репозитории Ondrej (Debian) или REMI (RedHat).
 
-### Установка СУБД MySQL/MariaDB
-
-Реализация идемпотентной и безопасной установки базы данных для различных семейств ОС вынесена в профильное руководство: **[Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md)**.
-
-### Управление версиями PHP через сторонние репозитории
-
-Для установки актуальных версий PHP (например, 8.4) на стабильные дистрибутивы требуются внешние источники.
-
-#### Ubuntu (использование репозитория PHP)
-
+#### Подготовка в RedHat (использование DNF модулей)
 ```yaml
-# roles/php/tasks/debian.yml
-- name: Добавление репозитория PHP (формат DEB 822)
-  ansible.builtin.deb822_repository:
-    name: ondrej-php
-    types: deb
-    uris: https://ppa.launchpadcontent.net/ondrej/php/ubuntu
-    suites: "{{ ansible_facts['distribution_release'] }}"
-    components: main
-    signed_by: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4f4ea0aae5267a6c
-    state: present
-
-- name: Установка PHP-FPM
-  ansible.builtin.apt:
-    name: "php{{ php_version }}-fpm"
-    state: present
-```
-
-#### CentOS (использование репозитория REMI)
-
-```yaml
-# roles/php/tasks/redhat.yml
-- name: Установка REMI release
-  ansible.builtin.yum:
+- name: Установка репозитория REMI
+  ansible.builtin.dnf:
     name: "https://rpms.remirepo.net/enterprise/remi-release-{{ ansible_facts['distribution_major_version'] }}.rpm"
     state: present
+    disable_gpg_check: no
 
-- name: Включение PHP репозитория REMI
-  ansible.builtin.command:
-    cmd: "yum-config-manager --enable remi-php{{ php_version | replace('.', '') }}"
-  args:
-    creates: /etc/yum.repos.d/remi-php.repo
+- name: Сброс текущего модуля PHP
+  ansible.builtin.dnf:
+    name: "@php"
+    state: absent
+
+- name: Включение модуля PHP {{ php_version }} из REMI
+  ansible.builtin.dnf:
+    name: "@php:remi-{{ php_version }}"
+    state: present
 ```
 
-### Работа с Python-зависимостями (pip и venv)
+### Сценарий 3: Параметризация путей и пользователей
 
-Кроссплатформенность в Python-проектах требует внимания к версии системного интерпретатора и изоляции окружений.
+Разные ОС используют разные стандарты для путей к веб-контенту и пользователей сервисов. Эти данные должны храниться в `vars/`.
+
+**Пример `vars/Debian.yml`:**
+```yaml
+web_root: "/var/www/html"
+web_user: "www-data"
+```
+
+**Пример `vars/RedHat.yml`:**
+```yaml
+web_root: "/usr/share/nginx/html"
+web_user: "nginx"
+```
+
+**Использование в задачах:**
+```yaml
+- name: Копирование контента сайта
+  ansible.builtin.copy:
+    src: index.html
+    dest: "{{ web_root }}/index.html"
+    owner: "{{ web_user }}"
+    group: "{{ web_user }}"
+```
+
+### Сценарий 4: Настройка Python для MySQL
+
+Модуль `community.mysql` требует наличия клиентской библиотеки Python на целевом хосте.
 
 ```yaml
-- name: Установка системных зависимостей для MySQL
+- name: Установка Python-библиотеки для MySQL
   ansible.builtin.package:
-    name: "{{ 'python3-pymysql' if ansible_facts['os_family'] == 'Debian' else 'python3-mysql' }}"
+    name: "{{ 'python3-pymysql' if ansible_facts['os_family'] == 'Debian' else 'python3-PyMySQL' }}"
     state: present
-
-- name: Установка зависимостей в виртуальное окружение
-  ansible.builtin.pip:
-    requirements: "/var/www/app/requirements.txt"
-    virtualenv: "/var/www/app/venv"
-    virtualenv_command: /usr/bin/python3 -m venv
 ```
 
 ## Дополнительная информация
 
-- [Кроссплатформенные концепции](./concepts.md) — базовые паттерны и принципы.
-- [Установка и настройка MySQL](../examples/mysql_setup.md) — детальный пример для баз данных.
-- [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — особенности `apt`, `yum`, `pip`.
+- [Кроссплатформенные концепции](./concepts.md) — детали реализации паттернов адаптации.
+- [Установка и настройка MySQL/MariaDB](../examples/mysql_setup.md) — профильное руководство по БД.
+- [Модули управления пакетами](../Modules/ansible_package_management_modules.md) — подробнее об `apt`, `dnf` и `package`.
+- [Роли: Стратегии проектирования](../Roles/strategies.md) — организация структуры ролей.

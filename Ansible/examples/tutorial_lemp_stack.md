@@ -1,33 +1,36 @@
-# Ansible: Развертывание LEMP-стека
+# Развертывание LEMP-стека с помощью Ansible
 
 ## Определения
 
-**LEMP (Linux, Nginx, MySQL, PHP)** — набор программного обеспечения для развертывания веб-приложений. Акроним расшифровывается как:
+**LEMP (Linux, Nginx, MySQL, PHP)** — популярный набора программного обеспечения для развертывания динамических веб-приложений.
 
-* **L**inux — операционная система (ОС — Операционная Система).
-* **E**ngine-X (Nginx) — веб-сервер.
-* **M**ySQL/MariaDB — **СУБД (Система Управления Базами Данных)**.
-* **P**HP (PHP: Hypertext Preprocessor) — язык программирования для обработки динамического контента.
+**Компоненты стека:**
+- **Linux** — операционная система (ОС — Операционная Система), выступающая фундаментом.
+- **Engine-X (Nginx)** — высокопроизводительный веб-сервер и реверс-прокси.
+- **MySQL/MariaDB** — реляционная **СУБД (Система Управления Базами Данных)**.
+- **PHP** (Hypertext Preprocessor) — язык сценариев для серверной обработки данных.
 
 ## Базовые концепции
 
-### Структура плейбука
+### Структура управления
 
-* `name`: Описание плейбука.
-* `hosts`: Целевые хосты или группы из инвентаря.
-* `become: true`: Указание выполнять задачи с повышенными привилегиями (`sudo`).
-* `tasks`: Список задач, которые выполняются последовательно.
-* `handlers`: Специальные задачи, которые запускаются только по уведомлению от других задач (например, для перезапуска сервиса после изменения конфигурации).
+| Элемент | Назначение |
+|---|---|
+| `hosts` | Целевые группы хостов из инвентаря. |
+| `become: true` | Выполнение задач с правами суперпользователя (`sudo`). |
+| `tasks` | Основной список последовательных действий. |
+| `handlers` | Задачи, запускаемые через `notify` только при изменении состояния. |
+| `vars` | Переменные для кастомизации конфигурации (например, версии пакетов). |
 
 ### Ключевые модули
 
-* `ansible.builtin.apt`: Управление пакетами в Debian-подобных системах.
-* `ansible.builtin.file`: Управление файлами, директориями и символическими ссылками.
-* `ansible.builtin.copy`: Копирование файлов с управляющего узла на целевые хосты.
-* `ansible.builtin.template`: Создание файлов на основе шаблонов Jinja2.
-* `ansible.builtin.service`: Управление системными службами.
-* `community.mysql.mysql_user`: Управление пользователями MySQL.
-* `community.mysql.mysql_db`: Управление базами данных MySQL.
+Для развертывания LEMP используются стандартные модули Ansible:
+
+- `ansible.builtin.apt`: Установка пакетов (Nginx, PHP).
+- `ansible.builtin.template`: Генерация конфигов Nginx на основе Jinja2.
+- `ansible.builtin.copy`: Доставка статических файлов сайта.
+- `ansible.builtin.service`: Управление состоянием служб (start, reload).
+- `community.mysql.*`: Настройка базы данных и пользователей.
 
 ## Практические сценарии
 
@@ -35,34 +38,36 @@
 
 #### Шаг 1: Установка и настройка Nginx
 
-1. **Установка Nginx**: Используем модуль `apt` для установки пакета. Параметр `state: present` обеспечивает идемпотентность.
-2. **Подготовка веб-директории**: Удаляем стандартную директорию `/var/www/html`.
-3. **Развертывание сайта**: Копируем файлы простого HTML (Hypertext Markup Language) сайта из локальной папки `files/html` на сервер.
+1.  **Установка**: Используем `apt` для инсталляции. Параметр `update_cache: yes` гарантирует актуальность списка пакетов.
+2.  **Очистка**: Удаляем стандартную страницу приветствия Nginx.
+3.  **Доставка контента**: Копируем файлы лендинга.
 
 ```yaml
 ---
-- name: Configure LEMP Stack
-  hosts: all
+- name: Развертывание LEMP-стека
+  hosts: web_servers
   become: true
+  vars:
+    php_version: "8.3"
 
   tasks:
-    - name: Install nginx via apt
+    - name: Установка Nginx
       ansible.builtin.apt:
         name: nginx
         state: present
         update_cache: yes
 
-    - name: Remove default html directory
+    - name: Удаление стандартной директории веб-сервера
       ansible.builtin.file:
         path: /var/www/html
         state: absent
 
-    - name: Copy our landing page content
+    - name: Копирование статических файлов сайта
       ansible.builtin.copy:
-        src: files/html # Директория с вашим сайтом
-        dest: /var/www/
-        owner: vagrant
-        group: vagrant
+        src: files/landing/
+        dest: /var/www/my-site/
+        owner: www-data
+        group: www-data
         mode: '0755'
 ```
 
@@ -74,18 +79,17 @@
 
 #### Шаг 3: Установка PHP и интеграция с Nginx
 
-1. **Установка PHP**: Устанавливаем `php-fpm` (FastCGI Process Manager) и `php-mysql` для связи с MySQL.
-2. **Шаблонизация конфигурации Nginx**: Создаем конфигурационный файл для PHP-сайта из шаблона `php-test.conf.j2`. Это позволяет использовать переменные (например, `{{ php_version }}`) для динамической генерации конфигурации.
-3. **Активация сайта и обработчики**: Создаем символическую ссылку для активации сайта и используем `notify`, чтобы уведомить `handler` о необходимости перезагрузки Nginx.
+1.  **Инсталляция**: Устанавливаем `php-fpm` и драйвер для MySQL.
+2.  **Шаблонизация**: Создаем виртуальный хост Nginx. Путь к сокету зависит от версии PHP: `/var/run/php/php{{ php_version }}-fpm.sock`.
 
-**Шаблон `templates/php-test.conf.j2`:**
+**Шаблон `templates/nginx-php.conf.j2`:**
 
 ```j2
 server {
     listen 80;
-    server_name php-test.com;
-    root /var/www/php-test;
-    index index.php;
+    server_name my-site.local;
+    root /var/www/my-site;
+    index index.php index.html;
 
     location / {
         try_files $uri $uri/ =404;
@@ -98,31 +102,29 @@ server {
 }
 ```
 
-**Задачи и обработчик в плейбуке:**
+**Задачи в плейбуке:**
 
 ```yaml
-# ... (продолжение секции tasks)
-    - name: Install PHP-FPM and PHP-MySQL
+    - name: Установка PHP-FPM и модулей
       ansible.builtin.apt:
         name:
-          - php-fpm
-          - php-mysql
+          - "php{{ php_version }}-fpm"
+          - "php{{ php_version }}-mysql"
         state: present
 
-    - name: Create Nginx config for PHP site from template
+    - name: Настройка виртуального хоста Nginx
       ansible.builtin.template:
-        src: templates/php-test.conf.j2
-        dest: /etc/nginx/sites-available/php-test.conf
-      notify: Reload Nginx # Уведомляем обработчик
+        src: templates/nginx-php.conf.j2
+        dest: /etc/nginx/sites-available/my-site.conf
+      notify: Reload Nginx
 
-    - name: Create symlink for the new site config
+    - name: Активация конфигурации (симлинк)
       ansible.builtin.file:
-        src: /etc/nginx/sites-available/php-test.conf
-        dest: /etc/nginx/sites-enabled/php-test.conf
+        src: /etc/nginx/sites-available/my-site.conf
+        dest: /etc/nginx/sites-enabled/my-site.conf
         state: link
       notify: Reload Nginx
 
-# ... (в конце плейбука, на одном уровне с 'tasks')
   handlers:
     - name: Reload Nginx
       ansible.builtin.service:
@@ -130,49 +132,56 @@ server {
         state: reloaded
 ```
 
-#### Шаг 4: Развертывание тестового PHP-приложения
-
-Создаем директорию для сайта и два PHP-файла для проверки: один с `phpinfo()` и второй для теста соединения с MySQL.
+#### Шаг 4: Развертывание тестового приложения
 
 ```yaml
-# ... (продолжение секции tasks)
-    - name: Create web root for PHP site
+    - name: Создание корневой директории сайта
       ansible.builtin.file:
-        path: /var/www/php-test
+        path: /var/www/my-site
         state: directory
-        owner: vagrant
-        group: vagrant
+        owner: www-data
+        group: www-data
         mode: '0755'
 
-    - name: Deploy phpinfo page
+    - name: Создание тестового файла phpinfo
       ansible.builtin.copy:
         content: "<?php phpinfo(); ?>"
-        dest: /var/www/php-test/index.php
+        dest: /var/www/my-site/index.php
 
-    - name: Deploy MySQL test page
+    - name: Тест подключения к базе данных
       ansible.builtin.copy:
         content: |
           <?php
           $mysqli = new mysqli("localhost", "root", "{{ mysql_root_password }}");
           if ($mysqli->connect_errno) {
-            echo "Failed to connect to MySQL: " . $mysqli->connect_error;
+            echo "Ошибка подключения: " . $mysqli->connect_error;
             exit();
           }
-          echo "MySQL Server Version: " . $mysqli->server_info;
+          echo "Соединение успешно. Версия сервера: " . $mysqli->server_info;
           $mysqli->close();
           ?>
-        dest: /var/www/php-test/db_test.php
+        dest: /var/www/my-site/db_test.php
 ```
 
 #### Шаг 5: Запуск и проверка
 
-1. Запустите плейбук: `ansible-playbook playbook.yml -i inventory.ini`  # → стек LEMP развернут
-2. Добавьте `127.0.0.1 php-test.com` в ваш локальный файл `hosts` (если вы запускаете на локальной VM — Virtual Machine, виртуальная машина).
-3. Откройте в браузере `http://php-test.com` для просмотра информации о PHP.
-4. Откройте `http://php-test.com/db_test.php` для проверки соединения с MySQL.
+1.  **Запуск**: `ansible-playbook playbook.yml -i hosts.ini` # → стек LEMP развернут
+2.  **Настройка хостов**: Добавьте `127.0.0.1 my-site.local` в локальный файл `/etc/hosts`.
+3.  **Проверка PHP**: Откройте `http://my-site.local` — вы увидите страницу `phpinfo`.
+4.  **Проверка БД**: Откройте `http://my-site.local/db_test.php` — должна отобразиться версия MySQL.
+
+---
 
 ## Дополнительная информация
 
-* **Безопасность**: Для хранения чувствительных данных, таких как пароль от базы данных, всегда используйте **[Ansible Vault (защищенное хранилище)](../Vault/basics.md)**.
-* **Кроссплатформенность**: Этот плейбук ориентирован на Debian/Ubuntu. Для создания универсальных плейбуков, работающих на разных ОС (например, CentOS), ознакомьтесь с примером **[кроссплатформенной установки LAMP](../CrossPlatform/lamp-example.md)** и документом о **[кроссплатформенных плейбуках](../CrossPlatform/concepts.md)**.
-* **Роли**: Для более сложных и переиспользуемых конфигураций рекомендуется структурировать плейбуки с помощью **[ролей Ansible](../ansible_roles.md)**.
+### Безопасность и масштабирование
+
+- **Секреты**: Для защиты паролей (например, `mysql_root_password`) всегда используйте **[Ansible Vault](../Vault/basics.md)**.
+- **Универсальность**: Данный пример ориентирован на Ubuntu/Debian. Для поддержки RHEL/CentOS используйте модуль `package` и кроссплатформенные переменные. См. **[Кроссплатформенные плейбуки](../CrossPlatform/concepts.md)**.
+- **Структурирование**: Для крупных проектов переносите логику в **[роли Ansible](../ansible_roles.md)**.
+
+## Смотрите также
+
+- [Установка и настройка MySQL через Ansible](mysql_setup.md)
+- [Пример развертывания LAMP](../CrossPlatform/lamp-example.md)
+- [Обзор возможностей Nginx](../../WebServers/Nginx/Core/nginx_overview.md)

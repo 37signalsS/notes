@@ -113,3 +113,4 @@ vagrant destroy -f
 - [Сетевые настройки](./vagrant_networking.md) — проброс портов и частные сети.
 - [Управление хранилищем](./vagrant_storage_and_folders.md) — общие папки и диски.
 - [Провайдеры виртуализации](./vagrant_providers.md) — особенности работы с Libvirt и VirtualBox.
+- [Vagrant на Apple Silicon](./vagrant_macos_apple_silicon.md) — специфическая настройка для процессоров M1/M2/M3.

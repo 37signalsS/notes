@@ -1,71 +1,43 @@
-# Semaphore — веб-интерфейс для Ansible
+# Semaphore — веб-интерфейс для Ansible и Terraform
 
 ## Определения
 
-**Semaphore** — это легковесный и быстрый веб-интерфейс (UI) с открытым исходным кодом для запуска Ansible Playbook. Он предоставляет централизованную панель для управления ИТ-инфраструктурой, аналогичную Ansible Tower или AWX, но является значительно более простой и менее требовательной к ресурсам альтернативой.
+**Semaphore (Semaphore UI)** — это легковесный веб-интерфейс (UI) с открытым исходным кодом для управления задачами автоматизации. Первоначально созданный как альтернатива **Ansible Automation Platform (ранее Ansible Tower)** или **AWX**, Semaphore значительно менее требователен к ресурсам и поддерживает не только Ansible, но и **Terraform**, **OpenTofu**, **Terragrunt** и выполнение произвольных Bash-скриптов.
 
 ## Основные концепции
 
-**Архитектура:** Semaphore состоит из веб-приложения и требует внешнюю базу данных (PostgreSQL или MySQL) для хранения состояния: Inventory, учетные данные (Credentials), шаблоны задач (Task Templates), история запусков.
+### Архитектура и компоненты
 
-**Конфигурация:** Основная конфигурация осуществляется через переменные окружения. В официальном Docker-образе используется внутренний shell-скрипт (`semaphore-wrapper`), который на основе этих переменных генерирует итоговый конфигурационный файл `config.json` при старте контейнера.
+Semaphore — это приложение на Go, которое использует внешнюю базу данных для хранения состояния. Основные сущности системы:
+- **Инвентарь (Inventory):** Список хостов и групп, на которых будут выполняться задачи.
+- **Учетные данные (Credentials):** SSH-ключи, пароли, токены и секреты из внешних хранилищ.
+- **Шаблоны задач (Task Templates):** Описания запусков, объединяющие плейбук, инвентарь, учетные данные и параметры окружения.
+- **Проекты (Projects):** Изолированные пространства имен для разделения доступа между командами или окружениями.
 
-**Хранение данных:** Для хранения временных файлов (клонированные из Git-репозиториев Playbook) используется персистентное хранилище. В Kubernetes для этого используется `PersistentVolumeClaim` (PVC).
+### Современные возможности (v2.18+)
+
+*   **Интеграция с Secret Managers:** Поддержка HashiCorp Vault, AWS Secrets Manager и Azure Key Vault для динамического получения секретов.
+*   **Безопасность:** Поддержка двухфакторной аутентификации (2FA) и интеграция с LDAP/Active Directory.
+*   **Многофункциональность:** Возможность запуска Terraform/OpenTofu с хранением стейта через HTTP-бэкенд Semaphore.
+*   **API и CLI:** Полный программный доступ ко всем функциям и возможность экспорта/импорта проектов.
+
+### Управление конфигурацией
+
+В Docker-окружениях Semaphore настраивается через переменные окружения. При старте встроенный скрипт `semaphore-wrapper` генерирует `config.json`.
+Критически важный параметр — `SEMAPHORE_ACCESS_KEY_ENCRYPTION`. Это 16-байтовый (32 символа в hex) ключ, которым шифруются все секреты в базе данных. Его потеря делает невозможным использование существующих учетных данных после миграции.
 
 ## Практические сценарии
 
-### Деплой в Kubernetes
+### Развертывание в Kubernetes
 
-Деплой Semaphore в Kubernetes сводится к созданию набора манифестов, которые описывают все необходимые компоненты системы.
+Ниже приведен пример манифестов для развертывания Semaphore в кластере Kubernetes с использованием внешней базы данных PostgreSQL.
 
-#### 1. Подготовка: Namespace и база данных
+#### 1. Создание Secret и ConfigMap
 
-Рекомендуется разворачивать Semaphore в отдельном Namespace.
-
-```bash
-kubectl create namespace semaphore
-# → namespace/semaphore created
-```
-
-Перед установкой необходимо иметь работающий экземпляр PostgreSQL или MySQL, доступный из кластера Kubernetes.
-
-#### 2. ConfigMap
-
-Создается для хранения неконфиденциальных параметров, таких как адрес базы данных, имя пользователя и диалект.
+Сгенерируйте ключ шифрования перед созданием секрета: `openssl rand -hex 16`.
 
 ```yaml
-# semaphore-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: semaphore-cm
-  namespace: semaphore
-data:
-  SEMAPHORE_DB_USER: "semaphore"
-  SEMAPHORE_DB_HOST: "postgres.semaphore.svc.cluster.local" # Пример адреса БД
-  SEMAPHORE_DB_DIALECT: "postgres"
-  SEMAPHORE_DB: "semaphore"
-  SEMAPHORE_ADMIN_NAME: "admin"
-  SEMAPHORE_ADMIN_EMAIL: "admin@localhost"
-  SEMAPHORE_ADMIN: "admin"
-  SEMAPHORE_LDAP_ACTIVATED: "false"
-```
-
-#### 3. Secret
-
-Используется для хранения паролей и ключа шифрования.
-
-**Важно:** `SEMAPHORE_ACCESS_KEY_ENCRYPTION` — это ключ, которым Semaphore шифрует чувствительные данные в базе (например, ключи SSH). Он критически важен для бэкапов и миграций. Если вы переносите инсталляцию, этот ключ должен совпадать.
-
-Сгенерировать ключ можно командой:
-
-```bash
-openssl rand -hex 16
-# → 4a1e71f9a2b8b9d0c8e3f2a1b5c4d6e7
-```
-
-```yaml
-# semaphore-secret.yaml
+# semaphore-secrets.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -73,35 +45,29 @@ metadata:
   namespace: semaphore
 type: Opaque
 stringData:
-  SEMAPHORE_DB_PASS: "your-db-password"
-  SEMAPHORE_ADMIN_PASSWORD: "your-admin-password"
-  SEMAPHORE_ACCESS_KEY_ENCRYPTION: "your-generated-16-byte-hex-key" # Например, 4a1e71f9a2b8b9d0c8e3f2a1b5c4d6e7
-  SEMAPHORE_LDAP_PASSWORD: "" # Если LDAP не используется
-```
-
-#### 4. PersistentVolumeClaim
-
-Создается для хранения временных файлов, в основном Playbook из Git.
-
-```yaml
-# semaphore-pvc.yaml
+  SEMAPHORE_DB_PASS: "secure-db-password"
+  SEMAPHORE_ADMIN_PASSWORD: "admin-web-password"
+  SEMAPHORE_ACCESS_KEY_ENCRYPTION: "4a1e71f9a2b8b9d0c8e3f2a1b5c4d6e7" # Замените на свой
+---
+# semaphore-config.yaml
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: ConfigMap
 metadata:
-  name: semaphore-pvc
+  name: semaphore-cm
   namespace: semaphore
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi # Размер зависит от ожидаемого объема Playbook
-  storageClassName: your-storage-class # Укажите ваш StorageClass
+data:
+  SEMAPHORE_DB_USER: "semaphore"
+  SEMAPHORE_DB_HOST: "postgres-svc.database.svc.cluster.local"
+  SEMAPHORE_DB_DIALECT: "postgres"
+  SEMAPHORE_DB: "semaphore"
+  SEMAPHORE_ADMIN: "admin"
+  SEMAPHORE_ADMIN_NAME: "Administrator"
+  SEMAPHORE_ADMIN_EMAIL: "admin@example.com"
 ```
 
-#### 5. Deployment
+#### 2. Deployment и PersistentVolumeClaim
 
-Основной манифест, описывающий запуск контейнера Semaphore.
+PVC необходим для хранения склонированных репозиториев и временных файлов задач.
 
 ```yaml
 # semaphore-deployment.yaml
@@ -110,8 +76,6 @@ kind: Deployment
 metadata:
   name: semaphore
   namespace: semaphore
-  labels:
-    app: semaphore
 spec:
   replicas: 1
   selector:
@@ -124,102 +88,56 @@ spec:
     spec:
       containers:
         - name: semaphore
-          image: semaphoreui/semaphore:v2.17.28 
-          imagePullPolicy: IfNotPresent
+          image: semaphoreui/semaphore:v2.18.27
           ports:
-            - name: http
-              containerPort: 3000
-              protocol: TCP
+            - containerPort: 3000
           env:
             - name: SEMAPHORE_PLAYBOOK_PATH
-              value: "/tmp/semaphore" # Путь монтирования PVC
+              value: "/tmp/semaphore"
           envFrom:
             - configMapRef:
                 name: semaphore-cm
             - secretRef:
                 name: semaphore-secret
           volumeMounts:
-            - name: playbooks
+            - name: data
               mountPath: "/tmp/semaphore"
           livenessProbe:
             tcpSocket:
               port: 3000
-            initialDelaySeconds: 20
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /api/ping
-              port: 3000
-            initialDelaySeconds: 20
-            periodSeconds: 10
+            initialDelaySeconds: 30
       volumes:
-        - name: playbooks
+        - name: data
           persistentVolumeClaim:
             claimName: semaphore-pvc
 ```
 
-#### 6. Service и Ingress
+### Разделение CI и CD для повышения безопасности
 
-Для доступа к веб-интерфейсу создаются `Service` и `Ingress`.
+Semaphore эффективно решает проблему "слишком широких прав" у CI-систем (например, GitLab CI или GitHub Actions).
 
-```yaml
-# semaphore-service-ingress.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: semaphore
-  namespace: semaphore
-spec:
-  selector:
-    app: semaphore
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 3000
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: semaphore-ingress
-  namespace: semaphore
-spec:
-  rules:
-    - host: "semaphore.your-domain.local"
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: semaphore
-                port:
-                  number: 80
-```
-
-### Безопасное разделение CI и CD
-
-Semaphore часто используется как инструмент для физического разделения процессов сборки (CI, Continuous Integration) и деплоя (CD, Continuous Deployment) с целью защиты инфраструктуры от компрометации CI-системы (например, GitLab CI). Если CI-система и ее администраторы скомпрометированы, разделение не позволит злоумышленникам напрямую выкатить вредоносный код на продакшн.
-
-**Архитектура решения:**
-
-1. **Отсутствие продовых секретов в CI:** CI-раннеры лишаются доступа к production-окружению и секретам. Они только собирают артефакты.
-2. **Независимые пайплайны деплоя:** Semaphore настраивается на поллинг репозитория (по cron) или реагирует на вебхуки для инициации деплоя.
-3. **Каскад Playbook (Auto-run):** Используется фича запуска Playbook по цепочке:
-   - *Playbook 1 (Check Integrity):* Скачивает исходники или артефакты и **проверяет их подпись** (например, x509 сертификат или GPG). Если проверка не пройдена, процесс останавливается.
-   - *Playbook 2 (Deploy):* В случае успешной валидации, Semaphore автоматически запускает следующий Playbook, который подтягивает временные токены (через робота) и выполняет безопасный деплой.
-4. **Разграничение прав в Semaphore:** Администраторы инфраструктуры настраивают учетные данные и пайплайны, в то время как разработчикам выдаются минимальные права на запуск задач (Task Runner) без возможности просматривать секреты или изменять логику деплоя.
+**Логика разделения:**
+1.  **CI (Build):** Собирает артефакты (Docker-образы, бинарные файлы) и пушит их в реестр. CI не имеет SSH-ключей от серверов или токенов от продакшн-облаков.
+2.  **Semaphore (CD):** Обладает правами на деплой. Он запускается либо по вебхуку из CI, либо по расписанию (поллинг).
+3.  **Валидация:** Semaphore может быть настроен на проверку цифровой подписи коммита или артефакта перед запуском деплоя, гарантируя, что код прошел все проверки безопасности.
 
 ## Дополнительная информация
 
-**Ограничения конфигурации:** Встроенный wrapper-скрипт (`semaphore-wrapper.sh`) в Docker-образе обрабатывает не все параметры из `config.json`, что может ограничить настройку уведомлений (email, Telegram). Для полной кастомизации можно использовать `dockerize` для генерации `config.json` из шаблона при запуске контейнера (требует модификации образа или `command` в Deployment).
+### Рекомендации по эксплуатации
 
-**Работа с Git:** Для доступа к публичным репозиториям без аутентификации в Semaphore необходимо создать ключ доступа типа `None`. Если в Inventory используются хостнеймы, не разрешаемые внутренним DNS контейнера, может потребоваться явно прописать IP-адреса хостов в файле Inventory.
+-   **Бэкапы:** Регулярно делайте дампы базы данных и обязательно сохраняйте `SEMAPHORE_ACCESS_KEY_ENCRYPTION` в защищенном месте (например, корпоративном Vault).
+-   **Логирование:** Для интеграции с централизованными системами сбора логов используйте параметр `SEMAPHORE_LOG=true` и драйверы логирования контейнера.
+-   **Обновления:** При переходе между мажорными версиями Semaphore автоматически выполняет миграции схемы базы данных при первом запуске нового образа.
 
-**Миграция:** При переносе Semaphore на новую инсталляцию с сохранением базы данных критически важно сохранить значение `SEMAPHORE_ACCESS_KEY_ENCRYPTION` — без него Semaphore не сможет расшифровать секреты в БД.
+### Работа с внешними зависимостями
 
-**Протоколы аутентификации:** Semaphore поддерживает интеграцию с LDAP (Lightweight Directory Access Protocol) для централизованного управления пользователями.
+Если ваши плейбуки требуют специфических коллекций Ansible или Python-библиотек:
+1.  Создайте кастомный Docker-образ на базе официального.
+2.  Добавьте установку зависимостей через `ansible-galaxy collection install` и `pip install`.
+3.  Используйте этот образ в Deployment.
 
 ### Смотрите также
 
-- [Лучшие практики безопасности Ansible](ansible_security_best_practices.md)
-- [Основы Ansible Vault](Vault/basics.md)
+- [Лучшие практики безопасности Ansible](./ansible_security_best_practices.md)
+- [Основы Ansible Vault](./Vault/basics.md)
+- [Модели управления конфигурацией](../Concepts/configuration_management_models.md)

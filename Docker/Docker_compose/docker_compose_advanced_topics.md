@@ -2,107 +2,153 @@
 
 ## Определения
 
-**Продвинутые возможности Docker Compose** — набор техник для управления сложными многоконтейнерными стеками, позволяющий адаптировать конфигурации под различные окружения (Dev/Stage/Prod) и минимизировать дублирование кода.
+**Продвинутые возможности Docker Compose** — это набор технологий и методов для управления сложными инфраструктурными стеками, обеспечивающий гибкость конфигурации под разные окружения, минимизацию дублирования кода и оркестрацию локальных ресурсов.
 
 ## Базовые концепции
 
 ### Интерполяция переменных
 
-Docker Compose поддерживает подстановку переменных окружения из командной оболочки или файла `.env`.
+Docker Compose позволяет динамически изменять значения в `compose.yml` на основе переменных окружения.
 
-- **Приоритет источников:**
-  1. Переменные системной оболочки (shell).
-  2. Файл `.env` в корне проекта.
+- **Синтаксис и условия:**
+  - `${VAR}` — простая подстановка значения.
+  - `${VAR:-default}` — подставить `default`, если переменная пуста или не задана.
+  - `${VAR-default}` — подставить `default`, только если переменная не задана (пустое значение допускается).
+  - `${VAR:?error}` — завершить выполнение с ошибкой `error`, если переменная не задана.
 
-- **Синтаксис:**
-  - `${VAR}` — простая подстановка.
-  - `${VAR:-default}` — использование `default`, если переменная не задана.
-  - `${VAR:?error}` — вывод ошибки, если переменная отсутствует.
+- **Приоритет источников (от высокого к низкому):**
+  1. Переменные системного окружения (Shell).
+  2. Переменные, заданные через флаг `--env-file` в CLI.
+  3. Файл `.env` в текущей директории.
+  4. Переменные, заданные в секции `environment` сервиса (используются внутри контейнера, но не для интерполяции в самом YAML).
 
-> **Безопасность:** Не используйте `.env` для хранения паролей в production. Для чувствительных данных применяйте [Docker Secrets](../Docker_security/secrets_management.md).
+### Профили (Profiles)
 
-### Переопределение конфигурации
+Профили позволяют объединять сервисы в логические группы, которые не запускаются автоматически при выполнении `docker compose up`.
 
-По умолчанию Docker Compose ищет и объединяет `compose.yml` и `compose.override.yml`. Это позволяет хранить базовую структуру в основном файле, а локальные правки (порты, монтирование кода) — в override-файле.
+- **Назначение:** разделение сервисов для разработки, тестирования, инструментов мониторинга или отладки внутри одного файла.
+- **Пример использования:**
+  ```yaml
+  services:
+    app:
+      image: app:latest
+    
+    admin-panel:
+      image: admin:latest
+      profiles: ["admin", "tools"]
+    
+    debug-proxy:
+      image: mitmproxy:latest
+      profiles: ["debug"]
+  ```
+- **Запуск:** `docker compose --profile admin up -d`. Сервисы без профиля запускаются всегда.
 
-Для явного объединения нескольких файлов используется флаг `-f`:
+### Модульность через Include
 
-```bash
-docker compose -f compose.yml -f compose.prod.yml up -d
-# → [OK] Стек запущен с применением настроек из обоих файлов
-```
+Директива **`include`** (Compose v2.20+) — основной инструмент декомпозиции в 2026 году.
 
-### Переиспользование через extends
+- **Преимущества:**
+  - Полная изоляция ресурсов (сети и тома импортируемого файла не конфликтуют с текущими, если не указано иное).
+  - Поддержка относительных путей для вложенных структур.
+  - Возможность импорта конфигураций напрямую из OCI-реестров.
+- **Сравнение с `extends`:** В отличие от `extends`, который наследует только свойства сервиса, `include` импортирует всю инфраструктуру файла. `extends` теперь считается устаревшим (legacy) и рекомендуется только для точечного переиспользования внутри одного файла.
 
-Директива `extends` позволяет сервису наследовать параметры другого сервиса из этого же или внешнего файла.
+### Работа с внешними ресурсами (External)
+
+Для взаимодействия с инфраструктурой, созданной вне текущего проекта (например, общей базой данных или сетью прокси), используются внешние ресурсы.
 
 ```yaml
 services:
   web:
-    extends:
-      file: common.yml
-      service: base_web
-    build: .
+    networks:
+      - global_proxy_net
+
+networks:
+  global_proxy_net:
+    external: true
+    name: common-ingress-network
 ```
 
-> **Примечание:** В современных конфигурациях для переиспользования внутри одного файла часто предпочитают **YAML anchors (&)** и **aliases (*)** за их наглядность.
+### Секреты на этапе сборки (Build Secrets)
 
-### Интеграция с Docker Swarm (deploy)
+Для безопасной передачи API-ключей или сертификатов в процессе сборки образа, чтобы они не попали в финальные слои:
 
-Секция `deploy` используется для настройки ресурсов и репликации.
+```yaml
+services:
+  app:
+    build:
+      context: .
+      secrets:
+        - npm_token
 
-> **Важно:** Полная поддержка `deploy` доступна только в Docker Swarm через `docker stack deploy`. Однако `docker compose` (v2.20+) умеет обрабатывать параметры `replicas` и `resources.limits` даже в обычном режиме.
-
-### Масштабирование сервисов
-
-Горизонтальное масштабирование на одном хосте выполняется через флаг `--scale` или параметр `replicas`.
-
-```bash
-docker compose up -d --scale worker=3
-# → Creating project_worker_2 ... done
-# → Creating project_worker_3 ... done
+secrets:
+  npm_token:
+    file: ~/.npmrc
 ```
 
 ## Практические сценарии
 
-### HA-кластер PostgreSQL с Patroni
+### Сценарий: Мульти-стейджинг (Dev/Prod) через наложение
 
-Пример реализации отказоустойчивого кластера с использованием YAML-якорей для исключения дублирования.
+Использование базового файла и специфичных переопределений для разных окружений.
 
-- **Компоненты:** etcd (DCS), HAProxy (балансировщик), Patroni (управление PostgreSQL).
-- **Концепция HA:** Подробно описана в [High Availability PostgreSQL](../../Databases/PostgreSQL/Concepts/high_availability.md).
+1. **`compose.yml`** (базовая логика):
+   ```yaml
+   services:
+     web:
+       image: myapp:base
+       ports: ["80:80"]
+   ```
+
+2. **`compose.override.yml`** (локальная разработка):
+   ```yaml
+   services:
+     web:
+       build: .
+       volumes: ["./src:/app/src"]
+       develop:
+         watch:
+           - action: sync
+             path: ./src
+             target: /app/src
+   ```
+
+3. **`compose.prod.yml`** (продакшн):
+   ```yaml
+   services:
+     web:
+       deploy:
+         replicas: 5
+         resources:
+           limits:
+             memory: 1G
+   ```
+
+**Запуск для продакшна:** `docker compose -f compose.yml -f compose.prod.yml up -d`
+
+### Сценарий: Отказоустойчивый стек с YAML-якорями
+
+Использование якорей для минимизации ошибок при конфигурации кластерных приложений.
 
 ```yaml
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "100m"
+
 services:
-  etcd:
-    image: 'bitnami/etcd:3.4'
-    environment:
-      - ALLOW_NONE_AUTHENTICATION=yes
-
-  patroni1: &patroni-base
-    image: 'bitnami/patroni:3.0'
-    environment: &patroni-env
-      - PATRONI_SCOPE=pg-cluster
-      - PATRONI_ETCD_HOSTS=etcd:2379
-      - PATRONI_NAME=patroni1
-    volumes:
-      - patroni_data1:/data/patroni1
-
-  patroni2:
-    <<: *patroni-base
-    environment:
-      <<: *patroni-env
-      - PATRONI_NAME=patroni2
-    volumes:
-      - patroni_data2:/data/patroni2
-
-volumes:
-  patroni_data1:
-  patroni_data2:
+  db-1:
+    image: postgres:17
+    logging: *default-logging
+  
+  db-2:
+    image: postgres:17
+    logging: *default-logging
 ```
 
 ## Дополнительная информация
 
-- **[Справочник по директивам](./docker_compose_directives.md)** — описание всех ключей `compose.yml`
-- **[Примеры конфигураций](./docker_compose_file_example.md)** — готовые стеки для различных технологий
-- **[Безопасное управление секретами](../Docker_security/secrets_management.md)** — использование Docker Secrets
+- **[Справочник по директивам](./docker_compose_directives.md)** — описание всех доступных ключей `compose.yml`.
+- **[Примеры конфигураций](./docker_compose_file_example.md)** — готовые шаблоны для типовых стеков.
+- **[Справочник команд CLI](./docker_compose_cli_commands.md)** — управление профилями и файлами через командную строку.
+- **[Безопасность Docker](../Docker_security/docker_security_overview.md)** — общие принципы защиты контейнеризированных сред.

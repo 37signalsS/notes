@@ -2,122 +2,114 @@
 
 ## Определения
 
-**Поток пайплайна (Pipeline Workflow)** — это последовательность [этапов (Stages)](./pipeline_glossary.md#этап-stage) и [задач (Jobs)](./pipeline_glossary.md#задача-job-step), которые выполняются для доставки кода от коммита до развертывания в рамках процесса **CI/CD (Continuous Integration / Continuous Delivery — непрерывная интеграция и непрерывная доставка)**.
+- **Поток пайплайна (Pipeline Workflow)** — последовательность этапов и задач, выполняемых для автоматизированной доставки кода от момента фиксации (commit) до развертывания в продуктивной среде.
 
-Процесс инициируется [триггером](./pipeline_glossary.md#триггер-trigger) (например, `git push`) и выполняется [исполнителями (Runners)](./pipeline_glossary.md#исполнитель-runner-agent).
+- **Quality Gates (Ворота качества)** — автоматизированные проверки на определенных этапах пайплайна (например, порог покрытия тестами или отсутствие критических уязвимостей), непрохождение которых блокирует дальнейшее продвижение изменений.
+
+- **DAG (Directed Acyclic Graph)** — механизм в CI/CD, позволяющий запускать задачи на основе их зависимостей, а не только по завершении целого этапа, что значительно ускоряет выполнение пайплайна.
 
 ## Основные концепции
 
-### Принципы построения пайплайна
+### Принципы эффективного пайплайна
 
-1. **Fail-Fast (Падай быстро):** Чем раньше в пайплайне обнаруживается ошибка, тем дешевле ее исправление. Самые быстрые и дешевые проверки (линтинг, юнит-тесты) должны идти первыми.
-2. **Параллелизм:** Всё, что может выполняться одновременно, должно выполняться одновременно. Например, юнит-тесты, линтеры для разных частей проекта, E2E-тесты в разных браузерах. Это радикально сокращает общее время выполнения пайплайна.
-3. **Последовательность:** Зависимые этапы должны выполняться строго по порядку. Нельзя тестировать несобранный код или развертывать непротестированное приложение.
+1. **Fail-Fast (Падай быстро)**
+   Самые быстрые и критичные проверки (линтеры, Unit-тесты) должны выполняться первыми. Это экономит время разработчика и ресурсы инфраструктуры.
 
-### Каноническая структура пайплайна
+2. **Параллелизм и DAG**
+   Независимые задачи должны выполняться одновременно. Использование **needs** (в GitLab CI) позволяет начать сборку артефакта сразу после завершения тестов, не дожидаясь окончания всех задач на этапе тестирования.
 
-Универсальная последовательность с воротами качества (quality gates):
+3. **Иммутабельность артефактов**
+   Артефакт (например, Docker-образ) должен собираться один раз и проходить через все среды (`staging`, `prod`) без пересборки. Для идентификации используются уникальные теги (например, `Git SHA`).
 
-`Lint` → `Test` → `Build` (Docker-образ) → `Push` (registry, immutable-тег) → `Deploy`.
+### Каноническая структура (Lifecycle)
 
-Для компилируемых языков (Go, Java, Rust) компиляция происходит на этапах `Test` (языки со встроенной компиляцией, например `go test`) или на выделенном шаге перед тестами (`javac` → `mvn test`), но **Docker-образ собирается только после зелёных тестов** — нет смысла паковать то, что не работает.
+Современный пайплайн интегрирует практики **DevSecOps** и включает следующие фазы:
 
-### Типичный поток пайплайна
+1. **Lint (Статический анализ)**
+   - Проверка стиля кода, синтаксических ошибок и безопасности кода (**SAST**).
+   - Инструменты: `eslint`, `golangci-lint`, `hadolint` (для Dockerfile).
 
-Рассмотрим канонический пайплайн, обеспечивающий баланс скорости и качества:
+2. **Test (Тестирование)**
+   - Запуск Unit-тестов и расчет покрытия (**Coverage**).
+   - Применение **Quality Gate**: если покрытие ниже целевого (например, 80%), пайплайн прерывается.
 
-Идеальный пайплайн — это конвейер с **gates**, а не просто «запустить скрипты»:
+3. **Build (Сборка)**
+   - Создание исполняемых файлов или Docker-образов.
+   - Использование **Multi-stage builds** для минимизации размера и повышения безопасности образа.
 
-1. **lint** — быстрая (1–2 мин) статическая проверка: golangci-lint, eslint, форматтер. Цель — поймать грубые ошибки до запуска тестов.
-2. **test** — unit-тесты + **coverage gate** (≥80%). Публикация отчёта через artifacts → JUnit — GitLab подсвечивает провалы прямо в MR.
-3. **build** — сборка Docker-образа (multi-stage). Build идёт **после** test — нет смысла собирать образ, если тесты не зелёные.
-4. **push** — публикация в registry с **иммутабельным тегом**: `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA`. Почему не `:latest`? `latest` — mutable, его можно перезаписать; по sha всегда можно воспроизвести, что именно запущено.
-5. **deploy** — в dev-окружение автоматически после merge в main; в production — `when: manual`. Это не паранойя, а аудит: кто, когда, что задеплоил.
+4. **Security Scan (Сканирование)**
+   - Проверка собранного образа на наличие известных уязвимостей (**SCA**).
+   - Инструменты: `Trivy`, `Grype`.
 
-На зрелых командах между push и deploy добавляют: **scan** (Trivy CVE по образу), **validate** (migration lint), **review-окружение** на MR.
+5. **Push (Публикация)**
+   - Отправка проверенного образа в **Container Registry** с иммутабельным тегом.
+
+6. **Deploy (Развертывание)**
+   - Автоматическая выкатка в `development`/`staging`.
+   - Развертывание в `production` после ручного подтверждения (**Manual Approval**) или автоматизировано после прохождения `E2E`-тестов в `staging`.
 
 ## Практические сценарии
 
-### Пример на GitLab CI
+### Пример современного пайплайна (GitLab CI)
 
 ```yaml
 stages:
-  - lint
+  - validate
   - test
   - build
-  - push
+  - security
   - deploy
 
 variables:
   IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
 
-# 1. Lint — быстрая статическая проверка
+# 1. Быстрая проверка
 lint:
-  stage: lint
+  stage: validate
   script:
     - golangci-lint run ./...
 
-# 2. Test — unit + coverage gate
-test:
+# 2. Тесты с Quality Gate
+unit_tests:
   stage: test
   script:
-    - go test -coverprofile=coverage.out -covermin=80 ./...
+    - go test -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' > coverage.txt
+    - if [ $(cat coverage.txt | cut -d. -f1) -lt 80 ]; then echo "Coverage too low"; exit 1; fi
   artifacts:
     reports:
-      junit: junit.xml
+      junit: report.xml
 
-# 3. Build — только если lint и test прошли
-build:
+# 3. Сборка (зависит только от тестов через DAG)
+build_image:
   stage: build
+  needs: ["unit_tests"]
   script:
     - docker build -t $CI_REGISTRY_IMAGE:$IMAGE_TAG .
-  needs: ["test"]
-
-# 4. Push — immutable tag
-push:
-  stage: push
-  script:
     - docker push $CI_REGISTRY_IMAGE:$IMAGE_TAG
-  needs: ["build"]
 
-# 5. Deploy (dev — авто, prod — manual)
-deploy_dev:
-  stage: deploy
+# 4. Сканирование безопасности
+vulnerability_scan:
+  stage: security
+  needs: ["build_image"]
   script:
-    - ./deploy.sh dev $IMAGE_TAG
-  needs: ["push"]
-  only:
-    - main
-  environment: dev
+    - trivy image --exit-code 1 --severity CRITICAL $CI_REGISTRY_IMAGE:$IMAGE_TAG
 
+# 5. Деплой (авто в dev, ручной в prod)
 deploy_prod:
   stage: deploy
   when: manual
-  script:
-    - ./deploy.sh prod $IMAGE_TAG
-  needs: ["push"]
   only:
     - main
+  script:
+    - ./deploy.sh production $IMAGE_TAG
   environment: production
 ```
 
-### Пояснения к примеру
-
-| Компонент | Описание |
-| :--- | :--- |
-| `stages` | Последовательность этапов: `lint` → `test` → `build` → `push` → `deploy` |
-| `needs` | Явное указание зависимостей между задачами (DAG) |
-| `artifacts.reports.junit` | Публикация результатов тестов — GitLab показывает провалы в MR |
-| `IMAGE_TAG` | Иммутабельный тег (`$CI_COMMIT_SHORT_SHA`) — воспроизводимость и аудит |
-| `when: manual` | Ручное подтверждение деплоя в prod — аудит: кто, когда, что задеплоил |
-| `only: main` | Деплой только из основной ветки |
-
 ## Дополнительная информация
 
-### Связанные документы
-
-* **[CI/CD: Обзор](../ci_cd_overview.md)** — общее введение в CI/CD.
-* **[Глоссарий](./pipeline_glossary.md)** — определения ключевых терминов.
-* **[GitLab CI Basics](../GitLab_CI/Concepts/gitlab_ci_basics.md)** — основы GitLab CI.
-* **[Пример GitOps-пайплайна](../../GitOps/gitops_pipeline_example.md)** — пример пайплайна с GitOps.
-* **[Deployment Strategies](./deployment_strategies.md)** — стратегии развертывания.
+- **Глоссарий терминов:** [Определения Jobs, Stages, Runners](./pipeline_glossary.md).
+- **Метрики эффективности:** [Метрики DORA (Lead Time, CFR)](./dora_metrics.md).
+- **Стратегии развертывания:** [Rolling Update, Canary, Blue-Green](./deployment_strategies.md).
+- **Основы GitLab CI:** [Синтаксис и возможности](../GitLab_CI/Concepts/gitlab_ci_basics.md).
+- **GitOps подход:** [Пример GitOps-пайплайна](../../GitOps/gitops_pipeline_example.md).

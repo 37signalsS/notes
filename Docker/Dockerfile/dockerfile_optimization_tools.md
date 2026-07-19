@@ -22,8 +22,16 @@
 
 | Инструмент | Назначение | Репозиторий |
 | :--- | :--- | :--- |
-| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик. Использует `shellcheck` для анализа скриптов в `RUN`. *Особенности:* написан на Haskell (сложно писать кастомные правила), может не парсить новые флаги инструкций (например, `ADD --checksum`). | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
-| **semgrep** | Универсальный SAST-сканер, поддерживающий `Dockerfile`. *Особенности:* правила пишутся на YAML (или как регулярные выражения), что значительно упрощает создание кастомных проверок по сравнению с hadolint. | [github.com/semgrep/semgrep](https://github.com/semgrep/semgrep) |
+| **hadolint** | Линтер `Dockerfile`, проверка синтаксиса и лучших практик. | [github.com/hadolint/hadolint](https://github.com/hadolint/hadolint) |
+| **D-roast** | Rust-утилита для "прожарки" (roasting) Dockerfile. Дает советы по оптимизации (например, замена `npm install` на `npm ci`) в ироничном или обычном стиле. | [github.com/nottheshrimp/d-roast](https://github.com/nottheshrimp/d-roast) |
+| **semgrep** | Универсальный SAST-сканер, поддерживающий `Dockerfile`. | [github.com/semgrep/semgrep](https://github.com/semgrep/semgrep) |
+
+### Анализ и мониторинг рантайма
+
+| Инструмент | Назначение | Репозиторий |
+| :--- | :--- | :--- |
+| **Dozle** | Легковесный веб-интерфейс для мониторинга логов и метрик контейнеров в реальном времени. | [github.com/amir20/dozzle](https://github.com/amir20/dozzle) |
+| **ctop** | Интерфейс в стиле top для контейнеров (метрики CPU, Mem). Подробное сравнение в **[TUI инструментах](../docker_tools.md)**. | [github.com/bcicen/ctop](https://github.com/bcicen/ctop) |
 
 ### Сканирование безопасности
 

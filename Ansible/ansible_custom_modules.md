@@ -1,72 +1,71 @@
-# Разработка собственных модулей Ansible
+# Ansible — разработка собственных модулей
 
 ## Определения
 
-**Пользовательский Ansible Module** — Python-скрипт, расширяющий стандартную функциональность Ansible. Позволяет инкапсулировать сложную логику, обеспечивать идемпотентность и автоматизировать специфические задачи без использования встроенных модулей.
+**Пользовательский модуль Ansible (Custom Module)** — это автономный сценарий (обычно на Python), расширяющий стандартную функциональность Ansible. Модули позволяют инкапсулировать сложную логику, обеспечивать идемпотентность и автоматизировать специфические задачи, для которых не подходят встроенные инструменты.
 
 ## Основные концепции
 
-### Module против Plugin
+### Модуль (Module) против Плагина (Plugin)
 
-**Module:**
+*   **Модуль (Module):**
+    *   **Место исполнения:** выполняется на **удаленном узле (Managed Node)**.
+    *   **Назначение:** управление состоянием ресурса (установка пакета, конфигурация БД).
+*   **Плагин (Plugin):**
+    *   **Место исполнения:** выполняется на **узле управления (Control Node)**.
+    *   **Назначение:** расширение логики ядра Ansible (Inventory, Connection, Callback, Lookup).
 
-- **Место исполнения:** выполняется на **удаленном хосте (Managed Node)**.
-- **Назначение:** управление состоянием ресурса (установка пакета, создание пользователя).
+### Современный стандарт: Коллекции
 
-**Plugin:**
+Начиная с версии 2.10, предпочтительным способом разработки и распространения модулей являются **Коллекции**.
+*   **Путь размещения:** `plugins/modules/` внутри структуры коллекции.
+*   **FQCN:** использование полного имени `namespace.collection.module_name` предотвращает конфликты.
+*   **Общие библиотеки:** логика, общая для нескольких модулей, выносится в `plugins/module_utils/`.
 
-- **Место исполнения:** выполняется на **Control Node**.
-- **Назначение:** расширение ядра Ansible (Inventory Plugin, Connection Plugin, Callback Plugin).
+### Поиск модулей Ansible
 
-### Процесс взаимодействия
-
-1. Ansible на Control Node парсит Playbook.
-2. Action Plugin подготавливает аргументы в формате JSON и передает их на удаленный хост.
-3. Module исполняется на удаленном хосте, выполняя поставленную задачу.
-4. Module возвращает результат в формате JSON.
-5. Action Plugin интерпретирует результат и выводит его пользователю.
-
-### Размещение модулей
-
-Ansible ищет Module в следующих местах:
-
-- Директория `library/` рядом с Playbook.
-- Внутри роли: `roles/<role_name>/library/`.
-- В путях, указанных в переменной окружения `ANSIBLE_LIBRARY` или в конфигурационном файле `ansible.cfg`.
+Ansible ищет модули в следующих местах (в порядке приоритета):
+1.  Директория `library/` в корне текущего плейбука.
+2.  Внутри роли: `roles/<role_name>/library/`.
+3.  В установленных коллекциях.
+4.  Пути из переменной `ANSIBLE_LIBRARY` или параметра `library` в `ansible.cfg`.
 
 ### Лучшие практики разработки
 
-- **Идемпотентность:** Module не должен вносить изменения, если система уже находится в целевом состоянии.
-- **Поддержка `check_mode`:** возможность запуска без внесения реальных изменений (dry run).
-- **Минимальные зависимости:** использование стандартной библиотеки Python или широко распространенных пакетов (например, `requests`).
-- **Документация:** наличие обязательных секций `DOCUMENTATION`, `EXAMPLES` и `RETURN`.
-- **Безопасность:** использование `no_log: true` для параметров, содержащих чувствительные данные (пароли, токены).
+*   **Идемпотентность:** модуль должен проверять текущее состояние и вносить изменения только при необходимости.
+*   **Поддержка `check_mode`:** обязательная реализация `supports_check_mode=True` для безопасного тестирования (dry run).
+*   **Возвращаемые значения:** всегда возвращайте `changed` (boolean) и, при необходимости, детали изменений в JSON-формате.
+*   **Документация:** наличие блоков `DOCUMENTATION`, `EXAMPLES` и `RETURN` внутри Python-файла обязательно для работы `ansible-doc`.
+*   **Безопасность:** используйте параметр `no_log: true` в `argument_spec` для защиты паролей и токенов в логах.
 
 ## Практические сценарии
 
-### Пример: Создание Module `clickhouse_user`
+### Пример: Создание модуля `clickhouse_user`
 
-**Цель:** создать Module для декларативного управления пользователями в базе данных ClickHouse.
+Ниже представлен пример модуля для управления пользователями в ClickHouse с использованием современной структуры.
 
-#### Код модуля
-
-Каждый Ansible Module представляет собой Python-скрипт со специальной структурой.
+#### Код модуля (clickhouse_user.py)
 
 ```python
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
+
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
 
 from ansible.module_utils.basic import AnsibleModule
 
+# Попытка импорта внешних зависимостей
 try:
     from clickhouse_driver import Client as CHClient
+    HAS_CH_DRIVER = True
 except ImportError:
-    CHClient = None
+    HAS_CH_DRIVER = False
 
 DOCUMENTATION = r'''
 ---
 module: clickhouse_user
-short_description: Управляет пользователями в ClickHouse.
+short_description: Управляет пользователями в ClickHouse
 version_added: "1.0.0"
 description:
     - Создает, обновляет или удаляет пользователей в базе данных ClickHouse.
@@ -76,7 +75,7 @@ options:
         required: true
         type: str
     login_password:
-        description: Пароль для пользователя, используемого для аутентификации.
+        description: Пароль для аутентификации.
         required: true
         type: str
         no_log: true
@@ -85,7 +84,7 @@ options:
         required: true
         type: str
     password:
-        description: Пароль для управляемого пользователя.
+        description: Пароль для нового пользователя.
         required: false
         type: str
         no_log: true
@@ -95,37 +94,29 @@ options:
         default: present
         type: str
 author:
-    - Имя Автора (@github_nickname)
+    - DevOps Team (@company)
 '''
 
 EXAMPLES = r'''
-# Создание пользователя
-- name: Создать пользователя 'new_user'
+- name: Создать пользователя ClickHouse
   clickhouse_user:
     login_user: default
-    login_password: ""
-    user: new_user
+    login_password: "admin_password"
+    user: readonly_user
     password: "secure_password"
     state: present
-
-# Удаление пользователя
-- name: Удалить пользователя 'new_user'
-  clickhouse_user:
-    login_user: default
-    login_password: ""
-    user: new_user
-    state: absent
 '''
 
 RETURN = r'''
 queries:
-    description: Список выполненных изменяющих запросов.
+    description: Список выполненных SQL-запросов.
     type: list
     returned: always
-    sample: ['CREATE USER new_user IDENTIFIED BY password']
+    sample: ["CREATE USER readonly_user IDENTIFIED BY 'password'"]
 '''
 
 def main():
+    # Определение спецификации аргументов
     argument_spec = {
         "login_user": {"type": "str", "required": True},
         "login_password": {"type": "str", "required": True, "no_log": True},
@@ -139,60 +130,53 @@ def main():
         supports_check_mode=True
     )
 
-    if CHClient is None:
-        module.fail_json(msg="Требуется Python-библиотека 'clickhouse-driver'. Пожалуйста, установите ее с помощью 'pip install clickhouse-driver'.")
+    # Проверка зависимостей
+    if not HAS_CH_DRIVER:
+        module.fail_json(msg="Библиотека 'clickhouse-driver' не найдена. Установите её через pip.")
 
-    user_to_manage = module.params['user']
+    user = module.params['user']
     state = module.params['state']
-    
     result = {'changed': False, 'queries': []}
 
     try:
         client = CHClient(
-            host='localhost', 
-            user=module.params['login_user'], 
+            host='localhost',
+            user=module.params['login_user'],
             password=module.params['login_password']
         )
-        # Проверка доступности сервера
+        # Проверка подключения
         client.execute('SELECT 1')
     except Exception as e:
-        module.fail_json(msg=f"Не удалось подключиться к ClickHouse: {e}")
+        module.fail_json(msg=f"Ошибка подключения к ClickHouse: {str(e)}")
 
-    # Проверка существования пользователя (идемпотентность)
+    # Идемпотентность: проверка существования
     user_exists = client.execute(
         "SELECT count() FROM system.users WHERE name = %(user)s",
-        {'user': user_to_manage}
+        {'user': user}
     )[0][0] > 0
 
+    # Обработка Check Mode
     if module.check_mode:
-        if state == 'present' and not user_exists:
-            result['changed'] = True
-        elif state == 'absent' and user_exists:
+        if (state == 'present' and not user_exists) or (state == 'absent' and user_exists):
             result['changed'] = True
         module.exit_json(**result)
 
-    # Применение изменений
-    if state == 'present':
-        if not user_exists:
-            password = module.params.get('password')
-            if not password:
-                module.fail_json(msg="Пароль обязателен при state=present")
+    # Основная логика
+    if state == 'present' and not user_exists:
+        password = module.params.get('password')
+        if not password:
+            module.fail_json(msg="Пароль обязателен при создании пользователя.")
+        
+        query = "CREATE USER %(user)s IDENTIFIED BY %(password)s"
+        client.execute(query, {'user': user, 'password': password})
+        result['changed'] = True
+        result['queries'].append(f"CREATE USER {user} ...")
 
-            query = "CREATE USER %(user)s IDENTIFIED BY %(password)s"
-            params = {'user': user_to_manage, 'password': password}
-            client.execute(query, params)
-
-            result['changed'] = True
-            result['queries'].append(query % params)
-
-    elif state == 'absent':
-        if user_exists:
-            query = "DROP USER %(user)s"
-            params = {'user': user_to_manage}
-            client.execute(query, params)
-
-            result['changed'] = True
-            result['queries'].append(query % params)
+    elif state == 'absent' and user_exists:
+        query = f"DROP USER {user}"
+        client.execute(query)
+        result['changed'] = True
+        result['queries'].append(query)
 
     module.exit_json(**result)
 
@@ -200,57 +184,29 @@ if __name__ == '__main__':
     main()
 ```
 
-#### Тестирование Module
+### Тестирование и отладка
 
-Тестирование является интеграционным и требует развернутого окружения (например, контейнера с ClickHouse).
+Для профессиональной разработки рекомендуется использовать встроенную утилиту `ansible-test`.
 
-1. **Создать Inventory:**
-
-    ```ini
-    # inventory.ini
-    [clickhouse]
-    ch_server ansible_host=172.17.0.2 ansible_user=root ansible_ssh_pass=password
-    ```
-
-2. **Создать Playbook для теста:**
-
-    ```yaml
-    # test_module.yml
-    - name: Test ClickHouse Module
-      hosts: clickhouse
-      become: true
-
-      tasks:
-        - name: Install clickhouse-driver
-          ansible.builtin.pip:
-            name: clickhouse-driver
-            state: present
-        
-        - name: Create user 'testuser'
-          clickhouse_user:
-            login_user: default
-            login_password: ""
-            user: testuser
-            password: "test_password"
-            state: present
-          register: create_result
-
-        - name: Print create result
-          ansible.builtin.debug:
-            var: create_result
-    ```
-
-3. **Запустить Playbook:**
-
+1.  **Локальное тестирование модулей:**
     ```bash
-    ansible-playbook -i inventory.ini test_module.yml
-    # → PLAY [Test ClickHouse Module] ... ok=2 changed=1 unreachable=0 failed=0
+    # Запуск тестов для коллекции
+    ansible-test units --python 3.10 plugins/modules/clickhouse_user.py
     ```
+
+2.  **Отладка через `ansible-playbook`:**
+    Создайте плейбук и запустите его с флагом `-vvv`. Ansible сохранит временный Python-файл модуля на удаленном хосте, что позволит изучить его в случае ошибки.
 
 ## Дополнительная информация
 
+### Использование module_utils
+
+Если ваша логика (например, клиент для API) используется в нескольких модулях, вынесите её в отдельный файл:
+*   Путь: `plugins/module_utils/my_api_client.py`
+*   Импорт в модуле: `from ansible_collections.my_namespace.my_collection.plugins.module_utils.my_api_client import MyClient`
+
 ### Смотрите также
 
-- [Официальная документация по разработке модулей](https://docs.ansible.com/ansible/latest/dev_guide/developing_modules_general.html)
-- [Обзор модулей Ansible](./Modules/ansible_modules_overview.md)
-- [Сборка образов с Buildah](./ansible_buildah_image_building.md)
+*   [Обзор модулей Ansible](./Modules/ansible_modules_overview.md) — базовые принципы работы.
+*   [Ансбиль — роли и коллекции](./ansible_roles.md) — структура и распространение контента.
+*   [Официальный Module Development Guide](https://docs.ansible.com/ansible/latest/dev_guide/developing_modules_general.html) (EN).

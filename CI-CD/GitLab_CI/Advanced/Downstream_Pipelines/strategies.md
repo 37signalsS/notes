@@ -1,109 +1,92 @@
-# Стратегии выполнения downstream pipelines
+# Стратегии выполнения downstream-пайплайнов
 
 ## Определения
 
-**Strategy** — параметр в триггере downstream pipeline, определяющий как родительский пайплайн взаимодействует с дочерним: синхронизирует статусы или отображает отчёты.
+**Downstream-стратегия (Strategy)** — параметр в ключевом слове `trigger`, который определяет способ взаимодействия родительского (upstream) задания с дочерним или мультипроектным пайплайном. Она управляет синхронизацией статусов, ожиданием завершения и агрегацией отчётов.
 
 ## Основные концепции
 
-### Стратегия mirror
+### Стратегия mirror (Рекомендуемая)
 
-**Назначение:** Отображает статус downstream pipeline в trigger job.
+**Назначение:** Полное зеркалирование состояния downstream-пайплайна в родительское задание. Введена в **GitLab 18.6**.
 
-**Поведение:**
-
-- Parent job отображает реальный статус child pipeline
-- При провале child pipeline — parent job также показывает failed
-- При настройке auto-cancel — родительский пайплайн может быть отменён при провале child (см. [directives_definitions.md](../workflow_rules/directives_definitions.md))
-
-**Применение:**
-
-- [Parent-child](./parent_child_pipelines.md) и [multi-project](./multi_project_pipelines.md) pipelines
-- Критичные зависимости, где статус downstream важен
+**Ключевые особенности:**
+- **Точность статусов:** Статус родительского задания всегда точно соответствует статусу downstream (включая `Canceled`, `Skipped` и `Manual`).
+- **Авто-отмена (Auto-cancel):** Поддерживает распространение отмены. Если downstream-пайплайн отменяется, родительское задание также корректно завершается.
+- **Агрегация отчётов:** Родительское задание ждёт завершения всех стадий downstream, что позволяет отображать тесты и уязвимости в Merge Request родительского проекта.
+- **Универсальность:** Работает как с [parent-child](./parent_child_pipelines.md), так и с [multi-project](./multi_project_pipelines.md) пайплайнами.
 
 ```yaml
 trigger_job:
   trigger:
-    include:
-      - local: path/to/child-pipeline.yml
+    include: child-pipeline.yml
     strategy: mirror
 ```
 
-### Стратегия depend
+### Стратегия depend (Legacy)
 
-**Назначение:** Отображает отчёты child pipeline в Merge Request виджетах.
+**Назначение:** Ожидание завершения downstream-пайплайна для получения статуса и отчётов. Считается устаревающей после появления `mirror`.
 
-**Поведение:**
+**Особенности и ограничения:**
+- **Неточные статусы:** Может некорректно обрабатывать специфические состояния, такие как `skipped` или пайплайны, содержащие только ручные задания.
+- **Ожидание:** Как и `mirror`, заставляет upstream-задание находиться в состоянии `running` до конца работы downstream.
+- **Отчёты:** Позволяет агрегировать JUnit и Security отчёты, если пайплайн завершился успешно.
 
-- Parent job ждёт завершения child pipeline перед завершением
-- Отчёты (JUnit, code quality, security) появляются в Merge Request
-- Родительский пайплайн не завершается пока child выполняется
+### Поведение по умолчанию (Без strategy)
 
-**Критично для:**
-
-- Unit test отчётов (JUnit)
-- Code quality отчётов
-- Terraform отчётов
-- Security отчётов (SAST, secret detection, container scanning, DAST)
-
-```yaml
-test-backend:
-  trigger:
-    include: backend-tests.yml
-    strategy: depend
-
-test-frontend:
-  trigger:
-    include: frontend-tests.yml
-    strategy: depend
-```
-
-**Без `strategy: depend`:** родительский пайплайн завершается до окончания child pipelines, и их отчёты не появляются в Merge Request.
+Если параметр `strategy` не указан, родительское задание переходит в статус `success` сразу после успешного **создания** (запуска) downstream-пайплайна.
+- **Минус:** Статус downstream никак не влияет на родителя.
+- **Минус:** Отчёты из downstream не попадают в Merge Request родительского проекта.
 
 ## Практические сценарии
 
-### Комбинирование стратегий
+### Настройка для тестов и безопасности
+
+Для получения отчётов (JUnit, SAST, DAST) в Merge Request необходимо использовать `mirror`.
 
 ```yaml
-# Для зависимостей с отчётами
-deploy-dependent:
-  stage: deploy
+test-and-scan:
+  stage: test
   trigger:
-    project: 'group/deploy-project'
-    branch: main
-    strategy: depend
+    include: tests-and-security.yml
+    strategy: mirror
+```
 
-# Для зависимостей со статусом
-deploy-critical:
+### Мультипроектный деплой с ожиданием
+
+Когда важно, чтобы основной пайплайн не завершился, пока не отработает деплой в другом проекте.
+
+```yaml
+deploy-infrastructure:
   stage: deploy
   trigger:
-    project: 'group/critical-project'
+    project: 'ops/terraform-deploy'
     branch: main
     strategy: mirror
 ```
 
-### Выбор стратегии
-
-| Сценарий | Рекомендуемая стратегия |
-| :--- | :--- |
-| Нужны отчёты в MR | `strategy: depend` |
-| Критичный downstream | `strategy: mirror` |
-| Независимые parallel jobs | без strategy |
-| Быстрый отказ при ошибке | `strategy: mirror` |
-
 ## Дополнительная информация
 
-### Когда использовать каждую стратегию
+### Сравнение стратегий
 
-- **`strategy: depend`:** Обязательно для тестов, сканирования безопасности, code quality
-- **`strategy: mirror`:** Для критичных зависимостей, где важна синхронизация статусов
-- **Без стратегии:** Параллельные независимые downstream pipelines
+| Характеристика | Без стратегии | `strategy: depend` | `strategy: mirror` |
+| :--- | :---: | :---: | :---: |
+| **Ожидание завершения** | Нет | Да | Да |
+| **Синхронизация статуса** | Нет | Частично | **Полная** |
+| **Агрегация отчётов** | Нет | Да | **Да** |
+| **Поддержка Auto-cancel** | Нет | Ограниченно | **Да** |
+| **Рекомендуемая версия** | Любая | < 18.6 | **>= 18.6** |
 
-### Ограничения
+### Важные примечания по версиям
 
-- `strategy: depend` замедляет общий pipeline (ожидает завершения child)
-- `strategy: mirror` требует внимания к order of execution
+- **GitLab 18.6:** Появление `strategy: mirror`.
+- **GitLab 18.9:** Официальная поддержка агрегации отчётов безопасности (Security Reports) из дочерних пайплайнов в интерфейс родительского MR.
+- **Ограничение ресурсов:** Задания с `mirror` или `depend` занимают слот раннера (Runner slot) всё время, пока выполняется downstream-пайплайн.
 
 ---
 
-**Связанные документы:** [Определения](./definitions.md), [Лучшие практики](./best_practices.md), [Наследование переменных](./variable_inheritance.md).
+**Связанные документы:**
+- [Определения](./definitions.md) — базовые понятия downstream
+- [Лучшие практики](./best_practices.md) — оптимизация триггеров
+- [Наследование переменных](./variable_inheritance.md) — передача данных в child-пайплайны
+- [Продвинутые рабочие процессы](../gitlab_ci_advanced_workflow.md) — управление логикой запуска

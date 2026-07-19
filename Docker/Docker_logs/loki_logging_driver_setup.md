@@ -12,7 +12,9 @@
 
 **Схема работы:** `Приложение → STDOUT/STDERR → Docker Engine → loki-docker-driver → Loki`
 
-Основное преимущество этого метода — простота. Он избавляет от необходимости разворачивать и настраивать на каждом Docker-хосте дополнительный агент для сбора логов (например, Promtail). Однако он наследует и главный недостаток всех сетевых лог-драйверов: при недоступности Loki или проблемах с сетью логи могут быть утеряны. Более надежной альтернативой является [агентный сбор логов](./docker_agent_based_logging.md).
+Основное преимущество этого метода — простота. Он избавляет от необходимости разворачивать и настраивать на каждом Docker-хосте дополнительный агент для сбора логов. Однако по умолчанию драйвер работает в **блокирующем режиме** (`blocking`): если Loki недоступен, приложение может "повиснуть" при попытке записи в stdout. Для предотвращения этого в production-средах критически важно использовать **неблокирующий режим** (`non-blocking`).
+
+Более надежной, но сложной в настройке альтернативой является [агентный сбор логов](./docker_agent_based_logging.md).
 
 ## Практические сценарии
 
@@ -24,7 +26,7 @@
 docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
 ```
 
-> **Рекомендация:** Для production-систем используйте фиксированную версию вместо `latest` (например, `grafana/loki-docker-driver:3.7.0`), чтобы избежать непредсказуемых изменений при обновлении. Актуальная версия Loki — 3.7.x (март 2026).
+> **Рекомендация:** Для production-систем используйте фиксированную версию вместо `latest` (например, `grafana/loki-docker-driver:3.7.3`), чтобы избежать непредсказуемых изменений при обновлении. Актуальная версия Loki — 3.7.3 (июль 2026).
 
 - **`docker plugin install ...`**: Команда для установки плагинов в Docker.
 - **`grafana/loki-docker-driver:latest`**: Имя плагина. Для production-систем рекомендуется использовать фиксированную версию вместо `latest`.
@@ -40,52 +42,69 @@ docker plugin ls
 
 ### Шаг 2: Конфигурация логирования
 
-Настроить отправку логов в Loki можно как для всего стека через `docker-compose.yml`, так и для отдельного контейнера.
+Настроить отправку логов в Loki можно глобально для всех контейнеров хоста, через `docker-compose.yml` или для отдельного контейнера.
 
-#### Вариант А: Настройка в `docker-compose.yml` (рекомендуемый)
+#### Вариант А: Глобальная настройка (`daemon.json`)
+
+Рекомендуется для однотипных сред, где все логи должны уходить в центральное хранилище.
+
+1. Отредактируйте или создайте файл `/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "loki",
+  "log-opts": {
+    "loki-url": "http://<IP_АДРЕС_LOKI>:3100/loki/api/v1/push",
+    "loki-batch-size": "400",
+    "mode": "non-blocking",
+    "max-buffer-size": "4m"
+  }
+}
+```
+
+2. Перезапустите Docker: `sudo systemctl restart docker`.
+   *Внимание: Изменение затронет только новые контейнеры.*
+
+#### Вариант Б: Настройка в `docker-compose.yml` (рекомендуемый)
 
 Для удобства и предотвращения дублирования конфигурацию можно определить один раз с помощью YAML-якоря (`&default-logging`).
 
 ```yaml
 # docker-compose.yml
 
-version: '3.8'
-
-x-logging: &default-logging
-  driver: loki
-  options:
-    loki-url: "http://<IP_АДРЕС_LOKI>:3100/loki/api/v1/push"
-    loki-batch-size: "400"
-    loki-retries: "3"
-    loki-max-backoff: "1s"
-    loki-timeout: "1s"
-
 services:
   my-app:
     image: my-app-image:latest
-    logging: *default-logging # Применяем конфигурацию
-
-  my-database:
-    image: postgres:14
-    logging: *default-logging # Применяем ту же конфигурацию
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://<IP_АДРЕС_LOKI>:3100/loki/api/v1/push"
+        loki-batch-size: "400"
+        loki-retries: "3"
+        loki-max-backoff: "1s"
+        loki-timeout: "1s"
+        mode: non-blocking
+        max-buffer-size: 4m
+        loki-external-labels: "env=prod,host={{.Node.Name}}"
 ```
 
-**Объяснение опций (`options`):**
+**Объяснение ключевых опций (`options`):**
 
-- **`loki-url`**: Полный URL-адрес эндпоинта Loki для приема логов. Замените `<IP_АДРЕС_LOKI>` на IP вашего сервера, где запущен Loki.
-- **`loki-batch-size`**: Размер пачки логов (в байтах), которая будет отправляться за один раз.
-- **`loki-retries`**: Количество попыток повторной отправки в случае ошибки.
-- **`loki-max-backoff`**: Максимальное время ожидания между попытками.
-- **`loki-timeout`**: Таймаут для отправки логов.
+- **`loki-url`**: Полный URL-адрес эндпоинта Loki для приема логов.
+- **`mode: non-blocking`**: Контейнер пишет логи в промежуточный буфер в памяти. Если буфер переполнен или Loki недоступен, новые логи отбрасываются, но приложение продолжает работать.
+- **`max-buffer-size`**: Размер буфера для режима `non-blocking` (по умолчанию 1m).
+- **`loki-external-labels`**: Дополнительные статические метки. Можно использовать шаблоны Docker Go (например, `{{.Node.Name}}`).
+- **`loki-batch-size`**: Размер пачки логов (в байтах) перед отправкой.
+- **`loki-retries`**: Количество попыток повторной отправки.
 
-#### Вариант Б: Настройка через `docker run`
+#### Вариант В: Настройка через `docker run`
 
 ```bash
 docker run \
   --log-driver=loki \
   --log-opt loki-url="http://<IP_АДРЕС_LOKI>:3100/loki/api/v1/push" \
+  --log-opt mode=non-blocking \
   my-app-image:latest
-# → Запуск контейнера с отправкой логов в Loki
 ```
 
 ### Шаг 3: Проверка в Grafana
@@ -97,8 +116,35 @@ docker run \
 1. Откройте Grafana и перейдите в раздел **Explore**.
 2. В качестве источника данных выберите **Loki**.
 3. Используйте **Log browser** для фильтрации по автоматически добавляемым меткам (например, `container_name`, `job`).
-4. Или напишите запрос на языке LogQL, например: `{job="<имя_проекта_docker_compose>"}`.
+4. Или напишите запрос на языке LogQL, например: `{job="my-app"}`.
+
+### Шаг 4: Диагностика и устранение неполадок
+
+Если логи не появляются в Loki, выполните следующие проверки:
+
+1. **Статус плагина:**
+   ```bash
+   docker plugin inspect loki
+   ```
+   Убедитесь, что `"Enabled": true`.
+
+2. **Доступность Loki:**
+   Проверьте сетевую доступность с Docker-хоста:
+   ```bash
+   curl -I http://<IP_АДРЕС_LOKI>:3100/ready
+   ```
+
+3. **Логи самого плагина:**
+   В Linux логи плагина обычно пишутся в системный журнал:
+   ```bash
+   journalctl -u docker | grep loki
+   ```
+
+4. **Проверка конфигурации контейнера:**
+   ```bash
+   docker inspect <имя_контейнера> --format '{{.HostConfig.LogConfig}}'
+   ```
 
 ## Дополнительная информация
 
-Обзор системы логирования Docker см. в **[Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)**. Для детального изучения Loki рекомендуется начать с **[Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)**, а пример развертывания доступен в **[Настройка Loki Stack через Docker Compose](../../Loki/Docker_Compose/index.md)**.
+Обзор системы логирования Docker см. в **[Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)**. Для детального изучения Loki рекомендуется начать с **[Grafana Loki: обзор системы и архитектура](../../Loki/loki_overview.md)**, а пример развертывания доступен в **[Настройка Loki Stack через Docker Compose](../../Loki/Docker_Compose/loki_docker_compose_setup.md)**.

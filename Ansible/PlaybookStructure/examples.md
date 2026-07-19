@@ -1,76 +1,100 @@
-# Ansible: Практические примеры структуры плейбуков
+# Ansible: практические примеры структуры плейбуков
 
 ## Определения
 
-**Практические примеры структуры плейбуков** — это конкретные сценарии использования Ansible, демонстрирующие различные подходы к организации и написанию плейбуков и ролей.
+**Практические примеры структуры плейбуков** — набор проверенных паттернов организации кода, демонстрирующих способы параметризации, оркестрации и переиспользования задач для создания гибких и отказоустойчивых сценариев автоматизации.
 
-## Основные концепции
+**Параметризация** — отделение логики (задач) от данных (переменных), позволяющее использовать один и тот же код для разных окружений или конфигураций.
 
-- **Параметризация ролей**: Использование переменных `defaults` и `group_vars` для настройки ролей без изменения их кода.
-- **Управление контейнерами**: Использование шаблонов systemd для управления Docker-контейнерами.
-- **Переиспользование кода**: Вынос повторяющихся задач в отдельные файлы и роли.
+## Базовые концепции
 
-## 1. Параметризация роли (defaults и group_vars)
+*   **Иерархия переменных**: Использование `defaults` внутри ролей для базовых настроек и `group_vars` для специфичных переопределений.
+*   **Идиоматичность**: Использование встроенных модулей Ansible вместо выполнения Shell-команд везде, где это возможно.
+*   **Оркестрация**: Координация нескольких ролей и задач в рамках одного плейбука для достижения сложного целевого состояния.
 
-Пример демонстрирует, как сделать размер swap-файла настраиваемым.
+## Практические сценарии
 
-1. **Задача с переменной** (`roles/swap/tasks/main.yml`):
+### Сценарий 1: Многоуровневая параметризация роли
 
+Пример реализации настраиваемого swap-файла, где логика едина, а параметры зависят от группы серверов.
+
+1.  **Логика задачи** (`roles/swap/tasks/main.yml`):
     ```yaml
-    - name: Create swap file
-      ansible.builtin.shell: "fallocate -l {{ swap_size }} /swapfile"
-      args:
+    - name: Создать swap-файл
+      ansible.builtin.command:
+        cmd: "fallocate -l {{ swap_size }} /swapfile"
         creates: /swapfile
     ```
 
-2. **Значение по умолчанию** (`roles/swap/defaults/main.yml`):
-
+2.  **Значение по умолчанию** (`roles/swap/defaults/main.yml`):
     ```yaml
+    # Безопасный минимум для всех
     swap_size: 1g
     ```
 
-3. **Переопределение для группы** (`group_vars/backup.yml`):
-
+3.  **Переопределение для группы** (`group_vars/db_servers.yml`):
     ```yaml
-    swap_size: 2g # Для бэкап-серверов
+    # Больше памяти для серверов баз данных
+    swap_size: 4g
     ```
 
-**Результат**: Приоритет `group_vars` выше, чем у `defaults`, поэтому для хостов из группы `backup` будет использовано значение `2g`.
+### Сценарий 2: Управление контейнерами через шаблоны Systemd
 
-## 2. Управление контейнерами Docker через systemd
+Идиоматичный подход к управлению Docker-контейнерами как системными сервисами, что обеспечивает автозапуск и стандартное управление через `systemctl`.
 
-**Шаблон `container.service.j2`:**
-
-```j2
+**Шаблон сервиса** (`templates/container.service.j2`):
+```ini
 [Unit]
-Description={{ item.name }} container
+Description=Контейнер {{ item.name }}
 Requires=docker.service
 After=docker.service
+
 [Service]
 Restart=always
 ExecStartPre=-/usr/bin/docker stop {{ item.name }}
 ExecStartPre=-/usr/bin/docker rm {{ item.name }}
-ExecStart=/usr/bin/docker run --rm --name {{ item.name }} 
-{% if item.ports is defined %}{% for port in item.ports %} -p {{ port }} \ {% endfor %}{% endif %}
+ExecStart=/usr/bin/docker run --rm --name {{ item.name }} \
+    {% if item.ports is defined %}{% for port in item.ports %} -p {{ port }} {% endfor %}{% endif %} \
     {{ item.image }}
 ExecStop=/usr/bin/docker stop {{ item.name }}
+
 [Install]
 WantedBy=multi-user.target
 ```
 
-**Задача Ansible:**
-
+**Плейбук для развертывания**:
 ```yaml
-- name: Create systemd unit files for containers
-  ansible.builtin.template:
-    src: container.service.j2
-    dest: "/etc/systemd/system/{{ item.name }}.service"
-  loop: "{{ containers }}"
-  notify: Reload systemd
+- name: Управление контейнерами приложений
+  hosts: app_nodes
+  vars:
+    containers:
+      - { name: 'web-app', image: 'nginx:latest', ports: ['80:80'] }
+      - { name: 'redis-cache', image: 'redis:alpine' }
+
+  tasks:
+    - name: Создать unit-файлы для контейнеров
+      ansible.builtin.template:
+        src: container.service.j2
+        dest: "/etc/systemd/system/{{ item.name }}.service"
+        mode: '0644'
+      loop: "{{ containers }}"
+      notify: Перезагрузить systemd
+
+    - name: Убедиться, что сервисы запущены
+      ansible.builtin.systemd:
+        name: "{{ item.name }}"
+        state: started
+        enabled: true
+      loop: "{{ containers }}"
+
+  handlers:
+    - name: Перезагрузить systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
 ```
 
 ## Дополнительная информация
 
-Основы структуры плейбуков и компоненты описаны в [basics.md](basics.md). Подробнее о структуре и компонентах ролей — в [ansible_roles.md](../ansible_roles.md). Создание динамических конфигураций с Jinja2 — в [ansible_jinja_templating.md](../ansible_jinja_templating.md).
-
-Полная информация о приоритетах переменных (`defaults` vs `group_vars`) — в [PlaybookStructure/variables.md](variables.md). Управление переменными в ролях — в [Roles/structure.md](../Roles/structure.md). Более полный пример управления Docker с использованием специализированных модулей — в [examples/example_docker_management.md](../examples/example_docker_management.md).
+* [Основы структуры плейбуков](basics.md) — компоненты и иерархия выполнения
+* [Переменные в Ansible](variables.md) — детальный разбор приоритетов (22 уровня)
+* [Типовая структура проекта](../examples/example_project_layout.md) — организация файлов и каталогов

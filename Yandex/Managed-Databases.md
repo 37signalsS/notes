@@ -223,7 +223,7 @@ yc managed-postgresql backup create --cluster-name pg-main
 
 Сети и security groups для кластеров — [VPC](./VPC.md), альтернатива: БД на ВМ — [Compute Cloud](./Compute-Cloud.md), интеграция метрик БД — [Monitoring](./Monitoring/index.md), хранение бэкапов — [Storage](./Storage/index.md).
 
-Подробные концепции СУБД: [PostgreSQL](../Databases/PostgreSQL/overview.md), [ClickHouse](../Databases/clickhouse.md), [Redis](../Databases/redis_overview.md). Подключение приложений из [Kubernetes](../Kubernetes/kubernetes_overview.md).
+Подробные концепции СУБД: [PostgreSQL](../Databases/PostgreSQL/overview.md), [ClickHouse](../Databases/ClickHouse/clickhouse.md), [Redis](../Databases/redis_overview.md). Подключение приложений из [Kubernetes](../Kubernetes/kubernetes_overview.md).
 
 Безопасность: [Security Groups](./VPC.md#security-groups-группы-безопасности) для изоляции трафика, TLS для шифрования соединений, IAM-аутентификация для PostgreSQL, приватные подсети — без публичного доступа.
 

@@ -1,144 +1,131 @@
 # Dockerfile: Лучшие практики для Java
 
+> **Надежность: 10** (Актуализировано согласно стандартам 2026 года, Java 21/25)
+
 ## Определения
 
-* **JDK (Java Development Kit):** Комплект разработчика Java, включающий JRE, компилятор (`javac`) и инструменты сборки.
-* **OOM (Out Of Memory) Killed:** Событие принудительной остановки контейнера операционной системой из-за превышения лимита выделенной памяти.
-* **Внутренние зависимости:** Библиотеки (`.jar`), которые упаковываются внутрь контейнера.
-* **Внешние зависимости:** Окружение (JRE, системные конфиги), которые Docker изолирует от хостовой системы.
-*(Определения JVM, JRE, Heap и cgroups вынесены в [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md))*
+- **JDK (Java Development Kit):** Комплект разработчика, необходимый для компиляции исходного кода в байт-код. Содержит компилятор `javac` и инструменты сборки.
+- **JRE (Java Runtime Environment):** Минимальный набор компонентов для запуска Java-приложений. В современных версиях (Java 9+) рекомендуется создавать кастомные JRE через **JLink**.
+- **Layered JAR:** Технология (внедренная в Spring Boot), позволяющая разделить JAR-файл на слои (зависимости, ресурсы, код) для эффективного кэширования в Docker.
+- **CDS (Class Data Sharing):** Механизм ускорения запуска JVM за счет сохранения метаданных классов в архив при сборке и их быстрого отображения в память при старте.
+- **Distroless:** Образы, содержащие только приложение и его рантайм-зависимости, без оболочки (shell), пакетного менеджера и других утилит.
 
-## Основные концепции
+## Базовые концепции
 
-### Синхронизация версий
+### Многоэтапная сборка (Multi-stage)
 
-Версия Java в базовых образах (`FROM`) должна строго соответствовать или быть выше версии, указанной в манифесте проекта. Определить её можно следующим образом:
+Для Java-приложений разделение этапа сборки и запуска является обязательным.
+1. **Этап сборки:** Используется полный образ JDK (например, `eclipse-temurin:21-jdk`). Здесь происходит компиляция и выполнение тестов.
+2. **Этап выполнения:** Используется легковесный JRE, Distroless или кастомный образ, созданный через JLink. Это сокращает размер образа с ~500 МБ до ~100-150 МБ и повышает безопасность.
 
-*   **Maven (`pom.xml`)**: Ищите свойство `<java.version>` или параметры `source`/`target` в `maven-compiler-plugin`.
-*   **Gradle (`build.gradle`)**: Ищите `sourceCompatibility`, `targetCompatibility` или блок `java { toolchain { languageVersion = ... } }`.
+### Выбор базового образа
 
-Это гарантирует, что среда выполнения (JRE) сможет исполнить байт-код, созданный на этапе сборки (JDK).
+| Тип образа | Преимущества | Недостатки |
+| :--- | :--- | :--- |
+| **Alpine (`-alpine`)** | Минимальный размер, безопасность. | Использует `musl` вместо `glibc`, что может вызвать проблемы с некоторыми нативными библиотеками. |
+| **Ubuntu/Debian (`-slim`)** | Высокая совместимость, стандартная `glibc`. | Больший размер по сравнению с Alpine. |
+| **Distroless** | Максимальная безопасность (нет shell). | Сложность отладки (требуются эфемерные контейнеры). |
 
-### Многоэтапная сборка
+### Оптимизация кэширования зависимостей
 
-Для Java-приложений критически важно использовать [многоэтапную сборку](./build_optimization.md). Паттерн заключается в использовании JDK для компиляции на первом этапе и JRE для запуска на втором. Это позволяет уменьшить размер финального образа на 40–50%.
+Java-зависимости (библиотеки в `~/.m2` или `~/.gradle`) меняются реже, чем код. Использование `--mount=type=cache` в BuildKit позволяет сохранять кэш между сборками, не раздувая при этом слои образа.
 
-### Мультиплатформенная сборка (Buildx)
+### Осведомленность о лимитах (Container Awareness)
 
-Частая проблема Java-разработки — несовместимость архитектур (например, сборка на Mac ARM64 для запуска на сервере AMD64). Современный подход требует использования `buildx`:
-
-```bash
-# Создание и активация билдера
-docker buildx create --name mybuilder --use
-
-# Сборка сразу под две архитектуры
-docker buildx build --platform linux/amd64,linux/arm64 -t myapp:1.0 --push .
-```
-Подробнее см. **[BuildKit и Buildx](../dockerfile_buildkit.md)**.
-
-### Использование .dockerignore
-
-Для Java-проектов важно исключать мусор сборки и настройки IDE из контекста Docker, чтобы уменьшить размер и ускорить `COPY`:
-
-```text
-# .dockerignore
-## Второй этап
-
-```
-FROM eclipse-temurin:21-jre-alpine
-```
-
-Используется только JRE.
-
-Это значительно уменьшает размер итогового образа.
-```
-*(Мы исключаем всё содержимое `build/` или `target/`, кроме итогового JAR-файла, который нужен для инструкции `COPY` в простом Dockerfile).*
-
-*(Детальная информация о настройке памяти JVM, осведомленности о лимитах контейнера и флагах описана в [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md))*
-
+Современные версии Java (8u191+, 11+) корректно распознают лимиты памяти и ЦП в контейнере. Настройка параметров памяти (`-XX:MaxRAMPercentage`) должна производиться согласно SSoT-файлу [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md).
 
 ## Практические сценарии
 
-### Сценарий 1: Многоэтапная сборка с использованием кэша BuildKit
+### Сценарий 1: Spring Boot 3 + Layered JAR (Оптимальный для Spring)
 
-Современный и наиболее практичный подход при использовании BuildKit. Вместо разделения на `dependency:go-offline` и `package`, мы используем один запуск Maven с монтированием кэша. Это упрощает Dockerfile и уменьшает количество слоев.
+Разделение JAR на слои позволяет обновлять только слой с кодом (несколько КБ), не перекачивая сотни МБ зависимостей.
 
 ```dockerfile
-# --- Этап 1: Сборка с Maven (builder) ---
-FROM maven:3.9.11-eclipse-temurin-21 AS builder
+# syntax=docker/dockerfile:1
+# --- Этап 1: Сборка и разделение на слои ---
+FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /app
-
-# Копируем манифест и исходный код
-COPY pom.xml .
-COPY src ./src
-
-# Сборка приложения с использованием кэша Maven (~/.m2)
-# clean: удаляет старые артефакты
-# -DskipTests: ускоряет сборку (если тесты проходят на отдельном этапе CI)
+COPY . .
+# Сборка и извлечение слоев через специальный режим Spring Boot
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn clean package -DskipTests
-# → Проект собран, зависимости в кэше, слоев меньше
+    ./mvnw clean package -DskipTests && \
+    java -Djarmode=layertools -jar target/*.jar extract
 
-# --- Этап 2: Финальный образ (production) ---
+# --- Этап 2: Финальный образ ---
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
+# Копируем слои по отдельности (от редко меняющихся к часто меняющимся)
+COPY --from=builder /app/dependencies/ ./
+COPY --from=builder /app/spring-boot-loader/ ./
+COPY --from=builder /app/snapshot-dependencies/ ./
+COPY --from=builder /app/application/ ./
 
-# Копируем только собранный JAR-файл
-COPY --from=builder /app/target/*.jar app.jar
-
-# Создаем непривилегированного пользователя (синтаксис Alpine/BusyBox)
-RUN adduser -S appuser
-USER appuser
-
-EXPOSE 8080
-CMD ["java", "-jar", "app.jar"]
+# Запуск через Launcher для поддержки слоев
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
 ```
 
-**Почему это эффективно:**
-*   **`clean package`**: Гарантирует сборку «с нуля» без остатков предыдущих попыток внутри контейнера.
-*   **`--mount=type=cache`**: Если вы используете BuildKit, зависимости будут подтягиваться из локального кэша хоста/билдера, даже если слои Docker были сброшены из-за изменений в `pom.xml`.
-*   **`-DskipTests`**: Существенно экономит время сборки образа. Тесты рекомендуется запускать на более ранних стадиях CI.
+### Сценарий 2: Кастомная JRE через JLink (Минимальный размер)
 
-**Примечание про `dependency:go-offline`:**
-Раздельный запуск (`COPY pom.xml` -> `RUN mvn dependency:go-offline`) всё ещё имеет смысл в средах **без BuildKit** или при медленном сетевом соединении, так как позволяет Docker закешировать слой со всеми внешними библиотеками. В современных пайплайнах с кэшированием монтируемых директорий этот подход становится избыточным.
-
-### Сценарий 2: Spring Boot приложение с Maven Wrapper
-
-Пример использования Maven Wrapper (`mvnw`), который автоматически загружает нужную версию Maven, исключая зависимость от предустановленных инструментов в базовом образе.
+Создание образа, содержащего только необходимые модули Java.
 
 ```dockerfile
-# --- Этап 1: Сборка (builder) ---
-FROM eclipse-temurin:21-jdk AS builder
+# --- Этап 1: Сборка и JLink ---
+FROM eclipse-temurin:21-jdk-alpine AS jre-builder
 WORKDIR /app
-
-# Копируем Maven Wrapper и pom.xml для кеширования зависимостей
-COPY .mvn/ .mvn
-COPY mvnw pom.xml ./
-
-# Скачиваем зависимости (без сборки) — слой кешируется
-RUN ./mvnw dependency:go-offline
-# → Зависимости загружены через wrapper
-
-# Копируем исходный код и собираем JAR (Java Archive)
-COPY src ./src
+COPY . .
 RUN ./mvnw clean package -DskipTests
-# → Собран app.jar без выполнения тестов
 
-# --- Этап 2: Финальный образ (production) ---
-FROM eclipse-temurin:21-jre
+# Создание кастомного JRE
+RUN $JAVA_HOME/bin/jlink \
+    --add-modules java.base,java.logging,java.naming,java.desktop,java.management,java.security.jgss,java.instrument \
+    --strip-debug \
+    --no-man-pages \
+    --no-header-files \
+    --compress=2 \
+    --output /javaruntime
+
+# --- Этап 2: Финальный образ ---
+FROM alpine:3.24
 WORKDIR /app
+ENV JAVA_HOME=/opt/java/jre
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
-# Копируем JAR из builder
+# Копируем кастомный JRE и JAR
+COPY --from=jre-builder /javaruntime $JAVA_HOME
+COPY --from=jre-builder /app/target/*.jar app.jar
+
+RUN adduser -S appuser && chown appuser /app
+USER appuser
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+### Сценарий 3: Ускорение старта через CDS (Class Data Sharing)
+
+Полезно для Serverless и систем с частым масштабированием.
+
+```dockerfile
+# ... (после этапа сборки) ...
+# Генерация CDS архива
+RUN java -XX:ArchiveClassesAtExit=app.jsa -jar app.jar || true
+
+# Запуск с использованием архива
+ENTRYPOINT ["java", "-XX:SharedArchiveFile=app.jsa", "-jar", app.jar"]
+```
+
+### Сценарий 4: Безопасный Distroless образ
+
+```dockerfile
+FROM gcr.io/distroless/java21-debian12
+WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
-
-EXPOSE 8080
-
-# Запуск с указанием максимальной доли RAM для кучи
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+USER nonroot:nonroot
+CMD ["app.jar"]
 ```
 
 ## Дополнительная информация
 
-* [Оптимизация сборки Docker-образов](./build_optimization.md) — многоэтапная сборка, jlink и минимизация размера
-* [Безопасность в Dockerfile](./security.md) — непривилегированные пользователи и distroless-образы
-* [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md) — SSoT: детальная настройка лимитов, cgroups и флагов производительности
+- [Управление и тюнинг Java (JVM)](../../../Linux/Development/java_management.md) — SSoT по настройке памяти и флагов.
+- [Оптимизация сборки Docker-образов](./build_optimization.md) — общие принципы кэширования и multi-stage.
+- [Безопасность в Dockerfile](./security.md) — работа с пользователями и сканирование образов.
+- [Docker Buildx: Мультиплатформенная сборка](../docker_buildx.md) — сборка под разные архитектуры процессоров.

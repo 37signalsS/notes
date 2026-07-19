@@ -11,9 +11,9 @@
 Основная идея подхода заключается в разделении ответственности: Docker daemon отвечает только за запуск контейнеров и запись их стандартных потоков вывода (`STDOUT`/`STDERR` — Standard Output / Standard Error) в локальные файлы, а специализированный агент — за их дальнейшую доставку.
 
 **Схема работы:**
-`Приложение → STDOUT/STDERR → Docker Engine (json-file driver) → Агент (Fluentd/Filebeat) → Система хранения (Elasticsearch/Loki/etc.)`
+`Приложение → STDOUT/STDERR → Docker Engine (json-file / local driver) → Агент (Fluentd / Alloy / Vector) → Система хранения`
 
-В качестве драйвера логирования Docker используется `json-file` (настройка по умолчанию). Он сохраняет логи контейнеров в формате JSON (JavaScript Object Notation) на локальном диске хоста, обычно в директории `/var/lib/docker/containers/`.
+В качестве драйвера логирования Docker обычно используется `json-file` (настройка по умолчанию). Однако в современных инсталляциях (Docker 20.10+) часто применяется драйвер `local`, который более эффективно управляет дисковым пространством и предотвращает его переполнение за счет встроенной ротации. Агенты одинаково успешно читают логи обоих драйверов, так как они физически располагаются в `/var/lib/docker/containers/`.
 
 ### Преимущества агентного подхода
 
@@ -24,13 +24,13 @@
 
 ## Практические сценарии
 
-В качестве агентов чаще всего выступают `Fluentd` или `Filebeat`.
+В качестве агентов чаще всего выступают `Fluentd`, `Filebeat`, `Grafana Alloy` или `Vector`.
 
-### Сценарий 1: Использование Fluentd в качестве агента
+### Шаг 1: Использование Fluentd в качестве агента
 
 **Реализация:**
 
-1. **Docker**: Использует драйвер `json-file` по умолчанию.
+1. **Docker**: Использует драйвер `json-file` или `local`.
 2. **Fluentd**: Запускается как отдельный контейнер на каждом Docker-хосте.
 
 **Пример `docker-compose.yml` для агента Fluentd:**
@@ -38,7 +38,7 @@
 ```yaml
 services:
   fluentd-agent:
-    image: fluent/fluentd:v1.19.2-debian-1
+    image: fluent/fluentd:v1.19.3-debian-1
     container_name: fluentd-agent
     volumes:
       # Монтируем директорию с логами Docker и позиционные файлы fluentd
@@ -62,6 +62,7 @@ services:
     time_format %Y-%m-%dT%H:%M:%S.%NZ
   </parse>
 </source>
+```
 
 # 2. Фильтр: обогащение логов ID контейнера
 # Тег формируется из пути к файлу, например: docker.containers.CONTAINER_ID.CONTAINER_ID-json.log
@@ -84,13 +85,13 @@ services:
 - **`@type tail`**: Плагин для чтения файлов "на лету" (`tail -f`).
 - **`pos_file`**: Файл, в котором Fluentd хранит информацию о последней прочитанной строке. Это гарантирует, что при перезапуске не будут отправлены дубликаты.
 
-### Сценарий 2: Использование Filebeat в качестве агента
+### Шаг 2: Использование Filebeat в качестве агента
 
 Этот подход аналогичен Fluentd, но использует Filebeat — легковесный агент из стека Elastic (ELK — Elasticsearch, Logstash, Kibana).
 
 **Реализация:**
 
-1. **Docker**: Использует драйвер `json-file` по умолчанию.
+1. **Docker**: Использует драйвер `json-file` или `local`.
 2. **Filebeat**: Устанавливается как сервис на хост или запускается как контейнер.
 
 **Пример конфигурации `filebeat.yml`:**
@@ -105,38 +106,87 @@ filebeat.inputs:
   processors:
     - add_docker_metadata: ~
 
-# Отправка в Logstash для дальнейшей обработки
+# Отправка в Logstash
 output.logstash:
   hosts: ["logstash.example.com:5044"]
-
-# Альтернатива: отправка напрямую в Elasticsearch
-# output.elasticsearch:
-#   hosts: ["elasticsearch.example.com:9200"]
 ```
 
-- **`type: container`**: Специализированный входной плагин Filebeat, который автоматически парсит JSON-логи Docker.
-- **`add_docker_metadata`**: Процессор, который обогащает события полной информацией о контейнере от Docker API.
+### Шаг 3: Использование Grafana Alloy (рекомендуется для Loki)
+
+В 2026 году Grafana Alloy стал стандартным агентом для сбора телеметрии, полностью заменив Promtail. Он поддерживает как Pull, так и Push модели и глубоко интегрирован с OpenTelemetry.
+
+**Пример конфигурации `config.alloy`:**
+
+```alloy
+loki.source.file "docker_logs" {
+  targets = [
+    { __path__ = "/var/lib/docker/containers/*/*.log" },
+  ]
+  forward_to = [loki.process.docker_meta.receiver]
+}
+
+loki.process "docker_meta" {
+  stage.docker { } // Автоматически извлекает метаданные Docker
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+```
+
+### Шаг 4: Использование Vector
+
+Vector — высокопроизводительный агент от Datadog, написанный на Rust. Он отличается минимальным потреблением памяти и встроенным языком VRL (Vector Remap Language) для обработки данных.
+
+**Пример `vector.yaml`:**
+
+```yaml
+sources:
+  docker_logs:
+    type: docker_logs
+
+transforms:
+  parse_json:
+    type: remap
+    inputs: [docker_logs]
+    source: |
+      . = parse_json!(.message)
+
+sinks:
+  emit_loki:
+    type: loki
+    inputs: [parse_json]
+    endpoint: "http://loki:3100"
+    labels:
+      container_name: "{{ container_name }}"
+```
 
 ## Дополнительная информация
 
-### Сравнение Fluentd и Filebeat
+### Сравнение современных агентов
 
-| Критерий | Fluentd | Filebeat |
-| :--- | :--- | :--- |
-| **Производительность** | Высокая, но потребляет больше ресурсов. | Очень легковесный, минимальное потребление ресурсов. |
-| **Экосистема** | Огромное количество плагинов (более 500) для разных источников и назначений. | Нативная интеграция с Elastic Stack (Logstash, Elasticsearch, Kibana). |
-| **Трансформация**| Мощные возможности по фильтрации, буферизации и трансформации "на лету". | Базовая трансформация. Для сложных сценариев требуется Logstash. |
-| **Сложность** | Более гибкий, но и более сложный в настройке. | Простая конфигурация для стандартных задач. |
+| Критерий | Fluentd | Filebeat | Grafana Alloy | Vector |
+| :--- | :--- | :--- | :--- | :--- |
+| **Производительность** | Средняя (Ruby/C) | Высокая (Go) | Высокая (Go) | Экстремальная (Rust) |
+| **Экосистема** | 500+ плагинов | Elastic Stack | Grafana / OTel | Универсальный |
+| **Сложность** | Средняя | Низкая | Средняя (HCL-like) | Средняя (VRL) |
+| **Лучшее применение** | Гетерогенные среды | Elastic Stack | Grafana Stack / OTel | High-load системы |
 
 **Выбор:**
 
-- **Filebeat** — идеальный выбор, если вы используете ELK стек и вам нужен простой и легковесный сборщик.
-- **Fluentd** — предпочтителен в гетерогенных средах, где требуется интеграция с множеством различных систем (не только ELK), или необходима сложная обработка логов на стороне агента.
+- **Grafana Alloy** — если ваша основная цель Grafana Loki и вы переходите на стандарты OpenTelemetry.
+- **Vector** — если требуется максимальная производительность при минимальных ресурсах.
+- **Filebeat** — для нативной работы с Elastic Stack.
+- **Fluentd** — для сложных корпоративных сценариев с множеством кастомных плагинов.
 
-> **Примечание о версиях:** Для production-систем рекомендуется использовать фиксированные версии вместо `latest`.
+> **Примечание о версиях:** Для production-систем используйте фиксированные версии.
 >
-> - **Fluentd:** `fluent-package` v5 достиг EOL в декабре 2025 года — рекомендуется использовать v6 (LTS — Long Term Support до декабря 2027). Актуальная версия v1.19.x (февраль 2026).
-> - **Filebeat:** актуальная версия 9.3.x (март 2026). Для совместимости с Elastic Stack используйте версию, соответствующую версии Elasticsearch/Logstash.
+> - **Fluentd:** v1.19.3 (июль 2026). Пакет `fluent-package` v6.0.x LTS.
+> - **Filebeat:** v9.4.3 (июль 2026).
+> - **Grafana Alloy:** v1.17.1 (июль 2026).
+> - **Vector:** v0.41.x (июль 2026).
 
-Для детального примера конфигурации Logstash для приема логов от Filebeat см. **[Logstash: Обзор и ключевые концепции](../../ELK_Stack/Logstash/logstash_overview.md)**.
-erview.md)**.
+Для детального примера конфигурации Logstash для приема логов от Filebeat см. **[Logstash: Обзор и ключевые концепции](../../ELK_Stack/Logstash/logstash_overview.md)**. Сравнение с лог-драйверами доступно в **[Настройка лог-драйвера Grafana Loki для Docker](./loki_logging_driver_setup.md)**.

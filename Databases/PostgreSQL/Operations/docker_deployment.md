@@ -2,188 +2,138 @@
 
 ## Определения
 
-**postgres** — официальный Docker-образ PostgreSQL, содержащий сервер БД и клиентские утилиты.
+**postgres** — официальный Docker-образ PostgreSQL, включающий сервер СУБД, клиентские утилиты и набор скриптов для автоматизации инициализации.
 
-**Именованный том (Named Volume)** — управляемый Docker ресурс хранения данных, сохраняющийся после удаления контейнера.
+**Именованный том (Named Volume)** — механизм Docker для персистентного хранения данных, обеспечивающий изоляцию файловой системы БД от жизненного цикла контейнера.
 
-**docker-entrypoint-initdb.d** — специальная директория в образе, где размещаются скрипты инициализации (`.sh`, `.sql`, `.sql.gz`), выполняемые при первом запуске на пустом томе.
+**docker-entrypoint-initdb.d** — точка расширения в образе, предназначенная для автоматического выполнения SQL или Bash скриптов при первом создании базы данных.
 
 ## Основные концепции
 
-### Сохранение данных
+### Управление данными и правами
 
-Данные в контейнере эфемерны. Для персистентного хранения необходимо монтировать том в директорию, указанную в переменной `PGDATA` (по умолчанию `/var/lib/postgresql/data`).
+PostgreSQL в Docker работает под пользователем `postgres` (UID 999, GID 999). 
 
-- **Рекомендация:** Использовать поддиректорию внутри тома для избежания конфликтов с системными файлами (например, `PGDATA=/var/lib/postgresql/data/pgdata`).
-- **Тома:** Сравнение типов томов приведено в **[Docker: Тома и персистентное хранение данных](../../../Docker/Docker_fs/docker_volumes.md)**.
+- **Персистентность:** Всегда монтируйте том в директорию, указанную в `PGDATA` (рекомендуется `/var/lib/postgresql/data/pgdata`).
+- **Права доступа:** При использовании bind mounts (монтирование папки с хоста) убедитесь, что директория принадлежит пользователю с UID 999, иначе контейнер не сможет запуститься из-за ошибки `Permission denied`.
+- **Подробнее о томах:** [Docker: Тома и персистентное хранение](../../../Docker/Docker_fs/docker_volumes.md).
 
-### Сеть и доступ
+### Тюнинг ресурсов и памяти
 
-Для изоляции рекомендуется создавать пользовательские сети Docker (User-defined bridge networks).
+В контейнеризированной среде PostgreSQL не видит реальных ограничений cgroups без дополнительной настройки.
 
-- Контейнеры в одной сети обращаются друг к другу по именам сервисов.
-- Порт `5432` следует пробрасывать на хост (`-p`) только при необходимости внешнего доступа (например, для GUI-клиентов).
-- В production рекомендуется ограничить доступ через `127.0.0.1:5432:5432`.
+- **shared_buffers:** Рекомендуется устанавливать на уровне 25% от лимита памяти контейнера (через команду запуска или конфиг).
+- **huge_pages:** По умолчанию в контейнерах `try`. Для полноценной работы может потребоваться увеличение `shm_size` в Docker и настройка параметров ядра на хосте.
+- **Лимиты:** Всегда устанавливайте `deploy.resources.limits` в Docker Compose для предотвращения OOM Killer.
 
-### Инициализация (Init Scripts)
+### Инициализация и логирование
 
-Официальный образ автоматически выполняет скрипты из `/docker-entrypoint-initdb.d` при **первом** запуске.
-
-- Скрипты выполняются в алфавитном порядке.
-- Поддерживаются форматы: `.sh`, `.sql`, `.sql.gz`.
-- Если директория данных (`PGDATA`) уже содержит базу, скрипты проигнорируются.
-
-### Безопасность
-
-- **Закрепление версии:** Всегда указывайте конкретный тег (например, `postgres:16.3-alpine`), избегая `latest`.
-- **Секреты:** Используйте `POSTGRES_PASSWORD_FILE` вместо `POSTGRES_PASSWORD` для передачи пароля через Docker Secrets или примонтированные файлы.
-- **Аутентификация:** По умолчанию используется метод `trust` (для локальных подключений). Для сетевых подключений настройте `scram-sha-256` в `pg_hba.conf`.
-- **Hardening:** Общие принципы защиты СУБД описаны в **[Безопасная установка СУБД](../../installation_security.md)**.
-- **Docker Security:** Практики защиты контейнеров — **[Безопасность в Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md)**.
+- **Init-скрипты:** Выполняются строго один раз при пустом `PGDATA`. Поддерживают `.sql`, `.sql.gz` и `.sh`.
+- **Логи:** Официальный образ направляет логи в `stdout`/`stderr`. Это позволяет собирать их стандартными средствами Docker (например, `docker logs`) или внешними драйверами (Loki, Fluentd).
+- **Формат логов:** Для удобства парсинга рекомендуется изменить формат логов на CSV или JSON (требует правок в `postgresql.conf`).
 
 ## Практические сценарии
 
-### Сценарий 1: Запуск standalone-сервера (CLI)
+### Сценарий 1: Запуск через Docker CLI
+
+Базовый запуск с безопасной передачей пароля через файл:
 
 ```bash
-# 1. Создаем выделенную сеть
-docker network create pg-net
+# Создание сети для взаимодействия приложений
+docker network create pg-backend
 
-# 2. Запускаем контейнер с примонтированным конфигом и инициализацией
-docker run --name pg-server \
-  --network pg-net \
-  -e POSTGRES_PASSWORD=mysecretpassword \
+# Запуск контейнера
+docker run --name pg-master \
+  -d --network pg-backend \
+  -e POSTGRES_PASSWORD_FILE=/run/secrets/pg_pass \
   -e PGDATA=/var/lib/postgresql/data/pgdata \
+  -v pg_data_volume:/var/lib/postgresql/data \
+  -v $(pwd)/secrets/db_pass.txt:/run/secrets/pg_pass:ro \
   -p 127.0.0.1:5432:5432 \
-  -v pg-data:/var/lib/postgresql/data \
-  -v ./my_pg_hba.conf:/var/lib/postgresql/data/pgdata/pg_hba.conf \
-  -v ./init-scripts:/docker-entrypoint-initdb.d \
-  -d postgres:16.3-alpine
+  postgres:16-alpine
 ```
 
-### Сценарий 2: Развертывание через Docker Compose (Best Practice)
+### Сценарий 2: Оптимальный Docker Compose (Best Practice)
 
-Пример конфигурации с проверкой здоровья (`healthcheck`) и ограничением ресурсов:
-
-```yaml
-services:
-  db:
-    image: postgres:16.3-alpine
-    container_name: postgres_prod
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=app_user
-      - POSTGRES_DB=app_db
-      # Использование файла для секрета
-      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
-      - PGDATA=/var/lib/postgresql/data/pgdata
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d:ro
-    secrets:
-      - db_password
-    deploy:
-      resources:
-        limits:
-          memory: 1gb
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - backend
-
-secrets:
-  db_password:
-    file: ./db_password.txt
-
-volumes:
-  db_data:
-
-networks:
-  backend:
-    driver: bridge
-```
-
-**Настройка shared_buffers:** Внутри контейнера Postgres параметр `shared_buffers` выставляйте ~25% от лимита памяти. При лимите 1G это 256M. Если оставить дефолтные 128MB при лимите 1G, Postgres будет использовать RAM через файловый кеш ОС, что менее предсказуемо.
-
-### Сценарий 4: Автоматизированный бэкап в Compose
-
-Named volume хранит данные между перезапусками (`/var/lib/docker/volumes/`), но не защищает от отказа хоста или `docker compose down -v`. Минимальный бэкап — `pg_dump` в отдельном сервисе:
+Конфигурация с проверкой здоровья, лимитами ресурсов и правильной инициализацией:
 
 ```yaml
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: pg_prod
     restart: unless-stopped
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+    # Тюнинг параметров через аргументы командной строки
+    command: >
+      postgres -c 'shared_buffers=256MB' 
+               -c 'max_connections=200'
+               -c 'logging_collector=off'
+               -c 'log_destination=stderr'
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      - POSTGRES_USER=admin
+      - POSTGRES_DB=main_db
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init-sql:/docker-entrypoint-initdb.d:ro
+    secrets:
+      - db_password
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          memory: 512M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d main_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
 
-  backup:
-    image: postgres:16-alpine
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./backups:/backups
-    entrypoint: >
-      sh -c "while true; do
-        PGPASSWORD=$$POSTGRES_PASSWORD pg_dump -h postgres -U postgres mydb |
-        gzip > /backups/backup_$$(date +%Y%m%d_%H%M%S).sql.gz;
-        find /backups -mtime +7 -delete;
-        sleep 86400;
-      done"
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    restart: unless-stopped
+secrets:
+  db_password:
+    file: ./secrets/password.txt
 
 volumes:
-  pgdata:
+  pg_data:
+
+networks:
+  internal:
+    driver: bridge
 ```
 
-Каждые 24 часа: дамп, сжатие gzip, удаление дампов старше 7 дней. Папку `./backups` синхронизируйте на S3 или другой сервер — бэкап на том же хосте спасает от `docker compose down -v`, но не от отказа железа.
+### Сценарий 3: Администрирование и бэкапы
 
-### Сценарий 5: Администрирование в Docker
+**Подключение через psql:**
+```bash
+docker exec -it pg_prod psql -U admin -d main_db
+```
 
-- **Выполнение команд в контейнере:**
+**Создание дампа (Logical Backup):**
+```bash
+docker exec pg_prod pg_dump -U admin main_db | gzip > backup_$(date +%F).sql.gz
+```
 
-  ```bash
-  docker exec -it pg-server psql -U postgres
-  ```
-
-- **Создание бэкапа (Logical Dump):**
-
-  ```bash
-  docker exec pg-server pg_dumpall -U postgres > full_backup.sql
-  ```
-
-- **Восстановление из дампа:**
-
-  ```bash
-  cat backup.sql | docker exec -i pg-server psql -U postgres
-  ```
+**Восстановление:**
+```bash
+gunzip < backup.sql.gz | docker exec -i pg_prod psql -U admin -d main_db
+```
 
 ## Дополнительная информация
 
-### Расширение стека (Sidecars)
+### Безопасность
 
-Для полноценной эксплуатации часто добавляются дополнительные компоненты:
-
-- **[Full-Stack Observability](./observability.md)** — использование `postgres-exporter` для сбора метрик.
-- **PgBouncer** — пул соединений для высоконагруженных систем.
-- **Adminer / pgAdmin** — веб-интерфейсы для управления.
+1. **Образы:** Используйте `alpine` версии для минимизации поверхности атаки.
+2. **Сеть:** Никогда не публикуйте порт `5432` на `0.0.0.0` без SSL и строгих правил в `pg_hba.conf`.
+3. **Обновления:** Для минорных версий (например, 16.2 -> 16.3) достаточно сменить тег образа и перезапустить контейнер. Мажорные версии требуют миграции данных (`pg_upgrade`).
 
 ### Связанные документы
 
-- **Резервное копирование:** **[Backup and Recovery](../Concepts/backup_and_recovery.md)**
-- **Производительность:** **[Performance Tuning](./performance_tuning.md)**
-- **Kubernetes:** **[PostgreSQL в Kubernetes](./kubernetes_deployment.md)**
-- **Тома Docker:** **[Docker: Тома и персистентное хранение](../../../Docker/Docker_fs/docker_volumes.md)**
+- [Наблюдаемость PostgreSQL](./observability.md) — сбор метрик и трейсов в Docker.
+- [Оптимизация производительности](./performance_tuning.md) — детальный тюнинг параметров СУБД.
+- [PostgreSQL в Kubernetes](./kubernetes_deployment.md) — масштабирование и High Availability.
+- [Безопасность в Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md) — общие практики защиты контейнеров.

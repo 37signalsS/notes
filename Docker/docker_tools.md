@@ -10,88 +10,84 @@
 
 | Инструмент | Язык | Особенности | Когда использовать |
 | :--- | :--- | :--- | :--- |
-| **lazydocker** | Go | Полнофункциональный UI, Docker Compose, prune | Ежедневная работа, мониторинг ресурсов |
-| **oxker** | Rust | Минимализм, высокая скорость | Быстрый просмотр статуса |
-| **dry** | Go | Управление без мыши, акцент на клавиатуре | Работа в чистом CLI |
-| **ctop** | Go | Мониторинг в стиле `htop` | Быстрая диагностика нагрузки |
+| **lazydocker** | Go | Полнофункциональный UI, Docker Compose, ASCII-графики | Ежедневная работа, глубокий мониторинг |
+| **oxker** | Rust | Высокая скорость, современный интерфейс | Быстрый просмотр и управление |
+| **docker-tui** | Rust | Поддержка MCP (Model Context Protocol), логи | Интеграция с ИИ-агентами (Claude и др.) |
+| **ctop** | Go | Мониторинг метрик в стиле `htop` | Быстрая диагностика нагрузки CPU/Mem |
+| **dry** | Go | Управление без мыши, поддержка Swarm | Работа в чистом CLI, Swarm-кластеры |
 
 ### Интеграция с экосистемой
 
-TUI-инструменты работают через Docker API (Unix-сокет `/var/run/docker.sock` или TCP). Не требуют установки дополнительных демонов.
+TUI-инструменты взаимодействуют с Docker через API (Unix-сокет `/var/run/docker.sock` или TCP). Это позволяет им работать без установки дополнительных фоновых процессов (демонов).
 
-**Альтернативы для анализа образов:**
+**Специализированные инструменты:**
 
-- **[dive](./Dockerfile/dockerfile_optimization_tools.md)** — исследование слоев образа
-- **[dockle](./Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности
+- **[dive](./Dockerfile/dockerfile_optimization_tools.md)** — анализ слоев образа (TUI)
+- **[dockle](./Dockerfile/dockerfile_optimization_tools.md)** — аудит безопасности образов
+- **Dozle** — легковесный веб-интерфейс для логов (альтернатива TUI)
 
 ## Практические сценарии
 
-### lazydocker: Ежедневная работа
+### lazydocker: Полнофункциональное управление
+
+Наиболее популярный инструмент с поддержкой Docker Compose и наглядными графиками ресурсов.
 
 **Установка:**
 
 ```bash
-# Официальный скрипт
+# Официальный скрипт для Linux/macOS
 curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
 
-# Или через Go
-go install github.com/jesseduffield/lazydocker@latest
+# Через Homebrew (macOS)
+brew install jesseduffield/lazydocker/lazydocker
 ```
 
-**Горячие клавиши:**
+**Основные горячие клавиши:**
 
 | Клавиша | Действие |
 | :--- | :--- |
-| **Стрелки / hjkl** | Навигация |
-| **Enter** | Детали/логи |
-| **b** | Меню действий |
+| **Стрелки / hjkl** | Навигация по спискам |
+| **Enter** | Просмотр деталей или логов |
+| **b** | Меню команд (Bulk commands) |
 | **s** | Остановить контейнер |
 | **r** | Перезапустить |
-| **d** | Удалить |
-| **x** | Выполнить команду (exec) |
-| **q** | Выход |
+| **d** | Удалить (с подтверждением) |
+| **x** | Выполнить команду внутри (exec) |
 
-**Сценарии использования:**
+### docker-tui: Интеграция с ИИ
 
-- Мониторинг CPU/Memory в реальном времени
-- Просмотр логов нескольких контейнеров одновременно
-- Очистка ресурсов (`prune`) через меню
-- Управление Docker Compose проектами
+Современный инструмент на Rust, который примечателен встроенным MCP-сервером.
 
-### ctop: Мониторинг в стиле htop
-
-**Установка и запуск:**
-
-```bash
-# Установка
-wget https://github.com/bcicen/ctop/releases/download/v0.7.7/ctop-0.7.7-linux-amd64 -O /usr/local/bin/ctop
-chmod +x /usr/local/bin/ctop
-
-# Запуск
-ctop
-```
-
-**Особенности:** Отображает метрики всех контейнеров в одной таблице (аналогично `htop` для процессов). Поддерживает фильтрацию, сортировку по CPU/Memory.
-
-### oxker: Быстрый просмотр
+**Особенности:**
+- Позволяет ИИ-агентам (например, Claude Desktop) напрямую взаимодействовать с вашим Docker-окружением.
+- Высокая производительность и низкое потребление ресурсов.
 
 **Установка:**
-
 ```bash
-# Через cargo (Rust)
-cargo install oxker
-
-# Или скачать бинарник
-# https://github.com/mrvillage/oxker/releases
+# Через cargo
+cargo install docker-tui
 ```
 
-**Особенности:** Минималистичный интерфейс, низкое потребление ресурсов. Подходит для быстрой проверки статуса контейнеров.
+### ctop: Быстрая диагностика метрик
+
+Идеален для случаев, когда нужно быстро увидеть, какой контейнер потребляет больше всего ресурсов, без переключения между вкладками.
+
+**Установка (Linux):**
+```bash
+sudo wget https://github.com/bcicen/ctop/releases/download/v0.7.7/ctop-0.7.7-linux-amd64 -O /usr/local/bin/ctop
+sudo chmod +x /usr/local/bin/ctop
+```
 
 ## Дополнительная информация
 
-**Репозитории:** [lazydocker](https://github.com/jesseduffield/lazydocker), [oxker](https://github.com/mrvillage/oxker), [dry](https://github.com/moncho/dry), [ctop](https://github.com/bcicen/ctop).
+**Официальные репозитории:**
+- [lazydocker](https://github.com/jesseduffield/lazydocker)
+- [oxker](https://github.com/mrvillage/oxker)
+- [docker-tui](https://github.com/skanehira/docker-tui)
+- [ctop](https://github.com/bcicen/ctop)
+- [dry](https://github.com/moncho/dry)
 
 **Связанные темы:**
-
 - [Альтернативные среды выполнения](./alternative_runtimes_and_tools.md)
 - [Инструменты оптимизации Dockerfile](./Dockerfile/dockerfile_optimization_tools.md)
+- [Безопасность Docker](./Docker_security/overview.md)

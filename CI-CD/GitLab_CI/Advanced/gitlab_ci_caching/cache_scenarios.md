@@ -6,34 +6,28 @@
 
 **Якорь YAML (`&` / `*`)** — механизм переиспользования конфигурации в GitLab CI через `&anchor_name` (объявление) и `*anchor_name` (ссылка).
 
+**BuildKit** — современный движок сборки Docker-образов, обеспечивающий эффективное кэширование слоёв и параллельное выполнение задач.
+
 ## Основные концепции
 
 ### Принципы построения сценариев
 
-1. **Используйте якоря YAML** для переиспользования конфигурации кэша между задачами
-2. **Настраивайте политики** (`pull`, `push`, `pull-push`) для каждой задачи отдельно
-3. **Кэшируйте по файлам зависимостей** для автоматического обновления кэша
-4. **Разделяйте кэши** для разных типов зависимостей (NPM, Pip, Maven)
+1. **Использование якорей YAML** для переиспользования конфигурации кэша между задачами.
+2. **Настройка политик** (`pull`, `push`, `pull-push`) для оптимизации времени выполнения пайплайна.
+3. **Кэширование по файлам зависимостей** (`package-lock.json`, `go.sum`, `Cargo.lock`) для автоматической инвалидации кэша.
+4. **Разделение кэшей** для разных экосистем внутри одного проекта (NPM + Python + Go).
 
-### Ограничения
+### Ограничения и особенности
 
-- Максимум 4 кэша на задачу
-- Размер кэша ограничен настройками сервера GitLab
-- Кэш для защищённых веток изолирован по умолчанию
-
-### Переменные окружения для кэширования
-
-| Переменная | Описание | Пример |
-| :--- | :--- | :--- |
-| `CI_PROJECT_DIR` | Корневая директория проекта | `/builds/group/project` |
-| `CI_COMMIT_REF_SLUG` | Нормализованное имя ветки | `feature-my-branch` |
-| `CI_DEFAULT_BRANCH` | Имя основной ветки | `main` |
+- **Лимиты:** Максимум 4 кэша на одну задачу.
+- **Размер:** Кэш сжимается в `.zip`, размер ограничен настройками сервера.
+- **Изоляция:** Кэши защищённых веток изолированы по умолчанию для предотвращения атак на цепочку поставок.
 
 ## Практические сценарии
 
-### Сценарий 1 — Кэширование NPM-зависимостей
+### Сценарий 1 — Кэширование зависимостей Node.js (NPM/Yarn)
 
-Рекомендуемый подход для Node.js-проектов:
+Рекомендуемый подход с использованием локального кэша NPM:
 
 ```yaml
 variables:
@@ -50,9 +44,9 @@ default:
     policy: pull
 
 install_dependencies:
-  stage: build
+  stage: .pre
   script:
-    - npm ci --cache .npm --prefer-offline
+    - npm ci --prefer-offline
   cache:
     <<: *global_cache
     policy: pull-push
@@ -67,14 +61,12 @@ test_job:
 ```
 
 **Ключевые моменты:**
+- `npm ci --prefer-offline` максимально использует локальный кэш `.npm`.
+- Задача `install_dependencies` выполняется в `.pre` для подготовки кэша для всего пайплайна.
 
-- `npm ci --prefer-offline` использует локальный кэш
-- `install_dependencies` обновляет кэш (`pull-push`)
-- `test_job` только читает кэш (`pull`)
+### Сценарий 2 — Кэширование зависимостей Python (Pip)
 
-### Сценарий 2 — Кэширование Python-зависимостей (Pip)
-
-Эффективная настройка для Python с использованием виртуального окружения:
+Использование виртуального окружения и кэша pip:
 
 ```yaml
 variables:
@@ -90,219 +82,127 @@ cache:
     - .venv/
 
 before_script:
-  - python -V
-  - |
-    if [ -d ".venv" ]; then
-      echo "Virtualenv found in cache"
-    else
-      echo "Virtualenv not found, creating..."
-      python -m venv .venv
-    fi
+  - python -m venv .venv
   - source .venv/bin/activate
-  - pip install -r requirements.txt
+  - pip install --cache-dir .cache/pip -r requirements.txt
 ```
 
 **Ключевые моменты:**
+- Использование `prefix` с именем ветки предотвращает конфликты между разными ветками разработки.
 
-- `PIP_CACHE_DIR` переопределяет путь к кэшу pip, чтобы он попадал в область кэширования GitLab.
-- `before_script` проверяет наличие `.venv`, что позволяет избежать создания окружения с нуля.
-- Ключ включает `$CI_COMMIT_REF_SLUG` для изоляции зависимостей между ветками.
+### Сценарий 3 — Кэширование зависимостей Go
 
-### Сценарий 3 — Раздельные кэши для разных компонентов
-
-Для проектов с несколькими типами зависимостей в одной задаче:
+Эффективное кэширование модулей и кэша компиляции:
 
 ```yaml
+variables:
+  GOPATH: $CI_PROJECT_DIR/.go
+  GOLANGCI_LINT_CACHE: $CI_PROJECT_DIR/.golangci-lint-cache
+
+cache:
+  key:
+    files:
+      - go.sum
+  paths:
+    - .go/pkg/mod/
+    - .golangci-lint-cache/
+    - $CI_PROJECT_DIR/.cache/go-build
+
 test:
-  cache:
-    - key:
-        files:
-          - Gemfile.lock
-      paths:
-        - vendor/ruby
-      policy: pull-push
-
-    - key:
-        files:
-          - yarn.lock
-      paths:
-        - .yarn-cache/
-      policy: pull-push
-
-    - key:
-        files:
-          - requirements.txt
-      paths:
-        - .venv/
-      policy: pull
-```
-
-**Ключевые моменты:**
-
-- До 4 кэшей на одну задачу.
-- Отдельные ключи для каждого типа зависимостей.
-- Разные политики (`pull`, `pull-push`) в рамках одной задачи.
-
-### Сценарий 4 — Общий кэш для всех веток
-
-**Предупреждение:** Используйте только в доверенной среде.
-
-```yaml
-cache:
-  key: global-cache
-  paths:
-    - .m2/repository/
-```
-
-**Настройка в UI GitLab:**
-
-1. Settings → CI/CD
-2. General pipelines
-3. Снимите галочку **Use separate caches for protected branches**
-4. Save changes
-
-**Риск безопасности:** Разные разработчики могут получить доступ к кэшу друг друга.
-
-### Сценарий 5 — Кэширование в монорепозитории
-
-Для проектов с несколькими сервисами:
-
-```yaml
-# Общий кэш для всех сервисов
-cache:
-  key:
-    files:
-      - services/frontend/package-lock.json
-      - services/backend/requirements.txt
-  paths:
-    - services/frontend/node_modules/
-    - services/backend/.venv/
-
-# Или раздельные кэши
-cache-frontend:
-  key:
-    files:
-      - services/frontend/package-lock.json
-  paths:
-    - services/frontend/node_modules/
-
-cache-backend:
-  key:
-    files:
-      - services/backend/requirements.txt
-  paths:
-    - services/backend/.venv/
-```
-
-**Ключевые моменты:**
-
-- Раздельные кэши уменьшают размер каждого архива.
-- Общий кэш упрощает конфигурацию, но растет в объеме.
-
-### Сценарий 6 — Кэширование слоев Docker
-
-Ускорение сборки Docker-образов через переиспользование слоев:
-
-```yaml
-build_image:
-  stage: build
-  image: docker:20.10.16
-  services:
-    - docker:20.10.16-dind
-  variables:
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-    CACHE_IMAGE_TAG: $CI_REGISTRY_IMAGE:latest
+  image: golang:1.21
   script:
-    - docker pull $CACHE_IMAGE_TAG || true
-    - docker build --cache-from $CACHE_IMAGE_TAG -t $IMAGE_TAG -t $CACHE_IMAGE_TAG .
-    - docker push $IMAGE_TAG
-    - docker push $CACHE_IMAGE_TAG
+    - go test -v ./...
 ```
 
-**Стратегия:**
+### Сценарий 4 — Кэширование зависимостей Rust (Cargo)
 
-1. `docker pull` загружает последний образ для использования как кэш
-2. `docker build --cache-from` использует слои из загруженного образа
-3. `docker push` сохраняет новый образ для следующих сборок
+Кэширование реестра и скомпилированных артефактов:
 
-**Ключевые моменты:**
+```yaml
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
 
-- GitLab CI `cache` не используется напрямую
-- Docker-демон управляет кэшированием слоев
-- Требуется `docker-in-docker` (dind) или доступ к сокету хоста
+cache:
+  key:
+    files:
+      - Cargo.lock
+  paths:
+    - .cargo/bin/
+    - .cargo/registry/index/
+    - .cargo/registry/cache/
+    - target/
+```
 
-### Сценарий 7 — Комбинация кэша и артефактов
+### Сценарий 5 — Кэширование слоёв Docker через Registry (BuildKit)
 
-Кэш ускоряет установку зависимостей, артефакты передают результаты сборки между стадиями:
+Современный способ ускорения сборки без использования `docker pull/push` вручную:
 
 ```yaml
 build:
   stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_BUILDKIT: 1
   script:
-    - npm ci
-    - npm run build
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-    policy: pull-push
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 week
-
-test:
-  stage: test
-  script:
-    - npm test
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-    policy: pull
-  dependencies:
-    - build
-  artifacts:
-    reports:
-      junit: test-results.xml
+    - docker build 
+      --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache:latest 
+      --cache-to type=registry,ref=$CI_REGISTRY_IMAGE/cache:latest,mode=max 
+      -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 ```
 
 **Ключевые моменты:**
+- `mode=max` сохраняет кэш всех слоёв, включая промежуточные.
+- Кэш хранится в реестре образов, что делает его доступным для любых Runner'ов.
 
-- `cache` сохраняется между пайплайнами для ускорения `npm ci`
-- `artifacts` передают директорию `dist/` из `build` в `test`
-- `policy: pull` в тестах гарантирует, что тесты не изменят кэш зависимостей
+### Сценарий 6 — Монорепозиторий с разделением кэша
 
-### Сценарий 8 — Резервные ключи (Fallback Keys)
-
-Использование базового кэша, если для текущей ветки он ещё не создан:
+Использование `rules:changes` для выборочного кэширования:
 
 ```yaml
-test:
-  cache:
-    - key: cache-$CI_COMMIT_REF_SLUG
-      fallback_keys:
-        - cache-$CI_DEFAULT_BRANCH
-        - cache-main
-      paths:
-        - vendor/ruby
+.frontend_cache: &frontend_cache
+  key:
+    files:
+      - frontend/package-lock.json
+  paths:
+    - frontend/node_modules/
+
+frontend_test:
+  cache: *frontend_cache
+  rules:
+    - changes:
+        - frontend/**/*
+  script:
+    - cd frontend && npm test
 ```
 
-**Ключевые моменты:**
+### Сценарий 7 — Резервные ключи (Fallback Keys)
 
-- Сначала ищется кэш для текущей ветки (`$CI_COMMIT_REF_SLUG`)
-- Если не найден, используется кэш основной ветки (`$CI_DEFAULT_BRANCH`)
-- Это ускоряет сборку новых веток, используя "теплое" состояние основной ветки
+Использование кэша основной ветки для новых feature-веток:
+
+```yaml
+job:
+  cache:
+    - key: "cache-$CI_COMMIT_REF_SLUG"
+      fallback_keys:
+        - "cache-$CI_DEFAULT_BRANCH"
+        - "global-cache"
+      paths:
+        - vendor/
+```
 
 ## Дополнительная информация
 
+### Устранение типичных проблем
+
+- **Кэш не обновляется:** Проверьте правильность путей в `paths` (они должны быть относительны `$CI_PROJECT_DIR`).
+- **Медленная загрузка:** Большие кэши (гигабайты) могут замедлять пайплайн сильнее, чем повторная установка. Используйте `artifacts` для передачи результатов сборки.
+- **Конфликты версий:** Если вы обновили версию языка (например, Node.js 16 -> 20), добавьте префикс в `key`, чтобы инвалидировать старый кэш.
+
 ### Связанные документы
 
-- **Концепции и механизмы:** [обзор кэширования](./caching_overview.md)
 - **Ключи и политики:** [настройка cache:key](./cache_keys.md)
+- **Концепции и механизмы:** [обзор кэширования](./caching_overview.md)
 - **Рекомендации:** [лучшие практики](./cache_best_practices.md)
-

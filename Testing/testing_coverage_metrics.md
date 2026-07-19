@@ -107,4 +107,4 @@ test:coverage:
 
 - **[Интеграция тестов в CI/CD](./testing_cicd_integration.md)** — общая стратегия автоматизации.
 - **[Инструменты отчётности](./testing_reporting_tools.md)** — визуализация результатов.
-- **[TDD и BDD](../CI-CD/Testing/tdd_bdd_overview.md)** — методологии разработки через тестирование.
+- **[TDD, BDD и ATDD](../CI-CD/Testing/tdd_bdd_overview.md)** — методологии разработки через тестирование.

@@ -2,141 +2,146 @@
 
 ## Определения
 
-- **`docker network`**: Набор команд CLI (Command Line Interface) для управления сетями Docker — создание, инспекция, подключение/отключение контейнеров, удаление.
-- **Сеть (Network)**: Программный коммутатор, объединяющий конечные точки (endpoints) контейнеров для обмена данными.
-- **Драйвер сети**: Плагин, определяющий тип сети (`bridge`, `overlay`, `host`, `macvlan`, `ipvlan`, `none`).
+- **`docker network`**: Набор команд CLI (Command Line Interface — интерфейс командной строки) для управления жизненным циклом сетей Docker.
+- **Сеть (Network)**: Виртуальный коммутатор, обеспечивающий связь между контейнерами (endpoints).
+- **Драйвер сети (Network Driver)**: Плагин, реализующий сетевую логику (`bridge`, `host`, `overlay`, `macvlan`, `ipvlan`, `none`).
+- **IPAM (IP Address Management)**: Система управления адресным пространством (подсети, шлюзы, диапазоны IP).
+- **CIDR (Classless Inter-Domain Routing)**: Метод безклассовой адресации для определения границ подсетей (например, `192.168.1.0/24`).
+- **DNS (Domain Name System)**: Система разрешения доменных имён; в Docker обеспечивает поиск контейнеров по имени или алиасу.
 
 ## Основные концепции
 
 ### Команды управления
 
-| Команда | Назначение |
-| :--- | :--- |
-| `docker network ls` | Список всех сетей на хосте |
-| `docker network create` | Создание новой сети с указанием драйвера и параметров |
-| `docker network inspect` | Детальная информация о сети в формате JSON (JavaScript Object Notation) |
-| `docker network connect` | Подключение работающего контейнера к сети |
-| `docker network disconnect` | Отключение контейнера от сети |
-| `docker network rm` | Удаление одной или нескольких сетей |
-| `docker network prune` | Удаление всех неиспользуемых сетей |
+| Команда | Назначение | Ключевые флаги / Фильтры |
+| :--- | :--- | :--- |
+| `ls` | Список сетей | `--filter` (`driver`, `type`, `name`, `scope`), `--format`, `--no-trunc` |
+| `create` | Создание сети | `-d` (драйвер), `--subnet`, `--gateway`, `--internal`, `--attachable` |
+| `inspect` | Детальная информация | `--format` (Go-шаблоны), `-f` |
+| `connect` | Подключение контейнера | `--ip`, `--ip6`, `--alias`, `--link` (legacy) |
+| `disconnect` | Отключение контейнера | `-f` (force — принудительно) |
+| `rm` | Удаление сети | Удаляет только неиспользуемые сети |
+| `prune` | Очистка системы | `--filter` (например, `until=24h`), `-f` |
 
-### Ключевые опции `docker network create`
+### Расширенные опции `docker network create`
 
-- `-d, --driver <driver>`: Драйвер сети (по умолчанию `bridge`).
-- `--subnet <CIDR>`: Подсеть в формате CIDR (Classless Inter-Domain Routing) (например, `172.20.0.0/16`).
-- `--gateway <IP>`: IP-адрес (Internet Protocol) шлюза для подсети.
-- `--ip-range <CIDR>`: Диапазон IP-адресов для контейнеров (не должен пересекаться с `--subnet`).
-- `--internal`: Изолированная сеть без внешнего шлюза (только внутренняя коммуникация).
-- `--attachable`: Разрешить ручное подключение контейнеров (`docker run --network`).
-- `--label <key>=<value>`: Метаданные сети (например, `env=production`).
+- **Управление IP (IPAM):**
+  - `--subnet`: Определяет подсеть в формате CIDR.
+  - `--gateway`: Указывает адрес шлюза.
+  - `--ip-range`: Ограничивает диапазон выдаваемых IP-адресов внутри подсети.
+  - `--aux-address`: Резервирует IP-адреса для внешних нужд (например, `--aux-address="my-router=192.168.1.5"`).
+- **Параметры драйвера (`-o, --opt`):**
+  - `com.docker.network.bridge.name`: Кастомное имя интерфейса на хосте (только для `bridge`).
+  - `com.docker.network.bridge.enable_icc`: Включение/выключение связи между контейнерами (Inter-Container Communication).
+  - `com.docker.network.bridge.enable_ip_masquerade`: Включение NAT (Network Address Translation) для выхода в интернет.
+- **Особенности Swarm/Overlay:**
+  - `--attachable`: Позволяет подключать обычные контейнеры (не сервисы) к `overlay`-сетям.
+  - `--encrypted`: Включает шифрование трафика (IPsec) на уровне данных.
+  - `--scope`: Область видимости сети (`local` или `swarm`).
 
 ## Практические сценарии
 
-### Базовые операции
+### Работа со списком и фильтрация
 
-**Список сетей:**
+**Поиск всех bridge-сетей:**
 
 ```bash
-docker network ls
+docker network ls --filter driver=bridge
 # → NETWORK ID     NAME      DRIVER    SCOPE
 # → a1b2c3d4e5f6   bridge    bridge    local
-# → f7e6d5c4b3a2   host      host      local
-# → 1234567890ab   none      null      local
 ```
 
-**Создание сети:**
+**Вывод только имён сетей (для автоматизации):**
 
 ```bash
-# Стандартная bridge-сеть
-docker network create my-bridge-net
-
-# Сеть с указанием подсети
-docker network create -d bridge --subnet=192.168.50.0/24 my-custom-net
-
-# Изолированная сеть (без выхода во внешний мир)
-docker network create -d bridge --internal --subnet=172.30.0.0/16 isolated-net
-
-# Сеть с несколькими подсетями
-docker network create -d bridge --subnet=172.20.0.0/16 --subnet=172.21.0.0/16 multi-subnet-net
+docker network ls --format "{{.Name}}"
+# → bridge
+# → host
+# → none
 ```
 
-**Инспекция сети:**
+### Сложное создание сети
+
+**Создание bridge-сети с кастомным именем интерфейса и ограниченным диапазоном IP:**
 
 ```bash
-docker network inspect my-bridge-net
-# → Вывод: драйвер, подсеть, шлюз, список подключенных контейнеров
+docker network create -d bridge \
+  --subnet=10.10.0.0/16 \
+  --ip-range=10.10.10.0/24 \
+  --gateway=10.10.0.1 \
+  -o com.docker.network.bridge.name=br-prod \
+  prod-net
 ```
 
-**Удаление сети:**
+**Создание сети с поддержкой IPv6:**
 
 ```bash
-docker network rm my-bridge-net
-# → Ошибка, если к сети подключен хотя бы один контейнер
+docker network create --ipv6 --subnet=2001:db8:1::/64 ipv6-net
 ```
 
-**Очистка неиспользуемых сетей:**
+### Управление подключениями контейнеров
+
+**Подключение контейнера со статическим IP и сетевым алиасом:**
 
 ```bash
-docker network prune
-# → Требует подтверждения
+# Контейнер будет доступен в сети по имени "db-master"
+docker network connect --ip 10.10.10.50 --alias db-master prod-net my-app-container
 ```
 
-### Полный жизненный цикл сети
-
-1. **Создание сети для приложения:**
-
-   ```bash
-   docker network create my-app-net
-   ```
-
-2. **Запуск контейнера в сети:**
-
-   ```bash
-   docker run -d --name server --network my-app-net nginx
-   ```
-
-3. **Проверка подключения:**
-
-   ```bash
-   docker network inspect my-app-net
-   # → Секция "Containers" покажет контейнер "server"
-   ```
-
-4. **Подключение второго контейнера "на лету":**
-
-   ```bash
-   docker run -d --name client alpine sleep 3600
-   docker network connect my-app-net client
-   # Теперь client может обращаться к server по имени: ping server
-   ```
-
-5. **Отключение и очистка:**
-
-   ```bash
-   docker network disconnect my-app-net client
-   docker stop server client && docker rm server client
-   docker network rm my-app-net
-   ```
-
-### Мульти-сетевые контейнеры
-
-Один контейнер может быть подключен к нескольким сетям одновременно:
+**Инспекция конкретных параметров (например, IP-адреса контейнера в сети):**
 
 ```bash
-# Контейнер в двух сетях
-docker run -d --name router --network frontend-net alpine sleep 3600
-docker network connect backend-net router
-
-# router имеет интерфейсы в обеих сетях и может маршрутизировать трафик
+docker network inspect prod-net --format '{{range .Containers}}{{.Name}}: {{.IPv4Address}}{{end}}'
+# → my-app-container: 10.10.10.50/16
 ```
 
-**Сценарий использования:** Разделение frontend/backend трафика, организация DMZ (Demilitarized Zone), шлюзы между сетями.
+### Жизненный цикл: отладочный сценарий
+
+1. **Создание изолированной сети:**
+
+   ```bash
+   docker network create --internal isolated-net
+   ```
+
+2. **Запуск контейнера-сервера:**
+
+   ```bash
+   docker run -d --name secret-api --network isolated-net hashicorp/http-echo -text="hello"
+   ```
+
+3. **Подключение клиента "на лету" для диагностики:**
+
+   ```bash
+   docker run -d --name debugger alpine sleep 3600
+   docker network connect isolated-net debugger
+   ```
+
+4. **Проверка связи:**
+
+   ```bash
+   docker exec debugger wget -qO- http://secret-api:5678
+   # → hello
+   ```
+
+5. **Принудительное отключение и удаление:**
+
+   ```bash
+   docker network disconnect -f isolated-net debugger
+   docker network rm isolated-net
+   # Примечание: secret-api должен быть остановлен/удален перед удалением сети
+   ```
 
 ## Дополнительная информация
 
-Сторонние сетевые драйверы предоставляют расширенные возможности: интеграция с SDN (Software-Defined Networking), применение сетевых политик, подключение к внешним оркестраторам.
+### Нюансы и ограничения
+
+- **Сеть `none`**: Невозможно подключить контейнер к другим сетям, если он запущен с `--network none`.
+- **Сеть `host`**: Контейнер разделяет сетевой стек с хостом; флаг `--ip` или `--alias` игнорируются.
+- **Конфликты подсетей**: Docker не позволяет создавать сети с пересекающимися подсетями на одном хосте.
+- **Лимиты**: По умолчанию в одной bridge-сети может быть до 1024 контейнеров (ограничение bridge-драйвера).
 
 **Смотрите также:**
 
 - [Обзор сетевых моделей Docker](./docker_network.md)
-- [DNS и Service Discovery](./dns_and_service_discovery.md)
+- [Сетевой драйвер bridge](./drivers/bridge.md)
+- [Сетевой драйвер overlay](./drivers/overlay.md)
