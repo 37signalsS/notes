@@ -20,7 +20,7 @@
 chmod +x .git/hooks/pre-commit
 ```
 
-Скрипты могут быть написаны на любом языке, поддерживаемом системой: Bash, Python, Ruby, Node.js и другие.
+Скрипты могут быть написаны на любом языке, поддерживаемом системой: Bash, Python, Ruby, Node.js и другие. В первой строке (shebang) должен быть указан путь к интерпретатору.
 
 ### Жизненный цикл хуков
 
@@ -30,132 +30,101 @@ chmod +x .git/hooks/pre-commit
 | `prepare-commit-msg` | Клиентский | Перед открытием редактора сообщения | Отменяет коммит |
 | `commit-msg` | Клиентский | После ввода сообщения, перед коммитом | Отменяет коммит |
 | `post-commit` | Клиентский | После успешного коммита | Не влияет на коммит |
+| `post-checkout` | Клиентский | После `git checkout` или `git switch` | Не влияет на операцию |
+| `post-merge` | Клиентский | После `git merge` (успешного) | Не влияет на операцию |
 | `pre-push` | Клиентский | Перед `git push` | Отменяет push |
 | `pre-receive` | Серверный | При получении push на сервере | Отклоняет push |
 | `update` | Серверный | Для каждой обновляемой ветки | Отклоняет обновление ветки |
 | `post-receive` | Серверный | После успешного push | Не влияет на push |
-| `post-update` | Серверный | После обновления ссылок | Не влияет на push |
+| `reference-transaction` | Клиент/Сервер | При любом обновлении ссылок | Может отменить транзакцию |
 
-### Клиентские хуки
+### Типы клиентских хуков
 
-Выполняются локально, позволяют проверять код до отправки на сервер:
+* **`pre-commit`** — линтинг, форматирование (`eslint`, `prettier`, `black`, `ruff`), проверка синтаксиса, поиск отладочных выражений (`console.log`, `print`).
+* **`commit-msg`** — проверка сообщения коммита на соответствие стандартам (Conventional Commits).
+* **`pre-push`** — запуск тяжелых тестов или сканирования на секреты (`gitleaks`) перед публикацией.
+* **`post-checkout` / `post-merge`** — автоматизация обновления зависимостей (`npm install`, `terraform init`) при смене ветки или получении изменений.
 
-* **`pre-commit`** — линтинг, форматирование (`eslint`, `prettier`, `black`), проверка синтаксиса, поиск отладочных выражений (`console.log`, `print`).
-* **`commit-msg`** — проверка сообщения коммита на соответствие стандартам (наличие номера задачи, Conventional Commits).
-* **`pre-push`** — запуск быстрых тестов или сканирования на секреты перед публикацией.
+### Типы серверных хуков
 
-### Серверные хуки
-
-Выполняются на сервере, применяются для глобальных политик:
-
-* **`pre-receive`** — запуск глубокого анализа кода, проверка прав доступа, защита веток от force-push.
-* **`post-receive`** — запуск CI/CD пайплайнов, отправка уведомлений (Slack, email), обновление внешних систем.
+* **`pre-receive`** — глобальная проверка прав, защита веток, проверка подписей коммитов, запрет на push больших файлов.
+* **`post-receive`** — запуск CI/CD пайплайнов через вебхуки, уведомления в мессенджеры, обновление документации.
 
 ### Фреймворки для управления хуками
 
-Ручное управление хуками затруднено в командах. Фреймворки упрощают установку и синхронизацию:
-
-* **[pre-commit](https://pre-commit.com/):** Фреймворк для управления клиентскими хуками. Конфигурируется через `.pre-commit-config.yaml`, поддерживает множество языков и инструментов.
-* **[Husky](https://typicode.github.io/husky/):** Управление хуками через `package.json` для JavaScript/Node.js проектов.
+* **[pre-commit](https://pre-commit.com/):** Мультиязычный фреймворк. Конфигурируется через `.pre-commit-config.yaml`. Позволяет использовать готовые хуки без их ручного написания.
+* **[Husky](https://typicode.github.io/husky/):** Основной инструмент для JavaScript-экосистемы. Начиная с v9.0, процесс инициализации упрощен до одной команды `npx husky init`.
+* **[Lefthook](https://github.com/evilmartians/lefthook):** Быстрый и мощный инструмент на Go, поддерживающий параллельное выполнение хуков.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Pre-commit — линтинг и форматирование
+### Сценарий 1: Автоматизация с Ruff (замена Black и Flake8)
 
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
+**Ruff** — крайне быстрый линтер и форматировщик для Python, написанный на Rust.
 
-echo "Running pre-commit checks..."
-
-# Проверка синтаксиса Python
-echo "Checking Python syntax..."
-if ! git diff --cached --name-only --diff-filter=ACM | grep '\.py$' | xargs -r python3 -m py_compile 2>/dev/null; then
-    echo "ERROR: Ошибка синтаксиса Python"
-    exit 1
-fi
-
-# Поиск забытых отладочных выражений
-if git diff --cached -S "console.log" -- '*.js' -- '*.ts' | grep -q 'console.log'; then
-    echo "ERROR: Обнаружены console.log в коммите"
-    exit 1
-fi
-
-echo "All checks passed."
-exit 0
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
+    hooks:
+      - id: ruff
+        args: [ --fix ]
+      - id: ruff-format
 ```
 
-### Сценарий 2: Commit-msg — валидация Conventional Commits
+### Сценарий 2: Автоматическое обновление зависимостей
+
+Хук `post-merge` позволяет автоматически запускать установку пакетов после `git pull`.
 
 ```bash
 #!/bin/bash
-# .git/hooks/commit-msg
+# .git/hooks/post-merge
 
-commit_msg=$(cat "$1")
-pattern='^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .+'
+changed_files=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD)
 
-if ! echo "$commit_msg" | grep -qE "$pattern"; then
-    echo "ERROR: Сообщение коммита должно соответствовать Conventional Commits"
-    echo "Пример: feat(auth): добавить OAuth2 аутентификацию"
-    exit 1
-fi
+check_run() {
+    echo "$changed_files" | grep --quiet "$1" && eval "$2"
+}
+
+echo "Checking for dependency updates..."
+check_run "package-lock.json" "npm install"
+check_run "requirements.txt" "pip install -r requirements.txt"
 ```
 
-### Сценарий 3: Pre-push — сканирование на секреты
+### Сценарий 3: Проверка сообщения коммита (Commitlint)
+
+Использование Husky и Commitlint для соблюдения Conventional Commits.
 
 ```bash
-#!/bin/bash
-# .git/hooks/pre-push
-
-echo "Scanning for secrets before push..."
-
-# Поиск паттернов, похожих на секреты
-if git diff --cached -S "AWS_SECRET_ACCESS_KEY" | grep -q "AWS_SECRET_ACCESS_KEY"; then
-    echo "ERROR: Обнаружены потенциальные AWS секреты"
-    exit 1
-fi
-
-if git diff --cached -S "PRIVATE KEY" | grep -q "PRIVATE KEY"; then
-    echo "ERROR: Обнаружен приватный ключ"
-    exit 1
-fi
-
-echo "No secrets detected."
-exit 0
+# Установка
+npm install --save-dev @commitlint/config-conventional @commitlint/cli
+npx husky init
+# Добавление хука
+echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
 ```
 
 ### Сценарий 4: Распространение хуков в команде
 
-Директория `.git/hooks` не отслеживается Git. Два способа синхронизации хуков:
+1. **`core.hooksPath`**: Переопределение пути к хукам на директорию, отслеживаемую Git (например, `.githooks`).
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+2. **`git init --template`**: Использование шаблонов для автоматической установки хуков при создании (`git init`) или клонировании (`git clone`) репозитория.
+   ```bash
+   git config --global init.templateDir ~/.git-template
+   # Положить хуки в ~/.git-template/hooks
+   ```
 
-**Способ A: Символические ссылки**
-
-```bash
-# Создать директорию для хуков в репозитории
-mkdir -p scripts/git-hooks
-
-# Создать символическую ссылку
-ln -s -f ../../scripts/git-hooks/pre-commit .git/hooks/pre-commit
-```
-
-**Способ B: `core.hooksPath`**
-
-```bash
-# Указать Git директорию с хуками
-git config core.hooksPath scripts/git-hooks
-```
-
-Способ B предпочтительнее для командной работы, так как не требует ручного создания ссылок каждым разработчиком.
-
-### Сценарий 5: Настройка через pre-commit фреймворк
+### Сценарий 5: Современный конфиг pre-commit (v5.0.0+)
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -163,42 +132,38 @@ repos:
       - id: check-added-large-files
 
   - repo: https://github.com/psf/black
-    rev: 24.2.0
+    rev: 25.1.0
     hooks:
       - id: black
 
   - repo: https://github.com/pycqa/flake8
-    rev: 7.0.0
+    rev: 7.1.0
     hooks:
       - id: flake8
-```
-
-```bash
-# Установка pre-commit фреймворка
-pip install pre-commit
-
-# Инициализация в репозитории
-pre-commit install
-
-# Запуск всех хуков вручную
-pre-commit run --all-files
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Предостережения
+### Безопасность и обход проверок
 
-* Клиентские хуки можно обойти флагом `--no-verify` (`git commit --no-verify`, `git push --no-verify`)
-* Хуки не заменяют CI/CD пайплайны — они только первый рубеж проверки
-* `post-commit` и `post-receive` не могут отменить операцию, только зафиксировать результат
+* **Локальный обход**: Любой клиентский хук можно обойти флагом `--no-verify`.
+* **Доверие**: Никогда не полагайтесь на клиентские хуки как на единственный механизм безопасности. Они предназначены для удобства разработчика.
+* **Серверная валидация**: Окончательная проверка должна всегда происходить на сервере (через `pre-receive` или CI/CD) — этот этап невозможно обойти локально.
+
+### Ограничения
+
+* Хуки не копируются при клонировании репозитория (по соображениям безопасности).
+* Скрипты должны быть переносимыми (не использовать пути, специфичные для конкретной ОС, если команда работает на разных платформах).
 
 ### Официальные ресурсы
 
-* **Документация Git:** [git-scm.com/book/en/v2/Customizing-Git-Git-Hooks](https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks)
-* **pre-commit:** [pre-commit.com](https://pre-commit.com/)
+* **Git Book - Hooks:** [git-scm.com/book/ru/v2/Настройка-Git-Git-Hooks](https://git-scm.com/book/ru/v2/Customizing-Git-Git-Hooks)
+* **Pre-commit Framework:** [pre-commit.com](https://pre-commit.com/)
 
-### Связанные темы
+### См. также
 
-Шаблон коммитов и валидация через commit-msg в [git_commit_template.md](./git_commit_template.md). Защита от секретов в [git_history_manipulation.md](./git_history_manipulation.md).
+* [Шаблон коммитов и валидация](./git_commit_template.md)
+* [Очистка истории и защита от секретов](./git_history_manipulation.md)
+* [Специальные файлы Git](./git_special_files_overview.md)

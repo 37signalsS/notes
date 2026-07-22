@@ -2,156 +2,193 @@
 
 ## Определения
 
-**Kube-scheduler** — компонент плоскости управления (Control Plane) Kubernetes, отвечающий за назначение подов (Pods) на доступные рабочие узлы (Nodes). Он принимает решение о размещении на основе требований пода и доступных ресурсов кластера.
+**Kube-scheduler** — это основной компонент плоскости управления (Control Plane) Kubernetes, отвечающий за назначение подов (Pods) на доступные рабочие узлы (Nodes). Он непрерывно отслеживает (watch) API-сервер на предмет появления новых подов, у которых поле `spec.nodeName` не заполнено, и выбирает для них наиболее подходящий узел на основе набора политик и ограничений.
 
-**Основная задача:** найти для каждого пода узел, который соответствует всем жёстким требованиям (ресурсы, метки, taints, affinity) и является наилучшим по ряду критериев (свободные ресурсы, сбалансированность, предпочтения).
+**Основная задача:** найти для каждого пода узел, который удовлетворяет всем жестким требованиям (Predicates) и является наилучшим согласно критериям предпочтения (Priorities).
 
-После выбора планировщик сообщает API-серверу о назначении, и kubelet на выбранном узле запускает под.
+После того как планировщик выбирает узел, он выполняет операцию привязки (Binding), сообщая API-серверу о своем решении. Затем `kubelet` на выбранном узле видит назначение и приступает к запуску контейнеров.
 
 ## Основные концепции
 
-### Процесс планирования
+### Процесс планирования (Классическая модель)
 
-Процесс планирования выполняется в два основных этапа:
+Процесс выбора узла для пода традиционно описывается двумя последовательными этапами:
 
-**1. Фильтрация (Predicates / Filtering)**
-Отсеиваются все узлы, которые не могут запустить под. Проверяются:
+#### 1. Фильтрация (Predicates / Filtering)
+На этом этапе планировщик отсеивает все узлы, которые физически или логически не могут запустить данный под. Проверяются следующие условия:
+*   **Достаточность ресурсов**: Наличие свободных CPU (Central Processing Unit), оперативной памяти (RAM), эфемерного хранилища и свободных портов (`hostPort`).
+*   **Соответствие селекторам**: Проверка `nodeSelector` и правил `nodeAffinity`.
+*   **Ограничения на узлах**: Проверка наличия `taints` на узле и соответствующих `tolerations` у пода.
+*   **Связность подов**: Проверка правил `podAffinity` и `podAntiAffinity`.
+*   **Дисковые ограничения**: Проверка возможности подключения требуемых томов (например, лимиты на количество примонтированных облачных дисков).
+*   **Конфликты**: Отсутствие конфликтов по именам хостов или занятым портам.
 
-* Достаточность свободных ресурсов (CPU (Central Processing Unit), память, диски, порты).
-* Соответствие меток узла требованиям `nodeSelector` или `nodeAffinity`.
-* Отсутствие запрещающих taints без соответствующих `tolerations`.
-* Соблюдение правил Pod Affinity/Anti-Affinity.
-* Отсутствие конфликтов с уже запущенными подами (например, занятые `hostPort`).
+**Результат:** список "подходящих" узлов (feasible nodes). Если список пуст, под остается в статусе `Pending`.
 
-**Результат:** список подходящих узлов.
+#### 2. Оценка (Scoring / Prioritization)
+Каждый узел из списка прошедших фильтрацию получает баллы (от 0 до 100) по ряду критериев. Планировщик суммирует баллы от разных функций оценки:
+*   **LeastRequestedPriority**: Предпочтение отдается узлам с меньшей загрузкой (равномерное распределение нагрузки по кластеру).
+*   **MostRequestedPriority**: Предпочтение отдается более нагруженным узлам (стратегия упаковки — "bin packing", полезна для экономии ресурсов в облаке).
+*   **ImageLocalityPriority**: Приоритет узлам, на которых уже скачаны необходимые Docker-образы.
+*   **BalancedResourceAllocation**: Предпочтение узлам, где после запуска пода соотношение CPU и RAM будет наиболее сбалансированным.
+*   **NodeAffinityPriority**: Учет мягких предпочтений (`preferredDuringSchedulingIgnoredDuringExecution`).
 
-**2. Оценка (Scoring / Prioritization)**
-Каждый оставшийся узел получает баллы по различным критериям. Чем больше баллов, тем предпочтительнее узел. Критерии оценки:
+**Результат:** Выбирается узел с наивысшим баллом. Если таких несколько, выбор происходит случайным образом.
 
-* Количество свободных ресурсов после запуска пода.
-* Сбалансированность использования ресурсов.
-* Близость к другим заданным подам для уменьшения сетевых задержек.
-* Выполнение правил предпочтений (`preferred` affinity).
+### Современная архитектура: Scheduling Framework
 
-**Результат:** выбирается узел с наибольшей суммой баллов. Если подходящих узлов нет, под остаётся в статусе `Pending`.
+Начиная с Kubernetes 1.15, планировщик перешел на расширяемую архитектуру **Scheduling Framework**. Это позволяет разработчикам добавлять свои плагины на различных этапах жизненного цикла планирования.
 
-### Механизмы управления планированием
+**Точки расширения (Extension Points):**
+*   **QueueSort**: Определение порядка подов в очереди ожидания.
+*   **PreFilter**: Предварительная обработка данных о поде перед фильтрацией.
+*   **Filter**: Реализация логики Predicates.
+*   **PostFilter**: Запускается, если ни один узел не подошел. Здесь обычно реализуется логика **Preemption** (вытеснения).
+*   **PreScore / Score**: Реализация логики Prioritization.
+*   **NormalizeScore**: Приведение баллов от разных плагинов к единому диапазону.
+*   **Reserve**: Резервирование ресурсов на узле (защита от race conditions до фактической записи в etcd).
+*   **Permit**: Возможность задержать или отклонить привязку (используется для Gang Scheduling).
+*   **PreBind / Bind / PostBind**: Этапы финальной привязки пода к узлу.
 
-* **NodeSelector:** простейший способ указать, что под должен быть размещён на узле с определённой меткой. Более гибкая альтернатива — [Node Affinity](../Scheduling/affinity.md).
-* **Affinity и Anti-Affinity:** правила с уровнями строгости (`required` — жёсткие, `preferred` — мягкие). Подробнее: [Affinity и Anti-Affinity](../Scheduling/affinity.md).
-* **Taints и Tolerations:** механизм «отталкивания» на уровне узлов. Подробнее: [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).
-* **Resource Requests и Limits:** планировщик учитывает `requests` для расчёта доступного места. Подробнее: [QoS (Quality of Service), Requests и Limits](../Scheduling/qos_limit_and_requests.md).
-* **Приоритеты подов (Pod Priority and Preemption):** поды с высоким приоритетом планируются первыми и могут вытеснять низкоприоритетные поды. Подробнее: [PriorityClass](./priorityclass.md).
+### Механизмы управления размещением
 
-### Жизненный цикл планирования
+*   **NodeSelector**: Простейший механизм фильтрации по меткам узлов.
+*   **Affinity и Anti-Affinity**: Гибкие правила с уровнями строгости (`required` — жесткие, `preferred` — мягкие). Подробнее: [Affinity и Anti-Affinity](../Scheduling/affinity.md).
+*   **Taints и Tolerations**: Механизм "отталкивания" подов от определенных узлов. Подробнее: [Taints and Tolerations](../Scheduling/taints_and_tolerations.md).
+*   **Pod Topology Spread Constraints**: Позволяет контролировать распределение подов по различным топологическим доменам (зоны, стойки, хосты) для обеспечения отказоустойчивости и баланса.
+*   **Resource Requests и Limits**: Планировщик использует значение `requests` для расчета доступного места. Подробнее: [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md).
+*   **PriorityClass**: Определяет очередь планирования и возможность вытеснения других подов. Подробнее: [PriorityClass](./priorityclass.md).
 
-1. Пользователь создаёт под, API-сервер сохраняет его в `etcd` с пустым полем `spec.nodeName`.
-2. Планировщик обнаруживает новый под через механизм `watch`.
-3. Этап фильтрации: отбор подходящих узлов.
-4. Этап оценки: ранжирование узлов.
-5. Привязка (Binding): планировщик выбирает узел и выполняет операцию `patch` для ресурса пода, заполняя `spec.nodeName`.
-6. Уведомление Kubelet: `kubelet` на целевом узле видит назначение через `watch` и приступает к запуску контейнеров.
+## Жизненный цикл планирования (Workflow)
+
+1.  **Пользователь/Контроллер** создает под через API.
+2.  **API-сервер** сохраняет объект в `etcd` с пустым полем `spec.nodeName`.
+3.  **Kube-scheduler** обнаруживает новый под через `watch`.
+4.  **Scheduling Cycle (Синхронный)**:
+    *   Планировщик извлекает под из очереди.
+    *   Проходит этапы **Filter** и **Score**.
+    *   Выбирает узел.
+    *   Выполняет этап **Reserve** в локальном кеше.
+5.  **Binding Cycle (Асинхронный)**:
+    *   Выполняет этап **Permit** (проверка разрешений).
+    *   Выполняет этап **PreBind** (подготовка).
+    *   Отправляет запрос `patch` к API-серверу для заполнения `nodeName` (этап **Bind**).
+6.  **Kubelet** на узле видит обновление, скачивает образы и запускает контейнеры.
 
 ## Практические сценарии
 
-### Размещение на узлах с GPU
-
-**Задача:** запустить нагрузку Machine Learning (ML) только на узлах с **GPU (Graphics Processing Unit)**.
-
-**Решение:** комбинация `nodeAffinity` и `tolerations`.
+### Сценарий 1: Размещение на узлах с GPU
+**Задача:** Направить ML-нагрузку только на узлы с видеокартами, зарезервированными для этих целей.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ml-training
+  name: gpu-training
 spec:
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
-          - key: nvidia.com/gpu
-            operator: Exists
+          - key: accelerator
+            operator: In
+            values:
+            - nvidia-tesla-v100
   tolerations:
-  - key: nvidia.com/gpu
-    operator: Exists
-    effect: NoSchedule
+  - key: "gpu-node"
+    operator: "Exists"
+    effect: "NoSchedule"
   containers:
-  - name: trainer
-    image: tensorflow/tensorflow:latest-gpu
+  - name: worker
+    image: nvidia/cuda:12.0-base
     resources:
       limits:
-        nvidia.com/gpu: "1"
+        nvidia.com/gpu: 1
 ```
 
-### Высокая доступность с Pod Anti-Affinity
-
-**Задача:** распределить реплики приложения по разным узлам для отказоустойчивости.
-
-**Решение:** использовать `podAntiAffinity` с `topologyKey: kubernetes.io/hostname`.
+### Сценарий 2: Равномерное распределение по зонам (Topology Spread)
+**Задача:** Гарантировать, что реплики приложения будут распределены по зонам доступности максимально равномерно (разница не более 1 пода).
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web-app
+  name: distributed-app
 spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: web-app
+  replicas: 4
   template:
     spec:
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: web-app
-            topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: distributed-app
       containers:
-      - name: web
-        image: nginx:1.28.0
+      - name: nginx
+        image: nginx:1.27
 ```
 
-### Диагностика Pending-подов
+### Сценарий 3: Изоляция сред через Scheduler Profiles
+Вы можете настроить `kube-scheduler` так, чтобы он по-разному обрабатывал поды в зависимости от их `schedulerName`.
 
-**Симптом:** под остаётся в статусе `Pending`.
-
-**Диагностика:**
-
-```bash
-# Проверить события пода
-kubectl describe pod <pod-name>
-
-# Проверить доступные ресурсы узлов
-kubectl top nodes
+```yaml
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+profiles:
+  - schedulerName: default-scheduler
+  - schedulerName: bin-packing-scheduler
+    pluginConfig:
+    - name: NodeResourcesFit
+      args:
+        scoringStrategy:
+          type: MostAllocated # Стратегия упаковки для экономии ресурсов
 ```
 
-**Типичные причины:**
+## Диагностика и отладка
 
-* Недостаточно ресурсов (CPU/память).
-* Не выполнены требования `nodeAffinity` или `nodeSelector`.
-* Taints узлов без соответствующих `tolerations`.
-* Конфликты `podAntiAffinity`.
+### Статус Pending
+Если под не назначается на узел, выполните следующие шаги:
+
+1.  **Проверка событий**:
+    ```bash
+    kubectl describe pod <pod-name>
+    # Ищите секцию 'Events', там будет указано количество узлов и причины отказа
+    ```
+2.  **Проверка ресурсов узлов**:
+    ```bash
+    kubectl top nodes
+    kubectl describe node <node-name> | grep -A 5 Allocated
+    ```
+3.  **Логи планировщика**:
+    В HA-кластерах логи активного планировщика помогут понять логику принятия решений:
+    ```bash
+    kubectl logs -n kube-system -l component=kube-scheduler
+    ```
+
+### Типичные причины отказа в планировании:
+*   **Insufficient cpu/memory**: На узлах недостаточно свободных ресурсов согласно `requests`.
+*   **MatchNodeSelector / NodeAffinity**: Нет узлов с требуемыми метками.
+*   **Taints / Tolerations**: Узлы имеют taints, которые не "переносит" под.
+*   **PodAffinityRulesNotMet**: Нарушены правила близости к другим подам.
+*   **Too many pods**: Достигнут лимит `maxPods` на узле (по умолчанию 110).
 
 ## Дополнительная информация
 
-**Особенности производительности:**
-
-* В больших кластерах (>500 узлов) широкие селекторы в `podAffinity` могут замедлять планирование.
-* Избыток жёстких правил (`required`) снижает гибкость системы при отказах узлов.
+**Производительность в больших кластерах:**
+*   **percentageOfNodesToScore**: Планировщик прекращает поиск подходящих узлов, как только находит определенный процент от общего числа. Для кластера в 5000 узлов это значение по умолчанию равно 10%.
+*   **Сложность правил**: Избыточное использование `podAffinity` в больших кластерах может значительно замедлить планирование из-за необходимости пересчета связей.
 
 **Рекомендации:**
-
-* Всегда указывайте `requests` для эффективного распределения ресурсов.
-* Используйте `PriorityClass` для разделения сред (production/staging).
-* Комбинируйте `taints` для резервирования узлов с `nodeAffinity` для точного размещения.
+*   **Всегда указывайте `requests`**: Без них планировщик не может корректно рассчитать нагрузку.
+*   **Используйте `PriorityClass`**: Для разделения критических нагрузок от фоновых.
+*   **PDB**: При использовании вытеснения планировщик старается не нарушать [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md).
 
 **См. также:**
-
-* [Affinity и Anti-Affinity](../Scheduling/affinity.md)
-* [Taints and Tolerations](../Scheduling/taints_and_tolerations.md)
-* [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md)
-* [PriorityClass](./priorityclass.md)
+*   [Affinity и Anti-Affinity](../Scheduling/affinity.md)
+*   [Taints and Tolerations](../Scheduling/taints_and_tolerations.md)
+*   [QoS, Requests и Limits](../Scheduling/qos_limit_and_requests.md)
+*   [PriorityClass](./priorityclass.md)
+*   [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md)

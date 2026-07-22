@@ -2,9 +2,9 @@
 
 ## Определения
 
-**Секреты (Secrets)** — встроенный механизм Docker Swarm для безопасного хранения чувствительных данных (пароли, токены, ключи **SSH (Secure Shell)**). Секреты шифруются при хранении в базе данных алгоритма консенсуса **Raft** и монтируются в контейнеры как файлы во временную файловую систему в оперативной памяти (**tmpfs — temporary file system**).
+**Секреты (Secrets)** — встроенный механизм Docker Swarm для безопасного хранения чувствительных данных (пароли, токены, ключи **SSH (Secure Shell)**). Секреты шифруются при хранении в базе данных алгоритма консенсуса **Raft** (AES-256) и монтируются в контейнеры как файлы во временную файловую систему в оперативной памяти (**tmpfs**).
 
-**Конфигурации (Configs)** — механизм, аналогичный секретам, предназначенный для управления нечувствительными данными (файлы настроек, параметры приложений). В отличие от секретов, конфигурации не шифруются при хранении.
+**Конфигурации (Configs)** — механизм, аналогичный секретам, предназначенный для управления нечувствительными данными (файлы настроек, параметры приложений). В отличие от секретов, конфигурации не шифруются при хранении в Raft-логе.
 
 ## Базовые концепции
 
@@ -13,34 +13,35 @@
 | Характеристика | Секреты (Secrets) | Конфигурации (Configs) |
 | :--- | :--- | :--- |
 | **Raft-лог** | Зашифровано (AES-256) | Не шифровано |
-| **Путь в контейнере** | `/run/secrets/<имя>` | `/<имя>` (или `target:`) |
-| **Тип хранилища** | tmpfs | tmpfs |
-| **Изменяемость** | Неизменяемы | Неизменяемы |
-| **Назначение** | Пароли, токены, ключи SSH, сертификаты (приватные) | nginx.conf, ca.crt (публичные), YAML/JSON-конфиги |
+| **Путь в контейнере** | По умолчанию `/run/secrets/<имя>` | Любой путь (через `target`) |
+| **Тип хранилища** | tmpfs (в оперативной памяти) | tmpfs (в оперативной памяти) |
+| **Изменяемость** | Неизменяемы (требуют пересоздания) | Неизменяемы (требуют пересоздания) |
+| **Лимит размера** | 500 КБ на один объект | 500 КБ на один объект |
 
 ### Принцип работы
 
-1. **Создание:** Объект создается через **CLI (Command Line Interface)** или файл стека.
-2. **Назначение:** Секрет или конфигурация привязывается к конкретному сервису.
-3. **Монтирование:** При запуске задачи Swarm передает объект узлу и монтирует его в память контейнера.
-4. **Использование:** Приложение читает данные как обычный файл из файловой системы.
+1. **Создание:** Объект создается через **CLI (Command Line Interface)** или API менеджера. При создании можно добавить метки (labels) для классификации.
+2. **Назначение:** Секрет или конфигурация привязывается к сервису. Только авторизованные узлы (те, где запущены задачи сервиса) получают доступ к данным.
+3. **Монтирование:** Swarm доставляет данные на узел в зашифрованном виде (для секретов), расшифровывает их в памяти и монтирует в контейнер.
+4. **Изоляция:** Секреты Swarm доступны только внутри Swarm-сервисов. Автономные контейнеры на том же узле не имеют доступа к этим данным в `/run/secrets/`.
 
-### Неизменяемость (Immutability)
+### Неизменяемость и версионность
 
-После создания объект нельзя отредактировать. Для обновления данных необходимо:
+Поскольку объекты неизменяемы, стандартным паттерном является добавление версии или хеша к имени (например, `app_config_v1`). Для обновления данных необходимо:
 
-1. Создать новую версию объекта с другим именем.
-2. Обновить сервис, заменив старую версию на новую.
-3. Удалить неиспользуемую старую версию.
+1. Создать новую версию объекта.
+2. Обновить сервис, указав новый источник.
+3. Дождаться успешного завершения **Rolling Update**.
+4. Удалить старую версию объекта.
 
 Пример обновления через **CLI**:
 
 ```bash
-# Создание новой версии секрета
-docker secret create db_password_v2 ./new_password.txt
+# Создание новой версии секрета с меткой
+docker secret create --label version=2.0 db_password_v2 ./new_password.txt
 
-# Обновление сервиса
-docker service update --secret-rm db_password --secret-add db_password_v2 my-service
+# Обновление сервиса (атомарная замена)
+docker service update --secret-rm db_password_v1 --secret-add db_password_v2 my-service
 ```
 
 ## Практические сценарии
@@ -53,42 +54,41 @@ docker service update --secret-rm db_password --secret-add db_password_v2 my-ser
 # Создание секрета из файла
 docker secret create db_password ./password.txt
 
-# Создание секрета из стандартного ввода (stdin)
+# Создание из стандартного ввода (stdin) — содержимое не сохраняется в истории shell
 echo "my_secret_token" | docker secret create api_token -
 
-# Создание конфигурации
-docker config create app_config ./app.yaml
+# Создание конфигурации с метаданными
+docker config create --label env=prod --label app=nginx nginx_conf ./nginx.conf
 ```
 
-#### Просмотр и удаление
+#### Просмотр и диагностика
 
 ```bash
-# Список объектов
-docker secret ls
-docker config ls
+# Список объектов с фильтрацией по меткам
+docker secret ls --filter label=app=nginx
 
-# Детальная информация (включая метаданные)
+# Просмотр метаданных (содержимое секрета НЕ отображается)
 docker secret inspect db_password
 
-# Удаление (объект не должен использоваться сервисами)
+# Удаление (объект не должен использоваться ни одним активным сервисом)
 docker secret rm db_password
 ```
 
 ### Использование в сервисах
 
-#### Запуск сервиса с секретами через CLI
+#### Управление правами доступа при монтировании
+
+В Swarm можно точно настроить права доступа, владельца и группу для монтируемого файла:
 
 ```bash
-# Секрет по пути по умолчанию (/run/secrets/db_password)
-docker service create --name my-app --secret db_password my-image
-
-# Секрет по кастомному пути внутри контейнера
-docker service create --name my-app \
-  --secret source=db_password,target=/etc/app/db_pass \
-  my-image
+docker service create --name web \
+  --secret source=ssl_cert,target=/etc/nginx/certs/server.crt,uid=101,gid=101,mode=0400 \
+  nginx:alpine
 ```
 
 #### Использование в файлах стека (docker-compose.yml)
+
+Пример использования расширенного синтаксиса для управления путями и правами:
 
 ```yaml
 version: '3.8'
@@ -97,50 +97,42 @@ services:
   app:
     image: my-app:latest
     secrets:
-      - db_password
+      - source: db_password
+        target: db_password_file
+        uid: '1000'
+        gid: '1000'
+        mode: 0400
     configs:
       - source: app_config
         target: /etc/myapp/config.yaml
+        mode: 0444
 
   db:
     image: postgres:16-alpine
     secrets:
       - db_password
     environment:
-      # PostgreSQL поддерживает чтение пароля из файла через переменные _FILE
+      # Использование паттерна _FILE для безопасности
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
 
 secrets:
   db_password:
-    external: true  # Секрет должен быть создан заранее
+    external: true
 
 configs:
   app_config:
-    external: true  # Конфиг создан заранее через docker config create
+    external: true
 ```
 
-#### Замена host- bind mount на Config для портируемости
+#### Замена host-bind mount на Docker Config
 
-Bind-монтирование файла с хоста (`volumes:`) привязывает сервис к конкретной ноде — файла на других нодах нет.
+Bind-монтирование (`volumes:`) ограничивает мобильность сервиса, привязывая его к конкретному узлу. Docker Config позволяет сделать сервис портируемым.
 
-```yaml
-# docker-compose.yml — сервис привязан к ноде, где лежит bookstack.conf
-nginx:
-  image: nginx:alpine
-  volumes:
-    - /opt/bookstack/nginx/conf.d:/etc/nginx/conf.d:ro
-  deploy:
-    placement:
-      constraints:
-        - node.labels.name == machine1
-```
+**Автоматизация через Ansible:**
 
-Docker Config — «файл внутри Swarm». Конфиг загружается один раз, Swarm хранит его в зашифрованном Raft-логе и доставляет на любую ноду при запуске задачи.
-
-**Ansible (рекомендуемый способ):** модуль `community.docker.docker_config` с `data:` из lookup-плагина — файл на целевой ноде не нужен:
+Использование модуля `community.docker.docker_config` позволяет загружать данные напрямую с управляющей машины (control node), не сохраняя их на целевых узлах:
 
 ```yaml
-# Шаблон (Jinja2) — файл на control node
 - name: Создание Docker Config из шаблона
   community.docker.docker_config:
     name: nginx_bookstack_config
@@ -148,131 +140,43 @@ Docker Config — «файл внутри Swarm». Конфиг загружае
     state: present
     force: yes
 
-# Статический файл — тоже на control node
-- name: Создание Docker Config для CA-сертификата
-  community.docker.docker_config:
-    name: nginx_ca_crt
-    data: "{{ lookup('file', '/etc/nginx/ca.crt') }}"
-    state: present
-```
-
-`lookup('file', ...)` читает файл с **control node** (где запускается Ansible). `lookup('template', ...)` рендерит Jinja2-шаблон.
-
-**Важно про Vagrant:** `provision "ansible"` (не `ansible_local`) запускает Ansible на хосте, подключаясь к VM по SSH. `lookup('file')` ищет файл на хосте — если файл сгенерирован внутри VM, его там нет → ошибка. `ansible.builtin.shell` выполняет команду внутри VM через SSH, где файл существует → работает.
-
-**CLI (вручную) или shell-модуль:** требуется файл на целевой ноде:
-
-```bash
-docker config create nginx-bookstack /opt/bookstack/nginx/conf.d/bookstack.conf
-```
-
-```yaml
-# shell — для файлов, которые уже есть на целевой ноде
-- name: Создание Docker Config для dhparam
-  ansible.builtin.shell:
-    cmd: docker config create nginx_dhparam /etc/nginx/dhparam.pem 2>/dev/null || true
-```
-
-**Compose (ссылка на существующий Config):**
-
-```yaml
-# docker-compose.yml — сервис работает на любой ноде
-configs:
-  nginx-bookstack:
-    external: true            # конфиг уже создан (Ansible или CLI)
-
-services:
-  nginx:
-    image: nginx:alpine
-    configs:
-      - source: nginx-bookstack
-        target: /etc/nginx/conf.d/bookstack.conf
-```
-
-**Важно:** В режиме Swarm для `configs` и `secrets` не работает `file:` в compose-файле — только `external: true`. `file:` поддерживается только вне Swarm (`docker compose` без стека) как syntactic sugar.
-
-**Ansible для Secrets (TLS-сертификаты):** приватные ключи — чувствительные данные. `community.docker.docker_secret` с `data:` принимает значение в открытом виде — оно попадёт в лог Ansible. Безопаснее `ansible.builtin.shell` с `no_log: true` — команда ссылается на файл, не раскрывая содержимое:
-
-```yaml
-- name: Создание Docker secret для приватного ключа
+- name: Создание Docker secret для приватного ключа (безопасный метод)
   ansible.builtin.shell:
     cmd: >
       docker secret create nginx_privkey
       /etc/letsencrypt/live/{{ nginx_domain }}/privkey.pem
       2>/dev/null || true
-  no_log: true
-
-- name: Создание Docker secret для полной цепочки
-  ansible.builtin.shell:
-    cmd: >
-      docker secret create nginx_fullchain
-      /etc/letsencrypt/live/{{ nginx_domain }}/fullchain.pem
-      2>/dev/null || true
-  no_log: true
+  no_log: true  # Скрывает вывод в логах Ansible
 ```
 
-Compose для Secrets работает аналогично Configs — `external: true`:
+## Устранение неполадок
 
-```yaml
-secrets:
-  nginx_privkey:
-    external: true
-  nginx_fullchain:
-    external: true
+### Секрет не виден в контейнере
 
-services:
-  nginx:
-    secrets:
-      - source: nginx_privkey
-        target: /run/secrets/privkey.pem
-      - source: nginx_fullchain
-        target: /run/secrets/fullchain.pem
-```
-
-После перехода на Configs/Secrets ограничение `placement.constraints` можно убрать — nginx запустится на любой ноде кластера.
-
-### Устранение неполадок (Troubleshooting)
-
-#### Секрет не виден в контейнере
-
-**Проверка:**
-
-1. Убедитесь, что секрет назначен сервису:
+1. **Проверка назначения:**
    `docker service inspect --format='{{json .Spec.TaskTemplate.ContainerSpec.Secrets}}' <имя_сервиса>`
-2. Проверьте содержимое директории в контейнере:
-   `docker exec <ID_контейнера> ls -la /run/secrets/`
+2. **Проверка файловой системы:**
+   Внутри контейнера выполните `ls -la /run/secrets/`. Помните, что это **tmpfs**, данные не сохраняются на диске.
+3. **Пути монтирования:**
+   Если указан `target`, файл будет находиться по этому пути, а не в `/run/secrets/`.
 
-**Возможные причины:**
+### Ошибка "secret not found" при деплое стека
 
-- Секрет не был добавлен в секцию `secrets` при создании сервиса.
-- Контейнер запущен в режиме `--privileged` (может конфликтовать с монтированием **tmpfs** в некоторых версиях).
-- Путь переопределен параметром `target`.
-
-#### Ошибка "secret not found" при деплое стека
-
-**Решение:** Если используется `external: true`, секрет должен существовать в кластере до выполнения команды `docker stack deploy`. Проверьте наличие объекта через `docker secret ls`.
+Если в YAML указано `external: true`, Swarm требует наличия объекта в кластере **до** запуска `docker stack deploy`. В Swarm Mode инструкция `file:` в секции `secrets/configs` игнорируется (она работает только в автономном Docker Compose).
 
 ## Дополнительная информация
 
-### Рекомендации по безопасности
+### Сравнение методов передачи данных
 
-- **Минимальные привилегии:** Предоставляйте доступ к секретам только тем сервисам, которым они необходимы.
-- **Ротация:** Регулярно обновляйте пароли и токены (минимум раз в 90 дней).
-- **Внешние хранилища:** Для сложных сценариев (динамические секреты, аудит доступа) используйте специализированные системы.
-
-### Сравнение с альтернативами
-
-| Метод | Безопасность | Портабельность | Область применения |
+| Метод | Безопасность | Портируемость | Применение |
 | :--- | :--- | :--- | :--- |
-| **Swarm Configs** | Средняя (Raft, без шифрования) | Любая нода Swarm | Конфиги nginx, приложений, публичные сертификаты (ca.crt, dhparam) |
-| **Swarm Secrets** | Высокая (Шифрование + RAM) | Любая нода Swarm | Пароли, токены, приватные ключи TLS (privkey.pem)
-| **Bind mount (volume)** | Низкая (файл на хосте) | Только одна нода | Legacy, однонодовые сценарии |
-| **Переменные (ENV)** | Низкая (Видны в inspect/logs) | Любая нода | Разработка, нечувствительные данные |
-| **HashiCorp Vault** | Максимальная | Любая нода | Крупные инфраструктуры |
+| **Swarm Secrets** | Высокая (Raft + RAM) | Полная | Пароли, ключи TLS, токены |
+| **Swarm Configs** | Средняя (Raft) | Полная | nginx.conf, параметры окружения |
+| **Volumes (bind)** | Низкая (диск хоста) | Нет (привязка к ноде) | Большие файлы, legacy-решения |
+| **Env (переменные)** | Низкая (видны везде) | Полная | Нечувствительные флаги запуска |
 
 ### Смотрите также
 
-- **[Управление секретами в Docker (SSoT)](../Docker/Docker_security/secrets_management.md)**
-- **[Интеграция Vault с Docker](../Vault/guides/vault_docker_integration.md)**
-- **[Ansible Vault: шаблоны и plaintext (сценарий 5)](../Ansible/Vault/best_practices.md)** — создание Docker Secrets из Vault минуя запись на диск
-- **[Справочник CLI для Docker Swarm](./swarm_management_cli.md)**
+- **[Управление секретами в Docker](../../Docker/Docker_security/secrets_management.md)** — общие принципы и методы (Compose, BuildKit).
+- **[Интеграция Vault с Docker](../../Vault/guides/vault_docker_integration.md)** — использование HashiCorp Vault как центрального источника.
+- **[Ansible Vault и Docker Secrets](../../Ansible/Vault/best_practices.md)** — создание секретов из Vault без записи на диск.

@@ -2,43 +2,44 @@
 
 ## Определения
 
-* **ILM (Index Lifecycle Management)** — механизм автоматизированного управления индексами на протяжении их жизненного цикла: от создания до удаления.
-* **Политика ILM (ILM Policy)** — набор правил и фаз, определяющих, как и когда индекс должен переходить между различными состояниями (стадиями хранения).
-* **Ротация (Rollover)** — процесс создания нового индекса для записи, когда текущий достигает определенных критериев (размер, возраст, количество документов).
-* **Retention Policy (Политика удержания)** — правила, определяющие срок хранения данных перед их окончательным удалением.
+* **ILM (Index Lifecycle Management)** — подсистема Elasticsearch для автоматизации управления индексами. Она позволяет минимизировать ручное вмешательство в процесс ротации, оптимизации и удаления данных.
+* **Политика ILM (ILM Policy)** — конечный автомат (state machine), описывающий переходы индекса между фазами и действия, выполняемые в каждой фазе.
+* **Ротация (Rollover)** — точка перехода, когда текущий индекс закрывается для записи и создается новый. В современных версиях это базовая операция для **Data Streams**.
+* **Data Tier (Уровень данных)** — логическая группировка узлов кластера по их роли в хранении данных (`hot`, `warm`, `cold`, `frozen`). Настройка уровня данных в ILM автоматически управляет перемещением шардов (Shard Allocation) между узлами.
 
 ## Базовые концепции
 
 ### Фазы жизненного цикла
 
-Elasticsearch разделяет жизненный цикл индекса на пять фаз (в порядке убывания частоты доступа к данным):
+Elasticsearch 8.x выделяет пять фаз. Переход между фазами контролируется параметром `min_age` (время с момента ротации индекса, а не его создания).
 
-| Фаза | Назначение | Основные действия |
+| Фаза | Характеристики | Ключевые действия |
 | :--- | :--- | :--- |
-| **Hot** (Горячая) | Активная запись и частый поиск. | Rollover (обязательно для потоков данных). |
-| **Warm** (Теплая) | Запись прекращена, поиск выполняется регулярно. | Shrink (уменьшение шард), Force Merge, Read-only. |
-| **Cold** (Холодная) | Редкий поиск, данные оптимизированы для экономии места. | Searchable Snapshot, перенос на дешевые диски. |
-| **Frozen** (Замороженная) | Чрезвычайно редкий поиск. | Работа через Searchable Snapshots с кэшированием. |
-| **Delete** (Удаление) | Данные больше не нужны. | Удаление индекса (Delete). |
+| **Hot** | Активная запись, интенсивный поиск. | **Rollover**: обязателен для Data Streams. **Downsample**: (для метрик) агрегация данных в большие интервалы. |
+| **Warm** | Запись закрыта, поиск регулярный. | **Shrink**: уменьшение количества первичных шард. **Force Merge**: объединение сегментов Lucene. **Migrate**: перемещение на `data_warm` узлы. |
+| **Cold** | Поиск редкий, данные статичны. | **Searchable Snapshot**: перевод индекса в формат снимка для экономии локального диска. **Migrate**: перемещение на `data_cold` узлы. |
+| **Frozen** | Поиск через Searchable Snapshots. | **Mount**: работа напрямую с объектным хранилищем (S3, GCS) с локальным кэшированием. Требует `data_frozen`. |
+| **Delete** | Данные не нужны. | **Delete**: окончательное удаление индекса. |
 
-### Архитектура Hot-Warm-Cold
+### Связь с уровнями данных (Data Tiers)
 
-Для эффективного использования ресурсов узлы кластера помечаются ролями (node attributes), соответствующими фазам хранения:
+В Elasticsearch 8.x политики ILM используют встроенную систему миграции данных. Вам больше не нужно вручную настраивать `index.routing.allocation.require.data`; вместо этого ILM использует действие `migrate`, которое автоматически перемещает данные на узлы с соответствующими ролями (`data_hot`, `data_warm`, `data_cold`).
 
-* **Hot nodes**: Быстрые CPU, SSD (NVMe), высокая пропускная способность.
-* **Warm nodes**: Средние ресурсы, SSD или быстрые HDD.
-* **Cold/Frozen nodes**: Дешевые HDD, большой объем хранения, минимальные вычислительные мощности.
-
-Связь между политикой и узлами осуществляется через атрибуты `data_hot`, `data_warm`, `data_cold`, `data_frozen`.
+* **Hot nodes**: Максимальная производительность (SSD/NVMe).
+* **Warm nodes**: Баланс между ценой и производительностью.
+* **Cold nodes**: Оптимизация под плотность хранения (HDD).
+* **Frozen nodes**: Кэширующие узлы для поиска по снимкам в облаке.
 
 ## Практические сценарии
 
 ### Настройка комплексной политики ILM
 
-Пример политики для логов: ротация каждые 50 ГБ, переход в Warm через 7 дней, удаление через 90 дней.
+Пример политики для логов: ротация каждые 50 ГБ или 7 дней, переход в Warm сразу после ротации, удаление через 90 дней.
 
 ```bash
-curl -X PUT "localhost:9200/_ilm/policy/prod-logs-policy" -H 'Content-Type: application/json' -d'
+# Переменная $ELASTIC_PASSWORD должна содержать пароль пользователя elastic
+curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_ilm/policy/prod-logs-policy" \
+-H 'Content-Type: application/json' -d'
 {
   "policy": {
     "phases": {
@@ -46,24 +47,16 @@ curl -X PUT "localhost:9200/_ilm/policy/prod-logs-policy" -H 'Content-Type: appl
         "actions": {
           "rollover": {
             "max_size": "50gb",
-            "max_age": "7d",
-            "max_primary_shard_size": "50gb"
+            "max_age": "7d"
           }
         }
       },
       "warm": {
-        "min_age": "7d",
+        "min_age": "0ms",
         "actions": {
           "shrink": { "number_of_shards": 1 },
           "forcemerge": { "max_num_segments": 1 },
-          "set_priority": { "priority": 50 }
-        }
-      },
-      "cold": {
-        "min_age": "30d",
-        "actions": {
-          "set_priority": { "priority": 0 },
-          "readonly": {}
+          "migrate": { "enabled": true }
         }
       },
       "delete": {
@@ -74,36 +67,54 @@ curl -X PUT "localhost:9200/_ilm/policy/prod-logs-policy" -H 'Content-Type: appl
       }
     }
   }
-}'
+}' # → {"acknowledged": true}
 ```
 
-### Привязка политики к индексам
+### Привязка политики через Data Streams
 
-Политика ILM обычно назначается через **Index Template**:
+Современный способ назначения политики — использование компонентных шаблонов:
 
 ```bash
-curl -X PUT "localhost:9200/_index_template/logs-template" -H 'Content-Type: application/json' -d'
+# 1. Создаем компонентный шаблон с настройками ILM
+curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_component_template/logs-settings" \
+-H 'Content-Type: application/json' -d'
 {
-  "index_patterns": ["logs-*"],
   "template": {
     "settings": {
-      "index.lifecycle.name": "prod-logs-policy",
-      "index.lifecycle.rollover_alias": "logs-alias"
+      "index.lifecycle.name": "prod-logs-policy"
     }
   }
 }'
+
+# 2. Создаем индексный шаблон для потока данных
+curl -u elastic:$ELASTIC_PASSWORD -k -X PUT "https://localhost:9200/_index_template/logs-template" \
+-H 'Content-Type: application/json' -d'
+{
+  "index_patterns": ["logs-*"],
+  "data_stream": {},
+  "composed_of": ["logs-settings"],
+  "priority": 500
+}'
 ```
 
-### Проверка статуса ILM
+### Диагностика и отладка
 
-Для отладки и мониторинга текущего состояния индекса в жизненном цикле:
+Если индекс "застрял" в одной из фаз, используйте API `explain` для выяснения причины:
 
 ```bash
-# Общий статус ILM в кластере
-curl -X GET "localhost:9200/_ilm/status"
+curl -u elastic:$ELASTIC_PASSWORD -k -X GET "https://localhost:9200/logs-my_app-default/_ilm/explain?filter_path=indices.*.policy,indices.*.step_info"
+```
 
-# Статус конкретного индекса
-curl -X GET "localhost:9200/my-index/_ilm/explain"
+**Типичные проблемы:**
+* **`step_info` содержит ошибку о нехватке места**: ILM не может выполнить `shrink` или `migrate`, если на целевых узлах недостаточно места (см. `watermark` в [Обзоре Elasticsearch](./elasticsearch_overview.md#ключевые-настройки-elasticsearchyml)).
+* **Индекс не переходит в следующую фазу**: Проверьте `min_age`. Помните, что отсчет идет от момента **ротации** индекса.
+* **Ошибка "index.lifecycle.rollover_alias does not point to index"**: Возникает при использовании обычных индексов (не Data Streams) без правильно настроенного алиаса. С Data Streams этой проблемы не существует.
+
+### Проверка общего статуса
+
+```bash
+# Проверка, запущен ли процесс ILM в кластере
+curl -u elastic:$ELASTIC_PASSWORD -k -X GET "https://localhost:9200/_ilm/status" # → {"operation_mode": "RUNNING"}
 ```
 
 ## Дополнительная информация

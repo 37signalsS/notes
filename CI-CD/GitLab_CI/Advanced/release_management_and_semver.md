@@ -185,6 +185,7 @@ create_release_api:
 
 ### См. также
 
+- **[Шаблоны и стандарты коммитов](../../../Git/git_commit_template.md)** — подробное описание Conventional Commits.
 - **[Управление артефактами](../../artifact_management.md)** — схемы версионирования (SemVer, CalVer).
 - **[CI/CD Catalog Reference](../Reusable_Pipelines/ci_cd_catalog_reference.md)** — требования SemVer для компонентов каталога.
 - **[Docker тегирование](../../../Docker/Docker_registries/image_versioning_and_tagging.md)** — стратегии именования образов.

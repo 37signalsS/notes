@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Операции Ceph** — совокупность практических действий по управлению жизненным циклом компонентов кластера: OSD (Object Storage Daemon — демон хранения объектов), пулов, PG (Placement Group — группа размещения), MON (Monitor — монитор), MGR (Manager — менеджер) и MDS (Metadata Server — сервер метаданных).
+**Операции Ceph** — совокупность практических действий по управлению жизненным циклом компонентов кластера: OSD (Object Storage Daemon), пулов, PG (Placement Group), MON (Monitor), MGR (Manager) и MDS (Metadata Server).
 
 > **Базовые концепции и архитектура:** [Администрирование Ceph — Обзор](./index.md)
 
@@ -18,7 +18,11 @@
 |:----------|:------|:---------------|:------------|
 | **MON (монитор)** | `quorum node1,node2,node3` | `quorum 0,1` (не все узлы) | Отсутствие кворума |
 | **OSD (демон хранения объектов)** | `N up, N in` | `N-1 up, N in` | `0 up` (все демоны отключены) |
-| **PG (Placement Group — группа размещения)** | `active+clean` | `recovering`, `degraded` | `down`, `incomplete` |
+| **PG (Placement Group)** | `active+clean` | `recovering`, `degraded` | `down`, `incomplete` |
+
+### Современная оркестрация (cephadm)
+
+В кластерах, развернутых через `cephadm`, большинство операций по управлению демонами выполняется через интерфейс **Orchestrator (`ceph orch`)**. Это гарантирует, что изменения конфигурации будут применены на уровне контейнеров и системных служб.
 
 ---
 
@@ -30,85 +34,66 @@
 # Быстрая проверка здоровья
 ceph -s
 
-# Подробный статус всех компонентов
-ceph status
-
 # Детализация текущих предупреждений и ошибок
 ceph health detail
 
-# Временное отключение (mute) предупреждений
-ceph health mute
+# Просмотр списка всех сервисов под управлением оркестратора
+ceph orch ps
+
+# Список всех запущенных демонов
+ceph orch ls
 ```
 
 ### Управление OSD (Object Storage Daemon)
 
+**Традиционный метод (низкоуровневый):**
 ```bash
-# Список всех OSD с их физической топологией (карта CRUSH — Controlled Replication Under Scalable Hashing)
+# Список всех OSD с их физической топологией (карта CRUSH)
 ceph osd tree
-
-# Статус конкретного демона хранения
-ceph osd stat <osd_id>
 
 # Вывод OSD из эксплуатации (запуск перераспределения данных)
 ceph osd out <osd_id>
 
-# Возврат OSD в работу
-ceph osd in <osd_id>
-
-# Полное удаление OSD из кластера (например, для замены диска)
+# Полное удаление OSD из кластера (purge)
 ceph osd purge <osd_id> --yes-i-really-mean-it
 ```
 
-### Управление пулами
+**Метод через Orchestrator (рекомендуется для cephadm):**
+```bash
+# Удаление OSD с автоматической очисткой диска
+ceph orch osd rm <osd_id> --replace --zap
+
+# Проверка статуса удаления OSD
+ceph orch osd rm status
+```
+
+### Управление пулами и PG Autoscaler
+
+В современных версиях Ceph количество PG управляется автоматически модулем **pg_autoscaler**.
 
 ```bash
-# Список существующих пулов
-ceph osd pool ls
+# Список существующих пулов и статус автоскейлера
+ceph osd pool autoscale-status
 
-# Просмотр всех параметров пула
-ceph osd pool get <pool_name> all
+# Включение автоскейлера для конкретного пула
+ceph osd pool set <pool_name> pg_autoscale_mode on
 
-# Изменение количества групп размещения (PG)
+# Ручное изменение параметров (если автоскейлер в режиме warn или off)
 ceph osd pool set <pool_name> pg_num <new_pg_num>
-ceph osd pool set <pool_name> pgp_num <new_pgp_num>
-
-# Настройка количества реплик
-ceph osd pool set <pool_name> size 3
-
-# Удаление пула (требует подтверждения безопасности в конфигурации)
-ceph osd pool delete <pool_name> --yes-i-really-really-mean-it
 ```
 
-> **Важно:** Любые изменения `pg_num` должны быть предварительно рассчитаны. См. [Расчет PG](../ceph_placement_groups.md).
+> **Важно:** Рекомендуется держать автоскейлер в режиме `on` для автоматической оптимизации производительности.
 
-### Управление мониторами (MON)
+### Управление мониторами (MON) и менеджерами (MGR)
 
-```bash
-# Просмотр карты мониторов
-ceph mon dump
-
-# Добавление нового монитора в кластер
-ceph mon add <mon_name> <ip:port>
-
-# Удаление монитора
-ceph mon remove <mon_name>
-
-# Проверка текущего статуса кворума
-ceph quorum_status
-```
-
-### Управление менеджерами (MGR)
+Через оркестратор масштабирование выполняется декларативно:
 
 ```bash
-# Статус активного и резервных менеджеров
-ceph mgr dump
+# Установка количества мониторов в кластере
+ceph orch apply mon <number_of_nodes> --placement="host1,host2,host3"
 
-# Список и управление модулями (например, dashboard или prometheus)
-ceph mgr module ls
-ceph mgr module enable <module_name>
-
-# Принудительный перезапуск менеджера
-ceph mgr fail <mgr_name>
+# Перезапуск менеджера
+ceph mgr fail
 ```
 
 ---

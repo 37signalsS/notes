@@ -19,7 +19,7 @@
 | **Среда выполнения** | `containerd` + `runc` | `crun` (быстрее) или `runc`. |
 | **Интеграция с ОС** | Ограниченная. Для автозапуска требуются собственные systemd-юниты. | Глубокая. Контейнеры описываются как юниты **Quadlet**. Подробнее: [Daemonless архитектура](./podman_daemonless_architecture.md#интеграция-с-systemd). |
 | **Healthcheck** | Выполняется центральным демоном. | Выполняется через **systemd** или `podman healthcheck run`. Подробнее: [Healthchecks в Podman](./podman_healthchecks.md). |
-| **Зависимости** | Прямая поддержка `depends_on` в Docker Compose. | Нативная поддержка отсутствует. Заменяется зависимостями **systemd**. Подробнее: [Настройка через Quadlet и зависимости](./podman_healthchecks.md#настройка-через-quadlet-и-зависимости). |
+| **Зависимости** | Прямая поддержка `depends_on` в Docker Compose. | Нативная поддержка отсутствует. Заменяется зависимостями **systemd**. Подробнее: [Управление зависимостями и готовностью](./podman-dependencies.md). |
 | **Автообновление** | Требует внешних инструментов (Watchtower). | Встроенное через `podman auto-update`. Подробнее: [Автообновление](./podman_auto_update.md). |
 | **Группы контейнеров** | `docker-compose`. | **[Podman Compose](./podman-compose.md)** или концепция **Pods** (групп контейнеров). |
 | **Интеграция с K8s** | Нет встроенной генерации манифестов. | `podman kube generate` / `podman kube play` для работы с **K8s (Kubernetes)**. |

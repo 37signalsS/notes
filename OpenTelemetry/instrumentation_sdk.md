@@ -132,6 +132,68 @@ builder.Services.AddOpenTelemetry()
 // activity?.SetTag("order.id", orderId);
 ```
 
+### Сценарий 4: Ручная инструментация Go-приложения
+
+В Go (в отличие от Java) отсутствует механизм автоматической инструментации через агент — требуется ручная настройка SDK. Код инициализации обычно выносится в функцию, вызываемую при старте приложения.
+
+```go
+package main
+
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+    "go.opentelemetry.io/otel/propagation"
+    "go.opentelemetry.io/otel/sdk/resource"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+    semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+)
+
+func initTracer() (*sdktrace.TracerProvider, error) {
+    // 1. Создание экспортёра — отправляет данные в OTel Collector по gRPC
+    exporter, err := otlptracegrpc.New(ctx,
+        otlptracegrpc.WithEndpoint("otel-collector:4317"),
+        otlptracegrpc.WithInsecure(),
+    )
+    if err != nil {
+        return nil, err
+    }
+
+    // 2. Resource — идентификация сервиса
+    res, err := resource.New(ctx,
+        resource.WithAttributes(
+            semconv.ServiceNameKey.String("payment-service"),
+            semconv.ServiceVersionKey.String("1.0.0"),
+        ),
+    )
+
+    // 3. TracerProvider — основной компонент SDK, создаёт Tracer
+    tp := sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter),
+        sdktrace.WithResource(res),
+        sdktrace.WithSampler(sdktrace.TraceIDRatioBased(0.1)),
+    )
+    otel.SetTracerProvider(tp)
+
+    // 4. Propagators — обеспечивают передачу trace context между сервисами
+    otel.SetTextMapPropagator(
+        propagation.NewCompositeTextMapPropagator(
+            propagation.TraceContext{},
+            propagation.Baggage{},
+        ),
+    )
+    return tp, nil
+}
+```
+
+**Важные моменты:**
+
+- **Экспортёр:** рекомендуется `OTLP/gRPC` (порт `4317`). HTTP-экспортёр (порт `4318`) подходит для окружений с HTTP-прокси.
+- **Propagators:** обязательны для сквозной трассировки. Без них `trace_id` не будет передаваться между сервисами, и трейсы «разорвутся».
+- **Sampler:** `TraceIDRatioBased(0.1)` — сохраняет 10% трассировок. Должен быть одинаковым на всех коллекторах и сервисах для целостности трейсов.
+- **Boilerplate:** код инициализации одинаков для всех Go-сервисов и рекомендуется выносить в общую платформенную библиотеку.
+
+Аналогично настраиваются экспортёры для метрик (`otlpmetricgrpc`) и логов (`otlploggrpc`).
+
 ## Дополнительная информация
 
 ### Типичные ошибки

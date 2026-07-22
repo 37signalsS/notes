@@ -4,6 +4,8 @@
 
 **Ceph** — программно-определяемое (SDS), распределенное, отказоустойчивое объектное хранилище данных. Работает на стандартном оборудовании (commodity hardware), обеспечивает высокую доступность и масштабируемость.
 
+В основе Ceph лежит **RADOS** (Reliable Autonomic Distributed Object Store) — интеллектуальная распределенная сеть хранения, которая берет на себя задачи репликации, самовосстановления и балансировки данных без централизованного узла управления.
+
 ### Ключевые характеристики
 
 | Характеристика | Описание |
@@ -27,7 +29,7 @@ Ceph хранит данные как объекты, но предоставл�
 
 Подробные руководства:
 
-- [Работа с RBD](./ceph_rbd_usage/practical_scenarios.md)
+- [Работа с RBD (маппинг и монтирование)](./ceph_rbd_usage/mapping_and_mounting.md)
 - [Настройка CephFS](./cephfs_setup_and_usage/definitions_and_concepts.md)
 
 ### Компоненты кластера (Демоны)
@@ -35,9 +37,14 @@ Ceph хранит данные как объекты, но предоставл�
 | Демон | Назначение | Требования к HA |
 |-------|------------|-----------------|
 | **MON** (Monitor) | Поддержание карты кластера, кворум | Минимум 3 (нечетное число) |
-| **MGR** (Manager) | Метрики, мониторинг, API | 1 active + N standby |
+| **MGR** (Manager) | Метрики, мониторинг, API, Dashboard | 1 active + N standby |
 | **OSD** (Object Storage Daemon) | Хранение данных на дисках | 1 OSD на диск |
 | **MDS** (Metadata Server) | Метаданные для CephFS | 1 active + N standby |
+
+#### Технологии OSD
+
+- **BlueStore**: Текущий стандартный backend для OSD, работающий напрямую с блочным устройством (без файловой системы), что исключает двойную запись в журнал.
+- **Crimson**: Новый высокопроизводительный OSD-движок (введен в v20 Tentacle), построенный на фреймворке SeaStar. Оптимизирован для современных NVMe-дисков и многоядерных процессоров за счет исключения блокировок (lockless architecture).
 
 #### Минимальная конфигурация для HA
 
@@ -71,11 +78,13 @@ Ceph хранит данные как объекты, но предоставл�
 
 ### Алгоритм CRUSH
 
-**CRUSH** (Controlled Replication Under Scalable Hashing) — алгоритм распределения данных:
+**CRUSH** (Controlled Replication Under Scalable Hashing) — уникальный алгоритм распределения данных, который позволяет клиентам напрямую общаться с OSD, не обращаясь к центральному серверу метаданных (за исключением MDS для CephFS).
 
-1. Клиент вычисляет PG для объекта (хэш от имени объекта)
-2. CRUSH определяет OSD для PG на основе карты топологии
-3. Клиент записывает данные напрямую в OSD (без прокси)
+**Преимущества CRUSH:**
+- **Отсутствие узких мест**: Нет централизованного справочника объектов.
+- **Масштабируемость**: Карта кластера весит килобайты даже для петабайтных систем.
+- **Детерминизм**: Одно и то же имя объекта всегда вычисляется в один и тот же набор OSD.
+- **Осведомленность о топологии**: Позволяет задавать правила (например, "хранить реплики в разных стойках").
 
 #### Карта CRUSH
 
@@ -117,20 +126,22 @@ ceph osd crush rule create-replicated ssd-rule host type=ssd
 
 | Способ | Статус | Версии Ceph |
 |--------|--------|-------------|
-| **cephadm** | ✅ Рекомендуется | Reef (18.x)+ |
-| **ceph-ansible** | ⚠️ Устарел | Octopus (14.x) и ниже |
-| **Rook** | ✅ Для Kubernetes | Любые |
+| **cephadm** | Рекомендуется | Reef (18.x), Squid (19.x), Tentacle (20.x) |
+| **Rook** | Рекомендуется для Kubernetes | Любые (через CSI) |
+| **ceph-ansible** | Устарел (Legacy) | Nautilus (14.x) – Octopus (15.x) |
 
 - [Установка через cephadm/ceph-ansible](ceph_ansible_installation.md)
 
 ### Интеграция с Kubernetes
 
-Ceph — популярное решение для persistent storage в Kubernetes:
+Ceph является основным решением для сетевого хранилища в Kubernetes. Начиная с версии Kubernetes 1.31, встроенные (in-tree) плагины для Ceph полностью удалены. Использование **CSI (Container Storage Interface)** является обязательным.
 
-| Драйвер | Тип | Режим доступа | Руководство |
+| Драйвер | Тип | Режим доступа | Примеры использования |
 |---------|-----|---------------|-------------|
-| **Ceph CSI RBD** | Блочное | RWO, ROX | [ceph_csi_rbd_driver_setup.md](ceph_csi_rbd_driver_setup.md) |
-| **Ceph CSI CephFS** | Файловое | RWX, ROX | [ceph_csi_cephfs_driver_setup.md](ceph_csi_cephfs_driver_setup.md) |
+| **Ceph CSI RBD** | Блочное | RWO, ROX | [PV/PVC Scenarios (RBD)](../pv_and_pvc_scenarios.md#динамическое-выделение-ceph-rbd) |
+| **Ceph CSI CephFS** | Файловое | RWX, ROX | [Сравнение CSI-драйверов](../../CSI/csi_drivers_comparison.md) |
+
+> **Важно**: Для развертывания Ceph внутри Kubernetes рекомендуется использовать оператор **Rook**, который автоматизирует управление CSI-драйверами, пулами и жизненным циклом демонов.
 
 ### Администрирование
 
@@ -139,20 +150,34 @@ Ceph — популярное решение для persistent storage в Kubern
 ```bash
 # Статус кластера
 ceph status
+# → health: HEALTH_OK
+#   services: mon: 3 daemons, mgr: 2 daemons, osd: 12 osds
+
 ceph health detail
+# → HEALTH_OK
 
-# Список OSD
+# Список OSD и их состояние в иерархии
 ceph osd tree
+# → ID  CLASS  WEIGHT   TYPE NAME      STATUS  REWEIGHT  PRI-AFF
+#   -1         1.20000  root default
+#   -3         0.40000      host node1
+#    0    ssd  0.20000          osd.0      up   1.00000  1.00000
 
-# Пулы
+# Список пулов
 ceph osd pool ls
+# → device_health_metrics, rbd_pool, cephfs_data, cephfs_metadata
+
+# Просмотр параметров пула
 ceph osd pool get <pool> pg_num
+# → pg_num: 128
 
-# Мониторы
+# Информация о мониторах и кворуме
 ceph mon dump
+# → epoch 5, monmap: 3 mons, quorum node1,node2,node3
 
-# Менеджеры
+# Информация о менеджерах
 ceph mgr dump
+# → active_name: node1, standbys: node2, node3
 ```
 
 Подробнее: [Администрирование Ceph](./Administration/index.md)
@@ -163,15 +188,15 @@ ceph mgr dump
 
 | Версия | Кодовое имя | Статус | EOL |
 |--------|-------------|--------|-----|
-| 19.x | Squid | ✅ Stable | — |
-| 18.x | Reef | ✅ Stable | — |
-| 17.x | Quincy | ⚠️ Maintenance | 2025 |
-| 16.x | Pacific | ❌ EOL | 2024 |
-| 15.x | Octopus | ❌ EOL | 2023 |
-| 14.x | Nautilus | ❌ EOL | 2022 |
-| 12.x | Luminous | ❌ EOL | 2020 |
+| 21.x   | Umbrella    | Development | 2027 |
+| 20.x   | Tentacle    | Stable | 2027 |
+| 19.x   | Squid       | Stable | 2026 |
+| 18.x   | Reef        | EOL | 2026 |
+| 17.x   | Quincy      | EOL | 2025 |
+| 16.x   | Pacific     | EOL | 2024 |
 
-> **Рекомендация**: Используйте Reef (18.x) или Squid (19.x) для новых развертываний.
+> **Рекомендация**: Используйте Tentacle (20.x) для новых развертываний. Версия Squid (19.x) поддерживается до конца 2026 года.
+
 
 ### Расчет PG
 
@@ -199,7 +224,8 @@ Total PGs = (OSD_count × 100) / replication_factor
 - **Ceph Dashboard**: Встроенный веб-интерфейс
 - **Alertmanager**: Алерты по здоровью кластера
 
-### Ссылки
+### См. также
 
 - [Официальная документация Ceph](https://docs.ceph.com/)
-- [Ceph GitHub](https://github.com/ceph/ceph)
+- [Архитектура RADOS (документация)](https://docs.ceph.com/en/latest/architecture/)
+- [Rook — Ceph в Kubernetes](https://rook.io/)

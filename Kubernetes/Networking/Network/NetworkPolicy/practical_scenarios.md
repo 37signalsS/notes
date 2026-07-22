@@ -2,48 +2,48 @@
 
 ## Определения
 
-**Практический сценарий NetworkPolicy** — пошаговое руководство по внедрению сетевой изоляции в Kubernetes с демонстрацией типовых проблем и их решений.
+**Практический сценарий NetworkPolicy** — структурированное описание процесса внедрения сетевой изоляции в кластере Kubernetes, включающее настройку манифестов, разбор типовых конфигурационных ошибок и методы верификации связности.
 
-**Default Deny (Запрет по умолчанию)** — стратегия безопасности, при которой весь трафик блокируется, если он не разрешен явно.
+**Изоляция по умолчанию (Default Deny)** — стратегия безопасности «Нулевого доверия» (Zero Trust), при которой весь сетевой трафик блокируется, если он не разрешен явно.
 
-**Сетевая изоляция** — механизм ограничения сетевого взаимодействия между компонентами системы для уменьшения поверхности атаки.
+**Сетевая изоляция** — механизм ограничения сетевого взаимодействия между подами (Pod) или внешними ресурсами для уменьшения поверхности атаки и предотвращения бокового перемещения злоумышленника внутри кластера.
 
 ## Базовые Концепции
 
-### Демонстрируемые принципы
+### Методология настройки
 
-В данном сценарии рассматриваются ключевые принципы работы ресурсов NetworkPolicy:
+В данных сценариях демонстрируются ключевые принципы работы ресурсов NetworkPolicy:
 
-- **Изоляция по умолчанию** — использование принципа «Запрещено по умолчанию» для входящего и исходящего трафика.
-- **Селекторы объектов** — применение политик через `podSelector` (селектор подов) и `namespaceSelector` (селектор пространств имен).
-- **Разрешение системных служб** — обязательная настройка доступа к критической инфраструктуре, такой как DNS (Domain Name System).
-- **Межпространственная изоляция** — управление трафиком между Namespaces с использованием меток.
+- **Принцип явного разрешения** — использование разрешительных списков (Allow-lists) для входящего (Ingress) и исходящего (Egress) трафика.
+- **Гибкость селекторов** — применение политик через селекторы подов (`podSelector`) и пространств имен (`namespaceSelector`).
+- **Инфраструктурная связность** — обязательное разрешение доступа к системным службам, таким как система доменных имен (Domain Name System, DNS).
+- **Многоуровневая защита** — изоляция трафика между пространствами имен (Namespaces) с использованием меток (Labels).
 
-### Тестовая среда
+### Описание тестовой среды
 
-Сценарий предполагает наличие трех Namespaces (пространств имен) со следующими компонентами:
+Для сценариев используется среда с тремя Namespaces:
 
 | Namespace | Компонент | Описание |
-|-----------|-----------|----------|
-| `app1` | `webapp` | Приложение-прокси, перенаправляющее HTTP-запросы |
-| `app2` | `backend-api` | Основной сервис API (Application Programming Interface) |
-| `app2` | `nginx` | Статический веб-сервер |
-| `default` | `dns-tools` | Утилита для тестирования сетевой связности и DNS |
+| :--- | :--- | :--- |
+| `app-frontend` | `webapp` | Приложение-прокси, обрабатывающее запросы по протоколу HTTP (HyperText Transfer Protocol) |
+| `app-backend` | `api-server` | Основной сервис API (Application Programming Interface) на базе TCP (Transmission Control Protocol) |
+| `app-backend` | `static-server` | Веб-сервер для раздачи статического контента |
+| `kube-system` | `coredns` | Системный сервис DNS |
 
-Изначально в кластере действует «плоская» сеть: все Pod (поды) могут свободно взаимодействовать друг с другом.
+Изначально в кластере действует открытая сетевая модель: все Pod могут свободно взаимодействовать друг с другом.
 
 ## Практические Сценарии
 
-### Шаг 1: Полная изоляция пространства имен (Default Deny)
+### Шаг 1: Изоляция входящего трафика (Default Deny Ingress)
 
-Первым этапом внедрения безопасности является блокировка всего входящего трафика для Namespace `app2`.
+Первым этапом внедрения безопасности является блокировка всего входящего трафика для Namespace `app-backend`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: app2
+  namespace: app-backend
 spec:
   podSelector: {} # Выбирает все поды в пространстве имен
   policyTypes:
@@ -51,32 +51,29 @@ spec:
   ingress: [] # Пустой список правил означает полный запрет
 ```
 
-**Результат:** Попытки обращения от `webapp` (Namespace `app1`) или `dns-tools` (Namespace `default`) к сервисам в `app2` будут завершаться ошибкой `Connection timed out`.
+**Результат:** Любые попытки обращения от `webapp` или сторонних отладочных подов к сервисам в `app-backend` будут завершаться ошибкой `Connection timed out`.
 
-*Подробнее о концепции: [NetworkPolicy: Определения и концепции](./definitions.md#принцип-default-deny-запрещено-по-умолчанию)*
+### Шаг 2: Разрешение доступа к конкретному микросервису
 
-### Шаг 2: Разрешение доступа от конкретного приложения
-
-Разрешим приложению `webapp` обращаться к `backend-api` на порту 8080 по протоколу TCP (Transmission Control Protocol).
+Разрешим приложению `webapp` обращаться к `api-server` на порту 8080.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-webapp-to-backend-api
-  namespace: app2
+  name: allow-ingress-frontend-to-api
+  namespace: app-backend
 spec:
   podSelector:
     matchLabels:
-      app: backend-api # Политика применяется только к backend-api
+      app: api-server
   policyTypes:
   - Ingress
   ingress:
   - from:
     - namespaceSelector:
         matchLabels:
-          # Для работы селектора необходимо наличие метки на namespace
-          name: app1
+          kubernetes.io/metadata.name: app-frontend
       podSelector:
         matchLabels:
           app: webapp
@@ -85,60 +82,47 @@ spec:
       port: 8080
 ```
 
-**Результат:** `webapp` может подключаться к `backend-api`, но доступ к `nginx` для него остается закрытым.
+**Результат:** `webapp` может подключаться к `api-server`, но доступ к `static-server` для него остается закрытым, так как селектор политики ограничивает действие только одним приложением.
 
-### Шаг 3: Особенности работы селекторов
+### Шаг 3: Изоляция исходящего трафика и восстановление DNS
 
-Важно понимать побочный эффект применения политик. Если удалить общую политику `default-deny-ingress`, оставив только специфичную для `backend-api`:
-
-- **`backend-api`**: Останется изолированным, так как к нему применяется одна политика.
-- **`nginx`**: Станет снова полностью открытым для всего кластера, так как ни одна политика его не выбирает.
-
-**Вывод:** Безопасность обеспечивается только тогда, когда каждый Pod охвачен хотя бы одной политикой.
-
-### Шаг 4: Изоляция исходящего трафика и проблема DNS
-
-Применим политику `Egress` (исходящий трафик) для Namespace `app1`, разрешив обращения только в сторону `app2`.
+Применим изоляцию исходящего трафика для Namespace `app-frontend`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-to-app2
-  namespace: app1
+  name: default-deny-egress
+  namespace: app-frontend
 spec:
   podSelector: {}
   policyTypes:
   - Egress
-  egress:
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: app2
+  egress: []
 ```
 
-**Результат:** Приложение `webapp` перестанет работать. Ошибка `Resolving Timeout` указывает на то, что Pod больше не может обратиться к DNS-серверу кластера для преобразования имен в IP (Internet Protocol) адреса.
+**Результат:** Приложение `webapp` перестанет работать, так как оно больше не может обратиться к DNS-серверу кластера для преобразования имен сервисов в IP-адреса.
 
-### Шаг 5: Корректное разрешение системного DNS
+### Шаг 4: Разрешение доступа к системному DNS и Backend
 
-Для восстановления работоспособности необходимо явно разрешить исходящий трафик к CoreDNS (обычно находится в `kube-system`).
+Для восстановления работоспособности необходимо явно разрешить исходящий трафик к CoreDNS и к сервисам в `app-backend`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-to-dns
-  namespace: app1
+  name: allow-egress-to-infra-and-backend
+  namespace: app-frontend
 spec:
   podSelector: {}
   policyTypes:
   - Egress
   egress:
-  - to:
+  - to: # Разрешение трафика к Backend Namespace
     - namespaceSelector:
         matchLabels:
-          name: app2
-  - to: # Правило для DNS (UDP и TCP порт 53)
+          kubernetes.io/metadata.name: app-backend
+  - to: # Разрешение трафика к CoreDNS
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: kube-system
@@ -147,52 +131,55 @@ spec:
           k8s-app: kube-dns
     ports:
     - port: 53
-      protocol: UDP
+      protocol: UDP # User Datagram Protocol
     - port: 53
       protocol: TCP
 ```
 
-*UDP (User Datagram Protocol).*
+### Альтернатива: Использование ipBlock для внешних ресурсов
 
-### Альтернатива: Использование ipBlock для DNS
-
-Если в кластере используется фиксированный IP-адрес для DNS (например, NodeLocal DNSCache), можно использовать CIDR (Classless Inter-Domain Routing).
+Если приложению требуется доступ к внешнему API с фиксированным диапазоном адресов, используется формат CIDR (Classless Inter-Domain Routing).
 
 ```yaml
 egress:
 - to:
   - ipBlock:
-      cidr: 169.254.20.10/32
+      cidr: 203.0.113.0/24
+      except:
+      - 203.0.113.10/32 # Исключение конкретного IP из диапазона
   ports:
-  - port: 53
-    protocol: UDP
+  - port: 443
+    protocol: TCP
 ```
 
 ## Дополнительные Сведения
 
 ### Диагностика сетевой связности
 
-Для проверки действующих политик рекомендуется использовать временные отладочные Pod:
+Для проверки действующих политик и отладки рекомендуется использовать следующие методы:
 
-```bash
-# Тестирование входящего трафика
-kubectl run test-curl --rm -it --image=curlimages/curl -- curl -v http://<service-name>
+1. **Эфемерные контейнеры (kubectl debug):** запуск отладочного контейнера внутри существующего Pod без его перезагрузки.
+   ```bash
+   kubectl debug pod/webapp-pod -it --image=curlimages/curl -- curl -v http://api-server:8080
+   ```
+2. **Временные отладочные поды:**
+   ```bash
+   # Тестирование DNS
+   kubectl run test-dns --rm -it --image=registry.k8s.io/dnsutils:1.3 -- nslookup api-server
+   ```
+3. **Анализ примененных правил:**
+   ```bash
+   kubectl describe networkpolicy allow-ingress-frontend-to-api -n app-backend
+   ```
 
-# Тестирование разрешения имен (DNS)
-kubectl run test-dig --rm -it --image=registry.k8s.io/dnsutils:1.3 -- nslookup <service-name>
+### Сброс сетевой конфигурации
 
-# Проверка применённых ресурсов в пространстве имен
-kubectl get networkpolicy -n <namespace>
-```
-
-### Сброс конфигурации
-
-Для быстрого восстановления связи при ошибках в конфигурации можно использовать удаление всех политик (в тестовых средах):
-
+В случае критических ошибок в конфигурации, блокирующих доступ к кластеру, политики можно удалить массово:
 ```bash
 kubectl delete networkpolicy --all -n <namespace>
 ```
 
-- **Лучшие практики**: [NetworkPolicy: Лучшие практики](./best_practices.md)
-- **Логика правил**: [NetworkPolicy: Логика правил](./rule_logic.md)
-- **Реализация CNI**: [NetworkPolicy: Реализация CNI-плагинами](./cni_implementation.md)
+**См. также:**
+* [NetworkPolicy: Определения и концепции](./definitions.md) — базовые термины и 3-Tier модель.
+* [NetworkPolicy: Логика правил](./rule_logic.md) — детальный разбор логики И/ИЛИ.
+* [NetworkPolicy: Лучшие практики](./best_practices.md) — рекомендации по именованию и безопасности.

@@ -5,7 +5,7 @@
 - **Grafana**: Платформа для аналитики и визуализации. См. [Обзор Grafana](../grafana_overview.md).
 - **Docker Compose**: Инструмент для определения и запуска многоконтейнерных Docker-приложений с помощью YAML-файла.
 - **Prometheus**: Система мониторинга. См. [Обзор Prometheus](../../Prometheus/overview.md).
-- **Провиженинг (Provisioning)**: Автоматическая конфигурация Grafana при старте. См. [Провиженинг Grafana](../grafana_provisioning.md).
+- **Провиженинг (Provisioning)**: Автоматическая конфигурация Grafana при старте (источники данных, дашборды, плагины). См. [Провиженинг Grafana](../grafana_provisioning.md).
 
 ### Параметры `docker-compose.yml`
 
@@ -17,6 +17,7 @@
 | **`ports`** | Проброс портов (хост:контейнер) |
 | **`restart`** | Политика перезапуска (например, `unless-stopped`) |
 | **`depends_on`** | Определение зависимостей между сервисами для порядка запуска |
+| **`user`** | Запуск процесса от имени конкретного UID/GID (важно для прав на volumes) |
 
 ### Параметры `datasources.yaml`
 
@@ -24,7 +25,7 @@
 | :--- | :--- |
 | **`name`** | Имя источника данных в интерфейсе |
 | **`type`** | Тип источника (prometheus, loki, и др.) |
-| **`url`** | Адрес источника (в Docker Compose — имя сервиса) |
+| **`url`** | Адрес источника (в Docker Compose — имя сервиса и порт) |
 | **`isDefault`** | Флаг основного источника данных |
 | **`editable`** | Разрешение редактирования через UI |
 
@@ -32,20 +33,26 @@
 
 ## Основные концепции
 
-Использование Docker Compose позволяет развернуть полный стек мониторинга (Prometheus + Grafana) в виде изолированных контейнеров. Ключевым преимуществом является возможность декларативного описания всей инфраструктуры и её автоматической настройки через файлы провиженинга, что обеспечивает повторяемость среды и возможность версионирования конфигурации в Git.
+Использование Docker Compose позволяет развернуть полный стек мониторинга в виде изолированных контейнеров. Ключевым преимуществом является возможность декларативного описания всей инфраструктуры и её автоматической настройки через файлы провиженинга.
 
-Типовая структура проекта:
+### Структура проекта
+
+Для корректной работы рекомендуется придерживаться следующей структуры директорий:
 
 ```text
 monitoring/
 ├── docker-compose.yml
-├── .env
+├── .env                     # Секреты и переменные окружения
 ├── prometheus/
-│   └── prometheus.yml
+│   └── prometheus.yml       # Конфигурация сбора метрик
 └── grafana/
     └── provisioning/
-        └── datasources/
-            └── datasources.yaml
+        ├── datasources/
+        │   └── datasources.yaml
+        └── dashboards/
+            ├── dashboards.yaml  # Описание путей к дашбордам
+            └── default/         # Папка с JSON-файлами дашбордов
+                └── node-exporter.json
 ```
 
 ---
@@ -61,7 +68,7 @@ monitoring/
 
 services:
   prometheus:
-    image: prom/prometheus:v3.10.0
+    image: prom/prometheus:v3.13.1
     container_name: ${PROJECT_NAME:-monitoring}-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -82,9 +89,9 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:12.4.2
+    image: grafana/grafana:13.1.1
     container_name: ${PROJECT_NAME:-monitoring}-grafana
-    user: "472:472"
+    user: "472:472" # UID/GID по умолчанию для пользователя grafana
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
@@ -92,9 +99,9 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=${GRAFANA_PLUGINS:-} # Список плагинов через запятую
       - GF_LOG_LEVEL=info
       - GF_LOG_MODE=console file
-      - GF_LOG_FILE_LEVEL=info
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -118,60 +125,99 @@ networks:
     driver: bridge
 ```
 
-**Особенности конфигурации:**
-
-- Переменные `${PROJECT_NAME}` и `${GRAFANA_ADMIN_PASSWORD}` позволяют гибко настраивать окружение через `.env`.
-- Health checks гарантируют, что Grafana начнет запуск только после того, как Prometheus станет доступен.
-- Изолированная сеть `monitoring` предотвращает нежелательный доступ к сервисам извне.
-
 ### Сценарий 2: Провиженинг источника данных
 
-Для автоматического подключения Prometheus необходимо создать файл в директории `provisioning/datasources/`. Полный перечень параметров и примеры для других СУБД см. в разделе **[Источники данных — Практические сценарии](../grafana_datasources.md#практические-сценарии)**.
+Создайте файл `grafana/provisioning/datasources/datasources.yaml`. При использовании Docker Compose в поле `url` указывается имя сервиса из `docker-compose.yml`.
 
 ```yaml
-# monitoring/grafana/provisioning/datasources/datasources.yaml
 apiVersion: 1
 datasources:
   - name: Prometheus
     type: prometheus
     url: http://prometheus:9090
     isDefault: true
+    access: proxy
+    editable: false
 ```
 
-### Сценарий 3: Запуск и проверка работоспособности
+### Сценарий 3: Провиженинг дашбордов
 
-1. **Подготовка**: Убедитесь в наличии файла конфигурации Prometheus (`prometheus/prometheus.yml`).
-2. **Запуск**: Выполните команду в директории проекта:
+Для автоматической загрузки дашбордов необходимо создать описание провайдера в `grafana/provisioning/dashboards/dashboards.yaml`:
 
+```yaml
+apiVersion: 1
+providers:
+  - name: 'Default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/default
+```
+
+JSON-файлы дашбордов (например, скачанные с [grafana.com/dashboards](https://grafana.com/grafana/dashboards/)) следует поместить в директорию `grafana/provisioning/dashboards/default/`.
+
+### Сценарий 4: Конфигурация вспомогательных файлов
+
+Для работы сценария 1 необходимы файлы `.env` и `prometheus/prometheus.yml`.
+
+**Пример `.env`:**
+```ini
+PROJECT_NAME=my-stack
+GRAFANA_ADMIN_PASSWORD=secure_password_123
+GRAFANA_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+```
+
+**Пример `prometheus/prometheus.yml`:**
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+```
+
+### Сценарий 5: Запуск и проверка работоспособности
+
+1. **Запуск**: Выполните команду в директории проекта:
     ```bash
     docker compose up -d
     ```
 
-3. **Проверка**:
+2. **Проверка**:
     - Prometheus: `http://localhost:9090`
-    - Grafana: `http://localhost:3000` (логин/пароль по умолчанию: `admin` / `admin`). Подробнее об управлении доступом см. [Управление пользователями и аутентификация](../grafana_user_management_and_authentication.md).
-    - Статус источника: **Connections -> Data sources -> Prometheus -> Save & test**.
+    - Grafana: `http://localhost:3000` (логин/пароль: `admin` / `${GRAFANA_ADMIN_PASSWORD}`).
+    - Проверка плагинов: **Administration -> Plugins**.
+    - Проверка дашбордов: **Dashboards -> Browse**.
 
 ---
 
 ## Дополнительная информация
 
-### Чек-лист безопасности (Security Checklist)
+### Чек-лист безопасности
 
-- Смените пароль администратора при первом входе.
-- Используйте файл `.env` для хранения секретов, добавьте его в `.gitignore`.
-- Запускайте контейнеры от непривилегированного пользователя (`user: "472:472"` для Grafana).
-- Ограничивайте доступ к портам (например, `127.0.0.1:3000:3000`).
-- Используйте reverse proxy (Nginx/Traefik) для настройки HTTPS.
+- **Смена пароля**: Обязательно используйте `${GRAFANA_ADMIN_PASSWORD}` в `.env`, не оставляйте `admin` по умолчанию.
+- **Права доступа**: Флаг `user: "472:472"` гарантирует запуск от имени непривилегированного пользователя.
+- **Сетевая изоляция**: Используйте внутренние сети Docker (`networks`), пробрасывайте на хост только порт Grafana (`3000`).
+- **Секреты**: Никогда не коммитьте `.env` в публичные репозитории. Используйте `.gitignore`.
+- **HTTPS**: В промышленной эксплуатации всегда используйте reverse proxy (Nginx, Traefik, Caddy) для терминации SSL.
 
-### Устранение неполадок (Troubleshooting)
+### Устранение неполадок
 
 | Проблема | Решение |
 | :--- | :--- |
-| **Ошибка прав доступа к volumes** | `chmod -R 472:472 ./grafana` |
-| **Grafana не видит Prometheus** | Проверьте, что оба сервиса находятся в одной сети `networks` |
-| **Данные сбрасываются после перезапуска** | Проверьте наличие и корректность секции `volumes` для `grafana_data` |
-| **Ошибка подключения к БД** | Проверьте логи: `docker compose logs -f grafana` |
+| **Ошибка прав доступа (Permission Denied)** | Выполните `chown -R 472:472 ./grafana` на хосте, чтобы контейнер мог писать в bind mounts. |
+| **Grafana не видит Prometheus** | Проверьте `url` в `datasources.yaml`. Должно быть `http://prometheus:9090` (имя сервиса). |
+| **Плагины не устанавливаются** | Убедитесь, что у контейнера Grafana есть доступ в интернет для скачивания плагинов. |
+| **Дашборды не появляются** | Проверьте путь в `dashboards.yaml`. Он должен указывать на путь *внутри* контейнера. |
 
 ### Полезные команды
 
@@ -182,15 +228,17 @@ docker compose logs -f
 # Проверка статуса контейнеров и healthcheck
 docker compose ps
 
-# Перезапуск стека с пересборкой (при изменении конфигов)
-docker compose down && docker compose up -d
+# Принудительное пересоздание контейнеров
+docker compose up -d --force-recreate
 
-# Очистка неиспользуемых данных (volumes)
-docker volume prune
+# Очистка всех данных (осторожно!)
+docker compose down -v
 ```
 
 **См. также:**
 
 - [Высокая доступность Grafana](../high_availability.md)
 - [Алертинг в Grafana](../alerting/concepts.md)
-- [Loki в Docker Compose](../../Loki/Docker_Compose/index.md)
+- [Loki в Docker Compose](../../Loki/Docker_Compose/loki_docker_compose_setup.md)
+- [Провиженинг Grafana (подробно)](../grafana_provisioning.md)
+- [Полный стек мониторинга (Prometheus + Alertmanager + Exporters)](../../Prometheus/installation/docker_stack/docker-compose_config.md)

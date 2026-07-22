@@ -2,167 +2,139 @@
 
 ## Определения
 
-**Высокая доступность (High Availability, HA)** в контексте Grafana — архитектурный подход, подразумевающий развёртывание нескольких экземпляров приложения без сохранения состояния (stateless) за балансировщиком нагрузки с использованием общей внешней базы данных. Общие принципы обеспечения отказоустойчивости описаны в разделе **[обзор High Availability](../Concepts/High_Availability/ha_overview.md)**.
-
-**Текущая версия (март 2026):** Grafana 12.x поддерживает HA-режим.
+**Высокая доступность (High Availability, HA)** в контексте Grafana — архитектурный подход, обеспечивающий бесперебойную работу системы мониторинга при отказе одного или нескольких узлов. Реализуется через развертывание нескольких stateless-экземпляров приложения за балансировщиком нагрузки с использованием внешних хранилищ состояния (БД, Redis).
 
 **Связанные темы:**
-
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Установка через Docker](./Installation/docker_compose_setup.md) — развёртывание в Docker
-- [Установка через Helm](./Installation/grafana_helm_installation.md) — развёртывание в Kubernetes
+- [Провиженинг](./grafana_provisioning.md) — автоматизация конфигурации в HA
+- [Обзор High Availability](../Concepts/High_Availability/ha_overview.md) — общие принципы отказоустойчивости
 
 ## Базовые концепции
 
-### Архитектура HA
+### Архитектура HA в Grafana 13.x
 
-Grafana не имеет встроенных механизмов кластеризации; высокая доступность реализуется через внешние компоненты и архитектурные решения:
+Современная архитектура HA Grafana опирается на три столпа: общая база данных, внешнее хранилище сессий и межсерверная коммуникация для алертинга.
 
-1. **Общая база данных** — использование PostgreSQL или MySQL (вместо локальной SQLite) для хранения всех настроек, пользователей и дашбордов.
-2. **Экземпляры без состояния (Stateless)** — запуск двух и более идентичных экземпляров Grafana, которые не хранят уникальных данных локально.
-3. **Балансировщик нагрузки** — Nginx, HAProxy или облачные решения для распределения входящего трафика.
-
-**Принцип работы:**
-
-1. Пользователь обращается к балансировщику нагрузки.
-2. Балансировщик перенаправляет запрос на один из доступных экземпляров Grafana.
-3. Экземпляр Grafana взаимодействует с общей базой данных для чтения или записи данных.
-4. Любые изменения конфигурации (например, создание дашборда) мгновенно становятся доступными на всех узлах кластера через общую БД.
+1. **Внешняя БД (Configuration Storage):** PostgreSQL или MySQL для хранения дашбордов, пользователей и настроек. SQLite в HA не поддерживается.
+2. **Remote Cache / Session Storage:** Использование Redis для хранения сессий пользователей и временных данных. Это позволяет избежать зависимости от «липких сессий» (Sticky Sessions) на балансировщике.
+3. **Alerting HA (Gossip Protocol):** Узлы обмениваются состоянием алертов через Memberlist (порт 9094) для предотвращения дублирования уведомлений.
 
 ### Ключевые компоненты
 
-| Компонент | Назначение |
-| :--- | :--- |
-| **Балансировщик** | Распределение трафика между узлами (Nginx, HAProxy, AWS ALB) |
-| **Экземпляры Grafana** | 2+ независимых узла с идентичной конфигурацией |
-| **Внешняя БД** | Единое хранилище состояния (PostgreSQL, MySQL) |
-
-### Поддерживаемые базы данных
-
-| СУБД | Версия | Примечание |
+| Компонент | Назначение | Рекомендация |
 | :--- | :--- | :--- |
-| **PostgreSQL** | 12+ | Рекомендуемый вариант, лучшая совместимость |
-| **MySQL** | 8.0+ | Полная поддержка |
-| **SQLite** | — | Не подходит для HA-режима |
+| **Load Balancer** | L7-балансировка (HTTP/HTTPS) | Nginx, HAProxy, AWS ALB |
+| **Grafana Nodes** | 2 или более идентичных узла | Минимум 3 для кворума в алертинге |
+| **Shared Database** | Основное хранилище настроек | PostgreSQL 16+ (Patroni) |
+| **Redis** | Хранение сессий и кэширование | Redis Cluster или Sentinel |
 
 ## Практические сценарии
 
-### Настройка HA-кластера с Docker, PostgreSQL и Nginx
+### Конфигурация HA (grafana.ini)
 
-#### Шаг 1: Настройка внешней базы данных (PostgreSQL)
+Для корректной работы кластера необходимо синхронизировать настройки безопасности и подключить внешние хранилища.
 
-1. **Создайте файл `docker-compose.yml` для базы данных:**
+```ini
+[database]
+type = postgres
+host = postgres-ha-proxy:5432
+name = grafana
+user = grafana_user
+password = grafana_password
+# Включает распределенные блокировки для фоновых задач
+high_availability = true
 
-    ```yaml
-    services:
-      postgres:
-        image: postgres:16
-        container_name: grafana-postgres
-        restart: unless-stopped
-        ports:
-          - "5432:5432"
-        volumes:
-          - ./init-user-db.sh:/docker-entrypoint-initdb.d/init-user-db.sh
-          - postgres_data:/var/lib/postgresql/data
-        environment:
-          - POSTGRES_PASSWORD=your_super_secret_password
-    volumes:
-      postgres_data:
-    ```
+[remote_cache]
+# Рекомендуется для HA вместо базы данных
+type = redis
+connstr = addr=redis-ha-proxy:6379,pool_size=100,db=0
 
-2. **Создайте скрипт инициализации `init-user-db.sh`:**
+[session]
+# Использование Redis для сессий позволяет балансировщику работать в режиме Round Robin
+provider = redis
+provider_config = addr=redis-ha-proxy:6379,pool_size=100,prefix=grafana_sess
 
-    ```bash
-    #!/bin/bash
-    set -e
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-        CREATE USER grafana_user WITH PASSWORD 'grafana_password';
-        CREATE DATABASE grafana WITH OWNER = grafana_user;
-        GRANT ALL PRIVILEGES ON DATABASE grafana TO grafana_user;
-    EOSQL
-    ```
+[security]
+# КЛЮЧЕВОЙ ПАРАМЕТР: должен быть идентичен на всех узлах
+secret_key = <your_random_long_string>
+```
 
-3. **Запустите контейнер:** Установите права на выполнение (`chmod +x init-user-db.sh`) и выполните `docker compose up -d`.
+### Настройка Unified Alerting HA
 
-#### Шаг 2: Настройка экземпляров Grafana
+В версии 13.x Grafana использует Gossip-протокол для дедупликации уведомлений.
 
-1. **Подготовьте конфигурацию экземпляра (`docker-compose.yml`):**
+**Настройка через Memberlist:**
+Каждый узел должен знать о соседях. В Kubernetes это обычно решается через headless service.
+```ini
+[unified_alerting]
+enabled = true
+# Список IP или DNS-имен других узлов кластера
+ha_peers = grafana-node-1:9094, grafana-node-2:9094
+ha_listen_address = 0.0.0.0:9094
 
-    ```yaml
-    services:
-      grafana:
-        image: grafana/grafana:12.x
-        container_name: grafana
-        restart: unless-stopped
-        ports:
-          - "3000:3000"
-        volumes:
-          - ./grafana.ini:/etc/grafana/grafana.ini
-    ```
+# Новинка v13: Single-node Evaluation
+# Снижает нагрузку на Prometheus, вычисляя алерты только на одном (primary) узле
+ha_evaluation_mode = single-node
+```
 
-2. **Скорректируйте `grafana.ini`:** В секции `[database]` укажите параметры подключения.
+**Примечание по сети:** Убедитесь, что порт **9094 (TCP и UDP)** открыт между всеми узлами Grafana.
 
-    ```ini
-    [database]
-    type = postgres
-    host = <IP-адрес_сервера_PostgreSQL>:5432
-    name = grafana
-    user = grafana_user
-    password = grafana_password
-    ssl_mode = disable
+### Развертывание в Docker Compose (HA-стек)
 
-    [security]
-    # Обязательно одинаковый ключ на всех экземплярах
-    secret_key = some_random_long_string
-    ```
+```yaml
+services:
+  grafana-1: &grafana_base
+    image: grafana/grafana:13.1.1
+    environment:
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres:5432
+      - GF_REMOTE_CACHE_TYPE=redis
+      - GF_REMOTE_CACHE_CONNSTR=addr=redis:6379
+      - GF_SECURITY_SECRET_KEY=secret_123
+      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-2:9094
+    ports: [ "3001:3000", "9094:9094" ]
 
-3. **Запустите узлы** Grafana на разных серверах или портах.
+  grafana-2:
+    <<: *grafana_base
+    environment:
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres:5432
+      - GF_REMOTE_CACHE_TYPE=redis
+      - GF_REMOTE_CACHE_CONNSTR=addr=redis:6379
+      - GF_SECURITY_SECRET_KEY=secret_123
+      - GF_UNIFIED_ALERTING_HA_PEERS=grafana-1:9094
+    ports: [ "3002:3000", "9095:9094" ]
 
-#### Шаг 3: Настройка балансировщика нагрузки (Nginx)
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_DB=grafana
+      - POSTGRES_USER=grafana_user
+      - POSTGRES_PASSWORD=grafana_password
 
-1. **Создайте конфигурацию Nginx** (например, `/etc/nginx/sites-available/grafana.conf`):
-
-    ```nginx
-    upstream grafana_backend {
-        server <IP-адрес_grafana-1>:3000;
-        server <IP-адрес_grafana-2>:3000;
-    }
-
-    server {
-        listen 80;
-        server_name grafana.example.com;
-
-        location / {
-            proxy_pass http://grafana_backend;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-    }
-    ```
-
-2. **Примените настройки:**
-
-    ```bash
-    sudo ln -s /etc/nginx/sites-available/grafana.conf /etc/nginx/sites-enabled/
-    sudo systemctl restart nginx
-    ```
+  redis:
+    image: redis:7-alpine
+```
 
 ## Дополнительная информация
 
-### Важные соображения
+### Рекомендации по эксплуатации
 
-- **База данных как точка отказа:** В базовом примере PostgreSQL является единой точкой отказа (SPOF). Для продуктивных сред используйте отказоустойчивые решения: Patroni, PGBouncer или облачные управляемые БД (RDS, Cloud SQL).
-- **Секретный ключ (Secret key):** Параметр `secret_key` в `grafana.ini` должен быть идентичен на всех узлах для корректной работы сессий и механизмов аутентификации (OAuth).
-- **Kubernetes:** При использовании Helm-чарта установите `replicas: 2` или более и настройте параметры внешней БД в `values.yaml`.
+- **Синхронизация времени:** Используйте NTP. Разница во времени между узлами > 500мс приведет к дублированию алертов.
+- **Sticky Sessions:** При использовании Redis для сессий липкие сессии **не обязательны**, но рекомендуются для оптимизации работы Grafana Live (WebSockets).
+- **База данных:** PostgreSQL является критической точкой отказа. Используйте **Patroni** для обеспечения HA на уровне СУБД.
+- **Изоляция:** Если Grafana используется для критических алертов, не перегружайте ее тяжелыми ad-hoc запросами.
 
-### Контрольный список (Production Checklist)
+### Контрольный список (HA Checklist)
 
-- [ ] **Отказоустойчивая СУБД:** Кластер PostgreSQL или MySQL с автоматическим переключением (failover).
-- [ ] **Балансировка:** Настройка проверки доступности (health checks) на балансировщике.
-- [ ] **Консистентность сессий:** Одинаковый `secret_key` на всех экземплярах.
-- [ ] **Наблюдаемость:** Мониторинг каждого экземпляра Grafana и метрик базы данных.
-- [ ] **Резервное копирование:** Регулярные бэкапы внешней БД.
+- [ ] Идентичный `secret_key` на всех узлах.
+- [ ] Внешняя БД в отказоустойчивом режиме.
+- [ ] Redis подключен для сессий и кэша.
+- [ ] Порт 9094 открыт (TCP/UDP) для Alerting HA.
+- [ ] Настроены Health Checks (`/api/health`) на балансировщике.
+- [ ] Все узлы синхронизированы по времени (NTP).
 
-Подробная информация доступна в [официальной документации Grafana](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/high-availability/). Для настройки кластера базы данных см. [Patroni](https://patroni.readthedocs.io/). См. также [установку через Helm](./Installation/grafana_helm_installation.md).
+**Ссылки:**
+- [Официальная документация Grafana HA](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/high-availability/)
+- [Настройка Unified Alerting HA](https://grafana.com/docs/grafana/latest/alerting/set-up/high-availability/)
+- [Репозиторий Patroni (PostgreSQL HA)](https://github.com/zalando/patroni)

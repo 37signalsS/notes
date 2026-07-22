@@ -1,58 +1,48 @@
-# Интеграция с системами эскалации
+# Интеграция с системами эскалации — Incident Management
 
 ## Определения
 
-**Системы эскалации** — специализированные платформы (PagerDuty, Opsgenie) для управления инцидентами, которые обеспечивают организацию дежурств, настройку графиков, автоматическую эскалацию уведомлений и отслеживание жизненного цикла инцидентов.
+**Системы эскалации (Escalation Systems)** — платформы для управления инцидентами (PagerDuty, Opsgenie, Splunk On-Call), обеспечивающие автоматизацию дежурств (on-call), многоуровневое оповещение и контроль жизненного цикла критических событий.
 
-**Grafana OnCall** — внутреннее решение Grafana для управления дежурствами и процессами эскалации.
+**Incident Response & Management (IRM)** — комплексный подход к обработке инцидентов, включающий обнаружение, оповещение, совместную работу инженеров и последующий анализ (post-mortem).
 
-**Текущая версия (февраль 2026):** Grafana 12.x
+**Grafana OnCall** — решение от Grafana Labs для управления инцидентами. 
+*   **OnCall Cloud:** Активно развиваемая SaaS-версия в составе Grafana Cloud IRM.
+*   **OnCall OSS:** Open-source версия, официально **архивирована 24 марта 2026 года**. Cloud Connection деактивирован, функции SMS и звонков в OSS-версии не поддерживаются.
 
-> **Важно:** Версия Grafana OnCall для локальной установки (self-hosted) не получает обновлений с весны 2026 года. Для новых инсталляций рекомендуется использовать PagerDuty или Opsgenie.
-
-## Основные концепции
+## Базовые концепции
 
 ### Разделение ответственности
 
 | Система | Сфера ответственности |
 | :--- | :--- |
-| **Grafana** | Обнаружение отклонений, генерация события и отправка уведомления |
-| **Внешняя система** | Управление инцидентом: эскалация при отсутствии реакции, графики дежурств инженеров, группировка схожих событий и трекирование |
+| **Grafana** | Мониторинг, оценка правил, генерация алерта, передача данных в IRM. |
+| **IRM (PagerDuty/Opsgenie)** | Маршрутизация на основе графиков дежурств, эскалация при отсутствии квитирования (Acknowledge), группировка алертов в инциденты. |
 
-### Сравнение систем эскалации
+### Сравнение систем управления инцидентами (2026)
 
-| Критерий | PagerDuty | Opsgenie | Grafana OnCall |
-| :--- | :--- | :--- | :--- |
-| **Интеграция с Grafana** | Нативная (через контакт-пойнт) | Нативная (через контакт-пойнт) | Нативная (через плагин) |
-| **Графики дежурств** | Продвинутые возможности | Продвинутые возможности | Базовый функционал |
-| **Эскалация** | Многоуровневые правила | Многоуровневые правила | Базовые правила |
-| **Трекирование инцидентов** | Полнофункциональное | Полнофункциональное | Ограниченное |
-| **Стоимость** | Высокая (проприетарное ПО) | Средняя (проприетарное ПО) | Бесплатно (self-hosted версия) |
-| **Статус поддержки** | Активно развивается | Активно развивается | Не обновляется |
+| Критерий | PagerDuty | Opsgenie | GoAlert (OSS) | Grafana Cloud IRM |
+| :--- | :--- | :--- | :--- | :--- |
+| **Тип** | SaaS | SaaS | Самостоятельная установка | SaaS |
+| **Сложность эскалации** | Экстремально высокая | Высокая | Средняя | Средняя |
+| **Интеграция с Grafana** | Нативная (Events API v2) | Нативная | Webhook | Нативная + OnCall Plugin |
+| **Поддержка** | Корпоративный стандарт | В составе Atlassian | Сообщество | Grafana Labs |
+| **Статус 2026** | Лидер рынка | Стабильно | Рекомендованная замена OnCall OSS | Приоритет для Grafana |
 
 ### Механизм эскалации
 
-Эскалация — это процесс передачи ответственности за инцидент на следующий уровень, если на текущем уровне реакция отсутствует в течение заданного времени.
+Эскалация гарантирует, что инцидент не будет проигнорирован. Если первый инженер в графике не подтвердил получение алерта (Acknowledge) в течение `X` минут, система переходит на следующий уровень.
 
-**Пример уровней эскалации:**
-
-1. **Уровень 1:** Дежурный инженер (уведомления: мобильное приложение + Email).
-2. **Уровень 2:** Ведущий инженер (уведомления: SMS (Short Message Service) + голосовой звонок).
-3. **Уровень 3:** Руководитель подразделения (уведомление: голосовой звонок).
+**Пример цепочки эскалации:**
+1.  **Уровень 1 (0–5 мин):** Дежурный инженер (Push в приложении, Slack).
+2.  **Уровень 2 (5–15 мин):** Дублирующий инженер (Голосовой звонок, SMS).
+3.  **Уровень 3 (15+ мин):** Тимлид или дежурный администратор (Звонок).
 
 ## Практические сценарии
 
-### Настройка PagerDuty в Grafana
+### Настройка PagerDuty через Provisioning
 
-**Шаг 1: Получение ключа интеграции**
-
-1. В интерфейсе PagerDuty создайте новый сервис.
-2. Добавьте интеграцию с типом «Grafana».
-3. Скопируйте **Integration Key**.
-
-**Шаг 2: Создание контакт-пойнта**
-
-Для декларативной настройки (Provisioning) используйте YAML-файл (YAML Ain't Markup Language):
+Для обеспечения безопасности используйте переменные окружения для хранения ключей интеграции.
 
 ```yaml
 # provisioning/alerting/contact-points-pagerduty.yaml
@@ -62,42 +52,23 @@ contactPoints:
   - orgId: 1
     name: pagerduty-critical
     receivers:
-      - uid: pagerduty-receiver # UID (Unique Identifier)
+      - uid: pd-critical-receiver
         type: pagerduty
         settings:
-          integrationKey: "<YOUR_INTEGRATION_KEY>"
+          # Ключ интеграции из PagerDuty (Events API v2)
+          integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
           severity: critical
           class: infrastructure
-          component: grafana
-          group: production
-          summary: "{{ .CommonAnnotations.summary }}"
+          component: kubernetes-cluster
+          group: backend
+          summary: "Критический сбой: {{ .CommonAnnotations.summary }}"
+          # Автоматическое разрешение инцидента в PD при восстановлении в Grafana
+          autoResolve: true
 ```
 
-**Шаг 3: Настройка политики уведомлений**
+### Настройка Opsgenie с приоритетами
 
-```yaml
-policies:
-  - orgId: 1
-    receiver: pagerduty-critical
-    group_by: ["alertname", "service"]
-    group_wait: 30s
-    group_interval: 5m
-    repeat_interval: 1h
-    routes:
-      - receiver: pagerduty-critical
-        object_matchers:
-          - ["severity", "=", "critical"]
-```
-
-### Настройка Opsgenie в Grafana
-
-**Шаг 1: Получение API (Application Programming Interface) ключа**
-
-1. В Opsgenie создайте или выберите команду.
-2. Добавьте интеграцию типа «Grafana».
-3. Скопируйте **API Key**.
-
-**Шаг 2: Создание контакт-пойнта**
+Opsgenie позволяет динамически назначать приоритет инцидента на основе меток Grafana.
 
 ```yaml
 # provisioning/alerting/contact-points-opsgenie.yaml
@@ -105,52 +76,63 @@ apiVersion: 1
 
 contactPoints:
   - orgId: 1
-    name: opsgenie-team
+    name: opsgenie-devops
     receivers:
-      - uid: opsgenie-receiver
+      - uid: og-devops-receiver
         type: opsgenie
         settings:
-          apiKey: "<YOUR_API_KEY>"
+          apiKey: ${OPSGENIE_API_KEY}
           apiURL: "https://api.opsgenie.com/v2/alerts"
-          message: "{{ .CommonAnnotations.summary }}"
-          description: "{{ .CommonAnnotations.description }}"
+          message: "[{{ .Status | upper }}] {{ .CommonLabels.alertname }}"
+          # Приоритет P1 для critical, P3 для остальных
           priority: "{{ if eq .CommonLabels.severity \"critical\" }}P1{{ else }}P3{{ end }}"
+          description: |
+            Описание: {{ .CommonAnnotations.description }}
+            Инстанс: {{ .CommonLabels.instance }}
+            Дашборд: {{ .DashboardURL }}
           responders:
             - type: team
-              name: DevOps
+              name: DevOps-OnCall
 ```
 
-### Настройка многоуровневой эскалации
+### Маршрутизация многоуровневых уведомлений
 
-Алгоритм работы:
-
-1. **Во внешней системе** (PagerDuty/Opsgenie) настраиваются временные интервалы передачи инцидента между уровнями (например, 0–5 мин, 5–15 мин, 15+ мин).
-2. **В Grafana** настраивается маршрутизация оповещений в соответствующий контакт-пойнт на основе меток (labels).
-
-**Пример маршрутизации в Grafana:**
+Настройка политики уведомлений для разделения потоков между мессенджерами и системами эскалации.
 
 ```yaml
+# provisioning/alerting/policies/escalation-routing.yaml
+apiVersion: 1
+
 policies:
   - orgId: 1
-    receiver: default
-    group_by: ["alertname", "service"]
+    receiver: telegram-default
+    group_by: ["alertname", "cluster"]
     routes:
+      # Критичные алерты — в PagerDuty (эскалация)
       - receiver: pagerduty-critical
         object_matchers:
           - ["severity", "=", "critical"]
         group_wait: 10s
-        repeat_interval: 1h
-      - receiver: opsgenie-team
+        repeat_interval: 30m
+      # Предупреждения — только в Opsgenie (без ночных звонков)
+      - receiver: opsgenie-devops
         object_matchers:
           - ["severity", "=", "warning"]
         group_wait: 1m
         repeat_interval: 4h
 ```
 
+## Безопасность и секреты
+
+1.  **Интерполяция переменных:** Всегда используйте `${VARIABLE_NAME}` в конфигурации Grafana. Никогда не фиксируйте API-ключи в Git-репозиториях.
+2.  **Принцип минимизации привилегий:** В PagerDuty/Opsgenie используйте "Integration Keys" или "API Keys" с ограниченными правами (только на создание алертов), а не глобальные ключи администратора.
+3.  **Сетевая изоляция:** Если Grafana находится в закрытом контуре, убедитесь, что разрешен исходящий HTTPS-трафик к эндпоинтам `events.pagerduty.com` или `api.opsgenie.com`.
+
 ## Дополнительная информация
 
 **См. также:**
 
-- [Основные концепции Grafana Alerting](./concepts.md) — терминология и жизненный цикл оповещений
-- [Интеграция с Telegram](./telegram_integration.md) — настройка уведомлений в мессенджер
-- [Provisioning алертов](./provisioning.md) — декларативное управление ресурсами через конфигурационные файлы
+- [Основные концепции Grafana Alerting](./concepts.md) — терминология и жизненный цикл оповещений.
+- [Интеграция с Telegram](./telegram_integration.md) — настройка быстрых уведомлений.
+- [Provisioning алертов](./provisioning.md) — декларативное управление ресурсами.
+- [Best Practices: Алертинг](./best_practices.md) — рекомендации по снижению шума.

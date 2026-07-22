@@ -1,127 +1,169 @@
 # Развертывание Apache Kafka с помощью Ansible
 
+**Автоматизация развертывания Kafka через Ansible** — это стандарт де-факто для управления жизненным циклом (Lifecycle Management) кластеров на "голом железе" (Bare Metal) или виртуальных машинах. Использование Ansible обеспечивает идемпотентность конфигурации, упрощает масштабирование и позволяет внедрять лучшие практики безопасности (TLS, SASL) централизованно.
+
+---
+
 ## Определения
 
-**Ansible-роль Kafka** — инструмент автоматизации для развертывания и настройки кластеров Apache Kafka. Позволяет быстро поднять отказоустойчивую конфигурацию из нескольких брокеров.
+- **Ansible Role (Роль):** Структурированный набор плейбуков, шаблонов и переменных, предназначенный для выполнения конкретной задачи (в данном случае — полной установки Kafka).
+- **Inventory (Инвентарь):** Файл или скрипт, содержащий список всех хостов кластера и их группировку (например, `controllers` и `brokers`).
+- **KRaft (Kafka Raft):** Режим работы без ZooKeeper, использующий протокол Raft для управления метаданными. В Kafka 3.x+ это основной режим для промышленной эксплуатации.
+- **Node ID:** Уникальный числовой идентификатор брокера в кластере, обязательный для KRaft.
+- **Voters:** Список узлов (контроллеров), участвующих в голосовании по протоколу Raft для обеспечения консенсуса.
+- **Handlers (Обработчики):** Задачи в Ansible, которые запускаются только при изменении конфигурации (например, перезапуск сервиса Kafka после смены настроек в `server.properties`).
 
-**KRaft (Kafka Raft)** — современный режим консенсуса в Kafka (начиная с версии 3.3), исключающий зависимость от ZooKeeper. В этом режиме метаданные кластера хранятся непосредственно в Kafka, а роли контроллера и брокера могут быть совмещены.
+---
 
-## Подготовка
+## Основные концепции
 
-### Требования к инфраструктуре
+### Почему Ansible для Kafka?
 
-Для промышленной эксплуатации (Production) рекомендуются следующие ресурсы на каждую ноду:
-- **CPU**: 4 ядра
-- **RAM**: 16 ГБ (минимум 2 ГБ для Heap)
-- **Disk**: SSD, минимум 500 ГБ на брокера
-- **Сеть**: 1 Гбит/с и выше
-- **ОС**: Ubuntu 22.04+ или CentOS 8+
+В отличие от ручной установки, Ansible позволяет:
+1. **Идемпотентность:** Повторный запуск плейбука не изменит систему, если конфигурация уже соответствует целевой.
+2. **Контроль версий:** Вся инфраструктура описывается кодом (IaC), что позволяет версионировать изменения через Git.
+3. **Безопасность:** Массовая генерация и деплой SSL-сертификатов на десятки нод за один прогон.
+4. **Тюнинг ОС:** Автоматическая настройка лимитов (`ulimit`), TCP-стека и параметров ядра (`sysctl`) под высокие нагрузки.
 
-### Предварительные условия
+### Жизненный цикл развертывания в KRaft
 
-1. Установленный Ansible версии 2.15 и выше на управляющей машине.
-2. Настроенный SSH-доступ к целевым хостам под пользователем `root` или с правами `sudo`.
+Процесс автоматизации развертывания в режиме KRaft включает специфичные шаги:
+1. **Генерация Cluster ID:** Использование `kafka-storage.sh random-uuid` один раз для всего кластера.
+2. **Форматирование хранилища:** Выполнение `kafka-storage.sh format` с использованием Cluster ID. В Ansible это должно быть защищено проверкой наличия файла `meta.properties`, чтобы избежать повторного форматирования и потери данных.
+3. **Управление кворумом:** Правильная настройка `controller.quorum.voters` на основе IP-адресов из инвентаря.
 
 ---
 
 ## Практические сценарии
 
-### 1. Развертывание кластера в режиме KRaft
+### 1. Подготовка промышленного кластера (Production Ready)
 
-Сценарий описывает установку кластера из 3 брокеров, где функции контроллера совмещены с функциями брокера.
+Этот сценарий описывает настройку кластера из 3 узлов в совмещенном режиме (Controller + Broker) с учетом тюнинга ОС и JVM.
 
-#### Шаг 1: Подготовка роли
+#### Шаг 1: Инвентарь (`inventory/hosts.ini`)
 
-Создайте директорию для проекта и склонируйте роль:
-```bash
-mkdir -p my_kafka_project/roles/kafka
-cd my_kafka_project
-git clone https://github.com/dragomirr/ansible-role-kafka.git roles/kafka
-```
-
-#### Шаг 2: Настройка инвентаря
-
-Создайте файл `inventory/hosts.ini`:
 ```ini
 [kafka_cluster]
-server-1 ansible_host=192.168.10.11 ansible_user=root kafka_node_id=1
-server-2 ansible_host=192.168.10.12 ansible_user=root kafka_node_id=2
-server-3 ansible_host=192.168.10.13 ansible_user=root kafka_node_id=3
+kafka-node-1 ansible_host=10.0.1.1 kafka_node_id=1
+kafka-node-2 ansible_host=10.0.1.2 kafka_node_id=2
+kafka-node-3 ansible_host=10.0.1.3 kafka_node_id=3
+
+[kafka_cluster:vars]
+ansible_user=deploy
+ansible_become=yes
+kafka_version=3.7.1
+scala_version=2.13
 ```
 
-#### Шаг 3: Создание плейбука
+#### Шаг 2: Плейбук с тюнингом (`playbook.yaml`)
 
-Создайте файл `playbook.yaml`:
 ```yaml
-- name: Install Kafka
+- name: Развертывание кластера Kafka KRaft
   hosts: kafka_cluster
-  become: yes
   roles:
     - role: kafka
-      # Настройки кучи JVM
-      kafka_heap_size: 2G
-      # Автоматическая установка Java и зависимостей
-      kafka_install_dependencies: true
-      # Предварительное создание топиков
-      kafka_topics:
-        - name: MyFirstTopic
-          replication_factor: 1
-          partitions: 10
-      # Дополнительные параметры конфигурации (server.properties)
-      kafka_additional_config:
-        message.max.bytes: 1048576 # 1 MiB
-      # Параметры запуска JVM
-      kafka_opts:
-        - -XX:NewSize=256m
+      vars:
+        # Системные настройки
+        kafka_user: kafka
+        kafka_group: kafka
+        kafka_data_dir: /var/lib/kafka/data
+        
+        # JVM Тюнинг (Актуально для Java 17/21)
+        # Не давайте Kafka слишком много Heap, оставьте RAM для Page Cache ОС
+        kafka_heap_size: "6G" 
+        kafka_jvm_performance_opts: >-
+          -XX:+UseG1GC 
+          -XX:MaxGCPauseMillis=20 
+          -XX:InitiatingHeapOccupancyPercent=35 
+          -XX:+ExplicitGCInvokesConcurrent
+        
+        # Настройки KRaft
+        kafka_process_roles: "broker,controller"
+        kafka_controller_quorum_voters: "1@10.0.1.1:9093,2@10.0.1.2:9093,3@10.0.1.3:9093"
+        
+        # Тюнинг производительности
+        kafka_additional_config:
+          num.network.threads: 8
+          num.io.threads: 16
+          socket.send.buffer.bytes: 102400
+          socket.receive.buffer.bytes: 102400
+          num.partitions: 3
+          default.replication.factor: 3
+          min.insync.replicas: 2
+          
+          # Настройки Retention (7 дней)
+          log.retention.hours: 168
+          log.segment.bytes: 1073741824 # 1GB
 ```
 
-#### Шаг 4: Запуск установки
+#### Шаг 3: Настройка ОС через Ansible (Pre-tasks)
 
-```bash
-ansible-playbook -i inventory/hosts.ini playbook.yaml
+Перед установкой самой Kafka важно подготовить ОС:
+```yaml
+  pre_tasks:
+    - name: Увеличение лимитов файловых дескрипторов
+      pam_limits:
+        domain: "{{ kafka_user }}"
+        limit_type: "{{ item }}"
+        limit_item: nofile
+        value: 65536
+      loop: [ 'soft', 'hard' ]
+
+    - name: Настройка параметров ядра для сети
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+      with_dict:
+        net.core.rmem_max: 16777216
+        net.core.wmem_max: 16777216
+        net.ipv4.tcp_rmem: "4096 87380 16777216"
+        net.ipv4.tcp_wmem: "4096 65536 16777216"
 ```
 
 ---
 
-### 2. Проверка работоспособности
+### 2. Автоматизация обновления (Rolling Upgrade)
 
-Выполните команды на одном из брокеров для проверки успешной установки.
+Обновление Kafka без простоя (downtime) требует последовательного перезапуска нод. В Ansible это реализуется через `serial: 1`.
 
-**Просмотр списка топиков:**
-```bash
-/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
-```
+```yaml
+- name: Обновление конфигурации Kafka (Rolling)
+  hosts: kafka_cluster
+  serial: 1 # Выполнять по одной ноде за раз
+  tasks:
+    - name: Обновление server.properties
+      template:
+        src: server.properties.j2
+        dest: /opt/kafka/config/server.properties
+      notify: restart kafka
 
-**Отправка тестового сообщения:**
-```bash
-echo "Hello, World from Kafka" | /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic MyFirstTopic
-```
-
-**Чтение сообщений из топика:**
-```bash
-/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic MyFirstTopic --from-beginning
-# → Hello, World from Kafka
+    - name: Ожидание вхождения ноды в ISR
+      shell: "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe"
+      register: topic_status
+      until: "'Isr' in topic_status.stdout"
+      retries: 20
+      delay: 30
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Типовая структура проекта
+### Тюнинг JVM: Почему 6-8 ГБ Heap?
 
-```text
-├── inventory
-│   └── hosts.ini
-├── playbook.yaml
-└── roles
-    └── kafka
-        ├── defaults/main.yml    # Переменные роли по умолчанию
-        ├── tasks/main.yml       # Основные задачи установки
-        ├── templates/           # J2-шаблоны для systemd и конфигов
-        └── vars/main.yml        # Внутренние переменные роли
-```
+Одной из самых частых ошибок является выделение Kafka 32 ГБ+ оперативной памяти под Heap.
+- **Page Cache:** Kafka спроектирована так, что она почти не держит данные в памяти приложения. Она использует системные вызовы `sendfile`, которые читают данные из кэша файловой системы (Page Cache) напрямую в сетевой сокет.
+- **Производительность:** Если вы отдадите 90% RAM под JVM Heap, ОС не сможет эффективно кэшировать файлы сегментов, что приведет к резкому росту операций чтения с диска (Disk I/O) и падению производительности.
 
 ### См. также
-- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура, брокеры, топики и партиции.
-- **[Kafka для мониторинга](./kafka_for_monitoring.md)** — использование Kafka как буфера для телеметрии.
-- **[Миграция на StatefulSet](./deployment_to_statefulset_migration.md)** — развертывание Kafka в Kubernetes.
+
+- **[Обзор Apache Kafka](./kafka_overview.md)** — основы архитектуры (брокеры, топики).
+- **[Kafka для мониторинга](./kafka_for_monitoring.md)** — метрики JMX, которые стоит собирать после деплоя.
+- **[Гарантии доставки](./delivery_guarantees.md)** — как настройки `acks` и `min.insync.replicas` влияют на надежность.
+- **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — как распределять данные после расширения кластера.
+
+### Инструменты
+
+- **[Confluent Ansible Roles](https://github.com/confluentinc/cp-ansible):** Официальные, наиболее полные роли от Confluent (поддерживают TLS, Kerberos, мониторинг).
+- **[JMX Exporter:](https://github.com/prometheus/jmx_exporter)** Рекомендуется устанавливать через Ansible как Java Agent для сбора метрик в Prometheus.

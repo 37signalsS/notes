@@ -2,12 +2,26 @@
 
 ## Определения
 
-**Podman Compose** — общее название для способов запуска многоконтейнерных приложений с использованием спецификации Docker Compose в среде Podman. Существует два основных подхода:
+**Podman Compose** — инструмент для запуска многоконтейнерных приложений и управления ими с помощью файлов конфигурации, аналогичных Docker Compose. Он позволяет описывать сервисы, сети и тома в одном файле (обычно `compose.yaml` или `docker-compose.yml`).
 
-1. **Podman Compose (подкоманда)** — встроенный механизм Podman (начиная с версии 4.1), который выступает прокси-слоем. В качестве исполнителя (провайдера) он использует внешнюю утилиту `docker-compose` или Docker Compose v2, перенаправляя её запросы на сокет Podman.
-2. **podman-compose** — сторонняя утилита, написанная на Python. Она является нативной реализацией спецификации Compose для Podman, не требует наличия Docker-компонентов и напрямую взаимодействует с API Podman.
+В современной экосистеме выделяют следующие стандарты и инструменты:
 
-**Compose Spec** — открытый стандарт описания многоконтейнерных приложений (файлы `compose.yaml` или `docker-compose.yml`).
+- **Docker Compose (v2)** — основной и современный стандарт Docker, реализованный как плагин.
+- **docker-compose** — устаревший (legacy) способ запуска через отдельную Python-утилиту.
+- **Podman Compose** — официальный механизм в Podman для работы с Compose-спецификацией.
+- **podman-compose** — сторонний инструмент (Python-утилита) с открытым исходным кодом, реализующий поддержку Compose без зависимостей от Docker.
+
+Существует два основных способа запуска Compose-файлов в Podman:
+
+1. **Podman Compose (подкоманда `podman compose`)** — встроенный механизм (начиная с версии 4.1), который выступает прокси-слоем. По умолчанию он ищет установленный в системе `docker-compose` (v2) и проксирует команды через него на сокет Podman.
+2. **podman-compose (отдельная утилита)** — нативная реализация спецификации Compose для Podman, написанная на Python. Она напрямую взаимодействует с API Podman и не требует Docker-компонентов. Это "чистый" путь для Podman, избавленный от Docker-прокладок.
+
+
+**Основные задачи:**
+- Определение и запуск связанных сервисов из одного файла.
+- Автоматическое создание сетей и томов.
+- Поддержка синтаксиса и опций Docker Compose.
+- Обеспечение безопасности через архитектуру без демона и rootless-режим.
 
 ## Основные концепции
 
@@ -16,146 +30,187 @@
 | Характеристика | Podman Compose (подкоманда) | podman-compose (Python-утилита) |
 | :--- | :--- | :--- |
 | **Тип** | Встроенная прослойка (wrapper) | Сторонний инструмент |
-| **Зависимости** | Требует установленный `docker-compose` | Требует Python и пакет `podman-compose` |
-| **Совместимость** | Высокая (использует оригинальный движок) | Средняя (реализация спецификации на Python) |
-| **Архитектура** | Проксирует команды в Docker Compose | Нативно вызывает команды Podman через API |
-| **Работа с Pods** | Обычно создает отдельные контейнеры в сети | По умолчанию может объединять сервисы в один **Pod** (группу контейнеров) |
+| **Зависимости** | Требует `docker-compose` | Требует Python и пакет `podman-compose` |
+| **Совместимость** | Максимальная (через Docker-провайдер) | Средняя (нативная реализация) |
+| **Архитектура** | Проксирует команды в Docker Compose | Нативно вызывает API Podman |
+| **Работа с Pods** | Создает отдельные контейнеры | Автоматически объединяет сервисы в **Pod** |
 
-### Почему Podman вместо Docker Compose
-
-- **Rootless**: Запуск всей связки контейнеров от обычного пользователя без привилегий root.
-- **Daemonless**: Отсутствие постоянно запущенного фонового процесса (демона).
-- **Интеграция с systemd**: Возможность конвертации в юниты Quadlet для надежного автозапуска.
-- **Безопасность**: Изоляция через User Namespaces и отсутствие единой точки отказа.
+Выбор зависит от целей: для максимальной совместимости с Docker-воркфлоу — `podman compose`, для "чистого" Podman без Docker-прокладок — `podman-compose`.
 
 ## Практические сценарии
 
-### 1. Установка podman-compose
+### 1. Установка
 
-Если вы предпочитаете нативный Python-инструмент без Docker-прокладок:
-
+#### Пакетные менеджеры (Linux)
 ```bash
-# Ubuntu/Debian
-sudo apt install podman-compose
+# Debian/Ubuntu
+apt install podman-compose
 
-# Fedora/CentOS/RHEL
-sudo dnf install podman-compose
-
-# Через pip (универсальный способ)
-pip install podman-compose
-
-# Проверка версии
-podman-compose version
-# → podman-compose version 1.0.6
+# RHEL/CentOS/Fedora
+yum install podman-compose
 ```
 
-### 2. Запуск приложения
+#### Универсальный способ (pip)
+```bash
+pip3 install podman-compose
+podman-compose --version
+```
 
-Podman автоматически ищет файлы в следующем порядке: `compose.yaml`, `docker-compose.yml`, `container-compose.yml`.
+#### Windows и macOS
+- **Windows**: Рекомендуется **Podman Desktop**, который включает Podman Machine (ВМ для запуска контейнеров). После установки команды доступны в PowerShell или Windows Terminal.
+- **macOS**:
+  ```bash
+  brew install podman
+  podman machine init
+  podman machine start
+  pip3 install podman-compose
+  ```
 
-**Пример `compose.yaml`:**
+#### Ручная установка из исходного кода
+Если `pip` недоступен или нужна версия из репозитория:
+```bash
+git clone https://github.com/containers/podman-compose.git
+cd podman-compose
+python3 setup.py install
+```
 
+### 2. Управление приложением
+
+Podman Compose автоматически подтягивает конфигурационные файлы в текущей директории, если они названы:
+- `compose.yaml`
+- `docker-compose.yml`
+- `container-compose.yml`
+
+При использовании Podman важно помнить, что он требует явного указания реестра (например, `docker.io/library/nginx`), так как по умолчанию не всегда выполняет поиск в Docker Hub.
+
+**Пример `compose.yaml` (PostgreSQL + Nginx):**
 ```yaml
 services:
   db:
-    image: postgres:16
+    image: docker.io/postgres:16
     environment:
       POSTGRES_PASSWORD: example
     volumes:
       - db_data:/var/lib/postgresql/data
+
   app:
-    image: nginx:alpine
+    image: docker.io/nginx:alpine
     ports:
       - "8080:80"
     depends_on:
       - db
+
 volumes:
   db_data:
 ```
 
-**Команды управления:**
+**Основные команды:**
+- `podman-compose up -d` — запуск всех сервисов в фоновом режиме.
+- `podman-compose ps` — список запущенных сервисов и их статусы.
+- `podman-compose logs -f` — просмотр логов всех сервисов в реальном времени.
+- `podman-compose stop <service>` — остановка конкретного сервиса.
+- `podman-compose down` — полное удаление контейнеров, сетей и томов.
 
-```bash
-# Запуск в фоновом режиме
-podman-compose up -d
-# → podman-compose version 1.0.6, podman version 4.9.4
-# → podman pod create --name example_default ...
-# → podman run -d --pod example_default ...
+### 3. Работа с переменными окружения (.env)
 
-# Просмотр статуса
-podman-compose ps
-# → CONTAINER ID  IMAGE                           COMMAND               CREATED         STATUS             PORTS                 NAMES
-# → 8f2a1b3c4d5e  docker.io/library/postgres:16   postgres              1 minute ago    Up 1 minute ago                          example_db_1
-# → 1a2b3c4d5e6f  docker.io/library/nginx:alpine  nginx -g daemon o...  1 minute ago    Up 1 minute ago    0.0.0.0:8080->80/tcp  example_app_1
+Файл `.env` позволяет отделить настройки и секреты от основного YAML-файла. Podman Compose автоматически считывает `.env` в той же директории.
 
-# Остановка и удаление ресурсов
-podman-compose down
-# → podman stop -t 10 example_app_1 example_db_1
-# → podman rm -f example_app_1 example_db_1
-# → podman pod rm example_default
+**Пример `.env`:**
+```text
+WEB_PORT=8080
+DB_USER=admin
+POSTGRES_PASSWORD=supersecret
 ```
 
-### 3. Нюансы сетевого взаимодействия
+**Использование в `docker-compose.yml`:**
+```yaml
+services:
+  web:
+    image: docker.io/nginx:alpine
+    ports:
+      - "${WEB_PORT:-80}:80"
+  db:
+    image: docker.io/postgres:16
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+```
 
-В `podman-compose` есть критическое отличие в работе сети по сравнению с нативными подами Podman:
+*Совет: Чтобы проверить финальный YAML с подставленными значениями, выполните `podman-compose config`.*
 
-- **В нативном поде** (`podman pod create`): Контейнеры делят один network namespace и loopback. Обращение между ними доступно через `localhost`. Подробнее: **[Поды в Podman](./podman_pods.md)**.
-- **В podman-compose**: Создается bridge-сеть (аналогично Docker). Контейнеры объединяются в логический Pod, но имеют разные сетевые пространства.
-- **Правило**: Всегда используйте **имена сервисов** (`db`, `redis`) вместо `localhost` для связи между контейнерами внутри одного compose-файла.
+### 4. Управление сетями
 
-### 4. Использование Docker Compose v2 как провайдера
+Podman Compose автоматически создает изолированную сеть, но можно управлять сетями вручную:
+- `podman network create <name>` — создание новой сети.
+- `podman network ls` — список всех сетей Podman.
 
-Если вам нужна максимальная совместимость с плагинами Docker Compose:
+В rootless-режиме сети настраиваются через `slirp4netns` или `pasta`.
 
-1. Установите `docker-compose-plugin`.
-2. Включите сокет Podman для пользователя:
+### 5. Особенности сетевого взаимодействия (Networking)
 
-   ```bash
-   systemctl --user enable --now podman.socket
-   ```
+В `podman-compose` контейнеры по умолчанию объединяются в один **Pod**. Это дает им общее пространство имен, но есть нюанс в сетевом стеке:
 
-3. Укажите путь к сокету в переменной окружения:
+- **Обращение по именам сервисов**: Контейнеры видят друг друга по именам, описанным в `compose.yaml` (например, `curl db:5432`). Это рекомендуемый способ.
+- **Проблема localhost**: При запуске через `podman-compose`, контейнеры могут не видеть друг друга через `127.0.0.1` (localhost), даже находясь в одном поде. Это связано с тем, что `podman-compose` создает bridge-сеть "сверху", и сетевая модель остается близкой к Docker.
+- **Различие с нативным Podman**: Если создать под вручную (`podman pod create`), Podman создает `infra container` с единым network namespace, где `localhost` работает для всех контейнеров. `podman-compose` работает иначе ради совместимости со спецификацией Docker Compose.
 
-   ```bash
-   export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
-   ```
+**Рекомендация:** Всегда используйте имена сервисов (`db`, `redis`, `app`) вместо `localhost` для межсервисного взаимодействия.
 
-4. Теперь команда `podman compose up` будет использовать оригинальный движок Docker для управления контейнерами Podman.
+### 6. Мониторинг и отладка
+
+Для анализа работы сервисов в Podman Compose используйте нативные команды Podman для подов:
+
+- `podman pod ps` — просмотр созданных подов.
+- `podman ps --pod` — список контейнеров с привязкой к их подам.
+- `podman pod logs <POD_ID>` — просмотр агрегированных логов всех контейнеров в поде.
+- `podman exec -it <container_name> sh` — вход в контейнер для отладки (например, проверки связи через `curl db:5432`).
+
+## Миграция из Docker Compose
+
+1. **Проверка манифеста**: Большинство файлов версии 3.x работают "как есть".
+2. **Явные реестры**: Проверьте, что во всех `image` указаны полные пути (`docker.io/...`).
+3. **Права на тома**: В rootless-режиме может потребоваться настройка прав доступа к папкам на хосте (см. `podman unshare chown`).
+4. **Сетевые нюансы**: Используйте имена сервисов вместо `localhost` (§5).
+5. **Запуск**: Замените вызов `docker-compose` на `podman-compose`.
+
+### Использование Docker Compose v2 как провайдера
+Для максимальной совместимости с оригинальным Docker Compose можно использовать подкоманду `podman compose`:
+1. Включите сокет Podman: `systemctl --user enable --now podman.socket`.
+2. Настройте переменную: `export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"`.
+3. Запускайте через `podman compose up` (без дефиса). Podman будет проксировать команды в установленный плагин `docker-compose`.
 
 ## Дополнительная информация
 
 ### Генерация Kubernetes-манифестов
-
-Одной из сильнейших сторон Podman является возможность миграции с Compose на Kubernetes. Если приложение запущено через `podman-compose`, оно создает группу контейнеров (Pod), которую можно экспортировать.
+Podman позволяет экспортировать запущенный под (включая созданный через compose) в YAML для Kubernetes:
 
 ```bash
 # Узнать ID созданного пода
 podman pod ps
 
-# Сгенерировать YAML для Kubernetes (Podman 4.3+)
+# Сгенерировать YAML (Podman 4.x+)
 podman kube generate <POD_ID> > deployment.yaml
 
-# Запуск из YAML
-podman kube play deployment.yaml
+# Устаревший синтаксис (может встречаться в старых версиях)
+podman generate kube <POD_ID>
 ```
 
-Подробнее об интеграции: **[Поды в Podman: Интеграция с Kubernetes](./podman_pods.md#3-интеграция-с-kubernetes)**.
-
-*Примечание: сгенерированный файл содержит описания Pod и Service, но может потребовать ручной правки для добавления Deployment или StatefulSet.*
+Это отличное решение для быстрой миграции из локальной разработки в кластер, хотя полученный YAML обычно требует доработки (например, добавления Deployment или Service).
 
 ### Альтернатива: Quadlet
 
-Для продакшн-сред на Linux рекомендуется переходить с Compose на **Quadlet**. Это нативный способ описания контейнеров Podman в виде юнитов systemd, что обеспечивает:
+Для продакшн-сред на Linux рекомендуется переходить с Compose на **Quadlet**. Это нативный способ описания контейнеров Podman в виде юнитов systemd.
 
-- Декларативность.
-- Нативное управление через `systemctl`.
-- Отсутствие зависимости от Python или внешних скриптов.
+**Преимущества Quadlet:**
+- Декларативность и интеграция с `systemctl`.
+- Автоматический перезапуск при сбоях или после перезагрузки хоста.
+- Отсутствие зависимости от Python или сторонних утилит типа `podman-compose`.
+- Гибкость настройки через юниты.
 
 Подробнее: **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)**.
 
 ### См. также
-
 - **[Podman vs Docker](./podman_vs_docker.md)** — архитектурные различия.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — как Podman работает без демона.
 - **[Rootless режим](./podman_rootless.md)** — особенности запуска без root.
-сти запуска без root.
+- **[Поды в Podman](./podman_pods.md)** — концепция групп контейнеров.

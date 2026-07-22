@@ -2,138 +2,144 @@
 
 ## Определения
 
-**kubeconfig** — файл формата YAML, содержащий параметры конфигурации для подключения к API-серверу Kubernetes. Используется утилитой `kubectl`, а также другими клиентами (Lens, Helm, SDK) для аутентификации и выбора целевого кластера.
+**kubeconfig** — файл в формате YAML, содержащий параметры конфигурации для подключения к API-серверу Kubernetes. Он объединяет данные о кластерах, пользователях и контекстах, позволяя утилите `kubectl` и другим клиентам (Helm, Lens, Terraform) переключаться между различными окружениями.
 
-**Контекст (context)** — именованная группа параметров, объединяющая кластер, пользователя и (опционально) пространство имен (namespace) по умолчанию. Позволяет быстро переключаться между различными окружениями (например, dev, staging, prod).
+**Контекст (Context)** — логическая связка между **кластером** (куда подключаемся), **пользователем** (кто подключается) и **пространством имен** (namespace по умолчанию). Контексты позволяют работать с несколькими кластерами или ролями в рамках одного файла конфигурации.
 
-**Переменная KUBECONFIG** — переменная окружения, содержащая путь к одному или нескольким файлам конфигурации. По умолчанию `kubectl` ищет файл по пути `~/.kube/config`.
+**KUBECONFIG (переменная окружения)** — список путей к файлам конфигурации, разделенных двоеточием (в Linux/macOS) или точкой с запятой (в Windows). Если переменная не задана, `kubectl` по умолчанию использует файл `~/.kube/config`.
 
 ## Основные концепции
 
-### Структура файла
+### Структура файла конфигурации
 
-Файл конфигурации состоит из следующих ключевых секций:
+Файл `kubeconfig` состоит из четырех основных секций:
 
 | Секция | Назначение |
 | :--- | :--- |
-| **`clusters`** | Список кластеров: URL API-сервера и данные CA (Certificate Authority) для проверки подлинности сервера. |
-| **`users`** | Учетные данные пользователей: клиентские сертификаты, токены или параметры внешних плагинов аутентификации. |
-| **`contexts`** | Связки между кластером и пользователем. Здесь же указывается `namespace` по умолчанию для контекста. |
-| **`current-context`** | Указывает, какой контекст является активным в данный момент. |
+| **`clusters`** | Список эндпоинтов API-серверов и данные CA-сертификатов (`certificate-authority-data`) для проверки подлинности сервера. |
+| **`users`** | Учетные данные: клиентские сертификаты, статические токены или инструкции для внешних плагинов аутентификации (`exec`). |
+| **`contexts`** | Связывает пользователя с кластером и задает `namespace` по умолчанию для всех команд в этом контексте. |
+| **`current-context`** | Название контекста, который используется `kubectl` по умолчанию в данный момент. |
 
 ### Методы аутентификации
 
-| Метод | Поле в kubeconfig | Описание |
+| Метод | Поле в kubeconfig | Технические особенности |
 | :--- | :--- | :--- |
-| **Клиентские сертификаты** | `client-certificate-data`, `client-key-data` | Использование X.509 сертификатов. Стандарт для администраторов и системных компонентов. |
-| **Bearer Token** | `token` | Статический токен или JWT (ServiceAccount). Часто используется для временного доступа или в CI/CD. |
-| **Exec Plugin** | `exec` | Вызов внешней утилиты для получения токена (например, `aws eks get-token` или `gcloud auth`). |
+| **Клиентские сертификаты** | `client-certificate-data` | Использование X.509 сертификатов. Безопасно, но сложно в ротации без автоматизации. |
+| **Bearer Token** | `token` | Статический токен (например, ServiceAccount). Легко использовать, но трудно отозвать при компрометации. |
+| **Exec Plugin** | `exec` | Вызов внешней утилиты (AWS CLI, GCloud, `kubelogin` для OIDC) для получения временного токена. Рекомендуемый метод для корпоративных сред. |
+| **Basic Auth** | `username`/`password` | Устаревший и небезопасный метод. Удален в последних версиях Kubernetes. |
 
-Подробнее о механизмах проверки личности: [Аутентификация в Kubernetes](../Security/authentication.md).
+### Механизм слияния (Merging)
 
-### Принцип работы контекста
-
-Контекст позволяет абстрагироваться от деталей подключения. Команда `kubectl` использует параметры текущего контекста для формирования запроса:
-
-```text
-Запрос = [Кластер (URL + CA)] + [Пользователь (Credentials)] + [Namespace]
-```
+Если задано несколько файлов через переменную `KUBECONFIG`, `kubectl` объединяет их на лету:
+1. Конфликтующие значения разрешаются в пользу **первого** файла в списке, в котором найдено значение.
+2. Если используется флаг `--kubeconfig`, он имеет абсолютный приоритет над переменной окружения и файлом по умолчанию.
+3. Команда `kubectl config view --flatten` позволяет увидеть результат слияния всех доступных конфигов в один документ.
 
 ## Практические сценарии
 
-### Получение kubeconfig
+### Получение доступа к кластеру
 
-#### Для кластеров Bare Metal (kubeadm/Kubespray)
-
-После инициализации через `kubeadm` файл администратора создается по пути `/etc/kubernetes/admin.conf`.
-
+#### Самостоятельно развернутые кластеры (kubeadm)
+После успешного выполнения `kubeadm init`, файл административного доступа генерируется на мастере.
 ```bash
-# Копирование конфига на локальную машину
-scp root@master-node:/etc/kubernetes/admin.conf ~/.kube/config
+# На мастер-узле
+sudo cp /etc/kubernetes/admin.conf $HOME/
+sudo chown $(id -u):$(id -g) $HOME/admin.conf
+
+# На локальной машине (копирование через scp)
+scp user@master-ip:~/admin.conf ~/.kube/config-prod
+export KUBECONFIG=~/.kube/config-prod
 ```
 
-#### Для облачных кластеров
-
+#### Облачные провайдеры (Managed Kubernetes)
+Провайдеры обычно используют `exec` плагины для интеграции с IAM.
 ```bash
-# Google Kubernetes Engine (GKE)
-gcloud container clusters get-credentials cluster-name --zone europe-west1-b
-# → Fetching cluster endpoint and auth data.
-# → kubeconfig entry generated for cluster-name.
+# AWS EKS
+aws eks update-kubeconfig --region us-east-1 --name my-cluster
 
-# Amazon EKS
-aws eks update-kubeconfig --name cluster-name --region eu-central-1
-# → Added new context arn:aws:eks:eu-central-1:1234567890:cluster/cluster-name to /home/user/.kube/config
+# Google Cloud (GKE)
+gcloud container clusters get-credentials my-cluster --zone us-central1-a
 ```
 
-#### Для локальных кластеров
+### Управление конфигурацией через CLI
 
-* **Minikube:** `minikube start` автоматически добавляет контекст `minikube`.
-* **Kind:** `kind export kubeconfig --name my-cluster`.
-
-### Управление контекстами
+Вместо ручного редактирования YAML рекомендуется использовать встроенные команды:
 
 ```bash
-# Просмотр текущего активного контекста
+# Посмотреть текущий контекст
 kubectl config current-context
-# → my-production-cluster
 
-# Список всех доступных контекстов
+# Список всех контекстов в формате таблицы
 kubectl config get-contexts
-# → CURRENT   NAME          CLUSTER       USER          NAMESPACE
-# → *         prod          prod-k8s      admin-user    default
-# →           staging       stage-k8s     dev-user      testing
 
-# Переключение на другой контекст
-kubectl config use-context staging
-# → Switched to context "staging".
+# Переключение на другой кластер/контекст
+kubectl config use-context dev-cluster
 
-# Смена пространства имен по умолчанию для текущего контекста
-kubectl config set-context --current --namespace=my-namespace
-# → Context "staging" modified.
+# Установка пространства имен по умолчанию для ТЕКУЩЕГО контекста
+kubectl config set-context --current --namespace=frontend
+
+# Просмотр "очищенного" конфига без лишних данных (только текущий кластер и пользователь)
+kubectl config view --minify --flatten
 ```
 
-### Работа с несколькими файлами конфигурации
+### Создание изолированного kubeconfig для ServiceAccount
 
-Если файлы разделены, их можно объединить через переменную окружения:
+Сценарий: передача доступа в CI/CD систему с ограниченными правами.
 
+1. Создайте `ServiceAccount` и `RoleBinding`.
+2. Получите токен (через `Secret` или `TokenRequest API`).
+3. Сформируйте конфиг:
 ```bash
-# Использование нескольких файлов одновременно
-export KUBECONFIG=~/.kube/config:~/.kube/dev-config:~/.kube/prod-config
+# Добавление кластера (используя данные из текущего конфига)
+kubectl config set-cluster isolated-cluster --server=https://api.k8s.example.com --certificate-authority=ca.crt --embed-certs=true --kubeconfig=ci-config
 
-# Слияние всех файлов в один (результат в stdout)
-kubectl config view --flatten
+# Добавление пользователя с токеном
+kubectl config set-credentials ci-user --token=${USER_TOKEN} --kubeconfig=ci-config
+
+# Создание контекста
+kubectl config set-context ci-context --cluster=isolated-cluster --user=ci-user --kubeconfig=ci-config
 ```
+
+## Безопасность и лучшие практики
+
+### Защита файла конфигурации
+Файл `kubeconfig` фактически является эквивалентом пароля администратора.
+* **Права доступа:** Всегда устанавливайте `chmod 600 ~/.kube/config`.
+* **Встраивание данных:** Используйте `--embed-certs=true` при создании конфигов, чтобы не зависеть от внешних файлов `.crt` и `.key`, которые могут быть случайно удалены.
+* **Изоляция:** Не храните доступ к Production и Dev в одном файле. Используйте разные файлы и переключайтесь через переменную `KUBECONFIG` или утилиту `kubeswitch`.
+
+### Аудит и проверка доступа
+Перед началом работы убедитесь, что конфиг валиден и права соответствуют ожиданиям:
+```bash
+# Проверка связи с API
+kubectl cluster-info
+
+# Проверка собственных прав (RBAC)
+kubectl auth can-i --list
+```
+
+### Инструменты-помощники
+Для работы с большим количеством контекстов рекомендуется использовать:
+* **kubectx** — интерактивное переключение контекстов.
+* **kubens** — интерактивная смена namespace.
+* **[kubeswitches](../ToolsUtilities/kubeswitch_overview.md)** — глубокая изоляция и поиск конфигов по дереву директорий.
 
 ## Дополнительная информация
 
-### Безопасность и права доступа
+### Диагностика проблем
 
-Файл `kubeconfig` содержит чувствительные данные (приватные ключи, токены), дающие полный доступ к кластеру.
-
-* **Права доступа:** Устанавливайте права `600` на файлы конфигурации (`chmod 600 ~/.kube/config`).
-* **Разделение привилегий:** Не передавайте `admin.conf` обычным пользователям. Создавайте для них отдельные `ServiceAccount` с ограниченным RBAC.
-* **Ротация:** Регулярно обновляйте сертификаты. Подробнее: [Управление сертификатами](certificate_management.md).
-
-### Инструменты для работы с контекстами
-
-| Инструмент | Назначение |
-| :--- | :--- |
-| **kubectx** | Быстрое переключение между контекстами кластеров. |
-| **kubens** | Быстрое переключение между пространствами имен (namespaces). |
-| **[kubeswitches](../ToolsUtilities/kubeswitches/kubeswitch_overview.md)** | Менеджер для работы с сотнями изолированных файлов kubeconfig. |
-
-### Устранение проблем (Troubleshooting)
-
-| Проблема | Диагностика | Решение |
+| Ошибка | Возможная причина | Решение |
 | :--- | :--- | :--- |
-| **error: context "X" does not exist** | `kubectl config get-contexts` | Убедитесь, что контекст есть в списке. Проверьте опечатки в имени. |
-| **Unable to connect to the server** | `kubectl config view` | Проверьте поле `server` (URL). Убедитесь, что API-сервер доступен по сети. |
-| **x509: certificate expired** | `openssl x509 -in <cert> -noout -dates` | Обновите сертификаты в кластере или получите новый kubeconfig. |
-| **Forbidden / Unauthorized** | `kubectl auth can-i --list` | Проверьте права пользователя в текущем контексте и актуальность токена. |
+| `error: context "X" does not exist` | Опечатка в `current-context` или файл не прочитан | Проверьте переменную `KUBECONFIG`. Выполните `kubectl config get-contexts`. |
+| `Unable to connect to the server` | Неверный URL в `clusters.server` или проблемы с сетью | Проверьте доступность порта 6443. Проверьте настройки VPN/Proxy. |
+| `x509: certificate signed by unknown authority` | Отсутствует или неверный `certificate-authority-data` | Убедитесь, что CA в конфиге соответствует CA на сервере. Попробуйте `--insecure-skip-tls-verify` для диагностики (не для прод). |
+| `Forbidden: User cannot list pods` | Недостаточно прав RBAC или токен истек | Проверьте `kubectl auth can-i`. Обновите токен через `exec` плагин или `login`. |
 
 ### Связанные темы
 
-* [Управление сертификатами](certificate_management.md) — обновление данных в конфиге.
-* [Аутентификация в Kubernetes](../Security/authentication.md) — глубокое погружение в методы проверки.
-* [RBAC: Контроль доступа](../Security/rbac/rbac_overview.md) — управление правами пользователя из конфига.
-* [Инсталляция кластера: kubeadm](../Installation/kubeadm/cluster_initialization.md).
+* [Аутентификация в Kubernetes](../Security/authentication.md) — подробный разбор всех методов проверки личности.
+* [Управление сертификатами](certificate_management.md) — ротация и обновление данных в PKI.
+* [RBAC: Контроль доступа](../Security/rbac/rbac_overview.md) — как ограничить пользователя, заданного в конфиге.
+* [Обзор PKI](../../Security/Concepts/pki_overview.md) — понимание иерархии доверия в кластере.

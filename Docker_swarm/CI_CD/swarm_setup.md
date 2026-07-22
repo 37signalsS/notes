@@ -147,26 +147,26 @@ telnet <MANAGER-IP> 2376
 
 ## Дополнительная информация
 
-### Меры безопасности
+### Надежность и безопасность
 
-- **Ограничение IP:** Настройте Firewall (iptables/nftables) для разрешения доступа к порту 2376 только с IP-адресов GitLab Runner.
+- **Ограничение IP:** Настройте Firewall (iptables/nftables) для разрешения доступа к порту 2376 только с IP-адресов системы CI/CD.
 - **Ротация:** Обновляйте клиентские и серверные сертификаты не реже одного раза в год.
 - **Конфиденциальность:** Никогда не передавайте `ca-key.pem` и `server-key.pem` в переменные CI/CD.
 
-### Диагностика
+### Диагностика проблем
 
-| Ошибка | Возможная причина |
-|:---|:---|
-| `certificate signed by unknown authority` | Клиент не имеет правильного CA сертификата |
-| `remote error: tls: bad certificate` | Ошибка в Subject Alternative Names (SAN) серверного сертификата |
-| `Cannot connect to the Docker daemon` | Порт 2376 закрыт Firewall или демон не слушает TCP |
+| Ошибка | Возможная причина | Решение |
+|:---|:---|:---|
+| `certificate signed by unknown authority` | Клиент не имеет правильного CA сертификата | Проверить переменную `CA_PEM` |
+| `remote error: tls: bad certificate` | Ошибка в Subject Alternative Names (SAN) | Перевыпустить сертификат с корректным IP/DNS |
+| `Cannot connect to the Docker daemon` | Порт 2376 закрыт Firewall | Проверить `telnet <IP> 2376` |
 
 ### Связанные документы
 
-- **[Docker Context в CI/CD](./docker_context_setup.md)** — настройка профилей подключения.
-- **[Обзор Docker Swarm](../docker_swarm_overview.md)** — базовые возможности оркестратора.
-- **[Ansible: управление Docker](../../Ansible/examples/docker_management.md)** — автоматизация Swarm через Ansible.
-- **[Продвинутые темы Swarm](../swarm_advanced_topics.md)** — детали работы Raft и токенов.
-- **[Развертывание Traefik](./infra_deployment.md)** — настройка Ingress-прокси.
-- **[Пайплайн приложения](./app_deployment.md)** — примеры автоматизации деплоя.
-- **[Best Practices](./best_practices.md)** — рекомендации по безопасности.
+- **[Docker Context в CI/CD](./docker_context_setup.md)** — профили подключения.
+- **[Обзор Docker Swarm](../docker_swarm_overview.md)** — основы оркестрации.
+- **[Ansible: управление Docker](../../Ansible/examples/docker_management.md)** — автоматизация через Ansible.
+- **[Продвинутые темы Swarm](../swarm_advanced_topics.md)** — Raft и токены.
+- **[Развертывание Traefik](./infra_deployment.md)** — настройка Ingress.
+- **[Пайплайн приложения](./app_deployment.md)** — автоматизация деплоя.
+- **[Лучшие практики](./best_practices.md)** — рекомендации по эксплуатации.

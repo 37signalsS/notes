@@ -2,7 +2,9 @@
 
 ## Определения
 
-**Policy Reporter** — специализированное приложение для визуализации и мониторинга отчетов безопасности в Kubernetes. Оно предоставляет графический интерфейс, генерирует метрики для систем мониторинга и отправляет уведомления о нарушениях политик.
+**Policy Reporter** — специализированное приложение для визуализации, мониторинга и агрегации отчетов безопасности в Kubernetes. Инструмент преобразует «сырые» данные из PolicyReports (Custom Resources) в наглядные дашборды, генерирует метрики для систем мониторинга и обеспечивает оперативную рассылку уведомлений о нарушениях политик.
+
+В современных версиях (2024–2025) проект поддерживает инициативу **OpenReports**, что позволяет объединять результаты не только от Kyverno, но и от других инструментов (Falco, Trivy, Kube-bench) в едином интерфейсе.
 
 ---
 
@@ -12,97 +14,96 @@
 
 | Компонент | Назначение |
 |-----------|------------|
-| **Web UI** (User Interface, пользовательский интерфейс) | Панель управления для поиска, фильтрации и группировки отчетов по категориям. |
-| **Метрики** | Формирование данных для Prometheus и Grafana (система визуализации метрик). |
-| **REST API** (Representational State Transfer Application Programming Interface) | Программный интерфейс для извлечения данных внешними системами. |
-| **Централизация** | Сбор отчетов из всех пространств имен (namespaces) кластера в единую точку. |
-| **Уведомления** | Рассылка алертов в Slack, Telegram, Microsoft Teams, Discord. |
+| **Web UI** | Графическая панель управления для поиска, фильтрации и глубокого анализа отчетов. |
+| **Метрики** | Формирование данных в формате Prometheus для долгосрочного анализа трендов. |
+| **Мульти-инструментальность** | Поддержка любых движков политик, совместимых с форматом PolicyReport (Kyverno, CEL, Falco). |
+| **Высокая доступность (HA)** | Режим работы с Leader Election для предотвращения дублирования уведомлений в нагруженных кластерах. |
+| **Targets (Цели)** | Отправка алертов в Slack, Telegram, Microsoft Teams, Discord, Loki, S3 и Elasticsearch. |
+| **Безопасность** | Поддержка NetworkPolicies для изоляции компонентов и BasicAuth для защиты API и метрик. |
 
 ### Архитектура взаимодействия
 
-Данные передаются по следующей цепочке:
+Процесс обработки данных строится по следующей схеме:
 
-1. **Kyverno** генерирует отчеты в формате Custom Resources (пользовательские ресурсы) в кластере.
-2. **Policy Reporter** (Core компонент) считывает эти ресурсы через Kubernetes API.
-3. **Core компонент** распределяет данные:
-   - В **UI** для отображения пользователю.
-   - В **Prometheus** в виде числовых метрик.
-   - Во внешние системы через **Webhook** (вебхуки) или мессенджеры.
+1.  **Engine (Kyverno/CEL)**: Генерирует отчеты в виде ресурсов `PolicyReport` или `ClusterPolicyReport`.
+2.  **Core компонент**: Считывает данные через Kubernetes API, используя оптимизированные очереди (`workerqueue`) для снижения нагрузки на Control Plane.
+3.  **Распределение**:
+    *   **UI**: Отображение в реальном времени.
+    *   **Prometheus**: Экспорт числовых метрик (результаты pass/fail/warn).
+    *   **Notifications**: Отправка в настроенные внешние системы (Targets).
 
 ---
 
 ## Практические сценарии
 
-### Установка через Helm
+### Установка через Helm (v3.x)
+
+Для актуальных версий чарта используется модульная структура, где плагины включаются отдельно.
 
 ```bash
-# Добавление репозитория
+# Добавление и обновление репозитория
 helm repo add policy-reporter https://kyverno.github.io/policy-reporter
-# → "policy-reporter" has been added to your repositories
-
 helm repo update
-# → Hang tight while we grab the latest from your chart repositories...
 
-# Установка с базовыми настройками (UI и метрики включены)
+# Установка с включенным UI, метриками и плагином для Kyverno
 helm install policy-reporter policy-reporter/policy-reporter \
   --namespace policy-reporter \
   --create-namespace \
   --set ui.enabled=true \
-  --set ui.plugins.kyverno=true \
+  --set plugin.kyverno.enabled=true \
   --set metrics.enabled=true \
   --set prometheus.enabled=true
 # → NAME: policy-reporter, STATUS: deployed
 ```
 
-### Настройка уведомлений
+### Настройка уведомлений и логирования
 
-Пример конфигурации `values.yaml` (Yet Another Markup Language манифест) для отправки алертов:
+Пример конфигурации `values.yaml` для отправки алертов в Telegram и логирования в Grafana Loki:
 
 ```yaml
-# Уведомления в Slack
-slack:
-  enabled: true
-  webhook: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
-  minimumPriority: "high"
-
 # Уведомления в Telegram
 telegram:
   enabled: true
-  token: "BOT_TOKEN" # Токен бота
-  chatID: "CHAT_ID"  # ID чата или канала
+  token: "BOT_TOKEN"
+  chatID: "CHAT_ID"
   minimumPriority: "critical"
+
+# Отправка отчетов в Loki для анализа логов
+loki:
+  enabled: true
+  host: "http://loki-gateway.monitoring.svc.cluster.local"
+  minimumPriority: "warning"
 
 # Фильтрация по пространствам имен
 filter:
   namespaces:
-    include: ["production", "staging"]
-    exclude: ["kube-system"]
+    include: ["production", "security-audit"]
+    exclude: ["kube-system", "temp-*"]
 ```
 
-### Проверка работоспособности
+### Проверка состояния и доступ к UI
 
 ```bash
-# Проверка состояния компонентов
+# Проверка подов (Core, UI и Plugins)
 kubectl get pods -n policy-reporter
-# → NAME                                READY   STATUS    RESTARTS   AGE
-# → policy-reporter-5f8c9d7b9c-abc12    1/1     Running   0          5m
-# → policy-reporter-ui-6d9f8e7c8d-def34 1/1     Running   0          5m
+# → NAME                                     READY   STATUS    RESTARTS   AGE
+# → policy-reporter-5f8c9d7b9c-abc12         1/1     Running   0          5m
+# → policy-reporter-ui-6d9f8e7c8d-def34      1/1     Running   0          5m
+# → policy-reporter-kyverno-67f9b8c5-xzy78   1/1     Running   0          5m
 
-# Доступ к интерфейсу (проброс портов)
+# Доступ к интерфейсу через Port-Forward
 kubectl port-forward svc/policy-reporter-ui -n policy-reporter 8080:80
 # → Forwarding from 127.0.0.1:8080 -> 80
 ```
 
-После выполнения команды интерфейс будет доступен по адресу `http://localhost:8080`.
-
 ### Использование REST API
 
 ```bash
-# Получение всех отчетов в формате JSON
-curl http://localhost:8080/api/v1/policy-reports
-# → [{"name":"pol-rep-1", "namespace":"default", "results": [...]}]
+# Получение сводной статистики по результатам (Pass/Fail)
+curl http://localhost:8080/api/v1/statistics
+# → {"pass": 120, "fail": 5, "warn": 2, "error": 0}
 
-# Получение только критических нарушений
+# Получение списка отчетов с фильтрацией по результату
 curl "http://localhost:8080/api/v1/policy-reports?result=fail"
 ```
 
@@ -110,25 +111,22 @@ curl "http://localhost:8080/api/v1/policy-reports?result=fail"
 
 ## Дополнительная информация
 
-### Мониторинг ресурсов (Производительность)
+### Производительность и масштабируемость
 
-| Ресурс | Потребление (ориентировочно) |
-|--------|-----------------------------|
-| **RAM** (Random Access Memory, оперативная память) | 150–250 MB |
-| **CPU** (Central Processing Unit, центральный процессор) | 0.1–0.2 ядра |
+| Параметр | Рекомендация |
+|----------|--------------|
+| **Ресурсы (RAM)** | 150–300 MB (зависит от количества PolicyReports в кластере). |
+| **Ресурсы (CPU)** | 0.1–0.3 ядра. |
+| **Масштабирование** | При использовании более 500 namespaces рекомендуется включить HA-режим (`replicaCount: 2` + `leaderElection.enabled: true`). |
 
-Инструмент эффективно работает в кластерах до 200–300 пространств имен. При большем масштабе рекомендуется увеличить интервал сканирования.
+### Решение проблем (Troubleshooting)
 
-### Поиск и устранение неисправностей (Troubleshooting)
-
-| Проблема | Решение |
-|----------|---------|
-| Интерфейс не отображает данные | Проверьте права ClusterRole для Policy Reporter (нужен доступ к `policyreports`). |
-| Метрики отсутствуют в Prometheus | Убедитесь, что параметр `metrics.enabled` установлен в `true`. |
-| Уведомления не приходят | Проверьте валидность URL (Uniform Resource Locator) вебхука и сетевую доступность. |
+*   **UI пустой**: Убедитесь, что Kyverno генерирует отчеты (`kubectl get polr -A`). Проверьте, включен ли соответствующий плагин в Policy Reporter (`plugin.kyverno.enabled`).
+*   **Дубликаты уведомлений**: Проверьте, не запущено ли несколько реплик Core-компонента без включенного Leader Election.
+*   **Ошибка RBAC**: Policy Reporter требует прав на чтение `policyreports.wgpolicyk8s.io` во всех пространствах имен.
 
 ### Полезные ссылки
 
-- [Отчеты Kyverno](./reports.md) — структура и типы генерируемых данных.
-- [Установка Kyverno](./install.md) — настройка основного движка политик.
-- [Официальный репозиторий](https://github.com/kyverno/policy-reporter) — документация и исходный код.
+*   [Отчеты Kyverno](./reports.md) — структура и типы данных.
+*   [Установка Kyverno](./install.md) — базовый движок политик.
+*   [Официальная документация](https://kyverno.github.io/policy-reporter/) — актуальные параметры конфигурации.

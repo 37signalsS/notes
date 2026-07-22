@@ -1,175 +1,132 @@
-# Git Forge Directories — директории платформ
+# Специальные директории платформ — Git Forge Directories
 
 ## Определения
 
-**Forge-specific директории** — специальные папки в корне репозитория (`.github/`, `.gitlab/`, `.gitea/`, `.forgejo/`), используемые Git-платформами для конфигурации CI/CD, шаблонов, ревью кода и других функций.
+**Специальные директории платформ (Forge-specific directories)** — зарезервированные папки в корне репозитория (например, `.github/`, `.gitlab/`, `.gitea/`), которые используются Git-хостингами для хранения конфигураций CI/CD, шаблонов взаимодействия с пользователями, политик безопасности и управления доступом.
+
+**Git Forge (Кузница)** — платформа для хостинга Git-репозиториев (GitHub, GitLab, Codeberg и др.), предоставляющая дополнительные инструменты для совместной разработки.
 
 ---
 
 ## Базовые концепции
 
-### Назначение
+### Назначение директорий
 
-Платформы (GitHub, GitLab, Gitea, Forgejo) расширяют репозитории специальными директориями для:
+Использование специальных папок позволяет хранить метаданные проекта вместе с исходным кодом, обеспечивая принцип "Configuration as Code". Основные задачи:
 
-- **CI/CD конфигурации:** Автоматизация сборки, тестирования, деплоя
-- **Шаблонов:** Issue, Pull Request, Merge Request
-- **Управления доступом:** CODEOWNERS для обязательных ревьюеров
-- **Безопасности:** Security policies, vulnerability reporting
+- **Автоматизация (CI/CD):** Описание процессов сборки, тестирования и развертывания.
+- **Стандартизация коммуникаций:** Шаблоны для сообщений об ошибках (Issues) и запросов на слияние (PR/MR).
+- **Управление доступом:** Назначение ответственных за определенные части кода (CODEOWNERS).
+- **Юридическая и техническая информация:** Политики безопасности, руководства по участию в разработке (Contributing).
 
-### Директории по платформам
+### Сводная таблица по платформам
 
-| Платформа | Директория | Fallback-цепочка |
-| :--- | :--- | :--- |
-| **GitHub** | `.github/` | — |
-| **GitLab** | `.gitlab/` | — |
-| **Gitea** | `.gitea/` | `.gitea/` → `.github/` |
-| **Forgejo** | `.forgejo/` | `.forgejo/` → `.gitea/` → `.github/` |
-| **Bitbucket** | `.bitbucket/` | — |
-| **SourceHut** | `.build.yml` (корень) | `.builds/*.yml` |
+| Платформа | Основная директория | CI/CD конфигурация | Особенности |
+| :--- | :--- | :--- | :--- |
+| **GitHub** | `.github/` | `.github/workflows/` | Стандарт де-факто для многих инструментов. |
+| **GitLab** | `.gitlab/` | `.gitlab-ci.yml` (корень) | Шаблоны хранятся в `.gitlab/`. |
+| **Gitea / Forgejo** | `.gitea/` / `.forgejo/` | `.gitea/workflows/` | Поддержка совместимости с `.github/`. |
+| **Bitbucket** | `.bitbucket/` | `bitbucket-pipelines.yml` | `.bitbucket/` используется для CODEOWNERS. |
+| **Azure DevOps** | — | `azure-pipelines.yml` | Обычно не использует спец. директорию в корне. |
+| **Woodpecker** | `.woodpecker/` | `.woodpecker/*.yml` | Альтернативная CI для Gitea/Forgejo. |
 
-### Типовое содержимое
+### Состав директории .github (стандарт GitHub)
 
-**GitHub (`.github/`):**
+- `workflows/` — файлы рабочих процессов GitHub Actions.
+- `ISSUE_TEMPLATE/` — директория с шаблонами Issue (поддерживает YAML и Markdown).
+- `PULL_REQUEST_TEMPLATE/` — директория или файл шаблона для PR.
+- `CODEOWNERS` — файл для автоматического назначения ревьюеров.
+- `dependabot.yml` — настройка автоматического обновления зависимостей.
+- `FUNDING.yml` — ссылки на спонсирование проекта.
+- `SECURITY.md` — инструкции по сообщению об уязвимостях.
 
-- `workflows/` — GitHub Actions workflow-файлы
-- `ISSUE_TEMPLATE/` — шаблоны для новых issue
-- `PULL_REQUEST_TEMPLATE.md` — шаблон Pull Request
-- `CODEOWNERS` — маппинг путей к ревьюерам
-- `SECURITY.md` — политика безопасности
-- `CONTRIBUTING.md` — руководство для контрибьюторов
-- `FUNDING.yml` — информация о финансировании
-- `dependabot.yml` — конфигурация Dependabot
+### Состав директории .gitlab (стандарт GitLab)
 
-**GitLab (`.gitlab/`):**
-
-- `ci.yml` — основной CI-конфиг (альтернатива `.gitlab-ci.yml` в корне)
-- `issue_templates/` — шаблоны issue
-- `merge_request_templates/` — шаблоны MR
-- `labelling.toml` — конфигурация лейблов
-
-**Gitea/Forgejo (`.gitea/`, `.forgejo/`):**
-
-- `workflows/` — workflow-файлы (совместимы с GitHub Actions)
-- `issue_templates/` — шаблоны issue
-- `pull_request_template.md` — шаблон PR
-- `CODEOWNERS` — маппинг ревьюеров
-- `wiki/` — файлы для встроенной вики
-
-### Особенности
-
-- **Не являются Git-фичей:** Это соглашения платформ, но следуют принципу: конфигурация путешествует с кодом
-- **Fallback-цепочки:** Forgejo и Gitea проверяют несколько директорий для совместимости с GitHub-конфигурациями
-- **Мультиплатформенность:** Позволяет переопределять специфичные конфиги при хостинге на нескольких платформах
+- `issue_templates/` — шаблоны для задач.
+- `merge_request_templates/` — шаблоны для Merge Requests.
+- `CODEOWNERS` — поддерживается в `.gitlab/` или корне.
+- `route-map.yml` — маппинг путей для Review Apps.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка GitHub Actions
+### Сценарий 1: Создание шаблона Pull Request
+
+Для GitHub шаблон можно разместить в нескольких местах. Рекомендуется использовать `.github/PULL_REQUEST_TEMPLATE.md`.
+
+```markdown
+# Описание изменений
+<!-- Опишите, что было сделано и зачем -->
+
+## Тип изменений
+- [ ] Исправление ошибки
+- [ ] Новая функциональность
+
+## Как это протестировано?
+<!-- Опишите ваши тесты -->
+```
+
+### Сценарий 2: Настройка CODEOWNERS
+
+Позволяет автоматически запрашивать ревью у нужных команд.
+
+```text
+# .github/CODEOWNERS (или .gitlab/CODEOWNERS)
+
+# Глобальные владельцы
+*       @global-admin-team
+
+# Документация - только техписатели
+/docs/  @tech-writing-team
+
+# Конфигурации инфраструктуры
+*.tf    @devops-team
+*.yaml  @devops-team
+```
+
+### Сценарий 3: Автоматизация с Dependabot
+
+Файл `.github/dependabot.yml` позволяет поддерживать зависимости в актуальном состоянии.
 
 ```yaml
-# .github/workflows/ci.yml
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
-        run: npm test
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
 ```
 
-### Сценарий 2: Шаблоны для Issue
+### Сценарий 4: Совместимость Forgejo/Gitea с GitHub
 
-```markdown
-# .github/ISSUE_TEMPLATE/bug_report.md
----
-name: Bug Report
-about: Сообщение об ошибке
-title: '[BUG] '
-labels: bug
----
+Если вы мигрируете проект с GitHub на Forgejo, многие действия (Actions) будут работать без изменений благодаря поддержке директории `.github/workflows/`. Однако, если вы хотите переопределить поведение для Forgejo, используйте `.forgejo/workflows/`.
 
-## Описание ошибки
-Чёткое описание проблемы.
-
-## Шаги воспроизведения
-1. Шаг 1
-2. Шаг 2
-
-## Ожидаемое поведение
-Что должно было произойти.
-```
-
-### Сценарий 3: CODEOWNERS для обязательного ревью
-
-```text
-# .github/CODEOWNERS
-# Владелец всего кода
-* @tech-lead
-
-# Безопасность — только security-команда
-/security/ @security-team
-
-# Документация — техписатели
-/docs/ @tech-writers
-
-# Конфигурация БД — DBA
-**/*.sql @dba-team
-```
-
-### Сценарий 4: Мультиплатформенная настройка
-
-Для проекта, размещённого на GitHub и Forgejo:
-
-```text
-.github/
-  workflows/
-    ci.yml          # GitHub Actions
-.gitea/
-  workflows/
-    ci.yml          # Переопределение для Forgejo/Gitea
-  pull_request_template.md  # Специфичный шаблон
-```
-
-Forgejo сначала проверит `.gitea/workflows/`, затем `.github/workflows/`.
-
-### Сценарий 5: Политика безопасности
-
-```markdown
-# .github/SECURITY.md
-## Сообщение об уязвимости
-
-Пожалуйста, сообщайте об уязвимостях через GitHub Security Advisories
-или на email: security@example.com
-
-## Поддерживаемые версии
-| Версия | Поддержка |
-| :--- | :--- |
-| 2.x | Да |
-| 1.x | Только критические исправления |
-| 0.x | Нет |
+```bash
+# Проверка структуры на Forgejo
+ls -R .forgejo/workflows/
+# → ci.yml release.yml
 ```
 
 ---
 
 ## Дополнительная информация
 
+### Правила поиска файлов (Fallback)
+
+Платформы часто ищут документацию (README, LICENSE, CONTRIBUTING) в нескольких местах в следующем порядке:
+1. Корень репозитория (рекомендуется).
+2. Директория `docs/`.
+3. Директория `.github/` (для GitHub).
+
 ### Официальные ресурсы
 
-- **GitHub:** [docs.github.com/ru/repositories/configuring-repositories](https://docs.github.com/ru/repositories/configuring-repositories)
-- **GitLab:** [docs.gitlab.com/ee/user/project/](https://docs.gitlab.com/ee/user/project/)
-- **Gitea:** [docs.gitea.com/usage/](https://docs.gitea.com/usage/)
-- **Forgejo:** [codeberg.org/forgejo/forgejo](https://codeberg.org/forgejo/forgejo)
+- **GitHub Docs - Creating templates:** [docs.github.com](https://docs.github.com/en/communities/using-templates-to-encourage-high-quality-issues-and-pull-requests/syntax-for-issue-template-forms)
+- **GitLab Docs - Description templates:** [docs.gitlab.com](https://docs.gitlab.com/ee/user/project/description_templates.html)
+- **Forgejo - Actions:** [forgejo.org/docs/latest/user/actions/](https://forgejo.org/docs/latest/user/actions/)
 
-### Связанные документы
+### См. также
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md).
+- [Обзор специальных файлов Git](./git_special_files_overview.md) — общие сведения о `.gitignore`, `.gitattributes` и др.
+- [GitHub Actions — синтаксис рабочих процессов](../Github_CI/Workflow_Syntax.md)
+- [GitLab CI/CD — основы конфигурации](../CI-CD/GitLab_CI/Core_Concepts/gitlab_ci_basics.md)

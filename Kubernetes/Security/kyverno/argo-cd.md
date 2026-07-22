@@ -2,146 +2,123 @@
 
 ## Определения
 
-**Интеграция Kyverno с Argo CD** — настройка совместного использования policy-движка Kyverno и GitOps-платформы Argo CD для корректной работы мутации и валидации ресурсов.
-
-> **Проблема**: Argo CD и Kyverno могут конфликтовать из-за разных подходов к отслеживанию ресурсов и сравнению состояний.
+**Интеграция Kyverno с Argo CD** — комплекс мер по настройке совместной работы GitOps-платформы и движка политик, исключающий конфликты при мутации ресурсов и обеспечивающий прозрачность нарушений безопасности (Policy Violations) непосредственно в интерфейсе управления.
 
 ---
 
 ## Основные концепции
 
-### Источники конфликтов
+### Проблематика совместного использования
 
-| Конфликт | Причина | Последствия |
-|----------|---------|-------------|
-| **Resource Tracking (отслеживание ресурсов)** | Оба используют метки (`labels`) для отслеживания ресурсов | Argo CD теряет контроль над ресурсами |
-| **Server-side Diff (сравнение на стороне сервера)** | Kyverno мутирует манифесты после применения | Бесконечный цикл синхронизации |
-| **Mutation Webhooks (вебхуки мутации)** | Argo CD не учитывает изменения от вебхуков | Ложные различия в состоянии |
-| **Aggregated Roles (агрегированные роли)** | Kyverno динамически изменяет роли | Argo CD показывает изменения |
+При стандартной настройке Argo CD и Kyverno возникают три критические проблемы:
+
+1.  **Бесконечный цикл синхронизации (Sync Drift)**: Kyverno мутирует ресурс при создании (например, добавляет Sidecar или лейблы). Argo CD видит разницу между Git и кластером и пытается "откатить" изменения.
+2.  **Конфликты Resource Tracking**: Если оба инструмента используют одинаковые механизмы отслеживания (метки `app.kubernetes.io/instance`), это приводит к потере контроля над ресурсами.
+3.  **Невидимость нарушений**: Без специальной настройки Argo CD считает приложение "Healthy", даже если Kyverno заблокировал создание части его ресурсов или зафиксировал критические ошибки безопасности в отчетах.
+
+### Современный стек (2025–2026)
+
+Стандартом является использование **Server-Side Apply (SSA)** и **Server-Side Diff**. Это переносит логику объединения (merge) и сравнения манифестов на сторону Kubernetes API, где мутирующие вебхуки Kyverno учитываются автоматически.
 
 ---
 
 ## Практические сценарии
 
-### 1. Конфликт меток (Resource Tracking)
+### 1. Глобальная настройка Server-Side Diff
 
-**Проблема**: Argo CD и Kyverno используют одинаковый механизм отслеживания ресурсов через метки (`labels`).
+Чтобы Argo CD корректно учитывал изменения, внесенные мутирующими вебхуками Kyverno, необходимо включить сравнение на стороне сервера.
 
-**Решение**: Перевести Argo CD на использование аннотаций (`annotations`) вместо меток.
-
-```yaml
-# values.yaml (конфигурационный файл YAML) Argo CD
-resourceTrackingMethod: annotation
-```
-
-**Альтернативно для конкретного приложения**:
-
+**В аннотациях Application**:
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: my-app
   annotations:
-    argocd.argoproj.io/tracking-method: annotation
+    # Включает сравнение на стороне сервера и учет мутирующих вебхуков
+    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+spec:
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true # Использование SSA при синхронизации
 ```
 
-### 2. Server-side Diff
+### 2. Игнорирование системных различий (ignoreDifferences)
 
-**Проблема**: Argo CD по умолчанию сравнивает манифесты из Git с состоянием в кластере. При использовании Kyverno (который может мутировать манифесты) возникает бесконечный цикл синхронизации.
+Kyverno автоматически добавляет некоторые технические поля в свои ресурсы (например, `skipBackgroundRequests`), которые вызывают дрифт в Argo CD.
 
-**Решение**: Включить `server-side diff` (сравнение на стороне сервера) в Argo CD.
-
-**Глобально** (в `values.yaml` Argo CD):
-
+**Настройка в Application или ConfigMap (argocd-cm)**:
 ```yaml
-controller:
-  diff:
-    serverSide: true
+spec:
+  ignoreDifferences:
+    - group: kyverno.io
+      kind: ClusterPolicy
+      jqPathExpressions:
+        - .spec.rules[] | select(.name|test("autogen-.")) # Игнорировать автогенерируемые правила
+        - .spec.rules[].skipBackgroundRequests            # Игнорировать техническое поле
+    - group: kyverno.io
+      kind: Policy
+      jsonPointers:
+        - /status # Игнорировать блок статуса
 ```
 
-**Для конкретного приложения** (аннотация):
+### 3. Визуализация PolicyReport в UI Argo CD
 
+Чтобы видеть нарушения политик безопасности непосредственно в дашборде Argo CD, необходимо настроить **Health Checks** для ресурсов отчетов Kyverno.
+
+**В конфигурации Argo CD (argocd-cm)**:
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: my-app
-  annotations:
-    argocd.argoproj.io/compare-options: ServerSideDiff=true
+data:
+  resource.customizations.health.wgpolicyk8s.io_PolicyReport: |
+    hs = {}
+    if obj.summary.fail > 0 then
+      hs.status = "Degraded"
+      hs.message = "Нарушения политик: " .. obj.summary.fail
+    else
+      hs.status = "Healthy"
+      hs.message = "Проверки безопасности пройдены"
+    end
+    return hs
 ```
+*После этой настройки приложение перейдет в состояние `Degraded`, если Kyverno обнаружит ошибки безопасности в ресурсах этого приложения.*
 
-### 3. Mutation Webhooks
+### 4. Порядок установки (Sync Waves)
 
-**Проблема**: Kyverno может изменять (мутировать) манифесты в процессе admission (допуска). Argo CD необходимо учитывать эти изменения при сравнении.
+Для корректной работы системы при первичной установке или обновлении необходимо соблюдать очередность:
 
-**Решение**: Добавить аннотацию к приложению в Argo CD.
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: my-app
-  annotations:
-    argocd.argoproj.io/sync-options: IncludeMutationWebhook=true
-```
-
-> **Важно**: Работает только при включенном `server-side diff`.
-
-### 4. Aggregated Roles
-
-**Проблема**: Kyverno использует Aggregated Cluster Roles ([подробнее](./additional.md)), что приводит к динамическому изменению ролей. Argo CD может некорректно обрабатывать эти изменения.
-
-**Решение**: В `values.yaml` Argo CD указать:
-
-```yaml
-resource:
-  compare:
-    ignoreAggregatedRoles: true
-```
-
-### 5. Установка Kyverno через Argo CD
-
-Подробная инструкция — в [Установка Kyverno](./install.md).
+| Волна (Wave) | Компоненты | Зачем |
+| :--- | :--- | :--- |
+| **0** | Пространство имен (Namespace), секреты, конфигурация. | База. |
+| **1** | Контроллер Kyverno (Helm chart). | Движок должен быть активен до появления политик. |
+| **2** | Политики (ClusterPolicy / Policy). | Правила должны быть загружены до появления нагрузки. |
+| **3+** | Рабочая нагрузка (Workloads: Deployments, Services). | Поды будут мутированы и проверены сразу при создании. |
 
 ---
 
 ## Дополнительная информация
 
-### Сводная таблица настроек Argo CD
+### Сводная таблица параметров Argo CD для Kyverno
 
-| Настройка | Файл | Значение | Назначение |
-|-----------|------|----------|------------|
-| `resourceTrackingMethod` | `values.yaml` | `annotation` | Избежание конфликта меток |
-| `controller.diff.serverSide` | `values.yaml` | `true` | Учет мутаций Kyverno |
-| `resource.compare.ignoreAggregatedRoles` | `values.yaml` | `true` | Игнорирование динамических ролей |
-| `argocd.argoproj.io/compare-options` | Annotation | `ServerSideDiff=true` | Server-side diff для приложения |
-| `argocd.argoproj.io/sync-options` | Annotation | `IncludeMutationWebhook=true` | Учет мутаций вебхуков |
-| `applyServerSide` | Application | `true` | Server-side apply для установки |
+| Параметр | Уровень | Рекомендуемое значение | Назначение |
+| :--- | :--- | :--- | :--- |
+| `ServerSideApply=true` | Sync Option | Да | Решение проблем с большими манифестами и конфликтами полей. |
+| `ServerSideDiff=true` | Annotation | Да | Учет динамических изменений от вебхуков. |
+| `resourceTrackingMethod` | ConfigMap | `annotation` | Предотвращение конфликта меток (актуально для старых версий). |
+| `ApplyOutOfSyncOnly=true` | Sync Option | Да | Оптимизация: обновлять только изменившиеся ресурсы. |
 
-### Проверка конфигурации
+### Особенности работы с Helm
 
-```bash
-# Проверка текущего состояния приложения
-argocd app get my-app
+Если Kyverno устанавливается как Helm-чарт через Argo CD, важно обратить внимание на параметр `config.preserve`. 
+- **Рекомендация**: Установите `config.preserve=false`. В противном случае Helm создаст `post-delete` хуки для сохранения конфигурации, которые могут блокировать автоматическое удаление ресурсов контроллером Argo CD.
 
-# Принудительная синхронизация с server-side apply
-argocd app sync my-app --server-side
+### Поиск и устранение неисправностей (Troubleshooting)
 
-# Проверка различий с учетом мутаций
-argocd app diff my-app --server-side
-```
+| Проблема | Диагностика | Решение |
+| :--- | :--- | :--- |
+| Бесконечный `OutOfSync` | `argocd app diff <name> --server-side` | Проверьте `ignoreDifferences` для мутированных полей. |
+| Ресурс не мутируется | Проверьте логи `kyverno-admission-controller` | Убедитесь, что вебхуки Kyverno успевают обрабатывать запросы. |
+| Приложение `Healthy`, но поды не создаются | `kubectl get events -n <ns>` | Kyverno может блокировать создание подов в режиме `Enforce`, но Argo CD не видит этого без Health Checks. |
 
-### Troubleshooting (Поиск и устранение неисправностей)
-
-| Проблема | Решение |
-|----------|---------|
-| Бесконечный цикл синхронизации | Включить `server-side diff` |
-| Argo CD теряет ресурсы | Переключить на `annotation` tracking |
-| Ошибки вебхуков при установке | Использовать `applyServerSide: true` |
-| Ложные изменения в ролях | Включить `ignoreAggregatedRoles: true` |
-
-### Связанные темы
-
-- [Установка Kyverno](./install.md) — установка через Helm и Argo CD
-- [Aggregated Cluster Roles](./additional.md) — механизм расширения прав
-- [Мутация ресурсов](./rules.md) — как Kyverno изменяет манифесты
+### См. также
+- [Установка Kyverno с помощью Argo CD](./install.md)
+- [Типы правил и механизмы мутации](./rules.md)
+- [Официальный Policy Reporter UI (визуализация)](./reporter.md)

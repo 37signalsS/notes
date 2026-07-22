@@ -1,12 +1,12 @@
 # Конфигурация Docker Compose для стека мониторинга
 
-## Definitions
+## Определения
 
 **Docker Compose для мониторинга** — декларативное определение полного стека наблюдения (Prometheus + Grafana + Alertmanager + Node Exporter + cAdvisor) в едином `docker-compose.yml`. Позволяет запускать, останавливать и обновлять весь стек одной командой.
 
 > **См. также:** [Обзор Docker Stack](./overview.md), [Docker Compose basics](../../../Docker/Docker_compose/docker_compose_file_example.md).
 
-## Basic Concepts
+## Основные концепции
 
 ### Архитектура стека
 
@@ -42,22 +42,22 @@
 
 | Компонент | Образ | Версия |
 |---|---|---|
-| **Prometheus** | `prom/prometheus` | v3.10.0 |
-| **Grafana** | `grafana/grafana` | v12.4.2 |
-| **Alertmanager** | `prom/alertmanager` | v0.31.0 |
-| **Node Exporter** | `prom/node-exporter` | v1.10.2 |
-| **cAdvisor** | `ghcr.io/google/cadvisor` | v0.56.2 |
+| **Prometheus** | `prom/prometheus` | v3.13.1 |
+| **Grafana** | `grafana/grafana` | v13.1.1 |
+| **Alertmanager** | `prom/alertmanager` | v0.33.1 |
+| **Node Exporter** | `prom/node-exporter` | v1.12.1 |
+| **cAdvisor** | `ghcr.io/google/cadvisor` | v0.60.5 |
 
 > **Важно:** Проверяйте [Docker Hub](https://hub.docker.com/u/prom) для получения последних версий.
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Полный `docker-compose.yml`
 
 ```yaml
 services:
   prometheus:
-    image: prom/prometheus:v3.10.0
+    image: prom/prometheus:v3.13.1
     container_name: prometheus
     volumes:
       - ./prometheus:/etc/prometheus
@@ -80,7 +80,7 @@ services:
       - monitoring-net
 
   alertmanager:
-    image: prom/alertmanager:v0.31.0
+    image: prom/alertmanager:v0.33.1
     container_name: alertmanager
     volumes:
       - ./alertmanager:/config
@@ -100,7 +100,7 @@ services:
       - monitoring-net
 
   node-exporter:
-    image: prom/node-exporter:v1.10.2
+    image: prom/node-exporter:v1.12.1
     container_name: node-exporter
     pid: host
     volumes:
@@ -119,7 +119,7 @@ services:
       - monitoring-net
 
   cadvisor:
-    image: ghcr.io/google/cadvisor:v0.56.2
+    image: ghcr.io/google/cadvisor:v0.60.5
     container_name: cadvisor
     volumes:
       - /:/rootfs:ro
@@ -133,7 +133,7 @@ services:
       - monitoring-net
 
   grafana:
-    image: grafana/grafana:12.4.2
+    image: grafana/grafana:13.1.1
     container_name: grafana
     user: "472:472"
     volumes:
@@ -204,7 +204,7 @@ networks:
 | `depends_on: prometheus.service_healthy` | Health check dependency | Grafana ждёт готовности Prometheus перед запуском |
 | `GF_SECURITY_ADMIN_PASSWORD` | `${GRAFANA_ADMIN_PASSWORD:-admin}` | Пароль из env или `admin` по умолчанию |
 
-### Security-рекомендации
+### Рекомендации по безопасности
 
 | Мера | Реализация |
 |---|---|
@@ -237,7 +237,7 @@ networks:
 
 > **Подробнее:** [Resource management in Docker Compose](../../../Docker/Docker_compose/docker_compose_file_example.md).
 
-## Additional Information
+## Дополнительная информация
 
 ### Связанные темы
 
@@ -247,7 +247,7 @@ networks:
 * [Настройка Grafana с provisioning](../../../Grafana/Installation/docker_compose_setup.md) — автоматический datasource, security checklist
 * [Мониторинг Docker](../../../Docker/Docker_metrics/docker_prometheus_integration.md) — метрики контейнеров
 
-### Troubleshooting
+### Устранение неполадок
 
 | Проблема | Причина | Решение |
 |---|---|---|
@@ -261,7 +261,7 @@ networks:
 
 ```bash
 # Запуск всего стека
-docker-compose up -d
+docker compose up -d
 
 # Логи конкретного сервиса
 docker compose logs -f prometheus

@@ -2,106 +2,122 @@
 
 ## Определения
 
-**Rancher Server** — центральный компонент платформы Rancher, предназначенный для управления кластерами Kubernetes. Он предоставляет графический интерфейс пользователя (UI — User Interface) и программный интерфейс приложения (API — Application Programming Interface) для взаимодействия с инфраструктурой.
+**Rancher Server** — центральный управляющий компонент платформы Rancher (Management Plane). Он обеспечивает оркестрацию множества кластеров Kubernetes, управление пользователями (RBAC), политиками безопасности и интеграцию с внешними системами аутентификации.
 
-**Helm** — менеджер пакетов для Kubernetes, используемый для определения, установки и обновления сложных приложений.
+**Management Cluster** (Локальный кластер) — Kubernetes-кластер, в который устанавливается сам Rancher Server. Крайне не рекомендуется запускать пользовательские нагрузки в этом кластере для обеспечения стабильности панели управления.
+
+**cert-manager** — контроллер Kubernetes для автоматизации выпуска и обновления TLS-сертификатов. Является критическим пререквизитом для установки Rancher при использовании автоматической генерации сертификатов.
 
 ## Базовые концепции
 
-### Методы развертывания
+### Выбор базовой инфраструктуры (2026)
 
-Существует два основных способа установки Rancher Server:
+Для развертывания Management-кластера в современных инсталляциях (Rancher v2.10+) рекомендуется использовать специализированные дистрибутивы SUSE:
 
-1. **Установка в существующий кластер Kubernetes через Helm**: рекомендуемый метод для производственных (production) сред, обеспечивающий высокую доступность (HA — High Availability).
-2. **Установка в Docker-контейнер**: упрощенный метод, предназначенный исключительно для тестирования или ознакомления с платформой.
+| Параметр | **RKE2** (Рекомендовано для Prod) | **K3s** (Для Edge/Dev/Test) |
+| :--- | :--- | :--- |
+| **Безопасность** | Hardened по умолчанию (FIPS, CIS) | Требует ручного ужесточения |
+| **Ресурсы** | Высокое потребление (8GB+ RAM) | Минимальное (4GB+ RAM) |
+| **Ingress** | NGINX (в комплекте) | Traefik (в комплекте) |
+| **Назначение** | Корпоративные ЦОД, высокие требования к ИБ | Удаленные офисы, Edge-устройства, малые инсталляции |
 
-### Системные требования
+### Методы установки
 
-Для стабильной работы Rancher Server в кластере Kubernetes необходимы следующие компоненты:
-
-* **Контроллер Ingress (Ingress Controller)**: обеспечивает маршрутизацию внешнего трафика к интерфейсу и API Rancher (например, Nginx Ingress Controller).
-* **Cert Manager**: инструмент для автоматизации управления сертификатами безопасности (TLS — Transport Layer Security).
-* **Балансировщик нагрузки (Load Balancer)**: точка входа для внешнего трафика. В локальных (bare-metal) средах часто применяется [MetalLB](../../Kubernetes/Networking/metallb.md).
+1.  **Высокая доступность (HA) через Helm**: установка в подготовленный кластер (RKE2, K3s, EKS) из 3-х узлов. Единственный метод, рекомендуемый для производственных сред.
+2.  **Docker-инсталляция**: запуск одной командой `docker run`. Только для быстрого ознакомления. Данные хранятся внутри контейнера; миграция в HA-кластер затруднена.
 
 ## Практические сценарии
 
-### Развертывание в существующем кластере через Helm
+### Подготовка Management-кластера (RKE2)
 
-Процесс установки включает следующие этапы:
-
-1. **Добавление репозитория Rancher**:
-
-    ```bash
-    helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
-    helm repo update
-    ```
-
-2. **Подготовка пространства имен (Namespace)**:
-
-    ```bash
-    kubectl create namespace cattle-system
-    ```
-
-3. **Установка через Helm**:
-
-    ```bash
-    helm upgrade --install rancher rancher-stable/rancher \
-      --namespace cattle-system \
-      --set hostname=rancher.example.com \
-      --set bootstrapPassword=your_initial_password \
-      --set ingress.ingressClassName=nginx \
-      --set ingress.tls.source=rancher \
-      --set replicaCount=3
-    ```
-
-**Описание ключевых параметров:**
-
-* `hostname`: доменное имя для доступа к панели управления.
-* `bootstrapPassword`: временный пароль для первой авторизации администратора.
-* `ingress.ingressClassName`: идентификатор используемого класса Ingress.
-* `ingress.tls.source=rancher`: использование встроенного механизма Rancher для генерации самоподписанных сертификатов.
-* `replicaCount`: количество экземпляров приложения. Значение `3` рекомендуется для обеспечения отказоустойчивости.
-
-### Установка через Docker (для ознакомительных целей)
-
-Команда для быстрого запуска:
+Перед установкой Rancher необходимо развернуть Kubernetes. Пример базовой настройки узла RKE2:
 
 ```bash
-docker run -d --name=rancher --restart=unless-stopped \
-  -p 80:80 -p 443:443 \
-  rancher/rancher:latest
+# /etc/rancher/rke2/config.yaml
+token: "my-shared-secret"
+tls-san:
+  - "rancher.example.com"
 ```
 
-**Ограничения Docker-установки:**
+### Установка cert-manager (Пререквизит)
 
-* **Архитектура**: внутри контейнера запускается встроенный легковесный дистрибутив Kubernetes (K3s).
-* **Надежность**: метод не обеспечивает отказоустойчивость и не рекомендуется для критических задач.
-* **Альтернатива**: для стабильной работы на одном узле рекомендуется установка на полноценный [K3s](../Installation/k3s_dev_environment/k3s_architecture.md).
-
-### Совместимость и безопасность
-
-* **Версии**: необходимо сверяться с матрицей поддержки (Support Matrix). Rancher v2.13.x совместим с Kubernetes v1.32–v1.34.
-* **Безопасность**: в актуальных версиях Kubernetes вместо устаревших политик безопасности подов (PSP — Pod Security Policy) используется встроенный механизм контроля допуска (PSA — Pod Security Admission). Подробности в разделе [Контекст безопасности подов](../Security/pod_security_context.md).
-
-### Удаление компонентов
-
-**Полная очистка K3s**:
+Rancher требует TLS для всех соединений. Если вы не используете собственные сертификаты (BYO), установка `cert-manager` обязательна:
 
 ```bash
-/usr/local/bin/k3s-uninstall.sh
+# 1. Добавление репозитория Jetstack
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+# 2. Установка (с автоматическим созданием CRD)
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --set installCRDs=true
 ```
 
-**Удаление агента Rancher (на управляемых узлах)**:
+### Развертывание Rancher Server через Helm
+
+После того как кластер и `cert-manager` готовы, приступайте к установке Rancher:
 
 ```bash
-# Для агента в Docker:
-docker rm -f <container_name>
+# 1. Репозиторий
+helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
+helm repo update
 
-# Для системного агента:
+# 2. Namespace
+kubectl create namespace cattle-system
+
+# 3. Инсталляция
+helm upgrade --install rancher rancher-latest/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.example.com \
+  --set bootstrapPassword=admin \
+  --set ingress.tls.source=rancher \
+  --set replicaCount=3
+```
+
+**Разбор ключевых параметров:**
+*   `hostname`: FQDN (Full Qualified Domain Name), по которому будет доступен UI. Должен быть заранее направлен на IP-адрес Load Balancer или Ingress узлов.
+*   `ingress.tls.source=rancher`: Rancher попросит `cert-manager` выпустить самоподписанный сертификат.
+*   `replicaCount=3`: обеспечивает доступность панели управления при выходе из строя одного узла.
+
+## Особенности эксплуатации
+
+### Проверка статуса установки
+
+После запуска Helm-чарта отслеживайте состояние Rollout:
+```bash
+kubectl -n cattle-system rollout status deploy/rancher
+```
+
+### Безопасность и PSA (Pod Security Admission)
+
+В актуальных версиях Kubernetes политики PSP удалены. Rancher автоматически настраивает необходимые метки для Namespace, но при ручном создании Namespace для приложений рекомендуется использовать стандартные профили:
+```bash
+kubectl label namespace my-app pod-security.kubernetes.io/enforce=baseline
+```
+
+### Удаление и очистка
+
+Для полной очистки узла от Rancher и управляющих агентов используйте скрипты удаления, поставляемые с дистрибутивом:
+
+```bash
+# Удаление RKE2
+/usr/local/bin/rke2-uninstall.sh
+
+# Очистка системного агента Rancher (на управляемых узлах)
 /usr/local/bin/rancher-system-agent-uninstall.sh
 ```
 
 ## Дополнительная информация
 
-* [Обзор Rancher](./rancher_overview.md) — общие принципы и возможности платформы.
-* [Официальная матрица поддержки](https://www.suse.com/suse-rancher/support-matrix/) — проверка совместимости версий.
+### Рекомендации по железу
+
+*   **Диски**: Всегда используйте SSD/NVMe. `etcd` крайне чувствителен к задержкам записи (latency).
+*   **Сеть**: Обеспечьте синхронизацию времени через NTP. Разница более чем в 1 секунду между узлами приведет к сбою проверки TLS-сертификатов.
+
+**Связанные темы:**
+
+* [Rancher: Обзор платформы](./rancher_overview.md) — архитектура и возможности.
+* [Kubernetes: Секреты](../Base/secrets/creating_secrets.md) — управление учетными данными.
+* [Ingress: Контроллер NGINX](../../Networking/Ingress/nginx_controller.md) — настройка точки входа.

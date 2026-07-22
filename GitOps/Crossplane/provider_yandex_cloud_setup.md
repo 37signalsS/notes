@@ -2,7 +2,7 @@
 
 ## Определения
 
-**provider-yandex-cloud** — официальный кроссплатформенный Crossplane-провайдер от Yandex Cloud для управления ресурсами облака (Compute, **VPC (Virtual Private Cloud)**, Managed Services) через Kubernetes **API (Application Programming Interface)**.
+**provider-yandex-cloud** — официальный кроссплатформенный Crossplane-провайдер от Yandex Cloud для управления ресурсами облака (Compute, VPC, Managed Services, IAM) через Kubernetes API. Он позволяет описывать инфраструктуру Yandex Cloud с помощью декларативных манифестов Kubernetes, обеспечивая полную интеграцию облака в GitOps-пайплайны.
 
 > **Важно:** Репозиторий `crossplane-contrib/provider-yandex-cloud` архивирован (октябрь 2025). Используйте официальный провайдер от Yandex Cloud: `yandexcloud/crossplane-provider-yc`.
 
@@ -19,107 +19,101 @@
 
 ### Поддерживаемые ресурсы Yandex Cloud
 
-- **Compute**: Виртуальные машины, группы ВМ, диски, снапшоты.
-- **VPC**: Сети, подсети, статические IP-адреса.
-- **Managed Services**: Kubernetes, PostgreSQL, MySQL, Redis.
-- **IAM (Identity and Access Management)**: Сервисные аккаунты, API-ключи.
+- **Compute**: Виртуальные машины (`ComputeInstance`), группы ВМ, диски, снапшоты.
+- **VPC**: Сети (`Network`), подсети (`Subnet`), статические IP-адреса, шлюзы.
+- **Managed Services**: Кластеры Kubernetes, PostgreSQL, MySQL, Redis, ClickHouse.
+- **IAM (Identity and Access Management)**: Сервисные аккаунты, роли, авторизованные ключи.
+- **Storage**: Объектное хранилище (S3-бакеты).
 
-Обзор Crossplane и его возможностей см. в [Crossplane: обзор](./overview.md).
+Общий обзор технологии и архитектуры Control Plane см. в [Crossplane: Обзор](./overview.md).
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-- **Кластер Kubernetes**: Локальный (Minikube, Kind) или облачный.
-- **Helm**: Пакетный менеджер, должен быть установлен и настроен.
-- **kubectl**: **CLI (Command Line Interface)** для Kubernetes, установлен и настроен.
-- **Argo CD**: (Опционально) Развернут в кластере для реализации GitOps-подхода.
-- **Yandex Cloud CLI**: Установлен и настроен (`yc init`).
+- **Кластер Kubernetes**: Managed Service for Kubernetes или любой self-managed кластер v1.26+.
+- **Helm**: Пакетный менеджер версии 3.8.0+ (с поддержкой OCI).
+- **kubectl**: Настроенный доступ к управляющему кластеру.
+- **Yandex Cloud CLI**: Установлен и инициализирован (`yc init`).
+- **Argo CD**: (Рекомендуется) Для автоматизации развертывания через Git.
 
-### Установка Crossplane и его CLI
+### Установка Crossplane
 
-**Шаг 1: Добавление Helm-репозитория Crossplane**
+**Шаг 1: Добавление Helm-репозитория**
 
 ```bash
 helm repo add crossplane-stable https://charts.crossplane.io/stable
 helm repo update
 ```
 
-**Шаг 2: Установка чарта Crossplane**
+**Шаг 2: Установка в выделенный namespace**
 
 ```bash
-helm install crossplane crossplane-stable/crossplane --namespace crossplane-system --create-namespace
+helm install crossplane crossplane-stable/crossplane \
+  --namespace crossplane-system \
+  --create-namespace
 ```
 
-**Шаг 3: Проверка установки**
+**Шаг 3: Проверка готовности**
 
-Убедитесь, что все поды в `crossplane-system` перешли в состояние `Running`:
+Убедитесь, что основные компоненты (`crossplane` и `crossplane-rbac-manager`) запущены:
 
 ```bash
 kubectl get pods -n crossplane-system
 # NAME                                           READY   STATUS    RESTARTS   AGE
-# crossplane-7b8c9d4e5f-abcde                    1/1     Running   0          1m
-# crossplane-rbac-manager-6f7g8h9i0j-fghij       1/1     Running   0          1m
+# crossplane-7b8c9d4e5f-abcde                    1/1     Running   0          2m
+# crossplane-rbac-manager-6f7g8h9i0j-fghij       1/1     Running   0          2m
 ```
 
-**Шаг 4: Установка Crossplane CLI**
+### Установка Crossplane CLI
 
-Скачайте бинарный файл для вашей ОС с [официальной страницы релизов](https://github.com/crossplane/crossplane/releases) и поместите его в директорию, доступную в `PATH`. **CLI** позволяет управлять пакетами и конфигурациями Crossplane.
+Инструмент командной строки необходим для удобного управления пакетами (`xpkg`).
 
-### Установка и конфигурация провайдера
+1. Скачайте бинарный файл для вашей ОС с [GitHub Releases](https://github.com/crossplane/crossplane/releases).
+2. Переместите его в `/usr/local/bin/` или другой путь в `PATH`.
+3. Проверьте установку: `crossplane --version`.
 
-**Шаг 1: Установка провайдера Yandex Cloud**
+### Установка и конфигурация провайдера Yandex Cloud
 
-Используйте **Crossplane CLI** для установки официального пакета провайдера от Yandex Cloud:
+**Вариант А: Установка через Crossplane CLI (Рекомендуется)**
 
 ```bash
-crossplane xpkg install provider xpkg.upbound.io/yandexcloud/crossplane-provider-yc:v0.5.1
+crossplane xpkg install provider xpkg.upbound.io/yandexcloud/crossplane-provider-yc:v0.14.0
 ```
 
-> **Примечание:** Проверьте актуальную версию на [Yandex Cloud Marketplace](https://yandex.cloud/en/marketplace/products/yc/crossplane) или [Upbound Registry](https://upbound.io/marketplace/providers/yandexcloud/crossplane-provider-yc).
+**Вариант Б: Установка через Yandex Cloud Marketplace**
 
-**Альтернативный способ: Установка через Helm от Yandex Cloud**
+Если вы используете Managed Kubernetes в YC, вы можете установить приложение "Crossplane" через веб-консоль в разделе Marketplace. Это автоматически развернет провайдер и создаст необходимые секреты.
 
-```bash
-helm pull oci://cr.yandex/yc-marketplace/yandex-cloud/crossplane/crossplane \
-  --version v1.20.6 \
-  --untar && \
-helm install \
-  --namespace crossplane-system \
-  --create-namespace \
-  --set-file providerJetYc.creds=key.json \
-  crossplane ./crossplane/
-```
+**Проверка установленных CRD:**
 
-**Шаг 2: Проверка установленных CRD (Custom Resource Definitions)**
-
-После установки провайдера в кластере появятся новые типы ресурсов:
+После установки провайдера появятся новые группы ресурсов:
 
 ```bash
-kubectl get crd | grep yandex-cloud.jet.crossplane.io
+kubectl get crd | grep yandex-cloud
 # computeinstances.compute.yandex-cloud.jet.crossplane.io
-# kubernetesclusters.k8s.yandex-cloud.jet.crossplane.io
-# managedpostgresqlclusters.sql.yandex-cloud.jet.crossplane.io
 # networks.vpc.yandex-cloud.jet.crossplane.io
+# ...
 ```
 
-**Шаг 3: Создание сервисного аккаунта в Yandex Cloud**
+### Настройка безопасности и доступа
 
-- В консоли Yandex Cloud перейдите в **Identity and Access Management** → **Сервисные аккаунты**.
-- Создайте аккаунт (например, `crossplane-sa`) с ролью `editor` на ваш каталог.
-- Создайте **авторизованный ключ** для этого аккаунта и скачайте JSON-файл с ключами.
-
-Или через CLI:
+**Шаг 1: Создание Сервисного Аккаунта (SA) в Yandex Cloud**
 
 ```bash
+# Создание SA
 yc iam service-account create --name crossplane-sa
-yc iam service-account key create --service-account-name crossplane-sa --output sa-key.json
-yc resource-manager folder add-access-binding --name <folder-name> --role editor --service-account-id <sa-id>
+
+# Назначение роли (admin или editor на каталог)
+yc resource-manager folder add-access-binding <FOLDER_ID> \
+  --role admin \
+  --subject serviceAccount:<SA_ID>
+
+# Создание авторизованного ключа
+yc iam key create --service-account-name crossplane-sa --output sa-key.json
 ```
 
-**Шаг 4: Создание секрета с учетными данными**
-
-Создайте секрет Kubernetes, который будет содержать скачанный JSON-ключ:
+**Шаг 2: Создание секрета в Kubernetes**
 
 ```bash
 kubectl create secret generic yandex-cloud-credentials \
@@ -127,9 +121,9 @@ kubectl create secret generic yandex-cloud-credentials \
   --namespace crossplane-system
 ```
 
-**Шаг 5: Настройка ProviderConfig**
+**Шаг 3: Настройка ProviderConfig**
 
-Этот ресурс связывает провайдер с учетными данными. Создайте файл `provider-config.yaml`:
+Этот объект определяет, какие учетные данные использовать для обращения к API.
 
 ```yaml
 apiVersion: yandex-cloud.jet.crossplane.io/v1beta1
@@ -143,35 +137,21 @@ spec:
       name: yandex-cloud-credentials
       namespace: crossplane-system
       key: credentials
-    cloudId: <YOUR_YANDEX_CLOUD_CLOUD_ID>
-    folderId: <YOUR_YANDEX_CLOUD_FOLDER_ID>
 ```
 
-Примените манифест:
+### Развертывание VM с Nginx через GitOps (Детальный пример)
 
-```bash
-kubectl apply -f provider-config.yaml
-kubectl get providerconfig
-# NAME      READY   SYNCED   AGE
-# default   True    True     10s
-```
+Этот пример демонстрирует создание виртуальной машины с использованием `cloud-config` для автоматической установки Nginx.
 
-### Развертывание VM с Nginx через GitOps
-
-Этот сценарий демонстрирует, как с помощью Argo CD и Crossplane развернуть виртуальную машину в Yandex Cloud.
-
-**Шаг 1: Подготовка Git-репозитория с манифестом**
-
-Создайте файл `vm.yaml` в вашем Git-репозитории:
+**Шаг 1: Манифест инфраструктуры (`vm.yaml`)**
 
 ```yaml
 apiVersion: compute.yandex-cloud.jet.crossplane.io/v1beta1
 kind: ComputeInstance
 metadata:
-  name: nginx-vm
+  name: nginx-web-server
 spec:
   forProvider:
-    folderId: <YOUR_YANDEX_CLOUD_FOLDER_ID>
     zone: ru-central1-a
     platformId: standard-v3
     resources:
@@ -180,39 +160,44 @@ spec:
       coreFraction: 20
     bootDisk:
       initializeParams:
-        imageId: fd80m5rnb5lsvj0s2k91
+        imageId: fd80m5rnb5lsvj0s2k91 # Ubuntu 22.04 LTS
         size: 15G
     networkInterfaces:
-      - subnetId: <YOUR_SUBNET_ID>
-        primaryV4Address: {}
+      - subnetId: <YOUR_SUBNET_ID> # Ссылка на ID подсети
+        primaryV4Address: {} # Динамический публичный IP
     metadata:
       user-data: |
         #cloud-config
+        package_update: true
         packages:
           - nginx
-        services:
-          nginx:
-            enabled: true
+        write_files:
+          - content: |
+              <h1>Deployed via Crossplane</h1>
+            path: /var/www/html/index.html
+        runcmd:
+          - systemctl enable nginx
+          - systemctl start nginx
   providerConfigRef:
     name: default
 ```
 
-**Шаг 2: Создание ArgoCD Application**
+**Шаг 2: Настройка ArgoCD Application**
 
-Создайте манифест `Application` для Argo CD:
+Для реализации GitOps-цикла создайте манифест `Application`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: nginx-vm-from-crossplane
+  name: yc-infra-stack
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/your-repo/your-crossplane-gitops.git
-    targetRevision: HEAD
-    path: crossplane/resources
+    repoURL: https://github.com/my-org/infra-gitops.git
+    targetRevision: main
+    path: crossplane/resources/yandex
   destination:
     server: https://kubernetes.default.svc
     namespace: default
@@ -224,42 +209,31 @@ spec:
       - CreateNamespace=true
 ```
 
-**Шаг 3: Синхронизация и проверка**
-
-После применения манифеста `Application` Argo CD начнет синхронизацию:
-
-```bash
-# Статус ArgoCD приложения
-argocd app get nginx-vm-from-crossplane
-
-# Статус ресурса Crossplane
-kubectl get computeinstance nginx-vm -o yaml
-
-# Внешний IP ВМ (появится после создания)
-kubectl get computeinstance nginx-vm -o jsonpath='{.status.atProvider.externalIp}'
-```
-
 ### Мониторинг и отладка
 
-Проверьте статус ресурса:
+1. **Проверка статуса ресурса:**
+   ```bash
+   kubectl get computeinstance nginx-web-server
+   # NAME               READY   SYNCED   EXTERNAL-IP      AGE
+   # nginx-web-server   True    True     158.160.20.30    5m
+   ```
 
-```bash
-kubectl get computeinstance nginx-vm
-# NAME      READY   SYNCED   EXTERNAL-IP   AGE
-# nginx-vm  True    True     158.160.45.123   5m
-```
+2. **Детальная информация об ошибках:**
+   ```bash
+   kubectl describe computeinstance nginx-web-server
+   # Ищите секцию Status.Conditions
+   ```
 
-Логи провайдера:
-
-```bash
-kubectl -n crossplane-system logs -l app=crossplane-provider-yandex-cloud
-```
+3. **Логи провайдера:**
+   ```bash
+   kubectl -n crossplane-system logs -l app=crossplane-provider-yandex-cloud
+   ```
 
 ## Дополнительная информация
 
-Управление ресурсами Yandex Cloud: [Yandex Resource Manager](../../Yandex/Resource_Manager/overview.md). Смежные руководства: [Provider Kubernetes](./provider_kubernetes_setup.md), [Compute Cloud](../../Yandex/Compute-Cloud.md), [VPC (Virtual Private Cloud)](../../Yandex/VPC.md), [Managed Databases](../../Yandex/Managed-Databases.md).
+Управление ресурсами через нативные инструменты: [Yandex Resource Manager](../../Yandex/Resource_Manager/overview.md).
+Смежные настройки: [Provider Kubernetes](./provider_kubernetes_setup.md), [Интеграция с GitOps](./gitops_integration.md).
 
 Внешние ресурсы:
-
-- [Yandex Cloud Provider](https://github.com/yandexcloud/crossplane-provider-yc) — официальная документация провайдера.
-- [Crossplane Yandex Cloud Marketplace](https://yandex.cloud/en/marketplace/products/yc/crossplane) — поддержка в маркетплейсе.
+- [Официальный репозиторий yandexcloud/crossplane-provider-yc](https://github.com/yandexcloud/crossplane-provider-yc)
+- [Документация Yandex Cloud: Crossplane](https://yandex.cloud/ru/docs/managed-kubernetes/operations/applications/crossplane)

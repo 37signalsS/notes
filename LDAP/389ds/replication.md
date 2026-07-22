@@ -1,183 +1,142 @@
-# Настройка репликации 389DS
+# Репликация в 389DS
 
 ## Определения
 
-**Multi-Master репликация** — архитектура, при которой несколько серверов 389DS содержат синхронизированные копии базы данных. Каждый сервер может принимать записи на изменение.
+**Multi-Master Replication (MMR)** — топология, в которой несколько серверов (Supplier) одновременно могут принимать изменения в базу данных. Все изменения автоматически распространяются между всеми участниками кластера.
 
-**Replica ID** — уникальный идентификатор реплики в топологии (1–65535).
+**Replica ID** — уникальное число (от 1 до 65534), идентифицирующее конкретный мастер-сервер в топологии.
 
-**Replication Agreement** — настройка, определяющая параметры синхронизации между двумя серверами.
+**Replication Agreement (Соглашение о репликации)** — объект конфигурации на одном сервере, описывающий, как и куда отправлять изменения (на какой хост, порт, по какому протоколу и под какой учетной записью).
+
+**Changelog** — специальный журнал изменений, используемый плагином репликации для отслеживания операций, которые необходимо передать другим узлам.
 
 ## Базовые концепции
 
-### Типы репликации
+### Роли серверов
 
-| Тип | Описание | Сценарий |
-| :--- | :--- | :--- |
-| **Single-Master** | Один master (запись), остальные — consumers (чтение) | Простая HA |
-| **Multi-Master** | Несколько master (запись/чтение на всех) | Active-Active HA |
-| **Cascading** | Consumer сам становится master для других | Географическое распределение |
+-   **Supplier (Поставщик):** Содержит основную копию данных, ведет Changelog и может инициировать репликацию на другие узлы. В Multi-Master топологии все узлы являются Supplier.
+-   **Consumer (Потребитель):** Содержит копию данных "только для чтения". Получает обновления от Supplier, но сам не инициирует их дальше.
+-   **Hub (Концентратор):** Получает обновления от Supplier и пересылает их другим Consumer. Сам не хранит Changelog для своих изменений (так как работает в режиме Read-only), но хранит Changelog для пересылки.
 
-### Требования к репликации
+### Разрешение конфликтов
 
-* Сетевая связность между серверами (порт 3389/3636)
-* DNS-имена или статические IP (ldap01, ldap02)
-* Одинаковая версия 389DS на всех серверах
-* Синхронизированное время (NTP/Chrony)
-* Настроенная [безопасность (TLS/SSL)](./overview.md#Безопасность) для production
+В Multi-Master среде возможны одновременные изменения одной и той же записи. 389DS использует:
+-   **CSN (Change Sequence Number):** Каждому изменению присваивается уникальный номер, включающий временную метку и Replica ID. Побеждает изменение с более поздней меткой.
+-   **Conflict Entries:** Если запись была создана одновременно с одинаковым именем, одна из них переименовывается в "конфликтную" (с добавлением уникального суффикса) для ручного разбора.
+
+### Безопасность
+
+Для промышленной эксплуатации (Production) репликация **обязана** использовать шифрование:
+-   **LDAPS (порт 636):** Соединение защищено TLS с момента установления.
+-   **StartTLS (порт 389):** Переключение обычного соединения в защищенный режим.
+-   **Simple Bind + TLS:** Рекомендуемый метод аутентификации менеджера репликации.
 
 ## Практические сценарии
 
-### Подготовка серверов
+### Настройка Multi-Master репликации (2 узла)
 
-На обоих серверах выполнить (подробнее о развёртывании в [Docker](./docker.md)):
+Предполагается, что оба сервера запущены в Docker (см. [Docker развертывание](./docker.md)) и имеют доступ друг к другу по именам `ldap-01` и `ldap-02`.
 
+#### 1. Включение репликации на каждом узле
+
+На **ldap-01** (Replica ID: 1):
 ```bash
-# Создать директорию для данных
-mkdir -p /data/ldap
-
-# Запустить контейнер
-docker run -d \
-  --name 389ds \
-  -p 3389:3389 \
-  -p 3636:3636 \
-  -v /data/ldap:/data \
-  --memory=2g \
-  -e SUFFIX=dc=test,dc=local \
-  -e DM_PASSWORD=password \
-  -e DS_REINDEX=true \
-  quay.io/389ds/ds-container:latest
-
-# Проверить статус
-docker logs -f 389ds
-```
-
-### Создание backend
-
-На **каждом** сервере:
-
-```bash
-docker exec 389ds dsconf backend create \
-  --suffix "dc=test,dc=local" \
-  --be-name user-root \
-  --create-suffix
-```
-
-Проверка:
-
-```bash
-docker exec 389ds dsconf backend suffix list
-```
-
-### Включение репликации
-
-#### Сервер 1 (ldap01, Replica ID: 1)
-
-```bash
-docker exec 389ds dsconf replica enable \
-  --suffix "dc=test,dc=local" \
+docker exec 389ds dsconf localhost replication enable \
+  --suffix "dc=example,dc=com" \
   --role supplier \
   --replica-id 1 \
-  "cn=replication manager,cn=config" \
-  --password password
+  --bind-dn "cn=replication manager,cn=config" \
+  --bind-passwd "StrongPassword"
 ```
 
-#### Сервер 2 (ldap02, Replica ID: 2)
-
+На **ldap-02** (Replica ID: 2):
 ```bash
-docker exec 389ds dsconf replica enable \
-  --suffix "dc=test,dc=local" \
+docker exec 389ds dsconf localhost replication enable \
+  --suffix "dc=example,dc=com" \
   --role supplier \
   --replica-id 2 \
-  "cn=replication manager,cn=config" \
-  --password password
-```
-
-### Создание replication agreement
-
-#### На ldap01 (агрейт на ldap02)
-
-```bash
-docker exec 389ds dsconf repl-agmt create \
-  --suffix "dc=test,dc=local" \
-  --host-name ldap02 \
-  --port 3389 \
-  --bind-method simple \
   --bind-dn "cn=replication manager,cn=config" \
-  --password password \
-  me-to-ldap02
+  --bind-passwd "StrongPassword"
 ```
 
-#### На ldap02 (агрейт на ldap01)
+#### 2. Создание соглашений о репликации (Replication Agreements)
 
+На **ldap-01** для отправки данных на **ldap-02**:
 ```bash
-docker exec 389ds dsconf repl-agmt create \
-  --suffix "dc=test,dc=local" \
-  --host-name ldap01 \
+docker exec 389ds dsconf localhost repl-agmt create \
+  --suffix "dc=example,dc=com" \
+  --host "ldap-02" \
   --port 3389 \
-  --bind-method simple \
+  --conn-protocol LDAP \
   --bind-dn "cn=replication manager,cn=config" \
-  --password password \
-  me-to-ldap01
+  --bind-passwd "StrongPassword" \
+  --bind-method SIMPLE \
+  "agmt-to-ldap-02"
 ```
 
-### Инициализация репликации
+На **ldap-02** для отправки данных на **ldap-01**:
+```bash
+docker exec 389ds dsconf localhost repl-agmt create \
+  --suffix "dc=example,dc=com" \
+  --host "ldap-01" \
+  --port 3389 \
+  --conn-protocol LDAP \
+  --bind-dn "cn=replication manager,cn=config" \
+  --bind-passwd "StrongPassword" \
+  --bind-method SIMPLE \
+  "agmt-to-ldap-01"
+```
 
-На любом сервере:
+#### 3. Инициализация данных
+
+Выполняется **только на одном** из серверов для первичной синхронизации базы.
 
 ```bash
-docker exec 389ds dsconf repl-agmt init \
-  --suffix "dc=test,dc=local" \
-  me-to-ldap02
+docker exec 389ds dsconf localhost repl-agmt init \
+  --suffix "dc=example,dc=com" "agmt-to-ldap-02"
 ```
 
-### Проверка статуса репликации
+### Мониторинг и проверка
 
+Просмотр текущего состояния соглашения:
 ```bash
-docker exec 389ds dsconf replication status \
-  --suffix "dc=test,dc=local" \
-  me-to-ldap02
+docker exec 389ds dsconf localhost repl-agmt status \
+  --suffix "dc=example,dc=com" "agmt-to-ldap-02"
 ```
 
-**Ключевые параметры:**
-
-* `Replication Enabled` — репликация включена
-* `Last Update` — время последней синхронизации
-* `Replica Status` — статус (online/offline, ошибки)
+**Ожидаемый результат:** `Replication successfully completed` или `Incremental update succeeded`.
 
 ## Дополнительная информация
 
-### Troubleshooting
+### Управление Changelog
 
-| Проблема | Решение |
-| :--- | :--- |
-| `Error: Can't contact LDAP server` | Проверить сеть, firewall, статус контейнера |
-| `Replica not in sync` | Выполнить `dsconf repl-agmt init` |
-| `Conflict DN` | Проверить логи репликации, использовать `dsconf repl-conflict` |
-
-### Логи репликации
+Журнал изменений может занимать много места. Его параметры настраиваются глобально:
+-   **Max age:** Время хранения изменений (рекомендуется 7-14 дней).
+-   **Max entries:** Максимальное количество записей.
 
 ```bash
-# Включить логирование репликации
-docker exec 389ds dsconf config set \
-  --add-nsslapd-errorlog-level "replication"
-
-# Просмотр логов
-docker exec 389ds tail -f /var/log/dirsrv/slapd-*/errors
+# Пример настройки времени хранения
+dsconf localhost replication set --suffix "dc=example,dc=com" --repl-keep-history-interval "7d"
 ```
 
 ### Рекомендации (Best Practices)
 
-1. **Минимум 2 сервера** для HA
-2. **Replica ID** должны быть уникальны в топологии
-3. **Конфигурация (`cn=config`) не реплицируется** — настраивать на каждом сервере отдельно (см. [плагины](./plugins.md))
-4. **Мониторинг:** отслеживать `Last Update` и ошибки репликации
-5. **Тестирование:** проверять репликацию изменений перед production
+1.  **Синхронизация времени:** Репликация критически зависит от времени. Всегда используйте NTP (Chrony) на хостах.
+2.  **Уникальность Replica ID:** Никогда не используйте одинаковые ID для разных мастеров — это приведет к потере данных и конфликтам, которые невозможно разрешить автоматически.
+3.  **Изоляция трафика:** По возможности используйте выделенную сеть для трафика репликации.
+4.  **Фракционная репликация:** Если на некоторые узлы не нужно передавать определенные атрибуты (например, только для чтения в DMZ), используйте Fractional Replication.
 
-### Рекомендуемая последовательность развёртывания
+### Troubleshooting
 
-1. Запустить 389DS в Docker на отдельных машинах
-2. Настроить кластер и репликацию
-3. Протестировать failover
-4. Перенести конфигурацию в [Kubernetes](./k8s_deploy/basic_concepts.md) (опционально)
-5. Создать Helm chart для повторяемости
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `Can't contact LDAP server` | Сетевой экран или неверный порт | Проверьте `ping` и `telnet` на порты 3389/3636 |
+| `Invalid credentials` | Ошибка в пароле Replication Manager | Обновите пароль в соглашении через `repl-agmt set` |
+| `Replica has no root RUV` | Ошибка инициализации | Повторно запустите `repl-agmt init` |
+| Огромные лаги (Backlog) | Медленный диск или сеть | Проверьте IOPS на разделе с `/data/db` |
+
+### Связанные материалы
+
+-   [Обзор 389DS](./overview.md) — базовые понятия и архитектура
+-   [Docker развертывание](./docker.md) — запуск контейнеров для кластера
+-   [Плагины](./plugins.md) — работа плагина репликации и Retro Changelog

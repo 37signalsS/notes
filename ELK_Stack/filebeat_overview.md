@@ -1,107 +1,118 @@
-# Filebeat: Обзор и Конфигурация
+# Filebeat: Обзор и конфигурация
 
 > Эта заметка является частью обзора [ELK стека](./elk_stack_overview.md) и служит основной точкой входа для изучения Filebeat.
 
 ## Определения
 
-* **Filebeat**: Легковесный агент для пересылки логов (lightweight shipper) в Elastic Stack. Собирает логи и файловые данные с серверов, отправляет в Logstash или Elasticsearch.
-* **Модули (Modules)**: Предварительно настроенные конфигурации для популярных источников логов (Nginx, MySQL, System). Включают настройки сбора, парсинг через Ingest Pipeline и готовые дашборды в Kibana.
+* **Filebeat** — легковесный агент (shipper) для сбора и пересылки логов в Elastic Stack. Написан на Go, обладает минимальным потреблением ресурсов и встроенными механизмами отказоустойчивости.
+* **Filestream** — основной тип входных данных (input) в современных версиях Filebeat (начиная с 9.x является стандартом). Заменяет устаревшие типы `log` и `container`.
+* **Модули (Modules)** — наборы готовых конфигураций для популярных сервисов (Nginx, MySQL, System, AWS), включающие настройки сбора, парсинга (Ingest Pipelines) и визуализации (Kibana Dashboards).
 
 ## Основные концепции
 
-### Как работает Filebeat
+### Архитектура и механизмы работы
 
-Filebeat устанавливается на серверы-источники и отслеживает указанные файлы.
+Filebeat работает по принципу отслеживания изменений в файлах и их построчного чтения.
 
-* **Harvesters (Сборщики)**: Чтение содержимого одного файла. Harvester считывает новые данные по мере появления, держит файл открытым.
-* **Inputs (Входы)**: Управление Harvesters, поиск источников по конфигурации. Типы: `filestream` (современный), `log` (устаревший), `container`, `tcp`, `udp`.
-* **Registry File**: Хранение состояния (смещения) для каждого файла. Позволяет возобновить чтение после перезапуска, гарантирует доставку без дубликатов.
+* **Harvesters (Сборщики)**: процессы, отвечающие за чтение конкретного файла. Harvester считывает новые данные по мере их появления и держит дескриптор файла открытым.
+* **Inputs (Входы)**: управляют жизненным циклом Harvesters. В Filebeat 9.x рекомендуется использовать исключительно `filestream`.
+* **Registry File (Реестр)**: хранит состояние (смещение/offset) для каждого файла. В версии 9.x реестр переведен на формат **append-only**, что значительно повышает производительность при работе с тысячами файлов.
+* **Механизм обратного давления (Backpressure)**: если система-получатель (Elasticsearch или Logstash) не успевает обрабатывать данные, Filebeat автоматически замедляет чтение файлов, предотвращая переполнение памяти и потерю данных.
 
-### Обработка данных (Processors)
+### Идентификация файлов (Fingerprinting)
 
-Filebeat обрабатывает события перед отправкой: обогащение, фильтрация, структурирование данных на стороне агента.
+В Filebeat 9.x механизмом идентификации файлов по умолчанию стал **fingerprint** (вместо inode).
+* **Как это работает**: Filebeat хеширует первые 1024 байта контента файла для создания уникального ID.
+* **Зачем это нужно**: решает проблемы дублирования данных при смене inode (характерно для некоторых сетевых ФС или при агрессивной ротации логов).
+* **Особенность**: по умолчанию Filebeat начинает читать файл только после того, как его размер достигнет 1024 байт (настраивается через `prospector.scanner.fingerprint.length`).
 
-* **Примеры процессоров:** `add_cloud_metadata` (метаданные AWS, GCP, Azure), `drop_fields` (удаление полей), `decode_json_fields` (парсинг JSON).
+### Гибкий парсинг (Parsers)
 
-### Механизм обратного давления (Backpressure)
-
-При перегрузке Elasticsearch/Logstash Filebeat автоматически замедляет чтение файлов, предотвращая потерю данных и защищая downstream-компоненты.
-
-### Автообнаружение (Autodiscover)
-
-В Docker и Kubernetes Autodiscover автоматически обнаруживает новые контейнеры и применяет конфигурации на основе метаданных (лейблы, аннотации).
+Вход `filestream` позволяет настраивать порядок обработки данных через секцию `parsers`. В отличие от старых версий, теперь можно сначала разобрать JSON, а затем применить правила объединения строк (multiline).
 
 ## Практические сценарии
 
-### Отправка логов в Elasticsearch
+### Настройка входа filestream (Filebeat 9.x)
 
-Базовый пример: отслеживание `/var/log/*.log` и отправка в защищенный кластер Elasticsearch.
+Базовый пример сбора логов приложения с использованием уникального ID (обязательно в 9.x) и парсинга JSON.
 
 ```yaml
 filebeat.inputs:
 - type: filestream
-  id: my-filestream-id
+  id: my-application-logs # Уникальный ID обязателен
   paths:
-    - /var/log/*.log
-  exclude_files: [".gz$"]
+    - /var/log/myapp/*.log
+  
+  # Настройка идентификации (Fingerprint по умолчанию в 9.x)
+  file_identity.fingerprint: ~
+
+  parsers:
+    - ndjson:
+        target: "" # Раскрывать JSON в корень документа
+        add_error_key: true
+    - multiline:
+        type: pattern
+        pattern: '^\['
+        negate: true
+        match: after
 
 output.elasticsearch:
-  hosts: ["https://es01:9200", "https://es02:9200"]
-  api_key: "<id>:<api_key>"
-  # username: "<username>"
-  # password: "<password>"
+  hosts: ["https://es-cluster:9200"]
+  api_key: "YOUR_API_KEY"
   ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
 ```
 
-### Использование модуля Nginx
+### Использование модулей (на примере Nginx)
 
-Модули упрощают сбор стандартных логов.
+Модули позволяют быстро настроить сбор структурированных данных без ручного написания регулярных выражений.
 
-1. **Включить модуль:** `filebeat modules enable nginx`
+1. **Включение модуля**:
+   ```bash
+   filebeat modules enable nginx
+   ```
 
-2. **Настроить в `modules.d/nginx.yml`:**
+2. **Настройка параметров** в `/etc/filebeat/modules.d/nginx.yml`:
+   ```yaml
+   - module: nginx
+     access:
+       enabled: true
+       var.paths: ["/var/log/nginx/access.log*"]
+     error:
+       enabled: true
+   ```
 
-    ```yaml
-    - module: nginx
-      access:
-        enabled: true
-        var.paths: ["/var/log/nginx/access.log*"]
-      error:
-        enabled: true
-        var.paths: ["/var/log/nginx/error.log*"]
-    ```
+3. **Первичная загрузка ресурсов** (пайплайны, дашборды):
+   ```bash
+   filebeat setup -e
+   ```
 
-    Filebeat автоматически применит парсинг и направит данные на дашборды в Kibana.
+### Обработка данных процессорами
 
-### Использование процессоров
-
-Процессоры добавляются в конфигурацию входа и выполняются последовательно.
+Процессоры позволяют обогащать или фильтровать данные на стороне агента.
 
 ```yaml
-filebeat.inputs:
-- type: filestream
-  paths:
-    - /var/log/my-app/*.json
-
-  json.keys_under_root: true
-  json.add_error_key: true
-
-  processors:
-    - add_cloud_metadata: {}
-    - add_fields:
-        target: project
-        fields:
-          name: my-awesome-app
-          version: "1.0"
-    - drop_fields:
-        fields: ["request.body.content"]
-        ignore_missing: true
+processors:
+  - add_docker_metadata: ~ # Добавление имен и лейблов контейнеров
+  - drop_fields:
+      fields: ["agent.ephemeral_id", "agent.id"]
+      ignore_missing: true
+  - decode_json_fields:
+      fields: ["message"]
+      target: "json"
 ```
 
 ## Дополнительная информация
 
-* **Сбор логов Docker:** примеры использования Filebeat как агента для сбора логов контейнеров — в **[Агентный сбор логов в Docker](../Docker/Docker_logs/docker_agent_based_logging.md)**.
-* **Практика настройки:** полный цикл развертывания стека с Docker Compose — в **[Практическое руководство по настройке ELK](./Tutorials/practical_setup_with_docker.md)**.
-* **Документация:** список поддерживаемых модулей доступен в [официальной документации Elastic](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-modules.html).
+### Миграция с 8.x на 9.x
 
-> **Примечание о версиях:** Для совместимости компонентов ELK стека рекомендуется использовать одинаковые версии Elasticsearch, Logstash, Kibana и Filebeat. Актуальные мажорные версии — 8.x и 9.x (по состоянию на март 2026 года).
+* **Удаление старых типов**: входы `log` и `container` отключены. Необходимо перевести их на `filestream`.
+* **Параметр `take_over`**: при миграции с `log` на `filestream` используйте `take_over: true`, чтобы Filebeat подхватил старое состояние из реестра и не перечитывал файлы заново.
+* **Уникальные ID**: каждый вход обязан иметь поле `id`, иначе Filebeat не запустится.
+
+### Ссылки и ресурсы
+
+* **Сбор логов в Docker**: детальная настройка Filebeat как агента в контейнерной среде — в **[Агентный сбор логов в Docker](../Docker/Docker_logs/docker_agent_based_logging.md)**.
+* **Развертывание через Compose**: примеры запуска — в **[Практическое руководство по настройке ELK](./Tutorials/practical_setup_with_docker.md)**.
+* **Конфигурация выхода**: детали настройки передачи данных — в **[Logstash: Обзор и ключевые концепции](./Logstash/logstash_overview.md)**.
+
+> **Примечание**: при работе с Filebeat 9.x убедитесь, что версия Elasticsearch не ниже 8.15 для полной поддержки новых функций реестра.

@@ -164,7 +164,7 @@ end
 -   **Kubernetes Operators:** Управление конфигурацией приложений внутри K8s через Custom Resources. Постепенно заменяют традиционные CM-инструменты в контейнерных средах.
 -   **Policy as Code:** Автоматическая проверка конфигураций на соответствие стандартам безопасности и архитектуры (**Open Policy Agent, OPA**, HashiCorp Sentinel).
 -   **Immutable Infrastructure:** Подход, при котором серверы никогда не модифицируются после создания. Вместо изменения конфигурации создается новый образ (Packer, Docker) и заменяется старая версия сервера.
--   **Crossplane:** Управление облачной инфраструктурой и ее конфигурацией через API Kubernetes (K8s-native Infrastructure Management).
+-   **Crossplane:** Управление облачной инфраструктурой и ее конфигурацией через API Kubernetes (K8s-native Infrastructure Management). Подробнее: [Обзор Crossplane](../GitOps/Crossplane/overview.md).
 
 **См. также:**
 - [Модели Push vs Pull](./configuration_management_push_vs_pull.md)

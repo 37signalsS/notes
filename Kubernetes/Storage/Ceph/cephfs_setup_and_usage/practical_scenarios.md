@@ -2,282 +2,264 @@
 
 ## Определения
 
-**Keyring** — файл, содержащий ключ аутентификации клиента Ceph (формат: `/etc/ceph/ceph.client.<username>.keyring`).
+**Subvolume (Субтом)** — абстракция над директорией CephFS, позволяющая управлять квотами, снапшотами и путями через специализированный CLI. Является стандартом для Kubernetes CSI.
 
-**Secretfile** — файл с raw-ключом клиента, используется при монтировании через fstab.
+**Keyring** — файл, содержащий имя пользователя и его ключ аутентификации в формате CephX (обычно `/etc/ceph/ceph.client.<user>.keyring`).
 
-## Базовые концепции
+**Secretfile** — файл, содержащий исключительно "сырой" (raw) ключ (base64). Используется ядром Linux для монтирования, чтобы не передавать ключ в открытом виде через командную строку.
 
-### Жизненный цикл CephFS
+**MDS Caps (Capabilities)** — набор разрешений, выдаваемых MDS клиенту для работы с метаданными. Примеры: `allow rw path=/data` (доступ к пути), `allow r` (только чтение).
 
-```
-Создание пулов → Активация приложения → Создание ФС → Настройка MDS → Создание пользователей → Монтирование
-```
+---
 
-### Типы монтирования
+## Основные концепции
 
-| Тип | Команда | Сценарий |
-|-----|---------|----------|
-| **Kernel** | `mount -t ceph` | Production, высокая производительность |
-| **FUSE** | `ceph-fuse` | Тестирование, нестандартные ядра |
-| **fstab** | записи в `/etc/fstab` | Автоматическое монтирование при загрузке |
+### Жизненный цикл управления CephFS
 
-### Иерархия прав доступа
+1.  **Инфраструктурный уровень**: Создание пулов данных и метаданных, создание файловой системы, развертывание MDS.
+2.  **Уровень управления (Control Plane)**:
+    *   *Классический*: Ручное создание директорий и установка прав/квот через расширенные атрибуты (`xattrs`).
+    *   *Современный*: Использование модуля `volumes` и субтомов (Subvolumes).
+3.  **Уровень доступа**: Создание пользователей CephX с ограниченными Caps.
+4.  **Уровень потребления**: Монтирование через Kernel Driver, FUSE или CSI-драйвер в Kubernetes.
 
-```
-admin (полный доступ)
-  ↓
-path-based пользователь (rw на конкретный каталог)
-  ↓
-readonly пользователь (только чтение)
-```
+### Протоколы Messenger v1 vs v2
 
-Подробная модель прав — в [определениях и концепциях](./definitions_and_concepts.md#модель-прав-доступа).
+*   **v1 (порт 6789)**: Классический протокол без шифрования.
+*   **v2 (порт 3300)**: Современный протокол (Messenger v2). Поддерживает режимы `crc` (целостность) и `secure` (полное шифрование трафика "на лету").
 
 ---
 
 ## Практические сценарии
 
-### Создание файловой системы CephFS
+### 1. Создание и базовая настройка ФС
 
-#### Создание пулов
+#### Создание пулов и активация
 
 ```bash
-# Пул для данных (PG рассчитайте по формуле)
-ceph osd pool create cephfs_data 32
+# Пул для данных (рекомендуется использовать Erasure Coding для больших архивов или Replication для общего назначения)
+# См. [Расчёт Placement Groups](../ceph_placement_groups.md)
+ceph osd pool create cephfs_data 64
+ceph osd pool create cephfs_metadata 64
 
-# Пул для метаданных
-ceph osd pool create cephfs_metadata 32
-
-# Активация приложения CephFS
+# Активация приложения (обязательно для работы MGR и корректной статистики)
 ceph osd pool application enable cephfs_data cephfs
 ceph osd pool application enable cephfs_metadata cephfs
 ```
 
-> **Примечание**: Количество PG рассчитывается по формуле в [расчёте placement groups](../ceph_placement_groups.md).
-
-#### Создание файловой системы
+#### Инициализация файловой системы
 
 ```bash
-ceph fs new cephfs cephfs_metadata cephfs_data
+# Создание ФС (первым указывается пул метаданных)
+ceph fs new mycephfs cephfs_metadata cephfs_data
+
+# Проверка статуса
 ceph fs ls
-```
-
-#### Настройка MDS
-
-```bash
-# Статус MDS
 ceph mds stat
-
-# Увеличение количества активных MDS (для HA)
-ceph fs set cephfs max_mds 2
-ceph fs dump
 ```
 
-### Создание пользователя и настройка прав
+#### Настройка отказоустойчивости MDS
 
-#### Пользователь с доступом к каталогу
+Для обеспечения высокой доступности (HA) рекомендуется иметь минимум один активный и один Standby MDS на каждую ФС.
 
 ```bash
-ceph auth get-or-create client.fs_user \
+# Увеличение количества активных MDS (рангов) до 2 (требует минимум 3 MDS в кластере для HA)
+ceph fs set mycephfs max_mds 2
+
+# Включение режима standby-replay (ускоряет failover)
+ceph fs set mycephfs allow_standby_replay true
+```
+
+### 2. Современное управление через Субтомы (Subvolumes)
+
+Рекомендуемый метод для новых инсталляций и Kubernetes.
+
+#### Работа с группами и томами
+
+```bash
+# Создание группы (например, под конкретный проект)
+ceph fs subvolumegroup create mycephfs project_alpha
+
+# Создание субтома с жесткой квотой (50 ГБ)
+ceph fs subvolume create mycephfs user_data --group_name project_alpha --size 53687091200
+
+# Получение реального пути на диске (нужен для ручного монтирования)
+ceph fs subvolume getpath mycephfs user_data --group_name project_alpha
+# → /volumes/project_alpha/user_data/uuid...
+```
+
+#### Ресайз и информация
+
+```bash
+# Увеличение квоты до 100 ГБ
+ceph fs subvolume resize mycephfs user_data 107374182400 --group_name project_alpha
+
+# Просмотр информации о заполнении и квотах
+ceph fs subvolume info mycephfs user_data --group_name project_alpha
+```
+
+### 3. Классическое управление (Manual Path & Xattrs)
+
+Используется для тонкой настройки существующих директорий.
+
+#### Создание и права
+
+```bash
+# 1. Монтируем ФС как администратор
+sudo mount -t ceph :/ /mnt/cephfs -o name=admin,secretfile=/etc/ceph/admin.secret
+
+# 2. Создаем структуру
+sudo mkdir -p /mnt/cephfs/legacy_app/data
+sudo chown 1000:1000 /mnt/cephfs/legacy_app/data
+
+# 3. Установка квот через атрибуты (требует установленного пакета attr)
+# Квота на объем (10 ГБ)
+setfattr -n ceph.quota.max_bytes -v 10737418240 /mnt/cephfs/legacy_app/data
+# Квота на количество файлов (1 млн)
+setfattr -n ceph.quota.max_files -v 1000000 /mnt/cephfs/legacy_app/data
+```
+
+### 4. Настройка доступа (CephX)
+
+#### Пользователь с ограничением по пути (Path-based)
+
+```bash
+# Доступ только к конкретному субтому/директории
+ceph auth get-or-create client.app_user \
   mon 'allow r' \
   mgr 'allow r' \
-  mds 'allow r, allow rw path=/data_pes' \
+  mds 'allow rw path=/volumes/project_alpha/user_data' \
   osd 'allow rw pool=cephfs_data'
+
+# Извлечение ключа для клиента
+ceph auth get-key client.app_user > app_user.secret
+chmod 600 app_user.secret
 ```
 
-#### Административный пользователь
+### 5. Монтирование CephFS
+
+#### Метод А: Kernel Driver (Рекомендуемый)
+
+Обеспечивает наилучшую производительность.
 
 ```bash
-ceph auth get-or-create client.cephfs_admin \
-  mon 'allow r' \
-  mgr 'allow rw' \
-  mds 'allow *' \
-  osd 'allow rw pool=cephfs_data, allow rw pool=cephfs_metadata'
+# Монтирование с использованием Messenger v2 (порт 3300) и режима crc
+sudo mount -t ceph 192.168.1.10:3300,192.168.1.11:3300:/ /mnt/shared \
+  -o name=app_user,secretfile=/etc/ceph/app_user.secret,ms_mode=prefer-crc,noatime
 ```
 
-#### Получение ключа пользователя
+#### Метод Б: FUSE Client
+
+Используется, если ядро клиента слишком старое или нужны специфические фичи.
 
 ```bash
-ceph auth get-key client.fs_user
-ceph auth get client.fs_user -o /etc/ceph/ceph.client.fs_user.keyring
+# Установка (Debian/Ubuntu)
+sudo apt install -y ceph-fuse
+
+# Монтирование (через keyring)
+sudo ceph-fuse -m 192.168.1.10:6789 /mnt/shared \
+  -r /volumes/project_alpha/user_data \
+  -n client.app_user \
+  -k /etc/ceph/ceph.client.app_user.keyring
 ```
 
-### Монтирование CephFS
+#### Метод В: Автоматизация через /etc/fstab
 
-#### Подготовка каталога (администратор)
+Подробный разбор записи для надежного монтирования при загрузке:
 
 ```bash
-sudo mkdir -p /mnt/cephfs
-ADMIN_SECRET=$(ceph auth get-key client.admin)
-
-sudo mount -t ceph 172.21.0.10:6789:/ /mnt/cephfs \
-  -o name=admin,secret=$ADMIN_SECRET
-
-sudo mkdir /mnt/cephfs/data_pes
-sudo chown 1000:1000 /mnt/cephfs/data_pes
-
-sudo umount /mnt/cephfs
+# Запись в fstab
+192.168.1.10,192.168.1.11:/path /mnt/data ceph name=user,secretfile=/etc/ceph/user.secret,ms_mode=crc,_netdev,noatime 0 0
 ```
 
-#### Ручное монтирование (kernel driver)
+| Поле | Описание |
+|------|----------|
+| `192.168.1.10,...:/path` | Список мониторов и путь внутри CephFS. |
+| `_netdev` | **Критично!** Указывает системе монтировать ФС только после поднятия сети. |
+| `ms_mode=crc` | Режим работы протокола Messenger v2 (целостность данных). |
+| `noatime` | Отключает обновление времени последнего доступа (снижает нагрузку на MDS). |
+
+### 6. Снапшоты и резервное копирование
+
+#### Ручные снапшоты (через .snap)
+
+Снапшоты в CephFS доступны через скрытую директорию `.snap`.
 
 ```bash
-sudo mkdir -p /mnt/shared_fs
-USER_SECRET=$(ceph auth get-key client.fs_user)
+# Создание
+mkdir /mnt/shared/.snap/backup_2025_01_01
 
-sudo mount -t ceph 172.21.0.10:6789:/data_pes /mnt/shared_fs \
-  -o name=fs_user,secret=$USER_SECRET
+# Просмотр (снапшот выглядит как обычная копия данных)
+ls -l /mnt/shared/.snap/backup_2025_01_01/
 
-df -h /mnt/shared_fs
-mount | grep ceph
+# Удаление
+rmdir /mnt/shared/.snap/backup_2025_01_01
 ```
 
-#### Монтирование с несколькими мониторами
+#### Автоматизированные расписания (Snapshot Schedules)
+
+Требует активации модуля в MGR.
 
 ```bash
-sudo mount -t ceph \
-  172.21.0.10:6789,172.21.0.11:6789,172.21.0.12:6789:/data_pes \
-  /mnt/shared_fs \
-  -o name=fs_user,secret=$USER_SECRET
+# Включение и настройка
+ceph mgr module enable snap_schedule
+ceph fs snap-schedule add /volumes/project_alpha/user_data 1h --fs mycephfs
+
+# Настройка политики удержания: 24 часовых, 7 дневных, 4 недельных
+ceph fs snap-schedule retention add /volumes/project_alpha/user_data h 24 --fs mycephfs
+ceph fs snap-schedule retention add /volumes/project_alpha/user_data d 7 --fs mycephfs
+ceph fs snap-schedule retention add /volumes/project_alpha/user_data w 4 --fs mycephfs
 ```
 
-#### Монтирование через FUSE
+---
+
+## Диагностика и мониторинг
+
+### Проверка состояния кластера ФС
 
 ```bash
-# Установка
-sudo apt install -y fuse-ceph  # Debian/Ubuntu
-sudo yum install -y ceph-fuse  # CentOS/RHEL
-
-# Монтирование
-sudo ceph-fuse -m 172.21.0.10:6789 /mnt/shared_fs \
-  -r /data_pes \
-  -n client.fs_user \
-  -k /etc/ceph/ceph.client.fs_user.keyring
-```
-
-### Автоматическое монтирование (fstab)
-
-#### Создание файла с секретом
-
-```bash
-USER_SECRET=$(ceph auth get-key client.fs_user)
-echo "$USER_SECRET" | sudo tee /etc/ceph/fs_user.secret
-sudo chmod 600 /etc/ceph/fs_user.secret
-```
-
-#### Добавление в /etc/fstab
-
-```bash
-echo "172.21.0.10,172.21.0.11,172.21.0.12:/data_pes /mnt/shared_fs ceph name=fs_user,secretfile=/etc/ceph/fs_user.secret,_netdev,noatime 0 0" | \
-  sudo tee -a /etc/fstab
-```
-
-#### Разбор записи fstab
-
-| Поле | Значение | Описание |
-|------|----------|----------|
-| `172.21.0.10,...:/data_pes` | Device | Мониторы + путь |
-| `/mnt/shared_fs` | Mountpoint | Точка монтирования |
-| `ceph` | Type | Тип ФС |
-| `name=fs_user,secretfile=...,` | Options | Опции монтирования |
-| `_netdev` | Critical! | Монтировать после сети |
-| `noatime` | Optional | Не обновлять время доступа |
-| `0` | Dump | Не бэкапить |
-| `0` | Pass | Не проверять fsck |
-
-#### Проверка и тестирование
-
-```bash
-sudo mount -a
-mount | grep ceph
-df -h /mnt/shared_fs
-```
-
-### Управление квотами
-
-#### Установка квоты на каталог
-
-```bash
-# Квота на объем (10 ГБ)
-setfattr -n ceph.quota.max_bytes -v 10737418240 /mnt/shared_fs/data_pes
-
-# Квота на количество файлов (1000)
-setfattr -n ceph.quota.max_files -v 1000 /mnt/shared_fs/data_pes
-```
-
-#### Проверка квот
-
-```bash
-# Установка утилиты
-sudo apt install -y attr  # Debian/Ubuntu
-sudo yum install -y attr  # CentOS/RHEL
-
-# Просмотр
-getfattr -n ceph.quota.max_bytes /mnt/shared_fs/data_pes
-getfattr -n ceph.quota.max_files /mnt/shared_fs/data_pes
-
-# Использование кластера
-ceph df detail
-```
-
-### Снапшоты CephFS
-
-#### Создание снапшота
-
-```bash
-# Через MDS
-ceph mds snapshot add cephfs /data_pes snap1
-
-# Или через смонтированную ФС
-mkdir /mnt/shared_fs/.snapshots
-cp -r /mnt/shared_fs/data_pes /mnt/shared_fs/.snapshots/snap1/
-```
-
-#### Восстановление из снапшота
-
-```bash
-cp -r /mnt/shared_fs/.snapshots/snap1/data_pes/* /mnt/shared_fs/data_pes/
-```
-
-### Диагностика и мониторинг
-
-#### Статус CephFS
-
-```bash
+# Быстрый статус (активные MDS, клиенты, использование)
 ceph fs status
+
+# Детальный дамп состояния MDS (ранги, лаги, сессии)
 ceph fs dump
-ceph mds stat
+
+# Просмотр статистики MDS в реальном времени
+ceph tell mds.a perf dump | jq '.mds'
 ```
 
-#### Проверка клиентов
+### Мониторинг клиентов
 
 ```bash
-ceph fs ls
-ceph mds sessions
+# Список активных сессий клиентов
+ceph tell mds.0 session ls
+
+# Принудительный разрыв зависшей сессии (например, при замене узла)
+ceph tell mds.0 session evict id=12345
 ```
 
-#### Логи и отладка
+### Типичные проблемы и их решение
 
-```bash
-sudo ceph-debugfs start
-dmesg | grep ceph
-ceph --admin-daemon /var/run/ceph/ceph-mds.*.asok log dump
-```
+| Проблема | Причина | Решение |
+|----------|---------|---------|
+| **MDS_LAGGY / MDS_SLOW** | Медленный диск метаданных или огромный каталог. | Перенесите пул метаданных на SSD/NVMe. Проверьте `mds_cache_memory_limit`. |
+| **Permission Denied** | Несоответствие Caps и пути монтирования. | Проверьте `ceph auth get client.xxx`. Путь в `mds allow` должен строго совпадать с путем монтирования. |
+| **Зависание I/O** | Потеря связи с мониторами или OSD. | Проверьте `dmesg`. Убедитесь, что порты 3300/6789 открыты между клиентом и кластером. |
+| **Квота не срабатывает** | "Мягкая" природа квот в CephFS. | Клиент может записать чуть больше лимита (до 30 сек задержки). Используйте FUSE для более строгих лимитов. |
 
 ---
 
 ## Дополнительная информация
 
-### Troubleshooting
+### Рекомендуемый порядок внедрения
 
-| Проблема | Решение |
-|----------|---------|
-| **Mount fails: Permission denied** | Проверьте права пользователя: `ceph auth get client.fs_user` |
-| **Статус `inconsistent`** | Запустите `ceph fs status`, проверьте MDS |
-| **Квота не применяется** | Задержка до 30 сек на уровне MDS |
-| **FUSE не монтируется** | Проверьте установку `ceph-fuse` и наличие keyring |
+1.  Развертывание MDS (минимум 2 шт).
+2.  Создание пулов с SSD-tiering для метаданных.
+3.  Использование Subvolumes для изоляции приложений.
+4.  Настройка автоматических снапшотов для критичных данных.
+5.  Мониторинг латентности MDS через Prometheus/Grafana.
 
-### Рекомендуемый порядок действий
-
-1. Создайте пулы → 2. Создайте ФС → 3. Настройте MDS → 4. Создайте пользователя → 5. Смонтируйте → 6. Установите квоты
+### Ссылки
+- [Концепции и архитектура CephFS](./definitions_and_concepts.md)
+- [Оптимизация MDS и кэша](./advanced_topics.md)
+- [Официальная документация: Troubleshooting CephFS](https://docs.ceph.com/en/latest/cephfs/troubleshooting/)

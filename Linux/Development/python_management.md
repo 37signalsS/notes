@@ -241,5 +241,6 @@ pipx uninstall ansible   # удалить приложение
 
 ### Полезные ссылки
 
+* [Файлы версий (Version Files)](../../Git/version_files.md) — обзор файлов для фиксации версий (.python-version, .tool-versions и др.).
 * [Официальный репозиторий pyenv](https://github.com/pyenv/pyenv)
 * [Официальный репозиторий pyenv-virtualenv](https://github.com/pyenv/pyenv-virtualenv)

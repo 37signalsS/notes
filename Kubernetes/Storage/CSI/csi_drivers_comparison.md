@@ -2,120 +2,138 @@
 
 ## Определения
 
-**CSI Driver (Container Storage Interface Driver)** — программная реализация спецификации интерфейса хранения контейнеров для конкретной системы хранения данных. Каждый драйвер предоставляет уникальный набор возможностей (снапшоты, клонирование, расширение) в зависимости от поддерживаемой СХД (системы хранения данных).
+**CSI Driver (Container Storage Interface Driver)** — программная реализация спецификации интерфейса хранения контейнеров для конкретной системы хранения данных (СХД). Он выступает посредником между Kubernetes и API внешнего хранилища.
 
-**Provisioner** — компонент CSI-драйвера, отвечающий за динамическое создание и удаление томов в системе хранения.
+**Sidecar-контейнеры** — стандартные вспомогательные компоненты (external-provisioner, external-attacher и др.), которые обеспечивают интеграцию драйвера с объектами Kubernetes (PVC, PV, VolumeAttachment).
 
-**Attacher** — компонент, отвечающий за присоединение и отсоединение томов к узлам кластера.
+**Provisioner** — компонент драйвера, отвечающий за динамическое создание и удаление физических томов в СХД.
 
-> **Базовая информация:** [Обзор CSI](./csi_overview.md), [Продвинутые возможности CSI](./csi_advanced.md)
+**Attacher** — компонент, отвечающий за логическую привязку (attach) тома к конкретному узлу кластера.
+
+> **Базовая информация:** [Обзор CSI](./csi_overview.md), [Продвинутые возможности CSI](./csi_advanced.md).
 
 ---
 
 ## Базовые концепции
 
-### Сравнение возможностей драйверов
+### Сравнение возможностей популярных драйверов
 
-Выбор драйвера зависит от инфраструктуры кластера (облако или локальные серверы) и требований приложения к производительности и отказоустойчивости.
+Выбор драйвера зависит от типа инфраструктуры и функциональных требований (безопасность, производительность, возможность создания снимков).
 
-#### Облачные провайдеры
+#### Облачные провайдеры (Managed CSI)
 
-| Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
+| СХД / Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Yandex Disk CSI** | Block | + | + | + | + | RWO, RWOP |
-| **vSphere CSI** | Block | + | + | + | + | RWO, RWOP |
-| **OpenStack Cinder CSI** | Block | + | + | + | + | RWO, RWOP |
+| **AWS EBS** (`ebs.csi.aws.com`) | Block | + | + | + | + | RWO, RWOP |
+| **GCP PD** (`pd.csi.storage.gke.io`) | Block | + | + | + | + | RWO, RWOP |
+| **Azure Disk** (`disk.csi.azure.com`) | Block | + | + | + | + | RWO, RWOP |
+| **Yandex Disk** (`disk.csi.yandex.ru`) | Block | + | + | + | + | RWO, RWOP |
 
-#### Локальные (On-premise) решения
+#### Локальные и Open Source решения
 
-| Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
+| СХД / Драйвер | Тип | Snapshots | Cloning | Expansion | Topology | Режимы доступа |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Ceph RBD CSI** | Block | + | + | + | + | RWO, RWOP |
-| **CephFS CSI** | File | + | + | + | + | RWX |
-| **NFS Subdir** | File | - | - | - | - | RWX |
-| **Local Path** | Local | - | - | - | - | RWO, RWOP |
-| **Longhorn CSI** | Block | + | + | + | - | RWO, RWX |
-| **Portworx CSI** | Block | + | + | + | + | RWO, RWX |
+| **Ceph RBD** (`rbd.csi.ceph.com`) | Block | + | + | + | + | RWO, RWOP |
+| **CephFS** (`cephfs.csi.ceph.com`) | File | + | + | + | + | RWX, RWO |
+| **Longhorn** (`driver.longhorn.io`) | Block | + | + | + | - | RWO, RWX |
+| **Portworx** (`pxd.portworx.com`) | Block | + | + | + | + | RWO, RWX |
+| **Local Path** (`rancher.io/local-path`) | Local | - | - | - | + | RWO |
+| **NFS** (`nfs.csi.k8s.io`) | File | - | - | - | - | RWX, RWO |
+| **S3 CSI** (`csi-s3`) | Object | - | - | - | - | RWO, RWX |
 
-> **Примечание:** Возможности зависят от версии драйвера и конфигурации СХД. Для баз данных рекомендуются блочные устройства (Block), для общих файлов — файловые системы (File).
+> **Примечание:** `RWOP` (ReadWriteOncePod) — эксклюзивный доступ только для одного пода на узле (доступно с Kubernetes 1.22+).
 
 ---
 
 ## Практические сценарии
 
-### Диагностика и мониторинг
+### Выбор драйвера для объектного хранилища (S3)
 
-#### Проверка состояния драйверов
+Для монтирования S3-бакетов в поды как файловых систем используются специализированные CSI-драйверы:
+- **ctrox/csi-s3**: Универсальный драйвер с поддержкой Goofys, s3fs и rclone.
+- **yandex-cloud/k8s-csi-s3**: Оптимизированный форк с использованием GeeseFS.
 
-```bash
-# Список установленных CSI-драйверов и их возможностей
-kubectl get csidrivers.storage.k8s.io
+Подробное сравнение и инструкции по установке: **[S3 CSI-драйверы](./s3-csi-drivers.md)**.
 
-# Проверка работоспособности подов драйвера (обычно в kube-system)
-kubectl get pods -n kube-system -l app=csi-driver
+### Диагностика и эксплуатация
 
-# События, связанные с выделением ресурсов (provisioning)
-kubectl get events -n kube-system --field-selector reason=Provisioning
-```
-
-#### Отладка проблем с томами
-
-При возникновении проблем с монтированием томов следует проверять статус PVC (PersistentVolumeClaim) и PV (PersistentVolume):
+#### Инвентаризация CSI-ресурсов
 
 ```bash
-# Просмотр описания PVC для поиска ошибок в событиях
-kubectl describe pvc <pvc-name>
+# Список зарегистрированных драйверов и их возможностей (Attach, PodInfo)
+kubectl get csidrivers
 
-# Проверка состояния снапшотов
-kubectl get volumesnapshot,volumesnapshotcontent
+# Информация о драйверах, зарегистрированных на конкретных узлах
+kubectl get csinodes
 
-# Анализ логов конкретного контейнера в CSI-драйвере (например, attacher или provisioner)
-kubectl logs -n kube-system -l app=csi-driver -c csi-provisioner
+# Проверка статуса подов драйвера (обычно в kube-system или отдельном namespace)
+kubectl get pods -A -l app.kubernetes.io/instance=<driver-name>
 ```
+
+#### Отладка жизненного цикла тома
+
+Если PVC "завис" в статусе `Pending`, проверьте цепочку событий:
+
+1.  **Provisioning (Создание):**
+    ```bash
+    kubectl describe pvc <pvc-name>
+    # Ищите ошибки: "failed to provision volume", "permission denied"
+    ```
+2.  **Attaching (Привязка к ноде):**
+    ```bash
+    kubectl get volumeattachment
+    kubectl describe volumeattachment <attachment-id>
+    # Ошибки часто связаны с лимитами дисков на одну ВМ или зонами доступности.
+    ```
+3.  **Логи контроллера (Sidecars):**
+    ```bash
+    # Логи компонента, отвечающего за создание томов
+    kubectl logs -n <namespace> -l app=<driver-controller> -c csi-provisioner
+    ```
 
 #### Типовые неисправности
 
-| Проблема | Причина | Решение |
+| Симптом | Вероятная причина | Метод решения |
 | :--- | :--- | :--- |
-| PVC в статусе `Pending` | Нет подходящего PV или исчерпаны квоты | Проверить `StorageClass` и лимиты ресурсов |
-| PV в статусе `Failed` | Ошибка аутентификации в СХД | Проверить Secrets (секреты) и права доступа |
-| Тайм-аут монтирования | Проблемы сетевой связности с СХД | Проверить сетевые доступы и Firewall (межсетевой экран) |
-| Snapshot не создаётся | Драйвер или версия СХД не поддерживают функцию | Сверить возможности в таблице выше |
+| `Pending` PVC (FailedScheduling) | Несовпадение зон (Topology) | Проверить `nodeSelector` пода и зоны в `StorageClass`. |
+| `MountVolume.SetUp failed` | Отсутствие утилит (nfs-common, ceph-common) | Установить необходимые пакеты на все рабочие узлы. |
+| `VolumeExpansion` завис | ФС не поддерживает resize онлайн | Перезагрузить под для выполнения resize офлайн. |
+| `AttachVolume.Attach` timeout | Лимит дисков на облачную ВМ | Использовать ВМ большего размера или увеличить объем существующих дисков. |
 
 ### Драйвер Secrets Store CSI
 
-Используется для монтирования секретов из внешних хранилищ (например, HashiCorp Vault) напрямую в файловую систему пода без создания объектов `Secret` в Kubernetes.
+Используется для безопасного монтирования секретов из внешних хранилищ (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager) напрямую в файловую систему пода.
 
-**Особенности эксплуатации:**
+**Ключевые особенности:**
+- **Без объектов Secret:** Данные монтируются как `tmpfs` (память), не сохраняясь в `etcd`.
+- **Sync as Secret:** Возможность зеркалирования данных в обычные Kubernetes Secrets (если приложению это необходимо).
+- **Rotation:** Поддержка автоматического обновления секретов в поде при их изменении во внешнем источнике.
 
-- **Архитектура:** Устанавливается как DaemonSet (на каждый узел). Использует CRD (Custom Resource Definition) `SecretProviderClass`.
-- **Безопасность:** Секреты хранятся в памяти (`tmpfs`) и не попадают в `etcd`.
-- **Ограничение:** Секреты доступны приложению только как файлы.
-
-#### Пример настройки для Vault
-
+#### Пример объекта SecretProviderClass (Vault)
 ```yaml
 apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
-  name: vault-db-credentials
+  name: vault-db-creds
 spec:
   provider: vault
   parameters:
-    vaultAddress: https://vault.example.com:8200
-    vaultRole: app-role
+    vaultAddress: "https://vault:8200"
+    roleName: "app-role"
     objects: |
       - objectName: "db-password"
-        secretPath: "secret/data/myapp"
+        secretPath: "secret/data/db"
         secretKey: "password"
 ```
 
-### Лучшие практики эксплуатации
+---
 
-1. **Режим привязки:** Используйте `WaitForFirstConsumer` в `StorageClass` для корректного планирования подов в многозонных кластерах (Topology Aware).
-2. **Безопасность:** Ограничивайте использование `StorageClass` через RBAC (Role-Based Access Control).
-3. **Производительность:** Мониторьте IOPS (Input/Output Operations Per Second) и задержки (latency) через метрики драйвера, если они доступны.
-4. **Резервное копирование:** Регулярно тестируйте восстановление из снапшотов, так как наличие снапшота не гарантирует целостность данных без учета специфики приложения.
+## Лучшие практики эксплуатации
+
+1.  **Topology Awareness:** Всегда используйте `volumeBindingMode: WaitForFirstConsumer` для облачных дисков и локальных томов. Это гарантирует, что том будет создан в той же зоне, где планировщик разместил под.
+2.  **Ресурсные лимиты:** Ограничивайте ресурсы (CPU/Memory) для подов CSI-драйвера, чтобы они не влияли на работу приложений, но имели достаточный приоритет (`PriorityClass`).
+3.  **Мониторинг:** Настройте алерты на ошибки в `VolumeAttachment` и события `FailedMount`. Используйте метрики из `csi-provisioner` для отслеживания времени создания томов.
+4.  **Безопасность:** Используйте `CSIDriver` объект для включения `podInfoOnMount`, если драйверу необходимы данные о поде (например, для аудита или специфичных прав доступа).
 
 ---
 
@@ -123,11 +141,11 @@ spec:
 
 ### Связанные темы
 
-- [Обзор CSI](./csi_overview.md) — базовые понятия и архитектура.
+- [Обзор CSI](./csi_overview.md) — архитектура и компоненты.
 - [Продвинутые возможности CSI](./csi_advanced.md) — детали работы снапшотов и топологии.
-- [Хранение данных: PV и PVC](../pv_and_pvc.md) — основы управления дисками в Kubernetes.
+- [Хранение данных: PV и PVC](../pv_and_pvc.md) — основы управления дисками.
 
 ### Ссылки
 
-- [Kubernetes CSI Drivers](https://kubernetes-csi.github.io/docs/drivers.html) — официальный список поддерживаемых драйверов.
-- [Secrets Store CSI Documentation](https://secrets-store-csi-driver.sigs.k8s.io/) — документация по драйверу секретов.
+- [Kubernetes CSI Drivers List](https://kubernetes-csi.github.io/docs/drivers.html) — официальный реестр драйверов.
+- [Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/) — документация по драйверу секретов.

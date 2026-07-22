@@ -2,134 +2,117 @@
 
 ## Определения
 
-**Провиженинг (Provisioning)** — подход Infrastructure as Code для автоматизированного управления конфигурацией Grafana (источники данных, дашборды, оповещения, плагины).
-
-**Текущая версия (март 2026):** Grafana 12.x
+**Провиженинг (Provisioning)** — подход Infrastructure as Code (IaC) для автоматизированного управления конфигурацией Grafana. Он позволяет декларативно описывать источники данных, дашборды, правила оповещений, плагины и другие ресурсы через конфигурационные файлы (YAML/JSON).
 
 **Связанные темы:**
-
 - [Обзор Grafana](./grafana_overview.md) — общая информация о платформе
-- [Источники данных](./grafana_datasources.md) — провижинг источников
-- [Дашборды](./dashboards/definitions_and_concepts.md) — провижинг дашбордов
-- [Алертинг](./alerting/concepts.md) — провижинг правил оповещений
-- [Плагины](./grafana_plugins.md) — установка плагинов
+- [Источники данных](./grafana_datasources.md) — детали настройки подключений
+- [Дашборды](./grafana-dashboards.md) — создание и управление визуализациями
+- [Алертинг: Provisioning](./alerting/provisioning.md) — специализированный SSoT по провиженингу оповещений
+- [Плагины](./grafana_plugins.md) — автоматизация установки расширений
 
-### Преимущества
+### Преимущества подхода
 
 | Преимущество | Описание |
 | :--- | :--- |
-| **Автоматизация** | Устраняет ручную настройку |
-| **Версионирование** | Конфигурации в Git, отслеживание изменений |
-| **Согласованность** | Идентичная конфигурация во всех окружениях |
-| **GitOps** | Git — единственный источник правды |
+| **Автоматизация** | Устраняет необходимость ручной настройки через интерфейс, ускоряя развертывание. |
+| **Версионирование** | Конфигурации хранятся в Git, позволяя отслеживать историю изменений и проводить Code Review. |
+| **Согласованность** | Обеспечивает идентичное состояние Grafana во всех окружениях (Dev, Test, Prod). |
+| **GitOps** | Идеально вписывается в модель [GitOps](../GitOps/GitOps_overview.md), где Git — единственный источник правды. |
+| **Безопасность** | Позволяет использовать переменные окружения и внешние хранилища для управления секретами. |
 
 ## Основные концепции
 
 ### Принципы работы
 
-Grafana сканирует `/etc/grafana/provisioning` при старте и применяет конфигурации из YAML/JSON-файлов.
+Grafana сканирует директорию `/etc/grafana/provisioning` при запуске и применяет конфигурации. Для большинства ресурсов (источники данных, дашборды) изменения в файлах подхватываются "на лету" без перезагрузки сервиса, если настроены соответствующие интервалы сканирования.
 
 **Структура директорий:**
 
 ```
 /etc/grafana/provisioning/
-├── datasources/      # Источники данных
-├── dashboards/       # Дашборды (YAML-провайдеры + JSON)
-├── alerting/         # Правила оповещений
-├── contactpoints/    # Контакт-пойнты
-├── policies/         # Политики уведомлений
-└── plugins/          # Плагины (устарело)
+├── datasources/      # Источники данных (Prometheus, SQL, etc.)
+├── dashboards/       # Описания провайдеров дашбордов (YAML)
+├── alerting/         # Правила, политики и контакт-пойнты
+├── contactpoints/    # (v10+) Отдельная папка для контакт-пойнтов
+├── policies/         # (v10+) Отдельная папка для политик уведомлений
+├── access-control/   # (v11+) Роли RBAC и разрешения
+├── service-accounts/ # (v11+) Сервисные аккаунты
+├── playlists/        # Конфигурация плейлистов
+└── plugins/          # Установка плагинов (устаревает, рекомендуется CLI/ENV)
 ```
 
-**Поддерживаемые окружения:**
+### Поддерживаемые окружения
 
-| Окружение | Метод |
+| Окружение | Метод реализации |
 | :--- | :--- |
-| **Standalone** | Файлы в `/etc/grafana/provisioning` |
-| **Docker** | Volume: `./provisioning:/etc/grafana/provisioning` |
-| **Kubernetes** | ConfigMaps + Helm `values.yaml` |
-| **IaC** | Terraform/Pulumi + Ansible API |
-
-### Преимущества провиженинга
-
-- **Автоматизация:** Устраняет ручные операции настройки.
-- **Версионирование:** Конфигурации хранятся в Git, позволяя отслеживать изменения и откатываться к предыдущим версиям.
-- **Согласованность:** Обеспечивает идентичную конфигурацию Grafana во всех окружениях.
-- **GitOps:** Идеально подходит для реализации подхода [GitOps](../GitOps/GitOps_overview.md), где Git-репозиторий служит единственным источником правды о желаемом состоянии инфраструктуры.
+| **Standalone** | Локальные файлы в `/etc/grafana/provisioning/` |
+| **Docker** | Монтирование тома: `-v ./provisioning:/etc/grafana/provisioning` |
+| **Kubernetes** | ConfigMaps/Secrets + Helm `values.yaml` + `k8s-sidecar` |
+| **IaC** | Terraform (Grafana Provider), Pulumi или Ansible API |
 
 ## Практические сценарии
 
-Существуют основные подходы к провиженингу: файловый, с помощью Helm в Kubernetes и через API с использованием Ansible.
-
-### 1. Файловый провиженинг
-
-Этот подход часто используется с Docker. Grafana сканирует `/etc/grafana/provisioning/`, где создаются поддиректории для типов ресурсов:
-
-- `datasources/`
-- `dashboards/`
-- `alerting/` (для правил оповещений)
-- `playlists/`
-
-**Пример структуры:**
-
-```
-/path/to/your/grafana/provisioning/
-├── datasources/
-│   └── datasources.yaml
-├── dashboards/
-│   ├── dashboards.yaml
-│   └── rotation/
-│       ├── rotation-dash-1.json
-│       └── rotation-dash-2.json
-└── playlists/
-    └── playlists.yaml
-```
+### 1. Файловый провиженинг (Docker и Standalone)
 
 #### Провиженинг источников данных
+Конфигурационные файлы в `datasources/` позволяют автоматически подключать внешние системы.
 
-Конфигурационные файлы в директории `datasources/` позволяют автоматически подключать внешние системы. Подробные примеры YAML-конфигураций для различных баз данных (Prometheus, InfluxDB и др.) приведены в разделе **[Практические сценарии — Настройка источников данных](./grafana_datasources.md#практические-сценарии)**.
+```yaml
+# /etc/grafana/provisioning/datasources/datasources.yaml
+apiVersion: 1
+datasources:
+  - name: Prometheus-Prod
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: "POST"
+    secureJsonData:
+      basicAuthPassword: "${PROM_PASSWORD}" # Переменная окружения
+```
+*Подробности по специфическим БД см. в [Практические сценарии — Настройка источников данных](./grafana_datasources.md#практические-сценарии).*
 
 #### Провиженинг дашбордов
-
-Создается файл-провайдер (`dashboards/dashboards.yaml`), указывающий Grafana, где искать JSON-модели дашбордов.
+Создается файл-провайдер, который указывает, где искать JSON-модели.
 
 ```yaml
+# /etc/grafana/provisioning/dashboards/providers.yaml
 apiVersion: 1
 providers:
-- name: 'rotation-provider'
-  orgId: 1
-  folder: 'Rotation' # Дашборды помещаются в папку 'Rotation' в UI
-  type: file
-  options:
-    path: /etc/grafana/provisioning/dashboards/rotation # Путь к JSON-файлам внутри контейнера
+  - name: 'System-Monitoring'
+    orgId: 1
+    folder: 'Infrastructure' # Дашборды помещаются в папку 'Infrastructure' в UI
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/json # Путь к JSON-файлам
 ```
 
-JSON-модели дашбордов (`rotation-dash-1.json`) получаются экспортом из UI Grafana.
-
 #### Провиженинг плейлистов
-
-Автоматическое создание плейлистов для ротации дашбордов.
-
-**`provisioning/playlists.yaml`:**
+Автоматическое создание плейлистов для ротации панелей на мониторах.
 
 ```yaml
+# /etc/grafana/provisioning/playlists/playlists.yaml
 apiVersion: 1
 playlists:
-  - name: 'Rotation Playlist'
+  - name: 'NOC-Rotation'
     interval: '1m'
     orgId: 1
     items:
       - type: dashboard_by_folder
-        value:
-          folderName: 'Rotation' # Все дашборды из папки попадают в плейлист
-        title: 'Dashboards from Rotation Folder'
+        value: 'Infrastructure'
+        title: 'All Infrastructure Dashboards'
 ```
 
-### 2. Провиженинг в Kubernetes с помощью Helm
+### 2. Провиженинг в Kubernetes через Helm
 
-Helm-чарт для Grafana позволяет определять ресурсы провиженинга напрямую в `values.yaml`.
+Helm-чарт Grafana позволяет описывать все ресурсы провиженинга в `values.yaml`.
 
-#### Источники данных (Data Sources)
+#### Конфигурация источников и дашбордов
 
 ```yaml
 # values.yaml
@@ -138,116 +121,114 @@ grafana:
     datasources.yaml:
       apiVersion: 1
       datasources:
-      - name: Prometheus
-        type: prometheus
-        url: http://prometheus-server.monitoring.svc.cluster.local
-        access: proxy
-        isDefault: true
-        editable: false # Запрещает изменение через UI
-```
+        - name: Loki
+          type: loki
+          url: http://loki-stack.monitoring:3100
+          editable: false
 
-#### Дашборды (Dashboards)
-
-```yaml
-# values.yaml
-grafana:
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1
       providers:
-      - name: 'default-provider'
-        orgId: 1
-        folder: 'Default'
-        type: file
-        options:
-          path: /var/lib/grafana/dashboards/default
+        - name: 'default'
+          orgId: 1
+          folder: 'General'
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/default
 
   dashboards:
     default:
       # Импорт дашборда с Grafana.com по ID
-      node-exporter-full:
+      node-exporter:
         gnetId: 1860
-        revision: 21
+        revision: 37
         datasource: Prometheus
       
-      # Встраивание дашборда напрямую
-      custom-dashboard:
+      # Встраивание JSON-модели напрямую (не рекомендуется для больших дашбордов)
+      health-check:
         json: |-
           {
-            "uid": "custom-abc",
-            "title": "Custom Dashboard",
-            ...
+            "uid": "health-01",
+            "title": "System Health",
+            "panels": [...]
           }
 ```
 
-#### Плагины (Plugins)
+### 3. Механизм Sidecar и ConfigMap в Kubernetes
 
-Автоматизация установки плагинов (включая примеры конфигурации Helm и Docker Compose) подробно описана в разделе [Практические сценарии — Управление плагинами](./grafana_plugins.md#управление-плагинами).
+Используется для динамического обнаружения дашбордов в кластере (например, в `kube-prometheus-stack`).
 
-### 3. Механизм Grafana Sidecar и ConfigMap в Kubernetes
+#### Принцип работы
+Контейнер `k8s-sidecar` (часто называемый `grafana-sc-dashboards`) сканирует ConfigMaps в указанных неймспейсах. При нахождении ConfigMap с правильной меткой, он копирует JSON во временную директорию Grafana.
 
-В контексте `kube-prometheus-stack` (особенно при развертывании через Rancher) используется механизм **Grafana Sidecar** для автоматического обнаружения и загрузки дашбордов.
-
-#### Назначение и принцип работы
-
-Вместо хранения дашбордов в файловой системе Grafana (которая может быть эфемерной), `sidecar`-контейнер, запущенный в том же поде, что и Grafana, сканирует указанные Kubernetes `ConfigMap` или `Secret` ресурсы.
-
-`Sidecar` постоянно отслеживает изменения в `ConfigMap` с определенными метками и при обнаружении новых или измененных дашбордов автоматически импортирует их в Grafana. Это позволяет версионировать дашборды в Git и централизованно развертывать, не требуя ручных действий по импорту через UI.
-
-#### Провижионинг пользовательских дашбордов через ConfigMap
-
-1. **Экспортируйте JSON**: Используйте локальный экземпляр Grafana для создания дашборда и экспортируйте его в формате JSON.
-2. **Создайте `ConfigMap`**: Оберните экспортированный JSON дашборда в `ConfigMap`. **Ключевым моментом является добавление метки `grafana-dashboard: "1"`** (или другой, указанной в конфигурации `sidecar`), которая будет использоваться для обнаружения.
-
-   ```yaml
-   apiVersion: v1
-   kind: ConfigMap
-   metadata:
-     name: my-app-dashboard
-     namespace: test-app # Разверните в namespace вашего приложения
-     labels:
-       grafana-dashboard: "1" # Обязательная метка для обнаружения Grafana Sidecar
-   data:
-     my-app-dashboard.json: |-
-       {
-         "title": "Test Application Dashboard",
-         "type": "dashboard",
-         "uid": "test-app-dashboard",
-         ...
-       }
-   ```
-
-3. **Разверните `ConfigMap`**: Примените этот ресурс в вашем кластере. Дашборд появится в Grafana автоматически.
-   *Примечание: для обнаружения в других `namespaces`, убедитесь, что соответствующая настройка включена в `values.yaml` Helm-чарта (например, `sidecar.dashboards.searchNamespace: ALL`).*
-
-### 4. Автоматизация через API с помощью Ansible
-
-Ansible позволяет управлять ресурсами Grafana через её API, используя динамическую генерацию конфигураций.
-
-#### Динамическая генерация дашбордов
-
-Модуль `community.grafana.grafana_dashboard` в Ansible позволяет развертывать дашборды, созданные с помощью шаблонизатора **Jinja2**.
+#### Пример ConfigMap для дашборда
 
 ```yaml
-- name: Deploy Grafana Dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: business-metrics-dashboard
+  namespace: my-app
+  labels:
+    grafana_dashboard: "1" # Метка для обнаружения sidecar-ом
+data:
+  business-metrics.json: |-
+    {
+      "title": "Business Performance",
+      "type": "dashboard",
+      "uid": "biz-perf-001",
+      ...
+    }
+```
+*Для поиска во всех неймспейсах установите `sidecar.dashboards.searchNamespace: ALL` в Helm values.*
+
+### 4. Автоматизация через API с использованием Ansible
+
+Ansible позволяет динамически генерировать и обновлять дашборды, используя шаблоны **Jinja2**.
+
+#### Динамическое развертывание
+В Grafana 13 API-ключи заменены на **Service Accounts**, что является более безопасным методом.
+
+```yaml
+- name: Deploy Dynamic Dashboard
   community.grafana.grafana_dashboard:
     grafana_url: "https://grafana.example.com"
-    grafana_api_key: "{{ grafana_api_key }}" # API-ключ (Ansible Vault)
-    state: present # present (создать/обновить) или absent (удалить)
-    path: "/path/to/generated_dashboard.json"
-    folder: "My Team Dashboards"
+    grafana_token: "{{ service_account_token }}" # Токен Service Account (Ansible Vault)
+    state: present
+    path: "/path/to/generated_from_jinja.json"
+    folder: "Team Dashboards"
+    overwrite: true
 ```
 
-- **`grafana_api_key`**: API-ключ с правами Editor или Admin, создается в `Configuration -> API Keys`. Подробнее см. [управление пользователями](./grafana_user_management_and_authentication.md).
+### 5. Провиженинг Service Accounts и RBAC (v11+)
+
+Современный способ управления доступом без использования ручных API Keys.
+
+```yaml
+# /etc/grafana/provisioning/service-accounts/sa.yaml
+apiVersion: 1
+serviceAccounts:
+  - name: "Automation-SA"
+    role: "Editor"
+    orgId: 1
+    tokens:
+      - name: "ansible-token"
+        expires: "2027-01-01"
+```
 
 ## Дополнительная информация
 
-### Важные замечания
+### Важные технические нюансы
 
-| Замечание | Описание |
+| Нюанс | Описание |
 | :--- | :--- |
-| **`editable: false`** | Запрещает изменение через UI |
-| **`isDefault: true`** | Переопределяет ручной дефолтный источник |
-| **Имя JSON** | Не должно совпадать с именем директории |
+| **`editable: false`** | Запрещает изменения через UI, предотвращая расхождение между Git и живой системой. |
+| **Фиксация UID** | Всегда определяйте `uid` в JSON дашбордах. Без этого при изменении имени файла в провиженинге Grafana создаст дубликат. |
+| **Конфликты имен** | Имя JSON-файла не должно совпадать с именем директории провайдера, так как Grafana использует файловую систему как базу для путей. |
+| **Использование переменных** | Grafana поддерживает интерполяцию `${VAR_NAME}` во всех YAML-файлах провиженинга (требуется включение в `grafana.ini`). |
 
-Подробная [документация провиженинга](https://grafana.com/docs/grafana/latest/administration/provisioning/) доступна на сайте Grafana Labs. Дополнительные примеры: [Provisioning дашбордов](./dashboards/provisioning_configmap.md) и [Provisioning алертов](./alerting/provisioning.md).
+**См. также:**
+- [Официальная документация по провиженингу](https://grafana.com/docs/grafana/latest/administration/provisioning/)
+- [Provisioning алертов](./alerting/provisioning.md) — подробные примеры для правил и политик
+- [Grafana: RBAC](./grafana_user_management_and_authentication.md#rbac) — подробности управления ролями

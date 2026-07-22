@@ -1,10 +1,10 @@
-# Git Mailmap — маппинг авторов
+# Маппинг авторов в Git (.mailmap)
 
 ## Определения
 
-**`.mailmap`** — файл для маппинга имён и email-адресов авторов на канонические идентичности в истории Git.
+**`.mailmap`** — текстовый файл, используемый для сопоставления (маппинга) различных имен и email-адресов авторов с их единой, канонической идентичностью в истории репозитория.
 
-**Mailmap** — механизм Git для объединения записей об авторах, которые используют разные имена или email-адреса.
+**Каноническая идентичность** — эталонное сочетание имени и email автора, которое Git должен использовать при выводе статистики и истории, даже если в метаданных коммитов указаны другие данные.
 
 ---
 
@@ -12,104 +12,98 @@
 
 ### Назначение
 
-Файл `.mailmap` маппит имена и email авторов на канонические идентичности. Git использует его для вывода `git log`, `git shortlog`, `git blame`.
+Механизм `mailmap` решает проблему "раздвоения" личностей в истории проекта, которая возникает из-за:
+* Использования разных email-адресов (личный, рабочий, корпоративный).
+* Опечаток в имени или email при настройке `git config`.
+* Смены фамилии или предпочтительного написания имени.
+* Изменения политики корпоративных адресов.
 
-### Проблемы, которые решает mailmap
+### Форматы записей
 
-* **Смена email:** Автор сменил работу и использует новый корпоративный email
-* **Разные написания имени:** `Jane Dev`, `Jane Developer`, `J. Developer`
-* **Личный и рабочий email:** Коммиты с разных адресов считаются разными авторами
-* **Опечатки:** Случайные ошибки в имени или email при настройке Git
+В файле `.mailmap` поддерживается четыре типа записей (порядок аргументов: СНАЧАЛА канонические данные, ЗАТЕМ заменяемые).
 
-### Формат файла
+| Формат | Описание |
+| :--- | :--- |
+| `Имя <kanon@mail.ru> <old@mail.ru>` | Заменяет все вхождения `old@mail.ru` на `Имя <kanon@mail.ru>` |
+| `Имя <kanon@mail.ru> <kanon@mail.ru>` | Исправляет имя для конкретного email |
+| `Имя <kanon@mail.ru> Старое <old@mail.ru>` | Заменяет конкретную пару имя+email на новую пару |
+| `Имя <kanon@mail.ru> Старое` | Исправляет имя и email, если имя совпадает со "Старое" |
 
-**Формат строки:** `Proper Name <proper@email.com> Commit Name <commit@email.com>`
+### Приоритет и расположение
 
-```text
-# Маппинг старого email на новый
-Jane Developer <jane@company.com> <jane@oldcompany.com>
+Git ищет правила в следующем порядке (первое найденное правило выигрывает):
+1. Файл, указанный в опции `mailmap.file` в конфигурации репозитория.
+2. Файл `.mailmap` в корне рабочего каталога.
+3. Файл, указанный в глобальной настройке `mailmap.file`.
+4. Объект (blob), указанный в `mailmap.blob` (позволяет читать mailmap напрямую из ветки, например `refs/heads/main:.mailmap`).
 
-# Стандартизация написания имени
-Jane Developer <jane@company.com> Jane Dev <jane@company.com>
+### Особенности инструментов
 
-# Исправление обоих
-Jane Developer <jane@company.com> <janed@personal.com>
-Jane Developer <jane@company.com> J Developer <janed@personal.com>
-
-# Маппинг только по имени (без email)
-Jane Developer <jane@company.com> Jane Dev
-```
-
-### Особенности
-
-* **Инструменты:** `git shortlog -sn`, `git log`, `git blame` используют mailmap для агрегации коммитов
-* **GitHub:** Графики контрибьюторов GitHub не используют `.mailmap` — дубликаты сохраняются в веб-интерфейсе
-* **Расположение:** По умолчанию `.mailmap` в корне репозитория; путь настраивается через `mailmap.file`
+* **Локальные инструменты:** `git log`, `git shortlog`, `git blame` и `git check-mailmap` по умолчанию учитывают `.mailmap`.
+* **GitHub/GitLab:** Платформы обычно уважают `.mailmap` в списках контрибьюторов репозитория, но **не используют** его для формирования графика активности ("зеленых квадратов"). Для корректного отображения графика все использованные email должны быть добавлены в настройки профиля пользователя.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Объединение коммитов после смены email
+### Сценарий 1: Объединение истории после смены email
 
-Автор перешёл из старой компании в новую:
-
-```text
-# .mailmap
-Ivan Petrov <ivan@newcompany.com> <ivan@oldcompany.com>
-Ivan Petrov <ivan@newcompany.com> <i.petrov@personal.com>
-```
-
-### Сценарий 2: Стандартизация написания имён
-
-Разные разработчики по-разному писали одно имя:
+Разработчик использовал личный почтовый ящик до перехода на корпоративный:
 
 ```text
 # .mailmap
-Alexander Ivanov <alex@company.com> Alex Ivanov <alex@company.com>
-Alexander Ivanov <alex@company.com> A. Ivanov <alex@company.com>
-Alexander Ivanov <alex@company.com> alex.ivanov <alex@company.com>
+Ivan Petrov <ivan@corp.com> <ivan.p@gmail.com>
+Ivan Petrov <ivan@corp.com> <ivan@old-job.com>
 ```
 
-### Сценарий 3: Исправление опечаток
+### Сценарий 2: Исправление опечаток в именах
 
 ```text
 # .mailmap
-Maria Sidorova <maria@company.com> Maria Sidorova <maira@company.com>
-Maria Sidorova <maria@company.com> Maria Sidorova <maria@compnay.com>
+Alexander Ivanov <alex@corp.com> Alex Ivanov <alex@corp.com>
+Alexander Ivanov <alex@corp.com> A. Ivanov <alex@corp.com>
 ```
 
-### Сценарий 4: Настройка кастомного пути к mailmap
+### Сценарий 3: Проверка правил через `check-mailmap`
+
+Инструмент позволяет проверить, как Git преобразует конкретную строку автора:
 
 ```bash
-# Использовать файл в другой директории
-git config mailmap.file .github/mailmap
+# Проверка строки
+git check-mailmap "Alex Ivanov <alex@corp.com>"
+# → Alexander Ivanov <alex@corp.com>
+```
 
-# Глобально для всех репозиториев
+### Сценарий 4: Глобальная настройка для всех проектов
+
+Если вы часто допускаете одну и ту же опечатку или хотите видеть свои старые коммиты под новым именем во всех локальных репозиториях:
+
+```bash
+# Создать глобальный файл
+echo "My Name <me@current.com> <me@old.com>" >> ~/.git-mailmap
+
+# Настроить Git
 git config --global mailmap.file ~/.git-mailmap
 ```
 
-### Сценарий 5: Проверка результата
+### Сценарий 5: Анализ истории с использованием mailmap
 
 ```bash
-# Статистика авторов с учётом mailmap
+# Посмотреть топ контрибьюторов с учетом объединения дублей
 git shortlog -sn --all
+# → 150  Ivan Petrov
+# →  80  Maria Sidorova
 
-# Log с каноническими именами
-git log --use-mailmap --format="%an <%ae>" | sort | uniq -c
-
-# Blame с правильными именами
-git blame --use-mailmap file.txt
+# Вывод лога с каноническими данными
+git log --format="%aN <%aE> — %s"
 ```
 
-### Сценарий 6: Генерация mailmap из существующей истории
+### Сценарий 6: Генерация заготовки .mailmap
+
+Для поиска всех уникальных комбинаций имен и email в истории:
 
 ```bash
-# Получить список всех авторов
-git log --format='%aN <%aE>' | sort -u
-
-# Создать начальный .mailmap
-git log --format='%aN <%aE>' | sort -u > .mailmap.template
+git log --format="%aN <%aE>" | sort -u > .mailmap.template
 ```
 
 ---
@@ -118,9 +112,10 @@ git log --format='%aN <%aE>' | sort -u > .mailmap.template
 
 ### Официальные ресурсы
 
-* **Документация Git:** [git-scm.com/docs/gitmailmap](https://git-scm.com/docs/gitmailmap)
-* **Проверка mailmap:** [git-scm.com/docs/git-check-mailmap](https://git-scm.com/docs/git-check-mailmap)
+* **[Документация Git: gitmailmap](https://git-scm.com/docs/gitmailmap):** Спецификация формата и примеры.
+* **[Git Check-mailmap](https://git-scm.com/docs/git-check-mailmap):** Описание команды для тестирования правил.
 
 ### Связанные темы
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md).
+* [Обзор специальных файлов Git](./git_special_files_overview.md)
+* [Конфигурация Git](./git_configuration.md)

@@ -2,22 +2,21 @@
 
 ## Определения
 
-**ConfigMap** — объект API (Application Programming Interface) Kubernetes для хранения неконфиденциальных конфигурационных данных в виде пар «ключ-значение». Он позволяет отделить конфигурацию от кода приложения, обеспечивая переносимость образов между окружениями.
+**ConfigMap** — объект API (Application Programming Interface) Kubernetes для хранения неконфиденциальных конфигурационных данных в виде пар «ключ-значение». Он позволяет отделить конфигурацию от кода приложения, обеспечивая переносимость образов между окружениями и соблюдение принципа **Separation of Concerns**.
 
 ## Основные концепции
 
-### Подходы к созданию
+Существует три основных подхода к управлению жизненным циклом ConfigMap:
 
-Существует два основных подхода к созданию ресурсов ConfigMap:
-
-1. **Декларативный** (рекомендуемый) — через манифесты в формате YAML (YAML Ain't Markup Language). Обеспечивает возможность версионирования в Git и использование в процессах CI/CD (Continuous Integration / Continuous Deployment).
-2. **Императивный** — через команды `kubectl`. Подходит для быстрой отладки, создания простых объектов «на лету» или использования в автоматизационных скриптах.
+1. **Декларативный** (стандарт отрасли) — описание через YAML-манифесты. Позволяет использовать Code Review, версионирование (GitOps) и аудит изменений.
+2. **Генеративный** (Kustomize / Helm) — автоматическое создание ConfigMap из внешних файлов или литералов. В Kustomize этот подход является предпочтительным, так как позволяет автоматически обновлять поды при изменении конфигурации за счет хеширования имен.
+3. **Императивный** — через команды `kubectl`. Используется преимущественно для отладки, прототипирования или генерации базовых YAML-шаблонов.
 
 ## Практические сценарии
 
 ### Декларативно: из YAML-манифеста
 
-Это основной способ для Production-сред и подходов GitOps. Позволяет точно описать структуру данных и хранить её вместе с кодом.
+Этот способ используется для Production-сред. Манифест может содержать как простые значения, так и целые блоки конфигурационных файлов.
 
 ```yaml
 # app-config.yaml
@@ -26,12 +25,15 @@ kind: ConfigMap
 metadata:
   name: app-config
   namespace: my-app
+  labels:
+    app: backend
+    env: prod
 data:
   # Простые пары ключ-значение
   APP_COLOR: "blue"
-  APP_MODE: "production"
+  LOG_LEVEL: "info"
 
-  # Ключ, значением которого является содержимое целого файла
+  # Содержимое файла конфигурации
   nginx.conf: |
     server {
         listen 80;
@@ -40,63 +42,102 @@ data:
             index index.html;
         }
     }
-binaryData:
-  # Бинарные данные (например, логотип), закодированные в Base64
-  logo.png: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 ```
 
-**Применение манифеста:**
-
+**Применение:**
 ```bash
 kubectl apply -f app-config.yaml
 # → configmap/app-config created
 ```
 
-### Императивно: с помощью kubectl
+---
 
-Используется для быстрого создания объектов из существующих файлов или строковых литералов.
+### Генеративный подход: Kustomize (configMapGenerator)
 
-**Из литералов (явное указание ключ-значение):**
+Kustomize (встроен в `kubectl -k`) позволяет генерировать ConfigMap из файлов свойств или `.env`. Основное преимущество — **Name Hashing**: Kustomize добавляет хеш содержимого к имени (например, `app-config-f7h8z9`). При изменении данных имя меняется, что гарантирует перезапуск подов в Deployment.
 
-```bash
-kubectl create configmap my-config-from-literals --from-literal=KEY1=VALUE1 --from-literal=KEY2=VALUE2
-# → configmap/my-config-from-literals created
+```yaml
+# kustomization.yaml
+configMapGenerator:
+- name: app-config
+  files:
+    - configs/server.conf
+  literals:
+    - API_URL=https://api.example.com
+generatorOptions:
+  # Установка флага неизменяемости (Best Practice 2024+)
+  immutable: true
+  labels:
+    team: devops
 ```
 
-**Из одного или нескольких файлов:**
+---
 
+### Императивно: генерация и создание через kubectl
+
+Для создания объектов «на лету» или генерации заготовок манифестов.
+
+**Создание из литералов и файлов:**
 ```bash
-# Ключ = имя файла, значение = содержимое файла
-kubectl create configmap my-config-from-file --from-file=path/to/config.json
-# → configmap/my-config-from-file created
-
-# Можно указывать несколько файлов одновременно
-kubectl create configmap my-config-from-files --from-file=config1.json --from-file=config2.xml
+kubectl create configmap my-config \
+  --from-literal=DEBUG=true \
+  --from-file=config.json
 ```
 
-**Из директории:**
-
+**Совет: Генерация манифеста (Dry-run):**
+Вместо написания YAML вручную, используйте `dry-run` для получения чистого шаблона:
 ```bash
-# Создает ключи для всех файлов, находящихся в указанной директории
-kubectl create configmap my-config-dir --from-file=path/to/config-dir/
-# → configmap/my-config-dir created
+kubectl create configmap app-v1-config --from-env-file=.env --dry-run=client -o yaml > cm.yaml
 ```
 
-**Из env-файла:**
-
+**Валидация перед применением (Server-side dry-run):**
+Проверка манифеста на соответствие политикам кластера (Admission Controllers) без фактического создания:
 ```bash
-# Считывает переменные из файла формата .env и создает соответствующие ключи в ConfigMap
-kubectl create configmap my-config-from-env --from-env-file=.env
-# → configmap/my-config-from-env created
+kubectl apply -f cm.yaml --dry-run=server
 ```
+
+---
+
+### Работа с бинарными данными (binaryData)
+
+Для хранения не-UTF8 данных (сертификаты, изображения, скомпилированные конфиги) используется поле `binaryData`. Данные должны быть закодированы в **Base64**.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cert-config
+binaryData:
+  server.crt: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t..."
+```
+
+При использовании `kubectl create configmap --from-file=...` инструмент автоматически определяет бинарный формат и помещает данные в соответствующее поле.
+
+---
+
+### Неизменяемые (Immutable) ConfigMap
+
+Для высоконагруженных систем рекомендуется устанавливать флаг `immutable: true`. Это отключает механизм `watch` со стороны `kubelet`, снижая нагрузку на **API Server**.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: static-config
+immutable: true
+data:
+  config.yaml: |
+    key: value
+```
+*Примечание: для изменения таких конфигов требуется создание нового объекта с новым именем.* Подробнее см. [Неизменяемые ConfigMap](./immutable.md).
+
+## Дополнительная информация
 
 ### Проверка созданного ConfigMap
 
 ```bash
-# Просмотр списка всех ConfigMap в текущем пространстве имен
+# Список всех ConfigMap в текущем пространстве имен
 kubectl get configmaps
-# → NAME         DATA   AGE
-#   app-config   3      10m
 
 # Просмотр структуры и данных в формате YAML
 kubectl get configmap app-config -o yaml
@@ -109,25 +150,24 @@ kubectl get configmap app-config -o jsonpath='{.data.APP_COLOR}'
 # → blue
 ```
 
-## Дополнительная информация
+### Сравнение методов создания
 
-### Сравнение подходов
-
-| Подход | Преимущества | Недостатки | Когда использовать |
+| Метод | Плюсы | Минусы | Когда использовать |
 | :--- | :--- | :--- | :--- |
-| **Декларативный** | Версионируемость, аудит (Code Review), воспроизводимость | Требует предварительного описания манифеста | Production, GitOps, CI/CD |
-| **Императивный** | Скорость создания, не требует подготовки файлов | Сложно отследить изменения, не подходит для автоматизации развертываний | Разработка, отладка, разовые задачи |
+| **YAML Манифест** | Полный контроль, читаемость | Ручное обновление подов | GitOps, простые приложения |
+| **Kustomize** | Авто-рестарт подов, IaC | Требует настройки kustomize | Production, сложные окружения |
+| **kubectl create** | Скорость | Нет истории, сложность поддержки | Отладка, генерация шаблонов |
 
-### Рекомендации по созданию
+### Рекомендации по созданию (2024-2026)
 
-* **Предпочитайте декларативный подход** для всех постоянных конфигураций.
-* **Проверяйте изменения** перед их применением в кластере с помощью команды `kubectl diff -f <file>`.
-* **Для бинарных данных** (изображения, скомпилированные конфиги) используйте поле `binaryData` для корректной обработки.
-* **Не храните конфиденциальные данные** (пароли, ключи) в ConfigMap — для этих целей используйте [Secret](../secrets/creating_secrets.md).
-* **Учитывайте лимит размера**: максимальный размер объекта ConfigMap в etcd составляет 1 MiB (Мегабайт).
+* **Используйте хеширование имен:** это единственный надежный способ гарантировать, что все поды перечитают конфиг при обновлении.
+* **Соблюдайте лимит 1 MiB:** ConfigMap хранится в etcd. Для больших файлов (>500KB) рассмотрите возможность монтирования через `PersistentVolume`.
+* **Избегайте хранения секретов:** никогда не храните пароли или ключи в ConfigMap, даже в `binaryData`. Используйте [Secret](../secrets/secrets_basics.md).
+* **Проверяйте изменения:** всегда используйте `kubectl diff` перед применением новых конфигураций.
 
 **См. также:**
 
-* [Лучшие практики ConfigMap](./best_practices.md)
-* [Использование ConfigMap в подах](./pod_usage.md)
-* [Неизменяемые ConfigMap](./immutable.md)
+* [Лучшие практики ConfigMap](./best_practices.md) — нейминг, версионирование и структура.
+* [Использование ConfigMap в подах](./pod_usage.md) — монтирование и переменные окружения.
+* [Неизменяемые ConfigMap](./immutable.md) — оптимизация и безопасность.
+* [Обновление и Rollout](./update_and_rollout.md) — стратегии актуализации настроек.

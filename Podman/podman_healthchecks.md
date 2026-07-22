@@ -21,55 +21,31 @@
 
 ### Особенности формата OCI
 
-Инструкция `HEALTHCHECK` в `Dockerfile` игнорируется при сборке образа в формате OCI:
+При сборке образа с инструкцией `HEALTHCHECK` в `Dockerfile`, Podman по умолчанию выдаст предупреждение:
 `HEALTHCHECK is not supported for OCI image format and will be ignored. Must use docker format`.
 
-Для использования проверок в Podman с OCI-образами необходимо:
+Это связано с тем, что стандарт OCI (используемый Podman по умолчанию) не поддерживает описание проверок внутри метаданных образа. Существует два пути решения:
 
-1. Собрать образ в формате Docker: `podman build --format docker -t my-app .`
-2. Или определить параметры проверки при запуске (CLI) или в конфигурации Quadlet.
+1. **Сборка в формате Docker**:
+   ```bash
+   podman build --format docker -t healthcheck-demo .
+   ```
+2. **Определение параметров в рантайме** (Рекомендуется): параметры проверки указываются при запуске (CLI) или в конфигурации Quadlet. Это делает образ более универсальным.
 
-### Статусы проверки
+### Настройки для разных окружений
 
-- **starting**: Контейнер запущен, первая проверка еще выполняется.
-- **healthy**: Команда проверки вернула код `0`.
-- **unhealthy**: Команда вернула ошибку количество раз, равное значению `retries`.
+| Параметр | Dev-окружение | Production |
+| :--- | :--- | :--- |
+| **Interval** | Короткий (5s) | Длинный (30s) |
+| **Retries** | 1 (быстрое всплытие) | 3-5 (устойчивость к лагам) |
+| **Timeout** | Минимальный (1-2s) | С запасом (5-10s) |
 
 ## Практические сценарии
 
-### 1. Подготовка тестового приложения
+### 1. Запуск через CLI (с исправлением OCI)
 
-Создадим приложение на Python (Flask) с эндпоинтом `/health`.
-
-**app.py**:
-
-```python
-from flask import Flask, jsonify
-import os
-app = Flask(__name__)
-
-@app.route("/health")
-def health():
-    if os.getenv("FAIL", "false") == "true":
-        return jsonify({"status": "unhealthy"}), 500
-    return jsonify({"status": "ok"}), 200
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
-```
-
-**Dockerfile**:
-
-```dockerfile
-FROM python:3.11-slim
-RUN pip install flask && apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
-COPY app.py .
-CMD ["python", "app.py"]
-```
-
-### 2. Запуск через интерфейс командной строки (CLI)
-
-Если образ в формате OCI, параметры проверки указываются при старте:
+Если образ в формате OCI и в нем нет утилиты проверки (например, `curl`), её нужно добавить в образ:
+`RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*`.
 
 ```bash
 podman run -d \
@@ -81,33 +57,43 @@ podman run -d \
   --health-timeout=3s \
   --health-retries=3 \
   healthcheck-demo
-# → a1b2c3d4... (ID контейнера)
 ```
+Флаг `--replace` автоматически удаляет старый контейнер с тем же именем перед запуском.
 
-### 3. Настройка через Quadlet и зависимости
+### 2. Интеграция с Quadlet (systemd)
 
-Параметр `Notify=healthy` позволяет **systemd** дождаться успешного прохождения проверки перед запуском зависимых служб.
+Quadlet позволяет описать проверку прямо в unit-файле. Это превращает контейнер в полноценный системный сервис.
 
-**db.container**:
-
-```ini
-[Container]
-Image=postgres
-Environment=POSTGRES_PASSWORD=secret
-HealthCmd=pg_isready -U postgres
-Notify=healthy
-```
-
-**app.container**:
-
+**Файл:** `~/.config/containers/systemd/demo.container`
 ```ini
 [Unit]
-Requires=db.service
-After=db.service
+Description=Demo container with healthcheck
 
 [Container]
-Image=my-app-image
+Image=localhost/healthcheck-demo:latest
+PublishPort=8080:8080
+
+# Параметры Healthcheck
+HealthCmd=curl --fail http://localhost:8080/health || exit 1
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=3
+
+[Install]
+WantedBy=multi-user.target
 ```
+
+**Особенности работы Quadlet:**
+- Не требует `systemctl enable`: юнит включается автоматически при генерации, если указан `WantedBy`.
+- Логи доступны через `journalctl -u demo.service`.
+- Контейнер управляется как сервис ОС на низком уровне.
+
+## Дополнительная информация
+
+### Важные нюансы
+
+- **Healthcheck ≠ Restart**: Podman не перезапускает контейнер при провале проверки. Он только меняет статус на `unhealthy`. Для автоматического перезапуска необходимо добавить `Restart=always` в секцию `[Service]` (для Quadlet) или использовать внешние инструменты.
+- **Контекст выполнения**: Команда проверки запускается как отдельный процесс внутри неймспейса контейнера (с тем же сетевым стеком и файловой системой). Она проверяет внутреннее состояние, а не доступность порта извне.
 
 ### 4. Диагностика и инспекция состояния
 

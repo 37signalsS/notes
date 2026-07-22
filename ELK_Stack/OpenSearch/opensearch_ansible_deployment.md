@@ -2,72 +2,64 @@
 
 ## Определения
 
-**Ansible-роль OpenSearch** — официальный инструмент автоматизации, предназначенный для развертывания, настройки и управления кластерами OpenSearch и OpenSearch Dashboards на операционных системах семейства Linux.
+* **Ansible-роль OpenSearch**: набор автоматизированных сценариев (плейбуков), предназначенных для установки, конфигурации и управления жизненным циклом OpenSearch на узлах Linux.
+* **Cluster Manager (ранее Master)**: роль узла, ответственного за координацию состояния кластера. В Ansible настраивается через переменную `roles: [cluster_manager]`.
+* **Inventory (Инвентарь)**: файл конфигурации Ansible, описывающий хосты кластера, их IP-адреса и распределение ролей.
+* **Group Vars**: переменные Ansible, применяемые к группам хостов для централизованной настройки параметров кластера (имя кластера, версия, лимиты памяти).
 
-## Подготовка
+## Основные концепции
 
-### Требования к инфраструктуре
+### Роли узлов в OpenSearch 2.x
 
-Для развертывания кластера из 3 узлов рекомендуются следующие минимальные ресурсы на каждую ноду:
-- **CPU**: 2 ядра
-- **RAM**: 8 ГБ
-- **SSD**: 100 ГБ
-- **ОС**: Ubuntu 22.04/24.04
+При развертывании через Ansible важно четко разделять обязанности узлов для обеспечения стабильности:
+* **cluster_manager**: управляет метаданными кластера. Рекомендуется иметь 3 выделенных узла для обеспечения кворума.
+* **data**: отвечает за хранение данных и выполнение поисковых запросов.
+* **ingest**: выполняет предварительную обработку данных (пайплайны) перед индексацией.
 
-### Предварительные условия
+### Системные требования и тюнинг
 
-1. Установленный Ansible на управляющем сервере.
-2. Настроенный SSH-доступ к узлам по ключам (без пароля) с правами `root` или возможностью `sudo`.
-
----
+Автоматизация через Ansible должна учитывать обязательные требования OpenSearch к операционной системе:
+* **Виртуальная память (`vm.max_map_count`)**: должна быть не менее `262144` для корректной работы Lucene.
+* **Лимиты дескрипторов файлов (`nofile`)**: минимальное значение — `65536`.
+* **Блокировка памяти (`memlock`)**: рекомендуется установить `unlimited` и включить `bootstrap.memory_lock: true` для предотвращения свопирования процесса OpenSearch.
+* **JVM Heap Size**: стандартное правило — 50% от оперативной памяти узла, но не более 32 ГБ.
 
 ## Практические сценарии
 
-### 1. Развертывание кластера
+### 1. Развертывание кластера OpenSearch
 
-#### Шаг 1: Подготовка роли и инвентаря
+#### Подготовка роли и инвентаря
 
-Клонируйте официальный репозиторий с плейбуками:
+Рекомендуется использовать официальный репозиторий с плейбуками:
 ```bash
 git clone https://github.com/opensearch-project/ansible-playbook.git
 cd ansible-playbook
 ```
 
-Отредактируйте файл инвентаря `inventories/opensearch/hosts`. Пример конфигурации для 3 узлов данных/мастеров и одного узла для Dashboards:
+Пример файла инвентаря `inventories/opensearch/hosts` для кластера из 3 узлов:
 
 ```ini
-os-node-1 ansible_host=10.0.1.1 ansible_user=root ip=10.0.1.1 roles=data,master
-os-node-2 ansible_host=10.0.1.2 ansible_user=root ip=10.0.1.2 roles=data,master
-os-node-3 ansible_host=10.0.1.3 ansible_user=root ip=10.0.1.3 roles=data,master
-
-os-node-web ansible_host=10.0.1.4 ansible_user=root ip=10.0.1.4
-
 [os-cluster]
-os-node-1
-os-node-2
-os-node-3
-
-[master]
-os-node-1
-os-node-2
-os-node-3
+os-node-1 ansible_host=10.0.1.1 roles=cluster_manager,data
+os-node-2 ansible_host=10.0.1.2 roles=cluster_manager,data
+os-node-3 ansible_host=10.0.1.3 roles=cluster_manager,data
 
 [dashboards]
-os-node-web
+os-node-web ansible_host=10.0.1.4
 ```
 
-#### Шаг 2: Настройка переменных
+#### Настройка переменных кластера
 
-Отредактируйте файл `inventories/opensearch/group_vars/all/all.yml`:
+Отредактируйте `inventories/opensearch/group_vars/all/all.yml`:
 
 ```yaml
-os_cluster_name: "my-cluster"
-os_version: "3.0.0"
-os_dashboards_version: "3.0.0"
+os_cluster_name: "prod-cluster"
+os_version: "2.14.0" # Используйте актуальную стабильную версию
+os_dashboards_version: "2.14.0"
 
-# Лимиты памяти Java (Heap Size)
-xms_value: 2
-xmx_value: 2
+# Лимиты памяти Java (в ГБ)
+xms_value: 4
+xmx_value: 4
 
 # Тип кластера: multi-node или single-node
 cluster_type: multi-node
@@ -76,7 +68,7 @@ cluster_type: multi-node
 iac_enable: yes
 ```
 
-#### Шаг 3: Запуск установки
+#### Запуск установки
 
 Запустите плейбук, передав необходимые пароли через `extra-vars`. **Важно**: используйте сложные пароли, иначе кластер не запустится.
 
@@ -95,48 +87,41 @@ ansible-playbook -i inventories/opensearch/hosts opensearch.yml \
 
 ### 2. Балансировка нагрузки через Nginx
 
-Для создания единой точки входа и обеспечения отказоустойчивости рекомендуется использовать Nginx перед узлами OpenSearch.
+Nginx используется как точка входа для API OpenSearch (порт 9200) для распределения запросов между узлами данных.
 
-#### Конфигурация Nginx (на узле Dashboards)
+#### Конфигурация балансировщика
 
-Установите Nginx: `apt install nginx -y`. Пример конфигурации `/etc/nginx/nginx.conf`:
+Пример настройки `/etc/nginx/conf.d/opensearch.conf`:
 
 ```nginx
-events {
-  worker_connections 1024;
+upstream os_cluster {
+    server 10.0.1.1:9200;
+    server 10.0.1.2:9200;
+    server 10.0.1.3:9200;
+    keepalive 32;
 }
 
-http {
-  upstream os_backend {
-    server os-node-1.itzm.tech:9200;
-    server os-node-2.itzm.tech:9200;
-    server os-node-3.itzm.tech:9200;
-    keepalive 15;
-  }
-
-  server {
+server {
     listen 9200 ssl;
-    server_name os-node-web.itzm.tech;
-    client_max_body_size 100M;
+    server_name os-api.example.com;
 
-    # Пути к SSL-сертификатам
-    ssl_certificate /etc/nginx/ssl/os-cert.crt;
-    ssl_certificate_key /etc/nginx/ssl/os-key.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate /etc/nginx/ssl/os-api.crt;
+    ssl_certificate_key /etc/nginx/ssl/os-api.key;
 
     location / {
-      proxy_pass http://os_backend;
-      proxy_read_timeout 5m;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass https://os_cluster;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        
+        # Настройка таймаутов для тяжелых запросов
+        proxy_read_timeout 90s;
     }
-  }
 }
 ```
 
 Для работы балансировщика необходимо выпустить SSL-сертификаты и разместить их в `/etc/nginx/ssl/`. Если внутри OpenSearch включена обязательная проверка клиентских сертификатов, в секцию `location` необходимо добавить параметры `proxy_ssl_certificate` и `proxy_ssl_trusted_certificate`.
-
----
 
 ## Дополнительная информация
 

@@ -104,7 +104,7 @@ op run -- docker compose up -d
 **Смотрите также:**
 
 - **[Антипаттерны управления секретами](../../Vault/common_antipatterns.md)** — подробный разбор ошибок (Git, Base64, слои образов).
-- **[Интеграция Vault с Docker](../../Vault/guides/vault_docker_integration.md)** — использование HashiCorp Vault как SSoT.
+- **[Интеграция Vault с Docker](../../Vault/guides/vault_docker_integration.md)** — использование HashiCorp Vault как центрального источника.
 - **[Секреты и конфигурации в Swarm](../../Docker_swarm/swarm_secrets_configs.md)** — использование в кластерном режиме.
 
 **CIS Docker Benchmark:** Рекомендует использовать Docker Secrets вместо переменных окружения (пункты 5.1–5.4).

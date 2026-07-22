@@ -1,128 +1,128 @@
-# StorageClass
+# StorageClass (классы хранения)
 
 ## Определения
 
-**`StorageClass`** — объект Kubernetes, описывающий "классы" или "профили" хранилища с различными характеристиками (тип диска, зона, шифрование). Позволяет администраторам определять шаблоны для динамического выделения PV.
+**`StorageClass` (SC)** — объект Kubernetes, определяющий "профили" или "классы" доступного хранилища. Он выступает шаблоном для **динамического выделения (Dynamic Provisioning)** томов, избавляя администраторов от необходимости создавать каждый `PersistentVolume` (PV) вручную.
 
-Подробнее о базовых концепциях PV/PVC: [PersistentVolume и PVC](./pv_and_pvc.md).
+**Динамическое выделение** — процесс, при котором Kubernetes автоматически запрашивает у внешней системы хранения (облако, SAN, NAS) создание физического диска и регистрирует его в кластере как PV в ответ на создание `PersistentVolumeClaim` (PVC).
+
+Подробнее о базовых концепциях PV/PVC: [Persistent Volumes и PVC](./pv_and_pvc.md).
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
 ### Назначение StorageClass
 
-StorageClass абстрагирует детали инфраструктуры и позволяет разработчикам запрашивать хранилище по характеристикам, а не по конкретному типу:
+StorageClass абстрагирует детали реализации СХД. Разработчик запрашивает хранилище по смысловому имени (например, `fast-ssd`), а параметры реализации (тип диска в облаке, IOPS, шифрование) скрыты внутри SC.
 
-- **Тип хранилища** (SSD, HDD, сетевое)
-- **Provisioner** (CSI-драйвер для работы с конкретной СХД)
-- **Параметры выделения** (тип диска, зона доступности, шифрование)
-- **Политика возврата** (`Retain` или `Delete`)
-- **Режим привязки** (`Immediate` или `WaitForFirstConsumer`)
+**Ключевые возможности:**
+- Определение конкретного **CSI-драйвера** (provisioner).
+- Передача специфичных параметров (тип диска, файловая система).
+- Управление жизненным циклом (политика возврата).
+- Учет топологии кластера (зоны доступности).
+- Определение параметров монтирования (mount options).
 
-### Ключевые параметры
+---
+
+## Параметры StorageClass
+
+Типовой манифест современного StorageClass (CSI):
 
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: standard-ssd
-provisioner: ebs.csi.aws.com        # CSI-драйвер
-parameters:
-  type: gp2                         # Параметры для драйвера
-reclaimPolicy: Delete               # Политика возврата
-volumeBindingMode: WaitForFirstConsumer  # Режим привязки
-allowVolumeExpansion: true          # Разрешить расширение
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false" # Сделать классом по умолчанию
+provisioner: ebs.csi.aws.com           # CSI-драйвер (обязательно)
+reclaimPolicy: Retain                  # Retain или Delete
+volumeBindingMode: WaitForFirstConsumer # Immediate или WaitForFirstConsumer
+allowVolumeExpansion: true             # Разрешить расширение тома
+mountOptions:                          # Параметры монтирования в ОС
+  - nodiscard
+parameters:                            # Специфичные параметры драйвера
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
 ```
 
-#### `provisioner`
+### `provisioner` (провижинер)
 
-Имя плагина, который создаёт физические тома. Определяет тип СХД:
+Поле определяет, какой плагин будет отвечать за создание тома. 
+> **Важно:** С версий 1.24+ старые встроенные драйверы (`in-tree`, начинающиеся с `kubernetes.io/`) считаются устаревшими. Всегда используйте **CSI-драйверы**.
 
-| Provisioner | Тип хранилища |
-|-------------|---------------|
-| `kubernetes.io/aws-ebs` | AWS EBS (in-tree, legacy) |
-| `ebs.csi.aws.com` | AWS EBS (CSI) |
-| `rbd.csi.ceph.com` | Ceph RBD |
-| `nfs.csi.k8s.io` | NFS через CSI |
+| Провижинер | Технология |
+|---|---|
+| `ebs.csi.aws.com` | AWS EBS |
+| `pd.csi.storage.gke.io` | Google Cloud Persistent Disk |
+| `rbd.csi.ceph.com` | Ceph RBD (Блочное устройство) |
+| `cephfs.csi.ceph.com` | CephFS (Файловая система) |
+| `driver.longhorn.io` | [Longhorn](./longhorn.md) |
+| `nfs.csi.k8s.io` | Универсальный NFS через CSI |
 | `rancher.io/local-path` | [Local Path Provisioner](./local-path-provisioner.md) |
-| `cluster.local/nfs-client-provisioner` | [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md) |
 
-#### `volumeBindingMode`
+### `volumeBindingMode` (режим привязки)
 
-| Режим | Описание | Когда использовать |
-|-------|----------|-------------------|
-| `Immediate` | PV создаётся сразу при создании PVC | Простые однозонные кластеры |
-| `WaitForFirstConsumer` | PV создаётся после появления пода (планирования на узел) | Многозонные кластеры, локальные хранилища |
+Определяет момент создания физического тома:
 
-> **Важно:** Для stateful-приложений в многозонных кластерах и для локальных хранилищ всегда используйте `WaitForFirstConsumer`. Это гарантирует, что том будет создан в той же зоне/на том же узле, где работает приложение.
+1. **`Immediate`** (по умолчанию): Том создается сразу после создания PVC.
+   - **Риск:** В многозонных (multi-AZ) кластерах диск может быть создан в Зоне А, а планировщик позже решит запустить Под в Зоне Б. Под не сможет примонтировать диск и зависнет в `Pending`.
+2. **`WaitForFirstConsumer`** (рекомендуется): Том создается только тогда, когда Под, использующий этот PVC, назначен на конкретный узел.
+   - **Преимущество:** Гарантирует создание тома в той же зоне/на том же узле, где фактически запущен Под. Обязательно для облачных дисков и локальных томов.
 
-#### `allowVolumeExpansion`
+### `reclaimPolicy` (политика возврата)
 
-Разрешает увеличение размера PVC "на лету" (без удаления пода). Поддерживается не всеми CSI-драйверами.
+Определяет судьбу физического диска после удаления PVC:
+- **`Delete`**: Удаляет физический диск и PV автоматически.
+- **`Retain`**: Сохраняет физический диск. PV переходит в статус `Released`. Требуется ручная очистка администратором. Рекомендуется для критических баз данных.
 
-#### `parameters`
+### `mountOptions` (параметры монтирования)
 
-Специфичные для provisioner параметры. Зависят от типа СХД:
-
-- Для AWS EBS: `type`, `encrypted`, `kmsKeyId`
-- Для Ceph RBD: `pool`, `clusterID`, секреты
-- Для NFS: обычно не используются
+Список опций, которые будут переданы команде `mount` на узле. 
+- Для NFS: `nfsvers=4.1`, `hard`, `timeo=600`.
+- Для ускорения монтирования в современных K8s (1.30+) с SELinux: `context="system_u:object_r:container_file_t:s0"`.
 
 ---
 
 ## Практические сценарии
 
-### Несколько классов хранилища
+### Управление классом по умолчанию
 
-Типичная конфигурация для production-кластера:
+Если в кластере установлен класс по умолчанию, PVC без указания `storageClassName` будет автоматически использовать его.
 
-```yaml
-# Быстрый SSD для БД
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: fast-ssd
-provisioner: ebs.csi.aws.com
-parameters:
-  type: io2
-  iopsPerGB: "50"
-reclaimPolicy: Retain
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
----
-# Стандартный для приложений
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: standard
-provisioner: ebs.csi.aws.com
-parameters:
-  type: gp3
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-allowVolumeExpansion: true
----
-# Класс по умолчанию (annotation)
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: default-storage
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "true"
-provisioner: ebs.csi.aws.com
-parameters:
-  type: gp3
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
+**Как сделать класс по умолчанию:**
+```bash
+kubectl annotate storageclass <name> storageclass.kubernetes.io/is-default-class=true
 ```
 
-> **Важно:** Только один StorageClass может быть default в кластере. PVC без указания `storageClassName` будет использовать класс по умолчанию.
+**Как убрать статус по умолчанию:**
+```bash
+kubectl annotate storageclass <name> storageclass.kubernetes.io/is-default-class=false --overwrite
+```
 
-### Практические примеры использования StorageClass с конкретными СХД см. в [сценариях PV/PVC](./pv_and_pvc_scenarios.md)
+### Динамическое изменение атрибутов (VolumeAttributesClass)
+
+В новых версиях Kubernetes (1.30+ Beta) появился объект `VolumeAttributesClass`, который позволяет изменять параметры тома (например, IOPS) без его пересоздания.
+
+```yaml
+apiVersion: storage.k8s.io/v1alpha1
+kind: VolumeAttributesClass
+metadata:
+  name: high-iops
+driverName: ebs.csi.aws.com
+parameters:
+  iops: "10000"
+```
 
 ---
 
 ## Дополнительная информация
 
-Архитектура CSI: [CSI Overview](./CSI/csi_overview.md). Расширенные возможности CSI: [CSI Advanced](./CSI/csi_advanced.md). Сравнение драйверов: [CSI Drivers Comparison](./CSI/csi_drivers_comparison.md). Официальная документация: [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/).
+- Архитектура и установка CSI: [Обзор CSI](./CSI/csi_overview.md).
+- Расширенные возможности (снимки, клонирование): [CSI Advanced](./CSI/csi_advanced.md).
+- Сравнение драйверов: [CSI Drivers Comparison](./CSI/csi_drivers_comparison.md).
+- Работа с базами данных и StatefulSet: [Persistent Volumes и PVC](./pv_and_pvc.md).
+- Официальная документация: [Storage Classes (en)](https://kubernetes.io/docs/concepts/storage/storage-classes/).

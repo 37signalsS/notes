@@ -17,7 +17,7 @@
 - **Аппаратные ресурсы и поддержка версий:** см. в **[Minikube: Определения и концепции](./minikube_concepts.md)**.
 - **Драйвер и среда исполнения:** для работы Minikube на Linux рекомендуется использовать Docker. Инструкции по установке: **[Установка Docker на Ubuntu](../../../Docker/docker_install_ubuntu.md)**.
 
-> **Важно:** Для стабильной работы рекомендуется выделить **VM (Virtual Machine — виртуальная машина)** минимум **4 ГБ RAM (Random Access Memory — оперативная память)**.
+> **Важно:** Для стабильной работы рекомендуется выделить **VM** минимум **4 ГБ RAM**.
 
 ---
 
@@ -25,7 +25,7 @@
 
 ### Установка Minikube
 
-| **ОС (Операционная система)** | Команда |
+| **ОС** | Команда |
 | :--- | :--- |
 | **macOS (Homebrew)** | `brew install minikube` |
 | **Linux (binary)** | `curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64 && sudo install minikube-linux-amd64 /usr/local/bin/minikube` |
@@ -35,14 +35,9 @@
 
 ### Установка kubectl (опционально)
 
-Minikube включает встроенную версию **kubectl** — **CLI (Command Line Interface)** утилиты для управления кластером. Для установки отдельной версии:
+Minikube включает встроенную команду `minikube kubectl`, которая позволяет выполнять команды без отдельной установки утилиты. Однако для полноценной работы рекомендуется установить `kubectl` в систему.
 
-| ОС | Команда |
-| :--- | :--- |
-| **macOS** | `brew install kubectl` |
-| **Linux** | `curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl` |
-
-**Проверка:** `kubectl version --client`
+Инструкции по установке для всех ОС: [Установка kubectl](../kubectl_installation.md)
 
 ---
 
@@ -73,9 +68,10 @@ minikube start --driver=none
 | Параметр | Команда |
 | :--- | :--- |
 | **Ресурсы** | `minikube start --cpus=4 --memory=8192mb` |
-| **Версия K8s** | `minikube start --kubernetes-version=v1.33.0` |
+| **Версия K8s** | `minikube start --kubernetes-version=v1.36.0` |
 | **Драйвер** | `minikube start --driver=virtualbox` |
 | **Реестр** | `minikube start --insecure-registry="10.0.0.0/24"` |
+| **Профиль** | `minikube start -p dev-cluster` |
 
 ### Проверка состояния
 
@@ -94,31 +90,63 @@ minikube start --driver=none
 ```bash
 # Создание Deployment
 kubectl create deployment nginx --image=nginx:1.27
+# → deployment.apps/nginx created
 
 # Проверка подов
 kubectl get pods
+# → NAME                     READY   STATUS    RESTARTS   AGE
+# → nginx-6f8d...-xxxxx      1/1     Running   0          10s
 
 # Экспонирование сервиса (NodePort)
 kubectl expose deployment nginx --port=80 --type=NodePort
+# → service/nginx exposed
 
-# Получение URL (Uniform Resource Locator) сервиса
+# Получение URL сервиса
 minikube service nginx --url
+# → http://192.168.49.2:31234
 ```
+
+#### Экспонирование сервиса (LoadBalancer)
+
+При использовании типа сервиса `LoadBalancer`, необходимо запустить локальный туннель:
+
+```bash
+# Запуск туннеля (требует прав администратора)
+minikube tunnel
+# → Status:
+# → machine: minikube
+# → pid: 12345
+# → route: 10.96.0.0/12 -> 192.168.49.2
+# → minikube: Routing CIDR 10.96.0.0/12 to ...
+```
+
+После этого внешний IP-адрес сервиса станет доступен в `kubectl get svc`.
 
 #### Доступ к Dashboard и SSH
 
 - **Веб-интерфейс:** `minikube dashboard` (открывает панель управления в браузере).
-- **SSH (Secure Shell) доступ:** `minikube ssh` (подключение к узлу кластера).
+- **SSH доступ:** `minikube ssh` (подключение к узлу кластера).
 
-#### Копирование файлов
+#### Копирование и монтирование файлов
 
 ```bash
-# В кластер
+# Копирование файла в кластер
 minikube cp ./config.yaml /home/docker/config.yaml
 
-# Из кластера
+# Копирование файла из кластера
 minikube cp /var/log/pods/mypod.log ./logs/
 ```
+
+**Монтирование директории с хоста:**
+
+Позволяет пробросить локальную директорию напрямую в виртуальную машину кластера:
+
+```bash
+# Монтирование локальной папки в /data внутри Minikube
+minikube mount /path/to/local/dir:/data
+# → Mounting host path /path/to/local/dir into VM as /data ...
+```
+> Процесс будет заблокирован в терминале. Для остановки монтирования нажмите `Ctrl+C`.
 
 ---
 
@@ -137,19 +165,35 @@ minikube cp /var/log/pods/mypod.log ./logs/
 
 ### Работа с образами Docker
 
-#### Использование демона Minikube
+В Minikube есть два основных способа работы с локальными образами: использование встроенного демона и прямая загрузка архивов.
 
-Позволяет K8s видеть образы, собранные локально, без отправки в реестр.
+#### Способ 1: Использование демона Minikube
+
+Позволяет K8s видеть образы, собранные локально, без отправки во внешний реестр.
 
 ```bash
-# Переключение окружения
+# Переключение окружения Docker CLI на демона внутри Minikube
 eval $(minikube docker-env)
 
-# Сборка образа внутри Minikube
+# Сборка образа (происходит прямо в кластере)
 docker build -t myapp:1.0 .
+# → Successfully tagged myapp:1.0
 
-# Использование в Deployment
+# Использование в Deployment (образ уже локально доступен узлу)
 kubectl create deployment myapp --image=myapp:1.0
+```
+
+#### Способ 2: Загрузка готового образа (`image load`)
+
+Если образ уже собран на хост-машине (или скачан), его можно напрямую загрузить в кэш Minikube:
+
+```bash
+# Прямая загрузка образа в Minikube
+minikube image load myapp:1.0
+
+# Проверка, что образ доступен в кластере
+minikube image ls
+# → docker.io/library/myapp:1.0
 ```
 
 ---

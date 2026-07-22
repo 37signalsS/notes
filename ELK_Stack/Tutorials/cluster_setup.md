@@ -1,145 +1,138 @@
-# Руководство: Настройка кластера Elasticsearch 8
+# Руководство: Настройка кластера Elasticsearch 8.x
 
 > Эта заметка является частью обзора [ELK стека](../elk_stack_overview.md) и описывает пошаговую настройку мультинодового кластера Elasticsearch 8.x.
 >
-> Базовые понятия ([кластер](../Elasticsearch/elasticsearch_overview.md#определения), [роли узлов](../Elasticsearch/elasticsearch_overview.md#роли-узлов), [шарды и реплики](../Elasticsearch/elasticsearch_overview.md#индексы-шарды-и-реплики), [статусы здоровья](../Elasticsearch/elasticsearch_overview.md#статусы-здоровья-кластера)) — в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md).
+> Базовые понятия (роли узлов, шарды и реплики, статусы здоровья) — в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md).
 
 ## Определения
 
-* **Токен регистрации (Enrollment Token)**: временный токен в Elasticsearch 8 для безопасного присоединения новых узлов к кластеру. Автоматически настраивает TLS (Transport Layer Security) и параметры безопасности.
+* **Токен регистрации (Enrollment Token)** — механизм автоматической настройки безопасности в Elasticsearch 8.x. Позволяет новому узлу или Kibana безопасно присоединиться к кластеру, автоматически получая сертификаты CA и необходимые настройки TLS от первого узла.
+* **Проверки при загрузке (Bootstrap Checks)** — системные проверки, которые выполняет Elasticsearch при переходе в "production mode" (когда `network.host` не является loopback-адресом). Если проверки не пройдены, узел не запустится.
 
 ## Основные концепции
 
-### Параметры конфигурации
+### Ключевые параметры конфигурации
 
-| Параметр | Назначение | Примечание |
+| Параметр | Назначение | Особенности |
 | :--- | :--- | :--- |
-| **`cluster.name`** | Имя кластера | Должно быть идентичным на всех узлах |
-| **`node.name`** | Имя узла | Уникальное для каждого узла |
-| **`network.host`** | IP-адрес для прослушивания | В production (промышленной эксплуатации) указывать конкретный IP |
-| **`discovery.seed_hosts`** | Список узлов для обнаружения | IP-адреса всех мастер-нод |
-| **`cluster.initial_master_nodes`** | Мастер-ноды для первого запуска | Используется один раз при инициализации кластера |
+| **`cluster.name`** | Имя кластера | Должно быть идентичным на всех узлах. |
+| **`node.name`** | Уникальное имя узла | По умолчанию — имя хоста. |
+| **`network.host`** | IP-адрес для прослушивания | Установка значения, отличного от `localhost`, активирует **Bootstrap Checks**. |
+| **`discovery.seed_hosts`** | Список узлов для обнаружения | IP-адреса мастер-нод. Используется для поиска кластера при старте. |
+| **`cluster.initial_master_nodes`** | Начальные мастер-узлы | Используется **только один раз** при самом первом создании кластера. |
 
-### Безопасность в Elasticsearch 8
+### Системные настройки (Bootstrap Checks)
 
-* **TLS по умолчанию**: весь трафик (между узлами и клиентами) шифруется.
-* **Встроенные пользователи**: предопределенные пользователи (`elastic` — суперпользователь) с генерируемыми паролями.
-* **Токен регистрации**: рекомендуемый способ добавления узлов — автоматическая настройка TLS без ручного копирования сертификатов.
+Перед запуском в промышленной среде необходимо настроить ОС:
+
+1. **Виртуальная память (mmap)**: Elasticsearch использует `mmap` для хранения индексов. Лимит должен быть увеличен:
+    * `sysctl -w vm.max_map_count=262144` (или в `/etc/sysctl.conf`).
+2. **Лимиты файлов (ulimits)**: Увеличьте количество открытых файлов для пользователя `elasticsearch` до 65536 в `/etc/security/limits.conf`.
+3. **Отключение Swap**: Рекомендуется полностью отключить swap для предотвращения задержек GC.
 
 ## Практические сценарии
 
-### Пошаговая настройка кластера
+### Сценарий 1: Автоматическая настройка (Enrollment Token)
 
-#### Шаг 1: Подготовка и установка
+Рекомендуемый способ для новых кластеров, использующий встроенный CA.
 
-1. Установите Java (рекомендуется OpenJDK) на все узлы.
-2. Установите Elasticsearch на каждый узел (например, для Ubuntu/Debian):
+#### Шаг 1: Установка и первый запуск
 
-    ```bash
-    sudo apt update
-    sudo apt install elasticsearch
-    ```
-
-#### Шаг 2: Настройка первого узла (Bootstrap)
-
-1. Отредактируйте `/etc/elasticsearch/elasticsearch.yml`:
-
-    ```yaml
-    cluster.name: my-es-cluster
-    node.name: node-1
-    network.host: 0.0.0.0
-    http.port: 9200
-    transport.port: 9300
-    discovery.seed_hosts: ["192.168.101.63", "192.168.101.64", "192.168.101.65"]
-    cluster.initial_master_nodes: ["node-1", "node-2", "node-3"]
-    ```
-
-    > Подробное описание параметров `discovery.seed_hosts` и `cluster.initial_master_nodes` приведено в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md#ключевые-настройки-elasticsearchyml).
-
-#### Шаг 3: Настройка JVM и запуск
-
-1. **Размер Heap (кучи)**: настройте размер памяти в `/etc/elasticsearch/jvm.options.d/heap.options`. Рекомендуется выделять 50% от общей оперативной памяти, но не более 31 ГБ.
-    > Техническое обоснование лимита в 31 ГБ см. в разделе [Оптимизация производительности](../Elasticsearch/elasticsearch_overview.md#оптимизация-производительности).
-
-    ```text
-    -Xms1g
-    -Xmx1g
-    ```
-
-2. Запустите сервис:
+1. Установите Elasticsearch на все узлы.
+2. На **первом узле** запустите сервис без предварительной настройки `elasticsearch.yml`:
 
     ```bash
     sudo systemctl start elasticsearch
-    sudo systemctl enable elasticsearch
     ```
 
-3. Установите пароль для пользователя `elastic`:
+3. **Важно:** При первом запуске в консоль (или в `/var/log/elasticsearch/`) будут выведены:
+    * Пароль суперпользователя `elastic`.
+    * Токен регистрации для новых узлов.
+    * Токен регистрации для Kibana.
 
-    ```bash
-    sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i
-    ```
+#### Шаг 2: Добавление новых узлов
 
-#### Шаг 4: Добавление новых узлов
-
-1. Сгенерируйте токен на первом узле:
+1. Сгенерируйте новый токен на первом узле, если старый истек (30 мин):
 
     ```bash
     sudo /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
     ```
 
-2. На новом узле выполните присоединение:
-    * Остановите сервис: `sudo systemctl stop elasticsearch`
-    * Очистите директорию данных (если узел запускался ранее): `sudo rm -rf /var/lib/elasticsearch/*`
-    * Отредактируйте `elasticsearch.yml`, указав `cluster.name` и уникальный `node.name`.
-    * Выполните переконфигурацию:
+2. На новом узле выполните команду настройки, указав токен:
 
-        ```bash
-        sudo /usr/share/elasticsearch/bin/elasticsearch-reconfigure-node --enrollment-token <ВАШ_ТОКЕН>
-        ```
+    ```bash
+    sudo /usr/share/elasticsearch/bin/elasticsearch-reconfigure-node --enrollment-token <TOKEN>
+    ```
 
-    * Запустите сервис: `sudo systemctl start elasticsearch`
+3. Отредактируйте `elasticsearch.yml`, задав `node.name` и `network.host`, затем запустите сервис.
 
-#### Шаг 5: Проверка состояния и управление
+---
 
-Используйте API `_cat` для диагностики:
+### Сценарий 2: Ручная настройка (Custom CA)
 
-```bash
-# Список узлов и их ролей
-curl -k -u elastic:<пароль> "https://localhost:9200/_cat/nodes?v"
+Используется, если политика безопасности требует использования корпоративного Центра Сертификации.
 
-# Общее состояние здоровья
-curl -k -u elastic:<пароль> "https://localhost:9200/_cluster/health?pretty"
+#### Шаг 1: Генерация сертификатов
 
-# Список индексов
-curl -k -u elastic:<пароль> "https://localhost:9200/_cat/indices?v"
+1. Создайте сертификаты для транспортного уровня (Transport TLS) и HTTP с помощью утилиты `bin/elasticsearch-certutil`.
+2. Скопируйте сертификаты в директорию `/etc/elasticsearch/certs/` на все узлы.
+
+#### Шаг 2: Настройка `elasticsearch.yml`
+
+На всех узлах настройте параметры безопасности вручную:
+
+```yaml
+cluster.name: production-cluster
+network.host: 10.0.0.1
+discovery.seed_hosts: ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+
+# Security Settings
+xpack.security.enabled: true
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.keystore.path: certs/transport.p12
+xpack.security.transport.ssl.truststore.path: certs/transport.p12
+
+xpack.security.http.ssl.enabled: true
+xpack.security.http.ssl.keystore.path: certs/http.p12
 ```
 
-### Переезд кластера между дата-центрами
+#### Шаг 3: Инициализация кластера
 
-Процедура перемещения "на горячую" без остановки обслуживания:
+На первом узле при самом первом запуске добавьте:
+`cluster.initial_master_nodes: ["node-1", "node-2", "node-3"]`
 
-1. **Проверка репликации**: убедитесь, что для критичных индексов `number_of_replicas >= 1`.
-2. **Поэтапный вывод**:
-    * Выключите один узел.
-    * Дождитесь перехода статуса из Yellow обратно в Green (автоматическая ребалансировка).
-    * Перевезите/перенастройте узел в новом дата-центре.
-    * Введите узел обратно в кластер, обновив `discovery.seed_hosts`.
-    * Дождитесь статуса Green и повторите процедуру для остальных узлов.
+> После формирования кластера этот параметр следует удалить или закомментировать.
+
+---
+
+### Проверка состояния
+
+```bash
+# Проверка списка узлов и их ролей
+curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cat/nodes?v"
+
+# Проверка распределения шардов
+curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cat/shards?v"
+
+# Объяснение аллокации (полезно при статусе Yellow/Red)
+curl -k -u elastic:$ELASTIC_PASSWORD "https://localhost:9200/_cluster/allocation/explain?pretty"
+```
 
 ## Дополнительная информация
 
-### Типичные проблемы и отладка
+### Типичные проблемы
 
-* **Узел не присоединяется**: проверьте логи (`journalctl -u elasticsearch`), совпадение `cluster.name` и сетевую доступность портов `9200` (HTTP) и `9300` (Transport).
-* **Статус Yellow**: не все реплики распределены. Это штатная ситуация, если количество узлов в кластере меньше, чем `1 + количество реплик`.
-* **Статус Red**: потерян основной шард. Данные могут быть частично недоступны.
-
-### Особенности клиентских библиотек
-
-* **Официальные клиенты**: (Python, Go, Java) поддерживают работу с кластером, автоматически переключаясь на доступные узлы.
-* **Балансировка**: рекомендуется использовать клиенты с поддержкой sniffing (динамическое обнаружение узлов) или указывать список всех узлов кластера в конфигурации приложения.
+* **`mmap` limit reached**: Узел падает сразу после старта. Решение: увеличить `vm.max_map_count`.
+* **Certificate Expired**: Узлы теряют связь. Регулярно проверяйте срок действия сертификатов, если используете ручную настройку.
+* **Quorum Loss**: Если упало более половины мастер-узлов, кластер перестанет принимать запросы. Потребуется процедура восстановления кворума.
 
 ### Рекомендации
 
-* **Версионирование**: используйте конкретные версии (например, `8.11.1`) вместо тега `latest` для обеспечения предсказуемости поведения.
-* **Логирование**: системные логи — основной источник данных при поиске причин сбоев формирования кворума или ошибок TLS.
+* **JVM Heap**: Настраивайте в `/etc/elasticsearch/jvm.options.d/heap.options`. Выделяйте 50% RAM, но не более 31 ГБ. Подробное обоснование — в [Обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md#оптимизация-производительности).
+* **Dedicated Masters**: В кластерах более 10 узлов выделяйте 3 узла только с ролью `master`.
+* **Мониторинг**: Используйте `elasticsearch_exporter` для сбора метрик в Prometheus.
+
+> **См. также:**
+> * [Elasticsearch: Жизненный цикл индексов (ILM)](../Elasticsearch/elasticsearch_ilm_and_retention.md)
+> * [Сравнение Elasticsearch и OpenSearch](../OpenSearch/opensearch_overview.md)

@@ -4,179 +4,209 @@
 
 **MetalLB** — это решение для балансировки нагрузки в bare-metal Kubernetes-кластерах, которое позволяет использовать сервисы типа `LoadBalancer` без интеграции с облачными провайдерами. MetalLB назначает сервисам внешние IP-адреса из заранее определенных пулов и анонсирует их в локальной сети.
 
-**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде `DaemonSet`. Отвечает за анонсирование IP-адресов во внешней сети, используя протоколы L2 (Layer 2) — **ARP (Address Resolution Protocol)** / **NDP (Neighbor Discovery Protocol)** или **[BGP (Border Gateway Protocol)](../../Networking/Protocols/bgp.md)**. В современных версиях используется **FRR (Free Range Routing)**.
+**Speaker** — компонент MetalLB, работающий на каждом узле кластера в виде `DaemonSet`. Отвечает за анонсирование IP-адресов во внешней сети, используя протоколы L2 (Layer 2) — ARP (Address Resolution Protocol) / NDP (Neighbor Discovery Protocol) или BGP (Border Gateway Protocol). В современных версиях используется **FRR-K8s** (интеграция Free Range Routing для Kubernetes).
 
 **Controller** — компонент MetalLB, работающий как `Deployment`. Отслеживает сервисы с типом `LoadBalancer` и назначает IP-адреса из пулов — **IPAddressPool**.
 
 ## Основные концепции
 
-### Режим FRR (Free Range Routing)
+### Использование FRR-K8s
 
-Начиная с версии v0.13.0, MetalLB использует FRR в качестве движка для управления протоколами маршрутизации. Это изменение унифицировало работу L2 и BGP режимов, повысило производительность и стабильность. Контейнер с FRR запускается внутри каждого `speaker`-пода.
+Начиная с версии v0.15.0, MetalLB перешел на использование **FRR-K8s** в качестве основного бэкенда. Это позволяет MetalLB сосуществовать с другими сетевыми компонентами (например, Cilium), которые также используют BGP, разделяя с ними одну BGP-сессию.
 
 ### Режимы работы
 
 MetalLB поддерживает два основных режима анонсирования IP-адресов:
 
-#### 1. Режим L2 (Layer 2)
+#### 1. Режим уровня 2 (Layer 2)
 
-- **Принцип работы:** Один из узлов кластера становится "лидером" для конкретного IP-адреса сервиса. Этот узел отвечает на ARP-запросы (для IPv4) или NDP-сообщения (для IPv6), привязывая MAC-адрес своего сетевого интерфейса к виртуальному IP — **VIP (Virtual IP)**. Весь трафик для сервиса направляется на этот узел, который затем с помощью `kube-proxy` распределяет его по подам.
-- **Отказоустойчивость:** Если узел-лидер выходит из строя, другой `speaker` на рабочем узле обнаруживает это и перехватывает "лидерство", отправляя в сеть **GARP (Gratuitous ARP)** для обновления ARP-таблиц на сетевых устройствах.
+- **Принцип работы:** Один из узлов кластера становится "лидером" для конкретного IP-адреса сервиса. Этот узел отвечает на ARP-запросы (для IPv4) или NDP-сообщения (для IPv6), привязывая MAC-адрес своего сетевого интерфейса к виртуальному IP (VIP). Весь трафик для сервиса направляется на этот узел, который затем распределяет его по подам.
+- **Отказоустойчивость:** Если узел-лидер выходит из строя, другой `speaker` на рабочем узле обнаруживает это и перехватывает "лидерство", отправляя в сеть GARP (Gratuitous ARP) для обновления ARP-таблиц.
+- **Ограничения:** Трафик ограничен пропускной способностью одного узла ("бутылочное горлышко"). Переключение (failover) зависит от скорости обновления ARP-кэша на клиентах.
 
-##### Ограничения режима L2
+#### 2. Режим уровня 3 (BGP)
 
-- **"Бутылочное горлышко" (Single-Node Bottleneck):** Весь трафик для одного IP-адреса проходит через один узел, что ограничивает максимальную пропускную способность скоростью сетевого интерфейса этого узла.
-- **Медленное переключение (Slower Failover):** Процесс переключения на другой узел занимает несколько секунд, так как зависит от времени обновления ARP-таблиц на клиентах и сетевом оборудовании. На этот период возможна кратковременная потеря доступности сервиса.
-
-#### 2. Режим L3 (Layer 3 - BGP)
-
-**Принцип работы:** `Speaker` устанавливает BGP-сессии с пограничными маршрутизаторами. Каждый `speaker` анонсирует маршруты к IP-адресам сервисов на своём узле.
-
-**Преимущества:**
-
-- **Настоящая балансировка:** При использовании **ECMP (Equal-Cost Multi-Path)** трафик равномерно распределяется между узлами с подами сервиса.
-- **Быстрое переключение:** При сбое узла BGP-сессия разрывается, маршрутизатор мгновенно переключается на другие маршруты.
-
-**Требования:** Сетевое оборудование с поддержкой BGP.
+- **Принцип работы:** `Speaker` устанавливает BGP-сессии с внешними маршрутизаторами. Каждый узел анонсирует маршруты к IP-адресам сервисов.
+- **Преимущества:** Поддержка ECMP (Equal-Cost Multi-Path) обеспечивает истинную балансировку трафика между всеми узлами. Использование **BFD (Bidirectional Forwarding Detection)** позволяет добиться переключения маршрутов за доли секунды.
+- **Требования:** Сетевое оборудование с поддержкой BGP.
 
 ## Практические сценарии
 
 ### Установка
 
 **Предпосылки:**
-
-Для `kube-proxy` в режиме `ipvs` (например, в `kubespray`) требуется параметр `strictARP: true`:
-
-```yaml
-# k8s-cluster.yml в kubespray
-kube_proxy_strict_arp: true
-```
-
-**Установка через манифест:**
+Для корректной работы в режиме L2 (или если `kube-proxy` работает в режиме IPVS) необходимо включить `strictARP`.
 
 ```bash
-# Создание пространства имен (namespace)
-kubectl create namespace metallb-system
-
-# Применение манифеста (версию проверять в официальной документации)
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+# Проверка и включение strictARP в kube-proxy
+kubectl edit configmap -n kube-system kube-proxy
+# Установить: strictARP: true
 ```
 
-> **Важно:** В версиях до v0.13.0 требовалось создавать `secret/memberlist` для шифрования gossip-трафика. С переходом на FRR этот шаг не нужен.
+**Установка через Helm (рекомендуется):**
 
-### Конфигурация (CRD)
+```bash
+helm repo add metallb https://metallb.github.io/metallb
+helm install metallb metallb/metallb --namespace metallb-system --create-namespace
+```
 
-**CRD (Custom Resource Definition)** — это ресурсы Kubernetes, используемые для настройки MetalLB.
+**Установка через манифесты (актуально для v0.16.x):**
 
-#### IPAddressPool
+```bash
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.16.1/config/manifests/metallb-native.yaml
+```
+
+### Конфигурация через CRD
+
+В современных версиях настройка выполняется исключительно через Custom Resources.
+
+#### Пул адресов (IPAddressPool)
 
 ```yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
-  name: default-pool
+  name: main-pool
   namespace: metallb-system
 spec:
   addresses:
   - 192.168.10.100-192.168.10.200
 ```
 
-#### L2Advertisement
+#### Анонсирование уровня 2 (L2Advertisement)
 
 ```yaml
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
-  name: default-l2-adv
+  name: l2-adv
   namespace: metallb-system
 spec:
   ipAddressPools:
-  - default-pool
+  - main-pool
+  # Можно ограничить узлы, с которых идет анонс
+  nodeSelectors:
+  - matchLabels:
+      kubernetes.io/hostname: worker-1
 ```
 
-#### BGPAdvertisement
+#### Настройка BGP и BFD
 
 ```yaml
-# BGP-пир (маршрутизатор)
 apiVersion: metallb.io/v1beta2
 kind: BGPPeer
 metadata:
-  name: my-router
+  name: edge-router
   namespace: metallb-system
 spec:
   myASN: 64512
   peerASN: 64512
   peerAddress: 192.168.10.1
+  bfdProfile: fast-failover
 
-# Анонсирование пулов
+---
 apiVersion: metallb.io/v1beta1
-kind: BGPAdvertisement
+kind: BFDProfile
 metadata:
-  name: default-bgp-adv
+  name: fast-failover
   namespace: metallb-system
 spec:
-  ipAddressPools:
-  - default-pool
+  receiveInterval: 300
+  transmitInterval: 300
+  detectMultiplier: 3
 ```
 
-### Устаревшая конфигурация (ConfigMap)
+### Статические IP и выбор контроллера
 
-> **ПРЕДУПРЕЖДЕНИЕ:** Данный метод использовался в версиях до **0.10.0** и является **устаревшим**.
+#### Назначение конкретного IP (Static IP)
+
+Поле `spec.loadBalancerIP` в Kubernetes объявлено устаревшим. MetalLB рекомендует использовать аннотацию `metallb.universe.tf/loadBalancerIPs`:
 
 ```yaml
 apiVersion: v1
-kind: ConfigMap
+kind: Service
 metadata:
-  namespace: metallb-system
-  name: config
-data:
-  config: |
-    address-pools:
-    - name: default
-      protocol: layer2
-      addresses:
-      - 192.168.1.240-192.168.1.250
+  name: static-svc
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.10.50
+spec:
+  type: LoadBalancer
+  # ...
+```
+
+#### Использование loadBalancerClass
+
+Если в кластере установлено несколько решений для LoadBalancer (например, MetalLB и облачный провайдер), можно явно указать, какой из них должен обрабатывать сервис:
+
+```yaml
+spec:
+  type: LoadBalancer
+  loadBalancerClass: metallb.io/v1alpha1
+```
+
+### Совместное использование IP (Service IP Sharing)
+
+MetalLB позволяет нескольким сервисам использовать один и тот же IP-адрес. Это полезно, если вы ограничены в публичных IP или хотите объединить разные порты (например, 80 и 443) одного логического приложения под одним IP.
+
+Для этого добавьте аннотацию `metallb.universe.tf/allow-shared-ip` с одинаковым значением (ключом) на все нужные сервисы:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-http
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "my-app"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: my-app
 ```
 
 ### Устранение неисправностей
 
-#### Сервис в статусе PENDING
+#### Проверка состояния конфигурации
+
+Новый ресурс `ConfigurationState` позволяет быстро найти ошибки в CRD:
 
 ```bash
-# Логи Controller
-kubectl logs -n metallb-system -l app.kubernetes.io/component=controller
-
-# Проверка CRD
-kubectl get ipaddresspool,l2advertisement,bgpadvertisement -n metallb-system
-
-# Проверка занятых IP
-kubectl get svc --all-namespaces | grep LoadBalancer
+kubectl get configurationstate -n metallb-system
+# → NAME      STATUS   REASON
+# → speaker   Valid    
 ```
 
-**Причины:** исчерпан пул IP, некорректная связь CRD, IP занят другим сервисом.
+#### Диагностика сервиса
 
-#### Трафик не доходит до сервиса
+Если сервис висит в статусе `PENDING`:
 
 ```bash
-# Логи Speaker
-kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker
-
-# Логи FRR (для BGP)
-kubectl logs -n metallb-system <speaker-pod-name> -c frr
-
-# Проверка на маршрутизаторе
-show arp
-show ip bgp
+kubectl describe svc my-service
+# В событиях (Events) будет указана причина, например: "Failed to allocate IP from pool"
 ```
 
-**Специфическая проблема: Блокировка ARP между сегментами**
-В некоторых корпоративных сетях ARP-ответы (анонсы MetalLB) не проходят между сегментами или блокируются политиками безопасности. Клиенты из других подсетей не видят VIP, так как их запросы остаются без ответа.
+#### Просмотр логов анонсирования
 
-**Решение:**
+```bash
+# Логи спикера для конкретного узла
+kubectl logs -n metallb-system -l app.kubernetes.io/component=speaker --tail=50
+```
 
-1. Использование режима BGP (требует поддержки оборудованием).
-2. Проксирование через внешний Nginx на NodePort с централизованным DNS. Подробнее см. в [Внешний доступ в Bare-metal через NodePort и Nginx](./Ingress/bare_metal_manual_proxy.md).
+### Устаревшая конфигурация (ConfigMap)
+
+Метод настройки через `ConfigMap` полностью **удален** начиная с версии v0.13.0. При обновлении со старых версий необходимо выполнить миграцию на CRD.
 
 ## Дополнительная информация
 
-**Официальная документация:** [metallb.universe.tf](https://metallb.universe.tf/)
+- [Официальный сайт MetalLB](https://metallb.universe.tf/)
+- [Репозиторий FRR-K8s](https://github.com/metallb/frr-k8s)
+- [Сравнение режимов L2 и BGP](https://metallb.universe.tf/concepts/)
+
+### См. также
+- [BGP в сетях](../../Networking/Protocols/bgp.md)
+- [Внешний доступ в Bare-metal кластеры](./Ingress/bare_metal_manual_proxy.md)
+- [Настройка Cilium](./Network/CNI/cilium.md)

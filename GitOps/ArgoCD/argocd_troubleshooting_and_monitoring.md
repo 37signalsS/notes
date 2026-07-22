@@ -1,125 +1,116 @@
-# ArgoCD: Диагностика и мониторинг
+# Argo CD: Диагностика и мониторинг
 
 ## Определения
 
-**Диагностика (Troubleshooting) ArgoCD** — процесс выявления и устранения проблем, связанных с синхронизацией манифестов, доступом к репозиториям и состоянием компонентов системы.
+**Диагностика (Troubleshooting) Argo CD** — процесс выявления и устранения проблем, связанных с синхронизацией манифестов, доступом к репозиториям, конфликтами ресурсов Kubernetes и состоянием компонентов системы.
 
-**Мониторинг ArgoCD** — непрерывный сбор метрик производительности и состояния приложений для обеспечения надежности доставки и оценки эффективности процессов (метрики DORA).
+**Мониторинг Argo CD** — непрерывный сбор метрик производительности (Prometheus), анализ логов и визуализация состояния приложений для обеспечения надежности доставки и оценки эффективности процессов (метрики DORA).
 
-## Базовые концепции
+## Основные концепции
 
 ### Категории типовых проблем
 
 | Категория | Типичные проявления |
 | :--- | :--- |
-| **Синхронизация** | Статус `OutOfSync`, ошибки рендеринга манифестов, конфликты ресурсов. |
-| **Доступ к данным** | Ошибки аутентификации в Git (SSH/HTTPS), таймауты подключения. |
-| **Состояние ресурсов** | Статусы приложений `Degraded`, `Missing`, `Unknown`. |
-| **Производительность** | Медленная обработка репозиториев, высокая нагрузка на `application-controller`. |
-| **Инфраструктура** | Проблемы с Redis (кеширование), ошибки RBAC. |
+| **Синхронизация** | Статус `OutOfSync`, ошибки рендеринга (Helm/Kustomize), конфликты `Server-Side Apply`. |
+| **Доступ к данным** | Ошибки аутентификации в Git/OCI (SSH/HTTPS), таймауты подключения к API. |
+| **Состояние ресурсов** | Статусы приложений `Degraded` (ошибки health-checks), `Missing` (удаленные ресурсы). |
+| **Производительность** | Медленная обработка репозиториев (высокий `reconciliation time`), нагрузка на Redis. |
+| **RBAC и доступ** | Ошибки `ComparisonError` или `Forbidden` при выполнении операций в UI/CLI. |
 
-### Метрики и мониторинг
+### Особенности мониторинга v3.x (2026)
 
-ArgoCD предоставляет встроенный экспортер метрик в формате Prometheus. Основные эндпоинты:
+В версии Argo CD v3.0 была проведена значительная очистка метрик. Устаревшие метрики (например, `argocd_app_sync_status`) удалены. 
 
-- `/metrics`: Общие метрики системы и контроллера.
-- `/metrics/applications`: Детальные метрики по каждому приложению.
+**Ключевое изменение:** Единственным источником истины для статуса приложений стала метрика **`argocd_app_info`**. Она содержит метки `sync_status` и `health_status`, которые необходимо использовать в запросах Prometheus.
 
-## Практические сценарии
+## Практические сценарии диагностики
 
-### Сценарий 1: Диагностика компонентов через логи
+### Сценарий 1: Анализ системных логов
 
-При возникновении системных ошибок первым шагом является анализ логов основных компонентов в неймспейсе `argocd`:
+Логи разделены по функциональным компонентам. В v3.x рекомендуется использовать структурированный вывод логов в формате JSON для анализа через системы типа ELK или Loki.
 
 ```bash
-# Логи основного контроллера приложений
+# Ошибки синхронизации и логика контроллера
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 
-# Логи сервера репозиториев (ошибки Helm/Kustomize)
+# Ошибки рендеринга манифестов (Helm lint, Kustomize build)
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server
 
-# Логи API-сервера
+# Ошибки авторизации и взаимодействия с пользователем
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
 ```
 
-### Сценарий 2: Проблемы с доступом к репозиторию
+### Сценарий 2: Глубокая отладка синхронизации (Hard Refresh)
 
-Если приложение не может получить манифесты, необходимо проверить статус репозитория:
+Если ресурсы в кластере отображаются некорректно или "висят" в статусе `Unknown`, это может быть связано с переходом Argo CD на аннотации вместо лейблов для отслеживания ресурсов (v3.1+).
 
+**Решение через CLI:**
 ```bash
-# Список всех репозиториев и их статус
-argocd repo list
+# Принудительное обновление кэша метаданных приложения
+argocd app get <app-name> --refresh --hard
 
-# Детальная проверка конкретного URL
-argocd repo get <repo-url>
+# Просмотр детальных расхождений через Server-Side Diff
+argocd app diff <app-name> --server-side
 ```
 
-**Распространенные причины:**
+### Сценарий 3: Диагностика RBAC (v3.5+)
 
-- Истечение срока действия SSH-ключа или Personal Access Token (PAT).
-- Некорректный формат приватного ключа (требуется OpenSSH формат без passphrase).
-- Сетевые ограничения (Firewall/Proxy) между кластером и Git-сервером.
+Версии 3.x ввели гранулярный RBAC для ресурсов и логов. Если пользователь видит пустой экран или ошибку `403`, проверьте конфигурацию `argocd-rbac-cm`.
 
-### Сценарий 3: Анализ расхождений (Diff)
-
-Когда приложение находится в статусе `OutOfSync`, используйте CLI для визуализации различий:
-
+**Проверка прав через CLI (admin):**
 ```bash
-argocd app diff <app-name>
+# Проверить, имеет ли пользователь права на действие
+argocd admin rbac can <user> <action> <resource>
 ```
 
-Это поможет понять, какие поля в кластере отличаются от описанных в Git (например, из-за внешних контроллеров или ручных правок).
+## Мониторинг и алертинг
 
-### Сценарий 4: Интеграция с Prometheus
+### Правила алертинга Prometheus (v3.x)
 
-Для автоматического сбора метрик в среде с Prometheus Operator используйте `ServiceMonitor`:
+Рекомендуемые правила для Prometheus Alertmanager (2026):
 
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: argocd-metrics
-  namespace: argocd
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-metrics
-  endpoints:
-  - port: metrics
-```
+| Название алерта | Уровень | Запрос PromQL |
+| :--- | :--- | :--- |
+| **Приложение в Degraded** | Critical | `argocd_app_info{health_status="Degraded"} > 0` |
+| **Дрейф конфигурации** | Warning | `argocd_app_info{sync_status="OutOfSync"} > 0` (for: 30m) |
+| **Ошибка синхронизации** | Warning | `increase(argocd_app_sync_total{phase="Failed"}[15m]) > 0` |
+| **Контроллер недоступен** | Critical | `absent(up{job="argocd-application-controller-metrics"} == 1)` |
+| **Перегрузка контроллера** | Warning | `argocd_kubectl_exec_pending > 10` |
 
-### Сценарий 5: Расчет метрик DORA через ArgoCD
+### Сбор метрик DORA
 
-ArgoCD является идеальным источником данных для двух из четырех метрик DORA:
+Для оценки эффективности процессов (DevOps Research and Assessment) используйте следующие расчеты на основе метрик Argo CD:
 
-| Метрика DORA | Запрос Prometheus (пример) |
-| :--- | :--- |
-| **Deployment Frequency** | `increase(argocd_app_sync_status{phase="Succeeded"}[24h])` |
-| **Change Failure Rate** | `sum(rate(argocd_app_sync_status{phase="Failed"}[24h])) / sum(rate(argocd_app_sync_status[24h]))` |
-
-Подробное описание методологии DORA приведено в разделе **[Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)**.
+1. **Deployment Frequency (Частота деплоев):**
+   `sum(increase(argocd_app_sync_total{phase="Succeeded"}[24h]))`
+2. **Change Failure Rate (Процент ошибок):**
+   `sum(rate(argocd_app_sync_total{phase="Failed"}[1h])) / sum(rate(argocd_app_sync_total[1h]))`
 
 ## Дополнительная информация
 
-### Полезные команды CLI для диагностики
+### Технические лимиты и тюнинг
+
+- **Cardinality (Кардинальность):** В v3.x включите `--metrics-cache-expiration=24h` в параметрах `application-controller`, чтобы очищать метрики удаленных приложений и не перегружать Prometheus.
+- **Resource Exclusions:** Используйте `resource.exclusions` в `argocd-cm`, чтобы игнорировать динамические ресурсы (например, EndpointSlice), которые создают лишний шум в метриках и логах.
+
+### Полезные команды отладки
 
 ```bash
-# История синхронизаций приложения
+# Просмотр истории синхронизации
 argocd app history <app-name>
 
-# Журналы подов конкретного приложения
-argocd app logs <app-name>
+# Остановка зависшей операции
+argocd app terminate-op <app-name>
 
-# Перезапуск процесса синхронизации
-argocd app sync <app-name> --retry
-
-# Принудительное удаление с очисткой ресурсов
-argocd app delete <app-name> --cascade=true
+# Глобальная пауза синхронизации в кластере (v3.4+)
+# Добавьте аннотацию в секрет кластера:
+# argocd.argoproj.io/reconciliation-pause: "true"
 ```
 
 ### См. также
 
-- [ArgoCD: Обзор системы](./argocd_overview.md)
-- [ArgoCD: Установка и настройка](./argocd_installation_and_setup.md)
-- [ArgoCD: Синхронизация и её политики](./synchronization.md)
-- [Официальная документация: Troubleshooting](https://argo-cd.readthedocs.io/en/stable/operator-manual/troubleshooting/)
+- [Обзор Argo CD](./argocd_overview.md)
+- [Синхронизация и политики](./synchronization.md)
+- [Установка и настройка Argo CD](./argocd_installation_and_setup.md)
+- [Метрики DORA](../../CI-CD/Core_Concepts/dora_metrics.md)

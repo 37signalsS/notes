@@ -1,19 +1,22 @@
-# PV/PVC Practical Scenarios
+# Практические сценарии использования PV и PVC
 
 ## Определения
 
-Практические примеры использования PersistentVolume и PersistentVolumeClaim с различными типами хранилищ.
+В данном файле собраны практические примеры использования `PersistentVolume` (PV) и `PersistentVolumeClaim` (PVC) для различных типов систем хранения данных (СХД) и сценариев развертывания приложений.
 
-Базовые концепции: [PersistentVolume и PVC](./pv_and_pvc.md). StorageClass: [StorageClass](./storageclass.md).
+Базовые концепции и теория: [Persistent Volumes и PVC](./pv_and_pvc.md).
+Настройка классов хранения: [StorageClass](./storageclass.md).
 
 ---
 
-## Практические сценарии
+## Сценарии использования
 
 ### Динамическое выделение: Ceph RBD
 
+Сценарий использования блочного хранилища Ceph через CSI-драйвер. Подходит для баз данных и приложений, требующих высокой производительности (RWO).
+
 ```yaml
-# 1. StorageClass
+# 1. StorageClass для Ceph RBD
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -29,188 +32,161 @@ volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 
 ---
-# 2. PersistentVolumeClaim
+# 2. Запрос на выделение (PVC)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: my-app-pvc
+  name: database-pvc
 spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: ceph-ssd
   resources:
     requests:
-      storage: 10Gi
+      storage: 20Gi
 
 ---
-# 3. Pod с PVC
+# 3. Подключение к Поду
 apiVersion: v1
 kind: Pod
 metadata:
-  name: my-app-pod
+  name: postgres-db
 spec:
   containers:
-    - name: my-app
-      image: nginx
+    - name: postgres
+      image: postgres:15
       volumeMounts:
-        - name: my-storage
-          mountPath: /usr/share/nginx/html
+        - name: db-data
+          mountPath: /var/lib/postgresql/data
   volumes:
-    - name: my-storage
+    - name: db-data
       persistentVolumeClaim:
-        claimName: my-app-pvc
+        claimName: database-pvc
 ```
 
-**Пояснения:**
-
-- `reclaimPolicy: Retain` — данные сохраняются после удаления PVC (production).
-- `volumeBindingMode: WaitForFirstConsumer` — PV создаётся после планирования пода (важно для RBD, который привязан к узлу).
-- Секреты provisioner нужны для аутентификации CSI-драйвера в Ceph-кластере.
+**Ключевые моменты:**
+- `reclaimPolicy: Retain` гарантирует, что при случайном удалении PVC данные в Ceph останутся целыми.
+- `volumeBindingMode: WaitForFirstConsumer` критически важен, чтобы диск был создан в той же зоне доступности, где будет запущен Под.
 
 ### Статическое выделение: NFS
 
+Используется для интеграции с существующими файловыми серверами. Администратор вручную описывает параметры подключения.
+
 ```yaml
-# 1. PV (администратор)
+# 1. PV (создается администратором)
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: nfs-logs-pv
+  name: nfs-shared-pv
 spec:
   capacity:
-    storage: 10Gi
+    storage: 100Gi
   accessModes:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
   nfs:
-    path: /var/k8s-logs
-    server: 192.168.1.100
+    path: /export/k8s-data
+    server: 10.0.0.50
 
 ---
-# 2. PVC (разработчик)
+# 2. PVC (создается разработчиком)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: fluentd-logs-pvc
-  namespace: logging
+  name: web-content-pvc
 spec:
   accessModes:
     - ReadWriteMany
   resources:
     requests:
-      storage: 10Gi
-
----
-# 3. Pod с PVC
-apiVersion: v1
-kind: Pod
-metadata:
-  name: fluentd
-  namespace: logging
-spec:
-  containers:
-    - name: fluentd
-      image: fluent/fluentd
-      volumeMounts:
-        - name: log-storage
-          mountPath: /fluentd/log
-  volumes:
-    - name: log-storage
-      persistentVolumeClaim:
-        claimName: fluentd-logs-pvc
+      storage: 50Gi # Может быть меньше или равно объему PV
 ```
 
 **Пояснения:**
+- NFS поддерживает `ReadWriteMany` (RWX), что позволяет многим подам одновременно читать и писать в одну директорию.
+- При статическом выделении PVC "связывается" с подходящим по параметрам PV автоматически.
 
-- NFS поддерживает `ReadWriteMany` — несколько подов могут писать в один том.
-- Статическое выделение: PV создан вручную администратором, PVC автоматически связывается с ним.
+### Deployment с общим хранилищем (RWX)
 
-### Deployment с общим хранилищем (NFS)
-
-Стандартный сценарий для stateless-приложений, которым требуется доступ к общим данным (например, конфигурации или общая директория для логов).
+Стандартный подход для веб-серверов, которым нужен общий доступ к статическим файлам или общая директория для загрузки файлов.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: log-writer
+  name: nginx-cluster
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
-      app: log-writer
+      app: nginx
   template:
     metadata:
       labels:
-        app: log-writer
+        app: nginx
     spec:
       containers:
-      - name: busybox
-        image: busybox
-        command: ["/bin/sh", "-c", "while true; do echo \"$(date) - $(hostname)\" >> /data/app.log; sleep 5; done"]
+      - name: nginx
+        image: nginx:latest
         volumeMounts:
-        - name: shared-storage
-          mountPath: /data
+        - name: shared-html
+          mountPath: /usr/share/nginx/html
       volumes:
-      - name: shared-storage
+      - name: shared-html
         persistentVolumeClaim:
-          claimName: nfs-pvc
+          claimName: web-content-pvc # PVC должен поддерживать RWX
 ```
 
-**Особенности и риски:**
+**Риски RWX:**
+- **Блокировки:** Сама файловая система NFS не управляет конкурентным доступом на уровне файлов. Приложение должно самостоятельно обрабатывать возможные race conditions.
+- **Производительность:** Большое количество клиентов к одному NFS-серверу может создать "бутылочное горлышко" по сети.
 
-- **Общий доступ:** Все реплики пишут в один и тот же файл `app.log`. Это допустимо для простых логов, но может вызвать проблемы с блокировками (race conditions) в сложных приложениях.
-- **Отсутствие изоляции:** Приложения не могут иметь эксклюзивный доступ к данным. Например, базы данных с однопользовательским режимом (Berkeley DB) могут повредить файлы при одновременном доступе из двух подов.
-- **Непредсказуемость:** Имена подов в Deployment случайны. Если приложению нужно работать с конкретным файлом (например, `pod-0` работает с `file-0`), реализовать это через Deployment крайне сложно.
-- **Access Modes:** Требуется хранилище с поддержкой `ReadWriteMany` (RWX), например NFS. Если использовать `ReadWriteOnce` (RWO), второй под не сможет запуститься, так как том уже примонтирован к первому.
+### StatefulSet: Индивидуальное хранилище для каждой реплики
 
-### StatefulSet с PersistentVolume
-
-Для stateful-приложений (БД, брокеры сообщений), требующих уникального хранилища для каждого экземпляра, используется **[StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md)**. Он автоматически создаёт уникальный PVC для каждого пода на основе `volumeClaimTemplates`.
+Для систем, где каждая реплика должна иметь свои уникальные данные (Prometheus, ElasticSearch, Kafka).
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: web
+  name: redis-cluster
 spec:
-  serviceName: "web-headless" # Обязательно: Headless Service
-  replicas: 2
+  serviceName: "redis"
+  replicas: 3
   selector:
     matchLabels:
-      app: web
+      app: redis
   template:
     metadata:
       labels:
-        app: web
+        app: redis
     spec:
       containers:
-      - name: nginx
-        image: nginx
+      - name: redis
+        image: redis:7-alpine
         volumeMounts:
-        - name: www
-          mountPath: /usr/share/nginx/html
+        - name: data
+          mountPath: /data
   volumeClaimTemplates:
   - metadata:
-      name: www
+      name: data
     spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: standard-ssd
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "ceph-ssd"
       resources:
         requests:
-          storage: 1Gi
+          storage: 5Gi
 ```
 
-**Преимущества StatefulSet:**
-
-- **Уникальность PVC:** Каждый pod получает свой персональный PVC: `www-web-0`, `www-web-1`.
-- **Стабильная привязка:** При перезапуске под `web-0` всегда получит тот же самый том `www-web-0`.
-- **Предсказуемые имена:** Мы заранее знаем имена подов и их PVC, что позволяет приложению понимать, с каким набором данных оно работает.
-- **Headless Service:** Критически важен для обеспечения стабильных DNS-имен каждого пода.
-
-> **Важно:** При удалении StatefulSet его PVC **не удаляются автоматически**. Это защита данных. Для полной очистки ресурсов PVC необходимо удалить вручную: `kubectl delete pvc -l app=web`.
+**Особенности работы:**
+- `volumeClaimTemplates` автоматически создает PVC для каждой реплики с именами `data-redis-0`, `data-redis-1` и т.д.
+- При удалении StatefulSet его PVC **не удаляются** автоматически. Это механизм защиты от потери данных.
 
 ---
 
 ## Дополнительная информация
 
-Локальное хранилище: [Local Path Provisioner](./local-path-provisioner.md). NFS-хранилище: [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md). Ceph RBD: [Ceph RBD Concepts](./Ceph/ceph_rbd_usage/definitions_and_concepts.md). CephFS: [CephFS Concepts](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md). StatefulSet: [StatefulSet Core Concepts](../Base/StatefulSet/statefulset_core_concepts.md).
+- Хранилище на локальных дисках: [Local Path Provisioner](./local-path-provisioner.md).
+- Интеграция с Ceph: [Обзор Ceph](./Ceph/ceph_overview.md).
+- Работа с Longhorn: [Longhorn — установка и настройка](./longhorn.md).
+- Основы StatefulSet: [Концепции StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md).

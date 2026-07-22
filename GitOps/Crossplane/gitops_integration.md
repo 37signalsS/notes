@@ -2,138 +2,150 @@
 
 ## Определения
 
-**GitOps для инфраструктуры** — подход, при котором Git-репозиторий становится единым источником правды как для приложений, так и для инфраструктуры. Crossplane предоставляет декларативный API для управления облачными ресурсами, а GitOps-инструменты автоматизируют доставку и синхронизацию.
+**GitOps для инфраструктуры** — это операционная модель, при которой Git-репозиторий является единственным источником правды (SSoT) для всей декларативной конфигурации инфраструктуры. Crossplane выступает в роли "движка" управления облаком, предоставляя Kubernetes-native API, а GitOps-инструменты (Argo CD, Flux) обеспечивают автоматическую доставку и синхронизацию этого состояния.
+
+В 2026 году эта связка является основой для построения **Internal Developer Platforms (IDP)**, позволяя разработчикам запрашивать инфраструктуру через стандартные Kubernetes-манифесты без прямого доступа к облачным консолям.
 
 ## Базовые концепции
 
-### Архитектура интеграции
+### Архитектура и разделение ответственности
 
-Crossplane идеально вписывается в методологию GitOps. В этой парадигме Git-репозиторий становится единым источником правды как для приложений, так и для инфраструктуры. **Argo CD** выступает в роли оператора, который отслеживает изменения в Git, обнаруживает новые или измененные манифесты ресурсов Crossplane и применяет их в кластере. Затем Crossplane берет на себя задачу по приведению реальной облачной инфраструктуры в соответствие с этими манифестами.
+Эффективная интеграция Crossplane и GitOps строится на разделении репозиториев по ролям:
+
+1.  **Платформенный репозиторий (Platform Repo):**
+    *   **Контент:** `CompositeResourceDefinitions` (XRD), `Compositions`, функции композиции.
+    *   **Владелец:** Команда платформы (SRE/DevOps).
+    *   **Задача:** Определение "золотых стандартов" инфраструктуры (например, "стандартный PostgreSQL").
+2.  **Репозиторий инфраструктуры/приложений (App/Infra Repo):**
+    *   **Контент:** `Claims` (XRC) — запросы на создание конкретных ресурсов.
+    *   **Владелец:** Команды разработки.
+    *   **Задача:** Потребление инфраструктуры через высокоуровневые абстракции.
+
+### Схема взаимодействия
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│     Git     │────▶│   ArgoCD    │────▶│ Crossplane  │────▶│   Cloud     │
-│  Repository │     │  (Sync)     │     │ (Reconcile) │     │   API       │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
-      │                   │                   │                   │
-      │ 1. Коммит         │                   │                   │
-      │    манифеста      │                   │                   │
-      └──────────────────▶│                   │                   │
-                          │ 2. Detect change  │                   │
-                          │    & Apply        │                   │
-                          └──────────────────▶│                   │
-                                              │ 3. Create/Update  │
-                                              │    Cloud Resource │
-                                              └──────────────────▶│
-                                                                  │
-                          ◀───────────────────────────────────────┘
-                          5. Status Update      4. Status Response
+┌─────────────────┐      ┌───────────────┐      ┌────────────────┐      ┌──────────────┐
+│  Git (Claims)   │─────▶│   Argo CD     │─────▶│   Crossplane   │─────▶│   Облако     │
+│  (App Repo)     │      │   (Sync)      │      │  (Reconcile)   │      │   (API)      │
+└─────────────────┘      └───────────────┘      └────────────────┘      └──────────────┘
+         │                       │                       │                      │
+    1. Коммит Claim         2. Применение          3. Создание MR          4. Ресурс
+       в Git                   в кластер              в облаке                готов
 ```
 
-### Поддерживаемые GitOps-инструменты
+### Поддерживаемые инструменты
 
-| Инструмент | Поддержка | Особенности |
+| Инструмент | Преимущества в связке с Crossplane | Рекомендация |
 | :--- | :--- | :--- |
-| **ArgoCD** | Полная | Нативная синхронизация CRD, Application, ApplicationSet |
-| **Flux** | Полная | Kustomize Controller, Helm Controller для Crossplane манифестов |
+| **Argo CD** | Превосходная визуализация иерархии ресурсов (Claim -> XR -> MR). Нативная поддержка `ApplicationSet`. | Для централизованных Control Plane с UI. |
+| **Flux** | Модульность, нативная поддержка OCI-артефактов, интеграция с SOPS "из коробки". | Для распределенных систем и Edge-кластеров. |
 
-Обзор Crossplane и его возможностей см. в [Crossplane: Обзор](./overview.md).
+## Управление секретами
+
+В GitOps-процессе секреты (пароли БД, ключи доступа) требуют особого подхода. В 2026 году используются следующие паттерны:
+
+### 1. External Secrets Operator (ESO) + HashiCorp Vault
+*   **Workflow:** Crossplane создает базу данных -> записывает учетные данные в K8s Secret -> ESO синхронизирует этот секрет в Vault для долгосрочного хранения или другие приложения запрашивают его из Vault.
+*   **Плюс:** Централизованное управление и ротация секретов.
+
+### 2. Mozilla SOPS
+*   **Workflow:** Секреты (например, манифест `ProviderConfig`) шифруются в Git с помощью SOPS.
+*   **Плюс:** Секреты хранятся рядом с кодом, но в безопасности. Flux расшифровывает их автоматически перед применением.
 
 ## Практические сценарии
 
-### Сценарий 1: ArgoCD + Crossplane для управления инфраструктурой
+### Сценарий 1: Argo CD + Crossplane Claim (Рекомендуемый подход)
 
-1. **Создание манифеста Crossplane в Git:**
+Вместо управления низкоуровневыми ресурсами, разработчики используют `Claim`.
 
-   ```yaml
-   apiVersion: storage.yandex-cloud.jet.crossplane.io/v1alpha1
-   kind: Bucket
-   metadata:
-     name: my-artifacts
-   spec:
-     forProvider:
-       name: my-artifacts-bucket
-       location:
-         region: ru-central1
-     providerConfigRef:
-       name: yandex-cloud-provider
-   ```
+1.  **Создание Claim в Git (App Repo):**
 
-2. **ArgoCD Application для синхронизации:**
+    ```yaml
+    apiVersion: database.example.org/v1alpha1
+    kind: PostgreSQLInstance
+    metadata:
+      name: inventory-db
+      namespace: production
+    spec:
+      parameters:
+        storageGB: 20
+        version: "15"
+      compositionSelector:
+        matchLabels:
+          provider: yandex-cloud
+          tier: production
+      writeConnectionSecretToRef:
+        name: db-conn-secret
+    ```
 
-   ```yaml
-   apiVersion: argoproj.io/v1alpha1
-   kind: Application
-   metadata:
-     name: crossplane-infra
-     namespace: argocd
-   spec:
-     project: default
-     source:
-       repoURL: https://github.com/org/infra-gitops.git
-       targetRevision: main
-       path: crossplane/resources
-     destination:
-       server: https://kubernetes.default.svc
-       namespace: default
-     syncPolicy:
-       automated:
-         prune: true
-         selfHeal: true
-       syncOptions:
-         - CreateNamespace=true
-   ```
+2.  **Настройка Argo CD Application:**
 
-3. **Мониторинг статуса:**
+    ```yaml
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: app-infrastructure
+      namespace: argocd
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/org/app-infra-gitops.git
+        targetRevision: main
+        path: infrastructure/production
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: production
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true # Автоматическое исправление дрейфа в кластере
+    ```
 
-   ```bash
-   # Статус синхронизации ArgoCD
-   argocd app get crossplane-infra
-   
-   # Статус ресурса Crossplane
-   kubectl get bucket my-artifacts -o yaml
-   ```
+### Сценарий 2: Масштабирование через ApplicationSet
 
-### Сценарий 2: Мультикластерная синхронизация с ArgoCD
-
-ArgoCD может управлять несколькими кластерами с Crossplane:
+Для управления множеством окружений (dev, staging, prod) используйте генераторы.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: crossplane-multi-cluster
+  name: platform-stacks
   namespace: argocd
 spec:
   generators:
     - list:
         elements:
-          - cluster: dev
-            url: https://dev-cluster.example.com
-          - cluster: prod
-            url: https://prod-cluster.example.com
+          - env: dev
+            cluster: in-cluster
+          - env: prod
+            cluster: prod-cluster-url
   template:
     metadata:
-      name: crossplane-infra-{{cluster}}
+      name: '{{env}}-stack'
     spec:
       project: default
       source:
-        repoURL: https://github.com/org/infra-gitops.git
+        repoURL: https://github.com/org/platform-manifests.git
         targetRevision: main
-        path: crossplane/resources/{{cluster}}
+        path: 'stacks/{{env}}'
       destination:
-        server: {{url}}
-        namespace: default
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
+        server: '{{cluster}}'
+        namespace: crossplane-system
 ```
+
+## Исправление дрейфа (Drift Detection)
+
+Связка Crossplane + GitOps обеспечивает двухуровневую защиту от изменений вручную:
+
+1.  **Уровень GitOps (Argo CD/Flux):** Если кто-то изменит манифест Crossplane в кластере через `kubectl edit`, GitOps-инструмент обнаружит расхождение с Git и вернет состояние манифеста к эталонному.
+2.  **Уровень Crossplane:** Если кто-то изменит параметры ресурса напрямую в консоли Yandex Cloud, контроллер Crossplane обнаружит расхождение с манифестом и вернет параметры в облаке к описанным в YAML.
 
 ## Дополнительная информация
 
-Обзор ArgoCD и его возможностей см. в [ArgoCD Overview](../ArgoCD/argocd_overview.md), политики синхронизации — в [Synchronization](../ArgoCD/synchronization.md). Альтернативный GitOps-инструмент описан в [Flux](../flux.md).
+*   Обзор Crossplane: [Crossplane Overview](./overview.md)
+*   Настройка провайдера Yandex: [Yandex Cloud Setup](./provider_yandex_cloud_setup.md)
+*   Инструменты GitOps: [Argo CD Overview](../ArgoCD/argocd_overview.md), [Flux Overview](../flux.md)
 
 Внешние ресурсы:
-
-- Официальная документация Crossplane: [GitOps Workflows](https://docs.crossplane.io/latest/concepts/gitops/)
+* [Crossplane GitOps Workflows](https://docs.crossplane.io/latest/concepts/gitops/)
+* [Argo CD Best Practices](https://argo-cd.readthedocs.io/en/stable/operator-manual/best-practices/)

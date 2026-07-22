@@ -2,92 +2,160 @@
 
 ## Определения
 
-**Аутентификация** в Kubernetes — это процесс проверки личности пользователя или компонента, который пытается выполнить действие в кластере. API-сервер должен идентифицировать источник каждого запроса, прежде чем передать его на стадию [авторизации (RBAC)](./rbac/rbac_overview.md).
+**Аутентификация (Authentication, AuthN)** в Kubernetes — это процесс проверки личности пользователя или компонента, отправляющего запрос к API-серверу. Каждому запросу, приходящему в кластер, должна быть сопоставлена учетная запись (человек-пользователь или `ServiceAccount`), либо он помечается как анонимный.
 
-**Важно:** Аутентификация отвечает на вопрос «Кто вы?», авторизация — на вопрос «Что вам разрешено?». Подробнее о разграничении: [Authentication vs Authorization](../../Security/Concepts/authentication_vs_authorization.md).
+* **API-сервер как шлюз:** Аутентификация является первым этапом обработки запроса. Если личность не подтверждена, запрос отклоняется с кодом **401 Unauthorized** до этапа проверки прав (авторизации).
+* **Пользователи (Users) vs Сервисные аккаунты (ServiceAccounts):**
+    * **Пользователи:** Реальные люди или внешние системы. Kubernetes не хранит объекты «пользователь» в своей базе данных (etcd), полагаясь на внешние механизмы (сертификаты, OIDC).
+    * **ServiceAccounts:** Внутренние объекты кластера, предназначенные для аутентификации процессов, запущенных в подах.
+
+**Важно:** Подробное сравнение проверки личности и проверки прав доступно в материале [Authentication vs Authorization](../../Security/Concepts/authentication_vs_authorization.md).
 
 ## Основные концепции
 
-### 1. X.509 Сертификаты
+### 1. X.509 Клиентские сертификаты
 
-Принцип работы: Клиент предоставляет сертификат, подписанный доверенным CA (Certificate Authority — центр сертификации) кластера. Поле `Common Name` (CN) в сертификате используется как имя пользователя, а `Organization` (O) — для определения принадлежности к группам.
+Один из наиболее надежных методов, используемый компонентами кластера (Kubelet, Scheduler) и администраторами.
 
-Подробнее о PKI (Public Key Infrastructure — инфраструктура открытых ключей) и сертификатах: [PKI Overview](../../Security/Concepts/pki_overview.md), [TLS и mTLS в Kubernetes](./tls_and_mtls_in_kubernetes.md).
+* **Принцип работы:** Клиент предоставляет сертификат, подписанный доверенным Root CA кластера.
+* **Маппинг атрибутов:**
+    * `Common Name (CN)` → Имя пользователя (User).
+    * `Organization (O)` → Имя группы (Group). Можно указать несколько полей `O` для членства в нескольких группах.
+* **Особенности:** В Kubernetes нет встроенного механизма отзыва сертификатов (CRL/OCSP). Единственный способ аннулировать доступ — дождаться истечения срока действия или перевыпустить CA кластера (крайне сложная операция).
 
-### 2. Токены сервисных аккаунтов (ServiceAccount Tokens)
+Подробнее о PKI: [PKI Overview](../../Security/Concepts/pki_overview.md), [TLS и mTLS в Kubernetes](./tls_and_mtls_in_kubernetes.md).
 
-Принцип работы: Kubernetes автоматически создает JWT (JSON Web Token) для каждого `ServiceAccount` и монтирует его в поды по пути `/var/run/secrets/kubernetes.io/serviceaccount/`.
+### 2. Привязанные токены (Bound Service Account Tokens)
 
-**Кастомизация токена:** Через [Projected Volume](../Base/Pod/volume_types/projected_volumes.md) можно создать токен с измененными параметрами:
+Современный стандарт аутентификации для приложений (GA с v1.22, улучшения в v1.30+).
 
-- `expirationSeconds` — срок действия (по умолчанию 1 час, минимум 600 секунд).
-- `audience` — целевая аудитория токена (для доступа к внешним API).
-- `path` — нестандартный путь монтирования.
+* **TokenRequest API:** Вместо создания вечных токенов-секретов, Kubernetes использует динамическую генерацию кратковременных токенов через `TokenRequest`.
+* **Projected Volumes:** Токены монтируются в поды через [Projected Volume](../Base/Pod/volume_types/projected_volumes.md). Они автоматически ротируются Kubelet до истечения срока.
+* **Механизмы привязки (Binding):**
+    * **Time-bound:** Имеют ограниченный TTL (по умолчанию 1 час).
+    * **Audience-bound:** Преддназначены для конкретного получателя (например, `vault`).
+    * **Object-bound:** Привязаны к жизненному циклу конкретного Pod (токен недействителен после удаления пода).
+    * **Node-bound (Beta v1.31):** Токен привязан к конкретному узлу.
 
-### 3. OpenID Connect (OIDC) и Pinniped
+### 3. Структурированная конфигурация и OIDC (v1.30+)
 
-Принцип работы: Пользователь аутентифицируется через внешнего провайдера, получает OIDC (OpenID Connect) токен (ID Token) и передает его API-серверу. API-сервер проверяет подлинность токена, обращаясь к IdP (Identity Provider — провайдер идентификации).
+Начиная с Kubernetes 1.30, рекомендуется использовать флаг `--authentication-config` вместо старых флагов `--oidc-*`.
 
-**Pinniped:** Специализированный сервис, упрощающий интеграцию с OIDC, LDAP (Lightweight Directory Access Protocol) и Active Directory. Он выступает посредником между пользователем и Kubernetes API. Подробнее: [Pinniped](./pinniped.md).
+* **Multiple OIDC Providers:** Новая конфигурация `AuthenticationConfiguration` позволяет подключать неограниченное количество независимых OIDC-провайдеров (например, одновременно Okta, Google и GitHub).
+* **CEL Expressions:** Использование Common Expression Language для динамического маппинга данных из токена в атрибуты пользователя. Например: `claims.email.split('@')[0]` для извлечения имени пользователя.
+* **Hot-Reload:** API-сервер подхватывает изменения в конфигурационном файле без перезагрузки.
+* **Pinniped:** Популярный инструмент для упрощения сложной федерации IdP. Подробнее: [Pinniped](./pinniped.md).
 
-Подробнее: [OAuth2 Overview](../../Security/Concepts/oauth2_overview.md).
+### 4. Вебхук-аутентификация (Webhook Token Authentication)
 
-### 4. Статический файл с токенами (Static Token File)
+API-сервер отправляет полученный токен на внешний HTTP-сервис для проверки.
 
-Принцип работы: API-сервер при запуске читает файл, указанный в опции `--token-auth-file`. Файл содержит записи в формате `token,user,uid,"group1,group2"`.
+* **Сценарий:** Интеграция с корпоративными системами управления доступом, которые не поддерживают стандартный OIDC.
+* **Результат:** Вебхук возвращает статус аутентификации и список групп пользователя в формате JSON.
 
-**Предостережение:** Данный метод не рекомендуется использовать в производственной среде из-за сложностей с управлением и ротацией токенов. Подходит только для разработки и тестирования.
+### 5. Bootstrap Tokens и Статические токены
 
-### 5. Bootstrap Tokens
-
-Принцип работы: Токены создаются динамически и хранятся в виде `Secrets` в пространстве имен `kube-system`. Используются в процессе начальной загрузки (bootstrap) для аутентификации kubelet перед получением им постоянного X.509 сертификата.
-
-### 6. Webhook Token Authentication
-
-Принцип работы: API-сервер отправляет токен из запроса на внешний веб-сервис (webhook). Этот сервис проверяет токен и возвращает информацию о пользователе. Применяется при интеграции с проприетарными системами управления пользователями.
+* **Bootstrap Tokens:** Используются `kubeadm` для временной аутентификации новых узлов во время присоединения к кластеру. Хранятся как `Secrets` в `kube-system`.
+* **Static Token File:** Список токенов в CSV-файле на мастере. **Не рекомендуется** для использования из-за отсутствия безопасности и сложности ротации.
 
 ## Практические сценарии
 
-### 1. Подготовка сертификата для администратора
+### 1. Подготовка сертификата администратора (CSR)
 
-Администратор создает CSR (Certificate Signing Request — запрос на подпись сертификата), подписывает его CA кластера и формирует `kubeconfig` с сертификатом и ключом.
+Создание запроса на подпись сертификата через API Kubernetes:
 
-### 2. Использование ServiceAccount в приложении
+```bash
+# 1. Генерация ключа и запроса
+openssl genrsa -out developer.key 2048
+openssl req -new -key developer.key -out developer.csr -subj "/CN=developer/O=dev-group"
 
-Приложение в поде использует автоматически смонтированный токен в заголовке `Authorization: Bearer <token>` для запросов к Kubernetes API. Путь по умолчанию: `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+# 2. Создание объекта CertificateSigningRequest в K8s
+cat <<EOF | kubectl apply -f -
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: developer-access
+spec:
+  request: $(cat developer.csr | base64 | tr -d '\n')
+  signerName: kubernetes.io/kube-apiserver-client
+  usages:
+  - client auth
+EOF
 
-### 3. Настройка SSO через OIDC
+# 3. Одобрение и получение сертификата
+kubectl certificate approve developer-access
+kubectl get csr developer-access -o jsonpath='{.status.certificate}' | base64 -d > developer.crt
+```
 
-Пользователи аутентифицируются через корпоративный IdP (например, Keycloak или Google). API-сервер настраивается флагами `--oidc-issuer-url` и `--oidc-client-id`.
+### 2. Кастомизация ServiceAccount токена в поде
 
-### 4. Присоединение ноды через Bootstrap Token
+Использование `projected volume` для получения токена с кастомной аудиторией:
 
-Команда `kubeadm join` использует временный bootstrap-токен для первичной аутентификации узла в кластере.
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-app
+spec:
+  containers:
+  - name: app
+    image: my-app:latest
+    volumeMounts:
+    - mountPath: /var/run/secrets/tokens
+      name: vault-token
+  volumes:
+  - name: vault-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          path: vault-token
+          expirationSeconds: 7200
+          audience: vault-service
+```
+
+### 3. Пример структурированной конфигурации (AuthenticationConfiguration)
+
+Конфигурация для поддержки двух провайдеров (Google и Azure):
+
+```yaml
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: https://accounts.google.com
+    audiences: ["k8s-client-id-google"]
+  claimMappings:
+    username: { expression: 'claims.email' }
+    groups: { expression: 'claims.groups' }
+- issuer:
+    url: https://login.microsoftonline.com/tenant-id/v2.0
+    audiences: ["k8s-client-id-azure"]
+  claimMappings:
+    username: { expression: 'claims.preferred_username' }
+```
 
 ## Дополнительная информация
 
 ### Рекомендации по безопасности
 
-- **Отключение анонимного доступа:** Запускайте API-сервер с флагом `--anonymous-auth=false`.
-- **Ограничение прав ServiceAccount:** Не используйте `default` ServiceAccount. Создавайте выделенные аккаунты с минимальными правами по принципу наименьших привилегий.
-- **Ротация данных:** Настройте регулярную ротацию сертификатов и токенов.
-- **Централизованная идентификация:** Используйте OIDC для аутентификации пользователей (людей) для упрощения процессов onboarding и offboarding.
+* **Отключение анонимного доступа:** Используйте `--anonymous-auth=false` или ограничьте анонимный доступ через `AuthenticationConfiguration` только для `/healthz`.
+* **Отказ от Secret-based токенов:** Проверьте кластер на наличие старых `Secrets` с типом `kubernetes.io/service-account-token` и замените их на `TokenRequest`.
+* **Ротация CA:** Настройте автоматическую ротацию сертификатов Kubelet через флаг `--rotate-certificates`.
 
 ### Сравнение методов аутентификации
 
-| Метод | Основной сценарий (Use Case) | Безопасность | Сложность настройки |
-|:------|:-----------------------------|:-------------|:--------------------|
-| **X.509** | Компоненты кластера, администраторы | Высокая | Средняя |
-| **ServiceAccount** | Приложения внутри кластера | Средняя | Низкая |
-| **OIDC / Pinniped** | Пользователи (SSO, LDAP, AD) | Высокая | Средняя |
-| **Bootstrap** | Временная аутентификация нод | Средняя | Низкая |
-| **Webhook** | Кастомные системы идентификации | Зависит от реализации | Высокая |
-| **Static Token** | Разработка и локальное тестирование | Низкая | Низкая |
+| Метод | Субъект | Безопасность | Основная особенность |
+|:------|:--------|:-------------|:---------------------|
+| **X.509** | Компоненты, Админы | Высокая | Нельзя отозвать без смены CA |
+| **Bound Tokens** | Приложения (SA) | Высокая | Авто-ротация, привязка к Pod/Node |
+| **OIDC (v1.30+)** | Пользователи (SSO) | Высокая | Поддержка многих IdP, CEL-маппинг |
+| **Webhook** | Кастомные системы | Средняя | Требует внешний сервис-валидатор |
+| **Bootstrap** | Новые узлы | Средняя | Только для инициализации (`kubeadm`) |
+| **Static Tokens** | Тестирование | Низкая | **Deprecated**, небезопасно |
 
 **Ссылки:**
 
-- [TLS и mTLS в Kubernetes](./tls_and_mtls_in_kubernetes.md)
-- [Pinniped: Интеграция с IdP](./pinniped.md)
-- [Sealed Secrets: Хранение секретов](./sealed_secrets_overview.md)
-- [Authentication vs Authorization](../../Security/Concepts/authentication_vs_authorization.md)
-- [RBAC в Kubernetes](./rbac/rbac_overview.md)
+* [TLS и mTLS в Kubernetes](./tls_and_mtls_in_kubernetes.md) — детали шифрования трафика.
+* [Pinniped: Интеграция с IdP](./pinniped.md) — продвинутая федерация идентичностей.
+* [RBAC в Kubernetes](./rbac/rbac_overview.md) — следующий этап: проверка прав доступа.
+* [Управление kubeconfig](../Operations/kubeconfig_and_connection.md) — настройка клиентского доступа.

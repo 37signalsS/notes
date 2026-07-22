@@ -1,12 +1,12 @@
 # Обзор Docker Stack — установка стека мониторинга
 
-## Definitions
+## Определения
 
 **Docker Stack мониторинга** — полноценный стек наблюдения (Prometheus + Grafana + Alertmanager + Node Exporter + cAdvisor), развёртываемый через Docker Compose на одном хосте. Предназначен для локального тестирования, demo-сред и небольших production-окружений.
 
 > **См. также:** [Конфигурация Docker Compose](./docker-compose_config.md) — полный YAML-файл, описания сервисов, healthchecks, security.
 
-## Basic Concepts
+## Основные концепции
 
 ### Компоненты стека
 
@@ -43,7 +43,7 @@ monitoring/
 | **1** | [docker-compose_config.md](./docker-compose_config.md) | YAML-файл стека: сервисы, volumes, networks, healthchecks, resource limits |
 | **2** | [prometheus_config.md](./prometheus_config.md) | `prometheus.yml`: scrape-цели, rule_files, alerting-секция |
 | **3** | [docker_compose_alertmanager_config.md](./docker_compose_alertmanager_config.md) | `config.yml` Alertmanager: route, receivers, inhibit_rules |
-| **4** | — | Запуск и проверка: `docker-compose up -d`, health endpoints, UI компонентов |
+| **4** | — | Запуск и проверка: `docker compose up -d`, health endpoints, UI компонентов |
 | **5** | [remote_hosts_monitoring.md](./remote_hosts_monitoring.md) | Node Exporter на удалённых хостах, firewall, static_configs |
 
 ### Сравнение с альтернативами
@@ -56,7 +56,7 @@ monitoring/
 
 > Подробности: [Kubernetes overview](../../kubernetes/overview.md), [Helm-чарт Alertmanager](../with_helm_chart.md).
 
-## Practical Scenarios
+## Практические сценарии
 
 ### Быстрый старт
 
@@ -66,10 +66,10 @@ mkdir -p monitoring/{prometheus,alertmanager,grafana}
 cd monitoring
 
 # Запуск стека
-docker-compose up -d
+docker compose up -d
 
 # Проверка статусов
-docker-compose ps
+docker compose ps
 
 # Health endpoints
 curl -s http://localhost:9090/-/healthy   # Prometheus
@@ -89,10 +89,10 @@ curl -s http://localhost:3000/api/health   # Grafana
 
 ```bash
 # Остановка (данные сохраняются в volumes)
-docker-compose down
+docker compose down
 
 # Остановка с удалением данных
-docker-compose down -v
+docker compose down -v
 ```
 
 ### Расширение стека
@@ -103,17 +103,17 @@ docker-compose down -v
 | **Promtail** | Сбор и отправка логов в Loki | [Loki Docker Compose](../../../Loki/Docker_Compose/loki_docker_compose_setup.md) |
 | **Tempo** | Распределённые трассировки | [Tempo overview](../../../Tempo/index.md) |
 
-## Additional Information
+## Дополнительная информация
 
 ### Актуальные версии образов
 
 | Компонент | Образ | Версия |
 |---|---|---|
-| **Prometheus** | `prom/prometheus` | v3.10.0 |
-| **Grafana** | `grafana/grafana` | v12.4.2 |
-| **Alertmanager** | `prom/alertmanager` | v0.31.0 |
-| **Node Exporter** | `prom/node-exporter` | v1.10.2 |
-| **cAdvisor** | `ghcr.io/google/cadvisor` | v0.56.2 |
+| **Prometheus** | `prom/prometheus` | v3.13.1 |
+| **Grafana** | `grafana/grafana` | v13.1.1 |
+| **Alertmanager** | `prom/alertmanager` | v0.33.1 |
+| **Node Exporter** | `prom/node-exporter` | v1.12.1 |
+| **cAdvisor** | `ghcr.io/google/cadvisor` | v0.60.5 |
 
 > Проверить последние версии: [Docker Hub](https://hub.docker.com/u/prom).
 

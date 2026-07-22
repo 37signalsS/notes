@@ -3,19 +3,25 @@
 ## Определения
 
 - **Grafana**: Платформа для аналитики и визуализации. См. [Обзор Grafana](../grafana_overview.md).
-- **Helm**: Пакетный менеджер для Kubernetes, автоматизирующий установку и управление приложениями.
-- **Helm-чарт Grafana**: Набор шаблонов Kubernetes-ресурсов для развертывания Grafana.
-- **`values.yaml`**: Основной файл конфигурации Helm-чарта для кастомизации установки.
+- **Helm**: Пакетный менеджер для Kubernetes, автоматизирующий жизненный цикл приложений.
+- **Helm-чарт Grafana**: Набор шаблонов Kubernetes-ресурсов (Deployment, Service, ConfigMap, Secret, Ingress) для развертывания Grafana.
+- **`values.yaml`**: Основной файл конфигурации Helm-чарта, позволяющий переопределять стандартные параметры установки.
 
-> **Примечание:** Для установки Grafana в составе полного стека мониторинга см. [kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
+> **Примечание:** Для установки Grafana в составе полного стека мониторинга (Prometheus + Alertmanager + Grafana) рекомендуется использовать [kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md).
 
-### Миграция репозитория (январь 2026)
+### Миграция репозитория (2026)
 
-Официальный репозиторий `grafana` (github.io/helm-charts) **устарел**. Актуальный репозиторий для чарта `grafana`:
+С начала 2026 года официальные Open Source чарты Grafana Labs переехали в комьюнити-репозиторий. Оригинальный репозиторий `grafana/helm-charts` теперь ориентирован преимущественно на Enterprise-версии.
+
+**Актуальный репозиторий для OSS Grafana:**
 
 ```bash
+# Добавление репозитория
 helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo update
+
+# Поиск версий чарта
+helm search repo grafana-community/grafana --versions
 ```
 
 ---
@@ -24,78 +30,86 @@ helm repo update
 
 ### Персистентность (Persistence)
 
-Использование **PersistentVolumeClaim (PVC)** необходимо для сохранения данных (дашбордов, настроек пользователей, плагинов) между перезапусками подов. В Helm-чарте настраивается через секцию `persistence`.
+Для сохранения данных (дашбордов, настроек, пользователей) необходимо использование **PersistentVolumeClaim (PVC)**. По умолчанию Grafana использует SQLite, файл которой должен храниться на персистентном диске.
+
+**Важно:** SQLite не поддерживает режим `ReadWriteMany`, что ограничивает масштабирование Grafana до одного пода. Для High Availability (HA) требуется внешняя база данных (PostgreSQL/MySQL).
 
 ### Внешний доступ (Ingress)
 
-Ресурс Ingress предоставляет доступ к веб-интерфейсу Grafana извне кластера. Важным параметром является `root_url` в `grafana.ini`, который должен соответствовать публичному адресу для корректной генерации ссылок.
+Ресурс Ingress предоставляет доступ к веб-интерфейсу. При настройке Ingress критически важно синхронизировать параметр `root_url` в `grafana.ini` с фактическим DNS-именем, иначе функции экспорта и генерации ссылок в уведомлениях будут работать некорректно.
 
-### Автоматизация (Provisioning)
+### Автоматизация (Provisioning через Sidecar)
 
-Автоматическая загрузка дашбордов и источников данных через механизм **sidecar**. Sidecar-контейнер отслеживает ConfigMaps с определенными метками (например, `grafana_dashboard: "1"`) и импортирует их в Grafana. См. [Провиженинг Grafana](../grafana_provisioning.md).
-
-### Рендеринг изображений (Image Renderer)
-
-Дополнительный компонент (плагин или сервис) для генерации PNG-изображений графиков, необходимых для визуализации алертов в мессенджерах (Slack, Telegram).
+Helm-чарт включает sidecar-контейнер (на базе `k8s-sidecar`), который сканирует ConfigMaps и Secrets в кластере на наличие специфических меток (labels). При обнаружении нового ресурса sidecar автоматически загружает его в Grafana без перезагрузки пода. См. [Провиженинг Grafana](../grafana_provisioning.md).
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Базовая установка
+### Сценарий 1: Базовая установка с Ingress и PVC
 
-1. **Добавление репозитория:**
+Типовая конфигурация для небольших окружений.
 
-    ```bash
-    helm repo add grafana-community https://grafana-community.github.io/helm-charts
-    helm repo update
-    ```
+```yaml
+# grafana-values.yaml
+adminPassword: "StrongPassword123" # В продакшене используйте существующий Secret
 
-2. **Создание конфигурации `values.yaml`:**
+persistence:
+  enabled: true
+  type: pvc
+  size: 10Gi
+  storageClassName: standard
 
-    ```yaml
-    # grafana-values.yaml
-    adminPassword: "StrongPassword123"
-    
-    persistence:
-      enabled: true
-      size: 5Gi
-      storageClassName: standard
-
-    ingress:
-      enabled: true
-      ingressClassName: nginx
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  hosts:
+    - grafana.example.com
+  tls:
+    - secretName: grafana-tls
       hosts:
         - grafana.example.com
-      tls:
-        - secretName: grafana-tls
-          hosts:
-            - grafana.example.com
 
-    grafana.ini:
-      server:
-        root_url: "https://grafana.example.com"
-    ```
+grafana.ini:
+  server:
+    domain: grafana.example.com
+    root_url: "https://%(domain)s/"
+    enable_gzip: true
+  analytics:
+    reporting_enabled: false
+```
 
-3. **Установка:**
+### Сценарий 2: Production-конфигурация (HA, SMTP, DB)
 
-    ```bash
-    helm install grafana grafana-community/grafana \
-      -f grafana-values.yaml \
-      --namespace monitoring --create-namespace
-    ```
-
-### Сценарий 2: Production-конфигурация
-
-Для стабильной работы в продуктивной среде рекомендуется:
-
-- Запуск от непривилегированного пользователя.
-- Настройка лимитов ресурсов.
-- Использование внешних секретов для паролей.
+Для стабильной работы и масштабирования рекомендуется использовать внешнюю БД и настроить отправку уведомлений.
 
 ```yaml
 # production-values.yaml
-security:
+replicas: 2
+
+# Использование внешней PostgreSQL для HA
+database:
+  type: postgres
+  host: postgres-service.db-namespace.svc.cluster.local:5432
+  name: grafana
+  user: grafana
+  # Пароль рекомендуется передавать через существующий Secret
+  existingSecret: "grafana-db-secret"
+  userKey: "user"
+  passwordKey: "password"
+
+# Настройка SMTP для алертинга
+grafana.ini:
+  smtp:
+    enabled: true
+    host: "smtp.sendgrid.net:587"
+    user: "apikey"
+    password: "${SMTP_PASSWORD}" # Можно использовать переменные окружения
+    from_address: "grafana@example.com"
+    starttls_policy: MandatoryStartTLS
+
+# Безопасность и ресурсы
+podSecurityContext:
   runAsUser: 472
   runAsGroup: 472
   fsGroup: 472
@@ -103,34 +117,40 @@ security:
 resources:
   limits:
     cpu: 500m
-    memory: 512Mi
+    memory: 1Gi
   requests:
-    cpu: 100m
-    memory: 256Mi
+    cpu: 200m
+    memory: 512Mi
 
+# Sidecar для автоматического импорта дашбордов из ConfigMap
 sidecar:
   dashboards:
     enabled: true
     label: grafana_dashboard
+    labelValue: "1"
     searchNamespace: ALL
-
-networkPolicy:
-  enabled: true
 ```
 
-### Сценарий 3: Проверка и обновление
+### Сценарий 3: Управление и обновление
 
-**Проверка статуса:**
+**Установка или обновление:**
 
 ```bash
+# --install создает релиз, если его нет
+# --atomic откатывает изменения при ошибке
+helm upgrade --install grafana grafana-community/grafana \
+  -f grafana-values.yaml \
+  --namespace monitoring \
+  --create-namespace \
+  --atomic
+```
+
+**Проверка состояния:**
+
+```bash
+# Проверка подов и логов sidecar
 kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana
-helm status grafana -n monitoring
-```
-
-**Обновление конфигурации:**
-
-```bash
-helm upgrade grafana grafana-community/grafana -f grafana-values.yaml -n monitoring
+kubectl logs -f <grafana-pod-name> -c grafana-sc-dashboards -n monitoring
 ```
 
 ---
@@ -141,22 +161,22 @@ helm upgrade grafana grafana-community/grafana -f grafana-values.yaml -n monitor
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Pod в статусе `Pending`** | Нет свободных PV или ресурсов | Проверьте `kubectl describe pod` и доступность PVC |
-| **404 при доступе** | Ошибка в `root_url` или Ingress | Проверьте `grafana.ini` и правила Ingress |
-| **Дашборды не загружаются** | Sidecar не видит ConfigMap | Проверьте метки на ConfigMap и `searchNamespace` |
-| **OOMKilled** | Превышен лимит памяти | Увеличьте `resources.limits.memory` |
+| **PVC не монтируется** | `storageClassName` не существует или нет прав | Проверьте `kubectl get sc` и события в `kubectl describe pvc` |
+| **Циклическая перезагрузка** | Ошибка в `grafana.ini` или правах на `/var/lib/grafana` | Проверьте логи: `kubectl logs <pod> -c grafana` |
+| **Sidecar не видит дашборд** | Отсутствует метка на ConfigMap | Убедитесь, что на ConfigMap есть label `grafana_dashboard: "1"` |
+| **SMTP не отправляет почту** | Блокировка порта или неверные учетные данные | Проверьте логи Grafana на наличие ошибок "SMTP authentication failed" |
 
 ### Полезные команды Helm
 
 ```bash
-# Просмотр всех параметров чарта
+# Просмотр всех доступных параметров чарта с описанием
 helm show values grafana-community/grafana
 
-# Проверка истории релизов
-helm history grafana -n monitoring
+# Проверка рендеринга шаблонов без установки (dry-run)
+helm install grafana grafana-community/grafana -f values.yaml --dry-run --debug
 
-# Откат к предыдущей версии
-helm rollback grafana <revision_number> -n monitoring
+# Получение пароля администратора (если не задан в values)
+kubectl get secret --namespace monitoring grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
 ```
 
 **См. также:**
@@ -164,4 +184,4 @@ helm rollback grafana <revision_number> -n monitoring
 - [Провиженинг Grafana](../grafana_provisioning.md)
 - [Высокая доступность Grafana](../high_availability.md)
 - [Конфигурация Grafana в kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/grafana_config.md)
-- [Плагины Grafana](../grafana_plugins.md)
+- [Управление плагинами](../grafana_plugins.md)

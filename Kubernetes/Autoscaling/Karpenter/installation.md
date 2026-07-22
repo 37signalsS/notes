@@ -2,65 +2,75 @@
 
 ## Определения
 
-**Karpenter Helm Chart** — официальный пакет для развёртывания Karpenter в кластере Kubernetes. Управляет установкой контроллера, вебхуков (webhook) и необходимых ресурсов RBAC (Role-Based Access Control — управление доступом на основе ролей).
+**Karpenter Helm Chart** — официальный пакет для развёртывания контроллера Karpenter в кластере Kubernetes. Он управляет установкой бинарного файла контроллера, Admission Webhooks (для валидации CRD) и необходимых ресурсов RBAC (ClusterRole, RoleBinding). Начиная с версии v1.0, основным источником является OCI-репозиторий в Amazon ECR.
 
-**NodePool** — ресурс CRD (Custom Resource Definition), определяющий параметры масштабирования (типы инстансов, зоны, лимиты ресурсов). Подробное описание концепции см. в **[Обзор и основные концепции Karpenter](./overview.md)**.
+**NodePool** — ресурс CRD (Custom Resource Definition), пришедший на замену `Provisioner`. Он определяет «намерения» (intent) кластера по созданию узлов. NodePool позволяет задать жесткие лимиты на суммарные ресурсы (CPU, Memory), требования к инстансам (архитектура, тип, поколение) и политики прерывания (Disruption).
 
-**EC2NodeClass** — ресурс CRD для AWS (Amazon Web Services), определяющий инфраструктурную конфигурацию узлов: AMI (Amazon Machine Image — образ системы), IAM-роль, подсети и группы безопасности.
+**EC2NodeClass** — специализированный CRD для AWS (ранее `AWSNodeTemplate`), который связывает логику NodePool с конкретной инфраструктурой VPC. Он отвечает за выбор подсетей, групп безопасности, AMI-образов, настройку дисков (EBS) и выбор IAM-роли для узла.
+
+**NodeClaim** — объект, представляющий запрос на создание конкретного инстанса. В отличие от своего предшественника `Machine`, NodeClaim является неизменяемым (immutable). Если параметры в NodePool меняются, Karpenter создаёт новый NodeClaim вместо обновления существующего.
 
 ## Основные концепции
 
 ### Предварительные требования
 
-**Кластер EKS (Elastic Kubernetes Service)** — требуется версия Kubernetes 1.24 или выше и совместимость с Karpenter v1.x.
+**Версия Kubernetes** — требуется 1.25+. Для полной поддержки всех функций v1.x (например, In-Place Pod Resizing в связке с VPA) рекомендуется 1.27+.
 
-**IAM-роли (Identity and Access Management)** — необходимы две роли: для контроллера Karpenter (доступ к API облака) и для создаваемых узлов (права для работы компонентов Kubernetes на ноде).
+**EKS Pod Identity (рекомендуется)** — современный стандарт аутентификации в AWS. В отличие от IRSA (IAM Roles for Service Accounts), Pod Identity не требует сложной настройки Trust Policy с OIDC-провайдером для каждого кластера. Права передаются через `aws-eks-pod-identity-agent` (addon), что упрощает миграцию и управление правами.
 
-**Helm v3+** — инструмент для управления пакетами Kubernetes, необходим для установки Karpenter.
+**IAM-роли**:
+1.  **KarpenterControllerRole**: Должна обладать правами на `ec2:RunInstances`, `ec2:CreateFleet`, `ec2:TerminateInstances`, а также на чтение параметров из SSM (для поиска AMI) и доступ к SQS.
+2.  **KarpenterNodeRole**: IAM-роль, которая будет назначена самим узлам. Она должна содержать стандартные политики `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy` и `AmazonEC2ContainerRegistryReadOnly`.
 
-**Очередь SQS (Simple Queue Service)** — используется в AWS для обработки событий прерывания (interruption handling), таких как уведомления о вытеснении spot-инстансов.
+**Interruption Handling** — механизм подписки на события AWS (Spot Interruption, Instance Rebalance, Scheduled Maintenance). Реализуется через очередь Amazon SQS и правило EventBridge. Позволяет Karpenter начать перенос подов с узла за 2 минуты до его принудительного удаления AWS.
 
 ### Архитектура развёртывания
 
-Karpenter устанавливается в отдельное пространство имён (namespace) `karpenter`. Контроллер работает как Deployment и взаимодействует с API облачного провайдера (AWS EC2, IAM, SQS, CloudFormation).
+Karpenter работает как Deployment, обычно с 2 репликами для высокой доступности (HA). Он не использует стандартный `kube-scheduler` для создания узлов, а реализует собственный цикл «мониторинг -> бинпакинг -> заказ инстанса». Это позволяет сократить время появления нового узла с 2-3 минут (в случае с Cluster Autoscaler) до 45-60 секунд.
 
 ## Практические сценарии
 
-### Установка Karpenter в AWS EKS
+### Полный цикл установки в AWS EKS
 
-#### Шаг 1: Создание IAM-ролей
-
-```bash
-# Роль для Karpenter Controller
-aws iam create-role \
-  --role-name KarpenterControllerRole \
-  --assume-role-policy-document file://trust-policy.json
-
-# Роль для узлов Karpenter
-aws iam create-role \
-  --role-name KarpenterNodeRole \
-  --assume-role-policy-document file://node-trust-policy.json
-```
-
-#### Шаг 2: Установка через Helm
+#### Шаг 1: Создание инфраструктуры и Pod Identity
 
 ```bash
-# Добавление репозитория
-helm repo add karpenter https://charts.karpenter.sh
-helm repo update
+# Создание роли контроллера (пример упрощен)
+aws iam create-role --role-name KarpenterControllerRole --assume-role-policy-document ...
 
-# Установка Karpenter
-helm upgrade --install karpenter karpenter/karpenter \
+# Создание ассоциации Pod Identity
+# Это связывает ServiceAccount 'karpenter' в namespace 'karpenter' с IAM-ролью
+aws eks create-pod-identity-association \
+  --cluster-name my-cluster \
+  --role-arn arn:aws:iam::123456789012:role/KarpenterControllerRole \
   --namespace karpenter \
-  --create-namespace \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=karpenter-sa \
-  --set settings.clusterName=my-cluster \
-  --set settings.interruptionQueue=my-queue \
-  --version 1.10.0
+  --service-account karpenter
 ```
 
-#### Шаг 3: Создание NodePool
+#### Шаг 2: Установка контроллера через Helm (OCI)
+
+В v1.x крайне важно использовать OCI-репозиторий, так как старый Helm-репозиторий может содержать устаревшие версии.
+
+```bash
+# Логин в ECR Public (необязательно, но предотвращает Rate Limit)
+aws ecr-public get-login-password --region us-east-1 | helm registry login --username AWS --password-stdin oci://public.ecr.aws
+
+# Установка
+helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version 1.0.1 \
+  --namespace karpenter --create-namespace \
+  --set settings.clusterName=my-cluster \
+  --set settings.interruptionQueue=my-cluster-sqs-queue \
+  --set controller.resources.requests.cpu=1 \
+  --set controller.resources.requests.memory=1Gi \
+  --set controller.resources.limits.cpu=1 \
+  --set controller.resources.limits.memory=1Gi \
+  --wait
+```
+
+#### Шаг 3: Конфигурация универсального NodePool
+
+Данный пример демонстрирует использование v1 API с настроенной ротацией узлов и консолидацией.
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -68,48 +78,63 @@ kind: NodePool
 metadata:
   name: default
 spec:
-  # Границы масштабирования
+  # Суммарные лимиты ресурсов, которыми может управлять этот NodePool
   limits:
     cpu: 1000
     memory: 1000Gi
 
-  # Шаблон узла
   template:
+    metadata:
+      labels:
+        billing-team: platform
     spec:
-      # Типы инстансов (от дешёвых к дорогим)
-      instanceTypes:
-        - m5.large
-        - m5.xlarge
-        - m6i.large
-        - m6i.xlarge
-
-      # Ссылка на конфигурацию облачного уровня
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
         name: default
-
-      # Требования к узлам
+      
+      # Требования к инстансам
       requirements:
-        - key: "topology.kubernetes.io/zone"
-          operator: In
-          values: ["us-west-2a", "us-west-2b"]
-
-        # Использование только on-demand инстансов
         - key: "karpenter.sh/capacity-type"
           operator: In
-          values: ["on-demand"]
+          values: ["spot", "on-demand"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64", "arm64"]
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["2"]
 
-  # Стратегия консолидации
+      # Ротация узлов: поле перемещено в spec.template.spec
+      # Узлы будут принудительно заменены через 7 дней для обновления OS/AMI
+      expireAfter: 168h
+      
+      # Время на грациозное завершение подов при удалении узла
+      terminationGracePeriod: 48h
+
   disruption:
+    # Консолидация: заменяет узлы на более дешевые или объединяет их
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 1m
-
-  # Вес NodePool (для выбора между несколькими пулами)
-  weight: 100
+    
+    # Бюджеты прерываний: предотвращают массовое удаление узлов
+    budgets:
+      - nodes: "10%"
+        reasons: ["Underutilized"]
+        schedule: "0 9 * * 1-5" # Только в рабочее время по UTC
+        duration: 8h
+      - nodes: "0"
+        reasons: ["Empty"]
+        schedule: "0 23 * * *" # Запретить удаление пустых узлов во время бэкапа
+        duration: 1h
 ```
 
-#### Шаг 4: Создание EC2NodeClass
+#### Шаг 4: Конфигурация EC2NodeClass (глубокая настройка)
+
+Этот ресурс определяет «железо» и параметры безопасности AWS.
 
 ```yaml
 apiVersion: karpenter.k8s.aws/v1
@@ -117,160 +142,118 @@ kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  # Семейство AMI
+  # Выбор AMI. AL2023 — рекомендуемый стандарт для EKS
   amiFamily: AL2023
   amiSelectorTerms:
     - alias: al2023@latest
-
+  
   # IAM-роль для узлов
   role: KarpenterNodeRole
-
-  # Выбор подсетей по тегам
+  
+  # Селекторы инфраструктуры (должны быть помечены в AWS соответствующими тегами)
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: my-cluster
-
-  # Выбор групп безопасности
   securityGroupSelectorTerms:
     - tags:
-        aws:eks:cluster-name: my-cluster
-
-  # Настройка дисковой подсистемы EBS (Elastic Block Store)
+        karpenter.sh/discovery: my-cluster
+  
+  # Настройка EBS (Encryption, Volume Type, Size)
   blockDeviceMappings:
     - deviceName: /dev/xvda
       ebs:
         volumeSize: 50Gi
         volumeType: gp3
+        iops: 3000
+        throughput: 125
         encrypted: true
+        deleteOnTermination: true
 
-  # Настройки метаданных инстанса (IMDSv2 — Instance Metadata Service version 2)
+  # Безопасность метаданных (IMDSv2 обязателен в v1.x)
   metadataOptions:
     httpEndpoint: enabled
     httpProtocolIPv6: disabled
     httpPutResponseHopLimit: 2
-    httpTokens: required
+    httpTokens: required # Требует токены для доступа к metadata
+
+  # Пользовательские данные (User Data) для кастомизации узла
+  userData: |
+    #!/bin/bash
+    echo "Custom node configuration"
 ```
 
-### Сценарий: Экономия на пакетных задачах через spot-инстансы
+### Сценарий: Изоляция критических нагрузок и GPU
+
+Karpenter позволяет создавать специализированные пулы для тяжелых вычислений.
 
 ```yaml
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: batch-jobs
+  name: gpu-pool
 spec:
-  limits:
-    cpu: 500
-
   template:
     spec:
-      # Список подходящих типов инстансов
-      instanceTypes:
-        - c5.large
-        - c5.xlarge
-        - c6i.large
-
-      nodeClassRef:
-        group: karpenter.k8s.aws
-        kind: EC2NodeClass
-        name: default
-
       requirements:
-        # Принудительное использование spot-инстансов
+        - key: "karpenter.k8s.aws/instance-gpu-manufacturer"
+          operator: In
+          values: ["nvidia"]
         - key: "karpenter.sh/capacity-type"
           operator: In
-          values: ["spot"]
-
-  disruption:
-    consolidationPolicy: WhenEmpty
-    expireAfter: 24h # Ротация узлов каждые 24 часа
-```
-
-### Сценарий: Масштабирование GPU-узлов
-
-```yaml
-apiVersion: karpenter.sh/v1
-kind: NodePool
-metadata:
-  name: gpu-workloads
-spec:
-  limits:
-    cpu: 200
-    memory: 1000Gi
-
-  template:
-    spec:
-      # Специализированные GPU-инстансы
-      instanceTypes:
-        - g5.xlarge
-        - g5.2xlarge
-        - g6.xlarge
-
-      nodeClassRef:
-        group: karpenter.k8s.aws
-        kind: EC2NodeClass
-        name: gpu-node-class
-
-      requirements:
-        # Проверка наличия GPU (Graphics Processing Unit)
+          values: ["on-demand"] # GPU обычно не берут в Spot для обучения
+      taints:
         - key: "nvidia.com/gpu"
-          operator: Exists
-
-        # Использование on-demand для стабильности обучения моделей
-        - key: "karpenter.sh/capacity-type"
-          operator: In
-          values: ["on-demand"]
+          value: "true"
+          effect: "NoSchedule"
+  disruption:
+    consolidationPolicy: WhenEmpty # Не прерывать обучение при недогрузе CPU
 ```
 
 ## Дополнительная информация
 
-### Диагностика и мониторинг
+### Диагностика и устранение неисправностей
 
-**Просмотр логов контроллера:**
-
-```bash
-kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100
-```
-
-**Список существующих NodePool:**
+**Проверка логики планирования**:
+Если поды висят в `Pending`, первым делом проверьте логи контроллера. Karpenter пишет подробные сообщения о том, почему он не может подобрать инстанс (например, "no instance types found that meet requirements").
 
 ```bash
-kubectl get nodepool
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100 -f
 ```
 
-**Просмотр узлов, созданных Karpenter:**
+**Работа с NodeClaims**:
+NodeClaim — это "чек" на покупку инстанса. Если инстанс не создается в AWS, NodeClaim покажет ошибку API.
 
 ```bash
-kubectl get nodes -l karpenter.sh/nodepool=default
+kubectl get nodeclaims
+kubectl describe nodeclaim <name>
 ```
 
-**События жизненного цикла узлов:**
+**Защита от прерываний (Disruption)**:
+Если вам нужно временно запретить Karpenter удалять узел (например, идет миграция БД), используйте аннотацию:
 
 ```bash
-kubectl get events -n karpenter --sort-by='.lastTimestamp'
+kubectl annotate node <node-name> karpenter.sh/do-not-disrupt=true
 ```
 
-### Метрики мониторинга
+### Ключевые метрики Prometheus
 
-| Метрика | Описание |
-|---------|----------|
-| `karpenter_nodepool_usage_cpu` | Использование CPU в разрезе NodePool |
-| `karpenter_nodepool_usage_memory` | Использование памяти в разрезе NodePool |
-| `karpenter_pods_state` | Состояние подов, ожидающих назначения на узлы |
-| `karpenter_nodes_total` | Общее количество управляемых узлов |
-| `karpenter_disruption_actions_total` | Статистика операций консолидации и удаления |
-| `karpenter_provisioning_latency_seconds` | Время с момента Pending пода до готовности узла |
+| Метрика | Значение | Критичность |
+|---------|----------|-------------|
+| `karpenter_nodeclaims_created_total` | Общее количество созданных запросов | Информативно |
+| `karpenter_nodeclaims_terminated_total` | Количество удаленных узлов | Высокая (мониторинг Churn rate) |
+| `karpenter_nodeclaims_failed_total` | Ошибки создания (Insufficient Capacity, IAM errors) | КРИТИЧЕСКИ |
+| `karpenter_provisioning_scheduling_duration_seconds` | Время от Pending пода до создания NodeClaim | Средняя |
+| `karpenter_interruption_actions_total` | Количество реакций на события SQS | Высокая (статистика Spot) |
 
-### Лучшие практики
+### Лучшие практики эксплуатации
 
-- **Разделение нагрузок** — создавайте отдельные NodePool для критических сервисов, пакетных задач и GPU-нагрузок.
-- **Включение консолидации** — используйте `consolidationPolicy: WhenEmptyOrUnderutilized` для автоматической экономии средств.
-- **Контроль лимитов** — всегда задавайте `spec.limits` в NodePool, чтобы избежать неконтролируемого роста затрат при сбоях.
-- **Обновление AMI** — используйте алиасы (alias) в `amiSelectorTerms` для автоматического получения последних патчей безопасности.
-- **Мониторинг Pending** — настройте алерты на наличие подов в состоянии `Pending` более 5 минут, это может сигнализировать о проблемах с правами IAM или квотами облака.
+1.  **Drift Mechanism**: Понимайте, что в v1.x дрейф включен всегда. Любое изменение в `EC2NodeClass` (например, смена Security Group) приведет к тому, что Karpenter начнет планомерно пересоздавать все узлы кластера.
+2.  **Spot Diversity**: В `requirements` NodePool всегда указывайте как можно больше типов инстансов. Ограничение пула только одним типом (например, `t3.medium`) в Spot-режиме приведет к невозможности масштабирования при дефиците этого типа в AWS.
+3.  **Over-provisioning**: Для сверхбыстрого масштабирования используйте `Pause Pods` (поды с низким приоритетом), которые резервируют место в кластере. Когда появляется реальный под с высоким приоритетом, Karpenter вытесняет `Pause Pod` и мгновенно размещает нагрузку.
+4.  **Limits**: Всегда устанавливайте `spec.limits` в NodePool. Это ваш «предохранитель» от бесконечного счета AWS в случае, если баг в приложении вызовет бесконечный спавн подов.
 
 ### Ссылки
 
-- **[Обзор и основные концепции Karpenter](./overview.md)** — архитектура и отличия от Cluster Autoscaler.
-- **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — альтернативный инструмент масштабирования.
-- **[Pod Disruption Budget](../pod_disruption_budget.md)** — защита подов при операциях консолидации.
+- **[Обзор и основные концепции Karpenter](./overview.md)** — теоретическая база.
+- **[Официальная документация (v1.0)](https://karpenter.sh/v1.0/)** — справочник параметров.
+- **[Karpenter Blueprints](https://github.com/aws-samples/karpenter-blueprints)** — готовые шаблоны от AWS.

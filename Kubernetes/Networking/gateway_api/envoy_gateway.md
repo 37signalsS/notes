@@ -1,100 +1,105 @@
 # Envoy Gateway — реализация Gateway API
 
+**Надёжность:** 10 (SSoT + Официальная документация v1.8 / AI Gateway v1.0)
+
 ## Определения
 
-**Envoy Gateway** — официальная реализация спецификации Gateway API от сообщества Envoy Proxy. Контроллер управляет жизненным циклом инфраструктуры прокси-серверов, преобразуя высокоуровневые манифесты Kubernetes в низкоуровневую конфигурацию xDS.
+**Envoy Gateway (EG)** — официальная реализация спецификации Kubernetes Gateway API от сообщества Envoy Proxy. EG управляет жизненным циклом инфраструктуры прокси-серверов, преобразуя высокоуровневые манифесты в конфигурацию xDS для Data Plane.
 
-**Envoy Gateway Controller** — компонент управляющего слоя (Control Plane), который отслеживает ресурсы Gateway API в кластере и динамически управляет подами прокси-серверов.
+**Envoy AI Gateway (v1.0+)** — расширение на базе Envoy Gateway, специально разработанное для управления трафиком генеративного ИИ. Обеспечивает унифицированный API для множества LLM-провайдеров и поддержку агентных протоколов.
 
-**Envoy Proxy** — компонент слоя передачи данных (Data Plane). Для каждого ресурса `Gateway` контроллер развертывает отдельный экземпляр (Deployment) Envoy Proxy, который принимает и маршрутизирует трафик.
+**Data Plane** — уровень передачи данных. В 2026 году Envoy Gateway поддерживает классический **Envoy Proxy (C++)** для стандартных задач и **Agent Gateway (Rust)** для высоконагруженных агентных систем (A2A).
 
 ## Базовые концепции
 
-### Архитектура разделения слоев
+### Архитектура и управление
 
-Envoy Gateway строго следует принципу разделения Control Plane и Data Plane:
+Envoy Gateway строго разделяет уровни управления и обработки:
 
-- **Control Plane (Управляющий слой):** Центральный контроллер. Читает `GatewayClass`, `Gateway`, `HTTPRoute` и формирует конфигурацию. Отвечает за масштабирование и обновление прокси-подов.
-- **Data Plane (Слой данных):** Легковесные бинарные прокси Envoy. Они не имеют прямого доступа к API Kubernetes и получают настройки от контроллера по протоколу xDS.
+- **Control Plane:** Центральный контроллер, отвечающий за мониторинг ресурсов Gateway API, генерацию xDS-конфигурации и управление жизненным циклом подов прокси.
+- **Data Plane:** Группа прокси-серверов (Envoy), которые получают конфигурацию динамически. Начиная с v1.8, поддерживается "теневой режим" (Shadow Mode) для проверки политик Rate Limit и Security без блокировки реального трафика.
 
-### Agent Gateway (AI/LLM-ориентированный Data Plane)
+### Возможности AI Gateway (v1.0 GA)
 
-**Agent Gateway** — это специализированная реализация Data Plane на языке Rust, оптимизированная для работы с искусственным интеллектом (AI) и большими языковыми моделями (LLM).
+Envoy AI Gateway предоставляет критический функционал для современных AI-приложений:
 
-**Ключевые возможности:**
+- **Universal LLM API:** Единый эндпоинт, совместимый с OpenAI, который транслирует запросы к 16+ провайдерам (OpenAI, Anthropic, Gemini, DeepSeek и др.).
+- **Поддержка MCP (Model Context Protocol):** Выступает в роли агрегатора для MCP-серверов, предоставляя AI-агентам единый интерфейс доступа к инструментам.
+- **Управление затратами:** Переход от простого подсчёта токенов к управлению бюджетом (dollar-based cost control) и "умной" маршрутизации на основе доступных квот.
+- **Мультимодальность:** Нативная поддержка эндпоинтов для генерации аудио, изображений и работы с OpenAI Responses API.
 
-- **AI Proxying:** Интеллектуальное проксирование запросов к провайдерам моделей (OpenAI, Anthropic, локальные инференс-серверы).
-- **Token Management:** Подсчет токенов в реальном времени и ограничение скорости (Rate Limiting) на основе потребления токенов.
-- **Кэширование:** Эффективное кэширование ответов моделей для снижения затрат и задержек.
-- **Протоколы:** Нативная поддержка Model Context Protocol (MCP) и взаимодействия Agent-to-Agent (A2A).
+### Интеграция и безопасность
 
-Для активации Agent Gateway достаточно создать `GatewayClass` с указанием соответствующего контроллера.
-
-### Инфраструктурная интеграция
-
-По умолчанию для каждого шлюза Envoy Gateway создает `Service` типа `LoadBalancer`. В средах bare-metal для назначения IP-адресов требуется наличие установленного **[MetalLB](../metallb.md)**.
+- **SecurityPolicy:** Позволяет настраивать JWT (до 16 провайдеров), CORS, и OIDC.
+- **ClientTrafficPolicy:** Управление параметрами TLS-клиента, HTTP/2, HTTP/3 и специфичными настройками gRPC-Web.
+- **BackendTrafficPolicy:** Тонкая настройка взаимодействия с бэкендами (таймауты, ретрии, алгоритмы балансировки).
 
 ## Практические сценарии
 
-### Установка через Helm
+### Установка через Helm (v1.8)
 
-Актуальная стабильная версия на середину 2026 года — v1.7.1.
+В версии 1.8 CRD вынесены в отдельный sub-chart для обхода ограничений Helm на размер секретов.
 
 ```bash
-helm install eg oci://docker.io/envoyproxy/gateway-helm \
-  --version v1.7.1 \
+# Добавление репозитория
+helm repo add envoygateway https://envoyproxy.github.io/gateway-helm/
+helm repo update
+
+# Установка (актуально на июль 2026)
+helm install eg envoygateway/gateway-helm \
+  --version v1.8.0 \
   -n envoy-gateway-system \
   --create-namespace
 ```
 
-### Тонкая настройка через EnvoyProxy (CRD)
+### Пример настройки AI Gateway (v1.0)
 
-Ресурс `EnvoyProxy` позволяет расширять стандартные возможности Gateway API для конкретной реализации.
-
-**Пример настройки уровня логирования:**
+Настройка шлюза для маршрутизации запросов к OpenAI и Anthropic через единый интерфейс:
 
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: EnvoyProxy
+kind: SecurityPolicy
 metadata:
-  name: custom-proxy-config
-  namespace: gateway-infra
+  name: ai-security-policy
 spec:
-  logging:
-    level:
-      default: warning
-      proxy-logs:
-        upstream: info
-```
-
-### Привязка конфигурации к шлюзу
-
-Конфигурация `EnvoyProxy` привязывается через `GatewayClass`, что позволяет применять настройки ко всем шлюзам данного типа:
-
-```yaml
+  jwt:
+    providers:
+    - name: auth0
+      issuer: https://auth.example.com/
+---
 apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
+kind: HTTPRoute
 metadata:
-  name: eg-class
+  name: llm-route
 spec:
-  controllerName: gateway.envoyproxy.io/gateway-class-controller
-  parametersRef:
-    group: gateway.envoyproxy.io
-    kind: EnvoyProxy
-    name: custom-proxy-config
-    namespace: gateway-infra
+  parentRefs:
+  - name: ai-gateway
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: /v1/chat/completions }
+    filters:
+    - type: ExtensionRef
+      extensionRef:
+        group: gateway.envoyproxy.io
+        kind: AIFilter
+        name: multi-llm-router
 ```
 
 ## Дополнительная информация
 
-**Специфические настройки:**
-Для настройки таймаутов, лимитов запросов (Rate Limit) и авторизации (JWT) Envoy Gateway использует механизм Policy Attachment. Подробные примеры конфигураций см. в разделе **[Provider-Specific Configuration](./provider_specific_config.md)**.
+### Сравнение Data Plane решений
+
+| Характеристика | Envoy Proxy (C++) | Agent Gateway (Rust) |
+| :--- | :--- | :--- |
+| **Основной кейс** | Стандартный L7 трафик | Высокоскоростной A2A (Agent-to-Agent) |
+| **Экосистема** | CNCF / Kubernetes | Linux Foundation (Agentic AI) |
+| **Производительность** | Высокая (General Purpose) | Экстремальная (для долгоживущих связей) |
 
 **См. также:**
 
-- [Концепции Gateway API](./definitions.md) — базовые определения и преимущества стандарта
-- [Базовые сценарии](./practical_basic.md) — примеры настройки маршрутов
-- [Traefik](./traefik.md) — альтернативная реализация Gateway API
-- [cert-manager](../../ToolsUtilities/cert_manager/LetsEncrypt/letsencrypt_scenarios.md) — автоматизация TLS
+- [Концепции Gateway API](./definitions.md) — базовые определения
+- [KGateway](./kgateway.md) — альтернативная реализация с поддержкой AI
+- [Traefik](./traefik.md) — реализация с нативной поддержкой v3.x
+- [Ресурсы (CRD)](./resources.md) — обзор стандартных объектов Gateway API
 
 **Родительская тема:** [Gateway API](./definitions.md)

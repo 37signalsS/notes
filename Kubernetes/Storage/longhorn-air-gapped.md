@@ -1,12 +1,14 @@
-# Longhorn Air-gapped Installation
+# Longhorn — установка в закрытом контуре (Air-gapped)
 
-## Definitions
+## Определения
 
-**Air-gapped installation** — процедура развёртывания Longhorn в изолированном Kubernetes-кластере без доступа к интернету. Все артефакты (Docker-образы, Helm-чарты) переносятся вручную.
+**Air-gapped installation (установка в закрытом контуре)** — процедура развёртывания Longhorn в изолированном Kubernetes-кластере без прямого доступа к интернету. Все артефакты (Docker-образы, Helm-чарты) скачиваются заранее на хосте с доступом в сеть и переносятся во внутренний контур вручную (через съемные носители или одноразовые SSH-бастионы).
 
-**Harbor** — приватный container registry, используемый как внутренний источник образов в закрытом контуре. Подробнее: [Harbor Usage](../../Docker/Docker_registries/Harbor/usage.md).
+**Harbor** — приватный container registry, используемый как внутренний источник образов и Helm-чартов. Подробнее: [Использование Harbor](../../Docker/Docker_registries/Harbor/usage.md).
 
-## Basic Concepts
+**OCI (Open Container Initiative)** — стандарт хранения и распространения не только образов, но и Helm-чартов внутри registry.
+
+## Основные концепции
 
 ### Общая схема процесса
 
@@ -24,75 +26,74 @@
 └──────────────────┘                           └──────────────────┘
 ```
 
-### Необходимые компоненты
+### Необходимые компоненты и требования
 
-| Компонент | Назначение |
+| Компонент | Назначение / Версия |
 |---|---|
-| Хост с интернетом | Скачивание образов и Helm-чарта |
-| Docker | Pull/save/load образов |
-| Helm | Pull/push чарта |
-| Harbor (в контуре) | Хранение образов и чарта |
-| Kubernetes cluster | Целевая платформа |
+| Хост с интернетом | ОС Linux, установленные Docker/Podman, Helm v3.8+ |
+| Kubernetes cluster | Версия **v1.25** или выше (для работы CSI и Longhorn v1.12.0+) |
+| Registry (Harbor) | Должен поддерживать OCI для хранения чартов |
+| iSCSI / NFS | На узлах K8s должны быть установлены `open-iscsi` и `nfs-common` |
 
-## Practical Scenarios
+## Практические сценарии
 
-### Шаг 1. Подготовка образов (на хосте с интернетом)
+### Шаг 1. Подготовка артефактов (на хосте с интернетом)
 
-**Установка инструментов:**
-
-```bash
-apt update -y
-apt install helm docker.io -y
-```
-
-**Скачивание Helm-чарта:**
+**1. Скачивание Helm-чарта:**
 
 ```bash
 helm repo add longhorn https://charts.longhorn.io
 helm repo update
-# Актуальная версия: https://github.com/longhorn/longhorn/releases
-helm pull longhorn/longhorn --version v1.11.0 --untar
+# Актуальная версия на июль 2026: v1.12.0
+helm pull longhorn/longhorn --version v1.12.0 --untar
 ```
 
-**Извлечение списка образов из values.yaml:**
+**2. Получение списка образов:**
 
+Существует два способа. Первый — использовать официальный манифест. Второй — извлечь список напрямую из скачанного чарта (полезно для кастомных сборок или если нет доступа к GitHub).
+
+*Способ А (Официальный список):*
+```bash
+VERSION="v1.12.0"
+curl -sSfL "https://raw.githubusercontent.com/longhorn/longhorn/${VERSION}/deploy/longhorn-images.txt" | tr ',' '\n' > lh-images.txt
+```
+
+*Способ Б (Извлечение через awk из values.yaml):*
 ```bash
 cd longhorn
 awk '
   $1 ~ /repository:/ { repo=$2 }
   $1 ~ /tag:/        { tag=$2; if (repo != "" && tag != "") { print repo ":" tag; repo=""; tag="" } }
-' ./longhorn/values.yaml | sort -u > lh-images.txt
+' ./values.yaml | sort -u > ../lh-images.txt
+cd ..
 ```
 
-**Pull образов:**
+**3. Скачивание и сохранение образов:**
 
 ```bash
+# Pull всех образов
 while read -r img; do
   docker pull "${img}"
 done < lh-images.txt
-```
 
-**Сохранение в tar-архивы:**
-
-```bash
+# Сохранение в tar-архивы для переноса
 mkdir -p lh-tars
 while read -r img; do
+  # Замена спецсимволов / и : на подчеркивание для имени файла
   safe=$(echo "$img" | tr '/:' '_')
   docker save -o "lh-tars/${safe}.tar" "${img}"
 done < lh-images.txt
 ```
 
-**Упаковка Helm-чарта:**
+**4. Подготовка чарта к переносу:**
 
 ```bash
-tar -cvf longhorn-helm.tar longhorn
+tar -cvzf longhorn-helm-v1.12.0.tar.gz longhorn/
 ```
 
-**Перенос:** `lh-tars/` и `longhorn-helm.tar` в закрытый контур.
+### Шаг 2. Загрузка в приватный репозиторий (в закрытом контуре)
 
-### Шаг 2. Пуш образов в приватный репозиторий (в закрытом контуре)
-
-**Загрузка образов из tar:**
+**1. Импорт образов из архивов:**
 
 ```bash
 for f in lh-tars/*.tar; do
@@ -100,122 +101,152 @@ for f in lh-tars/*.tar; do
 done
 ```
 
-**Логин в Harbor:**
+**2. Пуш образов в Harbor:**
+
+Предположим, адрес Harbor `harbor.domain.local`. Рекомендуется использовать проект `longhornio`, чтобы структура путей совпадала с оригиналом.
 
 ```bash
-docker login harbor.domain.local
-helm login harbor.domain.local
-```
+REGISTRY="harbor.domain.local"
+PROJECT="longhornio" 
 
-**Пуш Helm-чарта в OCI registry:**
+docker login "$REGISTRY"
 
-```bash
-helm push longhorn-helm.tgz oci://harbor.domain.local/helm
-```
-
-**Тегирование и пуш образов:**
-
-```bash
-HARBOR="harbor.domain.local"
-PROJECT="platform"
-
-docker login "$HARBOR"
 while read -r img; do
-  new="${HARBOR}/${PROJECT}/${img}"
-  docker tag "${img}" "$new"
-  docker push "$new"
+  # Пример: longhornio/longhorn-manager:v1.12.0 -> harbor.domain.local/longhornio/longhorn-manager:v1.12.0
+  # Если оригинальный образ уже содержит префикс (например, для CSI sidecars), 
+  # логика тегирования может потребовать корректировки под структуру ваших проектов в Harbor.
+  
+  new_img="${REGISTRY}/${img}"
+  docker tag "${img}" "${new_img}"
+  docker push "${new_img}"
 done < lh-images.txt
 ```
 
-### Шаг 3. Подготовка values-файла для Harbor
+**3. Пуш чарта в OCI-репозиторий:**
+
+```bash
+helm login "$REGISTRY"
+helm push longhorn-helm-v1.12.0.tar.gz oci://${REGISTRY}/helm
+```
+
+### Шаг 3. Детальная конфигурация values.yaml
+
+В версии v1.12.0 есть два подхода к конфигурации реестра.
+
+#### Вариант 1: Упрощенный (Global Registry)
+Подходит, если все образы лежат в одном проекте Harbor с сохранением оригинальных имен.
 
 ```yaml
 global:
   imageRegistry: harbor.domain.local
+  imagePullSecrets:
+    - name: longhorn-registry-secret
 
 defaultSettings:
-  defaultReplicaCount: 2
-  replicaSoftAntiAffinity: true
+  defaultReplicaCount: 3
+  # V2 Data Engine (SPDK) — статус GA в v1.12.0
+  v2-data-engine: false 
   storageOverProvisioningPercentage: 200
   storageMinimalAvailablePercentage: 10
 
 longhornUI:
-  replicas: 1
+  replicas: 2
+```
 
+#### Вариант 2: Детальный (Manual Overrides)
+Необходим, если образы переименованы или распределены по разным проектам (например, `platform/lh-manager` вместо `longhornio/longhorn-manager`).
+
+```yaml
 image:
-  registry: harbor.domain.local
   longhorn:
     manager:
-      repository: platform/longhorn/longhorn-manager
+      repository: platform/lh-manager
+      tag: v1.12.0
     engine:
-      repository: platform/longhorn/longhorn-engine
+      repository: platform/lh-engine
+      tag: v1.12.0
     ui:
-      repository: platform/longhorn/longhorn-ui
+      repository: platform/lh-ui
+      tag: v1.12.0
     instanceManager:
-      repository: platform/longhorn/longhorn-instance-manager
+      repository: platform/lh-instance-manager
+      tag: v1.12.0
     shareManager:
-      repository: platform/longhorn/longhorn-share-manager
+      repository: platform/lh-share-manager
+      tag: v1.12.0
     backingImageManager:
-      repository: platform/longhorn/backing-image-manager
-    supportBundleKit:
-      repository: platform/longhorn/support-bundle-kit
+      repository: platform/lh-backing-image-manager
+      tag: v1.12.0
   csi:
     attacher:
-      repository: platform/longhorn/csi-attacher
+      repository: platform/csi-attacher
+      tag: v4.11.0-20260428
     provisioner:
-      repository: platform/longhorn/csi-provisioner
+      repository: platform/csi-provisioner
+      tag: v5.3.0-20260428
     nodeDriverRegistrar:
-      repository: platform/longhorn/csi-node-driver-registrar
+      repository: platform/csi-node-driver-registrar
+      tag: v2.16.0-20260428
     resizer:
-      repository: platform/longhorn/csi-resizer
+      repository: platform/csi-resizer
+      tag: v2.1.0-20260428
     snapshotter:
-      repository: platform/longhorn/csi-snapshotter
+      repository: platform/csi-snapshotter
+      tag: v8.5.0-20260428
     livenessProbe:
-      repository: platform/longhorn/livenessprobe
+      repository: platform/livenessprobe
+      tag: v2.18.0-20260428
 ```
 
-> **Важно:** Замените `harbor.domain.local` на свой адрес, `platform` — на имя проекта в Harbor.
+### Шаг 4. Установка и проверка
 
-### Шаг 4. Установка в кластер
+**Создание секрета:**
+```bash
+kubectl create namespace longhorn-system
+kubectl create secret docker-registry longhorn-registry-secret \
+  --docker-server=harbor.domain.local \
+  --docker-username="robot-longhorn" \
+  --docker-password="password" \
+  -n longhorn-system
+```
 
+**Запуск установки:**
 ```bash
 helm install longhorn oci://harbor.domain.local/helm/longhorn \
-  --version v1.11.0 \
+  --version v1.12.0 \
   -n longhorn-system \
-  --create-namespace \
-  -f longhorn-values.yaml
+  -f values.yaml
 ```
 
-**Проверка:**
-
+**Проверка статуса:**
 ```bash
-kubectl get pods -n longhorn-system
-kubectl get storageclass
+# Проверка запуска компонентов
+kubectl get pods -n longhorn-system -w
+
+# Проверка используемых образов
+kubectl get pods -n longhorn-system -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort -u
 ```
 
-Все поды должны быть в статусе `Running`.
+## Дополнительная информация
 
-**Настройка доступа к UI** (аналогично онлайн-установке):
+### Особенности V2 Data Engine (SPDK)
+В версии **v1.12.0** новый движок на базе SPDK официально объявлен стабильным (GA). Его использование в закрытом контуре имеет свои нюансы:
+1. **Образы:** Движок V2 использует специфические образы `instance-manager`. Убедитесь, что они присутствуют в `lh-images.txt`.
+2. **Системные требования:** На узлах должны быть выделены HugePages (минимум 2Gi на узел) и свободные CPU ядра для `longhorn-spdk-io-proxy`.
+3. **Ядро Linux:** Рекомендуется версия ядра 5.15+ для полноценной поддержки NVMe-over-Fabrics.
 
-Port-forward:
-
-```bash
-kubectl port-forward service/longhorn-frontend 8080:80 -n longhorn-system
-```
-
-Ingress — см. [Longhorn — онлайн-установка](./longhorn.md#доступ-к-ui).
-
-## Additional Information
-
-### Troubleshooting
+### Устранение неполадок (Troubleshooting)
 
 | Проблема | Причина | Решение |
 |---|---|---|
-| Поды в `ImagePullBackOff` | Образы не загружены в Harbor | Проверить `docker pull` и `docker push` всех образов из `lh-images.txt` |
-| `helm install` — chart not found | OCI chart не запушен или неверный URL | Проверить `helm push` и `helm search repo oci://harbor...` |
-| Volume не создаётся | Недостаточно нод с диском | Проверить `defaultReplicaCount` и доступные ноды в Longhorn UI |
+| `ImagePullBackOff` | Образ отсутствует в Harbor или неверно указан путь | Проверить логи `describe pod`. Убедиться, что `image.registry` или `global.imageRegistry` применились корректно. |
+| `iscsid not found` | На рабочих узлах не запущен сервис iSCSI | Выполнить `apt install open-iscsi && systemctl enable --now iscsid` на всех нодах. |
+| Ошибка монтирования RWX | Отсутствует NFS клиент | Установить `nfs-common` (Debian/Ubuntu) или `nfs-utils` (RHEL/CentOS). |
+| CSI-аттачер висит в `Pending` | Конфликт версий K8s | Longhorn v1.12+ использует API, появившиеся в K8s v1.25. Проверьте версию кластера: `kubectl version`. |
 
 ### Связанные темы
 
-- Основная статья: [Longhorn — обзор и онлайн-установка](./longhorn.md)
-- Аналогичный процесс для мониторинга: [Air-gapped kube-prometheus-stack](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios/offline_airgapped_installation.md)
+- [Longhorn — основной обзор и архитектура](./longhorn.md)
+- [CSI Drivers — сравнение и принципы работы](./CSI/csi_drivers_comparison.md)
+- [Harbor — управление OCI артефактами](../../Docker/Docker_registries/Harbor/usage.md)
+- [Air-gapped установка мониторинга](../../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/practical_scenarios/offline_airgapped_installation.md)

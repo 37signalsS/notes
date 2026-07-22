@@ -2,180 +2,135 @@
 
 ## Определения
 
-**Плагины 389DS** — модули расширения функциональности сервера. Включаются/отключаются через `cn=config`.
+**Плагины 389DS** — модули расширения функциональности сервера, которые позволяют изменять поведение стандартных операций (аутентификация, запись, поиск) или автоматизировать обслуживание данных.
+
+**dsconf** — современная утилита командной строки, являющаяся основным инструментом управления плагинами в актуальных версиях 389DS (взамен ручного редактирования LDIF).
+
+**Fixup-задача (Fixup Task)** — специальная операция, запускаемая вручную для обновления существующих данных после включения или изменения настроек плагина (например, MemberOf).
 
 ## Базовые концепции
 
 ### Категории плагинов
 
-| Категория | Плагины |
-| :--- | :--- |
-| **Репликация** | Replication, Changelog |
-| **Аутентификация** | PAM, Kerberos, GSSAPI |
-| **Авторизация** | [ACI](./aci.md), Roles, CoS |
-| **Аудит** | Audit Log, Retro Changelog |
-| **Синхронизация** | AD Sync, DNA |
-| **Утилиты** | MemberOf, Referential Integrity |
+Плагины в 389DS делятся на несколько типов в зависимости от момента их выполнения:
+- **Pre-operation:** Выполняются до основной операции (например, проверка сложности пароля).
+- **Post-operation:** Выполняются после завершения операции (например, обновление ссылок в Referential Integrity).
+- **Extended operation:** Добавляют новые типы операций LDAP.
+- **Matching rule:** Добавляют новые правила сравнения атрибутов.
+
+### Ключевые плагины и их назначение
+
+| Плагин | Категория | Назначение |
+| :--- | :--- | :--- |
+| **MemberOf** | Автоматизация | Поддерживает обратные ссылки от пользователя к группам. |
+| **Referential Integrity** | Целостность | Удаляет DN пользователя из групп при его удалении из дерева. |
+| **DNA** | Автоматизация | Автоматическое назначение уникальных `uidNumber`/`gidNumber`. |
+| **Retro Changelog** | Аудит | Ведет журнал всех изменений в отдельном суффиксе `cn=changelog`. |
+| **Account Policy** | Безопасность | Управление блокировками и жизненным циклом учетных записей. |
 
 ## Практические сценарии
 
-### Retro Changelog
+### Плагин MemberOf
 
-**Назначение:** Сохраняет все изменения в `cn=changelog` для аудита и отладки репликации.
+Автоматически добавляет пользователю атрибут `memberOf`, содержащий DN всех групп, в которых он состоит.
 
-**Включение:**
-
-```ldif
-dn: cn=Retro Changelog,cn=plugins,cn=config
-changetype: modify
-replace: nsslapd-pluginEnabled
-nsslapd-pluginEnabled: on
-```
-
-**Применение:**
+**Включение и настройка:**
 
 ```bash
-docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W -f retro-changelog.ldif
-```
-
-> Подробнее о развёртывании в [Docker](./docker.md).
-
-**Проверка:**
-
-```bash
-docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W \
-  -b "cn=Retro Changelog,cn=plugins,cn=config"
-```
-
-### MemberOf
-
-**Назначение:** Автоматически добавляет атрибут `memberOf` пользователям, указывая группы, в которых они состоят.
-
-**Включение:**
-
-```ldif
-dn: cn=MemberOf Plugin,cn=plugins,cn=config
-changetype: modify
-replace: nsslapd-pluginEnabled
-nsslapd-pluginEnabled: on
-
-dn: cn=MemberOf Plugin,cn=plugins,cn=config
-changetype: modify
-replace: memberOfGroupAttr
-memberOfGroupAttr: uniqueMember
-```
-
-**Применение:**
-
-```bash
-docker exec 389ds ldapmodify -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W -f memberof.ldif
-
-# Перезапуск контейнера
-docker restart 389ds
-```
-
-**Проверка:**
-
-```bash
-docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W \
-  -b "cn=MemberOf Plugin,cn=plugins,cn=config"
-```
-
-### Referential Integrity
-
-**Назначение:** Автоматически удаляет пользователя из групп при его удалении (поддерживает целостность ссылок).
-
-**Включение:**
-
-```ldif
-dn: cn=Referential Integrity Postop,cn=plugins,cn=config
-changetype: modify
-replace: nsslapd-pluginEnabled
-nsslapd-pluginEnabled: on
-
-dn: cn=Referential Integrity Postop,cn=plugins,cn=config
-changetype: modify
-replace: ref-integrity-attr
-ref-integrity-attr: member
-ref-integrity-attr: uniqueMember
-ref-integrity-attr: owner
-ref-integrity-attr: seeAlso
-```
-
-### DNA (Distributed Numeric Assignment)
-
-**Назначение:** Автоматическая генерация уникальных UID/GID для POSIX-пользователей.
-
-**Включение:**
-
-```ldif
 # Включить плагин
-dn: cn=DNA,cn=plugins,cn=config
-changetype: modify
-replace: nsslapd-pluginEnabled
-nsslapd-pluginEnabled: on
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin memberof enable
 
-# Создать конфигурацию диапазона
-dn: cn=posix-ids,cn=DNA,cn=plugins,cn=config
-objectClass: top
-objectClass: dnaPluginConfig
-cn: posix-ids
-dnaType: posixAccount
-dnaAttrName: uidNumber
-dnaNextValue: 10000
-dnaNextRange: 100000
+# Настроить область действия (scope)
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin memberof set --scope "dc=example,dc=com"
+
+# Перезапуск экземпляра обязателен для активации
+dsctl localhost restart
 ```
 
-### Account Policy
+**Обновление существующих данных (Fixup):**
+Если в базе уже есть группы и пользователи, после включения плагина нужно запустить задачу пересчета:
 
-**Назначение:** Управление блокировкой учётных записей, сроком действия паролей.
-
-**Включение:**
-
-```ldif
-dn: cn=Account Policy Plugin,cn=plugins,cn=config
-changetype: modify
-replace: nsslapd-pluginEnabled
-nsslapd-pluginEnabled: on
+```bash
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin memberof fixup "dc=example,dc=com"
 ```
 
-### Password Policy (встроенная)
+### Плагин Referential Integrity (Целостность ссылок)
 
-**Назначение:** Требования к сложности паролей, история, срок действия.
+Гарантирует, что при удалении или переименовании записи (например, пользователя) его старый DN будет удален из всех атрибутов членства в группах.
 
 **Настройка:**
 
 ```bash
-# Создать политику
-dsconf -D "cn=Directory Manager" ldap://localhost:3389 \
-  pwpolicy set --minlength 12 --minclasses 3 --maxage 90 \
-  --history 5 --checkdict true --dc=example,dc=com
+# Включение
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin referential-integrity enable
+
+# Настройка отслеживаемых атрибутов
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin referential-integrity set \
+  --membership-attr member --membership-attr uniqueMember
+
+# Установка задержки обновления (рекомендуется 5-10 сек для снижения нагрузки)
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin referential-integrity set --update-delay 5
+```
+
+### Плагин DNA (Автоматическое назначение ID)
+
+Используется для автоматической генерации уникальных числовых идентификаторов (`uidNumber`, `gidNumber`) для POSIX-аккаунтов.
+
+**Пример создания конфигурации для UID:**
+
+```bash
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin dna config "POSIX UID" add \
+  --type uidNumber \
+  --next-value 1000 \
+  --max-value 50000 \
+  --filter "(objectclass=posixAccount)" \
+  --scope "dc=example,dc=com"
+```
+
+### Плагин Retro Changelog
+
+Необходим для приложений, которые отслеживают изменения в LDAP (например, некоторые системы синхронизации или IDM).
+
+**Включение:**
+
+```bash
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin retro-changelog enable
+
+# Настройка времени хранения записей (например, 7 дней)
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin retro-changelog set --max-age "7d"
 ```
 
 ## Дополнительная информация
 
-### Проверка статуса плагинов
+### Проверка статуса и отладка
+
+Для каждого плагина можно получить подробную информацию о его состоянии:
 
 ```bash
-# Список всех плагинов
-docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W \
-  -b "cn=plugins,cn=config" \
-  "(objectClass=nsPlugin)" cn nsslapd-pluginEnabled
+# Список всех доступных плагинов
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin list
+
+# Детальный статус конкретного плагина
+dsconf -D "cn=Directory Manager" ldap://localhost:3389 plugin memberof status
 ```
 
 ### Рекомендации (Best Practices)
 
-1. **Retro Changelog** — включать в production для аудита
-2. **MemberOf** — необходим для интеграции с сервисами, требующими обратного поиска групп
-3. **Referential Integrity** — предотвращает "висячие" ссылки в группах
-4. **DNA** — упрощает управление POSIX-аккаунтами
-5. **Password Policy** — обязательна в production
+1. **Минимизация активных плагинов:** Каждый включенный плагин потребляет ресурсы CPU и RAM. Отключайте те, которые не используются.
+2. **Порядок выполнения:** Помните, что плагины выполняются в определенной последовательности. Например, `Referential Integrity` должен работать после `MemberOf`, если вы используете оба.
+3. **Репликация конфигурации:** Настройки плагинов хранятся в `cn=config` и **не реплицируются** автоматически между серверами. Их необходимо применять на каждом узле кластера отдельно (или использовать Shared Config в версиях 3.0+).
+4. **Restart:** Большинство изменений в `cn=plugins,cn=config` требуют перезапуска службы через `dsctl restart`.
 
-### Репликация конфигурации плагинов
+### Troubleshooting
 
-> **Важно:** Конфигурация плагинов (`cn=config`) **не реплицируется**. Настройки применяются на каждом сервере отдельно. Подробнее о репликации данных — в [настройке репликации](./replication.md).
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| `memberOf` не отображается | Плагин не включен или не запущен fixup | Включите плагин и запустите задачу `fixup` |
+| Ошибки при удалении групп | `Referential Integrity` работает слишком долго | Увеличьте `update-delay` или проверьте индексы по атрибутам членства |
+| Дубликаты UID/GID (DNA) | Пересечение диапазонов в репликации | Настройте разные диапазоны `next-value` и `max-value` для каждого мастера |
+
+### Связанные материалы
+
+- [Управление доступом (ACI)](./aci.md) — связь плагинов авторизации с правами доступа
+- [Docker развёртывание](./docker.md) — использование утилит внутри контейнера
+- [Репликация](./replication.md) — особенности работы плагинов в кластере

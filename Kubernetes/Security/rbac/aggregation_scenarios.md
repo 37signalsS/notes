@@ -2,119 +2,108 @@
 
 ## Определения
 
-**Агрегация ролей (Role Aggregation)** — механизм в **RBAC (Role-Based Access Control — управление доступом на основе ролей)** Kubernetes для динамического объединения правил из нескольких [ClusterRole](./roles.md#clusterrole) в одну агрегирующую роль. Контроллер автоматически обновляет агрегирующую роль при изменении входящих в неё ролей.
+**Агрегация ролей (Role Aggregation)** — высокоуровневый механизм в системе **RBAC (Role-Based Access Control)** Kubernetes, предназначенный для динамического и автоматического объединения наборов разрешений из нескольких [ClusterRole](./roles.md) в одну итоговую роль. Этот механизм позволяет реализовать модульную и расширяемую архитектуру управления доступом.
 
-**Агрегируемая ClusterRole** — роль, содержащая поле `aggregationRule` с селекторами для автоматического сбора правил из других ролей.
+**Агрегирующая ClusterRole** — объект ClusterRole, определяющий логику сборки через поле `aggregationRule`. Она не содержит правил `rules` напрямую (или содержит только базовый набор), а делегирует их формирование контроллеру.
+
+**Субъект агрегации** — любая ClusterRole, имеющая метки (labels), соответствующие селекторам агрегирующей роли.
 
 ## Основные концепции
 
-### Механизм работы
+### Механизм работы контроллера (Control Plane)
 
-1. Создаётся агрегирующая ClusterRole с заполненным полем `aggregationRule`.
-2. Контроллер RBAC находит все ClusterRole, соответствующие указанным селекторам.
-3. Правила из найденных ролей автоматически добавляются в список `rules` агрегирующей роли.
-4. При любом изменении (создании, удалении, модификации) соответствующих ролей агрегирующая роль обновляется автоматически.
+Процесс агрегации управляется встроенным в `kube-controller-manager` контроллером RBAC:
+1. **Обнаружение (Discovery):** Контроллер постоянно отслеживает изменения всех объектов `ClusterRole`.
+2. **Селекция (Selection):** При обнаружении роли с заполненным `aggregationRule`, контроллер выполняет поиск всех существующих ClusterRole, чьи метки удовлетворяют условиям `clusterRoleSelectors`.
+3. **Объединение (Union):** Контроллер вычисляет объединение (логическое OR) всех списков `rules` из найденных ролей.
+4. **Синхронизация (Synchronization):** Результат записывается в поле `rules` агрегирующей роли. Любое изменение в "дочерних" ролях инициирует немедленное обновление агрегирующей роли.
 
-> **Важно:** Агрегация поддерживается только для ClusterRole. Обычные [роли (Role)](./roles.md#role) не поддерживают `aggregationRule`.
+> **Важное архитектурное ограничение:** Агрегация поддерживается **только на уровне ClusterRole**. Обычные [роли (Role)](./roles.md) не имеют поля `aggregationRule`. Это связано с тем, что Role привязаны к конкретному Namespace, в то время как агрегация предназначена для формирования глобальных или кросс-пространственных шаблонов доступа.
 
-### Синтаксис aggregationRule
+### Структура и синтаксис aggregationRule
+
+Поле `aggregationRule` использует стандартный механизм `LabelSelector`, поддерживающий как простые равенства, так и сложные выражения:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: aggregated-role
+  name: system:aggregated-manager
 aggregationRule:
   clusterRoleSelectors:
-  - matchLabels:          # Селектор по меткам (labels)
-      rbac.example.io/aggregate-to-role: "true"
-  - matchExpressions:     # Селектор по выражениям
-    - key: rbac.example.io/scope
+  - matchLabels:          # Селектор по точному совпадению
+      rbac.example.io/aggregate-to-manager: "true"
+  - matchExpressions:     # Селектор по сложным условиям
+    - key: rbac.example.io/tier
       operator: In
-      values: ["global", "team"]
-rules: []  # Правила будут добавлены контроллером автоматически
+      values: ["infra", "security"]
+rules: []  # Рекомендуется оставлять пустым, так как контроллер будет управлять этим полем
 ```
 
-### Метки (labels) для агрегации во встроенные роли
+### Встроенные роли и системная агрегация
 
-Kubernetes предоставляет стандартные встроенные ClusterRole (`admin`, `edit`, `view`), которые можно расширять, добавляя свои роли с соответствующими метками:
+Kubernetes поставляется с набором стандартных ролей, которые уже настроены на агрегацию. Это позволяет администраторам расширять права `admin`, `edit` и `view` для новых типов ресурсов (например, CRD), просто помечая свои роли соответствующими метками.
 
-| Метка (Label) | Агрегирует в |
-|---------------|--------------|
-| `rbac.authorization.k8s.io/aggregate-to-admin` | ClusterRole `admin` |
-| `rbac.authorization.k8s.io/aggregate-to-edit` | ClusterRole `edit` |
-| `rbac.authorization.k8s.io/aggregate-to-view` | ClusterRole `view` |
-
-### Преимущества агрегации
-
-- **Модульность**: разные компоненты или команды могут определять свои специфические права независимо.
-- **Автоматическое обновление**: любые изменения в исходных ролях мгновенно отражаются в агрегированной роли.
-- **Расширяемость**: возможность дополнять стандартные роли Kubernetes без их прямого редактирования.
-- **Децентрализация**: команды могут самостоятельно управлять правами, необходимыми для их сервисов.
-
-### Ограничения
-
-- Механизм работает только для объектов [ClusterRole](./roles.md#clusterrole).
-- [Role](./roles.md#role) не поддерживают поле `aggregationRule`.
-- Запрещены циклические ссылки между ролями.
-- Агрегированные правила всегда добавляются в конец общего списка `rules`.
+| Системная метка (Label) | Целевая роль | Назначение |
+|-------------------------|--------------|------------|
+| `rbac.authorization.k8s.io/aggregate-to-admin: "true"` | `admin` | Позволяет расширить права администратора пространства имен. |
+| `rbac.authorization.k8s.io/aggregate-to-edit: "true"` | `edit` | Позволяет добавить права на редактирование ресурсов. |
+| `rbac.authorization.k8s.io/aggregate-to-view: "true"` | `view` | Позволяет добавить права на просмотр ресурсов. |
 
 ## Практические сценарии
 
-### Сценарий 1: Агрегация прав для команды разработчиков
+### Сценарий 1: Модульное управление доступом команды (Hierarchy)
 
-В данном примере создается общая роль для разработчиков, которая автоматически собирает права на просмотр подов и управление развертываниями (deployments).
+Разделение ответственности между командами инфраструктуры и CI/CD при формировании итоговой роли разработчика.
 
 ```yaml
-# 1. Агрегирующая роль
+# 1. Корневая агрегирующая роль (создается один раз)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: team-developer
+  name: developer-base
 aggregationRule:
   clusterRoleSelectors:
   - matchLabels:
-      rbac.myorg.io/aggregate-to-team-developer: "true"
+      rbac.company.io/aggregate-to-developer: "true"
 rules: []
 ---
-# 2. Права на просмотр подов (добавляет команда инфраструктуры)
+# 2. Модуль от Infra-команды: доступ к логам и чтению подов
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: pod-viewer
+  name: developer-logs-module
   labels:
-    rbac.myorg.io/aggregate-to-team-developer: "true"
+    rbac.company.io/aggregate-to-developer: "true"
 rules:
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
   verbs: ["get", "list", "watch"]
 ---
-# 3. Права на управление развертываниями (добавляет команда CI/CD)
+# 3. Модуль от CI/CD-команды: управление деплойментами
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: deployment-manager
+  name: developer-deploy-module
   labels:
-    rbac.myorg.io/aggregate-to-team-developer: "true"
+    rbac.company.io/aggregate-to-developer: "true"
 rules:
 - apiGroups: ["apps"]
   resources: ["deployments"]
-  verbs: ["get", "list", "watch", "create", "update", "delete"]
+  verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
 ```
 
-**Результат:** ClusterRole `team-developer` автоматически объединит права из обеих ролей.
+### Сценарий 2: Расширение стандартной роли edit для отладки
 
-### Сценарий 2: Расширение стандартной роли edit
-
-Добавление специфических прав (например, на выполнение команд в подах) всем пользователям, обладающим встроенной ролью `edit`.
+Предоставление возможности выполнять `kubectl exec` всем пользователям с ролью `edit` через создание дополняющей роли.
 
 ```yaml
-# Добавление права на выполнение exec в подах
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: custom:aggregate-to-edit:exec
+  name: aggregate-edit-exec-access
   labels:
+    # Эта метка заставит контроллер добавить правила ниже в ClusterRole 'edit'
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
 rules:
 - apiGroups: [""]
@@ -122,83 +111,70 @@ rules:
   verbs: ["create"]
 ```
 
-### Сценарий 3: Модульная роль для мониторинга
+### Сценарий 3: Агрегация по сложным условиям (matchExpressions)
 
-Создание роли `monitoring`, которая собирает необходимые разрешения от разных компонентов системы (Prometheus, Grafana).
-
-```yaml
-# Базовая агрегирующая роль
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: monitoring
-aggregationRule:
-  clusterRoleSelectors:
-  - matchLabels:
-      rbac.myorg.io/aggregate-to-monitoring: "true"
-rules: []
-```
-
-### Сценарий 4: Агрегация по условиям (matchExpressions)
-
-Более гибкая настройка селекторов для выбора ролей на основе сложных условий.
+Использование выражений для фильтрации ролей, относящихся к разным средам или командам.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: team-global
+  name: team-security-auditor
 aggregationRule:
   clusterRoleSelectors:
   - matchExpressions:
-    - key: rbac.example.io/scope
+    - key: rbac.company.io/scope
       operator: In
-      values: ["global", "team"]
-    - key: rbac.example.io/team
+      values: ["security", "audit"]
+    - key: rbac.company.io/team
       operator: Exists
 rules: []
 ```
 
-<a name="cve-2021-25740"></a>
+### Сценарий 4: Исправление совместимости и безопасности (CVE-2021-25740)
 
-### Сценарий 5: Восстановление записи в Endpoints (CVE-2021-25740)
-
-Начиная с Kubernetes v1.22, доступ на запись к `EndpointSlices` удалён из ролей `admin`/`edit` по умолчанию. Если вашим приложениям требуется это право:
+В Kubernetes v1.22+ из стандартных ролей `admin`/`edit` были удалены права на запись в `endpoints` из-за рисков безопасности. Если ваше приложение (например, старый Ingress-контроллер) требует этого:
 
 ```yaml
-# Восстановление доступа на запись к Endpoints для роли edit
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: custom:aggregate-to-edit:endpoints
+  name: fix:aggregate-to-edit:endpoints
   labels:
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
 rules:
 - apiGroups: [""]
   resources: ["endpoints"]
-  verbs: ["create", "delete", "patch", "update"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
 ```
 
-> **Предупреждение:** Восстанавливайте эти права только в случае явной необходимости, так как это снижает общий уровень безопасности кластера.
+> **Внимание:** Это действие снижает безопасность кластера. Используйте его только как временную меру при миграции.
 
 ## Дополнительная информация
 
-### Проверка агрегированных правил
+### Проверка и диагностика
+
+Для проверки того, как контроллер собрал итоговую роль, используйте `kubectl describe` или вывод в YAML:
 
 ```bash
-# Просмотр итогового списка правил ClusterRole
-kubectl get clusterrole team-developer -o yaml
+# Проверка итогового набора правил
+kubectl get clusterrole developer-base -o yaml
 
-# Список ролей, участвующих в агрегации для конкретного селектора
-kubectl get clusterrole -l rbac.myorg.io/aggregate-to-team-developer=true
+# Поиск всех ролей, участвующих в агрегации для конкретной метки
+kubectl get clusterrole -l rbac.company.io/aggregate-to-developer=true
 
-# Список всех ролей, расширяющих встроенную роль edit
-kubectl get clusterrole -l rbac.authorization.k8s.io/aggregate-to-edit
+# Проверка прав доступа конкретного пользователя (с учетом агрегации)
+kubectl auth can-i create deployments --as=system:serviceaccount:dev:default -n dev
+# → yes (если агрегация прошла успешно)
 ```
 
-### Автоматическое согласование (Auto-reconciliation)
+### Автоматическое обновление системных ролей (Auto-reconciliation)
 
-По умолчанию API-сервер восстанавливает значения стандартных ролей при каждом перезапуске. Чтобы внести изменения в системные роли вручную и предотвратить их перезапись, используется аннотация:
+Kubernetes защищает свои встроенные роли от случайного изменения. Если вы попытаетесь вручную отредактировать `ClusterRole/view`, контроллер вернет её к исходному состоянию при следующем цикле.
+
+**Как вносить изменения:**
+1. **Рекомендуемый способ:** Всегда используйте агрегацию (создание новой роли с меткой `aggregate-to-...`).
+2. **Принудительный способ:** Чтобы остановить автоматическое восстановление системной роли (не рекомендуется), добавьте аннотацию:
 
 ```yaml
 metadata:
@@ -206,10 +182,16 @@ metadata:
     rbac.authorization.kubernetes.io/autoupdate: "false"
 ```
 
-> **Внимание:** Отключение автоматического обновления может привести к критическим ошибкам в работе кластера при обновлении версии Kubernetes, если новые обязательные права не будут добавлены вручную.
+### Лучшие практики (Best Practices)
+
+1. **Имена-префиксы:** Используйте префиксы в именах агрегируемых ролей (например, `ext:`, `custom:`), чтобы отличать их от системных.
+2. **Минимализм matchExpressions:** Избегайте слишком сложных селекторов, которые могут случайно захватить лишние роли.
+3. **Пустые `rules`:** В агрегирующих ролях оставляйте поле `rules` пустым, чтобы избежать путаницы между статическими и динамическими правилами.
+4. **Документирование меток:** Ведите реестр используемых в компании меток для агрегации, чтобы избежать конфликтов имен.
 
 ### Связанные темы
 
-- **[Обзор RBAC](./rbac_overview.md)** — общая архитектура управления доступом.
-- **[Определение ролей (Role и ClusterRole)](./roles.md)** — детальное описание базовых объектов.
-- **[Привязки ролей (RoleBinding)](./bindings.md)** — механизмы назначения прав субъектам.
+- **[Общий обзор RBAC](./rbac_overview.md)** — архитектура управления доступом.
+- **[Определение ролей (Role и ClusterRole)](./roles.md)** — описание базовых объектов.
+- **[Привязки ролей (RoleBinding)](./bindings.md)** — назначение прав субъектам.
+- **[Дополнительная информация Kyverno: Агрегированные роли](../Security/kyverno/additional.md)** — практическое применение агрегации в контроллерах.

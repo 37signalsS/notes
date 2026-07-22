@@ -1,10 +1,14 @@
-# Git Commit Template — шаблон коммитов
+# Git Commit Template — шаблоны сообщений коммитов
 
 ## Определения
 
-**`.gitmessage`** — файл-шаблон сообщения коммита, который Git использует для предварительного заполнения редактора при создании коммита.
+**`.gitmessage`** — файл-шаблон сообщения коммита, который Git использует для предварительного заполнения текстового редактора при выполнении команды `git commit`.
 
-**commit.template** — конфигурационная директива Git, указывающая путь к файлу шаблона сообщения.
+**commit.template** — конфигурационный параметр Git, указывающий путь к файлу шаблона.
+
+**Conventional Commits** — соглашение о форматировании сообщений коммитов, обеспечивающее машиночитаемую структуру для автоматизации версионирования (SemVer) и генерации чейнджлогов.
+
+**Commitizen** — CLI-инструмент для интерактивного создания коммитов по стандарту Conventional Commits.
 
 ---
 
@@ -12,176 +16,157 @@
 
 ### Назначение шаблона
 
-Шаблон коммитов решает следующие задачи:
+Использование шаблона решает несколько задач:
+- **Стандартизация:** Обеспечение единого стиля сообщений во всей команде.
+- **Информативность:** Подсказки в шаблоне напоминают о необходимости указать ID задачи или описать причину изменений.
+- **Автоматизация:** Подготовка базы для инструментов автоматического релиза.
 
-- **Стандартизация:** Единый формат сообщений для всей команды
-- **Напоминание:** Комментарии в шаблоне напоминают о структуре сообщения
-- **Conventional Commits:** Поддержка машиночитаемого формата для автоматизации релизов
+### Структура Conventional Commits
 
-### Формат шаблона
-
+Стандартный формат сообщения:
 ```text
-# .gitmessage
-# <type>: <subject>
-#
-# <body>
-#
-# <footer>
-#
-# Types: feat, fix, docs, style, refactor, test, chore
-# Пример: feat(auth): добавить OAuth2 аутентификацию
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
 ```
-
-### Настройка
-
-```bash
-# Локальная настройка для текущего репозитория
-git config commit.template .gitmessage
-
-# Глобальная настройка для всех репозиториев
-git config --global commit.template ~/.gitmessage
-```
-
-### Conventional Commits
-
-Стандарт форматирования сообщений коммитов:
 
 | Тип | Описание |
 | :--- | :--- |
-| `feat` | Новая функция |
-| `fix` | Исправление ошибки |
-| `docs` | Изменения в документации |
-| `style` | Форматирование, пробелы, точки с запятой |
-| `refactor` | Изменение кода без изменения поведения |
-| `test` | Добавление или изменение тестов |
-| `chore` | Изменения в сборке, зависимостях, инструментах |
+| `feat` | Добавление новой функциональности. |
+| `fix` | Исправление ошибки. |
+| `docs` | Изменения только в документации. |
+| `style` | Правки, не влияющие на логику (пробелы, форматирование, пропущенные точки с запятой). |
+| `refactor` | Изменение кода, которое не исправляет ошибку и не добавляет функционал. |
+| `perf` | Изменения для улучшения производительности. |
+| `test` | Добавление или исправление существующих тестов. |
+| `build` | Изменения, влияющие на систему сборки или внешние зависимости (example scopes: gulp, broccoli, npm). |
+| `ci` | Изменения в конфигурационных файлах и скриптах CI (example scopes: GitHub Actions, GitLab CI). |
+| `chore` | Другие изменения, не влияющие на исходный код или тесты. |
+| `revert` | Откат предыдущего коммита. |
 
-**Формат:** `<type>(<scope>): <subject>`
+**BREAKING CHANGE:** Критические изменения обозначаются восклицательным знаком после типа/области (например, `feat(api)!: update auth logic`) или через заголовок `BREAKING CHANGE:` в футере.
 
-**Примеры:**
+### Настройка Git
 
-- `feat(auth): добавить OAuth2 аутентификацию`
-- `fix(api): исправить утечку памяти в обработчике`
-- `docs(readme): обновить инструкции по установке`
+Конфигурация может быть локальной (для проекта) или глобальной (для пользователя).
+
+```bash
+# Локальная настройка
+git config commit.template .gitmessage
+
+# Глобальная настройка
+git config --global commit.template ~/.gitmessage
+
+# Проверка настройки
+git config --get commit.template
+# → .gitmessage
+```
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка шаблона в проекте
+### Сценарий 1: Создание проекта с шаблоном
 
 1. Создайте файл `.gitmessage` в корне репозитория:
 
-```bash
-cat > .gitmessage << 'EOF'
+```text
 # <type>(<scope>): <subject>
-#
+# <Оставьте пустую строку здесь>
 # <body>
-#
+# <Оставьте пустую строку здесь>
 # <footer>
 #
-# Types: feat, fix, docs, style, refactor, test, chore
-# Subject: краткое описание в повелительном наклонении
-# Body: подробное описание изменений (опционально)
-# Footer: связанные задачи, BREAKING CHANGE (опционально)
-EOF
+# Типы: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+# Subject: Краткое описание в повелительном наклонении, без точки в конце.
+# BREAKING CHANGE: Опишите критические изменения в футере.
 ```
 
-1. Настройте локальный шаблон:
+2. Примените и закоммитьте шаблон:
 
 ```bash
 git config commit.template .gitmessage
-```
-
-1. Закоммитьте шаблон:
-
-```bash
 git add .gitmessage
 git commit -m "chore: add commit message template"
 ```
 
-### Сценарий 2: Глобальная настройка для разработчика
+### Сценарий 2: Интеграция Commitlint и Husky (v9+)
 
-Для личной продуктивности настройте глобальный шаблон:
+Для автоматической валидации сообщений в JavaScript-проектах.
+
+1. Установите зависимости:
+```bash
+npm install --save-dev @commitlint/config-conventional @commitlint/cli husky
+```
+
+2. Инициализируйте Husky:
+```bash
+npx husky init
+```
+
+3. Добавьте хук для проверки сообщений:
+```bash
+echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
+```
+
+4. Создайте конфиг `commitlint.config.js`:
+```javascript
+module.exports = { extends: ['@commitlint/config-conventional'] };
+```
+
+### Сценарий 3: Использование Commitizen для интерактивных коммитов
+
+Если разработчикам сложно запомнить все типы, можно использовать помощник.
+
+1. Установка и инициализация:
+```bash
+npm install -g commitizen
+commitizen init cz-conventional-changelog --save-dev --save-exact
+```
+
+2. Использование вместо `git commit`:
+```bash
+git cz
+# → Откроется интерактивное меню выбора типа и ввода описания
+```
+
+### Сценарий 4: Глобальный шаблон для всех проектов
+
+Полезно для соблюдения личного стиля во всех репозиториях.
 
 ```bash
-# Создать глобальный шаблон
-cat > ~/.gitmessage << 'EOF'
-# <type>(<scope>): <subject>
-#
-# <body>
-#
-# <footer>
-#
-# Examples:
-#   feat(users): add user registration endpoint
-#   fix(api): resolve memory leak in handler
-#   docs: update API documentation
+# Создание глобального файла
+cat <<EOF > ~/.gitmessage
+# type(scope): subject
+# 
+# body
+# 
+# footer
 EOF
 
-# Применить глобально
+# Глобальная регистрация
 git config --global commit.template ~/.gitmessage
-```
-
-### Сценарий 3: Автоматизация через setup-скрипт
-
-Для командной работы добавьте настройку в скрипт инициализации:
-
-```bash
-#!/bin/bash
-# setup.sh
-
-# Настроить шаблон коммита
-git config commit.template .gitmessage
-
-# Опционально: настроить hook для валидации
-cp hooks/commit-msg .git/hooks/commit-msg
-chmod +x .git/hooks/commit-msg
-```
-
-### Сценарий 4: Валидация через commit-msg hook
-
-Шаблон не гарантирует соблюдение формата. Для строгой валидации используйте хук `commit-msg` — пример в [git_hooks.md](./git_hooks.md#сценарий-2-commit-msg--валидация-conventional-commits).
-
-### Сценарий 5: Интеграция с Husky (для JavaScript-проектов)
-
-```json
-// package.json
-{
-  "husky": {
-    "hooks": {
-      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
-    }
-  },
-  "devDependencies": {
-    "@commitlint/cli": "^17.0.0",
-    "@commitlint/config-conventional": "^17.0.0"
-  }
-}
-```
-
-```javascript
-// commitlint.config.js
-module.exports = {
-  extends: ['@commitlint/config-conventional']
-};
 ```
 
 ---
 
 ## Дополнительная информация
 
-### Предостережения
+### Ограничения
 
-- **Требует ручной настройки:** Каждый разработчик должен выполнить `git config` после клонирования
-- **Не является обязательным:** Шаблон только заполняет редактор, но не валидирует сообщение
-- **Альтернатива:** Хук `commit-msg` для строгой валидации формата
+- **Ручная активация:** После клонирования репозитория шаблон не активируется автоматически (требуется `git config`).
+- **Отсутствие жесткой блокировки:** Команда `git commit -m "..."` игнорирует шаблон. Для блокировки "плохих" коммитов обязательны хуки (Commitlint).
+- **Редакторы:** Некоторые GUI-клиенты (например, VS Code) могут игнорировать `commit.template` при использовании встроенных полей ввода.
 
 ### Официальные ресурсы
 
 - **Документация Git:** [git-scm.com/docs/git-commit](https://git-scm.com/docs/git-commit)
-- **Conventional Commits:** [conventionalcommits.org](https://www.conventionalcommits.org/)
+- **Спецификация Conventional Commits:** [conventionalcommits.org](https://www.conventionalcommits.org/ru/v1.0.0/)
 
-### Связанные документы
+### См. также
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Git hooks описаны в [git_hooks.md](./git_hooks.md).
+- [Git Hooks — автоматизация и валидация](./git_hooks.md#сценарий-3-проверка-сообщения-коммита-commitlint)
+- [Специальные файлы Git](./git_special_files_overview.md)
+- [Конфигурация Git](./git_configuration.md)

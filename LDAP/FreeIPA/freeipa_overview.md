@@ -2,16 +2,20 @@
 
 ## Определения
 
-**FreeIPA** — это интегрированное решение для управления идентификацией (Identity Management, IdM), политиками и аудитом в Linux-окружениях. Оно объединяет такие технологии, как:
-- **389 Directory Server** — для хранения данных пользователей и групп (LDAP).
-- **MIT Kerberos** — для централизованной аутентификации и SSO (Single Sign-On).
-- **Dogtag Certificate System** — для управления сертификатами (PKI).
-- **Bind** — для управления DNS-записями.
-- **NTP** — для синхронизации времени (критично для Kerberos).
+**FreeIPA** — это интегрированное решение для управления идентификацией (Identity Management, IdM), политиками и аудитом в Linux-окружениях. Оно представляет собой программно-аппаратный комплекс (upstream-проект для Red Hat IDM), объединяющий следующие технологии:
+- **389 Directory Server** — LDAP-сервер для хранения данных пользователей, групп и политик.
+- **MIT Kerberos** — для централизованной аутентификации и обеспечения Single Sign-On (SSO).
+- **Dogtag Certificate System (PKI)** — система управления сертификатами (центр сертификации CA).
+- **BIND** — встроенный DNS-сервер для автоматизации управления сервисными записями.
+- **SSSD (System Security Services Daemon)** — агент на стороне клиента для кэширования учетных данных и работы в offline-режиме.
 
 ## Основные концепции
 
-FreeIPA позволяет централизованно управлять учетными записями пользователей, правами доступа (HBAC — Host Based Access Control), а также автоматизировать выпуск SSL/TLS сертификатов для внутренних сервисов.
+1.  **Централизация:** Управление пользователями, хостами, сервисами и правилами доступа из единой точки (Web UI, CLI или Ansible).
+2.  **HBAC (Host Based Access Control):** Правила, определяющие, какие пользователи могут входить на какие хосты через какие сервисы (например, SSH).
+3.  **SUDO-политики:** Централизованное управление правами `sudo` для всех узлов домена.
+4.  **Синхронизация времени:** Kerberos критически зависит от точности времени (расхождение не более 5 минут). Современные версии FreeIPA используют `chrony` для синхронизации.
+5.  **Доверительные отношения (Trusts):** Возможность настройки доверия с Microsoft Active Directory (AD) для прозрачной аутентификации пользователей Windows в Linux-среде.
 
 ---
 
@@ -36,30 +40,33 @@ FreeIPA позволяет централизованно управлять у�
 
 #### Шаг 2: Подготовка Ansible (для настройки клиентов)
 
-Если планируется использовать Ansible для автоматизации подключения клиентов, установите соответствующую роль:
+Если планируется использовать Ansible для автоматизации подключения клиентов, установите официальную коллекцию:
 
 ```bash
-sudo ansible-galaxy role install ipaclient
+ansible-galaxy collection install freeipa.ansible_freeipa
 ```
 
 **Решение проблем с GSSAPI:**
-При ошибке `No module named 'gssapi'` доустановите необходимые библиотеки:
+При ошибке `No module named 'gssapi'` на управляющей ноде (Control Node) доустановите необходимые системные библиотеки и Python-пакет:
+
 ```bash
-sudo apt install krb5-config libkrb5-dev
-/usr/bin/pip install gssapi --pre
+# Для Ubuntu/Debian
+sudo apt install krb5-config libkrb5-dev python3-dev
+# Для RHEL/CentOS/Rocky
+sudo dnf install krb5-devel python3-devel
+
+pip install gssapi
 ```
 
 #### Шаг 3: Настройка Docker Compose
 
-Создайте директорию `/opt/freeipa` и файл `docker-compose.yaml`:
+Создайте директорию `/opt/freeipa` и файл `docker-compose.yaml`. Использование образа на базе Rocky Linux 9 является предпочтительным для современных систем.
 
 ```yaml
-version: "3.8"
 services:
   freeipa:
-    image: freeipa/freeipa-server:rocky-8
-    hostname: freeipa
-    domainname: domain.local
+    image: freeipa/freeipa-server:rocky-9
+    hostname: freeipa.domain.local
     container_name: freeipa
     ports:
       - "80:80"
@@ -72,7 +79,7 @@ services:
       - "464:464/udp"
       - "123:123/udp"
     dns:
-      - 192.168.10.190        # Замените на ваш вышестоящий DNS
+      - 192.168.10.190        # Вышестоящий DNS (например, шлюз или 8.8.8.8)
     restart: unless-stopped
     tty: true
     stdin_open: true
@@ -99,10 +106,10 @@ services:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - ./data:/data
-      - ./logs:/var/logs
+      - ./logs:/var/log # Исправлен путь к логам (обычно /var/log)
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
-```
+```,old_string:
 
 #### Шаг 4: Запуск и авторизация
 
@@ -177,31 +184,28 @@ sudo ipa-client-install \
 
 ### 3. Автоматизация присоединения клиентов через Ansible
 
-Использование официальной роли `ipaclient` позволяет массово регистрировать узлы в домене.
+Использование официальной коллекции `freeipa.ansible_freeipa` позволяет массово регистрировать узлы в домене и управлять настройками IPA.
 
 #### Шаг 1: Установка необходимых компонентов
 
 На управляющей машине (Ansible Control Node) выполните:
 
 ```bash
-# Установка Ansible и роли
-sudo apt update && sudo apt install ansible sshpass -y
-sudo ansible-galaxy install freeipp.freeipa.ipaclient
+# Установка коллекции
+ansible-galaxy collection install freeipa.ansible_freeipa
 
-# Установка зависимостей для Kerberos-аутентификации
-sudo apt install python3-pip -y
-sudo pip install python-gssapi
+# Установка зависимостей для Kerberos-аутентификации (если не установлены ранее)
+pip install python-gssapi
 ```
 
 #### Шаг 2: Настройка инвентаря
 
-Создайте файл `inventory.ini` с перечислением клиентов и необходимых переменных:
+Создайте файл `inventory.ini`. Обратите внимание на использование префикса `ipaclient_` для переменных.
 
 ```ini
 [ipaclients]
 client-1.domain.local
 client-2.domain.local
-client-3.domain.local
 
 [ipaclients:vars]
 ipaclient_domain=domain.local
@@ -209,24 +213,23 @@ ipaclient_realm=DOMAIN.LOCAL
 ipaadmin_principal=admin
 ipaadmin_password=YourStrongPassword
 ipaclient_mkhomedir=yes
+# Если NTP уже настроен на хосте (рекомендуется)
 ipaclient_no_ntp=yes
 ```
 
 #### Шаг 3: Создание плейбука
 
-Создайте файл `ipa-playbook.yaml`:
+Создайте файл `ipa-playbook.yaml`. В коллекции роли называются по шаблону `freeipa.ansible_freeipa.ipaclient`.
 
 ```yaml
 ---
-- name: "Configure IPA clients"
+- name: "Конфигурация клиентов FreeIPA"
   hosts: ipaclients
   become: true
-  # Пользователь с правами sudo на целевых хостах
-  remote_user: admin
   gather_facts: true
 
   roles:
-    - role: freeipp.freeipa.ipaclient
+    - role: freeipa.ansible_freeipa.ipaclient
       state: present
 ```
 
@@ -301,7 +304,7 @@ ipa user-mod username --setattr=krbPasswordExpiration=20240911170748Z
 
 **Доступные переменные:** `{uid}`, `{fullname}`, `{first}`, `{last}`, `{expiration}`.
 
-#### Шаг 3: Тестирование и запуск
+#### Шаг 4: Тестирование и запуск
 
 1.  **Проверка выборки пользователей** (без отправки):
     ```bash
@@ -316,7 +319,7 @@ ipa user-mod username --setattr=krbPasswordExpiration=20240911170748Z
     sudo ipa-epn
     ```
 
-#### Шаг 4: Автоматизация рассылки
+#### Шаг 5: Автоматизация рассылки
 
 Модуль включает системный таймер, который по умолчанию запускается ежедневно в 01:00.
 
@@ -324,23 +327,28 @@ ipa user-mod username --setattr=krbPasswordExpiration=20240911170748Z
 sudo systemctl enable --now ipa-epn.timer
 ```
 
-**Изменение времени рассылки:**
-Отредактируйте файл `/usr/lib/systemd/system/ipa-epn.timer` (или создайте drop-in конфиг):
-```ini
-[Timer]
-OnCalendar=
-OnCalendar=*-*-* 08:00:00
-```
-После изменений: `sudo systemctl daemon-reload && sudo systemctl restart ipa-epn.timer`.
-
 ---
 
 ## Дополнительная информация
 
+### Резервное копирование
+Для создания полной резервной копии всех данных и конфигураций используйте встроенную утилиту (внутри контейнера или на сервере):
+```bash
+ipa-backup
+```
+Результат будет сохранен в `/var/lib/ipa/backup/`. Рекомендуется выполнять бэкап перед любым обновлением или изменением схемы.
+
+### Отказоустойчивость (High Availability)
+FreeIPA поддерживает топологию **Multi-Master**. Для обеспечения высокой доступности разверните дополнительные серверы репликации:
+```bash
+ipa-replica-install
+```
+Рекомендуется иметь как минимум два сервера в разных сегментах сети.
+
 ### Безопасность и Kerberos
-Kerberos крайне чувствительной к разнице во времени между сервером и клиентом (допуск обычно не более 5 минут). Убедитесь, что на всех узлах настроен NTP.
+Kerberos крайне чувствителен к разнице во времени между сервером и клиентом (допуск обычно не более 5 минут). На современных системах используйте `chronyd` для поддержания точности.
 
 ### См. также
-- **[LDAP: 389 Directory Server](../389ds/overview.md)** — база данных FreeIPA.
-- **[OpenLDAP в Kubernetes](../openldap_kubernetes.md)** — альтернативное LDAP-решение.
-- **[Ansible Roles: Usage](../../Ansible/Roles/usage.md)** — управление ролями Ansible.
+- **[389 Directory Server](../389ds/overview.md)** — детальный обзор LDAP-движка.
+- **[OpenLDAP в Kubernetes](../openldap_kubernetes.md)** — развертывание альтернативного LDAP в K8s.
+- **[Использование ролей Ansible](../../Ansible/Roles/usage.md)** — общие принципы работы с ролями.

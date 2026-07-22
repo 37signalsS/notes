@@ -2,123 +2,102 @@
 
 ## Определения
 
-**ArgoCD Notifications** — компонент ArgoCD для мониторинга событий жизненного цикла приложений и отправки уведомлений во внешние системы (Slack, Telegram, Email и др.).
+**ArgoCD Notifications** — встроенный компонент ArgoCD (начиная с v3.x), предназначенный для мониторинга событий жизненного цикла приложений и отправки уведомлений во внешние системы (Slack, Telegram, Email и др.).
 
-**Триггер (Trigger)** — условие, при выполнении которого инициируется отправка уведомления (например, `on-sync-succeeded`).
+**Триггер (Trigger)** — логическое условие, при выполнении которого инициируется отправка уведомления (например, `on-sync-failed`).
 
-**Шаблон (Template)** — структура и содержание сообщения, формируемого на основе данных о событии.
+**Шаблон (Template)** — структура и содержание сообщения, формируемого на основе данных о событии с использованием Go-шаблонов.
 
-**Сервис (Service)** — конфигурация подключения к внешней системе доставки сообщений.
+**Сервис (Service)** — конфигурация подключения к внешней платформе доставки (API токены, URL вебхуков).
 
-**Подписка (Subscription)** — связка конкретного приложения с триггером и сервисом доставки.
+**Подписка (Subscription)** — связка приложения с триггером и конкретным получателем.
 
-## Базовые концепции
+## Основные концепции
 
-Конфигурация уведомлений базируется на двух ресурсах в неймспейсе `argocd`:
+### Архитектура и компоненты
 
-1. **`argocd-notifications-cm` (ConfigMap):** Содержит логику (триггеры, шаблоны, описание сервисов).
-2. **`argocd-notifications-secret` (Secret):** Хранит чувствительные данные (токены, пароли).
+В версиях **ArgoCD v3.x** функционал уведомлений полностью интегрирован в основной контроллер, что упрощает администрирование. Конфигурация хранится в двух ресурсах:
 
-### Компоненты конфигурации
-
-- **Triggers:** Определяют «когда» отправлять. Используют выражения для проверки состояния приложения.
-- **Templates:** Определяют «что» отправлять. Используют Go-шаблонизацию для извлечения данных из контекста приложения (имя, статус, ревизия).
-- **Services:** Определяют «куда» отправлять. Настраиваются для каждого типа интеграции (Telegram, Slack и т.д.).
-- **Subscriptions:** Определяют получателей. Настраиваются через аннотации в манифесте `Application`.
+1. **`argocd-notifications-cm` (ConfigMap):** Логика уведомлений (триггеры, шаблоны, описание сервисов).
+2. **`argocd-notifications-secret` (Secret):** Чувствительные данные (токены Telegram, Slack Webhooks).
 
 ### Принцип работы
 
-1. Контроллер `argocd-notifications-controller` отслеживает изменения в `Application`.
-2. При наступлении события проверяются аннотации приложения на наличие подписок.
-3. Если подписка найдена и условие триггера выполнено, контроллер рендерит шаблон.
+1. Контроллер отслеживает изменения статуса `Application`.
+2. При наступлении события проверяются аннотации приложения на наличие активных подписок.
+3. Если подписка найдена и условие триггера выполнено, контроллер рендерит сообщение по шаблону.
 4. Сообщение отправляется через настроенный сервис.
-5. В аннотации приложения ставится отметка об отправке для предотвращения дублирования.
-
-**Примечание для ArgoCD v3.x:** Функционал уведомлений встроен в основной дистрибутив, отдельная установка компонентов не требуется.
+5. Аннотация `notifications.argoproj.io/last-notification-id` предотвращает повторную отправку одного и того же события.
 
 ## Практические сценарии
 
-### Настройка уведомлений в Telegram
+### Сценарий 1: Настройка уведомлений в Telegram
 
 #### 1. Подготовка в Telegram
-
 - Создать бота через `@BotFather` и получить `token`.
-- Создать группу и добавить туда бота.
-- Получить `Chat ID` группы (например, через `https://api.telegram.org/bot<TOKEN>/getUpdates`).
+- Добавить бота в группу и получить `Chat ID` (например, через бота `@getmyid_bot`).
 
-#### 2. Конфигурация Secret
-
+#### 2. Настройка секретов и конфигурации
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-notifications-secret
-  namespace: argocd
+# Secret
 stringData:
   telegram-token: "1234567890:ABC-DEF"
-```
 
-#### 3. Конфигурация ConfigMap
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-notifications-cm
-  namespace: argocd
+# ConfigMap
 data:
-  context: |
-    argocd.url: https://argocd.example.com
-
   service.telegram: |
-    my-telegram-bot:
+    my-bot:
       token: $telegram-token
+  
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Failed', 'Error']
+      send: [app-sync-failed]
 
-  trigger.on-sync-succeeded: |
-    - when: app.status.operationState.phase in ['Succeeded']
-      send: [app-sync-succeeded]
-
-  template.app-sync-succeeded: |
+  template.app-sync-failed: |
     message: |
-      [SUCCESS] Application `{{.app.metadata.name}}` has been successfully synced.
-      Sync status: {{.app.status.sync.status}}
-      Health status: {{.app.status.health.status}}
-      Revision: {{.app.status.sync.revision}}
-      View in ArgoCD: {{.context.argocd.url}}/applications/{{.app.metadata.name}}
+      [ERROR] Application `{{.app.metadata.name}}` sync failed!
+      View details: {{.context.argocd.url}}/applications/{{.app.metadata.name}}
 ```
 
-#### 4. Подписка приложения
-
+#### 3. Подписка приложения
 Добавьте аннотацию в манифест `Application`:
-
 ```yaml
 metadata:
   annotations:
-    notifications.argoproj.io/subscribe.on-sync-succeeded.my-telegram-bot: "-1001234567890"
+    notifications.argoproj.io/subscribe.on-sync-failed.my-bot: "-1001234567890"
+```
+
+### Сценарий 2: Интеграция с Commit Status API (GitHub/GitLab)
+
+ArgoCD может отправлять статус синхронизации напрямую в UI Git-платформы, помечая коммиты как проверенные (Check Succeeded/Failed).
+
+```yaml
+data:
+  service.github: |
+    github-app:
+      appID: 12345
+      installationID: 67890
+      privateKey: $github-private-key
 ```
 
 ## Дополнительная информация
 
-### Встроенные триггеры
+### Поддерживаемые системы
 
-| Триггер | Условие | Шаблон по умолчанию |
-| :--- | :--- | :--- |
-| `on-sync-succeeded` | Статус `Succeeded` | `app-sync-succeeded` |
-| `on-sync-failed` | Статус `Failed` или `Error` | `app-sync-failed` |
-| `on-health-degraded` | Здоровье `Degraded` | `app-health-degraded` |
-| `on-sync-running` | Процесс `Running` | `app-sync-running` |
+- **Мессенджеры:** Slack, Telegram, Discord, Microsoft Teams, Mattermost.
+- **Email:** SMTP интеграция.
+- **Git-платформы:** GitHub, GitLab, Bitbucket (Commit Status).
+- **Webhooks:** Универсальные HTTP-запросы для интеграции с любыми API.
 
-### Поддерживаемые сервисы
+### Полезные команды для диагностики
 
-- Telegram (Bots)
-- Slack (Webhooks, OAuth)
-- Email (SMTP)
-- Microsoft Teams (Webhooks)
-- GitHub/GitLab (Commit Status API)
+```bash
+# Проверка логов контроллера уведомлений (в v3.x это часть application-controller)
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller | grep notifications
+```
 
 ### См. также
 
 - [ArgoCD Overview](./argocd_overview.md)
-- [Установка и настройка ArgoCD](./argocd_installation_and_setup.md)
-- [Troubleshooting и мониторинг](./argocd_troubleshooting_and_monitoring.md)
+- [Синхронизация и её политики](./synchronization.md)
 - [GitOps: Уведомления](../gitops_notifications.md)

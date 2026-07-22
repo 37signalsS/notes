@@ -1,130 +1,169 @@
-# etcdctl: шпаргалка по командам
+# etcdctl и etcdutl: шпаргалка по командам
 
 ## Определения
 
-**etcdctl** — официальная утилита командной строки для взаимодействия с распределённым хранилищем **etcd**.
+**etcdctl** — основной клиент командной строки для сетевого взаимодействия с кластером etcd (через gRPC). Используется для работы с данными, управления участниками и мониторинга состояния.
 
-**ETCDCTL_API** — переменная окружения, определяющая версию API. Для большинства современных кластеров (включая Kubernetes) используется версия 3.
-# → export ETCDCTL_API=3
+**etcdutl** — (начиная с версии 3.6) утилита для выполнения административных задач, требующих прямого доступа к файлам данных (офлайн-операции), таких как восстановление из снапшота или миграция данных.
+
+**ETCDCTL_API** — переменная окружения, определяющая версию протокола.
+*   **API v3**: Стандарт по умолчанию в 3.6+. Для старых версий включается через `export ETCDCTL_API=3`.
+
+---
 
 ## Основные концепции
 
-Для работы с защищённым (TLS) кластером необходимо передавать пути к сертификатам и адреса узлов (endpoints).
+### Настройка окружения и аутентификация
+
+Для постоянной работы рекомендуется настроить переменные окружения, чтобы не передавать флаги TLS и адреса в каждой команде.
 
 ```bash
-# Настройка окружения
+# Базовая настройка (API v3)
 export ETCDCTL_API=3
-export ENDPOINTS="https://127.0.0.1:2379"
-export CA="/etc/etcd/ca.crt"
-export CERT="/etc/etcd/server.crt"
-export KEY="/etc/etcd/server.key"
+export ETCDCTL_ENDPOINTS="https://127.0.0.1:2379"
 
-# Шаблон команды с TLS
-etcdctl --endpoints=$ENDPOINTS --cacert=$CA --cert=$CERT --key=$KEY <command>
+# Настройка TLS (для Kubernetes и защищенных кластеров)
+export ETCDCTL_CACERT="/etc/etcd/ca.crt"
+export ETCDCTL_CERT="/etc/etcd/server.crt"
+export ETCDCTL_KEY="/etc/etcd/server.key"
+
+# Настройка аутентификации (если включен RBAC)
+export ETCDCTL_USER="admin:password"
 ```
+
+### Форматы вывода
+
+Флаг `-w` (или `--write-out`) изменяет формат ответа:
+*   `simple` — текстовый (по умолчанию).
+*   `table` — табличный (удобно для чтения).
+*   `json` — для автоматизации и скриптов.
+
+---
 
 ## Практические сценарии
 
-### Управление данными
+### Управление данными (CRUD)
 
-* **Запись и чтение ключа:**
+*   **Запись и чтение ключа:**
+    ```bash
+    etcdctl put /config/app "value1"
+    # → OK
+    etcdctl get /config/app
+    # → /config/app
+    # → value1
+    ```
 
-  ```bash
-  etcdctl put mykey "myvalue"
-  # → OK
+*   **Работа с префиксами (чтение всех ключей в директории):**
+    ```bash
+    etcdctl get /config/ --prefix
+    etcdctl get /config/ --prefix --keys-only # Только названия ключей
+    ```
 
-  etcdctl get mykey
-  # → mykey
-  # → myvalue
-  ```
+*   **Удаление:**
+    ```bash
+    etcdctl del /config/old_key
+    # → 1
+    etcdctl del /config/ --prefix # Удалить всё по префиксу
+    ```
 
-* **Чтение по префиксу:**
+### Продвинутые операции с данными
 
-  ```bash
-  etcdctl get /configs --prefix
-  # → /configs/database
-  # → postgres://...
-  # → /configs/api
-  # → https://...
-  ```
+*   **Наблюдение (Watch):** Ожидание изменений ключа в реальном времени.
+    ```bash
+    etcdctl watch /config/app
+    # → PUT
+    # → /config/app
+    # → new_value
+    ```
 
-* **Удаление ключей:**
+*   **Аренда (Lease):** Ключи с ограниченным временем жизни (TTL).
+    ```bash
+    # Создать аренду на 60 секунд
+    etcdctl lease grant 60
+    # → lease 694d5765fc71500b granted with TTL(60s)
 
-  ```bash
-  etcdctl del mykey
-  # → 1 (количество удалённых ключей)
+    # Привязать ключ к аренде
+    etcdctl put /tmp/key "val" --lease=694d5765fc71500b
 
-  etcdctl del /configs --prefix
-  # → 2
-  ```
+    # Продлить аренду
+    etcdctl lease keep-alive 694d5765fc71500b
+    ```
 
-### Состояние кластера
+*   **Распределенные блокировки (Lock):**
+    ```bash
+    etcdctl lock mutex_name
+    # → mutex_name/694d5765fc71500b (блокировка удерживается, пока команда запущена)
+    ```
 
-* **Проверка доступности узлов:**
+### Состояние и здоровье кластера
 
-  ```bash
-  etcdctl endpoint health --cluster -w table
-  # → +----------------+--------+-------+-------+
-  # → |    ENDPOINT    | HEALTH |  TOOK | ERROR |
-  # → +----------------+--------+-------+-------+
-  # → | 127.0.0.1:2379 |   true | 1.5ms |       |
-  # → +----------------+--------+-------+-------+
-  ```
+*   **Проверка здоровья всех узлов:**
+    ```bash
+    etcdctl endpoint health --cluster -w table
+    # → +----------------+--------+-------+-------+
+    # → |    ENDPOINT    | HEALTH |  TOOK | ERROR |
+    # → +----------------+--------+-------+-------+
+    # → | 127.0.0.1:2379 |   true | 1.5ms |       |
+    # → +----------------+--------+-------+-------+
+    ```
 
-* **Статус использования ресурсов (база данных, версия, лидер):**
+*   **Детальный статус (лидерство, размер БД, ревизия):**
+    ```bash
+    etcdctl endpoint status --cluster -w table
+    ```
 
-  ```bash
-  etcdctl endpoint status --cluster -w table
-  # → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
-  # → |    ENDPOINT    |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX |
-  # → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
-  # → | 127.0.0.1:2379 | 8e9e05f521f74f0d |  3.5.0  |   25 kB |      true |      false |         2 |          9 |                  9 |
-  # → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
-  ```
+*   **Управление участниками:**
+    ```bash
+    etcdctl member list -w table
+    etcdctl member add node3 --peer-urls=https://10.0.1.12:2380
+    etcdctl member remove 8e9e05f521f74f0d
+    ```
 
-* **Список участников кластера:**
+### Обслуживание и производительность
 
-  ```bash
-  etcdctl member list -w table
-  # → +------------------+---------+-------+------------------------+------------------------+------------+
-  # → |        ID        | STATUS  | NAME  |       PEER ADDRS       |      CLIENT ADDRS      | IS LEARNER |
-  # → +------------------+---------+-------+------------------------+------------------------+------------+
-  # → | 8e9e05f521f74f0d | started | node1 | http://127.0.0.1:2380  | http://127.0.0.1:2379  |      false |
-  # → +------------------+---------+-------+------------------------+------------------------+------------+
-  ```
+*   **Компакция (Сжатие истории):** Удаление старых ревизий для освобождения места.
+    ```bash
+    # Удалить все ревизии до 5000
+    etcdctl compaction 5000
+    # → compacted revision 5000
+    ```
+
+*   **Дефрагментация (Освобождение места в файловой системе):**
+    ```bash
+    etcdctl defrag --cluster
+    # → Finished defragmenting etcd member[https://127.0.0.1:2379]
+    ```
+
+*   **Проверка производительности (Perf Check):** Симуляция нагрузки.
+    ```bash
+    etcdctl check perf --load="s" # s (small), m (medium), l (large), xl (x-large)
+    # → PASS: Throughput is 150 writes/s
+    ```
 
 ### Резервное копирование и восстановление
 
-* **Создание снапшота (бэкапа):**
+*   **Создание снапшота (Online):**
+    ```bash
+    etcdctl snapshot save backup.db
+    # → Snapshot saved at backup.db
+    ```
 
-  ```bash
-  etcdctl snapshot save backup.db
-  # → Snapshot saved at backup.db
-  ```
+*   **Проверка статуса снапшота (Offline):**
+    ```bash
+    # В 3.6+ рекомендуется использовать etcdutl
+    etcdutl snapshot status backup.db -w table
+    ```
 
-* **Проверка состояния файла бэкапа:**
+*   **Восстановление (Offline):** Требует прямого доступа к новой директории данных.
+    ```bash
+    # Для etcd 3.6+
+    etcdutl snapshot restore backup.db --data-dir /var/lib/etcd-new
+    ```
 
-  ```bash
-  etcdctl snapshot status backup.db -w table
-  # → +----------+----------+------------+------------+
-  # → | HASH     | REVISION | TOTAL KEYS | TOTAL SIZE |
-  # → +----------+----------+------------+------------+
-  # → | 5f2a1b3c |       42 |        150 |      25 kB |
-  # → +----------+----------+------------+------------+
-  ```
-
-* **Восстановление из снапшота:**
-
-  ```bash
-  # Для etcd версий < 3.6
-  etcdctl snapshot restore backup.db --data-dir /var/lib/etcd-new
-
-  # Для etcd версий 3.6+ (рекомендуется использовать etcdutl)
-  etcdutl snapshot restore backup.db --data-dir /var/lib/etcd-new
-  ```
+---
 
 ## Дополнительная информация
 
-* **[Архитектура и основные концепции](./architecture-and-concepts.md)** — Lease, Watch, Revision.
-* **[Кластеризация и восстановление](./clustering_and_recovery.md)** — детальное руководство по управлению участниками и восстановлению.
-* **[MVCC и версионирование](./mvcc_versioning_and_compaction.md)** — работа с историей изменений и сжатием данных.
+*   **[Архитектура и основные концепции](./architecture-and-concepts.md)** — глубокое понимание WAL, Raft и Revision.
+*   **[Кластеризация и восстановление](./clustering_and_recovery.md)** — процедуры замены узлов и災害 восстановление.
+*   **[MVCC и версионирование](./mvcc_versioning_and_compaction.md)** — подробнее о ревизиях и транзакциях.

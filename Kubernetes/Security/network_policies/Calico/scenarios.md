@@ -6,17 +6,19 @@
 
 ## Определения
 
-**Calico Scenarios** — прикладные конфигурации ресурсов Calico (`HostEndpoint`, `GlobalNetworkPolicy`), предназначенные для решения конкретных задач безопасности, таких как создание внешнего периметра защиты или аудит трафика.
+**Практический сценарий (Scenario)** — прикладная конфигурация ресурсов Calico (`HostEndpoint`, `GlobalNetworkPolicy`, `GlobalNetworkSet`), предназначенная для решения конкретных задач безопасности, таких как создание внешнего периметра защиты или аудит трафика.
+
+**Периметральный файрвол** — стратегия защиты, при которой фильтрация трафика происходит на физических интерфейсах узлов кластера еще до его попадания во внутреннюю сеть Kubernetes.
 
 ## Основные концепции
 
 Для успешной реализации сценариев необходимо понимание следующих механизмов:
 
-- **HostEndpoint**: Привязка политик к физическим интерфейсам узлов.
-- **preDNAT**: Фильтрация трафика до трансляции адресов (критично для защиты NodePort).
-- **Order (Приоритет)**: Порядок обработки правил в цепочке политик.
+* **HostEndpoint**: Привязка политик к физическим интерфейсам узлов. Может создаваться вручную или автоматически через параметр `autoHostEndpoints` в `FelixConfiguration`.
+* **preDNAT**: Фильтрация трафика до трансляции адресов (DNAT). Это критично для защиты сервисов типа `NodePort`.
+* **Приоритет (Order)**: Определяет порядок применения политик. Политики с меньшим значением `order` обрабатываются первыми.
 
-*Подробное описание концепций: [Calico HostEndpoint и GlobalNetworkPolicy — Основные концепции](./index.md#основные-концепции)*
+*Подробное описание концепций: [Подробные определения Calico](./index.md)*
 
 ## Практические сценарии
 
@@ -25,8 +27,6 @@
 **Задача:** Создать защитный контур на уровне узлов, который разрешает только доверенный трафик и блокирует всё остальное.
 
 #### Шаг 1: Определение HostEndpoint для сетевых интерфейсов узлов
-
-Необходимо создать `HostEndpoint` для каждого интерфейса на каждом узле, который вы хотите защитить.
 
 ```yaml
 # host-endpoints.yaml
@@ -45,8 +45,6 @@ spec:
 
 #### Шаг 2: Создание разрешающей политики (Высокий приоритет)
 
-Эта политика разрешает легитимный внутренний трафик кластера.
-
 ```yaml
 # allow-cluster-internal.yaml
 apiVersion: projectcalico.org/v3
@@ -62,19 +60,17 @@ spec:
   egress:
     - action: Allow
   ingress:
-    # Разрешить трафик между узлами
+    # Разрешить трафик между узлами кластера
     - action: Allow
       source:
         selector: "endpoint-type == 'cluster-perimeter'"
-    # Разрешить трафик от Pod'ов (используйте ваш Pod CIDR)
+    # Разрешить трафик от подов (Pod CIDR)
     - action: Allow
       source:
         nets: ["10.244.0.0/16"]
 ```
 
 #### Шаг 3: Создание запрещающей политики (Низкий приоритет)
-
-Политика `Default Deny` для периметра, которая сработает, если трафик не подошел ни под одно разрешающее правило.
 
 ```yaml
 # default-deny-perimeter.yaml
@@ -94,7 +90,7 @@ spec:
 
 ### Сценарий 2: Аудит и логирование заблокированного трафика
 
-Для анализа попыток вторжения или отладки политик можно использовать действие `Log`.
+Использование действия `Log` позволяет анализировать попытки несанкционированного доступа.
 
 ```yaml
 # log-and-deny.yaml
@@ -113,12 +109,62 @@ spec:
     - action: Deny
 ```
 
-Просмотр логов: `journalctl -u calico-node -f | grep "calico-drop"` или в системном логе `/var/log/syslog`.
+Просмотр результатов логирования:
+```bash
+journalctl -u calico-node -f | grep "calico-drop"
+# → calico-drop: IN=eth0 OUT= MAC=... SRC=192.168.1.50 DST=192.168.1.10 PROTO=TCP SPT=45678 DPT=22
+```
+
+### Сценарий 3: Группировка внешних сетей (GlobalNetworkSet)
+
+**Задача:** Разрешить доступ к API-серверу только из доверенных офисных подсетей.
+
+#### Шаг 1: Создание набора доверенных IP
+
+```yaml
+# trusted-office-networks.yaml
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkSet
+metadata:
+  name: trusted-office-networks
+  labels:
+    network-type: trusted
+spec:
+  nets:
+    - 192.168.10.0/24
+    - 10.0.50.0/24
+```
+
+#### Шаг 2: Применение политики доступа
+
+```yaml
+# restrict-api-access.yaml
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: restrict-api-access
+spec:
+  order: 20
+  selector: "node-role == 'control-plane'"
+  preDNAT: true
+  types: [Ingress]
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: "network-type == 'trusted'"
+      destination:
+        ports: [6443]
+    - action: Deny
+      protocol: TCP
+      destination:
+        ports: [6443]
+```
 
 ## Дополнительная информация
 
 ### Связанные ресурсы
 
-- **Диагностика и команды**: [Операции Calico: Диагностика и обслуживание](./operations.md)
-- **Общая сетевая безопасность**: [NetworkPolicy: Сетевая безопасность](../../network_policies.md)
-- **Лучшие практики**: [NetworkPolicy: Лучшие практики](../../../Networking/Network/NetworkPolicy/best_practices.md)
+* **Подробные определения**: [Calico HostEndpoint и GlobalNetworkPolicy — Определения](./index.md)
+* **Диагностика и команды**: [Операции Calico: Диагностика и обслуживание](./operations.md)
+* **Лучшие практики**: [NetworkPolicy: Лучшие практики](../../../Networking/Network/NetworkPolicy/best_practices.md)

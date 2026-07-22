@@ -1,10 +1,22 @@
-# NFS Server Provisioner (устаревший Helm-чарт)
+# NFS Server Provisioner (Встроенный NFS-сервер через Helm)
+
+> **Статус: Archived / Deprecated.** Helm-чарт `stable/nfs-server-provisioner` официально заархивирован. Он содержит устаревшие API-версии (например, `policy/v1beta1`), которые удалены в Kubernetes 1.25+. Используйте данный метод исключительно в целях обучения или в изолированных legacy-средах.
 
 ## Определения
 
-**NFS Server Provisioner (Helm-чарт)** — устаревший Helm-чарт `stable/nfs-server-provisioner` (версия 1.8.0+), разворачивающий монолитное приложение (StatefulSet) со встроенным NFS-сервером и provisioner для Kubernetes.
+**NFS Server Provisioner (Helm-чарт)** — это устаревший способ развертывания NFS-сервера непосредственно внутри кластера Kubernetes в виде монолитного приложения (`StatefulSet`).
 
-> **Статус:** Чарт **не поддерживается** и находится в архивном репозитории. Используйте только для тестовых и учебных сред.
+В отличие от классических решений (например, `nfs-subdir-external-provisioner`), где провизионер подключается к внешнему хранилищу, данный чарт объединяет в одном поде и серверную часть, и логику взаимодействия с Kubernetes API.
+
+**Основные характеристики:**
+- **Встроенный сервер:** NFS-экспорт создается внутри самого пода.
+- **Локальное хранение:** Использует `hostPath` на узле как основу для всех динамических томов.
+- **Динамический провижининг:** Автоматически создает поддиректории и PV при появлении PVC с соответствующим `StorageClass`.
+
+**Назначение:**
+- Быстрое создание RWX-хранилища в однонодовых кластерах (Minikube, MicroK8s).
+- Тестирование механизмов динамического выделения томов без внешней инфраструктуры.
+- Обучающие сценарии и лабораторные работы.
 
 ---
 
@@ -12,50 +24,53 @@
 
 ### Архитектура
 
-В отличие от `nfs-subdir-external-provisioner`, который использует внешний NFS-сервер, этот чарт объединяет в одном поде:
+Система разворачивается как `StatefulSet` с одной репликой. Это необходимо для сохранения стабильного сетевого идентификатора и корректной работы блокировок файловой системы.
 
-- Встроенный NFS-сервер
-- Provisioner для интеграции с Kubernetes
+**Компоненты внутри пода:**
+1. **Ganesha NFS / Kernel NFS:** Программный сервер, обеспечивающий экспорт директорий.
+2. **NFS Provisioner:** Контроллер, который слушает Kubernetes API и создает поддиректории в основной "шаре".
 
-Хранилище использует `hostPath` volume на ноде, что создаёт критическую зависимость от конкретной ноды.
+**Зависимость от узла:** Хранилище привязано к конкретной ноде через `hostPath`. Если под переедет на другую ноду, он не найдет свои старые данные.
 
-> **Подробнее:** [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md) — современный аналог с внешним NFS-сервером.
+> **Подробнее:** [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md) — современный и рекомендуемый аналог для работы с внешними серверами.
 
 ### Принцип работы
 
-1. StatefulSet запускается на конкретной ноде (опционально через `nodeSelector`)
-2. Provisioner создаёт StorageClass `nfs`
-3. При создании PVC provisioner динамически выделяет хранилище из `hostPath` volume пода
-4. Данные записываются на локальный диск ноды
+1. **Запуск:** Под монтирует локальную директорию узла (например, `/var/lib/nfs-storage`).
+2. **Регистрация:** Создается `StorageClass` (по умолчанию `nfs`).
+3. **Выделение:** При создании PVC на 100Mi, провизионер создает папку внутри монтирования и генерирует объект `PersistentVolume`, указывающий на IP пода и эту папку.
+4. **Монтирование:** Клиентские поды подключаются к IP-адресу пода-сервера через стандартный протокол NFS.
 
 ---
 
 ## Практические сценарии
 
-### Установка через Helm
+### Полный цикл установки и настройки
 
-#### Подготовка
+#### Шаг 1: Подготовка окружения
 
-**Шаг 1: Создание namespace**
+Создайте отдельное пространство имен для изоляции ресурсов хранения:
 
 ```bash
-kubectl create namespace nfs
-# → namespace/nfs created
+kubectl create namespace nfs-storage
+# → namespace/nfs-storage created
 ```
 
-**Шаг 2: Добавление репозитория**
+#### Шаг 2: Подключение архивного репозитория
+
+Репозиторий `stable` больше не обновляется, но чарты доступны в архиве:
 
 ```bash
-# Добавление репозитория (можно использовать кастомное имя)
 helm repo add stable https://charts.helm.sh/stable
 helm repo update
 # → Hang tight while we grab the latest from your chart repositories...
 ```
 
-**Шаг 3: Скачивание и распаковка чарта**
+#### Шаг 3: Скачивание и исправление чарта
+
+Поскольку чарт старый, рекомендуется скачать его локально для возможной правки API-версий (если ваш кластер v1.25+):
 
 ```bash
-# Скачивание чарта
 helm pull stable/nfs-server-provisioner --untar
 # → Создаётся директория nfs-server-provisioner/
 
@@ -64,208 +79,151 @@ ls nfs-server-provisioner/
 # → Chart.yaml  values.yaml  templates/
 ```
 
-**Шаг 4: Правка values.yaml**
+#### Шаг 4: Конфигурация (values.yaml)
 
-Ключевые параметры для редактирования:
+Отредактируйте `nfs-server-provisioner/values.yaml`. Важно настроить персистентность и привязку к ноде:
 
 ```yaml
 # nfs-server-provisioner/values.yaml
 
-# Включение персистентности
 persistence:
   enabled: true
-  size: 10Gi  # Размер должен соответствовать доступному месту на ноде
+  size: 10Gi  # Общий объем дискового пространства на ноде
 
-# StorageClass как default (опционально)
 storageClass:
-  defaultClass: true
+  name: nfs-internal
+  defaultClass: false
 
-# NodeSelector для привязки пода к конкретной ноде
+# Обязательно для hostPath: привязка к конкретной железной ноде
 nodeSelector:
-  kubernetes.io/hostname: node2  # Указать целевую ноду
+  kubernetes.io/hostname: "worker-01" 
 ```
 
-> **Важно:** Параметр `persistence.size` должен соответствовать реальному доступному месту на ноде. Проверить: `df -h`.
+#### Шаг 5: Создание базового PV (Подложка)
 
-**Шаг 5: Создание PersistentVolume**
-
-Перед установкой чарта необходимо создать PV, который будет использовать provisioner:
+Перед установкой чарта создайте PV, который под провизионера будет использовать как свое хранилище:
 
 ```yaml
-# pv.yaml
+# nfs-root-pv.yaml
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: nfs-pv
+  name: nfs-root-pv
 spec:
   capacity:
-    storage: 10Gi  # Должно совпадать с persistence.size в values.yaml
+    storage: 10Gi
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ""
   hostPath:
-    path: /data/nfs  # Путь на ноде для хранения данных
+    path: /data/nfs-export  # Путь на диске ноды worker-01
+---
+# nfs-root-pvc.yaml (если чарт требует существующий PVC)
+# Обычно чарт сам создает PVC, если persistence.enabled=true
 ```
 
-```bash
-kubectl apply -f pv.yaml
-# → persistentvolume/nfs-pv created
-
-# Проверка
-kubectl get pv
-# → NAME     CAPACITY   STATUS    RECLAIM POLICY
-# → nfs-pv   10Gi       Available Retain
-```
-
-#### Установка чарта
+#### Шаг 6: Установка
 
 ```bash
-# Установка с кастомным именем
-helm install nfs-server stable/nfs-server-provisioner \
-  --namespace nfs \
+helm install nfs-server ./nfs-server-provisioner \
+  --namespace nfs-storage \
   -f nfs-server-provisioner/values.yaml
 ```
 
-> **Примечание:** Для передачи сложных структур (nodeSelector) рекомендуется использовать модифицированный `values.yaml` через флаг `-f values.yaml`.
+### Проверка и тестирование
 
-#### Проверка работоспособности
+#### 1. Валидация развертывания
 
 ```bash
-# Проверка пода (StatefulSet)
-kubectl get pods -n nfs
+# Проверка пода
+kubectl get pods -n nfs-storage
 # → NAME                    READY   STATUS    RESTARTS   AGE
-# → nfs-server-provisioner-0   1/1     Running   0          30s
+# → nfs-server-provisioner-0   1/1     Running   0          1m
 
 # Проверка StorageClass
 kubectl get storageclass
-# → NAME   PROVISIONER                          RECLAIMPOLICY   VOLUMEBINDINGMODE
-# → nfs    cluster.local/nfs-server-provisioner   Delete          Immediate
-
-# Просмотр логов
-kubectl logs -n nfs nfs-server-provisioner-0
+# → NAME           PROVISIONER                            RECLAIMPOLICY   VOLUMEBINDINGMODE
+# → nfs-internal   cluster.local/nfs-server-provisioner   Delete          Immediate
 ```
 
-### Тестирование динамического выделения хранилища
+#### 2. Тестирование динамического PVC
 
-#### Шаг 1: Создание PVC
+Создайте запрос на том:
 
 ```yaml
 # test-pvc.yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: dynamic-volume-claim
-  namespace: nfs
+  name: dynamic-nfs-pvc
+  namespace: nfs-storage
 spec:
-  storageClassName: nfs
+  storageClassName: nfs-internal
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
-      storage: 100Mi
+      storage: 500Mi
 ```
 
 ```bash
 kubectl apply -f test-pvc.yaml
-# → persistentvolumeclaim/dynamic-volume-claim created
-
-# Проверка
-kubectl get pvc -n nfs
-# → NAME                    STATUS   VOLUME   CAPACITY   ACCESS MODES
-# → dynamic-volume-claim    Bound    ...      100Mi      RWO
+kubectl get pvc -n nfs-storage
+# → NAME              STATUS   VOLUME                                     CAPACITY   ACCESS MODES
+# → dynamic-nfs-pvc   Bound    pvc-12345678-abcd-1234-abcd-1234567890ab   500Mi      RWX
 ```
 
-#### Шаг 2: Тестирование с nginx pod
+#### 3. Проверка сохранения данных (Nginx)
 
-Создаём под с монтированием PVC для проверки сохранения данных:
+Разверните под для проверки записи:
 
 ```yaml
-# test-nginx.yaml
+# test-pod.yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nginx-test
-  namespace: nfs
+  name: storage-test-pod
+  namespace: nfs-storage
 spec:
   containers:
     - name: nginx
       image: nginx:latest
       volumeMounts:
-        - name: test-storage
-          mountPath: /usr/share/nginx/html/test
+        - name: nfs-vol
+          mountPath: /data
   volumes:
-    - name: test-storage
+    - name: nfs-vol
       persistentVolumeClaim:
-        claimName: dynamic-volume-claim
+        claimName: dynamic-nfs-pvc
 ```
 
-```bash
-# Создание пода
-kubectl apply -f test-nginx.yaml
-# → pod/nginx-test created
+**Процедура верификации:**
 
-# Ожидание запуска
-kubectl get pods -n nfs -w
-# → nginx-test   0/1   ContainerCreating   0   5s
-# → nginx-test   1/1   Running             0   25s
-```
+1. **Запись данных:**
+   ```bash
+   kubectl exec -it -n nfs-storage storage-test-pod -- bash -c "echo 'Persistence Works' > /data/test.txt"
+   ```
 
-#### Шаг 3: Запись данных и проверка
+2. **Пересоздание пода:**
+   ```bash
+   kubectl delete pod storage-test-pod -n nfs-storage
+   kubectl apply -f test-pod.yaml
+   ```
 
-```bash
-# Вход в оболочку пода
-kubectl exec -it -n nfs nginx-test -- bash
+3. **Проверка:**
+   ```bash
+   kubectl exec -it -n nfs-storage storage-test-pod -- cat /data/test.txt
+   # → Persistence Works
+   ```
 
-# Создание тестовых файлов
-ls /usr/share/nginx/html/test
-# → (пусто)
+---
 
-echo "Hello" > /usr/share/nginx/html/test/hello.yaml
-cat /usr/share/nginx/html/test/hello.yaml
-# → Hello
+## Необходимые системные пакеты
 
-mkdir /usr/share/nginx/html/test2
-echo "World" > /usr/share/nginx/html/test2/world.yaml
+Для успешного монтирования NFS на клиентских нодах должны быть установлены утилиты:
 
-exit
-```
-
-#### Шаг 4: Проверка сохранения данных при пересоздании
-
-```bash
-# Удаление пода
-kubectl delete pod nginx-test -n nfs
-# → pod "nginx-test" deleted
-
-# Пересоздание пода
-kubectl apply -f test-nginx.yaml
-
-# Ожидание запуска и проверка
-kubectl exec -it -n nfs nginx-test -- bash
-
-ls /usr/share/nginx/html/test/
-# → hello.yaml
-
-cat /usr/share/nginx/html/test/hello.yaml
-# → Hello
-
-# Данные сохранены — PVC работает корректно
-```
-
-### Необходимые пакеты
-
-Для монтирования NFS-томов к подам требуется установка NFS-клиента на все worker-ноды кластера:
-
-```bash
-# Debian/Ubuntu
-sudo apt update && sudo apt install nfs-common
-
-# CentOS/RHEL
-sudo yum install nfs-utils
-```
-
-> **Важно:** Без пакета `nfs-common` (или `nfs-utils`) поды не смогут смонтировать NFS-том. При проблемах с монтированием проверьте наличие пакета: `dpkg -l | grep nfs-common` или `rpm -q nfs-utils`.
+- **Ubuntu/Debian:** `sudo apt update && sudo apt install nfs-common -y`
+- **CentOS/RHEL/Rocky:** `sudo yum install nfs-utils -y`
 
 ---
 
@@ -273,27 +231,21 @@ sudo yum install nfs-utils
 
 ### Критические ограничения
 
-| Ограничение | Описание |
-|-------------|----------|
-| **Локальный диск ноды** | Хранилище использует `hostPath` volume — локальный диск ноды, на которой запущен под |
-| **Привязка к ноде** | При переезде пода на другую ноду данные остаются на предыдущей ноде (новая нода не имеет доступа к старым данным) |
-| **Однонодовые кластеры** | Применимо только для minikube, microk8s, однонодовых кластеров или кластеров с жёсткой привязкой пода к ноде через `nodeSelector` |
-| **Не для production** | Отсутствуют механизмы HA, миграции, репликации. При падении ноды данные недоступны |
-| **Не поддерживается** | Репозиторий заархивирован, обновления не выпускаются |
+| Ограничение | Описание | Риски |
+| :--- | :--- | :--- |
+| **Локальная привязка** | Данные хранятся на локальном диске ОДНОЙ ноды. | При выходе ноды из строя данные теряются. |
+| **Отсутствие HA** | Сервер — это одиночный под (StatefulSet с 1 репликой). | Перезагрузка пода вызывает кратковременную недоступность хранилища. |
+| **Устаревший код** | Последние обновления были несколько лет назад. | Проблемы безопасности и несовместимость с новыми K8s API. |
+| **Производительность** | Весь трафик идет через один под. | Узкое место при большом количестве клиентов. |
 
-### Когда использовать
+### Рекомендации по выбору
 
-- **Обучение:** Посмотреть, как работает динамическое выделение хранилища в Kubernetes
-- **Тестирование:** Быстрая проверка работы PVC/PV без развёртывания внешнего NFS-сервера
-- **Локальные среды:** Minikube, microk8s, kind
-- **Тестовые кластеры с одной нодой:** Где можно гарантировать запуск пода на конкретной ноде
+- **Использовать для:** локальных экспериментов, CI/CD пайплайнов в однонодовых окружениях, обучения.
+- **НЕ использовать для:** Production, баз данных, высоконагруженных систем, многонодовых кластеров с потребностью в высокой доступности.
 
-### Когда НЕ использовать
+### См. также
 
-- **Production-кластеры:** Используйте [nfs-subdir-external-provisioner](./nfs-subdir-external-provisioner.md) или [Ceph CephFS](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)
-- **Многонодовые кластеры без nodeSelector:** Данные могут остаться на старой ноде при миграции пода
-- **Важные данные:** Отсутствуют механизмы резервирования и репликации
-
-Базовые концепции: [PersistentVolume и PVC](./pv_and_pvc.md). Современный аналог: [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md). Альтернатива для RWO: [Local Path Provisioner](./local-path-provisioner.md). Альтернатива для RWX с репликацией: [Ceph CephFS](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md).
-
-Архивный репозиторий: [kubernetes-charts.storage.googleapis.com](https://charts.helm.sh/stable). Документация Kubernetes по NFS: [Volumes — NFS](https://kubernetes.io/docs/concepts/storage/volumes/#nfs).
+- Базовые концепции хранения: [PersistentVolume и PVC](./pv_and_pvc.md)
+- Рекомендуемый современный аналог: [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md)
+- Альтернатива для локальных дисков: [Local Path Provisioner](./local-path-provisioner.md)
+- Распределенное хранилище: [Ceph CephFS](./Ceph/cephfs_setup_and_usage/definitions_and_concepts.md)

@@ -2,94 +2,115 @@
 
 ## Определения
 
-**Rancher Monitoring** — интегрированное решение для развертывания и управления стеком мониторинга на базе Prometheus и Grafana в кластерах Kubernetes (K8s). Инструмент базируется на Prometheus Operator и Helm-чарте `kube-prometheus-stack`.
+**Rancher Monitoring (Monitoring V2)** — интегрированное решение для развертывания и управления стеком наблюдаемости (observability) на базе Prometheus и Grafana. Инструмент построен на базе Prometheus Operator и является оберткой над Helm-чартом `kube-prometheus-stack`, адаптированной для работы в экосистеме Rancher.
 
-**Prometheus Operator** — контроллер Kubernetes, автоматизирующий управление жизненным циклом Prometheus, Alertmanager и сопутствующих компонентов через Custom Resource Definitions (CRD — пользовательские определения ресурсов).
+**Prometheus Operator** — контроллер Kubernetes, который автоматизирует управление жизненным циклом компонентов мониторинга через Custom Resource Definitions (CRD). Он позволяет описывать цели сбора метрик и правила оповещений в виде стандартных объектов Kubernetes.
+
+**AlertmanagerConfig** — ресурс (CRD), введенный для реализации многопользовательского (multi-tenant) алертинга. Он позволяет настраивать маршруты и получателей оповещений на уровне отдельных Namespace, не требуя доступа к глобальной конфигурации Alertmanager.
 
 ## Базовые концепции
 
 ### Архитектура решения
 
-Мониторинг в Rancher реализуется через установку пакета `rancher-monitoring`, который является адаптированной версией [kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md). В состав стека входят:
+Пакет `rancher-monitoring` развертывает полный стек мониторинга внутри кластера. В актуальных версиях (Rancher v2.8+) архитектура включает:
 
-1. **Prometheus Server**: система сбора и хранения временных рядов (метрик).
-2. **Alertmanager**: компонент для обработки оповещений и их маршрутизации (Email, Slack, Webhooks).
-3. **Grafana**: платформа для визуализации данных и построения дашбордов.
-4. **Экспортеры**:
-    * **Node Exporter**: сбор метрик операционной системы узлов (CPU, RAM, диск).
-    * **Kube-State-Metrics**: экспорт состояния объектов Kubernetes API (Application Programming Interface).
+1.  **Prometheus Server**: основной компонент для сбора (scraping) и хранения метрик. Поддерживает два режима работы:
+    *   **Standard Mode**: сбор данных, хранение в локальном TSDB и выполнение правил алертинга.
+    *   **Agent Mode** (v2.8+): оптимизированный режим только для сбора и пересылки метрик (Remote Write) во внешние хранилища. Снижает потребление ресурсов на 30–40%.
+2.  **Alertmanager**: система управления оповещениями, обеспечивающая дедупликацию, группировку и доставку уведомлений.
+3.  **Grafana**: визуализация данных с набором предустановленных дашбордов для узлов кластера, компонентов Kubernetes и ресурсов Rancher.
+4.  **Экспортеры**:
+    *   **Node Exporter**: сбор системных метрик узлов.
+    *   **Kube-State-Metrics**: генерация метрик на основе состояния объектов API (Deployment, Pod, Node).
 
 ### Уровни мониторинга
 
-* **Мониторинг кластера**: охватывает системные компоненты (etcd, scheduler, controller-manager) и состояние узлов. Доступен администраторам кластера.
-* **Мониторинг приложений**: реализуется через создание ресурсов [ServiceMonitor](../Prometheus/kubernetes/operator/crd/servicemonitor.md) или [PodMonitor](../Prometheus/kubernetes/operator/crd/podmonitor.md).
+*   **Кластерный мониторинг**: сбор метрик с системных компонентов (etcd, scheduler, kube-proxy). Настраивается администратором кластера.
+*   **Пользовательский мониторинг**: сбор метрик с приложений через ресурсы `ServiceMonitor` и `PodMonitor`.
+*   **Многопользовательское оповещение**: использование `AlertmanagerConfig` для изоляции уведомлений разных команд внутри одного кластера.
 
-**Важное изменение:** начиная с Rancher версии 2.7.x, функциональность "мониторинга проектов" (Project Monitoring) с выделенными экземплярами Prometheus была удалена. Теперь используется единый кластерный экземпляр Prometheus.
+### Особенности интеграции Rancher
 
-### Особенности интеграции
-
-Rancher автоматизирует следующие аспекты:
-
-* Установка и обновление всего стека через графический интерфейс (UI).
-* Предварительная настройка дашбордов Grafana для ресурсов кластера.
-* Настройка механизмов обнаружения целей (Service Discovery) для системных компонентов кластера.
+*   **Унифицированный UI**: управление конфигурацией (Retention, Storage, Remote Write) через графический интерфейс Rancher.
+*   **Автоматизация etcd**: безопасное подключение к etcd с использованием сертификатов узлов (только для RKE/RKE2/K3s).
+*   **Интеграция с проектами**: автоматическое создание RBAC для доступа пользователей к Grafana и Prometheus.
 
 ## Практические сценарии
 
-### Включение мониторинга через интерфейс Rancher
+### Установка и настройка стека
 
-1. **Подготовка**: рекомендуется создать отдельный проект (Project) в Rancher (например, "System") для размещения ресурсов мониторинга.
-2. **Установка**:
-    * Перейдите в **Cluster Dashboard** → **Apps** → **Charts**.
-    * Выберите чарт **Monitoring**.
-    * В разделе **Helm Options** настройте параметры хранения данных (Persistence) для Prometheus и Grafana, чтобы избежать потери метрик при перезагрузке подов.
-3. **Настройка Prometheus**:
-    * Укажите срок хранения данных (Retention).
-    * Настройте лимиты ресурсов (CPU/Memory) в соответствии с размером кластера.
+1.  **Развертывание**: В интерфейсе Rancher перейдите в **Apps** → **Charts** и выберите **Monitoring**.
+2.  **Настройка хранилища (Persistence)**:
+    *   Всегда включайте `Persistent Storage` для Prometheus и Grafana в продуктивных средах.
+    *   Настройте `Retention` (срок хранения). Для длительного хранения рекомендуется использовать `Remote Write` во внешние системы (VictoriaMetrics, Thanos).
+3.  **Лимиты ресурсов**: задавайте CPU и Memory limits исходя из количества метрик (cardinality). В кластерах с 100+ узлами Prometheus может требовать 16GB+ RAM.
 
-### Сбор метрик с пользовательских приложений
+### Настройка сбора метрик с приложения
 
-Для того чтобы кластерный Prometheus начал собирать метрики с вашего приложения, необходимо:
-
-1. Настроить приложение на отдачу метрик в формате Prometheus (обычно по пути `/metrics`).
-2. Создать ресурс `ServiceMonitor` с обязательной меткой `release: rancher-monitoring`. Эта метка позволяет Prometheus Operator обнаружить ресурс.
-
-Пример `ServiceMonitor`:
+Для автоматического обнаружения приложения создайте `ServiceMonitor`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: my-app-monitor
+  name: billing-api-monitor
+  namespace: billing
   labels:
+    # Обязательная метка для обнаружения оператором в Rancher
     release: rancher-monitoring
 spec:
   selector:
     matchLabels:
-      app: my-app
+      app: billing-api
   endpoints:
-  - port: web
+  - port: metrics-port
     interval: 30s
+    path: /metrics
 ```
 
-### Мониторинг хранилища etcd
+### Настройка уведомлений через AlertmanagerConfig
 
-Поскольку etcd является критическим компонентом, его мониторинг требует доступа к TLS-сертификатам (Transport Layer Security). В Rancher это настраивается автоматически при установке чарта, если выбрана опция "Enable etcd monitoring". Подробности ручной настройки доступны в разделе [Мониторинг etcd](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/etcd-monitoring.md).
+Пример настройки отправки уведомлений в Slack для конкретного пространства имен:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: slack-notifications
+  namespace: billing
+  labels:
+    release: rancher-monitoring
+spec:
+  route:
+    receiver: 'slack-receiver'
+    groupBy: ['alertname']
+  receivers:
+  - name: 'slack-receiver'
+    slackConfigs:
+    - apiURL: 
+        name: slack-webhook-url # Ссылка на Secret
+        key: url
+      channel: '#alerts-billing'
+```
 
 ## Дополнительная информация
 
-### Статус компонентов
+### Статус компонентов и актуальность
 
-| Компонент | Статус | Рекомендация |
-|-----------|--------|--------------|
-| kube-prometheus-stack | Актуально | Основной стек в Rancher 2.x |
-| Prometheus Operator | Стабильно | Используется для управления CRD |
-| Grafana | Актуально | Рекомендуется версия 10+ |
+| Компонент | Версия (ориентир) | Статус | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Prometheus Operator** | v0.65+ | Актуально | Поддержка Agent Mode и AlertmanagerConfig |
+| **Prometheus** | v2.45+ | Актуально | LTS-ветка с оптимизацией TSDB |
+| **Grafana** | v10.x / v11.x | Актуально | Новый интерфейс и поддержка AlertmanagerConfig |
+
+### Рекомендации по эксплуатации
+
+*   **Изоляция**: Размещайте стек мониторинга в выделенных узлах (через `nodeSelector` и `tolerations`), чтобы всплески нагрузки при сборе метрик не влияли на бизнес-приложения.
+*   **Remote Write**: Используйте этот механизм для централизации мониторинга в мультикластерных средах.
+*   **Фильтрация**: Настраивайте `metricRelabelConfigs` для удаления ненужных высокочастотных метрик (например, от cAdvisor), чтобы снизить нагрузку на хранилище.
 
 **Связанные темы:**
 
-* [Обзор kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — детали конфигурации Helm-чарта.
-* [Prometheus Operator Концепции](../Prometheus/kubernetes/operator/concepts.md) — принцип работы контроллера.
-* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — альтернатива для высоконагруженных сред.
-
-См. также: [rancher_overview](./rancher_overview.md) — обзор платформы Rancher.
+* [Обзор kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/overview.md) — глубокая настройка Helm-чарта.
+* [VictoriaMetrics](../../VictoriaMetrics/overview.md) — решение для долгосрочного хранения и высокой нагрузки.
+* [rancher_overview](./rancher_overview.md) — общая архитектура платформы Rancher.

@@ -2,143 +2,149 @@
 
 ## Определения
 
-- **[Rolling Update](../../CI-CD/Deployment_Strategies/rolling_update.md):** Стратегия постепенного обновления реплик сервиса без полной остановки системы.
-- **Rollback (Откат):** Процесс возврата сервиса к предыдущей версии конфигурации или образа при обнаружении сбоев.
-- **Health Check (Проверка состояния):** Механизм, позволяющий оркестратору Swarm определять работоспособность контейнера и принимать решение о продолжении обновления или выполнении отката.
-- **Update Config:** Набор параметров в Docker Swarm, определяющий поведение системы во время обновления сервиса (параллелизм, задержки, реакция на ошибки).
+- **[Rolling Update](../../CI-CD/Deployment_Strategies/rolling_update.md):** Стратегия постепенного обновления реплик сервиса, при которой новая версия заменяет старую без полной остановки системы.
+- **Rollback (Откат):** Автоматический или ручной процесс возврата сервиса к предыдущей стабильной конфигурации при обнаружении сбоев.
+- **Health Check (Проверка состояния):** Механизм контроля работоспособности контейнера, на основе которого Swarm принимает решение о продолжении обновления или выполнении отката.
+- **Graceful Shutdown (Корректное завершение):** Процесс плановой остановки приложения, при котором оно успевает завершить текущие запросы и закрыть соединения.
 
 ## Базовые концепции
 
 ### Стратегии развертывания в Swarm
 
-Docker Swarm нативно поддерживает стратегию **Rolling Update**. Другие стратегии реализуются через внешние инструменты (например, Traefik) или манипуляцию сервисами.
+Docker Swarm нативно поддерживает стратегию **Rolling Update**. Другие стратегии (Blue-Green, Canary) реализуются на уровне манипуляции сервисами или через внешние балансировщики (Traefik).
 
 | Стратегия | Реализация в Swarm | Риск |
 |:---|:---|:---|
-| **Rolling Update** | Встроенная (через `update_config`) | Низкий |
-| **Blue-Green** | Ручная/Внешняя (через `labels` или переключение имен) | Средний |
-| **Canary** | Ручная (через запуск отдельного сервиса с малым числом реплик) | Низкий |
+| **Rolling Update** | Встроенная (секция `update_config`) | Низкий |
+| **Blue-Green** | Внешняя (переключение меток `traefik.enable` или имен сервисов) | Средний |
+| **Canary** | Ручная (создание отдельного сервиса с 1 репликой для тестов) | Низкий |
 
 Детальное сравнение подходов — в **[Сравнение стратегий развертывания](../../CI-CD/Deployment_Strategies/comparison.md)**.
 
-### Конфигурация обновления
+### Тонкая настройка обновления (update_config)
 
-Параметры блока `update_config` в `docker-compose.yml` критически важны для стабильности CI/CD:
+Параметры секции `deploy.update_config` определяют стабильность процесса CI/CD:
 
 ```yaml
 deploy:
   update_config:
-    parallelism: 1            # Сколько реплик обновлять одновременно
-    delay: 10s                # Пауза между группами обновлений
-    failure_action: rollback  # Что делать при ошибке (continue, pause, rollback)
-    monitor: 30s              # Время наблюдения за новой репликой
-    max_failure_ratio: 0.1    # Допустимая доля ошибок при обновлении
-    order: start-first        # start-first (сначала новая) или stop-first
+    parallelism: 1            # Количество реплик, обновляемых за один шаг
+    delay: 10s                # Интервал между обновлением групп реплик
+    failure_action: rollback  # Реакция на ошибку (continue, pause, rollback)
+    monitor: 30s              # Время наблюдения за новой репликой после запуска
+    max_failure_ratio: 0.1    # Допустимый процент ошибок при обновлении
+    order: start-first        # start-first (сначала новая) или stop-first (сначала удалить старую)
 ```
 
-- **`order: start-first`** предпочтителен для stateless приложений, так как минимизирует снижение пропускной способности.
-- **`failure_action: rollback`** обеспечивает автоматический возврат к стабильному состоянию без вмешательства оператора.
+- **`order: start-first`**: Новая реплика запускается рядом со старой. Рекомендуется для stateless-сервисов, так как исключает снижение пропускной способности.
+- **`order: stop-first`**: Рекомендуется при дефиците ресурсов или для singleton-задач, где недопустим запуск двух экземпляров одновременно.
+
+### Корректное завершение (Graceful Shutdown)
+
+Для предотвращения разрыва клиентских соединений при обновлении необходимо настроить параметры завершения:
+
+- **`stop_grace_period`**: Время, которое Swarm дает контейнеру после отправки `SIGTERM` перед принудительным `SIGKILL` (по умолчанию 10s).
+- **`stop_signal`**: Сигнал, используемый для остановки (например, `SIGQUIT` для Nginx).
+
+```yaml
+services:
+  app:
+    stop_grace_period: 45s
+    stop_signal: SIGQUIT
+```
 
 ### Взаимосвязь с Health Check
 
-Для корректной работы Rolling Update в Swarm обязательна настройка `healthcheck`. Оркестратор не перейдет к обновлению следующей реплики, пока текущая не перейдет в статус `healthy`.
+Оркестратор переходит к обновлению следующей реплики только после того, как текущая перейдет в статус `healthy`. Без `healthcheck` Swarm считает контейнер готовым сразу после запуска процесса, что может привести к "дропу" трафика.
 
-Подробности синтаксиса проверок в Dockerfile — в **[Инструкция HEALTHCHECK](../../Docker/Dockerfile/Instructions/health_signals.md)**.
+Подробности синтаксиса проверок — в **[Инструкция HEALTHCHECK](../../Docker/Dockerfile/Instructions/health_signals.md)**.
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка отказоустойчивого обновления
+### Сценарий 1: Конфигурация отказоустойчивого стека
 
-Пример конфигурации в `docker-compose.yml`:
+Пример для `docker-compose.yml`, объединяющий все механизмы защиты:
 
 ```yaml
 version: '3.8'
 services:
-  app:
-    image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  api:
+    image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
+    stop_grace_period: 30s
     deploy:
       replicas: 3
       update_config:
         parallelism: 1
         delay: 15s
         failure_action: rollback
+        monitor: 20s
         order: start-first
       rollback_config:
-        parallelism: 2
-        delay: 5s
-        failure_action: pause
+        parallelism: 0         # 0 = обновить все реплики сразу при откате
+        order: stop-first
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 40s       # Время на "прогрев" приложения
 ```
 
-### Сценарий 2: Мониторинг процесса обновления
+### Сценарий 2: Диагностика и мониторинг деплоя
 
-Отслеживание статуса задач сервиса во время деплоя:
+Если обновление зависло или произошел откат, используйте следующие команды для анализа:
 
 ```bash
-# Список задач сервиса с отображением ошибок
-docker service ps --no-trunc my-stack_app
+# Просмотр детального статуса обновления сервиса
+docker service inspect --pretty my-stack_api
 
-# Проверка статуса в реальном времени
-watch -n 1 "docker service ps my-stack_app | grep -v 'Shutdown'"
+# Список всех задач (контейнеров) сервиса с ошибками
+docker service ps --no-trunc my-stack_api
 
-# Просмотр журналов всех реплик (агрегированный поток)
-docker service logs -f my-stack_app
+# Просмотр логов конкретной (упавшей) задачи
+docker inspect --format '{{.Status.ContainerStatus.ContainerID}}' <task_id>
 ```
 
-### Сценарий 3: Управление откатами
+### Сценарий 3: Управление узлами (Node Drain)
 
-#### Автоматический откат
-
-Происходит, если новая реплика не проходит Health Check в течение периода `monitor` или завершается с ошибкой. Причина будет видна в `docker service inspect`.
-
-#### Ручной откат
-
-Если обновление завершилось, но обнаружены логические ошибки:
+При выводе узла на обслуживание Swarm автоматически переносит (reschedule) задачи на другие узлы, соблюдая правила `update_config`.
 
 ```bash
-# Возврат к предыдущей конфигурации через CLI
-docker service rollback my-stack_app
+# Перевод узла в режим обслуживания
+docker node update --availability drain my-worker-01
 
-# Откат через GitLab CI
-# Перезапустите (Retry) предыдущий успешный Job деплоя
+# Возврат узла в строй
+docker node update --availability active my-worker-01
 ```
 
-### Сценарий 4: Реализация Blue-Green через Traefik
+### Сценарий 4: Ручное управление откатом
 
-Схема переключения трафика между двумя независимыми стеками:
+Если автоматика не сработала (например, ошибка логическая, а не техническая):
 
-1. Развертывание новой версии (`green`) с `traefik.enable=false`.
-2. Проверка работоспособности `green` стека вручную.
-3. Переключение меток:
-
-   ```bash
-   docker service update --label-rm traefik.enable stack-blue_app
-   docker service update --label-add traefik.enable=true stack-green_app
-   ```
-
-4. Удаление старого (`blue`) стека после успешной проверки.
-
-Подробнее о работе с Ingress — в **[Traefik в Swarm](../swarm_ingress_traefik.md)**.
+```bash
+# Мгновенный откат к предыдущей версии через CLI
+docker service rollback my-stack_api
+```
 
 ## Дополнительная информация
+
+### Влияние ограничений (Placement Constraints)
+
+Параметры `placement` могут заблокировать обновление, если на подходящих узлах недостаточно ресурсов для `start-first` деплоя. Всегда проверяйте наличие свободных ресурсов в кластере перед запуском `parallelism > 1`.
 
 ### Диагностика проблем
 
 | Симптом | Причина | Решение |
 |:---|:---|:---|
-| Обновление "зависло" | Health Check не переходит в `healthy` | Проверить логи контейнера, увеличить `start_period` |
-| Сразу происходит Rollback | Ошибка в конфигурации или образе | Проверить `docker service ps` на наличие ошибок запуска |
-| Снижение производительности | `parallelism` слишком велик или `order: stop-first` | Оптимизировать параметры `update_config` |
+| Статус `STARTING` завис | Health Check не проходит | Проверить логи, увеличить `start_period` |
+| Ошибка `No such image` | Узлы не авторизованы в Registry | Проверить флаг `--with-registry-auth` |
+| Циклический Rollback | `monitor` слишком мал | Увеличить время наблюдения после запуска |
+| Разрыв соединений | Малый `stop_grace_period` | Настроить Graceful Shutdown в приложении и YAML |
 
 ### Связанные документы
 
-- **[app_deployment.md](./app_deployment.md)** — общая схема пайплайнов деплоя.
-- **[swarm_management_cli.md](../swarm_management_cli.md)** — справочник команд управления сервисами.
-- **[deployment_health_checks_and_rollback.md](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)** — общие концепции проверок здоровья в CI/CD.
-- **[mTLS + healthcheck: исключение /health из проверки](../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md#сценарий-4-исключение-healthcheck-из-mtls-docker-swarm)** — настройка nginx при mTLS и Swarm healthcheck.
-- **[swarm_ingress_traefik.md](../swarm_ingress_traefik.md)** — управление входящим трафиком.
+- **[app_deployment.md](./app_deployment.md)** — общая схема CI/CD пайплайнов.
+- **[swarm_management_cli.md](../swarm_management_cli.md)** — справочник команд управления.
+- **[deployment_health_checks_and_rollback.md](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)** — общие концепции проверок здоровья.
+- **[Traefik в Swarm](../swarm_ingress_traefik.md)** — реализация Blue-Green и маршрутизация.
+- **[nginx_mtls_configuration.md](../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md#сценарий-4-исключение-healthcheck-из-mtls-docker-swarm)** — нюансы Health Check при использовании mTLS.

@@ -1,8 +1,8 @@
-# Kubernetes Deployment: Манифест и лучшие практики
+# Манифест Kubernetes Deployment и лучшие практики
 
 ## 1. Определения
 
-**Deployment** — объект Kubernetes для декларативного управления stateless-приложениями.
+**Deployment** — объект Kubernetes для декларативного управления stateless-приложениями. Он обеспечивает автоматическое развертывание, масштабирование и обновление групп идентичных подов.
 
 Общее описание и концепции см. в основном разделе: **[Kubernetes Deployment](./index.md)**.
 
@@ -19,18 +19,28 @@ metadata:
     app: nginx
 spec:
   replicas: 3
-  revisionHistoryLimit: 3
+  revisionHistoryLimit: 5
   selector:
     matchLabels:
       app: nginx
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   template:
     metadata:
       labels:
         app: nginx
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      terminationGracePeriodSeconds: 30
       containers:
       - name: nginx
-        image: nginx:1.28.0
+        image: nginx:1.28.1-alpine
         ports:
         - containerPort: 80
         resources:
@@ -40,6 +50,12 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "250m"
+        startupProbe:
+          httpGet:
+            path: /
+            port: 80
+          failureThreshold: 30
+          periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /
@@ -59,41 +75,48 @@ spec:
 | Поле | Назначение | Рекомендация |
 | :--- | :--- | :--- |
 | `replicas` | Количество реплик | Минимум 2 для высокой доступности |
-| `revisionHistoryLimit` | История версий для отката | 3–5 для production |
-| `selector.matchLabels` | Селектор для поиска подов | Должен совпадать с `template.metadata.labels` |
-| `image` | Образ контейнера | Использовать конкретную версию (не `:latest`) |
-| `resources` | Запросы и лимиты ресурсов | Обязательно для всех контейнеров |
-| `readinessProbe` | Проверка готовности к трафику | Обязательно. Подробнее: [Probes](../probes.md) |
-| `livenessProbe` | Проверка жизнеспособности | Обязательно. Подробнее: [Probes](../probes.md) |
+| `revisionHistoryLimit` | История версий для отката | 3–5 для баланса между откатами и чистотой API |
+| `selector.matchLabels` | Селектор для поиска подов | Должен строго совпадать с `template.metadata.labels` |
+| `image` | Образ контейнера | Использовать конкретную версию и легкие образы (например, `-alpine`) |
+| `resources` | Запросы и лимиты ресурсов | Обязательно для всех контейнеров. `requests` для планировщика, `limits` для стабильности узла |
+| `startupProbe` | Проверка начального запуска | Использовать для медленно стартующих приложений, чтобы liveness не убил их раньше времени |
+| `readinessProbe` | Проверка готовности к трафику | Обязательно. Исключает неготовую реплику из Service |
+| `livenessProbe` | Проверка жизнеспособности | Обязательно. Перезапускает зависший контейнер |
+| `securityContext` | Настройки безопасности | Запуск от не-root пользователя (`runAsNonRoot: true`) — стандарт безопасности |
 
 ### Поле containerPort
 
-Поле `containerPort` в спецификации контейнера — это **мета-информация**, а не инструкция для открытия порта. Оно служит для документации и не влияет на сетевое поведение пода. Реальное управление трафиком осуществляется через объект [`Service`](../../Networking/Service/service_type_nodeport.md), который направляет трафик на фактический порт приложения через `targetPort`.
+Поле `containerPort` в спецификации контейнера — это **мета-информация**, а не инструкция для открытия порта. Оно служит для документации и позволяет инструментам (например, Service или Ingress) ссылаться на порт по имени. Реальное управление трафиком осуществляется через объект [`Service`](../../Networking/Service/service_type_nodeport.md).
 
 ## 3. Практические сценарии
 
-### Настройка стратегии обновления
+### Обеспечение высокой доступности (Topology Spread Constraints)
+
+Для равномерного распределения подов по разным зонам доступности (Availability Zones) или узлам в современных кластерах рекомендуется использовать `topologySpreadConstraints` вместо сложной настройки `affinity`.
 
 ```yaml
 spec:
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0  # Недоступных подов не должно быть
-      maxSurge: 1        # Один дополнительный под при обновлении
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: "topology.kubernetes.io/zone"
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: nginx
 ```
 
-**Варианты настройки параметров:**
+### Настройка стратегии RollingUpdate
+
+Стратегия `RollingUpdate` позволяет обновлять приложение без простоя.
 
 | Конфигурация | Поведение | Когда использовать |
 | :--- | :--- | :--- |
-| `maxUnavailable: 0`, `maxSurge: >0` | Сначала создаются новые поды, потом удаляются старые | Критичные приложения, есть запас ресурсов |
-| `maxUnavailable: >0`, `maxSurge: 0` | Сначала удаляются старые поды, потом создаются новые | Ограниченные ресурсы, допустимы кратковременные деградации |
-| `maxUnavailable: >0`, `maxSurge: >0` | Гибкое управление (по умолчанию) | Стандартный вариант |
+| `maxUnavailable: 0`, `maxSurge: 1` | Сначала создается новый под, затем удаляется старый | **Рекомендуется.** Гарантирует наличие 100% мощности во время обновления |
+| `maxUnavailable: 1`, `maxSurge: 0` | Сначала удаляется один старый под, затем создается новый | Ограниченные ресурсы в кластере, допустима кратковременная деградация |
 
 ### Многоконтейнерный Deployment (Sidecar-паттерн)
 
-Sidecar используется для расширения функциональности основного контейнера (например, проксирование трафика через Envoy или сбор логов через Fluent Bit). Контейнеры в одном поде разделяют сетевое пространство (`localhost`) и тома.
+Sidecar используется для расширения функциональности основного контейнера (логирование, проксирование, сбор метрик). Начиная с Kubernetes 1.29, sidecar-контейнеры могут быть объявлены как `initContainers` с `restartPolicy: Always`.
 
 Подробно паттерны описаны в [Sidecar Patterns](../Pod/pod_sidecar_patterns.md).
 
@@ -101,13 +124,14 @@ Sidecar используется для расширения функциона�
 
 ### Лучшие практики
 
-- **Образы:** используйте конкретные версии или хэши и `imagePullPolicy: IfNotPresent`.
-- **Проверки здоровья:** всегда настраивайте `readinessProbe` и `livenessProbe` для предотвращения направления трафика на неисправные поды.
-- **Ресурсы:** установка `requests` и `limits` критична для планировщика (scheduler) и предотвращения OOM (Out Of Memory).
-- **Безопасность:** запускайте процессы от непривилегированного пользователя. Подробнее: [Security Context](../../Security/pod_security_context.md).
+1.  **Immutability (Неизменяемость):** Никогда не используйте тег `:latest`. Всегда указывайте конкретную версию образа.
+2.  **Graceful Termination:** Настраивайте `terminationGracePeriodSeconds` (по умолчанию 30с) в зависимости от того, как быстро ваше приложение может завершить текущие запросы.
+3.  **Probes:** Настраивайте триаду проверок (`startup`, `readiness`, `liveness`) с разумными таймаутами.
+4.  **Безопасность:** Минимизируйте привилегии контейнера через `securityContext`. Используйте `readOnlyRootFilesystem: true`, если приложение не пишет на диск.
+5.  **Affinity vs Spreading:** Предпочитайте `topologySpreadConstraints` для обеспечения отказоустойчивости на уровне дата-центров.
 
 ### См. также
 
-- Основной раздел: [Kubernetes Deployment](./index.md)
-- Управление жизненным циклом: [lifecycle_management.md](./lifecycle_management.md)
-- Сравнение стратегий: [Сравнение стратегий развертывания](../../../CI-CD/Deployment_Strategies/comparison.md)
+- [Управление жизненным циклом (Rollout/Rollback)](./lifecycle_management.md)
+- [Проверки состояния (Probes)](../probes.md)
+- [Стратегии развертывания](../../../CI-CD/Deployment_Strategies/comparison.md)

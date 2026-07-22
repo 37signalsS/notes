@@ -1,170 +1,167 @@
-# Git Attributes — обработка файлов
+# Атрибуты Git — обработка файлов
 
 ## Определения
 
-**`.gitattributes`** — декларативный конфигурационный файл Git, определяющий правила обработки файлов: нормализацию окончаний строк, фильтры, драйверы diff/merge, атрибуты для GitHub Linguist.
+**`.gitattributes`** — декларативный конфигурационный файл Git, определяющий правила обработки конкретных путей (файлов и директорий). Он позволяет управлять нормализацией окончаний строк, фильтрами (LFS, шифрование), драйверами сравнения (diff) и слияния (merge), а также метаданными для внешних инструментов (например, GitHub Linguist).
 
 ---
 
 ## Базовые концепции
 
-### Принцип работы
+### Принцип работы и иерархия
 
-Git проверяет `.gitattributes` в иерархии директорий:
+Git проверяет атрибуты в следующем порядке (последнее найденное правило побеждает):
 
-1. **Корень репозитория** — базовые правила для всего проекта
-2. **Вложенные директории** — переопределяют правила для подкаталогов
-3. **`.git/info/attributes`** — локальные атрибуты, не коммитятся
+1. **Глобальный файл** — путь задается через `git config --global core.attributesFile` или используется по умолчанию `~/.config/git/attributes`.
+2. **`.git/info/attributes`** — локальные правила репозитория, не коммитятся.
+3. **Корень репозитория (`/.gitattributes`)** — базовые правила проекта.
+4. **Вложенные директории (`/path/to/.gitattributes`)** — переопределяют правила для подкаталогов.
 
-Правила применяются к файлам при добавлении в индекс (`git add`).
+Атрибуты применяются к файлам при их добавлении в индекс (`git add`) или при извлечении из индекса в рабочую директорию (`git checkout`).
 
 ### Основные атрибуты
 
 | Атрибут | Описание |
 | :--- | :--- |
-| `text` | Нормализовать окончания строк (CRLF ↔ LF при checkout/commit) |
-| `binary` | Не делать diff/merge, обрабатывать как бинарные |
-| `eol=lf` / `eol=crlf` | Принудительная нормализация к LF или CRLF |
-| `merge=ours` | Автоматически разрешать конфликты в пользу текущей ветки |
-| `merge=union` | Объединять все изменения при конфликте |
-| `filter=<name>` | Применить фильтр (например, `lfs`, `git-crypt`) |
-| `diff=<name>` | Использовать кастомный драйвер diff |
-| `linguist-vendored` | Исключить из статистики языков GitHub |
-| `linguist-generated` | Сворачивать в diffs на GitHub |
-| `linguist-documentation` | Исключить из статистики языков GitHub |
-
-### Синтаксис паттернов
-
-```gitattributes
-# Паттерн с расширением
-*.json diff=json
-
-# Паттерн по пути
-vendor/* linguist-vendored
-
-# Отрицание
-!important.config
-
-# Комбинация паттернов
-*.{png,jpg,gif} binary
-```
+| `text` | Включает нормализацию окончаний строк (CRLF ↔ LF). Значение `auto` позволяет Git самому определять текстовые файлы. |
+| `eol=lf` / `eol=crlf` | Принудительная нормализация к конкретному типу окончаний строк. |
+| `working-tree-encoding` | Перекодирование файла при извлечении (например, из UTF-8 в UTF-16LE для Windows). |
+| `binary` | Сокращение для `-diff -merge -text`. Файл обрабатывается как бинарный. |
+| `ident` | Включает замену строки `$Id$` на SHA-1 хеш объекта при извлечении файла. |
+| `filter=<name>` | Применяет внешние фильтры (clean/smudge). Используется в Git LFS и git-crypt. |
+| `diff=<name>` | Назначает кастомный драйвер для генерации diff (например, `textconv` для JSON или PDF). |
+| `merge=<strategy>` | Определяет стратегию слияния (`ours`, `union`, `binary`). |
+| `export-ignore` | Исключает файл или директорию из архива при выполнении `git archive`. |
+| `export-subst` | Включает подстановку переменных (например, `$Format:%H$`) в файле при архивации. |
+| `linguist-*` | Атрибуты для GitHub: скрытие файлов (`generated`), изменение статистики языков (`vendored`). |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Нормализация окончаний строк
+### Сценарий 1: Кроссплатформенная нормализация строк
 
-Для кроссплатформенной разработки:
+Рекомендуемая настройка для проектов, где разработчики используют разные ОС (Windows, Linux, macOS).
 
 ```gitattributes
-# Все текстовые файлы нормализуются к LF
+# Автоматическое определение текстовых файлов и их нормализация к LF в индексе
 * text=auto
 
-# Скрипты всегда с LF
+# Явное указание для типов файлов
 *.sh text eol=lf
 *.bash text eol=lf
+*.py text
 
-# Windows-файлы с CRLF
+# Файлы, которые должны сохранить CRLF на Windows
 *.bat text eol=crlf
-*.cmd text eol=crlf
 *.ps1 text eol=crlf
 ```
 
-### Сценарий 2: Git LFS для бинарных файлов
+### Сценарий 2: Поддержка специфических кодировок
+
+Иногда инструменты требуют файлы в определенных кодировках (например, SQL-скрипты в UTF-16 на Windows), но в Git их удобнее хранить как UTF-8.
 
 ```gitattributes
-# Графические ресурсы через LFS
-*.psd filter=lfs diff=lfs merge=lfs
-*.ai filter=lfs diff=lfs merge=lfs
-*.sketch filter=lfs diff=lfs merge=lfs
-
-# Видео и аудио
-*.mp4 filter=lfs diff=lfs merge=lfs
-*.mov filter=lfs diff=lfs merge=lfs
-*.mp3 filter=lfs diff=lfs merge=lfs
-
-# Датасеты
-*.csv filter=lfs diff=lfs merge=lfs
-*.parquet filter=lfs diff=lfs merge=lfs
+# Хранить в Git как UTF-8, но в рабочей директории использовать UTF-16LE-with-BOM
+*.sql working-tree-encoding=UTF-16LE-with-BOM
 ```
 
-Требуется установка [Git LFS](https://git-lfs.com/) и инициализация: `git lfs install`.
+### Сценарий 3: Настройка Git LFS и бинарных данных
 
-### Сценарий 3: GitHub Linguist — точная статистика языков
+Подробная информация о LFS — в [git_lfs.md](./git_lfs.md).
 
 ```gitattributes
-# Исключить vendor-библиотеки
+# Обработка изображений и архивов как бинарных данных
+*.png binary
+*.zip binary
+
+# Передача тяжелых файлов в Git LFS
+*.psd filter=lfs diff=lfs merge=lfs
+*.mp4 filter=lfs diff=lfs merge=lfs
+```
+
+### Сценарий 4: Кастомизация GitHub (Linguist)
+
+Помогает сделать статистику языков в репозитории более точной и скрыть лишние файлы в diff.
+
+```gitattributes
+# Пометить директорию как сторонний код (не учитывать в статистике)
 vendor/* linguist-vendored
 third_party/* linguist-vendored
 
-# Сгенерированные файлы
+# Скрывать сгенерированные файлы в pull requests
 *.gen.go linguist-generated
-*.pb.go linguist-generated
-dist/* linguist-generated
+api_schema.json linguist-generated
 
-# Документация
-docs/* linguist-documentation
-README.* linguist-documentation
-
-# Конфигурационные файлы
-*.lock linguist-vendored
-package-lock.json linguist-vendored
+# Принудительно задать язык для файла
+*.inc linguist-language=cpp
 ```
 
-### Сценарий 4: Кастомный diff для JSON
+### Сценарий 5: Стратегии слияния для специфических файлов
+
+Помогает избежать конфликтов в файлах, которые генерируются автоматически или имеют специфическую структуру.
 
 ```gitattributes
-*.json diff=json
-```
-
-```ini
-# .git/config
-[diff "json"]
-    textconv = jq '.'
-```
-
-### Сценарий 5: Автоматическое разрешение конфликтов
-
-```gitattributes
-# Файлы зависимостей — всегда принимать локальную версию
+# Для lock-файлов: при конфликте всегда отдавать предпочтение версии в текущей ветке
 package-lock.json merge=ours
 yarn.lock merge=ours
-pnpm-lock.yaml merge=ours
 
-# Файлы проектов IDE — объединять
+# Для файлов, где изменения можно просто объединять (например, списки или файлы настроек IDE)
 *.iml merge=union
+history.log merge=union
 ```
 
-### Сценарий 6: Шифрование через git-crypt
+### Сценарий 6: Управление содержимым архивов
+
+Используется для исключения служебных файлов из релизных архивов `git archive`.
 
 ```gitattributes
-# Шифровать чувствительные файлы
-secrets/*.yml filter=git-crypt diff=git-crypt
-*.env filter=git-crypt diff=git-crypt
-```
+# Не включать тесты и конфигурацию CI в архив
+/tests export-ignore
+.github export-ignore
+.gitignore export-ignore
 
-Требуется установка [git-crypt](https://github.com/AGWA/git-crypt) и инициализация: `git-crypt init`.
+# Подставлять версию в специальный файл
+version.txt export-subst
+```
+*Файл `version.txt` может содержать: `Last commit: $Format:%H$`.*
 
 ---
 
 ## Дополнительная информация
 
-### Отладка атрибутов
+### Отладка и диагностика
+
+Для проверки того, какие атрибуты применяются к конкретному файлу, используйте команду `git check-attr`.
 
 ```bash
-# Проверить атрибуты для файла
-git check-attr -a -- <файл>
+# Проверить все атрибуты для файла
+git check-attr -a -- path/to/file
 
-# Проверить атрибуты для всех файлов
-git check-attr -a -- '*'
+# Проверить конкретный атрибут для группы файлов
+git check-attr diff -- *.json
+
+# Проверить атрибуты в конкретной ветке или коммите (Git 2.40+)
+git check-attr -a --source=HEAD -- path/to/file
+```
+
+### Работа в bare-репозиториях
+
+В bare-репозиториях (например, на сервере) нет рабочей директории с файлом `.gitattributes`. Чтобы Git знал, как обрабатывать объекты (например, для LFS или корректного diff в веб-интерфейсе), можно явно указать источник атрибутов:
+
+```bash
+# Использовать .gitattributes из ветки main
+git config attr.tree main
 ```
 
 ### Официальные ресурсы
 
-- **Спецификация:** [git-scm.com/docs/gitattributes](https://git-scm.com/docs/gitattributes)
+- **Документация Git:** [git-scm.com/docs/gitattributes](https://git-scm.com/docs/gitattributes)
 - **GitHub Linguist:** [github.com/github-linguist/linguist](https://github.com/github-linguist/linguist)
 
 ### Связанные документы
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Конфигурация LFS описана в [git_lfs_config.md](./git_lfs_config.md), игнорирование файлов — в [git_ignore.md](./git_ignore.md).
+- [Специальные файлы Git](./git_special_files_overview.md) — обзор всей конфигурации.
+- [Git LFS](./git_lfs.md) — работа с большими файлами.
+- [Конфигурация Git](./git_configuration.md) — общие настройки (включая `git-crypt`).
+- [Игнорирование файлов](./git_ignore.md) — различия между атрибутами и `.gitignore`.

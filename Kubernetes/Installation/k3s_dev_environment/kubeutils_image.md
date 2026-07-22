@@ -1,8 +1,8 @@
 # Вспомогательный образ Kubeutils
 
-Руководство по созданию универсального образа с утилитами для работы с Kubernetes в пайплайнах CI/CD (Continuous Integration / Continuous Deployment). Образ используется для сборки, валидации и развертывания приложений в кластере K3s.
+Руководство по созданию универсального образа с утилитами для работы с Kubernetes в пайплайнах CI/CD. Образ используется для сборки, валидации и развертывания приложений в кластере K3s.
 
-> **Контекст:** Часть серии по созданию dev-окружения в K3s. Образ используется в пайплайнах GitLab CI для взаимодействия с Harbor и Kubernetes. См. [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
+Контекст: Часть серии по созданию dev-окружения в K3s. Образ используется в пайплайнах GitLab CI для взаимодействия с Harbor и Kubernetes. См. [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md).
 
 ---
 
@@ -10,11 +10,12 @@
 
 | Термин | Описание |
 |--------|----------|
-| **Kubeutils** | Вспомогательный образ с набором утилит CLI (Command Line Interface): `kubectl`, `helm`, `regctl`, `kubeconform`. Используется в CI/CD для работы с Kubernetes |
+| **Kubeutils** | Вспомогательный образ с набором утилит CLI: `kubectl`, `helm`, `regctl`, `kubeconform`. Используется в CI/CD для работы с Kubernetes |
 | **Kaniko** | Инструмент сборки Docker-образов без демона Docker. Запускается в контейнере, идеален для Kubernetes. См. [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md) |
 | **Build Args** | Переменные, передаваемые в Dockerfile во время сборки. Позволяют кастомизировать версии утилит |
+| **OCI** | Open Container Initiative — стандарт для форматов образов и сред выполнения контейнеров |
 
-**Навигация:** [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md) | [Docker Best Practices](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md) | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)
+Навигация: [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md) | [Docker Best Practices](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md) | [GitLab CI Basics](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md)
 
 ---
 
@@ -26,48 +27,46 @@
 
 | Утилита | Назначение |
 |---------|------------|
-| **`kubectl`** | Взаимодействие с Kubernetes API (Application Programming Interface) (развертывание, диагностика) |
+| **`kubectl`** | Взаимодействие с Kubernetes API (развертывание, диагностика) |
 | **`helm`** | Управление Helm-чартами (установка, обновление, откат) |
-| **`regctl`** | Работа с OCI (Open Container Initiative) реестрами (тегирование, копирование образов) |
+| **`regctl`** | Работа с OCI реестрами (тегирование, копирование образов) |
 | **`kubeconform`** | Валидация манифестов Kubernetes против схем API |
 
-**Преимущества единого образа:**
+Преимущества единого образа:
 
-- **Воспроизводимость:** Одинаковые версии утилит во всех пайплайнах
-- **Скорость:** Не требуется установка утилит в каждом джобе
-- **Безопасность:** Централизованное обновление и контроль версий
+- **Воспроизводимость:** Одинаковые версии утилит во всех пайплайнах, что исключает ошибки из-за разницы версий в разных окружениях.
+- **Скорость:** Не требуется установка утилит в каждом джобе, образ содержит все необходимое и готов к выполнению команд сразу.
+- **Безопасность:** Централизованное обновление версий, контроль состава инструментов и возможность сканирования единого базового образа на уязвимости.
+- **Масштабируемость:** Легкое расширение набора инструментов для всех проектных команд путем обновления одного Dockerfile.
 
 ### Почему Kaniko для сборки?
 
-В средах CI/CD (GitLab CI, Kubernetes) доступ к Docker-демону ограничен или отсутствует.
+В средах CI/CD (GitLab CI, Kubernetes) доступ к Docker-демону часто ограничен по соображениям безопасности или из-за особенностей инфраструктуры.
 
-| Подход | Требования | Безопасность |
-|--------|------------|--------------|
-| **Docker-in-Docker (dind)** | Привилегированный режим | Низкая |
-| **Docker-outside-of-Docker (DooD)** | Доступ к `/var/run/docker.sock` | Низкая |
-| **Kaniko** | Непривилегированный контейнер | Высокая |
+| Подход | Требования | Безопасность | Особенности |
+|--------|------------|--------------|-------------|
+| **Docker-in-Docker (dind)** | Привилегированный режим | Низкая | Требует `--privileged`, что открывает доступ к хост-системе |
+| **Docker-outside-of-Docker (DooD)** | Доступ к `/var/run/docker.sock` | Низкая | Контейнер может управлять всеми образами и контейнерами хоста |
+| **Kaniko** | Непривилегированный контейнер | Высокая | Работает в userspace, не требует демон или привилегии |
 
-**Kaniko:**
-
-- Выполняет команды `Dockerfile` в userspace
-- Не требует Docker-демона
-- Работает в непривилегированных подах Kubernetes
-
-Подробности в [Kaniko Overview](../../../Docker/Dockerfile/dockerfile_kaniko.md).
+Kaniko:
+- Выполняет команды Dockerfile внутри файловой системы контейнера.
+- Не зависит от Docker-демона.
+- Работает в стандартных (непривилегированных) подах Kubernetes.
+- С 2025 года рекомендуется использовать форк `osscontainertools/kaniko`, так как оригинальный проект архивирован.
 
 ### Выбор базового образа
 
-**Alpine Linux** выбран по причинам:
+Alpine Linux является стандартом де-факто для подобных утилит благодаря:
 
-- **Минимальный размер:** ~5MB базовый образ
-- **Безопасность:** Меньшая поверхность атаки
-- **Совместимость:** Статические бинарники утилит работают без проблем
+- **Минимальному размеру:** Базовый образ ~5 МБ, итоговый образ с утилитами остается компактным.
+- **Безопасности:** Меньшее количество установленных пакетов снижает риск наличия известных уязвимостей.
+- **Совместимости:** Статические бинарники (Go) большинства облачных утилит отлично работают в среде musl.
 
-**Best practices:**
-
-- Использование `--no-install-recommends` для минимизации размера
-- Очистка кэша в том же слое `RUN`
-- Объединение команд для уменьшения количества слоев
+Best practices:
+- Использование `--no-cache` для менеджера пакетов `apk`.
+- Объединение команд установки в один слой `RUN` для уменьшения метаданных образа.
+- **Принцип наименьших привилегий:** Запуск всех процессов от не-root пользователя.
 
 ---
 
@@ -75,60 +74,72 @@
 
 ### Dockerfile для kubeutils
 
+Dockerfile обновлен до актуальных версий (июль 2026) и включает настройку безопасности.
+
 ```dockerfile
-# Версии утилит передаются как build-args
-ARG KUBE_VERSION=v1.28.6
-ARG HELM_VERSION=v3.13.0
-ARG REGCLIENT_VERSION=v0.5.6
-ARG KUBECONFORM_VERSION=v0.6.4
+# Аргументы для управления версиями
+ARG ALPINE_VERSION=3.24.1
+ARG KUBE_VERSION=v1.36.2
+ARG HELM_VERSION=v4.2.3
+ARG REGCLIENT_VERSION=v0.11.5
+ARG KUBECONFORM_VERSION=v0.8.0
 
-FROM alpine:3.18
+FROM alpine:${ALPINE_VERSION}
 
-# Установка kubectl
-RUN wget -q "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/amd64/kubectl" -O /usr/local/bin/kubectl && \
-    chmod +x /usr/local/bin/kubectl
+# Установка системных зависимостей
+RUN apk add --no-cache ca-certificates curl git bash tar
 
-# Установка Helm
-RUN wget -q "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -O - | tar -xzO linux-amd64/helm > /usr/local/bin/helm && \
-    chmod +x /usr/local/bin/helm
+# Создание непривилегированного пользователя
+RUN addgroup -S kubeuser && adduser -S kubeuser -G kubeuser
 
-# Установка regclient
-RUN wget -q "https://github.com/regclient/regclient/releases/download/${REGCLIENT_VERSION}/regctl-linux-amd64" -O /usr/local/bin/regctl && \
-    chmod +x /usr/local/bin/regctl
-
-# Установка kubeconform
-RUN wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -O - | tar -xzO kubeconform > /usr/local/bin/kubeconform && \
+# Установка бинарных файлов утилит
+RUN set -x && \
+    ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
+    # kubectl
+    curl -LO "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/${ARCH}/kubectl" && \
+    chmod +x kubectl && mv kubectl /usr/local/bin/ && \
+    # Helm
+    curl -L "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" | tar -xzO linux-${ARCH}/helm > /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm && \
+    # regclient (regctl)
+    curl -L "https://github.com/regclient/regclient/releases/download/${REGCLIENT_VERSION}/regctl-linux-${ARCH}" -o /usr/local/bin/regctl && \
+    chmod +x /usr/local/bin/regctl && \
+    # kubeconform
+    curl -L "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH}.tar.gz" | tar -xzO kubeconform > /usr/local/bin/kubeconform && \
     chmod +x /usr/local/bin/kubeconform
 
-# Проверка версий
+# Настройка рабочего окружения
+USER kubeuser
+WORKDIR /home/kubeuser
+
+# Валидация установки
 RUN kubectl version --client && helm version && regctl version && kubeconform -v
 ```
 
-**Оптимизации:**
-
-- Загрузка напрямую в `/usr/local/bin` — без промежуточных копий
-- Объединение `wget` и `chmod` в один слой
-- Использование `-q` для уменьшения размера логов сборки
-
 ### GitLab CI пайплайн для сборки
 
-Сборка осуществляется с помощью Kaniko. Пайплайн запускается вручную.
+Пример сборки образа с использованием Kaniko (форк `osscontainertools`).
 
 ```yaml
 build:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    name: osscontainertools/kaniko:v1.28.0-debug
     entrypoint: [""]
   tags:
-    - global # Тег вашего GitLab Runner
+    - global
+  variables:
+    KUBE_VERSION: "v1.36.2"
+    HELM_VERSION: "v4.2.3"
   script:
-    # 1. Подготовка аутентификации для Kaniko
+    # 1. Настройка аутентификации в реестре Harbor
+    - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$dev.registry\":{\"username\":\"$dev.registry-user\",\"password\":\"$dev.registry-password\"}}}" > /kaniko/.docker/config.json
-    # 2. Сборка и push образа
+    # 2. Сборка и отправка образа с несколькими тегами
     - /kaniko/executor \
         --context "dir://$CI_PROJECT_DIR" \
         --dockerfile $CI_PROJECT_DIR/Dockerfile \
+        --destination "$dev.registry/library/kube-utils:latest" \
         --destination "$dev.registry/library/kube-utils:${CI_COMMIT_TAG:-$KUBE_VERSION}" \
         --build-arg KUBE_VERSION=${KUBE_VERSION} \
         --build-arg HELM_VERSION=${HELM_VERSION} \
@@ -136,36 +147,25 @@ build:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
-  variables:
-    KUBE_VERSION: "v1.28.6"
-    HELM_VERSION: "v3.13.0"
 ```
-
-**Ключевые моменты:**
-
-| Параметр | Описание |
-|----------|----------|
-| `entrypoint: [""]` | Отменяет точку входа Kaniko для выполнения script |
-| `--destination` | Целевой реестр и тег образа |
-| `--registry-certificate` | CA (Certificate Authority) сертификат для доверия к Harbor (переменная `dev.se`) |
-| `${CI_COMMIT_TAG:-$KUBE_VERSION}` | Тег по коммиту или версии kubectl |
 
 ### Использование в пайплайнах
 
-Пример джоба для развертывания в Kubernetes:
+Пример джоба для развертывания в Kubernetes с использованием образа `kubeutils`.
 
 ```yaml
 deploy:
   stage: deploy
-  image: $dev.registry/library/kube-utils:v1.28.6
+  image: $dev.registry/library/kube-utils:v1.36.2
   script:
-    # Валидация манифестов
-    - kubeconform -strict manifests/
-    # Развертывание через Helm
+    # Валидация манифестов перед применением
+    - kubeconform -strict -ignore-missing-schemas manifests/
+    # Развертывание или обновление приложения
     - helm upgrade --install myapp ./chart \
         --namespace production \
         --atomic \
-        --wait
+        --wait \
+        --timeout 300s
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 ```
@@ -174,34 +174,31 @@ deploy:
 
 ## Дополнительная информация
 
-### Актуальность версий
+### Актуальность компонентов (июль 2026)
 
-> **Внимание:** Указанные версии компонентов относятся к 2024 году. Перед использованием проверьте актуальные стабильные версии:
+Версии ниже являются стабильными и рекомендуемыми для использования в продакшен-пайплайнах.
 
-| Компонент | Указанная версия | Статус | Рекомендация |
-|-----------|------------------|--------|--------------|
-| **Kubernetes (kubectl)** | v1.28.6 | Устарел | Рекомендуется v1.31+ |
-| **Helm** | v3.13.0 | Проверить | [GitHub Releases](https://github.com/helm/helm/releases) |
-| **regclient** | v0.5.6 | Проверить | [GitHub Releases](https://github.com/regclient/regclient/releases) |
-| **kubeconform** | v0.6.4 | Проверить | [GitHub Releases](https://github.com/yannh/kubeconform/releases) |
-| **Alpine** | 3.18 | Проверить | [Alpine Releases](https://alpinelinux.org/releases/) |
-
-**Проверка версий:**
-
-- K3s: [release.k3s.io](https://github.com/k3s-io/k3s/releases)
-- Kubernetes: [kubernetes.io/releases/](https://kubernetes.io/releases/)
+| Компонент | Текущая версия | Статус | Рекомендация |
+|-----------|----------------|--------|--------------|
+| **Alpine Linux** | 3.24.1 | Stable | Релиз от июня 2026 |
+| **Kubernetes (kubectl)** | v1.36.2 | Stable | [Kubernetes Releases](https://kubernetes.io/releases/) |
+| **Helm** | v4.2.3 | Stable | [Helm Releases](https://github.com/helm/helm/releases) |
+| **regclient (regctl)** | v0.11.5 | Stable | [regclient Releases](https://github.com/regclient/regclient/releases) |
+| **kubeconform** | v0.8.0 | Stable | [kubeconform Releases](https://github.com/yannh/kubeconform/releases) |
+| **Kaniko (fork)** | v1.28.0 | Active | Используйте `osscontainertools/kaniko` |
 
 ### Связанные темы
 
-- **Kaniko:** [Обзор Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md), [Best Practices](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md)
-- **Безопасность:** [Dockerfile Security](../../../Docker/Dockerfile/Docker_best_practices/security.md)
-- **GitLab CI:** [Основы GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md), [Kubernetes Integration](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)
+- **Kaniko:** [Обзор Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md), [Оптимизация сборки](../../../Docker/Dockerfile/Docker_best_practices/build_optimization.md)
+- **Безопасность:** [Безопасность Dockerfile](../../../Docker/Dockerfile/Docker_best_practices/security.md)
+- **GitLab CI:** [Основы GitLab CI](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_basics.md), [Интеграция с Kubernetes](../../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)
 - **Dev-окружение:** [Архитектура K3s](./k3s_architecture.md), [Интеграция GitLab с Harbor](./gitlab_harbor_integration.md)
 
 ### Предупреждения
 
 | Аспект | Риск | Рекомендация |
 |--------|------|--------------|
-| **Устаревшие версии** | CVE (Common Vulnerabilities and Exposures) в утилитах | Регулярно обновляйте версии |
-| **Alpine base** | Проблемы с glibc (GNU C Library) | Используйте статические бинарники |
-| **Hardcoded версии** | Рассинхронизация | Выносите версии в variables пайплайна |
+| **Устаревшие версии** | Наличие CVE в утилитах и базовом образе | Настройте регулярное (ежемесячное) сканирование и обновление |
+| **Alpine base** | Проблемы с glibc-зависимыми бинарниками | Используйте только статические бинарники или добавляйте `gcompat` |
+| **Права доступа** | Ошибки при записи в `/home/kubeuser` в CI | Убедитесь, что пайплайн не требует записи в системные папки под `kubeuser` |
+| **TLS/SSL** | Ошибки сертификатов при работе с Harbor | Всегда передавайте `--registry-certificate` в Kaniko для внутренних CA |

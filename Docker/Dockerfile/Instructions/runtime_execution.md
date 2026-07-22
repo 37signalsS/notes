@@ -123,6 +123,7 @@ docker inspect --format='{{json .Config.Entrypoint}} {{json .Config.Cmd}}' <imag
 ```
 
 **См. также:**
+- **[Файлы версий (Version Files)](../../../Git/version_files.md)** — подробнее о том, как фиксировать версии языков в проекте.
 - **[Практические сценарии переопределения](./practical_scenarios.md)** — как менять `CMD` и `ENTRYPOINT` при запуске.
 - **[Безопасность в Dockerfile](../Docker_best_practices/security.md)** — подробнее о минимизации привилегий.
 - **[Инструкции Dockerfile: Обзор](./overview_definitions.md)** — сводная таблица всех команд.

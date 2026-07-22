@@ -2,156 +2,152 @@
 
 ## Определения
 
-**Kyverno** устанавливается в кластер Kubernetes через **Helm** (менеджер пакетов для Kubernetes) или YAML-манифесты. При установке разворачиваются 4 компонента для обработки политик, фоновых сканирований, отчетов и очистки ресурсов.
-
-> **Официальная документация**: <https://kyverno.io/docs/installation/>
+**Установка Kyverno** — процесс развертывания компонентов управления политиками в кластер Kubernetes. В современной инфраструктуре (актуально на 2026 год, версия 1.18+) стандартом является установка через **Helm** в режиме высокой доступности (**High Availability, HA**) с использованием нативного движка **CEL (Common Expression Language)**.
 
 ---
 
 ## Основные концепции
 
-### Компоненты Kyverno
+### Компоненты системы
 
-| Компонент | Назначение | Критичность |
-|-----------|------------|-------------|
-| **Admission Controller** | Обработка mutating и validating admission webhook-запросов | **Критичен** — без него политики не применяются |
-| **Background Controller** | Фоновое сканирование существующих ресурсов и генерация отчетов | Рекомендуется для аудита |
-| **Cleanup Controller** | Удаление ресурсов по расписанию или условию | Опционально |
-| **Reports Controller** | Генерация Policy Reports в формате Policy Report WG (Working Group) | Рекомендуется для интеграции с Policy Reporter |
+| Компонент | Назначение | Режим (HA) |
+| :--- | :--- | :--- |
+| **Admission Controller** | Основной движок: обработка мутаций, валидаций и верификаций образов. | 3 реплики |
+| **Background Controller** | Применение политик к существующим ресурсам и управление генерацией. | 2 реплики |
+| **Reports Controller** | Сбор и агрегация отчетов `PolicyReport`. Поддерживает внешние БД для масштабирования. | 2 реплики |
+| **Cleanup Controller** | Автоматическое удаление ресурсов по расписанию (DeletingPolicy). | 2 реплики |
 
-### Требования
+### Системные требования (Production-ready)
 
-| Требование | Минимальные | Рекомендуемые |
-|------------|-------------|---------------|
-| Kubernetes | 1.23+ | 1.27+ |
-| CPU (Central Processing Unit) | 2 ядра | 4+ ядер |
-| Memory (Оперативная память) | 2 GB | 4+ GB |
-| Helm | 3.9+ | 3.12+ |
+| Параметр | Минимальные | Рекомендуемые (1000+ подов) |
+| :--- | :--- | :--- |
+| Kubernetes | 1.27+ | 1.30+ |
+| CPU | 2 ядра | 4+ ядра (суммарно на компоненты) |
+| RAM | 2 GB | 8+ GB |
+| Хранилище | Не требуется (etcd) | Внешняя БД (для масштабных отчетов) |
 
 ---
 
 ## Практические сценарии
 
-### Установка через Helm
+### Промышленная установка через Helm (HA + CEL)
+
+Для обеспечения отказоустойчивости рекомендуется использовать файл `values.yaml` с настройками распределения подов по узлам и зонам.
 
 ```bash
-# Добавление репозитория
+# Добавление и обновление репозитория
 helm repo add kyverno https://kyverno.github.io/kyverno/
-# → "kyverno" has been added to your repositories
-
 helm repo update
-# → Hang tight while we grab the latest from your chart repositories...
 
-# Установка в namespace kyverno
+# Установка с использованием конфигурационного файла
 helm install kyverno kyverno/kyverno \
   --namespace kyverno \
   --create-namespace \
-  --version 3.3.0 \
-  --set admissionController.replicas=2 \
-  --set backgroundController.replicas=2 \
-  --set cleanupController.replicas=1 \
-  --set reportsController.replicas=1
-# → NAME: kyverno, STATUS: deployed
+  --version 3.8.0 \
+  -f values.yaml
 ```
 
-> **Примечание**: Версия чарта 3.3.0 соответствует Kyverno ~1.15. Актуальную версию проверяйте на [Artifact Hub](https://artifacthub.io/packages/helm/kyverno/kyverno).
+**Пример оптимального `values.yaml` (v1.18):**
+```yaml
+admissionController:
+  replicas: 3
+  # Защита от удаления API-сервером при нехватке ресурсов
+  priorityClassName: system-cluster-critical
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities: { drop: ["ALL"] }
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+  # Безопасность внешних вызовов (Защита от SSRF)
+  externalHttp:
+    allowedHosts: ["sigstore.dev", "api.github.com"]
+    blockedHosts: ["169.254.169.254", "localhost"]
 
-### Проверка установки
+backgroundController:
+  replicas: 2
+
+reportsController:
+  replicas: 2
+  extraArgs:
+    - --reportsChunkSize=1000 # Оптимизация памяти
+
+webhooks:
+  # Исключение критических пространств имен для предотвращения Deadlock
+  namespaceSelector:
+    matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values: ["kyverno", "kube-system", "monitoring"]
+```
+
+### Верификация установки
+
+После завершения процесса установки необходимо убедиться в работоспособности всех контроллеров и вебхуков:
 
 ```bash
-# Проверка подов
-kubectl get pods -n kyverno
-# → NAME                                            READY   STATUS    RESTARTS   AGE
-# → kyverno-admission-controller-5f8c9d7b9c-abc12   1/1     Running   0          5m
-# → ...
+# 1. Проверка статуса подов
+kubectl get pods -n kyverno -o wide
+# → Все поды должны быть в статусе Running и распределены по разным узлам.
 
-# Проверка webhook-ов
-kubectl get validatingwebhookconfiguration
-kubectl get mutatingwebhookconfiguration
+# 2. Проверка регистрации вебхуков в API-сервере
+kubectl get mutatingwebhookconfigurations,validatingwebhookconfigurations -l app.kubernetes.io/instance=kyverno
 
-# Проверка CRD (Custom Resource Definition)
-kubectl get clusterpolicy
-kubectl get policy
+# 3. Проверка установленных CRD
+kubectl get crd | grep kyverno.io
 ```
 
-### Установка с Policy Reporter
+### Развертывание через Argo CD (GitOps)
 
-**Policy Reporter** предоставляет UI (User Interface, пользовательский интерфейс) для визуализации отчетов:
-
-```bash
-# Установка Kyverno + Policy Reporter
-helm install policy-reporter policy-reporter/policy-reporter \
-  --namespace policy-reporter \
-  --create-namespace \
-  --set ui.enabled=true \
-  --set ui.plugins.kyverno=true \
-  --set metrics.enabled=true \
-  --set prometheus.enabled=true
-```
-
-### Установка через Argo CD
-
-При развертывании через Argo CD **обязательно** использовать `server-side apply` для корректной обработки больших CRD:
+При установке через Argo CD критически важно использовать **Server-Side Apply (SSA)** для корректной обработки объемных CRD Kyverno.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: kyverno
+  name: kyverno-core
   namespace: argocd
 spec:
   syncPolicy:
-    automated:
-      applyServerSide: true  # Обязательно для установки CRD
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true # ОБЯЗАТЕЛЬНО для CRD
   source:
     repoURL: https://kyverno.github.io/kyverno
     chart: kyverno
-    targetRevision: 3.3.0
+    targetRevision: 3.8.0
     helm:
-      releaseName: kyverno
       values: |
         admissionController:
-          replicas: 2
+          replicas: 3
 ```
-
-> **Важно**: Глобальные настройки Argo CD для корректной работы с Kyverno (Server-side Diff, Resource Tracking) описаны в разделе **[Интеграция с Argo CD](./argo-cd.md)**.
+*Подробнее о специфических настройках дрифта и визуализации отчетов см. в разделе [Интеграция с Argo CD](./argo-cd.md).*
 
 ---
 
 ## Дополнительная информация
 
-### Управление правами
+### Безопасность и права (RBAC)
 
-По умолчанию Kyverno не имеет прав на создание некоторых ресурсов (например, `Secret`). Для расширения прав используются **Aggregated Cluster Roles** ([подробнее](./additional.md)).
+По умолчанию Kyverno имеет ограниченные права. Если ваши политики должны создавать ресурсы (например, `NetworkPolicy` при создании `Namespace`), необходимо расширить права через **Aggregated Cluster Roles** ([подробнее](./additional.md)).
 
 ### Поиск и устранение неисправностей (Troubleshooting)
 
-| Проблема | Решение |
-|----------|---------|
-| Webhook timeout | Увеличить `timeoutSeconds` в конфигурации webhook |
-| Policies not applied | Проверить статус подов `admission-controller` и наличие лейбла `kyverno-skip-webhook` |
-| Reports not generated | Проверить права `reports-controller` в ClusterRole |
-| Argo CD infinite loop | Включить `server-side diff` ([подробнее в интеграции](./argo-cd.md)) |
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Deadlock при старте кластера** | Kyverno пытается проверить поды CNI/CSI, которые еще не запустились. | Добавьте метку `kyverno-skip-webhook=true` на системные Namespace или настройте `namespaceSelector` в Helm. |
+| **Webhook timeout** | Высокая нагрузка или сетевые задержки. | Увеличить ресурсы CPU для `admissionController` или значение `timeoutSeconds` в настройках вебхука. |
+| **CRD слишком велики для kubectl** | Лимит аннотации `last-applied-configuration`. | Всегда используйте флаг `--server-side` при применении манифестов вручную. |
+| **Отчеты занимают слишком много места в etcd** | Большое количество ресурсов в кластере. | Включите агрегацию отчетов или настройте экспорт во внешнюю БД через `Reports Controller`. |
 
-### Удаление
+### Удаление Kyverno
 
-```bash
-# Удаление Helm release
-helm uninstall kyverno -n kyverno
+При удалении важно соблюдать порядок, чтобы не оставить "висящих" вебхуков, которые заблокируют кластер.
 
-# Удаление namespace
-kubectl delete namespace kyverno
+1. Удалить все `ClusterPolicy` и `Policy`.
+2. Выполнить `helm uninstall kyverno -n kyverno`.
+3. Удалить CRD вручную (только если планируете полную очистку данных): `kubectl delete crd -l app.kubernetes.io/instance=kyverno`.
 
-# Удаление CRD (ВНИМАНИЕ: удалит все политики и отчеты)
-kubectl delete crd clusterpolicies.kyverno.io
-kubectl delete crd policies.kyverno.io
-kubectl delete crd policyreports.wgpolicyk8s.io
-kubectl delete crd clusterpolicyreports.wgpolicyk8s.io
-```
-
-### Связанные темы
-
-- [Интеграция с Argo CD](./argo-cd.md) — детальная настройка совместной работы
-- [Основные концепции](./concepts.md) — архитектура и принцип работы
-- [Aggregated Cluster Roles](./additional.md) — управление правами доступа
-- [Типы правил](./rules.md) — написание и применение политик
+### См. также
+- [Интеграция с Argo CD: Server-Side Diff и Health Checks](./argo-cd.md)
+- [Основные концепции: Механизм Admission и CEL](./concepts.md)
+- [Типы правил: написание эффективных политик](./rules.md)

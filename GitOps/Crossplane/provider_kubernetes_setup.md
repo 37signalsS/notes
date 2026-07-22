@@ -2,29 +2,27 @@
 
 ## Определения
 
-**provider-kubernetes** — кроссплатформенный Crossplane-провайдер для управления нативными ресурсами Kubernetes в любом кластере. Позволяет использовать Crossplane **Composition API (Application Programming Interface)** для создания абстракций над Kubernetes-ресурсами.
+**provider-kubernetes** — это специализированный провайдер Crossplane для управления нативными объектами Kubernetes (Namespaces, ConfigMaps, Deployments и др.) как внутри текущего кластера, так и в удаленных кластерах. Он позволяет использовать декларативный подход Crossplane для оркестрации ресурсов самого Kubernetes, обеспечивая единый интерфейс управления инфраструктурой и приложениями.
 
 ## Базовые концепции
 
-### Сценарии использования
+### Ключевые сценарии использования
 
-- **Декларативное управление компонентами кластера**: Namespace, ConfigMap, Secret, **RBAC (Role-Based Access Control)**.
-- **Расширение GitOps**: Управление ресурсами, которые не поддерживаются ArgoCD/Flux напрямую.
-- **Мультикластерное управление**: Централизованное управление несколькими кластерами через Crossplane.
-- **Создание платформенных абстракций**: Использование **Composition API** для объединения нескольких Kubernetes-ресурсов в одну логическую единицу.
+- **Управление компонентами кластера:** Декларативное описание системных ресурсов (RBAC, секреты, квоты).
+- **Мультикластерная оркестрация:** Централизованное управление парком кластеров из одной точки (Control Plane).
+- **Композиция приложений:** Создание высокоуровневых абстракций (XRD), объединяющих облачную инфраструктуру и ресурсы K8s (например, S3-бакет + K8s Secret с ключами).
+- **Соблюдение стандартов:** Гарантия идентичности конфигурации во всех подконтрольных кластерах через непрерывную сверку.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-- **Кластер Kubernetes**: Локальный (Minikube, Kind) или облачный
-- **Установленный Crossplane**: Следуйте шагам по установке из [настройки Yandex Cloud провайдера](./provider_yandex_cloud_setup.md#установка-crossplane-и-его-cli)
+- **Управляющий кластер:** Установленный Crossplane v1.16+ (рекомендуется v2.x). Инструкция по установке: [Настройка Crossplane](./provider_yandex_cloud_setup.md).
+- **Доступ:** Права `cluster-admin` в управляющем кластере.
 
-### Установка и конфигурация provider-kubernetes
+### Установка провайдера
 
-#### Шаг 1: Установка провайдера
-
-Создайте файл `kubernetes-provider.yaml`:
+Создайте и примените манифест `provider.yaml` (версия актуальна на 2026 год):
 
 ```yaml
 apiVersion: pkg.crossplane.io/v1
@@ -35,161 +33,167 @@ spec:
   package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.2.0
 ```
 
-Примените манифест:
-
 ```bash
-kubectl apply -f kubernetes-provider.yaml
+kubectl apply -f provider.yaml
+# → provider.pkg.crossplane.io/provider-kubernetes created
 ```
 
-Проверьте статус установки (может занять 1-2 минуты):
+### Конфигурация для локального кластера (In-Cluster)
+
+Для управления ресурсами в том же кластере, где запущен Crossplane, используется `InjectedIdentity`.
+
+**1. Настройка прав:**
+Провайдеру нужны права для создания объектов. Настройте `ClusterRoleBinding` для его `ServiceAccount`:
 
 ```bash
-kubectl get provider
-# NAME                           INSTALLED   HEALTHY   AGE
-# provider-kubernetes            True        True      30s
-```
-
-#### Шаг 2: Настройка ProviderConfig
-
-Для управления ресурсами провайдеру требуются права администратора кластера. Создайте **ClusterRoleBinding** для **ServiceAccount (SA)** провайдера:
-
-```bash
-# Получение имени ServiceAccount провайдера
 SA=$(kubectl -n crossplane-system get sa -o name | grep provider-kubernetes | sed -e 's|serviceaccount\/|crossplane-system:|g')
-
-# Создание привязки роли
-kubectl create clusterrolebinding provider-kubernetes-admin-binding --clusterrole cluster-admin --serviceaccount="${SA}"
+kubectl create clusterrolebinding provider-kubernetes-admin-binding \
+  --clusterrole cluster-admin \
+  --serviceaccount="${SA}"
 ```
 
-Затем создайте файл `config-in-cluster.yaml` для `ProviderConfig`:
+**2. Создание ProviderConfig:**
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: ProviderConfig
 metadata:
-  name: in-cluster-config
+  name: default
 spec:
-  # Использует учетные данные ServiceAccount, под которым запущен провайдер
   credentials:
     source: InjectedIdentity
 ```
 
-Примените манифест:
+### Конфигурация для внешнего кластера (Multi-cluster)
+
+Управление удаленным кластером осуществляется через секрет с `kubeconfig`.
+
+**1. Создание секрета в управляющем кластере:**
 
 ```bash
-kubectl apply -f config-in-cluster.yaml
+kubectl -n crossplane-system create secret generic remote-cluster-kubeconfig \
+  --from-file=kubeconfig=/path/to/remote/kubeconfig
 ```
 
-Проверьте создание:
-
-```bash
-kubectl get providerconfig
-# NAME                AGE
-# in-cluster-config   10s
-```
-
-### Развертывание ресурсов Kubernetes
-
-#### Сценарий 1: Создание Namespace
-
-Для создания нативных ресурсов Kubernetes через Crossplane используется тип `Object`.
-
-Создайте файл `nginx-namespace.yaml`:
+**2. Создание ProviderConfig для удаленного кластера:**
 
 ```yaml
-apiVersion: kubernetes.crossplane.io/v1alpha2
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: remote-cluster-config
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: remote-cluster-kubeconfig
+      key: kubeconfig
+```
+
+### Управление объектами (API v1beta1)
+
+Для создания ресурсов используется тип `Object`.
+
+**Пример: Создание Namespace и ConfigMap во внешнем кластере:**
+
+```yaml
+apiVersion: kubernetes.crossplane.io/v1beta1
 kind: Object
 metadata:
-  name: nginx-namespace
+  name: remote-app-ns
 spec:
   forProvider:
     manifest:
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: crossplane-nginx-example
+        name: staging-app
         labels:
-          app.crossplane.io/example: "true"
+          managed-by: crossplane
   providerConfigRef:
-    name: in-cluster-config
-```
-
-Примените и проверьте:
-
-```bash
-kubectl apply -f nginx-namespace.yaml
-kubectl get ns crossplane-nginx-example # → статус Active
-```
-
-#### Сценарий 2: Создание Deployment
-
-Создайте файл `nginx-deployment.yaml`:
-
-```yaml
-apiVersion: kubernetes.crossplane.io/v1alpha2
+    name: remote-cluster-config
+---
+apiVersion: kubernetes.crossplane.io/v1beta1
 kind: Object
 metadata:
-  name: nginx-deployment
+  name: remote-configmap
 spec:
   forProvider:
     manifest:
-      apiVersion: apps/v1
-      kind: Deployment
+      apiVersion: v1
+      kind: ConfigMap
       metadata:
-        name: nginx-deployment
-        namespace: crossplane-nginx-example
-        labels:
-          app: nginx
-      spec:
-        replicas: 1
-        selector:
-          matchLabels:
-            app: nginx
-        template:
-          metadata:
-            labels:
-              app: nginx
-          spec:
-            containers:
-            - name: nginx
-              image: nginx:1.26.4
-              ports:
-              - containerPort: 80
+        name: app-config
+        namespace: staging-app
+      data:
+        environment: "staging"
+        feature_flag: "true"
   providerConfigRef:
-    name: in-cluster-config
+    name: remote-cluster-config
 ```
 
-Примените и проверьте:
+## Продвинутые возможности
 
-```bash
-kubectl apply -f nginx-deployment.yaml
-kubectl get deployment -n crossplane-nginx-example
-kubectl get pods -n crossplane-nginx-example
+### Режим только для чтения (Observe-only)
+
+Если вы хотите, чтобы Crossplane только отслеживал состояние объекта, но не изменял его, используйте политику управления:
+
+```yaml
+spec:
+  managementPolicies: ["Observe"]
 ```
 
-### Мониторинг и отладка
+### Использование в композициях (Patching)
 
-Проверьте статус ресурса Crossplane:
+В 2026 году стандартным паттерном является передача данных из облачных ресурсов в ресурсы Kubernetes через патчи. Например, передача `connection string` из Managed Database в K8s Secret.
 
-```bash
-kubectl get object nginx-deployment -o yaml
+```yaml
+# Фрагмент Composition
+- name: kubernetes-secret
+  base:
+    apiVersion: kubernetes.crossplane.io/v1beta1
+    kind: Object
+    spec:
+      forProvider:
+        manifest:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+  patches:
+    - fromFieldPath: "status.atProvider.connectionString"
+      toFieldPath: "spec.forProvider.manifest.data.DB_URL"
 ```
 
-Основные поля в `status`:
+## Мониторинг и отладка
 
-- `Ready: True` — ресурс успешно синхронизирован с кластером.
-- `Ready: False` — возникла ошибка. Проверьте `status.conditions` для диагностики.
-
-Просмотр логов провайдера:
+Проверка статуса объектов:
 
 ```bash
-kubectl -n crossplane-system logs -l app=crossplane-provider-kubernetes
+kubectl get objects
+# NAME             READY   SYNCED   AGE
+# remote-app-ns    True    True     5m
+```
+
+Просмотр ошибок синхронизации:
+
+```bash
+kubectl describe object remote-app-ns
+```
+
+Логи контроллера провайдера:
+
+```bash
+kubectl -n crossplane-system logs -l app=crossplane-provider-kubernetes -c provider-kubernetes
 ```
 
 ## Дополнительная информация
 
-Настройка провайдера для Yandex Cloud описана в [Provider Yandex Cloud](./provider_yandex_cloud_setup.md), интеграция с ArgoCD — в [GitOps Integration](./gitops_integration.md).
+- [Crossplane Overview](./overview.md) — общие концепции и архитектура.
+- [GitOps Integration](./gitops_integration.md) — развертывание через ArgoCD.
+- [Yandex Cloud Provider](./provider_yandex_cloud_setup.md) — управление облачной инфраструктурой.
 
 Внешние ресурсы:
-
-- Официальная документация provider-kubernetes: [github.com/crossplane-contrib/provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes)
+- [Provider Kubernetes GitHub](https://github.com/crossplane-contrib/provider-kubernetes)
+- [Official Documentation](https://docs.crossplane.io/latest/concepts/providers/)

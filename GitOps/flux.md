@@ -1,9 +1,6 @@
 # Flux: Обзор и Ключевые Концепции
 
-> **Надежность: 10** (Подтверждено SSoT и актуальными данными на февраль 2026)
-> **Актуальные версии:** Flux v2.8.1, notification-controller v1.8.1, image-automation-controller v1.1.0.
-
-**Flux** — это модульный и расширяемый набор инструментов для построения GitOps-конвейеров в Kubernetes. Проект является частью CNCF (Graduated с ноября 2022) и фокусируется на подходе "Unix-way", где каждый компонент решает свою задачу, а вместе они образуют гибкую систему.
+**Flux** — это модульный и расширяемый набор инструментов для построения GitOps-конвейеров в Kubernetes. Проект является частью CNCF (Graduated) и фокусируется на подходе "Unix-way", где каждый компонент решает свою задачу, а вместе они образуют гибкую систему.
 
 ## Определения
 
@@ -15,53 +12,46 @@
 
 ### Архитектура GitOps Toolkit
 
-Flux состоит из нескольких независимых контроллеров, взаимодействующих через CRD (Custom Resource Definitions).
+Flux состоит из нескольких независимых контроллеров, взаимодействующих через CRD (Custom Resource Definitions). Для управления жизненным циклом самих контроллеров рекомендуется использовать **Flux Operator**.
 
 | Контроллер | Основные CRD | Назначение |
 | :--- | :--- | :--- |
-| `source-controller` | `GitRepository`, `HelmRepository`, `Bucket` | Получение манифестов из внешних источников. |
-| `kustomize-controller`| `Kustomization` | Применение YAML-манифестов с использованием Kustomize. |
-| `helm-controller` | `HelmRelease` | Управление жизненным циклом Helm-релизов. |
+| `source-controller` | `GitRepository`, `HelmRepository`, `OCIRepository` | Получение манифестов из внешних источников и OCI-реестров. |
+| `kustomize-controller`| `Kustomization` | Применение YAML-манифестов с использованием Kustomize и SSA. |
+| `helm-controller` | `HelmRelease` | Управление Helm-релизами (полная поддержка Helm v4). |
 | `notification-controller`| `Provider`, `Alert`, `Receiver` | Отправка уведомлений о событиях (Slack, Teams, Webhooks). |
 | `image-reflector-controller`| `ImageRepository`, `ImagePolicy` | Сканирование реестров образов и отслеживание тегов. |
 | `image-automation-controller`| `ImageUpdateAutomation` | Автоматизация обновления тегов образов в Git. |
 
 ### Ключевые ресурсы (CRD)
 
-Философия Flux — разделение ответственности. Процесс развертывания описывается несколькими типами ресурсов:
+Философия Flux — разделение ответственности. Процесс развертывания описывается двумя типами ресурсов:
 
-1. **Источник (`GitRepository`, `HelmRepository`)**: Описывает, *откуда* брать данные (URL, ветка, интервал проверки).
+1. **Источник (`GitRepository`, `OCIRepository`)**: Описывает, *откуда* брать данные. С версии v2.9 через **ArtifactGenerator API** значительно оптимизирована работа с крупными монорепозиториями.
 2. **Применение (`Kustomization`, `HelmRelease`)**: Описывает, *что*, *куда* и *как* разворачивать, ссылаясь на конкретный источник.
-
-Эта модель позволяет использовать один `GitRepository` как источник для множества независимых `Kustomization`.
 
 ### Декларативное управление Helm
 
-Flux позволяет управлять Helm-релизами полностью декларативно, без использования `helm` CLI.
-
+Flux позволяет управлять Helm-релизами полностью декларативно.
 - **`HelmRepository`**: Описывает репозиторий чартов.
-- **`HelmRelease`**: Описывает конкретный релиз (чарт, версия, `values`). `helm-controller` обеспечивает установку, обновление и автоматический откат при неудаче.
+- **`HelmRelease`**: Описывает конкретный релиз (чарт, версия, `values`). `helm-controller` обеспечивает установку, обновление, проверку готовности через CEL-выражения и автоматический откат.
 
 ### Безопасность и секреты
 
 Flux нативно поддерживает работу с зашифрованными секретами через **Mozilla SOPS**. Это позволяет безопасно хранить секреты прямо в Git-репозитории.
-
-- Поддерживаемые провайдеры: AWS KMS, Azure Key Vault, Google Cloud KMS, HashiCorp Vault, PGP, age.
+- Поддерживаемые провайдеры: AWS KMS, Azure Key Vault, Google Cloud KMS (включая Sovereign Cloud), HashiCorp Vault, PGP, age.
 - Секреты расшифровываются непосредственно `kustomize-controller` перед применением в кластер.
 
-### Ключевые изменения в v2.8 (февраль 2026)
+### Ключевые изменения в v2.9 (июль 2026)
 
 | Функция | Описание |
 | :--- | :--- |
-| **Поддержка Helm v4** | Server-side apply и kstatus-based health checking для HelmRelease. |
-| **Оценка готовности** | Проверка готовности Helm-объектов через CEL-выражения. |
-| **Inventory tracking** | Отслеживание инвентаря в `.status.inventory` для HelmRelease. |
-| **Комментарии в PR** | Прямое комментирование Pull Request из Flux notifications. |
-| **Поддержка Cosign v3** | Верификация OCI-артефактов и образов контейнеров. |
-| **mTLS** | Поддержка mTLS для алертов и GitHub App transport. |
-| **OpenTelemetry** | Трассировка для Kustomization и HelmRelease. |
-
-> **Внимание:** API v1beta2 и v2beta2 удалены в v2.8.0. Требуется миграция через `flux migrate` перед обновлением.
+| **Система плагинов CLI** | Новая архитектура для расширения возможностей `flux` CLI сторонними инструментами. |
+| **ArtifactGenerator API** | Оптимизация работы с монорепозиториями, снижение нагрузки на сеть. |
+| **Улучшения SSA** | Расширенный контроль над игнорированием полей (`ignore rules`) при синхронизации. |
+| **AI-driven GitOps** | Анонс интеграции AI-агентов для диагностики и авто-исправления конфигураций. |
+| **GCP Sovereign Cloud** | Нативная поддержка Artifact Registry в суверенных облаках Google. |
+| **Kubernetes 1.36+** | Полная совместимость с актуальными версиями Kubernetes. |
 
 ## Практические сценарии
 
@@ -70,51 +60,51 @@ Flux нативно поддерживает работу с зашифрова�
 Настраивает кластер так, чтобы он управлял сам собой из Git-репозитория.
 
 ```bash
-# Экспортируем токен доступа (например, GitHub PAT)
+# Экспортируем токен доступа
 export GITHUB_TOKEN=<your-token>
-export GITHUB_USER=<your-username>
 
 # Запускаем bootstrap
 flux bootstrap github \
-  --owner=$GITHUB_USER \
-  --repository=my-cluster-config \
+  --owner=my-org \
+  --repository=fleet-infra \
   --branch=main \
-  --path=./clusters/my-cluster \
+  --path=./clusters/prod \
   --personal
+# → ► connecting to github.com
+# → ► cloning branch "main" from repo "my-org/fleet-infra"
+# → ✔ components are up to date
 ```
 
 ### Сценарий 2: Развертывание приложения через Kustomize
 
 ```yaml
-# 1. Источник манифестов
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: my-app-repo
-  namespace: flux-system
-spec:
-  interval: 1m
-  url: https://github.com/my-org/my-app
-  ref:
-    branch: main
----
-# 2. Правила применения
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: my-app
+  name: web-app
   namespace: flux-system
 spec:
   interval: 5m
-  path: ./kustomize/overlays/prod
+  path: ./apps/prod
   prune: true # Удалять ресурсы, отсутствующие в Git
   sourceRef:
     kind: GitRepository
-    name: my-app-repo
-  targetNamespace: my-app
+    name: fleet-infra
+  healthChecks:
+    - kind: Deployment
+      name: web-app
+      namespace: apps
 ```
 
-### Сценарий 3: Развертывание Helm-чарта с SOPS
+### Сценарий 3: Просмотр состояния синхронизации
+
+```bash
+flux get kustomizations
+# → NAME    REVISION             SUSPENDED  READY   MESSAGE
+# → web-app main@sha1:e1a2b3c4   False      True    Applied revision: main@sha1:e1a2b3c4
+```
+
+### Сценарий 4: Развертывание Helm-чарта с SOPS
 
 ```yaml
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -144,13 +134,6 @@ spec:
 ## Дополнительная информация
 
 **Связанные документы:**
-
-- [Сравнение с ArgoCD](./argo_vs_flux_manifests.md) — детальное сравнение архитектур и манифестов.
-- [Уведомления в GitOps](./gitops_notifications.md) — настройка оповещений в Slack/Teams.
-- [Управление секретами](./secrets_encryption.md) — подробнее о SOPS, Sealed Secrets и Vault.
-
-**Официальные ресурсы:**
-
-- [Документация Flux](https://fluxcd.io/)
-- [GitHub проекта](https://github.com/fluxcd/flux2)
-- [Список изменений (Changelog)](https://github.com/fluxcd/flux2/releases)
+- [Сравнение с ArgoCD](./argo_vs_flux_manifests.md) — детальное сравнение архитектур.
+- [Управление секретами](./secrets_encryption.md) — подробнее о SOPS и Sealed Secrets.
+- [Документация Flux](https://fluxcd.io/) — официальный справочник и руководства.

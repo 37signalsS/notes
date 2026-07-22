@@ -43,7 +43,7 @@ HEALTHCHECK NONE
 - `2`: **Зарезервировано** (не используйте этот код).
 
 **Важное замечание по Kubernetes:**
-Kubernetes **полностью игнорирует** инструкцию `HEALTHCHECK` из Dockerfile. В K8s необходимо использовать нативные механизмы: `livenessProbe`, `readinessProbe` и `startupProbe`. Подробнее см. **[Пробы в Kubernetes](../../Kubernetes/Base/Pod/health_checks.md)**.
+Kubernetes **полностью игнорирует** инструкцию `HEALTHCHECK` из Dockerfile. В K8s необходимо использовать нативные механизмы: `livenessProbe`, `readinessProbe` и `startupProbe`. Подробнее см. **[Пробы в Kubernetes](../../Kubernetes/Base/probes.md)**.
 
 ### Сигнал остановки: STOPSIGNAL
 
@@ -112,4 +112,4 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s \
 - **[Директивы Docker Compose](../../Docker_compose/docker_compose_directives.md)** — переопределение healthcheck в YAML.
 - **[Проблемы с сигналами (PID 1)](./runtime_execution.md#проблема-pid-1-и-сигналы)** — почему приложение может не останавливаться.
 - **[Healthchecks в Podman](../../Podman/podman_healthchecks.md)** — архитектурные отличия в бездемоновом режиме.
-- **[Liveness и Readiness в K8s](../../Kubernetes/Base/Pod/health_checks.md)** — аналоги для Kubernetes.
+- **[Liveness и Readiness в K8s](../../Kubernetes/Base/probes.md)** — аналоги для Kubernetes.

@@ -2,9 +2,7 @@
 
 ## Определения
 
-**Local Path Provisioner** — Kubernetes-провижинер от [Rancher](https://rancher.com/), позволяющий использовать локальное хранилище на узлах кластера через стандартный механизм PVC/PV. Динамически создаёт `PersistentVolume` из пути на файловой системе хоста, являясь легковесной альтернативой сложным СХД и прямому использованию `HostPath`.
-
----
+**Local Path Provisioner** — Kubernetes-провижинер от Rancher, позволяющий использовать локальное хранилище на узлах кластера через стандартный механизм PVC/PV. Динамически создаёт `PersistentVolume` из пути на файловой системе хоста, являясь легковесной альтернативой сложным СХД и прямому использованию `HostPath`.
 
 ## Базовые концепции
 
@@ -25,7 +23,7 @@ Provisioner работает как `Deployment`, отслеживающий с�
 - Helper под выполняет `rm -rf` для очистки директории.
 - PV удаляется.
 
-> **Преимущество:** Абстракция от прямого использования `HostPath`, повышенная безопасность и упрощённое управление.
+**Преимущество:** Абстракция от прямого использования `HostPath`, повышенная безопасность и упрощённое управление.
 
 ### Сравнение с альтернативами
 
@@ -44,7 +42,7 @@ Provisioner работает как `Deployment`, отслеживающий с�
 | **Нет контроля ёмкости** | PVC размер игнорируется. Приложение использует всё пространство диска | Отдельные диски/разделы, квоты на уровне LVM |
 | **Только RWO** | `ReadWriteMany` не поддерживается | Использовать NFS/CephFS для RWX |
 
-### `volumeBindingMode: WaitForFirstConsumer`
+### volumeBindingMode: WaitForFirstConsumer
 
 **Критически важный параметр** для локальных хранилищ.
 
@@ -53,19 +51,25 @@ Provisioner работает как `Deployment`, отслеживающий с�
 | `Immediate` | PV создаётся сразу при создании PVC (без учёта узла) |
 | `WaitForFirstConsumer` | PV создаётся после планирования первого пода |
 
-> **Важно:** Для локальных хранилищ всегда используйте `WaitForFirstConsumer`. Это гарантирует, что PV будет создан на том узле, где будет работать приложение.
-
----
+**Важно:** Для локальных хранилищ всегда используйте `WaitForFirstConsumer`. Это гарантирует, что PV будет создан на том узле, где будет работать приложение.
 
 ## Практические сценарии
 
 ### Установка
 
+#### Способ 1: Манифест (YAML)
+
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.36/deploy/local-path-storage.yaml
 ```
 
-> **Примечание:** Проверьте [актуальную версию на GitHub](https://github.com/rancher/local-path-provisioner).
+#### Способ 2: Helm
+
+```bash
+helm repo add rancher https://charts.rancher.io
+helm repo update
+helm install local-path rancher/local-path-provisioner --namespace local-path-storage --create-namespace
+```
 
 ### Конфигурация
 
@@ -75,13 +79,12 @@ kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisione
 
 Все тома создаются в `/opt/local-path-provisioner` на любом узле:
 
-```yaml
-# config.json в ConfigMap
+```json
 {
   "nodePathMap": [
     {
       "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
-      "path": "/opt/local-path-provisioner"
+      "paths": ["/opt/local-path-provisioner"]
     }
   ]
 }
@@ -89,10 +92,9 @@ kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisione
 
 #### Несколько StorageClass для разных дисков
 
-**Шаг 1:** Обновляем `ConfigMap`:
+**Шаг 1:** Обновление `ConfigMap` для поддержки нескольких путей:
 
-```yaml
-# config.json
+```json
 {
   "nodePathMap": [
     {
@@ -103,7 +105,7 @@ kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisione
 }
 ```
 
-**Шаг 2:** Создаём два `StorageClass`:
+**Шаг 2:** Создание соответствующих `StorageClass`:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -129,7 +131,7 @@ parameters:
 
 ### Использование со StatefulSet
 
-StatefulSet — идеальный кандидат для `local-path-provisioner`.
+StatefulSet — основной сценарий использования для локальных хранилищ, требующий строгой привязки данных.
 
 ```yaml
 apiVersion: v1
@@ -193,14 +195,12 @@ spec:
           storage: 1Gi
 ```
 
-**Объяснение `affinity`:**
+**Объяснение параметров affinity:**
 
 | Параметр | Назначение |
 |----------|------------|
 | `nodeAffinity` | Привязывает поды только к узлам с меткой `worker=true` |
-| `podAntiAffinity` | Запрещает размещение двух подов с меткой `app: my-sts-app` на одном узле |
-
----
+| `podAntiAffinity` | Запрещает размещение двух подов с меткой `app: my-sts-app` на одном узле (предотвращает конкуренцию за ресурсы узла) |
 
 ## Дополнительная информация
 

@@ -29,7 +29,13 @@ strategy:
 ### Изменение состава матрицы
 
 - **`exclude`**: Позволяет исключить конкретные комбинации из набора (например, если определенная версия библиотеки не поддерживается в конкретной операционной системе).
-- **`include`**: Позволяет добавить новые комбинации или дополнить существующие специальными переменными.
+- **`include`**: Самый мощный инструмент расширения матрицы. Позволяет:
+    1. Добавить абсолютно новую комбинацию, которая не вписывается в декартово произведение осей.
+    2. Дополнить существующие комбинации уникальными метаданными (например, добавить флаг `experimental: true` только для определенной версии ОС).
+
+**Ограничения матрицы**:
+- Максимальное количество задач, которые может сгенерировать одна матрица — **256**.
+- Общий лимит на количество одновременных задач в рамках всего воркфлоу зависит от тарифного плана GitHub.
 
 ## Практические сценарии
 
@@ -54,8 +60,8 @@ jobs:
             python-version: '3.12'
             experimental: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: pytest
@@ -80,13 +86,36 @@ jobs:
       - uses: actions/checkout@v4
       - name: Запуск тестов для шарда ${{ matrix.shard }}
         run: pytest --shard-id ${{ matrix.shard }} --shard-total 4
+
+```
+
+### Сценарий 3: Динамическая матрица
+
+Иногда состав матрицы заранее неизвестен и должен определяться "на лету" (например, на основе списка измененных модулей в монорепозитории). Для этого используется связка выхода задачи в формате JSON (JavaScript Object Notation) и функции `fromJSON`.
+
+```yaml
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: echo "matrix=[\"module-a\", \"module-b\"]" >> $GITHUB_OUTPUT
+
+  test:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - name: Testing ${{ matrix.module }}
+        run: ./test.sh --module ${{ matrix.module }}
 ```
 
 ## Дополнительная информация
 
-- **[Ключевые концепции GitHub Actions](./Core_Concept.md)** — общие принципы работы платформы.
-- **[События, Задачи и Шаги](./Events_Jobs_Steps.md)** — описание жизненного цикла выполнения.
 - **[Синтаксис Workflow](./Workflow_Syntax.md)** — детальный справочник по контекстам и директивам.
-- **[Оптимизация воркфлоу](./Optimization.md)** — другие методы ускорения пайплайнов.
-
-Официальная документация: [Using a matrix for your jobs](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs).
+- **[Оптимизация воркфлоу](./Optimization.md)** — методы ускорения пайплайнов через параллелизм.
+- **[Официальная документация GitHub](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs)** — детальное руководство по матрицам.

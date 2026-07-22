@@ -4,151 +4,89 @@
 
 **kubectl** — CLI-утилита командной строки для управления кластером Kubernetes через API.
 
-**kubeconfig** — YAML-файл конфигурации доступа к Kubernetes API. Содержит контексты, пользователей, кластеры и сертификаты.
+**kubeconfig** — YAML-файл конфигурации доступа к Kubernetes API. Содержит данные о кластерах, пользователях и контекстах.
 
-**контекст** — набор параметров доступа к кластеру (кластер + пользователь + namespace по умолчанию).
+**контекст** — логическая связка между кластером, пользователем и пространством имен по умолчанию.
 
 ## Базовые концепции
 
-### Требования к версии kubectl
+### Взаимодействие с RKE
+Для управления кластером, развернутым через RKE, необходимо:
+1. Установить утилиту `kubectl`.
+2. Получить файл `kubeconfig` (из Rancher UI или через CLI после `rke up`).
+3. Настроить контекст для работы с нужным кластером.
 
-Версия kubectl должна совпадать с версией кластера (допускается отклонение ±1 минорную версию).
-
-Проверка версии кластера:
-
-```bash
-kubectl version --short
-```
+Подробная информация о структуре и механизмах слияния конфигов доступна в разделе **[Kubeconfig: Подключение к кластеру Kubernetes](../../Operations/kubeconfig_and_connection.md)**.
 
 ## Практические сценарии
 
-### Установка kubectl
+### Шаг 1: Установка kubectl
+Для установки `kubectl` на Linux, macOS или Windows воспользуйтесь единым руководством:
+Инструкция по установке: [Установка kubectl](../kubectl_installation.md)
 
-**Linux (AMD64):**
+### Шаг 2: Получение kubeconfig из Rancher UI
+Если RKE-кластер управляется через Rancher, выполните следующие действия:
 
-```bash
-# Скачивание актуальной версии
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-
-# Проверка контрольной суммы (опционально)
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
-echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
-
-# Установка
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
-
-# Проверка
-kubectl version --client
-```
-
-**macOS (Homebrew):**
-
-```bash
-brew install kubectl
-kubectl version --client
-```
-
-**Windows (PowerShell):**
-
-```powershell
-curl.exe -LO "https://dl.k8s.io/release/v1.31.0/bin/windows/amd64/kubectl.exe"
-```
-
-### Получение kubeconfig из Rancher UI
-
-1. **Открыть Rancher UI** (`https://rancher.your-domain.com`)
+1. **Открыть Rancher UI:**
+   Перейдите по адресу вашего Rancher (например, `https://rancher.example.com`).
 
 2. **Выбрать кластер:**
-   - Перейти в `Cluster Management` или `Dashboard`
-   - Кликнуть на нужный RKE-кластер
+   - Перейдите в раздел `Cluster Management`.
+   - Найдите нужный кластер в списке.
 
-3. **Получить kubeconfig:**
-   - Нажать кнопку `Kubeconfig File` (верхний правый угол)
-   - Или `Explore` → `⋮` → `Download KubeConfig`
+3. **Скачать конфигурацию:**
+   - Нажмите на кнопку **Kubeconfig File** в верхней части панели управления кластером.
+   - Скопируйте содержимое в буфер обмена или скачайте файл.
 
-4. **Сохранить локально:**
-
+4. **Настроить локальный доступ:**
    ```bash
+   # Создание директории (если отсутствует)
    mkdir -p $HOME/.kube
-   nano $HOME/.kube/config  # Вставить содержимое из буфера
+   
+   # Сохранение конфигурации
+   # Вставьте скопированный текст в файл
+   nano $HOME/.kube/config 
+   
+   # Установка безопасных прав доступа
    chmod 600 $HOME/.kube/config
    ```
 
-5. **Проверить доступ:**
-
-   ```bash
-   kubectl get nodes
-   kubectl get pods --all-namespaces
-   ```
-
-### Работа с несколькими контекстами
-
-**Просмотр контекстов:**
+### Шаг 3: Проверка доступа
+После настройки проверьте связь с кластером:
 
 ```bash
+kubectl cluster-info
+# → Kubernetes control plane is running at https://192.168.1.100:6443
+# → CoreDNS is running at https://192.168.1.100:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+kubectl get nodes
+# → NAME         STATUS   ROLES                      AGE   VERSION
+# → node-01      Ready    controlplane,etcd,worker   10d   v1.30.2
+# → node-02      Ready    worker                     10d   v1.30.2
+```
+
+### Работа с несколькими кластерами
+Если вы управляете несколькими RKE-кластерами, используйте механизмы переключения контекстов:
+
+```bash
+# Просмотр доступных контекстов
 kubectl config get-contexts
-```
+# → CURRENT   NAME            CLUSTER         AUTHINFO        NAMESPACE
+# → *         rke-prod        rke-prod        user-abc12      default
+# →           rke-dev         rke-dev         user-def34      dev
 
-**Переключение контекста:**
-
-```bash
-kubectl config use-context c-m-xxxxxxxxx  # Имя из Rancher
-```
-
-**Слияние конфигураций:**
-
-Если уже есть `~/.kube/config` (например, от kubeadm):
-
-```bash
-# Резервное копирование
-cp ~/.kube/config ~/.kube/config.backup
-
-# Установка переменной для нового файла
-export KUBECONFIG=~/.kube/config:~/.kube/rke-config
-
-# Проверка доступных контекстов
-kubectl config get-contexts
-
-# Переключение на RKE контекст
-kubectl config use-context c-m-xxxxxxxxx
-```
-
-**Текущий контекст:**
-
-```bash
-kubectl config current-context
-```
-
-### Настройка автодополнения (autocomplete)
-
-**Bash:**
-
-```bash
-source <(kubectl completion bash)
-echo "source <(kubectl completion bash)" >> ~/.bashrc
-```
-
-**Zsh:**
-
-```bash
-source <(kubectl completion zsh)
-echo "source <(kubectl completion zsh)" >> ~/.zshrc
-```
-
-**Fish:**
-
-```bash
-kubectl completion fish | source
-echo "kubectl completion fish | source" >> ~/.config/fish/config.fish
+# Переключение на другой кластер
+kubectl config use-context rke-dev
+# → Switched to context "rke-dev".
 ```
 
 ## Дополнительная информация
 
-**Безопасность kubeconfig:**
+**Безопасность:**
+- Никогда не передавайте `kubeconfig` через открытые каналы связи (Slack, Telegram без шифрования).
+- Используйте минимально необходимые права (RBAC) при создании конфигов для сторонних пользователей.
 
-- Установить права: `chmod 600 ~/.kube/config`
-- Не передавать файл через незащищенные каналы
-- Использовать ServiceAccount с минимальными правами для CI/CD
-
-**См. также:** [RKE: Основные концепции](./rke_concepts.md), [RKE: Управление и поиск неисправностей](./rke_management_scenarios.md), [kubeconfig и подключение](../../Operations/kubeconfig_and_connection.md).
+**См. также:**
+- [RKE: Основные концепции](./rke_concepts.md)
+- [RKE: Управление и поиск неисправностей](./rke_management_scenarios.md)
+- [Kubeconfig: Подключение к кластеру Kubernetes](../../Operations/kubeconfig_and_connection.md)

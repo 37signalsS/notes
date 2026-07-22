@@ -1,48 +1,50 @@
-# Руководство: Настройка ELK стека с помощью Docker Compose
+# Руководство: Развертывание ELK стека в Docker Compose
 
-> Практическое руководство по развертыванию Elastic Stack (Elasticsearch, Kibana, Filebeat) для локальной разработки и тестирования через Docker Compose.
+> Практическое руководство по настройке связки Elasticsearch, Kibana и Filebeat для локальной разработки и тестирования. Описанная конфигурация актуальна для версий 8.17+.
 >
-> Базовые понятия: [Обзор Elasticsearch](../Elasticsearch/elasticsearch_overview.md), [Kibana](../Kibana/kibana_overview.md), [Filebeat](../filebeat_overview.md), [Маппинг и ILM](../Elasticsearch/elasticsearch_mapping_and_indexing.md).
+> Базовые понятия: [Обзор ELK стека](../elk_stack_overview.md), [Elasticsearch: Обзор](../Elasticsearch/elasticsearch_overview.md), [Kibana: Обзор](../Kibana/kibana_overview.md), [Filebeat: Обзор](../filebeat_overview.md).
 
 ## Определения
 
-* **Docker Compose**: инструмент для определения и запуска многоконтейнерных приложений Docker через YAML-файл. Подробнее — в [Обзоре Docker Compose](../../Docker/Docker_compose/docker_compose_overview.md).
-* **ELK стек в Docker**: контейнеризированная версия Elastic Stack для локальной разработки с упрощенной конфигурацией, позволяющая быстро развернуть среду мониторинга.
+* **Docker Compose** — инструмент для управления жизненным циклом многоконтейнерных приложений. Описание базовых команд доступно в [Обзоре Docker Compose](../../Docker/Docker_compose/docker_compose_overview.md).
+* **ELK в Docker** — контейнеризированное решение, обеспечивающее изоляцию компонентов стека и быстрое воспроизведение среды сбора и анализа логов.
 
 ## Основные концепции
 
-### Назначение локального стека
+### Задачи локального развертывания
 
-* **Тестирование конфигураций**: отладка файлов `filebeat.yml`, `elasticsearch.yml` перед развертыванием в промышленную эксплуатацию (production).
-* **Локальная разработка**: запуск полного стека на рабочей машине для отладки интеграций с приложениями.
-* **Демонстрация**: быстрое развертывание для ознакомления с возможностями платформы.
+* **Прототипирование**: быстрая проверка гипотез по парсингу логов перед внесением изменений в промышленный кластер.
+* **Отладка приложений**: использование полноценного поискового движка вместо стандартного `STDOUT` при разработке микросервисов.
+* **Изучение функционала**: знакомство с новыми возможностями Kibana (Dashboards, Maps, Canvas) без риска для стабильности системы.
 
-### Особенности развертывания в Docker
+### Особенности конфигурации для Docker
 
-* **Упрощенная безопасность**: для локальных тестов в данном руководстве безопасность отключается (`xpack.security.enabled=false`).
-* **Режим одного узла (Single-node)**: Elasticsearch запускается как один узел без формирования полноценного кластера (`discovery.type=single-node`).
-* **Сбор логов Docker**: Filebeat настраивается на автоматический сбор логов контейнеров через сокет Docker (`/var/run/docker.sock`) и директорию с логами хоста.
+* **Упрощенная безопасность (Basic Auth)**: вместо полного отключения безопасности (что не рекомендуется даже для локальных сред в версии 8.x), в данном руководстве используется настройка фиксированного пароля.
+* **Режим Single-node**: установка `discovery.type=single-node` отключает проверки кворума, необходимые для мультинодового кластера.
+* **Сетевое взаимодействие**: компоненты общаются внутри Docker-сети по именам сервисов, используя порты 9200 (ES API) и 5601 (Kibana UI).
 
 ## Практические сценарии
 
-### Настройка конфигурационных файлов
+### Подготовка инфраструктуры
 
-Создайте рабочую директорию и подготовьте следующие файлы.
+Создайте директорию проекта и подготовьте конфигурационные файлы.
 
 #### 1. Файл `docker-compose.yml`
 
 ```yaml
-version: '3.8'
-
 services:
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.1
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
     container_name: elasticsearch
     environment:
+      - node.name=elasticsearch
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - ELASTIC_PASSWORD=changeme
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.license.self_generated.type=trial
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
-      - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
       - esdata:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
@@ -50,24 +52,28 @@ services:
       - elk
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.14.1
+    image: docker.elastic.co/kibana/kibana:8.17.0
     container_name: kibana
-    ports:
-      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=changeme
     depends_on:
       - elasticsearch
+    ports:
+      - "5601:5601"
     networks:
       - elk
 
   filebeat:
-    image: docker.elastic.co/beats/filebeat:8.14.1
+    image: docker.elastic.co/beats/filebeat:8.17.0
     container_name: filebeat
+    user: root
     command: filebeat -e -strict.perms=false
     volumes:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    user: root
     depends_on:
       - elasticsearch
     networks:
@@ -82,14 +88,7 @@ networks:
     driver: bridge
 ```
 
-#### 2. Файл `elasticsearch.yml`
-
-```yaml
-# Отключение жизненного цикла индексов для экономии ресурсов в тестах
-xpack.ilm.enabled: false
-```
-
-#### 3. Файл `filebeat.yml`
+#### 2. Файл `filebeat.yml`
 
 ```yaml
 filebeat.autodiscover:
@@ -102,39 +101,61 @@ processors:
 
 output.elasticsearch:
   hosts: ["elasticsearch:9200"]
-  protocol: "http"
+  username: "elastic"
+  password: "changeme"
 
 logging.level: info
 ```
 
-### Запуск и проверка
+### Запуск и первичная настройка
 
-1. **Настройка системы**: Elasticsearch требует увеличения лимита на количество областей маппинга памяти (mmap counts). На хост-машине выполните:
-
+1. **Системные требования**: для работы Elasticsearch необходимо увеличить лимит `mmap`:
     ```bash
+    # Временное изменение
     sudo sysctl -w vm.max_map_count=262144
     ```
 
-2. **Запуск контейнеров**:
-
+2. **Запуск стека**:
     ```bash
-    docker-compose up -d
+    docker compose up -d
     ```
 
-3. **Проверка состояния**:
-   * **Elasticsearch**: `http://localhost:9200` — должен вернуть JSON с информацией об узле.
-   * **Kibana**: `http://localhost:5601` — веб-интерфейс для работы с данными.
+3. **Инициализация пароля для Kibana**:
+    Поскольку мы задали пароль только для `elastic`, пользователю `kibana_system` нужно задать пароль вручную или через API, чтобы Kibana могла подключиться к ES. Выполните команду внутри контейнера ES:
+    ```bash
+    docker exec -it elasticsearch bin/elasticsearch-reset-password -u kibana_system -b -i
+    # Введите "changeme", чтобы соответствовать настройкам в docker-compose.yml
+    ```
 
-4. **Настройка отображения логов в Kibana**:
-   * Перейдите в `Stack Management` → `Data Views`.
-   * Создайте новый Data View с паттерном `filebeat-*`.
-   * В разделе `Discover` выберите созданный паттерн для просмотра поступающих логов.
+4. **Проверка**:
+    * Elasticsearch: `curl -u elastic:changeme http://localhost:9200`
+    * Kibana: откройте `http://localhost:5601` в браузере.
+
+### Настройка визуализации данных
+
+В версии 8.x концепция Index Patterns заменена на **Data Views**:
+
+1. Откройте Kibana → **Stack Management** → **Data Views**.
+2. Нажмите **Create data view**.
+3. Укажите имя и паттерн `filebeat-*`.
+4. В поле **Timestamp field** выберите `@timestamp`.
+5. Перейдите в раздел **Discover** для анализа поступающих логов.
 
 ## Дополнительная информация
 
-### Рекомендации по эксплуатации
+### Типичные проблемы
 
-* **Безопасность**: при выходе за пределы локального тестирования необходимо включить `xpack.security.enabled=true`, настроить аутентификацию и TLS-шифрование.
-* **Обработка данных**: для сложной трансформации логов (парсинг нестандартных форматов, обогащение данными GeoIP) рекомендуется добавить Logstash в цепочку между Filebeat и Elasticsearch.
-* **Версионирование**: всегда указывайте конкретные версии образов. Использование тега `latest` в Docker-файлах затрудняет воспроизводимость среды и поиск причин сбоев при обновлении компонентов.
-* **Ресурсы**: для стабильной работы стека в Docker рекомендуется выделить не менее 4 ГБ оперативной памяти для Docker-демона.
+* **Контейнер ES падает с ошибкой 137**: нехватка оперативной памяти. Увеличьте лимиты в настройках Docker Desktop (рекомендуется от 4 ГБ) или уменьшите `ES_JAVA_OPTS`.
+* **Kibana: "Elasticsearch is not ready"**: проверьте сетевую связность и корректность пароля в `ELASTICSEARCH_PASSWORD`.
+* **Логи Docker не собираются**: убедитесь, что путь `/var/lib/docker/containers` на хосте совпадает с указанным в `volumes` (актуально для Linux; на macOS/Windows сбор через сокет Docker приоритетнее).
+
+### Рекомендации по развитию
+
+* **Использование Logstash**: если требуется сложная фильтрация (Grok, Dissect) или обогащение данных (GeoIP), добавьте Logstash в пайплайн. См. [Настройка пайплайнов Logstash](../Logstash/logstash_pipelines.md).
+* **Жизненный цикл данных**: настройте политики **ILM (Index Lifecycle Management)** для автоматического удаления старых логов и экономии места на диске. Детали в [Elasticsearch: Политики хранения](../Elasticsearch/elasticsearch_ilm_and_retention.md).
+* **Версионирование**: всегда фиксируйте мажорную и минорную версии образов (например, `8.17.0`) для обеспечения воспроизводимости инфраструктуры.
+
+> **См. также:**
+> * [Настройка мультинодового кластера Elasticsearch](./cluster_setup.md)
+> * [Безопасность в Elasticsearch](../Elasticsearch/elasticsearch_overview.md#безопасность-по-умолчанию)
+> * [Docker Compose: Практические примеры](../../Docker/Docker_compose/examples/common_patterns.md)

@@ -2,151 +2,128 @@
 
 ## Определения
 
-**Политика (Policy)** — основной декларативный ресурс Kyverno, содержащий набор правил для проверки, изменения или создания объектов Kubernetes.
+**Политика (Policy)** — основной декларативный ресурс Kyverno, содержащий набор правил для автоматизации процессов безопасности, мутации или генерации объектов в кластере.
 
-**Типы политик**:
+### Типы ресурсов
 
-- **ClusterPolicy**: Глобальный ресурс кластера (cluster-scoped), правила которого применяются ко всем пространствам имен (**Namespaces**) в кластере.
-- **Policy**: Локальный ресурс (namespace-scoped), действующий только в рамках конкретного пространства имен.
+*   **ClusterPolicy**: Глобальный ресурс кластера, правила которого применяются ко всем пространствам имен (Namespaces).
+*   **Policy**: Локальный ресурс, действующий только в рамках конкретного пространства имен.
+*   **ValidatingPolicy / MutatingPolicy (v1.14+)**: Специализированные CEL-ресурсы для повышения производительности и нативной интеграции с Kubernetes API.
 
 ---
 
 ## Основные концепции
 
-### Структура манифеста политики
+### Структура и стандарты
 
-Примеры в данной библиотеке написаны на языке **YAML (Yet Another Markup Language)** и используют стандартную структуру ресурсов Kyverno ([детальный разбор синтаксиса в типах правил](../rules.md)):
+Примеры в библиотеке ориентированы на стандарты безопасности Kubernetes (PSS — Pod Security Standards) и используют синтаксис Kyverno YAML или CEL (Common Expression Language).
 
-| Поле | Описание | Возможные значения |
-|------|----------|--------------------|
-| `validationFailureAction` | Режим реакции на нарушение. | `Audit` (запись в отчет), `Enforce` (блокировка). |
-| `background` | Фоновое сканирование ресурсов. | `true` (аудит запущенных объектов), `false`. |
-| `match` / `exclude` | Условия выбора или исключения ресурсов. | `kinds` (типы), `namespaces`, `subjects`. |
+| Параметр | Описание |
+| :--- | :--- |
+| **`validationFailureAction`** | Режим реакции: `Audit` (запись в отчет) или `Enforce` (блокировка). |
+| **`background`** | Включение фонового сканирования для существующих ресурсов (`true`/`false`). |
+| **`match` / `exclude`** | Условия выбора ресурсов по типам, пространствам имен или субъектам. |
 
 ---
 
 ## Практические сценарии
 
-### 1. Требование запуска от имени non-root пользователя
+### 1. Запрет привилегированных контейнеров (CEL)
 
-Базовая мера безопасности, предотвращающая запуск контейнеров с правами суперпользователя для уменьшения поверхности атаки.
+Реализация стандарта **PSS Baseline**. Предотвращает запуск контейнеров, имеющих неограниченный доступ к ресурсам хоста.
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
-  name: require-run-as-non-root
-  annotations:
-    policies.kyverno.io/title: Require Non-Root User
-    policies.kyverno.io/category: Security
-    policies.kyverno.io/severity: high
-    policies.kyverno.io/description: "Контейнеры должны запускаться от имени non-root пользователя."
+  name: disallow-privileged-containers
 spec:
-  validationFailureAction: Enforce
-  background: true
-  rules:
-    - name: check-run-as-non-root
-      match:
-        resources:
-          kinds:
-            - Pod
-      validate:
-        message: "Контейнер должен запускаться от имени пользователя с UID (User Identifier, идентификатор пользователя) > 0"
-        pattern:
-          spec:
-            =(securityContext):
-              runAsUser: ">0"
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods"]
+  validations:
+    - expression: |
+        (object.spec.containers + object.spec.?initContainers.orValue([]) + object.spec.?ephemeralContainers.orValue([])).all(c, 
+          !has(c.securityContext) || !has(c.securityContext.privileged) || c.securityContext.privileged == false
+        )
+      message: "Привилегированные контейнеры запрещены."
 ```
 
----
+### 2. Ограничение типов томов (hostPath)
 
-### 2. Запрет использования HostPath томов
-
-Предотвращает монтирование файловой системы хоста внутрь контейнера, что является критической уязвимостью.
+Реализация стандарта **PSS Restricted**. Запрещает использование `hostPath`, предотвращая возможный побег из контейнера на файловую систему узла.
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
-  name: deny-host-path
-  annotations:
-    policies.kyverno.io/title: Deny HostPath Volumes
-    policies.kyverno.io/category: Security
-    policies.kyverno.io/severity: high
+  name: restrict-host-path
 spec:
-  validationFailureAction: Enforce
-  background: true
-  rules:
-    - name: deny-host-path
-      match:
-        resources:
-          kinds:
-            - Pod
-      deny:
-        conditions:
-          - key: "{{ request.object.spec.volumes[*].hostPath }}"
-            operator: AnyNotIn
-            value:
-              - ""
-              - null
-        message: "Использование HostPath запрещено корпоративными стандартами безопасности"
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      resources: ["pods"]
+  validations:
+    - expression: |
+        !has(object.spec.volumes) || object.spec.volumes.all(vol, !has(vol.hostPath))
+      message: "Использование hostPath томов запрещено стандартами безопасности."
 ```
 
----
+### 3. Автоматическая установка non-root (Мутация)
 
-### 3. Автоматическое добавление настроек безопасности (Мутация)
-
-Автоматизирует процесс приведения ресурсов к безопасному виду, добавляя `securityContext`, если он не был указан разработчиком.
+Автоматизирует процесс приведения ресурсов к безопасному виду, принудительно устанавливая `runAsNonRoot: true`, если это не противоречит логике приложения.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: add-default-security-context
-  annotations:
-    policies.kyverno.io/title: Add Default Security Context
-    policies.kyverno.io/category: Security
+  name: mutate-run-as-non-root
 spec:
   rules:
-    - name: add-security-context
+    - name: set-non-root
       match:
-        resources:
-          kinds:
-            - Pod
+        any:
+          - resources:
+              kinds:
+                - Pod
       mutate:
         patchStrategicMerge:
           spec:
             securityContext:
               runAsNonRoot: true
               runAsUser: 1000
-              fsGroup: 1000
 ```
 
----
+### 4. Синхронизация ConfigMap между Namespace (Генерация)
 
-### 4. Синхронизация секретов между Namespace (Генерация)
-
-Пример копирования секрета с учетными данными для Docker Registry во все создаваемые пространства имен.
+Позволяет автоматически копировать конфигурации (например, настройки прокси или корпоративные сертификаты) во все новые пространства имен.
 
 ```yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: copy-docker-registry-secret
+  name: sync-global-config
 spec:
   rules:
-    - name: copy-secret
+    - name: copy-configmap
       match:
-        resources:
-          kinds:
-            - Namespace
+        any:
+          - resources:
+              kinds:
+                - Namespace
       generate:
-        kind: Secret
-        name: docker-registry-credentials
+        kind: ConfigMap
+        name: global-config
         namespace: "{{request.object.metadata.name}}"
         clone:
-          namespace: template-namespace # Эталонный namespace
-          name: docker-registry-credentials
+          namespace: default
+          name: source-config
         synchronize: true
 ```
 
@@ -156,14 +133,14 @@ spec:
 
 ### Рекомендации по эксплуатации
 
-1. **Постепенное внедрение**: Всегда начинайте с режима `Audit`. Проверяйте результаты в **[Policy Reports (Отчетах)](../reports.md)** перед переходом к `Enforce`.
-2. **Фоновая проверка**: Не отключайте `background: true`, если хотите видеть нарушения в уже запущенных ресурсах через отчеты или **[Policy Reporter](../reporter.md)**.
-3. **Аннотации**: Используйте стандартные аннотации `policies.kyverno.io/category` для группировки политик в дэшбордах.
-4. **Системные исключения**: Добавляйте `exclude` для критических пространств имен (например, `kube-system`), чтобы политики валидации не нарушили работу кластера.
+1.  **Постепенное внедрение**: Новые политики следует внедрять в режиме `Audit` (или `Warn` для CEL). Используйте **[Policy Reports](../reports.md)** для анализа нарушений перед блокировкой.
+2.  **Исключения (PolicyException)**: Вместо загромождения блока `exclude` внутри политики, используйте отдельный ресурс `PolicyException` для временных или специфических разрешений.
+3.  **Исключение системных ресурсов**: Всегда добавляйте `exclude` для `kube-system`, `kyverno` и других критических инфраструктурных пространств имен, чтобы избежать блокировки кластера.
+4.  **Валидация в CI/CD**: Используйте `kyverno CLI` для проверки манифестов на этапе сборки (Shift-Left Security).
 
-### Связанные темы
+### См. также
 
-- [Типы правил](../rules.md) — детальный синтаксис (match, validate, mutate, generate).
-- [Основные концепции](../concepts.md) — архитектура контроллеров допуска.
-- [Определения и структура](./definitions_and_concepts.md) — детальный разбор полей манифеста.
-- [Расширенные возможности](./advanced_topics.md) — переменные и конструкции циклов.
+- **[Типы правил (подробный синтаксис)](../rules.md)** — match, validate, mutate, generate.
+- **[Определения и структура](./definitions_and_concepts.md)** — база для написания манифестов.
+- **[Фоновое сканирование](../background.md)** — аудит уже запущенных объектов.
+- **[Отчеты (Policy Reports)](../reports.md)** — анализ результатов выполнения политик.

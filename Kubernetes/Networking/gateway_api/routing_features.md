@@ -1,171 +1,148 @@
 # Расширенная маршрутизация в Gateway API
 
+**Надёжность:** 10 (SSoT + Спецификация Gateway API v1.5/1.6)
+
 ## Определения
 
-**Фильтр (Filter)** — стандартный механизм Gateway API, позволяющий модифицировать HTTP-запросы или ответы непосредственно на прокси-сервере. Фильтры описываются в спецификации `HTTPRoute` и заменяют собой вендор-специфичные аннотации Ingress-контроллеров.
+**Фильтр (Filter)** — стандартный механизм Gateway API для модификации запросов и ответов. Фильтры заменяют собой вендор-специфичные аннотации Ingress-контроллеров, обеспечивая переносимость конфигурации.
 
-**Request Redirect** — механизм перенаправления клиента на другой URL с использованием HTTP-статусов 3xx. При редиректе клиент (браузер) получает новый адрес и выполняет повторный запрос.
+**Traffic Splitting** — распределение входящего трафика между несколькими сервисами (бэкендами) на основе весовых коэффициентов или условий (headers, cookies).
 
-**URL Rewrite** — изменение пути или хоста запроса на стороне прокси-сервера перед его передачей бэкенду. В отличие от редиректа, этот процесс прозрачен для клиента.
-
-**Traffic Splitting** — распределение входящего трафика между несколькими сервисами на основе весов или специфических правил (заголовки, куки).
+**CORS (Cross-Origin Resource Sharing)** — механизм безопасности, позволяющий веб-приложениям в браузере запрашивать ресурсы с другого домена. С версии v1.5 Gateway API поддерживает нативный CORS-фильтр.
 
 ## Базовые концепции
 
-Стандартизация расширенных функций в Gateway API позволяет избежать привязки к конкретному контроллеру. Вместо изучения десятков аннотаций Nginx или Traefik используется единый синтаксис фильтров в `spec.rules[].filters`.
+Стандартизация функций в Gateway API избавляет от необходимости использовать проприетарные аннотации (например, `nginx.ingress.kubernetes.io/rewrite-target`). Весь функционал описывается в блоке `spec.rules[].filters`.
 
-### Основные типы фильтров
+### Основные типы фильтров (Standard Channel)
 
-- `RequestHeaderModifier`: добавление, изменение или удаление заголовков запроса.
-- `ResponseHeaderModifier`: модификация заголовков ответа сервера.
-- `RequestRedirect`: управление навигацией пользователя.
-- `URLRewrite`: внутренняя адаптация путей под API бэкендов.
-- `RequestMirror`: копирование трафика на дополнительный бэкенд для тестирования (shadowing).
+- `RequestHeaderModifier`: Добавление, изменение или удаление заголовков запроса.
+- `ResponseHeaderModifier`: Модификация заголовков ответа.
+- `RequestRedirect`: Управление перенаправлением (301/302).
+- `URLRewrite`: Внутренняя перезапись путей и хостов.
+- `RequestMirror`: Копирование трафика для тестирования (Traffic Shadowing).
+- `CORS`: Нативная обработка префлайт-запросов и заголовков безопасности.
 
 ## Практические сценарии
 
-### Перенаправление запросов (Request Redirect)
+### Настройка CORS (v1.5+)
 
-#### Редирект с HTTP на HTTPS
-
-Стандартная задача по принудительному использованию защищенного соединения.
+Фильтр `CORS` позволяет шлюзу самостоятельно отвечать на запросы `OPTIONS`, не нагружая бэкенд.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: http-to-https-redirect
+  name: api-with-cors
 spec:
   parentRefs:
-  - name: my-gateway
-    sectionName: http
+  - name: external-gateway
   hostnames:
-  - "app.example.com"
+  - "api.example.com"
   rules:
   - filters:
-    - type: RequestRedirect
-      requestRedirect:
-        scheme: https
-        statusCode: 301
+    - type: CORS
+      cors:
+        allowOrigins:
+        - "https://app.example.com"
+        - "https://*.internal.net"
+        allowMethods: [GET, POST, OPTIONS]
+        allowHeaders: [Content-Type, Authorization]
+        maxAge: 600
+    backendRefs:
+    - name: api-service
+      port: 8080
 ```
 
-#### Изменение пути при редиректе
+### Перезапись URL (URL Rewrite)
 
-Перенаправление пользователей со старого адреса `/login` на новый `/auth`.
+Используется для адаптации внешних путей к внутренней структуре микросервисов.
 
 ```yaml
 rules:
 - matches:
   - path:
       type: PathPrefix
-      value: /login
+      value: /v1/users
   filters:
-  - type: RequestRedirect
-    requestRedirect:
+  - type: URLRewrite
+    urlRewrite:
       path:
         type: ReplacePrefixMatch
-        replacePrefixMatch: /auth
-      statusCode: 302
-```
-
-### Перезапись URL (URL Rewrite)
-
-Используется, когда структура путей на прокси отличается от структуры путей внутри приложения.
-
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: api-rewrite
-spec:
-  parentRefs:
-  - name: my-gateway
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /api/v1
-    filters:
-    - type: URLRewrite
-      urlRewrite:
-        path:
-          type: ReplacePrefixMatch
-          replacePrefixMatch: /internal/v1
-    backendRefs:
-    - name: api-service
-      port: 80
-```
-
-В данном примере запрос `app.example.com/api/v1/users` будет передан сервису как `/internal/v1/users`.
-
-### Модификация заголовков
-
-Полезно для передачи метаданных о шлюзе или удаления внутренних технических заголовков перед ответом клиенту.
-
-```yaml
-rules:
-- filters:
-  - type: RequestHeaderModifier
-    requestHeaderModifier:
-      add:
-      - name: "X-Gateway-ID"
-        value: "edge-01"
-      remove:
-      - "X-Internal-Token"
-  - type: ResponseHeaderModifier
-    responseHeaderModifier:
-      add:
-      - name: "Cache-Control"
-        value: "public, max-age=3600"
+        replacePrefixMatch: /api/internal/users
   backendRefs:
-  - name: web-service
+  - name: user-service
     port: 80
 ```
 
-### Разделение трафика (Traffic Splitting)
+### Канарейка через Traffic Splitting
 
-#### Канареечное развертывание (Canary Deployment)
-
-Направление трафика на новую версию для группы пользователей с определенным заголовком.
+Разделение трафика между стабильной версией и новой (canary) на основе весов.
 
 ```yaml
 rules:
-- matches:
-  - headers:
-    - type: Exact
-      name: "X-Canary-Test"
-      value: "true"
-  backendRefs:
-  - name: app-v2
-    port: 80
 - backendRefs:
   - name: app-v1
     port: 80
-```
-
-#### Взвешенная балансировка (Blue/Green)
-
-Постепенное переключение нагрузки между версиями на основе весовых коэффициентов.
-
-```yaml
-rules:
-- backendRefs:
-  - name: app-stable
-    port: 80
     weight: 90
-  - name: app-beta
+  - name: app-v2-canary
     port: 80
     weight: 10
 ```
 
+### Маршрутизация gRPC (GRPCRoute)
+
+Нативный ресурс для gRPC-трафика (GA с версии v1.1). Позволяет маршрутизировать по конкретным сервисам и методам.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: chat-route
+spec:
+  parentRefs:
+  - name: main-gateway
+  rules:
+  - matches:
+    - method:
+        service: "com.example.ChatService"
+        method: "SendMessage"
+    backendRefs:
+    - name: chat-v2-service
+      port: 9000
+```
+
+### Копирование трафика (Request Mirroring)
+
+Трафик дублируется на тестовый бэкенд. Ответы от зеркального бэкенда игнорируются, что позволяет безопасно проверять новые версии под реальной нагрузкой.
+
+```yaml
+rules:
+- matches:
+  - path: { type: PathPrefix, value: /api }
+  filters:
+  - type: RequestMirror
+    requestMirror:
+      backendRef:
+        name: app-shadow
+        port: 80
+  backendRefs:
+  - name: app-prod
+    port: 80
+```
+
 ## Дополнительная информация
 
-**Особенности реализации:** не все контроллеры поддерживают полный набор фильтров (например, `RequestMirror` может отсутствовать в некоторых реализациях). Всегда проверяйте статус ресурса `HTTPRoute` — при ошибке применения фильтра в статусе будет указано `ResolvedRefs: False`.
+### Нюансы использования
+
+- **Поддержка фильтров:** Проверьте возможности вашего контроллера (например, Cilium или Envoy Gateway) перед использованием `RequestMirror` или сложных `CORS`-правил.
+- **Статусы:** При возникновении проблем проверьте поле `ResolvedRefs` в статусе маршрута. Ошибки в конфигурации фильтров блокируют применение всего правила.
+- **Производительность:** Фильтры модификации заголовков и перезаписи URL выполняются на уровне прокси и практически не добавляют задержек.
 
 **См. также:**
 
-- [Базовые сценарии](./practical_basic.md) — основы настройки ресурсов Gateway API
-- [Миграция с Ingress](./migration.md) — сравнение аннотаций и фильтров
-- [L4-маршрутизация](./layer4_routing.md) — TCPRoute и UDPRoute
+- [Базовые сценарии](./practical_basic.md) — основы настройки ресурсов.
+- [Миграция с Ingress](./migration.md) — пошаговое руководство по переходу.
+- [Реализации: Envoy Gateway](./envoy_gateway.md) — примеры настройки специфичных политик.
 
 **Родительская тема:** [Gateway API](./definitions.md)

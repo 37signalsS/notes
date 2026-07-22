@@ -1,162 +1,186 @@
-# PV/PVC Advanced Scenarios
+# Расширенные сценарии работы с PV и PVC
 
 ## Определения
 
-Базовые концепции: [PersistentVolume и PVC](./pv_and_pvc.md). StorageClass: [StorageClass](./storageclass.md).
+В данном файле рассматриваются продвинутые механизмы управления жизненным циклом и поведением постоянных томов в Kubernetes.
+
+**Смежные темы:**
+- [Базовые концепции PV и PVC](./pv_and_pvc.md) — основы, режимы доступа, политики возврата.
+- [StorageClass](./storageclass.md) — параметры динамического провижининга.
+- [Volume Claims в StatefulSet](../Base/StatefulSet/statefulset_core_concepts.md#persistentvolumeclaim-pvc) — специфика работы с шаблонами.
 
 ---
 
-## Базовые концепции
+## Основные концепции
 
 ### Детальный алгоритм связывания PV и PVC
 
-Kubernetes связывает PVC с PV по строгому алгоритму:
+Kubernetes связывает PVC с PV по строгому алгоритму (Binding Loop):
 
-1. **Фильтрация по `StorageClassName`**: PV с совпадающим классом (или без класса, если в PVC не указан).
-2. **Фильтрация по `accessModes`**: PV с подходящим режимом доступа.
-3. **Фильтрация по размеру**: PV не меньше запрошенного.
-4. **Best Fit**: выбирается наименьший подходящий PV.
+1. **StorageClassName**: PV с совпадающим классом. Если в PVC класс не указан, ищется PV без класса (или используется Default StorageClass при создании нового тома).
+2. **AccessModes**: PV должен поддерживать все режимы доступа, указанные в PVC.
+3. **VolumeMode**: Совпадение `Filesystem` или `Block`.
+4. **Размер**: PV не меньше запрошенного.
+5. **Best Fit**: Выбирается наименьший подходящий PV из всех доступных.
+6. **Selector**: Если в PVC указан `selector`, PV должен иметь соответствующие метки.
 
-#### Алгоритм Best Fit — нюансы
+#### Нюансы Best Fit
+- Если PVC запрашивает 5 ГБ, а доступен только PV на 100 ГБ, PVC будет привязан к нему. 95 ГБ будут фактически недоступны для других PVC.
+- PVC остается в статусе `Pending`, пока не появится PV, удовлетворяющий **всем** критериям.
 
-- Если PVC запрашивает 500 MiB, а доступен PV на 1 GiB — PVC получит этот PV (ближайший больший).
-- Если точного совпадения нет, PV большего размера будет использован — это приводит к неэффективному использованию ресурсов.
-- PVC может оставаться в статусе `Pending` бесконечно, если в кластере нет PV, удовлетворяющего требованиям.
+### Режимы объема (Volume Mode)
 
-> **Примечание:** Для динамического выделения с учётом топологии (многозонные кластеры) используется `WaitForFirstConsumer`. Подробнее: [CSI Topology](./CSI/csi_advanced.md#csi-topology).
+Позволяют выбрать, как том будет представлен внутри контейнера (K8s 1.18+).
 
-### Привязка PVC к конкретному PV через метки
+| Режим | Описание | Применение |
+|---|---|---|
+| **`Filesystem`** (Default) | Том монтируется как директория с файловой системой (ext4, xfs). | Обычные приложения, логи, статика. |
+| **`Block`** | Том монтируется как "сырое" блочное устройство (`/dev/sdb`). | Высоконагруженные БД (Oracle, SAP HANA), виртуализация (KubeVirt). |
 
-По умолчанию PVC выбирает любой подходящий PV по алгоритму Best Fit. Для явного указания конкретного PV используются метки (labels) и `selector`:
+### Эксклюзивный доступ (ReadWriteOncePod)
 
-**Шаг 1: Администратор создаёт PV с метками**
+Новый режим доступа (GA в 1.29), обеспечивающий более строгую изоляцию:
+- **RWO (ReadWriteOnce)**: Позволяет нескольким подам на **одном узле** читать/писать в один том.
+- **RWOP (ReadWriteOncePod)**: Гарантирует, что только **один под в кластере** может монтировать этот том. Это предотвращает повреждение данных при некорректном переезде Stateful-приложений.
 
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: nfs-storage-pv
-  labels:
-    environment: production
-    storage-tier: fast
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadWriteMany
-  persistentVolumeReclaimPolicy: Retain
-  nfs:
-    path: /srv/nfs/k8s
-    server: 192.168.1.100
-```
+### Механизмы защиты (Finalizers)
 
-**Шаг 2: Разработчик создаёт PVC с selector.matchLabels**
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: app-data-pvc
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 500Mi
-  selector:
-    matchLabels:
-      storage-tier: fast
-```
-
-В этом случае PVC привяжется только к PV, у которого есть метка `storage-tier: fast`. Без `selector` PVC мог бы привязаться к любому PV с подходящим размером и accessMode.
-
-> **Рекомендация:** Используйте метки для гибкого управления: `environment`, `datacenter`, `storage-tier`, `instance`. Это позволяет разработчикам указывать требования к хранилищу без знания деталей инфраструктуры.
+Kubernetes предотвращает случайное удаление используемых данных через `finalizers`:
+- `kubernetes.io/pvc-protection`: Не дает удалить PVC, пока он используется активным подом.
+- `kubernetes.io/pv-protection`: Не дает удалить PV, пока он привязан к PVC.
 
 ---
 
 ## Практические сценарии
 
-### Диагностика состояния Pending у PVC
+### Динамическое расширение тома (Volume Expansion)
 
-Если PVC создан, но находится в статусе `Pending` длительное время — это означает отсутствие подходящего PV в кластере.
+Позволяет увеличить размер диска без удаления PVC.
 
-**Возможные причины:**
+**Условия успеха:**
+1. CSI-драйвер поддерживает расширение (почти все современные драйверы).
+2. В StorageClass установлено: `allowVolumeExpansion: true`.
+3. Файловая система поддерживает расширение (XFS, Ext4).
 
-- Нет PV с указанным `storageClassName`.
-- Нет PV с подходящим `accessMode`.
-- Все доступные PV меньше запрошенного размера.
-- `selector.matchLabels` не соответствует ни одному PV.
-- PV в состоянии `Released` (нельзя использовать повторно автоматически).
+**Алгоритм:**
+1. Отредактируйте PVC:
+   ```yaml
+   spec:
+     resources:
+       requests:
+         storage: 20Gi # Было 10Gi
+   ```
+2. **Online Expansion**: Если драйвер поддерживает, размер изменится сразу.
+3. **Offline Expansion**: Если драйвер не поддерживает расширение при смонтированном томе, потребуется перезагрузить под.
 
-**Диагностика:**
+### Использование источников данных (Volume Data Sources)
 
-```bash
-# Проверка статуса PVC
-kubectl get pvc
+Позволяет создавать PVC на основе уже существующих данных (клоны и снимки).
 
-# Детальная информация о PVC (Events покажут причину)
-kubectl describe pvc <pvc-name>
+#### 1. Клонирование тома (Volume Cloning)
+Создание идентичной копии существующего PVC внутри того же Namespace.
 
-# Проверка доступных PV
-kubectl get pv
-
-# Проверка состояния PV
-kubectl describe pv <pv-name>
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-clone
+spec:
+  dataSource:
+    name: source-pvc # Имя исходного PVC
+    kind: PersistentVolumeClaim
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi # Размер должен быть >= исходного
 ```
 
-**Решение:**
+#### 2. Восстановление из снимка (Volume Snapshot)
+Создание тома из заранее сделанного `VolumeSnapshot`.
 
-- Создать новый PV, удовлетворяющий требованиям PVC.
-- Изменить требования PVC (размер, accessMode, selector).
-- Удалить "зависший" PVC, если он больше не нужен.
-
-### Сценарий повторного использования PVC
-
-При правильной настройке (`reclaimPolicy: Retain`) данные сохраняются после удаления пода:
-
-```
-1. Pod удалён/перезапущен
-         │
-         │ (PVC и PV сохраняются)
-         ▼
-2. PVC остаётся в статусе Bound
-         │
-         │ (данные на физическом томе нетронуты)
-         ▼
-3. Новый Pod создаётся и ссылается на тот же PVC
-         │
-         ▼
-4. Том монтируется в новый под
-         │
-         │ (все данные доступны)
-         ▼
-5. Приложение продолжает работу с теми же данными
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-from-snapshot
+spec:
+  dataSource:
+    name: my-snapshot # Имя объекта VolumeSnapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
 ```
 
-**Важно:** PVC не удаляется автоматически при удалении пода. PVC удаляется только при явном удалении пользователем или при удалении StatefulSet (если PVC создан через `volumeClaimTemplates` и не установлен annotation для сохранения).
+### Привязка к конкретному PV через метки и ClaimRef
 
-### Рекомендуемый порядок удаления ресурсов
+#### Способ 1: Selector (Гибкий)
+Позволяет PVC выбрать PV с определенными характеристиками (например, `fast-disk: "true"`) через метки.
 
-При удалении приложения с постоянным хранилищем соблюдайте правильный порядок:
-
-```
-1. Удалить Pod (или Deployment/StatefulSet)
-         │
-         ▼
-2. Удалить PersistentVolumeClaim (PVC)
-         │
-         │ (срабатывает reclaimPolicy)
-         ▼
-3. Проверить состояние PersistentVolume
-         │
-         ├─► Retain: PV → Released (данные сохранены, требуется ручная обработка)
-         └─► Delete: PV и физический том удаляются автоматически
+```yaml
+# В спецификации PVC
+spec:
+  selector:
+    matchLabels:
+      fast-disk: "true"
 ```
 
-> **Критически важно:** Удаляйте PVC только после того, как поды перестали использовать том. Если удалить PVC при работающем поде, данные могут быть потеряны или повреждены.
+#### Способ 2: ClaimRef (Жесткий)
+Администратор может заранее "зарезервировать" PV для конкретного PVC, указав его в спецификации PV.
+
+```yaml
+# В манифесте PersistentVolume
+spec:
+  claimRef:
+    name: database-pvc-0
+    namespace: prod
+```
+В этом случае ни один другой PVC не сможет занять этот PV, даже если он идеально подходит по параметрам.
+
+### Топология и локальные диски (Node Affinity)
+
+Для томов, которые физически привязаны к узлу (Local PV) или зоне (AWS EBS), используется `nodeAffinity`.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-ssd-pv
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes: ["ReadWriteOnce"]
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: ["worker-node-1"]
+```
+
+> **Важно:** При использовании таких PV в StorageClass обязательно должен быть установлен режим `volumeBindingMode: WaitForFirstConsumer`, чтобы планировщик сначала выбрал подходящий узел для пода, а уже потом привязывал к нему PV.
+
+### Диагностика состояния Pending
+
+Если PVC "завис" в `Pending`, используйте чек-лист:
+
+1. **Проверка событий**: `kubectl describe pvc <name>`.
+   - `waiting for a volume to be created, either by external provisioner...` -> Проблема в StorageClass или CSI-драйвере.
+   - `failed to find a compliant node...` -> Проблема в Node Affinity или лимитах узлов.
+2. **Проверка StorageClass**: `kubectl get sc`. Убедитесь, что указанный в PVC класс существует.
+3. **Проверка PV (для статического выделения)**: `kubectl get pv`. Убедитесь, что есть PV в статусе `Available` с подходящим размером и AccessMode.
+4. **Проверка квот**: `kubectl get resourcequota`. Возможно, исчерпан лимит на суммарный объем дисков в Namespace.
 
 ---
 
 ## Дополнительная информация
 
-Полные примеры манифестов (Ceph RBD, NFS, StatefulSet): [PV/PVC Practical Scenarios](./pv_and_pvc_scenarios.md). Локальное хранилище: [Local Path Provisioner](./local-path-provisioner.md). NFS-хранилище: [NFS Subdir External Provisioner](./nfs-subdir-external-provisioner.md). Расширенные возможности CSI (snapshots, клонирование, топология): [CSI Advanced](./CSI/csi_advanced.md). Официальная документация: [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/), [Storage Classes](https://kubernetes.io/docs/concepts/storage/storage-classes/).
+- [CSI Advanced — снимки, клонирование, топология](./CSI/csi_advanced.md)
+- [Официальная документация: Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
+- [Официальная документация: Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)

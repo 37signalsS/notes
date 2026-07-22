@@ -1,102 +1,100 @@
-# Дополнительная информация Kyverno: Агрегированные роли
+# Агрегированные роли Kyverno и дополнительные возможности
 
 ## Определения
 
-**Aggregated Cluster Roles (Агрегированные роли кластера)** — механизм Kubernetes, позволяющий динамически расширять права существующих ролей через использование специальных лейблов (меток). В контексте Kyverno этот механизм критически важен для предоставления контроллерам прав на создание, изменение или удаление ресурсов, которыми они управляют в рамках политик.
+**Агрегированные ClusterRoles** — механизм Kubernetes, позволяющий динамически расширять права существующих ролей через использование селекторов по меткам (labels). В контексте Kyverno этот механизм является основным способом предоставления контроллерам прав на манипуляцию ресурсами (создание, изменение, удаление) без прямого редактирования стандартных ролей приложения.
+
+В современных версиях Kyverno (2024–2025) рекомендуется использовать метки с префиксом `rbac.kyverno.io/` для обеспечения безопасности и модульности.
 
 ---
 
 ## Основные концепции
 
-### Механизм агрегации в Kyverno
+### Механизм расширения прав
 
-По умолчанию контроллеры Kyverno обладают ограниченным набором прав для обеспечения безопасности кластера. Например, они не могут создавать ресурсы типа `Secret` без явного разрешения.
+По умолчанию контроллеры Kyverno работают по принципу минимальных привилегий. Например, `background-controller` не имеет прав на создание секретов, пока они не будут явно предоставлены через агрегацию.
 
-**Как это работает**:
+**Алгоритм работы**:
+1. Создается `ClusterRole` с необходимыми правилами (`rules`).
+2. В метаданные роли добавляется метка, соответствующая конкретному контроллеру.
+3. Kubernetes автоматически объединяет эти правила с системной ролью контроллера.
 
-1. Вы создаете новую `ClusterRole`, описывающую необходимые права (например, `create` для секретов).
-2. Вы добавляете к этой роли лейбл Kyverno: `kyverno.io/aggregate-to-<controller>-controller: "true"`.
-3. Kubernetes автоматически объединяет эти права с основной ролью соответствующего контроллера.
-4. Контроллер получает новые возможности без необходимости перезагрузки или изменения его основной конфигурации.
+### Контроллеры и метки агрегации
 
-Общую теорию работы агрегированных ролей можно найти в разделе **[Агрегация ролей RBAC](../rbac/aggregation_scenarios.md)**.
-
-### Контроллеры Kyverno и их лейблы
-
-| Контроллер | Лейбл для агрегации прав | Основная задача |
+| Контроллер | Метка для агрегации прав | Основная задача |
 |------------|--------------------------|-----------------|
-| **admission-controller** | `kyverno.io/aggregate-to-admission-controller: "true"` | Обработка мутирующих и валидирующих вебхуков. |
-| **background-controller** | `kyverno.io/aggregate-to-background-controller: "true"` | Фоновое сканирование ресурсов и генерация объектов (`generate`). |
-| **reports-controller** | `kyverno.io/aggregate-to-reports-controller: "true"` | Создание и обновление отчетов по политикам. |
-| **cleanup-controller** | `kyverno.io/aggregate-to-cleanup-controller: "true"` | Удаление ресурсов согласно политикам очистки. |
+| **admission-controller** | `rbac.kyverno.io/aggregate-to-admission-controller: "true"` | Валидация и мутация ресурсов в момент поступления запроса в API-сервер. |
+| **background-controller** | `rbac.kyverno.io/aggregate-to-background-controller: "true"` | Выполнение операций `generate`, фоновое сканирование и мутация существующих ресурсов. |
+| **reports-controller** | `rbac.kyverno.io/aggregate-to-reports-controller: "true"` | Управление жизненным циклом отчетов `PolicyReport`. |
+| **cleanup-controller** | `rbac.kyverno.io/aggregate-to-cleanup-controller: "true"` | Удаление ресурсов по расписанию или согласно TTL-меткам. |
+
+### Продвинутые механизмы (2025)
+
+*   **CEL-политики**: Использование `ValidatingAdmissionPolicies` позволяет выполнять проверки на стороне Kubernetes без вызова внешнего вебхука, что повышает производительность и надежность.
+*   **Reports Server**: Для крупных инсталляций (более 1000 узлов) рекомендуется использовать внешний сервер отчетов для разгрузки `etcd`.
+*   **Least Privilege**: В версии 1.16+ поддерживаются Namespaced-политики (например, `NamespacedDeletingPolicy`), позволяющие ограничить область действия прав конкретными пространствами имен.
 
 ---
 
 ## Практические сценарии
 
-### 1. Права для генерации секретов (Secret)
+### 1. Права на генерацию секретов
 
-Для работы политики `generate`, создающей секреты, необходимо предоставить права `background-controller`:
+Необходимы для работы политик `generate`, создающих `Secret` (например, при инициализации нового Namespace).
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kyverno-generate-secret
+  name: kyverno:generate-secrets
   labels:
-    # Привязка прав к фоновому контроллеру
-    kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "update", "delete", "get", "list", "watch"]
 ```
 
-### 2. Права для генерации сетевых политик (NetworkPolicy)
+### 2. Права на очистку старых ресурсов (Cleanup)
+
+Для автоматического удаления завершенных подов или временных ресурсов.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kyverno-generate-network-policy
+  name: kyverno:cleanup-pods
   labels:
-    kyverno.io/aggregate-to-background-controller: "true"
-rules:
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["create", "update", "delete", "get", "list", "watch"]
-```
-
-### 3. Права для чтения конфигураций (ConfigMap)
-
-Если политика валидации должна считывать данные из `ConfigMap`, права нужны `admission-controller`:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kyverno-read-configmap
-  labels:
-    kyverno.io/aggregate-to-admission-controller: "true"
+    rbac.kyverno.io/aggregate-to-cleanup-controller: "true"
 rules:
   - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
 ```
 
-### Проверка примененных прав
+### 3. TTL-управление через метки
 
-Для подтверждения того, что права были успешно агрегированы, используйте следующие команды:
+Kyverno поддерживает автоматическую очистку через добавление меток к самим ресурсам, что избавляет от необходимости создавать отдельные политики для простых сценариев.
+
+```yaml
+# Пример добавления TTL к временному пространству имен
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: temp-dev-env
+  labels:
+    cleanup.kyverno.io/ttl: "24h" # Будет удалено через 24 часа после создания
+```
+
+### Проверка агрегации прав
 
 ```bash
-# Поиск всех ClusterRole, агрегируемых в Kyverno
-kubectl get clusterrole -l 'kyverno.io/aggregate-to-background-controller=true'
+# Проверка, какие роли агрегируются в фоновый контроллер
+kubectl get clusterrole -l 'rbac.kyverno.io/aggregate-to-background-controller=true'
 
-# Просмотр итоговых прав фонового контроллера
-kubectl get clusterrole kyverno:background -o yaml
-
-# Проверка возможности выполнения действия от имени сервис-аккаунта
-kubectl auth can-i create secrets --as=system:serviceaccount:kyverno:kyverno-background-controller
+# Валидация итоговых прав сервис-аккаунта
+kubectl auth can-i create secrets \
+  --as=system:serviceaccount:kyverno:kyverno-background-controller
 # → yes
 ```
 
@@ -106,8 +104,13 @@ kubectl auth can-i create secrets --as=system:serviceaccount:kyverno:kyverno-bac
 
 ### Связанные темы
 
-- **[RBAC Overview](../rbac/rbac_overview.md)** — основы управления доступом (Role-Based Access Control).
-- **[Pod Security Context](../pod_security_context.md)** — миграция с устаревших PSP (Pod Security Policies) на современные PSS (Pod Security Standards) и PSA (Pod Security Admission).
-- **[Установка Kyverno](./install.md)** — базовая настройка компонентов.
-- **[Основные концепции Kyverno](./concepts.md)** — архитектура admission-контроллеров.
-- **[Типы правил](./rules.md)** — подробнее о механизме `generate` и мутациях.
+- **[Обзор RBAC](../rbac/rbac_overview.md)** — теоретические основы управления доступом.
+- **[Сценарии агрегации ролей](../rbac/aggregation_scenarios.md)** — подробные примеры использования `aggregationRule` в Kubernetes.
+- **[Pod Security Context](../pod_security_context.md)** — переход с PSP на PSS/PSA.
+- **[Установка Kyverno](./install.md)** — развертывание компонентов admission-контроллера.
+- **[Основные концепции](./concepts.md)** — архитектура и жизненный цикл политики.
+
+### Ссылки и ресурсы
+
+- [Kyverno Reports Server](https://github.com/kyverno/reports-server) — внешнее хранилище для отчетов.
+- [OpenReports API](https://openreports.io) — стандарт отчетности по безопасности в Kubernetes.

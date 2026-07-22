@@ -1,124 +1,136 @@
-# Docker развёртывание 389DS
+# Развертывание 389DS в Docker
 
 ## Определения
 
-**Официальный образ:** `quay.io/389ds/ds-container` (поддерживается проектом 389DS).
+**389 Directory Server (389DS)** — корпоративный LDAP-сервер с открытым исходным кодом. Контейнеризация 389DS позволяет быстро развертывать масштабируемые службы каталогов с предсказуемой конфигурацией.
 
-> **Примечание:** Образ `389ds/ds-container:latest` на Docker Hub может быть устаревшим. Рекомендуется использовать `quay.io/389ds/ds-container:<version>`.
+**Официальный образ:** `quay.io/389ds/dirsrv` (ранее `quay.io/389ds/ds-container`). Поддерживается проектом 389DS и Red Hat.
+
+**Instance (Экземпляр):** Изолированный процесс LDAP-сервера со своей базой данных и конфигурацией. В контейнере по умолчанию создается один экземпляр.
 
 ## Базовые концепции
 
-### Запуск контейнера
+### Выбор образа
 
-Базовая команда запуска:
+Рекомендуется использовать образы из **Quay.io**, так как они обновляются чаще, чем на Docker Hub.
 
-```bash
-docker run -d \
-  --name 389ds \
-  -p 3389:3389 \
-  -p 3636:3636 \
-  -v /data/ldap:/data \
-  --memory=2g \
-  -e SUFFIX=dc=example,dc=com \
-  -e DM_PASSWORD=mysecretpassword \
-  quay.io/389ds/ds-container:latest
-```
+*   `quay.io/389ds/dirsrv:latest` — актуальная стабильная версия.
+*   `quay.io/389ds/dirsrv:3.1` — конкретная мажорная версия для production.
 
 ### Переменные окружения
 
 | Переменная | Описание | Обязательно | Значение по умолчанию |
 | :--- | :--- | :--- | :--- |
-| `SUFFIX` | Корневой DN дерева LDAP | Да | — |
-| `DM_PASSWORD` | Пароль Directory Manager | Да | — |
-| `DS_SCHEMA_INETPERSON` | Включить схему inetPerson | Нет | `true` |
-| `DS_INDEX` | Включить индексацию при старте | Нет | `true` |
-| `DS_REINDEX` | Пересоздать индексы при старте | Нет | `false` |
-| `DS_CONTAINER_PORT` | Порт LDAP внутри контейнера | Нет | `3389` |
-| `DS_SECURE_PORT` | Порт LDAPS внутри контейнера | Нет | `3636` |
+| `DS_DM_PASSWORD` | Пароль администратора (`cn=Directory Manager`) | Да | Генерируется случайно (см. лог) |
+| `DS_SUFFIX_NAME` | Корневой DN (например, `dc=example,dc=com`) | Да | Извлекается из имени хоста |
+| `DS_INSTANCE_NAME` | Имя экземпляра сервера | Нет | `localhost` |
+| `DS_STARTUP_TIMEOUT` | Время ожидания запуска (сек) | Нет | `60` |
+| `DS_MEMORY_PERCENTAGE` | % RAM для автонастройки кэша БД | Нет | `25` |
 
-### Порты
+### Порты и сеть
 
-| Порт | Протокол | Описание |
+| Порт (Контейнер) | Протокол | Назначение |
 | :--- | :--- | :--- |
-| **3389** | LDAP | Стандартный порт (нешифрованный или StartTLS) |
-| **3636** | LDAPS | LDAP over SSL/TLS |
+| **3389** | LDAP | Стандартный доступ (рекомендуется STARTTLS) |
+| **3636** | LDAPS | Защищенный доступ через SSL/TLS |
 
-> **Примечание:** Порты > 1024 позволяют запускать контейнер от непривилегированного пользователя.
+*Использование портов выше 1024 позволяет запускать контейнер без root-привилегий на хосте.*
 
 ## Практические сценарии
 
-### Структура данных
-
-| Путь | Описание |
-| :--- | :--- |
-| `/data/db` | База данных (LMDB) |
-| `/data/backups` | Резервные копии |
-| `/data/config` | Конфигурация (`cn=config`) |
-| `/data/schema` | Схемы (редко требуют изменений) |
-| `/data/tls` | TLS-сертификаты (опционально) |
-
-### Утилиты управления
-
-Внутри контейнера доступны стандартные LDAP-утилиты:
-
-* `ldapsearch` — поиск по дереву
-* `ldapmodify` — модификация записей
-* `ldapadd` — добавление записей
-* `dsconf` — управление конфигурацией 389DS
-* `dsctl` — управление экземпляром (старт/стоп/бэкап)
-
-### Проверка работоспособности
-
-```bash
-# Подключение к контейнеру
-docker exec -it 389ds /bin/bash
-
-# Проверка конфигурации
-dsconf -D "cn=Directory Manager" ldap://localhost:3389 config get
-
-# Поиск базовой записи
-ldapsearch -x -H ldap://localhost:3389 \
-  -D "cn=Directory Manager" -W \
-  -b "dc=example,dc=com" "(objectClass=*)"
-```
-
-### Развёртывание одноузлового кластера
-
-1. Создать директорию для данных: `mkdir -p /data/ldap`
-2. Запустить контейнер с параметрами (см. выше)
-3. Проверить логи: `docker logs -f 389ds`
-4. Дождаться сообщения: `389DS container started`
-
-## Дополнительная информация
-
-### Конфигурация TLS/SSL
-
-Для использования LDAPS требуется смонтировать сертификаты:
+### Быстрый запуск (Docker CLI)
 
 ```bash
 docker run -d \
-  --name 389ds \
-  -v /data/ldap:/data \
-  -v /path/to/certs:/data/tls:ro \
-  -e SUFFIX=dc=example,dc=com \
-  -e DM_PASSWORD=password \
-  quay.io/389ds/ds-container:latest
+  --name 389ds-server \
+  -p 3389:3389 \
+  -p 3636:3636 \
+  -v /opt/389ds/data:/data:Z \
+  -e DS_DM_PASSWORD=MySecurePassword123 \
+  -e DS_SUFFIX_NAME="dc=example,dc=com" \
+  quay.io/389ds/dirsrv:latest
 ```
 
-Требования к сертификатам:
+### Развертывание через Docker Compose
 
-* Серверный сертификат: `/data/tls/server.crt`
-* Ключ: `/data/tls/server.key`
-* CA-сертификат: `/data/tls/ca.crt`
+Рекомендуемый способ для production, позволяющий управлять лимитами ресурсов и Healthcheck.
 
-### Системные требования (Ресурсы)
+```yaml
+services:
+  ldap:
+    image: quay.io/389ds/dirsrv:latest
+    container_name: 389ds
+    ports:
+      - "389:3389"
+      - "636:3636"
+    volumes:
+      - ./ldap_data:/data:Z
+    environment:
+      - DS_DM_PASSWORD=admin_password
+      - DS_SUFFIX_NAME=dc=example,dc=com
+    shm_size: '2gb' # Важно для высокой производительности базы данных
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "dsconf", "-D", "cn=Directory Manager", "ldap://localhost:3389", "config", "get"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
 
-* **CPU:** 2 ядра минимум, 4+ для production
-* **RAM:** 2 ГБ минимум, 4–8 ГБ для production
-* **Диск:** 10 ГБ+, SSD рекомендуется
+### Структура данных в томе /data
+
+При монтировании тома в `/data` сервер создает следующую структуру:
+- `/data/config`: Конфигурационные файлы (`dse.ldif`).
+- `/data/db`: Файлы базы данных (LMDB/BDB).
+- `/data/logs`: Журналы доступа, ошибок и аудита.
+- `/data/tls`: Сертификаты и ключи.
+- `/data/schema`: Пользовательские схемы LDAP.
+
+### Управление через exec
+
+Внутри контейнера доступны все современные утилиты управления:
+
+```bash
+# Проверка статуса сервера
+docker exec 389ds dsctl localhost status
+
+# Управление конфигурацией через dsconf
+docker exec 389ds dsconf -D "cn=Directory Manager" ldap://localhost:3389 config get
+
+# Поиск записей
+docker exec 389ds ldapsearch -x -H ldap://localhost:3389 \
+  -D "cn=Directory Manager" -w admin_password \
+  -b "dc=example,dc=com" "(objectClass=*)"
+```
+
+## Дополнительная информация
+
+### Настройка TLS/SSL
+
+Контейнер автоматически создает самоподписанный сертификат при первом запуске. Для использования корпоративных сертификатов:
+
+1. Поместите сертификат в `/data/tls/server.crt`.
+2. Поместите приватный ключ в `/data/tls/server.key`.
+3. Поместите цепочку CA в `/data/tls/ca.crt`.
+4. Перезапустите контейнер.
+
+### Оптимизация производительности
+
+1. **SHM (Shared Memory):** Для 389DS критически важен размер разделяемой памяти. Всегда устанавливайте `--shm-size` (минимум 1 ГБ, рекомендуется 2 ГБ и выше).
+2. **Лимиты файлов:** Убедитесь, что `ulimit -n` на хосте достаточно велик (минимум 65535), иначе сервер может не запуститься или ограничивать количество соединений.
+3. **Хранилище:** Используйте SSD для директории `/data/db`, чтобы минимизировать задержки при операциях записи.
+
+### Troubleshooting
+
+- **Контейнер падает сразу после старта:** Проверьте права на директорию, смонтированную в `/data`. Пользователь внутри контейнера (обычно `dirsrv` с UID 389) должен иметь права на запись.
+- **Ошибка "Insufficient access":** Проверьте пароль `DS_DM_PASSWORD` и корректность `DS_SUFFIX_NAME`.
+- **Логи:** Основной источник информации — `docker logs <container_name>` и файлы в `/data/logs/errors`.
 
 ### Связанные материалы
 
-* [Обзор 389DS](./overview.md) — общая информация
-* [Настройка репликации](./replication.md) — multi-master конфигурация
-* [ACI](./aci.md) — управление доступом
+- [Обзор 389DS](./overview.md) — общие сведения и архитектура
+- [Настройка ACI](./aci.md) — управление доступом
+- [Репликация](./replication.md) — создание кластеров в Docker

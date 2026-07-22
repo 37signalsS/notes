@@ -1,174 +1,138 @@
-# Git — прочие соглашения
+# Прочие соглашения и конвенции Git
 
 ## Определения
 
-**Git conventions** — различные файлы-соглашения, связанные с Git, но не являющиеся стандартными фичами системы контроля версий.
+**Конвенции Git (Git conventions)** — это набор общепринятых сообществом или специфичных для инструментов файлов и практик, которые не являются встроенными функциями Git, но дополняют его возможности для совместной разработки.
+
+**`.gitkeep`** — условное имя файла, используемого для отслеживания пустых директорий в Git (так как Git отслеживает только файлы, а не папки).
 
 ---
 
 ## Базовые концепции
 
-### .gitkeep
+### Отслеживание пустых директорий (.gitkeep)
 
-- **Статус:** Соглашение, **не фича Git**
-- **Назначение:** Git не отслеживает пустые директории. Файл `.gitkeep` (или любой другой) помещается в пустую папку, чтобы Git имел что отслеживать
-- **Имя произвольное:** Может называться как угодно, `.gitkeep` — конвенция
+Поскольку Git не сохраняет пустые папки, разработчики используют "заглушки".
+- **Статус:** Не является официальной фичей Git.
+- **Имя:** Обычно используется `.gitkeep`, но технически это может быть любой файл (например, `.placeholder` или пустой `.gitignore`).
+- **Размещение:** Помещается внутрь директории, которую необходимо сохранить в структуре репозитория.
 
-### .gitconfig (в репозитории)
+### Общие настройки проекта (.gitconfig)
 
-- **Назначение:** Предлагаемая конфигурация для разработчиков
-- **Ограничение:** Git **не загружает** такие файлы автоматически (безопасность)
-- **Использование:** Проекты включают инструкции для ручной настройки:
+Иногда в корень репозитория помещают файл `.gitconfig` с рекомендованными настройками для команды (например, алиасы или параметры `core`).
+- **Безопасность:** Git никогда не загружает этот файл автоматически.
+- **Подключение:** Разработчики должны вручную включить его в свой локальный конфиг командой `git config include.path ../.gitconfig`.
 
-  ```bash
-  git config include.path ../.gitconfig
-  ```
+### Верификация подписей (.gitsigners)
 
-- **Применение:** Монорепозитории, проекты со специфичными настройками Git
+Файл со списком доверенных публичных ключей (SSH или GPG) для проверки подлинности коммитов.
+- **allowedSigners:** Используется для настройки `gpg.ssh.allowedSignersFile`.
+- **Назначение:** Позволяет команде верифицировать коммиты коллег без импорта ключей в личное хранилище.
 
-### .gitsigners / allowedSigners
+### Интеграция с Gerrit (.gitreview)
 
-- **Назначение:** Файлы с доверенными ключами подписи (GPG/SSH) для верификации коммитов
-- **Использование:** Linux kernel и другие проекты с trusted contributors
-- **Настройка:** `git config gpg.ssh.allowedSignersFile <файл>` для `git log --show-signature`
+Используется в проектах, применяющих систему ревью Gerrit (например, OpenStack, Android).
+- **Функция:** Описывает хост, порт и ветку по умолчанию для отправки кода на ревью командой `git review`.
 
-### .gitreview
+### Линтинг и хуки
 
-- **Назначение:** Конфигурация интеграции с Gerrit
-- **Проекты:** OpenStack, Android, Eclipse
-- **Формат:**
-
-  ```ini
-  [gerrit]
-  host=review.opendev.org
-  port=29418
-  project=openstack/nova.git
-  defaultbranch=master
-  ```
-
-- **Использование:** `git review` читает файл и пушит коммиты в Gerrit для ревью
-
-### .gitlint
-
-- **Назначение:** Конфигурация линтера сообщений коммитов
-- **Пример:**
-
-  ```ini
-  [general]
-  ignore=body-is-missing
-
-  [title-max-length]
-  line-length=72
-  ```
-
-### .jj/
-
-- **Назначение:** Директория состояния Jujutsu (git-совместимая VCS)
-- **Особенности:** Сосуществует с `.git/`, уважает все магические файлы Git (.gitignore, .gitattributes, .mailmap)
+- **`.gitlint`:** Конфигурация для проверки формата сообщений коммитов (длина заголовка, наличие ID задачи).
+- **`.pre-commit-config.yaml`:** Самый популярный современный стандарт для управления git-хуками через фреймворк [pre-commit](https://pre-commit.com/). Позволяет автоматически запускать линтеры и тесты перед созданием коммита.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Создание пустых директорий для структуры проекта
+### Сценарий 1: Сохранение структуры логов и временных папок
+
+Если проекту нужны пустые папки `logs/` или `temp/` сразу после клонирования.
 
 ```bash
-# Создать структуру с .gitkeep
-mkdir -p src/{components,hooks,utils}
-mkdir -p tests/{unit,integration,e2e}
-mkdir -p logs
-mkdir -p tmp
-
-# Добавить .gitkeep в пустые директории
-touch src/components/.gitkeep
-touch src/hooks/.gitkeep
+# Создание папки и файла-заглушки
+mkdir logs
 touch logs/.gitkeep
-touch tmp/.gitkeep
 
-# Закоммитить структуру
-git add .
-git commit -m "chore: create project directory structure"
+# Добавление в Git
+git add logs/.gitkeep
+git commit -m "chore: add logs directory placeholder"
 ```
 
-### Сценарий 2: Настройка .gitlint для валидации коммитов
+### Сценарий 2: Использование общего .gitconfig в монорепозитории
+
+Полезно для настройки специфичных драйверов слияния или алиасов для всей команды.
+
+1. Создайте `.gitconfig` в корне проекта:
+```ini
+[alias]
+    st = status --short
+    lg = log --oneline --graph --all
+[core]
+    whitespace = trailing-space,space-before-tab
+```
+
+2. Инструкция для разработчиков (выполняется один раз):
+```bash
+git config include.path ../.gitconfig
+```
+
+### Сценарий 3: Настройка pre-commit хуков
+
+Стандарт де-факто для автоматизации проверок в DevOps/SRE проектах.
+
+1. Создайте `.pre-commit-config.yaml`:
+```yaml
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.0
+    hooks:
+    -   id: ruff
+```
+
+2. Установка:
+```bash
+pre-commit install
+# → pre-commit installed at .git/hooks/pre-commit
+```
+
+### Сценарий 4: Настройка .gitlint для Conventional Commits
+
+Если вы используете `gitlint` для валидации сообщений.
 
 ```ini
 # .gitlint
 [general]
-# Игнорировать правила
-ignore=body-is-missing,conventional-commit
+ignore=body-is-missing
 
-# Максимальная длина заголовка
 [title-max-length]
 line-length=72
 
-# Минимальная длина тела
-[body-min-length]
-min-length=10
-```
-
-Использование:
-
-```bash
-# Проверить последний коммит
-gitlint HEAD
-
-# Проверить диапазон коммитов
-gitlint HEAD~5..HEAD
-```
-
-### Сценарий 3: Настройка верификации подписей через allowedSigners
-
-```bash
-# Создать файл с доверенными ключами
-cat > .gitsigners << 'EOF'
-# Trusted contributors
-alice@company.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
-bob@company.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...
-EOF
-
-# Настроить Git для использования файла
-git config gpg.ssh.allowedSignersFile .gitsigners
-
-# Проверить подписи коммитов
-git log --show-signature
-```
-
-### Сценарий 4: Интеграция с Gerrit через .gitreview
-
-```ini
-# .gitreview
-[gerrit]
-host=review.example.com
-port=29418
-project=team/myproject.git
-defaultbranch=main
-```
-
-Использование:
-
-```bash
-# Установить git-review
-pip install git-review
-
-# Отправить коммит на ревью
-git review
-
-# Отправить на ревью с указанием темы
-git review -t feature-xyz
+[title-must-not-contain-word]
+words=wip,todo
 ```
 
 ---
 
 ## Дополнительная информация
 
+### Ограничения
+
+- **Необязательность:** Большинство конвенций требуют установки дополнительных инструментов (gitlint, pre-commit) или ручной настройки разработчиком.
+- **Разнообразие:** Разные команды могут использовать разные имена файлов (например, `.keep` вместо `.gitkeep`).
+
 ### Официальные ресурсы
 
-- **Gerrit:** [gerrit-review.googlesource.com](https://gerrit-review.googlesource.com/)
-- **git-review:** [pypi.org/project/git-review](https://pypi.org/project/git-review/)
-- **gitlint:** [jorisroovers.com/gitlint](https://jorisroovers.com/gitlint/)
-- **Jujutsu:** [github.com/martinvonz/jj](https://github.com/martinvonz/jj)
+- **Gerrit Code Review:** [gerrit-review.googlesource.com](https://gerrit-review.googlesource.com/)
+- **Pre-commit framework:** [pre-commit.com](https://pre-commit.com/)
+- **Gitlint documentation:** [jorisroovers.com/gitlint](https://jorisroovers.com/gitlint/)
 
-### Связанные темы
+### См. также
 
-Обзор специальных файлов в [git_special_files_overview.md](./git_special_files_overview.md). Шаблоны коммитов в [git_commit_template.md](./git_commit_template.md).
+- [Обзор специальных файлов Git](./git_special_files_overview.md) — SSoT для стандартных файлов (.gitignore, .gitattributes).
+- [Шаблоны коммитов](./git_commit_template.md) — детали Conventional Commits.
+- [Git Hooks — автоматизация](./git_hooks.md) — механизмы работы хуков.

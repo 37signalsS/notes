@@ -2,9 +2,12 @@
 
 ## Определения
 
-**Projected Volume (проектируемый том)** — тип Volume в Kubernetes, позволяющий объединить несколько источников данных (`Secret`, `ConfigMap`, `Downward API`, `ServiceAccountToken`) в один том, монтируемый как единая директория в файловую систему контейнера.
+**Projected Volume (проектируемый том)** — специализированный тип тома в Kubernetes, который позволяет агрегировать несколько существующих источников данных в одну общую директорию внутри контейнера. В отличие от стандартных томов, которые обычно представляют одну сущность (один `Secret` или один `ConfigMap`), проектируемый том выступает в роли "проекции" нескольких ресурсов.
 
-**Основное преимущество:** упрощение манифеста Pod за счёт использования одной точки монтирования вместо создания нескольких отдельных томов для разных источников.
+**Основные преимущества:**
+- **Упрощение манифестов:** сокращение количества секций `volumeMounts` в описании контейнера.
+- **Логическая группировка:** возможность объединить конфигурации, секреты и метаданные в единую структуру (например, `/etc/app/config`).
+- **Безопасность:** поддержка Bound Service Account Tokens с ограниченным временем жизни.
 
 ---
 
@@ -14,127 +17,122 @@
 
 Проектируемые тома могут агрегировать информацию из следующих источников:
 
-| Источник | Описание | Статус |
+| Источник | Описание | Статус (v1.35+) |
 | :--- | :--- | :--- |
 | `secret` | Данные из объектов Secret в том же Namespace. | Stable |
 | `configMap` | Данные из объектов ConfigMap в том же Namespace. | Stable |
-| `downwardAPI` | Метаданные Pod через механизм Downward API. | Stable |
-| `serviceAccountToken` | Кастомизированный токен ServiceAccount для аутентификации в API. | Stable |
-| `clusterTrustBundle` | Глобальные наборы доверенных сертификатов (trust anchors). | Beta (v1.33+) |
-| `podCertificate` | Автоматически выпускаемые X.509 сертификаты для Pod. | Beta (v1.35+) |
+| `downwardAPI` | Метаданные Pod и контейнера (имя, IP, лимиты). | Stable |
+| `serviceAccountToken` | Токен ServiceAccount с заданным Audience и временем жизни. | Stable |
+| `clusterTrustBundle` | Наборы доверенных сертификатов кластера (trust anchors). | Stable |
+| `podCertificate` | Автоматически выпускаемые X.509 сертификаты для идентификации Pod. | Beta |
+
+### Параметры настройки
+
+1. **`defaultMode`**: Устанавливает права доступа (Permissions) для всех файлов в томе (например, `0644`). По умолчанию — `0644`.
+2. **`sources`**: Список источников, данные из которых будут "спроецированы" в том.
+3. **`items`**: Позволяет выбрать конкретные ключи из источника и сопоставить их с определенными путями (файлами) внутри тома.
 
 ### Особенности реализации
 
-**Разрешение конфликтов:** Если несколько источников содержат файлы с одинаковыми именами, приоритет имеет тот источник, который указан последним в списке `sources`.
+**Разрешение конфликтов:** Если несколько источников содержат файлы с идентичными путями, приоритет имеет тот источник, который указан **последним** в списке `sources`.
 
-**Автоматические обновления:** Файлы в проектируемом томе обновляются автоматически при изменении исходных объектов (Secret или ConfigMap) в кластере.
+**Атомарные обновления:** Kubernetes обновляет данные в проектируемом томе атомарно. При изменении `ConfigMap` или `Secret` Kubelet создает новую директорию, записывает туда обновленные данные и затем обновляет символическую ссылку, чтобы минимизировать время несоответствия.
 
-**Ограничение subPath:** Если источник данных в проектируемом томе монтируется через `subPath`, автоматическое обновление данных для такого монтирования **не происходит**.
-
-### Сравнение подходов
-
-| Характеристика | Отдельные тома | Projected Volume |
-| :--- | :--- | :--- |
-| **Точки монтирования** | Несколько (по одной на каждый ресурс) | Одна (общая директория) |
-| **Сложность манифеста** | Высокая (множество `volumeMounts`) | Низкая (один `volumeMount`) |
-| **Изоляция данных** | Изолированы на уровне томов | Находятся в одной общей структуре |
-| **Контроль имен** | Имена файлов не пересекаются | Последний источник в списке выигрывает |
+**Ограничение subPath:** Если проектируемый том монтируется через `subPath`, файлы внутри него **не будут обновляться** автоматически при изменении исходных объектов. Для работы механизма обновления необходимо монтировать весь том целиком.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Агрегация конфигурации и секретов
+### Сценарий 1: Агрегация конфигураций и метаданных
 
-Объединение настроек приложения, паролей и метаданных в одну рабочую директорию `/app/config`:
+Пример объединения паролей базы данных, настроек приложения и имени Pod в одну директорию.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: all-in-one-pod
+  name: app-bundle-pod
 spec:
   volumes:
-  - name: config-all-in-one
+  - name: all-configs
     projected:
+      defaultMode: 0400 # Только чтение для владельца
       sources:
       - secret:
-          name: db-credentials
+          name: db-auth
           items:
             - key: password
-              path: secrets/db-pass.txt
+              path: db/pass.txt
       - configMap:
-          name: app-settings
+          name: runtime-settings
           items:
-            - key: ui-config.yaml
-              path: settings/ui.yaml
+            - key: log-level
+              path: settings/logging.conf
       - downwardAPI:
           items:
-            - path: "info/pod-name"
+            - path: "meta/pod-name"
               fieldRef:
                 fieldPath: metadata.name
   containers:
-  - name: app-container
-    image: busybox:1.36
-    command: ["sh", "-c", "ls -R /app/config && sleep infinity"]
+  - name: main-app
+    image: nginx:1.27
     volumeMounts:
-    - name: config-all-in-one
-      mountPath: "/app/config"
+    - name: all-configs
+      mountPath: "/etc/app"
       readOnly: true
 ```
 
-### Сценарий 2: Кастомизация ServiceAccountToken
+### Сценарий 2: Bound Service Account Token (Безопасность)
 
-Создание токена с ограниченным сроком действия и специфической аудиторией (Audience) для взаимодействия с внешним API Gateway.
+Использование токенов с коротким временем жизни и привязкой к конкретному сервису (Audience). Это стандарт де-факто для интеграции с внешними системами (Vault, AWS IAM).
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: secure-token-pod
+  name: vault-auth-pod
 spec:
   volumes:
-  - name: vault-token
+  - name: sa-token
     projected:
       sources:
       - serviceAccountToken:
-          path: token
-          audience: vault-service
-          expirationSeconds: 7200 # 2 часа
+          path: vault-token
+          audience: https://vault.example.com
+          expirationSeconds: 3600 # Токен действителен 1 час
   containers:
-  - name: worker
-    image: busybox
+  - name: app
+    image: my-app:latest
     volumeMounts:
-    - name: vault-token
-      mountPath: /var/run/secrets/tokens
+    - name: sa-token
+      mountPath: /var/run/secrets/vault
       readOnly: true
-  automountServiceAccountToken: false
 ```
 
-### Сценарий 3: Использование ClusterTrustBundle (Beta)
+### Сценарий 3: Автоматическая идентификация через PodCertificate
 
-Монтирование общекластерных доверенных сертификатов для проверки соединений (требует активации Feature Gate `ClusterTrustBundleProjection`).
+Монтирование сертификата для mTLS, который Kubelet выпускает и ротирует автоматически.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: trusted-app
+  name: mtls-enabled-pod
 spec:
   volumes:
-  - name: trusted-certs
+  - name: identity
     projected:
       sources:
-      - clusterTrustBundle:
-          name: company-ca
-          path: cluster-ca.crt
+      - podCertificate:
+          path: tls.crt
+          # Kubelet автоматически создаст tls.key в той же директории
   containers:
-  - name: main
-    image: alpine:latest
+  - name: server
+    image: envoyproxy/envoy:v1.30
     volumeMounts:
-    - name: trusted-certs
-      mountPath: /etc/ssl/certs/cluster-ca.crt
-      subPath: cluster-ca.crt
+    - name: identity
+      mountPath: /etc/tls/identity
       readOnly: true
 ```
 
@@ -142,10 +140,14 @@ spec:
 
 ## Дополнительная информация
 
-**Связанные темы:**
+**Технические нюансы:**
+- **Размер тома:** Проектируемые тома используют память (`tmpfs`), если это настроено в кластере, или локальный диск узла.
+- **Версионность:** При использовании `ConfigMap` и `Secret` обновление данных в томе может занимать до 1 минуты (зависит от настроек `syncFrequency` и `configMapAndSecretChangeDetectionStrategy` в Kubelet).
 
-- [Тома в Kubernetes](./volume_types.md)
+**Связанные темы:**
+- [Тома в Kubernetes — общие сведения](./volume_types.md)
 - [Использование ConfigMap в Pod](../../ConfigMap/pod_usage.md)
 - [Механизмы работы с Secret](../../secrets/using_secrets.md)
+- [Downward API в Kubernetes](../downward_api.md)
 
 **Официальная документация:** [Projected Volumes](https://kubernetes.io/docs/concepts/storage/projected-volumes/)
